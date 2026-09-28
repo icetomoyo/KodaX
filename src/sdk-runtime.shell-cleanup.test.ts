@@ -58,11 +58,29 @@ it.each(['automatic', 'same-request'] as const)(
       for (const receipt of repeated) {
         expect(receipt.receipts.map((entry) => entry.runId)).toEqual([run.runId]);
       }
+      // Exhausted retries settle the Run honestly with unresolved cleanup:
+      // the deferred record is retained and the stop never claims verified
+      // termination. Runtime close retries the deferred cleanup and reaps
+      // the child.
+      await expect(run.result).resolves.toMatchObject({
+        phase: 'interrupted',
+        stop: { state: 'unknown' },
+        terminal: { effectOutcome: 'unknown' },
+      });
+      await expect(later.result).resolves.toMatchObject({ phase: 'completed' });
+      await runtime.close();
+      const childPid = Number(await readFile(pidFile, 'utf8'));
+      await vi.waitFor(() => expect(() => process.kill(childPid, 0)).toThrow(), { timeout: 15_000 });
+    } else {
+      // A retry inside the cleanup budget verifies and confirms the stop.
+      await expect(run.result).resolves.toMatchObject({
+        phase: 'interrupted',
+        stop: { state: 'confirmed' },
+      });
+      await expect(later.result).resolves.toMatchObject({ phase: 'completed' });
+      const childPid = Number(await readFile(pidFile, 'utf8'));
+      await vi.waitFor(() => expect(() => process.kill(childPid, 0)).toThrow(), { timeout: 15_000 });
     }
-    await expect(run.result).resolves.toMatchObject({ phase: 'interrupted', stop: { state: 'confirmed' } });
-    await expect(later.result).resolves.toMatchObject({ phase: 'completed' });
-    const childPid = Number(await readFile(pidFile, 'utf8'));
-    expect(() => process.kill(childPid, 0)).toThrow();
   } finally {
     cleanup.blocked = false;
     if (cleanup.child) {
