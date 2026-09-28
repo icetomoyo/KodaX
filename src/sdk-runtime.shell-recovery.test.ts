@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { expect, it, vi } from 'vitest';
 
 const control = vi.hoisted(() => ({ pending: false, verified: false, retries: 0,
@@ -51,6 +53,76 @@ it('keeps owner liveness when Shell launch has not registered its child yet', as
   }
 });
 import { createKodaXRuntime } from './sdk-runtime.js';
+
+it('self-heals after a real owner is killed and stays usable across another restart', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-shell-crash-'));
+  vi.stubEnv('KODAX_HOME', path.join(root, '.kodax'));
+  control.pending = false;
+  control.recover.mockReset().mockResolvedValue({ status: 'unknown' });
+  const options = { homeDir: root, sharedDaemonHost: true, defaultProvider: 'unconfigured-provider' };
+  const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval', `
+    import fs from 'node:fs';
+    import path from 'node:path';
+    import { createKodaXRuntime } from ${JSON.stringify(pathToFileURL(path.resolve('src/sdk-runtime.ts')).href)};
+    const root = process.argv[1];
+    const runtime = await createKodaXRuntime({ homeDir: root, sharedDaemonHost: true,
+      defaultProvider: 'unconfigured-provider' });
+    const session = await runtime.sessions.create({ projectPath: root });
+    await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
+    fs.writeFileSync(path.join(root, 'ready.txt'), 'crash recovery fixture');
+    const run = await runtime.runs.start({ sessionId: session.id, prompt: 'read fixture',
+      options: { lsp: false, toolInvocation: { name: 'read', input: { path: path.join(root, 'ready.txt') } } } });
+    await run.result;
+    const file = path.join(root, '.kodax/runtime/profiles/default/runs', run.runId, 'status.json');
+    const state = JSON.parse(fs.readFileSync(file, 'utf8'));
+    state.phase = 'unknown'; state.stage = 'unknown'; delete state.terminal; delete state.endedAt;
+    state.stop = { requestedAt: new Date().toISOString(), state: 'unknown', outcome: 'unknown', reason: 'stop' };
+    state.interruptInputs = [{ inputId: 'queued-before-crash', afterRunId: run.runId,
+      delivery: 'interrupt', state: 'queued', contentPreview: 'status?', queuedAt: new Date().toISOString() }];
+    state._runtime.shellCleanups = [{ runtimeRunId: run.runId, pid: process.pid,
+      registrationId: '11111111-1111-4111-8111-111111111111' }];
+    fs.writeFileSync(file, JSON.stringify(state));
+    process.send({ runId: run.runId, sessionId: session.id });
+    setInterval(() => {}, 1000);
+  `, root], { env: { ...process.env, KODAX_HOME: path.join(root, '.kodax') }, windowsHide: true,
+    stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+  let stderr = '';
+  child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+  const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+  let observer: Awaited<ReturnType<typeof createKodaXRuntime>> | undefined;
+  try {
+    let ready: { runId: string; sessionId: string } | undefined;
+    child.once('message', (message: { runId: string; sessionId: string }) => { ready = message; });
+    await vi.waitFor(() => expect(ready, stderr).toBeDefined(), { timeout: 15_000 });
+    const { runId, sessionId } = ready!;
+    observer = await createKodaXRuntime(options);
+    expect((await observer.runs.get(runId))?.phase).toBe('unknown');
+    expect(control.recover).not.toHaveBeenCalled();
+    child.kill('SIGKILL');
+    await exited;
+    expect(await observer.runs.get(runId)).toMatchObject({ phase: 'interrupted',
+      terminal: { effectOutcome: 'unknown' }, interruptInputs: [{ state: 'terminal' }] });
+    expect(await observer.sessions.status(sessionId)).toMatchObject({ phase: 'interrupted' });
+    const statusFile = path.join(root, '.kodax/runtime/profiles/default/runs', runId, 'status.json');
+    expect(JSON.parse(await readFile(statusFile, 'utf8'))._runtime.shellCleanups)
+      .toEqual([expect.objectContaining({ deferred: true })]);
+    await observer.close();
+    control.recover.mockClear();
+    observer = await createKodaXRuntime(options);
+    expect((await observer.runs.get(runId))?.phase).toBe('interrupted');
+    expect(control.recover).not.toHaveBeenCalled();
+    const next = await observer.runs.start({ sessionId, prompt: 'continue after restart', options: {
+      lsp: false, toolInvocation: { name: 'read', input: { path: path.join(root, 'ready.txt') } },
+    } });
+    await expect(next.result).resolves.toMatchObject({ phase: 'completed' });
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await exited;
+    await observer?.close();
+    vi.unstubAllEnvs();
+    await rm(root, { recursive: true, force: true, maxRetries: 3 });
+  }
+}, 30_000);
 
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-shell-recovery-'));

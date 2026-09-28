@@ -42,5 +42,21 @@ Also inject one failed cleanup-status write followed by recovery, and native
 stdin/start-attestation failures with unconfirmed termination. Both must retain
 diagnostics and process identities without leaving a permanent cleanup fence.
 
+## Restart self-healing
+
+The process-level regression starts a real Runtime owner in an isolated home,
+seeds the incident's persisted unknown cleanup and queued interrupt, and attaches
+a second Runtime. While the owner is alive, recovery must not steal its Run or
+attempt cleanup. After killing that exact test process, querying the Run must
+recover it as interrupted, terminalize the queued input and persist deferred
+cleanup. A second restart must preserve that terminal state without retrying
+the unresolved cleanup as an admission condition; a successor must complete.
+
+No real user session or provider is used by this test. Run it with:
+
+```powershell
+node node_modules/vitest/vitest.mjs run src/sdk-runtime.shell-recovery.test.ts -t "real owner"
+```
+
 SDK and Space must both be rebuilt and deployed; source commits do not update
 an already running old daemon or installed application.
