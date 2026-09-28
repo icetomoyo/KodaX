@@ -4649,6 +4649,20 @@ from renderer or model output. `connectKodaXRuntime()` is attach-only unless `au
 An explicit inline rollback policy blocks auto-start until the owner policy is
 explicitly changed back to daemon.
 
+The embedder owns the complete credential storage lifecycle. When using an
+Electron `safeStorage` encrypted file on Windows, preserve the associated
+`Local State` encryption state together with the ciphertext across cleanup,
+uninstall, reinstall, and profile migration. Keeping only the ciphertext is
+insufficient, even when the Windows account and Provider API keys are unchanged.
+The SDK does not read, repair, or replace this Electron encryption state.
+
+If the existing client secret cannot be decrypted, surface a terminal credential
+recovery error before connecting; do not silently generate a replacement secret.
+A successful daemon connection alone does not prove that a recovered candidate
+matches the old secret: a different secret selects a different reverse bridge
+and cannot resume the old bridge's leases. Restore the exact existing identity
+from verified recovery material, or explicitly treat it as a new identity.
+
 For Electron, `homeDir` is still the CLI-style base directory, not
 `process.env.KODAX_HOME`. Packaged/asar applications may use `autoStart: true`
 directly; the SDK launches only the daemon child in Electron's Node execution
