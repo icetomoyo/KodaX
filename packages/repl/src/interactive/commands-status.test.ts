@@ -1,10 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BUILTIN_COMMANDS, getCommandRegistry, type CommandCallbacks, type CurrentConfig } from './commands.js';
 import { createInteractiveContext, type InteractiveContext } from './context.js';
 
 describe('status workspace output', () => {
   let context: InteractiveContext;
   let currentConfig: CurrentConfig;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   beforeEach(async () => {
     const registry = getCommandRegistry();

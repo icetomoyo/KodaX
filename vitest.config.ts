@@ -77,7 +77,6 @@ export function createVitestConfig(options: TestSuiteOptions = {}) {
       // the process-level smoke tests inside their real production deadlines.
       // Linux CI retains eight workers, while coverage remains capped at four.
       maxWorkers: Math.min(isCoverageRun || process.platform === 'win32' ? 4 : 8, availableParallelism()),
-      minWorkers: 1,
       // FEATURE_159 (v0.7.40) — global MessageQueue singleton reset before
       // each test. See `vitest.setup.queue.ts` for the rationale.
       setupFiles: [resolveFromRoot('vitest.setup.queue.ts')],

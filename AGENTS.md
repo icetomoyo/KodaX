@@ -46,7 +46,7 @@ If the user did not give a concrete task, read `README.md`, then check `docs/` f
 | Language | TypeScript | >= 5.7.0 (root uses 5.9.x) |
 | Package Manager | npm workspaces | — |
 | CLI Framework | Ink (React for CLI) | ^6.7.0 / React >= 19 |
-| Test | Vitest | ^3.2.4 |
+| Test | Vitest | 4.1.11 |
 | LLM Providers | Anthropic, OpenAI, DeepSeek, Kimi, Qwen, Zhipu, Zai, MiniMax, MiMo, Ark, Gemini CLI, Codex CLI, … | 16 built-in aliases |
 
 ## Monorepo Structure

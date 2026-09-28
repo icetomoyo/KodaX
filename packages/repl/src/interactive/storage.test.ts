@@ -76,6 +76,7 @@ describe('FileSessionStorage', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     if (previousHome === undefined) {
       delete process.env.HOME;
     } else {
