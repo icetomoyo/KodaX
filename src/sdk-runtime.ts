@@ -92,7 +92,6 @@ import type {
   KodaXInputArtifact,
   KodaXInputArtifactSource,
   KodaXInterruptedRunJournal,
-  KodaXInterruptedRunOperation,
   KodaXMessage,
   KodaXManagedTaskStatusEvent,
   KodaXOptions,
@@ -271,6 +270,7 @@ import {
 export type { RuntimeLearningService } from "./runtime-learning.js";
 import {
   deriveInterruptedRunOperations,
+  deriveInterruptedRunReplies,
   selectInterruptedRunCandidates,
 } from "./runtime-interrupted-run-journal.js";
 import {
@@ -3958,7 +3958,7 @@ const MAX_RUNTIME_MEMORY_EVENTS = 10_000;
 const MAX_RUNTIME_PENDING_EVENTS = 1_024;
 const MAX_RUNTIME_PENDING_EVENT_BYTES = 1024 * 1024;
 const MAX_RUNTIME_MEMORY_RUNS = 1_000;
-const MAX_INTERRUPTED_RUN_OPERATION_CACHE = 64;
+const MAX_INTERRUPTED_RUN_EVIDENCE_CACHE = 64;
 const MAX_RUNTIME_RECENT_PERSISTED_RUNS = 200;
 const MAX_RUNTIME_PENDING_RUN_STATUSES = 1_000;
 const MAX_RUNTIME_RUN_STATUS_INDEX_BYTES = 2 * 1024 * 1024;
@@ -8631,22 +8631,27 @@ function createRuntimeRunService(deps: {
   readonly sessionOperations: RuntimeSessionOperationGate;
   readonly settingsOwner: RuntimeSessionSettingsOwner;
 }): RuntimeRunServiceInternal {
-  // Terminal Run journals are immutable, so derived operations are cached by
+  // Terminal Run journals are immutable, so derived evidence is cached by
   // runId; the bound keeps a long-lived daemon from growing without limit.
-  const interruptedRunOperations = new Map<string, readonly KodaXInterruptedRunOperation[]>();
-  const readInterruptedRunOperations = (
+  type InterruptedRunEvidence = Pick<KodaXInterruptedRunJournal, "operations" | "replies">;
+  const interruptedRunEvidence = new Map<string, InterruptedRunEvidence>();
+  const readInterruptedRunEvidence = (
     runId: string,
     sessionId: string,
-  ): readonly KodaXInterruptedRunOperation[] => {
-    const cached = interruptedRunOperations.get(runId);
+  ): InterruptedRunEvidence => {
+    const cached = interruptedRunEvidence.get(runId);
     if (cached !== undefined) return cached;
-    const operations = deriveInterruptedRunOperations(deps.persistence.replay({ sessionId, runId }));
-    interruptedRunOperations.set(runId, operations);
-    if (interruptedRunOperations.size > MAX_INTERRUPTED_RUN_OPERATION_CACHE) {
-      const oldest = interruptedRunOperations.keys().next().value;
-      if (oldest !== undefined) interruptedRunOperations.delete(oldest);
+    const events = deps.persistence.replay({ sessionId, runId });
+    const evidence = {
+      operations: deriveInterruptedRunOperations(events),
+      replies: deriveInterruptedRunReplies(events),
+    };
+    interruptedRunEvidence.set(runId, evidence);
+    if (interruptedRunEvidence.size > MAX_INTERRUPTED_RUN_EVIDENCE_CACHE) {
+      const oldest = interruptedRunEvidence.keys().next().value;
+      if (oldest !== undefined) interruptedRunEvidence.delete(oldest);
     }
-    return operations;
+    return evidence;
   };
   /** Recovery evidence is best effort: a bad journal never blocks the new Run. */
   const collectInterruptedRunJournals = (
@@ -8654,14 +8659,15 @@ function createRuntimeRunService(deps: {
   ): KodaXInterruptedRunJournal[] =>
     selectInterruptedRunCandidates(deps.runs.values(), record).flatMap((candidate) => {
       try {
-        const operations = readInterruptedRunOperations(candidate.runId, candidate.sessionId);
-        return operations.length === 0
+        const { operations, replies } = readInterruptedRunEvidence(candidate.runId, candidate.sessionId);
+        return operations.length === 0 && !replies?.length
           ? []
           : [{
               runId: candidate.runId,
               turnId: candidate.turnId,
               terminalCode: candidate.terminal.code,
               operations,
+              ...(replies?.length ? { replies } : {}),
             }];
       } catch (error: unknown) {
         emitKodaXDiagnostic({
@@ -10183,7 +10189,13 @@ function createRuntimeRunService(deps: {
       return;
     }
 
-    const codingOperation = () => startKodaX(runOptions, record.start!.prompt);
+    const codingJournals = collectInterruptedRunJournals(record);
+    const codingOperation = () => startKodaX(
+      codingJournals.length > 0
+        ? { ...runOptions, context: { ...runOptions.context, interruptedRunJournals: codingJournals } }
+        : runOptions,
+      record.start!.prompt,
+    );
     let running: RunningSession;
     if (record.providerCredentialScope !== undefined) {
       running = runWithProviderCredentialLeaseScope(

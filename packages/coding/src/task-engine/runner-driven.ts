@@ -347,7 +347,7 @@ import {
   createManagedRuntimeContextMessage,
   stripManagedRunContextMessages,
 } from './_internal/managed-task/managed-run-context.js';
-import { renderInterruptedRunRecovery } from './_internal/managed-task/interrupted-run-recovery.js';
+import { renderInterruptedRunRecovery } from './_internal/interrupted-run-recovery.js';
 import {
   buildRunnerLlmAdapter,
   resolveManagedProviderReasoning,

@@ -60,6 +60,11 @@ import { mergeManagedProtocolPayload } from '../managed-protocol.js';
 import { generateSessionId, extractTitleFromMessages } from '../session.js';
 // FEATURE_076 Q4: load-time normalization for pre-v0.7.25 session messages.
 import { normalizeLoadedSessionMessages } from '../task-engine/_internal/round-boundary.js';
+import { renderInterruptedRunRecovery } from '../task-engine/_internal/interrupted-run-recovery.js';
+import {
+  createManagedRunContextMessage,
+  installCanonicalManagedRunContext,
+} from '../task-engine/_internal/managed-task/managed-run-context.js';
 import {
   createMemoryControlPlane,
   captureEpisodeReviewBranchEpoch,
@@ -990,6 +995,13 @@ async function runSubstrateInContext(
   );
   const initialImagePreparation = prepareHistoryImages(messages);
   if (initialImagePreparation) await initialImagePreparation;
+  // Journal evidence of earlier interrupted Runs is rendered once against the
+  // resumed history and installed into each request's wire view only, so it
+  // never reaches the persisted transcript.
+  const interruptedRunRecovery = renderInterruptedRunRecovery(
+    options.context?.interruptedRunJournals,
+    messages,
+  );
   let title = resumed.title || (
     transcriptPrompt.slice(0, 50) + (transcriptPrompt.length > 50 ? '...' : '')
   );
@@ -1980,6 +1992,14 @@ async function runSubstrateInContext(
       let textRecoveryRetry = false;
       while (true) {
         wireMessages = projectTextRecovery(wireMessages, textRecovery);
+        if (interruptedRunRecovery !== undefined) {
+          wireMessages = installCanonicalManagedRunContext(
+            wireMessages,
+            createManagedRunContextMessage(interruptedRunRecovery, {
+              turnId: liveTurnScopeRef.current.turnId,
+            }),
+          );
+        }
         effectiveSystemPrompt = withEffectivePermissionContext(policySystemPrompt, options.context);
         attempt += 1;
         // Recovery may replace providerMessages between attempts. Rebase the

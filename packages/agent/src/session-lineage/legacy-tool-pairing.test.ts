@@ -355,11 +355,94 @@ describe('legacy adjacent-only tool-pairing restoration', () => {
     expect(checks).toBeGreaterThan(0);
   });
 
+  it('restores damage that a pre-fix compaction copied into its retained region', () => {
+    const lineage = recompactedFixture();
+
+    expect([...restorationsFor(lineage).keys()]).toEqual(['z_call', 'z_result']);
+    expect(restorationsFor(lineage).get('z_result')).toMatchObject({
+      evidenceEntryId: 's_result',
+      logicalId: 'p_result',
+      message: results,
+    });
+    const rendered = getSessionMessagesFromLineage(lineage);
+    expect(rendered.slice(1)).toEqual([query, call, results, next, newQuery, laterQuery]);
+    expect(getSessionMessageEntryId(rendered[2]!)).toBe('z_call');
+  });
+
+  it('keeps the traced restoration as the re-compacted path grows', () => {
+    const lineage = recompactedFixture((entries) => {
+      entries.push(msg('n2_answer', 'n2_query', next));
+    }, 'n2_answer');
+
+    expect([...restorationsFor(lineage).keys()]).toEqual(['z_call', 'z_result']);
+  });
+
+  it.each<[string, (entries: KodaXSessionEntry[]) => void]>([
+    ['a copy hop carries a different logical identity', (entries) => {
+      replace(entries, 'z_result', (entry) => ({ ...entry, logicalId: 'unrelated' }));
+    }],
+    ['the retained region kept the damaged results without their call', (entries) => {
+      const index = entries.findIndex((entry) => entry.id === 'z_query');
+      entries.splice(index + 1, 1);
+      replace(entries, 'z_result', (entry) => ({ ...entry, parentId: 'z_query' }));
+    }],
+    ['a copy no longer equals its damaged original', (entries) => {
+      replace(entries, 'z_result', (entry) => ({ ...entry, message: copy(results) }));
+    }],
+  ])('fails closed on a re-compacted path when %s', (_label, mutate) => {
+    const lineage = recompactedFixture(mutate);
+
+    expect(restorationsFor(lineage).size).toBe(0);
+  });
+
   it('bounds the evidence chain it is willing to follow', () => {
     expect([...restorationsFor(longChainLineage(4)).keys()]).toEqual(['d_call']);
     expect(restorationsFor(longChainLineage(70)).size).toBe(0);
   });
 });
+
+const laterQuery: KodaXMessage = { role: 'user', content: 'after the second compaction', timestamp: T };
+
+/** A pre-fix copy: logicalId follows the source's identity, sourceEntryId the source entry. */
+function legacyCopy(
+  id: string,
+  parentId: string,
+  message: KodaXMessage,
+  logicalId: string,
+  sourceEntryId: string,
+): KodaXSessionMessageEntry {
+  return { type: 'message', id, parentId, timestamp: T, logicalId, sourceEntryId, message: copy(message) };
+}
+
+/**
+ * The damaged fixture compacted again by a pre-fix build: the stripped path
+ * content was copied below c2 with legacy provenance before any restorer ran.
+ */
+function recompactedFixture(
+  mutate?: (entries: KodaXSessionEntry[]) => void,
+  activeEntryId = 'n2_query',
+): KodaXSessionLineage {
+  const entries: KodaXSessionEntry[] = [
+    ...fixtureEntries(),
+    {
+      type: 'compaction',
+      id: 'c2',
+      parentId: null,
+      timestamp: T,
+      logicalId: 'c2',
+      summary: 'summary 2',
+      firstKeptEntryId: 'z_query',
+    },
+    legacyCopy('z_query', 'c2', query, 'p_query', 'k_query'),
+    legacyCopy('z_call', 'z_query', strippedCall, 'd_call', 'd_call'),
+    legacyCopy('z_result', 'z_call', strippedResults, 'd_result', 'y_result'),
+    legacyCopy('z_next', 'z_result', next, 'd_next', 'y_next'),
+    legacyCopy('z_new', 'z_next', newQuery, 'n_new', 'n_new'),
+    msg('n2_query', 'z_new', laterQuery),
+  ];
+  mutate?.(entries);
+  return { version: 2, activeEntryId, entries };
+}
 
 function longChainLineage(steps: number): KodaXSessionLineage {
   const talk = (index: number): KodaXMessage => ({

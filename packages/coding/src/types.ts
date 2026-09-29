@@ -1893,12 +1893,24 @@ export interface KodaXWorkspaceSandboxRootRegistry {
 
 /** One tool operation reconstructed from an interrupted Run's event journal. */
 export interface KodaXInterruptedRunOperation {
+  /** Provider call id; unique only within one turn, never across turns. */
   readonly toolUseId: string;
+  /** Turn that owned the invocation; falls back to the journal's turn when absent. */
+  readonly turnId?: string;
   readonly name: string;
   /** Short, already-bounded description of the tool input (path, command, url). */
   readonly target?: string;
   /** First line of the recorded result; absent when no result was journaled. */
   readonly result?: string;
+}
+
+/** Assistant text one provider call streamed before an interrupted Run stopped. */
+export interface KodaXInterruptedRunReply {
+  readonly turnId: string;
+  /** Effective streamed text (retries replaced); only its tail is kept when long. */
+  readonly text: string;
+  /** True when earlier text of the same reply was dropped by the bound. */
+  readonly truncated: boolean;
 }
 
 /** Journal evidence for one earlier Run whose effects are not in formal history. */
@@ -1909,6 +1921,8 @@ export interface KodaXInterruptedRunJournal {
   readonly terminalCode: string;
   /** Journal order; operations without `result` have an unknown outcome. */
   readonly operations: readonly KodaXInterruptedRunOperation[];
+  /** Streamed replies in journal order; unconfirmed text, never formal history. */
+  readonly replies?: readonly KodaXInterruptedRunReply[];
 }
 
 export interface KodaXContextOptions {
@@ -2063,9 +2077,9 @@ export interface KodaXContextOptions {
   promptOverlay?: string;
   /**
    * Runtime-owned journals of earlier Runs in this Session that stopped with
-   * an unknown effect outcome. The managed path renders the ones whose turn
-   * is still on the active history path as a transient recovery record; it is
-   * never written into formal history.
+   * an unknown effect outcome. Both the managed and the direct coding path
+   * render the ones whose turn is still on the active history path as a
+   * transient recovery record; it is never written into formal history.
    *
    * @internal
    */

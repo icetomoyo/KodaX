@@ -10873,13 +10873,51 @@ describe("createKodaXRuntime", () => {
       turnId: "turn-lost",
       terminalCode: expect.any(String),
       operations: [
-        { toolUseId: "tool-done", name: "bash", target: "npm test", result: "12 passed" },
-        { toolUseId: "tool-open", name: "write", target: "notes.md" },
+        { toolUseId: "tool-done", turnId: "turn-lost", name: "bash", target: "npm test", result: "12 passed" },
+        { toolUseId: "tool-open", turnId: "turn-lost", name: "write", target: "notes.md" },
       ],
     };
     expect(seen[1]?.interruptedRunJournals).toEqual([expectedJournal]);
     // A completed Run contributes nothing; the older unfinished Run stays visible.
     expect(seen[2]?.interruptedRunJournals).toEqual([expectedJournal]);
+    await runtime.close();
+  });
+
+  it("hands the streamed reply of an unfinished coding Run to the next coding Run", async () => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const runtime = await createKodaXRuntime({
+      homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, "interrupted-coding-sessions"),
+      defaultProvider: "mock-provider",
+    });
+    const session = await runtime.sessions.create({ title: "Interrupted Coding" });
+    const seen: Array<KodaXOptions["context"]> = [];
+    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+      seen.push(options.context);
+      if (seen.length > 1) {
+        return fakeRunningSession(options, Promise.resolve({ success: true, lastText: "resumed", messages: [], sessionId: session.id }));
+      }
+      const scope = { sessionId: session.id, turnId: "turn-lost", timestamp: "2026-07-08T00:00:00.000Z" };
+      const request = { ...scope, providerRequestId: "request-lost" };
+      options.events?.onTurnStarted?.({ ...scope, seq: 1, deliveryKind: "initial" });
+      options.events?.onOutputSegmentStart?.({ responseId: "turn-lost", providerRequestId: "request-lost", mode: "append" }, request);
+      options.events?.onTextDelta?.("Script drafted; rendering next.", { ...request, seq: 2 });
+      return fakeRunningSession(options, Promise.reject(new Error("provider connection lost")));
+    });
+
+    const first = await runtime.runs.start({ sessionId: session.id, prompt: "lost work", mode: "coding" });
+    await expect(first.result).resolves.toMatchObject({ phase: "failed" });
+    const second = await runtime.runs.start({ sessionId: session.id, prompt: "continue", mode: "coding" });
+    await expect(second.result).resolves.toMatchObject({ phase: "completed" });
+
+    expect(seen[0]?.interruptedRunJournals).toBeUndefined();
+    expect(seen[1]?.interruptedRunJournals).toEqual([{
+      runId: first.runId,
+      turnId: "turn-lost",
+      terminalCode: expect.any(String),
+      operations: [],
+      replies: [{ turnId: "turn-lost", text: "Script drafted; rendering next.", truncated: false }],
+    }]);
     await runtime.close();
   });
 

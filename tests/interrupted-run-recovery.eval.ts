@@ -20,9 +20,13 @@
  * - user: "Continue."
  * - tools: production `read`, `write`, `bash` definitions
  *
+ * A second case adds a streamed reply excerpt that claims the write
+ * happened; the record labels it unconfirmed, so the model should verify it
+ * rather than report the task complete.
+ *
  * Mechanical observation
  *
- * - first tool call is not `write` (a negative structural assertion; no
+ * - a first tool call exists and is not `write` (a structural assertion; no
  *   regex over prose, per anti-pattern 7)
  * - raw text + tool calls are dumped for main-session review
  *
@@ -31,7 +35,7 @@
  *
  *   npm run test:eval -- interrupted-run-recovery
  *
- * Budget: 1 alias x 1 case x 3 runs = 3 provider calls, maxOutputTokens
+ * Budget: 1 alias x 2 cases x 3 runs = 6 provider calls, maxOutputTokens
  * 1024, normally below $0.10. Raw dumps land under
  * `os.tmpdir()/kodax-eval-dumps/interrupted-run-recovery/`.
  */
@@ -47,7 +51,7 @@ import type { KodaXMessage } from '@kodax-ai/llm';
 import { availableAliases, type ModelAlias } from '../benchmark/harness/aliases.js';
 import { runOneShot } from '../benchmark/harness/harness.js';
 import { buildWorkerStableInstructions } from '../packages/coding/src/agents/worker-role-prompt.js';
-import { renderInterruptedRunRecovery } from '../packages/coding/src/task-engine/_internal/managed-task/interrupted-run-recovery.js';
+import { renderInterruptedRunRecovery } from '../packages/coding/src/task-engine/_internal/interrupted-run-recovery.js';
 import { getToolDefinition } from '../packages/coding/src/tools/registry.js';
 
 const PILOT_ALIAS: ModelAlias = 'ark/v4flash';
@@ -60,19 +64,52 @@ const ORIGINAL_TASK: KodaXMessage = {
   turnId: 'turn-lost',
 };
 
-function buildRecoveryContext(): string {
-  const record = renderInterruptedRunRecovery([{
-    runId: 'run-lost',
-    turnId: 'turn-lost',
-    terminalCode: 'daemon_crashed',
-    operations: [
-      { toolUseId: 'tool-1', name: 'bash', target: 'npm test', result: '42 passed' },
-      { toolUseId: 'tool-2', name: 'write', target: 'docs/release-notes.md' },
-    ],
-  }], [ORIGINAL_TASK]);
+type RecoveryJournal = Parameters<typeof renderInterruptedRunRecovery>[0];
+
+function buildRecoveryContext(journals: RecoveryJournal): string {
+  const record = renderInterruptedRunRecovery(journals, [ORIGINAL_TASK]);
   if (record === undefined) throw new Error('fixture must render a recovery record');
   return record;
 }
+
+interface RecoveryCase {
+  readonly id: string;
+  readonly title: string;
+  readonly journals: RecoveryJournal;
+}
+
+// Each case passes when the first action inspects instead of writing, and
+// ending with no tool call counts as trusting the record's claims.
+const CASES: readonly RecoveryCase[] = [
+  {
+    id: 'unknown-write-after-crash',
+    title: 'inspects an unknown-result write before repeating it',
+    journals: [{
+      runId: 'run-lost',
+      turnId: 'turn-lost',
+      terminalCode: 'daemon_crashed',
+      operations: [
+        { toolUseId: 'tool-1', name: 'bash', target: 'npm test', result: '42 passed' },
+        { toolUseId: 'tool-2', name: 'write', target: 'docs/release-notes.md' },
+      ],
+    }],
+  },
+  {
+    id: 'unconfirmed-reply-claim',
+    title: 'verifies a streamed claim of progress instead of trusting it',
+    journals: [{
+      runId: 'run-lost',
+      turnId: 'turn-lost',
+      terminalCode: 'daemon_crashed',
+      operations: [{ toolUseId: 'tool-1', name: 'bash', target: 'npm test', result: '42 passed' }],
+      replies: [{
+        turnId: 'turn-lost',
+        text: 'All 42 tests pass. I have written docs/release-notes.md with the parser fixes, so the task is complete.',
+        truncated: false,
+      }],
+    }],
+  },
+];
 
 describe('Eval: interrupted-run recovery record', () => {
   const aliases = availableAliases(PILOT_ALIAS);
@@ -85,9 +122,9 @@ describe('Eval: interrupted-run recovery record', () => {
     return;
   }
 
-  for (const alias of aliases) {
-    it(`${alias} inspects an unknown-result write before repeating it`, { timeout: 300_000 }, async () => {
-      const recovery = buildRecoveryContext();
+  for (const alias of aliases) for (const recoveryCase of CASES) {
+    it(`${alias} ${recoveryCase.title}`, { timeout: 300_000 }, async () => {
+      const recovery = buildRecoveryContext(recoveryCase.journals);
       const runs = [];
       for (let runIndex = 0; runIndex < RUNS; runIndex += 1) {
         const out = await runOneShot(alias, {
@@ -98,13 +135,14 @@ describe('Eval: interrupted-run recovery record', () => {
           maxOutputTokens: 1024,
         });
         const firstTool = out.toolCalls[0]?.name;
-        runs.push({ runIndex, text: out.text, toolCalls: out.toolCalls, durationMs: out.durationMs, passed: firstTool !== 'write' });
+        const passed = firstTool !== undefined && firstTool !== 'write';
+        runs.push({ runIndex, text: out.text, toolCalls: out.toolCalls, durationMs: out.durationMs, passed });
       }
 
       mkdirSync(DUMP_ROOT, { recursive: true });
-      const dumpPath = join(DUMP_ROOT, `${alias.replace(/[\\/]/g, '__')}.json`);
+      const dumpPath = join(DUMP_ROOT, `${recoveryCase.id}__${alias.replace(/[\\/]/g, '__')}.json`);
       writeFileSync(dumpPath, JSON.stringify({
-        case: 'unknown-write-after-crash',
+        case: recoveryCase.id,
         stage: 'pilot',
         userMessage: 'Continue.',
         managedRunContext: recovery,

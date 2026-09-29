@@ -1327,36 +1327,48 @@ a different cause.
   retained sibling chain was written first and the frozen legacy transform
   reproduces the damage exactly. Anything else stays ambiguous; siblings are
   never adopted wholesale and duplicate queries are not removed by text or time.
-  Nothing writes to the Session. The page cache version moves from 6 to 7.
+  Nothing writes to the Session. Source tracing also follows entries that were
+  compacted again before the fix. The page cache version moves from 6 to 8.
 - Journal progress is not backfilled into history: assistant text exists only
   as deltas, so a complete conversation cannot be proven. Instead the next
-  managed Run receives a transient record inside the managed-run context. It
-  names its source Run and terminal code, lists recorded results and
-  unknown-result operations, and is bounded (3 Runs, 6,000 characters). It
-  appears only when the Run's turn is on the active branch, drops operations
-  whose results history already has, and is stripped before every save.
-  Journal read failures emit a diagnostic and skip the record.
-- Limitation: only managed-task Runs receive the record. Coding-mode Runs and
-  tool invocations do not.
+  managed or coding Run receives a transient record. It names its source Run
+  and terminal code, lists recorded results and unknown-result operations,
+  and is bounded (3 Runs, 6,000 characters). It appears only when the Run's
+  turn is on the active branch, matches operations to history per turn (tool
+  call ids may repeat across turns), and is never saved: the managed path
+  strips it before every save and the coding path adds it only to the
+  provider request. Journal read failures emit a diagnostic and skip it.
+- Reply strategy: assistant text the Run streamed becomes quoted "reply
+  excerpts", labelled unconfirmed and not a user request. Retries use the
+  replaced segment, child actor output mirrored live is excluded, each excerpt
+  keeps its tail, and excerpts render last so the bound trims them first. An
+  excerpt is omitted when a saved assistant message of the same turn holds it.
+- Tool invocations run without a model call and need no record.
 
 #### Files Changed and Verification
 
 - `packages/agent/src/runtime-middleware/history-cleanup.ts`,
   `packages/agent/src/session-lineage/legacy-tool-pairing.ts`,
   `packages/agent/src/session-lineage/kodax-session-lineage.ts`,
-  `packages/coding/src/task-engine/_internal/managed-task/{llm-adapter,managed-run-context,interrupted-run-recovery}.ts`,
+  `packages/coding/src/task-engine/_internal/managed-task/{llm-adapter,managed-run-context}.ts`,
+  `packages/coding/src/task-engine/_internal/interrupted-run-recovery.ts`,
   `packages/coding/src/task-engine/runner-driven.ts`,
+  `packages/coding/src/agent-runtime/run-substrate.ts`,
   `packages/repl/src/session/{conversation-history,conversation-page-cache}.ts`,
   `src/runtime-interrupted-run-journal.ts`, `src/sdk-runtime.ts`.
 - Regression tests use de-identified minimal topologies next to each source
   file, plus `packages/repl/src/interactive/storage.test.ts` for v6 cache
-  rebuild parity and `src/sdk-runtime.test.ts` for journal handoff and the
-  unreadable-journal fallback.
-- A read-only copy of the reported Session now resolves with no issues. The one
-  unpaired call left is the Session's final in-flight operation.
+  rebuild parity, `src/sdk-runtime.test.ts` for managed and coding journal
+  handoff and the unreadable-journal fallback, and
+  `run-substrate.interrupted-run-recovery.test.ts` for the coding request view.
+- A read-only copy of the reported Session resolves with no issues, cold and
+  from cache alike: 590 entries, and 91 of 91 calls paired in the provider input.
 - Manual steps: [Issue 340 regression guide](test-guides/ISSUE_340_v0.7.96-rc.14_REGRESSION_GUIDE.md).
-  The prompt eval `tests/interrupted-run-recovery.eval.ts` has not produced a
-  result yet.
+  The prompt eval `tests/interrupted-run-recovery.eval.ts` (unknown-result
+  write, unconfirmed reply claim) has not produced a result: its pilot alias
+  `ark/v4flash` returns `InvalidSubscription`.
+- Space acceptance needs a rebuilt desktop package; a source commit does not
+  update `out/win-unpacked`.
 
 ### Issue 339: Background Git probes repeatedly trigger macOS developer-tools installation prompts
 

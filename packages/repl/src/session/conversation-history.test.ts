@@ -1284,6 +1284,40 @@ describe('legacy adjacent-only tool-pairing damage', () => {
       .toEqual([query, call, results, next, newQuery]);
   });
 
+  it('resolves damage that a pre-fix compaction copied again', () => {
+    const later: KodaXMessage = { role: 'user', content: 'after the second compaction' };
+    const legacyCopy = (
+      id: string,
+      parentId: string,
+      message: KodaXMessage,
+      logicalId: string,
+      sourceEntryId: string,
+    ): KodaXSessionMessageEntry => ({ ...entry(id, parentId, message), logicalId, sourceEntryId });
+    const lineage: KodaXSessionLineage = {
+      version: 2,
+      activeEntryId: 'n2_query',
+      entries: [
+        ...damagedEntries(),
+        { ...compactionEntry('c2', 'z_query'), summary: 'summary 2' },
+        legacyCopy('z_query', 'c2', query, 'p_query', 'k_query'),
+        legacyCopy('z_call', 'z_query', strippedCall, 'd_call', 'd_call'),
+        legacyCopy('z_result', 'z_call', strippedResults, 'd_result', 'y_result'),
+        legacyCopy('z_next', 'z_result', next, 'd_next', 'y_next'),
+        legacyCopy('z_new', 'z_next', newQuery, 'n_new', 'n_new'),
+        entry('n2_query', 'z_new', later),
+      ],
+    };
+
+    const history = buildSessionConversationHistory(lineage, 'sha256:test-source');
+
+    expect(history.status).toBe('resolved');
+    expect(history.issues).toEqual([]);
+    expect(history.entries.map((item) => item.message))
+      .toEqual([query, call, results, next, newQuery, later]);
+    expect(getSessionMessagesFromLineage(lineage).slice(1))
+      .toEqual([query, call, results, next, newQuery, later]);
+  });
+
   it('stays unresolved when a second retained sibling competes as evidence', () => {
     const entries = damagedEntries();
     entries.splice(8, 0, entry('s_other', 'k_query', call, 'p_call'));

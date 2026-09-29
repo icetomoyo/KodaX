@@ -18,10 +18,14 @@ All notable changes to this project will be documented in this file.
   adjacent-only cleanup when a retained sibling chain reproduces the damage
   exactly; unproven cases stay ambiguous. The page cache version is bumped so
   existing v6 caches rebuild once.
-- The next managed Run of a Session receives a labelled, bounded, transient
-  record of journaled operations from an earlier unfinished Run on the active
-  branch, separating confirmed results from operations whose result is unknown.
-  The record is never saved and disappears once history contains those results.
+- The next managed or coding Run of a Session receives a labelled, bounded,
+  transient record of journaled progress from an earlier unfinished Run on the
+  active branch: confirmed results, operations whose result is unknown, and
+  unconfirmed excerpts of assistant text the Run streamed but never saved. The
+  record is never saved and each part disappears once history contains it.
+  Operations match history per turn, so a provider reusing a tool call id in a
+  later turn no longer hides an earlier unfinished operation, and the source
+  tracing also covers histories compacted again before this fix.
 
 ---
 

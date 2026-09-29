@@ -11,7 +11,10 @@
  * closed, explicit retained sibling chain was written first, and replaying the
  * frozen legacy transform over that chain reproduces the damaged branch exactly,
  * including the managed context between the pair. Anything else fails closed.
- * Nothing here writes lineage; callers render the proven content instead.
+ * A later compaction written before the fix may have copied the damaged
+ * messages again; those copies are traced back to the damaged originals and
+ * held to the same proof. Nothing here writes lineage; callers render the
+ * proven content instead.
  */
 import type { KodaXContentBlock, KodaXMessage } from '@kodax-ai/llm';
 import type { KodaXSessionEntry, KodaXSessionMessageEntry } from '../index.js';
@@ -42,6 +45,9 @@ interface EvidenceStep {
 
 const MAX_EVIDENCE_CHAIN = 64;
 const MAX_CONTEXT_BRIDGE = 8;
+// Each compaction adds one copy hop; a retained region is a bounded tail.
+const MAX_COPY_HOPS = 8;
+const MAX_TRACED_ANCESTORS = 512;
 const INDEX_CHECKPOINT_INTERVAL = 256;
 // Mirrors kodax-session-lineage `isNavigableEntry`: side-state never joins a thread.
 const SIDE_STATE_TYPES: ReadonlySet<string> = new Set([
@@ -286,22 +292,120 @@ function damagedPathSlots(
   return slots;
 }
 
+function copySource(entry: KodaXSessionEntry): string | undefined {
+  if (entry.sourceEntryId !== undefined && entry.sourceEntryId !== entry.id) return entry.sourceEntryId;
+  return entry.logicalId !== undefined && entry.logicalId !== entry.id ? entry.logicalId : undefined;
+}
+
+/**
+ * Follow a copy's source hops back to the live entry it was copied from. A
+ * compaction that copied a copy points at the intermediate copy, so the walk
+ * must also agree with the logical identity every hop carried.
+ */
+function liveOriginalOf(
+  slot: KodaXSessionMessageEntry,
+  lookup: LegacyToolPairingLookup,
+): KodaXSessionMessageEntry | undefined {
+  const hops: KodaXSessionMessageEntry[] = [slot];
+  let current = slot;
+  for (let sourceId = copySource(current); sourceId !== undefined; sourceId = copySource(current)) {
+    const source = asMessageEntry(lookup.byId(sourceId));
+    if (!source || hops.length > MAX_COPY_HOPS || isManagedContext(source.message)) return undefined;
+    hops.push(source);
+    current = source;
+  }
+  const logicalIds = new Set(hops.slice(0, -1).map((hop) => hop.logicalId ?? hop.id));
+  if (current === slot || logicalIds.size !== 1 || !logicalIds.has(current.id)) return undefined;
+  return current;
+}
+
 /**
  * A later path copy points back at the damaged original; a live slot is its
- * own original. The copy must be an unambiguous, content-equal alias.
+ * own original. Every hop must be an unambiguous, content-equal alias.
  */
 function damagedOriginalFor(
   slot: KodaXSessionMessageEntry,
   lookup: LegacyToolPairingLookup,
 ): KodaXSessionMessageEntry | undefined {
   if (!isExplicitCopy(slot)) return slot;
-  const keys = new Set([slot.sourceEntryId, slot.logicalId]);
-  keys.delete(undefined);
-  keys.delete(slot.id);
-  if (keys.size !== 1) return undefined;
-  const original = asMessageEntry(lookup.byId(keys.values().next().value!));
-  if (!original || isExplicitCopy(original) || isManagedContext(original.message)) return undefined;
-  return sameMessage(original.message, slot.message) ? original : undefined;
+  const original = liveOriginalOf(slot, lookup);
+  if (!original || !sameMessage(original.message, slot.message)) return undefined;
+  return original;
+}
+
+/**
+ * A split pair loses every tool block on both sides, so a re-compacted damage
+ * always leaves a tool-free array copy in the retained region. Checking that
+ * first keeps ordinary compacted paths from indexing the lineage.
+ */
+function retainedRegionLooksStripped(path: readonly KodaXSessionEntry[]): boolean {
+  for (let index = 1; index < path.length; index += 1) {
+    const entry = path[index]!;
+    if (entry.type === 'archive_marker') continue;
+    if (entry.type !== 'message' || !isExplicitCopy(entry)) return false;
+    const { message } = entry;
+    if (!Array.isArray(message.content) || isManagedContext(message)) continue;
+    const toolType = message.role === 'assistant' ? 'tool_use' : 'tool_result';
+    if (!message.content.some((block) => blockType(block) === toolType)) return true;
+  }
+  return false;
+}
+
+/**
+ * Ancestors of a live original back to its compaction root, or undefined when
+ * the walk leaves navigable messages or exceeds the retained-region bound.
+ */
+function originalIslandPath(
+  original: KodaXSessionMessageEntry,
+  lookup: LegacyToolPairingLookup,
+): KodaXSessionEntry[] | undefined {
+  const path: KodaXSessionEntry[] = [original];
+  let parentId = original.parentId;
+  while (parentId !== null) {
+    const parent = lookup.byId(parentId);
+    if (!parent || path.length > MAX_TRACED_ANCESTORS) return undefined;
+    path.unshift(parent);
+    if (parent.type === 'compaction') return path;
+    // Only retained copies may precede the first damaged candidate.
+    if (parent.type === 'message' && !isExplicitCopy(parent) && !isManagedContext(parent.message)) {
+      return undefined;
+    }
+    parentId = parent.parentId;
+  }
+  return undefined;
+}
+
+interface DamagedCandidate {
+  readonly anchor: KodaXSessionMessageEntry;
+  readonly damagedId: string;
+  /** Path index of the first slot the evidence steps are matched against. */
+  readonly slotIndex: number;
+}
+
+/**
+ * A compaction written before the fix copied the damaged messages into its
+ * retained region, so the damage now sits behind copies. Trace the first copy
+ * that resolves to a live original, and require that original to be the first
+ * damaged candidate of its own island.
+ */
+function tracedDamagedCandidate(
+  path: readonly KodaXSessionEntry[],
+  lookup: LegacyToolPairingLookup,
+): DamagedCandidate | undefined {
+  for (let index = 1; index < path.length; index += 1) {
+    const slot = path[index]!;
+    if (slot.type === 'archive_marker') continue;
+    if (slot.type !== 'message' || !isExplicitCopy(slot)) return undefined;
+    if (isManagedContext(slot.message)) continue;
+    // Structural only: matchDamagedChain proves content equality per slot.
+    const original = liveOriginalOf(slot, lookup);
+    if (!original) return undefined;
+    const island = originalIslandPath(original, lookup);
+    if (!island || firstDamagedCandidateIndex(island) !== island.length - 1) continue;
+    const anchor = asMessageEntry(island[island.length - 2]);
+    if (anchor) return { anchor, damagedId: original.id, slotIndex: index };
+  }
+  return undefined;
 }
 
 /** The damaged original must sit below the previous one with the same context. */
@@ -384,21 +488,52 @@ function matchDamagedChain(
  * Restorations for one navigable path, keyed by path entry id. Branch-isolated:
  * the result depends only on this path and the evidence that sits beside it.
  */
+function restorationsFor(
+  path: readonly KodaXSessionEntry[],
+  candidate: DamagedCandidate,
+  lookup: LegacyToolPairingLookup,
+  checkpoint?: () => void,
+): ReadonlyMap<string, LegacyToolPairingRestoration> {
+  const chain = retainedEvidenceChain(candidate.anchor, candidate.damagedId, lookup);
+  const steps = chain ? evidenceSteps(candidate.anchor, chain) : undefined;
+  if (!steps || steps.length === 0) return NO_RESTORATIONS;
+  checkpoint?.();
+  const slots = damagedPathSlots(path, candidate.slotIndex, steps.length);
+  // A leaf inside the chain stays raw: a later append could still fail the proof.
+  if (slots.length !== steps.length) return NO_RESTORATIONS;
+  const restorations = matchDamagedChain(steps, slots, candidate.anchor.id, lookup);
+  return restorations && restorations.size > 0 ? restorations : NO_RESTORATIONS;
+}
+
+function directDamagedCandidate(path: readonly KodaXSessionEntry[]): DamagedCandidate | undefined {
+  const damagedIndex = firstDamagedCandidateIndex(path);
+  const anchor = asMessageEntry(damagedIndex > 0 ? path[damagedIndex - 1] : undefined);
+  return anchor ? { anchor, damagedId: path[damagedIndex]!.id, slotIndex: damagedIndex } : undefined;
+}
+
+/**
+ * Restorations for one navigable path, keyed by path entry id. Branch-isolated:
+ * the result depends only on this path and the evidence that sits beside it.
+ * Damage re-compacted into the retained region and damage on the live tail
+ * key disjoint entries, so both are resolved and merged; neither can revoke
+ * the other as the path grows.
+ */
 export function findLegacyToolPairingRestorations(
   path: readonly KodaXSessionEntry[],
   lookup: LegacyToolPairingLookup,
   checkpoint?: () => void,
 ): ReadonlyMap<string, LegacyToolPairingRestoration> {
-  const damagedIndex = firstDamagedCandidateIndex(path);
-  const anchor = asMessageEntry(damagedIndex > 0 ? path[damagedIndex - 1] : undefined);
-  if (!anchor) return NO_RESTORATIONS;
-  const chain = retainedEvidenceChain(anchor, path[damagedIndex]!.id, lookup);
-  const steps = chain ? evidenceSteps(anchor, chain) : undefined;
-  if (!steps || steps.length === 0) return NO_RESTORATIONS;
-  checkpoint?.();
-  const slots = damagedPathSlots(path, damagedIndex, steps.length);
-  // A leaf inside the chain stays raw: a later append could still fail the proof.
-  if (slots.length !== steps.length) return NO_RESTORATIONS;
-  const restorations = matchDamagedChain(steps, slots, anchor.id, lookup);
-  return restorations && restorations.size > 0 ? restorations : NO_RESTORATIONS;
+  const root = path[0];
+  if (root?.type !== 'compaction' || root.reason === 'rewind') return NO_RESTORATIONS;
+  const direct = directDamagedCandidate(path);
+  const directRestorations = direct
+    ? restorationsFor(path, direct, lookup, checkpoint)
+    : NO_RESTORATIONS;
+  const traced = retainedRegionLooksStripped(path) ? tracedDamagedCandidate(path, lookup) : undefined;
+  const tracedRestorations = traced
+    ? restorationsFor(path, traced, lookup, checkpoint)
+    : NO_RESTORATIONS;
+  if (tracedRestorations.size === 0) return directRestorations;
+  if (directRestorations.size === 0) return tracedRestorations;
+  return new Map([...tracedRestorations, ...directRestorations]);
 }

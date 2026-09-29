@@ -22,7 +22,7 @@ revision and whether the candidate is a local link or a published package.
 3. Confirm the Session file is byte-identical before and after (restoration is
    read-only).
 4. Confirm the v6 page cache is rebuilt once: first open is slower, later opens
-   reuse the v7 cache. Page through the whole conversation and compare it with
+   reuse the v8 cache. Page through the whole conversation and compare it with
    the full history view; both must show the same rows in the same order.
 5. Open a Session with a genuinely ambiguous fork (two diverging branches, no
    exact legacy reproduction). It must stay `ambiguous`.
@@ -35,15 +35,22 @@ revision and whether the candidate is a local link or a published package.
    confirm the first request contains `=== Interrupted Run Recovery ===`, names
    the source Run and terminal code, and lists recorded results separately
    from `Result unknown` operations.
-3. Confirm the saved Session does not contain the record.
-4. Let the Run finish, then start another. The record repeats only for
+3. If the interrupted Run streamed assistant text, confirm it appears under
+   `Reply excerpts` as quoted, unconfirmed text. Text a child agent streamed
+   must not appear there.
+4. Confirm the saved Session does not contain the record.
+5. Let the Run finish, then start another. The record repeats only for
    operations whose results history still lacks; it never duplicates.
-5. Rewind or fork to a turn before the interrupted Run. The record must not
+6. Rewind or fork to a turn before the interrupted Run. The record must not
    appear on that branch.
-6. Make the interrupted Run's `events.jsonl` unreadable. The next Run must start
+7. Make the interrupted Run's `events.jsonl` unreadable. The next Run must start
    normally and log a `runtime.interrupted-run-recovery` warning.
+8. Repeat steps 1–4 with coding-mode Runs (for example the SA agent mode).
+   The record reaches the provider request but never the saved Session.
 
 ## Limits
 
-Coding-mode Runs and tool invocations do not receive the record. Assistant text
-from the interrupted Run is not recovered; only journaled tool operations are.
+Tool invocations do not receive the record because they make no model call.
+Reply excerpts are unconfirmed notes, not restored conversation, and long
+replies keep only their tail. Space checks need a rebuilt desktop package; a
+source change does not update `out/win-unpacked`.
