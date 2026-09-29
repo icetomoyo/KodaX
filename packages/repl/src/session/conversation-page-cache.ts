@@ -35,8 +35,8 @@ export {
   removeConversationPageCachesInDirectory,
 } from './conversation-page-cache-files.js';
 
-// v6 includes persisted operator-confirmed identity aliases in the projection.
-const CACHE_VERSION = 6;
+// v7 restores legacy adjacent-only tool-pairing damage from proven sibling evidence.
+const CACHE_VERSION = 7;
 const INDEX_RECORD_BYTES = 24;
 const WRITE_BATCH_BYTES = 1024 * 1024;
 const MAX_CACHE_MANIFEST_BYTES = 1024 * 1024;
@@ -53,7 +53,7 @@ export interface ConversationPageCacheAdmission {
 }
 
 interface ConversationCacheManifest {
-  readonly version: 6;
+  readonly version: 7;
   readonly sessionId: string;
   readonly generation: string;
   readonly sourceRevision: string;

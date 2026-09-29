@@ -347,6 +347,7 @@ import {
   createManagedRuntimeContextMessage,
   stripManagedRunContextMessages,
 } from './_internal/managed-task/managed-run-context.js';
+import { renderInterruptedRunRecovery } from './_internal/managed-task/interrupted-run-recovery.js';
 import {
   buildRunnerLlmAdapter,
   resolveManagedProviderReasoning,
@@ -1156,8 +1157,10 @@ export async function runManagedTaskViaRunner(
     if (optionsWithSessionId.session?.storage) {
       try {
         const recoveredMessages = readRunnerRecoveryTranscript(err);
+        // Same persistence projection as the Turn boundary: internal managed
+        // context is rebuilt per call and never belongs in session history.
         const messagesToPersist = recoveredMessages
-          ? [...recoveredMessages] as KodaXMessage[]
+          ? buildPersistableManagedTranscript(recoveredMessages as readonly KodaXMessage[])
           : [];
         void saveSessionSnapshot(optionsWithSessionId, initialSessionId, {
           messages: messagesToPersist,
@@ -2124,8 +2127,18 @@ async function runManagedTaskViaRunnerInner(
     turnId: liveTurnController.currentTurnId(),
     timestamp: currentMessageTimestamp,
   };
-  const canonicalManagedContext = initialManagedContext.full
-    ? createManagedRunContextMessage(initialManagedContext.full, {
+  // Journal evidence of earlier interrupted Runs rides in the transient
+  // managed context (stripped before every save), ahead of the role context
+  // so the 32K carrier bound can never truncate it away.
+  const interruptedRunRecovery = renderInterruptedRunRecovery(
+    options.context?.interruptedRunJournals,
+    resolvedInitial.messages,
+  );
+  const withInterruptedRunRecovery = (full: string | undefined): string | undefined =>
+    [interruptedRunRecovery, full].filter(Boolean).join('\n\n') || undefined;
+  const initialManagedContextContent = withInterruptedRunRecovery(initialManagedContext.full);
+  const canonicalManagedContext = initialManagedContextContent
+    ? createManagedRunContextMessage(initialManagedContextContent, {
         turnId: liveTurnController.currentTurnId(),
         timestamp: currentMessageTimestamp,
       })
@@ -2175,8 +2188,9 @@ async function runManagedTaskViaRunnerInner(
     canonicalManagedContext: () => {
       const snapshot = captureManagedRunContext();
       pendingCompactedRuntimeContext = snapshot.runtimeFingerprint;
-      return snapshot.full
-        ? createManagedRunContextMessage(snapshot.full, {
+      const content = withInterruptedRunRecovery(snapshot.full);
+      return content
+        ? createManagedRunContextMessage(content, {
             turnId: liveTurnController.currentTurnId(),
             timestamp: new Date().toISOString(),
           })

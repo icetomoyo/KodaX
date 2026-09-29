@@ -1062,6 +1062,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 340 | High | Resolved in working tree | Interrupted Run progress missing from next turn; compacted history ambiguous after internal context split a tool pair | observed with v0.7.96-rc.13; first affected release unknown | unreleased | 2026-09-29 | 2026-09-29 |
 | 339 | Medium | Resolved | Background Git probes repeatedly trigger macOS developer-tools installation prompts | observed with v0.7.96-rc.10; first affected release unknown | `v0.7.96-rc.11` | 2026-09-23 | 2026-09-23 |
 | 338 | High | Resolved | Windows daemon state replacement fails under concurrent JSON readers | confirmed at `0ec6aa41`; first affected release not established | `v0.7.96-rc.9` | 2026-09-21 | 2026-09-21 |
 | 334 | High | Resolved | New Session journal initialization scans unrelated Run logs; stale cached floors break lost-cursor recovery | confirmed v0.7.96-rc.3; first affected release not established | `v0.7.96-rc.4` | 2026-09-13 | 2026-09-13 |
@@ -1286,6 +1287,76 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ---
 
 ## Issue Details
+
+### Issue 340: Interrupted Run progress missing from next turn; compacted history ambiguous
+
+- Priority: High
+- Status: Resolved in working tree (not yet released)
+- Introduced: Observed with v0.7.96-rc.13; first affected release unknown
+- Fixed: unreleased
+- Created / Source Resolution Date: 2026-09-29
+
+#### Original Problem
+
+Two related symptoms. First, a managed Run that stopped before its conversation
+was saved (for example `daemon_crashed`) left tool progress only in the Runtime
+event journal. Space could display it, but the next model turn never saw it;
+rc.13 persists new output promptly but did not close gaps left by older Runs.
+Second, a compacted Session resolved as `ambiguous` with
+`compaction_boundary_invalid` and `compaction_predecessor_missing`. Its active
+branch held a partial assistant and an empty user message, while a retained
+sibling branch held the complete tool calls and results.
+
+#### Root Cause and Scope
+
+`validateAndFixToolHistory` paired a `tool_use` only with the immediately
+following message. A managed-run context message inserted between
+`assistant(tool calls)` and `user(tool results)` made both halves look orphaned,
+so cleanup stripped them. A replay of the retained branch through the old
+transform reproduces the damaged branch exactly. Failed managed provider calls
+also attached the provider-normalized request copy as the recovery transcript,
+which let that cleanup reach persisted history. Issue 293 was consulted and is
+a different cause.
+
+#### Source Resolution
+
+- Pairing scope is the assistant plus every message before the next assistant.
+  Result carriers move next to their assistant and interposed messages follow.
+- Recovery transcripts are the Runner transcript the adapter received.
+- Resolution restores a damaged active-path entry only when a unique, closed,
+  retained sibling chain was written first and the frozen legacy transform
+  reproduces the damage exactly. Anything else stays ambiguous; siblings are
+  never adopted wholesale and duplicate queries are not removed by text or time.
+  Nothing writes to the Session. The page cache version moves from 6 to 7.
+- Journal progress is not backfilled into history: assistant text exists only
+  as deltas, so a complete conversation cannot be proven. Instead the next
+  managed Run receives a transient record inside the managed-run context. It
+  names its source Run and terminal code, lists recorded results and
+  unknown-result operations, and is bounded (3 Runs, 6,000 characters). It
+  appears only when the Run's turn is on the active branch, drops operations
+  whose results history already has, and is stripped before every save.
+  Journal read failures emit a diagnostic and skip the record.
+- Limitation: only managed-task Runs receive the record. Coding-mode Runs and
+  tool invocations do not.
+
+#### Files Changed and Verification
+
+- `packages/agent/src/runtime-middleware/history-cleanup.ts`,
+  `packages/agent/src/session-lineage/legacy-tool-pairing.ts`,
+  `packages/agent/src/session-lineage/kodax-session-lineage.ts`,
+  `packages/coding/src/task-engine/_internal/managed-task/{llm-adapter,managed-run-context,interrupted-run-recovery}.ts`,
+  `packages/coding/src/task-engine/runner-driven.ts`,
+  `packages/repl/src/session/{conversation-history,conversation-page-cache}.ts`,
+  `src/runtime-interrupted-run-journal.ts`, `src/sdk-runtime.ts`.
+- Regression tests use de-identified minimal topologies next to each source
+  file, plus `packages/repl/src/interactive/storage.test.ts` for v6 cache
+  rebuild parity and `src/sdk-runtime.test.ts` for journal handoff and the
+  unreadable-journal fallback.
+- A read-only copy of the reported Session now resolves with no issues. The one
+  unpaired call left is the Session's final in-flight operation.
+- Manual steps: [Issue 340 regression guide](test-guides/ISSUE_340_v0.7.96-rc.14_REGRESSION_GUIDE.md).
+  The prompt eval `tests/interrupted-run-recovery.eval.ts` has not produced a
+  result yet.
 
 ### Issue 339: Background Git probes repeatedly trigger macOS developer-tools installation prompts
 

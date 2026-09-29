@@ -6,6 +6,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Tool-history validation pairs calls with results across the whole assistant
+  scope, so an internal managed-run context message between them no longer
+  strips both halves of the pair (Issue 340).
+- Failed managed provider calls hand back the Runner transcript they received,
+  not provider-normalized request copies, so compatibility cleanup never becomes
+  persisted history.
+- Conversation resolution restores active-path entries damaged by the old
+  adjacent-only cleanup when a retained sibling chain reproduces the damage
+  exactly; unproven cases stay ambiguous. The page cache version is bumped so
+  existing v6 caches rebuild once.
+- The next managed Run of a Session receives a labelled, bounded, transient
+  record of journaled operations from an earlier unfinished Run on the active
+  branch, separating confirmed results from operations whose result is unknown.
+  The record is never saved and disappears once history contains those results.
+
 ---
 
 ## [0.7.96-rc.13] - 2026-09-29

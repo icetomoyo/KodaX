@@ -1891,6 +1891,26 @@ export interface KodaXWorkspaceSandboxRootRegistry {
   unregister(root: string): Promise<void>;
 }
 
+/** One tool operation reconstructed from an interrupted Run's event journal. */
+export interface KodaXInterruptedRunOperation {
+  readonly toolUseId: string;
+  readonly name: string;
+  /** Short, already-bounded description of the tool input (path, command, url). */
+  readonly target?: string;
+  /** First line of the recorded result; absent when no result was journaled. */
+  readonly result?: string;
+}
+
+/** Journal evidence for one earlier Run whose effects are not in formal history. */
+export interface KodaXInterruptedRunJournal {
+  readonly runId: string;
+  /** Turn of the user message that started the Run; anchors branch membership. */
+  readonly turnId: string;
+  readonly terminalCode: string;
+  /** Journal order; operations without `result` have an unknown outcome. */
+  readonly operations: readonly KodaXInterruptedRunOperation[];
+}
+
 export interface KodaXContextOptions {
   /** Host-owned Run identity for extension effects; standalone runs mint their own. */
   runtimeRunId?: string;
@@ -2041,6 +2061,15 @@ export interface KodaXContextOptions {
   inputArtifacts?: KodaXInputArtifact[];
   /** Internal execution-mode overlay appended to the system prompt */
   promptOverlay?: string;
+  /**
+   * Runtime-owned journals of earlier Runs in this Session that stopped with
+   * an unknown effect outcome. The managed path renders the ones whose turn
+   * is still on the active history path as a transient recovery record; it is
+   * never written into formal history.
+   *
+   * @internal
+   */
+  interruptedRunJournals?: readonly KodaXInterruptedRunJournal[];
   /**
    * Scoped specialist-agent resolver for embedders that run multiple
    * projects/sessions in one process. When absent, constructed-agent

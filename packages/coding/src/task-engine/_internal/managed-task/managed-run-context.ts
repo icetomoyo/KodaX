@@ -62,10 +62,19 @@ export function stripManagedRunContextMessages(
   return messages.filter((message) => !isManagedRunContextMessage(message));
 }
 
+function carriesToolResult(message: KodaXMessage): boolean {
+  return Array.isArray(message.content)
+    && message.content.some((block) => block.type === 'tool_result');
+}
+
 /**
  * Reinstall the canonical context immediately before the latest real user
  * instruction. A compacted history that has no retained real user instead
  * receives the context before its synthetic summary checkpoint.
+ *
+ * A user message that carries tool results is not an instruction: inserting
+ * before it would separate those results from the assistant calls they
+ * answer, and pairing repair would then discard both.
  */
 export function installCanonicalManagedRunContext(
   messages: readonly KodaXMessage[],
@@ -75,7 +84,7 @@ export function installCanonicalManagedRunContext(
   let anchorIndex = -1;
   for (let index = withoutManagedContext.length - 1; index >= 0; index -= 1) {
     const message = withoutManagedContext[index]!;
-    if (message.role === 'user' && message._synthetic !== true) {
+    if (message.role === 'user' && message._synthetic !== true && !carriesToolResult(message)) {
       anchorIndex = index;
       break;
     }

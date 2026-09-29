@@ -1367,6 +1367,38 @@ describe('buildRunnerLlmAdapter (via overrideStream)', () => {
     );
   });
 
+  it('keeps internal managed context out of the error snapshot', async () => {
+    const save = vi.fn(async () => undefined);
+    const optionsWithPressure: KodaXOptions = {
+      ...makeOptions(),
+      context: {
+        ...makeOptions().context,
+        contextTokenSnapshot: {
+          currentTokens: 1_000_000,
+          baselineEstimatedTokens: 0,
+          source: 'estimate',
+        },
+      },
+      session: {
+        id: 'runner-error-snapshot-managed-context',
+        storage: { load: vi.fn(async () => null), save },
+      },
+    };
+
+    await expect(runManagedTaskViaRunner(
+      optionsWithPressure,
+      'ERROR_SNAPSHOT_CONTEXT_SENTINEL',
+      vi.fn(async () => ({ textBlocks: [{ text: 'unreachable' }], toolBlocks: [] })),
+    )).rejects.toBeInstanceOf(ContextCapacityError);
+
+    const persisted = (save.mock.calls.at(-1)?.[1] as KodaXSessionData | undefined)?.messages ?? [];
+    expect(JSON.stringify(persisted)).toContain('ERROR_SNAPSHOT_CONTEXT_SENTINEL');
+    expect(persisted.filter((message) =>
+      message._source === 'managed-run-context' || message._source === 'managed-runtime-context'))
+      .toEqual([]);
+    expect(persisted.every((message) => message.role !== 'system')).toBe(true);
+  });
+
   it('clears stale crash metadata after a later managed Turn completes', async () => {
     const save = vi.fn(async () => undefined);
     const sessionId = 'managed-success-clears-error-metadata';
@@ -5192,6 +5224,53 @@ describe('Shard 6d-d — session continuity', () => {
     expect(priorUser?.turnId).toBeUndefined();
     expect(currentUser?.turnId).toMatch(/^turn_/);
     expect(assistant?.turnId).toBe(currentUser?.turnId);
+  });
+
+  it('gives the model a transient interrupted-run record without persisting it', async () => {
+    const capturedTranscripts: KodaXMessage[][] = [];
+    const save = vi.fn(async () => undefined);
+    const opts = {
+      ...makeOptions(),
+      context: {
+        ...makeOptions().context,
+        interruptedRunJournals: [{
+          runId: 'run_interrupted',
+          turnId: 'turn_prior',
+          terminalCode: 'daemon_crashed',
+          operations: [
+            { toolUseId: 'call_w', name: 'write', target: 'out/RECOVERY_SENTINEL.md', result: 'File created' },
+            { toolUseId: 'call_b', name: 'bash', target: 'npm run render' },
+          ],
+        }, {
+          runId: 'run_other_branch',
+          turnId: 'turn_not_in_history',
+          terminalCode: 'daemon_crashed',
+          operations: [{ toolUseId: 'call_x', name: 'write', target: 'OTHER_BRANCH_SENTINEL' }],
+        }],
+      },
+      session: {
+        id: 'interrupted-run-recovery-session',
+        storage: { load: vi.fn(async () => null), save },
+        initialMessages: [{ role: 'user' as const, content: 'make the episode', turnId: 'turn_prior' }],
+      },
+    } as unknown as Parameters<typeof runManagedTaskViaRunner>[0];
+
+    const result = await runManagedTaskViaRunner(opts, 'continue', async (transcript) => {
+      capturedTranscripts.push([...transcript]);
+      return { textBlocks: [{ text: 'resumed' }], toolBlocks: [] };
+    });
+
+    const providerInput = JSON.stringify(capturedTranscripts[0]);
+    expect(providerInput).toContain('RECOVERY_SENTINEL');
+    expect(providerInput).toContain('Result unknown');
+    expect(providerInput).not.toContain('OTHER_BRANCH_SENTINEL');
+    const carrier = capturedTranscripts[0]!.find((message) =>
+      JSON.stringify(message.content).includes('RECOVERY_SENTINEL'));
+    expect(carrier).toEqual(expect.objectContaining({ _synthetic: true, _source: 'managed-run-context' }));
+    const persisted = save.mock.calls.map((call) => JSON.stringify((call[1] as KodaXSessionData).messages));
+    expect(persisted.length).toBeGreaterThan(0);
+    expect(persisted.some((messages) => messages.includes('RECOVERY_SENTINEL'))).toBe(false);
+    expect(JSON.stringify(result.messages)).not.toContain('RECOVERY_SENTINEL');
   });
 
   it('falls back to raw string prompt when session.initialMessages is empty', async () => {

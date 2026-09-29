@@ -164,6 +164,8 @@ export type {
   KodaXSessionOptions,
   KodaXContextTokenSnapshot,
   KodaXContextOptions,
+  KodaXInterruptedRunJournal,
+  KodaXInterruptedRunOperation,
   KodaXPreparedShellSandboxInvocation,
   KodaXShellSandboxCleanupResult,
   KodaXShellSandboxProcessControl,

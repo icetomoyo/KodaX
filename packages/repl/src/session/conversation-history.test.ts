@@ -1,9 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
+  KodaXMessage,
   KodaXSessionEntry,
   KodaXSessionLineage,
+  KodaXSessionMessageEntry,
 } from '@kodax-ai/agent';
+import {
+  applySessionCompaction,
+  COMPACTION_SUMMARY_PREFIX,
+  getSessionMessagesFromLineage,
+} from '@kodax-ai/agent/session-lineage';
 
 import {
   buildLineageUnavailableConversationHistory,
@@ -1149,5 +1156,144 @@ describe('buildSessionConversationHistory', () => {
     }, 'sha256:test-source', () => {
       if (comparisonStarted) comparisonCheckpoints += 1;
     })).not.toThrow();
+  });
+});
+
+// De-identified minimal topology of a legacy session: the retained copy of an
+// assistant(2 tool calls) -> managed context -> user(2 tool results) turn was
+// persisted once intact and once after adjacent-only tool pairing stripped it.
+describe('legacy adjacent-only tool-pairing damage', () => {
+  const query: KodaXMessage = { role: 'user', content: 'inspect two files' };
+  const call: KodaXMessage = {
+    role: 'assistant',
+    content: [
+      { type: 'text', text: 'Reading both files.' },
+      { type: 'tool_use', id: 'tool-a', name: 'read', input: { path: 'a.ts' } },
+      { type: 'tool_use', id: 'tool-b', name: 'read', input: { path: 'b.ts' } },
+    ],
+  };
+  const results: KodaXMessage = {
+    role: 'user',
+    content: [
+      { type: 'tool_result', tool_use_id: 'tool-a', content: 'A' },
+      { type: 'tool_result', tool_use_id: 'tool-b', content: 'B' },
+    ],
+  };
+  const ctx: KodaXMessage = {
+    role: 'user',
+    content: '=== Managed Run Context ===\nround 2',
+    _synthetic: true,
+    _source: 'managed-run-context',
+  };
+  const next: KodaXMessage = { role: 'assistant', content: 'Both files read.' };
+  const newQuery: KodaXMessage = { role: 'user', content: 'next request' };
+  const strippedCall: KodaXMessage = {
+    ...call,
+    content: [{ type: 'text', text: 'Reading both files.' }],
+  };
+  const strippedResults: KodaXMessage = { ...results, content: [{ type: 'text', text: '' }] };
+
+  function entry(
+    id: string,
+    parentId: string | null,
+    message: KodaXMessage,
+    provenance?: string,
+  ): KodaXSessionMessageEntry {
+    return {
+      type: 'message',
+      id,
+      parentId,
+      timestamp,
+      logicalId: provenance ?? id,
+      ...(provenance !== undefined ? { sourceEntryId: provenance } : {}),
+      message: JSON.parse(JSON.stringify(message)) as KodaXMessage,
+    };
+  }
+  function damagedEntries(): KodaXSessionEntry[] {
+    return [
+      entry('p_query', null, query),
+      entry('p_call', 'p_query', call),
+      entry('p_result', 'p_call', results),
+      { ...compactionEntry('c1', 'k_query'), summary: 'summary' },
+      entry('k_query', 'c1', query, 'p_query'),
+      entry('s_call', 'k_query', call, 'p_call'),
+      entry('s_ctx', 's_call', ctx),
+      entry('s_result', 's_ctx', results, 'p_result'),
+      entry('d_call', 'k_query', strippedCall),
+      entry('d_ctx', 'd_call', ctx, 's_ctx'),
+      entry('d_result', 'd_ctx', strippedResults),
+      entry('d_next', 'd_result', next),
+      entry('y_result', 'd_call', strippedResults, 'd_result'),
+      entry('y_next', 'y_result', next, 'd_next'),
+      entry('n_new', 'y_next', newQuery),
+    ];
+  }
+
+  function damagedLineage(entries = damagedEntries()): KodaXSessionLineage {
+    return { version: 2, activeEntryId: 'n_new', entries };
+  }
+
+  it('resolves the damaged active branch from retained sibling evidence', () => {
+    const lineage = damagedLineage();
+
+    const history = buildSessionConversationHistory(lineage, 'sha256:test-source');
+
+    expect(history.status).toBe('resolved');
+    expect(history.issues).toEqual([]);
+    expect(history.entries.map((item) => item.message))
+      .toEqual([query, call, results, next, newQuery]);
+    expect(history.entries.map((item) => item.message))
+      .toEqual(getSessionMessagesFromLineage(lineage).slice(1));
+    expect(history.entries.map((item) => item.auditEntryIds)).toEqual([
+      ['p_query', 'k_query'],
+      ['p_call', 'd_call'],
+      ['d_result', 'p_result', 'y_result'],
+      ['d_next', 'y_next'],
+      ['n_new'],
+    ]);
+  });
+
+  it('keeps full history and Provider input aligned after a later compaction', () => {
+    const lineage = damagedLineage();
+    const rendered = getSessionMessagesFromLineage(lineage);
+    const compacted = applySessionCompaction(lineage, [
+      { role: 'system', content: `${COMPACTION_SUMMARY_PREFIX}summary 2` },
+      ...rendered.slice(2),
+    ], { summary: 'summary 2' });
+
+    const history = buildSessionConversationHistory(compacted, 'sha256:test-source');
+
+    expect(history.status).toBe('resolved');
+    expect(history.entries.map((item) => item.message))
+      .toEqual([query, call, results, next, newQuery]);
+    expect(getSessionMessagesFromLineage(compacted).slice(1))
+      .toEqual(history.entries.slice(1).map((item) => item.message));
+  });
+
+  it('forks the damaged branch at a conversation boundary with restored content', () => {
+    const forked = forkSessionConversationLineage(
+      damagedLineage(),
+      'n_new',
+      'sha256:test-source',
+    );
+
+    expect(forked).not.toBeNull();
+    const history = buildSessionConversationHistory(forked!, 'sha256:test-source');
+    expect(history.status).toBe('resolved');
+    expect(history.entries.map((item) => item.message))
+      .toEqual([query, call, results, next, newQuery]);
+  });
+
+  it('stays unresolved when a second retained sibling competes as evidence', () => {
+    const entries = damagedEntries();
+    entries.splice(8, 0, entry('s_other', 'k_query', call, 'p_call'));
+
+    const history = buildSessionConversationHistory(
+      damagedLineage(entries),
+      'sha256:test-source',
+    );
+
+    expect(history.status).not.toBe('resolved');
+    expect(history.entries.map((item) => item.message)).toContainEqual(strippedCall);
   });
 });
