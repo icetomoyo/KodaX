@@ -786,6 +786,14 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
+**v0.7.96-rc.13 release:** Thirteenth release candidate of the v0.7.96
+line. Runtime-owned managed runs persist generated assistant messages and
+tool results at Runner commit boundaries, before tools or subsequent
+provider calls can hang: the current compacted transcript and queued-input
+identities survive an interrupted run, initial input replay is skipped
+rather than re-saving all history, and host-owned persistence timing is
+unchanged. Every rc.12 contract is retained.
+
 **v0.7.96-rc.12 release:** Twelfth release candidate of the v0.7.96 line.
 Uncertain Shell cleanup no longer blocks conversations: exhausted cleanup
 retries return diagnostics and partial output to the model, unresolved

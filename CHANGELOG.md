@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.96-rc.13] - 2026-09-29
+
+Thirteenth release candidate of the v0.7.96 line: Runtime-owned managed
+runs persist generated output at Runner commit boundaries so an interrupted
+run keeps its transcript instead of losing it with a hung request. Every
+rc.12 contract is retained. npm publication remains a manual maintainer
+action.
+
 ### Fixed
 
 - Runtime-owned managed runs persist generated assistant messages and tool results

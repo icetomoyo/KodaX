@@ -2,7 +2,20 @@
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
 
-> Last updated: 2026-09-28
+> Last updated: 2026-09-29
+>
+> **v0.7.96-rc.13 release addendum:** Runtime-owned (`persistedByHost: false`)
+> managed runs persist each generated assistant message and tool result at
+> Runner commit boundaries — before tools execute or the next provider
+> request is issued — so an interrupted run (a hung tool or provider call)
+> keeps the current compacted transcript and queued-input identities instead
+> of losing generated output. A failed persistence save surfaces as a run
+> failure and never acknowledges queued input as durable. Host-owned
+> persistence timing is unchanged, and the initial input replay is skipped
+> rather than re-saving all history. Partial provider streams that have not
+> reached a message commit remain journal output recovered for display with
+> interruption/retry notices; they are not promoted to model-context
+> messages.
 >
 > **v0.7.96-rc.12 release addendum:** Uncertain Shell cleanup is nonblocking.
 > A cleanup probe failure or timeout no longer fences the conversation: the
