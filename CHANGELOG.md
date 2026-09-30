@@ -27,6 +27,12 @@ All notable changes to this project will be documented in this file.
   Operations match history per turn, so a provider reusing a tool call id in a
   later turn no longer hides an earlier unfinished operation, and the source
   tracing also covers histories compacted again before this fix.
+- Conversation resolution traces a compaction copy of a copy back to its first
+  retained predecessor, so re-compacted history no longer shows the same
+  message twice. When an older compaction boundary cannot be proven, history
+  is truncated at that boundary and reported as `partial` with
+  `compaction_history_truncated`, instead of flattening unproven regions into
+  one conversation. The page cache version is bumped to 9.
 
 ---
 

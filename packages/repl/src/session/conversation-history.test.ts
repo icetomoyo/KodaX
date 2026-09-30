@@ -521,6 +521,102 @@ describe('buildSessionConversationHistory', () => {
     expect(history.entries[2]?.auditEntryIds).toEqual(['u2', 'u2-copy-1', 'u2-copy-2']);
   });
 
+  // A retry leaf copies the first attempt under one logical id; a later
+  // abandoned branch of the compacted epoch copies the retry, and the active
+  // retained copy names that abandoned copy as its source.
+  function copyOfCopyEntries(sideLogicalId = 'u2'): KodaXSessionEntry[] {
+    return [
+      messageEntry('u1', null, 'user', 'request'),
+      messageEntry('a1', 'u1', 'assistant', 'answer'),
+      messageEntry('u2', 'a1', 'user', 'continue'),
+      messageEntry('u2-retry', 'a1', 'user', 'continue', { logicalId: 'u2', sourceEntryId: 'u2' }),
+      compactionEntry('compact', 'k-u1'),
+      messageEntry('k-u1', 'compact', 'user', 'request', { logicalId: 'u1', sourceEntryId: 'u1' }),
+      messageEntry('k-a1', 'k-u1', 'assistant', 'answer', { logicalId: 'a1', sourceEntryId: 'a1' }),
+      messageEntry('k-u2-side', 'k-a1', 'user', 'continue', {
+        logicalId: sideLogicalId,
+        sourceEntryId: 'u2-retry',
+      }),
+      messageEntry('k-u2', 'k-a1', 'user', 'continue', { logicalId: 'u2', sourceEntryId: 'k-u2-side' }),
+      messageEntry('done', 'k-u2', 'assistant', 'done'),
+    ];
+  }
+
+  it('resolves a retained copy whose source is an abandoned copy of the predecessor', () => {
+    const history = project(copyOfCopyEntries(), 'done');
+
+    expect(history.status).toBe('resolved');
+    expect(history.issues).toEqual([]);
+    expect(history.entries.map((entry) => entry.boundaryId)).toEqual([
+      'u1',
+      'a1',
+      'u2-retry',
+      'done',
+    ]);
+    expect(history.entries[2]?.auditEntryIds).toEqual(
+      expect.arrayContaining(['u2-retry', 'k-u2']),
+    );
+  });
+
+  it('does not follow a copy chain whose logical identity changes', () => {
+    const history = project(copyOfCopyEntries('other'), 'done');
+
+    expect(history.status).toBe('partial');
+    expect(history.entries.map((entry) => entry.boundaryId)).toEqual([
+      'k-u1',
+      'k-a1',
+      'k-u2',
+      'done',
+    ]);
+    expect(history.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'compaction_history_truncated',
+        entryIds: ['compact'],
+      }),
+    ]));
+  });
+
+  it('keeps proven later epochs and truncates at an unprovable older boundary', () => {
+    const entries = [
+      messageEntry('u1', null, 'user', 'first request'),
+      messageEntry('a1', 'u1', 'assistant', 'first answer'),
+      compactionEntry('compact-1', 'k1-a1'),
+      messageEntry('k1-a1', 'compact-1', 'assistant', 'first answer', {
+        logicalId: 'a1',
+        sourceEntryId: 'missing-source',
+      }),
+      messageEntry('u2', 'k1-a1', 'user', 'second request'),
+      messageEntry('a2', 'u2', 'assistant', 'second answer'),
+      compactionEntry('compact-2', 'k2-u2'),
+      messageEntry('k2-u2', 'compact-2', 'user', 'second request', {
+        logicalId: 'u2',
+        sourceEntryId: 'u2',
+      }),
+      messageEntry('k2-a2', 'k2-u2', 'assistant', 'second answer', {
+        logicalId: 'a2',
+        sourceEntryId: 'a2',
+      }),
+      messageEntry('u3', 'k2-a2', 'user', 'third request'),
+    ];
+
+    const history = project(entries, 'u3');
+
+    expect(history.status).toBe('partial');
+    expect(history.entries.map((entry) => entry.message.content)).toEqual([
+      'first answer',
+      'second request',
+      'second answer',
+      'third request',
+    ]);
+    expect(history.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'compaction_boundary_invalid' }),
+      expect.objectContaining({
+        code: 'compaction_history_truncated',
+        entryIds: ['compact-1'],
+      }),
+    ]));
+  });
+
   it('uses sourceEntryId as explicit provenance when a legacy logicalId changed', () => {
     const entries = [
       messageEntry('u1', null, 'user', 'request'),
@@ -673,14 +769,13 @@ describe('buildSessionConversationHistory', () => {
 
     expect(history.status).toBe('partial');
     expect(history.entries.map((entry) => entry.boundaryId)).toEqual([
-      'branch-a',
       'copy-future',
       'copy-a',
       'current',
-      'future',
     ]);
     expect(history.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'compaction_predecessor_missing' }),
+      expect.objectContaining({ code: 'compaction_history_truncated' }),
     ]));
   });
 
@@ -704,8 +799,6 @@ describe('buildSessionConversationHistory', () => {
 
     expect(history.status).toBe('partial');
     expect(history.entries.map((entry) => entry.boundaryId)).toEqual([
-      'branch-a',
-      'future-parent',
       'copy-future',
       'copy-a',
       'current',
@@ -713,10 +806,11 @@ describe('buildSessionConversationHistory', () => {
     expect(history.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'lineage_path_incomplete' }),
       expect.objectContaining({ code: 'compaction_predecessor_missing' }),
+      expect.objectContaining({ code: 'compaction_history_truncated' }),
     ]));
   });
 
-  it('preserves all candidates when two predecessor branches are indistinguishable', () => {
+  it('truncates instead of picking between indistinguishable predecessor branches', () => {
     const entries = [
       messageEntry('u1', null, 'user', 'request'),
       messageEntry('a1', 'u1', 'assistant', 'same answer'),
@@ -728,16 +822,14 @@ describe('buildSessionConversationHistory', () => {
 
     const history = project(entries, 'a1-copy');
 
-    expect(history.status).toBe('ambiguous');
+    expect(history.status).toBe('partial');
     expect(history.entries.map((entry) => entry.boundaryId)).toEqual([
-      'u1',
-      'a1',
-      'a1-other',
       'u1-copy',
       'a1-copy',
     ]);
     expect(history.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'compaction_predecessor_ambiguous' }),
+      expect.objectContaining({ code: 'compaction_history_truncated' }),
     ]));
   });
 
@@ -831,10 +923,9 @@ describe('buildSessionConversationHistory', () => {
 
     const history = project(entries, 'a1-copy');
 
+    // Both emitted copies claim `a1`: the conflict is inside the proven epoch.
     expect(history.status).toBe('ambiguous');
     expect(history.entries.map((entry) => entry.boundaryId)).toEqual([
-      'u1',
-      'a1',
       'u1-copy',
       'a1-copy',
     ]);
@@ -842,6 +933,7 @@ describe('buildSessionConversationHistory', () => {
       .filter((entryId) => entryId === 'a1')).toHaveLength(1);
     expect(history.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'compaction_boundary_invalid' }),
+      expect.objectContaining({ code: 'compaction_history_truncated' }),
     ]));
   });
 
@@ -857,13 +949,13 @@ describe('buildSessionConversationHistory', () => {
 
     const history = project(entries, 'u1-copy');
 
-    expect(history.status).toBe('ambiguous');
+    expect(history.status).toBe('partial');
     expect(history.entries.map((entry) => entry.boundaryId)).toEqual([
-      'u1',
       'u1-copy',
     ]);
     expect(history.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'compaction_boundary_invalid' }),
+      expect.objectContaining({ code: 'compaction_history_truncated' }),
     ]));
   });
 
@@ -883,17 +975,14 @@ describe('buildSessionConversationHistory', () => {
 
     const history = project(entries, 'a-copy');
 
-    expect(history.status).toBe('ambiguous');
+    expect(history.status).toBe('partial');
     expect(history.entries.map((entry) => entry.boundaryId)).toEqual([
-      'u-a',
-      'a-a',
-      'u-b',
-      'a-b',
       'u-copy',
       'a-copy',
     ]);
     expect(history.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'compaction_boundary_invalid' }),
+      expect.objectContaining({ code: 'compaction_history_truncated' }),
     ]));
   });
 
@@ -1329,5 +1418,30 @@ describe('legacy adjacent-only tool-pairing damage', () => {
 
     expect(history.status).not.toBe('resolved');
     expect(history.entries.map((item) => item.message)).toContainEqual(strippedCall);
+  });
+
+  it('truncates a forked legacy evidence chain instead of emitting sibling copies', () => {
+    const entries = damagedEntries();
+    entries.splice(8, 0, entry('s_other', 'k_query', call, 'p_call'));
+
+    const history = buildSessionConversationHistory(
+      damagedLineage(entries),
+      'sha256:test-source',
+    );
+
+    expect(history.status).toBe('partial');
+    expect(history.entries.map((item) => item.boundaryId)).toEqual([
+      'k_query',
+      'd_call',
+      'y_result',
+      'y_next',
+      'n_new',
+    ]);
+    expect(history.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'compaction_history_truncated',
+        entryIds: ['c1'],
+      }),
+    ]));
   });
 });

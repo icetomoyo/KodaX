@@ -37,7 +37,9 @@ export {
 
 // v7 restores legacy adjacent-only tool-pairing damage from proven sibling evidence.
 // v8 also traces that damage through a later pre-fix compaction's copies.
-const CACHE_VERSION = 8;
+// v9 follows copy-of-copy retained sources and truncates at an unprovable
+// compaction boundary instead of flattening every branch.
+const CACHE_VERSION = 9;
 const INDEX_RECORD_BYTES = 24;
 const WRITE_BATCH_BYTES = 1024 * 1024;
 const MAX_CACHE_MANIFEST_BYTES = 1024 * 1024;
@@ -54,7 +56,7 @@ export interface ConversationPageCacheAdmission {
 }
 
 interface ConversationCacheManifest {
-  readonly version: 8;
+  readonly version: 9;
   readonly sessionId: string;
   readonly generation: string;
   readonly sourceRevision: string;
@@ -180,6 +182,7 @@ function isConversationIssue(value: unknown): value is SessionConversationHistor
   const codes = new Set([
     'active_entry_missing',
     'compaction_boundary_invalid',
+    'compaction_history_truncated',
     'compaction_predecessor_ambiguous',
     'compaction_predecessor_missing',
     'legacy_overlap_ambiguous',

@@ -1328,7 +1328,16 @@ a different cause.
   reproduces the damage exactly. Anything else stays ambiguous; siblings are
   never adopted wholesale and duplicate queries are not removed by text or time.
   Nothing writes to the Session. Source tracing also follows entries that were
-  compacted again before the fix. The page cache version moves from 6 to 8.
+  compacted again before the fix. The page cache version moves from 6 to 9.
+- Compaction boundaries follow copy-of-copy provenance: a retained entry whose
+  source is an intermediate copy (often on an abandoned branch) is traced, up
+  to 8 hops, to the first predecessor-epoch entry, as long as every hop keeps
+  the same logical identity and content. Any other chain fails closed.
+- An unprovable older compaction boundary no longer flattens every physical
+  branch. The proven newer epochs are returned as `partial` with
+  `compaction_history_truncated` naming the boundary, so no sibling copy is
+  emitted. Flatten remains only for a missing or incomplete active path and
+  when no epoch is proven.
 - Journal progress is not backfilled into history: assistant text exists only
   as deltas, so a complete conversation cannot be proven. Instead the next
   managed or coding Run receives a transient record. It names its source Run
@@ -1365,10 +1374,16 @@ a different cause.
   `run-substrate.interrupted-run-recovery.test.ts` for the coding request view.
 - A read-only copy of the reported Session resolves with no issues, cold and
   from cache alike: 590 entries, and 91 of 91 calls paired in the provider input.
+- A read-only copy of the SDK-reported Session with a forked legacy evidence
+  chain went from `ambiguous` (2,069 entries, 1,051 content duplicates) to
+  `partial` (412 entries, truncated at its oldest compaction). No emitted entry
+  shares a logical identity with another; the 4 remaining content repeats are
+  separate inputs. Up to that boundary it resolves with no issues (664 entries).
 - Manual steps: [Issue 340 regression guide](test-guides/ISSUE_340_v0.7.96-rc.14_REGRESSION_GUIDE.md).
   The prompt eval `tests/interrupted-run-recovery.eval.ts` (unknown-result
-  write, unconfirmed reply claim) has not produced a result: its pilot alias
-  `ark/v4flash` returns `InvalidSubscription`.
+  write, unconfirmed reply claim) passed 12 of 12 on `zhipu/glm53flash` and
+  `ds/flash`: every run inspected the target before writing, and none
+  trusted the streamed claim. It is a single-arm pilot with no baseline arm.
 - Space acceptance needs a rebuilt desktop package; a source commit does not
   update `out/win-unpacked`.
 

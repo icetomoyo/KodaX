@@ -21,11 +21,17 @@ revision and whether the candidate is a local link or a published package.
    and the tool calls with their results on the active branch.
 3. Confirm the Session file is byte-identical before and after (restoration is
    read-only).
-4. Confirm the v6 page cache is rebuilt once: first open is slower, later opens
-   reuse the v8 cache. Page through the whole conversation and compare it with
-   the full history view; both must show the same rows in the same order.
+4. Confirm an older page cache is rebuilt once: first open is slower, later
+   opens reuse the v9 cache. Page through the whole conversation and compare it
+   with the full history view; both must show the same rows in the same order.
 5. Open a Session with a genuinely ambiguous fork (two diverging branches, no
-   exact legacy reproduction). It must stay `ambiguous`.
+   exact legacy reproduction). It must stay `ambiguous`, or `partial` with
+   `compaction_history_truncated` when the fork sits behind a compaction and
+   later epochs are proven.
+6. Open a copied Session whose oldest compaction cannot be proven (the
+   SDK-reported forked evidence chain). Expect `partial` with
+   `compaction_history_truncated` naming that compaction. Rows before it are
+   omitted, and no row appears twice with the same logical identity.
 
 ## Interrupted Run recovery
 
