@@ -135,11 +135,10 @@ function quoteExcerpt(reply: KodaXInterruptedRunReply): string {
   return lines.map((line) => `> ${line}`.trimEnd()).join('\n');
 }
 
-// Excerpts come last: they are the least certain evidence, so the overall
-// bound trims them before any operation line.
-function renderExcerptSection(replies: readonly KodaXInterruptedRunReply[]): string[] {
-  if (replies.length === 0) return [];
-  const shown = replies.slice(-MAX_EXCERPTS);
+/** Shows the newest `shownCount` replies; the budget pass decides the count. */
+function renderExcerptSection(replies: readonly KodaXInterruptedRunReply[], shownCount: number): string[] {
+  if (shownCount === 0) return [];
+  const shown = replies.slice(-shownCount);
   const omitted = replies.length - shown.length;
   return [
     'Reply excerpts: text the Run streamed but never saved, which may stop mid-sentence.',
@@ -150,12 +149,20 @@ function renderExcerptSection(replies: readonly KodaXInterruptedRunReply[]): str
   ];
 }
 
-function renderJournal(
-  journal: KodaXInterruptedRunJournal,
-  missing: readonly KodaXInterruptedRunOperation[],
-  replies: readonly KodaXInterruptedRunReply[],
-): string | undefined {
-  if (missing.length === 0 && replies.length === 0) return undefined;
+interface JournalEvidence {
+  journal: KodaXInterruptedRunJournal;
+  missing: KodaXInterruptedRunOperation[];
+  replies: KodaXInterruptedRunReply[];
+}
+
+/** One Run chosen for the record, with how many of its newest excerpts fit. */
+interface JournalPlan {
+  evidence: JournalEvidence;
+  excerptCount: number;
+}
+
+function renderJournal({ evidence, excerptCount }: JournalPlan): string {
+  const { journal, missing, replies } = evidence;
   const recorded = missing.filter((operation) => operation.result !== undefined);
   const unknown = missing.filter((operation) => operation.result === undefined);
   return [
@@ -176,8 +183,54 @@ function renderJournal(
     ...(unknown.length > 0
       ? ['Check the current files or processes before relying on an operation whose result is unknown, because repeating it blindly can duplicate or overwrite work.']
       : []),
-    ...renderExcerptSection(replies),
+    ...renderExcerptSection(replies, excerptCount),
   ].join('\n');
+}
+
+const RECORD_HEADER = '=== Interrupted Run Recovery ===\n';
+const RECORD_TRAILER = '\n=== End Interrupted Run Recovery ===';
+const BODY_LIMIT = MAX_RECOVERY_CHARS - RECORD_HEADER.length - RECORD_TRAILER.length;
+
+/** Plans stay in journal order, so the record reads oldest Run first. */
+function renderBody(plans: ReadonlyMap<number, JournalPlan>): string {
+  return [...plans.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([, plan]) => renderJournal(plan))
+    .join('\n\n');
+}
+
+function fits(plans: ReadonlyMap<number, JournalPlan>): boolean {
+  return renderBody(plans).length <= BODY_LIMIT;
+}
+
+/**
+ * Operations are the firmer evidence, so every Run's operations claim the
+ * budget, newest Run first, before any Run's reply excerpts. Excerpts then
+ * fill what is left, newest first, and never displace an operation.
+ */
+function planRecovery(evidence: readonly JournalEvidence[]): Map<number, JournalPlan> {
+  const plans = new Map<number, JournalPlan>();
+  const newestFirst = evidence.map((item, index) => ({ item, index })).reverse();
+  for (const { item, index } of newestFirst) {
+    if (plans.size >= MAX_JOURNALS || item.missing.length === 0) continue;
+    plans.set(index, { evidence: item, excerptCount: 0 });
+    if (plans.size > 1 && !fits(plans)) plans.delete(index);
+  }
+  for (const { item, index } of newestFirst) {
+    const existing = plans.get(index);
+    if (existing === undefined && plans.size >= MAX_JOURNALS) continue;
+    const maxCount = Math.min(item.replies.length, MAX_EXCERPTS);
+    let fitted = 0;
+    for (let count = 1; count <= maxCount; count += 1) {
+      plans.set(index, { evidence: item, excerptCount: count });
+      if (!fits(plans)) break;
+      fitted = count;
+    }
+    if (fitted > 0) plans.set(index, { evidence: item, excerptCount: fitted });
+    else if (existing !== undefined) plans.set(index, existing);
+    else plans.delete(index);
+  }
+  return plans;
 }
 
 /**
@@ -196,30 +249,19 @@ export function renderInterruptedRunRecovery(
   const recorded = collectRecordedToolResults(history);
   const recordedReplies = collectRecordedReplyText(history);
   // Results are claimed in journal order, so the earliest invocation owns them.
-  const missingByJournal = journals
+  const evidence: JournalEvidence[] = journals
     .filter((journal) => activeTurnIds.has(journal.turnId))
     .map((journal) => ({
       journal,
       missing: takeMissingOperations(journal, recorded),
       replies: missingReplies(journal.replies, recordedReplies),
     }));
-  const sections: string[] = [];
-  let usedChars = 0;
-  for (const { journal, missing, replies } of missingByJournal.reverse()) {
-    if (sections.length >= MAX_JOURNALS) break;
-    const section = renderJournal(journal, missing, replies);
-    if (section === undefined) continue;
-    if (sections.length > 0 && usedChars + section.length > MAX_RECOVERY_CHARS) break;
-    sections.unshift(section);
-    usedChars += section.length;
-  }
-  if (sections.length === 0) return undefined;
-  const header = '=== Interrupted Run Recovery ===\n';
-  const trailer = '\n=== End Interrupted Run Recovery ===';
-  const bodyLimit = MAX_RECOVERY_CHARS - header.length - trailer.length;
-  const body = sections.join('\n\n');
-  const bounded = body.length <= bodyLimit
+  const plans = planRecovery(evidence);
+  if (plans.size === 0) return undefined;
+  const body = renderBody(plans);
+  // Only a single Run whose operations alone overflow reaches this cut.
+  const bounded = body.length <= BODY_LIMIT
     ? body
-    : `${body.slice(0, bodyLimit - 1).trimEnd()}…`;
-  return `${header}${bounded}${trailer}`;
+    : `${body.slice(0, BODY_LIMIT - 1).trimEnd()}…`;
+  return `${RECORD_HEADER}${bounded}${RECORD_TRAILER}`;
 }

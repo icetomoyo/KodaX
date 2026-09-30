@@ -1340,9 +1340,11 @@ a different cause.
   provider request. Journal read failures emit a diagnostic and skip it.
 - Reply strategy: assistant text the Run streamed becomes quoted "reply
   excerpts", labelled unconfirmed and not a user request. Retries use the
-  replaced segment, child actor output mirrored live is excluded, each excerpt
-  keeps its tail, and excerpts render last so the bound trims them first. An
-  excerpt is omitted when a saved assistant message of the same turn holds it.
+  replaced segment, child actor output mirrored live is excluded, and each
+  excerpt keeps its tail. The budget goes to operations across every included
+  Run first, newest Run first, and excerpts only fill what is left, so a newer
+  Run's long replies cannot drop an older Run's operations. An excerpt is
+  omitted when a saved assistant message of the same turn holds it.
 - Tool invocations run without a model call and need no record.
 
 #### Files Changed and Verification

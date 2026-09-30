@@ -206,6 +206,62 @@ describe('renderInterruptedRunRecovery', () => {
     expect(text.indexOf('npm run render')).toBeLessThan(text.indexOf('never saved'));
   });
 
+  it('keeps an older Run\'s operations when a newer Run carries only long excerpts', () => {
+    const recorded = Array.from({ length: 16 }, (_, index) => ({
+      toolUseId: `call_read_${index}`,
+      name: 'read',
+      target: `src/file-${index}.ts`,
+      result: 'x'.repeat(200),
+    }));
+    const unknown = Array.from({ length: 8 }, (_, index) => ({
+      toolUseId: `call_write_${index}`,
+      name: 'write',
+      target: `out/${'d'.repeat(120)}/part-${index}.md`,
+    }));
+    const older = journal({ runId: 'run_old', operations: [...recorded, ...unknown] });
+    const newer = journal({
+      runId: 'run_new',
+      turnId: 'turn_b',
+      operations: [],
+      replies: Array.from({ length: 3 }, (_, index) => ({
+        turnId: 'turn_b',
+        text: `${'r'.repeat(2_000)} end of reply ${index}`,
+        truncated: false,
+      })),
+    });
+
+    const text = renderInterruptedRunRecovery([older, newer], anchoredHistory)!;
+
+    expect(text.length).toBeLessThanOrEqual(6_000);
+    expect(text).toContain('run_old');
+    expect(text).toContain('src/file-15.ts');
+    for (let index = 0; index < 8; index += 1) expect(text).toContain(`/part-${index}.md`);
+    expect(text).toContain('Check the current files');
+    expect(text).toContain('run_new');
+    expect(text).toContain('end of reply 2');
+    expect(text).toContain('earlier reply excerpts omitted');
+    expect(text.endsWith('=== End Interrupted Run Recovery ===')).toBe(true);
+    expect(text).not.toMatch(/…\n=== End/);
+  });
+
+  it('does not let an older Run\'s excerpts crowd out a newer Run\'s operations', () => {
+    const older = journal({
+      operations: [],
+      replies: Array.from({ length: 10 }, (_, index) => ({
+        turnId: 'turn_a',
+        text: `reply ${index} ${'r'.repeat(2_000)}`,
+        truncated: false,
+      })),
+    });
+    const newer = journal({ runId: 'run_new', turnId: 'turn_b' });
+
+    const text = renderInterruptedRunRecovery([older, newer], anchoredHistory)!;
+
+    expect(text.length).toBeLessThanOrEqual(6_000);
+    expect(text).toContain('bash npm run render');
+    expect(text.indexOf('run_a')).toBeLessThan(text.indexOf('run_new'));
+  });
+
   it('renders the same text for the same evidence', () => {
     const first = renderInterruptedRunRecovery([journal()], anchoredHistory);
 

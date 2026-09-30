@@ -23,6 +23,7 @@ All notable changes to this project will be documented in this file.
   active branch: confirmed results, operations whose result is unknown, and
   unconfirmed excerpts of assistant text the Run streamed but never saved. The
   record is never saved and each part disappears once history contains it.
+  Operations from every included Run take the size bound before any excerpt.
   Operations match history per turn, so a provider reusing a tool call id in a
   later turn no longer hides an earlier unfinished operation, and the source
   tracing also covers histories compacted again before this fix.
