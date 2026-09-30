@@ -31,12 +31,15 @@
  * - raw text + tool calls are dumped for main-session review
  *
  * Pilot run (requires the pilot alias credentials; sends the fixed prompt
- * bytes above to that provider):
+ * bytes above to those providers):
  *
  *   npm run test:eval -- interrupted-run-recovery
  *
- * Budget: 1 alias x 2 cases x 3 runs = 6 provider calls, maxOutputTokens
- * 1024, normally below $0.10. Raw dumps land under
+ * Pilot aliases: `zhipu/glm53flash` and `ds/flash`, two families on the floor
+ * tier. The earlier pilot alias `ark/v4flash` has no active subscription.
+ *
+ * Budget: 2 aliases x 2 cases x 3 runs = 12 provider calls, one in flight
+ * per provider, maxOutputTokens 1024, normally below $0.10. Raw dumps land under
  * `os.tmpdir()/kodax-eval-dumps/interrupted-run-recovery/`.
  */
 
@@ -54,7 +57,7 @@ import { buildWorkerStableInstructions } from '../packages/coding/src/agents/wor
 import { renderInterruptedRunRecovery } from '../packages/coding/src/task-engine/_internal/interrupted-run-recovery.js';
 import { getToolDefinition } from '../packages/coding/src/tools/registry.js';
 
-const PILOT_ALIAS: ModelAlias = 'ark/v4flash';
+const PILOT_ALIASES: readonly ModelAlias[] = ['zhipu/glm53flash', 'ds/flash'];
 const RUNS = 3;
 const DUMP_ROOT = join(tmpdir(), 'kodax-eval-dumps', 'interrupted-run-recovery');
 
@@ -112,7 +115,7 @@ const CASES: readonly RecoveryCase[] = [
 ];
 
 describe('Eval: interrupted-run recovery record', () => {
-  const aliases = availableAliases(PILOT_ALIAS);
+  const aliases = availableAliases(...PILOT_ALIASES);
   const tools = ['read', 'write', 'bash'].map((name) => getToolDefinition(name));
 
   if (aliases.length === 0 || tools.some((tool) => tool === undefined)) {

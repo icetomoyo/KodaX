@@ -13,6 +13,7 @@
  * The alias short ids follow the user-supplied convention:
  *   'zhipu-coding/glm-5.2':         'zhipu/glm52'
  *   'zhipu-coding/glm-5.1':         'zhipu/glm51' (legacy replay only)
+ *   'zhipu-coding/glm-5.3-flash':   'zhipu/glm53flash' (explicit opt-in)
  *   'kimi-code/kimi-for-coding':    'kimi'
  *   'mimo-coding/mimo-v2.5':        'mimo/v25'
  *   'mimo-coding/mimo-v2.5-pro':    'mimo/v25pro'
@@ -24,6 +25,7 @@
  *   'ark-coding/deepseek-v4-flash': 'ark/v4flash'
  *   'deepseek/deepseek-v4-pro':     'ds/v4pro'
  *   'deepseek/deepseek-v4-flash':   'ds/v4flash'
+ *   'deepseek/deepseek-flash':      'ds/flash' (explicit opt-in)
  *
  * To add a new alias: extend `MODEL_ALIASES` below. Existing eval files
  * that still inline their own PROVIDERS arrays continue to work — migration
@@ -40,6 +42,7 @@
 export type ModelAlias =
   | 'zhipu/glm51'
   | 'zhipu/glm52'
+  | 'zhipu/glm53flash'
   | 'kimi'
   | 'mimo/v25'
   | 'mimo/v25pro'
@@ -50,7 +53,8 @@ export type ModelAlias =
   | 'ark/v4pro'
   | 'ark/v4flash'
   | 'ds/v4pro'
-  | 'ds/v4flash';
+  | 'ds/v4flash'
+  | 'ds/flash';
 
 export interface ModelAliasTarget {
   /** KodaX provider name as it appears in the provider registry. */
@@ -71,6 +75,7 @@ const ARK_MODEL_CONCURRENCY = Object.freeze({ scope: 'model', providerLimit: 3 }
 export const MODEL_ALIASES: Readonly<Record<ModelAlias, ModelAliasTarget>> = Object.freeze({
   'zhipu/glm51':  { provider: 'zhipu-coding',   model: 'glm-5.1',           apiKeyEnv: 'ZHIPU_CODING_API_KEY' },
   'zhipu/glm52':  { provider: 'zhipu-coding',   model: 'glm-5.2',           apiKeyEnv: 'ZHIPU_CODING_API_KEY' },
+  'zhipu/glm53flash': { provider: 'zhipu-coding', model: 'glm-5.3-flash',   apiKeyEnv: 'ZHIPU_CODING_API_KEY' },
   'kimi':         { provider: 'kimi-code',      model: 'kimi-for-coding',   apiKeyEnv: 'KIMI_CODE_API_KEY' },
   'mimo/v25':     { provider: 'mimo-coding',    model: 'mimo-v2.5',         apiKeyEnv: 'MIMO_CODING_API_KEY' },
   'mimo/v25pro':  { provider: 'mimo-coding',    model: 'mimo-v2.5-pro',     apiKeyEnv: 'MIMO_CODING_API_KEY' },
@@ -82,6 +87,7 @@ export const MODEL_ALIASES: Readonly<Record<ModelAlias, ModelAliasTarget>> = Obj
   'ark/v4flash':  { provider: 'ark-coding',     model: 'deepseek-v4-flash', apiKeyEnv: 'ARK_CODING_API_KEY', evalConcurrency: ARK_MODEL_CONCURRENCY },
   'ds/v4pro':     { provider: 'deepseek',       model: 'deepseek-v4-pro',   apiKeyEnv: 'DEEPSEEK_API_KEY' },
   'ds/v4flash':   { provider: 'deepseek',       model: 'deepseek-v4-flash', apiKeyEnv: 'DEEPSEEK_API_KEY' },
+  'ds/flash':     { provider: 'deepseek',       model: 'deepseek-flash',    apiKeyEnv: 'DEEPSEEK_API_KEY' },
 });
 
 export const ALL_MODEL_ALIASES: readonly ModelAlias[] = Object.freeze(
