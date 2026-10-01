@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-09-23_
+_Last Updated: 2026-10-01_
 
 ---
 
@@ -1062,7 +1062,11 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 340 | High | Resolved in working tree | Interrupted Run progress missing from next turn; compacted history ambiguous after internal context split a tool pair | observed with v0.7.96-rc.13; first affected release unknown | unreleased | 2026-09-29 | 2026-09-29 |
+| 344 | Medium | ready | Interrupted-Run eval lacks per-request timeout, total usage budget, and incremental raw preservation | unreleased (`c232d7b5`); confirmed at `efe33d7d` | — | 2026-10-01 | — |
+| 343 | Medium | Resolved | Windows sandbox unit fixtures provision mock-SID artifacts and remove files in the live native cache | observed with v0.7.96-rc.13; first affected release unknown | working tree (unreleased) | 2026-10-01 | 2026-10-01 |
+| 342 | High | needs-info | Windows interactive REPL exits during final output without a terminal Run event | observed with v0.7.96-rc.13; first affected release unknown | — | 2026-10-01 | — |
+| 341 | High | Resolved | Windows startup skips NUL-device ACL repair after reboot because the durable setup marker remains current | v0.7.96-alpha.6 (`0aff6f91`) | `v0.7.96-rc.14` | 2026-10-01 | 2026-10-01 |
+| 340 | High | Resolved | Interrupted Run progress missing from next turn; compacted history ambiguous after internal context split a tool pair | observed with v0.7.96-rc.13; first affected release unknown | `v0.7.96-rc.14` | 2026-09-29 | 2026-09-29 |
 | 339 | Medium | Resolved | Background Git probes repeatedly trigger macOS developer-tools installation prompts | observed with v0.7.96-rc.10; first affected release unknown | `v0.7.96-rc.11` | 2026-09-23 | 2026-09-23 |
 | 338 | High | Resolved | Windows daemon state replacement fails under concurrent JSON readers | confirmed at `0ec6aa41`; first affected release not established | `v0.7.96-rc.9` | 2026-09-21 | 2026-09-21 |
 | 334 | High | Resolved | New Session journal initialization scans unrelated Run logs; stale cached floors break lost-cursor recovery | confirmed v0.7.96-rc.3; first affected release not established | `v0.7.96-rc.4` | 2026-09-13 | 2026-09-13 |
@@ -1288,12 +1292,236 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 ## Issue Details
 
+### Issue 344: Interrupted-Run eval budget and failure evidence are incomplete
+
+- Priority: Medium
+- Status: ready
+- Introduced: Unreleased (`c232d7b5`); confirmed at `efe33d7d`
+- Created: 2026-10-01
+
+#### Original Problem and Scope
+
+`tests/interrupted-run-recovery.eval.ts` describes a finite 12-call pilot and
+caps each output at 1,024 tokens, but does not pass `timeoutMs` to `runOneShot`
+or account for a total token/external-spend budget. The 300-second Vitest test
+timeout is not an AbortSignal for an in-flight provider stream. Raw evidence
+is written only after all three repetitions in a cell succeed, so a later
+request failure loses the earlier completed observations from that cell.
+These gaps violate the budget and raw-preservation requirements in
+`benchmark/EVAL_GUIDELINES.md`.
+
+#### Required Repair and Validation
+
+Pass an aborting per-request timeout, enforce cumulative usage/spend limits,
+and save each completed or failed observation before admitting another call.
+Validate delayed/failed calls with mocked provider responses and confirm that
+earlier raw rows remain readable. Do not rerun live providers just to test
+this bookkeeping or treat the existing single-arm 12/12 pilot as proof of
+cross-provider completeness. This is an eval-driver gap; the SDK's transient
+recovery execution and type/export implementation are separately covered.
+The 2026-10-01 SDK audit records it as unresolved and makes no live eval call.
+
+### Issue 343: Windows sandbox unit fixtures share the live native cache
+
+- Priority: Medium
+- Status: Resolved in working tree; unreleased
+- Introduced: Observed with v0.7.96-rc.13; first affected release unknown
+- Created / Source Resolution Date: 2026-10-01
+
+#### Original Problem and Evidence
+
+`src/sandbox-runtime.test.ts` provisions native artifacts during suite setup
+using a mocked sandbox group SID, `S-1-5-21-1001`, and deliberately removes
+cached artifacts in its recovery cases. It used the ordinary user's shared
+`LOCALAPPDATA` cache. A live 120-second sandbox reproduction overlapped one
+artifact-deletion case and caused `EBUSY`. The original review Session also
+ran the suite inside the real sandbox account and encountered `EPERM` opening
+the mock-SID artifact before any individual test could run.
+
+The directory's `sandbox-e08feba1acb62f61` key is the SHA-256 prefix of the
+mock SID. Its DACL grants the host ADMIN, SYSTEM, and that mock SID, while the
+real sandbox account is `S-1-5-21-2130785933-3654544736-2779019230-1050`.
+Independent SDK Sessions reproduce access denial before, during, and after
+another sandbox's 120-second Run; ordinary host reads always succeed. This
+file's denial is an identity boundary, not evidence of a live parallel lock.
+
+#### Resolution and Limits
+
+The suite now provisions into a unique temporary `LOCALAPPDATA`, restores that
+override before each test, and removes the private cache after the suite. Mock
+SID fixtures and destructive recovery cases no longer use the live cache.
+Production ACLs and cache verification are unchanged.
+
+This fixes fixture isolation, not the ability to provision host-trusted native
+state from an already restricted sandbox. Running the isolated suite under
+`srt-sandbox` fails at protected-directory provisioning instead of the old
+shared mock-SID file. Run this suite from ordinary host PowerShell; actual
+sandbox execution is verified separately through the public Runtime API.
+Do not widen the native cache DACL or treat skipped tests as a passing result.
+
+- Files Changed: `src/sandbox-runtime.test.ts` and the FEATURE_295 test guide.
+- Validation: the original restricted-account invocation reproduced the old
+  `EPERM`. After isolation, ordinary host runs pass 95 tests with 40 platform
+  skips, both alone and while an independent SDK Session's real sandbox Bash
+  runs for 120 seconds. The concurrent run started at 10:00:47 and finished in
+  85.74 seconds; background Bash ran 10:00:25–10:02:25 and exited 0. Deletion
+  used `srt-sandbox`, recreation used the trusted host text transaction, the
+  original `hello.md` was restored, and host doctor remained ready. Source and
+  test type checks passed.
+- Evidence: `%TEMP%/kodax-session342-concurrent-kMLCDY/acl-red/`, `acl-green/`,
+  and `acl-concurrent/`. The sandbox-only provisioning failure remains an
+  execution constraint, not a successful unit-suite run.
+
+Additional concurrency/Bash verification on the same working tree passes six
+selected real Windows sandbox cases: restricted-token startup, trusted text
+replacement, policy write isolation, background Bash/second Runtime/text
+concurrency, and two independent cold Runtime overlap cases (same write root;
+ancestor read plus child write). Two additional native-control grant rejection
+checks also pass. Five Bash/SDK cleanup and recovery files pass 81/81 with no
+skips. Unselected policy tests are not counted as coverage. These checks do not
+resolve Issue 342 or prove that every older sandbox failure mode is absent.
+
+### Issue 342: Windows REPL exits during final output without Run settlement
+
+- Priority: High
+- Status: needs-info
+- Introduced: Observed with v0.7.96-rc.13; first affected release unknown
+- Created: 2026-10-01
+
+#### Original Problem
+
+Session `20261001_081125_2953a8ed1c8f6d` returned to PowerShell while its review
+report was still streaming. The user confirms there was no Ctrl+C, Ctrl+D,
+`/quit`, or terminal closure. Expected behavior is to finish the Run and retain
+an interactive prompt, or report a concrete failure before terminating.
+
+Run `run_muou074o_b9ab6972` retains `phase:running`, and owner PID 6328 is dead.
+Its final event is an `assistant.delta` at 09:15:28.560; there is no terminal
+Run or Turn event. The original records contain no process exit code or
+exception stack. Windows Application logs contain no corresponding crash
+entry. Neither fact distinguishes natural event-loop exit, a caught renderer
+error, explicit `process.exit`, fatal runtime failure, or external termination.
+
+#### Investigation and Missing Evidence
+
+Two real SDK Sessions completed the sandbox/read concurrency experiment.
+An additional real-TTY full Ink REPL loaded an isolated copy of the affected
+Session and replayed all 1,148 original Run events, including 51 tool pairs
+and the interrupted final report. It stayed interactive after replay, and
+exited 0 only after an explicit `/quit`. This covers the original output data
+and renderer, not the original wall-clock timing, live provider/network, all
+SDK ownership callbacks, or process environment. It does not resolve the bug.
+The shared-cache ACL denial is separately tracked in Issue 343; causation of
+this unexpected exit is unproven.
+
+The next occurrence needs a timestamped process exit code and a lifecycle
+trace. A temporary observer retains normal terminal input/output and records
+stdin ref/unref stacks, explicit process exit, uncaught-exception monitoring,
+bounded stderr errors, memory samples, and the parent's observed exit code.
+Its memory sampler is unreferenced, so it does not keep a failing event loop
+alive. No production exit behavior has been changed.
+
+Evidence and launcher:
+`%TEMP%/kodax-repl342-replay-T8QFdk/lifecycle.jsonl`, `replay.mjs`,
+`observe-exit.cjs`, and `observe-kodax.ps1`. The launcher resumes the affected
+Session through the installed npm entry; use it in an interactive PowerShell
+window. The observer has been verified with a normal version exit and an
+uncaught exception. The initial launcher argument probes are invalid for the
+original bug: a single-string PowerShell splat split `-V` into two arguments;
+that probe was stopped and the launcher now constructs a typed argument array.
+
+### Issue 341: Windows startup skips NUL-device ACL repair after reboot
+
+- Priority: High
+- Status: Resolved
+- Introduced: v0.7.96-alpha.6 (`0aff6f91`, 2026-09-02)
+- Fixed: `v0.7.96-rc.14`
+- Created / Source Resolution Date: 2026-10-01
+
+#### Original Problem
+
+Session `20260902_073640_nd941e0c92f0fe` successfully ran sandboxed shells on
+2026-09-29, but rounds 28 and 29 ran as the host `admin` account after the next
+boot. Host `kodax sandbox doctor` reports `NUL sandbox-account ACE is missing
+or duplicated`, with `ready:false` and `setupRequired:true`. Deleting and
+rewriting `hello.md` still succeeds through the normal permission fallback and
+trusted text transaction, so file success alone does not prove containment.
+
+Reproduce by activating the Windows sandbox, rebooting Windows, and starting
+the interactive CLI with the current setup marker still present. Startup should
+enter the existing setup boundary if the NUL account grant needs repair.
+
+#### Root Cause and Evidence
+
+`0aff6f91` made `isWindowsSandboxV2SetupCurrent()` accept a valid durable setup
+marker without checking the NUL device's live DACL. Setup modifies a kernel
+device object, whose security descriptor does not have the marker's disk
+lifetime. A current marker therefore cannot prove current NUL access.
+
+The inspected marker was written on 2026-09-29 at 10:41:27; Windows last booted
+on 2026-09-30 at 08:23:28. Its user/group SIDs still match the installed account.
+A read-only NUL DACL probe found no ACE for that user; the original native
+verifier returned exit 2, while the original startup check returned `true`.
+This establishes the false-readiness bug and is consistent with boot reset;
+the investigation did not reboot the user's machine. It does not implicate
+background process concurrency or a sandbox account SID rotation.
+
+The live repair exposed a second defect: the `installing` marker deliberately
+retains historical read roots, but the elevated installer also received those
+roots after their files disappeared. Three retired `NTUSER.DAT*.TxR*` transaction
+files made native ACL preflight fail with Win32 error 2. The NUL ACE had already
+been repaired, but setup correctly retained a non-ready marker instead of
+publishing an incomplete generation. Re-running setup alone could not clear
+the stale roots because staging merged them back into every retry. That merge
+was introduced by `a5c23da1` on 2026-09-11.
+
+#### Resolution
+
+Interactive startup now verifies the existing NUL compatibility contract using
+the protected native executable in verify-only mode before skipping recovery.
+A failed probe returns `false`, so the CLI enters its existing setup child and
+UAC boundary. Healthy startup remains fast; command admission and SDK/daemon
+startup do not run setup or mutate ACLs. A healthy account is repaired in place
+by the existing installer. Capability setup filters its installation roots
+through the existing filesystem existence check, preserving historical roots
+in the pending marker for migration diagnosis without passing retired files to
+ACL preflight. Other filesystem errors still propagate.
+
+- Files Changed: `src/sandbox-runtime.ts`, `src/sandbox-runtime.test.ts`,
+  `public_docs/configuration/sandbox.md`, `docs/ADR.md`,
+  `docs/test-guides/FEATURE_295_v0.7.96_TEST_GUIDE.md`.
+- Tests Added: current marker plus missing NUL access requires recovery;
+  read-only inspection preserves the marker/account and observes restored access
+  without a cached false-ready result; setup succeeds with a retired historical
+  root while retaining that root in its pending migration record.
+- Validation: new regression observed RED before the fix, then GREEN; 116
+  related tests passed with 40 platform skips; source/test type checks and
+  CLI/SDK bundle build passed. Live source startup probe changed from `true`
+  to `false` on the unchanged failing host. The second regression was also
+  observed RED before its fix and GREEN afterwards. Standard source setup then
+  returned `ready:true`, without changing the account/group SIDs. Reboot
+  acceptance remains a manual follow-up.
+
+The real `toolBash`/trusted `toolWrite` replay in `C:\Works\TMP` started a
+120-second background PowerShell at 08:51:41 and completed at 08:53:41 with
+`[Exit: 0]`. Its initial/final identity and the delete/token probes were
+`srt-sandbox`; the background remained active during the 65 ms trusted text
+write. Shell deletion completed in 1116 ms. The original `hello.md` content was
+restored after verification. Host doctor remained ready after background exit.
+Evidence: `%TEMP%/kodax-nul341-smoke-rFcN5e/report.json`. An initial unit-suite
+attempt overlapping that live replay hit `EBUSY` in its artifact-deletion test;
+that case passed when rerun after the sandbox exited. Issue 343 subsequently
+isolates these fixtures from the live native cache, allowing host unit tests
+to overlap live sandbox experiments without deleting their shared ASRT binary.
+The complete five-file regression batch then passed (116 tests, 40 platform
+skips) with no overlapping live sandbox replay.
+
 ### Issue 340: Interrupted Run progress missing from next turn; compacted history ambiguous
 
 - Priority: High
-- Status: Resolved in working tree (not yet released)
+- Status: Resolved
 - Introduced: Observed with v0.7.96-rc.13; first affected release unknown
-- Fixed: unreleased
+- Fixed: `v0.7.96-rc.14`
 - Created / Source Resolution Date: 2026-09-29
 
 #### Original Problem
@@ -15401,11 +15629,34 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 216 (34 Open, 182 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 221 (36 Open / needs-info / ready, 185 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-10-01: Unreleased SDK and documentation audit
+
+- Review the eight commits after `v0.7.96-rc.13` and the pending sandbox/CI
+  changes. Managed and coding Runtime paths share journal recovery; embedded
+  and daemon execution share the implementation, and public types/exports
+  are present. Align the public SDK guide, sandbox/provider configuration
+  guides, and Unreleased changelog with the final behavior and its limits.
+- Ten focused source files pass 135 tests, the SDK journal handoff cases pass
+  3 selected tests, and bundled SDK credential/daemon compaction checks pass
+  15 tests. Source/test type checks, all 13 SDK declaration bundles, and the
+  CLI/SDK bundle build pass. These checks are not a full release matrix or
+  desktop-package acceptance. No live provider call is made by this audit.
+- Record Issue 344's remaining eval budget/evidence gap. Issue 342's original
+  unexpected REPL exit also remains unresolved.
+
+### 2026-10-01: Issues 342 and 343 investigated
+
+- Record the unexpected REPL exit as unresolved, with original Run evidence,
+  a full-TTY trace replay, and a temporary process lifecycle observer.
+- Isolate Windows sandbox unit fixtures from the live native cache; verify
+  host tests concurrently with a real 120-second sandbox Session. Running the
+  native provisioning suite inside a restricted sandbox remains unsupported.
 
 ### 2026-09-07: Issue 332 resolved (bundled Provider credential scope identity)
 

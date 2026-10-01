@@ -966,11 +966,27 @@ The result status is part of the contract:
   is accepted but before its body enters canonical history.
 - `partial`: persisted lineage or transcript identity needed for a complete
   projection of one or more existing conversation records is unavailable.
-  Available physical records are retained; Actor/Run state by itself does not
-  make an otherwise empty persisted conversation partial.
+  When newer compaction epochs are proven but an older boundary is not, the
+  projection returns those proven epochs and omits the unprovable older region,
+  with `compaction_history_truncated` naming its boundary. Available physical
+  records are retained in the fallback where the active path is missing or
+  incomplete, or no epoch can be proven.
+  Actor/Run state by itself does not make an otherwise empty persisted
+  conversation partial.
 - `ambiguous`: multiple legacy interpretations remain. All candidates are
-  retained and `issues[]` explains why; the host must not present the result as
-  confidently deduplicated.
+  retained in the physical-record fallback and `issues[]` explains why; the
+  host must not present the result as confidently deduplicated. A proven newer
+  region with an unprovable older boundary instead uses the `partial` truncation
+  contract above.
+
+The unreleased Issue 340 repair can restore legacy tool-call/result pairs only
+when one retained sibling chain exactly reproduces the old cleanup damage.
+It is read-only and does not rewrite the Session. Re-compacted copies follow
+proven logical identity and content through at most eight predecessor hops.
+Derived page cache v9 invalidates older generations once; direct and paged
+reads use the same restored entries, status, issues, and revision. A truncated
+conversation is not proof that the omitted physical history was empty; hosts
+can retain `loadFullTranscript()` as a separate raw audit view.
 
 Issues are bounded diagnostic summaries: `occurrenceCount` is the number of
 diagnostics represented, `entryCount` is the pre-bounding evidence-reference
@@ -1012,11 +1028,14 @@ lineage tail, or concurrent durable write fails with
 `SessionReadError.code === 'data_changed'`. Reload, obtain a fresh boundary,
 and rebuild the tail before retrying.
 
-The Ink REPL host follows the same rule: its prepared-tail persistence helper
+Host-owned Ink sessions follow the same rule: their prepared-tail persistence helper
 falls back to `appendSessionDelta(id, data)` after `data_changed`, so the
 authoritative full snapshot merges the newest UI/session state. Background
 write failures are emitted as structured diagnostics; they are not swallowed
 and a stale tail is never retried unchanged.
+Runtime-owned Ink sessions instead save host display/settings state and adopt
+the Runtime's durable lineage, as described in
+[transcript ownership](#unreleased-interrupted-run-recovery-and-transcript-ownership).
 
 A non-null fulfilled append result is the reusable successor boundary. A
 fulfilled `null` means the tail did commit exactly once, but the successor
@@ -4911,6 +4930,44 @@ capability diagnostic is evidence for troubleshooting, not permission to bypass
 the required capability. Diagnostic sink exceptions remain isolated from the
 Runtime operation.
 
+### Unreleased: interrupted Run recovery and transcript ownership
+
+Runtime-owned managed Runs persist generated messages and tool results at
+Runner commit boundaries, before a later provider request or tool can hang.
+Completion still requires the canonical Session write. UI event deltas alone
+are not durable conversation messages.
+
+The next `mode: 'managed_task'` or `mode: 'coding'` Run can receive an
+`Interrupted Run Recovery` record derived from earlier unfinished Runs of the
+same Session. Embedded Runtime and daemon execution share this implementation.
+Only evidence anchored to a turn on the active history path is included:
+journaled tool results, operations whose results are unknown, and quoted,
+unconfirmed excerpts of streamed replies. Thinking and live child-actor mirrors
+are excluded. The record is bounded to three Runs and 6,000 characters;
+operations take the budget before reply excerpts. Results and reply text
+already present in the same turn's formal history are omitted.
+
+This record belongs only to the provider request, never the persisted Session
+or an ordinary UI conversation row. An unreadable journal emits a
+`runtime.interrupted-run-recovery` warning and does not block the next Run.
+Unknown-result operations may already have taken effect; verify the current
+files or processes before repeating them. Streamed claims are not completion
+proof. Tool-only invocations need no record because they make no model call.
+Standalone `runKodaX()` / `runManagedTask()` calls do not discover Runtime
+journals automatically: hosts that need automatic recovery should use
+`createKodaXRuntime()` and its Run service. The exported
+`KodaXInterruptedRunJournal`, `KodaXInterruptedRunOperation`, and
+`KodaXInterruptedRunReply` types describe internal handoff data;
+`context.interruptedRunJournals` is not a host-owned persistence protocol.
+
+When a Runtime owns an Ink Session, it is the lineage writer. The Ink host
+saves display/settings state without minting a competing lineage, then adopts
+the Runtime's durable entry ids. `FileSessionStorage` reconciles messages
+against that canonical lineage. A cancellation before any result leaves the
+host's existing transcript intact. Embedders must not build a second
+conversation writer from streaming callbacks; use the Runtime Session APIs
+and presentation overlays instead.
+
 ### Historical v0.7.92 filesystem-effect coordinator and managed terminal authority
 
 The coordinator described below applied to v0.7.92-v0.7.95. v0.7.96 retires
@@ -6509,6 +6566,16 @@ Windows, Linux, and macOS:
   atomically publishes the ready marker only after confirmed parent success.
   No helper overlaps ordinary admission, shared system Temp is not prewarmed or
   rewritten, and doctor and normal admission never invoke this setup path.
+
+The unreleased Issue 341 fix changes bare interactive Windows CLI startup
+(including `kodax -r`): a current disk marker must also pass a read-only check
+of the live NUL device's sandbox-account grant before startup skips recovery.
+The marker can survive a reboot while that device grant does not. Failure
+enters the existing setup child/UAC boundary; historical read roots whose
+files disappeared are excluded from installation preflight. SDK, daemon,
+print-mode startup, doctor, and ordinary command admission do not gain
+automatic setup or ACL repair. SDK hosts should run the explicit host setup
+boundary when readiness requires activation, then recheck readiness.
 
 The Windows private desktop uses an ephemeral full-policy capability. Persistent
 filesystem authority instead uses stable capabilities derived from the

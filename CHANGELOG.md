@@ -8,6 +8,15 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Interactive Windows startup verifies the live NUL sandbox-account grant
+  before trusting the durable setup marker. Missing access enters the existing
+  setup recovery boundary; installation omits historical read roots whose
+  files disappeared. SDK/daemon startup and ordinary admission remain
+  read-only and do not activate setup automatically (Issue 341).
+- Windows sandbox unit tests provision mock-SID artifacts and remove recovery
+  fixtures in a private temporary native cache, so they no longer interfere
+  with live sandbox commands using the host's shared cache. The native
+  provisioning suite still requires an ordinary host token (Issue 343).
 - Tool-history validation pairs calls with results across the whole assistant
   scope, so an internal managed-run context message between them no longer
   strips both halves of the pair (Issue 340).
@@ -46,6 +55,21 @@ All notable changes to this project will be documented in this file.
   - A crash between the two writes no longer leaves a permanent fork.
   - A Run cancelled before it produced a result no longer clears the host's
     transcript copy.
+
+### Changed
+
+- CI runs through `workflow_call` or manual dispatch instead of branch pushes
+  and pull requests. Tag and manually dispatched release builds run the full
+  reusable CI workflow before their build matrix.
+
+### Documentation
+
+- Align the public SDK guide with read-only legacy history repair, partial
+  compaction truncation, transient interrupted-Run recovery, and Runtime-owned
+  transcript persistence. Document the CLI-only NUL recovery boundary and
+  provider authentication isolation.
+- Track unexpected interactive REPL exit as unresolved (Issue 342). Successful
+  SDK concurrency and full-TTY trace replay do not resolve that failure.
 
 ---
 
