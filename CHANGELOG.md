@@ -61,6 +61,12 @@ publication remains a manual maintainer action.
   provider key, so gateways such as zhipu-coding and deepseek returned 401 and
   the Anthropic token reached a third-party endpoint. The native Anthropic
   provider is unchanged.
+- Compare PowerShell-emitted native artifact and control-directory paths
+  through long-form realpaths when the literal comparison disagrees.
+  PowerShell's `GetFullPath` expands 8.3 path components, so a runner whose
+  `TEMP` root uses a short name (`C:\Users\RUNNER~1\...`) made the private
+  test native-artifact cache provisioning fail with an unexpected-path error
+  even though the provisioner returned the canonical destination.
 - The interactive REPL no longer forks a duplicate branch every round when a
   Runtime owns the Session. The host stops writing its own lineage. Storage
   reconciles host saves against the Runtime's durable lineage, and the host
