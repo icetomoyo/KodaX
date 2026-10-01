@@ -38,6 +38,14 @@ All notable changes to this project will be documented in this file.
   provider key, so gateways such as zhipu-coding and deepseek returned 401 and
   the Anthropic token reached a third-party endpoint. The native Anthropic
   provider is unchanged.
+- The interactive REPL no longer forks a duplicate branch every round when a
+  Runtime owns the Session. The host stops writing its own lineage. Storage
+  reconciles host saves against the Runtime's durable lineage, and the host
+  continues from the Runtime's entry ids. That fixes three problems:
+  - The next host save no longer replaces the Runtime's branch.
+  - A crash between the two writes no longer leaves a permanent fork.
+  - A Run cancelled before it produced a result no longer clears the host's
+    transcript copy.
 
 ---
 

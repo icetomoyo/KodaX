@@ -749,6 +749,38 @@ export async function persistHostSessionPayload(
   await storage.save(sessionId, sessionPayload);
 }
 
+/**
+ * Persist host-owned Session fields while a Runtime owns the transcript.
+ *
+ * The Runtime writes every Run boundary itself. The host copy re-mints entry
+ * ids when it reconciles a result, so writing it would add a sibling branch
+ * each round and later replace the Runtime's branch. Storage reconciles the
+ * messages against the durable lineage instead: a lagging or empty snapshot
+ * keeps it, and host-only messages extend its leaf. The returned lineage lets
+ * the host continue from the Runtime's entry ids.
+ */
+export async function persistRuntimeOwnedHostSession(
+  storage: Pick<SessionStorage, "save" | "getLineage">,
+  sessionId: string,
+  sessionPayload: SessionData,
+): Promise<KodaXSessionLineage | undefined> {
+  const { lineage: _hostLineage, ...runtimeOwnedPayload } = sessionPayload;
+  await storage.save(sessionId, runtimeOwnedPayload);
+  return (await storage.getLineage?.(sessionId)) ?? undefined;
+}
+
+/**
+ * A Runtime Run cancelled before it published a result carries no transcript.
+ * The Runtime's own boundary saves still hold its history, so the host must not
+ * replace its copy (or its active entry) with the empty list.
+ */
+export function isTranscriptlessRuntimeResult(
+  runtimeOwned: boolean,
+  result: Pick<KodaXResult, "interrupted" | "messages">,
+): boolean {
+  return runtimeOwned && result.interrupted === true && result.messages.length === 0;
+}
+
 export interface InkREPLOptions extends KodaXOptions {
   storage?: SessionStorage;
   execPolicy?: StandaloneExecPolicyOptions;
@@ -8232,12 +8264,22 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       artifactLedger: context.artifactLedger,
       ...extensionSessionPayload,
     });
-    await persistHostSessionPayload(
-      storage,
-      context.sessionId,
-      sessionPayload,
-      context.sessionSnapshotDirty === true,
-    );
+    if (options.runtimeRunner) {
+      const sessionId = context.sessionId;
+      const runtimeLineage = await persistRuntimeOwnedHostSession(storage, sessionId, sessionPayload);
+      // Continue from the Runtime's entry ids unless a local edit (memory
+      // mirror, /goal, session switch) replaced the host copy during the write.
+      if (runtimeLineage && context.lineage === lineage && context.sessionId === sessionId) {
+        context.lineage = runtimeLineage;
+      }
+    } else {
+      await persistHostSessionPayload(
+        storage,
+        context.sessionId,
+        sessionPayload,
+        context.sessionSnapshotDirty === true,
+      );
+    }
     context.extensionStateDirty = false;
     context.extensionRecordsDirty = false;
     context.sessionSnapshotDirty = false;
@@ -8253,7 +8295,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         },
       ));
     }
-  }, [context, reconcileContextLineage, storage]);
+  }, [context, options.runtimeRunner, reconcileContextLineage, storage]);
 
   const flushPendingPersistContextState = useCallback(() => {
     if (persistContextStateRunnerRef.current) {
@@ -8394,10 +8436,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     flushForegroundTextBuffer();
     const sidecarMessageDelivered = sidecarMessageDeliveredRef.current;
     sidecarMessageDeliveredRef.current = false;
-    context.messages = result.messages;
-    context.contextTokenSnapshot = result.contextTokenSnapshot;
     applyRuntimeSessionSnapshot(context, result);
-    reconcileContextLineage(result.messages);
+    if (!isTranscriptlessRuntimeResult(options.runtimeRunner !== undefined, result)) {
+      context.messages = result.messages;
+      context.contextTokenSnapshot = result.contextTokenSnapshot;
+      reconcileContextLineage(result.messages);
+    }
 
     // Issue 117: When the round failed (API error, etc.), skip the full
     // finalization that emits routing diagnostics and treats partial text as
@@ -8538,6 +8582,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     flushForegroundTextBuffer,
     getFullResponse,
     getThinkingContent,
+    options.runtimeRunner,
     persistContextStateInBackground,
     reconcileContextLineage,
     resetLiveToolCalls,
@@ -9976,6 +10021,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             },
           },
         };
+
+        // Commands such as /goal and /compact edit context.lineage and save it
+        // verbatim. Let the pending round-end write adopt the Runtime's entry
+        // ids first, so the command builds on the Runtime's branch.
+        if (options.runtimeRunner && parsed) {
+          await persistContextStateQueueRef.current.catch(reportBackgroundSessionPersistenceError);
+        }
 
         // Capture console.log output to add to history instead of
         // letting Ink render it in the wrong position
