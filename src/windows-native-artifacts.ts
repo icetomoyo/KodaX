@@ -204,6 +204,19 @@ function sameOrInside(parent: string, candidate: string): boolean {
   return relative === '' || (!relative.startsWith('..') && !pathApi.isAbsolute(relative));
 }
 
+// PowerShell's GetFullPath expands 8.3 path components (a TEMP root like
+// `C:\Users\RUNNER~1\...` comes back as `...\runneradmin\...`), so two
+// strings for the same file can disagree. Compare through the filesystem's
+// long-form paths once the destination exists.
+function sameRealPath(left: string, right: string): boolean {
+  try {
+    return fs.realpathSync.native(left).toLowerCase()
+      === fs.realpathSync.native(right).toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
 function assertDevelopmentSourceIsOutsideWriteRoots(
   directory: string,
   roots: readonly string[],
@@ -976,7 +989,8 @@ function runWindowsSandboxControlDirectoryAction(
     const reason = result.error?.message ?? (result.stderr.trim() || `exit ${String(result.status)}`);
     throw new Error(`Cannot ${action} protected KodaX native shell control state: ${reason}`);
   }
-  if (result.stdout.trim().toLowerCase() !== controlRoot.toLowerCase()) {
+  if (result.stdout.trim().toLowerCase() !== controlRoot.toLowerCase()
+    && !sameRealPath(result.stdout.trim(), controlRoot)) {
     throw new Error('Native shell control verifier returned an unexpected path.');
   }
   const canonicalCache = fs.realpathSync.native(cacheRoot);
@@ -1050,7 +1064,8 @@ function provisionProtectedArtifact(input: {
   }
   const destination = result.stdout.trim();
   const expected = path.join(destinationDirectory, input.entry.file);
-  if (destination.toLowerCase() !== expected.toLowerCase()) {
+  if (destination.toLowerCase() !== expected.toLowerCase()
+    && !sameRealPath(destination, expected)) {
     throw new Error('Native artifact provisioner returned an unexpected path.');
   }
   readVerifiedArtifact(destination, input.entry.sha256);
