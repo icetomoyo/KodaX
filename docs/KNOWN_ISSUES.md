@@ -1062,9 +1062,9 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 344 | Medium | ready | Interrupted-Run eval lacks per-request timeout, total usage budget, and incremental raw preservation | unreleased (`c232d7b5`); confirmed at `efe33d7d` | — | 2026-10-01 | — |
+| 344 | Medium | Open | Interrupted-Run eval lacks per-request timeout, total usage budget, and incremental raw preservation | unreleased (`c232d7b5`); confirmed at `efe33d7d` | — | 2026-10-01 | — |
 | 343 | Medium | Resolved | Windows sandbox unit fixtures provision mock-SID artifacts and remove files in the live native cache | observed with v0.7.96-rc.13; first affected release unknown | working tree (unreleased) | 2026-10-01 | 2026-10-01 |
-| 342 | High | needs-info | Windows interactive REPL exits during final output without a terminal Run event | observed with v0.7.96-rc.13; first affected release unknown | — | 2026-10-01 | — |
+| 342 | High | Open | Windows interactive REPL exits during final output without a terminal Run event | observed with v0.7.96-rc.13; first affected release unknown | — | 2026-10-01 | — |
 | 341 | High | Resolved | Windows startup skips NUL-device ACL repair after reboot because the durable setup marker remains current | v0.7.96-alpha.6 (`0aff6f91`) | `v0.7.96-rc.14` | 2026-10-01 | 2026-10-01 |
 | 340 | High | Resolved | Interrupted Run progress missing from next turn; compacted history ambiguous after internal context split a tool pair | observed with v0.7.96-rc.13; first affected release unknown | `v0.7.96-rc.14` | 2026-09-29 | 2026-09-29 |
 | 339 | Medium | Resolved | Background Git probes repeatedly trigger macOS developer-tools installation prompts | observed with v0.7.96-rc.10; first affected release unknown | `v0.7.96-rc.11` | 2026-09-23 | 2026-09-23 |
@@ -1295,7 +1295,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ### Issue 344: Interrupted-Run eval budget and failure evidence are incomplete
 
 - Priority: Medium
-- Status: ready
+- Status: Open (investigation ready)
 - Introduced: Unreleased (`c232d7b5`); confirmed at `efe33d7d`
 - Created: 2026-10-01
 
@@ -1384,7 +1384,7 @@ resolve Issue 342 or prove that every older sandbox failure mode is absent.
 ### Issue 342: Windows REPL exits during final output without Run settlement
 
 - Priority: High
-- Status: needs-info
+- Status: Open (needs-info)
 - Introduced: Observed with v0.7.96-rc.13; first affected release unknown
 - Created: 2026-10-01
 
@@ -3956,7 +3956,7 @@ the duplicate projection.
 ### 282: Agent progress persistence backlog can self-fence its live owner and make an unknown Run reject Stop
 
 - Priority: High
-- Status: Release blocked
+- Status: Open (release blocked)
 - Introduced: v0.7.79 bounded Actor settlement
 - Fixed target: v0.7.85
 - Created: 2026-08-06
@@ -15629,7 +15629,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 221 (36 Open / needs-info / ready, 185 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 221 (36 Open, 185 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
