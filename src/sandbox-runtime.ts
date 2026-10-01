@@ -1269,14 +1269,18 @@ function readWindowsSandboxV2CutoverMarker(): WindowsSandboxV2CutoverMarker | un
 }
 
 /**
- * Coarse interactive-startup check, matching Codex's marker fast path. This is
- * only a hint for skipping setup work; command admission still performs the
- * complete fail-closed sandbox verification.
+ * Read-only interactive-startup check. The durable setup marker survives a
+ * reboot, but the NUL device's account ACE does not. Verify both before skipping
+ * setup; command admission still performs the complete sandbox verification.
  */
 export function isWindowsSandboxV2SetupCurrent(): boolean {
   if (process.platform !== 'win32') return true;
   try {
-    return readWindowsSandboxV2CutoverMarker() !== undefined;
+    const marker = readWindowsSandboxV2CutoverMarker();
+    if (marker === undefined) return false;
+    const artifact = resolveWindowsSandboxV2Executable({ provision: false });
+    verifyWindowsV2AccountCompatibility(marker.sandboxUserSid, artifact.path);
+    return true;
   } catch {
     return false;
   }
@@ -2478,7 +2482,11 @@ function installWindowsV2AccountCapabilities(
       setupMarkerSha256: createHash('sha256')
         .update(JSON.stringify(marker), 'utf8')
         .digest('hex'),
-      readRoots: windowsSandboxAclRoots(marker.setupReadRoots, home, aclExclusions),
+      // The installing marker retains historical roots for migration retries;
+      // retired files must not become new ACL installation targets.
+      readRoots: existingMinimalWindowsAclGuardRoots(
+        windowsSandboxAclRoots(marker.setupReadRoots, home, aclExclusions),
+      ),
       writeRoots: [],
       aclExclusions,
       ...('legacyAclCleanup' in marker ? { legacyAclCleanup: marker.legacyAclCleanup } : {}),

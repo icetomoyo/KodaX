@@ -6275,6 +6275,17 @@ host-fallback-disabled target-start/exit probe. Non-interactive Runtime/daemon/
 SDK startup remains verify-only. Normal commands never wait on the setup lock
 or the legacy ACL cleanup path, so independent Sessions retain true overlap.
 
+**2026-10-01 startup readiness correction (Issue 341)**: A durable current setup
+marker does not prove the NUL kernel device still carries its setup-time account
+ACE after a reboot. The interactive startup fast path now runs the existing
+read-only native NUL verifier against the marker's account SID. Failure enters
+the existing setup child/UAC boundary and repairs a healthy account in place;
+it never performs setup during command admission or SDK/daemon startup.
+The pending marker retains previous read roots for migration retries, while
+capability installation filters out paths that no longer exist. Historical
+registry transaction files cannot block a fresh setup by being merged back
+into every installation request. Other filesystem failures remain errors.
+
 **Rejected alternatives**: keeping permission-before-sandbox (retains noisy
 reviews and the unsafe fallthrough split); moving a complete deterministic
 operation analyzer before the sandbox (makes the sandbox largely redundant and
