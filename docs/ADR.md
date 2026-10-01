@@ -2,7 +2,33 @@
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
 
-> Last updated: 2026-09-29
+> Last updated: 2026-10-01
+>
+> **v0.7.96-rc.14 release addendum:** Interrupted-Run recovery is
+> turn-matched and budgeted across Runs: the next managed or coding Run of a
+> Session receives a labelled, bounded, transient record of journaled
+> progress from earlier unfinished Runs (confirmed results, unknown-result
+> operations, unconfirmed text excerpts); operations from every included Run
+> take the size bound before any excerpt, and operations match history per
+> turn so a reused tool-call id cannot hide an earlier unfinished operation.
+> Tool-history validation pairs calls with results across the whole
+> assistant scope, so internal managed-run context messages no longer strip
+> a pair. Conversation resolution traces compaction copies up to eight
+> predecessor hops, repairs damage reproducible from retained sibling
+> chains, and truncates unprovable older boundaries as `partial` with
+> `compaction_history_truncated` (page cache bumped). Anthropic-compatible
+> providers ignore an inherited `ANTHROPIC_AUTH_TOKEN`, and failed managed
+> provider calls hand back the Runner transcript rather than
+> provider-normalized copies. In Runtime mode the Ink host stops writing its
+> own lineage: the Runtime is the single transcript writer, storage
+> reconciles host saves against the Runtime's durable lineage, and the host
+> continues from the Runtime's entry ids. Windows interactive startup
+> verifies the live NUL sandbox-account grant behind a current setup marker
+> (the durable marker survives reboot; the NUL account ACE does not) and
+> enters the existing setup recovery boundary on failure; SDK/daemon startup
+> and ordinary admission stay read-only (Issue 341). CI runs through
+> `workflow_call` inside the tag-triggered Release workflow instead of on
+> branch pushes.
 >
 > **v0.7.96-rc.13 release addendum:** Runtime-owned (`persistedByHost: false`)
 > managed runs persist each generated assistant message and tool result at

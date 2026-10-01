@@ -6,6 +6,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.96-rc.14] - 2026-10-01
+
+Fourteenth release candidate of the v0.7.96 line: interrupted-Run recovery
+reaches coding Runs and managed execution with budgeted turn-matched
+records, tool-history pairing and compaction-copy tracing become provable,
+Anthropic-compatible providers ignore inherited `ANTHROPIC_AUTH_TOKEN`, the
+Ink host defers to the Runtime as the single transcript writer, and Windows
+interactive startup re-verifies the NUL account ACE behind a current setup
+marker after a reboot. CI now runs inside the tag-triggered Release
+workflow instead of on branch pushes. Every rc.13 contract is retained. npm
+publication remains a manual maintainer action.
+
 ### Fixed
 
 - Interactive Windows startup verifies the live NUL sandbox-account grant

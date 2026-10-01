@@ -786,6 +786,18 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
+**v0.7.96-rc.14 release:** Fourteenth release candidate of the v0.7.96
+line. Interrupted-Run recovery reaches coding Runs and managed execution
+with a labelled, bounded, transient record of journaled progress matched
+per turn; tool-history pairing spans the whole assistant scope;
+conversation resolution traces compaction copies to a provable root and
+truncates unproven boundaries as `partial`; Anthropic-compatible providers
+ignore an inherited `ANTHROPIC_AUTH_TOKEN`; the Ink host defers to the
+Runtime as the single transcript writer; and Windows interactive startup
+re-verifies the NUL account ACE behind a current setup marker after a
+reboot (Issues 340-341). CI now runs inside the tag-triggered Release
+workflow instead of on branch pushes. Every rc.13 contract is retained.
+
 **v0.7.96-rc.13 release:** Thirteenth release candidate of the v0.7.96
 line. Runtime-owned managed runs persist generated assistant messages and
 tool results at Runner commit boundaries, before tools or subsequent

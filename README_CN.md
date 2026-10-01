@@ -296,6 +296,15 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
+**v0.7.96-rc.14 发布**：v0.7.96 线第十四个发布候选。中断 Run 的恢复进入
+coding Run 与托管执行：以带标签、有界、临时的记录按回合匹配交接已日志化的
+进度；工具历史配对覆盖整个 assistant 范围；会话解析把压缩副本追溯到可证明
+的根，无法证明的边界以 `partial` 截断；Anthropic 兼容 Provider 不再继承
+`ANTHROPIC_AUTH_TOKEN`；Ink 宿主让位给 Runtime 作为唯一转录写入者；
+Windows 交互启动在重启后面对仍有效的 setup 标记会重新校验 NUL 账户 ACE
+（Issues 340-341）。CI 改为在 tag 触发的 Release workflow 内运行，普通
+push 不再触发。所有 rc.13 契约全部保留。
+
 **v0.7.96-rc.13 发布**：v0.7.96 线第十三个发布候选。Runtime 拥有的托管 Run
 在 Runner 消息提交边界持久化已生成的助手消息与工具结果，赶在工具或后续
 Provider 调用可能挂起之前：当前压缩后的转录与排队输入身份在中断的 Run 中
@@ -461,7 +470,7 @@ native 文本权威改在摘要固定的 `manylinux_2_28` 构建器中编译，�
 scope 在 SDK、Agent 摘要、CLI 与 Runtime Worker 请求间共享，保留结构化的 Child Agent Provider
 失败信息，精确遵循 run-scoped 凭据校验，并为严格 vLLM 网关省略空 `tools` 数组（Issues 329-332）。
 npm 发布仍由
-维护者手动执行。详见 [v0.7.96-rc.13 发布清单](docs/release.md#v0796-rc13-release-preparation)。
+维护者手动执行。详见 [v0.7.96-rc.14 发布清单](docs/release.md#v0796-rc14-release-preparation)。
 
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
 credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭

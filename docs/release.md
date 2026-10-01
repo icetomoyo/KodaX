@@ -137,6 +137,67 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.96-rc.14 release preparation
+
+Release state: `v0.7.96-rc.14` is the GitHub pre-release for the exact
+tagged commit — the fourteenth release candidate of the v0.7.96 line,
+bringing turn-matched interrupted-Run recovery, provable history pairing
+and compaction tracing, provider authentication isolation, single-writer
+transcript ownership, and Windows NUL-ACE startup recovery (Issue 341).
+Starting with this candidate, branch pushes no longer trigger CI: the full
+reusable CI workflow (`workflow_call`) runs inside the tag-triggered
+Release workflow before the build matrix, so the tag is the first and only
+remote validation gate. Local gates below are mandatory before tagging.
+
+On top of rc.13 it includes:
+
+- Interrupted-Run recovery hands the next managed or coding Run a labelled,
+  bounded, transient record of journaled progress from earlier unfinished
+  Runs, matched per turn and budgeted across Runs (Issues 340; regression
+  guide: `docs/test-guides/ISSUE_INTERRUPTED_HISTORY_v0.7.96_REGRESSION_GUIDE.md`).
+- Tool-history validation pairs calls with results across the whole
+  assistant scope; conversation resolution traces compaction copies to a
+  provable root and truncates unprovable boundaries as `partial`.
+- Anthropic-compatible providers ignore an inherited `ANTHROPIC_AUTH_TOKEN`.
+- The Ink host defers to the Runtime as the single transcript writer in
+  Runtime mode.
+- Windows interactive startup re-verifies the live NUL sandbox-account grant
+  behind a current setup marker and recovers through the existing setup
+  boundary (Issue 341; sandbox unit fixtures moved to a private native
+  cache, Issue 343).
+- CI moved from branch-push/pull-request triggers to `workflow_call` +
+  manual dispatch; tag pushes run full CI before the release build matrix
+  (`55868a89`).
+
+All root/workspace package versions and lockfile entries are `0.7.96-rc.14`.
+The feature-design submodule, public guides, architecture documents, and
+`kodax_manual` track this release. Historical release records retain their versions.
+
+Release gates:
+
+1. Local, before tagging (no branch CI exists anymore): strict source/test
+   typechecks, tracker consistency, registry (`kodax_manual`) tests,
+   sandbox-runtime regressions (`src/sandbox-runtime.test.ts`), interrupted
+   recovery and transcript suites
+   (`packages/coding/src/task-engine/runner-driven.test.ts`,
+   `packages/agent/src/primitives/runner.test.ts`, REPL/session suites),
+   provider suites (`packages/llm/src`), and package builds pass.
+2. Push the reachable feature-design submodule commit before the parent commit.
+3. Push the release commit, then tag the exact commit `v0.7.96-rc.14`; the
+   tag must trigger the Release workflow whose `Full CI` job must pass
+   before the build matrix runs.
+4. The Release workflow must produce five platform archives, the universal
+   npm tarball, and SHA256SUMS (13 assets), with every job green, and
+   auto-create the GitHub pre-release.
+5. Leave npm publication to the maintainer: set `npm_config_tag=rc` in the
+   shell environment, then run `node scripts/release.mjs` to download and
+   verify the exact universal tarball before publishing. PowerShell:
+   `$env:npm_config_tag = "rc"`.
+
+Windows remains native shell protocol 10 with setup generation 11 and
+`sandboxRuntime:11`; `runtimeExitSettlement:2`, `crashOutcomeModel:2`, and
+`runtimeAutoModeGuardrail:6` remain unchanged.
+
 ## v0.7.96-rc.13 release preparation
 
 Release state: `v0.7.96-rc.13` is the GitHub pre-release for the exact

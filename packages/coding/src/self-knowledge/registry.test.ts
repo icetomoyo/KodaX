@@ -145,7 +145,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('may canonicalize DACL protection/inheritance control at commit');
     expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
-    expect(sandbox).toContain('v0.7.96-rc.13 release uses Windows native shell protocol 10');
+    expect(sandbox).toContain('v0.7.96-rc.14 release uses Windows native shell protocol 10');
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
@@ -173,7 +173,13 @@ describe('FEATURE_218 manual registry', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('The v0.7.96-rc.13 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.96-rc.14 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The rc.14 release hands the next managed or coding Run a labelled, bounded, transient record');
+    expect(sdk).toContain('matched per turn and budgeted across');
+    expect(sdk).toContain('providers ignore an inherited `ANTHROPIC_AUTH_TOKEN`');
+    expect(sdk).toContain('the single transcript writer');
+    expect(sdk).toContain('verifies the live NUL');
+    expect(sdk).toContain('SDK/daemon startup and ordinary admission stay read-only (Issues 341/343).');
     expect(sdk).toContain('The rc.13 release persists Runtime-owned managed-run output at Runner commit boundaries');
     expect(sdk).toContain('so an interrupted run keeps the current compacted transcript');
     expect(sdk).toContain('never');
