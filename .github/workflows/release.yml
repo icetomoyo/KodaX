@@ -1,8 +1,8 @@
 name: Release
 
-# Two trigger paths share the same build matrix:
-#   1. Push a `v*` tag         → build + auto-create GitHub Release with binaries
-#   2. workflow_dispatch (UI)  → build only, artifacts available for manual download
+# Two trigger paths run full CI before the same build matrix:
+#   1. Push a `v*` tag         → CI + build + auto-create GitHub Release with binaries
+#   2. workflow_dispatch (UI)  → CI + build, artifacts available for manual download
 #
 # No code signing; binaries are distributed as tar.gz (Linux/macOS) and zip (Windows)
 # with a sidecar `builtin/` directory next to the executable.
@@ -30,8 +30,13 @@ permissions:
   contents: write   # Needed for softprops/action-gh-release on tag push
 
 jobs:
+  ci:
+    name: Full CI
+    uses: ./.github/workflows/ci.yml
+
   build:
     name: build (${{ matrix.target }})
+    needs: ci
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
