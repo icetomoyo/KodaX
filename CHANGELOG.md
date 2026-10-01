@@ -33,6 +33,11 @@ All notable changes to this project will be documented in this file.
   is truncated at that boundary and reported as `partial` with
   `compaction_history_truncated`, instead of flattening unproven regions into
   one conversation. The page cache version is bumped to 9.
+- Anthropic-compatible providers no longer pick up an inherited
+  `ANTHROPIC_AUTH_TOKEN`. The SDK sent it as a Bearer header next to the
+  provider key, so gateways such as zhipu-coding and deepseek returned 401 and
+  the Anthropic token reached a third-party endpoint. The native Anthropic
+  provider is unchanged.
 
 ---
 
