@@ -726,7 +726,14 @@ function run(command, args, cwd, timeoutMs = 120_000, env = process.env) {
       clearTimeout(timer);
       const output = Buffer.concat(stdout).toString('utf8');
       if (code === 0) resolve(output);
-      else reject(new Error(`${command} exited ${code}: ${Buffer.concat(stderr).toString('utf8')}`));
+      else {
+        const stderrText = Buffer.concat(stderr).toString('utf8');
+        const stdoutTail = output.length > 2000 ? output.slice(-2000) : output;
+        reject(new Error(
+          `${command} exited ${code}: ${stderrText}`
+          + (stdoutTail === '' ? '' : `\n[stdout tail]\n${stdoutTail}`),
+        ));
+      }
     });
   });
 }
