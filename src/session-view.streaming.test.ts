@@ -15,7 +15,7 @@ it('projects current thinking and tool input progress without retaining partial 
     events.onThinkingDelta?.('Plan', { providerRequestId: 'request' });
     events.onThinkingDelta?.(' now', { providerRequestId: 'request' });
     await expect.poll(() => views.at(-1)?.activity?.streaming).toEqual({
-      kind: 'thinking', providerRequestId: 'request', itemId: 'run:request:thinking', charCount: 8,
+      kind: 'thinking', providerRequestId: 'request', itemId: 'run:request:thinking', charCount: 8, estimatedTokenCount: 2,
     });
     events.onToolInputDelta?.('read', '{"partial-secret":', { providerRequestId: 'request', toolId: 'call' });
     await expect.poll(() => views.at(-1)?.activity?.streaming).toEqual({

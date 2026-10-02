@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { emitKodaXDiagnostic, getSessionLineagePath } from '@kodax-ai/agent';
+import { countTokens, emitKodaXDiagnostic, getSessionLineagePath } from '@kodax-ai/agent';
 import { redactScopedProviderCredential } from '@kodax-ai/llm';
 import type { KodaXMessage, KodaXSessionUiHistoryItem, KodaXSessionData } from '@kodax-ai/agent';
 import { createOutputSegmentProjection, reduceOutputSegmentProjection, effectiveOutputSegmentText } from '@kodax-ai/coding';
@@ -460,6 +460,15 @@ export class SessionViewOwner {
       const costReport = state.costReport?.current?.();
       if (state.activityRunId && view.runs.some(run => run.runId === state.activityRunId && !STREAMING_RUN_PHASES.has(run.phase))) {
         if (state.activity?.streaming) state.activity = { ...state.activity, streaming: undefined };
+      }
+      const streaming = state.activity?.streaming;
+      if (state.activity && streaming?.kind === 'thinking') {
+        const segment = state.segments.get(state.activity.runId)?.active;
+        if (segment?.providerRequestId === streaming.providerRequestId) {
+          // Estimate once per coalesced view, before presentation text is bounded.
+          state.activity = { ...state.activity, streaming: { ...streaming,
+            estimatedTokenCount: countTokens(segment.thinkingText) } };
+        }
       }
       const { committedOutputIds: _committed, ...publicView } = view;
       state.view = { ...publicView, ...(state.activity ? { activity: { ...state.activity, ...(costReport ? { costReport } : {}) } } : {}), items: boundedViewItems(items) };

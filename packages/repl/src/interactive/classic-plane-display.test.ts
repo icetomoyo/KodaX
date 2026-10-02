@@ -202,7 +202,7 @@ describe('createClassicPlaneDisplayDiffer (T18)', () => {
   it('prints one count snapshot per streaming phase, retaining it across reconnect snapshots', async () => {
     const lines: string[] = [];
     const differ = createClassicPlaneDisplayDiffer(line => lines.push(line));
-    const thinking = { runId: 'run', streaming: { kind: 'thinking' as const, providerRequestId: 'request', itemId: 'thought', charCount: 5 } };
+    const thinking = { runId: 'run', streaming: { kind: 'thinking' as const, providerRequestId: 'request', itemId: 'thought', charCount: 5, estimatedTokenCount: 37 } };
     await differ([], thinking);
     await differ([], { ...thinking, streaming: { ...thinking.streaming, charCount: 1000 } });
     // Reconnected initial snapshots reuse this same session differ.
@@ -213,7 +213,7 @@ describe('createClassicPlaneDisplayDiffer (T18)', () => {
     await differ([], { ...tool, streaming: { ...tool.streaming, callId: 'two', charCount: 2 } });
     await differ([], { runId: 'run' });
     await differ([], tool);
-    expect(lines).toEqual(['info:Thinking (5 chars received so far)', 'info:Receiving read (8 chars received so far)',
+    expect(lines).toEqual(['info:Thinking (~37 tokens received so far)', 'info:Receiving read (8 chars received so far)',
       'info:Receiving read (2 chars received so far)', 'info:Receiving read (8 chars received so far)']);
   });
 

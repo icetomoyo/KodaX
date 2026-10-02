@@ -491,6 +491,34 @@ it.each(['initial', undefined])('captures delivered input changes only for new s
   } finally { await owner.close(); }
 });
 
+it('publishes multilingual thinking token estimates for the active request without counting child output', async () => {
+  const owner = new SessionViewOwner(async () => ({
+    session: { id: 'session', title: 'Test' }, settings: {}, queue: [], interactions: [], runs: [], items: [],
+  }), async () => {});
+  const observed: ClientSessionView[] = [];
+  const events = owner.events('session', 'run');
+  const meta = { providerRequestId: 'first' };
+  events.onOutputSegmentStart?.({ responseId: 'response', providerRequestId: 'first', mode: 'append' });
+  events.onThinkingDelta?.('Hello 世', meta);
+  events.onThinkingDelta?.('界', meta);
+  try {
+    const observation = await owner.observe('session', view => observed.push(view));
+    expect(observed.at(-1)?.activity?.streaming).toMatchObject({ kind: 'thinking',
+      charCount: 8, estimatedTokenCount: 4 });
+    events.onThinkingDelta?.('Child thinking must not increase parent tokens', { ...meta, contextKind: 'child', childAgentId: 'child' });
+    events.onThinkingDelta?.('😀', meta);
+    await expect.poll(() => observed.at(-1)?.activity?.streaming).toMatchObject({
+      charCount: 10, estimatedTokenCount: 5 });
+    events.onOutputSegmentStart?.({ responseId: 'response', providerRequestId: 'second', mode: 'replace' });
+    events.onThinkingDelta?.('12345', { providerRequestId: 'second' });
+    await expect.poll(() => observed.at(-1)?.activity?.streaming).toMatchObject({
+      providerRequestId: 'second', charCount: 5, estimatedTokenCount: 2 });
+    events.onStreamEnd?.({ providerRequestId: 'second' });
+    await expect.poll(() => observed.at(-1)?.activity?.streaming).toBeUndefined();
+    observation.close();
+  } finally { await owner.close(); }
+});
+
 it('publishes API usage and rebases parent tokens after root compaction without child contamination', async () => {
   const owner = new SessionViewOwner(async () => ({
     session: { id: 'session', title: 'Test' }, settings: {}, queue: [], interactions: [], runs: [], items: [],

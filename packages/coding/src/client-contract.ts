@@ -515,6 +515,8 @@ export interface ClientSessionActivity {
   readonly streaming?: {
     readonly kind: 'thinking'; readonly providerRequestId: string;
     readonly itemId: string; readonly charCount: number;
+    /** Host estimate for the current request's visible thinking, not Provider usage. */
+    readonly estimatedTokenCount?: number;
   } | {
     readonly kind: 'tool-input'; readonly providerRequestId: string;
     readonly toolName: string; readonly callId?: string;

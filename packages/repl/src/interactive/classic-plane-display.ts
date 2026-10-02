@@ -88,7 +88,9 @@ export function createClassicPlaneDisplayDiffer(write: WriteLine, readItem?: Rea
       if (!printedStreamingPhases.has(phase)) {
         printedStreamingPhases.add(phase);
         const label = streaming.kind === 'thinking' ? 'Thinking' : `Receiving ${streaming.toolName}`;
-        const count = streaming.charCount === undefined ? '' : ` (${streaming.charCount} chars received so far)`;
+        const count = streaming.kind === 'thinking'
+          ? streaming.estimatedTokenCount === undefined ? '' : ` (~${streaming.estimatedTokenCount} tokens received so far)`
+          : streaming.charCount === undefined ? '' : ` (${streaming.charCount} chars received so far)`;
         write(`info:${label}${count}`);
       }
     }

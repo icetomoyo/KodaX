@@ -124,12 +124,12 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
     const meta = { providerRequestId };
     events!.onOutputSegmentStart?.({ responseId: `streaming-response-${surface}`, providerRequestId, mode: 'append' });
     events!.onThinkingDelta?.('think', meta);
-    await expect.poll(output).toContain(surface === 'ink' ? 'Thinking(5chars)' : 'Thinking(5charsreceivedsofar)');
+    await expect.poll(output).toContain(surface === 'ink' ? 'Thinking(~2tokens)' : 'Thinking(~2tokensreceivedsofar)');
     const beforeThinkingUpdate = output().length;
-    events!.onThinkingDelta?.(' more', meta);
+    events!.onThinkingDelta?.(' more more more more more more more more', meta);
     // The owned renderer updates only changed cells, so the stable label is not repeated.
-    if (surface === 'ink') await expect.poll(() => output().slice(beforeThinkingUpdate)).toContain('10chars)');
-    events!.onThinkingEnd?.('think more', meta);
+    if (surface === 'ink') await expect.poll(() => output().slice(beforeThinkingUpdate)).toContain('12tokens)');
+    events!.onThinkingEnd?.('think more more more more more more more more', meta);
     events!.onToolInputDelta?.('read', '{"path":', { ...meta, toolId: `tool-${surface}` });
     await expect.poll(output).toContain(surface === 'ink' ? 'Receivingread(8chars)' : 'Receivingread(8charsreceivedsofar)');
     const beforeInputUpdate = output().length;

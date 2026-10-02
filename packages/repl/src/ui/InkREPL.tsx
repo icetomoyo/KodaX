@@ -4712,7 +4712,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       if (activity?.kind !== 'busy' || !hostStreamingActivity || isLivePaused || workflowBuilderMessage
         || (sessionView?.activity?.compacting ?? promptControlStreamingState.isCompacting)) return activity;
       const label = hostStreamingActivity.kind === 'thinking' ? 'Thinking' : `Receiving ${hostStreamingActivity.toolName}`;
-      const count = hostStreamingActivity.charCount === undefined ? '' : ` (${hostStreamingActivity.charCount} chars)`;
+      const count = hostStreamingActivity.kind === 'thinking'
+        ? hostStreamingActivity.estimatedTokenCount === undefined ? '' : ` (~${hostStreamingActivity.estimatedTokenCount} tokens)`
+        : hostStreamingActivity.charCount === undefined ? '' : ` (${hostStreamingActivity.charCount} chars)`;
       return { ...activity, text: `${label}${count}` };
     },
     [
