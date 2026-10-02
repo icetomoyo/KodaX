@@ -11,10 +11,10 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.96-rc.14` (Git tag / GitHub pre-release) |
+| Current released version | `v0.7.96` (Git tag / GitHub pre-release) |
 | Current package version | `@kodax-ai/kodax@0.7.96-rc.10` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
-| Current implementation | [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) — released in `v0.7.96-beta.9`, extended through `v0.7.96-rc.14` |
+| Current implementation | [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) — released in `v0.7.96-beta.9`, extended through `v0.7.96` |
 | Next design | `v0.7.97` / `FEATURE_298` — specification and ticket review; implementation not started |
 | Roadmap updated | `2026-09-23` — FEATURE_300 planned for `v0.7.99`; implementation not started |
 | Total tracked features | `84` |
@@ -29,7 +29,7 @@
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 59 | `299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96-rc.14; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| Completed | 59 | `299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 1 | `225` | `225` remains the bounded v0.8.25 cleanup. |
 | Planned, 0.7.97 | 1 | `298` | Product Host / Client / execution-boundary simplification; spec and ticket review, including a lifecycle decision. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
@@ -521,9 +521,23 @@
 
 ---
 
+## v0.7.96 Release Record
+
+`v0.7.96` is the stable release of the v0.7.96 line. It finalizes the
+fourteen release candidates: trusted text transactions and platform shell
+containment across Windows, Linux, and macOS; daemon lifecycle arbitration;
+nonblocking uncertain Shell cleanup with honest `effectOutcome: unknown`
+settlement; turn-matched interrupted-Run recovery across Runs; provable
+tool-history pairing and compaction-copy tracing; macOS system Git
+preflight; provider authentication isolation; single-writer Runtime
+transcript ownership; and Windows NUL-ACE startup recovery. CI runs inside
+the tag-triggered Release workflow. Every rc.14 contract is retained; open
+items remain tracked in `docs/KNOWN_ISSUES.md`. npm publication remains a
+manual maintainer step.
+
 ## v0.7.96-rc.14 Release Record
 
-`v0.7.96-rc.14` is the fourteenth release candidate of the v0.7.96 line.
+`v0.7.96-rc.14` was the fourteenth release candidate of the v0.7.96 line.
 Interrupted Run recovery reaches coding Runs and managed execution with
 budgeted, turn-matched records; tool-history pairing survives internal
 context splits; compaction copies trace to a provable root and truncate
