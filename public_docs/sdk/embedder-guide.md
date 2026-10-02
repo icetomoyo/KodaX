@@ -1,7 +1,7 @@
 # KodaX SDK — Product Client and Host Integration
 
 This page describes the current FEATURE_298/299 development tree, whose package
-version is still `0.7.96-rc.11` and whose design target is `v0.7.97`. It does not
+version is still `0.7.96-rc.14` and whose design target is `v0.7.97`. It does not
 claim that this contract is already published to npm. Check the installed
 package exports and the connected Host's capabilities when migrating.
 
@@ -1052,11 +1052,27 @@ The result status is part of the contract:
   is accepted but before its body enters canonical history.
 - `partial`: persisted lineage or transcript identity needed for a complete
   projection of one or more existing conversation records is unavailable.
-  Available physical records are retained; Actor/Run state by itself does not
-  make an otherwise empty persisted conversation partial.
+  When newer compaction epochs are proven but an older boundary is not, the
+  projection returns those proven epochs and omits the unprovable older region,
+  with `compaction_history_truncated` naming its boundary. Available physical
+  records are retained in the fallback where the active path is missing or
+  incomplete, or no epoch can be proven.
+  Actor/Run state by itself does not make an otherwise empty persisted
+  conversation partial.
 - `ambiguous`: multiple legacy interpretations remain. All candidates are
-  retained and `issues[]` explains why; the host must not present the result as
-  confidently deduplicated.
+  retained in the physical-record fallback and `issues[]` explains why; the
+  host must not present the result as confidently deduplicated. A proven newer
+  region with an unprovable older boundary instead uses the `partial` truncation
+  contract above.
+
+The unreleased Issue 340 repair can restore legacy tool-call/result pairs only
+when one retained sibling chain exactly reproduces the old cleanup damage.
+It is read-only and does not rewrite the Session. Re-compacted copies follow
+proven logical identity and content through at most eight predecessor hops.
+Derived page cache v9 invalidates older generations once; direct and paged
+reads use the same restored entries, status, issues, and revision. A truncated
+conversation is not proof that the omitted physical history was empty; hosts
+can retain `loadFullTranscript()` as a separate raw audit view.
 
 Issues are bounded diagnostic summaries: `occurrenceCount` is the number of
 diagnostics represented, `entryCount` is the pre-bounding evidence-reference
@@ -1098,11 +1114,13 @@ lineage tail, or concurrent durable write fails with
 `SessionReadError.code === 'data_changed'`. Reload, obtain a fresh boundary,
 and rebuild the tail before retrying.
 
-The Ink REPL host follows the same rule: its prepared-tail persistence helper
+Standalone Session owners follow the same rule: the prepared-tail persistence helper
 falls back to `appendSessionDelta(id, data)` after `data_changed`, so the
 authoritative full snapshot merges the newest UI/session state. Background
 write failures are emitted as structured diagnostics; they are not swallowed
 and a stale tail is never retried unchanged.
+Product Ink sessions use the Host Client API and never save a competing local
+transcript or lineage; see [transcript ownership](#unreleased-interrupted-run-recovery-and-transcript-ownership).
 
 A non-null fulfilled append result is the reusable successor boundary. A
 fulfilled `null` means the tail did commit exactly once, but the successor
@@ -4710,6 +4728,20 @@ use `ensureKodaXRuntime()` for low-level startup/update.
 An explicit inline rollback policy blocks auto-start until the owner policy is
 explicitly changed back to daemon.
 
+The embedder owns the complete credential storage lifecycle. When using an
+Electron `safeStorage` encrypted file on Windows, preserve the associated
+`Local State` encryption state together with the ciphertext across cleanup,
+uninstall, reinstall, and profile migration. Keeping only the ciphertext is
+insufficient, even when the Windows account and Provider API keys are unchanged.
+The SDK does not read, repair, or replace this Electron encryption state.
+
+If the existing client secret cannot be decrypted, surface a terminal credential
+recovery error before connecting; do not silently generate a replacement secret.
+A successful daemon connection alone does not prove that a recovered candidate
+matches the old secret: a different secret selects a different reverse bridge
+and cannot resume the old bridge's leases. Restore the exact existing identity
+from verified recovery material, or explicitly treat it as a new identity.
+
 For Electron, `homeDir` is still the CLI-style base directory, not
 `process.env.KODAX_HOME`. Packaged/asar applications may use `ensureKodaXRuntime()`
 directly; the SDK launches only the daemon child in Electron's Node execution
@@ -4900,6 +4932,41 @@ caching, relax Job/identity checks, or alter shutdown results. A missing
 capability diagnostic is evidence for troubleshooting, not permission to bypass
 the required capability. Diagnostic sink exceptions remain isolated from the
 Runtime operation.
+
+### Unreleased: interrupted Run recovery and transcript ownership
+
+The current development tree integrates the rc.14 fixes under FEATURE_298 /
+v0.7.97. Product applications use [/client](#product-client-integration), and
+the Host is the only Session writer. Ink/classic consumers render Host facts
+and submit intents; they do not save a competing transcript or lineage.
+
+Runtime-owned managed Runs save generated messages and tool results at Runner
+commit boundaries. An interrupted Run can contribute a bounded recovery note
+to the next SA or AMA model request. Its sources are canonical Session/active
+lineage, Run status, and successfully saved display checkpoints. The Host
+flushes the existing writer before reading; it does not replay durable events
+or infer success from telemetry. Failed checkpoint reads/writes remain errors.
+
+Evidence uses accepted input and turn identities, explicit sourceRunId /
+sourceTurnId, assistant outputId, and the assistantOutputId owning a tool call.
+A proposed tool is not an executed effect. Execution without a recorded result
+has an unknown outcome, including a displayed cancelled tool whose result was
+never saved. Already committed output is excluded by identity, so two equal
+replies with different outputIds remain distinct. Thinking, child output, and
+ordinary notices never enter the recovery record.
+
+The record covers at most three Runs and 6,000 characters, giving operations
+priority over quoted, unconfirmed reply excerpts. It is transient model context,
+never a user instruction or canonical Session message. No automatic tool redo
+or recovery of uncheckpointed tokens is promised. Tool-only invocations make
+no model call and need no recovery note. Standalone callers can supply the
+internal KodaXInterruptedRunEvidence / Operation / Reply handoff types through
+context.interruptedRunEvidence; that option is not a persistence protocol.
+
+Uncertain Shell cleanup retains deferred process ownership while allowing the
+next Run and Host close to proceed. ClientRunStatus and ClientRunOutcome expose
+the Host terminal.effectOutcome and Stop facts. A completed execution with
+unknown effects does not prove cleanup or confirm Stop.
 
 ### Historical v0.7.92 filesystem-effect coordinator and managed terminal authority
 
@@ -6509,6 +6576,16 @@ Windows, Linux, and macOS:
   atomically publishes the ready marker only after confirmed parent success.
   No helper overlaps ordinary admission, shared system Temp is not prewarmed or
   rewritten, and doctor and normal admission never invoke this setup path.
+
+The unreleased Issue 341 fix changes bare interactive Windows CLI startup
+(including `kodax -r`): a current disk marker must also pass a read-only check
+of the live NUL device's sandbox-account grant before startup skips recovery.
+The marker can survive a reboot while that device grant does not. Failure
+enters the existing setup child/UAC boundary; historical read roots whose
+files disappeared are excluded from installation preflight. SDK, daemon,
+print-mode startup, doctor, and ordinary command admission do not gain
+automatic setup or ACL repair. SDK hosts should run the explicit host setup
+boundary when readiness requires activation, then recheck readiness.
 
 The Windows private desktop uses an ephemeral full-policy capability. Persistent
 filesystem authority instead uses stable capabilities derived from the

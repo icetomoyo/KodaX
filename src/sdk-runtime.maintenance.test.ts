@@ -51,7 +51,10 @@ function holdArtifactWrites(root: string, failure?: Error) {
   const release = deferred<void>();
   const finished = deferred<void>();
   let started = false;
-  const originalWrite = fs.writeFile;
+  // Vitest 4 reuses an existing spy; retain its implementation before chaining.
+  const originalWrite = vi.isMockFunction(fs.writeFile)
+    ? (vi.mocked(fs.writeFile).getMockImplementation() ?? fs.writeFile)
+    : fs.writeFile;
   vi.spyOn(fs, 'writeFile').mockImplementation(async (...args) => {
     const file = path.resolve(String(args[0]));
     const held = file.startsWith(root + path.sep) && file.endsWith(`${path.sep}result.json`);

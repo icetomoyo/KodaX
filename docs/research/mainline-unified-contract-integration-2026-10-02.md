@@ -1,5 +1,9 @@
 # 如何把 KodaX rc.12–rc.14 合入统一 Product Client 分支
 
+> 实施更新：本文是合并前固定点的研究与获批方案。后续实施保留 v0.7.97
+> 设计并吸收 rc.14 源码基线；Issue 348–352 的分配、v10 缓存和 Host 事实恢复
+> 已落实。当前结果见 [整合验收记录](mainline-unified-contract-integration-verification-2026-10-02.md)。
+
 结论：建议在 `codex/product-client-refactor` 上完整合并最新 `origin/KodaX`，保留主线修复的用户能力，按 FEATURE_298 的 Host/Client 所有权改接实现。最关键的改接是中断恢复：当前分支已删除持久 Runtime journal，不能直接复制主线的事件回放依赖。统一契约设计仍属于 `v0.7.97 / FEATURE_298`，当前源码包版本是 `0.7.96-rc.11`。[设计](../features/v0.7.97.md)、[现行契约](../CLIENT_CONTRACT.md)、[迁移说明](../SDK_MIGRATION.md)
 
 ## 核对范围和冻结基线
@@ -40,7 +44,7 @@
 | Anthropic 兼容供应商的认证隔离 | `f2cb876b` | 保留 `authToken: null` 和凭据加载测试，避免兼容供应商继承 Anthropic Bearer token。属于 llm 层，独立性不变。 |
 | Windows NUL ACL、自包含测试缓存、8.3 路径 | `c8ed4383`、`588995ab`、`cad8b658` | 保留 native/sandbox 修复与 smoke 诊断，继续由受信任 Host 执行 setup/验证。 |
 | Vitest/fflate、发布 CI | `53debfdf`、`55868a89` | 接入锁文件、Vitest 4.1.11 配置变更及 release 前完整 CI；保留本分支 Client 的构建/声明检查。主线 CI 改为 workflow_call/dispatch，不能假设普通 PR 自动触发完整 CI。 |
-| Runner 真实迭代数和子任务耗尽结果 | `2dae4cd4` | 保留 Actor 的 iteration、iteration_limit 与 partial output 事实，核对 Product agents/IPC 字段能传递；界面使用现有 Session activity，不复活旧 live projection。 |
+| Runner 真实迭代数和子任务耗尽结果 | `2dae4cd4` | 保留 Actor 的 iteration、iteration_limit 与 partial output 事实，核对 Product agents/IPC 字段能传递；界面使用现有 Session activity，沿用已有进程内诊断 projection，不恢复持久事件权威。 |
 | 消息提交边界的持久化 | `7c0bfd79` | 接入 Runner 的 transcript 参数和每次实际新消息提交后的 canonical 保存，同时保留通知回执提交、inputId、outputId 及 managed context 剥离。 |
 | 历史工具配对、旧损坏恢复、copy-of-copy、不可证明边界截断 | `c232d7b5`、`866aff7f`、`7c21993c` | 吸收 agent 的配对/lineage 修复与 conversation 构建逻辑，保持本分支来源索引、全文补读和跨页顺序。无法证明的旧边界要返回可见诊断。 |
 | 不确定 Shell 清理不阻塞新对话 | `c5d7b856`、`869461ab`、`586b64fc`、`44fff8d3` | 接入 deferred cleanup，保留持久 child 注册和后续回收；Run 可结算不等于 Stop confirmed，effects 仍可 unknown。复核 Product 输入排队、Stop 和 Host close。 |
@@ -76,7 +80,7 @@
 
 | 冲突路径 | 解决原则 |
 | --- | --- |
-| `src/sdk-runtime.ts`、`src/sdk-runtime.test.ts` | 融合 deferred cleanup 和恢复能力；保留 Product queue/MCP/sessionControl/command/workflow；删除误带回的 replay、event→status 及旧 live projection。测试改用真实 Product Client/当前事实。 |
+| `src/sdk-runtime.ts`、`src/sdk-runtime.test.ts` | 融合 deferred cleanup 和恢复能力；保留 Product queue/MCP/sessionControl/command/workflow；删除误带回的 replay、event→status 。测试改用真实 Product Client/当前事实。 |
 | `packages/coding/src/task-engine/runner-driven.ts`、`.test.ts` | 保留本分支 currentUserIndex/inputId 与真实输入身份，融合提交边界保存、临时恢复 context、失败 transcript 剥离。 |
 | `packages/repl/src/session/conversation-page-cache.ts`、`.test.ts` | 当前 v7 有 sourceKeys，主线 v9 有旧配对修复/压缩截断；融合为新缓存版本（建议 v10），完整保留两侧字段和回归。不能仅采用数字较大的 v9，因为主线 v9 并不包含 sourceKeys。 |
 | `docs/DD.md`、`docs/HLD.md` | 保留 v0.7.97 Host/Client 架构，吸收主线可靠性更新，明确恢复事实与执行终态边界。 |
@@ -85,18 +89,18 @@
 | `public_docs/README.md`、`public_docs/sdk/embedder-guide.md` | 保留 `/client` 产品入口和迁移说明，融合凭据/safeStorage、历史诊断、恢复说明；底层 `/runtime` 文档放在其真实适用范围。 |
 | `docs/features` | 先在子模块融合 fd73eb81 和 664d8ba0，再记录新 gitlink，不能直接切到主线指针丢失本分支详细 Done 记录。 |
 
-**自动合并也不等于可用：** 候选 Ink 引用了 `options.runtimeRunner`，而当前分支已经没有该属性；候选 Runtime 加回 `persistence.replay` 调用，但 persistence 接口没有该方法，还加回旧 `RuntimeSessionLiveProjectionState` 等辅助实现。以上是读取候选源码确认的静态问题，未运行候选 typecheck。[现行 Ink 写保护](../../packages/repl/src/ui/InkREPL.tsx:8890)、[现行 persistence](../../src/sdk-runtime.ts:3863)、主线 `efe33d7d`、候选 tree `07cfc1c4`
+**自动合并也不等于可用：** 候选 Ink 引用了 `options.runtimeRunner`，而当前分支已经没有该属性；候选 Runtime 加回 `persistence.replay` 调用，但 persistence 接口没有该方法，保留了原本已有的进程内 live projection 辅助实现（它不是新增持久 journal）。以上是读取候选源码确认的静态问题，未运行候选 typecheck。[现行 Ink 写保护](../../packages/repl/src/ui/InkREPL.tsx:8890)、[现行 persistence](../../src/sdk-runtime.ts:3863)、主线 `efe33d7d`、候选 tree `07cfc1c4`
 
 **子模块本体可清洁融合：** fetch 后，`git -C docs/features rev-list --left-right --count fd73eb81...664d8ba0` 为 57/3。主线独有三次 rc.12–14 文档发布，只修改 `README.md`、`v0.7.96.md`，没有修改 `v0.7.97.md`。子模块 `merge-tree --write-tree` 成功，tree 为 `5996cd3e15ee560271243958f26ac37bd1d0497c`；仍需真正创建合并提交才能更新根仓库 gitlink。
 
-**Issue 编号发生实质碰撞：** 当前分支 340–344 是页序、协议标记截断、普通历史浏览、notice 排序和命令反馈；主线相同 ID 是中断进度、NUL ACL、Windows REPL 退出、sandbox 测试缓存和 eval 预算。建议保留发布主线 ID，将当前分支五项迁到未占用新 ID，更新活跃引用/测试指南和统计，并保存旧编号映射，避免把主线 Open 问题误记为本分支 Resolved。当前 345/346 可以继续保留。[当前 ledger](../KNOWN_ISSUES.md:1091)、`origin/KodaX:docs/KNOWN_ISSUES.md:1065–1069`
+**Issue 编号发生实质碰撞：** 当前分支 340–344 是页序、协议标记截断、普通历史浏览、notice 排序和命令反馈；主线相同 ID 是中断进度、NUL ACL、Windows REPL 退出、sandbox 测试缓存和 eval 预算。建议保留发布主线 ID，将当前分支五项迁到未占用新 ID，更新活跃引用/测试指南和统计，并保存旧编号映射，避免把主线 Open 问题误记为本分支 Resolved。当前 345/346/347 可以继续保留，新分配 ID 为 348–352。[当前 ledger](../KNOWN_ISSUES.md:1091)、`origin/KodaX:docs/KNOWN_ISSUES.md:1065–1069`
 
 ## 建议执行顺序和验收
 
 1. **冻结当前 HEAD 与主线 SHA，完整 merge 最新主线。** 26 个提交相互依赖，整体合并比逐个 cherry-pick 更能保存历史和删除意图。按领域处理冲突，最后形成一个根仓库 merge commit；子模块先形成自己的合并提交。
 2. **先融合基础依赖、Provider/native 修复、历史修复和消息边界保存。** 缓存使用新版本；保持 input/output/source identities 和现有通知回执。
 3. **改接 deferred Shell cleanup 与中断恢复。** 先写失败回归，再落实最小适配，保留 Host queue/MCP/interaction/sessionControl。中断恢复的必要设计增量仍写入 v0.7.97。
-4. **整理产品消费者及文档。** 移除误带回的 runtimeRunner/旧 projection；验证真实 iteration 和 iteration_limit 可由 Client agents/Session activity 读到。融合 Issue 编号、指南与版本摘要。
+4. **整理产品消费者及文档。** 移除误带回的 runtimeRunner/持久事件恢复；验证真实 iteration 和 iteration_limit 可由 Client agents/Session activity 读到。融合 Issue 编号、指南与版本摘要。
 5. **完成现有发布门禁后才认定融合完成。** 构建和源码/测试类型检查、分层 fast/unit/contract/system、bundle、Client 真实 IPC、Ink/classic PTY。重点覆盖：同 inputId 只接收一次；普通排队/steer/redirect；Shell unknown 后新对话；Stop 受理与确认；崩溃/重复重启；消息级持久化；history 全文/跨页/fork/rewind；MCP elicitation；ACP/A2A；断开观察不停止 Run。跨平台 native/人工验收仍需对应平台证据。
 
 契约测试层不是全部 `sdk-client.*` 的替代，必须包含公共 Product Client 行为回归。既有 9/26 验收记录可以用于选回归，不能复用其通过数字为本次合并背书。[9/26 验收](unified-contract-fix-verification-2026-09-26.md)、[历史/操作能力核对](product-contract-assurance-2026-09-26.md)
@@ -114,4 +118,3 @@
 
 - 中断恢复是否需要比当前“已保存 checkpoint 可恢复”更强的硬崩溃保证；若需要，在 v0.7.97 内明确有限恢复事实的保存点和边界。
 - Issue 重编号采用哪些空闲 ID，应在实际融合 ledger 时统一分配，并保留历史编号映射。
-

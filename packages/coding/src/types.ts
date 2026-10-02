@@ -563,11 +563,11 @@ export interface KodaXEvents {
     tool: { id: string; name: string },
     meta?: KodaXToolEventMeta,
   ) => void;
-  /** Internal owner binding: release only after process-tree cleanup is verified. */
+  /** Track cleanup separately from execution. Deferred cleanup must not block the conversation. */
   registerShellCleanup?: (
     reference: ManagedRunChildProcessReference,
     retry: () => Promise<void>,
-  ) => () => void;
+  ) => (outcome?: 'deferred') => void;
   /** Internal host ownership: optional terminal projections must drain on Runtime close. */
   scheduleManagedTaskMaintenance?: (maintenance: () => Promise<void>) => void;
   /** Internal host ownership: settle memory IO and cancel background review before close. */
@@ -1293,6 +1293,7 @@ export interface KodaXExecutionFailure {
 }
 
 export interface KodaXChildAgentResult {
+  readonly iteration?: { readonly current: number; readonly max: number };
   childId: string;
   fanoutClass: KodaXChildFanoutClass;
   status: 'completed' | 'blocked' | 'failed';
@@ -1914,6 +1915,45 @@ export interface KodaXWorkspaceSandboxRootRegistry {
   unregister(root: string): Promise<void>;
 }
 
+/** One tool operation reconstructed from an interrupted Run's saved Host checkpoint. */
+export interface KodaXInterruptedRunOperation {
+  readonly assistantOutputId?: string;
+  /** Provider call id; unique only within one turn, never across turns. */
+  readonly toolUseId: string;
+  /** Turn that owned the invocation; falls back to the Run's turn when absent. */
+  readonly turnId?: string;
+  readonly name: string;
+  /** Short, already-bounded description of the tool input (path, command, url). */
+  readonly target?: string;
+  /** First line of the recorded result; absent when no result was recorded. */
+  readonly result?: string;
+}
+
+/** Assistant text one provider call streamed before an interrupted Run stopped. */
+export interface KodaXInterruptedRunReply {
+  readonly turnId?: string;
+  /** Canonical generated output identity; supplied by the Host checkpoint. */
+  readonly outputId?: string;
+  /** Effective streamed text (retries replaced); only its tail is kept when long. */
+  readonly text: string;
+  /** True when earlier text of the same reply was dropped by the bound. */
+  readonly truncated: boolean;
+}
+
+/** Saved Host evidence for one earlier Run whose effects are not in formal history. */
+export interface KodaXInterruptedRunEvidence {
+  readonly runId: string;
+  /** Turn of the user message that started the Run; anchors branch membership. */
+  readonly turnId?: string;
+  /** Accepted input identity anchors Runs interrupted before their first turn. */
+  readonly inputId?: string;
+  readonly terminalCode: string;
+  /** Checkpoint order; operations without `result` have an unknown outcome. */
+  readonly operations: readonly KodaXInterruptedRunOperation[];
+  /** Checkpointed replies in output order; unconfirmed text, never formal history. */
+  readonly replies?: readonly KodaXInterruptedRunReply[];
+}
+
 export interface KodaXContextOptions {
   /** Host-owned Run identity for extension effects; standalone runs mint their own. */
   runtimeRunId?: string;
@@ -2070,6 +2110,15 @@ export interface KodaXContextOptions {
   inputArtifacts?: KodaXInputArtifact[];
   /** Internal execution-mode overlay appended to the system prompt */
   promptOverlay?: string;
+  /**
+   * Runtime-owned journals of earlier Runs in this Session that stopped with
+   * an unknown effect outcome. Both the managed and the direct coding path
+   * render the ones whose turn is still on the active history path as a
+   * transient recovery record; it is never written into formal history.
+   *
+   * @internal
+   */
+  interruptedRunEvidence?: readonly KodaXInterruptedRunEvidence[];
   /**
    * Scoped specialist-agent resolver for embedders that run multiple
    * projects/sessions in one process. When absent, constructed-agent

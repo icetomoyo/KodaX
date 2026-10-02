@@ -106,6 +106,7 @@ function toolCallSeedToHistoryToolStatus(status: KodaXSessionUiToolCallStatus): 
 export function toolCallSeedToHistoryToolCall(tool: KodaXSessionUiToolCall): ToolCall {
   return {
     id: tool.id,
+    ...(tool.assistantOutputId !== undefined ? { assistantOutputId: tool.assistantOutputId } : {}),
     name: tool.name,
     status: toolCallSeedToHistoryToolStatus(tool.status),
     ...(tool.input !== undefined ? { input: tool.input } : {}),
@@ -561,7 +562,9 @@ export function extractHistorySeedsFromMessages(
       seeds.push(
         ...assistantSeeds
           .map((seed) => (
-            message.outputId && (seed.type === 'assistant' || seed.type === 'thinking')
+            message.outputId && seed.type === 'tool_group'
+              ? { ...seed, tools: seed.tools.map(tool => ({ ...tool, assistantOutputId: message.outputId })) }
+              : message.outputId && (seed.type === 'assistant' || seed.type === 'thinking')
               ? { ...seed, outputId: message.outputId }
               : seed.type === "assistant"
               ? { ...seed, text: stripManagedProtocolBlocks(seed.text) }

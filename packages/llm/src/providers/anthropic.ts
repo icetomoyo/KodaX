@@ -233,6 +233,10 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     const defaultHeaders = getAnthropicCompatDefaultHeaders(this.config);
     return createAnthropicSdkClient({
       apiKey: this.getApiKey(),
+      // An undefined authToken makes the SDK read ANTHROPIC_AUTH_TOKEN and send
+      // it as a Bearer header next to the provider key. Gateways then reject
+      // the request with 401, and an inherited Anthropic token leaks to them.
+      authToken: null,
       baseURL: this.config.baseUrl,
       // Some Anthropic-compatible gateways block the SDK's default
       // "Anthropic/JS ..." user agent even when the request is otherwise valid.

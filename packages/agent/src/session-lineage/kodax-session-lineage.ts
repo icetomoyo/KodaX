@@ -5,6 +5,11 @@ import {
 } from './compaction/compaction.js';
 import type { CompactionDetails } from './compaction/types.js';
 import { isPostCompactAttachment } from './compaction/post-compact.js';
+import {
+  createLegacyToolPairingLookup,
+  findLegacyToolPairingRestorations,
+  type LegacyToolPairingRestoration,
+} from './legacy-tool-pairing.js';
 import type {
   KodaXCompactMemorySeed,
   KodaXJsonValue,
@@ -36,7 +41,10 @@ type NavigableSessionEntry = Exclude<
     | KodaXSessionMemoryReviewReceiptEntry
 >;
 
+type RestorationsByEntryId = ReadonlyMap<string, LegacyToolPairingRestoration>;
+
 const ENTRY_ID_LENGTH = 12;
+const NO_RESTORATIONS: RestorationsByEntryId = new Map();
 const MAX_BRANCH_SUMMARY_LENGTH = 600;
 const messageFingerprintCache = new WeakMap<KodaXMessage, string>();
 const messageProvenanceSourceIds = new WeakMap<KodaXMessage, Set<string>>();
@@ -233,6 +241,7 @@ function inheritMessageProvenance(
   entries: readonly KodaXSessionEntry[],
   existingIds: ReadonlySet<string>,
   sourceEntries: readonly NavigableSessionEntry[],
+  restorations: RestorationsByEntryId = NO_RESTORATIONS,
 ): KodaXSessionEntry[] {
   const clones = entries.filter((entry): entry is KodaXSessionMessageEntry =>
     entry.type === 'message' && !existingIds.has(entry.id));
@@ -255,7 +264,8 @@ function inheritMessageProvenance(
     return source
       ? {
           ...entry,
-          logicalId: logicalIdForEntry(source),
+          // A restored legacy entry carries the identity its evidence proved.
+          logicalId: restorations.get(source.id)?.logicalId ?? logicalIdForEntry(source),
           sourceEntryId: source.id,
         }
       : entry;
@@ -289,11 +299,16 @@ function createSummaryContextMessage(
   };
 }
 
-function getContextMessagesForEntry(entry: NavigableSessionEntry): KodaXMessage[] {
+function getContextMessagesForEntry(
+  entry: NavigableSessionEntry,
+  restoration?: LegacyToolPairingRestoration,
+): KodaXMessage[] {
   switch (entry.type) {
-    case 'message':
-      recordMessageProvenanceSource(entry.message, entry);
-      return [cloneMessage(entry.message)];
+    case 'message': {
+      const message = restoration?.message ?? entry.message;
+      recordMessageProvenanceSource(message, entry);
+      return [cloneMessage(message)];
+    }
     case 'compaction':
       if (entry.reason === 'rewind') {
         return [];
@@ -323,6 +338,42 @@ function getContextMessagesForEntry(entry: NavigableSessionEntry): KodaXMessage[
       return exhaustiveCheck;
     }
   }
+}
+
+/** Proven legacy tool-pairing restorations for one path; read-only. */
+function legacyRestorationsForPath(
+  lineage: KodaXSessionLineage,
+  path: readonly NavigableSessionEntry[],
+  checkpoint?: () => void,
+): RestorationsByEntryId {
+  return findLegacyToolPairingRestorations(
+    path,
+    createLegacyToolPairingLookup(lineage.entries, checkpoint),
+    checkpoint,
+  );
+}
+
+function renderPathMessages(
+  path: readonly NavigableSessionEntry[],
+  restorations: RestorationsByEntryId,
+): KodaXMessage[] {
+  const messages: KodaXMessage[] = [];
+  for (const entry of path) {
+    for (const message of getContextMessagesForEntry(entry, restorations.get(entry.id))) {
+      messages.push(cloneMessage(message));
+    }
+    if (
+      entry.type === 'compaction'
+      && entry.reason !== 'rewind'
+      && entry.postCompactAttachments
+      && entry.postCompactAttachments.length > 0
+    ) {
+      for (const message of entry.postCompactAttachments) {
+        messages.push(cloneMessage(message));
+      }
+    }
+  }
+  return messages;
 }
 
 function getChildrenMap(entries: NavigableSessionEntry[]): Map<string | null, NavigableSessionEntry[]> {
@@ -373,6 +424,7 @@ function getResolvedLabels(
 function entryMatchesContextMessage(
   entry: NavigableSessionEntry,
   message: KodaXMessage,
+  restoration?: LegacyToolPairingRestoration,
 ): boolean {
   if (
     entry.type === 'compaction'
@@ -391,6 +443,11 @@ function entryMatchesContextMessage(
       )
     )
   ) {
+    return true;
+  }
+  // Both the restored and the persisted form identify a restored entry, so a
+  // context saved before or after the restoration reconciles without copies.
+  if (restoration !== undefined && messagesEqual(restoration.message, message)) {
     return true;
   }
   const rendered = getContextMessagesForEntry(entry);
@@ -529,12 +586,13 @@ function getBranchSegment(
 }
 
 function recordActiveContextProvenance(
-  lineage: KodaXSessionLineage,
+  path: readonly NavigableSessionEntry[],
+  restorations: RestorationsByEntryId,
   messages: readonly KodaXMessage[],
 ): void {
   let messageIndex = 0;
-  for (const entry of getSessionLineagePath(lineage)) {
-    for (const _rendered of getContextMessagesForEntry(entry)) {
+  for (const entry of path) {
+    for (const _rendered of getContextMessagesForEntry(entry, restorations.get(entry.id))) {
       const message = messages[messageIndex];
       if (message !== undefined) recordMessageProvenanceSource(message, entry);
       messageIndex += 1;
@@ -558,9 +616,13 @@ export function createSessionLineage(
   const lineage = cloneLineage(previous);
   const navigableEntries = lineage.entries.filter(isNavigableEntry);
   const children = getChildrenMap(navigableEntries);
+  const previousPath = previous === undefined ? [] : getSessionLineagePath(previous);
+  const restorations = previous === undefined
+    ? NO_RESTORATIONS
+    : legacyRestorationsForPath(previous, previousPath);
   const priorActiveMessages = previous === undefined
     ? undefined
-    : getSessionMessagesFromLineage(previous);
+    : renderPathMessages(previousPath, restorations);
   const extendsPriorActivePath = previous !== undefined
     && priorActiveMessages !== undefined
     && priorActiveMessages.length <= messages.length
@@ -572,7 +634,7 @@ export function createSessionLineage(
     : null;
   let activeEntryId = parentId;
   if (extendsPriorActivePath && previous !== undefined) {
-    recordActiveContextProvenance(previous, messages.slice(0, messageOffset));
+    recordActiveContextProvenance(previousPath, restorations, messages.slice(0, messageOffset));
   }
 
   for (let index = messageOffset; index < messages.length; index += 1) {
@@ -587,7 +649,11 @@ export function createSessionLineage(
       ? undefined
       : [...(children.get(parentId) ?? [])]
           .reverse()
-          .find((entry) => entryMatchesContextMessage(entry, message));
+          .find((entry) => entryMatchesContextMessage(
+            entry,
+            message,
+            restorations.get(entry.id),
+          ));
 
     if (existing) {
       recordMessageProvenanceSource(message, existing);
@@ -626,7 +692,8 @@ export function createSessionLineage(
     lineage.entries = inheritMessageProvenance(
       lineage.entries,
       new Set(previous.entries.map((entry) => entry.id)),
-      getSessionLineagePath(previous),
+      previousPath,
+      restorations,
     );
   }
   return lineage;
@@ -682,23 +749,8 @@ export function getSessionMessagesFromLineage(
   lineage: KodaXSessionLineage,
   targetId: string | null = lineage.activeEntryId,
 ): KodaXMessage[] {
-  const messages: KodaXMessage[] = [];
-  for (const entry of getSessionLineagePath(lineage, targetId)) {
-    for (const message of getContextMessagesForEntry(entry)) {
-      messages.push(cloneMessage(message));
-    }
-    if (
-      entry.type === 'compaction'
-      && entry.reason !== 'rewind'
-      && entry.postCompactAttachments
-      && entry.postCompactAttachments.length > 0
-    ) {
-      for (const message of entry.postCompactAttachments) {
-        messages.push(cloneMessage(message));
-      }
-    }
-  }
-  return messages;
+  const path = getSessionLineagePath(lineage, targetId);
+  return renderPathMessages(path, legacyRestorationsForPath(lineage, path));
 }
 
 /**
@@ -849,6 +901,9 @@ export function applySessionCompaction(
   postCompactAttachments: readonly KodaXMessage[] = [],
 ): KodaXSessionLineage {
   const sourceEntries = lineage ? getSessionLineagePath(lineage) : [];
+  const sourceRestorations = lineage
+    ? legacyRestorationsForPath(lineage, sourceEntries)
+    : NO_RESTORATIONS;
   const base = cloneLineage(lineage);
   const compactionEntryId = generateEntryId();
   const compactionEntry: KodaXSessionCompactionEntry = {
@@ -917,6 +972,7 @@ export function applySessionCompaction(
     next.entries,
     existingIds,
     sourceEntries,
+    sourceRestorations,
   );
   const nextWithProvenance = {
     ...next,
@@ -1072,13 +1128,14 @@ export function evictOldIslandMessageContent(lineage: KodaXSessionLineage): Koda
 function cloneForkableEntry(
   entry: NavigableSessionEntry,
   parentId: string | null,
+  restoration?: LegacyToolPairingRestoration,
 ): NavigableSessionEntry {
   const entryId = generateEntryId();
   const base = {
     id: entryId,
     parentId,
     timestamp: entry.timestamp,
-    logicalId: logicalIdForEntry(entry),
+    logicalId: restoration?.logicalId ?? logicalIdForEntry(entry),
     sourceEntryId: entry.id,
   };
   switch (entry.type) {
@@ -1088,7 +1145,7 @@ function cloneForkableEntry(
         type: 'message',
         // Fork creates a genuinely independent branch — deep-clone the
         // message so modifications in one branch don't affect the other.
-        message: structuredClone(entry.message),
+        message: structuredClone(restoration?.message ?? entry.message),
       };
     case 'compaction':
       return {
@@ -1235,6 +1292,7 @@ export function forkSessionLineage(
   }
 
   const path = getSessionLineagePath(lineage, target.id, checkpoint);
+  const restorations = legacyRestorationsForPath(lineage, path, checkpoint);
   const idMap = new Map<string, string>();
   const entries: KodaXSessionEntry[] = [];
 
@@ -1242,7 +1300,7 @@ export function forkSessionLineage(
   for (let index = 0; index < path.length; index += 1) {
     if (index > 0 && index % 256 === 0) checkpoint?.();
     const entry = path[index]!;
-    const cloned = cloneForkableEntry(entry, parentId);
+    const cloned = cloneForkableEntry(entry, parentId, restorations.get(entry.id));
     entries.push(cloned);
     idMap.set(entry.id, cloned.id);
     parentId = cloned.id;

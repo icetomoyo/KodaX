@@ -1,6 +1,6 @@
 # SDK 统一 Client 契约迁移指南
 
-适用范围：当前工作树的 FEATURE_298/299 实现；包版本仍为 `0.7.96-rc.11`，设计目标为 `v0.7.97`。本文不表示 npm 已发布这些变更。接入前应核对所安装包的导出和 Host 能力。
+适用范围：当前工作树的 FEATURE_298/299 实现；包版本仍为 `0.7.96-rc.14`，设计目标为 `v0.7.97`。本文不表示 npm 已发布这些变更。接入前应核对所安装包的导出和 Host 能力。
 
 ## 1. 替换范围与文档权威
 
@@ -118,4 +118,4 @@ Session 观察通过 `onStatus` 区分 live/interrupted/closed；重连中的提
 6. Learning/Workflow 订阅注册失败、运行中故障、主动关闭和重连，均不会假报 Run 完成。
 7. 产品消费者不持有 SessionStorage、可执行 Runtime 对象或客户端 MCP owner；底层宿主代码单独标明职责。
 
-仓库现有验证入口：`src/sdk-client*.test.ts`、`src/session-view*.test.ts`、`tests/repl-pty-acceptance.mjs`、`tests/repl-history-browse-acceptance.mjs`。具体回归记录见[Issues 344–347 验证指南](test-guides/ISSUE_344_v0.7.96_REGRESSION_GUIDE.md)。这些测试不证明所有外部应用已经迁移。
+仓库现有验证入口：`src/sdk-client*.test.ts`、`src/session-view*.test.ts`、`tests/repl-pty-acceptance.mjs`、`tests/repl-history-browse-acceptance.mjs`。具体回归记录见[Issues 345–347 and 352 验证指南](test-guides/ISSUE_352_v0.7.96_REGRESSION_GUIDE.md)。这些测试不证明所有外部应用已经迁移。

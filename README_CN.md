@@ -301,6 +301,30 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
+**v0.7.96-rc.14 发布**：v0.7.96 线第十四个发布候选。中断 Run 的恢复进入
+coding Run 与托管执行：以带标签、有界、临时的记录按回合匹配交接已日志化的
+进度；工具历史配对覆盖整个 assistant 范围；会话解析把压缩副本追溯到可证明
+的根，无法证明的边界以 `partial` 截断；Anthropic 兼容 Provider 不再继承
+`ANTHROPIC_AUTH_TOKEN`；Ink 宿主让位给 Runtime 作为唯一转录写入者；
+Windows 交互启动在重启后面对仍有效的 setup 标记会重新校验 NUL 账户 ACE
+（Issues 340-341）。CI 改为在 tag 触发的 Release workflow 内运行，普通
+push 不再触发。所有 rc.13 契约全部保留。
+
+**v0.7.96-rc.13 发布**：v0.7.96 线第十三个发布候选。Runtime 拥有的托管 Run
+在 Runner 消息提交边界持久化已生成的助手消息与工具结果，赶在工具或后续
+Provider 调用可能挂起之前：当前压缩后的转录与排队输入身份在中断的 Run 中
+得以保留，初始输入重放被跳过而不重复保存全部历史，宿主拥有的持久化时机
+不变。所有 rc.12 契约全部保留。
+
+**v0.7.96-rc.12 发布**：v0.7.96 线第十二个发布候选。不确定的 Shell 清理不再
+阻塞对话：耗尽的清理重试把诊断与部分输出返回给模型，未决的进程身份转为
+deferred 清理记录，后继 Run 与 close 照常进行，耗尽后的终态 Run 以
+`effectOutcome: unknown` 诚实结算而不宣称已验证终止。Root Runner 迭代进度
+在 Runtime 实时快照与持久 Actor 回合中可见，耗尽的 native Actor 子任务以
+`terminationReason: iteration_limit` 结算为失败并保留部分输出、工件与结构化
+结果。测试工具链升级到 Vitest 4.1.11 与 fflate 0.8.3（修复 ZIP64 扫描死循环）。
+所有 rc.11 契约全部保留。
+
 **v0.7.96-rc.11 发布**：v0.7.96 线第十一个发布候选。macOS 上 SDK 拥有的后台
 Git 调用会先预检系统 Git 垫片：共享的平台守卫（`@kodax-ai/agent/runtime/macos-git`）
 能识别已知的开发者工具缺失状态（仅限退出码 2，感知 `DEVELOPER_DIR`，探测按有界
@@ -451,7 +475,7 @@ native 文本权威改在摘要固定的 `manylinux_2_28` 构建器中编译，�
 scope 在 SDK、Agent 摘要、CLI 与 Runtime Worker 请求间共享，保留结构化的 Child Agent Provider
 失败信息，精确遵循 run-scoped 凭据校验，并为严格 vLLM 网关省略空 `tools` 数组（Issues 329-332）。
 npm 发布仍由
-维护者手动执行。详见 [v0.7.96-rc.11 发布清单](docs/release.md#v0796-rc11-release-preparation)。
+维护者手动执行。详见 [v0.7.96-rc.14 发布清单](docs/release.md#v0796-rc14-release-preparation)。
 
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
 credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭

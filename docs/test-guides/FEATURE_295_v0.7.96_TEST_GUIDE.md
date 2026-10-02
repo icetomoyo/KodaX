@@ -296,3 +296,36 @@ npx vitest run tests/feature-295-windows-v2-policy.test.ts -t 'starts an inbox W
 All four selected cases must run and pass; skipped cases are not evidence for
 this gate. This covers restricted execution, shell-created file replacement,
 cross-policy write isolation, and background Shell/text concurrency.
+
+## Issue 341: Windows reboot and NUL compatibility recovery
+
+1. Use the local Issue 341 fix, activate with `kodax sandbox setup`, and confirm
+   host PowerShell `kodax sandbox doctor` returns `ready:true`. Keep an ordinary
+   disposable workspace for the remaining checks.
+2. Reboot Windows, then open a fresh interactive `kodax` or `kodax -r`. If the
+   NUL account ACE was reset, startup must enter the existing setup recovery
+   boundary; approve its UAC prompt. A current disk marker alone must not skip
+   recovery. Healthy account/group SIDs must remain unchanged.
+3. From host PowerShell, confirm doctor is ready with no NUL compatibility
+   diagnostic. In KodaX Auto or Edits, ask Bash to print `whoami`; expect the
+   sandbox account rather than the host account.
+4. Ask KodaX to run a 120-second background Bash with initial/final `whoami`,
+   delete a disposable `hello.md` while it runs, and recreate it with `write`.
+   Shell identities must be sandboxed; `write` uses the trusted host transaction.
+   Confirm the background log has its completion marker and `[Exit: 0]` after
+   roughly 120 seconds, and host doctor remains ready.
+5. Run the deterministic missing-ACE and retired-read-root regressions:
+
+   ```powershell
+   npx vitest run src/sandbox-runtime.test.ts -t 'requires current NUL access|repairs NUL access after a historical'
+   ```
+
+Run the unit suite from ordinary host PowerShell. It provisions host-trusted
+native fixtures, which cannot be installed by an already restricted sandbox
+token. Issue 343 gives this suite a private temporary native cache, so its
+artifact-deletion cases can overlap the live Bash check without touching the
+live ASRT binary. A host concurrent run passes 95 tests with 40 platform skips;
+a sandbox invocation that fails provisioning is not a passing test run.
+The automated tests simulate stale setup state; they do not replace the actual
+reboot check. The mock-SID cache issue is separate from Issue 342's unresolved
+unexpected REPL exit.

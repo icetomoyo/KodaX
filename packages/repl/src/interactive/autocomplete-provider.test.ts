@@ -7,36 +7,44 @@ import { AutocompleteProvider, createAutocompleteProvider } from './autocomplete
 
 // Mock completers
 vi.mock('./completers/skill-completer.js', () => ({
-  SkillCompleter: vi.fn().mockImplementation(() => ({
-    canComplete: vi.fn().mockReturnValue(false),
-    getCompletions: vi.fn().mockResolvedValue([]),
-    setGitRoot: vi.fn(),
-  })),
+  SkillCompleter: vi.fn().mockImplementation(function () {
+    return {
+      canComplete: vi.fn().mockReturnValue(false),
+      getCompletions: vi.fn().mockResolvedValue([]),
+      setGitRoot: vi.fn(),
+    };
+  }),
 }));
 
 vi.mock('./completers/argument-completer.js', () => ({
-  ArgumentCompleter: vi.fn().mockImplementation(() => ({
-    canComplete: vi.fn().mockReturnValue(false),
-    getCompletions: vi.fn().mockResolvedValue([]),
-  })),
+  ArgumentCompleter: vi.fn().mockImplementation(function () {
+    return {
+      canComplete: vi.fn().mockReturnValue(false),
+      getCompletions: vi.fn().mockResolvedValue([]),
+    };
+  }),
 }));
 
 vi.mock('./autocomplete.js', async () => {
   const actual = await vi.importActual<typeof import('./autocomplete.js')>('./autocomplete.js');
   return {
     ...actual,
-    FileCompleter: vi.fn().mockImplementation(() => ({
-      canComplete: vi.fn().mockReturnValue(false),
-      getCompletions: vi.fn().mockResolvedValue([]),
-    })),
-    CommandCompleter: vi.fn().mockImplementation(() => ({
-      canComplete: vi.fn((input: string) => input.startsWith('/')),
-      getCompletions: vi.fn().mockResolvedValue([
-        { text: '/help', display: '/help', description: 'Show help', type: 'command' },
-        { text: '/mode', display: '/mode', description: 'Change mode', type: 'command' },
-        { text: '/agent-mode', display: '/agent-mode', description: 'Agent mode', type: 'command' },
-      ]),
-    })),
+    FileCompleter: vi.fn().mockImplementation(function () {
+      return {
+        canComplete: vi.fn().mockReturnValue(false),
+        getCompletions: vi.fn().mockResolvedValue([]),
+      };
+    }),
+    CommandCompleter: vi.fn().mockImplementation(function () {
+      return {
+        canComplete: vi.fn((input: string) => input.startsWith('/')),
+        getCompletions: vi.fn().mockResolvedValue([
+          { text: '/help', display: '/help', description: 'Show help', type: 'command' },
+          { text: '/mode', display: '/mode', description: 'Change mode', type: 'command' },
+          { text: '/agent-mode', display: '/agent-mode', description: 'Agent mode', type: 'command' },
+        ]),
+      };
+    }),
   };
 });
 

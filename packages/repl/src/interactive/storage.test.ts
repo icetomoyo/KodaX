@@ -76,6 +76,7 @@ describe('FileSessionStorage', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     if (previousHome === undefined) {
       delete process.env.HOME;
     } else {
@@ -5849,6 +5850,132 @@ describe('FileSessionStorage', () => {
       maxInlineEntryBytes: 64 * 1024,
       reservedBytes: 0,
     })).rejects.toMatchObject({ code: 'data_changed' });
+  });
+
+  it('rebuilds a v6 page cache so legacy tool-pairing restoration matches pages and Provider input', async () => {
+    const { FileSessionStorage } = await import('./storage.js');
+    const { deriveProjectKeyFromRoot } = await import('./project-key.js');
+    const { buildSessionConversationHistory } = await import('../session/conversation-history.js');
+    const sessionsDir = testSessionsDir();
+    const gitRoot = tempHome.replace(/\\/g, '/');
+    const sessionId = 'session-legacy-tool-pairing-cache';
+    const timestamp = '2026-09-28T00:00:00.000Z';
+    const query = { role: 'user' as const, content: 'inspect two files' };
+    const call = {
+      role: 'assistant' as const,
+      content: [
+        { type: 'text' as const, text: 'Reading both files.' },
+        { type: 'tool_use' as const, id: 'tool-a', name: 'read', input: { path: 'a.ts' } },
+        { type: 'tool_use' as const, id: 'tool-b', name: 'read', input: { path: 'b.ts' } },
+      ],
+    };
+    const results = {
+      role: 'user' as const,
+      content: [
+        { type: 'tool_result' as const, tool_use_id: 'tool-a', content: 'A' },
+        { type: 'tool_result' as const, tool_use_id: 'tool-b', content: 'B' },
+      ],
+    };
+    const ctx = {
+      role: 'user' as const,
+      content: '=== Managed Run Context ===\nround 2',
+      _synthetic: true,
+      _source: 'managed-run-context' as const,
+    };
+    const next = { role: 'assistant' as const, content: 'Both files read.' };
+    const newQuery = { role: 'user' as const, content: 'next request' };
+    const strippedCall = { ...call, content: [call.content[0]] };
+    const strippedResults = { ...results, content: [{ type: 'text' as const, text: '' }] };
+    const entry = (
+      id: string,
+      parentId: string | null,
+      message: KodaXSessionMessageEntry['message'],
+      provenance?: string,
+    ): KodaXSessionEntry => ({
+      type: 'message',
+      id,
+      parentId,
+      timestamp,
+      logicalId: provenance ?? id,
+      ...(provenance !== undefined ? { sourceEntryId: provenance } : {}),
+      message: structuredClone(message),
+    });
+    const lineage: KodaXSessionLineage = {
+      version: 2,
+      activeEntryId: 'n_new',
+      entries: [
+        entry('p_query', null, query),
+        entry('p_call', 'p_query', call),
+        entry('p_result', 'p_call', results),
+        {
+          type: 'compaction', id: 'c1', parentId: null, timestamp,
+          logicalId: 'c1', summary: 'summary', firstKeptEntryId: 'k_query',
+        },
+        entry('k_query', 'c1', query, 'p_query'),
+        entry('s_call', 'k_query', call, 'p_call'),
+        entry('s_ctx', 's_call', ctx),
+        entry('s_result', 's_ctx', results, 'p_result'),
+        entry('d_call', 'k_query', strippedCall),
+        entry('d_ctx', 'd_call', ctx, 's_ctx'),
+        entry('d_result', 'd_ctx', strippedResults),
+        entry('d_next', 'd_result', next),
+        entry('y_result', 'd_call', strippedResults, 'd_result'),
+        entry('y_next', 'y_result', next, 'd_next'),
+        entry('n_new', 'y_next', newQuery),
+      ],
+    };
+    await new FileSessionStorage({ sessionsDir }).save(sessionId, {
+      messages: getSessionMessagesFromLineage(lineage),
+      title: 'Legacy tool pairing cache',
+      gitRoot,
+      lineage,
+    });
+    const projectDir = path.join(sessionsDir, deriveProjectKeyFromRoot(gitRoot).key);
+    const manifestPath = path.join(projectDir, `${sessionId}.conversation-cache.json`);
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Record<string, unknown>;
+    manifest.version = 6;
+    await writeFile(manifestPath, JSON.stringify(manifest), 'utf8');
+    const storage = new FileSessionStorage({ sessionsDir });
+    const pageInput = {
+      limit: 2,
+      maxPageBytes: 64 * 1024,
+      maxInlineEntryBytes: 64 * 1024,
+      reservedBytes: 0,
+    };
+
+    await expect(storage.readConversationPageCache(sessionId, pageInput)).resolves.toBeNull();
+
+    const capture = await storage.readFullSnapshot(sessionId);
+    if (capture === null || capture.lineage === null) throw new Error('expected Session capture');
+    const history = buildSessionConversationHistory(capture.lineage, capture.sourceRevision);
+    expect(history.status).toBe('resolved');
+    expect(history.entries.map((item) => item.message))
+      .toEqual([query, call, results, next, newQuery]);
+    await storage.prepareConversationPageCache(
+      sessionId,
+      history,
+      capture.lineage,
+      capture.data.runtimeInfo,
+      capture.boundaryRevision,
+      capture.sourceRevisionState,
+    );
+    const paged: unknown[] = [];
+    let end: number | undefined;
+    for (let guard = 0; guard < 8; guard += 1) {
+      const page = await storage.readConversationPageCache(sessionId, {
+        ...pageInput,
+        ...(end !== undefined ? { end } : {}),
+      });
+      if (page === null) throw new Error('expected rebuilt Conversation page');
+      expect(page.status).toBe('resolved');
+      paged.unshift(...page.entries.map((item) => item.entry?.message));
+      if (!page.hasMore) break;
+      end = page.nextEnd;
+    }
+    expect(paged).toEqual(history.entries.map((item) => item.message));
+    expect(JSON.parse(await readFile(manifestPath, 'utf8'))).toMatchObject({ version: 10 });
+    const provider = (await storage.load(sessionId))?.messages ?? [];
+    expect(provider.slice(1)).toEqual(history.entries.map((item) => item.message));
   });
 
   it('keeps the complete prepared append path off the lineage and artifact history prefixes', async () => {

@@ -3480,3 +3480,30 @@ describe('resolveEvidenceRef — FEATURE_199 task_id prefix + regression', () =>
     expect(result).not.toBe('- path:packages/x.ts');
   });
 });
+
+describe('iteration exhaustion', () => {
+  it('completion on the final permitted iteration remains successful', async () => {
+    mockRunKodaX.mockReset();
+    mockRunKodaX.mockImplementation(async (options: KodaXOptions) => {
+      options.events?.onIterationStart?.(2, 2);
+      return { success: true, lastText: 'done', messages: [], limitReached: false };
+    });
+    const result = await executeChildAgents([createBundle()], createCtx(), createOptions({ maxIterationsPerChild: 2 }));
+    expect(result.results[0]).toMatchObject({ status: 'completed', iteration: { current: 2, max: 2 } });
+    expect(result.results[0]?.limitReached).not.toBe(true);
+  });
+  it.each([true, false])('preserves partial output without repair or digest (readOnly=%s)', async (readOnly) => {
+    mockRunKodaX.mockReset();
+    const onIteration = vi.fn();
+    mockRunKodaX.mockImplementation(async (options: KodaXOptions) => {
+      options.events?.onIterationStart?.(1, 2);
+      options.events?.onIterationStart?.(2, 2);
+      return { success: true, lastText: 'partial output', sessionId: 'capped', limitReached: true, messages: Array.from({ length: 8 }, () => ({ role: 'assistant' as const, content: 'prior history' })) };
+    });
+    const result = await executeChildAgents([createBundle({ readOnly, outputSchema: { type: 'object', required: ['answer'], properties: { answer: { type: 'string' } } } })], createCtx(), createOptions({ maxIterationsPerChild: 2, workflowChild: true, onIteration }));
+    expect(mockRunKodaX).toHaveBeenCalledTimes(1);
+    expect(onIteration).toHaveBeenLastCalledWith({ current: 2, max: 2 });
+    expect(result.results[0]).toMatchObject({ status: 'failed', limitReached: true, actualIterations: 2, iteration: { current: 2, max: 2 } });
+    expect(result.results[0]?.summary).toContain('partial output');
+  });
+});

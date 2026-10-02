@@ -155,6 +155,11 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
     repl = runInkInteractiveMode({ provider: 'anthropic', agentMode: 'ama', session: { id: session.id, resume: true }, storage: clientStorage,
       clientPlane: plane, sessionCommands: createCliSessionCommands(client), hardExitOnClose: false });
     await expect.poll(() => received.at(-1)?.activity?.todos?.[0]?.subject).toBe('Verify the Host activity boundary');
+    events!.onIterationStart?.(17, 500);
+    events!.onIterationEnd?.({ iter: 4, maxIter: 200, tokenCount: 1, tokenSource: 'api', scope: 'worker', contextKind: 'child' });
+    await expect.poll(() => received.at(-1)?.activity?.iteration).toEqual({ current: 17, maximum: 500 });
+    events!.onIterationStart?.(1, 500);
+    await expect.poll(() => received.at(-1)?.activity?.iteration).toEqual({ current: 1, maximum: 500 });
     await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, ''), { timeout: 10_000 })
       .toContain('VerifytheHostactivityboundary');
     await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, '')).toContain('HOST_BOUNDARY.md');
@@ -235,8 +240,8 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
         expect(commandOutput()).toContain('(currentworkspace)');
       }
       yield '/status';
-      expect(commandOutput()).toContain('Messages:4');
-      expect(commandOutput()).toMatch(/Tokens:~[1-9]/);
+      await expect.poll(commandOutput).toContain('Messages:4');
+      await expect.poll(commandOutput).toMatch(/Tokens:~[1-9]/);
       const lineage = (await client.sessions.readLineage(target))!;
       const root = lineage.entries.find(entry => entry.role === 'user')!;
       expect(root.preview).toBe('TARGET_FIRST');

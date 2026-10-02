@@ -3,6 +3,12 @@
 KodaX supports 16 built-in LLM provider aliases. Each reads its API key from a
 dedicated environment variable — no key is ever stored in config files.
 
+The unreleased compatibility fix explicitly disables inherited
+`ANTHROPIC_AUTH_TOKEN` for Anthropic-compatible gateways, including custom
+compatible providers. CLI and SDK requests use that provider's configured key
+without adding an unrelated Anthropic Bearer token. The native `anthropic`
+provider's authentication behavior is unchanged.
+
 ## Built-in provider aliases
 
 | Alias | Environment variable | Reasoning | Default model |

@@ -10,10 +10,9 @@ name: CI
 # codebase relies on Node 20+ features (e.g. the RegExp `v` flag), so 18 is no
 # longer supported.
 
+# Run before release builds, or manually when an earlier check is needed.
 on:
-  push:
-    branches: [KodaX, InfX]
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 # Cancel superseded runs on the same ref to save CI minutes.

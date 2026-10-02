@@ -5,7 +5,7 @@
  * large-entry reads stay unambiguous.
  */
 import { restoreHistoryItemsFromSession } from '@kodax-ai/repl';
-import { canonicalTools, toolResultText } from './client-canonical-tools.js';
+import { canonicalTools, canonicalToolKey, toolResultText } from './client-canonical-tools.js';
 import { emitKodaXDiagnostic, type KodaXMessage } from '@kodax-ai/agent';
 import type {
   ClientHistoryPage,
@@ -115,7 +115,7 @@ export async function readConversationHistoryEntry(
   };
 }
 
-async function readFollowingMessage(
+export async function readFollowingMessage(
   readChunk: Parameters<typeof readConversationHistoryEntry>[2],
   sessionId: string,
   revision: string,
@@ -201,7 +201,7 @@ function projectHistoryEntry(
   for (const item of restored) {
     if (item.type === 'tool_group') {
       for (const tool of item.tools) {
-        const canonical = tools.get(tool.id);
+        const canonical = tools.get(canonicalToolKey(tool.id, tool.assistantOutputId));
         if (!canonical) continue;
         items.push({
           ...canonical,

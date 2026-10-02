@@ -72,6 +72,7 @@ it('FEATURE_298 T35 — runs.await resolves the terminal outcome over the produc
 
     const outcome = await client.runs.await(accepted.runId!);
     expect(outcome.phase).toBe('completed');
+    expect(outcome).toMatchObject({ terminal: { kind: 'completed', effectOutcome: 'known' } });
     expect(outcome.result).toMatchObject({ success: true, lastText: 'done' });
     expect(outcome.error).toBeUndefined();
 

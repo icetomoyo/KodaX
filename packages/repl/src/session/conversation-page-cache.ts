@@ -35,8 +35,8 @@ export {
   removeConversationPageCachesInDirectory,
 } from './conversation-page-cache-files.js';
 
-// v7 adds canonical source identities to descriptors for bounded body lookup.
-const CACHE_VERSION = 7;
+// v10 combines canonical source lookup with legacy pairing and compaction repair.
+const CACHE_VERSION = 10;
 const INDEX_RECORD_BYTES = 24;
 const WRITE_BATCH_BYTES = 1024 * 1024;
 const MAX_CACHE_MANIFEST_BYTES = 1024 * 1024;
@@ -53,7 +53,7 @@ export interface ConversationPageCacheAdmission {
 }
 
 interface ConversationCacheManifest {
-  readonly version: 7;
+  readonly version: 10;
   readonly sessionId: string;
   readonly generation: string;
   readonly sourceRevision: string;
@@ -182,6 +182,7 @@ function isConversationIssue(value: unknown): value is SessionConversationHistor
   const codes = new Set([
     'active_entry_missing',
     'compaction_boundary_invalid',
+    'compaction_history_truncated',
     'compaction_predecessor_ambiguous',
     'compaction_predecessor_missing',
     'legacy_overlap_ambiguous',

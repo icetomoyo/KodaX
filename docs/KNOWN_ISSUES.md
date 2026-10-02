@@ -1,11 +1,17 @@
 # Known Issues
 
-_Last Updated: 2026-09-27_
+_Last Updated: 2026-10-02_
 
 ---
 
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
+
+## Issue numbering after the 2026-10-02 integration
+
+Published mainline Issues 340–344 keep their identities. Worktree-only Issues
+340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
+resolution evidence is retained. Issues 345–347 are unchanged.
 
 ## rc.9 follow-up — text tools reject a workspace root containing native state
 
@@ -1087,20 +1093,25 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 352 | Medium | Resolved | Model commands and local command feedback disappear after Host view replacement | confirmed at `394d4134`; first affected version unknown | v0.7.96-rc.11 worktree (unreleased) | 2026-09-27 | 2026-09-27 |
+| 351 | High | Resolved | Historical client notices displace the following Run output from the viewport tail | confirmed at `d552be47`; first affected version unknown | v0.7.96-rc.11 worktree (unreleased) | 2026-09-24 | 2026-09-24 |
+| 350 | Medium | Resolved | Normal REPL loses browsable history when a bounded Host view replaces it | Product Client display replacement; confirmed against `c447c0f3` | v0.7.96-rc.11 worktree (unreleased) | 2026-09-24 | 2026-09-26 |
+| 349 | High | Resolved | Quoted managed protocol markers truncate ordinary assistant answers | confirmed at `d552be47`; first affected version unknown | v0.7.96-rc.11 worktree (unreleased) | 2026-09-24 | 2026-09-24 |
+| 348 | High | Resolved | Partial conversation pages place the final answer before older tools | confirmed at `d552be47`; first affected version unknown | v0.7.96-rc.11 worktree (unreleased) | 2026-09-24 | 2026-09-24 |
 | 347 | Medium | Resolved | Off-window item reads truncate high-block canonical messages | confirmed at `394d4134` | v0.7.96-rc.11 worktree (unreleased) | 2026-09-27 | 2026-09-27 |
 | 346 | Medium | Resolved | Stalled ordinary-history reads keep wheel navigation waiting indefinitely | confirmed at `394d4134` | v0.7.96-rc.11 worktree (unreleased) | 2026-09-27 | 2026-09-27 |
 | 345 | Medium | Resolved | Wheel down cannot leave a short frozen ordinary-history window | confirmed at `394d4134` | v0.7.96-rc.11 worktree (unreleased) | 2026-09-27 | 2026-09-27 |
-| 344 | Medium | Resolved | Model commands and local command feedback disappear after Host view replacement | confirmed at `394d4134`; first affected version unknown | v0.7.96-rc.11 worktree (unreleased) | 2026-09-27 | 2026-09-27 |
-| 343 | High | Resolved | Historical client notices displace the following Run output from the viewport tail | confirmed at `d552be47`; first affected version unknown | v0.7.96-rc.11 worktree (unreleased) | 2026-09-24 | 2026-09-24 |
-| 342 | Medium | Resolved | Normal REPL loses browsable history when a bounded Host view replaces it | Product Client display replacement; confirmed against `c447c0f3` | v0.7.96-rc.11 worktree (unreleased) | 2026-09-24 | 2026-09-26 |
-| 341 | High | Resolved | Quoted managed protocol markers truncate ordinary assistant answers | confirmed at `d552be47`; first affected version unknown | v0.7.96-rc.11 worktree (unreleased) | 2026-09-24 | 2026-09-24 |
-| 340 | High | Resolved | Partial conversation pages place the final answer before older tools | confirmed at `d552be47`; first affected version unknown | v0.7.96-rc.11 worktree (unreleased) | 2026-09-24 | 2026-09-24 |
+| 344 | Medium | Open | Interrupted-Run eval lacks per-request timeout, total usage budget, and incremental raw preservation | unreleased (`c232d7b5`); confirmed at `efe33d7d` | — | 2026-10-01 | — |
+| 343 | Medium | Resolved | Windows sandbox unit fixtures provision mock-SID artifacts and remove files in the live native cache | observed with v0.7.96-rc.13; first affected release unknown | working tree (unreleased) | 2026-10-01 | 2026-10-01 |
+| 342 | High | Open | Windows interactive REPL exits during final output without a terminal Run event | observed with v0.7.96-rc.13; first affected release unknown | — | 2026-10-01 | — |
+| 341 | High | Resolved | Windows startup skips NUL-device ACL repair after reboot because the durable setup marker remains current | v0.7.96-alpha.6 (`0aff6f91`) | `v0.7.96-rc.14` | 2026-10-01 | 2026-10-01 |
+| 340 | High | Resolved | Interrupted Run progress missing from next turn; compacted history ambiguous after internal context split a tool pair | observed with v0.7.96-rc.13; first affected release unknown | `v0.7.96-rc.14` | 2026-09-29 | 2026-09-29 |
 | 339 | Medium | Resolved | Background Git probes repeatedly trigger macOS developer-tools installation prompts | observed with v0.7.96-rc.10; first affected release unknown | `v0.7.96-rc.11` | 2026-09-23 | 2026-09-23 |
 | 338 | High | Resolved | Windows daemon state replacement fails under concurrent JSON readers | confirmed at `0ec6aa41`; first affected release not established | `v0.7.96-rc.9` | 2026-09-21 | 2026-09-21 |
 | 337 | High | Resolved | Windows startup candidate survives launcher death; safe handoff must preserve concurrent clients | confirmed v0.7.96-rc.8; first affected release unknown | v0.7.96-rc.8 working tree (unreleased) | 2026-09-20 | 2026-09-20 |
 | 336 | High | Resolved | REPL acceptance probes leave temporary shared daemons running after teardown | a72f test fixtures, observed 2026-09-17/19 | v0.7.96-rc.8 working tree (unreleased) | 2026-09-20 | 2026-09-20 |
-| 334 | High | Resolved | New Session journal initialization scans unrelated Run logs; stale cached floors break lost-cursor recovery | confirmed v0.7.96-rc.3; first affected release not established | `v0.7.96-rc.4` | 2026-09-13 | 2026-09-13 |
 | 335 | High | Resolved | Invalid existing image files poison GLM Coding tool-history replay; nested upstream error codes are lost | confirmed v0.7.96-rc.4; image path predates b25c5142 | `v0.7.96-rc.5` | 2026-09-14 | 2026-09-14 |
+| 334 | High | Resolved | New Session journal initialization scans unrelated Run logs; stale cached floors break lost-cursor recovery | confirmed v0.7.96-rc.3; first affected release not established | `v0.7.96-rc.4` | 2026-09-13 | 2026-09-13 |
 | 333 | High | Resolved | Windows sandbox ACL grants break host OpenSSH | confirmed v0.7.96-beta.4; first affected release not established | v0.7.96-beta.5 | 2026-09-10 | 2026-09-10 |
 | 332 | High | Resolved | Bundled compaction reads a duplicate Provider credential scope and never acquires scoped keys | scoped lease bundle path (confirmed v0.7.96-beta.1) | v0.7.96-beta.2 | 2026-09-07 | 2026-09-07 |
 | 331 | High | Resolved | Scoped custom Provider credential verification ignores active credential authority | run-scoped credential verification path (confirmed v0.7.95) | v0.7.96-beta.2 | 2026-09-04 | 2026-09-04 |
@@ -1285,38 +1296,38 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 | 150 | High | Resolved | v0.7.67 外部 Agent 脚本路由与执行平面关闭契约存在发布阻断缺口 | v0.7.67 RC | v0.7.67 | 2026-07-11 | 2026-07-11 |
 | 149 | High | Resolved | ACP tests persist empty sessions into the real user store | v0.7.66 | v0.7.67 | 2026-07-11 | 2026-07-11 |
 | 148 | High | Resolved | FEATURE_258 外部任务在持久化失败、配置热更新和并发回调下可能失联或状态回退 | v0.7.67 RC | v0.7.67 | 2026-07-10 | 2026-07-10 |
-| 082 | Low | Open | packages/llm 缺少单元测试 | v0.5.21 | - | 2026-03-08 | - |
-
-| 091 | High | Open | 缺少一等公民 MCP / Web Search / Code Search 工具体系 | v0.6.10 | - | 2026-03-18 | - |
-| 092 | High | Open | Team 模式已暴露但原生多 Agent 架构仍未闭环 | v0.6.10 | - | 2026-03-18 | - |
-| 093 | Low | Open | 缺少 IDE / Desktop / Web 一体化分发表面 (Vibe Coding 时代已降级) | v0.6.10 | - | 2026-03-18 | - |
-| 094 | Medium | Open | 核心工作流文件与函数过大，职责耦合导致重构成本持续上升 | v0.6.13 | - | 2026-03-22 | - |
-| 095 | Medium | Open | Agent / REPL 主流程仍存在重复编排与手写运行时流程 | v0.6.13 | - | 2026-03-22 | - |
-| 096 | Low | Open | 类型边界过宽且共享可变状态较多 | v0.6.13 | - | 2026-03-22 | - |
-| 097 | Medium | Open | 错误处理、阻塞式 I/O 与执行侧副作用清理仍不完整 | v0.6.13 | - | 2026-03-22 | - |
-| 098 | Low | Open | 重复 helper、兼容层导出、魔法数字与硬编码字符串需要收敛 | v0.6.13 | - | 2026-03-22 | - |
-| 099 | Low | Open | 测试辅助代码重复，局部验证资产需要收敛 | v0.6.13 | - | 2026-03-22 | - |
-
-
-| 105 | Medium | Resolved | kodax -c 可选择空 ACP 占位 session，classic REPL 还会忽略 resume | v0.7.14 | v0.7.74 | 2026-04-03 | 2026-07-23 |
-| 106 | High | Open | Managed-task structured worker blocks remain text-coupled and can fail closed on protocol drift | v0.7.14 | - | 2026-04-08 | - |
-| 107 | Medium | Open | harnessProfile 类型命名残留 - H0/H1/H2 应替换为 worker-chain composition | v0.7.16 | - | 2026-04-11 | - |
-
-| 110 | Low | Open | 缺少 /mcp status 和 /mcp refresh REPL 命令 | v0.7.16 | - | 2026-04-11 | - |
-| 112 | High | Resolved | ask_user_question 交互机制不完备 — 数字编号歧义 + 缺少 input/multiSelect 模式 | v0.7.18 | v0.7.62 | 2026-04-12 | 2026-07-06 |
-| 118 | Medium | Open | esbuild 打包替代 tsc 直接运行 — 消除运行时模块开销与 React dev 模式 | v0.7.19 | - | 2026-04-17 | - |
-| 119 | High | Open | Scout 升级 H0→H1 后残留 pre-Scout mutationSurface — Generator 被错误锁为 docs-only | v0.7.20 | - | 2026-04-19 | - |
-| 120 | High | Open | Skill / Plan-mode 调用路径下流式注入 prompt 失效 — `canQueueFollowUps` 未开启 | 一直存在 | - | 2026-04-20 | - |
-| 122 | Medium | Open | edit / multi_edit 错误消息在 v0.7.26 过度精简 — 丢失关键信息载体导致 LLM 恢复失败 | v0.7.26 | - | 2026-04-23 | - |
-| 124 | High | Open | AMA 子 Agent dispatch 实际触发率偏低 — Controller fanout gate + H1 工具白名单串联收得过紧 | v0.7.18 | - | 2026-04-26 | - |
-| 125 | Low | Open | Thinking-mode cross-provider replay — 三个不可测 OpenAI-compat 与 anthropic 官方 strict mode 待实证 | v0.7.28 | - | 2026-04-26 | - |
-| 126 | Low | Open | tmux 默认不透传 OSC 8 超链接 — kodax 输出中的 file:// / docs URL 在 tmux 内不可点击 | 一直存在 | - | 2026-04-28 | - |
-| 133 | Low | Open | `repo-intelligence/runtime.test.ts` "falls back to OSS when premium returns malformed preturn payloads" intermittent flake under heavy parallel load — failure mode not yet captured | 待调研 | - | 2026-05-16 | - |
-| 136 | Low | Open | 流式 / 滚动时 spinner 动画卡顿 + 计时变慢 — 根因在 CPU 侧每帧渲染（React reconciliation + outputToScreen 全量重建），**非**终端写入字节量（cell-diff + DECSTBM 两次否证 I/O 假设） | 待调研 | - | 2026-05-31 | - |
-| 141 | Medium | Open | CI workflow long-red on Linux: cross-platform test bugs (storage list() runtime-inspection, bash background-process, h2 spawn env, skill-creator API-key-at-load) | long-standing (pre-v0.7.49) | - | 2026-06-18 | - |
-| 145 | High | Resolved | Runtime daemon / SDK 边界存在生命周期、事件、权限与协议一致性缺口 | v0.7.64-v0.7.66 | v0.7.66 | 2026-07-10 | 2026-07-10 |
-| 146 | Medium | Resolved | 图片路径粘贴处理失败时吞掉原始输入且无可见反馈 | v0.7.40 | v0.7.66 | 2026-07-10 | 2026-07-10 |
 | 147 | High | Resolved | GitHub Release 二进制归档遗漏 Runtime 与工具 Worker sidecar | v0.7.66 RC | v0.7.66 | 2026-07-10 | 2026-07-10 |
+
+| 146 | Medium | Resolved | 图片路径粘贴处理失败时吞掉原始输入且无可见反馈 | v0.7.40 | v0.7.66 | 2026-07-10 | 2026-07-10 |
+| 145 | High | Resolved | Runtime daemon / SDK 边界存在生命周期、事件、权限与协议一致性缺口 | v0.7.64-v0.7.66 | v0.7.66 | 2026-07-10 | 2026-07-10 |
+| 141 | Medium | Open | CI workflow long-red on Linux: cross-platform test bugs (storage list() runtime-inspection, bash background-process, h2 spawn env, skill-creator API-key-at-load) | long-standing (pre-v0.7.49) | - | 2026-06-18 | - |
+| 136 | Low | Open | 流式 / 滚动时 spinner 动画卡顿 + 计时变慢 — 根因在 CPU 侧每帧渲染（React reconciliation + outputToScreen 全量重建），**非**终端写入字节量（cell-diff + DECSTBM 两次否证 I/O 假设） | 待调研 | - | 2026-05-31 | - |
+| 133 | Low | Open | `repo-intelligence/runtime.test.ts` "falls back to OSS when premium returns malformed preturn payloads" intermittent flake under heavy parallel load — failure mode not yet captured | 待调研 | - | 2026-05-16 | - |
+| 126 | Low | Open | tmux 默认不透传 OSC 8 超链接 — kodax 输出中的 file:// / docs URL 在 tmux 内不可点击 | 一直存在 | - | 2026-04-28 | - |
+| 125 | Low | Open | Thinking-mode cross-provider replay — 三个不可测 OpenAI-compat 与 anthropic 官方 strict mode 待实证 | v0.7.28 | - | 2026-04-26 | - |
+| 124 | High | Open | AMA 子 Agent dispatch 实际触发率偏低 — Controller fanout gate + H1 工具白名单串联收得过紧 | v0.7.18 | - | 2026-04-26 | - |
+| 122 | Medium | Open | edit / multi_edit 错误消息在 v0.7.26 过度精简 — 丢失关键信息载体导致 LLM 恢复失败 | v0.7.26 | - | 2026-04-23 | - |
+
+
+| 120 | High | Open | Skill / Plan-mode 调用路径下流式注入 prompt 失效 — `canQueueFollowUps` 未开启 | 一直存在 | - | 2026-04-20 | - |
+| 119 | High | Open | Scout 升级 H0→H1 后残留 pre-Scout mutationSurface — Generator 被错误锁为 docs-only | v0.7.20 | - | 2026-04-19 | - |
+| 118 | Medium | Open | esbuild 打包替代 tsc 直接运行 — 消除运行时模块开销与 React dev 模式 | v0.7.19 | - | 2026-04-17 | - |
+
+| 112 | High | Resolved | ask_user_question 交互机制不完备 — 数字编号歧义 + 缺少 input/multiSelect 模式 | v0.7.18 | v0.7.62 | 2026-04-12 | 2026-07-06 |
+| 110 | Low | Open | 缺少 /mcp status 和 /mcp refresh REPL 命令 | v0.7.16 | - | 2026-04-11 | - |
+| 107 | Medium | Open | harnessProfile 类型命名残留 - H0/H1/H2 应替换为 worker-chain composition | v0.7.16 | - | 2026-04-11 | - |
+| 106 | High | Open | Managed-task structured worker blocks remain text-coupled and can fail closed on protocol drift | v0.7.14 | - | 2026-04-08 | - |
+| 105 | Medium | Resolved | kodax -c 可选择空 ACP 占位 session，classic REPL 还会忽略 resume | v0.7.14 | v0.7.74 | 2026-04-03 | 2026-07-23 |
+| 099 | Low | Open | 测试辅助代码重复，局部验证资产需要收敛 | v0.6.13 | - | 2026-03-22 | - |
+| 098 | Low | Open | 重复 helper、兼容层导出、魔法数字与硬编码字符串需要收敛 | v0.6.13 | - | 2026-03-22 | - |
+| 097 | Medium | Open | 错误处理、阻塞式 I/O 与执行侧副作用清理仍不完整 | v0.6.13 | - | 2026-03-22 | - |
+| 096 | Low | Open | 类型边界过宽且共享可变状态较多 | v0.6.13 | - | 2026-03-22 | - |
+| 095 | Medium | Open | Agent / REPL 主流程仍存在重复编排与手写运行时流程 | v0.6.13 | - | 2026-03-22 | - |
+| 094 | Medium | Open | 核心工作流文件与函数过大，职责耦合导致重构成本持续上升 | v0.6.13 | - | 2026-03-22 | - |
+| 093 | Low | Open | 缺少 IDE / Desktop / Web 一体化分发表面 (Vibe Coding 时代已降级) | v0.6.10 | - | 2026-03-18 | - |
+| 092 | High | Open | Team 模式已暴露但原生多 Agent 架构仍未闭环 | v0.6.10 | - | 2026-03-18 | - |
+| 091 | High | Open | 缺少一等公民 MCP / Web Search / Code Search 工具体系 | v0.6.10 | - | 2026-03-18 | - |
+| 082 | Low | Open | packages/llm 缺少单元测试 | v0.5.21 | - | 2026-03-08 | - |
 
 ---
 
@@ -1329,7 +1340,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 - **Original Problem**: A canonical message with 80 alternating tool/text pairs retains every result in `readHistoryEntry`, but `readItem` returns null for the first tool. Display restoration was also assigning block ordinals after trimming.
 - **Root Cause / Resolution**: The fallback reused bounded view restoration. Reuse full projection before assigning identities, apply the existing 50-round/150-item policy only at the display boundary, and read canonical items without that policy. No new Product method or ID registry.
 - **Files / Tests**: `session-view.ts`, `sdk-runtime.ts`, `restore-history.ts`; `sdk-client.history-boundaries.test.ts` checks early tool text/input and captured multi-block identities after observation rollover. Existing ownership, notices, compaction and rewind tests remain required.
-- **Fixed / Resolution Date**: v0.7.96-rc.11 worktree (unreleased), 2026-09-27. See [regression guide](test-guides/ISSUE_344_v0.7.96_REGRESSION_GUIDE.md).
+- **Fixed / Resolution Date**: v0.7.96-rc.11 worktree (unreleased), 2026-09-27. See [regression guide](test-guides/ISSUE_352_v0.7.96_REGRESSION_GUIDE.md).
 
 ### Issue 346: Stalled ordinary-history reads keep wheel navigation waiting indefinitely
 
@@ -1338,7 +1349,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 - **Original Problem**: A history/body Promise that never settles keeps the browse loading lock held. Wheel navigation can remain unresponsive until End. This injected failure is not proof that the user's screenshot involved a stalled RPC.
 - **Root Cause / Resolution**: Abort was checked only around awaits. Bound the whole browse gesture to 15 seconds and race cancellation against pending reads; preserve the captured body and surface manual retry. Late responses cannot replace the page or request more chunks. This releases UI waiting, not the already-dispatched Host RPC.
 - **Files / Tests**: `prompt-history-browse.ts` and adjacent tests; `usePromptHistoryBrowse.test.tsx` covers timeout, preserved body, retry and stale response. Reader tests cover immediate cancellation, stalled hydration, cleanup and no further chunk reads.
-- **Fixed / Resolution Date**: v0.7.96-rc.11 worktree (unreleased), 2026-09-27. See [regression guide](test-guides/ISSUE_344_v0.7.96_REGRESSION_GUIDE.md).
+- **Fixed / Resolution Date**: v0.7.96-rc.11 worktree (unreleased), 2026-09-27. See [regression guide](test-guides/ISSUE_352_v0.7.96_REGRESSION_GUIDE.md).
 
 ### Issue 345: Wheel down cannot leave a short frozen ordinary-history window
 
@@ -1348,9 +1359,9 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 - **Root Cause**: The pointer policy consumed downward wheel input at offset zero, conflating the bottom of a frozen window with the live bottom. Short windows have zero offset even while browsing.
 - **Resolution**: Pass the existing browsing state to the pointer policy so downward wheel input reaches the existing newer-page/live navigation. Transcript and live-bottom behavior remain unchanged. No Host API or new state machine.
 - **Files / Tests**: `InkREPL.tsx`, `transcript-input-policy.ts`; `repl-pty-acceptance.mjs` now covers short frozen windows and top-to-bottom wheel travel without End. The short-window test failed before the fix and passed after it.
-- **Fixed / Resolution Date**: v0.7.96-rc.11 worktree (unreleased), 2026-09-27. See [regression guide](test-guides/ISSUE_344_v0.7.96_REGRESSION_GUIDE.md).
+- **Fixed / Resolution Date**: v0.7.96-rc.11 worktree (unreleased), 2026-09-27. See [regression guide](test-guides/ISSUE_352_v0.7.96_REGRESSION_GUIDE.md).
 
-### Issue 344: Model commands and local command feedback disappear after Host view replacement
+### Issue 352: Model commands and local command feedback disappear after Host view replacement
 
 - **Priority / Status**: Medium / Resolved (PTY reproduction confirmed ready before fixing).
 - **Introduced / Created**: Confirmed at `394d4134`; first affected version unknown; 2026-09-27.
@@ -1358,9 +1369,9 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 - **Root Cause**: Product mode omitted local command echoes, and captured command output plus direct setting/session callback feedback only updated local history, which `sessions.observe` replaces. Review also found that a null notice-write result was incorrectly acknowledged as success by the Product adapter.
 - **Resolution**: Route command feedback through the existing Host `appendNotice` client-only lineage. Generic non-Run command output includes its command echo; setting/session callbacks retain their result notices. Capture the destination Session before the write, show errors without re-executing the command, and reject null write results in the Product adapter. No new Product API or model-context messages.
 - **Files / Tests**: `InkREPL.tsx`, `client-plane.ts`, `cli-client-plane.ts`, `client-runtime-adapter.ts`; real PTY provider/model switching, query, invalid provider, Ctrl+T, Host refresh, new observer and model-context exclusion; `client-runtime-adapter.notices.test.ts` rejects failed writes. Reproductions were red before their respective fixes.
-- **Fixed / Resolution Date**: v0.7.96-rc.11 worktree (unreleased), 2026-09-27. See [regression guide](test-guides/ISSUE_344_v0.7.96_REGRESSION_GUIDE.md).
+- **Fixed / Resolution Date**: v0.7.96-rc.11 worktree (unreleased), 2026-09-27. See [regression guide](test-guides/ISSUE_352_v0.7.96_REGRESSION_GUIDE.md).
 
-### Issue 343: Historical client notices displace the following Run output from the viewport tail
+### Issue 351: Historical client notices displace the following Run output from the viewport tail
 
 - **Priority / Status**: High / Resolved (reproduced and ready before fixing).
 - **Introduced**: Confirmed at `d552be47`; first affected version unknown.
@@ -1388,7 +1399,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
   misleading notice timestamps, repeated legacy text and window-external tools.
   The PTY scrolling probe is followed by a streaming/Stop/next-input check.
 
-### Issue 342: Normal REPL loses browsable history when a bounded Host view replaces it
+### Issue 350: Normal REPL loses browsable history when a bounded Host view replaces it
 
 - **Priority / Status**: Medium / Resolved
 - **Fixed**: v0.7.96-rc.11 worktree (unreleased), 2026-09-26.
@@ -1401,7 +1412,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
   only the visible tool block, leaving nothing to scroll. Treat missing content
   and incorrect scroll geometry as separate hypotheses; working input on a
   synthetic notice list does not rule out this report.
-- **Context**: Same Session as Issues 340–341. A read-only copy of its history
+- **Context**: Same Session as Issues 348–349. A read-only copy of its history
   was replayed in isolated PTYs before and after the fixes. Both wheel and
   PageUp worked in both versions; this does not reproduce the reported terminal.
 - **Confirmed regression (2026-09-26)**: A live source-entry A/B against main
@@ -1417,7 +1428,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
   snapshot as the complete ordinary browsing history. Mouse protocol, parsing,
   renderer selection and wheel dispatch are unchanged from main. The exact
   original Session's live snapshots were not captured; its separate truncated
-  answer remains Issue 341. This issue no longer waits on user reproduction.
+  answer remains Issue 349. This issue no longer waits on user reproduction.
 - **Fix requirement**: Ordinary browsing must retrieve older Host-owned history
   through existing read interfaces, preserve the browsing position/draft, and
   return to the current live view explicitly. Do not merely raise the snapshot
@@ -1442,10 +1453,10 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
   retained the saved answer in ordinary mode. PageUp and wheel moved through
   earlier content; the banner scrolled with history. Transcript PageUp also
   worked. This is a restart/restore check, not reproduction of the original
-  live transition. See the Issues 340–343 regression guide for evidence and
+  live transition. See the Issues 348–351 regression guide for evidence and
   the distinction between bounded history and viewport clipping.
 
-### Issue 341: Quoted managed protocol markers truncate ordinary assistant answers
+### Issue 349: Quoted managed protocol markers truncate ordinary assistant answers
 
 - **Priority / Status**: High / Resolved (reproduced and ready before fixing).
 - **Introduced**: Confirmed at `d552be47`; first affected version unknown.
@@ -1467,7 +1478,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
   three quoted-marker answers; `src/sdk-client.streaming.test.ts` checks SA/AMA
   public Host result and Session view text against the full scripted answer.
 
-### Issue 340: Partial conversation pages place the final answer before older tools
+### Issue 348: Partial conversation pages place the final answer before older tools
 
 - **Priority / Status**: High / Resolved (reproduced and ready before fixing).
 - **Introduced**: Confirmed at `d552be47`; first affected version unknown.
@@ -1488,7 +1499,329 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 - **Tests Added**: `src/session-view.output-ownership.test.ts` exercises public
   observation with a mid-turn page and separately grouped or coalesced tools.
   Both wrong ordering and lost group siblings were reproduced before fixing.
-- **Manual validation**: See [regression guide](test-guides/ISSUE_340_v0.7.96-rc.11_REGRESSION_GUIDE.md).
+- **Manual validation**: See [regression guide](test-guides/ISSUE_348_v0.7.96-rc.11_REGRESSION_GUIDE.md).
+### Issue 344: Interrupted-Run eval budget and failure evidence are incomplete
+
+- Priority: Medium
+- Status: Open (investigation ready)
+- Introduced: Unreleased (`c232d7b5`); confirmed at `efe33d7d`
+- Created: 2026-10-01
+
+#### Original Problem and Scope
+
+`tests/interrupted-run-recovery.eval.ts` describes a finite 12-call pilot and
+caps each output at 1,024 tokens, but does not pass `timeoutMs` to `runOneShot`
+or account for a total token/external-spend budget. The 300-second Vitest test
+timeout is not an AbortSignal for an in-flight provider stream. Raw evidence
+is written only after all three repetitions in a cell succeed, so a later
+request failure loses the earlier completed observations from that cell.
+These gaps violate the budget and raw-preservation requirements in
+`benchmark/EVAL_GUIDELINES.md`.
+
+#### Required Repair and Validation
+
+Pass an aborting per-request timeout, enforce cumulative usage/spend limits,
+and save each completed or failed observation before admitting another call.
+Validate delayed/failed calls with mocked provider responses and confirm that
+earlier raw rows remain readable. Do not rerun live providers just to test
+this bookkeeping or treat the existing single-arm 12/12 pilot as proof of
+cross-provider completeness. This is an eval-driver gap; the SDK's transient
+recovery execution and type/export implementation are separately covered.
+The 2026-10-01 SDK audit records it as unresolved and makes no live eval call.
+
+### Issue 343: Windows sandbox unit fixtures share the live native cache
+
+- Priority: Medium
+- Status: Resolved in working tree; unreleased
+- Introduced: Observed with v0.7.96-rc.13; first affected release unknown
+- Created / Source Resolution Date: 2026-10-01
+
+#### Original Problem and Evidence
+
+`src/sandbox-runtime.test.ts` provisions native artifacts during suite setup
+using a mocked sandbox group SID, `S-1-5-21-1001`, and deliberately removes
+cached artifacts in its recovery cases. It used the ordinary user's shared
+`LOCALAPPDATA` cache. A live 120-second sandbox reproduction overlapped one
+artifact-deletion case and caused `EBUSY`. The original review Session also
+ran the suite inside the real sandbox account and encountered `EPERM` opening
+the mock-SID artifact before any individual test could run.
+
+The directory's `sandbox-e08feba1acb62f61` key is the SHA-256 prefix of the
+mock SID. Its DACL grants the host ADMIN, SYSTEM, and that mock SID, while the
+real sandbox account is `S-1-5-21-2130785933-3654544736-2779019230-1050`.
+Independent SDK Sessions reproduce access denial before, during, and after
+another sandbox's 120-second Run; ordinary host reads always succeed. This
+file's denial is an identity boundary, not evidence of a live parallel lock.
+
+#### Resolution and Limits
+
+The suite now provisions into a unique temporary `LOCALAPPDATA`, restores that
+override before each test, and removes the private cache after the suite. Mock
+SID fixtures and destructive recovery cases no longer use the live cache.
+Production ACLs and cache verification are unchanged.
+
+This fixes fixture isolation, not the ability to provision host-trusted native
+state from an already restricted sandbox. Running the isolated suite under
+`srt-sandbox` fails at protected-directory provisioning instead of the old
+shared mock-SID file. Run this suite from ordinary host PowerShell; actual
+sandbox execution is verified separately through the public Runtime API.
+Do not widen the native cache DACL or treat skipped tests as a passing result.
+
+- Files Changed: `src/sandbox-runtime.test.ts` and the FEATURE_295 test guide.
+- Validation: the original restricted-account invocation reproduced the old
+  `EPERM`. After isolation, ordinary host runs pass 95 tests with 40 platform
+  skips, both alone and while an independent SDK Session's real sandbox Bash
+  runs for 120 seconds. The concurrent run started at 10:00:47 and finished in
+  85.74 seconds; background Bash ran 10:00:25–10:02:25 and exited 0. Deletion
+  used `srt-sandbox`, recreation used the trusted host text transaction, the
+  original `hello.md` was restored, and host doctor remained ready. Source and
+  test type checks passed.
+- Evidence: `%TEMP%/kodax-session342-concurrent-kMLCDY/acl-red/`, `acl-green/`,
+  and `acl-concurrent/`. The sandbox-only provisioning failure remains an
+  execution constraint, not a successful unit-suite run.
+
+Additional concurrency/Bash verification on the same working tree passes six
+selected real Windows sandbox cases: restricted-token startup, trusted text
+replacement, policy write isolation, background Bash/second Runtime/text
+concurrency, and two independent cold Runtime overlap cases (same write root;
+ancestor read plus child write). Two additional native-control grant rejection
+checks also pass. Five Bash/SDK cleanup and recovery files pass 81/81 with no
+skips. Unselected policy tests are not counted as coverage. These checks do not
+resolve Issue 342 or prove that every older sandbox failure mode is absent.
+
+### Issue 342: Windows REPL exits during final output without Run settlement
+
+- Priority: High
+- Status: Open (needs-info)
+- Introduced: Observed with v0.7.96-rc.13; first affected release unknown
+- Created: 2026-10-01
+
+#### Original Problem
+
+Session `20261001_081125_2953a8ed1c8f6d` returned to PowerShell while its review
+report was still streaming. The user confirms there was no Ctrl+C, Ctrl+D,
+`/quit`, or terminal closure. Expected behavior is to finish the Run and retain
+an interactive prompt, or report a concrete failure before terminating.
+
+Run `run_muou074o_b9ab6972` retains `phase:running`, and owner PID 6328 is dead.
+Its final event is an `assistant.delta` at 09:15:28.560; there is no terminal
+Run or Turn event. The original records contain no process exit code or
+exception stack. Windows Application logs contain no corresponding crash
+entry. Neither fact distinguishes natural event-loop exit, a caught renderer
+error, explicit `process.exit`, fatal runtime failure, or external termination.
+
+#### Investigation and Missing Evidence
+
+Two real SDK Sessions completed the sandbox/read concurrency experiment.
+An additional real-TTY full Ink REPL loaded an isolated copy of the affected
+Session and replayed all 1,148 original Run events, including 51 tool pairs
+and the interrupted final report. It stayed interactive after replay, and
+exited 0 only after an explicit `/quit`. This covers the original output data
+and renderer, not the original wall-clock timing, live provider/network, all
+SDK ownership callbacks, or process environment. It does not resolve the bug.
+The shared-cache ACL denial is separately tracked in Issue 343; causation of
+this unexpected exit is unproven.
+
+The next occurrence needs a timestamped process exit code and a lifecycle
+trace. A temporary observer retains normal terminal input/output and records
+stdin ref/unref stacks, explicit process exit, uncaught-exception monitoring,
+bounded stderr errors, memory samples, and the parent's observed exit code.
+Its memory sampler is unreferenced, so it does not keep a failing event loop
+alive. No production exit behavior has been changed.
+
+Evidence and launcher:
+`%TEMP%/kodax-repl342-replay-T8QFdk/lifecycle.jsonl`, `replay.mjs`,
+`observe-exit.cjs`, and `observe-kodax.ps1`. The launcher resumes the affected
+Session through the installed npm entry; use it in an interactive PowerShell
+window. The observer has been verified with a normal version exit and an
+uncaught exception. The initial launcher argument probes are invalid for the
+original bug: a single-string PowerShell splat split `-V` into two arguments;
+that probe was stopped and the launcher now constructs a typed argument array.
+
+### Issue 341: Windows startup skips NUL-device ACL repair after reboot
+
+- Priority: High
+- Status: Resolved
+- Introduced: v0.7.96-alpha.6 (`0aff6f91`, 2026-09-02)
+- Fixed: `v0.7.96-rc.14`
+- Created / Source Resolution Date: 2026-10-01
+
+#### Original Problem
+
+Session `20260902_073640_nd941e0c92f0fe` successfully ran sandboxed shells on
+2026-09-29, but rounds 28 and 29 ran as the host `admin` account after the next
+boot. Host `kodax sandbox doctor` reports `NUL sandbox-account ACE is missing
+or duplicated`, with `ready:false` and `setupRequired:true`. Deleting and
+rewriting `hello.md` still succeeds through the normal permission fallback and
+trusted text transaction, so file success alone does not prove containment.
+
+Reproduce by activating the Windows sandbox, rebooting Windows, and starting
+the interactive CLI with the current setup marker still present. Startup should
+enter the existing setup boundary if the NUL account grant needs repair.
+
+#### Root Cause and Evidence
+
+`0aff6f91` made `isWindowsSandboxV2SetupCurrent()` accept a valid durable setup
+marker without checking the NUL device's live DACL. Setup modifies a kernel
+device object, whose security descriptor does not have the marker's disk
+lifetime. A current marker therefore cannot prove current NUL access.
+
+The inspected marker was written on 2026-09-29 at 10:41:27; Windows last booted
+on 2026-09-30 at 08:23:28. Its user/group SIDs still match the installed account.
+A read-only NUL DACL probe found no ACE for that user; the original native
+verifier returned exit 2, while the original startup check returned `true`.
+This establishes the false-readiness bug and is consistent with boot reset;
+the investigation did not reboot the user's machine. It does not implicate
+background process concurrency or a sandbox account SID rotation.
+
+The live repair exposed a second defect: the `installing` marker deliberately
+retains historical read roots, but the elevated installer also received those
+roots after their files disappeared. Three retired `NTUSER.DAT*.TxR*` transaction
+files made native ACL preflight fail with Win32 error 2. The NUL ACE had already
+been repaired, but setup correctly retained a non-ready marker instead of
+publishing an incomplete generation. Re-running setup alone could not clear
+the stale roots because staging merged them back into every retry. That merge
+was introduced by `a5c23da1` on 2026-09-11.
+
+#### Resolution
+
+Interactive startup now verifies the existing NUL compatibility contract using
+the protected native executable in verify-only mode before skipping recovery.
+A failed probe returns `false`, so the CLI enters its existing setup child and
+UAC boundary. Healthy startup remains fast; command admission and SDK/daemon
+startup do not run setup or mutate ACLs. A healthy account is repaired in place
+by the existing installer. Capability setup filters its installation roots
+through the existing filesystem existence check, preserving historical roots
+in the pending marker for migration diagnosis without passing retired files to
+ACL preflight. Other filesystem errors still propagate.
+
+- Files Changed: `src/sandbox-runtime.ts`, `src/sandbox-runtime.test.ts`,
+  `public_docs/configuration/sandbox.md`, `docs/ADR.md`,
+  `docs/test-guides/FEATURE_295_v0.7.96_TEST_GUIDE.md`.
+- Tests Added: current marker plus missing NUL access requires recovery;
+  read-only inspection preserves the marker/account and observes restored access
+  without a cached false-ready result; setup succeeds with a retired historical
+  root while retaining that root in its pending migration record.
+- Validation: new regression observed RED before the fix, then GREEN; 116
+  related tests passed with 40 platform skips; source/test type checks and
+  CLI/SDK bundle build passed. Live source startup probe changed from `true`
+  to `false` on the unchanged failing host. The second regression was also
+  observed RED before its fix and GREEN afterwards. Standard source setup then
+  returned `ready:true`, without changing the account/group SIDs. Reboot
+  acceptance remains a manual follow-up.
+
+The real `toolBash`/trusted `toolWrite` replay in `C:\Works\TMP` started a
+120-second background PowerShell at 08:51:41 and completed at 08:53:41 with
+`[Exit: 0]`. Its initial/final identity and the delete/token probes were
+`srt-sandbox`; the background remained active during the 65 ms trusted text
+write. Shell deletion completed in 1116 ms. The original `hello.md` content was
+restored after verification. Host doctor remained ready after background exit.
+Evidence: `%TEMP%/kodax-nul341-smoke-rFcN5e/report.json`. An initial unit-suite
+attempt overlapping that live replay hit `EBUSY` in its artifact-deletion test;
+that case passed when rerun after the sandbox exited. Issue 343 subsequently
+isolates these fixtures from the live native cache, allowing host unit tests
+to overlap live sandbox experiments without deleting their shared ASRT binary.
+The complete five-file regression batch then passed (116 tests, 40 platform
+skips) with no overlapping live sandbox replay.
+
+### Issue 340: Interrupted Run progress missing from next turn; compacted history ambiguous
+
+- Priority: High
+- Status: Resolved
+- Introduced: Observed with v0.7.96-rc.13; first affected release unknown
+- Fixed: `v0.7.96-rc.14`
+- Created / Source Resolution Date: 2026-09-29
+
+#### Original Problem
+
+Two related symptoms. First, a managed Run that stopped before its conversation
+was saved (for example `daemon_crashed`) left tool progress only in the Runtime
+event journal. Space could display it, but the next model turn never saw it;
+rc.13 persists new output promptly but did not close gaps left by older Runs.
+Second, a compacted Session resolved as `ambiguous` with
+`compaction_boundary_invalid` and `compaction_predecessor_missing`. Its active
+branch held a partial assistant and an empty user message, while a retained
+sibling branch held the complete tool calls and results.
+
+#### Root Cause and Scope
+
+`validateAndFixToolHistory` paired a `tool_use` only with the immediately
+following message. A managed-run context message inserted between
+`assistant(tool calls)` and `user(tool results)` made both halves look orphaned,
+so cleanup stripped them. A replay of the retained branch through the old
+transform reproduces the damaged branch exactly. Failed managed provider calls
+also attached the provider-normalized request copy as the recovery transcript,
+which let that cleanup reach persisted history. Issue 293 was consulted and is
+a different cause.
+
+#### Source Resolution
+
+- Pairing scope is the assistant plus every message before the next assistant.
+  Result carriers move next to their assistant and interposed messages follow.
+- Recovery transcripts are the Runner transcript the adapter received.
+- Resolution restores a damaged active-path entry only when a unique, closed,
+  retained sibling chain was written first and the frozen legacy transform
+  reproduces the damage exactly. Anything else stays ambiguous; siblings are
+  never adopted wholesale and duplicate queries are not removed by text or time.
+  Nothing writes to the Session. Source tracing also follows entries that were
+  compacted again before the fix. The page cache version moves from 6 to 9.
+- Compaction boundaries follow copy-of-copy provenance: a retained entry whose
+  source is an intermediate copy (often on an abandoned branch) is traced, up
+  to 8 hops, to the first predecessor-epoch entry, as long as every hop keeps
+  the same logical identity and content. Any other chain fails closed.
+- An unprovable older compaction boundary no longer flattens every physical
+  branch. The proven newer epochs are returned as `partial` with
+  `compaction_history_truncated` naming the boundary, so no sibling copy is
+  emitted. Flatten remains only for a missing or incomplete active path and
+  when no epoch is proven.
+- Journal progress is not backfilled into history: assistant text exists only
+  as deltas, so a complete conversation cannot be proven. Instead the next
+  managed or coding Run receives a transient record. It names its source Run
+  and terminal code, lists recorded results and unknown-result operations,
+  and is bounded (3 Runs, 6,000 characters). It appears only when the Run's
+  turn is on the active branch, matches operations to history per turn (tool
+  call ids may repeat across turns), and is never saved: the managed path
+  strips it before every save and the coding path adds it only to the
+  provider request. Journal read failures emit a diagnostic and skip it.
+- Reply strategy: assistant text the Run streamed becomes quoted "reply
+  excerpts", labelled unconfirmed and not a user request. Retries use the
+  replaced segment, child actor output mirrored live is excluded, and each
+  excerpt keeps its tail. The budget goes to operations across every included
+  Run first, newest Run first, and excerpts only fill what is left, so a newer
+  Run's long replies cannot drop an older Run's operations. An excerpt is
+  omitted when a saved assistant message of the same turn holds it.
+- Tool invocations run without a model call and need no record.
+
+#### Files Changed and Verification
+
+- `packages/agent/src/runtime-middleware/history-cleanup.ts`,
+  `packages/agent/src/session-lineage/legacy-tool-pairing.ts`,
+  `packages/agent/src/session-lineage/kodax-session-lineage.ts`,
+  `packages/coding/src/task-engine/_internal/managed-task/{llm-adapter,managed-run-context}.ts`,
+  `packages/coding/src/task-engine/_internal/interrupted-run-recovery.ts`,
+  `packages/coding/src/task-engine/runner-driven.ts`,
+  `packages/coding/src/agent-runtime/run-substrate.ts`,
+  `packages/repl/src/session/{conversation-history,conversation-page-cache}.ts`,
+  `src/runtime-interrupted-run-journal.ts`, `src/sdk-runtime.ts`.
+- Regression tests use de-identified minimal topologies next to each source
+  file, plus `packages/repl/src/interactive/storage.test.ts` for v6 cache
+  rebuild parity, `src/sdk-runtime.test.ts` for managed and coding journal
+  handoff and the unreadable-journal fallback, and
+  `run-substrate.interrupted-run-recovery.test.ts` for the coding request view.
+- A read-only copy of the reported Session resolves with no issues, cold and
+  from cache alike: 590 entries, and 91 of 91 calls paired in the provider input.
+- A read-only copy of the SDK-reported Session with a forked legacy evidence
+  chain went from `ambiguous` (2,069 entries, 1,051 content duplicates) to
+  `partial` (412 entries, truncated at its oldest compaction). No emitted entry
+  shares a logical identity with another; the 4 remaining content repeats are
+  separate inputs. Up to that boundary it resolves with no issues (664 entries).
+- Manual steps: [Issue 340 regression guide](test-guides/ISSUE_340_v0.7.96-rc.14_REGRESSION_GUIDE.md).
+  The prompt eval `tests/interrupted-run-recovery.eval.ts` (unknown-result
+  write, unconfirmed reply claim) passed 12 of 12 on `zhipu/glm53flash` and
+  `ds/flash`: every run inspected the target before writing, and none
+  trusted the streamed claim. It is a single-arm pilot with no baseline arm.
+- Space acceptance needs a rebuilt desktop package; a source commit does not
+  update `out/win-unpacked`.
 
 ### Issue 339: Background Git probes repeatedly trigger macOS developer-tools installation prompts
 
@@ -3894,7 +4227,7 @@ the duplicate projection.
 ### 282: Agent progress persistence backlog can self-fence its live owner and make an unknown Run reject Stop
 
 - Priority: High
-- Status: Release blocked
+- Status: Open (release blocked)
 - Introduced: v0.7.79 bounded Actor settlement
 - Fixed target: v0.7.85
 - Created: 2026-08-06
@@ -15567,7 +15900,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 226 (34 Open, 192 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 231 (36 Open, 195 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
@@ -15575,11 +15908,11 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 
 ### 2026-09-27: Command feedback and history boundary repairs
 
-- Resolved Issues 344–347: durable command feedback, reverse wheel routing, bounded/cancellable browse waiting, and complete canonical item fallback. Details and isolated verification are in the Issue 344 regression guide.
+- Resolved Issues 352–347: durable command feedback, reverse wheel routing, bounded/cancellable browse waiting, and complete canonical item fallback. Details and isolated verification are in the Issue 352 regression guide.
 
 ### 2026-09-26: Ordinary history browsing repaired
 
-- Resolved Issue 342 with Host-owned, bounded history paging, stable reading
+- Resolved Issue 350 with Host-owned, bounded history paging, stable reading
   anchors and live execution controls. Source/bundle live PTY retention
   scenarios and bidirectional paging checks pass; physical mouse delivery
   remains a separate manual check.
@@ -15589,6 +15922,28 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 - Resolved fixture teardown Issue 336 and production startup handoff Issue 337
   with independent review, controlled performance measurements and execution
   regression checks. Full-run failures and baseline controls remain documented.
+### 2026-10-01: Unreleased SDK and documentation audit
+
+- Review the eight commits after `v0.7.96-rc.13` and the pending sandbox/CI
+  changes. Managed and coding Runtime paths share journal recovery; embedded
+  and daemon execution share the implementation, and public types/exports
+  are present. Align the public SDK guide, sandbox/provider configuration
+  guides, and Unreleased changelog with the final behavior and its limits.
+- Ten focused source files pass 135 tests, the SDK journal handoff cases pass
+  3 selected tests, and bundled SDK credential/daemon compaction checks pass
+  15 tests. Source/test type checks, all 13 SDK declaration bundles, and the
+  CLI/SDK bundle build pass. These checks are not a full release matrix or
+  desktop-package acceptance. No live provider call is made by this audit.
+- Record Issue 344's remaining eval budget/evidence gap. Issue 342's original
+  unexpected REPL exit also remains unresolved.
+
+### 2026-10-01: Issues 342 and 343 investigated
+
+- Record the unexpected REPL exit as unresolved, with original Run evidence,
+  a full-TTY trace replay, and a temporary process lifecycle observer.
+- Isolate Windows sandbox unit fixtures from the live native cache; verify
+  host tests concurrently with a real 120-second sandbox Session. Running the
+  native provisioning suite inside a restricted sandbox remains unsupported.
 
 ### 2026-09-07: Issue 332 resolved (bundled Provider credential scope identity)
 

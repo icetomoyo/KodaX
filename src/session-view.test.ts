@@ -21,6 +21,101 @@ import { runWithProviderCredential } from '@kodax-ai/llm';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
 import { SessionViewOwner, restoreSessionViewItems, persistSessionViewItems, mergeSessionViewItems } from './session-view.js';
 
+it('keeps the root iteration independent of child telemetry and resets on a new invocation', async () => {
+  const owner = new SessionViewOwner(async () => ({ session: { id: 'session', title: 'Iterations' },
+    settings: {}, items: [], queue: [], interactions: [], runs: [] }), async () => undefined);
+  const views: ClientSessionView[] = [];
+  const observation = await owner.observe('session', view => views.push(view));
+  try {
+    const events = owner.events('session', 'run');
+    events.onIterationStart?.(17, 500);
+    events.onIterationEnd?.({ iter: 4, maxIter: 200, tokenCount: 1, tokenSource: 'api', scope: 'worker', contextKind: 'child' });
+    await expect.poll(() => views.at(-1)?.activity?.iteration).toEqual({ current: 17, maximum: 500 });
+    events.onIterationStart?.(1, 500);
+    await expect.poll(() => views.at(-1)?.activity?.iteration).toEqual({ current: 1, maximum: 500 });
+  } finally { observation.close(); await owner.close(); }
+});
+
+it('checkpoints output ownership and actual tool execution without treating a proposal as an effect', async () => {
+  let saved: KodaXSessionData['uiHistory'];
+  const owner = new SessionViewOwner(async () => ({ session: { id: 'session', title: 'Recovery' },
+    settings: {}, items: [], queue: [], interactions: [], runs: [] }), async (_session, _runs, items) => {
+      saved = persistSessionViewItems(items);
+    });
+  const events = owner.events('session', 'run', undefined, () => 'input');
+  const meta = { providerRequestId: 'request', turnId: 'turn' };
+  events.onOutputSegmentStart?.({ responseId: 'turn', providerRequestId: 'request', mode: 'append', outputId: 'output' }, meta);
+  events.onTextDelta?.('checkpointed answer', meta);
+  events.onStreamEnd?.(meta);
+  await owner.flush('session');
+  expect(saved).toContainEqual(expect.objectContaining({ type: 'assistant', outputId: 'output', sourceRunId: 'run',
+    sourceTurnId: 'turn', afterInputId: 'input' }));
+  const tool = { id: 'call', name: 'write', input: { path: 'out.md' } };
+  events.onToolUseStart?.(tool, meta);
+  owner.checkpoint('session');
+  await owner.flush('session');
+  expect(saved?.find(item => item.type === 'tool_group')).toMatchObject({ tools: [{ executionBegan: undefined }] });
+  events.onToolExecutionStart?.(tool, meta);
+  await owner.flush('session');
+  expect(saved?.find(item => item.type === 'tool_group')).toMatchObject({ sourceRunId: 'run', sourceTurnId: 'turn',
+    tools: [{ executionBegan: true }] });
+  events.onToolResult?.({ id: 'call', name: 'write', content: '' }, meta);
+  await owner.flush('session');
+  expect(saved?.find(item => item.type === 'tool_group')).toMatchObject({ tools: [{ resultRecorded: true, output: '' }] });
+  await owner.close();
+});
+
+it('retains separate checkpoints when different outputs reuse a tool call ID', async () => {
+  let saved: KodaXSessionData['uiHistory'];
+  const owner = new SessionViewOwner(async () => ({ session: { id: 'session', title: 'Repeated calls' },
+    settings: {}, items: [], queue: [], interactions: [], runs: [] }), async (_session, _runs, items) => {
+      saved = persistSessionViewItems(items);
+    });
+  const events = owner.events('session', 'run', undefined, () => 'input');
+  for (const output of ['first', 'second']) {
+    const meta = { providerRequestId: output, turnId: 'turn' };
+    events.onOutputSegmentStart?.({ responseId: 'turn', providerRequestId: output, mode: 'append', outputId: output }, meta);
+    const tool = { id: 'reused', name: 'write', input: { path: `${output}.md` } };
+    events.onToolUseStart?.(tool, meta);
+    events.onToolExecutionStart?.(tool, meta);
+    events.onToolProgress?.({ id: 'reused', message: `${output} progress` }, meta);
+    if (output === 'first') events.onToolResult?.({ id: 'reused', name: 'write', content: 'first saved' }, meta);
+    await owner.flush('session');
+  }
+  const tools = saved?.flatMap(item => item.type === 'tool_group' ? item.tools : []) ?? [];
+  expect(tools).toMatchObject([
+    { assistantOutputId: 'first', executionBegan: true, resultRecorded: true, output: 'first saved' },
+    { assistantOutputId: 'second', executionBegan: true, resultRecorded: undefined, output: '' },
+  ]);
+  const restored = restoreSessionViewItems('session', { title: 'Repeated calls', gitRoot: '.', messages: [{ role: 'user', inputId: 'input', content: 'write' }], uiHistory: saved });
+  expect(restored.filter(item => item.tool).map(item => item.tool?.assistantOutputId)).toEqual(['first', 'second']);
+  await owner.close();
+});
+
+it('restores repeated tool IDs using the owning output without borrowing results or legacy identities', () => {
+  const messages: KodaXSessionData['messages'] = [
+    { role: 'user', inputId: 'input', content: 'write' },
+    { role: 'assistant', outputId: 'first', content: [{ type: 'tool_use', id: 'reused', name: 'write', input: { path: 'first.md' } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'reused', content: 'FIRST' }] },
+    { role: 'assistant', outputId: 'second', content: [{ type: 'tool_use', id: 'reused', name: 'write', input: { path: 'second.md' } }] },
+  ];
+  const uiHistory: KodaXSessionData['uiHistory'] = [
+    { id: 'first-item', type: 'tool_group', tools: [{ id: 'reused', name: 'write', assistantOutputId: 'first', status: 'success', output: 'FIRST' }] },
+    { id: 'second-item', type: 'tool_group', tools: [{ id: 'reused', name: 'write', assistantOutputId: 'second', status: 'cancelled', executionBegan: true }] },
+    { id: 'legacy-item', type: 'tool_group', tools: [{ id: 'reused', name: 'write', status: 'success', output: 'LEGACY' }] },
+  ];
+  const restored = restoreSessionViewItems('session', { title: 'Repeated calls', gitRoot: '.', messages, uiHistory }).filter(item => item.tool);
+  expect(restored).toHaveLength(3);
+  expect(restored.find(item => item.id === 'first-item')).toMatchObject({ text: 'FIRST', tool: { status: 'success', inputText: '{"path":"first.md"}' } });
+  expect(restored.find(item => item.id === 'second-item')).toMatchObject({ tool: { status: 'cancelled', inputText: '{"path":"second.md"}' } });
+  expect(restored.find(item => item.id === 'second-item')?.text).not.toBe('FIRST');
+  expect(restored.find(item => item.id === 'legacy-item')?.text).toBe('LEGACY');
+  messages.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'reused', content: 'SECOND' }] });
+  const committed = restoreSessionViewItems('session', { title: 'Repeated calls', gitRoot: '.', messages, uiHistory }).filter(item => item.tool);
+  expect(committed.find(item => item.id === 'first-item')?.text).toBe('FIRST');
+  expect(committed.find(item => item.id === 'second-item')?.text).toBe('SECOND');
+});
+
 it('invalidates embedded observations when the Host releases the session', async () => {
   const owner = new SessionViewOwner(async () => ({
     session: { id: 'session', title: 'Observe' }, settings: {}, items: [], queue: [], interactions: [], runs: [],

@@ -1,7 +1,7 @@
 # KodaX High-Level Design
 
 Last updated: 2026-09-27. Current development tree: FEATURE_298/299 on package
-`0.7.96-rc.11`, with `v0.7.97` as the design target; publication is separate.
+`0.7.96-rc.14`, with `v0.7.97` as the design target; publication is separate.
 
 Product integrations use `KodaXProductClient` through `/client`. Read the
 [Client contract](CLIENT_CONTRACT.md) and [SDK migration guide](SDK_MIGRATION.md)

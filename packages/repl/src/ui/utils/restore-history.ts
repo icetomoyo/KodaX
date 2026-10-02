@@ -152,8 +152,9 @@ function dedupeToolGroups(
       continue;
     }
     const tools = item.tools.filter((tool) => {
-      if (seenToolIds.has(tool.id)) return false;
-      seenToolIds.add(tool.id);
+      const key = toolIdentity(tool);
+      if (seenToolIds.has(key)) return false;
+      seenToolIds.add(key);
       return true;
     });
     if (tools.length > 0) result.push({ ...item, tools });
@@ -171,8 +172,8 @@ function matchesTimestampSource(
   if (item.outputId !== undefined || candidate.outputId !== undefined) return false;
   if (item.inputId !== undefined || candidate.inputId !== undefined) return item.inputId === candidate.inputId;
   if (item.type === "tool_group" && candidate.type === "tool_group") {
-    return item.tools.map((tool) => tool.id).join("\n")
-      === candidate.tools.map((tool) => tool.id).join("\n");
+    return item.tools.map(toolIdentity).join("\n")
+      === candidate.tools.map(toolIdentity).join("\n");
   }
   if (item.type === "tool_group" || candidate.type === "tool_group") return false;
   const itemText = item.text.trim();
@@ -205,7 +206,7 @@ function alignCanonicalItems(
       if (!persisted) continue;
       const matches = derived.type === "tool_group"
         ? persisted.type === "tool_group" && derived.tools.some(tool =>
-          persisted.tools.some(saved => saved.id === tool.id))
+          persisted.tools.some(saved => toolIdentity(saved) === toolIdentity(tool)))
         : persisted.type !== "tool_group" && matchesTimestampSource(persisted, derived);
       if (!matches) continue;
       anchors.set(derivedIndex, index);
@@ -276,6 +277,10 @@ function isLegacyToolSummary(
 }
 
 type CreatableToolGroup = Extract<CreatableHistoryItem, { type: "tool_group" }>;
+function toolIdentity(tool: CreatableToolGroup['tools'][number]): string {
+  return JSON.stringify([tool.assistantOutputId ?? null, tool.id]);
+}
+
 type PersistedToolOverlay = {
   tool: CreatableToolGroup["tools"][number];
   timestamp?: number;
@@ -288,7 +293,8 @@ function collectPersistedTools(
   for (const item of items) {
     if (item.type !== "tool_group") continue;
     for (const tool of item.tools) {
-      if (!toolsById.has(tool.id)) toolsById.set(tool.id, { tool, timestamp: item.timestamp });
+      const key = toolIdentity(tool);
+      if (!toolsById.has(key)) toolsById.set(key, { tool, timestamp: item.timestamp });
     }
   }
   return toolsById;
@@ -300,7 +306,7 @@ function collectCanonicalToolIds(
   const toolIds = new Set<string>();
   for (const item of items) {
     if (item.type !== "tool_group") continue;
-    for (const tool of item.tools) toolIds.add(tool.id);
+    for (const tool of item.tools) toolIds.add(toolIdentity(tool));
   }
   return toolIds;
 }
@@ -338,9 +344,9 @@ function buildCanonicalItems(
       const persisted = persistedIndex === undefined ? undefined : persistedItems[persistedIndex];
       return persisted ? overlayCanonicalTextItem(item, persisted) : item;
     }
-    const tools = item.tools.map((tool) => persistedTools.get(tool.id)?.tool ?? tool);
+    const tools = item.tools.map((tool) => persistedTools.get(toolIdentity(tool))?.tool ?? tool);
     const timestamp = tools
-      .map((tool) => persistedTools.get(tool.id)?.timestamp)
+      .map((tool) => persistedTools.get(toolIdentity(tool))?.timestamp)
       .find((candidate) => candidate !== undefined) ?? item.timestamp;
     return { ...item, tools, ...(timestamp === undefined ? {} : { timestamp }) };
   });
@@ -376,7 +382,7 @@ function markUiOnlyItem(
   allowOrdinaryText: boolean,
 ): CreatableHistoryItem | undefined {
   if (item.type === "tool_group") {
-    const tools = item.tools.filter((tool) => !canonicalToolIds.has(tool.id));
+    const tools = item.tools.filter((tool) => !canonicalToolIds.has(toolIdentity(tool)));
     return tools.length > 0 ? { ...item, tools, isSessionUiOnly: true } : undefined;
   }
   const isOrdinaryText = item.type === "assistant"
@@ -496,8 +502,8 @@ export function restoreHistoryItemsFromSession(
     // A saved group can straddle the message page. Anchor its known calls
     // individually so matching one cannot discard the older, UI-only calls.
     .flatMap((item): CreatableHistoryItem[] => item.type === 'tool_group'
-      && item.tools.some(tool => canonicalToolIds.has(tool.id))
-      && item.tools.some(tool => !canonicalToolIds.has(tool.id))
+      && item.tools.some(tool => canonicalToolIds.has(toolIdentity(tool)))
+      && item.tools.some(tool => !canonicalToolIds.has(toolIdentity(tool)))
       ? item.tools.map(tool => ({ ...item, tools: [tool] })) : [item])
     .map(item => item.afterInputId && inputAliases.has(item.afterInputId)
       ? { ...item, afterInputId: inputAliases.get(item.afterInputId) } : item));

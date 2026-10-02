@@ -5,13 +5,15 @@ const mocks = vi.hoisted(() => {
   const unmount = vi.fn();
   const clear = vi.fn();
   const waitUntilExit = vi.fn(async () => undefined);
-  const InkMock = vi.fn().mockImplementation((options: { concurrent?: boolean }) => ({
-    isConcurrent: options.concurrent ?? false,
-    render,
-    unmount,
-    clear,
-    waitUntilExit,
-  }));
+  const InkMock = vi.fn().mockImplementation(function (options: { concurrent?: boolean }) {
+    return {
+      isConcurrent: options.concurrent ?? false,
+      render,
+      unmount,
+      clear,
+      waitUntilExit,
+    };
+  });
 
   return {
     render,

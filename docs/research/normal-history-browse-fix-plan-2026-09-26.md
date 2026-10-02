@@ -1,8 +1,8 @@
-# Issue 342: Ordinary history browsing fix design
+# Issue 350: Ordinary history browsing fix design
 
 Status: implemented; see [repair acceptance](contract-browse-fix-verification-2026-09-26.md). Evidence and the source-entry
 main/branch reproductions are in
-[the regression guide](../test-guides/ISSUE_340_v0.7.96-rc.11_REGRESSION_GUIDE.md).
+[the regression guide](../test-guides/ISSUE_348_v0.7.96-rc.11_REGRESSION_GUIDE.md).
 
 ## Decision
 
@@ -110,7 +110,7 @@ ordinary browsing. A UI fallback must not hide a failed or incomplete reader.
    native-scrollback behavior. Injected terminal input alone does not verify
    physical Windows Terminal mouse reporting; keep that limitation explicit.
 5. Review the final diff against these invariants and run affected type/build
-   checks. Only mark Issue 342 fixed after the original retention tests pass;
+   checks. Only mark Issue 350 fixed after the original retention tests pass;
    a successful restore or notice-only scroll test is insufficient.
 
 The previous Session's unpersisted answer suffix is not recoverable by this

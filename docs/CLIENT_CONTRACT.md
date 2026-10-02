@@ -2,6 +2,10 @@
 
 本文面向 CLI、SDK 和未来 Web 客户端。产品客户端通过 `KodaXProductClient` 读取 Host 事实、提交意图；Host 执行并保存工作。显示层不读取或写入 Session 文件，不另建运行状态权威。
 
+2026-10-02 主线 rc.14 修复融合仍属于 FEATURE_298 / v0.7.97。中断后的下一次运行只从当前分支的 canonical Session/lineage、Run status 和已成功保存的显示 checkpoint 读取有限恢复说明；不恢复持久事件日志，也不根据事件推导成功。Host 先等待现有 checkpoint 写入，再按 inputId/turnId、sourceRunId 和 outputId 确认来源，排除已提交的同一输出、Thinking、child 输出及普通通知。工具提出、执行开始、结果已保存分别记录；重复 callId 按所属 assistantOutputId 匹配；执行开始但没有已保存结果时，效果仍为 unknown。说明仅进入临时模型上下文，不能成为用户指令或正式会话正文。未落盘 token 不承诺硬崩溃恢复。
+
+Shell 清理重试耗尽时保留 deferred 进程身份，允许后续对话和 Host close 继续；这不证明进程已退出，也不确认 Stop。ClientRunStatus 和 runs.await 的 ClientRunOutcome 都携带 Host terminal（含 effectOutcome）及实际 Stop 事实；产品继续消费 `effectOutcome: unknown`，不能将执行完成等同于副作用已确认。
+
 从旧 `KodaXClient`、Runtime 或文件 API 接入迁移，先读 [SDK 迁移指南](SDK_MIGRATION.md)；最小生命周期示例见[产品 Client 接入](../public_docs/sdk/embedder-guide.md#product-client-integration)。本文描述当前开发树，不表示 npm 已发布，也不宣告所有底层库入口已删除。
 
 类型与行为以 [client-contract.ts](../packages/coding/src/client-contract.ts)、[SDK 入口](../src/sdk-client.ts)、[运行时适配器](../src/client-runtime-adapter.ts) 为准；产品决策见 [FEATURE_298 D01/T02](features/v0.7.97.md)。本文覆盖公开产品接口，不把 `/runtime` 的全部底层管理、执行和诊断 API 提升为产品承诺。

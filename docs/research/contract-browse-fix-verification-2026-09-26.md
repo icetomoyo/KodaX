@@ -14,7 +14,7 @@
 | F03 用户项移出视图后不能补读 | 有 inputId 的用户项使用稳定来源身份，canonical 回源；legacy 不借用新身份 | `sdk-client.input-read-source.test.ts`：同文不同身份、混合旧历史、追加/压缩/rewind |
 | F04 创建失败遗留 MCP 资源 | 资源取得即归属；区分新建与已有 sidecar，失败回滚并报告双重错误 | `sdk-client.mcp-create-rollback.test.ts`：真实子进程及故障注入 |
 | F05 工作流默认权限与界面不一致 | 产品工作流明确选择产品默认值，首次执行及动态设置共用规则 | `sdk-client.workflow-product-settings.test.ts`：真实 IPC 实际写入、低层对照、旧 Host 拒绝 |
-| Issue 342 普通界面早期内容不可达 | 向上操作触发已有历史接口；有界双向页窗和来源/字符锚点；仅冻结正文 | browse helper/hook、真实渲染器及 `repl-history-browse-acceptance.mjs` |
+| Issue 350 普通界面早期内容不可达 | 向上操作触发已有历史接口；有界双向页窗和来源/字符锚点；仅冻结正文 | browse helper/hook、真实渲染器及 `repl-history-browse-acceptance.mjs` |
 
 `KodaXProductClient` 不增加方法或调用参数。必要的底层工作流参数 `settingsDefaults: 'product'` 通过 `workflowSettingsDefaults.version=1` 协商；旧 Host 明确返回升级错误，未选择产品语义的底层调用保留旧默认。
 
@@ -74,7 +74,7 @@ PTY 原始症状的源码目录：`mrRsiP`（折叠）、`Jt2Qja`（独立）；
 
 既有完整 PTY 目录为 `MKT5td`，覆盖 48 项启动、设置、流式输出、审批/提问、队列、滚动/草稿、Stop、下一输入、隔离、恢复及退出检查。
 
-批量日志位于 `%TEMP%/kodax-contract-browse-{build,typecheck,contract,unit,recheck,fast,system,timeout-recheck,bundle,tracker}.log`；终端命令与手动鼠标检查见[回归指南](../test-guides/ISSUE_340_v0.7.96-rc.11_REGRESSION_GUIDE.md#repair-acceptance-2026-09-26)。`git diff --check` 通过。工作区既有 `Microsoft/` 和 `test_stat.txt` 未修改。
+批量日志位于 `%TEMP%/kodax-contract-browse-{build,typecheck,contract,unit,recheck,fast,system,timeout-recheck,bundle,tracker}.log`；终端命令与手动鼠标检查见[回归指南](../test-guides/ISSUE_348_v0.7.96-rc.11_REGRESSION_GUIDE.md#repair-acceptance-2026-09-26)。`git diff --check` 通过。工作区既有 `Microsoft/` 和 `test_stat.txt` 未修改。
 
 ## 明确边界
 

@@ -9,7 +9,7 @@ import { createRetryHistoryItem, buildManagedLiveEventDrafts, restoreHistoryItem
   toolActivityDetail, formatManagedTaskBreadcrumb, formatWorkflowAgentDigest, inferWorkflowLocaleFromParts } from '@kodax-ai/repl';
 import type { ClientObservation, ClientObserveOptions, ClientObservationStatus, ClientContextBudget, ClientSessionView, ClientSessionActivity, ClientViewItem, ClientItemReadOptions, ClientItemContent } from '@kodax-ai/coding/client-contract';
 import { createSessionNoticeEvents } from './session-view-notices.js';
-import { canonicalTools } from './client-canonical-tools.js';
+import { canonicalTools, canonicalToolKey } from './client-canonical-tools.js';
 
 const STREAMING_RUN_PHASES = new Set(['queued', 'running', 'recovering', 'waiting_agent', 'waiting_permission', 'waiting_user_input']);
 
@@ -87,6 +87,8 @@ export class SessionViewOwner {
     state.activityRunId = runId;
     let segmentInputId: string | undefined;
     let outputId: string | undefined;
+    const toolItemId = (callId: string): string => outputId
+      ? outputItemId(sessionId, outputId, `tool:${callId}`) : `${runId}:tool:${callId}`;
     const toolInputLengths = new Map<string, number>();
     const startedTools = new Set<string>();
     let streamEnded = false;
@@ -99,7 +101,7 @@ export class SessionViewOwner {
       // the later coalesced view/checkpoint runs after that scope may expire.
       const index = state.items.findIndex((current) => current.id === item.id);
       const afterInputId = index >= 0 ? state.items[index]!.afterInputId : source ? source.inputId : inputSource?.();
-      item = redactScopedProviderCredential({ ...item, afterInputId });
+      item = redactScopedProviderCredential({ sourceRunId: runId, ...item, afterInputId });
       if (index < 0) state.items.push(item);
       else state.items[index] = { ...item,
         ...(item.outputId ? { textRevision: revisesText ? revisedTextVersion(state.items[index], item.text)
@@ -118,7 +120,7 @@ export class SessionViewOwner {
       const id = outputId ? outputItemId(sessionId, outputId, kind) : `${runId}:${meta.providerRequestId}:${kind}`;
       const previous = outputId ? state.items.find(item => item.id === id) : undefined;
       upsert({ id, type: kind, ...(outputId ? { outputId, outputState: 'draft' as const } : {}),
-        text: outputId ? previous ? previous.text + text : effectiveOutputSegmentText(reduced.state, kind)
+        sourceTurnId: meta?.turnId, text: outputId ? previous ? previous.text + text : effectiveOutputSegmentText(reduced.state, kind)
           : reduced.state.active[kind === 'assistant' ? 'assistantText' : 'thinkingText'], timestamp: Date.now() }, { inputId: segmentInputId });
       if (currentStream(meta)) {
         activity({ streaming: kind === 'thinking' ? { kind, providerRequestId: meta.providerRequestId,
@@ -215,6 +217,7 @@ export class SessionViewOwner {
         streamEnded = true;
         toolInputLengths.clear(); startedTools.clear();
         activity({ streaming: undefined });
+        this.checkpoint(sessionId);
       },
       onToolUseStart: (tool, meta) => {
         if (!isPrimary(meta)) { childActivity('tool', toolActivityDetail(tool.name, tool.input), meta); return; }
@@ -226,24 +229,31 @@ export class SessionViewOwner {
           activity({ streaming: undefined });
         }
         const timestamp = Date.now();
-        upsert({ id: `${runId}:tool:${tool.id}`, type: 'tool', text: '', timestamp,
-          tool: { callId: tool.id, name: tool.name, status: 'running', startedAt: timestamp,
+        upsert({ id: toolItemId(tool.id), type: 'tool', text: '', timestamp, sourceTurnId: meta?.turnId,
+          tool: { assistantOutputId: outputId, callId: tool.id, name: tool.name, status: 'running', startedAt: timestamp,
             ...(tool.input ? { inputText: JSON.stringify(tool.input) } : {}) } });
+      },
+      onToolExecutionStart: (tool, meta) => {
+        if (!isPrimary(meta)) return;
+        const item = state.items.find(item => item.id === toolItemId(tool.id));
+        if (item?.tool) upsert({ ...item, sourceTurnId: meta?.turnId ?? item.sourceTurnId,
+          tool: { ...item.tool, executionBegan: true } });
+        this.checkpoint(sessionId);
       },
       onToolProgress: (update, meta) => {
         if (!isPrimary(meta)) { childActivity('progress', update.message, meta); return; }
-        const item = state.items.find((item) => item.id === `${runId}:tool:${update.id}`);
+        const item = state.items.find((item) => item.id === toolItemId(update.id));
         if (item?.tool) upsert({ ...item, tool: { ...item.tool, progress: update.message } });
       },
       onToolResult: (result, meta) => {
         if (!isPrimary(meta)) { childActivity('tool', `${result.name} completed`, meta); return; }
-        const previous = state.items.find((item) => item.id === `${runId}:tool:${result.id}`);
+        const previous = state.items.find((item) => item.id === toolItemId(result.id));
         const status = result.toolResult?.metadata?.cancelled === true ? 'cancelled'
           : result.toolResult ? (result.toolResult.is_error === true ? 'error' : 'success')
           : /^\[(?:Tool Error|Error)\]/.test(result.content) ? 'error'
           : /^\[(?:Cancelled|Blocked)\]/.test(result.content) ? 'cancelled' : 'success';
-        upsert({ id: `${runId}:tool:${result.id}`, type: 'tool', text: result.content, timestamp: Date.now(),
-          tool: { ...previous?.tool, callId: result.id, name: result.name, status, endedAt: Date.now(), progress: undefined } });
+        upsert({ id: toolItemId(result.id), type: 'tool', text: result.content, timestamp: Date.now(),
+          sourceTurnId: meta?.turnId ?? previous?.sourceTurnId, tool: { ...previous?.tool, resultRecorded: true, callId: result.id, name: result.name, status, endedAt: Date.now(), progress: undefined } });
         this.checkpoint(sessionId);
       },
       onSidecarMessage: (event) => {
@@ -575,7 +585,7 @@ function sessionActivityEvents(
       if (contextBudget?.scope !== scope || (info.contextId !== undefined && contextBudget.contextId !== info.contextId)) contextBudget = undefined;
       update({
         contextBudget,
-        iteration: { current: info.iter, maximum: info.maxIter },
+        ...(info.contextKind !== 'child' ? { iteration: { current: info.iter, maximum: info.maxIter } } : {}),
         context: { tokenCount: info.tokenCount, tokenSource: info.tokenSource, scope },
         ...(scope === 'parent' ? { parentContextTokens: info.tokenCount } : {}),
         ...(info.usage ? { usage: {
@@ -630,14 +640,14 @@ function boundedViewItems(items: readonly ClientViewItem[]): ClientViewItem[] {
 function restorePersistedViewItems(history: readonly KodaXSessionUiHistoryItem[] | undefined): ClientViewItem[] {
   return (history ?? []).flatMap((item, index): ClientViewItem[] => {
     if (item.type === 'tool_group') return item.tools.map((tool) => ({
-      id: item.id ?? `tool:${tool.id}`, type: 'tool' as const, text: tool.output ?? tool.error ?? '', timestamp: item.timestamp,
+      sourceRunId: item.sourceRunId, sourceTurnId: item.sourceTurnId, id: item.id ?? `tool:${tool.id}`, type: 'tool' as const, text: tool.output ?? tool.error ?? '', timestamp: item.timestamp,
       ...(item.afterInputId ? { afterInputId: item.afterInputId } : {}),
-      tool: { callId: tool.id, name: tool.name, status: tool.status, inputText: tool.preview,
+      tool: { assistantOutputId: tool.assistantOutputId, executionBegan: tool.executionBegan, resultRecorded: tool.resultRecorded, callId: tool.id, name: tool.name, status: tool.status, inputText: tool.preview,
         startedAt: tool.startTime, endedAt: tool.endTime },
     }));
     const verdict = item.sidecarVerdict ?? (item.icon === 'revise' || item.icon === 'blocked' ? item.icon : undefined);
     const delivery = item.sidecarDelivery ?? (item.icon === 'budget-exhausted' ? item.icon : undefined);
-    return [{ id: item.id ?? `legacy:${index}:${item.timestamp ?? 0}`, type: item.type as ClientViewItem['type'],
+    return [{ sourceRunId: item.sourceRunId, sourceTurnId: item.sourceTurnId, id: item.id ?? `legacy:${index}:${item.timestamp ?? 0}`, type: item.type as ClientViewItem['type'],
       ...(item.outputId ? { outputId: item.outputId, outputState: 'draft' as const } : {}),
       ...(item.textRevision !== undefined ? { textRevision: item.textRevision } : {}),
       text: item.text, ...(item.inputId !== undefined ? { inputId: item.inputId } : {}),
@@ -677,17 +687,17 @@ function locateLineageMessages(data: KodaXSessionData, messages: readonly KodaXM
   return located;
 }
 
-type NoticeAnchor = Pick<ClientViewItem, 'type' | 'text' | 'inputId' | 'outputId'> & { entryIndex: number; callId?: string };
+type NoticeAnchor = Pick<ClientViewItem, 'type' | 'text' | 'inputId' | 'outputId'> & { entryIndex: number; callId?: string; assistantOutputId?: string };
 
 function noticeAnchors(data: KodaXSessionData, messages: readonly KodaXMessage[], items: readonly ClientViewItem[]): NoticeAnchor[] {
   const located = locateLineageMessages(data, messages);
-  const visibleCalls = new Set(items.flatMap(item => item.tool ? [item.tool.callId] : []));
+  const visibleCalls = new Set(items.flatMap(item => item.tool ? [canonicalToolKey(item.tool.callId, item.tool.assistantOutputId)] : []));
   return (data.lineage?.entries ?? []).flatMap((entry, entryIndex): NoticeAnchor[] => {
     if (!located.has(entryIndex)) return entry.type !== 'message' || typeof entry.message.content === 'string' ? []
-      : entry.message.content.flatMap(block => block.type === 'tool_use' && visibleCalls.has(block.id)
-        ? [{ entryIndex, type: 'tool', callId: block.id, text: '' }] : []);
+      : entry.message.content.flatMap(block => block.type === 'tool_use' && visibleCalls.has(canonicalToolKey(block.id, entry.message.outputId))
+        ? [{ entryIndex, type: 'tool', callId: block.id, assistantOutputId: entry.message.outputId, text: '' }] : []);
     return restoreHistoryItemsFromSession({ messages: [located.get(entryIndex)!] }).flatMap((item): NoticeAnchor[] => item.type === 'tool_group'
-      ? item.tools.map(tool => ({ entryIndex, type: 'tool' as const, callId: tool.id, inputId: undefined, outputId: undefined, text: '' }))
+      ? item.tools.map(tool => ({ entryIndex, type: 'tool' as const, callId: tool.id, assistantOutputId: tool.assistantOutputId, inputId: undefined, outputId: undefined, text: '' }))
       : [{ entryIndex, type: item.type, callId: undefined, inputId: item.inputId, outputId: item.outputId, text: item.text }]);
   });
 }
@@ -703,7 +713,7 @@ function restoreLineageNotices(data: KodaXSessionData, messages: readonly KodaXM
     for (let sourceIndex = cursor; sourceIndex >= 0; sourceIndex -= 1) {
       const source = sources[sourceIndex]!;
       if (item.type !== source.type) continue;
-      const matches = item.tool ? item.tool.callId === source.callId
+      const matches = item.tool ? item.tool.callId === source.callId && item.tool.assistantOutputId === source.assistantOutputId
         : item.outputId !== undefined || source.outputId !== undefined ? item.outputId === source.outputId
         : item.inputId !== undefined || source.inputId !== undefined ? item.inputId === source.inputId
         : item.text === source.text;
@@ -791,15 +801,17 @@ export function restoreSessionContentItems(
     item.type === 'tool_group' || !item.outputId || !committedOutputs.has(item.outputId)) });
   const items = restored.flatMap((item): ClientViewItem[] => {
     if (item.type === 'tool_group') return item.tools.map((tool) => {
-      const previous = persisted.find((candidate) => candidate.tool?.callId === tool.id);
-      const canonical = tools.get(tool.id);
-      if (canonical) return { ...previous, ...canonical, id: previous?.id ?? canonical.id,
+      const previous = persisted.find(candidate => candidate.tool?.callId === tool.id
+        && candidate.tool.assistantOutputId === tool.assistantOutputId);
+      const canonical = tools.get(canonicalToolKey(tool.id, tool.assistantOutputId));
+      if (canonical) return { ...previous, ...canonical, id: previous?.id
+          ?? (tool.assistantOutputId ? outputItemId(sessionId, tool.assistantOutputId, `tool:${tool.id}`) : canonical.id),
         timestamp: previous?.timestamp ?? item.timestamp,
         tool: { ...previous?.tool, ...canonical.tool!, startedAt: previous?.tool?.startedAt ?? canonical.tool?.startedAt,
           endedAt: previous?.tool?.endedAt ?? canonical.tool?.endedAt } };
       return previous ? previous
         : { id: `tool:${tool.id}`, type: 'tool', text: String(tool.output ?? tool.error ?? ''), timestamp: item.timestamp,
-        tool: { callId: tool.id, name: tool.name,
+        tool: { assistantOutputId: tool.assistantOutputId, callId: tool.id, name: tool.name,
           status: tool.status === 'success' || tool.status === 'error' ? tool.status : 'cancelled',
           inputText: JSON.stringify(tool.input), startedAt: tool.startTime, endedAt: tool.endTime } };
     });
@@ -809,7 +821,7 @@ export function restoreSessionContentItems(
       occurrences.set(key, ordinal + 1);
       const committed = committedOutputs.has(item.outputId);
       const previous = persisted.find(candidate => candidate.outputId === item.outputId && candidate.type === item.type);
-      return [{ id: outputItemId(sessionId, item.outputId, item.type, ordinal), type: item.type, text: item.text,
+      return [{ sourceRunId: previous?.sourceRunId, sourceTurnId: previous?.sourceTurnId, id: outputItemId(sessionId, item.outputId, item.type, ordinal), type: item.type, text: item.text,
         outputId: item.outputId, outputState: committed ? 'committed' : 'draft',
         // Canonical content is immutable for an outputId. Its settled version
         // must be identical on first commit, window reload, and Host restart.
@@ -852,8 +864,8 @@ export function persistSessionViewItems(items: readonly ClientViewItem[]): KodaX
           icon: sidecar?.delivery === 'budget-exhausted' ? 'budget-exhausted' : sidecar?.verdict ?? item.icon } : {}) }];
     }
     if (!item.tool) return [];
-    return [{ id: item.id, type: 'tool_group', timestamp: item.timestamp, afterInputId: item.afterInputId, tools: [{
-      id: item.tool.callId, name: item.tool.name, status: item.tool.status === 'running' ? 'cancelled' : item.tool.status,
+    return [{ sourceRunId: item.sourceRunId, sourceTurnId: item.sourceTurnId, id: item.id, type: 'tool_group', timestamp: item.timestamp, afterInputId: item.afterInputId, tools: [{
+      assistantOutputId: item.tool.assistantOutputId, executionBegan: item.tool.executionBegan, resultRecorded: item.tool.resultRecorded, id: item.tool.callId, name: item.tool.name, status: item.tool.status === 'running' ? 'cancelled' : item.tool.status,
       output: item.text, preview: item.tool.inputText, startTime: item.tool.startedAt, endTime: item.tool.endedAt,
     }] }];
   });

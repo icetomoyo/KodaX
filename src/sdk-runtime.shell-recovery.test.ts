@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { expect, it, vi } from 'vitest';
 
 const control = vi.hoisted(() => ({ pending: false, verified: false, retries: 0,
@@ -52,6 +54,86 @@ it('keeps owner liveness when Shell launch has not registered its child yet', as
 });
 import { createKodaXRuntime } from './sdk-runtime.js';
 
+it('self-heals after a real owner is killed and stays usable across another restart', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-shell-crash-'));
+  vi.stubEnv('KODAX_HOME', path.join(root, '.kodax'));
+  control.pending = false;
+  control.recover.mockReset().mockResolvedValue({ status: 'unknown' });
+  const options = { homeDir: root, sharedDaemonHost: true, defaultProvider: 'unconfigured-provider' };
+  const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval', `
+    import fs from 'node:fs';
+    import path from 'node:path';
+    import { createKodaXRuntime } from ${JSON.stringify(pathToFileURL(path.resolve('src/sdk-runtime.ts')).href)};
+    import { awaitLatestCodingMemoryReviewDrain } from '@kodax-ai/coding';
+    const root = process.argv[1];
+    const runtime = await createKodaXRuntime({ homeDir: root, sharedDaemonHost: true,
+      defaultProvider: 'unconfigured-provider' });
+    const session = await runtime.sessions.create({ projectPath: root });
+    await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
+    fs.writeFileSync(path.join(root, 'ready.txt'), 'crash recovery fixture');
+    const run = await runtime.runs.start({ sessionId: session.id, prompt: 'read fixture',
+      options: { lsp: false, toolInvocation: { name: 'read', input: { path: path.join(root, 'ready.txt') } } } });
+    await run.result;
+    await awaitLatestCodingMemoryReviewDrain(5_000);
+    await runtime.sessions.load(session.id);
+    const file = path.join(root, '.kodax/runtime/profiles/default/runs', run.runId, 'status.json');
+    const state = JSON.parse(fs.readFileSync(file, 'utf8'));
+    state.phase = 'unknown'; state.stage = 'unknown'; delete state.terminal; delete state.endedAt;
+    state.stop = { requestedAt: new Date().toISOString(), state: 'unknown', outcome: 'unknown', reason: 'stop' };
+    state.interruptInputs = [{ inputId: 'queued-before-crash', afterRunId: run.runId,
+      delivery: 'interrupt', state: 'queued', contentPreview: 'status?', queuedAt: new Date().toISOString() }];
+    state._runtime.shellCleanups = [{ runtimeRunId: run.runId, pid: process.pid,
+      registrationId: '11111111-1111-4111-8111-111111111111' }];
+    fs.writeFileSync(file, JSON.stringify(state));
+    process.send({ runId: run.runId, sessionId: session.id });
+    setInterval(() => {}, 1000);
+  `, root], { env: { ...process.env, KODAX_HOME: path.join(root, '.kodax') }, windowsHide: true,
+    stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+  let stderr = '';
+  child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+  const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+  let observer: Awaited<ReturnType<typeof createKodaXRuntime>> | undefined;
+  try {
+    let ready: { runId: string; sessionId: string } | undefined;
+    child.once('message', (message: { runId: string; sessionId: string }) => { ready = message; });
+    await vi.waitFor(() => expect(ready, stderr).toBeDefined(), { timeout: 15_000 });
+    const { runId, sessionId } = ready!;
+    // There is exactly one product Host while the child owner is alive.
+    const liveStatus = JSON.parse(await readFile(path.join(root, '.kodax/runtime/profiles/default/runs', runId, 'status.json'), 'utf8')) as { phase: string };
+    expect(liveStatus.phase).toBe('unknown');
+    expect(control.recover).not.toHaveBeenCalled();
+    child.kill('SIGKILL');
+    await exited;
+    observer = await createKodaXRuntime(options);
+    await vi.waitFor(async () => expect(await observer!.runs.get(runId)).toMatchObject({ phase: 'interrupted',
+      terminal: { effectOutcome: 'unknown' }, interruptInputs: [{ state: 'terminal' }] }));
+    await vi.waitFor(async () => expect(await observer!.sessions.status(sessionId)).toMatchObject({ phase: 'interrupted' }));
+    const statusFile = path.join(root, '.kodax/runtime/profiles/default/runs', runId, 'status.json');
+    expect(JSON.parse(await readFile(statusFile, 'utf8'))._runtime.shellCleanups)
+      .toEqual([expect.objectContaining({ deferred: true })]);
+    await observer.close();
+    control.recover.mockClear();
+    const releaseVerified = vi.fn();
+    control.recover.mockResolvedValue({ status: 'verified', release: releaseVerified });
+    observer = await createKodaXRuntime(options);
+    await vi.waitFor(async () => expect(await observer!.runs.get(runId)).toMatchObject({ phase: 'interrupted', terminal: { effectOutcome: 'unknown' } }));
+    expect(control.recover).toHaveBeenCalledWith(expect.objectContaining({ runtimeRunId: runId, pid: child.pid,
+      registrationId: '11111111-1111-4111-8111-111111111111', deferred: true }));
+    expect(JSON.parse(await readFile(statusFile, 'utf8'))._runtime.shellCleanups).toEqual([]);
+    expect(releaseVerified).toHaveBeenCalledOnce();
+    const next = await observer.runs.start({ sessionId, prompt: 'continue after restart', options: {
+      lsp: false, toolInvocation: { name: 'read', input: { path: path.join(root, 'ready.txt') } },
+    } });
+    await expect(next.result).resolves.toMatchObject({ phase: 'completed' });
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await exited;
+    await observer?.close();
+    vi.unstubAllEnvs();
+    await rm(root, { recursive: true, force: true, maxRetries: 3 });
+  }
+}, 30_000);
+
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-shell-recovery-'));
   vi.stubEnv('KODAX_HOME', path.join(root, '.kodax'));
@@ -85,7 +167,34 @@ it('keeps executor completion pending and makes owner close retry Shell cleanup'
   }
 });
 
-it.each(['unknown', 'verified', 'invalid', 'error'])('verifies dead-owner Shell references before recovery (%s)', async (outcome) => {
+it('retries deferred references on Host close without changing an authoritative unknown terminal', async () => {
+  control.pending = false;
+  const f = await fixture();
+  await f.run.result; await f.runtime.close();
+  const value = JSON.parse(await readFile(f.file, 'utf8'));
+  const reference = { runtimeRunId: f.run.runId, pid: 12345, registrationId: randomUUID(), deferred: true };
+  value.phase = 'interrupted'; value.stage = 'terminal';
+  value.terminal = { revision: 1, kind: 'interrupted', code: 'daemon_crashed', effectOutcome: 'unknown' };
+  value._runtime.shellCleanups = [reference];
+  await writeFile(f.file, JSON.stringify(value));
+  control.recover.mockReset().mockResolvedValue({ status: 'unknown' });
+  const recovered = await createKodaXRuntime(f.options);
+  try {
+    expect(control.recover).toHaveBeenCalledWith(reference);
+    const released = vi.fn(() => expect(JSON.parse(readFileSync(f.file, 'utf8'))._runtime.shellCleanups).toEqual([]));
+    control.recover.mockClear().mockResolvedValue({ status: 'verified', release: released });
+    await recovered.close();
+    expect(control.recover).toHaveBeenCalledWith(reference);
+    expect(released).toHaveBeenCalledOnce();
+    const saved = JSON.parse(await readFile(f.file, 'utf8'));
+    expect(saved.terminal).toEqual(value.terminal);
+    expect(saved._runtime.shellCleanups).toEqual([]);
+  } finally {
+    await recovered.close(); vi.unstubAllEnvs(); await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+it.each(['unknown', 'verified', 'invalid', 'error'])('recovers a dead owner without blocking the session on valid unresolved Shell references (%s)', async (outcome) => {
   const verified = outcome === 'verified';
   control.pending = false;
   const f = await fixture();
@@ -96,7 +205,7 @@ it.each(['unknown', 'verified', 'invalid', 'error'])('verifies dead-owner Shell 
   value.stop = { requestedAt: new Date().toISOString(), state: 'unknown', outcome: 'unknown', reason: 'stop' };
   value._runtime.shellCleanups = [outcome === 'invalid' ? { ...reference, runtimeRunId: 'another-run' } : reference];
   await writeFile(f.file, JSON.stringify(value));
-  // A terminal event must not bypass pending process cleanup during restart.
+  // A dead executor cannot keep owning a Session solely because OS cleanup is unknown.
   control.recover.mockReset();
   const released = vi.fn(() => expect(JSON.parse(readFileSync(f.file, 'utf8'))._runtime.shellCleanups).toEqual([]));
   if (outcome === 'error') control.recover.mockRejectedValue(new Error('cleanup unavailable'));
@@ -107,7 +216,19 @@ it.each(['unknown', 'verified', 'invalid', 'error'])('verifies dead-owner Shell 
     else expect(control.recover).toHaveBeenCalledWith(reference);
     const status = await recovered.runs.get(f.run.runId);
     if (verified) { expect(status?.phase).not.toBe('unknown'); expect(released).toHaveBeenCalledOnce(); }
-    else { expect(status).toMatchObject({ phase: 'unknown', stop: { state: 'unknown' } }); expect(released).not.toHaveBeenCalled(); }
+    else if (outcome === 'invalid') {
+      expect(status).toMatchObject({ phase: 'unknown', stop: { state: 'unknown' } });
+    } else {
+      expect(status).toMatchObject({ phase: 'interrupted', terminal: { effectOutcome: 'unknown' } });
+      expect(released).not.toHaveBeenCalled();
+      expect(JSON.parse(await readFile(f.file, 'utf8'))._runtime.shellCleanups).toEqual([
+        expect.objectContaining({ deferred: true, registrationId: reference.registrationId }),
+      ]);
+      const next = await recovered.runs.start({ sessionId: f.session.id, prompt: 'continue', options: {
+        lsp: false, toolInvocation: { name: 'bash', input: { command: 'fixture' } },
+      } });
+      await expect(next.result).resolves.toMatchObject({ phase: 'completed' });
+    }
   } finally {
     await recovered.close(); vi.unstubAllEnvs(); await rm(f.root, { recursive: true, force: true });
   }

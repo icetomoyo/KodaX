@@ -1,4 +1,4 @@
-# Issues 344–347: command feedback and history navigation/read boundaries
+# Issues 345–347 and 352: command feedback and history navigation/read boundaries
 
 Baseline: `394d4134`. Date: 2026-09-27. Windows, owned Ink renderer.
 

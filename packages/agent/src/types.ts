@@ -396,6 +396,9 @@ export type KodaXSessionUiHistoryItemType =
   | 'tool_group';
 
 export interface KodaXSessionUiTextHistoryItem {
+  /** Host checkpoint provenance; never inferred from display IDs or text. */
+  sourceRunId?: string;
+  sourceTurnId?: string;
   /** Uncommitted generated output; canonical messages take ownership on save. */
   outputId?: string;
   textRevision?: number;
@@ -425,6 +428,12 @@ export type KodaXSessionUiToolCallStatus =
   | 'awaiting_approval';
 
 export interface KodaXSessionUiToolCall {
+  /** Generated assistant invocation owning this call; call IDs can repeat. */
+  assistantOutputId?: string;
+  /** Execution crossed the tool boundary; a missing result still has an unknown outcome. */
+  executionBegan?: true;
+  /** A tool result was saved, including an empty result. */
+  resultRecorded?: true;
   id: string;
   name: string;
   status: KodaXSessionUiToolCallStatus;
@@ -437,6 +446,8 @@ export interface KodaXSessionUiToolCall {
 }
 
 export interface KodaXSessionUiToolGroupHistoryItem {
+  sourceRunId?: string;
+  sourceTurnId?: string;
   afterInputId?: string;
   id?: string;
   type: 'tool_group';

@@ -41,6 +41,8 @@ pnpm-workspace.yaml
 .repointel/
 .claude/
 .electron-smoke/
+# Session/forensic scratch — keep outside the repo (AGENTS.md layout has no scratch dir).
+scratch/
 
 # Logs
 *.log

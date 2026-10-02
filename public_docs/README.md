@@ -3,7 +3,7 @@
 Documentation for KodaX users, product-client integrators and trusted Host developers.
 
 This development tree implements the unified Product Client contract under
-FEATURE_298/299. The package version remains `0.7.96-rc.11`; the design target is
+FEATURE_298/299. The package version remains `0.7.96-rc.14`; the design target is
 `v0.7.97`, and npm publication is a separate maintainer action. Historical release
 notes do not override the current Client contract or establish that a package
 has been published.

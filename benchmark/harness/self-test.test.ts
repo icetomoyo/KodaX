@@ -62,6 +62,7 @@ describe('FEATURE_104 aliases', () => {
         'ark/k27',
         'ark/v4flash',
         'ark/v4pro',
+        'ds/flash',
         'ds/v4flash',
         'ds/v4pro',
         'kimi',
@@ -71,6 +72,7 @@ describe('FEATURE_104 aliases', () => {
         'mmx/m3',
         'zhipu/glm51',
         'zhipu/glm52',
+        'zhipu/glm53flash',
       ].sort(),
     );
   });
@@ -149,6 +151,8 @@ describe('FEATURE_104 aliases', () => {
     expect(resolveAlias('ark/v4flash')).toMatchObject({ provider: 'ark-coding', model: 'deepseek-v4-flash' });
     expect(resolveAlias('ds/v4pro')).toMatchObject({ provider: 'deepseek', model: 'deepseek-v4-pro' });
     expect(resolveAlias('ds/v4flash')).toMatchObject({ provider: 'deepseek', model: 'deepseek-v4-flash' });
+    expect(resolveAlias('ds/flash')).toMatchObject({ provider: 'deepseek', model: 'deepseek-flash' });
+    expect(resolveAlias('zhipu/glm53flash')).toMatchObject({ provider: 'zhipu-coding', model: 'glm-5.3-flash' });
   });
 });
 

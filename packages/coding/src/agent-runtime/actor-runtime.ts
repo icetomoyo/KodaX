@@ -13,6 +13,7 @@ import {
   type AgentControllerHealth,
   type AgentExecutionInput,
   type AgentExecutionResult,
+  type AgentIterationProgress,
   type AgentMailboxMessage,
   type AgentMetadataValue,
   type AgentMutationOptions,
@@ -472,7 +473,10 @@ function publishRootMailboxMessage(
     : output.state === 'failed'
       ? 'failed'
       : 'cancelled';
-  const summary = output.output ?? output.error ?? status;
+  const summary = [
+    output.terminationReason ? output.error : undefined,
+    output.output ?? output.error ?? status,
+  ].filter(Boolean).join('\n');
   queue.enqueue({
     priority: 'background',
     mode: 'task-notification',
@@ -574,6 +578,10 @@ async function executeCodingActorTurn(
       actorTurnId: input.turn.turnId,
       initialMessages,
       actorCapabilities: input.actor.capabilities,
+      onIteration: (iteration) => progressProjector.report(
+        `Iteration ${iteration.current}${iteration.max > 0 ? `/${iteration.max}` : ''}`,
+        iteration,
+      ),
       onProgress: (message) => {
         progressProjector.report(message);
         parentCtx.reportToolProgress?.(`[agent ${input.actor.path}] ${message}`);
@@ -585,6 +593,20 @@ async function executeCodingActorTurn(
     await mailboxPump;
   }
   const child = result.results[0];
+  if (child?.limitReached) {
+    return {
+      output: child.summary,
+      artifacts: child.artifactPaths ?? [],
+      ...(child.structured === undefined ? {} : { structured: toAgentMetadataValue(child.structured) }),
+      terminationReason: 'iteration_limit',
+      turnMetadata: {
+        ...(child.provider === undefined ? {} : { effectiveProvider: child.provider }),
+        ...(child.model === undefined ? {} : { effectiveModel: child.model }),
+      },
+      ...(child.iteration ? { iteration: child.iteration } : child.actualIterations !== undefined
+        ? { iteration: { current: child.actualIterations, max: DEFAULT_MAX_CHILD_ITERATIONS } } : {}),
+    };
+  }
   if (!child || child.status !== 'completed') {
     const effectiveProvider = child?.failure?.provider ?? child?.provider;
     const effectiveModel = child?.failure?.model ?? child?.model;
@@ -632,6 +654,7 @@ async function executeCodingActorTurn(
   };
   return {
     output: child.summary,
+    ...(child.iteration ? { iteration: child.iteration } : {}),
     ...(child.artifactPaths && child.artifactPaths.length > 0
       ? { artifacts: child.artifactPaths } : {}),
     ...(validated.structured === undefined ? {} : { structured: validated.structured }),
@@ -643,15 +666,15 @@ function createDurableProgressProjector(
   input: AgentExecutionInput,
   label: string,
 ): {
-  report(summary: string): void;
+  report(summary: string, iteration?: AgentIterationProgress): void;
   finish(): void;
 } {
   // Progress is a bounded observation, not a terminal fact. The Actor controller
   // owns tree-wide batching so every executor, including custom ones, shares the
   // same persistence backpressure boundary.
   let finished = false;
-  const report = (summary: string): void => {
-    void input.reportProgress({ kind: 'status', summary }).catch((error: unknown) => {
+  const report = (summary: string, iteration?: AgentIterationProgress): void => {
+    void input.reportProgress({ kind: 'status', summary, ...(iteration ? { iteration } : {}) }).catch((error: unknown) => {
       emitKodaXDiagnostic({
         source: 'coding:actors',
         level: 'warn',
@@ -660,9 +683,9 @@ function createDurableProgressProjector(
     });
   };
   return {
-    report(summary) {
+    report(summary, iteration) {
       if (finished) return;
-      report(summary);
+      report(summary, iteration);
     },
     finish() {
       finished = true;
@@ -992,7 +1015,7 @@ function completionTaskResult(
     taskId: message.turnId,
     status,
     title: message.senderPath,
-    summary: output.output ?? output.error ?? message.content,
+    summary: [output.terminationReason ? output.error : undefined, output.output ?? output.error ?? message.content].filter(Boolean).join('\n'),
     ...(output.artifacts.length > 0 ? { artifactRefs: [...output.artifacts] } : {}),
   };
 }
@@ -1018,7 +1041,7 @@ function renderMailboxMessage(
     const turnId = message.turnId ? ` turn_id="${escapeXml(message.turnId)}"` : '';
     const terminalState = taskResult?.status === 'cancelled' ? 'interrupted' : taskResult?.status;
     const state = terminalState ? ` state="${terminalState}"` : '';
-    return `<agent-completed id="${escapeXml(message.messageId)}" path="${escapeXml(message.senderPath)}"${turnId}${state} classification="${message.classification}">\n${escapeXml(message.content)}\n</agent-completed>`;
+    return `<agent-completed id="${escapeXml(message.messageId)}" path="${escapeXml(message.senderPath)}"${turnId}${state} classification="${message.classification}">\n${escapeXml(taskResult?.summary ?? message.content)}\n</agent-completed>`;
   }
   return `<agent-message id="${escapeXml(message.messageId)}" from="${escapeXml(message.senderPath)}" classification="${message.classification}">\n${escapeXml(message.content)}\n</agent-message>`;
 }

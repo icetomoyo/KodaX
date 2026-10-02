@@ -114,6 +114,64 @@ afterEach(() => {
 });
 
 describe('F270 coding Actor runtime adapter', () => {
+  it('keeps structured iteration progress without requiring a tool call', async () => {
+    let finish: (() => void) | undefined;
+    executeChildAgentsMock.mockImplementation(async (_bundles, _ctx, childOptions) => {
+      childOptions.onIteration?.({ current: 4, max: 200 });
+      await new Promise<void>((resolve) => { finish = resolve; });
+      return completedChild('done');
+    });
+    const session = new CodingActorSession({ sessionId: 'session-1' });
+    const { ctx, options } = environment();
+    const root = session.attach(ctx, options);
+    const turn = await root.spawn({ taskName: 'worker', objective: 'Think.' });
+    await vi.waitFor(() => expect(root.output(turn.actorPath)).toMatchObject({
+      state: 'running', iteration: { current: 4, max: 200 },
+    }));
+    expect(root.list().actors.find((actor) => actor.path === turn.actorPath)?.latestTurn)
+      .toMatchObject({ iteration: { current: 4, max: 200 } });
+    finish?.();
+    await vi.waitFor(() => expect(root.output(turn.actorPath).state).toBe('completed'));
+    expect(root.output(turn.actorPath).iteration).toEqual({ current: 4, max: 200 });
+    await session.close();
+  });
+
+  it('preserves partial work and reports iteration exhaustion to the parent and queries', async () => {
+    const exhausted = completedChild('Partial research; verification remains.');
+    executeChildAgentsMock.mockResolvedValue({
+      ...exhausted,
+      results: exhausted.results.map((result) => ({
+        ...result, limitReached: true, actualIterations: 200,
+        artifactPaths: ['partial.json'],
+      })),
+    });
+    const session = new CodingActorSession({ sessionId: 'session-1' });
+    const { ctx, options } = environment();
+    const root = session.attach(ctx, options);
+    const turn = await root.spawn({ taskName: 'worker', objective: 'Research.' });
+    await vi.waitFor(() => expect(root.output(turn.actorPath).state).not.toBe('running'));
+    expect(root.output(turn.actorPath)).toMatchObject({
+      state: 'failed', terminationReason: 'iteration_limit',
+      output: 'Partial research; verification remains.', artifacts: ['partial.json'],
+      iteration: { current: 200, max: 200 },
+    });
+    expect(root.list().actors.find((actor) => actor.path === turn.actorPath)?.latestTurn)
+      .toMatchObject({ state: 'failed', terminationReason: 'iteration_limit' });
+    const terminalEvent = root.eventSnapshot().find((event) => event.turnId === turn.turnId && event.kind === 'turn_failed')!;
+    expect(await root.wait(terminalEvent.sequence - 1, 0)).toMatchObject({ kind: 'turn_failed', turnId: turn.turnId });
+    const notification = getMessageQueue().peek({
+      agentId: actorQueueId('session-1', '/root'), maxPriority: 'background', mode: 'task-notification',
+    }).find((message) => message.taskResult?.taskId === turn.turnId);
+    expect(notification?.taskResult?.status).toBe('failed');
+    expect(notification?.content).toContain('iteration_limit');
+    expect(notification?.content).toContain('Partial research');
+    executeChildAgentsMock.mockResolvedValue(completedChild('Finished verification.'));
+    await root.followup(turn.actorPath, 'Finish verification.');
+    await vi.waitFor(() => expect(root.output(turn.actorPath).state).toBe('completed'));
+    expect(root.output(turn.actorPath)).not.toHaveProperty('terminationReason');
+    await session.close();
+  });
+
   it('derives and closes a concrete Provider lease for each native child turn', async () => {
     let delayedRequest: Promise<unknown> | undefined;
     let releaseDelayed: (() => void) | undefined;
@@ -826,7 +884,10 @@ describe('F270 coding Actor runtime adapter', () => {
     ]);
   });
 
-  it('projects nested child completion with task-result identity into the parent queue', async () => {
+  it.each([false, true])('projects nested child completion into the parent queue (limitReached=%s)', async (limitReached) => {
+    const nestedResult = completedChild('nested complete');
+    nestedResult.results[0]!.limitReached = limitReached;
+    const expectedState = limitReached ? 'failed' : 'completed';
     let nestedTurnId: string | undefined;
     executeChildAgentsMock
       .mockImplementationOnce(async (_bundles, _ctx, childOptions) => {
@@ -838,7 +899,7 @@ describe('F270 coding Actor runtime adapter', () => {
         });
         nestedTurnId = nested.turnId;
         await vi.waitFor(() => {
-          expect(actorControl.output(nested.actorPath, nested.turnId).state).toBe('completed');
+          expect(actorControl.output(nested.actorPath, nested.turnId).state).toBe(expectedState);
         });
         await vi.waitFor(() => {
           expect(getMessageQueue().peek({
@@ -851,15 +912,15 @@ describe('F270 coding Actor runtime adapter', () => {
               taskResult: expect.objectContaining({
                 source: 'child_task',
                 taskId: nested.turnId,
-                status: 'completed',
-                summary: 'nested complete',
+                status: expectedState,
+                summary: limitReached ? expect.stringContaining('iteration_limit') : 'nested complete',
               }),
             }),
           ]));
         });
         return completedChild('parent complete');
       })
-      .mockResolvedValueOnce(completedChild('nested complete'));
+      .mockResolvedValueOnce(nestedResult);
     const session = new CodingActorSession({ sessionId: 'session-1' });
     const { ctx, options } = environment();
     const root = session.attach(ctx, options);

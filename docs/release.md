@@ -136,6 +136,175 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.96-rc.14 release preparation
+
+Release state: `v0.7.96-rc.14` is the GitHub pre-release for the exact
+tagged commit — the fourteenth release candidate of the v0.7.96 line,
+bringing turn-matched interrupted-Run recovery, provable history pairing
+and compaction tracing, provider authentication isolation, single-writer
+transcript ownership, and Windows NUL-ACE startup recovery (Issue 341).
+Starting with this candidate, branch pushes no longer trigger CI: the full
+reusable CI workflow (`workflow_call`) runs inside the tag-triggered
+Release workflow before the build matrix, so the tag is the first and only
+remote validation gate. Local gates below are mandatory before tagging.
+
+On top of rc.13 it includes:
+
+- Interrupted-Run recovery hands the next managed or coding Run a labelled,
+  bounded, transient record of journaled progress from earlier unfinished
+  Runs, matched per turn and budgeted across Runs (Issues 340; regression
+  guide: `docs/test-guides/ISSUE_INTERRUPTED_HISTORY_v0.7.96_REGRESSION_GUIDE.md`).
+- Tool-history validation pairs calls with results across the whole
+  assistant scope; conversation resolution traces compaction copies to a
+  provable root and truncates unprovable boundaries as `partial`.
+- Anthropic-compatible providers ignore an inherited `ANTHROPIC_AUTH_TOKEN`.
+- The Ink host defers to the Runtime as the single transcript writer in
+  Runtime mode.
+- Windows interactive startup re-verifies the live NUL sandbox-account grant
+  behind a current setup marker and recovers through the existing setup
+  boundary (Issue 341; sandbox unit fixtures moved to a private native
+  cache, Issue 343).
+- CI moved from branch-push/pull-request triggers to `workflow_call` +
+  manual dispatch; tag pushes run full CI before the release build matrix
+  (`55868a89`).
+
+All root/workspace package versions and lockfile entries are `0.7.96-rc.14`.
+The feature-design submodule, public guides, architecture documents, and
+`kodax_manual` track this release. Historical release records retain their versions.
+
+Release gates:
+
+1. Local, before tagging (no branch CI exists anymore): strict source/test
+   typechecks, tracker consistency, registry (`kodax_manual`) tests,
+   sandbox-runtime regressions (`src/sandbox-runtime.test.ts`), interrupted
+   recovery and transcript suites
+   (`packages/coding/src/task-engine/runner-driven.test.ts`,
+   `packages/agent/src/primitives/runner.test.ts`, REPL/session suites),
+   provider suites (`packages/llm/src`), and package builds pass.
+2. Push the reachable feature-design submodule commit before the parent commit.
+3. Push the release commit, then tag the exact commit `v0.7.96-rc.14`; the
+   tag must trigger the Release workflow whose `Full CI` job must pass
+   before the build matrix runs.
+4. The Release workflow must produce five platform archives, the universal
+   npm tarball, and SHA256SUMS (13 assets), with every job green, and
+   auto-create the GitHub pre-release.
+5. Leave npm publication to the maintainer: set `npm_config_tag=rc` in the
+   shell environment, then run `node scripts/release.mjs` to download and
+   verify the exact universal tarball before publishing. PowerShell:
+   `$env:npm_config_tag = "rc"`.
+
+Windows remains native shell protocol 10 with setup generation 11 and
+`sandboxRuntime:11`; `runtimeExitSettlement:2`, `crashOutcomeModel:2`, and
+`runtimeAutoModeGuardrail:6` remain unchanged.
+
+## v0.7.96-rc.13 release preparation
+
+Release state: `v0.7.96-rc.13` is the GitHub pre-release for the exact
+tagged commit — the thirteenth release candidate of the v0.7.96 line,
+persisting Runtime-owned managed-run output at Runner commit boundaries so
+interrupted runs keep their transcripts. The tag-triggered Release workflow
+builds every platform archive and the universal npm tarball, publishes
+checksums, and creates the GitHub pre-release. npm registry publication
+remains a separate manual maintainer action.
+
+On top of rc.12 it includes:
+
+- Runtime-owned (`persistedByHost: false`) managed runs persist generated
+  assistant messages and tool results at Runner commit boundaries, before
+  tools or subsequent provider calls can hang. The current compacted
+  transcript and queued-input identities survive an interrupted run; a
+  failed save surfaces as a run failure and never acknowledges queued input
+  as durable; host-owned persistence timing is unchanged and initial input
+  replay is skipped rather than re-saving all history. Regression guide:
+  `docs/test-guides/ISSUE_INTERRUPTED_HISTORY_v0.7.96_REGRESSION_GUIDE.md`.
+
+All root/workspace package versions and lockfile entries are `0.7.96-rc.13`.
+The feature-design submodule, public guides, architecture documents, and
+`kodax_manual` track this release. Historical release records retain their versions.
+
+Release gates:
+
+1. Config templates, strict source/test typechecks, manual documentation
+   tests, interrupted managed-run history regressions
+   (`packages/coding/src/task-engine/runner-driven.test.ts`, Runner
+   primitive/compaction suites), and package builds pass.
+2. GitHub CI passes on the exact release commit across Node 20/22, Windows
+   packaged Electron, Windows shell contracts, and Linux/macOS native platforms.
+3. Push the reachable feature-design submodule commit before the parent commit.
+4. Tag the green commit `v0.7.96-rc.13`; the Release workflow must produce five
+   platform archives, the universal npm tarball, and SHA256SUMS, with every job green.
+5. Publish the GitHub pre-release with release notes. Leave npm publication
+   to the maintainer: set `npm_config_tag=rc` in the shell environment, then
+   run `node scripts/release.mjs` to download and verify the exact universal
+   tarball before publishing. PowerShell: `$env:npm_config_tag = "rc"`.
+
+Windows remains native shell protocol 10 with setup generation 11 and
+`sandboxRuntime:11`; `runtimeExitSettlement:2`, `crashOutcomeModel:2`, and
+`runtimeAutoModeGuardrail:6` remain unchanged.
+
+## v0.7.96-rc.12 release preparation
+
+Release state: `v0.7.96-rc.12` is the GitHub pre-release for the exact
+tagged commit — the twelfth release candidate of the v0.7.96 line, making
+uncertain Shell cleanup nonblocking for conversations, exposing Runner
+iteration progress, and settling exhausted Actor children with honest
+structured results. The tag-triggered Release workflow builds every platform
+archive and the universal npm tarball, publishes checksums, and creates the
+GitHub pre-release. npm registry publication remains a separate manual
+maintainer action.
+
+On top of rc.11 it includes:
+
+- Exhausted Shell cleanup retries return diagnostics and partial output to
+  the model without cancelling the Run; unresolved process identities persist
+  as deferred cleanup records, and successors, Session admission, Run
+  completion, and Runtime close proceed. An exhausted terminal Run settles
+  with `stop.state: 'unknown'` and `terminal.effectOutcome: 'unknown'`.
+  Regression guide:
+  `docs/test-guides/ISSUE_SHELL_CLEANUP_v0.7.96-rc.11_REGRESSION_GUIDE.md`.
+- Root Runner iteration progress is exposed in Runtime live snapshots and
+  structured Actor iteration progress in durable turn summaries/output;
+  exhausted native Actor children settle as failed with
+  `terminationReason: iteration_limit`, preserving partial output, artifacts,
+  and structured results. Regression guide:
+  `docs/test-guides/ISSUE_RUNNER_ITERATION_v0.7.96-rc.11_REGRESSION_GUIDE.md`.
+- The test toolchain upgrades to Vitest 4.1.11 (`@vitest/coverage-v8`
+  4.1.11, pinned vite 7.3.3/vite-node) and fflate ^0.8.3, which fixes a ZIP64
+  directory scan that never terminated without the required `0x0001` extra
+  field (covered by `skill-archive-security.test.ts`).
+- The embedder guide documents the Electron `safeStorage` `Local State`
+  credential storage lifecycle on Windows.
+
+All root/workspace package versions and lockfile entries are `0.7.96-rc.12`.
+The feature-design submodule, public guides, architecture documents, and
+`kodax_manual` track this release. Historical release records retain their versions.
+
+Release gates:
+
+1. Config templates, strict source/test typechecks, manual documentation
+   tests, nonblocking Shell cleanup regressions
+   (`src/sdk-runtime.shell-cleanup.test.ts`,
+   `src/sdk-runtime.shell-timeout.test.ts`,
+   `src/sdk-runtime.shell-recovery.test.ts`, bash/child-executor cleanup
+   suites), Runner iteration regressions
+   (`src/sdk-runtime.test.ts`,
+   `packages/coding/src/child-executor.test.ts`), skill archive security
+   (`packages/agent/src/capabilities/skills/skill-archive-security.test.ts`),
+   and package builds pass.
+2. GitHub CI passes on the exact release commit across Node 20/22, Windows
+   packaged Electron, Windows shell contracts, and Linux/macOS native platforms.
+3. Push the reachable feature-design submodule commit before the parent commit.
+4. Tag the green commit `v0.7.96-rc.12`; the Release workflow must produce five
+   platform archives, the universal npm tarball, and SHA256SUMS, with every job green.
+5. Publish the GitHub pre-release with release notes. Leave npm publication
+   to the maintainer: set `npm_config_tag=rc` in the shell environment, then
+   run `node scripts/release.mjs` to download and verify the exact universal
+   tarball before publishing. PowerShell: `$env:npm_config_tag = "rc"`.
+
+Windows remains native shell protocol 10 with setup generation 11 and
+`sandboxRuntime:11`; `runtimeExitSettlement:2`, `crashOutcomeModel:2`, and
+`runtimeAutoModeGuardrail:6` remain unchanged.
+
 ## v0.7.96-rc.11 release preparation
 
 Release state: `v0.7.96-rc.11` is the GitHub pre-release for the exact

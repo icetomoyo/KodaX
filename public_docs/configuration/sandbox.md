@@ -22,9 +22,12 @@ control state.
 
 `kodax setup` and first-run setup also check sandbox readiness once. A bare
 interactive Windows CLI startup (including `kodax -r`) checks the installed
-setup generation before creating the REPL Runtime. An exact current marker is a
-coarse, marker-only fast path; command admission still owns full fail-closed
-verification. A missing or stale generation enters the existing setup boundary
+setup generation before creating the REPL Runtime. With the unreleased Issue 341
+fix, startup also verifies the live NUL device's sandbox-account grant before
+accepting a current marker: the disk marker can survive a reboot while that
+device grant does not. This check is read-only; command admission still owns
+full fail-closed verification. A missing or stale generation, or a failed NUL
+check, enters the existing setup boundary
 in a child process, so `kodax -r` and new-session startup keep a live elapsed-time
 indicator while concurrent startups converge on one install and followers
 recheck the winner. After repair, one no-side-effect command must prove target
@@ -34,6 +37,8 @@ from the exact hash pinned in the running package. It does not run setup, open
 UAC, or repair ACL policy; those remain exclusive to `kodax sandbox setup`.
 Print-mode, daemon, and SDK startup never activate setup automatically, and
 ordinary tool calls never run setup or wait on its lock.
+Setup omits historical read roots whose files no longer exist from native
+installation preflight, while retaining those roots in its migration marker.
 
 Trusted text tools have a separate native diagnostic because they do not use
 the shell sandbox. Run `kodax doctor --native-text` to explicitly load and
@@ -280,8 +285,12 @@ setup-only elevated native parent receives a small explicit base64 envelope,
 reads a versioned digest-bound single-use request from the protected control
 directory, verifies the protected non-ready `installing` marker, and
 synchronously converges NUL compatibility plus profile read capabilities. The
-setup caller atomically publishes the ready marker only after confirmed parent
-success; no helper overlaps ordinary admission and shared system Temp is not
+NUL grant belongs to a live kernel device and can be lost on reboot while the
+disk setup marker remains current. Interactive Windows CLI startup checks the
+live NUL grant before skipping setup recovery; repair may request UAC again and
+preserves a healthy account's SID. SDK/daemon startup and ordinary commands
+remain verify-only. The setup caller atomically publishes the ready marker only
+after confirmed parent success; no helper overlaps ordinary admission and shared system Temp is not
 prewarmed or rewritten;
 ordinary command admission verifies already-provisioned artifacts and control
 state without launching synchronous PowerShell. Text content and shell stdin

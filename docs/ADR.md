@@ -2,7 +2,63 @@
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
 
-> Last updated: 2026-09-23
+> Last updated: 2026-10-01
+>
+> **v0.7.96-rc.14 release addendum:** Interrupted-Run recovery is
+> turn-matched and budgeted across Runs: the next managed or coding Run of a
+> Session receives a labelled, bounded, transient record of journaled
+> progress from earlier unfinished Runs (confirmed results, unknown-result
+> operations, unconfirmed text excerpts); operations from every included Run
+> take the size bound before any excerpt, and operations match history per
+> turn so a reused tool-call id cannot hide an earlier unfinished operation.
+> Tool-history validation pairs calls with results across the whole
+> assistant scope, so internal managed-run context messages no longer strip
+> a pair. Conversation resolution traces compaction copies up to eight
+> predecessor hops, repairs damage reproducible from retained sibling
+> chains, and truncates unprovable older boundaries as `partial` with
+> `compaction_history_truncated` (page cache bumped). Anthropic-compatible
+> providers ignore an inherited `ANTHROPIC_AUTH_TOKEN`, and failed managed
+> provider calls hand back the Runner transcript rather than
+> provider-normalized copies. In Runtime mode the Ink host stops writing its
+> own lineage: the Runtime is the single transcript writer, storage
+> reconciles host saves against the Runtime's durable lineage, and the host
+> continues from the Runtime's entry ids. Windows interactive startup
+> verifies the live NUL sandbox-account grant behind a current setup marker
+> (the durable marker survives reboot; the NUL account ACE does not) and
+> enters the existing setup recovery boundary on failure; SDK/daemon startup
+> and ordinary admission stay read-only (Issue 341). CI runs through
+> `workflow_call` inside the tag-triggered Release workflow instead of on
+> branch pushes.
+>
+> **v0.7.96-rc.13 release addendum:** Runtime-owned (`persistedByHost: false`)
+> managed runs persist each generated assistant message and tool result at
+> Runner commit boundaries — before tools execute or the next provider
+> request is issued — so an interrupted run (a hung tool or provider call)
+> keeps the current compacted transcript and queued-input identities instead
+> of losing generated output. A failed persistence save surfaces as a run
+> failure and never acknowledges queued input as durable. Host-owned
+> persistence timing is unchanged, and the initial input replay is skipped
+> rather than re-saving all history. Partial provider streams that have not
+> reached a message commit remain journal output recovered for display with
+> interruption/retry notices; they are not promoted to model-context
+> messages.
+>
+> **v0.7.96-rc.12 release addendum:** Uncertain Shell cleanup is nonblocking.
+> A cleanup probe failure or timeout no longer fences the conversation: the
+> tool returns diagnostics and partial output to the model, unresolved
+> process identities persist as deferred cleanup records (`deferred: true`)
+> with the native registry and exact identity checks intact, and successors,
+> Session admission, Run completion, and Runtime close proceed. An exhausted
+> terminal Run settles with `stop.state: 'unknown'` and
+> `terminal.effectOutcome: 'unknown'` — it never claims verified process
+> termination — while verified cleanup removes the record and Runtime close
+> retries deferred references without blocking on them. Root Runner
+> iteration progress is exposed in Runtime live snapshots and structured
+> Actor iteration progress lands in durable turn summaries/output; exhausted
+> native Actor children settle as failed with
+> `terminationReason: iteration_limit`, preserving partial output, artifacts,
+> and structured results, with no structured-output repair or workflow digest
+> after exhaustion and a fresh iteration count on follow-up.
 >
 > **v0.7.96-rc.11 release addendum:** SDK-owned Git call sites preflight the
 > macOS system Git shim through a shared platform guard
@@ -6264,6 +6320,17 @@ host-fallback-disabled target-start/exit probe. Non-interactive Runtime/daemon/
 SDK startup remains verify-only. Normal commands never wait on the setup lock
 or the legacy ACL cleanup path, so independent Sessions retain true overlap.
 
+**2026-10-01 startup readiness correction (Issue 341)**: A durable current setup
+marker does not prove the NUL kernel device still carries its setup-time account
+ACE after a reboot. The interactive startup fast path now runs the existing
+read-only native NUL verifier against the marker's account SID. Failure enters
+the existing setup child/UAC boundary and repairs a healthy account in place;
+it never performs setup during command admission or SDK/daemon startup.
+The pending marker retains previous read roots for migration retries, while
+capability installation filters out paths that no longer exist. Historical
+registry transaction files cannot block a fresh setup by being merged back
+into every installation request. Other filesystem failures remain errors.
+
 **Rejected alternatives**: keeping permission-before-sandbox (retains noisy
 reviews and the unsafe fallthrough split); moving a complete deterministic
 operation analyzer before the sandbox (makes the sandbox largely redundant and
@@ -6402,6 +6469,15 @@ durable queue frontier and a stable request binding. Incomplete delivery retains
 its own dispatch fence. Stop receipts distinguish durable acceptance from
 confirmed execution/child/tool cleanup; terminal completion/failure remains true.
 CLI/ACP use this operation while `runs.abort` retains single-Run scope.
+
+Shell cleanup probe exhaustion is distinct from ongoing model/tool execution.
+A timed-out tool returns diagnostic output to the model instead of cancelling
+the Run. Once that tool returns, unresolved OS process identities are retained
+as deferred cleanup; they no longer own the Session execution slot. Explicit
+Stop still cancels model execution. A terminal Run with deferred cleanup reports
+unknown effects and does not claim verified process termination. After-turn
+input remains admissible while Stop settles, and dead-owner recovery preserves
+valid deferred references without recreating a Session-wide admission lock.
 
 Extension managed tools, commands and capability calls receive one host-created
 execution scope. Nested tools re-enter normal policy and scope effects drain

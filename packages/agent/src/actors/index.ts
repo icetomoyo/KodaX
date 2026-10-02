@@ -50,6 +50,7 @@ export type {
   AgentMetadataValue,
   AgentMutationOptions,
   AgentOutput,
+  AgentIterationProgress,
   AgentProgressItem,
   AgentProgressKind,
   AgentProgressUpdate,

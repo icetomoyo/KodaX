@@ -1,4 +1,4 @@
-# Issues 340–343: Completed Session output and scrolling
+# Issues 348–351: Completed Session output and scrolling
 
 Test in an isolated fixture or after restarting the development application to
 load the new code. Do not copy a live actor owner into another runtime or alter
@@ -16,7 +16,7 @@ the original Session to bypass ownership checks.
    scroll with the wheel and PageUp, then use End to return to the bottom.
    The viewport should move and the draft should remain. Repeat in Ctrl+O mode.
    If ordinary mode fails, record which input fails, terminal dimensions and
-   `KODAX_FULLSCREEN`; Issue 342 remains unconfirmed.
+   `KODAX_FULLSCREEN`; Issue 350 remains unconfirmed.
 4. Append enough Host client notices to fill the viewport, then start a new
    response. Its text must appear below those notices, remain visible while
    streaming, and permit Stop followed by another input. Reloading the Session
@@ -156,7 +156,7 @@ same transport. The repeated case's PageUp failure and short complete screen
 independently establish the history loss. Node-pty's post-capture teardown
 warning remained; these are screen-behavior results, not clean-exit claims.
 
-At the A/B baseline, Issue 342 was confirmed Open, with a production fix outstanding. The
+At the A/B baseline, Issue 350 was confirmed Open, with a production fix outstanding. The
 regression gate must preserve old content in ordinary browsing after the live
 snapshot rolls over, including the folded case; reloading the saved Session or
 only checking notices/scroll keys is insufficient. Reuse Host history readers

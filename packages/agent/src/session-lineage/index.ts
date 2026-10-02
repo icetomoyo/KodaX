@@ -59,6 +59,14 @@ export {
   rewindSessionLineage,
   setSessionLineageActiveEntry,
 } from './kodax-session-lineage.js';
+export {
+  createLegacyToolPairingLookup,
+  findLegacyToolPairingRestorations,
+} from './legacy-tool-pairing.js';
+export type {
+  LegacyToolPairingLookup,
+  LegacyToolPairingRestoration,
+} from './legacy-tool-pairing.js';
 
 export {
   readSessionHistoryEntry,

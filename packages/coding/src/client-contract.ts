@@ -556,6 +556,9 @@ export interface ClientSessionActivity {
 }
 
 export interface ClientViewItem {
+  /** Host checkpoint provenance for retained output and tool evidence. */
+  readonly sourceRunId?: string;
+  readonly sourceTurnId?: string;
   /** One generated assistant message, shared by its draft and canonical items. */
   readonly outputId?: string;
   readonly outputState?: 'draft' | 'committed';
@@ -580,6 +583,9 @@ export interface ClientViewItem {
     readonly delivery?: 'synthetic-user-message' | 'budget-exhausted' | 'terminal-block';
   };
   readonly tool?: {
+    readonly assistantOutputId?: string;
+    readonly executionBegan?: true;
+    readonly resultRecorded?: true;
     readonly callId: string;
     readonly name: string;
     readonly status: 'running' | 'success' | 'error' | 'cancelled' | 'awaiting_approval';
@@ -642,7 +648,18 @@ export interface ClientQueuedInput {
 }
 
 /** User-explainable lifecycle facts; accepting a Stop never implies them. */
+export interface ClientRunTerminal {
+  readonly revision: number;
+  readonly kind: 'completed' | 'failed' | 'cancelled' | 'interrupted';
+  readonly code: string;
+  /** Execution settlement and confirmed tool effects are separate facts. */
+  readonly effectOutcome: 'none' | 'known' | 'unknown';
+  readonly message?: string;
+  readonly failureKind?: string;
+}
+
 export interface ClientRunStatus {
+  readonly terminal?: ClientRunTerminal;
   readonly runId: string;
   readonly sessionId: string;
   readonly phase: string;
@@ -699,6 +716,8 @@ export interface ClientToolInvocationInput {
  * reject separately. Unknown is never success or cancellation.
  */
 export interface ClientRunOutcome {
+  readonly terminal?: ClientRunTerminal;
+  readonly stop?: ClientRunStatus['stop'];
   readonly runId: string;
   readonly sessionId: string;
   readonly phase: string;

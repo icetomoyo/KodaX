@@ -18,21 +18,34 @@ function resultStatus(result: KodaXToolResultBlock | undefined): NonNullable<Cli
 }
 
 /** Shared canonical facts for view, history, and full item reads. */
+export function canonicalToolKey(callId: string, outputId?: string): string {
+  return JSON.stringify([outputId ?? null, callId]);
+}
+
 export function canonicalTools(messages: readonly KodaXMessage[]): ReadonlyMap<string, ClientViewItem> {
-  const blocks = messages.flatMap(message => typeof message.content === 'string' ? [] : message.content);
-  const results = new Map(blocks.flatMap(block => block.type === 'tool_result' ? [[block.tool_use_id, block] as const] : []));
-  const times = new Map(messages.flatMap(message => {
+  const tools = new Map<string, ClientViewItem>();
+  const pending = new Map<string, string>();
+  for (const message of messages) {
     const time = message.timestamp === undefined ? NaN : Date.parse(message.timestamp);
-    if (!Number.isFinite(time) || time < 0 || typeof message.content === 'string') return [];
-    return message.content.flatMap((block): [string, number][] => block.type === 'tool_use' ? [[`start:${block.id}`, time]]
-      : block.type === 'tool_result' ? [[`end:${block.tool_use_id}`, time]] : []);
-  }));
-  return new Map(blocks.flatMap((block): [string, ClientViewItem][] => {
-    if (block.type !== 'tool_use') return [];
-    const result = results.get(block.id);
-    return [[block.id, { id: `tool:${block.id}`, type: 'tool',
-      text: result ? toolResultText(result.content) : '[Cancelled] Tool execution did not complete before the session ended.',
-      tool: { callId: block.id, name: block.name, status: resultStatus(result), inputText: JSON.stringify(block.input),
-        startedAt: times.get(`start:${block.id}`), endedAt: times.get(`end:${block.id}`) } }]];
-  }));
+    const timestamp = Number.isFinite(time) && time >= 0 ? time : undefined;
+    if (message.role === 'assistant') pending.clear();
+    for (const block of typeof message.content === 'string' ? [] : message.content) {
+      if (block.type === 'tool_use') {
+        const key = canonicalToolKey(block.id, message.outputId);
+        tools.set(key, { id: message.outputId ? `output:${message.outputId}:tool:${block.id}` : `tool:${block.id}`, type: 'tool',
+          text: '[Cancelled] Tool execution did not complete before the session ended.',
+          tool: { assistantOutputId: message.outputId, callId: block.id, name: block.name, status: resultStatus(undefined),
+            inputText: JSON.stringify(block.input), startedAt: timestamp } });
+        pending.set(block.id, key);
+      } else if (block.type === 'tool_result') {
+        const key = pending.get(block.tool_use_id);
+        const item = key === undefined ? undefined : tools.get(key);
+        if (!item?.tool || key === undefined) continue;
+        tools.set(key, { ...item, text: toolResultText(block.content), tool: { ...item.tool,
+          status: resultStatus(block), endedAt: timestamp } });
+        pending.delete(block.tool_use_id);
+      }
+    }
+  }
+  return tools;
 }

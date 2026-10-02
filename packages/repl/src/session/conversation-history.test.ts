@@ -1,9 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
+  KodaXMessage,
   KodaXSessionEntry,
   KodaXSessionLineage,
+  KodaXSessionMessageEntry,
 } from '@kodax-ai/agent';
+import {
+  applySessionCompaction,
+  COMPACTION_SUMMARY_PREFIX,
+  getSessionMessagesFromLineage,
+} from '@kodax-ai/agent/session-lineage';
 
 import {
   buildLineageUnavailableConversationHistory,
@@ -514,6 +521,102 @@ describe('buildSessionConversationHistory', () => {
     expect(history.entries[2]?.auditEntryIds).toEqual(['u2', 'u2-copy-1', 'u2-copy-2']);
   });
 
+  // A retry leaf copies the first attempt under one logical id; a later
+  // abandoned branch of the compacted epoch copies the retry, and the active
+  // retained copy names that abandoned copy as its source.
+  function copyOfCopyEntries(sideLogicalId = 'u2'): KodaXSessionEntry[] {
+    return [
+      messageEntry('u1', null, 'user', 'request'),
+      messageEntry('a1', 'u1', 'assistant', 'answer'),
+      messageEntry('u2', 'a1', 'user', 'continue'),
+      messageEntry('u2-retry', 'a1', 'user', 'continue', { logicalId: 'u2', sourceEntryId: 'u2' }),
+      compactionEntry('compact', 'k-u1'),
+      messageEntry('k-u1', 'compact', 'user', 'request', { logicalId: 'u1', sourceEntryId: 'u1' }),
+      messageEntry('k-a1', 'k-u1', 'assistant', 'answer', { logicalId: 'a1', sourceEntryId: 'a1' }),
+      messageEntry('k-u2-side', 'k-a1', 'user', 'continue', {
+        logicalId: sideLogicalId,
+        sourceEntryId: 'u2-retry',
+      }),
+      messageEntry('k-u2', 'k-a1', 'user', 'continue', { logicalId: 'u2', sourceEntryId: 'k-u2-side' }),
+      messageEntry('done', 'k-u2', 'assistant', 'done'),
+    ];
+  }
+
+  it('resolves a retained copy whose source is an abandoned copy of the predecessor', () => {
+    const history = project(copyOfCopyEntries(), 'done');
+
+    expect(history.status).toBe('resolved');
+    expect(history.issues).toEqual([]);
+    expect(history.entries.map((entry) => entry.boundaryId)).toEqual([
+      'u1',
+      'a1',
+      'u2-retry',
+      'done',
+    ]);
+    expect(history.entries[2]?.auditEntryIds).toEqual(
+      expect.arrayContaining(['u2-retry', 'k-u2']),
+    );
+  });
+
+  it('does not follow a copy chain whose logical identity changes', () => {
+    const history = project(copyOfCopyEntries('other'), 'done');
+
+    expect(history.status).toBe('partial');
+    expect(history.entries.map((entry) => entry.boundaryId)).toEqual([
+      'k-u1',
+      'k-a1',
+      'k-u2',
+      'done',
+    ]);
+    expect(history.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'compaction_history_truncated',
+        entryIds: ['compact'],
+      }),
+    ]));
+  });
+
+  it('keeps proven later epochs and truncates at an unprovable older boundary', () => {
+    const entries = [
+      messageEntry('u1', null, 'user', 'first request'),
+      messageEntry('a1', 'u1', 'assistant', 'first answer'),
+      compactionEntry('compact-1', 'k1-a1'),
+      messageEntry('k1-a1', 'compact-1', 'assistant', 'first answer', {
+        logicalId: 'a1',
+        sourceEntryId: 'missing-source',
+      }),
+      messageEntry('u2', 'k1-a1', 'user', 'second request'),
+      messageEntry('a2', 'u2', 'assistant', 'second answer'),
+      compactionEntry('compact-2', 'k2-u2'),
+      messageEntry('k2-u2', 'compact-2', 'user', 'second request', {
+        logicalId: 'u2',
+        sourceEntryId: 'u2',
+      }),
+      messageEntry('k2-a2', 'k2-u2', 'assistant', 'second answer', {
+        logicalId: 'a2',
+        sourceEntryId: 'a2',
+      }),
+      messageEntry('u3', 'k2-a2', 'user', 'third request'),
+    ];
+
+    const history = project(entries, 'u3');
+
+    expect(history.status).toBe('partial');
+    expect(history.entries.map((entry) => entry.message.content)).toEqual([
+      'first answer',
+      'second request',
+      'second answer',
+      'third request',
+    ]);
+    expect(history.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'compaction_boundary_invalid' }),
+      expect.objectContaining({
+        code: 'compaction_history_truncated',
+        entryIds: ['compact-1'],
+      }),
+    ]));
+  });
+
   it('uses sourceEntryId as explicit provenance when a legacy logicalId changed', () => {
     const entries = [
       messageEntry('u1', null, 'user', 'request'),
@@ -666,14 +769,13 @@ describe('buildSessionConversationHistory', () => {
 
     expect(history.status).toBe('partial');
     expect(history.entries.map((entry) => entry.boundaryId)).toEqual([
-      'branch-a',
       'copy-future',
       'copy-a',
       'current',
-      'future',
     ]);
     expect(history.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'compaction_predecessor_missing' }),
+      expect.objectContaining({ code: 'compaction_history_truncated' }),
     ]));
   });
 
@@ -697,8 +799,6 @@ describe('buildSessionConversationHistory', () => {
 
     expect(history.status).toBe('partial');
     expect(history.entries.map((entry) => entry.boundaryId)).toEqual([
-      'branch-a',
-      'future-parent',
       'copy-future',
       'copy-a',
       'current',
@@ -706,10 +806,11 @@ describe('buildSessionConversationHistory', () => {
     expect(history.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'lineage_path_incomplete' }),
       expect.objectContaining({ code: 'compaction_predecessor_missing' }),
+      expect.objectContaining({ code: 'compaction_history_truncated' }),
     ]));
   });
 
-  it('preserves all candidates when two predecessor branches are indistinguishable', () => {
+  it('truncates instead of picking between indistinguishable predecessor branches', () => {
     const entries = [
       messageEntry('u1', null, 'user', 'request'),
       messageEntry('a1', 'u1', 'assistant', 'same answer'),
@@ -721,16 +822,14 @@ describe('buildSessionConversationHistory', () => {
 
     const history = project(entries, 'a1-copy');
 
-    expect(history.status).toBe('ambiguous');
+    expect(history.status).toBe('partial');
     expect(history.entries.map((entry) => entry.boundaryId)).toEqual([
-      'u1',
-      'a1',
-      'a1-other',
       'u1-copy',
       'a1-copy',
     ]);
     expect(history.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'compaction_predecessor_ambiguous' }),
+      expect.objectContaining({ code: 'compaction_history_truncated' }),
     ]));
   });
 
@@ -824,10 +923,9 @@ describe('buildSessionConversationHistory', () => {
 
     const history = project(entries, 'a1-copy');
 
+    // Both emitted copies claim `a1`: the conflict is inside the proven epoch.
     expect(history.status).toBe('ambiguous');
     expect(history.entries.map((entry) => entry.boundaryId)).toEqual([
-      'u1',
-      'a1',
       'u1-copy',
       'a1-copy',
     ]);
@@ -835,6 +933,7 @@ describe('buildSessionConversationHistory', () => {
       .filter((entryId) => entryId === 'a1')).toHaveLength(1);
     expect(history.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'compaction_boundary_invalid' }),
+      expect.objectContaining({ code: 'compaction_history_truncated' }),
     ]));
   });
 
@@ -850,13 +949,13 @@ describe('buildSessionConversationHistory', () => {
 
     const history = project(entries, 'u1-copy');
 
-    expect(history.status).toBe('ambiguous');
+    expect(history.status).toBe('partial');
     expect(history.entries.map((entry) => entry.boundaryId)).toEqual([
-      'u1',
       'u1-copy',
     ]);
     expect(history.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'compaction_boundary_invalid' }),
+      expect.objectContaining({ code: 'compaction_history_truncated' }),
     ]));
   });
 
@@ -876,17 +975,14 @@ describe('buildSessionConversationHistory', () => {
 
     const history = project(entries, 'a-copy');
 
-    expect(history.status).toBe('ambiguous');
+    expect(history.status).toBe('partial');
     expect(history.entries.map((entry) => entry.boundaryId)).toEqual([
-      'u-a',
-      'a-a',
-      'u-b',
-      'a-b',
       'u-copy',
       'a-copy',
     ]);
     expect(history.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'compaction_boundary_invalid' }),
+      expect.objectContaining({ code: 'compaction_history_truncated' }),
     ]));
   });
 
@@ -1149,5 +1245,203 @@ describe('buildSessionConversationHistory', () => {
     }, 'sha256:test-source', () => {
       if (comparisonStarted) comparisonCheckpoints += 1;
     })).not.toThrow();
+  });
+});
+
+// De-identified minimal topology of a legacy session: the retained copy of an
+// assistant(2 tool calls) -> managed context -> user(2 tool results) turn was
+// persisted once intact and once after adjacent-only tool pairing stripped it.
+describe('legacy adjacent-only tool-pairing damage', () => {
+  const query: KodaXMessage = { role: 'user', content: 'inspect two files' };
+  const call: KodaXMessage = {
+    role: 'assistant',
+    content: [
+      { type: 'text', text: 'Reading both files.' },
+      { type: 'tool_use', id: 'tool-a', name: 'read', input: { path: 'a.ts' } },
+      { type: 'tool_use', id: 'tool-b', name: 'read', input: { path: 'b.ts' } },
+    ],
+  };
+  const results: KodaXMessage = {
+    role: 'user',
+    content: [
+      { type: 'tool_result', tool_use_id: 'tool-a', content: 'A' },
+      { type: 'tool_result', tool_use_id: 'tool-b', content: 'B' },
+    ],
+  };
+  const ctx: KodaXMessage = {
+    role: 'user',
+    content: '=== Managed Run Context ===\nround 2',
+    _synthetic: true,
+    _source: 'managed-run-context',
+  };
+  const next: KodaXMessage = { role: 'assistant', content: 'Both files read.' };
+  const newQuery: KodaXMessage = { role: 'user', content: 'next request' };
+  const strippedCall: KodaXMessage = {
+    ...call,
+    content: [{ type: 'text', text: 'Reading both files.' }],
+  };
+  const strippedResults: KodaXMessage = { ...results, content: [{ type: 'text', text: '' }] };
+
+  function entry(
+    id: string,
+    parentId: string | null,
+    message: KodaXMessage,
+    provenance?: string,
+  ): KodaXSessionMessageEntry {
+    return {
+      type: 'message',
+      id,
+      parentId,
+      timestamp,
+      logicalId: provenance ?? id,
+      ...(provenance !== undefined ? { sourceEntryId: provenance } : {}),
+      message: JSON.parse(JSON.stringify(message)) as KodaXMessage,
+    };
+  }
+  function damagedEntries(): KodaXSessionEntry[] {
+    return [
+      entry('p_query', null, query),
+      entry('p_call', 'p_query', call),
+      entry('p_result', 'p_call', results),
+      { ...compactionEntry('c1', 'k_query'), summary: 'summary' },
+      entry('k_query', 'c1', query, 'p_query'),
+      entry('s_call', 'k_query', call, 'p_call'),
+      entry('s_ctx', 's_call', ctx),
+      entry('s_result', 's_ctx', results, 'p_result'),
+      entry('d_call', 'k_query', strippedCall),
+      entry('d_ctx', 'd_call', ctx, 's_ctx'),
+      entry('d_result', 'd_ctx', strippedResults),
+      entry('d_next', 'd_result', next),
+      entry('y_result', 'd_call', strippedResults, 'd_result'),
+      entry('y_next', 'y_result', next, 'd_next'),
+      entry('n_new', 'y_next', newQuery),
+    ];
+  }
+
+  function damagedLineage(entries = damagedEntries()): KodaXSessionLineage {
+    return { version: 2, activeEntryId: 'n_new', entries };
+  }
+
+  it('resolves the damaged active branch from retained sibling evidence', () => {
+    const lineage = damagedLineage();
+
+    const history = buildSessionConversationHistory(lineage, 'sha256:test-source');
+
+    expect(history.status).toBe('resolved');
+    expect(history.issues).toEqual([]);
+    expect(history.entries.map((item) => item.message))
+      .toEqual([query, call, results, next, newQuery]);
+    expect(history.entries.map((item) => item.message))
+      .toEqual(getSessionMessagesFromLineage(lineage).slice(1));
+    expect(history.entries.map((item) => item.auditEntryIds)).toEqual([
+      ['p_query', 'k_query'],
+      ['p_call', 'd_call'],
+      ['d_result', 'p_result', 'y_result'],
+      ['d_next', 'y_next'],
+      ['n_new'],
+    ]);
+  });
+
+  it('keeps full history and Provider input aligned after a later compaction', () => {
+    const lineage = damagedLineage();
+    const rendered = getSessionMessagesFromLineage(lineage);
+    const compacted = applySessionCompaction(lineage, [
+      { role: 'system', content: `${COMPACTION_SUMMARY_PREFIX}summary 2` },
+      ...rendered.slice(2),
+    ], { summary: 'summary 2' });
+
+    const history = buildSessionConversationHistory(compacted, 'sha256:test-source');
+
+    expect(history.status).toBe('resolved');
+    expect(history.entries.map((item) => item.message))
+      .toEqual([query, call, results, next, newQuery]);
+    expect(getSessionMessagesFromLineage(compacted).slice(1))
+      .toEqual(history.entries.slice(1).map((item) => item.message));
+  });
+
+  it('forks the damaged branch at a conversation boundary with restored content', () => {
+    const forked = forkSessionConversationLineage(
+      damagedLineage(),
+      'n_new',
+      'sha256:test-source',
+    );
+
+    expect(forked).not.toBeNull();
+    const history = buildSessionConversationHistory(forked!, 'sha256:test-source');
+    expect(history.status).toBe('resolved');
+    expect(history.entries.map((item) => item.message))
+      .toEqual([query, call, results, next, newQuery]);
+  });
+
+  it('resolves damage that a pre-fix compaction copied again', () => {
+    const later: KodaXMessage = { role: 'user', content: 'after the second compaction' };
+    const legacyCopy = (
+      id: string,
+      parentId: string,
+      message: KodaXMessage,
+      logicalId: string,
+      sourceEntryId: string,
+    ): KodaXSessionMessageEntry => ({ ...entry(id, parentId, message), logicalId, sourceEntryId });
+    const lineage: KodaXSessionLineage = {
+      version: 2,
+      activeEntryId: 'n2_query',
+      entries: [
+        ...damagedEntries(),
+        { ...compactionEntry('c2', 'z_query'), summary: 'summary 2' },
+        legacyCopy('z_query', 'c2', query, 'p_query', 'k_query'),
+        legacyCopy('z_call', 'z_query', strippedCall, 'd_call', 'd_call'),
+        legacyCopy('z_result', 'z_call', strippedResults, 'd_result', 'y_result'),
+        legacyCopy('z_next', 'z_result', next, 'd_next', 'y_next'),
+        legacyCopy('z_new', 'z_next', newQuery, 'n_new', 'n_new'),
+        entry('n2_query', 'z_new', later),
+      ],
+    };
+
+    const history = buildSessionConversationHistory(lineage, 'sha256:test-source');
+
+    expect(history.status).toBe('resolved');
+    expect(history.issues).toEqual([]);
+    expect(history.entries.map((item) => item.message))
+      .toEqual([query, call, results, next, newQuery, later]);
+    expect(getSessionMessagesFromLineage(lineage).slice(1))
+      .toEqual([query, call, results, next, newQuery, later]);
+  });
+
+  it('stays unresolved when a second retained sibling competes as evidence', () => {
+    const entries = damagedEntries();
+    entries.splice(8, 0, entry('s_other', 'k_query', call, 'p_call'));
+
+    const history = buildSessionConversationHistory(
+      damagedLineage(entries),
+      'sha256:test-source',
+    );
+
+    expect(history.status).not.toBe('resolved');
+    expect(history.entries.map((item) => item.message)).toContainEqual(strippedCall);
+  });
+
+  it('truncates a forked legacy evidence chain instead of emitting sibling copies', () => {
+    const entries = damagedEntries();
+    entries.splice(8, 0, entry('s_other', 'k_query', call, 'p_call'));
+
+    const history = buildSessionConversationHistory(
+      damagedLineage(entries),
+      'sha256:test-source',
+    );
+
+    expect(history.status).toBe('partial');
+    expect(history.entries.map((item) => item.boundaryId)).toEqual([
+      'k_query',
+      'd_call',
+      'y_result',
+      'y_next',
+      'n_new',
+    ]);
+    expect(history.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'compaction_history_truncated',
+        entryIds: ['c1'],
+      }),
+    ]));
   });
 });

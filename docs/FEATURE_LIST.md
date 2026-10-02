@@ -11,11 +11,11 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.96-rc.11` (Git tag / GitHub pre-release) |
-| Current package version | `@kodax-ai/kodax@0.7.96-rc.11` (npm publication remains manual) |
+| Current released version | `v0.7.96-rc.14` (Git tag / GitHub pre-release) |
+| Current package version | `@kodax-ai/kodax@0.7.96-rc.14` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
-| Released implementation | [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) — released in `v0.7.96-beta.9`, extended through `v0.7.96-rc.11` |
-| Current development | `v0.7.97` / `FEATURE_298` — core, T38–T42 and parity follow-ups T43–T47 implemented; [2026-09-24 merge verification](research/mainline-merge-gap-audit-2026-09-24.md) completed without reporter timeout; cross-platform/manual release verification pending |
+| Released implementation | [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) — released in `v0.7.96-beta.9`, extended through `v0.7.96-rc.14` |
+| Current development | `v0.7.97` / `FEATURE_298` — core, T38–T42 and parity follow-ups T43–T56 implemented; [2026-09-24 merge verification](research/mainline-merge-gap-audit-2026-09-24.md) completed without reporter timeout; cross-platform/manual release verification pending |
 | Roadmap updated | `2026-09-23` — FEATURE_300 planned for `v0.7.99`; implementation not started |
 | Total tracked features | `84` |
 | InProgress | `2` |
@@ -29,7 +29,7 @@
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 59 | `299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96-rc.11; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| Completed | 59 | `299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96-rc.14; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 2 | `298, 225` | `298`: prior core implementation and automated evidence retained; 2026-09-18 consumer-completion T38–T42 implemented and reviewed; cross-platform/manual release verification pending. `225` remains the bounded v0.8.25 cleanup. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
@@ -521,9 +521,48 @@
 
 ---
 
+## v0.7.96-rc.14 Release Record
+
+`v0.7.96-rc.14` is the fourteenth release candidate of the v0.7.96 line.
+Interrupted Run recovery reaches coding Runs and managed execution with
+budgeted, turn-matched records; tool-history pairing survives internal
+context splits; compaction copies trace to a provable root and truncate
+with `partial` instead of flattening unproven regions; Anthropic-compatible
+providers ignore an inherited `ANTHROPIC_AUTH_TOKEN`; the Ink host defers to
+the Runtime as the single transcript writer; and Windows interactive
+startup re-verifies the NUL account ACE behind a current setup marker after
+a reboot (Issue 341). CI now runs as part of the tag-triggered Release
+workflow instead of every push. Every rc.13 contract is retained. npm
+publication remains a manual maintainer step.
+
+## v0.7.96-rc.13 Release Record
+
+`v0.7.96-rc.13` was the thirteenth release candidate of the v0.7.96 line.
+Runtime-owned managed runs persist generated assistant messages and tool
+results at Runner commit boundaries, before tools or subsequent provider
+calls can hang: the current compacted transcript and queued-input
+identities survive an interrupted run instead of being lost with a hung
+request, host-owned persistence timing is unchanged, and initial input
+replay is skipped rather than re-saving all history. Every rc.12 contract
+is retained. npm publication remains a manual maintainer step.
+
+## v0.7.96-rc.12 Release Record
+
+`v0.7.96-rc.12` was the twelfth release candidate of the v0.7.96 line.
+Uncertain Shell cleanup no longer blocks conversations: exhausted cleanup
+retries return diagnostics and partial output to the model, unresolved
+process identities become deferred cleanup records, successors and close
+proceed, and an exhausted terminal Run settles honestly with
+`effectOutcome: unknown` instead of claiming verified termination. Root
+Runner iteration progress is exposed in Runtime live snapshots and durable
+Actor turns, and exhausted native Actor children settle as failed with
+`iteration_limit` while preserving partial results. The test toolchain
+upgrades to Vitest 4.1.11 with fflate 0.8.3 (ZIP64 scan fix). Every rc.11
+contract is retained. npm publication remains a manual maintainer step.
+
 ## v0.7.96-rc.11 Release Record
 
-`v0.7.96-rc.11` is the eleventh release candidate of the v0.7.96 line.
+`v0.7.96-rc.11` was the eleventh release candidate of the v0.7.96 line.
 SDK-owned background Git calls preflight the macOS system Git shim: a shared
 DEVELOPER_DIR-aware platform guard detects the known developer-tools-missing
 condition (exit code 2 only, TTL-cached, concurrent probes shared, and

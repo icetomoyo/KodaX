@@ -36,6 +36,7 @@ function reviewPlan(): ReasoningPlan {
 describe('CAP-001 repo-intelligence hot-path budget', () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

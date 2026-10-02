@@ -39,7 +39,7 @@ import type {
 import { SessionViewOwner, restoreSessionViewItems, restoreSessionContentItems, persistSessionViewItems, committedSessionOutputIds } from "./session-view.js";
 import { SessionInputQueue, inputIntentDigest } from "./session-input-queue.js";
 import { listClientInteractions, respondToClientInteraction } from "./client-interactions.js";
-import { assembleConversationHistoryEntry, projectConversationHistoryPage, readConversationHistoryEntry, readHistoryPageWithBoundaryRetry } from "./client-history.js";
+import { assembleConversationHistoryEntry, projectConversationHistoryPage, readConversationHistoryEntry, readFollowingMessage, readHistoryPageWithBoundaryRetry } from "./client-history.js";
 import { toClientConfig, toClientSessionSettings } from "./client-settings.js";
 import { createHostIntegrations } from "./host-integrations.js";
 import { spawnSync } from "node:child_process";
@@ -147,6 +147,7 @@ import type {
   KodaXImageInputArtifact,
   KodaXInputArtifact,
   KodaXInputArtifactSource,
+  KodaXInterruptedRunEvidence,
   KodaXMessage,
   KodaXManagedTaskStatusEvent,
   KodaXOptions,
@@ -357,6 +358,10 @@ export type { RuntimeLearningService } from "./runtime-learning.js";
 export type {
   RuntimeMemoryService, RuntimeMemoryPlane, RuntimeMemoryRebuildResult,
 } from "./runtime-memory.js";
+import {
+  deriveInterruptedRunEvidence,
+  selectInterruptedRunCandidates,
+} from "./runtime-interrupted-run-recovery.js";
 import {
   createRuntimeDaemonClient,
   type RuntimeDaemonClientTransport,
@@ -1678,6 +1683,7 @@ export interface RuntimeManagedTaskProjection {
 }
 
 export interface RuntimeSessionLiveProjection {
+  readonly iterationsByRun?: Readonly<Record<string, { readonly current: number; readonly max: number }>>;
   readonly assistantTextByRun: Readonly<Record<string, string>>;
   readonly thinkingTextByRun: Readonly<Record<string, string>>;
   readonly outputSegmentsByRun: Readonly<
@@ -3690,7 +3696,7 @@ interface RuntimeRunRecord {
   actorDurabilityPreservesExecutorFact?: boolean;
   activeEffectCount?: number;
   finishAfterEffectDrain?: () => void;
-  shellCleanups?: Map<string, { reference: ManagedRunChildProcessReference; retry: () => Promise<void> }>;
+  shellCleanups?: Map<string, { reference: RuntimeShellCleanupReference; retry: () => Promise<void> }>;
   shellEffectDrain?: { count: number; promise: Promise<void>; resolve: () => void };
   capturedExecutorResult?: KodaXResult;
   capturedExecutorFailure?: RuntimeRunFailureFact;
@@ -4411,7 +4417,15 @@ async function createKodaXRuntimeInternal(
         for (const entry of [...entries.values()].sort((left, right) => left.index - right.index)) {
           const source = entry.entry ?? await assembleConversationHistoryEntry(
             input => sessionService.conversationEntryChunk(input), sessionId, page.revision, entry.index);
-          if (source) messages.push(source.message);
+          if (source) {
+            messages.push(source.message);
+            if (!entries.has(entry.index + 1) && source.message.role === 'assistant'
+              && Array.isArray(source.message.content) && source.message.content.some(block => block.type === 'tool_use')) {
+              const successor = await readFollowingMessage(input => sessionService.conversationEntryChunk(input),
+                sessionId, page.revision, entry.index);
+              if (successor?.role === 'user') messages.push(successor);
+            }
+          }
         }
         return messages.length > 0 ? messages : null;
       });
@@ -4462,13 +4476,15 @@ async function createKodaXRuntimeInternal(
       includeHistory ? readingData.then(data => readConversationHistory(sessionId, [...new Set([
         ...(data?.uiHistory ?? []).flatMap(item => [
           ...(item.afterInputId ? [`input:${item.afterInputId}`] : []),
-          ...(item.type === 'tool_group' ? item.tools.flatMap(tool => [`tool-use:${tool.id}`, `tool-result:${tool.id}`])
+          ...(item.type === 'tool_group' ? item.tools.flatMap(tool => tool.assistantOutputId
+            ? [`output:${tool.assistantOutputId}`] : [`tool-use:${tool.id}`, `tool-result:${tool.id}`])
             : item.inputId ? [`input:${item.inputId}`] : []),
         ]),
         ...liveItems.flatMap(item => [
           ...(item.afterInputId ? [`input:${item.afterInputId}`] : []),
           ...(item.inputId ? [`input:${item.inputId}`] : []),
-          ...(item.tool ? [`tool-use:${item.tool.callId}`, `tool-result:${item.tool.callId}`] : []),
+          ...(item.tool ? item.tool.assistantOutputId ? [`output:${item.tool.assistantOutputId}`]
+            : [`tool-use:${item.tool.callId}`, `tool-result:${item.tool.callId}`] : []),
         ]),
       ])])) : undefined,
     ]);
@@ -4499,7 +4515,10 @@ async function createKodaXRuntimeInternal(
   }, async (sessionId, itemId) => {
     const prefix = `${sessionId}:output:`;
     const identity = itemId.startsWith(prefix) ? /^(.*):(assistant|thinking):\d+$/.exec(itemId.slice(prefix.length)) : null;
-    const toolId = itemId.startsWith('tool:') ? itemId.slice(5)
+    // Native output IDs are output_<UUID>; provider call IDs remain opaque
+    // and may themselves contain the tool delimiter.
+    const toolIdentity = itemId.startsWith(prefix) ? /^([^:]+):tool:(.*):0$/.exec(itemId.slice(prefix.length)) : null;
+    const toolId = toolIdentity ? toolIdentity[2] : itemId.startsWith('tool:') ? itemId.slice(5)
       : itemId.includes(':tool:') ? itemId.slice(itemId.indexOf(':tool:') + 6) : undefined;
     const inputPrefix = `${sessionId}:input:`;
     const inputId = itemId.startsWith(inputPrefix) ? itemId.slice(inputPrefix.length) : undefined;
@@ -4507,15 +4526,23 @@ async function createKodaXRuntimeInternal(
     const boundary = await sessionService.conversationPage({ sessionId, limit: 1 });
     if (!boundary) return null;
     const sources = await locateConversationSources(sessionId, boundary.revision, identity
-      ? [`output:${identity[1]}`] : inputId !== undefined ? [`input:${inputId}`] : [`tool-use:${toolId}`, `tool-result:${toolId}`]);
+      ? [`output:${identity[1]}`] : inputId !== undefined ? [`input:${inputId}`]
+        : toolIdentity ? [`output:${toolIdentity[1]}`] : [`tool-use:${toolId}`, `tool-result:${toolId}`]);
     const messages: KodaXMessage[] = [];
     for (const entry of sources.entries) {
       const source = entry.entry ?? await assembleConversationHistoryEntry(
         input => sessionService.conversationEntryChunk(input), sessionId, sources.revision, entry.index);
-      if (source) messages.push(source.message);
+      if (source) {
+        messages.push(source.message);
+        if (toolIdentity && source.message.outputId === toolIdentity[1]) {
+          const successor = await readFollowingMessage(input => sessionService.conversationEntryChunk(input),
+            sessionId, sources.revision, entry.index);
+          if (successor?.role === 'user') messages.push(successor);
+        }
+      }
     }
     const restored = restoreSessionContentItems(sessionId, { title: '', gitRoot: '', messages }, messages)
-      .find(item => identity || inputId !== undefined ? item.id === itemId : item.tool?.callId === toolId);
+      .find(item => identity || toolIdentity || inputId !== undefined ? item.id === itemId : item.tool?.callId === toolId);
     return restored ? { ...restored, id: itemId } : null;
   });
   const bus = createRuntimeEventBus((sessionId, type) => {
@@ -4777,9 +4804,18 @@ async function createKodaXRuntimeInternal(
     };
     if (
       isTerminalRunPhase(status.phase)
-      && !hasPersistedShellCleanups(persisted)
+      && !hasPersistedBlockingShellCleanups(persisted)
       && !status.interruptInputs?.some((input) => input.state === "queued")
     ) {
+      // Deferred child identities remain reclaimable across Host restarts;
+      // cleanup cannot revise an already authoritative terminal.
+      if (Array.isArray(persisted.shellCleanups) && persisted.shellCleanups.length > 0) {
+        try { await recoverPersistedShellCleanups(normalizedStatus, persistence); }
+        catch (error: unknown) {
+          emitKodaXDiagnostic({ source: "runtime.shell-cleanup", level: "warn",
+            message: `Deferred Shell cleanup remains unavailable for Run ${status.runId}.`, detail: error });
+        }
+      }
       runs.set(
         status.runId,
         recordFromPersistedStatus(
@@ -9208,6 +9244,20 @@ function createRuntimeRunService(deps: {
   readonly sessionOperations: RuntimeSessionOperationGate;
   readonly settingsOwner: RuntimeSessionSettingsOwner;
 }): RuntimeRunServiceInternal {
+  // The existing Session writer owns checkpoints; fresh reads retire evidence
+  // once canonical history takes ownership. No event replay or recovery cache.
+  const collectInterruptedRunEvidence = async (record: RuntimeRunRecord): Promise<KodaXInterruptedRunEvidence[]> => {
+    await deps.sessionViews.flush(record.sessionId);
+    const data = await deps.sessionManager.storage.load(record.sessionId);
+    if (!data) throw new Error('Session unavailable while reading interrupted-run recovery facts.');
+    const persisted = selectInterruptedRunCandidates([...deps.runs.values()].map(statusFromRecord), record)
+      .flatMap(candidate => deps.persistence.loadRunStatus(candidate.runId) ?? []);
+    const candidates = new Map((await Promise.all(persisted.map(entry => observePersistedRun(entry, deps.runs.get(entry.status.runId)))))
+      .map(status => [status.runId, status]));
+    for (const run of deps.runs.values()) if (run.sessionId === record.sessionId && run.ownedByRuntime) candidates.set(run.runId, statusFromRecord(run));
+    return selectInterruptedRunCandidates(candidates.values(), record).flatMap(candidate =>
+      deriveInterruptedRunEvidence(data, candidate) ?? []);
+  };
   const activeRunBySession = new Map<string, string>();
   // FEATURE_298 T31 — runs and queued inputs reject while the Session's
   // manual compaction holds occupancy, so no writer interleaves with the
@@ -9398,9 +9448,7 @@ function createRuntimeRunService(deps: {
     record: RuntimeRunRecord,
     result: RuntimeRunResult,
   ): RuntimeRunResult => {
-    // rc.3 fix: a Run with in-flight managed shell cleanups defers its
-    // settlement fact until the cleanup owner resolves them.
-    if ((record.shellCleanups?.size ?? 0) > 0) {
+    if (hasBlockingShellCleanups(record)) {
       record.unconfirmedResult = result;
       return result;
     }
@@ -9500,7 +9548,7 @@ function createRuntimeRunService(deps: {
     record: RuntimeRunRecord,
     result: RuntimeRunResult,
   ): RuntimeRunResult => {
-    if ((record.shellCleanups?.size ?? 0) > 0) {
+    if (hasBlockingShellCleanups(record)) {
       record.unconfirmedResult = result;
       return result;
     }
@@ -10179,7 +10227,7 @@ function createRuntimeRunService(deps: {
   const canApplyExecutorTerminalSignal = (
     record: RuntimeRunRecord,
   ): boolean => {
-    if ((record.shellCleanups?.size ?? 0) > 0) return false;
+    if (hasBlockingShellCleanups(record)) return false;
     const actorSession = record.actorSession;
     return (
       actorSession === undefined
@@ -10338,7 +10386,7 @@ function createRuntimeRunService(deps: {
       const retainDurabilityFence =
         actorDurabilityFailureApplies(record)
         && !executorPromiseSettled(record);
-      if (!drain && !retainDurabilityFence && (record.shellCleanups?.size ?? 0) === 0) {
+      if (!drain && !retainDurabilityFence && !hasBlockingShellCleanups(record)) {
         resolveRunStart(record, result);
         releaseActiveQueueRoute(record);
         releaseActiveRun(record);
@@ -10600,14 +10648,22 @@ function createRuntimeRunService(deps: {
       const pending = record.shellCleanups ??= new Map();
       if (pending.has(reference.registrationId)) throw new Error("Duplicate Runtime Shell cleanup binding");
       pending.set(reference.registrationId, { reference, retry });
-      const release = () => {
+      const release = (outcome?: 'deferred') => {
         if (!pending.has(reference.registrationId)) return;
         const persisted = deps.persistence.loadRunStatus(record.runId);
         if (persisted?.owner?.ownerId !== deps.runOwner.ownerId) throw new Error("Runtime Shell cleanup owner changed");
-        deps.persistence.saveRunShellCleanups(record.runId, [...pending.values()]
-          .filter((entry) => entry.reference.registrationId !== reference.registrationId)
-          .map((entry) => entry.reference), persisted.revision);
-        pending.delete(reference.registrationId);
+        if (outcome === 'deferred') {
+          const entry = pending.get(reference.registrationId)!;
+          const deferred = { ...entry.reference, deferred: true as const };
+          deps.persistence.saveRunShellCleanups(record.runId, [...pending.values()].map((item) =>
+            item === entry ? deferred : item.reference), persisted.revision);
+          entry.reference = deferred;
+        } else {
+          deps.persistence.saveRunShellCleanups(record.runId, [...pending.values()]
+            .filter((entry) => entry.reference.registrationId !== reference.registrationId)
+            .map((entry) => entry.reference), persisted.revision);
+          pending.delete(reference.registrationId);
+        }
         queueMicrotask(() => {
           try { finishRecoveredUnconfirmedRun(record); }
           catch (error: unknown) { finishRunSettlementFailure(record, error); }
@@ -10702,7 +10758,7 @@ function createRuntimeRunService(deps: {
         ...(record.turnId !== undefined ? { turnId: record.turnId } : {}),
       },
     );
-    const execute = (): void => {
+    const execute = (recoveryEvidence: readonly KodaXInterruptedRunEvidence[] = []): void => {
     if (record.mode === "managed_task") {
       const sessionControl = createSessionControl();
       record.sessionControl = sessionControl;
@@ -10749,6 +10805,9 @@ function createRuntimeRunService(deps: {
         }
         return runManagedTask(continuation, start.prompt);
       }, runOptions.extensionRuntime, record.runId);
+      const interruptedRunEvidence = runOptions.toolInvocation === undefined
+        ? recoveryEvidence
+        : [];
       const managedOperation = () =>
         runOptions.toolInvocation !== undefined
         ? runWithMcpCallContext({ sessionId: record.sessionId, events }, executeCommandTool)
@@ -10760,6 +10819,9 @@ function createRuntimeRunService(deps: {
           {
             ...runOptions,
             sessionControl,
+            ...(interruptedRunEvidence.length > 0
+              ? { context: { ...runOptions.context, interruptedRunEvidence } }
+              : {}),
             abortSignal: abortController.signal,
           },
           record.start!.prompt,
@@ -10845,9 +10907,14 @@ function createRuntimeRunService(deps: {
       return;
     }
 
+    const codingEvidence = recoveryEvidence;
     const codingOperation = () => runWithMcpCallContext(
       { sessionId: record.sessionId, events },
-      () => startKodaX(runOptions, record.start!.prompt),
+      () => startKodaX(
+        codingEvidence.length > 0
+          ? { ...runOptions, context: { ...runOptions.context, interruptedRunEvidence: codingEvidence } }
+          : runOptions,
+        record.start!.prompt),
     );
     let running: RunningSession;
     if (record.providerCredentialScope !== undefined) {
@@ -10957,15 +11024,20 @@ function createRuntimeRunService(deps: {
       .catch((error: unknown) => finishRunSettlementFailure(record, error));
   };
 
-    if (record.start.prepare === undefined) {
+    if (record.start.prepare === undefined && (runOptions.toolInvocation !== undefined
+      || ![...deps.runs.values()].some(run => run.sessionId === record.sessionId
+        && run.runId !== record.runId && run.phase !== 'completed'))) {
       execute();
       return;
     }
     const controller = new AbortController();
     record.abortController = controller;
-    record.preparation = record.start.prepare(runOptions, controller.signal).then(() => {
+    record.preparation = Promise.resolve().then(async () => {
+      await record.start!.prepare?.(runOptions, controller.signal);
       controller.signal.throwIfAborted();
-      execute();
+      const evidence = runOptions.toolInvocation === undefined ? await collectInterruptedRunEvidence(record) : [];
+      controller.signal.throwIfAborted();
+      execute(evidence);
     }).catch(async (error: unknown) => {
       const failure = captureRunFailureFact(record, error);
       record.capturedExecutorFailure = failure;
@@ -11215,14 +11287,13 @@ function createRuntimeRunService(deps: {
         `Runtime continuation target ${record.runId} does not belong to session ${sessionId}`,
       );
     }
-    const awaitingDurabilityRepair =
+    const awaitingSettlement =
       record.phase === "unknown"
-      && record.actorDurabilityFailure !== undefined
       && !record.terminalEmitted;
     if (
       !isActiveRunPhase(record.phase)
       && record.phase !== "queued"
-      && !awaitingDurabilityRepair
+      && !awaitingSettlement
     ) {
       throw new RuntimeContinuationStaleError(record.runId);
     }
@@ -12257,14 +12328,13 @@ function createRuntimeRunService(deps: {
         return submitInterruptInput(input, afterRun);
       }
 
-      const queuesBehindDurabilityRepair =
+      const queuesBehindSettlement =
         afterRun.phase === "unknown"
-        && afterRun.actorDurabilityFailure !== undefined
         && !afterRun.terminalEmitted;
       if (
         !isActiveRunPhase(afterRun.phase)
         && afterRun.phase !== "queued"
-        && !queuesBehindDurabilityRepair
+        && !queuesBehindSettlement
       ) {
         return {
           accepted: false,
@@ -12533,12 +12603,25 @@ function createRuntimeRunService(deps: {
     },
     async retryShellCleanups() {
       for (const run of deps.runs.values()) {
-        if (!run.ownedByRuntime) continue;
+        if (!run.ownedByRuntime) {
+          const persisted = deps.persistence.loadRunStatus(run.runId);
+          if (isTerminalRunPhase(run.phase) && Array.isArray(persisted?.shellCleanups)
+            && persisted.shellCleanups.length > 0
+            && !hasPersistedBlockingShellCleanups(persisted)) {
+            try { await recoverPersistedShellCleanups(statusFromRecord(run), deps.persistence); }
+            catch (error: unknown) {
+              emitKodaXDiagnostic({ source: "runtime.shell-cleanup", level: "warn",
+                message: `Deferred Shell cleanup remains unavailable during Host close for Run ${run.runId}.`, detail: error });
+            }
+          }
+          continue;
+        }
         for (const entry of [...(run.shellCleanups?.values() ?? [])]) {
           try { await entry.retry(); }
           catch (error: unknown) {
             emitKodaXDiagnostic({ source: "runtime.shell-cleanup", level: "error",
               message: `Runtime close could not verify Shell cleanup for Run ${run.runId}.`, detail: error });
+            if (entry.reference.deferred === true) continue;
             throw Object.assign(createRuntimeConflictError("Shell cleanup failed; retry Runtime close", 0),
               { retryable: true, denialSource: "shell_cleanup", cause: error });
           }
@@ -12550,7 +12633,7 @@ function createRuntimeRunService(deps: {
               new Promise<void>((resolve) => { timer = setTimeout(resolve, 1_000); })]);
           } finally { if (timer !== undefined) clearTimeout(timer); }
         }
-        if ((run.shellCleanups?.size ?? 0) > 0 || run.shellEffectDrain !== undefined) {
+        if (hasBlockingShellCleanups(run) || run.shellEffectDrain !== undefined) {
           throw Object.assign(createRuntimeConflictError("Shell process cleanup is unconfirmed; retry Runtime close", 0),
             { retryable: true, denialSource: "shell_cleanup" });
         }
@@ -15171,6 +15254,7 @@ function createRuntimeEventBus(onSessionChanged?: (sessionId: string, type: Runt
 }
 
 interface RuntimeSessionLiveProjectionState {
+  readonly iterationsByRun: Record<string, { readonly current: number; readonly max: number }>;
   readonly assistantTextByRun: Record<string, string>;
   readonly thinkingTextByRun: Record<string, string>;
   readonly outputSegmentsByRun: Record<string, KodaXOutputSegmentProjection>;
@@ -15182,6 +15266,7 @@ interface RuntimeSessionLiveProjectionState {
 
 function createRuntimeSessionLiveProjectionState(): RuntimeSessionLiveProjectionState {
   return {
+    iterationsByRun: {},
     assistantTextByRun: {},
     thinkingTextByRun: {},
     outputSegmentsByRun: {},
@@ -15199,6 +15284,7 @@ function applyRuntimeSessionEvent(
   const payload = isRecord(event.payload) ? event.payload : undefined;
   if (isChildOwnedPrimaryLiveEvent(event.type, payload)) return;
   if (event.type === "turn.started") {
+    delete live.iterationsByRun[event.runId];
     delete live.assistantTextByRun[event.runId];
     delete live.thinkingTextByRun[event.runId];
     delete live.outputSegmentsByRun[event.runId];
@@ -15275,6 +15361,14 @@ function applyRuntimeSessionEvent(
         if (tool.runId === event.runId) live.activeTools.delete(candidate);
       }
     }
+  } else if (event.type === "run.progress" && (payload?.kind === "iteration_start" || payload?.kind === "iteration_end")) {
+    const info = payload.kind === "iteration_start" ? payload : isRecord(payload.info) ? payload.info : undefined;
+    const meta = payload.kind === "iteration_start" ? payload.meta : info;
+    if (!isChildActivityMeta(meta) && info
+      && Number.isInteger(info.iter) && typeof info.iter === "number" && info.iter >= 0
+      && Number.isInteger(info.maxIter) && typeof info.maxIter === "number" && info.maxIter >= 0) {
+      live.iterationsByRun[event.runId] = { current: info.iter, max: info.maxIter };
+    }
   } else if (event.type === "todo.updated") {
     live.todo = event.payload;
   } else if (
@@ -15309,6 +15403,7 @@ function applyRuntimeSessionEvent(
   ) {
     live.pendingUserInputs.delete(payload.requestId);
   } else if (isTerminalRuntimeEvent(event.type)) {
+    delete live.iterationsByRun[event.runId];
     delete live.assistantTextByRun[event.runId];
     delete live.thinkingTextByRun[event.runId];
     delete live.outputSegmentsByRun[event.runId];
@@ -15339,7 +15434,11 @@ function isChildOwnedPrimaryLiveEvent(
   payload: Readonly<Record<string, unknown>> | undefined,
 ): boolean {
   if (!PRIMARY_LIVE_ACTIVITY_EVENT_TYPES.has(type)) return false;
-  const meta = isRecord(payload?.meta) ? payload.meta : undefined;
+  return isChildActivityMeta(payload?.meta);
+}
+
+function isChildActivityMeta(value: unknown): boolean {
+  const meta = isRecord(value) ? value : undefined;
   if (!meta) return false;
   if (meta.contextKind === "child") return true;
   if (typeof meta.childAgentId === "string" && meta.childAgentId.length > 0)
@@ -15359,6 +15458,7 @@ function snapshotRuntimeSessionLiveProjection(
   live: RuntimeSessionLiveProjectionState,
 ): RuntimeSessionLiveProjection {
   return {
+    ...(Object.keys(live.iterationsByRun).length > 0 ? { iterationsByRun: structuredClone(live.iterationsByRun) } : {}),
     assistantTextByRun: { ...live.assistantTextByRun },
     thinkingTextByRun: { ...live.thinkingTextByRun },
     outputSegmentsByRun: structuredClone(live.outputSegmentsByRun),
@@ -15944,7 +16044,7 @@ function createRuntimePersistence(
       const file = statusFile(status.runId);
       return withRuntimeStatusFileLock(file, () => {
         const existing = readPersistedRuntimeRunStatus(file);
-        if (hasPersistedShellCleanups(existing) && isTerminalRunPhase(status.phase)) {
+        if (hasPersistedBlockingShellCleanups(existing) && isTerminalRunPhase(status.phase)) {
           return existing!.status;
         }
         if (existing && isTerminalRunPhase(existing.status.phase)) {
@@ -17628,32 +17728,47 @@ function recordFromPersistedStatus(
   };
 }
 
-function isManagedRunShellReference(value: unknown, runId: string): value is ManagedRunChildProcessReference {
-  return isRecord(value) && value.runtimeRunId === runId
-    && typeof value.pid === "number" && Number.isSafeInteger(value.pid) && value.pid > 0
-    && typeof value.registrationId === "string" && /^[0-9a-f-]{36}$/i.test(value.registrationId);
+type RuntimeShellCleanupReference = ManagedRunChildProcessReference & { readonly deferred?: true };
+
+function hasBlockingShellCleanups(run: RuntimeRunRecord): boolean {
+  return [...(run.shellCleanups?.values() ?? [])].some((entry) => entry.reference.deferred !== true);
 }
 
-function hasPersistedShellCleanups(entry: PersistedRuntimeRunStatus | undefined): boolean {
+function isManagedRunShellReference(value: unknown, runId: string): value is RuntimeShellCleanupReference {
+  return isRecord(value) && value.runtimeRunId === runId
+    && typeof value.pid === "number" && Number.isSafeInteger(value.pid) && value.pid > 0
+    && typeof value.registrationId === "string" && /^[0-9a-f-]{36}$/i.test(value.registrationId)
+    && (value.deferred === undefined || value.deferred === true);
+}
+
+function hasPersistedBlockingShellCleanups(entry: PersistedRuntimeRunStatus | undefined): boolean {
   return entry?.shellCleanups !== undefined
-    && (!Array.isArray(entry.shellCleanups) || entry.shellCleanups.length > 0);
+    && (!Array.isArray(entry.shellCleanups) || entry.shellCleanups.some((reference) =>
+      !isManagedRunShellReference(reference, entry.status.runId) || reference.deferred !== true));
 }
 
 async function recoverPersistedShellCleanups(status: RuntimeRunStatus, persistence: RuntimePersistence): Promise<boolean> {
   const entry = persistence.loadRunStatus(status.runId);
-  if (!hasPersistedShellCleanups(entry)) return true;
+  if (entry?.shellCleanups === undefined) return true;
   const references = entry?.shellCleanups;
   if (!Array.isArray(references)
     || !references.every((reference): reference is ManagedRunChildProcessReference => isManagedRunShellReference(reference, status.runId))) return false;
   for (const reference of references) {
-    const result = await cleanupManagedRunChildProcess(reference);
-    if (result.status === "unknown") return false;
+    let result: Awaited<ReturnType<typeof cleanupManagedRunChildProcess>> = { status: "unknown" };
+    try { result = await cleanupManagedRunChildProcess(reference); }
+    catch (error: unknown) {
+      emitKodaXDiagnostic({ source: "runtime.shell-cleanup", level: "warn",
+        message: `Deferring unavailable Shell cleanup for recovered Run ${status.runId}.`, detail: error });
+    }
     const currentEntry = persistence.loadRunStatus(status.runId);
     const current = currentEntry?.shellCleanups;
     if (!Array.isArray(current) || !current.every((item): item is ManagedRunChildProcessReference => isManagedRunShellReference(item, status.runId))) return false;
     if (currentEntry?.owner?.ownerId !== entry?.owner?.ownerId) return false;
-    persistence.saveRunShellCleanups(status.runId, current.filter((item) => item.registrationId !== reference.registrationId), currentEntry!.revision);
-    result.release();
+    persistence.saveRunShellCleanups(status.runId, result.status === "verified"
+      ? current.filter((item) => item.registrationId !== reference.registrationId)
+      : current.map((item) => item.registrationId === reference.registrationId
+        ? { ...item, deferred: true as const } : item), currentEntry!.revision);
+    if (result.status === "verified") result.release();
   }
   return true;
 }
@@ -17670,21 +17785,19 @@ async function interruptPersistedNonTerminalRun(
   bus: RuntimeEventBus,
   persistence: RuntimePersistence,
 ): Promise<RuntimeRunStatus> {
-  // rc.2 fix: a persisted non-terminal Run with unverified managed shell
-  // cleanups stays unknown rather than being projected interrupted - the
-  // native children may still be alive.
-  let shellCleanupVerified = false;
-  try { shellCleanupVerified = await recoverPersistedShellCleanups(status, persistence); }
+  let shellReferencesRecovered = false;
+  try { shellReferencesRecovered = await recoverPersistedShellCleanups(status, persistence); }
   catch (error: unknown) {
     emitKodaXDiagnostic({ source: "runtime.shell-cleanup", level: "error",
       message: `Shell recovery remains unconfirmed for Run ${status.runId}.`, detail: error });
   }
-  if (!shellCleanupVerified) {
+  if (!shellReferencesRecovered) {
     return { ...status, phase: "unknown", stage: "unknown", error: "shell_cleanup_unconfirmed",
       terminal: undefined, endedAt: undefined,
       ...(status.stop !== undefined ? { stop: { ...status.stop, state: "unknown", outcome: "unknown", resolvedAt: undefined } } : {}) };
   }
-
+  const cleanupReferences = persistence.loadRunStatus(status.runId)?.shellCleanups;
+  const cleanupDeferred = Array.isArray(cleanupReferences) && cleanupReferences.length > 0;
   const reason: RuntimeTerminalCode =
     status.phase === "queued"
       ? "runtime_restarted"
@@ -17698,7 +17811,7 @@ async function interruptPersistedNonTerminalRun(
     activeSubtaskCount: 0,
     endedAt,
     error: reason,
-    ...(status.stop !== undefined
+    ...(status.stop !== undefined && !cleanupDeferred
       ? {
           stop: {
             ...status.stop,
@@ -19167,12 +19280,12 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onToolResult?.(result, meta);
     },
     onToolExecutionStart(tool, meta) {
-      void meta;
       if (actorDurabilityFenced()) {
         const error = new Error("Tool execution was fenced by Actor durability failure.");
         error.name = "AbortError";
         throw error;
       }
+      input.display.onToolExecutionStart?.(tool, meta);
       record.activeEffectCount = (record.activeEffectCount ?? 0) + 1;
       if (tool.name === "bash") {
         if (record.shellEffectDrain === undefined) {
@@ -22428,7 +22541,7 @@ function markRunTerminal(
   terminal?: Omit<RuntimeTerminalFact, "revision" | "kind">,
 ): void {
   if (run.terminalEmitted) return;
-  if ((run.shellCleanups?.size ?? 0) > 0) {
+  if (hasBlockingShellCleanups(run)) {
     run.phase = "unknown";
     run.stage = "unknown";
     run.error = "shell_cleanup_unconfirmed";
@@ -22443,12 +22556,13 @@ function markRunTerminal(
   run.phase = phase;
   if (phase === "completed") delete run.failureDetail;
   const endedAt = new Date().toISOString();
+  const cleanupDeferred = (run.shellCleanups?.size ?? 0) > 0;
   run.trustedTextApprovals?.clear();
   run.stage = "terminal";
   run.stageChangedAt = endedAt;
   run.activeSubtaskCount = 0;
   run.endedAt = endedAt;
-  if (run.stop !== undefined) {
+  if (run.stop !== undefined && !cleanupDeferred) {
     run.stop = {
       ...run.stop,
       state: "confirmed",
@@ -22476,7 +22590,7 @@ function markRunTerminal(
     kind,
     code: terminal?.code ?? defaultRuntimeTerminalCode(kind),
     effectOutcome:
-      terminal?.effectOutcome ?? (kind === "interrupted" ? "unknown" : "known"),
+      cleanupDeferred ? "unknown" : terminal?.effectOutcome ?? (kind === "interrupted" ? "unknown" : "known"),
     ...(terminal?.message !== undefined ? { message: terminal.message } : {}),
     ...(terminal?.failureKind !== undefined
       ? { failureKind: terminal.failureKind }

@@ -25,6 +25,7 @@ import {
   persistCompactedSessionHistory,
   resolveActiveRootQueueRoute,
   Runner,
+  setKodaXDiagnosticSink,
   SkillRegistry,
   withKodaXFileLock,
 } from "@kodax-ai/agent";
@@ -8553,6 +8554,161 @@ describe("createKodaXRuntime", () => {
     expect(codingMock.runManagedTask).toHaveBeenCalledOnce();
     expect(codingMock.startKodaX).toHaveBeenCalledOnce();
     await runtime.close();
+  });
+
+  /** First managed Run saves its canonical input and checkpoints two actual executions. */
+  function mockInterruptedManagedRun(sessionId: string): Array<KodaXOptions["context"]> {
+    const seen: Array<KodaXOptions["context"]> = [];
+    codingMock.runManagedTask.mockImplementation(async (options: KodaXOptions) => {
+      seen.push(options.context);
+      if (seen.length > 1) {
+        return { success: true, lastText: "resumed", messages: [], sessionId };
+      }
+      const storage = options.session?.storage;
+      if (!storage) throw new Error("Runtime canonical storage missing");
+      const saved = await storage.load(sessionId);
+      if (!saved) throw new Error('Expected canonical Session');
+      const messages: KodaXMessage[] = [{ role: 'user', content: 'lost work', turnId: 'turn-lost' }];
+      await storage.save(sessionId, { ...saved, messages, lineage: createSessionLineage(messages, saved?.lineage) });
+      const scope = { sessionId, turnId: "turn-lost", timestamp: "2026-07-08T00:00:00.000Z" };
+      options.events?.onTurnStarted?.({ ...scope, seq: 1, deliveryKind: "initial" });
+      options.events?.onOutputSegmentStart?.({ responseId: 'turn-lost', providerRequestId: 'request-lost', mode: 'append', outputId: 'output-tools' },
+        { ...scope, providerRequestId: 'request-lost' });
+      options.events?.onToolUseStart?.(
+        { id: "tool-done", name: "bash", input: { command: "npm test" } },
+        { ...scope, seq: 2, toolId: "tool-done" },
+      );
+      options.events?.onToolResult?.(
+        { id: "tool-done", name: "bash", content: "12 passed\nmore" },
+        { ...scope, seq: 3, toolId: "tool-done" },
+      );
+      options.events?.onToolUseStart?.(
+        { id: "tool-open", name: "write", input: { path: "notes.md" } },
+        { ...scope, seq: 4, toolId: "tool-open" },
+      );
+      options.events?.onToolExecutionStart?.({ id: 'tool-open', name: 'write' }, scope);
+      options.events?.onToolExecutionEnd?.({ id: 'tool-open', name: 'write' }, scope);
+      throw new Error("provider connection lost");
+    });
+    return seen;
+  }
+
+  it("hands saved Host execution evidence of an unfinished managed Run to the next managed Run", async () => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const runtime = await createKodaXRuntime({
+      homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, "interrupted-journal-sessions"),
+      defaultProvider: "mock-provider",
+    });
+    const session = await runtime.sessions.create({ title: "Interrupted Journal" });
+    const seen = mockInterruptedManagedRun(session.id);
+
+    const first = await runtime.runs.start({ sessionId: session.id, prompt: "lost work", mode: "managed_task" });
+    await expect(first.result).resolves.toMatchObject({ phase: "failed" });
+    const second = await runtime.runs.start({ sessionId: session.id, prompt: "continue", mode: "managed_task" });
+    await expect(second.result).resolves.toMatchObject({ phase: "completed" });
+    const third = await runtime.runs.start({ sessionId: session.id, prompt: "again", mode: "managed_task" });
+    await third.result;
+
+    expect(seen[0]?.interruptedRunEvidence).toBeUndefined();
+    const expectedEvidence = {
+      runId: first.runId,
+      turnId: "turn-lost",
+      terminalCode: expect.any(String),
+      operations: [
+        { toolUseId: "tool-done", turnId: "turn-lost", assistantOutputId: 'output-tools', name: "bash", target: "npm test", result: "12 passed" },
+        { toolUseId: "tool-open", turnId: "turn-lost", assistantOutputId: 'output-tools', name: "write", target: "notes.md" },
+      ],
+      replies: [],
+    };
+    expect(seen[1]?.interruptedRunEvidence).toEqual([expectedEvidence]);
+    // A completed Run contributes nothing; the older unfinished Run stays visible.
+    expect(seen[2]?.interruptedRunEvidence).toEqual([expectedEvidence]);
+    await runtime.close();
+  });
+
+  it("hands the streamed reply of an unfinished coding Run to the next coding Run", async () => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const runtime = await createKodaXRuntime({
+      homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, "interrupted-coding-sessions"),
+      defaultProvider: "mock-provider",
+    });
+    const session = await runtime.sessions.create({ title: "Interrupted Coding" });
+    const seen: Array<KodaXOptions["context"]> = [];
+    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+      seen.push(options.context);
+      if (seen.length > 1) {
+        return fakeRunningSession(options, Promise.resolve({ success: true, lastText: "resumed", messages: [], sessionId: session.id }));
+      }
+      const result = (async (): Promise<KodaXResult> => {
+        const storage = options.session?.storage;
+        if (!storage) throw new Error("Runtime canonical storage missing");
+        const saved = await storage.load(session.id);
+        if (!saved) throw new Error('Expected canonical Session');
+        const messages: KodaXMessage[] = [{ role: 'user', content: 'lost work', turnId: 'turn-lost' }];
+        await storage.save(session.id, { ...saved, messages, lineage: createSessionLineage(messages, saved?.lineage) });
+        const scope = { sessionId: session.id, turnId: "turn-lost", timestamp: "2026-07-08T00:00:00.000Z" };
+        const request = { ...scope, providerRequestId: "request-lost" };
+        options.events?.onTurnStarted?.({ ...scope, seq: 1, deliveryKind: "initial" });
+        options.events?.onOutputSegmentStart?.({ responseId: "turn-lost", providerRequestId: "request-lost", mode: "append", outputId: 'output-lost' }, request);
+        options.events?.onTextDelta?.("Script drafted; rendering next.", { ...request, seq: 2 });
+        throw new Error("provider connection lost");
+      })();
+      return fakeRunningSession(options, result);
+    });
+
+    const first = await runtime.runs.start({ sessionId: session.id, prompt: "lost work", mode: "coding" });
+    await expect(first.result).resolves.toMatchObject({ phase: "failed" });
+    const second = await runtime.runs.start({ sessionId: session.id, prompt: "continue", mode: "coding" });
+    await expect(second.result).resolves.toMatchObject({ phase: "completed" });
+
+    expect(seen[0]?.interruptedRunEvidence).toBeUndefined();
+    expect(seen[1]?.interruptedRunEvidence).toEqual([{
+      runId: first.runId,
+      turnId: "turn-lost",
+      terminalCode: expect.any(String),
+      operations: [],
+      replies: [{ turnId: "turn-lost", outputId: 'output-lost', text: "Script drafted; rendering next.", truncated: false }],
+    }]);
+    await runtime.close();
+  });
+
+  it("ignores legacy event logs and starts without evidence when no Host checkpoint was saved", async () => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    let runtime = await createKodaXRuntime({
+      homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, "unreadable-journal-sessions"),
+      defaultProvider: "mock-provider",
+    });
+    const session = await runtime.sessions.create({ title: "Unreadable Journal" });
+    const seen = mockInterruptedManagedRun(session.id);
+    const diagnostics: Array<{ source: string; level: string }> = [];
+    const restoreSink = setKodaXDiagnosticSink((diagnostic) => diagnostics.push(diagnostic));
+
+    try {
+      const first = await runtime.runs.start({ sessionId: session.id, prompt: "lost work", mode: "managed_task" });
+      await expect(first.result).resolves.toMatchObject({ phase: "failed" });
+      await runtime.close();
+      const storage = new FileSessionStorage({ sessionsDir: path.join(tempRoot, 'unreadable-journal-sessions') });
+      const saved = await storage.load(session.id);
+      if (!saved) throw new Error('Expected canonical Session');
+      await storage.save(session.id, { ...saved, uiHistory: [] });
+      // Legacy telemetry is outside the recovery contract, even if unreadable.
+      const journal = path.join(tempRoot, ".kodax", "runtime", "runs", first.runId, "events.jsonl");
+      await fs.rm(journal, { force: true });
+      await fs.mkdir(journal, { recursive: true });
+      runtime = await createKodaXRuntime({ homeDir: tempRoot,
+        sessionsDir: path.join(tempRoot, 'unreadable-journal-sessions'), defaultProvider: 'mock-provider' });
+      const second = await runtime.runs.start({ sessionId: session.id, prompt: "continue", mode: "managed_task" });
+
+      await expect(second.result).resolves.toMatchObject({ phase: "completed" });
+      expect(seen[1]?.interruptedRunEvidence).toBeUndefined();
+      expect(diagnostics.filter(diagnostic => diagnostic.source === 'runtime.interrupted-run-recovery')).toEqual([]);
+    } finally {
+      restoreSink();
+      await runtime.close();
+    }
   });
 
   it("admits active-run input from cached Run identity without reading canonical Session", async () => {
@@ -17102,6 +17258,7 @@ describe("createKodaXRuntime", () => {
       sessionId: session.id,
       prompt: "edit inside the existing linked worktree",
     });
+    await expect.poll(() => captured.length).toBe(1);
     const secondOptions = captured[0];
     expect(secondOptions?.context?.workspaceSandboxRoots?.list())
       .toEqual([await fs.realpath(linkedWorktree)]);

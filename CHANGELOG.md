@@ -8,6 +8,149 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.96-rc.14] - 2026-10-01
+
+Fourteenth release candidate of the v0.7.96 line: interrupted-Run recovery
+reaches coding Runs and managed execution with budgeted turn-matched
+records, tool-history pairing and compaction-copy tracing become provable,
+Anthropic-compatible providers ignore inherited `ANTHROPIC_AUTH_TOKEN`, the
+Ink host defers to the Runtime as the single transcript writer, and Windows
+interactive startup re-verifies the NUL account ACE behind a current setup
+marker after a reboot. CI now runs inside the tag-triggered Release
+workflow instead of on branch pushes. Every rc.13 contract is retained. npm
+publication remains a manual maintainer action.
+
+### Fixed
+
+- Interactive Windows startup verifies the live NUL sandbox-account grant
+  before trusting the durable setup marker. Missing access enters the existing
+  setup recovery boundary; installation omits historical read roots whose
+  files disappeared. SDK/daemon startup and ordinary admission remain
+  read-only and do not activate setup automatically (Issue 341).
+- Windows sandbox unit tests provision mock-SID artifacts and remove recovery
+  fixtures in a private temporary native cache, so they no longer interfere
+  with live sandbox commands using the host's shared cache. The native
+  provisioning suite still requires an ordinary host token (Issue 343).
+- Tool-history validation pairs calls with results across the whole assistant
+  scope, so an internal managed-run context message between them no longer
+  strips both halves of the pair (Issue 340).
+- Failed managed provider calls hand back the Runner transcript they received,
+  not provider-normalized request copies, so compatibility cleanup never becomes
+  persisted history.
+- Conversation resolution restores active-path entries damaged by the old
+  adjacent-only cleanup when a retained sibling chain reproduces the damage
+  exactly; unproven cases stay ambiguous. The page cache version is bumped so
+  existing v6 caches rebuild once.
+- The next managed or coding Run of a Session receives a labelled, bounded,
+  transient record of journaled progress from an earlier unfinished Run on the
+  active branch: confirmed results, operations whose result is unknown, and
+  unconfirmed excerpts of assistant text the Run streamed but never saved. The
+  record is never saved and each part disappears once history contains it.
+  Operations from every included Run take the size bound before any excerpt.
+  Operations match history per turn, so a provider reusing a tool call id in a
+  later turn no longer hides an earlier unfinished operation, and the source
+  tracing also covers histories compacted again before this fix.
+- Conversation resolution traces a compaction copy of a copy back to its first
+  retained predecessor, so re-compacted history no longer shows the same
+  message twice. When an older compaction boundary cannot be proven, history
+  is truncated at that boundary and reported as `partial` with
+  `compaction_history_truncated`, instead of flattening unproven regions into
+  one conversation. The page cache version is bumped to 9.
+- Anthropic-compatible providers no longer pick up an inherited
+  `ANTHROPIC_AUTH_TOKEN`. The SDK sent it as a Bearer header next to the
+  provider key, so gateways such as zhipu-coding and deepseek returned 401 and
+  the Anthropic token reached a third-party endpoint. The native Anthropic
+  provider is unchanged.
+- Compare PowerShell-emitted native artifact and control-directory paths
+  through long-form realpaths when the literal comparison disagrees.
+  PowerShell's `GetFullPath` expands 8.3 path components, so a runner whose
+  `TEMP` root uses a short name (`C:\Users\RUNNER~1\...`) made the private
+  test native-artifact cache provisioning fail with an unexpected-path error
+  even though the provisioner returned the canonical destination.
+- The interactive REPL no longer forks a duplicate branch every round when a
+  Runtime owns the Session. The host stops writing its own lineage. Storage
+  reconciles host saves against the Runtime's durable lineage, and the host
+  continues from the Runtime's entry ids. That fixes three problems:
+  - The next host save no longer replaces the Runtime's branch.
+  - A crash between the two writes no longer leaves a permanent fork.
+  - A Run cancelled before it produced a result no longer clears the host's
+    transcript copy.
+
+### Changed
+
+- CI runs through `workflow_call` or manual dispatch instead of branch pushes
+  and pull requests. Tag and manually dispatched release builds run the full
+  reusable CI workflow before their build matrix.
+
+### Documentation
+
+- Align the public SDK guide with read-only legacy history repair, partial
+  compaction truncation, transient interrupted-Run recovery, and Runtime-owned
+  transcript persistence. Document the CLI-only NUL recovery boundary and
+  provider authentication isolation.
+- Track unexpected interactive REPL exit as unresolved (Issue 342). Successful
+  SDK concurrency and full-TTY trace replay do not resolve that failure.
+
+---
+
+## [0.7.96-rc.13] - 2026-09-29
+
+Thirteenth release candidate of the v0.7.96 line: Runtime-owned managed
+runs persist generated output at Runner commit boundaries so an interrupted
+run keeps its transcript instead of losing it with a hung request. Every
+rc.12 contract is retained. npm publication remains a manual maintainer
+action.
+
+### Fixed
+
+- Runtime-owned managed runs persist generated assistant messages and tool results
+  at Runner commit boundaries, before tools or subsequent provider calls can hang.
+  Persist the current compacted transcript and queued-input identities; do not
+  repeatedly save old input messages or change host-owned persistence timing.
+
+---
+
+## [0.7.96-rc.12] - 2026-09-28
+
+Twelfth release candidate of the v0.7.96 line: uncertain Shell cleanup no
+longer blocks conversations, Runner iteration progress becomes observable,
+exhausted Actor children settle with honest structured results, and the test
+toolchain upgrades to Vitest 4. Every rc.11 contract is retained. npm
+publication remains a manual maintainer action.
+
+### Fixed
+
+- Return exhausted Shell cleanup diagnostics and partial output to the model
+  without cancelling its Run. Keep unresolved process identities as deferred
+  cleanup, allow successors and close, and accept queued input during Stop.
+- Expose Root Runner iteration progress in Runtime live snapshots and structured
+  Actor iteration progress in durable turn summaries/output. Values come from
+  the executing Runner; the default managed Root (500) and native Actor child
+  (200) thresholds are unchanged.
+- Settle exhausted native Actor children as failed with terminationReason
+  iteration_limit, preserving partial output, artifacts and structured results.
+  Parent completion notifications include the reason. Exhaustion no longer runs
+  a structured-output repair or workflow digest, and follow-up starts a fresh
+  iteration count. Completion on the final permitted iteration remains successful.
+
+### Changed
+
+- Upgrade the test toolchain to Vitest 4.1.11 (with `@vitest/coverage-v8`
+  4.1.11 and pinned vite 7.3.3/vite-node) and fflate ^0.8.3, which fixes a
+  ZIP64 directory scan that never terminated when a compressed-size sentinel
+  was present without the required `0x0001` extra field; skill archive
+  regression coverage locks the fix in.
+
+### Documentation
+
+- Document the embedder-owned Electron `safeStorage` credential storage
+  lifecycle: on Windows, the `Local State` encryption state must be preserved
+  together with the ciphertext across cleanup, uninstall, reinstall, and
+  profile migration, and an undecryptable existing client secret surfaces a
+  terminal credential recovery error instead of a silent replacement.
+
+---
+
 ## [0.7.96-rc.11] - 2026-09-23
 
 Eleventh release candidate of the v0.7.96 line: SDK-owned background Git

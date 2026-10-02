@@ -395,6 +395,7 @@ export const TOOL_STATUS_ICONS: Record<ToolCallStatus, string> = {
  */
 export interface ToolCall {
   id: string;
+  assistantOutputId?: string;
   name: string;
   status: ToolCallStatus;
   input?: Record<string, unknown>;

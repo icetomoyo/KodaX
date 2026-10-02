@@ -769,6 +769,38 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
+**v0.7.96-rc.14 release:** Fourteenth release candidate of the v0.7.96
+line. Interrupted-Run recovery reaches coding Runs and managed execution
+with a labelled, bounded, transient record of journaled progress matched
+per turn; tool-history pairing spans the whole assistant scope;
+conversation resolution traces compaction copies to a provable root and
+truncates unproven boundaries as `partial`; Anthropic-compatible providers
+ignore an inherited `ANTHROPIC_AUTH_TOKEN`; the Ink host defers to the
+Runtime as the single transcript writer; and Windows interactive startup
+re-verifies the NUL account ACE behind a current setup marker after a
+reboot (Issues 340-341). CI now runs inside the tag-triggered Release
+workflow instead of on branch pushes. Every rc.13 contract is retained.
+
+**v0.7.96-rc.13 release:** Thirteenth release candidate of the v0.7.96
+line. Runtime-owned managed runs persist generated assistant messages and
+tool results at Runner commit boundaries, before tools or subsequent
+provider calls can hang: the current compacted transcript and queued-input
+identities survive an interrupted run, initial input replay is skipped
+rather than re-saving all history, and host-owned persistence timing is
+unchanged. Every rc.12 contract is retained.
+
+**v0.7.96-rc.12 release:** Twelfth release candidate of the v0.7.96 line.
+Uncertain Shell cleanup no longer blocks conversations: exhausted cleanup
+retries return diagnostics and partial output to the model, unresolved
+process identities become deferred cleanup records, successors and close
+proceed, and an exhausted terminal Run settles honestly with
+`effectOutcome: unknown` instead of claiming verified termination. Root
+Runner iteration progress is exposed in Runtime live snapshots and durable
+Actor turns, and exhausted native Actor children settle as failed with
+`terminationReason: iteration_limit` while preserving partial output,
+artifacts, and structured results. The test toolchain upgrades to Vitest
+4.1.11 with fflate 0.8.3 (ZIP64 scan fix). Every rc.11 contract is retained.
+
 **v0.7.96-rc.11 release:** Eleventh release candidate of the v0.7.96 line.
 SDK-owned background Git calls on macOS preflight the system Git shim: a
 shared `DEVELOPER_DIR`-aware platform guard (`@kodax-ai/agent/runtime/macos-git`)

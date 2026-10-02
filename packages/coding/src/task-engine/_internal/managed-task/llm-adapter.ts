@@ -190,43 +190,46 @@ function managedProviderAbortError(): Error {
   return error;
 }
 
+// The recovery carrier is the Runner transcript this call received. Request
+// copies are normalized for the provider (pairing repair, degraded inputs,
+// continuation turns) and must never become persisted history.
 function throwIfManagedProviderAborted(
   signal: AbortSignal | undefined,
-  providerMessages: readonly KodaXMessage[],
+  recoveryTranscript: readonly KodaXMessage[],
 ): void {
   if (!signal?.aborted) return;
   const error = managedProviderAbortError();
-  attachRunnerRecoveryTranscript(error, providerMessages);
+  attachRunnerRecoveryTranscript(error, recoveryTranscript);
   throw error;
 }
 
 function rethrowObservedManagedProviderAbort(
   signal: AbortSignal | undefined,
   error: Error,
-  providerMessages: readonly KodaXMessage[],
+  recoveryTranscript: readonly KodaXMessage[],
 ): void {
   if (!signal?.aborted) return;
-  attachRunnerRecoveryTranscript(error, providerMessages);
+  attachRunnerRecoveryTranscript(error, recoveryTranscript);
   throw error;
 }
 
 async function waitForManagedProviderRetry(
   delayMs: number,
   signal: AbortSignal | undefined,
-  providerMessages: readonly KodaXMessage[],
+  recoveryTranscript: readonly KodaXMessage[],
 ): Promise<void> {
-  throwIfManagedProviderAborted(signal, providerMessages);
+  throwIfManagedProviderAborted(signal, recoveryTranscript);
   try {
     await waitForRetryDelay(delayMs, signal);
   } catch (error: unknown) {
     if (signal?.aborted) {
       const abortError = managedProviderAbortError();
-      attachRunnerRecoveryTranscript(abortError, providerMessages);
+      attachRunnerRecoveryTranscript(abortError, recoveryTranscript);
       throw abortError;
     }
     throw error;
   }
-  throwIfManagedProviderAborted(signal, providerMessages);
+  throwIfManagedProviderAborted(signal, recoveryTranscript);
 }
 
 function estimateFinalEnvelopeTokens(
@@ -423,6 +426,9 @@ export function buildRunnerLlmAdapter(
     const baseSystem = systemParts.join('\n\n');
     let system = withEffectivePermissionContext(baseSystem, options.context);
     let transcript = messages.slice(cut);
+    // Injected reminders commit only with a successful turn, so a failure
+    // hands back exactly what the Runner passed in.
+    const recoveryTranscript: readonly KodaXMessage[] = transcript;
     const ephemeralSuffix = getEphemeralSuffix?.();
     const runtimeReminders = pendingRuntimeReminders;
     pendingRuntimeReminders = [];
@@ -784,7 +790,7 @@ export function buildRunnerLlmAdapter(
       while (true) {
         outputTextFilter = createManagedOutputTextFilter();
         system = withEffectivePermissionContext(baseSystem, options.context);
-        throwIfManagedProviderAborted(options.abortSignal, providerMessages);
+        throwIfManagedProviderAborted(options.abortSignal, recoveryTranscript);
         attempt += 1;
         const wireProviderMessages = lowerProviderMessages(providerMessages);
         boundaryTracker.beginRequest(
@@ -916,7 +922,7 @@ export function buildRunnerLlmAdapter(
             && !process.env.KODAX_MAX_OUTPUT_TOKENS
             && requestMaxOutputTokens < KODAX_ESCALATED_MAX_OUTPUT_TOKENS
           ) {
-            throwIfManagedProviderAborted(options.abortSignal, providerMessages);
+            throwIfManagedProviderAborted(options.abortSignal, recoveryTranscript);
             hasEscalatedForCurrentAdapterCall = true;
             requestMaxOutputTokens = KODAX_ESCALATED_MAX_OUTPUT_TOKENS;
             // FEATURE_296 T6 (ADR-067): the escalation must not blanket the
@@ -984,14 +990,14 @@ export function buildRunnerLlmAdapter(
             await waitForManagedProviderRetry(
               KODAX_EMPTY_COMPLETION_RETRY_BASE_DELAY_MS * emptyCompletionRetries,
               options.abortSignal,
-              providerMessages,
+              recoveryTranscript,
             );
             continue;
           }
           break;
         } catch (rawError) {
           let error = rawError instanceof Error ? rawError : new Error(String(rawError));
-          if (textRecoveryRetry) { attachRunnerRecoveryTranscript(error, providerMessages); throw error; }
+          if (textRecoveryRetry) { attachRunnerRecoveryTranscript(error, recoveryTranscript); throw error; }
           // Runner owns canonical history and the single post-compaction retry.
           if (error instanceof KodaXContextOverflowError) {
             error.requestInputReliefTokens = Math.max(0, canonicalInputEstimate - estimateTokens(providerMessages));
@@ -1010,7 +1016,7 @@ export function buildRunnerLlmAdapter(
           rethrowObservedManagedProviderAbort(
             options.abortSignal,
             error,
-            providerMessages,
+            recoveryTranscript,
           );
 
           const failureStage = boundaryTracker.inferFailureStage();
@@ -1049,7 +1055,7 @@ export function buildRunnerLlmAdapter(
           }
 
           if (decision.shouldUseNonStreaming && typeof provider.complete === 'function') {
-            throwIfManagedProviderAborted(options.abortSignal, providerMessages);
+            throwIfManagedProviderAborted(options.abortSignal, recoveryTranscript);
             const fallbackTimeoutController = new AbortController();
             const fallbackSignal = options.abortSignal
               ? AbortSignal.any([options.abortSignal, fallbackTimeoutController.signal])
@@ -1129,7 +1135,7 @@ export function buildRunnerLlmAdapter(
               rethrowObservedManagedProviderAbort(
                 options.abortSignal,
                 error,
-                providerMessages,
+                recoveryTranscript,
               );
             } finally {
               clearTimeout(fallbackHardTimer);
@@ -1157,7 +1163,7 @@ export function buildRunnerLlmAdapter(
             await waitForManagedProviderRetry(
               decision.delayMs,
               options.abortSignal,
-              providerMessages,
+              recoveryTranscript,
             );
             continue;
           }
@@ -1176,12 +1182,12 @@ export function buildRunnerLlmAdapter(
                 cacheReadTokens: usage.cachedReadTokens, cacheWriteTokens: usage.cachedWriteTokens }); },
             });
             if (recovered) { attempt += 1; textRecoveryRetry = true; nextRequestMode = 'replace'; continue; }
-            // Preserve in-flight providerMessages on the thrown error so the
+            // Preserve the Runner transcript on the thrown error so the
             // outer wrapper's session-snapshot save can persist real history
             // instead of `[]`. Non-enumerable so JSON-serializing telemetry
             // does not dump conversation history into logs. The outer catch
             // uses Array.isArray as a guard.
-            attachRunnerRecoveryTranscript(error, providerMessages);
+            attachRunnerRecoveryTranscript(error, recoveryTranscript);
             throw error;
           }
 
@@ -1197,7 +1203,7 @@ export function buildRunnerLlmAdapter(
           await waitForManagedProviderRetry(
             decision.delayMs,
             options.abortSignal,
-            providerMessages,
+            recoveryTranscript,
           );
           continue;
         } finally {
@@ -1214,7 +1220,7 @@ export function buildRunnerLlmAdapter(
           'Provider returned no user-visible text or tool calls after recovery attempts; refusing to commit an empty assistant turn.',
           providerName,
         );
-        attachRunnerRecoveryTranscript(error, providerMessages);
+        attachRunnerRecoveryTranscript(error, recoveryTranscript);
         throw error;
       }
 
@@ -1239,7 +1245,7 @@ export function buildRunnerLlmAdapter(
         && accumulatedText.trim().length > 0
         && l5Retries < KODAX_MAX_MAXTOKENS_RETRIES
       ) {
-        throwIfManagedProviderAborted(options.abortSignal, providerMessages);
+        throwIfManagedProviderAborted(options.abortSignal, recoveryTranscript);
         l5Retries += 1;
         // Push the partial assistant turn + synthetic user continuation
         // onto the outgoing transcript. The provider will see the full
@@ -1358,7 +1364,7 @@ export function buildRunnerLlmAdapter(
           rethrowObservedManagedProviderAbort(
             options.abortSignal,
             error instanceof Error ? error : new Error(String(error)),
-            providerMessages,
+            recoveryTranscript,
           );
           // L5 retries are best-effort — any failure here falls back to
           // the partial result we already have.

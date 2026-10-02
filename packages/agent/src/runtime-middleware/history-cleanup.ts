@@ -62,23 +62,72 @@ function isToolResultContentBlock(
   return isTypedContentBlock(block) && block.type === 'tool_result';
 }
 
+function toolUseIds(message: KodaXMessage | undefined): Set<string> {
+  const ids = new Set<string>();
+  if (message?.role !== 'assistant' || !Array.isArray(message.content)) return ids;
+  for (const block of message.content) {
+    if (isToolUseContentBlock(block) && block.id) ids.add(block.id);
+  }
+  return ids;
+}
+
+function answersAnyCall(message: KodaXMessage, callIds: ReadonlySet<string>): boolean {
+  return message.role === 'user'
+    && Array.isArray(message.content)
+    && message.content.some((block) =>
+      isToolResultContentBlock(block) && callIds.has(block.tool_use_id));
+}
+
+/**
+ * An assistant's tool calls own every message up to the next assistant — the
+ * same pairing scope the provider serializers use. Messages that answer those
+ * calls move directly after the assistant (keeping their relative order) and
+ * any interposed message, such as an internal context envelope, follows them.
+ * Scopes whose answers are already adjacent keep their exact order.
+ */
+function hoistScopedToolResults(messages: KodaXMessage[]): KodaXMessage[] {
+  const ordered: KodaXMessage[] = [];
+  let index = 0;
+  while (index < messages.length) {
+    const message = messages[index]!;
+    ordered.push(message);
+    index += 1;
+    const callIds = toolUseIds(message);
+    if (callIds.size === 0) continue;
+    const answers: KodaXMessage[] = [];
+    const interposed: KodaXMessage[] = [];
+    while (index < messages.length && messages[index]?.role !== 'assistant') {
+      const scoped = messages[index]!;
+      (answersAnyCall(scoped, callIds) ? answers : interposed).push(scoped);
+      index += 1;
+    }
+    ordered.push(...answers, ...interposed);
+  }
+  return ordered;
+}
+
 /**
  * Walk the message history and remove mis-paired `tool_use` / `tool_result`
- * blocks. Preserves message order and structure; never mutates input.
+ * blocks. Never mutates input; message count is preserved.
  *
- * Rules enforced:
- *   - assistant `tool_use` with no matching `tool_result` in the next user
- *     message → removed
+ * Rules enforced (scope = an assistant plus every message before the next
+ * assistant):
+ *   - result carriers move next to their assistant (see
+ *     `hoistScopedToolResults`), so an interposed internal message cannot
+ *     break a pair
+ *   - assistant `tool_use` with no matching `tool_result` in its scope →
+ *     removed
  *   - assistant `tool_use` with empty / missing id → removed
- *   - user `tool_result` with no matching assistant `tool_use` in the previous
- *     message → removed
+ *   - user `tool_result` with no matching `tool_use` in the scope's
+ *     assistant → removed
  *   - user `tool_result` with empty / missing tool_use_id → removed
  *   - assistant message that becomes content-empty after stripping → inject
  *     an EMPTY text-block marker (preserves message-alternation invariant
  *     downstream providers like Kimi require; the visible '...' is added
  *     wire-only by the serializer, never persisted)
  */
-export function validateAndFixToolHistory(messages: KodaXMessage[]): KodaXMessage[] {
+export function validateAndFixToolHistory(input: KodaXMessage[]): KodaXMessage[] {
+  const messages = hoistScopedToolResults(input);
   if (process.env.KODAX_DEBUG_TOOL_HISTORY) {
     reportToolHistoryDiagnostic('Validating messages.', { count: messages.length });
     for (let i = 0; i < messages.length; i++) {
@@ -98,10 +147,13 @@ export function validateAndFixToolHistory(messages: KodaXMessage[]): KodaXMessag
   }
 
   const fixedMessages: KodaXMessage[] = [];
+  // Call ids of the assistant that owns the current pairing scope.
+  let scopeCallIds = new Set<string>();
 
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     if (!msg) continue;
+    if (msg.role === 'assistant') scopeCallIds = toolUseIds(msg);
 
     if (typeof msg.content === 'string' || !Array.isArray(msg.content)) {
       fixedMessages.push(msg);
@@ -112,11 +164,12 @@ export function validateAndFixToolHistory(messages: KodaXMessage[]): KodaXMessag
     const fixedContent: typeof content = [];
 
     if (msg.role === 'assistant') {
-      const nextMsg = messages[i + 1];
       const resultIds = new Set<string>();
 
-      if (nextMsg?.role === 'user' && Array.isArray(nextMsg.content)) {
-        for (const block of nextMsg.content) {
+      for (let j = i + 1; j < messages.length && messages[j]?.role !== 'assistant'; j++) {
+        const scoped = messages[j];
+        if (scoped?.role !== 'user' || !Array.isArray(scoped.content)) continue;
+        for (const block of scoped.content) {
           if (isToolResultContentBlock(block) && block.tool_use_id) {
             resultIds.add(block.tool_use_id);
           }
@@ -146,17 +199,6 @@ export function validateAndFixToolHistory(messages: KodaXMessage[]): KodaXMessag
         }
       }
     } else if (msg.role === 'user') {
-      const prevMsg = messages[i - 1];
-      const toolUseIds = new Set<string>();
-
-      if (prevMsg?.role === 'assistant' && Array.isArray(prevMsg.content)) {
-        for (const block of prevMsg.content) {
-          if (isToolUseContentBlock(block) && block.id) {
-            toolUseIds.add(block.id);
-          }
-        }
-      }
-
       for (const block of content) {
         if (!isTypedContentBlock(block)) {
           fixedContent.push(block as typeof content[number]);
@@ -169,7 +211,7 @@ export function validateAndFixToolHistory(messages: KodaXMessage[]): KodaXMessag
             continue;
           }
 
-          if (!toolUseIds.has(block.tool_use_id)) {
+          if (!scopeCallIds.has(block.tool_use_id)) {
             reportToolHistoryDiagnostic('Removed orphaned tool_result.', { toolUseId: block.tool_use_id });
             continue;
           }

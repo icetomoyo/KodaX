@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -7,13 +7,15 @@ import {
   KodaXBaseProvider, clearRuntimeModelProviders, registerModelProvider,
   type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult,
 } from '@kodax-ai/llm';
-import { withKodaXFileLock } from '@kodax-ai/agent';
+import { createSessionLineage, withKodaXFileLock } from '@kodax-ai/agent';
 import { FileSessionStorage } from '../packages/repl/src/interactive/storage.js';
 import { SessionViewOwner } from './session-view.js';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { createKodaXRuntime } from './sdk-runtime.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
+
+const REUSED_TOOL_CALL_ID = 'reused:tool:suffix';
 
 class DeriveProvider extends KodaXBaseProvider {
   readonly name = 'product-derive-test';
@@ -23,6 +25,12 @@ class DeriveProvider extends KodaXBaseProvider {
   };
   async stream(messages: KodaXMessage[]): Promise<KodaXStreamResult> {
     requests.push(structuredClone(messages));
+    if (messages.some(message => message.role === 'user' && message.content === 'REUSED_TOOL_ID')) {
+      const count = messages.reduce((total, message) => total + (Array.isArray(message.content)
+        ? message.content.filter(block => block.type === 'tool_result').length : 0), 0);
+      if (count < 2) return { textBlocks: [], thinkingBlocks: [], toolBlocks: [{ type: 'tool_use', id: REUSED_TOOL_CALL_ID,
+        name: 'read', input: { path: path.join(homeDir, count === 0 ? 'first.txt' : 'second.txt') } }], stopReason: 'tool_use' };
+    }
     const lastUser = [...messages].reverse().find((message) => message.role === 'user');
     const userText = typeof lastUser?.content === 'string' ? lastUser.content : '';
     return { textBlocks: [{ type: 'text', text: `REPLY ${userText.slice(-1)}` }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
@@ -55,6 +63,10 @@ beforeEach(async () => {
   requests = [];
   registerModelProvider('product-derive-test', () => new DeriveProvider());
   vi.stubEnv('KODAX_PRODUCT_DERIVE_TEST_KEY', 'test-only');
+  await openHost();
+});
+
+async function openHost(): Promise<void> {
   runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'product-derive-test' });
   const paths = resolveRuntimeDaemonPaths(homeDir);
   const lock = tryAcquireRuntimeDaemonLock(paths, {
@@ -70,7 +82,7 @@ beforeEach(async () => {
   host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
   first = await connectKodaXClient({ homeDir, endpoint: endpointPath });
   second = await connectKodaXClient({ homeDir, endpoint: endpointPath });
-});
+}
 
 afterEach(async () => {
   await Promise.all([first.disconnect(), second.disconnect()]);
@@ -85,6 +97,58 @@ async function runRound(sessionId: string, index: number): Promise<void> {
   const accepted = await first.inputs.submit({ sessionId, inputId: `round-${index}`, text: `Ask round ${index}` });
   await runtime.runs.await(accepted.runId!);
 }
+
+it('keeps repeated provider call IDs separate in public views and full item reads after Host restart', async () => {
+  await writeFile(path.join(homeDir, 'first.txt'), 'FIRST_TOOL_BODY');
+  await writeFile(path.join(homeDir, 'second.txt'), 'SECOND_TOOL_BODY');
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  const input = await first.inputs.submit({ sessionId: session.id, inputId: 'reused-tools', text: 'REUSED_TOOL_ID' });
+  await expect(first.runs.await(input.runId!)).resolves.toMatchObject({ phase: 'completed' });
+  const check = async (): Promise<string[]> => {
+    const views: Parameters<Parameters<typeof second.sessions.observe>[1]>[0][] = [];
+    const observation = await second.sessions.observe(session.id, view => views.push(view));
+    observation.close();
+    const tools = views[0]!.items.filter(item => item.tool?.callId === REUSED_TOOL_CALL_ID);
+    expect(tools).toHaveLength(2);
+    expect(new Set(tools.map(item => item.id)).size).toBe(2);
+    expect(new Set(tools.map(item => item.tool?.assistantOutputId)).size).toBe(2);
+    expect(tools.map(item => item.tool?.status)).toEqual(['success', 'success']);
+    for (const [index, item] of tools.entries()) {
+      expect((await second.sessions.readItem(session.id, item.id))?.text).toContain(index === 0 ? 'FIRST_TOOL_BODY' : 'SECOND_TOOL_BODY');
+      expect((await second.sessions.readItem(session.id, item.id, { part: 'input' }))?.text)
+        .toContain(index === 0 ? 'first.txt' : 'second.txt');
+    }
+    return tools.map(item => item.id);
+  };
+  const ids = await check();
+  await Promise.all([first.disconnect(), second.disconnect()]);
+  await host.close(); await runtime.close();
+  await openHost();
+  expect(await check()).toEqual(ids);
+  // Retire both the display window and its bounded checkpoints; old references
+  // must still read the owning canonical output, even when call IDs repeat.
+  await Promise.all([first.disconnect(), second.disconnect()]);
+  await host.close(); await runtime.close();
+  const storage = new FileSessionStorage({ sessionsDir: path.join(homeDir, '.kodax', 'sessions') });
+  const saved = await storage.load(session.id);
+  if (!saved) throw new Error('Expected real tool conversation');
+  const messages: KodaXMessage[] = [...saved.messages, ...Array.from({ length: 80 }, (_, index): KodaXMessage[] => [
+    { role: 'user', inputId: `tail-${index}`, content: `Recorded query ${index}` },
+    { role: 'assistant', outputId: `tail-${index}`, content: `Recorded answer ${index}` },
+  ]).flat()];
+  await storage.save(session.id, { ...saved, messages, lineage: createSessionLineage(messages, saved.lineage),
+    uiHistory: saved.uiHistory?.filter(item => item.type !== 'tool_group' || item.tools.every(tool => tool.id !== REUSED_TOOL_CALL_ID)) });
+  await openHost();
+  const views: Parameters<Parameters<typeof second.sessions.observe>[1]>[0][] = [];
+  const observation = await second.sessions.observe(session.id, view => views.push(view));
+  observation.close();
+  expect(views[0]!.items.some(item => item.tool?.callId === REUSED_TOOL_CALL_ID)).toBe(false);
+  for (const [index, id] of ids.entries()) {
+    expect((await second.sessions.readItem(session.id, id))?.text).toContain(index === 0 ? 'FIRST_TOOL_BODY' : 'SECOND_TOOL_BODY');
+    expect((await second.sessions.readItem(session.id, id, { part: 'input' }))?.text).toContain(index === 0 ? 'first.txt' : 'second.txt');
+  }
+}, 30_000);
 
 it('forks an idle session at an explicit boundary with settings and source intact', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
@@ -230,6 +294,17 @@ it.each(Object.entries(idleSourceReads))(
   async (_name, readSource) => {
     const session = await first.sessions.create({ projectPath: homeDir });
     await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+    // Streaming completion now checkpoints before canonical commit. First
+    // finish that real round; hold a separate idle checkpoint to test reads.
+    let viewOwner: SessionViewOwner | undefined;
+    const checkpoint = SessionViewOwner.prototype.checkpoint;
+    const capture = vi.spyOn(SessionViewOwner.prototype, 'checkpoint').mockImplementation(function (this: SessionViewOwner, id) {
+      if (id === session.id) viewOwner = this;
+      return checkpoint.call(this, id);
+    });
+    try { await runRound(session.id, 1); await first.sessions.read(session.id); }
+    finally { capture.mockRestore(); }
+    expect(viewOwner).toBeDefined();
     const held = deferred<void>();
     const release = deferred<void>();
     const flushed = deferred<'flush'>();
@@ -247,7 +322,7 @@ it.each(Object.entries(idleSourceReads))(
     let restoreFlush: (() => void) | undefined;
     let reading: Promise<unknown> | undefined;
     try {
-      await runRound(session.id, 1);
+      viewOwner!.checkpoint(session.id);
       await held.promise;
       const flush = SessionViewOwner.prototype.flush;
       const flushSpy = vi.spyOn(SessionViewOwner.prototype, 'flush')

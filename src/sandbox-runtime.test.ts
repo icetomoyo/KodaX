@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 
 import { readProcessStartIdentity, SkillRegistry, type KodaXDiagnostic } from '@kodax-ai/agent';
 import { build } from 'esbuild';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ensureWindowsSandboxControlDirectory,
   resolveWindowsAsrtRunnerArtifact,
@@ -1323,11 +1323,17 @@ import {
 } from './sandbox-runtime.js';
 
 const tempRoots: string[] = [];
+let nativeArtifactLocalAppData = '';
 let cutoverDirectory = '';
 let restoreCutoverDirectory: (() => void) | undefined;
 
-beforeAll(() => {
+beforeAll(async () => {
   if (process.platform !== 'win32') return;
+  // Mock SID artifacts and destructive cache-recovery tests must not touch
+  // the native cache used by live sandbox sessions. Provisioning requires
+  // an ordinary host token; this suite cannot provision inside a sandbox.
+  nativeArtifactLocalAppData = await mkdtemp(path.join(os.tmpdir(), 'kodax-test-native-artifacts-'));
+  vi.stubEnv('LOCALAPPDATA', nativeArtifactLocalAppData);
   const runnerSource = path.resolve(
     'node_modules', '@anthropic-ai', 'sandbox-runtime',
     'vendor', 'srt-win', process.arch, 'srt-win.exe',
@@ -1344,6 +1350,12 @@ beforeAll(() => {
   });
   resolveWindowsSandboxV2Executable({ provision: true });
   ensureWindowsSandboxControlDirectory();
+});
+
+afterAll(async () => {
+  if (nativeArtifactLocalAppData !== '') {
+    await rm(nativeArtifactLocalAppData, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });
+  }
 });
 
 async function readDirectoryIfPresent(directory: string): Promise<string[]> {
@@ -1391,6 +1403,7 @@ function hasQueuedFileSystemCleanup(): boolean {
 }
 
 beforeEach(async () => {
+  if (nativeArtifactLocalAppData !== '') vi.stubEnv('LOCALAPPDATA', nativeArtifactLocalAppData);
   processIdentityMock.windowsBootIdentity = 'windows-boot-100';
   processIdentityMock.pid4StartIdentity = '13370000000000';
   processIdentityMock.unreadablePids.clear();
@@ -4211,6 +4224,31 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     }
   });
 
+  it('repairs NUL access after a historical setup read root disappears', async () => {
+    const removedRoot = path.join(cutoverDirectory, 'retired-profile-log');
+    await writeFile(removedRoot, 'old setup root');
+    const previous = JSON.parse(readFileSync(cutoverMarkerFile(), 'utf8')) as Record<string, unknown>;
+    await writeFile(cutoverMarkerFile(), JSON.stringify({ ...previous, setupReadRoots: [removedRoot] }));
+    await rm(removedRoot);
+    windowsSandboxMock.nullDeviceReady = false;
+
+    const restore = overrideWindowsSetupCapabilityInstallerForTest((_executable, request) => {
+      const pending = JSON.parse(readFileSync(request.setupMarkerPath, 'utf8')) as {
+        readonly setupReadRoots: readonly string[];
+      };
+      expect(pending.setupReadRoots).toContain(removedRoot);
+      expect(request.readRoots).not.toContain(removedRoot);
+      windowsSandboxMock.nullDeviceReady = true;
+    });
+    try {
+      const outcome = await prepareSandboxRuntimeForSetup();
+      expect(outcome, JSON.stringify(outcome)).toMatchObject({ status: 'ready', attempted: true });
+      expect(windowsSandboxMock.uninstallCalls).toBe(0);
+    } finally {
+      restore();
+    }
+  });
+
   it('does not publish a setup generation when elevated capability setup fails', async () => {
     windowsSandboxMock.nullDeviceReady = false;
     windowsSandboxMock.sidProcessesActive = false;
@@ -4422,6 +4460,19 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     await expect(readFile(cutoverMarkerFile(), 'utf8')).resolves.toContain(
       `"hostUserSid":"${windowsSandboxMock.hostUserSid}"`,
     );
+  });
+
+  it('requires current NUL access before skipping interactive startup recovery', () => {
+    windowsSandboxMock.nullDeviceReady = false;
+    const markerBefore = readFileSync(cutoverMarkerFile(), 'utf8');
+
+    expect(isWindowsSandboxV2SetupCurrent()).toBe(false);
+    expect(readFileSync(cutoverMarkerFile(), 'utf8')).toBe(markerBefore);
+    expect(windowsSandboxMock.installCalls).toBe(0);
+    expect(windowsSandboxMock.uninstallCalls).toBe(0);
+
+    windowsSandboxMock.nullDeviceReady = true;
+    expect(isWindowsSandboxV2SetupCurrent()).toBe(true);
   });
 
   it('uses the exact current cutover marker as the interactive startup fast path', async () => {

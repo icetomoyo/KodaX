@@ -1,5 +1,10 @@
 # 当前 worktree 的统一产品契约设计落在哪个版本？
 
+> 实施更新：以下对照记录合并前 `a63feede` 的固定快照。当前整合树保留
+> **v0.7.97 / FEATURE_298** 设计，源码包基线已吸收为 **0.7.96-rc.14**；
+> 子模块规格头部的 Planned/Done 冲突已纠正。当前实施及验收以
+> [2026-10-02 整合记录](mainline-unified-contract-integration-verification-2026-10-02.md) 为准。
+
 结论摘要：当前分支的统一契约设计是 **v0.7.97 / FEATURE_298**，正式规格在 `docs/features/v0.7.97.md`；实际产品接口及 9 月 26–27 日修补落在当前代码与 `docs/CLIENT_CONTRACT.md`、`docs/SDK_MIGRATION.md`。包版本仍继承主线 **0.7.96-rc.11**，不是 v0.7.97 已发布，也不是 v1.0.0。主线最新源码包版本为 rc.14，主线仍把 FEATURE_298 当作未实施规格，合并不能据此覆盖本分支的实施状态。[来源：`docs/features/v0.7.97.md:164–170`；`docs/DD.md:3–9`；`docs/SDK_MIGRATION.md:3`；`package.json:3`；主线 `cad8b658` 的 `package.json:3`、`docs/FEATURE_LIST.md:18`。]
 
 调研日期：2026-10-02（Asia/Shanghai）。只读核对仓库文档、公开契约源码和 Git 提交；本次未重新运行测试，既有验收数字只作为当时记录，不构成本次验收。源码固定点：`codex/product-client-refactor` 的 `a63feede5f4b2bac8a62ddfa687d9b515d8c2021`；主线读取固定点：`origin/KodaX` 的 `cad8b658797976ce22a4bd70c60d2251d537e542`。文件行号对应这些快照。

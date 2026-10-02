@@ -150,7 +150,9 @@ export function toKodaXProductClient(
           sessionId: outcome.sessionId,
           phase: outcome.phase,
           ...(outcome.result !== undefined ? { result: outcome.result } : {}),
-          ...(outcome.error !== undefined ? { error: outcome.error.message } : {}),
+            ...(outcome.error !== undefined ? { error: outcome.error.message } : {}),
+            ...(outcome.terminal !== undefined ? { terminal: outcome.terminal } : {}),
+            ...(outcome.stop !== undefined ? { stop: outcome.stop } : {}),
         };
       },
     },
