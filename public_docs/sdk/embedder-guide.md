@@ -1,7 +1,7 @@
 # KodaX SDK — Product Client and Host Integration
 
 This page describes the current FEATURE_298/299 development tree, whose package
-version is still `0.7.96-rc.14` and whose design target is `v0.7.97`. It does not
+version is still `0.7.96` and whose design target is `v0.7.97`. It does not
 claim that this contract is already published to npm. Check the installed
 package exports and the connected Host's capabilities when migrating.
 

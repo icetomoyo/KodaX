@@ -136,6 +136,49 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.96 release preparation
+
+Release state: `v0.7.96` is the stable GitHub release for the exact tagged
+commit — the final release of the v0.7.96 line, carrying every contract
+stabilized through the fourteen release candidates. The tag has no
+prerelease suffix, so the Release workflow publishes a full (non-prerelease)
+GitHub release. As with rc.14, branch pushes do not trigger CI: the full
+reusable CI workflow runs inside the tag-triggered Release workflow before
+the build matrix, so the tag is the first and only remote validation gate.
+Local gates below are mandatory before tagging.
+
+Relative to rc.14 it includes no code changes beyond the stable bookkeeping:
+package versions, guides, architecture documents, `kodax_manual`, and the
+feature-design submodule move to the stable version, and the release record
+finalizes the line. Open items (Issues 342, 344) remain tracked in
+`docs/KNOWN_ISSUES.md` and do not gate the stable release.
+
+All root/workspace package versions and lockfile entries are `0.7.96`.
+
+Release gates:
+
+1. Local, before tagging (no branch CI exists): strict source/test
+   typechecks, tracker consistency, registry (`kodax_manual`) tests, and
+   package builds pass. The rc.14 tag already validated the full CI matrix
+   and platform archives on this codebase; the stable commit changes only
+   versions and documentation.
+2. Push the reachable feature-design submodule commit before the parent commit.
+3. Push the release commit, then tag the exact commit `v0.7.96`; the tag
+   must trigger the Release workflow whose `Full CI` job must pass before
+   the build matrix runs.
+4. The Release workflow must produce five platform archives, the universal
+   npm tarball, and SHA256SUMS (13 assets), with every job green, and
+   auto-create the GitHub release WITHOUT the prerelease flag.
+5. Leave npm publication to the maintainer. With the stable tag, publishing
+   without `npm_config_tag` moves `latest` to `0.7.96`, which is the
+   intended outcome for the stable release. PowerShell:
+   `node scripts/release.mjs` after downloading and verifying the exact
+   universal tarball.
+
+Windows remains native shell protocol 10 with setup generation 11 and
+`sandboxRuntime:11`; `runtimeExitSettlement:2`, `crashOutcomeModel:2`, and
+`runtimeAutoModeGuardrail:6` remain unchanged.
+
 ## v0.7.96-rc.14 release preparation
 
 Release state: `v0.7.96-rc.14` is the GitHub pre-release for the exact

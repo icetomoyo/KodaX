@@ -8,6 +8,21 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.96] - 2026-10-01
+
+Stable release of the v0.7.96 line, finalizing the fourteen release
+candidates: trusted text transactions and platform shell containment across
+Windows, Linux, and macOS; Windows daemon lifecycle arbitration with
+nonblocking uncertain Shell cleanup; turn-matched interrupted-Run recovery
+across Runs; provable tool-history pairing and compaction-copy tracing;
+macOS system Git preflight; provider authentication isolation; single-writer
+Runtime transcript ownership in Ink sessions; and Windows NUL-ACE startup
+recovery. CI runs inside the tag-triggered Release workflow. Every rc.14
+contract is retained; open items remain tracked in `docs/KNOWN_ISSUES.md`.
+npm publication remains a manual maintainer action.
+
+---
+
 ## [0.7.96-rc.14] - 2026-10-01
 
 Fourteenth release candidate of the v0.7.96 line: interrupted-Run recovery

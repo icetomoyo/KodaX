@@ -4,6 +4,16 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-10-01
 >
+> **v0.7.96 stable release addendum:** The stable release finalizes the
+> fourteen release candidates of the v0.7.96 line without architectural
+> changes beyond rc.14. All capability floors are unchanged (Windows native
+> shell protocol 10, setup generation 11, `sandboxRuntime:11`,
+> `runtimeExitSettlement:2`, `crashOutcomeModel:2`,
+> `runtimeAutoModeGuardrail:6`). CI runs inside the tag-triggered Release
+> workflow through `workflow_call`; branch pushes no longer trigger CI.
+> Open items remain tracked in `docs/KNOWN_ISSUES.md` and do not gate the
+> stable release.
+>
 > **v0.7.96-rc.14 release addendum:** Interrupted-Run recovery is
 > turn-matched and budgeted across Runs: the next managed or coding Run of a
 > Session receives a labelled, bounded, transient record of journaled

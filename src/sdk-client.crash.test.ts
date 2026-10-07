@@ -9,6 +9,7 @@ import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
 import { ensureKodaXRuntime } from './sdk-runtime.js';
 import { readRuntimeDaemonLockOwner, resolveRuntimeDaemonPaths, type RuntimeDaemonPaths } from './runtime-daemon/state.js';
+import { RuntimeDaemonTransportError } from './runtime-daemon/transport.js';
 
 let homeDir: string;
 let configHome: string;
@@ -145,18 +146,37 @@ function markerLines(): number {
   }
 }
 
+// Host readiness permits connections, while a crashed owner's recent Session
+// lock may still reject a read until the existing stale-lock boundary clears.
+// Retry only public reads; never replay the accepted input or dispatched tool.
+async function readAfterCrashBoundary<T>(read: () => Promise<T>): Promise<T> {
+  const deadline = Date.now() + 60_000;
+  for (;;) {
+    try {
+      return await read();
+    } catch (error: unknown) {
+      if (!(error instanceof RuntimeDaemonTransportError)
+        || (error.code !== 'data_changed' && error.code !== 'resync_required')
+        || Date.now() >= deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+}
+
 it('a Host crash after input acceptance preserves content, marks the Run interrupted, and redoes no work', async () => {
   const scenario = await startScenario('Work that never completes.');
   const { survivor, restarted } = await killHostAndRestart(scenario);
   try {
-    await expect(survivor.sessions.read(scenario.sessionId)).resolves.toMatchObject({ id: scenario.sessionId });
+    await expect(readAfterCrashBoundary(() => survivor.sessions.read(scenario.sessionId)))
+      .resolves.toMatchObject({ id: scenario.sessionId });
 
-    const status = await survivor.runs.read(scenario.runId);
+    const status = await readAfterCrashBoundary(() => survivor.runs.read(scenario.runId));
     expect(status.phase).not.toBe('completed');
     expect(['interrupted', 'unknown']).toContain(status.phase);
 
     const recovered: ClientSessionView[] = [];
-    const reopened = await survivor.sessions.observe(scenario.sessionId, (view) => recovered.push(view));
+    const reopened = await readAfterCrashBoundary(() =>
+      survivor.sessions.observe(scenario.sessionId, (view) => recovered.push(view)));
     try {
       expect(recovered[0]!.items.some((item) => item.type === 'user' && item.text.includes('Work that never completes.'))).toBe(true);
     } finally { reopened.close(); }
@@ -188,7 +208,7 @@ it('a Host crash after tool dispatch keeps the executed tool un-redone and the R
   }
   const { survivor, restarted } = await killHostAndRestart(scenario);
   try {
-    const status = await survivor.runs.read(scenario.runId);
+    const status = await readAfterCrashBoundary(() => survivor.runs.read(scenario.runId));
     expect(status.phase).not.toBe('completed');
     expect(['interrupted', 'unknown']).toContain(status.phase);
 
@@ -212,14 +232,17 @@ it('a Host crash after the tool result entered the context shows interrupted, no
   // Request 2 carries the committed tool result: that is the observable of
   // the result entering the follow-up model context.
   await expect.poll(() => providerRequests, { timeout: 60_000 }).toBe(2);
+  await expect.poll(() => providerToolResults.some((result) => result.includes('tool-ran')),
+    { timeout: 60_000 }).toBe(true);
   const { survivor, restarted } = await killHostAndRestart(scenario);
   try {
-    const status = await survivor.runs.read(scenario.runId);
+    const status = await readAfterCrashBoundary(() => survivor.runs.read(scenario.runId));
     expect(status.phase).not.toBe('completed');
     expect(['interrupted', 'unknown']).toContain(status.phase);
 
     const recovered: ClientSessionView[] = [];
-    const reopened = await survivor.sessions.observe(scenario.sessionId, (view) => recovered.push(view));
+    const reopened = await readAfterCrashBoundary(() =>
+      survivor.sessions.observe(scenario.sessionId, (view) => recovered.push(view)));
     try {
       expect(recovered[0]!.items.some((item) => item.text.includes('tool-ran'))).toBe(true);
     } finally { reopened.close(); }

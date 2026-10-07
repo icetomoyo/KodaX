@@ -769,6 +769,17 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
+**v0.7.96 stable release:** The stable release of the v0.7.96 line,
+finalizing the fourteen release candidates: trusted text transactions and
+platform shell containment across Windows, Linux, and macOS; Windows daemon
+lifecycle arbitration with nonblocking uncertain Shell cleanup; turn-matched
+interrupted-Run recovery across Runs; provable tool-history pairing and
+compaction-copy tracing; macOS system Git preflight; provider authentication
+isolation; single-writer Runtime transcript ownership in Ink sessions; and
+Windows NUL-ACE startup recovery. CI runs inside the tag-triggered Release
+workflow. Every rc.14 contract is retained; open items remain tracked in
+`docs/KNOWN_ISSUES.md`.
+
 **v0.7.96-rc.14 release:** Fourteenth release candidate of the v0.7.96
 line. Interrupted-Run recovery reaches coding Runs and managed execution
 with a labelled, bounded, transient record of journaled progress matched

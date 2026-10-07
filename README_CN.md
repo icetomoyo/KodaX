@@ -301,6 +301,14 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
+**v0.7.96 正式版发布**：v0.7.96 线的正式版本，定格十四个发布候选的全部
+成果：跨 Windows/Linux/macOS 的受信文本事务与平台 Shell 隔离；Windows
+daemon 生命周期仲裁与不阻塞的不确定 Shell 清理；按回合匹配的中断 Run 跨
+Run 恢复；可证明的工具历史配对与压缩副本追溯；macOS 系统 Git 预检；
+Provider 认证隔离；Ink 会话中 Runtime 作为唯一转录写入者；Windows NUL
+账户 ACE 启动恢复。CI 在 tag 触发的 Release workflow 内运行。所有 rc.14
+契约全部保留；未决项继续在 `docs/KNOWN_ISSUES.md` 中跟踪。
+
 **v0.7.96-rc.14 发布**：v0.7.96 线第十四个发布候选。中断 Run 的恢复进入
 coding Run 与托管执行：以带标签、有界、临时的记录按回合匹配交接已日志化的
 进度；工具历史配对覆盖整个 assistant 范围；会话解析把压缩副本追溯到可证明
@@ -475,7 +483,7 @@ native 文本权威改在摘要固定的 `manylinux_2_28` 构建器中编译，�
 scope 在 SDK、Agent 摘要、CLI 与 Runtime Worker 请求间共享，保留结构化的 Child Agent Provider
 失败信息，精确遵循 run-scoped 凭据校验，并为严格 vLLM 网关省略空 `tools` 数组（Issues 329-332）。
 npm 发布仍由
-维护者手动执行。详见 [v0.7.96-rc.14 发布清单](docs/release.md#v0796-rc14-release-preparation)。
+维护者手动执行。详见 [v0.7.96 正式版发布清单](docs/release.md#v0796-release-preparation)。
 
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
 credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭
