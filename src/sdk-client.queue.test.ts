@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -8,6 +8,7 @@ import {
   type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult,
 } from '@kodax-ai/llm';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
+import { LEARNING_REVIEW_TOOL, awaitLatestCodingMemoryReviewDrain } from '@kodax-ai/coding';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { createKodaXRuntime } from './sdk-runtime.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
@@ -21,7 +22,15 @@ class QueueProvider extends KodaXBaseProvider {
   };
   constructor(private readonly request: (messages: KodaXMessage[]) => Promise<void>) { super(); }
   async stream(...args: Parameters<KodaXBaseProvider['stream']>): Promise<KodaXStreamResult> {
+    // Background Memory review is a separate request, not a queued input.
+    if (args[1].some(tool => tool.name === LEARNING_REVIEW_TOOL.name)) return {
+      textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [{
+        type: 'tool_use', id: 'review', name: LEARNING_REVIEW_TOOL.name,
+        input: { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' } },
+      }],
+    };
     requestModels.push(args[4]?.modelOverride);
+    requestSystems.push(args[2]);
     await this.request(args[0]);
     return {
       textBlocks: [{ type: 'text', text: 'This batch completed.' }],
@@ -34,6 +43,7 @@ let homeDir: string;
 let release: () => void = () => undefined;
 let requests: KodaXMessage[][] = [];
 let requestModels: (string | undefined)[] = [];
+let requestSystems: string[] = [];
 let onRequest: () => void = () => undefined;
 let runtime: Awaited<ReturnType<typeof createKodaXRuntime>>;
 let host: Awaited<ReturnType<typeof startRuntimeDaemonHost>>;
@@ -45,6 +55,7 @@ beforeEach(async () => {
   const firstRequest = new Promise<void>((resolve) => { release = resolve; });
   requests = [];
   requestModels = [];
+  requestSystems = [];
   onRequest = () => undefined;
   registerModelProvider('product-queue-test', () => new QueueProvider(async (messages) => {
     requests.push(structuredClone(messages));
@@ -72,6 +83,7 @@ afterEach(async () => {
   await Promise.all([first.disconnect(), second.disconnect()]);
   await host.close();
   await runtime.close();
+  await awaitLatestCodingMemoryReviewDrain(5_000);
   clearRuntimeModelProviders();
   vi.unstubAllEnvs();
   await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
@@ -122,6 +134,68 @@ it('shares queued input, atomically withdraws exact input, and delivers the rema
   }
 });
 
+it.each(['after_turn', 'redirect'] as const)('prepares a mid-text Skill on %s consumption, just like idle input', async (delivery) => {
+  const skillDir = path.join(homeDir, '.kodax', 'skills', 'probecontext');
+  await mkdir(skillDir, { recursive: true });
+  await writeFile(path.join(skillDir, 'SKILL.md'), [
+    '---', 'name: probecontext', 'description: Report current context', 'model: skill-model',
+    'hooks:', '  SessionStart:', '    - command: echo started>> skill-hooks.txt',
+    '---', 'Trusted Skill context:', 'Arguments: $ARGUMENTS', process.platform === 'win32' ? '!`type skill-state.txt`' : '!`cat skill-state.txt`',
+  ].join('\n'));
+  await writeFile(path.join(homeDir, 'skill-state.txt'), 'BEFORE-QUEUE');
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access', model: 'plain-model' });
+  const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
+  await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);
+  const text = 'Please /not-a-skill then use /probecontext now /unknown-argument and keep this.';
+  await expect(second.inputs.submit({ sessionId: session.id, inputId: 'multiple-skills',
+    text: 'Use /probecontext and /probecontext again.', delivery,
+    ...(delivery === 'redirect' ? { targetRunId: active.runId } : {}) }))
+    .rejects.toMatchObject({ code: 'conflict' });
+  expect(await first.inputs.read(session.id, 'multiple-skills')).toBeNull();
+  expect((await first.runs.read(active.runId!)).stop).toBeUndefined();
+  expect(await second.inputs.submit({ sessionId: session.id, inputId: 'queued-skill', text, delivery,
+    ...(delivery === 'redirect' ? { targetRunId: active.runId } : {}) }))
+    .toMatchObject({ state: 'queued' });
+  await expect(readFile(path.join(homeDir, 'skill-hooks.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+  await writeFile(path.join(homeDir, 'skill-state.txt'), 'AT-CONSUMPTION');
+  release();
+  await first.runs.await(active.runId!);
+  await expect.poll(async () => (await first.inputs.read(session.id, 'queued-skill'))?.state,
+    { timeout: 15_000 }).toBe('submitted');
+  const queued = await first.inputs.read(session.id, 'queued-skill');
+  await first.runs.await(queued!.runId!);
+  expect(queued!.runId).not.toBe(active.runId);
+  expect(requestModels.at(-1)).toBe('skill-model');
+  expect(requestSystems.at(-1)).toContain('AT-CONSUMPTION');
+  expect(requestSystems.at(-1)).toContain('Arguments: now /unknown-argument and keep this.');
+  expect(requestSystems.at(-1)).not.toContain('BEFORE-QUEUE');
+  expect((await readFile(path.join(homeDir, 'skill-hooks.txt'), 'utf8')).trim()).toBe('started');
+  const direct = await first.inputs.submit({ sessionId: session.id, inputId: 'idle-skill', text });
+  await first.runs.await(direct.runId!);
+  expect(requestModels.at(-1)).toBe('skill-model');
+  expect(requestSystems.at(-1)).toContain('AT-CONSUMPTION');
+  expect(requestSystems.at(-1)).toContain('Arguments: now /unknown-argument and keep this.');
+  expect((await readFile(path.join(homeDir, 'skill-hooks.txt'), 'utf8')).trim().split(/\r?\n/)).toEqual(['started', 'started']);
+}, 60_000);
+
+it('keeps unknown slash tokens, paths and URLs in the ordinary text batch', async () => {
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
+  await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);
+  const text = 'Inspect /src/file.ts and https://example.com/a/b with /not-a-skill.';
+  for (const [inputId, content] of [['slash', text], ['plain', 'Continue normally.']] as const) {
+    await second.inputs.submit({ sessionId: session.id, inputId, text: content, delivery: 'after_turn' });
+  }
+  release();
+  await first.runs.await(active.runId!);
+  expect(await second.inputs.read(session.id, 'slash')).toMatchObject({ state: 'submitted', runId: active.runId });
+  expect(await second.inputs.read(session.id, 'plain')).toMatchObject({ state: 'submitted', runId: active.runId });
+  expect(requests[1]?.filter(message => message.inputId === 'slash' || message.inputId === 'plain')
+    .map(message => message.content)).toEqual([text, 'Continue normally.']);
+});
+
 it('bounds queue previews and capacity while withdrawal returns the complete original once', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
   await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
@@ -169,6 +243,9 @@ it.each(['stop', 'failure'] as const)('retains undelivered text and starts no re
 });
 
 it('keeps queued Skill raw text as its own batch and merges only the plain text around it', async () => {
+  const skillDir = path.join(homeDir, '.kodax', 'skills', 'review');
+  await mkdir(skillDir, { recursive: true });
+  await writeFile(path.join(skillDir, 'SKILL.md'), '---\nname: review\ndescription: Review changes\n---\nReview the requested diff.');
   const session = await first.sessions.create({ projectPath: homeDir });
   await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
   const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });

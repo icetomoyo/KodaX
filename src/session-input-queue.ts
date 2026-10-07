@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 import { MessageQueue, type QueuedMessage } from '@kodax-ai/agent';
-import { parseInlineSkillReferences } from '@kodax-ai/coding';
 import type { ClientInputAcceptance, ClientQueuedInput, ClientSubmitInput } from '@kodax-ai/coding/client-contract';
 
 interface QueuedInputFact {
@@ -8,21 +7,10 @@ interface QueuedInputFact {
   readonly inputId: string;
   readonly digest: string;
   readonly messageId?: string;
-  /** Syntax-level only; trusted expansion happens at consumption (T37). */
+  /** Host-confirmed Skill boundary; trusted expansion happens at consumption. */
   readonly skill: boolean;
   state: ClientInputAcceptance['state'];
   runId?: string;
-}
-
-/**
- * An explicit Skill invocation keeps its own batch unit so its raw text is
- * never merged into a plain-text batch. A leading slash covers the explicit
- * head form; inline /skill: references are explicit by syntax. Mid-text bare
- * slashes stay plain — the submitting UI classifies those against the
- * registry before they reach the Host queue.
- */
-function isSkillInvocationText(text: string): boolean {
-  return text.trimStart().startsWith('/') || parseInlineSkillReferences(text).length > 0;
 }
 
 export function inputIntentDigest(input: ClientSubmitInput): string {
@@ -70,7 +58,7 @@ export class SessionInputQueue {
     return this.read(input.sessionId, input.inputId);
   }
 
-  enqueue(input: ClientSubmitInput): ClientInputAcceptance {
+  enqueue(input: ClientSubmitInput, skill: boolean): ClientInputAcceptance {
     const duplicate = this.find(input);
     if (duplicate) return duplicate;
     if (this.queue.count({ agentId: input.sessionId, mode: 'prompt', maxPriority: 'user' }) >= MAX_QUEUED_INPUTS) {
@@ -82,7 +70,7 @@ export class SessionInputQueue {
     });
     this.facts.set(this.key(input.sessionId, input.inputId), {
       sessionId: input.sessionId, inputId: input.inputId, digest: inputIntentDigest(input), messageId,
-      skill: isSkillInvocationText(input.text), state: 'queued',
+      skill, state: 'queued',
     });
     this.changed(input.sessionId);
     return this.read(input.sessionId, input.inputId)!;

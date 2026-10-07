@@ -1,4 +1,4 @@
-import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
+import type { ClientWorkflowRun, KodaXProductClient } from '@kodax-ai/coding/client-contract';
 import { memoryProposalRevision } from '@kodax-ai/agent';
 import type { KodaXRuntime } from './sdk-runtime.js';
 import { toClientConfig, toClientSessionSettings } from './client-settings.js';
@@ -167,6 +167,7 @@ export function toKodaXProductClient(
           revision: current.revision,
           grants: current.value.map((grant) => ({
             id: grant.id,
+            ...(grant.scope.sessionId !== undefined ? { sessionId: grant.scope.sessionId } : {}),
             ...(grant.label !== undefined ? { label: grant.label } : {}),
             ...(grant.persistence !== undefined ? { persistence: grant.persistence } : {}),
           })),
@@ -229,19 +230,30 @@ export function toKodaXProductClient(
     },
     workflows: {
       start: (input) => runtime.workflows.start({ ...input, settingsDefaults: 'product' }),
-      list: async (filter) => (await runtime.workflows.list(filter ?? {})).map((run) => ({
-        runId: run.runId,
-        workflowName: run.workflow,
-        status: run.status,
-        totalSpawned: run.totalSpawned, eventCount: run.eventCount, runDir: run.runDir,
-        ...(run.endedAt !== undefined ? { endedAt: new Date(run.endedAt).toISOString() } : {}),
-        startedAt: new Date(run.startedAt).toISOString(),
-        updatedAt: run.endedAt !== undefined
-          ? new Date(run.endedAt).toISOString()
-          : new Date(run.startedAt).toISOString(),
-        ...(run.resultText !== undefined ? { resultSummary: run.resultText } : {}),
-        ...(run.error !== undefined ? { error: run.error } : {}),
-      })),
+      list: async (filter) => {
+        const summaries: ClientWorkflowRun[] = [];
+        for (const run of await runtime.workflows.list(filter ?? {})) {
+          // Old Hosts omit process facts from summaries. Read them once through
+          // the existing detail method; never infer a timestamp from lifecycle.
+          const process = run.updatedAt === undefined ? await runtime.workflows.get(run.runId) : run;
+          if (process?.updatedAt === undefined) {
+            throw new Error(`Workflow process is unavailable: ${run.runId}`);
+          }
+          summaries.push({
+            runId: run.runId,
+            workflowName: run.workflow,
+            status: run.status,
+            totalSpawned: run.totalSpawned, eventCount: run.eventCount, runDir: run.runDir,
+            ...(run.endedAt !== undefined ? { endedAt: new Date(run.endedAt).toISOString() } : {}),
+            startedAt: new Date(run.startedAt).toISOString(),
+            updatedAt: process.updatedAt,
+            ...(process.displayName !== undefined ? { displayName: process.displayName } : {}),
+            ...(run.resultText !== undefined ? { resultSummary: run.resultText } : {}),
+            ...(run.error !== undefined ? { error: run.error } : {}),
+          });
+        }
+        return summaries;
+      },
       get: (runId) => runtime.workflows.get(runId),
       subscribe: (filter, listener, onError) => {
         const subscription = runtime.workflows.subscribe(filter, listener, onError);

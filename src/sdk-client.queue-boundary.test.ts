@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
@@ -20,6 +20,11 @@ it.each((['sa', 'ama'] as const).flatMap(agentMode =>
   (['deliver', 'skill-barrier', 'withdraw-race', 'stop', 'failure'] as const).map(behavior => ({ agentMode, behavior }))))
 ('handles $behavior at the next Provider boundary of a $agentMode Run', async ({ agentMode, behavior }) => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-next-request-'));
+  if (behavior === 'skill-barrier') {
+    const skillDir = path.join(homeDir, '.kodax', 'skills', 'inspect');
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(path.join(skillDir, 'SKILL.md'), '---\nname: inspect\ndescription: Inspect changes\n---\nInspect the requested changes.');
+  }
   const providerName = 'next-request-test';
   let releaseFirst: () => void = () => {};
   let releaseSecond: () => void = () => {};

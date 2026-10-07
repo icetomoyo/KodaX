@@ -786,6 +786,8 @@ export interface ClientInteractionResult {
 
 export interface ClientPermissionGrant {
   readonly id: string;
+  /** Host-recorded Session scope. Absence alone does not imply a global grant. */
+  readonly sessionId?: string;
   readonly label?: string;
   readonly persistence?: 'session' | 'persistent';
 }

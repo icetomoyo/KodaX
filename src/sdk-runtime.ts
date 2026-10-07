@@ -3343,7 +3343,11 @@ export interface RuntimeWorkflowFilter {
   readonly limit?: number;
 }
 
-export type RuntimeWorkflowSummary = ManagedWorkflowSnapshot;
+export type RuntimeWorkflowSummary = ManagedWorkflowSnapshot & {
+  /** Host process facts; absent on older daemons. */
+  readonly updatedAt?: string;
+  readonly displayName?: string;
+};
 export type RuntimeWorkflowSnapshot = WorkflowProcessSnapshot;
 export type RuntimeWorkflowListener = (event: WorkflowProcessEvent) => void;
 
@@ -11687,38 +11691,38 @@ function createRuntimeRunService(deps: {
   // FEATURE_298 T37 — a queued Skill input is prepared Host-side at actual
   // consumption: the trusted registry expands it and mints the runtime
   // policy; unknown references fall back to the raw user text.
-  const prepareSkillInput = async (
-    sessionId: string,
-    text: string,
-  ): Promise<{
-    readonly prompt: string;
-    readonly model?: string;
-    readonly prepare: NonNullable<RuntimeTrustedStartRunInput['prepare']>;
-    readonly skillInvocation: NonNullable<
-      RuntimeDaemonContextOptions["skillInvocation"]
-    >;
-  } | undefined> => {
+  const resolveSkillInput = async (sessionId: string, text: string) => {
     const references = [
       ...parseInlineSkillReferences(text),
       ...parseBareInlineSlashReferences(text),
     ].sort((left, right) => left.start - right.start);
-    // Preserve the REPL's single-Skill invocation boundary.
-    if (references.length > 1) {
-      throw createRuntimeConflictError('Only one Skill may be invoked by one input.', 0);
-    }
-    const reference = references[0];
-    if (reference === undefined) return undefined;
-    const argumentsText = text
-      .slice(reference.end, references[1]?.start ?? text.length)
-      .trim();
+    if (references.length === 0) return undefined;
     const session = await deps.sessionAdmission.loadRequired(sessionId);
     const settings = (await deps.settingsOwner.read(sessionId)).value;
     const projectRoot = resolveSessionPreparationRoot(session, settings);
-    const skill = await loadRuntimeSkill(projectRoot, reference.name);
-    if (!skill) return undefined;
+    // Registry reads only: unknown slash tokens never manufacture a Skill
+    // boundary, and queued input cannot execute hooks or dynamic commands.
+    const known = [];
+    for (const reference of references) {
+      const skill = await loadRuntimeSkill(projectRoot, reference.name);
+      if (skill) known.push({ skill, argumentsText: text.slice(reference.end).trim() });
+    }
+    if (known.length > 1) throw createRuntimeConflictError('Only one Skill may be invoked by one input.', 0);
+    return known[0] === undefined ? undefined : { ...known[0], projectRoot, settings };
+  };
+
+  const prepareSkillInput = async (sessionId: string, text: string): Promise<{
+    readonly prompt: string;
+    readonly model?: string;
+    readonly prepare: NonNullable<RuntimeTrustedStartRunInput['prepare']>;
+    readonly skillInvocation: NonNullable<RuntimeDaemonContextOptions['skillInvocation']>;
+  } | undefined> => {
+    const resolved = await resolveSkillInput(sessionId, text);
+    if (!resolved) return undefined;
+    const { skill, argumentsText, projectRoot, settings } = resolved;
     const preparationInput = {
       projectRoot,
-      name: reference.name,
+      name: skill.name,
       ...(argumentsText.length > 0 ? { argumentsText } : {}),
       sessionId,
     };
@@ -11958,7 +11962,7 @@ function createRuntimeRunService(deps: {
     await deps.sessionAdmission.loadExecutable(input.sessionId);
     // Receive the follow-up first, then cancel the old execution; the
     // redirect Stop reason lets the settled Run continue this queue.
-    const queuedInput = productQueue.enqueue(input);
+    const queuedInput = productQueue.enqueue(input, (await resolveSkillInput(input.sessionId, input.text)) !== undefined);
     await abortRun(target.runId, { redirect: true });
     return queuedInput;
   };
@@ -12237,7 +12241,7 @@ function createRuntimeRunService(deps: {
         }
         if (productInput.delivery === "after_turn" && activeRunBySession.has(input.sessionId)) {
           await deps.sessionAdmission.loadExecutable(input.sessionId);
-          return productQueue.enqueue(productInput);
+          return productQueue.enqueue(productInput, (await resolveSkillInput(input.sessionId, input.text)) !== undefined);
         }
         const preparedSkill = await prepareSkillInput(input.sessionId, productInput.text);
         const handle = await startRun({
@@ -12738,9 +12742,15 @@ function createRuntimeWorkflowService(deps: {
       const filtered = filter?.runId
         ? list.filter((item) => item.runId === filter.runId)
         : list;
-      return filter?.limit === undefined
+      const selected = filter?.limit === undefined
         ? filtered
         : filtered.slice(0, filter.limit);
+      return selected.map((run) => {
+        const process = manager.getWorkflowProcessSnapshot(run.runId);
+        if (process === undefined) throw new Error(`Workflow process is unavailable: ${run.runId}`);
+        return { ...run, updatedAt: process.updatedAt,
+          ...(process.displayName !== undefined ? { displayName: process.displayName } : {}) };
+      });
     },
 
     async get(runId) {

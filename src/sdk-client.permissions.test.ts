@@ -98,6 +98,34 @@ function sessionSuggestion(permission: ClientInteraction): { readonly id: string
   return { id: suggestion.id };
 }
 
+it('lets a new client distinguish and revoke same-label grants in different Sessions', async () => {
+  const sessions = await Promise.all([first.sessions.create({ projectPath: homeDir }), first.sessions.create({ projectPath: homeDir })]);
+  for (const [index, session] of sessions.entries()) {
+    await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'accept-edits' });
+    scriptedToolCall = () => [writeMarkerCall(`scope-${index}`, 'scope-marker.txt', 'same operation')];
+    const context = await submitAndView(session.id, `grant-${index}`);
+    try {
+      const permission = pendingPermission(context.views)!;
+      await first.interactions.respond(permission.requestId, {
+        kind: 'permission', decision: { type: 'allow_session', suggestionId: sessionSuggestion(permission).id },
+      });
+      await first.runs.await(context.runId);
+    } finally { context.close(); }
+  }
+  await second.disconnect();
+  second = await connectKodaXClient({ homeDir, endpoint: host.endpoint.path });
+  const listed = await second.permissions.listGrants();
+  expect(listed.grants).toHaveLength(2);
+  expect(listed.grants[0]!.label).toBe(listed.grants[1]!.label);
+  expect(listed.grants).toEqual(expect.arrayContaining(sessions.map(session => expect.objectContaining({ sessionId: session.id }))));
+  const target = listed.grants.find(grant => grant.sessionId === sessions[0]!.id)!;
+  expect(await second.permissions.revokeGrant(target.id, listed.revision)).toBe(true);
+  const remaining = await first.permissions.listGrants();
+  expect(remaining.grants).toEqual([expect.objectContaining({ sessionId: sessions[1]!.id })]);
+  await expect(second.permissions.revokeGrant(remaining.grants[0]!.id, listed.revision))
+    .rejects.toMatchObject({ code: 'conflict' });
+}, 90_000);
+
 async function submitAndView(sessionId: string, inputId: string): Promise<{
   readonly runId: string;
   readonly views: ClientSessionView[];

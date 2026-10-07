@@ -89,6 +89,10 @@ Shell 清理重试耗尽时保留 deferred 进程身份，允许后续对话和 
 
 `workflows.get` 返回现有工作流进程的完整数据快照，包括 items、counts、progress 与 lineage；`list` 保留计数、起止时间和 runDir，不让 UI 从摘要推算进度。`subscribe` 复用已有事件流，返回可关闭的订阅，不代表断线期间事件会无限重放。客户端重新连接后应重新读取快照。所有这些类型都是数据，不暴露 Host 执行对象。
 
+`workflows.list` 的 `displayName` 与 `updatedAt` 来自同一 Host process snapshot；更新时间不是开始时间、结束时间或客户端读取时间。旧 Host 的列表缺少更新时间时，SDK 通过已有 `get` 只读补齐，补读失败明确拒绝；未设置显示名称不触发补读。不同 RPC 之间可能有真实进度更新，字段一致性以稳定读取窗口为准，不承诺跨调用原子快照。
+
+`permissions.listGrants` 保留 Host 记录的可选 `sessionId`，用于区分不同 Session 的同标签授权。字段缺失只表示未提供 Session 归属，不能据此推断为全局授权；`persistence` 仍按原语义解释。撤销继续只使用 `grantId + expectedRevision`，显示字段不构成新的授权依据，不公开内部 matcher。
+
 Learning/Workflow 订阅的 `ready` 只表示 Host 已完成注册，不表示快照同步。Workflow 可传可选 `onError`；Learning 的 `ready` 及 iterator `next` 保留早期失败，多个 `next` 按 FIFO 接收事件。故障拒绝所有等待并终止观察；显式 `return` 清空事件、令剩余等待 `done`，不会重写已经拒绝的 Promise。主动关闭发生在握手前时 `ready` 拒绝，迟到的成功握手只释放远端订阅。
 
 传输断连、Host 学习服务故障与 Run 终态是独立事实。消费者报告观察错误，重新订阅并等待 `ready`，再读取 snapshot/list/get；读取期间的通知作为再次刷新信号，按领域 revision 去重，不重放 mutation。Ink Learning 和工作流完成观察使用这一恢复顺序，Session.observe 保留自身恢复语义。
@@ -158,6 +162,8 @@ delivery 的队列行为如下；空 queue 不能证明所有已知输入已经�
 普通 stop/failed 不自动 drain，队列保留；不能在重连时自行重放提交。Ink 已按逐 inputId 查询处理合批确认，不按正文去重。
 
 安全点消费与 withdraw 使用同一 Host Session 操作锁；输入成功保存后才从可撤回队列移除并标记 submitted。消费前撤回得到完整原文和附件，消费后撤回明确 conflict。排队 Skill 必须经 Host 可信准备，是普通批次的顺序边界；不把 Skill 当普通文字塞入执行器，也不让后方输入越过它。没有后续执行额度时不通过无限延长 Run 来消费队列。以上行为对 REPL 和 SDK 相同，不新增 UI 自有执行队列。
+
+即时、after_turn 与 redirect 输入的 Skill 引用使用同一 Host registry 识别规则，包含正文中间的 `/name` 和 `/skill:name`。未知斜杠词、路径及 URL 保持普通文本，多引用限制只计算已知 Skill。入队仅确认身份并保存原文和独立消费边界，不执行动态上下文或 hooks；实际消费时重新通过 registry 解析可信定义，沿用其缓存与显式重载语义。已入队的 Skill 若届时无法解析，沿用未知引用的原文回退并保留其既定队列边界。客户端不提交 Skill 执行元数据，原始输入去重与 Stop 保留规则不变。
 
 Interaction 的 kind 决定 options 和 response：单选问题、多问题、文本输入或权限；取消用 `kind: 'cancel'`。权限答案为 allow_once、带 suggestionId 的 allow_session/allow_always、或 reject；suggestionId 来自当前请求，不能自行拼装。`accepted: false` / `already_resolved` 覆盖迟到、重复、取消、过期或未知目标；不要无限重答。
 

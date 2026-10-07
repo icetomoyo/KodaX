@@ -264,3 +264,23 @@ Host 验证 canonical 先保存、display checkpoint 后到、取消 partial 的
 追加真实队列保存前 gate：观察端先读旧历史，保存放行后输入行与其 afterInputId 输出应在原 3 秒限内同时出现，不需要额外输入或查询刺激。`src/sdk-client.queue-boundary.test.ts` 10/10；第三轮完整集合仍有 8 项失败及 2 个未处理错误，EXIT 1，失败与 fixture/RPC 定位记录见设计块，不能覆盖历史失败。worktree 假进程边界隔离后 37/37，RPC 5/5 返回；hook 23/23、ACP/alias 8/8。完整门禁须读取最终退出码、失败与未处理错误计数。
 
 最终源码构建与类型检查均 EXIT 0；其后原生 `--long-history-only` 与 `--queue-boundary-only` 分别 7/7、EXIT 0。独立完整运行默认 4 worker、retry 0：1117 文件通过、1 跳过；16217 项通过、0 失败、77 跳过、21 todo，EXIT 0，未处理错误 0，源码哈希无变化。日志/JSON：`%TEMP%/kodax-output-final-gate.log`、`kodax-output-final-gate-results.json`。两轴评审无剩余 finding；清理未确认警告仍保留，真实 GUI 人工验收与覆盖率未在本轮测量。此前主 PTY 47/47、consumer 14/14，不与本轮最后两项重复累计为独立用例总数。
+
+## SDK 契约补缺回归（2026-10-07）
+
+基于主分支 `aaaf3c51` 与现有 Product Client v1，补齐 Workflow 摘要事实、排队 Skill 识别及授权的 Session 归属；不新增 RPC、能力版本或配置项。
+
+```bash
+npx vitest run src/sdk-client.workflow.test.ts src/sdk-client.queue.test.ts src/sdk-client.queue-boundary.test.ts src/sdk-client.permissions.test.ts src/session-input-queue.test.ts --maxWorkers=1 --retry=0
+npm run build
+npm run typecheck
+```
+
+- Workflow：经真实双 Client/IPC 在暂停、恢复及终态比较列表与详情的 `displayName`、`updatedAt`；跨 RPC 在稳定时间窗比较。模拟旧 Host 缺少摘要字段时使用已有详情读取；详情缺失必须失败，不能合成时间。
+- Skill：正文中间的已注册引用在 idle、after_turn、redirect 下应用同样的 model、参数及动态上下文；入队时 hook 未运行，消费时读取更新后的动态上下文。Skill 前后的未知 slash 文本不计入多 Skill 冲突，也不截断参数；路径、URL 和未知名称留在普通批次。两个已知引用须拒绝且不入队、不停止原 Run。既有队列边界夹具显式创建真实注册 Skill。
+- 授权：两个 Session 创建同标签授权，新连接仅依公开的 `sessionId` 区分，按原有 ID/revision 撤销一个，另一个保留，陈旧 revision 仍被拒绝。
+
+三处原始缺漏均先复现 RED。评审另发现未知 slash 截断参数，新增 `$ARGUMENTS` 断言先失败再修正。定向首轮 26/27；剩余断言混入后台 Memory review 请求，按已有夹具模式分流该请求后队列文件 8/8，其他四文件 19/19。较早一次并行类型检查期间队列保存观察超时，随后串行边界文件通过；不把复验描述为首轮全绿。构建与类型检查均 EXIT 0，双轴静态评审无剩余 finding。
+
+本轮不运行付费模型 eval，也未测量覆盖率或重复原生 PTY/GUI 验收。完整默认集合的结果在运行结束后追加，历史门禁不替代本轮结果。
+
+最终完整默认集合（默认 4 worker、retry 0）EXIT 0：1150 文件通过、1 跳过；16526 项通过、0 失败、77 跳过、21 todo；未处理错误 0。构建后测试期间未修改生产源码；日志与 JSON 为 `%TEMP%/kodax-sdk-contract-full.log` 和 `kodax-sdk-contract-full-results.json`。子进程清理未确认等既有警告保留，不等同于失败门禁；上述覆盖率和人工验收限制仍然适用。

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { createCliWorkflowControl } from './cli-client-plane.js';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { createKodaXRuntime } from './sdk-runtime.js';
@@ -26,9 +26,13 @@ const SOURCE = [
   '}',
 ].join('\n');
 
-it('runs one workflow on the Host that both clients observe and control', async () => {
+it.each([false, true])('shares workflow facts and control with an older summary=%s', async (olderSummary) => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-workflow-'));
   const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
+  // Simulate the old wire shape while retaining the real Host and IPC reads.
+  const list = runtime.workflows.list.bind(runtime.workflows);
+  if (olderSummary) vi.spyOn(runtime.workflows, 'list').mockImplementation(async filter =>
+    (await list(filter)).map(({ updatedAt: _updatedAt, displayName: _displayName, ...run }) => run));
   const paths = resolveRuntimeDaemonPaths(homeDir);
   const lock = tryAcquireRuntimeDaemonLock(paths, {
     runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
@@ -59,6 +63,17 @@ it('runs one workflow on the Host that both clients observe and control', async 
     expect(started).toMatchObject({ kind: 'started' });
     if (started.kind !== 'started') return;
     const runId = started.runId;
+    const expectSummaryFacts = async () => {
+      // Progress may advance between RPCs. Compare only a stable read window.
+      await expect.poll(async () => {
+        const before = await second.workflows.get(runId);
+        const summary = (await first.workflows.list({ runId }))[0];
+        const after = await second.workflows.get(runId);
+        return before?.updatedAt === after?.updatedAt
+          && summary?.updatedAt === after?.updatedAt
+          && summary?.displayName === 'Dual-client audit';
+      }, { timeout: 10_000 }).toBe(true);
+    };
     // Session-scoped control crosses the public client and real IPC boundary.
     const foreignSession = await second.sessions.create({ projectPath: homeDir });
     await expect(secondControl.stop(runId, { sessionId: foreignSession.id }))
@@ -98,8 +113,11 @@ it('runs one workflow on the Host that both clients observe and control', async 
 
     // Control crosses clients: A pauses, B observes and stops, both settle.
     await firstControl.pause(runId);
-    const paused = await second.workflows.get(runId);
-    expect(['paused', 'pausing', 'completed']).toContain(paused?.status ?? 'completed');
+    await expect.poll(async () => (await second.workflows.get(runId))?.status,
+      { timeout: 10_000 }).toMatch(/^(paused|pausing|completed)$/);
+    await expectSummaryFacts();
+    await firstControl.resume(runId);
+    await expectSummaryFacts();
     await secondControl.stop(runId, { sessionId: session.id });
     // workflows.get projects the WorkflowProcess snapshot; a Host stop settles
     // the process as 'cancelled' (run.status is 'stopped', but that never
@@ -116,9 +134,15 @@ it('runs one workflow on the Host that both clients observe and control', async 
     const terminal = await first.workflows.get(runId);
     expect(terminal).toBeDefined();
     const runTerminal = await runtime.runs.await(runId);
+    await expectSummaryFacts();
     expect(['completed', 'interrupted']).toContain(runTerminal.phase);
     expect(await first.workflows.resume(runId)).toBe(false);
     expect((await runtime.runs.get(runId)).phase).toBe(runTerminal.phase);
+    if (olderSummary) {
+      const get = vi.spyOn(runtime.workflows, 'get').mockResolvedValue(undefined);
+      await expect(first.workflows.list({ runId })).rejects.toThrow('Workflow process is unavailable');
+      get.mockRestore();
+    }
 
     // Validation settles the admitted Run even when no Workflow manager starts.
     await expect(first.workflows.start({
@@ -131,6 +155,7 @@ it('runs one workflow on the Host that both clients observe and control', async 
     await second.disconnect();
     await host.close();
     await runtime.close();
+    vi.restoreAllMocks();
     await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 90_000);
