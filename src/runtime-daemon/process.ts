@@ -430,8 +430,20 @@ export async function acquireRuntimeDaemonProcessLease(
     );
   }
   if (initialHealth === "unhealthy" || initialHealth === "mismatch") {
+    const ownerPid = initial.state?.pid;
+    let ownerCmdline: string | undefined;
+    if (ownerPid !== undefined && process.platform === 'linux') {
+      try {
+        ownerCmdline = readFileSync(`/proc/${ownerPid}/cmdline`, 'utf8')
+          .split('\0').filter(Boolean).join(' ').slice(0, 300);
+      } catch { ownerCmdline = undefined; }
+    }
     throw new Error(
-      `Runtime daemon is ${initialHealth}; refusing to start a competing owner.`,
+      `Runtime daemon is ${initialHealth}; refusing to start a competing owner.`
+      + ` [state pid=${ownerPid} status=${initial.state?.status} endpoint=${initial.state?.endpoint}`
+      + ` pidAlive=${initial.pidAlive} reachable=${initial.endpointReachable}`
+      + ` identityMatches=${initial.identityMatches}`
+      + `${ownerCmdline !== undefined ? ` ownerCmdline=${JSON.stringify(ownerCmdline)}` : ''}]`,
     );
   }
 
