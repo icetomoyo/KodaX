@@ -8,6 +8,47 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.97-alpha.1] - 2026-10-08
+
+First alpha of the v0.7.97 line: FEATURE_298's unified product Host and
+client contract. The interactive product pins to the independent Host, one
+shared session contract carries data, control, and information semantics to
+every consumer, and execution funnels through one prepared action. Every
+v0.7.96 stable contract is retained. npm publication remains a manual
+maintainer action.
+
+### Added
+
+- Shared product session contract and SDK entry: `KodaXProductClient`
+  through `/client` exposes sessions, goals, notices, paged history reads,
+  and Host-estimated token accounting to product consumers (T01, T09, T32).
+- The interactive REPL pins to the independent Host: session-command
+  mutations, `/compact`, `/goal`, full-text queue retention with atomic
+  pull-back, prompt input artifacts, and canonical session writes route
+  through the Host plane (T27, T34).
+- Host-owned planes replace client-side reimplementations: queued inputs
+  with batching and withdrawal (T06), steer/redirect/explicit-stop delivery
+  with required target runs (T07), one permission authority (T14), skills
+  preparation expanded at consumption (T37), declarative workflow start and
+  control operations (T22), memory management (T36), per-session MCP
+  persistence with typed catalogs (T12), A2A serving from bootstrap listen
+  config (T21), agent registry and Actor collaboration (T30), invocations
+  preparation over RPC for all interactive faces (T37), session derivation
+  by fork or deterministic recovery seed (T10), lineage selection/labels/
+  rewind (T11), and conservative legacy-run reads with event repair (T33).
+
+### Fixed
+
+- Preserve canonical history and ordinary browsing: complete canonical items
+  restore before identity assignment, reverse wheel input routes from frozen
+  windows, browse waiting is bounded and cancellable, partial pages keep the
+  final answer after older tools, and quoted managed protocol markers no
+  longer truncate ordinary assistant answers (Issues 344-349).
+- Host command failures stay visible with their feedback, late observation
+  cleanup keeps its diagnostics, and Host message counts drive `/new`.
+
+---
+
 ## [0.7.96] - 2026-10-01
 
 Stable release of the v0.7.96 line, finalizing the fourteen release

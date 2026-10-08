@@ -145,7 +145,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('may canonicalize DACL protection/inheritance control at commit');
     expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
-    expect(sandbox).toContain('v0.7.96 release uses Windows native shell protocol 10');
+    expect(sandbox).toContain('v0.7.97-alpha.1 release uses Windows native shell protocol 10');
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
@@ -173,7 +173,12 @@ describe('FEATURE_218 manual registry', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('The v0.7.96 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.97-alpha.1 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain("The v0.7.97-alpha.1 release lands FEATURE_298's unified product Host and client contract");
+    expect(sdk).toContain('pins to the independent Host');
+    expect(sdk).toContain('`steer` and `redirect` deliveries');
+    expect(sdk).toContain('derive by fork or deterministic recovery seed');
+    expect(sdk).toContain('Every v0.7.96 stable contract is retained.');
     expect(sdk).toContain('The stable v0.7.96 release finalizes the line with no contract changes beyond rc.14');
     expect(sdk).toContain('`latest` moves to the stable tag');
     expect(sdk).toContain('The rc.14 release hands the next managed or coding Run a labelled, bounded, transient record');

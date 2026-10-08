@@ -301,6 +301,14 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
+**v0.7.97-alpha.1 发布**：v0.7.97 线首个 alpha——FEATURE_298 统一产品宿主
+与客户端契约。交互式 REPL 绑定独立宿主；共享产品会话契约
+（`KodaXProductClient`，经 `/client`）承载会话、目标、通知、分页历史、
+带批量与撤回的排队输入，以及 steer/redirect/stop 投递区分；唯一权限权威、
+技能、工作流、内存、按会话 MCP 持久化与 A2A 服务收归宿主；会话按 fork 或
+确定性恢复种子派生；运行时读写缺口闭合（Issues 344-349）。所有 v0.7.96
+稳定契约全部保留；跨平台人工验收保持开放。
+
 **v0.7.96 正式版发布**：v0.7.96 线的正式版本，定格十四个发布候选的全部
 成果：跨 Windows/Linux/macOS 的受信文本事务与平台 Shell 隔离；Windows
 daemon 生命周期仲裁与不阻塞的不确定 Shell 清理；按回合匹配的中断 Run 跨
@@ -483,7 +491,7 @@ native 文本权威改在摘要固定的 `manylinux_2_28` 构建器中编译，�
 scope 在 SDK、Agent 摘要、CLI 与 Runtime Worker 请求间共享，保留结构化的 Child Agent Provider
 失败信息，精确遵循 run-scoped 凭据校验，并为严格 vLLM 网关省略空 `tools` 数组（Issues 329-332）。
 npm 发布仍由
-维护者手动执行。详见 [v0.7.96 正式版发布清单](docs/release.md#v0796-release-preparation)。
+维护者手动执行。详见 [v0.7.97-alpha.1 发布清单](docs/release.md#v0797-alpha1-release-preparation)。
 
 **v0.7.96-alpha.3 发布**：Provider 凭据成为惰性、受限、可撤销的能力（ADR-068）。v2
 credential broker 将 Provider 密钥保留在 OS keychain，按每次 wire call、为单一封闭

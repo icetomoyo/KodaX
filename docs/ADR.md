@@ -2,7 +2,23 @@
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
 
-> Last updated: 2026-10-01
+> Last updated: 2026-10-08
+>
+> **v0.7.97-alpha.1 release addendum:** FEATURE_298 lands its first alpha:
+> one product Host, one client contract, one execution decision. The
+> interactive REPL binds to the independent Host instead of writing its own
+> lineage; the shared product session contract (`KodaXProductClient`,
+> `/client`) exposes sessions, goals, notices, paged history reads,
+> Host-estimated tokens, and queued inputs with batching and atomic
+> withdrawal; `inputs.submit` gains `steer` and `redirect` deliveries bound
+> to a required target run, while plain stops and failures never
+> auto-continue. Sessions derive by fork or deterministic recovery seed,
+> lineage selection/labels/rewind moves into the Host, one permission
+> authority installs there, and skills, workflows, memory, per-session MCP
+> persistence, and A2A serving become Host-owned planes. Client-side
+> canonical session writes stop in bound mode, and runtime read/write gaps
+> close (Issues 344-349). Every v0.7.96 stable contract is retained;
+> cross-platform manual acceptance remains open.
 >
 > **v0.7.96 stable release addendum:** The stable release finalizes the
 > fourteen release candidates of the v0.7.96 line without architectural

@@ -769,6 +769,17 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
+**v0.7.97-alpha.1 release:** First alpha of the v0.7.97 line — FEATURE_298's
+unified product Host and client contract. The interactive REPL pins to the
+independent Host; the shared product session contract (`KodaXProductClient`
+through `/client`) carries sessions, goals, notices, paged history, queued
+inputs with batching and withdrawal, and the steer/redirect/stop delivery
+distinction; one permission authority, skills, workflows, memory, per-session
+MCP persistence, and A2A serving become Host-owned; sessions derive by fork
+or deterministic recovery seed; and runtime read/write gaps close (Issues
+344-349). Every v0.7.96 stable contract is retained; cross-platform manual
+acceptance remains open.
+
 **v0.7.96 stable release:** The stable release of the v0.7.96 line,
 finalizing the fourteen release candidates: trusted text transactions and
 platform shell containment across Windows, Linux, and macOS; Windows daemon

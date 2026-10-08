@@ -11,11 +11,11 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.96` (Git tag / GitHub release) |
-| Current package version | `@kodax-ai/kodax@0.7.96` (npm publication remains manual) |
+| Current released version | `v0.7.97-alpha.1` (Git tag / GitHub pre-release); `v0.7.96` remains the last stable release |
+| Current package version | `@kodax-ai/kodax@0.7.97-alpha.1` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
-| Released implementation | [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) — released in `v0.7.96-beta.9`, extended through `v0.7.96` |
-| Current development | `v0.7.97` / `FEATURE_298` — core, T38–T42 and parity follow-ups T43–T56 implemented; [2026-09-24 merge verification](research/mainline-merge-gap-audit-2026-09-24.md) completed without reporter timeout; cross-platform/manual release verification pending |
+| Released implementation | [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released in `v0.7.97-alpha.1`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
+| Current development | `v0.7.97` / `FEATURE_298` — cross-platform/manual release verification for the alpha continues |
 | Roadmap updated | `2026-09-23` — FEATURE_300 planned for `v0.7.99`; implementation not started |
 | Total tracked features | `84` |
 | InProgress | `2` |
@@ -520,6 +520,20 @@
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
 ---
+
+## v0.7.97-alpha.1 Release Record
+
+`v0.7.97-alpha.1` is the first alpha of the v0.7.97 line: FEATURE_298's
+unified product Host and client contract. The REPL pins to the independent
+Host; the shared product session contract and SDK entry
+(`KodaXProductClient` through `/client`) carry sessions, lineage, goals,
+notices, paged history, queued inputs with batching and withdrawal, and the
+steer/redirect/stop delivery distinction. Sessions derive by fork or
+deterministic recovery seed; one permission authority installs in the Host;
+skills, workflows, memory, MCP persistence, and A2A serving become
+Host-owned; and runtime read/write gaps close (Issues 344-349). Every
+v0.7.96 stable contract is retained. Cross-platform manual acceptance
+remains open; npm publication remains a manual maintainer step.
 
 ## v0.7.96 Release Record
 

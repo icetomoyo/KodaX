@@ -4,7 +4,7 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-09-03
 >
-> Current implementation baseline: `@kodax-ai/kodax@0.7.96`.
+> Current implementation baseline: `@kodax-ai/kodax@0.7.97-alpha.1`.
 > The GitHub release is automated from the release tag; npm publication
 > remains manual.
 > This baseline advertises Windows `sandboxRuntime:11`;

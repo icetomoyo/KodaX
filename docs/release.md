@@ -136,6 +136,59 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.97-alpha.1 release preparation
+
+Release state: `v0.7.97-alpha.1` is the GitHub pre-release for the exact
+tagged commit — the first alpha of the v0.7.97 line, carrying FEATURE_298's
+unified product Host and client contract (T01-T56) plus the runtime
+read/write gap closures (Issues 344-349). The tag-triggered Release
+workflow runs the full reusable CI workflow before the build matrix; branch
+pushes do not trigger CI, so the tag is the first and only remote validation
+gate. The `-alpha` suffix marks the release as a GitHub pre-release
+automatically. npm registry publication remains a separate manual maintainer
+action.
+
+On top of v0.7.96 stable it includes:
+
+- The unified product Host and one client contract: the REPL pins to the
+  independent Host, `KodaXProductClient` ships through `/client`, and
+  execution funnels through one prepared action (FEATURE_298, T01-T56;
+  design: `docs/features/v0.7.97.md`).
+- Host-owned planes: queued inputs with batching and withdrawal,
+  steer/redirect/stop deliveries, one permission authority, skills,
+  workflows, memory, per-session MCP persistence, A2A serving, session
+  derivation by fork or recovery seed, lineage management, and RPC
+  invocations preparation.
+- Client/runtime gap closures: canonical history restoration, bounded
+  browse waiting, partial-page ordering, quoted-marker truncation, visible
+  Host command failures, and Host-estimated token accounting (Issues
+  344-349).
+
+All root/workspace package versions and lockfile entries are
+`0.7.97-alpha.1`. The feature-design submodule, public guides, architecture
+documents, and `kodax_manual` track this release.
+
+Release gates:
+
+1. Local, before tagging (no branch CI exists): strict source/test
+   typechecks, tracker consistency, registry (`kodax_manual`) tests,
+   client/host suites, and package builds pass.
+2. Push the reachable feature-design submodule commit before the parent commit.
+3. Push the release commit, then tag the exact commit `v0.7.97-alpha.1`; the
+   tag must trigger the Release workflow whose `Full CI` job must pass
+   before the build matrix runs.
+4. The Release workflow must produce five platform archives, the universal
+   npm tarball, and SHA256SUMS (13 assets), with every job green, and
+   auto-create the GitHub pre-release.
+5. Leave npm publication to the maintainer: set `npm_config_tag=alpha` (or
+   accept that `latest` moves if published without a tag override), then
+   run `node scripts/release.mjs` to download and verify the exact universal
+   tarball before publishing.
+
+Windows remains native shell protocol 10 with setup generation 11 and
+`sandboxRuntime:11`; `runtimeExitSettlement:2`, `crashOutcomeModel:2`, and
+`runtimeAutoModeGuardrail:6` remain unchanged.
+
 ## v0.7.96 release preparation
 
 Release state: `v0.7.96` is the stable GitHub release for the exact tagged
