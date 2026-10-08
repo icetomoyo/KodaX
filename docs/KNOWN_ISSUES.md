@@ -13,6 +13,36 @@ Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
 
+## Issue 358: Long-line history layout exceeds the Linux Node 20 CI guard
+
+- Priority: Medium
+- Status: Open
+- Introduced: first affected version unknown; observed in v0.7.97-alpha.1
+  validation at `af6d7a7d`
+- Created: 2026-10-08
+
+**Original Problem:** After both Linux fast suites passed the Issue 356/357
+repairs, the Node 20 unit tier failed
+`prompt-history-browse.test.ts` → `records UTF-16 positions across long lines,
+newlines, emoji and wrapping`. Layout of `'🦊中文 '.repeat(30_000)` took
+46,118.6 ms against the existing 30,000 ms regression guard. The unit tier had
+11,898 passing tests and this single failure; contract/system tiers were
+therefore skipped. The other six CI jobs passed
+([run evidence](https://github.com/icetomoyo/KodaX/actions/runs/37744293957)).
+
+**Context:** The same case passes in isolation on local Windows Node 20 with
+`CI=true` (test body about 11 seconds). This observation does not establish
+whether the Linux result comes from CPU contention, runtime segmentation cost,
+or a layout regression. The fixture and production layout were unchanged by
+the Issue 356/357 fixes. The timing guard remains intact.
+
+**Root Cause:** Not established. The affected path is
+`pushWrappedRows` → `calculateVisualLayout` → `splitByCodePoints`, whose normal
+path uses `Intl.Segmenter` graphemes. Profile segmentation and wrapping
+separately on Linux Node 20, in isolation and under the unit tier's load,
+before selecting a fix or changing the performance gate. No production
+performance change or threshold increase is included in this repair.
+
 ## Issue 356: Interactive Ink fixtures inherit CI static-output mode
 
 - Priority: Medium
@@ -55,7 +85,8 @@ fixtures disable the independently tested RepoIntel cache prewarm through its
 existing switch, preventing its background writes from racing temporary-root
 cleanup; injected Host RepoIntel trace assertions remain enabled. This does not
 claim to validate the prewarm lifecycle itself.
-The three interactive cases pass with `CI=true`; final Linux CI validation is pending.
+All three interactive cases pass with `CI=true` locally and in both Linux
+Node 20/22 fast suites ([CI evidence](https://github.com/icetomoyo/KodaX/actions/runs/37744293957)).
 
 ## Issue 357: Output ownership fixture counts learning reviews as answers
 
@@ -100,7 +131,8 @@ fails the test instead of treating a bounded drain timeout as completion.
 The test requires exactly one review and the expected one/two foreground answer
 calls both before and after restart; the total-request count must also remain
 unchanged. Output identity, persistence, readItem and replay assertions remain.
-All four cases pass with `CI=true`; Linux CI validation is pending.
+All four cases pass with `CI=true` locally and in both Linux Node 20/22 fast
+suites ([CI evidence](https://github.com/icetomoyo/KodaX/actions/runs/37744293957)).
 
 ## Issue 355: A SIGKILLed daemon's zombie pid wedges crash recovery on Linux
 
@@ -1241,6 +1273,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 358 | Medium | Open | Long-line history layout exceeds the Linux Node 20 CI guard | observed at `af6d7a7d` during v0.7.97-alpha.1 validation; first affected version unknown | — | 2026-10-08 | — |
 | 357 | Medium | Resolved | Output ownership fixture counts learning reviews as answers | observed during v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
 | 356 | Medium | Resolved | Interactive Ink fixtures inherit CI static-output mode | observed during v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
 | 355 | High | Resolved | A SIGKILLed daemon's zombie pid wedges crash recovery on Linux | observed during v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
@@ -16053,7 +16086,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 236 (37 Open, 199 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 237 (38 Open, 199 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
