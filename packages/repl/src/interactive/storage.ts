@@ -2892,7 +2892,21 @@ export class FileSessionStorage implements KodaXSessionStorage {
     };
     const next = prev.then(locked, locked);
     this.writeQueues.set(id, next);
+    const retire = () => {
+      if (this.writeQueues.get(id) === next) this.writeQueues.delete(id);
+    };
+    // The caller retains next's result; a settled failure cannot poison later reads.
+    void next.then(retire, retire);
     return next;
+  }
+
+  private async awaitOwnWrites(id: string, options: SessionReadOptions, startedAt: number): Promise<void> {
+    for (;;) {
+      assertSessionReadBudget(options, startedAt);
+      const pending = this.writeQueues.get(id);
+      if (!pending) return;
+      await pending;
+    }
   }
 
   private refreshSelfVerifiedLocationTopology(id: string): void {
@@ -4721,8 +4735,14 @@ export class FileSessionStorage implements KodaXSessionStorage {
     options: SessionReadOptions = {},
   ): Promise<SessionData | null> {
     throwIfSessionReadAborted(options.signal);
+    const startedAt = Date.now();
     const resolved = await raceSessionRead(
-      this.readSession(id, { migrate: false, strict: true }),
+      (async () => {
+        // Coordinate known writes before opening the strict boundary. Waiting
+        // uses the same deadline/cancellation budget as the subsequent read.
+        await this.awaitOwnWrites(id, options, startedAt);
+        return this.readSession(id, { migrate: false, strict: true });
+      })(),
       options,
     );
     return resolved ? cloneSessionDataForRead(resolved.data) : null;
@@ -4890,7 +4910,9 @@ export class FileSessionStorage implements KodaXSessionStorage {
     options: SessionReadOptions = {},
   ): Promise<SessionReadSnapshot | null> {
     throwIfSessionReadAborted(options.signal);
+    const startedAt = Date.now();
     const operation = (async (): Promise<SessionReadSnapshot | null> => {
+      await this.awaitOwnWrites(id, options, startedAt);
       const mainPath = await this.resolveSessionLocation(id, true);
       if (mainPath === null) return null;
       return this.readFullSnapshotAtPath(id, mainPath, options.signal, false);

@@ -66,33 +66,11 @@ it('runs default ACP prompts in the existing shared Host and only detaches on di
   const probePath = path.join(homeDir, 'probe.txt');
   await (await import('node:fs/promises')).writeFile(probePath, 'ACP tool output');
   const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'acp-local' });
-  // Temporary CI diagnosis: preserve the actual storage operations and errors.
-  const diagnose = (phase: string, error: unknown, caller?: string) => {
-    if (error instanceof Error) process.stderr.write('[DEBUG-acp-boundary] '
-      + JSON.stringify({ phase, message: error.message, stack: error.stack, caller }) + '\n');
-  };
-  const read = FileSessionStorage.prototype.read;
-  const readProbe = vi.spyOn(FileSessionStorage.prototype, 'read').mockImplementation(async function (this: FileSessionStorage, ...args) {
-    const caller = new Error().stack;
-    try { return await read.apply(this, args); }
-    catch (error: unknown) { diagnose('storage.read', error, caller); throw error; }
-  });
-  const capture = FileSessionStorage.prototype.readFullSnapshot;
-  const captureProbe = vi.spyOn(FileSessionStorage.prototype, 'readFullSnapshot').mockImplementation(async function (this: FileSessionStorage, ...args) {
-    const caller = new Error().stack;
-    try { return await capture.apply(this, args); }
-    catch (error: unknown) { diagnose('storage.readFullSnapshot', error, caller); throw error; }
-  });
-  const observe = runtime.sessions.observeView;
-  const observeProbe = vi.spyOn(runtime.sessions, 'observeView').mockImplementation(async (...args) => {
-    try { return await observe(...args); }
-    catch (error: unknown) { diagnose('observeView', error); throw error; }
-  });
-  const submit = runtime.runs.acceptInput;
-  const submitProbe = vi.spyOn(runtime.runs, 'acceptInput').mockImplementation(async (...args) => {
-    try { return await submit(...args); }
-    catch (error: unknown) { diagnose('inputs.submit', error); throw error; }
-  });
+  let releaseWriter = () => {};
+  let restoreWriterProbe = () => {};
+  let restoreReadProbe = () => {};
+  let writer: Promise<void> | undefined;
+  let writerTimer: ReturnType<typeof setTimeout> | undefined;
   const paths = resolveRuntimeDaemonPaths(homeDir);
   const lock = tryAcquireRuntimeDaemonLock(paths, {
     runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
@@ -133,10 +111,49 @@ it('runs default ACP prompts in the existing shared Host and only detaches on di
       && update.content.type === 'text' ? [update.content.text] : []).join('');
     expect(text).toBe('Hello from shared Host.');
     notifications.length = 0;
+    const fs = (await import('node:fs/promises')).default;
+    const rename = fs.rename.bind(fs);
+    let enterWriter!: () => void;
+    const writerEntered = new Promise<void>(resolve => { enterWriter = resolve; });
+    const writerGate = new Promise<void>(resolve => { releaseWriter = resolve; });
+    const backgroundTitle = 'Controlled ACP background commit';
+    const renameProbe = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      if (String(to).endsWith(`${path.sep}${session.sessionId}.jsonl`)) {
+        const meta: unknown = JSON.parse((await fs.readFile(from, 'utf8')).split('\n', 1)[0]!);
+        if (meta !== null && typeof meta === 'object' && 'title' in meta && meta.title === backgroundTitle) {
+          enterWriter();
+          await writerGate;
+        }
+      }
+      return rename(from, to);
+    });
+    restoreWriterProbe = () => renameProbe.mockRestore();
+    const read = FileSessionStorage.prototype.read;
+    let injectWriter = true;
+    const readProbe = vi.spyOn(FileSessionStorage.prototype, 'read').mockImplementation(async function (this: FileSessionStorage, id, options) {
+      if (injectWriter && id === session.sessionId) {
+        injectWriter = false;
+        const data = await this.load(id);
+        if (!data) throw new Error('Expected the saved ACP Session.');
+        // Start real background persistence after the display checkpoint wait.
+        // Its commit outlasts the old polling window; only known-write
+        // coordination should allow the next ACP prompt to proceed.
+        writer = this.save(id, { ...data, title: backgroundTitle });
+        void writer.catch(() => undefined); // observed by the test and cleanup below
+        await Promise.race([writerEntered, writer.then(() => { throw new Error('Expected to hold the background commit.'); })]);
+        writerTimer = setTimeout(releaseWriter, 1_200);
+      }
+      return read.call(this, id, options);
+    });
+    restoreReadProbe = () => readProbe.mockRestore();
     callTool = true;
     await client.prompt({ sessionId: session.sessionId, prompt: [{ type: 'text', text: 'Read the probe.' }] });
     expect(notifications.filter(({ update }) => update.sessionUpdate === 'agent_message_chunk')
       .flatMap(({ update }) => 'content' in update && update.content && 'text' in update.content ? [update.content.text] : []).join('')).toBe('Hello from shared Host.');
+    await writer;
+    clearTimeout(writerTimer);
+    restoreReadProbe(); restoreWriterProbe();
+    expect((await runtime.runs.list({ sessionId: session.sessionId })).map(run => run.phase)).toEqual(['completed', 'completed']);
     expect(notifications).toContainEqual(expect.objectContaining({ update: expect.objectContaining({
       sessionUpdate: 'tool_call', toolCallId: 'read-probe', rawInput: { path: probePath }, kind: 'read',
     }) }));
@@ -187,12 +204,17 @@ it('runs default ACP prompts in the existing shared Host and only detaches on di
     await server.dispose();
     expect(await runtime.sessions.load(session.sessionId)).toBeTruthy();
   } finally {
-    await server.dispose();
-    await host.close();
-    await runtime.close();
-    readProbe.mockRestore(); captureProbe.mockRestore(); observeProbe.mockRestore(); submitProbe.mockRestore();
-    llm.clearRuntimeModelProviders();
-    vi.unstubAllEnvs();
-    await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    clearTimeout(writerTimer);
+    releaseWriter();
+    try { await writer; }
+    finally {
+      restoreReadProbe(); restoreWriterProbe();
+      await server.dispose();
+      await host.close();
+      await runtime.close();
+      llm.clearRuntimeModelProviders();
+      vi.unstubAllEnvs();
+      await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
   }
 }, 60_000);

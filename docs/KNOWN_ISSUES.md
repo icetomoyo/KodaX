@@ -32,17 +32,41 @@ ownership error. A similar strict-read race was reported before these repairs.
 conflict from the Host's own previous-turn background work, without reading a
 torn snapshot, suppressing a persistent conflict, or delivering the input twice.
 
-**Diagnosis:** Pending. Temporary test-only probes preserve real operations
-and log whether the failure escapes initial observation, background refresh,
-or input submission, with storage call stacks. Release is deferred at the
-user's request while this independently exposed race is investigated.
+**Diagnosis:** Strict reads can begin while the same `FileSessionStorage`
+instance still has a queued background write. The writer's lock/topology
+transition is then rejected just like an unknown external writer; the Host's
+short read-retry window can expire before that known write commits. A real
+same-instance save held at its rename boundary reproduces the ACP symptom:
+the second prompt delivers `ACP Host observation was interrupted` instead of
+the answer. Waiting for only the initial queue tail also fails when another
+write is queued during that wait.
+
+**Repair:** Before `read` or `readFullSnapshot` opens its strict boundary,
+drain the currently known per-Session write queue under the existing read
+deadline and cancellation budget. Retire settled tails by Promise identity,
+so a failed old write cannot poison later reads or erase a successor. Writes
+still propagate their failures; strict foreign-writer, topology, and snapshot
+checks are retained. A new writer starting during the actual strict read can
+still produce `data_changed`; this is not a general conflict suppression or
+input-submission retry.
+
+**Regression:** Seven public storage cases cover real held commits, a second
+queued write, foreign-writer rejection, cancellation/timeouts, and reading the
+last commit after a failed save. The ACP protocol regression holds a real
+background commit for 1.2s, preserves tool output, and verifies exactly two
+completed Runs. Removing coordination makes it fail with the original ACP
+error; restoring it passes. Local Node 20/22 pass with `CI=true`, the related
+storage/SDK batch and type checks are also verified. Temporary diagnostic
+probes are removed. Linux validation is pending; release remains deferred.
 
 ## Issue 360: Resume catalog fixture spends its deadline on unrelated repository analysis
 
 - Priority: Medium
-- Status: ready
+- Status: Resolved
 - Introduced: v0.7.97-alpha.1 product catalog integration fixture
 - Created: 2026-10-08
+- Fixed: v0.7.97-alpha.1 worktree (unreleased)
+- Resolved: 2026-10-08
 - Classification: Test fixture scope and performance
 
 **Original Problem:** Linux Node 22 CI times out at 45s in
@@ -58,12 +82,18 @@ before creating 1,001 newer Session files and checking discovery/archival/deleti
 the same fixture and setting only its seed Session's `repoIntelligenceMode`
 to `off` changes the body from 18.8s to 4.6s; restoring default mode returns
 it to 19.4s. This isolates unrelated repository analysis as the main measured
-cost; Linux CI must still validate the repaired fixture.
+cost.
 
 **Repair:** Disable repository intelligence only for this fixture's seed Run.
 Keep all 1,001 newer Sessions, the 45s timeout, both client connections, and
 every resume, snapshot parity, archive, and deletion assertion. Production
 repository-intelligence defaults are unchanged.
+
+**Validation:** The repaired six-test catalog file passes on Linux Node 20
+(11.2s) and Node 22 (11.3s) in
+[CI run 37798569186](https://github.com/icetomoyo/KodaX/actions/runs/37798569186).
+Node 20's full job passes; Node 22's fast tier has a separate one-shot cleanup
+failure, not a catalog timeout. The release gate is not yet fully green.
 
 ## Issue 359: Linux argv ownership checks reject SDK Hosts and reclaim live fences
 
@@ -124,10 +154,12 @@ Unix socket step were skipped after their earlier tier failures.
 ## Issue 358: Long-line history layout exceeds the Linux Node 20 CI guard
 
 - Priority: Medium
-- Status: ready
+- Status: Resolved
 - Introduced: first affected version unknown; observed in v0.7.97-alpha.1
   validation at `af6d7a7d`
 - Created: 2026-10-08
+- Fixed: v0.7.97-alpha.1 worktree (unreleased)
+- Resolved: 2026-10-08
 
 **Original Problem:** After both Linux fast suites passed the Issue 356/357
 repairs, the Node 20 unit tier failed
@@ -174,7 +206,15 @@ indexing, and width calculation. Restore the original 30s history-layout
 guard. The public splitting regression fails before the repair (10,443.6ms
 against 5s) and passes after it; Unicode boundary cases compare with native
 whole-string segmentation, and the original history test still validates all
-wrapped UTF-16 offsets. Linux CI validation is pending.
+wrapped UTF-16 offsets.
+
+**Validation:** The original 13-test history file passes in 1.4s under the
+Linux Node 20 unit tier, with the original 30s guard and outer timeout.
+That job passes all fast/unit/contract/system tiers in
+[CI run 37798569186](https://github.com/icetomoyo/KodaX/actions/runs/37798569186).
+Local Node 20/22 also pass 180 related text/layout tests, including native
+Unicode boundary comparisons. This resolves the measured long-line regression;
+other independently exposed failures still prevent release.
 
 ## Issue 356: Interactive Ink fixtures inherit CI static-output mode
 
@@ -1420,9 +1460,9 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
 | 361 | Medium | ready | ACP's next prompt can fail during a transient Session read boundary | observed during v0.7.97-alpha.1 validation; first affected version unknown | — | 2026-10-08 | — |
-| 360 | Medium | ready | Resume catalog fixture spends its deadline on unrelated repository analysis | v0.7.97-alpha.1 product catalog integration fixture | — | 2026-10-08 | — |
+| 360 | Medium | Resolved | Resume catalog fixture spends its deadline on unrelated repository analysis | v0.7.97-alpha.1 product catalog integration fixture | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
 | 359 | High | Resolved | Linux argv ownership checks reject SDK Hosts and reclaim live fences | `e43d6da6`, v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
-| 358 | Medium | ready | Long-line history layout exceeds the Linux Node 20 CI guard | observed at `af6d7a7d` during v0.7.97-alpha.1 validation; first affected version unknown | — | 2026-10-08 | — |
+| 358 | Medium | Resolved | Long-line history layout exceeds the Linux Node 20 CI guard | observed at `af6d7a7d` during v0.7.97-alpha.1 validation; first affected version unknown | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
 | 357 | Medium | Resolved | Output ownership fixture counts learning reviews as answers | observed during v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
 | 356 | Medium | Resolved | Interactive Ink fixtures inherit CI static-output mode | observed during v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
 | 355 | High | Resolved | A SIGKILLed daemon's zombie pid wedges crash recovery on Linux | observed during v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
@@ -16235,8 +16275,8 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 240 (37 Open, 200 Resolved, 0 Partially Resolved, 0 Won't Fix)
-- Ready: 3 (Issues 358, 360 and 361; validation/diagnosis in progress)
+- Total: 240 (37 Open, 202 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Ready: 1 (Issue 361; Linux validation in progress)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
