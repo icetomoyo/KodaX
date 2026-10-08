@@ -28,9 +28,36 @@ first case, the observation-unavailable notice in the second. The daemon-side
 projections are healthy — the test's own view assertions (activity todos,
 iteration counters) pass before the render assertion fails, and the
 observation rejection is injected above the transport. Windows passes both.
-Suspected area: the owned TUI renderer's second flush
-(`packages/repl/src/tui/runtime.ts` renderer selection, `KODAX_TUI_RENDERER`);
-needs reproduction on a Linux workstation.
+Reproduced on node 20 and node 22 across three CI runs. Suspected area: the
+owned TUI renderer's second flush (`packages/repl/src/tui/runtime.ts`
+renderer selection, `KODAX_TUI_RENDERER`); needs reproduction on a Linux
+workstation.
+
+## Issue 357: A provider request appears around a graceful Host restart under load
+
+- Priority: Medium
+- Status: Open
+- Introduced: observed during the v0.7.97-alpha.1 release validation; the
+  covering test is new in the v0.7.97 line, which has not had a fully green
+  CI run yet
+- Created: 2026-10-08
+
+`src/sdk-client.output-ownership.test.ts` restarts the Host gracefully
+(client disconnect, `host.close()`, fresh runtime) after the run completed,
+and asserts the fixture provider saw no extra answer call
+(`answerCalls === 1` for `continuation=false`). On CI Linux the count came
+back 2 — an extra non-verifier chat completion — while every persistence
+assertion (views, history items, `readItem`, display replay) still passed.
+The failing case drifts between runs (`sa`/`continuation=false` in one run;
+`ama`/`continuation=false` plus both `continuation=true` cases in a rerun),
+so this is a load-sensitive race rather than deterministic logic. One
+counting caveat: `answerCalls` and `calls` are cumulative, and the assertion
+at line 113 fails before line 114 is evaluated, so the extra request cannot
+be attributed pre- vs post-restart from the log alone — capturing request
+bodies (or sampling both counters before the restart) is the first
+diagnostic step. Candidates: a resume-time context rebuild or retry without
+the sidecar verifier tools, a startup probe, or a queued run attempt racing
+`host.close()` that re-executes in the new Host.
 
 ## Issue 355: A SIGKILLed daemon's zombie pid wedges crash recovery on Linux
 
@@ -1171,6 +1198,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 357 | Medium | Open | A provider request appears around a graceful Host restart under load | observed during v0.7.97-alpha.1 release validation | — | 2026-10-08 | — |
 | 356 | Medium | Open | Ink TUI stops rendering state changes after the first frame on CI Linux | observed during v0.7.97-alpha.1 release validation | — | 2026-10-08 | — |
 | 355 | High | Resolved | A SIGKILLed daemon's zombie pid wedges crash recovery on Linux | observed during v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
 | 354 | High | Resolved | Frontmatter hooks never execute on Linux where /bin/sh is dash | observed during v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
@@ -15982,7 +16010,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 235 (38 Open, 197 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 236 (39 Open, 197 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
