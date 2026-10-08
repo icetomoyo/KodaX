@@ -129,8 +129,10 @@ async function executeHookCommand(
 ): Promise<{ stdout: string; stderr: string }> {
   const shell: KodaXShellExecutionContract = options.context?.shellExecution ?? {
     version: 1,
-    shell: { kind: process.platform === 'win32' ? 'cmd' : 'bash', profile: 'none',
-      ...(process.platform === 'win32' ? {} : { executable: '/bin/sh' }) },
+    // The bash contract drives bash-only probe/invocation flags, so the
+    // executable must be bash — /bin/sh is dash on Debian and would reject
+    // every hook command at environment resolution.
+    shell: { kind: process.platform === 'win32' ? 'cmd' : 'bash', profile: 'none' },
   };
   const result = await toolBash(hookToolInput(event, hook), {
     backups: new Map(),
