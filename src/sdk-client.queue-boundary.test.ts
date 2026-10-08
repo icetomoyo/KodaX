@@ -35,8 +35,10 @@ it.each((['sa', 'ama'] as const).flatMap(agentMode =>
   let closeObservation = () => {};
   let releaseQueuedSave = () => {};
   let restoreSaveGate = () => {};
-  let queuedSaveViewIndex: number | undefined;
-  let historyReadDuringSave = false;
+  let queuedBoundaryViewIndex: number | undefined;
+  let markQueuedSaveEntered = () => {};
+  const queuedSaveEntered = new Promise<void>(resolve => { markQueuedSaveEntered = resolve; });
+  let historyReadBeforeCommit = false;
   class BoundaryProvider extends KodaXBaseProvider {
     readonly name = providerName;
     readonly supportsThinking = false;
@@ -100,9 +102,9 @@ it.each((['sa', 'ama'] as const).flatMap(agentMode =>
       const gate = new Promise<void>(resolve => { releaseQueuedSave = resolve; });
       const save = FileSessionStorage.prototype.save;
       const saveSpy = vi.spyOn(FileSessionStorage.prototype, 'save').mockImplementation(async function(this: FileSessionStorage, id, data) {
-        if (id === session.id && queuedSaveViewIndex === undefined
+        if (id === session.id
           && data.messages.some(message => message.inputId === 'followup')) {
-          queuedSaveViewIndex = views.length;
+          markQueuedSaveEntered();
           await gate;
         }
         return save.call(this, id, data);
@@ -110,7 +112,7 @@ it.each((['sa', 'ama'] as const).flatMap(agentMode =>
       const conversationPage = runtime.sessions.conversationPage.bind(runtime.sessions);
       const pageSpy = vi.spyOn(runtime.sessions, 'conversationPage').mockImplementation(async (input, options) => {
         const page = await conversationPage(input, options);
-        if (input.sessionId === session.id && queuedSaveViewIndex !== undefined) historyReadDuringSave = true;
+        if (input.sessionId === session.id && queuedBoundaryViewIndex !== undefined) historyReadBeforeCommit = true;
         return page;
       });
       restoreSaveGate = () => { saveSpy.mockRestore(); pageSpy.mockRestore(); };
@@ -123,11 +125,14 @@ it.each((['sa', 'ama'] as const).flatMap(agentMode =>
     const withdrawal = behavior === 'withdraw-race'
       ? client.inputs.withdraw(session.id, 'followup').then(() => true, () => false) : undefined;
     if (behavior === 'stop') await client.runs.stop(active.runId!);
+    // turn.started precedes asynchronous image preparation and save entry.
+    // Capture its refresh even when that refresh finishes before the save gate.
+    if (agentMode === 'sa' && behavior === 'deliver') queuedBoundaryViewIndex = views.length;
     releaseFirst();
     if (agentMode === 'sa' && behavior === 'deliver') {
       // Consume turn.started's history refresh before the queued input is durable.
-      await expect.poll(() => queuedSaveViewIndex).toBeDefined();
-      await expect.poll(() => historyReadDuringSave && views.slice(queuedSaveViewIndex).some(view =>
+      await queuedSaveEntered;
+      await expect.poll(() => historyReadBeforeCommit && views.slice(queuedBoundaryViewIndex).some(view =>
         view.queue.some(input => input.inputId === 'followup')
         && !view.items.some(item => item.inputId === 'followup'))).toBe(true);
       releaseQueuedSave();

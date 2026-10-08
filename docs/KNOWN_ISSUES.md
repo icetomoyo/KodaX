@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-10-08_
+_Last Updated: 2026-10-09_
 
 ---
 
@@ -57,7 +57,31 @@ background commit for 1.2s, preserves tool output, and verifies exactly two
 completed Runs. Removing coordination makes it fail with the original ACP
 error; restoring it passes. Local Node 20/22 pass with `CI=true`, the related
 storage/SDK batch and type checks are also verified. Temporary diagnostic
-probes are removed. Linux validation is pending; release remains deferred.
+probes are removed.
+
+**Linux follow-up:** At `b058ff80`, the controlled ACP regression passes on
+Node 20 (6.4s) and Node 22 (5.9s), and both catalog files pass in under 8s
+([CI evidence](https://github.com/icetomoyo/KodaX/actions/runs/37805597649)).
+Node 22 passes all 2,195 fast tests. Two separate fixture errors still prevent
+a green gate:
+
+- The Node 20 queue-boundary fixture starts its observation window at save
+  entry, although `turn.started` precedes asynchronous image preparation.
+  A valid queued/noncanonical view can arrive before that window. Delaying
+  save entry reproduces the exact assertion failure with and without the
+  owned-read repair. The window now opens before releasing the Provider
+  boundary; a Promise signals save entry under the original outer timeout.
+  The original pre/post-commit and exactly-once assertions remain. All ten
+  cases and the deliberately late-entry case pass locally.
+- The Unix gate deletes its temporary Home after only detaching its Clients.
+  Its still-running Host can recreate `.kodax` during `rm`. Cleanup now
+  detaches the second Client, requests shutdown through the first, and
+  verifies the captured owner's exit before deleting Home. A failed gate
+  retains Home for diagnosis. The exact Node body passes locally with the
+  Windows pipe expectation; Linux validation must verify the Unix path.
+
+The owned-read regression, final fixture corrections, and remaining complete
+CI tiers are awaiting a new Linux run. Release remains deferred.
 
 ## Issue 360: Resume catalog fixture spends its deadline on unrelated repository analysis
 

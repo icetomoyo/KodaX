@@ -117,14 +117,19 @@ jobs:
           home_dir="$(mktemp -d)"
           profile="ci-unix-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
           cleanup() {
-            rm -rf "$home_dir"
+            result=$?
+            if [ "$result" -eq 0 ]; then
+              rm -rf "$home_dir"
+            else
+              echo "Unix gate failed; retaining fixture Home: $home_dir" >&2
+            fi
           }
           trap cleanup EXIT
 
           KODAX_UNIX_GATE_HOME="$home_dir" KODAX_UNIX_GATE_PROFILE="$profile" node --input-type=module <<'NODE'
           import path from 'node:path';
           import { readFile } from 'node:fs/promises';
-          import { createKodaXRuntime, connectKodaXRuntime } from '@kodax-ai/kodax/runtime';
+          import { createKodaXRuntime, connectKodaXRuntime, waitForRuntimeDaemonShutdown } from '@kodax-ai/kodax/runtime';
 
           const homeDir = process.env.KODAX_UNIX_GATE_HOME;
           const profile = process.env.KODAX_UNIX_GATE_PROFILE;
@@ -139,6 +144,7 @@ jobs:
           };
           let first;
           let second;
+          let owner;
           let eventSubscription;
           let permissionTimeout;
           try {
@@ -150,6 +156,7 @@ jobs:
               clientInfo: { name: 'ci-unix-a', version: '0.7.66' },
               capabilities,
             });
+            owner = (await first.daemon.inspect()).owner;
             second = await connectKodaXRuntime({
               homeDir,
               profile,
@@ -230,7 +237,22 @@ jobs:
           } finally {
             clearTimeout(permissionTimeout);
             eventSubscription?.close();
-            try { await second?.close(); } finally { await first?.close(); }
+            try {
+              // Client close only detaches. Stop this isolated fixture's owner
+              // and verify its exit before the shell removes its Home.
+              await second?.close();
+              await first?.daemon.shutdown();
+              if (owner) {
+                const stopped = await waitForRuntimeDaemonShutdown({
+                  configHome: path.join(homeDir, '.kodax'), profile, owner,
+                });
+                if (stopped.status !== 'succeeded') {
+                  throw new Error(`Unix gate Host cleanup failed: ${JSON.stringify(stopped)}`);
+                }
+              }
+            } finally {
+              await first?.close();
+            }
           }
           NODE
 
