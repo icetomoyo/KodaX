@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import type { RuntimeDaemonClientTransport } from './client.js';
 import {
   claimRuntimeDaemonOwnership,
@@ -123,11 +124,25 @@ export function runtimeDaemonEndpointFromState(
 
 export function isRuntimeDaemonPidAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (process.platform === 'linux' && isZombiePid(pid)) return false;
   try {
     process.kill(pid, 0);
     return true;
   } catch (error: unknown) {
     return isNodeProcessError(error) && error.code === 'EPERM';
+  }
+}
+
+// A zombie child answers kill(pid, 0) until its parent reaps it, but it can
+// never serve the endpoint again; treating it as dead lets crash recovery
+// claim ownership instead of refusing a "competing" owner forever.
+function isZombiePid(pid: number): boolean {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const state = stat.slice(stat.lastIndexOf(') ') + 2).trimStart();
+    return state.startsWith('Z');
+  } catch {
+    return false;
   }
 }
 
