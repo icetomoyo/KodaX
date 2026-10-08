@@ -154,7 +154,12 @@ describe('ordinary saved history browsing', () => {
     const items = clientViewToHistoryItems([{ id: 'long', outputId: 'o', type: 'assistant', text }]);
     const before = performance.now();
     const rows = renderRows(items);
-    expect(performance.now() - before).toBeLessThan(3000);
+    // Machine-relative guard against a quadratic-layout regression, not a
+    // latency contract: the visual wrap of a ~210KB emoji/CJK line measures
+    // ~5s on a mid laptop and slower on CI runners, while a true quadratic
+    // blowup takes minutes. 30s keeps that signal without flaking on slow
+    // machines.
+    expect(performance.now() - before).toBeLessThan(30_000);
     const bodyRows = rows.filter(row => row.contentOffset !== undefined);
     expect(bodyRows.length).toBeGreaterThan(1000);
     for (const row of bodyRows) {
