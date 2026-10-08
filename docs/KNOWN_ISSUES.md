@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-10-02_
+_Last Updated: 2026-10-08_
 
 ---
 
@@ -12,6 +12,29 @@ _Last Updated: 2026-10-02_
 Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
+
+## Issue 353: Workflow control applied to a terminal run freezes the process projection
+
+- Priority: Medium
+- Status: Open
+- Introduced: FEATURE_298 unified workflow control plane; observed during the
+  v0.7.97-alpha.1 release validation
+- Created: 2026-10-08
+
+A workflow whose script completes within milliseconds reaches the terminal
+`completed` state before a client's `pause`/`stop` control RPC lands. The
+control path records the requested state optimistically: the process
+projection reports `paused` with `latestMessage: "workflow paused"` while the
+underlying run summary already reads `completed`, and later `resume`/`stop`
+controls never move the frozen projection. Observed through
+`src/sdk-client.workflow.test.ts` when two sequential dual-client cases race
+the run's completion: the fixture script previously used `setTimeout`, which
+does not exist in the restricted script realm, so every run failed before the
+race could surface; making the fixture compliant exposed the projection
+freeze. Control operations should decline terminal runs (the manager already
+returns `false`) without mutating the process projection. Tracked release
+validation applies controls only to a live run; the underlying decline
+without projection mutation remains open.
 
 ## rc.9 follow-up — text tools reject a workspace root containing native state
 
@@ -1093,6 +1116,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 353 | Medium | Open | Workflow control applied to a terminal run freezes the process projection at the requested state | observed during v0.7.97-alpha.1 release validation | — | 2026-10-08 | — |
 | 352 | Medium | Resolved | Model commands and local command feedback disappear after Host view replacement | confirmed at `394d4134`; first affected version unknown | v0.7.96-rc.11 worktree (unreleased) | 2026-09-27 | 2026-09-27 |
 | 351 | High | Resolved | Historical client notices displace the following Run output from the viewport tail | confirmed at `d552be47`; first affected version unknown | v0.7.96-rc.11 worktree (unreleased) | 2026-09-24 | 2026-09-24 |
 | 350 | Medium | Resolved | Normal REPL loses browsable history when a bounded Host view replaces it | Product Client display replacement; confirmed against `c447c0f3` | v0.7.96-rc.11 worktree (unreleased) | 2026-09-24 | 2026-09-26 |
@@ -15900,7 +15924,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 231 (36 Open, 195 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 232 (37 Open, 195 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
