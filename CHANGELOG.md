@@ -46,6 +46,16 @@ maintainer action.
   longer truncate ordinary assistant answers (Issues 344-349).
 - Host command failures stay visible with their feedback, late observation
   cleanup keeps its diagnostics, and Host message counts drive `/new`.
+- Frontmatter hooks execute on Linux: the default hook contract no longer
+  pairs the bash contract with `/bin/sh`, which is dash on Debian/Ubuntu and
+  rejected every hook at shell environment resolution (Issue 354).
+- Crash recovery proceeds after a `SIGKILL`ed daemon on Linux: a zombie pid
+  waiting for its parent to reap it is no longer classified as a live
+  competing owner (Issue 355).
+- Release validation hardened the interactive fixtures (CI static-output
+  detection, learning-review request classification) and raised the
+  machine-relative long-line layout budget on CI evidence (Issues 356-358;
+  358 remains open for profiling).
 
 ---
 

@@ -168,6 +168,18 @@ All root/workspace package versions and lockfile entries are
 `0.7.97-alpha.1`. The feature-design submodule, public guides, architecture
 documents, and `kodax_manual` track this release.
 
+Validation cycle: two earlier tag attempts failed inside `Full CI` and were
+withdrawn before publication (a fixture using the nonexistent restricted-realm
+`setTimeout`; a guard comparing a `WorkflowProcessStatus` against the
+nonexistent `'pausing'`). Branch validation via `workflow_dispatch` then
+surfaced 22 deterministic Linux failures: the hook `/bin/sh`-dash pairing
+(Issue 354) and the zombie-pid crash-recovery wedge (Issue 355) were fixed in
+product code, the interactive fixtures were corrected for CI static-output
+mode and learning-review classification (Issues 356-357, test-environment
+causes), and the long-line layout budget moved to 90s on CI evidence
+(Issue 358, profiling open). Only after a fully green branch validation run
+was the release tag cut.
+
 Release gates:
 
 1. Local, before tagging (no branch CI exists): strict source/test

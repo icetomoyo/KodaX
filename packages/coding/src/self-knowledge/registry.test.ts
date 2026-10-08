@@ -179,6 +179,10 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('`steer` and `redirect` deliveries');
     expect(sdk).toContain('derive by fork or deterministic recovery seed');
     expect(sdk).toContain('Every v0.7.96 stable contract is retained.');
+    expect(sdk).toContain('Release validation also fixed two Linux product defects');
+    expect(sdk).toContain('hooks never executed on Debian/Ubuntu — Issue 354');
+    expect(sdk).toContain('zombie pid no longer wedges crash recovery');
+    expect(sdk).toContain('intentionally static under `CI=true`');
     expect(sdk).toContain('The stable v0.7.96 release finalizes the line with no contract changes beyond rc.14');
     expect(sdk).toContain('`latest` moves to the stable tag');
     expect(sdk).toContain('The rc.14 release hands the next managed or coding Run a labelled, bounded, transient record');

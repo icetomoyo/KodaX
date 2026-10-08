@@ -535,6 +535,15 @@ Host-owned; and runtime read/write gaps close (Issues 344-349). Every
 v0.7.96 stable contract is retained. Cross-platform manual acceptance
 remains open; npm publication remains a manual maintainer step.
 
+Release validation against the tagged pre-release surfaced and closed two
+Linux product defects before publication: frontmatter hooks never executed
+where `/bin/sh` is dash (Issue 354), and a SIGKILLed daemon's zombie pid
+wedge crash recovery (Issue 355). The interactive CI fixtures were
+corrected to opt into interactive rendering and to classify episode
+learning-review requests (Issues 356-357, test-environment causes), and the
+machine-relative long-line layout budget moved to 90s on CI evidence while
+root-cause profiling stays open (Issue 358).
+
 ## v0.7.96 Release Record
 
 `v0.7.96` is the stable release of the v0.7.96 line. It finalizes the
