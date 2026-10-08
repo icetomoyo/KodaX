@@ -40,7 +40,7 @@ export async function observeRuntimeDaemonHealth(
   }
 
   const lockOwner = readRuntimeDaemonLockOwner(paths.lockFile);
-  const pidAlive = (options.isPidAlive ?? isRuntimeDaemonPidAlive)(state.pid);
+  const pidAlive = (options.isPidAlive ?? isRuntimeDaemonOwnerPidAlive)(state.pid);
   const endpoint = runtimeDaemonEndpointFromState(state);
   const token = readRuntimeDaemonToken(paths);
   let transport: RuntimeDaemonClientTransport | undefined;
@@ -105,7 +105,7 @@ export async function resolveRuntimeDaemonOwnership(
     ? {
         ...observation,
         observedLockOwner: lockOwner,
-        lockOwnerPidAlive: (options.isPidAlive ?? isRuntimeDaemonPidAlive)(lockOwner.pid),
+        lockOwnerPidAlive: (options.isPidAlive ?? isRuntimeDaemonOwnerPidAlive)(lockOwner.pid),
       }
     : observation;
   return claimRuntimeDaemonOwnership(paths, owner, enriched);
@@ -130,6 +130,25 @@ export function isRuntimeDaemonPidAlive(pid: number): boolean {
     return true;
   } catch (error: unknown) {
     return isNodeProcessError(error) && error.code === 'EPERM';
+  }
+}
+
+// Ownership recovery must not mistake a recycled pid for its daemon: after a
+// SIGKILL the kernel reaps the child quickly and a busy Linux runner can hand
+// the pid to an unrelated process before recovery re-observes it — kill(pid, 0)
+// then reports alive while the endpoint is gone forever, and the daemon is
+// never started again. Zombies read as an empty cmdline, so this one check
+// covers both. Callers probing arbitrary pids (parent watchdogs) keep using
+// isRuntimeDaemonPidAlive.
+export function isRuntimeDaemonOwnerPidAlive(pid: number): boolean {
+  if (!isRuntimeDaemonPidAlive(pid)) return false;
+  if (process.platform !== 'linux') return true;
+  try {
+    const argv = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean);
+    return argv.includes('daemon') && argv.includes('serve');
+  } catch {
+    // Unreadable (permission/mount) but kill() says alive: keep that verdict.
+    return true;
   }
 }
 
