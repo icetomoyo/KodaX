@@ -57,7 +57,17 @@ recycled PID with daemon argv, unreadable identity, and mismatched lock evidence
 The original six cases all fail on the argv heuristic and pass after the fix.
 Launcher tests additionally cover cancellation during delay and either probe,
 including closing the late transport. Local Node 20 with `CI=true` passes the
-ACP/Ink/lifecycle/launcher batch; Linux branch CI validation is pending.
+ACP/Ink/lifecycle/launcher batch. At `dfe48d10`, Linux CI passes the ACP test
+on both Node 20 and 22, plus all seven process-identity and nine launcher cases
+in the Node 20 unit tier
+([CI evidence](https://github.com/icetomoyo/KodaX/actions/runs/37787305862)).
+Node 20's fast tier passes all 2,195 tests. Node 22's targeted job rerun passes
+bundled review shutdown, ACP, and both Ink fixture files, but its fast tier
+still fails the catalog pagination case at its 45s timeout (2,194 other tests
+pass). Node 20 remains blocked by Issue 358's outer 30s test timeout.
+These validation failures are distinct from the resolved ownership regression;
+this run is not a fully green release gate. Contract/system and the Node 22
+Unix socket step were skipped after their earlier tier failures.
 
 ## Issue 358: Long-line history layout exceeds the Linux Node 20 CI guard
 
@@ -80,7 +90,7 @@ therefore skipped. The other six CI jobs passed
 `CI=true` (test body about 11 seconds). This observation does not establish
 whether the Linux result comes from CPU contention, runtime segmentation cost,
 or a layout regression. The fixture and production layout were unchanged by
-the Issue 356/357 fixes. The timing guard remains intact.
+the Issue 356/357 fixes. At that point, the timing guard was unchanged.
 
 **Root Cause:** Not established. The affected path is
 `pushWrappedRows` → `calculateVisualLayout` → `splitByCodePoints`, whose normal
@@ -94,6 +104,15 @@ budget moved from 30s to 90s with the measured spread recorded in its
 comment (5s mid laptop, ~11s local Windows with `CI=true`, 46s Linux Node 20
 under unit-tier load). A true quadratic blowup still takes minutes, so the
 regression signal survives; the root-cause profiling above remains open.
+
+**Follow-up validation (2026-10-08):** At `dfe48d10`, the Linux Node 20 fast
+tier passes all 2,195 tests, including the ACP Host regression. The unit tier
+passes the seven process-identity cases and nine launcher cases, but this
+layout case still fails with `Test timed out in 30000ms`; the other 11,910 unit
+tests pass ([CI evidence](https://github.com/icetomoyo/KodaX/actions/runs/37787305862)).
+Changing the elapsed-time assertion to 90s did not change Vitest's outer
+30s test timeout. This remains a separate release-validation blocker;
+the daemon ownership repair does not change either layout or timing limits.
 
 ## Issue 356: Interactive Ink fixtures inherit CI static-output mode
 
