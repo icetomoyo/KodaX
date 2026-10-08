@@ -154,13 +154,9 @@ describe('ordinary saved history browsing', () => {
     const items = clientViewToHistoryItems([{ id: 'long', outputId: 'o', type: 'assistant', text }]);
     const before = performance.now();
     const rows = renderRows(items);
-    // Machine-relative guard against a quadratic-layout regression, not a
-    // latency contract: the visual wrap of a ~210KB emoji/CJK line measures
-    // ~5s on a mid laptop, ~11s locally with CI=true, and 46s on the Linux
-    // Node 20 runner under unit-tier load (Issue 358), while a true quadratic
-    // blowup takes minutes. 90s keeps that signal without flaking on slow
-    // machines.
-    expect(performance.now() - before).toBeLessThan(90_000);
+    // Retain the original guard after fixing long-input grapheme iteration
+    // (Issue 358); correctness below also checks every wrapped UTF-16 offset.
+    expect(performance.now() - before).toBeLessThan(30_000);
     const bodyRows = rows.filter(row => row.contentOffset !== undefined);
     expect(bodyRows.length).toBeGreaterThan(1000);
     for (const row of bodyRows) {

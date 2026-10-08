@@ -351,7 +351,11 @@ it('uses saved log controls during the next actual verifier and stall sidecar ex
 it('finds resumable Host sessions beyond the first window and agrees with the read-only snapshot', async () => {
   const projectRoot = process.cwd();
   const session = await first.sessions.create({ projectPath: projectRoot, title: 'Old resumable' });
-  await first.sessions.updateSettings(session.id, { provider: 'product-catalog-test', agentMode: 'sa' });
+  // The seed Run supplies saved history; repository analysis is outside this
+  // discovery contract and otherwise scans the real checkout under CI load.
+  await first.sessions.updateSettings(session.id, {
+    provider: 'product-catalog-test', agentMode: 'sa', repoIntelligenceMode: 'off',
+  });
   const run = await first.inputs.submit({ sessionId: session.id, inputId: 'discovery-fixture', text: 'Saved history' });
   if (!run.runId) throw new Error('Expected immediate fixture run');
   await first.runs.await(run.runId);

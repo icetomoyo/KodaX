@@ -87,6 +87,7 @@ export class LRUCache<K, V> {
 const NARROW_CHAR_WIDTH = 1;
 const WIDE_CHAR_WIDTH = 2;
 const VISUAL_WIDTH_CACHE_CAPACITY = 1000;
+const GRAPHEME_SEGMENT_WINDOW = 2048;
 
 let graphemeSegmenter: Intl.Segmenter | undefined;
 
@@ -99,6 +100,31 @@ function getGraphemeSegmenter(): Intl.Segmenter | undefined {
   return graphemeSegmenter;
 }
 
+function* graphemes(str: string): Generator<string> {
+  const segmenter = getGraphemeSegmenter();
+  if (!segmenter) {
+    yield* str;
+    return;
+  }
+
+  // Node 20 copies the input when yielding SegmentData. Keep ordinary windows
+  // small, carrying the complete last cluster so combining/ZWJ/RI context survives.
+  let pending = "";
+  for (let offset = 0; offset < str.length;) {
+    let end = Math.min(offset + GRAPHEME_SEGMENT_WINDOW, str.length);
+    // Do not split a surrogate pair before handing the window to ICU.
+    if (end < str.length && str.codePointAt(end - 1)! > 0xffff) end--;
+    const window = pending + str.slice(offset, end);
+    pending = "";
+    for (const { segment } of segmenter.segment(window)) {
+      if (pending) yield pending;
+      pending = segment;
+    }
+    offset = end;
+  }
+  if (pending) yield pending;
+}
+
 // ============================================================================
 // Code Point Utilities - Code Point 工具
 // ============================================================================
@@ -108,19 +134,9 @@ function getGraphemeSegmenter(): Intl.Segmenter | undefined {
  * Properly handles emoji and other multi-byte characters - 正确处理 emoji 和其他多字节字符
  */
 export function getCodePointLength(str: string): number {
-  if (!str) return 0;
-
-  const segmenter = getGraphemeSegmenter();
-  if (segmenter) {
-    let count = 0;
-    for (const _segment of segmenter.segment(str)) {
-      count++;
-    }
-    return count;
-  }
-
-  // Fallback: use Array.from which handles surrogate pairs but not ZWJ
-  return [...str].length;
+  let count = 0;
+  for (const _grapheme of graphemes(str)) count++;
+  return count;
 }
 
 /**
@@ -170,22 +186,10 @@ export function isWideChar(char: string): boolean {
  * ASCII = 1, CJK/emoji = 2 - ASCII = 1, CJK/emoji = 2
  */
 export function getVisualWidth(str: string): number {
-  if (!str) return 0;
-
   let width = 0;
-
-  const segmenter = getGraphemeSegmenter();
-  if (segmenter) {
-    for (const segment of segmenter.segment(str)) {
-      width += isWideChar(segment.segment) ? WIDE_CHAR_WIDTH : NARROW_CHAR_WIDTH;
-    }
-  } else {
-    // Fallback
-    for (const char of str) {
-      width += isWideChar(char) ? WIDE_CHAR_WIDTH : NARROW_CHAR_WIDTH;
-    }
+  for (const char of graphemes(str)) {
+    width += isWideChar(char) ? WIDE_CHAR_WIDTH : NARROW_CHAR_WIDTH;
   }
-
   return width;
 }
 
@@ -194,42 +198,18 @@ export function getVisualWidth(str: string): number {
  */
 export function getCharAtCodePoint(str: string, index: number): string {
   if (!str || index < 0) return "";
-
-  const segmenter = getGraphemeSegmenter();
-  if (segmenter) {
-    let currentIndex = 0;
-    for (const segment of segmenter.segment(str)) {
-      if (currentIndex === index) {
-        return segment.segment;
-      }
-      currentIndex++;
-    }
-    return "";
+  let currentIndex = 0;
+  for (const char of graphemes(str)) {
+    if (currentIndex++ === index) return char;
   }
-
-  // Fallback: use Array.from
-  const chars = [...str];
-  if (index >= chars.length) return "";
-  return chars[index]!;
+  return "";
 }
 
 /**
  * Split string by code points - 按 code point 分割字符串
  */
 export function splitByCodePoints(str: string): string[] {
-  if (!str) return [];
-
-  const segmenter = getGraphemeSegmenter();
-  if (segmenter) {
-    const segments: string[] = [];
-    for (const segment of segmenter.segment(str)) {
-      segments.push(segment.segment);
-    }
-    return segments;
-  }
-
-  // Fallback: use Array.from
-  return [...str];
+  return [...graphemes(str)];
 }
 
 /**

@@ -13,6 +13,34 @@ Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
 
+## Issue 360: Resume catalog fixture spends its deadline on unrelated repository analysis
+
+- Priority: Medium
+- Status: ready
+- Introduced: v0.7.97-alpha.1 product catalog integration fixture
+- Created: 2026-10-08
+- Classification: Test fixture scope and performance
+
+**Original Problem:** Linux Node 22 CI times out at 45s in
+`sdk-client.catalog.test.ts` → `finds resumable Host sessions beyond the first
+window and agrees with the read-only snapshot`
+([CI evidence](https://github.com/icetomoyo/KodaX/actions/runs/37787305862)).
+This timeout does not identify a pagination assertion failure. The fixture
+first runs a saved-history turn against `process.cwd()`, the real checkout,
+before creating 1,001 newer Session files and checking discovery/archival/deletion.
+
+**Diagnosis:** Local Node 22 stage measurements show the seed Run consumes
+15.5s while individual catalog/discovery reads take about 0.1–0.6s. Keeping
+the same fixture and setting only its seed Session's `repoIntelligenceMode`
+to `off` changes the body from 18.8s to 4.6s; restoring default mode returns
+it to 19.4s. This isolates unrelated repository analysis as the main measured
+cost; Linux CI must still validate the repaired fixture.
+
+**Repair:** Disable repository intelligence only for this fixture's seed Run.
+Keep all 1,001 newer Sessions, the 45s timeout, both client connections, and
+every resume, snapshot parity, archive, and deletion assertion. Production
+repository-intelligence defaults are unchanged.
+
 ## Issue 359: Linux argv ownership checks reject SDK Hosts and reclaim live fences
 
 - Priority: High
@@ -72,7 +100,7 @@ Unix socket step were skipped after their earlier tier failures.
 ## Issue 358: Long-line history layout exceeds the Linux Node 20 CI guard
 
 - Priority: Medium
-- Status: Open
+- Status: ready
 - Introduced: first affected version unknown; observed in v0.7.97-alpha.1
   validation at `af6d7a7d`
 - Created: 2026-10-08
@@ -92,18 +120,19 @@ whether the Linux result comes from CPU contention, runtime segmentation cost,
 or a layout regression. The fixture and production layout were unchanged by
 the Issue 356/357 fixes. At that point, the timing guard was unchanged.
 
-**Root Cause:** Not established. The affected path is
-`pushWrappedRows` → `calculateVisualLayout` → `splitByCodePoints`, whose normal
-path uses `Intl.Segmenter` graphemes. Profile segmentation and wrapping
-separately on Linux Node 20, in isolation and under the unit tier's load,
-before selecting a fix or changing the performance gate. No production
-performance change is included in this repair.
+**Root Cause:** The affected path is `pushWrappedRows` →
+`calculateVisualLayout` → `splitByCodePoints`. Isolated segmentation of the
+same 150,000-code-unit string takes 11,212.9ms on local Node 20.20.2 versus
+26ms on Node 22.23.1. Node 20's V8 creates each segment's `input` string from
+the full ICU text ([runtime source](https://github.com/nodejs/node/blob/v20.20.2/deps/v8/src/objects/js-segments.cc#L129)).
+This makes ordinary long-line grapheme iteration scale poorly, independently
+of history wrapping. CI contention amplifies that measured cost.
 
 **Interim release measure (2026-10-08):** the test's own machine-relative
 budget moved from 30s to 90s with the measured spread recorded in its
 comment (5s mid laptop, ~11s local Windows with `CI=true`, 46s Linux Node 20
-under unit-tier load). A true quadratic blowup still takes minutes, so the
-regression signal survives; the root-cause profiling above remains open.
+under unit-tier load). This measure is superseded by the production repair
+below; elapsed time alone does not establish the algorithm's scaling.
 
 **Follow-up validation (2026-10-08):** At `dfe48d10`, the Linux Node 20 fast
 tier passes all 2,195 tests, including the ACP Host regression. The unit tier
@@ -113,6 +142,15 @@ tests pass ([CI evidence](https://github.com/icetomoyo/KodaX/actions/runs/377873
 Changing the elapsed-time assertion to 90s did not change Vitest's outer
 30s test timeout. This remains a separate release-validation blocker;
 the daemon ownership repair does not change either layout or timing limits.
+
+**Repair:** Iterate graphemes in small windows while retaining the complete
+last cluster for the next window and avoiding surrogate-pair cuts. This keeps
+native combining/ZWJ/regional-indicator context and also serves counting,
+indexing, and width calculation. Restore the original 30s history-layout
+guard. The public splitting regression fails before the repair (10,443.6ms
+against 5s) and passes after it; Unicode boundary cases compare with native
+whole-string segmentation, and the original history test still validates all
+wrapped UTF-16 offsets. Linux CI validation is pending.
 
 ## Issue 356: Interactive Ink fixtures inherit CI static-output mode
 
@@ -1357,8 +1395,9 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 360 | Medium | ready | Resume catalog fixture spends its deadline on unrelated repository analysis | v0.7.97-alpha.1 product catalog integration fixture | — | 2026-10-08 | — |
 | 359 | High | Resolved | Linux argv ownership checks reject SDK Hosts and reclaim live fences | `e43d6da6`, v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
-| 358 | Medium | Open | Long-line history layout exceeds the Linux Node 20 CI guard | observed at `af6d7a7d` during v0.7.97-alpha.1 validation; first affected version unknown | — | 2026-10-08 | — |
+| 358 | Medium | ready | Long-line history layout exceeds the Linux Node 20 CI guard | observed at `af6d7a7d` during v0.7.97-alpha.1 validation; first affected version unknown | — | 2026-10-08 | — |
 | 357 | Medium | Resolved | Output ownership fixture counts learning reviews as answers | observed during v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
 | 356 | Medium | Resolved | Interactive Ink fixtures inherit CI static-output mode | observed during v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
 | 355 | High | Resolved | A SIGKILLed daemon's zombie pid wedges crash recovery on Linux | observed during v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
@@ -16171,7 +16210,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 238 (38 Open, 200 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 239 (39 Open, 200 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
