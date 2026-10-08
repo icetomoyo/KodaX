@@ -109,4 +109,82 @@ describe('Host launcher waits for the original process', () => {
       await exited;
     }
   });
+
+  it('re-observes an unhealthy owner instead of refusing on one failed probe', async () => {
+    const homeDir = mkdtempSync(path.join(os.tmpdir(), 'kodax-owner-recheck-'));
+    const paths = resolveRuntimeDaemonPaths(homeDir, 'recheck');
+    const endpoint = defaultRuntimeDaemonEndpoint(paths.profile,
+      resolveRuntimeDaemonEndpointScope(homeDir, paths.configHome));
+    const child = spawn(process.execPath, ['-e', 'process.stdout.write("ready"); process.stdin.resume();'], {
+      stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+    });
+    let probes = 0;
+    try {
+      await once(child.stdout, 'data');
+      const pid = child.pid;
+      if (pid === undefined) throw new Error('Child did not start');
+      const processStartIdentity = readRuntimeOwnerProcessStartIdentity(pid);
+      if (processStartIdentity === undefined) throw new Error('Child process identity unavailable');
+      const owner = { runtimeId: 'slow-owner', pid, processStartIdentity,
+        createdAt: new Date().toISOString(), kind: 'daemon' as const };
+      expect(tryAcquireRuntimeDaemonLock(paths, owner)).toBeDefined();
+      writeRuntimeDaemonState(paths, { runtimeId: owner.runtimeId, pid, profile: paths.profile,
+        startedAt: owner.createdAt, endpoint: endpoint.path, version: '0.0.1', status: 'ready' });
+      // The first probe misses the handshake window (a busy host can do this)
+      // and the owner is a stub without a real endpoint, so the attach attempt
+      // afterwards fails to connect — the behavior under test is that recovery
+      // re-observes and takes the attach path instead of refusing forever.
+      await expect(acquireRuntimeDaemonProcessLease({ homeDir, profile: paths.profile,
+        startupTimeoutMs: 30_000,
+        connectTimeoutMs: 500,
+        healthCheck: {
+          async createTransport(target) {
+            probes += 1;
+            if (probes === 1) throw new Error('handshake timed out');
+            return {
+              async request() { return { identity: { runtimeId: owner.runtimeId, profile: paths.profile } }; },
+              subscribe() { return { close() {} }; },
+            };
+          },
+        },
+      })).rejects.not.toThrow(/refusing to start a competing owner/);
+      expect(probes).toBeGreaterThanOrEqual(2);
+      expect(readRuntimeDaemonLockOwner(paths.lockFile)?.runtimeId).toBe(owner.runtimeId);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill();
+      rmSync(homeDir, { recursive: true, force: true });
+      try { await once(child, 'exit'); } catch { /* already gone */ }
+    }
+  }, 60_000);
+
+  it('still refuses a persistently unreachable owner after the recheck budget', async () => {
+    const homeDir = mkdtempSync(path.join(os.tmpdir(), 'kodax-owner-hung-'));
+    const paths = resolveRuntimeDaemonPaths(homeDir, 'hung');
+    const child = spawn(process.execPath, ['-e', 'process.stdout.write("ready"); process.stdin.resume();'], {
+      stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+    });
+    try {
+      await once(child.stdout, 'data');
+      const pid = child.pid;
+      if (pid === undefined) throw new Error('Child did not start');
+      const processStartIdentity = readRuntimeOwnerProcessStartIdentity(pid);
+      if (processStartIdentity === undefined) throw new Error('Child process identity unavailable');
+      const owner = { runtimeId: 'hung-owner', pid, processStartIdentity,
+        createdAt: new Date().toISOString(), kind: 'daemon' as const };
+      expect(tryAcquireRuntimeDaemonLock(paths, owner)).toBeDefined();
+      writeRuntimeDaemonState(paths, { runtimeId: owner.runtimeId, pid, profile: paths.profile,
+        startedAt: owner.createdAt, endpoint: '\\\\.\\pipe\\kodax-owner-hung-missing', version: '0.0.1', status: 'ready' });
+      await expect(acquireRuntimeDaemonProcessLease({ homeDir, profile: paths.profile,
+        startupTimeoutMs: 30_000,
+        healthCheck: {
+          async createTransport() { throw new Error('endpoint never answers'); },
+        },
+      })).rejects.toThrow(/unhealthy; refusing to start a competing owner/);
+      expect(child.exitCode).toBeNull();
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill();
+      await once(child, 'exit');
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

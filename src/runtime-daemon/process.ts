@@ -380,8 +380,22 @@ export async function acquireRuntimeDaemonProcessLease(
     );
   }
 
-  const initial = await observeRuntimeDaemonHealth(paths, options.healthCheck);
-  const initialHealth = classifyRuntimeDaemonHealth(initial);
+  let initial = await observeRuntimeDaemonHealth(paths, options.healthCheck);
+  let initialHealth = classifyRuntimeDaemonHealth(initial);
+  // One failed probe is a weak basis for a permanent refusal: on a busy host a
+  // live owner can miss the 1-second handshake window. Bounded re-observation
+  // lets attach and stale outcomes emerge; a genuinely hung competitor still
+  // ends in the same refusal.
+  if (initialHealth === "unhealthy") {
+    const recheckDeadline = Date.now()
+      + Math.min(10_000, Math.max(0, startupDeadline - Date.now()));
+    while (initialHealth === "unhealthy" && Date.now() < recheckDeadline
+      && !options.startupSignal?.aborted) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      initial = await observeRuntimeDaemonHealth(paths, options.healthCheck);
+      initialHealth = classifyRuntimeDaemonHealth(initial);
+    }
+  }
   if (initial.pidAlive && (initial.state?.status === 'stopping' || initial.state?.status === 'draining')) {
     const owner = initial.observedLockOwner;
     if (initialHealth === 'mismatch' || owner?.runtimeId !== initial.state.runtimeId

@@ -158,7 +158,7 @@ passed while CI Linux failed deterministically.
 `isRuntimeDaemonPidAlive` now treats a Linux zombie (`/proc/<pid>/stat`
 state `Z`) as dead, letting recovery claim ownership.
 
-Follow-up validation caught the second window: once the child is reaped, a
+Follow-up validation caught two more windows. Once the child is reaped, a
 busy Linux runner can reassign the pid to an unrelated process before
 recovery re-observes it — `kill(pid, 0)` then reports alive while the
 endpoint is gone forever, and the refusal returns. Ownership observation now
@@ -166,6 +166,11 @@ verifies through `/proc/<pid>/cmdline` that the pid still names the daemon
 serve entry (`isRuntimeDaemonOwnerPidAlive`); zombies read as an empty
 cmdline, so both windows close with one check. The generic pid probe keeps
 its plain semantics for non-daemon callers such as the CLI parent watchdog.
+Separately, a live owner on a loaded host can miss the 1-second handshake
+probe, which also produced `unhealthy`; the acquire path now re-observes a
+bounded number of times before refusing, so attach and stale outcomes
+emerge while a genuinely hung competitor still ends in the same refusal
+(regression tests in `src/runtime-daemon/process.owner-exit.test.ts`).
 
 ## Issue 354: Frontmatter hooks never execute on Linux where /bin/sh is dash
 
