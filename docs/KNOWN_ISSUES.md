@@ -16,9 +16,11 @@ resolution evidence is retained. Issues 345–347 are unchanged.
 ## Issue 361: ACP's next prompt can fail during a transient Session read boundary
 
 - Priority: Medium
-- Status: ready
+- Status: Resolved
 - Introduced: first affected version unknown; observed during v0.7.97-alpha.1 validation
 - Created: 2026-10-08
+- Fixed: v0.7.97-alpha.1 worktree (unreleased)
+- Resolved: 2026-10-09
 
 **Original Problem:** In Linux Node 20 and 22, the shared-Host ACP fixture's
 second prompt returns an `[ACP Server Error]` chunk instead of the expected
@@ -82,8 +84,25 @@ a green gate:
   retains Home for diagnosis. The exact Node body passes locally with the
   Windows pipe expectation; Linux validation must verify the Unix path.
 
-The owned-read regression, final fixture corrections, and remaining complete
-CI tiers are awaiting a new Linux run. Release remains deferred.
+**Validation at `e598653f`:** Linux Node 20 and 22 pass all 2,195 fast tests,
+including ACP, catalog, and the corrected queue fixture. Node 20 passes all
+unit/contract tests, the original history file in 990ms, and all nine owned-read
+cases in 514ms under the serial system tier
+([CI evidence](https://github.com/icetomoyo/KodaX/actions/runs/37810752612)).
+The production repair and its regression are verified; this run is not a green
+release gate. Of 1,280 system tests, a separate Shell Stop fixture fails before
+the second Stop request: its raw `writeFile(..., { flag: 'wx' })` collides with
+a still-active Host write lock. Both fixture fences now use the existing
+`withKodaXFileLock` API to wait for acquisition and release only their own token;
+unconditional deletion of a potentially foreign lock is removed. Stop receipt,
+confirmed outcome, real child-PID death, and extension outcome assertions are
+retained and pass locally. The Electron job independently times out spawning
+the native `srt-win` WFP probe before application tests start.
+
+Files changed for the production repair: `storage.ts`,
+`storage.owned-read.test.ts`, and `acp_server.daemon.test.ts`. Further changes
+are confined to the three affected fixtures and Unix gate cleanup. The final
+complete CI gate still needs validation; release remains deferred.
 
 ## Issue 360: Resume catalog fixture spends its deadline on unrelated repository analysis
 
@@ -1485,7 +1504,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 361 | Medium | ready | ACP's next prompt can fail during a transient Session read boundary | observed during v0.7.97-alpha.1 validation; first affected version unknown | — | 2026-10-08 | — |
+| 361 | Medium | Resolved | ACP's next prompt can fail during a transient Session read boundary | observed during v0.7.97-alpha.1 validation; first affected version unknown | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-09 |
 | 360 | Medium | Resolved | Resume catalog fixture spends its deadline on unrelated repository analysis | v0.7.97-alpha.1 product catalog integration fixture | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
 | 359 | High | Resolved | Linux argv ownership checks reject SDK Hosts and reclaim live fences | `e43d6da6`, v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
 | 358 | Medium | Resolved | Long-line history layout exceeds the Linux Node 20 CI guard | observed at `af6d7a7d` during v0.7.97-alpha.1 validation; first affected version unknown | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
@@ -16301,8 +16320,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 240 (37 Open, 202 Resolved, 0 Partially Resolved, 0 Won't Fix)
-- Ready: 1 (Issue 361; Linux validation in progress)
+- Total: 240 (37 Open, 203 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 

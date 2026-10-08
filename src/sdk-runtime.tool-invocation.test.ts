@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
+import { withKodaXFileLock } from '@kodax-ai/agent';
 import { createExtensionRuntime } from '@kodax-ai/coding';
 import { executeCommand } from '@kodax-ai/repl';
 import { KodaXBaseProvider, registerModelProvider, type KodaXProviderConfig, type KodaXStreamResult } from '@kodax-ai/llm';
@@ -135,11 +136,12 @@ it('owns explicit Shell effects and confirms process cleanup through real shared
       lsp: false, toolInvocation: { name: 'bash', input: { command } },
     } });
     await vi.waitFor(async () => { childPid = Number(await readFile(pidFile, 'utf8')); expect(childPid).toBeGreaterThan(0); }, { timeout: 15_000 });
-    await mkdir(path.dirname(lock), { recursive: true });
-    await writeFile(lock, `${process.pid} owned-shell-test`, { flag: 'wx' });
-    const receipt = await client.sessions.cancel({ sessionId: session.id, expectedRunId: run.runId, requestId: 'stop-shell' });
+    // Acquire after any Host write finishes, then retain the foreign-writer
+    // fence while Stop is accepted. The helper releases only our own token.
+    const receipt = await withKodaXFileLock(lock, () => client.sessions.cancel({
+      sessionId: session.id, expectedRunId: run.runId, requestId: 'stop-shell',
+    }));
     expect(receipt.receipts[0]).toMatchObject({ runId: run.runId, accepted: true });
-    await rm(lock);
     await expect(run.result).resolves.toMatchObject({ stop: { state: 'confirmed', outcome: 'interrupted' } });
     expect(() => process.kill(childPid!, 0)).toThrow();
     await rm(pidFile);
@@ -153,9 +155,9 @@ it('owns explicit Shell effects and confirms process cleanup through real shared
         return result.result ?? { success: false, lastText: '[Cancelled] stopped', messages: [], sessionId: session.id };
       } } as never, {} as never);
     await vi.waitFor(async () => { childPid = Number(await readFile(pidFile, 'utf8')); expect(commandRunId).toBeDefined(); }, { timeout: 15_000 });
-    await writeFile(lock, `${process.pid} command-stop-test`, { flag: 'wx' });
-    await client.sessions.cancel({ sessionId: session.id, expectedRunId: commandRunId!, requestId: 'stop-extension-command' });
-    await rm(lock);
+    await withKodaXFileLock(lock, () => client.sessions.cancel({
+      sessionId: session.id, expectedRunId: commandRunId!, requestId: 'stop-extension-command',
+    }));
     await expect(commandResult).resolves.toBe(false);
     expect(() => process.kill(childPid!, 0)).toThrow();
   } catch (error: unknown) {
@@ -164,7 +166,6 @@ it('owns explicit Shell effects and confirms process cleanup through real shared
   } finally {
     const cleanupFailures: unknown[] = [];
     for (const cleanup of [
-      () => rm(lock, { force: true }),
       () => client.close(), () => server.close(), () => runtime.close(),
       () => extensions.dispose(),
       () => { vi.unstubAllEnvs(); },
