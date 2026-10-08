@@ -45,7 +45,12 @@ The tests supplied fake interactive TTY streams without overriding the
 `is-in-ci` detector. Both fixtures now explicitly select interactive rendering
 with a local `is-in-ci` mock, matching the existing renderer tests. Product
 renderer behavior and the original activity/observation assertions are retained.
-The three interactive cases pass with `CI=true`; Linux CI validation is pending.
+The fixtures also use full-frame debug output: stripping ANSI sequences from
+terminal cell diffs does not reconstruct the screen, so raw output deltas cannot
+support these semantic text assertions. Command submission waits for the visible
+input instead of a fixed delay, and recalled input gets an event-loop turn for
+its handler to update. Complete draft and exactly-once submission checks remain.
+The three interactive cases pass with `CI=true`; final Linux CI validation is pending.
 
 ## Issue 357: Output ownership fixture counts learning reviews as answers
 

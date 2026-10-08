@@ -120,7 +120,8 @@ it.each(['classic', 'ink'] as const)('keeps an unsent %s draft available when ob
       const stdout = new TerminalOutput();
       fixture.render.mockImplementation((render: typeof import('../packages/repl/src/ui/tui.js').render,
         element: Parameters<typeof render>[0], options: Parameters<typeof render>[1]) => {
-        mounted = render(element, { ...options, stdout: stdout as unknown as NodeJS.WriteStream,
+        // These semantic assertions need complete frames, not concatenated terminal cell diffs.
+        mounted = render(element, { ...options, debug: true, stdout: stdout as unknown as NodeJS.WriteStream,
           stdin: stdin as unknown as NodeJS.ReadStream, stderr: stdout as unknown as NodeJS.WriteStream });
         return mounted;
       });
@@ -138,6 +139,8 @@ it.each(['classic', 'ink'] as const)('keeps an unsent %s draft available when ob
       stdout.text = '';
       stdin.emit('data', Buffer.from('\u001b[A'));
       await expect.poll(outputText).toContain('existing-attachment.txt');
+      // Allow the recalled editor state to install its input handler before Enter.
+      await new Promise<void>(resolve => setImmediate(resolve));
       available = true;
       stdin.emit('data', Buffer.from('\r'));
       await expect.poll(() => fixture.start.mock.calls.length).toBe(1);

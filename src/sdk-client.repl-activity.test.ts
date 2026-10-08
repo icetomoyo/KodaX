@@ -68,7 +68,8 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
   let mounted: ReturnType<typeof import('../packages/repl/src/ui/tui.js').render> | undefined;
   fixture.render.mockImplementation((render: typeof import('../packages/repl/src/ui/tui.js').render,
     element: Parameters<typeof render>[0], options: Parameters<typeof render>[1]) => {
-    mounted = render(element, { ...options, stdout: stdout as unknown as NodeJS.WriteStream,
+    // These semantic assertions need complete frames, not concatenated terminal cell diffs.
+    mounted = render(element, { ...options, debug: true, stdout: stdout as unknown as NodeJS.WriteStream,
       stdin: stdin as unknown as NodeJS.ReadStream, stderr: stdout as unknown as NodeJS.WriteStream });
     return mounted;
   });
@@ -275,8 +276,8 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
       await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, '')).toContain('Typeamessage');
       stdout.text = '';
       stdin.emit('data', Buffer.from(command));
-      // Owned rendering writes terminal diffs, which can omit unchanged letters.
-      await new Promise(resolve => setTimeout(resolve, 40));
+      await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, ''))
+        .toContain(command.replace(/\s/g, ''));
       stdout.text = '';
       stdin.emit('data', Buffer.from('\r'));
       if (command === '/recover') {

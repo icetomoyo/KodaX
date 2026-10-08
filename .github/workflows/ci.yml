@@ -140,6 +140,7 @@ jobs:
           let first;
           let second;
           let eventSubscription;
+          let permissionTimeout;
           try {
             first = await createKodaXRuntime({
               mode: 'daemon',
@@ -157,26 +158,48 @@ jobs:
             });
 
             const session = await first.sessions.create({ title: 'CI Unix Runtime Gate', projectPath: homeDir });
+            await first.sessions.updateSettings(session.id, { permissionMode: 'accept-edits' });
+            // Project .kodax writes always require confirmation, without a model or shell sandbox.
+            const marker = path.join(homeDir, '.kodax', 'ci-permission-marker.txt');
             const events = [];
+            let resolveDecision;
+            let rejectDecision;
+            const permissionDecision = new Promise((resolve, reject) => {
+              resolveDecision = resolve;
+              rejectDecision = reject;
+            });
             eventSubscription = second.events.subscribe({ sessionId: session.id }, (event) => {
               events.push(event.type);
               if (event.type !== 'permission.requested') return;
               const payload = event.payload;
-              if (!payload || typeof payload !== 'object' || typeof payload.id !== 'string') return;
-              void second.permissions.respond(payload.id, { type: 'allow_once' }, { runId: payload.runId });
+              if (!payload || typeof payload !== 'object' || typeof payload.id !== 'string'
+                || typeof payload.runId !== 'string' || payload.toolName !== 'write') {
+                rejectDecision(new Error('Unexpected Host permission request.'));
+                return;
+              }
+              second.permissions.respond(payload.id, { type: 'allow_once' }, { runId: payload.runId }).then(
+                (accepted) => accepted
+                  ? resolveDecision('allow_once')
+                  : rejectDecision(new Error('Host rejected the bound permission response.')),
+                rejectDecision,
+              );
             });
-            await eventSubscription.ready;
-
-            const decision = await first.permissions.request({
-              sessionId: session.id,
-              runId: 'ci-unix-permission-run',
-              toolName: 'bash',
-              inputPreview: 'echo ok',
-            });
-            await new Promise((resolve) => setTimeout(resolve, 25));
+            const [decisionType, { run, outcome }] = await Promise.all([
+              permissionDecision,
+              (async () => {
+                await eventSubscription.ready;
+                permissionTimeout = setTimeout(() => rejectDecision(new Error('Host permission response timed out.')), 30_000);
+                const run = await first.runs.start({
+                  sessionId: session.id,
+                  prompt: 'Write the CI permission marker.',
+                  options: { lsp: false, toolInvocation: { name: 'write', input: { path: marker, content: 'ok' } } },
+                });
+                return { run, outcome: await run.result };
+              })(),
+            ]);
 
             const status = await second.status.snapshot();
-            const pending = await second.permissions.listPending({ runId: 'ci-unix-permission-run' });
+            const pending = await second.permissions.listPending({ runId: run.runId });
             const statePath = path.join(homeDir, '.kodax', 'runtime', 'daemon', profile, 'daemon.json');
             const state = JSON.parse(await readFile(statePath, 'utf8'));
             const endpoint = typeof state.endpoint === 'string' ? state.endpoint : '';
@@ -184,9 +207,11 @@ jobs:
               sameRuntime: first.identity.runtimeId === second.identity.runtimeId,
               endpointKind: endpoint.startsWith('\\\\.\\pipe\\') ? 'pipe' : 'unix',
               sessions: status.sessions.length,
-              decisionType: decision.type,
+              decisionType,
               hasPermissionEvents: events.includes('permission.requested') && events.includes('permission.resolved'),
               pending: pending.length,
+              toolSucceeded: outcome.phase === 'completed' && outcome.result?.success === true,
+              marker: await readFile(marker, 'utf8'),
             };
 
             if (
@@ -196,14 +221,16 @@ jobs:
               || proof.decisionType !== 'allow_once'
               || !proof.hasPermissionEvents
               || proof.pending !== 0
+              || !proof.toolSucceeded
+              || proof.marker !== 'ok'
             ) {
               throw new Error(`Unexpected Unix runtime proof: ${JSON.stringify(proof)}`);
             }
-            console.log(JSON.stringify(proof));
+            process.stdout.write(`${JSON.stringify(proof)}\n`);
           } finally {
+            clearTimeout(permissionTimeout);
             eventSubscription?.close();
-            await second?.close();
-            await first?.close();
+            try { await second?.close(); } finally { await first?.close(); }
           }
           NODE
 
