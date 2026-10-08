@@ -4735,6 +4735,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
     options: SessionReadOptions = {},
   ): Promise<SessionData | null> {
     throwIfSessionReadAborted(options.signal);
+    normalizeSessionReadTimeout(options.timeoutMs);
     const startedAt = Date.now();
     const resolved = await raceSessionRead(
       (async () => {
@@ -4910,6 +4911,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
     options: SessionReadOptions = {},
   ): Promise<SessionReadSnapshot | null> {
     throwIfSessionReadAborted(options.signal);
+    normalizeSessionReadTimeout(options.timeoutMs);
     const startedAt = Date.now();
     const operation = (async (): Promise<SessionReadSnapshot | null> => {
       await this.awaitOwnWrites(id, options, startedAt);

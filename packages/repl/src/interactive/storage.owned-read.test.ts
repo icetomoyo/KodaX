@@ -4,6 +4,17 @@ import path from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { FileSessionStorage, type SessionReadOptions } from './storage.js';
 
+it.each(['read', 'readFullSnapshot'] as const)('rejects invalid %s budgets without an orphaned rejection', async method => {
+  const storage = new FileSessionStorage({ sessionsDir: path.join(os.tmpdir(), 'kodax-invalid-read') });
+  const unhandled = vi.fn();
+  process.on('unhandledRejection', unhandled);
+  try {
+    await expect(storage[method]('invalid', { timeoutMs: 0 })).rejects.toThrow('positive safe integer');
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(unhandled).not.toHaveBeenCalled();
+  } finally { process.off('unhandledRejection', unhandled); }
+});
+
 async function heldWrite() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-owned-read-'));
   const sessionsDir = path.join(root, 'sessions');

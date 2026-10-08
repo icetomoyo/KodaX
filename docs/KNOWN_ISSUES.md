@@ -50,9 +50,11 @@ checks are retained. A new writer starting during the actual strict read can
 still produce `data_changed`; this is not a general conflict suppression or
 input-submission retry.
 
-**Regression:** Seven public storage cases cover real held commits, a second
+**Regression:** Nine public storage cases cover real held commits, a second
 queued write, foreign-writer rejection, cancellation/timeouts, and reading the
-last commit after a failed save. The ACP protocol regression holds a real
+last commit after a failed save. Invalid budgets are validated before creating
+the asynchronous wait, avoiding an orphaned rejection in either public read;
+the two tests fail without that validation. The ACP protocol regression holds a real
 background commit for 1.2s, preserves tool output, and verifies exactly two
 completed Runs. Removing coordination makes it fail with the original ACP
 error; restoring it passes. Local Node 20/22 pass with `CI=true`, the related
