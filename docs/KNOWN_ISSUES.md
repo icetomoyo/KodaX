@@ -13,6 +13,30 @@ Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
 
+## Issue 361: ACP's next prompt can fail during a transient Session read boundary
+
+- Priority: Medium
+- Status: ready
+- Introduced: first affected version unknown; observed during v0.7.97-alpha.1 validation
+- Created: 2026-10-08
+
+**Original Problem:** In Linux Node 20 and 22, the shared-Host ACP fixture's
+second prompt returns an `[ACP Server Error]` chunk instead of the expected
+answer. Node 20 reports `Session location topology could not be verified`;
+Node 22 reports `Session data changed during the read boundary` on the Session
+write-lock file ([CI evidence](https://github.com/icetomoyo/KodaX/actions/runs/37794691357)).
+The endpoint attaches successfully; this is distinct from Issue 359's argv
+ownership error. A similar strict-read race was reported before these repairs.
+
+**Expected:** A normal subsequent prompt must tolerate a transient boundary
+conflict from the Host's own previous-turn background work, without reading a
+torn snapshot, suppressing a persistent conflict, or delivering the input twice.
+
+**Diagnosis:** Pending. Temporary test-only probes preserve real operations
+and log whether the failure escapes initial observation, background refresh,
+or input submission, with storage call stacks. Release is deferred at the
+user's request while this independently exposed race is investigated.
+
 ## Issue 360: Resume catalog fixture spends its deadline on unrelated repository analysis
 
 - Priority: Medium
@@ -1395,6 +1419,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 361 | Medium | ready | ACP's next prompt can fail during a transient Session read boundary | observed during v0.7.97-alpha.1 validation; first affected version unknown | — | 2026-10-08 | — |
 | 360 | Medium | ready | Resume catalog fixture spends its deadline on unrelated repository analysis | v0.7.97-alpha.1 product catalog integration fixture | — | 2026-10-08 | — |
 | 359 | High | Resolved | Linux argv ownership checks reject SDK Hosts and reclaim live fences | `e43d6da6`, v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
 | 358 | Medium | ready | Long-line history layout exceeds the Linux Node 20 CI guard | observed at `af6d7a7d` during v0.7.97-alpha.1 validation; first affected version unknown | — | 2026-10-08 | — |
@@ -16210,7 +16235,8 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 239 (39 Open, 200 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 240 (37 Open, 200 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Ready: 3 (Issues 358, 360 and 361; validation/diagnosis in progress)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 

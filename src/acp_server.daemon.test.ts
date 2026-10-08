@@ -4,6 +4,7 @@ import path from 'node:path';
 import { TransformStream } from 'node:stream/web';
 import { expect, it, vi } from 'vitest';
 import type { KodaXMessage, KodaXToolDefinition, KodaXReasoningRequest, KodaXProviderStreamOptions, KodaXStreamResult } from '@kodax-ai/llm';
+import { FileSessionStorage } from '@kodax-ai/repl';
 import { ClientSideConnection, PROTOCOL_VERSION, ndJsonStream, type SessionNotification } from '@agentclientprotocol/sdk';
 
 vi.mock('@kodax-ai/agent', async (importOriginal) => ({
@@ -65,6 +66,33 @@ it('runs default ACP prompts in the existing shared Host and only detaches on di
   const probePath = path.join(homeDir, 'probe.txt');
   await (await import('node:fs/promises')).writeFile(probePath, 'ACP tool output');
   const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'acp-local' });
+  // Temporary CI diagnosis: preserve the actual storage operations and errors.
+  const diagnose = (phase: string, error: unknown, caller?: string) => {
+    if (error instanceof Error) process.stderr.write('[DEBUG-acp-boundary] '
+      + JSON.stringify({ phase, message: error.message, stack: error.stack, caller }) + '\n');
+  };
+  const read = FileSessionStorage.prototype.read;
+  const readProbe = vi.spyOn(FileSessionStorage.prototype, 'read').mockImplementation(async function (this: FileSessionStorage, ...args) {
+    const caller = new Error().stack;
+    try { return await read.apply(this, args); }
+    catch (error: unknown) { diagnose('storage.read', error, caller); throw error; }
+  });
+  const capture = FileSessionStorage.prototype.readFullSnapshot;
+  const captureProbe = vi.spyOn(FileSessionStorage.prototype, 'readFullSnapshot').mockImplementation(async function (this: FileSessionStorage, ...args) {
+    const caller = new Error().stack;
+    try { return await capture.apply(this, args); }
+    catch (error: unknown) { diagnose('storage.readFullSnapshot', error, caller); throw error; }
+  });
+  const observe = runtime.sessions.observeView;
+  const observeProbe = vi.spyOn(runtime.sessions, 'observeView').mockImplementation(async (...args) => {
+    try { return await observe(...args); }
+    catch (error: unknown) { diagnose('observeView', error); throw error; }
+  });
+  const submit = runtime.runs.acceptInput;
+  const submitProbe = vi.spyOn(runtime.runs, 'acceptInput').mockImplementation(async (...args) => {
+    try { return await submit(...args); }
+    catch (error: unknown) { diagnose('inputs.submit', error); throw error; }
+  });
   const paths = resolveRuntimeDaemonPaths(homeDir);
   const lock = tryAcquireRuntimeDaemonLock(paths, {
     runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
@@ -162,6 +190,7 @@ it('runs default ACP prompts in the existing shared Host and only detaches on di
     await server.dispose();
     await host.close();
     await runtime.close();
+    readProbe.mockRestore(); captureProbe.mockRestore(); observeProbe.mockRestore(); submitProbe.mockRestore();
     llm.clearRuntimeModelProviders();
     vi.unstubAllEnvs();
     await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
