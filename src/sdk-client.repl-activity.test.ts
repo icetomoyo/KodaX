@@ -52,13 +52,20 @@ class TerminalOutput extends EventEmitter {
   columns = 120;
   rows = 48;
   text = '';
-  write(chunk: string) { this.text += chunk; return true; }
+  frame = '';
+  write(chunk: string) {
+    this.text += chunk;
+    if (chunk.includes('\n')) this.frame = chunk;
+    return true;
+  }
 }
 
 it('renders current Host activity and accepts follow-ups when attaching Ink to a busy Session', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-ink-activity-'));
   vi.stubEnv('KODAX_HOME', path.join(homeDir, '.kodax'));
   vi.stubEnv('KODAX_TUI_RENDERER', 'owned');
+  // Repo cache prewarming has its own tests and outlives this synthetic UI fixture.
+  vi.stubEnv('KODAX_PREWARM_REPO_INTELLIGENCE', '0');
   const stdin = new TerminalInput();
   const stdout = new TerminalOutput();
   const ttyDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
@@ -272,12 +279,16 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
       await expect.poll(() => received.at(-1)?.session.id).not.toBe(forked);
       expect(await client.sessions.getSettings(received.at(-1)!.session.id)).toEqual(settings);
     }
+    const promptText = () => stripVTControlCharacters(stdout.frame).split('\n')
+      .filter(line => line.startsWith('>')).join('').replace(/\s/g, '');
     for await (const command of sessionCommands('ink')) {
-      await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, '')).toContain('Typeamessage');
+      await expect.poll(promptText).toContain('>Typeamessage');
+      await new Promise<void>(resolve => setImmediate(resolve));
       stdout.text = '';
       stdin.emit('data', Buffer.from(command));
-      await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, ''))
-        .toContain(command.replace(/\s/g, ''));
+      await expect.poll(promptText).toBe(`>${command.replace(/\s/g, '')}`);
+      // Painting precedes the passive effect that replaces the keypress handler.
+      await new Promise<void>(resolve => setImmediate(resolve));
       stdout.text = '';
       stdin.emit('data', Buffer.from('\r'));
       if (command === '/recover') {
@@ -286,7 +297,7 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
         await new Promise(resolve => setTimeout(resolve, 150));
         stdin.emit('data', Buffer.from('y'));
       }
-      await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, ''), { timeout: 5_000 }).toContain('Typeamessage');
+      await expect.poll(promptText, { timeout: 5_000, message: `Prompt after ${command}` }).toContain('>Typeamessage');
     }
     mounted?.unmount();
     mounted?.cleanup();

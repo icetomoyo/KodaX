@@ -54,6 +54,8 @@ it.each(['classic', 'ink'] as const)('keeps an unsent %s draft available when ob
   vi.stubEnv('KODAX_HOME', path.join(homeDir, '.kodax'));
   vi.stubEnv('TERM', 'xterm-256color');
   vi.stubEnv('KODAX_TUI_RENDERER', 'owned');
+  // Repo cache prewarming has its own tests and outlives this synthetic UI fixture.
+  vi.stubEnv('KODAX_PREWARM_REPO_INTELLIGENCE', '0');
   const runtime = await createKodaXRuntime({ homeDir, defaultProvider: 'anthropic' });
   const paths = resolveRuntimeDaemonPaths(homeDir);
   const lock = tryAcquireRuntimeDaemonLock(paths, { runtimeId: runtime.identity.runtimeId,
@@ -130,7 +132,8 @@ it.each(['classic', 'ink'] as const)('keeps an unsent %s draft available when ob
         clientPlane: plane, sessionCommands: createCliSessionCommands(client), hardExitOnClose: false });
       await expect.poll(outputText, { timeout: 10_000 }).toContain('observationunavailable');
       stdin.emit('data', Buffer.from(draft));
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await expect.poll(outputText).toContain('existing-attachment.txt');
+      await new Promise<void>(resolve => setImmediate(resolve));
       stdout.text = '';
       stdin.emit('data', Buffer.from('\r'));
       await expect.poll(outputText).toContain('Inputnotsubmitted');
