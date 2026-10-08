@@ -156,10 +156,11 @@ describe('ordinary saved history browsing', () => {
     const rows = renderRows(items);
     // Machine-relative guard against a quadratic-layout regression, not a
     // latency contract: the visual wrap of a ~210KB emoji/CJK line measures
-    // ~5s on a mid laptop and slower on CI runners, while a true quadratic
-    // blowup takes minutes. 30s keeps that signal without flaking on slow
+    // ~5s on a mid laptop, ~11s locally with CI=true, and 46s on the Linux
+    // Node 20 runner under unit-tier load (Issue 358), while a true quadratic
+    // blowup takes minutes. 90s keeps that signal without flaking on slow
     // machines.
-    expect(performance.now() - before).toBeLessThan(30_000);
+    expect(performance.now() - before).toBeLessThan(90_000);
     const bodyRows = rows.filter(row => row.contentOffset !== undefined);
     expect(bodyRows.length).toBeGreaterThan(1000);
     for (const row of bodyRows) {
