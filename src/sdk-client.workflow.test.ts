@@ -120,10 +120,10 @@ it.each([false, true])('shares workflow facts and control with an older summary=
     // operations only apply to a live run — an optimistic control recorded
     // against a terminal run freezes the process projection at that state.
     const liveStatus = (await first.workflows.get(runId))?.status;
-    if (liveStatus === 'running' || liveStatus === 'pausing' || liveStatus === 'paused') {
+    if (liveStatus === 'running' || liveStatus === 'paused') {
       await firstControl.pause(runId);
       await expect.poll(async () => (await second.workflows.get(runId))?.status,
-        { timeout: 10_000 }).toMatch(/^(paused|pausing|completed)$/);
+        { timeout: 10_000 }).toMatch(/^(paused|completed)$/);
       await expectSummaryFacts();
       await firstControl.resume(runId);
       await expectSummaryFacts();
