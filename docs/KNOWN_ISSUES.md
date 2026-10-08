@@ -13,6 +13,61 @@ Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
 
+## Issue 356: Ink TUI stops rendering state changes after the first frame on CI Linux
+
+- Priority: Medium
+- Status: Open
+- Introduced: FEATURE_298 product client surfaces; observed during the
+  v0.7.97-alpha.1 release validation
+- Created: 2026-10-08
+
+Two Ink interactive tests (`src/sdk-client.repl-activity.test.ts`,
+`src/sdk-client.repl-observation.test.ts`) render the static banner frame on
+CI Linux but never render subsequent state: the activity todo line in the
+first case, the observation-unavailable notice in the second. The daemon-side
+projections are healthy — the test's own view assertions (activity todos,
+iteration counters) pass before the render assertion fails, and the
+observation rejection is injected above the transport. Windows passes both.
+Suspected area: the owned TUI renderer's second flush
+(`packages/repl/src/tui/runtime.ts` renderer selection, `KODAX_TUI_RENDERER`);
+needs reproduction on a Linux workstation.
+
+## Issue 355: A SIGKILLed daemon's zombie pid wedges crash recovery on Linux
+
+- Priority: High
+- Status: Resolved
+- Introduced: Runtime daemon ownership classification; observed during the
+  v0.7.97-alpha.1 release validation
+- Created: 2026-10-08
+- Resolved: 2026-10-08 (v0.7.97-alpha.1 worktree, unreleased)
+
+After `SIGKILL`, the daemon child stays a zombie until its parent reaps it,
+and `process.kill(pid, 0)` reports zombies as alive. Ownership classification
+saw `pidAlive && !endpointReachable` → `unhealthy` and refused to start a
+competing owner, so crash recovery could never restart the Host while the
+embedding process lived. Windows has no zombies, which is why local runs
+passed while CI Linux failed deterministically.
+`isRuntimeDaemonPidAlive` now treats a Linux zombie (`/proc/<pid>/stat`
+state `Z`) as dead, letting recovery claim ownership.
+
+## Issue 354: Frontmatter hooks never execute on Linux where /bin/sh is dash
+
+- Priority: High
+- Status: Resolved
+- Introduced: frontmatter hook execution via the shell-execution contract;
+  observed during the v0.7.97-alpha.1 release validation
+- Created: 2026-10-08
+- Resolved: 2026-10-08 (v0.7.97-alpha.1 worktree, unreleased)
+
+The default hook contract paired `kind: 'bash'` with `executable: '/bin/sh'`.
+The bash contract drives bash-only probe flags (`--noprofile --norc`), and on
+Debian/Ubuntu `/bin/sh` is dash, which rejects those options — every hook
+failed at environment resolution ("shell environment probe failed") and never
+executed. 19 release-validation tests across six files failed on that single
+cause; fail-closed tests passed only because a failed hook also blocks.
+The default now resolves the `bash` executable from PATH instead of pinning
+`/bin/sh`.
+
 ## Issue 353: Workflow control applied to a terminal run freezes the process projection
 
 - Priority: Medium
@@ -1116,6 +1171,9 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 356 | Medium | Open | Ink TUI stops rendering state changes after the first frame on CI Linux | observed during v0.7.97-alpha.1 release validation | — | 2026-10-08 | — |
+| 355 | High | Resolved | A SIGKILLed daemon's zombie pid wedges crash recovery on Linux | observed during v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
+| 354 | High | Resolved | Frontmatter hooks never execute on Linux where /bin/sh is dash | observed during v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
 | 353 | Medium | Open | Workflow control applied to a terminal run freezes the process projection at the requested state | observed during v0.7.97-alpha.1 release validation | — | 2026-10-08 | — |
 | 352 | Medium | Resolved | Model commands and local command feedback disappear after Host view replacement | confirmed at `394d4134`; first affected version unknown | v0.7.96-rc.11 worktree (unreleased) | 2026-09-27 | 2026-09-27 |
 | 351 | High | Resolved | Historical client notices displace the following Run output from the viewport tail | confirmed at `d552be47`; first affected version unknown | v0.7.96-rc.11 worktree (unreleased) | 2026-09-24 | 2026-09-24 |
@@ -15924,7 +15982,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 232 (37 Open, 195 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 235 (38 Open, 197 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
