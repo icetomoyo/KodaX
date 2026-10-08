@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { acquireRuntimeDaemonProcessLease, waitForRuntimeDaemonOwnerExit } from './process.js';
 import {
   readRuntimeDaemonLockOwner, readRuntimeDaemonState, readRuntimeDaemonToken,
@@ -12,6 +12,7 @@ import {
   resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock, writeRuntimeDaemonState,
 } from './state.js';
 import { createRuntimeDaemonSocketClientTransport, defaultRuntimeDaemonEndpoint } from './transport.js';
+import type { RuntimeDaemonClientTransport } from './client.js';
 
 describe('Host launcher waits for the original process', () => {
   it.each([
@@ -187,4 +188,72 @@ describe('Host launcher waits for the original process', () => {
       rmSync(homeDir, { recursive: true, force: true });
     }
   }, 60_000);
+
+  it('reports cancellation while re-observing an unreachable live owner', async () => {
+    const homeDir = mkdtempSync(path.join(os.tmpdir(), 'kodax-owner-recheck-cancel-'));
+    const paths = resolveRuntimeDaemonPaths(homeDir, 'cancel');
+    const controller = new AbortController();
+    const owner = { runtimeId: 'live-owner', pid: process.pid, createdAt: new Date().toISOString() };
+    expect(tryAcquireRuntimeDaemonLock(paths, owner)).toBeDefined();
+    writeRuntimeDaemonState(paths, { runtimeId: owner.runtimeId, pid: owner.pid, profile: paths.profile,
+      startedAt: owner.createdAt, endpoint: '/missing-owner.sock', version: 'test', status: 'ready' });
+    const probe = vi.fn(async () => { throw new Error('Endpoint unavailable'); });
+    try {
+      const opening = acquireRuntimeDaemonProcessLease({ homeDir, profile: paths.profile,
+        startupSignal: controller.signal,
+        healthCheck: { isPidAlive: () => true, createTransport: probe },
+      });
+      const cancelled = expect(opening).rejects.toMatchObject({ reason: 'cancelled' });
+      await expect.poll(() => probe.mock.calls.length).toBeGreaterThan(0);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      controller.abort();
+      await cancelled;
+      expect(readRuntimeDaemonLockOwner(paths.lockFile)?.runtimeId).toBe(owner.runtimeId);
+    } finally {
+      controller.abort();
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([0, 1])('cancels an in-flight probe after %i failed probes and closes it without replacing the owner', async failedProbes => {
+    const homeDir = mkdtempSync(path.join(os.tmpdir(), 'kodax-owner-probe-cancel-'));
+    const paths = resolveRuntimeDaemonPaths(homeDir, 'cancel');
+    const controller = new AbortController();
+    const owner = { runtimeId: 'live-owner', pid: process.pid, createdAt: new Date().toISOString() };
+    expect(tryAcquireRuntimeDaemonLock(paths, owner)).toBeDefined();
+    writeRuntimeDaemonState(paths, { runtimeId: owner.runtimeId, pid: owner.pid, profile: paths.profile,
+      startedAt: owner.createdAt, endpoint: '/missing-owner.sock', version: 'test', status: 'ready' });
+    let releaseProbe!: (transport: RuntimeDaemonClientTransport) => void;
+    let reachedProbe!: () => void;
+    const entered = new Promise<void>(resolve => { reachedProbe = resolve; });
+    const lateProbe = new Promise<RuntimeDaemonClientTransport>(resolve => { releaseProbe = resolve; });
+    const closeProbe = vi.fn();
+    let probes = 0;
+    let settled = false;
+    let cancellation: unknown;
+    const opening = acquireRuntimeDaemonProcessLease({ homeDir, profile: paths.profile,
+      startupSignal: controller.signal, healthCheck: { isPidAlive: () => true, createTransport: async () => {
+        if (probes++ < failedProbes) throw new Error('Endpoint unavailable');
+        reachedProbe();
+        return lateProbe;
+      } },
+    });
+    const outcome = opening.then(lease => { settled = true; return lease; },
+      error => { settled = true; cancellation = error; return undefined; });
+    try {
+      await entered;
+      controller.abort();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(settled).toBe(true);
+      expect(cancellation).toMatchObject({ reason: 'cancelled' });
+      expect(readRuntimeDaemonLockOwner(paths.lockFile)?.runtimeId).toBe(owner.runtimeId);
+    } finally {
+      controller.abort();
+      releaseProbe({ async request() { return { identity: { runtimeId: owner.runtimeId, profile: paths.profile } }; },
+        subscribe() { return { close() {} }; }, close: closeProbe });
+      await (await outcome)?.close();
+      await expect.poll(() => closeProbe.mock.calls.length).toBe(1);
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
 });

@@ -13,6 +13,52 @@ Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
 
+## Issue 359: Linux argv ownership checks reject SDK Hosts and reclaim live fences
+
+- Priority: High
+- Status: Resolved
+- Introduced: `e43d6da6`, v0.7.97-alpha.1 release validation
+- Created: 2026-10-08
+- Fixed: v0.7.97-alpha.1 worktree (unreleased)
+- Resolved: 2026-10-08
+
+**Original Problem:** The ACP shared-Host test kept failing on Linux Node 20/22
+after an argv-based PID-reuse fix and a 10-second owner re-observation window.
+The diagnostic run at `170948b9` shows `pidAlive=false`, `reachable=true`, and
+`identityMatches=true` in both failures
+([CI evidence](https://github.com/icetomoyo/KodaX/actions/runs/37772868643)).
+The responsive owner was the Vitest worker hosting the SDK Runtime, whose
+argv legitimately does not contain `daemon` and `serve`. `unhealthy` also
+includes this false-PID/live-endpoint combination; it does not imply an
+unreachable endpoint. Repeating the same wrong PID test cannot restore health.
+
+The same heuristic can reclaim a live SDK/inline owner lock when the state
+file is missing, and can preserve a recycled PID when the new process happens
+to have the same daemon argv. These are ownership errors, not test-only noise.
+
+**Resolution:** Linux ownership observation now compares the lock's recorded
+OS process-start identity with the current process identity. State observations
+use that evidence only when the lock's runtimeId and PID match the state.
+Missing metadata or unreadable identity remain conservative: a live process
+keeps its fence. Zombie detection is still a separate PID-liveness check.
+Windows probe behavior and ownership nonce/handshake checks are unchanged;
+no foreign process is killed. The raw command-line diagnostic is removed,
+while PID/status/endpoint/health flags remain available.
+
+The bounded re-observation window is retained. Cancellation now covers its
+delay, first probe, and subsequent probes; a late probe closes its connection
+without attaching or replacing an owner. A separately observed Ink follow-up
+fixture failure uses the existing current-frame/key-handler synchronization
+before synthetic Enter, retaining queue and exactly-once assertions.
+
+**Regression:** Seven cross-platform OS-boundary/ownership cases cover a live
+SDK Host with/without start metadata, live daemon/inline locks without state,
+recycled PID with daemon argv, unreadable identity, and mismatched lock evidence.
+The original six cases all fail on the argv heuristic and pass after the fix.
+Launcher tests additionally cover cancellation during delay and either probe,
+including closing the late transport. Local Node 20 with `CI=true` passes the
+ACP/Ink/lifecycle/launcher batch; Linux branch CI validation is pending.
+
 ## Issue 358: Long-line history layout exceeds the Linux Node 20 CI guard
 
 - Priority: Medium
@@ -158,14 +204,13 @@ passed while CI Linux failed deterministically.
 `isRuntimeDaemonPidAlive` now treats a Linux zombie (`/proc/<pid>/stat`
 state `Z`) as dead, letting recovery claim ownership.
 
-Follow-up validation caught two more windows. Once the child is reaped, a
-busy Linux runner can reassign the pid to an unrelated process before
-recovery re-observes it — `kill(pid, 0)` then reports alive while the
-endpoint is gone forever, and the refusal returns. Ownership observation now
-verifies through `/proc/<pid>/cmdline` that the pid still names the daemon
-serve entry (`isRuntimeDaemonOwnerPidAlive`); zombies read as an empty
-cmdline, so both windows close with one check. The generic pid probe keeps
-its plain semantics for non-daemon callers such as the CLI parent watchdog.
+Follow-up validation caught a PID-reuse window after the child is reaped.
+An initial attempt to identify owners through `daemon serve` argv introduced
+Issue 359: legitimate SDK Hosts were classified as dead and live fences could
+be reclaimed. That heuristic is superseded by the existing recorded OS
+process-start identity. Missing identity evidence keeps a live fence; a proven
+identity change permits stale-owner recovery. The separate zombie check and
+generic PID semantics for callers such as the CLI parent watchdog are retained.
 Separately, a live owner on a loaded host can miss the 1-second handshake
 probe, which also produced `unhealthy`; the acquire path now re-observes a
 bounded number of times before refusing, so attach and stale outcomes
@@ -1293,6 +1338,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 359 | High | Resolved | Linux argv ownership checks reject SDK Hosts and reclaim live fences | `e43d6da6`, v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
 | 358 | Medium | Open | Long-line history layout exceeds the Linux Node 20 CI guard | observed at `af6d7a7d` during v0.7.97-alpha.1 validation; first affected version unknown | — | 2026-10-08 | — |
 | 357 | Medium | Resolved | Output ownership fixture counts learning reviews as answers | observed during v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
 | 356 | Medium | Resolved | Interactive Ink fixtures inherit CI static-output mode | observed during v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
@@ -16106,7 +16152,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 237 (38 Open, 199 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 238 (38 Open, 200 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 

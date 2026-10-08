@@ -68,6 +68,8 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
   vi.stubEnv('KODAX_PREWARM_REPO_INTELLIGENCE', '0');
   const stdin = new TerminalInput();
   const stdout = new TerminalOutput();
+  const promptText = () => stripVTControlCharacters(stdout.frame).split('\n')
+    .filter(line => line.startsWith('>')).join('').replace(/\s/g, '');
   const ttyDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
   const rawDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'setRawMode');
   Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: true });
@@ -198,7 +200,8 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
     await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, '')).toContain('Hostmodelworkflow');
     await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, '')).toContain('VerifiedthecompleteHostsource.');
     stdin.emit('data', Buffer.from('queued from attached Ink'));
-    await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, '')).toContain('queuedfromattachedInk');
+    await expect.poll(promptText).toBe('>queuedfromattachedInk');
+    await new Promise<void>(resolve => setImmediate(resolve));
     stdin.emit('data', Buffer.from('\r'));
     const observed: import('@kodax-ai/coding/client-contract').ClientSessionView[] = [];
     const observation = await client.sessions.observe(session.id, view => observed.push(view));
@@ -214,7 +217,8 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
     await run.result;
     await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, '')).toContain('Typeamessage');
     stdin.emit('data', Buffer.from('/cost'));
-    await expect.poll(() => stripVTControlCharacters(stdout.text)).toContain('/cost');
+    await expect.poll(promptText).toBe('>/cost');
+    await new Promise<void>(resolve => setImmediate(resolve));
     stdin.emit('data', Buffer.from('\r'));
     await expect.poll(() => stripVTControlCharacters(stdout.text).replace(/\s/g, '')).toContain('Totalcost:$0.012');
     const storage = new FileSessionStorage({ sessionsDir: path.join(homeDir, '.kodax', 'sessions'), configHome: path.join(homeDir, '.kodax') });
@@ -279,8 +283,6 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
       await expect.poll(() => received.at(-1)?.session.id).not.toBe(forked);
       expect(await client.sessions.getSettings(received.at(-1)!.session.id)).toEqual(settings);
     }
-    const promptText = () => stripVTControlCharacters(stdout.frame).split('\n')
-      .filter(line => line.startsWith('>')).join('').replace(/\s/g, '');
     for await (const command of sessionCommands('ink')) {
       await expect.poll(promptText).toContain('>Typeamessage');
       await new Promise<void>(resolve => setImmediate(resolve));

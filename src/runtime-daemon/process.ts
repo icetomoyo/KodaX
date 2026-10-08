@@ -380,7 +380,10 @@ export async function acquireRuntimeDaemonProcessLease(
     );
   }
 
-  let initial = await observeRuntimeDaemonHealth(paths, options.healthCheck);
+  if (options.startupSignal?.aborted) throw runtimeDaemonStartupCancelled();
+  let initial = await raceRuntimeDaemonStartupStep(
+    observeRuntimeDaemonHealth(paths, options.healthCheck), options.startupSignal,
+  );
   let initialHealth = classifyRuntimeDaemonHealth(initial);
   // One failed probe is a weak basis for a permanent refusal: on a busy host a
   // live owner can miss the 1-second handshake window. Bounded re-observation
@@ -391,11 +394,16 @@ export async function acquireRuntimeDaemonProcessLease(
       + Math.min(10_000, Math.max(0, startupDeadline - Date.now()));
     while (initialHealth === "unhealthy" && Date.now() < recheckDeadline
       && !options.startupSignal?.aborted) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      initial = await observeRuntimeDaemonHealth(paths, options.healthCheck);
+      await raceRuntimeDaemonStartupStep(
+        delay(Math.max(0, Math.min(250, recheckDeadline - Date.now()))), options.startupSignal,
+      );
+      initial = await raceRuntimeDaemonStartupStep(
+        observeRuntimeDaemonHealth(paths, options.healthCheck), options.startupSignal,
+      );
       initialHealth = classifyRuntimeDaemonHealth(initial);
     }
   }
+  if (options.startupSignal?.aborted) throw runtimeDaemonStartupCancelled();
   if (initial.pidAlive && (initial.state?.status === 'stopping' || initial.state?.status === 'draining')) {
     const owner = initial.observedLockOwner;
     if (initialHealth === 'mismatch' || owner?.runtimeId !== initial.state.runtimeId
@@ -431,19 +439,11 @@ export async function acquireRuntimeDaemonProcessLease(
   }
   if (initialHealth === "unhealthy" || initialHealth === "mismatch") {
     const ownerPid = initial.state?.pid;
-    let ownerCmdline: string | undefined;
-    if (ownerPid !== undefined && process.platform === 'linux') {
-      try {
-        ownerCmdline = readFileSync(`/proc/${ownerPid}/cmdline`, 'utf8')
-          .split('\0').filter(Boolean).join(' ').slice(0, 300);
-      } catch { ownerCmdline = undefined; }
-    }
     throw new Error(
       `Runtime daemon is ${initialHealth}; refusing to start a competing owner.`
       + ` [state pid=${ownerPid} status=${initial.state?.status} endpoint=${initial.state?.endpoint}`
       + ` pidAlive=${initial.pidAlive} reachable=${initial.endpointReachable}`
-      + ` identityMatches=${initial.identityMatches}`
-      + `${ownerCmdline !== undefined ? ` ownerCmdline=${JSON.stringify(ownerCmdline)}` : ''}]`,
+      + ` identityMatches=${initial.identityMatches}]`,
     );
   }
 

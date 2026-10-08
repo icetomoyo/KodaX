@@ -5,6 +5,7 @@ import {
   readRuntimeDaemonLockOwner,
   readRuntimeDaemonState,
   readRuntimeDaemonToken,
+  readRuntimeOwnerProcessStartIdentity,
   type RuntimeDaemonHealthObservation,
   type RuntimeDaemonLockOwner,
   type RuntimeDaemonOwnershipDecision,
@@ -40,7 +41,10 @@ export async function observeRuntimeDaemonHealth(
   }
 
   const lockOwner = readRuntimeDaemonLockOwner(paths.lockFile);
-  const pidAlive = (options.isPidAlive ?? isRuntimeDaemonOwnerPidAlive)(state.pid);
+  const pidAlive = options.isPidAlive
+    ? options.isPidAlive(state.pid)
+    : isRuntimeDaemonOwnerPidAlive(state.pid,
+      runtimeDaemonLockMatchesState(lockOwner, state) ? lockOwner?.processStartIdentity : undefined);
   const endpoint = runtimeDaemonEndpointFromState(state);
   const token = readRuntimeDaemonToken(paths);
   let transport: RuntimeDaemonClientTransport | undefined;
@@ -105,7 +109,9 @@ export async function resolveRuntimeDaemonOwnership(
     ? {
         ...observation,
         observedLockOwner: lockOwner,
-        lockOwnerPidAlive: (options.isPidAlive ?? isRuntimeDaemonOwnerPidAlive)(lockOwner.pid),
+        lockOwnerPidAlive: options.isPidAlive
+          ? options.isPidAlive(lockOwner.pid)
+          : isRuntimeDaemonOwnerPidAlive(lockOwner.pid, lockOwner.processStartIdentity),
       }
     : observation;
   return claimRuntimeDaemonOwnership(paths, owner, enriched);
@@ -133,23 +139,15 @@ export function isRuntimeDaemonPidAlive(pid: number): boolean {
   }
 }
 
-// Ownership recovery must not mistake a recycled pid for its daemon: after a
-// SIGKILL the kernel reaps the child quickly and a busy Linux runner can hand
-// the pid to an unrelated process before recovery re-observes it — kill(pid, 0)
-// then reports alive while the endpoint is gone forever, and the daemon is
-// never started again. Zombies read as an empty cmdline, so this one check
-// covers both. Callers probing arbitrary pids (parent watchdogs) keep using
-// isRuntimeDaemonPidAlive.
-export function isRuntimeDaemonOwnerPidAlive(pid: number): boolean {
+// Linux PID reuse is established by the recorded OS start identity. A Host
+// can be SDK-owned (including an inline owner), so argv is not owner identity.
+// Missing identity evidence remains conservative; the authenticated endpoint
+// and owner fence still decide whether the caller can attach or replace it.
+export function isRuntimeDaemonOwnerPidAlive(pid: number, processStartIdentity?: string): boolean {
   if (!isRuntimeDaemonPidAlive(pid)) return false;
-  if (process.platform !== 'linux') return true;
-  try {
-    const argv = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean);
-    return argv.includes('daemon') && argv.includes('serve');
-  } catch {
-    // Unreadable (permission/mount) but kill() says alive: keep that verdict.
-    return true;
-  }
+  if (process.platform !== 'linux' || processStartIdentity === undefined) return true;
+  const currentIdentity = readRuntimeOwnerProcessStartIdentity(pid);
+  return currentIdentity === undefined || currentIdentity === processStartIdentity;
 }
 
 // A zombie child answers kill(pid, 0) until its parent reaps it, but it can
