@@ -13,13 +13,18 @@ Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
 
-## Issue 356: Ink TUI stops rendering state changes after the first frame on CI Linux
+## Issue 356: Interactive Ink fixtures inherit CI static-output mode
 
 - Priority: Medium
-- Status: Open
+- Status: Resolved
 - Introduced: FEATURE_298 product client surfaces; observed during the
   v0.7.97-alpha.1 release validation
 - Created: 2026-10-08
+- Fixed: v0.7.97-alpha.1 worktree (unreleased)
+- Resolved: 2026-10-08
+- Classification: Test environment mismatch
+
+**Original report (product-defect attribution superseded):**
 
 Two Ink interactive tests (`src/sdk-client.repl-activity.test.ts`,
 `src/sdk-client.repl-observation.test.ts`) render the static banner frame on
@@ -33,14 +38,28 @@ owned TUI renderer's second flush (`packages/repl/src/tui/runtime.ts`
 renderer selection, `KODAX_TUI_RENDERER`); needs reproduction on a Linux
 workstation.
 
-## Issue 357: A provider request appears around a graceful Host restart under load
+**Resolution:** The same failures reproduce on Windows with `CI=true`.
+`core/engine.js` intentionally writes only Static content in CI, retaining
+dynamic output until unmount; this behavior already existed in v0.7.96.
+The tests supplied fake interactive TTY streams without overriding the
+`is-in-ci` detector. Both fixtures now explicitly select interactive rendering
+with a local `is-in-ci` mock, matching the existing renderer tests. Product
+renderer behavior and the original activity/observation assertions are retained.
+The three interactive cases pass with `CI=true`; Linux CI validation is pending.
+
+## Issue 357: Output ownership fixture counts learning reviews as answers
 
 - Priority: Medium
-- Status: Open
+- Status: Resolved
 - Introduced: observed during the v0.7.97-alpha.1 release validation; the
   covering test is new in the v0.7.97 line, which has not had a fully green
   CI run yet
 - Created: 2026-10-08
+- Fixed: v0.7.97-alpha.1 worktree (unreleased)
+- Resolved: 2026-10-08
+- Classification: Provider fixture classification and background-work race
+
+**Original report (restart-reexecution attribution superseded):**
 
 `src/sdk-client.output-ownership.test.ts` restarts the Host gracefully
 (client disconnect, `host.close()`, fresh runtime) after the run completed,
@@ -58,6 +77,20 @@ bodies (or sampling both counters before the restart) is the first
 diagnostic step. Candidates: a resume-time context rebuild or retry without
 the sidecar verifier tools, a startup probe, or a queued run attempt racing
 `host.close()` that re-executes in the new Host.
+
+**Resolution:** Captured request bodies identify the extra request as the normal
+`commit_episode_learning_review` after episode completion, before restart.
+Waiting for the already-started review makes all four old count assertions fail
+deterministically: the fixture counted every non-Verifier request as an answer
+and returned plain answer text even for the review's forced tool call. It now
+distinguishes learning review requests, supplies a valid no-op review result,
+and requires the review's persisted completion receipt through the public
+lineage API before recording the restart request baseline. A missing receipt
+fails the test instead of treating a bounded drain timeout as completion.
+The test requires exactly one review and the expected one/two foreground answer
+calls both before and after restart; the total-request count must also remain
+unchanged. Output identity, persistence, readItem and replay assertions remain.
+All four cases pass with `CI=true`; Linux CI validation is pending.
 
 ## Issue 355: A SIGKILLed daemon's zombie pid wedges crash recovery on Linux
 
@@ -1198,8 +1231,8 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 357 | Medium | Open | A provider request appears around a graceful Host restart under load | observed during v0.7.97-alpha.1 release validation | — | 2026-10-08 | — |
-| 356 | Medium | Open | Ink TUI stops rendering state changes after the first frame on CI Linux | observed during v0.7.97-alpha.1 release validation | — | 2026-10-08 | — |
+| 357 | Medium | Resolved | Output ownership fixture counts learning reviews as answers | observed during v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
+| 356 | Medium | Resolved | Interactive Ink fixtures inherit CI static-output mode | observed during v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
 | 355 | High | Resolved | A SIGKILLed daemon's zombie pid wedges crash recovery on Linux | observed during v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
 | 354 | High | Resolved | Frontmatter hooks never execute on Linux where /bin/sh is dash | observed during v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
 | 353 | Medium | Open | Workflow control applied to a terminal run freezes the process projection at the requested state | observed during v0.7.97-alpha.1 release validation | — | 2026-10-08 | — |
@@ -16010,7 +16043,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 236 (39 Open, 197 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 236 (37 Open, 199 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 

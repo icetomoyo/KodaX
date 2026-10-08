@@ -24,14 +24,27 @@ it.each([
   const gate = new Promise<void>(resolve => { release = resolve; });
   let calls = 0;
   let answerCalls = 0;
+  let learningCalls = 0;
   const server = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { tools?: { function?: { name?: string } }[] };
     const verifier = body.tools?.some(tool => tool.function?.name === 'emit_sidecar_verdict');
-    if (!verifier) answerCalls++;
+    const learning = body.tools?.some(tool => tool.function?.name === 'commit_episode_learning_review');
+    if (!verifier && !learning) answerCalls++;
     calls++;
     response.writeHead(200, { 'content-type': 'text/event-stream' });
+    if (learning) {
+      learningCalls++;
+      response.end(`data: ${JSON.stringify({ id: 'learning-fixture', object: 'chat.completion.chunk',
+        choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'review-result', type: 'function',
+          function: { name: 'commit_episode_learning_review', arguments: JSON.stringify({
+            memoryPlan: { actions: [], warnings: [] },
+            capabilityDecision: { disposition: 'discard', reasonCodes: ['fixture-no-reusable-method'] },
+          }) } }] }, finish_reason: 'tool_calls' }],
+      })}\n\ndata: [DONE]\n\n`);
+      return;
+    }
     const send = (content: string, finish: string | null = null) => response.write(`data: ${JSON.stringify({
       id: 'ownership-fixture', object: 'chat.completion.chunk',
       choices: [{ index: 0, delta: { content }, finish_reason: finish }],
@@ -102,6 +115,12 @@ it.each([
     for (const reply of replies) expect(await active.client.sessions.readItem(session.id, reply.id)).toMatchObject({ text: reply.text });
     await printing;
     expect(writes.filter(text => text.startsWith('assistant:')).map(text => text.slice('assistant:'.length)).join('')).toBe(answer);
+    // Include the completed episode's background review in the restart baseline.
+    await expect.poll(async () => (await active.client.sessions.readLineage(session.id))?.entries
+      .filter(entry => entry.type === 'memory_review_receipt').length, { timeout: 5_000 }).toBe(1);
+    await awaitLatestCodingMemoryReviewDrain(5_000);
+    expect(learningCalls).toBe(1);
+    expect(answerCalls).toBe(continuation ? 2 : 1);
     const callsBeforeRestart = calls;
     closeObservation(); await active.client.disconnect(); await active.host.close(); await active.runtime.close();
     active = await startHost();
@@ -111,6 +130,7 @@ it.each([
       .toEqual(replies.map(item => [item.id, item.text]));
     expect(writes.filter(text => text.startsWith('assistant:')).map(text => text.slice('assistant:'.length)).join('')).toBe(answer);
     expect(answerCalls).toBe(continuation ? 2 : 1);
+    expect(learningCalls).toBe(1);
     expect(calls).toBe(callsBeforeRestart);
   } finally {
     release(); closeObservation?.();

@@ -17,6 +17,8 @@ import { runInteractiveMode } from '../packages/repl/src/interactive/repl.js';
 import { runInkInteractiveMode } from '../packages/repl/src/ui/InkREPL.js';
 
 const fixture = vi.hoisted(() => ({ start: vi.fn(), ask: vi.fn(), readline: vi.fn(), render: vi.fn() }));
+// This fixture models an interactive TTY, including when the test runner is in CI.
+vi.mock('is-in-ci', () => ({ default: false }));
 vi.mock('readline', async original => ({ ...await original<typeof import('readline')>(), createInterface: (...args: unknown[]) => fixture.readline(...args) }));
 vi.mock('@kodax-ai/coding', async original => ({
   ...await original<typeof import('@kodax-ai/coding')>(), startKodaX: fixture.start,

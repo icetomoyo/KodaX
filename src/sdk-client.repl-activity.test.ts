@@ -18,6 +18,8 @@ import { runInkInteractiveMode } from '../packages/repl/src/ui/InkREPL.js';
 import { FileSessionStorage } from '../packages/repl/src/interactive/storage.js';
 
 const fixture = vi.hoisted(() => ({ start: vi.fn(), render: vi.fn(), ask: vi.fn() }));
+// This fixture models an interactive TTY, including when the test runner is in CI.
+vi.mock('is-in-ci', () => ({ default: false }));
 const clientStorage = {
   async load(): Promise<never> { throw new Error('Client cannot read Host Session files'); },
   async list(): Promise<never> { throw new Error('Client cannot list Host Session files'); },
