@@ -13,6 +13,43 @@ Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
 
+## Issue 362: Linux scoped startup review does not reach HTTP in the bundled cancellation gate
+
+- Priority: Medium
+- Status: ready
+- Introduced: first affected version unknown; observed during v0.7.97-alpha.1 validation
+- Created: 2026-10-09
+- Classification: Unresolved test failure; product versus fixture attribution pending
+
+**Original Problem:** At `ffec1df1`, Linux Node 22 twice fails
+`tests/bundled-memory-review-shutdown.test.mjs` → `bundled scoped daemon aborts
+a Run with an active startup review before quit and recovery` at line 286.
+The 10s observation window expires with `reviewRequests: 0`, before the test
+can exercise abort, daemon shutdown, or recovery. Both original and unchanged
+retry report `Timed out waiting for scoped startup review HTTP`
+([CI evidence, attempts 1 and 2](https://github.com/icetomoyo/KodaX/actions/runs/37815764971)).
+The preceding Node 22 run at `e598653f` passes the bundled gate; the only changes
+between these commits are a Shell Stop fixture and documentation, not production
+code. Node 20 passes the final complete job. This does not establish a new
+production regression or justify changing a business timeout.
+
+**Expected:** The fixture must reach an active Run-scoped review and primary
+request before aborting, then verify cancellation, durable deferral, and
+exactly-once recovery using the existing retry policy.
+
+**Reproduction:** Run the existing bundled CI gate on Linux Node 22, or isolate
+`node --test --test-name-pattern='bundled scoped daemon aborts'
+tests/bundled-memory-review-shutdown.test.mjs` after building packages/bundles.
+The isolated Windows Node 22 test passes in 67.5s, including its documented
+60s provider retry wait; it does not reproduce the Linux failure.
+
+**Diagnosis needed:** Capture the second Run phase, pending review state,
+claim/revalidation failures, and redacted daemon diagnostics before fixture
+cleanup. Current logs do not distinguish preparation latency, a skipped claim,
+or a review preparation failure. The original 10s observation and 100s outer
+limits, provider assertions, and recovery checks remain unchanged. The final
+CI gate is 6/7, and release remains deferred.
+
 ## Issue 361: ACP's next prompt can fail during a transient Session read boundary
 
 - Priority: Medium
@@ -101,8 +138,16 @@ the native `srt-win` WFP probe before application tests start.
 
 Files changed for the production repair: `storage.ts`,
 `storage.owned-read.test.ts`, and `acp_server.daemon.test.ts`. Further changes
-are confined to the three affected fixtures and Unix gate cleanup. The final
-complete CI gate still needs validation; release remains deferred.
+are confined to the three affected fixtures and Unix gate cleanup.
+
+**Final verification:** At `ffec1df1`, the unchanged Node 20 retry passes every
+fast/unit/contract/system tier (2,195 / 11,924 / 960 / 1,280 tests), including
+the Shell Stop fixture and all nine owned-read cases. The original history file
+passes in 659ms and catalog in 7.0s. Electron, all three native platforms, and
+the Windows shell contract pass. The gate remains 6/7 because of the independently
+recorded Node 22 failure in Issue 362
+([CI evidence](https://github.com/icetomoyo/KodaX/actions/runs/37815764971)).
+No test deadline or product assertion was relaxed. Release remains deferred.
 
 ## Issue 360: Resume catalog fixture spends its deadline on unrelated repository analysis
 
@@ -1504,6 +1549,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 362 | Medium | ready | Linux scoped startup review does not reach HTTP in the bundled cancellation gate | observed during v0.7.97-alpha.1 validation; first affected version unknown | — | 2026-10-09 | — |
 | 361 | Medium | Resolved | ACP's next prompt can fail during a transient Session read boundary | observed during v0.7.97-alpha.1 validation; first affected version unknown | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-09 |
 | 360 | Medium | Resolved | Resume catalog fixture spends its deadline on unrelated repository analysis | v0.7.97-alpha.1 product catalog integration fixture | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
 | 359 | High | Resolved | Linux argv ownership checks reject SDK Hosts and reclaim live fences | `e43d6da6`, v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
@@ -16320,7 +16366,8 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 240 (37 Open, 203 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 241 (37 Open, 203 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Ready: 1 (Issue 362; Linux diagnosis pending)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
