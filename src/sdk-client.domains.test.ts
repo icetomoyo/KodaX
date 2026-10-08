@@ -15,6 +15,9 @@ import {
   createLearnedCapabilityScope, resolveProjectLearnedAreaRoot,
 } from '@kodax-ai/agent';
 import { getActiveExtensionRuntime } from '@kodax-ai/coding';
+import { createInteractiveContext, executeCommand, type CommandCallbacks } from '@kodax-ai/repl';
+import { applyClientSessionMetadata } from '../packages/repl/src/session/client-session.js';
+import { createCliSessionCommands } from './cli-client-plane.js';
 import { createKodaXRuntime } from './sdk-runtime.js';
 import { createReplRuntimeAutoModeControl } from './kodax_cli.js';
 import { createRuntimeDaemonDispatcher } from './runtime-daemon/server.js';
@@ -81,6 +84,43 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }, 30_000);
+
+it('starts a new session from Host history written by another Client after loading clears the local cache', async () => {
+  const session = await first.sessions.create({ projectPath: homeDir });
+  const context = await createInteractiveContext({ sessionId: session.id, gitRoot: homeDir });
+  const binding = createCliSessionCommands(first);
+  const accepted = await second.inputs.submit({ sessionId: session.id, inputId: 'other-client-turn', text: 'Remember this conversation.' });
+  expect(await second.runs.await(accepted.runId!)).toMatchObject({ phase: 'completed' });
+  const loaded = await binding.read!(session.id);
+  applyClientSessionMetadata(context, loaded);
+  expect(context.messages).toEqual([]);
+  expect(loaded.msgCount).toBeGreaterThan(0);
+  const nextId = `new-${randomUUID()}`;
+  const clearHistory = vi.fn();
+  const callbacks: CommandCallbacks = {
+    ui: { select: async () => undefined, confirm: async () => true, input: async () => undefined },
+    exit: () => {}, saveSession: async () => {}, loadSession: async () => 'missing',
+    listSessions: async () => {}, printHistory: () => {}, clearHistory,
+    confirm: async () => true,
+    getSessionStatus: async () => ({ messageCount: (await binding.read!(context.sessionId)).msgCount }),
+    startNewSession: async () => {
+      await binding.create({ sessionId: nextId, title: 'New session', projectPath: homeDir, surface: 'repl' });
+      applyClientSessionMetadata(context, await binding.read!(nextId));
+    },
+  };
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  try {
+    await expect(executeCommand({ command: 'new', args: [] }, context, callbacks,
+      { provider: 'product-domains-test', thinking: false, reasoningMode: 'off', agentMode: 'sa', permissionMode: 'accept-edits' })).resolves.toBe(true);
+    expect(context.sessionId).toBe(nextId);
+    expect(clearHistory).toHaveBeenCalledOnce();
+    expect(await second.sessions.read(nextId)).toMatchObject({ msgCount: 0 });
+    expect((await second.sessions.read(session.id)).msgCount).toBe(loaded.msgCount);
+    expect(log.mock.calls.flat().join('\n')).not.toContain('already empty');
+  } finally {
+    log.mockRestore();
+  }
+});
 
 it('reads the same active Auto diagnostics through Product and the CLI control', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });

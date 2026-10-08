@@ -516,7 +516,7 @@
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
-| `298` | Product Host and Client Contract Simplification | Core / Runtime + UI SDK + Execution | Critical | `v0.7.97` | [v0.7.97](features/v0.7.97.md#feature-298) — core, [consumer completion T38–T42](features/v0.7.97.md#consumer-completion-tickets) and parity follow-ups T43–T47 implemented and reviewed |
+| `298` | Product Host and Client Contract Simplification | Core / Runtime + UI SDK + Execution | Critical | `v0.7.97` | [v0.7.97](features/v0.7.97.md#feature-298) — core, [consumer completion T38–T42](features/v0.7.97.md#consumer-completion-tickets) and parity follow-ups T43–T56 implemented; cross-platform/manual release verification pending |
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
 ---

@@ -1760,7 +1760,9 @@ export async function observeDaemonSessionView(
   const openRemoteView = async (isCurrent?: () => boolean): Promise<void> => {
     const response = requireRecord(await transport.request('session.view.observe', { sessionId, subscriptionId }));
     if (closed) {
-      void transport.request('session.view.close', { subscriptionId }).catch(() => undefined);
+      void transport.request('session.view.close', { subscriptionId }).catch((error: unknown) => {
+        emitKodaXDiagnostic({ source: 'session.view', level: 'warn', message: 'Unable to release the remote Session observation.', detail: error });
+      });
       throw new Error('Connection closed while opening the Session view.');
     }
     if (isCurrent !== undefined && !isCurrent()) {

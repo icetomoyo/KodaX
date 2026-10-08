@@ -9,6 +9,7 @@ import React, { useState, useEffect } from "react";
 import { Box, Text } from "../tui.js";
 import { getTheme } from "../themes/index.js";
 import type { Theme } from "../types.js";
+import { formatTokenCount } from "../view-models/status-bar.js";
 
 // === Types ===
 
@@ -307,7 +308,7 @@ export function buildSpinnerStatsText(elapsedMs: number, charCount: number): str
   const elapsed = formatElapsedDuration(elapsedMs);
   const tokens = estimateOutputTokens(charCount);
   return tokens > 0
-    ? ` (${elapsed} · ↓ ${tokens} tokens)`
+    ? ` (${elapsed} · ↓ ${formatTokenCount(tokens)} tokens)`
     : ` (${elapsed})`;
 }
 

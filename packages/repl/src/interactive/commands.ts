@@ -34,7 +34,7 @@ import {
   resolveKodaXManual,
 } from '@kodax-ai/coding';
 import type { AgentsFile } from '@kodax-ai/coding';
-import type { ClientCommandInfo } from '@kodax-ai/coding/client-contract';
+import type { ClientCommandInfo, ClientCommandInput, ClientCommandService } from '@kodax-ai/coding/client-contract';
 import {
   PermissionMode,
   PERMISSION_MODES,
@@ -3245,6 +3245,15 @@ export type CommandResult = boolean | {
   workflow?: CommandWorkflowInvocationRequest;
 };
 
+async function executeHostCommand(client: ClientCommandService, input: ClientCommandInput): Promise<CommandResult> {
+  try {
+    return clientCommandResult(await client.execute(input));
+  } catch (error: unknown) {
+    return { success: false,
+      message: `Command /${input.name} failed: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
 export async function executeCommand(
   parsed: { command: string; args: string[]; skillInvocation?: { name: string } },
   context: InteractiveContext,
@@ -3293,9 +3302,8 @@ export async function executeCommand(
     }
 
     if (callbacks.commandClient && (cmd.source === 'extension' || cmd.source === 'prompt')) {
-      const result = await callbacks.commandClient.execute({ sessionId: context.sessionId,
+      return executeHostCommand(callbacks.commandClient, { sessionId: context.sessionId,
         inputId: randomUUID(), name: parsed.command, args: parsed.args });
-      return clientCommandResult(result);
     }
 
     try {
@@ -3320,9 +3328,8 @@ export async function executeCommand(
 
     try {
       if (callbacks.commandClient) {
-        const result = await callbacks.commandClient.execute({ sessionId: context.sessionId,
+        return executeHostCommand(callbacks.commandClient, { sessionId: context.sessionId,
           inputId: randomUUID(), name: parsed.command, args: parsed.args });
-        return clientCommandResult(result);
       }
       return await executeExtensionCommand(extensionCommand, parsed.args, context, callbacks);
     } catch (error) {
@@ -3332,8 +3339,8 @@ export async function executeCommand(
   }
 
   if (callbacks.commandClient) {
-    return clientCommandResult(await callbacks.commandClient.execute({ sessionId: context.sessionId,
-      inputId: randomUUID(), name: parsed.command, args: parsed.args }));
+    return executeHostCommand(callbacks.commandClient, { sessionId: context.sessionId,
+      inputId: randomUUID(), name: parsed.command, args: parsed.args });
   }
 
   const namespacedDirectSkill = await resolveNamespacedDirectSkillCommand(parsed, context);

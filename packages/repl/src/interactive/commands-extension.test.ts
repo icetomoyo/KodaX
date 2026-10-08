@@ -9,7 +9,7 @@ import {
   registerOfficialSandboxExtension,
   runToolInvocation,
 } from '@kodax-ai/coding';
-import { BUILTIN_COMMANDS, executeCommand, getCommandRegistry, isRegisteredHostCommand, parseHostCommand } from './commands.js';
+import { BUILTIN_COMMANDS, executeCommand, getCommandRegistry, isRegisteredHostCommand, parseCommand, parseHostCommand } from './commands.js';
 
 describe('extension command host adapters', () => {
   let tempDir: string;
@@ -34,6 +34,46 @@ describe('extension command host adapters', () => {
     }
     setAgentConfigHome(undefined);
     await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it.each(['unknown', 'prompt', 'extension'] as const)(
+    'reports rejected %s Host commands and keeps subsequent commands usable', async (source) => {
+      const handler = vi.fn();
+      if (source !== 'unknown') {
+        getCommandRegistry().register({ name: 'qu', source, description: 'Host command', handler });
+      }
+      const execute = vi.fn().mockRejectedValueOnce(Object.assign(
+        new Error('Registered command is unavailable: qu'), { code: 'not_found' },
+      )).mockResolvedValueOnce({ kind: 'completed', success: true, message: 'Still running' });
+      const context = { sessionId: 's1', gitRoot: tempDir } as never;
+      const callbacks = { commandClient: { execute } } as never;
+      await expect(executeCommand(parseCommand('/qu')!, context, callbacks, {} as never))
+        .resolves.toEqual({ success: false, message: 'Command /qu failed: Registered command is unavailable: qu' });
+      await expect(executeCommand(parseCommand('/host-status')!, context, callbacks, {} as never))
+        .resolves.toEqual({ success: true, message: 'Still running' });
+      expect(handler).not.toHaveBeenCalled();
+    },
+  );
+
+  it('reports transport failures without turning them into unknown-command errors', async () => {
+    const execute = vi.fn().mockRejectedValue(new Error('Runtime daemon transport is closed'));
+    await expect(executeCommand(parseCommand('/host-status')!,
+      { sessionId: 's1', gitRoot: tempDir } as never,
+      { commandClient: { execute } } as never, {} as never))
+      .resolves.toEqual({ success: false, message: 'Command /host-status failed: Runtime daemon transport is closed' });
+  });
+
+  it.each(['/q', '/quit', '/exit', '/bye'])('keeps %s as a local save-and-exit command', async (input) => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const saveSession = vi.fn(async () => {});
+    const exit = vi.fn(async () => {});
+    const execute = vi.fn();
+    await expect(executeCommand(parseCommand(input)!,
+      { sessionId: 's1', gitRoot: tempDir } as never,
+      { saveSession, exit, commandClient: { execute } } as never, {} as never)).resolves.toBe(true);
+    expect(saveSession).toHaveBeenCalledOnce();
+    expect(exit).toHaveBeenCalledOnce();
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it('starts a registered alias in the Host without invoking its local handler', async () => {

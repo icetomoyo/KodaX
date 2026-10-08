@@ -85,11 +85,22 @@ describe("buildSpinnerStatsText", () => {
   });
 
   it("renders MmSs format for round in the 1-60min range", () => {
-    expect(buildSpinnerStatsText(72_000, 8_000)).toBe(" (1m12s · ↓ 2000 tokens)");
+    expect(buildSpinnerStatsText(72_000, 8_000)).toBe(" (1m12s · ↓ 2.0k tokens)");
   });
 
   it("renders HhMmSs format for round >= 60min", () => {
-    expect(buildSpinnerStatsText(3_723_000, 40_000)).toBe(" (1h2m3s · ↓ 10000 tokens)");
+    expect(buildSpinnerStatsText(3_723_000, 40_000)).toBe(" (1h2m3s · ↓ 10.0k tokens)");
+  });
+
+  it.each([
+    [3_996, '999'],
+    [4_000, '1.0k'],
+    [4_524, '1.1k'],
+    [4_800, '1.2k'],
+    [40_492, '10.1k'],
+    [4_400_000, '1.1M'],
+  ])('formats %i streamed characters as %s tokens', (chars, expected) => {
+    expect(buildSpinnerStatsText(3000, chars)).toBe(` (3s · ↓ ${expected} tokens)`);
   });
 
   it("leads with a space (so it concatenates after the row text cleanly)", () => {

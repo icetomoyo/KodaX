@@ -2281,6 +2281,49 @@ function flushAsyncNotifications(): Promise<void> {
 }
 
 describe('runtime daemon client session view reconnect', () => {
+  it('reports cleanup failure when an observe response arrives after terminal disconnect', async () => {
+    const diagnostics: KodaXDiagnostic[] = [];
+    const restore = setKodaXDiagnosticSink(diagnostic => diagnostics.push(diagnostic));
+    let finishObserve!: (response: unknown) => void;
+    let onLifecycle!: (state: RuntimeDaemonTransportLifecycleState) => void;
+    let closeRequests = 0;
+    let delivered = false;
+    const cleanupError = new Error('Late observation cleanup failed');
+    const transport: RuntimeDaemonClientTransport = {
+      async request(method) {
+        if (method === 'session.view.observe') return new Promise(resolve => { finishObserve = resolve; });
+        if (method === 'session.view.close' && ++closeRequests === 2) throw cleanupError;
+        return {};
+      },
+      subscribe() { return { close() {} }; },
+      subscribeLifecycle(listener) {
+        onLifecycle = listener;
+        return { close() {} };
+      },
+    };
+    const client = createRuntimeDaemonClient({
+      identity: { runtimeId: 'late-observe', mode: 'daemon', profile: 'default',
+        startedAt: '2026-10-08T00:00:00Z', version: KODAX_VERSION },
+      transport,
+    });
+    try {
+      const pending = client.sessions.observeView('session-1', () => { delivered = true; });
+      onLifecycle({ state: 'disconnected', connectionId: 'connection-1', reason: 'socket closed', reconnectable: false });
+      finishObserve({ view: {} });
+      await expect(pending).rejects.toThrow('Connection closed while opening the Session view.');
+      await flushAsyncNotifications();
+      expect(delivered).toBe(false);
+      expect(closeRequests).toBe(2);
+      expect(diagnostics).toContainEqual(expect.objectContaining({
+        source: 'session.view', level: 'warn',
+        message: 'Unable to release the remote Session observation.', detail: cleanupError,
+      }));
+    } finally {
+      await client.close();
+      restore();
+    }
+  });
+
   it('resubscribes the session view after a transport reconnect and keeps delivering', async () => {
     const calls: Array<{ readonly method: string; readonly params: unknown }> = [];
     let opens = 0;

@@ -18,8 +18,11 @@ export const newCommand: Command = {
   description: 'Start a new conversation session',
   usage: '/new',
   handler: async (_args, context, callbacks) => {
-    // Check if there are messages to clear
-    if (context.messages.length === 0) {
+    // Host-backed clients keep their local message cache empty after /load.
+    const messageCount = callbacks.getSessionStatus
+      ? (await callbacks.getSessionStatus()).messageCount
+      : context.messages.length;
+    if (messageCount === 0) {
       console.log(chalk.yellow('\nCurrent session is already empty.'));
       console.log(chalk.dim('You can start a new conversation directly.'));
       return;
