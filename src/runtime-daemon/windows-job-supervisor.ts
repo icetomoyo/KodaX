@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { BUN_BE_BUN_ENV } from '@kodax-ai/agent';
 
 const STARTUP_TIMEOUT_MS = 15_000;
 const PAYLOAD_ENV = 'KODAX_INTERNAL_WINDOWS_JOB_LAUNCH';
@@ -26,6 +27,9 @@ const logFile = JSON.parse(Buffer.from(process.env.${PAYLOAD_ENV}, 'base64').toS
 const childEnv = { ...process.env };
 delete childEnv.${SCRIPT_FILE_ENV};
 delete childEnv.${OWNER_AFTER_READY_ENV};
+// The supervisor needed Bun runtime mode for its own -e entrypoint; the
+// contained daemon must run as the ordinary KodaX CLI instead.
+delete childEnv.BUN_BE_BUN;
 const fail = (message) => {
   if (!existsSync(readyFile)) writeFileSync(readyFile, 'ERROR:' + message);
 };
@@ -542,6 +546,10 @@ export async function spawnWindowsJobContainedProcess(
       stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
       env: {
         ...supervisorEnv,
+        // A Bun-compiled executable only understands `-e` in Bun runtime mode
+        // (plain mode rejects it as an unknown CLI option); Electron ignores
+        // the flag, so enabling it unconditionally is safe.
+        [BUN_BE_BUN_ENV]: process.env.KODAX_BUNDLED === 'true' ? '1' : undefined,
         [PAYLOAD_ENV]: payload,
         [READY_FILE_ENV]: readyFile,
         [SCRIPT_FILE_ENV]: scriptFile,

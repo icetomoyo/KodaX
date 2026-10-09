@@ -303,6 +303,22 @@ async function verifyBundledProviderRuntime(binaryPath, smokeHome) {
     process.stdout.write('    ✓ standalone smoke: bundled Anthropic and OpenAI SDK runtime\n');
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
+    // The probes leave the Host daemon running; it holds the packaged binary
+    // directory as its CWD and would outlive the smoke-home teardown. Stop it
+    // explicitly — a best effort, since the last probe may have already
+    // stopped it.
+    try {
+      await runCapturedCommand(binaryPath, ['daemon', 'stop', '--profile', 'default'], {
+        cwd: dirname(binaryPath),
+        encoding: 'utf8',
+        env: { ...process.env, KODAX_HOME: smokeHome, KODAX_TRACING: '0' },
+        timeout: 30_000,
+        windowsHide: true,
+        maxBuffer: 1024 * 1024,
+      });
+    } catch {
+      // The daemon was already gone or never started.
+    }
   }
 }
 
@@ -654,16 +670,18 @@ async function verifyHostBinary(binaryPath) {
     await verifyBundledProviderRuntime(smokeBinaryPath, smokeHome);
   } finally {
     // The daemon's background memory-review queue releases its inbox lock
-    // directories when the orphaned daemon's exit grace expires, which on
-    // slow runners exceeds a few seconds; keep retrying the teardown within
-    // a deadline instead of failing an otherwise-green smoke on ENOTEMPTY.
+    // directories when the orphaned daemon's exit grace expires, and Windows
+    // keeps the packaged binary locked until every probe process is gone;
+    // both outlast an immediate teardown on slow runners. Keep retrying
+    // within a deadline instead of failing an otherwise-green smoke.
     const teardownDeadline = Date.now() + 90_000;
     for (;;) {
       try {
         rmSync(smokeHome, { recursive: true, force: true });
         break;
       } catch (error) {
-        if (Date.now() >= teardownDeadline || error?.code !== 'ENOTEMPTY') {
+        const retriable = error?.code === 'ENOTEMPTY' || error?.code === 'EBUSY' || error?.code === 'EPERM';
+        if (Date.now() >= teardownDeadline || !retriable) {
           throw error;
         }
         await new Promise((resolve) => setTimeout(resolve, 500));
