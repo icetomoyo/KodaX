@@ -52,11 +52,22 @@ export async function projectConversationHistoryPage(
       results.length > 0
         ? [owner.message, { role: 'user', content: results }]
         : [owner.message],
-    ).map(boundHistoryItem));
+    ).map(item => boundHistoryItem({ ...item,
+      ...(item.type === 'user' && Array.isArray(owner.message.content)
+        && owner.message.content.some(block => block.type === 'image')
+        ? { attachments: owner.message.content.flatMap(block => block.type === 'image'
+          ? [{ kind: 'image' as const, path: block.path, ...(block.mediaType ? { mediaType: block.mediaType } : {}) }] : []) } : {}),
+      ...(entry.boundaryId !== undefined ? { historyBoundary: {
+        entryId: entry.boundaryId, sourceRevision: page.sourceRevision,
+      } } : {}),
+    })));
   }
   return {
     items,
     revision: page.revision,
+    sourceRevision: page.sourceRevision,
+    status: page.status,
+    issues: page.issues,
     ...(page.hasMore && page.nextCursor !== undefined ? { nextCursor: page.nextCursor } : {}),
     oversized,
   };

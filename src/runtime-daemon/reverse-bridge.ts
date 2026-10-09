@@ -120,6 +120,7 @@ export interface RuntimeDaemonReverseBridge {
   }): RuntimeHostToolLease;
   getHostTools(leaseId: string): RuntimeHostToolLease | undefined;
   revokeHostTools(leaseId: string): boolean;
+  retireLeases(): void;
   completeHostTool(input: {
     readonly invocationId: string;
     readonly result?: RuntimeHostToolResult;
@@ -130,6 +131,7 @@ export interface RuntimeDaemonReverseBridge {
     readonly leaseId: string;
     readonly sessionId: string;
     readonly runId: string;
+    readonly allowedTools?: readonly string[];
   }): ExtensionRuntimeContract;
   getRunRequirements(runId: string): RuntimeRunRequirements | undefined;
   close(): void;
@@ -141,6 +143,7 @@ export interface RuntimeDaemonReverseBridgeHubAttachment {
 }
 
 export interface RuntimeDaemonReverseBridgeHub {
+  retireClient(principalId: string): void;
   attach(input: {
     readonly principalId: string;
     readonly connectionId: string;
@@ -684,8 +687,10 @@ export function createRuntimeDaemonReverseBridge(
     },
     createHostToolRuntime(input) {
       requireOpen();
-      const lease = hostTools.get(input.leaseId);
-      if (!lease) throw bridgeError('host_tool_unavailable', 'Host tool lease is missing.');
+      const registered = hostTools.get(input.leaseId);
+      if (!registered) throw bridgeError('host_tool_unavailable', 'Host tool lease is missing.');
+      const lease = input.allowedTools === undefined ? registered : { ...registered,
+        tools: registered.tools.filter(tool => input.allowedTools!.includes(tool.name)) };
       hostToolRuns.set(input.runId, input.leaseId);
       const searchCapabilities: ExtensionRuntimeContract['searchCapabilities'] = async (
         providerId,
@@ -783,6 +788,10 @@ export function createRuntimeDaemonReverseBridge(
           : {}),
       };
     },
+    retireLeases() {
+      for (const [id, lease] of [...credentials]) retireCredentialLease(id, lease, 'Client exited.');
+      for (const id of [...hostTools.keys()]) this.revokeHostTools(id);
+    },
     close() {
       if (closed) return;
       closed = true;
@@ -821,6 +830,7 @@ export function createRuntimeDaemonReverseBridgeHub(
   options: RuntimeDaemonReverseBridgeHubOptions = {},
 ): RuntimeDaemonReverseBridgeHub {
   const bridges = new Map<string, RuntimeDaemonReverseBridge>();
+  const owners = new Map<string, string>();
   const attachments = new Map<string, {
     readonly attachment: RuntimeDaemonReverseBridgeHubAttachment;
     readonly onReplaced?: () => void;
@@ -828,6 +838,9 @@ export function createRuntimeDaemonReverseBridgeHub(
   const persistedInvocations = loadHostToolInvocationStore(options.invocationStateFile);
   let closed = false;
   return {
+    retireClient(principalId) {
+      for (const [key, owner] of owners) if (owner === principalId) bridges.get(key)?.retireLeases();
+    },
     attach(input) {
       if (closed) throw bridgeError('host_tool_unavailable', 'Host bridge hub is closed.');
       if (
@@ -862,6 +875,7 @@ export function createRuntimeDaemonReverseBridgeHub(
         saveHostToolInvocationStore(options.invocationStateFile, persistedInvocations);
       }
       bridges.set(key, bridge);
+      owners.set(key, input.principalId);
       const previous = attachments.get(key);
       const transport = bridge.attachTransport(input.notify);
       const attachment: RuntimeDaemonReverseBridgeHubAttachment = {
@@ -892,6 +906,7 @@ export function createRuntimeDaemonReverseBridgeHub(
       closed = true;
       for (const bridge of bridges.values()) bridge.close();
       bridges.clear();
+      owners.clear();
       attachments.clear();
     },
   };

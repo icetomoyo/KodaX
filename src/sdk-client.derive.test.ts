@@ -98,6 +98,41 @@ async function runRound(sessionId: string, index: number): Promise<void> {
   await runtime.runs.await(accepted.runId!);
 }
 
+it('returns canonical operation boundaries and history quality without parsing display IDs', async () => {
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runRound(session.id, 1);
+  await runRound(session.id, 2);
+  const page = await first.sessions.readHistory(session.id);
+  expect(page).toMatchObject({ sourceRevision: expect.any(String), status: 'resolved', issues: [] });
+  const boundary = page.items.find(item => item.text === 'REPLY 1')?.historyBoundary;
+  expect(boundary).toMatchObject({ entryId: expect.any(String), sourceRevision: page.sourceRevision });
+  const fork = await first.sessions.forkSession(session.id, { historyBoundary: boundary });
+  expect((await first.sessions.readHistory(fork.id)).items.map(item => item.text)).toEqual(['Ask round 1', 'REPLY 1']);
+  const lineage = await first.sessions.readLineage(session.id);
+  await first.sessions.rewindSession(session.id, { historyBoundary: boundary, expectedHead: lineage!.activeEntryId });
+  expect((await first.sessions.readHistory(session.id)).items.map(item => item.text)).toEqual(['Ask round 1', 'REPLY 1']);
+  await expect(first.sessions.forkSession(session.id, { historyBoundary: boundary }))
+    .rejects.toMatchObject({ code: 'resync_required' });
+});
+
+it('derives Retry before a canonical user query, including the first query', async () => {
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runRound(session.id, 1);
+  await runRound(session.id, 2);
+  const page = await first.sessions.readHistory(session.id);
+  const queries = page.items.filter(item => item.type === 'user');
+  const firstRetry = await first.sessions.forkSession(session.id, { historyBoundary: queries[0]!.historyBoundary, before: true });
+  expect((await first.sessions.readHistory(firstRetry.id)).items).toEqual([]);
+  const secondRetry = await first.sessions.forkSession(session.id, { historyBoundary: queries[1]!.historyBoundary, before: true });
+  expect((await first.sessions.readHistory(secondRetry.id)).items.map(item => item.text)).toEqual(['Ask round 1', 'REPLY 1']);
+  const retry = await first.inputs.submit({ sessionId: secondRetry.id, inputId: 'retry-second', text: queries[1]!.text });
+  expect((await first.runs.await(retry.runId!)).phase).toBe('completed');
+  expect((await first.sessions.readHistory(secondRetry.id)).items.filter(item => item.type === 'user').map(item => item.text))
+    .toEqual(['Ask round 1', 'Ask round 2']);
+});
+
 it('keeps repeated provider call IDs separate in public views and full item reads after Host restart', async () => {
   await writeFile(path.join(homeDir, 'first.txt'), 'FIRST_TOOL_BODY');
   await writeFile(path.join(homeDir, 'second.txt'), 'SECOND_TOOL_BODY');
@@ -105,6 +140,10 @@ it('keeps repeated provider call IDs separate in public views and full item read
   await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
   const input = await first.inputs.submit({ sessionId: session.id, inputId: 'reused-tools', text: 'REUSED_TOOL_ID' });
   await expect(first.runs.await(input.runId!)).resolves.toMatchObject({ phase: 'completed' });
+  const facts = await first.statistics.readTools(session.id);
+  const repeated = facts.items.filter(tool => tool.toolId === REUSED_TOOL_CALL_ID);
+  expect(repeated).toHaveLength(2);
+  expect(new Set(repeated.map(tool => tool.id)).size).toBe(2);
   const check = async (): Promise<string[]> => {
     const views: Parameters<Parameters<typeof second.sessions.observe>[1]>[0][] = [];
     const observation = await second.sessions.observe(session.id, view => views.push(view));
@@ -125,6 +164,8 @@ it('keeps repeated provider call IDs separate in public views and full item read
   await Promise.all([first.disconnect(), second.disconnect()]);
   await host.close(); await runtime.close();
   await openHost();
+  expect((await first.statistics.readTools(session.id)).items).toEqual(facts.items);
+  expect((await first.statistics.readRequests(session.id)).items.every(row => row.state === 'succeeded')).toBe(true);
   expect(await check()).toEqual(ids);
   // Retire both the display window and its bounded checkpoints; old references
   // must still read the owning canonical output, even when call IDs repeat.

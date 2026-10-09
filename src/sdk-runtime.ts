@@ -6,8 +6,51 @@
  * process manager without introducing a daemon or a fifth workspace package.
  */
 
+import type {
+  RuntimeCredentialRequest,
+  RuntimeCredentialBroker,
+  RuntimeCredentialBinding,
+  RuntimeScopedCredentialTarget,
+  RuntimeScopedCredentialPurpose,
+  RuntimeScopedCredentialRequest,
+  RuntimeScopedCredentialBroker,
+  RuntimeCredentialLease,
+  RuntimeCredentialService,
+  RuntimeHostToolDescriptor,
+  RuntimeHostToolInvocation,
+  RuntimeHostToolResult,
+  RuntimeHostToolHandler,
+  RuntimeHostToolLease,
+  RuntimeHostToolInvocationStatus,
+  RuntimeHostToolService,
+} from './client-host-authorization.js';
+export type {
+  RuntimeCredentialRequest,
+  RuntimeCredentialBroker,
+  RuntimeCredentialBinding,
+  RuntimeScopedCredentialTarget,
+  RuntimeScopedCredentialPurpose,
+  RuntimeScopedCredentialRequest,
+  RuntimeScopedCredentialBroker,
+  RuntimeCredentialLease,
+  RuntimeCredentialService,
+  RuntimeHostToolDescriptor,
+  RuntimeHostToolInvocation,
+  RuntimeHostToolResult,
+  RuntimeHostToolHandler,
+  RuntimeHostToolLease,
+  RuntimeHostToolInvocationStatus,
+  RuntimeHostToolService,
+} from './client-host-authorization.js';
+
+
 import { LOCAL_RUNTIME_BUILD, readRuntimeBuildIdentity, type RuntimeBuildIdentity } from './runtime-build-identity.js';
 import { createRuntimeProductCommandService, type RuntimeProductCommandService, type RuntimeCommandInvocation } from './runtime-product-commands.js';
+import { currentProductExecution, withProductExecution } from './product-execution-authorization.js';
+import type { RuntimeExecutionAuthorization } from './client-host-authorization.js';
+import { registerClientWorkCleanup, settleClientWork, type ClientWorkCleanup } from './runtime-client-work.js';
+import { createExecutionFactsStore, type ExecutionFactsStore } from './execution-facts.js';
+export type { RuntimeExecutionAuthorization } from './client-host-authorization.js';
 export type { RuntimeBuildIdentity } from './runtime-build-identity.js';
 import { createHash, randomUUID } from "node:crypto";
 import type {
@@ -75,6 +118,7 @@ import {
   resolveToolBridgeTarget,
   generateSessionId,
   listCodingDispatchableAgents,
+  getAllRegisteredTools,
   listRunScopedTools,
   loadExecPolicy,
   parseModelSpec,
@@ -93,6 +137,7 @@ import {
   ToolResultBatchCapacityError,
   validateCustomProviderConfig,
   type CodingActorCredentialAccessFactory,
+  type CodingActorEnvironmentFactory,
   type ExecPolicyRule,
   type ExecPolicyRuleInput,
   type WorkflowRunProcessMetadata,
@@ -108,6 +153,8 @@ import {
 } from "@kodax-ai/coding";
 import {
   createProviderCredentialLeaseScope,
+  runWithProviderRequestObserver,
+  runWithProviderRequestAbortSignal,
   resolveProvider,
   getRuntimeModelProviderNames,
   KodaXContextOverflowError,
@@ -912,6 +959,11 @@ export const KODAX_RUNTIME_SDK_CAPABILITIES = Object.freeze({
 } as const);
 
 export interface RuntimeCapabilityRequirements {
+  readonly productExitControl?: 1;
+  readonly productExecutionFacts?: 1;
+  readonly productActorAuthorization?: 1;
+  readonly productHistoryBoundaries?: 1;
+  readonly productExecutionAuthorization?: 1;
   /** Unified product business operations and current-view lifecycle. */
   readonly productClient?: 1;
   /** Reject hosts that do not advertise an installed external Agent executor plane. */
@@ -992,6 +1044,8 @@ export interface RuntimeConnectionService {
 }
 
 export interface KodaXRuntime {
+  readonly statistics?: import('@kodax-ai/coding/client-contract').ClientStatisticsService;
+  readonly lifecycle?: import('@kodax-ai/coding/client-contract').ClientLifecycleService;
   readonly identity: RuntimeIdentity;
   /** Server-advertised facts. Authorization remains defined by grantedScopes. */
   readonly capabilities?: Readonly<Record<string, unknown>>;
@@ -1495,6 +1549,7 @@ export interface RuntimeTranscriptSearchResult {
 export type RuntimeSessionFilter = ClientSessionFilter;
 
 export interface RuntimeForkSessionInput {
+  readonly before?: boolean;
   readonly sessionId: string;
   readonly selector?: string;
   readonly newSessionId?: string;
@@ -1628,6 +1683,7 @@ export interface RuntimeCompactSessionInput {
  */
 export interface RuntimeAgentOperationOptions {
   readonly credential?: RuntimeCredentialBinding;
+  readonly authorization?: RuntimeExecutionAuthorization;
 }
 
 export interface RuntimeAgentFollowupOptions extends RuntimeAgentOperationOptions {
@@ -1635,16 +1691,26 @@ export interface RuntimeAgentFollowupOptions extends RuntimeAgentOperationOption
 }
 
 interface RuntimeTrustedAgentOperationOptions extends RuntimeAgentOperationOptions {
+  readonly assertAdmission?: () => void;
   readonly providerCredentialAccessFactory?: CodingActorCredentialAccessFactory;
+  readonly origin?: RuntimeRunStatus['origin'];
+  readonly tools?: readonly string[];
+  readonly actorExtensionRuntime?: (runId: string, base: KodaXOptions['extensionRuntime']) => KodaXOptions['extensionRuntime'];
 }
 
-interface RuntimeTrustedAgentFollowupOptions extends RuntimeAgentFollowupOptions {
+interface RuntimeTrustedAgentFollowupOptions extends RuntimeAgentFollowupOptions, RuntimeTrustedAgentOperationOptions {
   readonly providerCredentialAccessFactory?: CodingActorCredentialAccessFactory;
   readonly requireCredentialForNewTurn?: true;
 }
 
 interface RuntimeTrustedCompactSessionInput extends RuntimeCompactSessionInput {
   readonly providerCredentialAccess?: ProviderCredentialLeaseAccess;
+  readonly origin?: RuntimeRunStatus['origin'];
+  readonly operationId?: string;
+}
+interface RuntimeCompactionControl {
+  readonly principalId?: string; readonly operationId: string; readonly controller: AbortController;
+  readonly settled: Promise<void>; readonly resolve: () => void;
 }
 
 export interface RuntimeCompactSessionResult extends CompactSessionResult {
@@ -1927,6 +1993,7 @@ export type RuntimeInput =
 export type RuntimePermissionBroker = "runtime" | "client";
 
 export interface RuntimeStartRunInput {
+  readonly authorization?: RuntimeExecutionAuthorization;
   readonly sessionId: string;
   /** Stable product identity for an explicit tool invocation. */
   readonly inputId?: string;
@@ -1944,6 +2011,7 @@ export interface RuntimeStartRunInput {
 }
 
 interface RuntimeTrustedStartRunInput extends RuntimeStartRunInput {
+  readonly assertAdmission?: () => void;
   readonly productSession?: boolean;
   readonly commandInput?: ClientCommandInput;
   /** Host-only deferred work, after the canonical input and Run have been saved. */
@@ -1972,6 +2040,7 @@ export interface RuntimeSubmitInput {
 }
 
 interface RuntimeTrustedSubmitInput extends RuntimeSubmitInput {
+  readonly assertAdmission?: () => void;
   readonly providerCredential?: string;
   readonly providerCredentialProvider?: string;
   readonly providerCredentialAccess?: ProviderCredentialLeaseAccess;
@@ -2347,7 +2416,7 @@ export interface RuntimeRunFilter {
 }
 
 export interface RuntimeRunService {
-  acceptInput(input: ClientSubmitInput): Promise<ClientInputAcceptance>;
+  acceptInput(input: ClientSubmitInput & { readonly authorization?: RuntimeExecutionAuthorization }): Promise<ClientInputAcceptance>;
   getInput(sessionId: string, inputId: string): Promise<ClientInputAcceptance | null>;
   withdrawInput(sessionId: string, inputId: string): Promise<ClientSubmitInput>;
   start(input: RuntimeStartRunInput): Promise<RuntimeRunHandle>;
@@ -3176,165 +3245,6 @@ export interface RuntimeInteractionService {
   ): Promise<ClientInteractionResult>;
 }
 
-export interface RuntimeCredentialRequest {
-  readonly leaseId: string;
-  readonly provider: string;
-  readonly sessionId: string;
-  readonly runId: string;
-}
-
-export type RuntimeCredentialBroker = (
-  request: RuntimeCredentialRequest,
-) => Promise<string | undefined>;
-
-/** Public binding only carries authority; credential material never crosses this input. */
-export type RuntimeCredentialBinding =
-  | {
-      readonly leaseId: string;
-      /** v1 compatibility: one credential is acquired for the complete Run. */
-      readonly provider: string;
-    }
-  | {
-      readonly leaseId: string;
-      readonly mode: "scoped";
-      /** Operation-local narrowing of the registered v2 lease allowlist. */
-      readonly providers: readonly string[];
-    };
-
-export type RuntimeScopedCredentialTarget =
-  | {
-      readonly kind: "run";
-      readonly runId: string;
-    }
-  | {
-      readonly kind: "operation";
-      readonly operationId: string;
-      readonly operation: "session.compact";
-    }
-  | {
-      readonly kind: "actor_turn";
-      readonly actorPath: string;
-      readonly turnId: string;
-      readonly parentRunId?: string;
-    }
-  | {
-      readonly kind: "workflow";
-      readonly workflowRunId: string;
-      readonly parentRunId?: string;
-    };
-
-export type RuntimeScopedCredentialPurpose =
-  | "primary"
-  | "fallback"
-  | "classifier"
-  | "sidecar"
-  | "compaction"
-  | "workflow"
-  | "utility";
-
-export interface RuntimeScopedCredentialRequest {
-  readonly requestId: string;
-  readonly leaseId: string;
-  readonly provider: string;
-  readonly sessionId: string;
-  readonly target: RuntimeScopedCredentialTarget;
-  readonly purpose: RuntimeScopedCredentialPurpose;
-}
-
-export type RuntimeScopedCredentialBroker = (
-  request: RuntimeScopedCredentialRequest,
-) => Promise<string | undefined>;
-
-export interface RuntimeCredentialLease {
-  readonly id: string;
-  readonly providers: readonly string[];
-  readonly expiresAt?: string;
-  /** Absent on legacy v1 daemons. */
-  readonly brokerVersion?: 1 | 2;
-}
-
-export interface RuntimeCredentialService {
-  register(
-    input: {
-      readonly providers: readonly string[];
-      readonly expiresAt?: string;
-    },
-    broker: RuntimeCredentialBroker,
-  ): Promise<RuntimeCredentialLease>;
-  resume(
-    leaseId: string,
-    broker: RuntimeCredentialBroker,
-  ): Promise<RuntimeCredentialLease>;
-  registerScoped(
-    input: {
-      readonly providers: readonly string[];
-      readonly expiresAt?: string;
-    },
-    broker: RuntimeScopedCredentialBroker,
-  ): Promise<RuntimeCredentialLease>;
-  resumeScoped(
-    leaseId: string,
-    broker: RuntimeScopedCredentialBroker,
-  ): Promise<RuntimeCredentialLease>;
-  revoke(leaseId: string): Promise<boolean>;
-}
-
-export interface RuntimeHostToolDescriptor {
-  readonly name: string;
-  readonly description: string;
-  readonly inputSchema: Readonly<Record<string, unknown>>;
-  readonly sideEffect: "none" | "idempotent" | "non_idempotent";
-}
-
-export interface RuntimeHostToolInvocation {
-  readonly invocationId: string;
-  readonly leaseId: string;
-  readonly toolName: string;
-  readonly sessionId: string;
-  readonly runId: string;
-  readonly input: Readonly<Record<string, unknown>>;
-}
-
-export interface RuntimeHostToolResult {
-  readonly content: string;
-  readonly structuredContent?: unknown;
-}
-
-export type RuntimeHostToolHandler = (
-  invocation: RuntimeHostToolInvocation,
-) => Promise<RuntimeHostToolResult>;
-
-export interface RuntimeHostToolLease {
-  readonly id: string;
-  readonly tools: readonly RuntimeHostToolDescriptor[];
-}
-
-export interface RuntimeHostToolInvocationStatus {
-  readonly invocationId: string;
-  readonly leaseId: string;
-  readonly toolName: string;
-  readonly sessionId: string;
-  readonly runId: string;
-  readonly state:
-    "prepared" | "dispatched" | "completed" | "unknown" | "not_dispatched";
-  readonly updatedAt: string;
-}
-
-export interface RuntimeHostToolService {
-  register(
-    tools: readonly RuntimeHostToolDescriptor[],
-    handlers: Readonly<Record<string, RuntimeHostToolHandler>>,
-  ): Promise<RuntimeHostToolLease>;
-  resume(
-    leaseId: string,
-    handlers: Readonly<Record<string, RuntimeHostToolHandler>>,
-  ): Promise<RuntimeHostToolLease>;
-  getInvocation(
-    invocationId: string,
-  ): Promise<RuntimeHostToolInvocationStatus | undefined>;
-  revoke(leaseId: string): Promise<boolean>;
-}
-
 type RuntimePermissionToolDecision = boolean | string;
 
 export interface RuntimeWorkflowFilter {
@@ -3363,6 +3273,7 @@ export type RuntimeWorkflowStartSource =
   | { readonly kind: "name"; readonly name: string };
 
 export interface RuntimeWorkflowStartInput {
+  readonly authorization?: RuntimeExecutionAuthorization;
   /** Select product defaults; omitted low-level calls retain their existing defaults. */
   readonly settingsDefaults?: 'product';
   readonly sessionId?: string;
@@ -3657,6 +3568,8 @@ interface RuntimeAdmittedSessionContext {
 }
 
 interface RuntimeRunRecord {
+  readonly independentActorRef?: { readonly actorPath: string; readonly turnId: string };
+  readonly productExecutionKey?: string;
   readonly productSession?: boolean;
   readonly productInput?: { readonly inputId: string; readonly digest: string };
   readonly runId: string;
@@ -3798,6 +3711,7 @@ type RuntimeUserInputRegistry = ReturnType<
 type RuntimeArtifactStore = ReturnType<typeof createRuntimeArtifactStore>;
 
 interface RuntimeRunServiceInternal extends RuntimeRunService {
+  cleanupClientWork(principalId: string): Promise<ClientWorkCleanup>;
   startAdmitted(input: RuntimeTrustedStartRunInput): Promise<RuntimeRunHandle>;
   startPreparedInvocation(input: ClientCommandInput, invocation: RuntimeCommandInvocation): Promise<RuntimeRunHandle>;
   queuedInputs(sessionId: string): ClientSessionView['queue'];
@@ -4190,6 +4104,11 @@ async function createKodaXRuntimeInternal(
   // advertises on `runtime.capabilities`.
   const embeddedCapabilities: Record<string, unknown> = {
     productClient: { version: 1 },
+    productHistoryBoundaries: { version: 1 },
+    productExecutionAuthorization: { version: 1 },
+    productExitControl: { version: 1 },
+    productExecutionFacts: { version: 1 },
+    productActorAuthorization: { version: 1 },
     workflowSettingsDefaults: { version: 1 },
     externalAgents: options.externalAgents !== undefined,
     afterTurnInput: { version: 1 },
@@ -4349,6 +4268,7 @@ async function createKodaXRuntimeInternal(
     livenessPort: ownerLiveness.port,
   };
   const persistence = createRuntimePersistence(options, runOwner);
+  const executionFacts = createExecutionFactsStore(configHome, runOwner);
   let agentPlane: AgentExecutorPlane | undefined;
   try {
     agentPlane = options.externalAgents
@@ -4550,6 +4470,7 @@ async function createKodaXRuntimeInternal(
     return restored ? { ...restored, id: itemId } : null;
   });
   const bus = createRuntimeEventBus((sessionId, type) => {
+    if (type === 'session.created') executionFacts.created(sessionId);
     if (type === 'session.rewound' || type === 'session.active_entry.updated') {
       sessionViews.resetHistory(sessionId);
     }
@@ -4877,16 +4798,23 @@ async function createKodaXRuntimeInternal(
   const pendingManagedTaskMaintenance = new Set<Promise<void>>();
   const memoryReviewAbort = new AbortController();
   const pendingMemoryWork = new Set<Promise<void>>();
-  const runMemoryWork: NonNullable<KodaXEvents["runMemoryWork"]> = (work) => {
+  const clientMemoryWork = new Map<string, Set<{ readonly controller: AbortController; readonly settled: Promise<void> }>>();
+  const runMemoryWork = (work: Parameters<NonNullable<KodaXEvents['runMemoryWork']>>[0], principalId?: string): Promise<void> => {
     if (closed) return Promise.resolve();
+    const controller = new AbortController();
+    const signal = AbortSignal.any([memoryReviewAbort.signal, controller.signal]);
     const pending = Promise.resolve().then(() => {
-      if (!memoryReviewAbort.signal.aborted) return work(memoryReviewAbort.signal);
+      if (!signal.aborted) return work(signal);
     });
+    const entry = { controller, settled: pending };
+    const own = principalId === undefined ? undefined : clientMemoryWork.get(principalId) ?? new Set<typeof entry>();
+    if (own && principalId !== undefined) { own.add(entry); clientMemoryWork.set(principalId, own); }
     pendingMemoryWork.add(pending);
     void pending.then(
-      () => { pendingMemoryWork.delete(pending); },
+      () => { pendingMemoryWork.delete(pending); own?.delete(entry); },
       (error: unknown) => {
         pendingMemoryWork.delete(pending);
+        own?.delete(entry);
         emitKodaXDiagnostic({ source: "runtime.memory-review", level: "error",
           message: "Owned memory work failed.", detail: normalizeError(error) });
       },
@@ -5104,6 +5032,7 @@ async function createKodaXRuntimeInternal(
   // Session mutations consult it so no writer interleaves with the
   // compaction's whole-lineage commit.
   const activeCompactions = new Set<string>();
+  const compactionControls = new Map<string, RuntimeCompactionControl>();
   const reviewPreparation = createRuntimeReviewPreparationService(async (input) => {
       ensureOpen();
       const session = await sessionAdmission.loadExecutable(input.sessionId);
@@ -5179,6 +5108,7 @@ async function createKodaXRuntimeInternal(
     invocations,
     activeCompactions,
     extensionRuntime: (sessionId) => integrations.forSession(sessionId),
+    executionFacts,
     deleteTemporarySession: (sessionId) => sessionService.deleteTemporary(sessionId),
     sessionViews,
     bus,
@@ -5246,6 +5176,7 @@ async function createKodaXRuntimeInternal(
     sessionMcpStore,
     activeCompactions,
     (input) => runService.cancelSession(input),
+    executionFacts, compactionControls,
   );
   const managedWorkspaceRoot = path.join(
     options.homeDir ? path.resolve(options.homeDir) : os.homedir(),
@@ -5332,6 +5263,7 @@ async function createKodaXRuntimeInternal(
     memoryReviewAbort.abort(new Error("runtime closed"));
     const attempt = (async (): Promise<void> => {
       if (!shutdownStarted) {
+        for (const control of compactionControls.values()) control.controller.abort(new Error('Runtime closed'));
         preparationController.abort(new DOMException('runtime closed', 'AbortError'));
         runService.closeAll("runtime closed");
         permissions.rejectAll("runtime closed");
@@ -5340,6 +5272,7 @@ async function createKodaXRuntimeInternal(
         shutdownStarted = true;
       }
       await runService.retryShellCleanups();
+      await Promise.all([...compactionControls.values()].map(control => control.settled));
       beginCloseTranscriptSnapshots?.();
       await sessionOperations.close();
       await Promise.allSettled([...preparations, ...[...runs.values()].flatMap(run => run.preparation ? [run.preparation] : [])]);
@@ -5394,6 +5327,11 @@ async function createKodaXRuntimeInternal(
   };
 
   const runtime: KodaXRuntime = {
+    statistics: {
+      read: async sessionId => { ensureOpen(); await sessionAdmission.assertRunAccess(sessionId); return executionFacts.service.read(sessionId); },
+      readRequests: async (sessionId, input) => { ensureOpen(); await sessionAdmission.assertRunAccess(sessionId); return executionFacts.service.readRequests(sessionId, input); },
+      readTools: async (sessionId, input) => { ensureOpen(); await sessionAdmission.assertRunAccess(sessionId); return executionFacts.service.readTools(sessionId, input); },
+    },
     identity,
     capabilities: embeddedCapabilities,
     sessions: sessionService,
@@ -5435,10 +5373,122 @@ async function createKodaXRuntimeInternal(
       sessionAdmission,
       sessionOperations,
       ensureOpen,
+      (sessionId, trusted) => async (execution) => {
+        const session = await sessionAdmission.loadExecutable(sessionId);
+        const settings = resolveEffectiveRuntimeSessionSettings(readRuntimeConfig(configFile),
+          (await settingsOwner.read(sessionId)).value, true);
+        const runId = `actor_${execution.turn.turnId}`;
+        const effective = buildEffectiveRuntimeOptions({ extensionRuntime: trusted.actorExtensionRuntime?.(runId, integrations.forSession(sessionId))
+          ?? integrations.forSession(sessionId) }, settings, [], session);
+        const provider = effective.provider ?? options.defaultProvider ?? KODAX_DEFAULT_PROVIDER;
+        const startedAt = new Date().toISOString();
+        const record = recordFromPersistedStatus({ runId, sessionId, phase: 'running', startedAt, provider,
+          sessionOrder: persistence.nextSessionOrder(sessionId), origin: trusted.origin }, true);
+        record.turnId = execution.turn.turnId;
+        Object.assign(record, { independentActorRef: { actorPath: execution.actor.path, turnId: execution.turn.turnId },
+          admittedSessionContext: { gitRoot: session.gitRoot, runtimeInfo: session.runtimeInfo } });
+        record.permissionMode = settings.permissionMode;
+        record.permissionBroker = 'runtime';
+        record.abortController = new AbortController();
+        const signal = AbortSignal.any([execution.signal, record.abortController.signal]);
+        let resolveResult!: (result: RuntimeRunResult | PromiseLike<RuntimeRunResult>) => void;
+        Object.assign(record, { result: new Promise<RuntimeRunResult>(resolve => { resolveResult = resolve; }) });
+        const execPolicy = await loadExecPolicy({ userConfigDir: configHome, projectRoot: session.gitRoot,
+          trustProjectPolicy: options.execPolicy?.trustedProjectRoots?.some(root => sameHostPath(root, session.gitRoot)) === true,
+          adminRules: options.execPolicy?.adminRules });
+        record.execPolicyRules = execPolicy.rules;
+        record.execPolicyErrors = execPolicy.errors;
+        record.autoReviewPolicy = runtimeAutoReviewPolicy(readRuntimeConfig(configFile));
+        const guardrail = createRuntimeSessionAutoModeGuardrail({ runId, sessionId, provider,
+          model: effective.modelOverride ?? effective.model, autoReviewPolicy: record.autoReviewPolicy,
+          administratorPolicy: options.autoReview?.administratorPolicy, modelGuidance: options.autoReview?.modelGuidance,
+          options: effective, permissions, cache: new Map(), states: new Map(), settingsOwner, configHome,
+          getRecord: () => record, onPhase: (active, phase) => { active.phase = phase; saveRunStatusSafely(bus, persistence, active, statusFromRecord(active)); } });
+        await guardrail.prepare?.();
+        const { events, authorizeForcedPermission } = wrapKodaXEvents({ record, bus, executionFacts,
+          toolCeiling: trusted.tools,
+          executionTarget: { kind: 'actor_turn', actorPath: execution.actor.path, turnId: execution.turn.turnId }, display: {}, permissions, userInputs,
+          enableSharedInteractions: true, onPlanApproved: async () => false, onTurnStarted: () => {},
+          onExecutorTerminal: () => {}, onPhase: () => {}, onStage: () => {}, onMidTurnUserMessages: () => {} });
+        events.runMemoryWork = work => runMemoryWork(work, record.origin?.principalId);
+        events.registerShellCleanup = (reference, retry) => {
+          if (!isManagedRunShellReference(reference, runId)) throw new Error('Invalid Actor Shell cleanup binding.');
+          const entries = record.shellCleanups ??= new Map();
+          if (entries.has(reference.registrationId)) throw new Error('Duplicate Actor Shell cleanup binding.');
+          const save = () => {
+            const persisted = persistence.loadRunStatus(runId);
+            if (!persisted || persisted.owner?.ownerId !== runOwner.ownerId) throw new Error('Actor cleanup owner changed.');
+            persistence.saveRunShellCleanups(runId, [...entries.values()].map(entry => entry.reference), persisted.revision);
+          };
+          const release = (outcome?: 'deferred') => {
+            if (outcome === 'deferred') {
+              const entry = entries.get(reference.registrationId);
+              if (entry) entry.reference = { ...entry.reference, deferred: true };
+            } else entries.delete(reference.registrationId);
+            save();
+          };
+          entries.set(reference.registrationId, { reference, retry: async () => {
+            await retry();
+            if (!entries.has(reference.registrationId)) return;
+            const outcome = await cleanupManagedRunChildProcess(reference);
+            if (outcome.status === 'verified') { release(); outcome.release(); }
+            else release('deferred');
+          } });
+          save(); return release;
+        };
+        const runOptions = buildRunOptions({ record, events, authorizeForcedPermission,
+          options: { ...effective, abortSignal: signal, guardrails: [...(effective.guardrails ?? []), guardrail] },
+          defaultConfigHome: configHome, provider, model: effective.modelOverride ?? effective.model, sessionManager,
+          hasPendingInputs: () => false, consumePendingInputs: async () => [] });
+        record.start = { prompt: execution.turn.objective, inputArtifacts: [], options: runOptions, resolve: resolveResult };
+        const allowed = trusted.tools;
+        trusted.assertAdmission?.();
+        runs.set(runId, record);
+        if (!saveRunStatusSafely(bus, persistence, record, statusFromRecord(record))) {
+          runs.delete(runId); throw new Error('Independent Actor execution could not be persisted.');
+        }
+        return { signal, tools: allowed, options: runOptions,
+          run: operation => runWithProviderRequestObserver(fact => executionFacts.provider(sessionId,
+            { kind: 'actor_turn', actorPath: execution.actor.path, turnId: execution.turn.turnId }, fact),
+            () => runWithProviderRequestAbortSignal(signal, operation)),
+          parentCtx: {
+          ...runOptions.context, gitRoot: runOptions.context?.gitRoot ?? session.gitRoot,
+          executionCwd: runOptions.context?.executionCwd ?? session.gitRoot,
+          backups: new Map<string, string>(), sessionId, parentEvents: events,
+          parentAgentConfig: { provider, model: effective.modelOverride ?? effective.model,
+            compaction: effective.compaction, contextDiagnostics: true },
+          extensionRuntime: runOptions.extensionRuntime,
+          ...(allowed === undefined ? {} : { excludeTools: [...new Set([
+            ...(runOptions.context?.excludeTools ?? []), ...[...getAllRegisteredTools(), ...listRunScopedTools(runOptions.extensionRuntime)]
+              .filter(tool => !allowed.includes(tool.name)).map(tool => tool.name),
+          ])] }),
+          guardrails: runOptions.guardrails,
+        }, release: (result, error) => {
+          record.error = error instanceof Error ? error.message : error === undefined ? undefined : String(error);
+          const phase = signal.aborted ? 'cancelled' : error !== undefined || result?.terminationReason ? 'failed' : 'completed';
+          markRunTerminal(bus, persistence, record, phase, { code: phase === 'completed' ? 'completed' : phase === 'cancelled' ? 'cancelled' : 'run_failed',
+            effectOutcome: 'unknown', message: record.error ?? phase });
+          resolveResult(resultFromStatus(statusFromRecord(record)));
+        } };
+      },
     ),
     close: closeRuntime,
   };
 
+  registerClientWorkCleanup(runtime, async principalId => {
+    const reviews = [...(clientMemoryWork.get(principalId) ?? [])];
+    for (const review of reviews) review.controller.abort(new Error('Client exit requested'));
+    const own = [...compactionControls.values()].filter(control => control.principalId === principalId);
+    for (const control of own) control.controller.abort(new Error('Client exit requested'));
+    const [result] = await Promise.all([runService.cleanupClientWork(principalId),
+      settleClientWork([...reviews.map(review => review.settled), ...own.map(control => control.settled)])]);
+    const memoryUnsettled = (clientMemoryWork.get(principalId)?.size ?? 0) > 0;
+    const compactionUnsettled = own.some(control => [...compactionControls.values()].includes(control));
+    const issues = [...result.issues, ...(memoryUnsettled ? ['Client memory work remains unconfirmed.'] : []),
+      ...(compactionUnsettled ? ['Client compaction remains unconfirmed.'] : [])];
+    return { ...result, operationIds: own.map(control => control.operationId),
+      ...(issues.length > 0 ? { state: 'unknown' as const, issues } : {}) };
+  });
   return runtime;
 }
 
@@ -5604,7 +5654,10 @@ function assertRuntimeCapabilities(
     requirements?.actorControlPlane === undefined &&
     requirements?.sandboxRuntime === undefined &&
     requirements?.runtimeAutoModeGuardrail === undefined &&
-    requirements?.productClient === undefined
+    requirements?.productClient === undefined &&
+    requirements?.productHistoryBoundaries === undefined &&
+    requirements?.productExecutionAuthorization === undefined && requirements?.productExitControl === undefined
+    && requirements?.productExecutionFacts === undefined && requirements?.productActorAuthorization === undefined
   )
     return;
   const capabilities = requireRuntimeRecord(value);
@@ -5614,7 +5667,12 @@ function assertRuntimeCapabilities(
     );
   }
   const versionedRequirements = [
+    ['productExitControl', requirements.productExitControl],
+    ['productExecutionFacts', requirements.productExecutionFacts],
+    ['productActorAuthorization', requirements.productActorAuthorization],
     ["productClient", requirements.productClient],
+    ["productHistoryBoundaries", requirements.productHistoryBoundaries],
+    ["productExecutionAuthorization", requirements.productExecutionAuthorization],
     ["externalAgentAdmin", requirements.externalAgentAdmin],
     ["a2aConfigReconciler", requirements.a2aConfigReconciler],
     ["sessionObservation", requirements.sessionObservation],
@@ -5827,6 +5885,8 @@ function firstUpgradeableCapability(
 ): { readonly name: string; readonly version: number } | undefined {
   const upgradeOrder = [
     "productClient",
+    "productHistoryBoundaries",
+    "productExecutionAuthorization", 'productExitControl', 'productExecutionFacts', 'productActorAuthorization',
     "actorSettlementConvergence",
     "crashOutcomeModel",
     "managedRunDurability",
@@ -6590,6 +6650,8 @@ function createRuntimeSessionService(
   /** FEATURE_298 T31 — shared manual-compaction occupancy (see factory). */
   activeCompactions: Set<string>,
   cancel: RuntimeSessionService["cancel"],
+  executionFacts: ExecutionFactsStore,
+  compactionControls: Map<string, RuntimeCompactionControl>,
 ): RuntimeSessionService & { deleteTemporary(sessionId: string): Promise<void> } {
   const creatingSessionIds = new Set<string>();
   // FEATURE_298 T31 — in-flight manual compactions register occupancy so
@@ -8625,6 +8687,9 @@ function createRuntimeSessionService(
 
     async fork(input) {
       ensureOpen();
+      if (input.before === true && input.historyBoundary === undefined) {
+        throw Object.assign(new Error('Fork before requires a canonical history boundary.'), { code: 'invalid_params' as const });
+      }
       // FEATURE_298 T10: derivation reads the source while it is idle, so an
       // active run is an explicit conflict instead of a torn history copy.
       assertSessionMutationAllowed(input.sessionId, sessionMutationOwner);
@@ -8654,6 +8719,7 @@ function createRuntimeSessionService(
                 historyBoundary: {
                   sourceRevision: input.historyBoundary.sourceRevision,
                 },
+                ...(input.before === true ? { before: true } : {}),
               },
             );
       } catch (error: unknown) {
@@ -9031,7 +9097,12 @@ function createRuntimeSessionService(
             (entry) => entry.type === "compaction",
           ).length ?? 0;
         activeCompactions.add(input.sessionId);
-        return { compactProvider, compactModel, settings, providerCredentialScope, beforeRevision };
+        let resolve!: () => void;
+        const control: RuntimeCompactionControl = { principalId: trustedInput.origin?.principalId,
+          operationId: trustedInput.operationId ?? `compact_${randomUUID()}`, controller: new AbortController(),
+          settled: new Promise<void>(done => { resolve = done; }), resolve: () => resolve() };
+        compactionControls.set(input.sessionId, control);
+        return { compactProvider, compactModel, settings, providerCredentialScope, beforeRevision, control };
       });
       const startedAt = Date.now();
       let finalRevision = admissionResult.beforeRevision;
@@ -9048,7 +9119,10 @@ function createRuntimeSessionService(
           { sessionId: input.sessionId, runId: input.sessionId },
         );
         const { settings, compactModel } = admissionResult;
-        const compactOperation = () => manager.compactSession(input.sessionId, {
+        const compactOperation = () => runWithProviderRequestObserver(fact => executionFacts.provider(input.sessionId,
+          { kind: 'operation', operation: 'session.compact', operationId: admissionResult.control.operationId }, fact),
+          () => runWithProviderRequestAbortSignal(admissionResult.control.controller.signal, () => manager.compactSession(input.sessionId, {
+          abortSignal: admissionResult.control.controller.signal,
           provider: admissionResult.compactProvider,
           ...(admissionResult.providerCredentialScope === undefined
             ? {}
@@ -9074,7 +9148,7 @@ function createRuntimeSessionService(
                   input.triggerTokens ?? settings.compactionTriggerTokens,
               }
             : {}),
-        });
+        })));
         const result = admissionResult.providerCredentialScope === undefined
           ? await compactOperation()
           : await runWithProviderCredentialLeaseScope(
@@ -9129,6 +9203,8 @@ function createRuntimeSessionService(
       } finally {
         admissionResult.providerCredentialScope?.close("manual compaction settled");
         activeCompactions.delete(input.sessionId);
+        compactionControls.delete(input.sessionId);
+        admissionResult.control.resolve();
         invalidateMaterializedSessionCapture(input.sessionId);
         bus.emit(
           "context.compaction.ended",
@@ -9203,6 +9279,7 @@ function createRuntimeSessionService(
 }
 
 function createRuntimeRunService(deps: {
+  readonly executionFacts: ExecutionFactsStore;
   readonly deleteTemporarySession: (sessionId: string) => Promise<void>;
   /** FEATURE_298 T37 — trusted Skill preparation for queued inputs. */
   readonly invocations: RuntimeInvocationService;
@@ -9235,7 +9312,7 @@ function createRuntimeRunService(deps: {
   readonly ensureOpen: () => void;
   readonly isClosed: () => boolean;
   readonly scheduleManagedTaskMaintenance: NonNullable<KodaXEvents["scheduleManagedTaskMaintenance"]>;
-  readonly runMemoryWork: NonNullable<KodaXEvents["runMemoryWork"]>;
+  readonly runMemoryWork: (work: Parameters<NonNullable<KodaXEvents['runMemoryWork']>>[0], principalId?: string) => Promise<void>;
   readonly permissions: RuntimePermissionRegistry;
   readonly userInputs: RuntimeUserInputRegistry;
   readonly enableSharedInteractions: boolean;
@@ -9683,7 +9760,7 @@ function createRuntimeRunService(deps: {
     return actorSession.rootControl().list().actors.flatMap((actor) =>
       actor.path !== "/root"
         && actor.currentTurnId !== undefined
-        && !baseline.has(actor.currentTurnId)
+        && !baseline.has(actor.currentTurnId) && !actorSession.independentTurnIds().has(actor.currentTurnId)
         ? [actor.currentTurnId]
         : []
     );
@@ -9703,7 +9780,7 @@ function createRuntimeRunService(deps: {
     }
     const previous = record.actorCancellation ?? Promise.resolve();
     const cancellation = previous
-      .then(() => actorSession.quiesce(reason, baseline))
+      .then(() => actorSession.quiesce(reason, new Set([...baseline, ...actorSession.independentTurnIds()])))
       .then(() => ({}))
       .catch((error: unknown) => {
         const normalized = normalizeError(error);
@@ -9908,7 +9985,7 @@ function createRuntimeRunService(deps: {
         const root = actorSession.rootControl();
         const tree = root.list();
         const activeSubtaskCount =
-          record.stop !== undefined && record.actorTurnBaseline !== undefined
+          record.actorTurnBaseline !== undefined
             ? activeManagedActorTurnIds(record).length
             : tree.activeNonRootTurns;
         if (activeSubtaskCount > 0) {
@@ -9926,7 +10003,7 @@ function createRuntimeRunService(deps: {
           }
           const cursor = root.eventSnapshot().at(-1)?.sequence ?? 0;
           if (
-            record.stop !== undefined && record.actorTurnBaseline !== undefined
+            record.actorTurnBaseline !== undefined
               ? activeManagedActorTurnIds(record).length === 0
               : root.list().activeNonRootTurns === 0
           ) continue;
@@ -9967,7 +10044,7 @@ function createRuntimeRunService(deps: {
         if (confirmed.state === "recovering") continue;
         const confirmedTree = root.list();
         const confirmedActiveSubtaskCount =
-          record.stop !== undefined && record.actorTurnBaseline !== undefined
+          record.actorTurnBaseline !== undefined
             ? activeManagedActorTurnIds(record).length
             : confirmedTree.activeNonRootTurns;
         if (confirmedActiveSubtaskCount > 0) continue;
@@ -10544,6 +10621,7 @@ function createRuntimeRunService(deps: {
 
     let outputInputId = record.productInput?.inputId;
     const { events, authorizeForcedPermission } = wrapKodaXEvents({
+      executionFacts: deps.executionFacts,
       display: deps.sessionViews.events(record.sessionId, record.runId, record.start.options.events?.getCostReport,
         () => outputInputId),
       bus: deps.bus,
@@ -10644,7 +10722,7 @@ function createRuntimeRunService(deps: {
       },
     });
     events.scheduleManagedTaskMaintenance = deps.scheduleManagedTaskMaintenance;
-    events.runMemoryWork = deps.runMemoryWork;
+    events.runMemoryWork = work => deps.runMemoryWork(work, record.origin?.principalId);
     events.registerShellCleanup = (reference, retry) => {
       if (!isManagedRunShellReference(reference, record.runId) || record.terminalEmitted) {
         throw new Error("Invalid Runtime Shell cleanup binding");
@@ -10706,7 +10784,7 @@ function createRuntimeRunService(deps: {
       consumePendingInputs: persist => deps.sessionOperations.run(record.sessionId, async () => {
         if (deps.isClosed() || activeRunBySession.get(record.sessionId) !== record.runId
           || !isActiveRunPhase(record.phase) || record.stop !== undefined || record.abortController?.signal.aborted) return [];
-        const consumed = await productQueue.consumePlainBatch(record.sessionId, record.runId, persist);
+        const consumed = await productQueue.consumePlainBatch(record.sessionId, record.runId, persist, record.productExecutionKey, record.origin?.principalId);
         outputInputId = consumed.at(-1)?.inputId ?? outputInputId;
         if (consumed.length > 0) deps.sessionViews.changed(record.sessionId, true);
         return consumed;
@@ -10762,7 +10840,7 @@ function createRuntimeRunService(deps: {
         ...(record.turnId !== undefined ? { turnId: record.turnId } : {}),
       },
     );
-    const execute = (recoveryEvidence: readonly KodaXInterruptedRunEvidence[] = []): void => {
+    const executeUnobserved = (recoveryEvidence: readonly KodaXInterruptedRunEvidence[] = []): void => {
     if (record.mode === "managed_task") {
       const sessionControl = createSessionControl();
       record.sessionControl = sessionControl;
@@ -11028,6 +11106,11 @@ function createRuntimeRunService(deps: {
       .catch((error: unknown) => finishRunSettlementFailure(record, error));
   };
 
+    const execute = (evidence: readonly KodaXInterruptedRunEvidence[] = []): void => {
+      const controller = record.abortController ??= new AbortController();
+      runWithProviderRequestObserver(fact => deps.executionFacts.provider(record.sessionId, { kind: 'run', runId: record.runId }, fact),
+        () => runWithProviderRequestAbortSignal(controller.signal, () => executeUnobserved(evidence)));
+    };
     if (record.start.prepare === undefined && (runOptions.toolInvocation !== undefined
       || ![...deps.runs.values()].some(run => run.sessionId === record.sessionId
         && run.runId !== record.runId && run.phase !== 'completed'))) {
@@ -11322,7 +11405,8 @@ function createRuntimeRunService(deps: {
     operation: RuntimeRunInputOperation,
   ): Promise<RuntimeRunHandle> => {
     deps.ensureOpen();
-    const trustedInput = input as RuntimeTrustedStartRunInput;
+    let trustedInput = input as RuntimeTrustedStartRunInput;
+    const execution = currentProductExecution();
     if (input.inputId !== undefined && (!input.inputId.trim() || input.options?.toolInvocation === undefined || typeof input.prompt !== 'string' || !input.prompt.trim())) {
       throw new Error('A tool inputId requires a tool invocation and nonempty raw prompt.');
     }
@@ -11332,8 +11416,8 @@ function createRuntimeRunService(deps: {
     const inputDigest = productInput === undefined
       ? undefined
       : input.options?.toolInvocation === undefined
-        ? inputIntentDigest(productInput)
-        : createHash('sha256').update(JSON.stringify([inputIntentDigest(productInput), input.options.toolInvocation])).digest('hex');
+        ? inputIntentDigest(productInput, execution?.key)
+        : createHash('sha256').update(JSON.stringify([inputIntentDigest(productInput, execution?.key), input.options.toolInvocation])).digest('hex');
     if (productInput !== undefined) {
       const accepted = findAcceptedInput(input.sessionId, productInput.inputId);
       if (accepted !== undefined) {
@@ -11354,6 +11438,14 @@ function createRuntimeRunService(deps: {
           0,
         );
       }
+    }
+    const runId = productInput === undefined
+      ? trustedInput.trustedRunId ?? createRunId()
+      : immediateInputRunId(input.sessionId, productInput.inputId);
+    if (execution !== undefined) {
+      if (execution.sessionId !== undefined && execution.sessionId !== input.sessionId) throw createRuntimeConflictError('Execution authorization belongs to another Session.', 0);
+      input = await execution.bindRun(input, runId, deps.extensionRuntime(input.sessionId));
+      trustedInput = input as RuntimeTrustedStartRunInput;
     }
     const requiredAfterRunId = trustedInput.requiredAfterRunId;
     const requiredAfterRun =
@@ -11487,10 +11579,6 @@ function createRuntimeRunService(deps: {
       trustProjectPolicy: trustProjectExecPolicy,
       adminRules: deps.execPolicy?.adminRules,
     });
-    const runId =
-      productInput === undefined
-        ? trustedInput.trustedRunId ?? createRunId()
-        : immediateInputRunId(input.sessionId, productInput.inputId);
     if (deps.runs.has(runId))
       throw createRuntimeConflictError(
         `Runtime run already exists: ${runId}`,
@@ -11539,6 +11627,8 @@ function createRuntimeRunService(deps: {
       },
     });
     await autoModeGuardrail.prepare?.();
+    execution?.assertAdmission?.();
+    trustedInput.assertAdmission?.();
     const effectiveOptions: RuntimeKodaXOptions = {
       ...options,
       guardrails: [...(options.guardrails ?? []), autoModeGuardrail],
@@ -11563,6 +11653,9 @@ function createRuntimeRunService(deps: {
         ? { productInput: { inputId: productInput.inputId, digest: inputDigest } }
         : {}),
       phase: isQueued ? "queued" : "running",
+      ...((execution?.key !== undefined || input.credential !== undefined || input.hostTools !== undefined
+        || trustedInput.providerCredentialAccess !== undefined)
+        ? { productExecutionKey: execution?.key ?? `runtime-bound:${runId}` } : {}),
       stage: isQueued ? "queued" : "executing",
       stageChangedAt: startedAt,
       startedAt,
@@ -11758,7 +11851,7 @@ function createRuntimeRunService(deps: {
       ? await prepareSkillInput(sessionId, first.input.text)
       : undefined;
     const batchArtifacts = batch.flatMap(({ input }) => input.inputArtifacts ?? []);
-    await startRun({
+    await withProductExecution(first.execution, () => startRun({
       sessionId,
       prompt: preparedSkill !== undefined
         ? preparedSkill.prompt
@@ -11781,7 +11874,7 @@ function createRuntimeRunService(deps: {
         : {}),
       productInput: first.input, productBatch: batch.map(({ input }) => input.inputId), permissionBroker: "runtime",
       ...(preparedSkill ? { prepare: preparedSkill.prepare } : {}),
-    } as RuntimeTrustedStartRunInput, "runtime.runs.start");
+    } as RuntimeTrustedStartRunInput, "runtime.runs.start"));
   });
 
   const submitInterruptInput = (
@@ -11845,6 +11938,7 @@ function createRuntimeRunService(deps: {
           0,
         );
       }
+      input.assertAdmission?.();
       const queueMessageId = enqueueWithArtifacts({
         sessionId: input.sessionId,
         content: normalized.prompt,
@@ -11918,6 +12012,13 @@ function createRuntimeRunService(deps: {
     input: ClientSubmitInput,
   ): Promise<ClientInputAcceptance> => {
     const target = requireActiveTargetRun(input);
+    const execution = currentProductExecution();
+    if (execution?.key !== target.productExecutionKey) {
+      throw createRuntimeConflictError('Steer cannot replace active-run execution authorization.', 0);
+    }
+    if (execution?.principalId !== target.origin?.principalId) {
+      throw createRuntimeConflictError('Steer cannot enter another client\'s Run.', 0);
+    }
     if (target.actorSession === undefined) {
       throw createRuntimeConflictError(
         "Steer is not supported by this Run.",
@@ -12227,7 +12328,7 @@ function createRuntimeRunService(deps: {
         if (duplicate) return duplicate;
         const accepted = findAcceptedInput(productInput.sessionId, productInput.inputId);
         if (accepted !== undefined) {
-          if (accepted.productInput?.digest !== inputIntentDigest(productInput)) {
+          if (accepted.productInput?.digest !== inputIntentDigest(productInput, currentProductExecution()?.key)) {
             throw createRuntimeConflictError("Input ID already belongs to a different intent.", 0);
           }
           return { sessionId: accepted.sessionId, inputId: productInput.inputId, runId: accepted.runId, state: "submitted" as const };
@@ -12321,6 +12422,8 @@ function createRuntimeRunService(deps: {
 
     async submitInput(input) {
       deps.ensureOpen();
+      const trusted = input as RuntimeTrustedSubmitInput;
+      trusted.assertAdmission?.();
       const afterRun = getRecord(input.afterRunId);
       if (afterRun.sessionId !== input.sessionId) {
         throw new Error(
@@ -12349,7 +12452,6 @@ function createRuntimeRunService(deps: {
         };
       }
 
-      const trusted = input as RuntimeTrustedSubmitInput;
       let handle: RuntimeRunHandle;
       try {
         handle = await start(
@@ -12376,6 +12478,7 @@ function createRuntimeRunService(deps: {
               ? { trustedRunId: trusted.trustedRunId }
               : {}),
             requiredAfterRunId: input.afterRunId,
+            assertAdmission: trusted.assertAdmission,
           } as RuntimeTrustedStartRunInput,
           "runtime.runs.submitInput",
         );
@@ -12604,6 +12707,60 @@ function createRuntimeRunService(deps: {
       autoModeGuardrails.clear();
       autoModeStates.clear();
       queueBySession.clear();
+    },
+    async cleanupClientWork(principalId) {
+      const withdrawnInputs: Array<{ sessionId: string; inputId: string }> = [];
+      for (const sessionId of productQueue.clientSessions(principalId)) {
+        withdrawnInputs.push(...await deps.sessionOperations.run(sessionId, async () => productQueue.withdrawClient(principalId, sessionId)));
+      }
+      const own = [...deps.runs.values()].filter(run => run.origin?.principalId === principalId);
+      const active = own.filter(run => !isTerminalRunPhase(run.phase));
+      const issues: string[] = [];
+      let actorTurns: readonly Pick<AgentTurnRef, 'actorPath' | 'turnId'>[] = [];
+      try {
+        const actors = await deps.actorRegistry.quiesceClient(principalId);
+        actorTurns = actors.turns;
+        if (actors.unsettledTurnIds.length > 0) issues.push(`Actor executors remain unconfirmed: ${actors.unsettledTurnIds.join(', ')}`);
+      }
+      catch (error: unknown) { issues.push(error instanceof Error ? error.message : String(error)); }
+      await Promise.all(active.map(async run => {
+        try {
+          await deps.sessionOperations.run(run.sessionId, () => abortRun(run.runId));
+          if (!await settleClientWork([run.result])) { issues.push(`Run ${run.runId} executor remains unconfirmed.`); return; }
+          if (run.independentActorRef !== undefined) {
+            const root = await deps.actorRegistry.root(run.sessionId);
+            let cursor = root.eventSnapshot().at(-1)?.sequence ?? 0;
+            while (['accepted', 'running'].includes(root.output(run.independentActorRef.actorPath, run.independentActorRef.turnId).state)) {
+              const health = (await deps.actorRegistry.forSession(run.sessionId)).health();
+              if (health.state === 'unknown') { issues.push(health.message ?? 'Actor settlement is unknown.'); break; }
+              const event = await root.wait(cursor, 100);
+              if (event) cursor = event.sequence;
+            }
+          }
+        }
+        catch (error: unknown) { issues.push(error instanceof Error ? error.message : String(error)); }
+      }));
+      for (const run of own) {
+        try { for (const entry of [...(run.shellCleanups?.values() ?? [])]) await entry.retry(); }
+        catch (error: unknown) { issues.push(error instanceof Error ? error.message : String(error)); }
+        if (!isTerminalRunPhase(run.phase) || (run.shellCleanups?.size ?? 0) > 0 || run.shellEffectDrain !== undefined) {
+          issues.push(`Run ${run.runId} cleanup is unconfirmed.`);
+        }
+      }
+      for (const sessionId of new Set(active.map(run => run.sessionId))) {
+        try { await drainProductInputs(sessionId); }
+        catch (error: unknown) { emitKodaXDiagnostic({ source: 'runtime.input-queue', level: 'error',
+          message: `Another client's queued input could not be submitted after client exit: ${sessionId}`, detail: error }); }
+      }
+      for (const persisted of deps.persistence.loadRunStatuses()) {
+        if (persisted.status.origin?.principalId !== principalId || !Array.isArray(persisted.shellCleanups)
+          || persisted.shellCleanups.length === 0 || deps.runs.get(persisted.status.runId)?.ownedByRuntime) continue;
+        try {
+          if (!await recoverPersistedShellCleanups(persisted.status, deps.persistence)) issues.push(`Run ${persisted.status.runId} retained Shell cleanup is unconfirmed.`);
+        } catch (error: unknown) { issues.push(error instanceof Error ? error.message : String(error)); }
+      }
+      return { actorTurns, operationIds: [], runIds: active.map(run => run.runId), withdrawnInputs,
+        state: issues.length === 0 ? 'succeeded' : 'unknown', issues };
     },
     async retryShellCleanups() {
       for (const run of deps.runs.values()) {
@@ -14002,6 +14159,7 @@ function runtimeLocalListings(
 }
 
 interface RuntimeAgentActorRegistry {
+  quiesceClient(principalId: string): ReturnType<CodingActorSession['quiesceClient']>;
   forSession(
     sessionId: string,
     maxConcurrentThreads?: number,
@@ -14030,6 +14188,7 @@ function createRuntimeAgentActorRegistry(
   ) => void,
 ): RuntimeAgentActorRegistry {
   const sessions = new Map<string, Promise<CodingActorSession>>();
+  const ready = new Map<string, CodingActorSession>();
   let closed = false;
 
   const claimSession = (
@@ -14110,6 +14269,7 @@ function createRuntimeAgentActorRegistry(
       });
       try {
         await session.initialize();
+        ready.set(sessionId, session);
         onHealthChanged?.(sessionId, session.health());
         return session;
       } catch (error: unknown) {
@@ -14139,11 +14299,16 @@ function createRuntimeAgentActorRegistry(
     const session = await pending;
     if (!(await sessionManager.storage.isArchived(sessionId))) return session;
     await session.close("archived Session execution rejected");
+    ready.delete(sessionId);
     if (sessions.get(sessionId) === registered) sessions.delete(sessionId);
     throw createSessionArchivedError(sessionId);
   };
 
   return {
+    async quiesceClient(principalId) {
+      const results = await Promise.all([...ready.values()].map(session => session.quiesceClient(principalId)));
+      return { turns: results.flatMap(result => result.turns), unsettledTurnIds: results.flatMap(result => result.unsettledTurnIds) };
+    },
     forSession,
     async root(sessionId) {
       return (await forSession(sessionId)).rootControl();
@@ -14204,6 +14369,7 @@ function createRuntimeAgentActorRegistry(
         && await sessionManager.storage.isArchived(sessionId)
       ) {
         await session.close("archived Session mutation rejected");
+        ready.delete(sessionId);
         if (sessions.get(sessionId) === pending) sessions.delete(sessionId);
         throw createSessionArchivedError(sessionId);
       }
@@ -14233,6 +14399,7 @@ function createRuntimeAgentActorRegistry(
         && sessions.get(sessionId) === pending
       ) {
         sessions.delete(sessionId);
+        ready.delete(sessionId);
       }
       return result;
     },
@@ -14252,6 +14419,7 @@ function createRuntimeAgentActorRegistry(
         throw new AggregateError(errors, "Actor registry cleanup failed.");
       }
       sessions.clear();
+      ready.clear();
     },
   };
 }
@@ -14263,6 +14431,7 @@ function createRuntimeAgentService(
   admission: RuntimeSessionAdmission,
   sessionOperations: RuntimeSessionOperationGate,
   ensureOpen: () => void,
+  environment: (sessionId: string, options: RuntimeTrustedAgentOperationOptions) => CodingActorEnvironmentFactory,
 ): RuntimeAgentService {
   const withActorSession = <T>(
     sessionId: string,
@@ -14348,7 +14517,8 @@ function createRuntimeAgentService(
     async spawn(sessionId, input, options) {
       const credentialFactory = trustedCredentialFactory(options);
       return withActorSession(sessionId, (session) =>
-        session.spawnRoot(input, undefined, credentialFactory));
+        session.spawnRoot(input, { executionPrincipalId: (options as RuntimeTrustedAgentOperationOptions | undefined)?.origin?.principalId }, credentialFactory,
+          credentialFactory === undefined ? undefined : environment(sessionId, options as RuntimeTrustedAgentOperationOptions)));
     },
     async send(sessionId, actorPath, content, classification) {
       await withRoot(sessionId, (root) =>
@@ -14358,16 +14528,21 @@ function createRuntimeAgentService(
     async followup(sessionId, actorPath, objective, options) {
       const credentialFactory = trustedCredentialFactory(options);
       const trusted = options as RuntimeTrustedAgentFollowupOptions | undefined;
-      return withActorSession(sessionId, (session) =>
-        session.followupRoot(
+      return withActorSession(sessionId, (session) => {
+        if ((trusted?.tools !== undefined || trusted?.actorExtensionRuntime !== undefined)
+          && session.rootControl().list().actors.find(actor => actor.path === actorPath)?.kind === 'external') {
+          throw Object.assign(new Error('External Actors cannot bind native tools or a Host Tool runtime.'), { code: 'invalid_params' });
+        }
+        return session.followupRoot(
           actorPath,
           objective,
-          trusted?.expectedRevision === undefined
-            ? undefined
-            : { expectedRevision: trusted.expectedRevision },
+          { ...(trusted?.expectedRevision === undefined ? {} : { expectedRevision: trusted.expectedRevision }),
+            executionPrincipalId: trusted?.origin?.principalId },
           credentialFactory,
           trusted?.requireCredentialForNewTurn === true,
-        ));
+          credentialFactory === undefined ? undefined : environment(sessionId, trusted ?? {}),
+        );
+      });
     },
     async interrupt(sessionId, actorPath, reason) {
       await withRoot(sessionId, (root) => root.interrupt(actorPath, reason));
@@ -18978,6 +19153,9 @@ async function waitForRuntimeUserInput<T>(
 }
 
 function wrapKodaXEvents(input: {
+  readonly toolCeiling?: readonly string[];
+  readonly executionFacts?: ExecutionFactsStore;
+  readonly executionTarget?: import('@kodax-ai/coding/client-contract').ClientExecutionTarget;
   readonly onPlanApproved: () => Promise<boolean>;
   readonly display: KodaXEvents;
   readonly bus: RuntimeEventBus;
@@ -19029,6 +19207,18 @@ function wrapKodaXEvents(input: {
     runId: record.runId,
     turnId: meta?.turnId ?? record.turnId,
   });
+  const targetFromMeta = (meta?: Partial<KodaXActivityEventMeta>): import('@kodax-ai/coding/client-contract').ClientExecutionTarget =>
+    (meta?.childAgentId ?? meta?.agentId)?.startsWith('/') && meta?.turnId !== undefined
+      ? { kind: 'actor_turn', actorPath: (meta.childAgentId ?? meta.agentId)!, turnId: meta.turnId,
+        ...(input.executionTarget?.kind === 'actor_turn' ? {} : { parentRunId: record.runId }) }
+      : input.executionTarget ?? { kind: 'run', runId: record.runId };
+  const toolIdentities = new Map<string, string>();
+  const toolIdentity = (toolId: string, meta?: Partial<KodaXActivityEventMeta>, begin = false): string => {
+    const key = JSON.stringify([targetFromMeta(meta), toolId]);
+    if (meta && 'executionId' in meta && typeof meta.executionId === 'string') { toolIdentities.set(key, meta.executionId); return meta.executionId; }
+    if (begin || !toolIdentities.has(key)) toolIdentities.set(key, `execution_${randomUUID()}`);
+    return toolIdentities.get(key)!;
+  };
   const authorizeTrackedPermission = async (
     tool: string,
     toolInput: Record<string, unknown>,
@@ -19260,6 +19450,7 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onThinkingEnd?.(thinking, meta);
     },
     onToolUseStart(tool, meta) {
+      input.executionFacts?.tool(record.sessionId, targetFromMeta(meta), toolIdentity(tool.id, meta, true), tool.id, tool.name, { state: 'prepared' });
       if (actorDurabilityFenced()) return;
       input.display.onToolUseStart?.(tool, meta);
       onPhase(tool.name === "wait_agent" ? "waiting_agent" : "running");
@@ -19273,6 +19464,7 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onToolProgress?.(update, meta);
     },
     onToolSandboxObservation(update, meta) {
+      input.executionFacts?.tool(record.sessionId, targetFromMeta(meta), toolIdentity(update.id, meta), update.id, undefined, { observation: update.observation });
       emit("tool.sandbox", { update, meta }, meta);
       externalCallbacks()?.onToolSandboxObservation?.(update, meta);
     },
@@ -19283,6 +19475,8 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onToolInputDelta?.(toolName, partialJson, meta);
     },
     onToolResult(result, meta) {
+      input.executionFacts?.tool(record.sessionId, targetFromMeta(meta), toolIdentity(result.id, meta), result.id, result.name, { state: 'completed',
+        result: result.toolResult?.metadata?.cancelled ? 'cancelled' : result.toolResult?.is_error ? 'failed' : 'succeeded' });
       if (actorDurabilityFenced()) return;
       input.display.onToolResult?.(result, meta);
       if (result.name === "wait_agent") onPhase("running");
@@ -19290,6 +19484,7 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onToolResult?.(result, meta);
     },
     onToolExecutionStart(tool, meta) {
+      input.executionFacts?.tool(record.sessionId, targetFromMeta(meta), toolIdentity(tool.id, meta), tool.id, tool.name, { state: 'executing' });
       if (actorDurabilityFenced()) {
         const error = new Error("Tool execution was fenced by Actor durability failure.");
         error.name = "AbortError";
@@ -19307,6 +19502,7 @@ function wrapKodaXEvents(input: {
       }
     },
     onToolExecutionEnd(tool, meta) {
+      input.executionFacts?.tool(record.sessionId, targetFromMeta(meta), toolIdentity(tool.id, meta), tool.id, tool.name, { state: 'completed' });
       record.trustedTextApprovals?.revoke(tool.id);
       void meta;
       record.activeEffectCount = Math.max(0, (record.activeEffectCount ?? 0) - 1);
@@ -19513,6 +19709,7 @@ function wrapKodaXEvents(input: {
     },
     onContextBudgetSnapshot(event) {
       const attributed = withRuntimeDiagnosticIdentity(event, record.sessionId);
+      input.executionFacts?.context(record.sessionId, targetFromMeta(attributed), attributed);
       input.display.onContextBudgetSnapshot?.(attributed);
       emit("context.budget.snapshot", attributed, attributed);
       externalCallbacks()?.onContextBudgetSnapshot?.(attributed);
@@ -19685,6 +19882,9 @@ function wrapKodaXEvents(input: {
       toolInput: Record<string, unknown>,
       meta?: KodaXToolEventMeta,
     ): Promise<RuntimePermissionToolDecision> => {
+      if (input.toolCeiling !== undefined && !input.toolCeiling.includes(tool)) {
+        return `Tool ${tool} is outside this Actor turn's trusted authorization.`;
+      }
       const stoppedBeforeAdmission = managedStopDecision();
       if (stoppedBeforeAdmission !== undefined) return stoppedBeforeAdmission;
       const exactCall: RunnerToolCall = {

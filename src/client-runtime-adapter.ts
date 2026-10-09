@@ -2,6 +2,7 @@ import type { ClientWorkflowRun, KodaXProductClient } from '@kodax-ai/coding/cli
 import { memoryProposalRevision } from '@kodax-ai/agent';
 import type { KodaXRuntime } from './sdk-runtime.js';
 import { toClientConfig, toClientSessionSettings } from './client-settings.js';
+import type { KodaXClientExecutionRequest, KodaXClientHostAuthorization, RuntimeExecutionAuthorization } from './client-host-authorization.js';
 
 /**
  * FEATURE_298 T35 — project a connected runtime as the product client. The
@@ -10,13 +11,34 @@ import { toClientConfig, toClientSessionSettings } from './client-settings.js';
  */
 export function toKodaXProductClient(
   runtime: KodaXRuntime,
+  authorizeExecution?: KodaXClientHostAuthorization,
 ): KodaXProductClient {
+  const authorize = async <Request extends KodaXClientExecutionRequest>(request: Request): Promise<Request['input'] & {
+    readonly authorization?: RuntimeExecutionAuthorization;
+  }> => {
+    const input = structuredClone(request.input);
+    // Untyped Product/IPC inputs cannot supply Host authority.
+    for (const key of ['authorization', 'credential', 'hostTools', 'providerCredential',
+      'providerCredentialAccess', 'origin', 'trustedRunId']) delete (input as unknown as Record<string, unknown>)[key];
+    const authorization = await authorizeExecution?.({ ...request, input } as Request, runtime);
+    return { ...input, ...(authorization === undefined ? {} : { authorization: structuredClone(authorization) }) };
+  };
   return {
+    statistics: runtime.statistics ?? {
+      read: async () => { throw new Error('Execution facts require a compatible Host.'); },
+      readRequests: async () => { throw new Error('Execution facts require a compatible Host.'); },
+      readTools: async () => { throw new Error('Execution facts require a compatible Host.'); },
+    },
+    lifecycle: runtime.lifecycle ?? {
+      requestExit: async () => { throw new Error('Client exit control requires a compatible daemon Host.'); },
+      readExit: async () => { throw new Error('Client exit control requires a compatible daemon Host.'); },
+      listPendingExits: async () => { throw new Error('Client exit control requires a compatible daemon Host.'); },
+    },
     commands: {
-      execute: (input) => runtime.invocations.executeCommand(input),
+      execute: async (input) => runtime.invocations.executeCommand(await authorize({ kind: 'command', input })),
       readPrompt: (input) => runtime.invocations.readCommandPrompt(input),
     },
-    review: { start: (input) => runtime.invocations.startReview(input) },
+    review: { start: async (input) => runtime.invocations.startReview(await authorize({ kind: 'review', input })) },
     host: {
       shutdown: () => runtime.daemon !== undefined
         ? runtime.daemon.shutdown()
@@ -78,7 +100,9 @@ export function toKodaXProductClient(
         }),
       recoverSession: (sessionId, input) => runtime.sessions.recover({ sessionId, ...(input ?? {}) }),
       compact: async (sessionId, input) => {
-        const result = await runtime.sessions.compact({ sessionId, ...input });
+        const authorized = await authorize({ kind: 'compaction', input: { ...input, sessionId } });
+        const result = await runtime.sessions.compact({ sessionId: authorized.sessionId, customInstructions: authorized.customInstructions,
+          ...(authorized.authorization?.credential !== undefined ? { credential: authorized.authorization.credential } : {}) });
         return {
           compacted: result.compacted, messages: result.messages,
           tokensBefore: result.tokensBefore, tokensAfter: result.tokensAfter,
@@ -131,14 +155,16 @@ export function toKodaXProductClient(
       },
     },
     inputs: {
-      submit: (input) => runtime.runs.acceptInput(input),
+      submit: async (input) => runtime.runs.acceptInput(await authorize({ kind: 'input', input })),
       read: (sessionId, inputId) => runtime.runs.getInput(sessionId, inputId),
       withdraw: (sessionId, inputId) => runtime.runs.withdrawInput(sessionId, inputId),
     },
     runs: {
       startTool: async input => {
-        const handle = await runtime.runs.start({ sessionId: input.sessionId, inputId: input.inputId,
-          prompt: input.rawInput, options: { toolInvocation: { name: input.name, input: input.input } } });
+        const authorized = await authorize({ kind: 'tool', input });
+        const handle = await runtime.runs.start({ sessionId: authorized.sessionId, inputId: authorized.inputId,
+          prompt: authorized.rawInput, options: { toolInvocation: { name: authorized.name, input: authorized.input } },
+          ...(authorized.authorization !== undefined ? { authorization: authorized.authorization } : {}) });
         return { runId: handle.runId, sessionId: handle.sessionId };
       },
       read: (runId) => runtime.runs.get(runId),
@@ -183,15 +209,23 @@ export function toKodaXProductClient(
       remove: (agentId, options) => runtime.admin.agentRegistrations.remove(agentId, options),
     },
     agents: {
-      reviewLean: (input) => runtime.invocations.startAgentsLean(input),
+      reviewLean: async (input) => runtime.invocations.startAgentsLean(await authorize({ kind: 'agents_lean', input })),
       tree: (sessionId) => runtime.agents.tree(sessionId),
       detail: (sessionId, actorPath) => runtime.agents.detail(sessionId, actorPath),
-      spawn: (sessionId, input) => runtime.agents.spawn(sessionId, input),
+      spawn: async (sessionId, input) => {
+        const approved = await authorize({ kind: 'agent_spawn', input: { sessionId, agent: input } });
+        return approved.authorization === undefined ? runtime.agents.spawn(sessionId, approved.agent)
+          : runtime.agents.spawn(sessionId, approved.agent, { authorization: approved.authorization });
+      },
       send: (sessionId, actorPath, content, classification) =>
         runtime.agents.send(sessionId, actorPath, content, classification),
-      followup: (sessionId, actorPath, objective, options) =>
-        runtime.agents.followup(sessionId, actorPath, objective,
-          options?.expectedRevision === undefined ? undefined : { expectedRevision: options.expectedRevision }),
+      followup: async (sessionId, actorPath, objective, options) => {
+        const approved = await authorize({ kind: 'agent_followup', input: { sessionId, actorPath, objective,
+          ...(options?.expectedRevision === undefined ? {} : { expectedRevision: options.expectedRevision }) } });
+        return runtime.agents.followup(sessionId, actorPath, objective,
+          { expectedRevision: approved.expectedRevision,
+            ...(approved.authorization === undefined ? {} : { authorization: approved.authorization }) });
+      },
       interrupt: (sessionId, actorPath, reason) => runtime.agents.interrupt(sessionId, actorPath, reason),
       output: (sessionId, actorPath, turnId) => runtime.agents.output(sessionId, actorPath, turnId),
       wait: (sessionId, afterSequence, timeoutMs, options) =>
@@ -229,7 +263,7 @@ export function toKodaXProductClient(
       listTools: (filter) => runtime.mcp.listTools(filter),
     },
     workflows: {
-      start: (input) => runtime.workflows.start({ ...input, settingsDefaults: 'product' }),
+      start: async (input) => runtime.workflows.start({ ...await authorize({ kind: 'workflow', input }), settingsDefaults: 'product' }),
       list: async (filter) => {
         const summaries: ClientWorkflowRun[] = [];
         for (const run of await runtime.workflows.list(filter ?? {})) {

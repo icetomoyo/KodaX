@@ -41,7 +41,10 @@ export function canonicalTools(messages: readonly KodaXMessage[]): ReadonlyMap<s
         const key = pending.get(block.tool_use_id);
         const item = key === undefined ? undefined : tools.get(key);
         if (!item?.tool || key === undefined) continue;
-        tools.set(key, { ...item, text: toolResultText(block.content), tool: { ...item.tool,
+        const attachments = typeof block.content === 'string' ? [] : block.content.flatMap(content => content.type === 'image'
+          ? [{ kind: 'image' as const, path: content.path, ...(content.mediaType ? { mediaType: content.mediaType } : {}) }] : []);
+        tools.set(key, { ...item, text: toolResultText(block.content),
+          ...(attachments.length > 0 ? { attachments } : {}), tool: { ...item.tool,
           status: resultStatus(block), endedAt: timestamp } });
         pending.delete(block.tool_use_id);
       }

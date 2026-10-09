@@ -464,7 +464,7 @@ function makeRuntime(
       },
       async readViewItem() { return null; },
       async readHistory() {
-        return { items: [], revision: 'sha256:' + '0'.repeat(64), oversized: [] };
+        return { items: [], revision: 'sha256:' + '0'.repeat(64), sourceRevision: 'source', status: 'resolved', issues: [], oversized: [] };
       },
       async readHistoryEntry() { return null; },
       async searchHistory() {

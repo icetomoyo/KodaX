@@ -113,19 +113,21 @@ it('shares queued input, atomically withdraws exact input, and delivers the rema
     expect(requestModels).toEqual(['queue-model-a']);
     release();
     await runtime.runs.await(active.runId!);
-    await expect.poll(() => requests.length).toBe(2);
-    expect(requestModels).toEqual(['queue-model-a', 'queue-model-b']);
+    await expect.poll(() => requests.length).toBe(3);
+    expect(requestModels).toEqual(['queue-model-a', 'queue-model-b', 'queue-model-b']);
     await expect.poll(() => views.at(-1)?.queue.length).toBe(0);
     const delivered = requests[1]!.filter(message => message.role === 'user'
       && (message.inputId === 'second' || message.inputId === 'third'));
     expect(delivered.map(message => ({ inputId: message.inputId, content: message.content }))).toEqual([
       { inputId: 'second', content: 'Second instruction.' },
-      { inputId: 'third', content: 'Third instruction.' },
     ]);
+    expect(requests[2]!.filter(message => message.inputId === 'third').map(message => message.content)).toEqual(['Third instruction.']);
     expect(JSON.stringify(requests)).not.toContain(removed.text);
     const consumed = await first.inputs.read(session.id, 'second');
     expect(consumed).toMatchObject({ state: 'submitted', runId: active.runId });
-    expect(await second.inputs.read(session.id, 'third')).toMatchObject({ state: 'submitted', runId: active.runId });
+    const foreign = await second.inputs.read(session.id, 'third');
+    expect(foreign).toMatchObject({ state: 'submitted' });
+    expect(foreign!.runId).not.toBe(active.runId);
     await runtime.runs.await(consumed!.runId!);
     await expect(second.inputs.withdraw(session.id, 'third')).rejects.toMatchObject({ code: 'conflict' });
   } finally {
@@ -190,10 +192,13 @@ it('keeps unknown slash tokens, paths and URLs in the ordinary text batch', asyn
   }
   release();
   await first.runs.await(active.runId!);
-  expect(await second.inputs.read(session.id, 'slash')).toMatchObject({ state: 'submitted', runId: active.runId });
-  expect(await second.inputs.read(session.id, 'plain')).toMatchObject({ state: 'submitted', runId: active.runId });
+  await expect.poll(async () => (await second.inputs.read(session.id, 'slash'))?.runId).toBeTruthy();
+  const consumed = await second.inputs.read(session.id, 'slash');
+  expect(consumed!.runId).not.toBe(active.runId);
+  await second.runs.await(consumed!.runId!);
+  expect(await second.inputs.read(session.id, 'plain')).toMatchObject({ state: 'submitted', runId: consumed!.runId });
   expect(requests[1]?.filter(message => message.inputId === 'slash' || message.inputId === 'plain')
-    .map(message => message.content)).toEqual([text, 'Continue normally.']);
+    .map(message => message.content)).toEqual([`${text}\n\n---\n\nContinue normally.`]);
 });
 
 it('bounds queue previews and capacity while withdrawal returns the complete original once', async () => {

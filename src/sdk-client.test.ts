@@ -12,7 +12,7 @@ import {
   tryAcquireRuntimeDaemonLock,
 } from './runtime-daemon/state.js';
 
-it('rejects an older Host before exposing an incomplete product contract', async () => {
+it.each(['productClient', 'productHistoryBoundaries', 'productExecutionAuthorization'])('rejects an older Host missing %s before exposing an incomplete product contract', async capability => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-old-product-'));
   const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
   const paths = resolveRuntimeDaemonPaths(homeDir);
@@ -23,14 +23,16 @@ it('rejects an older Host before exposing an incomplete product contract', async
     ? { kind: 'pipe' as const, path: `\\\\.\\pipe\\kodax-old-product-${randomUUID()}` }
     : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
   const capabilities = { ...runtime.capabilities };
-  delete capabilities.productClient;
+  delete capabilities[capability];
   const host = await startRuntimeDaemonHost({ runtime: { ...runtime, capabilities }, paths, lock, endpoint });
   let unexpected: Awaited<ReturnType<typeof connectKodaXClient>> | undefined;
   try {
-    await expect(connectKodaXClient({ homeDir, endpoint: endpoint.path }).then(client => {
+    await expect(connectKodaXClient({ homeDir, endpoint: endpoint.path,
+      ...(capability === 'productExecutionAuthorization' ? { authorizeExecution: async () => undefined } : {}),
+    }).then(client => {
       unexpected = client;
       return client;
-    })).rejects.toThrow(/productClient/);
+    })).rejects.toThrow(capability);
     // Passive rejection leaves the existing owner and its data available.
     expect(await runtime.sessions.list()).toEqual([]);
   } finally {

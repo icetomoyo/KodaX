@@ -32,6 +32,7 @@ import {
 } from './transport.js';
 import { createRuntimeDaemonReverseBridgeHub } from './reverse-bridge.js';
 import { createRuntimeDaemonManagementController } from './management.js';
+import { createRuntimeClientLifecycleController } from './client-lifecycle.js';
 
 export interface RuntimeDaemonHostOptions {
   readonly runtime: KodaXRuntime;
@@ -94,12 +95,15 @@ export async function startRuntimeDaemonHost(
       ? { integrationStatuses: options.integrationStatuses }
       : {}),
   });
+  const clientLifecycle = createRuntimeClientLifecycleController({ runtime: options.runtime, paths: options.paths, management,
+    retireClientLeases: principalId => reverseBridgeHub.retireClient(principalId) });
   let ready: RuntimeDaemonState;
   try {
     options.commitStartup?.();
     server = await createRuntimeDaemonSocketServer({
       endpoint: options.endpoint,
       createDispatcher: (notify, disconnect) => createRuntimeDaemonDispatcher({
+        clientLifecycle,
         runtime: options.runtime,
         authToken: token,
         ...(options.ownsA2AConfigReconciler === true
@@ -255,6 +259,7 @@ export async function startRuntimeDaemonHost(
         }
       }
       if (failures.length > 0) {
+        clientLifecycle.hostCleanup('failed', failures.join('; '));
         try {
           appendRuntimeDaemonLog(options.paths, 'error', 'Runtime daemon host stopped with cleanup failures.', {
             failures,
@@ -265,6 +270,7 @@ export async function startRuntimeDaemonHost(
         throw new Error(`Runtime daemon cleanup failed: ${failures.join('; ')}`);
       }
       closed = true;
+      clientLifecycle.hostCleanup('succeeded');
       signalClosed?.();
     })();
     closeAttempt = attempt;

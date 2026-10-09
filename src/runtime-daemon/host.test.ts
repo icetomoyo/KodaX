@@ -609,7 +609,7 @@ describe("runtime daemon host", () => {
       clientCount: 1,
       clients: [{
         daemonConnectionId: expect.stringMatching(/^connection_/),
-        principalId: "space-client",
+        principalId: expect.stringMatching(/^client_[a-f0-9]{64}$/),
         name: oversizedName.slice(0, 128),
         title: oversizedTitle.slice(0, 256),
         version: oversizedVersion.slice(0, 64),
@@ -666,9 +666,9 @@ describe("runtime daemon host", () => {
     expect(concurrent).toMatchObject({
       clientCount: 2,
       clients: [
-        { principalId: "space-client", name: oversizedName.slice(0, 128) },
+        { principalId: expect.stringMatching(/^client_[a-f0-9]{64}$/), name: oversizedName.slice(0, 128) },
         {
-          principalId: "space-client",
+          principalId: expect.stringMatching(/^client_[a-f0-9]{64}$/),
           name: "space-reconnect",
           clientType: "unknown",
         },
@@ -1442,7 +1442,7 @@ function makeRuntime(
       },
       async readViewItem() { return null; },
       async readHistory() {
-        return { items: [], revision: "sha256:" + "0".repeat(64), oversized: [] };
+        return { items: [], revision: "sha256:" + "0".repeat(64), sourceRevision: 'source', status: 'resolved', issues: [], oversized: [] };
       },
       async readHistoryEntry() { return null; },
       async searchHistory() {

@@ -3,14 +3,15 @@ import type { KodaXExtensionRuntime } from '@kodax-ai/coding';
 import type { ClientCommandInput, ClientCommandResult, ClientCommandService, ClientReviewInput } from '@kodax-ai/coding/client-contract';
 import type { RuntimeReviewPreparationService, RuntimePreparedReview } from './runtime-review-preparation.js';
 import type { RuntimeInvocationService, RuntimePreparedCommandInvocation } from './runtime-invocations.js';
+import type { RuntimeExecutionAuthorization } from './client-host-authorization.js';
 
 export type RuntimeCommandInvocation = Omit<RuntimePreparedCommandInvocation, 'source'> & { readonly source: 'prompt' | 'extension' };
 
 export interface RuntimeProductCommandService {
   readCommandPrompt: ClientCommandService['readPrompt'];
-  startReview(input: ClientReviewInput): Promise<ClientCommandResult>;
-  startAgentsLean(input: Omit<ClientReviewInput, 'args'>): Promise<ClientCommandResult>;
-  executeCommand(input: ClientCommandInput): Promise<ClientCommandResult>;
+  startReview(input: ClientReviewInput & { readonly authorization?: RuntimeExecutionAuthorization }): Promise<ClientCommandResult>;
+  startAgentsLean(input: Omit<ClientReviewInput, 'args'> & { readonly authorization?: RuntimeExecutionAuthorization }): Promise<ClientCommandResult>;
+  executeCommand(input: ClientCommandInput & { readonly authorization?: RuntimeExecutionAuthorization }): Promise<ClientCommandResult>;
 }
 
 export interface RuntimeCommandContext {

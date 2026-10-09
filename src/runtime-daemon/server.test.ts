@@ -209,10 +209,10 @@ describe('runtime daemon dispatcher', () => {
       'session-1',
       '/root/worker',
       'Distinct stale follow-up.',
-      {
+      expect.objectContaining({
         expectedRevision: 4,
         requireCredentialForNewTurn: true,
-      },
+      }),
     );
     expect(detail).not.toHaveBeenCalled();
     expect(isRuntimeDaemonSuccessResponse(response)).toBe(false);
@@ -1446,7 +1446,8 @@ describe('runtime daemon dispatcher', () => {
       dispatcher.close();
 
       const implemented = isRuntimeDaemonSuccessResponse(response) || (
-        method === 'daemon.management.get'
+        ['daemon.management.get', 'client.exit.request', 'client.exit.read', 'client.exit.pending',
+          'session.facts.read', 'session.facts.requests', 'session.facts.tools'].includes(method)
         && response.error.code === 'client_upgrade_required'
       );
       expect(
@@ -3032,6 +3033,12 @@ function randomRequestSuffix(): string {
 }
 
 const METHOD_SMOKE_PARAMS = {
+  'client.exit.request': { requestId: 'quit' },
+  'client.exit.read': { requestId: 'quit' },
+  'client.exit.pending': undefined,
+  'session.facts.read': { sessionId: 'session-1' },
+  'session.facts.requests': { sessionId: 'session-1' },
+  'session.facts.tools': { sessionId: 'session-1' },
   initialize: { profile: 'default', capabilities: { contextDiagnostics: true } },
   'runtime.initialize': { profile: 'default', capabilities: { contextDiagnostics: true } },
   ping: undefined,
@@ -3394,7 +3401,7 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
       },
       async readViewItem() { return null; },
       async readHistory() {
-        return { items: [], revision: 'sha256:' + '0'.repeat(64), oversized: [] };
+        return { items: [], revision: 'sha256:' + '0'.repeat(64), sourceRevision: 'source', status: 'resolved', issues: [], oversized: [] };
       },
       async readHistoryEntry() { return null; },
       async searchHistory() {

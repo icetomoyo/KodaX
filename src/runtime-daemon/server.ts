@@ -1,5 +1,7 @@
 import type { MemoryRefFilter, MemoryRememberInput } from '@kodax-ai/agent';
 import { randomUUID } from "node:crypto";
+import { runtimeClientPrincipal, type RuntimeClientLifecycleController } from './client-lifecycle.js';
+import { withProductExecution } from '../product-execution-authorization.js';
 import {
   DEFAULT_CLASSIFIER_TIMEOUT_MS,
   getActiveExtensionRuntime,
@@ -110,6 +112,7 @@ export type RuntimeDaemonNotificationSink = (
 const LEGACY_TRANSCRIPT_WIRE_BUDGET_BYTES = 512 * 1024;
 
 export interface RuntimeDaemonDispatcherOptions {
+  readonly clientLifecycle?: RuntimeClientLifecycleController;
   readonly runtime: KodaXRuntime;
   readonly notify?: RuntimeDaemonNotificationSink;
   /** Close the physical transport after a stable identity takes over. */
@@ -186,6 +189,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
   RuntimeGrantedScope
 > = new Map([
   ...scopeEntries("session:observe", [
+    'session.facts.read', 'session.facts.requests', 'session.facts.tools',
     "ping",
     "runtime.identity",
     "runtime.status",
@@ -373,6 +377,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "agents.wait",
   ]),
   ...scopeEntries("daemon:admin", [
+    'client.exit.request', 'client.exit.read', 'client.exit.pending',
     "runtime.shutdown",
     "daemon.stop",
     "daemon.preflight",
@@ -494,6 +499,7 @@ export function createRuntimeDaemonDispatcher(
   let connectionPurpose: "client" | "probe" = "client";
   let clientCapabilities: RuntimeClientCapabilities = {};
   let principalId = `client_${randomUUID().replace(/-/g, "")}`;
+  let noticeIdentity = principalId;
   let clientName: string | undefined;
   let clientVersion: string | undefined;
   const grantedScopes = new Set(
@@ -624,6 +630,7 @@ export function createRuntimeDaemonDispatcher(
           initializeParams?.clientInfo,
           principalId,
         );
+        noticeIdentity = parseRuntimeClientNoticeIdentity(initializeParams?.clientInfo, principalId);
         clientName = parseRuntimeClientName(initializeParams?.clientInfo);
         clientVersion = parseRuntimeClientVersion(initializeParams?.clientInfo);
       }
@@ -714,14 +721,16 @@ export function createRuntimeDaemonDispatcher(
           clientVersion,
           reverseBridge,
           requestController.signal,
+          noticeIdentity,
         );
       let dispatched: unknown;
       try {
-        const mutation = dispatchMutation(
-          request,
-          options,
-          dispatch,
-        );
+        const execute = () => dispatchMutation(request, options, dispatch);
+        const ownedAdmission = ['input.submit', 'run.start', 'run.input.submit', 'workflow.start', 'agents.spawn', 'agents.followup',
+          'session.compact', 'invocations.executeCommand', 'invocations.startReview', 'invocations.startAgentsLean',
+          'credential.register', 'credential.resume', 'hostTool.register', 'hostTool.resume'].includes(request.method);
+        const mutation = options.clientLifecycle && ownedAdmission
+          ? options.clientLifecycle.admit(principalId, execute) : execute();
         dispatched = isRuntimeDaemonDrainingSensitiveMethod(request.method)
           ? await mutation
           : await raceRuntimeDaemonRequestCancellation(
@@ -943,7 +952,14 @@ function parseRuntimeClientPrincipal(value: unknown, fallback: string): string {
   ) {
     return fallback;
   }
-  return instanceId;
+  const secret = parseRuntimeClientInstanceSecret(value);
+  return secret === undefined ? instanceId : runtimeClientPrincipal(instanceId, secret);
+}
+
+// Notice preferences keep their display identity; execution uses the secret fence.
+function parseRuntimeClientNoticeIdentity(value: unknown, fallback: string): string {
+  return isRecord(value) && typeof value.instanceId === 'string' && /^[A-Za-z0-9_.:-]{4,160}$/.test(value.instanceId)
+    ? value.instanceId : fallback;
 }
 
 function parseRuntimeClientInstanceSecret(value: unknown): string | undefined {
@@ -981,10 +997,12 @@ async function dispatchRuntimeDaemonRequest(
   clientVersion: string | undefined,
   reverseBridge: RuntimeDaemonReverseBridge,
   requestSignal: AbortSignal,
+  noticeIdentity: string,
 ): Promise<unknown> {
   const runtime = options.runtime;
   const runRequirementSource = options.reverseBridgeHub ?? reverseBridge;
 
+  const dispatch = async (): Promise<unknown> => {
   switch (request.method) {
     case "initialize":
     case "runtime.initialize":
@@ -1002,6 +1020,7 @@ async function dispatchRuntimeDaemonRequest(
           options.orphanExitEnabled === true,
           runtimeImplementsEventCoalescing(runtime),
           runtime.capabilities,
+          options.clientLifecycle !== undefined,
         ),
         principalId,
         grantedScopes: [
@@ -1010,6 +1029,25 @@ async function dispatchRuntimeDaemonRequest(
       };
     case "ping":
       return { ok: true, runtimeId: runtime.identity.runtimeId };
+    case 'client.exit.request':
+      if (!options.clientLifecycle) throw daemonError('client_upgrade_required', 'Client exit control is unavailable.');
+      return options.clientLifecycle.request(principalId, requireRecord(request.params) as unknown as { requestId: string; shutdownHost?: boolean });
+    case 'client.exit.read':
+      if (!options.clientLifecycle) throw daemonError('client_upgrade_required', 'Client exit control is unavailable.');
+      return options.clientLifecycle.read(principalId, requireStringParam(request.params, 'requestId'));
+    case 'client.exit.pending':
+      if (!options.clientLifecycle) throw daemonError('client_upgrade_required', 'Client exit control is unavailable.');
+      return options.clientLifecycle.pending(principalId);
+    case 'session.facts.read':
+      if (!runtime.statistics) throw daemonError('client_upgrade_required', 'Execution facts are unavailable.');
+      return runtime.statistics.read(requireStringParam(request.params, 'sessionId'));
+    case 'session.facts.requests':
+    case 'session.facts.tools': {
+      if (!runtime.statistics) throw daemonError('client_upgrade_required', 'Execution facts are unavailable.');
+      const params = requireRecord(request.params);
+      return runtime.statistics[request.method === 'session.facts.requests' ? 'readRequests' : 'readTools'](
+        requireStringField(params, 'sessionId'), { cursor: optionalStringField(params, 'cursor'), limit: optionalIntegerField(params, 'limit') });
+    }
     case "runtime.identity":
       return runtime.identity;
     case "daemon.status":
@@ -1056,6 +1094,7 @@ async function dispatchRuntimeDaemonRequest(
         options.orphanExitEnabled === true,
         runtimeImplementsEventCoalescing(runtime),
         runtime.capabilities,
+        options.clientLifecycle !== undefined,
       );
     case "config.read":
       return options.config
@@ -1385,7 +1424,11 @@ async function dispatchRuntimeDaemonRequest(
       const sessionId = requireStringField(params, "sessionId");
       const actorInput = requireRecord(params.input);
       const actorKind = optionalStringField(actorInput, "kind") ?? "native";
-      const credentialBinding = optionalRecord(params.credential);
+      const actorAuthorization = optionalRecord(params.authorization);
+      if (actorKind !== 'native' && (actorAuthorization?.tools !== undefined || actorAuthorization?.hostTools !== undefined)) {
+        throw daemonError('invalid_params', 'External Actors cannot bind native tools or a Host Tool runtime.');
+      }
+      const credentialBinding = optionalRecord(actorAuthorization?.credential ?? params.credential);
       assertDaemonAgentCredentialBinding(actorKind, credentialBinding);
       const credentialAccessFactory = bindTrustedAgentCredentialAccessFactory({
         binding: credentialBinding,
@@ -1397,12 +1440,14 @@ async function dispatchRuntimeDaemonRequest(
         actorInput as unknown as Parameters<
           KodaXRuntime["agents"]["spawn"]
         >[1],
-        credentialAccessFactory === undefined
-          ? undefined
-          : {
-              providerCredentialAccessFactory: credentialAccessFactory,
+          {
+              ...(credentialAccessFactory === undefined ? {} : { providerCredentialAccessFactory: credentialAccessFactory }),
+              assertAdmission: () => options.clientLifecycle?.assertAdmission(principalId),
+              origin: { principalId, clientName, clientVersion },
+              tools: actorAuthorization?.tools,
+              actorExtensionRuntime: actorToolRuntimeFactory(actorAuthorization, sessionId, reverseBridge),
             } as RuntimeAgentOperationOptions & {
-              readonly providerCredentialAccessFactory: CodingActorCredentialAccessFactory;
+              readonly providerCredentialAccessFactory?: CodingActorCredentialAccessFactory;
             },
       );
     }
@@ -1432,7 +1477,8 @@ async function dispatchRuntimeDaemonRequest(
       const expectedRevision = optionalIntegerField(params, "expectedRevision");
       const sessionId = requireStringField(params, "sessionId");
       const actorPath = requireStringField(params, "actorPath");
-      const credentialBinding = optionalRecord(params.credential);
+      const actorAuthorization = optionalRecord(params.authorization);
+      const credentialBinding = optionalRecord(actorAuthorization?.credential ?? params.credential);
       const credentialAccessFactory = bindTrustedAgentCredentialAccessFactory({
         binding: credentialBinding,
         sessionId,
@@ -1448,6 +1494,10 @@ async function dispatchRuntimeDaemonRequest(
             ? {}
             : { providerCredentialAccessFactory: credentialAccessFactory }),
           requireCredentialForNewTurn: true,
+          assertAdmission: () => options.clientLifecycle?.assertAdmission(principalId),
+          origin: { principalId, clientName, clientVersion },
+          tools: actorAuthorization?.tools,
+          actorExtensionRuntime: actorToolRuntimeFactory(actorAuthorization, sessionId, reverseBridge),
         } as RuntimeAgentFollowupOptions & {
           readonly providerCredentialAccessFactory?: CodingActorCredentialAccessFactory;
           readonly requireCredentialForNewTurn: true;
@@ -1736,11 +1786,14 @@ async function dispatchRuntimeDaemonRequest(
         requireRecord(request.params) as unknown as RuntimeSetActiveEntryInput,
       );
     case "session.compact": {
+      options.clientLifecycle?.assertAdmission(principalId);
       const params = requireRecord(request.params);
+      const sessionId = requireStringField(params, 'sessionId');
+      const operationId = `compact_${randomUUID().replace(/-/g, '')}`;
       const credentialBinding = optionalRecord(params.credential);
       if (credentialBinding === undefined) {
         return runtime.sessions.compact(
-          params as unknown as RuntimeCompactSessionInput,
+          { ...params, operationId, origin: { principalId, clientName, clientVersion } } as unknown as RuntimeCompactSessionInput,
         );
       }
       if (credentialBinding.mode !== "scoped") {
@@ -1749,7 +1802,6 @@ async function dispatchRuntimeDaemonRequest(
           "Manual compaction requires a scoped v2 credential binding.",
         );
       }
-      const sessionId = requireStringField(params, "sessionId");
       const compactProvider = optionalStringField(params, "provider");
       const boundProviders = requireStringArrayField(credentialBinding, "providers");
       if (compactProvider !== undefined && !boundProviders.includes(compactProvider)) {
@@ -1767,7 +1819,7 @@ async function dispatchRuntimeDaemonRequest(
         target: {
           kind: "operation",
           operation: "session.compact",
-          operationId: `compact_${randomUUID().replace(/-/g, "")}`,
+          operationId,
         },
         reverseBridge,
       });
@@ -1775,6 +1827,8 @@ async function dispatchRuntimeDaemonRequest(
         ...params,
         sessionId,
         providerCredentialAccess,
+        operationId,
+        origin: { principalId, clientName, clientVersion },
       } as unknown as RuntimeCompactSessionInput);
     }
     case "session.archive":
@@ -1852,6 +1906,7 @@ async function dispatchRuntimeDaemonRequest(
       );
     }
     case "run.start": {
+      options.clientLifecycle?.assertAdmission(principalId);
       const params = requireRecord(request.params);
       const sessionId = requireStringField(params, "sessionId");
       const trustedRunId = `run_${Date.now().toString(36)}_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
@@ -1873,6 +1928,7 @@ async function dispatchRuntimeDaemonRequest(
       };
     }
     case "run.input.submit": {
+      options.clientLifecycle?.assertAdmission(principalId);
       const params = requireRecord(request.params);
       const sessionId = requireStringField(params, "sessionId");
       const afterRunId = requireStringField(params, "afterRunId");
@@ -1923,6 +1979,7 @@ async function dispatchRuntimeDaemonRequest(
           afterRunId,
           delivery: "interrupt",
           trustedInputId,
+          assertAdmission: () => options.clientLifecycle?.assertAdmission(principalId),
           origin: {
             principalId,
             ...(clientName !== undefined ? { clientName } : {}),
@@ -1940,7 +1997,9 @@ async function dispatchRuntimeDaemonRequest(
         clientVersion,
         reverseBridge,
       })) as unknown as RuntimeSubmitInput;
-      const result = await runtime.runs.submitInput(trustedInput);
+      const result = await runtime.runs.submitInput({ ...trustedInput,
+        assertAdmission: () => options.clientLifecycle?.assertAdmission(principalId),
+      } as RuntimeSubmitInput);
       if (result.accepted && result.delivery === "after_turn") {
         const pending = runtime.runs.await(result.runId);
         runResults.remember(result.runId, pending);
@@ -2197,22 +2256,22 @@ async function dispatchRuntimeDaemonRequest(
     }
 
     case "learning.list":
-      return bindRuntimeLearningClient(runtime.learning, principalId).list(
+      return bindRuntimeLearningClient(runtime.learning, noticeIdentity).list(
         optionalRecord(request.params) as Parameters<
           KodaXRuntime["learning"]["list"]
         >[0],
       );
     case "learning.get":
-      return bindRuntimeLearningClient(runtime.learning, principalId).get(
+      return bindRuntimeLearningClient(runtime.learning, noticeIdentity).get(
         requireStringParam(request.params, "nameOrSlug"),
       );
     case "learning.snapshot":
       return bindRuntimeLearningClient(
         runtime.learning,
-        principalId,
+        noticeIdentity,
       ).getSnapshot();
     case "learning.events":
-      return bindRuntimeLearningClient(runtime.learning, principalId).events(
+      return bindRuntimeLearningClient(runtime.learning, noticeIdentity).events(
         optionalIntegerField(
           optionalRecord(request.params) ?? {},
           "afterRevision",
@@ -2221,7 +2280,7 @@ async function dispatchRuntimeDaemonRequest(
     case "learning.subscribe": {
       const params = optionalRecord(request.params) ?? {};
       const subscriptionId = createSubscriptionId();
-      const stream = bindRuntimeLearningClient(runtime.learning, principalId).subscribe({
+      const stream = bindRuntimeLearningClient(runtime.learning, noticeIdentity).subscribe({
         afterRevision: optionalIntegerField(params, "afterRevision"),
       });
       const iterator = stream[Symbol.asyncIterator]();
@@ -2257,12 +2316,12 @@ async function dispatchRuntimeDaemonRequest(
     case "learning.acknowledge":
       await bindRuntimeLearningClient(
         runtime.learning,
-        principalId,
+        noticeIdentity,
       ).acknowledge(requireStringParam(request.params, "nameOrSlug"));
       return { ok: true };
     case "learning.snooze": {
       const params = requireRecord(request.params);
-      await bindRuntimeLearningClient(runtime.learning, principalId).snooze(
+      await bindRuntimeLearningClient(runtime.learning, noticeIdentity).snooze(
         requireStringField(params, "nameOrSlug"),
         requireStringField(params, "until"),
       );
@@ -2273,7 +2332,7 @@ async function dispatchRuntimeDaemonRequest(
     case "learning.rollback":
     case "learning.review":
     case "learning.trust": {
-      const learning = bindRuntimeLearningClient(runtime.learning, principalId);
+      const learning = bindRuntimeLearningClient(runtime.learning, noticeIdentity);
       const nameOrSlug = requireStringParam(request.params, "nameOrSlug");
       if (request.method === "learning.reject")
         await learning.reject(nameOrSlug);
@@ -2294,7 +2353,7 @@ async function dispatchRuntimeDaemonRequest(
           "invalid_params",
           "Learning promotion scope must be user.",
         );
-      await bindRuntimeLearningClient(runtime.learning, principalId).promote(
+      await bindRuntimeLearningClient(runtime.learning, noticeIdentity).promote(
         requireStringField(params, "nameOrSlug"),
         scope,
       );
@@ -2307,6 +2366,56 @@ async function dispatchRuntimeDaemonRequest(
         `Runtime daemon method is not implemented: ${request.method}`,
       );
   }
+  };
+  const authorization = isRecord(request.params) ? optionalRecord(request.params.authorization) : undefined;
+  if (request.method === 'agents.spawn' || request.method === 'agents.followup') {
+    options.clientLifecycle?.assertAdmission(principalId);
+    const params = requireRecord(request.params);
+    if (authorization !== undefined && params.credential !== undefined) throw daemonError('invalid_params', 'Use one Actor authorization binding.');
+    return dispatch();
+  }
+  if (authorization?.tools !== undefined) throw daemonError('invalid_params', 'A tools ceiling is supported only for independent Actor turns.');
+  const productExecution = ['input.submit', 'invocations.executeCommand', 'invocations.startReview',
+    'invocations.startAgentsLean', 'workflow.start'].includes(request.method);
+  if (authorization === undefined && !productExecution) return dispatch();
+  options.clientLifecycle?.assertAdmission(principalId);
+  const params = requireRecord(request.params);
+  const sessionId = authorization === undefined ? optionalStringField(params, 'sessionId') : requireStringField(params, 'sessionId');
+  if (authorization !== undefined && (params.credential !== undefined || params.hostTools !== undefined)) {
+    throw daemonError('invalid_params', 'Use one execution authorization binding.');
+  }
+  const credential = optionalRecord(authorization?.credential);
+  const hostTools = optionalRecord(authorization?.hostTools);
+  if (authorization !== undefined && credential === undefined && hostTools === undefined) throw daemonError('invalid_params', 'Execution authorization requires a lease.');
+  // Stable scope equality lets a same-authority follow-up enter the active Run;
+  // a different authority always waits for its own Run.
+  const key = authorization === undefined ? undefined : JSON.stringify([principalId, sessionId,
+    credential === undefined ? null : [credential.leaseId, [...requireStringArrayField(credential, 'providers')].sort()],
+    hostTools?.leaseId ?? null]);
+  return withProductExecution({ key, principalId, sessionId, assertAdmission: () => options.clientLifecycle?.assertAdmission(principalId),
+    bindRun: async (runInput, runId, baseExtensionRuntime) => {
+    options.clientLifecycle?.assertAdmission(principalId);
+    return await bindTrustedRunInput({ params: { ...runInput,
+      ...(credential !== undefined ? { credential } : {}),
+      ...(hostTools !== undefined ? { hostTools } : {}),
+    }, sessionId: runInput.sessionId, trustedRunId: runId, principalId, clientName, clientVersion, reverseBridge, baseExtensionRuntime,
+      trustedProductPreparation: true }) as unknown as RuntimeStartRunInput;
+  },
+  }, dispatch);
+}
+
+function actorToolRuntimeFactory(authorization: Record<string, unknown> | undefined, sessionId: string,
+  bridge: RuntimeDaemonReverseBridge | undefined) {
+  const hostTools = optionalRecord(authorization?.hostTools);
+  if (hostTools === undefined) return undefined;
+  if (!bridge) throw daemonError('host_tool_unavailable', 'Actor Host tools require a reverse bridge.');
+  const leaseId = requireStringField(hostTools, 'leaseId');
+  rejectHostToolNameCollisions(bridge, leaseId);
+  return (runId: string, base: ReturnType<typeof getActiveExtensionRuntime>) => {
+    const scoped = bridge.createHostToolRuntime({ leaseId, sessionId, runId,
+      allowedTools: authorization?.tools === undefined ? undefined : requireStringArrayField(authorization, 'tools') });
+    return base == null ? scoped : mergeExtensionRuntimeContracts(base, scoped);
+  };
 }
 
 async function bindTrustedRunInput(input: {
@@ -2317,6 +2426,8 @@ async function bindTrustedRunInput(input: {
   readonly clientName?: string;
   readonly clientVersion?: string;
   readonly reverseBridge: RuntimeDaemonReverseBridge;
+  readonly baseExtensionRuntime?: ExtensionRuntimeContract;
+  readonly trustedProductPreparation?: true;
 }): Promise<Record<string, unknown>> {
   const credentialBinding = optionalRecord(input.params.credential);
   const hostToolBinding = optionalRecord(input.params.hostTools);
@@ -2354,7 +2465,7 @@ async function bindTrustedRunInput(input: {
           sessionId: input.sessionId,
           runId: input.trustedRunId,
         });
-  const activeRuntime = getActiveExtensionRuntime();
+  const activeRuntime = input.baseExtensionRuntime ?? getActiveExtensionRuntime();
   const extensionRuntime =
     hostToolRuntime === undefined
       ? undefined
@@ -2370,7 +2481,8 @@ async function bindTrustedRunInput(input: {
           ...transportOptions,
           context: Object.fromEntries(
             Object.entries(transportContext).filter(
-              ([key]) => key !== "configHome" && key !== "memoryIdentity" && key !== "commandInvocation",
+              ([key]) => key !== "configHome" && key !== "memoryIdentity"
+                && (key !== "commandInvocation" || input.trustedProductPreparation === true),
             ),
           ),
         };
@@ -2468,8 +2580,9 @@ function runtimeDaemonCapabilities(
   orphanExitEnabled = false,
   runtimeEventCoalescing = false,
   ownerCapabilities: Readonly<Record<string, unknown>> = {},
+  clientExitControl = false,
 ): Record<string, unknown> {
-  const { productClient, toolInvocation, sessionCancellation, workflowSettingsDefaults } = ownerCapabilities;
+  const { productClient, productHistoryBoundaries, productExecutionAuthorization, toolInvocation, sessionCancellation, workflowSettingsDefaults } = ownerCapabilities;
   const safeOverrides = { ...overrides };
   delete safeOverrides.externalAgents;
   delete safeOverrides.externalAgentAdmin;
@@ -2488,6 +2601,11 @@ function runtimeDaemonCapabilities(
   delete safeOverrides.sandboxRuntime;
   delete safeOverrides.runLifecycleControl;
   delete safeOverrides.productClient;
+  delete safeOverrides.productHistoryBoundaries;
+  delete safeOverrides.productExecutionAuthorization;
+  delete safeOverrides.productExitControl;
+  delete safeOverrides.productExecutionFacts;
+  delete safeOverrides.productActorAuthorization;
   delete safeOverrides.workflowSettingsDefaults;
   delete safeOverrides.subscriptionLifecycle;
   delete safeOverrides.sessionCancellation;
@@ -2516,6 +2634,16 @@ function runtimeDaemonCapabilities(
       ? { workflowSettingsDefaults: { version: 1 } } : {}),
     ...(isRecord(productClient) && productClient.version === 1
       ? { productClient: { version: 1 } } : {}),
+    ...(isRecord(productHistoryBoundaries) && productHistoryBoundaries.version === 1
+      ? { productHistoryBoundaries: { version: 1 } } : {}),
+    ...(isRecord(productExecutionAuthorization) && productExecutionAuthorization.version === 1
+      ? { productExecutionAuthorization: { version: 1 } } : {}),
+    ...(daemonManagement && clientExitControl && isRecord(ownerCapabilities.productExitControl) && ownerCapabilities.productExitControl.version === 1
+      ? { productExitControl: { version: 1 } } : {}),
+    ...(isRecord(ownerCapabilities.productExecutionFacts) && ownerCapabilities.productExecutionFacts.version === 1
+      ? { productExecutionFacts: { version: 1 } } : {}),
+    ...(isRecord(ownerCapabilities.productActorAuthorization) && ownerCapabilities.productActorAuthorization.version === 1
+      ? { productActorAuthorization: { version: 1 } } : {}),
     ...(isRecord(toolInvocation) && toolInvocation.version === 1
       ? { toolInvocation: { version: 1 } } : {}),
     ...(isRecord(sessionCancellation) && sessionCancellation.version === 1 && sessionCancellation.durableFrontier === true

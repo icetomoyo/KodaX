@@ -63,6 +63,20 @@ async function readBody(client: KodaXProductClient, sessionId: string, itemId: s
   throw new Error('History body did not finish within the test read budget.');
 }
 
+it('preserves structured input attachments in canonical Product history', async () => {
+  const attachments = [{ kind: 'image' as const, path: '/fixture/image.png', mediaType: 'image/png' }];
+  await withHistory([{ role: 'user', inputId: 'attached', content: [
+    { type: 'text', text: 'Inspect the image.' }, { type: 'image', path: '/fixture/image.png', mediaType: 'image/png' },
+  ] }, { role: 'assistant', content: [{ type: 'tool_use', id: 'image-read', name: 'read', input: {} }] },
+  { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'image-read', content: [
+    { type: 'image', path: '/fixture/image.png', mediaType: 'image/png' },
+  ] }] }], async (client, sessionId) => {
+    const page = await client.sessions.readHistory(sessionId);
+    expect(page.items[0]).toMatchObject({ type: 'user', inputId: 'attached', attachments });
+    expect(page.items.find(item => item.type === 'tool')).toMatchObject({ attachments });
+  });
+});
+
 it.each([
   ['below 256 KiB', 'x'.repeat(256 * 1024 - 512)],
   ['at 256 KiB', 'x'.repeat(256 * 1024)],

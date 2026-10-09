@@ -24,11 +24,39 @@ import { toKodaXProductClient } from '@kodax-ai/kodax/client';
 declare const client: KodaXProductClient;
 const clientInfo: RuntimeClientInfo = { name: 'consumer', clientType: 'app' };
 const connectOptions: ConnectKodaXClientOptions = { clientInfo };
+const authorizedOptions: ConnectKodaXClientOptions = { clientInfo,
+  async authorizeExecution(request, services) {
+    if (!request.input.sessionId) throw new Error('An authorized execution requires a Session.');
+    const lease = await services.credentials.registerScoped({ providers: ['fixture'] }, async request => {
+      const purpose: string = request.purpose;
+      const sessionId: string = request.sessionId;
+      void purpose; void sessionId;
+      return undefined;
+    });
+    return { credential: { leaseId: lease.id, mode: 'scoped', providers: ['fixture'] } };
+  },
+};
+void authorizedOptions;
 const ensureOptions: EnsureKodaXClientOptions = { clientInfo, daemonStartupTimeoutMs: 30_000 };
 await connectKodaXClient(connectOptions);
 await ensureKodaXClient(ensureOptions);
 const sessions: readonly ClientSessionSummary[] = await client.sessions.list();
+const exit = await client.lifecycle.requestExit({ requestId: 'quit', shutdownHost: true });
+const pending = await client.lifecycle.listPendingExits();
+const statistics = await client.statistics.read('session-id');
+const physicalRequests: number = statistics.physicalRequestCount;
+const requestFacts = await client.statistics.readRequests('session-id', { limit: 20 });
+const toolFacts = await client.statistics.readTools('session-id');
+void [exit, pending, physicalRequests, requestFacts, toolFacts];
 const session: ClientSession = await client.sessions.read('session-id');
+const history = await client.sessions.readHistory(session.id);
+const sourceRevision: string = history.sourceRevision;
+void sourceRevision;
+const boundary = history.items[0]?.historyBoundary;
+if (boundary) {
+  await client.sessions.forkSession(session.id, { historyBoundary: boundary, before: true });
+  await client.sessions.rewindSession(session.id, { historyBoundary: boundary, expectedHead: null });
+}
 const renderItem = (item: ClientViewItem): string => item.text;
 const renderActivity = (activity: ClientSessionActivity | undefined): number => activity?.parentContextTokens ?? 0;
 const observation: ClientObservation = await client.sessions.observe(session.id, (view: ClientSessionView) => {

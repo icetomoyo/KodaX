@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
 import { MessageQueue, type QueuedMessage } from '@kodax-ai/agent';
 import type { ClientInputAcceptance, ClientQueuedInput, ClientSubmitInput } from '@kodax-ai/coding/client-contract';
+import { currentProductExecution, type ProductExecutionContext } from './product-execution-authorization.js';
 
 interface QueuedInputFact {
+  execution?: ProductExecutionContext;
   readonly sessionId: string;
   readonly inputId: string;
   readonly digest: string;
@@ -13,7 +15,7 @@ interface QueuedInputFact {
   runId?: string;
 }
 
-export function inputIntentDigest(input: ClientSubmitInput): string {
+export function inputIntentDigest(input: ClientSubmitInput, executionKey?: string): string {
   // targetRunId and inputArtifacts are appended only when present so
   // targetless artifact-free inputs keep the digest formula that earlier
   // Host builds persisted in Run statuses.
@@ -21,6 +23,7 @@ export function inputIntentDigest(input: ClientSubmitInput): string {
     input.text, input.delivery ?? 'immediate',
     ...(input.targetRunId !== undefined ? [input.targetRunId] : []),
     ...(input.inputArtifacts !== undefined ? [input.inputArtifacts] : []),
+    ...(executionKey !== undefined ? [executionKey] : []),
   ])).digest('hex');
 }
 
@@ -54,7 +57,7 @@ export class SessionInputQueue {
   find(input: ClientSubmitInput): ClientInputAcceptance | undefined {
     const fact = this.facts.get(this.key(input.sessionId, input.inputId));
     if (!fact) return undefined;
-    if (fact.digest !== inputIntentDigest(input)) throw conflict('Input ID already belongs to a different intent.');
+    if (fact.digest !== inputIntentDigest(input, currentProductExecution()?.key)) throw conflict('Input ID already belongs to a different intent.');
     return this.read(input.sessionId, input.inputId);
   }
 
@@ -69,7 +72,8 @@ export class SessionInputQueue {
       ...(input.inputArtifacts !== undefined ? { inputArtifacts: structuredClone(input.inputArtifacts) } : {}),
     });
     this.facts.set(this.key(input.sessionId, input.inputId), {
-      sessionId: input.sessionId, inputId: input.inputId, digest: inputIntentDigest(input), messageId,
+      sessionId: input.sessionId, inputId: input.inputId, digest: inputIntentDigest(input, currentProductExecution()?.key), messageId,
+      execution: currentProductExecution(),
       skill, state: 'queued',
     });
     this.changed(input.sessionId);
@@ -84,7 +88,7 @@ export class SessionInputQueue {
     const duplicate = this.find(input);
     if (duplicate) return duplicate;
     this.facts.set(this.key(input.sessionId, input.inputId), {
-      sessionId: input.sessionId, inputId: input.inputId, digest: inputIntentDigest(input),
+      sessionId: input.sessionId, inputId: input.inputId, digest: inputIntentDigest(input, currentProductExecution()?.key),
       skill: false, state, runId,
     });
     this.changed(input.sessionId);
@@ -112,7 +116,7 @@ export class SessionInputQueue {
     }));
   }
 
-  private ordered(sessionId: string): readonly { readonly input: ClientSubmitInput; readonly skill: boolean; readonly enqueuedAt: number }[] {
+  private ordered(sessionId: string): readonly { readonly input: ClientSubmitInput; readonly skill: boolean; readonly enqueuedAt: number; readonly execution?: ProductExecutionContext }[] {
     const queued = this.queue.peek({ agentId: sessionId, mode: 'prompt', maxPriority: 'user' });
     const factByMessageId = new Map<string, QueuedInputFact>();
     for (const fact of this.facts.values()) {
@@ -127,6 +131,7 @@ export class SessionInputQueue {
         input: { sessionId, inputId: fact.inputId, text: message.content, delivery: 'after_turn' as const,
           ...(message.inputArtifacts !== undefined ? { inputArtifacts: message.inputArtifacts } : {}) },
         skill: fact.skill,
+        execution: fact.execution,
         enqueuedAt: message.enqueuedAt,
       };
     });
@@ -137,12 +142,14 @@ export class SessionInputQueue {
    * alone. FEATURE_298 T37 — the skill flag tells the Host to prepare the
    * input's trusted expansion at consumption.
    */
-  batch(sessionId: string): readonly { readonly input: ClientSubmitInput; readonly enqueuedAt: number; readonly skill: boolean }[] {
+  batch(sessionId: string): readonly { readonly input: ClientSubmitInput; readonly enqueuedAt: number; readonly skill: boolean; readonly execution?: ProductExecutionContext }[] {
     const ordered = this.ordered(sessionId);
     const first = ordered[0];
     if (!first) return [];
-    const end = first.skill ? 1 : ordered.findIndex((item, index) => index > 0 && item.skill);
-    return (end === -1 ? ordered : ordered.slice(0, end)).map(({ input, enqueuedAt, skill }) => ({ input, enqueuedAt, skill }));
+    const end = first.skill ? 1 : ordered.findIndex((item, index) => index > 0
+      && (item.skill || item.execution?.key !== first.execution?.key
+        || item.execution?.principalId !== first.execution?.principalId));
+    return end === -1 ? ordered : ordered.slice(0, end);
   }
 
   submitBatch(sessionId: string, inputIds: readonly string[], runId: string): void {
@@ -155,15 +162,17 @@ export class SessionInputQueue {
       this.queue.dequeue({ agentId: sessionId, mode: 'prompt', maxPriority: 'user', id: fact.messageId });
       fact.state = 'submitted';
       fact.runId = runId;
+      delete fact.execution;
     }
     this.changed(sessionId);
   }
 
   /** Caller holds the same Session operation lock used by withdrawal. */
   async consumePlainBatch(sessionId: string, runId: string,
-    persist: (inputs: readonly QueuedMessage[]) => Promise<void>): Promise<readonly QueuedMessage[]> {
+    persist: (inputs: readonly QueuedMessage[]) => Promise<void>, executionKey?: string, principalId?: string): Promise<readonly QueuedMessage[]> {
     const batch = this.batch(sessionId);
-    if (batch.length === 0 || batch[0]!.skill) return [];
+    if (batch.length === 0 || batch[0]!.skill || batch[0]!.execution?.key !== executionKey
+      || batch[0]!.execution?.principalId !== principalId) return [];
     const prompts: QueuedMessage[] = batch.map(({ input, enqueuedAt }) => ({
       id: `product:${this.facts.get(this.key(sessionId, input.inputId))!.messageId!}`,
       agentId: sessionId, inputId: input.inputId, content: input.text,
@@ -186,6 +195,7 @@ export class SessionInputQueue {
     const [message] = this.queue.dequeue({ agentId: sessionId, mode: 'prompt', maxPriority: 'user', id: fact.messageId });
     if (!message) throw conflict('Input is already being submitted.');
     fact.state = 'withdrawn';
+    delete fact.execution;
     this.changed(sessionId);
     return { sessionId, inputId, text: message.content, delivery: 'after_turn',
       ...(message.inputArtifacts !== undefined ? { inputArtifacts: message.inputArtifacts } : {}) };
@@ -195,6 +205,20 @@ export class SessionInputQueue {
     this.queue.dequeue({ agentId: sessionId, mode: 'prompt', maxPriority: 'user' });
     for (const [key, fact] of this.facts) if (fact.sessionId === sessionId) this.facts.delete(key);
     this.changed(sessionId);
+  }
+
+  clientSessions(principalId: string): readonly string[] {
+    return [...new Set([...this.facts.values()].filter(fact => fact.state === 'queued' && fact.execution?.principalId === principalId).map(fact => fact.sessionId))];
+  }
+
+  withdrawClient(principalId: string, sessionId: string): Array<{ sessionId: string; inputId: string }> {
+    const withdrawn: Array<{ sessionId: string; inputId: string }> = [];
+    for (const fact of this.facts.values()) {
+      if (fact.sessionId !== sessionId || fact.state !== 'queued' || fact.execution?.principalId !== principalId) continue;
+      this.withdraw(fact.sessionId, fact.inputId);
+      withdrawn.push({ sessionId: fact.sessionId, inputId: fact.inputId });
+    }
+    return withdrawn;
   }
 
   close(): void {

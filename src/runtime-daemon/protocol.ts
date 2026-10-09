@@ -8,6 +8,12 @@ export type RuntimeDaemonMethod =
   | 'runtime.identity'
   | 'runtime.status'
   | 'runtime.shutdown'
+  | 'client.exit.request'
+  | 'client.exit.read'
+  | 'client.exit.pending'
+  | 'session.facts.read'
+  | 'session.facts.requests'
+  | 'session.facts.tools'
   | 'runtime.capabilities'
   | 'daemon.status'
   | 'daemon.stop'
@@ -353,6 +359,12 @@ export type RuntimeDaemonFrame =
   | RuntimeDaemonNotification;
 
 export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
+  'session.facts.read',
+  'session.facts.requests',
+  'session.facts.tools',
+  'client.exit.request',
+  'client.exit.read',
+  'client.exit.pending',
   'initialize',
   'runtime.initialize',
   'ping',

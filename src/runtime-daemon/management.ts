@@ -20,7 +20,7 @@ export interface RuntimeDaemonManagementController {
   runMutation<T>(method: RuntimeDaemonMethod, effect: () => Promise<T>): Promise<T>;
   preflight(): Promise<RuntimeDaemonPreflight>;
   inspect(): Promise<RuntimeDaemonManagementState>;
-  stop(): Promise<{ readonly ok: true }>;
+  stop(input?: { readonly principalId: string }): Promise<{ readonly ok: true }>;
   close(): void;
 }
 
@@ -147,10 +147,10 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
     throw managementError('conflict', 'Runtime state changed while daemon management was inspected.');
   }
 
-  async stop(): Promise<{ readonly ok: true }> {
+  async stop(input?: { readonly principalId: string }): Promise<{ readonly ok: true }> {
     this.beginDraining();
     try {
-      await this.assertStoppable();
+      await this.assertStoppable(input?.principalId);
       this.input.requestStop();
       return { ok: true };
     } catch (error: unknown) {
@@ -181,12 +181,16 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
     this.cancelOrphanExitCheck();
   }
 
-  private async assertStoppable(): Promise<void> {
+  private async assertStoppable(exitingPrincipalId?: string): Promise<void> {
     const current = await this.preflight();
-    if (!current.canStop) {
+    const blockers = exitingPrincipalId === undefined ? current.blockers : [
+      ...current.blockers.filter(blocker => blocker !== 'connected_clients'),
+      ...([...this.clients.values()].some(client => client.principalId !== exitingPrincipalId) ? ['connected_clients'] : []),
+    ];
+    if (blockers.length > 0) {
       throw managementError(
         'conflict',
-        `Runtime daemon cannot stop safely: ${current.blockers.join(', ')}.`,
+        `Runtime daemon cannot stop safely: ${blockers.join(', ')}.`,
         { preflight: current },
       );
     }

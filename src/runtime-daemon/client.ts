@@ -476,6 +476,16 @@ export function createRuntimeDaemonClient(
 
   return {
     identity: options.identity,
+    statistics: {
+      read: sessionId => request('session.facts.read', { sessionId }) as ReturnType<NonNullable<KodaXRuntime['statistics']>['read']>,
+      readRequests: (sessionId, options) => request('session.facts.requests', { sessionId, ...options }) as ReturnType<NonNullable<KodaXRuntime['statistics']>['readRequests']>,
+      readTools: (sessionId, options) => request('session.facts.tools', { sessionId, ...options }) as ReturnType<NonNullable<KodaXRuntime['statistics']>['readTools']>,
+    },
+    lifecycle: {
+      requestExit: input => request('client.exit.request', input) as ReturnType<NonNullable<KodaXRuntime['lifecycle']>['requestExit']>,
+      readExit: requestId => request('client.exit.read', { requestId }) as ReturnType<NonNullable<KodaXRuntime['lifecycle']>['readExit']>,
+      listPendingExits: () => request('client.exit.pending') as ReturnType<NonNullable<KodaXRuntime['lifecycle']>['listPendingExits']>,
+    },
     capabilities: options.capabilities,
     ...(options.grantedScopes !== undefined ? { grantedScopes: options.grantedScopes } : {}),
     sessions: {
@@ -1303,6 +1313,7 @@ export function createRuntimeDaemonClient(
         return request('agents.spawn', {
           sessionId,
           input,
+          ...(options?.authorization === undefined ? {} : { authorization: options.authorization }),
           ...(options?.credential !== undefined
             ? { credential: options.credential }
             : {}),
@@ -1328,6 +1339,7 @@ export function createRuntimeDaemonClient(
           sessionId,
           actorPath,
           objective,
+          ...(options?.authorization === undefined ? {} : { authorization: options.authorization }),
           ...(options?.expectedRevision !== undefined
             ? { expectedRevision: options.expectedRevision }
             : {}),

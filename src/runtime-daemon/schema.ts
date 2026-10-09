@@ -94,6 +94,12 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   'runtime.identity': { params: noParamsSchema, result: objectAnySchema },
   'runtime.status': { params: noParamsSchema, result: objectAnySchema },
   'runtime.shutdown': { params: noParamsSchema, result: okSchema },
+  'client.exit.request': { params: objectSchema({ requestId: stringSchema, shutdownHost: booleanSchema }, ['requestId']), result: objectAnySchema },
+  'client.exit.read': { params: objectSchema({ requestId: stringSchema }, ['requestId']), result: nullableSchema(objectAnySchema) },
+  'client.exit.pending': { params: noParamsSchema, result: arrayAnySchema },
+  'session.facts.read': { params: objectSchema({ sessionId: stringSchema }, ['sessionId']), result: objectAnySchema },
+  'session.facts.requests': { params: objectSchema({ sessionId: stringSchema, cursor: stringSchema, limit: integerSchema }, ['sessionId']), result: objectAnySchema },
+  'session.facts.tools': { params: objectSchema({ sessionId: stringSchema, cursor: stringSchema, limit: integerSchema }, ['sessionId']), result: objectAnySchema },
   'runtime.capabilities': { params: noParamsSchema, result: objectAnySchema },
   'daemon.status': { params: noParamsSchema, result: objectAnySchema },
   'daemon.stop': { params: noParamsSchema, result: okSchema },
@@ -293,7 +299,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   },
 
   'input.submit': {
-    params: objectSchema({ sessionId: stringSchema, inputId: stringSchema, text: stringSchema, targetRunId: stringSchema, delivery: { type: 'string', enum: ['immediate', 'after_turn', 'steer', 'redirect'] }, inputArtifacts: arraySchema(objectSchema({ kind: { type: 'string', enum: ['image', 'file', 'video'] }, path: stringSchema, mediaType: stringSchema, mimeType: stringSchema, name: stringSchema, source: { type: 'string', enum: ['user-inline', 'clipboard', 'drag-drop', 'file-picker'] }, description: stringSchema }, ['kind', 'path'])) }, ['sessionId', 'inputId', 'text']),
+    params: objectSchema({ authorization: executionAuthorizationSchema(), sessionId: stringSchema, inputId: stringSchema, text: stringSchema, targetRunId: stringSchema, delivery: { type: 'string', enum: ['immediate', 'after_turn', 'steer', 'redirect'] }, inputArtifacts: arraySchema(objectSchema({ kind: { type: 'string', enum: ['image', 'file', 'video'] }, path: stringSchema, mediaType: stringSchema, mimeType: stringSchema, name: stringSchema, source: { type: 'string', enum: ['user-inline', 'clipboard', 'drag-drop', 'file-picker'] }, description: stringSchema }, ['kind', 'path'])) }, ['sessionId', 'inputId', 'text']),
     result: objectSchema({ sessionId: stringSchema, inputId: stringSchema, runId: stringSchema, state: { type: 'string', enum: ['submitted', 'queued', 'withdrawn', 'dropped'] } }, ['sessionId', 'inputId', 'state']),
   },
   'input.withdraw': {
@@ -441,6 +447,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   'workflow.stop': { params: objectSchema({ runId: stringSchema, sessionId: stringSchema }, ['runId']), result: booleanSchema },
   'workflow.start': {
     params: objectSchema({
+      authorization: executionAuthorizationSchema(),
       settingsDefaults: { type: 'string', enum: ['product'] },
       sessionId: stringSchema,
       credential: credentialBindingSchema(),
@@ -647,16 +654,16 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
     result: { oneOf: [objectAnySchema, { type: 'null' }] },
   },
   'invocations.startReview': {
-    params: objectSchema({ sessionId: stringSchema, inputId: stringSchema,
+    params: objectSchema({ authorization: executionAuthorizationSchema(), sessionId: stringSchema, inputId: stringSchema,
       args: { type: 'array', items: stringSchema } }, ['sessionId', 'inputId']),
     result: objectAnySchema,
   },
   'invocations.startAgentsLean': {
-    params: objectSchema({ sessionId: stringSchema, inputId: stringSchema }, ['sessionId', 'inputId']),
+    params: objectSchema({ authorization: executionAuthorizationSchema(), sessionId: stringSchema, inputId: stringSchema }, ['sessionId', 'inputId']),
     result: objectAnySchema,
   },
   'invocations.executeCommand': {
-    params: objectSchema({ sessionId: stringSchema, inputId: stringSchema, name: stringSchema,
+    params: objectSchema({ authorization: executionAuthorizationSchema(), sessionId: stringSchema, inputId: stringSchema, name: stringSchema,
       args: { type: 'array', items: stringSchema } }, ['sessionId', 'inputId', 'name']),
     result: objectAnySchema,
   },
@@ -737,6 +744,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
       sessionId: stringSchema,
       input: agentSpawnInputSchema(),
       credential: credentialBindingSchema(),
+      authorization: executionAuthorizationSchema(),
     }, ['sessionId', 'input']),
     result: objectAnySchema,
   },
@@ -756,6 +764,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
       objective: stringSchema,
       expectedRevision: integerSchema,
       credential: credentialBindingSchema(),
+      authorization: executionAuthorizationSchema(),
     }, ['sessionId', 'actorPath', 'objective']),
     result: objectAnySchema,
   },
@@ -1292,6 +1301,7 @@ function ownerIdentitySchema(): RuntimeDaemonJsonSchema {
 
 function forkSessionParamsSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
+    before: booleanSchema,
     sessionId: stringSchema,
     selector: stringSchema,
     newSessionId: stringSchema,
@@ -1377,6 +1387,7 @@ function effectiveConfigSnapshotSchema(): RuntimeDaemonJsonSchema {
 
 function startRunParamsSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
+    authorization: executionAuthorizationSchema(),
     sessionId: stringSchema,
     inputId: stringSchema,
     prompt: stringSchema,
@@ -1390,6 +1401,15 @@ function startRunParamsSchema(): RuntimeDaemonJsonSchema {
     credential: credentialBindingSchema(),
     hostTools: objectSchema({ leaseId: stringSchema }, ['leaseId']),
   }, ['sessionId']);
+}
+
+function executionAuthorizationSchema(): RuntimeDaemonJsonSchema {
+  return objectSchema({
+    credential: objectSchema({ leaseId: stringSchema, mode: { enum: ['scoped'] },
+      providers: arraySchema(stringSchema) }, ['leaseId', 'mode', 'providers']),
+    hostTools: objectSchema({ leaseId: stringSchema }, ['leaseId']),
+    tools: arraySchema(stringSchema),
+  }, []);
 }
 
 function agentSpawnInputSchema(): RuntimeDaemonJsonSchema {
