@@ -212,9 +212,6 @@ export async function executeToolCall(
   // indistinguishable permission prompts for one bridged operation.
   const isBridgeMetaTool = toolCall.name === TOOL_CALL_NAME || toolCall.name === TOOL_DESCRIBE_NAME;
   if (!isBridgeMetaTool) {
-    if (activeToolNames && !activeToolNames.includes(toolCall.name)) {
-      return `[Tool Error] ${toolCall.name}: Tool is not active in the current runtime.`;
-    }
     const override = await getToolExecutionOverride(
       events,
       toolCall.name,

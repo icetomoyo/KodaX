@@ -292,6 +292,7 @@ describe('CAP-078: applyPostToolProcessing — visibility events', () => {
       {
         toolId: 'vis',
         workflowCorrelation,
+        executionId: expect.stringMatching(/^execution_/),
       },
     );
     expect(emit).toHaveBeenCalledExactlyOnceWith('tool:result', {
