@@ -654,9 +654,21 @@ async function verifyHostBinary(binaryPath) {
     await verifyBundledProviderRuntime(smokeBinaryPath, smokeHome);
   } finally {
     // The daemon's background memory-review queue releases its inbox lock
-    // directories slightly after the CLI exits; retry the teardown instead of
-    // failing an otherwise-green smoke on ENOTEMPTY.
-    rmSync(smokeHome, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+    // directories when the orphaned daemon's exit grace expires, which on
+    // slow runners exceeds a few seconds; keep retrying the teardown within
+    // a deadline instead of failing an otherwise-green smoke on ENOTEMPTY.
+    const teardownDeadline = Date.now() + 90_000;
+    for (;;) {
+      try {
+        rmSync(smokeHome, { recursive: true, force: true });
+        break;
+      } catch (error) {
+        if (Date.now() >= teardownDeadline || error?.code !== 'ENOTEMPTY') {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
   }
 }
 
