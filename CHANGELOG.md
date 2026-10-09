@@ -8,6 +8,39 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.97-alpha.2] - 2026-10-10
+
+Second alpha of the v0.7.97 line: completes the FEATURE_298 product seams
+embedders need to run the client inside a trusted shell (Space). Execution
+authorization moves to the trusted Main process, every provider wire request
+carries its attribution, and full exits become verifiable. Every
+v0.7.96 stable and v0.7.97-alpha.1 contract is retained. npm publication
+remains a manual maintainer action.
+
+### Added
+
+- Trusted Main execution authorization: `connectKodaXClient` /
+  `ensureKodaXClient` accept an `authorizeExecution(request, services)`
+  callback that runs only in the trusted Main process (Host capability
+  `productExecutionAuthorization:1`; older Hosts reject it instead of
+  silently dropping bindings). It registers scoped credential and hostTools
+  leases and attaches non-secret bindings per operation kind — input,
+  command, review, agents_lean, tool, workflow, agent_spawn, agent_followup,
+  and manual compaction. Queued consumes bind at consumption time, steers
+  keep the target Run's authorization, redirects carry their own, and
+  different authorizations never merge or widen.
+- Provider request attribution: every provider wire request carries its
+  execution identity and route so hosts and embedders can observe which
+  authorization issued it.
+- Client lifecycle and exit: `lifecycle.requestExit` settles client work and
+  records durable exit receipts that `readKodaXClientExits` verifies after
+  reconnect; full exits no longer rely on disconnect side effects.
+- Host surfaces for embedders: an execution facts store and per-session
+  statistics exposed through the daemon, and a bundled product-exit smoke
+  joined the release gates.
+
+---
+
 ## [0.7.97-alpha.1] - 2026-10-08
 
 First alpha of the v0.7.97 line: FEATURE_298's unified product Host and

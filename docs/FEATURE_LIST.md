@@ -11,10 +11,10 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-alpha.1` (Git tag / GitHub pre-release); `v0.7.96` remains the last stable release |
-| Current package version | `@kodax-ai/kodax@0.7.97-alpha.1` (npm publication remains manual) |
+| Current released version | `v0.7.97-alpha.2` (Git tag / GitHub pre-release); `v0.7.96` remains the last stable release |
+| Current package version | `@kodax-ai/kodax@0.7.97-alpha.2` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
-| Released implementation | [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released in `v0.7.97-alpha.1`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
+| Released implementation | [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.2`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Current development | `v0.7.97` / `FEATURE_298` — cross-platform/manual release verification for the alpha continues |
 | Roadmap updated | `2026-09-23` — FEATURE_300 planned for `v0.7.99`; implementation not started |
 | Total tracked features | `84` |
@@ -520,6 +520,24 @@
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
 ---
+
+## v0.7.97-alpha.2 Release Record
+
+`v0.7.97-alpha.2` is the second alpha of the v0.7.97 line: it completes the
+FEATURE_298 product seams embedders need to run the client inside a
+trusted shell (Space). `connectKodaXClient` / `ensureKodaXClient` accept a
+trusted `authorizeExecution` callback executed only in the product Main
+process, gated by the Host capability `productExecutionAuthorization:1`;
+authorizations register scoped credential and hostTools leases and attach
+non-secret bindings per operation kind (queued consumes bind at
+consumption, steers keep the target Run's authorization, redirects carry
+their own; authorizations never merge). Every Provider wire request
+carries its execution attribution. `lifecycle.requestExit` settles client
+work and records durable exit receipts verified by `readKodaXClientExits`;
+the Host exposes execution facts and per-session statistics, and a bundled
+product-exit smoke pins the flow. Every v0.7.96 stable and v0.7.97-alpha.1
+contract is retained. Cross-platform manual acceptance and npm publication
+remain manual maintainer steps.
 
 ## v0.7.97-alpha.1 Release Record
 

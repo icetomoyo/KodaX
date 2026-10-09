@@ -136,6 +136,39 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.97-alpha.2 release preparation
+
+Release state: `v0.7.97-alpha.2` is the GitHub pre-release for the exact
+tagged commit — the second alpha of the v0.7.97 line, completing the
+FEATURE_298 product seams embedders need to run the client inside a
+trusted shell (Space). The tag-triggered Release workflow runs the full
+reusable CI workflow before the build matrix; branch pushes do not trigger
+CI, so the tag is the first and only remote validation gate. The `-alpha`
+suffix marks the release as a GitHub pre-release automatically. npm
+registry publication remains a separate manual maintainer action.
+
+On top of v0.7.97-alpha.1 it includes:
+
+- Trusted Main execution authorization: `connectKodaXClient` /
+  `ensureKodaXClient` accept an `authorizeExecution` callback executed
+  only in the trusted product Main process, gated by the Host capability
+  `productExecutionAuthorization:1`. Authorizations register scoped
+  credential and hostTools leases and attach non-secret bindings per
+  operation kind — queued consumes bind at consumption, steers keep the
+  target Run's authorization, redirects carry their own, and
+  authorizations never merge (design: `docs/SPACE_SDK_SEAMS.md`).
+- Provider request attribution: every Provider wire request carries its
+  execution context so product backends can attribute calls.
+- Client lifecycle exit receipts: `lifecycle.requestExit` settles client
+  work and records durable receipts that `readKodaXClientExits` verifies
+  after reconnect; a bundled product-exit smoke pins the flow.
+- Host-side observability: execution facts and per-session statistics for
+  product dashboards.
+
+All root/workspace package versions and lockfile entries are
+`0.7.97-alpha.2`. The feature-design submodule, public guides, architecture
+documents, and `kodax_manual` track this release.
+
 ## v0.7.97-alpha.1 release preparation
 
 Release state: `v0.7.97-alpha.1` is the GitHub pre-release for the exact

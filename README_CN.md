@@ -301,6 +301,17 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
+**v0.7.97-alpha.2 发布**：补齐 FEATURE_298 面向嵌入方（Space）的产品接缝——
+在可信壳内运行客户端所需的最后一块。`connectKodaXClient`/`ensureKodaXClient`
+接受仅在可信 Main 进程执行的 `authorizeExecution` 回调，注册 scoped credential
+与 hostTools lease，并按操作种类附加非秘密绑定（排队消费在消费时绑定、steer
+保留目标 Run 的授权、redirect 携带自身授权）；每条 Provider wire request 携带
+其执行归因；`lifecycle.requestExit` 结清客户端工作并记录持久退出回执，由
+`readKodaXClientExits` 在重连后核验；宿主暴露 execution facts 与按会话统计。
+详见 [docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) 与
+[v0.7.97-alpha.2 发布清单](docs/release.md#v0797-alpha2-release-preparation)。
+所有 v0.7.96 稳定与 v0.7.97-alpha.1 契约全部保留。
+
 **v0.7.97-alpha.1 发布**：v0.7.97 线首个 alpha——FEATURE_298 统一产品宿主
 与客户端契约。交互式 REPL 绑定独立宿主；共享产品会话契约
 （`KodaXProductClient`，经 `/client`）承载会话、目标、通知、分页历史、

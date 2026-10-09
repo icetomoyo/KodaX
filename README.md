@@ -769,6 +769,19 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
+**v0.7.97-alpha.2 release:** Completes the FEATURE_298 product seams
+embedders need to run the client inside a trusted shell (Space).
+`connectKodaXClient`/`ensureKodaXClient` accept a trusted
+`authorizeExecution` callback that registers scoped credential and hostTools
+leases and attaches non-secret bindings per operation kind (queued consumes
+bind at consumption, steers keep the target Run's authorization, redirects
+carry their own); every provider wire request carries its execution
+attribution; `lifecycle.requestExit` settles client work and records
+durable exit receipts that `readKodaXClientExits` verifies; and the Host
+exposes execution facts and per-session statistics. See
+[docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md). Every v0.7.96 stable
+and v0.7.97-alpha.1 contract is retained.
+
 **v0.7.97-alpha.1 release:** First alpha of the v0.7.97 line — FEATURE_298's
 unified product Host and client contract. The interactive REPL pins to the
 independent Host; the shared product session contract (`KodaXProductClient`

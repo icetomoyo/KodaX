@@ -2,7 +2,22 @@
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
 
-> Last updated: 2026-10-08
+> Last updated: 2026-10-10
+>
+> **v0.7.97-alpha.2 release addendum:** FEATURE_298's second alpha closes
+> the embedder-facing product seams for running the client inside a
+> trusted shell (Space). `connectKodaXClient` / `ensureKodaXClient` accept
+> a trusted `authorizeExecution` callback that executes only in the
+> product Main process, gated by the Host capability
+> `productExecutionAuthorization:1`; authorizations register scoped
+> credential and hostTools leases and attach non-secret bindings per
+> operation kind — queued consumes bind at consumption, steers keep the
+> target Run's authorization, redirects carry their own, and
+> authorizations never merge. Every Provider wire request carries its
+> execution attribution. `lifecycle.requestExit` settles client work and
+> records durable exit receipts verified by `readKodaXClientExits`; the
+> Host exposes execution facts and per-session statistics. Every v0.7.96
+> stable and v0.7.97-alpha.1 contract is retained.
 >
 > **v0.7.97-alpha.1 release addendum:** FEATURE_298 lands its first alpha:
 > one product Host, one client contract, one execution decision. The
