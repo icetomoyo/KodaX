@@ -75,6 +75,7 @@ import {
   resolveConstructedAgentEntry,
 } from './construction/agent-resolver.js';
 import { getAllRegisteredTools } from './tools/registry.js';
+import { listRunScopedTools } from './agent-runtime/run-scoped-tools.js';
 import {
   applyToolResultBatchGuardrail,
   ToolResultBatchCapacityError,
@@ -436,15 +437,20 @@ export const CHILD_COLLABORATION_TOOLS: readonly string[] = [
   'emit_managed_protocol',
 ];
 
+function childToolDefinitions(runtime: KodaXOptions['extensionRuntime']) {
+  return [...getAllRegisteredTools(), ...listRunScopedTools(runtime)];
+}
+
 function restrictToolsForActor(
   excludedTools: readonly string[],
   capabilities: AgentCapabilities | undefined,
+  runtime: KodaXOptions['extensionRuntime'],
 ): readonly string[] {
   if (!capabilities) return excludedTools;
   const allowedTools = new Set(capabilities.tools);
   const allowAll = allowedTools.has('*');
   const excluded = new Set(excludedTools);
-  for (const tool of getAllRegisteredTools()) {
+  for (const tool of childToolDefinitions(runtime)) {
     const outsideExplicitCeiling = !allowAll && !allowedTools.has(tool.name);
     const networkDenied = !capabilities.network
       && (tool.sideEffect === 'reads-network' || tool.sideEffect === 'mutates-network');
@@ -458,8 +464,12 @@ function restrictToolsForChildRuntime(
   excludedTools: readonly string[],
   capabilities: AgentCapabilities | undefined,
   actorControl: ChildExecutorOptions['actorControl'],
+  runtime: KodaXOptions['extensionRuntime'],
+  readOnly = false,
 ): readonly string[] {
-  const restricted = restrictToolsForActor(excludedTools, capabilities);
+  const runMutations = readOnly ? listRunScopedTools(runtime)
+    .filter(tool => tool.sideEffect !== 'readonly').map(tool => tool.name) : [];
+  const restricted = restrictToolsForActor([...excludedTools, ...runMutations], capabilities, runtime);
   if (actorControl !== undefined) return restricted;
   return [...new Set([...restricted, ...CHILD_COLLABORATION_TOOLS])];
 }
@@ -928,7 +938,7 @@ async function createWorkflowChildDigest(
             ? { contextDiagnostics: input.options.parentOptions.contextDiagnostics }
             : {}),
           systemPromptOverride: WORKFLOW_CHILD_DIGEST_SYSTEM_PROMPT,
-          excludeTools: getAllRegisteredTools().map((tool) => tool.name),
+          excludeTools: childToolDefinitions(input.options.parentOptions.extensionRuntime).map((tool) => tool.name),
           contextIdentitySessionId:
             input.scopeCtx.contextIdentitySessionId ?? input.scopeCtx.sessionId,
           ownsContextRevision: false,
@@ -1086,7 +1096,7 @@ async function resolveChildStructuredOutput(input: {
             ? { contextDiagnostics: input.options.parentOptions.contextDiagnostics }
             : {}),
           systemPromptOverride: STRUCTURED_OUTPUT_REPAIR_SYSTEM_PROMPT,
-          excludeTools: getAllRegisteredTools().map((tool) => tool.name),
+          excludeTools: childToolDefinitions(input.options.parentOptions.extensionRuntime).map((tool) => tool.name),
           agentScope: input.scopeCtx.agentScope,
           contextIdentitySessionId:
             input.scopeCtx.contextIdentitySessionId ?? input.scopeCtx.sessionId,
@@ -1112,6 +1122,7 @@ function resolveSpecialistOverride(
   defaultSystemPrompt: string,
   defaultExcludeTools: readonly string[],
   parentCtx: KodaXToolExecutionContext,
+  runtime: KodaXOptions['extensionRuntime'],
 ): SpecialistOverride {
   if (!bundle.specialistName) {
     return { systemPromptOverride: defaultSystemPrompt, excludeTools: defaultExcludeTools };
@@ -1153,7 +1164,7 @@ function resolveSpecialistOverride(
   }
   const specialistToolNames = new Set(effectiveToolNames ?? []);
   const alwaysExcluded = new Set(defaultExcludeTools);
-  const allToolNames = getAllRegisteredTools().map(t => t.name);
+  const allToolNames = childToolDefinitions(runtime).map(t => t.name);
   const excludeTools = allToolNames.filter(n => alwaysExcluded.has(n) || !specialistToolNames.has(n));
   return { systemPromptOverride, excludeTools, ...modelProviderEffort };
 }
@@ -1304,11 +1315,14 @@ async function runReadChildBody(
       CHILD_AGENT_SYSTEM_PROMPT,
       CHILD_EXCLUDE_TOOLS_READONLY,
       scope.ctx,
+      options.parentOptions.extensionRuntime,
     );
   const excludeTools = restrictToolsForChildRuntime(
     specialistExcludeTools,
     options.actorCapabilities,
     options.actorControl,
+    options.parentOptions.extensionRuntime,
+    true,
   );
 
   // FEATURE_102 P1-auto — model_hint routing applies only when the dispatcher
@@ -1600,6 +1614,7 @@ async function runWriteChildBody(
       CHILD_AGENT_SYSTEM_PROMPT,
       CHILD_EXCLUDE_TOOLS_BASE,
       childCtx,
+      options.parentOptions.extensionRuntime,
     );
   // Project mutation rules remain the final authoritative block after any
   // specialist instructions.
@@ -1611,6 +1626,7 @@ async function runWriteChildBody(
     specialistExcludeTools,
     options.actorCapabilities,
     options.actorControl,
+    options.parentOptions.extensionRuntime,
   );
 
   // FEATURE_102 P1-auto — write children are NOT eligible for `fast`→cheap
@@ -2489,6 +2505,7 @@ export function buildChildEvents(
     // Combined progress: child [iteration/max] -> tool name (throttled).
     onToolUseStart: (tool, meta) => {
       parentEvents?.onToolUseStart?.(tool, toolEventMeta({
+        ...meta,
         ...(meta?.toolId !== undefined ? { toolId: meta.toolId } : { toolId: tool.id }),
         ...(meta?.workflowCorrelation !== undefined ? { workflowCorrelation: meta.workflowCorrelation } : {}),
       }, { liveOnly: true }));
@@ -2515,10 +2532,14 @@ export function buildChildEvents(
         toolEventMeta(meta, { liveOnly: true }),
       );
     },
+    onToolSandboxObservation: (update, meta) => {
+      parentEvents?.onToolSandboxObservation?.(update, toolEventMeta(meta, { liveOnly: true }));
+    },
     onToolProgress: (update, meta) => {
       parentEvents?.onToolProgress?.(
         update,
         toolEventMeta({
+          ...meta,
           ...(meta?.toolId !== undefined ? { toolId: meta.toolId } : { toolId: update.id }),
           ...(meta?.workflowCorrelation !== undefined ? { workflowCorrelation: meta.workflowCorrelation } : {}),
         }, { liveOnly: true }),
@@ -2526,6 +2547,7 @@ export function buildChildEvents(
     },
     onToolResult: (result, meta) => {
       parentEvents?.onToolResult?.(result, toolEventMeta({
+        ...meta,
         ...(meta?.toolId !== undefined ? { toolId: meta.toolId } : { toolId: result.id }),
         ...(meta?.workflowCorrelation !== undefined ? { workflowCorrelation: meta.workflowCorrelation } : {}),
       }, { liveOnly: true }));

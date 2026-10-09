@@ -16,7 +16,8 @@
  * REPL `/fallback` command + `~/.kodax/config.json` mirror into this env var;
  * an empty/unset list means fallback is OFF (no separate toggle).
  */
-import { KodaXNetworkError, KodaXProviderError, KodaXRateLimitError } from '@kodax-ai/llm';
+import { randomUUID } from 'node:crypto';
+import { KodaXNetworkError, KodaXProviderError, KodaXRateLimitError, runWithProviderRequestRoute } from '@kodax-ai/llm';
 
 import type { KodaXOptions, KodaXResult } from './types.js';
 
@@ -84,9 +85,14 @@ export async function invokeChildWithFallback(
   hooks?: ChildFallbackHooks,
 ): Promise<KodaXResult> {
   const primary = options.provider ?? 'anthropic';
+  const chainId = `route_${randomUUID()}`;
+  let routeAttempt = 0;
+  let previousProvider: string | undefined;
   let outcome: { result: KodaXResult } | { error: unknown };
   const attempt = async (selection: KodaXOptions): Promise<typeof outcome> => {
-    try { return { result: await run(selection, prompt) }; }
+    const route = { chainId, attempt: ++routeAttempt, fromProvider: previousProvider };
+    previousProvider = selection.provider ?? primary;
+    try { return { result: await runWithProviderRequestRoute(route, () => run(selection, prompt)) }; }
     catch (error) { return { error }; }
   };
   outcome = await attempt(options);

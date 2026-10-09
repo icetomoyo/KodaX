@@ -114,6 +114,38 @@ afterEach(() => {
 });
 
 describe('F270 coding Actor runtime adapter', () => {
+  it('preserves an independent client subtree and confirms descendant executor drain after its parent completes', async () => {
+    let releaseChild!: () => void;
+    let childTurn: { actorPath: string; turnId: string } | undefined;
+    const session = new CodingActorSession({ sessionId: 'session-1' });
+    const { ctx, options } = environment();
+    const root = session.attach(ctx, options);
+    executeChildAgentsMock.mockImplementationOnce(async (_bundles, _ctx, childOptions) => {
+      childTurn = await childOptions.actorControl!.spawn({ taskName: 'descendant', objective: 'Keep inspecting.' });
+      return completedChild('parent complete');
+    }).mockImplementation(async (_bundles, _ctx, childOptions) => {
+      if (!childOptions.actorControl!.callerPath.endsWith('/descendant')) return completedChild('new parent turn complete');
+      await new Promise<void>(resolve => { releaseChild = resolve; });
+      return completedChild('descendant complete');
+    });
+    const parent = await session.spawnRoot({ taskName: 'independent', objective: 'Inspect.' }, { executionPrincipalId: 'client-b' });
+    try {
+      await vi.waitFor(() => expect(root.output(parent.actorPath).state).toBe('completed'));
+      await vi.waitFor(() => expect(childTurn && root.output(childTurn.actorPath).state).toBe('running'));
+      expect(session.independentTurnIds().has(childTurn!.turnId)).toBe(true);
+      await session.quiesce('Other client stops its root Run', session.independentTurnIds());
+      expect(root.output(childTurn!.actorPath).state).toBe('running');
+      const cleanup = await session.quiesceClient('client-b');
+      expect(cleanup.turns).toContainEqual({ actorPath: childTurn!.actorPath, turnId: childTurn!.turnId });
+      expect(cleanup.unsettledTurnIds).toContain(childTurn!.turnId);
+      await session.followupRoot(parent.actorPath, 'New client intent.', { executionPrincipalId: 'client-c' });
+      await vi.waitFor(() => expect(root.output(parent.actorPath).state).toBe('completed'));
+      expect((await session.quiesceClient('client-b')).unsettledTurnIds).toContain(childTurn!.turnId);
+      releaseChild();
+      await vi.waitFor(async () => expect((await session.quiesceClient('client-b')).unsettledTurnIds).toEqual([]));
+    } finally { releaseChild?.(); await session.close(); }
+  });
+
   it('keeps structured iteration progress without requiring a tool call', async () => {
     let finish: (() => void) | undefined;
     executeChildAgentsMock.mockImplementation(async (_bundles, _ctx, childOptions) => {

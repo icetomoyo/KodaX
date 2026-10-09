@@ -316,6 +316,8 @@ export interface KodaXWorkflowAgentDigestEvent {
 
 export interface KodaXToolEventMeta extends KodaXActivityEventMeta {
   readonly toolId?: string;
+  /** One SDK invocation; Provider tool IDs can repeat, including within a batch. */
+  readonly executionId?: string;
 }
 
 export type KodaXShellSandboxBackend =

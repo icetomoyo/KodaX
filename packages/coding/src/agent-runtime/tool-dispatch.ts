@@ -192,7 +192,7 @@ export async function executeToolCall(
   // is already canonical.
 
   const visibleTool = isVisibleToolName(toolCall.name);
-  const toolMeta = createToolEventMeta(events, toolCall.id);
+  const toolMeta = createToolEventMeta(events, toolCall.id, toolExecution(toolCall).id);
   if (visibleTool) {
     await emitActiveExtensionEvent('tool:start', {
       name: toolCall.name,
@@ -212,6 +212,9 @@ export async function executeToolCall(
   // indistinguishable permission prompts for one bridged operation.
   const isBridgeMetaTool = toolCall.name === TOOL_CALL_NAME || toolCall.name === TOOL_DESCRIBE_NAME;
   if (!isBridgeMetaTool) {
+    if (activeToolNames && !activeToolNames.includes(toolCall.name)) {
+      return `[Tool Error] ${toolCall.name}: Tool is not active in the current runtime.`;
+    }
     const override = await getToolExecutionOverride(
       events,
       toolCall.name,
@@ -319,7 +322,7 @@ function executeInExtensionScope(
     reportProgress: (progress) => {
       if (events.onToolProgress) events.onToolProgress({ id: call.id, message: progress.message,
         extension: { ...identity, extensionId: getExtensionExecutionScope()?.extensionId ?? identity.extensionId,
-          data: progress.data } }, createToolEventMeta(events, call.id));
+          data: progress.data } }, createToolEventMeta(events, call.id, toolExecution(call).id));
       else ctx.reportToolProgress?.(progress.message);
     },
   }, (scope) => { ctx.extensionExecution = scope; return execute(); });
@@ -328,9 +331,11 @@ function executeInExtensionScope(
 export function createToolEventMeta(
   events: Pick<KodaXEvents, 'workflowCorrelation'>,
   toolId: string,
+  executionId?: string,
 ): KodaXToolEventMeta {
   return {
     toolId,
+    ...(executionId === undefined ? {} : { executionId }),
     ...(events.workflowCorrelation !== undefined ? { workflowCorrelation: events.workflowCorrelation } : {}),
   };
 }
@@ -340,7 +345,7 @@ function createContextForToolCall(
   toolCall: RunnableToolCall,
   ctx: KodaXToolExecutionContext,
 ): KodaXToolExecutionContext {
-  const toolMeta = createToolEventMeta(events, toolCall.id);
+  const toolMeta = createToolEventMeta(events, toolCall.id, toolExecution(toolCall).id);
   return events.onToolProgress
       || events.onToolSandboxObservation
       || events.askUser
@@ -349,6 +354,8 @@ function createContextForToolCall(
     ? {
         ...ctx,
         toolCallId: toolCall.id,
+        ...(ctx.recordToolResultArtifact ? { recordToolResultArtifact: (sourceId: string, outputPath: string) =>
+          ctx.recordToolResultArtifact!(sourceId === toolCall.id ? toolExecution(toolCall).resultKey : sourceId, outputPath) } : {}),
         ...(events.onToolProgress
           ? {
               reportToolProgress: (message: string) => {
@@ -376,7 +383,9 @@ function createContextForToolCall(
           ? { askUserInput: (options) => events.askUserInput!(options, toolMeta) }
           : {}),
       }
-    : { ...ctx, toolCallId: toolCall.id };
+    : { ...ctx, toolCallId: toolCall.id,
+      ...(ctx.recordToolResultArtifact ? { recordToolResultArtifact: (sourceId: string, outputPath: string) =>
+        ctx.recordToolResultArtifact!(sourceId === toolCall.id ? toolExecution(toolCall).resultKey : sourceId, outputPath) } : {}) };
 }
 
 function describeBridgeTools(
@@ -487,10 +496,10 @@ async function executeBridgeToolCall(input: {
   if (recordTargetArtifact !== undefined) {
     ctxWithToolHooks.recordToolResultArtifact = (toolCallId, outputPath) => {
       recordTargetArtifact(toolCallId, outputPath);
-      recordTargetArtifact(input.bridgeCall.id, outputPath);
+      recordTargetArtifact(toolExecution(input.bridgeCall).resultKey, outputPath);
     };
   }
-  const toolMeta = createToolEventMeta(input.events, targetCall.id);
+  const toolMeta = createToolEventMeta(input.events, targetCall.id, toolExecution(targetCall).id);
   const runScopedTarget = getToolDefinition(targetName) === undefined
     ? lookupRunScopedTool(input.ctx.extensionRuntime, targetName)
     : undefined;
@@ -597,6 +606,13 @@ interface PreparedToolCall {
   readonly blockedContent?: ToolResult;
 }
 
+const toolExecutions = new WeakMap<object, { readonly id: string; readonly resultKey: string }>();
+function toolExecution(call: { readonly id: string }) {
+  let execution = toolExecutions.get(call);
+  if (!execution) { execution = { id: `execution_${randomUUID()}`, resultKey: call.id }; toolExecutions.set(call, execution); }
+  return execution;
+}
+
 /**
  * CAP-077: dispatch the assistant's tool_use blocks. Non-bash
  * tools run in parallel via `Promise.all`; bash tools run sequentially
@@ -641,7 +657,7 @@ export async function runToolDispatch(
   for (const prepared of preparedCalls) {
     if (prepared.blockedContent === undefined) continue;
     await emitToolCallStart(input.events, prepared.call);
-    resultMap.set(prepared.call.id, prepared.blockedContent);
+    resultMap.set(toolExecution(prepared.call).resultKey, prepared.blockedContent);
   }
 
   const parallel = preparedCalls.filter((prepared) => (
@@ -650,7 +666,7 @@ export async function runToolDispatch(
     && prepared.call.name !== 'bash'
   ));
   const parallelResults = await Promise.all(parallel.map(async (prepared) => ({
-    id: prepared.call.id,
+    id: toolExecution(prepared.call).resultKey,
     content: await executePreparedToolCall(input, prepared.call),
   })));
   for (const result of parallelResults) resultMap.set(result.id, result.content);
@@ -661,11 +677,11 @@ export async function runToolDispatch(
   ));
   for (const prepared of serial) {
     if (input.abortSignal?.aborted) {
-      resultMap.set(prepared.call.id, CANCELLED_TOOL_RESULT_MESSAGE);
+      resultMap.set(toolExecution(prepared.call).resultKey, CANCELLED_TOOL_RESULT_MESSAGE);
       continue;
     }
     resultMap.set(
-      prepared.call.id,
+      toolExecution(prepared.call).resultKey,
       await executePreparedToolCall(input, prepared.call),
     );
   }
@@ -702,6 +718,10 @@ async function prepareToolBlock(
         }
       : { index, call: outcome.call };
   }
+  const id = `execution_${randomUUID()}`;
+  const execution = { id, resultKey: input.toolBlocks.filter(candidate => candidate.id === block.id).length > 1 ? id : block.id };
+  toolExecutions.set(prepared.call, execution);
+  toolExecutions.set(block, execution);
   input.finalToolBlocks?.set(block.id, runnerCallToToolBlock(prepared.call));
   return prepared;
 }
@@ -751,12 +771,14 @@ async function executePreparedToolCall(
 }
 
 function runnerCallToToolBlock(call: RunnerToolCall): KodaXToolUseBlock {
-  return {
+  const block = {
     id: call.id,
     name: call.name,
     type: 'tool_use',
     input: call.input,
   } as KodaXToolUseBlock;
+  toolExecutions.set(block, toolExecution(call));
+  return block;
 }
 
 function normalizeGuardrailResult(content: RunnerToolResult['content'], isError: boolean): ToolResult {
@@ -780,7 +802,7 @@ async function emitToolCallStart(
     name: call.name,
     id: call.id,
     input: call.input,
-  }, createToolEventMeta(events, call.id));
+  }, createToolEventMeta(events, call.id, toolExecution(call).id));
 }
 
 export interface PostToolProcessingInput {
@@ -835,7 +857,7 @@ export async function applyPostToolProcessing(
   const editRecoveryMessages: string[] = [];
 
   for (const tc of input.toolBlocks) {
-    let content = input.resultMap.get(tc.id) ?? '[Error] No result';
+    let content = input.resultMap.get(toolExecution(tc).resultKey) ?? '[Error] No result';
     // Scope reflection: when mutation tracker crosses threshold, append
     // once to a write tool result.
     if (
@@ -866,7 +888,7 @@ export async function applyPostToolProcessing(
       }
     }
     if (isVisibleToolName(tc.name)) {
-      const outputPath = input.toolResultArtifactPaths?.get(tc.id);
+      const outputPath = input.toolResultArtifactPaths?.get(toolExecution(tc).resultKey);
       toolResults.push(createToolResultBlock(
         tc.id,
         content,
@@ -893,7 +915,7 @@ async function admitAndEmitVisibleToolResults(
   toolResults: readonly KodaXToolResultBlock[],
   editRecoveryMessages: readonly string[],
 ): Promise<KodaXToolResultBlock[]> {
-  const toolBlockById = new Map(input.toolBlocks.map((block) => [block.id, block]));
+  const visibleBlocks = input.toolBlocks.filter(block => isVisibleToolName(block.name));
   const recoveryMessageTokens = editRecoveryMessages.length > 0
     ? estimateTokens([{
         role: 'user',
@@ -902,9 +924,9 @@ async function admitAndEmitVisibleToolResults(
       }])
     : 0;
   const guardedBatch = await applyToolResultBatchGuardrail(
-    toolResults.map((result) => ({
-      id: result.tool_use_id,
-      toolName: toolBlockById.get(result.tool_use_id)?.name ?? 'tool',
+    toolResults.map((result, index) => ({
+      id: toolExecution(visibleBlocks[index]!).resultKey,
+      toolName: visibleBlocks[index]!.name,
       content: result.content,
       ...(typeof result.metadata?.outputPath === 'string' && result.metadata.outputPath.length > 0
         ? { outputPath: result.metadata.outputPath }
@@ -915,9 +937,9 @@ async function admitAndEmitVisibleToolResults(
     recoveryMessageTokens,
   );
   const guardedById = new Map(guardedBatch.entries.map((entry) => [entry.id, entry]));
-  const finalResults = toolResults.map((sourceResult) => {
+  const finalResults = toolResults.map((sourceResult, index) => {
     const result = { ...sourceResult, is_error: sourceResult.is_error === true };
-    const guarded = guardedById.get(result.tool_use_id);
+    const guarded = guardedById.get(toolExecution(visibleBlocks[index]!).resultKey);
     if (!guarded || guarded.content === result.content) {
       // FEATURE_296 (ADR-067): an over-budget batch admits with debt metadata
       // so the pair commits; the recovery ladder owns the next request.
@@ -937,8 +959,8 @@ async function admitAndEmitVisibleToolResults(
       },
     };
   });
-  for (const result of finalResults) {
-    const toolBlock = toolBlockById.get(result.tool_use_id);
+  for (const [index, result] of finalResults.entries()) {
+    const toolBlock = visibleBlocks[index];
     if (!toolBlock) continue;
     const displayContent = toolResultText(result.content);
     await input.emitActiveExtensionEvent('tool:result', {
@@ -948,7 +970,7 @@ async function admitAndEmitVisibleToolResults(
     });
     input.events.onToolResult?.(
       { id: toolBlock.id, name: toolBlock.name, content: displayContent, toolResult: result },
-      createToolEventMeta(input.events, toolBlock.id),
+      createToolEventMeta(input.events, toolBlock.id, toolExecution(toolBlock).id),
     );
   }
   return finalResults;

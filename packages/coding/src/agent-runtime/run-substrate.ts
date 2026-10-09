@@ -2135,6 +2135,7 @@ async function runSubstrateInContext(
               },
               credentialSignal,
             ),
+            activeProviderRequestId,
           );
           emitPromptCacheDiagnosticResponse(events, cacheDiagnostic, result.usage);
 

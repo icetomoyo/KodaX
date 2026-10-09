@@ -31,6 +31,7 @@ import {
   normalizeReasoningEffortValue,
   runWithProviderCredentialLeaseScope,
   runWithoutProviderCredentialScope,
+  runWithProviderRequestAttribution,
   type KodaXTaskResultMetadata,
   type ProviderCredentialLeaseAccess,
   type ProviderCredentialLeaseScope,
@@ -73,10 +74,15 @@ export interface CodingActorSessionOptions {
   readonly onHealthChanged?: (health: AgentControllerHealth) => void;
 }
 
-interface CodingActorEnvironment {
+export interface CodingActorEnvironment {
   readonly parentCtx: KodaXToolExecutionContext;
   readonly options: KodaXOptions;
+  readonly signal?: AbortSignal;
+  readonly tools?: readonly string[];
+  readonly release?: (result?: AgentExecutionResult, error?: unknown) => void;
+  readonly run?: <T>(operation: () => Promise<T>) => Promise<T>;
 }
+export type CodingActorEnvironmentFactory = (input: AgentExecutionInput) => Promise<CodingActorEnvironment>;
 
 export interface CodingActorCredentialTarget {
   readonly actorPath: string;
@@ -93,12 +99,17 @@ type ActorFollowupHostOptions = NonNullable<
 >;
 type ActorStartPlan = Parameters<NonNullable<ActorFollowupHostOptions['beforeLaunch']>>[0];
 type ActorFollowupTarget = Parameters<NonNullable<ActorFollowupHostOptions['validateTarget']>>[0];
+type ClientActorMutationOptions = AgentMutationOptions & { readonly executionPrincipalId?: string };
 
 /** One Runtime-owned Actor tree for one KodaX session. */
 export class CodingActorSession {
   private readonly controller: AgentActorController;
   private readonly turnExecutors = new Map<string, AgentTurnExecutor>();
   private readonly turnCredentialAccess = new Map<string, ProviderCredentialLeaseAccess>();
+  private readonly turnEnvironments = new Map<string, CodingActorEnvironmentFactory>();
+  private readonly environmentsByActor = new Map<string, CodingActorEnvironment>();
+  private readonly clientTurnOwners = new Map<string, string>();
+  private readonly executingTurns = new Map<string, { readonly actorPath: string; readonly principalId?: string; readonly settled: Promise<unknown> }>();
   private environment?: CodingActorEnvironment;
   private activeBudget?: AgentBudgetPort;
 
@@ -106,21 +117,39 @@ export class CodingActorSession {
     this.activeBudget = sessionOptions.budget;
     const executor: AgentTurnExecutor = {
       execute: (input) => {
-        const executeTurn = (): Promise<AgentExecutionResult> => {
+        const dispatch = (): Promise<AgentExecutionResult> => {
+        const executeTurn = async (): Promise<AgentExecutionResult> => {
+          const factory = this.turnEnvironments.get(input.turn.turnId);
+          this.turnEnvironments.delete(input.turn.turnId);
           const executionKey = metadataString(input.turn.metadata?.executionKey);
           const registered = executionKey ? this.turnExecutors.get(executionKey) : undefined;
-          if (registered) return registered.execute(input);
+          if (registered && factory === undefined) return registered.execute(input);
           if (input.actor.kind === 'external' && sessionOptions.executor) {
             return sessionOptions.executor.execute(input);
           }
-          const environment = this.environment;
+          let inherited: CodingActorEnvironment | undefined;
+          for (let parent = input.actor.parentPath; parent; parent = parent.slice(0, parent.lastIndexOf('/'))) {
+            inherited = this.environmentsByActor.get(parent);
+            if (inherited) break;
+          }
+          const environment = factory === undefined ? inherited ?? this.environment : await factory(input);
           if (!environment) throw new Error('Actor session is not attached to an active KodaX run.');
-          return executeCodingActorTurn(
-            input,
+          if (factory !== undefined) this.environmentsByActor.set(input.actor.path, environment);
+          try {
+            const operation = () => executeCodingActorTurn(
+            { ...input, signal: environment.signal ? AbortSignal.any([input.signal, environment.signal]) : input.signal,
+              actor: environment.tools === undefined ? input.actor : { ...input.actor, capabilities: {
+                ...input.actor.capabilities, tools: environment.tools.filter(tool => input.actor.capabilities.tools.includes('*')
+                  || input.actor.capabilities.tools.includes(tool)),
+              } } },
             environment.parentCtx,
             environment.options,
             this.controller.bind(input.actor.path),
-          );
+            );
+            const result = await (factory !== undefined && environment.run ? environment.run(operation) : operation());
+            if (factory !== undefined) environment.release?.(result);
+            return result;
+          } catch (error: unknown) { if (factory !== undefined) environment.release?.(undefined, error); throw error; }
         };
         const explicitAccess = this.turnCredentialAccess.get(input.turn.turnId);
         this.turnCredentialAccess.delete(input.turn.turnId);
@@ -153,6 +182,12 @@ export class CodingActorSession {
         });
         if (credentialScope === undefined) return executeTurn();
         return runActorTurnInCredentialScope(credentialScope, input.signal, executeTurn);
+        };
+        const pending = runWithProviderRequestAttribution({ kind: 'actor_turn', actorPath: input.actor.path, turnId: input.turn.turnId }, dispatch);
+        this.executingTurns.set(input.turn.turnId, { actorPath: input.actor.path,
+          principalId: this.clientTurnOwners.get(input.turn.turnId) ?? this.turnOwner(input.actor.path), settled: pending });
+        void pending.then(() => this.executingTurns.delete(input.turn.turnId), () => this.executingTurns.delete(input.turn.turnId));
+        return pending;
       },
     };
     this.controller = new AgentActorController({
@@ -207,19 +242,22 @@ export class CodingActorSession {
 
   spawnRoot(
     input: AgentSpawnInput,
-    options?: AgentMutationOptions,
+    options?: ClientActorMutationOptions,
     credentialAccess?: CodingActorCredentialAccessFactory,
+    environment?: CodingActorEnvironmentFactory,
   ): Promise<AgentTurnRef> {
     let credentialTurnId: string | undefined;
     const admission = this.controller.spawn('/root', input, {
       ...options,
-      ...(credentialAccess === undefined
+      ...(credentialAccess === undefined && options?.executionPrincipalId === undefined
         ? {}
         : {
             beforeLaunch: (plan) => {
-              if (plan.actor.kind === 'external') throw externalCredentialBindingError();
+              if (credentialAccess !== undefined && plan.actor.kind === 'external') throw externalCredentialBindingError();
               credentialTurnId = plan.turn.turnId;
-              this.turnCredentialAccess.set(plan.turn.turnId, credentialAccess({
+              if (options?.executionPrincipalId !== undefined) this.clientTurnOwners.set(plan.turn.turnId, options.executionPrincipalId);
+              if (environment !== undefined) this.turnEnvironments.set(plan.turn.turnId, environment);
+              if (credentialAccess !== undefined) this.turnCredentialAccess.set(plan.turn.turnId, credentialAccess({
                 actorPath: plan.actor.path,
                 turnId: plan.turn.turnId,
                 providers: plan.actor.capabilities.providers,
@@ -234,6 +272,8 @@ export class CodingActorSession {
     });
     return admission.catch((error: unknown) => {
       if (credentialTurnId !== undefined) this.turnCredentialAccess.delete(credentialTurnId);
+      if (credentialTurnId !== undefined) this.turnEnvironments.delete(credentialTurnId);
+      if (credentialTurnId !== undefined) this.clientTurnOwners.delete(credentialTurnId);
       throw error;
     });
   }
@@ -241,9 +281,10 @@ export class CodingActorSession {
   followupRoot(
     actorPath: string,
     objective: string,
-    options?: AgentMutationOptions,
+    options?: ClientActorMutationOptions,
     credentialAccess?: CodingActorCredentialAccessFactory,
     requireCredentialForNewTurn = false,
+    environment?: CodingActorEnvironmentFactory,
   ): Promise<AgentFollowupResult> {
     let credentialTurnId: string | undefined;
     const validateTarget = credentialAccess === undefined
@@ -258,11 +299,13 @@ export class CodingActorSession {
           if (actor.kind === 'external') throw externalCredentialBindingError();
           if (actor.currentTurnId !== undefined) throw currentTurnCredentialBindingError(actor.path);
         };
-    const beforeLaunch = credentialAccess === undefined
+    const beforeLaunch = credentialAccess === undefined && options?.executionPrincipalId === undefined
       ? undefined
       : (plan: ActorStartPlan) => {
           credentialTurnId = plan.turn.turnId;
-          this.turnCredentialAccess.set(plan.turn.turnId, credentialAccess({
+          if (options?.executionPrincipalId !== undefined) this.clientTurnOwners.set(plan.turn.turnId, options.executionPrincipalId);
+          if (environment !== undefined) this.turnEnvironments.set(plan.turn.turnId, environment);
+          if (credentialAccess !== undefined) this.turnCredentialAccess.set(plan.turn.turnId, credentialAccess({
             actorPath: plan.actor.path,
             turnId: plan.turn.turnId,
             providers: plan.actor.capabilities.providers,
@@ -281,12 +324,48 @@ export class CodingActorSession {
     });
     return admission.catch((error: unknown) => {
       if (credentialTurnId !== undefined) this.turnCredentialAccess.delete(credentialTurnId);
+      if (credentialTurnId !== undefined) this.turnEnvironments.delete(credentialTurnId);
+      if (credentialTurnId !== undefined) this.clientTurnOwners.delete(credentialTurnId);
       throw error;
     });
   }
 
   health(): AgentControllerHealth {
     return this.controller.healthSnapshot();
+  }
+
+  private turnOwner(actorPath: string): string | undefined {
+    const actors = new Map(this.rootControl().list().actors.map(actor => [actor.path, actor]));
+    for (let current = actors.get(actorPath); current; current = current.parentPath ? actors.get(current.parentPath) : undefined) {
+      const id = current.currentTurnId ?? current.turnIds.at(-1);
+      const owner = id === undefined ? undefined : this.clientTurnOwners.get(id);
+      if (owner !== undefined) return owner;
+    }
+    return undefined;
+  }
+
+  independentTurnIds(): ReadonlySet<string> {
+    return new Set(this.rootControl().list().actors.flatMap(actor => actor.currentTurnId
+      && (this.executingTurns.get(actor.currentTurnId)?.principalId ?? this.turnOwner(actor.path)) !== undefined ? [actor.currentTurnId] : []));
+  }
+
+  async quiesceClient(principalId: string): Promise<{ readonly turns: readonly Pick<AgentTurnRef, 'actorPath' | 'turnId'>[]; readonly unsettledTurnIds: readonly string[] }> {
+    const tree = this.rootControl().list();
+    const own = new Map(tree.actors.flatMap(actor => actor.currentTurnId
+      && (this.executingTurns.get(actor.currentTurnId)?.principalId ?? this.turnOwner(actor.path)) === principalId
+      ? [[actor.currentTurnId, { actorPath: actor.path, turnId: actor.currentTurnId }] as const] : []));
+    for (const [turnId, execution] of this.executingTurns) {
+      if (execution.principalId === principalId) own.set(turnId, { actorPath: execution.actorPath, turnId });
+    }
+    if (own.size === 0) return { turns: [], unsettledTurnIds: [] };
+    const preserved = new Set(tree.actors.flatMap(actor => actor.currentTurnId && !own.has(actor.currentTurnId) ? [actor.currentTurnId] : []));
+    await this.controller.quiesce('client exit requested', preserved);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([Promise.allSettled([...own.keys()].flatMap(id => this.executingTurns.get(id)?.settled ?? [])),
+        new Promise<void>(resolve => { timer = setTimeout(resolve, 1_000); })]);
+    } finally { if (timer) clearTimeout(timer); }
+    return { turns: [...own.values()], unsettledTurnIds: [...own.keys()].filter(id => this.executingTurns.has(id)) };
   }
 
   ownerId(): string | undefined {
@@ -346,6 +425,9 @@ export class CodingActorSession {
     await this.controller.shutdown(reason);
     this.turnExecutors.clear();
     this.turnCredentialAccess.clear();
+    this.turnEnvironments.clear();
+    this.environmentsByActor.clear();
+    this.clientTurnOwners.clear();
     this.environment = undefined;
   }
 
@@ -360,6 +442,9 @@ export class CodingActorSession {
     this.controller.disposeAfterStoreRemoval(reason);
     this.turnExecutors.clear();
     this.turnCredentialAccess.clear();
+    this.turnEnvironments.clear();
+    this.environmentsByActor.clear();
+    this.clientTurnOwners.clear();
     this.environment = undefined;
   }
 }

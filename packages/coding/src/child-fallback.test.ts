@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { KodaXNetworkError, KodaXProviderError, KodaXRateLimitError } from '@kodax-ai/llm';
+import { KodaXNetworkError, KodaXProviderError, KodaXRateLimitError, runWithProviderRequestObserver,
+  withProviderRequestCredential, type ProviderRequestObservation } from '@kodax-ai/llm';
 
 import {
   invokeChildWithFallback,
@@ -47,6 +48,21 @@ describe('isFallbackEligibleError', () => {
 
 describe('invokeChildWithFallback', () => {
   afterEach(() => vi.unstubAllEnvs());
+
+  it('attributes cross-provider fallback to one route without expanding credential purpose', async () => {
+    vi.stubEnv('KODAX_FALLBACK_PROVIDERS', 'kimi-code');
+    const facts: ProviderRequestObservation[] = [];
+    await runWithProviderRequestObserver(fact => facts.push(fact), () => invokeChildWithFallback(baseOptions(), 'brief',
+      async selection => withProviderRequestCredential(selection.provider!, 'primary', undefined, async () => {
+        if (selection.provider === 'zhipu-coding') throw new KodaXNetworkError('offline');
+        return okResult();
+      })));
+    const final = [...new Map(facts.map(fact => [fact.requestId, fact])).values()];
+    expect(final).toHaveLength(2);
+    expect(final[0]).toMatchObject({ purpose: 'primary', route: { attempt: 1 } });
+    expect(final[1]).toMatchObject({ purpose: 'primary', route: { chainId: final[0]!.route!.chainId,
+      attempt: 2, fromProvider: 'zhipu-coding' } });
+  });
 
   it('returns the primary result without any fallback on success', async () => {
     const run = vi.fn().mockResolvedValue(okResult('primary'));

@@ -235,10 +235,11 @@ describe('CAP-024: executeToolCall — permission gate (CAP-010) override', () =
           options: [{ label: 'Yes', value: 'yes' }],
         },
       },
-      {
+      expect.objectContaining({
         toolId: 't1',
         workflowCorrelation,
-      },
+        executionId: expect.stringMatching(/^execution_/),
+      }),
     );
     expect(askUser).toHaveBeenCalledWith(
       {
@@ -248,10 +249,11 @@ describe('CAP-024: executeToolCall — permission gate (CAP-010) override', () =
         multiSelect: false,
         allowCustomInput: true,
       },
-      {
+      expect.objectContaining({
         toolId: 't1',
         workflowCorrelation,
-      },
+        executionId: onToolUseStart.mock.calls[0]![1]!.executionId,
+      }),
     );
     expect(onToolExecutionStart).toHaveBeenCalledOnce();
     expect(onToolExecutionEnd).toHaveBeenCalledOnce();

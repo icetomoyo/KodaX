@@ -5358,6 +5358,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
     id: string,
     selector?: string,
     options?: {
+      before?: boolean;
       sessionId?: string;
       title?: string;
       historyBoundary?: SessionHistoryBoundary;
@@ -5384,26 +5385,32 @@ export class FileSessionStorage implements KodaXSessionStorage {
       if (historyBoundary !== undefined && captured === null) return;
       const sourceLineage = captured?.lineage ?? resolved.data.lineage;
       if (sourceLineage === null) return;
+      const boundaryPath = captured !== undefined && selector !== undefined
+        ? completeLineageBoundaryPath(sourceLineage, selector) : undefined;
       if (
         captured !== undefined
         && (
           selector === undefined
-          || completeLineageBoundaryPath(sourceLineage, selector) === undefined
+          || boundaryPath === undefined
         )
       ) {
         return;
       }
       const projectionStartedAt = Date.now();
+      if (options?.before === true && captured === undefined) throw new Error('Fork before requires a canonical history boundary.');
+      const targetId = options?.before === true ? boundaryPath?.at(-2)?.id : selector;
       const lineage = captured === undefined
         ? forkSessionLineage(sourceLineage, selector)
         : captured === null
           ? null
-          : forkSessionConversationLineage(
-              sourceLineage,
-              selector!,
-              captured.sourceRevision,
-              () => assertSessionReadBudget({}, projectionStartedAt),
-            );
+          : targetId === undefined
+            ? createSessionLineage([])
+            : forkSessionConversationLineage(
+                sourceLineage,
+                targetId,
+                captured.sourceRevision,
+                () => assertSessionReadBudget({}, projectionStartedAt),
+              );
       if (!lineage) return;
 
       const sessionId = options?.sessionId ?? await generateSessionId();

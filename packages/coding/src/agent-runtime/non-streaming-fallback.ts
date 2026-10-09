@@ -171,6 +171,7 @@ export async function executeNonStreamingFallback(
         },
         credentialSignal,
       ),
+      providerRequestId,
     );
     return { ok: true, result, providerRequestId };
   } catch (rawError) {

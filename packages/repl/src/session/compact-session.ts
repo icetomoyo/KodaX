@@ -35,6 +35,7 @@ import { loadCompactionConfig } from '../common/compaction-config.js';
 import type { SessionData } from '../ui/utils/session-storage.js';
 
 export interface CompactSessionOptions {
+  readonly abortSignal?: AbortSignal;
   /** Summary policy, normally supplied by the Runtime Session settings. */
   readonly reasoning?: CompactionConfig['reasoning'];
   /** Provider alias for the summarizer. Defaults to the session's persisted provider, then 'anthropic'. */
@@ -122,6 +123,7 @@ export async function compactSession(
       triggerTokens: options?.triggerTokens ?? loadedCompactionConfig.triggerTokens,
     });
 
+    options?.abortSignal?.throwIfAborted();
     const result = await compact(
       messages,
       compactionConfig,
@@ -137,6 +139,7 @@ export async function compactSession(
       provider.getEffectiveMaxOutputTokens(model),
     );
 
+    options?.abortSignal?.throwIfAborted();
     if (!result.compacted) {
       return {
         compacted: false,

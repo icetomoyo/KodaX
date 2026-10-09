@@ -44,6 +44,7 @@ import {
 import type { AgentArtifact } from './construction/types.js';
 import { createWorkflowWorktree, removeWorkflowWorktree } from './tools/worktree.js';
 import { TOOL_OUTPUT_DIR_ENV } from './tools/truncate.js';
+import { createExtensionRuntime } from './extensions/runtime.js';
 
 const mockRunKodaX = runKodaX as ReturnType<typeof vi.fn>;
 const mockToolWorktreeCreate = vi.mocked(createWorkflowWorktree);
@@ -78,6 +79,15 @@ function createCtx() {
     gitRoot: '/test/repo',
     executionCwd: '/test/repo',
   };
+}
+
+function hostToolRuntime() {
+  const runtime = createExtensionRuntime();
+  runtime.listRunTools = () => (['readonly', 'mutates-state'] as const).map(sideEffect => ({
+    name: `fixture_host_${sideEffect}`, description: 'Host fixture tool', inputSchema: { type: 'object' },
+    capabilityId: `host:${sideEffect}`, sideEffect,
+  }));
+  return runtime;
 }
 
 function deferred<T>(): {
@@ -483,6 +493,7 @@ describe('executeChildAgents — guardrails propagation (FEATURE_092 phase 2b.7b
 
     await executeChildAgents([createBundle()], createCtx(), createOptions({
       initialMessages,
+      parentOptions: { provider: 'anthropic', extensionRuntime: hostToolRuntime() },
       actorCapabilities: {
         tools: ['read', 'web_search', 'ask_user_question'],
         filesystem: 'read',
@@ -500,6 +511,7 @@ describe('executeChildAgents — guardrails propagation (FEATURE_092 phase 2b.7b
     expect(childOptions.context?.excludeTools).toEqual(expect.arrayContaining([
       'web_search',
       'ask_user_question',
+      'fixture_host_readonly',
     ]));
     expect(childOptions.context?.excludeTools).not.toContain('read');
   });
@@ -673,6 +685,7 @@ describe('executeChildAgents — workflow accounting and isolation cleanup', () 
         actorParentAgentId: '/root/workflow-parent',
         parentOptions: {
           provider: 'anthropic',
+          extensionRuntime: hostToolRuntime(),
           contextDiagnostics: true,
           disablePromptCache: true,
           events: {
@@ -718,6 +731,7 @@ describe('executeChildAgents — workflow accounting and isolation cleanup', () 
     expect(digestOptions.context?.contextIdentitySessionId).toBe('test-session');
     expect(digestOptions.session?.initialMessages).toBe(childMessages);
     expect(digestOptions.context?.excludeTools).toContain('read');
+    expect(digestOptions.context?.excludeTools).toEqual(expect.arrayContaining(['fixture_host_readonly', 'fixture_host_mutates-state']));
     timeoutSpy.mockRestore();
   });
 
@@ -881,6 +895,7 @@ describe('executeChildAgents — workflow accounting and isolation cleanup', () 
         actorParentAgentId: '/root/repair-parent',
         parentOptions: {
           provider: 'anthropic',
+          extensionRuntime: hostToolRuntime(),
           contextDiagnostics: true,
           disablePromptCache: true,
           events: {
@@ -904,6 +919,7 @@ describe('executeChildAgents — workflow accounting and isolation cleanup', () 
         registerShellCleanup?: unknown;
       };
       context?: {
+        excludeTools?: readonly string[];
         contextDiagnostics?: boolean;
         parentAgentId?: string;
         contextIdentitySessionId?: string;
@@ -917,6 +933,7 @@ describe('executeChildAgents — workflow accounting and isolation cleanup', () 
     expect(repairOptions.events?.registerShellCleanup).toBeUndefined();
     expect(repairOptions.context?.parentAgentId).toBe('/root/repair-parent');
     expect(repairOptions.context?.contextIdentitySessionId).toBe('test-session');
+    expect(repairOptions.context?.excludeTools).toEqual(expect.arrayContaining(['fixture_host_readonly', 'fixture_host_mutates-state']));
   });
 
   it('parses a valid fixed AMA disposition envelope without a repair turn', async () => {

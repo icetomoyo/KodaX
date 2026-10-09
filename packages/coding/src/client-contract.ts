@@ -20,6 +20,9 @@ import type {
   KodaXSessionEntry,
 } from '@kodax-ai/agent';
 import type { KodaXResult } from './types.js';
+import type { KodaXShellSandboxObservation } from './types.js';
+import type { RuntimeContextBudgetSnapshot } from './agent-runtime/context-budget.js';
+import type { ProviderRequestObservation } from '@kodax-ai/llm';
 import type { ClientCompactSessionResult, ClientMemoryService, ClientLearningService, ClientCommandService, ClientReviewService, ClientReviewInput, ClientCommandResult } from './client-domains.js';
 export type * from './client-domains.js';
 
@@ -92,6 +95,8 @@ export interface ClientSessionFilter {
 }
 
 export interface KodaXProductClient {
+  readonly lifecycle: ClientLifecycleService;
+  readonly statistics: ClientStatisticsService;
   readonly commands: ClientCommandService;
   readonly review: ClientReviewService;
   readonly memory: ClientMemoryService;
@@ -148,7 +153,7 @@ export interface KodaXProductClient {
     /** Move the active head to an entry by id or label; stale selectors conflict, never silently no-op. */
     selectBranch(sessionId: string, selector: string, options?: { readonly summarizeCurrentBranch?: boolean }): Promise<ClientSession>;
     /** Move the head back to an entry; idle sessions only, and file effects are never rolled back. */
-    rewindSession(sessionId: string, input: { readonly selector?: string; readonly expectedHead: string | null }): Promise<ClientSession>;
+    rewindSession(sessionId: string, input: { readonly selector?: string; readonly historyBoundary?: ClientHistoryBoundary; readonly expectedHead: string | null }): Promise<ClientSession>;
     /** Derive a new Session from this idle session's history; the source stays unchanged. */
     forkSession(sessionId: string, input?: ClientSessionForkInput): Promise<ClientSession>;
     /** Derive a new Session from a deterministic recovery seed (no LLM call); continue with a normal input submit. */
@@ -373,6 +378,10 @@ export interface ClientHistoryPage {
   readonly items: readonly ClientViewItem[];
   /** Conversation revision this page was read at. */
   readonly revision: string;
+  /** Canonical storage revision used by operation boundaries; distinct from the page revision. */
+  readonly sourceRevision: string;
+  readonly status: 'resolved' | 'partial' | 'ambiguous';
+  readonly issues: readonly ClientHistoryIssue[];
   /** Cursor of the next older page; absent when this is the oldest page. */
   readonly nextCursor?: string;
   /**
@@ -380,6 +389,102 @@ export interface ClientHistoryPage {
    * readHistoryEntry; the page never substitutes a truncated preview.
    */
   readonly oversized: readonly { readonly itemId: string; readonly byteLength: number }[];
+}
+
+/** Durable, client-scoped exit control; receipt acceptance is separate from verified outcomes. */
+export interface ClientLifecycleService {
+  requestExit(input: { readonly requestId: string; readonly shutdownHost?: boolean }): Promise<ClientExitReceipt>;
+  readExit(requestId: string): Promise<ClientExitReceipt | null>;
+  listPendingExits(): Promise<readonly ClientExitReceipt[]>;
+}
+export type ClientExecutionTarget =
+  | { readonly kind: 'run'; readonly runId: string }
+  | { readonly kind: 'actor_turn'; readonly actorPath: string; readonly turnId: string; readonly parentRunId?: string }
+  | { readonly kind: 'operation'; readonly operationId: string; readonly operation: 'session.compact' };
+export interface ClientUsageTotals {
+  readonly inputTokens: number; readonly outputTokens: number; readonly totalTokens: number;
+  readonly cacheReadTokens: number; readonly cacheWriteTokens: number; readonly thoughtTokens: number;
+}
+export interface ClientProviderRequestFact extends Omit<ProviderRequestObservation, 'state'> {
+  readonly state: ProviderRequestObservation['state'] | 'unknown';
+  readonly revision: number; readonly sessionId: string; readonly runtimeId: string;
+  readonly target: ClientExecutionTarget;
+  readonly previousRequestId?: string;
+  readonly fallback: boolean;
+  /** Restart recovery only marks an unfinished request unknown; it never invents usage. */
+  readonly recovery?: 'outcome_unknown';
+}
+export interface ClientToolExecutionFact {
+  readonly id: string; readonly revision: number; readonly toolId: string; readonly name: string;
+  readonly sessionId: string; readonly runtimeId: string; readonly target: ClientExecutionTarget;
+  readonly state: 'prepared' | 'executing' | 'completed' | 'not_executed' | 'unknown';
+  readonly result?: 'succeeded' | 'failed' | 'cancelled';
+  readonly updatedAt: string;
+  /** Actual adapter observations, in order. Empty means the backend was not reported. */
+  readonly sandbox: readonly KodaXShellSandboxObservation[];
+}
+export interface ClientExecutionFactsPage<T> {
+  readonly revision: number; readonly items: readonly T[]; readonly nextCursor?: string;
+}
+/** Last request-preparation estimate for a context, retained across disconnect and restart. */
+export interface ClientContextBudgetFact extends RuntimeContextBudgetSnapshot {
+  readonly runtimeId: string;
+  readonly revision: number;
+  readonly target: ClientExecutionTarget;
+  readonly contextRevision?: number;
+}
+export interface ClientStatisticsService {
+  read(sessionId: string): Promise<{
+    readonly sessionId: string; readonly revision: number; readonly coverage: 'complete' | 'partial';
+    readonly issues: readonly string[]; readonly usage: ClientUsageTotals;
+    readonly requestCount: number; readonly requestsWithoutUsage: number;
+    readonly physicalRequestCount: number; readonly operationCount: number;
+    readonly contexts: readonly ClientContextBudgetFact[];
+  }>;
+  readRequests(sessionId: string, options?: { readonly cursor?: string; readonly limit?: number }): Promise<ClientExecutionFactsPage<ClientProviderRequestFact>>;
+  readTools(sessionId: string, options?: { readonly cursor?: string; readonly limit?: number }): Promise<ClientExecutionFactsPage<ClientToolExecutionFact>>;
+}
+export interface ClientExitReceipt {
+  readonly requestId: string;
+  readonly clientId: string;
+  readonly runtimeId: string;
+  readonly accepted: true;
+  readonly requestedAt: string;
+  readonly updatedAt: string;
+  readonly cleanup: {
+    readonly actorTurns: readonly { readonly actorPath: string; readonly turnId: string }[];
+    readonly operationIds: readonly string[];
+    readonly state: 'pending' | 'succeeded' | 'unknown' | 'failed';
+    readonly runIds: readonly string[];
+    readonly withdrawnInputs: readonly { readonly sessionId: string; readonly inputId: string }[];
+    readonly issues: readonly string[];
+  };
+  readonly host: {
+    readonly requested: boolean;
+    readonly state: 'not_requested' | 'pending' | 'protected' | 'accepted' | 'succeeded' | 'failed' | 'unknown';
+    readonly owner: {
+      readonly runtimeId: string; readonly pid: number; readonly kind?: 'daemon' | 'inline';
+      readonly processStartIdentity?: string; readonly processContainment?: 'windows-job';
+      readonly supervisorPid?: number; readonly supervisorProcessStartIdentity?: string;
+    };
+    readonly cleanup?: 'succeeded' | 'failed';
+    readonly message?: string;
+    readonly replacementRunning?: boolean;
+  };
+}
+
+/** Host-issued canonical boundary. Pass it back unchanged; never derive it from an item ID. */
+export interface ClientHistoryBoundary {
+  readonly entryId: string;
+  readonly sourceRevision: string;
+}
+
+export interface ClientHistoryIssue {
+  readonly code: string;
+  readonly message: string;
+  readonly occurrenceCount: number;
+  readonly entryCount: number;
+  readonly entryIds: readonly string[];
 }
 
 export interface ClientHistorySearchInput {
@@ -429,13 +534,12 @@ export interface ClientLineageLabelInput {
 }
 
 export interface ClientSessionForkInput {
+  /** Exclude the boundary message when deriving Retry; requires historyBoundary. */
+  readonly before?: boolean;
   /** Entry id or label naming the boundary; defaults to the active head. */
   readonly selector?: string;
   /** Explicit conversation-history boundary; stale revisions surface as resync_required. */
-  readonly historyBoundary?: {
-    readonly entryId: string;
-    readonly sourceRevision: string;
-  };
+  readonly historyBoundary?: ClientHistoryBoundary;
   readonly title?: string;
 }
 
@@ -558,6 +662,10 @@ export interface ClientSessionActivity {
 }
 
 export interface ClientViewItem {
+  /** Image references proven by canonical user/tool content; does not include file bytes. */
+  readonly attachments?: readonly { readonly kind: 'image'; readonly path: string; readonly mediaType?: string }[];
+  /** Boundary after the complete canonical message, shared by all its display blocks. */
+  readonly historyBoundary?: ClientHistoryBoundary;
   /** Host checkpoint provenance for retained output and tool evidence. */
   readonly sourceRunId?: string;
   readonly sourceTurnId?: string;

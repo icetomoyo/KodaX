@@ -173,6 +173,7 @@ function withActivityMeta<TMeta extends KodaXActivityEventMeta>(
         parentContextId: meta.parentContextId,
         agentId: meta.agentId,
         contextRevision: meta.contextRevision,
+        ...(meta.contextKind === 'child' && meta.turnId !== undefined ? { turnId: meta.turnId, deliveryId: meta.deliveryId } : {}),
       };
   return {
     ...(meta ?? ({} as TMeta)),
@@ -196,6 +197,7 @@ function withLiveMeta<TEvent extends object>(
         parentContextId: candidate.parentContextId,
         agentId: candidate.agentId,
         contextRevision: candidate.contextRevision,
+        ...(candidate.contextKind === 'child' && candidate.turnId !== undefined ? { turnId: candidate.turnId, deliveryId: candidate.deliveryId } : {}),
       };
   return {
     ...event,
