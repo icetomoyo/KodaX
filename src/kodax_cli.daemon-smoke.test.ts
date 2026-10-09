@@ -41,6 +41,7 @@ import {
   isRuntimeDaemonPidAlive,
   observeRuntimeDaemonHealth,
 } from './runtime-daemon/lifecycle.js';
+import { runtimeClientPrincipal } from './runtime-daemon/client-lifecycle.js';
 
 const tempRoots: string[] = [];
 const DEFAULT_NODE_PROCESS_TIMEOUT_MS = 90_000;
@@ -840,6 +841,14 @@ describe('daemon CLI smoke', () => {
       requirements: { daemonClientInventory: 1 },
     });
     const readyFile = path.join(homeDir, 'killed-client-ready');
+    const reconnectInstance = {
+      instanceId: 'inventory-reconnect-instance',
+      instanceSecret: 'kodax-daemon-smoke-reconnect-instance-secret',
+    };
+    const reconnectPrincipal = runtimeClientPrincipal(
+      reconnectInstance.instanceId,
+      reconnectInstance.instanceSecret,
+    );
     const killedClientScript = `
       const fs = await import('node:fs');
       const { connectKodaXRuntime } = await import('./src/sdk-runtime.ts');
@@ -848,6 +857,7 @@ describe('daemon CLI smoke', () => {
         clientInfo: {
           name: 'inventory-killed-client',
           instanceId: 'inventory-reconnect-instance',
+          instanceSecret: 'kodax-daemon-smoke-reconnect-instance-secret',
           clientType: 'automation',
         },
         requirements: { daemonClientInventory: 1 },
@@ -881,7 +891,7 @@ describe('daemon CLI smoke', () => {
         (client) => client.name === 'inventory-killed-client',
       );
       expect(killedEntry).toMatchObject({
-        principalId: 'inventory-reconnect-instance',
+        principalId: reconnectPrincipal,
         clientType: 'automation',
       });
       if (killedEntry === undefined) throw new Error('Killed client inventory entry is missing.');
@@ -894,22 +904,23 @@ describe('daemon CLI smoke', () => {
         ]),
       );
 
-      const reconnected = await connectKodaXRuntime({
-        homeDir,
-        profile,
-        autoStart: false,
-        clientInfo: {
-          name: 'inventory-reconnected-client',
-          instanceId: 'inventory-reconnect-instance',
-          clientType: 'automation',
-        },
-        requirements: { daemonClientInventory: 1 },
-      });
-      try {
-        const afterReconnect = await parent.status.preflight();
-        const reconnectEntries = afterReconnect.clients?.filter(
-          (client) => client.principalId === 'inventory-reconnect-instance',
-        );
+        const reconnected = await connectKodaXRuntime({
+          homeDir,
+          profile,
+          autoStart: false,
+          clientInfo: {
+            name: 'inventory-reconnected-client',
+            instanceId: reconnectInstance.instanceId,
+            instanceSecret: reconnectInstance.instanceSecret,
+            clientType: 'automation',
+          },
+          requirements: { daemonClientInventory: 1 },
+        });
+        try {
+          const afterReconnect = await parent.status.preflight();
+          const reconnectEntries = afterReconnect.clients?.filter(
+            (client) => client.principalId === reconnectPrincipal,
+          );
         expect(reconnectEntries).toHaveLength(1);
         expect(reconnectEntries?.[0]).toMatchObject({
           name: 'inventory-reconnected-client',

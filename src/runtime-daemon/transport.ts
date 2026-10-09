@@ -446,22 +446,16 @@ function withClientInstanceIdentity(
 ): Record<string, unknown> {
   const params = asRecord(value) ?? {};
   const clientInfo = asRecord(params.clientInfo) ?? { name: 'kodax-transport' };
-  // A client that declares its own instanceId owns a stable principal across
-  // reconnects; injecting this transport's per-connection secret would hash
-  // that principal to a different value every time (ghost inventory entries).
-  const declaredInstanceId = typeof clientInfo.instanceId === 'string';
   return {
     ...params,
     clientInfo: {
       ...clientInfo,
-      instanceId: declaredInstanceId
+      instanceId: typeof clientInfo.instanceId === 'string'
         ? clientInfo.instanceId
         : instanceId,
       instanceSecret: typeof clientInfo.instanceSecret === 'string'
         ? clientInfo.instanceSecret
-        : declaredInstanceId
-          ? clientInfo.instanceSecret
-          : instanceSecret,
+        : instanceSecret,
     },
   };
 }
