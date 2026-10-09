@@ -21,6 +21,7 @@ import {
   KodaXWireReasoningEffort,
 } from '../types.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { observeProviderAttempt } from '../provider-request-observation.js';
 import { KodaXError, KodaXRateLimitError, KodaXProviderError, KodaXNetworkError, KodaXContextOverflowError, KodaXReasoningEffortRejectedError } from '../errors.js';
 import { parseContextOverflowFacts } from './context-overflow.js';
 import type { KodaXProviderErrorMetadata } from '../errors.js';
@@ -235,6 +236,7 @@ export interface KodaXRetryAfterEvent {
 export type KodaXOnRetryAfterCallback = (event: KodaXRetryAfterEvent) => void;
 
 export abstract class KodaXBaseProvider {
+  protected readonly requestObservationBoundary: 'physical_attempt' | 'provider_operation' = 'provider_operation';
   abstract readonly name: string;
   abstract readonly supportsThinking: boolean;
   protected abstract readonly config: KodaXProviderConfig;
@@ -928,7 +930,7 @@ export abstract class KodaXBaseProvider {
           retryState.maxOutputTokensOverride === undefined
             ? {}
             : { maxOutputTokensOverride: retryState.maxOutputTokensOverride },
-          () => fn(retryState),
+          () => observeProviderAttempt(this.name, reasoningGuard?.model ?? this.getModel(), () => fn(retryState), this.requestObservationBoundary === 'physical_attempt'),
         );
       } catch (e) {
         // Context window overflow: compute reduced max_tokens and retry once

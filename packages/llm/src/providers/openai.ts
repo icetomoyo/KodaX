@@ -1,4 +1,5 @@
 import { recordRejectedImage } from './rejected-image.js';
+import { observeProviderFetch } from '../provider-request-observation.js';
 /**
  * KodaX OpenAI Compatible Provider
  *
@@ -68,7 +69,7 @@ async function createOpenAISdkClient(
   options: ConstructorParameters<typeof OpenAI>[0],
 ): Promise<OpenAI> {
   const { default: OpenAISdk } = await import('openai');
-  return new OpenAISdk(options);
+  return new OpenAISdk({ ...options, fetch: observeProviderFetch(options?.fetch ?? globalThis.fetch) });
 }
 
 type OpenAIReasoningAttempt =
@@ -297,6 +298,7 @@ function rewriteAssistantWireToolCalls(
 }
 
 export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
+  protected readonly requestObservationBoundary = 'physical_attempt' as const;
   // Only hard rejections survive requests. Attempt state remains request-local.
   private reasoningRejections: CapabilityCache = {};
 

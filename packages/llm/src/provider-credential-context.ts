@@ -1,5 +1,6 @@
 import { inheritRejectedImage } from './providers/rejected-image.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { observeProviderOperation, currentProviderRequestAbortSignal, currentProviderRequestAttribution } from './provider-request-observation.js';
 
 export type ProviderCredentialPurpose =
   | 'primary'
@@ -191,6 +192,21 @@ export function currentProviderCredentialLeaseProviders(): readonly string[] | u
  * in the nested exact scope and is discarded when the call settles.
  */
 export async function withProviderRequestCredential<T>(
+  provider: string,
+  purpose: ProviderCredentialPurpose,
+  signal: AbortSignal | undefined,
+  operation: (signal: AbortSignal | undefined) => Promise<T> | T,
+  logicalRequestId?: string,
+): Promise<T> {
+  const ownerSignal = currentProviderRequestAbortSignal();
+  if (ownerSignal) signal = signal === undefined ? ownerSignal : AbortSignal.any([signal, ownerSignal]);
+  signal?.throwIfAborted();
+  const scope = providerCredentialStorage.getStore();
+  const lease = scope?.kind === 'lease' ? scope : scope?.kind === 'exact' ? scope.parentLease : undefined;
+  return observeProviderOperation(provider, purpose, currentProviderRequestAttribution() ?? lease?.attribution,
+    () => withProviderRequestCredentialInternal(provider, purpose, signal, operation), logicalRequestId, signal);
+}
+async function withProviderRequestCredentialInternal<T>(
   provider: string,
   purpose: ProviderCredentialPurpose,
   signal: AbortSignal | undefined,

@@ -1,4 +1,5 @@
 import { recordRejectedImage } from './rejected-image.js';
+import { observeProviderFetch } from '../provider-request-observation.js';
 /**
  * KodaX Anthropic Compatible Provider
  *
@@ -55,7 +56,7 @@ export async function createAnthropicSdkClient(
   options: ConstructorParameters<typeof Anthropic>[0],
 ): Promise<Anthropic> {
   const { default: AnthropicSdk } = await import('@anthropic-ai/sdk');
-  return new AnthropicSdk(options);
+  return new AnthropicSdk({ ...options, fetch: observeProviderFetch(options?.fetch ?? globalThis.fetch) });
 }
 
 interface AnthropicRequestOptions {
@@ -190,6 +191,7 @@ function hasAnthropicOutputEffort(
 }
 
 export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
+  protected readonly requestObservationBoundary = 'physical_attempt' as const;
   abstract override readonly name: string;
   readonly supportsThinking = true;
   protected abstract override readonly config: KodaXProviderConfig;

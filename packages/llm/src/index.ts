@@ -6,6 +6,8 @@
  */
 
 // ============== Types ==============
+export { runWithProviderRequestObserver, runWithProviderRequestAbortSignal, runWithProviderRequestRoute, runWithProviderRequestAttribution } from './provider-request-observation.js';
+export type { ProviderRequestObservation } from './provider-request-observation.js';
 export type {
   KodaXImageBlock,
   KodaXTextBlock,
