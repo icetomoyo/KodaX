@@ -1,7 +1,7 @@
 # KodaX SDK — Product Client and Host Integration
 
 This page describes the current FEATURE_298/299 development tree, whose package
-version is still `0.7.96` and whose design target is `v0.7.97`. It does not
+baseline is `0.7.97-alpha.1`. Some seam additions are newer than that baseline; this does not
 claim that this contract is already published to npm. Check the installed
 package exports and the connected Host's capabilities when migrating.
 
@@ -17,6 +17,8 @@ objects, not alternate names for this contract.
 - [Complete Client contract](../../docs/CLIENT_CONTRACT.md): normative behavior
   and method inventory; [types](../../packages/coding/src/client-contract.ts).
 - [Removed surfaces](#migrating-to-v0797): breaking changes and replacements.
+- [Space Host seams](../../docs/SPACE_SDK_SEAMS.md): trusted Main authorization,
+  canonical Fork/Retry/Rewind, Host configuration, attachments, statistics and lifecycle limits.
 - Numbered sections below retain low-level library/Host guidance and historical
   release context. They are not instructions for a product UI to create its own
   execution owner or write the shared Host's files.

@@ -1,6 +1,8 @@
 # SDK 统一 Client 契约迁移指南
 
-适用范围：当前工作树的 FEATURE_298/299 实现；包基线为 `0.7.96`，设计目标为 `v0.7.97`。本文不表示 npm 已发布这些变更。接入前应核对所安装包的导出和 Host 能力。
+适用范围：当前工作树的 FEATURE_298/299 实现；包基线为 `0.7.97-alpha.1`。本文包含基线之后的接缝补齐，不表示 npm 已发布这些变更。接入前应核对所安装包的导出和 Host 能力。
+
+Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附件/统计与退出恢复范围见 [SDK/Host 接缝](SPACE_SDK_SEAMS.md)。
 
 ## 1. 替换范围与文档权威
 
@@ -39,7 +41,7 @@ TUI、桌面 UI、IDE、自动化应用接入共享 KodaX 时，以 `KodaXProduc
 | 客户端展开 Skill、执行 command hooks、准备 review | `inputs.submit` 原始 Skill 输入；`commands.execute`、`review.start`、`agents.reviewLean` | 可信准备和执行归 Host；`commands.readPrompt` 仅返回可编辑文本 |
 | UI 持有 workflow 模块或独立 memory/learning owner | `workflows.*`、`memory.forProject`、`learning.*` | 提交声明式意图；订阅故障和 Run 终态分开处理 |
 | 客户端维护 Agent 注册或 mailbox 状态 | `registrations.*`、`agents.*` | 使用领域 ID、revision 和实际事件，不按 UI 缓存推断完成 |
-| `runtime.close()` 或旧 Client dispose | `observation.close()`、`client.disconnect()` | 都不会停止共享 Run；正常关闭空闲 Host 需显式 `host.shutdown()` |
+| `runtime.close()` 或旧 Client dispose | `observation.close()`、`client.disconnect()` | 释放观察/连接；完整退出使用 lifecycle.requestExit，断连后 readKodaXClientExits 核验回执 |
 
 没有产品等价项的底层能力不能自动提升为产品承诺。例如凭据 lease、Host Tool bridge、原始 Runtime events 和特定诊断继续由受信任宿主明确接入 `/runtime`。产品 `mcp` 也不承诺旧 `McpManager` 的所有 start/stop/catalog 方法；先核对实际类型，不在 UI 中创建第二套执行连接来补齐。
 

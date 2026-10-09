@@ -2,6 +2,8 @@
 
 本文面向 CLI、SDK 和未来 Web 客户端。产品客户端通过 `KodaXProductClient` 读取 Host 事实、提交意图；Host 执行并保存工作。显示层不读取或写入 Session 文件，不另建运行状态权威。
 
+可信 Main 的 `authorizeExecution`、canonical `historyBoundary` / Retry `before`、历史完整性与图片引用，以及宿主配置/统计/生命周期边界见 [Space SDK/Host 接缝](SPACE_SDK_SEAMS.md)。这些接缝补齐需要当前 SDK 与 Host，不能仅根据旧包版本假定支持。
+
 2026-10-02 主线 rc.14 修复融合仍属于 FEATURE_298 / v0.7.97。中断后的下一次运行只从当前分支的 canonical Session/lineage、Run status 和已成功保存的显示 checkpoint 读取有限恢复说明；不恢复持久事件日志，也不根据事件推导成功。Host 先等待现有 checkpoint 写入，再按 inputId/turnId、sourceRunId 和 outputId 确认来源，排除已提交的同一输出、Thinking、child 输出及普通通知。工具提出、执行开始、结果已保存分别记录；重复 callId 按所属 assistantOutputId 匹配；执行开始但没有已保存结果时，效果仍为 unknown。说明仅进入临时模型上下文，不能成为用户指令或正式会话正文。未落盘 token 不承诺硬崩溃恢复。
 
 Shell 清理重试耗尽时保留 deferred 进程身份，允许后续对话和 Host close 继续；这不证明进程已退出，也不确认 Stop。ClientRunStatus 和 runs.await 的 ClientRunOutcome 都携带 Host terminal（含 effectOutcome）及实际 Stop 事实；产品继续消费 `effectOutcome: unknown`，不能将执行完成等同于副作用已确认。
@@ -49,6 +51,8 @@ Shell 清理重试耗尽时保留 deferred 进程身份，允许后续对话和 
 多个启动器同时刷新时，临时连接也受 `connected_clients` 保护。失败者先释放连接，在同一个启动截止时间内退避并重新探测；重试不重置期限，也不因客户端自称 launcher 而忽略它。底层启动取消信号会终止退避。竞争持续到期限时明确失败，不保证任意竞争都能收敛，不新增跨进程选举或恢复票据。
 
 `disconnect()` 仅释放本连接；`ClientObservation.close()` 仅结束一个观察。它们不表示 Run 停止或 Host 退出。`host.shutdown()` 请求空闲 Host 正常关闭，返回 `{ accepted: true }` 只代表接收请求，不能替代启动器对退出和清理完成的确认。
+
+完整客户端退出使用 `lifecycle.requestExit/readExit/listPendingExits`，断连后使用 `/client` 的 `readKodaXClientExits` 查询持久化回执。它结算本客户端工作，保护其他客户端，并分别报告请求接受、本客户端清理、精确 Host 退出与 unknown。累计用量、请求/工具执行事实及根/子上下文快照使用 `statistics.read/readRequests/readTools`；不由最新 activity 或 permissionMode 推断。独立 `agents.spawn/followup` 使用可信 Main authorizer 的 `agent_spawn/agent_followup` 接缝，新的 native turn 单独授权。持久化、断连、Host 重启和 adapter 可观察性边界详见 [Space 接缝](SPACE_SDK_SEAMS.md)。
 
 ## 公开域与全部方法
 
