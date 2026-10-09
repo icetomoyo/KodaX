@@ -53,9 +53,11 @@ maintainer action.
   waiting for its parent to reap it is no longer classified as a live
   competing owner (Issue 355).
 - Release validation hardened the interactive fixtures (CI static-output
-  detection, learning-review request classification) and raised the
+  detection, learning-review request classification), raised the
   machine-relative long-line layout budget on CI evidence (Issues 356-358;
-  358 remains open for profiling).
+  358 remains open for profiling), and aligned the release binary provider
+  smoke with Host-owned execution by seeding every provider's key env per
+  probe.
 
 ---
 

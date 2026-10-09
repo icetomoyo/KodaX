@@ -229,7 +229,7 @@ async function startProviderSmokeServer(requestPaths) {
   return { server, baseUrl: `http://127.0.0.1:${address.port}` };
 }
 
-async function verifyProviderRuntimeProbe(binaryPath, smokeHome, provider, requestPaths) {
+async function verifyProviderRuntimeProbe(binaryPath, provider, requestPaths, smokeEnv) {
   const requestCountBefore = requestPaths.length;
   const result = await runCapturedCommand(
     binaryPath,
@@ -239,8 +239,7 @@ async function verifyProviderRuntimeProbe(binaryPath, smokeHome, provider, reque
       encoding: 'utf8',
       env: {
         ...process.env,
-        KODAX_HOME: smokeHome,
-        KODAX_TRACING: '0',
+        ...smokeEnv,
         [provider.apiKeyEnv]: 'binary-smoke-key',
       },
       timeout: 30_000,
@@ -287,8 +286,19 @@ async function verifyBundledProviderRuntime(binaryPath, smokeHome) {
       'utf8',
     );
 
+    // Every probe shares one smoke home, so the second probe attaches to the
+    // daemon the first probe started — and since FEATURE_298 the run executes
+    // in that daemon, resolving provider credentials from ITS environment.
+    // Seed every provider's key env into each probe so the shared daemon can
+    // resolve them all.
+    const smokeEnv = {
+      KODAX_HOME: smokeHome,
+      KODAX_TRACING: '0',
+      ...Object.fromEntries(providers.map((entry) => [entry.apiKeyEnv, 'binary-smoke-key'])),
+    };
+
     for (const provider of providers) {
-      await verifyProviderRuntimeProbe(binaryPath, smokeHome, provider, requestPaths);
+      await verifyProviderRuntimeProbe(binaryPath, provider, requestPaths, smokeEnv);
     }
     process.stdout.write('    ✓ standalone smoke: bundled Anthropic and OpenAI SDK runtime\n');
   } finally {

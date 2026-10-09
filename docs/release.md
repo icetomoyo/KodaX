@@ -177,7 +177,11 @@ surfaced 22 deterministic Linux failures: the hook `/bin/sh`-dash pairing
 product code, the interactive fixtures were corrected for CI static-output
 mode and learning-review classification (Issues 356-357, test-environment
 causes), and the long-line layout budget moved to 90s on CI evidence
-(Issue 358, profiling open). Only after a fully green branch validation run
+(Issue 358, profiling open). The first release-tag build then failed its
+standalone provider smoke on every Unix target: FEATURE_298 moved execution
+into the Host daemon, so the second probe attached to a daemon whose
+environment held only the first probe's key — the smoke now seeds every
+provider's key env per probe. Only after a fully green branch validation run
 was the release tag cut.
 
 Release gates:
