@@ -9985,7 +9985,7 @@ function createRuntimeRunService(deps: {
         const root = actorSession.rootControl();
         const tree = root.list();
         const activeSubtaskCount =
-          record.actorTurnBaseline !== undefined
+          record.stop !== undefined && record.actorTurnBaseline !== undefined
             ? activeManagedActorTurnIds(record).length
             : tree.activeNonRootTurns;
         if (activeSubtaskCount > 0) {
@@ -10003,7 +10003,7 @@ function createRuntimeRunService(deps: {
           }
           const cursor = root.eventSnapshot().at(-1)?.sequence ?? 0;
           if (
-            record.actorTurnBaseline !== undefined
+            record.stop !== undefined && record.actorTurnBaseline !== undefined
               ? activeManagedActorTurnIds(record).length === 0
               : root.list().activeNonRootTurns === 0
           ) continue;
@@ -10044,7 +10044,7 @@ function createRuntimeRunService(deps: {
         if (confirmed.state === "recovering") continue;
         const confirmedTree = root.list();
         const confirmedActiveSubtaskCount =
-          record.actorTurnBaseline !== undefined
+          record.stop !== undefined && record.actorTurnBaseline !== undefined
             ? activeManagedActorTurnIds(record).length
             : confirmedTree.activeNonRootTurns;
         if (confirmedActiveSubtaskCount > 0) continue;
