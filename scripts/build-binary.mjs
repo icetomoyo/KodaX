@@ -653,7 +653,10 @@ async function verifyHostBinary(binaryPath) {
     console.log(`    ✓ standalone smoke: bundled YAML and fflate dependencies`);
     await verifyBundledProviderRuntime(smokeBinaryPath, smokeHome);
   } finally {
-    rmSync(smokeHome, { recursive: true, force: true });
+    // The daemon's background memory-review queue releases its inbox lock
+    // directories slightly after the CLI exits; retry the teardown instead of
+    // failing an otherwise-green smoke on ENOTEMPTY.
+    rmSync(smokeHome, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
   }
 }
 
