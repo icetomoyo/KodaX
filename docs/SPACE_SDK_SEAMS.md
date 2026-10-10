@@ -1,10 +1,10 @@
 # Space 的 Product Client / Host 接缝
 
-基线为 Space 已验证的 `0.7.97-alpha.1`；以下补齐属于当前工作树，需要重新构建 SDK 与 Host，不表示 npm 已发布。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
+基线为 Space 已接入的 `0.7.97-alpha.2`；以下 Workflow 补齐属于当前工作树，需要重新构建 SDK 与 Host，不表示 npm 已发布。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
 
 ## 可信执行授权
 
-`connectKodaXClient` / `ensureKodaXClient` 的可选 `authorizeExecution(request, services)` 只在可信 Main 进程执行。回调使用同一连接的 `services.credentials` 与 `services.hostTools` 注册现有 lease，为本次操作返回非秘密 `credential` / `hostTools` binding。回调与凭据值不会作为产品输入发送到 Host。配置回调的连接要求 `productExecutionAuthorization:1`；旧 Host 明确拒绝，不能忽略 binding 继续执行。
+`connectKodaXClient` / `ensureKodaXClient` 的可选 `authorizeExecution(request, services)` 只在可信 Main 进程执行。回调使用同一连接的 `services.credentials` 与 `services.hostTools` 注册现有 lease，为本次操作返回非秘密 `credential` / `hostTools` binding，也可仅返回下述 Workflow 上限。回调与凭据值不会作为产品输入发送到 Host。配置回调的连接要求 `productExecutionAuthorization:2`；旧 Host 明确拒绝，不能忽略 binding 或策略继续执行。
 
 `kind` 为 `input`、`command`、`review`、`agents_lean`、`tool`、`workflow`、`agent_spawn`、`agent_followup` 或 `compaction`，`input` 是对应业务意图的独立快照。Main 根据自己的 Session 授权、Provider allowlist 和操作用途作决策。SDK 丢弃产品 payload 中的授权字段，再附加 Main 返回的 binding。拒绝应抛出错误；返回 `undefined` 明确选择原有无 binding 路径，不代表拒绝。
 
@@ -35,7 +35,7 @@ const client = await connectKodaXClient({
 | 排队消费 | 接收时保存非秘密授权上下文，实际消费时绑定 Run；不同授权不合批，也不注入另一授权的活动 Run |
 | steer | 目标 Run 原有授权；不同授权返回 conflict，不替换或扩大它 |
 | redirect | 旧 Run 保持原授权，新排队意图带自身授权 |
-| Workflow | binding 要求明确 sessionId；实际 Run 与既有派生 Actor/Workflow scope，子任务按现有规则收窄 Provider 权限 |
+| Workflow | credential/tool binding 要求明确 sessionId；仅设置 Workflow 策略时可由 Host 创建临时 Session。实际 Run 与既有派生 Actor/Workflow scope，子任务按现有规则收窄 Provider 权限 |
 | manual compaction | 仅使用 scoped credential；Host 创建 `session.compact` operation 身份，工具 lease 不参与 |
 | automatic compaction、fallback、classifier、sidecar | 使用现有 Run resolver，每次实际请求重新检查 Provider 与 purpose |
 
@@ -44,6 +44,31 @@ const client = await connectKodaXClient({
 独立 `agents.spawn/followup` 使用同一 Main 回调，连接要求 `productActorAuthorization:1`。新 native turn 必须使用 scoped credential；Host 为实际 Actor/turn 创建独立执行上下文及 Run，不借用父 Run 的授权。broker 的 target 为 `actor_turn`，Provider allowlist 与 purpose 逐请求检查。Main 可返回 `tools: ['read', 'space_read']` 作为额外工具上限：模型 schema、实际调用、Host Tool runtime 和后代均收窄，仍执行 Session 的权限、Shell 与管理员策略。其他入口不接受该 `tools` 字段。
 
 新 turn 的 followup 重新授权；正在执行的 turn 保留原授权，不能用 followup 替换其 credential。独立子树有自己的客户端归属，其他客户端停止根 Run 不取消该子树。External Actor 使用原有 executor/credentialRef，不能绑定 native Provider credential、Host Tool runtime 或 native tools ceiling。授权和 handler 闭包不持久化；Host 重启恢复既有中断/未知事实，新执行须重新授权，旧工具副作用不重放。
+
+## Workflow 宿主能力与上限
+
+公开补齐限定为 `RuntimeExecutionAuthorization.workflowHostPolicy?: KodaXClientWorkflowHostPolicy`，只包含 `maxAgents` 和 `tokenBudget`。Main 可以仅返回策略，无需为了设置上限注册 credential/tool lease。普通 Product 输入、排队消费和 Skill/command/review 派生 Run 均绑定同一策略；独立 Actor 准入不从父 Run 借用策略，不能把此字段作为其授权。手动 compaction 不执行 Workflow，策略不应用于 summarizer。
+
+```ts
+import { connectKodaXClient } from '@kodax-ai/kodax/client';
+
+const client = await connectKodaXClient({
+  async authorizeExecution(request) {
+    if (['input', 'command', 'review', 'agents_lean', 'tool', 'workflow'].includes(request.kind)) {
+      return { workflowHostPolicy: { maxAgents: 16, tokenBudget: 100_000 } };
+    }
+    return undefined;
+  },
+});
+// Existing Host configuration, used by subsequent Product Runs.
+await client.config.patch({ workflow: { maxConcurrency: 8 } });
+```
+
+策略为准入时复制的 Run 作用域数据，不修改 Session 或全局配置。队列捕获该策略；不同策略或 principal 不合并到同一 Run，steer 不能替换活动 Run 的策略。同一 inputId 的重试仍校验原始意图和策略身份。断连后已接受的执行保留其捕获值；Host 重启不会恢复策略闭包、排队工作或自动续跑。Space 的策略持久化和 Main 重新授权仍由 Space 管理。SDK 的输入类型不含此字段，运行时丢弃 Product payload 中伪造的授权/策略字段。
+
+`maxAgents` 是每个 Workflow 的正整数生命周期上限，异步 spawn 前预留名额，已确认创建后才记录实际数量，拒绝的启动释放预留；并发请求不能一起越过上限。`tokenBudget` 是非负整数输出 token 预算；`0` 保留现有无预算限制语义，Manifest 的更小预算仍有效。已知 output=0 仍保留为 0；SA 各响应轮及 verification repair 各次执行均有完整用量时才发布聚合 output。缺失用量或没有 output 分量的旧 backend 保持原有 totalTokens 保守兜底。预算耗尽后拒绝新增工作，不保证在途 Provider 响应能被截断到精确 token 数。Manifest、Main 上限、现有并发配置和系统上限取约束交集。并发继续使用 `config.workflow.maxConcurrency`，在 Product Run 启动时捕获，不增加另一个可调并发字段。
+
+Product AMA 仅在已有显式 Workflow 意图门控下提供 `run_workflow`；普通输入不自动启动 Workflow，SA 继续使用显式 `workflows.start`。运行目录采用 Host 现有 profile/project 路径，Space 消费公开的 `workflows.list().runDir` 等结果，不传旧的 `workflowRunsBaseDir`。本轮不开放 `selfManual`、`promptOverlay` 或任意 Run options。
 
 ## 客户端退出与恢复
 
@@ -125,6 +150,7 @@ Retry 包括第一条查询之前的空历史；`before` 需要 canonical bounda
 
 ```text
 npx vitest run src/sdk-client.host-authorization.test.ts src/sdk-client.exit.test.ts src/sdk-client.statistics.test.ts src/sdk-client.derive.test.ts src/execution-facts.test.ts src/runtime-daemon/client-lifecycle.test.ts packages/coding/src/agent-runtime/__contract-tests__/cap-024-tool-dispatch.contract.test.ts
+npx vitest run src/sdk-client.workflow-policy.test.ts packages/agent/src/workflow/runtime.test.ts packages/coding/src/workflows/agent-adapter.test.ts packages/coding/src/agent-runtime/run-substrate.capacity-accounting.test.ts
 node --test tests/bundled-product-exit.test.mjs
 ```
 
@@ -137,3 +163,5 @@ node --test tests/bundled-product-exit.test.mjs
 事实存储、退出控制、客户端工作归属和 Provider observation 模块的 scoped coverage：语句 92.3%、分支 85.43%、函数 94.8%、行 95.93%；不是全仓覆盖率声明。
 
 2026-10-09 本轮本地验收：关联回归 97 文件、977 测试通过；最终增量专项 7 文件、31 测试，以及工具分发合同 12 测试通过。bundle 的 2 项真实 daemon 测试验证立即断连后的空闲 peer 保护、精确进程退出及替代 Host 保护。packages、SDK bundle、声明构建、源码/测试类型检查，以及不加载 Node ambient types 的 Product Client 类型消费者均通过。Standards / Spec 最终复核无明确残余。未全量复跑仓库全部测试，未发布 npm，Space 安装包尚未更新。
+
+2026-10-10 Workflow 补齐本地验收：关联回归 110 文件、1,349 测试通过；最终 scoped coverage 6 文件、171 测试通过，覆盖 Workflow runtime 与 Coding backend 两个模块，语句 88.39%、分支 74.56%、函数 89.24%、行 90.04%（不是全仓覆盖率）。真实 Host 专项包括 Product AMA Workflow 可用性、Main 上限、并发名额竞态、零输出预算、临时 Session、非法策略、现有并发配置、队列捕获/去重/steer 隔离、伪造 payload、跨客户端隔离和 Skill/command/review 准备。repair 混合已知/未知输出与 SA 多轮缺失用量另有 RED→GREEN 回归。bundle 的 2 项真实 daemon 退出测试、packages/bundle/14 个 SDK 声明入口构建、源码/测试类型检查及无 Node ambient types 的 Product Client 消费者检查均通过。Standards：0 项明确残余；Spec：0 项明确残余。未全量复跑仓库全部测试，未发布 npm，Space 安装包尚未更新。
