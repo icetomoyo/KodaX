@@ -10,14 +10,14 @@ vi.mock("node:child_process", () => ({
 import { copyTextToClipboard } from "./clipboard.js";
 
 class MockChildProcess extends EventEmitter {
-  stdin = {
+  stdin = Object.assign(new EventEmitter(), {
     write: vi.fn(),
     end: vi.fn(() => {
       queueMicrotask(() => {
         this.emit("close", 0);
       });
     }),
-  };
+  });
 
   stderr = new EventEmitter();
 }
@@ -51,6 +51,70 @@ describe("copyTextToClipboard", () => {
         windowsHide: true,
       }),
     );
+  });
+
+  it("falls back when a clipboard helper closes its input pipe", async () => {
+    const child = new MockChildProcess();
+    spawnMock.mockImplementationOnce(() => child);
+    const terminalWrite = vi.fn(() => true);
+    const copying = copyTextToClipboard("selected transcript text", {
+      terminalWrite,
+      env: {},
+      platform: "darwin",
+    });
+
+    const error = Object.assign(new Error("write EPIPE"), {
+      code: "EPIPE",
+      syscall: "write",
+    });
+    expect(() => child.stdin.emit("error", error)).not.toThrow();
+
+    await expect(copying).resolves.toEqual({ path: "osc52" });
+    expect(terminalWrite).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["wl-copy", "write", "native"], ["wl-copy", "end", "native"],
+    ["xclip", "write", "native"], ["xclip", "end", "native"],
+    ["xsel", "write", "tmux-buffer"], ["xsel", "end", "tmux-buffer"],
+    ["tmux", "write", "osc52"], ["tmux", "end", "osc52"],
+  ])("recovers from %s input failure during %s", async (helper, phase, path) => {
+    const candidates = ["wl-copy", "xclip", "xsel", "tmux"];
+    const escapedErrors: unknown[] = [];
+    spawnMock.mockImplementation((command: string) => {
+      const child = new MockChildProcess();
+      const failInput = () => queueMicrotask(() => {
+        try {
+          child.stdin.emit("error", Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+        } catch (error) {
+          // Capture the crash without terminating the test worker.
+          escapedErrors.push(error);
+        }
+      });
+      if (command === helper && phase === "write") child.stdin.write.mockImplementation(failInput);
+      child.stdin.end.mockImplementation(() => {
+        if (command === helper && phase === "end") failInput();
+        queueMicrotask(() => child.emit("close",
+          candidates.indexOf(command) < candidates.indexOf(helper) ? 1 : 0));
+      });
+      return child;
+    });
+
+    await expect(copyTextToClipboard("selected transcript text", {
+      platform: "linux", env: { TMUX: "fixture" }, terminalWrite: () => true,
+    })).resolves.toEqual({ path });
+    expect(escapedErrors).toEqual([]);
+  });
+
+  it("reports unavailable copying when the tmux pipe and terminal fallback both fail", async () => {
+    const child = new MockChildProcess();
+    spawnMock.mockReturnValueOnce(child);
+    const copying = copyTextToClipboard("selected transcript text", {
+      platform: "linux", env: { TMUX: "fixture", SSH_CONNECTION: "fixture" },
+      terminalWrite: () => false,
+    });
+    expect(() => child.stdin.emit("error", new Error("write EPIPE"))).not.toThrow();
+    await expect(copying).rejects.toThrow("Unable to access any clipboard path.");
   });
 
   it("uses OSC 52 when running remotely and the terminal writer accepts the payload", async () => {

@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { withProviderRequestCredential } from './provider-credential-context.js';
-import { observeProviderAttempt, observeProviderFetch, runWithProviderRequestObserver, type ProviderRequestObservation } from './provider-request-observation.js';
+import { observeProviderAttempt, observeProviderFetch, runWithAdditionalProviderRequestObserver, runWithProviderRequestObserver, type ProviderRequestObservation } from './provider-request-observation.js';
 
 it('records an in-flight non-fetch adapter before completion and retains its identity', async () => {
   const facts: ProviderRequestObservation[] = [];
@@ -12,6 +12,38 @@ it('records an in-flight non-fetch adapter before completion and retains its ide
   expect(facts[0]).toMatchObject({ state: 'started', boundary: 'provider_operation', dispatch: 'unknown', purpose: 'compaction' });
   finish(); await pending;
   expect(facts[1]).toMatchObject({ requestId: facts[0]!.requestId, state: 'succeeded', usage: { inputTokens: 5, outputTokens: 2 } });
+});
+
+it('adds isolated parallel observers without replacing the owner or changing explicit replacement', async () => {
+  const owner: ProviderRequestObservation[] = [];
+  const scopes: ProviderRequestObservation[][] = [[], []];
+  await runWithProviderRequestObserver(fact => owner.push(fact), () => Promise.all(scopes.map((facts, index) =>
+    runWithAdditionalProviderRequestObserver(fact => facts.push(fact), () =>
+      withProviderRequestCredential(`child-${index}`, 'primary', undefined, async () => {
+        await Promise.resolve();
+        return { usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7 } };
+      })))));
+  expect(owner).toHaveLength(4);
+  expect(scopes[0]!.map(fact => fact.provider)).toEqual(['child-0', 'child-0']);
+  expect(scopes[1]!.map(fact => fact.provider)).toEqual(['child-1', 'child-1']);
+
+  const replacement: ProviderRequestObservation[] = [];
+  await runWithAdditionalProviderRequestObserver(fact => owner.push(fact), () =>
+    runWithProviderRequestObserver(fact => replacement.push(fact), () =>
+      withProviderRequestCredential('different-session', 'primary', undefined, async () => ({}))));
+  expect(owner).toHaveLength(4);
+  expect(replacement).toHaveLength(2);
+});
+
+it.each([
+  [{ inputTokens: 10, outputTokens: 50 }, { inputTokens: 10, outputTokens: 50, totalTokens: 60 }],
+  [{ inputTokens: Number.NaN, outputTokens: 50 }, undefined],
+  [{ inputTokens: 10, outputTokens: -1 }, undefined],
+])('normalizes observed usage without inventing or propagating invalid totals: %j', async (usage, expected) => {
+  const facts: ProviderRequestObservation[] = [];
+  await runWithProviderRequestObserver(fact => facts.push(fact), () =>
+    withProviderRequestCredential('custom', 'primary', undefined, async () => ({ usage })));
+  expect(facts.at(-1)?.usage).toEqual(expected);
 });
 
 it('refines the pending fact at the physical fetch boundary and assigns SDK retries separate IDs', async () => {

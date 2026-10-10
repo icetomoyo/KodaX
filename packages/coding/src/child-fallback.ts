@@ -17,7 +17,8 @@
  * an empty/unset list means fallback is OFF (no separate toggle).
  */
 import { randomUUID } from 'node:crypto';
-import { KodaXNetworkError, KodaXProviderError, KodaXRateLimitError, runWithProviderRequestRoute } from '@kodax-ai/llm';
+import { KodaXNetworkError, KodaXProviderError, KodaXRateLimitError,
+  runWithAdditionalProviderRequestObserver, runWithProviderRequestRoute } from '@kodax-ai/llm';
 
 import type { KodaXOptions, KodaXResult } from './types.js';
 
@@ -61,7 +62,32 @@ function unavailableProviderResult(result: KodaXResult): boolean {
     .includes(failure.errorClass);
 }
 
+export function readChildTokenUsage(result: KodaXResult): number {
+  const candidate = result.totalTokensUsed
+    ?? result.usage?.totalTokens
+    ?? result.contextTokenSnapshot?.usage?.totalTokens
+    ?? result.contextTokenSnapshot?.currentTokens
+    ?? 0;
+  return Number.isFinite(candidate) && candidate > 0 ? candidate : 0;
+}
+
+function addUsage(previous: KodaXResult['usage'], current: NonNullable<KodaXResult['usage']>): NonNullable<KodaXResult['usage']> {
+  const aggregate: NonNullable<KodaXResult['usage']> = {
+    inputTokens: (previous?.inputTokens ?? 0) + current.inputTokens,
+    outputTokens: (previous?.outputTokens ?? 0) + current.outputTokens,
+    totalTokens: (previous?.totalTokens ?? 0) + current.totalTokens,
+  };
+  for (const field of ['cachedReadTokens', 'cachedWriteTokens', 'thoughtTokens'] as const) {
+    if (previous?.[field] !== undefined || current[field] !== undefined) {
+      aggregate[field] = (previous?.[field] ?? 0) + (current[field] ?? 0);
+    }
+  }
+  return aggregate;
+}
+
 export interface ChildFallbackHooks {
+  /** Completed-attempt totals remain observable if a later attempt throws. */
+  readonly onUsage?: (totalTokensUsed: number) => void;
   /** Notified just before each fallback attempt (for progress/trace). */
   readonly onFallback?: (info: {
     readonly fromProvider: string;
@@ -88,12 +114,47 @@ export async function invokeChildWithFallback(
   const chainId = `route_${randomUUID()}`;
   let routeAttempt = 0;
   let previousProvider: string | undefined;
+  let usage: KodaXResult['usage'];
+  let usageComplete = true;
+  let totalTokensUsed = 0;
   let outcome: { result: KodaXResult } | { error: unknown };
   const attempt = async (selection: KodaXOptions): Promise<typeof outcome> => {
     const route = { chainId, attempt: ++routeAttempt, fromProvider: previousProvider };
     previousProvider = selection.provider ?? primary;
-    try { return { result: await runWithProviderRequestRoute(route, () => run(selection, prompt)) }; }
-    catch (error) { return { error }; }
+    // Request facts precede continuation, tool execution, and UI epilogues.
+    // Nested children install their own route and account their own requests.
+    const requests = new Map<string, KodaXResult['usage']>();
+    const observedUsage = (): KodaXResult['usage'] => {
+      let aggregate: KodaXResult['usage'];
+      for (const current of requests.values()) {
+        if (current !== undefined) aggregate = addUsage(aggregate, current);
+      }
+      return aggregate;
+    };
+    let result: KodaXResult;
+    try {
+      result = await runWithProviderRequestRoute(route, () => runWithAdditionalProviderRequestObserver(fact => {
+        if (fact.route?.chainId === chainId && fact.route.attempt === route.attempt && fact.state !== 'started') {
+          requests.set(fact.requestId, fact.usage);
+        }
+      }, () => run(selection, prompt)));
+    } catch (error) {
+      usageComplete = false;
+      const observedTokens = observedUsage()?.totalTokens ?? 0;
+      if (observedTokens > 0) {
+        totalTokensUsed += observedTokens;
+        hooks?.onUsage?.(totalTokensUsed);
+      }
+      return { error };
+    }
+    const observed = observedUsage();
+    const observedTokens = observed?.totalTokens ?? 0;
+    totalTokensUsed += Math.max(readChildTokenUsage(result), observedTokens);
+    hooks?.onUsage?.(totalTokensUsed);
+    const current = observed !== undefined && observedTokens >= (result.usage?.totalTokens ?? 0) ? observed : result.usage;
+    if (current === undefined || [...requests.values()].some(value => value === undefined)) usageComplete = false;
+    else usage = addUsage(usage, current);
+    return { result };
   };
   outcome = await attempt(options);
   const chain = resolveFallbackChain().filter(candidate => candidate !== primary
@@ -105,6 +166,8 @@ export async function invokeChildWithFallback(
       reason: 'result' in outcome ? outcome.result.failure!.message : errorReason(outcome.error) });
     outcome = await attempt({ ...options, provider: toProvider, model: undefined });
   }
-  if ('result' in outcome) return outcome.result;
+  if ('result' in outcome) return routeAttempt === 1 && totalTokensUsed <= readChildTokenUsage(outcome.result)
+      && (usageComplete ? usage?.totalTokens === outcome.result.usage?.totalTokens : outcome.result.usage === undefined) ? outcome.result
+    : { ...outcome.result, totalTokensUsed, usage: usageComplete ? usage : undefined };
   throw outcome.error;
 }

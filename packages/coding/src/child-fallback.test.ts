@@ -73,6 +73,72 @@ describe('invokeChildWithFallback', () => {
     expect(onFallback).not.toHaveBeenCalled();
   });
 
+  it('includes completed rounds from failed providers in fallback usage', async () => {
+    vi.stubEnv('KODAX_FALLBACK_PROVIDERS', 'kimi-code');
+    const run = vi.fn()
+      .mockResolvedValueOnce({
+        ...okResult(), success: false,
+        failure: { source: 'provider', errorClass: 'provider_overloaded',
+          message: 'unavailable', safeMessage: 'unavailable', requestPhase: 'before_first_delta', httpStatus: 503 },
+        usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30,
+          cachedReadTokens: 3, cachedWriteTokens: 4, thoughtTokens: 5 },
+      })
+      .mockResolvedValueOnce({ ...okResult('fallback'),
+        usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11,
+          cachedReadTokens: 2, thoughtTokens: 6 } });
+
+    const result = await invokeChildWithFallback(baseOptions(), 'brief', run);
+
+    expect(result.lastText).toBe('fallback');
+    expect(result.usage).toEqual({ inputTokens: 20, outputTokens: 21, totalTokens: 41,
+      cachedReadTokens: 5, cachedWriteTokens: 4, thoughtTokens: 11 });
+  });
+
+  it('retains known token totals without claiming complete fallback output usage', async () => {
+    vi.stubEnv('KODAX_FALLBACK_PROVIDERS', 'kimi-code');
+    const run = vi.fn()
+      .mockResolvedValueOnce({
+        ...okResult(), success: false,
+        failure: { source: 'provider', errorClass: 'provider_overloaded',
+          message: 'unavailable', safeMessage: 'unavailable', requestPhase: 'before_first_delta', httpStatus: 503 },
+        usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+      })
+      .mockResolvedValueOnce(okResult('fallback without usage'));
+
+    const result = await invokeChildWithFallback(baseOptions(), 'brief', run);
+
+    expect(result.usage).toBeUndefined();
+    expect(result).toMatchObject({ totalTokensUsed: 30 });
+  });
+
+  it('treats an unreported thrown attempt as unknown output usage', async () => {
+    vi.stubEnv('KODAX_FALLBACK_PROVIDERS', 'kimi-code');
+    const run = vi.fn()
+      .mockRejectedValueOnce(new KodaXNetworkError('offline'))
+      .mockResolvedValueOnce({ ...okResult(),
+        usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 } });
+
+    const result = await invokeChildWithFallback(baseOptions(), 'brief', run);
+
+    expect(result.usage).toBeUndefined();
+    expect(result).toMatchObject({ totalTokensUsed: 11 });
+  });
+
+  it('preserves known zero output across fallback attempts', async () => {
+    vi.stubEnv('KODAX_FALLBACK_PROVIDERS', 'kimi-code');
+    const run = vi.fn()
+      .mockResolvedValueOnce({ ...okResult(), success: false,
+        failure: { message: 'unavailable', safeMessage: 'unavailable',
+          errorClass: 'provider_overloaded', requestPhase: 'before_first_delta', httpStatus: 503 },
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 } })
+      .mockResolvedValueOnce({ ...okResult(),
+        usage: { inputTokens: 10, outputTokens: 0, totalTokens: 10 } });
+
+    const result = await invokeChildWithFallback(baseOptions(), 'brief', run);
+
+    expect(result.usage).toEqual({ inputTokens: 10, outputTokens: 0, totalTokens: 10 });
+  });
+
   it('falls back to the next provider on a rate-limit-exhausted error', async () => {
     vi.stubEnv('KODAX_FALLBACK_PROVIDERS', 'kimi-code,ark-coding');
     const run = vi
@@ -104,6 +170,99 @@ describe('invokeChildWithFallback', () => {
 
     await expect(invokeChildWithFallback(baseOptions(), 'brief', run)).rejects.toThrow('p2-last');
     expect(run).toHaveBeenCalledTimes(3);
+  });
+
+  it('reports completed-attempt totals while preserving the final thrown error', async () => {
+    vi.stubEnv('KODAX_FALLBACK_PROVIDERS', 'kimi-code');
+    const error = Object.freeze(new KodaXProviderError('last failure'));
+    const onUsage = vi.fn();
+    const run = vi.fn()
+      .mockResolvedValueOnce({ ...okResult(), success: false,
+        failure: { message: 'unavailable', safeMessage: 'unavailable',
+          errorClass: 'provider_overloaded', requestPhase: 'before_first_delta', httpStatus: 503 },
+        usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 } })
+      .mockRejectedValueOnce(error);
+
+    await expect(invokeChildWithFallback(baseOptions(), 'brief', run, { onUsage })).rejects.toBe(error);
+    expect(onUsage).toHaveBeenCalledExactlyOnceWith(30);
+  });
+
+  it('counts completed requests before a throw without relying on iteration events', async () => {
+    vi.stubEnv('KODAX_FALLBACK_PROVIDERS', 'kimi-code');
+    const error = new KodaXProviderError('last failure');
+    const onUsage = vi.fn();
+    const onIterationEnd = vi.fn();
+    const run = vi.fn()
+      .mockResolvedValueOnce({ ...okResult(), success: false,
+        failure: { message: 'unavailable', safeMessage: 'unavailable',
+          errorClass: 'provider_overloaded', requestPhase: 'before_first_delta', httpStatus: 503 },
+        usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 } })
+      .mockImplementationOnce(async (selection: KodaXOptions) => {
+        await withProviderRequestCredential(selection.provider!, 'primary', undefined, async () => ({
+          usage: { inputTokens: 10, outputTokens: 50, totalTokens: 60 },
+        }));
+        const info = { iter: 1, maxIter: 10, tokenCount: 60, tokenSource: 'api' as const,
+          usage: { inputTokens: 10, outputTokens: 50, totalTokens: 60 } };
+        selection.events?.onIterationEnd?.(info);
+        selection.events?.onIterationEnd?.(info);
+        selection.events?.onIterationEnd?.({ ...info, iter: 2, scope: 'worker' });
+        throw error;
+      });
+
+    await expect(invokeChildWithFallback(baseOptions({ events: { onIterationEnd } }),
+      'brief', run, { onUsage })).rejects.toBe(error);
+    expect(onUsage.mock.calls).toEqual([[30], [90]]);
+    expect(onIterationEnd).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps parallel failure charges isolated even when they throw the same Error', async () => {
+    const error = Object.freeze(new Error('local failure after response'));
+    const totals = [vi.fn(), vi.fn()];
+    const outcomes = await Promise.allSettled([20, 50].map((outputTokens, index) =>
+      invokeChildWithFallback(baseOptions(), 'brief', async selection => {
+        await withProviderRequestCredential(selection.provider!, 'primary', undefined, async () => {
+          await Promise.resolve();
+          return { usage: { inputTokens: 10, outputTokens, totalTokens: 10 + outputTokens } };
+        });
+        throw error;
+      }, { onUsage: totals[index] })));
+
+    expect(outcomes).toEqual([{ status: 'rejected', reason: error }, { status: 'rejected', reason: error }]);
+    expect(totals[0]).toHaveBeenCalledExactlyOnceWith(30);
+    expect(totals[1]).toHaveBeenCalledExactlyOnceWith(60);
+  });
+
+  it('retains known input and output before a throw when the adapter omits totalTokens', async () => {
+    const error = new Error('local failure after response');
+    const onUsage = vi.fn();
+    await expect(invokeChildWithFallback(baseOptions(), 'brief', async selection => {
+      await withProviderRequestCredential(selection.provider!, 'primary', undefined, async () => ({
+        usage: { inputTokens: 10, outputTokens: 50 },
+      }));
+      throw error;
+    }, { onUsage })).rejects.toBe(error);
+    expect(onUsage).toHaveBeenCalledExactlyOnceWith(60);
+  });
+
+  it('preserves the Host observer while excluding a separately accounted child route', async () => {
+    const facts: ProviderRequestObservation[] = [];
+    const onUsage = vi.fn();
+    const childUsage = vi.fn();
+    await runWithProviderRequestObserver(fact => facts.push(fact), () => invokeChildWithFallback(baseOptions(), 'brief', async selection => {
+      await invokeChildWithFallback(selection, 'nested', async nested => {
+        return withProviderRequestCredential(nested.provider!, 'primary', undefined, async () => ({
+          ...okResult(), usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+        }));
+      }, { onUsage: childUsage });
+      return withProviderRequestCredential(selection.provider!, 'primary', undefined, async () => ({
+        ...okResult(), usage: { inputTokens: 10, outputTokens: 50, totalTokens: 60 },
+      }));
+    }, { onUsage }));
+
+    expect(onUsage).toHaveBeenCalledExactlyOnceWith(60);
+    expect(childUsage).toHaveBeenCalledExactlyOnceWith(30);
+    expect(facts).toHaveLength(4);
+    expect(new Set(facts.map(fact => fact.route?.chainId)).size).toBe(2);
   });
 
   it('skips a fallback entry equal to the primary provider', async () => {

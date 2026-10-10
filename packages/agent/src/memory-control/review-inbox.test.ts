@@ -1632,6 +1632,26 @@ describe("FEATURE_263 fenced episode review protocol", () => {
     if (home !== undefined) await rm(home, { recursive: true, force: true });
   });
 
+  it("excludes an already considered job before claiming while preserving other backlog", async () => {
+    home = await mkdtemp(path.join(os.tmpdir(), "kodax-review-excluded-job-"));
+    setAgentConfigHome(home);
+    const first = await persistPendingEpisodeReview(identity, digest(1));
+    const second = await persistPendingEpisodeReview(identity, digest(2));
+    const revalidate = vi.fn(async () => "discard" as const);
+
+    const result = await drainPendingEpisodeReviews(identity, {
+      excludedJobId: first.entry.jobId, maxEntries: 1,
+      revalidate, review: async () => [],
+    });
+
+    expect(result).toMatchObject({ discarded: 1, failed: 0 });
+    expect(revalidate).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ jobId: second.entry.jobId }));
+    expect((await inspectEpisodeReviewJob(identity, first.entry.jobId))?.state).toMatchObject({
+      status: "pending", claimEpoch: 0, providerAttempts: 0,
+    });
+    expect(await listPendingEpisodeReviews(identity)).toMatchObject([{ jobId: first.entry.jobId }]);
+  });
+
   it("rejects an outcome captured before the active branch epoch changed", async () => {
     home = await mkdtemp(path.join(os.tmpdir(), "kodax-review-v2-root-epoch-"));
     setAgentConfigHome(home);

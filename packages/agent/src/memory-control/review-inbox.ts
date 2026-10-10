@@ -189,6 +189,8 @@ export interface EpisodeReviewDrainOptions {
   readonly preferredJobId?: string;
   /** Skip unrelated backlog when searching across alternate project identities. */
   readonly onlyPreferred?: boolean;
+  /** Do not reclaim a preferred job already considered by this drain. */
+  readonly excludedJobId?: string;
   /** Epoch-ms deadline: stop claiming new jobs once passed and release an
    * in-flight claim instead of committing a decision. */
   readonly deadlineAtMs?: number;
@@ -1277,10 +1279,11 @@ export async function drainPendingEpisodeReviews(
     tenantId: identity.tenantId,
     agentId: identity.agentId,
   } satisfies PendingEpisodeReviewFilter;
-  const listed = await listPendingEpisodeReviews({
+  const listed = (await listPendingEpisodeReviews({
     ...ownerFilter,
     projectId: identity.projectId ?? null,
-  });
+  })).filter((entry) => options.excludedJobId === undefined
+    || entry.version !== 2 || entry.jobId !== options.excludedJobId);
   const preferred = options.preferredJobId === undefined
     ? undefined
     : listed.find((entry) => entry.version === 2 && entry.jobId === options.preferredJobId);
