@@ -11,10 +11,10 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-alpha.2` (Git tag / GitHub pre-release); `v0.7.96` remains the last stable release |
-| Current package version | `@kodax-ai/kodax@0.7.97-alpha.2` (npm publication remains manual) |
+| Current released version | `v0.7.97-alpha.3` (Git tag / GitHub pre-release); `v0.7.96` remains the last stable release |
+| Current package version | `@kodax-ai/kodax@0.7.97-alpha.3` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
-| Released implementation | [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.2`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
+| Released implementation | [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Current development | `v0.7.97` / `FEATURE_298` — cross-platform/manual release verification for the alpha continues |
 | Roadmap updated | `2026-09-23` — FEATURE_300 planned for `v0.7.99`; implementation not started |
 | Total tracked features | `84` |
@@ -520,6 +520,24 @@
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
 ---
+
+## v0.7.97-alpha.3 Release Record
+
+`v0.7.97-alpha.3` is the third alpha of the v0.7.97 line: trusted Main can
+bound Product Workflows. `authorizeExecution` may return a
+`workflowHostPolicy` — a `maxAgents` lifetime cap enforced with race-safe
+spawn-slot reservations and a `tokenBudget` output budget — without
+registering credential or hostTools leases; the Host capability moves to
+`productExecutionAuthorization:2` and older Hosts reject it like a missing
+capability. Policy-only authorizations bind to `/client` inputs, queued
+consumes, and Skill/command/review derived Runs, never to independent
+Actor admissions; steer cannot replace an active Run's policy, and
+different policies never merge into one Run. Product Runs capture the
+Host `workflow.maxConcurrency` at start, use the Host-owned workflow-runs
+directory, and publish output usage only when every executed round
+(including verification repair) reported it. Every v0.7.96 stable and
+v0.7.97-alpha.1/alpha.2 contract is retained. Cross-platform manual
+acceptance and npm publication remain manual maintainer steps.
 
 ## v0.7.97-alpha.2 Release Record
 

@@ -8,6 +8,40 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.97-alpha.3] - 2026-10-10
+
+Third alpha of the v0.7.97 line: trusted Main can now bound Product
+Workflows. `authorizeExecution` may return a `workflowHostPolicy`
+(`maxAgents`, `tokenBudget`) without registering credential or hostTools
+leases; the Host capability moves to `productExecutionAuthorization:2`.
+Ceilings bind to Product Runs including their Workflow children, Workflow
+spawn slots are reserved across concurrent admissions, and output usage is
+published only when every executed round reported it. Every v0.7.96
+stable and v0.7.97-alpha.1/alpha.2 contract is retained. npm publication
+remains a manual maintainer action.
+
+### Added
+
+- Trusted-Main Workflow ceilings: `workflowHostPolicy` (`maxAgents`,
+  `tokenBudget`) on `RuntimeExecutionAuthorization`, accepted policy-only
+  on `/client` inputs, queued consumes, and Skill/command/review derived
+  Runs; rejected on independent Actor admissions; Host capability
+  `productExecutionAuthorization:2`.
+- Workflow `maxAgents` race safety: spawn slots are reserved synchronously
+  across pending backend admissions, so concurrent requests cannot exceed
+  the lifetime cap.
+- Workflow output usage: finalized managed results carry aggregate
+  input/output usage; `outputTokens` is published only when every executed
+  round (including verification repair) reported its output usage.
+
+### Changed
+
+- Product Runs capture the Host `workflow.maxConcurrency` at start and use
+  the Host-owned workflow-runs directory; the client adapter strips forged
+  `workflowHostPolicy` fields from Product payloads.
+
+---
+
 ## [0.7.97-alpha.2] - 2026-10-10
 
 Second alpha of the v0.7.97 line: completes the FEATURE_298 product seams

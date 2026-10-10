@@ -4,6 +4,20 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-10-10
 >
+> **v0.7.97-alpha.3 release addendum:** FEATURE_298's third alpha lets
+> trusted Main bound Product Workflows. `authorizeExecution` may return a
+> `workflowHostPolicy` — a `maxAgents` lifetime cap enforced with
+> race-safe spawn-slot reservations and a `tokenBudget` output budget —
+> without registering credential or hostTools leases; the Host capability
+> moves to `productExecutionAuthorization:2` and older Hosts reject it
+> like a missing capability. Policy-only authorizations bind to `/client`
+> inputs, queued consumes, and Skill/command/review derived Runs, never to
+> independent Actor admissions. Product Runs capture the Host
+> `workflow.maxConcurrency` at start, use the Host-owned workflow-runs
+> directory, and publish output usage only when every executed round
+> reported it. Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2 contract
+> is retained.
+>
 > **v0.7.97-alpha.2 release addendum:** FEATURE_298's second alpha closes
 > the embedder-facing product seams for running the client inside a
 > trusted shell (Space). `connectKodaXClient` / `ensureKodaXClient` accept

@@ -769,6 +769,18 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
+**v0.7.97-alpha.3 release:** Lets trusted Main bound Product Workflows.
+`authorizeExecution` may return a `workflowHostPolicy` (`maxAgents`,
+`tokenBudget`) without registering credential or hostTools leases, and the
+Host capability moves to `productExecutionAuthorization:2`. Policy-only
+authorizations bind to `/client` inputs, queued consumes, and
+Skill/command/review derived Runs, never to independent Actor admissions;
+Workflow spawn slots are reserved across concurrent admissions, and output
+usage publishes only when every executed round reported it. See
+[docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) and the
+[v0.7.97-alpha.3 release notes](docs/release.md#v0797-alpha3-release-preparation).
+Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2 contract is retained.
+
 **v0.7.97-alpha.2 release:** Completes the FEATURE_298 product seams
 embedders need to run the client inside a trusted shell (Space).
 `connectKodaXClient`/`ensureKodaXClient` accept a trusted

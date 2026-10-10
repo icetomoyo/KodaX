@@ -136,6 +136,43 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.97-alpha.3 release preparation
+
+Release state: `v0.7.97-alpha.3` is the GitHub pre-release for the exact
+tagged commit — the third alpha of the v0.7.97 line, letting trusted Main
+bound Product Workflows. The tag-triggered Release workflow runs the full
+reusable CI workflow before the build matrix; branch pushes do not trigger
+CI, so the tag is the first and only remote validation gate. The `-alpha`
+suffix marks the release as a GitHub pre-release automatically. npm
+registry publication remains a separate manual maintainer action.
+
+On top of v0.7.97-alpha.2 it includes:
+
+- Trusted-Main Workflow ceilings: `authorizeExecution` may return a
+  `workflowHostPolicy` (`maxAgents`, `tokenBudget`) without registering
+  credential or hostTools leases; the Host capability moves to
+  `productExecutionAuthorization:2` and older Hosts reject it like a
+  missing capability (design: `docs/SPACE_SDK_SEAMS.md`).
+- Policy binding: policy-only authorizations bind to `/client` inputs,
+  queued consumes, and Skill/command/review derived Runs, never to
+  independent Actor admissions; steer cannot replace an active Run's
+  policy and different policies never merge into one Run. The client
+  adapter strips forged `workflowHostPolicy` fields from Product payloads.
+- Race-safe `maxAgents`: Workflow spawn slots are reserved synchronously
+  across pending backend admissions, so concurrent requests cannot exceed
+  the lifetime cap.
+- Usage-truthful `tokenBudget`: finalized managed results carry aggregate
+  input/output usage; `outputTokens` publishes only when every executed
+  round (including verification repair) reported its output usage, with
+  the conservative `totalTokens` fallback for legacy backends.
+- Host-owned Workflow configuration: Product Runs capture the existing
+  `workflow.maxConcurrency` at start and use the Host-owned workflow-runs
+  directory; no new tunable concurrency field.
+
+All root/workspace package versions and lockfile entries are
+`0.7.97-alpha.3`. The feature-design submodule, public guides, architecture
+documents, and `kodax_manual` track this release.
+
 ## v0.7.97-alpha.2 release preparation
 
 Release state: `v0.7.97-alpha.2` is the GitHub pre-release for the exact

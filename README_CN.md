@@ -301,6 +301,16 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
+**v0.7.97-alpha.3 发布**：让可信 Main 为产品 Workflow 设定上限。
+`authorizeExecution` 可以只返回 `workflowHostPolicy`（`maxAgents`、
+`tokenBudget`），无需注册 credential 或 hostTools lease；宿主能力升级为
+`productExecutionAuthorization:2`。仅策略的授权绑定 `/client` 输入、排队
+消费与 Skill/command/review 派生 Run，从不绑定独立 Actor 准入；Workflow
+spawn 名额在并发准入间同步预留，输出用量只在每个执行轮都上报时才发布。
+详见 [docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) 与
+[v0.7.97-alpha.3 发布清单](docs/release.md#v0797-alpha3-release-preparation)。
+所有 v0.7.96 稳定与 v0.7.97-alpha.1/alpha.2 契约全部保留。
+
 **v0.7.97-alpha.2 发布**：补齐 FEATURE_298 面向嵌入方（Space）的产品接缝——
 在可信壳内运行客户端所需的最后一块。`connectKodaXClient`/`ensureKodaXClient`
 接受仅在可信 Main 进程执行的 `authorizeExecution` 回调，注册 scoped credential
