@@ -386,6 +386,7 @@ function buildRuntime(opts: CreateWorkflowRuntimeOptions): InternalRuntime {
   const concurrency = new WorkflowResourceScope(maxConcurrency);
 
   let totalSpawned = 0;
+  let pendingSpawns = 0;
   let spentOutputTokens = 0;
   let status: WorkflowRunStatus = 'running';
   // FEATURE_246 Part D: per-inputHash call counter so two runAgent calls with
@@ -446,7 +447,7 @@ function buildRuntime(opts: CreateWorkflowRuntimeOptions): InternalRuntime {
   };
 
   const checkAgentCap = (): void => {
-    if (totalSpawned >= maxAgents) {
+    if (totalSpawned + pendingSpawns >= maxAgents) {
       throw new WorkflowLimitError(`maxAgents lifetime cap (${maxAgents}) reached`);
     }
   };
@@ -472,12 +473,17 @@ function buildRuntime(opts: CreateWorkflowRuntimeOptions): InternalRuntime {
         ),
     });
     let acquired = true;
+    let reservedAgentSlot = false;
     let handle: WorkflowTaskHandle | undefined;
     try {
       checkAbort();
       checkBudget();
       checkAgentCap();
+      // Reserve synchronously; another admission may arrive while the backend awaits.
+      pendingSpawns += 1;
+      reservedAgentSlot = true;
       for (;;) {
+        checkBudget();
         try {
           handle = await opts.backend.spawn(input);
           break;
@@ -488,6 +494,8 @@ function buildRuntime(opts: CreateWorkflowRuntimeOptions): InternalRuntime {
           if (!canRetry) throw error;
         }
       }
+      pendingSpawns -= 1;
+      reservedAgentSlot = false;
       totalSpawned += 1;
       taskNames.set(handle.taskId, handle.name);
       activeTaskIds.add(handle.taskId);
@@ -524,6 +532,8 @@ function buildRuntime(opts: CreateWorkflowRuntimeOptions): InternalRuntime {
         concurrency.release();
       }
       throw error;
+    } finally {
+      if (reservedAgentSlot) pendingSpawns -= 1;
     }
   };
 

@@ -707,6 +707,24 @@ describe('runWorkflow — event envelope + ordering', () => {
 });
 
 describe('maxAgents total cap', () => {
+  it('releases a pending lifetime reservation when the backend rejects a spawn', async () => {
+    const base = fakeBackend();
+    let attempts = 0;
+    const backend: WorkflowAgentBackend = { ...base.backend,
+      spawn: async input => {
+        if (attempts++ === 0) throw new Error('Fixture startup failed before acceptance.');
+        return base.backend.spawn(input);
+      },
+    };
+    const outcome = await runWorkflow(baseOpts(backend, { limits: { maxAgents: 1 } }), async wf => {
+      await expect(wf.spawnAgent({ name: 'rejected', prompt: 'x' })).rejects.toThrow('Fixture startup failed');
+      return wf.runAgent({ name: 'accepted', prompt: 'x' });
+    });
+    expect(outcome.ok).toBe(true);
+    expect(outcome.state.totalSpawned).toBe(1);
+    expect(base.spawnCount()).toBe(1);
+  });
+
   it('throws WorkflowLimitError when total spawns exceed maxAgents', async () => {
     const { backend, spawnCount } = fakeBackend();
     const outcome = await runWorkflow(baseOpts(backend, { limits: { maxAgents: 2 } }), async (wf) => {
