@@ -763,7 +763,7 @@ describe('createCodingWorkflowBackend — spawn + wait', () => {
     expect(result.verification?.reasons.join('\n')).toContain('expected file mutations');
   });
 
-  it('repairs a hard write verification failure before returning failed', async () => {
+  it.each([7, 0, undefined])('repairs a hard write verification failure with repair output usage %s', async (repairOutput) => {
     let attempts = 0;
     const objectives: string[] = [];
     const backend = createCodingWorkflowBackend({
@@ -796,7 +796,7 @@ describe('createCodingWorkflowBackend — spawn + wait', () => {
               fallbackReason: 'first route unavailable',
               iterations: 3,
               inputTokens: 15,
-              outputTokens: 7,
+              ...(repairOutput === undefined ? {} : { outputTokens: repairOutput }),
               cacheReadTokens: 2,
               durationMs: 150,
             },
@@ -844,10 +844,10 @@ describe('createCodingWorkflowBackend — spawn + wait', () => {
       usage: {
         totalTokens: 50,
         inputTokens: 25,
-        outputTokens: 12,
         cacheReadTokens: 3,
       },
     });
+    expect(result.usage?.outputTokens).toBe(repairOutput === undefined ? undefined : 5 + repairOutput);
   });
 
   it('stops repairing after two hard verification repair attempts', async () => {

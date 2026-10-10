@@ -828,6 +828,7 @@ async function runSubstrateInContext(
     postToolJudgeConsumed: false,
     maxTokensRetryCount: 0,
     costTracker: createCostTracker() as CostTracker,
+    usageComplete: true,
     managedProtocolContinueAttempted: false,
     compactConsecutiveFailures: 0,
     compactAntiThrash: createCompactionAntiThrashState(),
@@ -1218,8 +1219,15 @@ async function runSubstrateInContext(
       runtimeSessionState,
       { includeUnchanged: false },
     );
+    const usage = getSummary(turnState.costTracker);
     const finalized = {
       ...result,
+      ...(turnState.usageComplete && usage.callCount > 0 ? { usage: {
+        inputTokens: usage.totalInputTokens, outputTokens: usage.totalOutputTokens,
+        totalTokens: usage.totalInputTokens + usage.totalOutputTokens,
+        ...(usage.totalCacheReadTokens > 0 ? { cachedReadTokens: usage.totalCacheReadTokens } : {}),
+        ...(usage.totalCacheWriteTokens > 0 ? { cachedWriteTokens: usage.totalCacheWriteTokens } : {}),
+      } } : {}),
       writtenFiles: [...writtenFiles.values()],
       ...(payload ? { managedProtocolPayload: payload } : {}),
       ...(runtimeSessionSnapshot ? { runtimeSessionSnapshot } : {}),
@@ -2304,15 +2312,18 @@ async function runSubstrateInContext(
 
           if (decision.action === 'manual_continue' || attempt >= resilienceCfg.maxRetries) {
             streamTimers.clearAll();
+            const usageBeforeRecovery = turnState.usageComplete;
             const recovered = await tryTextRecovery({ state: textRecovery, error, messages: wireMessages,
               provider: streamProvider, system: effectiveSystemPrompt, model: turnState.currentModelOverride,
               reasoning: effectiveProviderReasoning, maxOutputTokens: requestMaxOutputTokens,
               attempt, maxAttempts: resilienceCfg.maxRetries, timeoutMs: API_HARD_TIMEOUT_MS, signal: options.abortSignal,
               hasPendingInputs: () => options.context?.interruptInput?.hasPendingInputs?.() === true
                 || hasQueuedFollowUp(events, messageQueueAgentId),
-              onStart: () => events.onProviderRecovery?.({ stage: decision.failureStage, errorClass: decision.reasonCode,
-                attempt, maxAttempts: resilienceCfg.maxRetries, delayMs: 0, recoveryAction: 'text_diagnosis', ladderStep: 4, fallbackUsed: false }),
-              onUsage: usage => { turnState.costTracker = recordUsage(turnState.costTracker, {
+              onStart: () => { turnState.usageComplete = false;
+                events.onProviderRecovery?.({ stage: decision.failureStage, errorClass: decision.reasonCode,
+                  attempt, maxAttempts: resilienceCfg.maxRetries, delayMs: 0, recoveryAction: 'text_diagnosis', ladderStep: 4, fallbackUsed: false }); },
+              onUsage: usage => { turnState.usageComplete = usageBeforeRecovery;
+                turnState.costTracker = recordUsage(turnState.costTracker, {
                 provider: turnState.currentProviderName, model: turnState.currentModelOverride ?? streamProvider.getModel(),
                 inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
                 cacheReadTokens: usage.cachedReadTokens, cacheWriteTokens: usage.cachedWriteTokens }); },
@@ -2365,6 +2376,8 @@ async function runSubstrateInContext(
           cacheReadTokens: result.usage.cachedReadTokens,
           cacheWriteTokens: result.usage.cachedWriteTokens,
         });
+      } else {
+        turnState.usageComplete = false;
       }
 
       turnState.lastText = result.textBlocks.map(b => b.text).join(' ');

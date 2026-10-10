@@ -35,8 +35,9 @@ interface CapturedRequest {
 
 class CapacityAccountingProvider extends KodaXBaseProvider {
   static requests: CapturedRequest[] = [];
-  static mode: 'text' | 'tool' | 'reject_once' = 'text';
+  static mode: 'text' | 'tool' | 'tool_once' | 'reject_once' = 'text';
   static usage: KodaXStreamResult['usage'] = undefined;
+  static usages: KodaXStreamResult['usage'][] | undefined;
 
   readonly name = PROVIDER_NAME;
   readonly supportsThinking = false;
@@ -62,7 +63,11 @@ class CapacityAccountingProvider extends KodaXBaseProvider {
     if (CapacityAccountingProvider.mode === 'reject_once' && CapacityAccountingProvider.requests.length === 1) {
       throw new KodaXContextOverflowError({ contextWindow: CONTEXT_WINDOW, inputTokensKind: 'unknown' });
     }
-    if (CapacityAccountingProvider.mode === 'tool') {
+    const usage = CapacityAccountingProvider.usages
+      ? CapacityAccountingProvider.usages[CapacityAccountingProvider.requests.length - 1]
+      : CapacityAccountingProvider.usage;
+    if (CapacityAccountingProvider.mode === 'tool'
+      || (CapacityAccountingProvider.mode === 'tool_once' && CapacityAccountingProvider.requests.length === 1)) {
       return {
         textBlocks: [],
         thinkingBlocks: [],
@@ -72,14 +77,14 @@ class CapacityAccountingProvider extends KodaXBaseProvider {
           name: 'read',
           input: { path: 'capacity-fixture.txt' },
         }],
-        usage: CapacityAccountingProvider.usage,
+        usage,
       };
     }
     return {
       textBlocks: [{ type: 'text', text: 'done' }],
       thinkingBlocks: [],
       toolBlocks: [],
-      usage: CapacityAccountingProvider.usage,
+      usage,
     };
   }
 }
@@ -90,6 +95,7 @@ describe('runSubstrate physical request accounting', { timeout: 30_000 }, () => 
     CapacityAccountingProvider.requests = [];
     CapacityAccountingProvider.mode = 'text';
     CapacityAccountingProvider.usage = undefined;
+    CapacityAccountingProvider.usages = undefined;
     registerModelProvider(PROVIDER_NAME, () => new CapacityAccountingProvider());
   });
 
@@ -97,6 +103,30 @@ describe('runSubstrate physical request accounting', { timeout: 30_000 }, () => 
     delete process.env[API_KEY_ENV];
     clearRuntimeModelProviders();
   });
+
+  it.each(['complete', 'missing_first', 'missing_last'] as const)(
+    'only exposes complete aggregate output usage for %s responses', async (mode) => {
+      CapacityAccountingProvider.mode = 'tool_once';
+      CapacityAccountingProvider.usages = [
+        mode === 'missing_first' ? undefined : { inputTokens: 10, outputTokens: 0 },
+        mode === 'missing_last' ? undefined : { inputTokens: 11, outputTokens: 0 },
+      ];
+      const result = await runSubstrate({
+        provider: PROVIDER_NAME,
+        model: 'capacity-model',
+        maxIter: 2,
+        reasoningMode: 'off',
+        context: { systemPromptOverride: 'sys' },
+        events: { beforeToolExecute: async () => 'read complete' },
+      }, 'read the file and finish');
+
+      expect(result.success).toBe(true);
+      expect(CapacityAccountingProvider.requests).toHaveLength(2);
+      expect(result.usage).toEqual(mode === 'complete'
+        ? { inputTokens: 21, outputTokens: 0, totalTokens: 21 }
+        : undefined);
+    },
+  );
 
   it('recovers a rejected SA generation after persisting reduced tool history', async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-sa-rejection-'));

@@ -1056,6 +1056,7 @@ export function createCodingWorkflowBackend(deps: CodingWorkflowBackendDeps): Wo
     const initialRouteFacts = term.routeFacts;
     let totalInputTokens = term.routeFacts?.inputTokens ?? 0;
     let totalOutputTokens = term.routeFacts?.outputTokens ?? 0;
+    let outputUsageKnown = term.routeFacts?.outputTokens !== undefined;
     let totalCacheReadTokens = term.routeFacts?.cacheReadTokens ?? 0;
     let totalIterations = term.routeFacts?.iterations ?? 0;
     let totalDurationMs = term.routeFacts?.durationMs ?? 0;
@@ -1121,6 +1122,7 @@ export function createCodingWorkflowBackend(deps: CodingWorkflowBackendDeps): Wo
       term = deriveTerminal(result, taskId);
       totalInputTokens += term.routeFacts?.inputTokens ?? 0;
       totalOutputTokens += term.routeFacts?.outputTokens ?? 0;
+      outputUsageKnown &&= term.routeFacts?.outputTokens !== undefined;
       totalCacheReadTokens += term.routeFacts?.cacheReadTokens ?? 0;
       totalIterations += term.routeFacts?.iterations ?? 0;
       totalDurationMs += term.routeFacts?.durationMs ?? 0;
@@ -1204,7 +1206,7 @@ export function createCodingWorkflowBackend(deps: CodingWorkflowBackendDeps): Wo
       usage: {
         totalTokens: totalTokensUsed,
         ...(totalInputTokens > 0 ? { inputTokens: totalInputTokens } : {}),
-        ...(totalOutputTokens > 0 ? { outputTokens: totalOutputTokens } : {}),
+        ...(outputUsageKnown ? { outputTokens: totalOutputTokens } : {}),
         ...(totalCacheReadTokens > 0 ? { cacheReadTokens: totalCacheReadTokens } : {}),
       },
     };
