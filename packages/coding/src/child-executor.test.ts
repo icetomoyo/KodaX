@@ -613,6 +613,25 @@ describe('executeChildAgents — workflow accounting and isolation cleanup', () 
     expect(result.totalTokensUsed).toBe(42);
   });
 
+  it.each([true, false])('retains fallback costs when a readOnly=%s child throws', async (readOnly) => {
+    vi.stubEnv('KODAX_FALLBACK_PROVIDERS', 'kimi-code');
+    mockRunKodaX
+      .mockResolvedValueOnce({ ...okResult('unavailable', { inputTokens: 10, outputTokens: 20, totalTokens: 30 }),
+        failure: { message: 'unavailable', safeMessage: 'unavailable', errorClass: 'provider_overloaded',
+          requestPhase: 'before_first_delta', httpStatus: 503 }, success: false })
+      .mockRejectedValueOnce(new Error('fallback execution failed'));
+    try {
+      const result = await executeChildAgents(
+        [createBundle({ id: 'cb-fallback-error-cost', readOnly })], createCtx(), createOptions(),
+      );
+
+      expect(result.totalTokensUsed).toBe(30);
+      expect(result.results[0]).toMatchObject({ status: 'failed', totalTokensUsed: 30 });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('emits child activity end metadata after a child leaves the executor', async () => {
     const onChildActivityEnd = vi.fn();
     const correlation = {

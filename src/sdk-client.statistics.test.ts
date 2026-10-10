@@ -18,11 +18,12 @@ let client: Awaited<ReturnType<typeof connectKodaXClient>>;
 let unregister: () => void;
 let executions: string[];
 let finishOperation: () => void;
-let operationEntered: boolean;
+let operationEntered: Promise<void>;
+let enterOperation: () => void;
 beforeEach(async () => {
   homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-statistics-regression-'));
   executions = [];
-  operationEntered = false;
+  operationEntered = new Promise<void>(resolve => { enterOperation = resolve; });
   const operation = new Promise<void>(resolve => { finishOperation = resolve; });
   vi.stubEnv('KODAX_STATS_FIXTURE', 'fixture');
   class Provider extends KodaXBaseProvider {
@@ -30,7 +31,7 @@ beforeEach(async () => {
     protected readonly config: KodaXProviderConfig = { apiKeyEnv: 'KODAX_STATS_FIXTURE', model: 'fixture', supportsThinking: false };
     async stream(messages: KodaXMessage[], _tools?: unknown, _system?: unknown, _reasoning?: unknown, options?: KodaXProviderStreamOptions): Promise<KodaXStreamResult> {
       const probe = JSON.stringify(messages);
-      if (probe.includes('HOLD-OPERATION-ONLY')) { operationEntered = true; await operation; }
+      if (probe.includes('HOLD-OPERATION-ONLY')) { enterOperation(); await operation; }
       const results = messages.flatMap(message => Array.isArray(message.content) ? message.content.filter(block => block.type === 'tool_result') : []);
       if (probe.includes('ROOT-SPAWN-PROBE') && !probe.includes('CHILD-FACT-PROBE') && results.length === 0) {
         return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [{ type: 'tool_use', id: 'spawn', name: 'spawn_agent',
@@ -121,7 +122,18 @@ it('reports partial physical coverage while an operation-only adapter is still e
   const session = await client.sessions.create({ projectPath: homeDir });
   await client.sessions.updateSettings(session.id, { provider: 'statistics-http', agentMode: 'sa', permissionMode: 'full-access' });
   const root = await client.inputs.submit({ sessionId: session.id, inputId: 'operation-only', text: 'HOLD-OPERATION-ONLY' });
-  await expect.poll(() => operationEntered).toBe(true);
+  let readinessTimer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      operationEntered,
+      client.runs.await(root.runId!).then(outcome => { throw new Error(`Fixture Run ended before Provider entry: ${outcome.phase}`); }),
+      new Promise<never>((_, reject) => {
+        readinessTimer = setTimeout(() => reject(new Error('Fixture Provider did not enter.')), 15_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(readinessTimer);
+  }
   expect(await client.statistics.read(session.id)).toMatchObject({ coverage: 'partial', operationCount: 1, physicalRequestCount: 0 });
   expect((await client.statistics.read(session.id)).issues.length).toBeGreaterThan(0);
   finishOperation(); expect((await client.runs.await(root.runId!)).phase).toBe('completed');

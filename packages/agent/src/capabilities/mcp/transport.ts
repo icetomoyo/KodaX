@@ -193,9 +193,9 @@ export function createStdioTransport(config: {
       }, {
         manualUnregister: true,
       });
-      // Absorb EPIPE on stdin — the server may exit before we finish writing
-      // (e.g. during framing auto-detection when Content-Length is rejected).
-      child.stdin.on('error', () => {});
+      child.stdin.on('error', (error) => {
+        if (!closingChildren.has(child)) ev.onError(error);
+      });
 
       child.stdout.on('data', (chunk: Buffer) => {
         buffer = Buffer.concat([buffer, chunk]);
@@ -239,14 +239,17 @@ export function createStdioTransport(config: {
     },
 
     async send(json) {
-      if (!process?.stdin.writable) {
+      const child = process;
+      if (!child?.stdin.writable) {
         throw new Error('Stdio transport is not writable.');
       }
-      if (framing === 'ndjson') {
-        process.stdin.write(json + '\n', 'utf8');
-      } else {
-        process.stdin.write(createContentLengthFrame(json), 'utf8');
-      }
+      const frame = framing === 'ndjson' ? json + '\n' : createContentLengthFrame(json);
+      await new Promise<void>((resolve, reject) => {
+        child.stdin.write(frame, 'utf8', (error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
     },
 
     /** Switch framing mode (used by runtime for auto-detection fallback). */

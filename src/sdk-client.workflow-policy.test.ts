@@ -6,7 +6,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   KodaXBaseProvider, clearRuntimeModelProviders, registerModelProvider,
-  type KodaXProviderConfig,
+  KodaXProviderError, KodaXContextOverflowError, type KodaXProviderConfig,
 } from '@kodax-ai/llm';
 import { LEARNING_REVIEW_TOOL } from '@kodax-ai/coding';
 import { connectKodaXClient, type KodaXClientWorkflowHostPolicy } from '@kodax-ai/kodax/client';
@@ -24,6 +24,7 @@ let childRequests: number;
 let activeChildren: number;
 let peakChildren: number;
 let outputTokens: number;
+let failAfterToolRound: boolean;
 let releaseHold: () => void;
 let holdEntered: Promise<void>;
 
@@ -45,6 +46,7 @@ beforeEach(async () => {
   homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-workflow-policy-'));
   policy = undefined; childRequests = 0; activeChildren = 0; peakChildren = 0;
   outputTokens = 2;
+  failAfterToolRound = false;
   const hold = new Promise<void>(resolve => { releaseHold = resolve; });
   let entered: () => void;
   holdEntered = new Promise<void>(resolve => { entered = resolve; });
@@ -78,6 +80,16 @@ beforeEach(async () => {
       } else if (probe.includes('CHILD-WORKFLOW-PROBE') && args[1].some(tool => tool.name === 'read')) {
         // Tool-free digest calls may overlap after a child settles; they are not active Workflow agents.
         childRequests += 1; activeChildren += 1; peakChildren = Math.max(peakChildren, activeChildren);
+        if (failAfterToolRound) {
+          activeChildren -= 1;
+          if (results.length === 0) return {
+            textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use' as const,
+            toolBlocks: [{ type: 'tool_use' as const, id: 'charged-read', name: 'read',
+              input: { path: 'fixture.txt' } }],
+            usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+          };
+          throw new KodaXProviderError('Unavailable after a charged tool round', this.name, { httpStatus: 503 });
+        }
         try { await new Promise(resolve => setTimeout(resolve, 30)); }
         finally { activeChildren -= 1; }
       }
@@ -165,6 +177,65 @@ it('stops new Workflow work when the trusted output-token budget is exhausted', 
   expect((await client.workflows.list({ runId: start.runId }))[0]).toMatchObject({
     status: 'failed', totalSpawned: 1, error: expect.stringContaining('tokenBudget cap (1)'),
   });
+});
+
+it.each(['known', 'unknown', 'throw', 'charged-throw', 'truncated-throw'] as const)('charges failed Provider rounds with fallback result=%s', async (mode) => {
+  failAfterToolRound = true;
+  const budget = mode === 'charged-throw' || mode === 'truncated-throw' ? 40 : 10;
+  policy = { tokenBudget: budget };
+  class FallbackProvider extends KodaXBaseProvider {
+    readonly name = 'workflow-fallback-fixture';
+    readonly supportsThinking = false;
+    protected readonly config: KodaXProviderConfig = {
+      apiKeyEnv: 'KODAX_WORKFLOW_POLICY_FIXTURE', model: 'fixture', supportsThinking: false,
+    };
+    async stream(...args: Parameters<KodaXBaseProvider['stream']>) {
+      if (mode === 'truncated-throw' && args[1].some(tool => tool.name === 'read')
+        && !JSON.stringify(args[0]).includes('Fallback truncated evidence')) return {
+        textBlocks: [{ type: 'text' as const, text: 'Fallback truncated evidence' }],
+        thinkingBlocks: [], toolBlocks: [], stopReason: 'max_tokens' as const,
+        usage: { inputTokens: 10, outputTokens: 50, totalTokens: 60 },
+      };
+      if (mode === 'charged-throw' && args[1].some(tool => tool.name === 'read')
+        && !JSON.stringify(args[0]).includes('fallback-charged-read')) return {
+        textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use' as const,
+        toolBlocks: [{ type: 'tool_use' as const, id: 'fallback-charged-read', name: 'read',
+          input: { path: 'fixture.txt' } }],
+        usage: { inputTokens: 10, outputTokens: 50, totalTokens: 60 },
+      };
+      if (mode === 'throw' || mode === 'charged-throw' || mode === 'truncated-throw') throw new KodaXContextOverflowError({
+        contextWindow: 128_000, inputTokensKind: 'unknown',
+      }, this.name);
+      return { textBlocks: [{ type: 'text' as const, text: 'Fallback evidence checked.' }],
+        thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' as const,
+        ...(mode === 'known' ? { usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 } } : {}) };
+    }
+  }
+  registerModelProvider('workflow-fallback-fixture', () => new FallbackProvider());
+  vi.stubEnv('KODAX_FALLBACK_PROVIDERS', 'workflow-fallback-fixture');
+  await writeFile(path.join(homeDir, 'fixture.txt'), 'evidence');
+  const session = await client.sessions.create({ projectPath: homeDir });
+  await client.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
+  const start = await client.workflows.start({ sessionId: session.id, projectRoot: homeDir,
+    source: { kind: 'inline', manifest, source: sequentialSource } });
+  if (start.kind !== 'started') throw new Error(start.reason);
+
+  const result = await client.runs.await(start.runId);
+
+  expect(result.phase).toBe('failed');
+  expect((await client.workflows.list({ runId: start.runId }))[0]).toMatchObject({
+    status: 'failed', totalSpawned: 1, error: expect.stringContaining(`tokenBudget cap (${budget})`),
+  });
+  const requests = (await client.statistics.readRequests(session.id)).items;
+  expect(requests).toEqual(expect.arrayContaining([
+    expect.objectContaining({ usage: expect.objectContaining({ outputTokens: 20 }) }),
+  ]));
+  if (mode === 'known') expect(requests).toEqual(expect.arrayContaining([
+    expect.objectContaining({ usage: expect.objectContaining({ outputTokens: 1 }) }),
+  ]));
+  if (mode === 'charged-throw' || mode === 'truncated-throw') expect(requests).toEqual(expect.arrayContaining([
+    expect.objectContaining({ usage: expect.objectContaining({ outputTokens: 50 }) }),
+  ]));
 });
 
 it('preserves known zero output usage instead of spending input tokens against the output budget', async () => {

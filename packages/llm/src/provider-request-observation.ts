@@ -52,6 +52,11 @@ export function currentProviderRequestAbortSignal(): AbortSignal | undefined { r
 export function runWithProviderRequestObserver<T>(observer: Observer, operation: () => T): T {
   return observers.run(observer, operation);
 }
+/** Observe this operation without replacing its owner's execution-fact observer. */
+export function runWithAdditionalProviderRequestObserver<T>(observer: Observer, operation: () => T): T {
+  const owner = observers.getStore();
+  return observers.run(fact => { observer(fact); owner?.(fact); }, operation);
+}
 export async function observeProviderAttempt<T>(provider: string, model: string | undefined, operation: () => Promise<T>, observesFetch = false): Promise<T> {
   const observer = observers.getStore();
   if (!observer) return operation();
@@ -72,7 +77,18 @@ export async function observeProviderAttempt<T>(provider: string, model: string 
 }
 function usageFrom(result: unknown): KodaXTokenUsage | undefined {
   const usage = result !== null && typeof result === 'object' && 'usage' in result ? result.usage : undefined;
-  return usage !== null && typeof usage === 'object' && 'inputTokens' in usage && 'outputTokens' in usage ? usage as KodaXTokenUsage : undefined;
+  if (usage === null || typeof usage !== 'object') return undefined;
+  const fields = usage as Record<string, unknown>;
+  const { inputTokens, outputTokens } = fields;
+  if (typeof inputTokens !== 'number' || !Number.isFinite(inputTokens) || inputTokens < 0
+    || typeof outputTokens !== 'number' || !Number.isFinite(outputTokens) || outputTokens < 0
+    || !Number.isFinite(inputTokens + outputTokens)) return undefined;
+  const normalized: KodaXTokenUsage = { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens };
+  for (const field of ['cachedReadTokens', 'cachedWriteTokens', 'thoughtTokens'] as const) {
+    const value = fields[field];
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) normalized[field] = value;
+  }
+  return normalized;
 }
 function finishWire(wire: WireContext, result: unknown, error?: unknown): void {
   if (!wire.current || wire.current.state !== 'started') return;

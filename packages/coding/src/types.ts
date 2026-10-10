@@ -2704,6 +2704,8 @@ export interface KodaXResult {
   contextTokenSnapshot?: KodaXContextTokenSnapshot;
   /** Latest provider usage when the caller has it directly. */
   usage?: KodaXTokenUsage;
+  /** Best-known execution total across fallback attempts; component usage may be incomplete. */
+  totalTokensUsed?: number;
   /** Serializable runtime-owned session state for host-owned persistence. */
   runtimeSessionSnapshot?: KodaXRuntimeSessionSnapshot;
   /**

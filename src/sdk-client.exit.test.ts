@@ -112,13 +112,14 @@ it('durably settles only this client work, protects the other client, and resume
 
 it('rechecks the trusted Host fence after asynchronous access and before interrupt enqueue', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-exit-interrupt-fence-'));
-  let entered = false;
+  let signalEntered: () => void = () => {};
+  const providerEntered = new Promise<void>((resolve) => { signalEntered = resolve; });
   class Provider extends KodaXBaseProvider {
     readonly name = 'interrupt-fence'; readonly supportsThinking = false;
     protected readonly config: KodaXProviderConfig = { apiKeyEnv: 'KODAX_INTERRUPT_FENCE', model: 'fixture', supportsThinking: false };
     async stream(_messages: KodaXMessage[], _tools: KodaXToolDefinition[], _system: string,
       _reasoning?: boolean | KodaXReasoningRequest, _options?: KodaXProviderStreamOptions, signal?: AbortSignal): Promise<KodaXStreamResult> {
-      entered = true;
+      signalEntered();
       await new Promise<never>((_, reject) => signal!.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), { once: true }));
       throw new Error('Unreachable after cancellation.');
     }
@@ -130,7 +131,20 @@ it('rechecks the trusted Host fence after asynchronous access and before interru
     await runtime.sessions.updateSettings(session.id, { agentMode: 'ama', permissionMode: 'full-access' });
     const active = await runtime.runs.start({ sessionId: session.id, input: { type: 'text', text: 'Wait.' },
       options: { agentMode: 'ama' } });
-    await expect.poll(() => entered).toBe(true);
+    // Cold Actor preparation may exceed the poll helper's default deadline.
+    // Leave time for cleanup even if the fixture never reaches the Provider.
+    let readinessTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        providerEntered,
+        active.result.then((result) => { throw new Error(`Fixture ended before Provider entry: ${result.phase}`); }),
+        new Promise<never>((_, reject) => {
+          readinessTimer = setTimeout(() => reject(new Error('Fixture Provider did not enter.')), 15_000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(readinessTimer);
+    }
     let allowed = true;
     let checks = 0;
     const assertAdmission = () => {

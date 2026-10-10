@@ -37,7 +37,7 @@ import { actorQueueId } from './agent-runtime/actor-queue.js';
 import { countTokens } from './tokenizer.js';
 import { resolveProvider } from './providers/index.js';
 import { resolveModelHintTier } from './model-hint-routing.js';
-import { invokeChildWithFallback } from './child-fallback.js';
+import { invokeChildWithFallback, readChildTokenUsage } from './child-fallback.js';
 import { createWorkflowWorktree, removeWorkflowWorktree } from './tools/worktree.js';
 import { loadAgentsFiles, formatAgentsForPrompt } from './context/agents-loader.js';
 import {
@@ -616,15 +616,6 @@ async function withChildIsolationCleanup(
   }
   const cleanupWarning = await cleanupChildIsolationScope(scope, cleanupCtx);
   return appendCleanupWarning(childResult, cleanupWarning);
-}
-
-function readChildTokenUsage(result: KodaXResult): number {
-  const candidate =
-    result.usage?.totalTokens ??
-    result.contextTokenSnapshot?.usage?.totalTokens ??
-    result.contextTokenSnapshot?.currentTokens ??
-    0;
-  return Number.isFinite(candidate) && candidate > 0 ? candidate : 0;
 }
 
 interface WorkflowChildDigestResult {
@@ -1369,6 +1360,7 @@ async function runReadChildBody(
   }
 
   let childResult: KodaXChildAgentResult;
+  let fallbackTokensUsed = 0;
   try {
     const childStartedAt = Date.now();
     const runFn = await getRunKodaX();
@@ -1462,6 +1454,7 @@ async function runReadChildBody(
       briefing,
       runFn,
       {
+        onUsage: (total) => { fallbackTokensUsed = total; },
         onFallback: ({ fromProvider, toProvider, reason }) => {
           actualProvider = toProvider;
           fallbackReason = `${fromProvider} → ${toProvider}: ${reason}`;
@@ -1540,7 +1533,8 @@ async function runReadChildBody(
       bundle,
       error instanceof Error ? error.message : String(error),
       'failed',
-      { actualIterations: 0, interrupted: false, failure: buildLocalExecutionFailure(error) },
+      { actualIterations: 0, interrupted: false, totalTokensUsed: fallbackTokensUsed,
+        failure: buildLocalExecutionFailure(error) },
     );
   } finally {
     emitChildActivityEnd(
@@ -1674,6 +1668,7 @@ async function runWriteChildBody(
   }
 
   let childResult: KodaXChildAgentResult;
+  let fallbackTokensUsed = 0;
   try {
     const childStartedAt = Date.now();
     const runFn = await getRunKodaX();
@@ -1766,6 +1761,7 @@ async function runWriteChildBody(
       briefing,
       runFn,
       {
+        onUsage: (total) => { fallbackTokensUsed = total; },
         onFallback: ({ fromProvider, toProvider, reason }) => {
           actualProvider = toProvider;
           fallbackReason = `${fromProvider} -> ${toProvider}: ${reason}`;
@@ -1846,7 +1842,8 @@ async function runWriteChildBody(
       bundle,
       error instanceof Error ? error.message : String(error),
       'failed',
-      { actualIterations: 0, interrupted: false, failure: buildLocalExecutionFailure(error) },
+      { actualIterations: 0, interrupted: false, totalTokensUsed: fallbackTokensUsed,
+        failure: buildLocalExecutionFailure(error) },
     );
   } finally {
     emitChildActivityEnd(

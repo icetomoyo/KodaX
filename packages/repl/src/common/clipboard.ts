@@ -60,6 +60,7 @@ async function execClipboardCommand(
     let stderr = "";
 
     child.on("error", reject);
+    child.stdin?.on("error", reject);
     child.stderr?.on("data", (chunk: Buffer | string) => {
       stderr += chunk.toString();
     });

@@ -469,6 +469,9 @@ async function drainStartedCodingMemoryReviewInbox(
     const partial = await drainPendingEpisodeReviews(ownerIdentity, {
       ...drainOptions,
       maxEntries: 2 - spent,
+      // The preferred pass already considered this job. Provider-unavailable
+      // failures have no backoff, so reclaiming it here can race the next Run.
+      ...(preferredJobId === undefined ? {} : { excludedJobId: preferredJobId }),
     });
     merge(partial);
   }

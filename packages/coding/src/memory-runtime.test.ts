@@ -12,6 +12,8 @@ import {
   createLearnedCapabilityScope,
   createMemoryControlPlane,
   createSessionLineage,
+  EpisodeReviewFailure,
+  inspectEpisodeReviewJob,
   LearnedAreaStore,
   listPendingEpisodeReviews,
   persistPendingEpisodeReview,
@@ -1433,6 +1435,63 @@ describe('memory runtime hooks', () => {
 
     expect(result).toMatchObject({ reviewed: 0, failed: 1 });
     expect(fixture.notices).toEqual([]);
+  });
+
+  it('does not retry an unavailable preferred review again as backlog in the same drain', async () => {
+    const reviewer = vi.fn(async () => {
+      throw new EpisodeReviewFailure('provider_unavailable', 'learning review provider is not configured');
+    });
+    const fixture = await failedLessonDrainFixture(reviewer);
+    const [job] = await listPendingEpisodeReviews(fixture.identity);
+    if (job?.version !== 2) throw new Error('Expected a durable v2 review job');
+
+    const result = await drainCodingMemoryReviewInbox(fixture.options, fixture.identity,
+      fixture.controller, '', undefined, job.jobId);
+
+    expect(reviewer).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ reviewed: 0, failed: 1 });
+    const snapshot = await inspectEpisodeReviewJob(fixture.identity, job.jobId);
+    expect(snapshot?.state).toMatchObject({
+      status: 'pending', claimEpoch: 1, providerAttempts: 0,
+    });
+    expect(snapshot?.state.nextAttemptAt).toBeUndefined();
+    expect(snapshot?.state.claimToken).toBeUndefined();
+  });
+
+  it('lets a successor drain recover a deferred preferred review without competing with an old retry', async () => {
+    let releaseRetry: () => void;
+    const retry = new Promise<void>(resolve => { releaseRetry = resolve; });
+    const unavailable = vi.fn(async () => {
+      if (unavailable.mock.calls.length > 1) await retry;
+      throw new EpisodeReviewFailure('provider_unavailable', 'learning review provider is not configured');
+    });
+    const fixture = await failedLessonDrainFixture(unavailable);
+    const [job] = await listPendingEpisodeReviews(fixture.identity);
+    if (job?.version !== 2) throw new Error('Expected a durable v2 review job');
+    const previous = drainCodingMemoryReviewInbox(fixture.options, fixture.identity,
+      fixture.controller, '', undefined, job.jobId);
+    const successor = vi.fn(async (input: Parameters<NonNullable<KodaXOptions['learningReviewer']>>[0]) => ({
+      memoryPlan: { trigger: input.memory.trigger, createdAt: '2026-07-27T00:01:00.000Z',
+        sourceRefs: input.memory.sourceRefs, candidateRefs: input.memory.candidateRefs,
+        actions: [], warnings: [] },
+    }));
+    try {
+      await expect.poll(async () => (await inspectEpisodeReviewJob(fixture.identity, job.jobId))?.state.lastError)
+        .toBe('learning review provider is not configured');
+      const recovered = await drainCodingMemoryReviewInbox({ ...fixture.options, learningReviewer: successor },
+        fixture.identity, fixture.controller, 'successor-session');
+      expect(successor).toHaveBeenCalledTimes(1);
+      expect(recovered).toMatchObject({ reviewed: 1, failed: 0 });
+      expect(await listPendingEpisodeReviews(fixture.identity)).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ jobId: job.jobId }),
+      ]));
+      const data = await fixture.options.session!.storage!.load(fixture.identity.sessionId);
+      expect(data?.lineage?.entries.filter(entry => entry.type === 'memory_review_receipt'
+        && entry.jobId === job.jobId)).toHaveLength(1);
+    } finally {
+      releaseRetry!();
+      await previous;
+    }
   });
   it('passes the drain deadline through and reports deadline-released claims', async () => {
     let reviewCalls = 0;

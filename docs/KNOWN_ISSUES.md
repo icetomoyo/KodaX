@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-10-09_
+_Last Updated: 2026-10-10_
 
 ---
 
@@ -12,6 +12,138 @@ _Last Updated: 2026-10-09_
 Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
+
+## Issue 366: Host test readiness races cold Actor preparation
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: observed during v0.7.97-alpha.3 regression validation; first affected version unknown
+- Created: 2026-10-10
+- Fixed: post-v0.7.97-alpha.3 working tree (unreleased)
+- Resolved: 2026-10-10
+
+**Original Problem:** The fast tier fails `sdk-client.exit.test.ts` before
+its trusted admission-fence assertions: the default polling deadline expires
+waiting for the fixture Provider to enter. Four unchanged isolated runs also
+fail, while an instrumented run passes. Observation shows the Run still
+`running/executing`, without a terminal execution error.
+The statistics operation-only fixture has the same default polling race:
+under concurrent validation it times out before its held Provider enters.
+
+**Resolution:** Await the Provider's explicit entry signal, race early Run
+termination and a clearable 15s fixture deadline, and retain the existing 30s
+outer timeout. Failure reaches the fixture's runtime/environment cleanup.
+The admission callback, two-check assertion, conflict assertion and production
+timeouts are unchanged. The complete exit and statistics files pass.
+
+**Files Changed / Tests:** `src/sdk-client.exit.test.ts` and
+`src/sdk-client.statistics.test.ts`. This is a fixture
+readiness correction, not evidence that production admission was bypassed.
+
+## Issue 365: Provider fallback drops child usage and bypasses Workflow budgets
+
+- Priority: High
+- Status: Resolved
+- Introduced: output-component budget regression in v0.7.97-alpha.3; fallback total-usage loss predates that release
+- Created: 2026-10-10
+- Fixed: post-v0.7.97-alpha.3 working tree (unreleased)
+- Resolved: 2026-10-10
+
+**Original Problem:** A Product Workflow with output budget 10 still starts a
+second child after its first Provider completed an output=20/total=30 tool
+round and then returned 503, followed by fallback output=1/total=11. The
+fallback helper replaces the earlier result. Alpha.2's conservative final
+total=11 happens to block new work; alpha.3's known output=1 exposes the loss.
+Returned unknown usage and a final raw throw also lose preceding charges.
+With budget 40, a fallback tool round output=50/total=60 followed by context
+overflow still permits a second child, despite known output consumption 70.
+Root-cause revalidation also reproduced a pure-text `max_tokens` response
+before the same throw: that continuation never emits `onIterationEnd`, so
+the first repair's iteration-event compensation still lost the charge.
+
+**Resolution:** Aggregate returned-attempt usage, retain known zero values,
+and publish complete components only when all attempts are known and
+consistent. Preserve best-known totals separately from context occupancy.
+Observe actual Provider request facts, including continuation, recovery and
+compaction calls, before downstream execution can throw. Scope by route
+chain/attempt and deduplicate by requestId; normal results and observed usage
+are reconciled without counting both. An explicit additional observer preserves
+the Host observer and leaves ordinary observer-replacement semantics intact.
+The fact boundary validates finite non-negative input/output and derives total
+as input+output, including adapters that omit totalTokens; invalid usage stays
+unknown rather than poisoning totals with NaN. Per-child callbacks retain totals
+in both read/write failure results;
+original callbacks and exception identity are preserved. No shared Error
+object is mutated. Exhausted budgets reject subsequent child admissions.
+
+**Files Changed / Tests:** `child-fallback.ts`, `child-executor.ts`, `types.ts`,
+and LLM request-observation exports/implementation; adjacent observation,
+fallback/executor tests and Product SDK Workflow-policy
+regressions. Public SDK cases cover known, unknown, immediate throw, and
+charged-round-then-throw and truncated-continuation-then-throw fallback. Parallel
+shared-error and nested-route tests keep expenses isolated and Host statistics
+intact. Existing authority, cancellation, failure,
+and lifetime-cap semantics remain in force.
+
+## Issue 364: MCP stdio reports failed writes as successful sends
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: observed in v0.7.97-alpha.3; first affected version unknown
+- Created: 2026-10-10
+- Fixed: post-v0.7.97-alpha.3 working tree (unreleased)
+- Resolved: 2026-10-10
+
+**Original Problem:** The stdio transport ignores input-stream errors and
+resolves `send()` before its write completes. A real Writable delivering
+`EPIPE` therefore appears successfully sent to the request caller.
+The original stream listener already prevented an unhandled EPIPE crash here;
+this was a delivery-error propagation defect. A second public Runtime
+reproduction showed that a failed required `notifications/initialized` send
+was swallowed by `notify`, after which handshake reported ready and cleared
+the error. This is fault-injection evidence, not a separate customer incident.
+
+**Resolution:** Await the write callback and reject the send on failure.
+Report input-stream errors through `onError` while the transport is active;
+expected shutdown errors do not emit new diagnostics. Required initialization
+notifications propagate failure into the handshake; cancellation and reverse
+responses retain explicit best-effort behavior with failure diagnostics.
+Framing, process-tree
+cleanup verification, and request deadlines are unchanged.
+
+**Files Changed / Tests:** `packages/agent/src/capabilities/mcp/transport.ts`
+and `runtime.ts`, plus `transport.write-error.test.ts`; both the send and
+public Runtime handshake regressions fail before repair and pass afterward,
+including cleanup of the controlled child and both existing framing attempts.
+
+## Issue 363: Mouse copy-on-select crashes on a closed clipboard helper pipe
+
+- Priority: High
+- Status: Resolved
+- Introduced: user report on v0.7.97-alpha.2; first affected version unknown
+- Created: 2026-10-10
+- Fixed: post-v0.7.97-alpha.3 working tree (unreleased)
+- Resolved: 2026-10-10
+
+**Original Problem:** On Linux inside tmux, triple-click selection or releasing
+a dragged selection triggers automatic copying and can terminate KodaX with
+`EPIPE: broken pipe`. Alpha.3 retains the same helper implementation. It
+observes child-process errors but not the separate `child.stdin` stream error.
+Asynchronous pipe failures escape the existing Promise and UI error handling.
+
+**Resolution:** Listen for input-stream errors before writing or ending the
+helper input, rejecting the existing copy operation so its native/tmux/OSC 52
+fallback and warning paths execute. No global exception suppression or new
+clipboard setting is introduced.
+
+**Files Changed / Tests:** `packages/repl/src/common/clipboard.ts` and its
+adjacent tests. Regressions cover write/end failures in `wl-copy`, `xclip`,
+`xsel`, and `tmux`, plus unavailable terminal fallback. The exact Linux/tmux
+physical mouse sequence still needs platform acceptance; deterministic
+stream failures and an early-exiting real child reproduce the crash mechanism.
+
+See [regression and audit guide](test-guides/ISSUE_363_0.7.97_REGRESSION_GUIDE.md)
+for validation coverage, remaining known issues, and platform acceptance.
 
 ## Issue 362: Linux scoped startup review does not reach HTTP in the bundled cancellation gate
 
@@ -49,6 +181,13 @@ cleanup. Current logs do not distinguish preparation latency, a skipped claim,
 or a review preparation failure. The original 10s observation and 100s outer
 limits, provider assertions, and recovery checks remain unchanged. The final
 CI gate is 6/7, and release remains deferred.
+
+**Latest release evidence (2026-10-10):** Alpha.3 at `21969792` passes the
+ordinary CI workflow, but its Release workflow fails the Linux ARM64 bundled
+gate at the same startup-review HTTP wait. The failure again reports
+`reviewRequests: 0` at test line 286; the universal npm-package build and GitHub
+Release jobs are skipped. See [Release job evidence](https://github.com/icetomoyo/KodaX/actions/runs/38049525862/job/114220626352).
+This failure remains unresolved; Windows bundle success does not clear it.
 
 ## Issue 361: ACP's next prompt can fail during a transient Session read boundary
 
@@ -1549,6 +1688,10 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 366 | Medium | Resolved | Host test readiness races cold Actor preparation | observed during v0.7.97-alpha.3 validation; first affected version unknown | post-v0.7.97-alpha.3 working tree (unreleased) | 2026-10-10 | 2026-10-10 |
+| 365 | High | Resolved | Provider fallback drops child usage and bypasses Workflow budgets | output-component regression in v0.7.97-alpha.3; earlier total loss | post-v0.7.97-alpha.3 working tree (unreleased) | 2026-10-10 | 2026-10-10 |
+| 364 | Medium | Resolved | MCP stdio reports failed writes as successful sends | observed in v0.7.97-alpha.3; first affected version unknown | post-v0.7.97-alpha.3 working tree (unreleased) | 2026-10-10 | 2026-10-10 |
+| 363 | High | Resolved | Mouse copy-on-select crashes on a closed clipboard helper pipe | reported in v0.7.97-alpha.2; first affected version unknown | post-v0.7.97-alpha.3 working tree (unreleased) | 2026-10-10 | 2026-10-10 |
 | 362 | Medium | ready | Linux scoped startup review does not reach HTTP in the bundled cancellation gate | observed during v0.7.97-alpha.1 validation; first affected version unknown | — | 2026-10-09 | — |
 | 361 | Medium | Resolved | ACP's next prompt can fail during a transient Session read boundary | observed during v0.7.97-alpha.1 validation; first affected version unknown | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-09 |
 | 360 | Medium | Resolved | Resume catalog fixture spends its deadline on unrelated repository analysis | v0.7.97-alpha.1 product catalog integration fixture | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
@@ -16366,7 +16509,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 241 (37 Open, 203 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 245 (37 Open, 207 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 1 (Issue 362; Linux diagnosis pending)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md

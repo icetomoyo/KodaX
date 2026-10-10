@@ -1174,7 +1174,7 @@ export class McpServerRuntime {
           void this.notify('notifications/cancelled', {
             requestId,
             reason: `Client request timed out after ${timeoutMs}ms`,
-          });
+          }).catch((error: unknown) => this.recordSendError(error));
         }
         reject(new Error(`MCP request timed out for ${this.serverId}:${method}`));
       }, timeoutMs);
@@ -1197,13 +1197,13 @@ export class McpServerRuntime {
 
   private async notify(method: string, params: Record<string, unknown>): Promise<void> {
     if (!this.transport?.connected) {
-      return;
+      throw new Error(`MCP server "${this.serverId}" is not connected.`);
     }
     await this.transport.send(jsonRpcString({
       jsonrpc: '2.0',
       method,
       params,
-    })).catch(() => {});
+    }));
   }
 
   private handleMessage(raw: string): void {
@@ -1287,12 +1287,16 @@ export class McpServerRuntime {
 
   /** Best-effort JSON-RPC response send (server times out on its own if closed). */
   private sendResponse(id: string | number, result: unknown): void {
-    this.transport?.send(jsonRpcString({ jsonrpc: '2.0', id, result })).catch(() => {});
+    this.transport?.send(jsonRpcString({ jsonrpc: '2.0', id, result })).catch((error: unknown) => this.recordSendError(error));
   }
 
   /** Best-effort JSON-RPC error send. */
   private sendError(id: string | number, code: number, message: string): void {
-    this.transport?.send(jsonRpcString({ jsonrpc: '2.0', id, error: { code, message } })).catch(() => {});
+    this.transport?.send(jsonRpcString({ jsonrpc: '2.0', id, error: { code, message } })).catch((error: unknown) => this.recordSendError(error));
+  }
+
+  private recordSendError(error: unknown): void {
+    this.diagnostics.lastError = error instanceof Error ? error.message : String(error);
   }
 
   /**
