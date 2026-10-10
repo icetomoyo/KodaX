@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-10-10_
+_Last Updated: 2026-10-11_
 
 ---
 
@@ -145,13 +145,15 @@ stream failures and an early-exiting real child reproduce the crash mechanism.
 See [regression and audit guide](test-guides/ISSUE_363_0.7.97_REGRESSION_GUIDE.md)
 for validation coverage, remaining known issues, and platform acceptance.
 
-## Issue 362: Linux scoped startup review does not reach HTTP in the bundled cancellation gate
+## Issue 362: Duplicate terminal-review claims prevent scoped startup recovery
 
 - Priority: Medium
-- Status: ready
+- Status: Resolved
 - Introduced: first affected version unknown; observed during v0.7.97-alpha.1 validation
 - Created: 2026-10-09
-- Classification: Unresolved test failure; product versus fixture attribution pending
+- Classification: Product review-drain handoff race, exposed by Linux scheduling
+- Fixed: post-v0.7.97-alpha.3 working tree (unreleased)
+- Resolved: 2026-10-11
 
 **Original Problem:** At `ffec1df1`, Linux Node 22 twice fails
 `tests/bundled-memory-review-shutdown.test.mjs` → `bundled scoped daemon aborts
@@ -187,7 +189,35 @@ ordinary CI workflow, but its Release workflow fails the Linux ARM64 bundled
 gate at the same startup-review HTTP wait. The failure again reports
 `reviewRequests: 0` at test line 286; the universal npm-package build and GitHub
 Release jobs are skipped. See [Release job evidence](https://github.com/icetomoyo/KodaX/actions/runs/38049525862/job/114220626352).
-This failure remains unresolved; Windows bundle success does not clear it.
+At that point the failure was unresolved; Windows success did not clear it.
+
+**Root-cause repair:** The terminal Coding drain
+processes its preferred job, then can reclaim that same job as backlog.
+`provider_unavailable` has no backoff, so this second claim competes with the
+next Run's startup review. Two deterministic public regressions fail on
+unchanged HEAD (old reviewer twice, successor reviewer zero) and pass after
+excluding the already-considered preferred job before backlog claim acquisition.
+Other backlog jobs remain eligible. Provider authority, cancellation, branch
+fences, attempt counters and retry deadlines are unchanged. See
+[Issue 362 regression guide](test-guides/ISSUE_362_0.7.97_REGRESSION_GUIDE.md).
+**Resolution / platform verification:** The already-considered preferred job
+is excluded before the Coding backlog pass acquires any claim. A succeeding
+Run can recover it under its new authority; the failed old scope no longer
+reclaims it. The repaired SDK/Host snapshot `3e11b03c` passes the original
+bundled release gate on both Linux ARM64 and x64 (40 passed, 1 platform skip
+each). The original scoped startup/abort/deferral/recovery case passes three
+times on each platform, preserving the actual HTTP entry, 10s observation,
+100s outer deadline, 60s Provider retry wait and exactly-one recovery receipt.
+Both real POSIX concurrency gates pass 4 tests, and each platform's seven-file
+ownership/usage gate passes 169 tests. Windows rebuilt bundle passes all 41
+tests. See [successful platform validation](https://github.com/icetomoyo/KodaX/actions/runs/38066072854).
+
+**Files / regressions:** `packages/agent/src/memory-control/review-inbox.ts`,
+`packages/coding/src/memory-runtime.ts` and their adjacent tests. The public
+regressions preserve zero attempts/no backoff on Provider unavailability,
+prevent duplicate claiming, retain another backlog job, and require exactly
+one successor receipt. SDK declaration/build/type checks pass; Product Client
+payloads, capability versions and Main authorization requirements are unchanged.
 
 ## Issue 361: ACP's next prompt can fail during a transient Session read boundary
 
@@ -1692,7 +1722,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 | 365 | High | Resolved | Provider fallback drops child usage and bypasses Workflow budgets | output-component regression in v0.7.97-alpha.3; earlier total loss | post-v0.7.97-alpha.3 working tree (unreleased) | 2026-10-10 | 2026-10-10 |
 | 364 | Medium | Resolved | MCP stdio reports failed writes as successful sends | observed in v0.7.97-alpha.3; first affected version unknown | post-v0.7.97-alpha.3 working tree (unreleased) | 2026-10-10 | 2026-10-10 |
 | 363 | High | Resolved | Mouse copy-on-select crashes on a closed clipboard helper pipe | reported in v0.7.97-alpha.2; first affected version unknown | post-v0.7.97-alpha.3 working tree (unreleased) | 2026-10-10 | 2026-10-10 |
-| 362 | Medium | ready | Linux scoped startup review does not reach HTTP in the bundled cancellation gate | observed during v0.7.97-alpha.1 validation; first affected version unknown | — | 2026-10-09 | — |
+| 362 | Medium | Resolved | Duplicate terminal-review claims prevent scoped startup recovery | observed during v0.7.97-alpha.1 validation; first affected version unknown | post-v0.7.97-alpha.3 working tree (unreleased) | 2026-10-09 | 2026-10-11 |
 | 361 | Medium | Resolved | ACP's next prompt can fail during a transient Session read boundary | observed during v0.7.97-alpha.1 validation; first affected version unknown | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-09 |
 | 360 | Medium | Resolved | Resume catalog fixture spends its deadline on unrelated repository analysis | v0.7.97-alpha.1 product catalog integration fixture | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
 | 359 | High | Resolved | Linux argv ownership checks reject SDK Hosts and reclaim live fences | `e43d6da6`, v0.7.97-alpha.1 release validation | v0.7.97-alpha.1 worktree (unreleased) | 2026-10-08 | 2026-10-08 |
@@ -16509,8 +16539,8 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 245 (37 Open, 207 Resolved, 0 Partially Resolved, 0 Won't Fix)
-- Ready: 1 (Issue 362; Linux diagnosis pending)
+- Total: 245 (37 Open, 208 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 

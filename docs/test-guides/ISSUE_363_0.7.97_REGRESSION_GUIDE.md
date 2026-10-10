@@ -1,7 +1,7 @@
 # Issues 363 to 366 regression and audit guide
 
 Date: 2026-10-10. Source baseline: `21969792`, `v0.7.97-alpha.3`.
-The fixes are in the working tree and have not been published.
+The fixes are in source and have not been published.
 
 The mouse-selection report exposed a missing clipboard-stream error listener.
 Further investigation confirmed an MCP send-error defect, a Provider-fallback
@@ -166,16 +166,18 @@ passes, while its [Release workflow](https://github.com/icetomoyo/KodaX/actions/
 fails the Linux ARM64 bundled startup-review HTTP wait (Issue 362). Universal
 npm-package construction and GitHub Release publication are skipped. This
 workflow tests the committed alpha.3 baseline, not these uncommitted repairs.
+The follow-up handoff repair now passes both Linux ARM64 and x64 platform
+validation, including three repetitions of the unchanged scoped startup gate
+per platform. See [Issue 362 verification](ISSUE_362_0.7.97_REGRESSION_GUIDE.md).
 
 - Issue 256 remains open: Windows cannot always prove descendant closure
   after an intermediate parent exits. Cleanup continues to report `unknown`
   and retain recovery evidence; this audit does not waive that boundary.
-- Issue 362 remains ready: the Linux Node 22 bundled scoped-startup review
-  cancellation gate still needs its original HTTP-entry failure diagnosed.
-  Windows validation does not resolve that Linux-specific observation.
-- Native platform acceptance and real Provider behavior remain separate from
-  these deterministic checks. No version bump, publishing, or remote write is
-  part of this repair.
+- Issue 362 is now resolved in the repaired source after actual Linux ARM64/x64
+  validation; the failed alpha.3 release tag still refers to the old code.
+- Physical mouse acceptance and real Provider behavior remain separate from
+  these deterministic checks. A validation branch was pushed for Linux runner
+  checks; no version bump, release tag or publication has been performed.
 
 ## SDK integration for this repair
 
@@ -186,6 +188,8 @@ arguments. Lower-level SDK changes are additive: optional
 The declaration and bundle builds include both. Component usage may be
 undefined when incomplete; consumers must not turn missing output usage into
 known zero. Context occupancy is not accumulated execution cost.
+The review-drain selection filter is internal to Agent/Coding and introduces
+no Product Client argument or RPC/capability-version change.
 
 Publish/repackage the SDK and Host from the same repaired source and replace
 the running old Host when upgrading. A client-only update does not repair an

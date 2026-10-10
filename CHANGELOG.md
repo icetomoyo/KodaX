@@ -8,6 +8,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Terminal Memory review drains no longer reclaim an unavailable preferred
+  job as backlog and steal startup recovery from the next Run (Issue 362).
+
 - Clipboard helper input-pipe failures now enter the existing native/tmux/OSC
   52 fallback instead of crashing mouse copy-on-select (Issue 363).
 - MCP stdio sends observe asynchronous write failures and report them through
@@ -18,7 +21,7 @@ All notable changes to this project will be documented in this file.
   accounting reuses normalized request facts, preserves Host observers, and
   keeps conservative totals when component usage is incomplete (Issue 365).
 - The Host interrupt-fence and statistics fixtures wait for actual Provider entry, observe
-  early Run termination, and retains a bounded cleanup window (Issue 366).
+  early Run termination, and retain a bounded cleanup window (Issue 366).
 
 ---
 
