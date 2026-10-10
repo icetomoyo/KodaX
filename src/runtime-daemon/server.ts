@@ -2369,6 +2369,7 @@ async function dispatchRuntimeDaemonRequest(
   };
   const authorization = isRecord(request.params) ? optionalRecord(request.params.authorization) : undefined;
   if (request.method === 'agents.spawn' || request.method === 'agents.followup') {
+    if (authorization?.workflowHostPolicy !== undefined) throw daemonError('invalid_params', 'Workflow ceilings bind to Product Runs, not independent Actor admissions.');
     options.clientLifecycle?.assertAdmission(principalId);
     const params = requireRecord(request.params);
     if (authorization !== undefined && params.credential !== undefined) throw daemonError('invalid_params', 'Use one Actor authorization binding.');
@@ -2380,24 +2381,30 @@ async function dispatchRuntimeDaemonRequest(
   if (authorization === undefined && !productExecution) return dispatch();
   options.clientLifecycle?.assertAdmission(principalId);
   const params = requireRecord(request.params);
-  const sessionId = authorization === undefined ? optionalStringField(params, 'sessionId') : requireStringField(params, 'sessionId');
   if (authorization !== undefined && (params.credential !== undefined || params.hostTools !== undefined)) {
     throw daemonError('invalid_params', 'Use one execution authorization binding.');
   }
   const credential = optionalRecord(authorization?.credential);
   const hostTools = optionalRecord(authorization?.hostTools);
-  if (authorization !== undefined && credential === undefined && hostTools === undefined) throw daemonError('invalid_params', 'Execution authorization requires a lease.');
+  const workflowHostPolicy = optionalRecord(authorization?.workflowHostPolicy);
+  const sessionId = credential === undefined && hostTools === undefined
+    ? optionalStringField(params, 'sessionId') : requireStringField(params, 'sessionId');
+  if (authorization !== undefined && credential === undefined && hostTools === undefined && workflowHostPolicy === undefined) {
+    throw daemonError('invalid_params', 'Execution authorization requires a lease or Workflow policy.');
+  }
   // Stable scope equality lets a same-authority follow-up enter the active Run;
   // a different authority always waits for its own Run.
   const key = authorization === undefined ? undefined : JSON.stringify([principalId, sessionId,
     credential === undefined ? null : [credential.leaseId, [...requireStringArrayField(credential, 'providers')].sort()],
-    hostTools?.leaseId ?? null]);
+    hostTools?.leaseId ?? null,
+    ...(workflowHostPolicy === undefined ? [] : [[workflowHostPolicy.maxAgents ?? null, workflowHostPolicy.tokenBudget ?? null]])]);
   return withProductExecution({ key, principalId, sessionId, assertAdmission: () => options.clientLifecycle?.assertAdmission(principalId),
     bindRun: async (runInput, runId, baseExtensionRuntime) => {
     options.clientLifecycle?.assertAdmission(principalId);
     return await bindTrustedRunInput({ params: { ...runInput,
       ...(credential !== undefined ? { credential } : {}),
       ...(hostTools !== undefined ? { hostTools } : {}),
+      ...(workflowHostPolicy !== undefined ? { options: { ...runInput.options, workflowHostPolicy } } : {}),
     }, sessionId: runInput.sessionId, trustedRunId: runId, principalId, clientName, clientVersion, reverseBridge, baseExtensionRuntime,
       trustedProductPreparation: true }) as unknown as RuntimeStartRunInput;
   },
@@ -2636,8 +2643,8 @@ function runtimeDaemonCapabilities(
       ? { productClient: { version: 1 } } : {}),
     ...(isRecord(productHistoryBoundaries) && productHistoryBoundaries.version === 1
       ? { productHistoryBoundaries: { version: 1 } } : {}),
-    ...(isRecord(productExecutionAuthorization) && productExecutionAuthorization.version === 1
-      ? { productExecutionAuthorization: { version: 1 } } : {}),
+    ...(isRecord(productExecutionAuthorization) && (productExecutionAuthorization.version === 1 || productExecutionAuthorization.version === 2)
+      ? { productExecutionAuthorization: { version: productExecutionAuthorization.version } } : {}),
     ...(daemonManagement && clientExitControl && isRecord(ownerCapabilities.productExitControl) && ownerCapabilities.productExitControl.version === 1
       ? { productExitControl: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.productExecutionFacts) && ownerCapabilities.productExecutionFacts.version === 1

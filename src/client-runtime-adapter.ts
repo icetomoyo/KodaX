@@ -19,7 +19,7 @@ export function toKodaXProductClient(
     const input = structuredClone(request.input);
     // Untyped Product/IPC inputs cannot supply Host authority.
     for (const key of ['authorization', 'credential', 'hostTools', 'providerCredential',
-      'providerCredentialAccess', 'origin', 'trustedRunId']) delete (input as unknown as Record<string, unknown>)[key];
+      'providerCredentialAccess', 'origin', 'trustedRunId', 'workflowHostPolicy']) delete (input as unknown as Record<string, unknown>)[key];
     const authorization = await authorizeExecution?.({ ...request, input } as Request, runtime);
     return { ...input, ...(authorization === undefined ? {} : { authorization: structuredClone(authorization) }) };
   };

@@ -1409,6 +1409,10 @@ function executionAuthorizationSchema(): RuntimeDaemonJsonSchema {
       providers: arraySchema(stringSchema) }, ['leaseId', 'mode', 'providers']),
     hostTools: objectSchema({ leaseId: stringSchema }, ['leaseId']),
     tools: arraySchema(stringSchema),
+    workflowHostPolicy: objectSchema({
+      maxAgents: { type: 'integer', minimum: 1 },
+      tokenBudget: { type: 'integer', minimum: 0 },
+    }),
   }, []);
 }
 

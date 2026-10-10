@@ -9,7 +9,7 @@ import path from 'node:path';
 import { KODAX_DIR } from '@kodax-ai/repl';
 import { resolveRuntimeDaemonPathsFromConfigHome } from './runtime-daemon/state.js';
 import { runtimeClientPrincipal, readExitReceipts, verifyExitReceipt } from './runtime-daemon/client-lifecycle.js';
-export type { KodaXClientHostAuthorization, KodaXClientExecutionRequest, RuntimeExecutionAuthorization } from './client-host-authorization.js';
+export type { KodaXClientHostAuthorization, KodaXClientExecutionRequest, RuntimeExecutionAuthorization, KodaXClientWorkflowHostPolicy } from './client-host-authorization.js';
 
 export type * from '@kodax-ai/coding/client-contract';
 export type { RuntimeClientInfo } from './runtime-client-info.js';
@@ -46,7 +46,7 @@ export async function readKodaXClientExits(options: {
 export async function ensureKodaXClient(options: EnsureKodaXClientOptions = {}): Promise<KodaXProductClient> {
   return toKodaXProductClient(await ensureKodaXRuntime({ ...options, requirements: {
     productClient: 1, productHistoryBoundaries: 1, productExitControl: 1, productExecutionFacts: 1,
-    ...(options.authorizeExecution ? { productExecutionAuthorization: 1, productActorAuthorization: 1 } : {}),
+    ...(options.authorizeExecution ? { productExecutionAuthorization: 2, productActorAuthorization: 1 } : {}),
   } }), options.authorizeExecution);
 }
 
@@ -62,7 +62,7 @@ export async function connectKodaXClient(
     autoStart: false,
     clientInfo: options.clientInfo,
     requirements: { productClient: 1, productHistoryBoundaries: 1, productExitControl: 1, productExecutionFacts: 1,
-      ...(options.authorizeExecution ? { productExecutionAuthorization: 1, productActorAuthorization: 1 } : {}) },
+      ...(options.authorizeExecution ? { productExecutionAuthorization: 2, productActorAuthorization: 1 } : {}) },
   });
   return toKodaXProductClient(runtime, options.authorizeExecution);
 }

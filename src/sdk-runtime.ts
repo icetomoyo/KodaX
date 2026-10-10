@@ -153,6 +153,8 @@ import {
 } from "@kodax-ai/coding";
 import {
   createProviderCredentialLeaseScope,
+  getRunScopedConfig,
+  runWithScopedConfig,
   runWithProviderRequestObserver,
   runWithProviderRequestAbortSignal,
   resolveProvider,
@@ -963,7 +965,7 @@ export interface RuntimeCapabilityRequirements {
   readonly productExecutionFacts?: 1;
   readonly productActorAuthorization?: 1;
   readonly productHistoryBoundaries?: 1;
-  readonly productExecutionAuthorization?: 1;
+  readonly productExecutionAuthorization?: 1 | 2;
   /** Unified product business operations and current-view lifecycle. */
   readonly productClient?: 1;
   /** Reject hosts that do not advertise an installed external Agent executor plane. */
@@ -4105,7 +4107,7 @@ async function createKodaXRuntimeInternal(
   const embeddedCapabilities: Record<string, unknown> = {
     productClient: { version: 1 },
     productHistoryBoundaries: { version: 1 },
-    productExecutionAuthorization: { version: 1 },
+    productExecutionAuthorization: { version: 2 },
     productExitControl: { version: 1 },
     productExecutionFacts: { version: 1 },
     productActorAuthorization: { version: 1 },
@@ -11482,8 +11484,9 @@ function createRuntimeRunService(deps: {
           : {}),
       };
     }
+    const config = readRuntimeConfig(path.join(deps.defaultConfigHome, "config.json"));
     const settings = resolveEffectiveRuntimeSessionSettings(
-      readRuntimeConfig(path.join(deps.defaultConfigHome, "config.json")), (await deps.settingsOwner.read(input.sessionId)).value,
+      config, (await deps.settingsOwner.read(input.sessionId)).value,
       trustedInput.productSession === true || productInput !== undefined);
     assertSessionSettingsAllowed(admittedSessionContext, settings);
     const options = buildEffectiveRuntimeOptions(
@@ -11492,6 +11495,15 @@ function createRuntimeRunService(deps: {
       normalizedInput.inputArtifacts,
       admittedSessionContext,
     );
+    if (trustedInput.productSession === true || productInput !== undefined) {
+      // Product Runs use the same Host-owned directory as declarative starts.
+      options.workflowRunsBaseDir = path.join(deps.defaultConfigHome, 'workflow-runs',
+        workflowRunsProjectKey(options.context?.gitRoot ?? admittedSessionContext.gitRoot ?? process.cwd()));
+      const concurrency = isRecord(config.workflow) ? config.workflow.maxConcurrency : undefined;
+      if (typeof concurrency === 'number' && Number.isInteger(concurrency) && concurrency > 0) {
+        options.workflow = { maxConcurrency: concurrency };
+      }
+    }
     const ownedActorSession = await deps.actorRegistry.forSession(
       input.sessionId,
       options.maxConcurrentThreadsPerSession,
@@ -12952,7 +12964,9 @@ async function executeRuntimeWorkflow(
   sessionId: string,
   signal: AbortSignal,
 ): Promise<KodaXResult> {
-  const started = await startManagedWorkflow({ ...workflow, options, runId, signal });
+  const started = await runWithScopedConfig({ ...getRunScopedConfig(),
+    ...(options.workflow === undefined ? {} : { workflow: options.workflow }),
+  }, () => startManagedWorkflow({ ...workflow, options, runId, signal }));
   workflow.onStarted?.(started.kind === 'started' ? { kind: 'started', runId } : started);
   if (started.kind === 'declined') throw new Error(started.reason);
   const outcome = await started.managed.done;

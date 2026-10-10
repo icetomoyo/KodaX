@@ -163,12 +163,21 @@ export interface RuntimeHostToolService {
   revoke(leaseId: string): Promise<boolean>;
 }
 
+/** Narrow, Run-owned ceilings. Concurrency uses the existing Host workflow config. */
+export interface KodaXClientWorkflowHostPolicy {
+  readonly maxAgents?: number;
+  /** Output-token budget; 0 keeps the existing unbounded-budget semantics. */
+  readonly tokenBudget?: number;
+}
+
 /** Non-secret capabilities selected by trusted Main code, never by a Product input. */
 export interface RuntimeExecutionAuthorization {
   readonly credential?: Extract<RuntimeCredentialBinding, { readonly mode: 'scoped' }>;
   readonly hostTools?: { readonly leaseId: string };
   /** Additional ceiling for independently admitted Actor turns. */
   readonly tools?: readonly string[];
+  /** Captured for this Product Run, including its Workflow children; not arbitrary Run options. */
+  readonly workflowHostPolicy?: KodaXClientWorkflowHostPolicy;
 }
 
 export type KodaXClientExecutionRequest =

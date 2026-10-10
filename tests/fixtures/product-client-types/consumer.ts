@@ -17,6 +17,7 @@ import {
   type ClientRunOutcome,
   type ClientWorkflowStartInput,
   type ClientWorkflowStartResult,
+  type KodaXClientWorkflowHostPolicy,
 } from '@kodax-ai/kodax/client';
 // @ts-expect-error Host adaptation is internal, not a product SDK export.
 import { toKodaXProductClient } from '@kodax-ai/kodax/client';
@@ -37,6 +38,14 @@ const authorizedOptions: ConnectKodaXClientOptions = { clientInfo,
   },
 };
 void authorizedOptions;
+const workflowPolicy: KodaXClientWorkflowHostPolicy = { maxAgents: 16, tokenBudget: 0 };
+const workflowOptions: ConnectKodaXClientOptions = {
+  authorizeExecution: async () => ({ workflowHostPolicy: workflowPolicy }),
+};
+void workflowOptions;
+// @ts-expect-error Concurrency uses the existing Host config, not another per-input setting.
+const extraWorkflowPolicy: KodaXClientWorkflowHostPolicy = { maxConcurrency: 8 };
+void extraWorkflowPolicy;
 const ensureOptions: EnsureKodaXClientOptions = { clientInfo, daemonStartupTimeoutMs: 30_000 };
 await connectKodaXClient(connectOptions);
 await ensureKodaXClient(ensureOptions);

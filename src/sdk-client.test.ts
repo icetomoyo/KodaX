@@ -12,7 +12,8 @@ import {
   tryAcquireRuntimeDaemonLock,
 } from './runtime-daemon/state.js';
 
-it.each(['productClient', 'productHistoryBoundaries', 'productExecutionAuthorization'])('rejects an older Host missing %s before exposing an incomplete product contract', async capability => {
+it.each(['productClient', 'productHistoryBoundaries', 'productExecutionAuthorization', 'productExecutionAuthorization-v1'])('rejects an older Host without the required %s contract', async requested => {
+  const capability = requested.replace('-v1', '');
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-old-product-'));
   const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
   const paths = resolveRuntimeDaemonPaths(homeDir);
@@ -23,7 +24,8 @@ it.each(['productClient', 'productHistoryBoundaries', 'productExecutionAuthoriza
     ? { kind: 'pipe' as const, path: `\\\\.\\pipe\\kodax-old-product-${randomUUID()}` }
     : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
   const capabilities = { ...runtime.capabilities };
-  delete capabilities[capability];
+  if (requested.endsWith('-v1')) capabilities[capability] = { version: 1 };
+  else delete capabilities[capability];
   const host = await startRuntimeDaemonHost({ runtime: { ...runtime, capabilities }, paths, lock, endpoint });
   let unexpected: Awaited<ReturnType<typeof connectKodaXClient>> | undefined;
   try {

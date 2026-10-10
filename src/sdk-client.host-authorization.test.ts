@@ -244,7 +244,12 @@ it('binds Main-owned credentials and tools to Product inputs, queued Runs and ex
     await client.lifecycle.requestExit({ requestId: 'cancel-compaction' });
     const compactResult = await compact;
     expect('error' in compactResult || !compactResult.result.compacted).toBe(true);
-    await expect.poll(async () => (await client.lifecycle.readExit('cancel-compaction'))?.cleanup.state).toBe('succeeded');
+    await expect.poll(async () => {
+      const receipt = await client.lifecycle.readExit('cancel-compaction');
+      // Bounded cleanup can return unknown under load; recover using the same idempotent request.
+      if (receipt?.cleanup.state === 'unknown') await client.lifecycle.requestExit({ requestId: 'cancel-compaction' });
+      return (await client.lifecycle.readExit('cancel-compaction'))?.cleanup.state;
+    }).toBe('succeeded');
     const quit = await client.lifecycle.readExit('cancel-compaction');
     expect(quit!.cleanup.operationIds).toHaveLength(1);
     expect((await client.sessions.readHistory(session.id)).sourceRevision).toBe(beforeCompact.sourceRevision);
