@@ -323,24 +323,6 @@ describe('FEATURE_144 — AMA worker capability-context parity', () => {
   });
 });
 
-// FEATURE_114 v0.7.36 Slice 2 — Worker role prompt entry wire.
-// The 'worker' branch of `createRolePrompt` collapses the legacy
-// scout/planner/generator chain into a single primary agent that
-// drives plan + execution behind the KODAX_HARNESS_V2 flag. These
-// tests assert the wiring (not Worker prompt wording — that lives in
-// `worker-role-prompt.ts` and is covered by its own tests when the
-// V2 runner ships in Slice 3):
-//   1. Worker emits the canonical workspace / capability / overlay /
-//      decisionSummary / contract context layers (FEATURE_144 +
-//      FEATURE_086 parity).
-//   2. Worker terminates text-only (FEATURE_190 v0.7.43 Phase 3: the
-//      legacy `emit_handoff` tool was deleted; Sidecar Verifier runs
-//      out-of-band).
-//   3. Worker prompt actually splices `buildWorkerInstructions`
-//      (plan-first contract / scope commitment / dispatch RULE A/B/C
-//      / handoff fragments).
-//   4. `isResumeAfterReviseFailure` flag is threaded through to the
-//      Worker fragment (revise-retry retrospective sentence).
 describe('FEATURE_114 Slice 2 — worker role prompt entry wire', () => {
   function renderWorker(
     overrides: Partial<ManagedRolePromptContext> = {},
@@ -393,9 +375,6 @@ describe('FEATURE_114 Slice 2 — worker role prompt entry wire', () => {
   });
 
   it('does NOT route Worker through emit_handoff (FEATURE_190: text-only termination)', () => {
-    // FEATURE_190 (v0.7.43) — Worker is excluded from PROTOCOL EMISSION
-    // teaching and from the kodax-task-handoff fenced-block fallback.
-    // Worker terminates text-only and Sidecar Verifier runs out-of-band.
     const rendered = renderWorker();
     expect(rendered).not.toContain('"emit_handoff"');
     expect(rendered).not.toContain('PROTOCOL EMISSION — MUST be in the SAME response');
@@ -426,7 +405,7 @@ describe('FEATURE_114 Slice 2 — worker role prompt entry wire', () => {
     // FEATURE_190 (v0.7.43): legacy `EVALUATOR HANDOFF` replaced by
     // positive text-only termination block.
     expect(rendered).toContain('TERMINATION');
-    expect(rendered).toContain('Sidecar Verifier');
+    expect(rendered).not.toContain('Sidecar Verifier');
     expect(rendered).not.toContain('EVALUATOR HANDOFF');
     expect(rendered).toContain('You are the Worker — KodaX\'s single primary agent');
   });
@@ -469,12 +448,6 @@ describe('FEATURE_114 Slice 2 — worker role prompt entry wire', () => {
 
 // FEATURE_193 v0.7.43: FEATURE_114 Slice 8a Scout TRIVIAL-EXEMPTION boundary pin describe deleted (V1 scout role retired)
 
-// v0.7.38 FEATURE_155 hotfix — Bug C: Evaluator wait-for-children discipline.
-// FEATURE_184 (v0.7.45) Phase C.3: in-chain Evaluator retired. The prompt
-// content tests (CHILD-TASK WAIT DISCIPLINE etc.) are removed because
-// createRolePrompt('evaluator', ...) now falls through to the default branch.
-// The isolation test ("does NOT leak") is preserved as a sentinel to ensure
-// the wait-discipline section stays confined to the Sidecar Verifier context.
 describe('createRolePrompt — wait-discipline isolation (FEATURE_155 / FEATURE_184)', () => {
   // FEATURE_193 v0.7.43: loop trimmed from ['scout','planner','generator','worker'] to ['worker'] (V1 chain retired)
   it('CHILD-TASK WAIT DISCIPLINE does NOT appear in Worker prompt', () => {
@@ -497,13 +470,6 @@ describe('createRolePrompt — wait-discipline isolation (FEATURE_155 / FEATURE_
   });
 });
 
-// FEATURE_125 (v0.7.41) — Team Mode prompt block injection. The runner-
-// driven adapter renders `=== Other active KodaX sessions ===` per LLM
-// round via `buildOtherInstancesPromptBlock(discoverInstances())` and
-// passes it via `rolePromptContext.teamModeSection`. The role-prompt
-// builder must surface it on every active managed-task role.
-// FEATURE_184 (v0.7.45) Phase C.3: 'evaluator' removed — in-chain
-// Evaluator retired; Sidecar Verifier does not use createRolePrompt.
 describe('FEATURE_125 — teamModeSection wiring across roles', () => {
   const SAMPLE_BLOCK = [
     '=== Other active KodaX sessions ===',

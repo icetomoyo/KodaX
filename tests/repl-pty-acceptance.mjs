@@ -557,7 +557,6 @@ async function checkHostSettingCommands(state) {
 
 async function checkHostExecutionControls(state) {
   for (const [command, field, value] of [
-    ['/verifier-log on', 'verifierLog', true], ['/verifier-log off', 'verifierLog', false],
     ['/stall-log on', 'stallLog', true], ['/stall-log off', 'stallLog', false],
     ['/fallback acceptance-local', 'fallbackProviders', ['acceptance-local']], ['/fallback off', 'fallbackProviders', []],
   ]) {

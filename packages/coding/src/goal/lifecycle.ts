@@ -152,8 +152,7 @@ export function withGoalBeforeNextTurn(
 /**
  * Wrap an existing `stopHook` with goal-driven continuation.
  *
- * Returned hook fires the inner hook FIRST (sidecar verifier wins on
- * `revise` / `blocked`). If the inner hook returns `undefined` AND
+ * Returned hook fires the extension Stop hook first; its reanimate or abort decision takes precedence. If the inner hook returns `undefined` AND
  * there's an active goal AND no pending user input, the wrapper
  * returns a continuation string so the Runner reanimates the loop —
  * Codex `/goal` parity.

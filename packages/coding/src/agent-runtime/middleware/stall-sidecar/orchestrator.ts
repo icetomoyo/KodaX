@@ -170,7 +170,7 @@ export function createStallOrchestrator(
       // Capture sidecar kickoff time so the `onVerdict` callback can
       // surface elapsedMs (FEATURE_187 Phase C opt-in observability).
       // Wall-clock includes provider.stream + parse + Levenshtein
-      // fuzzy match — same envelope a verifier `sidecarFinished` log
+      // fuzzy match
       // line reports.
       const sidecarStartedAt = Date.now();
       const signalGeneration = generation;

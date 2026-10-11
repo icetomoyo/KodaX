@@ -744,7 +744,7 @@ Reviewer 首次 90 秒，只有 timeout/provider/无效输出会再试一次 180
   <tr>
     <td align="center" valign="top">
       <h3>🤖 默认多 agent</h3>
-      <sub>V2 Worker 单循环 + Sidecar Verifier + 异步子 agent</sub>
+      <sub>V2 Worker 单循环 + 实际结果评审 + 异步子 agent</sub>
       <br><br>
       <code>spawn_agent</code>、<code>send_message</code>、<code>followup_task</code>、<code>interrupt_agent</code>，多实例自动协调（content-hash safety net）。
     </td>
@@ -1032,21 +1032,7 @@ key 写入 `metadata.user_id`，OpenAI-compatible 请求写入 `prompt_cache_key
 默认值为 `false`，因为部分严格兼容网关会拒绝未知请求字段；不要只因端点宣称协议
 兼容就开启。
 
-Sidecar verifier 的结构化裁决请求会优先使用 provider 级 `tool_choice` 强制工具调用；如果某个兼容端点明确拒绝 `tool_choice` 参数，KodaX 会对该 verifier 请求自动重试一次“不强制但仍带 tools”的兼容模式，并保持 fail-open，不会阻塞主 Worker。
-
-调试 Worker 结束后的 verifier 行为时可设置：
-
-```bash
-export KODAX_VERIFIER_LOG=1
-export KODAX_VERIFIER_PROVIDER=anthropic
-export KODAX_VERIFIER_MODEL=claude-haiku-4-5-20251001
-```
-
-`KODAX_VERIFIER_LOG=1` 等价于在 `~/.kodax/config.json` 写 `"verifierLog": true`，会显示 verifier gate、elapsedMs 和 trace；`KODAX_VERIFIER_PROVIDER` / `KODAX_VERIFIER_MODEL` 需要成对设置，用独立模型执行 verifier；`KODAX_VERIFIER_ALWAYS=1` 仅建议调试和回归测试时使用。
-
-SDK / headless 宿主可以通过 `KodaXEvents.onSidecarMessage` 观察 Sidecar
-Verifier 的 `revise` / `blocked` 可执行消息；JSONL 输出使用同形
-`sidecar.message` 事件。`accept` 仍保持静默。
+结果由主 Agent 按需求逐项验证。内置 `visual-review` 技能覆盖图像/图表、文档/幻灯片/表格、Web/应用/终端/Canvas/3D、视频/动画，检查真实渲染证据；缺少能力或未覆盖部分明确标为未验证。必要时使用当前 Run 内普通只读子 Agent 做独立评审，主 Agent 负责修复和最终交付。
 
 #### 给自定义 provider 开图片 / vision 输入（FEATURE_134 v0.7.40）
 
@@ -1227,7 +1213,6 @@ KodaX 有 50+ 个内置工具，按类别分组如下（实际暴露给 LLM 是�
 | `agent_output` | 读取有权限的 Actor/Turn 有界持久输出。 |
 | `ask_user_question` | 向用户发起单选 / 多选 / 自由文本提问 |
 | `exit_plan_mode` | 仅在当前 REPL/宿主提供审批回调时提交最终方案 |
-| `emit_managed_protocol` | managed-task 协议侧信道（verdict role payload）。v0.7.42 FEATURE_184 起默认走 V2 Worker 单循环 + Sidecar Verifier；v0.7.43 FEATURE_193 退役 V1 chain。 |
 
 ## Repo Intelligence（内置 full/light 引擎）
 

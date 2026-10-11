@@ -61,8 +61,8 @@ ${chalk.bold('Subcommands:')}
 ${chalk.bold('Notes:')}
   - The agent auto-continues toward an active goal on every Worker turn end.
   - Token budget is optional; set it only when you want a hard ceiling.
-  - update_goal({complete}) is verifier-gated; the agent cannot
-    self-declare done without runtime confirmation.
+  - update_goal({complete}) records the agent’s completion claim after
+    checking the objective against actual evidence.
 `.trim());
 }
 

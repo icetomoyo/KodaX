@@ -1,11 +1,4 @@
-/**
- * Runtime agent chain for the runner-driven AMA path.
- *
- * Hosts the per-run Worker graph builder (`buildRunnerAgentChain`) and
- * its private helpers (`buildTodoToolBundle`, `buildAgentToolsFromRegistry`).
- * V1 Scout / Planner / Generator / in-chain Evaluator agents are retired; the
- * live AMA path is a single Worker loop plus out-of-band Sidecar Verifier.
- */
+
 
 import { isToolResultErrorContent } from '../../../agent-runtime/tool-result-classify.js';
 import type {
@@ -69,13 +62,7 @@ import { getAmaRoleEffectiveExclude } from './role-exclude.js';
 import { wrapCodingToolAsRunnable } from './tool-wrappers.js';
 import { getToolExecutionOverride } from '../../../agent-runtime/permission-gate.js';
 import { NULL_OBSERVER } from './observer-bridge.js';
-import type { BudgetExtensionContext } from './verdict-recorder.js';
-import type {
-  AmaRole,
-  ObserverBridge,
-  RunnerChainPromptContext,
-  VerdictRecorder,
-} from './types.js';
+import type { AmaRole, ObserverBridge, RunnerChainPromptContext } from './types.js';
 
 interface TodoToolBundle {
   readonly todoUpdate: RunnableTool;
@@ -465,70 +452,22 @@ function buildAgentToolsFromRegistry(
   return tools;
 }
 
-// =============================================================================
-// Runtime Agent chain: Worker single-loop
-// =============================================================================
-// FEATURE_193 v0.7.43: V1 chain (Scout/Planner/Generator) retired. Worker is
-// the only role in the chain. FEATURE_184 (v0.7.42) retired the in-chain
-// Evaluator role too — the Sidecar Verifier StopHook handles verification
-// out-of-band after Worker terminates text-only.
-
 export interface RunnerAgentChain {
   readonly worker: Agent;
 }
 
-/**
- * Build the live runner agent chain: a single Worker with registry-derived
- * tools. The Sidecar Verifier runs out-of-band after Worker text termination.
- */
-export function buildRunnerAgentChain(
-  ctx: KodaXToolExecutionContext,
-  recorder: VerdictRecorder,
+export function buildRunnerAgentChain(ctx: KodaXToolExecutionContext,
   observer: ObserverBridge = NULL_OBSERVER,
   budget?: ManagedTaskBudgetController,
-  _budgetExtension?: BudgetExtensionContext,
-  // Kept as a positional compatibility hook for callers that still thread the
-  // runner plan through chain construction; Worker prompts now self-govern
-  // mutation discipline instead of reading this from tool wrappers.
-  _planRef: { current: ReasoningPlan | undefined } = { current: undefined },
-  // Task verification contract surfaces runtime obligations (startup command,
-  // ready signal, UI flows, API/DB checks) into Worker guidance and verifier
-  // context so runtime checks stay tied to the user's task.
   verification?: KodaXTaskVerificationContract,
-  // Full role-prompt context (original task, decision,
-  // metadata, tool policy, skill / scope factory). When provided, every
-  // role's `instructions` resolves through `createRolePrompt`: decision
-  // summary, contract, metadata, verification contract, tool policy, evidence
-  // strategies, collaboration guidance, and shared closing rules. When
-  // absent (test paths), the fallback minimal instructions are used.
   promptContext?: RunnerChainPromptContext,
-  // Events bus so coding-tool wrappers can attach
-  // `reportToolProgress` per tool_use call. Without this wiring,
-  // async-generator tools fire progress events
-  // that vanish silently — the REPL transcript's "Running: ..." line
-  // never updates mid-run.
   events?: KodaXEvents,
-  // Optional visible Todolist store. When omitted, the `todo_update` /
-  // `todo_create` tools soft-fail with "not active" for older fixtures.
   todoStore?: TodoStore,
-  pendingFailedResetRef?: { current: boolean },
-  // FEATURE_097 §5 ② — when provided, every successful `todo_update`
-  // call resets the throttle reminder counter (model is making
-  // progress; the no-update streak is broken).
   todoReminderState?: TodoReminderState,
-  // FEATURE_114 v0.7.36 Slice 3c — deterministic per-step evaluator
-  // hook. When provided, the `todo_update` wrapper detects items that
-  // flip to `completed` AND carry an `evaluator: 'build'|'test'|'lint'`
-  // hint, runs the corresponding command in `runtimeCwd`, and appends
-  // a formatted result to the tool's output so the LLM sees the check
-  // outcome on its next turn. Omitted → no-op (tests / legacy callers).
   runtimeCwd?: string,
-  // FEATURE_114 v0.7.36 Slice 3c — injectable evaluator runner. Tests
-  // pass a stub here to avoid spawning real shell commands; production
-  // omits this and uses the real `runDeterministicEvaluator`.
   runDeterministicEvaluatorOverride?: (
     input: RunDeterministicEvaluatorInput,
-  ) => Promise<DeterministicEvaluatorResult>,
+  ) => Promise<DeterministicEvaluatorResult>
 ): RunnerAgentChain {
   const codingTools = buildTodoToolBundle(ctx, budget, events);
   // FEATURE_097 (v0.7.34) §5 ② — wrap `todo_update` so every successful
@@ -658,17 +597,7 @@ export function buildRunnerAgentChain(
     };
     (codingTools as { -readonly [K in keyof typeof codingTools]: typeof codingTools[K] }).todoUpdate = wrappedTodoUpdate;
   }
-  // FEATURE_193 (v0.7.43): scoutEmit + contractEmit deleted with V1 chain.
-  // FEATURE_190 (v0.7.43) Phase 3: `handoffEmit` deleted — Worker terminates
-  // text-only (Sidecar Verifier StopHook handles verification out-of-band).
   type WritableAgent = { -readonly [K in keyof Agent]: Agent[K] };
-
-  // Dynamic Worker instructions. The closure resolves on each Runner
-  // invocation so retry/reset state and promptContext stay fresh. Tests that
-  // don't pass a `promptContext` continue to see the minimal static fallback.
-  // FEATURE_193 v0.7.43: V1 chain (Scout/Planner/Generator) agents retired —
-  // Worker is the only entry path. FEATURE_184 (v0.7.42) Phase C.1: Evaluator
-  // also retired — Sidecar Verifier StopHook handles verification out-of-band.
 
   // FEATURE_114 v0.7.36 — AMA Harness V2 Worker agent.
   //
@@ -692,32 +621,19 @@ export function buildRunnerAgentChain(
       // contextFactory reads `false` and the Worker prompt loses the
       // retrospective sentence on the retry turn.
       //
-      // 1. Build prompt — contextFactory reads pendingFailedResetRef.current
-      //    and writes ctx.isResumeAfterReviseFailure when role==='worker'.
       const actorTree = promptContext ? undefined : ctx.actorControl?.list();
       const resolved = resolveRoleInstructions(
         'worker',
         WORKER_AGENT_NAME,
         WORKER_INSTRUCTIONS_FALLBACK,
-        recorder,
         promptContext,
         verification,
         actorTree ? {
           maxConcurrentThreads: actorTree.maxConcurrentThreads,
           activeNonRootTurns: actorTree.activeNonRootTurns,
         } : undefined,
+
       );
-      // 2. Visual reset + ref clear. Mirrors Generator's same-turn
-      //    consumption (kept identical so the retry UX is bit-for-bit
-      //    consistent across V1 and V2 — the user sees ● → ✗ → ☐ → ●).
-      if (
-        pendingFailedResetRef
-        && pendingFailedResetRef.current
-        && todoStore
-      ) {
-        todoStore.resetFailed();
-        pendingFailedResetRef.current = false;
-      }
       return resolved;
     },
     // FEATURE_168 (v0.7.40 hotfix) — Worker's tool surface is derived from the
@@ -745,8 +661,6 @@ export function buildRunnerAgentChain(
     reasoning: { default: 'balanced', max: 'deep', escalateOnRevise: true },
   };
 
-  // FEATURE_184 (v0.7.42) Phase C.1: Worker terminates text-only —
-  // Sidecar Verifier StopHook handles verification, no handoff edges.
   const workerHandoffs: Handoff[] = [];
   worker.handoffs = workerHandoffs;
 

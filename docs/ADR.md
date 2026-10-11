@@ -2,7 +2,7 @@
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
 
-> Last updated: 2026-10-10
+> Last updated: 2026-10-11
 >
 > **v0.7.97-alpha.3 release addendum:** FEATURE_298's third alpha lets
 > trusted Main bound Product Workflows. `authorizeExecution` may return a
@@ -1842,7 +1842,7 @@ runner-driven.ts (主循环 + 顶部 re-export)
    - import hygiene（删除的 import 真的没人用）
    - CJK / regex notation（特别针对 R4）
    - `__runnerDrivenTestables` object identity 保留
-   
+
    4 次审计结果：**全 APPROVE，0 个 CRITICAL/HIGH/MEDIUM 缺陷**。对齐用户记忆 [feedback_review_each_commit](https://...)：多步重构每个 commit 主动 review 三件事。
 
 6. **测试每个 commit 后全跑**。R1/R2/R3/R4 commit 前都跑 198 个 runner-driven 测试 + 4314 个 coding/agent/repl 测试，全过。任何 commit 失败立即停推，不进入下一阶段。
@@ -1939,8 +1939,8 @@ runner-driven.ts (主循环 + 顶部 re-export)
 
 ## ADR-027: REPL 数据层 streaming cache miss 修复 (FEATURE_172 Phase 1, v0.7.41)
 
-**Status**: Partially Superseded by ADR-028 (2026-05-19).  
-**已 ship 部分**:Phase 1 数据层 cache miss 修复(5 commits `19c6aff3` → `343a85ce`)— 保留为 nice-to-have,无功能回退。  
+**Status**: Partially Superseded by ADR-028 (2026-05-19).
+**已 ship 部分**:Phase 1 数据层 cache miss 修复(5 commits `19c6aff3` → `343a85ce`)— 保留为 nice-to-have,无功能回退。
 **已撤回部分**:Phase 2-5 计划 + D2.A/B/C selection 机制 port — 见 ADR-028 重新设计。
 
 ### 已 ship 部分
@@ -2032,30 +2032,30 @@ ADR-027 把 SSH `kodax -c` 长 session 2-3s/frame 卡顿的根因定位在数据
 
 **Critical(必做,决定 SSH 流畅与否)**:
 
-- **C1. `nodeCache` blit short-circuit**(最大杠杆 ~55%)  
-  `WeakMap<DOMElement, ScreenRect>` 缓存每个 React node 的 (x, y, w, h)。clean subtree(`!node.dirty` && layout 未变 && `prevScreen` 在)调 `output.blit(prevScreen, x, y, w, h)` `TypedArray.set` 拷贝 + return,**不进 children 递归**。  
+- **C1. `nodeCache` blit short-circuit**(最大杠杆 ~55%)
+  `WeakMap<DOMElement, ScreenRect>` 缓存每个 React node 的 (x, y, w, h)。clean subtree(`!node.dirty` && layout 未变 && `prevScreen` 在)调 `output.blit(prevScreen, x, y, w, h)` `TypedArray.set` 拷贝 + return,**不进 children 递归**。
   参考:`c:/Works/claudecode/src/ink/node-cache.ts`(55 行)+ `src/ink/render-node-to-output.ts:454-481` blit 短路逻辑
 
-- **C2. Packed `Int32Array` Screen**(~12% + C1 的 enabler)  
-  替换 `Cell[]` 数组 + `cells.slice()` per cell(O(N²))为 `Int32Array(width*height*2)`(charId + style+hyperlink+width 打包)。blit 用 `TypedArray.set`,diff 用整数比较。**C1 的 `output.blit` 需要 TypedArray.set,所以 C2 是 C1 的前置。**  
+- **C2. Packed `Int32Array` Screen**(~12% + C1 的 enabler)
+  替换 `Cell[]` 数组 + `cells.slice()` per cell(O(N²))为 `Int32Array(width*height*2)`(charId + style+hyperlink+width 打包)。blit 用 `TypedArray.set`,diff 用整数比较。**C1 的 `output.blit` 需要 TypedArray.set,所以 C2 是 C1 的前置。**
   参考:`c:/Works/claudecode/src/ink/screen.ts`
 
-- **C3. `markDirty` propagation + renderer dirty-only recursion**(~5%,C1 的 enabler)  
-  `commitTextUpdate` 时 `markDirty(textNode)` 走 ancestors;`renderNodeToOutput` 检查 `node.dirty`,clean subtree 走 C1 blit 短路。  
+- **C3. `markDirty` propagation + renderer dirty-only recursion**(~5%,C1 的 enabler)
+  `commitTextUpdate` 时 `markDirty(textNode)` 走 ancestors;`renderNodeToOutput` 检查 `node.dirty`,clean subtree 走 C1 blit 短路。
   参考:`c:/Works/claudecode/src/ink/reconciler.ts` commitTextUpdate
 
-- **C4. `screen.damage` bounding box**(~10%)  
-  `Output` 记录本帧实际写入的 cell 范围;`diffEach` 只扫这个矩形,不走 max(prev.h, next.h) 全屏。  
+- **C4. `screen.damage` bounding box**(~10%)
+  `Output` 记录本帧实际写入的 cell 范围;`diffEach` 只扫这个矩形,不走 max(prev.h, next.h) 全屏。
   参考:`c:/Works/claudecode/src/ink/output.ts` damage tracking
 
 **Important(强烈建议)**:
 
-- **I1. `Output.charCache` 跨帧持久化**(~12%,和 C4 配合放大)  
-  Line 文本的 tokenize + grapheme clustering 结果跨帧缓存,clean line 不重 tokenize。  
+- **I1. `Output.charCache` 跨帧持久化**(~12%,和 C4 配合放大)
+  Line 文本的 tokenize + grapheme clustering 结果跨帧缓存,clean line 不重 tokenize。
   参考:`c:/Works/claudecode/src/ink/output.ts` charCache
 
-- **I2. `StylePool.transition` 缓存**(~2-5%)  
-  ANSI escape 转换字符串缓存(`Map<fromId * 0x100000 + toId, string>`),零分配 after warmup。  
+- **I2. `StylePool.transition` 缓存**(~2-5%)
+  ANSI escape 转换字符串缓存(`Map<fromId * 0x100000 + toId, string>`),零分配 after warmup。
   参考:`c:/Works/claudecode/src/ink/screen.ts:153-162`
 
 **Nice-to-have(锦上添花)**:
@@ -6552,3 +6552,9 @@ Rejected alternatives: history retries before Stop, swallowed control errors,
 optimistic stopped UI, client-side list/abort loops, global workflow cancellation,
 mode-blind dangerous-command blocks, interpreter rewrites after explicit denial,
 and a separate extension permission or lifecycle engine.
+
+## 2026-10-11 — Main-agent result verification replaces Sidecar Verifier
+
+The main agent verifies each requested requirement with actual tool and rendered evidence before delivery. The built-in `visual-review` skill covers static images/charts, paginated documents/slides/sheets, interactive web/app/terminal/canvas/3D surfaces, and temporal video/animation results. Missing capabilities and unchecked scope are reported as unverified. An ordinary read-only child reviewer may contribute findings within the same Run; the main agent owns repairs and the final answer.
+
+This supersedes the completion-adjudicator parts of the historical Sidecar decisions. No extension Stop, Stall sidecar, Auto permission reviewer, Bash/sandbox policy, Actor wait, or generic LLM judge is removed. Retire the verifier execution, config, live callbacks and synthetic revision producer; preserve only persisted history readers. Goal completion records the agent’s evidence-backed claim through the existing Host lineage owner; it is separate from Run termination and per-requirement quality. No automatic scorecard or batch criterion pass is produced.

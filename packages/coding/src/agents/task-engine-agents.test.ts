@@ -2,7 +2,7 @@
  * Unit test for task-engine role Agent placeholders.
  *
  * FEATURE_193 v0.7.43: V1 chain (Scout/Planner/Generator) Agent placeholders
- * retired. The name constants survive for verdict-recorder routing + historical
+ * retired. The name constants survive for historical
  * session id compat; Worker is the only declarative Agent now.
  */
 

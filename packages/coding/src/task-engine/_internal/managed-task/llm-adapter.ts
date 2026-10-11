@@ -156,17 +156,6 @@ export interface RunnerAdapterTokenState {
   source: 'api' | 'estimate';
 }
 
-// FEATURE_193 (v0.7.43) deep V1 cleanup: `agentNameToManagedRole` +
-// `flattenNormalizedForEmitterInput` deleted. They were C1-parity helpers
-// for the fenced-block fallback path that synthesized a tool call when
-// the LLM emitted a `kodax-task-*` block without calling the corresponding
-// `emit_*` tool. V1 chain retirement removed every reachable agent name
-// (SCOUT/PLANNER/GENERATOR) the mapping recognized, so `agentNameToManagedRole`
-// always returned `undefined` and the synthesize block short-circuited
-// before either helper ran. The Sidecar Verifier (FEATURE_184) drives
-// verdicts out-of-band and does not need the V2 worker to fall through
-// to the fence-synthesizer.
-
 /**
  * True when a successfully-returned provider turn carries no public output:
  * no text and no tool calls. Thinking blocks do not count here. Distinct from a
@@ -1446,16 +1435,6 @@ export function buildRunnerLlmAdapter(
       name: b.name,
       input: b.input ?? {},
     }));
-
-    // FEATURE_193 (v0.7.43) deep V1 cleanup: the C1-parity fenced-block
-    // fallback (synthesize tool_call when LLM emits a `kodax-task-*` block
-    // without calling the matching `emit_*` tool) used to live here. With
-    // V1 chain retired, only `'evaluator'` (Sidecar Verifier) remains as
-    // a valid emit role, and verdicts are driven out-of-band by Sidecar
-    // Verifier — the Worker's terminal turn never needs the fence-to-
-    // tool-call synthesis. `agentNameToManagedRole` only matched the V1
-    // SCOUT/PLANNER/GENERATOR agent names, so the entire branch was a
-    // dead short-circuit in V2 production.
 
     // Forward thinking blocks so
     // `buildAssistantMessageFromLlmResult` can prepend them to the

@@ -121,3 +121,7 @@ Session 观察通过 `onStatus` 区分 live/interrupted/closed；重连中的提
 7. 产品消费者不持有 SessionStorage、可执行 Runtime 对象或客户端 MCP owner；底层宿主代码单独标明职责。
 
 仓库现有验证入口：`src/sdk-client*.test.ts`、`src/session-view*.test.ts`、`tests/repl-pty-acceptance.mjs`、`tests/repl-history-browse-acceptance.mjs`。具体回归记录见[Issues 345–347 and 352 验证指南](test-guides/ISSUE_352_v0.7.96_REGRESSION_GUIDE.md)。这些测试不证明所有外部应用已经迁移。
+
+## Result verification retirement (2026-10-11)
+
+The automatic Sidecar Verifier is retired. Remove `verifierLog`, `/verifier-log`, `KODAX_VERIFIER_*`, `onSidecarMessage`, `sidecar.message`, and protocol-emitter integrations. New config patches reject the retired key; old saved defaults are ignored. Persisted legacy UI items, synthetic messages, and managed-task fields remain readable without replay. Main-agent evidence and ordinary Actor results carry review findings; Run completion and Goal completion are lifecycle facts. `agentProfile.verification` and `context.taskVerification` reach both SA and AMA. Host Goal tools use the canonical journal’s atomic mutation seam. Stall detection and Auto permission review retain their own models and controls. Rebuild Host and clients from matching code before using the changed types.

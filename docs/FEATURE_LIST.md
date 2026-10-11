@@ -15,6 +15,7 @@
 | Current package version | `@kodax-ai/kodax@0.7.97-alpha.3` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 packages |
 | Released implementation | [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
+| Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement implemented and validated, unreleased; [design](research/verifier-replacement-visual-review-2026-10-11.md) |
 | Current development | `v0.7.97` / `FEATURE_298` — cross-platform/manual release verification for the alpha continues |
 | Roadmap updated | `2026-09-23` — FEATURE_300 planned for `v0.7.99`; implementation not started |
 | Total tracked features | `84` |

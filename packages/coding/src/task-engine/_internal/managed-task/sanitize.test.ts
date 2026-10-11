@@ -11,7 +11,6 @@ import {
   MANAGED_FENCE_NAMES,
   findIncompleteManagedFenceIndex,
   isManagedFencePrefix,
-  sanitizeEvaluatorPublicAnswer,
   sanitizeManagedStreamingText,
   sanitizeManagedUserFacingText,
 } from './sanitize.js';
@@ -117,41 +116,5 @@ describe('sanitizeManagedStreamingText', () => {
   it('cuts at an incomplete managed fence mid-stream', () => {
     const text = 'answer\n```kodax-task-verdict\nstatus: accept';
     expect(sanitizeManagedStreamingText(text)).toBe('answer');
-  });
-});
-
-describe('sanitizeEvaluatorPublicAnswer', () => {
-  it('returns sanitized fence-stripped text when no process framing is present', () => {
-    expect(sanitizeEvaluatorPublicAnswer('Direct answer text.')).toBe('Direct answer text.');
-  });
-
-  it('strips leading process-framing paragraphs', () => {
-    const text = [
-      'Confirmed: all checks pass.',
-      '',
-      'The actual review finding: bug in line 42.',
-    ].join('\n');
-    const result = sanitizeEvaluatorPublicAnswer(text);
-    expect(result).toBe('The actual review finding: bug in line 42.');
-  });
-
-  it('strips "Let me verify" leads', () => {
-    const text = [
-      'Let me verify the Generator\'s claims.',
-      '',
-      'Finding 1: typo in README.',
-    ].join('\n');
-    expect(sanitizeEvaluatorPublicAnswer(text)).toBe('Finding 1: typo in README.');
-  });
-
-  it('keeps text that does not match any process-framing pattern', () => {
-    const text = 'Finding: N+1 query in user list.';
-    expect(sanitizeEvaluatorPublicAnswer(text)).toBe(text);
-  });
-
-  it('falls back to the full sanitized text if removing would leave nothing', () => {
-    const text = 'Confirmed: done.';
-    // Everything removed → fall back.
-    expect(sanitizeEvaluatorPublicAnswer(text)).toBe(text);
   });
 });

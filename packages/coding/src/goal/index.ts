@@ -44,13 +44,8 @@ export type {
   GoalToolsContext,
 } from './tools-context.js';
 
-export { verifyGoalCompletion } from './sidecar-bind.js';
-export type {
-  GoalCompletionVerifier,
-  VerifyGoalCompletionOptions,
-} from './sidecar-bind.js';
-
 export { buildGoalRuntimeBinding } from './runtime-wiring.js';
+export { buildSessionGoalRuntimeBinding } from './session-binding.js';
 export type {
   GoalRuntimeBinding,
   GoalRuntimeBindingDeps,

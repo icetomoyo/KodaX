@@ -435,7 +435,7 @@ export default function(api) {
       observation.close();
       expect(await readFile(path.join(homeDir, 'entered.txt'), 'utf8')).toBe('first\n');
       expect(requestOptions.filter(request => !request.sidecar)).toHaveLength(1);
-      expect(requestOptions.filter(request => request.sidecar)).toHaveLength(agentMode === 'ama' ? 1 : 0);
+      expect(requestOptions.filter(request => request.sidecar)).toHaveLength(0);
       expect((await second.sessions.readHistory(session.id)).items.filter(item => item.type === 'user').map(item => item.text)).toEqual(['/atomic-release first']);
       return;
     }
@@ -445,7 +445,7 @@ export default function(api) {
     releaseProvider();
     expect(await first.runs.await(started.runId)).toMatchObject({ phase: 'completed' });
     expect(requestOptions.filter(request => !request.sidecar)).toHaveLength(1);
-    expect(requestOptions.filter(request => request.sidecar)).toHaveLength(agentMode === 'ama' ? 1 : 0);
+    expect(requestOptions.filter(request => request.sidecar)).toHaveLength(0);
     expect((await second.sessions.readHistory(session.id)).items.filter(item => item.type === 'user').map(item => item.text)).toEqual(['/atomic-release first']);
   } finally {
     releaseProvider();

@@ -1,4 +1,9 @@
-import { readClientSession, clientSessionRuntimeInfo, applyClientSessionMetadata, readClientHistoryPreview } from '../session/client-session.js';
+import {
+  readClientSession,
+  clientSessionRuntimeInfo,
+  applyClientSessionMetadata,
+  readClientHistoryPreview,
+} from '../session/client-session.js';
 /**
  * InkREPL - Ink-based REPL Adapter
  *
@@ -11,12 +16,28 @@ import { readClientSession, clientSessionRuntimeInfo, applyClientSessionMetadata
  * - Uses StreamingContext for streaming response management
  */
 
-import React, { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from "react";
+import React, {
+  useState,
+  useCallback,
+  useRef,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+} from "react";
 import { usePromptHistoryBrowse } from './hooks/usePromptHistoryBrowse.js';
 import { capturePromptBrowseAnchor, resolvePromptBrowseAnchor } from './utils/prompt-history-browse.js';
 import { applyClientSessionViewSettings, changedClientSessionSettings, clientSessionSettings } from './client-session-settings.js';
 import type { RuntimeStopCallbacks, RuntimeStopControl } from '../interactive/runtime-stop.js';
-import { render, Box, useApp, Text, Static, useStdout, useStdin, useTerminalWrite } from "./tui.js";
+import {
+  render,
+  Box,
+  useApp,
+  Text,
+  Static,
+  useStdout,
+  useStdin,
+  useTerminalWrite,
+} from "./tui.js";
 import { AlternateScreen, type ScrollBoxWindow } from "../tui/index.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { FullscreenTranscriptLayout } from "./components/FullscreenTranscriptLayout.js";
@@ -102,7 +123,12 @@ import {
   KeypressHandlerPriority,
 } from "./types.js";
 import { getActivePasteStore, type PastedContent } from "./utils/paste-store.js";
-import { hashPastedText, storePastedText, retrievePastedText, cleanupOldPastes } from "./utils/paste-cache.js";
+import {
+  hashPastedText,
+  storePastedText,
+  retrievePastedText,
+  cleanupOldPastes,
+} from "./utils/paste-cache.js";
 import {
   prepareRootCompactionLineage,
   withSessionHistoryReadBarrier,
@@ -164,7 +190,6 @@ import type {
   KodaXActivityEventMeta,
   KodaXOutputSegmentProjection,
   KodaXOutputSegmentStarted,
-  KodaXSidecarMessageEvent,
   KodaXToolEventMeta,
   KodaXUserInputPromptContext,
   KodaXWorkflowAgentDigestEvent,
@@ -297,7 +322,12 @@ export { buildManagedTaskTranscriptItems };
 // FEATURE_202 (v0.7.45) — live reasoning topic header from the thinking stream.
 import { extractBoldHeader } from "../tui/streaming/bold-header-extractor.js";
 import { KODAX_VERSION } from "../common/utils.js";
-import { saveAlwaysAllowToolPattern, loadAlwaysAllowTools, savePermissionModeUser, loadAutoModeSettings } from "../common/permission-config.js";
+import {
+  saveAlwaysAllowToolPattern,
+  loadAlwaysAllowTools,
+  savePermissionModeUser,
+  loadAutoModeSettings,
+} from "../common/permission-config.js";
 import {
   bootstrapAutoMode,
   type AutoModeBootstrapResult,
@@ -314,7 +344,12 @@ import {
   GlobalShortcuts,
 } from "./shortcuts/index.js";
 import { prepareInvocationExecution } from "../interactive/invocation-runtime.js";
-import { memDiagEnabled, memDiagSnapshot, memDiagReset, buildMemDiagBreakdown } from "../interactive/memory-diagnostics.js";
+import {
+  memDiagEnabled,
+  memDiagSnapshot,
+  memDiagReset,
+  buildMemDiagBreakdown,
+} from "../interactive/memory-diagnostics.js";
 import { preparePromptInputArtifacts } from "../common/input-artifacts.js";
 import {
   buildRecoverySeed,
@@ -351,7 +386,12 @@ import { findMostRecentResumableSession } from "../session/resumable-session.js"
 export { restoreHistoryItemsFromSession, trimPersistedUiHistorySnapshot };
 import { withCapture, ConsoleCapturer } from "./utils/console-capturer.js";
 import { createRecoveryHistoryItem, createRetryHistoryItem } from "./utils/retry-history.js";
-import { ClientObservationUnavailableError, OBSERVATION_UNAVAILABLE, isCommandHelp, withObservedExecution } from './client-observation.js';
+import {
+  ClientObservationUnavailableError,
+  OBSERVATION_UNAVAILABLE,
+  isCommandHelp,
+  withObservedExecution,
+} from './client-observation.js';
 import { createRepoIntelTraceHistoryItem, emitRepoIntelTraceHistoryItem } from "./utils/repo-intel-history.js";
 import {
   formatManagedTaskBreadcrumb,
@@ -2459,7 +2499,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const managedLiveEventsRef = useRef<HistoryItem[]>([]);
   const managedRoundEventHistoryRef = useRef<HistoryItem[]>([]);
   const managedForegroundTurnItemsRef = useRef<HistoryItem[]>([]);
-  const sidecarMessageDeliveredRef = useRef(false);
   // FEATURE_213 (v0.7.45) — ids of mid-turn user messages already committed to
   // history (by a round-end / fresh-submit / interrupt commit). The ledger-wipe
   // rescue pass uses this to commit any UNcommitted mid-turn user message before
@@ -2817,31 +2856,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         `${content}\n[Could not save command feedback: ${error instanceof Error ? error.message : String(error)}]`);
     }
   }, [context, options.clientPlane, emitInfoItemToCorrectLayer, pushClientPlaneNotice]);
-
-  /**
-   * Emit a sidecar verifier history item to the correct transcript layer.
-   * Follows the same foreground-layering rule as emitInfoItemToCorrectLayer:
-   * if a managed worker currently owns the foreground, append to that ledger
-   * so the sidecar message renders inline with the worker output.
-   */
-  const emitSidecarItemToCorrectLayer = useCallback((
-    item: { type: "sidecar"; text: string; verdict?: "revise" | "blocked"; delivery?: "budget-exhausted" },
-    tag: string,
-  ): void => {
-    const ts = Date.now();
-    if (managedForegroundOwnerRef.current.workerId) {
-      appendManagedForegroundLedgerItem({
-        id: `${tag}-${ts}-${Math.random().toString(36).slice(2, 7)}`,
-        type: "sidecar",
-        text: item.text,
-        ...(item.verdict ? { verdict: item.verdict } : {}),
-        ...(item.delivery ? { delivery: item.delivery } : {}),
-        timestamp: ts,
-      } as HistoryItem);
-    } else {
-      addHistoryItem(item);
-    }
-  }, [addHistoryItem, appendManagedForegroundLedgerItem]);
 
   const updateManagedForegroundLedgerItem = useCallback((
     itemId: string | undefined,
@@ -7548,27 +7562,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         }
       }
     },
-    onSidecarMessage: (event: KodaXSidecarMessageEvent) => {
-      if (userInterruptedRef.current) {
-        return;
-      }
-      const bodyText = event.suggestedFix
-        ? `${event.content}\nSuggested fix: ${event.suggestedFix}`
-        : event.content;
-      if (event.delivery === "budget-exhausted") {
-        emitSidecarItemToCorrectLayer(
-          { type: "sidecar", text: bodyText, delivery: "budget-exhausted" },
-          "sidecar-message",
-        );
-      } else {
-        const verdict = event.verdict === "blocked" ? "blocked" : "revise";
-        emitSidecarItemToCorrectLayer(
-          { type: "sidecar", text: bodyText, verdict },
-          "sidecar-message",
-        );
-      }
-      sidecarMessageDeliveredRef.current = true;
-    },
     onError: (error: Error) => {
       // Cancellation is a control event. Handle it before marking tools failed
       // or constructing API/network recovery messages.
@@ -9088,8 +9081,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
   const recordCompletedAgentRound = useCallback(async (result: KodaXResult) => {
     flushForegroundTextBuffer();
-    const sidecarMessageDelivered = sidecarMessageDeliveredRef.current;
-    sidecarMessageDeliveredRef.current = false;
     context.messages = result.messages;
     context.contextTokenSnapshot = result.contextTokenSnapshot;
     applyRuntimeSessionSnapshot(context, result);
@@ -9134,9 +9125,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     ));
     const needsFinalResponseItem = !roundFailed && finalResponse && !foregroundCoversAssistantText;
     const managedRoundEvents = [...managedRoundEventHistoryRef.current];
-    const managedTranscriptCandidates = buildManagedTaskTranscriptItems(result, {
-      sidecarMessageDelivered,
-    });
+    const managedTranscriptCandidates = buildManagedTaskTranscriptItems(result);
     // Skip routing diagnostics for failed rounds — they mislead users into
     // thinking the task completed successfully.
     const managedTranscriptItems = roundFailed
@@ -9383,7 +9372,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     const sequenceGeneration = promptGenerationRef.current;
     userInterruptedRef.current = false;
     interruptPersistenceQueuedRef.current = false;
-    sidecarMessageDeliveredRef.current = false;
     setCanQueueFollowUps(true);
     try {
       return await runQueuedPromptSequence({
@@ -10307,7 +10295,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               executeDynamicContext: context.skillDynamicContext?.execute,
               disableDynamicContext: context.skillDynamicContext?.disable,
             });
-            
+
       } catch (error) {
         if (!(error instanceof MultipleUserSkillReferencesError)) throw error;
         addHistoryItem({ type: "info", text: `[${error.message}]` });
@@ -11324,7 +11312,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           //     when a managed-foreground worker just crashed.
           // The history-item path below is the single rendering source of
           // truth and lands in the correct chronological slot. A completed
-          // verifier can clear the owner before a later terminal failure, so
+          // event can clear the owner before a later terminal failure, so
           // the still-visible ledger is also authoritative failure history.
           const hasManagedFailureHistory = shouldCommitFailedManagedForeground(
             managedForegroundOwnerRef.current.workerId,

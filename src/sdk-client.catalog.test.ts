@@ -2,7 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import {
   KodaXBaseProvider, KodaXProviderError, clearRuntimeModelProviders, registerModelProvider,
   type KodaXProviderConfig, type KodaXStreamResult,
@@ -112,13 +118,13 @@ it('lists real Host skills, commands, and effective config through typed queries
 
   // A patch through one client must reach the other client after reload:
   // the saved-defaults file is Host-owned state, not per-connection cache.
-  const desiredVerifierLog = !(config.verifierLog ?? false);
-  const patched = await first.config.patch({ verifierLog: desiredVerifierLog });
-  expect(patched.verifierLog).toBe(desiredVerifierLog);
+  const desiredStallLog = !(config.stallLog ?? false);
+  const patched = await first.config.patch({ stallLog: desiredStallLog });
+  expect(patched.stallLog).toBe(desiredStallLog);
   const observed = await second.config.reload();
   expect(observed).toMatchObject({ ok: true });
-  expect(observed.config.verifierLog).toBe(desiredVerifierLog);
-  expect((await second.config.read()).verifierLog).toBe(desiredVerifierLog);
+  expect(observed.config.stallLog).toBe(desiredStallLog);
+  expect((await second.config.read()).stallLog).toBe(desiredStallLog);
 
   await first.config.patch({ model: 'explicit-model', effort: 'high' });
   // JSON needs an explicit reset value; omission must keep unrelated defaults.
@@ -126,7 +132,7 @@ it('lists real Host skills, commands, and effective config through typed queries
   const cleared = (await second.config.reload()).config;
   expect(cleared.model).toBeUndefined();
   expect(cleared.effort).toBeUndefined();
-  expect(cleared.verifierLog).toBe(desiredVerifierLog);
+  expect(cleared.stallLog).toBe(desiredStallLog);
 }, 60_000);
 
 it('selects a Host-only model through the actual model command and clears it when switching provider', async () => {
@@ -225,23 +231,22 @@ it('selects a Host-only model through the actual model command and clears it whe
 });
 
 it('applies explicit execution controls and exposes only their safe effective facts across clients', async () => {
-  vi.stubEnv('KODAX_VERIFIER_LOG', '0');
+  vi.stubEnv('KODAX_STALL_LOG', '0');
   vi.stubEnv('KODAX_STALL_LOG', '0');
   vi.stubEnv('KODAX_FALLBACK_PROVIDERS', 'old-shell-provider');
-  await first.config.patch({ verifierLog: true, stallLog: true, fallbackProviders: ['product-catalog-test'] });
+  await first.config.patch({ stallLog: true, fallbackProviders: ['product-catalog-test'] });
   expect(await second.config.readEffective()).toEqual({
-    verifierLog: { value: true, source: 'persisted', applied: true },
     stallLog: { value: true, source: 'persisted', applied: true },
     fallbackProviders: { value: ['product-catalog-test'], source: 'persisted', applied: true },
   });
   await first.config.reload();
-  expect((await second.config.readEffective()).verifierLog.value).toBe(true);
-  process.env.KODAX_VERIFIER_LOG = '0';
+  expect((await second.config.readEffective()).stallLog.value).toBe(true);
+  process.env.KODAX_STALL_LOG = '0';
   await first.config.reload();
-  expect((await second.config.readEffective()).verifierLog).toEqual({ value: false, source: 'environment', applied: true });
-  await first.config.patch({ verifierLog: false, stallLog: false, fallbackProviders: null });
+  expect((await second.config.readEffective()).stallLog).toEqual({ value: false, source: 'environment', applied: true });
+  await first.config.patch({ stallLog: false, fallbackProviders: null });
   expect((await second.config.readEffective()).fallbackProviders).toEqual({ value: [], source: 'unset', applied: true });
-  expect((await second.config.readEffective()).verifierLog.value).toBe(false);
+  expect((await second.config.readEffective()).stallLog.value).toBe(false);
   expect((await second.config.read()).fallbackProviders).toBeUndefined();
   const callbacks: CommandCallbacks = {
     config: first.config, exit() {}, async saveSession() {},
@@ -254,7 +259,7 @@ it('applies explicit execution controls and exposes only their safe effective fa
   };
   const context = await createInteractiveContext({});
   const current: CurrentConfig = { provider: 'product-catalog-test', thinking: false, reasoningMode: 'off', agentMode: 'sa', permissionMode: 'full-access' };
-  for (const [name, field] of [['verifier-log', 'verifierLog'], ['stall-log', 'stallLog']] as const) {
+  for (const [name, field] of [['stall-log', 'stallLog']] as const) {
     const command = BUILTIN_COMMANDS.find(item => item.name === name)!;
     expect(await command.handler(['on'], context, callbacks, current)).toMatchObject({ success: true });
     expect((await second.config.readEffective())[field].value).toBe(true);
@@ -290,13 +295,13 @@ it('applies explicit execution controls and exposes only their safe effective fa
   await Promise.all([first.disconnect(), second.disconnect()]);
   await host.close();
   await runtime.close();
-  vi.stubEnv('KODAX_VERIFIER_LOG', '1');
+  vi.stubEnv('KODAX_STALL_LOG', '1');
   await startCatalogHost();
-  expect((await first.config.read()).verifierLog).toBe(false);
-  expect((await second.config.readEffective()).verifierLog).toEqual({ value: true, source: 'environment', applied: true });
+  expect((await first.config.read()).stallLog).toBe(false);
+  expect((await second.config.readEffective()).stallLog).toEqual({ value: true, source: 'environment', applied: true });
 });
 
-it('uses saved log controls during the next actual verifier and stall sidecar executions', async () => {
+it('uses saved log controls during the next actual stall sidecar execution without re-enabling the retired judge', async () => {
   vi.stubEnv('KODAX_VERIFIER_ALWAYS', '1');
   vi.stubEnv('KODAX_STALL_DETECT', '1');
   const sample = path.join(homeDir, 'sample.txt');
@@ -328,7 +333,7 @@ it('uses saved log controls during the next actual verifier and stall sidecar ex
   }
   registerModelProvider('execution-log-test', () => new LogProvider());
   for (const enabled of [true, false]) {
-    await first.config.patch({ verifierLog: enabled, stallLog: enabled });
+    await first.config.patch({ stallLog: enabled });
     const session = await first.sessions.create({ projectPath: homeDir });
     await first.sessions.updateSettings(session.id, { provider: 'execution-log-test', agentMode: 'ama', permissionMode: 'full-access', maxIter: 10 });
     const seen: string[] = [];
@@ -339,10 +344,9 @@ it('uses saved log controls during the next actual verifier and stall sidecar ex
       if (!accepted.runId) throw new Error('Expected immediate run');
       expect((await runtime.runs.await(accepted.runId)).phase).toBe('completed');
       await awaitLatestCodingMemoryReviewDrain(5_000);
-      expect(probes.verifier).toBeGreaterThan(before.verifier);
+      expect(probes.verifier).toBe(before.verifier);
       expect(probes.stall).toBeGreaterThan(before.stall);
-      if (enabled) await expect.poll(() => seen.join('\n')).toContain('[Sidecar Verifier]');
-      expect(seen.join('\n').includes('[Sidecar Verifier]')).toBe(enabled);
+      expect(seen.join('\n')).not.toContain('[Sidecar Verifier]');
       expect(seen.join('\n').includes('[Stall Sidecar]')).toBe(enabled);
     } finally { observation.close(); }
   }
@@ -433,3 +437,61 @@ it('changes the fallback used by real Workflow child execution', async () => {
     }
   }
 }, 30_000);
+
+it.each(['ama', 'sa'] as const)('uses the Host goal journal during an actual %s Run without a completion sidecar', async agentMode => {
+  const requests: string[] = [];
+  let turn = 0;
+  class GoalProvider extends KodaXBaseProvider {
+    readonly name = 'goal-result-test';
+    readonly supportsThinking = false;
+    protected readonly config: KodaXProviderConfig = { apiKeyEnv: 'KODAX_PRODUCT_CATALOG_TEST_KEY', model: 'goal-test', supportsThinking: false };
+    async stream(...args: Parameters<KodaXBaseProvider['stream']>): Promise<KodaXStreamResult> {
+      const result = (name: string, input: Record<string, unknown>): KodaXStreamResult => ({
+        textBlocks: [], thinkingBlocks: [], toolBlocks: [{ type: 'tool_use', id: randomUUID(), name, input }], stopReason: 'tool_use', usage: { inputTokens: 200, outputTokens: 100, totalTokens: 300 },
+      });
+      requests.push(args[4]?.forcedToolName ?? 'ordinary');
+      if (args[1].some(tool => tool.name === LEARNING_REVIEW_TOOL.name)) return result(LEARNING_REVIEW_TOOL.name,
+        { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' } });
+      if (++turn === 1) return result('create_goal', { objective: 'Inspect the requested result.' });
+      if (turn === 2) return result('get_goal', {});
+      if (turn === 3) return result('update_goal', { status: 'complete' });
+      return { textBlocks: [{ type: 'text', text: 'Current requirements were checked.' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
+    }
+  }
+  registerModelProvider('goal-result-test', () => new GoalProvider());
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await first.sessions.updateSettings(session.id, { provider: 'goal-result-test', agentMode, permissionMode: 'full-access', repoIntelligenceMode: 'off', maxIter: 4 });
+  const accepted = await first.inputs.submit({ sessionId: session.id, inputId: 'goal-result', text: 'Create a goal, inspect the requested result, and mark the goal complete when finished.' });
+  if (!accepted.runId) throw new Error('Expected immediate run');
+  expect((await first.runs.await(accepted.runId)).phase).toBe('completed');
+  expect(await second.sessions.readGoal(session.id)).toMatchObject({ status: 'complete', objective: 'Inspect the requested result.', tokensUsed: 600 });
+  expect(requests).not.toContain('emit_sidecar_verdict');
+  expect((await second.sessions.readHistory(session.id)).items.length).toBeGreaterThan(4);
+ });
+
+it('keeps SA goal continuation out of user history while preserving the original input', async () => {
+  let turn = 0;
+  class Provider extends KodaXBaseProvider {
+    readonly name = 'goal-continuation-test'; readonly supportsThinking = false;
+    protected readonly config: KodaXProviderConfig = { apiKeyEnv: 'KODAX_PRODUCT_CATALOG_TEST_KEY', model: 'fixture', supportsThinking: false };
+    async stream(...args: Parameters<KodaXBaseProvider['stream']>): Promise<KodaXStreamResult> {
+      const tool = (name: string, input: Record<string, unknown>): KodaXStreamResult => ({ textBlocks: [], thinkingBlocks: [],
+        toolBlocks: [{ type: 'tool_use', id: randomUUID(), name, input }], stopReason: 'tool_use' });
+      if (args[1].some(item => item.name === LEARNING_REVIEW_TOOL.name)) return tool(LEARNING_REVIEW_TOOL.name,
+        { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' } });
+      if (++turn === 1) return tool('create_goal', { objective: 'Finish the actual requested result.' });
+      if (turn === 3) return tool('update_goal', { status: 'complete' });
+      return { textBlocks: [{ type: 'text', text: turn === 2 ? 'Still checking the result.' : 'Checks finished.' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
+    }
+  }
+  registerModelProvider('goal-continuation-test', () => new Provider());
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await first.sessions.updateSettings(session.id, { provider: 'goal-continuation-test', agentMode: 'sa', permissionMode: 'full-access', repoIntelligenceMode: 'off', maxIter: 5 });
+  const original = 'Create a goal and finish the requested result.';
+  const accepted = await first.inputs.submit({ sessionId: session.id, inputId: 'goal-continuation', text: original });
+  if (!accepted.runId) throw new Error('Expected immediate Run');
+  expect((await first.runs.await(accepted.runId)).phase).toBe('completed');
+  expect(turn).toBe(4);
+  const history = await second.sessions.readHistory(session.id);
+  expect(history.items.filter(item => item.type === 'user').map(item => item.text)).toEqual([original]);
+});

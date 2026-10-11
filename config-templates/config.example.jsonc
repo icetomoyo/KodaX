@@ -82,7 +82,6 @@
 
   // Runtime/provider diagnostics and timeouts.
   // "streamIdleTimeoutMs": 120000,
-  // "verifierLog": false,
   // "stallLog": false,
 
   // Ordered provider fallback for child tasks and optional model tiers used by

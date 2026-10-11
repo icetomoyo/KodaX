@@ -8,8 +8,9 @@ import { appendPersistedUiHistorySnapshot } from '../packages/repl/src/ui/InkREP
 import { SessionViewOwner, persistSessionViewItems, restoreSessionViewItems } from './session-view.js';
 
 it.each(['revise', 'blocked', 'budget-exhausted'] as const)('preserves %s Verifier meaning in both consumers and restored history', async classification => {
+  let restoredItems: ClientSessionView['items'] = [];
   const owner = new SessionViewOwner(async () => ({ session: { id: 'session', title: 'Verifier' },
-    settings: {}, items: [], queue: [], interactions: [], runs: [] }), async () => undefined);
+    settings: {}, items: restoredItems, queue: [], interactions: [], runs: [] }), async () => undefined);
   const events = owner.events('session', 'run');
   const lines: string[] = [];
   const classic = createClassicPlaneDisplayDiffer(line => lines.push(line));
@@ -20,7 +21,11 @@ it.each(['revise', 'blocked', 'budget-exhausted'] as const)('preserves %s Verifi
   const event = { source: 'sidecar-verifier' as const, recipient: 'main-agent' as const,
     content: 'Check the result.', suggestedFix: 'Fix the assertion.', verdict, delivery };
   try {
-    events.onSidecarMessage?.(event);
+    const historical = restoreSessionViewItems('session', { messages: [], title: 'Verifier', gitRoot: '',
+      uiHistory: [{ id: 'legacy-verifier', type: 'sidecar', text: event.content + '\nSuggested fix: ' + event.suggestedFix,
+        sidecarVerdict: verdict, sidecarDelivery: delivery, icon: classification }] });
+
+    restoredItems = historical;
     let view: ClientSessionView | undefined;
     const observer = await owner.observe('session', next => { view = next; });
     observer.close();

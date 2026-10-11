@@ -1,4 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import type { KodaXMessage } from "@kodax-ai/agent";
 import {
   createOutputSegmentProjection,
@@ -305,13 +312,6 @@ describe("buildManagedTaskTranscriptItems", () => {
     expect(transcript).toContain("Evaluator identified three blocking issues.");
   });
 
-  // FEATURE_195 (v0.7.43) — Sidecar Verifier UI silent accept.
-  //
-  // Hides accept verdict evidence entries by default (post-F184 design
-  // intent — verifier.ts JSDoc + ADR-030 §F184 specify silent accept).
-  // Revise / blocked still surface (user-actionable). `verifierLog`
-  // opt-in (env `KODAX_VERIFIER_LOG=1` or config `verifierLog: true`)
-  // restores accept visibility for debug/audit.
   describe("FEATURE_195 — Sidecar Verifier UI silent accept", () => {
     const baseSidecarAcceptResult = (): unknown => ({
       success: true,
@@ -361,28 +361,13 @@ describe("buildManagedTaskTranscriptItems", () => {
       },
     });
 
-    it("default mode (verifierLog=false): hides sidecar accept verdict entry", () => {
-      const items = buildManagedTaskTranscriptItems(
-        baseSidecarAcceptResult() as any,
-        { verifierLog: false },
-      );
+    it("hides historical sidecar accept verdict entries", () => {
+      const items = buildManagedTaskTranscriptItems(baseSidecarAcceptResult() as any);
       const transcript = items.join("\n\n");
       expect(transcript).not.toContain("[Evaluator]");
       expect(transcript).not.toContain("用户用中文说");
       // Worker entry still shows.
       expect(transcript).toContain("你好! 我是 KodaX 的开发助手。");
-    });
-
-    it("verifierLog=true: shows sidecar accept verdict entry", () => {
-      const items = buildManagedTaskTranscriptItems(
-        baseSidecarAcceptResult() as any,
-        { verifierLog: true },
-      );
-      const transcript = items.join("\n\n");
-      // verifierLog surfaces the accept entry too — under the Sidecar identity.
-      expect(transcript).toContain("⚡ Sidecar Verifier");
-      expect(transcript).not.toContain("[Evaluator]");
-      expect(transcript).toContain("用户用中文说");
     });
 
     it("default mode: sidecar revise verdict (status='running', no signal) still surfaces — user actionable", () => {
@@ -419,63 +404,11 @@ describe("buildManagedTaskTranscriptItems", () => {
           verdict: { decidedByAssignmentId: "direct" },
         },
       };
-      const items = buildManagedTaskTranscriptItems(result as any, { verifierLog: false });
+      const items = buildManagedTaskTranscriptItems(result as any);
       const transcript = items.join("\n\n");
-      // The verdict surfaces under the Sidecar identity, NOT the legacy
-      // [Evaluator] role label (FEATURE_184 follow-up — the in-chain Evaluator
-      // was retired; this feedback is the Sidecar Verifier's).
       expect(transcript).toContain("⚡ Sidecar Verifier");
       expect(transcript).not.toContain("[Evaluator]");
       expect(transcript).toContain("revise needed");
-    });
-
-    it("omits actionable sidecar evidence after the first-class sidecar message was delivered", () => {
-      const result = {
-        success: true,
-        messages: [],
-        lastText: "Worker completed the requested implementation on retry.",
-        managedTask: {
-          runtime: {},
-          roleAssignments: [
-            { id: "worker", role: "worker", title: "Worker" },
-            { id: "evaluator", role: "evaluator", title: "Evaluator" },
-          ],
-          evidence: {
-            entries: [
-              {
-                assignmentId: "evaluator",
-                title: "Evaluator",
-                role: "evaluator",
-                round: 1,
-                status: "running",
-                summary: "Please perform the requested implementation.",
-              },
-            ],
-          },
-          verdict: { decidedByAssignmentId: "direct", disposition: "complete" },
-        },
-      };
-
-      const items = buildManagedTaskTranscriptItems(
-        result as Parameters<typeof buildManagedTaskTranscriptItems>[0],
-        {
-          verifierLog: false,
-          sidecarMessageDelivered: true,
-        },
-      );
-      const transcript = items.join("\n\n");
-
-      expect(transcript).not.toContain("Sidecar Verifier");
-      expect(transcript).not.toContain("Please perform the requested implementation.");
-    });
-
-    it("keeps verifier-log accept evidence because accept has no first-class sidecar message", () => {
-      const items = buildManagedTaskTranscriptItems(
-        baseSidecarAcceptResult() as Parameters<typeof buildManagedTaskTranscriptItems>[0],
-        { verifierLog: true, sidecarMessageDelivered: true },
-      );
-
-      expect(items.join("\n\n")).toContain("Sidecar Verifier");
     });
 
     it("default mode: sidecar blocked verdict (signal='BLOCKED') still surfaces — user actionable", () => {
@@ -511,57 +444,12 @@ describe("buildManagedTaskTranscriptItems", () => {
           verdict: { decidedByAssignmentId: "direct", disposition: "blocked" },
         },
       };
-      const items = buildManagedTaskTranscriptItems(result as any, { verifierLog: false });
+      const items = buildManagedTaskTranscriptItems(result as any);
       const transcript = items.join("\n\n");
       // Blocked verdict surfaces under the Sidecar identity, not [Evaluator].
       expect(transcript).toContain("⚡ Sidecar Verifier");
       expect(transcript).not.toContain("[Evaluator]");
       expect(transcript).toContain("missing dependency");
-    });
-
-    it("default mode: sidecar blocked verdict (signal='BLOCKED') is omitted once the sidecar message was delivered", () => {
-      const result = {
-        success: false,
-        signal: "BLOCKED",
-        messages: [],
-        lastText: "Worker reported blocker.",
-        managedTask: {
-          runtime: {},
-          roleAssignments: [
-            { id: "worker", role: "worker", title: "Worker" },
-            { id: "evaluator", role: "evaluator", title: "Evaluator" },
-          ],
-          evidence: {
-            entries: [
-              {
-                assignmentId: "evaluator",
-                title: "Evaluator",
-                role: "evaluator",
-                round: 1,
-                status: "blocked",
-                signal: "BLOCKED",
-                signalReason: "Cannot proceed — missing dependency in user environment.",
-                summary: "Cannot proceed — missing dependency in user environment.",
-              },
-            ],
-          },
-          // BLOCKED case — per payload-builder.ts:218, harness='H0_DIRECT'
-          // wins so decidedByAssignmentId='direct'. The F195 sidecar filter
-          // omits non-COMPLETE evaluator evidence once the first-class sidecar
-          // message channel already delivered the verdict (no duplicate echo).
-          verdict: { decidedByAssignmentId: "direct", disposition: "blocked" },
-        },
-      };
-      const items = buildManagedTaskTranscriptItems(
-        result as Parameters<typeof buildManagedTaskTranscriptItems>[0],
-        { verifierLog: false, sidecarMessageDelivered: true },
-      );
-      const transcript = items.join("\n\n");
-      // Evaluator title and BLOCKED content are filtered — already shown via
-      // the first-class sidecar message.
-      expect(transcript).not.toContain("[Evaluator]");
-      expect(transcript).not.toContain("Sidecar Verifier");
-      expect(transcript).not.toContain("missing dependency");
     });
 
     it("default mode: non-evaluator entries with signal='COMPLETE' (e.g. direct H0) still surface", () => {
@@ -598,58 +486,12 @@ describe("buildManagedTaskTranscriptItems", () => {
           verdict: { decidedByAssignmentId: "direct", disposition: "complete" },
         },
       };
-      const items = buildManagedTaskTranscriptItems(result as any, { verifierLog: false });
+      const items = buildManagedTaskTranscriptItems(result as any);
       const transcript = items.join("\n\n");
       expect(transcript).toContain("[Worker]");
       expect(transcript).toContain("Worker completed");
     });
 
-    it("env var KODAX_VERIFIER_LOG=1 is honored when options.verifierLog omitted", () => {
-      const prev = process.env.KODAX_VERIFIER_LOG;
-      process.env.KODAX_VERIFIER_LOG = "1";
-      try {
-        const items = buildManagedTaskTranscriptItems(baseSidecarAcceptResult() as any);
-        const transcript = items.join("\n\n");
-        expect(transcript).toContain("⚡ Sidecar Verifier");
-        expect(transcript).not.toContain("[Evaluator]");
-        expect(transcript).toContain("用户用中文说");
-      } finally {
-        if (prev === undefined) delete process.env.KODAX_VERIFIER_LOG;
-        else process.env.KODAX_VERIFIER_LOG = prev;
-      }
-    });
-
-    it("env var unset + options omitted: defaults to filter-on (silent accept)", () => {
-      const prev = process.env.KODAX_VERIFIER_LOG;
-      delete process.env.KODAX_VERIFIER_LOG;
-      try {
-        const items = buildManagedTaskTranscriptItems(baseSidecarAcceptResult() as any);
-        const transcript = items.join("\n\n");
-        expect(transcript).not.toContain("[Evaluator]");
-        expect(transcript).not.toContain("用户用中文说");
-      } finally {
-        if (prev !== undefined) process.env.KODAX_VERIFIER_LOG = prev;
-      }
-    });
-
-    it("options.verifierLog=false overrides env var KODAX_VERIFIER_LOG=1 (explicit option wins)", () => {
-      // Test paths need deterministic behavior independent of test-env
-      // env vars. The `options.verifierLog` arg must take precedence
-      // over the env-var fallback.
-      const prev = process.env.KODAX_VERIFIER_LOG;
-      process.env.KODAX_VERIFIER_LOG = "1";
-      try {
-        const items = buildManagedTaskTranscriptItems(
-          baseSidecarAcceptResult() as any,
-          { verifierLog: false },
-        );
-        const transcript = items.join("\n\n");
-        expect(transcript).not.toContain("[Evaluator]");
-      } finally {
-        if (prev === undefined) delete process.env.KODAX_VERIFIER_LOG;
-        else process.env.KODAX_VERIFIER_LOG = prev;
-      }
-    });
   });
 });
 

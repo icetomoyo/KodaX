@@ -1,25 +1,4 @@
-/**
- * Observer bridge — funnels per-role lifecycle events from the runner-
- * driven AMA loop into the user-facing `KodaXEvents.onManagedTaskStatus`
- * surface.
- *
- * Hosts:
- *   - `MANAGED_WORK_BUDGET_CAP` + `MANAGED_WORK_BUDGET_EXTENSION` —
- *     single-constant budget cap + extension increment (consumed by
- *     `wrapEmitterWithRecorder` in `verdict-recorder.ts`)
- *   - `ROLE_TO_TITLE` + `MANAGED_MAX_ROUNDS` — display labels +
- *     role-chain length hint used by the status emit body
- *   - `buildEvidenceEntryForRoleEmit` — per-role evidence record
- *   - `buildRunnerRoutingNote` — preflight routing label
- *   - `buildObserverBridge` — the actual bridge factory
- *   - `NULL_OBSERVER` — observer-shaped no-op used by test paths and as
- *     the agent-chain builder's default
- *
- * Extracted from `task-engine/runner-driven.ts` lines ~872–1355 of the
- * pre-FEATURE_171 monolith as part of FEATURE_171 (v0.7.41) modular
- * split. Zero behavior change — bodies are byte-identical to the
- * previous in-file declarations.
- */
+
 
 import type {
   KodaXEvents,
@@ -39,7 +18,7 @@ import {
   DEFAULT_MANAGED_WORK_BUDGET,
   GLOBAL_WORK_BUDGET_INCREMENT,
 } from '../constants.js';
-import type { ObserverBridge, VerdictRecorder } from './types.js';
+import type { ObserverBridge } from './types.js';
 
 /**
  * Managed-task work-budget cap, in LLM-turn units. Each role emit + each
@@ -113,10 +92,9 @@ export const MANAGED_MAX_ROUNDS = 8;
 function buildEvidenceEntryForRoleEmit(args: {
   readonly role: KodaXTaskRole;
   readonly round: number;
-  readonly recorder: VerdictRecorder;
   readonly sessionId: string | undefined;
 }): KodaXTaskEvidenceEntry {
-  const { role, round, recorder, sessionId } = args;
+  const { role, round, sessionId } = args;
   let status: KodaXTaskStatus = 'completed';
   let summary: string | undefined;
   let signal: KodaXTaskEvidenceEntry['signal'];
@@ -126,20 +104,7 @@ function buildEvidenceEntryForRoleEmit(args: {
   // The 'direct' branch is retained for the H0_DIRECT execution path which
   // still publishes a direct-completion summary even though V1 Scout no
   // longer drives it.
-  if (role === 'evaluator') {
-    const verdict = recorder.verdict?.payload.verdict;
-    summary = verdict?.reason;
-    if (verdict?.status === 'blocked') {
-      status = 'blocked';
-      signal = 'BLOCKED';
-      signalReason = verdict.reason;
-    } else if (verdict?.status === 'revise') {
-      status = 'running';
-    } else if (verdict?.status === 'accept') {
-      signal = 'COMPLETE';
-      signalReason = verdict.reason;
-    }
-  } else if (role === 'direct') {
+  if (role === 'direct') {
     // FEATURE_193 (v0.7.43): H0_DIRECT direct-completion path. The
     // V1 `recorder.scout?.payload.scout?.summary` source was removed
     // along with the scout slot; remaining H0_DIRECT traces fire with
@@ -249,16 +214,10 @@ export function buildObserverBridge(
         persistToHistory: false,
       });
     },
-    onRoleEmit: (role, recorder) => {
-      // FEATURE_193 (v0.7.43): Scout harness-confirmation branch
-      // removed (V1 scout slot deleted). `harnessRef.current` is set
-      // by routing at run start and stays fixed — V2 Worker doesn't
-      // re-tier mid-run. onRoleEmit only fires with 'evaluator'
-      // (Sidecar Verifier bridge) or 'worker' (Worker text-only
-      // termination) on V2.
+    onRoleEmit: (role) => {
       rolesRef.emitted.push(role);
       roundRef.current += 1;
-      const detail = recorder.verdict?.payload.verdict?.reason;
+      const detail = undefined;
       // Shard 6d-R: accumulate `evidence.entries[]` per-turn. Mirrors legacy
       // `task-engine.ts` behaviour where each role completion appended a
       // `KodaXTaskEvidenceEntry` to the managed task's evidence bundle so
@@ -268,7 +227,6 @@ export function buildObserverBridge(
         buildEvidenceEntryForRoleEmit({
           role,
           round: roundRef.current,
-          recorder,
           sessionId: sessionIdRef.current,
         }),
       );
@@ -400,46 +358,13 @@ export function buildObserverBridge(
         ...buildManagedStatusBudgetFields(budget, budgetApprovalRef.current),
       });
     },
-    sidecarStarted: () => {
-      // FEATURE_184 Phase D.3 — emit `phase: 'verifying'` so the REPL
-      // spinner shows `[AMA Verifying]` while the sidecar verifier LLM
-      // call is in flight (typically 3-10s on inherit-main provider).
-      // Without this, the spinner would keep the prior Worker label
-      // for the full window with no signal that the agent has stopped
-      // and a verification call is running.
-      if (!events?.onManagedTaskStatus) return;
-      emit({
-        phase: 'verifying',
-        note: 'Verifying agent output',
-        persistToHistory: false,
-      });
-    },
-    sidecarFinished: (info) => {
-      // Opt-in verifier observability — gated upstream by
-      // `KODAX_VERIFIER_LOG=1`. Persists a one-line summary into the
-      // session jsonl so users can confirm post-hoc that the sidecar
-      // fired AND see which (provider, model) ran the verification.
-      //
-      // Phase: 'worker' (back to in-chain phase after the verifying
-      // spinner) — avoids adding a new union value just for the log
-      // line. The note format is the user-facing identifier.
-      if (!events?.onManagedTaskStatus) return;
-      const sourceTag = info.source === 'explicit-env' ? 'env' : 'inherit';
-      const modelLabel = info.model ?? '(default)';
-      emit({
-        phase: 'worker',
-        note: `[Sidecar Verifier] ${info.verdict} · ${info.providerName}/${modelLabel} (${sourceTag}) · ${info.elapsedMs}ms · ${info.trace}`,
-        persistToHistory: true,
-      });
-    },
     stallSidecarFired: (info) => {
       // FEATURE_187 Phase C (v0.7.43) — opt-in stall sidecar
       // observability. Gated upstream by `KODAX_STALL_LOG=1` (check
       // happens inside the stall-sidecar middleware factory's
       // `onVerdict` callback because stall verdicts arrive async; the
       // factory is the synchronous moment when the env check runs).
-      // Same shape strategy as `sidecarFinished`: `phase: 'worker'`,
-      // `persistToHistory: true`, single user-visible note line.
+      // Persist one user-visible note in the Worker phase.
       if (!events?.onManagedTaskStatus) return;
       const sourceTag = info.source === 'explicit-env' ? 'env' : 'inherit';
       const modelLabel = info.model ?? '(default)';
@@ -465,7 +390,5 @@ export const NULL_OBSERVER: ObserverBridge = {
   notifyChildFanout: () => undefined,
   idleWaiting: () => undefined,
   agentSwitched: () => undefined,
-  sidecarStarted: () => undefined,
-  sidecarFinished: () => undefined,
   stallSidecarFired: () => undefined,
 };

@@ -32,7 +32,7 @@ desktop app.
 
 ### 🤖 Multi-agent by default
 
-V2 Worker single-loop + Sidecar Verifier + async children
+V2 Worker single-loop + result review + async children
 
 `spawn_agent`, `send_message`, `followup_task`, `interrupt_agent`,
 multi-instance auto-coordination with content-hash safety net.

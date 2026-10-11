@@ -336,9 +336,6 @@ export function withLiveTurnAttribution(
     onContextCompactionSkipped: (event) => {
       baseEvents.onContextCompactionSkipped?.(withLiveMeta(scope, event));
     },
-    onSidecarMessage: (event) => {
-      baseEvents.onSidecarMessage?.(withLiveMeta(scope, event));
-    },
     onTodoUpdate: (items, meta) => {
       baseEvents.onTodoUpdate?.(items, withActivityMeta(scope, meta));
     },

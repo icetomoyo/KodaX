@@ -207,7 +207,8 @@ module (`aliases.ts` + `judges.ts` + `harness.ts` + `report.ts` + `persist.ts`).
 - `packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts`
 - Tool `description` fields in `packages/coding/src/tools/`
 - `coding-preset.ts:DEFAULT_CODING_INSTRUCTIONS`
-- `packages/coding/src/agents/protocol-emitters.ts` prompts
+- `packages/coding/src/prompts/execution-guidance.ts`
+- `packages/agent/src/capabilities/skills/builtin/visual-review/SKILL.md`
 - `packages/coding/src/guardrails/auto-mode/classifier-prompt.ts` (FEATURE_092 v0.7.33 — auto-mode classifier system prompt; eval: `tests/auto-mode-classifier.eval.ts`)
 
 **Non-triggers** (no eval needed):

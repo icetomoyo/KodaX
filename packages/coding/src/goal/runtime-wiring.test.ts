@@ -16,7 +16,12 @@
  *     byte-identity, so prompt wording can iterate without test churn)
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import {
+  describe,
+  it,
+  expect,
+  vi,
+} from 'vitest';
 
 import {
   appendGoalEntry,
@@ -44,7 +49,6 @@ interface HostState {
 
 function makeBinding(overrides: {
   state?: HostState;
-  verifyComplete?: ReturnType<typeof vi.fn>;
   hasPendingUserInput?: () => boolean;
 } = {}) {
   const state: HostState = overrides.state ?? {
@@ -54,8 +58,6 @@ function makeBinding(overrides: {
   const saveSession = vi.fn(async () => {
     state.saved++;
   });
-  const verifyComplete =
-    overrides.verifyComplete ?? vi.fn(async () => ({ ok: true }));
   const binding = buildGoalRuntimeBinding({
     getLineage: () => state.lineage,
     setLineage: (next) => {
@@ -65,9 +67,8 @@ function makeBinding(overrides: {
     getLatestUsage: () => undefined,
     getTurnStartMs: () => undefined,
     hasPendingUserInput: overrides.hasPendingUserInput ?? (() => false),
-    verifyComplete,
   });
-  return { binding, state, saveSession, verifyComplete };
+  return { binding, state, saveSession, };
 }
 
 describe('buildGoalRuntimeBinding — readGoal', () => {
@@ -146,39 +147,14 @@ describe('buildGoalRuntimeBinding — requestComplete', () => {
       'created',
     );
     const verify = vi.fn(async () => ({ ok: true }));
-    const { binding } = makeBinding({ state, verifyComplete: verify });
+    const { binding } = makeBinding({ state, });
     const r = await binding.goalContext.requestComplete();
     expect(r.ok).toBe(true);
-    expect(verify).toHaveBeenCalled();
+    expect(verify).not.toHaveBeenCalled();
     const events = state.lineage.entries
       .filter((e) => e.type === 'goal')
       .map((e) => (e as { event: string }).event);
     expect(events).toEqual(['created', 'complete']);
-  });
-
-  it('short-circuits on verifier reject — no complete event, no persist', async () => {
-    const state: HostState = { lineage: makeMsgLineage(), saved: 0 };
-    state.lineage = appendGoalEntry(
-      state.lineage,
-      buildCreatedGoal('X', null),
-      'created',
-    );
-    const verify = vi.fn(async () => ({
-      ok: false,
-      reason: 'tests still failing',
-      suggestedFix: 'run npm test',
-    }));
-    const { binding, saveSession } = makeBinding({
-      state,
-      verifyComplete: verify,
-    });
-    const initialEntries = state.lineage.entries.length;
-    const r = await binding.goalContext.requestComplete();
-    expect(r.ok).toBe(false);
-    expect(r.reason).toMatch(/tests still failing/);
-    expect(r.suggestedFix).toBe('run npm test');
-    expect(state.lineage.entries.length).toBe(initialEntries); // no new entry
-    expect(saveSession).not.toHaveBeenCalled();
   });
 });
 
@@ -236,89 +212,6 @@ describe('buildGoalRuntimeBinding — requestBlocked (3-turn rule)', () => {
   });
 });
 
-describe('buildGoalRuntimeBinding — installVerifyComplete (pluggable verifier slot)', () => {
-  it('replaces the initial deps.verifyComplete with the installed implementation', async () => {
-    const state: HostState = { lineage: makeMsgLineage(), saved: 0 };
-    state.lineage = appendGoalEntry(
-      state.lineage,
-      buildCreatedGoal('X', null),
-      'created',
-    );
-    const initialStub = vi.fn(async () => ({ ok: true as const }));
-    const { binding } = makeBinding({ state, verifyComplete: initialStub });
-    // Install replacement BEFORE first call — initial stub never fires.
-    const replacement = vi.fn(async () => ({
-      ok: false as const,
-      reason: 'replacement says no',
-    }));
-    binding.installVerifyComplete(replacement);
-    const r = await binding.goalContext.requestComplete();
-    expect(r.ok).toBe(false);
-    expect(r.reason).toBe('replacement says no');
-    expect(initialStub).not.toHaveBeenCalled();
-    expect(replacement).toHaveBeenCalledTimes(1);
-  });
-
-  it('subsequent installs swap the slot — last writer wins', async () => {
-    const state: HostState = { lineage: makeMsgLineage(), saved: 0 };
-    state.lineage = appendGoalEntry(
-      state.lineage,
-      buildCreatedGoal('X', null),
-      'created',
-    );
-    const { binding } = makeBinding({ state });
-    const v1 = vi.fn(async () => ({ ok: false as const, reason: 'v1' }));
-    const v2 = vi.fn(async () => ({ ok: false as const, reason: 'v2' }));
-    binding.installVerifyComplete(v1);
-    binding.installVerifyComplete(v2);
-    const r = await binding.goalContext.requestComplete();
-    expect(r.reason).toBe('v2');
-    expect(v1).not.toHaveBeenCalled();
-    expect(v2).toHaveBeenCalledTimes(1);
-  });
-
-  it('install AFTER first call still observed on next call (closure reads slot fresh)', async () => {
-    const state: HostState = { lineage: makeMsgLineage(), saved: 0 };
-    state.lineage = appendGoalEntry(
-      state.lineage,
-      buildCreatedGoal('X', null),
-      'created',
-    );
-    const initial = vi.fn(async () => ({
-      ok: false as const,
-      reason: 'initial',
-    }));
-    const { binding } = makeBinding({ state, verifyComplete: initial });
-    const r1 = await binding.goalContext.requestComplete();
-    expect(r1.reason).toBe('initial');
-    binding.installVerifyComplete(async () => ({
-      ok: false as const,
-      reason: 'after install',
-    }));
-    const r2 = await binding.goalContext.requestComplete();
-    expect(r2.reason).toBe('after install');
-  });
-
-  it('verifier reject propagates suggestedFix through requestComplete', async () => {
-    const state: HostState = { lineage: makeMsgLineage(), saved: 0 };
-    state.lineage = appendGoalEntry(
-      state.lineage,
-      buildCreatedGoal('X', null),
-      'created',
-    );
-    const { binding } = makeBinding({ state });
-    binding.installVerifyComplete(async () => ({
-      ok: false as const,
-      reason: 'tests not yet run',
-      suggestedFix: 'run `npm test`',
-    }));
-    const r = await binding.goalContext.requestComplete();
-    expect(r.ok).toBe(false);
-    expect(r.reason).toBe('tests not yet run');
-    expect(r.suggestedFix).toBe('run `npm test`');
-  });
-});
-
 describe('buildGoalRuntimeBinding — buildContinuationPrompt structure', () => {
   // Structural smoke test (added per independent review 2026-05-28).
   // Locks in Codex parity at the section-heading level + the two
@@ -362,8 +255,8 @@ describe('buildGoalRuntimeBinding — buildContinuationPrompt structure', () => 
 
   it('contains both KodaX runtime-enforcement paragraphs', () => {
     const prompt = getPrompt();
-    expect(prompt).toMatch(/Runtime enforcement of Completion audit/);
-    expect(prompt).toMatch(/Sidecar Verifier/);
+    expect(prompt).toMatch(/Completion audit:/);
+    expect(prompt).not.toMatch(/Sidecar Verifier/);
     expect(prompt).toMatch(/Runtime enforcement of Blocked audit/);
     expect(prompt).toMatch(/consecutive .*blocker_kind/);
   });

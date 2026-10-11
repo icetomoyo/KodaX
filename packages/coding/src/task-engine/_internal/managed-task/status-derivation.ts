@@ -18,12 +18,7 @@ import type {
   KodaXMessage,
   KodaXTextBlock,
 } from '@kodax-ai/llm';
-import type {
-  KodaXManagedProtocolPayload,
-  KodaXResult,
-} from '../../../types.js';
 import { sanitizeManagedUserFacingText } from './sanitize.js';
-import type { VerdictRecorder } from './types.js';
 
 export function extractUserFacingText(result: { messages: readonly KodaXMessage[]; output: string }): string {
   const raw = extractUserFacingRaw(result);
@@ -47,62 +42,4 @@ export function extractUserFacingRaw(result: { messages: readonly KodaXMessage[]
     .filter((b): b is KodaXTextBlock => b.type === 'text')
     .map((b) => b.text)
     .join('');
-}
-
-/**
- * Derive the final signal + managedTask.verdict.status from the recorder.
- * Priority:
- *   1. Sidecar Verifier verdict if present (accept / revise / blocked) —
- *      F184 v0.7.45 retired the in-chain Evaluator; this slot is now
- *      populated exclusively by the Stop-hook Sidecar Verifier
- *      (`agent-runtime/middleware/sidecar-verifier/`)
- *   2. Fallback: `{signal: 'COMPLETE'}` — the canonical text-only
- *      termination outcome. Worker produces a final text message,
- *      Runner.run exits via the no-tool-calls branch, the verdict slot
- *      is not populated, and this function returns COMPLETE. This is
- *      the DEFAULT happy-path post-F184; no recorder mutation is
- *      required for a successful Worker termination.
- *
- * FEATURE_193 (v0.7.43): removed the legacy `emit_handoff(status:'blocked')`
- * fallback — F190 deleted that tool, F193 removed the `recorder.handoff`
- * slot entirely. Generator-level blockers no longer exist on V2.
- */
-export function deriveFinalStatus(recorder: VerdictRecorder): {
-  signal: KodaXResult['signal'];
-  verdictStatus?: 'accept' | 'revise' | 'blocked';
-  reason?: string;
-  userAnswer?: string;
-} {
-  const verdictPayload = recorder.verdict?.payload.verdict;
-  if (verdictPayload) {
-    if (verdictPayload.status === 'blocked') {
-      return {
-        signal: 'BLOCKED',
-        verdictStatus: 'blocked',
-        reason: verdictPayload.reason,
-      };
-    }
-    return {
-      signal: 'COMPLETE',
-      verdictStatus: verdictPayload.status,
-      reason: verdictPayload.reason,
-      userAnswer: verdictPayload.userAnswer,
-    };
-  }
-  return { signal: 'COMPLETE' };
-}
-
-/**
- * Build the minimal `managedProtocolPayload` slice the round-boundary
- * reshape expects. Shard 5b populates whatever the recorder captured;
- * missing slices stay undefined.
- */
-export function buildManagedProtocolPayload(
-  recorder: VerdictRecorder,
-): KodaXManagedProtocolPayload | undefined {
-  // FEATURE_193 (v0.7.43): scout / contract / handoff slices removed —
-  // V1 chain retired, VerdictRecorder no longer carries those slots.
-  // Only verdict survives (Sidecar Verifier bridge).
-  if (!recorder.verdict?.payload.verdict) return undefined;
-  return { verdict: recorder.verdict.payload.verdict } as KodaXManagedProtocolPayload;
 }

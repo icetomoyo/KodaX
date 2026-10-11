@@ -142,7 +142,6 @@ export type {
   KodaXEvents,
   KodaXUserInputPromptContext,
   KodaXPromptCacheDiagnosticEvent,
-  KodaXSidecarMessageEvent,
   KodaXWorkflowAgentDigestEvent,
   KodaXContextIdentity,
   KodaXContextCompactionFinishedEvent,
@@ -153,7 +152,6 @@ export type {
   KodaXTurnDeliveryKind,
   KodaXTurnFailedEvent,
   KodaXTurnStartedEvent,
-  // SDK: workflow host contract so an embedder can implement KodaXOptions.workflowHost.
   WorkflowToolHost,
   WorkflowToolHostResult,
   WorkflowToolHostInlineInput,
@@ -195,7 +193,6 @@ export type {
   KodaXSkillScriptRunner,
   KodaXMcpTransport,
   KodaXMcpConnectMode,
-
   KodaXMcpServerConfig,
   KodaXMcpServersConfig,
   KodaXTaskCapabilityHint,
@@ -720,11 +717,6 @@ export {
 } from './agent-runtime/coding-compaction-prompts.js';
 export { applyPostCompactAttachments } from './agent-runtime/middleware/post-compact-attachments.js';
 
-// FEATURE_101 (v0.7.31): admission contract — capability-coupled
-// invariants (budgetCeiling / toolPermission / boundedRevise) plus
-// the bootstrap that registers the full v1 set.
-// (FEATURE_184 Phase C.1: independentReview deleted — superseded by
-// Sidecar Verifier.)
 export {
   CODING_INVARIANTS,
   boundedRevise,
@@ -936,7 +928,6 @@ export type {
   LoadAgentsOptions,
 } from './context/agents-loader.js';
 
-
 // ============== Resilience (Feature 045) ==============
 export type {
   ResilienceErrorClass,
@@ -997,7 +988,30 @@ export { exec, webhook } from './extensions/helpers.js';
 // The Option-Y dog-food registers the default coding dispatcher as a side
 // effect of importing `./coding-preset.js`.
 
-export type { Agent, AgentMessage, AgentReasoningProfile, AgentTool, Guardrail, Handoff, ReasoningDepth, InMemorySessionOptions, MessageEntry, Session, SessionEntry, SessionExtension, SessionForkOptions, CompactionContext, CompactionEntry, CompactionEntryPayload, CompactionPolicy, DefaultSummaryCompactionOptions, PresetDispatcher, RunEvent, RunOptions, RunResult } from '@kodax-ai/agent';
+export type {
+  Agent,
+  AgentMessage,
+  AgentReasoningProfile,
+  AgentTool,
+  Guardrail,
+  Handoff,
+  ReasoningDepth,
+  InMemorySessionOptions,
+  MessageEntry,
+  Session,
+  SessionEntry,
+  SessionExtension,
+  SessionForkOptions,
+  CompactionContext,
+  CompactionEntry,
+  CompactionEntryPayload,
+  CompactionPolicy,
+  DefaultSummaryCompactionOptions,
+  PresetDispatcher,
+  RunEvent,
+  RunOptions,
+  RunResult,
+} from '@kodax-ai/agent';
 
 export type { CompactionResult } from '@kodax-ai/agent';
 export {
@@ -1025,7 +1039,7 @@ export {
 // coding-side now (`@kodax-ai/coding/src/agents/task-engine-agents.ts`),
 // re-exported through coding's `agents/` barrel. See ADR-021.
 // FEATURE_193 v0.7.43: V1 chain (Scout/Planner/Generator) Agent declarations
-// retired. Name constants survive for verdict-recorder routing + historical
+// retired. Name constants survive for historical
 // session id compat.
 export {
   SCOUT_AGENT_NAME,
@@ -1040,19 +1054,6 @@ export {
   DEFAULT_CODING_AGENT_NAME,
   createDefaultCodingAgent,
 } from './coding-preset.js';
-
-// FEATURE_193 v0.7.43: V1 chain Coding Agent instances + V1 emit tools
-// (scoutCodingAgent / plannerCodingAgent / generatorCodingAgent /
-// CODING_AGENTS / EMIT_SCOUT_VERDICT_TOOL_NAME / EMIT_CONTRACT_TOOL_NAME /
-// emitScoutVerdict / emitContract) all retired. EMIT_VERDICT_TOOL_NAME +
-// emitVerdict survive for the Sidecar Verifier (FEATURE_184).
-export {
-  CODING_AGENT_MARKER,
-  EMIT_VERDICT_TOOL_NAME,
-  PROTOCOL_EMITTER_TOOLS,
-  emitVerdict,
-} from './agents/index.js';
-export type { ProtocolEmitterMetadata } from './agents/index.js';
 
 // FEATURE_085 (v0.7.26): adapter wrapping the legacy per-tool truncation
 // policy as a Layer A ToolGuardrail.afterTool. Opt-in — the SA preset path
@@ -1079,7 +1080,12 @@ export { LINEAGE_ENTRY_TYPES, LineageExtension, LineageCompaction } from '@kodax
 // legacy session types. As of FEATURE_081 (v0.7.23) it is superseded by
 // `Session` + `LineageExtension`; scheduled for removal in FEATURE_086
 // (v0.7.27) alongside the `KodaX*` prefix cleanup.
-export type { ExecOptions, ExecResult, WebhookOptions, WebhookResult } from './extensions/helpers.js';
+export type {
+  ExecOptions,
+  ExecResult,
+  WebhookOptions,
+  WebhookResult,
+} from './extensions/helpers.js';
 
 // FEATURE_082 (v0.7.24): MCP provider moved to `@kodax-ai/agent`. Barrel
 // re-export kept for batteries-included consumers; not a deprecation shim.
@@ -1401,6 +1407,7 @@ export {
   buildCompleteGoal,
   buildCreatedGoal,
   buildGoalRuntimeBinding,
+  buildSessionGoalRuntimeBinding,
   buildPausedGoal,
   buildResumedGoal,
   goalTokenDelta,
@@ -1410,7 +1417,6 @@ export {
   resetBlockerCounter,
   shouldFlipBudgetLimited,
   turnWallTimeDelta,
-  verifyGoalCompletion,
   withGoalBeforeNextTurn,
   withGoalStopHook,
   planGoalCreate,
@@ -1421,13 +1427,11 @@ export type {
   BlockerAttemptResult,
   GoalBlockedResult,
   GoalCompleteResult,
-  GoalCompletionVerifier,
   GoalCreateInput,
   GoalLifecycleContext,
   GoalRuntimeBinding,
   GoalRuntimeBindingDeps,
   GoalToolsContext,
-  VerifyGoalCompletionOptions,
 } from './goal/index.js';
 
 // FEATURE_209 (v0.7.45): tracing activation in production.

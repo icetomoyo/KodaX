@@ -548,13 +548,13 @@ user input
   -> Runner.run(createDefaultCodingAgent(), prompt, presetOptions)
   -> coding substrate
   -> provider stream + tool loop
-  -> Sidecar Verifier stop hook when Worker text-finishes
+  -> main-agent checks of actual results; extension Stop / goal lifecycle
   -> KodaXResult + session updates + UI/events
 ```
 
 The Worker single-loop is the only current main-agent execution shape. The
 Worker plans, reads, edits, tests, dispatches children, and writes the final
-answer. Sidecar Verifier is out-of-band and only judges termination quality.
+answer after checking actual results. Optional reviewers are ordinary child Actors, using existing evidence and artifact channels.
 
 ## 4. Provider Architecture
 
@@ -614,7 +614,7 @@ it to `prompt_cache_key`. Unverified compatible endpoints remain unchanged.
 - Worker prompts and capability sections,
 - permission and auto-mode integration,
 - built-in full/light repo-intelligence context and semantic worker wiring,
-- sidecar verifier integration,
+- extension Stop and goal lifecycle integration,
 - shared adaptive AMA pattern catalog and bounded `PatternTrace` projection,
 - session snapshots and runtime state,
 - construction and self-modification tools,

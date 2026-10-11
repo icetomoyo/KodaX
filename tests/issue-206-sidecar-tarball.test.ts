@@ -57,7 +57,7 @@ describe('Issue 206 publish tarball regression', () => {
     }
   });
 
-  it('packs bundle bytes with optional-follow-up and budget-approval guards', {
+  it('packs current visual-review assets without the retired completion judge', {
     timeout: 180_000,
   }, () => {
     const scratch = mkdtempSync(join(tmpdir(), 'kodax-i206-tarball-'));
@@ -85,11 +85,11 @@ describe('Issue 206 publish tarball regression', () => {
       ? filename
       : join(scratch, typeof filename === 'string' ? filename : '');
     const audited = run(process.execPath, [
-      resolve('scripts/audit-sidecar-tarball.mjs'),
+      resolve('scripts/audit-runtime-tarball.mjs'),
       tarball,
     ]);
 
     expect(audited.status, audited.error || audited.stderr || audited.stdout).toBe(0);
-    expect(audited.stdout).toContain('Sidecar tarball audit passed');
+    expect(audited.stdout).toContain('Runtime tarball audit passed');
   });
 });

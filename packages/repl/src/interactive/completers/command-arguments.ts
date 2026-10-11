@@ -680,7 +680,6 @@ export const COMMAND_ARGUMENTS: CommandArgumentsRegistry = new Map([
   ['fallback', FALLBACK_ARGS],
   ['agent-mode', AGENT_MODE_ARGS],
   ['am', AGENT_MODE_ARGS],
-  ['verifier-log', TOGGLE_ARGS],
   ['stall-log', TOGGLE_ARGS],
   ['memory', MEMORY_ARGS],
   ['goal', GOAL_ARGS],

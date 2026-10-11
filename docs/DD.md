@@ -673,8 +673,7 @@ Important contracts:
 - `Runner.run` remains generic and cannot depend on coding-specific modules.
 - Coding-specific state travels through `presetOptions`, not through global
   Runner configuration.
-- Sidecar verifier can ask for revision, but the Worker remains the main task
-  owner and final-answer author.
+- The Worker checks current evidence, repairs findings, and owns final delivery.
 - AMA strategy is selected stage by stage from the shared pattern catalog.
   Actor turns store validated opaque metadata; coding derives a bounded,
   fact-only `PatternTrace` for the existing Sidecar rather than adding a
@@ -824,7 +823,7 @@ Key concepts:
   review, and approval prompts; explicit forbidden rules and Codex
   dangerous-command policy can still block;
 - trusted-local workflow scripts require explicit confirmation;
-- verifier and stop-hook failures fail open where blocking would trap the user.
+- extension Stop decisions are respected; missing result evidence is reported as unverified.
 
 `gitRoot` constrains the session repository boundary. `executionCwd` is the
 working directory used to resolve relative operands and is independently
@@ -975,26 +974,11 @@ Actor. MessageQueue, idle-yield wake subscriptions, StreamingContext, and the
 Ink queued-input view all filter by that same key; a process-global
 `agentId: undefined` bucket is not a REPL session contract.
 
-## 9. Stop Hooks And Sidecar Verifier
+## 9. Stop Hooks And Result Review
 
-Generic stop-hook infrastructure lives in `packages/agent`.
-KodaX-specific verifier behavior lives in `packages/coding`.
+The main agent verifies each requested requirement with actual tool and rendered evidence before delivery. The built-in `visual-review` skill covers static images/charts, paginated documents/slides/sheets, interactive web/app/terminal/canvas/3D surfaces, and temporal video/animation results. Missing capabilities and unchecked scope are reported as unverified. An ordinary read-only child reviewer may contribute findings within the same Run; the main agent owns repairs and the final answer.
 
-Design split:
-
-- `packages/agent/src/runtime-middleware/llm-judge.ts`: generic LLM-judged
-  stop-hook primitives.
-- `packages/coding/src/agent-runtime/middleware/sidecar-verifier`: coding
-  verifier prompt, gate, parser, and integration.
-- content-aware gate skips trivial conversational turns.
-- verifier accept is silent by default in UI but preserved in session/artifacts
-  where applicable.
-- when that gate fires, the Sidecar packet may include a bounded
-  `PatternTrace` and quality signals as context, never as proof; a `revise` or
-  `blocked` verdict may carry one focused optional strategy recommendation.
-
-The verifier is not an in-chain Evaluator role. Do not represent it as a second
-visible agent in current product docs.
+Generic Stop hooks remain in `packages/agent`. The coding runner composes extension `turn:complete`, goal accounting/continuation, and child/mailbox waiting without a completion judge. Host goal tools mutate the existing lineage atomically; clients never save a replacement journal. Run terminal status does not certify quality. Historical verifier messages remain display-only and never replay tools.
 
 ## 10. Sessions And Storage
 
@@ -1013,7 +997,7 @@ Session behavior spans agent, coding, and repl:
   Presentation-only synthetic completion events (`agent-completed` and legacy
   `task-completed`) are the exception: a non-empty `uiHistory` owns whether the
   CLI displayed them, while headless/no-cache restore derives them from messages.
-  Failed-turn Assistant summaries, Sidecar verifier verdicts, and terminal
+  Failed-turn Assistant summaries, historical sidecar feedback, and terminal
   errors may also be marked `presentationOnly: true`; valid text items make an
   otherwise context-empty Session resumable, persist exactly once across write
   retries, and replay in that order without entering canonical model context.

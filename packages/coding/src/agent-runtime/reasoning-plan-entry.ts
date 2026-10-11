@@ -60,6 +60,8 @@ import { buildProviderPolicyHintsForDecision } from '../reasoning.js';
 import { buildSystemPrompt } from '../prompts/index.js';
 import { resolveExecutionCwd } from '../runtime-paths.js';
 import { formatFullSkillSection } from '../skill-invocation-format.js';
+import { resolveEffectiveVerification } from './effective-config.js';
+import { formatVerificationContract } from '../task-engine/_internal/managed-task/formatting.js';
 import { buildAutoRepoIntelligenceContext } from './middleware/repo-intelligence.js';
 
 export interface ReasoningExecutionState {
@@ -114,7 +116,9 @@ export async function buildReasoningExecutionState(
             ? formatFullSkillSection(effectiveOptions.context.skillInvocation)
             : undefined,
         ].filter((section): section is string => Boolean(section)).join('\n\n')
-      : await buildSystemPrompt(effectiveOptions, isNewSession),
+      : [await buildSystemPrompt(effectiveOptions, isNewSession),
+      formatVerificationContract(resolveEffectiveVerification(options)),
+        ].filter((section): section is string => Boolean(section)).join('\n\n'),
     providerReasoning: {
       enabled: reasoningPlan.effort !== 'none',
       effort: reasoningPlan.effort,

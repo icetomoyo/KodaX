@@ -1009,15 +1009,6 @@ export function loadConfig(): {
   repoIntelligenceTrace?: boolean;
   streamIdleTimeoutMs?: number;
   /**
-   * FEATURE_184 Phase D.3 follow-up (v0.7.42) — opt-in Sidecar Verifier
-   * observability. When `true`, the runtime emits a persisted note per
-   * verifier call:
-   *   `[Sidecar Verifier] {verdict} · {model} · {ms}ms · {trace}`
-   * Mirrored to env var `KODAX_VERIFIER_LOG=1` so the agent-runtime
-   * layer (which has no access to `~/.kodax/config.json`) can read it.
-   */
-  verifierLog?: boolean;
-  /**
    * FEATURE_187 Phase C (v0.7.43) — opt-in Stall Sidecar observability.
    * When `true`, the runtime emits a persisted note per L2 stall
    * verdict (isStuck true OR false):
@@ -1089,7 +1080,6 @@ export function loadConfig(): {
         repoIntelligenceMode?: 'auto' | 'off' | 'light' | 'full';
         repoIntelligenceTrace?: boolean;
         streamIdleTimeoutMs?: number;
-        verifierLog?: boolean;
         stallLog?: boolean;
         fallbackProviders?: string[];
         fastProvider?: string;
@@ -1276,7 +1266,6 @@ const CONFIG_ENV_BRIDGES: ReadonlyArray<{
   { configPath: 'streamIdleTimeoutMs', env: 'KODAX_STREAM_IDLE_TIMEOUT_MS', value: (c) => configNumberString(c.streamIdleTimeoutMs) },
   { configPath: 'repoIntelligenceMode', env: 'KODAX_REPO_INTELLIGENCE', value: (c) => c.repoIntelligenceMode },
   { configPath: 'repoIntelligenceTrace', env: 'KODAX_REPO_INTELLIGENCE_TRACE', value: (c) => configBooleanString(c.repoIntelligenceTrace) },
-  { configPath: 'verifierLog', env: 'KODAX_VERIFIER_LOG', value: (c) => configBooleanString(c.verifierLog) },
   { configPath: 'stallLog', env: 'KODAX_STALL_LOG', value: (c) => configBooleanString(c.stallLog) },
   { configPath: 'fallbackProviders', env: 'KODAX_FALLBACK_PROVIDERS', value: (c) => configStringList(c.fallbackProviders) },
   { configPath: 'fastProvider', env: 'KODAX_FAST_PROVIDER', value: (c) => normalizedConfigString(c.fastProvider) },
@@ -1335,7 +1324,7 @@ export function applyConfigEnvironment(config: ReturnType<typeof loadConfig>): v
 /** Only these existing commands promise immediate control of later execution. */
 export function applyExecutionConfigEnvironment(config: ReturnType<typeof loadConfig>, explicit = false): void {
   for (const binding of CONFIG_ENV_BRIDGES) {
-    if (!['fallbackProviders', 'verifierLog', 'stallLog'].includes(binding.configPath)) continue;
+    if (!['fallbackProviders', 'stallLog'].includes(binding.configPath)) continue;
     if (explicit && !Object.hasOwn(config, binding.configPath)) continue;
     projectConfigEnvironment(binding.env, binding.value(config), explicit);
   }
@@ -1368,8 +1357,6 @@ export function saveConfig(config: {
   mcpServers?: KodaXMcpServersConfig;
   repoIntelligenceMode?: 'auto' | 'off' | 'light' | 'full';
   repoIntelligenceTrace?: boolean;
-  /** FEATURE_184 Phase D.3 follow-up — opt-in verifier log line. */
-  verifierLog?: boolean;
   /** FEATURE_187 Phase C — opt-in stall sidecar log line. */
   stallLog?: boolean;
   /** FEATURE_102 Phase 3 — cross-provider child fallback chain. */

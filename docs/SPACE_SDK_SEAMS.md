@@ -165,3 +165,7 @@ node --test tests/bundled-product-exit.test.mjs
 2026-10-09 本轮本地验收：关联回归 97 文件、977 测试通过；最终增量专项 7 文件、31 测试，以及工具分发合同 12 测试通过。bundle 的 2 项真实 daemon 测试验证立即断连后的空闲 peer 保护、精确进程退出及替代 Host 保护。packages、SDK bundle、声明构建、源码/测试类型检查，以及不加载 Node ambient types 的 Product Client 类型消费者均通过。Standards / Spec 最终复核无明确残余。未全量复跑仓库全部测试，未发布 npm，Space 安装包尚未更新。
 
 2026-10-10 Workflow 补齐本地验收：关联回归 110 文件、1,349 测试通过；最终 scoped coverage 6 文件、171 测试通过，覆盖 Workflow runtime 与 Coding backend 两个模块，语句 88.39%、分支 74.56%、函数 89.24%、行 90.04%（不是全仓覆盖率）。真实 Host 专项包括 Product AMA Workflow 可用性、Main 上限、并发名额竞态、零输出预算、临时 Session、非法策略、现有并发配置、队列捕获/去重/steer 隔离、伪造 payload、跨客户端隔离和 Skill/command/review 准备。repair 混合已知/未知输出与 SA 多轮缺失用量另有 RED→GREEN 回归。bundle 的 2 项真实 daemon 退出测试、packages/bundle/14 个 SDK 声明入口构建、源码/测试类型检查及无 Node ambient types 的 Product Client 消费者检查均通过。Standards：0 项明确残余；Spec：0 项明确残余。未全量复跑仓库全部测试，未发布 npm，Space 安装包尚未更新。
+
+## 结果评审接缝（2026-10-11）
+
+视觉评审复用当前 Run 的 tools、图片输入、artifact refs 和普通子 Actor；不新增独立 Client agent、quality API 或完成证书。静态、分页、交互和时序对象均按实际证据检查，缺少 renderer/vision 或未覆盖部分必须说明未验证。Goal 工具只更新 Host 原子 lineage；客户端继续通过 readGoal 和 view 读取。旧 verifier 实时事件及日志配置已退役，历史读取保留，详见 SDK_MIGRATION。

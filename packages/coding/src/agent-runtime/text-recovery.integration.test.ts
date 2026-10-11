@@ -44,7 +44,7 @@ it.each(['SA', 'AMA'] as const)('%s diagnoses an image rejected after admission 
   const result = await (runtime === 'SA' ? runKodaX : runManagedTaskViaRunner)({ provider: 'text-recovery', reasoningMode: 'off', maxIter: 2,
     context: { executionCwd: directory, managedTaskWorkspaceDir: directory }, session: { initialMessages: history } }, '总价六万元，每项两万元，启动前支付');
   expect(result.success).toBe(true);
-  expect(diagnose).toHaveBeenCalledOnce(); expect(stream).toHaveBeenCalledTimes(runtime === 'SA' ? 2 : 3);
+  expect(diagnose).toHaveBeenCalledOnce(); expect(stream).toHaveBeenCalledTimes(2);
   expect(stream.mock.calls[1]![4]).toMatchObject({ singleAttempt: true });
   expect(stream.mock.calls.slice(1).every(call => !JSON.stringify(call[0]).includes('"type":"image"'))).toBe(true);
   expect(history).toEqual(original);

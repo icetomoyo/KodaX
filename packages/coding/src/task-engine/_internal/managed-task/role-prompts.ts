@@ -23,8 +23,10 @@ import {
   type WorkerActorCapacity,
 } from '../../../agents/worker-role-prompt.js';
 import { createRolePrompt } from './role-prompt.js';
+import { EXECUTION_GUIDANCE } from '../../../prompts/execution-guidance.js';
+import { formatVerificationContract } from './formatting.js';
 import type { ManagedRolePromptContext } from './role-prompt-types.js';
-import type { RunnerChainPromptContext, VerdictRecorder } from './types.js';
+import type { RunnerChainPromptContext } from './types.js';
 
 // FEATURE_193 (v0.7.43): SCOUT_INSTRUCTIONS_FALLBACK, PLANNER_INSTRUCTIONS_FALLBACK,
 // GENERATOR_INSTRUCTIONS_FALLBACK deleted — V1 chain roles retired.
@@ -40,26 +42,24 @@ export const WORKER_INSTRUCTIONS_FALLBACK = [
   'milestones via `todo_create` and `todo_update`; do not create one item per ',
   'child Agent. Execute via tool calls and update finished milestones before ',
   'waiting again or moving on, then end your turn with a brief ',
-  'text-only summary when done — no tool call is needed to terminate. An ',
-  'independent Sidecar Verifier reads your work and decides accept / revise ',
-  '/ blocked. You may call: read, grep, glob, bash, write, edit, multi_edit, ',
+  'text-only summary when done — no tool call is needed to terminate. Verify ',
+  'the actual result with available tools and report unverified requirements. ',
+  'You may call: read, grep, glob, bash, write, edit, multi_edit, ',
   'todo_create, todo_update, todo_list, spawn_agent, send_message, followup_task, wait_agent, interrupt_agent, list_agents, agent_output, exit_plan_mode.',
-].join('\n');
+].join('\n') + '\n' + EXECUTION_GUIDANCE;
 
-function createResolvedRolePrompt(
-  role: KodaXTaskRole,
+function createResolvedRolePrompt(role: KodaXTaskRole,
   agentName: string,
-  recorder: VerdictRecorder,
   promptContext: RunnerChainPromptContext,
   verification: KodaXTaskVerificationContract | undefined,
   renderMode: 'stable' | 'context',
-  resolvedContext?: ManagedRolePromptContext,
+  resolvedContext?: ManagedRolePromptContext
 ): string {
   const ctx = resolvedContext ?? (promptContext.contextFactory
-    ? promptContext.contextFactory(role, recorder)
+    ? promptContext.contextFactory(role)
     : { originalTask: promptContext.prompt });
   const toolPolicy = promptContext.toolPolicyFactory
-    ? promptContext.toolPolicyFactory(role, recorder)
+    ? promptContext.toolPolicyFactory(role)
     : promptContext.toolPolicy;
   const decision = typeof promptContext.decision === 'function'
     ? promptContext.decision()
@@ -94,14 +94,12 @@ function createResolvedRolePrompt(
  * Otherwise fall back to the minimal static constants — keeps test
  * fixtures that call `buildRunnerAgentChain(ctx, {})` working.
  */
-export function resolveRoleInstructions(
-  role: KodaXTaskRole,
+export function resolveRoleInstructions(role: KodaXTaskRole,
   agentName: string,
   fallback: string,
-  recorder: VerdictRecorder,
   promptContext: RunnerChainPromptContext | undefined,
   verification: KodaXTaskVerificationContract | undefined,
-  fallbackActorCapacity?: WorkerActorCapacity,
+  fallbackActorCapacity?: WorkerActorCapacity
 ): string {
   if (!promptContext) {
     // Legacy minimal-instructions path for tests / topology-only calls.
@@ -113,10 +111,10 @@ export function resolveRoleInstructions(
   const basePrompt = createResolvedRolePrompt(
     role,
     agentName,
-    recorder,
     promptContext,
     verification,
     'stable',
+
   );
   // FEATURE_247 (R1): a Partner profile (or any SDK-consumer profile) can carry
   // its own behavior instructions. On the SA path the embedder uses
@@ -134,23 +132,21 @@ export function resolveRoleInstructions(
 }
 
 /** Resolve the full run-scoped context installed before the real user task. */
-export function resolveRoleRunContext(
-  role: KodaXTaskRole,
+export function resolveRoleRunContext(role: KodaXTaskRole,
   agentName: string,
-  recorder: VerdictRecorder,
   promptContext: RunnerChainPromptContext | undefined,
   verification: KodaXTaskVerificationContract | undefined,
-  resolvedContext?: ManagedRolePromptContext,
+  resolvedContext?: ManagedRolePromptContext
 ): string | undefined {
-  if (!promptContext) return undefined;
+  if (!promptContext) return formatVerificationContract(verification);
   const roleContext = createResolvedRolePrompt(
     role,
     agentName,
-    recorder,
     promptContext,
     verification,
     'context',
     resolvedContext,
+
   );
   const repoBlock = promptContext.repoIntelligenceContext?.trim();
   const composed = repoBlock
@@ -253,51 +249,4 @@ export function renderRuntimeVerificationBlock(
     'cannot be executed or fails.',
   );
   return lines.join('\n');
-}
-
-/**
- * Shard 6d-S: derive `completionContractStatus` from the final verdict.
- * Keys are criterion ids (from `verification.criteria`) plus synthetic
- * `ui_flow:<n>` / `api_check:<n>` / `db_check:<n>` keys for the runtime
- * contract entries. Status maps 1:1 from verdict status:
- *   - 'accept'   → 'ready'
- *   - 'revise'   → 'incomplete'
- *   - 'blocked'  → 'blocked'
- *   - no verdict → 'missing' (every declared check is unverified)
- * Returns undefined when no verification contract is declared — matches
- * legacy's absent-field semantics so downstream consumers stay opt-in.
- */
-export function buildCompletionContractStatus(
-  verification: KodaXTaskVerificationContract | undefined,
-  verdictStatus: 'accept' | 'revise' | 'blocked' | undefined,
-): Record<string, 'ready' | 'incomplete' | 'blocked' | 'missing'> | undefined {
-  if (!verification) return undefined;
-  const criteria = verification.criteria ?? [];
-  const runtime = verification.runtime;
-  const uiFlows = runtime?.uiFlows ?? [];
-  const apiChecks = runtime?.apiChecks ?? [];
-  const dbChecks = runtime?.dbChecks ?? [];
-  if (criteria.length === 0 && uiFlows.length === 0 && apiChecks.length === 0 && dbChecks.length === 0) {
-    return undefined;
-  }
-  const status: 'ready' | 'incomplete' | 'blocked' | 'missing' =
-    verdictStatus === 'accept'
-      ? 'ready'
-      : verdictStatus === 'blocked'
-        ? 'blocked'
-        : verdictStatus === 'revise'
-          ? 'incomplete'
-          : 'missing';
-  const out: Record<string, 'ready' | 'incomplete' | 'blocked' | 'missing'> = {};
-  for (const criterion of criteria) out[criterion.id] = status;
-  uiFlows.forEach((_flow, idx) => {
-    out[`ui_flow:${idx + 1}`] = status;
-  });
-  apiChecks.forEach((_check, idx) => {
-    out[`api_check:${idx + 1}`] = status;
-  });
-  dbChecks.forEach((_check, idx) => {
-    out[`db_check:${idx + 1}`] = status;
-  });
-  return out;
 }

@@ -1,4 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import {
+  afterEach,
+  describe,
+  expect,
+  it,
+} from 'vitest';
 
 import {
   applyConfigEnvironment,
@@ -47,7 +52,7 @@ describe('config.json environment bindings', () => {
 
     expect(process.env.KODAX_PROVIDER).toBe('shell-provider');
     expect(process.env.KODAX_EFFORT).toBe('high');
-    expect(process.env.KODAX_VERIFIER_LOG).toBe('0');
+    expect(process.env.KODAX_VERIFIER_LOG).toBeUndefined();
     expect(process.env.KODAX_SESSION_RETENTION_DAYS).toBe('14');
     expect(process.env.KODAX_LSP_DOWNLOAD).toBe('1');
     expect(process.env.KODAX_REPO_INTELLIGENCE).toBe('full');

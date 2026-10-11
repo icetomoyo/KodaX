@@ -1,21 +1,4 @@
-/**
- * Managed-output fence detection + sanitization helpers — restored from
- * v0.7.22 task-engine (FEATURE_079 Slice 4). These helpers strip internal
- * managed-task control-plane markers and fenced protocol blocks (complete
- * or max-tokens-truncated) from worker output before it becomes
- * user-facing text.
- *
- * Re-added v0.7.26 during parity audit: the Runner-driven path uses
- * structured emit tools, but the LLM is free to emit fenced
- * ```kodax-task-*``` blocks inside assistant text (legacy fallback, or
- * confused instruction following). Without these sanitizers those
- * internal blocks leak to the user. The three sanitize functions
- * (`sanitizeManagedUserFacingText`, `sanitizeManagedStreamingText`,
- * `sanitizeEvaluatorPublicAnswer` — now used for Sidecar Verifier answers) are grouped with the fence helpers
- * (`MANAGED_FENCE_NAMES`, `isManagedFencePrefix`,
- * `findIncompleteManagedFenceIndex`) because they share the same
- * fence-prefix matching logic.
- */
+
 
 import {
   MANAGED_TASK_CONTRACT_BLOCK,
@@ -206,53 +189,4 @@ export function createManagedOutputTextFilter(): { push(text: string): string; f
 export function sanitizeManagedOutputText(text: string): string {
   const filter = createManagedOutputTextFilter();
   return filter.push(text) + filter.finish();
-}
-
-export function sanitizeEvaluatorPublicAnswer(text: string): string {
-  const sanitized = sanitizeManagedUserFacingText(text).trim();
-  if (!sanitized) {
-    return '';
-  }
-
-  const paragraphs = sanitized.split(/\n\s*\n/);
-  const remaining = [...paragraphs];
-  let removedInternalFraming = false;
-
-  const internalRolePattern = /\b(generator|planner|evaluator|verdict|contract|handoff|managed task)\b/i;
-  const internalMetaPattern = /\b(spot-check|spot check|verification|double-check|double check|sufficient evidence)\b/i;
-  const explicitProcessLeadPattern = /^(confirmed:|i now have sufficient evidence\b|let me (?:verify|check|double-check|review)\b|now let me\b|good\.\s*now let me\b|from the code i(?:'ve| have)? already (?:read|checked|reviewed)\b|here is my final evaluation\b)/i;
-
-  while (remaining.length > 0) {
-    const paragraph = remaining[0]?.trim() ?? '';
-    if (!paragraph) {
-      remaining.shift();
-      removedInternalFraming = true;
-      continue;
-    }
-
-    const isDivider = /^-{3,}$/.test(paragraph);
-    if (isDivider && removedInternalFraming) {
-      remaining.shift();
-      continue;
-    }
-
-    const isExplicitProcessLead = explicitProcessLeadPattern.test(paragraph);
-    const isInternalProcessLead = /^i\b/i.test(paragraph)
-      && internalRolePattern.test(paragraph)
-      && internalMetaPattern.test(paragraph);
-
-    if (
-      isExplicitProcessLead
-      || isInternalProcessLead
-    ) {
-      remaining.shift();
-      removedInternalFraming = true;
-      continue;
-    }
-
-    break;
-  }
-
-  const cleaned = remaining.join('\n\n').trim();
-  return cleaned || sanitized;
 }

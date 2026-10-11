@@ -13,36 +13,18 @@ import { sanitizeUserFacingAssistantText } from './utils/message-utils.js';
 type ManagedTask = NonNullable<KodaXResult['managedTask']>;
 type EvidenceEntry = ManagedTask['evidence']['entries'][number];
 
-/**
- * FEATURE_195 (v0.7.43): hide Sidecar Verifier accept-verdict evidence entries
- * by default. Revise / blocked verdicts remain visible unless the same verdict
- * was already delivered through the first-class sidecar message channel.
- * Accept debug visibility is opt-in via verifierLog.
- */
-function shouldFilterSidecarEvidenceEntry(
-  entry: EvidenceEntry,
-  verifierLog: boolean,
-  sidecarMessageDelivered: boolean,
-): boolean {
-  if (entry.role !== 'evaluator') return false;
-  if (entry.signal === 'COMPLETE') return !verifierLog;
-  return sidecarMessageDelivered;
+function shouldFilterSidecarEvidenceEntry(entry: EvidenceEntry): boolean {
+  return entry.role === 'evaluator' && entry.signal === 'COMPLETE';
 }
 
 /** Build the managed-task transcript string list shown after a run completes. */
 export function buildManagedTaskTranscriptItems(
   result: KodaXResult,
-  options?: {
-    readonly verifierLog?: boolean;
-    readonly sidecarMessageDelivered?: boolean;
-  },
 ): string[] {
   const task = result.managedTask;
   if (!task) {
     return [];
   }
-  const verifierLog = options?.verifierLog ?? process.env.KODAX_VERIFIER_LOG === '1';
-  const sidecarMessageDelivered = options?.sidecarMessageDelivered === true;
 
   const isInterruptedCancellation = (entry: EvidenceEntry): boolean => {
     if (!result.interrupted && !task.verdict.signalReason?.includes('Orchestration cancelled')) {
@@ -86,7 +68,7 @@ export function buildManagedTaskTranscriptItems(
     .filter((entry) => !isInterruptedCancellation(entry))
     .filter(
       (entry) =>
-        !shouldFilterSidecarEvidenceEntry(entry, verifierLog, sidecarMessageDelivered),
+        !shouldFilterSidecarEvidenceEntry(entry),
     )
     .filter(
       (entry) =>
@@ -117,12 +99,6 @@ export function buildManagedTaskTranscriptItems(
           : (entry.round ?? 1) > 1
             ? ` Round ${entry.round}`
             : '';
-      // FEATURE_184 follow-up: the Sidecar Verifier's verdicts carry the legacy
-      // 'evaluator' role name (verifier-recorder-bridge writes role:'evaluator'
-      // for downstream-slot compat). Attribute the surfaced revise / blocked
-      // feedback to the Sidecar identity instead of a phantom [Evaluator] agent
-      // — the in-chain Evaluator was retired in v0.7.45, and the same verdict is
-      // rendered live as a first-class sidecar item via onSidecarMessage.
       const label =
         entry.role === 'evaluator'
           ? `⚡ Sidecar Verifier${labelSuffix}`

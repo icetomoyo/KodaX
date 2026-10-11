@@ -1,31 +1,4 @@
-/**
- * Worker role prompt — FEATURE_114 v0.7.36 AMA Harness V2.
- *
- * The Worker collapses the legacy 4-role chain
- * (Scout → Planner → Generator → Evaluator) into a single primary
- * agent that decides when to plan, executes, and converges on a final
- * text-only summary. The full V2 design lives in
- * docs/features/v0.7.36.md §FEATURE_114.
- *
- * FEATURE_184 (v0.7.45) Phase C.1 retired the in-chain Evaluator and
- * replaced it with a Stop-hook Sidecar Verifier that runs out-of-band
- * after the Worker terminates. FEATURE_190 (v0.7.43) updated the
- * Worker prompt to teach text-only termination as the canonical exit
- * — no `emit_handoff` tool call needed.
- *
- * FEATURE_193 (v0.7.43) retired the legacy Scout / Planner / Generator
- * chain entirely — this file's wording is now the only AMA system
- * prompt path. The `KODAX_HARNESS_V2` env flag was removed at the same
- * time; setting it has no effect on V2 runs.
- *
- * Wording derives from:
- *   - SCOUT decisional framing (H0/H1/H2 → trivial / multi-step
- *     thresholds)
- *   - GENERATOR mutation-tool discipline + dispatch RULE A/B/C
- *   - FEATURE_106 SCOPE COMMITMENT hard rule (ported verbatim)
- *   - The Worker plan-first guidance and per-step `evaluator` hint
- *     convention.
- */
+
 
 import type {
   KodaXTaskRoutingDecision,
@@ -330,7 +303,7 @@ export function buildWorkerStableInstructions(): string {
     '- Before finishing, wait for or interrupt every live child you still own; if descendants intentionally remain active, report their canonical paths and unresolved ownership explicitly.',
     '- When all non-cancelled plan items are `completed`, end your turn with a brief text-only summary covering what you did, what changed (files / behavior), and any caveats. No tool call needed to terminate — the absence of a `tool_use` block on your final assistant message IS the terminal signal.',
     '- If you cannot proceed (e.g. user-input blocker, irrecoverable failure), end your turn with a text-only summary of the blocker. Mark the affected plan items `failed` with a note BEFORE the final summary turn so the dashboard reflects the blocked state.',
-    '- After your terminal turn, an independent Sidecar Verifier reads your work in a fresh read-only session and decides accept (success) / revise (your turn again, fix the called-out issues) / blocked (terminal failure). You do not call the verifier — it runs automatically.',
+    '- Before your terminal turn, verify the requested result with the available tools and evidence. You own the final conclusion; report any checks you could not perform.',
   ].join('\n');
 
   return [
@@ -373,12 +346,6 @@ export function buildWorkerInstructions(
   actorCapacity?: WorkerActorCapacity,
 ): string {
   void verification; // kept on the signature for parity with legacy roles
-  // FEATURE_116 follow-up — the revise-failure retrospective moved OUT of the
-  // Worker system prompt. Injecting it here flipped the system-prompt bytes on
-  // every reanimate, busting the Anthropic system cache block (~4.7K tokens per
-  // reanimate). It now rides the Sidecar Verifier's synthetic user message
-  // (see `mapVerifierVerdictToStopHookResult`), so the system prompt stays
-  // byte-stable across revise cycles. Parameter kept for signature parity.
   void isResumeAfterReviseFailure;
 
   const actorCapacityContract = buildWorkerActorCapacityContract(actorCapacity);

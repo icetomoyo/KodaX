@@ -96,7 +96,12 @@ import {
 import { CommandRegistry } from '../commands/registry.js';
 import { formatLearningStatus } from '../ui/view-models/learning-summary.js';
 import { copyCommand } from '../commands/copy-command.js';
-import { hostModelCommand, hostEffortCommand, hostExecutionConfigCommand, saveAndApplyHostSetting } from '../commands/host-settings.js';
+import {
+  hostModelCommand,
+  hostEffortCommand,
+  hostExecutionConfigCommand,
+  saveAndApplyHostSetting,
+} from '../commands/host-settings.js';
 import { learnCommand } from '../commands/learn-command.js';
 import { memoryCommand } from '../commands/memory-command.js';
 import { goalCommand } from '../commands/goal-command.js';
@@ -2050,82 +2055,6 @@ export const BUILTIN_COMMANDS: Command[] = [
     },
   },
   {
-    name: 'verifier-log',
-    description: 'Toggle Sidecar Verifier log line (off by default)',
-    usage: '/verifier-log [on|off]',
-    argumentHint: 'on | off',
-    handler: async (args, _context, callbacks) => {
-      if (callbacks.config) return hostExecutionConfigCommand('verifierLog', args, callbacks.config);
-      const raw = args[0]?.toLowerCase();
-      const envOn = process.env.KODAX_VERIFIER_LOG === '1';
-
-      if (!raw) {
-        const configOn = loadConfig().verifierLog === true;
-        const effective = envOn ? 'on' : 'off';
-        // Show config-vs-env divergence without asserting precedence —
-        // it depends on whether env came from shell (overrides config)
-        // or from `applyVerifierRuntimeEnv` (config-derived).
-        const persistedSuffix =
-          configOn === envOn
-            ? ''
-            : ` (env=${envOn ? 'on' : 'off'}, config=${configOn ? 'on' : 'off'})`;
-        console.log(
-          chalk.dim(`\nSidecar Verifier log: ${chalk.cyan(effective)}${persistedSuffix}`),
-        );
-        console.log(
-          chalk.dim(
-            '  When on, a one-line summary persists per verifier call:\n' +
-            '  `[Sidecar Verifier] {verdict} · {provider}/{model} · {ms}ms · {trace}`',
-          ),
-        );
-        console.log(chalk.dim('Usage: /verifier-log [on|off]\n'));
-        return;
-      }
-
-      let nextValue: boolean;
-      if (raw === 'on' || raw === 'true' || raw === '1') {
-        nextValue = true;
-      } else if (raw === 'off' || raw === 'false' || raw === '0') {
-        nextValue = false;
-      } else {
-        console.log(chalk.red(`\n[Invalid value: ${args[0]}]`));
-        console.log(chalk.dim('Usage: /verifier-log [on|off]\n'));
-        return;
-      }
-
-      // Mutate runtime env so the change takes effect immediately
-      // (next sidecar call reads `process.env.KODAX_VERIFIER_LOG`).
-      if (nextValue) {
-        process.env.KODAX_VERIFIER_LOG = '1';
-      } else {
-        delete process.env.KODAX_VERIFIER_LOG;
-      }
-
-      const persistence = persistUserConfig({ verifierLog: nextValue });
-      printPersistedCommandStatus(
-        `Sidecar Verifier log: ${nextValue ? 'on' : 'off'}`,
-        persistence,
-      );
-    },
-    detailedHelp: () => {
-      console.log(chalk.cyan('\n/verifier-log - Sidecar Verifier Log Toggle\n'));
-      console.log(chalk.bold('Usage:'));
-      console.log(chalk.dim('  /verifier-log           ') + 'Show current state');
-      console.log(chalk.dim('  /verifier-log on        ') + 'Enable + persist to config');
-      console.log(chalk.dim('  /verifier-log off       ') + 'Disable + persist to config');
-      console.log();
-      console.log(chalk.bold('Description:'));
-      console.log(chalk.dim('  The Sidecar Verifier is the second-pass LLM judgment that fires'));
-      console.log(chalk.dim('  after a Worker terminates text-only. Off by default (silent happy'));
-      console.log(chalk.dim('  path). When on, every verifier call emits a one-line summary:'));
-      console.log(chalk.dim('    [Sidecar Verifier] accept · anthropic/claude-sonnet-4-6 · 3214ms · verifier_ok'));
-      console.log();
-      console.log(chalk.bold('Equivalent env var:'));
-      console.log(chalk.dim('  KODAX_VERIFIER_LOG=1   ') + 'Same effect, env wins over config');
-      console.log();
-    },
-  },
-  {
     name: 'stall-log',
     description: 'Toggle Stall Sidecar log line (off by default)',
     usage: '/stall-log [on|off]',
@@ -2138,7 +2067,6 @@ export const BUILTIN_COMMANDS: Command[] = [
       if (!raw) {
         const configOn = loadConfig().stallLog === true;
         const effective = envOn ? 'on' : 'off';
-        // Same env-vs-config divergence handling as /verifier-log.
         const persistedSuffix =
           configOn === envOn
             ? ''

@@ -89,7 +89,6 @@ export interface VisualLayout {
 
 export type VisualCursor = [number, number];
 
-
 // === Input History - 输入历史 ===
 
 /**
@@ -536,13 +535,6 @@ export interface HistoryItemHint extends HistoryItemBase {
   text: string;
 }
 
-/**
- * Sidecar Verifier message - Sidecar 验证器消息
- * Displayed as an independent "role" with its own header so the user can
- * clearly see that the Sidecar Verifier is actively reviewing the output.
- * verdict: 'revise' | 'blocked' | undefined; delivery 'budget-exhausted' means
- * the verifier exhausted its delivery budget instead of injecting the advice.
- */
 export interface HistoryItemSidecar extends HistoryItemBase {
   type: "sidecar";
   text: string;

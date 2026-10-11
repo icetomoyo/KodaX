@@ -45,11 +45,6 @@ it.each([
           input: { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' } },
         }],
       };
-      if (args[1].some((tool) => tool.name === 'emit_sidecar_verdict')) return {
-        textBlocks: [], thinkingBlocks: [],
-        toolBlocks: [{ type: 'tool_use', id: 'verdict', name: 'emit_sidecar_verdict', input: { verdict: 'accept' } }],
-        stopReason: 'tool_use',
-      };
       if (seedingHistory) return {
         textBlocks: [{ type: 'text', text: 'Historical context from prior work. '.repeat(8_000) }],
         thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn',

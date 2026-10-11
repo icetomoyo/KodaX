@@ -1,46 +1,4 @@
-/**
- * FEATURE_187 (v0.7.43) — Stall Sidecar middleware factory.
- *
- * Encapsulates the FEATURE_178 L1 detector + L2 sidecar orchestrator
- * behind a `RunnerToolObserver`-shaped surface so the coding layer's
- * tool-loop wiring matches the canonical sidecar shape FEATURE_184
- * verifier established (`agent-runtime/middleware/sidecar-verifier/`).
- *
- * **What this factory does**:
- *   - Constructs `createStallOrchestrator` internally with the supplied
- *     provider + detector + prompt assets
- *   - Returns a `StallSidecarHandle` carrying:
- *       1. `observer: RunnerToolObserver` — `beforeTool` consumes
- *          pending nudge (returns string to block tool + inject nudge as
- *          tool_result); `onToolCall` records into the detector +
- *          transcript buffer; `onToolResult` records tool_result content
- *          for the next sidecar prompt
- *       2. `reset()` — coding layer wires this to the compaction
- *          post-hook so detector + transcript + pending nudge all clear
- *          when transcript replaces
- *
- * **Why two-handle return (observer + reset)**: agent-layer
- * `RunnerToolObserver` deliberately lacks an `onCompacted` hook (kept
- * minimal per ADR-021 layer-responsibility rules). Reset is therefore
- * carried out-of-band via the handle. Mirror this pattern if any
- * future sidecar needs lifecycle hooks beyond tool calls.
- *
- * **No prompt or logic change vs FEATURE_178** — this is pure plumbing.
- * The `byte-identity-lock.test.ts` test pins `SIDECAR_SYSTEM_PROMPT`,
- * `REPORT_TOOL`, and `buildSidecarUserMessage`'s canonical output to
- * snapshot so any drift breaks the build before the F178 eval (`1909d5d2`
- * SHIP-SIDECAR-ALL) is invalidated.
- *
- * **Phase A scope**: factory + module move only. Provider override
- * (`KODAX_STALL_PROVIDER` / `KODAX_STALL_MODEL`) lands in Phase B;
- * opt-in `KODAX_STALL_LOG` observability + `/stall-log` slash command
- * land in Phase C; `composeToolObservers` helper lands in Phase D.
- *
- * Design references:
- *   - ADR-030 §1584 — placeholder origin for FEATURE_187
- *   - FEATURE_184 verifier middleware — canonical sidecar shape model
- *   - docs/features/v0.7.43.md §FEATURE_187 — design rationale
- */
+
 
 import type { KodaXBaseProvider } from '@kodax-ai/llm';
 import type { RunnerToolObserver } from '@kodax-ai/agent';

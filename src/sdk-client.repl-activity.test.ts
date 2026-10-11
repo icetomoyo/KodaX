@@ -111,13 +111,6 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
     events!.onRepoIntelligenceTrace?.({ stage: 'routing', summary: `routing-${surface}-fixture` });
     await expect.poll(output).toContain(`[RepoIntel]routing-${surface}-fixture`);
   };
-  const expectVerifier = async (output: () => string): Promise<void> => {
-    for (const delivery of ['terminal-block', 'budget-exhausted'] as const) {
-      events!.onSidecarMessage?.({ source: 'sidecar-verifier', recipient: 'user', verdict: 'blocked', delivery,
-        content: `Verifier ${delivery}`, suggestedFix: 'Check the assertion.' });
-      await expect.poll(output).toContain(delivery === 'terminal-block' ? 'SidecarVerifier—blocked' : 'SidecarVerifier—budgetexhausted');
-    }
-  };
   const expectReasoningNotices = async (surface: string, output: () => string): Promise<void> => {
     const settings = await client.sessions.getSettings(session.id);
     const providerRequestId = `reasoning-${surface}`;
@@ -192,7 +185,6 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
     await expectReasoningNotices('ink', () => stripVTControlCharacters(stdout.text).replace(/\s/g, ''));
     await expectStreamingActivity('ink', () => stripVTControlCharacters(stdout.text).replace(/\s/g, ''));
     await expectRepoTrace('ink', () => stripVTControlCharacters(stdout.text).replace(/\s/g, ''));
-    await expectVerifier(() => stripVTControlCharacters(stdout.text).replace(/\s/g, ''));
     const snapshot = createWorkflowProcessTracker({ runId: 'inline-workflow', workflowName: 'Host model workflow' }).getSnapshot();
     events!.onWorkflowProcessEvent?.({ type: 'workflow_updated', snapshot });
     events!.onWorkflowAgentDigest?.({ runId: snapshot.runId, event: { type: 'agent_completed', seq: 1,
@@ -326,7 +318,6 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
       await expectReasoningNotices('classic', commandOutput);
       await expectStreamingActivity('classic', commandOutput);
       await expectRepoTrace('classic', commandOutput);
-      await expectVerifier(commandOutput);
       events!.onCompactStart?.();
       await expect.poll(commandOutput).toContain('[KodaX]Compactingcontext...');
       events!.onCompactEnd?.();

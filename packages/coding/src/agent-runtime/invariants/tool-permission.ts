@@ -101,19 +101,6 @@ export function resolveToolCapability(toolName: string): ToolCapability {
     case 'interrupt_agent':
     case 'list_agents':
     case 'agent_output':
-    // FEATURE_155 v0.7.39 Slice C1 — `await_child_task` removed; idle-
-    // yield is the canonical wait mechanic. The case branch is dropped;
-    // any leftover allow-list entry referencing it is a no-op (tool
-    // can never be invoked because it's not in the registry).
-    // AMA managed-protocol emitters (FEATURE_080+, canonical names since
-    // v0.7.23). These are tier-`subagent` because emitting a verdict /
-    // contract / final-verdict structurally drives the multi-agent
-    // topology — equivalent to starting or steering an Actor at the
-    // role-routing layer. FEATURE_190 (v0.7.43): `emit_handoff`
-    // removed — F184 retired the Worker→Evaluator handoff and Worker is
-    // now terminal via text-only termination + Sidecar Verifier.
-    // FEATURE_193 (v0.7.43): emit_scout_verdict and emit_contract deleted —
-    // scout and planner roles retired along with their emit tools.
     case 'emit_verdict':
     case 'scaffold_tool':
     case 'validate_tool':

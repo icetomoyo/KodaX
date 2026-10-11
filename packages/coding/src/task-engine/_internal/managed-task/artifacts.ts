@@ -295,11 +295,6 @@ export function buildManagedTaskArtifactRecords(
     },
     {
       kind: 'json',
-      path: path.join(workspaceDir, 'scorecard.json'),
-      description: 'Managed task verification scorecard',
-    },
-    {
-      kind: 'json',
       path: path.join(workspaceDir, 'continuation.json'),
       description: 'Managed task continuation checkpoint',
     },
@@ -348,11 +343,6 @@ export async function writeManagedTaskSnapshotArtifacts(
     buildRuntimeExecutionGuide(task.contract.verification) ?? 'No explicit runtime-under-test contract.\n',
     'utf8',
   );
-  await writeFile(
-    path.join(workspaceDir, 'scorecard.json'),
-    `${JSON.stringify(task.runtime?.scorecard ?? null, null, 2)}\n`,
-    'utf8',
-  );
 }
 
 export async function writeManagedTaskArtifacts(
@@ -361,12 +351,6 @@ export async function writeManagedTaskArtifacts(
   result: Pick<KodaXResult, 'success' | 'lastText' | 'sessionId' | 'signal' | 'signalReason' | 'signalDebugReason'>,
 ): Promise<void> {
   await writeManagedTaskSnapshotArtifacts(workspaceDir, task);
-  // Match legacy `task-engine.ts:5216` continuation inference, driven by
-  // sidecar-set disposition + blocked signal. The legacy
-  // `task.verdict.continuationSuggested` fallback was removed post-F190
-  // (the field was always false after the `emit_handoff` tool deletion;
-  // sidecar verifier is the canonical continuation authority and writes
-  // disposition / signal directly).
   const continuationSuggested = Boolean(
     task.verdict.disposition === 'needs_continuation'
       || (task.verdict.status === 'blocked' && task.verdict.signal === 'BLOCKED'),
@@ -376,34 +360,6 @@ export async function writeManagedTaskArtifacts(
     .filter((artifact) => artifact.path.endsWith(`${path.sep}feedback.json`)
       || artifact.path.endsWith('/feedback.json'))
     .at(-1)?.path;
-  await writeFile(
-    path.join(workspaceDir, 'continuation.json'),
-    `${JSON.stringify({
-      continuationSuggested,
-      taskId: task.contract.taskId,
-      status: task.contract.status,
-      nextRound,
-      signal: task.verdict.signal ?? null,
-      signalReason: task.verdict.signalReason ?? null,
-      signalDebugReason: task.verdict.signalDebugReason ?? null,
-      disposition: task.verdict.disposition ?? null,
-      latestFeedbackArtifact: latestFeedbackArtifact ?? null,
-      roundHistoryPath: path.join(workspaceDir, 'round-history.json'),
-      contractPath: path.join(workspaceDir, 'contract.json'),
-      managedTaskPath: path.join(workspaceDir, 'managed-task.json'),
-      scorecardPath: path.join(workspaceDir, 'scorecard.json'),
-      runtimeContractPath: path.join(workspaceDir, 'runtime-contract.json'),
-      runtimeExecutionGuidePath: path.join(workspaceDir, 'runtime-execution.md'),
-      budgetPath: path.join(workspaceDir, 'budget.json'),
-      harnessTransitions: task.runtime?.harnessTransitions ?? [],
-      // Legacy `task-engine.ts:5240` shaped this field from the evaluator
-      // directive + `buildManagedRoundPrompt`. The Runner-driven path has
-      // no equivalent directive; leave the slot in place so the JSON shape
-      // stays identical for downstream consumers.
-      suggestedPrompt: null,
-    }, null, 2)}\n`,
-    'utf8',
-  );
   await writeFile(
     path.join(workspaceDir, 'result.json'),
     `${JSON.stringify(result, null, 2)}\n`,

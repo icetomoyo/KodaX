@@ -284,3 +284,15 @@ npm run typecheck
 本轮不运行付费模型 eval，也未测量覆盖率或重复原生 PTY/GUI 验收。完整默认集合的结果在运行结束后追加，历史门禁不替代本轮结果。
 
 最终完整默认集合（默认 4 worker、retry 0）EXIT 0：1150 文件通过、1 跳过；16526 项通过、0 失败、77 跳过、21 todo；未处理错误 0。构建后测试期间未修改生产源码；日志与 JSON 为 `%TEMP%/kodax-sdk-contract-full.log` 和 `kodax-sdk-contract-full-results.json`。子进程清理未确认等既有警告保留，不等同于失败门禁；上述覆盖率和人工验收限制仍然适用。
+
+## 2026-10-11 Result verification replacement
+
+Regression scope: no completion-sidecar request, notification, scorecard or batch criterion pass; current image bytes reach the provider after repair; extension Stop and child/mailbox waiting survive; work-budget extension runs at ordinary execution boundaries. Host Goal tools on SA and AMA use atomic lineage mutation, preserve concurrent transcript/UI state, and propagate write failures/cancellation; parallel create claims are serialized. Legacy sidecar history still restores through Host, Ink and classic consumers. Stall detection and Auto permission review keep their own controls.
+
+Run `npm run typecheck`, `npm run build`, `npm test`, and `npm run test:bundle` with build completed and production files frozen before Host tests. New-module coverage uses session-binding and runner-stop-hook tests; assertions about model quality require a separate controlled eval. This change does not establish a measured quality improvement or validate every external renderer.
+
+2026-10-12 validation: typecheck/build passed; bundle checks 41/41; Windows native suites and N-API smoke passed; actual Ink/classic PTY matrix 50/50. An actual npm tarball audit checked 74 bundles, confirmed the built-in visual-review skill, and found no retired verifier runtime. New session-binding/Stop modules: statements 96.15%, branches 100%, functions 90%, lines 94.59%.
+
+The bundle check caught a 32K managed-compaction regression caused by expanded constant guidance (required 32,838 versus available 32,768). Shorter constant guidance with detailed steps in the skill restored the unchanged capacity test: RED → GREEN. Final full-suite verification after this repair passed 16,499 tests in 1,152 files, with 77 skips and 19 todo, zero failures and no unhandled errors. Source and build were frozen throughout; logs are `%TEMP%/kodax-result-review-final-frozen.log` and `kodax-result-review-final-frozen-results.json`. Final Standards and Spec reviews each reported zero remaining findings.
+
+The final current-prompt pilot observed one evidence-seeking response: `read` the PNG, without issuing a visual verdict. The frozen conservative token budget stopped the other three cells; this is no quality comparison. Raw data and structured main-session review: `%TEMP%/kodax-eval-dumps/result-review/1791735672929-e5835a965439`. Existing cleanup warnings retained 17 records in 11 test directories; the recorded PIDs were absent when checked, which does not prove complete descendant-tree cleanup. Cross-platform manual verification remains outside this Windows run.

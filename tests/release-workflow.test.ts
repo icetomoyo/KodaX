@@ -33,8 +33,8 @@ describe('GitHub release workflow', () => {
   it('publishes the exact Sidecar-audited npm tarball', () => {
     const source = readFileSync(resolve('scripts/release.mjs'), 'utf8');
 
-    expect(source).toContain("import { auditSidecarTarball } from './audit-sidecar-tarball.mjs'");
-    expect(source).toContain('auditSidecarTarball(tarballPath, {');
+    expect(source).toContain("import { auditRuntimeTarball } from './audit-runtime-tarball.mjs'");
+    expect(source).toContain('auditRuntimeTarball(tarballPath, {');
     expect(source).toContain('package/dist/native/win32-x64/manifest.json');
     expect(source).toContain('package/dist/native/win32-x64/kodax-windows-text-transaction.node');
     expect(source).toContain('package/dist/native/win32-x64/kodax-windows-sandbox.exe');

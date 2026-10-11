@@ -173,7 +173,8 @@ test('bundled daemon routes manual and managed compaction through the v2 broker'
       options: { provider: 'daemon-test-openai', model: 'test-model' },
       credential: { leaseId: lease.id, mode: 'scoped', providers: ['daemon-test-openai'] },
     });
-    assert.equal((await run.result).phase, 'completed');
+    const managedResult = await run.result;
+    assert.equal(managedResult.phase, 'completed', JSON.stringify(managedResult));
     const managedRequests = brokerRequests.filter((request) => request.sessionId === 'managed-session');
     assert.ok(managedRequests.some((request) => request.purpose === 'compaction'), JSON.stringify(managedRequests));
     assert.ok(managedRequests.some((request) => request.purpose === 'primary'));

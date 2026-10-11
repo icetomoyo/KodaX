@@ -21,7 +21,7 @@ export const CLIENT_CONFIG_KEYS = [
   'provider', 'model', 'effort', 'planModeEffort', 'thinking', 'reasoningMode',
   'permissionMode', 'agentMode', 'locale', 'providerModels', 'extensions',
   'fallbackProviders', 'repoIntelligenceMode', 'repoIntelligenceTrace',
-  'verifierLog', 'stallLog', 'fastProvider', 'fastModel', 'deepProvider', 'deepModel',
+  'stallLog', 'fastProvider', 'fastModel', 'deepProvider', 'deepModel',
   'maxOutputTokens', 'disablePromptCache', 'lsp', 'lspAutoDownload', 'acpLogLevel',
   'sessionRetentionDays', 'repoIntelligence', 'workflow',
 ] as const satisfies readonly (keyof ClientConfig)[];

@@ -111,7 +111,7 @@ does not break ordinary permission handling.
   <tr>
     <td align="center" valign="top">
       <h3>🤖 Multi-agent by default</h3>
-      <sub>V2 Worker single-loop + Sidecar Verifier + async children</sub>
+      <sub>V2 Worker single-loop + evidence-based result review + async children</sub>
       <br><br>
       <code>spawn_agent</code>, <code>send_message</code>, <code>followup_task</code>, <code>interrupt_agent</code>, multi-instance auto-coordination with content-hash safety net.
     </td>
@@ -346,7 +346,6 @@ receive `prompt_cache_key`. The default is `false` because some strict
 compatible gateways reject unknown request fields. Do not enable it solely
 because an endpoint claims protocol compatibility.
 
-Sidecar verifier judge calls use provider-level forced tool choice when supported. If a compatible endpoint rejects the `tool_choice` parameter, KodaX retries that verifier request once without forced tool choice and still fails open rather than blocking the main Worker.
 
 #### Opting a custom provider into image / vision input (FEATURE_134 v0.7.40)
 
@@ -1583,7 +1582,7 @@ per-command `denyRead`, which the Windows `WRITE_RESTRICTED` backend rejects as
 - **Modular Architecture** - Use as CLI, as a library, or as a Node-free single binary
 - **16 Built-in Provider Aliases** - Anthropic, OpenAI, DeepSeek, Kimi, Kimi Code, Qwen, Qwen Token Plan, Zhipu, Zhipu Coding, Zai Coding, MiniMax Coding, MiMo Coding, MiMo, Ark Coding, Gemini CLI, Codex CLI - plus user-defined OpenAI/Anthropic-compatible providers
 - **Dynamic Workflows + SDK Process Surface** - Generate/reuse capability-routed workflows, observe live progress through `WorkflowProcessSnapshot`, and control workflow lifecycle from SDK hosts without parsing REPL output
-- **V2 Worker single-loop + Sidecar Verifier (default)** - Single-agent main loop with an out-of-band Sidecar Verifier as Stop-hook (claudecode-shape; FEATURE_184 v0.7.42, ADR-030). Verifier returns accept/revise/blocked verdict on Worker text-only termination. The pre-v0.7.43 V1 chain is retired, `emit_handoff` is deleted, accept-verdict UI silently passes through, and content-aware gating skips trivial-chat sidecar calls. Adaptive child steering uses the canonical Actor collaboration tools with idle-yield waiting; specialist routing uses `spawn_agent(agent_id=...)`.
+- **V2 Worker single-loop + result review (default)** — The main agent verifies actual results and may use ordinary read-only child Actors for independent review.
 - **Reasoning Effort** - Effort-first control (`off/auto/low/medium/high` plus model-supported extras) across providers
 - **Streaming Output** - Real-time response display
 - **Session Management** - JSONL format with branchable session lineage tree
@@ -1930,24 +1929,9 @@ Related variables: `KODAX_MAX_TOKENS` (global fallback when no provider/model ca
 
 > **Retired in v0.7.42**: `KODAX_RST_PRONE_PROVIDERS` and `KODAX_WRITE_TURN_MAX_TOKENS` (the v0.7.28 P2b write-turn cap mechanism) are no longer recognized. The 2026-04 bench measured RST as time-based (zhipu-coding 308s server kill window), not payload-size-based, so the cap was retired in favor of the per-provider `streamMaxDurationMs` watchdog + non-streaming fallback chain (configured in `registry.ts`). Existing env exports become silent no-ops; remove them from shell profiles when convenient.
 
-#### Sidecar verifier diagnostics
+#### Result verification
 
-Use these when diagnosing Worker text-only completion stalls or custom provider verifier behavior:
-
-```bash
-export KODAX_VERIFIER_LOG=1
-export KODAX_VERIFIER_PROVIDER=anthropic
-export KODAX_VERIFIER_MODEL=claude-haiku-4-5-20251001
-```
-
-- `KODAX_VERIFIER_LOG=1` shows verifier gate/elapsed/trace information and is equivalent to `"verifierLog": true` in `~/.kodax/config.json`.
-- `KODAX_VERIFIER_PROVIDER` + `KODAX_VERIFIER_MODEL` route the verifier to a separate provider/model instead of inheriting the main Worker model. Set both together.
-- `KODAX_VERIFIER_ALWAYS=1` forces the verifier to fire on every text-only completion for debugging/regression sweeps.
-
-SDK/headless hosts can observe actionable Sidecar Verifier messages via
-`KodaXEvents.onSidecarMessage`; JSONL output emits the same payload as
-`sidecar.message`. Only `revise` and `blocked` verdicts are surfaced; `accept`
-stays silent.
+The main agent verifies each requested requirement with actual tool and rendered evidence before delivery. The built-in `visual-review` skill covers static images/charts, paginated documents/slides/sheets, interactive web/app/terminal/canvas/3D surfaces, and temporal video/animation results. Missing capabilities and unchecked scope are reported as unverified. An ordinary read-only child reviewer may contribute findings within the same Run; the main agent owns repairs and the final answer.
 
 ## Advanced Library Usage
 
@@ -1964,7 +1948,6 @@ const events: KodaXEvents = {
   onTextDelta: (text) => process.stdout.write(text),
   onThinkingDelta: (text) => console.log(`Thinking delta: ${text.length} chars`),
   onToolResult: (result) => console.log(`Tool ${result.name}: ${result.content.slice(0, 100)}`),
-  onSidecarMessage: (event) => console.log(`[sidecar:${event.verdict}] ${event.content}`),
   onComplete: () => console.log('\nDone!'),
   onError: (e) => console.error(e.message),
 };
@@ -2156,7 +2139,7 @@ cannot elevate a `disable-model-invocation` Skill.
 
 ### `@kodax-ai/kodax/coding` — Coding Agent
 
-Complete coding agent: 50+ tools (`read`/`write`/`edit`/`bash`/`grep`/`glob` plus `spawn_agent`/`send_message`/`followup_task`/`wait_agent`/`interrupt_agent`/`list_agents`/`agent_output`) + Worker role prompt + Sidecar Verifier (out-of-band Stop-hook) + agent loop + auto-continue + session management.
+Complete coding agent: 50+ tools (`read`/`write`/`edit`/`bash`/`grep`/`glob` plus `spawn_agent`/`send_message`/`followup_task`/`wait_agent`/`interrupt_agent`/`list_agents`/`agent_output`) + Worker role prompt + evidence-based result review (out-of-band Stop-hook) + agent loop + auto-continue + session management.
 
 ```typescript
 import { runKodaX, KodaXClient, KODAX_TOOLS } from '@kodax-ai/kodax/coding';
@@ -2178,7 +2161,7 @@ await client.send('Create a new file');
 await client.send('Add a function to it'); // Has context from previous message
 ```
 
-**Key Features**: 50+ built-in tools (see [Tools](#tools)) · V2 Worker single-loop + Sidecar Verifier (FEATURE_184 v0.7.42 / V1 chain fully retired by FEATURE_193 v0.7.43) · Runtime-owned Actor collaboration and safe-boundary steering (FEATURE_270, v0.7.72) · idle-yield waiting · specialist routing via `spawn_agent(agent_id=...)` · auto-continue · session lineage.
+**Key Features**: 50+ built-in tools (see [Tools](#tools)) · V2 Worker single-loop + evidence-based result review (FEATURE_184 v0.7.42 / V1 chain fully retired by FEATURE_193 v0.7.43) · Runtime-owned Actor collaboration and safe-boundary steering (FEATURE_270, v0.7.72) · idle-yield waiting · specialist routing via `spawn_agent(agent_id=...)` · auto-continue · session lineage.
 
 ### `@kodax-ai/kodax/repl` — Interactive Terminal UI
 
@@ -2334,7 +2317,6 @@ KodaX ships 50+ built-in tools, grouped below. They are registered as a single f
 | `ask_user_question` | Single/multi-select or free-text prompt back to the user |
 | `exit_plan_mode` | Present a finalized plan only when the active REPL/host supplied an approval callback |
 | `run_workflow` | Author and run a deterministic Workflow protocol in AMA only when Workflow intent is explicit; complexity alone never activates it. Child Agents share the Actor control plane. Async / idle-yield. (FEATURE_246; FEATURE_270 v0.7.72) |
-| `emit_managed_protocol` | Internal managed-task protocol side-channel for role payloads (verdict). V2 Worker single-loop + Sidecar Verifier is the default since v0.7.42 (FEATURE_184); V1 chain retired in v0.7.43 (FEATURE_193). |
 
 ---
 

@@ -1,14 +1,4 @@
-/**
- * Coding-tool runtime wrappers for the runner-driven AMA path.
- *
- * Hosts:
- *   - `MUTATES_FS_TOOL_NAMES` -- the file-mutating tool set that drives the
- *     mutation tracker and Sidecar Verifier work-scale gate.
- *   - `recordMutationForTool` -- populates `ctx.mutationTracker` per tool call.
- *   - `wrapCodingToolAsRunnable` -- adapts a coding tool handler into a
- *     `RunnableTool` with progress, budget metering, mutation tracking, and
- *     a tool-error envelope.
- */
+
 
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
 import type {
@@ -115,11 +105,6 @@ function estimateTouchedLines(input: Record<string, unknown>): number {
   return Math.max(lineCount(input.old_string), lineCount(input.new_string)) || 1;
 }
 
-/**
- * Populates `ctx.mutationTracker` with files + totalOps when a file-mutating
- * tool runs, or when bash executes a destructive command. Missing tracker is a
- * no-op. The tracked metrics feed the Sidecar Verifier work-scale gate.
- */
 export function recordMutationForTool(
   tracker: ManagedMutationTracker | undefined,
   toolName: string,

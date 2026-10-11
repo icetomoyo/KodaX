@@ -15,6 +15,7 @@
  */
 
 import path from 'node:path';
+import { resolveEffectiveVerification } from '../../../agent-runtime/effective-config.js';
 
 import type {
   KodaXHarnessProfile,
@@ -31,7 +32,6 @@ import type {
 } from '../../../types.js';
 import type { ReasoningPlan } from '../../../reasoning.js';
 import type { ManagedTaskBudgetController } from './budget.js';
-import type { VerdictRecorder } from './types.js';
 import {
   getManagedTaskSurface,
   getManagedTaskWorkspaceRoot,
@@ -40,11 +40,6 @@ import {
   buildManagedTaskArtifactRecords,
   mergeEvidenceArtifacts,
 } from './artifacts.js';
-import {
-  createVerificationScorecard,
-  type ScorecardVerdictDirective,
-} from './scorecard.js';
-import { buildCompletionContractStatus } from './role-prompts.js';
 
 // The legacy per-harness global work budget (H0→50 / H1→400 / H2→600) collapsed
 // with the harness tier (ADR-043): V2 is always H0_DIRECT, so the single-pass
@@ -60,11 +55,9 @@ const DEFAULT_GLOBAL_WORK_BUDGET = 50;
 export function buildManagedTaskPayload(args: {
   readonly prompt: string;
   readonly options: KodaXOptions;
-  readonly recorder: VerdictRecorder;
   readonly rolesEmitted: readonly KodaXTaskRole[];
   readonly baseCtx: KodaXToolExecutionContext;
   readonly signal: KodaXResult['signal'];
-  readonly verdictStatus?: 'accept' | 'revise' | 'blocked';
   readonly userAnswer?: string;
   readonly budget?: ManagedTaskBudgetController;
   readonly plan?: ReasoningPlan;
@@ -106,11 +99,9 @@ export function buildManagedTaskPayload(args: {
   const {
     prompt,
     options,
-    recorder,
     rolesEmitted,
     baseCtx,
     signal,
-    verdictStatus,
     userAnswer,
     budget,
     plan,
@@ -145,8 +136,7 @@ export function buildManagedTaskPayload(args: {
   // parity.
   const workspaceDir = path.join(getManagedTaskWorkspaceRoot(options, surface), taskId);
 
-  const contractStatus =
-    signal === 'BLOCKED' ? 'blocked' : verdictStatus === 'accept' ? 'completed' : 'running';
+  const contractStatus = signal === 'BLOCKED' ? 'blocked' : 'completed';
 
   // Shard 6d-L: honour the reasoning plan's routing decision when filling
   // `contract.*`. Legacy (`task-engine.ts:2160-2180`) populated every
@@ -179,7 +169,7 @@ export function buildManagedTaskPayload(args: {
     successCriteria: [],
     requiredEvidence: [],
     constraints: [],
-    verification: options.context?.taskVerification,
+    verification: resolveEffectiveVerification(options),
   };
 
   // De-dup roles while preserving first-occurrence order. The assignment
@@ -200,46 +190,9 @@ export function buildManagedTaskPayload(args: {
     status: contractStatus,
   }));
 
-  // FEATURE_193 (v0.7.43): `'generator'` fallback replaced with `'worker'`
-  // — V1 Generator role retired (chain.generator agent deleted in commit
-  // `dcac55ea`). On V2 the only execution agent that produces a managedTask
-  // payload without a Sidecar Verifier verdictStatus is the Worker. H0_DIRECT
-  // remains for the SA-fast-path pseudo-role.
-  // Harness collapsed to H0_DIRECT in V2 (ADR-043), so this was already always
-  // 'direct' at runtime — made explicit. (A Worker/Evaluator assignment-id
-  // distinction, if wanted, is a separate behavior change, not this cleanup.)
-  const decidedByAssignmentId = 'direct';
-  // FEATURE_159 follow-up (v0.7.40): fallback to '' instead of `prompt`.
-  // The legacy `?? prompt` fallback was a copy from SA fast-path days when
-  // the Scout always provided a `userAnswer`, so `?? prompt` was a never-
-  // reached safety net. Under V2 chain (FEATURE_114) Worker runs first and
-  // a Worker round can legitimately end without `emit_verdict` (e.g. the
-  // chain hands off to Generator on the next iteration, or the Sidecar
-  // Verifier has not yet written to recorder.verdict). In that case
-  // `userAnswer` and `verdict.reason` are both undefined, and
-  // `?? prompt` populated `verdict.summary` with the user's raw query
-  // verbatim.
-  //
-  // Downstream this surfaced as an end-user UX bug: when the Worker round
-  // produced no plain-text assistant turn (e.g. only tool_use + thinking,
-  // or only emit_handoff), `resolveCompletedAssistantText` (REPL
-  // message-utils.ts) iterates candidates and skips empty ones — falling
-  // through to `managedTask.verdict.summary` as the third candidate. With
-  // the legacy fallback that candidate held the user's own query, so the
-  // REPL rendered a prefix-less `Assistant: <Q verbatim>` item (the user
-  // sees their own question echoed back as the assistant's reply).
-  //
-  // Empty-string fallback is safe for all consumers we verified:
-  //   - REPL `resolveCompletedAssistantText`: empty candidate is skipped
-  //     (sanitize-and-pick-first-truthy loop).
-  //   - `runner-driven.ts` transcript dump: `if (task.verdict?.summary)`
-  //     gate already filters falsy, the "Last verdict" block silently
-  //     drops.
-  //   - `scorecard.ts`: `directive?.reason ?? task.verdict.summary` —
-  //     audit artefact, empty string is acceptable when no verdict ran.
-  //   - `json-guards.ts`: only checks `typeof === 'string'`.
+  const decidedByAssignmentId = rolesEmitted.at(-1) ?? 'worker';
   const verdictSummary =
-    userAnswer ?? recorder.verdict?.payload.verdict?.reason ?? '';
+    userAnswer ?? '';
 
   const task: KodaXManagedTask = {
     contract,
@@ -271,19 +224,7 @@ export function buildManagedTaskPayload(args: {
       routingNotes: plan?.decision.routingNotes ? [...plan.decision.routingNotes] : [],
     },
     verdict: {
-      // FEATURE_184 (v0.7.45) Phase C.1: verdict.status is owned by the
-      // Evaluator / Sidecar Verifier verdict slot (verdictStatus). A
-      // Generator-level blocked handoff surfaces via result.signal only,
-      // leaving verdict.status='running' (no verifier ran). We intentionally
-      // do NOT map signal='BLOCKED' → status='blocked' here because that
-      // would conflate Generator-blocked (no verifier) with Evaluator/Sidecar-
-      // blocked (verifier ran and said 'blocked').
-      status:
-        verdictStatus === 'blocked'
-          ? 'blocked'
-          : verdictStatus === 'accept'
-            ? 'completed'
-            : 'running',
+      status: signal === 'BLOCKED' ? 'blocked' : 'completed',
       decidedByAssignmentId,
       summary: verdictSummary,
       signal,
@@ -321,10 +262,6 @@ export function buildManagedTaskPayload(args: {
       // Shard 6d-S: derive per-criterion / per-runtime-check completion
       // status from the final verdict. Absent when no verification
       // contract was declared.
-      completionContractStatus: buildCompletionContractStatus(
-        options.context?.taskVerification,
-        verdictStatus,
-      ),
       // F4 parity (v0.7.26) — surface routing provenance + tool
       // truncation state. `rawRoutingDecision` is the pre-floor snapshot
       // (before `applyCurrentDiffReviewRoutingFloor`); `finalRoutingDecision`
@@ -343,19 +280,7 @@ export function buildManagedTaskPayload(args: {
     },
   };
 
-  // H2 parity (v0.7.26) — populate the verification scorecard after the
-  // task shape is built, mirroring legacy `createVerificationScorecard`.
-  // Without this, `task.runtime.scorecard` stayed undefined and
-  // `scorecard.json` persisted as `null`, starving downstream consumers
-  // (review-scale UI, session-storage replay, rubric-family branches).
-  const verdictPayload = recorder.verdict?.payload.verdict;
-  const scorecardDirective: ScorecardVerdictDirective | undefined = verdictPayload
-    ? { status: verdictPayload.status, reason: verdictPayload.reason }
-    : undefined;
-  const scorecard = createVerificationScorecard(task, scorecardDirective);
-  return scorecard && task.runtime
-    ? { ...task, runtime: { ...task.runtime, scorecard } }
-    : task;
+  return task;
 }
 
 /**

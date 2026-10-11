@@ -428,42 +428,6 @@ export type KodaXCompactionEndResult = KodaXCompactionEndState & (
     }
 );
 
-export interface KodaXSidecarMessageEvent {
-  readonly source: 'sidecar-verifier';
-  readonly verdict: 'revise' | 'blocked';
-  readonly recipient: 'main-agent' | 'user';
-  readonly delivery: 'synthetic-user-message' | 'budget-exhausted' | 'terminal-block';
-  /** Exact actionable text from the sidecar. `budget-exhausted` means it was not injected. */
-  readonly content: string;
-  readonly suggestedFix?: string;
-  readonly strategyReasonCode?:
-    | 'missing_requirement'
-    | 'contradicted_evidence'
-    | 'unsupported_claim'
-    | 'unresolved_high_risk'
-    | 'verification_degraded';
-  readonly recommendedPattern?:
-    | 'classify-and-act'
-    | 'fan-out-and-synthesize'
-    | 'adversarial-verification'
-    | 'generate-and-filter'
-    | 'tournament'
-    | 'loop-until-done';
-  readonly targetEvidenceRefs?: readonly string[];
-  readonly trace?: string;
-  /**
-   * FEATURE_247 (R3/R8) — session id the verdict belongs to, so a host running
-   * concurrent Partner/Coder sessions can correlate a sidecar verdict to the
-   * right session. Absent when the resolved session id is not available.
-   */
-  readonly sessionId?: string;
-  /**
-   * FEATURE_247 (R3/R8) — SDK-consumer agent profile whose output was verified.
-   * Absent ⇒ default Coding Agent.
-   */
-  readonly agentProfile?: KodaXAgentProfile;
-}
-
 export interface KodaXTodoDriftWarningEvent {
   readonly kind: 'work_started_without_claimed_todo';
   readonly toolName: string;
@@ -746,16 +710,6 @@ export interface KodaXEvents {
     event: RuntimeCompactionSkippedEvent & Partial<KodaXLiveEventMeta>,
   ) => void;
   /**
-   * Fired when the Sidecar Verifier produces an actionable message.
-   *
-   * `revise` is usually injected back into the main agent as a synthetic user
-   * message; if the reanimate budget is already exhausted, the same verdict is
-   * surfaced with `delivery: "budget-exhausted"` and no injection occurs.
-   * `blocked` is surfaced terminally to the user. Accept remains silent here
-   * because there is no sidecar-to-agent reply to show.
-   */
-  onSidecarMessage?: (event: KodaXSidecarMessageEvent & Partial<KodaXLiveEventMeta>) => void;
-  /**
    * FEATURE_097 (v0.7.34): emitted whenever the Scout-seeded todo list
    * changes — initial seed at `emit_scout_verdict`, per-item updates from
    * `todo_update` tool calls, and Evaluator-verdict auto-handling
@@ -890,7 +844,6 @@ export interface KodaXEvents {
   }) => void;
 }
 
-
 // ============== Provider Recovery Event (Feature 045) ==============
 
 /**
@@ -985,7 +938,6 @@ export interface KodaXProviderPolicyHints {
 // aliases extracted to ./types/mcp.ts and re-exported for backward compat.
 export * from './types/mcp.js';
 
-
 // ============== Todo Plan Surface (FEATURE_097, v0.7.34) ==============
 
 import type { TodoList } from './types/todo.js';
@@ -1063,25 +1015,6 @@ export interface KodaXTaskVerificationContract {
   runtime?: KodaXRuntimeVerificationContract;
 }
 
-/**
- * FEATURE_247 — SDK-consumer agent profile identity (e.g. KodaX-Space Partner).
- *
- * The SDK core treats this as OPAQUE attribution: it is echoed onto results,
- * events, the effective-config snapshot, session runtimeInfo, and tool context
- * so an embedder can confirm which profile actually ran and can attribute
- * concurrent Partner/Coder sessions. Absent ⇒ the default Coding Agent, with no
- * behavioral change anywhere.
- *
- * Only two fields carry behavior, both additive and gated on their own presence:
- *   - `instructions` — on the SA path the embedder sets
- *     `context.systemPromptOverride`; the AMA/AMAW path builds role prompts
- *     internally, so when this is set the Worker role prompt PREPENDS this block
- *     (absent ⇒ byte-identical default coding role prompt).
- *   - `verification` — a profile-default verifier standard the Sidecar Verifier
- *     applies; per-task `context.taskVerification` still overrides/augments it.
- *
- * Everything else (`surface`/`id`/`version`/`name`) is pure identity passthrough.
- */
 export interface KodaXAgentProfile {
   /** Surface/profile label, e.g. `'code'` | `'partner'`. Opaque to the core. */
   readonly surface?: string;
@@ -1500,13 +1433,8 @@ export interface KodaXEffectiveTaskConfig {
   readonly agentProfile?: KodaXAgentProfile;
   /** Tool names visible to the model for this run. */
   readonly toolScope: readonly string[];
-  /**
-   * Effective verification standard reaching the Sidecar Verifier — the profile
-   * default merged with per-task `context.taskVerification` (per-task wins).
-   */
+
   readonly verification?: KodaXTaskVerificationContract;
-  /** Resolved Sidecar Verifier provider/model, when the verifier is active. */
-  readonly verifier?: { readonly provider?: string; readonly model?: string };
 }
 
 export interface KodaXVerificationScorecardCriterion {
@@ -2599,9 +2527,7 @@ export interface KodaXManagedTask {
 }
 
 export interface KodaXManagedVerdictPayload {
-  /** FEATURE_184 (v0.7.45): `'sidecar'` is the new architectural source —   *  Sidecar Verifier replaces the in-chain Evaluator role. `'evaluator'`
-   *  / `'worker'` are retained for backward-compat reads of session jsonl
-   *  written before v0.7.45. New writes use `'sidecar'`. */
+
   source: 'evaluator' | 'worker' | 'sidecar';
   status: 'accept' | 'revise' | 'blocked';
   reason?: string;
@@ -2630,14 +2556,7 @@ export interface KodaXManagedVerdictPayload {
     | 'loop-until-done';
   targetEvidenceRefs?: string[];
   preferredFallbackWorkerId?: string;
-  /**
-   * v0.7.26 Risk-3 fix — Evaluator explicit budget-extension request.
-   * When present, the Runner-driven `wrapEmitterWithRecorder` fires the
-   * budget-extension dialog regardless of the 90% threshold, using this
-   * string as the user-visible summary. Mirrors legacy Evaluator's
-   * `budgetRequest` field which was parsed from the fenced-block
-   * `kodax-budget-request` payload in v0.7.22.
-   */
+
   budgetRequest?: string;
 }
 
@@ -2657,12 +2576,6 @@ export type KodaXScoutSuspiciousSignal =
   | 'budget-exhausted'
   | 'no-formal-completion';
 
-// FEATURE_193 (v0.7.43) deep V1 cleanup: the V1 chain payload slots
-// (`scout` / `contract` / `handoff`) and their slice type defs
-// (`KodaXManagedScoutPayload` / `KodaXManagedContractPayload` /
-// `KodaXManagedHandoffPayload`) have been removed physically — V1 chain
-// retired, no V2 caller mints these payloads. Only the verdict slot
-// remains; the Sidecar Verifier (FEATURE_184) is the sole emitter on V2.
 export interface KodaXManagedProtocolPayload {
   verdict?: KodaXManagedVerdictPayload;
 }

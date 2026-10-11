@@ -11,7 +11,16 @@
  *     managedTask when Generator/Evaluator enter the chain)
  */
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -1171,7 +1180,7 @@ describe('buildRunnerLlmAdapter (via overrideStream)', () => {
     });
     // FEATURE_193 v0.7.43: migrated from Scout/emit_scout_verdict fixture to
     // Worker chain (V1 chain retired).
-    const chain = buildRunnerAgentChain(makeCtx(), {});
+    const chain = buildRunnerAgentChain(makeCtx());
     await adapter([{ role: 'system', content: 's' }], chain.worker);
     for (const t of capturedTools) {
       expect(t.execute).toBeUndefined();
@@ -4239,212 +4248,6 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
   });
 });
 
-// FEATURE_114 v0.7.36 Slice 5 — V2 single-loop end-to-end runner test.
-// Sibling to the Slice 3b unit tests that asserted chain SHAPE; this
-// test asserts the chain actually FLOWS through Worker → Evaluator
-// when KODAX_HARNESS_V2=true. Reuses the `makeChainMockLlm` helper
-// (per-agent turn detection via system-prompt sniffing) and adds a
-// 'worker' branch.
-describe('FEATURE_114 v0.7.36 Slice 5 — V2 Worker→Evaluator end-to-end', () => {
-  // FEATURE_193 v0.7.43: withHarnessV2 helper deleted (KODAX_HARNESS_V2 env flag retired — V2 is now unconditional default)
-
-  it('runs a V2 trivial flow: Worker terminates text-only', async () => {
-    const mock = makeChainMockLlm({
-      worker: (turn) => {
-        if (turn === 1) {
-          // FEATURE_190 Phase 3: text-only termination (emit_handoff deleted).
-          return {
-            textBlocks: [{ text: 'Trivial arithmetic — answering directly. 2 + 2 = 4.' }],
-            toolBlocks: [],
-          };
-        }
-        return { textBlocks: [{ text: '2 + 2 = 4.' }], toolBlocks: [] };
-      },
-      // FEATURE_184 Phase C.1 (v0.7.45): Evaluator removed from chain.
-    });
-    const result = await runManagedTaskViaRunner(
-      makeOptions(),
-      'What is 2 + 2?',
-      mock,
-    );
-    expect(result.success).toBe(true);
-    expect(result.signal).toBe('COMPLETE');
-    // Worker answer reaches the user via lastText.
-    expect(result.lastText).toMatch(/2 \+ 2 = 4/);
-    // FEATURE_184 (v0.7.45): the Sidecar Verifier StopHook fires on
-    // Worker text-only termination and writes a verdict slot via
-    // `verifier-recorder-bridge.applySidecarVerdictToRecorder`. In the
-    // unit-test environment the verifier provider is `anthropic`
-    // without a real API key, so `provider.stream` throws inside the
-    // verifier; the fail-open policy resolves to `verdict: 'accept'`
-    // (trace=`provider_error`, see `verifier.ts:251`). The recorder
-    // bridge stamps `source: 'sidecar'` on the recorded payload.
-    //
-    // Pre-2026-05-23 this slot was silently `undefined` because
-    // `currentAgentRoleRef` was stuck at the V1 `'scout'` sentinel and
-    // the verifier gate (`isExecutionRole === 'worker'`) never opened
-    // (regression from F193 Commit 2 `c5d4b829`, restored by the
-    // ref-init fix).
-    expect(result.managedProtocolPayload?.verdict).toBeDefined();
-    expect(result.managedProtocolPayload?.verdict?.source).toBe('sidecar');
-    expect(result.managedProtocolPayload?.verdict?.status).toBe('accept');
-  });
-
-  it('V2 active: preflight emits activeWorkerTitle="Worker" (not "Scout")', async () => {
-    // FEATURE_114 v0.7.38 Slice 7 — when V2 is the entry path
-    // (chain.worker), the runner's preflight emit MUST carry the
-    // Worker label so the REPL prefix on Worker's tool calls reads
-    // `[Worker] read/bash/grep`. The previous hardcoded scout label
-    // persisted into every Worker tool call (no slot emit had fired
-    // yet) and made V2 sessions appear to still be running V1.
-    const statuses: Array<Record<string, unknown>> = [];
-    const opts = {
-      ...makeOptions(),
-      events: {
-        onManagedTaskStatus: (s: Record<string, unknown>) => statuses.push(s),
-      },
-    } as unknown as Parameters<typeof runManagedTaskViaRunner>[0];
-    const mock = makeChainMockLlm({
-      worker: (turn) => {
-        if (turn === 1) {
-          // FEATURE_190 Phase 3: text-only termination (emit_handoff deleted).
-          return {
-            textBlocks: [{ text: 'Done.' }],
-            toolBlocks: [],
-          };
-        }
-        return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
-      },
-      // FEATURE_184 Phase C.1 (v0.7.45): Evaluator removed from chain.
-    });
-    await runManagedTaskViaRunner(opts, 'What is 2 + 2?', mock);
-    const preflight = statuses.find((s) => s.phase === 'preflight');
-    expect(preflight?.activeWorkerId).toBe('worker');
-    expect(preflight?.activeWorkerTitle).toBe('Worker');
-    expect(preflight?.note).toBe('Worker analyzing task');
-  });
-
-  // FEATURE_190 Phase 3: Worker terminates text-only — onRoleEmit('worker')
-  // is never called, so no `phase:'worker', activeWorkerId:'worker'` event
-  // with the "completed a turn" note exists to assert against. The agentSwitched
-  // event does fire but was not the invariant this test exercised (it checked
-  // the onRoleEmit path specifically). Covered by text-only-termination.test.ts.
-  it.todo('post-F190: V2 worker onRoleEmit event no longer fires — Worker terminates text-only; covered by text-only-termination.test.ts');
-
-  // FEATURE_193 v0.7.43: V1 flag-off routing test deleted (Scout chain agents retired).
-});
-
-// FEATURE_196 (v0.7.43) — content-aware sidecar fire gate integration.
-//
-// Gate logic + regex boundaries covered exhaustively in `gate.test.ts`
-// (23 unit tests). These integration tests verify the wire-up to
-// `runner-driven.ts:composedStopHook` — fire/skip routing produces the
-// right end-state in `managedProtocolPayload.verdict`. The unit-test
-// env has no API keys so when the sidecar verifier fires it fail-opens
-// to `accept` (trace=`provider_error`); when it skips, no verdict is
-// recorded.
-describe('FEATURE_196 v0.7.43 — sidecar content-aware fire gate (integration)', () => {
-  it('trivial greeting → gate skips → no sidecar verdict written', async () => {
-    // User: "你好" (Chinese greeting, 2 chars, no imperative).
-    // Worker: text-only "你好!". Layer 2 detects conversational
-    // intent → gate skips → composedStopHook returns through the
-    // extension chain without invoking the verifier.
-    //
-    // Pre-F196 the verifier would have fail-open to accept and
-    // stamped `source: 'sidecar'` on the verdict. Post-F196 the gate
-    // skips → no verdict slot is written → `managedProtocolPayload?.verdict`
-    // is undefined.
-    const mock = makeChainMockLlm({
-      worker: (turn) => {
-        if (turn === 1) {
-          return {
-            textBlocks: [{ text: '你好! 我是 KodaX 的开发助手。' }],
-            toolBlocks: [],
-          };
-        }
-        return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
-      },
-    });
-    const result = await runManagedTaskViaRunner(makeOptions(), '你好', mock);
-    expect(result.success).toBe(true);
-    expect(result.signal).toBe('COMPLETE');
-    // Gate skipped sidecar — verdict slot never populated.
-    expect(result.managedProtocolPayload?.verdict).toBeUndefined();
-  });
-
-  it('mutation tool call → gate fires → sidecar verdict written', async () => {
-    // Worker invokes a mutation tool (action-surface signal). Layer 1
-    // returns fire. Verifier fires + fail-opens to accept in the
-    // key-less test env.
-    const mock = makeChainMockLlm({
-      worker: (turn) => {
-        if (turn === 1) {
-          return {
-            toolBlocks: [{
-              type: 'tool_use',
-              id: 'w-1',
-              name: 'todo_create',
-              input: { items: [{ subject: 'plan step', description: 'do work' }] },
-            }],
-          };
-        }
-        // Turn 2 — text-only termination after tool ran.
-        return {
-          textBlocks: [{ text: 'Done. Plan items recorded.' }],
-          toolBlocks: [],
-        };
-      },
-    });
-    const result = await runManagedTaskViaRunner(
-      makeOptions(),
-      // Imperative user message — even without Layer 1, Layer 2 would
-      // defer to default fire.
-      'plan three things and implement them',
-      mock,
-    );
-    // Mutation tool call signals "real work" — gate fires regardless
-    // of user-message intent.
-    expect(result.managedProtocolPayload?.verdict).toBeDefined();
-    expect(result.managedProtocolPayload?.verdict?.source).toBe('sidecar');
-    expect(result.managedProtocolPayload?.verdict?.status).toBe('accept');
-  });
-
-  it('imperative + zero tool action (zhipu floor) → gate fires safely (F184 contract)', async () => {
-    // The CORE F184 contract case: user asked Worker to do something
-    // imperative, Worker responds text-only without invoking a tool
-    // (intent-vs-action floor). Layer 2's conversational check must
-    // NOT skip this — safe default fires → sidecar verifies the claim.
-    const mock = makeChainMockLlm({
-      worker: (turn) => {
-        if (turn === 1) {
-          return {
-            // No tool call — Worker just claims to have done it.
-            textBlocks: [{ text: '明白，我用 grep 搜索了 README 文件。结果如下...' }],
-            toolBlocks: [],
-          };
-        }
-        return { textBlocks: [{ text: 'ok' }], toolBlocks: [] };
-      },
-    });
-    const result = await runManagedTaskViaRunner(
-      makeOptions(),
-      '查一下 README 文件',
-      mock,
-    );
-    // Imperative user + zero action ⇒ gate defaults to fire.
-    expect(result.managedProtocolPayload?.verdict).toBeDefined();
-    expect(result.managedProtocolPayload?.verdict?.source).toBe('sidecar');
-    // Fail-open accept in key-less test env. Production with real API
-    // would surface the verifier's actual verdict (likely revise/
-    // blocked given the false-action claim).
-    expect(result.managedProtocolPayload?.verdict?.status).toBe('accept');
-  });
-});
-
-// FEATURE_167 (v0.7.41) Evaluator terminal-verdict fallback (B1+B2) deleted
-// in FEATURE_184 Phase C.2 (v0.7.45). The three-layer B0/B1/B2 retry/synth
-// fallback block is superseded by the Sidecar Verifier StopHook (Phase D.2).
-
 describe('parity — Runner path and legacy SA path produce compatible KodaXResult shape', () => {
   // The goal of Shard 5a parity is NOT byte-level equivalence (the legacy
   // AMA state machine emits dozens of observer events and populates a
@@ -4464,15 +4267,6 @@ describe('parity — Runner path and legacy SA path produce compatible KodaXResu
     expect(typeof result.lastText).toBe('string');
     expect(Array.isArray(result.messages)).toBe(true);
     expect(typeof result.sessionId).toBe('string');
-    // Shard 6a populates managedTask even on zero-tool runs.
-    // FEATURE_184 (v0.7.45): Sidecar Verifier fires on Worker text-only
-    // termination. In the unit-test environment without a real API
-    // key, the verifier fail-opens to `accept` (provider_error trace),
-    // which `payload-builder.ts:285-294` maps to `status: 'completed'`.
-    // Restored 2026-05-23 by fixing the `currentAgentRoleRef` init
-    // regression that previously gated the verifier off (was stuck at
-    // V1 `'scout'` sentinel; now `'worker'` so `isExecutionRole` opens
-    // the gate from turn 0).
     expect(result.managedTask?.verdict?.status).toBe('completed');
   });
 
@@ -4567,20 +4361,6 @@ function makeChainMockLlm(handlers: Record<string, AgentTurn>) {
     return handler(turnCount[role]!, transcript);
   };
 }
-
-// FEATURE_193 v0.7.43: V1 Scout→Generator H1 accept describe deleted (V1 chain retired).
-
-// FEATURE_193 v0.7.43: M5 Scout pre-handoff write warning describe deleted (V1 chain retired).
-
-// FEATURE_193 v0.7.43: Shard 5b parity H1 (scout→generator text-only) describe deleted (V1 chain retired — uses emit_scout_verdict + generator role)
-
-// FEATURE_193 v0.7.43: Shard 5b parity H2 (scout→planner→generator) describe deleted (V1 chain retired — uses emit_scout_verdict + emit_contract + generator role)
-
-describe('Shard 5b parity — blocked path', () => {
-  // FEATURE_190 Phase 3: emit_handoff deleted. BLOCKED semantics now owned
-  // by Sidecar Verifier — covered by sidecar.test.ts.
-  it.todo('post-F190: blocked semantics owned by Sidecar Verifier — covered by sidecar.test.ts');
-});
 
 // =============================================================================
 // Shard 6a — Observer events + managedTask payload
@@ -4725,13 +4505,13 @@ describe('Shard 6d-f — role-scoped tool boundaries (legacy toolPolicy parity)'
   // single-handoff topology) so Slice 3b has a stable target.
   describe('FEATURE_114 Slice 3a — Worker agent topology', () => {
     it('chain.worker exists with the canonical worker agent name', () => {
-      const chain = buildRunnerAgentChain(makeCtx(), {});
+      const chain = buildRunnerAgentChain(makeCtx());
       expect(chain.worker.name).toBe('kodax/role/worker');
     });
 
     it('Worker exposes the full execution toolbox (Scout exec ∪ Generator mutation surface)', () => {
       // FEATURE_190 Phase 3: emit_handoff deleted — Worker terminates text-only.
-      const chain = buildRunnerAgentChain(makeCtx(), {});
+      const chain = buildRunnerAgentChain(makeCtx());
       const workerTools = chain.worker.tools?.map((t) => t.name) ?? [];
       // emit_handoff no longer exists post-F190 Phase 3.
       expect(workerTools).not.toContain('emit_handoff');
@@ -4773,7 +4553,7 @@ describe('Shard 6d-f — role-scoped tool boundaries (legacy toolPolicy parity)'
     it('Worker has no handoffs (FEATURE_184 C.1: Evaluator removed from chain)', () => {
       // FEATURE_184 Phase C.1 (v0.7.45): Evaluator removed from chain.
       // FEATURE_190 Phase 3: Worker terminates text-only; no agent handoff edge.
-      const chain = buildRunnerAgentChain(makeCtx(), {});
+      const chain = buildRunnerAgentChain(makeCtx());
       const handoffs = chain.worker.handoffs ?? [];
       expect(handoffs).toHaveLength(0);
     });
@@ -4801,7 +4581,7 @@ describe('Shard 6d-f — role-scoped tool boundaries (legacy toolPolicy parity)'
       // FEATURE_184 Phase C.1 (v0.7.45): Evaluator removed from chain.
       // FEATURE_190 Phase 3: Worker terminates text-only (emit_handoff deleted); no edge to Evaluator.
       // FEATURE_193 v0.7.43: withHarnessV2 wrapper removed (V2 is now unconditional default)
-      const chain = buildRunnerAgentChain(makeCtx(), {});
+      const chain = buildRunnerAgentChain(makeCtx());
       const workerTargets = (chain.worker.handoffs ?? []).map((h) => h.target.name);
       expect(workerTargets).toHaveLength(0);
       expect(workerTargets).not.toContain('kodax/role/evaluator');
@@ -4811,9 +4591,9 @@ describe('Shard 6d-f — role-scoped tool boundaries (legacy toolPolicy parity)'
       // FEATURE_184 Phase C.1 (v0.7.45): Evaluator removed from chain.
       // chain.evaluator no longer exists; verify Worker has no Evaluator target.
       // FEATURE_193 v0.7.43: withHarnessV2 wrappers removed (V2 is now unconditional default)
-      const chain1 = buildRunnerAgentChain(makeCtx(), {});
+      const chain1 = buildRunnerAgentChain(makeCtx());
       expect((chain1.worker.handoffs ?? [])).toHaveLength(0);
-      const chain2 = buildRunnerAgentChain(makeCtx(), {});
+      const chain2 = buildRunnerAgentChain(makeCtx());
       expect((chain2.worker.handoffs ?? [])).toHaveLength(0);
     });
   });
@@ -4882,23 +4662,16 @@ describe('Shard 6d-f — role-scoped tool boundaries (legacy toolPolicy parity)'
       // that here so the wrapper sees real status transitions instead
       // of the not-active error path.
       const ctxWithStore: KodaXToolExecutionContext = { ...makeCtx(), todoStore };
-      const chain = buildRunnerAgentChain(
-        ctxWithStore,
-        {},
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        // FEATURE_188 v0.7.42 — childWriteWorktreePathsRef param removed.
-        // The remaining trailing slots stay in the same order.
-        undefined,
-        undefined,
-        todoStore,
-        undefined,
-        undefined,
-        '/test/cwd',
-        stub,
+      const chain = buildRunnerAgentChain(ctxWithStore,
+undefined,
+undefined,
+undefined,
+undefined,
+undefined,
+todoStore,
+undefined,
+'/test/cwd',
+stub
       );
       return { chain, todoStore };
     }
@@ -4983,23 +4756,17 @@ describe('Shard 6d-f — role-scoped tool boundaries (legacy toolPolicy parity)'
       const todoStore = createTodoStore();
       const stub = buildStubRunner(calls, 'pass');
       const ctxWithStore: KodaXToolExecutionContext = { ...makeCtx(), todoStore };
-      const chain = buildRunnerAgentChain(
-        ctxWithStore,
-        {},
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        todoStore,
-        undefined,
-        undefined,
-        // runtimeCwd intentionally omitted
-        undefined,
-        stub,
+      const chain = buildRunnerAgentChain(ctxWithStore,
+undefined,
+undefined,
+undefined,
+undefined,
+undefined,
+undefined,
+undefined,
+undefined,
+undefined,
+stub
       );
       todoStore.init([{ id: 't1', subject: 'Build', evaluator: 'build' }]);
       const tool = chain.worker.tools?.find((t) => t.name === 'todo_update');
@@ -5020,15 +4787,8 @@ describe('Shard 6d-f — role-scoped tool boundaries (legacy toolPolicy parity)'
 // (chain.scout/.planner/.generator retired). Worker dispatch is covered by
 // Worker topology tests in the Slice 3a describe.
 
-// FEATURE_193 v0.7.43: 'Shard 6d-S — task verification contract completionContractStatus' deleted
-//   (all tests used makeChainMockLlm with scout:/generator: — V1 chain roles retired)
-
 // FEATURE_193 v0.7.43: 'Shard 6d-U — degraded-continue when upgrade beyond ceiling' deleted
 //   (test used makeChainMockLlm with scout:/generator: — V1 chain roles retired)
-
-// FEATURE_184 Phase C.1 (v0.7.45): Evaluator removed from chain.
-// "Shard 6d-f — evaluator graceful fallback when verdict is not emitted" deleted.
-// The F167 three-layer B0/B1/B2 retry/synth fallback is superseded by Sidecar Verifier (Phase D.2).
 
 describe('Shard 6d-d — session continuity', () => {
   it('keeps the AMA wire prefix stable across runs in the same session', async () => {
@@ -5376,11 +5136,6 @@ describe('Shard 6d-c3 — budget extension at 90% threshold', () => {
   //   (used makeChainMockLlm with scout:/generator: — V1 chain roles retired)
 
   it('fires askUser when revise summary lands and usage crosses 90% threshold', async () => {
-    // Directly exercise `maybeRequestAdditionalWorkBudget` with a
-    // pre-seeded controller, proving the helper we wire into the runner
-    // path produces the expected askUser dialog + budget extension. The
-    // integration with the Runner is exercised at compile-time via the
-    // `wrapEmitterWithRecorder` budgetExtension path.
     const { maybeRequestAdditionalWorkBudget } = await import(
       './_internal/managed-task/budget.js'
     );
@@ -5469,292 +5224,6 @@ describe('Shard 6d-c3 — budget extension at 90% threshold', () => {
 });
 
 // =============================================================================
-// Risk-2 + Risk-3 + Risk-5 — wrapEmitterWithRecorder behavioural guards
-//
-// Direct exercises of the emit-wrapper's verdict processing via the
-// `__runnerDrivenTestables` export. These tests stub the underlying
-// emitter (no real LLM, no Runner boot) and assert the wrapper's
-// rewrite / auto-conversion / budget-dialog behaviour.
-// =============================================================================
-
-describe('wrapEmitterWithRecorder — Risk 2/3/5 behavioural guards', () => {
-  type VerdictFixture = {
-    status: 'accept' | 'revise' | 'blocked';
-    reason?: string;
-    followups?: string[];
-    nextHarness?: 'H1_EXECUTE_EVAL' | 'H2_PLAN_EXECUTE_EVAL';
-    budgetRequest?: string;
-  };
-
-  async function harnessTestables() {
-    const mod = await import('./runner-driven.js');
-    const budgetMod = await import('./_internal/managed-task/budget.js');
-    return { ...mod.__runnerDrivenTestables, ...budgetMod };
-  }
-
-  function makeFakeVerdictEmitter(verdict: VerdictFixture): RunnableTool {
-    return {
-      name: 'emit_verdict',
-      description: 'stub',
-      input_schema: { type: 'object' },
-      execute: async () => ({
-        content: 'emitted',
-        metadata: {
-          role: 'evaluator',
-          payload: {
-            verdict: {
-              source: 'evaluator',
-              status: verdict.status,
-              reason: verdict.reason,
-              followups: verdict.followups ?? [],
-              userFacingText: '',
-              nextHarness: verdict.nextHarness,
-              budgetRequest: verdict.budgetRequest,
-            },
-          },
-          handoffTarget: verdict.status === 'revise' ? 'kodax/role/generator' : undefined,
-          isTerminal: verdict.status !== 'revise',
-        },
-      }),
-    } as unknown as RunnableTool;
-  }
-
-  function makeBudgetExtensionFixture(opts: {
-    events?: KodaXEvents;
-    upgradeCeiling?: 'H0_DIRECT' | 'H1_EXECUTE_EVAL' | 'H2_PLAN_EXECUTE_EVAL';
-    harness?: 'H0_DIRECT' | 'H1_EXECUTE_EVAL' | 'H2_PLAN_EXECUTE_EVAL';
-  }) {
-    // Plan fixture is intentionally minimal — the wrapper only reads
-    // `decision.harnessProfile` and `decision.upgradeCeiling`, so the
-    // rest of ReasoningPlan's surface is not required for these tests.
-    // Cast through `unknown` to satisfy the full interface.
-    const planRef = {
-      current: {
-        decision: {
-          primaryTask: 'edit',
-          workIntent: 'implement',
-          complexity: 'medium',
-          riskLevel: 'low',
-          harnessProfile: opts.harness ?? 'H1_EXECUTE_EVAL',
-          upgradeCeiling: opts.upgradeCeiling ?? 'H2_PLAN_EXECUTE_EVAL',
-          topologyCeiling: 'solo',
-          assuranceIntent: 'default',
-          recommendedMode: 'default',
-          requiresBrainstorm: false,
-          reason: 'test',
-        },
-        effort: 'medium',
-        promptOverlay: undefined,
-      },
-    };
-    return {
-      planRef,
-      degradedContinueRef: { current: false },
-      harnessRef: { current: opts.harness ?? 'H1_EXECUTE_EVAL' },
-      events: opts.events,
-      originalTask: 'test task',
-      roundRef: { current: 1 },
-      maxRoundsRef: { current: 6 },
-      budgetApprovalRef: { current: false },
-    } as any;
-  }
-
-  function makeBudgetController(init: { total: number; spent: number; harness?: string }) {
-    return {
-      totalBudget: init.total,
-      spentBudget: init.spent,
-      currentHarness: init.harness ?? 'H1_EXECUTE_EVAL',
-      lastApprovalBudgetTotal: 0,
-    } as any;
-  }
-
-  const makeRecorder = (): any => ({
-    scout: undefined,
-    contract: undefined,
-    handoff: undefined,
-    verdict: undefined,
-  });
-
-  const noopObserver: any = {
-    onRoleEmit: () => undefined,
-    notifyBudgetApprovalRequest: () => undefined,
-  };
-
-  const toolCtx: any = { gitRoot: process.cwd(), executionCwd: process.cwd(), agent: 'test' };
-
-  it('Risk-3: explicit budgetRequest triggers askUser below 90% threshold', async () => {
-    const { wrapEmitterWithRecorder } = await harnessTestables();
-    const askUserCalls: Array<{ question: string }> = [];
-    const events: KodaXEvents = {
-      askUser: async (q: { question: string }) => {
-        askUserCalls.push({ question: q.question });
-        return 'continue';
-      },
-    } as KodaXEvents;
-    const base = makeFakeVerdictEmitter({
-      status: 'revise',
-      reason: 'need another e2e pass',
-      budgetRequest: 'need another e2e pass',
-    });
-    const recorder = makeRecorder();
-    const budget = makeBudgetController({ total: 200, spent: 40 }); // 20% — well below 90%
-    const budgetExtension = makeBudgetExtensionFixture({
-      harness: 'H1_EXECUTE_EVAL',
-      events,
-    });
-
-    const wrapped = wrapEmitterWithRecorder(base, 'verdict', recorder, noopObserver, budget, budgetExtension);
-    await wrapped.execute({}, toolCtx);
-
-    expect(askUserCalls.length).toBe(1);
-    // The dialog summary surfaces the Evaluator's explicit reason.
-    expect(askUserCalls[0]!.question).toMatch(/work units|budget/i);
-  });
-
-  it('Risk-3: missing budgetRequest + below 90% → no dialog fires', async () => {
-    const { wrapEmitterWithRecorder } = await harnessTestables();
-    const askUserCalls: Array<unknown> = [];
-    const events: KodaXEvents = {
-      askUser: async () => {
-        askUserCalls.push({});
-        return 'continue';
-      },
-    } as KodaXEvents;
-    const base = makeFakeVerdictEmitter({ status: 'accept', reason: 'done' });
-    const recorder = makeRecorder();
-    const budget = makeBudgetController({ total: 200, spent: 40 });
-    const budgetExtension = makeBudgetExtensionFixture({
-      harness: 'H1_EXECUTE_EVAL',
-      events,
-    });
-
-    const wrapped = wrapEmitterWithRecorder(base, 'verdict', recorder, noopObserver, budget, budgetExtension);
-    await wrapped.execute({}, toolCtx);
-
-    expect(askUserCalls.length).toBe(0);
-  });
-
-  it.each(['accept', 'blocked'] as const)(
-    'Risk-3: %s verdict never requests more budget even with an explicit budgetRequest',
-    async (status) => {
-      const { wrapEmitterWithRecorder } = await harnessTestables();
-      const askUserCalls: Array<unknown> = [];
-      const approvalNotifications: Array<unknown> = [];
-      const events: KodaXEvents = {
-        askUser: async () => {
-          askUserCalls.push({});
-          return 'continue';
-        },
-      } as KodaXEvents;
-      const base = makeFakeVerdictEmitter({
-        status,
-        reason: status === 'accept' ? 'done' : 'needs user input',
-        budgetRequest: 'stale evaluator budget request',
-      });
-      const recorder = makeRecorder();
-      const budget = makeBudgetController({ total: 200, spent: 200 });
-      const budgetExtension = makeBudgetExtensionFixture({
-        harness: 'H1_EXECUTE_EVAL',
-        events,
-      });
-      const observer = {
-        ...noopObserver,
-        notifyBudgetApprovalRequest: (...args: unknown[]) => {
-          approvalNotifications.push(args);
-        },
-      };
-
-      const wrapped = wrapEmitterWithRecorder(
-        base,
-        'verdict',
-        recorder,
-        observer,
-        budget,
-        budgetExtension,
-      );
-      await wrapped.execute({}, toolCtx);
-
-      expect(approvalNotifications).toHaveLength(0);
-      expect(askUserCalls).toHaveLength(0);
-    },
-  );
-
-  it('Risk-5: a revise verdict passes through unchanged (no same-harness revise cap)', async () => {
-    // The per-harness revise cap (reviseCountByHarnessRef) was never wired —
-    // the counter was created but never read — and was removed in ADR-043. A
-    // revise verdict therefore always passes through; the round cap is the only
-    // bound.
-    const { wrapEmitterWithRecorder } = await harnessTestables();
-    const base = makeFakeVerdictEmitter({ status: 'revise', reason: 'retry' });
-    const recorder = makeRecorder();
-    const budget = makeBudgetController({ total: 200, spent: 50, harness: 'H2_PLAN_EXECUTE_EVAL' });
-    const budgetExtension = makeBudgetExtensionFixture({
-      harness: 'H2_PLAN_EXECUTE_EVAL',
-    });
-
-    const wrapped = wrapEmitterWithRecorder(base, 'verdict', recorder, noopObserver, budget, budgetExtension);
-    const result = await wrapped.execute({}, toolCtx);
-
-    const meta = result.metadata as { payload: { verdict: { status: string } } };
-    expect(meta.payload.verdict.status).toBe('revise');
-  });
-
-  it('Risk-5: multi-emit on same slot — recorder holds the LAST payload (last-wins)', async () => {
-    // When the LLM calls emit_verdict twice in one turn (either by
-    // accident or as a self-correction), the recorder must hold the
-    // SECOND payload so handoff routing reflects the corrected intent.
-    // Legacy managed-protocol-handoff.test.ts explicitly covered this
-    // for the text-fence path ("uses the last verdict block when
-    // multiple exist"); the same semantic must hold for the tool-call
-    // path.
-    const { wrapEmitterWithRecorder } = await harnessTestables();
-    const recorder = makeRecorder();
-    const budget = makeBudgetController({ total: 200, spent: 10 });
-    const budgetExtension = makeBudgetExtensionFixture({ harness: 'H1_EXECUTE_EVAL' });
-
-    // First emit: revise with one reason
-    const firstBase = makeFakeVerdictEmitter({ status: 'revise', reason: 'first pass incomplete' });
-    const firstWrapped = wrapEmitterWithRecorder(firstBase, 'verdict', recorder, noopObserver, budget, budgetExtension);
-    await firstWrapped.execute({}, toolCtx);
-    expect((recorder as any).verdict?.payload.verdict?.reason).toBe('first pass incomplete');
-
-    // Second emit on same slot: self-correct to accept
-    const secondBase = makeFakeVerdictEmitter({ status: 'accept', reason: 'actually done' });
-    const secondWrapped = wrapEmitterWithRecorder(secondBase, 'verdict', recorder, noopObserver, budget, budgetExtension);
-    await secondWrapped.execute({}, toolCtx);
-    // Last-wins semantic — recorder now holds the second payload
-    expect((recorder as any).verdict?.payload.verdict?.status).toBe('accept');
-    expect((recorder as any).verdict?.payload.verdict?.reason).toBe('actually done');
-  });
-
-  it('Risk-5: malformed verdict (missing payload fields) passes through without mutation', async () => {
-    // When the emitter's base.execute returns a metadata-less error
-    // (e.g. schema validation failed, emit tool rejected the input),
-    // wrapEmitterWithRecorder must NOT try to rewrite — the recorder
-    // stays empty and downstream handoff falls through to whatever the
-    // fallback path decides. This guards the silent-fatal regression
-    // the old managed-protocol-handoff.test.ts covered.
-    const { wrapEmitterWithRecorder } = await harnessTestables();
-    const errorBase = {
-      name: 'emit_verdict',
-      description: 'stub',
-      input_schema: { type: 'object' },
-      execute: async () => ({ content: '[emit error]', isError: true }),
-    } as unknown as RunnableTool;
-    const recorder = makeRecorder();
-    const budget = makeBudgetController({ total: 200, spent: 50 });
-    const budgetExtension = makeBudgetExtensionFixture({ harness: 'H1_EXECUTE_EVAL' });
-
-    const wrapped = wrapEmitterWithRecorder(errorBase, 'verdict', recorder, noopObserver, budget, budgetExtension);
-    const result = await wrapped.execute({}, toolCtx);
-
-    expect(result.isError).toBe(true);
-    // Degraded-continue flag untouched
-    expect(budgetExtension.degradedContinueRef.current).toBe(false);
-  });
-});
-
-// =============================================================================
 // H1 structural resume (v0.7.26) — buildStructuralResumeSeed
 // =============================================================================
 
@@ -5784,6 +5253,6 @@ describe('FEATURE_166 v0.7.41 follow-up — agent-switch label flip', () => {
     // buildRunnerAgentChain accepts the default `observer:
     // NULL_OBSERVER` parameter, so reaching this line without
     // throwing is itself the assertion.
-    expect(() => buildRunnerAgentChain(makeCtx(), {})).not.toThrow();
+    expect(() => buildRunnerAgentChain(makeCtx())).not.toThrow();
   });
 });

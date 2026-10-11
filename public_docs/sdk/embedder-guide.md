@@ -2216,46 +2216,11 @@ trace drawer. Do not append raw child thinking/text/tool streams into the normal
 conversation by default; it makes the parent assistant appear to have authored
 every child step and can overwhelm users.
 
-### Sidecar verifier actionable messages
+### Result review and historical sessions
 
-`KodaXEvents.onSidecarMessage` fires when the Sidecar Verifier produces an
-actionable `revise` or `blocked` verdict. `accept` remains silent because there
-is no message to deliver.
+The main agent verifies each requested requirement with actual tool and rendered evidence before delivery. The built-in `visual-review` skill covers static images/charts, paginated documents/slides/sheets, interactive web/app/terminal/canvas/3D surfaces, and temporal video/animation results. Missing capabilities and unchecked scope are reported as unverified. An ordinary read-only child reviewer may contribute findings within the same Run; the main agent owns repairs and the final answer.
 
-```ts
-events.onSidecarMessage = (event) => {
-  if (event.delivery === 'synthetic-user-message') {
-    renderAudit(`Sidecar asked the main agent to revise: ${event.content}`);
-    return;
-  }
-  if (event.delivery === 'budget-exhausted') {
-    renderTerminalBlock(`Sidecar requested a revision, but the reanimate budget is exhausted: ${event.content}`);
-    return;
-  }
-  renderTerminalBlock(event.content);
-};
-```
-
-The payload is:
-
-```ts
-interface KodaXSidecarMessageEvent {
-  source: 'sidecar-verifier';
-  verdict: 'revise' | 'blocked';
-  recipient: 'main-agent' | 'user';
-  delivery: 'synthetic-user-message' | 'budget-exhausted' | 'terminal-block';
-  content: string;
-  suggestedFix?: string;
-  trace?: string;
-}
-```
-
-For `revise`, `content` is the exact synthetic user message injected back into
-the main agent. Treat it as sidecar-authored control text rather than a
-user-authored chat turn. When `delivery` is `budget-exhausted`, that same
-revise text was not injected because the runner is terminating instead. For
-`blocked`, `content` is terminal user-facing text. Headless JSONL output emits
-the same information as `{"type":"sidecar.message", ...}`.
+New Runs do not emit `onSidecarMessage` or `sidecar.message`. Existing persisted sidecar items and synthetic messages remain readable, without replaying execution. Run completion, Goal status, and review findings retain separate meanings.
 
 The lifecycle controller also exposes terminal-run controls: stop, pause,
 resume, artifact reads, delete, prune, display-name changes, saved-capsule
@@ -2752,9 +2717,9 @@ runKodaX({
   `false` for are hidden from the model.
 - **R3 — `agentProfile.verification`.** A profile-default `KodaXTaskVerificationContract`
   merged with per-task `context.taskVerification` (per-task fields win) before it
-  reaches the Sidecar Verifier; each verdict is attributed to the profile.
+  reaches the main agent on both SA and AMA paths.
 - **R4 — `KodaXEvents.onEffectiveConfig`.** Reports the effective agentMode / tool
-  scope / verification / resolved verifier at run start, so a host can reflect what
+  scope / verification at run start, so a host can reflect what
   the profile actually resolved to.
 - **R5 — metadata across `fork()`.** Structured `profile` + `runtimeInfo` metadata
   ride on results and are inherited by forked sessions.

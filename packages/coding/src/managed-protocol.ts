@@ -140,10 +140,6 @@ export function coerceManagedProtocolToolPayload(
     return undefined;
   }
 
-  // FEATURE_193 (v0.7.43) deep V1 cleanup: V1 chain roles (scout / planner /
-  // generator) were the only callers besides Sidecar Verifier; with the
-  // chain retired they are unreachable from V2 production. Only `evaluator`
-  // (Sidecar Verifier verdict normalization) remains.
   if (role !== 'evaluator') {
     return undefined;
   }

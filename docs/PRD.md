@@ -326,11 +326,8 @@ ACL transaction.
 
 ## 5. Current Execution Model
 
-KodaX uses a V2 Worker single-loop model with an out-of-band Sidecar Verifier.
-The Worker owns normal reasoning, tool use, file edits, and final response
-drafting. When the Worker appears to finish by text, the Sidecar Verifier can
-accept, request revision, or mark the run blocked without becoming a visible
-in-chain role.
+KodaX uses a V2 Worker single-loop model.
+The main agent verifies each requested requirement with actual tool and rendered evidence before delivery. The built-in `visual-review` skill covers static images/charts, paginated documents/slides/sheets, interactive web/app/terminal/canvas/3D surfaces, and temporal video/animation results. Missing capabilities and unchecked scope are reported as unverified. An ordinary read-only child reviewer may contribute findings within the same Run; the main agent owns repairs and the final answer.
 
 The retired V1 chain model is not a product requirement:
 
@@ -351,8 +348,7 @@ AMA uses one shared six-pattern problem-solving catalog:
 chooses and composes only the stages justified by the task through existing
 Actor operations. Strategy metadata and Runtime-derived `PatternTrace` are
 bounded execution facts, not proof of quality. They must not activate Workflow,
-force a child or model call, create a fixed topology, or replace the existing
-Sidecar as the sole terminal-answer quality adjudicator.
+force a child or model call, create a fixed topology, or replace actual evidence or the main agent’s final responsibility.
 
 Queued user input belongs to the session-root Actor queue rather than a
 process-global "main thread" bucket. A waiting Actor can therefore yield at a
@@ -589,7 +585,7 @@ truth.
 
 Failed interactive turns may persist `presentationOnly: true` text items as a
 display-authoritative exception. They participate in resumability and restore
-exactly once in terminal order (Assistant summary, Sidecar verifier, terminal
+exactly once in terminal order (Assistant summary, historical sidecar feedback, terminal
 error) without entering canonical model context.
 
 Hosts that render ordinary chat require a third, SDK-owned view distinct from
@@ -813,7 +809,7 @@ after restart without KodaX interpreting host-specific meaning.
 ### Safety And Control
 
 KodaX must keep permission modes, auto-mode guardrails, bash classification,
-content-hash safety checks, session snapshots, verifier fail-open behavior, and
+content-hash safety checks, session snapshots, explicit unverified reporting, and
 explicit user confirmation for trusted-local workflow scripts.
 
 ## 7. Non-Goals

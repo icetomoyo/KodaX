@@ -3,7 +3,12 @@
  */
 
 import * as readline from 'readline';
-import { readClientSession, clientSessionRuntimeInfo, applyClientSessionMetadata, readClientHistoryPreview } from '../session/client-session.js';
+import {
+  readClientSession,
+  clientSessionRuntimeInfo,
+  applyClientSessionMetadata,
+  readClientHistoryPreview,
+} from '../session/client-session.js';
 import type { ClientSession, ClientSessionSettingsPatch, ClientSessionView } from '@kodax-ai/coding/client-contract';
 import type { RuntimeStopCallbacks, RuntimeStopControl } from './runtime-stop.js';
 import * as childProcess from 'child_process';
@@ -819,7 +824,6 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     },
   });
 
-
   // FEATURE_092 phase 2b.7b: bootstrap auto-mode guardrail (factory only;
   // the guardrail is constructed lazily on first 'auto' tool call so the
   // cost is paid only by users who actually use auto mode).
@@ -1029,7 +1033,6 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     teamModeHandle?.writer.update({ sessionId: id });
     return loaded.session;
   };
-
 
   // FEATURE_298 T18 — plane-bound rounds travel the Host input/run faces;
   // display authority is the live session view (the plane display
@@ -2487,15 +2490,6 @@ Keyboard Shortcuts:
                     maxPriority: 'user',
                     mode: 'prompt',
                   }),
-                // STUB — Commit 3 of the v0.7.44 review-cycle replaces
-                // this with a real verifier wire that closes over the
-                // runner's per-turn transcript + fileEdits. Until the
-                // adapter extraction lands (Commit 2 of the same cycle),
-                // verifyComplete is constructed inside runner-driven.ts
-                // (where transcript/edits are accessible) and overrides
-                // the stub via the same dep-injection pattern as
-                // getLatestUsage / getTurnStartMs.
-                verifyComplete: async () => ({ ok: true }),
               })
             : undefined;
 
@@ -2886,10 +2880,27 @@ function extractTitle(messages: KodaXMessage[]): string {
 
 // Print startup Banner (using theme colors) - 打印启动 Banner (使用主题颜色)
 // FEATURE_200 Phase E: readline/input helpers extracted to ./readline-helpers.ts.
-import { getPrompt, askInput, openExternalEditor, needsContinuation } from './readline-helpers.js';
-import { bindClientPlaneSessionStop, followClientPlaneRun, runClientPlaneRound, mintInkInputId, viewRunsActive, type InkClientPlane } from '../ui/client-plane.js';
+import {
+  getPrompt,
+  askInput,
+  openExternalEditor,
+  needsContinuation,
+} from './readline-helpers.js';
+import {
+  bindClientPlaneSessionStop,
+  followClientPlaneRun,
+  runClientPlaneRound,
+  mintInkInputId,
+  viewRunsActive,
+  type InkClientPlane,
+} from '../ui/client-plane.js';
 import { attachClassicPlaneDisplay, createClassicPlaneDisplayDiffer } from './classic-plane-display.js';
-import { ClientObservationUnavailableError, OBSERVATION_UNAVAILABLE, isCommandHelp, withObservedExecution } from '../ui/client-observation.js';
+import {
+  ClientObservationUnavailableError,
+  OBSERVATION_UNAVAILABLE,
+  isCommandHelp,
+  withObservedExecution,
+} from '../ui/client-observation.js';
 import { createClassicPlaneDialogSurface } from './classic-plane-interactions.js';
 
 // FEATURE_200 Phase E: startup banner extracted to ./startup-banner.ts.

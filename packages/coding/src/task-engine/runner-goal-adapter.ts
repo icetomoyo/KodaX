@@ -39,13 +39,8 @@
 
 import type { StopHookFn } from '@kodax-ai/agent';
 import type { GoalRuntimeBinding } from '../goal/runtime-wiring.js';
-import { verifyGoalCompletion, withGoalBeforeNextTurn, withGoalStopHook } from '../goal/index.js';
-import type { GoalCompletionVerifier } from '../goal/sidecar-bind.js';
+import { withGoalBeforeNextTurn, withGoalStopHook } from '../goal/index.js';
 import type { KodaXMessage, KodaXTokenUsage } from '@kodax-ai/llm';
-import { KodaXBaseProvider } from '@kodax-ai/llm';
-import type { ManagedMutationTracker } from '../types.js';
-import { buildVerifierContext } from '../agent-runtime/middleware/sidecar-verifier/verifier-context-builder.js';
-import { invokeSidecarVerifier } from '../agent-runtime/middleware/sidecar-verifier/verifier.js';
 
 /** Shape of the token usage cell that the LLM adapter writes per call. */
 interface TokenStateCell {
@@ -74,6 +69,7 @@ interface BeforeNextTurnCtx {
 type BeforeNextTurnFn = (ctx: BeforeNextTurnCtx) => Promise<readonly KodaXMessage[]>;
 
 export interface RunnerGoalAdapterDeps {
+  readonly hasPendingWork?: () => boolean;
   /**
    * Host-supplied goal binding, or undefined for sync-dispatch / non-
    * REPL test harnesses. When undefined the adapter returns the base
@@ -104,45 +100,12 @@ export interface RunnerGoalAdapterDeps {
   readonly baseBeforeNextTurn: BeforeNextTurnFn;
 
   /**
-   * The composed inner stop hook (sidecar verifier + extension
+   * The composed inner stop hook (extension
    * turn:complete bridge + any other stops). Adapter wraps it with
    * `withGoalStopHook` so a text-only termination can auto-reanimate
    * with a continuation prompt when a goal is active.
    */
   readonly composedStopHook: StopHookFn;
-
-  /**
-   * Mutable transcript snapshot ref. The adapter updates this at every
-   * turn boundary (`turnCtx.transcript` inside `beforeNextTurn`) so the
-   * real `verifyComplete` closure can read the latest transcript when
-   * `update_goal({complete})` fires mid-turn. The snapshot is at most
-   * one turn boundary stale relative to the model's claim, which is
-   * sufficient for verification (the claim itself is part of the
-   * current turn being verified).
-   *
-   * Optional — when omitted the verifier wire degrades gracefully
-   * (verifyComplete falls back to the binding's REPL-supplied stub).
-   */
-  readonly transcriptRef?: { current: readonly KodaXMessage[] };
-
-  /**
-   * Mutation tracker for file-edit summary. Reused from the F184 stop-
-   * hook path — same mutation tracker is fed to both verifiers so a
-   * goal-complete claim sees the same fileEdit context as a text-only
-   * termination would.
-   */
-  readonly mutationTracker?: ManagedMutationTracker;
-
-  /**
-   * Resolved verifier provider/model (same shape the F184 stop-hook
-   * path uses). When both are present, the adapter installs a real
-   * F184-backed `verifyComplete` on the binding via
-   * `goalRuntime.installVerifyComplete`. When either is missing
-   * (verifier disabled / no provider resolvable) the binding keeps
-   * the REPL-supplied stub.
-   */
-  readonly verifierProvider?: KodaXBaseProvider;
-  readonly verifierModel?: string;
 }
 
 export interface RunnerGoalAdapter {
@@ -174,10 +137,6 @@ export function buildRunnerGoalAdapter(
     baseCtx,
     baseBeforeNextTurn,
     composedStopHook,
-    transcriptRef,
-    mutationTracker,
-    verifierProvider,
-    verifierModel,
   } = deps;
 
   // Wall-clock anchor — private to the adapter; goal lifecycle ctx
@@ -192,46 +151,6 @@ export function buildRunnerGoalAdapter(
       }
     : undefined;
 
-  // F184-backed verifyComplete installation. When the host supplied a
-  // goalRuntime AND we have all the verifier inputs in scope, build the
-  // real verifier closure and swap it into the binding via the
-  // pluggable slot. The closure captures `transcriptRef` BY REFERENCE,
-  // so any mid-run update by the beforeNextTurn handler below is
-  // observed when the model fires `update_goal({complete})`.
-  //
-  // When any input is missing (no goalRuntime / no verifier provider /
-  // no transcript ref) the binding keeps the REPL-supplied stub
-  // (`async () => ({ok: true})`). Stub semantics are documented in
-  // sidecar-bind.ts as "fail-open per F184 convention" — same path
-  // F184 takes when the resolver can't find a provider.
-  if (goalRuntime && verifierProvider && transcriptRef) {
-    const realInvokeVerifier: GoalCompletionVerifier = (verifierOptions) =>
-      invokeSidecarVerifier(verifierOptions);
-    goalRuntime.installVerifyComplete(async (goal) => {
-      const builtCtx = buildVerifierContext({
-        transcript: transcriptRef.current,
-        // No `lastAssistantText` at tool-call time — the model emitted
-        // tool calls, not text. The verifier infers the claim from the
-        // synthetic objective query that `verifyGoalCompletion`
-        // prepends, plus the transcript window.
-        lastAssistantText: '',
-        mutationTracker,
-      });
-      return verifyGoalCompletion({
-        goal,
-        recentTranscript: builtCtx.recentTranscript,
-        lastAssistantText: builtCtx.lastAssistantText,
-        currentTurnUserQueries: builtCtx.currentTurnUserQueries,
-        fileEditSummary: builtCtx.fileEditSummary,
-        invokeVerifier: realInvokeVerifier,
-        providerInvocation: {
-          provider: verifierProvider,
-          model: verifierModel,
-        },
-      });
-    });
-  }
-
   const wrappedBeforeNextTurn = goalLifecycleCtx
     ? withGoalBeforeNextTurn(goalLifecycleCtx, baseBeforeNextTurn, {
         enabled: true,
@@ -239,13 +158,7 @@ export function buildRunnerGoalAdapter(
     : baseBeforeNextTurn;
 
   const beforeNextTurn: BeforeNextTurnFn = async (turnCtx) => {
-    // Update the transcript snapshot ref BEFORE delegating to the
-    // wrapped base. The snapshot becomes available to verifyComplete
-    // from this point forward; subsequent tool calls in the next
-    // iteration will see the new value via closure capture.
-    if (transcriptRef) {
-      transcriptRef.current = turnCtx.transcript;
-    }
+    await goalRuntime?.refresh?.();
     const result = await wrappedBeforeNextTurn(turnCtx);
     // Advance the wall-clock anchor for the next turn's accounting.
     turnStartMsRef.current = Date.now();
@@ -259,9 +172,14 @@ export function buildRunnerGoalAdapter(
     return result;
   };
 
-  const stopHook: StopHookFn = goalLifecycleCtx
+  const innerStopHook: StopHookFn = goalLifecycleCtx
     ? withGoalStopHook(goalLifecycleCtx, composedStopHook, { enabled: true })
     : composedStopHook;
 
+  const stopHook: StopHookFn = async ctx => {
+    if (deps.hasPendingWork?.()) return undefined;
+    await goalRuntime?.refresh?.();
+    return innerStopHook(ctx);
+  };
   return { beforeNextTurn, stopHook };
 }

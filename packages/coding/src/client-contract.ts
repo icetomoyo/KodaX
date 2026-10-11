@@ -23,7 +23,15 @@ import type { KodaXResult } from './types.js';
 import type { KodaXShellSandboxObservation } from './types.js';
 import type { RuntimeContextBudgetSnapshot } from './agent-runtime/context-budget.js';
 import type { ProviderRequestObservation } from '@kodax-ai/llm';
-import type { ClientCompactSessionResult, ClientMemoryService, ClientLearningService, ClientCommandService, ClientReviewService, ClientReviewInput, ClientCommandResult } from './client-domains.js';
+import type {
+  ClientCompactSessionResult,
+  ClientMemoryService,
+  ClientLearningService,
+  ClientCommandService,
+  ClientReviewService,
+  ClientReviewInput,
+  ClientCommandResult,
+} from './client-domains.js';
 export type * from './client-domains.js';
 
 /** Display facts only; extension handlers and Host execution types stay private. */
@@ -945,7 +953,6 @@ export interface ClientConfig {
   readonly fallbackProviders?: string[];
   readonly repoIntelligenceMode?: 'auto' | 'off' | 'light' | 'full';
   readonly repoIntelligenceTrace?: boolean;
-  readonly verifierLog?: boolean;
   readonly stallLog?: boolean;
   readonly fastProvider?: string;
   readonly fastModel?: string;
@@ -973,7 +980,6 @@ export interface ClientEffectiveConfigValue<T> {
 }
 
 export interface ClientEffectiveExecutionConfig {
-  readonly verifierLog: ClientEffectiveConfigValue<boolean>;
   readonly stallLog: ClientEffectiveConfigValue<boolean>;
   readonly fallbackProviders: ClientEffectiveConfigValue<readonly string[]>;
 }

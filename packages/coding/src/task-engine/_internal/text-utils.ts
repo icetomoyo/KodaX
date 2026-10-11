@@ -7,8 +7,8 @@
  * function of its inputs.
  *
  * Not moved in Slice 3 (reserved for later):
- * - sanitizeManagedUserFacingText / sanitizeManagedStreamingText /
- *   sanitizeEvaluatorPublicAnswer — these depend on MANAGED_CONTROL_PLANE_MARKERS
+ * - sanitizeManagedUserFacingText / sanitizeManagedStreamingText
+ *   — these depend on MANAGED_CONTROL_PLANE_MARKERS
  *   and MANAGED_FENCE_NAMES, which depend on block-name constants still co-located
  *   with the protocol parse helpers. They move together in Slice 4 (protocol parse)
  *   to keep one coherent "managed-output sanitation" unit.

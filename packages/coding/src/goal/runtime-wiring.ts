@@ -1,55 +1,4 @@
-/**
- * FEATURE_192 v0.7.44 Phase F — Goal runtime binding factory.
- *
- * REPL (or any host that owns a `KodaXSessionLineage`) calls
- * `buildGoalRuntimeBinding(deps)` once per `runManagedTask` invocation
- * and passes the returned binding via
- * `KodaXOptions.context.goalRuntime`. The runner-driven adapter wires:
- *   - `binding.goalContext` onto the tool-execution context (so the
- *     3 goal tools can read/mutate state),
- *   - `binding.lifecycleCtx` into `withGoalBeforeNextTurn` /
- *     `withGoalStopHook` (turn-end accounting + continuation reanimate).
- *
- * Why a factory instead of host-side ad-hoc wiring:
- *   - Pulls the lineage-read + persist + sidecar-verifier-call wiring
- *     into one well-tested entry point so the host (REPL today; any
- *     future SDK consumer) doesn't have to re-implement the same glue.
- *   - The factory is the seam where v0.7.45+ extensions (e.g.
- *     objective-updated steering, multi-goal across forks) land
- *     without breaking the runner-driven contract.
- *
- * The factory does NOT own state — every accessor is a function the
- * caller wires (`getLineage` reads from REPL's `context.lineage`,
- * `saveSession` flushes to disk, etc.). This keeps the binding
- * reentrant and test-friendly.
- *
- * Codex parity: the default `buildContinuationPrompt` mirrors codex's
- * `core/templates/goals/continuation.md` verbatim in structure and
- * intent — Continuation behavior / Budget / Work from evidence /
- * Progress visibility / Fidelity / Completion audit / Blocked audit —
- * with 6 documented KodaX-specific deviations (see the function
- * JSDoc below for the full list). Two of the six are trailing
- * "Runtime enforcement" paragraphs that make the KodaX runtime gates
- * legible to the model (Sidecar Verifier on Completion audit + 3-turn
- * counter on Blocked audit) so the model does not waste a turn being
- * rejected; they do not replace the Codex teaching, they complement it.
- *
- * The earlier v0.7.44 draft trimmed this prompt aggressively under
- * ADR-033 §4 ("no enumerated taxonomies"). That was a mechanical
- * misapplication — Codex's Completion-audit enumerated list
- * ("requirements / artifacts / commands / tests / gates / invariants /
- * deliverables") names AUDIT DIMENSIONS, not the classification
- * taxonomies §4 was written against ("RULE A/B/C/D" labels). The
- * trim correlated with a Layer 2 C1 simple-continuation panel rate
- * of 53% on the canonical 3-active-alias panel; restoring the Codex-
- * faithful sections is the v0.7.44 follow-up before tagging.
- * See: [[feedback_adr_033_scope_clarification_new_feature]].
- *
- * Progress visibility cites KodaX's `todo_*` tools (FEATURE_170 v0.7.41
- * todo V2) rather than Codex's `update_plan`, since KodaX does not have
- * `update_plan` but the equivalent multi-step planning surface lives
- * in `todo_create` / `todo_update` / `todo_list` / `todo_get`.
- */
+
 
 import type {
   KodaXGoalEventType,
@@ -84,13 +33,9 @@ import {
  * a callback because the binding has no opinion on storage — the host
  * owns the lineage handle + flush pipe.
  */
-export interface GoalRuntimeBindingDeps {
+interface GoalRuntimeCommonDeps {
   /** Returns the current session lineage. May throw if no lineage. */
   readonly getLineage: () => KodaXSessionLineage;
-  /** Replace the host's lineage handle after a goal entry is appended. */
-  readonly setLineage: (next: KodaXSessionLineage) => void;
-  /** Flush the host's session storage. Awaited by the binding. */
-  readonly saveSession: () => Promise<void>;
   /**
    * Returns the latest LLM token usage from the just-completed turn.
    * Wired by the host to the runner-driven `tokenStateRef.current.lastUsage`.
@@ -114,70 +59,20 @@ export interface GoalRuntimeBindingDeps {
    * the next turn's drain handles user input naturally.
    */
   readonly hasPendingUserInput: () => boolean;
-  /**
-   * Verifier hook for `update_goal({complete})`. Implemented by the
-   * coding layer's sidecar-verifier-bind helper; host passes the same
-   * function through.
-   */
-  readonly verifyComplete: (
-    goal: KodaXGoalState,
-  ) => Promise<GoalCompleteResult>;
 }
+
+export type GoalRuntimeBindingDeps = GoalRuntimeCommonDeps & (
+  | { readonly setLineage: (next: KodaXSessionLineage) => void;
+      readonly saveSession: () => Promise<void> }
+  | { readonly persistGoal: (goal: KodaXGoalState | null, event: KodaXGoalEventType) => Promise<void> }
+);
 
 export interface GoalRuntimeBinding {
+  readonly refresh?: () => Promise<void>;
   readonly goalContext: GoalToolsContext;
   readonly lifecycleCtx: GoalLifecycleContext;
-  /**
-   * Replace the verifyComplete implementation at runtime.
-   *
-   * The REPL constructs the binding eagerly (before the runner exists)
-   * and supplies a stub verifyComplete. The runner-driven adapter
-   * then has access to runner-local context the REPL doesn't
-   * (transcript ref, mutation tracker, resolved verifier provider/
-   * model) and installs a real F184-backed verifier via this method.
-   *
-   * Idempotent: calling more than once just replaces the slot. The
-   * `goalContext.requestComplete` closure reads the slot fresh on
-   * every invocation, so any later swap is observed immediately.
-   *
-   * Called only from `buildRunnerGoalAdapter` in production; tests
-   * may also call it directly when exercising the goal-complete
-   * verifier path without a full runner harness.
-   */
-  readonly installVerifyComplete: (
-    fn: GoalRuntimeBindingDeps['verifyComplete'],
-  ) => void;
 }
 
-/**
- * Codex-faithful continuation prompt with KodaX runtime-enforcement
- * appends. Mirrors `codex-rs/core/templates/goals/continuation.md`
- * section-by-section. KodaX-specific deviations (all intentional):
- *
- *   1. "thread" → "session" in the header line. KodaX persists goals
- *      in session-lineage, not Codex's `thread_goals` table.
- *   2. `<objective>` body HTML-escapes `<`, `>`, `&` so a user-supplied
- *      objective cannot break out of the framing tag (defense against
- *      prompt-injection via the `objective` argument).
- *   3. Progress visibility cites KodaX's `todo_*` tools (FEATURE_170
- *      v0.7.41 todo V2) instead of Codex's `update_plan`. KodaX has
- *      no `update_plan` — the multi-step planning surface lives in
- *      `todo_create` / `todo_update` / `todo_list` / `todo_get`.
- *   4. Budget section adds a 4th line `Elapsed: ${seconds}s` after the
- *      3 Codex lines (used / budget / remaining). KodaX `lifecycle.ts`
- *      tracks wall-time and `/goal status` surfaces it — keeping the
- *      same data on the continuation prompt avoids a divergence between
- *      what the user sees and what the model sees.
- *   5. Null `tokenBudget` renders gracefully (`(none set — ...)`,
- *      `(unbounded)`) — Codex's template assumes `token_budget` is
- *      always present, but KodaX's `isValidTokenBudget` accepts null
- *      (optional budget) so the render needs to handle it.
- *   6. Two trailing paragraphs document the KodaX-specific runtime
- *      gates: Sidecar Verifier on Completion audit + 3-turn blocker
- *      counter on Blocked audit. The model knowing the audits are
- *      enforced (not just teaching) saves a wasted turn on rejected
- *      `update_goal` attempts.
- */
 function defaultContinuationPrompt(goal: KodaXGoalState): string {
   const objective = goal.objective.replace(/[<>&]/g, (c) =>
     c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&amp;',
@@ -234,7 +129,6 @@ function defaultContinuationPrompt(goal: KodaXGoalState): string {
     '',
     'Do not rely on intent, partial progress, memory of earlier work, or a plausible final answer as proof of completion. Marking the goal complete is a claim that the full objective has been finished and can withstand requirement-by-requirement scrutiny. Only mark the goal achieved when current evidence proves every requirement has been satisfied and no required work remains. If the evidence is incomplete, weak, indirect, merely consistent with completion, or leaves any requirement missing, incomplete, or unverified, keep working instead of marking the goal complete. If the objective is achieved, call update_goal with status "complete" so usage accounting is preserved. If the achieved goal has a token budget, report the final consumed token budget to the user after update_goal succeeds.',
     '',
-    'Runtime enforcement of Completion audit: the KodaX runtime invokes the Sidecar Verifier on every `update_goal({status:"complete"})` call and rejects the transition when evidence does not prove the objective is met. A rejected complete-attempt costs a turn and surfaces a `revise` instruction back to you. Self-audit thoroughly above before calling complete; do not rely on the Sidecar to catch what you should have caught.',
     '',
     'Blocked audit:',
     '- Do not call update_goal with status "blocked" the first time a blocker appears.',
@@ -263,25 +157,29 @@ export function buildGoalRuntimeBinding(
     goal: KodaXGoalState | null,
     event: KodaXGoalEventType,
   ): Promise<void> {
+    if ('persistGoal' in deps) {
+      await deps.persistGoal(goal, event);
+      return;
+    }
     const lineage = deps.getLineage();
     const next = appendGoalEntry(lineage, goal, event);
     deps.setLineage(next);
-    await deps.saveSession();
+    try {
+      await deps.saveSession();
+    } catch (error: unknown) {
+      deps.setLineage(lineage);
+      throw error;
+    }
   }
-
-  // Pluggable verifyComplete slot. The REPL passes a stub at
-  // construction time; the runner-driven adapter swaps it for a real
-  // F184-backed verifier once it has access to transcript +
-  // mutation tracker. The `requestComplete` closure below reads this
-  // local fresh on every invocation, so any later install is
-  // observed without rebuilding the binding.
-  let verifyCompleteImpl: GoalRuntimeBindingDeps['verifyComplete'] = deps.verifyComplete;
 
   const goalContext: GoalToolsContext = {
     readGoal: async () => readLatestGoalState(deps.getLineage()),
 
     createGoal: async (input: GoalCreateInput): Promise<KodaXGoalState> => {
       const lineage = deps.getLineage();
+      if (lineage.activeEntryId === null) {
+        throw new Error('Send an input before creating a goal: the session has no conversation branch.');
+      }
       const existing = readLatestGoalState(lineage);
       if (existing && existing.status !== 'complete') {
         throw new Error(
@@ -308,10 +206,6 @@ export function buildGoalRuntimeBinding(
       }
       if (goal.status === 'complete') {
         return { ok: false, reason: 'goal is already complete' };
-      }
-      const verdict = await verifyCompleteImpl(goal);
-      if (!verdict.ok) {
-        return verdict;
       }
       const next = buildCompleteGoal(goal);
       await persistGoal(next, 'complete');
@@ -381,11 +275,5 @@ export function buildGoalRuntimeBinding(
     hasPendingUserInput: deps.hasPendingUserInput,
   };
 
-  const installVerifyComplete = (
-    fn: GoalRuntimeBindingDeps['verifyComplete'],
-  ): void => {
-    verifyCompleteImpl = fn;
-  };
-
-  return { goalContext, lifecycleCtx, installVerifyComplete };
+  return { goalContext, lifecycleCtx };
 }

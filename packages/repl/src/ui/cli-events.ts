@@ -177,19 +177,6 @@ export function createCliEvents(showSessionId = true): KodaXEvents {
       console.log(chalk.dim(`[RepoIntel] ${event.summary}`));
     },
 
-    onSidecarMessage: (event) => {
-      if (spinner) { spinner.stop(); spinner = null; }
-      const header = event.delivery === 'budget-exhausted'
-        ? '⚡ Sidecar Verifier — budget exhausted'
-        : event.verdict === 'blocked'
-        ? '⚡ Sidecar Verifier — blocked'
-        : '⚡ Sidecar Verifier — revise';
-      const bodyText = event.suggestedFix
-        ? `${event.content}\nSuggested fix: ${event.suggestedFix}`
-        : event.content;
-      process.stdout.write(chalk.yellow(`\n${header}\n`) + chalk.dim(`${bodyText}\n`));
-    },
-
     onStreamEnd: () => {
       // Stop globalSpinner (may be created in input_json_delta) - 停止 globalSpinner（在 input_json_delta 中可能创建的）
       if (globalSpinner && !globalSpinner.isStopped()) {

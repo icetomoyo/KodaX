@@ -92,11 +92,7 @@ export type SummarizeBlob = (
 
 export interface CreateBlobSummarizerOptions {
   readonly provider: KodaXBaseProvider;
-  /** Model id for the underlying provider. `undefined` means use the
-   *  provider's registered default. Error messages render `undefined`
-   *  as `(default)` for diagnostic clarity. DO NOT pass a placeholder
-   *  like `'unknown'` — see FEATURE_187 Phase B code review (same
-   *  sentinel-truthiness pitfall as sidecar-verifier / stall-sidecar). */
+
   readonly model: string | undefined;
   readonly events?: KodaXEvents;
   /** Override the 30 s wall. Tests pass small values to keep them fast. */

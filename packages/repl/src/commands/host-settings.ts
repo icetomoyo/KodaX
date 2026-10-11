@@ -4,7 +4,7 @@ import { normalizeReasoningEffortValue } from '@kodax-ai/coding';
 type ConfigPatch = Parameters<NonNullable<CommandCallbacks['config']>['patch']>[0];
 
 export async function hostExecutionConfigCommand(
-  field: 'verifierLog' | 'stallLog' | 'fallbackProviders', args: string[],
+  field: 'stallLog' | 'fallbackProviders', args: string[],
   config: NonNullable<CommandCallbacks['config']>,
 ): Promise<CommandResultData> {
   const raw = args[0]?.toLowerCase();

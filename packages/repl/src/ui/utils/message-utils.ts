@@ -420,14 +420,7 @@ export interface HistorySeedSourceMessage {
   content: string | KodaXContentBlock[];
   timestamp?: string;
   _synthetic?: boolean;
-  /**
-   * Provenance marker persisted on host-injected messages. `'sidecar-verifier'`
-   * tags the synthetic user message the Sidecar Verifier injects on a `revise`
-   * verdict; `'agent-completed'` tags a synthetic actor-result notification.
-   * Legacy `'task-completed'` values are still accepted while restoring older
-   * sessions. Both render under their own identity instead of being swallowed
-   * by the generic `_synthetic` skip.
-   */
+
   _source?: string;
 }
 
@@ -474,13 +467,6 @@ function extractHistorySeedsFromMessageWithoutTimestamp(
       });
     }
     case "user": {
-      // Sidecar Verifier `revise` feedback is persisted as a synthetic user
-      // message (_source: 'sidecar-verifier') so the Worker reanimates on it.
-      // On restore it must render under the Sidecar identity — not as a user
-      // bubble, and not dropped by the generic _synthetic skip below. Only
-      // `revise` is ever persisted this way (accept injects no message;
-      // blocked / budget-exhausted target the user, not the main agent), so the
-      // restored verdict is always `revise`.
       if (message._source === "sidecar-verifier") {
         const sidecarText = extractTextContent(message.content).trim();
         return sidecarText

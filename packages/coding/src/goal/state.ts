@@ -184,11 +184,6 @@ export function buildBlockedGoal(
   });
 }
 
-/**
- * Transition to `complete`. Caller MUST verify the Sidecar Verifier
- * has BLESSED the completion BEFORE invoking — see
- * sidecar-bind.ts (Phase C).
- */
 export function buildCompleteGoal(
   current: KodaXGoalState,
   now: number = Date.now(),

@@ -14,7 +14,7 @@
  * the architecture provides the override mechanism, the user decides
  * whether to use it.
  *
- * Resolution order (mirrors `verifier-provider-resolver.ts`):
+ * Resolution order:
  *
  *   1. Explicit env override (both must be set):
  *        `KODAX_STALL_PROVIDER` + `KODAX_STALL_MODEL`
@@ -27,8 +27,7 @@
  *   2. Inherit from Main Agent (default — always returns).
  *
  * The resolver **always returns a defined value** — the stall sidecar is
- * always installed in production. This mirrors the FEATURE_184 verifier
- * resolver's always-defined contract.
+ * always installed in production.
  *
  * DI-clean: `env` parameter is injectable so unit tests don't mutate
  * `process.env`.
@@ -36,7 +35,6 @@
  * Design references:
  *   - ADR-030 §1584 — FEATURE_187 placeholder origin
  *   - docs/features/v0.7.43.md §FEATURE_187 Phase B
- *   - sibling `verifier-provider-resolver.ts` for the canonical pattern
  */
 
 import {

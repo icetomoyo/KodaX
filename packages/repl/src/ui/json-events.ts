@@ -12,7 +12,6 @@ import type {
   KodaXLiveEventMeta,
   KodaXManagedTaskStatusEvent,
   KodaXRepoIntelligenceTraceEvent,
-  KodaXSidecarMessageEvent,
   KodaXShellSandboxObservation,
   KodaXTokenUsage,
   KodaXTurnCompletedEvent,
@@ -95,16 +94,6 @@ type JsonEvent =
       summary: string;
       capability?: KodaXRepoIntelligenceTraceEvent['capability'];
       trace?: KodaXRepoIntelligenceTraceEvent['trace'];
-    } & JsonLiveMeta)
-  | ({
-      type: 'sidecar.message';
-      source: KodaXSidecarMessageEvent['source'];
-      verdict: KodaXSidecarMessageEvent['verdict'];
-      recipient: KodaXSidecarMessageEvent['recipient'];
-      delivery: KodaXSidecarMessageEvent['delivery'];
-      content: string;
-      suggestedFix?: string;
-      trace?: string;
     } & JsonLiveMeta)
   | ({
       type: 'tool.progress';
@@ -364,20 +353,6 @@ export function createJsonEvents(options: JsonEventOutputOptions = {}): KodaXEve
         summary: event.summary,
         capability: event.capability,
         trace: event.trace,
-        ...liveMetaFields(event),
-      });
-    },
-
-    onSidecarMessage: (event) => {
-      writeJsonLine(stdout, {
-        type: 'sidecar.message',
-        source: event.source,
-        verdict: event.verdict,
-        recipient: event.recipient,
-        delivery: event.delivery,
-        content: event.content,
-        ...(event.suggestedFix !== undefined ? { suggestedFix: event.suggestedFix } : {}),
-        ...(event.trace !== undefined ? { trace: event.trace } : {}),
         ...liveMetaFields(event),
       });
     },

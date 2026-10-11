@@ -226,10 +226,6 @@ class ProbeProvider extends KodaXBaseProvider {
   ) { super(); }
   async stream(...args: Parameters<KodaXBaseProvider['stream']>): Promise<KodaXStreamResult> {
     const messages = args[0];
-    if (args[1].some(tool => tool.name === 'emit_sidecar_verdict')) return {
-      textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use',
-      toolBlocks: [{ type: 'tool_use', id: 'verdict', name: 'emit_sidecar_verdict', input: { verdict: 'accept' } }],
-    };
     this.capture([{ role: 'system', content: args[2] }, ...messages]);
     return {
       textBlocks: [{ type: 'text', text: 'done' }],

@@ -1,35 +1,4 @@
-/**
- * Capability-coupled + coding-AMA-specific invariants registered by
- * @kodax-ai/coding.
- *
- * Pairs with `@kodax-ai/agent`'s pure-new invariants (`finalOwner`,
- * `handoffLegality`, `evidenceTrail`). Together they form the FEATURE_101
- * admission v1 closed set + FEATURE_106 external.
- *
- * Why this split:
- *
- *   - Three pure invariants (finalOwner, handoffLegality, evidenceTrail)
- *     are pure functions of admission types and live in @kodax-ai/agent.
- *   - Three coupled invariants (budgetCeiling, toolPermission,
- *     boundedRevise) tie into @kodax-ai/coding's budget controller /
- *     tool registry / revise tracker and live here.
- *     (FEATURE_184 Phase C.1: `independentReview` deleted — superseded by
- *     Sidecar Verifier.)
- *   - `harnessSelectionTiming` (FEATURE_106 external) reads coding's AMA
- *     `ctx.recorder.scout.payload.scout.confirmedHarness` and lives here
- *     too (v0.7.35.1 FEATURE_142 A-R2 moved it from @kodax-ai/agent per
- *     ADR-021 — agent admission framework must not enumerate coding-AMA
- *     field names). FEATURE_193 (v0.7.43) retired V1 Scout — the
- *     invariant is now a permanent no-op (predicate always admits)
- *     but stays registered so existing admission manifests + tests
- *     keep working.
- *
- * `registerCodingInvariants()` is the canonical bootstrap entry point
- * — call it once at SDK startup (or in test setup paired with
- * `_resetInvariantRegistry()`). The function also calls
- * `registerCoreInvariants()` so a single call wires the full v1 set +
- * harnessSelectionTiming.
- */
+
 
 import { registerCoreInvariants, registerInvariant } from '@kodax-ai/agent';
 import type { QualityInvariant } from '@kodax-ai/agent';

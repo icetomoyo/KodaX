@@ -242,7 +242,6 @@ export function toKodaXProductClient(
         });
         const chain = entries.fallbackProviders?.value;
         return {
-          verifierLog: project('verifierLog', entries.verifierLog?.value === '1' || entries.verifierLog?.value === true),
           stallLog: project('stallLog', entries.stallLog?.value === '1' || entries.stallLog?.value === true),
           fallbackProviders: project('fallbackProviders', typeof chain === 'string'
             ? chain.split(',').map(item => item.trim()).filter(Boolean)

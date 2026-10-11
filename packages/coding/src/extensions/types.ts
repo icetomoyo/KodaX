@@ -217,30 +217,6 @@ export interface ExtensionTurnSettleHookContext {
   setThinkingLevel: (level: KodaXWireReasoningEffort) => void;
 }
 
-/**
- * FEATURE_184 (v0.7.45) — Stop Hook bridge context for extensions.
- *
- * Fires ONLY when the model terminates a turn text-only (no tool_use)
- * — a strict subset of `turn:settle`, which fires on every turn end
- * including mid-task tool turns. Use this hook for verification or
- * "is the task actually done?" checks. The three-state return surface
- * mirrors `RunOptions.stopHook` at the agent layer; the bridge passes
- * the extension's return through unchanged.
- *
- * Coding-layer first-party consumers (Sidecar Verifier, FEATURE_184
- * Phase D) wire directly to the agent `stopHook`. Third-party
- * extensions write `api.hook('turn:complete', handler)` and the bridge
- * dispatches to them inside the agent's `stopHook` callback. Handlers
- * fire in registration order, first non-`void` return short-circuits
- * the chain (matches `tool:before` semantics).
- *
- * Scope note: this hook fires on the AMA `runner-driven` path only
- * (main loop, B1 retry, V2 worker). Native child Actor turns go through
- * `runKodaX` and do NOT trigger this hook — observe their lifecycle via
- * `turn:settle` on the SA
- * path. Extensions wanting "every agent termination" semantics must
- * register both hooks.
- */
 export interface ExtensionTurnCompleteHookContext {
   sessionId: string;
   lastAssistantText: string;

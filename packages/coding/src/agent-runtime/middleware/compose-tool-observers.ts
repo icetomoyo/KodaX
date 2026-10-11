@@ -1,47 +1,4 @@
-/**
- * FEATURE_187 (v0.7.43) Phase D — RunnerToolObserver composition helper.
- *
- * Phase A through C built the FEATURE_178 stall sidecar into a
- * `RunnerToolObserver`-shaped middleware that runner-driven.ts wired in
- * by manually delegating to `stallSidecar.observer.beforeTool` /
- * `onToolCall` / `onToolResult` inside its existing toolObserver object
- * literal. That pattern works but obscures the precedence contract
- * ("which observer's beforeTool runs first?") and scales poorly if a
- * future middleware (e.g. compaction observer, auto-mode classifier)
- * needs the same surface.
- *
- * `composeToolObservers` is the explicit composition primitive:
- * receives N observers, returns a single `RunnerToolObserver` whose
- * lifecycle methods invoke each child in turn with documented semantics:
- *
- *   - `beforeTool`: invoked in argument order. Returns the FIRST
- *     short-circuit result (string OR `false`) — subsequent observers'
- *     beforeTool are NOT called. Returns `true` only if every observer
- *     allowed the tool (returned `true` or `undefined`).
- *
- *     Rationale: `beforeTool` is a permission gate. The earliest gate
- *     to block wins. The stall sidecar's nudge-consume MUST run before
- *     any permission/extension gate so the synthesized tool_result is
- *     injected instead of being filtered by a downstream policy.
- *
- *   - `onToolCall`: invoked in argument order on every observer. No
- *     short-circuit — multiple observers may legitimately observe the
- *     same call (e.g. stall detector records into transcript buffer
- *     AND evidence trail emits a span).
- *
- *   - `onToolResult`: same fan-out semantics as onToolCall.
- *
- * **Precedence convention** for runner-driven.ts callers: pass the
- * stall sidecar FIRST so its nudge-consume gates everything else.
- * Auto-mode classifier and extension permission observers follow.
- * Evidence-trail / telemetry observers go LAST (pure observation,
- * no gating).
- *
- * Design references:
- *   - ADR-030 §C — "abstract primitive, not framework"
- *   - docs/features/v0.7.43.md §FEATURE_187 Phase D
- *   - sibling `sidecar-verifier/` and `stall-sidecar/` middleware modules
- */
+
 
 import type {
   RunnerToolCall,

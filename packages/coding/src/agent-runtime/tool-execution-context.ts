@@ -424,11 +424,6 @@ function buildWorkflowToolHost(
         });
     const done = managedDone.then((outcome): WorkflowToolHostResult => {
       const snap = started.managed.getSnapshot?.();
-      // A child agent that completes but fails its sidecar verifier in warn-only
-      // mode settles as `completed_unverified` and emits an `agent_unverified`
-      // event — but the overall run status is still `completed`. Surface those
-      // child names so the Worker's tool reply flags the partial verification
-      // failure instead of silently swallowing it.
       const verificationWarnings = outcome.kind === 'completed'
         ? outcome.state.events.reduce<string[]>((names, event) => {
             if (event.type === 'agent_unverified') {

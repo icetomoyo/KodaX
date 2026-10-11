@@ -7,7 +7,17 @@ import type { KodaXEvents, KodaXOutputSegmentProjection, KodaXActivityEventMeta 
 import { createRetryHistoryItem, buildManagedLiveEventDrafts, restoreHistoryItemsFromSession, trimPersistedUiHistorySnapshot,
   childActivityId, childActivityLabel, childActivitySource, truncateChildActivityDetail, suppressesChurnOverToolAction,
   toolActivityDetail, formatManagedTaskBreadcrumb, formatWorkflowAgentDigest, inferWorkflowLocaleFromParts } from '@kodax-ai/repl';
-import type { ClientObservation, ClientObserveOptions, ClientObservationStatus, ClientContextBudget, ClientSessionView, ClientSessionActivity, ClientViewItem, ClientItemReadOptions, ClientItemContent } from '@kodax-ai/coding/client-contract';
+import type {
+  ClientObservation,
+  ClientObserveOptions,
+  ClientObservationStatus,
+  ClientContextBudget,
+  ClientSessionView,
+  ClientSessionActivity,
+  ClientViewItem,
+  ClientItemReadOptions,
+  ClientItemContent,
+} from '@kodax-ai/coding/client-contract';
 import { createSessionNoticeEvents } from './session-view-notices.js';
 import { canonicalTools, canonicalToolKey } from './client-canonical-tools.js';
 
@@ -254,16 +264,6 @@ export class SessionViewOwner {
           : /^\[(?:Cancelled|Blocked)\]/.test(result.content) ? 'cancelled' : 'success';
         upsert({ id: toolItemId(result.id), type: 'tool', text: result.content, timestamp: Date.now(),
           sourceTurnId: meta?.turnId ?? previous?.sourceTurnId, tool: { ...previous?.tool, resultRecorded: true, callId: result.id, name: result.name, status, endedAt: Date.now(), progress: undefined } });
-        this.checkpoint(sessionId);
-      },
-      onSidecarMessage: (event) => {
-        upsert({ id: `${runId}:sidecar:${randomUUID()}`, type: 'sidecar', timestamp: Date.now(),
-          text: event.suggestedFix ? `${event.content}\nSuggested fix: ${event.suggestedFix}` : event.content,
-          icon: event.delivery === 'budget-exhausted' ? 'budget-exhausted' : event.verdict,
-          ...(event.verdict || event.delivery ? { sidecar: {
-            ...(event.verdict ? { verdict: event.verdict } : {}),
-            ...(event.delivery ? { delivery: event.delivery } : {}),
-          } } : {}) });
         this.checkpoint(sessionId);
       },
       onManagedTaskStatus: (status) => {

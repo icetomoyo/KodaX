@@ -18,7 +18,13 @@
  * deleted alongside the V1 chain agent declarations.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import type { RunnableTool } from '@kodax-ai/agent';
 
 import {
@@ -83,7 +89,7 @@ function getAgentToolNames(
   const ctx = hasSessionHistory
     ? { ...makeCtx(hasCapabilityRuntime, hasWorkflowHost), loadSessionHistory: async () => null }
     : makeCtx(hasCapabilityRuntime, hasWorkflowHost);
-  const chain = buildRunnerAgentChain(ctx, makeRecorder());
+  const chain = buildRunnerAgentChain(ctx);
   if (role !== 'worker') {
     throw new Error(`FEATURE_193: role '${role}' retired with V1 chain`);
   }
@@ -105,7 +111,7 @@ describe('FEATURE_168 — AMA agent tool wiring (per-role full set)', () => {
     expect(unsupported).not.toContain('session_history_search');
     expect(unsupported).not.toContain('session_history_read');
 
-    const chain = buildRunnerAgentChain(makeHistoryCtx(), makeRecorder());
+    const chain = buildRunnerAgentChain(makeHistoryCtx());
     const supported = (chain.worker.tools ?? []).map((tool) => tool.name);
     expect(supported).toContain('session_history_search');
     expect(supported).toContain('session_history_read');
@@ -117,7 +123,7 @@ describe('FEATURE_168 — AMA agent tool wiring (per-role full set)', () => {
       excludeTools: ['read'],
       toolVisibilityPolicy: (tool) => tool.sideEffect === 'readonly',
     };
-    const chain = buildRunnerAgentChain(ctx, makeRecorder());
+    const chain = buildRunnerAgentChain(ctx);
     const names = (chain.worker.tools ?? []).map((tool) => tool.name);
 
     expect(names).not.toContain('read');
@@ -148,7 +154,7 @@ describe('FEATURE_168 — AMA agent tool wiring (per-role full set)', () => {
 
   it('exposes the explicit Workflow activation policy only with a Workflow host', () => {
     const workflowDescription = (hasWorkflowHost: boolean): string => {
-      const chain = buildRunnerAgentChain(makeCtx(true, hasWorkflowHost), makeRecorder());
+      const chain = buildRunnerAgentChain(makeCtx(true, hasWorkflowHost));
       const workflow = (chain.worker.tools ?? []).find(
         (t) => (t as { name?: string }).name === 'run_workflow',
       ) as { description?: string } | undefined;
@@ -222,7 +228,7 @@ describe('FEATURE_250 — managed-path progressive disclosure (deferred hint-swa
   const MCP_SET = new Set<string>([...MCP_TOOL_NAMES]);
 
   function workerTools(): Array<{ name: string; description?: string }> {
-    const chain = buildRunnerAgentChain(makeCtx(true, true), makeRecorder());
+    const chain = buildRunnerAgentChain(makeCtx(true, true));
     return (chain.worker.tools ?? []) as Array<{ name: string; description?: string }>;
   }
   function workerTool(name: string): { name: string; description?: string } | undefined {
@@ -284,7 +290,7 @@ describe('FEATURE_250 — managed-path progressive disclosure (deferred hint-swa
       toClassifierInput: () => '',
     }));
 
-    const chain = buildRunnerAgentChain(makeCtx(true, true), makeRecorder());
+    const chain = buildRunnerAgentChain(makeCtx(true, true));
     const tools = (chain.worker.tools ?? []) as Array<{
       name: string;
       execute?: (input: Record<string, unknown>, ctx: { agent: typeof chain.worker; toolCallId: string }) => Promise<{ content: string | readonly unknown[] }>;
@@ -317,7 +323,7 @@ describe('FEATURE_250 — managed-path progressive disclosure (deferred hint-swa
       input_schema: { type: 'object', properties: {} },
       handler: async () => content, sideEffect: 'readonly', toClassifierInput: () => '',
     }));
-    const chain = buildRunnerAgentChain(makeCtx(false, false), makeRecorder());
+    const chain = buildRunnerAgentChain(makeCtx(false, false));
     const bridge = chain.worker.tools?.find((tool) => tool.name === 'tool_call') as RunnableTool | undefined;
     expect(bridge).toBeDefined();
     const result = await bridge!.execute({ name: 'managed_image_target', input: {} },
@@ -347,16 +353,12 @@ describe('FEATURE_250 — managed-path progressive disclosure (deferred hint-swa
     const events: KodaXEvents = {
       beforeToolExecute: async () => true,
     };
-    const chain = buildRunnerAgentChain(
-      makeCtx(true, true),
-      makeRecorder(),
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      events,
+    const chain = buildRunnerAgentChain(makeCtx(true, true),
+undefined,
+undefined,
+undefined,
+undefined,
+events
     );
     const callTool = (chain.worker.tools ?? []).find((tool) => tool.name === 'tool_call') as {
       execute?: (
@@ -406,7 +408,7 @@ describe('FEATURE_250 — managed-path progressive disclosure (deferred hint-swa
       }));
     }
 
-    const chain = buildRunnerAgentChain(makeCtx(true, true), makeRecorder());
+    const chain = buildRunnerAgentChain(makeCtx(true, true));
     const describeTool = (chain.worker.tools ?? []).find((tool) => tool.name === 'tool_describe') as {
       execute?: (input: Record<string, unknown>, ctx: { agent: typeof chain.worker; toolCallId: string }) => Promise<{ content: string | readonly unknown[] }>;
     } | undefined;
@@ -476,7 +478,7 @@ describe('FEATURE_294 — run-scoped host tools on the AMA managed path', () => 
   }
 
   it('worker materializes run-scoped host tools next to the registry set', () => {
-    const chain = buildRunnerAgentChain(makeHostCtx(), makeRecorder());
+    const chain = buildRunnerAgentChain(makeHostCtx());
     const names = (chain.worker.tools ?? []).map((tool) => (tool as { name: string }).name);
     expect(names).toContain('space_artifact_create');
     // Plain runs without a host binding keep the surface unchanged.
@@ -484,7 +486,7 @@ describe('FEATURE_294 — run-scoped host tools on the AMA managed path', () => 
   });
 
   it('materialized host tool execution routes through the capability channel', async () => {
-    const chain = buildRunnerAgentChain(makeHostCtx(), makeRecorder());
+    const chain = buildRunnerAgentChain(makeHostCtx());
     const tools = (chain.worker.tools ?? []) as Array<{
       name: string;
       execute?: (input: Record<string, unknown>, ctx: { agent: unknown; toolCallId: string }) => Promise<{ content: string | readonly unknown[] }>;

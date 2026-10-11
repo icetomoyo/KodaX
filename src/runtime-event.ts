@@ -18,7 +18,7 @@ const RUNTIME_EVENT_TYPES: ReadonlySet<string> = new Set<RuntimeEventType>([
   'context.compaction.messages', 'context.compaction.ended', 'context.compaction.skipped',
   'context.budget.snapshot', 'tool.exposure.planned', 'child_activity.finished', 'provider.retry',
   'provider.recovery', 'provider.cache.diagnostics', 'repo_intelligence.trace', 'todo.updated',
-  'todo.warning', 'sidecar.message',
+  'todo.warning',
   'run.completed', 'run.failed', 'run.cancelled', 'run.interrupted', 'artifact.created',
   'config.effective', 'runtime.warning',
 ]);

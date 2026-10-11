@@ -106,15 +106,6 @@ describe('createJsonEvents', () => {
         source: 'full',
       },
     });
-    events.onSidecarMessage?.({
-      source: 'sidecar-verifier',
-      verdict: 'revise',
-      recipient: 'main-agent',
-      delivery: 'synthetic-user-message',
-      content: 'Run the missing regression test.',
-      suggestedFix: 'npm test -- foo.test.ts',
-      trace: 'verifier_ok',
-    });
     events.onIterationEnd?.({
       iter: 1,
       maxIter: 5,
@@ -194,16 +185,6 @@ describe('createJsonEvents', () => {
           triggeredAt: '2026-04-01T00:00:00.000Z',
           source: 'full',
         },
-      },
-      {
-        type: 'sidecar.message',
-        source: 'sidecar-verifier',
-        verdict: 'revise',
-        recipient: 'main-agent',
-        delivery: 'synthetic-user-message',
-        content: 'Run the missing regression test.',
-        suggestedFix: 'npm test -- foo.test.ts',
-        trace: 'verifier_ok',
       },
       {
         type: 'iteration.end',

@@ -104,12 +104,19 @@ export async function toolUpdateGoal(
   }
 
   if (status === 'complete') {
+    const control = ctx.actorControl;
+    if (control) {
+      const prefix = `${control.callerPath}/`;
+      if (control.list().actors.some(actor => actor.path.startsWith(prefix) && actor.currentTurnId !== undefined)) {
+        return '[Tool Error] update_goal: child work is still active. Inspect its results before completing the goal.';
+      }
+    }
     const result = await goalCtx.requestComplete();
     if (result.ok) {
       return `Goal marked complete: "${goal.objective}".`;
     }
     const fixHint = result.suggestedFix ? ` Suggested next step: ${result.suggestedFix}` : '';
-    return `[Tool Error] update_goal: completion verifier did not confirm. ${result.reason ?? 'unspecified reason.'}${fixHint} Keep working until the objective is genuinely achieved.`;
+    return `[Tool Error] update_goal: completion request was rejected. ${result.reason ?? 'unspecified reason.'}${fixHint} Keep working until the objective is achieved.`;
   }
 
   // status === 'blocked'

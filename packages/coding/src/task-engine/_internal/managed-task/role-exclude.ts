@@ -77,8 +77,6 @@ export function getAmaRoleEffectiveExclude(role: AmaRole): ReadonlySet<string> {
 /**
  * The names of all registry-borne tools an AMA role can see, computed by
  * subtracting the role's effective exclude set from `listToolDefinitions()`.
- * Excludes emit tools (which are NOT registry-borne — Runner-driven path
- * builds them via `protocol-emitters.ts` and splices them in separately).
  *
  * Exported for the FEATURE_168 contract test that pins each role's
  * expected tool surface. MCP tools are runtime-backed, so callers pass

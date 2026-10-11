@@ -1,23 +1,4 @@
-/**
- * FEATURE_192 v0.7.44 Phase C — Goal-tools execution context.
- *
- * The 3 goal tools (`get_goal`, `create_goal`, `update_goal`) read +
- * mutate persistent goal state. The coding layer does NOT own that
- * state — it lives in the REPL-side session lineage. Tools call into
- * this interface, which the runner-driven adapter wires at task start.
- *
- * Why an interface (not direct lineage access from the tool):
- *   1. Lineage mutations need to round-trip through session storage
- *      (persistence + UI events); the tool shouldn't know that pipe.
- *   2. The Sidecar Verifier call for `update_goal({complete})` needs
- *      runtime provider + transcript snapshot — wired at the boundary
- *      where verifier-provider-resolver runs, not inside the tool.
- *   3. The 3-turn blocker rule has process-lifetime state that lives
- *      with the goal runtime, not with the tool registration.
- *
- * All three methods are async — both reads (because they may touch
- * the session storage) and writes (because they persist).
- */
+
 
 import type { KodaXGoalState } from '@kodax-ai/agent';
 

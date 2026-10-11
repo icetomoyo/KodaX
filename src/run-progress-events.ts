@@ -268,12 +268,6 @@ function forwardDaemonDiagnosticEvent(
         NonNullable<KodaXEvents['onToolExposurePlanned']>
       >[0],
     );
-  } else if (event.type === 'sidecar.message') {
-    events?.onSidecarMessage?.(
-      event.payload as Parameters<
-        NonNullable<KodaXEvents['onSidecarMessage']>
-      >[0],
-    );
   } else if (event.type === 'todo.updated' && Array.isArray(payload.items)) {
     events?.onTodoUpdate?.(
       payload.items as Parameters<NonNullable<KodaXEvents['onTodoUpdate']>>[0],

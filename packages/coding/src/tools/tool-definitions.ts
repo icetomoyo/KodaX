@@ -123,7 +123,6 @@ import {
   SELF_MODIFY_TOOL_NAME,
 } from './self-modify-tool.js';
 
-
 /**
  * Classifier projection helper for `stage_*` construction tools whose input
  * is the artifact serialized as a JSON string. Parses opportunistically and
@@ -1354,7 +1353,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   {
     name: 'update_goal',
     description:
-      'Mark the current goal complete or blocked.\n\nSet status to complete only when the objective is achieved and no required work remains. Completion triggers a runtime verifier; if the verifier does not confirm, the call is rejected and you must keep working.\n\nSet status to blocked only when the goal cannot proceed without external unblock, and the same blocking condition has persisted across recent goal turns. The runtime counter rejects blocked status until the same blocker_kind has repeated for 3 consecutive turns.\n\nPause, resume, and budget-limited transitions are controlled by the user, not this tool. Do not call to stop work — only call when the objective is truly achieved or truly blocked.',
+      'Mark the current goal complete or blocked.\n\nSet status to complete only when the objective is achieved and no required work remains. Verify each requirement with actual evidence before calling complete; report unverified scope explicitly. Completion is goal bookkeeping, not a quality certificate.\n\nSet status to blocked only when the goal cannot proceed without external unblock, and the same blocking condition has persisted across recent goal turns. The runtime counter rejects blocked status until the same blocker_kind has repeated for 3 consecutive turns.\n\nPause, resume, and budget-limited transitions are controlled by the user, not this tool. Do not call to stop work — only call when the objective is truly achieved or truly blocked.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1362,7 +1361,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
           type: 'string',
           enum: ['complete', 'blocked'],
           description:
-            'New status. "complete" requires verifier confirmation; "blocked" requires the same blocker_kind across 3 consecutive turns.',
+            'New status. "complete" requires the objective to be achieved; "blocked" requires the same blocker_kind across 3 consecutive turns.',
         },
         blocker_kind: {
           type: 'string',
@@ -1375,7 +1374,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     handler: toolUpdateGoal,
     sideEffect: 'mutates-state',
     planModeAllowed: false,
-    classifierExemptReason: 'Updates only session-local goal status and is independently runtime-verified.',
+    classifierExemptReason: 'Updates only session-local goal status; the persistent blocker counter is enforced by the runtime.',
     toClassifierInput: () => '',
   },
   {

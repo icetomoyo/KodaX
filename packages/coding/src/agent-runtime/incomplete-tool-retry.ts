@@ -98,7 +98,7 @@ function appendTextToUserContent(
  * Does a `user` turn carry real user text (vs. only tool_result blocks)? A
  * tool_results-only turn renders no transcript bubble and is not a user
  * REQUEST, so the merged retry nudge can be marked `_synthetic` (hidden on
- * restore + skipped by the sidecar gate) exactly like the old discrete nudge.
+ * restore) exactly like the old discrete nudge.
  * A turn with real text (e.g. the initial prompt) must stay visible.
  */
 function userTurnHasText(content: KodaXMessage['content']): boolean {
@@ -145,7 +145,7 @@ export async function checkAndRetryIncompleteTools(
     if (prev && prev.role === 'user') {
       // Mark the merged turn `_synthetic` ONLY when the preceding turn carries no
       // real user text (a pure tool_results turn) — that keeps the nudge hidden
-      // on session restore + skipped by the sidecar "last real user" gate, just
+      // on session restore, just
       // like the old discrete `_synthetic` nudge. When the preceding turn is a
       // real message (e.g. the initial prompt), it must stay visible, so its
       // existing (non-synthetic) flag is preserved.

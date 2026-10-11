@@ -272,8 +272,6 @@ it('keeps earlier output and retry history when replacing exactly one failed out
     events!.onToolUseStart?.({ id: 'test-call', name: 'bash', input: { command: 'npm test' } });
     events!.onToolProgress?.({ id: 'test-call', message: 'still running' });
     events!.onToolResult?.({ id: 'test-call', name: 'bash', content: '42 tests passed.' });
-    events!.onSidecarMessage?.({ source: 'sidecar-verifier', verdict: 'revise', recipient: 'user',
-      delivery: 'budget-exhausted', content: 'Check the remaining case.', suggestedFix: 'Add a boundary test.' });
     events!.onManagedTaskStatus?.({ agentMode: 'ama', harnessProfile: 'H1_EXECUTE_EVAL', phase: 'worker', events: [
       { key: 'ephemeral', kind: 'progress', summary: 'Transient countdown', persistToHistory: false },
       { key: 'saved', kind: 'warning', summary: 'Worker needs attention.', persistToHistory: true },
@@ -307,7 +305,7 @@ it('keeps earlier output and retry history when replacing exactly one failed out
     await run.result;
     await expect.poll(() => views.at(-1)?.items.map((item) => item.text)).toEqual([
       'Earlier complete output.', 'Connection reset · retry 1/2', 'Replacement partial output.',
-      'Complete reasoning.', '42 tests passed.', 'Check the remaining case.\nSuggested fix: Add a boundary test.', 'Worker needs attention.',
+      'Complete reasoning.', '42 tests passed.', 'Worker needs attention.',
       '[Overloaded] (mock-provider) — retrying in 2s [retry-after-seconds] (1/3)',
       'Context auto-compacted (was ~12k tokens)', '[memory] Saved the requested preference',
     ]);

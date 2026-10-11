@@ -62,6 +62,9 @@ import { generateSessionId, extractTitleFromMessages } from '../session.js';
 // FEATURE_076 Q4: load-time normalization for pre-v0.7.25 session messages.
 import { normalizeLoadedSessionMessages } from '../task-engine/_internal/round-boundary.js';
 import { renderInterruptedRunRecovery } from '../task-engine/_internal/interrupted-run-recovery.js';
+import { formatVerificationContract } from '../task-engine/_internal/managed-task/formatting.js';
+import { resolveEffectiveVerification } from './effective-config.js';
+import { EXECUTION_GUIDANCE } from '../prompts/execution-guidance.js';
 import {
   createManagedRunContextMessage,
   installCanonicalManagedRunContext,
@@ -216,6 +219,8 @@ import {
 } from '../tools/session-history.js';
 import { assertProviderConfigured } from './provider-config-check.js';
 import { buildToolExecutionContext } from './tool-execution-context.js';
+import { applyAccountingDelta } from '../goal/state.js';
+import { turnWallTimeDelta } from '../goal/accounting.js';
 import { resolvePerTurnReasoning } from './per-turn-reasoning.js';
 import { buildStreamTimers } from './stream-timers.js';
 import { applyProviderPolicyGate } from './provider-policy-gate.js';
@@ -1012,6 +1017,11 @@ async function runSubstrateInContext(
     options.context?.interruptedRunEvidence,
     messages,
   );
+  const verificationRunContext = options.context?.systemPromptOverride
+    ? [options.context.agentProfile ? EXECUTION_GUIDANCE : undefined,
+        formatVerificationContract(resolveEffectiveVerification(options))]
+        .filter((section): section is string => Boolean(section)).join('\n\n')
+    : undefined;
   let title = resumed.title || (
     transcriptPrompt.slice(0, 50) + (transcriptPrompt.length > 50 ? '...' : '')
   );
@@ -1501,6 +1511,17 @@ async function runSubstrateInContext(
   }
 
   let incompleteRetryCount = 0;
+  const goalRuntime = options.context?.goalRuntime;
+  const appendGoalContinuation = async (iter: number): Promise<boolean> => {
+    if (!goalRuntime || iter + 1 >= iterationLimit || options.abortSignal?.aborted) return false;
+    await goalRuntime.refresh?.();
+    const goal = goalRuntime.lifecycleCtx.getGoal();
+    if (!goal || goal.status !== 'active' || goalRuntime.lifecycleCtx.hasPendingUserInput?.()) return false;
+    messages.push({ role: 'user', content: goalRuntime.lifecycleCtx.buildContinuationPrompt(goal),
+      _synthetic: true, timestamp: new Date().toISOString() });
+    if (canReopenInterruptInput(iter)) options.context?.interruptInput?.reopenInputWindow();
+    return true;
+  };
   let terminalExecutionFailure: KodaXExecutionFailure | undefined;
   // CAP-085: `limitReached` flag — was a `let` toggled `true` only at
   // the iteration-limit terminal site. Folded into the literal `true`
@@ -1595,6 +1616,7 @@ async function runSubstrateInContext(
     }
 
     for (let iter = 0; iter < iterationLimit; iter++) {
+    const goalTurnStartedAt = Date.now();
     try {
       if (
         options.context?.interruptInput
@@ -2020,10 +2042,11 @@ async function runSubstrateInContext(
       let textRecoveryRetry = false;
       while (true) {
         wireMessages = projectTextRecovery(wireMessages, textRecovery);
-        if (interruptedRunRecovery !== undefined) {
+        if (interruptedRunRecovery !== undefined || verificationRunContext) {
           wireMessages = installCanonicalManagedRunContext(
             wireMessages,
-            createManagedRunContextMessage(interruptedRunRecovery, {
+            createManagedRunContextMessage([interruptedRunRecovery, verificationRunContext]
+              .filter((section): section is string => Boolean(section)).join('\n\n'), {
               turnId: liveTurnScopeRef.current.turnId,
             }),
           );
@@ -2381,6 +2404,16 @@ async function runSubstrateInContext(
       }
 
       turnState.lastText = result.textBlocks.map(b => b.text).join(' ');
+      if (goalRuntime && result.usage && goalRuntime.lifecycleCtx.getPermissionMode?.() !== 'plan') {
+        await goalRuntime.refresh?.();
+        const goal = goalRuntime.lifecycleCtx.getGoal();
+        if (goal?.status === 'active') {
+          const accounting = applyAccountingDelta(goal, result.usage, turnWallTimeDelta(goalTurnStartedAt, Date.now()));
+          if (accounting.nextState !== goal) await goalRuntime.lifecycleCtx.persistEvent(
+            accounting.nextState, accounting.budgetLimited ? 'budget_limited' : 'updated',
+          );
+        }
+      }
       const reportedPreAssistantTokenSnapshot = createContextTokenSnapshot(messages, result.usage);
       const preAssistantTokenSnapshot = reportedPreAssistantTokenSnapshot.source === 'api'
         ? reportedPreAssistantTokenSnapshot
@@ -2530,6 +2563,7 @@ async function runSubstrateInContext(
           hadToolCalls: false,
           signal: 'COMPLETE',
         });
+        if (await appendGoalContinuation(iter)) continue;
         await emitActiveExtensionEvent('complete', { success: true, signal: 'COMPLETE' });
         return finalizeCompletedProtocolResult({
           success: true,
@@ -2699,6 +2733,7 @@ async function runSubstrateInContext(
           hadToolCalls: false,
           signal: undefined,
         });
+        if (await appendGoalContinuation(iter)) continue;
         await emitActiveExtensionEvent('complete', { success: true, signal: undefined });
         // CAP-085 (clean-exit variant): natural completion path. We still
         // run the iter-terminal helper so the final snapshot save + signal

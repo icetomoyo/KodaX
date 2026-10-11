@@ -124,6 +124,8 @@ import {
 import type { ManagedTaskBudgetController } from './_internal/managed-task/budget.js';
 import {
   buildManagedStatusBudgetFields,
+  canRequestAdditionalWorkBudget,
+  maybeRequestAdditionalWorkBudget,
 } from './_internal/managed-task/budget.js';
 import { deleteCheckpoint } from './_internal/managed-task/checkpoint.js';
 import {
@@ -144,11 +146,7 @@ import { buildManagedWorkerToolPolicy } from './_internal/managed-task/tool-poli
 import { formatFullSkillSection } from './_internal/managed-task/formatting.js';
 import { applyCurrentDiffReviewRoutingFloor } from './_internal/managed-task/review-routing.js';
 import { createTodoStore, type TodoStore } from './todo-store.js';
-import {
-  applySidecarVerdictToRecorder,
-  emitSidecarMessageEvent,
-} from '../agent-runtime/middleware/sidecar-verifier/verifier-recorder-bridge.js';
-import { buildRunnerSidecarVerifierAdapter } from './runner-sidecar-verifier-adapter.js';
+import { buildRunnerStopHook } from './runner-stop-hook.js';
 import { buildPatternTrace } from '../orchestration/pattern-trace.js';
 import { resolveEffectiveVerification } from '../agent-runtime/effective-config.js';
 import { createTodoReminderState } from './todo-throttle-reminder.js';
@@ -161,10 +159,6 @@ import { createTodoReminderState } from './todo-throttle-reminder.js';
 // on the SDK type surface for pre-1.0 consumer compat but is no longer
 // fired by the Runner-driven path.
 import type { ManagedRolePromptContext } from './_internal/managed-task/role-prompt-types.js';
-import {
-  sanitizeEvaluatorPublicAnswer,
-  sanitizeManagedUserFacingText,
-} from './_internal/managed-task/sanitize.js';
 import {
   buildManagedTaskCompactionHook,
   resolveManagedTaskContextCapacity,
@@ -307,11 +301,7 @@ import {
   getAmaRoleEffectiveExclude,
   getAmaRoleExpectedToolNames,
 } from './_internal/managed-task/role-exclude.js';
-import {
-  extractUserFacingText,
-  deriveFinalStatus,
-  buildManagedProtocolPayload,
-} from './_internal/managed-task/status-derivation.js';
+import { extractUserFacingText } from './_internal/managed-task/status-derivation.js';
 import {
   // FEATURE_193 (v0.7.43): `applyScoutDecisionToPlanRunner` import
   // removed — last consumer (H1 structural-resume overlay block at the
@@ -322,16 +312,11 @@ import {
   MANAGED_WORK_BUDGET_CAP,
   MANAGED_MAX_ROUNDS,
 } from './_internal/managed-task/observer-bridge.js';
-import {
-  wrapEmitterWithRecorder,
-  type BudgetExtensionContext,
-} from './_internal/managed-task/verdict-recorder.js';
 import type {
   AmaRole,
   ObserverBridge,
   RolePromptContextFactory,
   RunnerChainPromptContext,
-  VerdictRecorder,
 } from './_internal/managed-task/types.js';
 import {
   buildRunnerAgentChain,
@@ -377,7 +362,6 @@ export type {
   ObserverBridge,
   RolePromptContextFactory,
   RunnerChainPromptContext,
-  VerdictRecorder,
   RunnerAgentChain,
   RunnerAdapterTokenState,
 };
@@ -457,12 +441,6 @@ function resolveInitialRuntimeThinkingLevel(
 // =============================================================================
 
 // =============================================================================
-// VerdictRecorder interface — moved to `./_internal/managed-task/types.ts`
-// (FEATURE_171). The interface is re-exported at the top of this file so
-// existing import paths keep working.
-// =============================================================================
-
-// =============================================================================
 // Tool wrapping — moved to `./_internal/managed-task/tool-wrappers.ts` and
 // `./_internal/managed-task/dispatch-child.ts` (FEATURE_171 v0.7.41 split).
 // `wrapCodingToolAsRunnable` and `wrapDispatchChildTaskForRole` are the live
@@ -499,15 +477,6 @@ function resolveInitialRuntimeThinkingLevel(
 // =============================================================================
 
 // =============================================================================
-// Result conversion: RunResult + VerdictRecorder → KodaXResult.
-//
-// `extractUserFacingText`, `extractUserFacingRaw`, `deriveFinalStatus`
-// and `buildManagedProtocolPayload` moved to
-// `./_internal/managed-task/status-derivation.ts` (FEATURE_171 v0.7.41
-// split). Imported at the top of this file.
-// =============================================================================
-
-// =============================================================================
 // managedTask payload construction — moved to
 // `./_internal/managed-task/payload-builder.ts` (FEATURE_171 v0.7.41 split).
 // `harnessToBudget`, `buildManagedTaskPayload`, `deriveQualityAssuranceMode`,
@@ -539,7 +508,6 @@ function resolveInitialRuntimeThinkingLevel(
  *   - Malformed verdict payload passthrough (existing recorder behaviour)
  */
 export const __runnerDrivenTestables = {
-  wrapEmitterWithRecorder,
   buildStructuralResumeSeed,
   resolveInitialRuntimeThinkingLevel,
 } as const;
@@ -1401,7 +1369,6 @@ async function runManagedTaskViaRunnerInner(
   // on a Generator-targeted revise; consumed at the start of the
   // next Generator turn (the agent's `instructions` closure).
   // Scoped to one task run; survives mid-run handoffs.
-  const pendingFailedResetRef: { current: boolean } = { current: false };
   // FEATURE_097 §5 ② — Layer 2 throttle reminder state. Lives for one
   // managed-task run; the LLM adapter increments the counter on each
   // call, the `todo_update` wrapper resets it on success, the agent-
@@ -1513,7 +1480,6 @@ async function runManagedTaskViaRunnerInner(
     configurable: true,
   });
 
-  const recorder: VerdictRecorder = {};
   // FEATURE_193 (v0.7.43): V1 `recorder.scout` / `recorder.contract`
   // resume-seed restoration removed — slots deleted in v0.7.43 along
   // with the emit tools. Pre-F193 checkpoints carrying these slots
@@ -1586,8 +1552,7 @@ async function runManagedTaskViaRunnerInner(
     const snapshot = attachTodoDriftWarnings(buildManagedTaskPayload({
       prompt,
       options,
-      recorder,
-      rolesEmitted: rolesRef.emitted,
+        rolesEmitted: rolesRef.emitted,
       baseCtx,
       signal: 'COMPLETE',
       budget,
@@ -1665,26 +1630,7 @@ async function runManagedTaskViaRunnerInner(
   observer.preflight();
 
   const planRef = { current: plan };
-  // FEATURE_193 (v0.7.43): V1 scout resume-seed → plan overlay branch
-  // removed (Scout role retired, `structuralResumeSeed.recorderSlots.scout`
-  // never populated on V2 checkpoints). `planRef.current` stays at the
-  // pre-Worker routing decision throughout the run.
-  // Shard 6d-U: degraded-continue ref. Flipped by the verdict emitter
-  // wrapper when the Evaluator requests an H2 upgrade beyond the plan's
-  // `upgradeCeiling`, or when budget-extension approval is denied during
-  // revise. Surfaced on `managedTask.runtime.degradedContinue` so the
-  // REPL / CLI can warn the user.
   const degradedContinueRef: { current: boolean } = { current: false };
-  const budgetExtension: BudgetExtensionContext = {
-    events: options.events,
-    originalTask: prompt,
-    roundRef,
-    maxRoundsRef,
-    budgetApprovalRef,
-    planRef,
-    degradedContinueRef,
-    harnessRef,
-  };
   const tokenStateRef: { current: RunnerAdapterTokenState } = {
     current: { totalTokens: 0, source: 'estimate' },
   };
@@ -1830,19 +1776,7 @@ async function runManagedTaskViaRunnerInner(
     });
   }
   const promptOverlay = plan?.promptOverlay?.trim();
-  const rolePromptContextFactory: RolePromptContextFactory = (role, currentRecorder) => {
-    // FEATURE_193 (v0.7.43): `scoutPayload = currentRecorder.scout?.payload.scout`
-    // read removed (V1 scout slot deleted). All downstream scoutPayload-derived
-    // ctx fields (skillMap, scoutScope, previousRoleSummaries.scout/planner/
-    // generator) are permanently undefined on V2.
-    void currentRecorder;
-    // FEATURE_125 v0.7.41 — Per-LLM-round sibling discovery. Only fires
-    // when the Team Mode writer was bootstrapped (REPL session normally;
-    // disabled via KODAX_DISABLE_MULTI_INSTANCE=1). The active writer's
-    // pid is excluded so we never describe ourselves to the LLM.
-    // `discoverInstances` does one readdir + N stat — cheap enough to
-    // call at each managed turn boundary. Failure is
-    // swallowed so a transient fs hiccup never blocks the LLM call.
+  const rolePromptContextFactory: RolePromptContextFactory = (role) => {
     let teamModeBlock: string | undefined;
     let teamModeFingerprint: string | undefined;
     try {
@@ -1893,20 +1827,6 @@ async function runManagedTaskViaRunnerInner(
       // Pre-FEATURE_143 this was stitched onto the user prompt head;
       // see runner-driven.ts:promptWithOverlay for the migration.
       promptOverlay: promptOverlay,
-      // FEATURE_114 v0.7.36 Slice 3b — Worker resume signal.
-      // `pendingFailedResetRef.current === true` means the Evaluator
-      // returned `revise` on the previous turn AND the verdict-slot
-      // wrapper armed the failed→pending visual reset. The Worker
-      // prompt picks this up via `worker-role-prompt.ts` → prepended
-      // retrospective sentence so the LLM treats prior `failed` items
-      // as ground truth on the retry. Only relevant for `role==='worker'`;
-      // legacy roles ignore the field. Read at factory invocation time
-      // (every Runner turn) so the signal stays fresh; the Worker
-      // instructions closure consumes the ref AFTER prompt resolution
-      // so this read sees the armed state.
-      isResumeAfterReviseFailure: role === 'worker'
-        ? pendingFailedResetRef.current === true
-        : undefined,
     };
     // v0.7.26 C4 parity — surface the caller's skill invocation + the
     // on-disk artefact paths so role prompts can quote a stable filesystem
@@ -1977,24 +1897,15 @@ async function runManagedTaskViaRunnerInner(
     : undefined;
   const chain = buildRunnerAgentChain(
     baseCtx,
-    recorder,
     observer,
     budget,
-    budgetExtension,
-    planRef,
-    options.context?.taskVerification,
+    resolveEffectiveVerification(options),
     chainPromptContext,
     options.events,
     todoStore,
-    pendingFailedResetRef,
     todoReminderState,
-    // FEATURE_114 v0.7.36 Slice 3c — workspace cwd for the
-    // deterministic per-step evaluator. The check spawns
-    // `npm run build/test/lint` here when a todo flips to completed
-    // with an evaluator hint. Production always has a cwd; the
-    // override slot is for tests only and stays undefined in the
-    // hot path.
     managedWorkspace.executionCwd,
+
   );
   // FEATURE_193 (v0.7.43): FEATURE_078 Scout `downstream_reasoning_hint`
   // callback retired — Scout role gone, no payload to surface. The
@@ -2008,14 +1919,14 @@ async function runManagedTaskViaRunnerInner(
     readonly runtime?: string;
     readonly runtimeFingerprint?: string;
   } => {
-    const resolvedContext = rolePromptContextFactory('worker', recorder);
+    const resolvedContext = rolePromptContextFactory('worker');
     const full = resolveRoleRunContext(
       'worker',
       WORKER_AGENT_NAME,
-      recorder,
       chainPromptContext,
-      options.context?.taskVerification,
+      resolveEffectiveVerification(options),
       resolvedContext,
+
     ) ?? resolveRoleRuntimeStateContext(resolvedContext);
     const runtime = resolveRoleRuntimeStateContext(resolvedContext);
     const runtimeFingerprint = resolveRoleRuntimeStateFingerprint(resolvedContext);
@@ -2410,37 +2321,7 @@ async function runManagedTaskViaRunnerInner(
     memoryObserver,
   );
 
-  // FEATURE_184 Sidecar Verifier stop-hook wiring — extracted to
-  // `runner-sidecar-verifier-adapter.ts` (FEATURE_200 Phase A.2). The adapter
-  // owns verifier provider resolution, the captured-verdict ref, the sidecar +
-  // extension-fallback hooks, and `currentAgentRoleRef` (flipped below by
-  // `onAgentSwitched`). The verdict side-effect (`applySidecarVerdictToRecorder`,
-  // which needs recorder/todoStore/budget/budgetExtension) stays here as the
-  // `onVerdict` callback so the adapter need not depend on that whole surface.
-  const verifierAdapter = buildRunnerSidecarVerifierAdapter({
-    mainProvider: resolveProvider(options.provider ?? 'anthropic'),
-    mainProviderName: options.provider ?? 'anthropic',
-    mainModel: options.modelOverride ?? options.model,
-    mutationTracker,
-    observer,
-    // FEATURE_247 (R3): profile default merged with per-task verification.
-    verification: resolveEffectiveVerification(options),
-    onVerdict: (verdict, context) => {
-      // FEATURE_247 (R3/R8): attribute the verdict to its session + profile.
-      emitSidecarMessageEvent(options.events, verdict, context, {
-        sessionId: sessionIdRef.current,
-        agentProfile: options.context?.agentProfile,
-      });
-      void applySidecarVerdictToRecorder({
-        recorder,
-        observer,
-        verdict,
-        todoStore,
-        pendingFailedResetRef,
-        budget,
-        budgetExtension,
-      }).catch(() => undefined);
-    },
+  const composedStopHook = buildRunnerStopHook({
     getSessionId: () => sessionIdRef.current,
     getCollaborationState: () => ({
       activeDescendantTurns: activeDescendantTurnCount(baseCtx),
@@ -2450,28 +2331,7 @@ async function runManagedTaskViaRunnerInner(
         mode: 'task-notification',
       }),
     }),
-    getPlanSnapshot: () => todoStore.getAll(),
-    getPatternTrace: () => (
-      baseCtx.actorControl ? buildPatternTrace(baseCtx.actorControl) : undefined
-    ),
-    getQualitySignals: () => {
-      const decision = planRef.current?.decision;
-      return decision
-        ? {
-            riskLevel: decision.riskLevel,
-            needsIndependentQA: decision.needsIndependentQA,
-            assuranceIntent: decision.assuranceIntent,
-            reviewScale: decision.reviewScale,
-            requiresBrainstorm: decision.requiresBrainstorm,
-          }
-        : undefined;
-    },
-    getRoundCount: () => roundRef.current,
-    getHasPlan: () => todoStore.getAll().length > 0,
   });
-  const resolvedVerifier = verifierAdapter.resolvedVerifier;
-  const composedStopHook = verifierAdapter.composedStopHook;
-  const currentAgentRoleRef = verifierAdapter.currentAgentRoleRef;
 
   // FEATURE_192 v0.7.44 — `/goal` lifecycle adapter. See
   // `runner-goal-adapter.ts` for the full composition rationale.
@@ -2554,7 +2414,7 @@ async function runManagedTaskViaRunnerInner(
   };
 
   const buildManagedRuntimeContextDelta = (): KodaXMessage | undefined => {
-    const currentContext = rolePromptContextFactory('worker', recorder);
+    const currentContext = rolePromptContextFactory('worker');
     const currentRuntimeContext = resolveRoleRuntimeStateContext(currentContext);
     const currentRuntimeFingerprint = resolveRoleRuntimeStateFingerprint(currentContext);
     const runtimeContextChanged = currentRuntimeFingerprint !== managedRuntimeContextBaseline;
@@ -2578,6 +2438,22 @@ async function runManagedTaskViaRunnerInner(
     readonly iteration: number;
     readonly lastTurnToolNames?: readonly string[];
   }) => Promise<readonly KodaXMessage[]> = async (turnCtx) => {
+    if (canRequestAdditionalWorkBudget(options.events, budget)) {
+      observer.notifyBudgetApprovalRequest();
+      try {
+        const decision = await maybeRequestAdditionalWorkBudget(options.events, budget, {
+          summary: 'Execution needs additional work budget.',
+          originalTask: prompt,
+          currentRound: roundRef.current,
+          maxRounds: maxRoundsRef.current,
+        });
+        if (decision === 'approved') maxRoundsRef.current += 1;
+        if (decision === 'denied') degradedContinueRef.current = true;
+      } finally {
+        budgetApprovalRef.current = false;
+        observer.agentSwitched('worker');
+      }
+    }
     const runtimeContextMessage = buildManagedRuntimeContextDelta();
     const drained = maybeDrainMidTurn({
       agentId: messageQueueAgentId,
@@ -2614,22 +2490,15 @@ async function runManagedTaskViaRunnerInner(
       ...hostMessages,
     ];
   };
-  // Transcript snapshot ref — populated by the adapter's beforeNextTurn
-  // each turn boundary; read by the goal verifyComplete closure when
-  // `update_goal({complete})` fires mid-turn.
-  const goalTranscriptRef: { current: readonly KodaXMessage[] } = {
-    current: [],
-  };
   const { beforeNextTurn, stopHook } = buildRunnerGoalAdapter({
     goalRuntime: options.context?.goalRuntime,
     tokenStateRef,
     baseCtx,
     baseBeforeNextTurn,
     composedStopHook,
-    transcriptRef: goalTranscriptRef,
-    mutationTracker,
-    verifierProvider: resolvedVerifier?.provider,
-    verifierModel: resolvedVerifier?.model,
+    hasPendingWork: () => activeDescendantTurnCount(baseCtx) > 0 || getMessageQueue().has({
+      agentId: messageQueueAgentId, maxPriority: 'background', mode: 'task-notification',
+    }),
   });
 
   // One-shot Runner invocation closure, used by the idle-yield outer
@@ -2702,24 +2571,8 @@ async function runManagedTaskViaRunnerInner(
         // leaves the label untouched).
         const switchedRole: KodaXTaskRole | undefined =
           to.name === WORKER_AGENT_NAME ? 'worker' : undefined;
-        // FEATURE_184 (v0.7.45) Phase C.1: update the current-agent role
-        // ref so composedStopHook can gate the sidecar verifier to
-        // generator/worker turns only.
-        if (switchedRole) currentAgentRoleRef.current = switchedRole;
         observer.agentSwitched(switchedRole);
       },
-      // FEATURE_184 (v0.7.45) Phase D.2 — Composed Stop hook:
-      // sidecar verifier (first-party) → extension `turn:complete`
-      // bridge (second-party). Constructed above; see comment block
-      // preceding `runOnce`. When sidecar returns `revise` or `blocked`
-      // the extension chain is intentionally NOT consulted — first-
-      // party precedence guarantees architectural defenses cannot be
-      // silently overridden by user-installed extensions.
-      //
-      // FEATURE_192 v0.7.44 Phase F — wrapped with `withGoalStopHook`
-      // when an active `/goal` binding is present so a Worker text-
-      // only termination on an active goal returns a continuation
-      // prompt and the Runner reanimates the loop.
       stopHook,
       // Core's default (20) is meant for stand-alone single-agent runs
       // and is far too low for a multi-step managed task.
@@ -2731,53 +2584,6 @@ async function runManagedTaskViaRunnerInner(
     });
   };
 
-  // FEATURE_155 (v0.7.39) idle-yield outer loop, wrapped by
-  // FEATURE_120 v0.7.39 Step 0c's `runWithIdleYield` generic helper.
-  //
-  // When the agent exits via the no-tool-calls + pending-children +
-  // no-handoff branch, the loop waits for an external wake event
-  // (child completion or inbound queue message), splices a synthetic
-  // user message that surfaces the wake content, and re-enters
-  // `Runner.run` so the agent can observe and react.
-  //
-  // Bug A-G hotfix invariants preserved through the wrapper:
-  //   - Bug A (registry cleanup): owned by `registerChildTask`
-  //     (`@kodax-ai/agent`).
-  //   - Bug B+D (terminal-verdict + handoff gates): `computeSnapshot`
-  //     reads from `recorder` — the canonical chain state —
-  //     **not** `managedProtocolPayloadRef`. The V2 chain's
-  //     `emit_handoff` / `emit_verdict` tools return metadata via
-  //     `wrapEmitterWithRecorder` (line ~947); reading
-  //     `managedProtocolPayloadRef.current.*` would silently make
-  //     both gates always-false and break the loop only on
-  //     `lastAssistantToolCallCount > 0`, masking the bug except on
-  //     text-only turns after emit_verdict with pending children
-  //     (the 2026-05-11 production trace). `revise` is excluded
-  //     from the terminal gate (chain re-runs Worker/Generator).
-  //   - Bug E (fast-child race): `hasPendingBackgroundMessages`
-  //     reads the queue alongside the registry. A child that
-  //     completes within the current `Runner.run` iteration has its
-  //     `.finally(delete)` race with `enqueueChildTaskNotification`;
-  //     the banner sits in the background queue waiting for
-  //     `composeIdleYieldUserMessage` to drain it. Without this
-  //     gate the loop would break and strand the banner.
-  //
-  //     FEATURE_159 follow-up: the filter MUST narrow to
-  //     `mode:'task-notification'`. `maxPriority:'background'` is
-  //     inclusive of user priority (see
-  //     `packages/agent/src/messaging/queue.ts` `priorityWithinMax`
-  //     — rank ≤ 1 includes user + background), so without the mode
-  //     narrow, a user-priority `mode:'prompt'` queued follow-up
-  //     leaks into this banner-only gate. That makes
-  //     `detectIdleYield` return true even with zero pending
-  //     children, splicing the user's prompt into the same round via
-  //     `composeIdleYieldUserMessage` (which surfaces it as the
-  //     mode-split real user message) instead of letting
-  //     `runQueuedPromptSequence` start a fresh round through
-  //     `stageQueuedPrompt`. End-user symptom: agent echoes Q1
-  //     verbatim then stops; Q2 never gets answered.
-  //   - Bug F (abort listener cleanup): owned by the agent-layer
-  //     `waitForWakeEvent`.
   let preparedIdleTurn: ReturnType<ManagedLiveTurnController['prepareTurn']> | undefined;
   const runResult = await (async () => {
     const sessionRuntime = isSessionBindableExtensionRuntime(extensionRuntime)
@@ -2808,7 +2614,6 @@ async function runManagedTaskViaRunnerInner(
     runOnce,
     computeSnapshot: (rr) => {
       // Bug B+D: read from recorder, NOT managedProtocolPayloadRef.
-      const verdictStatusForGate = recorder.verdict?.payload?.verdict?.status;
       return {
         lastAssistantToolCallCount: countLastAssistantToolCalls(rr.messages),
         pendingChildTaskCount: activeDescendantTurnCount(baseCtx),
@@ -2818,8 +2623,7 @@ async function runManagedTaskViaRunnerInner(
         // without dispatching" on V1; on V2 only Worker runs and the
         // gate falls through to the child-registry + verdict check.
         hasEmittedHandoff: false,
-        hasEmittedTerminalVerdict:
-          verdictStatusForGate === 'accept' || verdictStatusForGate === 'blocked',
+        hasEmittedTerminalVerdict: rr.stoppedByHook === true,
         // Bug E: queue arm alongside registry arm. Strictly
         // task-notification banners — see comment above for the
         // FEATURE_159 follow-up that narrowed this filter.
@@ -2958,43 +2762,24 @@ async function runManagedTaskViaRunnerInner(
   // broader error coverage.
   await cleanupRunCheckpoint();
 
-  // FEATURE_184 (v0.7.45) Phase C.2: F167 Evaluator terminal-verdict
-  // fallback (B0/B1/B2 retry/synth block) deleted. The in-chain Evaluator
-  // is gone (Phase C.1); Sidecar Verifier StopHook (Phase D.2) handles
-  // post-execution verification. No synthetic verdict path needed.
   const effectiveRunResult = runResult;
 
   const lastText = extractUserFacingText(effectiveRunResult);
-  const { signal, verdictStatus, reason, userAnswer } = deriveFinalStatus(recorder);
-
-  // Evaluator's user_answer may carry internal role
-  // framing ("I verified the Generator…", "Let me double-check…") even
-  // after the fence sanitizer runs. Strip that framing specifically for
-  // review-like tasks where the evaluator was told to speak as the
-  // reviewer, not about the review process. For non-review tasks, still
-  // run the lighter sanitizer to drop control-plane markers + fences.
-  const sanitizedUserAnswer = userAnswer
-    ? (plan?.decision.primaryTask === 'review'
-      ? sanitizeEvaluatorPublicAnswer(userAnswer)
-      : sanitizeManagedUserFacingText(userAnswer))
-    : undefined;
+  const signal: KodaXResult['signal'] = effectiveRunResult.stoppedByHook ? 'BLOCKED' : 'COMPLETE';
+  const reason = effectiveRunResult.stoppedByHook && typeof effectiveRunResult.output === 'string'
+    ? effectiveRunResult.output : undefined;
+  const userAnswer = lastText;
 
   // Prefer the verdict's explicit user_answer over the final transcript
   // text when the Evaluator provided one — it's the intentional final
   // answer, while transcript text may be any last assistant turn.
-  const resolvedText = sanitizedUserAnswer && sanitizedUserAnswer.trim().length > 0
-    ? sanitizedUserAnswer
-    : lastText;
-
-  const managedProtocolPayload = buildManagedProtocolPayload(recorder);
+  const resolvedText = lastText;
   const managedTask = attachTodoDriftWarnings(buildManagedTaskPayload({
     prompt,
     options,
-    recorder,
     rolesEmitted: rolesRef.emitted,
     baseCtx,
     signal,
-    verdictStatus,
     userAnswer,
     budget,
     plan,
@@ -3046,7 +2831,7 @@ async function runManagedTaskViaRunnerInner(
     // FEATURE_184 (v0.7.45) Phase C.1: success=false when the run is
     // blocked, regardless of source — sidecar verdict (verdictStatus=
     // 'blocked') or Generator-level blocked handoff (signal='BLOCKED').
-    success: signal !== 'BLOCKED' && verdictStatus !== 'blocked',
+    success: signal !== 'BLOCKED',
     lastText: resolvedText,
     signal,
     signalReason: reason,
@@ -3060,7 +2845,6 @@ async function runManagedTaskViaRunnerInner(
     // through onSessionStart, keeping hydrate/result/snapshot keys aligned
     // even when callers omit an explicit session.id.
     sessionId: options.session?.id ?? effectiveRunResult.sessionId ?? resolvedSessionId,
-    managedProtocolPayload,
     managedTask,
     contextTokenSnapshot,
     // Shard 6d-L: surface the reasoning plan's routing decision so

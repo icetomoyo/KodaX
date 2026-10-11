@@ -63,7 +63,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { auditSidecarTarball } from './audit-sidecar-tarball.mjs';
+import { auditRuntimeTarball } from './audit-runtime-tarball.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -493,7 +493,7 @@ function packLocalTarball(version) {
       // Consumer flow: `npm install /abs/path/to/kodax-ai-kodax-<version>.tgz`.
       log('-- npm pack (exact candidate bytes)');
       runCmd('npm', ['pack']);
-      auditSidecarTarball(tarballPath, {
+      auditRuntimeTarball(tarballPath, {
         requiredEntries: REQUIRED_NATIVE_TARBALL_ENTRIES,
       });
       log('-- ✓ npm pack + Sidecar tarball audit succeeded');
@@ -509,7 +509,7 @@ function packLocalTarball(version) {
     assertNativeArtifacts(dist, [[process.platform, process.arch]]);
     log('-- npm pack (host-only test bytes)');
     runCmd('npm', ['pack']);
-    auditSidecarTarball(tarballPath, {
+    auditRuntimeTarball(tarballPath, {
       requiredEntries: hostNativeTarballEntries(),
     });
     log('-- ✓ host-only test tarball + sidecar audit succeeded');
@@ -539,7 +539,7 @@ async function publishCiTarball(pkg, version) {
     throw new Error(`sha256 checksum mismatch for ${tarballName}: expected ${checksum[1]}, got ${actual}`);
   }
   writeFileSync(tarballPath, bytes);
-  auditSidecarTarball(tarballPath, {
+  auditRuntimeTarball(tarballPath, {
     requiredEntries: REQUIRED_NATIVE_TARBALL_ENTRIES,
   });
   log('-- ✓ sha256 + sidecar audit of the CI-built universal tarball passed');

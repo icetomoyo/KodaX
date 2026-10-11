@@ -2,13 +2,29 @@
  * Tests for Argument Completer - 参数补全器测试
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { getAgentConfigPath, setAgentConfigHome, type WorkflowAgentBackend, type WorkflowModule } from '@kodax-ai/agent';
+import {
+  getAgentConfigPath,
+  setAgentConfigHome,
+  type WorkflowAgentBackend,
+  type WorkflowModule,
+} from '@kodax-ai/agent';
 import { getDefaultWorkflowRunManager, registerCustomProviders } from '@kodax-ai/coding';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import {
+  describe,
+  it,
+  expect,
+  beforeEach,
+  afterEach,
+} from 'vitest';
 import { ArgumentCompleter } from '../completers/argument-completer.js';
 import { deriveProjectKeyFromRoot } from '../project-key.js';
 
@@ -364,7 +380,6 @@ describe('ArgumentCompleter', () => {
           ['/reasoning ', ['none', 'auto', 'low', 'medium', 'high', 'xhigh', 'max']],
           ['/effort ', ['none', 'auto', 'low', 'medium', 'high', 'xhigh', 'max']],
           ['/agent-mode ', ['ama', 'sa', 'toggle']],
-          ['/verifier-log ', ['on', 'off']],
           ['/stall-log ', ['on', 'off']],
           ['/memory ', ['list', 'remember', 'forget', 'decisions', 'show', 'approve', 'reject', 'doctor', 'open', 'help']],
           ['/goal ', ['status', 'pause', 'resume', 'clear', 'help']],

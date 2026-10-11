@@ -43,7 +43,6 @@ export type {
   RuntimeHostToolService,
 } from './client-host-authorization.js';
 
-
 import { LOCAL_RUNTIME_BUILD, readRuntimeBuildIdentity, type RuntimeBuildIdentity } from './runtime-build-identity.js';
 import { createRuntimeProductCommandService, type RuntimeProductCommandService, type RuntimeCommandInvocation } from './runtime-product-commands.js';
 import { currentProductExecution, withProductExecution } from './product-execution-authorization.js';
@@ -79,10 +78,22 @@ import type {
   ClientLineageSummary,
   ClientCommandInput,
 } from "@kodax-ai/coding/client-contract";
-import { SessionViewOwner, restoreSessionViewItems, restoreSessionContentItems, persistSessionViewItems, committedSessionOutputIds } from "./session-view.js";
+import {
+  SessionViewOwner,
+  restoreSessionViewItems,
+  restoreSessionContentItems,
+  persistSessionViewItems,
+  committedSessionOutputIds,
+} from "./session-view.js";
 import { SessionInputQueue, inputIntentDigest } from "./session-input-queue.js";
 import { listClientInteractions, respondToClientInteraction } from "./client-interactions.js";
-import { assembleConversationHistoryEntry, projectConversationHistoryPage, readConversationHistoryEntry, readFollowingMessage, readHistoryPageWithBoundaryRetry } from "./client-history.js";
+import {
+  assembleConversationHistoryEntry,
+  projectConversationHistoryPage,
+  readConversationHistoryEntry,
+  readFollowingMessage,
+  readHistoryPageWithBoundaryRetry,
+} from "./client-history.js";
 import { toClientConfig, toClientSessionSettings } from "./client-settings.js";
 import { createHostIntegrations } from "./host-integrations.js";
 import { spawnSync } from "node:child_process";
@@ -165,7 +176,13 @@ import {
   runWithProviderCredentialLeaseScope,
   runWithProviderCredential,
 } from "@kodax-ai/llm";
-import { appendGoalEntry, appendSessionLineageLabel, clearCapabilityCache, extractAssistantTextFromMessage, readLatestGoalState } from "@kodax-ai/agent";
+import {
+  appendGoalEntry,
+  appendSessionLineageLabel,
+  clearCapabilityCache,
+  extractAssistantTextFromMessage,
+  readLatestGoalState,
+} from "@kodax-ai/agent";
 import type {
   ProviderCredentialLeaseAccess,
   KodaXContextOverflowFacts,
@@ -231,6 +248,7 @@ import type {
 } from "@kodax-ai/coding";
 import {
   isValidTokenBudget,
+  buildSessionGoalRuntimeBinding,
   planGoalCreate,
   planGoalTransition,
 } from "@kodax-ai/coding";
@@ -740,7 +758,6 @@ const RUNTIME_CONFIG_PATCH_KEYS = [
   "extensions",
   "repoIntelligenceMode",
   "repoIntelligenceTrace",
-  "verifierLog",
   "stallLog",
   "fallbackProviders",
   "fastProvider",
@@ -2488,7 +2505,6 @@ export type RuntimeEventType =
   | "repo_intelligence.trace"
   | "todo.updated"
   | "todo.warning"
-  | "sidecar.message"
   | "run.completed"
   | "run.failed"
   | "run.cancelled"
@@ -3570,6 +3586,7 @@ interface RuntimeAdmittedSessionContext {
 }
 
 interface RuntimeRunRecord {
+  goalRuntime?: NonNullable<NonNullable<KodaXOptions['context']>['goalRuntime']>;
   readonly independentActorRef?: { readonly actorPath: string; readonly turnId: string };
   readonly productExecutionKey?: string;
   readonly productSession?: boolean;
@@ -4288,7 +4305,6 @@ async function createKodaXRuntimeInternal(
     await ownerLiveness.close();
     throw error;
   }
-
 
   // The view's history source is the canonical conversation (lineage-resolved,
   // so pre-compaction entries survive); the recent storage tail is only the
@@ -11764,6 +11780,33 @@ function createRuntimeRunService(deps: {
         lineage: createSessionLineage(messages, session.lineage),
       });
     }
+    if (record.mode === 'managed_task' || record.mode === 'coding') {
+      const assertWritable = (): void => {
+        if (deps.isClosed() || activeRunBySession.get(record.sessionId) !== record.runId
+          || !isActiveRunPhase(record.phase) || record.stop !== undefined || record.abortController?.signal.aborted) {
+          throw new Error('Goal mutation requires the active Run owner.');
+        }
+      };
+      record.goalRuntime = await buildSessionGoalRuntimeBinding({
+        sessionId: record.sessionId,
+        storage: {
+          load: id => deps.sessionManager.storage.load(id),
+          ...(deps.sessionManager.storage.mutateLineage ? {
+            mutateLineage: (id, mutation) => deps.sessionOperations.run(id, async () => {
+              assertWritable();
+              const found = await deps.sessionManager.storage.mutateLineage!(id, mutation);
+              if (found) deps.sessionViews.changed(id, true);
+              return found;
+            }),
+          } : {}),
+        },
+        hasPendingUserInput: () => productQueue.list(record.sessionId).length > 0,
+        getPermissionMode: () => record.permissionMode,
+        assertWritable,
+      });
+    }
+    execution?.assertAdmission?.();
+    trustedInput.assertAdmission?.();
     if (trustedInput.productBatch) productQueue.submitBatch(input.sessionId, trustedInput.productBatch, runId);
     deps.runs.set(runId, record);
     if (isQueued) {
@@ -12668,7 +12711,6 @@ function createRuntimeRunService(deps: {
       }
       return stopOperation;
     },
-
 
     async setModel(runId, model) {
       deps.ensureOpen();
@@ -13894,6 +13936,7 @@ function buildRunOptions(input: {
     memoryIdentity: _callerMemoryIdentity,
     shellSandbox: callerShellSandbox,
     trustedTextMutationHost: _callerTrustedTextMutationHost,
+    goalRuntime: _callerGoalRuntime,
     ...ownerSafeContext
   } = options.context ?? {};
   const runtimeAutoGuardrail = options.guardrails?.find(isRuntimeAutoModeGuardrail);
@@ -14070,6 +14113,7 @@ function buildRunOptions(input: {
     events,
     context: {
       ...ownerSafeContext,
+      ...(!isForkInvocation && record.goalRuntime ? { goalRuntime: record.goalRuntime } : {}),
       runtimeRunId: record.runId,
       configHome: input.defaultConfigHome,
       shellSandbox: restrictedModeShellSandbox,
@@ -17378,8 +17422,6 @@ function encodeRuntimePathComponent(value: string): string {
   return Buffer.from(value, "utf-8").toString("base64url") || "_";
 }
 
-
-
 function parseRuntimeRunStatus(value: unknown): RuntimeRunStatus | undefined {
   if (!isRecord(value)) return undefined;
   if (
@@ -19742,12 +19784,6 @@ function wrapKodaXEvents(input: {
       const attributed = withRuntimeDiagnosticIdentity(event, record.sessionId);
       emit("context.compaction.skipped", attributed, attributed);
       externalCallbacks()?.onContextCompactionSkipped?.(attributed);
-    },
-    onSidecarMessage(event) {
-      if (actorDurabilityFenced()) return;
-      input.display.onSidecarMessage?.(event);
-      emit("sidecar.message", event, event);
-      externalCallbacks()?.onSidecarMessage?.(event);
     },
     onTodoUpdate(items, meta) {
       if (actorDurabilityFenced()) return;
@@ -23615,7 +23651,6 @@ function permissionMatchesFilter(
   return true;
 }
 
-
 interface RuntimeAutoModeGuardrailCacheEntry {
   readonly runId: string;
   readonly projectRoot: string;
@@ -23769,7 +23804,6 @@ function runtimeAutoModeDecisionKey(call: RunnerToolCall): string | undefined {
   }
 }
 
-
 function isRuntimeAutoModeGuardrail(
   guardrail: NonNullable<RuntimeKodaXOptions["guardrails"]>[number],
 ): guardrail is RuntimeOwnedAutoModeGuardrail {
@@ -23791,7 +23825,6 @@ function getRuntimeAutoModeGuardrail(
   }
   return record.start?.options.guardrails?.find(isRuntimeAutoModeGuardrail);
 }
-
 
 function workspaceSandboxCanContainReview(review: AutoModePermissionReview): boolean {
   const writable = (boundary: AutoModePermissionTarget["boundary"]): boolean => (
@@ -23882,7 +23915,6 @@ function createRuntimeOwnedAutoModeGuardrail(
     },
   };
 }
-
 
 function createRuntimeSessionAutoModeGuardrail(input: {
   readonly runId: string;
@@ -24609,4 +24641,9 @@ function cloneMessage(message: KodaXMessage): KodaXMessage {
   return structuredClone(message);
 }
 
-export type { KodaXMessage, KodaXResult, KodaXEvents, SessionTranscriptEntry };
+export type {
+  KodaXMessage,
+  KodaXResult,
+  KodaXEvents,
+  SessionTranscriptEntry,
+};

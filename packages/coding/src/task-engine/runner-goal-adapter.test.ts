@@ -5,7 +5,12 @@
  * per-turn flood counter reset.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import {
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import type { GoalRuntimeBinding } from '../goal/runtime-wiring.js';
 import { buildRunnerGoalAdapter } from './runner-goal-adapter.js';
 
@@ -133,7 +138,6 @@ describe('buildRunnerGoalAdapter — goal runtime wrap', () => {
         getTurnStartMs: () => undefined,
         hasPendingUserInput: () => false,
       },
-      installVerifyComplete: () => {},
     };
   }
 
@@ -231,74 +235,15 @@ describe('buildRunnerGoalAdapter — goal runtime wrap', () => {
     expect(r).toBeUndefined();
   });
 
-  it('does NOT call installVerifyComplete when verifierProvider is missing (binding keeps stub)', () => {
-    const goalRuntime = makeGoalRuntime();
-    const installSpy = vi.spyOn(goalRuntime, 'installVerifyComplete');
-    buildRunnerGoalAdapter({
-      goalRuntime,
-      tokenStateRef: makeTokenStateRef(),
-      baseCtx: makeBaseCtx(),
-      baseBeforeNextTurn: NOOP_BEFORE_NEXT_TURN,
-      composedStopHook: NOOP_STOP_HOOK,
-      transcriptRef: { current: [] },
-      // verifierProvider omitted
+  it('parks for child work before an active goal can reanimate the root', async () => {
+    const goalRuntime = makeGoalRuntime({ getGoal: () => activeGoal() });
+    const { stopHook } = buildRunnerGoalAdapter({ goalRuntime,
+      tokenStateRef: makeTokenStateRef(), baseCtx: makeBaseCtx(),
+      baseBeforeNextTurn: NOOP_BEFORE_NEXT_TURN, composedStopHook: NOOP_STOP_HOOK,
+      hasPendingWork: () => true,
     });
-    expect(installSpy).not.toHaveBeenCalled();
-  });
-
-  it('does NOT call installVerifyComplete when transcriptRef is missing (binding keeps stub)', () => {
-    const goalRuntime = makeGoalRuntime();
-    const installSpy = vi.spyOn(goalRuntime, 'installVerifyComplete');
-    buildRunnerGoalAdapter({
-      goalRuntime,
-      tokenStateRef: makeTokenStateRef(),
-      baseCtx: makeBaseCtx(),
-      baseBeforeNextTurn: NOOP_BEFORE_NEXT_TURN,
-      composedStopHook: NOOP_STOP_HOOK,
-      // transcriptRef omitted
-      verifierProvider: { name: 'fake' } as never,
-    });
-    expect(installSpy).not.toHaveBeenCalled();
-  });
-
-  it('calls installVerifyComplete when all verifier deps are supplied', () => {
-    const goalRuntime = makeGoalRuntime();
-    const installSpy = vi.spyOn(goalRuntime, 'installVerifyComplete');
-    buildRunnerGoalAdapter({
-      goalRuntime,
-      tokenStateRef: makeTokenStateRef(),
-      baseCtx: makeBaseCtx(),
-      baseBeforeNextTurn: NOOP_BEFORE_NEXT_TURN,
-      composedStopHook: NOOP_STOP_HOOK,
-      transcriptRef: { current: [] },
-      verifierProvider: { name: 'fake' } as never,
-      verifierModel: 'fake-model',
-    });
-    expect(installSpy).toHaveBeenCalledTimes(1);
-    // Inspect the installed fn shape — it should be an async function
-    // taking a goal and returning a GoalCompleteResult shape.
-    const installedFn = installSpy.mock.calls[0]![0];
-    expect(typeof installedFn).toBe('function');
-  });
-
-  it('beforeNextTurn updates transcriptRef.current to the latest snapshot', async () => {
-    const transcriptRef: { current: readonly { role: 'user'; content: string }[] } = {
-      current: [],
-    };
-    const { beforeNextTurn } = buildRunnerGoalAdapter({
-      goalRuntime: undefined,
-      tokenStateRef: makeTokenStateRef(),
-      baseCtx: makeBaseCtx(),
-      baseBeforeNextTurn: NOOP_BEFORE_NEXT_TURN,
-      composedStopHook: NOOP_STOP_HOOK,
-      transcriptRef: transcriptRef as never,
-    });
-    const newTranscript = [
-      { role: 'user' as const, content: 'first' },
-      { role: 'user' as const, content: 'second' },
-    ];
-    await beforeNextTurn({ transcript: newTranscript, iteration: 0 });
-    expect(transcriptRef.current).toEqual(newTranscript);
+    expect(await stopHook({ transcript: [], lastAssistantText: 'Waiting.', signal: new AbortController().signal,
+      reanimateCount: 0, reanimateBudget: 3 })).toBeUndefined();
   });
 
   it('wrappedStopHook prefers inner stop hook result when defined (priority over goal continuation)', async () => {
