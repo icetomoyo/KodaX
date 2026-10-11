@@ -6,23 +6,6 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-### Fixed
-
-- Terminal Memory review drains no longer reclaim an unavailable preferred
-  job as backlog and steal startup recovery from the next Run (Issue 362).
-
-- Clipboard helper input-pipe failures now enter the existing native/tmux/OSC
-  52 fallback instead of crashing mouse copy-on-select (Issue 363).
-- MCP stdio sends observe asynchronous write failures and report them through
-  the awaited send and transport diagnostics; required initialization
-  notifications cannot turn a failed connection into ready (Issue 364).
-- Workflow child budgets retain all reported Provider fallback attempts and
-  requests before a thrown attempt, including truncated continuations. Local
-  accounting reuses normalized request facts, preserves Host observers, and
-  keeps conservative totals when component usage is incomplete (Issue 365).
-- The Host interrupt-fence and statistics fixtures wait for actual Provider entry, observe
-  early Run termination, and retain a bounded cleanup window (Issue 366).
-
 ---
 
 ## [0.7.97-alpha.3] - 2026-10-10
@@ -56,6 +39,22 @@ remains a manual maintainer action.
 - Product Runs capture the Host `workflow.maxConcurrency` at start and use
   the Host-owned workflow-runs directory; the client adapter strips forged
   `workflowHostPolicy` fields from Product payloads.
+
+### Fixed
+
+- Terminal Memory review drains no longer reclaim an unavailable preferred
+  job as backlog and steal startup recovery from the next Run (Issue 362).
+- Clipboard helper input-pipe failures now enter the existing native/tmux/OSC
+  52 fallback instead of crashing mouse copy-on-select (Issue 363).
+- MCP stdio sends observe asynchronous write failures and report them through
+  the awaited send and transport diagnostics; required initialization
+  notifications cannot turn a failed connection into ready (Issue 364).
+- Workflow child budgets retain all reported Provider fallback attempts and
+  requests before a thrown attempt, including truncated continuations. Local
+  accounting reuses normalized request facts, preserves Host observers, and
+  keeps conservative totals when component usage is incomplete (Issue 365).
+- The Host interrupt-fence and statistics fixtures wait for actual Provider entry, observe
+  early Run termination, and retain a bounded cleanup window (Issue 366).
 
 ---
 

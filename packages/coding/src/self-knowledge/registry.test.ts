@@ -178,6 +178,8 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('race-safe spawn-slot reservations');
     expect(sdk).toContain('productExecutionAuthorization:2');
     expect(sdk).toContain('never to independent Actor admissions');
+    expect(sdk).toContain('Release validation fixes scoped Memory review recovery (Issue 362)');
+    expect(sdk).toContain('Host statistics fixtures (366) harden the same surfaces');
     expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2 contract is retained.');
     expect(sdk).toContain('The v0.7.97-alpha.2 release completes the FEATURE_298 product seams embedders need');
     expect(sdk).toContain('`authorizeExecution(request, services)` callback');

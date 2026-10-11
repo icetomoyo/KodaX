@@ -168,6 +168,15 @@ On top of v0.7.97-alpha.2 it includes:
 - Host-owned Workflow configuration: Product Runs capture the existing
   `workflow.maxConcurrency` at start and use the Host-owned workflow-runs
   directory; no new tunable concurrency field.
+- Release-validation fixes shipped with the tag: scoped Memory review
+  drains no longer reclaim an unavailable preferred job and steal startup
+  recovery from the next Run (Issue 362); clipboard helper pipe failures
+  fall back instead of crashing (Issue 363); MCP stdio sends observe
+  asynchronous write failures (Issue 364); Workflow child budgets retain
+  every reported Provider attempt before a thrown one (Issue 365); Host
+  interrupt-fence and statistics fixtures wait for actual Provider entry
+  (Issue 366). Regression guides: `docs/test-guides/ISSUE_362_0.7.97_REGRESSION_GUIDE.md`,
+  `docs/test-guides/ISSUE_363_0.7.97_REGRESSION_GUIDE.md`.
 
 All root/workspace package versions and lockfile entries are
 `0.7.97-alpha.3`. The feature-design submodule, public guides, architecture
