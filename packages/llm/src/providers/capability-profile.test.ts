@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  getProvider,
   getProviderConfiguredCapabilityProfile,
   getProviderList,
   getProviderModels,
@@ -40,6 +41,11 @@ const EXPECTED_IMAGE_INPUT_NATIVE_PROFILE = {
 } as const;
 
 describe('provider capability profiles', () => {
+  it.each(getProviderList().map(provider => [provider.name, provider.capabilityProfile] as const))(
+    'passes the declared capability profile to the live %s provider', (name, profile) => {
+      expect(getProvider(name).getCapabilityProfile()).toEqual(profile);
+    },
+  );
   it('marks CLI bridge providers as lossy bridge transports in snapshot metadata', () => {
     // gemini-cli was widened to image-input in FEATURE_134 v0.7.40 since
     // Gemini CLI 2.x supports `@<path>` file-include syntax in prompts.

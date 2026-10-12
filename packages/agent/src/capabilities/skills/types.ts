@@ -310,6 +310,7 @@ export interface LearnedSkillDiscoveryConfig extends LearnedSkillDiscoveryConfig
 // === Default Skill Paths ===
 
 import { homedir } from 'os';
+import { existsSync } from 'node:fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -333,7 +334,9 @@ function resolveBuiltinPath(): string {
   if (process.env.KODAX_BUNDLED === 'true') {
     return path.join(path.dirname(process.execPath), 'builtin');
   }
-  return path.join(__dirname, 'builtin');
+  const local = path.join(__dirname, 'builtin');
+  const distribution = path.join(__dirname, '..', 'builtin');
+  return !existsSync(local) && existsSync(distribution) ? distribution : local;
 }
 
 /**

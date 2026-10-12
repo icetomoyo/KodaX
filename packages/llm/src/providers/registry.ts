@@ -163,6 +163,7 @@ function buildProviderConfig<K extends ProviderName>(
     maxOutputTokensField: snapshot.maxOutputTokensField,
     thinkingBudgetCap: snapshot.thinkingBudgetCap,
     supportsThinking: snapshot.supportsThinking ?? false,
+    capabilityProfile: snapshot.capabilityProfile,
     verifyStrategy: snapshot.verifyStrategy,
     ...extras,
   };
