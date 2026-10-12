@@ -2,7 +2,24 @@
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
 
-> Last updated: 2026-10-11
+> Last updated: 2026-10-12
+>
+> **v0.7.97-alpha.4 release addendum:** FEATURE_301 ships the independent
+> `@kodax-ai/artifacts` package — PPTX authoring, bounded editing, and
+> current-file visual evidence through LibreOffice/PDF rendering — with an
+> optional managed KodaX adapter built on managed permissions, sandbox,
+> and cancellation. Main-agent result verification replaces the
+> out-of-band Sidecar Verifier: the main agent verifies each requested
+> requirement with actual tool and rendered evidence before delivery, the
+> built-in `visual-review` skill covers static, paginated, interactive,
+> and temporal surfaces, an ordinary read-only child reviewer may
+> contribute findings within the same Run, and missing capabilities or
+> unchecked scope are reported honestly as unverified. Verifier
+> execution, config, live callbacks, `/verifier-log`, and
+> `KODAX_VERIFIER_*` diagnostics retire; persisted history readers, the
+> Stall sidecar, Auto permission reviewer, Bash/sandbox policy, Actor
+> waits, and Stop hooks are unchanged. Every v0.7.96 stable and
+> v0.7.97-alpha.1/alpha.2/alpha.3 contract is retained.
 >
 > **v0.7.97-alpha.3 release addendum:** FEATURE_298's third alpha lets
 > trusted Main bound Product Workflows. `authorizeExecution` may return a

@@ -768,6 +768,20 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
+**v0.7.97-alpha.4 release:** Adds the independent `@kodax-ai/artifacts`
+package — PPTX authoring, bounded editing, and current-file visual
+evidence through LibreOffice/PDF rendering — with an optional managed
+KodaX adapter (FEATURE_301), and retires the out-of-band Sidecar
+Verifier: the main agent now verifies requested requirements with actual
+tool and rendered evidence before delivery, guided by the `visual-review`
+builtin skill across static, paginated, interactive, and temporal
+surfaces, with read-only child reviewers inside the same Run and
+unverified scope reported honestly. See
+[docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) and the
+[v0.7.97-alpha.4 release notes](docs/release.md#v0797-alpha4-release-preparation).
+Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2/alpha.3 contract is
+retained.
+
 **v0.7.97-alpha.3 release:** Lets trusted Main bound Product Workflows.
 `authorizeExecution` may return a `workflowHostPolicy` (`maxAgents`,
 `tokenBudget`) without registering credential or hostTools leases, and the

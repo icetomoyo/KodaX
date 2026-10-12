@@ -8,6 +8,47 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.97-alpha.4] - 2026-10-12
+
+Fourth alpha of the v0.7.97 line: FEATURE_301 adds the independent
+`@kodax-ai/artifacts` package — PPTX authoring, bounded editing, and
+current-file visual evidence through LibreOffice/PDF rendering — with an
+optional managed KodaX adapter, and retires the out-of-band Sidecar
+Verifier in favor of evidence-based in-run result review with the
+`visual-review` builtin skill. Every v0.7.96 stable and
+v0.7.97-alpha.1/alpha.2/alpha.3 contract is retained. npm publication
+remains a manual maintainer action.
+
+### Added
+
+- `@kodax-ai/artifacts`: independent optional package for PPTX authoring,
+  bounded editing, and current-file visual evidence; its optional KodaX
+  bridge uses managed permissions, sandbox, and cancellation (FEATURE_301).
+- Managed PPT review loop: native Office and autonomous non-Office PPT
+  validation with rendered-page evidence and bounded edit cycles.
+- `visual-review` builtin skill covering static images/charts, paginated
+  documents/slides/sheets, interactive web/app/terminal/canvas/3D surfaces,
+  and temporal video/animation results; missing capabilities and unchecked
+  scope are reported honestly as unverified.
+
+### Changed
+
+- Main-agent result verification replaces the Sidecar Verifier (ADR
+  2026-10-11): the main agent verifies each requested requirement with
+  actual tool and rendered evidence before delivery, and an ordinary
+  read-only child reviewer may contribute findings within the same Run.
+  Retired: verifier execution, config, live callbacks, the synthetic
+  revision producer, `/verifier-log`, and `KODAX_VERIFIER_*` diagnostics;
+  persisted verifier history readers remain. Stall sidecar, Auto
+  permission reviewer, Bash/sandbox policy, Actor waits, and Stop hooks
+  are unchanged.
+- Bundled skill discovery resolves the packaged `builtin` layout, and
+  provider capability profiles carry the capability snapshot into managed
+  task admission; the release audit now walks the runtime tarball
+  (`audit-runtime-tarball.mjs`).
+
+---
+
 ## [0.7.97-alpha.3] - 2026-10-10
 
 Third alpha of the v0.7.97 line: trusted Main can now bound Product

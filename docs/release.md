@@ -136,6 +136,44 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.97-alpha.4 release preparation
+
+Release state: `v0.7.97-alpha.4` is the GitHub pre-release for the exact
+tagged commit — the fourth alpha of the v0.7.97 line, shipping FEATURE_301
+(managed Artifact SDK and PPT review loop) and the Sidecar Verifier
+retirement. The tag-triggered Release workflow runs the full reusable CI
+workflow before the build matrix; branch pushes do not trigger CI, so the
+tag is the first and only remote validation gate. The `-alpha` suffix
+marks the release as a GitHub pre-release automatically. npm registry
+publication remains a separate manual maintainer action.
+
+On top of v0.7.97-alpha.3 it includes:
+
+- `@kodax-ai/artifacts`: a fifth, independent optional workspace package
+  for PPTX authoring, bounded editing, and current-file visual evidence
+  through LibreOffice/PDF rendering; its optional KodaX bridge uses
+  managed permissions, sandbox, and cancellation (FEATURE_301; design:
+  `docs/features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop`).
+- Managed PPT review loop: native Office and autonomous non-Office PPT
+  validation with rendered-page evidence and bounded edit cycles.
+- Evidence-based result review: the Sidecar Verifier retires; the main
+  agent verifies requested requirements with actual tool and rendered
+  evidence before delivery, guided by the built-in `visual-review` skill
+  (static, paginated, interactive, and temporal surfaces), with read-only
+  child reviewers allowed inside the same Run and unverified scope
+  reported honestly. Retired with it: verifier execution, config, live
+  callbacks, `/verifier-log`, and `KODAX_VERIFIER_*` diagnostics;
+  persisted history readers remain.
+- Packaging fixes: bundled skill discovery resolves the packaged `builtin`
+  layout, provider capability profiles reach managed task admission, and
+  the release audit walks the runtime tarball
+  (`scripts/audit-runtime-tarball.mjs`).
+
+All root/workspace package versions and lockfile entries are
+`0.7.97-alpha.4` (the new `@kodax-ai/artifacts` package keeps its own
+`0.1.0` version). The feature-design submodule, public guides, architecture
+documents, and `kodax_manual` track this release.
+
 ## v0.7.97-alpha.3 release preparation
 
 Release state: `v0.7.97-alpha.3` is the GitHub pre-release for the exact

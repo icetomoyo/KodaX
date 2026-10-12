@@ -11,10 +11,10 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-alpha.3` (Git tag / GitHub pre-release); `v0.7.96` remains the last stable release |
-| Current package version | `@kodax-ai/kodax@0.7.97-alpha.3` (npm publication remains manual) |
+| Current released version | `v0.7.97-alpha.4` (Git tag / GitHub pre-release); `v0.7.96` remains the last stable release |
+| Current package version | `@kodax-ai/kodax@0.7.97-alpha.4` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 core packages + independent optional `artifacts` |
-| Released implementation | [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
+| Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement implemented and validated, unreleased; [design](research/verifier-replacement-visual-review-2026-10-11.md) |
 | Current development | `v0.7.97` / `FEATURE_298` — cross-platform/manual release verification for the alpha continues |
 | Roadmap updated | `2026-09-23` — FEATURE_300 planned for `v0.7.99`; implementation not started |
@@ -522,6 +522,26 @@
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
 ---
+
+## v0.7.97-alpha.4 Release Record
+
+`v0.7.97-alpha.4` is the fourth alpha of the v0.7.97 line: FEATURE_301
+ships the independent `@kodax-ai/artifacts` package — PPTX authoring,
+bounded editing, and current-file visual evidence through LibreOffice/PDF
+rendering — with an optional managed KodaX adapter built on managed
+permissions, sandbox, and cancellation. The managed PPT review loop
+validates native Office and autonomous non-Office decks against rendered
+pages within bounded edit cycles. Main-agent result verification replaces
+the out-of-band Sidecar Verifier: the built-in `visual-review` skill
+covers static images/charts, paginated documents/slides/sheets,
+interactive web/app/terminal/canvas/3D surfaces, and temporal
+video/animation results; a read-only child reviewer may contribute within
+the same Run; and unverified scope is reported honestly. Verifier
+execution, config, live callbacks, `/verifier-log`, and
+`KODAX_VERIFIER_*` diagnostics retire while persisted history readers
+remain. Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2/alpha.3 contract
+is retained. Cross-platform manual acceptance and npm publication remain
+manual maintainer steps.
 
 ## v0.7.97-alpha.3 Release Record
 
@@ -2020,6 +2040,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
+| `301` | Managed Artifact SDK and PPT Review Loop | `v0.7.97` (release pending) | [v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) | Independent `@kodax-ai/artifacts` package (PPTX authoring, bounded editing, current-file visual evidence) with an optional managed KodaX adapter through managed permissions, sandbox and cancellation; retires the out-of-band Sidecar Verifier in favor of evidence-based in-run result review and the `visual-review` builtin skill; native Office and autonomous non-Office PPT validation. |
 | `299` | Unified Stop, Full Access and Extension Execution Contracts | `v0.7.96` (release pending) | [v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) | Implements legacy large metadata paging, Full Access policy provenance, lock-independent Session Stop, CLI/ACP convergence and managed extension execution with reload isolation. |
 | `297` | Codex-Aligned Permission Profiles, Sandbox Escalation, and Exec Policy | `v0.7.96-alpha.5` | [v0.7.96](features/v0.7.96.md#feature_297-codex-aligned-permission-profiles-sandbox-escalation-and-exec-policy) | Makes sandbox completion authoritative, moves Edits/Auto decisions to an exact host boundary, adds Full Access and JSONC Exec Policy, removes Auto[RULES]/envPass/global-Git blocking, and preserves a single no-replay host retry. |
 | `295` | Separate Trusted Text Mutation from Native Shell Containment | `v0.7.96-alpha.1`; alpha.6 concurrency completion | [v0.7.96](features/v0.7.96.md#feature_295-separate-trusted-text-mutation-from-native-shell-containment) | Splits trusted text transactions from platform shell containment; Issue 326/ADR-070 removes command-lifetime/global/target admission locks, uses protocol 10 + setup generation 10 (with generation 8 retained only as the legacy-migration proof), stable capability SIDs, setup-owned broad roots that are verify-only during ordinary admission, protected two-phase synchronous setup with no overlapping helper, cold interactive startup self-healing through the setup-only boundary, additive command-root convergence, unsupported Windows per-command `denyRead` rejection before target start, independent command Jobs/pipes, OS-arbitrated exact-authority brokers, and a real dual-Runtime overlap gate. |
