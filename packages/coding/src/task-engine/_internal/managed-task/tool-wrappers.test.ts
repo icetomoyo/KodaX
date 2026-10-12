@@ -1,6 +1,6 @@
 /**
  * Unit tests for `recordMutationForTool` — the mutation-tracker feeder that
- * drives the Sidecar Verifier work-scale gate. Regression coverage for the
+ * drives managed-task mutation accounting. Regression coverage for the
  * P0 fixes:
  *   - `multi_edit` (registry `mutates-fs`) is now tracked (was silently
  *     omitted by the old hand-written set → gate skipped verification).
@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Agent, RunnerToolContext } from '@kodax-ai/agent';
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
 
@@ -20,12 +20,33 @@ import {
   wrapCodingToolAsRunnable,
 } from './tool-wrappers.js';
 import type { ManagedMutationTracker } from '../../../types.js';
+import { getExtensionExecutionScope } from '../../../extensions/execution-scope.js';
 
 function tracker(): ManagedMutationTracker {
   return { files: new Map<string, number>(), totalOps: 0, riskyShellOps: 0 };
 }
 
 const lines = (n: number): string => Array.from({ length: n }, (_, i) => `line ${i}`).join('\n');
+
+it('binds AMA extension handlers to current Run and checked nested effects', async () => {
+ const nested = vi.fn(async () => '[Blocked] checked host decision');
+ const signal = new AbortController().signal;
+ const runnable = wrapCodingToolAsRunnable({ name: 'artifact-scope-probe', description: 'probe', input_schema: { type: 'object', properties: {} } },
+  async () => {
+   const scope = getExtensionExecutionScope(); expect(scope).toMatchObject({ sessionId: 'session', runId: 'run', invocationId: 'call' });
+   return scope!.invokeTool('write', { path: 'effect', content: 'x' });
+  }, { backups: new Map(), sessionId: 'session', runtimeRunId: 'run', abortSignal: signal, invokeCheckedTool: nested });
+ const runnerContext = { agent: { name: 'worker' } as Agent, toolCallId: 'call', abortSignal: signal };
+ expect((await runnable.execute({}, runnerContext)).content).toBe('[Blocked] checked host decision');
+ expect(nested).toHaveBeenCalledWith('write', { path: 'effect', content: 'x' }, runnerContext);
+});
+it('uses the current Runner invocation cancellation signal for handler effects', async () => {
+ const rootSignal = new AbortController().signal, invocationSignal = new AbortController().signal;
+ const runnable = wrapCodingToolAsRunnable({ name: 'signal-probe', description: 'probe', input_schema: { type: 'object', properties: {} } },
+  async (_input, context) => { expect(context.abortSignal).toBe(invocationSignal); return 'ok'; },
+  { backups: new Map(), abortSignal: rootSignal });
+ expect((await runnable.execute({}, { agent: { name: 'worker' } as Agent, abortSignal: invocationSignal })).content).toBe('ok');
+});
 
 describe('recordMutationForTool — file mutation tracking', () => {
   it('tracks multi_edit (the bug: was omitted by the old hand-written set)', () => {

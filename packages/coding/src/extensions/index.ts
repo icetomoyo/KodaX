@@ -70,6 +70,8 @@ export {
 } from './official-sandbox.js';
 
 export { exec, webhook } from './helpers.js';
+export { executeManagedProcess } from './managed-process.js';
+export type { ManagedProcessInput } from './managed-process.js';
 export type { ExecOptions, ExecResult, WebhookOptions, WebhookResult } from './helpers.js';
 
 export {

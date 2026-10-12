@@ -307,7 +307,7 @@ export async function executeToolCall(
   return result;
 }
 
-function executeInExtensionScope(
+export function executeInExtensionScope(
   call: RunnableToolCall, ctx: KodaXToolExecutionContext, signal: AbortSignal | undefined,
   events: KodaXEvents, execute: () => Promise<ToolResult>,
 ): Promise<ToolResult> {

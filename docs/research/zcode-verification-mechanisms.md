@@ -1,5 +1,7 @@
 # ZCode 怎样验证交付结果，视觉审查能否替代常驻 verifier？
 
+> 2026-10-12 补充：下文 LibreOffice→PDF→PNG 是 PPT 技能规定的 agent 审查路线，不是所有 ZCode PPT 功能的依赖。当前 UI 自带 `@aiden0z/pptx-renderer` 1.2.4，直接解析 PPTX 并在浏览器渲染；界面 PDF 导出使用 Electron `printToPDF`。本机 ZCode 第三方清单确认该库，PATH、常见安装位置及 ZCode 安装目录未发现 LibreOffice；未核对具体用户任务的工具历史，不据界面可预览断言 agent 已完成视觉审查。[预览引擎](C:/Works/PubProj/ZCode/packages/ui/src/presentation/pptxRendererPreviewEngine.ts:1)、[PDF 导出](C:/Works/PubProj/ZCode/packages/desktop/src/main/desktopPrintToPdf.ts:18)、[安装包清单](C:/Users/ADMIN/AppData/Local/Programs/ZCode/resources/THIRD-PARTY-NOTICES.md:33)。
+
 TL;DR：ZCode 已把“看实际产物的视觉验收”与“读历史判断 goal 是否完成”分开：PPT 通过技能选择性调度只读 visual-judge 审查预渲染 PNG；HTML 通过主 agent 的浏览器观察回路审查 DOM 与截图。通用 goal verifier 仍存在，且不调用工具，只判断已有历史；它不能替代产物验收。[PPT QA](C:/Users/ADMIN/.zcode/cli/plugins/cache/zcode-plugins-official/presentations/0.1.7/skills/pptx/SKILL.md:152)、[visual-judge](C:/Users/ADMIN/.zcode/cli/plugins/cache/zcode-plugins-official/presentations/0.1.7/agents/visual-judge.md:3)、[Browser 观察规则](C:/Works/PubProj/ZCode/apps/zcode-cli/packages/browser-use-plugin/skills/control-browser/SKILL.md:127)、[goal verifier 调用](C:/Works/PubProj/ZCode/apps/zcode-cli/packages/core/src/runtime/methods/target-completion-verification.ts:338)。
 
 ## 研究边界与来源状态

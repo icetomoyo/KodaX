@@ -1,0 +1,55 @@
+{
+  "name": "@kodax-ai/artifacts",
+  "version": "0.1.0",
+  "description": "Independent artifact operations and visual evidence with an injected execution boundary",
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./kodax": {
+      "types": "./dist/kodax.d.ts",
+      "import": "./dist/kodax.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "import": "./dist/runtime.js"
+    }
+  },
+  "files": [
+    "dist",
+    "skills",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aiden0z/pptx-renderer": "1.3.0",
+    "fast-xml-parser": "5.3.4",
+    "jszip": "3.10.1",
+    "pdfjs-dist": "5.4.296",
+    "playwright-core": "1.62.1",
+    "pptxgenjs": "4.0.1"
+  },
+  "peerDependencies": {
+    "@kodax-ai/kodax": "*"
+  },
+  "peerDependenciesMeta": {
+    "@kodax-ai/kodax": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "vitest": "4.1.11"
+  },
+  "engines": {
+    "node": ">=20.16"
+  }
+}

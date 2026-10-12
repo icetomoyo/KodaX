@@ -25,7 +25,7 @@ import { matchesShellPattern, SHELL_WRITE_PATTERNS } from './tool-policy.js';
 /**
  * File-mutating tool names. MUST mirror every tool registered with
  * `sideEffect: 'mutates-fs'` in `tool-definitions.ts`; a Worker that uses any
- * of them is doing mutation work the Verifier work-scale gate must see.
+ * of them contributes to managed-task mutation accounting.
  *
  * This is hardcoded rather than derived from `BUILTIN_TOOL_DEFINITIONS` at
  * module load. Importing that registry here pulls its handler chain, which has
@@ -49,7 +49,7 @@ export const MUTATES_FS_TOOL_NAMES: ReadonlySet<string> = new Set([
 /**
  * The subset of `MUTATES_FS_TOOL_NAMES` whose mutated file path is not carried
  * in the tool input because the handler computes it internally. Each call bumps
- * `unattributedWriteOps` so the Verifier gate still sees the mutation.
+ * `unattributedWriteOps` so managed-task accounting still sees the mutation.
  */
 const UNATTRIBUTED_WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
   'undo',
@@ -171,6 +171,7 @@ export function wrapCodingToolAsRunnable(
         : undefined;
       const ctxForCall: KodaXToolExecutionContext = {
         ...baseCtx,
+        ...(runnerCtx?.abortSignal ? { abortSignal: runnerCtx.abortSignal } : {}),
         ...(toolCallId ? { toolCallId } : {}),
         ...(toolResultCapacityTokens !== undefined ? { toolResultCapacityTokens } : {}),
         ...(reportToolProgress ? { reportToolProgress } : {}),
@@ -183,8 +184,17 @@ export function wrapCodingToolAsRunnable(
             }
           : {}),
       };
+      if (baseCtx.invokeCheckedTool) {
+        ctxForCall.invokeCheckedTool = (name, parameters) => baseCtx.invokeCheckedTool!(name, parameters, runnerCtx);
+      }
       try {
-        const content = await handler(input, ctxForCall);
+        const execute = () => handler(input, ctxForCall);
+        // Lazy import avoids the registry -> construction -> AMA module cycle.
+        const content = ctxForCall.invokeCheckedTool && toolCallId
+          ? await (await import('../../../agent-runtime/tool-dispatch.js')).executeInExtensionScope(
+            { id: toolCallId, name: definition.name, input }, ctxForCall, runnerCtx?.abortSignal,
+            events ?? {}, execute)
+          : await execute();
         recordWrittenFile(baseCtx.writtenFiles, { name: definition.name, input }, content, resolveExecutionCwd(ctxForCall));
         return {
           content,

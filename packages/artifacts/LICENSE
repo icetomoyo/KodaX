@@ -1,0 +1,158 @@
+KodaX-AI Fair Core License (KAI-FCL) 1.0
+
+Copyright (c) 2026 icetomoyo <icetomoyo@gmail.com> <icetomoyo@163.com>
+
+All rights reserved except as expressly granted in this License.
+
+This License applies to KodaX releases and files that include this LICENSE file
+or otherwise identify KAI-FCL as their governing license. Earlier KodaX
+releases or files that were distributed under the Apache License, Version 2.0
+remain licensed under Apache-2.0 for those released copies. Third-party
+components remain governed by their own license terms.
+
+Effective Version Notice
+
+KodaX-AI intends KAI-FCL to govern official KodaX distributions for version
+0.7.70 and later when those distributions are provided by KodaX-AI with this
+LICENSE file, a KAI-FCL notice, or accompanying customer terms.
+
+Historical Git tags, source archives, binaries, npm packages, or other copies
+of KodaX that were already distributed with Apache-2.0 license text remain
+licensed under Apache-2.0 for those specific copies. This notice does not
+retroactively revoke rights that were already granted under Apache-2.0.
+
+For avoidance of doubt, current and future official enterprise/customer
+packages for KodaX 0.7.70 and later should be delivered with KAI-FCL or
+separate KodaX-AI customer terms.
+
+1. Definitions
+
+"Software" means KodaX, including its source code, object code, documentation,
+configuration, examples, official npm packages, binaries, and other materials
+distributed by KodaX-AI under this License.
+
+"KodaX-AI" means the copyright owner, licensor, or license steward for the
+Software.
+
+"You" means the individual or legal entity exercising permissions under this
+License.
+
+"Community Use" means use by an individual for personal learning, individual
+non-commercial work, classroom instruction, non-production research, or
+developing and testing changes for contribution to public open-source
+projects.
+
+"Commercial or Managed Use" means any use by or for a company, school, lab,
+institution, government agency, or other organization for administration, IT
+operations, team research and development, production work, intranet hosting,
+managed-device deployment, paid service delivery, customer redistribution,
+hosted or managed services, or other business purposes.
+
+"Customer Agreement" means a written agreement with KodaX-AI, including
+evaluation terms, an order form, an enterprise agreement, partner terms, or
+another commercial authorization document.
+
+"License Entitlement" means a signed offline entitlement file, commonly using
+the `.kodax-license` extension, that identifies product, edition, license
+kind, customer, expiry, enabled features, binding claims, and signature. A
+License Entitlement proves technical authorization; it is not by itself the
+complete legal contract.
+
+2. Community Grant
+
+Subject to this License, KodaX-AI grants You a limited, non-exclusive,
+non-transferable, no-charge license to download, install, run, inspect, and
+modify the Software solely for Community Use.
+
+You may make copies of the Software as reasonably necessary for Your own
+Community Use, backup, testing, and contribution preparation. You may submit
+changes, patches, issues, and documentation improvements to KodaX-AI. Unless a
+separate written contribution agreement says otherwise, You grant KodaX-AI a
+perpetual, worldwide, irrevocable, royalty-free license to use, reproduce,
+modify, distribute, sublicense, and otherwise exploit contributions You submit
+for inclusion in the Software.
+
+3. Commercial and Managed Use
+
+Commercial or Managed Use is not permitted under the Community Grant.
+
+Enterprise evaluation, enterprise production, intranet deployment,
+managed-device deployment, commercial redistribution, partner distribution,
+paid service delivery, or any other Commercial or Managed Use requires a
+Customer Agreement with KodaX-AI and, where the Software requires it, a valid
+License Entitlement.
+
+All production customer License Entitlements must include an expiry date unless
+a Customer Agreement expressly says otherwise. Longer commercial terms are
+renewals or replacements, not perpetual local secrets.
+
+4. Restrictions
+
+Except as expressly allowed by this License or a Customer Agreement, You must
+not:
+
+- use the Software for Commercial or Managed Use;
+- sell, rent, lease, sublicense, host, provide, or redistribute the Software to
+  third parties;
+- remove, disable, bypass, tamper with, or misrepresent license enforcement,
+  entitlement checks, signatures, expiry checks, binding checks, or related
+  technical controls;
+- remove or alter copyright, license, attribution, trademark, or third-party
+  notices;
+- use KodaX-AI names, logos, product names, or trademarks except to describe
+  the origin of the Software accurately;
+- violate applicable law or use the Software to infringe third-party rights.
+
+5. Separate Agreements
+
+If You have a Customer Agreement with KodaX-AI, that Customer Agreement
+controls for the Software, edition, term, users, sites, features, and use cases
+it covers. This License controls only where the Customer Agreement does not
+grant additional rights or impose different obligations.
+
+6. Ownership
+
+KodaX-AI and its licensors retain all right, title, and interest in and to the
+Software. No rights are granted except those expressly stated in this License
+or a Customer Agreement.
+
+7. Third-Party Software
+
+The Software may include or depend on third-party software, packages, models,
+fonts, assets, or tools. Those materials are licensed by their respective
+owners under their own terms. This License does not change third-party license
+obligations.
+
+8. Termination
+
+Your rights under this License terminate automatically if You violate this
+License and do not cure the violation within 30 days after receiving notice
+from KodaX-AI. Rights also terminate immediately for intentional license
+enforcement bypass, unauthorized Commercial or Managed Use, or unauthorized
+redistribution. After termination, You must stop using and distributing the
+Software, and You must delete copies not otherwise authorized by a Customer
+Agreement or by another license that independently applies to a specific
+released copy.
+
+9. Disclaimer of Warranty
+
+THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, NON-INFRINGEMENT,
+SECURITY, ACCURACY, OR AVAILABILITY.
+
+10. Limitation of Liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, KODAX-AI AND ITS CONTRIBUTORS WILL NOT
+BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR
+PUNITIVE DAMAGES, OR FOR LOST PROFITS, LOST REVENUE, LOST DATA, BUSINESS
+INTERRUPTION, GOODWILL LOSS, OR PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES,
+ARISING OUT OF OR RELATING TO THE SOFTWARE OR THIS LICENSE, EVEN IF ADVISED OF
+THE POSSIBILITY OF SUCH DAMAGES.
+
+11. Contact
+
+For enterprise evaluation, production licensing, redistribution permission, or
+questions about this License, contact:
+
+icetomoyo <icetomoyo@gmail.com> <icetomoyo@163.com>

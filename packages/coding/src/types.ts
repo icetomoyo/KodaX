@@ -2102,8 +2102,8 @@ export interface KodaXContextOptions {
   taskVerification?: KodaXTaskVerificationContract;
   /**
    * FEATURE_247 — SDK-consumer agent profile (KodaX-Space Partner et al).
-   * Opaque identity + optional AMA-path instructions + optional default verifier
-   * standard. Absent ⇒ the default Coding Agent (no behavioral change). See
+   * Opaque identity + optional AMA-path instructions + task verification
+   * requirements. Absent ⇒ the default Coding Agent (no behavioral change). See
    * {@link KodaXAgentProfile}.
    */
   agentProfile?: KodaXAgentProfile;
@@ -2672,7 +2672,7 @@ export interface KodaXToolExecutionContext {
   runtimeRunId?: string;
   extensionExecution?: ExtensionExecutionScope;
   /** Host callback re-entering the complete tool/guardrail dispatch route. */
-  invokeCheckedTool?: (name: string, input: Record<string, unknown>) => Promise<ExtensionToolResult>;
+  invokeCheckedTool?: (name: string, input: Record<string, unknown>, caller?: import('@kodax-ai/agent').RunnerToolContext) => Promise<ExtensionToolResult>;
   /** File backups for undo functionality - 文件备份用于撤销功能 */
   backups: Map<string, string>;
   /** Runtime-minted collaboration principal; model inputs cannot replace its caller path. */

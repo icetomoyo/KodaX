@@ -10,7 +10,7 @@
 
 **反模式（之前一直在做的）**：
 
-> 给 LLM 一个 user message → 让 KodaX 自由跑完整 task loop（历史 V1 是 Scout → Planner → Generator → Evaluator；当前 V2 是 Worker + Sidecar Verifier）→ 跑完看 OK rate / hit rate。
+> 给 LLM 一个 user message → 让 KodaX 自由跑完整 task loop（历史 V1 是 Scout → Planner → Generator → Evaluator；当前是 Worker 主 Agent，按任务要求读取证据并评审；旧 Sidecar Verifier 已退役）→ 跑完看 OK rate / hit rate。
 
 为什么错：
 1. **信号被淹没**。Prompt 微小调整的效果被 N 轮自由决策的累积噪声覆盖。Worker / 历史 Generator 第 5 步的不同决策 ≠ prompt 的效果。

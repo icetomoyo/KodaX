@@ -381,6 +381,8 @@ export {
 export type { ProviderName, KodaXModelCapabilities } from './providers/index.js';
 
 // ============== Tools ==============
+export { executeManagedProcess } from './extensions/managed-process.js';
+export type { ManagedProcessInput } from './extensions/managed-process.js';
 
 export {
   type ToolResult,

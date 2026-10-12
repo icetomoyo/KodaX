@@ -4,6 +4,7 @@
     { "path": "./packages/llm" },
     { "path": "./packages/agent" },
     { "path": "./packages/coding" },
+    { "path": "./packages/artifacts" },
     { "path": "./packages/repl" }
   ]
 }

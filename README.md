@@ -1337,11 +1337,12 @@ kodax --repo-intelligence full --repo-intelligence-trace
 
 ## Architecture
 
-KodaX uses a **monorepo architecture** with npm workspaces. Source layout currently has 4 workspace packages; the current source packages them as a single bundled npm package `@kodax-ai/kodax` with 13 SDK subpath exports (`/agent`, `/llm`, `/coding`, `/media`, `/repl`, `/skills`, `/mcp`, `/session`, `/client`, `/runtime`, `/sandbox`, `/a2a`, `/experimental-memory`; ADR-024 + ADR-032 + ADR-038, with ADR-036 consolidation):
+KodaX uses a **monorepo architecture** with npm workspaces. Four core packages ship in `@kodax-ai/kodax` with 13 SDK subpath exports (`/agent`, `/llm`, `/coding`, `/media`, `/repl`, `/skills`, `/mcp`, `/session`, `/client`, `/runtime`, `/sandbox`, `/a2a`, `/experimental-memory`; ADR-024 + ADR-032 + ADR-038, with ADR-036 consolidation). The independent optional `@kodax-ai/artifacts` package provides PPTX authoring, bounded editing and current-file visual evidence without adding renderers to the core bundle. Its optional KodaX bridge uses managed permissions, sandbox and cancellation. [Setup and checks](docs/test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md).
 
 ```
 KodaX/
-├── packages/                # 4 workspace packages (FEATURE_194 v0.7.43)
+├── packages/                # 4 core packages + optional artifacts
+│   ├── artifacts/           # Independent Artifact SDK + optional managed KodaX adapter
 │   ├── llm/                 # @kodax-ai/llm - LLM abstraction (16 built-in provider aliases)
 │   │   └── providers/       # Anthropic, OpenAI, DeepSeek, Kimi, MiMo, MiniMax, Zhipu, Ark, …
 │   │

@@ -16,6 +16,7 @@ import type {
   KodaXToolExecutionContext,
 } from '../types.js';
 import { resolveExecutionCwd } from '../runtime-paths.js';
+import { getManagedProcessInvocation } from '../extensions/managed-process.js';
 import {
   BASH_CAPTURE_COMPLETE_MARKER,
   BASH_CAPTURE_INCOMPLETE_MARKER,
@@ -462,14 +463,15 @@ export async function toolBash(
   const permissionMode = ctx.resolveShellPermissionMode?.();
   const directHostExecution = permissionMode === 'full-access';
   const command = toolInput.command as string;
-  const userTimeout = toolInput.timeout as number | undefined;
+  const fixedProcess = getManagedProcessInvocation(command);
+  const userTimeout = fixedProcess?.timeoutSeconds ?? toolInput.timeout as number | undefined;
   const timeout = userTimeout ? Math.min(KODAX_HARD_TIMEOUT, userTimeout) : KODAX_DEFAULT_TIMEOUT;
   const deadlineAt = Date.now() + timeout * 1000;
   const capped = userTimeout && userTimeout > KODAX_HARD_TIMEOUT;
-  const runInBackground = (toolInput.run_in_background as boolean) ?? false;
+  const runInBackground = fixedProcess === undefined ? (toolInput.run_in_background as boolean) ?? false : false;
   const cwd = resolveExecutionCwd(ctx);
   const usesWindowsCmd =
-    process.platform === 'win32'
+    fixedProcess === undefined && process.platform === 'win32'
     && (ctx.shellExecution === undefined || ctx.shellExecution.shell.kind === 'cmd');
   const legacyEnvSource = ctx.sessionScratchDir
     ? {
@@ -510,7 +512,9 @@ export async function toolBash(
         ctx.sessionScratchDir,
         ctx.abortSignal,
       );
-      commandInvocation = createShellCommandInvocation(resolved, command);
+      commandInvocation = fixedProcess === undefined
+        ? createShellCommandInvocation(resolved, command)
+        : { executable: fixedProcess.executable, args: [...fixedProcess.args], env: resolved.env };
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         return cancelledCommandResult(command);
@@ -523,6 +527,10 @@ export async function toolBash(
     | Awaited<ReturnType<NonNullable<typeof ctx.shellSandbox>['prepare']>>
     | undefined;
   let sandboxPreparationDiagnostic: string | undefined;
+  // 固定 argv 沿原 Bash 权限/沙箱/结算链路执行，绝不交给平台 shell 重新解释参数。
+  if (fixedProcess !== undefined && commandInvocation === undefined) {
+    commandInvocation = { executable: fixedProcess.executable, args: [...fixedProcess.args], env: legacyEnv };
+  }
   if (!directHostExecution && ctx.shellSandbox) {
     try {
       sandboxInvocation = await ctx.shellSandbox.prepare({

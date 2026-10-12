@@ -41,6 +41,7 @@ import type {
 } from '@kodax-ai/agent';
 import {
   Runner,
+  collectGuardrails,
   buildSystemPrompt,
   captureEpisodeReviewBranchEpoch,
   createMemoryControlPlane,
@@ -268,6 +269,8 @@ import { applyToolVisibilityPolicy, filterExcludedTools } from '../agent-runtime
 import { listRunScopedTools, runScopedToolMap } from '../agent-runtime/run-scoped-tools.js';
 import { listToolDefinitions } from '../tools/index.js';
 import { activateSessionHistoryTools } from '../tools/session-history.js';
+import { runToolDispatch } from '../agent-runtime/tool-dispatch.js';
+import { randomUUID } from 'node:crypto';
 import {
   MANAGED_RUNNER_PANIC_ITERATIONS,
   MANAGED_TASK_IDLE_YIELD_ITERATIONS,
@@ -2056,6 +2059,20 @@ async function runManagedTaskViaRunnerInner(
   const currentUserIndex = options.session?.inputId === undefined ? initialMessages.length - 1
     : initialMessages.findIndex(message => message.role === 'user' && message.inputId === options.session!.inputId);
   const currentUserMessage = initialMessages[currentUserIndex]!;
+  const nestedToolGuardrails = collectGuardrails(options.guardrails).tool;
+  // AMA handlers share the existing checked dispatch and the same per-Run state.
+  baseCtx.invokeCheckedTool = async (name, input, caller) => {
+    const id = randomUUID();
+    const guardrailContext = { agent: caller?.agent ?? chain.worker,
+      messages: caller?.transcript ?? initialMessages, abortSignal: caller?.abortSignal ?? options.abortSignal,
+      permissionIntent: options.context?.permissionIntent };
+    const results = await runToolDispatch({ toolBlocks: [{ type: 'tool_use', id, name, input }],
+      events: options.events ?? {}, ctx: { ...baseCtx, abortSignal: guardrailContext.abortSignal }, runtimeSessionState,
+      activeToolNames: runtimeSessionState.activeTools, abortSignal: guardrailContext.abortSignal,
+      ...(nestedToolGuardrails.length ? { toolGuardrails: nestedToolGuardrails, guardrailContext } : {}),
+    });
+    return results.get(id) ?? '[Tool Error] Nested tool did not return a result.';
+  };
   const currentMessageTimestamp = currentUserMessage.timestamp ?? new Date().toISOString();
   // Saved Host evidence rides only in transient request context.
   const interruptedRunRecovery = renderInterruptedRunRecovery(options.context?.interruptedRunEvidence, resolvedInitial.messages);

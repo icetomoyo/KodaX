@@ -13,24 +13,25 @@
 |---|---|
 | Current released version | `v0.7.97-alpha.3` (Git tag / GitHub pre-release); `v0.7.96` remains the last stable release |
 | Current package version | `@kodax-ai/kodax@0.7.97-alpha.3` (npm publication remains manual) |
-| Workspace baseline | `llm / agent / coding / repl` 4 packages |
+| Workspace baseline | `llm / agent / coding / repl` 4 core packages + independent optional `artifacts` |
 | Released implementation | [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement implemented and validated, unreleased; [design](research/verifier-replacement-visual-review-2026-10-11.md) |
 | Current development | `v0.7.97` / `FEATURE_298` — cross-platform/manual release verification for the alpha continues |
 | Roadmap updated | `2026-09-23` — FEATURE_300 planned for `v0.7.99`; implementation not started |
-| Total tracked features | `84` |
+| Artifact SDK | `2026-10-12` — FEATURE_301 Completed (unreleased) for `v0.7.97`; managed execution/PPT loop and four visual contracts; [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
+| Total tracked features | `85` |
 | InProgress | `2` |
 | Planned | `17` |
-| Completed | `59` |
+| Completed | `60` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
-| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300` |
+| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301` |
 | Archive cutoff | Shipped / canceled / absorbed / shelved items through `v0.7.49` are archived. |
 
 ### 一览表
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 59 | `299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| Completed | 60 | `301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 2 | `298, 225` | `298`: prior core implementation and automated evidence retained; 2026-09-18 consumer-completion T38–T42 implemented and reviewed; cross-platform/manual release verification pending. `225` remains the bounded v0.8.25 cleanup. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
@@ -2154,3 +2155,7 @@ relocation tombstones slid with their slots (`v0.8.7` -> `v0.8.17`,
 `v0.8.26`-`v0.8.34`) return to free debug/patch capacity. A pre-existing
 control-character defect in the old `v0.8.5.md` Version header was repaired
 during the rename.
+
+## 2026-10-12 FEATURE_301 Completion
+
+Managed optional Artifact SDK and PPT repair/review loop implemented, tested and reviewed; unreleased. Four visual evidence contracts are available, other capture adapters stay explicitly unverified. See the design and test guide linked above.
