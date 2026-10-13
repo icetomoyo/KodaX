@@ -62,7 +62,10 @@ class TimeoutProvider extends KodaXBaseProvider {
   }
 }
 
-it.each(['direct', 'managed', 'managed-retry', 'stopped', 'product'] as const)('keeps the session usable after %s Shell cleanup remains unknown', async (mode) => {
+// Real daemon hosts, process-tree cleanup settlement and successor Runs;
+// loaded CI Linux runners legitimately exceed the default 30s budget
+// (same evidence-based widening as the Issue 358 layout budget).
+it.each(['direct', 'managed', 'managed-retry', 'stopped', 'product'] as const)('keeps the session usable after %s Shell cleanup remains unknown', { timeout: 90_000 }, async (mode) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-shell-timeout-'));
   vi.stubEnv('KODAX_HOME', path.join(root, '.kodax'));
   vi.stubEnv('SHELL_TIMEOUT_TEST_KEY', 'offline-test');
@@ -169,4 +172,4 @@ it.each(['direct', 'managed', 'managed-retry', 'stopped', 'product'] as const)('
     vi.unstubAllEnvs();
     await rm(root, { recursive: true, force: true, maxRetries: 3 });
   }
-}, 30_000);
+});
