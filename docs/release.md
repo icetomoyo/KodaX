@@ -177,8 +177,7 @@ On top of v0.7.97-alpha.3 it includes:
   (contract: `docs/CLIENT_CONTRACT.md`).
 
 All root/workspace package versions and lockfile entries are
-`0.7.97-alpha.4` (the new `@kodax-ai/artifacts` package keeps its own
-`0.1.0` version). The feature-design submodule, public guides, architecture
+`0.7.97-alpha.4`. The feature-design submodule, public guides, architecture
 documents, and `kodax_manual` track this release.
 
 ## v0.7.97-alpha.3 release preparation
