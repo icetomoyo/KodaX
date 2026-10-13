@@ -1,6 +1,6 @@
 # SDK 统一 Client 契约迁移指南
 
-适用范围：当前工作树的 FEATURE_298/299 实现；包基线为 `0.7.97-alpha.1`。本文包含基线之后的接缝补齐，不表示 npm 已发布这些变更。接入前应核对所安装包的导出和 Host 能力。
+适用范围：当前工作树的 FEATURE_298/299 实现；本次核对的包版本为 `0.7.97-alpha.4`。版本号不表示 npm 已发布当前工作树中的所有变更。接入前应核对所安装包的导出和 Host 能力。
 
 Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附件/统计与退出恢复范围见 [SDK/Host 接缝](SPACE_SDK_SEAMS.md)。
 
@@ -100,6 +100,16 @@ Session Stop 的 `expectedRunId` 来自用户点击时观察的 Run，`requestId
 
 `ensureKodaXClient` 可启动/正常更新本地空闲 Host；`connectKodaXClient` 不启动或替换它。两者要求 `productClient` v1，具体新增领域能力仍可能要求额外握手支持（如 `subscriptionLifecycle`、`workflowSettingsDefaults`、`planModeEffort` 设置键）。缺失时明确报错，不能静默降级。
 
+### 启动进度与 UI 交接
+
+两个产品入口都接受可选 `onStartupProgress(progress)`，`ClientStartupProgress` 可从 `/client` 或纯契约入口作类型导入。底层 `ensureKodaXRuntime/connectKodaXRuntime` 使用同一类型和回调。ensure 报告实际 `checking/starting/upgrading/waiting/connecting/ready` 阶段；被动 connect 只报告 `connecting/ready`。`waiting.reason` 为 `connected_clients/host_starting/host_stopping`，沿用现有等待与期限，不强停其他客户端。
+
+启动 `ready` 只表示认证、身份及能力校验完成，Client 接口可用；不表示 Session 已加载、订阅已同步或 UI 已渲染。以返回 Promise 的结果处理成功/失败，在 `finally` 清除启动显示。阶段可以重复，连续相同通知会合并。回调在本机调用、不被等待；抛错或异步拒绝走现有诊断，不改变启动结果。已有无回调调用无需改动。
+
+REPL 的显示交接使用可选 `onBeforeRender`，在恢复提示及初始 banner/TUI 输出前清除终端加载显示；原先未发布的启动显示钩子 `onReady` 已直接更名，不保留别名。其他 UI 在自己的渲染边界完成交接。该能力不新增 Host RPC、持久事件或能力版本；完整语义见 [Client 契约](CLIENT_CONTRACT.md#连接启动与所有权)，可编译示例见[英文指南](../public_docs/sdk/embedder-guide.md#show-local-startup-progress)。
+
+### 订阅就绪与连接状态
+
 Session 观察通过 `onStatus` 区分 live/interrupted/closed；重连中的提示由应用自身管理，不存在公共 `reconnecting` 状态。Workflow/Learning 订阅的 `ready` 仅代表注册成功；重新订阅后等待 ready，再读取快照，读取期间通知作为再次刷新信号。断连恢复不重放业务 mutation，Run 的 `unknown` 结算也不等于网络断连。
 
 ## 7. 已移除与仍保留的能力
@@ -119,6 +129,7 @@ Session 观察通过 `onStatus` 区分 live/interrupted/closed；重连中的提
 5. 命令通知经 Host 后仍可见且不进入模型上下文；失败只报告，不重跑有副作用命令。
 6. Learning/Workflow 订阅注册失败、运行中故障、主动关闭和重连，均不会假报 Run 完成。
 7. 产品消费者不持有 SessionStorage、可执行 Runtime 对象或客户端 MCP owner；底层宿主代码单独标明职责。
+8. 如展示启动进度，失败时也清除显示；不把启动 `ready` 当作 UI/Session/订阅就绪，不因进度回调故障重试启动或提交业务。
 
 仓库现有验证入口：`src/sdk-client*.test.ts`、`src/session-view*.test.ts`、`tests/repl-pty-acceptance.mjs`、`tests/repl-history-browse-acceptance.mjs`。具体回归记录见[Issues 345–347 and 352 验证指南](test-guides/ISSUE_352_v0.7.96_REGRESSION_GUIDE.md)。这些测试不证明所有外部应用已经迁移。
 

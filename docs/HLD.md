@@ -388,6 +388,11 @@ input admission, Run outcomes, interactions, config and integrations. Clients
 replace current views and explicitly page canonical history, rather than
 building an authority from raw event deltas or writing Session files.
 
+Both connection entries expose optional local `onStartupProgress` using the
+shared pure `ClientStartupProgress` type. Launcher `ready` means Client APIs
+are usable; REPL `onBeforeRender` handles the later terminal display handoff.
+See the [Client contract](CLIENT_CONTRACT.md#连接启动与所有权) for these boundaries.
+
 Inline embedding remains a low-level option for independent callers. The
 Worker-hosted embedded Runtime has been removed; retained handler/semantic
 workers and the AMA Worker role are separate concepts. Products do not select

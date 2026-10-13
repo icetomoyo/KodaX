@@ -447,6 +447,11 @@ connector does not provide browser HTTP/WebSocket transport. The retained
 Worker-hosted embedded Runtime is removed. The following structured-failure
 reference is scoped to that low-level API, not fields promised by Product Client.
 
+Both product entries accept optional `onStartupProgress` with the shared
+`ClientStartupProgress` type. Launcher `ready` means the Client is usable;
+Session loading and UI rendering have separate boundaries. See the
+[startup progress example](public_docs/sdk/embedder-guide.md#show-local-startup-progress).
+
 ### Structured Runtime failures
 
 Since v0.7.96, when Runtime has a structured failure fact, failed/cancelled runs
@@ -2039,8 +2044,9 @@ await runKodaX({
 This development tree exposes 13 SDK subpaths plus the root. Shared product
 applications use `@kodax-ai/kodax/client`; independent libraries and trusted Host
 APIs remain available through the other subpaths. See the [Client contract](docs/CLIENT_CONTRACT.md)
-and [SDK migration guide](docs/SDK_MIGRATION.md). The package version is still
-`0.7.96-rc.11`; npm publication is separate from the `v0.7.97` design target.
+and [SDK migration guide](docs/SDK_MIGRATION.md). This documentation was checked
+against package version `0.7.97-alpha.4`; npm publication is separate from
+the current development-tree contract.
 
 ```bash
 npm install @kodax-ai/kodax

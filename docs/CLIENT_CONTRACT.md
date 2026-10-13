@@ -34,6 +34,7 @@ Shell 清理重试耗尽时保留 deferred 进程身份，允许后续对话和 
 | `token?: string` | 支持 | 不支持 | 显式 Host token；省略时从所选本地 profile 读取 |
 | `daemonStartupTimeoutMs?: number` | 不支持 | 支持 | 本机 Host 启动等待期限，单位毫秒；省略时采用运行时默认值 |
 | `onStartupProgress?: (progress: ClientStartupProgress) => void \| Promise<void>` | 支持 | 支持 | 本机启动/连接阶段观察；不等待显示工作，不改变启动结果 |
+| `authorizeExecution?: KodaXClientHostAuthorization` | 支持 | 支持 | 可信 Main 的执行授权回调；binding 与 Workflow 上限见 [Space SDK/Host 接缝](SPACE_SDK_SEAMS.md#可信执行授权) |
 
 `ClientStartupProgress` 是纯数据契约，由统一 Node 启动器报告实际阶段：`checking` 检查本机 Host，`starting` 创建 Host，`upgrading` 对符合条件的空闲旧 Host 发起正常更新，`connecting` 建立并认证 Client，`ready` 表示 Client 已通过身份与能力校验、接口可用。`waiting` 附带实际等待原因：`connected_clients` 等待其他客户端退出以允许更新，`host_starting` 等待 Host 就绪，`host_stopping` 等待原 Host 退出。被动 connect 只报告连接阶段，不启动或更新 Host；阶段可以随既有重试重复，连续相同通知会合并，轮询不逐次发通知。
 
@@ -68,6 +69,8 @@ CLI 用同一通知驱动加载动画，模块加载、旧子进程清理、Sess
 | 域 | 方法 | 语义与结果 |
 | --- | --- | --- |
 | `host` | `shutdown` | 请求正常关闭空闲 Host |
+| `lifecycle` | `requestExit`, `readExit`, `listPendingExits` | 请求本客户端完整退出、查询回执及尚未结算的退出请求；接收、清理、Host 退出与 unknown 分开报告 |
+| `statistics` | `read`, `readRequests`, `readTools` | 读取累计用量、上下文快照及分页请求/工具执行事实；不从当前活动或显示项推算 |
 | `commands` | `execute`, `readPrompt` | 按注册名称/参数执行，或只取可编辑纯文本；可信 hooks/model/tools/fork 元数据不返回客户端 |
 | `review` | `start` | Host 捕获 git diff、构造普通 review 或既有 scoped-review workflow，并返回对应 Run |
 | `agents` 审查 | `reviewLean` | Host 读取该 Session 项目的 AGENTS.md 并启动精简审查；缺文件明确返回失败消息 |
@@ -407,10 +410,10 @@ export async function watchSession(
 
 | 导出入口 | 可导入内容 |
 | --- | --- |
-| `@kodax-ai/kodax/client` 值 | `connectKodaXClient`、`ensureKodaXClient` |
-| `/client` 类型 | `ConnectKodaXClientOptions`、`EnsureKodaXClientOptions`、`RuntimeClientInfo`，以及 `export type *` 转出的所有纯契约声明，包括 ClientSessionView、ClientViewItem、ClientRunOutcome、ClientObservation |
+| `@kodax-ai/kodax/client` 值 | `connectKodaXClient`、`ensureKodaXClient`、离线退出恢复查询 `readKodaXClientExits` |
+| `/client` 类型 | `ConnectKodaXClientOptions`、`EnsureKodaXClientOptions`、`RuntimeClientInfo`、`KodaXClientHostAuthorization`、`KodaXClientExecutionRequest`、`RuntimeExecutionAuthorization`、`KodaXClientWorkflowHostPolicy`，以及 `export type *` 转出的所有纯契约声明，包括 ClientStartupProgress、ClientSessionView、ClientViewItem、ClientRunOutcome、ClientObservation |
 | `@kodax-ai/coding/client-contract` 类型 | `KodaXProductClient` 及纯产品数据契约；不包含 Node 连接器、启动器或诊断错误类 |
-| `@kodax-ai/kodax/runtime` 类型 | 底层 `RuntimeIdentity`、`RuntimeBuildIdentity`；RuntimeIdentity.build 可选，RuntimeBuildIdentity 明确声明 origin/fingerprint，不将它加入业务 view |
+| `@kodax-ai/kodax/runtime` 类型 | 底层 `RuntimeIdentity`、`RuntimeBuildIdentity`，以及同一 `ClientStartupProgress`；RuntimeIdentity.build 可选，RuntimeBuildIdentity 明确声明 origin/fingerprint，不将它加入业务 view |
 | `/runtime` Node 诊断值 | 既有 `RuntimeDaemonCapabilityUpgradeError`；仅底层 Node 宿主按需导入 |
 
 `RuntimeClientInfo` 来自共享纯数据声明，并由 `/client` 与 `/runtime` 保留类型导出；它不把底层 Runtime 的 Node 类型依赖带入产品声明。未声明导出的依赖类型应从其所属包显式导入。消费者类型验证通过真实 `/client` 包入口覆盖 options 和核心 view/outcome/observation 类型，保持 `types: []` 的无 Node 类型环境；Node 诊断类另从 `/runtime` 消费，不用源码直导替代包导出验证。

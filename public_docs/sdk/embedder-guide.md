@@ -1,8 +1,8 @@
 # KodaX SDK — Product Client and Host Integration
 
-This page describes the current FEATURE_298/299 development tree, whose package
-baseline is `0.7.97-alpha.1`. Some seam additions are newer than that baseline; this does not
-claim that this contract is already published to npm. Check the installed
+This page describes the current FEATURE_298/299 development tree, checked against
+package version `0.7.97-alpha.4`. The version alone does not claim that all current
+working-tree changes are already published to npm. Check the installed
 package exports and the connected Host's capabilities when migrating.
 
 For applications sharing KodaX sessions, use `KodaXProductClient` from
@@ -46,15 +46,20 @@ bridge; do not import the Node connector into browser code.
 `daemonStartupTimeoutMs`. Both accept `profile` and `clientInfo`. Presentation
 metadata such as `clientInfo.name` grants no authority. Configure provider
 credentials at the Host, rather than passing API keys in input submissions.
+Both also accept trusted Main's optional `authorizeExecution`; see the
+[Host authorization seam](../../docs/SPACE_SDK_SEAMS.md#可信执行授权).
 
 ### Show local startup progress
 
 Both entries accept an optional `onStartupProgress` callback with the shared
-`ClientStartupProgress` data type. `ensure` reports local Host checking,
-starting, updating, waiting and connecting; passive `connect` only reports
-connecting and readiness. A waiting event explains whether the launcher is
+`ClientStartupProgress` data type. Its stages are `checking`, `starting`,
+`upgrading`, `waiting`, `connecting` and `ready`. `ensure` reports the actual
+local launcher stages; passive `connect` only reports `connecting` and `ready`.
+For `waiting`, `reason` is `connected_clients`, `host_starting` or `host_stopping`:
 waiting for other clients to disconnect, a Host to start, or the previous Host
-to exit. It does not forcibly stop busy clients or work.
+to exit. It does not forcibly stop busy clients or work. The low-level
+`ensureKodaXRuntime` / `connectKodaXRuntime` entries accept the same callback;
+the type is also exported by `/runtime` and the pure contract entry.
 
 ```ts
 import { ensureKodaXClient, type ClientStartupProgress } from '@kodax-ai/kodax/client';
@@ -80,8 +85,10 @@ the existing diagnostic sink without changing startup's result. Keep rendering
 callbacks quick. Existing calls without the callback continue to work.
 
 For `/repl` consumers, optional `onBeforeRender` fires immediately before the
-initial banner/TUI render so a caller can clear its terminal loading indicator.
-This is a separate display handoff from the launcher's `ready` stage.
+session restoration notices and initial banner/TUI output so a caller can clear
+its terminal loading indicator. It directly replaces the unreleased startup
+display hook `onReady`, with no alias. This is a separate display handoff from
+the launcher's `ready` stage; other UIs own their render boundary.
 
 ### Observe, submit, and settle
 

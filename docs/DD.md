@@ -403,6 +403,12 @@ than creating a second execution/storage engine. `SessionViewOwner` supplies
 replacement views; complete history/item reads remain separate from display
 limits. Product methods do not expose Runtime events, storage or execution callbacks.
 
+`onStartupProgress` on product and Runtime connection entries observes the same
+local launcher facts without new Host RPCs or polling. Observer work is not
+awaited; failures use existing diagnostics and leave startup's result intact.
+Client `ready` and REPL `onBeforeRender` are separate connection/display boundaries;
+see the [Client contract](CLIENT_CONTRACT.md#连接启动与所有权).
+
 `createKodaXRuntime()` defaults to an inline embedded runtime in the caller's
 process (the v0.7.96 Worker-hosted isolation form was removed in v0.7.97).
 `mode: 'daemon'` starts or attaches to a detached

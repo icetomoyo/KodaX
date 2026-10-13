@@ -1,6 +1,12 @@
 # Space 的 Product Client / Host 接缝
 
-基线为 Space 已接入的 `0.7.97-alpha.2`；以下 Workflow 补齐属于当前工作树，需要重新构建 SDK 与 Host，不表示 npm 已发布。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
+Space 既有接入基线为 `0.7.97-alpha.2`；本文接缝按当前工作树 `0.7.97-alpha.4` 核对，需要重新构建 SDK 与 Host，不表示 npm 已发布或 Space 已采用全部变更。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
+
+## 启动进度与 Renderer 交接
+
+Main 调用 `ensureKodaXClient/connectKodaXClient` 时可传 `onStartupProgress`；如需展示，由 Space 经自己的 IPC 转发纯数据 `ClientStartupProgress`，Renderer 不导入 Node 启动器。ensure 报告 Host 检查、启动、更新、等待与连接；connect 只报告连接与就绪。该通知来自本机调用，不是 Session view、Run 事件或新 Host RPC。
+
+`ready` 只表示 Client 接口可用；Main 的 Session 读取和 Renderer 的首次渲染仍有自己的完成边界。回调应快速返回，其 Promise 不被等待，故障不改变启动结果。Space 根据启动 Promise 清除加载或展示失败，再在自身 UI 边界完成交接；不假定已存在自动 IPC 桥。REPL 使用 `onBeforeRender` 完成终端交接，桌面 UI 无需依赖它。阶段、等待原因与完整示例见 [Client 契约](CLIENT_CONTRACT.md#连接启动与所有权)和[英文指南](../public_docs/sdk/embedder-guide.md#show-local-startup-progress)。
 
 ## 可信执行授权
 

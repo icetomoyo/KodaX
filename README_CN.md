@@ -98,6 +98,8 @@ try {
 
 `connectKodaXClient` 只连接已有兼容 Host；`ensureKodaXClient` 通过统一启动器启动或正常更新空闲 Host。Node 连接器不提供浏览器 HTTP/WebSocket transport。
 
+两个产品入口均支持可选 `onStartupProgress` 和共享 `ClientStartupProgress` 类型。启动 `ready` 表示 Client 接口可用；Session 加载与 UI 渲染仍有独立完成边界。详见[启动进度示例](public_docs/sdk/embedder-guide.md#show-local-startup-progress)。
+
 底层 `/runtime` 仍支持显式 inline embedded 与 daemon，供受信任宿主处理凭据桥、Host Tools、启动和诊断；Worker-hosted embedded、通用 operation receipt/journal 已移除。不能在产品连接失败时退回私有 Runtime。下方结构化 Runtime 错误说明仅属于底层接口，不能假定 Product Client 暴露相同字段。
 
 ### 结构化且凭据安全的 Runtime 错误
