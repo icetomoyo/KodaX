@@ -168,6 +168,13 @@ On top of v0.7.97-alpha.3 it includes:
   layout, provider capability profiles reach managed task admission, and
   the release audit walks the runtime tarball
   (`scripts/audit-runtime-tarball.mjs`).
+- Unified client startup progress: `/client` connections accept an
+  `onStartupProgress` observer over the pure-data `ClientStartupProgress`
+  contract (checking / starting / upgrading / connecting / ready, plus
+  waiting reasons). Observation is local and never changes startup; the
+  CLI drives its loading animation from the same notifications and the
+  REPL clears the loading display via optional `onBeforeRender`
+  (contract: `docs/CLIENT_CONTRACT.md`).
 
 All root/workspace package versions and lockfile entries are
 `0.7.97-alpha.4` (the new `@kodax-ai/artifacts` package keeps its own

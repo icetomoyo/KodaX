@@ -46,6 +46,15 @@ remains a manual maintainer action.
   provider capability profiles carry the capability snapshot into managed
   task admission; the release audit now walks the runtime tarball
   (`audit-runtime-tarball.mjs`).
+- Unified client startup progress: `connectKodaXClient` /
+  `ensureKodaXClient` accept an `onStartupProgress` observer over the
+  pure-data `ClientStartupProgress` contract (checking / starting /
+  upgrading / connecting / ready, with waiting reasons
+  `connected_clients`, `host_starting`, `host_stopping`). Observation is
+  local, never awaited, and observer failures never change the startup
+  result; the CLI drives its loading animation from the same notifications
+  and stays responsive, and the REPL gains an optional `onBeforeRender` to
+  clear the loading display before restoring prompts.
 
 ---
 

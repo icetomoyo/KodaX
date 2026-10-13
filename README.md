@@ -781,7 +781,9 @@ Verifier: the main agent now verifies requested requirements with actual
 tool and rendered evidence before delivery, guided by the `visual-review`
 builtin skill across static, paginated, interactive, and temporal
 surfaces, with read-only child reviewers inside the same Run and
-unverified scope reported honestly. See
+unverified scope reported honestly. Client and CLI startup share one
+`onStartupProgress` contract, keeping the CLI responsive while the Host
+starts, upgrades, or waits. See
 [docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) and the
 [v0.7.97-alpha.4 release notes](docs/release.md#v0797-alpha4-release-preparation).
 Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2/alpha.3 contract is

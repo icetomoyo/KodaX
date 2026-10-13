@@ -178,6 +178,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('The built-in `visual-review` skill verifies static images/charts');
     expect(sdk).toContain('Main-agent result verification replaces the out-of-band Sidecar Verifier');
     expect(sdk).toContain('`KODAX_VERIFIER_*`');
+    expect(sdk).toContain('`onStartupProgress` observer over the pure-data');
     expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2/alpha.3 contract is retained.');
     expect(sdk).toContain('The v0.7.97-alpha.3 release lets trusted Main bound Product Workflows');
     expect(sdk).toContain('race-safe spawn-slot reservations');

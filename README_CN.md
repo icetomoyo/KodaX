@@ -308,6 +308,8 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 适配器（FEATURE_301）；同时退役旁路 Sidecar Verifier：主 Agent 在交付前用
 真实工具与渲染证据核验每条需求，由内置 `visual-review` 技能覆盖静态、分页、
 交互与时间性表面，允许只读子评审者在同一 Run 内参与，未核验范围如实报告。
+客户端与 CLI 启动共享同一 `onStartupProgress` 契约，在 Host 启动、升级或
+等待期间保持 CLI 可响应。
 详见 [docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) 与
 [v0.7.97-alpha.4 发布清单](docs/release.md#v0797-alpha4-release-preparation)。
 所有 v0.7.96 稳定与 v0.7.97-alpha.1/alpha.2/alpha.3 契约全部保留。
