@@ -775,7 +775,7 @@ physical summary call.
 
 **v0.7.97-alpha.4 release:** Adds the independent `@kodax-ai/artifacts`
 package — PPTX authoring, bounded editing, and current-file visual
-evidence through LibreOffice/PDF rendering — with an optional managed
+evidence through lightweight rendering (optional LibreOffice/PDF conversion) — with an optional managed
 KodaX adapter (FEATURE_301), and retires the out-of-band Sidecar
 Verifier: the main agent now verifies requested requirements with actual
 tool and rendered evidence before delivery, guided by the `visual-review`
@@ -788,6 +788,15 @@ starts, upgrades, or waits. See
 [v0.7.97-alpha.4 release notes](docs/release.md#v0797-alpha4-release-preparation).
 Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2/alpha.3 contract is
 retained.
+
+**Current-source Artifact additions (2026-10-13):** `27d08788` follows the
+alpha.4 tag and adds nine SDK operations, PDF/image/SVG evidence, lightweight
+DOCX pagination and local HTML/SMIL capture through the same Node/shared-Host
+contract. Rendering works headlessly; automatic review needs available tools
+and an image-capable provider, without a slash command. Native DOCX fidelity
+and full natural-task repair/re-review/delivery remain unverified. The package
+version is unchanged; check the actual installed build. See
+[SDK support, setup and migration](docs/ARTIFACT_SDK.md).
 
 **v0.7.97-alpha.3 release:** Lets trusted Main bound Product Workflows.
 `authorizeExecution` may return a `workflowHostPolicy` (`maxAgents`,

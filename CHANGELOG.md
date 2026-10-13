@@ -6,13 +6,46 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Unified optional Artifact SDK (`27d08788`, after the alpha.4 tag): public
+  `prepare` and `readEvidence`, native PDF, exact PNG and JPEG/WebP/SVG evidence,
+  candidate DOCX pagination, local HTML loaded-view capture and SVG SMIL samples.
+  The same execution port serves independent Node and existing shared-Host clients.
+
+### Changed
+
+- Artifact contracts use content formats, structured capabilities, file/surface
+  provenance, kind-matched capture locators, PNG dimensions and paginated layout.
+  These pre-release changes have no legacy aliases. Shared-Host image bytes use
+  existing attachment reads; core startup does not load optional renderers.
+- SDK, Client/Space integration, migration, architecture and feature documents
+  distinguish source support from released packages and evidence readiness from
+  visual approval. See [support and limits](docs/ARTIFACT_SDK.md).
+
+### Fixed
+
+- Mixed-size PDF viewport cropping, DOCX rendering without optional settings,
+  cross-bundle admitted fixed-argv authority and Host tool image attachment delivery.
+- Daemon preflight rejects known in-flight mutations before redundant full state
+  scans, and reports the actual method/count using the existing shutdown fence
+  (Issue 367). A mutation beginning during a read also stops further scans;
+  busy work is never treated as safe to stop.
+
+Validation: 16,589 tests passed, with package/bundle/native/type checks recorded
+in the [regression guide](docs/test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md).
+Natural-task GLM/DeepSeek smoke observed automatic image review, but full
+repair/re-review/delivery has not passed all checks. Native DOCX fidelity and
+model-facing schema gaps remain open; see [E2E evidence](docs/research/automatic-visual-review-e2e-2026-10-13.md).
+
 ---
 
 ## [0.7.97-alpha.4] - 2026-10-12
 
 Fourth alpha of the v0.7.97 line: FEATURE_301 adds the independent
 `@kodax-ai/artifacts` package — PPTX authoring, bounded editing, and
-current-file visual evidence through LibreOffice/PDF rendering — with an
+current-file visual evidence through lightweight rendering (optional
+LibreOffice/PDF conversion) — with an
 optional managed KodaX adapter, and retires the out-of-band Sidecar
 Verifier in favor of evidence-based in-run result review with the
 `visual-review` builtin skill. Every v0.7.96 stable and

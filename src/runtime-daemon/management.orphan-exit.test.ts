@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   KodaXRuntime,
@@ -21,6 +21,50 @@ afterEach(() => {
 });
 
 describe('Runtime daemon orphan idle exit', () => {
+  it('rejects an in-flight Session load before repeatedly scanning preflight state', async () => {
+    const preflight = vi.fn(() => idlePreflight());
+    let release!: () => void;
+    const loading = new Promise<void>((resolve) => { release = resolve; });
+    const controller = createController({ orphanExitMs: 10, preflight, requestStop: vi.fn() });
+    const mutation = controller.runMutation('session.load', () => loading);
+    try {
+      await expect(controller.preflight()).rejects.toMatchObject({
+        code: 'conflict', message: expect.stringContaining('session.load'),
+      });
+      expect(preflight).not.toHaveBeenCalled();
+      release();
+      await mutation;
+      await expect(controller.preflight()).resolves.toMatchObject({ canStop: true });
+      expect(preflight).toHaveBeenCalledTimes(1);
+    } finally {
+      release();
+      await mutation;
+      controller.close();
+    }
+  });
+
+  it('stops retrying snapshots when a managed mutation starts during the first read', async () => {
+    let release!: () => void;
+    const reloading = new Promise<void>((resolve) => { release = resolve; });
+    let mutation: Promise<void> | undefined;
+    let controller!: ReturnType<typeof createController>;
+    const preflight = vi.fn(() => {
+      mutation ??= controller.runMutation('extension.reload', () => reloading);
+      return idlePreflight();
+    });
+    controller = createController({ orphanExitMs: 10, preflight, requestStop: vi.fn() });
+    try {
+      await expect(controller.preflight()).rejects.toMatchObject({
+        code: 'conflict', message: expect.stringContaining('extension.reload'),
+      });
+      expect(preflight).toHaveBeenCalledTimes(1);
+    } finally {
+      release();
+      await mutation;
+      controller.close();
+    }
+  });
+
   it('stops only after the final logical client disconnects', async () => {
     let stopRequests = 0;
     const controller = createController({

@@ -1,6 +1,6 @@
 # KodaX High-Level Design
 
-Last updated: 2026-10-12. Current development tree: FEATURE_298/299/301 on package
+Last updated: 2026-10-13. Current development tree: FEATURE_298/299/301 on package
 `0.7.97-alpha.4`, with `v0.7.96` as the last stable release; publication is separate.
 
 Product integrations use `KodaXProductClient` through `/client`. Read the
@@ -11,8 +11,9 @@ ADRs remain records of their original decisions.
 
 ## 1. System Overview
 
-KodaX is a TypeScript monorepo published as one npm package with multiple SDK
-subpaths. Source code is organized into four workspace packages:
+KodaX is a TypeScript monorepo with four core workspace packages published as
+one npm package with multiple SDK subpaths, plus the independently installed
+optional `@kodax-ai/artifacts` workspace:
 
 ```text
 packages/
@@ -20,6 +21,7 @@ packages/
   agent/    generic Agent/Runner, orchestration, skills, MCP, tracing, workflow
   coding/   coding-agent preset, tools, prompts, sessions, workflows
   repl/     Ink terminal UI, config, commands, session management surface
+  artifacts/ optional independent file authoring/rendering and visual evidence
 src/        CLI entry point and binary-facing bootstrap
 clients/    optional external clients and protocol adapters
 benchmark/  eval harness, datasets, and prompt-change rules
@@ -561,6 +563,15 @@ The Worker single-loop is the only current main-agent execution shape. The
 Worker plans, reads, edits, tests, dispatches children, and writes the final
 answer after checking actual results. Optional reviewers are ordinary child Actors, using existing evidence and artifact channels.
 
+Artifact evidence uses one `ArtifactExecutionPort`: independent Node hosts use
+the optional runtime; shared CLI/Space consumers use the existing Host's tool
+Runs and PNG attachment reads. Nine SDK operations include explicit preparation
+and checked binary evidence reading. PPTX authoring/limited edits and PDF,
+image/SVG, candidate DOCX, local HTML/SMIL backends run on demand and headlessly;
+core startup loads no renderers. The Agent reviews actual pixels and owns repairs;
+mechanical readiness does not certify quality. See [support and integration](ARTIFACT_SDK.md)
+and the [accepted design](research/unified-artifact-sdk-design.md).
+
 ## 4. Provider Architecture
 
 `packages/llm` provides:
@@ -577,7 +588,8 @@ answer after checking actual results. Optional reviewers are ordinary child Acto
   validation after the terminal CLI event,
 - effort-first reasoning and request-timeout config normalization,
 - capability metadata and provider policy gates,
-- side-query support for verifier and other out-of-band LLM calls.
+- side-query support for Stall detection, Auto permission review and other
+  explicitly requested out-of-band LLM calls; the Sidecar Verifier is retired.
 
 The 2026-07-25 Kimi snapshot makes `kimi-k2.7-code` the public default, keeps
 HighSpeed/K2.6/K2.5 as explicit routes, and treats thinking support as a

@@ -1,6 +1,6 @@
 # KodaX SDK — Product Client and Host Integration
 
-This page describes the current FEATURE_298/299 development tree, checked against
+This page describes the current FEATURE_298/299/301 development tree, checked against
 package version `0.7.97-alpha.4`. The version alone does not claim that all current
 working-tree changes are already published to npm. Check the installed
 package exports and the connected Host's capabilities when migrating.
@@ -19,6 +19,8 @@ objects, not alternate names for this contract.
 - [Removed surfaces](#migrating-to-v0797): breaking changes and replacements.
 - [Space Host seams](../../docs/SPACE_SDK_SEAMS.md): trusted Main authorization,
   canonical Fork/Retry/Rewind, Host configuration, attachments, statistics and lifecycle limits.
+- [Optional Artifact SDK](#optional-artifact-sdk): shared-Host or independent Node
+  file rendering, current PNG evidence, preparation and supported format limits.
 - Numbered sections below retain low-level library/Host guidance and historical
   release context. They are not instructions for a product UI to create its own
   execution owner or write the shared Host's files.
@@ -145,7 +147,7 @@ for an explicit request to close an idle Host. `phase: 'unknown'` from
 | Concern | Product surface | Consumer responsibility |
 | --- | --- | --- |
 | Current UI | `sessions.observe` | Replace each view; bounded items are not a complete transcript |
-| Full display item | `sessions.readItem` | Keep the observed ID; validate paginated original text/input |
+| Full display item | `sessions.readItem` | Keep the observed ID; validate paginated original text/input; image attachments use separate byte offsets and hashes |
 | History/search | `readHistory`, `readHistoryEntry`, `searchHistory` | Keep page revision and distinct history IDs; no cross-revision splicing |
 | Settings and discovery | `sessions.*Settings`, `config.*`, `catalog.*` | Distinguish saved overrides/defaults from effective settings |
 | User questions and permissions | `interactions.list/respond`, `view.interactions` | Reply to the exact request; use only Host-provided grant suggestions |
@@ -159,6 +161,50 @@ not snapshot synchronization; rebuild a failed subscription and read its current
 snapshot. Reconnect does not authorize replaying mutations. See the complete
 Client contract for nullable reads, revision conflicts, lifecycle error handling,
 and feature-specific Host compatibility checks.
+
+## Optional Artifact SDK
+
+Install `@kodax-ai/artifacts` separately (ESM, Node >=20.16). Its root SDK/types
+have no KodaX or renderer dependency; `/runtime` supplies an independently
+authorized Node host. For a product UI sharing KodaX, register the `/kodax`
+adapter once in the trusted Host and bind the SDK to the existing Client/Session:
+
+```ts
+import type { KodaXProductClient } from '@kodax-ai/kodax/client';
+import { createArtifactSdk } from '@kodax-ai/artifacts';
+import { createKodaXArtifactPort } from '@kodax-ai/artifacts/client';
+
+export function artifactSdk(client: KodaXProductClient, sessionId: string) {
+  return createArtifactSdk(createKodaXArtifactPort(client, sessionId));
+}
+```
+
+The nine operations are `capabilities`, `prepare`, `create`, `open`, `edit`,
+`export`, `render`, `capture` and `readEvidence`. PPTX supports authoring and
+limited edits/export; PDF, PNG/JPEG/WebP/SVG, candidate DOCX pagination, local
+HTML loaded viewports and SVG SMIL samples provide actual visual evidence.
+DOCX page count belongs to rendered layout; Word/WPS fidelity remains unverified.
+`capture` requires kind-matched locators, and `readEvidence` checks source,
+dependencies, provenance, PNG hash and geometry before returning actual bytes.
+
+The shared port uses existing tool Runs and bounded PNG attachment reads through
+`sessions.readItem`; it adds no Client domain or local fallback renderer. Image
+chunks use byte offsets, distinct from text offsets, and never appear in text
+projections/logs. Cancellation stops only the admitted Run and awaits settlement;
+busy/disconnected/unknown results are not replayed. Compatible Host support is
+required. Core startup does not load renderers, and browser preparation is explicit.
+
+Rendering is headless and can run on a terminal-only system. Automatic review
+uses shared Agent guidance, available tools and a provider accepting real images,
+without a user slash command. The SDK does not call a separate model judge;
+`ready` and coverage checks do not certify quality. Full natural-task repair,
+re-review and delivery have not passed all model smoke checks.
+
+See [support, setup and examples](../../docs/ARTIFACT_SDK.md),
+[pre-release contract migration](../../docs/SDK_MIGRATION.md#artifact-sdk-契约迁移2026-10-13)
+and [E2E evidence/known schema gap](../../docs/research/automatic-visual-review-e2e-2026-10-13.md).
+Commit `27d08788` follows the alpha.4 tag; the unchanged package version does not
+establish that these additions are in the tagged release or an installed npm package.
 
 ## Low-level reference and release history
 

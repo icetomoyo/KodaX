@@ -82,6 +82,7 @@ CLI 用同一通知驱动加载动画，模块加载、旧子进程清理、Sess
 | `sessions` 条件设置 | `getSettingsVersioned`, `updateSettingsVersioned` | 读取 `{ revision, value }`；更新必须携带 `{ expectedRevision }`，过期时 `conflict` 且不写入。复用 Host 既有设置 CAS，普通编辑无需使用，不新增操作回执或恢复协议 |
 | `sessions` Auto 诊断 | `getAutoModeStats` | 返回现有 Host Auto 拒绝、熔断和分类器健康事实；非 Auto 为 undefined，不创建第二套权限状态 |
 | `sessions` 显示 | `observe`, `readItem` | 当前显示视图及其替换；补读显示项的完整正文或工具输入 |
+| `sessions` 图片附件 | `readItem(..., {part:'attachment', attachmentIndex, attachmentOffset, expectedImageSha256})` | 读取该 Host 项已附带的 PNG 字节块；不接受客户端文件路径 |
 | `sessions` 历史 | `readHistory`, `readHistoryEntry`, `searchHistory` | 规范对话分页、超大项正文和全 Session 搜索 |
 | `sessions` 目标 | `readGoal`, `createGoal`, `pauseGoal`, `resumeGoal`, `clearGoal` | 读取及修改共享持久目标；创建、状态转换和预算遵守领域约束 |
 | `sessions` 通知 | `appendNotice` | 由 Host 保存通知正文及可选来源 |
@@ -302,6 +303,8 @@ Interaction 的 kind 决定 options 和 response：单选问题、多问题、�
 4. 新输出继续更新后台当前 view，不移动冻结页阅读位置；退出冻结浏览再回当前 view。用户真正要继续工作时才用新 inputId 提交新意图。
 
 ### 全文读取规则
+
+图片附件通过 `readItem(sessionId, itemId, {part:'attachment', attachmentIndex, attachmentOffset, expectedImageSha256})` 读取，返回 `ClientItemContent.image`。`attachmentIndex` 是该项附件索引；`attachmentOffset` 默认 0，按图片字节计数，独立于正文的 UTF-16 `offset`。可选 `expectedImageSha256` 要求完整图片身份不变。Host 只读该 Session 项已持有的附件引用，验证实际 PNG，不接受任意客户端路径。当前每块最多 512 KiB、整张最多 10 MiB；返回 `dataBase64/sha256/width/height/offset/totalLength/nextOffset`。调用方分别解码各块，验证同一哈希、尺寸、总长及连续偏移，拼接后校验完整 SHA256；缺项、无进展、图片变化或缺 Host 能力均不能回退到 UI 文件读取。Artifact Client port 已封装这些检查，见 [SDK](ARTIFACT_SDK.md)。图片字节不作为正文、历史文本或日志返回。
 
 `sessions.observe` 先交付当前 `ClientSessionView`，以后交付完整替换视图。它不是文本 delta 或可回放事件日志；客户端替换当前展示投影，不自行将每帧追加成历史。view 包含 Session、settings、items、queue、interactions、runs，以及可选的 contextBudget/activity/parentContextTokens。Activity 的父上下文与 worker 上下文不可混为一个计数。
 

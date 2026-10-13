@@ -107,6 +107,7 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
 
   async preflight(): Promise<RuntimeDaemonPreflight> {
     for (let attempt = 0; attempt < 8; attempt += 1) {
+      this.assertNoActiveMutations();
       const before = this.revision;
       const current = await this.input.runtime.status.preflight();
       this.observePreflight(current);
@@ -169,6 +170,12 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
   private beginDraining(): void {
     if (this.closed) throw managementError('conflict', 'Runtime daemon management is closed.');
     if (this.draining) throw managementError('conflict', 'Runtime daemon is already draining.');
+    this.assertNoActiveMutations();
+    this.draining = true;
+    this.cancelOrphanExitCheck();
+  }
+
+  private assertNoActiveMutations(): void {
     if (this.activeMutations > 0) {
       throw managementError(
         'conflict',
@@ -177,8 +184,6 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
           .join(', ')}.`,
       );
     }
-    this.draining = true;
-    this.cancelOrphanExitCheck();
   }
 
   private async assertStoppable(exitingPrincipalId?: string): Promise<void> {

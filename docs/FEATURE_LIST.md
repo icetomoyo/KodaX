@@ -15,7 +15,8 @@
 | Current package version | `@kodax-ai/kodax@0.7.97-alpha.4` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 core packages + independent optional `artifacts` |
 | Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
-| Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement implemented and validated, unreleased; [design](research/verifier-replacement-visual-review-2026-10-11.md) |
+| Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement released in alpha.4; missing visual capabilities remain unverified; [design](research/verifier-replacement-visual-review-2026-10-11.md) |
+| Current Artifact SDK additions | `27d08788`, after the alpha.4 tag: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
 | Current development | `v0.7.97` / `FEATURE_298` — cross-platform/manual release verification for the alpha continues |
 | Roadmap updated | `2026-09-23` — FEATURE_300 planned for `v0.7.99`; implementation not started |
 | Artifact SDK | `2026-10-13` — subsequent implementation (unreleased): complete preparation/evidence-read SDK and existing Host bridge; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
@@ -527,8 +528,8 @@
 
 `v0.7.97-alpha.4` is the fourth alpha of the v0.7.97 line: FEATURE_301
 ships the independent `@kodax-ai/artifacts` package — PPTX authoring,
-bounded editing, and current-file visual evidence through LibreOffice/PDF
-rendering — with an optional managed KodaX adapter built on managed
+bounded editing, and current-file visual evidence through lightweight
+rendering (optional LibreOffice/PDF conversion) — with an optional managed KodaX adapter built on managed
 permissions, sandbox, and cancellation. The managed PPT review loop
 validates native Office and autonomous non-Office decks against rendered
 pages within bounded edit cycles. Main-agent result verification replaces
@@ -2040,7 +2041,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
-| `301` | Managed Artifact SDK and PPT Review Loop | `v0.7.97` (release pending) | [v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) | Independent `@kodax-ai/artifacts` package (PPTX authoring, bounded editing, current-file visual evidence) with an optional managed KodaX adapter through managed permissions, sandbox and cancellation; retires the out-of-band Sidecar Verifier in favor of evidence-based in-run result review and the `visual-review` builtin skill; native Office and autonomous non-Office PPT validation. |
+| `301` | Managed Artifact SDK and PPT Review Loop | Initial implementation in `v0.7.97-alpha.4`; subsequent additions await release | [v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) | Independent optional SDK with nine operations and shared Host execution; PPTX authoring/limited edits, PDF/image/SVG evidence, candidate DOCX and local HTML/SMIL capture. Native Office fidelity and full natural-task model repair/re-review/delivery remain unverified; [current support](ARTIFACT_SDK.md). |
 | `299` | Unified Stop, Full Access and Extension Execution Contracts | `v0.7.96` (release pending) | [v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) | Implements legacy large metadata paging, Full Access policy provenance, lock-independent Session Stop, CLI/ACP convergence and managed extension execution with reload isolation. |
 | `297` | Codex-Aligned Permission Profiles, Sandbox Escalation, and Exec Policy | `v0.7.96-alpha.5` | [v0.7.96](features/v0.7.96.md#feature_297-codex-aligned-permission-profiles-sandbox-escalation-and-exec-policy) | Makes sandbox completion authoritative, moves Edits/Auto decisions to an exact host boundary, adds Full Access and JSONC Exec Policy, removes Auto[RULES]/envPass/global-Git blocking, and preserves a single no-replay host retry. |
 | `295` | Separate Trusted Text Mutation from Native Shell Containment | `v0.7.96-alpha.1`; alpha.6 concurrency completion | [v0.7.96](features/v0.7.96.md#feature_295-separate-trusted-text-mutation-from-native-shell-containment) | Splits trusted text transactions from platform shell containment; Issue 326/ADR-070 removes command-lifetime/global/target admission locks, uses protocol 10 + setup generation 10 (with generation 8 retained only as the legacy-migration proof), stable capability SIDs, setup-owned broad roots that are verify-only during ordinary admission, protected two-phase synchronous setup with no overlapping helper, cold interactive startup self-healing through the setup-only boundary, additive command-root convergence, unsupported Windows per-command `denyRead` rejection before target start, independent command Jobs/pipes, OS-arbitrated exact-authority brokers, and a real dual-Runtime overlap gate. |
@@ -2179,4 +2180,8 @@ during the rename.
 
 ## 2026-10-12 FEATURE_301 Completion
 
-Managed optional Artifact SDK and PPT repair/review loop implemented, tested and reviewed; unreleased. Four visual evidence contracts are available, other capture adapters stay explicitly unverified. See the design and test guide linked above.
+Initial managed optional Artifact SDK and PPT repair/review loop implemented, tested and reviewed on 2026-10-12, then tagged as alpha.4. Four visual evidence contracts were established; the additional backends below are subsequent work.
+
+## 2026-10-13 Unified Artifact SDK Additions
+
+Commit `27d08788` extends the same execution/evidence seam with public preparation and checked image reading, PDF/PNG/JPEG/WebP/SVG/DOCX rendering, local HTML loaded viewports and SMIL samples. Full regression: 16,589 passed. SDK ready/coverage never certifies visual quality; native DOCX fidelity remains unverified. Automatic GLM/DeepSeek image review was observed, but full repair/re-review/delivery has not passed all smoke checks and model-facing schema gaps remain. See [SDK](ARTIFACT_SDK.md), [accepted design](research/unified-artifact-sdk-design.md), [regression guide](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md) and [E2E evidence](research/automatic-visual-review-e2e-2026-10-13.md). This commit follows the alpha.4 tag; package version alone does not establish publication.

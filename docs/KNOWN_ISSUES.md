@@ -1,17 +1,89 @@
 # Known Issues
 
-_Last Updated: 2026-10-11_
+_Last Updated: 2026-10-13_
 
 ---
 
 > **Archive Notice**: Historical issue records are maintained in `docs/ISSUES_ARCHIVED.md`.
 > This file tracks the active issue backlog plus recently resolved issue records that have not yet been archived.
 
+## Artifact SDK acceptance gaps (2026-10-13)
+
+Current source `27d08788` supports unified file evidence; its model-facing
+locator schema still advertises fields that the kind-specific SDK decoder rejects.
+Some nested source/raster objects and color requirements also lack precise tool
+descriptions. Natural-task GLM/DeepSeek smoke observed automatic rendering and
+grounded visual findings, but full repair/re-review/delivery has not passed all
+checks under the recorded budgets/provider failures. Native Word/WPS fidelity
+remains unverified. These are not claims that Space cannot trigger review or
+that every CLI lacks tools; the default adapter inspection was local in scope.
+See [evidence and remaining work](research/automatic-visual-review-e2e-2026-10-13.md)
+and [actual SDK support](ARTIFACT_SDK.md). No production fix is claimed by this
+documentation update.
+
 ## Issue numbering after the 2026-10-02 integration
 
 Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
+
+## Issue 367: Daemon preflight repeatedly scans during an in-flight mutation
+
+- Priority: Medium
+- Status: Resolved (confirmed redundant-scan path; live incident cause remains unconfirmed)
+- Introduced: observed in `v0.7.97-alpha.4`; first affected version unknown
+- Created: 2026-10-13
+- Fixed: post-v0.7.97-alpha.4 working tree (unreleased)
+- Resolved: 2026-10-13
+
+### Original Problem
+
+A user reported `kodax -r` staying at `Connecting to KodaX` for over 40 seconds
+before `Runtime state changed while daemon preflight was being read.` The spinner
+shows total startup elapsed time, not the duration of that stage alone.
+
+The management controller cannot return a stable/stoppable snapshot while a
+managed mutation remains active, yet retries eight full Runtime preflight reads.
+Each read scans Runs, Workflows, admitted Sessions and Actor state. An isolated
+held `session.load` reproduced the exact error and eight redundant reads; the
+same problem occurs when a mutation starts during the first read. The captured
+incident does not identify its actual concurrent method, so this confirmed
+amplification path is not a claim to have reconstructed the entire live failure.
+
+### Expected Behavior and Regression Scope
+
+Reject an existing in-flight mutation before scanning, identify its method and
+count, and stop retrying expensive snapshots if a mutation begins during a read.
+After the mutation settles, normal preflight succeeds. Keep logical-client,
+owner/revision, active/unknown-work and shutdown fences; never force-stop busy
+work or certify an inconsistent snapshot as idle. Compatible passive Client
+connections remain independent of upgrade preflight.
+
+The current live Host's read-only probe connected in 7ms and inspected in 1196ms,
+with no active work; those warm timings do not establish cold startup latency.
+The guard now reuses the existing shutdown mutation check. Two deterministic
+tests cover initial and mid-read mutations; 119 daemon/Client/launcher tests and
+both source/test typechecks passed. `npm run build` and two real bundled Product
+exit tests passed; Standards/Spec reviews each reported zero findings. After
+rebuilding, the user retried `kodax -r` and confirmed entry into the TUI. A read-only
+metadata check confirmed the default Host had changed from PID 25488 to 37792,
+started at 23:33:13 (Asia/Shanghai), and was ready. No exact retry latency was supplied;
+successful retry does not reconstruct which method caused the earlier failure.
+
+### Resolution
+
+`src/runtime-daemon/management.ts` checks existing managed mutations before each
+preflight attempt, sharing the shutdown guard's method/count error. An existing
+mutation now causes zero full scans; one starting during a read permits only
+that first scan. The stable snapshot and owner/client shutdown fences are not
+relaxed, and business operations are not replayed. No generic startup speedup
+or complete reconstruction of the original 40-second failure is claimed.
+
+Tests were added beside the management source in
+`src/runtime-daemon/management.orphan-exit.test.ts`. Initial RED reproduced the
+old conflict; GREEN verifies early rejection, mid-read rejection and successful
+preflight after the mutation settles. The [regression guide](test-guides/ISSUE_367_v0.7.97_REGRESSION_GUIDE.md)
+records commands, validation and remaining live-diagnosis limits.
 
 ## Issue 366: Host test readiness races cold Actor preparation
 
@@ -1718,6 +1790,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 367 | Medium | Resolved | Daemon preflight repeatedly scans during an in-flight mutation | observed in v0.7.97-alpha.4; first affected version unknown | post-v0.7.97-alpha.4 working tree (unreleased) | 2026-10-13 | 2026-10-13 |
 | 366 | Medium | Resolved | Host test readiness races cold Actor preparation | observed during v0.7.97-alpha.3 validation; first affected version unknown | post-v0.7.97-alpha.3 working tree (unreleased) | 2026-10-10 | 2026-10-10 |
 | 365 | High | Resolved | Provider fallback drops child usage and bypasses Workflow budgets | output-component regression in v0.7.97-alpha.3; earlier total loss | post-v0.7.97-alpha.3 working tree (unreleased) | 2026-10-10 | 2026-10-10 |
 | 364 | Medium | Resolved | MCP stdio reports failed writes as successful sends | observed in v0.7.97-alpha.3; first affected version unknown | post-v0.7.97-alpha.3 working tree (unreleased) | 2026-10-10 | 2026-10-10 |
@@ -16539,7 +16612,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 245 (37 Open, 208 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 246 (37 Open, 209 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md

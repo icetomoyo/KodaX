@@ -329,6 +329,16 @@ ACL transaction.
 KodaX uses a V2 Worker single-loop model.
 The main agent verifies each requested requirement with actual tool and rendered evidence before delivery. The built-in `visual-review` skill covers static images/charts, paginated documents/slides/sheets, interactive web/app/terminal/canvas/3D surfaces, and temporal video/animation results. Missing capabilities and unchecked scope are reported as unverified. An ordinary read-only child reviewer may contribute findings within the same Run; the main agent owns repairs and the final answer.
 
+Applicable file tasks can trigger review through shared Agent guidance without
+a slash command. The optional independent Artifact SDK supplies actual pixels
+to the same Agent through existing Host tools, or to an independently authorized
+Node host. Supported file rendering works headlessly on terminal-only systems.
+Current backends cover PPTX, PDF, PNG/JPEG/WebP/SVG, candidate DOCX pagination,
+local HTML loaded viewports and SVG SMIL samples; native Office fidelity and
+missing interaction/media backends are not certified. Evidence readiness is not
+visual approval. The [SDK support matrix](ARTIFACT_SDK.md) defines delivered
+capabilities separately from the skill's broader review scope.
+
 The retired V1 chain model is not a product requirement:
 
 - no retired pre-v0.7.43 chain entry,

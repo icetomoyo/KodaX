@@ -136,6 +136,17 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## Current-source Artifact additions after alpha.4
+
+Commit `27d08788` follows the existing `v0.7.97-alpha.4` tag (`a3e8d754`). It
+adds unified multi-format evidence and nine public Artifact SDK operations;
+the package version was not bumped. These additions are not part of that
+existing tag. Publishing a matching package/build is a separate release action;
+rebuilding/linking alone also does not register the optional adapter in a Host.
+See [SDK installation, support and migration](ARTIFACT_SDK.md) and the
+[regression/E2E boundaries](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md).
+The tagged release record below is preserved separately.
+
 ## v0.7.97-alpha.4 release preparation
 
 Release state: `v0.7.97-alpha.4` is the GitHub pre-release for the exact
@@ -151,7 +162,7 @@ On top of v0.7.97-alpha.3 it includes:
 
 - `@kodax-ai/artifacts`: a fifth, independent optional workspace package
   for PPTX authoring, bounded editing, and current-file visual evidence
-  through LibreOffice/PDF rendering; its optional KodaX bridge uses
+  through lightweight rendering (optional LibreOffice/PDF conversion); its optional KodaX bridge uses
   managed permissions, sandbox, and cancellation (FEATURE_301; design:
   `docs/features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop`).
 - Managed PPT review loop: native Office and autonomous non-Office PPT

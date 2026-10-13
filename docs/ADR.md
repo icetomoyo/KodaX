@@ -2,11 +2,20 @@
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
 
-> Last updated: 2026-10-12
+> Last updated: 2026-10-13
+>
+> **Current-source Artifact follow-up (2026-10-13):** `27d08788`, after the
+> alpha.4 tag, expands the accepted single `ArtifactExecutionPort` seam to
+> nine public operations and PDF/image/SVG/DOCX/HTML/SMIL evidence. Independent
+> Node and shared CLI/Space hosts retain their existing execution authority;
+> no quality API, verifier daemon or persistent renderer is added. Core
+> startup stays free of renderer loading/probes. Read the [accepted design](research/unified-artifact-sdk-design.md)
+> and [delivered support/limits](ARTIFACT_SDK.md); evidence readiness is not visual approval.
 >
 > **v0.7.97-alpha.4 release addendum:** FEATURE_301 ships the independent
 > `@kodax-ai/artifacts` package — PPTX authoring, bounded editing, and
-> current-file visual evidence through LibreOffice/PDF rendering — with an
+> current-file visual evidence through lightweight rendering (optional
+> LibreOffice/PDF conversion) — with an
 > optional managed KodaX adapter built on managed permissions, sandbox,
 > and cancellation. Main-agent result verification replaces the
 > out-of-band Sidecar Verifier: the main agent verifies each requested

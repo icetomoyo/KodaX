@@ -55,6 +55,12 @@ The existing ACP tests' 1s run-registration polling ceiling failed under filesys
 
 Final frozen-source full suite: 1,165 files passed, one skipped; 16,589 tests passed, 77 skipped and 19 existing TODOs, zero failures (801.88s, four workers, isolated browser). The final run includes the capability declaration, SDK PPT loop, attachment transport, managed execution and ACP fixes. Earlier attempts exposed a removed shared browser cache and a cached in-flight RED capability test; those runs are not counted as successful final validation. No lint script is configured; strict typecheck and `git diff --check` pass.
 
+### Natural-task model smoke
+
+`KODAX_ARTIFACT_E2E=1 node tests/artifact-auto-review-smoke.eval.mjs` is a separate opt-in Layer 3.5 check with ZAI GLM-5.3-Flash and DeepSeek Flash. It asks only for an ordinary PPT title edit, without slash/review/tool hints, through one shared Host and two Sessions. Provider requests retain actual image hashes. Shell/child restrictions and fixed call/token/time bounds are part of the fixture. No general success percentage is inferred.
+
+2026-10-13 observations prove autonomous rendering/image delivery, and each model produced a grounded occlusion finding in a shared-Host revision. **Full repair/re-review/delivery has not passed**: preserve the registry-interference diagnostic run, output-budget calibration, final call cutoff and provider timeout rather than claiming green E2E. See [actual evidence, default adapter gap and schema mismatch](../research/automatic-visual-review-e2e-2026-10-13.md). The earlier Kimi smoke explicitly requested visual review and cannot prove automatic task-triggering.
+
 ## Spec
 
 0 open findings after closure of locator completeness, unique IDs, rich-text preservation limits, inherited resources/3D diagnostics, font readiness and grouped coordinate ambiguity. No scope creep or new Session owner.

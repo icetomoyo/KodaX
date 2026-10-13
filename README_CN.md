@@ -304,7 +304,7 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
 **v0.7.97-alpha.4 发布**：新增独立的 `@kodax-ai/artifacts` 包——PPTX 创作、
-有界编辑与当前文件视觉证据（LibreOffice/PDF 渲染），并带可选的受管 KodaX
+有界编辑与当前文件视觉证据（轻量渲染，可选 LibreOffice/PDF 转换），并带可选的受管 KodaX
 适配器（FEATURE_301）；同时退役旁路 Sidecar Verifier：主 Agent 在交付前用
 真实工具与渲染证据核验每条需求，由内置 `visual-review` 技能覆盖静态、分页、
 交互与时间性表面，允许只读子评审者在同一 Run 内参与，未核验范围如实报告。
@@ -313,6 +313,13 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 详见 [docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) 与
 [v0.7.97-alpha.4 发布清单](docs/release.md#v0797-alpha4-release-preparation)。
 所有 v0.7.96 稳定与 v0.7.97-alpha.1/alpha.2/alpha.3 契约全部保留。
+
+**当前源码的 Artifact 扩展（2026-10-13）**：`27d08788` 在 alpha.4 tag 之后
+增加九项 SDK 操作、PDF/图片/SVG 取证、DOCX 轻量分页及本地 HTML/SMIL 捕获，
+独立 Node 与共享 Host 使用同一契约。文件渲染可无界面运行；自动审查需要可用
+取证工具及支持图片输入的模型，不要求 slash。DOCX 原生保真和自然任务的完整
+修复/复查/交付仍未全部验证。包版本未变，需核对实际安装构建。
+详见 [SDK 支持、接入与迁移](docs/ARTIFACT_SDK.md)。
 
 **v0.7.97-alpha.3 发布**：让可信 Main 为产品 Workflow 设定上限。
 `authorizeExecution` 可以只返回 `workflowHostPolicy`（`maxAgents`、

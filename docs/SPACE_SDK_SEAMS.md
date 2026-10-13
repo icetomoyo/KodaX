@@ -175,3 +175,11 @@ node --test tests/bundled-product-exit.test.mjs
 ## 结果评审接缝（2026-10-11）
 
 视觉评审复用当前 Run 的 tools、图片输入、artifact refs 和普通子 Actor；不新增独立 Client agent、quality API 或完成证书。静态、分页、交互和时序对象均按实际证据检查，缺少 renderer/vision 或未覆盖部分必须说明未验证。Goal 工具只更新 Host 原子 lineage；客户端继续通过 readGoal 和 view 读取。旧 verifier 实时事件及日志配置已退役，历史读取保留，详见 SDK_MIGRATION。
+
+## Artifact SDK 接入（2026-10-13）
+
+独立可选 `@kodax-ai/artifacts` 通过唯一 `ArtifactExecutionPort` 接缝提供九个公开操作：`capabilities/prepare/create/open/edit/export/render/capture/readEvidence`。Space 共享 Host 时，由可信 Host 扩展注册 `/kodax` adapter，客户端使用 `/client` 的 `createKodaXArtifactPort(client, sessionId)`。执行沿 `runs.startTool/await/stop`；PNG 经该 Run 对应的工具项和 `sessions.readItem` 附件字节块返回，不能在 UI 读 Host 路径或另起私有 renderer。取消只停止本次已接纳 Run 并等待结算；断连/busy/unknown 不透明重放。
+
+当前支持 PPTX 创作和限定编辑、PDF/图片/SVG 取证、DOCX 轻量分页、本地 HTML 加载视口与 SVG SMIL 时间采样。DOCX 的实际页数属于渲染证据，Word/WPS 保真仍未验证；新格式没有通用编辑承诺。`prepare` 是显式准备，正常连接/启动不加载渲染依赖。具体类型、安装/注册示例、支持矩阵及 alpha.4 tag 之后的契约变更见 [Artifact SDK](ARTIFACT_SDK.md)。
+
+共享 Agent 指引可以在适用任务中自动触发视觉审查，无需用户输入 slash；Space 或 CLI 必须实际提供取证工具及图片输入能力。文件取证可在纯 terminal 系统无界面执行，不等于已实现 terminal 表面的 capture。SDK 返回 `ready` 或 Run 终态均不认证视觉质量，修复与复查归现有 Agent。两模型已观察到自动取图和遮挡发现，完整修复/复查/交付尚未全部验证通过，详见 [E2E 范围与缺口](research/automatic-visual-review-e2e-2026-10-13.md)。

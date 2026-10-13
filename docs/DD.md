@@ -1,6 +1,6 @@
 # KodaX Detailed Design
 
-Last updated: 2026-10-12. Current development tree: FEATURE_298/299/301 on package
+Last updated: 2026-10-13. Current development tree: FEATURE_298/299/301 on package
 `0.7.97-alpha.4`; `v0.7.96` is the last stable release.
 
 The [Client contract](CLIENT_CONTRACT.md) and [SDK migration guide](SDK_MIGRATION.md)
@@ -985,6 +985,19 @@ Ink queued-input view all filter by that same key; a process-global
 The main agent verifies each requested requirement with actual tool and rendered evidence before delivery. The built-in `visual-review` skill covers static images/charts, paginated documents/slides/sheets, interactive web/app/terminal/canvas/3D surfaces, and temporal video/animation results. Missing capabilities and unchecked scope are reported as unverified. An ordinary read-only child reviewer may contribute findings within the same Run; the main agent owns repairs and the final answer.
 
 Generic Stop hooks remain in `packages/agent`. The coding runner composes extension `turn:complete`, goal accounting/continuation, and child/mailbox waiting without a completion judge. Host goal tools mutate the existing lineage atomically; clients never save a replacement journal. Run terminal status does not certify quality. Historical verifier messages remain display-only and never replay tools.
+
+The optional Artifact SDK's `ArtifactExecutionPort` is shared by standalone Node
+and existing-Host consumers. File `VisualSource` records actual source/dependency
+hashes; surface provenance records its target/observation without inventing a
+file hash. PNG evidence records hash, dimensions and a kind-matched locator;
+paginated batches also record actual total pages and page geometry. DOCX page
+count is render output, with native Word/WPS fidelity unverified. `readEvidence`
+validates provenance and current bytes. Host images stay in existing attachment
+channels and bounded `sessions.readItem` byte chunks, outside stdout/history text.
+Managed fixed argv remains bound to the admitted Host even across bundles;
+permissions, sandbox and Stop settlement keep their existing owner. Detailed
+operations, unsupported formats and pre-release migration are defined in
+[Artifact SDK](ARTIFACT_SDK.md); no quality API or renderer owner is added.
 
 ## 10. Sessions And Storage
 

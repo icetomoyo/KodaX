@@ -2,6 +2,8 @@
 
 `@kodax-ai/artifacts` is an optional, independently installed ESM package (Node >=20.16). Its root entry contains pure types, request/result validation, SDK dispatch and mechanical coverage checks. The optional `/runtime` entry owns local file/browser work; `/kodax` registers admitted Host tools; `/client` binds the SDK to an existing KodaX Product Client. The core CLI does not load renderers or probe Chromium at startup.
 
+This page describes commit `27d08788` and its current integration notes. That implementation follows the `v0.7.97-alpha.4` tag (`a3e8d754`); the unchanged package version does not mean the tagged release or an installed npm package contains these additions.
+
 ## Operations and actual support
 
 | SDK method | Current implementation |
@@ -16,7 +18,22 @@
 
 Missing capability records do not imply support. Native Word/WPS fidelity remains **unverified** for every DOCX render, even when useful page pixels exist. DOCX `open` has no `pages`; pagination belongs to `evidence.layout.totalPages`. Minimal documents without settings are normalized only in the rendering snapshot; source bytes stay unchanged. Fields, floating objects, complex sections and native Office pagination need reference validation.
 
+PPTX geometry uses inches. Text/rectangle colors are six hexadecimal digits without `#` (for example, `172C45`). `edit` uses inspected `page/objectId`, the current `expectedSourceHash` and an exclusive new `output`. Text replacement supports a single run in a single paragraph; rich-run/multi-paragraph text needs another compatible editor. Geometry edits retain their existing bounds and grouped-object limitations. Use `render({ path, pages })` for PPTX page evidence; PPTX does not implement `capture`.
+
 PDF.js captures page content at 96 DPI, adapting the viewport for each page's dimensions/rotation. Form interaction and annotation appearance are outside the current capture. PNG render preserves original alpha/bytes; explicit image/SVG capture backgrounds use Chromium. HTML captures its authored CSS background and only the observed loaded viewport, not interaction behavior. SVG samples cover SMIL, not script/CSS animation, continuous playback or audio. Animated WebP, GIF/video, spreadsheet calculation/native display, EPUB, desktop/mobile/terminal and 3D/CAD have no default backend.
+
+Supported file rendering runs headlessly: a terminal-only system can produce PNG evidence and send it to an image-capable provider without a desktop UI. This does not add capture of the terminal UI itself. The selected operation still needs its runtime dependencies and normal Host authorization.
+
+`capture` uses matching `kind` and `locators`; fields from another kind are rejected. Current file backends accept these scopes:
+
+| Input | Kind and locator |
+| --- | --- |
+| PNG/JPEG/WebP/static SVG | `static`: optional `region: [x, y, width, height]` in pixels |
+| PDF/DOCX | `paginated`: `page` (one-based); sheet/range capture has no default backend |
+| Local HTML | `interactive`: actual `target`, `state: 'loaded'`, explicit `viewport: [width, height]`, `sequence: 0` |
+| SVG SMIL | `temporal`: `time` in seconds; samples do not certify continuous playback |
+
+For example, `sdk.capture({ target: 'diagram.svg', kind: 'static', locators: [{ kind: 'static', region: [0, 0, 320, 180] }] })` requests actual region pixels. `expectedSource`, when supplied, must be the current `VisualSource`, not a bare file hash. Use the public SDK types/validation; the model-facing locator schema still has a documented [schema/decoder mismatch](research/automatic-visual-review-e2e-2026-10-13.md#确认的参数契约缺口).
 
 ## Trusted standalone Node host
 
@@ -46,6 +63,8 @@ if (result.evidence) {
 Browser/LibreOffice executable paths and workspace authority belong to trusted runtime options, never model request JSON. LibreOffice is optional for PPTX conversion only; other supported formats do not require it. Render capability records include `backend: 'lightweight' | 'libreoffice'`; select by operation, format and backend. LibreOffice availability checks the configured absolute file and browser presence without launching either; its identity/version is checked during rendering. Preparation may download the pinned Playwright browser and write its cache; ordinary permission/sandbox rules apply. Querying/rendering never installs implicitly.
 
 ## Existing shared KodaX Host
+
+KodaX's shared Agent guidance calls for visual review during applicable tasks without requiring a user slash command. File backend availability still requires this optional adapter to be registered once in the trusted Host and a provider that accepts actual images. Building/linking the workspace alone does not register it in a user's Host. SDK `render/capture/readEvidence` prepare and deliver evidence; the calling Agent owns visual judgment, repair and final review. Missing capabilities remain unverified. See [natural-task model observations and current integration gaps](research/automatic-visual-review-e2e-2026-10-13.md).
 
 Register once in the trusted Host extension, using its admitted managed execution:
 

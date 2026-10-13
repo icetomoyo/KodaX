@@ -3,8 +3,9 @@
 Documentation for KodaX users, product-client integrators and trusted Host developers.
 
 This development tree implements the unified Product Client contract under
-FEATURE_298/299. The package baseline is the stable `0.7.96`; the design target is
-`v0.7.97`, and npm publication is a separate maintainer action. Historical release
+FEATURE_298/299/301. The working-tree package version is `0.7.97-alpha.4`;
+`v0.7.96` remains the last stable release. Commit `27d08788` adds unified Artifact
+backends after the alpha.4 tag, and npm publication is a separate maintainer action. Historical release
 notes do not override the current Client contract or establish that a package
 has been published.
 
@@ -30,6 +31,7 @@ Independent library and trusted Host APIs remain separate integration layers.
 - [Product Client integration](./sdk/embedder-guide.md#product-client-integration) — default entry for shared-Session applications; also links to scoped low-level Host/library reference.
 - [SDK migration](../docs/SDK_MIGRATION.md) — old-to-new calls, lifecycle and migration acceptance (Chinese).
 - [Client contract](../docs/CLIENT_CONTRACT.md) — complete Product method inventory, observation, history and error semantics.
+- [Artifact SDK](../docs/ARTIFACT_SDK.md) — optional independent package, shared-Host/Node setup, nine operations, format support, evidence and visual-review limits.
 
 ## Guides
 
