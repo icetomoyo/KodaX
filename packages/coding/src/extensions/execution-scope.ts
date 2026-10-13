@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { ExtensionExecutionScope } from './execution-contract.js';
+import type { ExtensionExecutionScope, ManagedProcessInput } from './execution-contract.js';
+import { executeBoundManagedProcess } from './managed-process.js';
 
 const invocations = new AsyncLocalStorage<ExtensionExecutionScope>();
 
@@ -18,6 +19,7 @@ export async function withExtensionExecutionScope<T>(
   let open = true;
   const scope: ExtensionExecutionScope = Object.freeze({
     ...bindings,
+    executeProcess: (input: ManagedProcessInput) => executeBoundManagedProcess(scope, input),
     reportProgress: (progress: Parameters<ExtensionExecutionScope['reportProgress']>[0]) => {
       if (!open) throw new Error('Extension invocation is closed; progress cannot be published.');
       bindings.reportProgress(progress);

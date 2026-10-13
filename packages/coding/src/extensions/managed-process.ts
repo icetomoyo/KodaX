@@ -1,17 +1,17 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
-import type { ExtensionExecutionScope, ExtensionToolResult } from './execution-contract.js';
+import type { ExtensionExecutionScope, ExtensionToolResult, ManagedProcessInput } from './execution-contract.js';
+export type { ManagedProcessInput } from './execution-contract.js';
 
-export interface ManagedProcessInput {
-  readonly executable: string;
-  readonly args: readonly string[];
-  readonly timeoutSeconds?: number;
-}
 interface BoundProcess extends ManagedProcessInput { readonly descriptor: string }
 const processes = new AsyncLocalStorage<BoundProcess>();
 
 /** Trusted host-only argv binding; model JSON never supplies process authority. */
 export function executeManagedProcess(scope: ExtensionExecutionScope, input: ManagedProcessInput): Promise<ExtensionToolResult> {
+  return scope.executeProcess ? scope.executeProcess(input) : executeBoundManagedProcess(scope, input);
+}
+/** Called in the Host's module instance, including when the extension uses another bundle. */
+export function executeBoundManagedProcess(scope: ExtensionExecutionScope, input: ManagedProcessInput): Promise<ExtensionToolResult> {
   if (!path.isAbsolute(input.executable) || input.executable.includes('\0')) {
     throw new Error('Managed executable must be an absolute path.');
   }
@@ -32,7 +32,10 @@ export function executeManagedProcess(scope: ExtensionExecutionScope, input: Man
 /** Only the exact checked Bash call may consume the host binding. */
 export function getManagedProcessInvocation(command: string): ManagedProcessInput | undefined {
   const bound = processes.getStore();
-  if (!bound) return undefined;
+  if (!bound) {
+    if (command.startsWith('Fixed argv: ')) throw new Error('Managed process binding is missing from the admitted Host scope.');
+    return undefined;
+  }
   if (command !== bound.descriptor) throw new Error('Managed process descriptor changed during admission.');
   return bound;
 }

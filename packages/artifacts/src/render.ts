@@ -3,24 +3,27 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import type { PresentationData, SlideHandle } from '@aiden0z/pptx-renderer';
-import type { ArtifactRef, ArtifactResult, Diagnostic, RasterEvidence, RenderInput } from './types.js';
+import type { PresentationRef, ArtifactResult, Diagnostic, RasterEvidence, RenderInput } from './types.js';
 import type { ArtifactRuntimeOptions } from './runtime.js';
 import { hashBytes } from './files.js';
 import { convertWithLibreOffice } from './libreoffice.js';
+import { saveEvidence } from './evidence-files.js';
+import { decodeArtifactResult } from './contract.js';
 
 type RendererApi = typeof import('@aiden0z/pptx-renderer');
 declare global { interface Window { kodaxArtifactRender?: { kit: RendererApi; presentation: PresentationData; handle?: SlideHandle } } }
 type PdfApi = typeof import('pdfjs-dist');
 declare global { interface Window { kodaxArtifactPdf?: Awaited<ReturnType<PdfApi['getDocument']>['promise']> } }
 export function defaultBrowserExecutable(): string { return process.env.KODAX_ARTIFACT_BROWSER_EXECUTABLE ?? chromium.executablePath(); }
-export async function renderPresentation(bytes: Buffer, artifact: ArtifactRef, input: RenderInput,
+export async function renderPresentation(bytes: Buffer, artifact: PresentationRef, input: RenderInput,
  diagnostics: readonly Diagnostic[], options: ArtifactRuntimeOptions): Promise<ArtifactResult> {
  const findings = [...diagnostics];
  if (input.backend === 'libreoffice' && !options.libreOfficeExecutable) return { status: 'unverified', artifact, diagnostics: [...findings,
    { code: 'libreoffice-unavailable', message: 'Prepare LibreOffice only when this conversion backend is needed.', blocking: true }] };
  const executable = options.browserExecutable ?? defaultBrowserExecutable();
  try { await fs.access(executable); }
- catch { return { status: 'unverified', artifact, diagnostics: [...findings, { code: 'missing-browser', message: 'Prepare a compatible browser runtime before rendering.', blocking: true }] }; }
+ catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  return { status: 'unverified', artifact, diagnostics: [...findings, { code: 'missing-browser', message: 'Prepare a compatible browser runtime before rendering.', blocking: true }] }; }
  const pages = input.pages ?? Array.from({ length: artifact.pages }, (_, index) => index + 1);
  if (options.maxRenderPages !== undefined && pages.length > options.maxRenderPages) throw new Error('Specify a render batch of at most ' + options.maxRenderPages + ' pages.');
  if (!pages.length || pages.some(page => !Number.isInteger(page) || page < 1 || page > artifact.pages)) throw new Error('Invalid render pages.');
@@ -38,6 +41,8 @@ export async function renderPresentation(bytes: Buffer, artifact: ArtifactRef, i
  options.signal?.addEventListener('abort', cancel, { once: true });
  if (options.signal?.aborted) cancel();
  const evidence: RasterEvidence[] = [];
+ const layout: { page: number; width: number; height: number; rotation: number; scale: number }[] = [];
+ const source = { kind: 'file' as const, file: artifact };
  try {
    const context = await browser.newContext({ deviceScaleFactor: 1 });
    await context.route('**/*', route => {
@@ -82,7 +87,7 @@ export async function renderPresentation(bytes: Buffer, artifact: ArtifactRef, i
         const canvas = document.createElement('canvas'); canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
         document.body.append(canvas);
         await pdfPage.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport }).promise;
-        return { errors: [] as string[] };
+        return { errors: [] as string[], width: canvas.width, height: canvas.height, rotation: viewport.rotation, scale: 4 / 3 };
        }
        const state = window.kodaxArtifactRender;
        if (!state) throw new Error('Renderer state missing.');
@@ -125,13 +130,14 @@ export async function renderPresentation(bytes: Buffer, artifact: ArtifactRef, i
            if (stable < 3) errors.push('Layout did not stabilize.');
          }), new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('Render resources timed out.')), 20_000); })]);
        } finally { if (timeout) clearTimeout(timeout); }
-       return { errors };
+       return { errors, width: state.presentation.width, height: state.presentation.height, rotation: 0, scale: 1 };
      }, number - 1);
      for (const message of result.errors) findings.push({ code: 'render-resource', message, page: number, blocking: true });
+     if (result.width <= 0 || result.height <= 0 || result.width > 8192 || result.height > 8192 || result.width * result.height > 40_000_000) throw new Error('Invalid rendered page size.');
+     await page.setViewportSize({ width: Math.ceil(result.width), height: Math.ceil(result.height) });
      const image = await page.screenshot();
-     const file = path.join(directory, 'slide-' + number + '.png');
-     await fs.writeFile(file, image, { flag: 'wx' });
-     evidence.push({ path: file, sha256: hashBytes(image), mediaType: 'image/png', locator: { kind: 'paginated', page: number } });
+     evidence.push(await saveEvidence(directory, 'slide-' + number, image, source, { kind: 'paginated', page: number }));
+     layout.push({ page: number, width: Math.ceil(result.width), height: Math.ceil(result.height), rotation: result.rotation, scale: result.scale });
    }
    await context.close();
  } finally {
@@ -139,7 +145,7 @@ export async function renderPresentation(bytes: Buffer, artifact: ArtifactRef, i
    await (cancelledClose ?? browser.close());
    if (closeFailure) throw closeFailure;
  }
- return { status: findings.some(item => item.blocking) ? 'unverified' : 'ready', artifact, diagnostics: findings,
-   evidence: { kind: 'paginated', sourceHash: artifact.sourceHash, scope: { pages }, evidence,
-     engine: { name: converted ? 'LibreOffice/PDF.js' : '@aiden0z/pptx-renderer', version: converted ? converted.version + '/PDF.js ' + version : version }, diagnostics: findings } };
+ return decodeArtifactResult('render', { status: findings.some(item => item.blocking) ? 'unverified' : 'ready', artifact, diagnostics: findings,
+   evidence: { kind: 'paginated', source, scope: { pages }, evidence, layout: { totalPages: artifact.pages, pages: layout },
+     engine: { name: converted ? 'LibreOffice/PDF.js' : '@aiden0z/pptx-renderer', version: converted ? converted.version + '/PDF.js ' + version : version }, diagnostics: findings } });
 }

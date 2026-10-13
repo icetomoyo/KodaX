@@ -29,7 +29,7 @@ export async function artifactPath(root: string, requested: string, output = fal
 export async function readPresentation(root: string, requested: string, expected?: string) {
  const file = await artifactPath(root, requested);
  const bytes = await fs.readFile(file);
- if (bytes.length > 32 * 1024 * 1024) throw new Error('PPTX input exceeds 32 MiB.');
+ if (bytes.length > 32 * 1024 * 1024) throw new Error('Artifact input exceeds 32 MiB.');
  const sourceHash = hashBytes(bytes);
  if (expected !== undefined && expected !== sourceHash) throw new Error('Stale artifact source hash.');
  return { path: file, bytes, sourceHash };

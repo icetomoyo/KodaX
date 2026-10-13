@@ -6,6 +6,10 @@ export function toolResultText(content: KodaXToolResultBlock['content']): string
   return typeof content === 'string' ? content
     : content.flatMap(item => item.type === 'text' ? [item.text] : []).join('\n');
 }
+export function toolResultAttachments(content: KodaXToolResultBlock['content']): ClientViewItem['attachments'] {
+  return typeof content === 'string' ? [] : content.flatMap(item => item.type === 'image'
+    ? [{ kind: 'image' as const, path: item.path, ...(item.mediaType ? { mediaType: item.mediaType } : {}) }] : []);
+}
 
 function resultStatus(result: KodaXToolResultBlock | undefined): NonNullable<ClientViewItem['tool']>['status'] {
   if (!result) return 'cancelled';
@@ -41,8 +45,7 @@ export function canonicalTools(messages: readonly KodaXMessage[]): ReadonlyMap<s
         const key = pending.get(block.tool_use_id);
         const item = key === undefined ? undefined : tools.get(key);
         if (!item?.tool || key === undefined) continue;
-        const attachments = typeof block.content === 'string' ? [] : block.content.flatMap(content => content.type === 'image'
-          ? [{ kind: 'image' as const, path: content.path, ...(content.mediaType ? { mediaType: content.mediaType } : {}) }] : []);
+        const attachments = toolResultAttachments(block.content)!;
         tools.set(key, { ...item, text: toolResultText(block.content),
           ...(attachments.length > 0 ? { attachments } : {}), tool: { ...item.tool,
           status: resultStatus(block), endedAt: timestamp } });

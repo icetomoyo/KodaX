@@ -14,7 +14,7 @@ describe.skipIf(!process.env.KODAX_ARTIFACT_TEST_BROWSER)('real lightweight rend
    const rendered = await executeArtifactRequest({ operation: 'render', input: { path: created.artifact!.path,
      expectedSourceHash: created.artifact!.sourceHash } }, { workspaceRoot: root, browserExecutable: process.env.KODAX_ARTIFACT_TEST_BROWSER });
    expect(rendered.status).toBe('ready');
-   expect(rendered.evidence!.sourceHash).toBe(created.artifact!.sourceHash);
+   expect(rendered.evidence!.source).toEqual({ kind: 'file', file: created.artifact });
    expect(rendered.evidence!.evidence[0]!.locator).toEqual({ kind: 'paginated', page: 1 });
    expect((await fs.readFile(rendered.evidence!.evidence[0]!.path)).subarray(1, 4).toString()).toBe('PNG');
  });

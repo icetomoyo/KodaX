@@ -90,6 +90,7 @@ export async function readConversationHistoryEntry(
   options: ClientItemReadOptions = {},
   namespace: 'history' | 'transcript' = 'history',
 ): Promise<ClientItemContent | null> {
+  if (options.part === 'attachment') throw new Error('Read image attachments through sessions.readItem.');
   const parsed = parseHistoryEntryItemId(sessionId, itemId, namespace);
   if (parsed === undefined) return null;
   const entry = await assembleConversationHistoryEntry(readChunk, sessionId, parsed.revision, parsed.entryIndex);

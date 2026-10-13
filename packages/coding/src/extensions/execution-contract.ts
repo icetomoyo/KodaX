@@ -2,6 +2,11 @@ import type { AgentActorClient, KodaXJsonValue } from '@kodax-ai/agent';
 import type { KodaXToolResultContentItem } from '@kodax-ai/llm';
 
 export type ExtensionToolResult = string | readonly KodaXToolResultContentItem[];
+export interface ManagedProcessInput {
+  readonly executable: string;
+  readonly args: readonly string[];
+  readonly timeoutSeconds?: number;
+}
 
 /** Authority comes from the admitted host invocation, never extension input. */
 export interface ExtensionExecutionScope {
@@ -12,6 +17,8 @@ export interface ExtensionExecutionScope {
   readonly extensionId: string;
   readonly signal: AbortSignal;
   readonly actors?: AgentActorClient;
+  /** Host-local fixed argv binding; stays on the admitted scope, never in model JSON/RPC. */
+  readonly executeProcess?: (input: ManagedProcessInput) => Promise<ExtensionToolResult>;
   invokeTool(name: string, input: Record<string, unknown>): Promise<ExtensionToolResult>;
   reportProgress(progress: { message: string; data?: KodaXJsonValue }): void;
 }

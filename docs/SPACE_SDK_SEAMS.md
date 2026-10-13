@@ -148,7 +148,7 @@ Retry 包括第一条查询之前的空历史；`before` 需要 canonical bounda
 | 手册/可信系统指令 | Host 安装的 extension `provider:before` hook 用 `replaceSystemPrompt` 合并可信手册，随 Host integrations 生命周期加载。低层显式 Run 保留 `context.systemPromptOverride`（SA）/`agentProfile.instructions`（AMA）；产品输入不开放任意 prompt/context。共享 Host hook 的适用范围由可信宿主策略选择。 |
 | Shell | 可信 `/runtime` 的 Session `shellExecution` 设置，采用现有规范化 Shell contract 与 revision CAS；Product settings 只暴露已列出的业务选择。 |
 | 工具/执行策略 | permissionMode、Plan 与审批经 `/client`；Host `execPolicy.adminRules/trustedProjectRoots`、`autoReview` 在 owner 启动时注入，附着已有 Host不覆盖它。Skill/command 的 allowedTools、hooks 来自可信注册来源；Host Tool 描述符仅在绑定 Run 中提供。 |
-| 结构化历史附件 | `readHistory().items[].attachments` 暴露 canonical 用户图片块/工具结果图片的 path、mediaType。原始 picker source/name、附件字节、任意 Office/Artifact 对象不在该接口中。file/video 尚不能作为 Provider prompt 附件；Space 可通过 Host Tools 提供业务读取结果。 |
+| 结构化图片附件 | `view.items` / `readHistory().items[].attachments` 暴露用户/工具图片的 path、mediaType。`readItem(sessionId, itemId, {part:'attachment', attachmentIndex, attachmentOffset, expectedImageSha256})` 从该 Host 项读取 PNG，返回 `image` 字节 chunk（base64）、SHA256、宽高、总字节数与 nextOffset；每块最多512KiB、整图最多10MiB。只接受项身份/附件索引，不接受客户端路径；旧文本 offset 仍按 UTF-16。原始 picker source/name、file/video/native Office 对象不在此接口中。 |
 | 详细统计 | 使用上述 statistics 结构化事实。view.activity.usage 保留最新活动展示语义；SDK 不提供货币价格账本。 |
 | 退出/崩溃恢复 | 使用上述 lifecycle 与离线回执查询；SDK 结算自身受管工作，Space 管理自身资源。Host 重启不自动续跑队列、Provider 或未知工具调用。 |
 

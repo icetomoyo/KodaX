@@ -453,7 +453,8 @@ describe('KodaXAcpServer reasoning effort forwarding', () => {
 });
 
 async function waitForCondition(label: string, predicate: () => boolean | Promise<boolean>): Promise<void> {
-  const deadline = Date.now() + 1000;
+  // Run registration includes filesystem-backed Session preparation; it has no 1s latency contract.
+  const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
     if (await predicate()) return;
     await new Promise<void>((resolve) => setTimeout(resolve, 10));

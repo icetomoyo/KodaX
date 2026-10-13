@@ -19,7 +19,8 @@ import type {
   ClientItemContent,
 } from '@kodax-ai/coding/client-contract';
 import { createSessionNoticeEvents } from './session-view-notices.js';
-import { canonicalTools, canonicalToolKey } from './client-canonical-tools.js';
+import { canonicalTools, canonicalToolKey, toolResultAttachments } from './client-canonical-tools.js';
+import { readItemImage } from './session-view-image.js';
 
 const STREAMING_RUN_PHASES = new Set(['queued', 'running', 'recovering', 'waiting_agent', 'waiting_permission', 'waiting_user_input']);
 
@@ -263,6 +264,7 @@ export class SessionViewOwner {
           : /^\[(?:Tool Error|Error)\]/.test(result.content) ? 'error'
           : /^\[(?:Cancelled|Blocked)\]/.test(result.content) ? 'cancelled' : 'success';
         upsert({ id: toolItemId(result.id), type: 'tool', text: result.content, timestamp: Date.now(),
+          ...(result.toolResult ? { attachments: toolResultAttachments(result.toolResult.content) } : {}),
           sourceTurnId: meta?.turnId ?? previous?.sourceTurnId, tool: { ...previous?.tool, resultRecorded: true, callId: result.id, name: result.name, status, endedAt: Date.now(), progress: undefined } });
         this.checkpoint(sessionId);
       },
@@ -402,6 +404,8 @@ export class SessionViewOwner {
       ?? state.items.find((item) => item.id === itemId) ?? state.history.find((item) => item.id === itemId)
       ?? await this.readCommittedItem?.(sessionId, itemId);
     if (!item) return null;
+    if (options.part === 'attachment') return { id: item.id, text: '', offset: 0, totalLength: 0,
+      image: await readItemImage(item, options) };
     const content = options.part === 'input' ? item.tool?.inputText ?? '' : item.text;
     const text = content.slice(offset, offset + 64 * 1024);
     const nextOffset = offset + text.length;

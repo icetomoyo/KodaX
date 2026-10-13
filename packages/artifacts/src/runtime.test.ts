@@ -7,6 +7,17 @@ import JSZip from 'jszip';
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))); });
 describe('real PPT public operations', () => {
+ it('retains zero-size imported drawing metadata without rejecting a valid PPTX', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'artifact zero extent ')); roots.push(root);
+  const options = { workspaceRoot: root };
+  await executeArtifactRequest({ operation: 'create', input: { output: 'x.pptx', slides: [{ elements: [{ type: 'rectangle', color: 'FFFFFF', x: 0, y: 0, width: 1, height: 1 }] }] } }, options);
+  const zip = await JSZip.loadAsync(await fs.readFile(path.join(root, 'x.pptx')));
+  const xml = await zip.file('ppt/slides/slide1.xml')!.async('string');
+  zip.file('ppt/slides/slide1.xml', xml.replace(/<a:ext\b[^>]*\/>/g, '<a:ext cx="0" cy="0"/>'));
+  await fs.writeFile(path.join(root, 'zero.pptx'), await zip.generateAsync({ type: 'nodebuffer' }));
+  const opened = await executeArtifactRequest({ operation: 'open', input: { path: 'zero.pptx' } }, options);
+  expect(opened.objects!.some(object => object.box?.width === 0 && object.box.height === 0)).toBe(true);
+ });
  it('creates, opens, edits and exports a new revision while preserving the original', async () => {
    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'artifact 中文 ')); roots.push(root);
    const original = await executeArtifactRequest({ operation: 'create', input: { output: 'deck.pptx', slides: [
@@ -73,13 +84,13 @@ describe('real PPT public operations', () => {
  });
  it('reports missing adapters and dependencies, and respects cancellation', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'artifact missing ')); roots.push(root);
-  for (const kind of ['static', 'paginated', 'interactive', 'temporal'] as const) expect((await executeArtifactRequest({ operation: 'capture', input: { kind, target: 'anything' } }, { workspaceRoot: root })).status).toBe('unverified');
+  expect((await executeArtifactRequest({ operation: 'capture', input: { kind: 'static', target: 'owned-surface', locators: [{ kind: 'static' }], expectedSource: { kind: 'surface', target: 'owned-surface', observedAt: '2026-10-13T00:00:00Z' } } }, { workspaceRoot: root })).status).toBe('unverified');
   const options = { workspaceRoot: root, browserExecutable: path.join(root, 'missing.exe') };
-  expect((await executeArtifactRequest({ operation: 'capabilities', input: {} }, options)).capabilities!.render).toBe('missing-browser');
+  expect((await executeArtifactRequest({ operation: 'capabilities', input: {} }, options)).capabilities!.find(c => c.operation === 'render' && c.input === 'pptx')!.availability).toBe('not-prepared');
   await executeArtifactRequest({ operation: 'create', input: { output: 'x.pptx', slides: [{ elements: [] }] } }, options);
   expect((await executeArtifactRequest({ operation: 'render', input: { path: 'x.pptx' } }, options)).diagnostics[0]!.code).toBe('missing-browser');
   expect((await executeArtifactRequest({ operation: 'render', input: { path: 'x.pptx', backend: 'libreoffice' } }, options)).status).toBe('unverified');
-  await expect(executeArtifactRequest({ operation: 'open', input: { path: 'x.pptx' } }, { ...options, signal: AbortSignal.abort() })).rejects.toThrow(/cancel/);
+  await expect(executeArtifactRequest({ operation: 'open', input: { path: 'x.pptx' } }, { ...options, signal: AbortSignal.abort() })).rejects.toThrow(/abort/i);
  });
  it('rejects falsely declared compressed ZIP expansion before parsing', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'artifact zip expansion ')); roots.push(root);

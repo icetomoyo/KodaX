@@ -1255,7 +1255,7 @@ KodaX 是基于 npm workspaces 的 TypeScript monorepo，**4 个核心 workspace
 
 KodaX 有两层结构，SDK 用户需要分开理解：
 
-- **源码层**：4 个核心 workspace 包，另有独立可选 `@kodax-ai/artifacts`：PPTX 创作、限定编辑、当前文件渲染及四类视觉证据契约。它不增加核心 bundle 的渲染依赖；KodaX 桥接沿用受管权限、沙箱和取消。[启用与验证](docs/test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md)。
+- **源码层**：4 个核心 workspace 包，另有独立可选 `@kodax-ai/artifacts`：PPTX 创作/限定编辑，PDF/图片/SVG 取证、DOCX 轻量预览、本地网页与 SMIL 捕获，公共准备和真实图片读取。核心启动不加载渲染依赖；桥接沿用受管权限、沙箱和取消。[SDK 支持与限制](docs/ARTIFACT_SDK.md)。
 - **当前源码打包导出**（不表示已发布到 npm）：单个 bundled 包 `@kodax-ai/kodax`，对外暴露 13 个 SDK subpath（SDK 消费者 `import` 时看到的接口）。subpath 分两种角色：
   - **完整包 subpath**（`/agent`、`/llm`、`/coding`、`/repl`）—— 每个 1:1 对应一个源码包，暴露完整公开 API。
   - **集成与窄子集 subpath**（`/media`、`/skills`、`/mcp`、`/session`、`/client`、`/runtime`、`/sandbox`、`/a2a`、`/experimental-memory`）—— 聚焦能力或宿主集成边界；`/experimental-memory` 明确为 opt-in 不稳定接口。

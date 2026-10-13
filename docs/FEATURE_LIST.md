@@ -18,7 +18,7 @@
 | Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement implemented and validated, unreleased; [design](research/verifier-replacement-visual-review-2026-10-11.md) |
 | Current development | `v0.7.97` / `FEATURE_298` — cross-platform/manual release verification for the alpha continues |
 | Roadmap updated | `2026-09-23` — FEATURE_300 planned for `v0.7.99`; implementation not started |
-| Artifact SDK | `2026-10-12` — FEATURE_301 Completed (unreleased) for `v0.7.97`; managed execution/PPT loop and four visual contracts; [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
+| Artifact SDK | `2026-10-13` — subsequent implementation (unreleased): complete preparation/evidence-read SDK and existing Host bridge; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
 | Total tracked features | `85` |
 | InProgress | `2` |
 | Planned | `17` |

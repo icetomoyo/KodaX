@@ -1,4 +1,6 @@
 docs/FEATURE_LIST.md text eol=lf
+tests/fixtures/artifacts/*.pdf binary
+tests/fixtures/artifacts/*.docx binary
 docs/features/v0.6.0.md text eol=lf
 packages/repl/src/interactive/commands.ts text eol=lf
 packages/repl/src/interactive/project-commands.test.ts text eol=lf

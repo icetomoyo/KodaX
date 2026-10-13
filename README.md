@@ -1358,7 +1358,7 @@ kodax --repo-intelligence full --repo-intelligence-trace
 
 ## Architecture
 
-KodaX uses a **monorepo architecture** with npm workspaces. Four core packages ship in `@kodax-ai/kodax` with 13 SDK subpath exports (`/agent`, `/llm`, `/coding`, `/media`, `/repl`, `/skills`, `/mcp`, `/session`, `/client`, `/runtime`, `/sandbox`, `/a2a`, `/experimental-memory`; ADR-024 + ADR-032 + ADR-038, with ADR-036 consolidation). The independent optional `@kodax-ai/artifacts` package provides PPTX authoring, bounded editing and current-file visual evidence without adding renderers to the core bundle. Its optional KodaX bridge uses managed permissions, sandbox and cancellation. [Setup and checks](docs/test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md).
+KodaX uses a **monorepo architecture** with npm workspaces. Four core packages ship in `@kodax-ai/kodax` with 13 SDK subpath exports (`/agent`, `/llm`, `/coding`, `/media`, `/repl`, `/skills`, `/mcp`, `/session`, `/client`, `/runtime`, `/sandbox`, `/a2a`, `/experimental-memory`; ADR-024 + ADR-032 + ADR-038, with ADR-036 consolidation). The independent optional `@kodax-ai/artifacts` package adds PPTX authoring/limited edits, PDF/image/SVG evidence, candidate DOCX preview, local HTML/SMIL capture, preparation and binary evidence reading. Core startup does not load renderers; the KodaX bridge uses managed permissions, sandbox and cancellation. [SDK support and limits](docs/ARTIFACT_SDK.md).
 
 ```
 KodaX/

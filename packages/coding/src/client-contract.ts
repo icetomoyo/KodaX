@@ -376,7 +376,11 @@ export interface ClientCapabilityProbeResult {
 
 export interface ClientItemReadOptions {
   readonly offset?: number;
-  readonly part?: 'text' | 'input';
+  readonly part?: 'text' | 'input' | 'attachment';
+  /** Reads a PNG already attached to this Host item; never accepts a client file path. */
+  readonly attachmentIndex?: number;
+  readonly attachmentOffset?: number;
+  readonly expectedImageSha256?: string;
 }
 
 /** Paging over a Session's canonical conversation history. */
@@ -576,11 +580,24 @@ export interface ClientHistorySearchResult {
 }
 
 export interface ClientItemContent {
+  readonly image?: ClientImageAttachmentContent;
   readonly outputState?: 'draft' | 'committed';
   /** Same revision and outputState as the observed item, for frozen reads. */
   readonly textRevision?: number;
   readonly id: string;
   readonly text: string;
+  readonly offset: number;
+  readonly totalLength: number;
+  readonly nextOffset?: number;
+}
+
+/** Bounded binary chunks, distinct from text projection and character offsets. */
+export interface ClientImageAttachmentContent {
+  readonly mediaType: 'image/png';
+  readonly dataBase64: string;
+  readonly sha256: string;
+  readonly width: number;
+  readonly height: number;
   readonly offset: number;
   readonly totalLength: number;
   readonly nextOffset?: number;

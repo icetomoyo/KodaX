@@ -66,6 +66,7 @@ TUI、桌面 UI、IDE、自动化应用接入共享 KodaX 时，以 `KodaXProduc
 | --- | --- |
 | 当前屏幕 | `observe` 返回的 `ClientSessionView` |
 | 显示项全文/工具参数 | `readItem(sessionId, viewItem.id, {part, offset})` |
+| Host 项的实际 PNG | `readItem(sessionId, viewItem.id, {part:'attachment', attachmentIndex, attachmentOffset, expectedImageSha256})`；有界字节块，不是文本投影 |
 | 较早的规范对话 | `readHistory(sessionId, {cursor})`，首次为最新页 |
 | 历史页或搜索结果全文 | `readHistoryEntry(sessionId, historyItemId, {part, offset})` |
 | 全 Session 搜索 | `searchHistory`，使用命中 itemId 读取正文 |

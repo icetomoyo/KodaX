@@ -66,6 +66,18 @@ it('executes explicit tools from daemon negotiation with permissions, events and
       await expect(read.result).resolves.toMatchObject({ phase: 'completed', result: {
         success: true, lastText: expect.stringContaining('durable explicit read'),
       } });
+      const imagePath = path.join(root, 'image.png'), bytes = await readFile('tests/fixtures/images/valid-png.png');
+      await writeFile(imagePath, bytes);
+      const imageRun = await client.runs.start({ sessionId: session.id, prompt: 'image attachment read', options: { lsp: false, toolInvocation: { name: 'read', input: { path: imagePath } } } });
+      const imageTerminal = await imageRun.result;
+      expect(imageTerminal.result?.success, imageTerminal.result?.lastText).toBe(true);
+      let imageItemId: string | undefined;
+      const imageObservation = await client.sessions.observeView(session.id, view => { imageItemId = view.items.find(item => item.attachments?.some(a => a.path === imagePath))?.id; });
+      try {
+        expect(imageItemId).toBeDefined();
+        const attachment = await client.sessions.readViewItem(session.id, imageItemId!, { part: 'attachment', attachmentIndex: 0, expectedImageSha256: createHash('sha256').update(bytes).digest('hex') });
+        expect(Buffer.from(attachment!.image!.dataBase64, 'base64')).toEqual(bytes);
+      } finally { imageObservation.close(); }
       const denied = await client.runs.start({ sessionId: session.id, prompt: 'deny write in plan mode', options: {
         lsp: false, toolInvocation: { name: 'write', input: { path: target, content: 'must not write' } },
       } });

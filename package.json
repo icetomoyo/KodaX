@@ -91,7 +91,7 @@
     "config:templates:sync": "node scripts/sync-config-templates.mjs",
     "config:templates:check": "node scripts/sync-config-templates.mjs --check",
     "build:dts": "node scripts/build-dts.mjs",
-    "build:packages": "tsc -b tsconfig.build.json && npm run copy:builtin -w @kodax-ai/agent && npm run copy:provider-caps -w @kodax-ai/llm",
+    "build:packages": "tsc -b tsconfig.build.json && npm run copy:builtin -w @kodax-ai/agent && npm run copy:provider-caps -w @kodax-ai/llm && npm run build:browser -w @kodax-ai/artifacts",
     "build:bundle": "node scripts/build-bundle.mjs",
     "build:native": "node scripts/build-native.mjs",
     "dev": "node --max-old-space-size=4096 --require ./scripts/production-env.cjs --import tsx src/kodax_bootstrap.ts",

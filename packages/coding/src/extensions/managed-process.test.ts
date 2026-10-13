@@ -6,7 +6,7 @@ import { setAgentConfigHome } from '@kodax-ai/agent';
 import { toolBash } from '../tools/bash.js';
 import type { KodaXToolExecutionContext } from '../types.js';
 import type { ExtensionExecutionScope } from './execution-contract.js';
-import { executeManagedProcess } from './managed-process.js';
+import { executeManagedProcess, getManagedProcessInvocation } from './managed-process.js';
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -26,6 +26,16 @@ async function fixture(signal = new AbortController().signal) {
   return { scope, decisions, directory, ctx };
 }
 describe('checked fixed process execution', () => {
+  it('delegates binding to the admitted Host scope across independently bundled consumers', async () => {
+    const { scope } = await fixture();
+    const executeProcess = vi.fn(async () => 'host-owned result');
+    const input = { executable: process.execPath, args: ['literal'] };
+    expect(await executeManagedProcess({ ...scope, executeProcess }, input)).toBe('host-owned result');
+    expect(executeProcess).toHaveBeenCalledWith(expect.objectContaining(input));
+  });
+  it('never treats a fixed descriptor without an admitted binding as a shell command', () => {
+    expect(() => getManagedProcessInvocation('Fixed argv: ["unbound.exe"]')).toThrow(/binding/);
+  });
   it('preserves literal argv through the normal host authorization boundary', async () => {
     const { scope, decisions } = await fixture();
     const args = ['中文 空格', '$HOME', '$(echo unsafe)', 'a;b&c', '"quoted"', String.fromCharCode(96) + 'literal' + String.fromCharCode(96)];

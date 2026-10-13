@@ -1,4 +1,6 @@
 import type { EvidenceLocator, VisualEvidenceBatch, VisualRequirement } from './types.js';
+import { validateRaster, validateSource } from './contract.js';
+import { sameSource } from './identity.js';
 
 function validLocator(locator: EvidenceLocator): boolean {
  switch (locator.kind) {
@@ -21,11 +23,14 @@ function matches(actual: EvidenceLocator, required: EvidenceLocator): boolean {
 /** Mechanical coverage/readiness only; it never returns a visual pass verdict. */
 export function validateVisualEvidence(batch: VisualEvidenceBatch, required: VisualRequirement): { status: 'ready' | 'unverified'; missing: readonly string[] } {
  const missing: string[] = [];
- if (!/^[a-f0-9]{64}$/.test(required.sourceHash)) missing.push('invalid-source-hash');
- if (batch.sourceHash !== required.sourceHash) missing.push('stale-source');
+ let sourceValid = true;
+ try { validateSource(required.source); validateSource(batch.source); }
+ catch { missing.push('invalid-source'); sourceValid = false; }
+ if (sourceValid && !sameSource(batch.source, required.source)) missing.push('stale-source');
  if (batch.kind !== required.kind) missing.push('wrong-evidence-kind');
+ if (required.background !== undefined && batch.background !== required.background) missing.push('wrong-background');
  if (batch.diagnostics.some(item => item.blocking)) missing.push('blocking-diagnostic');
- const valid = batch.evidence.filter(item => /^[a-f0-9]{64}$/.test(item.sha256) && item.mediaType === 'image/png' && item.path.length > 0 && item.locator.kind === required.kind && validLocator(item.locator));
+ const valid = batch.evidence.filter(item => { try { validateRaster(item); } catch { return false; } return item.locator.kind === required.kind && validLocator(item.locator); });
  if (valid.length === 0) missing.push('no-raster');
  for (const [index, locator] of (required.locators ?? []).entries()) {
   if (locator.kind !== required.kind || !valid.some(item => matches(item.locator, locator))) missing.push('locator:' + index);
