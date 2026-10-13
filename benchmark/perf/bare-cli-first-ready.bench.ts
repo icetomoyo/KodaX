@@ -17,6 +17,14 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { connectKodaXRuntime } from '../../src/sdk-runtime.js';
+import { waitForRuntimeDaemonOwnerExit } from '../../src/runtime-daemon/process.js';
+import {
+  readRuntimeDaemonLockOwner,
+  readRuntimeDaemonState,
+  readRuntimeDaemonToken,
+  resolveRuntimeDaemonPathsFromConfigHome,
+} from '../../src/runtime-daemon/state.js';
 
 const DEFAULT_SAMPLES = 5;
 const WARMUPS = 1;
@@ -89,7 +97,7 @@ async function measureFirstReady(
     windowsHide: true,
   });
 
-  return new Promise<number>((resolve, reject) => {
+  const readyMs = await new Promise<number>((resolve, reject) => {
     let captured = '';
     let readyMs: number | undefined;
     let settled = false;
@@ -133,16 +141,35 @@ async function measureFirstReady(
       ));
     }, TIMEOUT_MS);
   });
+  // The CLI disconnects on /exit; its persistent Host needs its own shutdown.
+  // Reclaim it outside the measured boundary, before deleting its config home.
+  const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome);
+  const owner = readRuntimeDaemonLockOwner(paths.lockFile);
+  const state = readRuntimeDaemonState(paths);
+  if (!owner || !state || state.runtimeId !== owner.runtimeId || state.pid !== owner.pid) {
+    throw new Error('Cannot confirm the benchmark Host owner; retain its fixture for diagnosis.');
+  }
+  const runtime = await connectKodaXRuntime({
+    homeDir: sampleRoot, endpoint: state.endpoint, daemonToken: readRuntimeDaemonToken(paths),
+  });
+  try {
+    if (runtime.identity.runtimeId !== owner.runtimeId) throw new Error('Benchmark Host owner changed before shutdown.');
+    await runtime.daemon.shutdown();
+  } finally { await runtime.close(); }
+  await waitForRuntimeDaemonOwnerExit(owner, TIMEOUT_MS);
+  return readyMs;
 }
 
 const benchmarkRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-cli-first-ready-'));
 const samples = sampleCount();
 const timings: number[] = [];
+let completed = false;
 try {
   for (let sample = -WARMUPS; sample < samples; sample += 1) {
     const wallMs = await measureFirstReady(benchmarkRoot, sample);
     if (sample >= 0) timings.push(wallMs);
   }
+  completed = true;
   process.stdout.write(`${JSON.stringify({
     benchmark: 'bare-cli-first-ready',
     surface: 'classic-repl-with-redirected-stdio',
@@ -165,5 +192,6 @@ try {
     summary: summarize(timings),
   }, null, 2)}\n`);
 } finally {
-  await fs.rm(benchmarkRoot, { recursive: true, force: true });
+  if (completed) await fs.rm(benchmarkRoot, { recursive: true, force: true });
+  else process.stderr.write(`Retained incomplete benchmark fixtures: ${benchmarkRoot}\n`);
 }

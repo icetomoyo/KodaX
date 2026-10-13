@@ -33,6 +33,13 @@ Shell 清理重试耗尽时保留 deferred 进程身份，允许后续对话和 
 | `endpoint?: string` | 支持 | 不支持 | 指定本地 socket/Windows named pipe；省略时从本地 profile 解析 |
 | `token?: string` | 支持 | 不支持 | 显式 Host token；省略时从所选本地 profile 读取 |
 | `daemonStartupTimeoutMs?: number` | 不支持 | 支持 | 本机 Host 启动等待期限，单位毫秒；省略时采用运行时默认值 |
+| `onStartupProgress?: (progress: ClientStartupProgress) => void \| Promise<void>` | 支持 | 支持 | 本机启动/连接阶段观察；不等待显示工作，不改变启动结果 |
+
+`ClientStartupProgress` 是纯数据契约，由统一 Node 启动器报告实际阶段：`checking` 检查本机 Host，`starting` 创建 Host，`upgrading` 对符合条件的空闲旧 Host 发起正常更新，`connecting` 建立并认证 Client，`ready` 表示 Client 已通过身份与能力校验、接口可用。`waiting` 附带实际等待原因：`connected_clients` 等待其他客户端退出以允许更新，`host_starting` 等待 Host 就绪，`host_stopping` 等待原 Host 退出。被动 connect 只报告连接阶段，不启动或更新 Host；阶段可以随既有重试重复，连续相同通知会合并，轮询不逐次发通知。
+
+回调可省略；同步抛错或异步拒绝通过现有诊断报告，不改变认证、更新、等待期限、取消、清理或 Promise 结果。回调不被等待，显示层应快速返回。失败或取消不会报告 `ready`，成功仍以返回的 Client 为准。通知仅在本机调用期间产生，不新增 Host RPC、Run 状态或持久事件日志；不包含 token、命令、进程身份或构建指纹。
+
+CLI 用同一通知驱动加载动画，模块加载、旧子进程清理、Session 读取和工作区准备仍由实际执行它们的 CLI 报告。REPL 的可选 `onBeforeRender` 在恢复提示及初始 banner/TUI 输出前通知调用方清除加载显示；它不是 Host-ready 或输入-ready 信号。SDK 可以用同一 `onStartupProgress` 显示自己的进度，无需依赖终端组件。
 
 `EnsureKodaXClientOptions` 扩展 `Omit<ConnectKodaXClientOptions, 'endpoint' | 'token'>`，避免把任意远端连接当作可由本机更新的安装。`RuntimeClientInfo` 在提供时要求 `name`，其可选字段是 `title`、`version`、`clientType`、`instanceId`、`instanceSecret`。clientType 为 app/cli/diagnostic/automation/unknown，仅供展示；name/title/version 也不证明权限。instanceId/instanceSecret 是 Host 颁发的身份与凭据，应按底层身份契约保管，不能通过自填展示元数据获取管理权限。
 

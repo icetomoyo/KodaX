@@ -6,6 +6,10 @@
  * process manager without introducing a daemon or a fifth workspace package.
  */
 
+import { createClientStartupProgressReporter } from './client-startup-progress.js';
+import type { ClientStartupProgress } from '@kodax-ai/coding/client-contract';
+export type { ClientStartupProgress } from '@kodax-ai/coding/client-contract';
+
 import type {
   RuntimeCredentialRequest,
   RuntimeCredentialBroker,
@@ -934,6 +938,8 @@ function runtimeDaemonOwnerBootstrap(
 }
 
 export interface ConnectKodaXRuntimeOptions {
+  /** Local stage changes; observer work is not awaited. Failures are diagnosed without affecting startup. */
+  readonly onStartupProgress?: (progress: ClientStartupProgress) => void | Promise<void>;
   readonly profile?: string;
   /** @deprecated Connect is passive. Use ensureKodaXRuntime for startup; true is rejected here. */
   readonly autoStart?: boolean;
@@ -5860,6 +5866,7 @@ interface CapabilityUpgradeInput {
   readonly requiredCapability: string;
   readonly startupDeadline: number;
   readonly startupSignal?: AbortSignal;
+  readonly reportProgress: (progress: ClientStartupProgress) => void;
 }
 
 function createCapabilityUpgradeRuntime(
@@ -6097,7 +6104,9 @@ async function replaceRuntimeDaemonForCapabilityUpgrade(
     assertCurrentLauncherBuild();
     input.startupSignal?.throwIfAborted();
     if (Date.now() >= input.startupDeadline) throw new Error('Host startup timed out before managed shutdown.');
+    input.reportProgress({ stage: 'upgrading' });
     await input.transport.request("runtime.shutdown");
+    input.reportProgress({ stage: 'waiting', reason: 'host_stopping' });
     await runtime.close();
     const remainingStartupMs = input.startupDeadline - Date.now();
     if (remainingStartupMs <= 0) {
@@ -6139,6 +6148,7 @@ async function connectKodaXRuntimeInternal(
   startupRetries = 2,
   startupDeadline = Date.now() + (options.daemonStartupTimeoutMs ?? 60_000),
   contentionAttempt = 0,
+  reportProgress = createClientStartupProgressReporter(options.onStartupProgress),
 ): Promise<KodaXDaemonRuntime> {
   if (allowCapabilityUpgrade && options.autoStart === true) assertCurrentLauncherBuild();
   assertRuntimeTimeout(
@@ -6190,6 +6200,7 @@ async function connectKodaXRuntimeInternal(
           orphanExitMs: options.daemonOrphanExitMs,
           startupTimeoutMs: Math.max(1, startupDeadline - Date.now()),
           startupSignal: options.daemonStartupSignal,
+          onStartupProgress: reportProgress,
           connectTimeoutMs: options.daemonConnectTimeoutMs,
           ownerBootstrap,
         })
@@ -6206,6 +6217,7 @@ async function connectKodaXRuntimeInternal(
           ),
         )
       : undefined);
+  reportProgress({ stage: 'connecting' });
   const transport =
     options.transport ??
     lease?.transport ??
@@ -6345,6 +6357,7 @@ async function connectKodaXRuntimeInternal(
           requiredCapability: requiredUpgrade.name,
           startupDeadline,
           startupSignal: options.daemonStartupSignal,
+          reportProgress,
         });
       } catch (error: unknown) {
         if (
@@ -6356,9 +6369,10 @@ async function connectKodaXRuntimeInternal(
           // The rejected temporary client is already closed. Contention gets
           // the remaining startup budget, not the actual-upgrade attempt limit.
           const backoff = 50 + Math.floor(Math.random() * Math.min(950, 100 * 2 ** Math.min(contentionAttempt, 4)));
+          reportProgress({ stage: 'waiting', reason: 'connected_clients' });
           await waitForDaemonStartupRetry(Math.min(backoff, startupDeadline - Date.now()), options.daemonStartupSignal);
           if (Date.now() >= startupDeadline) throw error;
-          return connectKodaXRuntimeInternal(options, true, ownerBootstrap, startupRetries, startupDeadline, contentionAttempt + 1);
+          return connectKodaXRuntimeInternal(options, true, ownerBootstrap, startupRetries, startupDeadline, contentionAttempt + 1, reportProgress);
         }
         throw error;
       } finally {
@@ -6373,6 +6387,7 @@ async function connectKodaXRuntimeInternal(
         startupRetries - 1,
         startupDeadline,
         contentionAttempt,
+        reportProgress,
       );
     }
     assertRuntimeCapabilities(daemonCapabilities, requirements);
@@ -6389,7 +6404,7 @@ async function connectKodaXRuntimeInternal(
       if (Date.now() >= startupDeadline) throw error;
       await waitForDaemonStartupRetry(Math.min(50 + Math.floor(Math.random() * 100), startupDeadline - Date.now()), options.daemonStartupSignal);
       if (Date.now() >= startupDeadline) throw error;
-      return connectKodaXRuntimeInternal(options, true, ownerBootstrap, startupRetries - 1, startupDeadline, contentionAttempt);
+      return connectKodaXRuntimeInternal(options, true, ownerBootstrap, startupRetries - 1, startupDeadline, contentionAttempt, reportProgress);
     }
     throw error;
   }
@@ -6399,6 +6414,7 @@ async function connectKodaXRuntimeInternal(
     capabilities: daemonCapabilities,
     ...(grantedScopes !== undefined ? { grantedScopes } : {}),
   });
+  reportProgress({ stage: 'ready' });
   if (!lease) return runtime;
   return {
     ...runtime,

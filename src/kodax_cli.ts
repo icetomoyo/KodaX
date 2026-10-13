@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
+import { cliStartupProgressMessage, createCliStartupProgress, isInteractiveCliStartup, type CliStartupProgress } from './cli-startup-progress.js';
 import { createHostOwnedExtensionRuntime } from "./host-integrations.js";
 import {
   exitCodeForOneShotResult,
@@ -2971,25 +2972,15 @@ async function prepareInteractiveSandboxStartupInChild(
 
 async function withInteractiveSandboxStartupProgress<T>(
   operation: () => Promise<T>,
+  startupProgress?: CliStartupProgress,
 ): Promise<T> {
-  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const;
-  const startedAt = Date.now();
-  let frame = 0;
-  const render = (): void => {
-    const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1_000);
-    process.stderr.write(
-      `\r${frames[frame % frames.length]} Preparing Windows sandbox (${elapsedSeconds}s; first repair may take a few minutes)...`,
-    );
-    frame += 1;
-  };
-  render();
-  const timer = setInterval(render, 120);
-  timer.unref?.();
+  const message = 'Preparing Windows sandbox; first repair may take a few minutes';
+  const progress = startupProgress ?? createCliStartupProgress(message);
+  if (startupProgress) progress.update(message);
   try {
     return await operation();
   } finally {
-    clearInterval(timer);
-    process.stderr.write('\r\u001B[2K');
+    if (!startupProgress) progress.stop();
   }
 }
 
@@ -2997,6 +2988,7 @@ export async function prepareInteractiveSandboxStartup(
   input: InteractiveSandboxStartupInput,
   prepare: () => Promise<InteractiveSandboxStartupReport>,
   isSetupCurrent: () => boolean | Promise<boolean> = () => false,
+  startupProgress?: CliStartupProgress,
 ): Promise<InteractiveSandboxStartupReport | undefined> {
   if (
     input.platform !== 'win32'
@@ -3004,7 +2996,7 @@ export async function prepareInteractiveSandboxStartup(
     || !input.stdoutIsTTY
   ) return undefined;
   if (await isSetupCurrent()) return undefined;
-  return withInteractiveSandboxStartupProgress(prepare);
+  return withInteractiveSandboxStartupProgress(prepare, startupProgress);
 }
 
 function reportInteractiveSandboxStartup(
@@ -3274,7 +3266,17 @@ async function runMemoryReviewDrain(input: {
   }
 }
 
-async function main() {
+async function main(entryOptions: { readonly startupProgress?: CliStartupProgress } = {}) {
+  const startupProgress = entryOptions.startupProgress
+    ?? (isInteractiveCliStartup(process.argv.slice(2)) ? createCliStartupProgress('Starting KodaX') : undefined);
+  try {
+    await runCliMain(startupProgress);
+  } finally {
+    startupProgress?.stop();
+  }
+}
+
+async function runCliMain(startupProgress?: CliStartupProgress) {
   const argv = process.argv.slice(2);
   if (
     argv[0] === 'setup' &&
@@ -3330,6 +3332,7 @@ async function main() {
     return;
   }
   if (!isDaemonManagementCommand) {
+    startupProgress?.update('Checking previous processes');
     await cleanupRegisteredManagedChildren();
   }
 
@@ -4499,6 +4502,7 @@ complete -c kodax -l version -d 'Show version'`);
         );
         return;
       }
+      startupProgress?.stop();
       await executeProviderSetup();
       return;
     }
@@ -4630,11 +4634,11 @@ complete -c kodax -l version -d 'Show version'`);
     // daemon owner. The Host process owns extensions, configured MCP, and
     // the A2A plane; embedded construction remains a low-level SDK path
     // and is never a product fallback.
-    cliRuntime = await createKodaXRuntime({
-      mode: 'daemon',
+    cliRuntime = await ensureKodaXRuntime({
       profile: 'default',
       requirements: { productClient: 1 },
-      autoStartDaemon: true,
+      onStartupProgress: startupProgress === undefined ? undefined
+        : (progress) => { startupProgress.update(cliStartupProgressMessage(progress)); },
       clientInfo: {
         name: 'kodax-cli',
         title: 'KodaX CLI',
@@ -4781,7 +4785,9 @@ complete -c kodax -l version -d 'Show version'`);
         options.resume = selected.id;
       }
     } else if (typeof opts.resume === 'string') {
+      startupProgress?.update('Loading session');
       const resumeClient = toKodaXProductClient(await getCliRuntime());
+      startupProgress?.update('Loading session');
       let found = false;
       try {
         const target = await resumeClient.sessions.read(opts.resume);
@@ -4896,7 +4902,7 @@ complete -c kodax -l version -d 'Show version'`);
           stdoutIsTTY: process.stdout.isTTY === true,
         }, prepareInteractiveSandboxStartupInChild, () => (
           sandboxRuntime?.isWindowsSandboxV2SetupCurrent() ?? true
-        )));
+        ), startupProgress));
         if (useClassicInteractiveMode) {
           console.error(
             chalk.dim(
@@ -4950,6 +4956,7 @@ complete -c kodax -l version -d 'Show version'`);
           ...(program.getOptionValueSource('repoIntelligenceTrace') === 'cli' ? { repoIntelligenceTrace: opts.repoIntelligenceTrace === true } : {}),
         };
         const interactiveOptions = {
+          onBeforeRender: () => startupProgress?.stop(),
           initialClientSettings,
           provider: interactiveKodaXOptions.provider,
           model: interactiveKodaXOptions.model,
@@ -5033,6 +5040,7 @@ complete -c kodax -l version -d 'Show version'`);
           );
         }
 
+        startupProgress?.update('Preparing workspace');
         if (useClassicInteractiveMode) {
           await runInteractiveMode(interactiveOptions);
         } else {

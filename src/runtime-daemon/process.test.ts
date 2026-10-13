@@ -556,6 +556,7 @@ describe("runtime daemon child startup", () => {
   });
 
   it("waits for an existing healthy owner to publish ready without spawning a competitor", async () => {
+    const progress: unknown[] = [];
     let healthChecks = 0;
     const starting = await healthy(779)();
     const observe = async () => {
@@ -574,6 +575,7 @@ describe("runtime daemon child startup", () => {
         {
           startupTimeoutMs: 1_000,
           pollIntervalMs: 1,
+          onStartupProgress: (event) => { progress.push(event); },
         },
         await observe(),
         observe,
@@ -582,6 +584,7 @@ describe("runtime daemon child startup", () => {
       state: { pid: 779, status: "ready" },
     });
     expect(healthChecks).toBe(2);
+    expect(progress).toEqual([{ stage: 'waiting', reason: 'host_starting' }]);
   });
 
   it("bounds and cancels waiting for an existing non-ready owner without terminating it", async () => {

@@ -34,6 +34,11 @@ import type {
 } from './client-domains.js';
 export type * from './client-domains.js';
 
+/** Local launcher facts. `ready` means the Client is usable, not that a UI has rendered. */
+export type ClientStartupProgress =
+  | { readonly stage: 'checking' | 'starting' | 'upgrading' | 'connecting' | 'ready' }
+  | { readonly stage: 'waiting'; readonly reason: 'connected_clients' | 'host_starting' | 'host_stopping' };
+
 /** Display facts only; extension handlers and Host execution types stay private. */
 export interface ClientLoadedExtension {
   readonly path: string;

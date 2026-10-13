@@ -102,4 +102,22 @@ describe('classic REPL display events', () => {
     expect(events.onRetry).toBe(onRetry);
     expect(typeof events.onTextDelta).toBe('function');
   });
+
+  it('hands off terminal output before printing a resumed Session notice', async () => {
+    const storage = new MemorySessionStorage();
+    await storage.save('handoff-session', { messages: [], title: 'Handoff' });
+    const output: string[] = [];
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      output.push(String(chunk));
+      return true;
+    });
+    askInputMock.mockReset().mockRejectedValueOnce(new Error(TEST_EXIT));
+    await expect(runInteractiveMode({
+      provider: 'openai', storage, session: { id: 'handoff-session' },
+      onBeforeRender: () => { output.push('handoff'); },
+    })).rejects.toThrow(TEST_EXIT);
+    expect(output[0]).toBe('handoff');
+    expect(output.join('')).toContain('Session loaded: handoff-session');
+    expect(output.filter((line) => line === 'handoff')).toHaveLength(1);
+  });
 });

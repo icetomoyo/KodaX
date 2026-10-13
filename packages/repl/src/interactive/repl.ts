@@ -508,6 +508,8 @@ export async function saveClassicSession(
 export type ReplRuntimeStatusProvider = () => Promise<RuntimeSurfaceStatus | undefined>;
 
 export interface RepLOptions extends KodaXOptions {
+  /** Called before the REPL starts writing to the terminal. */
+  onBeforeRender?: () => void;
   initialClientSettings?: ClientSessionSettingsPatch;
   storage?: SessionStorage;
   execPolicy?: StandaloneExecPolicyOptions;
@@ -739,10 +741,6 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     currentConfig = applyClientSessionViewSettings(currentConfig, { settings });
     currentPermissionMode = currentConfig.permissionMode;
   } else await syncClientSettings();
-  if (startupSession) {
-    const label = startupSession.kind === 'continue' ? 'Continuing session' : 'Session loaded';
-    process.stdout.write(`${chalk.green(`[${label}: ${startupSession.id}]`)}\n`);
-  }
   // FEATURE_222 (R4): forward the host skill dynamic-context policy so the
   // user-typed `/skill` slash path is gated the same as the model-triggered tool.
   context.skillDynamicContext = options.skillDynamicContext;
@@ -782,6 +780,11 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   let agentsFiles = await reloadAgentsFiles();
 
   // Print startup Banner - 打印启动 Banner
+  options.onBeforeRender?.();
+  if (startupSession) {
+    const label = startupSession.kind === 'continue' ? 'Continuing session' : 'Session loaded';
+    process.stdout.write(`${chalk.green(`[${label}: ${startupSession.id}]`)}\n`);
+  }
   printStartupBanner(currentConfig, currentConfig.permissionMode, {
     contextWindow: effectiveContextWindow,
     triggerPercent: compactionConfig.triggerPercent,

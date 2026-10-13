@@ -22,6 +22,7 @@ import {
   rememberChildProcessTree,
   rememberedChildProcessTreeIdentities,
   rememberedChildProcessTreeIsComplete,
+  readProcessStartIdentity,
   retainedWindowsProcessTree,
   withSharedWindowsProcessSnapshot,
   type WindowsProcessTreeIdentity,
@@ -61,12 +62,21 @@ export type ManagedRunChildCleanupResult =
 export async function cleanupManagedRunChildProcess(
   reference: ManagedRunChildProcessReference,
 ): Promise<ManagedRunChildCleanupResult> {
+  return cleanupManagedRunChildProcessWithOwnerIdentity(reference, processStartIdentity);
+}
+
+async function cleanupManagedRunChildProcessWithOwnerIdentity(
+  reference: ManagedRunChildProcessReference,
+  readOwnerStartIdentity: (pid: number) => string | undefined,
+  expectedRecord?: ManagedChildProcessRecord,
+): Promise<ManagedRunChildCleanupResult> {
   let record = readRunChildRecord(reference);
   if (record === undefined) return { status: 'unknown' };
+  if (expectedRecord !== undefined && !sameRunChildRecord(record, expectedRecord)) return { status: 'unknown' };
   if (record.cleanupVerified !== true) {
     const active = activeChildren.get(record.pid);
     const owned = record.ownerPid === process.pid && sameRunChildRecord(active?.record, record);
-    if (!owned && !runChildOwnerIsGone(record)) return { status: 'unknown' };
+    if (!owned && !runChildOwnerIsGone(record, readOwnerStartIdentity)) return { status: 'unknown' };
     if (!owned && record.processStartIdentity === undefined) return { status: 'unknown' };
     if (!owned && incompleteRunTreeTargetsAreGone(record)) return { status: 'unknown' };
     if (!owned) record = persistRunChildTree(record);
@@ -110,9 +120,16 @@ function incompleteRunTreeTargetsAreGone(record: ManagedChildProcessRecord): boo
     || root?.creationTime !== record.processStartIdentity) return false;
   // A missing root cannot reveal a new tree. When every retained target is
   // also gone, exact termination would do nothing and cleanup stays unconfirmed.
-  return identities.every(({ pid }) => {
+  return identities.every(({ pid, creationTime }) => {
     if (!Number.isSafeInteger(pid) || pid <= 0) return false;
-    try { process.kill(pid, 0); return false; }
+    try {
+      process.kill(pid, 0);
+      if (creationTime === '0') return false;
+      // An alive, reused PID is not the retained process. One shared native
+      // snapshot avoids repeatedly attempting exact termination of old trees.
+      const current = readProcessStartIdentity(pid);
+      return current !== undefined && current !== creationTime;
+    }
     catch (error: unknown) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
   });
 }
@@ -134,11 +151,14 @@ function persistRunChildTree(record: ManagedChildProcessRecord): ManagedChildPro
   return updated;
 }
 
-function runChildOwnerIsGone(record: ManagedChildProcessRecord): boolean {
+function runChildOwnerIsGone(
+  record: ManagedChildProcessRecord,
+  readStartIdentity: (pid: number) => string | undefined,
+): boolean {
   try { process.kill(record.ownerPid, 0); }
   catch (error: unknown) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
   if (record.ownerProcessStartIdentity === undefined) return false;
-  const current = processStartIdentity(record.ownerPid);
+  const current = readStartIdentity(record.ownerPid);
   return current !== undefined && current !== record.ownerProcessStartIdentity;
 }
 
@@ -984,6 +1004,8 @@ async function cleanupRegisteredManagedChildrenInSharedSnapshotScope(
   );
 
   for (const { filePath, current, persisted } of persistedFiles) {
+    // Keep terminal progress and interrupts responsive between synchronous OS probes.
+    if (process.platform === 'win32') await new Promise<void>((resolve) => setImmediate(resolve));
     if (!current) {
       if (persisted.status === 'invalid') {
         if (removePersistedRecord(filePath)) pruned += 1;
@@ -1026,8 +1048,8 @@ async function cleanupRegisteredManagedChildrenInSharedSnapshotScope(
         skip(record.ownerPid);
         continue;
       }
-      const result = await cleanupManagedRunChildProcess({ runtimeRunId: record.runtimeRunId,
-        pid: record.pid, registrationId: record.registrationId });
+      const result = await cleanupManagedRunChildProcessWithOwnerIdentity({ runtimeRunId: record.runtimeRunId,
+        pid: record.pid, registrationId: record.registrationId }, readOwnerStartIdentity, record);
       if (result.status === 'verified') killed += 1;
       else skip(record.ownerPid);
       continue;

@@ -53,8 +53,11 @@ import {
   type RuntimeDaemonEndpoint,
 } from "./transport.js";
 import { spawnWindowsJobContainedProcess } from "./windows-job-supervisor.js";
+import { createClientStartupProgressReporter } from '../client-startup-progress.js';
+import type { ClientStartupProgress } from '@kodax-ai/coding/client-contract';
 
 export interface RuntimeDaemonProcessLeaseOptions {
+  readonly onStartupProgress?: (progress: ClientStartupProgress) => void | Promise<void>;
   readonly homeDir?: string;
   readonly configHome?: string;
   readonly profile?: string;
@@ -381,6 +384,8 @@ export async function acquireRuntimeDaemonProcessLease(
   }
 
   if (options.startupSignal?.aborted) throw runtimeDaemonStartupCancelled();
+  const reportProgress = createClientStartupProgressReporter(options.onStartupProgress);
+  reportProgress({ stage: 'checking' });
   let initial = await raceRuntimeDaemonStartupStep(
     observeRuntimeDaemonHealth(paths, options.healthCheck), options.startupSignal,
   );
@@ -414,6 +419,7 @@ export async function acquireRuntimeDaemonProcessLease(
     }
     const exitBudget = startupDeadline - Date.now();
     if (exitBudget <= 0) throw runtimeDaemonStartupTimeout(paths);
+    reportProgress({ stage: 'waiting', reason: 'host_stopping' });
     await waitForRuntimeDaemonOwnerExit(owner, exitBudget, options.startupSignal);
     const remainingMs = startupDeadline - Date.now();
     if (remainingMs <= 0) throw runtimeDaemonStartupTimeout(paths);
@@ -451,6 +457,7 @@ export async function acquireRuntimeDaemonProcessLease(
     ? undefined
     : createRuntimeDaemonOwnerBootstrapFile(paths, options.ownerBootstrap);
   try {
+    reportProgress({ stage: 'starting' });
     const child = await spawnRuntimeDaemonServeProcess({
       profile: paths.profile,
       homeDir,
@@ -493,6 +500,7 @@ async function connectProcessLease(
   options: RuntimeDaemonProcessLeaseOptions,
   probeInitialization?: unknown,
 ): Promise<RuntimeDaemonProcessLease> {
+  createClientStartupProgressReporter(options.onStartupProgress)({ stage: 'connecting' });
   const transport = await createRuntimeDaemonSocketClientTransport(endpoint, {
     connectTimeoutMs: options.connectTimeoutMs,
   });
@@ -551,7 +559,9 @@ export async function waitForHealthyDaemonStartup(
   }
 > {
   const deadline = Date.now() + (options.startupTimeoutMs ?? 60_000);
+  const reportProgress = createClientStartupProgressReporter(options.onStartupProgress);
   try {
+    reportProgress({ stage: 'waiting', reason: 'host_starting' });
     while (true) {
       const observation = await observeStartupHealth(
         paths,
@@ -616,6 +626,7 @@ export async function waitForReadyRuntimeDaemonOwner(
       "identity_mismatch",
     );
   }
+  createClientStartupProgressReporter(options.onStartupProgress)({ stage: 'waiting', reason: 'host_starting' });
   let observation = initial;
   while (true) {
     const health = classifyRuntimeDaemonHealth(observation);

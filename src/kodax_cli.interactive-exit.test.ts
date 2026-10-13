@@ -24,6 +24,7 @@ interface InteractiveMainHarness {
   readonly shutdownTracing: ReturnType<typeof vi.fn>;
   readonly runtimeDispose: ReturnType<typeof vi.fn>;
   readonly createKodaXRuntime: ReturnType<typeof vi.fn>;
+  readonly ensureKodaXRuntime: ReturnType<typeof vi.fn>;
   readonly runtimeOptions: unknown[];
   readonly runtimeStarts: unknown[];
   readonly runtimeDeletes: string[];
@@ -192,12 +193,11 @@ async function importMainWithMocks(options: {
   const daemonShutdown = vi.fn(async () => {
     calls.push('daemon-shutdown');
   });
-  const createKodaXRuntime = vi.fn(async (runtimeOptionsInput: unknown) => {
+  const createMockRuntime = async (runtimeOptionsInput: unknown, runtimeMode: 'daemon' | 'embedded') => {
     runtimeOptions.push(runtimeOptionsInput);
     const runtimeOptionsRecord = runtimeOptionsInput !== null && typeof runtimeOptionsInput === 'object'
       ? runtimeOptionsInput as Record<string, unknown>
       : {};
-    const runtimeMode = runtimeOptionsRecord.mode === 'daemon' ? 'daemon' : 'embedded';
     const runtimeProfile = typeof runtimeOptionsRecord.profile === 'string'
       ? runtimeOptionsRecord.profile
       : 'default';
@@ -300,7 +300,10 @@ async function importMainWithMocks(options: {
         await options.runtimeClose?.();
       },
     };
-  });
+  };
+  const createKodaXRuntime = vi.fn((input: { readonly mode?: string } = {}) =>
+    createMockRuntime(input, input.mode === 'daemon' ? 'daemon' : 'embedded'));
+  const ensureKodaXRuntime = vi.fn((input: unknown) => createMockRuntime(input, 'daemon'));
 
   vi.doMock('@kodax-ai/agent', () => ({
     applyProcessHardening: vi.fn(() => {
@@ -431,6 +434,7 @@ async function importMainWithMocks(options: {
   if (options.mockSdkRuntime !== false) {
     vi.doMock('./sdk-runtime.js', () => ({
       createKodaXRuntime,
+      ensureKodaXRuntime,
     }));
   }
   vi.doMock('./sandbox-runtime.js', () => ({
@@ -495,6 +499,7 @@ async function importMainWithMocks(options: {
       shutdownTracing,
       runtimeDispose,
       createKodaXRuntime,
+      ensureKodaXRuntime,
       runtimeOptions,
       runtimeStarts,
       runtimeDeletes,
@@ -739,6 +744,7 @@ describe('CLI interactive exit lifecycle', () => {
       expect(harness.runInkInteractiveMode).not.toHaveBeenCalled();
       expect(harness.runInteractiveMode).not.toHaveBeenCalled();
       expect(harness.createKodaXRuntime).not.toHaveBeenCalled();
+      expect(harness.ensureKodaXRuntime).not.toHaveBeenCalled();
       expect(writeSpy).toHaveBeenCalled();
     } finally {
       if (stdinDescriptor) Object.defineProperty(process.stdin, 'isTTY', stdinDescriptor);
@@ -775,6 +781,7 @@ describe('CLI interactive exit lifecycle', () => {
       expect(harness.runProviderSetupWizard).not.toHaveBeenCalled();
       expect(harness.runInkInteractiveMode).not.toHaveBeenCalled();
       expect(harness.createKodaXRuntime).not.toHaveBeenCalled();
+      expect(harness.ensureKodaXRuntime).not.toHaveBeenCalled();
     } finally {
       if (stdinDescriptor) Object.defineProperty(process.stdin, 'isTTY', stdinDescriptor);
       else Reflect.deleteProperty(process.stdin, 'isTTY');
@@ -1046,11 +1053,10 @@ describe('CLI interactive exit lifecycle', () => {
       await main();
 
       expect(harness.runInkInteractiveMode).toHaveBeenCalledTimes(1);
-      expect(harness.createKodaXRuntime).toHaveBeenCalledTimes(1);
+      expect(harness.ensureKodaXRuntime).toHaveBeenCalledTimes(1);
+      expect(harness.createKodaXRuntime).not.toHaveBeenCalled();
       expect(harness.runtimeOptions[0]).toMatchObject({
-        mode: 'daemon',
         profile: 'default',
-        autoStartDaemon: true,
         clientInfo: {
           name: 'kodax-cli',
           title: 'KodaX CLI',
@@ -1090,11 +1096,10 @@ describe('CLI interactive exit lifecycle', () => {
 
     await main();
 
-    expect(harness.createKodaXRuntime).toHaveBeenCalledOnce();
+    expect(harness.ensureKodaXRuntime).toHaveBeenCalledOnce();
+    expect(harness.createKodaXRuntime).not.toHaveBeenCalled();
     expect(harness.runtimeOptions[0]).toMatchObject({
-      mode: 'daemon',
       profile: 'default',
-      autoStartDaemon: true,
     });
     expect(harness.runtimeOptions[0]).not.toHaveProperty('externalAgents');
     expect(harness.runtimeStarts).toHaveLength(1);
@@ -1139,9 +1144,7 @@ describe('CLI interactive exit lifecycle', () => {
     // env still wins over config for the provider, and the runtime is
     // always the started-or-attached daemon owner.
     expect(harness.runtimeOptions[0]).toMatchObject({
-      mode: 'daemon',
       defaultProvider: 'env-provider',
-      autoStartDaemon: true,
     });
   });
 
@@ -1156,11 +1159,8 @@ describe('CLI interactive exit lifecycle', () => {
 
     await main();
 
-    expect(harness.createKodaXRuntime).toHaveBeenCalledOnce();
-    expect(harness.runtimeOptions[0]).toMatchObject({
-      mode: 'daemon',
-      autoStartDaemon: true,
-    });
+    expect(harness.ensureKodaXRuntime).toHaveBeenCalledOnce();
+    expect(harness.createKodaXRuntime).not.toHaveBeenCalled();
     expect(harness.runtimeOptions[0]).not.toHaveProperty('isolation');
     expect(harness.runtimeOptions[0]).not.toHaveProperty('worker');
     expect(harness.runtimeOptions[0]).not.toHaveProperty('externalAgents');
@@ -1189,6 +1189,7 @@ describe('CLI interactive exit lifecycle', () => {
       expect(harness.runInkInteractiveMode).not.toHaveBeenCalled();
       expect(harness.runInteractiveMode).not.toHaveBeenCalled();
       expect(harness.createKodaXRuntime).not.toHaveBeenCalled();
+      expect(harness.ensureKodaXRuntime).not.toHaveBeenCalled();
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"health": "missing"'));
     } finally {
       await rm(homeDir, { recursive: true, force: true });
@@ -1220,6 +1221,7 @@ describe('CLI interactive exit lifecycle', () => {
       expect(harness.runInkInteractiveMode).not.toHaveBeenCalled();
       expect(harness.runInteractiveMode).not.toHaveBeenCalled();
       expect(harness.createKodaXRuntime).not.toHaveBeenCalled();
+      expect(harness.ensureKodaXRuntime).not.toHaveBeenCalled();
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"health": "missing"'));
     } finally {
       await rm(homeDir, { recursive: true, force: true });

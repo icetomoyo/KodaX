@@ -101,7 +101,48 @@ describe('product Host startup and passive connection', () => {
 
   });
 
+  it('reports usable Client readiness after authentication without starting a Host on passive connect', async () => {
+    const progress: unknown[] = [];
+    const calls: string[] = [];
+    const runtime = await connectKodaXRuntime({
+      profile: PROFILE,
+      transport: createCurrentTransport(calls, async () => undefined),
+      onStartupProgress: (event) => { progress.push(event); },
+    });
+    try {
+      expect(progress).toEqual([{ stage: 'connecting' }, { stage: 'ready' }]);
+      expect(runtime.identity.runtimeId).toBe('runtime_current');
+      expect(calls).toEqual(['new:initialize']);
+      expect(upgradeMocks.acquireProcessLease).not.toHaveBeenCalled();
+    } finally { await runtime.close(); }
+  });
+
+  it.each(['throw', 'reject', 'pending'] as const)('keeps Client startup independent of a %s progress observer', async (mode) => {
+    const diagnostics: KodaXDiagnostic[] = [];
+    const restore = setKodaXDiagnosticSink((diagnostic) => {
+      diagnostics.push(diagnostic);
+      throw new Error('Diagnostic sink failure');
+    });
+    let runtime: Awaited<ReturnType<typeof connectKodaXRuntime>> | undefined;
+    try {
+      runtime = await connectKodaXRuntime({
+        profile: PROFILE,
+        transport: createCurrentTransport([], async () => undefined),
+        onStartupProgress: () => {
+          if (mode === 'throw') throw new Error('Observer failure');
+          if (mode === 'reject') return Promise.reject(new Error('Observer failure'));
+          return new Promise<void>(() => undefined);
+        },
+      });
+      expect(runtime.identity.runtimeId).toBe('runtime_current');
+      if (mode !== 'pending') {
+        expect(diagnostics).toContainEqual(expect.objectContaining({ source: 'client.startup-progress', level: 'warn' }));
+      }
+    } finally { await runtime?.close(); restore(); }
+  });
+
   it('refreshes an idle older Host by normal shutdown and waits for its process before starting', async () => {
+    const progress: unknown[] = [];
     const calls: string[] = [];
     const old = createLegacyTransport({ preflight: createPreflight(), calls, close: async () => undefined });
     upgradeMocks.acquireProcessLease
@@ -111,7 +152,11 @@ describe('product Host startup and passive connection', () => {
         return createLease(createCurrentTransport(calls, async () => undefined));
       });
     upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
-    const runtime = await ensureKodaXRuntime({ profile: PROFILE });
+    const runtime = await ensureKodaXRuntime({ profile: PROFILE, onStartupProgress: (event) => { progress.push(event); } });
+    expect(progress).toEqual([
+      { stage: 'connecting' }, { stage: 'upgrading' },
+      { stage: 'waiting', reason: 'host_stopping' }, { stage: 'connecting' }, { stage: 'ready' },
+    ]);
     expect(calls).toEqual(['old:initialize', 'old:daemon.management.get', 'old:runtime.shutdown', 'old:close', 'new:initialize']);
     expect(upgradeMocks.enableDaemonOwner).not.toHaveBeenCalled();
     await runtime.close();
@@ -311,12 +356,14 @@ describe('product Host startup and passive connection', () => {
     vi.useFakeTimers();
     const random = vi.spyOn(Math, 'random').mockReturnValue(0);
     const calls: string[] = [];
+    const progress: unknown[] = [];
     upgradeMocks.acquireProcessLease.mockImplementation(async () => createLease(createLegacyTransport({
       preflight: createPreflight({ blockers: ['connected_clients'], canStop: false }), calls, close: async () => undefined,
     })));
     try {
       const startedAt = Date.now();
-      const pending = ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 500 })
+      const pending = ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 500,
+        onStartupProgress: (event) => { progress.push(event); }, })
         .then(() => { throw new Error('Busy Host unexpectedly accepted'); }, error => ({ error, settledAt: Date.now() }));
       await vi.advanceTimersByTimeAsync(500);
       const outcome = await pending;
@@ -325,6 +372,9 @@ describe('product Host startup and passive connection', () => {
       expect(upgradeMocks.acquireProcessLease.mock.calls.length).toBeGreaterThan(3);
       expect(calls.filter(call => call === 'old:close')).toHaveLength(upgradeMocks.acquireProcessLease.mock.calls.length);
       expect(calls).not.toContain('old:runtime.shutdown');
+      expect(progress).toContainEqual({ stage: 'waiting', reason: 'connected_clients' });
+      expect(progress).not.toContainEqual({ stage: 'upgrading' });
+      expect(progress).not.toContainEqual({ stage: 'ready' });
       const budgets = upgradeMocks.acquireProcessLease.mock.calls.map(([options]) => options.startupTimeoutMs as number);
       expect(budgets[0]).toBe(500);
       expect(budgets.at(-1)).toBeLessThan(500);

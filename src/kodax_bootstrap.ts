@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { createCliStartupProgress, isInteractiveCliStartup, type CliStartupProgress } from './cli-startup-progress.js';
 
 export type BootstrapResumeRoute =
   | { readonly kind: 'continue'; readonly argv: readonly string[] }
@@ -12,7 +13,7 @@ interface ResumeModule {
 }
 
 interface CliModule {
-  readonly main: () => Promise<void>;
+  readonly main: (options?: { readonly startupProgress?: CliStartupProgress }) => Promise<void>;
 }
 
 export interface KodaXBootstrapOptions {
@@ -65,28 +66,39 @@ export async function runKodaXBootstrap(options: KodaXBootstrapOptions = {}): Pr
     return cliModulePromise;
   };
   const args = argv.slice(2);
-  if (isVersionRequest(args)) {
-    process.stdout.write(`${readBootstrapVersion()}\n`);
-    return;
-  }
-  if (isBareResumeRequest(args)) {
-    const route = await (await loadResume()).resolveBareResume({
-      beforeSelect: async () => {
-        await loadCliOnce();
-      },
-    });
-    if (route.kind === 'exit') {
-      stdin.pause?.();
-      stdin.unref?.();
+  let startupProgress: CliStartupProgress | undefined;
+  try {
+    if (isVersionRequest(args)) {
+      process.stdout.write(`${readBootstrapVersion()}\n`);
       return;
     }
-    argv.splice(2, argv.length - 2, ...route.argv);
-    if (route.argv.length > 0 && stdin.isTTY === true) {
-      stdin.pause?.();
-      stdin.ref?.();
+    if (isBareResumeRequest(args)) {
+      const route = await (await loadResume()).resolveBareResume({
+        beforeSelect: async () => {
+          await loadCliOnce();
+        },
+      });
+      if (route.kind === 'exit') {
+        stdin.pause?.();
+        stdin.unref?.();
+        return;
+      }
+      argv.splice(2, argv.length - 2, ...route.argv);
+      if (route.argv.length > 0 && stdin.isTTY === true) {
+        stdin.pause?.();
+        stdin.ref?.();
+      }
     }
+    if (isInteractiveCliStartup(argv.slice(2))) {
+      startupProgress = createCliStartupProgress(args[0] === '-r' || args[0] === '--resume'
+        ? 'Resuming session' : 'Starting KodaX');
+    }
+    const cli = await loadCliOnce();
+    if (startupProgress) await cli.main({ startupProgress });
+    else await cli.main();
+  } finally {
+    startupProgress?.stop();
   }
-  await (await loadCliOnce()).main();
 }
 
 export async function runKodaXBootstrapAsEntry(): Promise<void> {

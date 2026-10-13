@@ -1,5 +1,5 @@
 /** Product SDK entry — @kodax-ai/kodax/client. */
-import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
+import type { ClientStartupProgress, KodaXProductClient } from '@kodax-ai/coding/client-contract';
 import { connectKodaXRuntime, ensureKodaXRuntime } from './sdk-runtime.js';
 import type { RuntimeClientInfo } from './runtime-client-info.js';
 import { toKodaXProductClient } from './client-runtime-adapter.js';
@@ -15,6 +15,8 @@ export type * from '@kodax-ai/coding/client-contract';
 export type { RuntimeClientInfo } from './runtime-client-info.js';
 
 export interface ConnectKodaXClientOptions {
+  /** Local launcher stage changes. Work is not awaited; observer failures do not change the result. */
+  readonly onStartupProgress?: (progress: ClientStartupProgress) => void | Promise<void>;
   /** Base directory containing .kodax, matching CLI --home. */
   readonly homeDir?: string;
   readonly profile?: string;
@@ -60,6 +62,7 @@ export async function connectKodaXClient(
     endpoint: options.endpoint,
     daemonToken: options.token,
     autoStart: false,
+    onStartupProgress: options.onStartupProgress,
     clientInfo: options.clientInfo,
     requirements: { productClient: 1, productHistoryBoundaries: 1, productExitControl: 1, productExecutionFacts: 1,
       ...(options.authorizeExecution ? { productExecutionAuthorization: 2, productActorAuthorization: 1 } : {}) },

@@ -30,6 +30,7 @@ describe('Host launcher waits for the original process', () => {
     const exited = once(child, 'exit');
     let releaseTimer: ReturnType<typeof setTimeout> | undefined;
     let lease: Awaited<ReturnType<typeof acquireRuntimeDaemonProcessLease>> | undefined;
+    const progress: unknown[] = [];
     try {
       await once(child.stdout, 'data');
       const pid = child.pid;
@@ -44,11 +45,16 @@ describe('Host launcher waits for the original process', () => {
       let observedOldOwner = false;
       lease = await acquireRuntimeDaemonProcessLease({ homeDir, profile: paths.profile,
         startupTimeoutMs: 30_000,
+        onStartupProgress: (event) => {
+          progress.push(event);
+          if (event.stage === 'waiting' && event.reason === 'host_stopping') {
+            releaseTimer = setTimeout(() => child.stdin.end(), 50);
+          }
+        },
         healthCheck: {
           async createTransport(target) {
             if (!observedOldOwner) {
               observedOldOwner = true;
-              releaseTimer = setTimeout(() => child.stdin.end(), 200);
               if (!reachable) throw new Error('Old endpoint has already closed');
               return {
                 async request() { return { identity: { runtimeId: owner.runtimeId, profile: paths.profile } }; },
@@ -59,10 +65,15 @@ describe('Host launcher waits for the original process', () => {
           },
         },
       });
-      expect(child.exitCode).toBe(0);
+      const originalExitedBeforeLease = child.exitCode === 0;
+      await lease.transport.request('initialize', { profile: paths.profile, token: readRuntimeDaemonToken(paths) });
+      expect(originalExitedBeforeLease).toBe(true);
+      expect(progress).toEqual([
+        { stage: 'checking' }, { stage: 'waiting', reason: 'host_stopping' }, { stage: 'checking' },
+        { stage: 'starting' }, { stage: 'waiting', reason: 'host_starting' }, { stage: 'connecting' },
+      ]);
       expect(readRuntimeDaemonState(paths)?.status).toBe('ready');
       expect(readRuntimeDaemonLockOwner(paths.lockFile)?.runtimeId).not.toBe(owner.runtimeId);
-      await lease.transport.request('initialize', { profile: paths.profile, token: readRuntimeDaemonToken(paths) });
     } finally {
       if (releaseTimer) clearTimeout(releaseTimer);
       if (lease) {

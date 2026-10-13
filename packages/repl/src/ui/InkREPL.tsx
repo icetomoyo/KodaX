@@ -804,6 +804,8 @@ export async function persistHostSessionPayload(
 }
 
 export interface InkREPLOptions extends KodaXOptions {
+  /** Called immediately before the TUI takes ownership of terminal output. */
+  onBeforeRender?: () => void;
   initialClientSettings?: ClientSessionSettingsPatch;
   storage?: SessionStorage;
   execPolicy?: StandaloneExecPolicyOptions;
@@ -12212,6 +12214,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     // Silently ignore configuration loading errors for banner
   }
 
+  let startupSessionNotice: string | undefined;
   if (options.sessionCommands?.read) {
     sessionId = options.session?.id ?? ((options.session?.resume || options.session?.autoResume)
       ? (await options.sessionCommands.list!({ projectRoot: gitRoot ?? process.cwd(), scope: 'user', limit: Number.MAX_SAFE_INTEGER })).find(item => item.msgCount > 0)?.id
@@ -12242,7 +12245,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
         // FEATURE_226: carry the resumed session's tag into options so the
         // live currentOptionsRef reflects it (save side reads it back).
         options = { ...options, session: { ...(options.session ?? {}), id: sessionId, tag: loaded.tag } };
-        console.log(chalk.green(`[Session loaded: ${sessionId}]`));
+        startupSessionNotice = `[Session loaded: ${sessionId}]`;
       }
     }
     // -c or autoResume: Load most recent non-empty session
@@ -12268,7 +12271,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
             ...options,
             session: { ...(options.session ?? {}), id: sessionId, tag: loaded.tag },
           };
-          console.log(chalk.green(`[Continuing session: ${recentSession.id}]`));
+          startupSessionNotice = `[Continuing session: ${recentSession.id}]`;
         }
       }
     }
@@ -12381,6 +12384,8 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     // Render Ink app
     // Issue 058/060: Ink 6.x options to reduce flickering
     let exitMessageRequested = false;
+    options.onBeforeRender?.();
+    if (startupSessionNotice) process.stdout.write(`${chalk.green(startupSessionNotice)}\n`);
     const { waitUntilExit, cleanup } = render(
       <InkREPL
         options={options}

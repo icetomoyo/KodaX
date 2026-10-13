@@ -1,9 +1,19 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ClientSessionSummary } from '@kodax-ai/coding/client-contract';
 import { Box, Text, render, useApp, useInput } from '../tui/renderer-runtime.js';
 import { resolveInteractiveSurfacePreference } from '../tui/runtime.js';
 
 const SELECTION_TRANSITION_PAINT_MS = 40;
+
+function SelectionLoadingIndicator(): React.ReactElement {
+  const frames = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏';
+  const [frame, setFrame] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setFrame((current) => (current + 1) % frames.length), 120);
+    return () => clearInterval(timer);
+  }, []);
+  return <Text>{frames[frame]} Loading selected session...</Text>;
+}
 
 export type SessionPickerItem = Pick<
   ClientSessionSummary,
@@ -141,7 +151,7 @@ export function SessionPicker({
       <Text>Search: <Text color="yellow">{query || 'type to filter'}</Text></Text>
       <Text dimColor>
         {selectionPending
-          ? 'Loading selected session...'
+          ? <SelectionLoadingIndicator />
           : '↑/↓ select · PgUp/PgDn page · Tab complete · Enter resume · Esc cancel'}
       </Text>
       <Box flexDirection="column" marginTop={1}>

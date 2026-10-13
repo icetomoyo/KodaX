@@ -47,6 +47,42 @@ bridge; do not import the Node connector into browser code.
 metadata such as `clientInfo.name` grants no authority. Configure provider
 credentials at the Host, rather than passing API keys in input submissions.
 
+### Show local startup progress
+
+Both entries accept an optional `onStartupProgress` callback with the shared
+`ClientStartupProgress` data type. `ensure` reports local Host checking,
+starting, updating, waiting and connecting; passive `connect` only reports
+connecting and readiness. A waiting event explains whether the launcher is
+waiting for other clients to disconnect, a Host to start, or the previous Host
+to exit. It does not forcibly stop busy clients or work.
+
+```ts
+import { ensureKodaXClient, type ClientStartupProgress } from '@kodax-ai/kodax/client';
+
+export async function openProductClient(
+  showProgress: (progress: ClientStartupProgress) => void,
+  hideProgress: () => void,
+) {
+  try {
+    return await ensureKodaXClient({ onStartupProgress: showProgress });
+  } finally {
+    hideProgress(); // Also clear the indicator when startup fails.
+  }
+}
+```
+
+`ready` means authentication and capability checks have passed and Client APIs
+are usable. It does not mean a UI has rendered or a Session has loaded. Stages
+may repeat during existing retries; identical consecutive events are merged.
+No per-poll event stream or persistent startup log is added. Callbacks run
+locally and are not awaited; synchronous errors and rejected promises go to
+the existing diagnostic sink without changing startup's result. Keep rendering
+callbacks quick. Existing calls without the callback continue to work.
+
+For `/repl` consumers, optional `onBeforeRender` fires immediately before the
+initial banner/TUI render so a caller can clear its terminal loading indicator.
+This is a separate display handoff from the launcher's `ready` stage.
+
 ### Observe, submit, and settle
 
 The following helper uses an existing Client and Session. The application owns
