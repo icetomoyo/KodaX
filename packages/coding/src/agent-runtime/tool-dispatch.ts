@@ -136,6 +136,7 @@ import {
   TOOL_DESCRIBE_NAME,
 } from '../tools/index.js';
 import { executeRunScopedTool, lookupRunScopedTool, toModelToolDefinition } from './run-scoped-tools.js';
+import { isToolDiscoverable } from '../tools/tool-search.js';
 import { emitActiveExtensionEvent } from '../extensions/runtime.js';
 import { isVisibleToolName } from './event-emitter.js';
 import { getToolExecutionOverride } from './permission-gate.js';
@@ -234,7 +235,7 @@ export async function executeToolCall(
   }
 
   if (toolCall.name === TOOL_DESCRIBE_NAME) {
-    return describeBridgeTools(toolCall.input ?? {}, activeToolNames, ctx.extensionRuntime);
+    return describeBridgeTools(toolCall.input ?? {}, activeToolNames, ctx);
   }
   if (toolCall.name === TOOL_CALL_NAME) {
     return executeBridgeToolCall({
@@ -274,6 +275,7 @@ export async function executeToolCall(
     return `[Tool Error] ${toolCall.name}: Host tool lease was revoked or the tool is no longer bound to this run.`;
   }
   const ctxWithToolHooks = createContextForToolCall(events, toolCall, ctx);
+  ctxWithToolHooks.discoveryToolNames = activeToolNames ?? ctx.discoveryToolNames;
   ctxWithToolHooks.invokeCheckedTool = ctx.invokeCheckedTool ?? ((name, input) => executeToolCall(
     events, { id: randomUUID(), name, input }, ctx, runtimeSessionState, activeToolNames, abortSignal,
   ));
@@ -389,7 +391,7 @@ function createContextForToolCall(
 function describeBridgeTools(
   input: Record<string, unknown>,
   activeToolNames: readonly string[] | undefined,
-  extensionRuntime: KodaXToolExecutionContext['extensionRuntime'],
+  ctx: KodaXToolExecutionContext,
 ): string {
   const names = readBridgeToolNames(input);
   if (names.length === 0) {
@@ -399,20 +401,20 @@ function describeBridgeTools(
   const active = activeToolNames ? new Set(activeToolNames) : undefined;
   const lines: string[] = [];
   for (const name of names) {
-    if (active && !active.has(name)) {
+    if ((active && !active.has(name)) || !isToolDiscoverable(name, ctx)) {
       lines.push(`<!-- ${name}: not active in the current runtime -->`);
       continue;
     }
     let definition = getToolDefinition(name);
     if (definition === undefined) {
-      const runScoped = lookupRunScopedTool(extensionRuntime, name);
+      const runScoped = lookupRunScopedTool(ctx.extensionRuntime, name);
       if (runScoped !== undefined) definition = toModelToolDefinition(runScoped);
     }
     if (!definition) {
       lines.push(`<!-- ${name}: not registered -->`);
       continue;
     }
-    definition = projectModelToolDefinition(definition);
+    definition = projectModelToolDefinition(definition, getRegisteredToolDefinition(definition.name)?.source);
     lines.push(`<function>${JSON.stringify({
       name: definition.name,
       description: definition.description,
@@ -487,6 +489,7 @@ async function executeBridgeToolCall(input: {
   }
 
   const ctxWithToolHooks = createContextForToolCall(input.events, targetCall, input.ctx);
+  ctxWithToolHooks.discoveryToolNames = input.activeToolNames ?? input.ctx.discoveryToolNames;
   ctxWithToolHooks.invokeCheckedTool = input.ctx.invokeCheckedTool ?? ((name, parameters) => executeToolCall(
     input.events, { id: randomUUID(), name, input: parameters }, input.ctx, input.runtimeSessionState,
     input.activeToolNames ? [...input.activeToolNames] : undefined, input.abortSignal,

@@ -92,8 +92,9 @@ export function buildWorkerReviewFanoutContract(
         : '- No child start slot is currently available; keep the root on useful work and refill a review lane after capacity changes.';
   const scopeAcquisition = availableToolNames === undefined || availableToolNames.includes('changed_scope')
     ? 'call `changed_scope` once' : 'establish the requested scope with available tools';
-  const diffReading = availableToolNames === undefined || availableToolNames.includes('changed_diff_bundle')
-    ? '`changed_diff_bundle` or before ' : '';
+  const diffTool = availableToolNames === undefined || availableToolNames.includes('changed_diff')
+    ? 'changed_diff' : availableToolNames.includes('changed_diff_bundle') ? 'changed_diff_bundle' : undefined;
+  const diffReading = diffTool ? `\`${diffTool}\` or before ` : '';
   const scopeRule = isDiffScopedReview
     ? `- If the exact diff scope is unknown, ${scopeAcquisition}, then fan out before ${diffReading}the root reads every diff.`
     : '- Preserve the exact user-requested repository/module scope. Fan out inside that scope; do not expand into unrelated dirty-worktree changes.';
@@ -120,6 +121,9 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
   // Omitted means no capability snapshot; an explicit empty list is authoritative.
   const hasTool = (name: string): boolean => availableToolNames === undefined
     || availableToolNames.includes(name);
+  const batchEditTool = hasTool('edit') ? 'edit' : 'multi_edit';
+  const diffTool = hasTool('changed_diff') ? 'changed_diff'
+    : hasTool('changed_diff_bundle') ? 'changed_diff_bundle' : undefined;
   const fullTodo = ['todo_create', 'todo_update', 'todo_get', 'todo_list', 'wait_agent'].every(hasTool);
   const fullCollaboration = ['spawn_agent', 'wait_agent', 'send_message', 'followup_task', 'list_agents', 'agent_output', 'interrupt_agent'].every(hasTool);
   const managedRunContextTrust = [
@@ -136,6 +140,7 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
     'PLAN-FIRST GUIDANCE:',
     '- Trivial tasks (single typo / single-line edit / single-question lookup / pure conversational answer) → answer or execute directly. Do NOT call `todo_create` / `todo_update`.',
     '- Non-trivial tasks benefit from a concise plan. If this run has no current plan, create a small initial batch of `todo_create` milestones before broad execution. If a plan already exists because the run resumed or continued, use it and do not recreate or restate it.',
+    '- Name concrete deliverables, not planning itself; add descriptions only when scope or constraints would otherwise be unclear.',
     '- Supply `activeForm` with each milestone for the progress spinner. Use `evaluator` sparingly, only for milestones with a real deterministic check; the tool contract defines its completion side effect.',
     '- TODO LANGUAGE: Write initial and updated todo text (`subject`, `description`, `activeForm`, and user-visible `note`) in the user\'s requested language; otherwise use the primary natural language of the user\'s request. Keep identifiers, paths, commands, and quoted evidence in their source language.',
     '- If a task you started as trivial turns out to be multi-step mid-flight, call `todo_create` AT THAT MOMENT — one call per newly-realized step — to retrofit the plan. Do not silently grow scope.',
@@ -180,9 +185,9 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
 
   const mutationDiscipline = [
     'MUTATION DISCIPLINE:',
-    '- `read` first when the file is non-trivial. Skipping the read forces `edit`/`multi_edit` to fail with "old_string not found" and costs a retry round-trip.',
+    '- `read` first when the file is non-trivial. Copy anchors from current file content to avoid failed edits and retry rounds.',
     '- Prefer `edit` over `write` for existing files (smaller token footprint, diff-safe). Use `write` only for new files or full rewrites the user explicitly asked for.',
-    '- For multiple edits to one file, batch with `multi_edit` instead of N separate `edit` calls — atomic, cheaper, structure-preserving.',
+    `- For multiple edits to one file, batch with \`${batchEditTool}\` instead of separate calls — atomic, cheaper, structure-preserving.`,
     '- NEVER route a single known-content file through `bash` heredocs — use `write` or `edit` instead. Heredoc routing bypasses mutation tracking and diff visibility; the file lands without an edit record so reviewers cannot see what changed.',
     '- For scratch files, use the Session Scratch Directory named in Managed Run Context. If none is provided, use a session-scoped subdirectory under `.agent/tmp/sessions/` relative to the git root. Do not write directly in the shared `.agent/tmp/` root. Never use the project root, `.agent/` top level (reserved for runtime artifacts), or system tmp.',
   ].join('\n');
@@ -263,12 +268,9 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
     hasTool('changed_scope')
       ? '- For compare-changes, what-changed-since-X, or current-worktree/change-set review, the first scope-acquisition tool MUST be `changed_scope` (one call).' : undefined,
     hasTool('spawn_agent')
-      ? `- For change-set review, establish the requested scope, then fan out before ${hasTool('changed_diff_bundle') ? '`changed_diff_bundle` or ' : ''}reading every diff locally. The root reads its own lane and integrates the others.`
+      ? `- For change-set review, establish the requested scope, then fan out before ${diffTool ? '\`' + diffTool + '\` or ' : ''}reading every diff locally. The root reads its own lane and integrates the others.`
       : '- For change-set review, establish the requested scope before reading diffs. Inspect the relevant review axes locally and synthesize the evidence.',
-    hasTool('changed_diff_bundle')
-      ? '- Use `changed_diff_bundle` for paged diffs of multiple changed files.' : undefined,
-    hasTool('changed_diff')
-      ? '- Use `changed_diff` when one file dominates the review.' : undefined,
+    diffTool ? `- Use \`${diffTool}\` for paged diffs of explicit changed files.` : undefined,
     '- Keep an explicitly scoped file/module/repository audit inside the requested scope; unrelated worktree changes do not expand it.',
     lspTools.length > 0
       ? `- For exact file positions or compiler-backed symbol/call hierarchy edges, use the available LSP tools: ${lspTools.map((name) => '\`' + name + '\`').join(', ')}.` : undefined,
@@ -299,6 +301,7 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
   const limitedPlanGuidance = [
     'PLAN-FIRST GUIDANCE (available capability):',
     '- Execute or answer trivial tasks directly. For non-trivial work, keep a concise plan of semantic milestones; do not silently grow scope. On resume, reuse the existing plan and progress instead of recreating them.',
+    '- Name concrete deliverables, not planning itself; add descriptions only when scope or constraints would otherwise be unclear.',
     '- Milestones describe deliverables, not Actor instances. Keep at most one milestone per owner in progress; integrate supporting evidence before treating it as complete.',
     hasTool('todo_create')
       ? '- Use `todo_create` for a small initial plan or newly discovered milestones. Supply activeForm and use evaluator only for a real deterministic check. Before adding mid-task, check visible progress for duplicate deliverables; preserve prior progress.' : undefined,

@@ -28,9 +28,10 @@ import {
 } from '../../../agent-runtime/run-scoped-tools.js';
 import { DEFERRED_TOOL_HINTS, isDeferredTool } from '../../../tools/deferred-tools.js';
 import { TOOL_CALL_NAME, TOOL_DESCRIBE_NAME } from '../../../tools/tool-bridge.js';
-import { isSessionHistoryTool } from '../../../tools/session-history.js';
+import { isToolDiscoverable } from '../../../tools/tool-search.js';
 import { withManualToolBranding } from '../../../self-knowledge/tool-description.js';
 import { projectModelToolDefinition } from '../../../tools/model-tool-definition.js';
+import { filterModelToolAliases } from '../../../agent-runtime/tool-resolution.js';
 import type {
   KodaXEvents,
   KodaXToolExecutionContext,
@@ -110,23 +111,7 @@ function isManagedToolVisibleForContext(
   ctx: KodaXToolExecutionContext,
 ): boolean {
   if (exclude.has(name)) return false;
-  if (ctx.excludeTools?.includes(name)) return false;
-  if (!ctx.extensionRuntime && isMcpToolName(name)) return false;
-  if (name === 'run_workflow' && !ctx.workflowHost) return false;
-  if (name === 'run_skill_script' && (!ctx.skillScriptRunner || !ctx.executionCwd)) return false;
-  if (isSessionHistoryTool(name) && !ctx.loadSessionHistory) return false;
-  if (ctx.toolVisibilityPolicy) {
-    const definition = getRegisteredToolDefinition(name)
-      ?? lookupRunScopedTool(ctx.extensionRuntime, name);
-    if (!definition || !ctx.toolVisibilityPolicy({
-      name: definition.name,
-      sideEffect: definition.sideEffect,
-      planModeAllowed: definition.planModeAllowed === true,
-    })) {
-      return false;
-    }
-  }
-  return true;
+  return isToolDiscoverable(name, ctx);
 }
 
 function readManagedBridgeToolNames(input: Record<string, unknown>): string[] {
@@ -165,7 +150,8 @@ function describeManagedBridgeTools(
       lines.push(`<!-- ${name}: not active in the current runtime -->`);
       continue;
     }
-    const branded = withManualToolBranding(projectModelToolDefinition(definition), ctx.selfManual?.productName);
+    const branded = withManualToolBranding(projectModelToolDefinition(definition,
+      getRegisteredToolDefinition(definition.name)?.source), ctx.selfManual?.productName);
     lines.push(`<function>${JSON.stringify({
       name: branded.name,
       description: branded.description,
@@ -371,6 +357,10 @@ function buildAgentToolsFromRegistry(
     )),
     ...runScopedDefinitions.map(toModelToolDefinition),
   ];
+  const discoveryCtx: KodaXToolExecutionContext = {
+    ...ctx,
+    discoveryToolNames: bridgeTargetDefinitions.map((definition) => definition.name),
+  };
   const tools: RunnableTool[] = [];
 
   for (const def of definitions) {
@@ -378,7 +368,7 @@ function buildAgentToolsFromRegistry(
 
     const override = overrides.get(def.name);
     if (override) {
-      tools.push(projectModelToolDefinition(override));
+      tools.push(projectModelToolDefinition(override, getRegisteredToolDefinition(override.name)?.source));
       continue;
     }
 
@@ -394,7 +384,7 @@ function buildAgentToolsFromRegistry(
       continue;
     }
     if (def.name === TOOL_CALL_NAME) {
-      tools.push(buildManagedToolCallBridge(def, bridgeTargetDefinitions, ctx, budget, events, overrides));
+      tools.push(buildManagedToolCallBridge(def, bridgeTargetDefinitions, discoveryCtx, budget, events, overrides));
       continue;
     }
 
@@ -407,7 +397,8 @@ function buildAgentToolsFromRegistry(
 
     // FEATURE_221: white-label the kodax_manual description per product
     // (no-op for every other tool / the default product name).
-    const brandedDef = withManualToolBranding(projectModelToolDefinition(def), ctx.selfManual?.productName);
+    const brandedDef = withManualToolBranding(projectModelToolDefinition(def,
+      getRegisteredToolDefinition(def.name)?.source), ctx.selfManual?.productName);
     // FEATURE_250: managed-path progressive disclosure. Swap deferred tool
     // descriptions for their one-line searchHint to shrink the cache-cold
     // tools[] payload. `input_schema` is unchanged so the tool stays directly
@@ -429,7 +420,7 @@ function buildAgentToolsFromRegistry(
           input: Record<string, unknown>,
           execCtx: KodaXToolExecutionContext,
         ) => Promise<RunnerToolResult['content']>,
-        ctx,
+        def.name === 'tool_search' ? discoveryCtx : ctx,
         budget,
         events,
       ),
@@ -634,7 +625,7 @@ export function buildRunnerAgentChain(ctx: KodaXToolExecutionContext,
           maxConcurrentThreads: actorTree.maxConcurrentThreads,
           activeNonRootTurns: actorTree.activeNonRootTurns,
         } : undefined,
-        worker.tools?.map(tool => tool.name) ?? [],
+        filterModelToolAliases(worker.tools ?? []).map(tool => tool.name),
       );
       return resolved;
     },

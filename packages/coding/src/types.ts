@@ -2669,6 +2669,8 @@ export type {
 };
 
 export interface KodaXToolExecutionContext {
+  /** Internal run/role execution inventory, before model-only schema projection. */
+  discoveryToolNames?: readonly string[];
   runtimeRunId?: string;
   extensionExecution?: ExtensionExecutionScope;
   /** Host callback re-entering the complete tool/guardrail dispatch route. */

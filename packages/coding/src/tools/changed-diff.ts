@@ -246,6 +246,7 @@ function renderBundleSection(options: {
   baseRef?: string;
   targetRef?: string;
   contextLines: number;
+  canonicalInput: boolean;
 }): string {
   const { diff, relativePath, offset, limit, baseRef, targetRef, contextLines } = options;
   const header = [
@@ -269,10 +270,13 @@ function renderBundleSection(options: {
   const endLine = safeOffset + slice.length - 1;
   const hasMore = endLine < lines.length;
   const suggestedLimit = resolveSuggestedContinuationLimit(limit, lines.length);
+  const continuation = options.canonicalInput
+    ? `paths=${JSON.stringify([relativePath])} offset=${endLine + 1} limit_per_path=${suggestedLimit}`
+    : `path=${relativePath} offset=${endLine + 1} limit=${suggestedLimit}`;
   const footer = hasMore
     ? suggestedLimit > limit
-      ? `[Large diff detected. Continue ${relativePath} with changed_diff path=${relativePath} offset=${endLine + 1} limit=${suggestedLimit}.]`
-      : `[Continue ${relativePath} with changed_diff path=${relativePath} offset=${endLine + 1} limit=${limit}.]`
+      ? `[Large diff detected. Continue ${relativePath} with changed_diff ${continuation}.]`
+      : `[Continue ${relativePath} with changed_diff ${continuation}.]`
     : '[End of diff]';
 
   return [
@@ -290,6 +294,19 @@ export async function toolChangedDiff(
   ctx: KodaXToolExecutionContext,
 ): Promise<string> {
   try {
+    if (Object.hasOwn(input, 'paths')) {
+      if (Object.hasOwn(input, 'path') || Object.hasOwn(input, 'limit')) {
+        throw new Error('Use paths/limit_per_path OR path/limit, not both.');
+      }
+      if (!Array.isArray(input.paths) || input.paths.length === 0
+        || input.paths.some((value) => typeof value !== 'string' || !value.trim())) {
+        throw new Error('paths must be a non-empty array of file paths.');
+      }
+      return readChangedDiffPaths(input, ctx, 'changed_diff');
+    }
+    if (Object.hasOwn(input, 'limit_per_path')) {
+      throw new Error('limit_per_path requires paths; use limit with legacy path.');
+    }
     const cwd = resolveExecutionCwd(ctx);
     const targetPath = readOptionalString(input, 'target_path');
     const baseDir = targetPath
@@ -329,6 +346,14 @@ export async function toolChangedDiff(
 export async function toolChangedDiffBundle(
   input: Record<string, unknown>,
   ctx: KodaXToolExecutionContext,
+): Promise<string> {
+  return readChangedDiffPaths(input, ctx, 'changed_diff_bundle');
+}
+
+async function readChangedDiffPaths(
+  input: Record<string, unknown>,
+  ctx: KodaXToolExecutionContext,
+  toolName: 'changed_diff' | 'changed_diff_bundle',
 ): Promise<string> {
   try {
     const cwd = resolveExecutionCwd(ctx);
@@ -373,6 +398,7 @@ export async function toolChangedDiffBundle(
           baseRef,
           targetRef,
           contextLines,
+          canonicalInput: toolName === 'changed_diff',
         });
       })));
     }
@@ -387,6 +413,6 @@ export async function toolChangedDiffBundle(
     ].join('\n');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return `[Tool Error] changed_diff_bundle: ${message}`;
+    return `[Tool Error] ${toolName}: ${message}`;
   }
 }

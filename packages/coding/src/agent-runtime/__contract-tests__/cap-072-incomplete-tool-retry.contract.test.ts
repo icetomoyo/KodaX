@@ -124,6 +124,23 @@ function hiddenTruncatedTool(id: string): KodaXToolUseBlock {
 }
 
 describe('CAP-072: checkAndRetryIncompleteTools — no incomplete', () => {
+  it('does not retry complete array calls or legacy and array deletions', async () => {
+    const messages: KodaXMessage[] = [];
+    const result = await checkAndRetryIncompleteTools({
+      toolBlocks: [
+        { type: 'tool_use', id: 'edit-array', name: 'edit', input: { path: '/tmp/x', edits: [{ old_string: 'x', new_string: '' }] } },
+        { type: 'tool_use', id: 'edit-legacy', name: 'edit', input: { path: '/tmp/y', old_string: 'x', new_string: '' } },
+        { type: 'tool_use', id: 'diff-array', name: 'changed_diff', input: { paths: ['x', 'y'] } },
+      ],
+      events: {}, emitActiveExtensionEvent: fakeEmitter(), messages,
+      incompleteRetryCount: KODAX_MAX_INCOMPLETE_RETRIES,
+      preAssistantTokenSnapshot: makeSnapshot('pre'),
+      completedTurnTokenSnapshot: makeSnapshot('completed'),
+    });
+    expect(result.outcome).toBe('no_incomplete');
+    expect(messages).toEqual([]);
+  });
+
   it('CAP-INCOMPLETE-TOOL-NOOP: zero incomplete tools → outcome no_incomplete, counter reset to 0', async () => {
     const messages: KodaXMessage[] = [];
     const completed = makeSnapshot('completed');
@@ -379,6 +396,25 @@ describe('CAP-072: checkAndRetryIncompleteTools — truncated-input guard', () =
 });
 
 describe('CAP-072: checkAndRetryIncompleteTools — at cap (maxed-out path)', () => {
+  it.each([
+    { path: '/tmp/file.txt' },
+    { path: '/tmp/file.txt', edits: [{ old_string: 'old' }] },
+  ])('attributes an incomplete edit branch to missing parameters at the retry cap', async (toolInput) => {
+    const messages: KodaXMessage[] = [{ role: 'assistant', content: [] }];
+    const onToolResult = vi.fn();
+    const result = await checkAndRetryIncompleteTools({
+      toolBlocks: [{ type: 'tool_use', id: 'edit-partial', name: 'edit', input: toolInput }],
+      events: { onToolResult }, emitActiveExtensionEvent: fakeEmitter(), messages,
+      incompleteRetryCount: KODAX_MAX_INCOMPLETE_RETRIES,
+      preAssistantTokenSnapshot: makeSnapshot('pre'),
+      completedTurnTokenSnapshot: makeSnapshot('completed'),
+    });
+    expect(result.outcome).toBe('maxed_out');
+    expect(onToolResult.mock.calls[0]?.[0]).toMatchObject({
+      id: 'edit-partial', content: expect.stringContaining('Skipped due to missing required parameters'),
+    });
+  });
+
   it('CAP-INCOMPLETE-TOOL-003: at cap → outcome maxed_out, push error tool_results, reset counter, emit per missing-param tool', async () => {
     const messages: KodaXMessage[] = [{ role: 'assistant', content: [] }];
     const onRetry = vi.fn();

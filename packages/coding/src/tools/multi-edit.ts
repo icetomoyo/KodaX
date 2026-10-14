@@ -44,32 +44,41 @@ export async function toolMultiEdit(
   input: Record<string, unknown>,
   ctx: KodaXToolExecutionContext,
 ): Promise<string> {
+  return executeEditBatch(input, ctx, 'multi_edit');
+}
+
+/** Shared atomic execution, retaining the invoked tool identity for host policy and output. */
+export async function executeEditBatch(
+  input: Record<string, unknown>,
+  ctx: KodaXToolExecutionContext,
+  toolName: 'edit' | 'multi_edit',
+): Promise<string> {
   const filePath = resolveExecutionPath(input.path as string, ctx);
   const memoryDenial = memoryMutationDenial(filePath);
   if (memoryDenial !== undefined) return memoryDenial;
   const rawEdits = input.edits;
   if (!Array.isArray(rawEdits) || rawEdits.length === 0) {
-    return '[Tool Error] multi_edit: `edits` must be a non-empty array of { old_string, new_string, replace_all? } objects.';
+    return `[Tool Error] ${toolName}: edits must be a non-empty array of { old_string, new_string, replace_all? } objects.`;
   }
 
   const edits: MultiEditOperation[] = [];
   for (let i = 0; i < rawEdits.length; i += 1) {
     const raw = rawEdits[i];
     if (!raw || typeof raw !== 'object') {
-      return `[Tool Error] multi_edit: edits[${i}] must be an object with old_string and new_string.`;
+      return `[Tool Error] ${toolName}: edits[${i}] must be an object with old_string and new_string.`;
     }
     const oldStr = (raw as { old_string?: unknown }).old_string;
     const newStr = (raw as { new_string?: unknown }).new_string;
     if (typeof oldStr !== 'string' || typeof newStr !== 'string') {
-      return `[Tool Error] multi_edit: edits[${i}] requires string old_string and new_string.`;
+      return `[Tool Error] ${toolName}: edits[${i}] requires string old_string and new_string.`;
     }
     if (oldStr.length === 0) {
-      return `[Tool Error] multi_edit: edits[${i}].old_string must be non-empty.`;
+      return `[Tool Error] ${toolName}: edits[${i}].old_string must be non-empty.`;
     }
     if (oldStr === newStr) {
-      return `[Tool Error] multi_edit: edits[${i}] has identical old_string and new_string (no-op).`;
+      return `[Tool Error] ${toolName}: edits[${i}] has identical old_string and new_string (no-op).`;
     }
-    const sizeFail = getSizeFailure(filePath, oldStr, newStr, i);
+    const sizeFail = getSizeFailure(filePath, oldStr, newStr, i, toolName);
     if (sizeFail) return sizeFail;
     edits.push({
       old_string: oldStr,
@@ -79,9 +88,9 @@ export async function toolMultiEdit(
   }
 
   // FEATURE_295: the trusted host commits this batch under canonical-file CAS.
-  const result = await withTextFileMutation(filePath, 'multi_edit', input, ctx, async (snapshot) => {
+  const result = await withTextFileMutation(filePath, toolName, input, ctx, async (snapshot) => {
     if (snapshot.state === 'missing') {
-      return `[Tool Error] multi_edit: File not found: ${filePath}`;
+      return `[Tool Error] ${toolName}: File not found: ${filePath}`;
     }
     // FEATURE_125 v0.7.41 — Layer 4 hard gate. Check BEFORE reading
     // the file so a peer-modified file is detected without paying the
@@ -90,7 +99,7 @@ export async function toolMultiEdit(
     if (ctx.contentHashCache) {
       const stale = ctx.contentHashCache.checkStaleContent(filePath, snapshot.content);
       if (stale.stale) {
-        return `[Tool Error] multi_edit: ${buildStaleWriteReason(filePath, stale)}`;
+        return `[Tool Error] ${toolName}: ${buildStaleWriteReason(filePath, stale)}`;
       }
     }
     const originalContent = snapshot.content;
@@ -102,7 +111,7 @@ export async function toolMultiEdit(
     const replacementCounts: number[] = [];
     for (let i = 0; i < edits.length; i += 1) {
       const edit = edits[i]!;
-      const applied = applyOneEdit(runningContent, edit, i, originalContent);
+      const applied = applyOneEdit(runningContent, edit, i, originalContent, toolName);
       if ('error' in applied) {
         return applied.error;
       }
@@ -111,7 +120,7 @@ export async function toolMultiEdit(
     }
 
     if (runningContent === originalContent) {
-      return `[Tool Error] multi_edit: all ${edits.length} edits produced no net change. Check old_string / new_string values.`;
+      return `[Tool Error] ${toolName}: all ${edits.length} edits produced no net change. Check old_string / new_string values.`;
     }
 
     await writeTextFileForMutation(snapshot, runningContent, false, ctx, originalContent);
@@ -133,7 +142,7 @@ export async function toolMultiEdit(
     result += `\n  (+${changes.added} lines, -${changes.removed} lines)`;
 
     if (diff) {
-      const preview = await formatDiffPreview({ diff, toolName: 'multi_edit', filePath, ctx });
+      const preview = await formatDiffPreview({ diff, toolName, filePath, ctx });
       result += `\n\n${preview}`;
     }
 
@@ -155,6 +164,7 @@ function applyOneEdit(
   edit: MultiEditOperation,
   index: number,
   originalContent: string,
+  toolName: 'edit' | 'multi_edit',
 ): { content: string; replacements: number } | { error: string } {
   const { old_string: oldStr, new_string: newStr, replace_all: replaceAll } = edit;
   const exactMatches = findExactMatchPositions(content, oldStr);
@@ -163,7 +173,7 @@ function applyOneEdit(
     if (exactMatches.length > 1 && !replaceAll) {
       return {
         error:
-          `[Tool Error] multi_edit: edits[${index}] matched ${exactMatches.length} places `
+          `[Tool Error] ${toolName}: edits[${index}] matched ${exactMatches.length} places `
           + `(lines ${formatLineList(exactMatches)}). `
           + 'Widen old_string to include nearby unique context '
           + '(a heading, function name, or distinctive comment), '
@@ -201,7 +211,7 @@ function applyOneEdit(
     const blockLocations = ambiguousRanges.map((r) => r.startLine);
     return {
       error:
-        `[Tool Error] multi_edit: edits[${index}] matched ${ambiguousRanges.length} normalized blocks `
+        `[Tool Error] ${toolName}: edits[${index}] matched ${ambiguousRanges.length} normalized blocks `
         + `(lines ${formatLineList(blockLocations)}). `
         + 'Include more surrounding lines so the old_string spans a unique region, '
         + 'or set replace_all=true if all matches should change.',
@@ -224,7 +234,7 @@ function applyOneEdit(
         const prior = index === 1 ? 'edits[0]' : `edits[0..${index - 1}]`;
         return {
           error:
-            `[Tool Error] multi_edit: edits[${index}] old_string is present in the original file but `
+            `[Tool Error] ${toolName}: edits[${index}] old_string is present in the original file but `
             + `was consumed by ${prior}'s replacement region in this batch. `
             + 'Shrink that earlier edit to preserve this anchor, '
             + 'or pick a different anchor still present after it.',
@@ -233,7 +243,7 @@ function applyOneEdit(
     }
     return {
       error:
-        `[Tool Error] multi_edit: edits[${index}] old_string not found. `
+        `[Tool Error] ${toolName}: edits[${index}] old_string not found. `
         + 'Common cause: the anchor was copied from a narrow `read` window and has typos or '
         + 'whitespace drift vs the actual file, OR it was never in the file to begin with. '
         + 'Re-read a wider window where you expect the anchor and copy an exact slice.',
@@ -254,6 +264,7 @@ function getSizeFailure(
   oldString: string,
   newString: string,
   index: number,
+  toolName: 'edit' | 'multi_edit',
 ): string | undefined {
   const oldLines = oldString.split(/\r\n|\n|\r/).length;
   const newLines = newString.split(/\r\n|\n|\r/).length;
@@ -264,7 +275,7 @@ function getSizeFailure(
     || newLines > MAX_SAFE_EDIT_LINES
   ) {
     return (
-      `[Tool Error] multi_edit: edits[${index}] for ${filePath} is too large for safe exact replacement. `
+      `[Tool Error] ${toolName}: edits[${index}] for ${filePath} is too large for safe exact replacement. `
       + 'Split it into smaller edits.'
     );
   }

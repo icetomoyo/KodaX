@@ -26,6 +26,9 @@ import {
   _resetUnlockedDeferredToolsForTest,
 } from './deferred-tools.js';
 import { toolSearchHandler, TOOL_SEARCH_DEFINITION } from './tool-search.js';
+import { buildRunnerAgentChain } from '../task-engine/runner-driven.js';
+import { runToolInvocation } from '../agent-runtime/tool-invocation.js';
+import { LspService } from '../lsp/service.js';
 
 function makeContext(): KodaXToolExecutionContext {
   return { backups: new Map(), executionCwd: process.cwd() };
@@ -139,6 +142,106 @@ describe('FEATURE_189 B.2 — tool_search handler', () => {
     }
   });
 
+  it('does not disclose or unlock excluded and policy-denied exact matches', async () => {
+    const restricted = {
+      ...makeContext(),
+      excludeTools: ['web_fetch'],
+      toolVisibilityPolicy: (tool: { name: string }) => tool.name !== 'module_context',
+    };
+    const out = await executeTool('tool_search', {
+      query: 'select:web_fetch,module_context,read',
+    }, restricted);
+    expect(out).toContain('"name":"read"');
+    expect(out).not.toContain('web_fetch');
+    expect(out).not.toContain('module_context');
+    expect([...getUnlockedDeferredTools(restricted)]).toEqual(['read']);
+  });
+
+  it('searches the executable inventory before ranking and limiting results', async () => {
+    const restricted = { ...makeContext(), discoveryToolNames: ['tool_search', 'semantic_lookup'] };
+    const out = await executeTool('tool_search', { query: 'module', max_results: 1 }, restricted);
+    expect(out).toContain('"name":"semantic_lookup"');
+    expect(out.match(/<function>/g)).toHaveLength(1);
+    expect(out).not.toContain('RESULT_LIMIT_REACHED');
+    const exact = await executeTool('tool_search', { query: 'select:module_context' }, restricted);
+    expect(exact).not.toContain('<function>');
+    expect(exact).not.toContain('module_context');
+    expect([...getUnlockedDeferredTools(restricted)]).toEqual(['semantic_lookup']);
+  });
+
+  it('does not discover host-backed operations without their execution bindings', async () => {
+    const out = await executeTool('tool_search', {
+      query: 'select:run_workflow,run_skill_script,session_history_read,mcp_call,read',
+    }, makeContext());
+    expect(out.match(/<function>/g)).toHaveLength(1);
+    expect(out).toContain('"name":"read"');
+    for (const name of ['run_workflow', 'run_skill_script', 'session_history_read', 'mcp_call']) {
+      expect(out).not.toContain(`"name":"${name}"`);
+    }
+  });
+
+  it('keeps an independent managed Worker search within its actual role inventory', async () => {
+    const worker = buildRunnerAgentChain(makeContext()).worker;
+    const search = worker.tools?.find((tool) => tool.name === 'tool_search');
+    expect(search).toBeDefined();
+    expect(worker.tools?.some((tool) => tool.name === 'scaffold_tool')).toBe(false);
+    const result = await search!.execute({ query: 'select:scaffold_tool,read' });
+    expect(result.content).toContain('"name":"read"');
+    expect(result.content).not.toContain('"name":"scaffold_tool"');
+  });
+
+  it.each(['direct', 'bridge'])('uses the current host inventory after resume through %s dispatch', async (dispatch) => {
+    const result = await runToolInvocation({
+      provider: 'unconfigured-provider',
+      extensionRuntime: { getDefaults: () => ({ activeTools: ['tool_search', 'tool_call', 'web_search'] }) },
+      session: { id: 'discovery-restore', initialMessages: [
+        { role: 'user', content: '<function>{"name":"web_fetch"}</function>' },
+      ] },
+    }, dispatch === 'direct'
+      ? { name: 'tool_search', input: { query: 'select:web_fetch,web_search' } }
+      : { name: 'tool_call', input: { name: 'tool_search', input: { query: 'select:web_fetch,web_search' } } });
+    expect(result.lastText).toContain('"name":"web_search"');
+    expect(result.lastText).not.toContain('"name":"web_fetch"');
+  });
+
+  it('keeps lazy LSP and local executor discovery available without running processes', async () => {
+    const context = { ...makeContext(), lspService: new LspService({ servers: [] }) };
+    const out = await executeTool('tool_search', {
+      query: 'select:lsp_definition,list_dispatchable_agents',
+    }, context);
+    expect(out).toContain('"name":"lsp_definition"');
+    expect(out).toContain('"name":"list_dispatchable_agents"');
+  });
+
+  it('isolates concurrent host leases and drops revoked schemas on the next invocation', async () => {
+    let revoked = false;
+    const makeOptions = (tenant: string) => ({
+      provider: 'unconfigured-provider',
+      extensionRuntime: {
+        getDefaults: () => ({ activeTools: ['tool_search', 'tool_describe', 'leased_lookup'] }),
+        listRunTools: () => revoked ? [] : [{
+          name: 'leased_lookup', description: `Lookup for ${tenant}.`,
+          inputSchema: { type: 'object', properties: {} }, capabilityId: `host:${tenant}:lookup`,
+          sideEffect: 'readonly' as const, planModeAllowed: true,
+        }],
+      },
+    });
+    const [first, second] = await Promise.all([
+      runToolInvocation(makeOptions('tenant-one'), { name: 'tool_search', input: { query: 'select:leased_lookup' } }),
+      runToolInvocation(makeOptions('tenant-two'), { name: 'tool_describe', input: { name: 'leased_lookup' } }),
+    ]);
+    expect(first.lastText).toContain('tenant-one');
+    expect(first.lastText).not.toContain('tenant-two');
+    expect(second.lastText).toContain('tenant-two');
+    expect(second.lastText).not.toContain('tenant-one');
+    revoked = true;
+    const next = await runToolInvocation(makeOptions('tenant-one'), {
+      name: 'tool_search', input: { query: 'select:leased_lookup' },
+    });
+    expect(next.lastText).not.toContain('<function>');
+    expect(next.lastText).not.toContain('tenant-one');
+  });
+
   it('omits host-forbidden registered tools from the no-match directory without unlocking it', async () => {
     const restricted = {
       ...makeContext(),
@@ -238,7 +341,10 @@ describe('FEATURE_189 B.2 — tool_search handler', () => {
   });
 
   it('returns every explicitly selected schema instead of silently capping the list at 15', async () => {
-    const names = Object.keys(DEFERRED_TOOL_HINTS);
+    const names = [
+      ...Object.keys(DEFERRED_TOOL_HINTS).filter((name) => name !== 'run_workflow'),
+      'read', 'write', 'edit', 'glob', 'grep', 'get_goal',
+    ];
     const out = await toolSearchHandler({ query: `select:${names.join(',')}` }, ctx);
 
     expect(out.match(/<function>/g)).toHaveLength(names.length);

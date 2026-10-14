@@ -1,6 +1,7 @@
 export { extractArtifactLedger, mergeArtifactLedger, type CompactionAnchor, type CompactionUpdate } from '@kodax-ai/agent';
 import type { KodaXToolUseBlock } from '@kodax-ai/llm';
-import { getRequiredToolParams, isToolMutation } from './tools/index.js';
+import { isToolMutation } from './tools/index.js';
+import { getMissingToolParams } from './tools/registry.js';
 
 /**
  * A salvaged tool input is untrustworthy to execute when EITHER:
@@ -30,12 +31,9 @@ export function checkIncompleteToolCalls(toolBlocks: KodaXToolUseBlock[]): strin
       incomplete.push(`${tc.name}: incomplete input (salvaged from malformed/truncated JSON)`);
       continue;
     }
-    const required = getRequiredToolParams(tc.name);
     const input = (tc.input ?? {}) as Record<string, unknown>;
-    for (const param of required) {
-      if (input[param] === undefined || input[param] === null || input[param] === '') {
-        incomplete.push(`${tc.name}: missing '${param}'`);
-      }
+    for (const param of getMissingToolParams(tc.name, input)) {
+      incomplete.push(`${tc.name}: missing '${param}'`);
     }
   }
   return incomplete;

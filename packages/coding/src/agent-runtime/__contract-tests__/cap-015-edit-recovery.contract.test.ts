@@ -41,6 +41,7 @@
 
 import os from 'os';
 import path from 'path';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -69,6 +70,23 @@ function makeCtx(overrides: Partial<KodaXToolExecutionContext> = {}): KodaXToolE
 }
 
 describe('CAP-015: edit anchor recovery + write-block contract', () => {
+  it('recovers the actual anchor from the canonical single-edit array', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-edit-array-recovery-'));
+    try {
+      await writeFile(path.join(directory, 'source.txt'), 'unrelated\n'.repeat(180) + 'unique recovery marker current\n');
+      const result = await buildEditRecoveryUserMessage({ id: 'array-edit', name: 'edit',
+        input: { path: 'source.txt', edits: [{ old_string: 'unique recovery marker stale', new_string: 'fixed' }] } },
+        '[Tool Error] edit: EDIT_NOT_FOUND: anchor missing', emptyState(), makeCtx({ executionCwd: directory }));
+      expect(result).toContain('unique recovery marker current');
+      expect(result).toContain('Do not use write');
+    } finally {
+      if (path.dirname(directory) !== path.resolve(os.tmpdir()) || !path.basename(directory).startsWith('kodax-edit-array-recovery-')) {
+        throw new Error('Unsafe recovery fixture cleanup');
+      }
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   let savedDebugStream: string | undefined;
   let savedDebugResilience: string | undefined;
 

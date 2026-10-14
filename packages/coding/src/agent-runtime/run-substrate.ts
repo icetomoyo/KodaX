@@ -251,6 +251,7 @@ import {
   getActiveToolDefinitions,
   getRuntimeActiveToolNames,
 } from './tool-resolution.js';
+import { isToolDiscoverable } from '../tools/tool-search.js';
 import { listRunScopedTools, runScopedToolMap } from './run-scoped-tools.js';
 import { createRuntimeContextBudgetSnapshot } from './context-budget.js';
 import {
@@ -1777,12 +1778,11 @@ async function runSubstrateInContext(
         options.context?.agentExecutorPlane !== undefined,
         runScopedToolDefs,
       );
-      // Direct Runner children do not pass through the managed-chain
-      // workflowHost gate. Keep the model-visible schema truthful: without a
-      // bound host, run_workflow can only return "unavailable".
-      const fullActiveToolDefinitions = ctx.workflowHost
-        ? resolvedActiveToolDefinitions
-        : resolvedActiveToolDefinitions.filter((tool) => tool.name !== 'run_workflow');
+      // Apply the same host ceiling to model definitions and dispatch names,
+      // before optional model-only schema hiding. Children use this path too.
+      const fullActiveToolDefinitions = resolvedActiveToolDefinitions.filter(
+        (tool) => isToolDiscoverable(tool.name, ctx),
+      );
       const diagnosticScope = liveTurnScopeRef.current;
       const diagnosticContextIdentity = {
         contextId: diagnosticScope.contextId,
@@ -2431,7 +2431,7 @@ async function runSubstrateInContext(
         runtime?.hasCapabilityProvider?.('mcp') ?? !!runtime,
         options.context?.toolConstructionMode,
         options.context?.agentExecutorPlane !== undefined,
-      );
+      ).filter((name) => isToolDiscoverable(name, ctx));
       result = { ...result, toolBlocks: repairToolBlockNames(result.toolBlocks, activeToolNamesForTurn) };
 
       const visibleToolBlocks = result.toolBlocks.filter((block) => isVisibleToolName(block.name));

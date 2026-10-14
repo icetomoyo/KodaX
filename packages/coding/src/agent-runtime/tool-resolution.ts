@@ -47,6 +47,7 @@
  */
 
 import type { KodaXRepoIntelligenceMode, KodaXToolVisibilityPolicy } from '../types.js';
+import type { KodaXToolDefinition } from '@kodax-ai/llm';
 import type { RunScopedToolDefinition } from '../extensions/runtime-contract.js';
 import { toModelToolDefinition } from './run-scoped-tools.js';
 import {
@@ -62,6 +63,18 @@ import { resolveKodaXAutoRepoMode } from '../repo-intelligence/runtime.js';
 import { DEFERRED_TOOL_HINTS, isDeferredTool } from '../tools/deferred-tools.js';
 import { withManualToolBranding } from '../self-knowledge/tool-description.js';
 import { projectModelToolDefinition } from '../tools/model-tool-definition.js';
+
+/** Only remove an internal alias when its builtin replacement is executable. */
+export function filterModelToolAliases<T extends KodaXToolDefinition>(tools: readonly T[]): T[] {
+  const names = new Set(tools.map(tool => tool.name));
+  return tools.filter(tool => {
+    const canonical = tool.name === 'multi_edit' ? 'edit'
+      : tool.name === 'changed_diff_bundle' ? 'changed_diff' : undefined;
+    return canonical === undefined || !names.has(canonical)
+      || getRegisteredToolDefinition(tool.name)?.source.kind !== 'builtin'
+      || getRegisteredToolDefinition(canonical)?.source.kind !== 'builtin';
+  });
+}
 
 /** FEATURE_067 v3: Filter tools excluded for child agents at API level. */
 export function filterExcludedTools(
@@ -153,15 +166,16 @@ export function getActiveToolDefinitions(
       hasAgentExecutorPlane,
     ),
   );
-  return allTools
+  return filterModelToolAliases(allTools
     .filter((tool) => (
       allowed.has(tool.name)
       && (allowManagedProtocolTool || !isManagedProtocolToolName(tool.name))
-    ))
+    )))
     .map((tool) => {
       // FEATURE_221: white-label the kodax_manual description (no-op unless a
       // non-default productName is set, so the default surface is unchanged).
-      const branded = withManualToolBranding(projectModelToolDefinition(tool), selfManualProductName);
+      const branded = withManualToolBranding(projectModelToolDefinition(tool,
+        getRegisteredToolDefinition(tool.name)?.source), selfManualProductName);
       // FEATURE_189 Batch 3 B.2 — progressive disclosure: deferred tools
       // emit a one-line searchHint instead of the full description until
       // the per-context unlock set marks them. The schema parameters are

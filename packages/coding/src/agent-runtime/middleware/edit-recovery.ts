@@ -146,7 +146,11 @@ export async function buildEditRecoveryUserMessage(
   }
 
   const windowLines = attempt === 1 ? 120 : 400;
-  const diagnostic = await inspectEditFailure(pathValue, String(toolCall.input?.old_string ?? ''), ctx, windowLines);
+  const edits = toolCall.input?.edits;
+  const firstEdit = Array.isArray(edits) && edits.length === 1 ? edits[0] : undefined;
+  const oldString = toolCall.input?.old_string
+    ?? (firstEdit && typeof firstEdit === 'object' && 'old_string' in firstEdit ? firstEdit.old_string : '');
+  const diagnostic = await inspectEditFailure(pathValue, String(oldString ?? ''), ctx, windowLines);
   const primary = diagnostic.candidates[0];
   const alternates = diagnostic.candidates.slice(1, 3);
 

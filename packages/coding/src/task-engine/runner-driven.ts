@@ -64,6 +64,7 @@ import {
 // GENERATOR_AGENT_NAME imports removed alongside the V1 chain agents —
 // the only remaining V2 chain agent is the Worker.
 import { WORKER_AGENT_NAME } from '../agents/task-engine-agents.js';
+import { filterModelToolAliases } from '../agent-runtime/tool-resolution.js';
 import { resolveProvider } from '../providers/index.js';
 import { estimateTokens } from '../tokenizer.js';
 import { rebaseContextTokenSnapshot } from '../token-accounting.js';
@@ -1914,7 +1915,7 @@ async function runManagedTaskViaRunnerInner(
   );
   // Root and managed children both arrive here after their own role/host filters.
   // Keep executable capability separate from any deferred model-facing projection.
-  workerAvailableToolNames = (chain.worker.tools ?? []).map((tool) => tool.name);
+  workerAvailableToolNames = filterModelToolAliases(chain.worker.tools ?? []).map((tool) => tool.name);
   // FEATURE_193 (v0.7.43): FEATURE_078 Scout `downstream_reasoning_hint`
   // callback retired — Scout role gone, no payload to surface. The
   // adapter still accepts the getter slot for signature compatibility;

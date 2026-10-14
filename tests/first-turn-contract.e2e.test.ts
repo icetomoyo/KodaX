@@ -64,12 +64,15 @@ describe('first-turn contracts through public SDK and HTTP providers', () => {
         const workspace = path.join(root, 'workspace');
         await mkdir(workspace);
         const target = path.join(workspace, 'app.txt');
-        await writeFile(target, 'before\n');
+        await writeFile(target, 'before\nkeep\n');
         const requests: WireRequest[] = [];
         const errors: unknown[] = [];
         const calls: FixtureCall[] = [
           { name: 'read', input: { path: target } },
-          { name: 'edit', input: { path: target, old_string: 'before', new_string: 'after' } },
+          { name: 'edit', input: { path: target, edits: [
+            { old_string: 'before', new_string: 'after' },
+            { old_string: 'keep', new_string: 'kept' },
+          ] } },
           { name: 'ask_user_question', input: { questions: [{ question: '选择验收方式',
             header: '验收', options: [{ value: 'test', label: '运行测试' }, { value: 'review', label: '检查修改' }] }] } },
         ];
@@ -109,10 +112,10 @@ describe('first-turn contracts through public SDK and HTTP providers', () => {
             events: { askUserMulti },
           };
           const result = await (mode === 'sa' ? runKodaX : runManagedTask)(options,
-            '读取 app.txt，将 before 精确改为 after，再询问验收方式。');
+            '读取 app.txt，将 before 精确改为 after、keep 改为 kept，再询问验收方式。');
           expect(errors).toEqual([]);
           expect(result.success).toBe(true);
-          expect(await readFile(target, 'utf8')).toBe('after\n');
+          expect(await readFile(target, 'utf8')).toBe('after\nkept\n');
           expect(askUserMulti).toHaveBeenCalledOnce();
           expect(requests).toHaveLength(4);
           const first = requests[0]!;
@@ -124,6 +127,9 @@ describe('first-turn contracts through public SDK and HTTP providers', () => {
           expect(todo?.schema?.properties).not.toHaveProperty('items');
           expect(tools.find(tool => tool.name === 'ask_user_question')?.schema?.properties).not.toHaveProperty('agent_id');
           expect(tools.map(tool => tool.name)).not.toContain('run_skill_script');
+          expect(tools.map(tool => tool.name)).not.toContain('multi_edit');
+          expect(tools.find(tool => tool.name === 'edit')?.schema?.required).toEqual(['path', 'edits']);
+          expect(tools.find(tool => tool.name === 'edit')?.schema?.properties).not.toHaveProperty('old_string');
           if (mode === 'ama') {
             expect(tools.map(tool => tool.name)).not.toContain('module_context');
             const instructions = JSON.stringify(first.system ?? first.messages.filter(message =>

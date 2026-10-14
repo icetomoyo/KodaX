@@ -12,12 +12,48 @@
 import { describe, expect, it } from 'vitest';
 import type { KodaXToolUseBlock } from '@kodax-ai/llm';
 import { checkIncompleteToolCalls } from './messages.js';
+import { registerTool } from './tools/index.js';
 
 function block(partial: Partial<KodaXToolUseBlock> & { name: string }): KodaXToolUseBlock {
   return { type: 'tool_use', id: 'id-1', input: {}, ...partial } as KodaXToolUseBlock;
 }
 
 describe('checkIncompleteToolCalls', () => {
+  it('detects missing legacy branch fields while accepting complete consolidated calls', () => {
+    expect(checkIncompleteToolCalls([
+      block({ name: 'edit', input: { path: '/tmp/x' } }),
+      block({ name: 'changed_diff', input: { limit: 20 } }),
+    ])).toEqual(["edit: missing 'old_string'", "edit: missing 'new_string'", "changed_diff: missing 'path'"]);
+    expect(checkIncompleteToolCalls([
+      block({ name: 'edit', input: { path: '/tmp/x', edits: [{ old_string: 'x', new_string: 'y' }] } }),
+      block({ name: 'changed_diff', input: { paths: ['x'] } }),
+      block({ name: 'edit', input: { path: '/tmp/x', old_string: 'x', new_string: 'y' } }),
+      block({ name: 'changed_diff', input: { path: 'x' } }),
+    ])).toEqual([]);
+  });
+
+  it('detects truncated edit array elements without treating a complete deletion as truncated', () => {
+    expect(checkIncompleteToolCalls([
+      block({ name: 'edit', input: { path: '/tmp/x', edits: [{ old_string: 'x' }, { new_string: 'y' }] } }),
+    ])).toEqual(["edit: missing 'edits[0].new_string'", "edit: missing 'edits[1].old_string'"]);
+    expect(checkIncompleteToolCalls([
+      block({ name: 'edit', input: { path: '/tmp/x', edits: [{ old_string: 'x', new_string: '' }] } }),
+      block({ name: 'edit', input: { path: '/tmp/x', old_string: 'x', new_string: '' } }),
+    ])).toEqual([]);
+  });
+
+  it.each(['edit', 'changed_diff'])('uses the active custom %s schema instead of builtin branch requirements', (name) => {
+    const dispose = registerTool({
+      name, description: 'Custom contract',
+      input_schema: { type: 'object', properties: { custom: { type: 'string' } }, required: ['custom'] },
+      handler: async () => 'ok', sideEffect: 'readonly', toClassifierInput: () => '',
+    });
+    try {
+      expect(checkIncompleteToolCalls([block({ name, input: { custom: 'ok', edits: [{}] } })])).toEqual([]);
+      expect(checkIncompleteToolCalls([block({ name, input: { paths: ['x'] } })]))
+        .toEqual([`${name}: missing 'custom'`]);
+    } finally { dispose(); }
+  });
   it('returns empty for a complete tool call', () => {
     expect(checkIncompleteToolCalls([block({ name: 'read', input: { path: '/tmp/x' } })])).toEqual([]);
   });

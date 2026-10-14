@@ -99,6 +99,24 @@ describe('todo_get — unknown id recovery hint', () => {
 });
 
 describe('todo_get — populated store', () => {
+  it('reads caller-supplied owner provenance without inventing an owner for legacy items', async () => {
+    const store = createTodoStore();
+    store.init([
+      { id: 'owned', subject: 'Review auth', owner: '/root/auth' },
+      { id: 'legacy', subject: 'Integrate findings' },
+    ]);
+    const ctx = makeContext({ todoStore: store });
+    const owned = JSON.parse(await toolTodoGet({ id: 'owned' }, ctx)) as {
+      item: { owner?: string; status: string };
+    };
+    const legacy = JSON.parse(await toolTodoGet({ id: 'legacy' }, ctx)) as {
+      item: { owner?: string; status: string };
+    };
+    expect(owned.item.owner).toBe('/root/auth');
+    expect(legacy.item).not.toHaveProperty('owner');
+    expect(store.getAll().map(item => item.status)).toEqual(['pending', 'pending']);
+  });
+
   it('returns the full item with stable JSON envelope shape', async () => {
     let onChangeCalls = 0;
     const store = createTodoStore({ onChange: () => onChangeCalls++ });

@@ -25,11 +25,14 @@ import type { KodaXToolDefinition } from '@kodax-ai/llm';
 import type { LocalToolDefinition, ToolHandlerSync } from './types.js';
 import type { KodaXToolExecutionContext } from '../types.js';
 import { getRegisteredToolDefinition, getToolDefinition } from './index.js';
+import { isMcpToolName } from './registry.js';
+import { isSessionHistoryTool } from './session-history.js';
 import { lookupRunScopedTool, toModelToolDefinition } from '../agent-runtime/run-scoped-tools.js';
 
 /** Context needed for run-scoped lookup and host-backed skill availability. */
 type ToolSearchContext = Pick<KodaXToolExecutionContext,
-  'extensionRuntime' | 'skillScriptRunner' | 'executionCwd' | 'excludeTools' | 'toolVisibilityPolicy'>;
+  'extensionRuntime' | 'skillScriptRunner' | 'executionCwd' | 'excludeTools' | 'toolVisibilityPolicy'
+  | 'discoveryToolNames' | 'workflowHost' | 'loadSessionHistory'>;
 
 import {
   DEFERRED_TOOL_HINTS,
@@ -72,10 +75,18 @@ function parseQuery(rawQuery: string): { mode: 'select' | 'keyword'; names: stri
   return { mode: 'keyword', names: [], required, loose };
 }
 
-function isHostVisibleRegisteredTool(name: string, context: ToolSearchContext): boolean {
+/** Shared discovery/dispatch ceiling; lazy service startup is not a capability check. */
+export function isToolDiscoverable(name: string, context: ToolSearchContext): boolean {
+  if (context.discoveryToolNames && !context.discoveryToolNames.includes(name)) return false;
   if (context.excludeTools?.includes(name)) return false;
+  if (name === 'run_workflow' && !context.workflowHost) return false;
+  if (name === 'run_skill_script' && (!context.skillScriptRunner || !context.executionCwd)) return false;
+  if (isSessionHistoryTool(name) && !context.loadSessionHistory) return false;
+  if (isMcpToolName(name)
+    && !(context.extensionRuntime?.hasCapabilityProvider?.('mcp') ?? !!context.extensionRuntime)) return false;
   if (!context.toolVisibilityPolicy) return true;
-  const definition = getRegisteredToolDefinition(name);
+  const definition = getRegisteredToolDefinition(name)
+    ?? lookupRunScopedTool(context.extensionRuntime, name);
   return definition !== undefined && context.toolVisibilityPolicy({
     name: definition.name,
     sideEffect: definition.sideEffect,
@@ -90,8 +101,7 @@ function resolveSelectNames(
   const resolved: string[] = [];
   const seen = new Set<string>();
   for (const n of names) {
-    if (n === 'run_skill_script' && (!context.skillScriptRunner || !context.executionCwd
-      || !isHostVisibleRegisteredTool(n, context))) continue;
+    if (!isToolDiscoverable(n, context)) continue;
     if (seen.has(n)) continue;
     seen.add(n);
     if (isDeferredTool(n)) resolved.push(n);
@@ -102,8 +112,9 @@ function resolveSelectNames(
   return resolved;
 }
 
-function searchKeywords(required: readonly string[], loose: readonly string[], maxResults: number): string[] {
+function searchKeywords(required: readonly string[], loose: readonly string[], maxResults: number, context: ToolSearchContext): string[] {
   const deferredDefinitions = Object.keys(DEFERRED_TOOL_HINTS)
+    .filter((name) => isToolDiscoverable(name, context))
     .map((name) => getToolDefinition(name))
     .filter((definition): definition is KodaXToolDefinition => definition !== undefined);
   const index = buildToolSearchIndex(deferredDefinitions, { hints: DEFERRED_TOOL_HINTS });
@@ -127,7 +138,7 @@ function buildResult(
   if (resolved.length === 0) {
     return 'No tools matched the query. Available deferred tools: '
       + Object.keys(DEFERRED_TOOL_HINTS)
-        .filter((name) => isHostVisibleRegisteredTool(name, context)).join(', ')
+        .filter((name) => isToolDiscoverable(name, context)).join(', ')
       + '. Use query form `select:NAME` to fetch a specific schema.';
   }
   const lines: string[] = [];
@@ -146,7 +157,8 @@ function buildResult(
     // FEATURE_221: white-label the kodax_manual description here too, so a
     // re-branded consumer's `select:kodax_manual` lookup cannot pull the raw
     // KodaX description. No-op for every other tool / the default product name.
-    lines.push(formatToolAsFunctionBlock(withManualToolBranding(projectModelToolDefinition(def), selfManualProductName)));
+    lines.push(formatToolAsFunctionBlock(withManualToolBranding(projectModelToolDefinition(def,
+      getRegisteredToolDefinition(def.name)?.source), selfManualProductName)));
   }
   return lines.join('\n');
 }
@@ -175,7 +187,7 @@ export const toolSearchHandler: ToolHandlerSync = async (input, context) => {
       context.selfManual?.productName,
     );
   }
-  const probed = searchKeywords(parsed.required, parsed.loose, requestedMax + 1);
+  const probed = searchKeywords(parsed.required, parsed.loose, requestedMax + 1, context);
   const resolved = probed.slice(0, requestedMax);
   const result = buildResult(resolved, context, context.selfManual?.productName);
   return appendLimitMarker(result, requestedMax, probed.length > requestedMax);

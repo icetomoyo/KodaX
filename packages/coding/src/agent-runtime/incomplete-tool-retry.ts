@@ -43,7 +43,7 @@
 import type { KodaXEvents, KodaXContextTokenSnapshot } from '../types.js';
 import type { KodaXMessage, KodaXToolUseBlock, KodaXToolResultBlock } from '@kodax-ai/llm';
 import { checkIncompleteToolCalls, isUntrustedSalvage } from '../messages.js';
-import { getRequiredToolParams } from '../tools/index.js';
+import { getMissingToolParams } from '../tools/registry.js';
 import { rebaseContextTokenSnapshot } from '../token-accounting.js';
 import { createToolEventMeta, createToolResultBlock } from './tool-dispatch.js';
 import { isVisibleToolName } from './event-emitter.js';
@@ -186,14 +186,8 @@ export async function checkAndRetryIncompleteTools(
       salvageIds.add(tc.id);
       continue;
     }
-    const required = getRequiredToolParams(tc.name);
     const inputObj = (tc.input ?? {}) as Record<string, unknown>;
-    for (const param of required) {
-      if (inputObj[param] === undefined || inputObj[param] === null || inputObj[param] === '') {
-        incompleteIds.add(tc.id);
-        break;
-      }
-    }
+    if (getMissingToolParams(tc.name, inputObj).length > 0) incompleteIds.add(tc.id);
   }
 
   // Synthesize a tool_result for every VISIBLE tool_use in this turn — not only

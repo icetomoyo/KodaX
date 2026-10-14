@@ -101,6 +101,18 @@ function getAgentToolNames(
 }
 
 describe('FEATURE_168 — AMA agent tool wiring (per-role full set)', () => {
+  it('keeps MCP discovery and descriptions absent when an extension runtime has no MCP provider', async () => {
+    const extensionRuntime = createExtensionRuntime().activate();
+    try {
+      expect(extensionRuntime.hasCapabilityProvider('mcp')).toBe(false);
+      const chain = buildRunnerAgentChain({ ...makeCtx(), extensionRuntime });
+      const tools = chain.worker.tools ?? [];
+      for (const name of MCP_TOOL_NAMES) expect(tools.map(tool => tool.name)).not.toContain(name);
+      expect((await tools.find(tool => tool.name === 'tool_search')?.execute({ query: 'select:mcp_call' }))?.content).not.toContain('<function>');
+      expect((await tools.find(tool => tool.name === 'tool_describe')?.execute({ name: 'mcp_call' }))?.content).not.toContain('<function>');
+    } finally { await extensionRuntime.dispose(); }
+  });
+
   it('keeps managed todo overrides and both discovery surfaces on the incremental model contract', async () => {
     const tools = buildRunnerAgentChain(makeCtx()).worker.tools ?? [];
     const todo = tools.find((tool) => tool.name === 'todo_update');

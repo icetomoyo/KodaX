@@ -42,7 +42,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { getToolDefinition } from '../../tools/registry.js';
+import { getToolDefinition, registerTool } from '../../tools/registry.js';
 
 import {
   applyToolVisibilityPolicy,
@@ -64,6 +64,26 @@ describe('model-visible todo contract', () => {
     expect(JSON.stringify(tool)).not.toContain('op="update" only.');
     expect(raw.input_schema).toEqual(before);
     expect(getToolDefinition('todo_update')?.input_schema.properties).toHaveProperty('items');
+  });
+});
+
+describe('model-visible file tool compatibility', () => {
+  it('uses canonical entries while retaining a legacy-only executable surface', () => {
+    const paired = getActiveToolDefinitions(['edit', 'multi_edit', 'changed_diff', 'changed_diff_bundle'], 'full');
+    expect(paired.map(tool => tool.name).sort()).toEqual(['changed_diff', 'edit']);
+    expect(paired.find(tool => tool.name === 'edit')?.input_schema.required).toEqual(['path', 'edits']);
+    expect(getActiveToolDefinitions(['multi_edit']).map(tool => tool.name)).toEqual(['multi_edit']);
+  });
+
+  it('preserves an extension override and its distinct batch companion', () => {
+    const cleanup = registerTool({ name: 'edit', description: 'Custom edit operation',
+      input_schema: { type: 'object', properties: { custom: { type: 'string' } }, required: ['custom'] },
+      sideEffect: 'mutates-fs', handler: async () => 'custom edit' });
+    try {
+      const tools = getActiveToolDefinitions(['edit', 'multi_edit']);
+      expect(tools.map(tool => tool.name)).toEqual(['edit', 'multi_edit']);
+      expect(tools[0]?.input_schema.required).toEqual(['custom']);
+    } finally { cleanup(); }
   });
 });
 

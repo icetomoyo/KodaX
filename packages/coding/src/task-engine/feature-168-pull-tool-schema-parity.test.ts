@@ -1,13 +1,10 @@
 /**
  * FEATURE_168 (v0.7.40 hotfix) — Layer 1 schema parity check.
  *
- * Purpose: validate that the 8 repo-intel pull tools the AMA Worker now sees
- * in its `agent.tools` schema (post-FEATURE_168 wiring fix) carry AT LEAST
- * the same information surface as the schemas FEATURE_161's mocked driver
- * exposed when collecting the +30-40pp adoption-lift data. This makes the
- * FEATURE_161 result a **lower bound** on production behaviour at no LLM
- * cost: more inner-property descriptions on the wired schema can only
- * increase LLM context, not decrease it.
+ * Current scope: preserve the raw SDK invocation fields in FEATURE_161's
+ * frozen schemas. The model projection is tested separately. changed_diff
+ * now admits path OR paths, with branch validation in its handler; legacy
+ * callers must not gain additional mandatory parameters.
  *
  * Per EVAL_GUIDELINES §Layer 1: "any 'X 机制是否生效' / 'X 函数是否被调用' /
  * 'X env hook 是否实装' 类问题" — schema-bytes parity is the textbook example.
@@ -19,15 +16,14 @@
  *     between FEATURE_161 mocked schema and the FEATURE_168 wired schema.
  *   - All 8 pull tools' `input_schema.properties` keys are a superset of the
  *     mocked properties (production may expose strictly more properties).
- *   - Required-field sets, enums, and types match exactly.
+ *   - Required fields do not add new obligations to legacy callers; enums
+ *     and types retain their legacy values.
  *   - Wired schema may additionally carry per-property `description` strings
  *     that FEATURE_161 stripped (not present in mocked).
  *
- * Decision: with parity confirmed, FEATURE_161's pull-tool adoption lift
- * data transfers as a lower bound to production AMA Worker behaviour. No
- * Layer 2 LLM probe needed for FEATURE_168 re-eval. If users want
- * end-to-end production validation (Layer 3.5 smoke), that is a separate
- * call requiring its own budget approval.
+ * SDK compatibility is a Layer 1 question. It does not establish model
+ * adoption, intelligence or performance: FEATURE_161's observations remain
+ * historical and are not a lower bound for the new model-facing contract.
  *
  * If this test FAILS:
  *   - The wired schema diverged from what FEATURE_161 measured. Treat the
@@ -192,14 +188,9 @@ describe('FEATURE_168 — pull-tool schema parity with FEATURE_161 mocked schema
   // over-strict and went stale once production pull-tool descriptions were
   // deliberately enriched/reworded (ADR-033 prompt-design + FEATURE_189 tool
   // description cleanup) after FEATURE_161 snapshotted its frozen mock at
-  // v0.7.40. Re-syncing the mock would falsify the historical record of what
-  // FEATURE_161 measured; the mock stays frozen. Crucially, the FEATURE_161
-  // "lower bound" claim rests on the *invocation surface* (name + properties +
-  // types + required set + enum), NOT the guidance prose — and those parities
-  // are still asserted below. Richer prose can only help adoption, never break
-  // an invocation, so the lower-bound conclusion is unaffected. Per this test's
-  // own decision tree, divergence here means "treat the FEATURE_161 number as
-  // historical", which it now is.
+  // v0.7.40. The mock stays frozen. These assertions preserve legacy SDK
+  // fields; they do not transfer historical adoption measurements to the
+  // separately projected model contract.
 
   it.each(PULL_TOOL_NAMES)('%s — input_schema.properties is a superset (every mocked key exists in wired)', (toolName) => {
     const wired = getWiredSchema(toolName);
@@ -222,10 +213,12 @@ describe('FEATURE_168 — pull-tool schema parity with FEATURE_161 mocked schema
     }
   });
 
-  it.each(PULL_TOOL_NAMES)('%s — required-field set is byte-identical (production cannot break a FEATURE_161 invocation)', (toolName) => {
+  it.each(PULL_TOOL_NAMES)('%s — required fields add no obligations to a legacy invocation', (toolName) => {
     const wired = getWiredSchema(toolName);
     const mocked = FEATURE_161_MOCKED_SCHEMA[toolName];
-    expect([...requiredOf(wired.input_schema)].sort()).toEqual([...requiredOf(mocked.input_schema)].sort());
+    for (const field of requiredOf(wired.input_schema)) {
+      expect(requiredOf(mocked.input_schema)).toContain(field);
+    }
   });
 
   it('changed_scope — enum exposed in wired schema is a superset of mocked enum', () => {
@@ -250,27 +243,5 @@ describe('FEATURE_168 — wired schema may add information (one-way superset)', 
     const wiredProps = propertiesOf(wired.input_schema) as Record<string, { description?: string }>;
     expect(wiredProps.target_path?.description?.length ?? 0).toBeGreaterThan(0);
     expect(wiredProps.refresh?.description?.length ?? 0).toBeGreaterThan(0);
-  });
-});
-
-describe('FEATURE_168 — re-eval conclusion (Layer 1 only)', () => {
-  it('schema parity holds → FEATURE_161 adoption-lift is a transferable lower bound for production', () => {
-    // This is a meta-assertion that documents the eval conclusion in code,
-    // not just in CHANGELOG / design doc. If every assertion above passes,
-    // the FEATURE_168 wiring fix preserves (or strictly enriches) every
-    // schema field FEATURE_161 measured against. The +30-40pp pull-tool
-    // adoption lift transfers as a lower bound.
-    //
-    // No Layer 2 LLM probe needed per EVAL_GUIDELINES §Layer 1 — code
-    // reading + this parity check answer the question at $0.
-    //
-    // Caveat (out of scope here): FEATURE_168 also adds web tools / coordinator
-    // tools / ask_user_question to the AMA Worker, so the FULL tool-list
-    // length grows from FEATURE_161's 12-tool probe surface to production's
-    // ~40-tool surface. Whether the larger tool list changes LLM selection
-    // dynamics is a Layer 3.5 question, not a Layer 1 question — it requires
-    // running the model end-to-end with the full surface. Reserve that for
-    // a future dedicated smoke test if production traces show regression.
-    expect(true).toBe(true);
   });
 });

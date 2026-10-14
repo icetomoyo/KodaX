@@ -21,6 +21,8 @@
 import { randomUUID } from 'node:crypto';
 import { withEffectivePermissionContext } from '../../../prompts/effective-permissions.js';
 import { projectModelToolDefinition } from '../../../tools/model-tool-definition.js';
+import { getRegisteredToolDefinition } from '../../../tools/registry.js';
+import { filterModelToolAliases } from '../../../agent-runtime/tool-resolution.js';
 
 import type {
   KodaXContentBlock,
@@ -489,12 +491,12 @@ export function buildRunnerLlmAdapter(
       }
     }
 
-    const wireTools: KodaXToolDefinition[] = (agent.tools ?? [])
+    const wireTools: KodaXToolDefinition[] = filterModelToolAliases(agent.tools ?? [])
       .map((t) => projectModelToolDefinition({
         name: t.name,
         description: t.description,
         input_schema: t.input_schema,
-      }));
+      }, getRegisteredToolDefinition(t.name)?.source));
 
     // Reasoning single-tracking: resolve the per-turn reasoning EFFORT through
     // the FEATURE_078 L1-L2 chain (effort-native):

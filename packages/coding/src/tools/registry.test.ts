@@ -186,7 +186,8 @@ describe('tool registry', () => {
     expect(getRequiredToolParams('mcp_describe')).toEqual(['id']);
     expect(getRequiredToolParams('mcp_call')).toEqual(['id']);
     expect(getRequiredToolParams('mcp_read_resource')).toEqual(['id']);
-    expect(getRequiredToolParams('changed_diff')).toEqual(['path']);
+    // The handler validates legacy path vs canonical paths; neither branch is globally required.
+    expect(getRequiredToolParams('changed_diff')).toEqual([]);
     expect(getRequiredToolParams('changed_diff_bundle')).toEqual(['paths']);
     expect(getRequiredToolParams('insert_after_anchor')).toEqual(['path', 'anchor', 'content']);
   });

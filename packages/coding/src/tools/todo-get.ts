@@ -54,6 +54,7 @@ interface TodoGetItemDTO {
   readonly activeForm?: string;
   readonly note?: string;
   readonly evaluator?: TodoEvaluatorHint;
+  readonly owner?: string;
   readonly metadata?: Record<string, unknown>;
 }
 
@@ -68,6 +69,7 @@ function toDTO(item: TodoItem): TodoGetItemDTO {
     ...(item.activeForm ? { activeForm: item.activeForm } : {}),
     ...(item.note ? { note: item.note } : {}),
     ...(item.evaluator ? { evaluator: item.evaluator } : {}),
+    ...(item.owner !== undefined ? { owner: item.owner } : {}),
     ...(item.metadata ? { metadata: item.metadata } : {}),
   };
   return dto;

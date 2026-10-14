@@ -22,6 +22,23 @@ const baseDecision: KodaXTaskRoutingDecision = {
 };
 
 describe('buildWorkerInstructions', () => {
+  it('teaches canonical batch tools without advertising a legacy alias', () => {
+    const output = buildWorkerInstructions(baseDecision, undefined, false, undefined,
+      ['read', 'edit', 'changed_diff', 'todo_create', 'todo_update', 'todo_get', 'todo_list', 'wait_agent']);
+    expect(output).toContain('batch with `edit`');
+    expect(output).not.toContain('multi_edit');
+    expect(output).not.toContain('changed_diff_bundle');
+    expect(output).toContain('paged diffs');
+  });
+
+  it('keeps concrete deliverables and concise descriptions in full and limited plans', () => {
+    for (const available of [undefined, ['todo_create', 'todo_update', 'read']]) {
+      const output = buildWorkerInstructions(baseDecision, undefined, false, undefined, available);
+      expect(output).toContain('Name concrete deliverables, not planning itself');
+      expect(output).toContain('descriptions only when scope or constraints would otherwise be unclear');
+    }
+  });
+
   it('retains only available plan and child controls for a resumed limited Worker', () => {
     const output = buildWorkerInstructions(baseDecision, undefined, true,
       { maxConcurrentThreads: 4, activeNonRootTurns: 1 },
@@ -118,7 +135,7 @@ describe('buildWorkerInstructions', () => {
     expect(output).toContain('two or more substantive independent lanes');
     expect(output).toContain('same assistant response');
     expect(output).toContain('Broad review and audit work is presumptively multi-lane');
-    expect(output).toContain('fan out before `changed_diff_bundle`');
+    expect(output).toContain('fan out before `changed_diff`');
     expect(output).toContain('mutually exclusive write sets');
     expect(output).toContain('Keep the root on the critical path');
     expect(output).toContain('Keep the immediate blocking step with the root');

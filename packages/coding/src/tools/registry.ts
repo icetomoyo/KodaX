@@ -394,8 +394,43 @@ export function isToolMutation(
   return def.sideEffect !== 'readonly';
 }
 
-export function getRequiredToolParams(name: string): string[] {
-  return getActiveToolRegistration(name)?.requiredParams ?? [];
+export function getRequiredToolParams(name: string, input?: Record<string, unknown>): string[] {
+  const definition = getActiveToolRegistration(name);
+  // The raw schema admits either input branch. Truncation detection needs
+  // the selected branch's required fields, without changing extension contracts.
+  if (definition?.source.kind === 'builtin' && input !== undefined) {
+    if (name === 'edit') {
+      return Object.hasOwn(input, 'edits')
+        ? ['path', 'edits']
+        : ['path', 'old_string', 'new_string'];
+    }
+    if (name === 'changed_diff') {
+      return Object.hasOwn(input, 'paths') ? ['paths'] : ['path'];
+    }
+  }
+  return definition?.requiredParams ?? [];
+}
+
+/** Internal truncation diagnostics shared by detection and exhausted-retry attribution. */
+export function getMissingToolParams(name: string, input: Record<string, unknown>): string[] {
+  const builtinEdit = name === 'edit' && getActiveToolRegistration(name)?.source.kind === 'builtin';
+  const missing = getRequiredToolParams(name, input).filter((param) => (
+    input[param] === undefined || input[param] === null
+    || (input[param] === '' && !(builtinEdit && param === 'new_string'))
+  ));
+  if (builtinEdit && Array.isArray(input.edits)) {
+    input.edits.forEach((raw: unknown, index: number) => {
+      // Malformed element types are ordinary handler validation errors.
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return;
+      const edit = raw as Record<string, unknown>;
+      for (const field of ['old_string', 'new_string']) {
+        if (edit[field] === undefined || edit[field] === null || (field === 'old_string' && edit[field] === '')) {
+          missing.push(`edits[${index}].${field}`);
+        }
+      }
+    });
+  }
+  return missing;
 }
 
 export function listTools(): string[] {

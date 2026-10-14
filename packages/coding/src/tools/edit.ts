@@ -9,7 +9,7 @@ import {
   findUniqueUnicodeNormalizedBlockMatch,
   readResolvedTextFile,
 } from './text-anchor.js';
-import { findExactMatchPositions, formatLineList } from './multi-edit.js';
+import { executeEditBatch, findExactMatchPositions, formatLineList } from './multi-edit.js';
 import { appendLspDiagnostics } from './_internal/lsp-reflux.js';
 import { buildStaleWriteReason } from '../multi-instance/content-hash-cache.js';
 import { memoryMutationDenial } from './memory-mutation-guard.js';
@@ -40,12 +40,29 @@ const MAX_SAFE_EDIT_CHARS = 64 * 1024;
 const MAX_SAFE_EDIT_LINES = 400;
 
 export async function toolEdit(input: Record<string, unknown>, ctx: KodaXToolExecutionContext): Promise<string> {
+  let operation = input;
+  if (Object.hasOwn(input, 'edits')) {
+    if (['old_string', 'new_string', 'replace_all'].some((key) => Object.hasOwn(input, key))) {
+      return '[Tool Error] edit: Use edits OR old_string/new_string/replace_all, not both.';
+    }
+    if (!Array.isArray(input.edits) || input.edits.length !== 1) {
+      return executeEditBatch(input, ctx, 'edit');
+    }
+    const single: unknown = input.edits[0];
+    if (!single || typeof single !== 'object' || Array.isArray(single)) {
+      return '[Tool Error] edit: edits[0] must be an object with old_string and new_string.';
+    }
+    operation = single as Record<string, unknown>;
+  }
+  if (typeof operation.old_string !== 'string' || typeof operation.new_string !== 'string') {
+    return '[Tool Error] edit: Provide edits, or string old_string and new_string.';
+  }
   const filePath = resolveExecutionPath(input.path as string, ctx);
   const memoryDenial = memoryMutationDenial(filePath);
   if (memoryDenial !== undefined) return memoryDenial;
-  const oldStr = String(input.old_string ?? '');
-  const newStr = String(input.new_string ?? '');
-  const replaceAll = input.replace_all === true;
+  const oldStr = operation.old_string;
+  const newStr = operation.new_string;
+  const replaceAll = operation.replace_all === true;
   const sizeCheck = getEditSizeFailure(filePath, oldStr, newStr);
   if (sizeCheck) {
     return sizeCheck;
