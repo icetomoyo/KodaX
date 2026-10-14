@@ -1779,6 +1779,7 @@ async function runManagedTaskViaRunnerInner(
     });
   }
   const promptOverlay = plan?.promptOverlay?.trim();
+  let workerAvailableToolNames: readonly string[] | undefined;
   const rolePromptContextFactory: RolePromptContextFactory = (role) => {
     let teamModeBlock: string | undefined;
     let teamModeFingerprint: string | undefined;
@@ -1814,6 +1815,7 @@ async function runManagedTaskViaRunnerInner(
     const actorTree = baseCtx.actorControl?.list();
     const ctx: ManagedRolePromptContext = {
       originalTask: prompt,
+      availableToolNames: workerAvailableToolNames,
       workspace: managedWorkspace,
       capabilityContextBlock: prebuiltCapabilityContextBlock,
       stableCapabilityContextBlock: prebuiltStableCapabilityContextBlock,
@@ -1910,6 +1912,9 @@ async function runManagedTaskViaRunnerInner(
     managedWorkspace.executionCwd,
 
   );
+  // Root and managed children both arrive here after their own role/host filters.
+  // Keep executable capability separate from any deferred model-facing projection.
+  workerAvailableToolNames = (chain.worker.tools ?? []).map((tool) => tool.name);
   // FEATURE_193 (v0.7.43): FEATURE_078 Scout `downstream_reasoning_hint`
   // callback retired — Scout role gone, no payload to surface. The
   // adapter still accepts the getter slot for signature compatibility;

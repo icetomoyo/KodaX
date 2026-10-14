@@ -3,7 +3,7 @@
  *
  * Hosts the `WORKER_INSTRUCTIONS_FALLBACK` constant used when
  * `buildRunnerAgentChain` is invoked without a full prompt context
- * (topology-only tests; V1 scout/planner/generator fallbacks deleted
+ * (standalone SDK chains and topology tests; V1 scout/planner/generator fallbacks deleted
  * by FEATURE_193 v0.7.43), plus the runtime resolver
  * `resolveRoleInstructions` that bridges `RunnerChainPromptContext`
  * through `createRolePrompt` for the current Worker prompt surface.
@@ -30,13 +30,13 @@ import type { RunnerChainPromptContext } from './types.js';
 
 // FEATURE_193 (v0.7.43): SCOUT_INSTRUCTIONS_FALLBACK, PLANNER_INSTRUCTIONS_FALLBACK,
 // GENERATOR_INSTRUCTIONS_FALLBACK deleted — V1 chain roles retired.
-// Only WORKER_INSTRUCTIONS_FALLBACK remains for the topology-only test path.
+// Only WORKER_INSTRUCTIONS_FALLBACK remains for callers without a capability snapshot.
 
 // FEATURE_114 v0.7.36 — minimal Worker instructions for the
-// topology-only test path (no `promptContext`). Real Worker prompts
+// standalone chain path (no `promptContext`). Managed Worker prompts
 // are produced by `createRolePrompt('worker', ...)` via
 // `worker-role-prompt.ts`. Mirrors the other *_FALLBACK constants
-// above; the production path never reaches this string.
+// above; chains with known tools use the capability-aware minimal builder below.
 export const WORKER_INSTRUCTIONS_FALLBACK = [
   'You are Worker (AMA Harness V2 single-loop primary agent). Plan semantic ',
   'milestones via `todo_create` and `todo_update`; do not create one item per ',
@@ -47,6 +47,25 @@ export const WORKER_INSTRUCTIONS_FALLBACK = [
   'You may call: read, grep, glob, bash, write, edit, multi_edit, ',
   'todo_create, todo_update, todo_list, spawn_agent, send_message, followup_task, wait_agent, interrupt_agent, list_agents, agent_output, exit_plan_mode.',
 ].join('\n') + '\n' + EXECUTION_GUIDANCE;
+
+/** Minimal standalone chain contract; rich managed prompts are resolved separately. */
+function buildWorkerFallbackInstructions(toolNames: readonly string[]): string {
+  const hasTool = (name: string): boolean => toolNames.includes(name);
+  return [
+    'You are Worker (AMA Harness V2 single-loop primary agent). Execute with the available tools. Answer trivial tasks directly; for non-trivial work, keep concise semantic milestones and reuse existing progress on resume. Milestones represent deliverables, not child Agents.',
+    hasTool('todo_create') ? 'Use `todo_create` for new milestones; avoid duplicating existing progress.' : undefined,
+    hasTool('todo_update') ? 'Use `todo_update` to reconcile finished milestones before waiting, moving on, or delivering. Keep one milestone per owner in progress; record concrete blockers.' : undefined,
+    hasTool('spawn_agent') ? 'Use `spawn_agent` for useful independent lanes with bounded objectives and ownership. Continue non-overlapping work and own final synthesis.' : undefined,
+    hasTool('wait_agent') ? 'Use `wait_agent` only when required child evidence blocks useful work; its acknowledgement is followed by mailbox evidence. Do not poll in a loop.' : undefined,
+    hasTool('send_message') ? 'Use `send_message` for relevant evidence or constraints; it does not start idle actors.' : undefined,
+    hasTool('followup_task') ? 'Use `followup_task` to start another idle actor turn or update an objective.' : undefined,
+    hasTool('interrupt_agent') ? 'Use `interrupt_agent` when continued child work is no longer useful.' : undefined,
+    'Integrate delivered child evidence before completing the supported milestone; child completion alone is not success. Settle owned live descendants with available controls or report their canonical paths and unresolved ownership.',
+    'Verify the actual result with available tools and report unverified requirements or blockers. End with a brief text-only summary; no tool call is needed to terminate.',
+    `Available tools: ${toolNames.length > 0 ? toolNames.join(', ') : 'none'}.`,
+    EXECUTION_GUIDANCE,
+  ].filter((part): part is string => part !== undefined).join('\n');
+}
 
 function createResolvedRolePrompt(role: KodaXTaskRole,
   agentName: string,
@@ -91,22 +110,24 @@ function createResolvedRolePrompt(role: KodaXTaskRole,
  * v0.7.22-parity prompt (decision summary, contract, metadata,
  * verification, tool-policy, evidence strategies, and collaboration
  * guidance).
- * Otherwise fall back to the minimal static constants — keeps test
- * fixtures that call `buildRunnerAgentChain(ctx, {})` working.
+ * Otherwise use a minimal contract for the actual executable tool set,
+ * retaining the supplied fallback when no capability snapshot was provided.
  */
 export function resolveRoleInstructions(role: KodaXTaskRole,
   agentName: string,
   fallback: string,
   promptContext: RunnerChainPromptContext | undefined,
   verification: KodaXTaskVerificationContract | undefined,
-  fallbackActorCapacity?: WorkerActorCapacity
+  fallbackActorCapacity?: WorkerActorCapacity,
+  fallbackToolNames?: readonly string[],
 ): string {
   if (!promptContext) {
-    // Legacy minimal-instructions path for tests / topology-only calls.
+    // Minimal-instructions path for standalone SDK chains and topology tests.
     // FEATURE_193 (v0.7.43): removed role === 'generator' skillMap append —
     // generator role deleted along with V1 chain.
     void fallbackActorCapacity;
-    return fallback;
+    return role === 'worker' && fallbackToolNames !== undefined
+      ? buildWorkerFallbackInstructions(fallbackToolNames) : fallback;
   }
   const basePrompt = createResolvedRolePrompt(
     role,
@@ -167,7 +188,7 @@ export function resolveRoleRuntimeStateContext(
       `Session Scratch Directory: ${context.workspace.scratchDir}`,
     ].join('\n')
     : undefined;
-  const actorCapacity = buildWorkerActorCapacityContract(context?.actorCapacity);
+  const actorCapacity = buildWorkerActorCapacityContract(context?.actorCapacity, context?.availableToolNames);
   const teamMode = context?.teamModeSection?.trim();
   const composed = [scratchDirectory, actorCapacity, teamMode]
     .filter((section): section is string => Boolean(section))

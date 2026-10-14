@@ -22,6 +22,35 @@ const baseDecision: KodaXTaskRoutingDecision = {
 };
 
 describe('buildWorkerInstructions', () => {
+  it('retains only available plan and child controls for a resumed limited Worker', () => {
+    const output = buildWorkerInstructions(baseDecision, undefined, true,
+      { maxConcurrentThreads: 4, activeNonRootTurns: 1 },
+      ['read', 'grep', 'todo_update', 'todo_get', 'send_message']);
+    for (const name of ['todo_update', 'todo_get', 'send_message']) {
+      expect(output).toContain(`\`${name}\``);
+    }
+    for (const name of ['todo_create', 'todo_list', 'spawn_agent', 'wait_agent', 'followup_task', 'interrupt_agent', 'agent_output', 'list_agents']) {
+      expect(output).not.toContain(name);
+    }
+    expect(output).toContain('On resume, reuse the existing plan');
+    expect(output).toContain('one milestone per owner');
+    expect(output).toContain('reconcile the affected semantic milestone');
+    expect(output).toContain('unresolved ownership');
+    expect(output).toContain('verify the requested result');
+  });
+
+  it('keeps spawn guidance and capacity without inventing unavailable child controls', () => {
+    const output = buildWorkerInstructions(baseDecision, undefined, false,
+      { maxConcurrentThreads: 4, activeNonRootTurns: 1 }, ['spawn_agent']);
+    expect(output).toContain('emit at most 2 `spawn_agent` calls');
+    expect(output).toContain('PARALLEL-FIRST COLLABORATION');
+    expect(output).toContain('read_only:true');
+    expect(output).toContain('unresolved ownership');
+    for (const name of ['wait_agent', 'list_agents', 'todo_create', 'send_message']) {
+      expect(output).not.toContain(name);
+    }
+  });
+
   it('keeps the primary worker identity and execution contracts', () => {
     const output = buildWorkerInstructions(baseDecision, undefined, false);
 

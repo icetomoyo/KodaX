@@ -634,7 +634,7 @@ export function buildRunnerAgentChain(ctx: KodaXToolExecutionContext,
           maxConcurrentThreads: actorTree.maxConcurrentThreads,
           activeNonRootTurns: actorTree.activeNonRootTurns,
         } : undefined,
-
+        worker.tools?.map(tool => tool.name) ?? [],
       );
       return resolved;
     },

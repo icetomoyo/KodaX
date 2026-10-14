@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createRolePrompt } from './role-prompt.js';
+import { resolveRoleRuntimeStateContext } from './role-prompts.js';
 import {
   buildFallbackRoutingDecision,
   type ReasoningPlan,
@@ -42,6 +43,56 @@ function callWorker(ctx: ManagedRolePromptContext): string {
 }
 
 describe('createRolePrompt — runtime identity in workspace section', () => {
+  it('presents each routing fact once while retaining assurance and the current task on resume', () => {
+    const decision = buildFallbackRoutingDecision(userQuestion);
+    for (const mode of ['combined', 'context'] as const) {
+      const rendered = createRolePrompt(
+        'worker', 'Continue from the saved milestone.', decision,
+        undefined, undefined, 'kodax/role/worker', undefined,
+        buildContext(), undefined, false, mode,
+      );
+      expect(rendered.match(/(?:^|\n)(?:- )?Primary task:/g)).toHaveLength(1);
+      expect(rendered.match(/(?:^|\n)(?:- )?Risk:/g)).toHaveLength(1);
+      expect(rendered).toContain(`Assurance intent: ${decision.assuranceIntent ?? 'default'}`);
+      expect(rendered).toContain('Current round instructions:\nContinue from the saved milestone.');
+    }
+  });
+
+  it('guides a restricted Worker using only its available repository tools without losing review scope or fallback', () => {
+    const decision = {
+      ...buildFallbackRoutingDecision('Review the requested changes.'),
+      primaryTask: 'review' as const,
+      reviewScale: 'large' as const,
+      reviewTarget: 'current-worktree' as const,
+    };
+    for (const agent of ['kodax/role/worker', 'root/review-child']) {
+      for (const availableToolNames of [[], ['read', 'grep', 'module_context']] as const) {
+        const ctx = {
+          ...buildContext(), availableToolNames,
+          actorCapacity: { maxConcurrentThreads: 4, activeNonRootTurns: 0 },
+        };
+        const render = (mode: 'stable' | 'context') => createRolePrompt(
+          'worker', 'Review the requested changes.', decision,
+          undefined, undefined, agent, undefined, ctx, undefined, false, mode,
+        );
+        const firstRequest = `${render('stable')}\n${render('context')}`;
+        for (const unavailable of ['changed_scope', 'changed_diff_bundle', 'symbol_context', 'relationship_scan']) {
+          expect(firstRequest).not.toContain(`\`${unavailable}`);
+        }
+        for (const unavailable of ['todo_create', 'todo_update', 'todo_get', 'todo_list', 'spawn_agent', 'wait_agent', 'send_message', 'followup_task', 'interrupt_agent', 'list_agents', 'agent_output']) {
+          expect(firstRequest.includes(unavailable), `${agent}: unavailable ${unavailable}`).toBe(false);
+        }
+        expect(firstRequest).not.toContain('start at least 2 distinct read-only review Agents');
+        expect(firstRequest.includes('`module_context`')).toBe(availableToolNames.length > 0);
+        expect(firstRequest).toContain('requested scope');
+        expect(firstRequest).toContain('read/grep');
+        expect(firstRequest).toContain('verify the requested result');
+        expect(firstRequest).not.toContain('run_workflow');
+        expect(resolveRoleRuntimeStateContext(ctx)).toBeUndefined();
+      }
+    }
+  });
+
   it('emits Provider and Model lines when both are supplied', () => {
     const rendered = callWorker(
       buildContext({ provider: 'ark-coding', model: 'glm-5.2' }),
@@ -369,9 +420,9 @@ describe('FEATURE_114 Slice 2 — worker role prompt entry wire', () => {
 
   it('teaches language continuity across Actor-event resumes', () => {
     const rendered = renderWorker();
-    expect(rendered).toContain('Language continuity: Match the primary natural language');
-    expect(rendered).toContain('Actor-event resume summaries');
-    expect(rendered).toContain('Tool outputs, code identifiers, and quoted evidence may remain');
+    expect(rendered).toContain('Actor-event resume summaries: match the primary natural language of the original user request');
+    expect(rendered).toContain('user-visible explanations, progress notes, and final answer');
+    expect(rendered).toContain('Code, identifiers, file paths, tool output, and quoted evidence stay in their source language');
   });
 
   it('does NOT route Worker through emit_handoff (FEATURE_190: text-only termination)', () => {

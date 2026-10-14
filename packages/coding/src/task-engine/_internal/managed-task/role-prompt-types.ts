@@ -14,6 +14,8 @@ import type {
 
 export interface ManagedRolePromptContext {
   originalTask: string;
+  /** Executable tools after role/host policy. Omitted preserves standalone guidance. */
+  availableToolNames?: readonly string[];
   skillInvocation?: KodaXSkillInvocationContext;
   skillMap?: KodaXSkillMap;
   skillExecutionArtifactPath?: string;

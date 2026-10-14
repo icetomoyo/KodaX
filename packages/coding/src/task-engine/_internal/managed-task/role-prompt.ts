@@ -96,22 +96,12 @@ export function createRolePrompt(
   // ceiling:` (V1 vestige) lines were dropped — they were the ADR-033
   // classification-table residue and an eval confirmed removing them is
   // behaviour-neutral (the harness tier collapsed; see ADR-043 Phase 2).
-  const decisionSummary = [
-    `Primary task: ${decision.primaryTask}`,
-    `Assurance intent: ${decision.assuranceIntent ?? 'default'}`,
-    `Work intent: ${decision.workIntent}`,
-    `Complexity hint: ${decision.complexity}`,
-    `Risk: ${decision.riskLevel}`,
-    `Review scale: ${decision.reviewScale ?? 'not classified'}`,
-    `Review target: ${decision.reviewTarget ?? 'general'}`,
-    `Independent QA needed: ${decision.needsIndependentQA ? 'yes' : 'no'}`,
-    `Brainstorm required: ${decision.requiresBrainstorm ? 'yes' : 'no'}`,
-  ].join('\n');
+  const decisionSummary = buildWorkerRoutingContext(decision);
 
   const sharedClosingRule = [
     'Preserve any exact machine-readable closing contract requested by the original task.',
     'Do not claim completion authority unless your role explicitly owns final judgment — a premature complete signal from a non-authoritative role causes the runner to terminate the task before the owning role validates the result.',
-    'Language continuity: Match the primary natural language of the original user request for user-visible progress, Actor-event resume summaries, and final answers. Tool outputs, code identifiers, and quoted evidence may remain in their source language.',
+    'Language continuity also applies to Actor-event resume summaries: match the primary natural language of the original user request.',
     'When proposing shell commands or command examples, match the current host OS and shell. Do not assume Unix-only tools such as head on Windows.',
   ].join('\n');
 
@@ -200,8 +190,6 @@ export function createRolePrompt(
   const sharedWorkerDiscipline = [
     'Workspace discipline:',
     '- Helper scripts / scratch files are a last resort, not a default recovery path.',
-    '- If you must write a temporary file, use the Session Scratch Directory named in Managed Run Context. If none is provided, use a session-scoped subdirectory under `.agent/tmp/sessions/` relative to the git root. Do not write directly in the shared `.agent/tmp/` root.',
-    "- NEVER write scratch files to the project root, to `.agent/` top level (reserved for managed-tasks/, project/, repo-intelligence/), or to the system temp directory. Files in system tmp are invisible to the project and block code review.",
     '- The `write` tool creates parent directories automatically. Calling `mkdir` before `write` is redundant and may fail on Windows shells where `mkdir -p` is unsupported.',
     '- If you truly need an empty directory: `mkdir dir` (Windows) or `mkdir -p dir` (Unix).',
     '',
@@ -307,24 +295,27 @@ export function createRolePrompt(
       const workerSkillSection = generatorSkillSection;
       const actorCapacityContract = buildWorkerActorCapacityContract(
         rolePromptContext?.actorCapacity,
+        rolePromptContext?.availableToolNames,
       );
       const reviewFanoutContract = buildWorkerReviewFanoutContract(
         decision,
         rolePromptContext?.actorCapacity,
+        rolePromptContext?.availableToolNames,
       );
-      const workerInstructions = [
-        buildWorkerRoutingContext(decision),
-        buildWorkerStableInstructions(),
-      ].join('\n\n');
+      const workerInstructions = buildWorkerStableInstructions(rolePromptContext?.availableToolNames);
+      const collaborationPolicy = rolePromptContext?.availableToolNames === undefined
+        || rolePromptContext.availableToolNames.includes('spawn_agent') ? ULTRA_AGENT_POLICY : undefined;
+      const workflowPolicy = rolePromptContext?.availableToolNames === undefined
+        || rolePromptContext.availableToolNames.includes('run_workflow') ? EXPLICIT_WORKFLOW_POLICY : undefined;
       if (renderMode === 'stable') {
         return [
           workspaceSection,
           agentSection,
           stableCapabilityContextSection,
           parallelBatchGuidance,
-          ULTRA_AGENT_POLICY,
-          EXPLICIT_WORKFLOW_POLICY,
-          buildWorkerStableInstructions(),
+          collaborationPolicy,
+          workflowPolicy,
+          workerInstructions,
           sharedWorkerDiscipline,
           sharedClosingRule,
         ].filter((section): section is string => Boolean(section)).join('\n\n');
@@ -341,7 +332,6 @@ export function createRolePrompt(
           verificationSection,
           toolPolicySection,
           workerSkillSection,
-          buildWorkerRoutingContext(decision),
           roundInstructionSection,
           metadataSection,
           contractSection,
@@ -372,8 +362,8 @@ export function createRolePrompt(
         parallelBatchGuidance,
         workerSkillSection,
         previousRoleSummarySection,
-        ULTRA_AGENT_POLICY,
-        EXPLICIT_WORKFLOW_POLICY,
+        collaborationPolicy,
+        workflowPolicy,
         // The standalone Worker fragment (plan-first contract + scope
         // commitment + mutation discipline + dispatch RULE A/B/C +
         // handoff rules) lives here between context blocks and the shared

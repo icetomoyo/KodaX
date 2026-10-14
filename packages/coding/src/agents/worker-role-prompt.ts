@@ -23,8 +23,10 @@ export interface WorkerActorCapacity {
 
 export function buildWorkerActorCapacityGuidance(
   actorCapacity: WorkerActorCapacity | undefined,
+  availableToolNames?: readonly string[],
 ): readonly string[] {
   if (actorCapacity === undefined) return [];
+  if (availableToolNames !== undefined && !availableToolNames.includes('spawn_agent')) return [];
   const availableStartSlots = Math.max(
     0,
     actorCapacity.maxConcurrentThreads - 1 - actorCapacity.activeNonRootTurns,
@@ -34,14 +36,17 @@ export function buildWorkerActorCapacityGuidance(
     `- At this prompt snapshot, ${actorCapacity.activeNonRootTurns} non-root turns are active and ${availableStartSlots} child start slots are available.`,
     `- HARD RUNTIME LIMIT FOR THIS ASSISTANT RESPONSE: emit at most ${availableStartSlots} \`spawn_agent\` calls. Calls beyond this number will be rejected; do not attempt them.`,
     `- If the task has more independent tracks, select at most ${availableStartSlots} for the first wave. Keep the remaining tracks with the root or name them as a later refill wave after a terminal event.`,
-    '- Your visible plan and prose must not claim that you are dispatching more Agents than this response can start. Call `list_agents` before a later multi-spawn wave because capacity may have changed.',
+    availableToolNames === undefined || availableToolNames.includes('list_agents')
+      ? '- Your visible plan and prose must not claim that you are dispatching more Agents than this response can start. Call `list_agents` before a later multi-spawn wave because capacity may have changed.'
+      : '- Do not promise more Agents than this response can start. Before another wave, use current runtime capacity evidence; capacity may have changed.',
   ];
 }
 
 export function buildWorkerActorCapacityContract(
   actorCapacity: WorkerActorCapacity | undefined,
+  availableToolNames?: readonly string[],
 ): string | undefined {
-  const guidance = buildWorkerActorCapacityGuidance(actorCapacity);
+  const guidance = buildWorkerActorCapacityGuidance(actorCapacity, availableToolNames);
   return guidance.length === 0
     ? undefined
     : ['ACTOR CAPACITY (authoritative runtime fact):', ...guidance].join('\n');
@@ -50,6 +55,7 @@ export function buildWorkerActorCapacityContract(
 export function buildWorkerReviewFanoutContract(
   decision: KodaXTaskRoutingDecision,
   actorCapacity: WorkerActorCapacity | undefined,
+  availableToolNames?: readonly string[],
 ): string | undefined {
   const reviewTarget = decision.reviewTarget ?? 'general';
   const isDiffScopedReview = reviewTarget === 'current-worktree'
@@ -64,6 +70,13 @@ export function buildWorkerReviewFanoutContract(
   ) {
     return undefined;
   }
+  if (availableToolNames !== undefined && !availableToolNames.includes('spawn_agent')) {
+    return [
+      'BROAD REVIEW (available capability):',
+      '- Preserve the exact user-requested scope and inspect independent modules or failure-mode axes locally; delegation is unavailable in this run.',
+      '- Own the cross-cutting synthesis and final verification. Report any required independent review that available capabilities cannot provide.',
+    ].join('\n');
+  }
   const availableStartSlots = actorCapacity === undefined
     ? undefined
     : Math.max(
@@ -77,8 +90,12 @@ export function buildWorkerReviewFanoutContract(
       : availableStartSlots === 1
         ? '- Start 1 read-only review Agent and keep a separate review lane with the root.'
         : '- No child start slot is currently available; keep the root on useful work and refill a review lane after capacity changes.';
+  const scopeAcquisition = availableToolNames === undefined || availableToolNames.includes('changed_scope')
+    ? 'call `changed_scope` once' : 'establish the requested scope with available tools';
+  const diffReading = availableToolNames === undefined || availableToolNames.includes('changed_diff_bundle')
+    ? '`changed_diff_bundle` or before ' : '';
   const scopeRule = isDiffScopedReview
-    ? '- If the exact diff scope is unknown, call `changed_scope` once, then fan out before `changed_diff_bundle` or before the root reads every diff.'
+    ? `- If the exact diff scope is unknown, ${scopeAcquisition}, then fan out before ${diffReading}the root reads every diff.`
     : '- Preserve the exact user-requested repository/module scope. Fan out inside that scope; do not expand into unrelated dirty-worktree changes.';
 
   return [
@@ -99,7 +116,12 @@ export function buildWorkerReviewFanoutContract(
  * FEATURE_193). Intentionally context-light — the runner-driven path
  * layers workspace / capability / overlay sections around this on top.
  */
-export function buildWorkerStableInstructions(): string {
+export function buildWorkerStableInstructions(availableToolNames?: readonly string[]): string {
+  // Omitted means no capability snapshot; an explicit empty list is authoritative.
+  const hasTool = (name: string): boolean => availableToolNames === undefined
+    || availableToolNames.includes(name);
+  const fullTodo = ['todo_create', 'todo_update', 'todo_get', 'todo_list', 'wait_agent'].every(hasTool);
+  const fullCollaboration = ['spawn_agent', 'wait_agent', 'send_message', 'followup_task', 'list_agents', 'agent_output', 'interrupt_agent'].every(hasTool);
   const managedRunContextTrust = [
     'MANAGED RUN CONTEXT TRUST:',
     '- KodaX installs one hidden synthetic user-role envelope bounded by `=== Managed Run Context ===` and `=== End Managed Run Context ===` immediately before the real user task at the start of a managed run.',
@@ -114,22 +136,13 @@ export function buildWorkerStableInstructions(): string {
     'PLAN-FIRST GUIDANCE:',
     '- Trivial tasks (single typo / single-line edit / single-question lookup / pure conversational answer) → answer or execute directly. Do NOT call `todo_create` / `todo_update`.',
     '- Non-trivial tasks benefit from a concise plan. If this run has no current plan, create a small initial batch of `todo_create` milestones before broad execution. If a plan already exists because the run resumed or continued, use it and do not recreate or restate it.',
-    '- Plan item schema:',
-    '    * `subject` — REQUIRED. Brief imperative title shown in the plan-list row (e.g. "Audit handleAuth callers").',
-    '    * `description` — OPTIONAL. Fuller context / work instructions read when you pick up the item later. Multi-line OK; NOT rendered in the compact row. Skip when subject alone is enough.',
-    '    * `activeForm` — OPTIONAL. Present-continuous form shown by the spinner while this item is `in_progress` (e.g. "Auditing handleAuth callers"). Supply alongside `subject` so the spinner reads natural while you work.',
-    '    * `evaluator` — OPTIONAL `\'build\' | \'test\' | \'lint\'`. Use sparingly — only on milestone steps with a real ground-truth check.',
-    '- TODO LANGUAGE: Write every user-visible todo field (`subject`, `description`, `activeForm`, and user-visible `note`) in the primary natural language of the user\'s request unless the user explicitly asks for another language. This applies to the initial `todo_create` batch and later `todo_update` patches. Keep code identifiers, file paths, commands, and quoted evidence in their source language.',
+    '- Supply `activeForm` with each milestone for the progress spinner. Use `evaluator` sparingly, only for milestones with a real deterministic check; the tool contract defines its completion side effect.',
+    '- TODO LANGUAGE: Write initial and updated todo text (`subject`, `description`, `activeForm`, and user-visible `note`) in the user\'s requested language; otherwise use the primary natural language of the user\'s request. Keep identifiers, paths, commands, and quoted evidence in their source language.',
     '- If a task you started as trivial turns out to be multi-step mid-flight, call `todo_create` AT THAT MOMENT — one call per newly-realized step — to retrofit the plan. Do not silently grow scope.',
-    '- Each non-trivial item should carry a status (`pending` / `in_progress` / `completed` / `failed` / `cancelled` / `deleted`).',
-    '- Mark exactly ONE item `in_progress` at a time.',
+    '- Track each milestone with the todo status contract. Mark exactly ONE item per owner `in_progress` at a time.',
     '- Todo items are user-visible semantic milestones, not Actor instances. Several Agents may support one milestone; create separate items only for genuinely separate deliverables.',
     '- After a milestone is actually finished, update it before starting the next item, calling `wait_agent` again, or writing the final response. Do not defer multiple status changes to final cleanup.',
-    '- Replan iteratively as the picture firms up — use the per-item API:',
-    '    * INSERT ONE NEW STEP mid-task: `todo_create({subject:"...", description?:"...", activeForm?:"..."})`. Use this when the plan needs one more step but the existing items must be preserved. The store auto-mints the id.',
-    '    * EDIT ONE STEP: `todo_update({id, subject?, description?, activeForm?, evaluator?, metadata?})` — patch fields without changing status.',
-    '    * REMOVE ONE STEP entirely (no breadcrumb): `todo_update({id, status:"deleted"})`. Prefer over `cancelled` when the item was wholly off-plan.',
-    '    * STRIKETHROUGH ONE STEP (keep visible breadcrumb): `todo_update({id, status:"cancelled", note:"..."})`. Prefer over `deleted` when the user benefits from seeing the discarded record.',
+    '- Replan incrementally: add new milestones with `todo_create` and refine existing items with `todo_update`. Preserve existing progress; delete wholly off-plan items, or cancel them when the discarded record helps the user.',
   ].join('\n');
 
   // v0.7.42 — plan-list hygiene: staleness refresh + dedup. The two
@@ -158,7 +171,9 @@ export function buildWorkerStableInstructions(): string {
   const scopeCommitment = [
     'SCOPE COMMITMENT:',
     '- The user\'s requested deliverable and constraints are the run contract; the todo list is a revisable progress view, not a reason to preserve an invalid hypothesis or silently expand the task.',
-    '- When evidence disproves a premise, record that conclusion, cancel/delete or rewrite the affected todo items, and pivot or conclude. Do not keep searching for evidence merely to make the original plan true.',
+    hasTool('todo_update')
+      ? '- When evidence disproves a premise, record that conclusion, cancel/delete or rewrite the affected todo items, and pivot or conclude. Do not keep searching for evidence merely to make the original plan true.'
+      : '- When evidence disproves a premise, record that conclusion and revise the plan, then pivot or conclude. Do not keep searching for evidence merely to make the original plan true.',
     '- Facts already verified in this run or preserved with concrete evidence in a compaction summary should be cited, not re-probed. Re-verify only when the underlying state changed or new evidence directly conflicts.',
     '- If the user request is review/audit, use the plan as a lightweight visible report skeleton without turning plan maintenance into the work itself.',
   ].join('\n');
@@ -169,7 +184,7 @@ export function buildWorkerStableInstructions(): string {
     '- Prefer `edit` over `write` for existing files (smaller token footprint, diff-safe). Use `write` only for new files or full rewrites the user explicitly asked for.',
     '- For multiple edits to one file, batch with `multi_edit` instead of N separate `edit` calls — atomic, cheaper, structure-preserving.',
     '- NEVER route a single known-content file through `bash` heredocs — use `write` or `edit` instead. Heredoc routing bypasses mutation tracking and diff visibility; the file lands without an edit record so reviewers cannot see what changed.',
-    '- Workspace discipline: scratch files go under the Session Scratch Directory shown in the environment, or under a unique `.agent/tmp/sessions/<session-id>/` subdirectory when no absolute scratch path is shown. NEVER write scratch directly in the shared `.agent/tmp/` root, to project root, or to system tmp.',
+    '- For scratch files, use the Session Scratch Directory named in Managed Run Context. If none is provided, use a session-scoped subdirectory under `.agent/tmp/sessions/` relative to the git root. Do not write directly in the shared `.agent/tmp/` root. Never use the project root, `.agent/` top level (reserved for runtime artifacts), or system tmp.',
   ].join('\n');
 
   const dispatchRules = [
@@ -182,7 +197,7 @@ export function buildWorkerStableInstructions(): string {
     '- `wait_agent` returns only a wake acknowledgement; the following mailbox block carries the evidence. For a delivered `<agent-completed path="..." turn_id="..." state="completed">` block, its body is the authoritative bounded terminal summary. Use it directly. Do not call `agent_output` speculatively or to poll completion. Reserve `agent_output` for a known terminal Actor/Turn when exact structured output or artifact metadata was not delivered.',
     '- After a terminal Agent result arrives, integrate its evidence and reconcile the affected semantic plan milestone before calling `wait_agent` again or starting a different plan milestone. Do not mark a milestone completed merely because one supporting Agent finished; keep it `in_progress` when other work or synthesis remains.',
     '- After `AgentLimitReached` or another full-capacity result, do not retry `spawn_agent` while the reported capacity is still full. Wait/list, continue useful local work, or replan through an existing Agent.',
-    '- `send_message` delivers bounded evidence without waking an idle actor. Use `followup_task` when an idle actor must start another turn or a running actor needs an objective update.',
+    '- `send_message` delivers bounded evidence without waking an idle actor; broadcast is capped at 20 recipients. Use `followup_task` when an idle actor must start another turn or a running actor needs an objective update.',
     '- Use `list_agents` for tree/capacity state and `agent_output` for a completed turn result. Use `interrupt_agent` only when continued work is no longer useful.',
     '- A parent may not silently abandon live descendants: wait for them, interrupt them, or explicitly report their canonical paths and unresolved ownership.',
     '- MODEL HINT: set `model_hint` intentionally — `"fast"` only for evaluated read-only mechanical lookups, `"balanced"` for ordinary implementation/investigation, and `"deep"` for architecture, adversarial verification, severity calibration, or final synthesis. Configured `fast`/`deep` tiers select their operator-mapped route; an unconfigured tier inherits the parent. Write-capable `fast` remains on the parent tier. For substantive children, also state the one-line scope, binding constraints, evidence refs, and required output shape instead of repeating the diff.',
@@ -191,22 +206,18 @@ export function buildWorkerStableInstructions(): string {
     // (vs A=9% baseline-low ceiling-flatten), pull-correct mention 41→76%
     // (+35pp lift), 5/6 alias C ≥ 70%.
     '- DISPATCH OBJECTIVE QUALITY: when writing a child\'s `objective`, prefer stating the goal abstractly. Avoid hand-feeding specific bash commands ("use `git diff X`", "run `git log`") — the child picks its own tools, and hand-feeding bash bypasses the child\'s pull-tool guidance. If you need to convey a specific git revision or scope (e.g., v0.7.39..HEAD), state it as data ("scope: v0.7.39..HEAD") rather than a command directive.',
-    '- DISPATCH OBJECTIVE LANGUAGE: write the `objective` (and any `run_workflow` child prompts) in the same natural language as the user\'s request, so the child\'s report comes back in that language. Code, file paths, and quoted scope stay in their source form.',
-    '- DISPATCH OBJECTIVE GUIDANCE: WHEN RELEVANT (review / change-audit / module-exploration objectives only — not trivial probes), briefly note the recommended pull-tool family in the objective. Examples:',
-    '    - Change-set review: "scope via `changed_scope`, then drill specific files with `changed_diff_bundle`"',
-    '    - Module exploration: "use `module_context` to map the module surface before reading individual files"',
-    '    - Symbol tracing: "start with `symbol_context` to find callers"',
-    '    - Relationship mapping: "start with `relationship_scan` for upstream/downstream callers, callees, dependencies, and impact"',
-    '    - Process flow / execution trace: "use `process_context` to map the flow before reading runner files"',
-    '    - Rename / refactor impact: "use `impact_estimate` to estimate blast radius first"',
-    '- SPECIALIST ROUTING: when a registered specialist Agent matches the task domain, use its canonical `agent_id` from `list_dispatchable_agents`.',
-  ].join('\n');
+    hasTool('run_workflow')
+      ? '- DISPATCH OBJECTIVE LANGUAGE: write the `objective` (and any `run_workflow` child prompts) in the same natural language as the user\'s request, so the child\'s report comes back in that language. Code, file paths, and quoted scope stay in their source form.'
+      : '- DISPATCH OBJECTIVE LANGUAGE: write the `objective` in the same natural language as the user\'s request. Code, file paths, and quoted scope stay in their source form.',
+    '- For review, change-audit, or module-exploration objectives, briefly recommend the available pull-tool family that fits the evidence needed. Trivial probes do not need this guidance.',
+    hasTool('list_dispatchable_agents')
+      ? '- SPECIALIST ROUTING: when a registered specialist Agent matches the task domain, use its canonical `agent_id` from `list_dispatchable_agents`.' : undefined,
+  ].filter((line): line is string => line !== undefined).join('\n');
 
   const parallelFirstCollaboration = [
     'PARALLEL-FIRST COLLABORATION:',
     '- When a task has two or more substantive independent lanes and child start slots are available, fan them out with `spawn_agent` calls in the same assistant response. Do not serially perform every lane first.',
     '- Broad review and audit work is presumptively multi-lane: split it by module, file group, or failure-mode axis unless the discovered scope is genuinely indivisible.',
-    '- For a change-set review with unknown scope, call `changed_scope` once, then fan out before `changed_diff_bundle` or reading every diff locally. For repository/module audits, preserve the requested scope and use the matching repo-intelligence tool instead.',
     '- Split lanes by distinct evidence scopes or mutually exclusive write sets. Read-only investigations and independent background lanes are especially suitable for parallel execution.',
     '- Before spawning, separate the immediate blocking step from independent background lanes. Keep the immediate blocking step with the root when the root\'s very next action depends on it; delegate background work that can run alongside useful local work.',
     '- Prefer a bounded code-change Agent over a read-only explorer when the patch has clear disjoint write ownership. Dispatch it with `read_only:false` and shared isolation, and name the exact files and generated outputs it exclusively owns. The root and siblings must not touch that write set until the child finishes. Its edits are already visible in the root workspace: review them and do not reapply or redo them. Use worktree isolation only with an explicit merge-back strategy.',
@@ -219,10 +230,6 @@ export function buildWorkerStableInstructions(): string {
 
   const childSteeringRules = [
     'AGENT STEERING:',
-    '- `send_message(to=path, content="…")` delivers evidence to a parent, direct child, or admitted peer without changing lifecycle state. Broadcast `to="*"` is capped at 20 recipients.',
-    '- `followup_task(target=path, objective="…")` starts an idle child turn or joins a running child turn at its next safe boundary.',
-    '- `interrupt_agent(target=path, reason="…")` interrupts the active turn while preserving the reusable actor identity and history.',
-    '',
     'WHEN TO `send_message`:',
     '- The user added a follow-up requirement mid-task that materially affects an in-flight child (e.g., "also check the auth module" while a security-audit child is running).',
     '- You realized the child needs a constraint you forgot to set (e.g., "ignore vendored libraries under `third_party/`").',
@@ -235,62 +242,45 @@ export function buildWorkerStableInstructions(): string {
     '- Do not interrupt a child just because it is slow but progressing; wait for a relevant event.',
   ].join('\n');
 
-  // FEATURE_161 v0.7.41 — teach the Worker that repo-intelligence pull
-  // tools exist and when to prefer them over raw read/grep. Eval
-  // `tests/repointel-tool-adoption.eval.ts` validated this section across
-  // 6 production aliases × 5 cases × 5 runs (300 calls, 2026-05-14): 4 of
-  // 6 aliases lifted from <80% A_baseline to ≥80% B_with_f7 pull-tool
-  // first-tool rate (+30-40pp on ds/v4flash, ds/v4pro, kimi, mmx/m27;
-  // zhipu/glm51 and ark/glm51 were already at 92-96% baseline and gain
-  // marginal +4-8pp). Decision matrix verdict: F7_USEFUL_FOR_WEAK.
-  //
-  // Section is unconditional. When `repoIntelligenceMode === 'off'` the
-  // repo-intelligence pull tools get stripped from the LLM-visible tool list (see
-  // `agent-runtime/tool-resolution.ts`); the model will discover unknown
-  // tool calls fail and fall back to read/grep. Off mode is opt-in and
-  // rare, so the prompt-waste cost is acceptable vs. the threading cost
-  // of plumbing mode into this context-light builder.
+  // Keep first-choice guidance visible even when rich tool descriptions are deferred.
+  // Capability snapshots come from the executable tool set, never task keywords.
+  const lspTools = ['lsp_workspace_symbols', 'lsp_implementation', 'lsp_incoming_calls', 'lsp_outgoing_calls']
+    .filter(hasTool);
   const repoIntelligenceTools = [
-    'REPO INTELLIGENCE TOOLS (prefer these over read+grep for module-level exploration):',
-    '- `relationship_scan(symbol|module|path|entry)` - single entrypoint for upstream/downstream, callers/callees, dependencies, process links, and impact. Use first for "what calls this", "what depends on this", "上下游", "调用链", and blast-radius questions.',
-    '- `module_context(target_path|module)` — compact module capsule with deps, entry files, top symbols, tests, docs. Replaces 5-10 `read`/`grep` calls when you need to understand "what does this module do / what depends on what".',
-    '- `symbol_context(symbol)` — definition + probable callers/callees + imports for one symbol. Replaces multiple `grep -n "symbolName"` + `read` rounds when tracing usage.',
-    '- `impact_estimate(symbol|module|path)` — blast-radius estimate combining symbol/module info with current changed-scope overlap. Use BEFORE planning a rename/refactor instead of guessing from grep.',
-    '- `process_context(entry|module)` — static execution trace from an entry point. Use to understand "how does this flow execute" instead of chasing N file reads.',
-    '- `repo_overview()` — workspace-wide structure snapshot. Use ONCE when onboarding to a new area.',
-    '- `changed_scope()` — list of changed files in current git state, with area/category labels. Use for current-worktree, compare-range, and other change-set reviews; do not use it to expand an explicitly scoped repository/module/file audit.',
-    '- `changed_diff_bundle(paths[])` — paged diff for multiple changed files in one call. Use for review tasks instead of multiple `bash git diff` calls.',
-    '- `changed_diff(path)` — paged diff for one file. Use when one file dominates the review.',
-    '- LSP precision tools (`lsp_workspace_symbols`, `lsp_implementation`, `lsp_incoming_calls`, `lsp_outgoing_calls`) - use when you have an exact file position or need compiler-backed symbol/call hierarchy edges.',
-    '- `code_search(query)` — ranked repo-wide text search with noise filtering. Prefer over `grep` when you want the strongest / most-likely matches (a shortlist), not every raw occurrence — e.g. "where is X most likely handled", "what are the main implementations of Y".',
-    '- `semantic_lookup(query)` — symbol/module/process-aware semantic query. Use when you are searching for a concept ("where do we validate auth") rather than an exact string; `grep` stays right for exact-string or all-occurrences needs.',
-    '',
-    'WHEN TO PREFER REPO-INTEL TOOLS:',
-    '- About to answer upstream/downstream, caller/callee, dependency, or impact questions → call `relationship_scan` first.',
-    '- About to read 3+ files in the same module → call `module_context` first.',
-    '- About to grep for a symbol\'s callers → call `symbol_context` first.',
-    '- About to estimate impact of a change → call `impact_estimate` first.',
-    '- About to review a multi-file change → call `changed_scope`, fan out independent review lanes, then use `changed_diff_bundle` for the root\'s own lane instead of reading every diff serially.',
-    '',
-    'WHEN TO STICK WITH read/grep:',
-    '- Single-file targeted edit or lookup in one or a few known files.',
-    '- Need exact line numbers or code text (capsules summarize; files give you exact bytes).',
-    '- Pull-tool returned `[Tool Error]` / `unavailable` (repo-intel full mode unavailable) — fall back to read/grep without retrying the same pull-tool.',
-    '- Rationale: pull-tool capsules are much smaller than the equivalent multi-file read exploration; the token savings compound across a full task.',
-    '',
-    // FEATURE_169 v0.7.40 — F3 change-review positive reframe. Suite B v2
-    // audit VALID (pull 5%, bash_git_diff 0%, neg-correct 7.7%): 6/6 alias
-    // C=100% pull-tool rate on review tasks (vs 92% baseline), neg
-    // bash-expected 94% healthy. Disambiguates "review" intent from generic
-    // "git ops" intent — the former goes through repo-intel capsules, the
-    // latter stays in bash.
-    'CHANGE-REVIEW POSITIVE REFRAME:',
-    '- For a task framed as "compare changes", "check diff", "what changed since X", or a current-worktree/change-set review: your first scope-acquisition tool MUST be `changed_scope` (one call).',
-    '- If `changed_scope` surfaces independent areas, dispatch their review lanes before calling `changed_diff_bundle(paths[])` for the root\'s own cross-cutting lane.',
-    '- Keep an explicitly scoped file/module/repository audit inside the requested scope; do not call `changed_scope` merely because unrelated worktree changes exist.',
-    '- Do NOT use `bash git diff …` for change review — that pattern reads opaque text the repo-intel tools already structured for you.',
-    '- `bash git …` is reserved for NON-review git ops: status, commit, tag, push, log (commit history), branch operations.',
-  ].join('\n');
+    'REPO INTELLIGENCE TOOLS:',
+    hasTool('relationship_scan')
+      ? '- For upstream/downstream, callers/callees, dependencies, process links, or impact questions (上下游、调用链), use `relationship_scan` first.' : undefined,
+    hasTool('module_context')
+      ? '- Before exploring 3+ files in one module, use `module_context` for its dependencies, entry points, symbols, tests, and docs.' : undefined,
+    hasTool('symbol_context')
+      ? '- Use `symbol_context` before grepping for one symbol and its probable callers/callees.' : undefined,
+    hasTool('impact_estimate')
+      ? '- Before planning a rename/refactor, use `impact_estimate` to estimate the blast radius.' : undefined,
+    hasTool('process_context')
+      ? '- Use `process_context` to trace execution from an entry point.' : undefined,
+    hasTool('repo_overview')
+      ? '- Use `repo_overview` once when onboarding to a new area.' : undefined,
+    hasTool('changed_scope')
+      ? '- For compare-changes, what-changed-since-X, or current-worktree/change-set review, the first scope-acquisition tool MUST be `changed_scope` (one call).' : undefined,
+    hasTool('spawn_agent')
+      ? `- For change-set review, establish the requested scope, then fan out before ${hasTool('changed_diff_bundle') ? '`changed_diff_bundle` or ' : ''}reading every diff locally. The root reads its own lane and integrates the others.`
+      : '- For change-set review, establish the requested scope before reading diffs. Inspect the relevant review axes locally and synthesize the evidence.',
+    hasTool('changed_diff_bundle')
+      ? '- Use `changed_diff_bundle` for paged diffs of multiple changed files.' : undefined,
+    hasTool('changed_diff')
+      ? '- Use `changed_diff` when one file dominates the review.' : undefined,
+    '- Keep an explicitly scoped file/module/repository audit inside the requested scope; unrelated worktree changes do not expand it.',
+    lspTools.length > 0
+      ? `- For exact file positions or compiler-backed symbol/call hierarchy edges, use the available LSP tools: ${lspTools.map((name) => '\`' + name + '\`').join(', ')}.` : undefined,
+    hasTool('code_search')
+      ? '- Use `code_search` for ranked, likely implementations; use grep for exact strings or all occurrences.' : undefined,
+    hasTool('semantic_lookup')
+      ? '- Use `semantic_lookup` for concepts rather than exact strings.' : undefined,
+    '- Use read/grep for targeted lookups or edits in known files and for exact code or line numbers; capsules summarize.',
+    '- If a pull-tool returns `[Tool Error]` or `unavailable`, fall back to read/grep without repeating that call.',
+    hasTool('changed_diff_bundle') || hasTool('changed_diff')
+      ? '- Use structured diff tools for change review instead of `bash git diff`; `bash git` remains for non-review operations such as status, commit, tag, push, log, and branches.' : undefined,
+  ].filter((line): line is string => line !== undefined).join('\n');
 
   // Static EXECUTION GUIDANCE (shared with the SA path) replaces the
   // router-injected EXECUTION_MODE / HARNESS_PROFILE overlays — the Worker
@@ -306,18 +296,64 @@ export function buildWorkerStableInstructions(): string {
     '- Before your terminal turn, verify the requested result with the available tools and evidence. You own the final conclusion; report any checks you could not perform.',
   ].join('\n');
 
+  const limitedPlanGuidance = [
+    'PLAN-FIRST GUIDANCE (available capability):',
+    '- Execute or answer trivial tasks directly. For non-trivial work, keep a concise plan of semantic milestones; do not silently grow scope. On resume, reuse the existing plan and progress instead of recreating them.',
+    '- Milestones describe deliverables, not Actor instances. Keep at most one milestone per owner in progress; integrate supporting evidence before treating it as complete.',
+    hasTool('todo_create')
+      ? '- Use `todo_create` for a small initial plan or newly discovered milestones. Supply activeForm and use evaluator only for a real deterministic check. Before adding mid-task, check visible progress for duplicate deliverables; preserve prior progress.' : undefined,
+    hasTool('todo_update')
+      ? '- Use `todo_update` to maintain existing items at milestone boundaries, before further waiting or final delivery. Revise or cancel disproved work; report blockers on the affected items. Do not mark work complete while synthesis remains.' : undefined,
+    hasTool('todo_get') && hasTool('todo_update')
+      ? '- Use `todo_get` before changing an item only when another Actor or runtime event may have changed it since last seen; ordinary consecutive turns need no refresh ritual.' : undefined,
+    hasTool('todo_list')
+      ? '- Use `todo_list` when the existing plan is uncertain; visible current progress is sufficient for deduplication and resume.' : undefined,
+    hasTool('todo_get') && !hasTool('todo_update')
+      ? '- Use `todo_get` when the state of an existing milestone is uncertain.' : undefined,
+    '- Write user-visible plan text and progress in the user\'s requested language, otherwise their request\'s primary language. Preserve identifiers, paths, commands, and quoted evidence.',
+  ].filter((line): line is string => line !== undefined).join('\n');
+  const limitedCollaboration = [
+    'AGENT COLLABORATION (available capability):',
+    hasTool('spawn_agent')
+      ? '- `spawn_agent` creates a named direct child and returns its canonical path. Keep task names stable and objectives bounded; read-only investigations use read_only:true. Children share the root budget and capacity. After AgentLimitReached, do not retry while capacity remains full.' : undefined,
+    hasTool('spawn_agent')
+      ? '- Give children the goal, binding constraints, evidence refs, and required output shape in the user\'s language. State revisions and scope as data rather than prescribing shell commands; recommend available pull tools for substantive investigations. Use model_hint intentionally: fast only for evaluated read-only mechanical lookups, balanced for ordinary work, deep for architecture or adversarial verification and synthesis. Unconfigured tiers inherit the parent; write-capable fast stays on the parent tier.' : undefined,
+    hasTool('spawn_agent') && hasTool('list_dispatchable_agents')
+      ? '- Use a matching registered specialist\'s canonical agent_id from `list_dispatchable_agents`.' : undefined,
+    hasTool('wait_agent')
+      ? '- Use `wait_agent` sparingly when required child evidence is on the critical path. It returns a wake acknowledgement; the following mailbox carries evidence. Ordinary progress does not wake the model. Do not loop on wait_expired.' : undefined,
+    hasTool('send_message')
+      ? '- Use `send_message` for bounded evidence or material constraints affecting a child; it does not wake idle actors. Do not use it for chat or questions that assume an idle child awaits your reply.' : undefined,
+    hasTool('followup_task')
+      ? '- Use `followup_task` to start another turn on an idle actor or update a running actor\'s objective.' : undefined,
+    hasTool('list_agents') ? '- Use `list_agents` for current tree and capacity state.' : undefined,
+    hasTool('agent_output')
+      ? '- Reserve `agent_output` for a known terminal Actor/Turn whose exact structured output or artifact metadata was not delivered; never poll completion with it.' : undefined,
+    hasTool('interrupt_agent')
+      ? '- Use `interrupt_agent` for off-scope work, parent cancellation, or work that is no longer useful. Do not interrupt a slow but progressing child merely for being slow.' : undefined,
+    '- Delivered terminal Agent summaries are authoritative evidence. Integrate them and reconcile the affected semantic milestone before further waiting or starting a different milestone. One supporting child finishing does not complete unfinished work or synthesis.',
+    '- Continue useful non-overlapping local work. If only live children remain, end the current turn with text so Runtime can suspend. A parent must settle owned children using available controls or explicitly report their canonical paths and unresolved ownership; never silently abandon them.',
+  ].filter((line): line is string => line !== undefined).join('\n');
+  const limitedHandoff = [
+    'TERMINATION:',
+    '- Before delivery, reconcile actual progress and verify the requested result with available tools and evidence. You own the final conclusion; report checks you could not perform and any live descendants\' canonical paths and unresolved ownership.',
+    hasTool('todo_update')
+      ? '- Perform a final consistency check with `todo_update` only for genuinely finished items still open, or record failed items with a blocker note. This is a safety net; normal updates belong at milestone boundaries.' : undefined,
+    '- End with a brief text-only summary of the completed result, changes, and caveats, or the concrete blocker if you cannot proceed. No tool call is needed to terminate.',
+  ].filter((line): line is string => line !== undefined).join('\n');
+
   return [
     managedRunContextTrust,
-    parallelFirstCollaboration,
-    planFirstContract,
-    planListHygiene,
+    hasTool('spawn_agent') ? parallelFirstCollaboration : 'LOCAL EXECUTION: Delegation is unavailable in this run. Perform the requested work locally, preserve scope, and own synthesis and verification.',
+    fullTodo ? planFirstContract : limitedPlanGuidance,
+    fullTodo ? planListHygiene : undefined,
     scopeCommitment,
     mutationDiscipline,
     repoIntelligenceTools,
-    dispatchRules,
-    childSteeringRules,
+    fullCollaboration ? dispatchRules : limitedCollaboration,
+    fullCollaboration ? childSteeringRules : undefined,
     EXECUTION_GUIDANCE,
-    handoffRules,
+    fullTodo && fullCollaboration ? handoffRules : limitedHandoff,
   ]
     .filter((part): part is string => Boolean(part?.length))
     .join('\n\n');
@@ -329,6 +365,7 @@ export function buildWorkerRoutingContext(
   return [
     `You are the Worker — KodaX's single primary agent for this task. Routing decision summary:`,
     `- Primary task: ${decision.primaryTask}`,
+    `- Assurance intent: ${decision.assuranceIntent ?? 'default'}`,
     `- Work intent: ${decision.workIntent}`,
     `- Risk: ${decision.riskLevel}`,
     `- Complexity: ${decision.complexity}`,
@@ -344,18 +381,19 @@ export function buildWorkerInstructions(
   verification: KodaXTaskVerificationContract | undefined,
   isResumeAfterReviseFailure: boolean,
   actorCapacity?: WorkerActorCapacity,
+  availableToolNames?: readonly string[],
 ): string {
   void verification; // kept on the signature for parity with legacy roles
   void isResumeAfterReviseFailure;
 
-  const actorCapacityContract = buildWorkerActorCapacityContract(actorCapacity);
-  const reviewFanoutContract = buildWorkerReviewFanoutContract(decision, actorCapacity);
+  const actorCapacityContract = buildWorkerActorCapacityContract(actorCapacity, availableToolNames);
+  const reviewFanoutContract = buildWorkerReviewFanoutContract(decision, actorCapacity, availableToolNames);
 
   return [
     buildWorkerRoutingContext(decision),
     actorCapacityContract,
     reviewFanoutContract,
-    buildWorkerStableInstructions(),
+    buildWorkerStableInstructions(availableToolNames),
   ]
     .filter((part): part is string => Boolean(part?.length))
     .join('\n\n');
