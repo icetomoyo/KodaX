@@ -1,6 +1,6 @@
 # SDK 统一 Client 契约迁移指南
 
-适用范围：当前工作树的 FEATURE_298/299/301 实现；本次核对的包版本为 `0.7.97-alpha.4`。版本号不表示 npm 已发布当前工作树中的所有变更。接入前应核对所安装包的导出和 Host 能力。
+适用范围：当前工作树的 FEATURE_298/299/301 实现；本次核对的包版本为 `0.7.97-alpha.5`。版本号不表示 npm 已发布当前工作树中的所有变更。接入前应核对所安装包的导出和 Host 能力。
 
 Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附件/统计与退出恢复范围见 [SDK/Host 接缝](SPACE_SDK_SEAMS.md)。
 
@@ -141,7 +141,7 @@ The automatic Sidecar Verifier is retired. Remove `verifierLog`, `/verifier-log`
 
 ## Artifact SDK 契约迁移（2026-10-13）
 
-`27d08788` 在 alpha.4 tag 之后扩展独立 Artifact SDK；包版本未变，需核对实际构建。公开方法为 `capabilities/prepare/create/open/edit/export/render/capture/readEvidence`。独立 Node 宿主使用 `/runtime` 的 `createNodeArtifactPort`；共享 CLI/Space 使用 `/client` 的 `createKodaXArtifactPort(client, sessionId)`，沿现有 Run 和附件通道执行，不新增 Session owner。
+`v0.7.97-alpha.5` 交付独立 Artifact SDK 的统一扩展（开发于 `27d08788`）；早期版本的安装包不含这些变更。公开方法为 `capabilities/prepare/create/open/edit/export/render/capture/readEvidence`。独立 Node 宿主使用 `/runtime` 的 `createNodeArtifactPort`；共享 CLI/Space 使用 `/client` 的 `createKodaXArtifactPort(client, sessionId)`，沿现有 Run 和附件通道执行，不新增 Session owner。
 
 初版 `ArtifactRef.kind: 'presentation'` 改为内容 `format: 'pptx'`；证据批次的裸 `sourceHash` 改为 `source: VisualSource`，文件引用内的 `sourceHash` 仍是实际字节 SHA256。capabilities 改为结构化记录；PNG 必须有哈希和尺寸；分页证据必须有 `layout`。DOCX 的实际页数在渲染后的 `layout.totalPages`，不在 `open` 返回值。`capture` 改用与 `kind` 匹配的 `locators`。这些是发布前直接调整，不保留旧字段别名。
 

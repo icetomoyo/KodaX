@@ -4,12 +4,14 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-10-13
 >
-> **Current-source Artifact follow-up (2026-10-13):** `27d08788`, after the
-> alpha.4 tag, expands the accepted single `ArtifactExecutionPort` seam to
+> **v0.7.97-alpha.5 release addendum:** FEATURE_301's unified Artifact SDK
+> expands the accepted single `ArtifactExecutionPort` seam to
 > nine public operations and PDF/image/SVG/DOCX/HTML/SMIL evidence. Independent
 > Node and shared CLI/Space hosts retain their existing execution authority;
 > no quality API, verifier daemon or persistent renderer is added. Core
-> startup stays free of renderer loading/probes. Read the [accepted design](research/unified-artifact-sdk-design.md)
+> startup stays free of renderer loading/probes. Busy daemon preflights are
+> bounded before redundant full state scans (Issue 367). Read the
+> [accepted design](research/unified-artifact-sdk-design.md)
 > and [delivered support/limits](ARTIFACT_SDK.md); evidence readiness is not visual approval.
 >
 > **v0.7.97-alpha.4 release addendum:** FEATURE_301 ships the independent

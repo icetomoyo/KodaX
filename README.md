@@ -789,14 +789,19 @@ starts, upgrades, or waits. See
 Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2/alpha.3 contract is
 retained.
 
-**Current-source Artifact additions (2026-10-13):** `27d08788` follows the
-alpha.4 tag and adds nine SDK operations, PDF/image/SVG evidence, lightweight
-DOCX pagination and local HTML/SMIL capture through the same Node/shared-Host
-contract. Rendering works headlessly; automatic review needs available tools
-and an image-capable provider, without a slash command. Native DOCX fidelity
-and full natural-task repair/re-review/delivery remain unverified. The package
-version is unchanged; check the actual installed build. See
-[SDK support, setup and migration](docs/ARTIFACT_SDK.md).
+**v0.7.97-alpha.5 release:** Ships FEATURE_301's unified Artifact SDK and
+format backends — nine SDK operations (`prepare`, `readEvidence`,
+capabilities/diagnostics), native PDF, exact PNG/JPEG/WebP/SVG, candidate
+DOCX pagination and local HTML/SMIL capture through the same
+Node/shared-Host contract — plus a bounded busy daemon preflight (Issue
+367) that stops redundant scans when a mutation begins mid-read. Rendering
+works headlessly; automatic review needs available tools and an
+image-capable provider, without a slash command. Native DOCX fidelity and
+full natural-task repair/re-review/delivery remain unverified. See
+[SDK support, setup and migration](docs/ARTIFACT_SDK.md) and the
+[v0.7.97-alpha.5 release notes](docs/release.md#v0797-alpha5-release-preparation).
+Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.4 contract is
+retained.
 
 **v0.7.97-alpha.3 release:** Lets trusted Main bound Product Workflows.
 `authorizeExecution` may return a `workflowHostPolicy` (`maxAgents`,
@@ -2056,7 +2061,7 @@ This development tree exposes 13 SDK subpaths plus the root. Shared product
 applications use `@kodax-ai/kodax/client`; independent libraries and trusted Host
 APIs remain available through the other subpaths. See the [Client contract](docs/CLIENT_CONTRACT.md)
 and [SDK migration guide](docs/SDK_MIGRATION.md). This documentation was checked
-against package version `0.7.97-alpha.4`; npm publication is separate from
+against package version `0.7.97-alpha.5`; npm publication is separate from
 the current development-tree contract.
 
 ```bash

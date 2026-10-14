@@ -6,9 +6,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-alpha.5] - 2026-10-13
+
+Fifth alpha of the v0.7.97 line: FEATURE_301's unified Artifact SDK and
+format backends ship — the `ArtifactExecutionPort` seam grows to nine
+public operations with native PDF, exact PNG/JPEG/WebP/SVG, candidate DOCX
+pagination, and local HTML/SMIL evidence over one execution port serving
+independent Node and shared-Host clients — and busy daemon preflights are
+bounded before redundant full state scans (Issue 367). Every v0.7.96
+stable and v0.7.97-alpha.1 through alpha.4 contract is retained. npm
+publication remains a manual maintainer action.
+
 ### Added
 
-- Unified optional Artifact SDK (`27d08788`, after the alpha.4 tag): public
+- Unified optional Artifact SDK (developed in `27d08788`): public
   `prepare` and `readEvidence`, native PDF, exact PNG and JPEG/WebP/SVG evidence,
   candidate DOCX pagination, local HTML loaded-view capture and SVG SMIL samples.
   The same execution port serves independent Node and existing shared-Host clients.

@@ -2,7 +2,10 @@
 
 `@kodax-ai/artifacts` is an optional, independently installed ESM package (Node >=20.16). Its root entry contains pure types, request/result validation, SDK dispatch and mechanical coverage checks. The optional `/runtime` entry owns local file/browser work; `/kodax` registers admitted Host tools; `/client` binds the SDK to an existing KodaX Product Client. The core CLI does not load renderers or probe Chromium at startup.
 
-This page describes commit `27d08788` and its current integration notes. That implementation follows the `v0.7.97-alpha.4` tag (`a3e8d754`); the unchanged package version does not mean the tagged release or an installed npm package contains these additions.
+This page describes the unified Artifact SDK shipped in `v0.7.97-alpha.5`
+(developed in commit `27d08788`) and its current integration notes. The
+`v0.7.97-alpha.4` tag (`a3e8d754`) does not contain these additions; an
+installed npm package from that version does not include them.
 
 ## Operations and actual support
 

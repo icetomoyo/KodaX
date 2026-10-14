@@ -145,7 +145,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('may canonicalize DACL protection/inheritance control at commit');
     expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
-    expect(sandbox).toContain('v0.7.97-alpha.4 release uses Windows native shell protocol 10');
+    expect(sandbox).toContain('v0.7.97-alpha.5 release uses Windows native shell protocol 10');
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
@@ -173,7 +173,11 @@ describe('FEATURE_218 manual registry', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('The v0.7.97-alpha.4 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.97-alpha.5 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain("The v0.7.97-alpha.5 release ships FEATURE_301's unified Artifact SDK");
+    expect(sdk).toContain('nine public operations');
+    expect(sdk).toContain('safe to stop. Evidence readiness is not visual approval.');
+    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.4 contract is retained.');
     expect(sdk).toContain('The v0.7.97-alpha.4 release adds the independent `@kodax-ai/artifacts` package');
     expect(sdk).toContain('The built-in `visual-review` skill verifies static images/charts');
     expect(sdk).toContain('Main-agent result verification replaces the out-of-band Sidecar Verifier');

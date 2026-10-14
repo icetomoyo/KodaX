@@ -2,8 +2,8 @@
 
 Approved on 2026-10-13 after isolated format research and the existing FEATURE_301 PPT implementation. This document records the accepted implementation boundary; [SDK usage/support](../ARTIFACT_SDK.md) defines the delivered surface.
 
-Implemented in `27d08788`, after the alpha.4 tag; the unchanged package version
-does not establish publication. Subsequent [natural-task model observations](automatic-visual-review-e2e-2026-10-13.md)
+Implemented in `27d08788` and shipped in `v0.7.97-alpha.5`; npm publication
+remains separate. Subsequent [natural-task model observations](automatic-visual-review-e2e-2026-10-13.md)
 confirm automatic image review but leave full repair/re-review/delivery and
 model-facing schema gaps open. Those observations do not change this execution boundary.
 

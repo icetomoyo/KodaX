@@ -1,7 +1,7 @@
 # ISSUE_367 — In-flight mutation amplifies daemon preflight
 
-Date: 2026-10-13 (Asia/Shanghai). Source fix follows `27d08788`; package version
-remains `0.7.97-alpha.4`, and publication is separate.
+Date: 2026-10-13 (Asia/Shanghai). The fix ships in `v0.7.97-alpha.5`; npm
+publication remains separate.
 
 ## Symptom and confirmed scope
 

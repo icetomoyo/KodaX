@@ -136,16 +136,40 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
-## Current-source Artifact additions after alpha.4
+## v0.7.97-alpha.5 release preparation
 
-Commit `27d08788` follows the existing `v0.7.97-alpha.4` tag (`a3e8d754`). It
-adds unified multi-format evidence and nine public Artifact SDK operations;
-the package version was not bumped. These additions are not part of that
-existing tag. Publishing a matching package/build is a separate release action;
-rebuilding/linking alone also does not register the optional adapter in a Host.
-See [SDK installation, support and migration](ARTIFACT_SDK.md) and the
-[regression/E2E boundaries](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md).
-The tagged release record below is preserved separately.
+Release state: `v0.7.97-alpha.5` is the GitHub pre-release for the exact
+tagged commit — the fifth alpha of the v0.7.97 line, shipping FEATURE_301's
+unified Artifact SDK and format backends plus the bounded busy daemon
+preflight (Issue 367). The tag-triggered Release workflow runs the full
+reusable CI workflow before the build matrix; branch pushes do not trigger
+CI, so the tag is the first and only remote validation gate. The `-alpha`
+suffix marks the release as a GitHub pre-release automatically. npm
+registry publication remains a separate manual maintainer action.
+
+On top of v0.7.97-alpha.4 it includes:
+
+- Unified Artifact SDK and format backends (FEATURE_301 follow-through):
+  the accepted single `ArtifactExecutionPort` seam grows to nine public
+  operations — explicit `prepare`, `readEvidence`, and capability
+  diagnostics — with native PDF, exact PNG/JPEG/WebP/SVG, candidate DOCX
+  pagination, and local HTML loaded-view capture with SVG SMIL samples.
+  One execution port serves independent Node and existing shared CLI/Space
+  Host clients; rendering works headlessly and core startup stays free of
+  renderer loading/probes (support and limits:
+  `docs/ARTIFACT_SDK.md`; boundaries:
+  `docs/test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md`).
+- Bounded busy daemon preflight (Issue 367): preflight reads stop scanning
+  and report the actual method/count through the existing shutdown fence
+  when a mutation begins mid-read; busy work is never treated as safe to
+  stop, keeping interactive startup recovery responsive.
+- Workspace lockstep: `@kodax-ai/artifacts` now versions in lockstep with
+  the release train, satisfying the release guard that every workspace
+  entry in `package-lock.json` matches the release version.
+
+All root/workspace package versions and lockfile entries are
+`0.7.97-alpha.5`. The feature-design submodule, public guides, architecture
+documents, and `kodax_manual` track this release.
 
 ## v0.7.97-alpha.4 release preparation
 

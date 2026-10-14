@@ -33,7 +33,7 @@ resolution evidence is retained. Issues 345–347 are unchanged.
 - Status: Resolved (confirmed redundant-scan path; live incident cause remains unconfirmed)
 - Introduced: observed in `v0.7.97-alpha.4`; first affected version unknown
 - Created: 2026-10-13
-- Fixed: post-v0.7.97-alpha.4 working tree (unreleased)
+- Fixed: `v0.7.97-alpha.5`
 - Resolved: 2026-10-13
 
 ### Original Problem
@@ -1790,7 +1790,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 367 | Medium | Resolved | Daemon preflight repeatedly scans during an in-flight mutation | observed in v0.7.97-alpha.4; first affected version unknown | post-v0.7.97-alpha.4 working tree (unreleased) | 2026-10-13 | 2026-10-13 |
+| 367 | Medium | Resolved | Daemon preflight repeatedly scans during an in-flight mutation | observed in v0.7.97-alpha.4; first affected version unknown | `v0.7.97-alpha.5` | 2026-10-13 | 2026-10-13 |
 | 366 | Medium | Resolved | Host test readiness races cold Actor preparation | observed during v0.7.97-alpha.3 validation; first affected version unknown | post-v0.7.97-alpha.3 working tree (unreleased) | 2026-10-10 | 2026-10-10 |
 | 365 | High | Resolved | Provider fallback drops child usage and bypasses Workflow budgets | output-component regression in v0.7.97-alpha.3; earlier total loss | post-v0.7.97-alpha.3 working tree (unreleased) | 2026-10-10 | 2026-10-10 |
 | 364 | Medium | Resolved | MCP stdio reports failed writes as successful sends | observed in v0.7.97-alpha.3; first affected version unknown | post-v0.7.97-alpha.3 working tree (unreleased) | 2026-10-10 | 2026-10-10 |

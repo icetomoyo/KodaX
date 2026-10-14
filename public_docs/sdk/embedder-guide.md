@@ -1,7 +1,7 @@
 # KodaX SDK — Product Client and Host Integration
 
 This page describes the current FEATURE_298/299/301 development tree, checked against
-package version `0.7.97-alpha.4`. The version alone does not claim that all current
+package version `0.7.97-alpha.5`. The version alone does not claim that all current
 working-tree changes are already published to npm. Check the installed
 package exports and the connected Host's capabilities when migrating.
 
@@ -203,8 +203,8 @@ re-review and delivery have not passed all model smoke checks.
 See [support, setup and examples](../../docs/ARTIFACT_SDK.md),
 [pre-release contract migration](../../docs/SDK_MIGRATION.md#artifact-sdk-契约迁移2026-10-13)
 and [E2E evidence/known schema gap](../../docs/research/automatic-visual-review-e2e-2026-10-13.md).
-Commit `27d08788` follows the alpha.4 tag; the unchanged package version does not
-establish that these additions are in the tagged release or an installed npm package.
+These additions ship in `v0.7.97-alpha.5`; an installed npm package from an
+earlier version does not include them.
 
 ## Low-level reference and release history
 
