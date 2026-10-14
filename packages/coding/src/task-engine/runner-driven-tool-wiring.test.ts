@@ -60,6 +60,7 @@ function makeCtx(hasCapabilityRuntime = true, hasWorkflowHost = true): KodaXTool
     backups: new Map<string, string>(),
     gitRoot: process.cwd(),
     executionCwd: process.cwd(),
+    skillScriptRunner: { run: async () => 'ran' },
     ...(hasCapabilityRuntime
       ? { extensionRuntime: {} as KodaXToolExecutionContext['extensionRuntime'] }
       : {}),
@@ -100,6 +101,23 @@ function getAgentToolNames(
 }
 
 describe('FEATURE_168 — AMA agent tool wiring (per-role full set)', () => {
+  it('advertises skill scripts only when an independent host binds a runner, and still honors policy', async () => {
+    const { skillScriptRunner: _runner, ...ctx } = makeCtx();
+    const unavailable = buildRunnerAgentChain(ctx).worker.tools ?? [];
+    expect(unavailable.map((tool) => tool.name)).not.toContain('run_skill_script');
+    const search = unavailable.find((tool) => tool.name === 'tool_search');
+    const describeTool = unavailable.find((tool) => tool.name === 'tool_describe');
+    expect((await search?.execute({ query: 'select:run_skill_script' }))?.content).not.toContain('<function>');
+    expect((await describeTool?.execute({ name: 'run_skill_script' }))?.content).not.toContain('<function>');
+
+    const capable = { ...ctx, skillScriptRunner: { run: async () => 'ran' } };
+    const available = buildRunnerAgentChain(capable).worker.tools ?? [];
+    expect(available.map((tool) => tool.name)).toContain('run_skill_script');
+    expect((await available.find((tool) => tool.name === 'tool_search')?.execute({ query: 'select:run_skill_script' }))?.content).toContain('<function>');
+    const denied = buildRunnerAgentChain({ ...capable, toolVisibilityPolicy: () => false });
+    expect(denied.worker.tools).toEqual([]);
+  });
+
   it(`worker.tools === getAmaRoleExpectedToolNames('worker')`, () => {
     const actual = getAgentToolNames('worker');
     const expected = getAmaRoleExpectedToolNames('worker');

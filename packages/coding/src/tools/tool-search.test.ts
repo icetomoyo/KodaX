@@ -13,10 +13,11 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
+import { SkillRegistry } from '@kodax-ai/agent/capabilities/skills';
 
-import type { KodaXToolExecutionContext } from '../types.js';
+import type { KodaXToolExecutionContext, KodaXToolVisibilityMeta } from '../types.js';
 import { getActiveToolDefinitions } from '../agent-runtime/tool-resolution.js';
-import { getToolDefinition } from './index.js';
+import { executeTool, getToolDefinition } from './index.js';
 import {
   DEFERRED_TOOL_HINTS,
   isDeferredTool,
@@ -123,6 +124,57 @@ describe('FEATURE_189 B.2 — tool_search handler', () => {
     expect(out).toContain('"name":"web_fetch"');
     // Full description should include the load-bearing teaching:
     expect(out).toContain('prefer `bash` with the `gh` CLI');
+  });
+
+  it('keeps host-forbidden skill scripts undiscoverable through the registry', async () => {
+    const capable = { ...makeContext(), skillScriptRunner: { run: async () => 'ran' } };
+    for (const denied of [
+      { ...capable, excludeTools: ['run_skill_script'] },
+      { ...capable, toolVisibilityPolicy: (tool: { name: string }) => tool.name !== 'run_skill_script' },
+    ]) {
+      const out = await executeTool('tool_search', { query: 'select:run_skill_script' }, denied);
+      expect(out).not.toContain('<function>');
+      expect(out).not.toContain('run_skill_script');
+      expect(getUnlockedDeferredTools(denied).size).toBe(0);
+    }
+  });
+
+  it('omits host-forbidden registered tools from the no-match directory without unlocking it', async () => {
+    const restricted = {
+      ...makeContext(),
+      excludeTools: ['web_fetch'],
+      toolVisibilityPolicy: (tool: { name: string }) => tool.name !== 'module_context',
+    };
+    const out = await executeTool('tool_search', { query: 'zzz_nonexistent_xyz' }, restricted);
+    expect(out).toContain('Available deferred tools');
+    expect(out).toContain('web_search');
+    expect(out).not.toContain('web_fetch');
+    expect(out).not.toContain('module_context');
+    expect(getUnlockedDeferredTools(restricted).size).toBe(0);
+  });
+
+  it('requires a runner and cwd even when a skill catalog is present, and honors real registry metadata', async () => {
+    const runner = { run: async () => 'ran' };
+    const catalog = { skillsPrompt: 'Available skills: example', skillRegistry: new SkillRegistry(process.cwd()) };
+    const unavailable: KodaXToolExecutionContext[] = [
+      { ...makeContext(), ...catalog },
+      { backups: new Map(), ...catalog, skillScriptRunner: runner },
+    ];
+    for (const context of unavailable) {
+      const out = await executeTool('tool_search', { query: 'select:run_skill_script' }, context);
+      expect(out).not.toContain('<function>');
+      expect(getUnlockedDeferredTools(context).size).toBe(0);
+    }
+    const metadata: KodaXToolVisibilityMeta[] = [];
+    const capable = {
+      ...makeContext(), skillScriptRunner: runner,
+      toolVisibilityPolicy: (tool: KodaXToolVisibilityMeta) => { metadata.push(tool); return true; },
+    };
+    const out = await executeTool('tool_search', { query: 'select:run_skill_script' }, capable);
+    expect(out).toContain('"name":"run_skill_script"');
+    expect(out).toContain('<function>');
+    expect(metadata).toEqual([{ name: 'run_skill_script', sideEffect: 'mutates-shell', planModeAllowed: false }]);
+    expect(getUnlockedDeferredTools(capable).has('run_skill_script')).toBe(true);
   });
 
   it('keeps exact lookup compatible for the newly resident goal tools', async () => {

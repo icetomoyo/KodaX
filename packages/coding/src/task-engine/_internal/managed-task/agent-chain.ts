@@ -112,6 +112,7 @@ function isManagedToolVisibleForContext(
   if (ctx.excludeTools?.includes(name)) return false;
   if (!ctx.extensionRuntime && isMcpToolName(name)) return false;
   if (name === 'run_workflow' && !ctx.workflowHost) return false;
+  if (name === 'run_skill_script' && (!ctx.skillScriptRunner || !ctx.executionCwd)) return false;
   if (isSessionHistoryTool(name) && !ctx.loadSessionHistory) return false;
   if (ctx.toolVisibilityPolicy) {
     const definition = getRegisteredToolDefinition(name)

@@ -24,11 +24,12 @@
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
 import type { LocalToolDefinition, ToolHandlerSync } from './types.js';
 import type { KodaXToolExecutionContext } from '../types.js';
-import { getToolDefinition } from './index.js';
+import { getRegisteredToolDefinition, getToolDefinition } from './index.js';
 import { lookupRunScopedTool, toModelToolDefinition } from '../agent-runtime/run-scoped-tools.js';
 
-/** Minimal context shape tool_search needs: the run's extension runtime for run-scoped lookups. */
-type ToolSearchContext = Pick<KodaXToolExecutionContext, 'extensionRuntime'>;
+/** Context needed for run-scoped lookup and host-backed skill availability. */
+type ToolSearchContext = Pick<KodaXToolExecutionContext,
+  'extensionRuntime' | 'skillScriptRunner' | 'executionCwd' | 'excludeTools' | 'toolVisibilityPolicy'>;
 
 import {
   DEFERRED_TOOL_HINTS,
@@ -70,6 +71,17 @@ function parseQuery(rawQuery: string): { mode: 'select' | 'keyword'; names: stri
   return { mode: 'keyword', names: [], required, loose };
 }
 
+function isHostVisibleRegisteredTool(name: string, context: ToolSearchContext): boolean {
+  if (context.excludeTools?.includes(name)) return false;
+  if (!context.toolVisibilityPolicy) return true;
+  const definition = getRegisteredToolDefinition(name);
+  return definition !== undefined && context.toolVisibilityPolicy({
+    name: definition.name,
+    sideEffect: definition.sideEffect,
+    planModeAllowed: definition.planModeAllowed === true,
+  });
+}
+
 function resolveSelectNames(
   names: readonly string[],
   context: ToolSearchContext,
@@ -77,6 +89,8 @@ function resolveSelectNames(
   const resolved: string[] = [];
   const seen = new Set<string>();
   for (const n of names) {
+    if (n === 'run_skill_script' && (!context.skillScriptRunner || !context.executionCwd
+      || !isHostVisibleRegisteredTool(n, context))) continue;
     if (seen.has(n)) continue;
     seen.add(n);
     if (isDeferredTool(n)) resolved.push(n);
@@ -111,7 +125,8 @@ function buildResult(
 ): string {
   if (resolved.length === 0) {
     return 'No tools matched the query. Available deferred tools: '
-      + Object.keys(DEFERRED_TOOL_HINTS).join(', ')
+      + Object.keys(DEFERRED_TOOL_HINTS)
+        .filter((name) => isHostVisibleRegisteredTool(name, context)).join(', ')
       + '. Use query form `select:NAME` to fetch a specific schema.';
   }
   const lines: string[] = [];

@@ -1279,10 +1279,6 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
           type: 'integer',
           description: 'Maximum number of options the user may select. Only applies when multi_select is true.',
         },
-        agent_id: {
-          type: 'string',
-          description: 'Optional canonical selector returned by list_dispatchable_agents. Routes Native, Constructed, or External agents through the shared catalog. Do not combine with subagent_type.',
-        },
         allow_custom_input: {
           type: 'boolean',
           description: 'Whether to add an automatic custom input option for select mode. Defaults to true. Set false only for closed safety/protocol choices.',
@@ -1301,7 +1297,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
         },
         default: { type: 'string', description: 'Recommended option value (for select) or text (for input) used if the interaction expires.' },
       },
-      required: ['question'],
+      // The handler validates either a single question or a questions-only batch.
     },
     handler: toolAskUserQuestion,
     sideEffect: 'readonly',

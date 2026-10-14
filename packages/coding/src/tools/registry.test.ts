@@ -22,6 +22,21 @@ const TEST_CONTEXT: KodaXToolExecutionContext = {
 };
 
 describe('tool registry', () => {
+  it('executes questions-only requests through the registry without a redundant single question', async () => {
+    const result = await executeTool('ask_user_question', {
+      questions: [{ question: 'Color?', options: [{ label: 'Blue', value: 'blue' }] }],
+    }, {
+      ...TEST_CONTEXT,
+      askUserMulti: async () => ({ color: 'blue' }),
+    });
+
+    expect(JSON.parse(result as string)).toEqual({
+      success: true,
+      answers: { color: 'blue' },
+    });
+    expect(getToolDefinition('ask_user_question')?.input_schema.properties).not.toHaveProperty('agent_id');
+  });
+
   it('makes the resident spawn surface explicit for broad read-only review fan-out', () => {
     const description = getToolDefinition('spawn_agent')?.description ?? '';
 
@@ -150,7 +165,7 @@ describe('tool registry', () => {
 
   it('derives required params from the active tool schema', () => {
     expect(getRequiredToolParams('read')).toEqual(['path']);
-    expect(getRequiredToolParams('ask_user_question')).toEqual(['question']);
+    expect(getRequiredToolParams('ask_user_question')).toEqual([]);
     expect(getRequiredToolParams('web_search')).toEqual(['query']);
     expect(getRequiredToolParams('code_search')).toEqual(['query']);
     expect(getRequiredToolParams('semantic_lookup')).toEqual(['query']);
