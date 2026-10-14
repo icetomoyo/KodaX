@@ -64,8 +64,11 @@ samples establish neither statistical non-inferiority nor full-task quality.
 The original live low-level SDK smoke failed because its harness omitted the
 production text mutation host; the baseline refused the same edit. Production
 Runtime replay with the recorded read/edit and a scripted final response passed.
-Live resume was not evaluated. Codex's matching complete wire capture remains
-absent; no cross-product total ratio is claimed. The historical shared evaluation ceiling was 35 logical calls,
+Live resume was not evaluated. This historical evaluation did not capture a
+complete Codex request. A subsequent zero-network CLI capture and the next
+refinement plan are recorded in [the contract refinement design](first-turn-contract-refinement.md);
+the products still differ in capabilities and protocol, so no strict task-efficiency ratio is claimed.
+The historical shared evaluation ceiling was 35 logical calls,
 including a 32-call generation ceiling and bounded smoke; no budget is reset.
 
 The follow-up pilot used `kimi-code/kimi-for-coding` and
