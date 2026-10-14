@@ -9,10 +9,10 @@
  * filesystem boundary.
  *
  * Safety envelope (matches `docs/features/v0.7.32.md` §Eval 执行隔离):
- *   - Every case runs in `<TMP>/kodax-eval-<id>-<rand>/`
+ *   - Every case runs in `<TMP>/kodax-eval-worktree-<id>-<rand>/`
  *   - Worktree is `git worktree add` against the case's `gitHeadSha`
  *   - try/finally guarantees `git worktree remove --force` on exit
- *   - Startup scan detects orphaned `kodax-eval-*` worktrees from prior crashes
+ *   - Startup scan detects orphaned `kodax-eval-worktree-*` worktrees
  *   - Verifies SHA reachability via `git cat-file -e` before adding
  *
  * Non-goals (intentional simplicity):
@@ -30,7 +30,7 @@ import { promisify } from 'util';
 
 const execFileAsync = promisify(execFile);
 
-const WORKTREE_PREFIX = 'kodax-eval-';
+const WORKTREE_PREFIX = 'kodax-eval-worktree-';
 
 export interface WorktreeHandle {
   /** Absolute path to the worktree root (caller runs commands here). */
@@ -243,19 +243,20 @@ export interface OrphanScanResult {
 }
 
 /**
- * Scan tmpdir for orphaned `kodax-eval-*` worktrees from crashed prior runs
+ * Scan tmpdir for orphaned `kodax-eval-worktree-*` worktrees from crashed prior runs
  * and remove them. Run this at harness startup. Returns what was cleaned up
  * so the caller can log a summary.
  *
- * Conservative: only matches the exact prefix; never touches dirs the
- * harness didn't create. Per §Release 硬条件 — leak rate ≤ 1%.
+ * The worktree namespace excludes `kodax-eval-dumps` evidence. Legacy
+ * `kodax-eval-*` directories require explicit cleanup; their broad prefix
+ * cannot distinguish old worktrees from unrelated eval data.
  */
 export async function scanAndCleanOrphanWorktrees(opts: {
   repoRoot?: string;
   tmpRoot?: string;
 } = {}): Promise<OrphanScanResult> {
   const repoRoot = opts.repoRoot ?? process.cwd();
-  const tmpRoot = opts.tmpRoot ?? tmpdir();
+  const tmpRoot = path.resolve(opts.tmpRoot ?? tmpdir());
   const removed: string[] = [];
   const failed: { path: string; error: string }[] = [];
 
@@ -268,8 +269,12 @@ export async function scanAndCleanOrphanWorktrees(opts: {
 
   for (const entry of entries) {
     if (!entry.startsWith(WORKTREE_PREFIX)) continue;
-    const orphanPath = path.join(tmpRoot, entry);
+    const orphanPath = path.resolve(tmpRoot, entry);
     try {
+      if (path.dirname(orphanPath) !== tmpRoot
+        || !path.basename(orphanPath).startsWith(WORKTREE_PREFIX)) {
+        throw new Error(`Refusing worktree cleanup outside temporary root: ${orphanPath}`);
+      }
       // Try git's view first so its admin metadata gets cleaned too.
       await execFileAsync(
         'git',

@@ -69,7 +69,7 @@ describe('worktree-runner', () => {
 
     expect(handle.sha).toBe(head);
     expect(handle.path.startsWith(tmpdir())).toBe(true);
-    expect(path.basename(handle.path).startsWith('kodax-eval-unit-setup-')).toBe(
+    expect(path.basename(handle.path).startsWith('kodax-eval-worktree-unit-setup-')).toBe(
       true,
     );
     // package.json must exist at root of the worktree as a smoke check.
@@ -124,22 +124,32 @@ describe('worktree-runner', () => {
     }
   });
 
-  it('scanAndCleanOrphanWorktrees only touches kodax-eval- prefixed dirs', { timeout: GIT_TEST_TIMEOUT }, async () => {
-    // Plant a fake orphan AND an unrelated dir; ensure only the orphan goes.
-    const fakeOrphan = path.join(tmpdir(), `kodax-eval-orphan-test-${Date.now()}`);
-    const unrelated = path.join(tmpdir(), `unrelated-dir-test-${Date.now()}`);
+  it('scanAndCleanOrphanWorktrees preserves eval evidence and legacy directories', { timeout: GIT_TEST_TIMEOUT }, async () => {
+    const tmpRoot = await fs.mkdtemp(path.join(tmpdir(), 'kodax-worktree-scan-test-'));
+    const fakeOrphan = path.join(tmpRoot, 'kodax-eval-worktree-orphan-test');
+    const unrelated = path.join(tmpRoot, 'unrelated-dir-test');
+    const legacy = path.join(tmpRoot, 'kodax-eval-legacy-orphan');
+    const evidence = path.join(tmpRoot, 'kodax-eval-dumps', 'case', 'raw.json');
     await fs.mkdir(fakeOrphan, { recursive: true });
     await fs.mkdir(unrelated, { recursive: true });
+    await fs.mkdir(legacy);
+    await fs.mkdir(path.dirname(evidence), { recursive: true });
+    await fs.writeFile(evidence, 'preserved raw evidence');
 
     try {
-      const result = await scanAndCleanOrphanWorktrees({ repoRoot });
-      expect(result.removed).toContain(fakeOrphan);
-      expect(result.removed).not.toContain(unrelated);
+      const result = await scanAndCleanOrphanWorktrees({ repoRoot, tmpRoot });
+      await expect(fs.readFile(evidence, 'utf8')).resolves.toBe('preserved raw evidence');
+      expect(result).toEqual({ removed: [fakeOrphan], failed: [] });
       await expect(fs.stat(fakeOrphan)).rejects.toBeDefined();
       await expect(fs.stat(unrelated)).resolves.toBeDefined();
+      await expect(fs.stat(legacy)).resolves.toBeDefined();
     } finally {
-      await fs.rm(unrelated, { recursive: true, force: true }).catch(() => undefined);
-      await fs.rm(fakeOrphan, { recursive: true, force: true }).catch(() => undefined);
+      const resolvedRoot = path.resolve(tmpRoot);
+      if (path.dirname(resolvedRoot) !== path.resolve(tmpdir())
+        || !path.basename(resolvedRoot).startsWith('kodax-worktree-scan-test-')) {
+        throw new Error(`Refusing cleanup outside isolated test root: ${resolvedRoot}`);
+      }
+      await fs.rm(resolvedRoot, { recursive: true, force: true });
     }
   });
 });
