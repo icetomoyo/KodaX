@@ -24,6 +24,29 @@ from what the model sees.
 The implementation is in `de3d8ff9`, `dcbe2b83` and `9055a4c1`; deterministic
 capture, E2E and bounded evaluation support are in `be23099c`.
 
+## Consolidated file tools and discovery
+
+The follow-up against `351e8675` exposes builtin `edit(path, edits[])` and
+`changed_diff(paths[])` to models, including single-item arrays. Legacy names
+and parameters remain executable for SDK callers and existing histories.
+Aliases disappear only when both builtin entries are available; extension
+overrides and legacy-only surfaces retain their own contracts.
+
+Single-item edits retain precise anchor diagnostics and automatic recovery.
+Multi-item edits remain sequential in memory, with zero writes on match failure
+and one trusted commit on success. The actual invoked tool name reaches host
+authorization and diff metadata. Diff arrays retain untracked files, per-path
+limits and continuation. No shell replacement or new patch grammar is added.
+
+Search, descriptions and tool tables share the current executable inventory
+and host ceiling, separate from model-only exposure. Keyword filtering precedes
+ranking and limits. Discovery never grants execution permission. Lazy LSP
+startup is not absence of capability. LSP schemas remain resident; full-schema
+disclosure is separate future work.
+`todo_get` returns existing owner provenance without assigning new owners.
+Plans name concrete deliverables; descriptions clarify otherwise unclear scope
+or constraints. This does not add an owner scheduler or recreate resumed plans.
+
 ## Evidence and limits
 
 The real provider SDK JSON capture covers four fixtures, SA/AMA, and
@@ -41,10 +64,32 @@ samples establish neither statistical non-inferiority nor full-task quality.
 The original live low-level SDK smoke failed because its harness omitted the
 production text mutation host; the baseline refused the same edit. Production
 Runtime replay with the recorded read/edit and a scripted final response passed.
-The corrected live Runtime smoke and live resume were not evaluated. Codex's
-matching complete wire capture remains absent; no cross-product total ratio is
-claimed. The historical shared evaluation ceiling was 35 logical calls,
+Live resume was not evaluated. Codex's matching complete wire capture remains
+absent; no cross-product total ratio is claimed. The historical shared evaluation ceiling was 35 logical calls,
 including a 32-call generation ceiling and bounded smoke; no budget is reset.
+
+The follow-up pilot used `kimi-code/kimi-for-coding` and
+`zai-coding/glm-5.3`, explicitly requested routes, against the frozen `351e8675`
+baseline. Three complete pairs produced two candidate preferences and one tie
+(one response per arm). Kimi delivered a concrete pending plan immediately;
+reading first in the baseline remains lawful, so this is next-response value,
+not proof of full-task failure. GLM's candidate used unique function anchors;
+the baseline's second bare return anchor became ambiguous after the first
+replacement. Zero-network Runtime replay confirmed the baseline batch left the
+file unchanged and the candidate edited both functions. GLM's plan pair stopped
+on a connection error: one failed request, no second arm, no quality verdict.
+
+Successful paired API inputs decreased by 4.67%–4.69%; latency did not improve
+uniformly. Complete OpenAI Runtime request JSON decreased by a further 3,743
+bytes for SA (4.6%) and 3,736 bytes for AMA (3.8%). Both candidate-only live
+Runtime smokes completed read → one atomic edit → actual Node test → honest
+final response, with exact file content and test output checked. These two
+controlled four-response cases verify execution, not comparative task quality.
+The new revision used 15/18 permitted calls, conservatively charged 244,264
+tokens including one unknown-usage failure, and $0.00820 nominal reference cost
+for coding plans; this is not a subscription bill. Historical charges remain
+unchanged. These small samples cannot establish overall intelligence
+non-inferiority; generation-length and latency variance remain relevant limits.
 
 ## Regression checks
 
@@ -56,6 +101,11 @@ test-only mutation fallback and `result.success` do not certify file changes.
 
 Any future disclosure or interface consolidation must preserve error recovery,
 capability/permission boundaries, SDK compatibility and child/resume behavior.
-General deferred search still has a known policy consistency gap; fix that
-before hiding additional schemas. Exploration notes and transient data stay out
+Discovery now applies the same host, exclusion and policy ceiling to tables,
+search, descriptions and dispatch. Full-suite regression also caught and fixed
+legacy incomplete-edit detection after introducing conditional schemas. The
+evaluation worktree cleaner now validates a dedicated directory prefix, so it
+cannot mistake `kodax-eval-dumps` for a worktree; its test preserves an evidence
+sentinel. Raw evidence is additionally mirrored outside that namespace.
+Exploration notes and transient data stay out
 of the tracked documentation; evaluation raw belongs in OS temporary storage.
