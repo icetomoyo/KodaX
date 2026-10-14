@@ -202,7 +202,7 @@ re-review and delivery have not passed all model smoke checks.
 
 See [support, setup and examples](../../docs/ARTIFACT_SDK.md),
 [pre-release contract migration](../../docs/SDK_MIGRATION.md#artifact-sdk-契约迁移2026-10-13)
-and [E2E evidence/known schema gap](../../docs/research/automatic-visual-review-e2e-2026-10-13.md).
+and [acceptance boundaries](../../docs/test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#automatic-visual-review-acceptance-boundary).
 These additions ship in `v0.7.97-alpha.5`; an installed npm package from an
 earlier version does not include them.
 

@@ -109,7 +109,7 @@ node scripts/openrouter-reasoning-live.mjs --run rejection
 
 两个 404 的结构化元数据均为初始端点数 1、失败于 `Filter by Parameters`。这进一步支持“当前 OpenRouter 路由没有可路由的 reasoning 参数支持”，不是从无 thinking 或 HTTP 200 得出的判断。普通请求的控制可能被忽略，符合官方默认路由语义；底层匿名模型是否做不可见内部推理仍未证实。这些直连诊断未改变 SDK 策略，泛化的 404 不写入档位拒绝缓存。
 
-追加证据：临时根目录下 `2026-09-17T06-15-15.314Z-strict-routing` 和 `official-model-metadata.json`。追加 3 次请求（429×1、404×2），0 tokens / 0 USD；与前述 E2E 合计 43 次 HTTP 请求，生成用量不变。详细官方引用和未解问题见 [Union Alpha reasoning 调研](research/union-alpha-reasoning.md)。
+追加证据：临时根目录下 `2026-09-17T06-15-15.314Z-strict-routing` 和 `official-model-metadata.json`。追加 3 次请求（429×1、404×2），0 tokens / 0 USD；与前述 E2E 合计 43 次 HTTP 请求，生成用量不变。上述结论限于 2026-09-17 的元数据和实际路由，不证明后续模型支持状态；底层匿名模型是否执行不可见内部推理仍未解决。
 
 ## Standards
 

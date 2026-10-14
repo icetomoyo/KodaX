@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-10-13_
+_Last Updated: 2026-10-14_
 
 ---
 
@@ -17,7 +17,11 @@ grounded visual findings, but full repair/re-review/delivery has not passed all
 checks under the recorded budgets/provider failures. Native Word/WPS fidelity
 remains unverified. These are not claims that Space cannot trigger review or
 that every CLI lacks tools; the default adapter inspection was local in scope.
-See [evidence and remaining work](research/automatic-visual-review-e2e-2026-10-13.md)
+For static locators the schema advertises `state/sequence/target`, while the SDK
+only accepts the kind-specific `kind/region` fields; the captured request was
+rejected as `Unknown artifact field.` Nested `source/raster` objects and the
+six-digit color format without `#` also need precise model-facing contracts.
+See [acceptance evidence and limits](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#automatic-visual-review-acceptance-boundary)
 and [actual SDK support](ARTIFACT_SDK.md). No production fix is claimed by this
 documentation update.
 
@@ -2155,7 +2159,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
   bundle entry points; additional bundle runs verify downward traversal through
   intervening history. They await the actual Host terminal state and verify
   activity/prompt updates while browsing. See
-  [repair verification](research/contract-browse-fix-verification-2026-09-26.md).
+  [repair verification](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#canonical-history-and-browse-regressions).
 - **Tests added**: `tests/repl-pty-acceptance.mjs --prompt-scroll-only` checks
   wheel, PageUp, End and draft retention in ordinary mode. The new
   `tests/repl-history-browse-acceptance.mjs` adds the live retention cases;
@@ -2807,9 +2811,8 @@ are not guessed or deleted by SID prefix. This does not grant the independent
 account transparent access to user credentials; existing host authorization
 remains available. Installed-build/customer confirmation is still required.
 
-See [final scope and evidence](research/windows-sandbox-acl-design-alternatives.md),
-[concurrency comparison](research/windows-read-acl-concurrency.md), and
-[regression guide](test-guides/ISSUE_333_v0.7.96_REGRESSION_GUIDE.md).
+See the [accepted concurrency boundary](ADR.md#adr-070-windows-sandbox-coordination-is-setup-scoped-or-capability-scoped)
+and [final scope, migration and regression evidence](test-guides/ISSUE_333_v0.7.96_REGRESSION_GUIDE.md).
 
 <!-- Full details for each issue - REQUIRED for all issues -->
 

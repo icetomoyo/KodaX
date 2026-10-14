@@ -11,7 +11,7 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 > no quality API, verifier daemon or persistent renderer is added. Core
 > startup stays free of renderer loading/probes. Busy daemon preflights are
 > bounded before redundant full state scans (Issue 367). Read the
-> [accepted design](research/unified-artifact-sdk-design.md)
+> [accepted design](designs/unified-artifact-sdk.md)
 > and [delivered support/limits](ARTIFACT_SDK.md); evidence readiness is not visual approval.
 >
 > **v0.7.97-alpha.4 release addendum:** FEATURE_301 ships the independent
@@ -6471,6 +6471,11 @@ lock.
    owner and unrelated entries. Pending cleanup retains old SID, nonce and
    roots across retries; only that cleanup requires idle sandbox processes.
    Generation-8/9 protocol-only in-place upgrades retain their existing behavior.
+   The persistent ACL set does not vary between read and write admission:
+   both paths publish a whole DACL from a prior snapshot, so a late RX-only
+   publisher could replace a concurrent writer's grants. Changing trustee or
+   merge mode alone does not make that publication atomic. The SSH exclusion
+   repair therefore preserves the existing token and stable-set contract.
 3. Windows per-command `denyRead` is rejected as structured
    `unsupported_policy` before doctor, setup, DACL mutation, or target start.
    `WRITE_RESTRICTED` consults restricting SIDs for writes, not reads, so a

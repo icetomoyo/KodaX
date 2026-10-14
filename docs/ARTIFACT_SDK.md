@@ -36,7 +36,7 @@ Supported file rendering runs headlessly: a terminal-only system can produce PNG
 | Local HTML | `interactive`: actual `target`, `state: 'loaded'`, explicit `viewport: [width, height]`, `sequence: 0` |
 | SVG SMIL | `temporal`: `time` in seconds; samples do not certify continuous playback |
 
-For example, `sdk.capture({ target: 'diagram.svg', kind: 'static', locators: [{ kind: 'static', region: [0, 0, 320, 180] }] })` requests actual region pixels. `expectedSource`, when supplied, must be the current `VisualSource`, not a bare file hash. Use the public SDK types/validation; the model-facing locator schema still has a documented [schema/decoder mismatch](research/automatic-visual-review-e2e-2026-10-13.md#确认的参数契约缺口).
+For example, `sdk.capture({ target: 'diagram.svg', kind: 'static', locators: [{ kind: 'static', region: [0, 0, 320, 180] }] })` requests actual region pixels. `expectedSource`, when supplied, must be the current `VisualSource`, not a bare file hash. Use the public SDK types/validation. The model-facing static locator schema currently advertises `state/sequence/target` although the decoder accepts only `kind/region`; those extra fields reject. `readEvidence` requires structured `source/raster` arguments, and colors use six hexadecimal digits without `#`. See the [acceptance boundary](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#automatic-visual-review-acceptance-boundary).
 
 ## Trusted standalone Node host
 
@@ -67,7 +67,7 @@ Browser/LibreOffice executable paths and workspace authority belong to trusted r
 
 ## Existing shared KodaX Host
 
-KodaX's shared Agent guidance calls for visual review during applicable tasks without requiring a user slash command. File backend availability still requires this optional adapter to be registered once in the trusted Host and a provider that accepts actual images. Building/linking the workspace alone does not register it in a user's Host. SDK `render/capture/readEvidence` prepare and deliver evidence; the calling Agent owns visual judgment, repair and final review. Missing capabilities remain unverified. See [natural-task model observations and current integration gaps](research/automatic-visual-review-e2e-2026-10-13.md).
+KodaX's shared Agent guidance calls for visual review during applicable tasks without requiring a user slash command. File backend availability still requires this optional adapter to be registered once in the trusted Host and a provider that accepts actual images. Building/linking the workspace alone does not register it in a user's Host. SDK `render/capture/readEvidence` prepare and deliver evidence; the calling Agent owns visual judgment, repair and final review. Missing capabilities remain unverified. See the [automatic visual review acceptance boundary](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#automatic-visual-review-acceptance-boundary).
 
 Register once in the trusted Host extension, using its admitted managed execution:
 
@@ -105,4 +105,4 @@ Pass an `AbortSignal` to any SDK operation. The Host port stops only its admitte
 
 PPT operation inputs and their supported edits remain. `ArtifactRef.kind: 'presentation'` becomes content `format: 'pptx'`; evidence uses `source` instead of a bare batch `sourceHash`; file hashes retain their meaning. Capabilities are structured records instead of descriptive string maps. Rasters require actual dimensions, and paginated evidence requires layout. `capture` uses a kind-matched `locators` array instead of separate pages/states/times/viewport fields. Add `prepare` and `readEvidence`; do not hand-read returned paths in a shared Host UI. These are explicit pre-release contract changes, not alias-based compatibility layers. Package versions are unchanged by this implementation and remain under the repository's release workflow.
 
-See [implementation design](research/unified-artifact-sdk-design.md) and [regression guide](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md).
+See [implementation design](designs/unified-artifact-sdk.md) and [regression guide](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md).

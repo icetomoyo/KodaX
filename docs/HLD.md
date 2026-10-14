@@ -570,7 +570,7 @@ and checked binary evidence reading. PPTX authoring/limited edits and PDF,
 image/SVG, candidate DOCX, local HTML/SMIL backends run on demand and headlessly;
 core startup loads no renderers. The Agent reviews actual pixels and owns repairs;
 mechanical readiness does not certify quality. See [support and integration](ARTIFACT_SDK.md)
-and the [accepted design](research/unified-artifact-sdk-design.md).
+and the [accepted design](designs/unified-artifact-sdk.md).
 
 ## 4. Provider Architecture
 
@@ -639,6 +639,12 @@ it to `prompt_cache_key`. Unverified compatible endpoints remain unchanged.
 
 The coding runtime is the only layer that knows about KodaX's coding-product
 tool bundle and user-facing task semantics.
+
+The [first-turn input contract](designs/first-turn-input-optimization.md) separates
+the raw SDK registry from the smaller model-facing todo interface. Tool schemas
+own parameter semantics; Worker instructions retain planning, scope, collaboration,
+resume and verification. Capability-aware guidance uses the executable tool set;
+it does not replace execution permissions.
 
 Generated constructed handlers are a narrower coding-layer isolation case.
 Each active handler runs in a persistent Worker, while `ctx.tools.*` calls

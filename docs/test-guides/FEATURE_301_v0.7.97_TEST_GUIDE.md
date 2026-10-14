@@ -59,7 +59,30 @@ Final frozen-source full suite: 1,165 files passed, one skipped; 16,589 tests pa
 
 `KODAX_ARTIFACT_E2E=1 node tests/artifact-auto-review-smoke.eval.mjs` is a separate opt-in Layer 3.5 check with ZAI GLM-5.3-Flash and DeepSeek Flash. It asks only for an ordinary PPT title edit, without slash/review/tool hints, through one shared Host and two Sessions. Provider requests retain actual image hashes. Shell/child restrictions and fixed call/token/time bounds are part of the fixture. No general success percentage is inferred.
 
-2026-10-13 observations prove autonomous rendering/image delivery, and each model produced a grounded occlusion finding in a shared-Host revision. **Full repair/re-review/delivery has not passed**: preserve the registry-interference diagnostic run, output-budget calibration, final call cutoff and provider timeout rather than claiming green E2E. See [actual evidence, default adapter gap and schema mismatch](../research/automatic-visual-review-e2e-2026-10-13.md). The earlier Kimi smoke explicitly requested visual review and cannot prove automatic task-triggering.
+2026-10-13 observations prove autonomous rendering/image delivery, and each model produced a grounded occlusion finding in a shared-Host revision. **Full repair/re-review/delivery has not passed**: preserve the registry-interference diagnostic run, output-budget calibration, final call cutoff and provider timeout rather than claiming green E2E. The earlier Kimi smoke explicitly requested visual review and cannot prove automatic task-triggering.
+
+### Automatic visual review acceptance boundary
+
+Historical source `27d08788`, Windows, one explicitly enabled shared Artifact Host
+and two AMA Sessions: ZAI GLM-5.3-Flash and DeepSeek Flash received an ordinary PPT
+title-edit request without review/skill/tool hints. Both rendered current PNGs
+that matched the actual provider image bytes and produced a grounded title-
+occlusion finding. This observes automatic triggering, not a full quality gate.
+
+The three revisions included extension-lifecycle interference, output-budget
+calibration, a GLM transport timeout and a DeepSeek call cutoff. The accumulated
+41 physical requests include those diagnostic failures. Full repair, fresh
+re-review and final delivery remain unproven; no general success rate is claimed.
+Raw requests/images and assessments remain in OS temporary storage, not Git.
+
+The fixture supplied the optional adapter; a local default-CLI configuration
+inspection did not find it. That inspection does not establish the capabilities
+of Space or other users' Hosts. Building/linking alone does not register it.
+The static locator schema advertises fields rejected by its decoder. Structured
+source/raster arguments and six-digit colors without `#` also need clearer
+model guidance; see the [SDK contract](../ARTIFACT_SDK.md#operations-and-actual-support).
+New acceptance must verify actual image delivery, repair, fresh evidence and
+honest final scope, while keeping shared Host authority and hard budgets.
 
 ## Spec
 

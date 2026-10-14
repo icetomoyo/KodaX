@@ -43,6 +43,9 @@ pnpm-workspace.yaml
 .electron-smoke/
 # Session/forensic scratch — keep outside the repo (AGENTS.md layout has no scratch dir).
 scratch/
+# Local research drafts, comparisons and diagnostic artifacts.
+# Accepted designs and regression contracts belong in tracked docs/ and tests/.
+docs/research/
 
 # Logs
 *.log

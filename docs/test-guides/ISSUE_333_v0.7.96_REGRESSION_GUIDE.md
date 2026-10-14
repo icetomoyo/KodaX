@@ -67,8 +67,11 @@ roots/SSH paths. Missing nonce history, moved paths or unrelated unknown SIDs
 are not guessed or deleted by prefix. Do not claim arbitrary historical ACLs
 have been recovered without inspecting those cases.
 
-See [final design and historical experiments](../research/windows-sandbox-acl-design-alternatives.md)
-and [why the RX implementation was not copied](../research/windows-read-acl-concurrency.md).
+See [ADR-070](../ADR.md#adr-070-windows-sandbox-coordination-is-setup-scoped-or-capability-scoped).
+Read/write admission keeps the same persistent ACL set: independent whole-DACL
+updates from old snapshots can otherwise overwrite a concurrent writer's
+grants. A different trustee or GRANT_ACCESS does not make publication atomic.
+The SSH repair does not adopt a read-only RX publication algorithm.
 
 ## Local validation result
 

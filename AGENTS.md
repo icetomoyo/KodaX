@@ -74,6 +74,10 @@ Allowed `.md` files — anything else goes under `docs/`:
 - **`docs/` (required)**: `PRD.md`, `ADR.md`, `HLD.md`, `DD.md`, `FEATURE_LIST.md`, `features/v{VERSION}.md`, `test-guides/*.md` — optional: `KNOWN_ISSUES.md`
 - **Test guide naming**: `FEATURE_{ID}_{VERSION}_TEST_GUIDE.md` / `ISSUE_{ID}_{VERSION}_REGRESSION_GUIDE.md`
 
+`docs/research/` is local exploration and is not tracked. Promote accepted designs
+to `docs/designs/` or existing formal documents; keep executable regressions in
+tests/benchmark. LLM eval raw remains in OS temporary storage per EVAL_GUIDELINES.
+
 ## Test Requirements
 
 - **Coverage**: ≥ 80%

@@ -147,4 +147,4 @@ The automatic Sidecar Verifier is retired. Remove `verifierLog`, `/verifier-log`
 
 调用 `readEvidence` 获取经新鲜度、来源和 PNG 校验的实际图片；共享 Host UI 不自行读返回路径。附件 `image.offset/totalLength/nextOffset` 和 `attachmentOffset` 按字节计数，与正文 UTF-16 偏移分开。客户端校验每块身份、哈希、尺寸和连续偏移，拼接后再次校验完整图片；旧 Host 缺能力时明确失败。
 
-自动视觉审查由共享 Agent 指引及可用工具触发，不要求 slash；SDK 本身不另发起模型判官请求。文件渲染可无界面运行，仍需可用 renderer 和支持图片输入的 Provider。`ready`/覆盖检查不表示质量通过。完整支持矩阵、DOCX 保真限制、示例和取消语义见 [Artifact SDK](ARTIFACT_SDK.md)；自然任务 E2E 的未完成闭环及工具 schema 缺口见[实测记录](research/automatic-visual-review-e2e-2026-10-13.md)。
+自动视觉审查由共享 Agent 指引及可用工具触发，不要求 slash；SDK 本身不另发起模型判官请求。文件渲染可无界面运行，仍需可用 renderer 和支持图片输入的 Provider。`ready`/覆盖检查不表示质量通过。完整支持矩阵、DOCX 保真限制、示例和取消语义见 [Artifact SDK](ARTIFACT_SDK.md)；自然任务 E2E 的未完成闭环及工具 schema 缺口见[验收边界](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#automatic-visual-review-acceptance-boundary)。

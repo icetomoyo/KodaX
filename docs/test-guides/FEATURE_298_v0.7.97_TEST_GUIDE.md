@@ -4,7 +4,7 @@
 
 ## 2026-09-14 主线融合复核
 
-完整分析和边界见 [复核报告](../research/product-client-reaudit-2026-09-14.md)。补充以下人工场景，均使用专用测试 HOME 和已有共享 Host：
+已实施的消费者修复以以下公开接缝和人工场景验收，均使用专用测试 HOME 和已有共享 Host：
 
 1. 一个窗口等待问题，第二个客户端回答该问题。classic 窗口应撤掉旧输入；Host 下一问题可立即作答。关闭观察后输入旧答案不得发出 Host 答复。
 2. 忙时排入 `说明 @"带空格的图片.png"`，重新挂接同一 Session 后按 ↑ 取回，修改正文再提交。图片引用应可见、仅一份，后续模型请求仍有该图片附件。
@@ -13,6 +13,45 @@
 5. ACP 进程与既有 Host 的 repo-intelligence 环境值不同。ACP 发起 prompt 后，Host Session 的模式/trace 开关应采用 ACP 调用配置。
 
 上述公开接缝已有自动回归；真实终端操作通过与否应单独记录，不能以单测成绩代替。
+
+## Canonical history and browse regressions
+
+The 2026-09-26 repairs preserve one Host authority and bounded live views.
+Verify these public seams:
+
+| Contract | Existing regression |
+|---|---|
+| Chunked UTF-8/JSON assembly above 256 KiB; complete canonical message blocks, bounded live window | `src/sdk-client.history-boundaries.test.ts`, `packages/repl/src/ui/utils/restore-history.test.ts` |
+| Evicted input reads use stable input identity; ambiguous legacy history does not borrow a newer source | `src/sdk-client.input-read-source.test.ts` |
+| Failed Session creation releases newly acquired MCP resources, including cleanup failures | `src/sdk-client.mcp-create-rollback.test.ts` |
+| Product workflow defaults and live settings agree; old Host negotiation fails explicitly | `src/sdk-client.workflow-product-settings.test.ts` |
+| Frozen browse pages retain identity/revision, recover evicted pages in order and reject late reads | `tests/repl-history-browse-acceptance.mjs` |
+
+Observe's bounded live window is not complete browse history. Await real Run
+termination, check activity/input remain live while browsing, and preserve the
+screen on expired or ambiguous reads. Failed diagnostics do not certify a fix.
+
+The ordinary browse window is capped at four pages, 800 items, 2,000,000
+characters and 128 newer-page cursors; anchor hydration is capped at 1,000,000
+characters. If the reading position cannot be recovered within these limits,
+preserve the current screen and use existing Transcript full-text reads.
+This does not recover never-persisted content or assign stable input identity
+to ambiguous legacy messages. Automated paging does not certify physical mouse behavior.
+
+## Mainline integration acceptance boundaries
+
+The 2026-10-02 candidate `f1bb8eb87b7f367c56a799847b77224baab90a0e`
+retained Host ownership of interruption, opaque tool-call identity and cleanup
+unknowns. Tests covered actual Client IPC for SA/AMA restart, repeated callId
+ownership and off-window reads, plus layered suites, 39 bundle checks and 50
+Ink/classic PTY cases. Passing these did not certify other platforms or release.
+
+The 2026-10-07 merge adopted the released v0.7.96 package baseline while retaining
+FEATURE_298's contract and T38–T56 state. Frozen-output checks passed 218 fast
+files / 2,203 tests and 39 bundle tests. Crash-recovery fixtures permit only
+bounded read retries for the contract's `data_changed/resync_required`, never
+lock deletion or resubmission. Customer/installed-build and cross-platform
+manual acceptance remain separate; no new verification is claimed here.
 
 ## Windows 终端验收
 

@@ -182,4 +182,4 @@ node --test tests/bundled-product-exit.test.mjs
 
 当前支持 PPTX 创作和限定编辑、PDF/图片/SVG 取证、DOCX 轻量分页、本地 HTML 加载视口与 SVG SMIL 时间采样。DOCX 的实际页数属于渲染证据，Word/WPS 保真仍未验证；新格式没有通用编辑承诺。`prepare` 是显式准备，正常连接/启动不加载渲染依赖。具体类型、安装/注册示例、支持矩阵及 alpha.4 tag 之后的契约变更见 [Artifact SDK](ARTIFACT_SDK.md)。
 
-共享 Agent 指引可以在适用任务中自动触发视觉审查，无需用户输入 slash；Space 或 CLI 必须实际提供取证工具及图片输入能力。文件取证可在纯 terminal 系统无界面执行，不等于已实现 terminal 表面的 capture。SDK 返回 `ready` 或 Run 终态均不认证视觉质量，修复与复查归现有 Agent。两模型已观察到自动取图和遮挡发现，完整修复/复查/交付尚未全部验证通过，详见 [E2E 范围与缺口](research/automatic-visual-review-e2e-2026-10-13.md)。
+共享 Agent 指引可以在适用任务中自动触发视觉审查，无需用户输入 slash；Space 或 CLI 必须实际提供取证工具及图片输入能力。文件取证可在纯 terminal 系统无界面执行，不等于已实现 terminal 表面的 capture。SDK 返回 `ready` 或 Run 终态均不认证视觉质量，修复与复查归现有 Agent。两模型已观察到自动取图和遮挡发现，完整修复/复查/交付尚未全部验证通过，详见[验收边界](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#automatic-visual-review-acceptance-boundary)。
