@@ -773,6 +773,13 @@ export function restoreSessionContentItems(
 ): ClientViewItem[] {
   if (!data) return [];
   const historyMessages = conversation && conversation.length > 0 ? conversation : data.messages.slice(-30);
+  const userAttachments = new Map<string, NonNullable<ClientViewItem['attachments']>>();
+  for (const message of historyMessages) {
+    if (message.role !== 'user' || message.inputId === undefined || !Array.isArray(message.content)) continue;
+    const images = message.content.flatMap(block => block.type === 'image'
+      ? [{ kind: 'image' as const, path: block.path, ...(block.mediaType ? { mediaType: block.mediaType } : {}) }] : []);
+    if (images.length > 0) userAttachments.set(message.inputId, images);
+  }
   const committedOutputs = committedSessionOutputIds(data, conversation ?? []);
   const tools = canonicalTools(historyMessages);
   const lastAssistant = [...historyMessages].reverse().find(message => message.role === 'assistant');
@@ -844,7 +851,8 @@ export function restoreSessionContentItems(
     }
     if (item.type === 'user' && item.inputId !== undefined) {
       return [{ id: `${sessionId}:input:${item.inputId}`, type: 'user', text: item.text,
-        inputId: item.inputId, ...(item.timestamp !== undefined ? { timestamp: item.timestamp } : {}) }];
+        inputId: item.inputId, ...(item.timestamp !== undefined ? { timestamp: item.timestamp } : {}),
+        ...(userAttachments.has(item.inputId) ? { attachments: userAttachments.get(item.inputId) } : {}) }];
     }
     let previous: ClientViewItem | undefined;
     if (item.inputId !== undefined) {

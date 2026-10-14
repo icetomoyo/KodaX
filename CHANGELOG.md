@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve user image references when restoring canonical accepted inputs into the public Session view. Resolve attachments by the original inputId, retaining item identity, order and text, including repeated identical prompts with different images.
+
 ---
 
 ## [0.7.97-alpha.5] - 2026-10-13

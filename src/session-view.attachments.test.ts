@@ -4,7 +4,25 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, it } from 'vitest';
 import type { ClientViewItem } from '@kodax-ai/coding/client-contract';
-import { SessionViewOwner } from './session-view.js';
+import { SessionViewOwner, restoreSessionViewItems } from './session-view.js';
+import type { KodaXSessionData } from '@kodax-ai/agent';
+
+it('retains canonical user image references for distinct accepted inputs in the current view', async () => {
+  const data: KodaXSessionData = { title: 'Images', gitRoot: '', messages: [
+    { role: 'user', inputId: 'first', content: [{ type: 'text', text: 'inspect' }, { type: 'image', path: '/first.png', mediaType: 'image/png' }] },
+    { role: 'user', inputId: 'second', content: [{ type: 'text', text: 'inspect' }, { type: 'image', path: '/second.png', mediaType: 'image/png' }] },
+  ] };
+  const owner = new SessionViewOwner(async () => ({ session: { id: 'images', title: data.title }, settings: {},
+    items: restoreSessionViewItems('images', data, data.messages), queue: [], interactions: [], runs: [] }), async () => {});
+  let view: import('@kodax-ai/coding/client-contract').ClientSessionView | undefined;
+  const observation = await owner.observe('images', value => { view = value; });
+  try {
+    expect(view!.items.map(item => ({ id: item.id, attachments: item.attachments }))).toEqual([
+      { id: 'images:input:first', attachments: [{ kind: 'image', path: '/first.png', mediaType: 'image/png' }] },
+      { id: 'images:input:second', attachments: [{ kind: 'image', path: '/second.png', mediaType: 'image/png' }] },
+    ]);
+  } finally { observation.close(); await owner.close(); }
+});
 
 it('reads only the image attached to a known Host item with exact bytes and hash', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-client-image-'));
