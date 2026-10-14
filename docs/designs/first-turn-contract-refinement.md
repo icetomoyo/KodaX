@@ -2,6 +2,8 @@
 
 2026-10-14；设计基线 `cded4799`。本阶段完成测量、候选契约和实施边界设计，尚未修改产品行为。DSH Minimal 不作为目标。
 
+后续 [Codex 框架对标](codex-harness-parity.md) 已零网络确认默认 SA 的协作展示/宿主绑定不一致及 native/bridge 调度差异。完整 schema 延迟披露前先修这些窄边界；本文件的现状与 r3 数字保留原场景，新增 SA 合并预算另列，既定 18 次评测上限不自动扩大。
+
 ## 完整请求基线
 
 采用同一 `countTokens` 估算完整序列化请求，包含工具、SDK、说明、任务与包装；不是模型 tokenizer、API usage 或 Codex 桌面上下文显示值。
