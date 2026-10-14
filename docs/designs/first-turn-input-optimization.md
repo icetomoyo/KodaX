@@ -81,7 +81,12 @@ on a connection error: one failed request, no second arm, no quality verdict.
 
 Successful paired API inputs decreased by 4.67%–4.69%; latency did not improve
 uniformly. Complete OpenAI Runtime request JSON decreased by a further 3,743
-bytes for SA (4.6%) and 3,736 bytes for AMA (3.8%). Both candidate-only live
+bytes for SA (4.6%) and 6,915 bytes for AMA (7.0%), including the final host
+capability filter. Zero-network recapture of the committed implementation gives
+78,015 bytes / 19,574 estimated tokens for SA and 91,963 bytes / 23,067 estimated
+tokens for AMA in the OpenAI Runtime fixture. These estimates include JSON
+framing and use the project heuristic, not a provider tokenizer.
+Both candidate-only live
 Runtime smokes completed read → one atomic edit → actual Node test → honest
 final response, with exact file content and test output checked. These two
 controlled four-response cases verify execution, not comparative task quality.
