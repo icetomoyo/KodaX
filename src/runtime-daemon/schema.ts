@@ -1046,6 +1046,7 @@ function transcriptSearchResultSchema(): RuntimeDaemonJsonSchema {
 
 function createSessionParamsSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
+    draft: booleanSchema,
     mcpServers: objectAnySchema,
     temporary: booleanSchema,
     sessionId: stringSchema,

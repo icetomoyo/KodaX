@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-10-13_
+_Last Updated: 2026-10-14_
 
 ---
 
@@ -26,6 +26,44 @@ documentation update.
 Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
+
+## Issue 368: Unsubmitted REPL Sessions leave empty persisted history
+
+- Priority: Medium
+- Status: Resolved in source; SDK publication pending
+- Introduced: v0.7.97 unified Host migration; eager `/new` in `3301a452` (2026-09-06), empty-title startup creation in `0914f589` (2026-09-08); present in v0.7.97-alpha.1
+- Created / Resolved: 2026-10-14
+- Fixed: post-v0.7.97-alpha.5 source (unreleased)
+
+REPL startup and `/new` previously persisted metadata before any input was
+submitted, leaving unnamed empty Sessions in Space. The production command
+binding now creates SDK drafts, with the Host advertising `sessionDrafts:1`.
+Session data, Actor CAS state and settings remain in memory until a valid user
+input is accepted and saved. Explicit durable Session creation retains its
+existing meaning. Rejected input and closing an unsubmitted draft leave no
+history; deleting a draft permits reuse of its ID.
+
+Settings stay authoritative during promotion so concurrent reads cannot reset
+them before they are saved. Tests cover the real shared Host, production REPL
+binding, invalid input, canonical input idempotency, draft deletion and settings
+restoration after Host restart. Space Issue 220 covers existing empty records.
+Follow-up review closed two admission gaps: low-level coding/managed Runs now
+save the initial canonical input and settings before Provider dispatch, and a failed
+promotion retries the already-saved input without appending another message.
+Reusing that input ID for different content is rejected before execution.
+See the [regression guide](test-guides/ISSUE_368_v0.7.97_REGRESSION_GUIDE.md).
+The next SDK release must include both this repair and `83aafb22` (restored user
+image references); no new npm version is claimed by this source repair.
+
+Git history confirms the lifecycle regression: `3301a452` wires both REPL
+surfaces' `/new` commands to durable Host creation; `0914f589` adds startup
+creation before view observation/settings, passing an empty title. The Host
+immediately saves `messages: []`. `5aa4956c` (2026-09-12) carries this behavior
+into the unified Product Client adapter. The v0.7.96 sources have no such
+Session command binding and keep new Sessions in local context until saving.
+The first release tag containing the two introducing commits is v0.7.97-alpha.1;
+alpha.5 retains the defect. This dates the code change, not the user's first
+affected installed version or the provenance of each individual old record.
 
 ## Issue 367: Daemon preflight repeatedly scans during an in-flight mutation
 
@@ -1790,6 +1828,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 368 | Medium | Resolved in source; publication pending | Unsubmitted REPL Sessions leave empty persisted history | v0.7.97-alpha.1; Host migration commits 3301a452 / 0914f589 | post-v0.7.97-alpha.5 source (unreleased) | 2026-10-14 | 2026-10-14 |
 | 367 | Medium | Resolved | Daemon preflight repeatedly scans during an in-flight mutation | observed in v0.7.97-alpha.4; first affected version unknown | `v0.7.97-alpha.5` | 2026-10-13 | 2026-10-13 |
 | 366 | Medium | Resolved | Host test readiness races cold Actor preparation | observed during v0.7.97-alpha.3 validation; first affected version unknown | post-v0.7.97-alpha.3 working tree (unreleased) | 2026-10-10 | 2026-10-10 |
 | 365 | High | Resolved | Provider fallback drops child usage and bypasses Workflow budgets | output-component regression in v0.7.97-alpha.3; earlier total loss | post-v0.7.97-alpha.3 working tree (unreleased) | 2026-10-10 | 2026-10-10 |
@@ -16612,7 +16651,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 246 (37 Open, 209 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 247 (37 Open, 210 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md

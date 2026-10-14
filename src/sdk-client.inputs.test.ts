@@ -13,6 +13,7 @@ import {
   type KodaXStreamResult,
 } from '@kodax-ai/llm';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
+import { createCliSessionCommands } from './cli-client-plane.js';
 import { FileSessionStorage } from '@kodax-ai/repl';
 import { createKodaXRuntime } from './sdk-runtime.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
@@ -35,6 +36,94 @@ class InputTestProvider extends KodaXBaseProvider {
     };
   }
 }
+
+it('concurrent settings reads cannot reset draft settings during input promotion', async () => {
+  await createCliSessionCommands(client).create({ sessionId: 'promoting', title: '', surface: 'repl', projectPath: homeDir });
+  await runtime.sessions.updateSettings('promoting', { permissionMode: 'plan', agentMode: 'sa' });
+  let entered!: () => void;
+  let release!: () => void;
+  const paused = new Promise<void>(resolve => { entered = resolve; });
+  const resume = new Promise<void>(resolve => { release = resolve; });
+  const save = FileSessionStorage.prototype.save;
+  const spy = vi.spyOn(FileSessionStorage.prototype, 'save').mockImplementation(async function (this: FileSessionStorage, id, data) {
+    await save.call(this, id, data);
+    if (id === 'promoting' && data.messages.some(message => message.inputId === 'promoting-input')) {
+      entered(); await resume;
+    }
+  });
+  const accepting = client.inputs.submit({ sessionId: 'promoting', inputId: 'promoting-input', text: 'Keep draft settings.' });
+  let duringPromotion: Awaited<ReturnType<typeof runtime.sessions.getSettings>>;
+  try {
+    await paused;
+    duringPromotion = await runtime.sessions.getSettings('promoting');
+  } finally {
+    release(); spy.mockRestore();
+    const accepted = await accepting;
+    await runtime.runs.await(accepted.runId!);
+  }
+  expect(duringPromotion!).toMatchObject({ permissionMode: 'plan', agentMode: 'sa' });
+  expect(await runtime.sessions.getSettings('promoting')).toMatchObject({ permissionMode: 'plan', agentMode: 'sa' });
+});
+
+it('REPL drafts remain absent from history after rejected input and become durable exactly once on acceptance', async () => {
+  const commands = createCliSessionCommands(client);
+  await commands.create({ sessionId: 'repl-draft', title: '', surface: 'repl', projectPath: homeDir });
+  const observation = await client.sessions.observe('repl-draft', view => {
+    expect(view.session.id).toBe('repl-draft');
+  });
+  observation.close();
+  expect(await storage.list()).toEqual([]);
+  await runtime.sessions.updateSettings('repl-draft', { permissionMode: 'full-access', agentMode: 'sa' });
+  await expect(client.inputs.submit({ sessionId: 'repl-draft', inputId: 'rejected', text: '   ' })).rejects.toThrow();
+  expect(await storage.list()).toEqual([]);
+  const input = { sessionId: 'repl-draft', inputId: 'first-draft-input', text: 'Process this draft once.' };
+  const accepted = await client.inputs.submit(input);
+  expect(accepted.state).toBe('submitted');
+  expect((await storage.load('repl-draft'))?.messages.filter(message => message.inputId === input.inputId)).toHaveLength(1);
+  await runtime.runs.await(accepted.runId!);
+  expect(await client.inputs.submit(input)).toEqual(accepted);
+  expect((await storage.list()).map(session => session.id)).toEqual(['repl-draft']);
+  expect(requests).toBe(1);
+  await client.disconnect();
+  await host.close();
+  await runtime.close();
+  const reopened = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
+  try {
+    expect(await reopened.sessions.getSettings('repl-draft')).toMatchObject({
+      permissionMode: 'full-access', agentMode: 'sa',
+    });
+  } finally { await reopened.close(); }
+});
+
+it.each([
+  { retryInputId: 'failed-promotion', text: 'Save settings.' },
+  { retryInputId: 'retry-promotion', text: 'Retry saving settings.' },
+])('retries draft settings persistence as $retryInputId after a failed promotion write', async ({ retryInputId, text }) => {
+  await createCliSessionCommands(client).create({ sessionId: 'retry-draft', title: '', surface: 'repl', projectPath: homeDir });
+  await runtime.sessions.updateSettings('retry-draft', { permissionMode: 'full-access', agentMode: 'sa' });
+  const settingsDir = path.join(homeDir, '.kodax', 'runtime', 'profiles', 'default', 'session-settings');
+  await writeFile(settingsDir, 'Block the settings directory for the first write.');
+  await expect(client.inputs.submit({ sessionId: 'retry-draft', inputId: 'failed-promotion', text: 'Save settings.' }))
+    .rejects.toThrow();
+  expect(requests).toBe(0);
+  expect((await storage.load('retry-draft'))?.messages.filter(message => message.inputId === 'failed-promotion')).toHaveLength(1);
+  await rm(settingsDir);
+  const input = { sessionId: 'retry-draft', inputId: retryInputId, text };
+  if (retryInputId === 'failed-promotion') {
+    await expect(client.inputs.submit({ ...input, text: 'A different intent.' })).rejects.toMatchObject({ code: 'conflict' });
+    expect(requests).toBe(0);
+  }
+  const accepted = await client.inputs.submit(input);
+  await runtime.runs.await(accepted.runId!);
+  expect(await client.inputs.submit(input)).toEqual(accepted);
+  expect(requests).toBe(1);
+  expect((await storage.load('retry-draft'))?.messages.filter(message => message.inputId === 'failed-promotion')).toHaveLength(1);
+  await client.disconnect(); await host.close(); await runtime.close();
+  const reopened = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
+  try {
+    expect(await reopened.sessions.getSettings('retry-draft')).toMatchObject({ permissionMode: 'full-access', agentMode: 'sa' });
+  } finally { await reopened.close(); }
+});
 
 it('accepts an immediate input once across clients and rejects reuse for a different intent', async () => {
   const second = await connectKodaXClient({ homeDir, endpoint: endpointPath });
@@ -87,6 +176,7 @@ beforeEach(async () => {
   host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
   endpointPath = endpoint.path;
   client = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
+  expect(runtime.capabilities?.sessionDrafts).toEqual({ version: 1 });
 });
 
 afterEach(async () => {

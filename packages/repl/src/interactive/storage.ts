@@ -2609,6 +2609,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
   private readonly configHome: string;
   private readonly sessionLocations: Map<string, SessionLocationState>;
   private readonly verifiedLocationMisses = new Map<string, SessionTopologyIdentity>();
+  private readonly drafts = new Map<string, SessionData>();
 
   /**
    * v0.7.46 — optional explicit project cwd for in-process embedders
@@ -3526,6 +3527,9 @@ export class FileSessionStorage implements KodaXSessionStorage {
     id: string,
     options: { readonly migrate?: boolean; readonly strict?: boolean } = {},
   ): Promise<ResolvedSessionSnapshot | null> {
+    const draft = this.drafts.get(id);
+    if (draft) return { data: cloneSessionDataForRead(draft), filePath: this.writeFilePath(id, draft),
+      activeMessageCount: draft.messages.length };
     if (options.migrate !== false) await this.ensureMigrated();
     const filePath = await this.resolveSessionLocation(id, options.strict === true);
     if (!filePath) {
@@ -4172,6 +4176,12 @@ export class FileSessionStorage implements KodaXSessionStorage {
       // instead of regressing `activeEntryId` (the dual-writer corruption).
       lineage: resolveSnapshotLineage(data, existing?.data.lineage),
     };
+    if (this.isDraft(id) && !merged.messages.some(message => message.role === 'user'
+      && (typeof message.content === 'string' ? message.content.trim().length > 0
+        : message.content.some(block => block.type === 'image' || (block.type === 'text' && block.text.trim().length > 0))))) {
+      this.drafts.set(id, structuredClone(merged));
+      return;
+    }
     if (existing !== null) {
       const existingIdentity = deriveProjectKeyFromData(existing.data);
       const nextIdentity = deriveProjectKeyFromData(merged);
@@ -4210,6 +4220,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
       verifiedTopology,
       reconciledLineage,
     );
+    this.drafts.delete(id);
     // The caller continues with the unslimmed lineage. Keep its count as the
     // append watermark even though storage moved old entries to the sidecar.
     await this.syncAppendStateFromFile(
@@ -4522,6 +4533,17 @@ export class FileSessionStorage implements KodaXSessionStorage {
 
   // ── Public API ──
 
+  isDraft(id: string): boolean { return this.drafts.has(id); }
+
+  /** Host-local draft: ordinary SDK creation keeps its existing durable semantics. */
+  async createDraft(id: string, data: SessionData): Promise<void> {
+    await this.serializedWrite(id, async () => {
+      if (this.drafts.has(id) || await this.readSession(id) !== null)
+        throw Object.assign(new Error(`Session already exists: ${id}`), { code: 'conflict' });
+      this.drafts.set(id, structuredClone({ ...data, lineage: createSessionLineage(data.messages, data.lineage) }));
+    });
+  }
+
   async save(id: string, data: SessionData): Promise<void> {
     await this.serializedWrite(id, async () => {
       await this.mergeAndWriteInternal(id, data);
@@ -4653,6 +4675,12 @@ export class FileSessionStorage implements KodaXSessionStorage {
           ...resolved.data,
           actorSnapshot: structuredClone(snapshot),
         };
+        if (this.isDraft(id)) {
+          lifecycle.canonicalObserver.beforeCommit();
+          this.drafts.set(id, structuredClone(updated));
+          lifecycle.canonicalObserver.afterCommit();
+          return;
+        }
         lifecycle.canonicalObserver.beginTiming('lineage');
         const lineageStartedAt = performance.now();
         let completeLineage: KodaXSessionLineage | undefined;
@@ -4915,6 +4943,12 @@ export class FileSessionStorage implements KodaXSessionStorage {
     const startedAt = Date.now();
     const operation = (async (): Promise<SessionReadSnapshot | null> => {
       await this.awaitOwnWrites(id, options, startedAt);
+      const draft = this.drafts.get(id);
+      if (draft) {
+        const revision = `draft:${id}:${createHash('sha256').update(JSON.stringify(draft)).digest('hex')}`;
+        return { data: cloneSessionDataForRead(draft), lineage: structuredClone(draft.lineage ?? null),
+          sourceRevision: revision, boundaryRevision: revision, sourceRevisionState: { version: 1, files: [] } };
+      }
       const mainPath = await this.resolveSessionLocation(id, true);
       if (mainPath === null) return null;
       return this.readFullSnapshotAtPath(id, mainPath, options.signal, false);
@@ -4986,6 +5020,8 @@ export class FileSessionStorage implements KodaXSessionStorage {
   }
 
   async load(id: string): Promise<SessionData | null> {
+    const draft = this.drafts.get(id);
+    if (draft) return cloneSessionDataForRead(draft);
     const resolved = await this.readSession(id);
     if (!resolved) {
       return null;
@@ -5155,6 +5191,8 @@ export class FileSessionStorage implements KodaXSessionStorage {
   }
 
   async loadFullLineage(id: string): Promise<KodaXSessionLineage | null> {
+    const draft = this.drafts.get(id);
+    if (draft) return structuredClone(draft.lineage ?? null);
     await this.ensureMigrated();
     return withKodaXFileLock(
       this.sessionWriteLockPath(id),
@@ -6115,6 +6153,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
       if (!resolved) return;
       this.assertActorFileOwner(resolved.data.actorSnapshot, expectedOwnerId);
 
+      if (this.drafts.delete(id)) return;
       const located = resolved.filePath;
       const targets: string[] = [];
       const addTarget = (target: string): void => {

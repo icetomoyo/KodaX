@@ -8,6 +8,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Keep new REPL Sessions as Host-local drafts until the first accepted user input is saved. Preserve draft settings and Actor CAS in memory, avoid empty history records after exit or rejected input, and persist settings on admission. CLI requires `sessionDrafts:1`; explicit durable SDK creation keeps its existing semantics.
+- Save initial draft inputs and settings before low-level Runs dispatch, preserve settings after restart, and reuse canonical inputs when retrying failed promotion instead of duplicating them.
+- Declare `relationship_scan.depth` as an integer range from 1 to 3 for cross-protocol tool schema compatibility, preserving numeric inputs and stream completion checks.
 - Preserve user image references when restoring canonical accepted inputs into the public Session view. Resolve attachments by the original inputId, retaining item identity, order and text, including repeated identical prompts with different images.
 
 ---

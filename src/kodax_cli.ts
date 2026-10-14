@@ -4636,7 +4636,7 @@ complete -c kodax -l version -d 'Show version'`);
     // and is never a product fallback.
     cliRuntime = await ensureKodaXRuntime({
       profile: 'default',
-      requirements: { productClient: 1 },
+      requirements: { productClient: 1, sessionDrafts: 1 },
       onStartupProgress: startupProgress === undefined ? undefined
         : (progress) => { startupProgress.update(cliStartupProgressMessage(progress)); },
       clientInfo: {

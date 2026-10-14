@@ -969,6 +969,7 @@ export interface ConnectKodaXRuntimeOptions {
 /** SDK facts that embedders can inspect before auto-starting a daemon. */
 export const KODAX_RUNTIME_SDK_CAPABILITIES = Object.freeze({
   productClient: 1,
+  sessionDrafts: 1,
   actorSettlementConvergence: 2,
   conversationHistory: 2,
   crashOutcomeModel: 2,
@@ -991,6 +992,7 @@ export interface RuntimeCapabilityRequirements {
   readonly productExecutionAuthorization?: 1 | 2;
   /** Unified product business operations and current-view lifecycle. */
   readonly productClient?: 1;
+  readonly sessionDrafts?: 1;
   /** Reject hosts that do not advertise an installed external Agent executor plane. */
   readonly externalAgents?: boolean;
   /** Require owner/revision-fenced external Agent registration administration. */
@@ -3597,6 +3599,8 @@ interface RuntimeRunRecord {
   readonly productExecutionKey?: string;
   readonly productSession?: boolean;
   readonly productInput?: { readonly inputId: string; readonly digest: string };
+  /** Initial input already saved by admission, including a low-level draft Run. */
+  canonicalInputId?: string;
   readonly runId: string;
   readonly sessionId: string;
   turnId?: string;
@@ -4129,6 +4133,7 @@ async function createKodaXRuntimeInternal(
   // advertises on `runtime.capabilities`.
   const embeddedCapabilities: Record<string, unknown> = {
     productClient: { version: 1 },
+    sessionDrafts: { version: 1 },
     productHistoryBoundaries: { version: 1 },
     productExecutionAuthorization: { version: 2 },
     productExitControl: { version: 1 },
@@ -4421,7 +4426,7 @@ async function createKodaXRuntimeInternal(
     const [session, data, conversation] = await Promise.all([
       includeHistory || !previous ? sessionService.load(sessionId) : previous.session,
       readingData,
-      includeHistory ? readingData.then(data => readConversationHistory(sessionId, [...new Set([
+      includeHistory && !sessionManager.storage.isDraft(sessionId) ? readingData.then(data => readConversationHistory(sessionId, [...new Set([
         ...(data?.uiHistory ?? []).flatMap(item => [
           ...(item.afterInputId ? [`input:${item.afterInputId}`] : []),
           ...(item.type === 'tool_group' ? item.tools.flatMap(tool => tool.assistantOutputId
@@ -4505,7 +4510,8 @@ async function createKodaXRuntimeInternal(
       || type === 'run.started' || type === 'turn.started' || type === 'run.input.delivered' || isTerminalRuntimeEvent(type));
     if (isTerminalRuntimeEvent(type)) sessionViews.checkpoint(sessionId);
   });
-  const settingsOwner = createRuntimeSessionSettingsOwner(persistence, bus);
+  const settingsOwner = createRuntimeSessionSettingsOwner(persistence, bus,
+    sessionId => sessionManager.storage.isDraft(sessionId));
   const permissions = createRuntimePermissionRegistry(
     bus,
     options.permissionTimeoutMs ?? DEFAULT_PERMISSION_TIMEOUT_MS,
@@ -5678,7 +5684,7 @@ function assertRuntimeCapabilities(
     requirements?.actorControlPlane === undefined &&
     requirements?.sandboxRuntime === undefined &&
     requirements?.runtimeAutoModeGuardrail === undefined &&
-    requirements?.productClient === undefined &&
+    requirements?.sessionDrafts === undefined && requirements?.productClient === undefined &&
     requirements?.productHistoryBoundaries === undefined &&
     requirements?.productExecutionAuthorization === undefined && requirements?.productExitControl === undefined
     && requirements?.productExecutionFacts === undefined && requirements?.productActorAuthorization === undefined
@@ -5695,6 +5701,7 @@ function assertRuntimeCapabilities(
     ['productExecutionFacts', requirements.productExecutionFacts],
     ['productActorAuthorization', requirements.productActorAuthorization],
     ["productClient", requirements.productClient],
+    ['sessionDrafts', requirements.sessionDrafts],
     ["productHistoryBoundaries", requirements.productHistoryBoundaries],
     ["productExecutionAuthorization", requirements.productExecutionAuthorization],
     ["externalAgentAdmin", requirements.externalAgentAdmin],
@@ -5910,6 +5917,7 @@ function firstUpgradeableCapability(
 ): { readonly name: string; readonly version: number } | undefined {
   const upgradeOrder = [
     "productClient",
+    'sessionDrafts',
     "productHistoryBoundaries",
     "productExecutionAuthorization", 'productExitControl', 'productExecutionFacts', 'productActorAuthorization',
     "actorSettlementConvergence",
@@ -6506,6 +6514,7 @@ type RuntimeSessionSettingsListener = (
 ) => void;
 
 interface RuntimeSessionSettingsOwner {
+  persistCurrent(sessionId: string): Promise<void>;
   read(
     sessionId: string,
   ): Promise<RuntimeVersionedValue<RuntimeSessionSettings>>;
@@ -6525,6 +6534,7 @@ interface RuntimeSessionSettingsOwner {
 function createRuntimeSessionSettingsOwner(
   persistence: RuntimePersistence,
   bus: RuntimeEventBus,
+  isDraft: (sessionId: string) => boolean,
 ): RuntimeSessionSettingsOwner {
   const current = new Map<
     string,
@@ -6532,6 +6542,9 @@ function createRuntimeSessionSettingsOwner(
   >();
   const tails = new Map<string, Promise<void>>();
   const listeners = new Set<RuntimeSessionSettingsListener>();
+  // The canonical Session is saved before its settings. Keep draft settings
+  // authoritative until both writes finish, including concurrent reads/updates.
+  const pendingDraftSettings = new Set<string>();
 
   const enqueue = <T>(
     sessionId: string,
@@ -6570,9 +6583,19 @@ function createRuntimeSessionSettingsOwner(
   };
 
   return {
+    persistCurrent(sessionId) {
+      return enqueue(sessionId, () => {
+        if (!pendingDraftSettings.has(sessionId)) return;
+        const value = current.get(sessionId);
+        if (value) persistence.saveSessionSettingsVersioned(sessionId, value);
+        pendingDraftSettings.delete(sessionId);
+      });
+    },
     async read(sessionId) {
       await (tails.get(sessionId) ?? Promise.resolve());
-      const loaded = persistence.loadSessionSettingsVersioned(sessionId);
+      if (isDraft(sessionId)) pendingDraftSettings.add(sessionId);
+      const loaded = pendingDraftSettings.has(sessionId) ? current.get(sessionId) ?? { revision: 0, value: {} }
+        : persistence.loadSessionSettingsVersioned(sessionId);
       current.set(sessionId, loaded);
       return loaded;
     },
@@ -6581,7 +6604,9 @@ function createRuntimeSessionSettingsOwner(
     },
     update(sessionId, patch, expectedRevision, validate) {
       return enqueue(sessionId, () => {
-        const loaded = persistence.loadSessionSettingsVersioned(sessionId);
+        if (isDraft(sessionId)) pendingDraftSettings.add(sessionId);
+        const loaded = pendingDraftSettings.has(sessionId) ? current.get(sessionId) ?? { revision: 0, value: {} }
+          : persistence.loadSessionSettingsVersioned(sessionId);
         if (
           expectedRevision !== undefined &&
           loaded.revision !== expectedRevision
@@ -6595,7 +6620,7 @@ function createRuntimeSessionSettingsOwner(
         const settings = applySessionSettingsPatch(loaded.value, canonicalPatch);
         validate(settings);
         const updated = { revision: loaded.revision + 1, value: settings };
-        persistence.saveSessionSettingsVersioned(sessionId, updated);
+        if (!pendingDraftSettings.has(sessionId)) persistence.saveSessionSettingsVersioned(sessionId, updated);
         publish(sessionId, updated, canonicalPatch);
         return updated;
       });
@@ -6609,6 +6634,7 @@ function createRuntimeSessionSettingsOwner(
       };
     },
     release(sessionId) {
+      pendingDraftSettings.delete(sessionId);
       current.delete(sessionId);
       tails.delete(sessionId);
     },
@@ -8040,7 +8066,9 @@ function createRuntimeSessionService(
           ownsSessionMcpConfig = true;
         }
         bus.prepareSessionEvents(sessionId);
-        if (input.sessionId === undefined) {
+        if (input.draft === true) {
+          await manager.storage.createDraft(sessionId, data);
+        } else if (input.sessionId === undefined) {
           await manager.storage.createGenerated(sessionId, data);
         } else {
           await manager.storage.save(sessionId, data);
@@ -11781,12 +11809,21 @@ function createRuntimeRunService(deps: {
       terminalEmitted: false,
       ownedByRuntime: true,
     };
-    if (productInput !== undefined) {
+    const canonicalInputId = productInput?.inputId
+      ?? (deps.sessionManager.storage.isDraft(input.sessionId) ? runId : undefined);
+    if (canonicalInputId !== undefined) {
       const session = await deps.sessionAdmission.loadExecutable(input.sessionId);
-      const messages: KodaXMessage[] = [...session.messages, {
+      const content = buildPromptMessageContent(normalizedInput.prompt, effectiveOptions.context?.inputArtifacts);
+      const savedInput = session.messages.find(message => message.role === 'user' && message.inputId === canonicalInputId);
+      if (savedInput && JSON.stringify(savedInput.content) !== JSON.stringify(content)) {
+        throw createRuntimeConflictError('Input ID already belongs to a different intent.', 0);
+      }
+      // A promotion write can fail after the canonical input is saved, before
+      // its Run is registered. Retry that save without appending another input.
+      const messages: KodaXMessage[] = savedInput ? session.messages : [...session.messages, {
         role: "user",
-        content: buildPromptMessageContent(normalizedInput.prompt, effectiveOptions.context?.inputArtifacts),
-        inputId: productInput.inputId,
+        content,
+        inputId: canonicalInputId,
         ...(trustedInput.productBatch ? { inputIds: trustedInput.productBatch } : {}),
         timestamp: startedAt,
       }];
@@ -11795,6 +11832,12 @@ function createRuntimeRunService(deps: {
         messages,
         lineage: createSessionLineage(messages, session.lineage),
       });
+      record.canonicalInputId = canonicalInputId;
+    }
+    // Promotion can fail after saving the input. Complete its settings write
+    // before dispatch, including a later low-level Run on that durable Session.
+    if (!deps.sessionManager.storage.isDraft(input.sessionId)) {
+      await deps.settingsOwner.persistCurrent(input.sessionId);
     }
     if (record.mode === 'managed_task' || record.mode === 'coding') {
       const assertWritable = (): void => {
@@ -14119,7 +14162,8 @@ function buildRunOptions(input: {
     session: {
       ...(options.session ?? {}),
       id: record.sessionId,
-      ...(record.productInput !== undefined ? { inputId: record.productInput.inputId } : {}),
+      ...((record.canonicalInputId ?? record.productInput?.inputId) !== undefined
+        ? { inputId: record.canonicalInputId ?? record.productInput?.inputId } : {}),
       storage: isForkInvocation ? undefined : sessionManager.storage,
       ...(isForkInvocation ? { initialMessages: [] } : {}),
       // The Runtime is the canonical Session owner even when a REPL client

@@ -738,6 +738,8 @@ export interface ClientViewItem {
 }
 
 export interface ClientCreateSessionInput {
+  /** Keep a new Session in memory until its first accepted user input is saved. */
+  readonly draft?: boolean;
   readonly mcpServers?: Readonly<Record<string, ClientMcpServerConfig>>;
   /** Delete this Session when its task ends, including after the client detaches. */
   readonly temporary?: boolean;

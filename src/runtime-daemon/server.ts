@@ -2608,6 +2608,7 @@ function runtimeDaemonCapabilities(
   delete safeOverrides.sandboxRuntime;
   delete safeOverrides.runLifecycleControl;
   delete safeOverrides.productClient;
+  delete safeOverrides.sessionDrafts;
   delete safeOverrides.productHistoryBoundaries;
   delete safeOverrides.productExecutionAuthorization;
   delete safeOverrides.productExitControl;
@@ -2647,6 +2648,8 @@ function runtimeDaemonCapabilities(
       ? { productExecutionAuthorization: { version: productExecutionAuthorization.version } } : {}),
     ...(daemonManagement && clientExitControl && isRecord(ownerCapabilities.productExitControl) && ownerCapabilities.productExitControl.version === 1
       ? { productExitControl: { version: 1 } } : {}),
+    ...(isRecord(ownerCapabilities.sessionDrafts) && ownerCapabilities.sessionDrafts.version === 1
+      ? { sessionDrafts: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.productExecutionFacts) && ownerCapabilities.productExecutionFacts.version === 1
       ? { productExecutionFacts: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.productActorAuthorization) && ownerCapabilities.productActorAuthorization.version === 1
