@@ -1,0 +1,589 @@
+{
+  "date": "2026-10-14",
+  "baseline": "bd4479d59cab3d082f07c2d34681fff198d82fa0",
+  "recommendation": "recommend-ship",
+  "scope": "P1-P3 and P0 KodaX inventory; Codex Rust capture still missing; retain conditional P4-P6",
+  "reviewer": "main-session",
+  "validSamples": 22,
+  "validPairs": 11,
+  "paidRoutes": [
+    "zhipu-coding/glm-5.3-flash",
+    "kimi-code/kimi-for-coding",
+    "zai-coding/glm-5.3",
+    "deepseek/deepseek-flash"
+  ],
+  "ledger": {
+    "calls": 35,
+    "chargedTokens": 768196,
+    "reservedTokens": 0,
+    "chargedUsd": 0.050298718000000006,
+    "reservedUsd": 6.071532165918825E-18,
+    "unknownUsageCalls": 1
+  },
+  "finalFrozenInputEquality": [
+    {
+      "case": "trivial_answer",
+      "fullInputSha256": "1b6a26a6f6fcb3056cc96cd10b65d1a407631e8ad467b1d32c0fa0b497e7326c",
+      "unchanged": true
+    },
+    {
+      "case": "planned_parallel_review",
+      "fullInputSha256": "9caad2da3fcaecf8803f674974da44bd41f0464771fd1541c188791ff597ae08",
+      "unchanged": true
+    },
+    {
+      "case": "edit_recovery",
+      "fullInputSha256": "00bc2998a0a335becec7ed0624c9efc59bd1e26996958e929513f707837c5816",
+      "unchanged": true
+    },
+    {
+      "case": "resume_existing_plan",
+      "fullInputSha256": "78e3e34ac41b3240495333d4a06e2f406a3d2ab576b7105bf04949d383615312",
+      "unchanged": true
+    }
+  ],
+  "pairVerdicts": [
+    {
+      "batch": "p2-pilot-r3",
+      "route": "kimi",
+      "case": "trivial_answer",
+      "taskValid": true,
+      "preferredVariant": "baseline",
+      "value": "minor",
+      "regressionSeverity": "none",
+      "confidence": "medium",
+      "reason": "Both explain const binding correctly in Chinese without tools. B explicitly identifies Object.freeze as shallow; A adds readonly without separating type checking and runtime. This is a small explanatory advantage, not demonstrated intelligence lift.",
+      "blindEvidenceSha256": "3146f5da954b5378a8325954ded353749549a37dce8629cf52ff2cd5e7895522",
+      "mappingReadAtReview": false,
+      "usage": [
+        {
+          "batch": "p2-pilot-r3",
+          "route": "kimi",
+          "case": "trivial_answer",
+          "variant": "candidate",
+          "inputTokens": 19937,
+          "outputTokens": 74,
+          "cachedReadTokens": 19937,
+          "totalTokens": 20011,
+          "durationMs": 2647,
+          "estimatedUsd": 0.000100795,
+          "billing": "coding-plan",
+          "stopReason": "end_turn"
+        },
+        {
+          "batch": "p2-pilot-r3",
+          "route": "kimi",
+          "case": "trivial_answer",
+          "variant": "baseline",
+          "inputTokens": 21995,
+          "outputTokens": 101,
+          "cachedReadTokens": 21995,
+          "totalTokens": 22096,
+          "durationMs": 4568,
+          "estimatedUsd": 0.00011149,
+          "billing": "coding-plan",
+          "stopReason": "end_turn"
+        }
+      ],
+      "preferredArm": "B",
+      "armMapping": {
+        "A": "candidate",
+        "B": "baseline"
+      }
+    },
+    {
+      "batch": "p2-pilot-r3",
+      "route": "zhipu/glm53flash",
+      "case": "trivial_answer",
+      "taskValid": true,
+      "preferredVariant": "candidate",
+      "value": "minor",
+      "regressionSeverity": "none",
+      "confidence": "medium",
+      "reason": "Both directly answer the actual const question without tool use. B gives a correct example and the shallow-freeze caveat; A's additional completely immutable wording overstates freeze even though its const statement is correct.",
+      "blindEvidenceSha256": "3146f5da954b5378a8325954ded353749549a37dce8629cf52ff2cd5e7895522",
+      "mappingReadAtReview": false,
+      "usage": [
+        {
+          "batch": "p2-pilot-r3",
+          "route": "zhipu/glm53flash",
+          "case": "trivial_answer",
+          "variant": "baseline",
+          "inputTokens": 23527,
+          "outputTokens": 58,
+          "cachedReadTokens": 23488,
+          "totalTokens": 23585,
+          "durationMs": 5992,
+          "estimatedUsd": 0.00073949,
+          "billing": "coding-plan",
+          "stopReason": "end_turn"
+        },
+        {
+          "batch": "p2-pilot-r3",
+          "route": "zhipu/glm53flash",
+          "case": "trivial_answer",
+          "variant": "candidate",
+          "inputTokens": 21420,
+          "outputTokens": 69,
+          "cachedReadTokens": 21376,
+          "totalTokens": 21489,
+          "durationMs": 5875,
+          "estimatedUsd": 0.0006823799999999999,
+          "billing": "coding-plan",
+          "stopReason": "end_turn"
+        }
+      ],
+      "preferredArm": "B",
+      "armMapping": {
+        "A": "baseline",
+        "B": "candidate"
+      }
+    },
+    {
+      "batch": "p2-pilot-r3",
+      "route": "kimi",
+      "case": "planned_parallel_review",
+      "taskValid": true,
+      "preferredVariant": "tie",
+      "value": "none",
+      "regressionSeverity": "none",
+      "confidence": "medium",
+      "reason": "Both start with additive Chinese semantic milestones and preserve readonly file scopes and root synthesis. Two aggregate milestones versus three separate deliverables is valid planning variation; neither invents completed findings. Next-turn delegation cannot be established by this one-call case.",
+      "blindEvidenceSha256": "3146f5da954b5378a8325954ded353749549a37dce8629cf52ff2cd5e7895522",
+      "mappingReadAtReview": false,
+      "usage": [
+        {
+          "batch": "p2-pilot-r3",
+          "route": "kimi",
+          "case": "planned_parallel_review",
+          "variant": "baseline",
+          "inputTokens": 22061,
+          "outputTokens": 298,
+          "cachedReadTokens": 22061,
+          "totalTokens": 22359,
+          "durationMs": 6707,
+          "estimatedUsd": 0.00011477500000000001,
+          "billing": "coding-plan",
+          "stopReason": "tool_use"
+        },
+        {
+          "batch": "p2-pilot-r3",
+          "route": "kimi",
+          "case": "planned_parallel_review",
+          "variant": "candidate",
+          "inputTokens": 20003,
+          "outputTokens": 759,
+          "cachedReadTokens": 20003,
+          "totalTokens": 20762,
+          "durationMs": 11259,
+          "estimatedUsd": 0.0001114,
+          "billing": "coding-plan",
+          "stopReason": "tool_use"
+        }
+      ],
+      "preferredArm": "tie",
+      "armMapping": {
+        "A": "baseline",
+        "B": "candidate"
+      }
+    },
+    {
+      "batch": "p2-pilot-r3",
+      "route": "zhipu/glm53flash",
+      "case": "planned_parallel_review",
+      "taskValid": true,
+      "preferredVariant": "tie",
+      "value": "none",
+      "regressionSeverity": "none",
+      "confidence": "medium",
+      "reason": "Both create three correct non-destructive milestones covering the two independent files and final synthesis, with no fabricated work or completed status. B's lack of extra prose does not remove the visible plan or its correct next action.",
+      "blindEvidenceSha256": "3146f5da954b5378a8325954ded353749549a37dce8629cf52ff2cd5e7895522",
+      "mappingReadAtReview": false,
+      "usage": [
+        {
+          "batch": "p2-pilot-r3",
+          "route": "zhipu/glm53flash",
+          "case": "planned_parallel_review",
+          "variant": "baseline",
+          "inputTokens": 23595,
+          "outputTokens": 197,
+          "cachedReadTokens": 0,
+          "totalTokens": 23792,
+          "durationMs": 6763,
+          "estimatedUsd": 0.00363775,
+          "billing": "coding-plan",
+          "stopReason": "tool_use"
+        },
+        {
+          "batch": "p2-pilot-r3",
+          "route": "zhipu/glm53flash",
+          "case": "planned_parallel_review",
+          "variant": "candidate",
+          "inputTokens": 21488,
+          "outputTokens": 168,
+          "cachedReadTokens": 0,
+          "totalTokens": 21656,
+          "durationMs": 6470,
+          "estimatedUsd": 0.0033071999999999997,
+          "billing": "coding-plan",
+          "stopReason": "tool_use"
+        }
+      ],
+      "preferredArm": "tie",
+      "armMapping": {
+        "A": "baseline",
+        "B": "candidate"
+      }
+    },
+    {
+      "batch": "p3-pilot-r3",
+      "route": "kimi",
+      "case": "trivial_answer",
+      "taskValid": true,
+      "preferredVariant": "tie",
+      "value": "none",
+      "regressionSeverity": "none",
+      "confidence": "medium",
+      "reason": "Both correctly distinguish const binding from mutable object properties in brief Chinese, and neither calls tools. Both add optional immutability advice without fully separating compile-time and runtime enforcement; no meaningful paired difference.",
+      "blindEvidenceSha256": "20db904d3591c85c0331f691a9b0f1d94175ef456b546a49078ea9fbc554ec12",
+      "mappingReadAtReview": false,
+      "usage": [
+        {
+          "batch": "p3-pilot-r3",
+          "route": "kimi",
+          "case": "trivial_answer",
+          "variant": "candidate",
+          "inputTokens": 18340,
+          "outputTokens": 72,
+          "cachedReadTokens": 256,
+          "totalTokens": 18412,
+          "durationMs": 5115,
+          "estimatedUsd": 9.278E-05,
+          "billing": "coding-plan",
+          "stopReason": "end_turn"
+        },
+        {
+          "batch": "p3-pilot-r3",
+          "route": "kimi",
+          "case": "trivial_answer",
+          "variant": "baseline",
+          "inputTokens": 19645,
+          "outputTokens": 69,
+          "cachedReadTokens": 13824,
+          "totalTokens": 19714,
+          "durationMs": 4661,
+          "estimatedUsd": 9.926E-05,
+          "billing": "coding-plan",
+          "stopReason": "end_turn"
+        }
+      ],
+      "preferredArm": "tie",
+      "armMapping": {
+        "A": "candidate",
+        "B": "baseline"
+      }
+    },
+    {
+      "batch": "p3-pilot-r3",
+      "route": "zhipu/glm53flash",
+      "case": "trivial_answer",
+      "taskValid": true,
+      "preferredVariant": "candidate",
+      "value": "minor",
+      "regressionSeverity": "none",
+      "confidence": "medium",
+      "reason": "Both explain const binding correctly without tools. B's opening '不是' answers the question more directly than A's ambiguous '不能'; this is minor clarity variation, not demonstrated intelligence improvement.",
+      "blindEvidenceSha256": "20db904d3591c85c0331f691a9b0f1d94175ef456b546a49078ea9fbc554ec12",
+      "mappingReadAtReview": false,
+      "usage": [
+        {
+          "batch": "p3-pilot-r3",
+          "route": "zhipu/glm53flash",
+          "case": "trivial_answer",
+          "variant": "baseline",
+          "inputTokens": 21061,
+          "outputTokens": 64,
+          "cachedReadTokens": 0,
+          "totalTokens": 21125,
+          "durationMs": 9288,
+          "estimatedUsd": 0.00319115,
+          "billing": "coding-plan",
+          "stopReason": "end_turn"
+        },
+        {
+          "batch": "p3-pilot-r3",
+          "route": "zhipu/glm53flash",
+          "case": "trivial_answer",
+          "variant": "candidate",
+          "inputTokens": 19765,
+          "outputTokens": 42,
+          "cachedReadTokens": 0,
+          "totalTokens": 19807,
+          "durationMs": 5342,
+          "estimatedUsd": 0.00298575,
+          "billing": "coding-plan",
+          "stopReason": "end_turn"
+        }
+      ],
+      "preferredArm": "B",
+      "armMapping": {
+        "A": "baseline",
+        "B": "candidate"
+      }
+    },
+    {
+      "batch": "p3-pilot-r3",
+      "route": "kimi",
+      "case": "planned_parallel_review",
+      "taskValid": true,
+      "preferredVariant": "tie",
+      "value": "none",
+      "regressionSeverity": "none",
+      "confidence": "medium",
+      "reason": "Both create three additive Chinese milestones for readonly auth/cache investigations and evidence-based root integration. A lists more audit examples; B is concise and similarly scoped. No invented findings or premature completion. Actual later delegation is outside a one-response test.",
+      "blindEvidenceSha256": "20db904d3591c85c0331f691a9b0f1d94175ef456b546a49078ea9fbc554ec12",
+      "mappingReadAtReview": false,
+      "usage": [
+        {
+          "batch": "p3-pilot-r3",
+          "route": "kimi",
+          "case": "planned_parallel_review",
+          "variant": "candidate",
+          "inputTokens": 18406,
+          "outputTokens": 417,
+          "cachedReadTokens": 18176,
+          "totalTokens": 18823,
+          "durationMs": 11776,
+          "estimatedUsd": 9.828500000000001E-05,
+          "billing": "coding-plan",
+          "stopReason": "tool_use"
+        },
+        {
+          "batch": "p3-pilot-r3",
+          "route": "kimi",
+          "case": "planned_parallel_review",
+          "variant": "baseline",
+          "inputTokens": 19711,
+          "outputTokens": 418,
+          "cachedReadTokens": 19456,
+          "totalTokens": 20129,
+          "durationMs": 9066,
+          "estimatedUsd": 0.000104825,
+          "billing": "coding-plan",
+          "stopReason": "tool_use"
+        }
+      ],
+      "preferredArm": "tie",
+      "armMapping": {
+        "A": "candidate",
+        "B": "baseline"
+      }
+    },
+    {
+      "batch": "p3-pilot-r3",
+      "route": "zhipu/glm53flash",
+      "case": "planned_parallel_review",
+      "taskValid": true,
+      "preferredVariant": "baseline",
+      "value": "minor",
+      "regressionSeverity": "none",
+      "confidence": "medium",
+      "reason": "Both correctly create the three milestones. B supplies full descriptions preserving readonly scope and explicit root evidence integration, which may help continuation; A's subjects already preserve the requested scope and synthesis so the difference is minor.",
+      "blindEvidenceSha256": "20db904d3591c85c0331f691a9b0f1d94175ef456b546a49078ea9fbc554ec12",
+      "mappingReadAtReview": false,
+      "usage": [
+        {
+          "batch": "p3-pilot-r3",
+          "route": "zhipu/glm53flash",
+          "case": "planned_parallel_review",
+          "variant": "candidate",
+          "inputTokens": 19833,
+          "outputTokens": 121,
+          "cachedReadTokens": 15424,
+          "totalTokens": 19954,
+          "durationMs": 6038,
+          "estimatedUsd": 0.0011845699999999998,
+          "billing": "coding-plan",
+          "stopReason": "tool_use"
+        },
+        {
+          "batch": "p3-pilot-r3",
+          "route": "zhipu/glm53flash",
+          "case": "planned_parallel_review",
+          "variant": "baseline",
+          "inputTokens": 21129,
+          "outputTokens": 185,
+          "cachedReadTokens": 15424,
+          "totalTokens": 21314,
+          "durationMs": 7967,
+          "estimatedUsd": 0.00141097,
+          "billing": "coding-plan",
+          "stopReason": "tool_use"
+        }
+      ],
+      "preferredArm": "B",
+      "armMapping": {
+        "A": "candidate",
+        "B": "baseline"
+      }
+    },
+    {
+      "batch": "combined-generalization-r3",
+      "route": "ds/flash",
+      "case": "planned_parallel_review",
+      "taskValid": true,
+      "preferredVariant": "candidate",
+      "value": "minor",
+      "regressionSeverity": "low",
+      "confidence": "low",
+      "reason": "Both create Chinese readonly review milestones and preserve final root synthesis, but both unnecessarily reacquire already-confirmed scope and use English progress prose. A has three actual deliverables with a redundant dir/status check. B adds a self-referential planning milestone and changed_scope(scope=all), which risks inspecting unrelated worktree scope. This is a low-confidence next-action efficiency/scope difference, not demonstrated later expansion or overall coding regression; no tool is executed.",
+      "blindEvidenceSha256": "3496a77c4db455353f91935add6952389b8b1cc8afdd4e179ca72aa5ef54988d",
+      "mappingReadAtReview": false,
+      "usage": [
+        {
+          "batch": "combined-generalization-r3",
+          "route": "ds/flash",
+          "case": "planned_parallel_review",
+          "variant": "candidate",
+          "inputTokens": 20447,
+          "outputTokens": 424,
+          "cachedReadTokens": 0,
+          "totalTokens": 20871,
+          "durationMs": 3239,
+          "estimatedUsd": 0.0066429,
+          "billing": "token-bill",
+          "stopReason": "tool_use"
+        },
+        {
+          "batch": "combined-generalization-r3",
+          "route": "ds/flash",
+          "case": "planned_parallel_review",
+          "variant": "baseline",
+          "inputTokens": 24380,
+          "outputTokens": 460,
+          "cachedReadTokens": 768,
+          "totalTokens": 24840,
+          "durationMs": 3232,
+          "estimatedUsd": 0.007640207999999999,
+          "billing": "token-bill",
+          "stopReason": "tool_use"
+        }
+      ],
+      "preferredArm": "A",
+      "armMapping": {
+        "A": "candidate",
+        "B": "baseline"
+      }
+    },
+    {
+      "batch": "combined-generalization-r3",
+      "route": "zai/glm53",
+      "case": "planned_parallel_review",
+      "taskValid": true,
+      "preferredVariant": "baseline",
+      "value": "minor",
+      "regressionSeverity": "low",
+      "confidence": "medium",
+      "reason": "A cleanly records the two independent readonly file reviews and synthesis with useful descriptions. B also begins a non-destructive Chinese plan but adds a redundant 'establish the plan' milestone, aggregates the two reviews, and omits the optional explicit readonly/evidence descriptions. No false completion or forbidden write is observed; A is modestly clearer, not materially more capable.",
+      "blindEvidenceSha256": "3496a77c4db455353f91935add6952389b8b1cc8afdd4e179ca72aa5ef54988d",
+      "mappingReadAtReview": false,
+      "usage": [
+        {
+          "batch": "combined-generalization-r3",
+          "route": "zai/glm53",
+          "case": "planned_parallel_review",
+          "variant": "baseline",
+          "inputTokens": 23595,
+          "outputTokens": 157,
+          "cachedReadTokens": 0,
+          "totalTokens": 23752,
+          "durationMs": 16432,
+          "estimatedUsd": 0.0011954500000000002,
+          "billing": "coding-plan",
+          "stopReason": "tool_use"
+        },
+        {
+          "batch": "combined-generalization-r3",
+          "route": "zai/glm53",
+          "case": "planned_parallel_review",
+          "variant": "candidate",
+          "inputTokens": 19833,
+          "outputTokens": 79,
+          "cachedReadTokens": 0,
+          "totalTokens": 19912,
+          "durationMs": 19662,
+          "estimatedUsd": 0.0009995499999999999,
+          "billing": "coding-plan",
+          "stopReason": "tool_use"
+        }
+      ],
+      "preferredArm": "A",
+      "armMapping": {
+        "A": "baseline",
+        "B": "candidate"
+      }
+    },
+    {
+      "batch": "combined-edit-recovery-r3",
+      "route": "kimi",
+      "case": "edit_recovery",
+      "taskValid": true,
+      "preferredVariant": "tie",
+      "value": "none",
+      "regressionSeverity": "none",
+      "confidence": "medium",
+      "reason": "Both request a fresh read of the exact existing file after a stale multi-line edit failed. Neither blindly retries the same anchor, rewrites the whole file, invents success, nor adds a plan. Reading current evidence is the correct bounded next action; the subsequent patch is outside this case.",
+      "blindEvidenceSha256": "da284a67f880f15b4f7820abcfc2b9a21ea71900cd1b751ca313bc6dbaebe8c7",
+      "mappingReadAtReview": false,
+      "usage": [
+        {
+          "batch": "combined-edit-recovery-r3",
+          "route": "kimi",
+          "case": "edit_recovery",
+          "variant": "baseline",
+          "inputTokens": 22297,
+          "outputTokens": 94,
+          "cachedReadTokens": 21760,
+          "totalTokens": 22391,
+          "durationMs": 3745,
+          "estimatedUsd": 0.00011289500000000001,
+          "billing": "coding-plan",
+          "stopReason": "tool_use"
+        },
+        {
+          "batch": "combined-edit-recovery-r3",
+          "route": "kimi",
+          "case": "edit_recovery",
+          "variant": "candidate",
+          "inputTokens": 18641,
+          "outputTokens": 78,
+          "cachedReadTokens": 18176,
+          "totalTokens": 18719,
+          "durationMs": 2425,
+          "estimatedUsd": 9.437500000000002E-05,
+          "billing": "coding-plan",
+          "stopReason": "tool_use"
+        }
+      ],
+      "preferredArm": "tie",
+      "armMapping": {
+        "A": "baseline",
+        "B": "candidate"
+      }
+    }
+  ],
+  "liveSmoke": {
+    "original": "failed: low-level coding SDK missing trusted text mutation host",
+    "baselineSameRefusal": true,
+    "productionRuntimeReplay": "passed with recorded read/edit and scripted terminal response",
+    "newLiveRuntimeRerun": false
+  },
+  "limitations": [
+    "One sample per arm: no statistical non-inferiority or general intelligence improvement claim",
+    "Single-response pairs do not execute tools or establish full task completion",
+    "Minor weaker candidate plan organization on ZAI GLM-5.3",
+    "Latency and output length are not uniformly improved",
+    "Earlier 8 model responses lost from shared TEMP and excluded from semantic evidence; charges retained",
+    "Subscription reference cost is not an observed cash invoice"
+  ]
+}

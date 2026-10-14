@@ -1,0 +1,45 @@
+{
+  "baselineCommit": "bd4479d59cab3d082f07c2d34681fff198d82fa0",
+  "methodology": "Pure production builders with one fixed Windows context; baseline source compiled from the pinned baselineCommit, unchanged formatting/execution-guidance dependencies shared. No tools JSON or external context included. countTokens is the project heuristic, not provider usage. Candidate uses the current worktree builders. Undefined capabilities preserve standalone full guidance on both sides.",
+  "workerStable": {
+    "before": {
+      "chars": 24118,
+      "bytes": 24240,
+      "estimatedTokens": 6076
+    },
+    "after": {
+      "chars": 19426,
+      "bytes": 19488,
+      "estimatedTokens": 4880
+    }
+  },
+  "roleStable": {
+    "before": {
+      "chars": 26943,
+      "bytes": 27085,
+      "estimatedTokens": 6789
+    },
+    "after": {
+      "chars": 21626,
+      "bytes": 21708,
+      "estimatedTokens": 5438
+    }
+  },
+  "roleContext": {
+    "before": {
+      "chars": 480,
+      "bytes": 482,
+      "estimatedTokens": 121
+    },
+    "after": {
+      "chars": 305,
+      "bytes": 307,
+      "estimatedTokens": 77
+    }
+  },
+  "restrictedRepoGuidance": {
+    "chars": 8463,
+    "bytes": 8491,
+    "estimatedTokens": 2127
+  }
+}

@@ -1,0 +1,1918 @@
+{
+  "commit": "bd4479d59cab3d082f07c2d34681fff198d82fa0",
+  "methodology": "Actual TypeScript component builders. Empty isolated home and empty non-Git workspace; no project rules, user history, skills, MCP, optional hosts, permission suffix or automatic repo-intelligence bundle. SA full repo-intel tool mode with workflow-host gate; managed Worker builder without optional hosts. Not a complete runtime/provider payload. countTokens heuristic, not BPE/API usage; exact chars/bytes for the stated normalized representation. Temporary fixture directory names have fixed length; path text is not stored.",
+  "sa": {
+    "system": {
+      "chars": 13342,
+      "bytes": 13388,
+      "estimatedTokens": 3353
+    },
+    "sections": [
+      {
+        "id": "base-system",
+        "chars": 6638,
+        "bytes": 6666,
+        "estimatedTokens": 1670
+      },
+      {
+        "id": "environment-context",
+        "chars": 58,
+        "bytes": 58,
+        "estimatedTokens": 15
+      },
+      {
+        "id": "working-directory",
+        "chars": 92,
+        "bytes": 92,
+        "estimatedTokens": 23
+      },
+      {
+        "id": "project-snapshot",
+        "chars": 18,
+        "bytes": 18,
+        "estimatedTokens": 5
+      },
+      {
+        "id": "self-knowledge-routing",
+        "chars": 841,
+        "bytes": 847,
+        "estimatedTokens": 213
+      },
+      {
+        "id": "execution-guidance",
+        "chars": 2855,
+        "bytes": 2867,
+        "estimatedTokens": 719
+      },
+      {
+        "id": "memory-rules",
+        "chars": 2782,
+        "bytes": 2782,
+        "estimatedTokens": 696
+      },
+      {
+        "id": "project-memory",
+        "chars": 44,
+        "bytes": 44,
+        "estimatedTokens": 11
+      }
+    ],
+    "tools": {
+      "count": 55,
+      "estimatedTokens": 16747,
+      "rows": [
+        {
+          "name": "agent_output",
+          "chars": 593,
+          "bytes": 593,
+          "estimatedTokens": 149,
+          "description": {
+            "chars": 278,
+            "bytes": 278,
+            "estimatedTokens": 70
+          },
+          "parameters": {
+            "chars": 261,
+            "bytes": 261,
+            "estimatedTokens": 66
+          }
+        },
+        {
+          "name": "ask_user_question",
+          "chars": 5269,
+          "bytes": 5273,
+          "estimatedTokens": 1319,
+          "description": {
+            "chars": 657,
+            "bytes": 657,
+            "estimatedTokens": 165
+          },
+          "parameters": {
+            "chars": 4549,
+            "bytes": 4553,
+            "estimatedTokens": 1139
+          }
+        },
+        {
+          "name": "bash",
+          "chars": 1779,
+          "bytes": 1787,
+          "estimatedTokens": 448,
+          "description": {
+            "chars": 1272,
+            "bytes": 1280,
+            "estimatedTokens": 321
+          },
+          "parameters": {
+            "chars": 448,
+            "bytes": 448,
+            "estimatedTokens": 112
+          }
+        },
+        {
+          "name": "changed_diff",
+          "chars": 951,
+          "bytes": 951,
+          "estimatedTokens": 238,
+          "description": {
+            "chars": 113,
+            "bytes": 113,
+            "estimatedTokens": 29
+          },
+          "parameters": {
+            "chars": 784,
+            "bytes": 784,
+            "estimatedTokens": 196
+          }
+        },
+        {
+          "name": "changed_diff_bundle",
+          "chars": 1066,
+          "bytes": 1066,
+          "estimatedTokens": 267,
+          "description": {
+            "chars": 126,
+            "bytes": 126,
+            "estimatedTokens": 32
+          },
+          "parameters": {
+            "chars": 879,
+            "bytes": 879,
+            "estimatedTokens": 220
+          }
+        },
+        {
+          "name": "changed_scope",
+          "chars": 789,
+          "bytes": 791,
+          "estimatedTokens": 198,
+          "description": {
+            "chars": 220,
+            "bytes": 222,
+            "estimatedTokens": 56
+          },
+          "parameters": {
+            "chars": 512,
+            "bytes": 512,
+            "estimatedTokens": 128
+          }
+        },
+        {
+          "name": "code_search",
+          "chars": 841,
+          "bytes": 843,
+          "estimatedTokens": 211,
+          "description": {
+            "chars": 142,
+            "bytes": 144,
+            "estimatedTokens": 37
+          },
+          "parameters": {
+            "chars": 644,
+            "bytes": 644,
+            "estimatedTokens": 161
+          }
+        },
+        {
+          "name": "create_goal",
+          "chars": 696,
+          "bytes": 696,
+          "estimatedTokens": 174,
+          "description": {
+            "chars": 261,
+            "bytes": 261,
+            "estimatedTokens": 66
+          },
+          "parameters": {
+            "chars": 382,
+            "bytes": 382,
+            "estimatedTokens": 96
+          }
+        },
+        {
+          "name": "cyclic_dependencies",
+          "chars": 597,
+          "bytes": 599,
+          "estimatedTokens": 150,
+          "description": {
+            "chars": 501,
+            "bytes": 503,
+            "estimatedTokens": 126
+          },
+          "parameters": {
+            "chars": 33,
+            "bytes": 33,
+            "estimatedTokens": 9
+          }
+        },
+        {
+          "name": "edit",
+          "chars": 1460,
+          "bytes": 1468,
+          "estimatedTokens": 368,
+          "description": {
+            "chars": 1056,
+            "bytes": 1064,
+            "estimatedTokens": 267
+          },
+          "parameters": {
+            "chars": 344,
+            "bytes": 344,
+            "estimatedTokens": 86
+          }
+        },
+        {
+          "name": "exit_plan_mode",
+          "chars": 914,
+          "bytes": 918,
+          "estimatedTokens": 230,
+          "description": {
+            "chars": 403,
+            "bytes": 405,
+            "estimatedTokens": 102
+          },
+          "parameters": {
+            "chars": 455,
+            "bytes": 457,
+            "estimatedTokens": 115
+          }
+        },
+        {
+          "name": "followup_task",
+          "chars": 684,
+          "bytes": 684,
+          "estimatedTokens": 171,
+          "description": {
+            "chars": 169,
+            "bytes": 169,
+            "estimatedTokens": 43
+          },
+          "parameters": {
+            "chars": 460,
+            "bytes": 460,
+            "estimatedTokens": 115
+          }
+        },
+        {
+          "name": "get_goal",
+          "chars": 206,
+          "bytes": 206,
+          "estimatedTokens": 52,
+          "description": {
+            "chars": 123,
+            "bytes": 123,
+            "estimatedTokens": 31
+          },
+          "parameters": {
+            "chars": 33,
+            "bytes": 33,
+            "estimatedTokens": 9
+          }
+        },
+        {
+          "name": "glob",
+          "chars": 253,
+          "bytes": 253,
+          "estimatedTokens": 64,
+          "description": {
+            "chars": 30,
+            "bytes": 30,
+            "estimatedTokens": 8
+          },
+          "parameters": {
+            "chars": 177,
+            "bytes": 177,
+            "estimatedTokens": 45
+          }
+        },
+        {
+          "name": "grep",
+          "chars": 2020,
+          "bytes": 2020,
+          "estimatedTokens": 505,
+          "description": {
+            "chars": 125,
+            "bytes": 125,
+            "estimatedTokens": 32
+          },
+          "parameters": {
+            "chars": 1849,
+            "bytes": 1849,
+            "estimatedTokens": 463
+          }
+        },
+        {
+          "name": "impact_estimate",
+          "chars": 730,
+          "bytes": 732,
+          "estimatedTokens": 184,
+          "description": {
+            "chars": 143,
+            "bytes": 145,
+            "estimatedTokens": 37
+          },
+          "parameters": {
+            "chars": 528,
+            "bytes": 528,
+            "estimatedTokens": 132
+          }
+        },
+        {
+          "name": "insert_after_anchor",
+          "chars": 506,
+          "bytes": 506,
+          "estimatedTokens": 127,
+          "description": {
+            "chars": 138,
+            "bytes": 138,
+            "estimatedTokens": 35
+          },
+          "parameters": {
+            "chars": 307,
+            "bytes": 307,
+            "estimatedTokens": 77
+          }
+        },
+        {
+          "name": "interrupt_agent",
+          "chars": 673,
+          "bytes": 673,
+          "estimatedTokens": 169,
+          "description": {
+            "chars": 193,
+            "bytes": 193,
+            "estimatedTokens": 49
+          },
+          "parameters": {
+            "chars": 423,
+            "bytes": 423,
+            "estimatedTokens": 106
+          }
+        },
+        {
+          "name": "kodax_manual",
+          "chars": 1170,
+          "bytes": 1174,
+          "estimatedTokens": 294,
+          "description": {
+            "chars": 778,
+            "bytes": 782,
+            "estimatedTokens": 196
+          },
+          "parameters": {
+            "chars": 332,
+            "bytes": 332,
+            "estimatedTokens": 83
+          }
+        },
+        {
+          "name": "list_agents",
+          "chars": 652,
+          "bytes": 652,
+          "estimatedTokens": 163,
+          "description": {
+            "chars": 175,
+            "bytes": 175,
+            "estimatedTokens": 44
+          },
+          "parameters": {
+            "chars": 424,
+            "bytes": 424,
+            "estimatedTokens": 106
+          }
+        },
+        {
+          "name": "lsp_definition",
+          "chars": 1081,
+          "bytes": 1083,
+          "estimatedTokens": 271,
+          "description": {
+            "chars": 717,
+            "bytes": 719,
+            "estimatedTokens": 180
+          },
+          "parameters": {
+            "chars": 308,
+            "bytes": 308,
+            "estimatedTokens": 77
+          }
+        },
+        {
+          "name": "lsp_document_symbols",
+          "chars": 631,
+          "bytes": 631,
+          "estimatedTokens": 158,
+          "description": {
+            "chars": 460,
+            "bytes": 460,
+            "estimatedTokens": 115
+          },
+          "parameters": {
+            "chars": 109,
+            "bytes": 109,
+            "estimatedTokens": 28
+          }
+        },
+        {
+          "name": "lsp_hover",
+          "chars": 801,
+          "bytes": 803,
+          "estimatedTokens": 201,
+          "description": {
+            "chars": 471,
+            "bytes": 473,
+            "estimatedTokens": 119
+          },
+          "parameters": {
+            "chars": 279,
+            "bytes": 279,
+            "estimatedTokens": 70
+          }
+        },
+        {
+          "name": "lsp_implementation",
+          "chars": 632,
+          "bytes": 632,
+          "estimatedTokens": 158,
+          "description": {
+            "chars": 230,
+            "bytes": 230,
+            "estimatedTokens": 58
+          },
+          "parameters": {
+            "chars": 342,
+            "bytes": 342,
+            "estimatedTokens": 86
+          }
+        },
+        {
+          "name": "lsp_incoming_calls",
+          "chars": 565,
+          "bytes": 565,
+          "estimatedTokens": 142,
+          "description": {
+            "chars": 154,
+            "bytes": 154,
+            "estimatedTokens": 39
+          },
+          "parameters": {
+            "chars": 351,
+            "bytes": 351,
+            "estimatedTokens": 88
+          }
+        },
+        {
+          "name": "lsp_outgoing_calls",
+          "chars": 568,
+          "bytes": 568,
+          "estimatedTokens": 142,
+          "description": {
+            "chars": 157,
+            "bytes": 157,
+            "estimatedTokens": 40
+          },
+          "parameters": {
+            "chars": 351,
+            "bytes": 351,
+            "estimatedTokens": 88
+          }
+        },
+        {
+          "name": "lsp_prepare_call_hierarchy",
+          "chars": 594,
+          "bytes": 594,
+          "estimatedTokens": 149,
+          "description": {
+            "chars": 175,
+            "bytes": 175,
+            "estimatedTokens": 44
+          },
+          "parameters": {
+            "chars": 351,
+            "bytes": 351,
+            "estimatedTokens": 88
+          }
+        },
+        {
+          "name": "lsp_references",
+          "chars": 965,
+          "bytes": 967,
+          "estimatedTokens": 242,
+          "description": {
+            "chars": 630,
+            "bytes": 632,
+            "estimatedTokens": 159
+          },
+          "parameters": {
+            "chars": 279,
+            "bytes": 279,
+            "estimatedTokens": 70
+          }
+        },
+        {
+          "name": "lsp_workspace_symbols",
+          "chars": 508,
+          "bytes": 508,
+          "estimatedTokens": 127,
+          "description": {
+            "chars": 302,
+            "bytes": 302,
+            "estimatedTokens": 76
+          },
+          "parameters": {
+            "chars": 143,
+            "bytes": 143,
+            "estimatedTokens": 36
+          }
+        },
+        {
+          "name": "module_context",
+          "chars": 541,
+          "bytes": 543,
+          "estimatedTokens": 136,
+          "description": {
+            "chars": 148,
+            "bytes": 150,
+            "estimatedTokens": 38
+          },
+          "parameters": {
+            "chars": 335,
+            "bytes": 335,
+            "estimatedTokens": 84
+          }
+        },
+        {
+          "name": "multi_edit",
+          "chars": 2622,
+          "bytes": 2634,
+          "estimatedTokens": 660,
+          "description": {
+            "chars": 1944,
+            "bytes": 1956,
+            "estimatedTokens": 491
+          },
+          "parameters": {
+            "chars": 600,
+            "bytes": 600,
+            "estimatedTokens": 150
+          }
+        },
+        {
+          "name": "process_context",
+          "chars": 611,
+          "bytes": 613,
+          "estimatedTokens": 154,
+          "description": {
+            "chars": 101,
+            "bytes": 103,
+            "estimatedTokens": 26
+          },
+          "parameters": {
+            "chars": 451,
+            "bytes": 451,
+            "estimatedTokens": 113
+          }
+        },
+        {
+          "name": "read",
+          "chars": 1833,
+          "bytes": 1839,
+          "estimatedTokens": 461,
+          "description": {
+            "chars": 1310,
+            "bytes": 1316,
+            "estimatedTokens": 330
+          },
+          "parameters": {
+            "chars": 471,
+            "bytes": 471,
+            "estimatedTokens": 118
+          }
+        },
+        {
+          "name": "relationship_scan",
+          "chars": 1737,
+          "bytes": 1749,
+          "estimatedTokens": 439,
+          "description": {
+            "chars": 462,
+            "bytes": 474,
+            "estimatedTokens": 120
+          },
+          "parameters": {
+            "chars": 1206,
+            "bytes": 1206,
+            "estimatedTokens": 302
+          }
+        },
+        {
+          "name": "repo_overview",
+          "chars": 425,
+          "bytes": 427,
+          "estimatedTokens": 107,
+          "description": {
+            "chars": 106,
+            "bytes": 108,
+            "estimatedTokens": 28
+          },
+          "parameters": {
+            "chars": 262,
+            "bytes": 262,
+            "estimatedTokens": 66
+          }
+        },
+        {
+          "name": "semantic_lookup",
+          "chars": 767,
+          "bytes": 769,
+          "estimatedTokens": 193,
+          "description": {
+            "chars": 149,
+            "bytes": 151,
+            "estimatedTokens": 38
+          },
+          "parameters": {
+            "chars": 559,
+            "bytes": 559,
+            "estimatedTokens": 140
+          }
+        },
+        {
+          "name": "send_message",
+          "chars": 1147,
+          "bytes": 1147,
+          "estimatedTokens": 287,
+          "description": {
+            "chars": 290,
+            "bytes": 290,
+            "estimatedTokens": 73
+          },
+          "parameters": {
+            "chars": 803,
+            "bytes": 803,
+            "estimatedTokens": 201
+          }
+        },
+        {
+          "name": "skill",
+          "chars": 932,
+          "bytes": 934,
+          "estimatedTokens": 234,
+          "description": {
+            "chars": 613,
+            "bytes": 615,
+            "estimatedTokens": 154
+          },
+          "parameters": {
+            "chars": 265,
+            "bytes": 265,
+            "estimatedTokens": 67
+          }
+        },
+        {
+          "name": "spawn_agent",
+          "chars": 3863,
+          "bytes": 3865,
+          "estimatedTokens": 967,
+          "description": {
+            "chars": 698,
+            "bytes": 698,
+            "estimatedTokens": 175
+          },
+          "parameters": {
+            "chars": 3112,
+            "bytes": 3114,
+            "estimatedTokens": 779
+          }
+        },
+        {
+          "name": "symbol_context",
+          "chars": 614,
+          "bytes": 616,
+          "estimatedTokens": 155,
+          "description": {
+            "chars": 119,
+            "bytes": 121,
+            "estimatedTokens": 31
+          },
+          "parameters": {
+            "chars": 437,
+            "bytes": 437,
+            "estimatedTokens": 110
+          }
+        },
+        {
+          "name": "todo_create",
+          "chars": 4077,
+          "bytes": 4107,
+          "estimatedTokens": 1031,
+          "description": {
+            "chars": 2778,
+            "bytes": 2806,
+            "estimatedTokens": 705
+          },
+          "parameters": {
+            "chars": 1204,
+            "bytes": 1206,
+            "estimatedTokens": 302
+          }
+        },
+        {
+          "name": "todo_get",
+          "chars": 1363,
+          "bytes": 1375,
+          "estimatedTokens": 346,
+          "description": {
+            "chars": 1133,
+            "bytes": 1145,
+            "estimatedTokens": 288
+          },
+          "parameters": {
+            "chars": 163,
+            "bytes": 163,
+            "estimatedTokens": 41
+          }
+        },
+        {
+          "name": "todo_list",
+          "chars": 1139,
+          "bytes": 1151,
+          "estimatedTokens": 290,
+          "description": {
+            "chars": 1037,
+            "bytes": 1049,
+            "estimatedTokens": 264
+          },
+          "parameters": {
+            "chars": 33,
+            "bytes": 33,
+            "estimatedTokens": 9
+          }
+        },
+        {
+          "name": "todo_update",
+          "chars": 8854,
+          "bytes": 8908,
+          "estimatedTokens": 2234,
+          "description": {
+            "chars": 4220,
+            "bytes": 4258,
+            "estimatedTokens": 1070
+          },
+          "parameters": {
+            "chars": 4515,
+            "bytes": 4531,
+            "estimatedTokens": 1135
+          }
+        },
+        {
+          "name": "tool_call",
+          "chars": 452,
+          "bytes": 452,
+          "estimatedTokens": 113,
+          "description": {
+            "chars": 173,
+            "bytes": 173,
+            "estimatedTokens": 44
+          },
+          "parameters": {
+            "chars": 228,
+            "bytes": 228,
+            "estimatedTokens": 57
+          }
+        },
+        {
+          "name": "tool_describe",
+          "chars": 460,
+          "bytes": 460,
+          "estimatedTokens": 115,
+          "description": {
+            "chars": 157,
+            "bytes": 157,
+            "estimatedTokens": 40
+          },
+          "parameters": {
+            "chars": 248,
+            "bytes": 248,
+            "estimatedTokens": 62
+          }
+        },
+        {
+          "name": "tool_search",
+          "chars": 1278,
+          "bytes": 1278,
+          "estimatedTokens": 320,
+          "description": {
+            "chars": 878,
+            "bytes": 878,
+            "estimatedTokens": 220
+          },
+          "parameters": {
+            "chars": 343,
+            "bytes": 343,
+            "estimatedTokens": 86
+          }
+        },
+        {
+          "name": "undo",
+          "chars": 113,
+          "bytes": 113,
+          "estimatedTokens": 29,
+          "description": {
+            "chars": 34,
+            "bytes": 34,
+            "estimatedTokens": 9
+          },
+          "parameters": {
+            "chars": 33,
+            "bytes": 33,
+            "estimatedTokens": 9
+          }
+        },
+        {
+          "name": "update_goal",
+          "chars": 1306,
+          "bytes": 1308,
+          "estimatedTokens": 328,
+          "description": {
+            "chars": 743,
+            "bytes": 745,
+            "estimatedTokens": 187
+          },
+          "parameters": {
+            "chars": 504,
+            "bytes": 504,
+            "estimatedTokens": 126
+          }
+        },
+        {
+          "name": "wait_agent",
+          "chars": 768,
+          "bytes": 768,
+          "estimatedTokens": 192,
+          "description": {
+            "chars": 475,
+            "bytes": 475,
+            "estimatedTokens": 119
+          },
+          "parameters": {
+            "chars": 241,
+            "bytes": 241,
+            "estimatedTokens": 61
+          }
+        },
+        {
+          "name": "web_fetch",
+          "chars": 509,
+          "bytes": 513,
+          "estimatedTokens": 129,
+          "description": {
+            "chars": 140,
+            "bytes": 144,
+            "estimatedTokens": 37
+          },
+          "parameters": {
+            "chars": 316,
+            "bytes": 316,
+            "estimatedTokens": 79
+          }
+        },
+        {
+          "name": "web_search",
+          "chars": 356,
+          "bytes": 358,
+          "estimatedTokens": 90,
+          "description": {
+            "chars": 102,
+            "bytes": 104,
+            "estimatedTokens": 27
+          },
+          "parameters": {
+            "chars": 200,
+            "bytes": 200,
+            "estimatedTokens": 50
+          }
+        },
+        {
+          "name": "worktree_create",
+          "chars": 340,
+          "bytes": 340,
+          "estimatedTokens": 85,
+          "description": {
+            "chars": 70,
+            "bytes": 70,
+            "estimatedTokens": 18
+          },
+          "parameters": {
+            "chars": 213,
+            "bytes": 213,
+            "estimatedTokens": 54
+          }
+        },
+        {
+          "name": "worktree_remove",
+          "chars": 517,
+          "bytes": 517,
+          "estimatedTokens": 130,
+          "description": {
+            "chars": 48,
+            "bytes": 48,
+            "estimatedTokens": 12
+          },
+          "parameters": {
+            "chars": 412,
+            "bytes": 412,
+            "estimatedTokens": 103
+          }
+        },
+        {
+          "name": "write",
+          "chars": 1797,
+          "bytes": 1801,
+          "estimatedTokens": 451,
+          "description": {
+            "chars": 1532,
+            "bytes": 1536,
+            "estimatedTokens": 385
+          },
+          "parameters": {
+            "chars": 198,
+            "bytes": 198,
+            "estimatedTokens": 50
+          }
+        }
+      ]
+    }
+  },
+  "managed": {
+    "stableInstructions": {
+      "chars": 24118,
+      "bytes": 24240,
+      "estimatedTokens": 6076
+    },
+    "system": {
+      "chars": 30623,
+      "bytes": 30771,
+      "estimatedTokens": 7712
+    },
+    "dynamicContext": {
+      "chars": 546,
+      "bytes": 548,
+      "estimatedTokens": 138
+    },
+    "tools": {
+      "count": 59,
+      "estimatedTokens": 17922,
+      "rows": [
+        {
+          "name": "agent_output",
+          "chars": 593,
+          "bytes": 593,
+          "estimatedTokens": 149,
+          "description": {
+            "chars": 278,
+            "bytes": 278,
+            "estimatedTokens": 70
+          },
+          "parameters": {
+            "chars": 261,
+            "bytes": 261,
+            "estimatedTokens": 66
+          }
+        },
+        {
+          "name": "ask_user_question",
+          "chars": 5269,
+          "bytes": 5273,
+          "estimatedTokens": 1319,
+          "description": {
+            "chars": 657,
+            "bytes": 657,
+            "estimatedTokens": 165
+          },
+          "parameters": {
+            "chars": 4549,
+            "bytes": 4553,
+            "estimatedTokens": 1139
+          }
+        },
+        {
+          "name": "bash",
+          "chars": 1779,
+          "bytes": 1787,
+          "estimatedTokens": 448,
+          "description": {
+            "chars": 1272,
+            "bytes": 1280,
+            "estimatedTokens": 321
+          },
+          "parameters": {
+            "chars": 448,
+            "bytes": 448,
+            "estimatedTokens": 112
+          }
+        },
+        {
+          "name": "changed_diff",
+          "chars": 951,
+          "bytes": 951,
+          "estimatedTokens": 238,
+          "description": {
+            "chars": 113,
+            "bytes": 113,
+            "estimatedTokens": 29
+          },
+          "parameters": {
+            "chars": 784,
+            "bytes": 784,
+            "estimatedTokens": 196
+          }
+        },
+        {
+          "name": "changed_diff_bundle",
+          "chars": 1066,
+          "bytes": 1066,
+          "estimatedTokens": 267,
+          "description": {
+            "chars": 126,
+            "bytes": 126,
+            "estimatedTokens": 32
+          },
+          "parameters": {
+            "chars": 879,
+            "bytes": 879,
+            "estimatedTokens": 220
+          }
+        },
+        {
+          "name": "changed_scope",
+          "chars": 789,
+          "bytes": 791,
+          "estimatedTokens": 198,
+          "description": {
+            "chars": 220,
+            "bytes": 222,
+            "estimatedTokens": 56
+          },
+          "parameters": {
+            "chars": 512,
+            "bytes": 512,
+            "estimatedTokens": 128
+          }
+        },
+        {
+          "name": "code_search",
+          "chars": 841,
+          "bytes": 843,
+          "estimatedTokens": 211,
+          "description": {
+            "chars": 142,
+            "bytes": 144,
+            "estimatedTokens": 37
+          },
+          "parameters": {
+            "chars": 644,
+            "bytes": 644,
+            "estimatedTokens": 161
+          }
+        },
+        {
+          "name": "create_goal",
+          "chars": 696,
+          "bytes": 696,
+          "estimatedTokens": 174,
+          "description": {
+            "chars": 261,
+            "bytes": 261,
+            "estimatedTokens": 66
+          },
+          "parameters": {
+            "chars": 382,
+            "bytes": 382,
+            "estimatedTokens": 96
+          }
+        },
+        {
+          "name": "cyclic_dependencies",
+          "chars": 597,
+          "bytes": 599,
+          "estimatedTokens": 150,
+          "description": {
+            "chars": 501,
+            "bytes": 503,
+            "estimatedTokens": 126
+          },
+          "parameters": {
+            "chars": 33,
+            "bytes": 33,
+            "estimatedTokens": 9
+          }
+        },
+        {
+          "name": "edit",
+          "chars": 1460,
+          "bytes": 1468,
+          "estimatedTokens": 368,
+          "description": {
+            "chars": 1056,
+            "bytes": 1064,
+            "estimatedTokens": 267
+          },
+          "parameters": {
+            "chars": 344,
+            "bytes": 344,
+            "estimatedTokens": 86
+          }
+        },
+        {
+          "name": "exit_plan_mode",
+          "chars": 914,
+          "bytes": 918,
+          "estimatedTokens": 230,
+          "description": {
+            "chars": 403,
+            "bytes": 405,
+            "estimatedTokens": 102
+          },
+          "parameters": {
+            "chars": 455,
+            "bytes": 457,
+            "estimatedTokens": 115
+          }
+        },
+        {
+          "name": "followup_task",
+          "chars": 684,
+          "bytes": 684,
+          "estimatedTokens": 171,
+          "description": {
+            "chars": 169,
+            "bytes": 169,
+            "estimatedTokens": 43
+          },
+          "parameters": {
+            "chars": 460,
+            "bytes": 460,
+            "estimatedTokens": 115
+          }
+        },
+        {
+          "name": "get_goal",
+          "chars": 206,
+          "bytes": 206,
+          "estimatedTokens": 52,
+          "description": {
+            "chars": 123,
+            "bytes": 123,
+            "estimatedTokens": 31
+          },
+          "parameters": {
+            "chars": 33,
+            "bytes": 33,
+            "estimatedTokens": 9
+          }
+        },
+        {
+          "name": "glob",
+          "chars": 253,
+          "bytes": 253,
+          "estimatedTokens": 64,
+          "description": {
+            "chars": 30,
+            "bytes": 30,
+            "estimatedTokens": 8
+          },
+          "parameters": {
+            "chars": 177,
+            "bytes": 177,
+            "estimatedTokens": 45
+          }
+        },
+        {
+          "name": "grep",
+          "chars": 2020,
+          "bytes": 2020,
+          "estimatedTokens": 505,
+          "description": {
+            "chars": 125,
+            "bytes": 125,
+            "estimatedTokens": 32
+          },
+          "parameters": {
+            "chars": 1849,
+            "bytes": 1849,
+            "estimatedTokens": 463
+          }
+        },
+        {
+          "name": "impact_estimate",
+          "chars": 730,
+          "bytes": 732,
+          "estimatedTokens": 184,
+          "description": {
+            "chars": 143,
+            "bytes": 145,
+            "estimatedTokens": 37
+          },
+          "parameters": {
+            "chars": 528,
+            "bytes": 528,
+            "estimatedTokens": 132
+          }
+        },
+        {
+          "name": "insert_after_anchor",
+          "chars": 506,
+          "bytes": 506,
+          "estimatedTokens": 127,
+          "description": {
+            "chars": 138,
+            "bytes": 138,
+            "estimatedTokens": 35
+          },
+          "parameters": {
+            "chars": 307,
+            "bytes": 307,
+            "estimatedTokens": 77
+          }
+        },
+        {
+          "name": "interrupt_agent",
+          "chars": 673,
+          "bytes": 673,
+          "estimatedTokens": 169,
+          "description": {
+            "chars": 193,
+            "bytes": 193,
+            "estimatedTokens": 49
+          },
+          "parameters": {
+            "chars": 423,
+            "bytes": 423,
+            "estimatedTokens": 106
+          }
+        },
+        {
+          "name": "kodax_manual",
+          "chars": 1170,
+          "bytes": 1174,
+          "estimatedTokens": 294,
+          "description": {
+            "chars": 778,
+            "bytes": 782,
+            "estimatedTokens": 196
+          },
+          "parameters": {
+            "chars": 332,
+            "bytes": 332,
+            "estimatedTokens": 83
+          }
+        },
+        {
+          "name": "list_agents",
+          "chars": 652,
+          "bytes": 652,
+          "estimatedTokens": 163,
+          "description": {
+            "chars": 175,
+            "bytes": 175,
+            "estimatedTokens": 44
+          },
+          "parameters": {
+            "chars": 424,
+            "bytes": 424,
+            "estimatedTokens": 106
+          }
+        },
+        {
+          "name": "list_dispatchable_agents",
+          "chars": 793,
+          "bytes": 793,
+          "estimatedTokens": 199,
+          "description": {
+            "chars": 137,
+            "bytes": 137,
+            "estimatedTokens": 35
+          },
+          "parameters": {
+            "chars": 590,
+            "bytes": 590,
+            "estimatedTokens": 148
+          }
+        },
+        {
+          "name": "lsp_definition",
+          "chars": 1081,
+          "bytes": 1083,
+          "estimatedTokens": 271,
+          "description": {
+            "chars": 717,
+            "bytes": 719,
+            "estimatedTokens": 180
+          },
+          "parameters": {
+            "chars": 308,
+            "bytes": 308,
+            "estimatedTokens": 77
+          }
+        },
+        {
+          "name": "lsp_document_symbols",
+          "chars": 631,
+          "bytes": 631,
+          "estimatedTokens": 158,
+          "description": {
+            "chars": 460,
+            "bytes": 460,
+            "estimatedTokens": 115
+          },
+          "parameters": {
+            "chars": 109,
+            "bytes": 109,
+            "estimatedTokens": 28
+          }
+        },
+        {
+          "name": "lsp_hover",
+          "chars": 801,
+          "bytes": 803,
+          "estimatedTokens": 201,
+          "description": {
+            "chars": 471,
+            "bytes": 473,
+            "estimatedTokens": 119
+          },
+          "parameters": {
+            "chars": 279,
+            "bytes": 279,
+            "estimatedTokens": 70
+          }
+        },
+        {
+          "name": "lsp_implementation",
+          "chars": 632,
+          "bytes": 632,
+          "estimatedTokens": 158,
+          "description": {
+            "chars": 230,
+            "bytes": 230,
+            "estimatedTokens": 58
+          },
+          "parameters": {
+            "chars": 342,
+            "bytes": 342,
+            "estimatedTokens": 86
+          }
+        },
+        {
+          "name": "lsp_incoming_calls",
+          "chars": 565,
+          "bytes": 565,
+          "estimatedTokens": 142,
+          "description": {
+            "chars": 154,
+            "bytes": 154,
+            "estimatedTokens": 39
+          },
+          "parameters": {
+            "chars": 351,
+            "bytes": 351,
+            "estimatedTokens": 88
+          }
+        },
+        {
+          "name": "lsp_outgoing_calls",
+          "chars": 568,
+          "bytes": 568,
+          "estimatedTokens": 142,
+          "description": {
+            "chars": 157,
+            "bytes": 157,
+            "estimatedTokens": 40
+          },
+          "parameters": {
+            "chars": 351,
+            "bytes": 351,
+            "estimatedTokens": 88
+          }
+        },
+        {
+          "name": "lsp_prepare_call_hierarchy",
+          "chars": 594,
+          "bytes": 594,
+          "estimatedTokens": 149,
+          "description": {
+            "chars": 175,
+            "bytes": 175,
+            "estimatedTokens": 44
+          },
+          "parameters": {
+            "chars": 351,
+            "bytes": 351,
+            "estimatedTokens": 88
+          }
+        },
+        {
+          "name": "lsp_references",
+          "chars": 965,
+          "bytes": 967,
+          "estimatedTokens": 242,
+          "description": {
+            "chars": 630,
+            "bytes": 632,
+            "estimatedTokens": 159
+          },
+          "parameters": {
+            "chars": 279,
+            "bytes": 279,
+            "estimatedTokens": 70
+          }
+        },
+        {
+          "name": "lsp_workspace_symbols",
+          "chars": 508,
+          "bytes": 508,
+          "estimatedTokens": 127,
+          "description": {
+            "chars": 302,
+            "bytes": 302,
+            "estimatedTokens": 76
+          },
+          "parameters": {
+            "chars": 143,
+            "bytes": 143,
+            "estimatedTokens": 36
+          }
+        },
+        {
+          "name": "memory_intent",
+          "chars": 2019,
+          "bytes": 2019,
+          "estimatedTokens": 505,
+          "description": {
+            "chars": 1012,
+            "bytes": 1012,
+            "estimatedTokens": 253
+          },
+          "parameters": {
+            "chars": 952,
+            "bytes": 952,
+            "estimatedTokens": 238
+          }
+        },
+        {
+          "name": "memory_recall",
+          "chars": 655,
+          "bytes": 655,
+          "estimatedTokens": 164,
+          "description": {
+            "chars": 439,
+            "bytes": 439,
+            "estimatedTokens": 110
+          },
+          "parameters": {
+            "chars": 161,
+            "bytes": 161,
+            "estimatedTokens": 41
+          }
+        },
+        {
+          "name": "module_context",
+          "chars": 541,
+          "bytes": 543,
+          "estimatedTokens": 136,
+          "description": {
+            "chars": 148,
+            "bytes": 150,
+            "estimatedTokens": 38
+          },
+          "parameters": {
+            "chars": 335,
+            "bytes": 335,
+            "estimatedTokens": 84
+          }
+        },
+        {
+          "name": "multi_edit",
+          "chars": 2622,
+          "bytes": 2634,
+          "estimatedTokens": 660,
+          "description": {
+            "chars": 1944,
+            "bytes": 1956,
+            "estimatedTokens": 491
+          },
+          "parameters": {
+            "chars": 600,
+            "bytes": 600,
+            "estimatedTokens": 150
+          }
+        },
+        {
+          "name": "process_context",
+          "chars": 611,
+          "bytes": 613,
+          "estimatedTokens": 154,
+          "description": {
+            "chars": 101,
+            "bytes": 103,
+            "estimatedTokens": 26
+          },
+          "parameters": {
+            "chars": 451,
+            "bytes": 451,
+            "estimatedTokens": 113
+          }
+        },
+        {
+          "name": "read",
+          "chars": 1833,
+          "bytes": 1839,
+          "estimatedTokens": 461,
+          "description": {
+            "chars": 1310,
+            "bytes": 1316,
+            "estimatedTokens": 330
+          },
+          "parameters": {
+            "chars": 471,
+            "bytes": 471,
+            "estimatedTokens": 118
+          }
+        },
+        {
+          "name": "relationship_scan",
+          "chars": 1737,
+          "bytes": 1749,
+          "estimatedTokens": 439,
+          "description": {
+            "chars": 462,
+            "bytes": 474,
+            "estimatedTokens": 120
+          },
+          "parameters": {
+            "chars": 1206,
+            "bytes": 1206,
+            "estimatedTokens": 302
+          }
+        },
+        {
+          "name": "repo_overview",
+          "chars": 425,
+          "bytes": 427,
+          "estimatedTokens": 107,
+          "description": {
+            "chars": 106,
+            "bytes": 108,
+            "estimatedTokens": 28
+          },
+          "parameters": {
+            "chars": 262,
+            "bytes": 262,
+            "estimatedTokens": 66
+          }
+        },
+        {
+          "name": "run_skill_script",
+          "chars": 1225,
+          "bytes": 1225,
+          "estimatedTokens": 307,
+          "description": {
+            "chars": 366,
+            "bytes": 366,
+            "estimatedTokens": 92
+          },
+          "parameters": {
+            "chars": 798,
+            "bytes": 798,
+            "estimatedTokens": 200
+          }
+        },
+        {
+          "name": "semantic_lookup",
+          "chars": 767,
+          "bytes": 769,
+          "estimatedTokens": 193,
+          "description": {
+            "chars": 149,
+            "bytes": 151,
+            "estimatedTokens": 38
+          },
+          "parameters": {
+            "chars": 559,
+            "bytes": 559,
+            "estimatedTokens": 140
+          }
+        },
+        {
+          "name": "send_message",
+          "chars": 1147,
+          "bytes": 1147,
+          "estimatedTokens": 287,
+          "description": {
+            "chars": 290,
+            "bytes": 290,
+            "estimatedTokens": 73
+          },
+          "parameters": {
+            "chars": 803,
+            "bytes": 803,
+            "estimatedTokens": 201
+          }
+        },
+        {
+          "name": "skill",
+          "chars": 932,
+          "bytes": 934,
+          "estimatedTokens": 234,
+          "description": {
+            "chars": 613,
+            "bytes": 615,
+            "estimatedTokens": 154
+          },
+          "parameters": {
+            "chars": 265,
+            "bytes": 265,
+            "estimatedTokens": 67
+          }
+        },
+        {
+          "name": "spawn_agent",
+          "chars": 3863,
+          "bytes": 3865,
+          "estimatedTokens": 967,
+          "description": {
+            "chars": 698,
+            "bytes": 698,
+            "estimatedTokens": 175
+          },
+          "parameters": {
+            "chars": 3112,
+            "bytes": 3114,
+            "estimatedTokens": 779
+          }
+        },
+        {
+          "name": "symbol_context",
+          "chars": 614,
+          "bytes": 616,
+          "estimatedTokens": 155,
+          "description": {
+            "chars": 119,
+            "bytes": 121,
+            "estimatedTokens": 31
+          },
+          "parameters": {
+            "chars": 437,
+            "bytes": 437,
+            "estimatedTokens": 110
+          }
+        },
+        {
+          "name": "todo_create",
+          "chars": 4077,
+          "bytes": 4107,
+          "estimatedTokens": 1031,
+          "description": {
+            "chars": 2778,
+            "bytes": 2806,
+            "estimatedTokens": 705
+          },
+          "parameters": {
+            "chars": 1204,
+            "bytes": 1206,
+            "estimatedTokens": 302
+          }
+        },
+        {
+          "name": "todo_get",
+          "chars": 1363,
+          "bytes": 1375,
+          "estimatedTokens": 346,
+          "description": {
+            "chars": 1133,
+            "bytes": 1145,
+            "estimatedTokens": 288
+          },
+          "parameters": {
+            "chars": 163,
+            "bytes": 163,
+            "estimatedTokens": 41
+          }
+        },
+        {
+          "name": "todo_list",
+          "chars": 1139,
+          "bytes": 1151,
+          "estimatedTokens": 290,
+          "description": {
+            "chars": 1037,
+            "bytes": 1049,
+            "estimatedTokens": 264
+          },
+          "parameters": {
+            "chars": 33,
+            "bytes": 33,
+            "estimatedTokens": 9
+          }
+        },
+        {
+          "name": "todo_update",
+          "chars": 8854,
+          "bytes": 8908,
+          "estimatedTokens": 2234,
+          "description": {
+            "chars": 4220,
+            "bytes": 4258,
+            "estimatedTokens": 1070
+          },
+          "parameters": {
+            "chars": 4515,
+            "bytes": 4531,
+            "estimatedTokens": 1135
+          }
+        },
+        {
+          "name": "tool_call",
+          "chars": 452,
+          "bytes": 452,
+          "estimatedTokens": 113,
+          "description": {
+            "chars": 173,
+            "bytes": 173,
+            "estimatedTokens": 44
+          },
+          "parameters": {
+            "chars": 228,
+            "bytes": 228,
+            "estimatedTokens": 57
+          }
+        },
+        {
+          "name": "tool_describe",
+          "chars": 460,
+          "bytes": 460,
+          "estimatedTokens": 115,
+          "description": {
+            "chars": 157,
+            "bytes": 157,
+            "estimatedTokens": 40
+          },
+          "parameters": {
+            "chars": 248,
+            "bytes": 248,
+            "estimatedTokens": 62
+          }
+        },
+        {
+          "name": "tool_search",
+          "chars": 1278,
+          "bytes": 1278,
+          "estimatedTokens": 320,
+          "description": {
+            "chars": 878,
+            "bytes": 878,
+            "estimatedTokens": 220
+          },
+          "parameters": {
+            "chars": 343,
+            "bytes": 343,
+            "estimatedTokens": 86
+          }
+        },
+        {
+          "name": "undo",
+          "chars": 113,
+          "bytes": 113,
+          "estimatedTokens": 29,
+          "description": {
+            "chars": 34,
+            "bytes": 34,
+            "estimatedTokens": 9
+          },
+          "parameters": {
+            "chars": 33,
+            "bytes": 33,
+            "estimatedTokens": 9
+          }
+        },
+        {
+          "name": "update_goal",
+          "chars": 1306,
+          "bytes": 1308,
+          "estimatedTokens": 328,
+          "description": {
+            "chars": 743,
+            "bytes": 745,
+            "estimatedTokens": 187
+          },
+          "parameters": {
+            "chars": 504,
+            "bytes": 504,
+            "estimatedTokens": 126
+          }
+        },
+        {
+          "name": "wait_agent",
+          "chars": 768,
+          "bytes": 768,
+          "estimatedTokens": 192,
+          "description": {
+            "chars": 475,
+            "bytes": 475,
+            "estimatedTokens": 119
+          },
+          "parameters": {
+            "chars": 241,
+            "bytes": 241,
+            "estimatedTokens": 61
+          }
+        },
+        {
+          "name": "web_fetch",
+          "chars": 509,
+          "bytes": 513,
+          "estimatedTokens": 129,
+          "description": {
+            "chars": 140,
+            "bytes": 144,
+            "estimatedTokens": 37
+          },
+          "parameters": {
+            "chars": 316,
+            "bytes": 316,
+            "estimatedTokens": 79
+          }
+        },
+        {
+          "name": "web_search",
+          "chars": 356,
+          "bytes": 358,
+          "estimatedTokens": 90,
+          "description": {
+            "chars": 102,
+            "bytes": 104,
+            "estimatedTokens": 27
+          },
+          "parameters": {
+            "chars": 200,
+            "bytes": 200,
+            "estimatedTokens": 50
+          }
+        },
+        {
+          "name": "worktree_create",
+          "chars": 340,
+          "bytes": 340,
+          "estimatedTokens": 85,
+          "description": {
+            "chars": 70,
+            "bytes": 70,
+            "estimatedTokens": 18
+          },
+          "parameters": {
+            "chars": 213,
+            "bytes": 213,
+            "estimatedTokens": 54
+          }
+        },
+        {
+          "name": "worktree_remove",
+          "chars": 517,
+          "bytes": 517,
+          "estimatedTokens": 130,
+          "description": {
+            "chars": 48,
+            "bytes": 48,
+            "estimatedTokens": 12
+          },
+          "parameters": {
+            "chars": 412,
+            "bytes": 412,
+            "estimatedTokens": 103
+          }
+        },
+        {
+          "name": "write",
+          "chars": 1797,
+          "bytes": 1801,
+          "estimatedTokens": 451,
+          "description": {
+            "chars": 1532,
+            "bytes": 1536,
+            "estimatedTokens": 385
+          },
+          "parameters": {
+            "chars": 198,
+            "bytes": 198,
+            "estimatedTokens": 50
+          }
+        }
+      ]
+    }
+  },
+  "componentTotals": {
+    "sa": 20100,
+    "managed": 25772
+  }
+}

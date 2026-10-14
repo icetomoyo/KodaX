@@ -1,0 +1,324 @@
+{
+  "commit": "c22a06c18070c3e33bd2648c7210a00a2a9f6f80",
+  "methodology": "Offline source reconstruction, NOT executed Rust builder or captured provider payload. Exactly extracted source text with manually transcribed bounded schemas. LF normalized. Normalized JSON has only name,description,parameters (freeform lacks parameters); excludes native wrappers/grammar/output schema. CodeMode subset includes output schemas, boilerplate and headings; excludes namespace header for clock, native wait/request/collaboration schemas, web, deferred search/catalog and external/app tools. Linux/single-env/login allowed/legacy image-detail baseline. ASCII chars/4 heuristic only, not tokenizer/API usage.",
+  "modelMetadata": [
+    {
+      "slug": "gpt-6-astra",
+      "tool_mode": "code_mode_only",
+      "multi_agent_version": "v2",
+      "supports_search_tool": true,
+      "use_responses_lite": true,
+      "experimental_supported_tools": [
+        "send_user_message_async",
+        "clock"
+      ],
+      "toolMessagesOverride": null
+    },
+    {
+      "slug": "gpt-6.1-sol",
+      "tool_mode": "code_mode_only",
+      "multi_agent_version": "v2",
+      "supports_search_tool": true,
+      "use_responses_lite": true,
+      "experimental_supported_tools": [
+        "send_user_message_async",
+        "clock"
+      ],
+      "toolMessagesOverride": null
+    }
+  ],
+  "codeModeFixed": {
+    "execDescription": {
+      "chars": 3374,
+      "bytes": 3374,
+      "estimatedTokens": 844
+    },
+    "deferredGuidance": {
+      "chars": 251,
+      "bytes": 251,
+      "estimatedTokens": 63
+    },
+    "sharedMcpPreamble": {
+      "chars": 1571,
+      "bytes": 1571,
+      "estimatedTokens": 393
+    },
+    "waitDescription": {
+      "chars": 700,
+      "bytes": 700,
+      "estimatedTokens": 175
+    }
+  },
+  "directApplyPatchGrammar": {
+    "chars": 578,
+    "bytes": 578,
+    "estimatedTokens": 145
+  },
+  "eightNestedPlusBoilerplateLowerBound": {
+    "chars": 10988,
+    "bytes": 10988,
+    "estimatedTokens": 2747
+  },
+  "tools": [
+    {
+      "name": "exec_command",
+      "classification": "nested-default",
+      "description": {
+        "chars": 82,
+        "bytes": 82,
+        "estimatedTokens": 21
+      },
+      "parametersJson": {
+        "chars": 1395,
+        "bytes": 1395,
+        "estimatedTokens": 349
+      },
+      "normalizedJson": {
+        "chars": 1531,
+        "bytes": 1531,
+        "estimatedTokens": 383
+      },
+      "codeModeDeclaration": {
+        "chars": 1804,
+        "bytes": 1804,
+        "estimatedTokens": 451
+      }
+    },
+    {
+      "name": "write_stdin",
+      "classification": "nested-default",
+      "description": {
+        "chars": 80,
+        "bytes": 80,
+        "estimatedTokens": 20
+      },
+      "parametersJson": {
+        "chars": 618,
+        "bytes": 618,
+        "estimatedTokens": 155
+      },
+      "normalizedJson": {
+        "chars": 751,
+        "bytes": 751,
+        "estimatedTokens": 188
+      },
+      "codeModeDeclaration": {
+        "chars": 1168,
+        "bytes": 1168,
+        "estimatedTokens": 292
+      }
+    },
+    {
+      "name": "list_mcp_resources",
+      "classification": "nested-default",
+      "description": {
+        "chars": 238,
+        "bytes": 238,
+        "estimatedTokens": 60
+      },
+      "parametersJson": {
+        "chars": 297,
+        "bytes": 297,
+        "estimatedTokens": 75
+      },
+      "normalizedJson": {
+        "chars": 595,
+        "bytes": 595,
+        "estimatedTokens": 149
+      },
+      "codeModeDeclaration": {
+        "chars": 570,
+        "bytes": 570,
+        "estimatedTokens": 143
+      }
+    },
+    {
+      "name": "list_mcp_resource_templates",
+      "classification": "nested-default",
+      "description": {
+        "chars": 300,
+        "bytes": 300,
+        "estimatedTokens": 75
+      },
+      "parametersJson": {
+        "chars": 315,
+        "bytes": 315,
+        "estimatedTokens": 79
+      },
+      "normalizedJson": {
+        "chars": 684,
+        "bytes": 684,
+        "estimatedTokens": 171
+      },
+      "codeModeDeclaration": {
+        "chars": 668,
+        "bytes": 668,
+        "estimatedTokens": 167
+      }
+    },
+    {
+      "name": "read_mcp_resource",
+      "classification": "nested-default",
+      "description": {
+        "chars": 83,
+        "bytes": 83,
+        "estimatedTokens": 21
+      },
+      "parametersJson": {
+        "chars": 351,
+        "bytes": 351,
+        "estimatedTokens": 88
+      },
+      "normalizedJson": {
+        "chars": 493,
+        "bytes": 493,
+        "estimatedTokens": 124
+      },
+      "codeModeDeclaration": {
+        "chars": 437,
+        "bytes": 437,
+        "estimatedTokens": 110
+      }
+    },
+    {
+      "name": "apply_patch",
+      "classification": "nested-default-freeform",
+      "description": {
+        "chars": 108,
+        "bytes": 108,
+        "estimatedTokens": 27
+      },
+      "parametersJson": null,
+      "normalizedJson": {
+        "chars": 147,
+        "bytes": 147,
+        "estimatedTokens": 37
+      },
+      "codeModeDeclaration": {
+        "chars": 232,
+        "bytes": 232,
+        "estimatedTokens": 58
+      }
+    },
+    {
+      "name": "view_image",
+      "classification": "nested-default",
+      "description": {
+        "chars": 124,
+        "bytes": 124,
+        "estimatedTokens": 31
+      },
+      "parametersJson": {
+        "chars": 317,
+        "bytes": 317,
+        "estimatedTokens": 80
+      },
+      "normalizedJson": {
+        "chars": 493,
+        "bytes": 493,
+        "estimatedTokens": 124
+      },
+      "codeModeDeclaration": {
+        "chars": 653,
+        "bytes": 653,
+        "estimatedTokens": 164
+      }
+    },
+    {
+      "name": "clock__curr_time",
+      "classification": "nested-default",
+      "description": {
+        "chars": 31,
+        "bytes": 31,
+        "estimatedTokens": 8
+      },
+      "parametersJson": {
+        "chars": 62,
+        "bytes": 62,
+        "estimatedTokens": 16
+      },
+      "normalizedJson": {
+        "chars": 151,
+        "bytes": 151,
+        "estimatedTokens": 38
+      },
+      "codeModeDeclaration": {
+        "chars": 240,
+        "bytes": 240,
+        "estimatedTokens": 60
+      }
+    },
+    {
+      "name": "update_plan",
+      "classification": "optional-off",
+      "description": {
+        "chars": 157,
+        "bytes": 157,
+        "estimatedTokens": 40
+      },
+      "parametersJson": {
+        "chars": 487,
+        "bytes": 487,
+        "estimatedTokens": 122
+      },
+      "normalizedJson": {
+        "chars": 700,
+        "bytes": 700,
+        "estimatedTokens": 175
+      },
+      "codeModeDeclaration": {
+        "chars": 498,
+        "bytes": 498,
+        "estimatedTokens": 125
+      }
+    },
+    {
+      "name": "request_user_input",
+      "classification": "direct-default",
+      "description": {
+        "chars": 120,
+        "bytes": 120,
+        "estimatedTokens": 30
+      },
+      "parametersJson": {
+        "chars": 1142,
+        "bytes": 1142,
+        "estimatedTokens": 286
+      },
+      "normalizedJson": {
+        "chars": 1322,
+        "bytes": 1322,
+        "estimatedTokens": 331
+      },
+      "codeModeDeclaration": {
+        "chars": 951,
+        "bytes": 951,
+        "estimatedTokens": 238
+      }
+    },
+    {
+      "name": "request_user_input_async",
+      "classification": "direct-root-default",
+      "description": {
+        "chars": 556,
+        "bytes": 556,
+        "estimatedTokens": 139
+      },
+      "parametersJson": {
+        "chars": 844,
+        "bytes": 844,
+        "estimatedTokens": 211
+      },
+      "normalizedJson": {
+        "chars": 1466,
+        "bytes": 1466,
+        "estimatedTokens": 367
+      },
+      "codeModeDeclaration": {
+        "chars": 1271,
+        "bytes": 1271,
+        "estimatedTokens": 318
+      }
+    }
+  ]
+}

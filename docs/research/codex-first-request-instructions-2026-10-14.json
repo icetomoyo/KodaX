@@ -1,0 +1,163 @@
+{
+  "kind": "offline-source-text-reconstruction-not-builder-or-api-usage",
+  "codexCommit": "c22a06c18070c3e33bd2648c7210a00a2a9f6f80",
+  "catalogSha256": "0db887f28adcc483a830362de16b6440585517565a2edf1cd80eb6b8a7b337a7",
+  "estimator": "direct import of packages/agent/src/tokenizer.ts countTokens; text only; no per-message or provider protocol overhead",
+  "scenario": {
+    "modelSource": "bundled catalog",
+    "source": "CLI root",
+    "reasoning": "catalog default low",
+    "collaborationMode": "Default",
+    "updatePlanEnabled": false,
+    "sandbox": "danger-full-access",
+    "approvals": "never",
+    "cwd": "C:\\workspace",
+    "shell": "powershell",
+    "date": "2026-10-14",
+    "timezone": "Asia/Shanghai",
+    "multiAgentV2": {
+      "maxConcurrency": 4,
+      "waitAgentEnabled": true,
+      "exposeModelOverrides": true
+    },
+    "empty": [
+      "history",
+      "skills",
+      "MCP",
+      "AGENTS",
+      "user/developer custom instructions",
+      "plugins/apps",
+      "subagents"
+    ],
+    "omitted": [
+      "ALL tool channel definitions and generated tool guidance",
+      "user task",
+      "optional feature contexts",
+      "wire protocol overhead"
+    ]
+  },
+  "models": {
+    "gpt-6.1-sol": {
+      "modelSettings": {
+        "toolMode": "code_mode_only",
+        "multiAgentVersion": "v2",
+        "useResponsesLite": true,
+        "defaultReasoning": "low",
+        "contextWindow": 272000
+      },
+      "catalogBaseBeforeUpdatePlanFilter": {
+        "utf16Units": 21769,
+        "unicodeCodepoints": 21769,
+        "utf8Bytes": 21779,
+        "kodaxCountTokens": 5446,
+        "sha256": "e1bdd4f8f0df4b20f4a0ffc8a861ce819df45325d8cecdfb92e80379cf8d142e"
+      },
+      "components": {
+        "base": {
+          "utf16Units": 21769,
+          "unicodeCodepoints": 21769,
+          "utf8Bytes": 21779,
+          "kodaxCountTokens": 5446,
+          "sha256": "e1bdd4f8f0df4b20f4a0ffc8a861ce819df45325d8cecdfb92e80379cf8d142e"
+        },
+        "collaboration": {
+          "utf16Units": 920,
+          "unicodeCodepoints": 920,
+          "utf8Bytes": 920,
+          "kodaxCountTokens": 230,
+          "sha256": "bec8e7b5358a20b4cd552dae768b3a65ebf4ea9fb2645220085b84d60ee3fe81"
+        },
+        "permissions": {
+          "utf16Units": 363,
+          "unicodeCodepoints": 363,
+          "utf8Bytes": 363,
+          "kodaxCountTokens": 91,
+          "sha256": "6317aae42a3a2f7a9df89482665e48f390469df8a89e555fde535fa5042f1e65"
+        },
+        "environment": {
+          "utf16Units": 357,
+          "unicodeCodepoints": 357,
+          "utf8Bytes": 357,
+          "kodaxCountTokens": 90,
+          "sha256": "017ca89525cb2711754a8699181793b55b9730ffb7fff733ea8815cec106b315"
+        },
+        "multiAgentRootRole": {
+          "utf16Units": 2400,
+          "unicodeCodepoints": 2400,
+          "utf8Bytes": 2400,
+          "kodaxCountTokens": 600,
+          "sha256": "3edd51083129388f52e881435e93e4b981e00c5ee3d62ab5d32e22c428fd504b"
+        },
+        "multiAgentMode": {
+          "utf16Units": 271,
+          "unicodeCodepoints": 271,
+          "utf8Bytes": 271,
+          "kodaxCountTokens": 68,
+          "sha256": "6ded806e3cdbb35599ecaf8742574bc5274908472b1729090010c404c2151e8e"
+        }
+      },
+      "subtotalTextOnly": 6525
+    },
+    "gpt-6-astra": {
+      "modelSettings": {
+        "toolMode": "code_mode_only",
+        "multiAgentVersion": "v2",
+        "useResponsesLite": true,
+        "defaultReasoning": "low",
+        "contextWindow": 272000
+      },
+      "catalogBaseBeforeUpdatePlanFilter": {
+        "utf16Units": 21420,
+        "unicodeCodepoints": 21420,
+        "utf8Bytes": 21428,
+        "kodaxCountTokens": 5358,
+        "sha256": "35bd51b5f577cb7b24cd5f4629e49e37cb724ab57754ce6f8f202001635bab8a"
+      },
+      "components": {
+        "base": {
+          "utf16Units": 21420,
+          "unicodeCodepoints": 21420,
+          "utf8Bytes": 21428,
+          "kodaxCountTokens": 5358,
+          "sha256": "35bd51b5f577cb7b24cd5f4629e49e37cb724ab57754ce6f8f202001635bab8a"
+        },
+        "collaboration": {
+          "utf16Units": 920,
+          "unicodeCodepoints": 920,
+          "utf8Bytes": 920,
+          "kodaxCountTokens": 230,
+          "sha256": "bec8e7b5358a20b4cd552dae768b3a65ebf4ea9fb2645220085b84d60ee3fe81"
+        },
+        "permissions": {
+          "utf16Units": 363,
+          "unicodeCodepoints": 363,
+          "utf8Bytes": 363,
+          "kodaxCountTokens": 91,
+          "sha256": "6317aae42a3a2f7a9df89482665e48f390469df8a89e555fde535fa5042f1e65"
+        },
+        "environment": {
+          "utf16Units": 357,
+          "unicodeCodepoints": 357,
+          "utf8Bytes": 357,
+          "kodaxCountTokens": 90,
+          "sha256": "017ca89525cb2711754a8699181793b55b9730ffb7fff733ea8815cec106b315"
+        },
+        "multiAgentRootRole": {
+          "utf16Units": 2400,
+          "unicodeCodepoints": 2400,
+          "utf8Bytes": 2400,
+          "kodaxCountTokens": 600,
+          "sha256": "3edd51083129388f52e881435e93e4b981e00c5ee3d62ab5d32e22c428fd504b"
+        },
+        "multiAgentMode": {
+          "utf16Units": 271,
+          "unicodeCodepoints": 271,
+          "utf8Bytes": 271,
+          "kodaxCountTokens": 68,
+          "sha256": "6ded806e3cdbb35599ecaf8742574bc5274908472b1729090010c404c2151e8e"
+        }
+      },
+      "subtotalTextOnly": 6437
+    }
+  }
+}

@@ -1,0 +1,118 @@
+{
+  "baselineCommit": "bd4479d59cab3d082f07c2d34681fff198d82fa0",
+  "methodology": "Same normalized {name,description,parameters} per tool and KodaX countTokens as frozen inventory. Source model projection; not API/BPE usage. No provider calls.",
+  "rows": [
+    {
+      "name": "ask_user_question",
+      "before": {
+        "chars": 5269,
+        "bytes": 5273,
+        "estimatedTokens": 1319
+      },
+      "after": {
+        "chars": 5024,
+        "bytes": 5028,
+        "estimatedTokens": 1258
+      },
+      "savedEstimate": 61,
+      "rawDescription": {
+        "chars": 657,
+        "bytes": 657,
+        "estimatedTokens": 165
+      }
+    },
+    {
+      "name": "todo_create",
+      "before": {
+        "chars": 4077,
+        "bytes": 4107,
+        "estimatedTokens": 1031
+      },
+      "after": {
+        "chars": 2149,
+        "bytes": 2151,
+        "estimatedTokens": 538
+      },
+      "savedEstimate": 493,
+      "rawDescription": {
+        "chars": 892,
+        "bytes": 892,
+        "estimatedTokens": 223
+      }
+    },
+    {
+      "name": "todo_get",
+      "before": {
+        "chars": 1363,
+        "bytes": 1375,
+        "estimatedTokens": 346
+      },
+      "after": {
+        "chars": 655,
+        "bytes": 655,
+        "estimatedTokens": 164
+      },
+      "savedEstimate": 182,
+      "rawDescription": {
+        "chars": 442,
+        "bytes": 442,
+        "estimatedTokens": 111
+      }
+    },
+    {
+      "name": "todo_list",
+      "before": {
+        "chars": 1139,
+        "bytes": 1151,
+        "estimatedTokens": 290
+      },
+      "after": {
+        "chars": 448,
+        "bytes": 448,
+        "estimatedTokens": 112
+      },
+      "savedEstimate": 178,
+      "rawDescription": {
+        "chars": 364,
+        "bytes": 364,
+        "estimatedTokens": 91
+      }
+    },
+    {
+      "name": "todo_update",
+      "before": {
+        "chars": 8854,
+        "bytes": 8908,
+        "estimatedTokens": 2234
+      },
+      "after": {
+        "chars": 3728,
+        "bytes": 3738,
+        "estimatedTokens": 936
+      },
+      "savedEstimate": 1298,
+      "rawDescription": {
+        "chars": 991,
+        "bytes": 991,
+        "estimatedTokens": 248
+      }
+    }
+  ],
+  "totalSavedEstimate": 2212,
+  "noRunnerManagedRemoval": {
+    "name": "run_skill_script",
+    "chars": 1225,
+    "bytes": 1225,
+    "estimatedTokens": 307,
+    "description": {
+      "chars": 366,
+      "bytes": 366,
+      "estimatedTokens": 92
+    },
+    "parameters": {
+      "chars": 798,
+      "bytes": 798,
+      "estimatedTokens": 200
+    }
+  }
+}
