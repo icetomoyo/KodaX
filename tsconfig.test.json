@@ -66,6 +66,10 @@
   },
   "include": [
     "src/**/*.test.ts",
-    "src/**/*.test.tsx"
+    "src/**/*.test.tsx",
+    "tests/first-turn*.ts",
+    "benchmark/datasets/first-turn-tokens/*.ts",
+    "packages/coding/src/task-engine/_internal/managed-task/llm-adapter-tool-contract.test.ts",
+    "packages/coding/src/task-engine/_internal/managed-task/role-prompt-capabilities.test.ts"
   ]
 }
