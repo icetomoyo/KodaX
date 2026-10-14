@@ -114,6 +114,7 @@ import type {
 } from '../types.js';
 import type { KodaXToolUseBlock } from '@kodax-ai/llm';
 import { renderCapabilityToolResult } from '../tools/capability-result.js';
+import { projectModelToolDefinition } from '../tools/model-tool-definition.js';
 import {
   emitKodaXDiagnostic,
   runToolAfterGuardrails,
@@ -411,6 +412,7 @@ function describeBridgeTools(
       lines.push(`<!-- ${name}: not registered -->`);
       continue;
     }
+    definition = projectModelToolDefinition(definition);
     lines.push(`<function>${JSON.stringify({
       name: definition.name,
       description: definition.description,

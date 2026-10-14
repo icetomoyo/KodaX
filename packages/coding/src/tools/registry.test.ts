@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderAmaPatternPlaybook } from '../orchestration/pattern-catalog.js';
+import { createTodoStore } from '../task-engine/todo-store.js';
 import {
   executeTool,
   getAllRegisteredTools,
@@ -22,6 +23,18 @@ const TEST_CONTEXT: KodaXToolExecutionContext = {
 };
 
 describe('tool registry', () => {
+  it('keeps internal legacy todo initialization and subsequent incremental execution available', async () => {
+    const store = createTodoStore();
+    const ctx = { ...TEST_CONTEXT, todoStore: store };
+    const seeded = await executeTool('todo_update', {
+      op: 'init', items: [{ id: 'seed_1', subject: 'Verify the change' }],
+    }, ctx);
+    expect(JSON.parse(seeded as string)).toEqual({ ok: true, count: 1 });
+    const updated = await executeTool('todo_update', { id: 'seed_1', description: 'Inspect the rendered artifact' }, ctx);
+    expect(JSON.parse(updated as string)).toMatchObject({ ok: true });
+    expect(store.getAll()).toMatchObject([{ id: 'seed_1', description: 'Inspect the rendered artifact', status: 'pending' }]);
+  });
+
   it('executes questions-only requests through the registry without a redundant single question', async () => {
     const result = await executeTool('ask_user_question', {
       questions: [{ question: 'Color?', options: [{ label: 'Blue', value: 'blue' }] }],

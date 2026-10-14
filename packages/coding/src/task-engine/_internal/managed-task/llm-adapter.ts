@@ -20,6 +20,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { withEffectivePermissionContext } from '../../../prompts/effective-permissions.js';
+import { projectModelToolDefinition } from '../../../tools/model-tool-definition.js';
 
 import type {
   KodaXContentBlock,
@@ -489,7 +490,7 @@ export function buildRunnerLlmAdapter(
     }
 
     const wireTools: KodaXToolDefinition[] = (agent.tools ?? [])
-      .map((t) => ({
+      .map((t) => projectModelToolDefinition({
         name: t.name,
         description: t.description,
         input_schema: t.input_schema,

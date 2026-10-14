@@ -61,6 +61,7 @@ import { isManagedProtocolToolName } from '../managed-protocol.js';
 import { resolveKodaXAutoRepoMode } from '../repo-intelligence/runtime.js';
 import { DEFERRED_TOOL_HINTS, isDeferredTool } from '../tools/deferred-tools.js';
 import { withManualToolBranding } from '../self-knowledge/tool-description.js';
+import { projectModelToolDefinition } from '../tools/model-tool-definition.js';
 
 /** FEATURE_067 v3: Filter tools excluded for child agents at API level. */
 export function filterExcludedTools(
@@ -160,7 +161,7 @@ export function getActiveToolDefinitions(
     .map((tool) => {
       // FEATURE_221: white-label the kodax_manual description (no-op unless a
       // non-default productName is set, so the default surface is unchanged).
-      const branded = withManualToolBranding(tool, selfManualProductName);
+      const branded = withManualToolBranding(projectModelToolDefinition(tool), selfManualProductName);
       // FEATURE_189 Batch 3 B.2 — progressive disclosure: deferred tools
       // emit a one-line searchHint instead of the full description until
       // the per-context unlock set marks them. The schema parameters are

@@ -42,6 +42,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { getToolDefinition } from '../../tools/registry.js';
 
 import {
   applyToolVisibilityPolicy,
@@ -49,6 +50,22 @@ import {
   getActiveToolDefinitions,
   getRuntimeActiveToolNames,
 } from '../tool-resolution.js';
+
+describe('model-visible todo contract', () => {
+  it('requires a stable item id without exposing internal list replacement or mutating the registry', () => {
+    const raw = getToolDefinition('todo_update');
+    if (!raw) throw new Error('Missing todo_update');
+    const before = structuredClone(raw.input_schema);
+    const [tool] = getActiveToolDefinitions(['todo_update']);
+
+    expect(tool?.input_schema.required).toEqual(['id']);
+    expect(tool?.input_schema.properties).not.toHaveProperty('op');
+    expect(tool?.input_schema.properties).not.toHaveProperty('items');
+    expect(JSON.stringify(tool)).not.toContain('op="update" only.');
+    expect(raw.input_schema).toEqual(before);
+    expect(getToolDefinition('todo_update')?.input_schema.properties).toHaveProperty('items');
+  });
+});
 
 describe('FEATURE_247 (R2): applyToolVisibilityPolicy', () => {
   it('returns the input reference unchanged when no policy is set (identity short-circuit)', () => {

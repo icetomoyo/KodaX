@@ -41,6 +41,7 @@ import {
   searchToolIndex,
 } from './tool-search-index.js';
 import { withManualToolBranding } from '../self-knowledge/tool-description.js';
+import { projectModelToolDefinition } from './model-tool-definition.js';
 
 interface ToolSearchInput {
   query?: string;
@@ -145,7 +146,7 @@ function buildResult(
     // FEATURE_221: white-label the kodax_manual description here too, so a
     // re-branded consumer's `select:kodax_manual` lookup cannot pull the raw
     // KodaX description. No-op for every other tool / the default product name.
-    lines.push(formatToolAsFunctionBlock(withManualToolBranding(def, selfManualProductName)));
+    lines.push(formatToolAsFunctionBlock(withManualToolBranding(projectModelToolDefinition(def), selfManualProductName)));
   }
   return lines.join('\n');
 }

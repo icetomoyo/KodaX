@@ -101,6 +101,23 @@ function getAgentToolNames(
 }
 
 describe('FEATURE_168 — AMA agent tool wiring (per-role full set)', () => {
+  it('keeps managed todo overrides and both discovery surfaces on the incremental model contract', async () => {
+    const tools = buildRunnerAgentChain(makeCtx()).worker.tools ?? [];
+    const todo = tools.find((tool) => tool.name === 'todo_update');
+    expect(todo?.input_schema.required).toEqual(['id']);
+    expect(todo?.input_schema.properties).not.toHaveProperty('items');
+    for (const [name, input] of [
+      ['tool_search', { query: 'select:todo_update' }],
+      ['tool_describe', { name: 'todo_update' }],
+    ] as const) {
+      const result = await tools.find((tool) => tool.name === name)?.execute(input);
+      const body = String(result?.content).replace(/^<function>|<\/function>$/g, '');
+      const described = JSON.parse(body) as { parameters: unknown };
+      expect(described.parameters).toEqual(todo?.input_schema);
+    }
+    expect(getToolDefinition('todo_update')?.input_schema.properties).toHaveProperty('items');
+  });
+
   it('advertises skill scripts only when an independent host binds a runner, and still honors policy', async () => {
     const { skillScriptRunner: _runner, ...ctx } = makeCtx();
     const unavailable = buildRunnerAgentChain(ctx).worker.tools ?? [];

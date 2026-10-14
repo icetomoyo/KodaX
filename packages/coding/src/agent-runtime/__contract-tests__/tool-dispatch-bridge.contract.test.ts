@@ -58,6 +58,18 @@ describe('FEATURE_254 portable bridge dispatch', () => {
     delete process.env[TOOL_OUTPUT_DIR_ENV];
     await fs.rm(tempDir, { recursive: true, force: true });
   });
+  it('describes the incremental todo schema without exposing internal replacement', async () => {
+    const result = await executeToolCall(
+      {}, makeToolCall(TOOL_DESCRIBE_NAME, { name: 'todo_update' }), makeCtx(), freshState(),
+      [TOOL_DESCRIBE_NAME, 'todo_update'],
+    );
+    const body = String(result).replace(/^<function>|<\/function>$/g, '');
+    const tool = JSON.parse(body) as { parameters: { properties: Record<string, unknown>; required: string[] } };
+    expect(tool.parameters.required).toEqual(['id']);
+    expect(tool.parameters.properties).not.toHaveProperty('op');
+    expect(tool.parameters.properties).not.toHaveProperty('items');
+  });
+
   it('tool_describe returns schema only for active tools', async () => {
     const unregister = registerTool({
       name: 'bridge_describe_target',

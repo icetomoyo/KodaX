@@ -30,6 +30,7 @@ import { DEFERRED_TOOL_HINTS, isDeferredTool } from '../../../tools/deferred-too
 import { TOOL_CALL_NAME, TOOL_DESCRIBE_NAME } from '../../../tools/tool-bridge.js';
 import { isSessionHistoryTool } from '../../../tools/session-history.js';
 import { withManualToolBranding } from '../../../self-knowledge/tool-description.js';
+import { projectModelToolDefinition } from '../../../tools/model-tool-definition.js';
 import type {
   KodaXEvents,
   KodaXToolExecutionContext,
@@ -164,7 +165,7 @@ function describeManagedBridgeTools(
       lines.push(`<!-- ${name}: not active in the current runtime -->`);
       continue;
     }
-    const branded = withManualToolBranding(definition, ctx.selfManual?.productName);
+    const branded = withManualToolBranding(projectModelToolDefinition(definition), ctx.selfManual?.productName);
     lines.push(`<function>${JSON.stringify({
       name: branded.name,
       description: branded.description,
@@ -377,7 +378,7 @@ function buildAgentToolsFromRegistry(
 
     const override = overrides.get(def.name);
     if (override) {
-      tools.push(override);
+      tools.push(projectModelToolDefinition(override));
       continue;
     }
 
@@ -406,7 +407,7 @@ function buildAgentToolsFromRegistry(
 
     // FEATURE_221: white-label the kodax_manual description per product
     // (no-op for every other tool / the default product name).
-    const brandedDef = withManualToolBranding(def, ctx.selfManual?.productName);
+    const brandedDef = withManualToolBranding(projectModelToolDefinition(def), ctx.selfManual?.productName);
     // FEATURE_250: managed-path progressive disclosure. Swap deferred tool
     // descriptions for their one-line searchHint to shrink the cache-cold
     // tools[] payload. `input_schema` is unchanged so the tool stays directly
