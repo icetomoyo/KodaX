@@ -98,25 +98,21 @@ test('built KodaX Host owns PPT tool Runs and returns current pixels through the
   assert.equal(opened.objects[0].text, 'Current pixels');
   const capture = await invoke('artifact_capture', { kind: 'temporal', target: 'owned-surface', expectedSource: { kind: 'surface', target: 'owned-surface', observedAt: '2026-10-13T00:00:00Z' }, locators: [{ kind: 'temporal', time: 0 }] });
   assert.equal(capture.status, 'unverified');
-  if (options.browserExecutable) {
-   const rendered = await invoke('artifact_render', { path: 'deck.pptx', expectedSourceHash: opened.artifact.sourceHash, pages: [1] });
-   assert.equal(rendered.status, 'ready');
-   assert.equal(rendered.evidence.source.file.sourceHash, opened.artifact.sourceHash);
-   const raster = rendered.evidence.evidence[0];
-   assert.equal(createHash('sha256').update(await fs.readFile(raster.path)).digest('hex'), raster.sha256);
-   assert.equal(raster.locator.page, 1);
-  }
+  const rendered = await invoke('artifact_render', { path: 'deck.pptx', expectedSourceHash: opened.artifact.sourceHash, pages: [1] });
+  assert.equal(rendered.status, 'ready', 'PPT rendering requires prepared Chromium; run artifact_prepare or SDK prepare() before full acceptance. ' + JSON.stringify(rendered.diagnostics));
+  assert.equal(rendered.evidence.source.file.sourceHash, opened.artifact.sourceHash);
+  const raster = rendered.evidence.evidence[0];
+  assert.equal(createHash('sha256').update(await fs.readFile(raster.path)).digest('hex'), raster.sha256);
+  assert.equal(raster.locator.page, 1);
   assert.equal(modelCalls, 0);
-  if (options.browserExecutable) {
-   modelScenario = 'AMA render';
-   const handle = await runtime.runs.start({ sessionId: session.id, mode: 'managed_task', prompt: 'Render deck.pptx with artifact_render once and return evidence readiness only.', options: { lsp: false, maxIter: 3, reasoningMode: 'off',
-    context: { executionCwd: workspace, gitRoot: workspace, repoIntelligenceMode: 'off' } } });
-   const terminal = await handle.result;
-   assert.equal(terminal.phase, 'completed', JSON.stringify(terminal));
-   const result = modelMessages.flatMap(message => Array.isArray(message.content) ? message.content : []).find(item => item.type === 'tool_result' && item.tool_use_id === 'scripted-render');
-   assert.ok(result && Array.isArray(result.content), JSON.stringify(result));
-   assert.ok(result.content.some(item => item.type === 'image'));
-   assert.equal(JSON.parse(result.content.find(item => item.type === 'text').text).status, 'ready');
-  }
+  modelScenario = 'AMA render';
+  const handle = await runtime.runs.start({ sessionId: session.id, mode: 'managed_task', prompt: 'Render deck.pptx with artifact_render once and return evidence readiness only.', options: { lsp: false, maxIter: 3, reasoningMode: 'off',
+   context: { executionCwd: workspace, gitRoot: workspace, repoIntelligenceMode: 'off' } } });
+  const terminal = await handle.result;
+  assert.equal(terminal.phase, 'completed', JSON.stringify(terminal));
+  const result = modelMessages.flatMap(message => Array.isArray(message.content) ? message.content : []).find(item => item.type === 'tool_result' && item.tool_use_id === 'scripted-render');
+  assert.ok(result && Array.isArray(result.content), JSON.stringify(result));
+  assert.ok(result.content.some(item => item.type === 'image'));
+  assert.equal(JSON.parse(result.content.find(item => item.type === 'text').text).status, 'ready');
  } finally { await runtime.close(); unregister(); delete process.env.KODAX_ARTIFACT_TEST_KEY; await fs.rm(directory, { recursive: true, force: true }); }
 });

@@ -18,12 +18,21 @@ export default api => registerArtifactTools(api, {
 
 Node >=20.16 is required; exact PNG reading/render does not require Chromium. `artifact_prepare` prepares the pinned Chromium through ordinary managed admission. A supplied browser path must identify the prepared runtime. LibreOffice is optional for PPTX conversion, explicitly selected, uses a separate profile and PDF.js pixels. It does not verify animation. `ready` never means visual approval.
 
+Supported file rendering uses headless Chromium: a terminal-only Host needs no desktop or browser window to produce PNG evidence for an image-capable provider. No manual browser path is required; the runtime uses its default Playwright Chromium unless a trusted override is supplied. Prepare missing runtime dependencies explicitly before rendering.
+
 ## Repeatable checks
 
 - `npm run typecheck`; `npm run build`; `npm test`; `npm run test:bundle`; `npm run test:native`.
-- Set `KODAX_ARTIFACT_TEST_BROWSER` to a compatible absolute Chromium path; `npx vitest run packages/artifacts/src packages/coding/src/extensions/managed-process.test.ts`.
-- `node --test tests/bundled-artifacts.test.mjs tests/packed-artifacts.test.mjs`: manifest tampering rejected; actual Host tool Runs and scripted AMA receive current images; a separately spawned Host serves Product Client evidence through the shared attachment seam; independent installation and Node-free root type checks. No external model calls.
-- Opt-in paid smoke: `KODAX_ARTIFACT_E2E=1 node tests/artifact-review-smoke.eval.mjs`. Read EVAL_GUIDELINES first. Fixed subscription route `kimi-code/k3-256k`, two cases, one provider request in flight. Physical calls, rounds, tools, tokens, reservation cost and timeout are bounded; raw protocol requests exclude transport headers/credentials and stay in OS temp.
+- After building, explicitly prepare the default Chromium for local acceptance with the existing SDK operation (may download the runtime and write its cache; a product Host uses admitted `artifact_prepare`):
+
+  ```sh
+  node --input-type=module -e 'import {executeArtifactRequest} from "./packages/artifacts/dist/runtime.js"; const result = await executeArtifactRequest({operation:"prepare",input:{}},{workspaceRoot:process.cwd()}); if(result.status!=="ready") throw new Error(JSON.stringify(result));'
+  ```
+
+  This command also works in PowerShell. An optional `KODAX_ARTIFACT_TEST_BROWSER` supplies an already-prepared absolute Chromium path to the tests; it does not enable production visual review. Set it in PowerShell with `$env:KODAX_ARTIFACT_TEST_BROWSER = 'C:\path\to\chrome.exe'`, or in Bash with `export KODAX_ARTIFACT_TEST_BROWSER='/absolute/path/to/chrome'`. An explicitly supplied path remains the trusted host's responsibility.
+- `node --test tests/bundled-artifacts.test.mjs tests/packed-artifacts.test.mjs`: manifest tampering rejected; actual Host tool Runs and scripted AMA receive current images; a separately spawned Host serves Product Client evidence through the shared attachment seam; independent installation and Node-free root type checks. PPT render/hash and AMA image assertions always run, including when the test browser variable is unset and the production default runtime is used. A missing or unusable runtime fails this full acceptance; it is never counted as a visual pass. No external model calls or implicit browser installation.
+- For the source tests, set `KODAX_ARTIFACT_TEST_BROWSER` to the prepared Chromium path, then run `npx vitest run packages/artifacts/src packages/coding/src/extensions/managed-process.test.ts`. Their browser-dependent cases still explicitly skip without that test variable; those skips do not establish full visual acceptance.
+- Opt-in paid smoke, Bash: `KODAX_ARTIFACT_E2E=1 node tests/artifact-review-smoke.eval.mjs`; PowerShell: `$env:KODAX_ARTIFACT_E2E = '1'; node tests/artifact-review-smoke.eval.mjs`. Read EVAL_GUIDELINES first. Fixed subscription route `kimi-code/k3-256k`, two cases, one provider request in flight. Physical calls, rounds, tools, tokens, reservation cost and timeout are bounded; raw protocol requests exclude transport headers/credentials and stay in OS temp. In PowerShell, remove the opt-in afterward with `Remove-Item Env:KODAX_ARTIFACT_E2E`.
 
 Exercise literal Windows argv (Chinese/spaces/quotes/metacharacters), sandbox admission/host denial, cancellation, overlapping bindings, stale source, protected paths, exclusive outputs, malformed/falsely sized ZIP, duplicate shape IDs, table preservation, grouped coordinates, missing fonts/images, inherited unknown objects, 3D charts, animation and missing capture adapters. Review images after every repair; verify required source/hash/page/region/state/viewport/camera/order/frame/time scope. Samples cannot attest continuous playback.
 
@@ -57,7 +66,7 @@ Final frozen-source full suite: 1,165 files passed, one skipped; 16,589 tests pa
 
 ### Natural-task model smoke
 
-`KODAX_ARTIFACT_E2E=1 node tests/artifact-auto-review-smoke.eval.mjs` is a separate opt-in Layer 3.5 check with ZAI GLM-5.3-Flash and DeepSeek Flash. It asks only for an ordinary PPT title edit, without slash/review/tool hints, through one shared Host and two Sessions. Provider requests retain actual image hashes. Shell/child restrictions and fixed call/token/time bounds are part of the fixture. No general success percentage is inferred.
+`KODAX_ARTIFACT_E2E=1 node tests/artifact-auto-review-smoke.eval.mjs` (Bash), or `$env:KODAX_ARTIFACT_E2E = '1'; node tests/artifact-auto-review-smoke.eval.mjs` (PowerShell), is a separate opt-in Layer 3.5 check with ZAI GLM-5.3-Flash and DeepSeek Flash. Remove the PowerShell opt-in afterward with `Remove-Item Env:KODAX_ARTIFACT_E2E`. It asks only for an ordinary PPT title edit, without slash/review/tool hints, through one shared Host and two Sessions. Provider requests retain actual image hashes. Shell/child restrictions and fixed call/token/time bounds are part of the fixture. No general success percentage is inferred.
 
 2026-10-13 observations prove autonomous rendering/image delivery, and each model produced a grounded occlusion finding in a shared-Host revision. **Full repair/re-review/delivery has not passed**: preserve the registry-interference diagnostic run, output-budget calibration, final call cutoff and provider timeout rather than claiming green E2E. See [actual evidence, default adapter gap and schema mismatch](../research/automatic-visual-review-e2e-2026-10-13.md). The earlier Kimi smoke explicitly requested visual review and cannot prove automatic task-triggering.
 
