@@ -27,6 +27,49 @@ Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
 
+## Issue 369: Concurrent resume launchers fail while refreshing an older Host
+
+- Priority: High
+- Status: Resolved (source; SDK publication pending)
+- Introduced: observed in v0.7.97-alpha.5, including `82b36118`; first affected version unknown
+- Created / Resolved: 2026-10-15
+- Fixed: post-v0.7.97-alpha.5 source (unreleased)
+
+### Original Problem
+
+Two `kodax -r` commands launched from different directories stayed at Connecting
+and failed with `Runtime state changed while daemon preflight was being read.`
+and `The original Host is still running; retry startup after it exits.` The
+default Host log records stop acceptance at 14:04:39 and completed exit at
+14:05:03 (Asia/Shanghai); its remaining startup budget was not captured. An
+unverified live Owner must still prevent replacement.
+
+A private installation with the older loaded Host, 50 large saved histories and
+two real ConPTY clients reproduced the exact preflight failure. Temporary
+connections can invalidate a peer's management revision while its read is in
+flight. The launcher retried `connected_clients` results but treated inspection
+conflicts and peer-induced handshake/inspection disconnects as terminal. Fixed
+sub-second retries can also deny a slower peer a quiet inspection window.
+
+### Resolution
+
+The SDK launcher releases temporary clients before retrying only startup
+initialization and read-only inspection conflicts/reconnectable disconnects.
+Inspection contention retains the original deadline, cancellation, exact Owner
+checks and normal shutdown. Randomized backoff also considers elapsed inspection
+time. Shutdown and business requests are not replayed; corrupt data, invalid
+frames, passive connect and live-owner exit refusal retain their boundaries.
+
+Files changed: `src/sdk-runtime.ts`, its startup regression tests, the standalone
+`tests/repl-concurrent-startup.mjs`, Client/SDK documentation and this tracker.
+Tests added: seven SDK startup cases for concurrent conflict recovery, deadline,
+cancellation, handshake/inspection disconnects, corruption and slow contention;
+the existing shutdown refusal case now uses a typed conflict. Real dual-directory
+resume verifies usable TUIs, replacement identity, clean CLI exits and verified
+Host stop. The user also confirmed both original directories can enter normally.
+Details, failures retained as evidence and verification commands are in the
+[regression guide](test-guides/ISSUE_369_v0.7.97_REGRESSION_GUIDE.md).
+
 ## Issue 368: Unsubmitted REPL Sessions leave empty persisted history
 
 - Priority: Medium
@@ -1828,6 +1871,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 369 | High | Resolved | Concurrent resume launchers fail while refreshing an older Host | observed in v0.7.97-alpha.5; first affected version unknown | post-v0.7.97-alpha.5 source (unreleased) | 2026-10-15 | 2026-10-15 |
 | 368 | Medium | Resolved | Unsubmitted REPL Sessions leave empty persisted history | v0.7.97-alpha.1; Host migration commits 3301a452 / 0914f589 | post-v0.7.97-alpha.5 source (unreleased) | 2026-10-14 | 2026-10-14 |
 | 367 | Medium | Resolved | Daemon preflight repeatedly scans during an in-flight mutation | observed in v0.7.97-alpha.4; first affected version unknown | `v0.7.97-alpha.5` | 2026-10-13 | 2026-10-13 |
 | 366 | Medium | Resolved | Host test readiness races cold Actor preparation | observed during v0.7.97-alpha.3 validation; first affected version unknown | post-v0.7.97-alpha.3 working tree (unreleased) | 2026-10-10 | 2026-10-10 |
@@ -16651,7 +16695,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 247 (37 Open, 210 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 248 (37 Open, 211 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md

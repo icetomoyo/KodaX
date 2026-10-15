@@ -3269,6 +3269,19 @@ the same daemon. Simultaneous startup is expected: candidates race only for the
 atomic owner lock, then non-owners wait for and attach to the verified winner.
 A client never owns a daemon merely because it caused auto-start.
 
+When auto-start refreshes an older build, concurrent temporary clients retain
+the same client-count and ownership fences. A conflict or reconnectable
+`protocol_closed` / `transport_error` during initialization or the read-only
+upgrade inspection releases that connection before retrying against the current
+Owner. Inspection retries and client contention share the original startup
+deadline; cancellation interrupts backoff. The randomized contention window
+also accounts for the previous inspection duration so sub-second reconnects do
+not continually invalidate a slower peer. Shutdown and business requests are
+never replayed by this recovery. Corrupt data, invalid frames, client-initiated
+closure, and an unverified live Owner remain explicit failures. Passive connect
+does not gain auto-start or replacement behavior. Existing startup progress
+types are unchanged: a retried inspection reports `checking`.
+
 The shared Host performs historical managed-child recovery once after acquiring
 its Owner and Session-storage fences, before readiness, in its resolved config
 home. Clients do not repeat that sweep; process exit still verifies its own

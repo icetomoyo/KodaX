@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Retry transient initialization and read-only inspection failures during concurrent CLI/SDK Host refresh after releasing temporary clients. Account for slow preflight duration in contention backoff, retain the original deadline, and never replay shutdown or business requests (Issue 369).
 - Avoid repeated historical process sweeps during shared-Host startup and exit. Recover under the Host/storage owner fences, retain exact local-child final cleanup, batch Windows identity observations, and read canonical Actor metadata for preflight without materializing Session transcripts.
 - Order `kodax -r`, Host and SDK Session lists by genuine recent message activity. Preserve creation time, compaction/fork provenance and metadata-only writes; expose optional `lastMessageAt`, retain creation-based `before`, and continue new cursors after anchor deletion or activity changes.
 - Keep new REPL Sessions as Host-local drafts until the first accepted user input is saved. Preserve draft settings and Actor CAS in memory, avoid empty history records after exit or rejected input, and persist settings on admission. CLI requires `sessionDrafts:1`; explicit durable SDK creation keeps its existing semantics.

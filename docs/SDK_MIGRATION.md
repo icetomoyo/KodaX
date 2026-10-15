@@ -26,6 +26,8 @@ TUI、桌面 UI、IDE、自动化应用接入共享 KodaX 时，以 `KodaXProduc
 
 启动提速由共享 Host 的单次历史恢复和规范 Actor 元数据投影实现，不增加 UI 配置、业务 RPC 或启动进度类型。现有 `onStartupProgress` 继续可用于 CLI、Space 和 Node SDK；被动 connect 与私有 embedded Runtime 不承担全局恢复。
 
+并发自动更新的源码修复（Issue 369）在 SDK 启动器中统一处理初始化/只读预检的瞬时冲突及可重连断开，释放临时连接后按原期限退避，并考虑慢预检耗时。调用方无需增加重试层或更改参数；停机和业务请求不重放，被动 connect 不自动更新。需要重新加载包含该修复的 SDK；仅重建磁盘文件不会更新已加载的旧模块。详见 [回归记录](test-guides/ISSUE_369_v0.7.97_REGRESSION_GUIDE.md)。
+
 下表按调用目的映射，参数和返回值不保证一对一兼容。
 
 | 原有用法 | 统一契约用法 | 必须调整的行为 |

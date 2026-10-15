@@ -455,6 +455,7 @@ export type {
 import {
   createRuntimeDaemonSocketClientTransport,
   defaultRuntimeDaemonEndpoint,
+  isRuntimeDaemonDisconnectError,
   type RuntimeDaemonEndpoint,
 } from "./runtime-daemon/transport.js";
 import {
@@ -6083,11 +6084,21 @@ function capabilityUpgradeClientInfo(): RuntimeClientInfo {
   };
 }
 
+function isDaemonStartupReadInterruption(error: unknown): boolean {
+  return (isRecord(error) && error.code === 'conflict')
+    || (isRuntimeDaemonDisconnectError(error) && error.reconnectable
+      && (error.code === 'protocol_closed' || error.code === 'transport_error'));
+}
+
+/** Retrying inspection never replays a refused or ambiguously completed shutdown. */
+class RuntimeDaemonInspectionInterruptedError extends RuntimeDaemonCapabilityUpgradeError {}
+
 async function replaceRuntimeDaemonForCapabilityUpgrade(
   input: CapabilityUpgradeInput,
 ): Promise<void> {
   const runtime = createCapabilityUpgradeRuntime(input);
   let preflight: RuntimeDaemonPreflight | undefined;
+  let inspecting = false;
   try {
     if (!hasVersionedRuntimeCapability(input.capabilities, "daemonManagement", 1)) {
       throw new Error("The older Host does not support normal managed shutdown; stop it and retry startup.");
@@ -6098,7 +6109,9 @@ async function replaceRuntimeDaemonForCapabilityUpgrade(
     if (!sameInstallationBuildChanged && compareSemanticVersions(input.identity.version, replApi.KODAX_VERSION) !== -1) {
       throw new Error("Only a provably older Host can be refreshed automatically; use a compatible installation.");
     }
+    inspecting = true;
     const management = await runtime.daemon.inspect();
+    inspecting = false;
     preflight = management.preflight;
     if (!preflight.canStop) {
       throw new Error(`The older Host is busy: ${preflight.blockers.join(", ")}. Finish or stop that work and retry.`);
@@ -6129,7 +6142,10 @@ async function replaceRuntimeDaemonForCapabilityUpgrade(
     }
     await waitForRuntimeDaemonOwnerExit(owner, remainingStartupMs, input.startupSignal);
   } catch (error: unknown) {
-    throw new RuntimeDaemonCapabilityUpgradeError(
+    const UpgradeError = inspecting && isDaemonStartupReadInterruption(error)
+      ? RuntimeDaemonInspectionInterruptedError
+      : RuntimeDaemonCapabilityUpgradeError;
+    throw new UpgradeError(
       error instanceof Error ? error.message : "The older Host could not be refreshed.",
       preflight,
       { cause: error },
@@ -6362,6 +6378,7 @@ async function connectKodaXRuntimeInternal(
           requiredUpgrade.name,
         );
       }
+      const upgradeStartedAt = Date.now();
       try {
         await replaceRuntimeDaemonForCapabilityUpgrade({
           identity,
@@ -6377,14 +6394,22 @@ async function connectKodaXRuntimeInternal(
       } catch (error: unknown) {
         if (
           error instanceof RuntimeDaemonCapabilityUpgradeError
-          && error.preflight?.blockers.length === 1
-          && error.preflight.blockers[0] === "connected_clients"
+          && (error instanceof RuntimeDaemonInspectionInterruptedError
+            || (error.preflight?.blockers.length === 1
+              && error.preflight.blockers[0] === "connected_clients"))
           && Date.now() < startupDeadline
         ) {
           // The rejected temporary client is already closed. Contention gets
           // the remaining startup budget, not the actual-upgrade attempt limit.
-          const backoff = 50 + Math.floor(Math.random() * Math.min(950, 100 * 2 ** Math.min(contentionAttempt, 4)));
-          reportProgress({ stage: 'waiting', reason: 'connected_clients' });
+          // A fixed sub-second retry can keep invalidating a peer's slow read.
+          const backoffWindow = Math.max(
+            Math.min(950, 100 * 2 ** Math.min(contentionAttempt, 4)),
+            2 * (Date.now() - upgradeStartedAt),
+          );
+          const backoff = 50 + Math.floor(Math.random() * backoffWindow);
+          reportProgress(error instanceof RuntimeDaemonInspectionInterruptedError
+            ? { stage: 'checking' }
+            : { stage: 'waiting', reason: 'connected_clients' });
           await waitForDaemonStartupRetry(Math.min(backoff, startupDeadline - Date.now()), options.daemonStartupSignal);
           if (Date.now() >= startupDeadline) throw error;
           return connectKodaXRuntimeInternal(options, true, ownerBootstrap, startupRetries, startupDeadline, contentionAttempt + 1, reportProgress);
@@ -6413,7 +6438,7 @@ async function connectKodaXRuntimeInternal(
       else await transport.close?.();
     }
     if (allowCapabilityUpgrade && lease && attaching && startupRetries > 0
-      && isRecord(error) && error.code === 'conflict') {
+      && isDaemonStartupReadInterruption(error)) {
       // Admission may temporarily close before shutdown is published on disk.
       // Only retry connection initialization; business operations are never replayed.
       if (Date.now() >= startupDeadline) throw error;

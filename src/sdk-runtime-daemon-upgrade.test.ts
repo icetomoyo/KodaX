@@ -61,6 +61,7 @@ import {
   type RuntimeDaemonPreflight,
 } from './sdk-runtime.js';
 import type { RuntimeDaemonClientTransport } from './runtime-daemon/client.js';
+import { RuntimeDaemonDisconnectError } from './runtime-daemon/transport.js';
 import type { RuntimeDaemonProcessLease } from './runtime-daemon/process.js';
 import type { RuntimeDaemonPaths } from './runtime-daemon/state.js';
 
@@ -254,6 +255,151 @@ describe('product Host startup and passive connection', () => {
     const runtime = await ensureKodaXRuntime({ profile: PROFILE });
     expect(calls.filter((call) => call === 'old:runtime.shutdown')).toHaveLength(1);
     await runtime.close();
+  });
+
+  it('releases both temporary clients after concurrent upgrade inspection conflicts and retries without replaying shutdown', async () => {
+    const calls: string[] = [];
+    let inspections = 0;
+    const legacy = (): RuntimeDaemonClientTransport => {
+      const base = createLegacyTransport({ preflight: createPreflight(), calls, close: async () => undefined });
+      return {
+        ...base,
+        async request(method, params) {
+          if (method === 'daemon.management.get') {
+            inspections += 1;
+            if (inspections <= 2) {
+              throw Object.assign(new Error('Runtime state changed while daemon preflight was being read.'), { code: 'conflict' });
+            }
+          }
+          return base.request(method, params);
+        },
+      };
+    };
+    upgradeMocks.acquireProcessLease
+      .mockResolvedValueOnce(createLease(legacy()))
+      .mockResolvedValueOnce(createLease(legacy()))
+      .mockImplementation(async () => {
+        expect(calls.filter(call => call === 'old:close')).toHaveLength(2);
+        return createLease(createCurrentTransport(calls, async () => undefined));
+      });
+    const runtimes = await Promise.all([
+      ensureKodaXRuntime({ profile: PROFILE }),
+      ensureKodaXRuntime({ profile: PROFILE }),
+    ]);
+    try {
+      expect(runtimes.map(runtime => runtime.identity.runtimeId)).toEqual(['runtime_current', 'runtime_current']);
+      expect(calls).not.toContain('old:runtime.shutdown');
+      expect(upgradeMocks.waitOwnerExit).not.toHaveBeenCalled();
+    } finally { await Promise.all(runtimes.map(runtime => runtime.close())); }
+  });
+
+  it.each(['deadline', 'cancel'] as const)('bounds inspection conflict retries by the startup %s and releases every temporary client', async (mode) => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+    const controller = new AbortController();
+    const calls: string[] = [];
+    upgradeMocks.acquireProcessLease.mockImplementation(async () => {
+      const base = createLegacyTransport({ preflight: createPreflight(), calls, close: async () => undefined });
+      return createLease({
+        ...base,
+        async request(method, params) {
+          if (method === 'daemon.management.get') {
+            throw Object.assign(new Error('Runtime state changed while daemon preflight was being read.'), { code: 'conflict' });
+          }
+          return base.request(method, params);
+        },
+      });
+    });
+    try {
+      const startedAt = Date.now();
+      if (mode === 'cancel') setTimeout(() => controller.abort(), 25);
+      const pending = ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 500, daemonStartupSignal: controller.signal })
+        .then(() => { throw new Error('Unstable Host unexpectedly accepted'); }, error => ({ error: error as unknown, settledAt: Date.now() }));
+      await vi.advanceTimersByTimeAsync(500);
+      const outcome = await pending;
+      expect(outcome.error).toMatchObject(mode === 'cancel'
+        ? { name: 'AbortError' }
+        : { code: 'daemon_capability_upgrade_required', message: 'Runtime state changed while daemon preflight was being read.' });
+      expect(outcome.settledAt - startedAt).toBe(mode === 'cancel' ? 25 : 500);
+      const attempts = upgradeMocks.acquireProcessLease.mock.calls.length;
+      if (mode === 'cancel') expect(attempts).toBe(1);
+      else expect(attempts).toBeGreaterThan(1);
+      expect(calls.filter(call => call === 'old:close')).toHaveLength(attempts);
+      expect(calls).not.toContain('old:runtime.shutdown');
+      expect(upgradeMocks.waitOwnerExit).not.toHaveBeenCalled();
+    } finally { random.mockRestore(); vi.useRealTimers(); }
+  });
+
+  it.each(['initialize', 'daemon.management.get'] as const)('re-observes the owner when a peer closes the old transport during %s', async (interruptedMethod) => {
+    const calls: string[] = [];
+    const base = createLegacyTransport({ preflight: createPreflight(), calls, close: async () => undefined });
+    upgradeMocks.acquireProcessLease
+      .mockResolvedValueOnce(createLease({
+        ...base,
+        async request(method, params) {
+          if (method === interruptedMethod) throw new RuntimeDaemonDisconnectError('Runtime daemon transport closed.', 'protocol_closed', 'old-connection', true);
+          return base.request(method, params);
+        },
+      }))
+      .mockResolvedValueOnce(createLease(createCurrentTransport(calls, async () => undefined)));
+    const runtime = await ensureKodaXRuntime({ profile: PROFILE });
+    try {
+      expect(runtime.identity.runtimeId).toBe('runtime_current');
+      expect(calls).not.toContain('old:runtime.shutdown');
+      expect(calls.filter(call => call === 'old:close')).toHaveLength(1);
+      expect(upgradeMocks.waitOwnerExit).not.toHaveBeenCalled();
+    } finally { await runtime.close(); }
+  });
+
+  it('does not retry corrupt management state as a transient inspection conflict', async () => {
+    const calls: string[] = [];
+    const base = createLegacyTransport({ preflight: createPreflight(), calls, close: async () => undefined });
+    upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease({
+      ...base,
+      async request(method, params) {
+        if (method === 'daemon.management.get') throw Object.assign(new Error('Corrupt canonical metadata'), { code: 'data_corrupt' });
+        return base.request(method, params);
+      },
+    }));
+    await expect(ensureKodaXRuntime({ profile: PROFILE })).rejects.toThrow('Corrupt canonical metadata');
+    expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(1);
+    expect(calls.filter(call => call === 'old:close')).toHaveLength(1);
+    expect(calls).not.toContain('old:runtime.shutdown');
+  });
+
+  it('leaves a competing launcher enough quiet time to finish a slow preflight', async () => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.75);
+    const calls: string[] = [];
+    let lastInspectionFinishedAt = Date.now();
+    let replaced = false;
+    upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
+    upgradeMocks.acquireProcessLease.mockImplementation(async () => {
+      if (replaced) return createLease(createCurrentTransport(calls, async () => undefined));
+      const base = createLegacyTransport({ preflight: createPreflight(), calls, close: async () => undefined });
+      return createLease({
+        ...base,
+        async request(method, params) {
+          if (method === 'daemon.management.get') {
+            const competitorFinished = Date.now() - lastInspectionFinishedAt >= 1_000;
+            await new Promise(resolve => setTimeout(resolve, 1_000));
+            lastInspectionFinishedAt = Date.now();
+            return createManagementState(createPreflight(competitorFinished ? {} : { blockers: ['connected_clients'], canStop: false }));
+          }
+          if (method === 'runtime.shutdown') replaced = true;
+          return base.request(method, params);
+        },
+      });
+    });
+    let runtime: Awaited<ReturnType<typeof ensureKodaXRuntime>> | undefined;
+    try {
+      const pending = ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 5_000 })
+        .then(value => { runtime = value; return { error: undefined }; }, error => ({ error: error as unknown }));
+      await vi.advanceTimersByTimeAsync(7_000);
+      expect((await pending).error).toBeUndefined();
+      expect(runtime?.identity.runtimeId).toBe('runtime_current');
+      expect(calls.filter(call => call === 'old:runtime.shutdown')).toHaveLength(1);
+    } finally { await runtime?.close(); random.mockRestore(); vi.useRealTimers(); }
   });
 
   it.each([
@@ -491,7 +637,7 @@ describe('product Host startup and passive connection', () => {
     const transport: RuntimeDaemonClientTransport = {
       ...base,
       async request(method, params) {
-        if (method === 'runtime.shutdown') throw new Error('Host became busy');
+        if (method === 'runtime.shutdown') throw Object.assign(new Error('Host became busy'), { code: 'conflict' });
         return base.request(method, params);
       },
     };
