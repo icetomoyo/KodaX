@@ -1,5 +1,6 @@
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { withManagedChildProcessConfigHome } from '@kodax-ai/agent';
 import type { KodaXToolExecutionContext } from '../types.js';
 import type {
   LocalToolDefinition,
@@ -467,6 +468,14 @@ async function consumeToolGenerator(
 }
 
 export async function executeTool(
+  name: string,
+  input: Record<string, unknown>,
+  ctx: KodaXToolExecutionContext,
+): Promise<ToolResult> {
+  return withManagedChildProcessConfigHome(ctx.configHome, () => executeScopedTool(name, input, ctx));
+}
+
+async function executeScopedTool(
   name: string,
   input: Record<string, unknown>,
   ctx: KodaXToolExecutionContext,

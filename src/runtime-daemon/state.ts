@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import path from 'node:path';
 
-import { readProcessStartIdentity } from '@kodax-ai/agent';
+import { readProcessStartIdentity, readProcessStartIdentities } from '@kodax-ai/agent';
 
 let currentProcessStartIdentity: string | undefined;
 let currentProcessStartIdentityRead = false;
@@ -98,6 +98,19 @@ export function readRuntimeOwnerProcessStartIdentity(pid: number): string | unde
     currentProcessStartIdentityRead = true;
   }
   return currentProcessStartIdentity;
+}
+
+/** A fresh external-PID observation; only this process's immutable identity is cached. */
+export function readRuntimeOwnerProcessStartIdentities(pids: readonly number[]): Map<number, string | undefined> {
+  const result = readProcessStartIdentities(pids.filter(pid => pid !== process.pid || !currentProcessStartIdentityRead));
+  if (pids.includes(process.pid)) {
+    if (!currentProcessStartIdentityRead) {
+      currentProcessStartIdentity = result.get(process.pid);
+      currentProcessStartIdentityRead = true;
+    }
+    result.set(process.pid, currentProcessStartIdentity);
+  }
+  return result;
 }
 
 export type RuntimeDaemonHealth =

@@ -22,6 +22,10 @@ TUI、桌面 UI、IDE、自动化应用接入共享 KodaX 时，以 `KodaXProduc
 
 ## 2. 旧调用如何迁移
 
+当前源码增加可选 `ClientSession.lastMessageAt`（摘要同样提供）。会话列表和裸 `-r` 使用最近真实对话时间排序，缺失时回退创建时间；`before` 的创建时间过滤含义不变。UI 可用 `lastMessageAt ?? createdAt` 显示日期，继续透传不透明游标，避免本地再次按创建时间排序。分页是实时边界，不保证跨页冻结快照，新增活动后刷新首页。历史压缩、Actor/设置保存和合成消息不刷新最近对话时间。完整规则见 [Client 契约](CLIENT_CONTRACT.md)。
+
+启动提速由共享 Host 的单次历史恢复和规范 Actor 元数据投影实现，不增加 UI 配置、业务 RPC 或启动进度类型。现有 `onStartupProgress` 继续可用于 CLI、Space 和 Node SDK；被动 connect 与私有 embedded Runtime 不承担全局恢复。
+
 下表按调用目的映射，参数和返回值不保证一对一兼容。
 
 | 原有用法 | 统一契约用法 | 必须调整的行为 |

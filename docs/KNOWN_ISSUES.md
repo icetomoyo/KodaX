@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-10-14_
+_Last Updated: 2026-10-15_
 
 ---
 
@@ -1828,7 +1828,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 368 | Medium | Resolved in source; publication pending | Unsubmitted REPL Sessions leave empty persisted history | v0.7.97-alpha.1; Host migration commits 3301a452 / 0914f589 | post-v0.7.97-alpha.5 source (unreleased) | 2026-10-14 | 2026-10-14 |
+| 368 | Medium | Resolved | Unsubmitted REPL Sessions leave empty persisted history | v0.7.97-alpha.1; Host migration commits 3301a452 / 0914f589 | post-v0.7.97-alpha.5 source (unreleased) | 2026-10-14 | 2026-10-14 |
 | 367 | Medium | Resolved | Daemon preflight repeatedly scans during an in-flight mutation | observed in v0.7.97-alpha.4; first affected version unknown | `v0.7.97-alpha.5` | 2026-10-13 | 2026-10-13 |
 | 366 | Medium | Resolved | Host test readiness races cold Actor preparation | observed during v0.7.97-alpha.3 validation; first affected version unknown | post-v0.7.97-alpha.3 working tree (unreleased) | 2026-10-10 | 2026-10-10 |
 | 365 | High | Resolved | Provider fallback drops child usage and bypasses Workflow budgets | output-component regression in v0.7.97-alpha.3; earlier total loss | post-v0.7.97-alpha.3 working tree (unreleased) | 2026-10-10 | 2026-10-10 |

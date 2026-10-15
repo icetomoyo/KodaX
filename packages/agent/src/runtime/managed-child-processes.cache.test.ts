@@ -39,7 +39,7 @@ describe.runIf(process.platform === 'win32')('managed child cleanup query reuse'
     spawnSyncMock.mockReturnValue({
       pid: 1,
       output: [null, '', ''],
-      stdout: JSON.stringify({ ProcessId: process.pid, CreationDate: creationDate }),
+      stdout: `${process.pid},1,${ownerProcessStartIdentity.slice('windows:'.length)}`,
       stderr: '',
       status: 0,
       signal: null,
@@ -77,7 +77,7 @@ describe.runIf(process.platform === 'win32')('managed child cleanup query reuse'
       `windows:${(BigInt(Date.parse(creationDate)) + 11_644_473_600_000n).toString()}`;
     spawnSyncMock.mockReturnValue({
       status: 0,
-      stdout: JSON.stringify({ ProcessId: process.ppid, CreationDate: creationDate }),
+      stdout: `${process.ppid},1,${ownerProcessStartIdentity.slice('windows:'.length)}`,
     });
     const registry = path.join(tempHome, 'runtime', 'processes', 'children');
     await mkdir(registry, { recursive: true });
@@ -156,10 +156,7 @@ describe.runIf(process.platform === 'win32')('managed child cleanup query reuse'
     spawnSyncMock.mockReturnValue({
       pid: 1,
       output: [null, '', ''],
-      stdout: JSON.stringify(ownerPids.map((ProcessId) => ({
-        ProcessId,
-        CreationDate: creationDate,
-      }))),
+      stdout: ownerPids.map(pid => `${pid},1,${ownerProcessStartIdentity.slice('windows:'.length)}`).join('\n'),
       stderr: '',
       status: 0,
       signal: null,
@@ -189,6 +186,35 @@ describe.runIf(process.platform === 'win32')('managed child cleanup query reuse'
     expect(spawnSyncMock).toHaveBeenCalledTimes(1);
   });
 
+  it('uses one OS observation for stale Owner identity and retained tree PID reuse', async () => {
+    tempHome = await mkdtemp(path.join(tmpdir(), 'kodax-managed-owner-tree-batch-'));
+    setAgentConfigHome(tempHome);
+    const pid = 95_001;
+    const creationDate = '2026-08-01T00:00:00.000Z';
+    const ownerIdentity = (BigInt(Date.parse(creationDate)) + 11_644_473_600_000n).toString();
+    vi.spyOn(process, 'kill').mockImplementation(target => {
+      if (target === process.ppid || target === pid) return true;
+      throw Object.assign(new Error('gone'), { code: 'ESRCH' });
+    });
+    spawnSyncMock.mockImplementation((_command, args: string[]) => ({ status: 0,
+      stdout: args.join(' ').includes('KodaXNativeProcessSnapshot')
+        ? `${process.ppid},1,${ownerIdentity}\n${pid},4,222\n`
+        : JSON.stringify({ ProcessId: process.ppid, CreationDate: creationDate }),
+    }));
+    const directory = path.join(tempHome, 'runtime', 'processes', 'children');
+    await mkdir(directory, { recursive: true });
+    const file = path.join(directory, `${pid}.95bc0da4-8673-43c6-a8e7-a2c081da6dce.json`);
+    const evidence = JSON.stringify({ version: 4, registrationId: '95bc0da4-8673-43c6-a8e7-a2c081da6dce',
+      pid, ownerPid: process.ppid, ownerProcessStartIdentity: 'windows:old', registeredAtMs: Date.now(),
+      kind: 'bash', command: process.execPath, runtimeRunId: 'run-a', processStartIdentity: '111',
+      processTreeComplete: false, processTreeIdentities: [{ pid, creationTime: '111' }],
+    });
+    await writeFile(file, evidence);
+    await expect(cleanupRegisteredManagedChildren()).resolves.toEqual({ killed: 0, pruned: 0, skipped: 1 });
+    expect(spawnSyncMock).toHaveBeenCalledTimes(1);
+    expect(await readFile(file, 'utf8')).toBe(evidence);
+  });
+
   it('does not apply a cached owner identity to a Run record replaced after the owner query', async () => {
     tempHome = await mkdtemp(path.join(tmpdir(), 'kodax-managed-replaced-run-owner-'));
     setAgentConfigHome(tempHome);
@@ -213,7 +239,7 @@ describe.runIf(process.platform === 'win32')('managed child cleanup query reuse'
     const replacement = JSON.stringify({ ...record, ownerProcessStartIdentity: 'windows:new-owner' });
     spawnSyncMock.mockImplementation(() => {
       writeFileSync(file, replacement);
-      return { status: 0, stdout: JSON.stringify({ ProcessId: process.ppid, CreationDate: creationDate }) };
+      return { status: 0, stdout: `${process.ppid},1,${record.ownerProcessStartIdentity.slice('windows:'.length)}` };
     });
 
     await expect(cleanupRegisteredManagedChildren()).resolves.toEqual({ killed: 0, pruned: 0, skipped: 1 });

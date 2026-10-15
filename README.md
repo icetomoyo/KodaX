@@ -1798,7 +1798,7 @@ kodax --session my-project "Summarize it"
 kodax --session my-project "How should I fix the first issue?"
 
 # Session management
-kodax -r                    # Search, page, and select a non-empty session
+kodax -r                    # Search and page sessions, most recent conversation first
 kodax -r <session-id>       # Resume a known session directly
 kodax -r "Review runtime"   # Resume a unique exact title; duplicates open the picker
 kodax --session list        # List up to 50 non-empty sessions

@@ -8,6 +8,12 @@ Main 调用 `ensureKodaXClient/connectKodaXClient` 时可传 `onStartupProgress`
 
 `ready` 只表示 Client 接口可用；Main 的 Session 读取和 Renderer 的首次渲染仍有自己的完成边界。回调应快速返回，其 Promise 不被等待，故障不改变启动结果。Space 根据启动 Promise 清除加载或展示失败，再在自身 UI 边界完成交接；不假定已存在自动 IPC 桥。REPL 使用 `onBeforeRender` 完成终端交接，桌面 UI 无需依赖它。阶段、等待原因与完整示例见 [Client 契约](CLIENT_CONTRACT.md#连接启动与所有权)和[英文指南](../public_docs/sdk/embedder-guide.md#show-local-startup-progress)。
 
+## 会话列表时间与启动职责
+
+Main 从 `client.sessions.list()` 取得 `lastMessageAt` 和 Host 排序，Renderer 以 `lastMessageAt ?? createdAt` 显示时间，不按本地 mtime 或创建时间重新排序。游标原样透传；列表分页是实时边界，活动变化后刷新首页。标题、设置、Actor 状态和压缩不构成新对话；缺少可靠时间的旧记录回退创建时间。新增字段的源码支持不代表 Space 已更新或 npm 已发布。
+
+历史进程恢复在取得所有权的共享 Host 就绪前完成。Space 连接不再重复扫描，不增加 Renderer 恢复职责；Host 退出仍保留原有进程、Job、supervisor 和持久化结果证明。启动进度继续复用 `ClientStartupProgress`。
+
 ## 可信执行授权
 
 `connectKodaXClient` / `ensureKodaXClient` 的可选 `authorizeExecution(request, services)` 只在可信 Main 进程执行。回调使用同一连接的 `services.credentials` 与 `services.hostTools` 注册现有 lease，为本次操作返回非秘密 `credential` / `hostTools` binding，也可仅返回下述 Workflow 上限。回调与凭据值不会作为产品输入发送到 Host。配置回调的连接要求 `productExecutionAuthorization:2`；旧 Host 明确拒绝，不能忽略 binding 或策略继续执行。

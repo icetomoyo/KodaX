@@ -11,8 +11,9 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { emitKodaXDiagnostic } from '../diagnostics.js';
-import { getAgentConfigPath } from './agent-home.js';
+import { getAgentConfigHome } from './agent-home.js';
 import {
   captureWindowsProcessTree,
   isCurrentProcessWindowsJobContained,
@@ -23,6 +24,7 @@ import {
   rememberedChildProcessTreeIdentities,
   rememberedChildProcessTreeIsComplete,
   readProcessStartIdentity,
+  readProcessStartIdentities,
   retainedWindowsProcessTree,
   withSharedWindowsProcessSnapshot,
   type WindowsProcessTreeIdentity,
@@ -61,8 +63,15 @@ export type ManagedRunChildCleanupResult =
 /** Missing evidence is never equivalent to a verified process-tree drain. */
 export async function cleanupManagedRunChildProcess(
   reference: ManagedRunChildProcessReference,
+  options: { readonly configHome?: string } = {},
 ): Promise<ManagedRunChildCleanupResult> {
-  return cleanupManagedRunChildProcessWithOwnerIdentity(reference, processStartIdentity);
+  return withManagedChildProcessConfigHome(options.configHome, async () => {
+    const configHome = registryHome();
+    const result = await cleanupManagedRunChildProcessWithOwnerIdentity(reference, processStartIdentity);
+    return result.status === 'verified'
+      ? { status: 'verified', release: () => registryContext.run(configHome, result.release) }
+      : result;
+  });
 }
 
 async function cleanupManagedRunChildProcessWithOwnerIdentity(
@@ -105,8 +114,8 @@ async function cleanupManagedRunChildProcessWithOwnerIdentity(
   } };
 }
 
-function sameRunChildRecord(current: ManagedChildProcessRecord | undefined, expected: ManagedChildProcessRecord): boolean {
-  return current !== undefined && current.pid === expected.pid
+function sameRunChildRecord(current: ManagedChildProcessRecord | undefined, expected: ManagedChildProcessRecord | undefined): boolean {
+  return current !== undefined && expected !== undefined && current.pid === expected.pid
     && current.registrationId === expected.registrationId && current.runtimeRunId === expected.runtimeRunId
     && current.ownerPid === expected.ownerPid && current.ownerProcessStartIdentity === expected.ownerProcessStartIdentity
     && current.processStartIdentity === expected.processStartIdentity && current.registeredAtMs === expected.registeredAtMs;
@@ -191,9 +200,23 @@ interface ManagedChildProcessRecord extends ManagedChildProcessMetadata {
 interface ActiveManagedChildProcess {
   readonly record: ManagedChildProcessRecord;
   readonly child: ChildProcess;
+  readonly configHome: string;
 }
 
 const activeChildren = new Map<number, ActiveManagedChildProcess>();
+// Exact registrations created by this process, including incomplete trees retained
+// after their root exits. Final cleanup need not rescan every historical Owner.
+const currentOwnerRecords = new Map<string, ManagedChildProcessRecord>();
+const registryContext = new AsyncLocalStorage<string>();
+
+function registryHome(): string {
+  return registryContext.getStore() ?? path.resolve(getAgentConfigHome());
+}
+
+/** Scope child registration and recovery to a trusted Host without mutating Agent defaults. */
+export function withManagedChildProcessConfigHome<T>(configHome: string | undefined, operation: () => T): T {
+  return configHome === undefined ? operation() : registryContext.run(path.resolve(configHome), operation);
+}
 
 export interface ManagedChildCleanupSummary {
   readonly killed: number;
@@ -202,6 +225,10 @@ export interface ManagedChildCleanupSummary {
 }
 
 interface CleanupOptions {
+  /** Default remains the explicit global Agent recovery operation. */
+  readonly scope?: 'all' | 'current-owner';
+  /** Bind recovery to the owning Host, including SDK instances with private homes. */
+  readonly configHome?: string;
   readonly includeCurrentOwner?: boolean;
   /** Fail when a child owned by this process cannot be verified as reclaimed. */
   readonly requireCurrentOwnerCleanup?: boolean;
@@ -230,11 +257,11 @@ type PosixCommandLineLookup =
   | { readonly status: 'unknown' };
 
 function registryDir(): string {
-  return getAgentConfigPath('runtime', 'processes', 'children');
+  return path.join(registryHome(), 'runtime', 'processes', 'children');
 }
 
 function legacyRegistryDir(): string {
-  return getAgentConfigPath('processes', 'children');
+  return path.join(registryHome(), 'processes', 'children');
 }
 
 function verifiedLegacyRegistryDir(): string | undefined {
@@ -313,6 +340,8 @@ function writeRecord(record: ManagedChildProcessRecord): void {
     JSON.stringify(record),
     'utf8',
   );
+  const file = registryPath(record.pid, record.registrationId);
+  if (currentOwnerRecords.has(file)) currentOwnerRecords.set(file, record);
 }
 
 function removeRecord(pid: number, registrationId: string): boolean {
@@ -327,6 +356,7 @@ function removeRecord(pid: number, registrationId: string): boolean {
     return false;
   }
   rmSync(file, { force: true });
+  currentOwnerRecords.delete(file);
   if (active?.record.registrationId === registrationId) {
     activeChildren.delete(pid);
   }
@@ -336,6 +366,7 @@ function removeRecord(pid: number, registrationId: string): boolean {
 function removePersistedRecord(filePath: string): boolean {
   try {
     rmSync(filePath, { force: true });
+    currentOwnerRecords.delete(filePath);
     return true;
   } catch (error: unknown) {
     emitKodaXDiagnostic({
@@ -747,16 +778,9 @@ function processStartIdentities(pids: readonly number[]): Map<number, string | u
   if (process.platform !== 'win32') {
     return new Map(pids.map((pid) => [pid, processStartIdentity(pid)]));
   }
-  return new Map([...getWindowsProcessInfos(pids)].map(([pid, lookup]) => {
-    if (lookup.status !== 'found') return [pid, undefined];
-    const creationMs = parseWindowsDate(lookup.info.CreationDate);
-    return [
-      pid,
-      creationMs === undefined
-        ? undefined
-        : `windows:${(BigInt(creationMs) + 11_644_473_600_000n).toString()}`,
-    ];
-  }));
+  return new Map([...readProcessStartIdentities(pids)].map(([pid, identity]) => [
+    pid, identity === undefined ? undefined : `windows:${identity}`,
+  ]));
 }
 
 function isManagedChildRecordBase(
@@ -786,10 +810,11 @@ export function registerManagedChildProcess(
   if (pid === undefined) {
     return () => {};
   }
+  const configHome = registryHome();
 
   let registered = false;
   const registrationId = randomUUID();
-  const unregister = (): void => {
+  const unregister = (): void => registryContext.run(configHome, () => {
     if (!registered) {
       return;
     }
@@ -806,7 +831,7 @@ export function registerManagedChildProcess(
       return;
     }
     removeRecord(pid, registrationId);
-  };
+  });
 
   const initialRecord: ManagedChildProcessRecord = {
     version: REGISTRY_VERSION,
@@ -822,7 +847,8 @@ export function registerManagedChildProcess(
     args: metadata.args ? [...metadata.args] : undefined,
     cwd: metadata.cwd,
   };
-  activeChildren.set(pid, { record: initialRecord, child });
+  activeChildren.set(pid, { record: initialRecord, child, configHome });
+  currentOwnerRecords.set(registryPath(pid, registrationId), initialRecord);
   registered = true;
 
   try {
@@ -842,7 +868,7 @@ export function registerManagedChildProcess(
         : { processTreeIdentities }),
       processTreeComplete: rememberedChildProcessTreeIsComplete(child),
     };
-    activeChildren.set(pid, { record, child });
+    activeChildren.set(pid, { record, child, configHome });
     writeRecord(record);
   } catch (error: unknown) {
     if (options.requireDurableRecord) {
@@ -858,7 +884,7 @@ export function registerManagedChildProcess(
     });
   }
 
-  const refreshTreeRecord = (): void => {
+  const refreshTreeRecord = (): void => registryContext.run(configHome, () => {
     rememberChildProcessTree(child);
     const active = activeChildren.get(pid);
     if (!registered || active?.record.registrationId !== registrationId) return;
@@ -868,7 +894,7 @@ export function registerManagedChildProcess(
       ...(identities === undefined ? {} : { processTreeIdentities: identities }),
       processTreeComplete: rememberedChildProcessTreeIsComplete(child),
     };
-    activeChildren.set(pid, { record: refreshed, child });
+    activeChildren.set(pid, { record: refreshed, child, configHome });
     try {
       writeRecord(refreshed);
     } catch (error: unknown) {
@@ -899,7 +925,7 @@ export function registerManagedChildProcess(
         detail: { pid, registrationId, error },
       });
     }
-  };
+  });
   child.on('exit', refreshTreeRecord);
   child.on('error', refreshTreeRecord);
 
@@ -927,9 +953,10 @@ export async function cleanupRegisteredManagedChildren(
 ): Promise<ManagedChildCleanupSummary> {
   // The sweep captures/kills several stale trees; one shared process
   // snapshot replaces the per-record powershell captures.
-  return withSharedWindowsProcessSnapshot(
-    () => cleanupRegisteredManagedChildrenInSharedSnapshotScope(options),
-  );
+  return registryContext.run(path.resolve(options.configHome ?? getAgentConfigHome()), () =>
+    withSharedWindowsProcessSnapshot(
+      () => cleanupRegisteredManagedChildrenInSharedSnapshotScope(options),
+    ));
 }
 
 async function cleanupRegisteredManagedChildrenInSharedSnapshotScope(
@@ -957,13 +984,21 @@ async function cleanupRegisteredManagedChildrenInSharedSnapshotScope(
   skipped += activeSummary.skipped;
   unresolvedCurrentOwner += activeSummary.unresolved;
 
-  const legacyDirectory = verifiedLegacyRegistryDir();
-  const registrySources = [
+  const ownOnly = options.scope === 'current-owner';
+  const legacyDirectory = ownOnly ? undefined : verifiedLegacyRegistryDir();
+  const registrySources = ownOnly ? [] : [
     { directory: registryDir(), current: true },
     ...(legacyDirectory === undefined
       ? []
       : [{ directory: legacyDirectory, current: false }]),
   ];
+  if (ownOnly) {
+    for (const filePath of currentOwnerRecords.keys()) {
+      if (path.dirname(filePath) === registryDir()) {
+        persistedRecordFiles.push({ file: path.basename(filePath), filePath, current: true });
+      }
+    }
+  }
   for (const source of registrySources) {
     try {
       persistedRecordFiles.push(...readdirSync(source.directory)
@@ -1006,6 +1041,11 @@ async function cleanupRegisteredManagedChildrenInSharedSnapshotScope(
   for (const { filePath, current, persisted } of persistedFiles) {
     // Keep terminal progress and interrupts responsive between synchronous OS probes.
     if (process.platform === 'win32') await new Promise<void>((resolve) => setImmediate(resolve));
+    if (ownOnly && (persisted.status !== 'current'
+      || !sameRunChildRecord(persisted.record, currentOwnerRecords.get(filePath)))) {
+      skip(process.pid);
+      continue;
+    }
     if (!current) {
       if (persisted.status === 'invalid') {
         if (removePersistedRecord(filePath)) pruned += 1;
@@ -1204,7 +1244,7 @@ async function cleanupActiveCurrentOwnerChildren(
   let unresolved = 0;
   const processedFiles = new Set<string>();
   const records = [...activeChildren.values()]
-    .filter(({ record }) => record.ownerPid === process.pid);
+    .filter(({ record, configHome }) => record.ownerPid === process.pid && configHome === registryHome());
   for (const { record } of records) {
     processedFiles.add(path.basename(registryPath(record.pid, record.registrationId)));
     try {

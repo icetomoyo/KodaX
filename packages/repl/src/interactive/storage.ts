@@ -9,6 +9,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { isDeepStrictEqual } from 'node:util';
 import chalk from 'chalk';
+import { compareSessionRecency, latestSessionMessageAt, validSessionTimestamp } from '../session/session-recency.js';
 import type {
   AgentActorSaveAttempt,
   AgentActorSaveDiagnostics,
@@ -117,7 +118,7 @@ import {
   type ResumeIndexEntry,
 } from '../session/resume-index.js';
 import { countResumableSessionItems } from '../session/resumable-session.js';
-import { maintainProjectResumeIndex, resolveSessionDiscoveryRoots } from '../session/resume-discovery.js';
+import { maintainProjectResumeIndex, resolveSessionDiscoveryRoots, readEffectiveSessionMetadata } from '../session/resume-discovery.js';
 export type {
   ConversationPageCacheChunk,
   ConversationPageCacheChunkInput,
@@ -192,6 +193,7 @@ interface PersistedMetaUpdateLine {
   uiHistory?: unknown[];
   scope?: string;
   lineageIdentityFilterHash?: string;
+  lastMessageAt?: string;
 }
 
 interface PersistedSessionMeta extends KodaXSessionMeta {
@@ -575,6 +577,7 @@ function isPersistedMetaUpdateLine(value: unknown): value is PersistedMetaUpdate
     && (value.activeMessageCount === undefined || typeof value.activeMessageCount === 'number')
     && (value.uiHistory === undefined || Array.isArray(value.uiHistory))
     && (value.scope === undefined || typeof value.scope === 'string')
+    && (value.lastMessageAt === undefined || validSessionTimestamp(value.lastMessageAt) !== undefined)
     && (value.lineageIdentityFilterHash === undefined
       || (typeof value.lineageIdentityFilterHash === 'string'
         && /^[a-f0-9]{64}$/.test(value.lineageIdentityFilterHash)));
@@ -2251,6 +2254,7 @@ function buildSessionData(
       : {}),
     data: {
       messages,
+      lastMessageAt: validSessionTimestamp(snapshot.meta?.lastMessageAt),
       title: snapshot.meta?.title ?? '',
       gitRoot: snapshot.meta?.gitRoot ?? '',
       tag: typeof snapshot.meta?.tag === 'string' ? snapshot.meta.tag : undefined,
@@ -2301,6 +2305,7 @@ function createSessionMeta(
     tag: data.tag,
     runtimeInfo: data.runtimeInfo ? { ...data.runtimeInfo } : undefined,
     createdAt: createdAt ?? new Date().toISOString(),
+    lastMessageAt: latestSessionMessageAt(lineage?.entries ?? [], data.lastMessageAt),
     scope: data.scope ?? 'user',
     uiHistory: data.uiHistory,
     errorMetadata: data.errorMetadata,
@@ -2322,12 +2327,14 @@ function createResumeIndexEntry(
   msgCount: number,
   createdAt?: string,
   surface?: string,
+  lastMessageAt?: string,
 ): ResumeIndexEntry {
   return {
     id,
     title,
     msgCount,
     ...(createdAt !== undefined ? { createdAt } : {}),
+    ...(lastMessageAt !== undefined ? { lastMessageAt } : {}),
     ...(surface !== undefined ? { surface } : {}),
   };
 }
@@ -2422,6 +2429,7 @@ async function readPersistedSessionFile(
           if (parsed.lineageIdentityFilterHash !== undefined) {
             snapshot.meta.lineageIdentityFilterHash = parsed.lineageIdentityFilterHash;
           }
+          if (parsed.lastMessageAt !== undefined) snapshot.meta.lastMessageAt = parsed.lastMessageAt;
         }
         continue;
       }
@@ -2486,14 +2494,16 @@ async function readPersistedSessionFile(
 // total line count).
 const SESSION_HEAD_READ_BYTES = 65536;
 
-async function readConversationPageAdmission(
+async function readSessionMetadata(
   filePath: string,
-): Promise<ConversationPageCacheAdmission> {
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
   const handle = await fs.open(filePath, 'r');
   try {
     const chunks: Buffer[] = [];
     let offset = 0;
     while (true) {
+      throwIfSessionReadAborted(signal);
       const buffer = Buffer.allocUnsafe(SESSION_HEAD_READ_BYTES);
       const { bytesRead } = await handle.read(buffer, 0, buffer.length, offset);
       if (bytesRead === 0) break;
@@ -2518,16 +2528,21 @@ async function readConversationPageAdmission(
       );
     }
     if (!isRecord(value) || value._type !== 'meta') return {};
-    const runtimeInfo = isKodaXSessionRuntimeInfo(value.runtimeInfo)
-      ? value.runtimeInfo
-      : undefined;
-    return {
-      ...(runtimeInfo?.surface !== undefined ? { surface: runtimeInfo.surface } : {}),
-      ...(runtimeInfo?.profileId !== undefined ? { profileId: runtimeInfo.profileId } : {}),
-    };
+    return value;
   } finally {
     await handle.close();
   }
+}
+
+async function readConversationPageAdmission(
+  filePath: string,
+): Promise<ConversationPageCacheAdmission> {
+  const value = await readSessionMetadata(filePath);
+  const runtimeInfo = isKodaXSessionRuntimeInfo(value.runtimeInfo) ? value.runtimeInfo : undefined;
+  return {
+    ...(runtimeInfo?.surface !== undefined ? { surface: runtimeInfo.surface } : {}),
+    ...(runtimeInfo?.profileId !== undefined ? { profileId: runtimeInfo.profileId } : {}),
+  };
 }
 
 export async function readSessionFirstLine(filePath: string): Promise<string | null> {
@@ -2594,6 +2609,12 @@ function processSessionLocationIndex(
     processSessionLocationIndexes.set(sessionsDir, index);
   }
   return index;
+}
+
+export interface SessionActorMetadata {
+  readonly id: string;
+  readonly runtimeInfo?: KodaXSessionRuntimeInfo;
+  readonly actorSnapshot?: AgentActorSnapshot;
 }
 
 export class FileSessionStorage implements KodaXSessionStorage {
@@ -3076,6 +3097,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
     tag?: string;
     scope?: SessionData['scope'];
     surface?: string;
+    lastMessageAt?: string;
     projectCanonicalRoot?: string;
     filePath?: string;
     mainIdentity?: StableFileIdentity;
@@ -3143,6 +3165,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
       tag: data.tag !== undefined ? data.tag : prev?.tag,
       scope: data.scope ?? prev?.scope,
       surface: data.runtimeInfo?.surface ?? prev?.surface,
+      lastMessageAt: latestSessionMessageAt(data.lineage?.entries ?? [], data.lastMessageAt ?? prev?.lastMessageAt),
       projectCanonicalRoot: deriveProjectKeyFromData(data).canonicalRoot ?? prev?.projectCanonicalRoot,
       filePath: fileWitness?.filePath ?? prev?.filePath,
       // A write without a fresh post-write witness must not inherit an older
@@ -3989,6 +4012,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
       resumeItemCount,
       meta.createdAt,
       meta.runtimeInfo?.surface,
+      meta.lastMessageAt,
     );
     if (resumable) {
       try {
@@ -4141,6 +4165,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
       : this.verifiedLocationTopology(id);
     const merged: SessionData = {
       ...data,
+      lastMessageAt: existing?.data.lastMessageAt ?? data.lastMessageAt,
       scope: data.scope ?? existing?.data.scope ?? 'user',
       uiHistory: data.uiHistory ?? existing?.data.uiHistory,
       extensionState: data.extensionState ?? existing?.data.extensionState,
@@ -4211,7 +4236,8 @@ export class FileSessionStorage implements KodaXSessionStorage {
       reconciledLineage.entries,
       existing?.filePath,
     );
-    const persisted: SessionData = { ...merged, lineage: archiveResult.slimmedLineage };
+    const persisted: SessionData = { ...merged, lineage: archiveResult.slimmedLineage,
+      lastMessageAt: latestSessionMessageAt(reconciledLineage.entries, merged.lastMessageAt) };
     const targetPath = await this.writeSessionInternal(
       id,
       persisted,
@@ -4433,6 +4459,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
       );
       const metaUpdate: PersistedMetaUpdateLine = {
         _type: 'meta_update',
+        lastMessageAt: latestSessionMessageAt(newLineage, cached.lastMessageAt),
         title: preparedDelta.title,
         activeEntryId: preparedDelta.activeEntryId,
         activeMessageCount: nextActiveMessageCount,
@@ -4459,6 +4486,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
         nextResumeItemCount,
         undefined,
         cached.surface,
+        metaUpdate.lastMessageAt,
       );
       if (resumable) {
         try {
@@ -4507,6 +4535,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
         extensionCount: cached.extensionCount + newExtensions.length,
         activeEntryId: preparedDelta.activeEntryId,
         activeMessageCount: nextActiveMessageCount,
+        lastMessageAt: metaUpdate.lastMessageAt,
         presentationOnlyHistoryCount: nextPresentationOnlyHistoryCount,
         scope: nextScope,
         lineageIdentityFilter: nextLineageIdentityFilter,
@@ -4755,6 +4784,112 @@ export class FileSessionStorage implements KodaXSessionStorage {
   async peek(id: string): Promise<SessionData | null> {
     const resolved = await this.readSession(id, { migrate: false });
     return resolved ? cloneSessionDataForRead(resolved.data) : null;
+  }
+
+  /** Runtime preflight projection. Actor snapshots are replaced only in canonical metadata. */
+  async readActorSnapshot(
+    id: string,
+    options: SessionReadOptions = {},
+  ): Promise<AgentActorSnapshot | undefined> {
+    return (await this.readActorMetadata(id, options))?.actorSnapshot;
+  }
+
+  /** Strict inventory for control decisions, independent of presentation filtering and pagination. */
+  async listActiveSessionIds(): Promise<readonly string[]> {
+    assertSessionMigrationInactive(this.sessionsDir);
+    const boundary = {
+      topologyBefore: this.readSessionTopologyIdentitySync('', 'global'),
+      writerTopologyDigestBefore: sessionWriterTopologyDigestSync(this.sessionsDir),
+      topologyMutationBefore: fsSync.existsSync(sessionLocationTopologyLockPath(this.sessionsDir)),
+    };
+    // Do not create/migrate the directory merely to inspect an empty Runtime.
+    let rootEntries: fsSync.Dirent[];
+    try { rootEntries = await fs.readdir(this.sessionsDir, { withFileTypes: true }); }
+    catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [...this.drafts.keys()];
+      throw error;
+    }
+    const paths: string[] = [];
+    const active: string[] = [...this.drafts.keys()];
+    const collect = (directory: string, names: readonly string[], archived: boolean): void => {
+      for (const name of names) {
+        if (!name.endsWith('.jsonl') || name.startsWith('.') || name.endsWith('.islands.jsonl') || name.endsWith('.archive.jsonl')) continue;
+        paths.push(path.join(directory, name));
+        if (!archived && !name.startsWith('archived-')) active.push(path.basename(name, '.jsonl'));
+      }
+    };
+    collect(this.sessionsDir, rootEntries.filter(entry => entry.isFile()).map(entry => entry.name), false);
+    await Promise.all(rootEntries.filter(entry => entry.isDirectory() && !entry.name.startsWith('.')).map(async entry => {
+      const directory = path.join(this.sessionsDir, entry.name);
+      const legacyArchive = entry.name === 'archived';
+      collect(directory, await fs.readdir(directory), legacyArchive);
+      if (legacyArchive) return;
+      const archived = path.join(directory, 'archived');
+      try { collect(archived, await fs.readdir(archived), true); }
+      catch (error: unknown) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    }));
+    this.completeSessionLocationTraversal(boundary, paths, true);
+    const after = this.readSessionTopologyIdentitySync('', 'global');
+    assertSessionMigrationInactive(this.sessionsDir);
+    // Content writes change writer queues and flat-directory timestamps without
+    // changing membership. Keep the stronger witness for locator caching above;
+    // inventory uses the directory instance and canonical topology mutation fence.
+    if (boundary.topologyMutationBefore || boundary.topologyBefore === undefined || after === undefined
+      || fsSync.existsSync(sessionLocationTopologyLockPath(this.sessionsDir))
+      || boundary.topologyBefore.root.dev !== after.root.dev
+      || boundary.topologyBefore.root.ino !== after.root.ino
+      || boundary.topologyBefore.epoch !== after.epoch) {
+      throw new SessionReadError('data_changed', 'Session inventory changed during preflight');
+    }
+    return [...new Set(active)];
+  }
+
+  /** Canonical Actor state plus the Runtime-owned admission identity, never a resume cache. */
+  async readActorMetadata(id: string, options: SessionReadOptions = {}): Promise<SessionActorMetadata | undefined> {
+    throwIfSessionReadAborted(options.signal);
+    normalizeSessionReadTimeout(options.timeoutMs);
+    const startedAt = Date.now();
+    return raceSessionRead((async () => {
+      await this.awaitOwnWrites(id, options, startedAt);
+      const draft = this.drafts.get(id);
+      if (draft) return { id, runtimeInfo: structuredClone(draft.runtimeInfo), actorSnapshot: structuredClone(draft.actorSnapshot) };
+      const mainPath = await this.resolveSessionLocation(id, true);
+      if (mainPath === null) return undefined;
+      const topology = this.verifiedLocationTopology(id);
+      const before = await readStableSessionBundleBoundaryAtPath(this.sessionsDir, id, mainPath);
+      const meta = await readSessionMetadata(mainPath, options.signal);
+      const after = await readStableSessionBundleBoundaryAtPath(this.sessionsDir, id, mainPath);
+      this.assertLocationTopologyUnchanged(id, topology);
+      if (before !== after) {
+        throw new SessionReadError('data_changed', 'Session changed while reading Actor metadata');
+      }
+      if (meta._type !== 'meta') {
+        throw new SessionReadError('data_corrupt', 'Session metadata is missing');
+      }
+      if (meta.lineageVersion !== undefined && meta.lineageVersion !== 2) {
+        throw new SessionReadError('version_incompatible', 'Unsupported Session lineage version');
+      }
+      const snapshot = meta.actorSnapshot;
+      const runtimeInfo = isKodaXSessionRuntimeInfo(meta.runtimeInfo) ? meta.runtimeInfo : undefined;
+      if (snapshot === undefined) return { id, runtimeInfo };
+      if (!isRecord(snapshot) || (snapshot.schemaVersion !== 1 && snapshot.schemaVersion !== 2)) {
+        throw new SessionReadError('version_incompatible', 'Unsupported Actor snapshot schema');
+      }
+      if (!Array.isArray(snapshot.actors) || !snapshot.actors.every((actor: unknown) => (
+        isRecord(actor) && typeof actor.path === 'string'
+        && (actor.currentTurnId === undefined || typeof actor.currentTurnId === 'string')
+      ))) {
+        throw new SessionReadError('data_corrupt', 'Invalid Actor metadata');
+      }
+      if (snapshot.schemaVersion === 2 && snapshot.owner !== undefined) {
+        const owner = snapshot.owner;
+        if (!isRecord(owner) || typeof owner.ownerId !== 'string' || typeof owner.runtimeId !== 'string'
+          || !Number.isSafeInteger(owner.pid) || (owner.pid as number) <= 0 || typeof owner.startedAt !== 'string') {
+          throw new SessionReadError('data_corrupt', 'Invalid Actor owner metadata');
+        }
+      }
+      return { id, runtimeInfo, actorSnapshot: structuredClone(snapshot) as unknown as AgentActorSnapshot };
+    })(), options);
   }
 
   /** Strict read-only Session load. It never migrates or repairs persisted data. */
@@ -5453,6 +5588,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
 
       const sessionId = options?.sessionId ?? await generateSessionId();
       const forked: SessionData = {
+        lastMessageAt: latestSessionMessageAt(lineage.entries, undefined, sourceLineage.entries),
         messages: getSessionMessagesFromLineage(lineage),
         title: options?.title ?? resolved.data.title,
         gitRoot: resolved.data.gitRoot,
@@ -5514,6 +5650,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
     runtimeInfo?: KodaXSessionRuntimeInfo;
     archived?: boolean;
     createdAt?: string;
+    lastMessageAt?: string;
   }>> {
     await this.ensureMigrated();
     await fs.mkdir(this.sessionsDir, { recursive: true });
@@ -5662,6 +5799,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
       msgCount: number;
       tag?: string;
       createdAt?: string;
+      lastMessageAt?: string;
       archived?: boolean;
       runtimeInfo?: KodaXSessionRuntimeInfo;
     }> = [];
@@ -5669,12 +5807,10 @@ export class FileSessionStorage implements KodaXSessionStorage {
     type SessionEntry = (typeof sessions)[number];
     const parseSessionFile = async (filePath: string, archived: boolean): Promise<SessionEntry | null> => {
       try {
-        const firstLine = await readSessionFirstLine(filePath);
-        if (!firstLine) {
+        const first = await readEffectiveSessionMetadata(filePath);
+        if (!first) {
           return null;
         }
-
-        const first = JSON.parse(firstLine);
         if (isRecord(first) && first._type === 'meta') {
           const sessionGitRoot = typeof first.gitRoot === 'string' ? first.gitRoot : '';
           const sessionRuntime = isKodaXSessionRuntimeInfo(first.runtimeInfo)
@@ -5732,6 +5868,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
             msgCount: resumeItemCount,
             ...(typeof first.tag === 'string' ? { tag: first.tag } : {}),
             createdAt: typeof first.createdAt === 'string' ? first.createdAt : undefined,
+            lastMessageAt: indexedResume?.lastMessageAt ?? validSessionTimestamp(first.lastMessageAt),
             // v0.7.46 fix — fall back to `sessionGitRoot` when the meta
             // record predates the nested `runtimeInfo` field. Without
             // this, legacy meta records returned `runtimeInfo:
@@ -5787,33 +5924,21 @@ export class FileSessionStorage implements KodaXSessionStorage {
     // existing behavior; SDK consumers pass an explicit limit.
     const limit = opts?.limit ?? 10;
     return sessions
-      .sort((left, right) => {
-        const leftTime = left.createdAt ? Date.parse(left.createdAt) : Number.NaN;
-        const rightTime = right.createdAt ? Date.parse(right.createdAt) : Number.NaN;
-        if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
-          return rightTime - leftTime;
-        }
-        if (Number.isFinite(rightTime) && !Number.isFinite(leftTime)) {
-          return 1;
-        }
-        if (Number.isFinite(leftTime) && !Number.isFinite(rightTime)) {
-          return -1;
-        }
-        return right.id.localeCompare(left.id);
-      })
+      .sort(compareSessionRecency)
       .slice(0, limit)
       // v0.7.46 — surface `createdAt` so the public-api fast path can
       // populate `SessionSummary.createdAt` instead of silently
       // emitting `undefined` (previously every fast-path summary had
       // createdAt=undefined → consumer UIs sorting by date got
       // random order).
-      .map(({ id, title, msgCount, tag, runtimeInfo, createdAt, archived }) => ({
+      .map(({ id, title, msgCount, tag, runtimeInfo, createdAt, lastMessageAt, archived }) => ({
         id,
         title,
         msgCount,
         ...(tag !== undefined ? { tag } : {}),
         ...(runtimeInfo ? { runtimeInfo } : {}),
         ...(createdAt !== undefined ? { createdAt } : {}),
+        ...(lastMessageAt !== undefined ? { lastMessageAt } : {}),
         ...(archived ? { archived: true } : {}),
       }));
   }

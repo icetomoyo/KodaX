@@ -1404,6 +1404,8 @@ stdin 并立即回到原 shell。历史回放保留每条持久 event 的原始�
 使用 session-root Actor queue scope，避免一个 session/child 的待处理输入被另一个
 REPL 显示、唤醒或消费。
 
+当前源码中，`kodax -r` 按最近真实对话消息排序并显示对应时间，旧记录缺少可靠消息时间时回退创建时间。SDK 的 `lastMessageAt`、Host 列表与选择器共用规则；标题、设置、Actor 保存和压缩不刷新对话时间。共享 Host 在取得所有权后统一恢复历史进程，连接客户端不重复清扫；加载提示继续使用统一启动进度契约。
+
 **外部 Agent SDK plane（FEATURE_258，v0.7.67）**：`/agent` 导出协议中立的 executor、registration、policy、credential broker、artifact policy、catalog 和 durable task 契约；`/runtime` 通过 `admin.agentRegistrations`、`agents`、`agentTasks` 向 embedded 与 daemon client 提供同一组 DTO API。Executor factory 是宿主函数，只能装入 inline owner，或在创建新的 in-process daemon owner 时装入；不能通过既有 daemon 连接或 Runtime Worker 边界注入。Plane 关闭后是终态：未完成的 wait 和后续所有服务调用都会拒绝；受限 Workflow 脚本会完整校验并传递 `phase` 与外部 `target`。完整所有权、注册、preflight、启动/等待/继续/取消/对账和安全边界见 [SDK Embedder Guide §18](public_docs/sdk/embedder-guide.md#18-external-agent-executor-plane-feature_258-v0767)。
 
 **成本受控 Workflow SDK（FEATURE_259，v0.7.67）**：SDK 调用方用 run-scoped `modelTiers` 与 `workflow.maxConcurrency` 配置路由和并发，workflow 作者只表达 `fast` / `balanced` / `deep` 语义意图。terminal workflow event 回显 tier/source/fallback/usage/duration，持久化 `run.json.efficiencyReport` 给出 token coverage、role/tier 启动数、packet-read 拓扑、review wave 和 quality gate 结果。完整配置与遥测读取方式见 [SDK Embedder Guide §20](public_docs/sdk/embedder-guide.md#20-cost-disciplined-workflow-routing-and-telemetry-feature_259-v0767)。

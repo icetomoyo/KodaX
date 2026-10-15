@@ -2,6 +2,70 @@
 
 本指南验证构建后的产品入口。组件、协议和 SDK 单测继续保留，但不替代这里的真实进程与终端操作。
 
+## 2026-10-15 启动与最近消息排序回归
+
+测试边界：规范存储 Actor 投影、共享 Host 所有权与退出、SDK/Client 列表、裸 `-r` 发现及真实 ConPTY 首次可输入。所有性能样本禁止提交模型请求，使用专用 Home，不停止用户默认 Host。
+
+```powershell
+npx vitest run packages/repl/src/interactive/storage.actor-read.test.ts packages/repl/src/interactive/storage.owned-read.test.ts packages/repl/src/session/session-recency.test.ts packages/repl/src/cli-resume.test.ts packages/repl/src/session/resume-index.test.ts
+npx vitest run packages/agent/src/runtime/managed-child-processes.scope.test.ts packages/agent/src/runtime/managed-child-processes.cache.test.ts packages/agent/src/runtime/managed-child-processes.run.test.ts packages/agent/src/runtime/process-tree.identity-batch.test.ts
+npx vitest run src/sdk-runtime.host-owner.test.ts src/sdk-runtime.actors.test.ts src/sdk-client.session-recency.test.ts src/runtime-daemon/process.owner-exit.test.ts src/kodax_cli.interactive-exit.test.ts
+npx vitest run src/sdk-runtime.preflight-projection.test.ts src/sdk-runtime.shell-home.test.ts src/sdk-runtime.mcp-home.test.ts packages/agent/src/capabilities/mcp/transport-home.test.ts
+npm run typecheck
+npm run build
+```
+
+必须保留：其他项目的活跃 Actor 仍阻止停机；长首行、未知 schema、损坏与并发替换不返回 false idle；本 Owner 写队列、取消和期限仍生效。历史恢复仅在取得存储所有权后执行并绑定 Host 配置目录；Client 退出不扫描历史，自己的活进程仍需回收，未知树证据仍保留。身份批次内复用，下一轮刷新，PID 复用不误杀。
+
+忙时预检沿用已认领且验证过 admission 的现场 Actor，不因普通内容写队列或旧 flat 临时文件而失效；未认领 Actor 仍严格读取。真实目录成员变化、迁移锁/journal 不得变成空清单；旧 flat 的顶层 `archived/` 与项目内归档均不参与活跃枚举。全量回归首次检出的忙时读锁问题及复核检出的旧 flat 归档问题均有对应修正和失败后通过的用例。
+
+排序场景：旧会话新增真实消息置顶；标题/设置/Actor 保存、合成消息和压缩不置顶；压缩复制与 Fork 保留来源时间。全量保存、prepared append、索引命中/删除重建、旧记录及 SDK 快慢路径一致；相同时间稳定排序；筛选先于 limit，`before` 仍过滤创建时间。新游标锚点删除或移动后可继续；实时分页中的新增活动通过首页刷新发现。
+
+### 本次启动耗时对比
+
+2026-10-15，Windows ConPTY + xterm，110×35，等待实际出现可输入提示后发送 `/exit`。优化前后使用独立安装副本、相同的 759 条历史子进程记录及恢复会话夹具；沙箱已就绪，无模型请求。每种场景各一次配对样本，包含相同的只记录阶段/OS 调用耗时的内存探针，不代表统计分位数或首次安装沙箱的耗时。
+
+| 场景 | 优化前 | 优化后 |
+| --- | ---: | ---: |
+| 无运行中 Host，输入命令到 TUI 可输入 | 27.493 s | 17.614 s |
+| 已有同构建 Host，再次启动 | 8.344 s | 0.772 s |
+| `-r`，选择会话到 TUI 可输入 | 8.181 s | 0.621 s |
+| 同版本、同来源构建内容改变，正常切换 Host | 27.405 s | 11.699 s |
+
+刷新样本只在私有安装的 `dist/provider-capabilities.json` 末尾追加合法空白以改变构建身份，覆盖重建后的切换路径；不声称在计时期间执行了编译。所有 CLI 样本正常退出，候选 Host 最后通过 `daemon stop --home <专用 Home> --json` 返回 `stopped: true`。基线最后的停机返回 `cleanup_unverified`，进程已退出，不能将其记为已验证清理成功。
+
+阶段证据：再次启动原本约 6.77 s 的客户端全局清理已消除；候选只处理自己的精确登记，约 1–3 ms。冷启动仍保留 Host 的一次历史恢复（最终样本 9.87 s），构建身份首次读取两侧约 1.30–1.36 s。正常切换等待旧 Owner 退出由约 7.31 s 降至 0.89 s；此处仍验证真实退出及清理结果。沙箱就绪检查两侧均约 28–40 ms，配置准备约 1–4 ms，恢复会话的 Host 读取约 2–10 ms，未观察到这些阶段的新回归。大历史会话的预检读取边界另由 Actor 投影和超过 50 条会话的严格全量回归验证，不能用本夹具的预检耗时代替大库测量。
+
+本机证据目录：`%TEMP%/kodax-startup-comparison-Gtwl6A`，包含 `run.mjs`、`probe.cjs`、`comparison-state.json`、`final-candidate.json`、`comparison-results.json`、各场景 `*-result.json`、阶段 `*.jsonl` 与原始 `*.ansi`。表中候选采用最终重建后的 `after-final-*` 样本；较早候选测得冷启动 15.263 s、再次启动 0.827 s、选中后 0.586 s、切换 10.831 s，保留为额外样本，不据此选取最低值。真实用户默认 Host 未停止或重启。
+
+### 回归结果与证据边界
+
+类型检查、完整构建、SDK 声明自包含检查通过。冻结 2,884 个源码、测试和构建文件后运行默认全量：1,178 个文件，16,618 passed、10 failed、89 skipped、19 todo，耗时 1,202.85 s；结束时所有冻结哈希一致。首轮失败逐项处理如下：
+
+- Shell 恢复的 5 项旧调用参数断言现在明确检查 Host `configHome`，MCP 清理的 3 项旧 mock 改为保留真实作用域导出；相关两文件完整复验 12/12 通过，原清理结果与持久化顺序断言保留。
+- 既有 Issue 368 索引使用非标准状态导致统计失败，索引规范为 `Resolved`，详情及版本仍明确源码已修复、SDK 待发布；tracker 4/4 通过。
+- 1,005 轮 Run 存储用例遇到一次 Windows `EPERM` 原子重命名失败；生产重命名处理未变，原用例独立复验 56.384 s 通过。保留首轮失败证据，不将其写成已根治文件系统失败。
+
+以上共 17 项定向复验通过，覆盖首轮全部 10 个失败；不是第二份“全量零失败”日志。构建产物验收 42/42 通过，测试适配后的类型检查通过。证据为同目录 `regression-frozen.{log,json}`、`frozen-check.json`、`test-adaptation.log`、`retention-check.log`、`bundle.log`、`typecheck.log` 和 `final-build.log`。
+
+完整真实 ConPTY 验收通过 50/50（owned Ink 30、classic 20），覆盖启动、新建草稿、首次提交、设置、排队、停止、退出与持久会话恢复等；结果与屏幕证据为 `%TEMP%/kodax-repl-acceptance-k88a6C/results.json` 及同目录文件，入口输出为本轮证据目录的 `pty-final.log`。首次执行的旧驱动因错误期待未提交会话进入历史而失败，修正的是驱动对草稿契约的适配，生产行为未改。
+
+打包 Electron 42.5.0 验收通过（`electron.log`）：实际 Windows 沙箱执行 20 次工具查询、4 个 Session 并发、环境隔离、连接/断开、Host 关闭与重新启动。新增 `session-recency.ts` 单独测得行/函数覆盖率 100%、语句 95.83%、分支 89.36%，4 项测试通过；证据为 `coverage.log` 和 `recency-coverage/coverage-summary.json`，不代表全仓覆盖率。最后核对 2,884 个冻结文件，只有两个 mock/断言测试文件及 PTY 驱动发生已复验的适配，生产源码和构建均未改变（`final-freeze-check.json`）；`git diff --check` 通过。
+
+Standards：硬规范违反 0，仍需处理的坏味道 0。Spec：剩余需求/契约问题 0。两轴独立只读复核，未修改用户默认 Host。
+
+### 性能成本与功能回归边界
+
+目前证据未发现本次改动引入新的性能或功能退化；这不等于所有平台、磁盘条件和历史规模都已证明零回归。提交前核对以下成本与权威边界：
+
+- 预检仍枚举全部 admitted、未归档会话，成本随会话数量及元数据大小增长；未认领 Actor 的元数据每批最多 48 个并发读取，不物化正文和 lineage。已经认领的 Actor 使用经过 admission 验证的现场控制器，避免持久化写锁使忙时预检失效。损坏、迁移中或无法证明稳定的记录仍拒绝控制读取，不能误报空闲。
+- 全量保存原本需要处理完整 lineage，最近消息事实的持久字段、主文件元数据与写后缓存分别计算来源时间投影，使用临时映射，成本随各自处理的完整或精简 lineage 长度线性增长；prepared append 只处理本次新增 entries 和既有时间，不因该字段重新扫描全部历史。会话列表仍为元数据读取及排序，不为补旧时间遍历所有正文；旧索引按现有维护入口升级，裸 `-r` 不重建索引。
+- 历史清理由取得独占所有权的共享 Host 执行一次，客户端连接与退出不重复扫描其他 Owner；精确登记、私有 Home、Job/supervisor、真实退出和持久化清理结果的验证保留。未知清理记录不会为了速度被当成已成功回收。
+- Windows 身份批次只共享本次 OS 观察；仅自身不可变启动身份可缓存，外部 PID 下一批重新读取。工具执行增加的 Home 作用域不新增 OS 子进程或全局扫描，也不改变进程全局 Agent Home。
+- `lastMessageAt` 是统一展示事实，设置、标题、Actor 保存和压缩不制造新活动。新增字段可缺省，旧数据有可靠消息时间才补充；`before` 继续按创建时间过滤，分页保持明确的实时边界语义。
+
+本轮已覆盖 1,005 轮 Run 存储、真实双终端和打包 Electron；没有做全部非启动路径的吞吐量 A/B、大库生产预检延迟分位数或 macOS/Linux 实机对比。Windows 全量中的一次 `EPERM` 已独立复验通过但没有根因修复结论，保留原始证据。后续若出现新的性能或功能问题，应使用同一场景的源码/构建身份和阶段记录定位，不通过缩小预检覆盖、清除未知登记或放宽 Owner 验证规避。
+
 ## 2026-09-14 主线融合复核
 
 完整分析和边界见 [复核报告](../research/product-client-reaudit-2026-09-14.md)。补充以下人工场景，均使用专用测试 HOME 和已有共享 Host：
@@ -38,6 +102,8 @@ npm run test:repl-pty:built
 - `*-host.json`：公开 Client 读取的视图、Run 和事件，区分正常停止与运行失败。
 
 两种终端均验证新会话启动、流式输入/输出、设置往返、完整长输入、提问、停止后继续输入、新建隔离、退出和历史续接。Ink 额外验证忙时排队撤回编辑、搜索旧消息及冻结浏览。Ink 长输入使用 bracketed paste；classic 使用原有反斜杠续行。新建会话沿用各入口原有交互：Ink 确认后创建，classic 直接创建。具体通过项以当次 `results.json` 为准；失败不能以旧测试通过数豁免。
+
+2026-10-15 驱动同步草稿契约：启动及 `/new` 从真实终端所显示的 Session ID 经公开 `read/observe` 确认目标，classic 使用 `/status` 获取完整 ID；未提交会话必须仍不在历史列表中。首次真实输入后才验证持久化与旧会话保留，不为迎合旧断言恢复空历史记录，也不增加虚假的预热输入。
 
 2026-09-09 起，Ink 同一入口额外检查以下回归：
 

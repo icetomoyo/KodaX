@@ -540,6 +540,7 @@ export class McpServerRuntime {
     private readonly cacheDir: string,
     /** FEATURE_222 — host-injected server→client reverse capabilities. */
     private readonly reverse?: McpReverseCapabilities,
+    private readonly configHome?: string,
   ) {
     this.diagnostics = {
       serverId,
@@ -962,6 +963,7 @@ export class McpServerRuntime {
         {
           ...(framing ? { stdioFraming: framing } : {}),
           httpResolvedTransport: this.cachedHttpTransport,
+          configHome: this.configHome,
         },
       );
       this.transport = transport;

@@ -10,7 +10,7 @@ import {
   isCurrentProcessWindowsJobContained,
   rememberChildProcessTree,
 } from '../../runtime/process-tree.js';
-import { registerManagedChildProcess } from '../../runtime/managed-child-processes.js';
+import { registerManagedChildProcess, withManagedChildProcessConfigHome } from '../../runtime/managed-child-processes.js';
 
 // ---------------------------------------------------------------------------
 // Transport interface
@@ -80,6 +80,7 @@ export class McpTransportCleanupIncompleteError extends Error {
 }
 
 export function createStdioTransport(config: {
+  configHome?: string;
   command: string;
   args?: string[];
   cwd?: string;
@@ -185,14 +186,14 @@ export function createStdioTransport(config: {
         removeCleanupOnProcessExit = removeChildCleanupOnProcessExit;
         globalThis.process.once('exit', childCleanupOnProcessExit);
       }
-      unregisterManagedChild = registerManagedChildProcess(child, {
+      unregisterManagedChild = withManagedChildProcessConfigHome(config.configHome, () => registerManagedChildProcess(child, {
         kind: 'mcp-stdio',
         command: config.command,
         args: config.args,
         cwd: config.cwd,
       }, {
         manualUnregister: true,
-      });
+      }));
       child.stdin.on('error', (error) => {
         if (!closingChildren.has(child)) ev.onError(error);
       });
@@ -890,6 +891,8 @@ export function createAutoHttpTransport(config: {
 // ---------------------------------------------------------------------------
 
 export interface McpTransportOptions {
+  /** Trusted Host home for stdio process recovery, independent of cache location. */
+  configHome?: string;
   stdioFraming?: StdioFraming;
   httpResolvedTransport?: 'streamable-http' | 'sse';
 }
@@ -961,6 +964,7 @@ export function createMcpTransport(
         throw new Error('MCP stdio transport requires a "command" field.');
       }
       return createStdioTransport({
+        configHome: options.configHome,
         command: resolveEnvironmentString(config.command),
         args: config.args?.map(resolveEnvironmentString),
         cwd: config.cwd !== undefined ? resolveEnvironmentString(config.cwd) : undefined,

@@ -49,6 +49,8 @@ interface CachedPromptCatalog {
 }
 
 export interface McpProviderOptions {
+  /** Host process registry root, captured for prewarm, lazy connect, and reconnect. */
+  configHome?: string;
   cacheDir?: string;
   /**
    * FEATURE_222 — host-injected server→client reverse capabilities (workspace
@@ -98,7 +100,7 @@ export class McpCapabilityProvider implements CapabilityProvider {
     for (const [serverId, serverConfig] of enabledServerEntries(servers)) {
       this.runtimes.set(
         serverId,
-        new McpServerRuntime(serverId, serverConfig, this.cacheDir, options.reverse),
+        new McpServerRuntime(serverId, serverConfig, this.cacheDir, options.reverse, options.configHome),
       );
     }
   }

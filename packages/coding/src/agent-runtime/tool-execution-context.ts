@@ -132,6 +132,7 @@ export function buildToolExecutionContext(
     : undefined;
 
   const context: KodaXToolExecutionContext = {
+    configHome: options.context?.configHome,
     runtimeRunId: options.context?.runtimeRunId,
     registerShellCleanup: options.events?.registerShellCleanup,
     backups: new Map(),

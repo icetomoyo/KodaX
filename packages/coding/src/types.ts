@@ -2669,6 +2669,8 @@ export type {
 };
 
 export interface KodaXToolExecutionContext {
+  /** Trusted Runtime home for managed process registration; never model supplied. */
+  configHome?: string;
   runtimeRunId?: string;
   extensionExecution?: ExtensionExecutionScope;
   /** Host callback re-entering the complete tool/guardrail dispatch route. */

@@ -16,6 +16,25 @@ afterEach(async () => {
 });
 
 describe('product Host Session storage ownership', () => {
+  it('runs historical recovery only after shared storage ownership, in the Host home', async () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-host-recovery-'));
+    roots.push(homeDir);
+    const directory = path.join(homeDir, '.kodax', 'runtime', 'processes', 'children');
+    fs.mkdirSync(directory, { recursive: true });
+    const evidence = path.join(directory, 'invalid-history.json');
+    fs.writeFileSync(evidence, '{untrusted');
+    const embedded = await createKodaXRuntime({ homeDir });
+    runtimes.push(embedded);
+    expect(fs.existsSync(evidence)).toBe(true);
+    await embedded.close();
+    const host = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
+    runtimes.push(host);
+    expect(fs.existsSync(evidence)).toBe(false);
+    fs.writeFileSync(evidence, '{new-evidence');
+    await expect(createKodaXRuntime({ homeDir, sharedDaemonHost: true }))
+      .rejects.toMatchObject({ code: 'session_storage_owned' });
+    expect(fs.readFileSync(evidence, 'utf8')).toBe('{new-evidence');
+  });
   it('rejects a live Host in another process and permits startup after that process crashes', async () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-host-process-'));
     roots.push(homeDir);

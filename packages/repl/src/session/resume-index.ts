@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-const RESUME_INDEX_VERSION = 7;
+const RESUME_INDEX_VERSION = 8;
 const RESUME_INDEX_DIR = '.resume-index';
 const RESUME_INDEX_MANIFEST = 'complete.json';
 const RESUME_INDEX_PUBLISH_LOCK = 'publish.lock';
@@ -20,6 +20,7 @@ export interface ResumeIndexEntry {
   readonly title: string;
   readonly msgCount: number;
   readonly createdAt?: string;
+  readonly lastMessageAt?: string;
   readonly surface?: string;
 }
 
@@ -38,7 +39,7 @@ export interface ResumeIndexScannedFile extends ResumeIndexSourceIdentity {
 }
 
 interface ResumeIndexManifest {
-  readonly version: 7;
+  readonly version: 8;
   readonly markerNames: readonly string[];
   readonly markerCount: number;
   readonly markerDigest: string;
@@ -51,7 +52,7 @@ interface ResumeIndexManifest {
 }
 
 interface ResumeMarker {
-  readonly version: 7;
+  readonly version: 8;
   readonly state: 'pending' | 'ready';
   readonly entry: ResumeIndexEntry;
   readonly source?: {
@@ -343,6 +344,7 @@ function parseEntry(value: unknown): ResumeIndexEntry | undefined {
     || !Number.isInteger(value.msgCount)
     || value.msgCount <= 0
     || (value.createdAt !== undefined && typeof value.createdAt !== 'string')
+    || (value.lastMessageAt !== undefined && typeof value.lastMessageAt !== 'string')
     || (value.surface !== undefined && typeof value.surface !== 'string')
   ) return undefined;
   return {
@@ -350,6 +352,7 @@ function parseEntry(value: unknown): ResumeIndexEntry | undefined {
     title: value.title,
     msgCount: value.msgCount,
     ...(value.createdAt !== undefined ? { createdAt: value.createdAt } : {}),
+    ...(value.lastMessageAt !== undefined ? { lastMessageAt: value.lastMessageAt } : {}),
     ...(value.surface !== undefined ? { surface: value.surface } : {}),
   };
 }

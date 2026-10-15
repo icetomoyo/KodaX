@@ -135,6 +135,7 @@ async function executeHookCommand(
     shell: { kind: process.platform === 'win32' ? 'cmd' : 'bash', profile: 'none' },
   };
   const result = await toolBash(hookToolInput(event, hook), {
+    configHome: options.context?.configHome,
     backups: new Map(),
     executionCwd: cwd,
     gitRoot: options.context?.gitRoot ?? undefined,

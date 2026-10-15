@@ -1059,9 +1059,21 @@ interface SessionManager {
 ```
 
 `surface` is an exact filter applied before `limit`. Each returned summary may
-include an opaque `cursor`; pass the last summary's cursor back unchanged to
-continue the stable newest-first listing. Callers must not parse or construct
-cursors themselves.
+include an opaque `cursor`; pass the last summary's cursor back unchanged.
+Lists sort by `lastMessageAt` (latest genuine user/assistant conversation),
+falling back to `createdAt`, then creation time and ID descending. The optional
+`lastMessageAt` is carried by Session summaries, loaded product Sessions, and
+the shared Host Client. Actor/settings/title writes, synthetic wakes, and
+compaction do not create new conversation activity; copied history keeps its
+source time. Legacy data without a reliable message time falls back to creation,
+never filesystem mtime. These times are display facts, not event sequence IDs.
+
+Filtering and ordering precede `limit`; `before` still filters **creation** time.
+New cursors retain the returned ordering boundary even if the anchor is deleted
+or becomes active. Pagination is a live listing, not a cross-page snapshot:
+newly active Sessions may move before the boundary; refresh the first page to
+see them. Do not parse or construct cursors. Bare `kodax -r` uses the same order
+and displays message time, without starting a Host or writing an index.
 
 ### Active context vs full transcript vs UI replay
 
@@ -3256,6 +3268,25 @@ REPL, Space, and SDK callers using the same resolved `homeDir + profile` target
 the same daemon. Simultaneous startup is expected: candidates race only for the
 atomic owner lock, then non-owners wait for and attach to the verified winner.
 A client never owns a daemon merely because it caused auto-start.
+
+The shared Host performs historical managed-child recovery once after acquiring
+its Owner and Session-storage fences, before readiness, in its resolved config
+home. Clients do not repeat that sweep; process exit still verifies its own
+exact registrations. Passive connect and private embedded Runtime construction
+do not run shared-Host global recovery. Stop preflight projects canonical Actor
+metadata without materializing transcripts, while retaining all admitted active
+Session coverage, writer/file identity fences, and Owner liveness checks. Resume
+indexes never authorize stopping a Host. Claimed Actor controllers are checked
+for admission before initialization and supply live state while persistence is
+pending; unclaimed Actors use canonical metadata. Existing process/Job/supervisor and
+durable shutdown verification remain required; unavailable evidence stays unknown.
+
+Standalone MCP embedders can pass `McpProviderOptions.configHome` (or transport
+`configHome`) to bind stdio process registration and recovery to their Host;
+`cacheDir` remains a separate cache location. Product Hosts supply it for
+prewarm, lazy connection, reload and reconnect. Runtime tool execution, dynamic
+Skill context and hooks inherit the same trusted home without changing the
+process-global Agent home. Omitted standalone options retain Agent defaults.
 
 On abnormal exit, the next start validates the saved PID, endpoint, token, and
 runtime id before removing stale state. KodaX will not kill a process whose

@@ -1,12 +1,55 @@
 # KodaX Detailed Design
 
-Last updated: 2026-10-13. Current development tree: FEATURE_298/299/301 on package
+Last updated: 2026-10-15. Current development tree: FEATURE_298/299/301 on package
 `0.7.97-alpha.5`; `v0.7.96` is the last stable release.
 
 The [Client contract](CLIENT_CONTRACT.md) and [SDK migration guide](SDK_MIGRATION.md)
 define current product integration. Version-labelled release context below does
 not restore removed APIs. Low-level Runtime mechanisms remain distinct from
 the `KodaXProductClient` business surface.
+
+## Startup and resume projections (2026-10-15 source)
+
+`FileSessionStorage.readActorSnapshot()` waits for its own queued writes and
+reads the complete canonical metadata line in chunks under location/topology
+and stable bundle boundaries. It does not migrate, repair, rebuild lineage, or
+clone transcript bodies. Unknown Actor schemas and invalid metadata reject;
+Runtime preflight retains its admitted Session coverage and Owner liveness
+checks. Claimed live Actor controllers remain authoritative while their saves
+are pending; admission is checked explicitly before a controller claims its
+durable fence. Unclaimed Actors use the strict metadata projection. The Actor
+section is replaced by its existing CAS writer and cannot be
+changed by append-only `meta_update` records.
+
+Full Session saves and prepared tail appends maintain `lastMessageAt`; tail
+metadata and source-verified resume index v8 carry the same fact. Message
+provenance preserves time across compaction copies and forks. The shared
+metadata projection and comparator serve storage, CLI, and SDK lists. Old
+records use a reliable final persisted message timestamp when available,
+otherwise creation time; list discovery does not backfill entire transcripts.
+New list cursors encode the returned recency/creation/ID boundary, while prior
+ID-only cursors retain their existing anchor behavior. Pagination is live,
+not a retained snapshot.
+
+Agent cleanup defaults to its explicit global recovery API. Product exit uses
+`scope: 'current-owner'`, backed by exact process-local registration references,
+including incomplete records retained after root exit. A cleanup-local config
+home scope binds filesystem operations and registration callbacks; it does not
+mutate the Agent home singleton. Shared Runtime construction recovers history
+after the Session-storage owner fence. Bounded process-identity batches share
+the existing OS probe and preserve FILETIME/raw/Unix identity encodings; only
+the current process's immutable identity is cached.
+
+The existing Runtime `context.configHome` passes through tool execution into
+the Agent registration scope, including nested constructed Bash invocations.
+Run-specific recovery and its release callback bind that same home explicitly.
+MCP providers capture the Host home separately from their cache directory and
+pass it to each stdio transport, covering prewarm, lazy connect, reload, and
+reconnect. Direct Skill Bash and frontmatter hooks use the same registry scope.
+Preflight enumeration is unbounded by presentation page size and includes all
+admitted scopes in batches of 48; unreadable active metadata fails the control
+read instead of inheriting the display list's skip behavior. Product list
+admission precedes its page limit.
 
 ## 1. Scope
 

@@ -506,6 +506,19 @@ export async function withSharedWindowsProcessSnapshot<T>(
 }
 
 /** Read an OS-issued start identity so later cleanup never trusts a bare PID. */
+export function readProcessStartIdentities(pids: readonly number[]): Map<number, string | undefined> {
+  const valid = [...new Set(pids.filter(pid => Number.isInteger(pid) && pid > 0))];
+  if (process.platform !== 'win32') return new Map(valid.map(pid => [pid, readProcessStartIdentity(pid)]));
+  if (valid.length === 0) return new Map();
+  const snapshot = readWindowsProcessSnapshot();
+  const identities = new Map(snapshot?.map(row => [row.pid, row.creationTime]));
+  return new Map(valid.map(pid => {
+    const identity = identities.get(pid);
+    return [pid, identity === '0' ? undefined : identity];
+  }));
+}
+
+/** Read an OS-issued start identity so later cleanup never trusts a bare PID. */
 export function readProcessStartIdentity(pid: number): string | undefined {
   if (!Number.isInteger(pid) || pid <= 0) return undefined;
   if (process.platform === 'win32') {

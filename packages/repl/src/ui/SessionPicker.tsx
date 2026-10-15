@@ -17,7 +17,7 @@ function SelectionLoadingIndicator(): React.ReactElement {
 
 export type SessionPickerItem = Pick<
   ClientSessionSummary,
-  'id' | 'title' | 'msgCount' | 'createdAt' | 'surface'
+  'id' | 'title' | 'msgCount' | 'createdAt' | 'lastMessageAt' | 'surface'
 >;
 
 export interface SessionPickerPage {
@@ -40,6 +40,7 @@ export function filterSessionPickerItems(
       session.id,
       session.surface ?? '',
       session.createdAt ?? '',
+      session.lastMessageAt ?? '',
       String(session.msgCount),
     ].join(' ').toLocaleLowerCase();
     return tokens.every((token) => searchable.includes(token));
@@ -163,7 +164,7 @@ export function SessionPicker({
           const surface = session.surface ? ` · ${session.surface}` : '';
           return (
             <Text key={session.id} color={selected ? 'cyan' : undefined} bold={selected}>
-              {selected ? '❯' : ' '} {title} · {session.msgCount} msgs{surface} · {formatTimestamp(session.createdAt)} · {session.id.slice(0, 8)}
+              {selected ? '❯' : ' '} {title} · {session.msgCount} msgs{surface} · {formatTimestamp(session.lastMessageAt ?? session.createdAt)} · {session.id.slice(0, 8)}
             </Text>
           );
         })}

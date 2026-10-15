@@ -85,6 +85,8 @@ export interface ClientSession {
   readonly surface?: string;
   readonly profileId?: string;
   readonly createdAt?: string;
+  /** Latest genuine conversation message time; falls back to createdAt for legacy lists. */
+  readonly lastMessageAt?: string;
 }
 
 export interface ClientSessionSummary extends ClientSession {

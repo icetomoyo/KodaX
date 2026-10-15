@@ -911,15 +911,15 @@ describe('CLI interactive exit lifecycle', () => {
       hardExitOnClose: false,
     }));
     expect(harness.shutdownDefaultLspService).toHaveBeenCalledTimes(1);
-    expect(harness.cleanupRegisteredManagedChildren).toHaveBeenNthCalledWith(1);
-    expect(harness.cleanupRegisteredManagedChildren).toHaveBeenNthCalledWith(2, { includeCurrentOwner: true });
+    expect(harness.cleanupRegisteredManagedChildren).toHaveBeenCalledExactlyOnceWith({
+      scope: 'current-owner', includeCurrentOwner: true,
+    });
     expect(harness.shutdownTracing).toHaveBeenCalledTimes(1);
     expect(exitSpy).toHaveBeenCalledTimes(1);
     // FEATURE_298 T27 — fixed Host: no client-side extension runtime, MCP
     // provider registration, or extension dispose (the Host owns those).
     expect(harness.calls).toEqual([
       'hardening',
-      'cleanup-children-startup',
       'bootstrap-tracing',
       'session-retention',
       'run-ink',

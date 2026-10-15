@@ -760,6 +760,7 @@ describe('FileSessionStorage', () => {
 
     await expect(storage.load('session-1')).resolves.toEqual({
       messages: [{ role: 'user', content: 'hello persisted runtime' }],
+      lastMessageAt: expect.any(String),
       title: 'Persisted Runtime',
       gitRoot,
       runtimeInfo,

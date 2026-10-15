@@ -60,6 +60,12 @@ CLI 用同一通知驱动加载动画，模块加载、旧子进程清理、Sess
 
 `disconnect()` 仅释放本连接；`ClientObservation.close()` 仅结束一个观察。它们不表示 Run 停止或 Host 退出。`host.shutdown()` 请求空闲 Host 正常关闭，返回 `{ accepted: true }` 只代表接收请求，不能替代启动器对退出和清理完成的确认。
 
+启动历史进程恢复由取得独占 Owner 和 Session 存储所有权的共享 Host 在就绪前执行；连接客户端不重复扫描。退出收尾仅处理本进程精确注册的子进程，保留 Job、supervisor、实际退出及持久化清理结果的验证。私有 embedded Runtime 和被动 connect 不执行共享 Host 的全局恢复。预检对已认领且验证过 admission 的 Actor 使用现场控制器，其余读取规范 Actor 元数据；仍覆盖全部 admitted、未归档 Session，保留并发写入、文件身份和 Owner 检查，忙时持久化不妨碍读取现场状态。恢复列表索引不构成空闲证明。
+
+`sessions.list()` 按 `lastMessageAt`（最近真实用户/助手对话消息时间）倒序，缺失时用 `createdAt`，再按创建时间及 ID 倒序稳定排序。`ClientSession` / `ClientSessionSummary` 提供可选 `lastMessageAt`；读取、标题/设置/Actor 保存、合成唤醒和历史压缩不产生新对话时间，历史复制沿用来源时间。时间只用于列表展示，不定义跨 Session 的事件顺序。旧记录只在有可靠消息时间时补充该事实，缺失时回退创建时间，不用文件 mtime 推测。
+
+筛选和排序先于 `limit`。`before` 仍按 `createdAt` 过滤。新不透明游标保存返回时的排序边界，锚点删除或活动更新后仍可继续；分页是实时列表，不提供跨页快照，新活动可能使记录移到已浏览边界之前，刷新第一页获取最新结果。SDK、Host 和裸 `kodax -r` 采用相同时间与排序语义；裸恢复列表保持只读，不启动 Host 来显示列表。
+
 完整客户端退出使用 `lifecycle.requestExit/readExit/listPendingExits`，断连后使用 `/client` 的 `readKodaXClientExits` 查询持久化回执。它结算本客户端工作，保护其他客户端，并分别报告请求接受、本客户端清理、精确 Host 退出与 unknown。累计用量、请求/工具执行事实及根/子上下文快照使用 `statistics.read/readRequests/readTools`；不由最新 activity 或 permissionMode 推断。独立 `agents.spawn/followup` 使用可信 Main authorizer 的 `agent_spawn/agent_followup` 接缝，新的 native turn 单独授权。持久化、断连、Host 重启和 adapter 可观察性边界详见 [Space 接缝](SPACE_SDK_SEAMS.md)。
 
 ## 公开域与全部方法

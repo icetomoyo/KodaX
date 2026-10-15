@@ -1185,7 +1185,7 @@ async function cleanupInteractiveProcessResources(input: {
   await attempt('extension Runtime', input.disposeExtensions, phaseTimeoutMs, managedChildReserveMs);
   await attempt('LSP', shutdownDefaultLspService, phaseTimeoutMs, managedChildReserveMs);
   await attempt('managed child process', async () => {
-    await cleanupRegisteredManagedChildren({ includeCurrentOwner: true });
+    await cleanupRegisteredManagedChildren({ scope: 'current-owner', includeCurrentOwner: true });
   });
   await attempt('tracing', shutdownTracing);
 
@@ -1246,6 +1246,7 @@ async function cleanupDaemonServeProcessResources(input: {
   await attempt('LSP', shutdownDefaultLspService);
   await attempt('managed child process', async () => {
     await cleanupRegisteredManagedChildren({
+      scope: 'current-owner',
       includeCurrentOwner: true,
       requireCurrentOwnerCleanup: true,
       currentOwnerJobContained: isCurrentProcessWindowsJobContained(),
@@ -3331,11 +3332,6 @@ async function runCliMain(startupProgress?: CliStartupProgress) {
       .runAsrtWindowsNetworkBrokerProcess(argv[1]);
     return;
   }
-  if (!isDaemonManagementCommand) {
-    startupProgress?.update('Checking previous processes');
-    await cleanupRegisteredManagedChildren();
-  }
-
   // FEATURE_209 (v0.7.45): activate tracing so Runner spans persist to
   // ~/.kodax/.traces/<traceId>.jsonl. FileTracingProcessor flushes per-trace
   // on completion, so completed traces are durable without the beforeExit
@@ -5104,7 +5100,7 @@ complete -c kodax -l version -d 'Show version'`);
       }
       cliRuntime = undefined;
       await shutdownDefaultLspService();
-      await cleanupRegisteredManagedChildren({ includeCurrentOwner: true });
+      await cleanupRegisteredManagedChildren({ scope: 'current-owner', includeCurrentOwner: true });
       await shutdownTracing();
       if (runtimeCloseError !== undefined) throw runtimeCloseError;
     }

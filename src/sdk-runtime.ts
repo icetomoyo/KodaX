@@ -306,6 +306,7 @@ import type {
 import {
   McpCapabilityProvider,
   cleanupManagedRunChildProcess,
+  cleanupRegisteredManagedChildren,
   type ManagedRunChildProcessReference,
   createMcpManager,
   createAgentExecutorPlane,
@@ -3814,6 +3815,7 @@ interface RuntimeInternalEventService {
 }
 
 interface RuntimePersistence {
+  readonly configHome: string;
   readonly runtimeDir: string;
   close(): void;
   nextSessionOrder(sessionId: string): number;
@@ -3850,7 +3852,7 @@ interface RuntimeSessionAdmission {
   assertCreate(input: RuntimeCreateSessionInput): void;
   assertFilter(filter: RuntimeSessionFilter | undefined): void;
   admitsData(data: KodaXSessionData): boolean;
-  admitsSummary(summary: SessionSummary): boolean;
+  admitsSummary(summary: Pick<SessionSummary, 'runtimeInfo'>): boolean;
   assertCachedIdentity(
     sessionId: string,
     identity: { readonly surface?: string; readonly profileId?: string },
@@ -4011,6 +4013,9 @@ export async function createKodaXRuntime(
     released = true;
   };
   try {
+    await cleanupRegisteredManagedChildren({
+      configHome: options.homeDir ? path.join(path.resolve(options.homeDir), '.kodax') : replApi.KODAX_DIR,
+    });
     const runtime = await createKodaXRuntimeInternal({ ...options, daemonHostRuntimeId: runtimeId });
     return {
       ...runtime,
@@ -4729,6 +4734,7 @@ async function createKodaXRuntimeInternal(
     sessionManager,
     identity,
     ownerLiveness,
+    sessionAdmission,
     agentPlane,
     options.externalAgents?.defaultContext,
     onActorHealthChanged,
@@ -5102,6 +5108,7 @@ async function createKodaXRuntimeInternal(
           if (mode === 'plan') throw new Error('Dynamic context disabled by host. Skill `!`cmd`` blocks are not allowed in Plan mode.');
           if (!replApi.isBashReadCommand(command)) throw new Error('Dynamic context permits only read-only commands.');
           const output = await toolBash({ command, timeout: 10 }, {
+            configHome,
             backups: new Map(), executionCwd: cwd, gitRoot: workspace,
             abortSignal: preparationOptions?.signal,
             toolCallId: `skill-context-${randomUUID()}`,
@@ -5460,7 +5467,7 @@ async function createKodaXRuntimeInternal(
           entries.set(reference.registrationId, { reference, retry: async () => {
             await retry();
             if (!entries.has(reference.registrationId)) return;
-            const outcome = await cleanupManagedRunChildProcess(reference);
+            const outcome = await cleanupManagedRunChildProcess(reference, { configHome });
             if (outcome.status === 'verified') { release(); outcome.release(); }
             else release('deferred');
           } });
@@ -6742,6 +6749,7 @@ function createRuntimeSessionService(
       ? { profileId: data.runtimeInfo.profileId }
       : {}),
     ...(createdAt ? { createdAt } : {}),
+    ...(data.lastMessageAt !== undefined ? { lastMessageAt: data.lastMessageAt } : {}),
   });
   type PreparedConversationPage = NonNullable<Awaited<
     ReturnType<SessionManager["storage"]["readConversationPageCache"]>
@@ -8112,9 +8120,10 @@ function createRuntimeSessionService(
     async list(filter) {
       ensureOpen();
       admission.assertFilter(filter);
-      const summaries = await manager.listSessions(filter);
+      const summaries = await manager.listSessions({ ...filter, limit: Number.MAX_SAFE_INTEGER });
       return summaries
         .filter(admission.admitsSummary)
+        .slice(0, filter?.limit ?? 50)
         .map(toRuntimeSessionSummary);
     },
 
@@ -10823,7 +10832,7 @@ function createRuntimeRunService(deps: {
         pending.set(reference.registrationId, { reference, retry: async () => {
           await retry();
           if (!pending.has(reference.registrationId)) return;
-          const cleaned = await cleanupManagedRunChildProcess(reference);
+          const cleaned = await cleanupManagedRunChildProcess(reference, { configHome: deps.defaultConfigHome });
           if (cleaned.status === "unknown") return;
           release();
           cleaned.release();
@@ -13336,6 +13345,7 @@ function createRuntimeMcpService(
       ensureOpen();
       const servers = listRuntimeMcpServers(configFile);
       const provider = await replaceConfiguredMcpCapabilityProvider(runtime, servers, {
+        configHome: configFile === undefined ? replApi.KODAX_DIR : path.dirname(configFile),
         cacheDir: path.join(configFile === undefined ? replApi.KODAX_DIR : path.dirname(configFile), "mcp-cache"),
         reverse: buildMcpReverseCapabilities({ cwd: process.cwd(), enableElicitation: true }),
       });
@@ -14122,6 +14132,7 @@ function buildRunOptions(input: {
   const executeSkillDynamicContext = options.skillDynamicContext?.execute ?? (async (command: string) => {
     if (!replApi.isBashReadCommand(command)) throw new Error('Dynamic context permits only read-only commands.');
     const output = await toolBash({ command, timeout: 10 }, {
+      configHome: input.defaultConfigHome,
       ...ownerSafeContext, backups: new Map(), executionCwd, gitRoot: workspaceRoot,
       abortSignal: record.abortController?.signal ?? options.abortSignal,
       toolCallId: `skill-context-${randomUUID()}`, shellSandbox: restrictedModeShellSandbox,
@@ -14284,7 +14295,7 @@ interface RuntimeAgentActorRegistry {
   ): Promise<CodingActorSession>;
   root(sessionId: string): Promise<AgentActorClient>;
   activeTurns(
-    sessionIds: readonly string[],
+    admits: RuntimeSessionAdmission['admitsSummary'],
   ): Promise<readonly RuntimeActiveAgentTurn[]>;
   mutateSessionFile<T>(
     sessionId: string,
@@ -14298,6 +14309,7 @@ function createRuntimeAgentActorRegistry(
   sessionManager: SessionManager,
   identity: RuntimeIdentity,
   ownerLiveness: RuntimeActorOwnerLiveness,
+  admission: RuntimeSessionAdmission,
   plane?: AgentExecutorPlane,
   defaultContext?: AgentDispatchContext,
   onHealthChanged?: (
@@ -14332,6 +14344,7 @@ function createRuntimeAgentActorRegistry(
     const created = (async () => {
       const data = await sessionManager.storage.peek(sessionId);
       if (!data) throw new Error(`Session not found: ${sessionId}`);
+      admission.assertCachedIdentity(sessionId, data.runtimeInfo ?? {});
       const persistedMax = data.actorSnapshot?.maxConcurrentThreads;
       if (
         persistedMax !== undefined &&
@@ -14431,34 +14444,38 @@ function createRuntimeAgentActorRegistry(
     async root(sessionId) {
       return (await forSession(sessionId)).rootControl();
     },
-    async activeTurns(sessionIds) {
-      const snapshots = await Promise.all(
-        sessionIds.map(async (sessionId) => {
-          if (await sessionManager.storage.isArchived(sessionId)) {
-            return undefined;
-          }
+    async activeTurns(admits) {
+      const sessionIds = await sessionManager.storage.listActiveSessionIds();
+      const snapshots: Array<{ sessionId: string; snapshot: Pick<AgentTreeSnapshot, 'actors'> } | undefined> = [];
+      for (let index = 0; index < sessionIds.length; index += 48) {
+        snapshots.push(...await Promise.all(sessionIds.slice(index, index + 48).map(async (sessionId) => {
           const existing = sessions.get(sessionId);
           if (existing) {
+            // Claimed controllers already passed admission and own the live
+            // Actor authority, including while their durable save is pending.
             return {
               sessionId,
               snapshot: (await existing).rootControl().list(),
             };
           }
-          const data = await sessionManager.storage.peek(sessionId);
-          if (!data?.actorSnapshot) return undefined;
+          const metadata = await sessionManager.storage.readActorMetadata(sessionId);
+          if (metadata === undefined) throw new Error('Session disappeared during Actor preflight; retry the read.');
+          if (!admits(metadata)) return undefined;
+          const actorSnapshot = metadata.actorSnapshot;
+          if (!actorSnapshot) return undefined;
           if (
-            data.actorSnapshot.schemaVersion === 2
-            && data.actorSnapshot.owner !== undefined
-            && !await isRuntimeActorOwnerAlive(data.actorSnapshot.owner)
+            actorSnapshot.schemaVersion === 2
+            && actorSnapshot.owner !== undefined
+            && !await isRuntimeActorOwnerAlive(actorSnapshot.owner)
           ) {
             return undefined;
           }
           return {
             sessionId,
-            snapshot: data.actorSnapshot,
+            snapshot: actorSnapshot,
           };
-        }),
-      );
+        })));
+      }
       return snapshots.flatMap((entry) => {
         if (!entry) return [];
         const { sessionId, snapshot } = entry;
@@ -14748,13 +14765,8 @@ function createRuntimeStatusService(deps: {
           workflow.status !== "denied" &&
           workflow.status !== "stopped",
       );
-      const admittedSessionIds = (
-        await deps.sessionManager.listSessions({ includeArchived: true })
-      )
-        .filter(deps.sessionAdmission.admitsSummary)
-        .map((session) => session.id);
       const activeAgentTurns =
-        await deps.actors.activeTurns(admittedSessionIds);
+        await deps.actors.activeTurns(deps.sessionAdmission.admitsSummary);
       const pendingPermissions = await deps.permissions.service.listPending();
       const pendingUserInputs = await deps.userInputs.service.listPending();
       const blockers: RuntimeDaemonPreflight["blockers"][number][] = [];
@@ -16307,6 +16319,7 @@ function createRuntimePersistence(
 
   return {
     runtimeDir,
+    configHome: options.homeDir ? path.join(path.resolve(options.homeDir), '.kodax') : replApi.KODAX_DIR,
     close() {
       fs.mkdirSync(runtimeDir, { recursive: true });
       withRuntimeStatusFileLock(runStatusIndexFile, () => {
@@ -16813,7 +16826,19 @@ interface RuntimeStatusLockRecord {
   readonly ticket?: number;
 }
 
-const RUNTIME_PROCESS_START_IDENTITY = readRuntimeProcessStartIdentity(process.pid);
+let runtimeProcessStartIdentity: string | undefined;
+let runtimeProcessStartIdentityRead = false;
+function currentRuntimeProcessStartIdentity(): string | undefined {
+  if (!runtimeProcessStartIdentityRead) {
+    const identity = readRuntimeOwnerProcessStartIdentity(process.pid);
+    runtimeProcessStartIdentity = process.platform === 'win32'
+      ? (identity !== undefined && /^\d+$/.test(identity)
+          ? `windows:${BigInt(identity) - 11_644_473_600_000n}` : undefined)
+      : identity;
+    runtimeProcessStartIdentityRead = true;
+  }
+  return runtimeProcessStartIdentity;
+}
 interface AbandonedRuntimeLockFile {
   readonly family: string;
   readonly token: string;
@@ -16850,13 +16875,14 @@ function runtimeStatusLockRecord(
   token: string,
   ticket?: number,
 ): RuntimeStatusLockRecord {
+  const processStartIdentity = currentRuntimeProcessStartIdentity();
   return {
     pid: process.pid,
     createdAt: Date.now(),
     token,
-    ...(RUNTIME_PROCESS_START_IDENTITY === undefined
+    ...(processStartIdentity === undefined
       ? {}
-      : { processStartIdentity: RUNTIME_PROCESS_START_IDENTITY }),
+      : { processStartIdentity }),
     ...(ticket === undefined ? {} : { ticket }),
   };
 }
@@ -16915,7 +16941,7 @@ function runtimeStatusLockOwnerState(
     }
     if (typeof parsed.processStartIdentity !== "string") return "alive";
     const currentIdentity = parsed.pid === process.pid
-      ? RUNTIME_PROCESS_START_IDENTITY
+      ? currentRuntimeProcessStartIdentity()
       : readRuntimeProcessStartIdentity(parsed.pid, processProbeTimeoutMs);
     if (currentIdentity === undefined) return "unknown";
     return currentIdentity === parsed.processStartIdentity ? "alive" : "gone";
@@ -18056,7 +18082,7 @@ async function recoverPersistedShellCleanups(status: RuntimeRunStatus, persisten
     || !references.every((reference): reference is ManagedRunChildProcessReference => isManagedRunShellReference(reference, status.runId))) return false;
   for (const reference of references) {
     let result: Awaited<ReturnType<typeof cleanupManagedRunChildProcess>> = { status: "unknown" };
-    try { result = await cleanupManagedRunChildProcess(reference); }
+    try { result = await cleanupManagedRunChildProcess(reference, { configHome: persistence.configHome }); }
     catch (error: unknown) {
       emitKodaXDiagnostic({ source: "runtime.shell-cleanup", level: "warn",
         message: `Deferring unavailable Shell cleanup for recovered Run ${status.runId}.`, detail: error });
@@ -20207,6 +20233,7 @@ function toRuntimeSessionSummary(
     ...(summary.createdAt !== undefined
       ? { createdAt: summary.createdAt }
       : {}),
+    ...(summary.lastMessageAt !== undefined ? { lastMessageAt: summary.lastMessageAt } : {}),
     ...(summary.tag !== undefined ? { tag: summary.tag } : {}),
     ...(summary.projectKey !== undefined
       ? { projectKey: summary.projectKey }

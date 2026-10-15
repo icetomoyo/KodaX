@@ -24,6 +24,7 @@ import {
 } from './resume-index.js';
 import type { SessionPickerItem } from '../ui/SessionPicker.js';
 import { countResumableSessionItems } from './resumable-session.js';
+import { compareSessionRecency, validSessionTimestamp } from './session-recency.js';
 
 const SESSION_HEAD_READ_BYTES = 65536;
 const SESSION_READ_CONCURRENCY = 48;
@@ -224,7 +225,7 @@ async function readLastNonEmptyLine(handle: fs.FileHandle, size: number): Promis
   return Buffer.concat(chunks).toString('utf8').trim();
 }
 
-async function readSessionEnvelope(filePath: string): Promise<SessionEnvelope | undefined> {
+async function readSessionEnvelope(filePath: string, strict = false): Promise<SessionEnvelope | undefined> {
   let handle: fs.FileHandle | undefined;
   try {
     handle = await fs.open(filePath, 'r');
@@ -264,7 +265,8 @@ async function readSessionEnvelope(filePath: string): Promise<SessionEnvelope | 
     };
     const after = await handle.stat();
     return sameSource(source, after) ? { line, tailLine, ...source } : undefined;
-  } catch {
+  } catch (error: unknown) {
+    if (strict) throw error;
     return undefined;
   } finally {
     await handle?.close();
@@ -284,6 +286,7 @@ function applyMetaUpdate(
       : {}),
     ...(Array.isArray(update.uiHistory) ? { uiHistory: update.uiHistory } : {}),
     ...(typeof update.scope === 'string' ? { scope: update.scope } : {}),
+    ...(validSessionTimestamp(update.lastMessageAt) !== undefined ? { lastMessageAt: update.lastMessageAt } : {}),
   };
 }
 
@@ -318,6 +321,35 @@ async function applyEffectiveTailMetadata(
     }
   }
   return meta;
+}
+
+/** Shared bounded metadata projection for discovery and SDK list paths. Never writes. */
+export async function readEffectiveSessionMetadata(filePath: string): Promise<Record<string, unknown> | undefined> {
+  const envelope = await readSessionEnvelope(filePath, true);
+  if (!envelope) return undefined;
+  const head = parseJsonRecord(envelope.line);
+  if (!head.valid) throw new Error('Malformed Session metadata');
+  if (!head.value || head.value._type !== 'meta') return undefined;
+  return effectiveEnvelopeMetadata(filePath, head.value, envelope.tailLine);
+}
+
+async function effectiveEnvelopeMetadata(
+  filePath: string, head: Record<string, unknown>, tailLine: string,
+): Promise<Record<string, unknown>> {
+  const meta = await applyEffectiveTailMetadata(filePath, head, tailLine);
+  if (validSessionTimestamp(meta.lastMessageAt) !== undefined) return meta;
+  // Legacy full snapshots can expose a reliable final message without reading
+  // their transcript. An absent timestamp stays absent rather than using mtime.
+  const tail = parseJsonRecord(tailLine).value;
+  const entry = tail?._type === 'lineage_entry' && tail.entry !== null && typeof tail.entry === 'object'
+    ? tail.entry as Record<string, unknown> : undefined;
+  const message = entry?.type === 'message' && entry.message !== null && typeof entry.message === 'object'
+    ? entry.message as Record<string, unknown> : entry === undefined ? tail : undefined;
+  if (message?._synthetic === true || (message?.role !== 'user' && message?.role !== 'assistant')) return meta;
+  if (entry !== undefined && meta.activeEntryId !== undefined && meta.activeEntryId !== entry.id) return meta;
+  const timestamp = validSessionTimestamp(message.timestamp)
+    ?? (entry?.sourceEntryId === undefined ? validSessionTimestamp(entry?.timestamp) : undefined);
+  return timestamp === undefined ? meta : { ...meta, lastMessageAt: timestamp };
 }
 
 async function readMessageCount(filePath: string, meta: Record<string, unknown>): Promise<number> {
@@ -363,7 +395,7 @@ async function readResumeCandidate(
   try {
     const parsed: unknown = JSON.parse(head.line);
     if (parsed === null || typeof parsed !== 'object') return { source };
-    const meta = await applyEffectiveTailMetadata(
+    const meta = await effectiveEnvelopeMetadata(
       filePath,
       parsed as Record<string, unknown>,
       head.tailLine,
@@ -383,6 +415,7 @@ async function readResumeCandidate(
         title: typeof meta.title === 'string' ? meta.title : '',
         msgCount,
         ...(createdAt !== undefined ? { createdAt } : {}),
+        ...(validSessionTimestamp(meta.lastMessageAt) !== undefined ? { lastMessageAt: meta.lastMessageAt as string } : {}),
         ...(runtime?.surface !== undefined ? { surface: runtime.surface } : {}),
         ...(createdAt !== undefined ? { createdAtMs: Date.parse(createdAt) } : {}),
         sourceSize: head.sourceSize,
@@ -521,15 +554,7 @@ async function scanResumeSessions(
       reportResumeIndexFailure('rebuild', error);
     }
   }
-  candidates.sort((left, right) => {
-    if (Number.isFinite(left.createdAtMs) && Number.isFinite(right.createdAtMs)
-        && left.createdAtMs !== right.createdAtMs) {
-      return (right.createdAtMs as number) - (left.createdAtMs as number);
-    }
-    if (Number.isFinite(right.createdAtMs) && !Number.isFinite(left.createdAtMs)) return 1;
-    if (Number.isFinite(left.createdAtMs) && !Number.isFinite(right.createdAtMs)) return -1;
-    return right.id.localeCompare(left.id);
-  });
+  candidates.sort(compareSessionRecency);
   return candidates.slice(0, options.limit ?? Number.MAX_SAFE_INTEGER).map(({
     createdAtMs: _createdAtMs,
     sourceSize: _sourceSize,

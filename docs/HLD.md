@@ -1,6 +1,6 @@
 # KodaX High-Level Design
 
-Last updated: 2026-10-13. Current development tree: FEATURE_298/299/301 on package
+Last updated: 2026-10-15. Current development tree: FEATURE_298/299/301 on package
 `0.7.97-alpha.5`, with `v0.7.96` as the last stable release; publication is separate.
 
 Product integrations use `KodaXProductClient` through `/client`. Read the
@@ -8,6 +8,23 @@ Product integrations use `KodaXProductClient` through `/client`. Read the
 for current guarantees. Version-labelled release paragraphs below are historical
 context, not promises that retired Runtime surfaces still exist. Historical
 ADRs remain records of their original decisions.
+
+## Startup recovery and conversation recency (2026-10-15 source)
+
+Shared-Host historical process recovery runs once under its exclusive Owner
+and Session-storage fences, before readiness. Client connection and private
+embedding do not repeat it. Final process cleanup retains exact local
+registrations and the existing Job/supervisor/durable-outcome proof. Preflight
+projects canonical Actor metadata across all admitted non-archived Sessions;
+resume indexes are presentation caches, never liveness authority. Windows
+identity batches share one OS observation without changing persisted encodings
+or caching external PIDs across checks.
+
+Canonical Session persistence maintains optional `lastMessageAt`. Storage,
+read-only CLI discovery, Host, and SDK lists share message-recency ordering,
+creation fallback, and deterministic ties. Metadata changes and compaction do
+not manufacture activity. New cursors carry a live ordering boundary;
+`before` remains a creation-time filter. See [Client contract](CLIENT_CONTRACT.md).
 
 ## 1. System Overview
 

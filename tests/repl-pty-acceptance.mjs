@@ -424,6 +424,17 @@ async function check(state, name, action) {
   process.stdout.write(`PASS ${state.mode}: ${name}\n`);
 }
 
+async function displayedSessionId(state, previousId) {
+  if (state.mode === 'classic') await state.terminal.submit('/status');
+  return waitFor('displayed Session identity', () => {
+    const screen = state.terminal.screen();
+    const id = state.mode === 'ink'
+      ? screen.match(/\bsession\s+(\d{8}_\d{6}_[a-z0-9]+)/i)?.[1]
+      : [...screen.matchAll(/Session ID:\s+([a-z0-9_]+)/gi)].at(-1)?.[1];
+    return id && id !== previousId ? id : undefined;
+  });
+}
+
 async function checkStartup(state) {
   await waitFor('interactive ready', () => /acceptance-local|acceptance-model/.test(state.terminal.screen()), 45_000);
   state.client = await waitFor('Host connection', async () => {
@@ -433,10 +444,10 @@ async function checkStartup(state) {
       return undefined; // The banner may precede the socket opening.
     }
   });
-  await waitFor('cold-start Host session', async () => (await state.client.sessions.list()).length === 1);
-  const [session] = await state.client.sessions.list();
-  state.originalSessionId = session.id;
-  await observeSession(state, session.id);
+  state.originalSessionId = await displayedSessionId(state);
+  assert.equal((await state.client.sessions.read(state.originalSessionId)).id, state.originalSessionId);
+  assert.equal((await state.client.sessions.list()).length, 0, 'Unsubmitted startup drafts must not enter history');
+  await observeSession(state, state.originalSessionId);
   await delay(1000);
   await assertSelectedSettings(state);
 }
@@ -960,10 +971,10 @@ async function checkNewSession(state) {
     assert.equal((await state.client.sessions.list()).length, 1, 'Confirmation must precede creation');
     await state.terminal.type('y');
   }
-  const next = await waitFor('new Host session', async () =>
-    (await state.client.sessions.list()).find(session => session.id !== state.originalSessionId));
-  assert.notEqual(next.id, state.originalSessionId);
-  await observeSession(state, next.id);
+  const nextId = await displayedSessionId(state, state.originalSessionId);
+  assert.equal((await state.client.sessions.read(nextId)).id, nextId);
+  assert.equal((await state.client.sessions.list()).length, 1, 'Unsubmitted /new drafts must not enter history');
+  await observeSession(state, nextId);
   await waitFor('new-session terminal ready', () => state.mode === 'ink'
     ? /^>\s+Type a message/m.test(state.terminal.screen())
     : /^kodax:.*>\s*$/.test(state.terminal.cursorLine()));

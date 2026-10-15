@@ -429,6 +429,7 @@ export {
   killPidTreeSync,
   isCurrentProcessWindowsJobContained,
   readProcessStartIdentity,
+  readProcessStartIdentities,
   rememberChildProcessTree,
   type ProcessTreeKillResult,
   type ProcessTreeKillStatus,
@@ -438,6 +439,7 @@ export {
 export {
   registerManagedChildProcess,
   cleanupRegisteredManagedChildren,
+  withManagedChildProcessConfigHome,
   cleanupManagedRunChildProcess,
   type ManagedRunChildProcessReference,
   type ManagedRunChildCleanupResult,

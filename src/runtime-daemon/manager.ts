@@ -17,7 +17,7 @@ import {
 import { appendRuntimeDiagnostic, startRuntimeDaemonHost, type RuntimeDaemonHost } from './host.js';
 import {
   assertRuntimeDaemonOwnerAllowed,
-  readRuntimeOwnerProcessStartIdentity,
+  readRuntimeOwnerProcessStartIdentities,
   releaseRuntimeDaemonLock,
   resolveRuntimeDaemonEndpointScope,
   resolveRuntimeDaemonPathsFromConfigHome,
@@ -132,10 +132,9 @@ function readOwnerIdentityWithDiagnostics(paths: RuntimeDaemonPaths, supervisorP
     const jobContained = isCurrentProcessWindowsJobContained()
       && Number.isSafeInteger(supervisorPid)
       && supervisorPid > 0;
-    const processStartIdentity = readRuntimeOwnerProcessStartIdentity(process.pid);
-    const supervisorProcessStartIdentity = jobContained
-      ? readRuntimeOwnerProcessStartIdentity(supervisorPid)
-      : undefined;
+    const identities = readRuntimeOwnerProcessStartIdentities(jobContained ? [process.pid, supervisorPid] : [process.pid]);
+    const processStartIdentity = identities.get(process.pid);
+    const supervisorProcessStartIdentity = jobContained ? identities.get(supervisorPid) : undefined;
     return { jobContained, processStartIdentity, supervisorProcessStartIdentity };
   } finally {
     restore();

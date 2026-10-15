@@ -118,7 +118,7 @@ it('self-heals after a real owner is killed and stays usable across another rest
     observer = await createKodaXRuntime(options);
     await vi.waitFor(async () => expect(await observer!.runs.get(runId)).toMatchObject({ phase: 'interrupted', terminal: { effectOutcome: 'unknown' } }));
     expect(control.recover).toHaveBeenCalledWith(expect.objectContaining({ runtimeRunId: runId, pid: child.pid,
-      registrationId: '11111111-1111-4111-8111-111111111111', deferred: true }));
+      registrationId: '11111111-1111-4111-8111-111111111111', deferred: true }), { configHome: path.join(root, '.kodax') });
     expect(JSON.parse(await readFile(statusFile, 'utf8'))._runtime.shellCleanups).toEqual([]);
     expect(releaseVerified).toHaveBeenCalledOnce();
     const next = await observer.runs.start({ sessionId, prompt: 'continue after restart', options: {
@@ -180,11 +180,11 @@ it('retries deferred references on Host close without changing an authoritative 
   control.recover.mockReset().mockResolvedValue({ status: 'unknown' });
   const recovered = await createKodaXRuntime(f.options);
   try {
-    expect(control.recover).toHaveBeenCalledWith(reference);
+    expect(control.recover).toHaveBeenCalledWith(reference, { configHome: path.join(f.root, '.kodax') });
     const released = vi.fn(() => expect(JSON.parse(readFileSync(f.file, 'utf8'))._runtime.shellCleanups).toEqual([]));
     control.recover.mockClear().mockResolvedValue({ status: 'verified', release: released });
     await recovered.close();
-    expect(control.recover).toHaveBeenCalledWith(reference);
+    expect(control.recover).toHaveBeenCalledWith(reference, { configHome: path.join(f.root, '.kodax') });
     expect(released).toHaveBeenCalledOnce();
     const saved = JSON.parse(await readFile(f.file, 'utf8'));
     expect(saved.terminal).toEqual(value.terminal);
@@ -213,7 +213,7 @@ it.each(['unknown', 'verified', 'invalid', 'error'])('recovers a dead owner with
   const recovered = await createKodaXRuntime(f.options);
   try {
     if (outcome === 'invalid') expect(control.recover).not.toHaveBeenCalled();
-    else expect(control.recover).toHaveBeenCalledWith(reference);
+    else expect(control.recover).toHaveBeenCalledWith(reference, { configHome: path.join(f.root, '.kodax') });
     const status = await recovered.runs.get(f.run.runId);
     if (verified) { expect(status?.phase).not.toBe('unknown'); expect(released).toHaveBeenCalledOnce(); }
     else if (outcome === 'invalid') {
