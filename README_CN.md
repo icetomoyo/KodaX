@@ -314,6 +314,15 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 [v0.7.97-alpha.4 发布清单](docs/release.md#v0797-alpha4-release-preparation)。
 所有 v0.7.96 稳定与 v0.7.97-alpha.1/alpha.2/alpha.3 契约全部保留。
 
+**v0.7.97-alpha.6 发布**：精简共享 Host 启动——历史子进程恢复在 owner fence
+下只运行一次，预检投影规范 Actor 元数据而不加载 transcript；`kodax -r`、Host
+与 SDK 的 Session 列表按真实最近消息活动排序并暴露可选 `lastMessageAt`。
+新 REPL Session 在首个被接受输入保存前保持 Host 本地草稿（Issue 368，CLI 要求
+`sessionDrafts:1`）；恢复视图保留用户图片附件；并发 resume 启动器在刷新旧 Host
+时从瞬时检查冲突中恢复，不重放停机或业务请求（Issue 369）。
+详见 [v0.7.97-alpha.6 发布清单](docs/release.md#v0797-alpha6-release-preparation)。
+所有 v0.7.96 稳定与 v0.7.97-alpha.1 至 alpha.5 契约全部保留。
+
 **v0.7.97-alpha.5 发布**：交付 FEATURE_301 统一 Artifact SDK 与格式后端——
 九项 SDK 操作（`prepare`、`readEvidence`、能力/诊断）、原生 PDF、精确
 PNG/JPEG/WebP/SVG、DOCX 候选分页及本地 HTML/SMIL 捕获，独立 Node 与共享

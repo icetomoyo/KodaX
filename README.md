@@ -789,6 +789,19 @@ starts, upgrades, or waits. See
 Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2/alpha.3 contract is
 retained.
 
+**v0.7.97-alpha.6 release:** Streamlines shared-Host startup — historical
+child recovery runs once under the owner fences and preflight projects
+canonical Actor metadata without loading transcripts — and orders `kodax -r`,
+Host, and SDK Session lists by genuine recent message activity with an
+optional `lastMessageAt`. New REPL Sessions stay Host-local drafts until the
+first accepted input is saved (Issue 368, the CLI requires `sessionDrafts:1`),
+restored views preserve user image attachments, and concurrent resume
+launchers recover from transient inspection conflicts while refreshing an
+older Host without replaying shutdown or business requests (Issue 369). See
+the [v0.7.97-alpha.6 release notes](docs/release.md#v0797-alpha6-release-preparation).
+Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.5 contract is
+retained.
+
 **v0.7.97-alpha.5 release:** Ships FEATURE_301's unified Artifact SDK and
 format backends — nine SDK operations (`prepare`, `readEvidence`,
 capabilities/diagnostics), native PDF, exact PNG/JPEG/WebP/SVG, candidate
@@ -2061,7 +2074,7 @@ This development tree exposes 13 SDK subpaths plus the root. Shared product
 applications use `@kodax-ai/kodax/client`; independent libraries and trusted Host
 APIs remain available through the other subpaths. See the [Client contract](docs/CLIENT_CONTRACT.md)
 and [SDK migration guide](docs/SDK_MIGRATION.md). This documentation was checked
-against package version `0.7.97-alpha.5`; npm publication is separate from
+against package version `0.7.97-alpha.6`; npm publication is separate from
 the current development-tree contract.
 
 ```bash

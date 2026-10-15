@@ -136,6 +136,53 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.97-alpha.6 release preparation
+
+Release state: `v0.7.97-alpha.6` is the GitHub pre-release for the exact
+tagged commit — the sixth alpha of the v0.7.97 line, shipping the Host
+startup streamlining and Session recency ordering, REPL draft admission
+(Issue 368), preserved user image attachments in restored views, and the
+concurrent-launch Host-refresh recovery (Issue 369). The tag-triggered
+Release workflow runs the full reusable CI workflow before the build matrix;
+branch pushes do not trigger CI, so the tag is the first and only remote
+validation gate. The `-alpha` suffix marks the release as a GitHub
+pre-release automatically. npm registry publication remains a separate
+manual maintainer action.
+
+On top of v0.7.97-alpha.5 it includes:
+
+- Streamlined shared-Host startup: historical child recovery runs once under
+  the Host and storage owner fences with exact local-child cleanup retained,
+  Windows identity queries batch, and preflight projects canonical Actor
+  metadata for admitted active Sessions without loading transcripts or
+  weakening owner and writer checks.
+- Session recency ordering: `kodax -r`, Host, and SDK Session lists order by
+  genuine recent message activity and expose an optional `lastMessageAt`;
+  creation-time filters, compaction/fork provenance, and cursor boundaries
+  are preserved.
+- REPL draft admission (Issue 368): new Sessions stay Host-local drafts until
+  the first accepted user input is saved; initial inputs and settings persist
+  before Runs dispatch, restarts preserve settings, and failed promotion
+  retries reuse the canonical input. The CLI requires `sessionDrafts:1`.
+- Preserved user image attachments: restored views resolve attachments by the
+  original inputId, retaining item identity, order, and text.
+- Concurrent-launch Host-refresh recovery (Issue 369): initialization and the
+  read-only pre-upgrade inspection retry after releasing temporary clients;
+  randomized backoff accounts for the previous inspection duration under the
+  original startup deadline; shutdown and business requests are never
+  replayed, and corrupt data, invalid frames, passive connects, and unverified
+  live owners keep their boundaries.
+- `relationship_scan.depth` is declared as an integer range from 1 to 3 for
+  cross-protocol tool schema compatibility.
+- Artifact bundle acceptance requires prepared Chromium: PPT render/hash and
+  AMA image assertions always run, and a missing or unusable runtime fails
+  the gate instead of being skipped (`tests/bundled-artifacts.test.mjs`,
+  `docs/test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md`).
+
+All root/workspace package versions and lockfile entries are
+`0.7.97-alpha.6`. The feature-design submodule, public guides, architecture
+documents, and `kodax_manual` track this release.
+
 ## v0.7.97-alpha.5 release preparation
 
 Release state: `v0.7.97-alpha.5` is the GitHub pre-release for the exact

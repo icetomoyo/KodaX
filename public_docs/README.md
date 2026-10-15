@@ -3,9 +3,9 @@
 Documentation for KodaX users, product-client integrators and trusted Host developers.
 
 This development tree implements the unified Product Client contract under
-FEATURE_298/299/301. The working-tree package version is `0.7.97-alpha.5`;
-`v0.7.96` remains the last stable release. `v0.7.97-alpha.5` ships the
-unified Artifact backends, and npm publication is a separate maintainer
+FEATURE_298/299/301. The working-tree package version is `0.7.97-alpha.6`;
+`v0.7.96` remains the last stable release. `v0.7.97-alpha.5` shipped the
+unified Artifact backends and `v0.7.97-alpha.6` streamlines Host startup with draft and recency Session contracts; npm publication is a separate maintainer
 action. Historical release
 notes do not override the current Client contract or establish that a package
 has been published.

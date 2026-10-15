@@ -6,6 +6,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-alpha.6] - 2026-10-15
+
+Sixth alpha of the v0.7.97 line: shared-Host startup runs historical child
+recovery once under the owner fences and projects canonical Actor metadata
+during preflight, and `kodax -r`/Host/SDK Session lists order by genuine
+recent message activity with an optional `lastMessageAt`. New REPL Sessions
+stay Host-local drafts until their first accepted input is saved (Issue 368),
+restored views preserve user image attachments, and concurrent resume
+launchers recover from transient inspection conflicts while refreshing an
+older Host (Issue 369). Every v0.7.96 stable and v0.7.97-alpha.1 through
+alpha.5 contract is retained. npm publication remains a manual maintainer
+action.
+
 ### Fixed
 
 - Retry transient initialization and read-only inspection failures during concurrent CLI/SDK Host refresh after releasing temporary clients. Account for slow preflight duration in contention backoff, retain the original deadline, and never replay shutdown or business requests (Issue 369).

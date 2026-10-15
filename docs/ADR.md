@@ -2,7 +2,21 @@
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
 
-> Last updated: 2026-10-13
+> Last updated: 2026-10-15
+>
+> **v0.7.97-alpha.6 release addendum:** FEATURE_298's startup and Session
+> contracts are extended without a Host capability bump: shared-Host startup
+> runs historical child recovery once under the Host and storage owner fences
+> and projects canonical Actor metadata during preflight; `kodax -r`, Host,
+> and SDK Session lists order by genuine recent message activity with an
+> optional `lastMessageAt`; new REPL Sessions stay Host-local drafts until
+> their first accepted input is saved (`sessionDrafts:1`, Issue 368); restored
+> views preserve user image attachments; and concurrent resume launchers
+> retry only startup initialization and the read-only pre-upgrade inspection
+> after releasing temporary clients, never replaying shutdown or business
+> requests (Issue 369). Artifact bundle acceptance now requires prepared
+> Chromium and never counts a missing runtime as a visual pass. Every
+> v0.7.96 stable and v0.7.97-alpha.1 through alpha.5 contract is retained.
 >
 > **v0.7.97-alpha.5 release addendum:** FEATURE_301's unified Artifact SDK
 > expands the accepted single `ArtifactExecutionPort` seam to

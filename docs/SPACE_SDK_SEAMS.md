@@ -1,6 +1,6 @@
 # Space 的 Product Client / Host 接缝
 
-Space 既有接入基线为 `0.7.97-alpha.2`；本文接缝按当前工作树 `0.7.97-alpha.5` 核对，需要重新构建 SDK 与 Host，不表示 npm 已发布或 Space 已采用全部变更。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
+Space 既有接入基线为 `0.7.97-alpha.2`；本文接缝按当前工作树 `0.7.97-alpha.6` 核对，需要重新构建 SDK 与 Host，不表示 npm 已发布或 Space 已采用全部变更。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
 
 ## 启动进度与 Renderer 交接
 

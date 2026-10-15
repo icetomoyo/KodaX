@@ -145,7 +145,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('may canonicalize DACL protection/inheritance control at commit');
     expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
-    expect(sandbox).toContain('v0.7.97-alpha.5 release uses Windows native shell protocol 10');
+    expect(sandbox).toContain('v0.7.97-alpha.6 release uses Windows native shell protocol 10');
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
@@ -173,7 +173,14 @@ describe('FEATURE_218 manual registry', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('The v0.7.97-alpha.5 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.97-alpha.6 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.97-alpha.6 release streamlines shared-Host startup');
+    expect(sdk).toContain('optional `lastMessageAt`');
+    expect(sdk).toContain('The CLI requires');
+    expect(sdk).toContain('`sessionDrafts:1`');
+    expect(sdk).toContain('while refreshing an older Host (Issue 369)');
+    expect(sdk).toContain('shutdown or business requests are never replayed.');
+    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.5 contract is retained.');
     expect(sdk).toContain("The v0.7.97-alpha.5 release ships FEATURE_301's unified Artifact SDK");
     expect(sdk).toContain('nine public operations');
     expect(sdk).toContain('safe to stop. Evidence readiness is not visual approval.');

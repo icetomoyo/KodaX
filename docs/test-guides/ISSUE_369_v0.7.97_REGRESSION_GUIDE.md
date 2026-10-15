@@ -1,6 +1,6 @@
 # ISSUE_369 — Concurrent resume during Host refresh
 
-2026-10-15，当前源码修复，尚未发布新的 npm 版本。
+2026-10-15。修复随 `v0.7.97-alpha.6` tag 发布；npm 发布仍为手动。
 
 ## 现象与确认范围
 

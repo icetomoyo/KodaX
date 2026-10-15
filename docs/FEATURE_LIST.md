@@ -11,15 +11,15 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-alpha.5` (Git tag / GitHub pre-release); `v0.7.96` remains the last stable release |
-| Current package version | `@kodax-ai/kodax@0.7.97-alpha.5` (npm publication remains manual) |
+| Current released version | `v0.7.97-alpha.6` (Git tag / GitHub pre-release); `v0.7.96` remains the last stable release |
+| Current package version | `@kodax-ai/kodax@0.7.97-alpha.6` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 core packages + independent optional `artifacts` |
-| Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
+| Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3` and extended with startup streamlining, Session recency ordering, draft admission and concurrent-launch recovery through `v0.7.97-alpha.6`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement released in alpha.4; missing visual capabilities remain unverified; [design](research/verifier-replacement-visual-review-2026-10-11.md) |
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
 | Current development | `v0.7.97` / `FEATURE_298` — cross-platform/manual release verification for the alpha continues |
 | Roadmap updated | `2026-09-23` — FEATURE_300 planned for `v0.7.99`; implementation not started |
-| Artifact SDK | `2026-10-13` — subsequent implementation (unreleased): complete preparation/evidence-read SDK and existing Host bridge; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
+| Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
 | Total tracked features | `85` |
 | InProgress | `2` |
 | Planned | `17` |
@@ -523,6 +523,23 @@
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
 ---
+
+## v0.7.97-alpha.6 Release Record
+
+`v0.7.97-alpha.6` is the sixth alpha of the v0.7.97 line: shared-Host startup
+runs historical child recovery once under the Host and storage owner fences,
+batches Windows identity queries, and projects canonical Actor metadata for
+admitted active Sessions during preflight without loading transcripts;
+`kodax -r`, Host, and SDK Session lists order by genuine recent message
+activity with an optional `lastMessageAt`. New REPL Sessions stay Host-local
+drafts until the first accepted user input is saved (Issue 368, CLI requires
+`sessionDrafts:1`), restored views preserve user image attachments, and
+concurrent resume launchers recover from transient inspection conflicts while
+refreshing an older Host (Issue 369) without replaying shutdown or business
+requests. Artifact bundle acceptance now requires prepared Chromium and never
+counts a missing runtime as a visual pass. Every v0.7.96 stable and
+v0.7.97-alpha.1 through alpha.5 contract is retained. Cross-platform manual
+acceptance and npm publication remain manual maintainer steps.
 
 ## v0.7.97-alpha.5 Release Record
 
