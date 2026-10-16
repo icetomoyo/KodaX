@@ -589,11 +589,27 @@ export function readRuntimeDaemonState(paths: RuntimeDaemonPaths): RuntimeDaemon
 
 type RuntimeOwnerProcessState = 'alive' | 'gone' | 'unknown';
 
-function runtimeOwnerProcessState(owner: RuntimeDaemonLockOwner): RuntimeOwnerProcessState {
+/** Shared by owner reclamation, daemon health and verified exit waiting. */
+export function runtimeOwnerProcessState(
+  owner: Pick<RuntimeDaemonLockOwner, 'pid' | 'processStartIdentity'>,
+): RuntimeOwnerProcessState {
+  if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0) return 'gone';
   try {
     process.kill(owner.pid, 0);
   } catch (error: unknown) {
     return isNodeFileError(error) && error.code === 'ESRCH' ? 'gone' : 'unknown';
+  }
+  if (process.platform === 'linux') {
+    try {
+      const stat = fs.readFileSync(`/proc/${owner.pid}/stat`, 'utf8');
+      const fields = /^\d+ \(.*\) ([A-Za-z]) /s.exec(stat);
+      // A zombie (or a kernel-dead task) has terminated even before waitpid.
+      if (fields && ['Z', 'X', 'x'].includes(fields[1]!)) return 'gone';
+      if (!fields) return 'unknown';
+    } catch {
+      // Missing or unreadable evidence never authorizes reclaiming a lock.
+      return 'unknown';
+    }
   }
   if (owner.processStartIdentity === undefined) return 'alive';
   const currentIdentity = readRuntimeOwnerProcessStartIdentity(owner.pid);

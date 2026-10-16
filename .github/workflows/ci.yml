@@ -96,6 +96,10 @@ jobs:
       - name: Fast tests
         run: npm run test:fast
 
+      - name: Shared Host ownership recovery regressions
+        if: matrix.node == '22'
+        run: node node_modules/vitest/vitest.mjs run src/runtime-daemon/lifecycle.process-identity.test.ts src/runtime-daemon/process.owner-exit.test.ts src/sdk-runtime-daemon-upgrade.test.ts
+
       - name: Unit tests
         if: matrix.node == '20'
         run: npm run test:unit

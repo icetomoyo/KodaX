@@ -118,6 +118,7 @@ describe('product Host startup and passive connection', () => {
       expect(runtime.identity.runtimeId).toBe('runtime_current');
       expect(calls).toEqual(['new:initialize']);
       expect(upgradeMocks.acquireProcessLease).not.toHaveBeenCalled();
+      expect(upgradeMocks.findSharedHost).not.toHaveBeenCalled();
     } finally { await runtime.close(); }
   });
 
@@ -210,6 +211,27 @@ describe('product Host startup and passive connection', () => {
     } finally { await runtime.close(); restore(); }
   });
 
+  it('closes a stale attachment and revalidates the current shared owner before retrying', async () => {
+    const calls: string[] = [];
+    const host = { profile: PROFILE, ownerFile: '/fixture/owner.lock', owner: { runtimeId: 'runtime_current' } };
+    upgradeMocks.findSharedHost
+      .mockReturnValueOnce({ ...host, owner: { runtimeId: RUNTIME_ID } })
+      .mockImplementation(() => {
+        expect(calls).toContain('new:close');
+        return host;
+      });
+    upgradeMocks.acquireProcessLease.mockImplementation(async () =>
+      createLease(createCurrentTransport(calls, async () => undefined)));
+
+    const runtime = await ensureKodaXRuntime({ profile: PROFILE });
+    try {
+      expect(runtime.identity.runtimeId).toBe('runtime_current');
+      expect(calls).toEqual(['new:initialize', 'new:close', 'new:initialize']);
+      expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(2);
+      expect(upgradeMocks.waitOwnerExit).not.toHaveBeenCalled();
+    } finally { await runtime.close(); }
+  });
+
   it.each([false, true])('recovers a concurrent shared-storage winner (descriptor pending: %s)', async (pending) => {
     const calls: string[] = [];
     const host = { profile: 'default', ownerFile: '/fixture/owner.lock', owner: { runtimeId: 'runtime_current' } };
@@ -231,6 +253,83 @@ describe('product Host startup and passive connection', () => {
       expect(calls).toEqual(['new:initialize']);
       expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(2);
     } finally { await runtime.close(); }
+  });
+
+  it('rejects a connection whose shared fence changed after discovery even when initialize matches the snapshot', async () => {
+    const calls: string[] = [];
+    const host = { profile: PROFILE, ownerFile: '/fixture/owner.lock', owner: { runtimeId: 'runtime_current' } };
+    upgradeMocks.findSharedHost.mockReturnValueOnce(host).mockReturnValue({ ...host, owner: { runtimeId: 'another-owner' } });
+    upgradeMocks.acquireProcessLease.mockImplementation(async () =>
+      createLease(createCurrentTransport(calls, async () => undefined)));
+    await expect(ensureKodaXRuntime({ profile: PROFILE })).rejects.toMatchObject({ code: 'session_storage_owned', retryable: true });
+    expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(3);
+    expect(calls).toEqual(Array.from({ length: 3 }, () => ['new:initialize', 'new:close']).flat());
+    expect(upgradeMocks.waitOwnerExit).not.toHaveBeenCalled();
+  });
+
+  it('rediscovers a replacement in a different profile after closing the stale connection', async () => {
+    const calls: string[] = [];
+    const host = { profile: 'default', ownerFile: '/fixture/owner.lock', owner: { runtimeId: 'runtime_current' } };
+    upgradeMocks.findSharedHost.mockReturnValueOnce({ ...host, profile: PROFILE, owner: { runtimeId: RUNTIME_ID } });
+    upgradeMocks.findSharedHost.mockImplementation(() => {
+      expect(calls).toContain('new:close');
+      return host;
+    });
+    const base = createCurrentTransport(calls, async () => undefined);
+    upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(base))
+      .mockResolvedValue(createLease({ ...base, async request(method, params) {
+        const result = await base.request(method, params) as { identity: Record<string, unknown> };
+        return { ...result, identity: { ...result.identity, profile: 'default' } };
+      } }));
+    const runtime = await ensureKodaXRuntime({ profile: PROFILE });
+    try {
+      expect(runtime.identity).toMatchObject({ runtimeId: 'runtime_current', profile: 'default' });
+      expect(upgradeMocks.acquireProcessLease.mock.calls.map(([options]) => options.profile)).toEqual([PROFILE, 'default']);
+      expect(calls).toEqual(['new:initialize', 'new:close', 'new:initialize']);
+    } finally { await runtime.close(); }
+  });
+
+  it('retries an owner change between capability probe and authenticated initialization', async () => {
+    const calls: string[] = [];
+    const transport = createCurrentTransport(calls, async () => undefined);
+    const current = await transport.request('initialize') as { identity: Record<string, unknown> };
+    calls.length = 0;
+    upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(transport,
+      { ...current, identity: { ...current.identity, runtimeId: 'previous-owner' } }))
+      .mockResolvedValueOnce(createLease(createCurrentTransport(calls, async () => undefined)));
+    const runtime = await ensureKodaXRuntime({ profile: PROFILE });
+    try {
+      expect(runtime.identity.runtimeId).toBe('runtime_current');
+      expect(calls).toEqual(['new:initialize', 'new:close', 'new:initialize']);
+      expect(upgradeMocks.waitOwnerExit).not.toHaveBeenCalled();
+    } finally { await runtime.close(); }
+  });
+
+  it('does not extend the original startup deadline across owner changes', async () => {
+    const now = Date.now();
+    let elapsed = 0;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now + elapsed);
+    const calls: string[] = [];
+    upgradeMocks.findSharedHost.mockReturnValue({ profile: PROFILE, ownerFile: '/fixture/owner.lock', owner: { runtimeId: 'previous-owner' } });
+    upgradeMocks.acquireProcessLease.mockImplementation(async () =>
+      createLease(createCurrentTransport(calls, async () => { elapsed += 10; })));
+    try {
+      await expect(ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 15 }))
+        .rejects.toMatchObject({ code: 'session_storage_owned', retryable: true });
+      expect(upgradeMocks.acquireProcessLease.mock.calls.map(([options]) => options.startupTimeoutMs)).toEqual([15, 5]);
+      expect(calls).toEqual(['new:initialize', 'new:close', 'new:initialize', 'new:close']);
+    } finally { clock.mockRestore(); }
+  });
+
+  it('honors cancellation after closing a temporary attachment without retrying or executing work', async () => {
+    const controller = new AbortController();
+    const reason = new Error('cancel owner handoff');
+    const calls: string[] = [];
+    upgradeMocks.findSharedHost.mockReturnValue({ profile: PROFILE, ownerFile: '/fixture/owner.lock', owner: { runtimeId: 'previous-owner' } });
+    upgradeMocks.acquireProcessLease.mockResolvedValue(createLease(createCurrentTransport(calls, async () => controller.abort(reason))));
+    await expect(ensureKodaXRuntime({ profile: PROFILE, daemonStartupSignal: controller.signal })).rejects.toBe(reason);
+    expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(1);
+    expect(calls).toEqual(['new:initialize', 'new:close']);
   });
 
   it('waits for the shared owner to publish its descriptor before attaching', async () => {

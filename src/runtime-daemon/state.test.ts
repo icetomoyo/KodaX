@@ -80,6 +80,28 @@ function state(overrides: Partial<RuntimeDaemonState> = {}): RuntimeDaemonState 
 }
 
 describe('runtime daemon state paths', () => {
+  it('ignores an unreaped Linux zombie when discovering the shared Session Host', () => {
+    const configHome = path.join(tempHome(), '.kodax');
+    const sessionsDir = path.join(configHome, 'sessions');
+    const owner = { runtimeId: 'zombie-host', pid: process.pid, createdAt: new Date().toISOString(), kind: 'daemon' };
+    const ownerFile = path.join(sessionsDir, '.product-host', 'owner.lock');
+    fs.mkdirSync(path.dirname(ownerFile), { recursive: true });
+    fs.writeFileSync(ownerFile, JSON.stringify(owner));
+    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'default');
+    fs.mkdirSync(paths.rootDir, { recursive: true });
+    fs.writeFileSync(paths.lockFile, JSON.stringify(owner));
+    writeRuntimeDaemonState(paths, state({ runtimeId: owner.runtimeId, pid: owner.pid, configHome }));
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    const readFile = fsDefault.readFileSync;
+    vi.spyOn(fsDefault, 'readFileSync').mockImplementation(((file, ...args) =>
+      file === `/proc/${owner.pid}/stat` ? `${owner.pid} (host with ) spaces) Z 1 0 0` : readFile(file, ...args)
+    ) as typeof fsDefault.readFileSync);
+    syncBuiltinESMExports();
+
+    expect(findRuntimeSessionStorageHost(configHome, sessionsDir)).toBeUndefined();
+    expect(readRuntimeDaemonLockOwner(ownerFile)).toEqual(owner);
+  });
+
   it('resolves the shared Session owner across profiles and canonical directory aliases', () => {
     const configHome = path.join(tempHome(), '.kodax');
     const sessionsDir = path.join(configHome, 'sessions');

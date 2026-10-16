@@ -6345,6 +6345,7 @@ async function connectKodaXRuntimeInternal(
   let grantedScopes: readonly RuntimeGrantedScope[] | undefined;
   let upgradeReleasedLease = false;
   let attaching = true;
+  let ownerChangedDuringAttachment = false;
   try {
     const requirements = daemonCapabilityRequirements(options);
     const probedDaemon = parseProbedDaemon(lease);
@@ -6400,7 +6401,21 @@ async function connectKodaXRuntimeInternal(
         `Runtime daemon profile mismatch: expected ${expectedProfile}, got ${identity.profile}`,
       );
     }
-    if (sharedHost && identity.runtimeId !== sharedHost.owner.runtimeId) {
+    let currentSharedHost = sharedHost;
+    if (sharedHost && identity.runtimeId === sharedHost.owner.runtimeId) {
+      try {
+        currentSharedHost = findRuntimeSessionStorageHost(daemonLocation.configHome,
+          options.sessionsDir ?? path.join(daemonLocation.configHome, 'sessions'));
+      } catch (error: unknown) {
+        ownerChangedDuringAttachment = isRecord(error)
+          && error.code === 'session_storage_owned' && error.retryable === true;
+        throw error;
+      }
+    }
+    if (sharedHost && (identity.runtimeId !== sharedHost.owner.runtimeId
+      || currentSharedHost?.owner.runtimeId !== identity.runtimeId
+      || currentSharedHost.profile !== identity.profile)) {
+      ownerChangedDuringAttachment = true;
       throw Object.assign(new Error('The shared Session Host changed during attachment; retry against its current owner.'), {
         code: 'session_storage_owned' as const, retryable: true,
       });
@@ -6423,6 +6438,7 @@ async function connectKodaXRuntimeInternal(
       probedDaemon !== undefined
       && probedDaemon.identity.runtimeId !== identity.runtimeId
     ) {
+      ownerChangedDuringAttachment = true;
       throw new RuntimeDaemonCapabilityUpgradeError(
         "Runtime daemon owner changed between capability probe and authenticated attach. Retry against the current owner.",
         undefined,
@@ -6520,6 +6536,18 @@ async function connectKodaXRuntimeInternal(
     if (!upgradeReleasedLease) {
       if (lease !== undefined) await lease.close();
       else await transport.close?.();
+    }
+    if (ownerChangedDuringAttachment && allowCapabilityUpgrade && options.autoStart === true
+      && options.transport === undefined && explicitEndpoint === undefined
+      && startupRetries > 0 && Date.now() < startupDeadline) {
+      // Only initialization is retried. Close the temporary client before
+      // rediscovering authority; never reuse the pre-start owner snapshot.
+      options.daemonStartupSignal?.throwIfAborted();
+      await waitForRuntimeSessionStorageHost(daemonLocation.configHome,
+        options.sessionsDir ?? path.join(daemonLocation.configHome, 'sessions'),
+        startupDeadline, options.daemonStartupSignal, reportProgress);
+      return connectKodaXRuntimeInternal(options, true, ownerBootstrap, startupRetries - 1,
+        startupDeadline, contentionAttempt, reportProgress);
     }
     if (allowCapabilityUpgrade && lease && attaching && startupRetries > 0
       && isDaemonStartupReadInterruption(error)) {

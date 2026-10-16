@@ -178,7 +178,7 @@ it('a Host crash after input acceptance preserves content, marks the Run interru
     const reopened = await readAfterCrashBoundary(() =>
       survivor.sessions.observe(scenario.sessionId, (view) => recovered.push(view)));
     try {
-      expect(recovered[0]!.items.some((item) => item.type === 'user' && item.text.includes('Work that never completes.'))).toBe(true);
+      expect(recovered[0]!.items.filter((item) => item.type === 'user' && item.text.includes('Work that never completes.'))).toHaveLength(1);
     } finally { reopened.close(); }
 
     // The restarted Host redoes neither the Provider call nor the input:

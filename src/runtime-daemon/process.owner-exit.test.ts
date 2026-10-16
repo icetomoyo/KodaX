@@ -1,12 +1,14 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 import { acquireRuntimeDaemonProcessLease, waitForRuntimeDaemonOwnerExit } from './process.js';
+import { observeRuntimeDaemonHealth } from './lifecycle.js';
 import {
+  acquireRuntimeSessionStorageOwner, findRuntimeSessionStorageHost,
   readRuntimeDaemonLockOwner, readRuntimeDaemonState, readRuntimeDaemonToken,
   readRuntimeOwnerProcessStartIdentity, resolveRuntimeDaemonEndpointScope,
   resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock, writeRuntimeDaemonState,
@@ -15,6 +17,58 @@ import { createRuntimeDaemonSocketClientTransport, defaultRuntimeDaemonEndpoint 
 import type { RuntimeDaemonClientTransport } from './client.js';
 
 describe('Host launcher waits for the original process', () => {
+  it.skipIf(process.platform !== 'linux')('recovers shared storage and confirms exit while the original PID is an unreaped zombie', async () => {
+    // This parent deliberately waits for stdin before waitpid. Node never owns
+    // the terminated child, so libuv cannot reap it before the assertions.
+    const parent = spawn('python3', ['-c', [
+      'import os, sys',
+      'pid = os.fork()',
+      'if pid == 0: os._exit(0)',
+      'print(pid, flush=True)',
+      'sys.stdin.readline()',
+      'os.waitpid(pid, 0)',
+    ].join('\n')], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const exited = once(parent, 'exit');
+    const homeDir = mkdtempSync(path.join(os.tmpdir(), 'kodax-zombie-owner-'));
+    try {
+      const [output] = await once(parent.stdout, 'data') as [Buffer];
+      const pid = Number(output.toString().trim());
+      expect(pid).toBeGreaterThan(0);
+      const stat = (): string => readFileSync(`/proc/${pid}/stat`, 'utf8');
+      await expect.poll(() => {
+        const value = stat();
+        return value.slice(value.lastIndexOf(') ') + 2).split(' ')[0];
+      }).toBe('Z');
+      expect(() => process.kill(pid, 0)).not.toThrow();
+      const processStartIdentity = readRuntimeOwnerProcessStartIdentity(pid);
+      expect(processStartIdentity).toBeDefined();
+      const owner = { runtimeId: 'unreaped-host', pid, processStartIdentity,
+        createdAt: new Date().toISOString(), kind: 'daemon' as const };
+      const paths = resolveRuntimeDaemonPaths(homeDir);
+      expect(tryAcquireRuntimeDaemonLock(paths, owner)).toBeDefined();
+      writeRuntimeDaemonState(paths, { runtimeId: owner.runtimeId, pid, profile: paths.profile,
+        startedAt: owner.createdAt, endpoint: '/tmp/terminated-host.sock', version: 'test', status: 'ready' });
+      const sessionsDir = path.join(paths.configHome, 'sessions');
+      const ownerFile = path.join(sessionsDir, '.product-host', 'owner.lock');
+      mkdirSync(path.dirname(ownerFile), { recursive: true });
+      writeFileSync(ownerFile, JSON.stringify(owner));
+
+      expect(findRuntimeSessionStorageHost(paths.configHome, sessionsDir)).toBeUndefined();
+      expect(await observeRuntimeDaemonHealth(paths, {
+        createTransport: async () => { throw new Error('Terminated Host endpoint'); },
+      })).toMatchObject({ pidAlive: false, endpointReachable: false });
+      await expect(waitForRuntimeDaemonOwnerExit(owner, 100)).resolves.toBeUndefined();
+      const replacement = acquireRuntimeSessionStorageOwner(sessionsDir, 'replacement-host');
+      expect(readRuntimeDaemonLockOwner(replacement.file)?.runtimeId).toBe('replacement-host');
+      // Reclamation and exit verification did not depend on reaping.
+      expect(stat()).toContain(') Z ');
+    } finally {
+      parent.stdin.end('\n');
+      await exited;
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     { status: 'stopping', reachable: true },
     { status: 'stopping', reachable: false },

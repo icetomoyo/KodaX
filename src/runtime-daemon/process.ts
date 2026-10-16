@@ -41,7 +41,7 @@ import {
   classifyRuntimeDaemonHealth,
   ensureRuntimeDaemonDirectories,
   readRuntimeDaemonLockOwner,
-  readRuntimeOwnerProcessStartIdentity,
+  runtimeOwnerProcessState,
   resolveRuntimeDaemonEndpointScope,
   resolveRuntimeDaemonPathsFromConfigHome,
   type RuntimeDaemonHealthObservation,
@@ -343,16 +343,10 @@ export async function waitForRuntimeDaemonOwnerExit(
   const deadline = Date.now() + timeoutMs;
   while (true) {
     if (signal?.aborted) throw runtimeDaemonStartupCancelled();
-    try {
-      process.kill(owner.pid, 0);
-    } catch (error: unknown) {
-      if (error instanceof Error && 'code' in error && error.code === 'ESRCH') return;
-      throw new Error('Cannot verify whether the original Host exited.', { cause: error });
-    }
-    const identity = readRuntimeOwnerProcessStartIdentity(owner.pid);
-    if (identity !== undefined && identity !== owner.processStartIdentity) return;
+    const state = runtimeOwnerProcessState(owner);
+    if (state === 'gone') return;
     if (Date.now() >= deadline) {
-      throw new Error(identity === undefined
+      throw new Error(state === 'unknown'
         ? 'Cannot verify the original Host process identity; retry startup after it exits.'
         : 'The original Host is still running; retry startup after it exits.');
     }

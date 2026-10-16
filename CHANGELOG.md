@@ -21,6 +21,7 @@ remains a manual maintainer action.
 
 ### Fixed
 
+- Space Issue 222 CI regression: use one conservative process-liveness check for shared storage discovery, daemon health and verified exit, recognizing unreaped Linux zombies while retaining PID generation checks. Release temporary attachments and rediscover current ownership on bounded startup-only retries within the original deadline and cancellation signal; never replay accepted input or tool work. Gate the original crash cases and deterministic zombie/owner-handoff regressions on Linux Node 20/22 before release.
 - Space Issue 222: resolve the daemon that owns the canonical Session directory across profiles before startup, and recheck ownership if a peer wins during bootstrap. Wait for a starting owner's descriptor within the original startup deadline and cancellation signal. Reuse compatible Hosts without restarting work. Permit guarded same-build orphan-exit policy refresh, retaining active-work preflight, exact owner identity and process-exit verification. Publish structured owner/profile and upgrade blocker diagnostics; mark transient blockers retryable.
 - Add bundled real-process shared-Host recovery to the continuous `test:bundle` gate.
 

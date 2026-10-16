@@ -1,11 +1,10 @@
-import { readFileSync } from 'node:fs';
 import type { RuntimeDaemonClientTransport } from './client.js';
 import {
   claimRuntimeDaemonOwnership,
   readRuntimeDaemonLockOwner,
   readRuntimeDaemonState,
   readRuntimeDaemonToken,
-  readRuntimeOwnerProcessStartIdentity,
+  runtimeOwnerProcessState,
   type RuntimeDaemonHealthObservation,
   type RuntimeDaemonLockOwner,
   type RuntimeDaemonOwnershipDecision,
@@ -129,14 +128,7 @@ export function runtimeDaemonEndpointFromState(
 }
 
 export function isRuntimeDaemonPidAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  if (process.platform === 'linux' && isZombiePid(pid)) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error: unknown) {
-    return isNodeProcessError(error) && error.code === 'EPERM';
-  }
+  return runtimeOwnerProcessState({ pid }) !== 'gone';
 }
 
 // Linux PID reuse is established by the recorded OS start identity. A Host
@@ -144,23 +136,7 @@ export function isRuntimeDaemonPidAlive(pid: number): boolean {
 // Missing identity evidence remains conservative; the authenticated endpoint
 // and owner fence still decide whether the caller can attach or replace it.
 export function isRuntimeDaemonOwnerPidAlive(pid: number, processStartIdentity?: string): boolean {
-  if (!isRuntimeDaemonPidAlive(pid)) return false;
-  if (process.platform !== 'linux' || processStartIdentity === undefined) return true;
-  const currentIdentity = readRuntimeOwnerProcessStartIdentity(pid);
-  return currentIdentity === undefined || currentIdentity === processStartIdentity;
-}
-
-// A zombie child answers kill(pid, 0) until its parent reaps it, but it can
-// never serve the endpoint again; treating it as dead lets crash recovery
-// claim ownership instead of refusing a "competing" owner forever.
-function isZombiePid(pid: number): boolean {
-  try {
-    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
-    const state = stat.slice(stat.lastIndexOf(') ') + 2).trimStart();
-    return state.startsWith('Z');
-  } catch {
-    return false;
-  }
+  return runtimeOwnerProcessState({ pid, processStartIdentity }) !== 'gone';
 }
 
 async function withTimeout<T>(
@@ -203,8 +179,4 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     return undefined;
   }
   return value as Record<string, unknown>;
-}
-
-function isNodeProcessError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && 'code' in error;
 }
