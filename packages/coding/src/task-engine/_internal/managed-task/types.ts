@@ -64,20 +64,10 @@ export interface RunnerChainPromptContext {
   /** Optional structured task metadata. */
   readonly metadata?: Record<string, KodaXJsonValue>;
   /**
-   * Optional static tool policy. Kept for tests / topology-only call sites
-   * that don't need per-role policy. When both `toolPolicy` and
-   * `toolPolicyFactory` are absent, the prompt's "## Tool Policy" section
-   * is omitted (matches legacy behavior when a role falls through to
-   * `undefined` in `buildManagedWorkerToolPolicy`).
+   * Optional explicit tool policy. When absent, the prompt's "## Tool Policy"
+   * section is omitted; the managed Worker does not install a role policy.
    */
   readonly toolPolicy?: KodaXTaskToolPolicy;
-  /**
-   * P1 parity — per-role tool policy factory. Called lazily at each
-   * Runner invocation so future role policies can attach without changing
-   * prompt construction. The current Worker policy returns `undefined`.
-   */
-  readonly toolPolicyFactory?: (role: KodaXTaskRole
-  ) => KodaXTaskToolPolicy | undefined;
   /** Optional role-context factory for runtime prompt context injection. */
   readonly contextFactory?: RolePromptContextFactory;
   /**

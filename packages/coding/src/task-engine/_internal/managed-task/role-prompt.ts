@@ -268,14 +268,6 @@ export function createRolePrompt(
   // h1MutationGuardance deleted — all V1 scout/planner/generator-only helpers.
   // Also: inferScoutMutationIntent and isReviewEvidenceTask imports are no longer needed
   // (see role-prompt-types.ts — those exports remain for external consumers if any).
-  // FEATURE_193 (v0.7.43): emitToolName + managedProtocolToolInstructions
-  // deleted — scout and planner roles (the only roles with emit tools) are
-  // retired. Worker terminates text-only (F184/F190). The evaluator role has
-  // its own emit_verdict handling via parse-helpers.ts; no prompt injection
-  // needed here.
-  // Keep a typed undefined so the worker case array shape is unchanged.
-  const managedProtocolToolInstructions: string | undefined = undefined;
-
   // FEATURE_193 (v0.7.43): case 'scout', case 'planner', case 'generator'
   // deleted — V1 chain roles retired. Only case 'worker', case 'evaluator'
   // (via default pass-through), and case 'direct' remain.
@@ -369,13 +361,6 @@ export function createRolePrompt(
         // handoff rules) lives here between context blocks and the shared
         // closing rules.
         workerInstructions,
-        // FEATURE_190 (v0.7.43): Worker no longer injects PROTOCOL EMISSION
-        // or the kodax-task-handoff fenced-block fallback — under F184
-        // architecture Worker terminates text-only. Both contributors will
-        // be undefined here for Worker after the role !== 'worker' guard
-        // above, but kept in the array for shape parity with other roles.
-        managedProtocolToolInstructions,
-        // handoffBlockInstructions intentionally omitted for Worker post-F190.
         sharedWorkerDiscipline,
         sharedClosingRule,
       ].filter((section): section is string => Boolean(section)).join('\n\n');

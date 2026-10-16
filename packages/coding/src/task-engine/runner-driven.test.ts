@@ -1,14 +1,10 @@
 /**
- * Runner-driven path tests — FEATURE_084 Shard 5a (v0.7.26).
+ * Runner-driven AMA path tests.
  *
  * Covers:
- *   - Env flag detection (`KODAX_MANAGED_TASK_RUNTIME=runner`)
- *   - Agent construction (Scout with emit + core tools, no handoffs for H0)
+ *   - Single Worker construction and capability-aware tool wiring
  *   - LLM adapter: system split, tool serialization, RunnerLlmResult shape
- *   - End-to-end Scout H0_DIRECT flow via mocked provider stream
- *   - KodaXResult shape: success + lastText + messages, no managedTask
- *     (matches SA fast-path semantics for Shard 5a; Shard 5b populates
- *     managedTask when Generator/Evaluator enter the chain)
+ *   - Managed execution, resume, and result contracts via mocked provider stream
  */
 
 import {
@@ -44,7 +40,6 @@ import {
 import {
   buildRunnerAgentChain,
   buildRunnerLlmAdapter,
-  isRunnerDrivenRuntimeEnabled,
   runManagedTaskViaRunner,
   __runnerDrivenTestables,
 } from './runner-driven.js';
@@ -886,35 +881,6 @@ describe('managed runner queue routing', () => {
         maxPriority: 'user',
       });
     }
-  });
-});
-
-describe('isRunnerDrivenRuntimeEnabled', () => {
-  const envKey = 'KODAX_MANAGED_TASK_RUNTIME';
-  afterEach(() => {
-    delete process.env[envKey];
-  });
-
-  it('returns false when env var is unset', () => {
-    delete process.env[envKey];
-    expect(isRunnerDrivenRuntimeEnabled()).toBe(false);
-  });
-
-  it('returns true for "runner"', () => {
-    process.env[envKey] = 'runner';
-    expect(isRunnerDrivenRuntimeEnabled()).toBe(true);
-  });
-
-  it('returns true for "RUNNER" (case insensitive)', () => {
-    process.env[envKey] = 'RUNNER';
-    expect(isRunnerDrivenRuntimeEnabled()).toBe(true);
-  });
-
-  it('returns false for "legacy" or any other value', () => {
-    process.env[envKey] = 'legacy';
-    expect(isRunnerDrivenRuntimeEnabled()).toBe(false);
-    process.env[envKey] = '1';
-    expect(isRunnerDrivenRuntimeEnabled()).toBe(false);
   });
 });
 

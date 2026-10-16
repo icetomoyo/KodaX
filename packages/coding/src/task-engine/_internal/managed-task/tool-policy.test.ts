@@ -7,7 +7,6 @@
 
 import { describe, expect, it } from 'vitest';
 import {
-  DOCS_ONLY_WRITE_PATH_PATTERNS,
   SHELL_WRITE_PATTERNS,
   collectToolInputPaths,
   enforceShellWriteBoundary,
@@ -15,6 +14,13 @@ import {
   matchesShellPattern,
   matchesWritePathPattern,
 } from './tool-policy.js';
+
+// A caller-supplied boundary for the shared guards; no role installs it by default.
+const DOCS_ONLY_WRITE_PATH_PATTERNS: readonly string[] = [
+  '\\.(?:md|mdx|txt|rst|adoc)$',
+  '(?:^|/)(?:docs?|documentation|design|requirements?|specs?|plans?|notes?|reports?)(?:/|$)',
+  '(?:^|/)(?:README|CHANGELOG|FEATURE_LIST|KNOWN_ISSUES|PRD|ADR|HLD|DD)(?:\\.[^/]+)?$',
+];
 
 describe('matchesWritePathPattern', () => {
   it('matches docs-only path patterns (docs/foo.md, CHANGELOG, README)', () => {

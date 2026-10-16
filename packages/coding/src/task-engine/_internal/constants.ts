@@ -10,7 +10,7 @@
  *   moves in Slice 7 (checkpoint helpers) so the test surface stays intact.
  * - REVIEW_*_THRESHOLD — duplicated in reasoning.ts (separate GLM-like DRY issue,
  *   handled in follow-up).
- * - WRITE_ONLY_TOOLS / INSPECTION_SHELL_PATTERNS / DOCS_ONLY_WRITE_PATH_PATTERNS /
+ * - WRITE_ONLY_TOOLS / INSPECTION_SHELL_PATTERNS /
  *   VERIFICATION_SHELL_PATTERNS / SHELL_WRITE_PATTERNS — tool-policy constants,
  *   moved with tool-policy helpers (Slice 6/8). FEATURE_184 (v0.7.45) /
  *   FEATURE_193 (v0.7.43) retired the V1-only tool-policy allow-lists

@@ -9,8 +9,8 @@
  *
  * Dispatch:
  *   - SA mode  -> `runKodaX` with a direct-path prompt overlay.
- *   - AMA mode -> `runManagedTaskViaRunner` (Scout → Planner? → Generator
- *                 → Evaluator via Layer-A Runner + protocol emit tools).
+ *   - AMA mode -> `runManagedTaskViaRunner` (single Worker via Layer-A Runner,
+ *                 with optional Actor children).
  *
  * The outer wrapper also runs `reshapeToUserConversation` so
  * `result.messages` surfaces a clean user-facing {user, assistant} pair

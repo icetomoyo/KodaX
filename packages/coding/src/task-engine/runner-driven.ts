@@ -1,30 +1,8 @@
 /**
- * Runner-driven AMA path — FEATURE_084 (v0.7.26).
- *
- * Runner-based replacement for the legacy `runManagedTask` state machine.
- *
- *   - Scout → {Generator (H1) | Planner (H2)} → Evaluator →
- *     {accept | revise → Generator | replan → Planner | blocked}.
- *   - Env flag `KODAX_MANAGED_TASK_RUNTIME=legacy` restores the legacy
- *     path (deleted after Shard 6d-b but preserved as a code search
- *     reference through git history).
- *
- * **Parity coverage (as of v0.7.26 release):**
- *   - Checkpoint detection + per-role write (FEATURE_071) — `_internal/managed-task/checkpoint.ts`
- *   - Budget tracking (per-harness caps + 90%-threshold extension dialog) — `_internal/managed-task/budget.ts`
- *   - Observer events: managed-task status / phase / child fan-out / iteration end / context-token snapshot
- *   - Mutation tracker integration — populated by tool wrappers, surfaced via `recordMutationForTool`
- *   - Session continuity — `options.session.initialMessages` threaded into `Runner.run`'s `runnerInput`
- *   - Role prompts — `_internal/managed-task/role-prompt.ts` restores the full v0.7.22 prompt surface
- *     (decision summary, contract, metadata, verification, tool-policy, evidence strategies,
- *     collaboration guidance, H0/H1/H2 framework, handoff/verdict/contract block specs)
- *   - Tool observability — Runner `toolObserver` forwards `onToolCall` / `onToolResult`
- *     / `beforeToolExecute` / `onToolProgress`, and per-call `reportToolProgress` injection
- *   - Compaction — `_internal/managed-task/compaction.ts` wraps `intelligentCompact` behind
- *     Runner's `compactionHook`; fires `onCompactStart` / `onCompactStats` / `onCompact` / `onCompactEnd`
- *   - Cost tracking — `CostTracker` per run, `events.getCostReport` populated
- *   - Thinking blocks — preserved on assistant messages (Anthropic extended-thinking contract)
- *   - Sanitize pipeline — `_internal/managed-task/sanitize.ts` strips leaked fences / control markers
+ * Runner-driven AMA path: a single Worker owns execution and completion,
+ * with optional Actor children. The outer loop manages budgets, wake events,
+ * checkpoints, compaction, and session continuity. Historical role data is
+ * still readable, but the retired V1 chain has no runtime selector.
  */
 
 import type {
@@ -144,7 +122,6 @@ import { attachManagedTaskRepoIntelligence } from './_internal/managed-task/repo
 // FEATURE_193 (v0.7.43): `inferScoutMutationIntent` import removed —
 // last consumer (Shard 6d-k Scout suspicious-completion block) deleted
 // alongside the V1 `recorder.scout` slot.
-import { buildManagedWorkerToolPolicy } from './_internal/managed-task/tool-policy.js';
 import { formatFullSkillSection } from './_internal/managed-task/formatting.js';
 import { applyCurrentDiffReviewRoutingFloor } from './_internal/managed-task/review-routing.js';
 import { createTodoStore, type TodoStore } from './todo-store.js';
@@ -384,15 +361,6 @@ function isSessionBindableExtensionRuntime(
     && typeof candidate.hydrateSession === 'function';
 }
 
-/**
- * Env-flag check. `KODAX_MANAGED_TASK_RUNTIME=runner` enables the Runner-
- * driven path. Case-insensitive match.
- */
-export function isRunnerDrivenRuntimeEnabled(): boolean {
-  const value = process.env.KODAX_MANAGED_TASK_RUNTIME?.trim().toLowerCase();
-  return value === 'runner';
-}
-
 function runnerToolEventMeta(
   events: KodaXOptions['events'] | undefined,
   toolId: string,
@@ -435,13 +403,7 @@ function resolveInitialRuntimeThinkingLevel(
 }
 
 // =============================================================================
-// Role instructions — moved to `./_internal/managed-task/role-prompts.ts`
-// (FEATURE_171 v0.7.41 split). FEATURE_193 (v0.7.43) retired four of the
-// five `*_INSTRUCTIONS_FALLBACK` constants (Scout/Planner/Generator/
-// Evaluator) and the `renderScoutSkillMapBlock` helper. Only
-// `WORKER_INSTRUCTIONS_FALLBACK` + `resolveRoleInstructions` +
-// `renderRuntimeVerificationBlock` + `buildCompletionContractStatus`
-// remain (imported at the top of this file).
+// Role instructions live in `./_internal/managed-task/role-prompts.ts`.
 // =============================================================================
 
 // =============================================================================
@@ -1880,11 +1842,7 @@ async function runManagedTaskViaRunnerInner(
   const chainPromptContext: RunnerChainPromptContext | undefined = plan
     ? {
       prompt,
-      // M4 parity — resolve decision from planRef at invocation time so
-      // post-Scout plan updates (applyScoutDecisionToPlanRunner) reach
-      // downstream Generator / Evaluator prompts. Without the thunk, the
-      // captured `plan.decision` would keep pre-Scout harness / routing
-      // notes and leak H2-only prompt guidance into H1 workers.
+      // Resolve the current decision at invocation time for resumed turns.
       decision: () => planRef.current?.decision ?? plan.decision,
       metadata: options.context?.taskMetadata,
       repoIntelligenceContext: prebuiltRepoIntelligenceContext,
@@ -1892,12 +1850,6 @@ async function runManagedTaskViaRunnerInner(
       // the Worker role prompt (prepended). Undefined for the default Coding
       // Agent, so the produced prompt is byte-identical to today.
       partnerInstructions: options.context?.agentProfile?.instructions,
-      // FEATURE_193 (v0.7.43): V1 Scout-driven mutation-intent + harness
-      // branching retired. `buildManagedWorkerToolPolicy` now takes only
-      // `role` and returns undefined for V2 Worker (prompt-enforced
-      // discipline). The factory closure stays to preserve the
-      // `(role, recorder) => policy` interface the agent runtime expects.
-      toolPolicyFactory: (role) => buildManagedWorkerToolPolicy(role),
       contextFactory: rolePromptContextFactory,
     }
     : undefined;
@@ -1916,10 +1868,6 @@ async function runManagedTaskViaRunnerInner(
   // Root and managed children both arrive here after their own role/host filters.
   // Keep executable capability separate from any deferred model-facing projection.
   workerAvailableToolNames = filterModelToolAliases(chain.worker.tools ?? []).map((tool) => tool.name);
-  // FEATURE_193 (v0.7.43): FEATURE_078 Scout `downstream_reasoning_hint`
-  // callback retired — Scout role gone, no payload to surface. The
-  // adapter still accepts the getter slot for signature compatibility;
-  // it permanently returns `undefined` on V2.
   // Per-Runner invocation LLM-turn counter. Idle-yield resumes are fresh
   // invocations and reset this event-display scope below.
   const iterationStateRef = { current: 0 };
