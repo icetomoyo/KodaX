@@ -6,6 +6,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Space Issue 222: resolve the daemon that owns the canonical Session directory across profiles before startup, and recheck ownership if a peer wins during bootstrap. Wait for a starting owner's descriptor within the original startup deadline and cancellation signal. Reuse compatible Hosts without restarting work. Permit guarded same-build orphan-exit policy refresh, retaining active-work preflight, exact owner identity and process-exit verification. Publish structured owner/profile and upgrade blocker diagnostics; mark transient blockers retryable.
+- Add bundled real-process shared-Host recovery to the continuous `test:bundle` gate. The local integration candidate is `0.7.97-alpha.6.issue222.3`; it has not been published to npm.
+
 ---
 
 ## [0.7.97-alpha.6] - 2026-10-15

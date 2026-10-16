@@ -462,6 +462,7 @@ import {
   acquireRuntimeInlineOwner,
   acquireRuntimeSessionStorageOwner,
   enableRuntimeDaemonOwner,
+  findRuntimeSessionStorageHost,
   readRuntimeDaemonLockOwner,
   readRuntimeOwnerProcessStartIdentity,
   readRuntimeOwnerPolicy,
@@ -481,16 +482,19 @@ export class RuntimeDaemonCapabilityUpgradeError extends Error {
   readonly recoverable = true as const;
   readonly restartRequired = true as const;
   readonly capability: string;
+  readonly retryable: boolean;
 
   constructor(
     message: string,
     readonly preflight?: RuntimeDaemonPreflight,
     options?: ErrorOptions,
     capability = "runtimeAutoModeGuardrail",
+    readonly ownerProfile?: string,
   ) {
     super(message, options);
     this.name = "RuntimeDaemonCapabilityUpgradeError";
     this.capability = capability;
+    this.retryable = preflight?.canStop === false;
   }
 }
 
@@ -5879,6 +5883,8 @@ interface CapabilityUpgradeInput {
   readonly lease: RuntimeDaemonProcessLease;
   readonly grantedScopes?: readonly RuntimeGrantedScope[];
   readonly requiredCapability: string;
+  readonly sharedOwnerFile?: string;
+  readonly orphanExitMs?: number;
   readonly startupDeadline: number;
   readonly startupSignal?: AbortSignal;
   readonly reportProgress: (progress: ClientStartupProgress) => void;
@@ -6091,7 +6097,9 @@ function isDaemonStartupReadInterruption(error: unknown): boolean {
 }
 
 /** Retrying inspection never replays a refused or ambiguously completed shutdown. */
-class RuntimeDaemonInspectionInterruptedError extends RuntimeDaemonCapabilityUpgradeError {}
+class RuntimeDaemonInspectionInterruptedError extends RuntimeDaemonCapabilityUpgradeError {
+  override readonly retryable = true;
+}
 
 async function replaceRuntimeDaemonForCapabilityUpgrade(
   input: CapabilityUpgradeInput,
@@ -6106,7 +6114,11 @@ async function replaceRuntimeDaemonForCapabilityUpgrade(
     const sameInstallationBuildChanged = input.identity.build?.origin === LOCAL_RUNTIME_BUILD.origin
       && input.identity.build.fingerprint !== LOCAL_RUNTIME_BUILD.fingerprint
       && compareSemanticVersions(input.identity.version, replApi.KODAX_VERSION) === 0;
-    if (!sameInstallationBuildChanged && compareSemanticVersions(input.identity.version, replApi.KODAX_VERSION) !== -1) {
+    const sameBuildPolicyRefresh = input.requiredCapability === 'daemonOrphanExit' && input.orphanExitMs !== undefined
+      && input.identity.build?.fingerprint === LOCAL_RUNTIME_BUILD.fingerprint
+      && compareSemanticVersions(input.identity.version, replApi.KODAX_VERSION) === 0;
+    if (!sameInstallationBuildChanged && !sameBuildPolicyRefresh
+      && compareSemanticVersions(input.identity.version, replApi.KODAX_VERSION) !== -1) {
       throw new Error("Only a provably older Host can be refreshed automatically; use a compatible installation.");
     }
     inspecting = true;
@@ -6118,6 +6130,8 @@ async function replaceRuntimeDaemonForCapabilityUpgrade(
     }
     const owner = management.owner;
     const current = readRuntimeDaemonLockOwner(input.lease.paths.lockFile);
+    const shared = input.sharedOwnerFile === undefined
+      ? undefined : readRuntimeDaemonLockOwner(input.sharedOwnerFile);
     if (
       management.runtimeId !== input.identity.runtimeId
       || owner.runtimeId !== input.identity.runtimeId
@@ -6128,6 +6142,8 @@ async function replaceRuntimeDaemonForCapabilityUpgrade(
       || current.kind !== owner.kind
       || !owner.processStartIdentity
       || current.processStartIdentity !== owner.processStartIdentity
+      || (input.sharedOwnerFile !== undefined && (shared?.runtimeId !== owner.runtimeId
+        || shared.pid !== owner.pid || shared.processStartIdentity !== owner.processStartIdentity))
     ) throw new Error("The original Host process identity cannot be confirmed; retry against the current owner.");
     assertCurrentLauncherBuild();
     input.startupSignal?.throwIfAborted();
@@ -6145,11 +6161,18 @@ async function replaceRuntimeDaemonForCapabilityUpgrade(
     const UpgradeError = inspecting && isDaemonStartupReadInterruption(error)
       ? RuntimeDaemonInspectionInterruptedError
       : RuntimeDaemonCapabilityUpgradeError;
+    emitKodaXDiagnostic({
+      source: 'runtime.daemon.upgrade-blocked', level: 'warn',
+      message: error instanceof Error ? error.message : 'Host refresh failed.',
+      detail: { ownerProfile: input.identity.profile, runtimeId: input.identity.runtimeId,
+        capability: input.requiredCapability, blockers: preflight?.blockers },
+    });
     throw new UpgradeError(
       error instanceof Error ? error.message : "The older Host could not be refreshed.",
       preflight,
       { cause: error },
       input.requiredCapability,
+      input.identity.profile,
     );
   } finally {
     await closeRejectedCapabilityUpgrade(runtime, input.lease, input.requiredCapability);
@@ -6170,6 +6193,26 @@ function waitForDaemonStartupRetry(milliseconds: number, signal?: AbortSignal): 
     };
     signal?.addEventListener('abort', cancel, { once: true });
   });
+}
+
+/** A live owner may hold its fence before publishing its authenticated endpoint. */
+async function waitForRuntimeSessionStorageHost(
+  configHome: string,
+  sessionsDir: string,
+  startupDeadline: number,
+  startupSignal: AbortSignal | undefined,
+  reportProgress: (progress: ClientStartupProgress) => void,
+): Promise<ReturnType<typeof findRuntimeSessionStorageHost>> {
+  for (;;) {
+    try { return findRuntimeSessionStorageHost(configHome, sessionsDir); }
+    catch (error: unknown) {
+      if (!isRecord(error) || error.code !== 'session_storage_owned' || error.retryable !== true
+        || Date.now() >= startupDeadline) throw error;
+      reportProgress({ stage: 'waiting', reason: 'host_starting' });
+      await waitForDaemonStartupRetry(Math.min(250, startupDeadline - Date.now()), startupSignal);
+      if (Date.now() >= startupDeadline) throw error;
+    }
+  }
 }
 
 async function connectKodaXRuntimeInternal(
@@ -6216,12 +6259,29 @@ async function connectKodaXRuntimeInternal(
       ? normalizeRuntimeDaemonEndpoint(options.endpoint)
       : undefined;
   const daemonLocation = resolveRuntimeDaemonClientLocation(options.homeDir);
-  const lease =
+  // Profiles share one Session writer. Resolve that writer before trying to
+  // start another process; only the normal authenticated shutdown path may replace it.
+  const sharedHost = allowCapabilityUpgrade && options.autoStart === true
+    && options.transport === undefined && explicitEndpoint === undefined
+    ? await waitForRuntimeSessionStorageHost(daemonLocation.configHome,
+      options.sessionsDir ?? path.join(daemonLocation.configHome, 'sessions'),
+      startupDeadline, options.daemonStartupSignal, reportProgress)
+    : undefined;
+  const connectionProfile = sharedHost?.profile ?? options.profile ?? 'default';
+  if (sharedHost && contentionAttempt === 0) emitKodaXDiagnostic({
+    source: 'runtime.daemon.storage-owner', level: 'info',
+    message: `Session storage is owned by Host profile ${sharedHost.profile}.`,
+    detail: { requestedProfile: options.profile ?? 'default', ownerProfile: sharedHost.profile,
+      runtimeId: sharedHost.owner.runtimeId, pid: sharedHost.owner.pid },
+  });
+  let lease: RuntimeDaemonProcessLease | undefined;
+  try {
+    lease =
     options.transport === undefined && options.autoStart === true
       ? await acquireRuntimeDaemonProcessLease({
           homeDir: daemonLocation.homeDir,
           configHome: daemonLocation.configHome,
-          profile: options.profile,
+          profile: connectionProfile,
           endpoint: explicitEndpoint,
           defaultProvider: options.defaultProvider,
           defaultModel: options.defaultModel,
@@ -6236,12 +6296,29 @@ async function connectKodaXRuntimeInternal(
           ownerBootstrap,
         })
       : undefined;
+  } catch (error: unknown) {
+    // A peer can win the shared writer after discovery but before our child
+    // starts. Recheck authority; unrelated bootstrap failures stay failures.
+    const winner = allowCapabilityUpgrade && options.autoStart === true
+      && options.transport === undefined && explicitEndpoint === undefined
+      ? await waitForRuntimeSessionStorageHost(daemonLocation.configHome,
+        options.sessionsDir ?? path.join(daemonLocation.configHome, 'sessions'),
+        startupDeadline, options.daemonStartupSignal, reportProgress) : undefined;
+    if (!winner || winner.owner.runtimeId === sharedHost?.owner.runtimeId) throw error;
+    if (startupRetries > 0 && Date.now() < startupDeadline) {
+      return connectKodaXRuntimeInternal(options, true, ownerBootstrap, startupRetries - 1,
+        startupDeadline, contentionAttempt, reportProgress);
+    }
+    throw Object.assign(new Error(`Shared Host profile ${winner.profile} won Session storage startup; retry against its current owner.`, { cause: error }), {
+      code: 'session_storage_owned' as const, retryable: true, ownerProfile: winner.profile,
+    });
+  }
   const endpoint =
     explicitEndpoint ??
     lease?.endpoint ??
     (options.transport === undefined
       ? defaultRuntimeDaemonEndpoint(
-          options.profile ?? "default",
+          connectionProfile,
           resolveRuntimeDaemonEndpointScope(
             daemonLocation.homeDir,
             daemonLocation.configHome,
@@ -6262,7 +6339,7 @@ async function connectKodaXRuntimeInternal(
       "connectKodaXRuntime requires a daemon transport, endpoint, or autoStart: true.",
     );
   }
-  const token = resolveConnectDaemonToken(options);
+  const token = resolveConnectDaemonToken({ ...options, profile: connectionProfile });
   let identity: RuntimeIdentity;
   let daemonCapabilities: Readonly<Record<string, unknown>> = {};
   let grantedScopes: readonly RuntimeGrantedScope[] | undefined;
@@ -6306,7 +6383,7 @@ async function connectKodaXRuntimeInternal(
     const clientInfo = upgradeClientInfo ?? requestedClientInfo;
     const initialized = requireRuntimeRecord(
       await transport.request("initialize", {
-        profile: options.profile ?? "default",
+        profile: connectionProfile,
         connectionPurpose: "client",
         autoStart: options.autoStart === true,
         ...(token !== undefined ? { token } : {}),
@@ -6317,11 +6394,16 @@ async function connectKodaXRuntimeInternal(
     );
     attaching = false;
     identity = parseRuntimeIdentity(initialized.identity);
-    const expectedProfile = options.profile ?? "default";
+    const expectedProfile = connectionProfile;
     if (identity.profile !== expectedProfile) {
       throw new Error(
         `Runtime daemon profile mismatch: expected ${expectedProfile}, got ${identity.profile}`,
       );
+    }
+    if (sharedHost && identity.runtimeId !== sharedHost.owner.runtimeId) {
+      throw Object.assign(new Error('The shared Session Host changed during attachment; retry against its current owner.'), {
+        code: 'session_storage_owned' as const, retryable: true,
+      });
     }
     daemonCapabilities =
       initialized.capabilities === undefined
@@ -6387,6 +6469,8 @@ async function connectKodaXRuntimeInternal(
           lease,
           ...(grantedScopes !== undefined ? { grantedScopes } : {}),
           requiredCapability: requiredUpgrade.name,
+          ...(sharedHost ? { sharedOwnerFile: sharedHost.ownerFile } : {}),
+          orphanExitMs: options.daemonOrphanExitMs,
           startupDeadline,
           startupSignal: options.daemonStartupSignal,
           reportProgress,

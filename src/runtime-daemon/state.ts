@@ -712,6 +712,31 @@ export function tryAcquireRuntimeDaemonLock(
 }
 
 /** Profiles are connection names; the actual Session directory has one product writer. */
+export function findRuntimeSessionStorageHost(
+  configHome: string,
+  sessionsDir: string,
+): { readonly profile: string; readonly ownerFile: string; readonly owner: RuntimeDaemonLockOwner } | undefined {
+  if (!fs.existsSync(sessionsDir)) return undefined;
+  const ownerFile = path.join(fs.realpathSync(sessionsDir), '.product-host', 'owner.lock');
+  const owner = readRuntimeDaemonLockOwner(ownerFile);
+  if (!owner || owner.kind !== 'daemon' || runtimeOwnerProcessState(owner) === 'gone') return undefined;
+  const daemonDir = path.join(path.resolve(configHome), 'runtime', 'daemon');
+  for (const entry of fs.existsSync(daemonDir) ? fs.readdirSync(daemonDir, { withFileTypes: true }) : []) {
+    if (!entry.isDirectory() || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(entry.name)) continue;
+    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, entry.name);
+    const state = readRuntimeDaemonState(paths);
+    const candidate = readRuntimeDaemonLockOwner(paths.lockFile);
+    if (state?.profile !== entry.name || state.runtimeId !== owner.runtimeId || state.pid !== owner.pid
+      || candidate?.runtimeId !== owner.runtimeId || candidate.pid !== owner.pid
+      || (candidate.kind !== undefined && candidate.kind !== 'daemon')
+      || (candidate.processStartIdentity !== undefined && candidate.processStartIdentity !== owner.processStartIdentity)) continue;
+    return { profile: entry.name, ownerFile, owner };
+  }
+  throw Object.assign(new Error(`The shared Session storage owner ${owner.runtimeId} (PID ${owner.pid}) cannot be attached yet. Waiting for its verified daemon descriptor.`), {
+    code: 'session_storage_owned' as const, retryable: true,
+  });
+}
+
 export function acquireRuntimeSessionStorageOwner(
   sessionsDir: string,
   runtimeId: string,
