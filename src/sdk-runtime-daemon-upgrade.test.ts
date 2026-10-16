@@ -332,6 +332,42 @@ describe('product Host startup and passive connection', () => {
     expect(calls).toEqual(['new:initialize', 'new:close']);
   });
 
+  it.each(['timeout', 'cancel'] as const)('bounds a pending replacement initialize by the original %s control', async mode => {
+    const calls: string[] = [];
+    const controller = new AbortController();
+    const reason = new Error('cancel pending replacement initialize');
+    const host = { profile: PROFILE, ownerFile: '/fixture/owner.lock', owner: { runtimeId: 'runtime_current' } };
+    upgradeMocks.findSharedHost.mockReturnValueOnce({ ...host, owner: { runtimeId: 'previous-owner' } }).mockReturnValue(host);
+    let entered!: () => void;
+    const pending = new Promise<void>(resolve => { entered = resolve; });
+    let complete!: (value: unknown) => void;
+    const hanging = new Promise<unknown>(resolve => { complete = resolve; });
+    const replacement = createCurrentTransport(calls, async () => undefined);
+    upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(createCurrentTransport(calls, async () => undefined)))
+      .mockResolvedValueOnce(createLease({ ...replacement, request: async () => {
+        calls.push('replacement:initialize');
+        entered();
+        return hanging;
+      } }));
+    const starting = ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 100,
+      daemonStartupSignal: controller.signal });
+    const result = starting.then(() => 'unexpected success', error => error as unknown);
+    try {
+      await pending;
+      if (mode === 'cancel') controller.abort(reason);
+      // A bounded observation makes this a quick RED on the old unguarded await.
+      const observed = await Promise.race([result, new Promise<string>(resolve => setTimeout(() => resolve('still pending'), 300))]);
+      if (mode === 'cancel') expect(observed).toBe(reason);
+      else expect(observed).toMatchObject({ code: 'daemon_startup_failed', reason: 'timeout', retryable: true });
+      expect(calls).toEqual(['new:initialize', 'new:close', 'replacement:initialize', 'new:close']);
+      expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(2);
+    } finally {
+      complete(await replacement.request('initialize'));
+      const runtime = await starting.catch(() => undefined);
+      await runtime?.close();
+    }
+  });
+
   it('waits for the shared owner to publish its descriptor before attaching', async () => {
     const calls: string[] = [];
     upgradeMocks.findSharedHost.mockImplementationOnce(() => {

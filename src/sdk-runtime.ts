@@ -442,6 +442,7 @@ import {
 import { acquireRuntimeDaemonLease } from "./runtime-daemon/manager.js";
 import {
   acquireRuntimeDaemonProcessLease,
+  RuntimeDaemonStartupError,
   waitForRuntimeDaemonOwnerExit,
   type RuntimeDaemonOwnerBootstrap,
   type RuntimeDaemonProcessLease,
@@ -6195,6 +6196,31 @@ function waitForDaemonStartupRetry(milliseconds: number, signal?: AbortSignal): 
   });
 }
 
+async function initializeRuntimeDaemonForStartup(
+  transport: RuntimeDaemonClientTransport,
+  params: unknown,
+  startupDeadline: number,
+  startupSignal: AbortSignal | undefined,
+): Promise<unknown> {
+  const controller = new AbortController();
+  const signal = startupSignal ? AbortSignal.any([controller.signal, startupSignal]) : controller.signal;
+  signal.throwIfAborted();
+  const remainingMs = startupDeadline - Date.now();
+  const timeout = new RuntimeDaemonStartupError('Host startup timed out during authenticated attachment.', 'timeout');
+  if (remainingMs <= 0) throw timeout;
+  try {
+    return await Promise.race([
+      transport.request('initialize', params, { signal }),
+      waitForDaemonStartupRetry(remainingMs, signal).then(() => {
+        controller.abort(timeout);
+        throw timeout;
+      }),
+    ]);
+  } finally {
+    controller.abort();
+  }
+}
+
 /** A live owner may hold its fence before publishing its authenticated endpoint. */
 async function waitForRuntimeSessionStorageHost(
   configHome: string,
@@ -6382,17 +6408,18 @@ async function connectKodaXRuntimeInternal(
       ? undefined
       : capabilityUpgradeClientInfo();
     const clientInfo = upgradeClientInfo ?? requestedClientInfo;
-    const initialized = requireRuntimeRecord(
-      await transport.request("initialize", {
-        profile: connectionProfile,
-        connectionPurpose: "client",
-        autoStart: options.autoStart === true,
-        ...(token !== undefined ? { token } : {}),
-        clientInfo,
-        capabilities: { ...options.capabilities },
-        ...(endpoint !== undefined ? { endpoint: endpoint.path } : {}),
-      }),
-    );
+    const initializeParams = {
+      profile: connectionProfile,
+      connectionPurpose: "client",
+      autoStart: options.autoStart === true,
+      ...(token !== undefined ? { token } : {}),
+      clientInfo,
+      capabilities: { ...options.capabilities },
+      ...(endpoint !== undefined ? { endpoint: endpoint.path } : {}),
+    };
+    const initialized = requireRuntimeRecord(await (allowCapabilityUpgrade && options.autoStart === true
+      ? initializeRuntimeDaemonForStartup(transport, initializeParams, startupDeadline, options.daemonStartupSignal)
+      : transport.request('initialize', initializeParams)));
     attaching = false;
     identity = parseRuntimeIdentity(initialized.identity);
     const expectedProfile = connectionProfile;

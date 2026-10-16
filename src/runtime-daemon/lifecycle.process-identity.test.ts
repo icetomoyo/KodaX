@@ -5,10 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { waitForRuntimeDaemonOwnerExit } from './process.js';
+import { waitForRuntimeDaemonShutdown } from './shutdown-verifier.js';
 import { observeRuntimeDaemonHealth, resolveRuntimeDaemonOwnership } from './lifecycle.js';
 import { acquireRuntimeSessionStorageOwner, findRuntimeSessionStorageHost,
   readRuntimeDaemonLockOwner, resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock,
-  writeRuntimeDaemonState, type RuntimeDaemonLockOwner, type RuntimeDaemonPaths } from './state.js';
+  writeRuntimeDaemonState, writeRuntimeDaemonShutdownOutcome,
+  type RuntimeDaemonLockOwner, type RuntimeDaemonPaths } from './state.js';
 
 const proc = vi.hoisted(() => new Map<string, string | Error>());
 vi.mock('node:fs', async original => {
@@ -115,6 +117,20 @@ it('never reclaims or kills a live shared owner on timeout', async () => {
   expect(() => acquireRuntimeSessionStorageOwner(sessionsDir, 'replacement')).toThrow(expect.objectContaining({ code: 'session_storage_owned' }));
   expect(readRuntimeDaemonLockOwner(ownerFile)).toEqual(owner);
   expect(() => process.kill(owner.pid, 0)).not.toThrow();
+});
+
+it('keeps shutdown unverified when a denied PID probe cannot establish exit despite other identity evidence', async () => {
+  publishOwner();
+  writeRuntimeDaemonShutdownOutcome(paths, { version: 1, runtimeId: owner.runtimeId,
+    pid: owner.pid, status: 'succeeded', completedAt: new Date().toISOString() });
+  const kill = process.kill.bind(process);
+  vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+    if (pid === owner.pid && signal === 0) throw Object.assign(new Error('Cannot probe owner'), { code: 'EPERM' });
+    return kill(pid, signal);
+  });
+  await expect(waitForRuntimeDaemonShutdown({ configHome: paths.configHome,
+    owner: { ...owner, processStartIdentity: 'linux:41' }, timeoutMs: 10,
+  })).resolves.toMatchObject({ status: 'unverified', reason: 'daemon_active' });
 });
 
 it.each([true, false])('observes a live SDK Host without daemon serve argv (start identity=%s)', async identified => {
