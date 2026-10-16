@@ -640,7 +640,9 @@ function waitForConnect(socket: net.Socket, timeoutMs = 2_000): Promise<void> {
     const timer = setTimeout(() => {
       cleanup();
       socket.destroy();
-      reject(new Error('Timed out connecting to runtime daemon.'));
+      reject(Object.assign(new Error('Timed out connecting to runtime daemon.'), {
+        code: 'ETIMEDOUT' as const,
+      }));
     }, timeoutMs);
     timer.unref?.();
     const cleanup = (): void => {

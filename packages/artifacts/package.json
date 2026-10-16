@@ -1,6 +1,6 @@
 {
   "name": "@kodax-ai/artifacts",
-  "version": "0.7.97-alpha.6.issue222.3",
+  "version": "0.7.97-alpha.6.issue222.4",
   "description": "Independent artifact operations and visual evidence with an injected execution boundary",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",

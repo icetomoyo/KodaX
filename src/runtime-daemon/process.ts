@@ -309,15 +309,19 @@ function capFileToTail(file: string, maxBytes: number): void {
 }
 
 export type RuntimeDaemonStartupFailureReason =
-  "cancelled" | "child_exit" | "identity_mismatch" | "timeout";
+  "cancelled" | "child_exit" | "identity_mismatch" | "timeout" | "unhealthy";
 
 export class RuntimeDaemonStartupError extends Error {
+  readonly code = 'daemon_startup_failed' as const;
+  readonly retryable: boolean;
+
   constructor(
     message: string,
     readonly reason: RuntimeDaemonStartupFailureReason,
   ) {
     super(message);
     this.name = "RuntimeDaemonStartupError";
+    this.retryable = reason === 'timeout' || reason === 'unhealthy';
   }
 }
 
@@ -445,11 +449,12 @@ export async function acquireRuntimeDaemonProcessLease(
   }
   if (initialHealth === "unhealthy" || initialHealth === "mismatch") {
     const ownerPid = initial.state?.pid;
-    throw new Error(
+    throw new RuntimeDaemonStartupError(
       `Runtime daemon is ${initialHealth}; refusing to start a competing owner.`
       + ` [state pid=${ownerPid} status=${initial.state?.status} endpoint=${initial.state?.endpoint}`
       + ` pidAlive=${initial.pidAlive} reachable=${initial.endpointReachable}`
       + ` identityMatches=${initial.identityMatches}]`,
+      initialHealth === 'unhealthy' ? 'unhealthy' : 'identity_mismatch',
     );
   }
 
