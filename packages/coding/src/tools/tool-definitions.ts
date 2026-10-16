@@ -554,7 +554,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
         pattern: { type: 'string', description: "Regex to match in file contents." },
         path: { type: 'string', description: "File or directory; defaults to cwd." },
         glob: { type: 'string', description: "File glob, e.g. *.{ts,tsx}." },
-        type: { type: 'string', description: "File type such as ts or py; preferred over glob for standard types." },
+        type: { type: 'string', description: "File type such as ts (includes .ts/.tsx/.mts/.cts). Use glob for an exact extension, e.g. *.ts." },
         output_mode: {
           type: 'string',
           enum: ['content', 'files_with_matches', 'count'],
@@ -567,7 +567,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
         '-C': { type: 'number', description: 'Alias for context' },
         context: { type: 'number', description: "Context lines on both sides; content mode only." },
         multiline: { type: 'boolean', description: "Allow . and matches across newlines; default false." },
-        head_limit: { type: 'number', description: "Maximum output entries; default 250, 0 disables this cap. Source byte budget still applies." },
+        head_limit: { type: 'number', description: 'Limit output to first N entries. Defaults to 250. Pass 0 to remove the entry-count cap; the source byte budget still applies.' },
         offset: { type: 'number', description: "Entries to skip; default 0." },
         scan_offset: { type: 'number', description: "Candidate files skipped for SOURCE_INCOMPLETE continuation." },
       },

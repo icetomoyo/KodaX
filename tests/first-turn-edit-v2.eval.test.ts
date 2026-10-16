@@ -55,3 +55,39 @@ it('does not dispatch after another lane stops while its reservation is being pe
   expect(evidence.error).toContain('Other lane stopped before dispatch');
   expect(budget.state.reservedTokens).toBe(0);
 });
+
+it('cancels the physical request and settles unknown usage without retry', async () => {
+  vi.stubEnv(route.env, 'local-edit-fixture-key');
+  const controller = new AbortController();
+  let started!: (signal: AbortSignal) => void;
+  const dispatched = new Promise<AbortSignal>(resolve => { started = resolve; });
+  let rejectTransport: ((reason: Error) => void) | undefined;
+  const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const request = new Request(input, init);
+    return new Promise<Response>((_resolve, reject) => {
+      rejectTransport = reject;
+      request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true });
+      started(request.signal);
+    });
+  });
+  vi.stubGlobal('fetch', fetch);
+  const budget = new EditRevisionBudget();
+  const pending = budgetedEditCall(route, { system: 'fixture', messages: [{ role: 'user', content: 'edit' }], tools: [] }, budget,
+    async () => undefined, controller.signal);
+  let evidence: Awaited<ReturnType<typeof budgetedEditCall>> | undefined;
+  try {
+    const transportSignal = await dispatched;
+    controller.abort(new Error('Eval cancelled'));
+    expect(transportSignal.aborted).toBe(true);
+  } finally {
+    rejectTransport?.(new Error('Offline transport cleanup'));
+    evidence = await pending;
+  }
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(evidence.physicalAttempts).toBe(1);
+  expect(evidence.error).toBeTruthy();
+  expect(budget.state.calls).toBe(1);
+  expect(budget.state.unknownUsageCalls).toBe(1);
+  expect(budget.state.reservedTokens).toBe(0);
+  expect(budget.state.reservedUsd).toBe(0);
+});

@@ -44,7 +44,7 @@ export async function budgetedEditCall(route: EditRoute, input: FrozenInput, bud
       () => {
         requestSignal.throwIfAborted(); beforeDispatch?.();
         return getProvider(route.provider).stream([...input.messages], [...input.tools], input.system, route.reasoning,
-          { modelOverride: route.model, maxOutputTokensOverride: EDIT_LIMITS.maxOutputTokens, singleAttempt: true, signal: requestSignal });
+          { modelOverride: route.model, maxOutputTokensOverride: EDIT_LIMITS.maxOutputTokens, singleAttempt: true }, requestSignal);
       }, undefined, requestSignal));
   } catch (cause: unknown) { error = redactEditError(cause); onFailure?.(error); }
   const usage = result?.usage;
