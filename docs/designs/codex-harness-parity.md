@@ -21,6 +21,8 @@ CLI、REPL 和 `runManagedTask` 当前已默认 AMA。需要收敛的是 SA 的�
 | Workflow leaf / digest / repair | 同一 direct executor，加专属提示词、工具集合和短预算 | 保留受限执行，不能自动升级为根 Worker 编排 |
 | 共享底座 | tools、权限、文件锁/CAS、history、缓存、压缩及取消 | 继续复用；只修已确认的不一致，不因名字带 SA 成批删除 |
 
+**现有行为保留项，不是新增开发范围**：AMA 已是单 Worker loop；简单任务直接完成、免 Todo 的指导和 reminder 豁免均已存在；根编排不机械插入计划、子 Agent 或固定阶段。模型是否遵循指导仍需观察，不能宣称每次决策都有硬保证。本次保持现有规划/派发策略，不新增简单/复杂任务分类器、AMA-lite、强制禁派发规则或额外预算层。迁移复用现有直接回答和 reminder 测试；只有实际触达的入口/恢复/child 契约缺少覆盖时才补测试，不为已覆盖行为另造实现或重复测试。
+
 `agentMode:'ama'` 目前也用于子任务的能力语义，不代表调用了根 managed engine。不可把所有 `runKodaX` 重定向 `runManagedTask`：保留显式 sa 参数会经 dispatch 回到 runKodaX；强制改成 ama 又会改变 child 的提示词、maxIter、Todo/完成及恢复责任。根 Worker 的机械保护线不等价于 leaf 的一轮/少轮预算。
 
 迁移边界：
@@ -65,7 +67,7 @@ CLI、REPL 和 `runManagedTask` 当前已默认 AMA。需要收敛的是 SA 的�
 
 ## 执行顺序与回归边界
 
-1. **产品入口统一 AMA，保住执行边界**。先固定 root/child/helper 与历史恢复契约，再退出 SA 用户入口、迁移新任务设置；保留低层执行器和稳定 SDK。补简单任务无强制计划/派发、旧 Run 不换引擎、子任务/repair 预算及提示词覆盖测试。
+1. **产品入口统一 AMA，保住执行边界**。先核对 root/child/helper 与历史恢复的现有契约，再退出 SA 用户入口、迁移新任务设置；保留低层执行器和稳定 SDK。现有单 Worker、简单任务免计划、按需派发行为只作回归保留；仅为迁移实际改变且尚未覆盖的旧 Run、child/repair 预算或提示词边界补测试，不重做任务策略。
 2. **修共享能力真值和桥接调度**。TDD 覆盖 Actor-backed / actorless child、AMA、保留 SDK、override、取消、native/bridge 同一目标的 barrier 顺序；不把默认 SA 修补发展为另一条产品主线。全部先用零网络验证。
 3. **落实已核对的短契约与规则归属**。保持 ask 自由文本/批问、Todo 增量/owner/veto/metadata、独占写集合、模型档位限制、terminal 证据与用户最新修正。清理保留路径的过时 permission-mode 教学。新抓包以产品 AMA 为主、内部 leaf/SDK 为回归，不沿用离线数字当上线结果。
 4. **试点低频完整 schema 披露**。稳定核心前缀、短能力目录，一次批量 search 返回完整契约后经原 bridge 执行；验证首次发现、compaction/resume、权限和 override。核心编辑/Todo/交互/技能/AMA 协作保留 direct。
@@ -75,7 +77,7 @@ SA/AMA 已共享执行上下文、权限、工具投影、输出容量与持久�
 
 ## 如何判定接近 Codex
 
-- **输入效率**：主 KPI 为产品 AMA 完整 request/工具/说明字节及估算，另列真实 API input/output/cache；首个工程目标约 18–20k，等待实现和质量验证。SA 16.6–16.8k 仅保留为历史离线兼容场景，不能代表统一产品的成果。另检查简单 AMA 不强制派发、child 的预算和全任务总成本。
+- **输入效率**：主 KPI 为产品 AMA 完整 request/工具/说明字节及估算，另列真实 API input/output/cache；首个工程目标约 18–20k，等待实现和质量验证。SA 16.6–16.8k 仅保留为历史离线兼容场景，不能代表统一产品的成果。回归保留简单任务现有直接执行能力、child 预算和全任务成本，不为此新增路由机制。
 - **执行可靠性**：真实可用工具一致、权限/取消、原子编辑失败零写、目标调度、child terminal 与恢复事实。以 production Runtime 不变量和回归证明，不以名称数或 run success 判断。
 - **有限任务表现**：保留既定最多 18 次的 KodaX 基线/候选 pilot 与有界 Runtime smoke，报告正确性、计划/协作、证据、诚实性、总 token、轮次、时延与失败归因，不宣布广域智能非劣。
 - **同模型 Codex 对照**：先确认共同 native model/route/effort/protocol，再单独预注册；当前 KodaX codex-cli 忽略本地 system/tools、转发最新消息并由 Codex 自己执行，不能隔离 KodaX harness 增益。Windows 当前仅解析到 bundled codex.exe，而桥接执行器使用 codex.cmd，入口也未验证。原生 OpenAI adapter 为 Chat Completions，不声称已支持此次 sol/astra 的同条件 Responses 路径。
