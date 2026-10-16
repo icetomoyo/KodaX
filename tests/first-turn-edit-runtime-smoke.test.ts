@@ -11,7 +11,10 @@ it.each([
   { executionMode: 'coding', scenario: 'edit' },
   { executionMode: 'managed_task', scenario: 'edit' },
   { executionMode: 'managed_task', scenario: 'fixture-check' },
-] as const)('checks Runtime tools and real node tests with scripted responses ($executionMode/$scenario)', async ({ executionMode, scenario }) => {
+  { executionMode: 'managed_task', scenario: 'edit', toolExposure: 'full' },
+] as const)('checks Runtime tools and real node tests with scripted responses ($executionMode/$scenario)', async (fixtureCase) => {
+  const { executionMode, scenario } = fixtureCase;
+  const toolExposure = 'toolExposure' in fixtureCase ? fixtureCase.toolExposure : 'core';
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-edit-smoke-test-'));
   vi.stubEnv('NODE_ENV', 'production');
   vi.stubEnv('KODAX_EDIT_TEST_KEY', 'local-scripted-only');
@@ -24,6 +27,9 @@ it.each([
   let round = 0;
   try {
     const evidence = await runEditRuntimeSmoke({ id: 'scripted', provider: 'scripted', model: 'scripted', env: 'KODAX_EDIT_TEST_KEY', rate: { inputPer1M: 0, outputPer1M: 0 }, reasoning: { enabled: false, effort: 'none' }, billing: 'coding-plan-reference-only' }, async input => {
+      if (toolExposure === 'full') {
+        expect(input.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(['spawn_agent', 'ask_user_question', 'todo_create', 'tool_search']));
+      }
       const calls = scenario === 'fixture-check' ? [
         { name: 'bash', input: { command: 'node --test page.test.js' } },
       ] : [
@@ -34,7 +40,7 @@ it.each([
       const call = calls[round++];
       const result: KodaXStreamResult = { textBlocks: call ? [] : [{ type: 'text', text: 'Scripted fixture: the actual Node test passed. This is not a live model conclusion.' }], thinkingBlocks: [], toolBlocks: call ? [{ type: 'tool_use', id: `offline-${round}`, ...call }] : [], stopReason: call ? 'tool_use' : 'end_turn' };
       return { inputHash: inputHash(input), result, text: result.textBlocks.map(block => block.text).join(''), toolCalls: result.toolBlocks, usage: null, estimatedUsd: null, error: null, physicalRequestObservations: [], physicalAttempts: 0, durationMs: 0 };
-    }, path.join(directory, 'evidence.json'), 'scripted-test', undefined, executionMode, undefined, scenario);
+    }, path.join(directory, 'evidence.json'), 'scripted-test', undefined, executionMode, undefined, scenario, toolExposure);
     expect(evidence.error).toBeNull();
     expect(round).toBe(scenario === 'fixture-check' ? 2 : 4);
     expect(evidence.groundtruth.fileExact).toBe(true);
@@ -72,9 +78,10 @@ it('keeps already in-flight evidence but forbids another provider request after 
       return { inputHash: inputHash(input), result, text: '', toolCalls: result.toolBlocks, usage: null, estimatedUsd: null, error: null, physicalRequestObservations: [], physicalAttempts: 0, durationMs: 0 };
     }, (lane, call, control) => runEditRuntimeSmoke(lane, call, path.join(directory, `${lane.id}.json`), 'scripted-test', control))).rejects.toThrow('Smoke incomplete');
     expect(requests.sort()).toEqual(['failing', 'running']);
-    const inFlight = JSON.parse(await fs.readFile(path.join(directory, 'running.json'), 'utf8')) as { calls: unknown[]; error: string; runtimeSuccess: boolean };
+    const inFlight = JSON.parse(await fs.readFile(path.join(directory, 'running.json'), 'utf8')) as { calls: unknown[]; error: string; runtimeSuccess: boolean; groundtruth: { toolOrder: string[] } };
     expect(inFlight.calls).toHaveLength(1); expect(inFlight.error).toContain('Smoke lanes stopped');
     expect(inFlight.runtimeSuccess).toBe(false);
+    expect(inFlight.groundtruth.toolOrder).toEqual([]);
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   } finally {
     vi.unstubAllEnvs(); vi.unstubAllGlobals();
