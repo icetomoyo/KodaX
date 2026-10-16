@@ -6,10 +6,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-alpha.7] - 2026-10-16
+
+Seventh alpha of the v0.7.97 line: shared-Session Host ownership resolves
+across daemon profiles — launchers wait for a starting owner's verified
+descriptor within the original startup deadline, reuse compatible Hosts
+without restarting work, and permit only a guarded same-build orphan-exit
+policy refresh — and daemon startup and connection timeouts surface as
+structured, retryable failures (Space #222). Every v0.7.96 stable and
+v0.7.97-alpha.1 through alpha.6 contract is retained. npm publication
+remains a manual maintainer action.
+
 ### Fixed
 
 - Space Issue 222: resolve the daemon that owns the canonical Session directory across profiles before startup, and recheck ownership if a peer wins during bootstrap. Wait for a starting owner's descriptor within the original startup deadline and cancellation signal. Reuse compatible Hosts without restarting work. Permit guarded same-build orphan-exit policy refresh, retaining active-work preflight, exact owner identity and process-exit verification. Publish structured owner/profile and upgrade blocker diagnostics; mark transient blockers retryable.
-- Add bundled real-process shared-Host recovery to the continuous `test:bundle` gate. The local integration candidate is `0.7.97-alpha.6.issue222.3`; it has not been published to npm.
+- Add bundled real-process shared-Host recovery to the continuous `test:bundle` gate.
 
 ---
 

@@ -136,6 +136,40 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.97-alpha.7 release preparation
+
+Release state: `v0.7.97-alpha.7` is the GitHub pre-release for the exact
+tagged commit — the seventh alpha of the v0.7.97 line, shipping the Space
+#222 shared-Session Host ownership resolution and the structured retryable
+daemon startup/connection timeouts. The tag-triggered Release workflow runs
+the full reusable CI workflow before the build matrix; branch pushes do not
+trigger CI, so the tag is the first and only remote validation gate. The
+`-alpha` suffix marks the release as a GitHub pre-release automatically.
+npm registry publication remains a separate manual maintainer action.
+
+On top of v0.7.97-alpha.6 it includes:
+
+- Shared-Session Host ownership resolution: the launcher resolves the daemon
+  that owns the canonical Session directory across daemon profiles before
+  startup, waits for a starting owner's verified descriptor within the
+  original startup deadline and cancellation signal, and rechecks ownership
+  if a peer wins during bootstrap (`session_storage_owned` is retryable).
+- Safe Host reuse and guarded policy refresh: compatible Hosts are reused
+  without restarting work; only a same-build orphan-exit policy refresh is
+  permitted, retaining active-work preflight, exact owner identity, and
+  process-exit verification.
+- Structured diagnostics and retryable timeouts: owner/profile and
+  upgrade-blocker diagnostics publish; daemon startup failures expose
+  retryable `daemon_startup_failed` (`timeout`/`unhealthy`) and daemon
+  connection timeouts surface as `ETIMEDOUT`, so clients can retry without
+  losing state.
+- Bundle gate growth: `test:bundle` now includes bundled real-process
+  shared-Host recovery (`tests/bundled-shared-host-recovery.test.mjs`).
+
+All root/workspace package versions and lockfile entries are
+`0.7.97-alpha.7`. The feature-design submodule, public guides, architecture
+documents, and `kodax_manual` track this release.
+
 ## v0.7.97-alpha.6 release preparation
 
 Release state: `v0.7.97-alpha.6` is the GitHub pre-release for the exact

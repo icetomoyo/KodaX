@@ -2,7 +2,21 @@
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
 
-> Last updated: 2026-10-15
+> Last updated: 2026-10-16
+>
+> **v0.7.97-alpha.7 release addendum:** Space #222's shared-Session Host
+> ownership is resolved without a Host capability bump: the launcher finds
+> the daemon that owns the canonical Session directory across daemon
+> profiles before startup, waits for a starting owner's verified descriptor
+> within the original startup deadline and cancellation signal, and
+> rechecks ownership if a peer wins during bootstrap. Compatible Hosts are
+> reused without restarting work; only a guarded same-build orphan-exit
+> policy refresh is permitted, retaining active-work preflight, exact owner
+> identity, and process-exit verification. Structured owner/profile and
+> upgrade-blocker diagnostics publish; daemon startup and connection
+> timeouts surface as retryable `daemon_startup_failed` and `ETIMEDOUT`
+> failures. Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.6
+> contract is retained.
 >
 > **v0.7.97-alpha.6 release addendum:** FEATURE_298's startup and Session
 > contracts are extended without a Host capability bump: shared-Host startup

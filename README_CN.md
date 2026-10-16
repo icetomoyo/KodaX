@@ -314,6 +314,14 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 [v0.7.97-alpha.4 发布清单](docs/release.md#v0797-alpha4-release-preparation)。
 所有 v0.7.96 稳定与 v0.7.97-alpha.1/alpha.2/alpha.3 契约全部保留。
 
+**v0.7.97-alpha.7 发布**：跨 daemon profile 解析共享 Session 存储的 Host
+归属（Space #222）——启动器在原启动期限内等待启动中 owner 的已验证描述符，
+兼容 Host 直接复用而不重启工作，仅允许受控的同构建 orphan-exit 策略刷新。
+结构化 owner/profile 与升级阻塞诊断对外发布，daemon 启动与连接超时以可重试的
+`daemon_startup_failed` 与 `ETIMEDOUT` 呈现。
+详见 [v0.7.97-alpha.7 发布清单](docs/release.md#v0797-alpha7-release-preparation)。
+所有 v0.7.96 稳定与 v0.7.97-alpha.1 至 alpha.6 契约全部保留。
+
 **v0.7.97-alpha.6 发布**：精简共享 Host 启动——历史子进程恢复在 owner fence
 下只运行一次，预检投影规范 Actor 元数据而不加载 transcript；`kodax -r`、Host
 与 SDK 的 Session 列表按真实最近消息活动排序并暴露可选 `lastMessageAt`。

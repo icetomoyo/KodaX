@@ -789,6 +789,17 @@ starts, upgrades, or waits. See
 Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2/alpha.3 contract is
 retained.
 
+**v0.7.97-alpha.7 release:** Resolves shared-Session Host ownership across
+daemon profiles (Space #222) — launchers wait for a starting owner's verified
+descriptor within the original startup deadline, reuse compatible Hosts
+without restarting work, and permit only a guarded same-build orphan-exit
+policy refresh. Structured owner/profile and upgrade-blocker diagnostics
+publish, and daemon startup and connection timeouts surface as retryable
+`daemon_startup_failed` and `ETIMEDOUT` failures. See the
+[v0.7.97-alpha.7 release notes](docs/release.md#v0797-alpha7-release-preparation).
+Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.6 contract is
+retained.
+
 **v0.7.97-alpha.6 release:** Streamlines shared-Host startup — historical
 child recovery runs once under the owner fences and preflight projects
 canonical Actor metadata without loading transcripts — and orders `kodax -r`,
@@ -2074,7 +2085,7 @@ This development tree exposes 13 SDK subpaths plus the root. Shared product
 applications use `@kodax-ai/kodax/client`; independent libraries and trusted Host
 APIs remain available through the other subpaths. See the [Client contract](docs/CLIENT_CONTRACT.md)
 and [SDK migration guide](docs/SDK_MIGRATION.md). This documentation was checked
-against package version `0.7.97-alpha.6`; npm publication is separate from
+against package version `0.7.97-alpha.7`; npm publication is separate from
 the current development-tree contract.
 
 ```bash

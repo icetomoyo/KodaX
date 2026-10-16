@@ -11,10 +11,10 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-alpha.6` (Git tag / GitHub pre-release); `v0.7.96` remains the last stable release |
-| Current package version | `@kodax-ai/kodax@0.7.97-alpha.6` (npm publication remains manual) |
+| Current released version | `v0.7.97-alpha.7` (Git tag / GitHub pre-release); `v0.7.96` remains the last stable release |
+| Current package version | `@kodax-ai/kodax@0.7.97-alpha.7` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 core packages + independent optional `artifacts` |
-| Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3` and extended with startup streamlining, Session recency ordering, draft admission and concurrent-launch recovery through `v0.7.97-alpha.6`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
+| Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3` and extended with startup streamlining, Session recency ordering, draft admission, concurrent-launch recovery and shared-Session Host ownership resolution through `v0.7.97-alpha.7`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement released in alpha.4; missing visual capabilities remain unverified; [design](research/verifier-replacement-visual-review-2026-10-11.md) |
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
 | Current development | `v0.7.97` / `FEATURE_298` — cross-platform/manual release verification for the alpha continues |
@@ -523,6 +523,23 @@
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
 ---
+
+## v0.7.97-alpha.7 Release Record
+
+`v0.7.97-alpha.7` is the seventh alpha of the v0.7.97 line: shared-Session
+Host ownership resolves across daemon profiles (Space #222) — the launcher
+finds the daemon that owns the canonical Session directory before startup,
+waits for a starting owner's verified descriptor within the original startup
+deadline and cancellation signal, and rechecks ownership if a peer wins
+during bootstrap. Compatible Hosts are reused without restarting work; only
+a guarded same-build orphan-exit policy refresh is permitted, retaining
+active-work preflight, exact owner identity, and process-exit verification.
+Structured owner/profile and upgrade-blocker diagnostics publish, and daemon
+startup and connection timeouts surface as retryable `daemon_startup_failed`
+and `ETIMEDOUT` failures. The continuous `test:bundle` gate now includes
+bundled real-process shared-Host recovery. Every v0.7.96 stable and
+v0.7.97-alpha.1 through alpha.6 contract is retained. Cross-platform manual
+acceptance and npm publication remain manual maintainer steps.
 
 ## v0.7.97-alpha.6 Release Record
 
