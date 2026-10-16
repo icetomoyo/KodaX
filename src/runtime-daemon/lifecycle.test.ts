@@ -31,6 +31,33 @@ afterEach(() => {
 });
 
 describe('runtime daemon lifecycle health checks', () => {
+  it('holds temporary client admission before checking a startup owner identity and always closes it', async () => {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), 'default');
+    const current = state();
+    writeRuntimeDaemonState(paths, current);
+    expect(tryAcquireRuntimeDaemonLock(paths, owner(current.runtimeId, current.pid))).toBeDefined();
+    const calls: string[] = [];
+    const observation = await observeRuntimeDaemonHealth(paths, {
+      connectionPurpose: 'client',
+      isPidAlive: () => {
+        expect(calls).toEqual(['client:initialize']);
+        calls.push('check:identity');
+        return true;
+      },
+      createTransport: async () => ({
+        async request(_method, params) {
+          expect(params).toMatchObject({ connectionPurpose: 'client' });
+          calls.push('client:initialize');
+          return { identity: { runtimeId: current.runtimeId, profile: current.profile } };
+        },
+        subscribe() { return { close() {} }; },
+        close() { calls.push('client:close'); },
+      }),
+    });
+    expect(observation).toMatchObject({ pidAlive: true, endpointReachable: true, identityMatches: true });
+    expect(calls).toEqual(['client:initialize', 'check:identity', 'client:close']);
+  });
+
   it('observes a healthy daemon through initialize handshake identity', async () => {
     const paths = resolveRuntimeDaemonPaths(tempHome(), 'default');
     const current = state();

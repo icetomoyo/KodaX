@@ -18,6 +18,8 @@ import {
 } from './transport.js';
 
 export interface RuntimeDaemonHealthCheckOptions {
+  /** Fresh startup candidates hold admission while their OS identity is checked. */
+  readonly connectionPurpose?: 'probe' | 'client';
   readonly connectTimeoutMs?: number;
   readonly handshakeTimeoutMs?: number;
   readonly isPidAlive?: (pid: number) => boolean;
@@ -40,7 +42,7 @@ export async function observeRuntimeDaemonHealth(
   }
 
   const lockOwner = readRuntimeDaemonLockOwner(paths.lockFile);
-  const pidAlive = options.isPidAlive
+  const readPidAlive = (): boolean => options.isPidAlive
     ? options.isPidAlive(state.pid)
     : isRuntimeDaemonOwnerPidAlive(state.pid,
       runtimeDaemonLockMatchesState(lockOwner, state) ? lockOwner?.processStartIdentity : undefined);
@@ -57,7 +59,7 @@ export async function observeRuntimeDaemonHealth(
     );
     const request = transport.request('initialize', {
       profile: state.profile,
-      connectionPurpose: 'probe',
+      connectionPurpose: options.connectionPurpose ?? 'probe',
       ...(token !== undefined ? { token } : {}),
     });
     request.catch(() => undefined);
@@ -69,7 +71,7 @@ export async function observeRuntimeDaemonHealth(
     return {
       state,
       initialization: initialized,
-      pidAlive,
+      pidAlive: readPidAlive(),
       endpointReachable: true,
       identityMatches: daemonIdentityMatchesState(initialized, state)
         && runtimeDaemonLockMatchesState(lockOwner, state),
@@ -79,7 +81,7 @@ export async function observeRuntimeDaemonHealth(
     if (isRuntimeDaemonTransportError(error) && error.code === 'unauthorized') {
       return {
         state,
-        pidAlive,
+        pidAlive: readPidAlive(),
         endpointReachable: true,
         identityMatches: false,
         ...(lockOwner !== undefined ? { observedLockOwner: lockOwner } : {}),
@@ -87,7 +89,7 @@ export async function observeRuntimeDaemonHealth(
     }
     return {
       state,
-      pidAlive,
+      pidAlive: readPidAlive(),
       endpointReachable: false,
       identityMatches: false,
       ...(lockOwner !== undefined ? { observedLockOwner: lockOwner } : {}),

@@ -53,6 +53,11 @@ three original crash tests.
   out or cancels within that same budget and closes the temporary client.
   Shutdown outcome verification and Client exit receipts use the same
   conservative generation check.
+- Newly spawned candidates hold a temporary authenticated Client admission
+  during OS identity inspection, then close it before the real attachment.
+  This preserves the existing 150ms Windows orphan-exit smoke with slower
+  process identity queries. Ordinary health and existing-owner probes stay
+  passive; no PID generation assertion or orphan timeout is relaxed.
 - Initialization is the only replayed RPC. No retry bypasses identity checks,
   force-releases a live owner or resubmits an input/tool operation.
 
