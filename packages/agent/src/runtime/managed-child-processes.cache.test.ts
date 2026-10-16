@@ -145,6 +145,80 @@ describe.runIf(process.platform === 'win32')('managed child cleanup query reuse'
     }
   });
 
+  it.each(['unreadable', 'permission-denied', 'missing'] as const)(
+    'preserves incomplete Run trees with %s live identities without attempting termination',
+    async evidence => {
+      tempHome = await mkdtemp(path.join(tmpdir(), 'kodax-managed-unknown-run-pids-'));
+      const ownerPid = 93_000;
+      const pids = Array.from({ length: 32 }, (_, index) => 93_001 + index);
+      const signal = vi.spyOn(process, 'kill').mockImplementation((pid, value) => {
+        if (value !== 0) throw new Error('Cleanup must not signal an unverified process');
+        if (pids.includes(pid)) {
+          if (evidence === 'permission-denied') throw Object.assign(new Error('denied'), { code: 'EPERM' });
+          return true;
+        }
+        throw Object.assign(new Error('gone'), { code: 'ESRCH' });
+      });
+      spawnSyncMock.mockReturnValue({ status: 0,
+        stdout: evidence === 'missing' ? '4,0,0' : pids.map(pid => `${pid},4,0`).join('\n'),
+      });
+      const directory = path.join(tempHome, 'runtime', 'processes', 'children');
+      await mkdir(directory, { recursive: true });
+      const records = pids.map(pid => {
+        const registrationId = '95bc0da4-8673-43c6-a8e7-a2c081da6dce';
+        return { file: path.join(directory, `${pid}.${registrationId}.json`),
+          bytes: JSON.stringify({ version: 4, registrationId, pid, ownerPid,
+            registeredAtMs: 100, kind: 'bash', command: process.execPath, runtimeRunId: 'run-a',
+            processStartIdentity: '111', processTreeComplete: false,
+            processTreeIdentities: [{ pid, creationTime: '111' }],
+          }),
+        };
+      });
+      await Promise.all(records.map(({ file, bytes }) => writeFile(file, bytes)));
+
+      await expect(cleanupRegisteredManagedChildren({ configHome: tempHome })).resolves.toEqual({
+        killed: 0, pruned: 0, skipped: pids.length,
+      });
+      expect(spawnSyncMock.mock.calls.some(([, args]) =>
+        (args as string[]).join(' ').includes('[KodaXNativeProcessSnapshot]::TerminateExact('),
+      )).toBe(false);
+      expect(spawnSyncMock.mock.calls.length).toBeLessThanOrEqual(1);
+      expect(signal.mock.calls.every(([, value]) => value === 0)).toBe(true);
+      for (const { file, bytes } of records) await expect(readFile(file, 'utf8')).resolves.toBe(bytes);
+    },
+  );
+
+  it('still attempts exact cleanup for a verified descendant of an unreadable incomplete root', async () => {
+    tempHome = await mkdtemp(path.join(tmpdir(), 'kodax-managed-known-descendant-'));
+    const pid = 93_001;
+    const descendantPid = 93_002;
+    vi.spyOn(process, 'kill').mockImplementation((target, value) => {
+      if (value !== 0) throw new Error('Cleanup must use exact process identities');
+      if (target === pid || target === descendantPid) return true;
+      throw Object.assign(new Error('gone'), { code: 'ESRCH' });
+    });
+    spawnSyncMock.mockReturnValue({ status: 0, stdout: `${pid},4,0\n${descendantPid},4,112` });
+    const directory = path.join(tempHome, 'runtime', 'processes', 'children');
+    await mkdir(directory, { recursive: true });
+    const registrationId = '95bc0da4-8673-43c6-a8e7-a2c081da6dce';
+    const file = path.join(directory, `${pid}.${registrationId}.json`);
+    const bytes = JSON.stringify({ version: 4, registrationId, pid, ownerPid: 93_000,
+      registeredAtMs: 100, kind: 'bash', command: process.execPath, runtimeRunId: 'run-a',
+      processStartIdentity: '111', processTreeComplete: false, processTreeIdentities: [
+        { pid, creationTime: '111' }, { pid: descendantPid, creationTime: '112' },
+      ],
+    });
+    await writeFile(file, bytes);
+
+    await expect(cleanupRegisteredManagedChildren({ configHome: tempHome })).resolves.toEqual({
+      killed: 0, pruned: 0, skipped: 1,
+    });
+    expect(spawnSyncMock.mock.calls.some(([, args]) => (args as string[]).join(' ')
+      .includes(`[KodaXNativeProcessSnapshot]::TerminateExact(${descendantPid}, [UInt64]112)`),
+    )).toBe(true);
+    expect(await readFile(file, 'utf8')).toBe(bytes);
+  });
+
   it('queries all live owner identities in one Windows process snapshot', async () => {
     tempHome = await mkdtemp(path.join(tmpdir(), 'kodax-managed-owner-batch-'));
     setAgentConfigHome(tempHome);

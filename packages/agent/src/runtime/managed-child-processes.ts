@@ -87,7 +87,7 @@ async function cleanupManagedRunChildProcessWithOwnerIdentity(
     const owned = record.ownerPid === process.pid && sameRunChildRecord(active?.record, record);
     if (!owned && !runChildOwnerIsGone(record, readOwnerStartIdentity)) return { status: 'unknown' };
     if (!owned && record.processStartIdentity === undefined) return { status: 'unknown' };
-    if (!owned && incompleteRunTreeTargetsAreGone(record)) return { status: 'unknown' };
+    if (!owned && incompleteRunTreeNeedsNoTermination(record, expectedRecord !== undefined)) return { status: 'unknown' };
     if (!owned) record = persistRunChildTree(record);
     const result = owned ? await killChildProcessTree(active!.child) : await killPidTree(record.pid, {
       expectedProcessStartIdentity: record.processStartIdentity,
@@ -121,25 +121,29 @@ function sameRunChildRecord(current: ManagedChildProcessRecord | undefined, expe
     && current.processStartIdentity === expected.processStartIdentity && current.registeredAtMs === expected.registeredAtMs;
 }
 
-function incompleteRunTreeTargetsAreGone(record: ManagedChildProcessRecord): boolean {
+function incompleteRunTreeNeedsNoTermination(
+  record: ManagedChildProcessRecord,
+  skipUnverifiableTargets: boolean,
+): boolean {
   if (process.platform !== 'win32' || record.processTreeComplete === true) return false;
   const identities = record.processTreeIdentities;
   const root = identities?.find((identity) => identity.pid === record.pid);
   if (identities === undefined || record.processStartIdentity === undefined
     || root?.creationTime !== record.processStartIdentity) return false;
-  // A missing root cannot reveal a new tree. When every retained target is
-  // also gone, exact termination would do nothing and cleanup stays unconfirmed.
+  // A historical sweep keeps unverifiable incomplete trees unknown instead of
+  // launching a native helper per record and invalidating its shared snapshot.
+  // An explicit Run cleanup can still try exact-handle recovery independently.
   return identities.every(({ pid, creationTime }) => {
-    if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+    if (!Number.isSafeInteger(pid) || pid <= 0) return skipUnverifiableTargets;
     try {
       process.kill(pid, 0);
-      if (creationTime === '0') return false;
-      // An alive, reused PID is not the retained process. One shared native
-      // snapshot avoids repeatedly attempting exact termination of old trees.
+      if (creationTime === '0') return skipUnverifiableTargets;
       const current = readProcessStartIdentity(pid);
-      return current !== undefined && current !== creationTime;
+      return current === undefined ? skipUnverifiableTargets : current !== creationTime;
     }
-    catch (error: unknown) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
+    catch (error: unknown) {
+      return skipUnverifiableTargets || (error as NodeJS.ErrnoException).code === 'ESRCH';
+    }
   });
 }
 

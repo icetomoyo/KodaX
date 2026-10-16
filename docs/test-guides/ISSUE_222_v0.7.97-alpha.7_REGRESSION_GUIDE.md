@@ -70,3 +70,36 @@ the original `session_storage_owned` at `sdk-runtime.ts:6404`.
 Local Windows Node 22 validation passes the original three crash cases, typed
 source/test checks and the related ownership/upgrade suites. Linux acceptance
 and full CI must pass on the fixed commit before creating the release tag.
+
+## Windows startup latency follow-up
+
+An automatic historical child sweep must preserve an incomplete Run tree as
+`unknown` when none of its retained process identities can be verified alive.
+A live PID with unreadable start identity, `EPERM`, or an absent snapshot row
+does not justify launching an exact-termination helper for every old record.
+Those helpers invalidate the shared process snapshot and make startup cost grow
+with history. Keep the records intact; explicit Run recovery can still attempt
+exact-handle recovery, and a verified live descendant still receives cleanup.
+
+Run the Windows query regression and the existing recovery cases:
+
+```sh
+npx vitest run packages/agent/src/runtime/managed-child-processes.cache.test.ts packages/agent/src/runtime/managed-child-processes.run.test.ts
+```
+
+The deterministic cases cover 32 records each with unreadable, denied, or
+missing current identities: no termination requests, at most one snapshot,
+unchanged records, and no verified cleanup. A separate case retains exact
+cleanup of a known live descendant under an unreadable root.
+
+Local Windows Node 22 measurement with 24 protected-PID historical records:
+11,069ms and 48 PowerShell helpers before the fix; 10ms and no helpers after it.
+Termination calls were removed from the diagnostic subprocess scripts, so this
+measurement exercised OS helper startup without signaling any real process.
+All 24 records remained unknown and present in both runs.
+
+The user's active Host was left running. Its passive connection measured 6ms;
+same-build attachment measured 747ms and 745ms. Its full management inspection
+still measured 5.4s/5.1s with 3,015 active Session files. These are separate
+costs; the screenshot's entire 33-second refresh was not replayed against the
+active user Host.
