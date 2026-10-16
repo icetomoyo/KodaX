@@ -103,3 +103,11 @@ same-build attachment measured 747ms and 745ms. Its full management inspection
 still measured 5.4s/5.1s with 3,015 active Session files. These are separate
 costs; the screenshot's entire 33-second refresh was not replayed against the
 active user Host.
+
+Follow-up validation on Windows Node 22: 162 tests passed and three
+platform-specific cases skipped, including all three original crash cases;
+the full build and source/test type checks passed. Both review axes reported
+no findings. The changed cleanup predicate has 17/17 statements and 19/19
+branches covered. The selected suites cover 70.85% of the whole registry
+module's lines; this is not a claim that the repository's 80% overall coverage
+or a new release gate has passed.
