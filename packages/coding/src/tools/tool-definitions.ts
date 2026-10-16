@@ -209,13 +209,7 @@ const RUN_WORKFLOW_DESCRIPTION = [
 const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   {
     name: 'read',
-    description: [
-      'Read a file from the local filesystem with bounded output.',
-      '- Text files: returns line-numbered content. Large files are capped per call; use offset/limit to continue in smaller slices. A partial-line continuation marker provides the exact line_offset cursor for lines that exceed one response chunk.',
-      '- Image files (PNG, JPG, JPEG, GIF, WEBP): returns the image as inline vision content. The model is multimodal — when an image is delivered through this tool, you can see the picture directly in your next turn. Describe what you see; do NOT claim binary files are unsupported — the tool decodes the image bytes into vision content for the model, so refusing as "binary file" skips a valid read and frustrates the user.',
-      '- For pasted/attached images already inlined in the user message, you already perceive them via native vision — no `read` call is needed. Use `read` on an image path only when the file is on disk and not yet in the conversation (e.g., a fresh path the user mentioned in text without attaching).',
-      '- PDF files (.pdf): do not use this tool for PDF content. If the `read_pdf` tool is available, call `read_pdf` directly with the PDF path; it extracts page-marked text and can OCR scanned pages when configured. If `read_pdf` is unavailable, tell the user to enable/install the read_pdf extension.',
-    ].join('\n'),
+    description: "Read a local file with bounded output. Text is line-numbered; continue using offset/limit and the exact line_offset cursor from the partial-line continuation marker. PNG/JPG/JPEG/GIF/WEBP return inline vision content: inspect them directly; do not reject them as binary. Read an image path only if it is not already attached or inlined in the conversation. For PDF content, use read_pdf; if unavailable, tell the user to enable/install that extension.",
     input_schema: {
       type: 'object',
       properties: {
@@ -379,18 +373,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'write',
-    description:
-      'Write content to a file on the local filesystem. Large diffs may be summarized in the tool result.\n\n'
-      + '## When to Use This Tool\n\n'
-      + '- Creating a NEW file the user explicitly asked for.\n'
-      + '- Performing a complete rewrite of an existing file the user explicitly requested.\n'
-      + '- Writing a structural skeleton with placeholder markers (e.g. `<!-- SECTION_A -->` or `// === SECTION_A ===`), then filling each section with `edit` / `multi_edit`. This pattern streams reliably for files too large to write in one pass.\n\n'
-      + '## When NOT to Use This Tool\n\n'
-      + '- Modifying an existing file — call `edit` (single change) or `multi_edit` (multiple independent changes) instead. `edit` sends only the diff and avoids output-token pressure and mid-stream truncation on large files.\n'
-      + '- Generating a known-content file through `bash` heredocs (`cat > file <<EOF`), `echo > file`, PowerShell `Set-Content` / `Out-File`, or python/node heredoc. Shell redirection bypasses mutation tracking, loses diff visibility to downstream verification, and recurses the same streaming limit onto the generator script itself.\n'
-      + '- Switching to `python` / `bash` scripts to "avoid encoding problems". `write` calls Node `fs.writeFile(path, content, "utf-8")` — content goes directly from your tool_use input to disk WITHOUT passing through any shell. UTF-8 (Chinese / emoji / etc.) works correctly by default; routing through a shell adds encoding surface area rather than removing it.\n\n'
-      + '## Recovery\n\n'
-      + 'If a `write` failed mid-stream, retry with a smaller skeleton, then `edit` each section.',
+    description: "Write a new file explicitly requested by the user, or an explicitly requested complete rewrite. For existing-file changes, use edit; large diffs may be summarized. For oversized content or a mid-stream failure, write a smaller skeleton with placeholders, then fill sections using edit. Use write/edit for known content: shell redirection bypasses mutation tracking and diff verification, and moves the streaming limit to the generator. Shell scripts are for computed output. write sends UTF-8 directly to fs.writeFile without a shell; Chinese/emoji need no encoding workaround.",
     input_schema: {
       type: 'object',
       properties: {
@@ -516,17 +499,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'bash',
-    description:
-      'Execute a shell command. Use `run_in_background` for long-running commands. Output is captured completely; only a real next-request capacity overflow produces an explicit recoverable artifact preview.\n\n'
-      + '## When to Use This Tool\n\n'
-      + '- Tests, builds, lint, type-checking, package managers.\n'
-      + '- Git operations (status, diff, log, blame, commit, push).\n'
-      + '- Process inspection / management (ps, kill, top).\n'
-      + '- File system queries not covered by dedicated tools — `grep` and `glob` have dedicated tools, but `find` / `du` / `df` etc. go through bash.\n'
-      + '- Computed or templated multi-file generation — e.g. generating 50 similar test fixtures from a template script.\n\n'
-      + '## When NOT to Use This Tool\n\n'
-      + '- Producing a SINGLE file whose content you already have — call `write` or `edit` instead. Shell redirection (`cat > file <<EOF`, `echo ... >`, PowerShell `Set-Content` / `Out-File`, python/node heredoc) bypasses the mutation tracker, loses diff visibility to downstream verification, and re-encounters the same streaming limit on the generator script itself.\n'
-      + '- Reproducing a hand-written file you already have in memory — write it directly with `write`. Use a shell script ONLY when the output is computed (loops, templating over many files, data transformation of an input you are reading).',
+    description: "Execute shell commands for tests/builds/lint, packages, Git, process management, filesystem queries without dedicated tools, or computed/template-driven multi-file generation. Use grep/glob for their dedicated searches. Use run_in_background for long commands. Output is fully captured; only next-request capacity overflow yields a recoverable artifact preview. For a known-content file, use write/edit: shell redirection, heredocs, Set-Content/Out-File or Python/Node wrappers bypass mutation tracking and diff verification, and move the streaming limit to the generator.",
     input_schema: {
       type: 'object',
       properties: {
@@ -578,25 +551,25 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     input_schema: {
       type: 'object',
       properties: {
-        pattern: { type: 'string', description: 'The regex pattern to search for in file contents' },
-        path: { type: 'string', description: 'File or directory to search in. Defaults to current working directory.' },
-        glob: { type: 'string', description: 'Glob pattern to filter files (e.g. "*.js", "*.{ts,tsx}")' },
-        type: { type: 'string', description: 'File type to search (e.g. js, ts, py, go, rust, java). More efficient than glob for standard types.' },
+        pattern: { type: 'string', description: "Regex to match in file contents." },
+        path: { type: 'string', description: "File or directory; defaults to cwd." },
+        glob: { type: 'string', description: "File glob, e.g. *.{ts,tsx}." },
+        type: { type: 'string', description: "File type such as ts or py; preferred over glob for standard types." },
         output_mode: {
           type: 'string',
           enum: ['content', 'files_with_matches', 'count'],
-          description: 'Output mode. "content" shows matching lines (default), "files_with_matches" shows file paths only, "count" shows match counts.',
+          description: "content (default): matching lines; files_with_matches: paths; count: per-file match counts.",
         },
-        ignore_case: { type: 'boolean', description: 'Case insensitive search (default false)' },
+        ignore_case: { type: 'boolean', description: "Case-insensitive matching; default false." },
         '-i': { type: 'boolean', description: 'Alias for ignore_case' },
-        '-A': { type: 'number', description: 'Number of lines to show after each match. Requires output_mode "content".' },
-        '-B': { type: 'number', description: 'Number of lines to show before each match. Requires output_mode "content".' },
+        '-A': { type: 'number', description: "Following context lines; content mode only." },
+        '-B': { type: 'number', description: "Preceding context lines; content mode only." },
         '-C': { type: 'number', description: 'Alias for context' },
-        context: { type: 'number', description: 'Number of lines to show before and after each match. Requires output_mode "content".' },
-        multiline: { type: 'boolean', description: 'Enable multiline mode where . matches newlines and patterns can span lines. Default: false.' },
-        head_limit: { type: 'number', description: 'Limit output to first N entries. Defaults to 250. Pass 0 to remove the entry-count cap; the source byte budget still applies.' },
-        offset: { type: 'number', description: 'Skip first N entries before applying head_limit. Defaults to 0.' },
-        scan_offset: { type: 'number', description: 'Skip candidate files already scanned by a prior SOURCE_INCOMPLETE continuation.' },
+        context: { type: 'number', description: "Context lines on both sides; content mode only." },
+        multiline: { type: 'boolean', description: "Allow . and matches across newlines; default false." },
+        head_limit: { type: 'number', description: "Maximum output entries; default 250, 0 disables this cap. Source byte budget still applies." },
+        offset: { type: 'number', description: "Entries to skip; default 0." },
+        scan_offset: { type: 'number', description: "Candidate files skipped for SOURCE_INCOMPLETE continuation." },
       },
       required: ['pattern'],
     },
@@ -1370,7 +1343,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
           type: 'string',
           enum: ['complete', 'blocked'],
           description:
-            'New status. "complete" requires the objective to be achieved; "blocked" requires the same blocker_kind across 3 consecutive turns.',
+            "Target goal status.",
         },
         blocker_kind: {
           type: 'string',
@@ -1677,7 +1650,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'lsp_definition',
-    description: "Jump to where the symbol at a specific line/column is DEFINED, using the language server's live view of the current code. Use this when you are looking at a usage and need its exact definition site — it resolves through imports, re-exports, and overloads the way the compiler does, which `grep` cannot. Give the 1-based line and column of the symbol as it appears in the file you just read. Prefer this when you want the precise single definition of the symbol right where you are; prefer `symbol_context` when you want the repo-wide usage graph (callers/callees) of a named symbol. Needs a language server for the file's language installed (TypeScript/JS, Python, Go, Rust, Java); returns install guidance otherwise.",
+    description: "Find the compiler-resolved definition at a file position, through imports, re-exports and overloads. Give 1-based line/character from a recent read. Prefer symbol_context for a named symbol's repo-wide callers/callees. Requires the language's server; returns install guidance if unavailable.",
     input_schema: {
       type: 'object',
       properties: {
@@ -1693,7 +1666,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'lsp_hover',
-    description: 'Show the type, signature, and doc of the symbol at a specific line/column, as the language server sees it. Use this to confirm an inferred type, a function\'s parameter/return types, or a value\'s declared type before editing — it reflects the real compiler state, including generics resolved in context, so you do not have to open and read the definition just for its signature. Give the 1-based line and column of the symbol. Needs the matching language server installed.',
+    description: "Show the compiler-resolved type, signature and documentation at a 1-based file position, including resolved generics. Use before editing when you need types without reading the definition. Requires the matching language server.",
     input_schema: {
       type: 'object',
       properties: {
@@ -1709,7 +1682,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'lsp_references',
-    description: 'List every place the symbol at a specific line/column is USED (including its declaration), from the language server. Use this before renaming or changing a symbol\'s signature to see exactly what would break — it finds the structural references `grep` misses (re-exports, aliased imports) and skips the string/comment matches `grep` wrongly includes. Give the 1-based line and column. When you only have a NAME and want a quick repo-scope blast-radius estimate, use `impact_estimate`; use `lsp_references` when you have the exact position and want the compiler-accurate reference list. Needs the matching language server installed.',
+    description: "List compiler-resolved references, including the declaration, at a 1-based file position before renaming or signature changes. Follows re-exports and aliases; excludes string/comment matches. Use impact_estimate for a quick name-only repo blast radius. Requires the matching language server.",
     input_schema: {
       type: 'object',
       properties: {
@@ -1725,7 +1698,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'lsp_document_symbols',
-    description: 'Outline the symbols (classes, functions, methods, fields) declared in a single file, with their lines, from the language server. Use this to get oriented in an unfamiliar file without reading all of it, or to find the line of a member before an `lsp_definition` / `lsp_hover` / `edit`. For a repo-scope structural view across modules use `module_context`; `lsp_document_symbols` is the precise single-file outline. Needs the matching language server installed.',
+    description: "Outline a file's classes, functions, methods and fields with line numbers through its language server. Use to locate a member before navigation/editing without reading the file. For a module overview use module_context. Requires the matching language server.",
     input_schema: {
       type: 'object',
       properties: {

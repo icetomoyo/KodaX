@@ -3,6 +3,16 @@ import type { ToolDefinitionSource } from './types.js';
 
 /** Keep runner-only list seeding callable internally, outside the model contract. */
 export function projectModelToolDefinition<T extends KodaXToolDefinition>(tool: T, source?: ToolDefinitionSource): T {
+  if (source?.kind === 'builtin') {
+    const aliases = tool.name === 'grep' ? ['-i', '-C']
+      : ['lsp_implementation', 'lsp_prepare_call_hierarchy', 'lsp_incoming_calls', 'lsp_outgoing_calls'].includes(tool.name) ? ['column'] : [];
+    if (aliases.length > 0) return {
+      ...tool,
+      input_schema: { ...tool.input_schema, properties: Object.fromEntries(
+        Object.entries(tool.input_schema.properties).filter(([name]) => !aliases.includes(name)),
+      ) },
+    };
+  }
   if (source?.kind === 'builtin' && tool.name === 'edit') {
     const { path, edits } = tool.input_schema.properties;
     return {

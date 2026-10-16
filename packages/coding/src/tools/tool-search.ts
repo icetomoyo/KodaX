@@ -209,11 +209,9 @@ export const toolSearchHandler: ToolHandlerSync = async (input, context) => {
 export const TOOL_SEARCH_DEFINITION: LocalToolDefinition = {
   name: 'tool_search',
   description: [
-    'Fetch full schema definitions for tools whose rich descriptions are deferred behind compact search hints.',
-    'The deferred catalog includes web discovery, repo intelligence (module_context / symbol_context / impact_estimate / process_context / changed_scope / repo_overview / semantic_lookup / code_search), and run_workflow.',
-    'Use `tool_search` when a hint suggests a tool fits the task and you need the full schema (parameter shape, when-to-prefer-X, behavioral contracts) before invoking.',
-    'Query forms: `select:ToolName` (exact, recommended) or keyword search like `"+module exploration"` (require keyword) / `"refactor impact"` (loose match, ranked).',
-    'On the SA path, resolving a deferred tool unlocks its full description for later tool lists in the same context. On the AMA managed path, the tool list is static, so the `tool_search` result itself is the durable teaching surface.',
+    'Look up full contracts for active tools. Native parameter schemas are already callable; look up richer selection or behavior guidance when needed.',
+    'Use query="select:NAME[,NAME...]" for exact lookup across discoverable tools. Keyword queries search compact-hint web/repo/workflow tools, with +required terms and loose ranked terms.',
+    'Results include full descriptions and schemas. Use the returned contract even if later tool lists remain compact.',
   ].join(' '),
   input_schema: {
     type: 'object',

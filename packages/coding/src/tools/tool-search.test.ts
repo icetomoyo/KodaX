@@ -418,7 +418,8 @@ describe('FEATURE_189 B.2 — tool_search handler', () => {
     expect(TOOL_SEARCH_DEFINITION.planModeAllowed).toBe(true);
     expect(TOOL_SEARCH_DEFINITION.description).not.toContain('get_goal / create_goal / update_goal');
     expect(TOOL_SEARCH_DEFINITION.description).not.toContain('mcp_*');
-    expect(TOOL_SEARCH_DEFINITION.description).toContain('AMA managed path');
+    expect(TOOL_SEARCH_DEFINITION.description).toContain('Native parameter schemas are already callable');
+    expect(TOOL_SEARCH_DEFINITION.description).toContain('even if later tool lists remain compact');
     expect(TOOL_SEARCH_DEFINITION.description).not.toContain('AMAW');
   });
 });
@@ -525,6 +526,6 @@ describe('FEATURE_189 B.2 — getActiveToolDefinitions deferred description swap
     const ts = defs.find((d) => d.name === 'tool_search');
     expect(ts).toBeDefined();
     expect(ts!.description.length).toBeGreaterThan(200);
-    expect(ts!.description).toContain('Fetch full schema');
+    expect(ts!.description).toBe(TOOL_SEARCH_DEFINITION.description);
   });
 });
