@@ -98,7 +98,7 @@ function collectToolResultEntries(batch: RunnerToolResultBatch): ToolResultBatch
   return batch.results.flatMap((result, index) => {
     const outputPath = result.metadata?.outputPath;
     return [{
-      id: batch.calls[index]!.id,
+      id: String(index),
       toolName: batch.calls[index]!.name,
       content: result.content,
       ...(typeof outputPath === 'string' && outputPath.length > 0 ? { outputPath } : {}),
@@ -118,7 +118,7 @@ function mergeGuardedResults(
     const result = original.metadata?.cancelled === undefined && original.isError === true
       && isCancelledToolResultContent(original.content)
       ? { ...original, metadata: { ...original.metadata, cancelled: true } } : original;
-    const guarded = guardedById.get(batch.calls[index]!.id);
+    const guarded = guardedById.get(String(index));
     const content = guarded?.content ?? result.content;
     if (content === result.content) return result;
     options.onCapacityFallback?.(batch.calls[index]!);

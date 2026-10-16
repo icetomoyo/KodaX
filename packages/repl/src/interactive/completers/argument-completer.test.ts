@@ -379,7 +379,7 @@ describe('ArgumentCompleter', () => {
           ['/think ', ['none', 'auto', 'low', 'medium', 'high', 'xhigh', 'max']],
           ['/reasoning ', ['none', 'auto', 'low', 'medium', 'high', 'xhigh', 'max']],
           ['/effort ', ['none', 'auto', 'low', 'medium', 'high', 'xhigh', 'max']],
-          ['/agent-mode ', ['ama', 'sa', 'toggle']],
+          ['/agent-mode ', ['ama']],
           ['/stall-log ', ['on', 'off']],
           ['/memory ', ['list', 'remember', 'forget', 'decisions', 'show', 'approve', 'reject', 'doctor', 'open', 'help']],
           ['/goal ', ['status', 'pause', 'resume', 'clear', 'help']],

@@ -43,7 +43,7 @@ it.each([true, false])('clears active Session overrides to the same Host setting
     expect(await runtime.sessions.getSettings(session.id)).toEqual({});
     // Product views resolve their built-in default without granting a low-level
     // Run an undeclared policy; its original approval hook still owns this call.
-    await expect.poll(() => views.at(-1)?.settings).toEqual({ permissionMode: 'accept-edits', ...profileSettings });
+    await expect.poll(() => views.at(-1)?.settings).toEqual({ permissionMode: 'accept-edits', agentMode: 'sa', ...profileSettings });
     const decide = () => captured!.events!.beforeToolExecute!(hasProfile ? 'edit' : 'bash',
       hasProfile ? { path: path.join(process.cwd(), 'file.ts'), old_string: 'old', new_string: 'new' } : { command: 'echo test' });
     const activeDecision = await decide();

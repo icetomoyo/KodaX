@@ -652,7 +652,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     config,
     process.env.KODAX_EFFORT,
   );
-  const initialAgentMode = options.agentMode ?? (config as { agentMode?: KodaXAgentMode }).agentMode ?? 'ama';
+  const initialAgentMode = 'ama' as const;
   const initialThinking = initialReasoningMode !== 'off';
   const initialPermissionMode: PermissionMode =
     normalizePermissionMode((config as { permissionMode?: string }).permissionMode, 'accept-edits') ?? 'accept-edits';

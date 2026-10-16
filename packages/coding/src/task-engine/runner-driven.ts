@@ -43,6 +43,7 @@ import {
 // the only remaining V2 chain agent is the Worker.
 import { WORKER_AGENT_NAME } from '../agents/task-engine-agents.js';
 import { filterModelToolAliases } from '../agent-runtime/tool-resolution.js';
+import { toolExecution } from '../agent-runtime/tool-dispatch.js';
 import { resolveProvider } from '../providers/index.js';
 import { estimateTokens } from '../tokenizer.js';
 import { rebaseContextTokenSnapshot } from '../token-accounting.js';
@@ -363,11 +364,12 @@ function isSessionBindableExtensionRuntime(
 
 function runnerToolEventMeta(
   events: KodaXOptions['events'] | undefined,
-  toolId: string,
+  call: { readonly id: string },
   attribution?: { sessionId?: string; agentProfile?: KodaXAgentProfile },
 ): KodaXToolEventMeta {
   return {
-    toolId,
+    toolId: call.id,
+    executionId: toolExecution(call).id,
     ...(events?.workflowCorrelation !== undefined ? { workflowCorrelation: events.workflowCorrelation } : {}),
     // FEATURE_247 (R8): session + profile attribution so a host running
     // concurrent Partner/Coder sessions can route tool events. The tool NAME
@@ -1849,7 +1851,7 @@ async function runManagedTaskViaRunnerInner(
       // FEATURE_247 (R1): thread the SDK-consumer profile's instructions into
       // the Worker role prompt (prepended). Undefined for the default Coding
       // Agent, so the produced prompt is byte-identical to today.
-      partnerInstructions: options.context?.agentProfile?.instructions,
+      partnerInstructions: options.context?.systemPromptOverride ?? options.context?.agentProfile?.instructions,
       contextFactory: rolePromptContextFactory,
     }
     : undefined;
@@ -2197,7 +2199,7 @@ async function runManagedTaskViaRunnerInner(
         name: call.name,
         id: call.id,
         input: call.input,
-      }, runnerToolEventMeta(options.events, call.id, {
+      }, runnerToolEventMeta(options.events, call, {
         sessionId: sessionIdRef.current,
         agentProfile: options.context?.agentProfile,
       }));
@@ -2227,7 +2229,7 @@ async function runManagedTaskViaRunnerInner(
                 .filter((i) => i.type === 'text')
                 .map((i) => (i.type === 'text' ? i.text : ''))
                 .join(''),
-      }, runnerToolEventMeta(options.events, call.id, {
+      }, runnerToolEventMeta(options.events, call, {
         sessionId: sessionIdRef.current,
         agentProfile: options.context?.agentProfile,
       }));
@@ -2235,7 +2237,7 @@ async function runManagedTaskViaRunnerInner(
     onToolExecutionStart: (call) => {
       options.events?.onToolExecutionStart?.(
         { id: call.id, name: call.name },
-        runnerToolEventMeta(options.events, call.id, {
+        runnerToolEventMeta(options.events, call, {
           sessionId: sessionIdRef.current,
           agentProfile: options.context?.agentProfile,
         }),
@@ -2244,7 +2246,7 @@ async function runManagedTaskViaRunnerInner(
     onToolExecutionEnd: (call) => {
       options.events?.onToolExecutionEnd?.(
         { id: call.id, name: call.name },
-        runnerToolEventMeta(options.events, call.id, {
+        runnerToolEventMeta(options.events, call, {
           sessionId: sessionIdRef.current,
           agentProfile: options.context?.agentProfile,
         }),

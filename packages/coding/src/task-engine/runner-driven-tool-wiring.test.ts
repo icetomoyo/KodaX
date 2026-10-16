@@ -20,12 +20,13 @@
 
 import {
   afterEach,
+  beforeAll,
   describe,
   expect,
   it,
   vi,
 } from 'vitest';
-import type { RunnableTool } from '@kodax-ai/agent';
+import { createAgentActorController, type AgentActorClient, type RunnableTool } from '@kodax-ai/agent';
 
 import {
   type AmaRole,
@@ -44,6 +45,11 @@ import { createExtensionRuntime } from '../extensions/index.js';
 import type { KodaXEvents, KodaXToolExecutionContext } from '../types.js';
 
 const cleanupToolRegistrations: Array<() => void> = [];
+let actorControl: AgentActorClient;
+beforeAll(async () => {
+  const controller = await createAgentActorController({ executor: { execute: async () => { throw new Error('Topology tests must not launch children.'); } } });
+  actorControl = controller.bind('/root');
+});
 
 afterEach(() => {
   while (cleanupToolRegistrations.length > 0) {
@@ -60,6 +66,7 @@ function makeCtx(hasCapabilityRuntime = true, hasWorkflowHost = true): KodaXTool
     backups: new Map<string, string>(),
     gitRoot: process.cwd(),
     executionCwd: process.cwd(),
+    actorControl,
     skillScriptRunner: { run: async () => 'ran' },
     ...(hasCapabilityRuntime
       ? { extensionRuntime: {} as KodaXToolExecutionContext['extensionRuntime'] }

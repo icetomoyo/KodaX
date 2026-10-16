@@ -127,6 +127,8 @@ export interface RunnerToolContext {
    * the REPL's tool-block in the transcript. Populated by `executeRunnerToolCall`.
    */
   readonly toolCallId?: string;
+  /** Exact prepared invocation; Provider ids alone need not be unique. */
+  readonly toolCall?: RunnerToolCall;
 }
 
 /**
@@ -164,6 +166,8 @@ export type RunnerToolResultBatchTransform = (
  * unchanged while also carrying a function the Runner can invoke.
  */
 export interface RunnableTool extends AgentTool {
+  /** Dynamic bridges retain the concrete target's serial execution requirement. */
+  readonly requiresSerialExecution?: (input: Record<string, unknown>) => boolean;
   readonly execute: (
     input: Record<string, unknown>,
     ctx: RunnerToolContext,
@@ -177,6 +181,12 @@ export interface RunnableTool extends AgentTool {
  */
 export function isRunnableTool(tool: AgentTool): tool is RunnableTool {
   return typeof (tool as { execute?: unknown }).execute === 'function';
+}
+
+export function requiresSerialToolExecution(agent: Agent, call: RunnerToolCall): boolean {
+  if (call.name === 'bash') return true;
+  const tool = agent.tools?.find(candidate => candidate.name === call.name);
+  return tool !== undefined && isRunnableTool(tool) && tool.requiresSerialExecution?.(call.input) === true;
 }
 
 /**
@@ -245,7 +255,7 @@ export async function executeRunnerToolCall(
     // Propagate the tool_use call id into the execute context so tool
     // wrappers can attach per-call side-effects (progress events,
     // telemetry, etc.) without threading the id through every layer.
-    const executeCtx: RunnerToolContext = { ...ctx, toolCallId: call.id };
+    const executeCtx: RunnerToolContext = { ...ctx, toolCallId: call.id, toolCall: call };
     const result = await tool.execute(call.input, executeCtx);
     throwIfAborted();
     if (toolSpan) {

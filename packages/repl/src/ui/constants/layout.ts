@@ -32,7 +32,6 @@ const HELP_BAR_PINNED_SHORTCUTS: Array<{
   { id: "toggleThinking", label: "reasoning" },
   { id: "toggleTranscriptMode", label: "transcript" },
   { id: "togglePermissionMode", label: "mode" },
-  { id: "toggleAgentMode", label: "AMA/SA" },
   { id: "interrupt", label: "interrupt" },
 ];
 
@@ -49,7 +48,6 @@ const HELP_MENU_SHORTCUT_IDS_BY_CATEGORY: Record<ShortcutCategory, ShortcutActio
     "toggleThinking",
     "toggleTranscriptMode",
     "togglePermissionMode",
-    "toggleAgentMode",
   ],
   navigation: [
     "openTranscriptSearch",

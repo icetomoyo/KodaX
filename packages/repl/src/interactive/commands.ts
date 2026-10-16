@@ -69,7 +69,6 @@ import {
 } from './provider-setup.js';
 import { probeProviderReasoningEfforts } from '../common/capability-probe.js';
 import { savePermissionModeUser } from '../common/permission-config.js';
-import { nextAgentMode } from '../common/agent-mode.js';
 import {
   clearCapabilityCache,
   compact,
@@ -1942,30 +1941,25 @@ export const BUILTIN_COMMANDS: Command[] = [
     name: 'agent-mode',
     aliases: ['am'],
     description: 'Show or set agent mode',
-    usage: '/agent-mode [ama|sa|toggle]',
+    usage: '/agent-mode [ama]',
     handler: async (args, _context, callbacks, currentConfig) => {
       if (args.length === 0) {
-        console.log(chalk.dim(`\nAgent mode: ${chalk.cyan(currentConfig.hostSettings ? currentConfig.hostSettings.agentMode?.toUpperCase() ?? 'Host default' : currentConfig.agentMode.toUpperCase())}`));
-        console.log(chalk.dim('Usage: /agent-mode [ama|sa|toggle]\n'));
-        return;
+        const mode = currentConfig.hostSettings ? currentConfig.hostSettings.agentMode?.toUpperCase() ?? 'Host default' : currentConfig.agentMode.toUpperCase();
+        return { success: true, message: `Agent mode: ${mode}\nNew product tasks use AMA.` };
       }
 
       const raw = args[0]?.toLowerCase();
+      if (raw === 'sa' || raw === 'toggle') {
+        return { success: false, message: 'SA selection and mode toggling were retired. New product tasks use AMA.' };
+      }
       if (raw === 'amaw' || raw === 'ama-workflow') {
         console.log(chalk.yellow('\n[AMAW was retired in v0.7.72. Use AMA; Workflow execution now requires an explicit /workflow request.]'));
         return;
       }
-      const nextMode: KodaXAgentMode | undefined =
-        raw === 'toggle'
-          ? nextAgentMode(currentConfig.agentMode)
-          : raw === 'ama' || raw === 'sa'
-            ? raw
-            : undefined;
+      const nextMode = raw === 'ama' ? 'ama' : undefined;
 
       if (!nextMode) {
-        console.log(chalk.red(`\n[Invalid agent mode: ${args[0]}]`));
-        console.log(chalk.dim('Usage: /agent-mode [ama|sa|toggle]\n'));
-        return;
+        return { success: false, message: `Invalid agent mode: ${args[0]}. Usage: /agent-mode [ama]` };
       }
 
       if (callbacks.config) return saveAndApplyHostSetting(callbacks, { agentMode: nextMode }, async () => {
@@ -1980,15 +1974,12 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.bold('Usage:'));
       console.log(chalk.dim('  /agent-mode            ') + 'Show current agent mode');
       console.log(chalk.dim('  /agent-mode ama        ') + 'Adaptive multi-agent mode; workflows require an explicit /workflow request');
-      console.log(chalk.dim('  /agent-mode sa         ') + 'Force single-agent execution');
-      console.log(chalk.dim('  /agent-mode toggle     ') + 'Cycle AMA -> SA');
       console.log(chalk.dim('  /am                    ') + 'Alias for /agent-mode');
       console.log();
       console.log(chalk.bold('Description:'));
       console.log(chalk.dim('  AMA runs the adaptive multi-agent harness. Sub-agents are available when parallel'));
       console.log(chalk.dim('      work materially improves speed or quality. Workflows only run when explicitly'));
       console.log(chalk.dim('      requested with /workflow or by naming a Workflow.'));
-      console.log(chalk.dim('  SA forces a single solo agent — no sub-agents and no workflows — to save tokens.'));
       console.log();
     },
   },

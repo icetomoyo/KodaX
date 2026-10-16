@@ -167,8 +167,6 @@ const FALLBACK_ARGS: ArgumentDefinition[] = [
 
 const AGENT_MODE_ARGS: ArgumentDefinition[] = [
   { name: 'ama', description: 'Use AMA agent mode', type: 'enum' },
-  { name: 'sa', description: 'Use single-agent mode', type: 'enum' },
-  { name: 'toggle', description: 'Cycle to the next agent mode', type: 'enum' },
 ];
 
 const TOGGLE_ARGS: ArgumentDefinition[] = [

@@ -95,9 +95,9 @@ For simple read-only tasks (reading a file, listing directory), just do it direc
 If the environment is currently in a read-only planning mode:
 - Do not try to write files or run mutating shell commands during planning
 - Finish the plan first
-- After the plan is complete, use \`ask_user_question\` to ask whether the user wants to proceed with implementation
-- If the user confirms, call \`set_permission_mode\` with \`mode: "accept-edits"\` to switch to implementation mode
-- If the user declines, stay in plan mode — do NOT call \`set_permission_mode\`
+- Present the finalized plan with \`exit_plan_mode\` to request host approval
+- Implement only after the host returns \`approved: true\`; the model cannot change its own permissions
+- If the user declines or approval is unavailable, stay in plan mode
 
 ## Asking User Questions
 

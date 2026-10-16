@@ -340,7 +340,7 @@ export function createToolEventMeta(
   };
 }
 
-function createContextForToolCall(
+export function createContextForToolCall(
   events: KodaXEvents,
   toolCall: RunnableToolCall,
   ctx: KodaXToolExecutionContext,
@@ -609,7 +609,7 @@ interface PreparedToolCall {
 }
 
 const toolExecutions = new WeakMap<object, { readonly id: string; readonly resultKey: string }>();
-function toolExecution(call: { readonly id: string }) {
+export function toolExecution(call: { readonly id: string }) {
   let execution = toolExecutions.get(call);
   if (!execution) { execution = { id: `execution_${randomUUID()}`, resultKey: call.id }; toolExecutions.set(call, execution); }
   return execution;
@@ -632,7 +632,7 @@ export async function runToolDispatch(
   const preparedByIndex = new Map<number, PreparedToolCall>();
   const nonBashEntries = input.toolBlocks
     .map((block, index) => ({ block, index }))
-    .filter(({ block }) => block.name !== 'bash');
+    .filter(({ block }) => !requiresSerialToolExecution(block));
   const preparedNonBash = await Promise.all(nonBashEntries.map(
     ({ block, index }) => prepareToolBlock(input, block, index),
   ));
@@ -641,7 +641,7 @@ export async function runToolDispatch(
   }
   for (let index = 0; index < input.toolBlocks.length; index += 1) {
     const block = input.toolBlocks[index]!;
-    if (block.name !== 'bash') continue;
+    if (!requiresSerialToolExecution(block)) continue;
     preparedByIndex.set(index, await prepareToolBlock(input, block, index));
   }
   const preparedCalls = input.toolBlocks.map((_, index) => {
@@ -664,8 +664,8 @@ export async function runToolDispatch(
 
   const parallel = preparedCalls.filter((prepared) => (
     prepared.blockedContent === undefined
-    && input.toolBlocks[prepared.index]!.name !== 'bash'
-    && prepared.call.name !== 'bash'
+    && !requiresSerialToolExecution(input.toolBlocks[prepared.index]!)
+    && !requiresSerialToolExecution(prepared.call)
   ));
   const parallelResults = await Promise.all(parallel.map(async (prepared) => ({
     id: toolExecution(prepared.call).resultKey,
@@ -675,7 +675,7 @@ export async function runToolDispatch(
 
   const serial = preparedCalls.filter((prepared) => (
     prepared.blockedContent === undefined
-    && (input.toolBlocks[prepared.index]!.name === 'bash' || prepared.call.name === 'bash')
+    && (requiresSerialToolExecution(input.toolBlocks[prepared.index]!) || requiresSerialToolExecution(prepared.call))
   ));
   for (const prepared of serial) {
     if (input.abortSignal?.aborted) {
@@ -689,6 +689,12 @@ export async function runToolDispatch(
   }
 
   return resultMap;
+}
+
+function requiresSerialToolExecution(call: { readonly id: string; readonly name: string; readonly input?: Record<string, unknown> }): boolean {
+  if (call.name === 'bash') return true;
+  const target = resolveToolBridgeTarget(call);
+  return target?.ok === true && target.call.name === 'bash';
 }
 
 async function prepareToolBlock(

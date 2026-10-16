@@ -100,7 +100,7 @@ class ElicitProvider extends KodaXBaseProvider {
   }
 }
 
-it('attributes a shared MCP server elicitation to the Session whose Run is executing', async () => {
+it.each(['sa', 'ama'] as const)('attributes a shared MCP server elicitation to its executing Session (%s)', async agentMode => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-mcp-elicit-'));
   const scriptPath = path.join(homeDir, 'elicit-server.cjs');
   await writeFile(scriptPath, ELICIT_SERVER_SOURCE, 'utf8');
@@ -131,7 +131,7 @@ it('attributes a shared MCP server elicitation to the Session whose Run is execu
     try {
       const active = await first.sessions.create({ projectPath: homeDir });
       await first.sessions.updateSettings(active.id, {
-        provider: 'product-mcp-elicit-test', permissionMode: 'full-access', agentMode: 'sa',
+        provider: 'product-mcp-elicit-test', permissionMode: 'full-access', agentMode,
       });
       const idle = await first.sessions.create({ projectPath: homeDir });
       const activeViews: ClientSessionView[] = [];

@@ -22,14 +22,13 @@
   // "reasoningMode": "auto",
   // "thinking": true,
 
-  // Agent harness: "ama" enables adaptive multi-agent use; "sa" forces one
-  // agent. Permission profiles are "plan", "accept-edits", sandbox-first
+  // New product tasks use AMA with adaptive multi-agent use.
+  // Permission profiles are "plan", "accept-edits", sandbox-first
   // "auto", or direct-host "full-access". Full Access has no sandbox or
   // approval prompts; built-in dangerous-command fallbacks do not apply.
   // Explicit forbidden rules still block; explicit prompt rules cannot prompt.
   // Exec Policy is separate:
   // ~/.kodax/exec-policy.jsonc (and explicitly trusted project policy).
-  // "agentMode": "ama",
   // "permissionMode": "accept-edits",
   // User-level Bash allow patterns. Project additions belong in
   // <project>/.kodax/config.local.json. Broad Bash(*) is rejected.

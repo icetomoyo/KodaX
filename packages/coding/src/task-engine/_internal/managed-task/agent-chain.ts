@@ -102,7 +102,8 @@ function buildTodoToolBundle(
  * hint-swapped — eval-verified DEFER_SAFE across the coding-plan panel.
  */
 function shouldDeferOnManagedPath(name: string): boolean {
-  return isDeferredTool(name) && !isMcpToolName(name) && DEFERRED_TOOL_HINTS[name] !== undefined;
+  return isDeferredTool(name) && !isMcpToolName(name) && DEFERRED_TOOL_HINTS[name] !== undefined
+    && getRegisteredToolDefinition(name)?.source.kind === 'builtin';
 }
 
 function isManagedToolVisibleForContext(
@@ -212,6 +213,10 @@ function buildManagedToolCallBridge(
   const active = new Map(activeDefinitions.map((entry) => [entry.name, entry]));
   return {
     ...definition,
+    requiresSerialExecution: input => {
+      const target = parseManagedBridgeCallInput(input);
+      return target.ok && target.name === 'bash';
+    },
     execute: async (
       input: Record<string, unknown>,
       runnerCtx?: RunnerToolContext,
@@ -236,9 +241,11 @@ function buildManagedToolCallBridge(
         };
       }
       const targetToolId = `${runnerCtx?.toolCallId ?? TOOL_CALL_NAME}:${parsed.name}`;
+      const targetCall = { id: targetToolId, name: parsed.name, input: parsed.input };
       const targetRunnerCtx: RunnerToolContext = {
         ...runnerCtx,
         toolCallId: targetToolId,
+        toolCall: targetCall,
       };
       const permissionOverride = events
         ? await getToolExecutionOverride(
@@ -258,61 +265,69 @@ function buildManagedToolCallBridge(
         };
       }
 
-      const overrideRunnable = overrides.get(parsed.name);
-      if (overrideRunnable) {
-        const targetResult = await overrideRunnable.execute(parsed.input, targetRunnerCtx);
-        const content = targetResult.content;
-        return {
-          content,
-          isError: targetResult.isError === true || isToolResultErrorContent(content),
-          metadata: targetResult.metadata,
-        };
-      }
-
-      // Registry-first mirrors tool-dispatch and the model-facing table
-      // (tool-resolution): a tool registered after the binding wins, so the
-      // schema the model saw is the implementation that executes. Run-scoped
-      // host tools are the fallback for names the registry cannot resolve.
-      const registration = getRegisteredToolDefinition(parsed.name);
-      if (registration) {
-        if (registration.handler.constructor.name === 'AsyncGeneratorFunction') {
+      const { toolExecution, createToolEventMeta, createContextForToolCall } = await import('../../../agent-runtime/tool-dispatch.js');
+      const targetMeta = createToolEventMeta(events ?? {}, targetToolId, toolExecution(targetCall).id);
+      const targetCtx = createContextForToolCall(events ?? {}, targetCall, ctx);
+      events?.onToolExecutionStart?.({ id: targetToolId, name: parsed.name }, targetMeta);
+      try {
+        const overrideRunnable = overrides.get(parsed.name);
+        if (overrideRunnable) {
+          const targetResult = await overrideRunnable.execute(parsed.input, targetRunnerCtx);
+          const content = targetResult.content;
           return {
-            content: `[Tool Error] ${parsed.name}: Tool requires a managed-path wrapper and cannot be called through ${TOOL_CALL_NAME}.`,
-            isError: true,
+            content,
+            isError: targetResult.isError === true || isToolResultErrorContent(content),
+            metadata: targetResult.metadata,
           };
         }
-        const runnable = wrapCodingToolAsRunnable(
-          targetDefinition,
-          registration.handler as (
-            targetInput: Record<string, unknown>,
-            execCtx: KodaXToolExecutionContext,
-          ) => Promise<RunnerToolResult['content']>,
-          ctx,
-          budget,
-          events,
-        );
-        const targetResult = await runnable.execute(parsed.input, targetRunnerCtx);
-        const content = targetResult.content;
-        return {
-          content,
-          isError: targetResult.isError === true || isToolResultErrorContent(content),
-          metadata: targetResult.metadata,
-        };
-      }
 
-      const runScopedTarget = lookupRunScopedTool(ctx.extensionRuntime, parsed.name);
-      if (runScopedTarget !== undefined) {
-        const content = await executeRunScopedTool(ctx, runScopedTarget, parsed.input);
-        return {
-          content,
-          isError: isToolResultErrorContent(content),
-        };
-      }
+        // Registry-first mirrors tool-dispatch and the model-facing table
+        // (tool-resolution): a tool registered after the binding wins, so the
+        // schema the model saw is the implementation that executes. Run-scoped
+        // host tools are the fallback for names the registry cannot resolve.
+        const registration = getRegisteredToolDefinition(parsed.name);
+        if (registration) {
+          if (registration.handler.constructor.name === 'AsyncGeneratorFunction') {
+            return {
+              content: `[Tool Error] ${parsed.name}: Tool requires a managed-path wrapper and cannot be called through ${TOOL_CALL_NAME}.`,
+              isError: true,
+            };
+          }
+          const runnable = wrapCodingToolAsRunnable(
+            targetDefinition,
+            registration.handler as (
+              targetInput: Record<string, unknown>,
+              execCtx: KodaXToolExecutionContext,
+            ) => Promise<RunnerToolResult['content']>,
+            ctx,
+            budget,
+            events,
+          );
+          const targetResult = await runnable.execute(parsed.input, targetRunnerCtx);
+          const content = targetResult.content;
+          return {
+            content,
+            isError: targetResult.isError === true || isToolResultErrorContent(content),
+            metadata: targetResult.metadata,
+          };
+        }
 
-      return {
-        content: `[Tool Error] ${parsed.name}: Tool is not registered or bound to this run.`,
-        isError: true,
-      };
+        const runScopedTarget = lookupRunScopedTool(ctx.extensionRuntime, parsed.name);
+        if (runScopedTarget !== undefined) {
+          const content = await executeRunScopedTool(targetCtx, runScopedTarget, parsed.input);
+          return {
+            content,
+            isError: isToolResultErrorContent(content),
+          };
+        }
+
+        return {
+          content: `[Tool Error] ${parsed.name}: Tool is not registered or bound to this run.`,
+          isError: true,
+        };
+      } finally {
+        events?.onToolExecutionEnd?.({ id: targetToolId, name: parsed.name }, targetMeta);
+      }
     },
   };
 }

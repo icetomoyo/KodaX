@@ -674,7 +674,7 @@ const TOPICS: readonly KodaXManualTopic[] = [
       "Default mode shortcuts:",
       "- Ctrl+T: cycle reasoning depth.",
       "- Shift+Tab: cycle permission mode.",
-      "- Alt+M: switch AMA/SA agent mode.",
+      "New product tasks use AMA; /agent-mode shows the effective mode. Internal SDK executors remain available.",
       "Use /help <topic> for this manual and /help for command usage.",
       "CLI: `kodax`, `kodax -c`, `kodax -r`, `kodax setup [--custom]`,",
       "`kodax setup --help`, `kodax doctor [--ping]`, and",

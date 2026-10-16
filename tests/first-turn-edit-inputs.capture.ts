@@ -68,7 +68,7 @@ export async function captureEditInputs(fixture: string, stage: 'baseline' | 'ca
     const baselineSource = stage === 'candidate'
       ? (JSON.parse(await fs.readFile(path.join(editDumpRoot(), 'baseline-inputs.json'), 'utf8')) as FrozenCapture).source
       : execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true }).trim();
-    const changed = execFileSync('git', ['diff', '--name-only', baselineSource, '--', 'src', 'packages'], { encoding: 'utf8', windowsHide: true }).trim().split(/\r?\n/);
+    const changed = execFileSync('git', ['diff', '--name-only', '--diff-filter=ACMR', baselineSource, '--', 'src', 'packages'], { encoding: 'utf8', windowsHide: true }).trim().split(/\r?\n/);
     const untracked = execFileSync('git', ['ls-files', '--others', '--exclude-standard', '--', 'src', 'packages'], { encoding: 'utf8', windowsHide: true }).trim().split(/\r?\n/);
     const files = [...new Set([...stableFiles, ...changed, ...untracked].filter(file => /\.(?:[cm]?[jt]s|tsx)$/.test(file) && !/\.(?:test|spec)\./.test(file)))].sort();
     const sourceHashes = Object.fromEntries(await Promise.all(files.map(async file => [file, createHash('sha256').update(await fs.readFile(new URL(`../${file}`, import.meta.url))).digest('hex')])));

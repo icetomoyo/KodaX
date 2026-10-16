@@ -105,9 +105,9 @@ it('retains actual Sandbox observations reported by an ordinary child tool', asy
   expect(tool!.sandbox).toEqual([{ version: 1, state: 'not_selected' }]);
 });
 
-it('keeps parallel calls sharing a Provider toolId complete with their own Sandbox observations', async () => {
+it.each(['sa', 'ama'] as const)('keeps duplicate Provider toolIds separate with their own Sandbox observations (%s)', async agentMode => {
   const session = await client.sessions.create({ projectPath: homeDir });
-  await client.sessions.updateSettings(session.id, { provider: 'statistics-http', agentMode: 'sa', permissionMode: 'full-access' });
+  await client.sessions.updateSettings(session.id, { provider: 'statistics-http', agentMode, permissionMode: 'full-access' });
   const root = await client.inputs.submit({ sessionId: session.id, inputId: 'duplicates', text: 'DUPLICATE-FACT-PROBE' });
   expect((await client.runs.await(root.runId!)).phase).toBe('completed');
   expect(executions.sort()).toEqual(['one', 'two']);
@@ -139,9 +139,9 @@ it('reports partial physical coverage while an operation-only adapter is still e
   finishOperation(); expect((await client.runs.await(root.runId!)).phase).toBe('completed');
 });
 
-it('keeps a bridge target and its Sandbox sequence in one completed execution fact', async () => {
+it.each(['sa', 'ama'] as const)('keeps a bridge target and its Sandbox sequence in one execution fact (%s)', async agentMode => {
   const session = await client.sessions.create({ projectPath: homeDir });
-  await client.sessions.updateSettings(session.id, { provider: 'statistics-http', agentMode: 'sa', permissionMode: 'full-access' });
+  await client.sessions.updateSettings(session.id, { provider: 'statistics-http', agentMode, permissionMode: 'full-access' });
   const root = await client.inputs.submit({ sessionId: session.id, inputId: 'bridge', text: 'BRIDGE-FACT-PROBE' });
   expect((await client.runs.await(root.runId!)).phase).toBe('completed');
   expect(executions).toEqual(['bridge']);
@@ -152,9 +152,9 @@ it('keeps a bridge target and its Sandbox sequence in one completed execution fa
   expect(facts.some(row => row.state === 'prepared' || row.state === 'executing')).toBe(false);
 });
 
-it('retains the separate recovery artifact of each call sharing a Provider toolId', async () => {
+it.each(['sa', 'ama'] as const)('retains separate recovery artifacts despite duplicate Provider toolIds (%s)', async agentMode => {
   const session = await client.sessions.create({ projectPath: homeDir });
-  await client.sessions.updateSettings(session.id, { provider: 'statistics-http', agentMode: 'sa', permissionMode: 'full-access' });
+  await client.sessions.updateSettings(session.id, { provider: 'statistics-http', agentMode, permissionMode: 'full-access' });
   const root = await client.inputs.submit({ sessionId: session.id, inputId: 'artifacts', text: 'DUPLICATE-FACT-PROBE ARTIFACT-FACT-PROBE' });
   const result = await runtime.runs.await(root.runId!);
   expect(result.phase).toBe('completed');

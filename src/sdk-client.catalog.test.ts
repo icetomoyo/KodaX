@@ -207,26 +207,27 @@ it('selects a Host-only model through the actual model command and clears it whe
   const other = await first.sessions.create({ projectPath: homeDir });
   await first.sessions.updateSettings(other.id, { agentMode: 'ama' });
   const patch = runtime.config.patch;
+  await first.config.patch({ agentMode: 'sa' });
   runtime.config.patch = async () => { throw new Error('Injected Host save failure'); };
   try {
-    expect(await modeCommand.handler(['sa'], context, callbacks, current)).toMatchObject({
+    expect(await modeCommand.handler(['ama'], context, callbacks, current)).toMatchObject({
       success: false, message: expect.stringMatching(/Host default save failed:.*Session applied/),
     });
-    expect(await second.sessions.getSettings(session.id)).toMatchObject({ agentMode: 'sa' });
-    expect(await second.config.read()).toMatchObject({ agentMode: 'ama' });
+    expect(await second.sessions.getSettings(session.id)).toMatchObject({ agentMode: 'ama' });
+    expect(await second.config.read()).toMatchObject({ agentMode: 'sa' });
   } finally { runtime.config.patch = patch; }
   runtime.config.patch = async input => { await patch(input); throw new Error('Injected post-save failure'); };
   try {
-    expect(await modeCommand.handler(['sa'], context, callbacks, current)).toMatchObject({
+    expect(await modeCommand.handler(['ama'], context, callbacks, current)).toMatchObject({
       success: true, message: expect.stringMatching(/Host default saved.*confirmed.*Session applied/),
     });
-    expect(await second.config.read()).toMatchObject({ agentMode: 'sa' });
+    expect(await second.config.read()).toMatchObject({ agentMode: 'ama' });
   } finally { runtime.config.patch = patch; }
   await first.sessions.delete(session.id);
-  expect(await modeCommand.handler(['sa'], context, callbacks, current)).toMatchObject({
+  expect(await modeCommand.handler(['ama'], context, callbacks, current)).toMatchObject({
     success: false, message: expect.stringMatching(/Host default saved; Session apply failed:/),
   });
-  expect(await second.config.read()).toMatchObject({ agentMode: 'sa' });
+  expect(await second.config.read()).toMatchObject({ agentMode: 'ama' });
   expect(await second.sessions.getSettings(other.id)).toMatchObject({ agentMode: 'ama' });
 });
 

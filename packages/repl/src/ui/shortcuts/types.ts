@@ -23,7 +23,7 @@ export type ShortcutActionId =
   | 'toggleTranscriptMode' // Ctrl+O - toggle transcript mode
   | 'openTranscriptSearch' // Ctrl+F - search transcript
   | 'togglePermissionMode' // Shift+Tab - 切换权限模式
-  | 'toggleAgentMode' // Alt+M - cycle AMA / SA
+  | 'toggleAgentMode' // Retired; retained for reading saved shortcut configurations.
   | 'submitInput' // Enter - 提交输入
   // Input shortcuts - 输入快捷键
   | 'acceptCompletion' // Tab - 接受补全

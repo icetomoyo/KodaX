@@ -4441,7 +4441,9 @@ async function createKodaXRuntimeInternal(
     const latest = currentRuns.reduce<RuntimeRunStatus | undefined>((last, run) =>
       !last || run.startedAt > last.startedAt ? run : last, undefined);
     const config = readRuntimeConfig(configFile);
-    const settings = resolveEffectiveRuntimeSessionSettings(config, rawSettings, true);
+    const activeRun = [...runs.values()].find(run => run.sessionId === sessionId && !run.terminalEmitted);
+    const settings = { ...resolveEffectiveRuntimeSessionSettings(config, rawSettings, true),
+      ...(activeRun ? { agentMode: activeRun.mode === 'coding' ? 'sa' as const : 'ama' as const } : {}) };
     const contextBudget = resolveClientContextBudget(config, settings, options.defaultProvider, options.defaultModel);
     return { session, settings: toClientSessionSettings(settings), contextBudget, items: restoreSessionViewItems(sessionId, data, conversation, liveItems),
       ...(data ? { committedOutputIds: [...committedSessionOutputIds(data, conversation ?? [])] } : {}),
@@ -10931,7 +10933,7 @@ function createRuntimeRunService(deps: {
         ? runWithMcpCallContext({ sessionId: record.sessionId, events }, () => executeRuntimeWorkflow(
           record.start!.workflow!, runOptions, record.runId, record.sessionId, abortController.signal,
         ))
-        : runManagedTask(
+        : runWithMcpCallContext({ sessionId: record.sessionId, events }, () => runManagedTask(
           {
             ...runOptions,
             sessionControl,
@@ -10941,7 +10943,7 @@ function createRuntimeRunService(deps: {
             abortSignal: abortController.signal,
           },
           record.start!.prompt,
-        );
+        ));
       const managedResult =
         record.providerCredentialScope !== undefined
           ? runWithProviderCredentialLeaseScope(
@@ -21604,7 +21606,7 @@ function resolveEffectiveRuntimeSessionSettings(config: unknown, overrides: Runt
   productSession = false): RuntimeSessionSettings {
   // Product defaults are effective facts only; raw overrides and low-level Run
   // callers retain their existing semantics when no permission was specified.
-  const settings: RuntimeSessionSettings = { ...(productSession ? { permissionMode: 'accept-edits' as const } : {}),
+  const settings: RuntimeSessionSettings = { ...(productSession ? { permissionMode: 'accept-edits' as const, agentMode: 'ama' as const } : {}),
     ...parseRuntimeSessionSettings(config), ...overrides };
   if (settings.permissionMode === 'plan' && overrides.effort === undefined && overrides.planModeEffort !== undefined) {
     return { ...settings, effort: overrides.planModeEffort };

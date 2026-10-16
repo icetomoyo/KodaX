@@ -139,7 +139,7 @@ describe('help command output', () => {
     expect(output).toContain('kodax setup --custom');
     expect(output).toContain('/model');
     expect(output).toContain('mcp.json');
-    expect(output).toContain('Alt+M');
+    expect(output).not.toContain('Alt+M');
   });
 
   it('shows refreshed sandbox diagnostics only when /sandbox is requested', async () => {
@@ -362,7 +362,7 @@ describe('help command output', () => {
     expect(output).toContain('/workflow');
   });
 
-  it('cycles /agent-mode toggle through AMA and SA', async () => {
+  it('explains retired SA and toggle commands without changing settings', async () => {
     const context = await createInteractiveContext({});
     const setAgentMode = vi.fn();
     const callbacks = {
@@ -377,19 +377,22 @@ describe('help command output', () => {
       permissionMode: 'accept-edits',
     } as const;
 
-    await executeCommand(
-      { command: 'agent-mode', args: ['toggle'] },
+    const retiredSA = await executeCommand(
+      { command: 'agent-mode', args: ['sa'] },
       context,
       callbacks,
       { ...baseConfig, agentMode: 'ama' },
     );
-    await executeCommand(
+    const retiredToggle = await executeCommand(
       { command: 'agent-mode', args: ['toggle'] },
       context,
       callbacks,
       { ...baseConfig, agentMode: 'sa' },
     );
 
-    expect(setAgentMode.mock.calls.map((call) => call[0])).toEqual(['sa', 'ama']);
+    expect(setAgentMode).not.toHaveBeenCalled();
+    for (const result of [retiredSA, retiredToggle]) {
+      expect(result).toMatchObject({ success: false, message: expect.stringMatching(/retired.*AMA/i) });
+    }
   });
 });

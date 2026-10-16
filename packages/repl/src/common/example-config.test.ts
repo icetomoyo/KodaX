@@ -105,7 +105,6 @@ describe('ensureExampleConfigFile (F1 first-launch template)', () => {
       'model',
       'planModeEffort',
       'reasoningCeiling',
-      'agentMode',
       'permissionMode',
       'alwaysAllowTools',
       'autoMode',

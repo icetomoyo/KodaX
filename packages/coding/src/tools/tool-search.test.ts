@@ -14,10 +14,11 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { SkillRegistry } from '@kodax-ai/agent/capabilities/skills';
+import { createAgentActorController } from '@kodax-ai/agent';
 
 import type { KodaXToolExecutionContext, KodaXToolVisibilityMeta } from '../types.js';
 import { getActiveToolDefinitions } from '../agent-runtime/tool-resolution.js';
-import { executeTool, getToolDefinition } from './index.js';
+import { executeTool, getToolDefinition, registerTool } from './index.js';
 import {
   DEFERRED_TOOL_HINTS,
   isDeferredTool,
@@ -119,6 +120,27 @@ describe('FEATURE_189 B.2 — tool_search handler', () => {
   beforeEach(() => {
     ctx = makeContext();
     _resetUnlockedDeferredToolsForTest(ctx);
+  });
+
+  it('omits Actor-only builtin schemas without a binding while retaining independent overrides', async () => {
+    const names = ['spawn_agent', 'send_message', 'followup_task', 'wait_agent', 'interrupt_agent', 'list_agents', 'agent_output'];
+    const unavailable = await toolSearchHandler({ query: `select:${names.join(',')}` }, ctx);
+    expect(unavailable).not.toContain('<function>');
+    const actorlessWorker = buildRunnerAgentChain(ctx).worker;
+    expect(actorlessWorker.tools?.map(tool => tool.name)).not.toEqual(expect.arrayContaining(['spawn_agent']));
+
+    const controller = await createAgentActorController({ executor: { execute: async () => { throw new Error('No child should run.'); } } });
+    const bound = { ...ctx, actorControl: controller.bind('/root') };
+    const available = await toolSearchHandler({ query: `select:${names.join(',')}` }, bound);
+    expect(available.match(/<function>/g)).toHaveLength(7);
+    expect(buildRunnerAgentChain(bound).worker.tools?.map(tool => tool.name)).toEqual(expect.arrayContaining(names));
+
+    const unregister = registerTool({ name: 'list_agents', description: 'List independently hosted actors.',
+      input_schema: { type: 'object', properties: {} }, sideEffect: 'readonly', handler: async () => 'independent',
+      toClassifierInput: () => '' }, { source: { kind: 'extension', id: 'independent-actor-host' } });
+    try {
+      expect(await toolSearchHandler({ query: 'select:list_agents' }, ctx)).toContain('independently hosted');
+    } finally { unregister(); }
   });
 
   it('returns a function block for `select:web_fetch`', async () => {

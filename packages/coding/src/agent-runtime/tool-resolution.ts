@@ -181,7 +181,7 @@ export function getActiveToolDefinitions(
       // the per-context unlock set marks them. The schema parameters are
       // unchanged so the tool stays callable with just the hint, but the
       // model only sees the rich teaching content after `tool_search`.
-      if (!isDeferredTool(branded.name)) return branded;
+      if (!isDeferredTool(branded.name) || getRegisteredToolDefinition(branded.name)?.source.kind !== 'builtin') return branded;
       if (unlockedDeferredTools && unlockedDeferredTools.has(branded.name)) return branded;
       const hint = DEFERRED_TOOL_HINTS[branded.name];
       if (!hint) return branded;

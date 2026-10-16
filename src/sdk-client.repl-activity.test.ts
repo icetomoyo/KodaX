@@ -27,6 +27,14 @@ const clientStorage = {
 };
 vi.mock('@kodax-ai/coding', async original => ({
   ...await original<typeof import('@kodax-ai/coding')>(), startKodaX: fixture.start,
+  runManagedTask: async (options: KodaXOptions, prompt: string): Promise<KodaXResult> => {
+    const running: RunningSession = fixture.start(options, prompt);
+    const abort = () => running.abort();
+    if (options.abortSignal?.aborted) abort();
+    else options.abortSignal?.addEventListener('abort', abort, { once: true });
+    try { return await running.result; }
+    finally { options.abortSignal?.removeEventListener('abort', abort); }
+  },
 }));
 vi.mock('../packages/repl/src/interactive/readline-helpers.js', async original => ({
   ...await original<typeof import('../packages/repl/src/interactive/readline-helpers.js')>(), askInput: fixture.ask,
@@ -144,8 +152,8 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
   };
   let repl: Promise<void> | undefined;
   try {
-    const run = await runtime.runs.start({ sessionId: session.id, prompt: 'Work started from a different client',
-      options: { agentMode: 'sa' } });
+    const run = await runtime.runs.start({ sessionId: session.id, mode: 'managed_task', prompt: 'Work started from a different client',
+      options: { agentMode: 'ama' } });
     events!.onTodoUpdate?.([{ id: 'todo', subject: 'Verify the Host activity boundary', status: 'in_progress' }]);
     events!.onManagedTaskStatus?.({ agentMode: 'ama', harnessProfile: 'H1_EXECUTE_EVAL', phase: 'worker',
       activeWorkerTitle: 'Host reviewer', childFanoutClass: 'finding-validation', childFanoutCount: 3 });

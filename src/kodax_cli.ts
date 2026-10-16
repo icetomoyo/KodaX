@@ -2247,7 +2247,6 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
         'Compatibility mode: off, auto, quick, balanced, deep',
     );
     console.log(
-      chalk.dim('  --agent-mode <mode>  ') + 'Set agent mode: ama, sa',
     );
     console.log(
       chalk.dim('  -t, --thinking       ') +
@@ -2409,11 +2408,7 @@ export function configureKodaXRootCommand(program: Command): Command {
         'Reasoning mode: off, auto, quick, balanced, deep',
         parseReasoningModeOption,
       )
-      .option(
-        '--agent-mode <mode>',
-        'Agent mode: ama, sa',
-        parseAgentModeOption,
-      )
+      .addOption(new Option('--agent-mode <mode>').argParser(parseAgentModeOption).hideHelp())
       .option(
         '--repo-intelligence <mode>',
         'Repo intelligence mode: auto, full, light, off',
@@ -2733,7 +2728,6 @@ function showBasicHelp(): void {
   console.log(
     '  --reasoning MODE        Compatibility mode: off, auto, quick, balanced, deep',
   );
-  console.log('  --agent-mode MODE       Agent mode: ama, sa');
   console.log(
     '  -y, --auto              Backward-compat alias; no effect in non-REPL CLI',
   );
@@ -3404,7 +3398,6 @@ async function runCliMain(startupProgress?: CliStartupProgress) {
       const providerNames = getAvailableProviderNames().join(' ');
       const reasoningModes = 'off auto quick balanced deep';
       const effortModes = 'off auto low medium high xhigh max';
-      const agentModes = 'ama sa';
       const repoModes = 'auto full light off';
       const rootSubcommands = KODAX_COMPLETION_ROOT_SUBCOMMANDS.join(' ');
       const allOptions = [
@@ -3428,7 +3421,6 @@ async function runCliMain(startupProgress?: CliStartupProgress) {
         '--thinking',
         '--effort',
         '--reasoning',
-        '--agent-mode',
         '--repo-intelligence',
         '--repo-intelligence-trace',
         '--auto',
@@ -3481,7 +3473,6 @@ _kodax_complete() {
     --mode) COMPREPLY=( $(compgen -W "json" -- "\${cur}") ); return 0 ;;
     --effort) COMPREPLY=( $(compgen -W "${effortModes}" -- "\${cur}") ); return 0 ;;
     --reasoning) COMPREPLY=( $(compgen -W "${reasoningModes}" -- "\${cur}") ); return 0 ;;
-    --agent-mode) COMPREPLY=( $(compgen -W "${agentModes}" -- "\${cur}") ); return 0 ;;
     --repo-intelligence) COMPREPLY=( $(compgen -W "${repoModes}" -- "\${cur}") ); return 0 ;;
     --session|-s) COMPREPLY=( $(compgen -W "list resume delete delete-all" -- "\${cur}") ); return 0 ;;
     completion) COMPREPLY=( $(compgen -W "bash zsh fish" -- "\${cur}") ); return 0 ;;
@@ -3516,7 +3507,6 @@ _kodax() {
   providers=(${providerNames.replace(/ /g, ' ')})
   reasoning_modes=(off auto quick balanced deep)
   effort_modes=(off auto low medium high xhigh max)
-  agent_modes=(ama sa)
   repo_modes=(${repoModes})
 
   _arguments -C \\
@@ -3536,7 +3526,6 @@ _kodax() {
     '--thinking[Enable thinking]' \\
     '--effort+[Reasoning effort]:level:($effort_modes)' \\
     '--reasoning+[Compatibility reasoning mode]:mode:($reasoning_modes)' \\
-    '--agent-mode+[Agent mode]:mode:($agent_modes)' \\
     '--repo-intelligence+[Repo intelligence mode]:mode:($repo_modes)' \\
     '--repo-intelligence-trace[Enable repo intelligence trace]' \\
     '-s[Legacy session operation]+:operation:(list resume delete delete-all)' \\
@@ -3580,7 +3569,6 @@ complete -c kodax -l model -d 'Model override' -r
 complete -c kodax -s t -l thinking -d 'Enable thinking'
 complete -c kodax -l effort -d 'Reasoning effort' -xa 'off auto low medium high xhigh max'
 complete -c kodax -l reasoning -d 'Reasoning mode' -xa '${reasoningModes}'
-complete -c kodax -l agent-mode -d 'Agent mode' -xa '${agentModes}'
 complete -c kodax -l repo-intelligence -d 'Repo intelligence mode' -xa '${repoModes}'
 complete -c kodax -l repo-intelligence-trace -d 'Enable repo intelligence trace'
 complete -c kodax -s y -l auto -d 'Backward-compatible no-op'
@@ -4949,7 +4937,7 @@ complete -c kodax -l version -d 'Show version'`);
           ...(program.getOptionValueSource('effort') === 'cli' ? { effort: options.effort ?? null } : {}),
           ...(program.getOptionValueSource('reasoning') === 'cli' || program.getOptionValueSource('thinking') === 'cli'
             ? { reasoningMode: options.reasoningMode, thinking: options.thinking } : {}),
-          ...(program.getOptionValueSource('agentMode') === 'cli' ? { agentMode: options.agentMode } : {}),
+          agentMode: 'ama' as const,
           ...(program.getOptionValueSource('maxIter') === 'cli' ? { maxIter: options.maxIter } : {}),
           ...(program.getOptionValueSource('repoIntelligence') === 'cli'
             ? { repoIntelligenceMode: parseRepoIntelligenceModeOption(opts.repoIntelligence) } : {}),

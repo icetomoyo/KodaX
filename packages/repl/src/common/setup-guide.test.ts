@@ -35,10 +35,10 @@ describe('renderSetupGuide', () => {
     expect(guide).toContain('/effort');
     expect(guide).toContain('/agent-mode');
     expect(guide).toContain('AMA');
-    expect(guide).toContain('SA');
+    expect(guide).not.toContain('AMA/SA');
     expect(guide).toContain('Ctrl+T');
     expect(guide).toContain('Shift+Tab');
-    expect(guide).toContain('Alt+M');
+    expect(guide).not.toContain('Alt+M');
     expect(guide).toContain('kodax setup --custom');
     expect(guide).toMatch(/custom provider.*apiKeyEnv.*name.*config\.json/is);
     expect(guide).toMatch(/actual API key.*value.*environment variable/is);

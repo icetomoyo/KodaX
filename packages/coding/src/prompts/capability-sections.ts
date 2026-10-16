@@ -59,6 +59,7 @@ import { resolveExecutionCwd } from '../runtime-paths.js';
 import { getSessionScratchDir } from '../session-scratch.js';
 import type { KodaXOptions } from '../types.js';
 import { formatFullSkillSection } from '../skill-invocation-format.js';
+import { isToolDiscoverable } from '../tools/tool-search.js';
 
 import { buildMemoryRulesSection } from './memory-rules.js';
 import { createPromptSection, type KodaXPromptSection } from './sections.js';
@@ -204,7 +205,9 @@ export async function buildCapabilityContextSections(
   // surfaces each agent's name + description so the Worker LLM can
   // choose a specialist whose curated instructions / tool whitelist
   // fits the task.
-  const specialistBlock = buildSpecialistAgentsBlock(options.context?.agentScope);
+  const specialistBlock = isToolDiscoverable('spawn_agent', {
+    ...options.context,
+  }) ? buildSpecialistAgentsBlock(options.context?.agentScope) : null;
   if (specialistBlock) {
     sections.push(
       createPromptSection(

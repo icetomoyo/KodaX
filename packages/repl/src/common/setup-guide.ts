@@ -34,7 +34,7 @@ function formatBinding(binding: KeyBinding): string {
   return parts.join('+');
 }
 
-function shortcut(id: 'toggleThinking' | 'togglePermissionMode' | 'toggleAgentMode'): string {
+function shortcut(id: 'toggleThinking' | 'togglePermissionMode'): string {
   const definition = DEFAULT_SHORTCUTS.find((candidate) => candidate.id === id);
   const binding = definition?.defaultBindings[0];
   return binding ? formatBinding(binding) : '<unavailable>';
@@ -123,13 +123,12 @@ export function renderSetupGuide(input: RenderSetupGuideInput = {}): string {
     '  /model [provider[/model]]  List or switch provider/model',
     '  /mode [plan|accept-edits|auto|full-access]  Switch permission mode',
     '  /effort [off|auto|low|medium|high|xhigh|max]  Set reasoning depth',
-    '  /agent-mode [ama|sa|toggle]  Switch AMA/SA execution',
+    '  /agent-mode               Show AMA execution status',
     '  /setup --help           Show this guide',
     '',
     'Default shortcuts:',
     `  ${shortcut('toggleThinking')}       Cycle reasoning effort`,
     `  ${shortcut('togglePermissionMode')}    Cycle permission mode`,
-    `  ${shortcut('toggleAgentMode')}       Cycle AMA/SA`,
     '  Tab          Accept completion',
     '  Esc          Cancel or clear input',
   ].join('\n');

@@ -491,12 +491,8 @@ export function buildRunnerLlmAdapter(
       }
     }
 
-    const wireTools: KodaXToolDefinition[] = filterModelToolAliases(agent.tools ?? [])
-      .map((t) => projectModelToolDefinition({
-        name: t.name,
-        description: t.description,
-        input_schema: t.input_schema,
-      }, getRegisteredToolDefinition(t.name)?.source));
+    const wireTools = filterModelToolAliases(agent.tools ?? []).map(t => projectModelToolDefinition({ name: t.name, description: t.description, input_schema: t.input_schema },
+      getRegisteredToolDefinition(t.name)?.source));
 
     // Reasoning single-tracking: resolve the per-turn reasoning EFFORT through
     // the FEATURE_078 L1-L2 chain (effort-native):
@@ -528,6 +524,35 @@ export function buildRunnerLlmAdapter(
     // splicing them as real user messages into the transcript — Worker
     // keeps running, the LLM sees the new prompts in its next turn,
     // and no empty assistant turn ever reaches the transcript.
+
+    const diagnosticSessionId = options.context?.contextIdentitySessionId
+      ?? options.session?.id;
+    const diagnosticAgentId = options.context?.currentAgentId;
+    const diagnosticParentAgentId = options.context?.parentAgentId;
+    const diagnosticContextId = diagnosticSessionId === undefined
+      ? undefined
+      : diagnosticAgentId === undefined
+        ? diagnosticSessionId
+        : `${diagnosticSessionId}/agent/${encodeURIComponent(diagnosticAgentId)}`;
+    const diagnosticContextIdentity = {
+      ...(diagnosticContextId !== undefined
+        ? { contextId: diagnosticContextId }
+        : {}),
+      contextKind: diagnosticAgentId !== undefined
+        ? 'child' as const
+        : 'root' as const,
+      ...(diagnosticSessionId !== undefined && diagnosticAgentId !== undefined
+        ? {
+            parentContextId: diagnosticParentAgentId === undefined
+              || diagnosticParentAgentId === '/root'
+              ? diagnosticSessionId
+              : `${diagnosticSessionId}/agent/${encodeURIComponent(diagnosticParentAgentId)}`,
+          }
+        : {}),
+      ...(diagnosticAgentId !== undefined
+        ? { agentId: diagnosticAgentId }
+        : {}),
+    };
 
     let streamResult: {
       textBlocks?: readonly { text: string }[];
@@ -569,34 +594,6 @@ export function buildRunnerLlmAdapter(
       ): KodaXMessage[] => projectTextRecovery(supportsNativeEphemeralSuffix
         ? [...providerMessages]
         : appendEphemeralSuffixToMessages(providerMessages, ephemeralSuffix), textRecovery);
-      const diagnosticSessionId = options.context?.contextIdentitySessionId
-        ?? options.session?.id;
-      const diagnosticAgentId = options.context?.currentAgentId;
-      const diagnosticParentAgentId = options.context?.parentAgentId;
-      const diagnosticContextId = diagnosticSessionId === undefined
-        ? undefined
-        : diagnosticAgentId === undefined
-          ? diagnosticSessionId
-          : `${diagnosticSessionId}/agent/${encodeURIComponent(diagnosticAgentId)}`;
-      const diagnosticContextIdentity = {
-        ...(diagnosticContextId !== undefined
-          ? { contextId: diagnosticContextId }
-          : {}),
-        contextKind: diagnosticAgentId !== undefined
-          ? 'child' as const
-          : 'root' as const,
-        ...(diagnosticSessionId !== undefined && diagnosticAgentId !== undefined
-          ? {
-              parentContextId: diagnosticParentAgentId === undefined
-                || diagnosticParentAgentId === '/root'
-                ? diagnosticSessionId
-                : `${diagnosticSessionId}/agent/${encodeURIComponent(diagnosticParentAgentId)}`,
-            }
-          : {}),
-        ...(diagnosticAgentId !== undefined
-          ? { agentId: diagnosticAgentId }
-          : {}),
-      };
       const promptCacheKey = resolvePromptCacheDisabled(options.disablePromptCache)
         ? undefined
         : derivePromptCacheAffinityKey({
@@ -1415,10 +1412,7 @@ export function buildRunnerLlmAdapter(
     if (options.events) emitStreamEnd(options.events,
       activeProviderRequestId ? { providerRequestId: activeProviderRequestId } : undefined);
 
-    // Fire onIterationEnd so the REPL token-count indicator can refresh
-    // after each worker turn. `scope: 'worker'` mirrors the FEATURE_072
-    // tagging — every Runner-driven iteration runs inside a worker role,
-    // never the top-level REPL agent.
+    // Execution scope follows the actual root/child context, independently of role.
     if (options.events?.onIterationEnd) {
       const usage = streamResult.usage;
       const tokenCount = usage?.totalTokens ?? usage?.outputTokens ?? 0;
@@ -1428,7 +1422,8 @@ export function buildRunnerLlmAdapter(
         tokenCount,
         tokenSource: usage ? 'api' : 'estimate',
         usage,
-        scope: 'worker',
+        ...diagnosticContextIdentity,
+        scope: diagnosticContextIdentity.contextKind === 'child' ? 'worker' : 'parent',
       });
     }
 

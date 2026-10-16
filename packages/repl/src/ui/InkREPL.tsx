@@ -110,7 +110,6 @@ import {
 import { AutocompleteContextProvider, useAutocompleteContext } from "./hooks/index.js";
 import { hostEffortCommand, saveAndApplyHostSetting } from '../commands/host-settings.js';
 import { nearestCycleIndex } from './shortcuts/GlobalShortcuts.js';
-import { nextAgentMode } from '../common/agent-mode.js';
 import {
   StreamingState,
   ToolCallStatus,
@@ -6060,13 +6059,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     }
   };
 
-  const cycleHostAgentMode = async (): Promise<void> => {
-    const agentMode = nextAgentMode(currentConfigRef.current.agentMode);
-    const result = await saveAndApplyHostSetting({ config: options.config }, { agentMode },
-      () => selectClientConfig({ ...currentConfigRef.current, agentMode }, ['agentMode']), `Agent mode: ${agentMode.toUpperCase()}`);
-    await publishCommandFeedback(result.message ?? '');
-  };
-
   const setSessionPermissionMode = useCallback(async (mode: PermissionMode): Promise<void> => {
     const canonicalMode = canonicalizePermissionMode(mode);
     const updateId = ++permissionModeUpdateRef.current;
@@ -11860,7 +11852,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       <GlobalShortcuts
         currentConfig={currentConfig}
         onCycleThinking={options.config ? () => { void cycleHostEffort(); } : undefined}
-        onCycleAgentMode={options.config ? () => { void cycleHostAgentMode(); } : undefined}
         setCurrentConfig={setCurrentConfig}
         isLoading={isLoading}
         abort={abort}
@@ -11881,9 +11872,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         onOpenTranscriptSearch={openHistorySearchSurface}
         canOpenTranscriptSearch={isTranscriptMode && !confirmRequest && !uiRequest}
         isInteractiveDialogActive={Boolean(confirmRequest || uiRequest)}
-        onSetAgentMode={(mode) => {
-          currentOptionsRef.current.agentMode = mode;
-        }}
         onSetPermissionMode={(mode) => {
           setSessionPermissionMode(mode);
         }}
@@ -12061,7 +12049,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     config,
     process.env.KODAX_EFFORT,
   );
-  const initialAgentMode = options.agentMode ?? config.agentMode ?? 'ama';
+  const initialAgentMode = 'ama' as const;
   const initialThinking = initialReasoningMode !== 'off';
   // Load permission mode from config file (not from CLI options)
   // CLI is always YOLO mode; REPL uses config file for permission mode

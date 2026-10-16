@@ -1198,63 +1198,63 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'ask_user_question',
-    description: 'Ask the user a question. Supports single-select (default), multi-select, free-text input, and custom input from select dialogs. Select questions are open-ended by default: KodaX adds an "Other..." custom input option automatically, so do NOT add your own Other/Custom option. Set allow_custom_input=false only for closed safety/protocol decisions. Set default to the recommended option value; the Runtime uses that validated value if the user does not answer before expiry. When you have multiple independent questions, use the "questions" array; each question is presented separately with its own options. Do NOT combine multiple questions into one string.',
+    description: "Ask one question or 1–4 independent questions, shown separately. Single select: question/options. Batch: questions[]; select-only, every item requires options; overrides flat question/options. Free text: kind=input only for a flat single question. Select supports multi_select and automatic Other/custom input: do not add your own Other; allow_custom_input=false only for closed safety/protocol choices. Set default to the recommended answer: Runtime uses the validated value at expiry; select defaults must match an option value. Flat custom settings are fallbacks for batch items.",
     input_schema: {
       type: 'object',
       properties: {
-        question: { type: 'string', description: 'The question to ask the user. Use this for a single question. For multiple independent questions, use the "questions" array instead.' },
+        question: { type: 'string', description: "Single question. Use questions[] for independent multiple questions." },
         questions: {
           type: 'array',
-          description: 'Multiple independent questions (1-4). Each question is presented separately with its own options. Use this instead of combining multiple questions into a single "question" string. Takes precedence over "question"+"options" when provided.',
+          description: "1–4 select questions shown separately; each requires options; takes precedence over flat question/options. Not free-text input.",
           items: {
             type: 'object',
             properties: {
-              question: { type: 'string', description: 'The question text' },
-              header: { type: 'string', description: 'Short label (max 12 chars) shown in progress indicator, e.g. "环境" or "Deploy"' },
+              question: { type: 'string', description: "One question." },
+              header: { type: 'string', description: "Short progress label, at most 12 chars." },
               options: {
                 type: 'array',
-                description: 'Available options for this question.',
+                description: "Choices for this question.",
                 items: {
                   type: 'object',
                   properties: {
-                    label: { type: 'string', description: 'Display label for this option' },
-                    description: { type: 'string', description: 'Optional description of this option' },
-                    value: { type: 'string', description: 'Optional value to return (defaults to label)' },
+                    label: { type: 'string', description: "Display label." },
+                    description: { type: 'string', description: "Optional option explanation." },
+                    value: { type: 'string', description: "Returned value; defaults to label." },
                   },
                   required: ['label'],
                 },
               },
               multi_select: {
                 type: 'boolean',
-                description: 'Allow multiple selections for this question. Returns an array of the selected values.',
+                description: "Allow multiple choices; returns an array.",
               },
               min_selections: {
                 type: 'integer',
-                description: 'Minimum number of options the user must select. Only applies when multi_select is true.',
+                description: "Minimum choices when multi_select=true.",
               },
               max_selections: {
                 type: 'integer',
-                description: 'Maximum number of options the user may select. Only applies when multi_select is true.',
+                description: "Maximum choices when multi_select=true.",
               },
               default: {
                 type: 'string',
-                description: 'Recommended option value selected if this question expires. Must match one option value.',
+                description: "Validated expiry fallback; must match an option value.",
               },
               allow_custom_input: {
                 type: 'boolean',
-                description: 'Whether to add an automatic custom input option for this select question. Defaults to true. Set false only for closed safety/protocol choices.',
+                description: "Defaults to the flat setting or true; false only for closed safety/protocol choices.",
               },
               custom_input_label: {
                 type: 'string',
-                description: 'Optional display label for the automatic custom input option. Defaults to "Other...".',
+                description: "Custom-choice label; falls back to flat setting or \"Other...\".",
               },
               custom_input_prompt: {
                 type: 'string',
-                description: 'Optional prompt shown when the user chooses the automatic custom input option.',
+                description: "Custom-choice prompt; falls back to flat setting.",
               },
               custom_input_default: {
                 type: 'string',
-                description: 'Optional default text for the custom input prompt.',
+                description: "Custom-choice initial text; falls back to flat setting.",
               },
             },
             required: ['question', 'options'],
@@ -1265,50 +1265,50 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
         kind: {
           type: 'string',
           enum: ['select', 'input'],
-          description: 'Interaction kind. "select" (default) shows options for the user to pick from. "input" shows a free-text prompt for the user to type anything. Use "input" when the user needs to provide an open-ended answer (e.g. step combinations like "1,3,5", version numbers, custom text).',
+          description: "select by default; input is free text for a flat single question (options ignored); not for questions[].",
         },
         options: {
           type: 'array',
-          description: 'Available options for the user to choose from. Required for kind="select", ignored for kind="input".',
+          description: "Choices; required for select, ignored for input.",
           items: {
             type: 'object',
             properties: {
-              label: { type: 'string', description: 'Display label for this option' },
-              description: { type: 'string', description: 'Optional description of this option' },
-              value: { type: 'string', description: 'Optional value to return (defaults to label)' },
+              label: { type: 'string', description: "Display label." },
+              description: { type: 'string', description: "Optional option explanation." },
+              value: { type: 'string', description: "Returned value; defaults to label." },
             },
             required: ['label'],
           },
         },
         multi_select: {
           type: 'boolean',
-          description: 'Allow the user to select multiple options (space to toggle, enter to confirm). Only applies to kind="select". Returns an array of the selected values.',
+          description: "Select only: allow multiple choices; answer is an array.",
         },
         min_selections: {
           type: 'integer',
-          description: 'Minimum number of options the user must select. Only applies when multi_select is true.',
+          description: "Minimum choices when multi_select=true.",
         },
         max_selections: {
           type: 'integer',
-          description: 'Maximum number of options the user may select. Only applies when multi_select is true.',
+          description: "Maximum choices when multi_select=true.",
         },
         allow_custom_input: {
           type: 'boolean',
-          description: 'Whether to add an automatic custom input option for select mode. Defaults to true. Set false only for closed safety/protocol choices.',
+          description: "Automatic custom choice defaults true; false only for closed safety/protocol choices.",
         },
         custom_input_label: {
           type: 'string',
-          description: 'Optional display label for the automatic custom input option. Defaults to "Other...".',
+          description: "Automatic custom-choice label; default \"Other...\".",
         },
         custom_input_prompt: {
           type: 'string',
-          description: 'Optional prompt shown when the user chooses the automatic custom input option.',
+          description: "Prompt for the automatic custom choice.",
         },
         custom_input_default: {
           type: 'string',
-          description: 'Optional default text for the custom input prompt.',
+          description: "Initial text for the automatic custom choice.",
         },
-        default: { type: 'string', description: 'Recommended option value (for select) or text (for input) used if the interaction expires.' },
+        default: { type: 'string', description: "Validated expiry fallback: select option value or input text." },
       },
       // The handler validates either a single question or a questions-only batch.
     },
@@ -1407,7 +1407,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'todo_update',
-    description: 'Patch one existing todo by stable id; supply a status transition, field changes, or both. Omitted fields are preserved. Use todo_create to add work. Before starting, mark in_progress with activeForm; mark completed after finishing. Keep only one item per owner in_progress. Use failed for an attempt needing retry, skipped for unnecessary work, cancelled to retain a discarded breadcrumb, or deleted to remove it. Avoid redundant unchanged updates; read todo_get when the current state is uncertain. Write subject, description, activeForm, and note in the primary natural language of the user\'s request unless asked otherwise; preserve source-language identifiers, paths, commands, and quoted evidence. Completion may run the item\'s deterministic evaluator and may be vetoed by an extension hook. On blocked-by-hook or an extension rejection, re-read the plan and revise before retrying. Unknown todo id: refresh with todo_list. If the store is inactive, continue without further todo calls.',
+    description: "Patch one existing todo by stable id: status, fields or both. Omitted fields are preserved; add work with todo_create. Mark in_progress with activeForm before work, completed only after finishing; one in_progress item per owner. Avoid unchanged updates; use todo_get when state is uncertain, todo_list for unknown ids. Use the requested language, otherwise the request primary language, for subject/description/activeForm/note; retain source identifiers, paths, commands and quotes. Completion may trigger evaluator when runner evaluator wiring is active, and may be vetoed by a hook; after rejection/blocked-by-hook, re-read and revise before retrying. Inactive store: continue without more todo calls.",
     input_schema: {
       type: 'object',
       properties: {
@@ -1453,41 +1453,38 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
         },
         id: {
           type: 'string',
-          description: 'op="update" only. The id of the todo item to update (e.g. "todo_3"). Must match a current valid id in the plan list.',
+          description: "Existing canonical todo id; must match the current plan.",
         },
         status: {
           type: 'string',
           enum: ['in_progress', 'completed', 'failed', 'skipped', 'cancelled', 'deleted'],
           description:
-            'op="update" only. New status. Optional — when omitted you may still patch subject/description/activeForm/note/evaluator/metadata. '
-            + '"pending" is intentionally not allowed — items start as pending automatically and only the runner moves them back to pending after a revise verdict. '
-            + '"cancelled" signals a Worker-driven mid-execution decision to drop the item; UI shows strikethrough. '
-            + '"deleted" removes the item from the visible list entirely — use when the item turned out to be wholly irrelevant and you do not want a strikethrough breadcrumb. The matching extension event is `todo:deleted`.',
+            "Optional transition: failed needs retry; skipped is unnecessary; cancelled retains a struck-through breadcrumb; deleted removes the row and emits todo:deleted. Only Runtime may restore pending after revise.",
         },
         note: {
           type: 'string',
-          description: 'op="update" only. Optional free-text reason or detail. When omitted, any pre-existing note on the item is preserved.',
+          description: "Optional reason/detail; omit to preserve.",
         },
         activeForm: {
           type: 'string',
           description:
-            'op="update" only. Present-continuous form of the item subject (e.g. "Running failing tests"). Required when status="in_progress" so the spinner can show the user what you are doing right now. Omitted on completed/failed/skipped (the previous activeForm is preserved but irrelevant once the item leaves in_progress).',
+            "Present-continuous spinner label; required for in_progress. Omit on terminal transitions to preserve the previous value.",
         },
         subject: {
           type: 'string',
           description:
-            'op="update" only. Optional. When provided, REPLACES the brief imperative title shown in the plan-list row. Use for mid-task plan refinement (e.g. "Run failing tests" → "Run failing tests AND clean up tmp"). Must be a non-empty string.',
+            "Optional replacement imperative title; must be non-empty.",
         },
         description: {
           type: 'string',
           description:
-            'op="update" only. Optional. When provided, REPLACES the fuller context (work instruction). Multi-line OK. Pass empty string to clear an existing description.',
+            "Optional replacement multi-line work context; empty string clears it.",
         },
         evaluator: {
           type: 'string',
           enum: ['build', 'test', 'lint'],
           description:
-            'op="update" only. Optional. When provided, REPLACES the item\'s deterministic evaluator hint. When the item later flips to "completed", the runner runs the corresponding deterministic check and surfaces stderr on failure.',
+            "Optional replacement completion check when runner evaluator wiring is active: build/test/lint runs npm run build/npm test/npm run lint. Failure returns stderr.",
         },
         metadata: {
           // Note: the handler also accepts JSON `null` as an explicit clear
@@ -1499,7 +1496,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
           // handler is authoritative.
           type: 'object',
           description:
-            'op="update" only. Optional opaque key-value bag. Semantics: shallow-merge — top-level keys overwrite (nested objects are NOT deep-merged); a value of `null` inside the object DELETES that key from existing metadata; mixed merge+delete in one call is supported (e.g. `{newKey: "v", oldKey: null}`); pass the whole `metadata` field as `null` (NOT inside an object) to clear ALL metadata (handler accepts top-level null even though the JSON Schema is `type:"object"`). The UI does NOT render metadata; it is for extension hooks / eval harnesses.',
+            "Opaque hook/eval data, not UI. Shallow-merge: keys overwrite, nested objects are not deep-merged; null values delete keys, allowing merge+delete together. Whole-field null clears all (handler accepts it despite object schema).",
         },
       },
       // No top-level required fields — the handler validates per-op:
@@ -1515,33 +1512,33 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'todo_create',
-    description: 'Add one pending semantic milestone without changing existing items. Returns {ok:true,id}; reuse that stable, auto-generated id for later updates and never supply your own id. Plan non-trivial execution work before starting; skip a plan for one straightforward operation or a purely informational response. On continuation/resume, continue the existing plan; use todo_list if unsure to avoid duplicates. Capture semantic milestones, not one item per child Agent. Several Agents may support one milestone; split only genuinely separate deliverables. This records planned work; you still need to execute it. Write subject, description, and activeForm in the primary natural language of the user\'s request unless asked otherwise; preserve source-language identifiers, paths, commands, and quoted evidence. Returns {ok:false,reason} for an inactive store, invalid input, or an extension hook veto.',
+    description: "Add one pending semantic milestone; preserve existing items. Returns {ok:true,id}; reuse the stable generated id, never supply one. Plan non-trivial work; skip trivial/informational tasks. Resume the existing plan; use todo_list if uncertain to avoid duplicates. Milestones are deliverables, not child Agents; several Agents may support one. This records planned work, not execution. Use the requested language, otherwise the request primary language, for subject/description/activeForm; keep source identifiers, paths, commands and quotes. Inactive store, invalid input or extension veto returns {ok:false,reason}.",
     input_schema: {
       type: 'object',
       properties: {
         subject: {
           type: 'string',
-          description: 'Brief imperative title shown in the plan-list row (e.g. "Audit handleAuth callers").',
+          description: "Non-empty imperative milestone title shown in the plan row.",
         },
         description: {
           type: 'string',
-          description: 'Optional fuller context / work instructions read when this item is later picked up via todo_get. Multi-line OK; NOT rendered in the compact row. Skip when subject alone is enough.',
+          description: "Optional multi-line work context read via todo_get; absent from compact row. Omit when subject suffices.",
         },
         activeForm: {
           type: 'string',
           description:
-            'Optional present-continuous form (e.g. "Running failing tests"). Shown by the spinner when this item later flips to `in_progress`.',
+            "Optional present-continuous label shown by the in_progress spinner.",
         },
         evaluator: {
           type: 'string',
           enum: ['build', 'test', 'lint'],
           description:
-            'Optional per-step deterministic evaluator. When set and the item later flips to "completed" via todo_update, the runner runs `npm run build` / `npm test` / `npm run lint` accordingly; failure surfaces stderr in your next tool result. Use sparingly — only on milestone steps with a real ground-truth check.',
+            "Optional milestone check on completion when runner evaluator wiring is active: build/test/lint runs npm run build/npm test/npm run lint; failure returns stderr. Use sparingly for real checks.",
         },
         metadata: {
           type: 'object',
           description:
-            'Optional opaque key-value bag carried alongside the item. Used by extension hooks / eval harnesses. The UI does NOT render metadata. Omit if you have nothing structured to attach.',
+            "Optional opaque hook/eval data; not shown in UI. Omit when unused.",
         },
       },
       required: ['subject'],

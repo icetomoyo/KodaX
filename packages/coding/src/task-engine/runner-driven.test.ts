@@ -4475,9 +4475,9 @@ describe('Shard 6d-f — role-scoped tool boundaries (legacy toolPolicy parity)'
       expect(chain.worker.name).toBe('kodax/role/worker');
     });
 
-    it('Worker exposes the full execution toolbox (Scout exec ∪ Generator mutation surface)', () => {
+    it('Worker exposes the full execution toolbox when the Actor host is bound', async () => {
       // FEATURE_190 Phase 3: emit_handoff deleted — Worker terminates text-only.
-      const chain = buildRunnerAgentChain(makeCtx());
+      const chain = buildRunnerAgentChain({ ...makeCtx(), actorControl: (await createAgentActorController({ executor: { execute: async () => { throw new Error('Topology fixture must not spawn'); } } })).bind('/root') });
       const workerTools = chain.worker.tools?.map((t) => t.name) ?? [];
       // emit_handoff no longer exists post-F190 Phase 3.
       expect(workerTools).not.toContain('emit_handoff');
@@ -5064,11 +5064,12 @@ describe('Shard 6d-d — session continuity', () => {
 });
 
 describe('Shard 6d-c4 — onIterationEnd + contextTokenSnapshot', () => {
-  it('fires onIterationEnd after LLM turn with scope=worker', async () => {
+  it.each([undefined, '/root/child'])('reports the actual execution scope after a Worker turn (agent=%s)', async currentAgentId => {
     // FEATURE_193 v0.7.43: migrated from scout/generator to worker (V1 chain retired)
     const iterations: Array<{ iter: number; scope?: string }> = [];
     const opts = {
       ...makeOptions(),
+      context: { ...makeOptions().context, currentAgentId },
       events: {
         onIterationEnd: (info: { iter: number; scope?: string }) =>
           iterations.push({ iter: info.iter, scope: info.scope }),
@@ -5078,7 +5079,7 @@ describe('Shard 6d-c4 — onIterationEnd + contextTokenSnapshot', () => {
       worker: () => ({ textBlocks: [{ text: 'done' }], toolBlocks: [] }),
     }));
     expect(iterations.length).toBeGreaterThanOrEqual(1);
-    expect(iterations.every((i) => i.scope === 'worker')).toBe(true);
+    expect(iterations.every((i) => i.scope === (currentAgentId ? 'worker' : 'parent'))).toBe(true);
   });
 
   it('returns a full-envelope estimate when no provider usage is reported', async () => {

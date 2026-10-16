@@ -14,7 +14,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { resolveMemoryRoot, setAgentConfigHome } from '@kodax-ai/agent';
+import { createAgentActorController, resolveMemoryRoot, setAgentConfigHome } from '@kodax-ai/agent';
 
 import type { KodaXOptions } from '../types.js';
 import type { KodaXAgentScope } from '../construction/agent-resolver.js';
@@ -401,10 +401,14 @@ describe('FEATURE_191 — specialist-agents section (A.3)', () => {
 
   async function buildSections(cwd: string): Promise<readonly { id: string; content: string }[]> {
     return buildCapabilityContextSections(
-      makeOptions({ executionCwd: cwd, gitRoot: cwd }),
+      makeOptions({ executionCwd: cwd, gitRoot: cwd, actorControl: await actorControl() }),
       false,
       cwd,
     );
+  }
+
+  async function actorControl() {
+    return (await createAgentActorController({ executor: { execute: async () => { throw new Error('Prompt fixture must not spawn'); } } })).bind('/root');
   }
 
   it('omits specialist-agents section when registry is empty (token saving)', async () => {
@@ -450,6 +454,11 @@ describe('FEATURE_191 — specialist-agents section (A.3)', () => {
     const cwd = await createTempDir('kodax-capsec-sp2-');
     cleanupDirs.push(cwd);
 
+    const actorless = await buildCapabilityContextSections(makeOptions({ executionCwd: cwd, gitRoot: cwd }), false, cwd);
+    expect(ids(actorless)).not.toContain('specialist-agents');
+    const excluded = await buildCapabilityContextSections(makeOptions({ executionCwd: cwd, gitRoot: cwd, actorControl: await actorControl(), excludeTools: ['spawn_agent'] }), false, cwd);
+    expect(ids(excluded)).not.toContain('specialist-agents');
+
     const sections = await buildSections(cwd);
     const sp = sections.find((s) => s.id === 'specialist-agents');
     expect(sp).toBeDefined();
@@ -482,12 +491,12 @@ describe('FEATURE_191 — specialist-agents section (A.3)', () => {
     const scopeB = await loadMarkdownAgentScope({ cwd: projectB, configHome });
 
     const sectionsA = await buildCapabilityContextSections(
-      makeOptions({ executionCwd: projectA, gitRoot: projectA, agentScope: scopeA.scope }),
+      makeOptions({ executionCwd: projectA, gitRoot: projectA, agentScope: scopeA.scope, actorControl: await actorControl() }),
       false,
       projectA,
     );
     const sectionsB = await buildCapabilityContextSections(
-      makeOptions({ executionCwd: projectB, gitRoot: projectB, agentScope: scopeB.scope }),
+      makeOptions({ executionCwd: projectB, gitRoot: projectB, agentScope: scopeB.scope, actorControl: await actorControl() }),
       false,
       projectB,
     );

@@ -156,25 +156,13 @@ export function wrapCodingToolAsRunnable(
       const toolResultCapacityTokens = runnerCtx?.transcript
         ? baseCtx.resolveToolResultCapacityTokens?.(runnerCtx.transcript)
         : undefined;
-      const reportToolProgress = events?.onToolProgress && toolCallId
-        ? (message: string): void => {
-            events.onToolProgress?.(
-              { id: toolCallId, message },
-              {
-                toolId: toolCallId,
-                ...(events.workflowCorrelation !== undefined
-                  ? { workflowCorrelation: events.workflowCorrelation }
-                  : {}),
-              },
-            );
-          }
-        : undefined;
-      const ctxForCall: KodaXToolExecutionContext = {
+      const { createContextForToolCall } = await import('../../../agent-runtime/tool-dispatch.js');
+      const call = runnerCtx?.toolCall ?? { id: toolCallId ?? definition.name, name: definition.name, input };
+      const ctxForCall = createContextForToolCall(events ?? {}, call, {
         ...baseCtx,
         ...(runnerCtx?.abortSignal ? { abortSignal: runnerCtx.abortSignal } : {}),
         ...(toolCallId ? { toolCallId } : {}),
         ...(toolResultCapacityTokens !== undefined ? { toolResultCapacityTokens } : {}),
-        ...(reportToolProgress ? { reportToolProgress } : {}),
         ...(toolCallId
           ? {
               recordToolResultArtifact: (recordedToolCallId, recordedOutputPath) => {
@@ -183,7 +171,7 @@ export function wrapCodingToolAsRunnable(
               },
             }
           : {}),
-      };
+      });
       if (baseCtx.invokeCheckedTool) {
         ctxForCall.invokeCheckedTool = (name, parameters) => baseCtx.invokeCheckedTool!(name, parameters, runnerCtx);
       }

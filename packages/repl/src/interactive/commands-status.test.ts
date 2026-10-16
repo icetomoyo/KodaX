@@ -63,8 +63,9 @@ describe('status workspace output', () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     currentConfig.hostSettings = {};
     const command = BUILTIN_COMMANDS.find(candidate => candidate.name === name)!;
-    await command.handler([], context, {} as CommandCallbacks, currentConfig);
-    const output = logSpy.mock.calls.flat().join('\n');
+    const result = await command.handler([], context, {} as CommandCallbacks, currentConfig);
+    const output = result && typeof result === 'object' && 'message' in result
+      ? String(result.message) : logSpy.mock.calls.flat().join('\n');
     expect(output).toContain(name === 'mode' ? 'Current mode: Host default'
       : name === 'agent-mode' ? 'Agent mode: Host default' : 'Reasoning effort: Host default');
   });

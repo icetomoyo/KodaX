@@ -52,95 +52,20 @@ describe('GlobalShortcuts', () => {
     ]);
   });
 
-  it('lets Alt+M cycle agent mode AMA -> SA -> AMA and persist each change', () => {
-    let currentConfig: CurrentConfig = {
-      provider: 'openai',
-      model: 'gpt-5.4',
-      thinking: false,
-      reasoningMode: 'off',
-      agentMode: 'ama',
-      permissionMode: 'accept-edits',
-    };
-
-    const setShowHelp = vi.fn();
-    const onSetAgentMode = vi.fn();
-
-    const renderShortcuts = () => {
-      GlobalShortcuts({
-        currentConfig,
-        setCurrentConfig: (updater) => {
-          currentConfig =
-            typeof updater === 'function'
-              ? updater(currentConfig)
-              : updater;
-        },
-        isLoading: false,
-        abort: vi.fn(),
-        stopThinking: vi.fn(),
-        clearThinkingContent: vi.fn(),
-        setCurrentTool: vi.fn(),
-        setIsLoading: vi.fn(),
-        onToggleHelp: vi.fn(),
-        setShowHelp,
-        onSetAgentMode,
-        isInputEmpty: true,
-      });
-      return shortcutHandlers.get('toggleAgentMode');
-    };
-
-    let handler = renderShortcuts();
-    expect(handler).toBeDefined();
-    expect(handler?.()).toBe(true);
-    expect(currentConfig.agentMode).toBe('sa');
-    expect(saveConfigMock).toHaveBeenLastCalledWith({ agentMode: 'sa' });
-    expect(onSetAgentMode).toHaveBeenLastCalledWith('sa');
-
-    handler = renderShortcuts();
-    expect(handler?.()).toBe(true);
-    expect(currentConfig.agentMode).toBe('ama');
-    expect(saveConfigMock).toHaveBeenLastCalledWith({ agentMode: 'ama' });
-    expect(onSetAgentMode).toHaveBeenLastCalledWith('ama');
-    expect(setShowHelp).toHaveBeenCalledWith(false);
-  });
-
-  it('normalizes a persisted AMAW value before cycling to AMA', () => {
-    let currentConfig: CurrentConfig = {
-      provider: 'openai',
-      model: 'gpt-5.4',
-      thinking: false,
-      reasoningMode: 'off',
-      agentMode: 'amaw',
-      permissionMode: 'accept-edits',
-    };
-
-    const onSetAgentMode = vi.fn();
-
+  it.each(['ama', 'sa', 'amaw'] as const)('does not expose the retired mode toggle for saved %s', agentMode => {
+    const setCurrentConfig = vi.fn();
     GlobalShortcuts({
-      currentConfig,
-      setCurrentConfig: (updater) => {
-        currentConfig =
-          typeof updater === 'function'
-            ? updater(currentConfig)
-            : updater;
-      },
-      isLoading: false,
-      abort: vi.fn(),
-      stopThinking: vi.fn(),
-      clearThinkingContent: vi.fn(),
-      setCurrentTool: vi.fn(),
-      setIsLoading: vi.fn(),
-      onToggleHelp: vi.fn(),
-      setShowHelp: vi.fn(),
-      onSetAgentMode,
-      isInputEmpty: true,
+      currentConfig: { provider: 'openai', model: 'gpt-5.4', thinking: false,
+        reasoningMode: 'off', agentMode, permissionMode: 'accept-edits' },
+      setCurrentConfig,
+      isLoading: false, abort: vi.fn(), stopThinking: vi.fn(), clearThinkingContent: vi.fn(),
+      setCurrentTool: vi.fn(), setIsLoading: vi.fn(), onToggleHelp: vi.fn(), setShowHelp: vi.fn(), isInputEmpty: true,
     });
-
-    expect(shortcutHandlers.get('toggleAgentMode')?.()).toBe(true);
-    expect(currentConfig.agentMode).toBe('ama');
-    expect(saveConfigMock).toHaveBeenCalledWith({ agentMode: 'ama' });
-    expect(onSetAgentMode).toHaveBeenCalledWith('ama');
+    expect(shortcutHandlers.has('toggleAgentMode')).toBe(false);
+    expect(DEFAULT_SHORTCUTS.some(shortcut => shortcut.id === 'toggleAgentMode')).toBe(false);
+    expect(setCurrentConfig).not.toHaveBeenCalled();
+    expect(saveConfigMock).not.toHaveBeenCalled();
   });
-
   it('lets Ctrl+O toggle transcript mode without persisting config', () => {
     const currentConfig: CurrentConfig = {
       provider: 'openai',

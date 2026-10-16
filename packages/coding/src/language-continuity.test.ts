@@ -51,8 +51,8 @@ describe('language-continuity rule coverage (③)', () => {
 
     expect(out).toContain('TODO LANGUAGE');
     expect(out).toContain('`subject`, `description`, `activeForm`, and user-visible `note`');
-    expect(todoCreate?.description).toContain('primary natural language of the user\'s request');
-    expect(todoUpdate?.description).toContain('primary natural language of the user\'s request');
+    expect(todoCreate?.description).toContain('requested language, otherwise the request primary language');
+    expect(todoUpdate?.description).toContain('requested language, otherwise the request primary language');
   });
 
   it('the child-agent system prompt tells the child to report in the objective language', () => {

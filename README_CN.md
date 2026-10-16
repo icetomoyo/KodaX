@@ -1410,7 +1410,7 @@ REPL 显示、唤醒或消费。
 
 **Inline workflow authoring（FEATURE_246，v0.7.58；F270 于 v0.7.72 更新）**：Worker 在明确表达 Workflow 意图时，可通过 model-callable 的 `run_workflow` 工具在会话内编写并运行工作流。F270 退役 AMAW 与复杂度驱动激活；AMA 保留显式 `/workflow`、named/SDK 和自然语言 Workflow 请求。Workflow 子 Agent 统一运行在 Actor 控制面。详见 [docs/features/v0.7.58.md](docs/features/v0.7.58.md)、[docs/features/v0.7.72.md](docs/features/v0.7.72.md) 与 ADR-044/046/047/048/049/055。
 
-**历史工作流激活分层（FEATURE_248 + FEATURE_249，v0.7.59；F270 于 v0.7.72 取代）**：v0.7.59 引入 AMAW 和 AMA 的显式请求行为。F270 退役 AMAW 及其复杂度驱动指令；SA 保持单独作业，AMA 成为唯一自适应多 Agent 模式，并且只在明确 Workflow 意图下激活 Workflow。详见 [docs/features/v0.7.59.md](docs/features/v0.7.59.md) 与 [docs/features/v0.7.72.md](docs/features/v0.7.72.md)。
+**历史工作流激活分层（FEATURE_248 + FEATURE_249，v0.7.59；F270 于 v0.7.72 取代）**：v0.7.59 引入 AMAW 和 AMA 的显式请求行为。F270 退役 AMAW 及其复杂度驱动指令；CLI/REPL 使用 AMA；SDK 显式 SA 和内部单 Agent 执行器继续兼容。AMA 是唯一自适应多 Agent 模式，并且只在明确 Workflow 意图下激活 Workflow。详见 [docs/features/v0.7.59.md](docs/features/v0.7.59.md) 与 [docs/features/v0.7.72.md](docs/features/v0.7.72.md)。
 
 **managed 工具路径的渐进披露（FEATURE_250，v0.7.60；当前策略于 v0.7.74 纠偏）**：deferred-tool 机制同时应用于 AMA managed path 与 SA。当前延迟集合精确包含 11 个工具：6 个 repo-intelligence、4 个 web/code discovery，以及 `run_workflow`；其 `input_schema` 仍可直接调用，完整描述按需由 `tool_search` 返回。5 个固定 `mcp_*` facade 与 `get_goal` / `create_goal` / `update_goal` 生命周期工具常驻完整契约。v0.7.74 的 Goal 纠偏相对旧 hint 仅增加约 109 个估算 schema token（其中常驻的 `get_goal` 反而少 12 token），消除一次发现往返，并且不改变工具 schema、handler、权限、Goal 状态或压缩保护。详见 [docs/features/v0.7.60.md](docs/features/v0.7.60.md) 与 [docs/features/v0.7.74.md](docs/features/v0.7.74.md#feature_250-v0774-correction-resident-goal-lifecycle-tools)。
 

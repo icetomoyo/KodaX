@@ -43,6 +43,7 @@ import {
   buildToolResultMessage,
   executeRunnerToolCall,
   isRunnerLlmResult,
+  requiresSerialToolExecution,
   type RunnerLlmResult,
   type RunnerLlmReturn,
   type RunnerToolCall,
@@ -1251,7 +1252,7 @@ async function genericRun<TData>(
       const parallelPrepareIndices: number[] = [];
       const serialPrepareIndices: number[] = [];
       for (let index = 0; index < toolCalls.length; index += 1) {
-        if (toolCalls[index]!.name === 'bash') {
+        if (requiresSerialToolExecution(currentAgent, toolCalls[index]!)) {
           serialPrepareIndices.push(index);
         } else {
           parallelPrepareIndices.push(index);
@@ -1397,7 +1398,7 @@ async function genericRun<TData>(
       // Preserve original bash serialization and also serialize calls a
       // guardrail rewrote into bash. Rewriting must not weaken shell
       // side-effect ordering.
-      if (toolCalls[i]!.name === 'bash' || finalCalls[i]!.name === 'bash') {
+      if (requiresSerialToolExecution(currentAgent, toolCalls[i]!) || requiresSerialToolExecution(currentAgent, finalCalls[i]!)) {
         serialIndices.push(i);
       } else {
         parallelIndices.push(i);

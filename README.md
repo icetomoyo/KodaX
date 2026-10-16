@@ -1478,7 +1478,7 @@ KodaX has two layers that consumers should understand separately:
 
 **Inline Workflow Authoring (FEATURE_246, v0.7.58; F270 update in v0.7.72)**: the Worker can author and run a workflow inline via the model-callable `run_workflow` tool when Workflow intent is explicit. It scouts the codebase first, bakes concrete findings into child prompts, and runs the script through the sandbox, static-validation, and postcondition-verification pipeline. F270 retires AMAW and complexity-driven activation; AMA keeps explicit `/workflow`, named/SDK, and natural-language Workflow requests. Workflow child Agents now run on the unified Actor control plane. See [docs/features/v0.7.58.md](docs/features/v0.7.58.md), [docs/features/v0.7.72.md](docs/features/v0.7.72.md), and ADR-044/046/047/048/049/055.
 
-**Historical Workflow Activation Tiers (FEATURE_248 + FEATURE_249, v0.7.59; superseded by F270 in v0.7.72)**: v0.7.59 introduced AMAW and explicit-request AMA behavior. F270 retires AMAW and its complexity-driven directive. SA remains solo; AMA is the single adaptive multi-Agent mode and activates Workflow only from explicit Workflow intent. See [docs/features/v0.7.59.md](docs/features/v0.7.59.md) and [docs/features/v0.7.72.md](docs/features/v0.7.72.md).
+**Historical Workflow Activation Tiers (FEATURE_248 + FEATURE_249, v0.7.59; superseded by F270 in v0.7.72)**: v0.7.59 introduced AMAW and explicit-request AMA behavior. F270 retires AMAW and its complexity-driven directive. CLI and REPL tasks use AMA; explicit SDK SA selection and the internal solo executor remain compatible. AMA is the single adaptive multi-Agent mode and activates Workflow only from explicit Workflow intent. See [docs/features/v0.7.59.md](docs/features/v0.7.59.md) and [docs/features/v0.7.72.md](docs/features/v0.7.72.md).
 
 **Progressive Disclosure on the Managed Tool Path (FEATURE_250, v0.7.60; current policy corrected in v0.7.74)**: the deferred-tool mechanism applies to the managed AMA path as well as SA. The current deferred set contains exactly 11 tools: six repo-intelligence tools, four web/code discovery tools, and `run_workflow`. Their `input_schema` remains directly callable while `tool_search` provides the full description on demand. The five fixed `mcp_*` facades and the `get_goal` / `create_goal` / `update_goal` lifecycle tools stay resident with their complete contracts. The v0.7.74 goal correction adds only about 109 estimated schema tokens versus the former hints (`get_goal` is actually 12 tokens smaller when resident), removes a discovery round trip, and changes no tool schema, handler, permission, goal state, or compaction-protection behavior. See [docs/features/v0.7.60.md](docs/features/v0.7.60.md) and [docs/features/v0.7.74.md](docs/features/v0.7.74.md#feature_250-v0774-correction-resident-goal-lifecycle-tools).
 
@@ -2287,7 +2287,7 @@ kodax --session list
 kodax --parallel "Read package.json and tsconfig.json"
 
 # Adaptive multi-agent (AMA) mode — V2 Worker single-loop with Actor collaboration
-kodax --agent-mode ama "Analyze code structure, check test coverage, find bugs"
+kodax "Analyze code structure, check test coverage, find bugs"
 ```
 
 ---

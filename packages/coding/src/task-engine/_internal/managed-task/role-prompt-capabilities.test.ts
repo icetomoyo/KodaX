@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { Runner, setAgentConfigHome } from '@kodax-ai/agent';
+import { createAgentActorController, Runner, setAgentConfigHome } from '@kodax-ai/agent';
 import type { KodaXOptions } from '../../../types.js';
 import { runManagedTaskViaRunner } from '../../runner-driven.js';
 import { buildFallbackRoutingDecision } from '../../../reasoning.js';
@@ -29,6 +29,7 @@ describe('managed Worker prompt capability wiring', () => {
   it.each([[], ['todo_update', 'send_message']])('keeps partial standalone responsibilities for tools %j', async (...toolNames: string[]) => {
     const chain = buildRunnerAgentChain({
       backups: new Map<string, string>(), gitRoot: workspace, executionCwd: workspace,
+      actorControl: (await createAgentActorController({ executor: { execute: async () => { throw new Error('Prompt fixture must not spawn'); } } })).bind('/root'),
       toolVisibilityPolicy: ({ name }) => toolNames.includes(name),
     });
     await Runner.run(chain.worker, 'Continue the requested work.', { tracer: null,

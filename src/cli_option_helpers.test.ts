@@ -11,6 +11,7 @@ import {
   parseRepoIntelligenceModeOption,
   normalizeCliSessionFlags,
   resolveCliEffort,
+  resolveCliAgentMode,
   resolveCliModelSelection,
   resolveCliProviderSelection,
   findSessionTitleMatches,
@@ -302,8 +303,9 @@ describe('resolveCliProviderSelection', () => {
 });
 
 describe('parseAgentModeOption', () => {
-  it('accepts SA mode case-insensitively', () => {
-    expect(parseAgentModeOption('SA')).toBe('sa');
+  it('accepts AMA and explains the retired SA selection', () => {
+    expect(parseAgentModeOption(' AMA ')).toBe('ama');
+    expect(() => parseAgentModeOption('SA')).toThrow(/retired.*ama/i);
   });
 
   it.each(['AMAW', 'ama-workflow'])('rejects retired %s with a migration hint', (mode) => {
@@ -312,8 +314,22 @@ describe('parseAgentModeOption', () => {
 
   it('rejects unsupported agent modes', () => {
     expect(() => parseAgentModeOption('team')).toThrow(
-      'Expected one of: ama, sa.',
+      'Expected one of: ama.',
     );
+  });
+});
+
+describe('resolveCliAgentMode', () => {
+  it('uses AMA for new CLI tasks without rewriting legacy saved settings', () => {
+    const config = { agentMode: 'sa' as const };
+    expect(resolveCliAgentMode(new Command(), {}, config)).toBe('ama');
+    expect(config.agentMode).toBe('sa');
+  });
+
+  it('rejects explicit legacy SA before a new task is started', () => {
+    const program = new Command().option('--agent-mode <mode>');
+    program.parse(['node', 'kodax', '--agent-mode', 'sa']);
+    expect(() => resolveCliAgentMode(program, program.opts(), {})).toThrow(/retired.*ama/i);
   });
 });
 

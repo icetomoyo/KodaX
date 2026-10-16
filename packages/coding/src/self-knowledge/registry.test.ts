@@ -584,10 +584,10 @@ describe('FEATURE_218 manual registry', () => {
     expect(commands).toContain('/setup --help');
     expect(commands).toContain('Ctrl+T');
     expect(commands).toContain('Shift+Tab');
-    expect(commands).toContain('Alt+M');
+    expect(commands).not.toContain('Alt+M');
     expect(commands).toMatch(/Ctrl\+T.*reasoning/i);
     expect(commands).toMatch(/Shift\+Tab.*permission/i);
-    expect(commands).toMatch(/Alt\+M.*AMA\/SA/i);
+    expect(commands).toContain('New product tasks use AMA');
   });
 
   it('documents the governed runtime and SDK memory surfaces', () => {

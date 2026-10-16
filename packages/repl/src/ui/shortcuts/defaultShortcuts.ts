@@ -66,16 +66,6 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     configurable: true,
   },
   {
-    id: 'toggleAgentMode',
-    name: 'Cycle Agent Mode',
-    description: 'Cycle agent mode: AMA, SA',
-    defaultBindings: [{ key: 'm', meta: true }],
-    context: 'global',
-    priority: 150,
-    category: 'mode',
-    configurable: true,
-  },
-  {
     id: 'submitInput',
     name: 'Submit Input',
     description: 'Submit the current input',

@@ -32,7 +32,12 @@ import { lookupRunScopedTool, toModelToolDefinition } from '../agent-runtime/run
 /** Context needed for run-scoped lookup and host-backed skill availability. */
 type ToolSearchContext = Pick<KodaXToolExecutionContext,
   'extensionRuntime' | 'skillScriptRunner' | 'executionCwd' | 'excludeTools' | 'toolVisibilityPolicy'
-  | 'discoveryToolNames' | 'workflowHost' | 'loadSessionHistory'>;
+  | 'discoveryToolNames' | 'workflowHost' | 'loadSessionHistory' | 'actorControl'>;
+
+const ACTOR_BOUND_TOOL_NAMES = new Set([
+  'spawn_agent', 'send_message', 'followup_task', 'wait_agent',
+  'interrupt_agent', 'list_agents', 'agent_output',
+]);
 
 import {
   DEFERRED_TOOL_HINTS,
@@ -79,13 +84,16 @@ function parseQuery(rawQuery: string): { mode: 'select' | 'keyword'; names: stri
 export function isToolDiscoverable(name: string, context: ToolSearchContext): boolean {
   if (context.discoveryToolNames && !context.discoveryToolNames.includes(name)) return false;
   if (context.excludeTools?.includes(name)) return false;
+  const registered = getRegisteredToolDefinition(name);
+  if (!context.actorControl && ACTOR_BOUND_TOOL_NAMES.has(name)
+    && registered?.source.kind === 'builtin') return false;
   if (name === 'run_workflow' && !context.workflowHost) return false;
   if (name === 'run_skill_script' && (!context.skillScriptRunner || !context.executionCwd)) return false;
   if (isSessionHistoryTool(name) && !context.loadSessionHistory) return false;
   if (isMcpToolName(name)
     && !(context.extensionRuntime?.hasCapabilityProvider?.('mcp') ?? !!context.extensionRuntime)) return false;
   if (!context.toolVisibilityPolicy) return true;
-  const definition = getRegisteredToolDefinition(name)
+  const definition = registered
     ?? lookupRunScopedTool(context.extensionRuntime, name);
   return definition !== undefined && context.toolVisibilityPolicy({
     name: definition.name,

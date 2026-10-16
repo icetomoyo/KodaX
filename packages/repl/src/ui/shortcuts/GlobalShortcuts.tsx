@@ -9,7 +9,6 @@
 import type React from 'react';
 import chalk from 'chalk';
 import {
-  type KodaXAgentMode,
   type KodaXReasoningMode,
 } from '@kodax-ai/coding';
 // FEATURE_093 (v0.7.24): import from concrete module, not the barrel,
@@ -17,7 +16,6 @@ import {
 import { useShortcut } from './useShortcut.js';
 import type { CurrentConfig } from '../../interactive/commands.js';
 import type { PermissionMode } from '../../permission/types.js';
-import { nextAgentMode } from '../../common/agent-mode.js';
 import { getProviderReasoningEffortCycle, saveConfig } from '../../common/utils.js';
 import type { KeyInfo } from '../types.js';
 
@@ -34,13 +32,11 @@ export interface GlobalShortcutsProps {
   setShowHelp: (visible: boolean) => void;
   onSetThinking?: (enabled: boolean) => void;
   onCycleThinking?: () => void;
-  onCycleAgentMode?: () => void;
   onSetReasoningMode?: (mode: KodaXReasoningMode) => void;
   onToggleTranscriptMode?: () => void;
   onOpenTranscriptSearch?: () => void;
   canOpenTranscriptSearch?: boolean;
   isInteractiveDialogActive?: boolean;
-  onSetAgentMode?: (mode: KodaXAgentMode) => void;
   onSetPermissionMode?: (mode: PermissionMode) => void;
   isInputEmpty: boolean;
   onSavePermissionMode?: (mode: PermissionMode) => void;
@@ -110,13 +106,11 @@ export function GlobalShortcuts({
   setShowHelp,
   onSetThinking,
   onCycleThinking,
-  onCycleAgentMode,
   onSetReasoningMode,
   onToggleTranscriptMode,
   onOpenTranscriptSearch,
   canOpenTranscriptSearch = true,
   isInteractiveDialogActive = false,
-  onSetAgentMode,
   onSetPermissionMode,
   isInputEmpty,
   onSavePermissionMode,
@@ -262,20 +256,6 @@ export function GlobalShortcuts({
     setCurrentConfig((prev) => ({ ...prev, permissionMode: newMode }));
     onSetPermissionMode?.(newMode);
     onSavePermissionMode?.(newMode);
-    setShowHelp(false);
-    return true;
-  });
-
-  useShortcut('toggleAgentMode', () => {
-    if (isInteractiveDialogActive) {
-      return false;
-    }
-    if (onCycleAgentMode) { onCycleAgentMode(); setShowHelp(false); return true; }
-    const nextMode: KodaXAgentMode = nextAgentMode(currentConfig.agentMode);
-
-    setCurrentConfig((prev) => ({ ...prev, agentMode: nextMode }));
-    saveConfig({ agentMode: nextMode });
-    onSetAgentMode?.(nextMode);
     setShowHelp(false);
     return true;
   });

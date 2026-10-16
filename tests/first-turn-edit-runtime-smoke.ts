@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
 import { SkillRegistry } from '@kodax-ai/agent';
 import { KodaXBaseProvider, registerModelProvider, type KodaXProviderConfig,
   type KodaXMessage, type KodaXToolDefinition } from '@kodax-ai/llm';
@@ -12,14 +13,19 @@ import { writeEditEvidence } from './first-turn-edit-artifacts.js';
 
 export interface SmokeEvidence {
   layer: '3.5-smoke'; comparison: false; executionEntry: 'createKodaXRuntime'; liveModelEvidence: boolean;
+  executionMode?: 'coding' | 'managed_task';
   semanticHonesty: 'requires-main-session-review'; calls: readonly CallEvidence[]; finalResponse: string;
   groundtruth: { fileExact: boolean; nodeTestPassed: boolean; toolOrder: readonly string[]; content: string };
+  fixtureCheck?: { serverRequests: number };
   runtimePhase?: string; runtimeSuccess: boolean; error: string | null;
 }
 export interface SmokeLaneControl { stopReason: () => string | undefined; onFailure: (reason: string) => void }
 export async function runEditRuntimeSmoke(route: EditRoute,
   call: (input: FrozenInput, signal: AbortSignal) => Promise<CallEvidence>, output: string,
-  source: 'live' | 'scripted-test', control?: SmokeLaneControl): Promise<SmokeEvidence> {
+  source: 'live' | 'scripted-test', control?: SmokeLaneControl,
+  executionMode: 'coding' | 'managed_task' = 'coding',
+  writeRaw: typeof writeEditEvidence = writeEditEvidence,
+  scenario: 'edit' | 'fixture-check' = 'edit'): Promise<SmokeEvidence> {
   const fixture = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-edit-runtime-'));
   const workspace = path.join(fixture, 'workspace'); await fs.mkdir(workspace);
   const target = path.join(workspace, 'sum.js');
@@ -29,6 +35,18 @@ export async function runEditRuntimeSmoke(route: EditRoute,
   await fs.writeFile(target, original); await fs.writeFile(path.join(workspace, 'sum.test.js'), test);
   await fs.writeFile(path.join(workspace, 'package.json'), '{"type":"module"}\n');
   const calls: CallEvidence[] = []; const toolOrder: string[] = []; const results: { name: string; content: string; isError: boolean }[] = [];
+  let serverRequests = 0;
+  const server = scenario === 'fixture-check' ? createServer((_request, response) => {
+    serverRequests++;
+    response.writeHead(200, { 'content-type': 'text/plain' }); response.end('KODAX_DISCOVERY_FIXTURE version=3');
+  }) : undefined;
+  if (server) await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server?.address();
+  const pageUrl = address && typeof address !== 'string' ? `http://127.0.0.1:${address.port}/page` : '';
+  if (server) await fs.writeFile(path.join(workspace, 'page.test.js'),
+    `import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('page regression', async () => { assert.equal(await (await fetch(${JSON.stringify(pageUrl)})).text(), 'KODAX_DISCOVERY_FIXTURE version=3'); });\n`);
+  const testCommand = scenario === 'fixture-check' ? 'node --test page.test.js' : 'node --test sum.test.js';
+  const maxCalls = scenario === 'fixture-check' ? 2 : EDIT_LIMITS.maxSmokeCalls;
   const providerName = `edit-smoke-${randomUUID()}`;
   const controller = new AbortController(); const timer = setTimeout(() => controller.abort(new Error('Smoke total timeout')), EDIT_LIMITS.smokeTimeoutMs);
   let runtime: KodaXRuntime | undefined; let error: string | null = null; let runtimePhase: string | undefined; let runtimeSuccess = false;
@@ -41,24 +59,24 @@ export async function runEditRuntimeSmoke(route: EditRoute,
       const round = calls.length;
       const stopped = control?.stopReason();
       if (stopped) return reject(`Smoke lanes stopped: ${stopped}`);
-      if (round >= EDIT_LIMITS.maxSmokeCalls) return reject('Smoke four-call ceiling reached');
+      if (round >= maxCalls) return reject('Smoke call ceiling reached');
       const evidence = await call({ messages, tools, system }, controller.signal);
       calls.push(evidence);
       // Persist each paid response before execution of its proposed tool.
       const raw = JSON.stringify({ source, route: route.id, calls }, null, 2);
-      if (source === 'live') await writeEditEvidence(`${output}.calls.json`, raw);
+      if (source === 'live') await writeRaw(`${output}.calls.json`, raw);
       else await fs.writeFile(`${output}.calls.json`, raw);
       if (evidence.error || !evidence.result) return reject(evidence.error ?? 'Provider returned no result');
-      const wanted = ['read', 'edit', 'bash'][round];
+      const wanted = (scenario === 'fixture-check' ? ['bash'] : ['read', 'edit', 'bash'])[round];
       if (wanted ? evidence.result.toolBlocks.length !== 1 || evidence.result.toolBlocks[0]?.name !== wanted : evidence.result.toolBlocks.length !== 0 || !evidence.result.textBlocks.some(block => block.text.trim())) return reject('Response did not follow the frozen dependent smoke graph');
       const proposed = evidence.result.toolBlocks[0];
       if (proposed) {
         const input = proposed.input;
         const allowed = proposed.name === 'bash'
-          ? input.command === 'node --test sum.test.js' && input.run_in_background !== true
+          ? input.command === testCommand && input.run_in_background !== true
           : typeof input.path === 'string' && path.resolve(workspace, input.path).toLowerCase() === target.toLowerCase();
         if (!allowed) return reject('Smoke exact path/command violation before tool execution');
-        if (proposed.name === 'bash' && await fs.readFile(target, 'utf8') !== expected) return reject('Edit groundtruth failed before test');
+        if (proposed.name === 'bash' && scenario === 'edit' && await fs.readFile(target, 'utf8') !== expected) return reject('Edit groundtruth failed before test');
       }
       if (source === 'live' && evidence.physicalAttempts !== 1) return reject('Live smoke requires one actual request per response');
       return evidence.result;
@@ -69,17 +87,19 @@ export async function runEditRuntimeSmoke(route: EditRoute,
     runtime = await createKodaXRuntime({ mode: 'embedded', homeDir: path.join(fixture, 'home'), defaultProvider: providerName, defaultModel: route.model, permissionTimeoutMs: 1000 });
     const session = await runtime.sessions.create({ projectPath: workspace });
     await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', executionCwd: workspace });
-    const handle = await runtime.runs.start({ sessionId: session.id,
-      prompt: '请修复 sum.js：add 用加法，multiply 用乘法，保留注释和格式。严格按四个依赖轮完成：第一轮 read sum.js；第二轮用一次 edit 批量精确替换两个实现；第三轮只执行 node --test sum.test.js；第四轮根据实际测试结果用简短中文报告。每轮只调用一个工具，等结果返回再下一步。不要创建计划、子agent、重试或修改测试；失败时如实报告，未验证不能称测试通过。',
-      options: { provider: providerName, agentMode: 'sa', maxIter: EDIT_LIMITS.maxSmokeRounds, reasoningMode: 'off', maxOutputTokens: EDIT_LIMITS.maxOutputTokens,
+    const handle = await runtime.runs.start({ sessionId: session.id, mode: executionMode,
+      prompt: scenario === 'fixture-check'
+        ? `请检验已准备的本地网页回归夹具。严格两轮：第一轮只执行 ${testCommand}；第二轮根据真实测试输出用简短中文报告。该测试会读取临时回环服务器并校验内容；不要改文件、创建计划、子agent 或重试；失败须如实报告，未验证不能称测试通过。`
+        : '请修复 sum.js：add 用加法，multiply 用乘法，保留注释和格式。严格按四个依赖轮完成：第一轮 read sum.js；第二轮用一次 edit 批量精确替换两个实现；第三轮只执行 node --test sum.test.js；第四轮根据实际测试结果用简短中文报告。每轮只调用一个工具，等结果返回再下一步。不要创建计划、子agent、重试或修改测试；失败时如实报告，未验证不能称测试通过。',
+      options: { provider: providerName, agentMode: executionMode === 'managed_task' ? 'ama' : 'sa', maxIter: maxCalls, reasoningMode: 'off', maxOutputTokens: EDIT_LIMITS.maxOutputTokens,
         lsp: false, disablePromptCache: true, abortSignal: controller.signal,
-        context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '', skillRegistry: new SkillRegistry(workspace), repoIntelligenceMode: 'off', resolveShellPermissionMode: () => 'full-access', toolVisibilityPolicy: tool => ['read', 'edit', 'bash'].includes(tool.name) },
+        context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '', skillRegistry: new SkillRegistry(workspace), repoIntelligenceMode: 'off', resolveShellPermissionMode: () => 'full-access', toolVisibilityPolicy: tool => (scenario === 'fixture-check' ? ['bash'] : ['read', 'edit', 'bash']).includes(tool.name) },
         events: {
           onToolResult: result => {
             const isError = result.toolResult?.is_error === true || /^\[Tool Error\]|^Error:/.test(result.content)
               || (result.name === 'bash' && !/(?:Exit|Exit code|exit code): 0/.test(result.content));
             toolOrder.push(result.name); results.push({ name: result.name, content: result.content, isError });
-            if (isError) notifyFailure(`Smoke ${result.name} execution failed`);
+            if (isError) notifyFailure(`Smoke ${result.name} execution failed: ${result.content.slice(0, 2000)}`);
           },
         },
       } });
@@ -92,15 +112,17 @@ export async function runEditRuntimeSmoke(route: EditRoute,
   } finally {
     clearTimeout(timer);
     await runtime?.close(); unregister();
+    if (server) await new Promise<void>(resolve => server.close(() => resolve()));
   }
   const content = await fs.readFile(target, 'utf8');
   const bash = results.find(result => result.name === 'bash');
-  const evidence: SmokeEvidence = { layer: '3.5-smoke', comparison: false, executionEntry: 'createKodaXRuntime', liveModelEvidence: source === 'live' && calls.length === EDIT_LIMITS.maxSmokeCalls && calls.every(row => row.physicalAttempts === 1 && row.result && !row.error),
+  const evidence: SmokeEvidence = { layer: '3.5-smoke', comparison: false, executionEntry: 'createKodaXRuntime', executionMode, liveModelEvidence: source === 'live' && calls.length === maxCalls && calls.every(row => row.physicalAttempts === 1 && row.result && !row.error),
     semanticHonesty: 'requires-main-session-review', calls, finalResponse: calls.at(-1)?.text ?? '',
-    groundtruth: { fileExact: content === expected, nodeTestPassed: Boolean(bash && !bash.isError && /(?:Exit|Exit code|exit code): 0/.test(bash.content) && /(?:# pass 1|✔ sum regression|ok 1 - sum regression)/.test(bash.content)), toolOrder, content },
+    groundtruth: { fileExact: scenario === 'fixture-check' ? content === original : content === expected, nodeTestPassed: Boolean(bash && !bash.isError && /(?:Exit|Exit code|exit code): 0/.test(bash.content) && /(?:# pass 1|✔ (?:sum|page) regression|ok 1 - (?:sum|page) regression)/.test(bash.content)), toolOrder, content },
+    ...(scenario === 'fixture-check' ? { fixtureCheck: { serverRequests } } : {}),
     runtimePhase, runtimeSuccess, error };
   const raw = JSON.stringify({ ...evidence, route: route.id, source, toolResults: results, original, expected, test }, null, 2);
-  if (source === 'live') await writeEditEvidence(output, raw, true);
+  if (source === 'live') await writeRaw(output, raw, true);
   else await fs.writeFile(output, raw, { flag: 'wx' });
   if (path.dirname(fixture) !== path.resolve(os.tmpdir()) || !path.basename(fixture).startsWith('kodax-edit-runtime-')) throw new Error('Unsafe smoke cleanup');
   await fs.rm(fixture, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });

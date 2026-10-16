@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { buildHelpBarSegments, buildHelpBarText, buildHelpMenuSections } from "./layout.js";
 
 describe("help bar layout", () => {
-  it("includes the SA/AMA toggle shortcut in the help bar", () => {
+  it("omits the retired mode toggle while retaining editing help", () => {
     const helpText = buildHelpBarText();
     const helpSegments = buildHelpBarSegments();
-    expect(helpText).toContain("Alt+M AMA/SA");
-    expect(helpSegments.some((segment) => segment.text === "Alt+M AMA/SA")).toBe(true);
+    expect(helpText).not.toContain("Alt+M");
+    expect(helpSegments.some((segment) => segment.text.includes("AMA/SA"))).toBe(false);
     expect(helpText).not.toContain("AMAW");
     expect(helpText).toContain("Ctrl+W/K/U edit");
   });

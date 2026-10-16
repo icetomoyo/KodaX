@@ -52,8 +52,8 @@ describe('FEATURE_259 prompt contracts', () => {
     expect(waitDescription).toContain('reconcile the affected semantic plan milestone');
     expect(waitDescription).toContain('before waiting again');
     expect(createDescription).toContain('semantic milestone');
-    expect(createDescription).toContain('not one item per child Agent');
-    expect(createDescription).toContain('Several Agents may support one milestone');
+    expect(createDescription).toContain('Milestones are deliverables, not child Agents');
+    expect(createDescription).toContain('several Agents may support one');
     expect(createDescription).not.toContain('natural anchor for the work each child will execute');
   });
 });
