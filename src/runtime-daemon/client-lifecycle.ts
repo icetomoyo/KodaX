@@ -5,8 +5,8 @@ import type { ClientExitReceipt } from '@kodax-ai/coding/client-contract';
 import type { KodaXRuntime } from '../sdk-runtime.js';
 import { cleanupClientWork, settleClientWork } from '../runtime-client-work.js';
 import type { RuntimeDaemonManagementController } from './management.js';
-import { readRuntimeDaemonLockOwner, readRuntimeOwnerProcessStartIdentity, type RuntimeDaemonPaths } from './state.js';
-import { isRuntimeDaemonPidAlive } from './lifecycle.js';
+import { readRuntimeDaemonLockOwner, type RuntimeDaemonPaths } from './state.js';
+import { isRuntimeDaemonOwnerPidAlive } from './lifecycle.js';
 import { waitForRuntimeDaemonShutdown } from './shutdown-verifier.js';
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 
@@ -38,10 +38,8 @@ export function readExitReceipts(paths: RuntimeDaemonPaths, principal: string): 
 export async function verifyExitReceipt(paths: RuntimeDaemonPaths, receipt: ClientExitReceipt): Promise<ClientExitReceipt> {
   const owner = receipt.host.owner;
   const current = readRuntimeDaemonLockOwner(paths.lockFile);
-  const identity = isRuntimeDaemonPidAlive(owner.pid) ? readRuntimeOwnerProcessStartIdentity(owner.pid) : undefined;
   const ownerActive = current?.runtimeId === owner.runtimeId && current.pid === owner.pid
-    && isRuntimeDaemonPidAlive(owner.pid)
-    && (owner.processStartIdentity === undefined || identity === undefined || identity === owner.processStartIdentity);
+    && isRuntimeDaemonOwnerPidAlive(owner.pid, owner.processStartIdentity);
   const recovered = !ownerActive && receipt.cleanup.state === 'pending'
     ? { ...receipt, cleanup: { ...receipt.cleanup, state: 'unknown' as const,
       issues: [...receipt.cleanup.issues, 'Original Host stopped before client cleanup was confirmed.'] } }

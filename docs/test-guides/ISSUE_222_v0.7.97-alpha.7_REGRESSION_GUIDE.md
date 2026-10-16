@@ -51,7 +51,8 @@ three original crash tests.
   startup deadline and cancellation signal apply to every attempt.
 - A replacement that never completes authenticated initialization still times
   out or cancels within that same budget and closes the temporary client.
-  Shutdown outcome verification uses the same conservative generation check.
+  Shutdown outcome verification and Client exit receipts use the same
+  conservative generation check.
 - Initialization is the only replayed RPC. No retry bypasses identity checks,
   force-releases a live owner or resubmits an input/tool operation.
 

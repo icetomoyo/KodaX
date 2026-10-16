@@ -6,7 +6,7 @@ import type { ClientExitReceipt } from '@kodax-ai/coding/client-contract';
 import { verifyExitReceipt } from './client-lifecycle.js';
 import { resolveRuntimeDaemonPaths } from './state.js';
 
-vi.mock('./lifecycle.js', () => ({ isRuntimeDaemonPidAlive: () => false }));
+vi.mock('./lifecycle.js', () => ({ isRuntimeDaemonOwnerPidAlive: () => false }));
 afterEach(() => vi.restoreAllMocks());
 
 it.each([true, false])('recovers an unconfirmed client cleanup after owner loss (shutdownHost=%s)', async requested => {

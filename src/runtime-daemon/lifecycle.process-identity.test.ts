@@ -6,6 +6,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { waitForRuntimeDaemonOwnerExit } from './process.js';
 import { waitForRuntimeDaemonShutdown } from './shutdown-verifier.js';
+import { verifyExitReceipt } from './client-lifecycle.js';
 import { observeRuntimeDaemonHealth, resolveRuntimeDaemonOwnership } from './lifecycle.js';
 import { acquireRuntimeSessionStorageOwner, findRuntimeSessionStorageHost,
   readRuntimeDaemonLockOwner, resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock,
@@ -131,6 +132,22 @@ it('keeps shutdown unverified when a denied PID probe cannot establish exit desp
   await expect(waitForRuntimeDaemonShutdown({ configHome: paths.configHome,
     owner: { ...owner, processStartIdentity: 'linux:41' }, timeoutMs: 10,
   })).resolves.toMatchObject({ status: 'unverified', reason: 'daemon_active' });
+});
+
+it('preserves a pending client exit when owner liveness is unknown despite other identity evidence', async () => {
+  publishOwner();
+  proc.set(`/proc/${owner.pid}/stat`, `${owner.pid} (unconfirmed process) S ${'0 '.repeat(18)}43 0`);
+  const kill = process.kill.bind(process);
+  vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+    if (pid === owner.pid && signal === 0) throw Object.assign(new Error('Cannot probe owner'), { code: 'EPERM' });
+    return kill(pid, signal);
+  });
+  const timestamp = new Date().toISOString();
+  expect(await verifyExitReceipt(paths, { requestId: 'pending-exit', clientId: 'client',
+    runtimeId: owner.runtimeId, accepted: true, requestedAt: timestamp, updatedAt: timestamp,
+    cleanup: { state: 'pending', runIds: [], operationIds: [], actorTurns: [], withdrawnInputs: [], issues: [] },
+    host: { requested: true, state: 'pending', owner },
+  })).toMatchObject({ cleanup: { state: 'pending' }, host: { state: 'pending' } });
 });
 
 it.each([true, false])('observes a live SDK Host without daemon serve argv (start identity=%s)', async identified => {
