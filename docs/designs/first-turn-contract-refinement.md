@@ -4,6 +4,8 @@
 
 后续 [Codex 框架对标](codex-harness-parity.md) 已零网络确认默认 SA 的协作展示/宿主绑定不一致及 native/bridge 调度差异。完整 schema 延迟披露前先修这些窄边界；本文件的现状与 r3 数字保留原场景，新增 SA 合并预算另列，既定 18 次评测上限不自动扩大。
 
+2026-10-16 范围更新：新产品任务统一 AMA、退出用户可选 SA；保留 AMA child/helper 使用的 direct executor 和旧 SDK/恢复兼容。实施顺序见框架对标设计。下文 SA 抓包与 r3 作为历史/内部回归保留；产品首轮和任务表现以 AMA 为主，退出 SA 本身不算 token 收益。候选输入变化须新 revision，模型预算不扩大。
+
 ## 完整请求基线
 
 采用同一 `countTokens` 估算完整序列化请求，包含工具、SDK、说明、任务与包装；不是模型 tokenizer、API usage 或 Codex 桌面上下文显示值。
