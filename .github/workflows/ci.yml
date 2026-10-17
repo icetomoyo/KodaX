@@ -14,10 +14,6 @@ name: CI
 on:
   workflow_call:
   workflow_dispatch:
-    inputs:
-      shell_stop_diagnostics:
-        type: boolean
-        default: false
 
 # Cancel superseded runs on the same ref to save CI minutes.
 concurrency:
@@ -25,11 +21,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  shell-stop-diagnostics:
-    if: inputs.shell_stop_diagnostics == true
-    uses: ./.github/workflows/shell-stop-diagnostics.yml
   test:
-    if: inputs.shell_stop_diagnostics != true
     name: test (node ${{ matrix.node }})
     runs-on: ubuntu-24.04
     strategy:
@@ -269,7 +261,6 @@ jobs:
           NODE
 
   packaged-electron-daemon:
-    if: inputs.shell_stop_diagnostics != true
     name: packaged Electron daemon (Windows)
     runs-on: windows-latest
     steps:
@@ -351,7 +342,6 @@ jobs:
         run: npm run test:electron-daemon:built
 
   trusted-text-native-platforms:
-    if: inputs.shell_stop_diagnostics != true
     name: trusted text and POSIX sandbox (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -415,7 +405,6 @@ jobs:
         run: node node_modules/vitest/vitest.mjs run tests/feature-295-posix-shell-policy.test.ts
 
   shell-contract-windows:
-    if: inputs.shell_stop_diagnostics != true
     name: shell execution contract (Windows)
     runs-on: windows-latest
     steps:

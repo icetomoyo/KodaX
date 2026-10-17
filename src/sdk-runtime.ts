@@ -11502,6 +11502,8 @@ function createRuntimeRunService(deps: {
       sessionId: record.sessionId,
       runId: record.runId,
     });
+    // The predecessor may finish while admission awaits storage or settings.
+    drainNext(record.sessionId);
   };
 
   const publishRunUpdate = (record: RuntimeRunRecord): boolean => {

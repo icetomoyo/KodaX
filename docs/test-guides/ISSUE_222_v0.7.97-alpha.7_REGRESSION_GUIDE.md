@@ -346,3 +346,67 @@ Deadline expiry, cancellation and changed-owner behavior remain separate
 deterministic regressions that first fail against the old implementation.
 The earlier single-CPU failures above remain diagnostic evidence of resource
 starvation and are not erased or represented as successful acceptance.
+
+The final boundary audit also covers the synchronous owner discovery itself.
+The SDK checks the original deadline and signal before and after discovery,
+after authenticated owner revalidation, and after the final build check. If
+discovery consumes the deadline or observes cancellation, it must not open a
+process lease with a new minimum budget. Both public ensure regressions first
+failed by opening that lease and now pass without any lease acquisition.
+
+## Fixed-commit acceptance
+
+The Windows attachment fix was verified at
+`ae77c2b7836b1130ed1426bb508d3f324ab9cad2`.
+Local Windows Node 20 and 22 each passed all nine CPU-aware concurrent SDK
+cases. The final quiet empty-Home runs measured 1.50–1.75s for the initial
+attachment and 2.16–2.34s for idle-Host replacement, compared with the original
+2.0–2.5s and 3.34–3.73s. These SDK timings do not include a large Session picker.
+The actual 3,000-Session concurrent CLI rebuild/resume remained within its
+existing 20s gate at 13.46s/14.24s, with both saved conversations restored.
+
+Linux Node 22 CI passed all three original crash cases and all 96 explicit
+ownership regressions, including the real unreaped-zombie fixture. Independent
+Standards and Spec reviews of the final source reported zero findings.
+
+Windows CI passed the original 43 bundled tests, nine concurrent SDK cases,
+141 startup ownership/cancellation tests, concurrent CLI startup/rebuild
+refresh, native policy gates and the Electron 42.5.0 packaged daemon. The nine
+concurrent SDK cases measured 3.734–3.891s for initial attachment and
+4.967–5.176s for Host replacement, within the unchanged 15s/10s budgets.
+
+[Full CI run 39003213083](https://github.com/icetomoyo/KodaX/actions/runs/39003213083)
+passed six platform jobs. Linux Node 20 also passed the three original crash
+cases and all ten owner-exit tests, including the real unreaped zombie, in its
+Fast/Unit tiers. Its System tier passed 1,344 tests but timed out after 90s in
+`keeps the session usable after stopped Shell cleanup remains unknown`.
+That in-process Runtime test does not use the Windows daemon attachment path.
+The overall run is therefore **failed**, not accepted by rerunning; it
+triggered a separate Stop wait-chain diagnosis. Release remains held.
+
+## Queued Run handoff found by the full gate
+
+[Scoped Linux Node 20 diagnosis 39004848120](https://github.com/icetomoyo/KodaX/actions/runs/39004848120)
+reproduced the same 90s timeout on its first case. Public wait-boundary probes
+showed Stop returning in milliseconds and the original Run settling as
+`interrupted` about six seconds later. The successor Run then failed to advance.
+This is distinct from Windows daemon startup or authenticated attachment.
+
+Run admission decides whether to queue before awaiting settings/journal work.
+The active predecessor can finish during those awaits and drain an empty
+queue. Publishing the already-classified queued Run afterward did not wake
+the drain, leaving it queued indefinitely. Queue publication now calls the
+existing drain helper, which still refuses to start work while another Run is
+active or a Session Stop fence remains. No timeout, authorization or ordering
+check is relaxed, and no input or tool operation is resubmitted.
+
+The asynchronous journal binding was added by `ceb4ed10c` on October 12;
+`152ec646` widened this Shell test from 30s to 90s on October 13 without
+repairing the handoff. These changes predate the Windows attachment fix.
+
+Two deterministic public SDK tests pause journal binding, complete the first
+Run, then publish the second through `runs.start` or `after_turn`. Both failed
+against the old code because only the first executor started, then passed with
+the queue-publication fix and exactly one executor call per Run. The original
+Shell cleanup test retains its five cases and 90s limit. Temporary diagnostic
+workflow/input/probes were removed; the normal CI matrix is restored.
