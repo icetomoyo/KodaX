@@ -3388,6 +3388,7 @@ export interface RuntimeDaemonPreflight {
     | "active_agent_turns"
     | "active_agent_tasks"
     | "pending_interactions"
+    | "background_work"
   )[];
   readonly canStop: boolean;
 }
@@ -5414,6 +5415,7 @@ async function createKodaXRuntimeInternal(
       sessionAdmission,
       workflows,
       actors: actorRegistry,
+      hasBackgroundWork: () => pendingMemoryWork.size > 0 || pendingManagedTaskMaintenance.size > 0,
     }),
     admin: createRuntimeAdminService(agentPlane),
     agents: createRuntimeAgentService(
@@ -6331,6 +6333,9 @@ async function connectKodaXRuntimeInternal(
   );
   const orphanExitMs = options.daemonOrphanExitMs
     ?? (options.daemonLifecycle === 'interactive' ? 30_000 : undefined);
+  if (options.daemonLifecycle === 'persistent' && options.daemonOrphanExitMs !== undefined) {
+    throw new Error('A persistent daemon cannot also request daemonOrphanExitMs.');
+  }
   if (options.daemonLifecycle !== undefined && options.autoStart !== true) {
     throw new Error('Daemon lifecycle changes require owner auto-start.');
   }
@@ -6612,9 +6617,12 @@ async function connectKodaXRuntimeInternal(
         // lease's transport. Do not close the same transport again below.
         upgradeReleasedLease = true;
       }
+      const persistentLifecycle = initialized.daemonLifecycle === 'persistent'
+        || (initialized.daemonLifecycle !== 'interactive'
+          && !hasVersionedRuntimeCapability(daemonCapabilities, 'daemonOrphanExit', 1));
       return connectKodaXRuntimeInternal(
         options.daemonLifecycle === 'interactive' && options.daemonOrphanExitMs === undefined
-          && initialized.daemonLifecycle === 'persistent'
+          && persistentLifecycle
           ? { ...options, daemonLifecycle: 'persistent' } : options,
         allowCapabilityUpgrade,
         ownerBootstrap,
@@ -14970,6 +14978,7 @@ function createRuntimeStatusService(deps: {
   readonly sessionAdmission: RuntimeSessionAdmission;
   readonly workflows: RuntimeWorkflowService;
   readonly actors: RuntimeAgentActorRegistry;
+  readonly hasBackgroundWork: () => boolean;
 }): RuntimeStatusService {
   return {
     async snapshot() {
@@ -15016,6 +15025,7 @@ function createRuntimeStatusService(deps: {
       if (pendingPermissions.length > 0 || pendingUserInputs.length > 0) {
         blockers.push("pending_interactions");
       }
+      if (deps.hasBackgroundWork()) blockers.push('background_work');
       return {
         runtimeId: deps.identity.runtimeId,
         clientCount: 0,

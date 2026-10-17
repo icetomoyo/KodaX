@@ -77,6 +77,22 @@ function holdArtifactWrites(root: string, failure?: Error) {
   };
 }
 
+it('blocks idle shutdown until post-Run maintenance has finished', async () => {
+  const f = await fixture();
+  const maintenance = holdArtifactWrites(f.root);
+  try {
+    await expect((await f.start()).result).resolves.toMatchObject({ phase: 'completed' });
+    await maintenance.entered;
+    await expect(f.runtime.status.preflight()).resolves.toMatchObject({
+      activeRuns: [], canStop: false, blockers: expect.arrayContaining(['background_work']),
+    });
+    await maintenance.settleStartedWrites();
+    await vi.waitFor(async () => expect((await f.runtime.status.preflight()).canStop).toBe(true));
+  } finally {
+    try { await maintenance.settleStartedWrites(); } finally { await f.close(); }
+  }
+});
+
 it('settles owned maintenance on close without delaying the completed Run or its successor', async () => {
   const f = await fixture();
   const maintenance = holdArtifactWrites(f.root);

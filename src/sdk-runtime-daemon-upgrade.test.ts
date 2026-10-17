@@ -168,6 +168,12 @@ describe('product Host startup and passive connection', () => {
     expect(upgradeMocks.acquireProcessLease).not.toHaveBeenCalled();
   });
 
+  it('rejects conflicting persistent and idle-exit startup intents before acquiring an owner', async () => {
+    await expect(ensureKodaXRuntime({ daemonLifecycle: 'persistent', daemonOrphanExitMs: 30_000 }))
+      .rejects.toThrow(/persistent daemon/);
+    expect(upgradeMocks.acquireProcessLease).not.toHaveBeenCalled();
+  });
+
   it('gives a newly launched interactive Host a 30-second idle policy without replacing a compatible persistent owner', async () => {
     const calls: string[] = [];
     const base = createCurrentTransport(calls, async () => undefined);
@@ -575,9 +581,17 @@ describe('product Host startup and passive connection', () => {
     await runtime.close();
   });
 
-  it.each(['interactive', 'persistent'] as const)('preserves a %s Host lifecycle through a rebuild refresh', async (lifecycle) => {
+  it.each([
+    { name: 'interactive', lifecycle: 'interactive', orphanVersion: 1, exitMs: 30_000 },
+    { name: 'persistent', lifecycle: 'persistent', orphanVersion: 1, exitMs: undefined },
+    { name: 'legacy interactive', lifecycle: undefined, orphanVersion: 1, exitMs: 30_000 },
+    { name: 'legacy persistent', lifecycle: undefined, orphanVersion: undefined, exitMs: undefined },
+    { name: 'legacy unreadable policy', lifecycle: undefined, orphanVersion: 0, exitMs: undefined },
+  ] as const)('preserves a $name Host lifecycle through a rebuild refresh', async ({ lifecycle, orphanVersion, exitMs }) => {
     const calls: string[] = [];
     const current = await createCurrentTransport([], async () => undefined).request('initialize') as { capabilities: Record<string, unknown> };
+    if (orphanVersion === undefined) delete current.capabilities.daemonOrphanExit;
+    else current.capabilities.daemonOrphanExit = { version: orphanVersion };
     const old = createLegacyTransport({
       preflight: createPreflight(), calls, close: async () => undefined,
       runtimeVersion: KODAX_VERSION, capabilities: current.capabilities,
@@ -586,7 +600,7 @@ describe('product Host startup and passive connection', () => {
     upgradeMocks.acquireProcessLease
       .mockResolvedValueOnce(createLease({ ...old, async request(method, params) {
         const result = await old.request(method, params);
-        return method === 'initialize' ? { ...result as object, daemonLifecycle: lifecycle } : result;
+        return method === 'initialize' && lifecycle !== undefined ? { ...result as object, daemonLifecycle: lifecycle } : result;
       } }))
       .mockResolvedValueOnce(createLease(createCurrentTransport(calls, async () => undefined)));
     upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
@@ -594,7 +608,7 @@ describe('product Host startup and passive connection', () => {
     try {
       expect(calls.filter(call => call === 'old:runtime.shutdown')).toHaveLength(1);
       expect(upgradeMocks.acquireProcessLease.mock.calls[1]?.[0]).toMatchObject({
-        orphanExitMs: lifecycle === 'persistent' ? undefined : 30_000,
+        orphanExitMs: exitMs,
       });
     } finally { await runtime.close(); }
   });

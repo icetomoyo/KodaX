@@ -470,6 +470,11 @@ authenticated logical-client initialization, with `daemon:admin` authorization;
 probe and observation-only connections cannot change lifetime. No extra RPC is
 added. A2A retention uses the Host's already-created serving handle. Rebuild
 refresh carries a declared persistent lifetime into the replacement owner.
+For old Hosts without a lifetime field, a valid orphan-exit capability is
+positive evidence of an interactive policy; otherwise refresh conservatively
+retains persistence. Old automatic and explicit startups were indistinguishable.
+An old automatic Host therefore needs one normal, idle `kodax daemon stop` before
+the next ordinary CLI startup can select the new interactive default.
 
 Idle exit reuses the existing draining fence and governed-work preflight. The
 last disconnect checks for idle work; observed work or inspection failures
@@ -477,6 +482,10 @@ reset the grace. A newly observed idle state receives the complete grace, and
 attach/detach during inspection rechecks the latest state. Idle inspection runs
 only when no logical Clients remain; persistent/A2A Hosts avoid these scans.
 Existing startup deadlines, cancellation, PID identity and owner fences remain.
+The real Runtime preflight additionally blocks on its already-tracked pending
+memory review and managed-task maintenance promises, including after the Run
+has completed. This is an in-memory check, with no new history scan. It prevents
+idle exit or rebuild shutdown from aborting unfinished background work.
 
 Regression commands:
 

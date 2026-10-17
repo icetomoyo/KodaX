@@ -332,7 +332,6 @@ describe('daemon CLI smoke', () => {
       '--import', 'tsx', path.join(process.cwd(), 'src', 'kodax_cli.ts'),
       'daemon', 'serve', '--home', homeDir, '--profile', profile,
       '--provider', 'mock-provider',
-      '--orphan-exit-ms', '150',
     ], {
       cwd: process.cwd(),
       stdio: ['ignore', 'ignore', 'pipe'],
@@ -442,6 +441,7 @@ describe('daemon CLI smoke', () => {
       '--import', 'tsx', path.join(process.cwd(), 'src', 'kodax_cli.ts'),
       'daemon', 'serve', '--home', homeDir, '--profile', profile,
       '--provider', 'mock-provider',
+      '--orphan-exit-ms', '150',
     ], {
       cwd: process.cwd(),
       stdio: ['ignore', 'ignore', 'pipe'],

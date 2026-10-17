@@ -134,13 +134,13 @@ describe('Runtime daemon orphan idle exit', () => {
     } finally { controller.close(); vi.useRealTimers(); }
   });
 
-  it('gives completed background work a full idle grace before exiting', async () => {
+  it.each(['active_runs', 'background_work'] as const)('gives completed %s a full idle grace before exiting', async (blocker) => {
     vi.useFakeTimers();
     let active = true;
     const requestStop = vi.fn();
     const controller = createController({
       orphanExitMs: 30_000,
-      preflight: () => ({ ...idlePreflight(), canStop: !active, blockers: active ? ['active_runs'] : [] }),
+      preflight: () => ({ ...idlePreflight(), canStop: !active, blockers: active ? [blocker] : [] }),
       requestStop,
     });
     try {

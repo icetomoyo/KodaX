@@ -114,6 +114,22 @@ async function fixture(existingRoot?: string) {
   };
 }
 
+it('keeps idle shutdown blocked while a completed Run still owns terminal review', async () => {
+  const f = await fixture();
+  const review = reviewerGate();
+  try {
+    await expect((await f.start(review.reviewer)).result).resolves.toMatchObject({ phase: 'completed' });
+    const signal = await awaitEvent(review.entered, 'terminal reviewer started');
+    await expect(f.runtime.status.preflight()).resolves.toMatchObject({
+      activeRuns: [], canStop: false, blockers: expect.arrayContaining(['background_work']),
+    });
+    expect(signal.aborted).toBe(false);
+    review.release();
+    await vi.waitFor(async () => expect((await f.runtime.status.preflight()).canStop).toBe(true));
+    expect(signal.aborted).toBe(false);
+  } finally { review.release(); review.finishCleanup(); await f.close(); }
+});
+
 it.each(['coding', 'managed_task'] as const)('cancels owned %s terminal review and waits for reviewer cleanup before releasing its claim', async (mode) => {
   const f = await fixture();
   const review = reviewerGate();

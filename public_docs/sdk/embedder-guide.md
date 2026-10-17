@@ -4970,6 +4970,10 @@ as used by `kodax daemon start`; only a logical Client with `daemon:admin` can
 request this. Configured A2A serving also retains its Host. An interactive
 rebuild refresh preserves a Host's declared persistent lifecycle. These options
 are startup operations; passive `connectKodaXRuntime` rejects `daemonLifecycle`.
+Old Hosts without lifetime metadata retain persistence unless a valid orphan-exit
+capability proves their temporary policy. Stopping an idle legacy Host once lets
+the next ordinary CLI startup apply its new interactive default. Pending memory
+review and managed-task maintenance also block shutdown after a Run completes.
 
 An embedder can inspect `KODAX_RUNTIME_SDK_CAPABILITIES.daemonOrphanExit`
 before calling an auto-start API. This prevents an older SDK from spawning a
