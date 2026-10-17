@@ -297,7 +297,7 @@ assertions, waits for every worker's cleanup, and reports every failure. The
 bundled test records public startup stages on failure and attachment timings
 on success so a future CI failure has evidence beyond its terminal stack.
 The Windows packaged CI job runs this gate in addition to the full bundle
-suite. Release remains on hold pending validation of this patch.
+suite. Release remains on hold at the user's request.
 
 Follow-up validation did not treat the first improvement as sufficient. The
 committed pressure gate passed 9/9 on Windows Node 22, but Node 20 still timed
@@ -422,3 +422,35 @@ after capacity reservation but before opening the file, preserving the
 outcome is observed immediately and awaited during cleanup. Both original
 failures are retained in the local logs, and both corrected target cases pass.
 No tests are skipped and no timeout is increased by these fixture corrections.
+
+## Final build validation
+
+At `61a67599cd6c25237c97a2352f05c374c4e38b99`, the complete build and source/test
+type checks passed. The full Windows Node 20 SDK file passed 305/305, including
+both queue-handoff regressions and the corrected fixtures, without unhandled
+errors. The related Stop suite passed 13/13 and all five original Shell cleanup
+scenarios passed.
+
+The final compiled SDK recovery measured 1.754s for initial attachment and
+2.346s for idle-Host refresh. Actual concurrent CLI rebuild/resume with 3,000
+Sessions measured 10.756s/11.442s against the unchanged 20s gate. Both saved
+conversations resumed, both Clients exited normally without forced termination
+or reported errors, and both observed the replacement Host. Private Host
+cleanup succeeded. These are measurements of the final build, separate from
+the earlier SDK timings and the constrained single-CPU diagnostic experiments.
+
+[Final CI run 39006197931](https://github.com/icetomoyo/KodaX/actions/runs/39006197931)
+uses this exact commit. Its Linux Node 22 job passed all three crash cases and
+all 96 explicit ownership regressions, including the unreaped-zombie fixture.
+
+All seven final CI jobs completed successfully. Linux Node 20 passed its three
+original crash cases and all ten owner-exit tests, including the unreaped
+zombie, then passed 1,347 System tests. The original stopped-Shell successor
+case passed in 6.566s instead of timing out at 90s. Its full SDK file passed
+with the two existing platform skips; Windows ran all 305 cases without skips.
+Windows CI passed all 43 bundled tests, nine concurrent SDK cases, 141 startup
+ownership/cancellation tests, the native policy gates and packaged Electron.
+Both macOS jobs, Linux ARM64 and Windows Shell contracts also passed.
+
+The temporary diagnostic workflow, dispatch input and probes are removed.
+Release remains held by explicit user instruction; no release or tag was made.
