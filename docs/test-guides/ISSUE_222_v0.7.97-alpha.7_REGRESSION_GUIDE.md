@@ -410,3 +410,15 @@ against the old code because only the first executor started, then passed with
 the queue-publication fix and exactly one executor call per Run. The original
 Shell cleanup test retains its five cases and 90s limit. Temporary diagnostic
 workflow/input/probes were removed; the normal CI matrix is restored.
+
+The expanded local Windows Node 20 SDK/Stop/Shell gate passed 321 tests but
+also exposed two existing fixture cleanup failures. T14 detached its Client
+then removed its Home while the persistent Host was still writing; it now
+cooperatively shuts down that private Host and verifies its exact owner exit.
+The snapshot budget case attempted to delete a directory with an open blocked
+writer, which Windows rejects. Its barrier now pauses the pending materialization
+after capacity reservation but before opening the file, preserving the
+`overloaded` and `resync_required` assertions on both platforms. Its first-page
+outcome is observed immediately and awaited during cleanup. Both original
+failures are retained in the local logs, and both corrected target cases pass.
+No tests are skipped and no timeout is increased by these fixture corrections.

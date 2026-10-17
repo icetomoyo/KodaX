@@ -1401,7 +1401,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("retires client-minted permission requests on the daemon wire (T14)", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime, waitForRuntimeDaemonShutdown } = await import("@kodax-ai/kodax/runtime");
     const profile = `space-permission-${randomUUID()}`;
     const worker = await createKodaXRuntime({
       mode: "daemon",
@@ -1442,7 +1442,17 @@ describe("createKodaXRuntime", () => {
       expect(seen).toEqual([]);
       subscription.close();
     } finally {
-      await worker.close();
+      try {
+        const daemon = worker.daemon;
+        if (!daemon) throw new Error('Expected the private fixture daemon');
+        const { owner } = await daemon.inspect();
+        if (!owner) throw new Error('Expected the private fixture daemon owner');
+        await daemon.shutdown();
+        await expect(waitForRuntimeDaemonShutdown({ configHome: path.join(tempRoot, '.kodax'),
+          profile, owner })).resolves.toMatchObject({ status: 'succeeded' });
+      } finally {
+        await worker.close();
+      }
     }
   });
 
@@ -5383,32 +5393,23 @@ describe("createKodaXRuntime", () => {
       markFirstWriteStarted = resolve;
     });
     let firstSnapshotPath: string | undefined;
+    let firstPageSettled: Promise<unknown> | undefined;
     let blockFirstSnapshotWrite = true;
     const open = vi.spyOn(nodeFsPromises, "open").mockImplementation(
       async (file, flags, mode) => {
-        const handle = await originalOpen(file, flags, mode);
         if (
-          !blockFirstSnapshotWrite
-          || !String(file).endsWith(".entries")
-          || String(flags) !== "wx"
+          blockFirstSnapshotWrite
+          && String(file).endsWith(".entries")
+          && String(flags) === "wx"
         ) {
-          return handle;
+          blockFirstSnapshotWrite = false;
+          firstSnapshotPath = String(file);
+          // Capacity is already reserved. Hold the pending materialization
+          // before opening its file so directory deletion also works on Windows.
+          markFirstWriteStarted?.();
+          await firstWriteGate;
         }
-        blockFirstSnapshotWrite = false;
-        firstSnapshotPath = String(file);
-        return {
-          write: async (
-            buffer: Uint8Array,
-            offset?: number,
-            length?: number,
-            position?: number | null,
-          ) => {
-            markFirstWriteStarted?.();
-            await firstWriteGate;
-            return handle.write(buffer, offset, length, position);
-          },
-          close: () => handle.close(),
-        } as unknown as Awaited<ReturnType<typeof originalOpen>>;
+        return originalOpen(file, flags, mode);
       },
     );
     try {
@@ -5432,22 +5433,24 @@ describe("createKodaXRuntime", () => {
       const firstPage = runtime.sessions.transcriptPage({
         sessionId: first.id,
       });
+      firstPageSettled = firstPage.then(value => ({ value }), (error: unknown) => ({ error }));
       await firstWriteStarted;
-      await fs.rm(path.dirname(firstSnapshotPath!), {
-        recursive: true,
-        force: true,
-      });
+      const snapshotDir = path.dirname(firstSnapshotPath!);
+      expect(path.dirname(snapshotDir)).toBe(path.resolve(os.tmpdir()));
+      expect(path.basename(snapshotDir)).toMatch(/^kodax-transcript-snapshots-/);
+      await fs.rm(snapshotDir, { recursive: true, force: true });
       await expect(runtime.sessions.transcriptPage({
         sessionId: second.id,
       })).rejects.toMatchObject({ code: "overloaded" });
       releaseFirstWrite?.();
-      await expect(firstPage).rejects.toMatchObject({
-        code: "resync_required",
+      await expect(firstPageSettled).resolves.toMatchObject({
+        error: { code: "resync_required" },
       });
     } finally {
       releaseFirstWrite?.();
       open.mockRestore();
       await runtime.close();
+      await firstPageSettled;
     }
   }, 30_000);
 
