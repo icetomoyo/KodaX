@@ -355,6 +355,30 @@ describe('product Host startup and passive connection', () => {
     } finally { clock.mockRestore(); }
   });
 
+  it.each(['timeout', 'cancel'] as const)('closes a compatible attachment if final owner verification crosses the original %s boundary', async mode => {
+    const calls: string[] = [];
+    const progress: unknown[] = [];
+    const controller = new AbortController();
+    const reason = new Error('cancel final owner verification');
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    const host = { profile: PROFILE, ownerFile: '/fixture/owner.lock', owner: { runtimeId: 'runtime_current' } };
+    upgradeMocks.findSharedHost.mockReturnValueOnce(host).mockImplementation(() => {
+      if (mode === 'cancel') controller.abort(reason);
+      else clock.mockReturnValue(1_101);
+      return host;
+    });
+    upgradeMocks.acquireProcessLease.mockResolvedValue(createLease(createCurrentTransport(calls, async () => undefined)));
+    try {
+      const starting = ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 100,
+        daemonStartupSignal: controller.signal, onStartupProgress: event => { progress.push(event); } });
+      if (mode === 'cancel') await expect(starting).rejects.toBe(reason);
+      else await expect(starting).rejects.toMatchObject({ code: 'daemon_startup_failed', reason: 'timeout' });
+      expect(calls).toEqual(['new:initialize', 'new:close']);
+      expect(progress).not.toContainEqual({ stage: 'ready' });
+      expect(upgradeMocks.waitOwnerExit).not.toHaveBeenCalled();
+    } finally { clock.mockRestore(); }
+  });
+
   it('honors cancellation after closing a temporary attachment without retrying or executing work', async () => {
     const controller = new AbortController();
     const reason = new Error('cancel owner handoff');

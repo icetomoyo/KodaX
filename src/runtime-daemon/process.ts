@@ -471,6 +471,7 @@ export async function acquireRuntimeDaemonProcessLease(
       userInputTimeoutMs: options.userInputTimeoutMs,
       orphanExitMs: options.orphanExitMs,
       startupTimeoutMs: Math.max(1, startupDeadline - Date.now()),
+      startupSignal: options.startupSignal,
       ownerBootstrapFile,
     });
     const observation = await waitForHealthyDaemonStartup(paths, options, child, undefined, startupDeadline);
@@ -510,6 +511,7 @@ async function connectProcessLease(
   createClientStartupProgressReporter(options.onStartupProgress)({ stage: 'connecting' });
   const transport = await createRuntimeDaemonSocketClientTransport(endpoint, {
     connectTimeoutMs: Math.min(options.connectTimeoutMs ?? 2_000, remainingMs),
+    signal: options.startupSignal,
   });
   if (options.startupSignal?.aborted || Date.now() >= deadline) {
     await transport.close?.();
@@ -807,6 +809,7 @@ export interface RuntimeDaemonServeProcessInput {
   readonly userInputTimeoutMs?: number;
   readonly orphanExitMs?: number;
   readonly startupTimeoutMs?: number;
+  readonly startupSignal?: AbortSignal;
   /** @internal One-shot owner-only policy file; never emitted on the command line. */
   readonly ownerBootstrapFile?: string;
 }
@@ -882,6 +885,7 @@ export async function spawnRuntimeDaemonServeProcess(
         env: launch.env,
         logFile: runtimeDaemonBootstrapLogPath(paths),
         startupTimeoutMs: input.startupTimeoutMs,
+        startupSignal: input.startupSignal,
         startupHandoff: true,
       });
       child = contained.supervisor;

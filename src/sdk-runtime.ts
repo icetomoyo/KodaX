@@ -6593,6 +6593,14 @@ async function connectKodaXRuntimeInternal(
     }
     assertRuntimeCapabilities(daemonCapabilities, requirements);
     if (allowCapabilityUpgrade && options.autoStart === true) assertCurrentLauncherBuild();
+    // Synchronous owner/build verification can cross the boundary after the
+    // initialize timer has been cleared. Close this temporary lease on expiry.
+    if (allowCapabilityUpgrade && options.autoStart === true) {
+      options.daemonStartupSignal?.throwIfAborted();
+      if (Date.now() >= startupDeadline) {
+        throw new RuntimeDaemonStartupError('Host startup timed out before the Client became ready.', 'timeout');
+      }
+    }
   } catch (error: unknown) {
     if (!upgradeReleasedLease) {
       if (lease !== undefined) await lease.close();

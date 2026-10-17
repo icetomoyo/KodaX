@@ -68,10 +68,24 @@ export async function observeRuntimeDaemonHealth(
       options.handshakeTimeoutMs ?? 1_000,
       'Timed out waiting for runtime daemon handshake.',
     );
+    const pidAlive = readPidAlive();
+    let observedState = state;
+    if (state.status === 'starting') {
+      // The descriptor may become ready during authentication/OS inspection.
+      // Refresh only readiness for the exact already-verified owner; a new
+      // owner still needs its own authenticated probe and fresh OS inspection.
+      const ready = readRuntimeDaemonState(paths);
+      const readyOwner = readRuntimeDaemonLockOwner(paths.lockFile);
+      if (ready?.status === 'ready' && ready.runtimeId === state.runtimeId
+        && ready.pid === state.pid && ready.profile === state.profile && ready.endpoint === state.endpoint
+        && runtimeDaemonLockMatchesState(readyOwner, ready)
+        && readyOwner?.createdAt === lockOwner?.createdAt
+        && readyOwner?.processStartIdentity === lockOwner?.processStartIdentity) observedState = ready;
+    }
     return {
-      state,
+      state: observedState,
       initialization: initialized,
-      pidAlive: readPidAlive(),
+      pidAlive,
       endpointReachable: true,
       identityMatches: daemonIdentityMatchesState(initialized, state)
         && runtimeDaemonLockMatchesState(lockOwner, state),

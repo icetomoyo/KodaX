@@ -298,3 +298,23 @@ bundled test records public startup stages on failure and attachment timings
 on success so a future CI failure has evidence beyond its terminal stack.
 The Windows packaged CI job runs this gate in addition to the full bundle
 suite. Release remains on hold pending validation of this patch.
+
+Follow-up validation did not treat the first improvement as sufficient. The
+committed pressure gate passed 9/9 on Windows Node 22, but Node 20 still timed
+out on one first refresh. A health probe could retain its initial `starting`
+descriptor even though that same owner became ready during authentication and
+OS identity inspection. It then repeated the entire expensive probe. Health
+now refreshes readiness after that inspection only if the latest descriptor
+and lock still name the exact same owner, endpoint and process generation.
+Owner/PID-generation replacements cannot be promoted by this refresh. A
+deterministic public health-observation test reproduces the stale status, and
+separate replacement cases retain the changed fence without returning ready.
+
+Independent Spec review also found two budget/cancellation gaps. SDK success
+now checks the original deadline and signal after its final synchronous
+owner/build validation, inside the existing cleanup boundary. Pending socket
+attachment accepts the same cancellation signal and destroys the canceled
+socket. Windows supervisor readiness observes that signal through its normal
+Job cleanup/retained-handoff path. New public-boundary tests first failed for
+late owner verification, pending socket cancellation and pre-ready Job
+cancellation, then passed with these corrections.

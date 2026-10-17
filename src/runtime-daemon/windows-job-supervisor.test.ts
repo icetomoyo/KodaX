@@ -20,6 +20,37 @@ afterEach(() => {
 });
 
 describe('Windows Job daemon supervisor', () => {
+  it.skipIf(process.platform !== 'win32')('cancels a candidate before readiness and reclaims its Job', async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'kodax-job-cancel-startup-'));
+    temporaryDirectories.push(directory);
+    const preloadFile = path.join(directory, 'pause.cjs');
+    const traceFile = path.join(directory, 'wrapper.json');
+    writeFileSync(preloadFile, [
+      'if (process.env.KODAX_INTERNAL_WINDOWS_JOB_SCRIPT_FILE) {',
+      `require('node:fs').writeFileSync(${JSON.stringify(traceFile)}, JSON.stringify({ pid: process.pid, script: process.env.KODAX_INTERNAL_WINDOWS_JOB_SCRIPT_FILE, ready: process.env.KODAX_INTERNAL_WINDOWS_JOB_READY_FILE }));`,
+      'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500); }',
+    ].join(' '));
+    const controller = new AbortController();
+    const reason = new Error('cancel candidate before readiness');
+    let contained: Awaited<ReturnType<typeof spawnWindowsJobContainedProcess>> | undefined;
+    const starting = spawnWindowsJobContainedProcess({
+      executable: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'], cwd: directory,
+      env: { ...process.env, NODE_OPTIONS: `--require ${JSON.stringify(preloadFile)}` },
+      logFile: path.join(directory, 'supervisor.log'), startupHandoff: true,
+      startupSignal: controller.signal, startupTimeoutMs: 10_000,
+    }).then(value => { contained = value; return 'unexpected successful attachment'; }, error => error as unknown);
+    try {
+      await waitForFile(traceFile);
+      const rejected = expect(starting).resolves.toBe(reason);
+      controller.abort(reason);
+      await rejected;
+      const trace = JSON.parse(readFileSync(traceFile, 'utf8')) as { pid: number; script: string; ready: string };
+      await waitForPidExit(trace.pid);
+      expect(existsSync(trace.script)).toBe(false);
+      expect(existsSync(trace.ready)).toBe(false);
+    } finally { await contained?.terminate(); }
+  }, 30_000);
+
   it.skipIf(process.platform !== 'win32')(
     'reclaims an opt-in wrapper and launch files when PowerShell cannot spawn',
     async () => {
