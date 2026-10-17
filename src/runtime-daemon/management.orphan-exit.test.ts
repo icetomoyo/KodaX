@@ -65,6 +65,28 @@ describe('Runtime daemon orphan idle exit', () => {
     }
   });
 
+  it('does not scan historical preflight state between startup admission and the first real client', async () => {
+    vi.useFakeTimers();
+    const preflight = vi.fn(() => idlePreflight());
+    const requestStop = vi.fn();
+    const controller = createController({ orphanExitMs: 30_000, preflight, requestStop });
+    try {
+      controller.armOrphanExitAfterReady();
+      controller.attachClient(client('startup'), { persistent: false, startup: true });
+      controller.detachClient('startup');
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(preflight).not.toHaveBeenCalled();
+      controller.attachClient(client('cli'));
+      controller.detachClient('cli');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(preflight).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(requestStop).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(requestStop).toHaveBeenCalledTimes(1);
+    } finally { controller.close(); vi.useRealTimers(); }
+  });
+
   it('stops only after the final logical client disconnects', async () => {
     let stopRequests = 0;
     const controller = createController({

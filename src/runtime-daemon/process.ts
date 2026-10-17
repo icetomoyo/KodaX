@@ -694,7 +694,7 @@ async function observeStartupHealth(
 ): Promise<RuntimeDaemonHealthObservation> {
   // Keep only a fresh startup candidate admitted during OS identity inspection.
   // Ordinary health probes remain passive and cannot keep an orphan alive.
-  const healthCheck = { ...options.healthCheck, connectionPurpose: 'client' as const };
+  const healthCheck = { ...options.healthCheck, connectionPurpose: 'startup' as const };
   const outcome = await raceRuntimeDaemonStartupStep(
     Promise.race([
       observe(paths, healthCheck).then((observation) => ({

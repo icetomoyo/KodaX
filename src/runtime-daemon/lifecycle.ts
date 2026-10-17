@@ -19,7 +19,7 @@ import {
 
 export interface RuntimeDaemonHealthCheckOptions {
   /** Fresh startup candidates hold admission while their OS identity is checked. */
-  readonly connectionPurpose?: 'probe' | 'client';
+  readonly connectionPurpose?: 'probe' | 'client' | 'startup';
   readonly connectTimeoutMs?: number;
   readonly handshakeTimeoutMs?: number;
   readonly isPidAlive?: (pid: number) => boolean;

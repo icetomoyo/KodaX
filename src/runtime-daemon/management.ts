@@ -16,7 +16,7 @@ import {
 export interface RuntimeDaemonManagementController {
   readonly lifecycle: 'interactive' | 'persistent';
   armOrphanExitAfterReady(): void;
-  attachClient(client: RuntimeDaemonClientSnapshot, options?: { readonly persistent: boolean }): void;
+  attachClient(client: RuntimeDaemonClientSnapshot, options?: { readonly persistent: boolean; readonly startup?: boolean }): void;
   detachClient(connectionId: string): void;
   runMutation<T>(method: RuntimeDaemonMethod, effect: () => Promise<T>): Promise<T>;
   preflight(): Promise<RuntimeDaemonPreflight>;
@@ -44,6 +44,8 @@ export function createRuntimeDaemonManagementController(input: {
 
 class DaemonManagementController implements RuntimeDaemonManagementController {
   private readonly clients = new Map<string, RuntimeDaemonClientSnapshot>();
+  private readonly startupClients = new Set<string>();
+  private observedLogicalClient = false;
   private revision = 0;
   private activeMutations = 0;
   private readonly activeMutationMethods = new Map<RuntimeDaemonMethod, number>();
@@ -80,13 +82,15 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
     this.scheduleOrphanExitCheck(this.input.orphanExitMs);
   }
 
-  attachClient(client: RuntimeDaemonClientSnapshot, options?: { readonly persistent: boolean }): void {
+  attachClient(client: RuntimeDaemonClientSnapshot, options?: { readonly persistent: boolean; readonly startup?: boolean }): void {
     if (this.draining || this.closed) {
       throw managementError('conflict', 'Runtime daemon is draining and cannot attach another client.');
     }
     if (options?.persistent) this.persistent = true;
     if (this.clients.has(client.daemonConnectionId)) return;
     this.clients.set(client.daemonConnectionId, { ...client });
+    if (options?.startup) this.startupClients.add(client.daemonConnectionId);
+    else this.observedLogicalClient = true;
     this.orphanExitArmed = true;
     this.clientGeneration += 1;
     this.orphanIdleSince = undefined;
@@ -97,9 +101,16 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
 
   detachClient(connectionId: string): void {
     if (!this.clients.delete(connectionId)) return;
+    const startup = this.startupClients.delete(connectionId);
     this.clientGeneration += 1;
     this.revision += 1;
-    if (this.clients.size === 0) this.scheduleOrphanExitCheck(0);
+    if (this.clients.size === 0) {
+      // A bootstrap identity check holds admission but has submitted no work.
+      // Do not compete with the first real SDK attach by scanning history now.
+      const bootstrapOnly = startup && !this.observedLogicalClient;
+      if (bootstrapOnly) this.orphanIdleSince = Date.now();
+      this.scheduleOrphanExitCheck(bootstrapOnly ? this.input.orphanExitMs : 0);
+    }
   }
 
   async runMutation<T>(method: RuntimeDaemonMethod, effect: () => Promise<T>): Promise<T> {
@@ -181,6 +192,7 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
     this.closed = true;
     this.cancelOrphanExitCheck();
     this.clients.clear();
+    this.startupClients.clear();
   }
 
   private beginDraining(): void {

@@ -482,6 +482,11 @@ reset the grace. A newly observed idle state receives the complete grace, and
 attach/detach during inspection rechecks the latest state. Idle inspection runs
 only when no logical Clients remain; persistent/A2A Hosts avoid these scans.
 Existing startup deadlines, cancellation, PID identity and owner fences remain.
+Fresh-launch OS identity checks use authenticated, read-only startup admission.
+They hold the bootstrap timer but do not trigger an immediate history preflight
+when they disconnect before the first real Client. A deterministic test first
+reproduced that unwanted scan; a subsequent real Client still enables normal
+idle-work inspection on disconnect. Ordinary passive probes remain non-admitting.
 The real Runtime preflight additionally reports its already-tracked pending
 memory review and managed-task maintenance count, including after the Run has
 completed. This is an in-memory check, with no new history scan. Automatic idle

@@ -496,7 +496,7 @@ export function createRuntimeDaemonDispatcher(
   let initialized = false;
   let closed = false;
   let logicalClientAttached = false;
-  let connectionPurpose: "client" | "probe" = "client";
+  let connectionPurpose: "client" | "probe" | "startup" = "client";
   let clientCapabilities: RuntimeClientCapabilities = {};
   let principalId = `client_${randomUUID().replace(/-/g, "")}`;
   let noticeIdentity = principalId;
@@ -591,7 +591,7 @@ export function createRuntimeDaemonDispatcher(
       }
       if (
         initialized &&
-        connectionPurpose === "probe" &&
+        connectionPurpose !== "client" &&
         !RUNTIME_PROBE_METHODS.has(request.method)
       ) {
         throw daemonError(
@@ -601,8 +601,8 @@ export function createRuntimeDaemonDispatcher(
       }
       if (isInitializeMethod(request.method)) {
         initializeParams = optionalRecord(request.params);
-        connectionPurpose =
-          initializeParams?.connectionPurpose === "probe" ? "probe" : "client";
+        connectionPurpose = initializeParams?.connectionPurpose === 'startup' ? 'startup'
+          : initializeParams?.connectionPurpose === 'probe' ? 'probe' : 'client';
         const token =
           typeof initializeParams?.token === "string"
             ? initializeParams.token
@@ -790,7 +790,7 @@ export function createRuntimeDaemonDispatcher(
           privateReverseBridge.close();
         }
         if (
-          connectionPurpose === "client" &&
+          connectionPurpose !== "probe" &&
           options.management !== undefined
         ) {
           try {
@@ -800,7 +800,7 @@ export function createRuntimeDaemonDispatcher(
                 principalId,
                 initializeParams?.clientInfo,
               ),
-              { persistent: initializeParams?.daemonLifecycle === 'persistent' },
+              { persistent: initializeParams?.daemonLifecycle === 'persistent', startup: connectionPurpose === 'startup' },
             );
             logicalClientAttached = true;
           } catch (error: unknown) {

@@ -1690,13 +1690,39 @@ describe('runtime daemon dispatcher', () => {
     }
   });
 
-  it.each(['observer', 'probe'] as const)('rejects a %s attempt to retain an idle-exit Host', async (kind) => {
+  it('holds startup admission without admitting business requests or retaining the Host', async () => {
+    const attachClient = vi.fn();
+    const detachClient = vi.fn();
+    const management: RuntimeDaemonManagementController = {
+      lifecycle: 'interactive', armOrphanExitAfterReady() {}, attachClient, detachClient,
+      async runMutation<T>(_method: RuntimeDaemonMethod, effect: () => Promise<T>): Promise<T> { return effect(); },
+      async preflight() { throw new Error('not used'); },
+      async inspect() { throw new Error('not used'); },
+      async stop() { throw new Error('not used'); }, close() {},
+    };
+    const runtime = makeRuntime();
+    const createSession = vi.spyOn(runtime.sessions, 'create');
+    const dispatcher = createRuntimeDaemonDispatcher({ runtime, management });
+    try {
+      expect(await dispatcher.handle(createRuntimeDaemonRequest('startup', 'initialize', {
+        profile: 'default', connectionPurpose: 'startup',
+      }))).toMatchObject({ kind: 'response' });
+      expect(attachClient).toHaveBeenCalledWith(expect.any(Object), { persistent: false, startup: true });
+      expect(await dispatcher.handle(createRuntimeDaemonRequest('ping', 'ping'))).toMatchObject({ result: { ok: true } });
+      expect(await dispatcher.handle(createRuntimeDaemonRequest('business', 'session.create', {})))
+        .toMatchObject({ error: { code: 'unauthorized' } });
+      expect(createSession).not.toHaveBeenCalled();
+    } finally { dispatcher.close(); }
+    expect(detachClient).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['observer', 'probe', 'startup'] as const)('rejects a %s attempt to retain an idle-exit Host', async (kind) => {
     const dispatcher = createRuntimeDaemonDispatcher({ runtime: makeRuntime(),
       ...(kind === 'observer' ? { grantedScopes: ['session:observe' as const] } : {}) });
     try {
       const response = await dispatcher.handle(createRuntimeDaemonRequest('retain', 'initialize', {
         profile: 'default', daemonLifecycle: 'persistent',
-        connectionPurpose: kind === 'probe' ? 'probe' : 'client',
+        connectionPurpose: kind === 'observer' ? 'client' : kind,
         capabilities: { configAdmin: true },
       }));
       expect(response).toMatchObject({ error: { code: 'unauthorized' } });
