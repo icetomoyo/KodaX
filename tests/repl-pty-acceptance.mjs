@@ -28,6 +28,7 @@ const consumerOnly = process.argv.includes('--consumer-only');
 const exposureOnly = process.argv.includes('--exposure-only');
 const promptScrollOnly = process.argv.includes('--prompt-scroll-only');
 const streamingScrollOnly = process.argv.includes('--streaming-scroll-only');
+const checkpointResumeOnly = process.argv.includes('--checkpoint-resume-only');
 const modelNoticesOnly = process.argv.includes('--model-notices-only');
 process.stdout.write(`Artifacts: ${artifacts}\n`);
 
@@ -169,6 +170,11 @@ async function respondToModelRequest(state, request, response) {
       usage: { prompt_tokens: 50, completion_tokens: 10, total_tokens: 60 },
     })}\n\ndata: [DONE]\n\n`);
   };
+  if (token === 'ACCEPT_CHECKPOINT_HOLD') {
+    response.flushHeaders();
+    state.pending.set(token, finish);
+    return;
+  }
   if (token === 'ACCEPT_HOLD_PAINT') {
     send(Array.from({ length: 80 }, (_, index) => index + '\t' + 'BODY_中文 '.repeat(45)).join('\n') + '\n');
   }
@@ -1100,6 +1106,52 @@ async function checkStreamingPromptScroll(state) {
   assert.equal(received(state, 'ACCEPT_HOLD_TRANSCRIPT').length, 1, 'Browsing must not resubmit the input');
 }
 
+async function seedCheckpointResumeHistory(state) {
+  const { FileSessionStorage } = await import('../dist/sdk-repl.js');
+  const storage = new FileSessionStorage({ sessionsDir: path.join(state.homeDir, '.kodax', 'sessions'),
+    configHome: path.join(state.homeDir, '.kodax') });
+  state.fixtureSessionId = '20261017_000000_checkpoint';
+  const messages = [{ role: 'user', inputId: 'old-query', content: 'ACCEPT_CHECKPOINT_HOLD' }];
+  const uiHistory = [];
+  for (let index = 0; index < 55; index += 1) {
+    messages.push(
+      { role: 'assistant', outputId: `saved-output-${index}`, content: [
+        { type: 'thinking', thinking: `Saved reasoning ${index}` },
+        { type: 'text', text: `CHECKPOINT_SAVED_ANSWER_${index}` },
+        { type: 'tool_use', id: `saved-call-${index}`, name: 'read', input: { path: 'fixture.txt' } },
+      ] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: `saved-call-${index}`, content: `Saved result ${index}` }] },
+    );
+    uiHistory.push({ type: 'tool_group', afterInputId: 'old-query', tools: [{ id: `saved-call-${index}`,
+      assistantOutputId: `saved-output-${index}`, name: 'read', status: 'success', output: `Saved result ${index}` }] });
+  }
+  await storage.save(state.fixtureSessionId, { messages, uiHistory, gitRoot: state.homeDir });
+}
+
+async function checkCheckpointResumeSubmit(state) {
+  await state.terminal.resize(220, 64);
+  await waitFor('previous checkpoint round visible', () => state.terminal.screen().includes('CHECKPOINT_SAVED_ANSWER_54'));
+  // Paste the original query text after browsing; keep the OS clipboard untouched.
+  for (let tick = 0; tick < 100 && !state.terminal.screen().includes('ACCEPT_CHECKPOINT_HOLD'); tick += 1) {
+    state.terminal.child.write('\x1b[<64;20;8M');
+    await delay(35);
+  }
+  assert.ok(state.terminal.screen().includes('ACCEPT_CHECKPOINT_HOLD'), 'The original query must remain browsable');
+  await state.terminal.type('\x1b[200~ACCEPT_CHECKPOINT_HOLD\x1b[201~');
+  await state.terminal.type('\r');
+  await waitFor('checkpoint input accepted', () => state.pending.has('ACCEPT_CHECKPOINT_HOLD'));
+  try {
+    await delay(400);
+    await state.terminal.save('checkpoint-new-query');
+    assert.ok(state.terminal.screen().includes('CHECKPOINT_SAVED_ANSWER_54'),
+      'Submitting from saved history must retain the preceding round instead of displaying only the new query');
+    assert.ok(state.view.items.length <= 150 && state.view.items.length > 1, 'The Host window must remain bounded and populated');
+    assert.equal(new Set(state.view.items.map(item => item.id)).size, state.view.items.length);
+    assert.equal(received(state, 'ACCEPT_CHECKPOINT_HOLD').length, 1, 'Pasting the old query must submit only once');
+  } finally { state.pending.get('ACCEPT_CHECKPOINT_HOLD')?.(); }
+  await waitFor('checkpoint round settles', () => state.view.runs.every(run => run.phase === 'completed'));
+}
+
 async function checkShortPromptScroll(state) {
   await state.terminal.resize(220, 64);
   await state.client.sessions.appendNotice(state.sessionId, { content: 'SHORT_HISTORY_BEFORE' });
@@ -1307,9 +1359,10 @@ async function run(mode) {
     if (sourceEntry) await symlink(path.join(repo, 'node_modules'), path.join(state.homeDir, 'node_modules'), 'junction');
     await setupHostCommands(state);
     if (streamingScrollOnly) await seedStreamingScrollHistory(state);
+    if (checkpointResumeOnly) await seedCheckpointResumeHistory(state);
     state.terminal = openTerminal(state.homeDir, mode, state.fixtureSessionId ? ['--resume', state.fixtureSessionId] : []);
     await check(state, 'startup', checkStartup);
-    if (mode === 'ink' && !streamingScrollOnly && !modelNoticesOnly && !longHistoryOnly && !queueBoundaryOnly && !consumerOnly && !exposureOnly) {
+    if (mode === 'ink' && !checkpointResumeOnly && !streamingScrollOnly && !modelNoticesOnly && !longHistoryOnly && !queueBoundaryOnly && !consumerOnly && !exposureOnly) {
       await check(state, 'short-history-wheel-return-to-live', checkShortPromptScroll);
     }
     if (modelNoticesOnly) {
@@ -1319,6 +1372,11 @@ async function run(mode) {
     }
     if (streamingScrollOnly) {
       await check(state, 'streaming-prompt-saved-history-scroll', checkStreamingPromptScroll);
+      await check(state, 'exit', checkExit);
+      return;
+    }
+    if (checkpointResumeOnly) {
+      await check(state, 'checkpoint-resume-browse-paste-submit', checkCheckpointResumeSubmit);
       await check(state, 'exit', checkExit);
       return;
     }
@@ -1389,8 +1447,8 @@ async function run(mode) {
 }
 
 try {
-  const requestedModes = process.argv.slice(2).filter(argument => !['--source', '--long-history-only', '--queue-boundary-only', '--consumer-only', '--exposure-only', '--prompt-scroll-only', '--streaming-scroll-only', '--model-notices-only'].includes(argument));
-  const modes = requestedModes.length ? requestedModes : longHistoryOnly || queueBoundaryOnly || promptScrollOnly || streamingScrollOnly || modelNoticesOnly ? ['ink'] : ['ink', 'classic'];
+  const requestedModes = process.argv.slice(2).filter(argument => !['--source', '--long-history-only', '--queue-boundary-only', '--consumer-only', '--exposure-only', '--prompt-scroll-only', '--streaming-scroll-only', '--checkpoint-resume-only', '--model-notices-only'].includes(argument));
+  const modes = requestedModes.length ? requestedModes : longHistoryOnly || queueBoundaryOnly || promptScrollOnly || streamingScrollOnly || checkpointResumeOnly || modelNoticesOnly ? ['ink'] : ['ink', 'classic'];
   assert.ok(modes.every(mode => ['ink', 'classic'].includes(mode)), 'Modes must be ink or classic');
   for (const mode of modes) await run(mode);
 } catch (error) {

@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Keep the preceding turn visible when submitting a new query in a restored Session with legacy display checkpoints. The Host retains its bounded 150-item tail instead of advancing to the next query and collapsing the entire view to the new input; canonical history, full-item reads and input/tool identities are preserved.
 - Keep saved history readable when its final tool call has no result yet: reaching the end of a valid cached revision no longer reports a history-change conflict. Preserve canonical tool timestamps across observed and paged history, and show the session banner only at the beginning of saved history while browsing ordinary chat, avoiding banner flashes at intermediate page boundaries.
 
 ---

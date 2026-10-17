@@ -120,6 +120,8 @@ npm run test:repl-pty:built
 
 普通聊天的流式翻页回归：构建后运行 `node tests/repl-pty-acceptance.mjs --streaming-scroll-only ink`。驱动在私有 Home 保存 90 轮规范问答，持续追加本地模型输出，同时用鼠标滚轮跨越最近显示窗口和多个历史页。必须能到达第一条 query，停手后阅读位置保持不动，中间页顶部不闪现会话 banner，Provider 只收到一次当前输入。此用例不调用真实模型，也不改写用户会话。
 
+旧显示 checkpoint 的恢复/提交回归：构建后运行 `node tests/repl-pty-acceptance.mjs --checkpoint-resume-only ink`。私有会话包含一轮 55 次已保存工具交互及旧 checkpoint，恢复后回滚到原 query，再用 bracketed paste 提交相同文字。模型响应受控暂停期间，上一轮末尾必须仍可见，Host 视图保留 2–150 个唯一展示项，而非只剩新 query；Provider 仅收到一次新输入。脚本不读取或写入系统剪贴板。对应 SDK 用例还验证没有重新执行旧工具，历史原文和完整补读不依赖显示窗口的 query 边界。
+
 SDK 另由 `src/sdk-client.observe-history.test.ts` 验证：末尾工具尚无结果时，首次准备与复用缓存都能读到原始 query；相同文本的不同 inputId 保持独立，复用 callId 的不同 assistantOutputId 保持独立，工具时间在 observe/readHistory 两个面保持一致。真正的版本变化仍须返回 `resync_required`（`src/sdk-client.history.test.ts`）。Ctrl+E 的 `collapse` 只证明细节已展开；完整读取失败时仍保留冻结窗口并报告失败，不代表早期记录已删除。
 
 ## 打包 Electron 与沙箱验收

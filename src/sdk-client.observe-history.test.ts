@@ -16,6 +16,50 @@ import { FileSessionStorage } from '@kodax-ai/repl';
 
 const REPLY_TEXT = 'A sufficiently detailed recorded summary of the exchange that carries usable semantic content for later turns.';
 
+it.each([true, false])('retains the previous saved turn across new input (checkpoint: %s)', async keepCheckpoint => {
+  const session = await client.sessions.create({ projectPath: homeDir });
+  await client.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  const storage = new FileSessionStorage({ sessionsDir: path.join(homeDir, '.kodax', 'sessions'), configHome: path.join(homeDir, '.kodax') });
+  const data = (await storage.load(session.id))!;
+  data.messages = [{ role: 'user', inputId: 'old-query', content: 'Review the existing changes' }];
+  data.uiHistory = [];
+  for (let index = 0; index < 55; index += 1) {
+    data.messages.push(
+      { role: 'assistant', outputId: `saved-output-${index}`, content: [
+        { type: 'thinking', thinking: `Saved reasoning ${index}` },
+        { type: 'text', text: `Saved answer ${index}` },
+        { type: 'tool_use', id: `saved-call-${index}`, name: 'read', input: { path: 'fixture.txt' } },
+      ] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: `saved-call-${index}`, content: `Saved result ${index}` }] },
+    );
+    if (keepCheckpoint) data.uiHistory.push({ type: 'tool_group', afterInputId: 'old-query', tools: [{ id: `saved-call-${index}`,
+      assistantOutputId: `saved-output-${index}`, name: 'read', status: 'success', output: `Saved result ${index}` }] });
+  }
+  delete data.lineage;
+  await storage.save(session.id, data);
+  let release = () => {};
+  const response = new Promise<void>(resolve => { release = resolve; });
+  const originalStream = HistoryProvider.prototype.stream;
+  const held = vi.spyOn(HistoryProvider.prototype, 'stream').mockImplementation(async function (this: HistoryProvider) {
+    await response;
+    return originalStream.call(this);
+  });
+  const views: ClientSessionView[] = [];
+  const observation = await client.sessions.observe(session.id, view => { views.push(view); });
+  try {
+    expect(views.at(-1)!.items.some(item => item.text === 'Saved answer 54')).toBe(true);
+    const accepted = await client.inputs.submit({ sessionId: session.id, inputId: 'new-query', text: 'Review the existing changes' });
+    await expect.poll(() => views.at(-1)!.items.some(item => item.inputId === 'new-query')).toBe(true);
+    expect(views.at(-1)!.items.some(item => item.text === 'Saved answer 54')).toBe(true);
+    expect(views.at(-1)!.items.filter(item => item.inputId === 'new-query')).toHaveLength(1);
+    expect(views.at(-1)!.items.length).toBeLessThanOrEqual(150);
+    release();
+    await runtime.runs.await(accepted.runId!);
+    expect(held).toHaveBeenCalledTimes(1);
+    expect((await client.statistics.readTools(session.id)).items).toEqual([]);
+  } finally { release(); held.mockRestore(); observation.close(); }
+});
+
 it('pages back to the original query when the saved tail is a tool call without a result', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });
   const storage = new FileSessionStorage({ sessionsDir: path.join(homeDir, '.kodax', 'sessions'), configHome: path.join(homeDir, '.kodax') });
