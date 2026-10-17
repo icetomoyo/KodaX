@@ -454,3 +454,46 @@ Both macOS jobs, Linux ARM64 and Windows Shell contracts also passed.
 
 The temporary diagnostic workflow, dispatch input and probes are removed.
 Release remains held by explicit user instruction; no release or tag was made.
+
+## Follow-up: actual linked installation after rebuild (2026-10-17)
+
+The user reproduced another roughly 30s first resume after rebuilding and
+running the npm-linked command. This remains an open performance report;
+the green CI above does not establish that this real installation is fast.
+The actual daemon log records the old Host stopping at 13:59:40 and the new
+Host becoming ready at 13:59:53 (local time). Both terminal Node executables
+are Node 22.23.1 with identical hashes; their npm links resolve to this checkout.
+
+An isolated copy of the user's Session history reproduced an 8.933s first
+read-only stop preflight; subsequent scans were faster. Ordinary passive
+attachment to the real running Host measured 0.637s after a 0.398s SDK import.
+The retained child registry contains over 860 incomplete records. A private
+Host CPU profile attributed about 2.94s of one cold bootstrap to synchronous
+initial registry reads. Diagnostic cleanup uses copies and excludes matching
+live targets; it reported zero processes killed or records pruned.
+
+The candidate registry change reads the initial historical files asynchronously
+in batches of at most 48. Parsing, owner/PID/start-identity validation and the
+per-record checks preceding termination retain their existing semantics.
+The regression holds disk reads pending, observes a responsive event loop,
+checks that reads are concurrent but bounded, and verifies that all 50
+unverifiable Run records remain intact. It fails against the synchronous reader.
+Unreadable historical records are retained and reported as skipped rather than
+being classified as corrupt and pruned. The permission-denied regression first
+failed with one record pruned, then passed with the record preserved. The
+related cleanup tests pass (70 tests), and source/test type checks pass.
+
+A linked-entry terminal probe using the private history copy restored the
+selected real conversation and exited normally: the baseline measured 11.024s,
+and the candidate measured 11.657s. Thus the registry change alone does not
+demonstrate an improvement to total resume latency. A separate SDK cold-attach
+probe measured 4.718s baseline versus 2.262s candidate; managed Host refresh
+remained about 7.5s in both probes. These measurements must not be presented
+as resolution of the user's original slow first launch.
+
+Ordinary CLI startup currently omits `daemonOrphanExitMs`, so its detached Host
+is persistent even with no clients. The existing opt-in idle-exit controller
+waits for all governed work to be idle. Deciding the default policy for
+interactive auto-start versus explicitly started daemons/A2A serving is a
+separate lifecycle change; no default exit-policy change is included here.
+Release remains held.

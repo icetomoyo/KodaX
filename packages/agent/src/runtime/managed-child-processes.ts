@@ -10,6 +10,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { emitKodaXDiagnostic } from '../diagnostics.js';
@@ -650,8 +651,22 @@ function isConfirmedRecord(record: ManagedChildProcessRecord): boolean | undefin
 }
 
 function readRecord(filePath: string): ManagedChildRecordReadResult {
+  try { return parseRecord(readFileSync(filePath, 'utf8')); }
+  catch { return { status: 'invalid' }; }
+}
+
+async function readHistoricalRecord(filePath: string): Promise<ManagedChildRecordReadResult | undefined> {
+  try { return parseRecord(await readFile(filePath, 'utf8')); }
+  catch (error: unknown) {
+    emitKodaXDiagnostic({ source: 'agent.managed-child-processes', level: 'warn',
+      message: 'Unable to read a historical managed child record; retaining its evidence.', detail: { filePath, error } });
+    return undefined;
+  }
+}
+
+function parseRecord(contents: string): ManagedChildRecordReadResult {
   try {
-    const parsed: unknown = JSON.parse(readFileSync(filePath, 'utf8'));
+    const parsed: unknown = JSON.parse(contents);
     if (!isManagedChildRecordBase(parsed)) return { status: 'invalid' };
     if (parsed.version !== REGISTRY_VERSION) {
       return Number.isSafeInteger(parsed.version)
@@ -1022,15 +1037,22 @@ async function cleanupRegisteredManagedChildrenInSharedSnapshotScope(
     }
   }
 
-  const persistedFiles = persistedRecordFiles
-    .filter(({ current, file }) => !current || !activeSummary.processedFiles.has(file))
-    .map(({ filePath, current }) => ({
-      filePath,
-      current,
-      persisted: readRecord(filePath),
-    }));
+  const filesToRead = persistedRecordFiles
+    .filter(({ current, file }) => !current || !activeSummary.processedFiles.has(file));
+  const persistedFiles: Array<{
+    readonly filePath: string;
+    readonly current: boolean;
+    readonly persisted: ManagedChildRecordReadResult | undefined;
+  }> = [];
+  // Historical registries can contain hundreds of retained incomplete trees.
+  // Bound disk concurrency and yield while reading; identity checks remain fresh below.
+  for (let index = 0; index < filesToRead.length; index += 48) {
+    persistedFiles.push(...await Promise.all(filesToRead.slice(index, index + 48).map(async ({ filePath, current }) => ({
+      filePath, current, persisted: await readHistoricalRecord(filePath),
+    }))));
+  }
   const ownerPids = persistedFiles.flatMap(({ persisted }) => (
-    persisted.status !== 'invalid'
+    persisted !== undefined && persisted.status !== 'invalid'
     && isPidAlive(persisted.record.ownerPid)
       ? [persisted.record.ownerPid]
       : []
@@ -1045,6 +1067,10 @@ async function cleanupRegisteredManagedChildrenInSharedSnapshotScope(
   for (const { filePath, current, persisted } of persistedFiles) {
     // Keep terminal progress and interrupts responsive between synchronous OS probes.
     if (process.platform === 'win32') await new Promise<void>((resolve) => setImmediate(resolve));
+    if (persisted === undefined) {
+      skip(ownOnly ? process.pid : undefined);
+      continue;
+    }
     if (ownOnly && (persisted.status !== 'current'
       || !sameRunChildRecord(persisted.record, currentOwnerRecords.get(filePath)))) {
       skip(process.pid);
