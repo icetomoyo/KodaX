@@ -100,7 +100,7 @@ $ErrorActionPreference = 'Stop'
 $source = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:KODAX_INTERNAL_JOB_QUERY_SOURCE))
 Add-Type -TypeDefinition $source
 if ([KodaXWindowsJobMembership]::IsCurrentProcessContained($env:KODAX_DAEMON_JOB_NAME)) {
-  [Console]::Out.Write('1')
+  [Console]::Out.WriteLine('1')
 } else {
   [Console]::Out.Write('0')
 }`;
@@ -505,13 +505,52 @@ export async function withSharedWindowsProcessSnapshot<T>(
   }
 }
 
+function windowsProcessStartIdentitiesScript(pids: readonly number[]): string {
+  return [
+    `foreach ($processId in @(${pids.join(',')})) {`,
+    '  $target = $null; $creationTime = "0"',
+    '  try {',
+    '    $target = [System.Diagnostics.Process]::GetProcessById($processId)',
+    '    [long]$remainder = 0',
+    '    $creationTime = ([Math]::DivRem($target.StartTime.ToFileTimeUtc(), [long]10000, [ref]$remainder)).ToString([System.Globalization.CultureInfo]::InvariantCulture)',
+    '  } catch { $creationTime = "0" } finally { if ($null -ne $target) { $target.Dispose() } }',
+    '  [Console]::Out.WriteLine("$processId,$creationTime")',
+    '}',
+  ].join('\n');
+}
+
+function parseWindowsProcessStartIdentities(stdout: string, pids: readonly number[]): Map<number, string> | undefined {
+  const rows = stdout.trim().split(/\r?\n/);
+  if (rows.length !== pids.length
+    || rows.some((row, index) => !row.startsWith(`${pids[index]},`) || !/^\d+,\d+$/.test(row))) return undefined;
+  return new Map(rows.map(row => {
+    const [pid, identity] = row.split(',') as [string, string];
+    return [Number(pid), identity];
+  }));
+}
+
+function readWindowsProcessStartIdentities(pids: readonly number[]): Map<number, string> | undefined {
+  // Scalar liveness checks need fresh creation times, not a compiled C# snapshot
+  // of every process. Keep the native snapshot for tree capture and its fallback.
+  const startedAt = Date.now();
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsProcessStartIdentitiesScript(pids)], {
+    encoding: 'utf8', timeout: DEFAULT_TASKKILL_MS, windowsHide: true,
+  });
+  const identities = result.stdout === undefined ? undefined : parseWindowsProcessStartIdentities(result.stdout, pids);
+  if (result.error || result.status !== 0 || identities === undefined) {
+    reportWindowsProbe('process-start-identities', result, startedAt, false);
+    return undefined;
+  }
+  return identities;
+}
+
 /** Read an OS-issued start identity so later cleanup never trusts a bare PID. */
 export function readProcessStartIdentities(pids: readonly number[]): Map<number, string | undefined> {
   const valid = [...new Set(pids.filter(pid => Number.isInteger(pid) && pid > 0))];
   if (process.platform !== 'win32') return new Map(valid.map(pid => [pid, readProcessStartIdentity(pid)]));
   if (valid.length === 0) return new Map();
-  const snapshot = readWindowsProcessSnapshot();
-  const identities = new Map(snapshot?.map(row => [row.pid, row.creationTime]));
+  const identities = (sharedSnapshotScopeDepth <= 0 ? readWindowsProcessStartIdentities(valid) : undefined)
+    ?? new Map(readWindowsProcessSnapshot()?.map(row => [row.pid, row.creationTime]));
   return new Map(valid.map(pid => {
     const identity = identities.get(pid);
     return [pid, identity === '0' ? undefined : identity];
@@ -522,15 +561,14 @@ export function readProcessStartIdentities(pids: readonly number[]): Map<number,
 export function readProcessStartIdentity(pid: number): string | undefined {
   if (!Number.isInteger(pid) || pid <= 0) return undefined;
   if (process.platform === 'win32') {
-    const identity = readWindowsProcessSnapshot()
-      ?.find((candidate) => candidate.pid === pid);
-    if (identity === undefined || identity.creationTime === '0') {
+    const identity = readProcessStartIdentities([pid]).get(pid);
+    if (identity === undefined) {
       emitKodaXDiagnostic({
         source: 'runtime:windows', level: 'warn', message: 'Windows process start identity is unavailable.',
         detail: { stage: 'process-start-identity', pid, available: false },
       });
     }
-    return identity?.creationTime === '0' ? undefined : identity?.creationTime;
+    return identity;
   }
   if (process.platform === 'linux') {
     try {
@@ -562,6 +600,16 @@ export function isCurrentProcessWindowsJobContained(): boolean {
     });
     return currentProcessWindowsJobContained;
   }
+  readCurrentProcessWindowsJobIdentity();
+  return currentProcessWindowsJobContained === true;
+}
+
+/** Fresh OS evidence for publishing a Windows Job owner, in one subprocess. */
+export function readCurrentProcessWindowsJobIdentity(): {
+  readonly processStartIdentity?: string;
+  readonly supervisorProcessStartIdentity?: string;
+} | undefined {
+  if (process.platform !== 'win32') return undefined;
   const supervisorPid = Number.parseInt(
     process.env.KODAX_DAEMON_JOB_SUPERVISOR_PID ?? '',
     10,
@@ -577,12 +625,13 @@ export function isCurrentProcessWindowsJobContained(): boolean {
       source: 'runtime:windows', level: 'warn', message: 'Windows Job supervisor metadata is unavailable.',
       detail: { stage: 'job-membership', cached: false, available: false, reason: 'supervisor-metadata' },
     });
-    return false;
+    return undefined;
   }
   const startedAt = Date.now();
   const result = spawnSync(
     'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_JOB_MEMBERSHIP_SCRIPT],
+    ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_JOB_MEMBERSHIP_SCRIPT
+      + '\n' + windowsProcessStartIdentitiesScript([process.pid, supervisorPid])],
     {
       encoding: 'utf8',
       timeout: 5_000,
@@ -596,9 +645,17 @@ export function isCurrentProcessWindowsJobContained(): boolean {
       },
     },
   );
-  currentProcessWindowsJobContained = result.status === 0 && result.stdout.trim() === '1';
+  const lines = result.stdout?.trim().split(/\r?\n/) ?? [];
+  currentProcessWindowsJobContained = result.status === 0 && lines[0] === '1';
   reportWindowsProbe('job-membership', result, startedAt, currentProcessWindowsJobContained);
-  return currentProcessWindowsJobContained;
+  if (!currentProcessWindowsJobContained) return undefined;
+  const identities = parseWindowsProcessStartIdentities(lines.slice(1).join('\n'), [process.pid, supervisorPid]);
+  const processStartIdentity = identities?.get(process.pid);
+  const supervisorProcessStartIdentity = identities?.get(supervisorPid);
+  return {
+    processStartIdentity: processStartIdentity === '0' ? undefined : processStartIdentity,
+    supervisorProcessStartIdentity: supervisorProcessStartIdentity === '0' ? undefined : supervisorProcessStartIdentity,
+  };
 }
 
 function collectDescendantIdentities(

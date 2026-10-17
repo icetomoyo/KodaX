@@ -6357,6 +6357,8 @@ async function connectKodaXRuntimeInternal(
   } catch (error: unknown) {
     // A peer can win the shared writer after discovery but before our child
     // starts. Recheck authority; unrelated bootstrap failures stay failures.
+    options.daemonStartupSignal?.throwIfAborted();
+    if (Date.now() >= startupDeadline) throw error;
     const winner = allowCapabilityUpgrade && options.autoStart === true
       && options.transport === undefined && explicitEndpoint === undefined
       ? await waitForRuntimeSessionStorageHost(daemonLocation.configHome,

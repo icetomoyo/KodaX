@@ -582,6 +582,50 @@ describe("runtime daemon child startup", () => {
     expect(child.terminate).not.toHaveBeenCalled();
   });
 
+  it('rejects ready evidence obtained after the startup deadline', async () => {
+    const child: RuntimeDaemonStartupProcess = {
+      pid: 778, exit: new Promise(() => undefined), unref: vi.fn(),
+      terminate: vi.fn(async () => undefined),
+    };
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    try {
+      await expect(waitForHealthyDaemonStartup(paths, { startupTimeoutMs: 100 }, child, async () => {
+        clock.mockReturnValue(1_101);
+        return healthy(778)();
+      })).rejects.toMatchObject({ reason: 'timeout' });
+      expect(child.unref).not.toHaveBeenCalled();
+      expect(child.terminate).toHaveBeenCalledOnce();
+    } finally { clock.mockRestore(); }
+  });
+
+  it('does not restart the budget after spawning a child', async () => {
+    const child: RuntimeDaemonStartupProcess = {
+      pid: 778, exit: new Promise(() => undefined), unref: vi.fn(),
+      terminate: vi.fn(async () => undefined),
+    };
+    // The initial observation and child spawn have already consumed the budget.
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_101);
+    const observe = vi.fn(healthy(778));
+    try {
+      await expect(waitForHealthyDaemonStartup(paths, { startupTimeoutMs: 100 }, child, observe, 1_100))
+        .rejects.toMatchObject({ reason: 'timeout' });
+      expect(observe).not.toHaveBeenCalled();
+      expect(child.terminate).toHaveBeenCalledOnce();
+    } finally { clock.mockRestore(); }
+  });
+
+  it('rejects late ready evidence from an existing owner without terminating it', async () => {
+    const ready = await healthy(779)();
+    const initial = { ...ready, state: { ...ready.state, status: 'starting' as const } };
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    try {
+      await expect(waitForReadyRuntimeDaemonOwner(paths, { startupTimeoutMs: 100, pollIntervalMs: 1 }, initial, async () => {
+        clock.mockReturnValue(1_101);
+        return ready;
+      })).rejects.toMatchObject({ reason: 'timeout' });
+    } finally { clock.mockRestore(); }
+  });
+
   it("waits for an existing healthy owner to publish ready without spawning a competitor", async () => {
     const progress: unknown[] = [];
     let healthChecks = 0;

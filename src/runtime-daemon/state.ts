@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import path from 'node:path';
 
-import { readProcessStartIdentity, readProcessStartIdentities } from '@kodax-ai/agent';
+import { readProcessStartIdentity, readProcessStartIdentities, readCurrentProcessWindowsJobIdentity } from '@kodax-ai/agent';
 
 let currentProcessStartIdentity: string | undefined;
 let currentProcessStartIdentityRead = false;
@@ -98,6 +98,17 @@ export function readRuntimeOwnerProcessStartIdentity(pid: number): string | unde
     currentProcessStartIdentityRead = true;
   }
   return currentProcessStartIdentity;
+}
+
+export function readRuntimeDaemonWindowsJobIdentity(): ReturnType<typeof readCurrentProcessWindowsJobIdentity> {
+  const identity = readCurrentProcessWindowsJobIdentity();
+  if (identity !== undefined) {
+    // Only our own immutable identity is cached; the supervisor evidence is
+    // returned to this startup observation and never reused for later checks.
+    currentProcessStartIdentity = identity.processStartIdentity;
+    currentProcessStartIdentityRead = true;
+  }
+  return identity;
 }
 
 /** A fresh external-PID observation; only this process's immutable identity is cached. */

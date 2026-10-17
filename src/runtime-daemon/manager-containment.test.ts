@@ -6,11 +6,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { emitKodaXDiagnostic, setKodaXDiagnosticSink } from '@kodax-ai/agent';
 import * as daemonState from './state.js';
 
-const { jobProbe } = vi.hoisted(() => ({ jobProbe: vi.fn(() => true) }));
+const { jobProbe } = vi.hoisted(() => ({ jobProbe: vi.fn((): {
+  processStartIdentity?: string; supervisorProcessStartIdentity?: string;
+} | undefined => ({})) }));
 
 vi.mock('@kodax-ai/agent', async (importOriginal) => ({
   ...await importOriginal<typeof import('@kodax-ai/agent')>(),
-  isCurrentProcessWindowsJobContained: jobProbe,
+  readCurrentProcessWindowsJobIdentity: jobProbe,
 }));
 
 import { acquireRuntimeDaemonLease } from './manager.js';
@@ -19,7 +21,7 @@ const temporaryDirectories: string[] = [];
 const originalSupervisorPid = process.env.KODAX_DAEMON_JOB_SUPERVISOR_PID;
 
 afterEach(() => {
-  jobProbe.mockReset().mockReturnValue(true);
+  jobProbe.mockReset().mockReturnValue({});
   vi.restoreAllMocks();
   if (originalSupervisorPid === undefined) {
     delete process.env.KODAX_DAEMON_JOB_SUPERVISOR_PID;
@@ -43,7 +45,7 @@ describe('runtime daemon containment ownership', () => {
     jobProbe.mockImplementation(() => {
       emitKodaXDiagnostic(diagnostic);
       if (probeThrows) throw new Error('probe failure');
-      return false;
+      return undefined;
     });
     vi.spyOn(daemonState, 'readRuntimeOwnerProcessStartIdentity').mockReturnValue('fixture-identity');
     const previous = vi.fn(() => { throw new Error('previous sink failure'); });

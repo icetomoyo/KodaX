@@ -300,6 +300,9 @@ jobs:
       - name: Bundled Provider credentials and daemon compaction
         run: npm run test:bundle
 
+      - name: Windows SDK attachment under CPU contention
+        run: node tests/windows-sdk-attach-pressure.mjs
+
       - name: Windows native transaction and runner tests
         run: npm run test:native
 

@@ -338,6 +338,23 @@ describe('product Host startup and passive connection', () => {
     } finally { clock.mockRestore(); }
   });
 
+  it('preserves an expired startup failure without rediscovering its own newly published Host as a competitor', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    const failure = new Error('Timed out waiting for the new Host to become ready.');
+    upgradeMocks.findSharedHost.mockReturnValueOnce(undefined).mockReturnValue({
+      profile: PROFILE, ownerFile: '/fixture/owner.lock', owner: { runtimeId: 'our-new-host' },
+    });
+    upgradeMocks.acquireProcessLease.mockImplementation(async () => {
+      clock.mockReturnValue(1_101);
+      throw failure;
+    });
+    try {
+      await expect(ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 100 })).rejects.toBe(failure);
+      expect(upgradeMocks.findSharedHost).toHaveBeenCalledOnce();
+      expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledOnce();
+    } finally { clock.mockRestore(); }
+  });
+
   it('honors cancellation after closing a temporary attachment without retrying or executing work', async () => {
     const controller = new AbortController();
     const reason = new Error('cancel owner handoff');

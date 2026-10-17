@@ -7,6 +7,7 @@ import {
   killChildProcessTree,
   killChildProcessTreeSync,
   killPidTree,
+  captureWindowsProcessTree,
   readProcessStartIdentity,
   rememberChildProcessTree,
 } from './process-tree.js';
@@ -125,6 +126,13 @@ describe('process tree cleanup', () => {
 
     expect(first).toBeDefined();
     expect(second).toBe(first);
+  });
+
+  it.runIf(originalPlatform === 'win32')('uses the same exact FILETIME identity as native tree capture', () => {
+    const identity = readProcessStartIdentity(process.pid);
+    expect(identity).toBeDefined();
+    const capture = captureWindowsProcessTree(process.pid, identity!);
+    expect(capture?.root.creationTime).toBe(identity);
   });
 
   it('does not send a destructive POSIX signal when exact identity is requested', async () => {

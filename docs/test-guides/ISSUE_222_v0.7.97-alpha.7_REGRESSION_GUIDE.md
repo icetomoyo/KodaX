@@ -224,3 +224,77 @@ The compiled 3,000-Session concurrent resume acceptance after this fix completed
 in 13.2s/14.3s on Windows Node 22, rendered both saved conversations, refreshed
 one idle Host, and closed both Clients and the private Host normally. This is
 within the existing 20s gate and does not replace Linux Node 20/22 CI acceptance.
+
+## Windows SDK attachment deadline under CPU contention
+
+CI run `38996333556`, attempt 1, failed the bundled idle default-Host recovery
+test on its second public `ensureKodaXRuntime` call. The stack ended in
+`initializeRuntimeDaemonForStartup` with `Host startup timed out during
+authenticated attachment.` The successful rerun of the same SHA did not
+resolve or explain that failure. Passive `connectKodaXClient` does not discover
+or refresh the shared owner in this scenario.
+
+The original two ensures use 15s and 10s startup budgets. Three independent
+callers pinned to one Windows CPU, each with an empty private Home, reproduced
+9/9 failures at `1ec38d12`. The first three refreshes reached `connecting` at
+12.89–12.92s, then immediately rejected before authenticated initialization.
+Repeated synchronous PowerShell queries cost approximately 1–2.5s each under
+that contention. Each scalar PID check compiled C# and enumerated the full
+machine process table; startup also captured an unused tree of the already
+Job-contained wrapper. No historical Session scan, shared-Home peer, model
+request or tool execution was required to reproduce the failure.
+
+The process lease incorrectly started another readiness budget after spawning,
+and accepted a ready observation before checking whether that observation had
+crossed its deadline. The SDK's original deadline was already exhausted when
+the lease returned. A separate failure path could then rediscover its own newly
+published Host and replace the real timeout with `session_storage_owned`.
+Deterministic clock-controlled regressions reproduce these errors without
+relying on CPU timing.
+
+Scalar Windows checks now read only the requested PIDs' OS creation times.
+Integer FILETIME division preserves the existing native identity exactly.
+Every external-PID observation is fresh; permission failures and unreadable
+identities remain unknown. Tree capture retains its native snapshot, fallback
+routes and cleanup-scope invalidation. Initial Job membership and the exact
+Host/supervisor identities are collected in one subprocess. Only the current
+process's immutable identity and Job membership fact may be cached; later
+supervisor checks still re-read its identity. The contained startup candidate
+uses its existing Job cleanup handle without the unused wrapper tree capture.
+
+The lease passes one deadline through existing-owner waiting, child spawning,
+readiness and socket attachment. Late ready evidence is rejected; an expired
+failure does not trigger more owner discovery. Committed Job owners remain
+protected by the existing retained-handoff behavior. Timeouts, retry counts,
+identity assertions and Session ownership locks are not relaxed.
+
+The same three-caller, single-CPU, empty-Home reproduction then passed 9/9
+with unchanged budgets; refreshes took 8.50–9.89s, including all three first
+calls. This is a deliberately constrained local stress result, not a promise
+of success under unlimited CPU starvation. Synchronous OS queries cannot be
+preempted by a JavaScript timer; expiry is checked immediately after them.
+
+The expensive snapshot backend and the readiness budget reset predate the
+October fixes (July commits `a0a67a8f3` and `7cafcd364`). `f336c165` correctly
+extended exact owner identity checks to Windows health and exit waiting,
+making that existing query cost more visible during refresh. This shares a
+costly primitive with the earlier startup slowdown, but is distinct from the
+historical-child sweep and concurrent Actor inspections already fixed. The
+original user terminal has no retained timing trace proving which costs
+dominated that particular 20–33s wait. Restarting a terminal is not required to
+reload JavaScript; a still-running Client/Host keeps its loaded build until
+normal detach and refresh permit replacement.
+
+Run the committed Windows pressure gate after building:
+
+```sh
+node tests/windows-sdk-attach-pressure.mjs
+```
+
+It runs the original bundled recovery test nine times across three isolated
+workers on one available CPU. It retains the original startup budgets and
+assertions, waits for every worker's cleanup, and reports every failure. The
+bundled test records public startup stages on failure and attachment timings
+on success so a future CI failure has evidence beyond its terminal stack.
+The Windows packaged CI job runs this gate in addition to the full bundle
+suite. Release remains on hold pending validation of this patch.

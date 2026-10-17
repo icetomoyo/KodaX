@@ -424,6 +424,7 @@ export async function acquireRuntimeDaemonProcessLease(
     return acquireRuntimeDaemonProcessLease({ ...options, startupTimeoutMs: remainingMs });
   }
   if (initialHealth === "healthy" && initial.state) {
+    if (Date.now() >= startupDeadline) throw runtimeDaemonStartupTimeout(paths);
     if (options.ownerBootstrap !== undefined) {
       throw new Error(
         "Trusted daemon owner policy cannot be applied to an existing daemon. Stop that owner and retry the bootstrap.",
@@ -432,12 +433,13 @@ export async function acquireRuntimeDaemonProcessLease(
     const observation =
       initial.state.status === "ready"
         ? { ...initial, state: initial.state }
-        : await waitForReadyRuntimeDaemonOwner(paths, options, initial);
+        : await waitForReadyRuntimeDaemonOwner(paths, options, initial, undefined, startupDeadline);
     return connectProcessLease(
       paths,
       runtimeDaemonEndpointFromState(observation.state),
       false,
       options,
+      startupDeadline,
       observation.initialization,
     );
   }
@@ -452,6 +454,7 @@ export async function acquireRuntimeDaemonProcessLease(
     );
   }
 
+  if (Date.now() >= startupDeadline) throw runtimeDaemonStartupTimeout(paths);
   const ownerBootstrapFile = options.ownerBootstrap === undefined
     ? undefined
     : createRuntimeDaemonOwnerBootstrapFile(paths, options.ownerBootstrap);
@@ -467,10 +470,10 @@ export async function acquireRuntimeDaemonProcessLease(
       permissionTimeoutMs: options.permissionTimeoutMs,
       userInputTimeoutMs: options.userInputTimeoutMs,
       orphanExitMs: options.orphanExitMs,
-      startupTimeoutMs: options.startupTimeoutMs,
+      startupTimeoutMs: Math.max(1, startupDeadline - Date.now()),
       ownerBootstrapFile,
     });
-    const observation = await waitForHealthyDaemonStartup(paths, options, child);
+    const observation = await waitForHealthyDaemonStartup(paths, options, child, undefined, startupDeadline);
     const ownsHost = observation.state.pid === child.pid;
     if (options.ownerBootstrap !== undefined && !ownsHost) {
       throw new Error(
@@ -483,6 +486,7 @@ export async function acquireRuntimeDaemonProcessLease(
       endpoint,
       ownsHost,
       options,
+      startupDeadline,
       observation.initialization,
     );
   } finally {
@@ -497,12 +501,21 @@ async function connectProcessLease(
   endpoint: RuntimeDaemonEndpoint,
   ownsHost: boolean,
   options: RuntimeDaemonProcessLeaseOptions,
+  deadline: number,
   probeInitialization?: unknown,
 ): Promise<RuntimeDaemonProcessLease> {
+  if (options.startupSignal?.aborted) throw runtimeDaemonStartupCancelled();
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) throw runtimeDaemonStartupTimeout(paths);
   createClientStartupProgressReporter(options.onStartupProgress)({ stage: 'connecting' });
   const transport = await createRuntimeDaemonSocketClientTransport(endpoint, {
-    connectTimeoutMs: options.connectTimeoutMs,
+    connectTimeoutMs: Math.min(options.connectTimeoutMs ?? 2_000, remainingMs),
   });
+  if (options.startupSignal?.aborted || Date.now() >= deadline) {
+    await transport.close?.();
+    if (options.startupSignal?.aborted) throw runtimeDaemonStartupCancelled();
+    throw runtimeDaemonStartupTimeout(paths);
+  }
   let transportClosed = false;
   let closeAttempt: Promise<void> | undefined;
   let shutdownRequested = false;
@@ -552,22 +565,27 @@ export async function waitForHealthyDaemonStartup(
   options: RuntimeDaemonProcessLeaseOptions,
   child: RuntimeDaemonStartupProcess,
   observe: RuntimeDaemonHealthObserver = observeRuntimeDaemonHealth,
+  deadline = Date.now() + (options.startupTimeoutMs ?? 60_000),
 ): Promise<
   RuntimeDaemonHealthObservation & {
     readonly state: NonNullable<RuntimeDaemonHealthObservation["state"]>;
   }
 > {
-  const deadline = Date.now() + (options.startupTimeoutMs ?? 60_000);
   const reportProgress = createClientStartupProgressReporter(options.onStartupProgress);
   try {
     reportProgress({ stage: 'waiting', reason: 'host_starting' });
     while (true) {
+      if (options.startupSignal?.aborted) throw runtimeDaemonStartupCancelled();
+      if (Date.now() >= deadline) throw runtimeDaemonStartupTimeout(paths);
       const observation = await observeStartupHealth(
         paths,
         options,
         child,
         observe,
+        deadline,
       );
+      if (options.startupSignal?.aborted) throw runtimeDaemonStartupCancelled();
+      if (Date.now() >= deadline) throw runtimeDaemonStartupTimeout(paths);
       const health = classifyRuntimeDaemonHealth(observation);
       if (health === "healthy" && observation.state?.status === "ready") {
         if (observation.state.pid === child.pid) child.unref();
@@ -612,12 +630,12 @@ export async function waitForReadyRuntimeDaemonOwner(
   options: RuntimeDaemonProcessLeaseOptions,
   initial: RuntimeDaemonHealthObservation,
   observe: RuntimeDaemonHealthObserver = observeRuntimeDaemonHealth,
+  deadline = Date.now() + (options.startupTimeoutMs ?? 60_000),
 ): Promise<
   RuntimeDaemonHealthObservation & {
     readonly state: NonNullable<RuntimeDaemonHealthObservation["state"]>;
   }
 > {
-  const deadline = Date.now() + (options.startupTimeoutMs ?? 60_000);
   const expectedOwner = initial.state;
   if (expectedOwner === undefined) {
     throw new RuntimeDaemonStartupError(
@@ -628,6 +646,8 @@ export async function waitForReadyRuntimeDaemonOwner(
   createClientStartupProgressReporter(options.onStartupProgress)({ stage: 'waiting', reason: 'host_starting' });
   let observation = initial;
   while (true) {
+    if (options.startupSignal?.aborted) throw runtimeDaemonStartupCancelled();
+    if (Date.now() >= deadline) throw runtimeDaemonStartupTimeout(paths);
     const health = classifyRuntimeDaemonHealth(observation);
     if (
       observation.state !== undefined &&
@@ -668,6 +688,7 @@ async function observeStartupHealth(
   options: RuntimeDaemonProcessLeaseOptions,
   child: RuntimeDaemonStartupProcess,
   observe: RuntimeDaemonHealthObserver,
+  startupDeadline: number,
 ): Promise<RuntimeDaemonHealthObservation> {
   // Keep only a fresh startup candidate admitted during OS identity inspection.
   // Ordinary health probes remain passive and cannot keep an orphan alive.
@@ -689,7 +710,7 @@ async function observeStartupHealth(
     if (outcome.exit.code === 0 && outcome.exit.signal === null) {
       const graceMs = Math.min(
         CLEAN_EXIT_OWNER_PUBLICATION_GRACE_MS,
-        options.startupTimeoutMs ?? CLEAN_EXIT_OWNER_PUBLICATION_GRACE_MS,
+        Math.max(0, startupDeadline - Date.now()),
       );
       const deadline = Date.now() + graceMs;
       while (Date.now() <= deadline) {
@@ -889,7 +910,9 @@ export async function spawnRuntimeDaemonServeProcess(
       child.once("error", reject);
     });
   }
-  rememberChildProcessTree(child);
+  // The Windows startup supervisor owns the Job and its cleanup handle. Its
+  // termination path never consumes a PID-tree snapshot of the wrapper.
+  if (terminateContainedProcess === undefined) rememberChildProcessTree(child);
   return createRuntimeDaemonStartupProcess(
     child,
     exit,

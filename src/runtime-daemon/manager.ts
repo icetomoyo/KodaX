@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 
-import { isCurrentProcessWindowsJobContained, setKodaXDiagnosticSink } from '@kodax-ai/agent';
+import { setKodaXDiagnosticSink } from '@kodax-ai/agent';
 
 import type {
   KodaXRuntime,
@@ -18,6 +18,7 @@ import { appendRuntimeDiagnostic, startRuntimeDaemonHost, type RuntimeDaemonHost
 import {
   assertRuntimeDaemonOwnerAllowed,
   readRuntimeOwnerProcessStartIdentities,
+  readRuntimeDaemonWindowsJobIdentity,
   releaseRuntimeDaemonLock,
   resolveRuntimeDaemonEndpointScope,
   resolveRuntimeDaemonPathsFromConfigHome,
@@ -129,12 +130,13 @@ function readOwnerIdentityWithDiagnostics(paths: RuntimeDaemonPaths, supervisorP
     if (diagnostic.source === 'runtime:windows') appendRuntimeDiagnostic(paths, diagnostic);
   });
   try {
-    const jobContained = isCurrentProcessWindowsJobContained()
+    const jobIdentity = readRuntimeDaemonWindowsJobIdentity();
+    const jobContained = jobIdentity !== undefined
       && Number.isSafeInteger(supervisorPid)
       && supervisorPid > 0;
-    const identities = readRuntimeOwnerProcessStartIdentities(jobContained ? [process.pid, supervisorPid] : [process.pid]);
-    const processStartIdentity = identities.get(process.pid);
-    const supervisorProcessStartIdentity = jobContained ? identities.get(supervisorPid) : undefined;
+    const processStartIdentity = jobContained ? jobIdentity.processStartIdentity
+      : readRuntimeOwnerProcessStartIdentities([process.pid]).get(process.pid);
+    const supervisorProcessStartIdentity = jobContained ? jobIdentity.supervisorProcessStartIdentity : undefined;
     return { jobContained, processStartIdentity, supervisorProcessStartIdentity };
   } finally {
     restore();
