@@ -634,6 +634,61 @@ These measurements do not close the original approximately 30s startup report,
 the Windows CI deadline failure, WFP verification timeout or intermittent
 ConPTY exit observation.
 
+### Local acceptance at 6e4334c2
+
+Runtime commit `6e4334c2fdb22470422f7a5122194683920b7fbd` passed all 44
+bundled tests without skips (75.07s). The real idle case released ownership
+after 30.113s and confirmed Host/supervisor exit; SDK attachment measured
+2.008s initial and 2.582s refresh. The complete SDK source file passed all
+305 cases, and the canonical Actor-read storage file passed all 17 cases.
+
+The ordinary-Host 3,000-Session rebuild/resume probe restored both conversations
+in 13.221s/14.001s, but failed its ConPTY exit-notification gate for one Client.
+A diagnostic repeat (`kodax-concurrent-resume-Wcv3f7`) observed the same failure:
+the Client printed its exit message at 14.860s, and a direct OS liveness probe
+reported `ESRCH` by 14.874s. At 29.790s the PTY output/input sockets were still
+open and the native exit callback/exit code had not arrived. Forced fixture
+cleanup then caused `AttachConsole failed`; that is later than the verified
+CLI process disappearance. This occurrence is a missing native PTY exit
+notification rather than a CLI process remaining alive for the 15s bound.
+The missing callback itself remains unexplained; its exit code was not captured.
+
+Two further diagnostic runs retained independent Windows process handles before
+sending `/exit`. All four Clients returned exit code 0 from the kernel watcher,
+as well as the normal native/public PTY notifications; ready times ranged
+13.149–14.046s. There was no forced cleanup, and guarded private-Host shutdown
+succeeded. These successful runs verify those exits but do not erase or repair
+the earlier missing callback. The probes use private installations/Homes and
+scripted conversations and never submit a model request.
+
+A cold resume using that same private actual-history copy, after verified
+shutdown and a missing-descriptor check, reached the prompt in 5.984s and exited normally
+with code 0. It starts a fresh Host without the old-Host inspection/shutdown
+steps; the live-old-Host refresh measurement above remains 14.379s. This
+illustrates why retiring idle interactive Hosts can reduce later rebuild
+startup work, but it does not diagnose the user's original slow attempt.
+
+In [CI run 39018047888](https://github.com/icetomoyo/KodaX/actions/runs/39018047888),
+the Windows packaged Electron job passed: 44 bundled cases without skips,
+all nine SDK contention cases, 155 ownership/startup/cancellation cases,
+Windows sandbox preparation and native policy gates, and the packaged Electron
+42.5.0 smoke. The contention cases measured 2.641–2.963s initial attachment
+and 3.522–3.925s refresh, within the original 15s/10s budgets. Linux Node 22
+passed the three original crash cases (input acceptance, tool dispatch and
+result-in-context), all 110 explicit ownership regressions including the
+unreaped zombie, and 2,303 Fast cases. The two macOS jobs, Linux ARM64 and
+Windows Shell contract job also passed. These successful runs do not explain
+the earlier Windows deadline/WFP failures, which retain their original evidence.
+
+The same CI run finished **successful across all seven jobs** at Runtime commit
+`6e4334c2fdb22470422f7a5122194683920b7fbd`. Linux Node 20 completed 2,303 Fast,
+11,883 Unit, 950 Contract and 1,365 System cases, with only the existing platform
+skips/TODOs. Its three original crash cases passed and assert no repeated input
+or tool execution. Thus the actual Node 20/22 crash and ownership acceptance
+has passed at this Runtime revision. No release, tag or main-branch merge was
+performed. The earlier slow-start/WFP/PTY observations retain the limitations
+above rather than being closed by a subsequent green run.
+
 ### Standards
 
 Independent final Standards review: zero remaining findings. The final delta
