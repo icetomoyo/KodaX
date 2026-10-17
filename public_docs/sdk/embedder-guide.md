@@ -4974,6 +4974,8 @@ Old Hosts without lifetime metadata retain persistence unless a valid orphan-exi
 capability proves their temporary policy. Stopping an idle legacy Host once lets
 the next ordinary CLI startup apply its new interactive default. Pending memory
 review and managed-task maintenance also block shutdown after a Run completes.
+An explicit `requirements.daemonOrphanExit` still takes precedence over inherited
+persistence; it uses the existing fenced policy-refresh path.
 
 An embedder can inspect `KODAX_RUNTIME_SDK_CAPABILITIES.daemonOrphanExit`
 before calling an auto-start API. This prevents an older SDK from spawning a

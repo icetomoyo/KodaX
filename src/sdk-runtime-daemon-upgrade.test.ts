@@ -194,6 +194,28 @@ describe('product Host startup and passive connection', () => {
     } finally { await runtime.close(); }
   });
 
+  it('honors an explicit orphan-exit requirement over inherited persistent startup intent', async () => {
+    const calls: string[] = [];
+    const initialized = await createCurrentTransport([], async () => undefined).request('initialize') as { capabilities: Record<string, unknown> };
+    const capabilities = { ...initialized.capabilities };
+    delete capabilities.daemonOrphanExit;
+    const old = createLegacyTransport({
+      preflight: createPreflight(), calls, close: async () => undefined,
+      runtimeVersion: KODAX_VERSION, build: LOCAL_RUNTIME_BUILD, capabilities,
+    });
+    upgradeMocks.acquireProcessLease
+      .mockResolvedValueOnce(createLease(old))
+      .mockResolvedValueOnce(createLease(createCurrentTransport(calls, async () => undefined)));
+    upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
+    const runtime = await ensureKodaXRuntime({
+      profile: PROFILE, daemonLifecycle: 'interactive', requirements: { daemonOrphanExit: 1 },
+    });
+    try {
+      expect(upgradeMocks.acquireProcessLease.mock.calls[1]?.[0]).toMatchObject({ orphanExitMs: 30_000 });
+      expect(upgradeMocks.waitOwnerExit).toHaveBeenCalledTimes(1);
+    } finally { await runtime.close(); }
+  });
+
   it('rebuilds an idle same-build Host missing the requested orphan-exit policy', async () => {
     const calls: string[] = [];
     const current = await createCurrentTransport([], async () => undefined).request('initialize') as { capabilities: Record<string, unknown> };

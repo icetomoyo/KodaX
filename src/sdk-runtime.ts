@@ -6622,6 +6622,7 @@ async function connectKodaXRuntimeInternal(
           && !hasVersionedRuntimeCapability(daemonCapabilities, 'daemonOrphanExit', 1));
       return connectKodaXRuntimeInternal(
         options.daemonLifecycle === 'interactive' && options.daemonOrphanExitMs === undefined
+          && requirements.daemonOrphanExit === undefined
           && persistentLifecycle
           ? { ...options, daemonLifecycle: 'persistent' } : options,
         allowCapabilityUpgrade,
