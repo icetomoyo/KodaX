@@ -177,6 +177,10 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('The v0.7.97-alpha.7 release resolves shared-Session Host ownership across daemon');
     expect(sdk).toContain('guarded same-build orphan-exit policy refresh');
     expect(sdk).toContain('`daemon_startup_failed` and `ETIMEDOUT`');
+    expect(sdk).toContain('report `already_running` by its actual');
+    expect(sdk).toContain('retire after the accepted 30-second lifetime');
+    expect(sdk).toContain('reads targeted exact process identities within the original startup controls');
+    expect(sdk).toContain('starts exactly once, and');
     expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.6 contract is retained.');
     expect(sdk).toContain('The v0.7.97-alpha.6 release streamlines shared-Host startup');
     expect(sdk).toContain('optional `lastMessageAt`');

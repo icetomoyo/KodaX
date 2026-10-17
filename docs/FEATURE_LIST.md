@@ -536,7 +536,12 @@ a guarded same-build orphan-exit policy refresh is permitted, retaining
 active-work preflight, exact owner identity, and process-exit verification.
 Structured owner/profile and upgrade-blocker diagnostics publish, and daemon
 startup and connection timeouts surface as retryable `daemon_startup_failed`
-and `ETIMEDOUT` failures. The continuous `test:bundle` gate now includes
+and `ETIMEDOUT` failures. Concurrent CLI starts recognize a starting daemon as the existing
+owner; idle interactive Hosts retire after the accepted 30-second lifetime
+while explicit daemon/A2A service owners are retained; Windows SDK
+attachment reads targeted exact process identities within the original
+startup controls; queued Runs drain instead of stranding; and restored
+Sessions keep visible history across the display-window limit. The continuous `test:bundle` gate now includes
 bundled real-process shared-Host recovery. Every v0.7.96 stable and
 v0.7.97-alpha.1 through alpha.6 contract is retained. Cross-platform manual
 acceptance and npm publication remain manual maintainer steps.

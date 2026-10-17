@@ -800,7 +800,11 @@ descriptor within the original startup deadline, reuse compatible Hosts
 without restarting work, and permit only a guarded same-build orphan-exit
 policy refresh. Structured owner/profile and upgrade-blocker diagnostics
 publish, and daemon startup and connection timeouts surface as retryable
-`daemon_startup_failed` and `ETIMEDOUT` failures. See the
+`daemon_startup_failed` and `ETIMEDOUT` failures. Idle interactive Hosts
+retire after a bounded 30-second lifetime while explicit daemon/A2A service
+owners are retained, concurrent CLI starts recognize a starting daemon as
+the existing owner, and Windows SDK attachment reads targeted exact process
+identities within the original startup controls. See the
 [v0.7.97-alpha.7 release notes](docs/release.md#v0797-alpha7-release-preparation).
 Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.6 contract is
 retained.

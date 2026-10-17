@@ -15,8 +15,13 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 > identity, and process-exit verification. Structured owner/profile and
 > upgrade-blocker diagnostics publish; daemon startup and connection
 > timeouts surface as retryable `daemon_startup_failed` and `ETIMEDOUT`
-> failures. Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.6
-> contract is retained.
+> failures. Concurrent CLI starts recognize a starting daemon as the
+> existing owner; idle interactive Hosts retire after the accepted
+> 30-second lifetime while explicit daemon/A2A service owners are retained
+> and idle exit stays fenced on pending maintenance and tracked background
+> work; Windows SDK attachment reads targeted exact process identities
+> within the original startup controls. Every v0.7.96 stable and
+> v0.7.97-alpha.1 through alpha.6 contract is retained.
 >
 > **v0.7.97-alpha.6 release addendum:** FEATURE_298's startup and Session
 > contracts are extended without a Host capability bump: shared-Host startup

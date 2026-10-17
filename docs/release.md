@@ -172,6 +172,20 @@ On top of v0.7.97-alpha.6 it includes:
   history (24-record fixture: 11,069ms/48 helpers before, 10ms/none after);
   exact-handle Run recovery and verified live-descendant cleanup are
   preserved (`9fd4f426`).
+- Bounded Windows SDK attachment work: fresh PID identity checks read targeted
+  exact FILETIME identities instead of full process-table scans, the original
+  startup deadline passes through readiness and attachment, discovery past
+  its boundary no longer opens leases, and a concurrent CLI start recognizes
+  a starting daemon as the existing owner (`already_running`).
+- Idle interactive Host lifetime: interactive Hosts retire after the accepted
+  30-second idle window while explicit daemon `start` and A2A-serving owners
+  are retained in place; idle exit is fenced on pending maintenance and
+  tracked background work without breaking explicit shutdown contracts.
+- Session/history repairs: restored Sessions keep the preceding turn visible
+  across the display-window limit, and saved history with a pending final
+  tool result reads without false history-change conflicts.
+- Queued Run drainage: a Run admitted while its predecessor drains now starts
+  exactly once instead of stranding after an empty-queue drain.
 
 All root/workspace package versions and lockfile entries are
 `0.7.97-alpha.7`. The feature-design submodule, public guides, architecture

@@ -318,7 +318,9 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 归属（Space #222）——启动器在原启动期限内等待启动中 owner 的已验证描述符，
 兼容 Host 直接复用而不重启工作，仅允许受控的同构建 orphan-exit 策略刷新。
 结构化 owner/profile 与升级阻塞诊断对外发布，daemon 启动与连接超时以可重试的
-`daemon_startup_failed` 与 `ETIMEDOUT` 呈现。
+`daemon_startup_failed` 与 `ETIMEDOUT` 呈现。空闲的交互式 Host 在 30 秒生命周期后
+退隐而显式 daemon/A2A 服务 owner 保留;并发 CLI 启动识别启动中的 daemon 为既有
+owner;Windows SDK attach 在原启动控制内读取精确进程身份。
 详见 [v0.7.97-alpha.7 发布清单](docs/release.md#v0797-alpha7-release-preparation)。
 所有 v0.7.96 稳定与 v0.7.97-alpha.1 至 alpha.6 契约全部保留。
 
