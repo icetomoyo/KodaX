@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep saved history readable when its final tool call has no result yet: reaching the end of a valid cached revision no longer reports a history-change conflict. Preserve canonical tool timestamps across observed and paged history, and show the session banner only at the beginning of saved history while browsing ordinary chat, avoiding banner flashes at intermediate page boundaries.
+
 ---
 
 ## [0.7.97-alpha.7] - 2026-10-16

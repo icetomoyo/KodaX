@@ -118,6 +118,10 @@ npm run test:repl-pty:built
 
 这里 Ctrl+E 表示展开/折叠完整历史，`/` 表示打开 transcript 搜索。分页期间模型继续追加、旧会话来源歧义和取消读取另有契约/显示函数回归；不把这些单测计为额外真实终端用例。
 
+普通聊天的流式翻页回归：构建后运行 `node tests/repl-pty-acceptance.mjs --streaming-scroll-only ink`。驱动在私有 Home 保存 90 轮规范问答，持续追加本地模型输出，同时用鼠标滚轮跨越最近显示窗口和多个历史页。必须能到达第一条 query，停手后阅读位置保持不动，中间页顶部不闪现会话 banner，Provider 只收到一次当前输入。此用例不调用真实模型，也不改写用户会话。
+
+SDK 另由 `src/sdk-client.observe-history.test.ts` 验证：末尾工具尚无结果时，首次准备与复用缓存都能读到原始 query；相同文本的不同 inputId 保持独立，复用 callId 的不同 assistantOutputId 保持独立，工具时间在 observe/readHistory 两个面保持一致。真正的版本变化仍须返回 `resync_required`（`src/sdk-client.history.test.ts`）。Ctrl+E 的 `collapse` 只证明细节已展开；完整读取失败时仍保留冻结窗口并报告失败，不代表早期记录已删除。
+
 ## 打包 Electron 与沙箱验收
 
 入口：`scripts/test-electron-daemon-smoke.mjs`。配置已有 Electron 和 electron-builder 后执行：

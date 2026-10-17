@@ -27,6 +27,7 @@ const queueBoundaryOnly = process.argv.includes('--queue-boundary-only');
 const consumerOnly = process.argv.includes('--consumer-only');
 const exposureOnly = process.argv.includes('--exposure-only');
 const promptScrollOnly = process.argv.includes('--prompt-scroll-only');
+const streamingScrollOnly = process.argv.includes('--streaming-scroll-only');
 const modelNoticesOnly = process.argv.includes('--model-notices-only');
 process.stdout.write(`Artifacts: ${artifacts}\n`);
 
@@ -446,7 +447,8 @@ async function checkStartup(state) {
   });
   state.originalSessionId = await displayedSessionId(state);
   assert.equal((await state.client.sessions.read(state.originalSessionId)).id, state.originalSessionId);
-  assert.equal((await state.client.sessions.list()).length, 0, 'Unsubmitted startup drafts must not enter history');
+  assert.equal((await state.client.sessions.list()).length, state.fixtureSessionId ? 1 : 0,
+    'Unsubmitted startup drafts must not enter history');
   await observeSession(state, state.originalSessionId);
   await delay(1000);
   await assertSelectedSettings(state);
@@ -1051,6 +1053,53 @@ async function checkPromptScroll(state) {
   await state.terminal.type('\x15');
 }
 
+async function seedStreamingScrollHistory(state) {
+  const { FileSessionStorage } = await import('../dist/sdk-repl.js');
+  const storage = new FileSessionStorage({ sessionsDir: path.join(state.homeDir, '.kodax', 'sessions'),
+    configHome: path.join(state.homeDir, '.kodax') });
+  state.fixtureSessionId = '20261017_000000_scrollprobe';
+  await storage.save(state.fixtureSessionId, { title: 'Streaming scroll fixture', gitRoot: state.homeDir,
+    messages: Array.from({ length: 90 }, (_, index) => [
+      { role: 'user', inputId: `query-${index}`, content: `SAVED_QUERY_${index}`, timestamp: '2026-10-16T00:00:00.000Z' },
+      { role: 'assistant', outputId: `reply-${index}`, content: `SAVED_REPLY_${index}\n${'Saved history body '.repeat(25)}`,
+        timestamp: '2026-10-16T00:00:01.000Z' },
+    ]).flat() });
+}
+
+async function checkStreamingPromptScroll(state) {
+  await state.terminal.submit('ACCEPT_HOLD_TRANSCRIPT');
+  await waitFor('streaming scroll reply', () => state.terminal.screen().includes('BEGIN_ACCEPT_HOLD_TRANSCRIPT'));
+  const grow = setInterval(() => state.pending.get('grow')?.(), 60);
+  const frames = [];
+  let reached = false;
+  try {
+    for (let tick = 0; tick < 240; tick += 1) {
+      state.terminal.child.write('\x1b[<64;20;8M');
+      await delay(35);
+      const screen = state.terminal.screen();
+      const queries = [...screen.matchAll(/SAVED_QUERY_(\d+)/g)].map(match => Number(match[1]));
+      const banner = screen.includes('AI Coding Agent');
+      frames.push({ tick, queries, banner });
+      reached = queries.includes(0);
+      assert.ok(!banner || queries.length === 0 || reached,
+        'Paging must not flash the session banner at the start of an intermediate saved page');
+      if (reached) break;
+    }
+    assert.ok(reached, 'Mouse wheel must reach the original saved query while output continues');
+    const body = state.terminal.screen().split('\n').slice(0, 20).join('\n');
+    await delay(500);
+    assert.equal(state.terminal.screen().split('\n').slice(0, 20).join('\n'), body,
+      'Streaming output must preserve the reading position');
+  } finally {
+    clearInterval(grow);
+    state.pending.get('ACCEPT_HOLD_TRANSCRIPT')?.();
+    await writeFile(path.join(artifacts, `${state.mode}-streaming-scroll-frames.json`), JSON.stringify(frames, null, 2));
+  }
+  await waitFor('streaming scroll round settlement', () => state.view.runs.every(run => run.phase === 'completed'));
+  await state.terminal.type('\x1b[F');
+  assert.equal(received(state, 'ACCEPT_HOLD_TRANSCRIPT').length, 1, 'Browsing must not resubmit the input');
+}
+
 async function checkShortPromptScroll(state) {
   await state.terminal.resize(220, 64);
   await state.client.sessions.appendNotice(state.sessionId, { content: 'SHORT_HISTORY_BEFORE' });
@@ -1257,13 +1306,19 @@ async function run(mode) {
     // The source Host launcher resolves its --import tsx from the project cwd.
     if (sourceEntry) await symlink(path.join(repo, 'node_modules'), path.join(state.homeDir, 'node_modules'), 'junction');
     await setupHostCommands(state);
-    state.terminal = openTerminal(state.homeDir, mode);
+    if (streamingScrollOnly) await seedStreamingScrollHistory(state);
+    state.terminal = openTerminal(state.homeDir, mode, state.fixtureSessionId ? ['--resume', state.fixtureSessionId] : []);
     await check(state, 'startup', checkStartup);
-    if (mode === 'ink' && !modelNoticesOnly && !longHistoryOnly && !queueBoundaryOnly && !consumerOnly && !exposureOnly) {
+    if (mode === 'ink' && !streamingScrollOnly && !modelNoticesOnly && !longHistoryOnly && !queueBoundaryOnly && !consumerOnly && !exposureOnly) {
       await check(state, 'short-history-wheel-return-to-live', checkShortPromptScroll);
     }
     if (modelNoticesOnly) {
       await check(state, 'model-command-visible-feedback', checkModelNotices);
+      await check(state, 'exit', checkExit);
+      return;
+    }
+    if (streamingScrollOnly) {
+      await check(state, 'streaming-prompt-saved-history-scroll', checkStreamingPromptScroll);
       await check(state, 'exit', checkExit);
       return;
     }
@@ -1334,8 +1389,8 @@ async function run(mode) {
 }
 
 try {
-  const requestedModes = process.argv.slice(2).filter(argument => !['--source', '--long-history-only', '--queue-boundary-only', '--consumer-only', '--exposure-only', '--prompt-scroll-only', '--model-notices-only'].includes(argument));
-  const modes = requestedModes.length ? requestedModes : longHistoryOnly || queueBoundaryOnly || promptScrollOnly || modelNoticesOnly ? ['ink'] : ['ink', 'classic'];
+  const requestedModes = process.argv.slice(2).filter(argument => !['--source', '--long-history-only', '--queue-boundary-only', '--consumer-only', '--exposure-only', '--prompt-scroll-only', '--streaming-scroll-only', '--model-notices-only'].includes(argument));
+  const modes = requestedModes.length ? requestedModes : longHistoryOnly || queueBoundaryOnly || promptScrollOnly || streamingScrollOnly || modelNoticesOnly ? ['ink'] : ['ink', 'classic'];
   assert.ok(modes.every(mode => ['ink', 'classic'].includes(mode)), 'Modes must be ink or classic');
   for (const mode of modes) await run(mode);
 } catch (error) {

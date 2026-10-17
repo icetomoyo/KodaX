@@ -4013,10 +4013,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     terminalWidth,
   ]);
   const fullscreenBannerSection = useMemo(
-    () => (fullscreenPolicy.enabled && showBanner
+    () => (fullscreenPolicy.enabled && showBanner && (isTranscriptMode || !promptBrowse.display
+      || (promptBrowse.display.window !== undefined && promptBrowse.display.window.nextCursor === undefined))
       ? buildBannerTranscriptSection(bannerProps)
       : undefined),
-    [bannerProps, fullscreenPolicy.enabled, showBanner],
+    [bannerProps, fullscreenPolicy.enabled, showBanner, isTranscriptMode, promptBrowse.display],
   );
   // FEATURE_214 — inline scrollback ledger. Active ONLY on the inline main-screen path
   // AND only when the live renderer handle actually exposes commitInlineScrollback;

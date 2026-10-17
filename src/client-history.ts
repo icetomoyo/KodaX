@@ -50,7 +50,8 @@ export async function projectConversationHistoryPage(
       page.revision,
       entry.index,
       results.length > 0
-        ? [owner.message, { role: 'user', content: results }]
+        ? [owner.message, { role: 'user', content: results,
+          ...(successor?.timestamp !== undefined ? { timestamp: successor.timestamp } : {}) }]
         : [owner.message],
     ).map(item => boundHistoryItem({ ...item,
       ...(item.type === 'user' && Array.isArray(owner.message.content)

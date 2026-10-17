@@ -670,8 +670,11 @@ async function readConversationPageCacheChunkInternal(
   const manifest = await readConversationPageCacheManifest(mainPath);
   if (manifest === undefined || manifest.boundaryRevision !== boundaryRevision) return null;
   await input.authorize?.(manifest.admission);
-  if (manifest.revision !== input.revision || input.entryIndex >= manifest.entryCount) {
+  if (manifest.revision !== input.revision) {
     throw new ConversationPageCacheStaleError('Conversation history changed; request a fresh page');
+  }
+  if (input.entryIndex >= manifest.entryCount) {
+    throw new Error(`Transcript entry index is out of range: ${input.entryIndex}`);
   }
   if (input.offset < 0 || input.offset % manifest.chunkBytes !== 0) {
     throw new ConversationPageCacheStaleError('Conversation entry cursor is invalid');

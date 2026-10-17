@@ -16,6 +16,69 @@ import { FileSessionStorage } from '@kodax-ai/repl';
 
 const REPLY_TEXT = 'A sufficiently detailed recorded summary of the exchange that carries usable semantic content for later turns.';
 
+it('pages back to the original query when the saved tail is a tool call without a result', async () => {
+  const session = await client.sessions.create({ projectPath: homeDir });
+  const storage = new FileSessionStorage({ sessionsDir: path.join(homeDir, '.kodax', 'sessions'), configHome: path.join(homeDir, '.kodax') });
+  const data = (await storage.load(session.id))!;
+  data.messages = [
+    { role: 'user', inputId: 'original-query', content: 'Review the changes' },
+    { role: 'assistant', outputId: 'pending-output', content: [
+      { type: 'thinking', thinking: 'Checking the changes' },
+      { type: 'tool_use', id: 'pending-call', name: 'read', input: { path: 'changes.txt' } },
+    ] },
+  ];
+  delete data.lineage;
+  await storage.save(session.id, data);
+  // Exercise the durable page cache as well as its first preparation.
+  for (let read = 0; read < 2; read += 1) {
+    const newest = await client.sessions.readHistory(session.id, { limit: 1 });
+    expect(newest.items.find(item => item.tool?.callId === 'pending-call')?.tool?.status).toBe('cancelled');
+    expect(newest.nextCursor).toBeDefined();
+    const oldest = await client.sessions.readHistory(session.id, { cursor: newest.nextCursor, limit: 1 });
+    expect(oldest.items).toMatchObject([{ type: 'user', inputId: 'original-query', text: 'Review the changes' }]);
+    expect(oldest.nextCursor).toBeUndefined();
+  }
+});
+
+it.each(['history', 'observe'] as const)('preserves dated canonical tool facts and distinct repeated queries through %s', async surface => {
+  const session = await client.sessions.create({ projectPath: homeDir });
+  const storage = new FileSessionStorage({ sessionsDir: path.join(homeDir, '.kodax', 'sessions'), configHome: path.join(homeDir, '.kodax') });
+  const data = (await storage.load(session.id))!;
+  data.messages = [
+    { role: 'user', inputId: 'first-input', timestamp: '2026-10-08T02:44:14.762Z', content: 'Repeat the same test' },
+    { role: 'assistant', outputId: 'first-output', timestamp: '2026-10-08T02:50:36.276Z', content: [
+      { type: 'tool_use', id: 'reused-call', name: 'read', input: { path: 'first.txt' } },
+    ] },
+    { role: 'user', timestamp: '2026-10-08T02:50:37.276Z', content: [
+      { type: 'tool_result', tool_use_id: 'reused-call', content: 'First result' },
+    ] },
+    { role: 'user', inputId: 'later-input', timestamp: '2026-10-13T01:29:39.401Z', content: 'Repeat the same test' },
+    { role: 'assistant', outputId: 'later-output', timestamp: '2026-10-13T01:30:00.000Z', content: [
+      { type: 'tool_use', id: 'reused-call', name: 'read', input: { path: 'later.txt' } },
+    ] },
+    { role: 'user', timestamp: '2026-10-13T01:30:01.000Z', content: [
+      { type: 'tool_result', tool_use_id: 'reused-call', content: 'Later result' },
+    ] },
+  ];
+  data.uiHistory = [];
+  delete data.lineage;
+  await storage.save(session.id, data);
+  let view: ClientSessionView | undefined;
+  const observation = surface === 'observe'
+    ? await client.sessions.observe(session.id, next => { view = next; }) : undefined;
+  try {
+    const items = surface === 'history' ? (await client.sessions.readHistory(session.id)).items : view!.items;
+    expect(items.filter(item => item.type === 'user').map(item => item.inputId)).toEqual(['first-input', 'later-input']);
+    expect(items.map(item => item.type)).toEqual(['user', 'tool', 'user', 'tool']);
+    expect(new Set(items.map(item => item.id)).size).toBe(items.length);
+    const tools = items.filter(item => item.type === 'tool');
+    expect(tools.map(item => item.tool?.assistantOutputId)).toEqual(['first-output', 'later-output']);
+    expect(tools.map(item => item.timestamp)).toEqual([1791427836276, 1791855000000]);
+    expect(tools.map(item => item.tool?.startedAt)).toEqual([1791427836276, 1791855000000]);
+    expect(tools.map(item => item.tool?.endedAt)).toEqual([1791427837276, 1791855001000]);
+  } finally { observation?.close(); }
+});
+
 it('keeps an interrupted draft inside its aliased input round when that input is outside the byte-budget page', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });
   const storage = new FileSessionStorage({ sessionsDir: path.join(homeDir, '.kodax', 'sessions'), configHome: path.join(homeDir, '.kodax') });
