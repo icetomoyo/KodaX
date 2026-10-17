@@ -291,8 +291,8 @@ Run the committed Windows pressure gate after building:
 node tests/windows-sdk-attach-pressure.mjs
 ```
 
-It runs the original bundled recovery test nine times across three isolated
-workers on one available CPU. It retains the original startup budgets and
+It runs the original bundled recovery test three times per worker, with up to
+three isolated workers bounded by the available CPU count. It retains the original startup budgets and
 assertions, waits for every worker's cleanup, and reports every failure. The
 bundled test records public startup stages on failure and attachment timings
 on success so a future CI failure has evidence beyond its terminal stack.
@@ -331,4 +331,18 @@ ownership/deadline/cancellation tests passed 208 (3 platform skips). The real
 both conversations, observed the new Host and closed both Clients normally.
 This confirms no measured regression in that scenario, but does not clear
 the single-CPU pressure limitation. Release remains held and the fix branch
-must not be described as fully accepted while this limitation is unresolved.
+must not be described as fully accepted on the basis of a rerun of the same
+single-CPU experiment.
+
+The initial fixed single-CPU gate was too restrictive as a success requirement:
+it forced three independent cold Host replacements to compete for one CPU
+while assuming all would finish within 10s. CI run `39002116074` passed the
+original Windows bundled suite, but that additional gate failed one pressure
+case. The user explicitly permitted correcting this acceptance criterion.
+The committed concurrent gate now respects the available CPU count, requires
+every original SDK scenario to succeed, and keeps the 15s/10s deadlines and
+owner/cleanup assertions unchanged. It does not accept timeouts as success.
+Deadline expiry, cancellation and changed-owner behavior remain separate
+deterministic regressions that first fail against the old implementation.
+The earlier single-CPU failures above remain diagnostic evidence of resource
+starvation and are not erased or represented as successful acceptance.
