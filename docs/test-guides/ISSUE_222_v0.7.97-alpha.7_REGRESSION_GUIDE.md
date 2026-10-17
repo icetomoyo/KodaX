@@ -517,3 +517,78 @@ The original approximately 30-second first resume after rebuild remains an open
 performance diagnosis. A warm successful run is insufficient to close it. This
 lifetime change does not claim to resolve that delay; the one-off local startup
 trace remains available in `.tmp/Trace-KodaXStartup.ps1` for a slow real attempt.
+
+### Lifetime validation at 9f203bb8
+
+The final Runtime commit is `9f203bb8cc64367454d959fdeb15c39f3ee81b97`.
+Full source/test type checks and the complete build passed. The seven-file
+ownership/lifetime source gate passed 251/251. The full SDK file passed 305/305
+after the background-work shutdown correction; the later commits add startup
+admission and retained-service guards, covered by the final seven-file gate.
+The complete final Windows CLI daemon source file passed 26/26.
+
+On the final Windows Node 22 build, all 44 bundled tests passed without skips.
+The real 30-second case released the owner fence after 30.111s and confirmed
+both Host and supervisor exit. SDK initial attachment measured 1.870s, and
+the shared-Host refresh/attachment measured 2.368s against unchanged deadlines.
+An instrumented 3,000-Session concurrent rebuild/resume restored both saved
+conversations in 13.851s/12.988s, with both processes recording exit code 0,
+no forced cleanup or reported errors, and successful private-Host shutdown.
+
+One preceding UI acceptance attempt resumed within the same 20s gate but
+failed its exit gate: one ConPTY exit notification did not arrive before the
+15s cleanup bound. Its subsequent forced cleanup produced `AttachConsole
+failed`; that error is a consequence of the cleanup attempt and does not
+establish why the original notification was missing. The targeted process-exit
+probe and 24 minimal ConPTY child exits did not reproduce the failure. The
+original evidence remains in the local `kodax-concurrent-resume-UKh4gE`
+artifact directory. This intermittent exit observation remains unexplained;
+the later pass is not treated as proof that it has been fixed.
+
+[Full CI run 39015073200](https://github.com/icetomoyo/KodaX/actions/runs/39015073200)
+is **failed**, with five of seven platform jobs successful. Linux Node 22
+passed all three original crash cases and 110 explicit ownership regressions,
+including the unreaped zombie. Linux Node 20 passed the same three crash cases,
+2,303 Fast tests, and 11,879 Unit tests including all ten owner-exit cases. Its
+Contract tier passed 949 cases but failed `agent.written-files.test.ts` teardown
+with `ENOTEMPTY`; the System tier therefore did not run. Windows passed all 44
+bundled tests, the six selected CLI/launcher cases, all nine concurrent SDK
+attachment cases, and 155 startup/ownership/cancellation tests. Those nine cases
+measured 3.159–4.056s initial attachment and 4.286–4.985s replacement. The later,
+independent `setupKodaXSandbox` command failed at its 30s native WFP verification
+bound, before the native policy and packaged Electron gates could run.
+
+The Contract failure exposed an existing fixture lifetime race: managed-task
+artifact maintenance is scheduled after Run completion, but this fixture deleted
+its workspace without owning that maintenance. A public `runManagedTask` probe
+holds the maintenance callback until the Run returns. Deleting the workspace
+before releasing the callback deterministically recreates an already-cleaned
+directory (RED); awaiting the callback before deletion leaves it absent (GREEN).
+The fixture now collects maintenance through its existing event and awaits it
+before releasing providers/environment and deleting the directory. The original
+18 cases plus the Runner finalization case pass locally. Business assertions,
+timeouts and production behavior are unchanged. Independent Standards and Spec
+delta reviews each report zero findings. The complete local Contract tier then
+passed 950 cases across all 117 files (19 preexisting TODO cases), and test type
+checks passed. These local results do not change the failed CI run's conclusion.
+
+The native WFP timeout is not explained by the successful SDK measurements.
+The original stack reaches `verifyPreparedWindowsWfp` from sandbox setup, rather
+than shared owner discovery; this branch does not change the sandbox verifier or
+its native binary. A causal connection to the user's slow first resume is still
+unproven. Neither a later passing run nor the lifetime change closes that issue.
+
+### Standards
+
+Independent final Standards review: zero remaining findings. The final delta
+reuses authenticated initialization and the existing guarded refresh path;
+retention conflicts are checked before shutdown. No added startup scan or
+configuration was found.
+
+### Spec
+
+Independent final Spec review: zero remaining findings. Explicit and A2A
+retention, conservative legacy handling, background-work protection, startup
+admission, original deadlines/cancellation and owner identity fences satisfy
+the accepted lifetime requirement. This does not close the original slow-resume
+diagnosis or the intermittent ConPTY exit observation. Release remains held.
