@@ -165,6 +165,13 @@ On top of v0.7.97-alpha.6 it includes:
   losing state.
 - Bundle gate growth: `test:bundle` now includes bundled real-process
   shared-Host recovery (`tests/bundled-shared-host-recovery.test.mjs`).
+- Bounded Windows startup cleanup: the automatic historical child sweep keeps
+  unverifiable incomplete Run trees `unknown` instead of launching a
+  PowerShell termination helper per old record — a helper storm that
+  invalidated the shared process snapshot and made startup cost grow with
+  history (24-record fixture: 11,069ms/48 helpers before, 10ms/none after);
+  exact-handle Run recovery and verified live-descendant cleanup are
+  preserved (`9fd4f426`).
 
 All root/workspace package versions and lockfile entries are
 `0.7.97-alpha.7`. The feature-design submodule, public guides, architecture
