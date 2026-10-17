@@ -83,11 +83,11 @@ it('blocks idle shutdown until post-Run maintenance has finished', async () => {
   try {
     await expect((await f.start()).result).resolves.toMatchObject({ phase: 'completed' });
     await maintenance.entered;
-    await expect(f.runtime.status.preflight()).resolves.toMatchObject({
-      activeRuns: [], canStop: false, blockers: expect.arrayContaining(['background_work']),
-    });
+    const preflight = await f.runtime.status.preflight();
+    expect(preflight).toMatchObject({ activeRuns: [], canStop: true });
+    expect(preflight.pendingBackgroundWork).toBeGreaterThan(0);
     await maintenance.settleStartedWrites();
-    await vi.waitFor(async () => expect((await f.runtime.status.preflight()).canStop).toBe(true));
+    await vi.waitFor(async () => expect((await f.runtime.status.preflight()).pendingBackgroundWork).toBe(0));
   } finally {
     try { await maintenance.settleStartedWrites(); } finally { await f.close(); }
   }

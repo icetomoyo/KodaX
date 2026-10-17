@@ -140,7 +140,11 @@ describe('Runtime daemon orphan idle exit', () => {
     const requestStop = vi.fn();
     const controller = createController({
       orphanExitMs: 30_000,
-      preflight: () => ({ ...idlePreflight(), canStop: !active, blockers: active ? [blocker] : [] }),
+      preflight: () => ({ ...idlePreflight(),
+        canStop: blocker === 'background_work' || !active,
+        blockers: active && blocker === 'active_runs' ? ['active_runs'] : [],
+        pendingBackgroundWork: active && blocker === 'background_work' ? 1 : 0,
+      }),
       requestStop,
     });
     try {
@@ -156,6 +160,33 @@ describe('Runtime daemon orphan idle exit', () => {
       await vi.advanceTimersByTimeAsync(1);
       expect(requestStop).toHaveBeenCalledTimes(1);
     } finally { controller.close(); vi.useRealTimers(); }
+  });
+
+  it('preserves background work that starts during the final idle-exit preflight', async () => {
+    vi.useFakeTimers();
+    let checks = 0;
+    const requestStop = vi.fn();
+    const controller = createController({ orphanExitMs: 30_000, requestStop,
+      preflight: () => ({ ...idlePreflight(), pendingBackgroundWork: ++checks >= 2 ? 1 : 0 }),
+    });
+    try {
+      controller.armOrphanExitAfterReady();
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(checks).toBeGreaterThanOrEqual(2);
+      expect(requestStop).not.toHaveBeenCalled();
+      expect(() => controller.attachClient(client('replacement'))).not.toThrow();
+    } finally { controller.close(); vi.useRealTimers(); }
+  });
+
+  it('allows explicit shutdown to cancel and settle optional background work', async () => {
+    const requestStop = vi.fn();
+    const controller = createController({ orphanExitMs: 30_000, requestStop,
+      preflight: () => ({ ...idlePreflight(), pendingBackgroundWork: 1 }),
+    });
+    try {
+      await expect(controller.stop()).resolves.toEqual({ ok: true });
+      expect(requestStop).toHaveBeenCalledTimes(1);
+    } finally { controller.close(); }
   });
 
   it('cancels an armed orphan exit when another client attaches during the grace period', async () => {

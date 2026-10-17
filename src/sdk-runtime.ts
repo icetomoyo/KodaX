@@ -3380,6 +3380,8 @@ export interface RuntimeDaemonPreflight {
   readonly activeAgentTasks: readonly RuntimeActiveAgentTurn[];
   readonly pendingPermissions: readonly RuntimePermissionRequest[];
   readonly pendingUserInputs: readonly RuntimeUserInputRequest[];
+  /** Optional work preserved by idle exit; explicit shutdown cancels/settles it. */
+  readonly pendingBackgroundWork?: number;
   readonly blockers: readonly (
     | "connected_clients"
     | "active_runs"
@@ -3388,7 +3390,6 @@ export interface RuntimeDaemonPreflight {
     | "active_agent_turns"
     | "active_agent_tasks"
     | "pending_interactions"
-    | "background_work"
   )[];
   readonly canStop: boolean;
 }
@@ -5415,7 +5416,7 @@ async function createKodaXRuntimeInternal(
       sessionAdmission,
       workflows,
       actors: actorRegistry,
-      hasBackgroundWork: () => pendingMemoryWork.size > 0 || pendingManagedTaskMaintenance.size > 0,
+      pendingBackgroundWork: () => pendingMemoryWork.size + pendingManagedTaskMaintenance.size,
     }),
     admin: createRuntimeAdminService(agentPlane),
     agents: createRuntimeAgentService(
@@ -14979,7 +14980,7 @@ function createRuntimeStatusService(deps: {
   readonly sessionAdmission: RuntimeSessionAdmission;
   readonly workflows: RuntimeWorkflowService;
   readonly actors: RuntimeAgentActorRegistry;
-  readonly hasBackgroundWork: () => boolean;
+  readonly pendingBackgroundWork: () => number;
 }): RuntimeStatusService {
   return {
     async snapshot() {
@@ -15026,7 +15027,6 @@ function createRuntimeStatusService(deps: {
       if (pendingPermissions.length > 0 || pendingUserInputs.length > 0) {
         blockers.push("pending_interactions");
       }
-      if (deps.hasBackgroundWork()) blockers.push('background_work');
       return {
         runtimeId: deps.identity.runtimeId,
         clientCount: 0,
@@ -15037,6 +15037,7 @@ function createRuntimeStatusService(deps: {
         activeAgentTasks: activeAgentTurns,
         pendingPermissions,
         pendingUserInputs,
+        pendingBackgroundWork: deps.pendingBackgroundWork(),
         blockers,
         canStop: blockers.length === 0,
       };

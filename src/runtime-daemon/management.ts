@@ -21,7 +21,7 @@ export interface RuntimeDaemonManagementController {
   runMutation<T>(method: RuntimeDaemonMethod, effect: () => Promise<T>): Promise<T>;
   preflight(): Promise<RuntimeDaemonPreflight>;
   inspect(): Promise<RuntimeDaemonManagementState>;
-  stop(input?: { readonly principalId: string }): Promise<{ readonly ok: true }>;
+  stop(input?: { readonly principalId?: string; readonly preserveBackgroundWork?: true }): Promise<{ readonly ok: true }>;
   close(): void;
 }
 
@@ -164,10 +164,10 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
     throw managementError('conflict', 'Runtime state changed while daemon management was inspected.');
   }
 
-  async stop(input?: { readonly principalId: string }): Promise<{ readonly ok: true }> {
+  async stop(input?: { readonly principalId?: string; readonly preserveBackgroundWork?: true }): Promise<{ readonly ok: true }> {
     this.beginDraining();
     try {
-      await this.assertStoppable(input?.principalId);
+      await this.assertStoppable(input?.principalId, input?.preserveBackgroundWork === true);
       this.input.requestStop();
       return { ok: true };
     } catch (error: unknown) {
@@ -202,12 +202,13 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
     }
   }
 
-  private async assertStoppable(exitingPrincipalId?: string): Promise<void> {
+  private async assertStoppable(exitingPrincipalId?: string, preserveBackgroundWork = false): Promise<void> {
     const current = await this.preflight();
-    const blockers = exitingPrincipalId === undefined ? current.blockers : [
+    const blockers = exitingPrincipalId === undefined ? [...current.blockers] : [
       ...current.blockers.filter(blocker => blocker !== 'connected_clients'),
       ...([...this.clients.values()].some(client => client.principalId !== exitingPrincipalId) ? ['connected_clients'] : []),
     ];
+    if (preserveBackgroundWork && (current.pendingBackgroundWork ?? 0) > 0) blockers.push('background_work');
     if (blockers.length > 0) {
       throw managementError(
         'conflict',
@@ -283,7 +284,7 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
         retryDelayMs = 0;
         return;
       }
-      if (current.canStop) {
+      if (current.canStop && (current.pendingBackgroundWork ?? 0) === 0) {
         this.orphanIdleSince ??= Date.now();
         const remaining = this.input.orphanExitMs - (Date.now() - this.orphanIdleSince);
         if (remaining > 0) {
@@ -294,18 +295,19 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
           'info',
           'Runtime daemon orphan exit accepted after the final client disconnected.',
         );
-        await this.stop();
+        await this.stop({ preserveBackgroundWork: true });
         stopped = true;
         return;
       }
       this.orphanIdleSince = undefined;
-      const fingerprint = current.blockers.join(',');
+      const blockers = [...current.blockers, ...((current.pendingBackgroundWork ?? 0) > 0 ? ['background_work'] : [])];
+      const fingerprint = blockers.join(',');
       if (fingerprint !== this.orphanBlockerFingerprint) {
         this.orphanBlockerFingerprint = fingerprint;
         this.appendOrphanExitLog(
           'info',
           'Runtime daemon orphan exit deferred until governed work becomes idle.',
-          { blockers: current.blockers },
+          { blockers },
         );
       }
     } catch (error: unknown) {

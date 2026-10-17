@@ -4973,7 +4973,8 @@ are startup operations; passive `connectKodaXRuntime` rejects `daemonLifecycle`.
 Old Hosts without lifetime metadata retain persistence unless a valid orphan-exit
 capability proves their temporary policy. Stopping an idle legacy Host once lets
 the next ordinary CLI startup apply its new interactive default. Pending memory
-review and managed-task maintenance also block shutdown after a Run completes.
+review and managed-task maintenance defer automatic idle exit after a Run
+completes. Explicit shutdown keeps its cancellation and cleanup contract.
 An explicit `requirements.daemonOrphanExit` still takes precedence over inherited
 persistence; it uses the existing fenced policy-refresh path.
 

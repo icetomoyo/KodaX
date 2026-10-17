@@ -482,19 +482,23 @@ reset the grace. A newly observed idle state receives the complete grace, and
 attach/detach during inspection rechecks the latest state. Idle inspection runs
 only when no logical Clients remain; persistent/A2A Hosts avoid these scans.
 Existing startup deadlines, cancellation, PID identity and owner fences remain.
-The real Runtime preflight additionally blocks on its already-tracked pending
-memory review and managed-task maintenance promises, including after the Run
-has completed. This is an in-memory check, with no new history scan. It prevents
-idle exit or rebuild shutdown from aborting unfinished background work.
+The real Runtime preflight additionally reports its already-tracked pending
+memory review and managed-task maintenance count, including after the Run has
+completed. This is an in-memory check, with no new history scan. Automatic idle
+exit preserves this work, including its final check inside the draining fence.
+Explicit shutdown retains its existing contract: cancel optional review and
+await cleanup/maintenance. Active Runs, ownership and process checks remain.
 
 Regression commands:
 
 ```sh
 npx vitest run src/runtime-daemon/management.orphan-exit.test.ts src/runtime-daemon/server.test.ts src/runtime-daemon/host.test.ts src/runtime-daemon/schema.test.ts src/sdk-runtime-daemon-upgrade.test.ts
+npx vitest run src/sdk-runtime.maintenance.test.ts src/sdk-runtime.memory-review.test.ts
 npx vitest run src/kodax_cli.daemon-smoke.test.ts
 npm run typecheck
 npm run build
 node --test tests/bundled-shared-host-recovery.test.mjs
+node --test tests/bundled-memory-review-shutdown.test.mjs tests/bundled-daemon-compaction.test.mjs
 ```
 
 The original approximately 30-second first resume after rebuild remains an open
