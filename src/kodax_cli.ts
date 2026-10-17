@@ -739,6 +739,11 @@ async function getDaemonStartResult(input: {
     input.profile,
   );
   const before = await observeRuntimeDaemonHealth(paths);
+  // Initial integration reconciliation holds the owner fence before publishing
+  // daemon.json. A later authenticated attach to that exact owner is reuse.
+  const beforeOwner = before.state === undefined
+    ? readRuntimeDaemonLockOwner(paths.lockFile)
+    : undefined;
   const cancellation = createDaemonStartupCancellation();
   try {
     const runtime = await ensureKodaXRuntime({
@@ -757,7 +762,9 @@ async function getDaemonStartResult(input: {
         || observation.state.status !== 'ready' || !observation.identityMatches) {
         throw new Error('The Host owner changed while startup was being verified. Retry startup.');
       }
-      return before.state?.runtimeId === runtime.identity.runtimeId
+      const existingOwner = before.state ?? (beforeOwner?.kind === 'daemon' ? beforeOwner : undefined);
+      return existingOwner?.runtimeId === runtime.identity.runtimeId
+        && existingOwner.pid === observation.state.pid
         ? { started: false, reason: 'already_running', state: observation.state }
         : { started: true, pid: observation.state?.pid ?? null, health: 'healthy', state: observation.state };
     } finally { await runtime.close(); }

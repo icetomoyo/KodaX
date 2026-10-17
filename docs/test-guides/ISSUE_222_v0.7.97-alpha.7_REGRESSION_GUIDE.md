@@ -187,3 +187,40 @@ another inspection; after release both Clients must attach to the same new Host
 and retain the saved Session. Its former two-Client rendezvous deliberately
 required the overlap that startup coordination now prevents, so that fixture
 must not be retained as an expectation of the new startup order.
+
+## Concurrent daemon start before the ready descriptor
+
+Initial A2A reconciliation can hold both daemon and shared-storage owner locks
+before publishing `daemon.json`. The CLI used only its initial daemon state
+snapshot to decide whether to report `already_running`. A second `start` that
+observed no descriptor therefore reported `started: true` even after attaching
+to the original owner. The fix retains the initial daemon-lock snapshot when
+the state is absent and compares its runtimeId and PID after the existing
+authenticated ready-owner verification. Startup coordination, owner discovery,
+Host refresh, retry budgets and Session reads are unchanged.
+
+On Windows, the original assertion failed at `143e74e3`. Additional assertions
+confirmed that both CLI results and the SDK follower retained the initial
+owner's runtimeId and PID: the failure did not demonstrate a replacement Host.
+The `connected_clients` cleanup rejection came from the assertion skipping the
+test's SDK follower close. Its outer finally now closes that connection even
+when an assertion fails.
+
+The original test passed in a `cc2d02bc` source snapshot using the same installed
+workspace dependencies. Once a test-only observer pinned the second CLI's
+actual missing-descriptor lookup before releasing A2A discovery, that snapshot
+also reported `started: true` for the same owner. Thus the passing/failing
+anchors alone do not establish that owner discovery regressed. The committed
+test uses this observation barrier, preserves the real filesystem lookup
+result, and verifies original-owner identity before checking CLI classification.
+
+Rerun the public CLI regression with:
+
+```sh
+node node_modules/vitest/vitest.mjs run -c vitest.system.config.ts src/kodax_cli.daemon-smoke.test.ts -t "does not become ready before initial A2A reconciliation completes"
+```
+
+The compiled 3,000-Session concurrent resume acceptance after this fix completed
+in 13.2s/14.3s on Windows Node 22, rendered both saved conversations, refreshed
+one idle Host, and closed both Clients and the private Host normally. This is
+within the existing 20s gate and does not replace Linux Node 20/22 CI acceptance.

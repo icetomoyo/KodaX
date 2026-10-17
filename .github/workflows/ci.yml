@@ -291,6 +291,12 @@ jobs:
       - name: Build packaged Electron gate inputs
         run: npm run build
 
+      - name: Windows concurrent Host startup and rebuild refresh
+        run: >-
+          node node_modules/vitest/vitest.mjs run -c vitest.system.config.ts
+          src/kodax_cli.daemon-smoke.test.ts src/sdk-runtime.launcher.test.ts
+          -t "does not become ready before initial A2A reconciliation completes|concurrent launchers refresh a real idle older Host"
+
       - name: Bundled Provider credentials and daemon compaction
         run: npm run test:bundle
 
