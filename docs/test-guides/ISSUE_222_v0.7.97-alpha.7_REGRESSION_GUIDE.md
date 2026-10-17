@@ -472,7 +472,7 @@ Host CPU profile attributed about 2.94s of one cold bootstrap to synchronous
 initial registry reads. Diagnostic cleanup uses copies and excludes matching
 live targets; it reported zero processes killed or records pruned.
 
-The candidate registry change reads the initial historical files asynchronously
+The experimental registry change read the initial historical files asynchronously
 in batches of at most 48. Parsing, owner/PID/start-identity validation and the
 per-record checks preceding termination retain their existing semantics.
 The regression holds disk reads pending, observes a responsive event loop,
@@ -481,7 +481,7 @@ unverifiable Run records remain intact. It fails against the synchronous reader.
 Unreadable historical records are retained and reported as skipped rather than
 being classified as corrupt and pruned. The permission-denied regression first
 failed with one record pruned, then passed with the record preserved. The
-related cleanup tests pass (70 tests), and source/test type checks pass.
+related cleanup tests passed (70 tests), and source/test type checks passed.
 
 A linked-entry terminal probe using the private history copy restored the
 selected real conversation and exited normally: the baseline measured 11.024s,
@@ -490,6 +490,15 @@ demonstrate an improvement to total resume latency. A separate SDK cold-attach
 probe measured 4.718s baseline versus 2.262s candidate; managed Host refresh
 remained about 7.5s in both probes. These measurements must not be presented
 as resolution of the user's original slow first launch.
+
+The experiment was withdrawn. Independent review identified a race in which
+an asynchronous read could capture partial JSON while a synchronous registration
+was being rewritten, then prune the now-valid record. A deterministic regression
+reproduced this and a fresh-read guard passed the expanded 71-test local gate.
+However, the end-to-end resume probe still provided no demonstrated benefit,
+so neither the asynchronous reader nor its experiment-specific tests are
+retained. The exploratory CI run 39009551324 was cancelled. Runtime source
+returns to `d30ad669`; the original slow-launch report remains open.
 
 Ordinary CLI startup currently omits `daemonOrphanExitMs`, so its detached Host
 is persistent even with no clients. The existing opt-in idle-exit controller
