@@ -15,7 +15,8 @@ const fixture = fileURLToPath(new URL('./bundled-shared-host-recovery.test.mjs',
 async function worker(index) {
   for (let iteration = 0; iteration < 3; iteration += 1) {
     await new Promise((resolve, reject) => {
-      const child = spawn(process.execPath, ['--test', fixture], { windowsHide: true, stdio: 'inherit' });
+      const child = spawn(process.execPath, ['--test', '--test-name-pattern=^ensure recovers a shared Session directory', fixture],
+        { windowsHide: true, stdio: 'inherit' });
       child.once('error', reject);
       child.once('exit', (code, signal) => code === 0 ? resolve()
         : reject(new Error(`SDK pressure worker ${index}, iteration ${iteration} failed (${code ?? signal})`)));

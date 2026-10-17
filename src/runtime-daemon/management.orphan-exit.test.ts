@@ -21,6 +21,27 @@ afterEach(() => {
 });
 
 describe('Runtime daemon orphan idle exit', () => {
+  it('cancels an in-flight idle inspection when a real client attaches', async () => {
+    let entered = false;
+    let signal: AbortSignal | undefined;
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const requestStop = vi.fn();
+    const controller = createController({ orphanExitMs: 30_000, requestStop,
+      preflight: async options => { entered = true; signal = options?.signal; await pending; return idlePreflight(); },
+    });
+    try {
+      controller.attachClient(client('old'));
+      controller.detachClient('old');
+      await waitUntil(() => entered);
+      controller.attachClient(client('new'));
+      expect(signal?.aborted).toBe(true);
+      release();
+      await delay(0);
+      expect(requestStop).not.toHaveBeenCalled();
+    } finally { release(); controller.close(); }
+  });
+
   it('rejects an in-flight Session load before repeatedly scanning preflight state', async () => {
     const preflight = vi.fn(() => idlePreflight());
     let release!: () => void;
@@ -292,7 +313,7 @@ describe('Runtime daemon orphan idle exit', () => {
 
 function createController(input: {
   readonly orphanExitMs: number;
-  readonly preflight: () => RuntimeDaemonPreflight | Promise<RuntimeDaemonPreflight>;
+  readonly preflight: (options?: { readonly signal?: AbortSignal }) => RuntimeDaemonPreflight | Promise<RuntimeDaemonPreflight>;
   readonly requestStop: () => void;
   readonly keepAlive?: () => boolean;
 }) {
@@ -314,8 +335,8 @@ function createController(input: {
         },
       },
       status: {
-        async preflight() {
-          return input.preflight();
+        async preflight(options?: { readonly signal?: AbortSignal }) {
+          return input.preflight(options);
         },
       },
     } as unknown as KodaXRuntime,

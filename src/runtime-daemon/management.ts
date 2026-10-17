@@ -20,7 +20,7 @@ export interface RuntimeDaemonManagementController {
   attachClient(client: RuntimeDaemonClientSnapshot, options?: { readonly persistent: boolean; readonly startup?: boolean }): void;
   detachClient(connectionId: string): void;
   runMutation<T>(method: RuntimeDaemonMethod, effect: () => Promise<T>): Promise<T>;
-  preflight(): Promise<RuntimeDaemonPreflight>;
+  preflight(signal?: AbortSignal): Promise<RuntimeDaemonPreflight>;
   inspect(): Promise<RuntimeDaemonManagementState>;
   stop(input?: { readonly principalId?: string; readonly preserveBackgroundWork?: true }): Promise<{ readonly ok: true }>;
   close(): void;
@@ -57,6 +57,7 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
   private clientGeneration = 0;
   private orphanExitTimer: ReturnType<typeof setTimeout> | undefined;
   private orphanExitCheckRunning = false;
+  private orphanExitAbort: AbortController | undefined;
   private orphanBlockerFingerprint: string | undefined;
   private persistent = false;
   private orphanIdleSince: number | undefined;
@@ -95,6 +96,7 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
     if (options?.persistent) this.persistent = true;
     if (this.clients.has(client.daemonConnectionId)) return;
     this.clients.set(client.daemonConnectionId, { ...client });
+    this.orphanExitAbort?.abort();
     if (options?.startup) this.startupClients.add(client.daemonConnectionId);
     else this.observedLogicalClient = true;
     this.orphanExitArmed = true;
@@ -138,11 +140,13 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
     }
   }
 
-  async preflight(): Promise<RuntimeDaemonPreflight> {
+  async preflight(signal?: AbortSignal): Promise<RuntimeDaemonPreflight> {
     for (let attempt = 0; attempt < 8; attempt += 1) {
+      signal?.throwIfAborted();
       this.assertNoActiveMutations();
       const before = this.revision;
-      const current = await this.input.runtime.status.preflight();
+      const current = await this.input.runtime.status.preflight(signal ? { signal } : undefined);
+      signal?.throwIfAborted();
       this.observePreflight(current);
       if (before === this.revision && this.activeMutations === 0) {
         return withLogicalClients(
@@ -196,6 +200,7 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.orphanExitAbort?.abort();
     this.cancelOrphanExitCheck();
     this.clients.clear();
     this.startupClients.clear();
@@ -206,6 +211,7 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
     if (this.draining) throw managementError('conflict', 'Runtime daemon is already draining.');
     this.assertNoActiveMutations();
     this.draining = true;
+    this.orphanExitAbort?.abort();
     this.cancelOrphanExitCheck();
   }
 
@@ -285,6 +291,8 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
       return;
     }
     this.orphanExitCheckRunning = true;
+    const inspection = new AbortController();
+    this.orphanExitAbort = inspection;
     const clientGeneration = this.clientGeneration;
     let stopped = false;
     let retryDelayMs = Math.min(this.input.orphanExitMs, 5_000);
@@ -293,7 +301,8 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
         this.orphanIdleSince = undefined;
         return;
       }
-      const current = await this.preflight();
+      const current = await this.preflight(inspection.signal);
+      this.orphanExitAbort = undefined;
       if (this.clients.size > 0 || this.closed || this.draining || this.persistent) return;
       if (this.clientGeneration !== clientGeneration) {
         // A client attached and detached while preflight was in flight. Give
@@ -330,12 +339,17 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
       }
     } catch (error: unknown) {
       this.orphanIdleSince = undefined;
+      if (inspection.signal.aborted) {
+        retryDelayMs = 0;
+        return;
+      }
       this.appendOrphanExitLog(
         'warn',
         'Runtime daemon orphan exit inspection failed; it will retry.',
         { error: error instanceof Error ? error.message : String(error) },
       );
     } finally {
+      if (this.orphanExitAbort === inspection) this.orphanExitAbort = undefined;
       this.orphanExitCheckRunning = false;
       if (!stopped) {
         this.scheduleOrphanExitCheck(retryDelayMs);

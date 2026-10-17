@@ -518,9 +518,9 @@ performance diagnosis. A warm successful run is insufficient to close it. This
 lifetime change does not claim to resolve that delay; the one-off local startup
 trace remains available in `.tmp/Trace-KodaXStartup.ps1` for a slow real attempt.
 
-### Lifetime validation at 9f203bb8
+### Earlier lifetime validation at 9f203bb8
 
-The final Runtime commit is `9f203bb8cc64367454d959fdeb15c39f3ee81b97`.
+This validation used Runtime commit `9f203bb8cc64367454d959fdeb15c39f3ee81b97`.
 Full source/test type checks and the complete build passed. The seven-file
 ownership/lifetime source gate passed 251/251. The full SDK file passed 305/305
 after the background-work shutdown correction; the later commits add startup
@@ -534,6 +534,12 @@ the shared-Host refresh/attachment measured 2.368s against unchanged deadlines.
 An instrumented 3,000-Session concurrent rebuild/resume restored both saved
 conversations in 13.851s/12.988s, with both processes recording exit code 0,
 no forced cleanup or reported errors, and successful private-Host shutdown.
+A further uninstrumented run used an ordinary CLI `--session list` to create the
+initial interactive Host, rather than explicitly retaining it with daemon start.
+That exercises the last-disconnect preflight alongside the subsequent rebuild
+and attachment. Both conversations resumed in 13.140s/13.858s against the same
+20s gate, both Clients exited normally with code 0, and private-Host cleanup
+succeeded (`kodax-concurrent-resume-FA2RdH`).
 
 One preceding UI acceptance attempt resumed within the same 20s gate but
 failed its exit gate: one ConPTY exit notification did not arrive before the
@@ -577,13 +583,64 @@ The original stack reaches `verifyPreparedWindowsWfp` from sandbox setup, rather
 than shared owner discovery; this branch does not change the sandbox verifier or
 its native binary. A causal connection to the user's slow first resume is still
 unproven. Neither a later passing run nor the lifetime change closes that issue.
+The local one-off startup trace now separately times native WFP verification
+and records only its recognized runner stage, exit status and error code, in
+addition to CLI/Host CPU profiles and startup stages. Its isolated missing-runner
+probe verifies that capture stops at the prompt and restores the spawn hook;
+it does not invoke or modify the user's sandbox setup.
+
+### Idle inspection cancellation and subsequent CI evidence
+
+[CI run 39016233508](https://github.com/icetomoyo/KodaX/actions/runs/39016233508)
+at `fff2f5e2da6c7722e7335821251e1ae19566cd4b` is **failed**, with six
+of seven platform jobs successful. Linux Node 20 now passed the complete
+Fast/Unit/Contract/System sequence, including 950 Contract and 1,364 System
+tests. Windows passed all 44 bundled tests and the first six concurrent SDK
+cases, but two refreshes in the third batch exceeded the original 10s deadline.
+Their caller traces reach new-Host startup at 3.112s/5.103s and then wait for
+readiness. The fixture removed its private Home, so those traces alone cannot
+explain the missing time. This failure remains open.
+
+The pressure runner now explicitly selects its original SDK recovery case.
+Adding the independent 30s idle-exit case to the same fixture had accidentally
+made pressure workers repeat that case nine times too. The full bundled suite
+still runs that lifetime case; the pressure gate retains three workers, three
+SDK cases each, and unchanged 15s initial/10s refresh deadlines. On failure,
+only the empty fixture's startup stages and Host bootstrap/daemon logs are
+saved and uploaded. A private one-off 1ms refresh probe deterministically failed
+with the original startup error, preserved the initial Host logs and stages,
+and completed normal cleanup. Acceptance test deadlines were not altered.
+
+A separate private copy of the actual local Session history exposed a new
+performance regression in this branch's idle inspection: ordinary-Host
+rebuild/resume took 21.112s and 20.206s, compared with 14.310s for an explicitly
+persistent Host. CPU profiles show the old idle Host continuing strict Actor
+metadata/topology reads after the replacement Client attaches. This is evidence
+about the proposed lifetime change, not an explanation of the earlier user
+report. Idle inspection now receives cancellation when a Client attaches, the
+controller closes, or draining begins. Runtime preflight and canonical Actor
+reads honor it. The final stop still performs a fresh complete preflight;
+canonical ownership, topology and active-work guards remain intact.
+
+The idle-controller and real Actor-read barrier tests failed before this change
+and pass afterward. Spec review found the remote preflight path only cancelled
+the caller wait; that signal now also reaches all three dispatcher routes
+(management, callback and direct Runtime), with three additional barrier cases
+first failing and then passing. The eleven-file source gate passed 322 tests;
+complete source/test type checks and the build passed. On the same private
+history copy, a loaded run took 15.773s and an isolated run took 14.379s, with
+normal exit code 0, no forced cleanup and successful guarded Host shutdown.
+These measurements do not close the original approximately 30s startup report,
+the Windows CI deadline failure, WFP verification timeout or intermittent
+ConPTY exit observation.
 
 ### Standards
 
 Independent final Standards review: zero remaining findings. The final delta
 reuses authenticated initialization and the existing guarded refresh path;
 retention conflicts are checked before shutdown. No added startup scan or
-configuration was found.
+configuration was found. Incremental cancellation/diagnostics review also
+reported zero remaining findings.
 
 ### Spec
 
@@ -592,3 +649,5 @@ retention, conservative legacy handling, background-work protection, startup
 admission, original deadlines/cancellation and owner identity fences satisfy
 the accepted lifetime requirement. This does not close the original slow-resume
 diagnosis or the intermittent ConPTY exit observation. Release remains held.
+Incremental Spec review reported zero remaining findings after the remote
+preflight cancellation correction.

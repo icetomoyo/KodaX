@@ -121,7 +121,7 @@ export interface RuntimeDaemonDispatcherOptions {
   readonly authToken?: string;
   readonly status?: () => Promise<unknown> | unknown;
   readonly stop?: () => Promise<unknown> | unknown;
-  readonly preflight?: () =>
+  readonly preflight?: (signal?: AbortSignal) =>
     Promise<RuntimeDaemonPreflight> | RuntimeDaemonPreflight;
   readonly logs?: () => Promise<unknown> | unknown;
   readonly config?: () => Promise<unknown> | unknown;
@@ -1077,10 +1077,10 @@ async function dispatchRuntimeDaemonRequest(
     case "daemon.preflight":
       return augmentPreflightRunRequirements(
         await (options.management
-          ? options.management.preflight()
+          ? options.management.preflight(requestSignal)
           : options.preflight
-            ? options.preflight()
-            : runtime.status.preflight()),
+            ? options.preflight(requestSignal)
+            : runtime.status.preflight({ signal: requestSignal })),
         runRequirementSource,
       );
     case "daemon.management.get":

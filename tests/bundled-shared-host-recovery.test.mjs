@@ -100,6 +100,23 @@ test('ensure recovers a shared Session directory from an idle default-profile Ho
     assert.equal(runtime.capabilities.daemonOrphanExit.version, 1);
   } catch (error) {
     context.diagnostic(`SDK startup stages: ${JSON.stringify(trace)}`);
+    const evidence = fileURLToPath(new URL(`../.tmp/sdk-startup-failures/${path.basename(homeDir)}/`, import.meta.url));
+    try {
+      await fs.mkdir(evidence, { recursive: true });
+      await fs.writeFile(path.join(evidence, 'startup.json'), JSON.stringify({ node: process.version, trace }, null, 2));
+      for (const profile of ['default', 'coder']) {
+        for (const file of ['bootstrap.log', 'daemon.log']) {
+          try {
+            await fs.copyFile(path.join(configHome, 'runtime', 'daemon', profile, file), path.join(evidence, `${profile}-${file}`));
+          } catch (captureError) {
+            context.diagnostic(`Startup evidence ${profile}/${file}: ${captureError.code ?? 'capture_failed'}`);
+          }
+        }
+      }
+      context.diagnostic(`SDK startup evidence: ${evidence}`);
+    } catch (captureError) {
+      context.diagnostic(`Startup evidence could not be saved: ${captureError.code ?? 'capture_failed'}`);
+    }
     throw error;
   } finally {
     await runtime?.close();

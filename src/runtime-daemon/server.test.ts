@@ -64,6 +64,46 @@ function restoreEnvironment(name: string, value: string | undefined): void {
 describe('runtime daemon dispatcher', () => {
   afterEach(() => setActiveExtensionRuntime(null));
 
+  it.each(['runtime', 'callback', 'management'] as const)('cancels the underlying %s daemon preflight scan', async (route) => {
+    const runtime = makeRuntime();
+    const original = runtime.status.preflight;
+    let signal: AbortSignal | undefined;
+    let entered!: () => void;
+    const reading = new Promise<void>(resolve => { entered = resolve; });
+    let release!: () => void;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const preflight = async (requestSignal?: AbortSignal) => {
+      signal = requestSignal;
+      entered();
+      await barrier;
+      signal?.throwIfAborted();
+      return original();
+    };
+    const management: RuntimeDaemonManagementController = {
+      lifecycle: 'persistent', retention: undefined,
+      armOrphanExitAfterReady() {}, attachClient() {}, detachClient() {}, close() {},
+      async runMutation(_method, effect) { return effect(); },
+      preflight,
+      async inspect() { throw new Error('not used'); },
+      async stop() { throw new Error('not used'); },
+    };
+    vi.spyOn(runtime.status, 'preflight').mockImplementation(options => preflight(options?.signal));
+    const dispatcher = createRuntimeDaemonDispatcher({ runtime,
+      ...(route === 'management' ? { management } : route === 'callback' ? { preflight } : {}),
+    });
+    await initializeDispatcher(dispatcher);
+    const pending = dispatcher.handle(createRuntimeDaemonRequest('preflight-scan', 'daemon.preflight'));
+    try {
+      await reading;
+      expect(signal).toBeDefined();
+      expect(await dispatcher.handle(createRuntimeDaemonRequest('cancel-preflight', 'request.cancel', { requestId: 'preflight-scan' })))
+        .toMatchObject({ kind: 'response', result: { ok: true } });
+      expect(signal?.aborted).toBe(true);
+      release();
+      expect(await pending).toMatchObject({ kind: 'error', error: { code: 'read_cancelled' } });
+    } finally { release(); await pending; dispatcher.close(); }
+  });
+
   it('waits for Learning service readiness and releases a failed registration', async () => {
     const runtime = makeRuntime();
     let fail!: (error: unknown) => void;

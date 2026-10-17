@@ -4864,9 +4864,11 @@ export class FileSessionStorage implements KodaXSessionStorage {
     const startedAt = Date.now();
     return raceSessionRead((async () => {
       await this.awaitOwnWrites(id, options, startedAt);
+      throwIfSessionReadAborted(options.signal);
       const draft = this.drafts.get(id);
       if (draft) return { id, runtimeInfo: structuredClone(draft.runtimeInfo), actorSnapshot: structuredClone(draft.actorSnapshot) };
       const mainPath = await this.resolveSessionLocation(id, true);
+      throwIfSessionReadAborted(options.signal);
       if (mainPath === null) return undefined;
       const topology = this.verifiedLocationTopology(id);
       // Capture and verify the bundle around the metadata read itself. Taking
@@ -4874,6 +4876,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
       const meta = await withStableSessionBundleBoundaryAtPath(
         this.sessionsDir, id, mainPath, false, () => readSessionMetadata(mainPath, options.signal),
       );
+      throwIfSessionReadAborted(options.signal);
       this.assertLocationTopologyUnchanged(id, topology);
       if (meta._type !== 'meta') {
         throw new SessionReadError('data_corrupt', 'Session metadata is missing');

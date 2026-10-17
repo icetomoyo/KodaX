@@ -3440,7 +3440,7 @@ export interface RuntimeDaemonManagementService {
 
 export interface RuntimeStatusService {
   snapshot(): Promise<RuntimeStatusSnapshot>;
-  preflight(): Promise<RuntimeDaemonPreflight>;
+  preflight(options?: { readonly signal?: AbortSignal }): Promise<RuntimeDaemonPreflight>;
 }
 
 /**
@@ -14552,6 +14552,7 @@ interface RuntimeAgentActorRegistry {
   root(sessionId: string): Promise<AgentActorClient>;
   activeTurns(
     admits: RuntimeSessionAdmission['admitsSummary'],
+    signal?: AbortSignal,
   ): Promise<readonly RuntimeActiveAgentTurn[]>;
   mutateSessionFile<T>(
     sessionId: string,
@@ -14700,11 +14701,14 @@ function createRuntimeAgentActorRegistry(
     async root(sessionId) {
       return (await forSession(sessionId)).rootControl();
     },
-    async activeTurns(admits) {
+    async activeTurns(admits, signal) {
+      signal?.throwIfAborted();
       const sessionIds = await sessionManager.storage.listActiveSessionIds();
       const snapshots: Array<{ sessionId: string; snapshot: Pick<AgentTreeSnapshot, 'actors'> } | undefined> = [];
       for (let index = 0; index < sessionIds.length; index += 48) {
+        signal?.throwIfAborted();
         snapshots.push(...await Promise.all(sessionIds.slice(index, index + 48).map(async (sessionId) => {
+          signal?.throwIfAborted();
           const existing = sessions.get(sessionId);
           if (existing) {
             // Claimed controllers already passed admission and own the live
@@ -14714,7 +14718,8 @@ function createRuntimeAgentActorRegistry(
               snapshot: (await existing).rootControl().list(),
             };
           }
-          const metadata = await sessionManager.storage.readActorMetadata(sessionId);
+          const metadata = await sessionManager.storage.readActorMetadata(sessionId, { signal });
+          signal?.throwIfAborted();
           if (metadata === undefined) throw new Error('Session disappeared during Actor preflight; retry the read.');
           if (!admits(metadata)) return undefined;
           const actorSnapshot = metadata.actorSnapshot;
@@ -14732,6 +14737,7 @@ function createRuntimeAgentActorRegistry(
           };
         })));
       }
+      signal?.throwIfAborted();
       return snapshots.flatMap((entry) => {
         if (!entry) return [];
         const { sessionId, snapshot } = entry;
@@ -15008,8 +15014,10 @@ function createRuntimeStatusService(deps: {
         workflows: await deps.workflows.list({}),
       };
     },
-    async preflight() {
+    async preflight(options) {
+      options?.signal?.throwIfAborted();
       const runs = await deps.listRuns();
+      options?.signal?.throwIfAborted();
       const activeRuns = runs.filter(
         (run) =>
           isActiveRunPhase(run.phase) || run.phase === "unknown",
@@ -15023,9 +15031,10 @@ function createRuntimeStatusService(deps: {
           workflow.status !== "stopped",
       );
       const activeAgentTurns =
-        await deps.actors.activeTurns(deps.sessionAdmission.admitsSummary);
+        await deps.actors.activeTurns(deps.sessionAdmission.admitsSummary, options?.signal);
       const pendingPermissions = await deps.permissions.service.listPending();
       const pendingUserInputs = await deps.userInputs.service.listPending();
+      options?.signal?.throwIfAborted();
       const blockers: RuntimeDaemonPreflight["blockers"][number][] = [];
       if (activeRuns.length > 0) blockers.push("active_runs");
       if (queuedRuns.length > 0) blockers.push("queued_runs");

@@ -341,6 +341,16 @@ jobs:
           KODAX_ELECTRON_BUILDER_CLI: ${{ github.workspace }}\.electron-smoke\node_modules\electron-builder\out\cli\cli.js
         run: npm run test:electron-daemon:built
 
+      - name: Preserve failed SDK startup evidence
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-sdk-startup-${{ github.run_id }}
+          path: .tmp/sdk-startup-failures/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+
   trusted-text-native-platforms:
     name: trusted text and POSIX sandbox (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}

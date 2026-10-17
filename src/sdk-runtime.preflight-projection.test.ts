@@ -5,6 +5,42 @@ import { expect, it, vi } from 'vitest';
 import { FileSessionStorage } from '../packages/repl/src/interactive/storage.js';
 import { createKodaXRuntime } from './sdk-runtime.js';
 
+it('passes preflight cancellation into canonical Actor metadata reads', async () => {
+  const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-preflight-cancel-'));
+  const sessionsDir = path.join(homeDir, '.kodax', 'sessions');
+  await fs.mkdir(sessionsDir, { recursive: true });
+  await fs.writeFile(path.join(sessionsDir, 'cancel.jsonl'), JSON.stringify({
+    _type: 'meta', id: 'cancel', title: 'cancel', gitRoot: homeDir,
+    createdAt: '2026-10-17T00:00:00.000Z', activeMessageCount: 0,
+  }) + '\n');
+  const runtime = await createKodaXRuntime({ homeDir });
+  const controller = new AbortController();
+  let entered!: (signal: AbortSignal | undefined) => void;
+  const reading = new Promise<AbortSignal | undefined>(resolve => { entered = resolve; });
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const original = FileSessionStorage.prototype.readActorMetadata;
+  const metadata = vi.spyOn(FileSessionStorage.prototype, 'readActorMetadata').mockImplementation(async function (this: FileSessionStorage, id, options) {
+    entered(options?.signal);
+    await pending;
+    return original.call(this, id, options);
+  });
+  const operation = runtime.status.preflight({ signal: controller.signal });
+  const outcome = operation.then(() => 'resolved', error => error);
+  try {
+    expect(await reading).toBe(controller.signal);
+    controller.abort();
+    release();
+    await expect(outcome).resolves.toMatchObject({ code: 'read_cancelled' });
+  } finally {
+    release();
+    await outcome;
+    metadata.mockRestore();
+    await runtime.close();
+    await fs.rm(homeDir, { recursive: true, force: true });
+  }
+});
+
 it('checks an old active Actor beyond the first list page and outside the current project without loading transcripts', async () => {
   const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-preflight-projection-'));
   const sessionsDir = path.join(homeDir, '.kodax', 'sessions');
