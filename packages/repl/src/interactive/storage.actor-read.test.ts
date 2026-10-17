@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { AgentActorSnapshot } from '@kodax-ai/agent';
 import { FileSessionStorage } from './storage.js';
@@ -10,6 +11,35 @@ afterEach(async () => {
   vi.restoreAllMocks();
   await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true })));
 });
+
+it.each(['main', 'islands', 'archive', 'writer', 'topology'] as const)(
+  'rejects %s changes during the Actor metadata read', async change => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-actor-boundary-'));
+    roots.push(root);
+    const sessionsDir = path.join(root, 'sessions');
+    const storage = new FileSessionStorage({ sessionsDir });
+    await storage.save('guard', { gitRoot: root, messages: [] });
+    const open = fs.open.bind(fs);
+    let changed = false;
+    vi.spyOn(fs, 'open').mockImplementation(async (file, flags, mode) => {
+      const handle = await open(file, flags, mode);
+      if (!changed && String(file).endsWith('guard.jsonl')) {
+        changed = true;
+        if (change === 'main') await fs.appendFile(file, '\n');
+        else if (change === 'islands' || change === 'archive') {
+          await fs.writeFile(path.join(path.dirname(String(file)), `guard.${change}.jsonl`), '{}\n');
+        } else if (change === 'writer') {
+          const key = createHash('sha256').update('guard').digest('hex');
+          await fs.mkdir(path.join(sessionsDir, '.write-locks'), { recursive: true });
+          await fs.writeFile(path.join(sessionsDir, '.write-locks', `${key}.lock`), 'writer');
+        } else await fs.writeFile(path.join(sessionsDir, '.location-topology'), 'changed\n');
+      }
+      return handle;
+    });
+    await expect(storage.readActorMetadata('guard')).rejects.toMatchObject({ code: 'data_changed' });
+    expect(changed).toBe(true);
+  },
+);
 
 it('reads an isolated Actor projection across a large header without loading the transcript', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-actor-projection-'));

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { cp, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import os from 'node:os';
@@ -7,6 +7,7 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
+import { deriveProjectKeyFromRoot } from '../packages/repl/dist/interactive/project-key.js';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-concurrent-resume-'));
@@ -81,7 +82,7 @@ function openResume(cwd, index) {
       clearInterval(poll);
       await writeFile(path.join(root, `client-${index}.ansi`), raw);
       terminal.dispose();
-      return { cwd, readyAt, forced, exit: exited,
+      return { cwd, readyAt, resumed: raw.includes('Saved conversation fixture'), forced, exit: exited,
         errors: raw.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').split(/[\r\n]/).filter(line => line.includes('[Error]')) };
     },
   };
@@ -98,12 +99,18 @@ try {
   await writeFile(path.join(configHome, 'config.json'), JSON.stringify({ provider: 'deepseek' }));
   const sessions = path.join(configHome, 'sessions');
   await mkdir(sessions);
+  const sessionFile = async (projectRoot, id) => {
+    const directory = path.join(sessions, deriveProjectKeyFromRoot(projectRoot).key);
+    await mkdir(directory, { recursive: true });
+    return path.join(directory, `${id}.jsonl`);
+  };
   const createdAt = '2026-10-15T00:00:00.000Z';
   const projects = ['alpha', 'beta'].map(name => path.join(root, name));
   for (const [index, project] of projects.entries()) {
     await mkdir(project);
+    execFileSync('git', ['init', '--quiet', project]);
     const id = `concurrent-${index}`;
-    await writeFile(path.join(sessions, `${id}.jsonl`), [JSON.stringify({ _type: 'meta', id, title: id,
+    await writeFile(await sessionFile(project, id), [JSON.stringify({ _type: 'meta', id, title: id,
       scope: 'user', gitRoot: project, surface: 'repl', createdAt, lastMessageAt: createdAt, activeMessageCount: 1 }),
     JSON.stringify({ role: 'user', content: 'Saved conversation fixture', timestamp: createdAt }), ''].join('\n'));
   }
@@ -112,8 +119,14 @@ try {
   })).join('\n') + '\n';
   for (let index = 0; index < 50; index += 1) {
     const id = `large-history-${index}`;
-    await writeFile(path.join(sessions, `${id}.jsonl`), JSON.stringify({ _type: 'meta', id, title: id,
+    await writeFile(await sessionFile(path.join(root, 'other'), id), JSON.stringify({ _type: 'meta', id, title: id,
       scope: 'user', gitRoot: path.join(root, 'other'), createdAt, activeMessageCount: 1_000 }) + '\n' + history);
+  }
+  // Match a long-lived installation without loading every old transcript.
+  for (let index = 50; index < 3_000; index += 1) {
+    const id = `metadata-history-${index}`;
+    await writeFile(await sessionFile(path.join(root, 'other'), id), JSON.stringify({ _type: 'meta', id, title: id,
+      scope: 'user', gitRoot: path.join(root, 'other'), createdAt, activeMessageCount: 0 }) + '\n');
   }
   await daemon('start');
   started = true;
@@ -140,8 +153,8 @@ try {
     try { result.stop = await daemon('stop'); assert.equal(result.stop.stopped, true); }
     catch (error) { result.cleanupError = String(error); process.exitCode = 1; }
   }
-  if (result.clients.length !== 2 || result.clients.some(client => client.readyAt === undefined
-    || client.forced || client.exit.exitCode !== 0 || client.errors.length > 0)) process.exitCode = 1;
+  if (result.clients.length !== 2 || result.clients.some(client => client.readyAt === undefined || client.readyAt >= 20_000
+    || !client.resumed || client.forced || client.exit.exitCode !== 0 || client.errors.length > 0)) process.exitCode = 1;
   await writeFile(path.join(root, 'results.json'), JSON.stringify(result, null, 2));
   process.stdout.write(JSON.stringify(result) + '\n');
 }

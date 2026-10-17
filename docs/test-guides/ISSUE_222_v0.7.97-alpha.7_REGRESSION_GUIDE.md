@@ -111,3 +111,72 @@ no findings. The changed cleanup predicate has 17/17 statements and 19/19
 branches covered. The selected suites cover 70.85% of the whole registry
 module's lines; this is not a claim that the repository's 80% overall coverage
 or a new release gate has passed.
+
+## Rebuild, persistent Hosts and existing terminals
+
+PowerShell's `kodax.ps1` starts a fresh Node process for each invocation. In this
+installation both observed FNM paths resolve to Node 22.23.1 with the same
+executable hash; both global `@kodax-ai/kodax` links resolve to this checkout.
+Alternating those paths against the same current Host measured 1.03–1.13s per
+SDK ensure. No evidence supports a PowerShell JavaScript module cache.
+
+A running Client or Host does retain its loaded build. A same-version rebuild
+changes the disk fingerprint, and a new launcher must refresh an idle old Host
+through authenticated managed shutdown. A retained old Client correctly blocks
+that shutdown. An isolated experiment held such a Client for 10s: the new
+launcher remained pending and the original Host stayed alive. Closing only the
+Client allowed refresh at 12.1s, preserving the saved Session. The PowerShell
+process stayed open. This explains one possible benefit of closing a terminal;
+it does not establish what processes the user's original terminal retained.
+
+Historical cleanup overhead predates the October CI fixes. Same-installation
+build refresh dates to `99ad85e3` (September 10). Concurrent refresh contention
+also predates alpha.7; `224813c6` (October 15, Issue 369) added retries whose
+backoff grows with the preceding inspection duration. Slow history scans and
+temporary launchers counting each other as connected Clients can amplify that
+backoff. Git records do not identify which model produced these edits.
+
+The follow-up fix serializes startup per canonical Session directory **before**
+discovery or attaching a temporary management Client. The coordinator is
+separate from the Host's owner lock and reuses the existing nonce, process
+generation and zombie-aware coordination primitive. A queued launcher reads
+the current owner after obtaining the gate. Queueing, initialization and refresh
+share the original startup deadline and cancellation signal. Passive connects
+remain passive. No business RPC is retried and no active Host lock is replaced.
+
+Actor metadata preflight retains the main/islands/archive identity checks,
+writer fences and topology witness. It now captures identities once before
+reading metadata and verifies them once afterward, rather than taking two full
+double-checked snapshots. Direct read-only scans of the user's 3,015 Sessions
+improved from 4.8–5.8s to 2.5–2.6s. The initial 2s diagnostic target was not met.
+Tests inject main, islands, archive, writer and topology changes during the read
+and require `data_changed` rather than an idle result.
+
+Run the compiled CLI acceptance with `node-pty`, `@xterm/headless` and
+`@xterm/addon-unicode11` installed in `KODAX_ACCEPTANCE_TOOLS` (default:
+the temporary directory's `kodax-acceptance-tools/node_modules`):
+
+```sh
+node tests/repl-concurrent-startup.mjs
+```
+
+This uses private installations and dummy credentials, initializes actual Git
+projects, retains 3,000 historical Sessions including 50 large transcripts,
+changes a runtime asset while the Host is loaded, and resumes saved conversations
+from two concurrent terminal Clients. Both must display the saved conversation,
+reach readiness within 20s, exit normally, and observe a different Host identity.
+It makes no model requests and does not stop the user's Host.
+
+Windows Node 22 measurements: the old launcher reproduction took 31.5s for one
+Client and rejected its peer as draining. With startup coordination, both actual
+resumes completed in 14.4s/15.6s; upgrading a pre-fix Host completed in
+15.9s/17.0s. Same-build full CLI resumes completed in 4.7s/5.8s and retained the
+same Host. These timings include CLI startup, picker selection and Session
+attachment; they are not just passive socket timings. They are local acceptance
+measurements, not a claim that every rebuild is instantaneous.
+
+The startup coordinator tests retain a live owner and malformed/unreadable
+coordination evidence, and reclaim a proven terminated zombie. The Linux real
+unreaped-zombie fixture now checks startup coordination as well as shared-owner
+discovery and exit verification. Rerun it on Linux Node 20/22 in CI before a
+release; a Windows platform skip is not Linux acceptance.

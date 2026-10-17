@@ -14,6 +14,7 @@ const upgradeMocks = vi.hoisted(() => ({
   readLockOwner: vi.fn(),
   findSharedHost: vi.fn(),
   waitOwnerExit: vi.fn(),
+  acquireStartup: vi.fn(),
   localBuild: { origin: '/fixture/kodax/dist/kodax_cli.js', fingerprint: 'a'.repeat(64) },
   readBuild: vi.fn(),
 }));
@@ -44,6 +45,7 @@ vi.mock('./runtime-daemon/state.js', async (importOriginal) => {
     readRuntimeDaemonToken: upgradeMocks.readDaemonToken,
     readRuntimeDaemonLockOwner: upgradeMocks.readLockOwner,
     findRuntimeSessionStorageHost: upgradeMocks.findSharedHost,
+    tryAcquireRuntimeSessionStorageStartup: upgradeMocks.acquireStartup,
   };
 });
 
@@ -93,6 +95,7 @@ const NEWER_RUNTIME_VERSION = `${CURRENT_MAJOR + 1n}.0.0`;
 
 describe('product Host startup and passive connection', () => {
   beforeEach(() => {
+    upgradeMocks.acquireStartup.mockReset().mockReturnValue(vi.fn());
     upgradeMocks.readBuild.mockReset().mockReturnValue(upgradeMocks.localBuild);
     upgradeMocks.waitOwnerExit.mockReset().mockResolvedValue(undefined);
     upgradeMocks.acquireProcessLease.mockReset();
@@ -103,6 +106,20 @@ describe('product Host startup and passive connection', () => {
     upgradeMocks.readLockOwner.mockReset();
     upgradeMocks.findSharedHost.mockReset();
 
+  });
+
+  it.each(['timeout', 'cancel'] as const)('bounds waiting for another launcher by the original %s control', async mode => {
+    const controller = new AbortController();
+    const reason = new Error('cancel queued launcher');
+    upgradeMocks.acquireStartup.mockReturnValue(undefined);
+    const starting = ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 30,
+      daemonStartupSignal: controller.signal });
+    const rejected = mode === 'cancel' ? expect(starting).rejects.toBe(reason)
+      : expect(starting).rejects.toThrow(/startup timed out/i);
+    if (mode === 'cancel') controller.abort(reason);
+    await rejected;
+    expect(upgradeMocks.acquireProcessLease).not.toHaveBeenCalled();
+    expect(upgradeMocks.findSharedHost).not.toHaveBeenCalled();
   });
 
   it('reports usable Client readiness after authentication without starting a Host on passive connect', async () => {

@@ -727,6 +727,16 @@ export function tryAcquireRuntimeDaemonLock(
   }
 }
 
+/** Serialize launchers before they attach management clients to the shared Host. */
+export function tryAcquireRuntimeSessionStorageStartup(sessionsDir: string): (() => void) | undefined {
+  fs.mkdirSync(sessionsDir, { recursive: true });
+  const rootDir = path.join(fs.realpathSync(sessionsDir), '.product-host');
+  fs.mkdirSync(rootDir, { recursive: true });
+  const paths = { ownerPolicyLockFile: path.join(rootDir, 'startup.lock') };
+  const handle = tryAcquireRuntimeOwnerCoordination(paths);
+  return handle === undefined ? undefined : () => releaseRuntimeOwnerCoordination(paths, handle);
+}
+
 /** Profiles are connection names; the actual Session directory has one product writer. */
 export function findRuntimeSessionStorageHost(
   configHome: string,

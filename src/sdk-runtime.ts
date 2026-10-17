@@ -469,6 +469,7 @@ import {
   readRuntimeOwnerPolicy,
   readRuntimeDaemonToken,
   releaseRuntimeDaemonLock,
+  tryAcquireRuntimeSessionStorageStartup,
   resolveRuntimeDaemonEndpointScope,
   resolveRuntimeDaemonPathsFromConfigHome,
   updateRuntimeOwnerPolicy,
@@ -4092,7 +4093,7 @@ async function createKodaXRuntimeInternal(
         "Trusted daemon execPolicy/autoReview options require owner auto-start; attach clients cannot change daemon administrator policy.",
       );
     }
-    return connectKodaXRuntimeInternal({
+    return connectKodaXRuntimeWithStartupCoordination({
       profile: options.profile,
       transport: options.daemonTransport,
       endpoint: options.daemonEndpoint,
@@ -5792,7 +5793,38 @@ export async function connectKodaXRuntime(
 export async function ensureKodaXRuntime(
   options: Omit<ConnectKodaXRuntimeOptions, "autoStart" | "transport"> = {},
 ): Promise<KodaXDaemonRuntime> {
-  return connectKodaXRuntimeInternal({ ...options, autoStart: true }, true);
+  return connectKodaXRuntimeWithStartupCoordination({ ...options, autoStart: true }, true);
+}
+
+async function connectKodaXRuntimeWithStartupCoordination(
+  options: ConnectKodaXRuntimeOptions,
+  allowCapabilityUpgrade: boolean,
+  ownerBootstrap?: RuntimeDaemonOwnerBootstrap,
+): Promise<KodaXDaemonRuntime> {
+  if (options.autoStart !== true || options.transport !== undefined) {
+    return connectKodaXRuntimeInternal(options, allowCapabilityUpgrade, ownerBootstrap);
+  }
+  assertRuntimeTimeout('daemonStartupTimeoutMs', options.daemonStartupTimeoutMs, 1);
+  const deadline = Date.now() + (options.daemonStartupTimeoutMs ?? 60_000);
+  const location = resolveRuntimeDaemonClientLocation(options.homeDir);
+  const sessionsDir = options.sessionsDir ?? path.join(location.configHome, 'sessions');
+  const reportProgress = createClientStartupProgressReporter(options.onStartupProgress);
+  let release: (() => void) | undefined;
+  while (release === undefined) {
+    options.daemonStartupSignal?.throwIfAborted();
+    if (Date.now() >= deadline) throw new RuntimeDaemonCapabilityUpgradeError('Host startup timed out while another launcher was initializing.');
+    release = tryAcquireRuntimeSessionStorageStartup(sessionsDir);
+    if (release === undefined) {
+      reportProgress({ stage: 'waiting', reason: 'host_starting' });
+      await waitForDaemonStartupRetry(Math.min(50, deadline - Date.now()), options.daemonStartupSignal);
+    }
+  }
+  try {
+    // Discovery occurs after acquiring the gate, including when a peer refreshed
+    // the owner while this launcher was queued. The Host owner lock stays separate.
+    return await connectKodaXRuntimeInternal(options, allowCapabilityUpgrade, ownerBootstrap,
+      2, deadline, 0, reportProgress);
+  } finally { release(); }
 }
 
 function hasVersionedRuntimeCapability(

@@ -12,6 +12,7 @@ import {
   readRuntimeDaemonLockOwner, readRuntimeDaemonState, readRuntimeDaemonToken,
   readRuntimeOwnerProcessStartIdentity, resolveRuntimeDaemonEndpointScope,
   resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock, writeRuntimeDaemonState,
+  tryAcquireRuntimeSessionStorageStartup,
 } from './state.js';
 import { createRuntimeDaemonSocketClientTransport, defaultRuntimeDaemonEndpoint } from './transport.js';
 import type { RuntimeDaemonClientTransport } from './client.js';
@@ -52,6 +53,11 @@ describe('Host launcher waits for the original process', () => {
       const ownerFile = path.join(sessionsDir, '.product-host', 'owner.lock');
       mkdirSync(path.dirname(ownerFile), { recursive: true });
       writeFileSync(ownerFile, JSON.stringify(owner));
+      const startupFile = path.join(path.dirname(ownerFile), 'startup.lock');
+      writeFileSync(startupFile, JSON.stringify({ ...owner, runtimeId: 'owner-transition-zombie', nonce: 'zombie' }));
+      const releaseStartup = tryAcquireRuntimeSessionStorageStartup(sessionsDir);
+      expect(releaseStartup).toBeTypeOf('function');
+      releaseStartup?.();
 
       expect(findRuntimeSessionStorageHost(paths.configHome, sessionsDir)).toBeUndefined();
       expect(await observeRuntimeDaemonHealth(paths, {

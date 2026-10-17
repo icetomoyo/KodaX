@@ -1295,6 +1295,18 @@ async function readStableSessionBundleBoundarySnapshotAtPath(
   mainPath: string,
   allowActiveWriter = false,
 ): Promise<StableSessionBundleBoundarySnapshot> {
+  return withStableSessionBundleBoundaryAtPath(
+    sessionsDir, id, mainPath, allowActiveWriter, async snapshot => snapshot,
+  );
+}
+
+async function withStableSessionBundleBoundaryAtPath<T>(
+  sessionsDir: string,
+  id: string,
+  mainPath: string,
+  allowActiveWriter: boolean,
+  read: (snapshot: StableSessionBundleBoundarySnapshot) => Promise<T>,
+): Promise<T> {
   if (!allowActiveWriter) assertStableSessionReadBoundary(sessionsDir, id);
   const directory = path.dirname(mainPath);
   const descriptors = [
@@ -1319,6 +1331,10 @@ async function readStableSessionBundleBoundarySnapshotAtPath(
     throw new SessionReadError('data_changed', 'Session main file moved during the read boundary');
   }
   if (!allowActiveWriter) assertStableSessionReadBoundary(sessionsDir, id);
+  const result = await read({
+    revision: createStableBundleBoundaryRevision(sessionsDir, reads),
+    identities: reads.map((entry) => entry?.identity ?? null),
+  });
   for (let index = 0; index < descriptors.length; index += 1) {
     const finalIdentity = await statStableFileIdentity(descriptors[index]!.filePath);
     const captured = reads[index];
@@ -1335,10 +1351,7 @@ async function readStableSessionBundleBoundarySnapshotAtPath(
     }
   }
   if (!allowActiveWriter) assertStableSessionReadBoundary(sessionsDir, id);
-  return {
-    revision: createStableBundleBoundaryRevision(sessionsDir, reads),
-    identities: reads.map((read) => read?.identity ?? null),
-  };
+  return result;
 }
 
 function isExpectedAppendBoundaryTransition(
@@ -4856,13 +4869,12 @@ export class FileSessionStorage implements KodaXSessionStorage {
       const mainPath = await this.resolveSessionLocation(id, true);
       if (mainPath === null) return undefined;
       const topology = this.verifiedLocationTopology(id);
-      const before = await readStableSessionBundleBoundaryAtPath(this.sessionsDir, id, mainPath);
-      const meta = await readSessionMetadata(mainPath, options.signal);
-      const after = await readStableSessionBundleBoundaryAtPath(this.sessionsDir, id, mainPath);
+      // Capture and verify the bundle around the metadata read itself. Taking
+      // two complete snapshots doubles the stats without strengthening this fence.
+      const meta = await withStableSessionBundleBoundaryAtPath(
+        this.sessionsDir, id, mainPath, false, () => readSessionMetadata(mainPath, options.signal),
+      );
       this.assertLocationTopologyUnchanged(id, topology);
-      if (before !== after) {
-        throw new SessionReadError('data_changed', 'Session changed while reading Actor metadata');
-      }
       if (meta._type !== 'meta') {
         throw new SessionReadError('data_corrupt', 'Session metadata is missing');
       }
