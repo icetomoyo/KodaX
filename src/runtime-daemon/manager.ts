@@ -40,6 +40,7 @@ export interface RuntimeDaemonLeaseOptions {
   readonly pollIntervalMs?: number;
   readonly healthCheck?: RuntimeDaemonHealthCheckOptions;
   readonly orphanExitMs?: number;
+  readonly keepAlive?: () => boolean;
   /** True only when this host owns the live A2A config reconciler. */
   readonly ownsA2AConfigReconciler?: boolean;
   readonly integrationStatuses?: () => readonly RuntimeIntegrationDomainStatus[];
@@ -192,6 +193,7 @@ async function createClaimedDaemonLease(
       lock,
       ...(options.commitStartup ? { commitStartup: options.commitStartup } : {}),
       ...(options.orphanExitMs !== undefined ? { orphanExitMs: options.orphanExitMs } : {}),
+      keepAlive: options.keepAlive,
       ...(options.ownsA2AConfigReconciler === true
         ? { ownsA2AConfigReconciler: true }
         : {}),

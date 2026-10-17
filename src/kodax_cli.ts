@@ -754,6 +754,7 @@ async function getDaemonStartResult(input: {
       defaultModel: input.model,
       daemonStartupTimeoutMs: input.timeoutMs,
       daemonStartupSignal: cancellation.signal,
+      daemonLifecycle: 'persistent',
       clientInfo: { name: 'kodax-daemon-start', clientType: 'automation' },
     });
     try {
@@ -848,6 +849,7 @@ async function serveDaemonCommand(input: {
       // The host is created only after createRuntime returns, so this trusted
       // fact is never observable until reconcile and watcher startup succeed.
       ownsA2AConfigReconciler: true,
+      keepAlive: () => hostedA2AServer !== undefined,
       commitStartup,
       integrationStatuses: () => [
         ...extensions.hotReload.statuses(),
@@ -4639,6 +4641,7 @@ complete -c kodax -l version -d 'Show version'`);
     // and is never a product fallback.
     cliRuntime = await ensureKodaXRuntime({
       profile: 'default',
+      daemonLifecycle: 'interactive',
       requirements: { productClient: 1, sessionDrafts: 1 },
       onStartupProgress: startupProgress === undefined ? undefined
         : (progress) => { startupProgress.update(cliStartupProgressMessage(progress)); },

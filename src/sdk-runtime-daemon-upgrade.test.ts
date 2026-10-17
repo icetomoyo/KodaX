@@ -163,6 +163,31 @@ describe('product Host startup and passive connection', () => {
     } finally { await runtime?.close(); restore(); }
   });
 
+  it('keeps lifecycle changes out of passive connections', async () => {
+    await expect(connectKodaXRuntime({ daemonLifecycle: 'persistent' })).rejects.toThrow(/passive/);
+    expect(upgradeMocks.acquireProcessLease).not.toHaveBeenCalled();
+  });
+
+  it('gives a newly launched interactive Host a 30-second idle policy without replacing a compatible persistent owner', async () => {
+    const calls: string[] = [];
+    const base = createCurrentTransport(calls, async () => undefined);
+    upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease({
+      ...base,
+      async request(method, params) {
+        const result = await base.request(method, params) as { capabilities?: Record<string, unknown> };
+        if (result.capabilities) delete result.capabilities.daemonOrphanExit;
+        return result;
+      },
+    }));
+    const runtime = await ensureKodaXRuntime({ profile: PROFILE, daemonLifecycle: 'interactive' });
+    try {
+      expect(runtime.identity.runtimeId).toBe('runtime_current');
+      expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ orphanExitMs: 30_000 }));
+      expect(calls).toEqual(['new:initialize']);
+      expect(upgradeMocks.waitOwnerExit).not.toHaveBeenCalled();
+    } finally { await runtime.close(); }
+  });
+
   it('rebuilds an idle same-build Host missing the requested orphan-exit policy', async () => {
     const calls: string[] = [];
     const current = await createCurrentTransport([], async () => undefined).request('initialize') as { capabilities: Record<string, unknown> };
@@ -548,6 +573,30 @@ describe('product Host startup and passive connection', () => {
     expect(calls).toContain('old:runtime.shutdown');
     expect(upgradeMocks.waitOwnerExit).toHaveBeenCalledTimes(1);
     await runtime.close();
+  });
+
+  it.each(['interactive', 'persistent'] as const)('preserves a %s Host lifecycle through a rebuild refresh', async (lifecycle) => {
+    const calls: string[] = [];
+    const current = await createCurrentTransport([], async () => undefined).request('initialize') as { capabilities: Record<string, unknown> };
+    const old = createLegacyTransport({
+      preflight: createPreflight(), calls, close: async () => undefined,
+      runtimeVersion: KODAX_VERSION, capabilities: current.capabilities,
+      build: { ...LOCAL_RUNTIME_BUILD, fingerprint: '0'.repeat(64) },
+    });
+    upgradeMocks.acquireProcessLease
+      .mockResolvedValueOnce(createLease({ ...old, async request(method, params) {
+        const result = await old.request(method, params);
+        return method === 'initialize' ? { ...result as object, daemonLifecycle: lifecycle } : result;
+      } }))
+      .mockResolvedValueOnce(createLease(createCurrentTransport(calls, async () => undefined)));
+    upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
+    const runtime = await ensureKodaXRuntime({ profile: PROFILE, daemonLifecycle: 'interactive' });
+    try {
+      expect(calls.filter(call => call === 'old:runtime.shutdown')).toHaveLength(1);
+      expect(upgradeMocks.acquireProcessLease.mock.calls[1]?.[0]).toMatchObject({
+        orphanExitMs: lifecycle === 'persistent' ? undefined : 30_000,
+      });
+    } finally { await runtime.close(); }
   });
 
   it('refreshes the same version from changed files in the same installation before attaching', async () => {

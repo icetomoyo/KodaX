@@ -889,9 +889,12 @@ export interface CreateKodaXRuntimeOptions {
   readonly daemonConnectTimeoutMs?: number;
   /**
    * Auto-started daemon only: after the last logical client disconnects,
-   * stop once governed work is idle. Omit to keep the normal persistent daemon.
+   * stop after governed work has remained idle for this grace period.
+   * Omit to retain the default SDK persistence (unless daemonLifecycle is interactive).
    */
   readonly daemonOrphanExitMs?: number;
+  /** Interactive startup gives new Hosts a 30-second idle exit; persistent startup retains the attached Host. */
+  readonly daemonLifecycle?: 'interactive' | 'persistent';
   readonly daemonTransport?: RuntimeDaemonClientTransport;
   readonly daemonEndpoint?: string | RuntimeDaemonEndpoint;
   /** Defaults to true for daemon mode unless a transport or endpoint is supplied. */
@@ -968,6 +971,8 @@ export interface ConnectKodaXRuntimeOptions {
   readonly daemonConnectTimeoutMs?: number;
   /** Auto-started daemon idle-exit policy; see CreateKodaXRuntimeOptions. */
   readonly daemonOrphanExitMs?: number;
+  /** Applies an interactive default only to new Hosts, or explicitly retains the attached Host. */
+  readonly daemonLifecycle?: 'interactive' | 'persistent';
   readonly daemonToken?: string;
   readonly clientInfo?: RuntimeClientInfo;
   readonly capabilities?: RuntimeClientCapabilities;
@@ -4109,6 +4114,7 @@ async function createKodaXRuntimeInternal(
       ...(options.daemonOrphanExitMs !== undefined
         ? { daemonOrphanExitMs: options.daemonOrphanExitMs }
         : {}),
+      daemonLifecycle: options.daemonLifecycle,
       daemonToken: options.daemonToken,
       clientInfo: options.clientInfo,
       capabilities: options.capabilities,
@@ -5786,6 +5792,9 @@ export async function connectKodaXRuntime(
   if (options.autoStart === true) {
     throw new Error("connectKodaXRuntime is passive; use ensureKodaXRuntime to start or update a Host.");
   }
+  if (options.daemonLifecycle !== undefined) {
+    throw new Error('Daemon lifecycle changes require ensureKodaXRuntime; connectKodaXRuntime is passive.');
+  }
   return connectKodaXRuntimeInternal(options, false);
 }
 
@@ -6320,6 +6329,11 @@ async function connectKodaXRuntimeInternal(
     options.daemonOrphanExitMs,
     1,
   );
+  const orphanExitMs = options.daemonOrphanExitMs
+    ?? (options.daemonLifecycle === 'interactive' ? 30_000 : undefined);
+  if (options.daemonLifecycle !== undefined && options.autoStart !== true) {
+    throw new Error('Daemon lifecycle changes require owner auto-start.');
+  }
   options.daemonStartupSignal?.throwIfAborted();
   if (allowCapabilityUpgrade && options.autoStart === true && Date.now() >= startupDeadline) {
     throw new RuntimeDaemonCapabilityUpgradeError('Host startup timed out before another connection attempt.', undefined, undefined, 'runtimeBuild');
@@ -6358,7 +6372,7 @@ async function connectKodaXRuntimeInternal(
           sessionsDir: options.sessionsDir,
           permissionTimeoutMs: options.permissionTimeoutMs,
           userInputTimeoutMs: options.userInputTimeoutMs,
-          orphanExitMs: options.daemonOrphanExitMs,
+          orphanExitMs,
           startupTimeoutMs: Math.max(1, startupDeadline - Date.now()),
           startupSignal: options.daemonStartupSignal,
           onStartupProgress: reportProgress,
@@ -6458,6 +6472,8 @@ async function connectKodaXRuntimeInternal(
       profile: connectionProfile,
       connectionPurpose: "client",
       autoStart: options.autoStart === true,
+      ...(options.daemonLifecycle === 'persistent' && upgradeClientInfo === undefined
+        ? { daemonLifecycle: 'persistent' } : {}),
       ...(token !== undefined ? { token } : {}),
       clientInfo,
       capabilities: { ...options.capabilities },
@@ -6562,7 +6578,7 @@ async function connectKodaXRuntimeInternal(
           ...(grantedScopes !== undefined ? { grantedScopes } : {}),
           requiredCapability: requiredUpgrade.name,
           ...(sharedHost ? { sharedOwnerFile: sharedHost.ownerFile } : {}),
-          orphanExitMs: options.daemonOrphanExitMs,
+          orphanExitMs,
           startupDeadline,
           startupSignal: options.daemonStartupSignal,
           reportProgress,
@@ -6597,7 +6613,9 @@ async function connectKodaXRuntimeInternal(
         upgradeReleasedLease = true;
       }
       return connectKodaXRuntimeInternal(
-        options,
+        options.daemonLifecycle === 'interactive' && options.daemonOrphanExitMs === undefined
+          && initialized.daemonLifecycle === 'persistent'
+          ? { ...options, daemonLifecycle: 'persistent' } : options,
         allowCapabilityUpgrade,
         ownerBootstrap,
         startupRetries - 1,

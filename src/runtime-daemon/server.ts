@@ -626,6 +626,10 @@ export function createRuntimeDaemonDispatcher(
             `Runtime daemon profile mismatch: expected ${options.runtime.identity.profile}, got ${requestedProfile}.`,
           );
         }
+        if (initializeParams?.daemonLifecycle === 'persistent'
+          && (connectionPurpose !== 'client' || !grantedScopes.has('daemon:admin'))) {
+          throw daemonError('unauthorized', 'Retaining a daemon requires a logical client with daemon:admin scope.');
+        }
         principalId = parseRuntimeClientPrincipal(
           initializeParams?.clientInfo,
           principalId,
@@ -796,6 +800,7 @@ export function createRuntimeDaemonDispatcher(
                 principalId,
                 initializeParams?.clientInfo,
               ),
+              { persistent: initializeParams?.daemonLifecycle === 'persistent' },
             );
             logicalClientAttached = true;
           } catch (error: unknown) {
@@ -1001,6 +1006,8 @@ async function dispatchRuntimeDaemonRequest(
 ): Promise<unknown> {
   const runtime = options.runtime;
   const runRequirementSource = options.reverseBridgeHub ?? reverseBridge;
+  const persistentDaemon = options.management?.lifecycle === 'persistent'
+    || (isInitializeMethod(request.method) && optionalRecord(request.params)?.daemonLifecycle === 'persistent');
 
   const dispatch = async (): Promise<unknown> => {
   switch (request.method) {
@@ -1008,6 +1015,7 @@ async function dispatchRuntimeDaemonRequest(
     case "runtime.initialize":
       return {
         identity: runtime.identity,
+        ...(options.management ? { daemonLifecycle: persistentDaemon ? 'persistent' : 'interactive' } : {}),
         capabilities: runtimeDaemonCapabilities(
           options.capabilities,
           runtime.agents.enabled,
@@ -1017,7 +1025,7 @@ async function dispatchRuntimeDaemonRequest(
           options.reverseBridgeHub !== undefined,
           options.durableHostToolInvocations === true,
           options.management !== undefined,
-          options.orphanExitEnabled === true,
+          options.orphanExitEnabled === true && !persistentDaemon,
           runtimeImplementsEventCoalescing(runtime),
           runtime.capabilities,
           options.clientLifecycle !== undefined,
@@ -1091,7 +1099,7 @@ async function dispatchRuntimeDaemonRequest(
         options.reverseBridgeHub !== undefined,
         options.durableHostToolInvocations === true,
         options.management !== undefined,
-        options.orphanExitEnabled === true,
+        options.orphanExitEnabled === true && !persistentDaemon,
         runtimeImplementsEventCoalescing(runtime),
         runtime.capabilities,
         options.clientLifecycle !== undefined,

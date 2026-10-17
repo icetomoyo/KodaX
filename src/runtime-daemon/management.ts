@@ -14,8 +14,9 @@ import {
 } from './state.js';
 
 export interface RuntimeDaemonManagementController {
+  readonly lifecycle: 'interactive' | 'persistent';
   armOrphanExitAfterReady(): void;
-  attachClient(client: RuntimeDaemonClientSnapshot): void;
+  attachClient(client: RuntimeDaemonClientSnapshot, options?: { readonly persistent: boolean }): void;
   detachClient(connectionId: string): void;
   runMutation<T>(method: RuntimeDaemonMethod, effect: () => Promise<T>): Promise<T>;
   preflight(): Promise<RuntimeDaemonPreflight>;
@@ -31,9 +32,11 @@ export function createRuntimeDaemonManagementController(input: {
   /**
    * When set, a daemon that has observed at least one logical client stops
    * itself after the final client disconnects and all governed work is idle.
-   * Omitted for ordinary CLI-owned daemons, which remain persistent.
+   * Omitted for persistent daemon owners.
    */
   readonly orphanExitMs?: number;
+  /** A configured server keeps this Host available independently of clients. */
+  readonly keepAlive?: () => boolean;
   readonly integrationStatuses?: () => readonly RuntimeIntegrationDomainStatus[];
 }): RuntimeDaemonManagementController {
   return new DaemonManagementController(input);
@@ -52,30 +55,41 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
   private orphanExitTimer: ReturnType<typeof setTimeout> | undefined;
   private orphanExitCheckRunning = false;
   private orphanBlockerFingerprint: string | undefined;
+  private persistent = false;
+  private orphanIdleSince: number | undefined;
 
   constructor(private readonly input: {
     readonly runtime: KodaXRuntime;
     readonly paths: RuntimeDaemonPaths;
     readonly requestStop: () => void;
     readonly orphanExitMs?: number;
+    readonly keepAlive?: () => boolean;
     readonly integrationStatuses?: () => readonly RuntimeIntegrationDomainStatus[];
   }) {
+  }
+
+  get lifecycle(): 'interactive' | 'persistent' {
+    return this.persistent || this.input.orphanExitMs === undefined || this.input.keepAlive?.()
+      ? 'persistent' : 'interactive';
   }
 
   armOrphanExitAfterReady(): void {
     if (this.input.orphanExitMs === undefined || this.closed || this.draining) return;
     this.orphanExitArmed = true;
+    this.orphanIdleSince = Date.now();
     this.scheduleOrphanExitCheck(this.input.orphanExitMs);
   }
 
-  attachClient(client: RuntimeDaemonClientSnapshot): void {
+  attachClient(client: RuntimeDaemonClientSnapshot, options?: { readonly persistent: boolean }): void {
     if (this.draining || this.closed) {
       throw managementError('conflict', 'Runtime daemon is draining and cannot attach another client.');
     }
+    if (options?.persistent) this.persistent = true;
     if (this.clients.has(client.daemonConnectionId)) return;
     this.clients.set(client.daemonConnectionId, { ...client });
     this.orphanExitArmed = true;
     this.clientGeneration += 1;
+    this.orphanIdleSince = undefined;
     this.cancelOrphanExitCheck();
     this.orphanBlockerFingerprint = undefined;
     this.revision += 1;
@@ -85,7 +99,7 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
     if (!this.clients.delete(connectionId)) return;
     this.clientGeneration += 1;
     this.revision += 1;
-    if (this.clients.size === 0) this.scheduleOrphanExitCheck(this.input.orphanExitMs);
+    if (this.clients.size === 0) this.scheduleOrphanExitCheck(0);
   }
 
   async runMutation<T>(method: RuntimeDaemonMethod, effect: () => Promise<T>): Promise<T> {
@@ -93,6 +107,7 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
       throw managementError('conflict', 'Runtime daemon is draining and rejects new mutations.');
     }
     this.activeMutations += 1;
+    this.orphanIdleSince = undefined;
     this.activeMutationMethods.set(method, (this.activeMutationMethods.get(method) ?? 0) + 1);
     this.revision += 1;
     try {
@@ -102,6 +117,7 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
       const remaining = (this.activeMutationMethods.get(method) ?? 1) - 1;
       if (remaining === 0) this.activeMutationMethods.delete(method);
       else this.activeMutationMethods.set(method, remaining);
+      if (this.clients.size === 0) this.scheduleOrphanExitCheck(0);
     }
   }
 
@@ -215,6 +231,8 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
   private scheduleOrphanExitCheck(delayMs: number | undefined): void {
     if (
       delayMs === undefined
+      || this.input.orphanExitMs === undefined
+      || this.persistent
       || !this.orphanExitArmed
       || this.closed
       || this.draining
@@ -240,6 +258,7 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
   private async tryOrphanExit(): Promise<void> {
     if (
       this.closed
+      || this.persistent
       || this.draining
       || this.clients.size > 0
       || this.input.orphanExitMs === undefined
@@ -251,16 +270,26 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
     let stopped = false;
     let retryDelayMs = Math.min(this.input.orphanExitMs, 5_000);
     try {
+      if (this.input.keepAlive?.()) {
+        this.orphanIdleSince = undefined;
+        return;
+      }
       const current = await this.preflight();
-      if (this.clients.size > 0 || this.closed || this.draining) return;
+      if (this.clients.size > 0 || this.closed || this.draining || this.persistent) return;
       if (this.clientGeneration !== clientGeneration) {
         // A client attached and detached while preflight was in flight. Give
         // that newest detach a complete grace period instead of stopping on
         // the stale timer's deadline.
-        retryDelayMs = this.input.orphanExitMs;
+        retryDelayMs = 0;
         return;
       }
       if (current.canStop) {
+        this.orphanIdleSince ??= Date.now();
+        const remaining = this.input.orphanExitMs - (Date.now() - this.orphanIdleSince);
+        if (remaining > 0) {
+          retryDelayMs = remaining;
+          return;
+        }
         this.appendOrphanExitLog(
           'info',
           'Runtime daemon orphan exit accepted after the final client disconnected.',
@@ -269,6 +298,7 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
         stopped = true;
         return;
       }
+      this.orphanIdleSince = undefined;
       const fingerprint = current.blockers.join(',');
       if (fingerprint !== this.orphanBlockerFingerprint) {
         this.orphanBlockerFingerprint = fingerprint;
@@ -279,6 +309,7 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
         );
       }
     } catch (error: unknown) {
+      this.orphanIdleSince = undefined;
       this.appendOrphanExitLog(
         'warn',
         'Runtime daemon orphan exit inspection failed; it will retry.',

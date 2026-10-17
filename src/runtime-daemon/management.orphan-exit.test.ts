@@ -119,6 +119,45 @@ describe('Runtime daemon orphan idle exit', () => {
     controller.close();
   });
 
+  it('keeps a serving A2A Host alive without scanning idle preflight state', async () => {
+    vi.useFakeTimers();
+    const preflight = vi.fn(() => idlePreflight());
+    const requestStop = vi.fn();
+    const controller = createController({ orphanExitMs: 30_000, preflight, requestStop, keepAlive: () => true });
+    try {
+      controller.armOrphanExitAfterReady();
+      controller.attachClient(client('cli'));
+      controller.detachClient('cli');
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(requestStop).not.toHaveBeenCalled();
+      expect(preflight).not.toHaveBeenCalled();
+    } finally { controller.close(); vi.useRealTimers(); }
+  });
+
+  it('gives completed background work a full idle grace before exiting', async () => {
+    vi.useFakeTimers();
+    let active = true;
+    const requestStop = vi.fn();
+    const controller = createController({
+      orphanExitMs: 30_000,
+      preflight: () => ({ ...idlePreflight(), canStop: !active, blockers: active ? ['active_runs'] : [] }),
+      requestStop,
+    });
+    try {
+      controller.attachClient(client('cli'));
+      controller.detachClient('cli');
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(requestStop).not.toHaveBeenCalled();
+      active = false;
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(requestStop).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(requestStop).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(requestStop).toHaveBeenCalledTimes(1);
+    } finally { controller.close(); vi.useRealTimers(); }
+  });
+
   it('cancels an armed orphan exit when another client attaches during the grace period', async () => {
     let stopRequests = 0;
     const controller = createController({
@@ -202,6 +241,7 @@ function createController(input: {
   readonly orphanExitMs: number;
   readonly preflight: () => RuntimeDaemonPreflight | Promise<RuntimeDaemonPreflight>;
   readonly requestStop: () => void;
+  readonly keepAlive?: () => boolean;
 }) {
   const configHome = mkdtempSync(path.join(os.tmpdir(), 'kodax-orphan-exit-'));
   temporaryHomes.push(configHome);
@@ -229,6 +269,7 @@ function createController(input: {
     paths: resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder'),
     requestStop: input.requestStop,
     orphanExitMs: input.orphanExitMs,
+    keepAlive: input.keepAlive,
   });
 }
 

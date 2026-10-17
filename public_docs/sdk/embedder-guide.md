@@ -4958,8 +4958,18 @@ replaces it only when preflight proves that doing so is safe. After the daemon
 has observed a logical client, final-client detach arms the requested grace
 period; a new client cancels it, and active/queued runs, Workflow, Agent turns,
 pending permission/user input, or other governed work defer exit until
-preflight is idle. Omit the option for CLI-style daemons that are intentionally
-persistent.
+preflight is idle for a complete grace period. Omit the option for SDK daemons
+that are intentionally persistent.
+
+`ensureKodaXRuntime({daemonLifecycle:'interactive'})` gives a newly spawned Host
+a 30-second idle grace and reuses a compatible persistent Host without a policy
+refresh. The product CLI uses this lifecycle. In contrast, the explicit
+`daemonOrphanExitMs` option still requires the enabled orphan-exit capability.
+`daemonLifecycle:'persistent'` retains the authenticated current Host in place,
+as used by `kodax daemon start`; only a logical Client with `daemon:admin` can
+request this. Configured A2A serving also retains its Host. An interactive
+rebuild refresh preserves a Host's declared persistent lifecycle. These options
+are startup operations; passive `connectKodaXRuntime` rejects `daemonLifecycle`.
 
 An embedder can inspect `KODAX_RUNTIME_SDK_CAPABILITIES.daemonOrphanExit`
 before calling an auto-start API. This prevents an older SDK from spawning a

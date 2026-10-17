@@ -332,6 +332,7 @@ describe('daemon CLI smoke', () => {
       '--import', 'tsx', path.join(process.cwd(), 'src', 'kodax_cli.ts'),
       'daemon', 'serve', '--home', homeDir, '--profile', profile,
       '--provider', 'mock-provider',
+      '--orphan-exit-ms', '150',
     ], {
       cwd: process.cwd(),
       stdio: ['ignore', 'ignore', 'pipe'],
@@ -465,6 +466,7 @@ describe('daemon CLI smoke', () => {
         throw new Error(`${String(error)}; hosted A2A exit=${child.exitCode}, signal=${child.signalCode}; ${bootstrapError}`, { cause: error });
       }
 
+      await new Promise((resolve) => setTimeout(resolve, 500));
       const card = await fetch(`${baseUrl}/.well-known/agent-card.json`);
       expect(card.status).toBe(200);
       const cardBody = await card.json() as { readonly name: string };
@@ -633,6 +635,20 @@ describe('daemon CLI smoke', () => {
       '--json',
     ]);
     expect(status).toMatchObject({ health: 'healthy' });
+  }, 90_000);
+
+  it('retains an existing idle-exit Host when daemon start explicitly makes it persistent', async () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-daemon-retain-'));
+    tempRoots.push(homeDir);
+    const profile = `retain-${process.pid}-${Date.now()}`;
+    const runtime = await ensureKodaXRuntime({ homeDir, profile, daemonOrphanExitMs: 150 });
+    try {
+      const started = await runDaemonCommand(['start', '--home', homeDir, '--profile', profile, '--json']);
+      expect(started).toMatchObject({ started: false, reason: 'already_running', state: { runtimeId: runtime.identity.runtimeId } });
+    } finally { await runtime.close(); }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const status = await runDaemonCommand(['status', '--home', homeDir, '--profile', profile, '--json']);
+    expect(status).toMatchObject({ health: 'healthy', state: { runtimeId: runtime.identity.runtimeId } });
   }, 90_000);
 
   it('self-stops a Space-managed daemon after its final client disconnects', async () => {

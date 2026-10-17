@@ -449,6 +449,7 @@ describe('runtime daemon dispatcher', () => {
       code: 'conflict' as const,
     });
     const management: RuntimeDaemonManagementController = {
+      lifecycle: 'persistent',
       armOrphanExitAfterReady() {},
       attachClient() {},
       detachClient() {},
@@ -1687,6 +1688,19 @@ describe('runtime daemon dispatcher', () => {
     if (!isRuntimeDaemonSuccessResponse(invalid)) {
       expect(invalid.error).toMatchObject({ code: 'invalid_request' });
     }
+  });
+
+  it.each(['observer', 'probe'] as const)('rejects a %s attempt to retain an idle-exit Host', async (kind) => {
+    const dispatcher = createRuntimeDaemonDispatcher({ runtime: makeRuntime(),
+      ...(kind === 'observer' ? { grantedScopes: ['session:observe' as const] } : {}) });
+    try {
+      const response = await dispatcher.handle(createRuntimeDaemonRequest('retain', 'initialize', {
+        profile: 'default', daemonLifecycle: 'persistent',
+        connectionPurpose: kind === 'probe' ? 'probe' : 'client',
+        capabilities: { configAdmin: true },
+      }));
+      expect(response).toMatchObject({ error: { code: 'unauthorized' } });
+    } finally { dispatcher.close(); }
   });
 
   it('uses server-issued scopes instead of client capability claims for authorization', async () => {

@@ -494,6 +494,11 @@ kodax -p "Review this repository"
 kodax daemon stop --profile default
 ```
 
+An ordinary CLI-started Host exits after its last client disconnects and governed
+work has remained idle for 30 seconds. Reconnecting cancels that idle exit.
+`kodax daemon start` retains the current Host (including an existing temporary
+Host); a Host serving configured A2A also stays available without CLI clients.
+
 Tests that start an isolated Host must close that exact Host after its work has
 settled, before removing its temporary home. Never stop arbitrary Node processes.
 With no explicit home, CLI and SDK use the resolved `KODAX_HOME`; explicit

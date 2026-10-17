@@ -1133,6 +1133,8 @@ daemon 可承载多个 Session；不同 Session 可以并发，同一 Session �
 
 显式独立库嵌入仍可使用 `/runtime` 的 `createKodaXRuntime({mode:'embedded'})`，其 owner 和退出责任属于调用者。这不是 CLI 的可选运行模式，也不是产品客户端的连接失败回退。当前包版本与发布状态见[SDK 迁移指南](docs/SDK_MIGRATION.md)。
 
+普通 CLI 自动拉起的 Host 在最后一个客户端断开、后台工作持续空闲 30 秒后退出；重新连接会取消空闲退出。显式 `kodax daemon start` 会保留当前 Host，即使它原先是临时 Host；承载已配置 A2A 服务的 Host 也会在没有 CLI 客户端时继续常驻。
+
 ### 7. 打包成单文件二进制（无需 Node）
 
 KodaX 可以用 `bun --compile` 打包成单可执行文件 + 一个 `builtin/` sidecar 目录，目标机器**不需要安装 Node.js 或任何运行时**。

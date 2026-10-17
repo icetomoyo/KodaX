@@ -454,3 +454,41 @@ Both macOS jobs, Linux ARM64 and Windows Shell contracts also passed.
 
 The temporary diagnostic workflow, dispatch input and probes are removed.
 Release remains held by explicit user instruction; no release or tag was made.
+
+## Interactive Host lifetime follow-up (accepted 2026-10-17)
+
+Accepted user requirement: ordinary `kodax` auto-started Hosts exit after the
+last logical Client disconnects and governed background work remains idle for
+30 seconds. Explicit `kodax daemon start` and configured A2A serving Hosts remain
+persistent. Reconnecting cancels the idle exit. Active owners and work must not
+be reclaimed, and rebuild/resume performance must not regress. Release stays held.
+
+The CLI selects an interactive startup default only for a newly spawned Host;
+it reuses a compatible persistent Host without a policy upgrade or another
+startup scan. Explicit start retains an existing temporary Host through its
+authenticated logical-client initialization, with `daemon:admin` authorization;
+probe and observation-only connections cannot change lifetime. No extra RPC is
+added. A2A retention uses the Host's already-created serving handle. Rebuild
+refresh carries a declared persistent lifetime into the replacement owner.
+
+Idle exit reuses the existing draining fence and governed-work preflight. The
+last disconnect checks for idle work; observed work or inspection failures
+reset the grace. A newly observed idle state receives the complete grace, and
+attach/detach during inspection rechecks the latest state. Idle inspection runs
+only when no logical Clients remain; persistent/A2A Hosts avoid these scans.
+Existing startup deadlines, cancellation, PID identity and owner fences remain.
+
+Regression commands:
+
+```sh
+npx vitest run src/runtime-daemon/management.orphan-exit.test.ts src/runtime-daemon/server.test.ts src/runtime-daemon/host.test.ts src/runtime-daemon/schema.test.ts src/sdk-runtime-daemon-upgrade.test.ts
+npx vitest run src/kodax_cli.daemon-smoke.test.ts
+npm run typecheck
+npm run build
+node --test tests/bundled-shared-host-recovery.test.mjs
+```
+
+The original approximately 30-second first resume after rebuild remains an open
+performance diagnosis. A warm successful run is insufficient to close it. This
+lifetime change does not claim to resolve that delay; the one-off local startup
+trace remains available in `.tmp/Trace-KodaXStartup.ps1` for a slow real attempt.
