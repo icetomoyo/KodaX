@@ -379,6 +379,24 @@ describe('product Host startup and passive connection', () => {
     } finally { clock.mockRestore(); }
   });
 
+  it.each(['timeout', 'cancel'] as const)('does not open an attachment after shared-owner discovery crosses the %s boundary', async mode => {
+    const controller = new AbortController();
+    const reason = new Error('cancel shared-owner discovery');
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    upgradeMocks.findSharedHost.mockImplementation(() => {
+      if (mode === 'cancel') controller.abort(reason);
+      else clock.mockReturnValue(1_101);
+      return { profile: PROFILE, ownerFile: '/fixture/owner.lock', owner: { runtimeId: 'runtime_current' } };
+    });
+    upgradeMocks.acquireProcessLease.mockResolvedValue(createLease(createCurrentTransport([], async () => undefined)));
+    try {
+      const starting = ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 100, daemonStartupSignal: controller.signal });
+      if (mode === 'cancel') await expect(starting).rejects.toBe(reason);
+      else await expect(starting).rejects.toMatchObject({ code: 'daemon_startup_failed', reason: 'timeout' });
+      expect(upgradeMocks.acquireProcessLease).not.toHaveBeenCalled();
+    } finally { clock.mockRestore(); }
+  });
+
   it('honors cancellation after closing a temporary attachment without retrying or executing work', async () => {
     const controller = new AbortController();
     const reason = new Error('cancel owner handoff');

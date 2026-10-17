@@ -6253,6 +6253,13 @@ async function initializeRuntimeDaemonForStartup(
   }
 }
 
+function assertRuntimeDaemonStartupActive(deadline: number, signal?: AbortSignal): void {
+  signal?.throwIfAborted();
+  if (Date.now() >= deadline) {
+    throw new RuntimeDaemonStartupError('Host startup timed out before the Client became ready.', 'timeout');
+  }
+}
+
 /** A live owner may hold its fence before publishing its authenticated endpoint. */
 async function waitForRuntimeSessionStorageHost(
   configHome: string,
@@ -6262,7 +6269,12 @@ async function waitForRuntimeSessionStorageHost(
   reportProgress: (progress: ClientStartupProgress) => void,
 ): Promise<ReturnType<typeof findRuntimeSessionStorageHost>> {
   for (;;) {
-    try { return findRuntimeSessionStorageHost(configHome, sessionsDir); }
+    assertRuntimeDaemonStartupActive(startupDeadline, startupSignal);
+    try {
+      const owner = findRuntimeSessionStorageHost(configHome, sessionsDir);
+      assertRuntimeDaemonStartupActive(startupDeadline, startupSignal);
+      return owner;
+    }
     catch (error: unknown) {
       if (!isRecord(error) || error.code !== 'session_storage_owned' || error.retryable !== true
         || Date.now() >= startupDeadline) throw error;
@@ -6473,6 +6485,9 @@ async function connectKodaXRuntimeInternal(
         throw error;
       }
     }
+    if (allowCapabilityUpgrade && options.autoStart === true) {
+      assertRuntimeDaemonStartupActive(startupDeadline, options.daemonStartupSignal);
+    }
     if (sharedHost && (identity.runtimeId !== sharedHost.owner.runtimeId
       || currentSharedHost?.owner.runtimeId !== identity.runtimeId
       || currentSharedHost.profile !== identity.profile)) {
@@ -6596,10 +6611,7 @@ async function connectKodaXRuntimeInternal(
     // Synchronous owner/build verification can cross the boundary after the
     // initialize timer has been cleared. Close this temporary lease on expiry.
     if (allowCapabilityUpgrade && options.autoStart === true) {
-      options.daemonStartupSignal?.throwIfAborted();
-      if (Date.now() >= startupDeadline) {
-        throw new RuntimeDaemonStartupError('Host startup timed out before the Client became ready.', 'timeout');
-      }
+      assertRuntimeDaemonStartupActive(startupDeadline, options.daemonStartupSignal);
     }
   } catch (error: unknown) {
     if (!upgradeReleasedLease) {
