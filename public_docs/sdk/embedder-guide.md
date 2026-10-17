@@ -4975,8 +4975,12 @@ capability proves their temporary policy. Stopping an idle legacy Host once lets
 the next ordinary CLI startup apply its new interactive default. Pending memory
 review and managed-task maintenance defer automatic idle exit after a Run
 completes. Explicit shutdown keeps its cancellation and cleanup contract.
-An explicit `requirements.daemonOrphanExit` still takes precedence over inherited
-persistence; it uses the existing fenced policy-refresh path.
+An explicit `requirements.daemonOrphanExit` still takes precedence over inferred
+default/legacy persistence through the existing fenced policy-refresh path.
+An explicitly retained or A2A-serving Host instead reports a policy conflict;
+an idle-exit request cannot silently replace that service. Authenticated startup
+metadata distinguishes retained services from ordinary SDK persistence and
+preserves their intent through rebuild refresh, including default SDK launchers.
 
 An embedder can inspect `KODAX_RUNTIME_SDK_CAPABILITIES.daemonOrphanExit`
 before calling an auto-start API. This prevents an older SDK from spawning a

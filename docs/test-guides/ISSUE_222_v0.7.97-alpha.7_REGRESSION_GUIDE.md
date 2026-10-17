@@ -475,6 +475,13 @@ positive evidence of an interactive policy; otherwise refresh conservatively
 retains persistence. Old automatic and explicit startups were indistinguishable.
 An old automatic Host therefore needs one normal, idle `kodax daemon stop` before
 the next ordinary CLI startup can select the new interactive default.
+Authenticated `daemonRetention` evidence distinguishes an explicitly retained or
+A2A-serving Host from default SDK persistence. A strict orphan-exit request must
+report the policy conflict without shutting down that service. Rebuild preserves
+explicit retention even for default SDK launchers; inferred persistence does not
+invent an explicit retention marker. A configured service is reevaluated from
+the new Host's config, so removing A2A config does not invent a permanent explicit
+pin. Default SDK policy refresh remains supported.
 
 Idle exit reuses the existing draining fence and governed-work preflight. The
 last disconnect checks for idle work; observed work or inspection failures

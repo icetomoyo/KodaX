@@ -450,6 +450,7 @@ describe('runtime daemon dispatcher', () => {
     });
     const management: RuntimeDaemonManagementController = {
       lifecycle: 'persistent',
+      retention: undefined,
       armOrphanExitAfterReady() {},
       attachClient() {},
       detachClient() {},
@@ -1694,7 +1695,7 @@ describe('runtime daemon dispatcher', () => {
     const attachClient = vi.fn();
     const detachClient = vi.fn();
     const management: RuntimeDaemonManagementController = {
-      lifecycle: 'interactive', armOrphanExitAfterReady() {}, attachClient, detachClient,
+      lifecycle: 'interactive', retention: undefined, armOrphanExitAfterReady() {}, attachClient, detachClient,
       async runMutation<T>(_method: RuntimeDaemonMethod, effect: () => Promise<T>): Promise<T> { return effect(); },
       async preflight() { throw new Error('not used'); },
       async inspect() { throw new Error('not used'); },

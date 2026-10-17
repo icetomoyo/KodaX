@@ -6545,6 +6545,13 @@ async function connectKodaXRuntimeInternal(
       );
     }
     if (requiredUpgrade !== undefined) {
+      if ((initialized.daemonRetention === 'explicit' || initialized.daemonRetention === 'service')
+        && requirements.daemonOrphanExit !== undefined) {
+        throw new RuntimeDaemonCapabilityUpgradeError(
+          'This Host is explicitly retained or serves A2A. Connect without an idle-exit requirement, or stop it explicitly before changing its lifetime.',
+          undefined, undefined, 'daemonOrphanExit',
+        );
+      }
       if (startupRetries < 0) {
         throw new RuntimeDaemonCapabilityUpgradeError(
           'Host startup did not converge on the requested build. Retry after the installation has finished updating.',
@@ -6622,10 +6629,11 @@ async function connectKodaXRuntimeInternal(
         || (initialized.daemonLifecycle !== 'interactive'
           && !hasVersionedRuntimeCapability(daemonCapabilities, 'daemonOrphanExit', 1));
       return connectKodaXRuntimeInternal(
-        options.daemonLifecycle === 'interactive' && options.daemonOrphanExitMs === undefined
+        options.daemonOrphanExitMs === undefined
           && requirements.daemonOrphanExit === undefined
-          && persistentLifecycle
-          ? { ...options, daemonLifecycle: 'persistent' } : options,
+          && (initialized.daemonRetention === 'explicit'
+            || (options.daemonLifecycle === 'interactive' && persistentLifecycle && initialized.daemonRetention !== 'service'))
+          ? { ...options, daemonLifecycle: initialized.daemonRetention === 'explicit' ? 'persistent' : undefined } : options,
         allowCapabilityUpgrade,
         ownerBootstrap,
         startupRetries - 1,

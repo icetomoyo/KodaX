@@ -194,6 +194,28 @@ describe('product Host startup and passive connection', () => {
     } finally { await runtime.close(); }
   });
 
+  it.each(['explicit', 'service'] as const)('refuses an idle-exit policy refresh of a retained %s owner', async (retention) => {
+    const calls: string[] = [];
+    const initialized = await createCurrentTransport([], async () => undefined).request('initialize') as { capabilities: Record<string, unknown> };
+    const capabilities = { ...initialized.capabilities };
+    delete capabilities.daemonOrphanExit;
+    const old = createLegacyTransport({ preflight: createPreflight(), calls, close: async () => undefined,
+      runtimeVersion: KODAX_VERSION, build: LOCAL_RUNTIME_BUILD, capabilities });
+    upgradeMocks.acquireProcessLease
+      .mockResolvedValueOnce(createLease({ ...old, async request(method, params) {
+        const result = await old.request(method, params);
+        return method === 'initialize' ? { ...result as object, daemonLifecycle: 'persistent', daemonRetention: retention } : result;
+      } }))
+      .mockResolvedValueOnce(createLease(createCurrentTransport(calls, async () => undefined)));
+    upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
+    const starting = ensureKodaXRuntime({ profile: PROFILE, daemonOrphanExitMs: 30_000 });
+    try {
+      await expect(starting).rejects.toMatchObject({ capability: 'daemonOrphanExit', message: expect.stringMatching(/retained/) });
+      expect(calls).not.toContain('old:runtime.shutdown');
+      expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(1);
+    } finally { await (await starting.catch(() => undefined))?.close(); }
+  });
+
   it('honors an explicit orphan-exit requirement over inherited persistent startup intent', async () => {
     const calls: string[] = [];
     const initialized = await createCurrentTransport([], async () => undefined).request('initialize') as { capabilities: Record<string, unknown> };
@@ -604,12 +626,15 @@ describe('product Host startup and passive connection', () => {
   });
 
   it.each([
-    { name: 'interactive', lifecycle: 'interactive', orphanVersion: 1, exitMs: 30_000 },
-    { name: 'persistent', lifecycle: 'persistent', orphanVersion: 1, exitMs: undefined },
-    { name: 'legacy interactive', lifecycle: undefined, orphanVersion: 1, exitMs: 30_000 },
-    { name: 'legacy persistent', lifecycle: undefined, orphanVersion: undefined, exitMs: undefined },
-    { name: 'legacy unreadable policy', lifecycle: undefined, orphanVersion: 0, exitMs: undefined },
-  ] as const)('preserves a $name Host lifecycle through a rebuild refresh', async ({ lifecycle, orphanVersion, exitMs }) => {
+    { name: 'interactive', lifecycle: 'interactive', retention: undefined, request: 'interactive', orphanVersion: 1, exitMs: 30_000 },
+    { name: 'persistent', lifecycle: 'persistent', retention: undefined, request: 'interactive', orphanVersion: 1, exitMs: undefined },
+    { name: 'legacy interactive', lifecycle: undefined, retention: undefined, request: 'interactive', orphanVersion: 1, exitMs: 30_000 },
+    { name: 'legacy persistent', lifecycle: undefined, retention: undefined, request: 'interactive', orphanVersion: undefined, exitMs: undefined },
+    { name: 'legacy unreadable policy', lifecycle: undefined, retention: undefined, request: 'interactive', orphanVersion: 0, exitMs: undefined },
+    { name: 'explicitly retained', lifecycle: 'persistent', retention: 'explicit', request: 'interactive', orphanVersion: undefined, exitMs: undefined },
+    { name: 'explicitly retained with a default SDK launcher', lifecycle: 'persistent', retention: 'explicit', request: undefined, orphanVersion: undefined, exitMs: undefined },
+    { name: 'configured service after its config is removed', lifecycle: 'persistent', retention: 'service', request: 'interactive', orphanVersion: undefined, exitMs: 30_000 },
+  ] as const)('preserves a $name Host lifecycle through a rebuild refresh', async ({ lifecycle, retention, request, orphanVersion, exitMs }) => {
     const calls: string[] = [];
     const current = await createCurrentTransport([], async () => undefined).request('initialize') as { capabilities: Record<string, unknown> };
     if (orphanVersion === undefined) delete current.capabilities.daemonOrphanExit;
@@ -619,19 +644,26 @@ describe('product Host startup and passive connection', () => {
       runtimeVersion: KODAX_VERSION, capabilities: current.capabilities,
       build: { ...LOCAL_RUNTIME_BUILD, fingerprint: '0'.repeat(64) },
     });
+    const next = createCurrentTransport(calls, async () => undefined);
+    const initializedClients: unknown[] = [];
     upgradeMocks.acquireProcessLease
       .mockResolvedValueOnce(createLease({ ...old, async request(method, params) {
         const result = await old.request(method, params);
-        return method === 'initialize' && lifecycle !== undefined ? { ...result as object, daemonLifecycle: lifecycle } : result;
+        return method === 'initialize' && lifecycle !== undefined ? { ...result as object, daemonLifecycle: lifecycle, daemonRetention: retention } : result;
       } }))
-      .mockResolvedValueOnce(createLease(createCurrentTransport(calls, async () => undefined)));
+      .mockResolvedValueOnce(createLease({ ...next, async request(method, params) {
+        if (method === 'initialize') initializedClients.push(params);
+        return next.request(method, params);
+      } }));
     upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
-    const runtime = await ensureKodaXRuntime({ profile: PROFILE, daemonLifecycle: 'interactive' });
+    const runtime = await ensureKodaXRuntime({ profile: PROFILE, daemonLifecycle: request });
     try {
       expect(calls.filter(call => call === 'old:runtime.shutdown')).toHaveLength(1);
       expect(upgradeMocks.acquireProcessLease.mock.calls[1]?.[0]).toMatchObject({
         orphanExitMs: exitMs,
       });
+      if (retention === 'explicit') expect(initializedClients[0]).toHaveProperty('daemonLifecycle', 'persistent');
+      else expect(initializedClients[0]).not.toHaveProperty('daemonLifecycle');
     } finally { await runtime.close(); }
   });
 

@@ -15,6 +15,7 @@ import {
 
 export interface RuntimeDaemonManagementController {
   readonly lifecycle: 'interactive' | 'persistent';
+  readonly retention: 'explicit' | 'service' | undefined;
   armOrphanExitAfterReady(): void;
   attachClient(client: RuntimeDaemonClientSnapshot, options?: { readonly persistent: boolean; readonly startup?: boolean }): void;
   detachClient(connectionId: string): void;
@@ -71,8 +72,13 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
   }
 
   get lifecycle(): 'interactive' | 'persistent' {
-    return this.persistent || this.input.orphanExitMs === undefined || this.input.keepAlive?.()
+    return this.retention !== undefined || this.input.orphanExitMs === undefined
       ? 'persistent' : 'interactive';
+  }
+
+  get retention(): 'explicit' | 'service' | undefined {
+    if (this.persistent) return 'explicit';
+    return this.input.keepAlive?.() === true ? 'service' : undefined;
   }
 
   armOrphanExitAfterReady(): void {

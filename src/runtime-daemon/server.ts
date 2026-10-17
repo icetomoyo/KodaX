@@ -1006,8 +1006,9 @@ async function dispatchRuntimeDaemonRequest(
 ): Promise<unknown> {
   const runtime = options.runtime;
   const runRequirementSource = options.reverseBridgeHub ?? reverseBridge;
-  const persistentDaemon = options.management?.lifecycle === 'persistent'
-    || (isInitializeMethod(request.method) && optionalRecord(request.params)?.daemonLifecycle === 'persistent');
+  const retention = isInitializeMethod(request.method) && optionalRecord(request.params)?.daemonLifecycle === 'persistent'
+    ? 'explicit' : options.management?.retention;
+  const persistentDaemon = retention !== undefined || options.management?.lifecycle === 'persistent';
 
   const dispatch = async (): Promise<unknown> => {
   switch (request.method) {
@@ -1015,7 +1016,7 @@ async function dispatchRuntimeDaemonRequest(
     case "runtime.initialize":
       return {
         identity: runtime.identity,
-        ...(options.management ? { daemonLifecycle: persistentDaemon ? 'persistent' : 'interactive' } : {}),
+        ...(options.management ? { daemonLifecycle: persistentDaemon ? 'persistent' : 'interactive', daemonRetention: retention } : {}),
         capabilities: runtimeDaemonCapabilities(
           options.capabilities,
           runtime.agents.enabled,

@@ -467,6 +467,10 @@ describe('daemon CLI smoke', () => {
       }
 
       await new Promise((resolve) => setTimeout(resolve, 500));
+      const servingPid = JSON.parse(fs.readFileSync(paths.stateFile, 'utf8')) as { pid: number };
+      await expect(ensureKodaXRuntime({ homeDir, profile, daemonOrphanExitMs: 150 }))
+        .rejects.toThrow(/retained/);
+      expect((JSON.parse(fs.readFileSync(paths.stateFile, 'utf8')) as { pid: number }).pid).toBe(servingPid.pid);
       const card = await fetch(`${baseUrl}/.well-known/agent-card.json`);
       expect(card.status).toBe(200);
       const cardBody = await card.json() as { readonly name: string };
@@ -646,6 +650,8 @@ describe('daemon CLI smoke', () => {
       const started = await runDaemonCommand(['start', '--home', homeDir, '--profile', profile, '--json']);
       expect(started).toMatchObject({ started: false, reason: 'already_running', state: { runtimeId: runtime.identity.runtimeId } });
     } finally { await runtime.close(); }
+    await expect(ensureKodaXRuntime({ homeDir, profile, daemonOrphanExitMs: 150 }))
+      .rejects.toThrow(/retained/);
     await new Promise((resolve) => setTimeout(resolve, 500));
     const status = await runDaemonCommand(['status', '--home', homeDir, '--profile', profile, '--json']);
     expect(status).toMatchObject({ health: 'healthy', state: { runtimeId: runtime.identity.runtimeId } });
