@@ -154,7 +154,7 @@ it('restores multi-block canonical output without adding separators or reviving 
       { type: 'thinking', thinking: 'First ' }, { type: 'thinking', thinking: 'thought' },
       { type: 'text', text: 'First ' }, { type: 'text', text: 'answer' },
     ] },
-    ...Array.from({ length: 55 }, (_, index) => ({ role: 'user' as const, content: `Later ${index}`, inputId: `later-${index}` })),
+    ...Array.from({ length: 155 }, (_, index) => ({ role: 'user' as const, content: `Later ${index}`, inputId: `later-${index}` })),
   ], uiHistory: persistSessionViewItems([
     { id: 'old-draft', type: 'assistant', outputId: 'blocks', outputState: 'draft', text: 'First answer' },
     { id: 'still-partial', type: 'assistant', outputId: 'other', outputState: 'draft', text: 'Interrupted' },
