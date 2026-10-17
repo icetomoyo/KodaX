@@ -180,3 +180,10 @@ coordination evidence, and reclaim a proven terminated zombie. The Linux real
 unreaped-zombie fixture now checks startup coordination as well as shared-owner
 discovery and exit verification. Rerun it on Linux Node 20/22 in CI before a
 release; a Windows platform skip is not Linux acceptance.
+
+`src/sdk-runtime.launcher.test.ts` also holds a real old Host's first management
+inspection open. The second public ensure must report queueing without issuing
+another inspection; after release both Clients must attach to the same new Host
+and retain the saved Session. Its former two-Client rendezvous deliberately
+required the overlap that startup coordination now prevents, so that fixture
+must not be retained as an expectation of the new startup order.
