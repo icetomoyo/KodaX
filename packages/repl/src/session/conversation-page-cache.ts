@@ -653,7 +653,7 @@ export async function readConversationPageCacheChunk(
   mainPath: string,
   boundaryRevision: string,
   input: ConversationPageCacheChunkInput,
-): Promise<ConversationPageCacheChunk | null> {
+): Promise<ConversationPageCacheChunk | null | undefined> {
   try {
     return await readConversationPageCacheChunkInternal(mainPath, boundaryRevision, input);
   } catch (error: unknown) {
@@ -665,7 +665,7 @@ async function readConversationPageCacheChunkInternal(
   mainPath: string,
   boundaryRevision: string,
   input: ConversationPageCacheChunkInput,
-): Promise<ConversationPageCacheChunk | null> {
+): Promise<ConversationPageCacheChunk | null | undefined> {
   throwIfAborted(input.signal);
   const manifest = await readConversationPageCacheManifest(mainPath);
   if (manifest === undefined || manifest.boundaryRevision !== boundaryRevision) return null;
@@ -673,13 +673,14 @@ async function readConversationPageCacheChunkInternal(
   if (manifest.revision !== input.revision) {
     throw new ConversationPageCacheStaleError('Conversation history changed; request a fresh page');
   }
+  await assertCacheFilesStable(mainPath, manifest);
   if (input.entryIndex >= manifest.entryCount) {
-    throw new Error(`Transcript entry index is out of range: ${input.entryIndex}`);
+    // Let storage verify its final source/topology boundary before reporting EOF.
+    return undefined;
   }
   if (input.offset < 0 || input.offset % manifest.chunkBytes !== 0) {
     throw new ConversationPageCacheStaleError('Conversation entry cursor is invalid');
   }
-  await assertCacheFilesStable(mainPath, manifest);
   const paths = cachePaths(mainPath, manifest);
   const { data, index } = await openCachePair(paths.dataPath, paths.indexPath, 'r');
   try {

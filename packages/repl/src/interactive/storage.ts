@@ -5072,6 +5072,9 @@ export class FileSessionStorage implements KodaXSessionStorage {
         if (before !== after || chunk === null) {
           throw new ConversationPageCacheStaleError('Conversation history changed; request a fresh page');
         }
+        if (chunk === undefined) {
+          throw new Error(`Transcript entry index is out of range: ${input.entryIndex}`);
+        }
         return chunk;
       } catch (error: unknown) {
         if (error instanceof ConversationPageCacheStaleError) {

@@ -5335,6 +5335,37 @@ describe('FileSessionStorage', () => {
     })).rejects.toMatchObject({ code: 'data_changed' });
   });
 
+  it('rejects cached end-of-history when the Session changes during the read', async () => {
+    const { FileSessionStorage } = await import('./storage.js');
+    const { buildSessionConversationHistory } = await import('../session/conversation-history.js');
+    const { deriveProjectKeyFromRoot } = await import('./project-key.js');
+    const storage = new FileSessionStorage({ sessionsDir: testSessionsDir() });
+    const sessionId = 'cache-end-race';
+    const gitRoot = tempHome.replace(/\\/g, '/');
+    await storage.save(sessionId, { messages: [{ role: 'user', content: 'Original query' }], gitRoot });
+    const capture = await storage.readFullSnapshot(sessionId);
+    if (!capture?.lineage) throw new Error('expected Session capture');
+    const history = buildSessionConversationHistory(capture.lineage, capture.sourceRevision);
+    await storage.prepareConversationPageCache(sessionId, history, capture.lineage, capture.data.runtimeInfo,
+      capture.boundaryRevision, capture.sourceRevisionState);
+    const page = await storage.readConversationPageCache(sessionId, {
+      limit: 10, maxPageBytes: 64 * 1024, maxInlineEntryBytes: 64 * 1024, reservedBytes: 0,
+    });
+    if (!page) throw new Error('expected cached page');
+    const mainPath = path.join(testSessionsDir(), deriveProjectKeyFromRoot(gitRoot).key, `${sessionId}.jsonl`);
+    await expect(storage.readConversationPageCacheChunk(sessionId, {
+      revision: page.revision, entryIndex: history.entries.length, offset: 0,
+      authorize: async () => {
+        const entry: KodaXSessionEntry = {
+          type: 'message', id: 'concurrent-message', logicalId: 'concurrent-message',
+          parentId: capture.lineage!.activeEntryId, timestamp: '2026-10-17T00:00:00.000Z',
+          message: { role: 'assistant', content: 'Concurrent saved output' },
+        };
+        await fsPromises.appendFile(mainPath, `${JSON.stringify({ _type: 'lineage_entry', entry })}\n`);
+      },
+    })).rejects.toMatchObject({ code: 'data_changed' });
+  });
+
   it('uses a canonical-hash-bound identity filter for archived ids and keeps the page cache hot', async () => {
     const { FileSessionStorage } = await import('./storage.js');
     const { buildSessionConversationHistory } = await import('../session/conversation-history.js');
