@@ -1,6 +1,7 @@
 name: Shell Stop diagnostics
 
 on:
+  workflow_call:
   workflow_dispatch:
 
 permissions:
