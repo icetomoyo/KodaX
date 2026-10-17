@@ -318,3 +318,17 @@ socket. Windows supervisor readiness observes that signal through its normal
 Job cleanup/retained-handoff path. New public-boundary tests first failed for
 late owner verification, pending socket cancellation and pre-ready Job
 cancellation, then passed with these corrections.
+
+Validation status for the follow-up remains deliberately qualified. The
+Windows Node 20 single-CPU, three-worker pressure gate still failed 2/9 cases
+after the readiness/cancellation corrections; the failures were startup
+readiness timeouts rather than a reported successful attachment or the old
+misleading authenticated-attachment error. These failures are retained and
+are not converted into acceptance by rerunning the same code. The normal
+Windows Node 22 full bundled suite passed 43/43; Windows Node 20 targeted
+ownership/deadline/cancellation tests passed 208 (3 platform skips). The real
+3,000-Session concurrent rebuild/resume completed in 13.46s/14.24s, retained
+both conversations, observed the new Host and closed both Clients normally.
+This confirms no measured regression in that scenario, but does not clear
+the single-CPU pressure limitation. Release remains held and the fix branch
+must not be described as fully accepted while this limitation is unresolved.
