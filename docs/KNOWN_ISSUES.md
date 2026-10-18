@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-10-15_
+_Last Updated: 2026-10-18_
 
 ---
 
@@ -17,7 +17,7 @@ grounded visual findings, but full repair/re-review/delivery has not passed all
 checks under the recorded budgets/provider failures. Native Word/WPS fidelity
 remains unverified. These are not claims that Space cannot trigger review or
 that every CLI lacks tools; the default adapter inspection was local in scope.
-See [evidence and remaining work](research/automatic-visual-review-e2e-2026-10-13.md)
+See [evidence and remaining work](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#natural-task-observations-2026-10-13)
 and [actual SDK support](ARTIFACT_SDK.md). No production fix is claimed by this
 documentation update.
 
@@ -2238,7 +2238,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
   bundle entry points; additional bundle runs verify downward traversal through
   intervening history. They await the actual Host terminal state and verify
   activity/prompt updates while browsing. See
-  [repair verification](research/contract-browse-fix-verification-2026-09-26.md).
+  [repair verification](test-guides/ISSUE_348_v0.7.96-rc.11_REGRESSION_GUIDE.md#shared-contract-repairs-and-recorded-results).
 - **Tests added**: `tests/repl-pty-acceptance.mjs --prompt-scroll-only` checks
   wheel, PageUp, End and draft retention in ordinary mode. The new
   `tests/repl-history-browse-acceptance.mjs` adds the live retention cases;
@@ -2890,8 +2890,7 @@ are not guessed or deleted by SID prefix. This does not grant the independent
 account transparent access to user credentials; existing host authorization
 remains available. Installed-build/customer confirmation is still required.
 
-See [final scope and evidence](research/windows-sandbox-acl-design-alternatives.md),
-[concurrency comparison](research/windows-read-acl-concurrency.md), and
+See the [accepted scope and concurrency rationale](ADR.md#issue-333-acl-exclusions-and-concurrency-rationale) and
 [regression guide](test-guides/ISSUE_333_v0.7.96_REGRESSION_GUIDE.md).
 
 <!-- Full details for each issue - REQUIRED for all issues -->

@@ -44,6 +44,13 @@ pnpm-workspace.yaml
 # Session/forensic scratch — keep outside the repo (AGENTS.md layout has no scratch dir).
 scratch/
 
+# Local research drafts. Promote durable decisions, contracts, and acceptance
+# evidence into the corresponding docs before referencing them from tracked files.
+/docs/research/
+
+# Local Windows PowerShell module analysis cache.
+/Microsoft/Windows/PowerShell/ModuleAnalysisCache
+
 # Logs
 *.log
 npm-debug.log*

@@ -109,7 +109,35 @@ node scripts/openrouter-reasoning-live.mjs --run rejection
 
 两个 404 的结构化元数据均为初始端点数 1、失败于 `Filter by Parameters`。这进一步支持“当前 OpenRouter 路由没有可路由的 reasoning 参数支持”，不是从无 thinking 或 HTTP 200 得出的判断。普通请求的控制可能被忽略，符合官方默认路由语义；底层匿名模型是否做不可见内部推理仍未证实。这些直连诊断未改变 SDK 策略，泛化的 404 不写入档位拒绝缓存。
 
-追加证据：临时根目录下 `2026-09-17T06-15-15.314Z-strict-routing` 和 `official-model-metadata.json`。追加 3 次请求（429×1、404×2），0 tokens / 0 USD；与前述 E2E 合计 43 次 HTTP 请求，生成用量不变。详细官方引用和未解问题见 [Union Alpha reasoning 调研](research/union-alpha-reasoning.md)。
+追加证据：临时根目录下 `2026-09-17T06-15-15.314Z-strict-routing` 和 `official-model-metadata.json`。追加 3 次请求（429×1、404×2），0 tokens / 0 USD；与前述 E2E 合计 43 次 HTTP 请求，生成用量不变。
+
+### 参数语义与未证实边界
+
+以下保留 2026-09-17 的公开资料与实测解释，不代表后续模型能力快照。
+当时 Union Alpha 模型及唯一 Stealth endpoint 的 `supported_parameters` 只含
+`max_tokens`、`response_format`、`temperature`、`tool_choice`、`tools`、`top_p`，
+没有 reasoning 能力对象。对照 `openai/gpt-oss-20b` 则声明 reasoning 参数、
+mandatory、支持档位及默认档。来源：[模型 API](https://openrouter.ai/api/v1/models)、
+[模型页面](https://openrouter.ai/stealth/union-alpha)、[端点 API](https://openrouter.ai/api/v1/models/stealth/union-alpha/endpoints)。
+
+| 参数 | 当时文档语义及解释边界 |
+| --- | --- |
+| `provider.require_parameters` | 默认 false，路由可能忽略不支持的参数；true 只证明端点参数过滤，不测量底层算力。[路由规则](https://openrouter.ai/docs/guides/routing/provider-selection#requiring-providers-to-support-all-parameters) |
+| `reasoning_effort` | 是 `reasoning.effort` 的简写，二者同时出现不得冲突；不能只因无推理输出认定顶层写法错误。[接口定义](https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion#body-reasoning-effort) |
+| `reasoning.exclude: true` / `include_reasoning: false` | 隐藏推理输出，不等于关闭内部推理；旧 include 参数对应 exclude。[隐藏推理](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens#excluding-reasoning-tokens)、[旧参数](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens#legacy-parameters) |
+| `effort: "none"` | 表达关闭意图，实际支持依模型；mandatory 模型不可由此关闭，支持/默认档查公开元数据。[模型推理配置](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens#discovering-per-model-reasoning-options) |
+
+参数总览曾漏列 `max`，具体 Chat Completions schema 和 reasoning 专页列有此值；
+不能用总览遗漏推导网关拒绝。推理文本的 `reasoning` / `reasoning_content` 是兼容
+字段，`reasoning_details` 还可能包含摘要、文本、加密结构，工具续接要保留结构与
+顺序；没有可见文本不证明没有内部推理。[推理说明与续接](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens#preserving-reasoning)。
+
+严格路由的无 reasoning 基线返回 429，未完成正向生成，不能当作 reasoning 拒绝；
+嵌套请求额外带 `exclude: false`，也不是与顶层请求严格单变量对照。结合元数据和
+两个参数过滤 404，只能推断默认 200/无推理与“参数可能被忽略”相符。未取得匿名
+上游实际请求，不能断言哪一层移除参数、底层无隐藏推理、实际 effort/预算或
+`reasoning_tokens: 0` 完整反映内部计算。开发商/底座身份也未公开确认；后续
+reasoning 支持及计量保证需要提供商披露，不由字段缺失或此轮成功响应推断。
 
 ## Standards
 

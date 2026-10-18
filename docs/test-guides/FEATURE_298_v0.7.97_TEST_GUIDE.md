@@ -68,7 +68,7 @@ Standards：硬规范违反 0，仍需处理的坏味道 0。Spec：剩余需求
 
 ## 2026-09-14 主线融合复核
 
-完整分析和边界见 [复核报告](../research/product-client-reaudit-2026-09-14.md)。补充以下人工场景，均使用专用测试 HOME 和已有共享 Host：
+复核保留唯一 Host/Client 权威，不以旧内部接口删除判断能力缺失。补充以下人工场景，均使用专用测试 HOME 和已有共享 Host：
 
 1. 一个窗口等待问题，第二个客户端回答该问题。classic 窗口应撤掉旧输入；Host 下一问题可立即作答。关闭观察后输入旧答案不得发出 Host 答复。
 2. 忙时排入 `说明 @"带空格的图片.png"`，重新挂接同一 Session 后按 ↑ 取回，修改正文再提交。图片引用应可见、仅一份，后续模型请求仍有该图片附件。
@@ -77,6 +77,89 @@ Standards：硬规范违反 0，仍需处理的坏味道 0。Spec：剩余需求
 5. ACP 进程与既有 Host 的 repo-intelligence 环境值不同。ACP 发起 prompt 后，Host Session 的模式/trace 开关应采用 ACP 调用配置。
 
 上述公开接缝已有自动回归；真实终端操作通过与否应单独记录，不能以单测成绩代替。
+
+### 2026-09-14 自动回归与边界
+
+复核时当前分支 `0841fb51` 已包含主线 `7b5b1b9e`，无需再次合并。
+本轮修复了输入接受期间取消未等待真实结算、classic 失效问题占用输入、
+队列图片取回/重交丢失媒体类型（含无后缀图片和 Windows 大小写）、one-shot
+恢复设置覆盖另一 Client、ACP repo-intelligence 参数未到达 Host，以及清除
+Session Auto 审查覆盖后未回到 profile 的消费者缺口。
+`sessions.getSettingsVersioned` / `updateSettingsVersioned` 复用 Host revision/CAS，
+没有增加第二设置权威；另一 Client 修改后恢复冲突保留现状，未改写的临时旗标
+可能继续保留，不承诺逐 Run 设置隔离。
+
+代码冻结后的历史结果：完整构建与源码/测试类型检查通过；真实构建 PTY
+Ink 21 + classic 14，共 35/35；13 文件定向回归 423/423；新增可执行行
+150/159（94.34%，非全仓覆盖率）；完整 Vitest 1,086 文件通过、1 跳过，
+15,799 用例通过、77 跳过、21 todo。初轮与修改并行、含旧模块缓存/RED 用例的
+运行和主动停止的两轮不计为最终快照。Spec 发现的无后缀媒体类型与大小写 P2
+经公开 queue 回归修复，最终 Standards/Spec 均无剩余发现。
+
+该次没有真实模型或其他 OS 验收；ACP trace 开关传递不等于新增完整诊断事件面，
+浏览器 transport 也未实现。A2A 离线期间 Run 已完成后读取结果、classic 同 ID
+正文缩短等当时未独立复现的范围，不由本次成绩证明已解决。入口存在不证明
+所有配置、授权 UI 或 Learning 消费者均完成迁移；后续状态以当前契约和问题记录为准。
+
+## Historical integration evidence
+
+以下为原融合记录的定稿事实与限制，迁移不代表重新执行测试或发布新版本。
+
+### 2026-10-02 integration
+
+主线 `cad8b658797976ce22a4bd70c60d2251d537e542` 合入统一 Client 分支
+`a63feede5f4b2bac8a62ddfa687d9b515d8c2021`；最终生产源码/双轴复审候选为
+`f1bb8eb87b7f367c56a799847b77224baab90a0e`。保留单一 Host、瞬态中断证据、
+outputId + opaque callId 身份、离窗全文回源、deferred cleanup unknown 和 v10
+缓存边界；未回接 REPL runner 或持久 Runtime event journal/replay。
+主线 Issues 340–344 保持身份，worktree 同号项迁为 348–352，345–347 不变。
+
+| 历史门禁 | 结果 |
+| --- | --- |
+| 最终构建与源码/测试类型检查 | 通过；14 个自包含 SDK 声明入口，纯 Client 不需 Node ambient types |
+| 冻结源码后 Fast | 218 文件通过、1 跳过；2,202 项通过、32 跳过 |
+| Unit 全量序列 | 740 文件；12,017 项通过、3 跳过 |
+| Contract 全量序列 | 117 文件；960 项通过、21 todo |
+| System 全量及 daemon 复验 | 全量 74 文件通过；daemon 最终 25/25，合计覆盖 75 文件、1,341 项通过、42 跳过 |
+| 最终构建产物 / 真实 PTY | 九个 bundle 文件 39/39；Ink 30 + classic 20，共 50/50；大历史浏览通过 |
+| 恢复模块专项覆盖 | statements 97.4%、branches 89.44%、functions 97.82%、lines 99.33%；仅新证据派生/渲染模块 |
+| Standards / Spec | 同一最终源码候选均为 0 剩余发现 |
+
+原全量 System 有三项 `launcherBuild` 失败：daemon 测试进程加载的旧源码与
+复审修复后磁盘指纹不同。冻结源码、最终重建后整份 daemon 文件 25/25 复验，
+不把原 `npm run test:full` 退出码写为成功。真实 IPC 覆盖 SA/AMA 流式中断、
+detach、Host 重启与下一轮恢复，未重跑 Provider/工具；复用
+`reused:tool:suffix` 的不同 output 在额外 160 条 canonical 消息、移除工具
+checkpoint 后仍可各自补读全文。owner-kill fixture 先结清无关 Session 写入，
+未用删除遗留锁或放宽超时规避失败。
+
+该次未执行付费模型 eval，也未替代 Linux/macOS 或跨平台人工验收。未成功
+checkpoint 的 token 不在恢复保证内；主线未解决问题保留原状态。设计子模块
+当时固定点为 `22f1c3561d24b225f057edebb25f6325e362b8e8`，保留双亲融合历史。
+
+### 2026-10-07 stable mainline integration
+
+开发起点 `f9b0fb586aa9bc8af8ffa67160d2c9ec952779b9` 吸收正式主线
+`c2c8fdc41f4e0b50fa1c2d0b24142586f155777c` 的 `v0.7.96` 发布记录，
+共同祖先为 `cad8b658`。包基线同步 `0.7.96`；FEATURE_298 已实施状态及
+单 Host/Client 契约保留，不复活旧 API。用户未选择文本工具 OS 沙箱迁移，
+继续沿用 ADR-066；没有新增迁移实施票、重置既有 tag 或宣告 v0.7.97 发布。
+设计子模块融合 `7be826fcab188720745e9a5c9374ec5c78997b56` 保留双方历史。
+
+最终历史结果：typecheck、完整构建/纯 Client 编译通过；七文件受影响测试
+69 项；冻结产物、修正只读夹具后的 Fast 为 218 文件通过、1 跳过，2,203 项
+通过、32 跳过（414.86 秒）；九个 bundle 文件 39/39。包含夹具修正的固定
+tree `b0c02b71d1e518d9a2a4ff3972cd2f0876f81037` Standards/Spec 均为 0 发现。
+
+首轮 Fast 有两个构建指纹保护失败；停止重建后专项 3/3 通过。第二轮仍有一个
+Session 只读 `data_changed` 失败，不能由窄循环通过抹去；原现场锁未捕获，
+不能断言根因。夹具仅按公开契约在原整体期限内重试
+`data_changed/resync_required` 的只读 Run/Session 查询，其他错误立即失败；
+不删除锁、不重交输入、不修改生产锁/重试，并等待 Provider 正文包含 `tool-ran`
+后才触发崩溃。保留 interrupted/unknown、工具一次、Provider 不重跑及完整观察
+断言；随后另行完成上面的最终 Fast。日志为
+`%TEMP%/kodax-stable-merge-{fast-corrected,bundle,focused}-2026-10-07.log`
+及对应崩溃专项日志。该次是主线融合，正式发布及跨平台人工验收另行跟踪。
 
 ## Windows 终端验收
 

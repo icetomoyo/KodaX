@@ -587,7 +587,7 @@ and checked binary evidence reading. PPTX authoring/limited edits and PDF,
 image/SVG, candidate DOCX, local HTML/SMIL backends run on demand and headlessly;
 core startup loads no renderers. The Agent reviews actual pixels and owns repairs;
 mechanical readiness does not certify quality. See [support and integration](ARTIFACT_SDK.md)
-and the [accepted design](research/unified-artifact-sdk-design.md).
+and the [accepted design](ADR.md#unified-artifact-execution-and-evidence-boundary).
 
 ## 4. Provider Architecture
 

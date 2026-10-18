@@ -36,7 +36,7 @@ Supported file rendering runs headlessly: a terminal-only system can produce PNG
 | Local HTML | `interactive`: actual `target`, `state: 'loaded'`, explicit `viewport: [width, height]`, `sequence: 0` |
 | SVG SMIL | `temporal`: `time` in seconds; samples do not certify continuous playback |
 
-For example, `sdk.capture({ target: 'diagram.svg', kind: 'static', locators: [{ kind: 'static', region: [0, 0, 320, 180] }] })` requests actual region pixels. `expectedSource`, when supplied, must be the current `VisualSource`, not a bare file hash. Use the public SDK types/validation; the model-facing locator schema still has a documented [schema/decoder mismatch](research/automatic-visual-review-e2e-2026-10-13.md#确认的参数契约缺口).
+For example, `sdk.capture({ target: 'diagram.svg', kind: 'static', locators: [{ kind: 'static', region: [0, 0, 320, 180] }] })` requests actual region pixels. `expectedSource`, when supplied, must be the current `VisualSource`, not a bare file hash. Use the public SDK types/validation; the model-facing locator schema still has a documented [schema/decoder mismatch](ARTIFACT_SDK.md#tool-schema-gaps).
 
 ## Trusted standalone Node host
 
@@ -67,7 +67,7 @@ Browser/LibreOffice executable paths and workspace authority belong to trusted r
 
 ## Existing shared KodaX Host
 
-KodaX's shared Agent guidance calls for visual review during applicable tasks without requiring a user slash command. File backend availability still requires this optional adapter to be registered once in the trusted Host and a provider that accepts actual images. Building/linking the workspace alone does not register it in a user's Host. SDK `render/capture/readEvidence` prepare and deliver evidence; the calling Agent owns visual judgment, repair and final review. Missing capabilities remain unverified. See [natural-task model observations and current integration gaps](research/automatic-visual-review-e2e-2026-10-13.md).
+KodaX's shared Agent guidance calls for visual review during applicable tasks without requiring a user slash command. File backend availability still requires this optional adapter to be registered once in the trusted Host and a provider that accepts actual images. Building/linking the workspace alone does not register it in a user's Host. SDK `render/capture/readEvidence` prepare and deliver evidence; the calling Agent owns visual judgment, repair and final review. Missing capabilities remain unverified. See [natural-task model observations and current integration gaps](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#natural-task-observations-2026-10-13).
 
 Register once in the trusted Host extension, using its admitted managed execution:
 
@@ -101,8 +101,43 @@ Each operation's `ready` type requires its payload. Malformed JSON, invalid path
 
 Pass an `AbortSignal` to any SDK operation. The Host port stops only its admitted Run and awaits settlement; busy/disconnected/unknown outcomes reject and are never replayed. Cancellation does not promise rollback of already-created files. Browser and child cleanup stay with their existing owning host. A Host without the attachment-read capability fails explicitly; update the Host rather than reading its filesystem from a UI.
 
+## Integration gaps recorded on 2026-10-13
+
+At source `27d08788`, GLM-5.3-Flash and DeepSeek Flash autonomously rendered an
+ordinary PPT edit and received actual current PNG bytes in a shared test Host
+with the adapter explicitly enabled. Grounded title-occlusion findings were
+observed; complete repair/re-review/delivery was not proven under the recorded
+call limits, output-budget calibration and provider failures. The earlier Kimi
+smoke explicitly requested review and cannot prove automatic task-triggering.
+See [natural-task observations and diagnostic rounds](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#natural-task-observations-2026-10-13).
+
+The inspected local default CLI extension directories contained `read_pdf` but
+no Artifact registration. Building/linking the workspace does not register
+`registerArtifactTools`; configured extensions are loaded through the existing
+Host lifecycle. This local configuration check does not establish that every
+CLI lacks rendering tools. The user's separate observation that Space triggers
+review was not independently tested against that Space configuration. Automatic
+review when tools are enabled does not prove default CLI capability exposure.
+
+### Tool schema gaps
+
+The model-facing capture locator schema advertises fields from all four kinds in
+one object, while the SDK decoder rejects fields outside the selected kind. A
+GLM static locator containing `state`, `sequence` and `target` reproduced
+`Unknown artifact field.` with the real adapter/decoder, without another model
+request. Use the kind-specific SDK shapes above; do not infer accepted field
+combinations from that broad tool schema.
+
+`readEvidence.source/raster` and `capture.expectedSource` also lack nested shape
+guidance in the tool descriptions. PPT creation colors lack the six-digit,
+no-`#` requirement there; a DeepSeek CSS-style color was rejected by the worker.
+These are parameter-contract/diagnostic gaps, not evidence that visual triggering
+is absent. Consistent schemas, precise errors, default/needed capability exposure
+and natural-task closed-loop acceptance remain follow-up work; this migration
+does not claim a production fix or complete visual acceptance.
+
 ## Migration from the initial PPT API
 
 PPT operation inputs and their supported edits remain. `ArtifactRef.kind: 'presentation'` becomes content `format: 'pptx'`; evidence uses `source` instead of a bare batch `sourceHash`; file hashes retain their meaning. Capabilities are structured records instead of descriptive string maps. Rasters require actual dimensions, and paginated evidence requires layout. `capture` uses a kind-matched `locators` array instead of separate pages/states/times/viewport fields. Add `prepare` and `readEvidence`; do not hand-read returned paths in a shared Host UI. These are explicit pre-release contract changes, not alias-based compatibility layers. Package versions are unchanged by this implementation and remain under the repository's release workflow.
 
-See [implementation design](research/unified-artifact-sdk-design.md) and [regression guide](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md).
+See [implementation design](ADR.md#unified-artifact-execution-and-evidence-boundary) and [regression guide](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md).

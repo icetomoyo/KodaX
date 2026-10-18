@@ -2,7 +2,7 @@
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
 
-> Last updated: 2026-10-16
+> Last updated: 2026-10-18
 >
 > **v0.7.97-alpha.7 release addendum:** Space #222's shared-Session Host
 > ownership is resolved without a Host capability bump: the launcher finds
@@ -44,7 +44,7 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 > no quality API, verifier daemon or persistent renderer is added. Core
 > startup stays free of renderer loading/probes. Busy daemon preflights are
 > bounded before redundant full state scans (Issue 367). Read the
-> [accepted design](research/unified-artifact-sdk-design.md)
+> [accepted design](ADR.md#unified-artifact-execution-and-evidence-boundary)
 > and [delivered support/limits](ARTIFACT_SDK.md); evidence readiness is not visual approval.
 >
 > **v0.7.97-alpha.4 release addendum:** FEATURE_301 ships the independent
@@ -6577,6 +6577,32 @@ the 75-second multiplication); a protocol-7 hard-timeout drain (blocks setup
 despite fixed-identity reuse); and automatic deletion of ambiguous ACL or
 control state (cannot prove ownership).
 
+### Issue 333 ACL exclusions and concurrency rationale
+
+The accepted SSH repair filters the final read and write roots, including
+expanded profile roots and SSH `Include`/`IdentityFile` dependencies. Exclusion
+means no KodaX ACL installation; it does not add `denyRead`, transparent credential
+access, or a guarantee that every external ACL remains unchanged. Generation 11
+setup removes only attributable generation-10 entries using the recorded SID,
+nonce, path and ACE shape, without following junctions or changing unrelated
+permissions. Unproven history remains diagnostic rather than guessed cleanup.
+
+Ordinary roots retain the same persistent four-ACE set for reads and writes;
+each command selects its capabilities through its own token. A read-only RX
+publication and a simultaneous Modify publication could both start from the
+same old DACL and overwrite one another. Changing `SET_ACCESS` to `GRANT_ACCESS`
+does not make the subsequent whole-DACL write atomic. Checking an existing grant
+only handles the warm path, and read-back can precede a later overwrite. The
+reference Codex read helper has its own mutex; it is not evidence for a local
+lock-free RX substitution under KodaX's existing token/concurrency contract.
+
+The broader external-ACL immutability proposal and simple removal of the token's
+compatibility SIDs were not adopted. Historical probes found external
+Everyone:Modify writes with the broad SID set and PowerShell/Node IPC failures
+with narrower sets; they did not establish a deployable replacement token or
+global write isolation. Keep the existing same-root concurrent-read/write and
+warm-admission regressions. See the [scope, probe limitations and validation](test-guides/ISSUE_333_v0.7.96_REGRESSION_GUIDE.md).
+
 ### FEATURE_299 v0.7.96 — admitted control and extension execution
 
 Session Stop is a control operation over admitted Run/Session/Profile and owner
@@ -6619,3 +6645,66 @@ and a separate extension permission or lifecycle engine.
 The main agent verifies each requested requirement with actual tool and rendered evidence before delivery. The built-in `visual-review` skill covers static images/charts, paginated documents/slides/sheets, interactive web/app/terminal/canvas/3D surfaces, and temporal video/animation results. Missing capabilities and unchecked scope are reported as unverified. An ordinary read-only child reviewer may contribute findings within the same Run; the main agent owns repairs and the final answer.
 
 This supersedes the completion-adjudicator parts of the historical Sidecar decisions. No extension Stop, Stall sidecar, Auto permission reviewer, Bash/sandbox policy, Actor wait, or generic LLM judge is removed. Retire the verifier execution, config, live callbacks and synthetic revision producer; preserve only persisted history readers. Goal completion records the agent’s evidence-backed claim through the existing Host lineage owner; it is separate from Run termination and per-requirement quality. No automatic scorecard or batch criterion pass is produced.
+
+### Verification responsibility and tradeoffs
+
+A text-only verdict over a transcript cannot inspect the delivered page, UI state
+or animation. Adding screenshots to a final one-shot verdict still leaves no
+investigation/repair loop; a mandatory independent reviewer for every task adds
+duplicate work. The accepted approach puts requirement checks in the main agent's
+existing tool loop, with domain skills and an ordinary read-only child reviewer
+when useful. Repairs require fresh evidence for the affected version and scope;
+the main agent consumes findings before final delivery.
+
+Visual scope follows the user's task: static regions, document pages, actual
+interactive states/viewports and temporal samples. A screenshot cannot establish
+interaction, continuous playback, audio, calculations or backend correctness.
+Image generation, image delivery to the provider and visual judgment are separate
+facts. Bind evidence to actual source/dependency versions and inspected scope;
+missing vision, failed rendering, reviewer timeout or unchecked scope remains
+unverified. Existing budgets, cancellation, Host settlement and lineage ownership
+continue to apply; no new quality owner, automatic model call, scorecard or
+unbounded review loop is introduced. Historical readers remain compatible without
+reviving verifier execution or its synthetic verdict-driven task/goal updates.
+
+Retirement shipped in alpha.4. No controlled old-versus-new quality/cost comparison
+is claimed. Automatic review was observed in the later bounded smoke, while the
+complete repair/re-review/delivery loop remains unproven; see the [dated evidence](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#natural-task-observations-2026-10-13).
+
+### Unified Artifact execution and evidence boundary
+
+Approved on 2026-10-13, implemented in `27d08788`, and shipped in
+`v0.7.97-alpha.5`. `ArtifactExecutionPort` is the single execution seam. An
+independent Node host authorizes its optional runtime; a shared CLI/Space client
+uses its existing Host's admitted tool Runs and attachment reads. Fixed-argv
+authority stays bound to that admitted scope across bundles. Missing capability,
+busy state, cancellation or disconnect never triggers local fallback execution.
+No new Product Client domain, Host RPC, permanent renderer, verifier daemon or
+global evidence store is added. Core startup does not load or probe renderers.
+
+The accepted scope closes the PPT SDK loop with public preparation and checked
+binary evidence reads; adds intrinsic PDF page geometry, exact PNG and
+browser-backed JPEG/WebP/SVG evidence; uses pinned docx-renderer 0.2.2 as a
+candidate with source-preserving normalization/pagination; and captures a local
+HTML loaded viewport at sequence 0. Word/WPS fidelity remains unverified. Live
+applications retain their existing authorized owner; no synthetic interactions
+or new UI controller are implied. Unsupported spreadsheet/media/EPUB/3D backends
+remain explicit capability gaps rather than a speculative universal editor.
+
+File identity is actual source-byte SHA-256 plus observed dependency hashes;
+surface identity is the observed target and optional owner revision, never an
+invented file hash. Provenance records are caller-owned outputs. Changed source,
+dependencies or raster bytes invalidate evidence. Static, paginated, interactive
+and temporal kinds retain their distinct scopes. Operation-specific ready
+payloads and mechanical coverage checks never certify visual quality; actual
+image bytes travel through the existing bounded image-attachment channel.
+
+Public root declarations and the client bridge remain usable without Node ambient
+types. Delivered backends require SDK/types, runtime, thin Host tools, actual
+pixel tests and documentation. Regression coverage retains exclusive outputs,
+malformed archives, literal argv, managed permission/sandbox/Stop settlement,
+cross-bundle authority, standalone/packaged consumers, mixed PDF geometry, minimal
+and automatic DOCX pagination, actual viewport/background/time, staleness,
+corruption and absent capabilities. [SDK support and integration gaps](ARTIFACT_SDK.md)
+and the [test guide](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md) define the delivered
+surface and evidence limits.

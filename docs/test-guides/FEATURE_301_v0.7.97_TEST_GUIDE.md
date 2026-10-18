@@ -68,7 +68,50 @@ Final frozen-source full suite: 1,165 files passed, one skipped; 16,589 tests pa
 
 `KODAX_ARTIFACT_E2E=1 node tests/artifact-auto-review-smoke.eval.mjs` (Bash), or `$env:KODAX_ARTIFACT_E2E = '1'; node tests/artifact-auto-review-smoke.eval.mjs` (PowerShell), is a separate opt-in Layer 3.5 check with ZAI GLM-5.3-Flash and DeepSeek Flash. Remove the PowerShell opt-in afterward with `Remove-Item Env:KODAX_ARTIFACT_E2E`. It asks only for an ordinary PPT title edit, without slash/review/tool hints, through one shared Host and two Sessions. Provider requests retain actual image hashes. Shell/child restrictions and fixed call/token/time bounds are part of the fixture. No general success percentage is inferred.
 
-2026-10-13 observations prove autonomous rendering/image delivery, and each model produced a grounded occlusion finding in a shared-Host revision. **Full repair/re-review/delivery has not passed**: preserve the registry-interference diagnostic run, output-budget calibration, final call cutoff and provider timeout rather than claiming green E2E. See [actual evidence, default adapter gap and schema mismatch](../research/automatic-visual-review-e2e-2026-10-13.md). The earlier Kimi smoke explicitly requested visual review and cannot prove automatic task-triggering.
+2026-10-13 observations prove autonomous rendering/image delivery, and each model produced a grounded occlusion finding in a shared-Host revision. **Full repair/re-review/delivery has not passed**: preserve the registry-interference diagnostic run, output-budget calibration, final call cutoff and provider timeout rather than claiming green E2E. See [actual evidence, default adapter gap and schema mismatch](FEATURE_301_v0.7.97_TEST_GUIDE.md#natural-task-observations-2026-10-13). The earlier Kimi smoke explicitly requested visual review and cannot prove automatic task-triggering.
+
+### Natural-task observations (2026-10-13)
+
+Historical baseline: `27d08788`, Windows, AMA/full-access, one isolated shared
+Host with two Sessions, explicit Artifact registration and separate headless
+Chromium cache. Real routes were `zai-coding/glm-5.3-flash` and
+`deepseek/deepseek-flash`, at most one request in flight per provider, with no
+third judge or child/workflow. Production tool descriptions/prompts were used.
+The input only requested renaming the PPT title to “Quarterly revenue review”,
+saving `final.pptx` and retaining the revenue table/other content; it contained
+no slash, review, skill or tool hint. A dark overlaid rectangle hid the title.
+
+| Model | Autonomous rendering / PNG delivered to provider | Grounded occlusion finding | Full repair/re-review/delivery |
+| --- | --- | --- | --- |
+| GLM-5.3-Flash | Observed; actual PNG SHA-256 matched request image bytes | Observed in revision 2 | Unproven; final verification hit provider termination/timeout and test cutoff |
+| DeepSeek Flash | Observed; actual PNG SHA-256 matched request image bytes | Observed in revisions 2 and 3 | Unproven; final verification reached the ten-request cell limit |
+
+Both models loaded `artifact-review` without being asked. GLM compared original
+and edited pixels; DeepSeek also rendered a probe to investigate text/layer
+ordering. Main-session pixel inspection agreed with the occlusion findings.
+These observations establish possible automatic triggering, not a reliability
+percentage, every-format coverage or completed final acceptance.
+
+| Revision / directory under `%TEMP%` | Actual generation requests | Diagnostic result |
+| --- | ---: | --- |
+| 1 / `kodax-artifact-auto-e2e-1cu2up` | 14 | Two in-process Runtimes interfered through extension registration; closing one invalidated the other's scope. Event callbacks did not enforce the intended AMA fixture restriction. Keep observed image delivery; do not attribute scope failure to model review ability. |
+| 2 / `kodax-artifact-auto-e2e-juzwDb` | 11 | One Host and trusted `tool:before` fixture checks removed the scope error. Both models found the defect. The normal 2,048→64,000 output-budget upgrade met the fixture's 32,768 wire cap. |
+| 3 / `kodax-artifact-auto-e2e-apjfWR` | 16 | Initial budget 8,192 allowed the existing 64,000 upgrade. DeepSeek reached the request cap; GLM had three normal responses before termination/request timeout and the 300-second cutoff. |
+
+Total: 41 actual generation requests including diagnostic failures. Per-cell
+limits were ten requests, 50 tool events and 300 seconds. Each `experiment.json`
+froze limits and accumulated prior rounds; the final conservative token/spend
+reservation was 6,171,182 / USD 26.142904, not actual usage or billing. Raw request
+bodies without auth headers, responses, tool events, source/PPT/PNG and
+`main-session-review.json` retain image hashes, decisions, attribution and limits
+in those temporary directories; generated outputs are not repository fixtures.
+
+Unmanaged shell was intentionally prohibited in revisions 2/3, so this did not
+cover ordinary CLI script/OOXML/layer-order repair alternatives. No further
+samples were added to chase a green result. The engineering recommendation was
+`recommend-iterate`. Keep the [local adapter inspection and tool schema gaps](../ARTIFACT_SDK.md#integration-gaps-recorded-on-2026-10-13)
+separate from model behavior and the user's independently reported Space behavior.
+This is migrated historical evidence, not a new paid run.
 
 ## Spec
 

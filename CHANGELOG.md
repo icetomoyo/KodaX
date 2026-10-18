@@ -103,7 +103,7 @@ Validation: 16,589 tests passed, with package/bundle/native/type checks recorded
 in the [regression guide](docs/test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md).
 Natural-task GLM/DeepSeek smoke observed automatic image review, but full
 repair/re-review/delivery has not passed all checks. Native DOCX fidelity and
-model-facing schema gaps remain open; see [E2E evidence](docs/research/automatic-visual-review-e2e-2026-10-13.md).
+model-facing schema gaps remain open; see [E2E evidence](docs/test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#natural-task-observations-2026-10-13).
 
 ---
 

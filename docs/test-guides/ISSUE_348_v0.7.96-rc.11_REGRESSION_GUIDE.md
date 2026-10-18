@@ -192,3 +192,47 @@ pages, then End to the final answer. Resize while reading a long user or
 assistant paragraph and verify that the same words remain in view. During a
 held Run, verify that activity, Stop and any approval dialog remain usable
 while reading old content. Do not use a live personal Session for fault tests.
+
+### Shared-contract repairs and recorded results
+
+Historical baseline: branch `6e5d6298` containing main `c447c0f3`, 2026-09-26.
+The repair retained Host authority and existing Client methods; it added no
+global event log, unlimited UI cache or generic state machine.
+
+| Confirmed counterexample | Repair / regression boundary |
+| --- | --- |
+| F01: large chunked bodies corrupt UTF-8 | Decode each base64 chunk to bytes, concatenate, then decode UTF-8/JSON; test 256 KiB boundaries, Chinese/emoji and page/item/search reads |
+| F02: 160-block message cut to 150 | Canonical history uses the complete restore range while the live window stays bounded; preserve source identities and tool parameters |
+| F03: user item leaves live window | InputId-backed items use stable canonical read sources; distinguish same-text identities and legacy items across append/compaction/rewind |
+| F04: failed Session creation leaks MCP | Own acquired resources immediately, distinguish new/existing sidecars, roll back and report both creation and cleanup failures |
+| F05: Workflow default permission differs from product | Explicit `settingsDefaults: 'product'`, negotiated with `workflowSettingsDefaults.version=1`; reject older Hosts, retain low-level defaults when not selected |
+| Issue 350: early ordinary history unreachable | Existing canonical readers, bounded bidirectional pages and source/character anchors; freeze only body content while controls stay live |
+
+Event subscription cleanup also retains diagnostics before handshake and on
+remote release failure. Normal browsing is bounded to four pages, 800 items,
+two million characters and 128 new-page cursors; anchor reads cap at one million
+characters. Stale revisions, unlocatable ranges or read failures retain the
+screen and report/refresh explicitly. No cross-revision concatenation, invented
+legacy identity, unlimited retry or restoration of unsaved answer tails is promised.
+
+Recorded validation: typecheck/build passed; bundle 39/39; Contract 117 files,
+954 passed/21 todo; UI 162/162 with an overlapping independent 15/15 recheck;
+source/bundle symptom PTY 4/4, bidirectional PTY 2/2, existing full PTY 48/48;
+tracker 4/4. Standards/Spec finished with no actionable findings after fixing
+long-line quadratic offsets, oversized body slicing and resize anchors.
+
+The first Unit broad run was 11,929 passed, two failed, three skipped: one read
+an in-progress anchor RED case and one OAuth fixture hit a random `bad port`.
+The affected files/hook then passed 26/26; a second broad run was stopped and is
+not a pass. Fast recorded 2,185 passed/two timeouts/32 skipped; System recorded
+1,326 passed/two timeouts/42 skipped while broad suites overlapped and System
+used two workers. All four timeout cases passed serially within their original
+limits afterward, without product/timeout changes. These rechecks do not make
+the initial broad runs all green; future layers follow CI order with System
+single-worker. No paid provider or original user Session was used.
+
+Logs remain at `%TEMP%/kodax-contract-browse-{build,typecheck,contract,unit,recheck,fast,system,timeout-recheck,bundle,tracker}.log`.
+Symptom PTY directories under `%TEMP%/kodax-repl-acceptance-` were `mrRsiP`,
+`Jt2Qja`, `545TVh`, `gU7aWd`; bidirectional runs `1F2DXy`, `C3Re3M`; full PTY
+`MKT5td`. SGR/PageUp checks do not replace physical Windows Terminal mouse tests.
+This section preserves historical results rather than claiming a new test run.
