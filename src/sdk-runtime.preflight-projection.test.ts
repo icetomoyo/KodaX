@@ -83,3 +83,63 @@ it('rejects unreadable canonical metadata instead of inheriting presentation-lis
     await fs.rm(homeDir, { recursive: true, force: true });
   }
 });
+
+it.each(['completed', 'running'] as const)('checks shared Host safety with a %s Run and an unreadable Session body', async (phase) => {
+  const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-preflight-body-eio-'));
+  const sessionsDir = path.join(homeDir, '.kodax', 'sessions');
+  const sessionId = 'historical-body-eio';
+  const sessionFile = path.join(sessionsDir, `${sessionId}.jsonl`);
+  await fs.mkdir(sessionsDir, { recursive: true });
+  const content = JSON.stringify({
+    _type: 'meta', id: sessionId, title: sessionId, gitRoot: homeDir,
+    createdAt: '2026-10-01T00:00:00.000Z', activeMessageCount: 1,
+    runtimeInfo: { surface: 'cli' },
+    ...(phase === 'running' ? { actorSnapshot: {
+      schemaVersion: 1, revision: 1, maxConcurrentThreads: 4,
+      actors: [{ path: '/root/worker', currentTurnId: 'active-turn', kind: 'native' }],
+      turns: [], mailboxes: {}, events: [],
+    } } : {}),
+  }) + '\n' + JSON.stringify({ role: 'user', content: 'x'.repeat(600_000) }) + '\n';
+  await fs.writeFile(sessionFile, content);
+  const runDir = path.join(homeDir, '.kodax', 'runtime', 'profiles', 'coder', 'runs', 'historical-run');
+  await fs.mkdir(runDir, { recursive: true });
+  await fs.writeFile(path.join(runDir, 'status.json'), JSON.stringify({
+    runId: 'historical-run', sessionId, phase, provider: 'fixture',
+    startedAt: '2026-10-01T00:00:00.000Z',
+    ...(phase === 'completed' ? { endedAt: '2026-10-01T00:01:00.000Z' } : {}),
+  }));
+  const runtime = await createKodaXRuntime({ homeDir, profile: 'coder', sharedDaemonHost: true });
+  const readFile = fs.readFile;
+  // Windows ERROR_CRC surfaced as EIO on a real historical file after 512 KiB.
+  // Metadata reads through a file handle still succeed; a full-body read fails.
+  const bodyRead = vi.spyOn(fs, 'readFile').mockImplementation(((...args: Parameters<typeof fs.readFile>) => {
+    if (String(args[0]) === sessionFile) {
+      return Promise.reject(Object.assign(new Error('EIO: i/o error, read'), { code: 'EIO' }));
+    }
+    return readFile(...args);
+  }) as typeof fs.readFile);
+  try {
+    await expect(runtime.runs.list()).resolves.toMatchObject([{
+      runId: 'historical-run', phase: phase === 'completed' ? 'completed' : 'unknown',
+    }]);
+    await expect(runtime.status.preflight()).resolves.toMatchObject(phase === 'completed'
+      ? { canStop: true, activeRuns: [], activeAgentTurns: [] }
+      : { canStop: false, blockers: expect.arrayContaining(['active_runs', 'active_agent_turns']),
+          activeRuns: [{ runId: 'historical-run', phase: 'unknown' }],
+          activeAgentTurns: [{ sessionId, actorPath: '/root/worker', turnId: 'active-turn' }],
+        });
+    const metadataRead = vi.spyOn(FileSessionStorage.prototype, 'readActorMetadata')
+      .mockRejectedValueOnce(Object.assign(new Error('EIO: i/o error, read'), { code: 'EIO' }));
+    try {
+      await expect(runtime.runs.list()).rejects.toMatchObject({ code: 'EIO' });
+    } finally {
+      metadataRead.mockRestore();
+    }
+    await expect(runtime.sessions.load(sessionId)).rejects.toMatchObject({ code: 'EIO' });
+  } finally {
+    bodyRead.mockRestore();
+    await runtime.close();
+    expect(await fs.readFile(sessionFile, 'utf8')).toBe(content);
+    await fs.rm(homeDir, { recursive: true, force: true });
+  }
+});

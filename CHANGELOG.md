@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Shared Host Run inspection now checks Session admission through canonical identity metadata instead of loading complete historical transcripts. A readable metadata header with an unreadable body no longer blocks unrelated Run listing, daemon inspection, or idle-exit inspection. Unreadable metadata still fails closed, active/unknown Runs and Actor turns still block exit, and explicitly opening the affected Session still reports its read error.
+
 ---
 
 ## [0.7.97-alpha.8] - 2026-10-18

@@ -20998,9 +20998,11 @@ function createRuntimeSessionAdmission(
     },
     async admitsSession(sessionId) {
       if (!enforced) return true;
-      const data = await manager.storage.peek(sessionId);
+      // Admission depends on canonical identity metadata, not transcript bytes.
+      // A historical body's read failure must not block global Run inspection.
+      const data = await manager.storage.readActorMetadata(sessionId);
       return (
-        data !== null &&
+        data !== undefined &&
         admitted(data.runtimeInfo?.surface, data.runtimeInfo?.profileId)
       );
     },
