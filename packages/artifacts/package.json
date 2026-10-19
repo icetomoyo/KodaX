@@ -3,6 +3,7 @@
   "version": "0.7.97-alpha.7",
   "description": "Independent artifact operations and visual evidence with an injected execution boundary",
   "type": "module",
+  "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

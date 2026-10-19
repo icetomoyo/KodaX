@@ -1,7 +1,7 @@
 name: CI
 
-# Verifies the declared runtime floor actually holds. `engines.node` is
-# ">=20.0.0" across the root and every workspace package, but nothing was
+# Verifies the supported Node major versions. The root/Artifact runtime floor
+# is 20.16; the core source workspaces retain 20.0, but nothing was
 # proving the suite runs on anything other than the release build's Node 22.
 # This matrix runs the build + fast suite on the engines floor (20) and the
 # build version (22), then runs the expensive contract/system tiers once on

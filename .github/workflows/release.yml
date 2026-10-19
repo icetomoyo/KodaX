@@ -366,6 +366,9 @@ jobs:
       - name: Installed npm trusted text native gate
         run: npm run test:packed-native
 
+      - name: Installed Artifact SDK gate
+        run: node --test tests/packed-artifacts.test.mjs
+
       - name: Hash npm package
         shell: bash
         run: sha256sum kodax-ai-kodax-*.tgz > kodax-ai-kodax-npm.sha256

@@ -9,12 +9,12 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createKodaXRuntime, ensureKodaXRuntime, waitForRuntimeDaemonShutdown } from '../dist/sdk-runtime.js';
 import { connectKodaXClient } from '../dist/sdk-client.js';
-import { createArtifactSdk } from '../packages/artifacts/dist/index.js';
-import { createKodaXArtifactPort } from '../packages/artifacts/dist/client.js';
+import { createArtifactSdk } from '@kodax-ai/kodax/artifacts';
+import { createKodaXArtifactPort } from '@kodax-ai/kodax/artifacts/client';
 import { KodaXBaseProvider, registerModelProvider } from '../dist/sdk-llm.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const artifactEntry = path.join(root, 'packages/artifacts/dist/runtime-entry.js');
+const artifactEntry = fileURLToPath(new URL('./runtime-entry.js', import.meta.resolve('@kodax-ai/kodax/artifacts/runtime')));
 const run = promisify(execFile);
 test('built worker rejects a changed manifest before executing or writing artifact output', async () => {
  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'artifact tamper '));
@@ -32,7 +32,7 @@ test('built Product Client reads exact evidence bytes from the shared Host witho
  await fs.mkdir(path.join(home, '.kodax', 'extensions'), { recursive: true }); await fs.mkdir(work);
  const bytes = await fs.readFile(path.join(root, 'tests/fixtures/images/valid-png.png')); await fs.writeFile(path.join(work, 'a.png'), bytes);
  await fs.writeFile(path.join(home, '.kodax', 'extensions', 'artifacts.mjs'),
-  'import {registerArtifactTools} from ' + JSON.stringify(pathToFileURL(path.join(root, 'packages/artifacts/dist/kodax.js')).href) + ';\n' +
+  'import {registerArtifactTools} from ' + JSON.stringify(import.meta.resolve('@kodax-ai/kodax/artifacts/kodax')) + ';\n' +
   'import {executeManagedProcess} from ' + JSON.stringify(pathToFileURL(path.join(root, 'dist/sdk-coding.js')).href) + ';\n' +
   'export default api=>registerArtifactTools(api,{execute:executeManagedProcess,nodeExecutable:' + JSON.stringify(process.execPath) + '});');
  const runtime = await ensureKodaXRuntime({ homeDir: home, defaultProvider: 'openai', daemonStartupTimeoutMs: 30_000 });
@@ -63,7 +63,7 @@ test('built KodaX Host owns PPT tool Runs and returns current pixels through the
  await fs.mkdir(path.join(home, '.kodax', 'extensions'), { recursive: true }); await fs.mkdir(workspace);
  const options = { nodeExecutable: process.execPath, browserExecutable: process.env.KODAX_ARTIFACT_TEST_BROWSER };
  await fs.writeFile(path.join(home, '.kodax', 'extensions', 'artifacts.mjs'),
-  'import {registerArtifactTools} from ' + JSON.stringify(pathToFileURL(path.join(root, 'packages/artifacts/dist/kodax.js')).href) + ';\n' +
+  'import {registerArtifactTools} from ' + JSON.stringify(import.meta.resolve('@kodax-ai/kodax/artifacts/kodax')) + ';\n' +
   'import {executeManagedProcess} from ' + JSON.stringify(pathToFileURL(path.join(root, 'dist/sdk-coding.js')).href) + ';\n' +
   'export default api=>registerArtifactTools(api,{execute:executeManagedProcess,...' + JSON.stringify(options) + '});');
  let modelCalls = 0, modelScenario, modelMessages;

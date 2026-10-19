@@ -83,6 +83,22 @@
       "types": "./dist/sdk-experimental-memory.d.ts",
       "import": "./dist/sdk-experimental-memory.js"
     },
+    "./artifacts": {
+      "types": "./dist/artifacts/dist/index.d.ts",
+      "import": "./dist/artifacts/dist/index.js"
+    },
+    "./artifacts/client": {
+      "types": "./dist/artifacts/dist/client.d.ts",
+      "import": "./dist/artifacts/dist/client.js"
+    },
+    "./artifacts/runtime": {
+      "types": "./dist/artifacts/dist/runtime.d.ts",
+      "import": "./dist/artifacts/dist/runtime.js"
+    },
+    "./artifacts/kodax": {
+      "types": "./dist/artifacts/dist/kodax.d.ts",
+      "import": "./dist/artifacts/dist/kodax.js"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
@@ -143,6 +159,7 @@
   "author": "",
   "license": "SEE LICENSE IN LICENSE",
   "dependencies": {
+    "@aiden0z/pptx-renderer": "1.3.0",
     "@agentclientprotocol/sdk": "^0.15.0",
     "@alcalzone/ansi-tokenize": "^0.2.5",
     "@anthropic-ai/sandbox-runtime": "0.0.65",
@@ -157,8 +174,10 @@
     "clipboardy": "^4.0.0",
     "code-excerpt": "^4.0.0",
     "commander": "^13.1.0",
+    "docx-renderer": "0.2.2",
     "es-toolkit": "^1.46.1",
     "fflate": "^0.8.3",
+    "fast-xml-parser": "5.3.4",
     "glob": "^11.0.1",
     "iconv-lite": "^0.6.3",
     "image-size": "2.0.2",
@@ -168,9 +187,14 @@
     "ink-text-input": "^6.0.0",
     "is-in-ci": "^2.0.0",
     "jimp": "^1.6.0",
+    "jszip": "3.10.1",
     "oauth4webapi": "3.8.6",
     "openai": "^6.32.0",
     "partial-json": "^0.1.7",
+    "pdfjs-dist": "5.4.296",
+    "playwright-core": "1.62.1",
+    "pngjs": "7.0.0",
+    "pptxgenjs": "4.0.1",
     "patch-console": "^2.0.0",
     "react": ">=19.0.0",
     "react-devtools-core": "^7.0.1",
@@ -208,7 +232,7 @@
     "vitest": "4.1.11"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=20.16.0"
   },
   "repository": {
     "type": "git",
@@ -224,6 +248,7 @@
     "dist/constructed-handler-worker.js",
     "dist/types-chunks",
     "dist/native",
+    "dist/artifacts",
     "config-templates",
     "scripts/kodax-bin.cjs",
     "scripts/production-env.cjs",
@@ -236,6 +261,7 @@
     "docs/CLIENT_CONTRACT.md",
     "docs/SDK_MIGRATION.md",
     "docs/SPACE_SDK_SEAMS.md",
+    "docs/ARTIFACT_SDK.md",
     "public_docs/configuration",
     "public_docs/getting-started",
     "LICENSE",
