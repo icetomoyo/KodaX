@@ -164,15 +164,16 @@ and feature-specific Host compatibility checks.
 
 ## Optional Artifact SDK
 
-Install `@kodax-ai/artifacts` separately (ESM, Node >=20.16). Its root SDK/types
-have no KodaX or renderer dependency; `/runtime` supplies an independently
-authorized Node host. For a product UI sharing KodaX, register the `/kodax`
-adapter once in the trusted Host and bind the SDK to the existing Client/Session:
+Install only `@kodax-ai/kodax` (ESM, Node >=20.16). The optional Artifact API
+uses `/artifacts` subpaths; its pure SDK/types do not load renderers.
+`/artifacts/runtime` supplies an independently authorized Node host. For a
+product UI, register `/artifacts/kodax` once in the existing trusted Host and
+bind `/artifacts/client` to the existing Client/Session:
 
 ```ts
 import type { KodaXProductClient } from '@kodax-ai/kodax/client';
-import { createArtifactSdk } from '@kodax-ai/artifacts';
-import { createKodaXArtifactPort } from '@kodax-ai/artifacts/client';
+import { createArtifactSdk } from '@kodax-ai/kodax/artifacts';
+import { createKodaXArtifactPort } from '@kodax-ai/kodax/artifacts/client';
 
 export function artifactSdk(client: KodaXProductClient, sessionId: string) {
   return createArtifactSdk(createKodaXArtifactPort(client, sessionId));
@@ -203,8 +204,10 @@ re-review and delivery have not passed all model smoke checks.
 See [support, setup and examples](../../docs/ARTIFACT_SDK.md),
 [pre-release contract migration](../../docs/SDK_MIGRATION.md#artifact-sdk-契约迁移2026-10-13)
 and [E2E evidence/known schema gap](../../docs/test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#natural-task-observations-2026-10-13).
-These additions ship in `v0.7.97-alpha.5`; an installed npm package from an
-earlier version does not include them.
+The operations were implemented in the alpha.5 source release; the single-package
+Artifact exports were added locally on 2026-10-18 and are not in the already
+published alpha.7. Install the current local main tarball or a future npm version
+containing this distribution change; no second package or publish command is needed.
 
 ## Low-level reference and release history
 

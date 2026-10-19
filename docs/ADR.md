@@ -4,6 +4,11 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-10-18
 >
+> **2026-10-18 Artifact distribution revision:** FEATURE_301 now ships only
+> through `@kodax-ai/kodax` Artifact subpaths. The workspace remains private;
+> no independent Artifact npm publication is required. This local change is
+> not a new npm release; see the distribution decision below.
+>
 > **v0.7.97-alpha.7 release addendum:** Space #222's shared-Session Host
 > ownership is resolved without a Host capability bump: the launcher finds
 > the daemon that owns the canonical Session directory across daemon
@@ -6708,3 +6713,30 @@ and automatic DOCX pagination, actual viewport/background/time, staleness,
 corruption and absent capabilities. [SDK support and integration gaps](ARTIFACT_SDK.md)
 and the [test guide](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md) define the delivered
 surface and evidence limits.
+
+### Single-package Artifact distribution (2026-10-18)
+
+The user selected one public npm package and one publish operation. This
+supersedes FEATURE_301's earlier independent `@kodax-ai/artifacts` distribution
+plan; historical source/tag records above retain their original dates.
+`packages/artifacts` remains a private, independently testable source module.
+Standalone Node use still injects an execution port, without requiring a
+separate npm package or a KodaX Session/Run owner.
+
+The four public entries are `@kodax-ai/kodax/artifacts`,
+`/artifacts/client`, `/artifacts/runtime` and `/artifacts/kodax`. The main
+tarball stages the existing module/worker/resource layout under
+`dist/artifacts/` and declares its pinned third-party dependencies. These files
+are kept separate from the core import graph; no startup renderer probes,
+automatic browser installation, additional Host owner or RPC are introduced.
+The declared main-package Node floor advances from 20.0 to 20.16 to match the
+existing Artifact runtime.
+
+This increases main-package dependency/resource size. It avoids an unnecessary
+second install, version-sync and publish workflow when no independent release
+cadence is required. The existing universal main-package CI tarball, checksum,
+archive audit and manual publish remain the only distribution path. Space
+installs that one package and enables the existing trusted extension. Actual
+Space/Electron deployment, other-OS acceptance and prior visual fidelity/model
+limits remain separately unverified. New subpaths require a future npm release;
+the already published alpha.7 cannot be replaced in place.

@@ -303,7 +303,7 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
-**v0.7.97-alpha.4 发布**：新增独立的 `@kodax-ai/artifacts` 包——PPTX 创作、
+**v0.7.97-alpha.4 发布**：新增可独立使用的 Artifact SDK 源码模块——PPTX 创作、
 有界编辑与当前文件视觉证据（轻量渲染，可选 LibreOffice/PDF 转换），并带可选的受管 KodaX
 适配器（FEATURE_301）；同时退役旁路 Sidecar Verifier：主 Agent 在交付前用
 真实工具与渲染证据核验每条需求，由内置 `visual-review` 技能覆盖静态、分页、
@@ -1272,7 +1272,7 @@ kodax --repo-intelligence full --repo-intelligence-trace
 
 ## 仓库结构
 
-KodaX 是基于 npm workspaces 的 TypeScript monorepo，**4 个核心 workspace 包与独立可选 Artifact SDK**（FEATURE_194 v0.7.43 包合并 — 9 → 4，ADR-036），npm 上以单 bundle 包 `@kodax-ai/kodax` 发布 + 13 个 SDK subpath exports（`/agent`、`/llm`、`/coding`、`/media`、`/repl`、`/skills`、`/mcp`、`/session`、`/client`、`/runtime`、`/sandbox`、`/a2a`、`/experimental-memory`；ADR-024 + ADR-032 + ADR-038）。核心包：
+KodaX 是基于 npm workspaces 的 TypeScript monorepo，**4 个核心 workspace 包与私有 Artifact 源码模块**（FEATURE_194 v0.7.43 包合并 — 9 → 4，ADR-036），npm 上以单 bundle 包 `@kodax-ai/kodax` 发布 + 17 个 SDK subpath exports（`/agent`、`/llm`、`/coding`、`/media`、`/repl`、`/skills`、`/mcp`、`/session`、`/client`、`/runtime`、`/sandbox`、`/a2a`、`/experimental-memory`、`/artifacts`、`/artifacts/client`、`/artifacts/runtime`、`/artifacts/kodax`；ADR-024 + ADR-032 + ADR-038）。核心包：
 
 | Workspace 包 | 作用 | 主要依赖 |
 |----|------|---------|
@@ -1287,10 +1287,10 @@ KodaX 是基于 npm workspaces 的 TypeScript monorepo，**4 个核心 workspace
 
 KodaX 有两层结构，SDK 用户需要分开理解：
 
-- **源码层**：4 个核心 workspace 包，另有独立可选 `@kodax-ai/artifacts`：PPTX 创作/限定编辑，PDF/图片/SVG 取证、DOCX 轻量预览、本地网页与 SMIL 捕获，公共准备和真实图片读取。核心启动不加载渲染依赖；桥接沿用受管权限、沙箱和取消。[SDK 支持与限制](docs/ARTIFACT_SDK.md)。
-- **当前源码打包导出**（不表示已发布到 npm）：单个 bundled 包 `@kodax-ai/kodax`，对外暴露 13 个 SDK subpath（SDK 消费者 `import` 时看到的接口）。subpath 分两种角色：
+- **源码层**：4 个核心 workspace 包，另有私有可选 Artifact 源码 workspace，经同一主包 `/artifacts` 子路径交付：PPTX 创作/限定编辑，PDF/图片/SVG 取证、DOCX 轻量预览、本地网页与 SMIL 捕获，公共准备和真实图片读取。核心启动不加载渲染依赖；桥接沿用受管权限、沙箱和取消。[SDK 支持与限制](docs/ARTIFACT_SDK.md)。
+- **当前源码打包导出**（不表示已发布到 npm）：单个 bundled 包 `@kodax-ai/kodax`，对外暴露 17 个 SDK subpath（SDK 消费者 `import` 时看到的接口）。subpath 分两种角色：
   - **完整包 subpath**（`/agent`、`/llm`、`/coding`、`/repl`）—— 每个 1:1 对应一个源码包，暴露完整公开 API。
-  - **集成与窄子集 subpath**（`/media`、`/skills`、`/mcp`、`/session`、`/client`、`/runtime`、`/sandbox`、`/a2a`、`/experimental-memory`）—— 聚焦能力或宿主集成边界；`/experimental-memory` 明确为 opt-in 不稳定接口。
+  - **集成与窄子集 subpath**（`/media`、`/skills`、`/mcp`、`/session`、`/client`、`/runtime`、`/sandbox`、`/a2a`、`/experimental-memory`、`/artifacts`、`/artifacts/client`、`/artifacts/runtime`、`/artifacts/kodax`）—— 聚焦能力或宿主集成边界；`/experimental-memory` 明确为 opt-in 不稳定接口。
 
 | 源码包 | npm subpath | 类型 | 内容 | 典型消费者 |
 |---|---|---|---|---|
@@ -1462,7 +1462,7 @@ KodaX/                       # 4 workspace packages(FEATURE_194 v0.7.43)
 │   ├── kodax_cli.ts         # CLI 主入口（bin: `kodax`）
 │   └── sdk-*.ts             # SDK subpath 入口 → @kodax-ai/kodax/{agent,llm,coding,media,repl,skills,mcp,session,runtime,sandbox,a2a,experimental-memory}
 ├── scripts/
-│   ├── build-bundle.mjs     # esbuild 单 bundle 多 entry 打包（CLI + root + 13 SDK subpath + chunks）
+│   ├── build-bundle.mjs     # esbuild 单 bundle 多 entry 打包（CLI + root + 13 核心 SDK subpath + Artifact 资源 + chunks）
 │   ├── build-binary.mjs     # Bun --compile 单文件二进制打包
 │   └── release.mjs          # 发布 CI 构建的通用 tarball；本地 --pack-only 保持 private:true
 └── .github/workflows/

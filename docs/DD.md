@@ -1029,7 +1029,12 @@ The main agent verifies each requested requirement with actual tool and rendered
 
 Generic Stop hooks remain in `packages/agent`. The coding runner composes extension `turn:complete`, goal accounting/continuation, and child/mailbox waiting without a completion judge. Host goal tools mutate the existing lineage atomically; clients never save a replacement journal. Run terminal status does not certify quality. Historical verifier messages remain display-only and never replay tools.
 
-The optional Artifact SDK's `ArtifactExecutionPort` is shared by standalone Node
+The optional Artifact API is delivered through the main package's four
+`/artifacts` subpaths; its private workspace is not published independently.
+The main tarball preserves `dist/artifacts/{dist,skills,LICENSE}` so worker,
+DOCX browser and skill-relative paths remain valid. Renderer dependencies are
+root dependencies, and core startup does not import those modules.
+`ArtifactExecutionPort` is shared by standalone Node
 and existing-Host consumers. File `VisualSource` records actual source/dependency
 hashes; surface provenance records its target/observation without inventing a
 file hash. PNG evidence records hash, dimensions and a kind-matched locator;

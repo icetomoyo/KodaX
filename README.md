@@ -778,8 +778,8 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
-**v0.7.97-alpha.4 release:** Adds the independent `@kodax-ai/artifacts`
-package — PPTX authoring, bounded editing, and current-file visual
+**v0.7.97-alpha.4 source release:** Adds the optional Artifact SDK workspace
+— PPTX authoring, bounded editing, and current-file visual
 evidence through lightweight rendering (optional LibreOffice/PDF conversion) — with an optional managed
 KodaX adapter (FEATURE_301), and retires the out-of-band Sidecar
 Verifier: the main agent now verifies requested requirements with actual
@@ -1405,12 +1405,12 @@ kodax --repo-intelligence full --repo-intelligence-trace
 
 ## Architecture
 
-KodaX uses a **monorepo architecture** with npm workspaces. Four core packages ship in `@kodax-ai/kodax` with 13 SDK subpath exports (`/agent`, `/llm`, `/coding`, `/media`, `/repl`, `/skills`, `/mcp`, `/session`, `/client`, `/runtime`, `/sandbox`, `/a2a`, `/experimental-memory`; ADR-024 + ADR-032 + ADR-038, with ADR-036 consolidation). The independent optional `@kodax-ai/artifacts` package adds PPTX authoring/limited edits, PDF/image/SVG evidence, candidate DOCX preview, local HTML/SMIL capture, preparation and binary evidence reading. Core startup does not load renderers; the KodaX bridge uses managed permissions, sandbox and cancellation. [SDK support and limits](docs/ARTIFACT_SDK.md).
+KodaX uses a **monorepo architecture** with npm workspaces. Four core packages ship in `@kodax-ai/kodax` with 17 SDK subpath exports (`/agent`, `/llm`, `/coding`, `/media`, `/repl`, `/skills`, `/mcp`, `/session`, `/client`, `/runtime`, `/sandbox`, `/a2a`, `/experimental-memory`, `/artifacts`, `/artifacts/client`, `/artifacts/runtime`, `/artifacts/kodax`; ADR-024 + ADR-032 + ADR-038, with ADR-036 consolidation). The private `artifacts` source workspace adds optional APIs through the same main npm package: PPTX authoring/limited edits, PDF/image/SVG evidence, candidate DOCX preview, local HTML/SMIL capture, preparation and binary evidence reading. Core startup does not load renderers; the KodaX bridge uses managed permissions, sandbox and cancellation. [SDK support and limits](docs/ARTIFACT_SDK.md).
 
 ```
 KodaX/
 ├── packages/                # 4 core packages + optional artifacts
-│   ├── artifacts/           # Independent Artifact SDK + optional managed KodaX adapter
+│   ├── artifacts/           # Private Artifact SDK workspace; main-package subpaths
 │   ├── llm/                 # @kodax-ai/llm - LLM abstraction (16 built-in provider aliases)
 │   │   └── providers/       # Anthropic, OpenAI, DeepSeek, Kimi, MiMo, MiniMax, Zhipu, Ark, …
 │   │
@@ -1480,10 +1480,10 @@ Source-side workspace package names (`@kodax-ai/*`). npm consumers install the s
 
 KodaX has two layers that consumers should understand separately:
 
-- **Source-side**: 4 workspace packages above (what developers see when reading the repo).
-- **Current packaged exports** (not a claim of npm availability): a single bundled package `@kodax-ai/kodax` with 13 SDK subpaths (what SDK consumers `import` from). The subpaths are split into two roles:
+- **Source-side**: 4 core workspace packages plus the private Artifact workspace (what developers see when reading the repo).
+- **Current packaged exports** (not a claim of npm availability): a single bundled package `@kodax-ai/kodax` with 17 SDK subpaths (what SDK consumers `import` from). The subpaths are split into two roles:
   - **Full-package subpaths** (`/agent`, `/llm`, `/coding`, `/repl`) — each one maps 1:1 to a source workspace and exposes its complete public API.
-  - **Integration and narrow subpaths** (`/media`, `/skills`, `/mcp`, `/session`, `/client`, `/runtime`, `/sandbox`, `/a2a`, `/experimental-memory`) — focused host surfaces. `/a2a` composes the neutral F258 plane with the Runtime facade; it does not add A2A wire types to `/agent`.
+  - **Integration and narrow subpaths** (`/media`, `/skills`, `/mcp`, `/session`, `/client`, `/runtime`, `/sandbox`, `/a2a`, `/experimental-memory`, `/artifacts`, `/artifacts/client`, `/artifacts/runtime`, `/artifacts/kodax`) — focused host surfaces. `/a2a` composes the neutral F258 plane with the Runtime facade; it does not add A2A wire types to `/agent`.
 
 | Source package | npm subpath | Type | What you get | Example consumer |
 |---|---|---|---|---|
@@ -2090,7 +2090,7 @@ await runKodaX({
 
 ## SDK Usage
 
-This development tree exposes 13 SDK subpaths plus the root. Shared product
+This development tree exposes 17 SDK subpaths plus the root. Shared product
 applications use `@kodax-ai/kodax/client`; independent libraries and trusted Host
 APIs remain available through the other subpaths. See the [Client contract](docs/CLIENT_CONTRACT.md)
 and [SDK migration guide](docs/SDK_MIGRATION.md). This documentation was checked

@@ -1,13 +1,13 @@
 # FEATURE_301 — Managed Artifact SDK / PPT
 
-Scope: independent optional package; existing PPTX authoring/limited edits, native PDF, PNG/JPEG/WebP/SVG, candidate DOCX, local HTML loaded viewport and SMIL samples; public preparation and checked binary evidence reading through Node or the same shared Host. Four visual kinds remain. Native Office fidelity and absent owner/decoder backends remain unverified. See [actual SDK support and migration](../ARTIFACT_SDK.md).
+Scope: optional Artifact API in the single `@kodax-ai/kodax` npm package, implemented by a private source workspace; existing PPTX authoring/limited edits, native PDF, PNG/JPEG/WebP/SVG, candidate DOCX, local HTML loaded viewport and SMIL samples; public preparation and checked binary evidence reading through Node or the same shared Host. Four visual kinds remain. Native Office fidelity and absent owner/decoder backends remain unverified. See [actual SDK support and migration](../ARTIFACT_SDK.md).
 
 ## Enable the optional adapter
 
-Build the matching checkout with `npm run build`. Install/pack `@kodax-ai/artifacts` separately; it is not part of the core CLI bundle. Add a trusted extension in the configured KodaX extensions directory:
+Build the matching checkout with `npm run build`, then use `node scripts/release.mjs --skip-build --pack-only` and install that one main-package tarball. The already published alpha.7 lacks these new exports. The private Artifact workspace is not published separately; its renderer graph remains separate from core startup. Add a trusted extension in the configured Host extensions directory:
 
 ```js
-import { registerArtifactTools } from '@kodax-ai/artifacts/kodax';
+import { registerArtifactTools } from '@kodax-ai/kodax/artifacts/kodax';
 import { executeManagedProcess } from '@kodax-ai/kodax/coding';
 export default api => registerArtifactTools(api, {
   execute: executeManagedProcess,
@@ -26,11 +26,11 @@ Supported file rendering uses headless Chromium: a terminal-only Host needs no d
 - After building, explicitly prepare the default Chromium for local acceptance with the existing SDK operation (may download the runtime and write its cache; a product Host uses admitted `artifact_prepare`):
 
   ```sh
-  node --input-type=module -e 'import {executeArtifactRequest} from "./packages/artifacts/dist/runtime.js"; const result = await executeArtifactRequest({operation:"prepare",input:{}},{workspaceRoot:process.cwd()}); if(result.status!=="ready") throw new Error(JSON.stringify(result));'
+  node --input-type=module -e 'import {executeArtifactRequest} from "@kodax-ai/kodax/artifacts/runtime"; const result = await executeArtifactRequest({operation:"prepare",input:{}},{workspaceRoot:process.cwd()}); if(result.status!=="ready") throw new Error(JSON.stringify(result));'
   ```
 
   This command also works in PowerShell. An optional `KODAX_ARTIFACT_TEST_BROWSER` supplies an already-prepared absolute Chromium path to the tests; it does not enable production visual review. Set it in PowerShell with `$env:KODAX_ARTIFACT_TEST_BROWSER = 'C:\path\to\chrome.exe'`, or in Bash with `export KODAX_ARTIFACT_TEST_BROWSER='/absolute/path/to/chrome'`. An explicitly supplied path remains the trusted host's responsibility.
-- `node --test tests/bundled-artifacts.test.mjs tests/packed-artifacts.test.mjs`: manifest tampering rejected; actual Host tool Runs and scripted AMA receive current images; a separately spawned Host serves Product Client evidence through the shared attachment seam; independent installation and Node-free root type checks. PPT render/hash and AMA image assertions always run, including when the test browser variable is unset and the production default runtime is used. A missing or unusable runtime fails this full acceptance; it is never counted as a visual pass. No external model calls or implicit browser installation.
+- `node --test tests/bundled-artifacts.test.mjs tests/packed-artifacts.test.mjs`: manifest tampering rejected; actual Host tool Runs and scripted AMA receive current images; a separately spawned Host serves Product Client evidence through the shared attachment seam; main-package-only installation, four Artifact subpaths/resources and Node-free Artifact root type checks. PPT render/hash and AMA image assertions always run, including when the test browser variable is unset and the production default runtime is used. A missing or unusable runtime fails this full acceptance; it is never counted as a visual pass. No external model calls or implicit browser installation.
 - For the source tests, set `KODAX_ARTIFACT_TEST_BROWSER` to the prepared Chromium path, then run `npx vitest run packages/artifacts/src packages/coding/src/extensions/managed-process.test.ts`. Their browser-dependent cases still explicitly skip without that test variable; those skips do not establish full visual acceptance.
 - Opt-in paid smoke, Bash: `KODAX_ARTIFACT_E2E=1 node tests/artifact-review-smoke.eval.mjs`; PowerShell: `$env:KODAX_ARTIFACT_E2E = '1'; node tests/artifact-review-smoke.eval.mjs`. Read EVAL_GUIDELINES first. Fixed subscription route `kimi-code/k3-256k`, two cases, one provider request in flight. Physical calls, rounds, tools, tokens, reservation cost and timeout are bounded; raw protocol requests exclude transport headers/credentials and stay in OS temp. In PowerShell, remove the opt-in afterward with `Remove-Item Env:KODAX_ARTIFACT_E2E`.
 
