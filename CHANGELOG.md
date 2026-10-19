@@ -8,6 +8,22 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.97-alpha.8] - 2026-10-18
+
+Eighth alpha of the v0.7.97 line: the Artifact SDK ships inside the single
+main package — `@kodax-ai/kodax` gains `/artifacts`, `/artifacts/client`,
+`/artifacts/runtime` and `/artifacts/kodax` subpath exports while the
+workspace module turns private, its pinned dependencies declare in the root
+package, and the declared Node floor advances to 20.16. Every v0.7.96
+stable and v0.7.97-alpha.1 through alpha.7 contract is retained. npm
+publication remains a manual maintainer action.
+
+### Changed
+
+- Single-package Artifact distribution: the main tarball stages the existing module/worker/resource layout under `dist/artifacts/`, the tarball audit validates every export/entry/dependency, the Release workflow runs an installed-package Artifact gate, and `release.mjs` rejects a separate `--artifacts` publication. There is no separate `@kodax-ai/artifacts` npm package. Core startup stays free of renderer loading and probes.
+
+---
+
 ## [0.7.97-alpha.7] - 2026-10-16
 
 Seventh alpha of the v0.7.97 line: shared-Session Host ownership resolves

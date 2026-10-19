@@ -136,6 +136,36 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.97-alpha.8 release preparation
+
+Release state: `v0.7.97-alpha.8` is the GitHub pre-release for the exact
+tagged commit — the eighth alpha of the v0.7.97 line, shipping the
+single-package Artifact distribution revision. The tag-triggered Release
+workflow runs the full reusable CI workflow before the build matrix; branch
+pushes do not trigger CI, so the tag is the first and only remote validation
+gate. The `-alpha` suffix marks the release as a GitHub pre-release
+automatically. npm registry publication remains a separate manual maintainer
+action.
+
+On top of v0.7.97-alpha.7 it includes:
+
+- Artifact SDK inside the single main package: `@kodax-ai/kodax` exposes
+  `/artifacts`, `/artifacts/client`, `/artifacts/runtime` and
+  `/artifacts/kodax`; `packages/artifacts` turns private with no separate
+  npm publication, and `release.mjs` rejects `--artifacts`.
+- Distribution integrity: the bundle build stages the existing
+  module/worker/resource layout under `dist/artifacts/`; the tarball audit
+  validates every export/entry/dependency; the Release workflow runs the
+  installed-package Artifact gate (`tests/packed-artifacts.test.mjs`) on the
+  packed candidate.
+- Declared Node floor advances from 20.0 to 20.16 (the existing Artifact
+  runtime floor); the CI matrix comment records that the core source
+  workspaces retain 20.0 while the root/Artifact floor is 20.16.
+
+All root/workspace package versions and lockfile entries are
+`0.7.97-alpha.8`. The feature-design submodule, public guides, architecture
+documents, and `kodax_manual` track this release.
+
 ## v0.7.97-alpha.7 release preparation
 
 Release state: `v0.7.97-alpha.7` is the GitHub pre-release for the exact

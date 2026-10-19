@@ -4,6 +4,13 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-10-18
 >
+> **v0.7.97-alpha.8 release addendum:** the Artifact SDK ships inside the
+> single `@kodax-ai/kodax` package — four public subpaths (`/artifacts`,
+> `/artifacts/client`, `/artifacts/runtime`, `/artifacts/kodax`), a private
+> workspace module, hoisted pinned dependencies, Node floor 20.16, tarball
+> audit and an installed-package Release gate. Every v0.7.96 stable and
+> v0.7.97-alpha.1 through alpha.7 contract is retained.
+>
 > **2026-10-18 Artifact distribution revision:** FEATURE_301 now ships only
 > through `@kodax-ai/kodax` Artifact subpaths. The workspace remains private;
 > no independent Artifact npm publication is required. This local change is

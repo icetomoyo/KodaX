@@ -11,8 +11,8 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-alpha.7` (Git tag / GitHub pre-release); `v0.7.96` remains the last stable release |
-| Current package version | `@kodax-ai/kodax@0.7.97-alpha.7` (npm publication remains manual) |
+| Current released version | `v0.7.97-alpha.8` (Git tag / GitHub pre-release); `v0.7.96` remains the last stable release |
+| Current package version | `@kodax-ai/kodax@0.7.97-alpha.8` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 core packages + private optional `artifacts` source workspace; one public npm package |
 | Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3` and extended with startup streamlining, Session recency ordering, draft admission, concurrent-launch recovery and shared-Session Host ownership resolution through `v0.7.97-alpha.7`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement released in alpha.4; missing visual capabilities remain unverified; [design](ADR.md#verification-responsibility-and-tradeoffs) |
@@ -524,6 +524,22 @@
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
 ---
+
+## v0.7.97-alpha.8 Release Record
+
+`v0.7.97-alpha.8` is the eighth alpha of the v0.7.97 line: the Artifact SDK
+ships inside the single main package. `@kodax-ai/kodax` gains
+`/artifacts`, `/artifacts/client`, `/artifacts/runtime` and
+`/artifacts/kodax` subpath exports; the workspace module turns private,
+its pinned dependencies declare in the root package, and the declared Node
+floor advances to 20.16. The main tarball stages the existing
+module/worker/resource layout under `dist/artifacts/`, the tarball audit
+validates every export/entry/dependency, the Release workflow runs an
+installed-package Artifact gate, and `release.mjs` rejects a separate
+`--artifacts` publication. Core startup stays free of renderer loading and
+probes. Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.7 contract
+is retained. Cross-platform manual acceptance and npm publication remain
+manual maintainer steps.
 
 ## v0.7.97-alpha.7 Release Record
 

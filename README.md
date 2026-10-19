@@ -794,6 +794,17 @@ starts, upgrades, or waits. See
 Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2/alpha.3 contract is
 retained.
 
+**v0.7.97-alpha.8 release:** Ships the Artifact SDK inside the single main
+package — `@kodax-ai/kodax` gains `/artifacts`, `/artifacts/client`,
+`/artifacts/runtime` and `/artifacts/kodax` subpath exports; the workspace
+module turns private (no separate artifacts npm package), its pinned
+dependencies declare in the root package, and the declared Node floor
+advances to 20.16, with tarball-audit and installed-package Release gates.
+See the
+[v0.7.97-alpha.8 release notes](docs/release.md#v0797-alpha8-release-preparation).
+Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.7 contract is
+retained.
+
 **v0.7.97-alpha.7 release:** Resolves shared-Session Host ownership across
 daemon profiles (Space #222) — launchers wait for a starting owner's verified
 descriptor within the original startup deadline, reuse compatible Hosts
@@ -2094,7 +2105,7 @@ This development tree exposes 17 SDK subpaths plus the root. Shared product
 applications use `@kodax-ai/kodax/client`; independent libraries and trusted Host
 APIs remain available through the other subpaths. See the [Client contract](docs/CLIENT_CONTRACT.md)
 and [SDK migration guide](docs/SDK_MIGRATION.md). This documentation was checked
-against package version `0.7.97-alpha.7`; npm publication is separate from
+against package version `0.7.97-alpha.8`; npm publication is separate from
 the current development-tree contract.
 
 ```bash

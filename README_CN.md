@@ -314,6 +314,13 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 [v0.7.97-alpha.4 发布清单](docs/release.md#v0797-alpha4-release-preparation)。
 所有 v0.7.96 稳定与 v0.7.97-alpha.1/alpha.2/alpha.3 契约全部保留。
 
+**v0.7.97-alpha.8 发布**：Artifact SDK 并入单一主包发布——`@kodax-ai/kodax` 新增
+`/artifacts`、`/artifacts/client`、`/artifacts/runtime`、`/artifacts/kodax` 四个
+子路径导出;工作区模块转为私有(不再独立发布 npm),固定依赖上移到根包声明,
+Node 最低版本提升到 20.16,tarball 审计与已安装包 Release 门同步就位。
+详见 [v0.7.97-alpha.8 发布清单](docs/release.md#v0797-alpha8-release-preparation)。
+所有 v0.7.96 稳定与 v0.7.97-alpha.1 至 alpha.7 契约全部保留。
+
 **v0.7.97-alpha.7 发布**：跨 daemon profile 解析共享 Session 存储的 Host
 归属（Space #222）——启动器在原启动期限内等待启动中 owner 的已验证描述符，
 兼容 Host 直接复用而不重启工作，仅允许受控的同构建 orphan-exit 策略刷新。

@@ -145,7 +145,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('may canonicalize DACL protection/inheritance control at commit');
     expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
-    expect(sandbox).toContain('v0.7.97-alpha.7 release uses Windows native shell protocol 10');
+    expect(sandbox).toContain('v0.7.97-alpha.8 release uses Windows native shell protocol 10');
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
@@ -173,7 +173,13 @@ describe('FEATURE_218 manual registry', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('The v0.7.97-alpha.7 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.97-alpha.8 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.97-alpha.8 release ships the Artifact SDK inside the single main package');
+    expect(sdk).toContain('`@kodax-ai/kodax/artifacts`, `/artifacts/client`, `/artifacts/runtime`, and');
+    expect(sdk).toContain('no separate @kodax-ai/artifacts npm publication exists.');
+    expect(sdk).toContain('advances to 20.16');
+    expect(sdk).toContain('never certify visual approval.');
+    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.7 contract is retained.');
     expect(sdk).toContain('The v0.7.97-alpha.7 release resolves shared-Session Host ownership across daemon');
     expect(sdk).toContain('guarded same-build orphan-exit policy refresh');
     expect(sdk).toContain('`daemon_startup_failed` and `ETIMEDOUT`');
@@ -697,7 +703,8 @@ describe('FEATURE_218 manual registry', () => {
   it('keeps the SDK topic aligned with current published subpaths', () => {
     const content = resolveKodaXManual({ topic: 'sdk' }).content;
 
-    expect(content).toContain('12 SDK subpaths');
+    expect(content).toContain('17 SDK subpaths');
+    expect(content).toContain('no separate @kodax-ai/artifacts npm publication exists.');
     expect(content).toContain('@kodax-ai/kodax/runtime');
     expect(content).toContain('@kodax-ai/kodax/sandbox');
     expect(content).toContain('@kodax-ai/kodax/experimental-memory');
