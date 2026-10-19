@@ -41,6 +41,8 @@ Run from the KodaX repository:
 npx vitest run src/sdk-client.exit.test.ts src/sdk-runtime.preflight-projection.test.ts
 npm run test:full
 npm run typecheck
+npm run build
+npm run test:bundle
 ```
 
 The public two-client case must settle only the exiting client's work, retain
@@ -66,24 +68,52 @@ reject Partner and unknown-surface Sessions.
 
 Windows, Node 22.23.1. The superseded nonterminal-Run repair passed 16,742 source
 cases, with 90 skips and 19 TODOs, but failed the compaction bundle gate above.
-That green source result is not final acceptance. An added
-test assertion against an internal-only `runs.inspect` method failed the test
-type check, was removed, and the public exit/EIO combination and complete type
-checks then passed. Final qualification is recorded after the owner-fence
-repair. These are local Windows results, not new Linux Node 20/22
+That green source result is not final acceptance. Final qualification is
+recorded after the owner-fence repair. These are local Windows results, not new Linux Node 20/22
 or branch-CI evidence. Release preparation remains separate; its stash and the
 preexisting features submodule checkout are retained.
 
+Final source implementation: `315d6a2ea92c3a7308dc418c5eb20c1c836c46a7`.
+
+| Final gate | Result |
+| --- | --- |
+| Fast | 2,323 passed, 44 skipped |
+| Unit | 12,030 passed, 4 skipped |
+| Contract | 950 passed, 19 TODO |
+| System | 1,440 passed, 42 skipped |
+| Source and test TypeScript checks | Passed |
+| Complete workspace/native/bundle/declaration build | Passed |
+| Bundle gate | 44 passed, no skips; includes the original failing compaction and Product exit cases |
+| Public declaration comparison | All 14 top-level declaration files byte-for-byte unchanged |
+
+All four final source tiers exited successfully: **16,743 passed**, 90 skips,
+19 TODOs, zero failures. The System command used `--reporter=verbose` for
+progress visibility; concurrency and timeouts were unchanged. Production and
+test sources remained fixed throughout the final sequence. The 3 Product exit
+cases and 6 preflight projection cases passed in these full tiers; the latter
+includes the real paused-save/released-fence regression and both body-EIO cases.
+The final TypeScript checks, build and complete bundle gate also passed.
+
+This closes the local regression, not npm delivery or release-CI qualification.
+Restore the maintainer's release layer and run the normal branch CI before
+tagging or publishing. No tag, push, release or npm publication was performed
+during this repair.
+
 ## Standards
 
-Initial Standards review of `0f0c8293..514b4b9a`: zero actionable findings.
-The repair reuses the existing admitted context and predicates, introduces no
-new abstraction or configuration, and tests public behavior. This was static
-review, not an independent test run.
+Final Standards review of `0f0c8293..315d6a2`: zero actionable findings. The
+ownership predicate stays within the registry, reuses the durable fence, and
+adds no configuration or general-purpose abstraction. The write-barrier test
+settles operations before restoring its spy and closing the Runtime. This was
+static review, not an independent test run.
 
 ## Spec
 
-Initial Spec review of the same fixed diff: zero actionable findings. The later
-bundle failure demonstrated a scope gap in the initial repair; its green source
-tests and static review did not close the terminal-Run persistence boundary.
-This was static review; test execution evidence is recorded separately above.
+Final Spec review of the same fixed diff: zero actionable findings. Only
+initialized, admitted controllers with a retained owner fence supply live
+identity; unclaimed, initialization-pending, released and closed controllers
+fall back to strict metadata admission. The paused-save, released-fence,
+two-client exit and EIO cases cover the accepted behavior. No retry, wait or
+receipt reclassification was added. This was static review; execution evidence
+is recorded separately above. The initial review's zero findings did not close
+the later bundle failure and were not treated as final acceptance.
