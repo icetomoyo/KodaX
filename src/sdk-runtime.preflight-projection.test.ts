@@ -84,6 +84,64 @@ it('rejects unreadable canonical metadata instead of inheriting presentation-lis
   }
 });
 
+it('lists historical Runs while an admitted live Actor controller is persisting without an active Run', async () => {
+  const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-preflight-live-admission-'));
+  const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  let entered!: () => void;
+  const writing = new Promise<void>(resolve => { entered = resolve; });
+  let saving: Promise<void> | undefined;
+  let restoreRename: (() => void) | undefined;
+  let listing: ReturnType<typeof runtime.runs.list> | undefined;
+  try {
+    const session = await runtime.sessions.create({ sessionId: 'live-admission', projectPath: homeDir, surface: 'cli' });
+    await runtime.agents.tree(session.id);
+    // Without a bound Run environment the turn fails before any provider call.
+    const worker = await runtime.agents.spawn(session.id, { taskName: 'worker', objective: 'Create an idle mailbox target.' });
+    await expect.poll(async () => (await runtime.agents.output(session.id, worker.actorPath)).state).toBe('failed');
+    const sessionsDir = path.join(homeDir, '.kodax', 'sessions');
+    const relative = (await fs.readdir(sessionsDir, { recursive: true })).find(file => path.basename(file) === `${session.id}.jsonl`);
+    if (!relative) throw new Error('Expected the canonical Session file.');
+    const sessionFile = path.join(sessionsDir, relative);
+    const runDir = path.join(homeDir, '.kodax', 'runtime', 'profiles', 'default', 'runs', 'historical-run');
+    await fs.mkdir(runDir, { recursive: true });
+    await fs.writeFile(path.join(runDir, 'status.json'), JSON.stringify({
+      runId: 'historical-run', sessionId: session.id, phase: 'completed', provider: 'fixture',
+      startedAt: '2026-10-01T00:00:00.000Z', endedAt: '2026-10-01T00:01:00.000Z',
+    }));
+    const originalRename = fs.rename;
+    let held = false;
+    const rename = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      if (!held && String(to) === sessionFile) { held = true; entered(); await pending; }
+      return originalRename(from, to);
+    });
+    restoreRename = () => rename.mockRestore();
+    saving = runtime.agents.send(session.id, worker.actorPath, 'Persist a mailbox message without executing a Run.');
+    await Promise.race([writing, saving.then(() => { throw new Error('Expected a paused Actor save.'); })]);
+    let settled = false;
+    listing = runtime.runs.list();
+    void listing.then(() => { settled = true; }, () => { settled = true; });
+    await expect.poll(() => settled, { timeout: 1_000 }).toBe(true);
+    await expect(listing).resolves.toMatchObject([{ runId: 'historical-run', phase: 'completed' }]);
+    release();
+    await saving;
+    restoreRename();
+    restoreRename = undefined;
+    await runtime.sessions.archive(session.id);
+    const archived = (await fs.readdir(sessionsDir, { recursive: true })).find(file => path.basename(file) === `${session.id}.jsonl`);
+    if (!archived) throw new Error('Expected the archived Session file.');
+    await fs.writeFile(path.join(sessionsDir, archived), '{broken\n');
+    await expect(runtime.runs.list()).rejects.toMatchObject({ code: 'data_corrupt' });
+  } finally {
+    release();
+    await Promise.allSettled([saving, listing]);
+    restoreRename?.();
+    await runtime.close();
+    await fs.rm(homeDir, { recursive: true, force: true });
+  }
+});
+
 it.each(['completed', 'running'] as const)('checks shared Host safety with a %s Run and an unreadable Session body', async (phase) => {
   const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-preflight-body-eio-'));
   const sessionsDir = path.join(homeDir, '.kodax', 'sessions');

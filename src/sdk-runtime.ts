@@ -12960,6 +12960,7 @@ function createRuntimeRunService(deps: {
       return filterAdmittedRunStatuses(
         canonicalRuntimeRunStatuses(boundedRuntimeRunStatuses(matching)),
         deps.sessionAdmission,
+        deps.actorRegistry,
       );
     },
 
@@ -12987,6 +12988,7 @@ function createRuntimeRunService(deps: {
       return filterAdmittedRunStatuses(
         canonicalRuntimeRunStatuses(boundedRuntimeRunStatuses(matching)),
         deps.sessionAdmission,
+        deps.actorRegistry,
       );
     },
 
@@ -14544,6 +14546,7 @@ function runtimeLocalListings(
 }
 
 interface RuntimeAgentActorRegistry {
+  ownsAdmittedSession(sessionId: string): boolean;
   quiesceClient(principalId: string): ReturnType<CodingActorSession['quiesceClient']>;
   forSession(
     sessionId: string,
@@ -14693,6 +14696,10 @@ function createRuntimeAgentActorRegistry(
   };
 
   return {
+    ownsAdmittedSession(sessionId) {
+      // Only initialized controllers enter ready, after Session admission.
+      return !closed && ready.get(sessionId)?.ownsDurableFence() === true;
+    },
     async quiesceClient(principalId) {
       const results = await Promise.all([...ready.values()].map(session => session.quiesceClient(principalId)));
       return { turns: results.flatMap(result => result.turns), unsettledTurnIds: results.flatMap(result => result.unsettledTurnIds) };
@@ -21039,13 +21046,18 @@ function createRuntimeSessionAdmission(
 async function filterAdmittedRunStatuses(
   statuses: readonly RuntimeRunStatus[],
   admission: RuntimeSessionAdmission,
+  actors: RuntimeAgentActorRegistry,
 ): Promise<readonly RuntimeRunStatus[]> {
   const admittedBySession = new Map<string, boolean>();
   const result: RuntimeRunStatus[] = [];
   for (const status of statuses) {
     let admitted = admittedBySession.get(status.sessionId);
     if (admitted === undefined) {
-      admitted = await admission.admitsSession(status.sessionId);
+      // As in Actor preflight, a claimed live controller already passed Session
+      // admission. Its fence survives Run completion and trailing persistence.
+      // Unclaimed Sessions still require strict canonical metadata admission.
+      admitted = actors.ownsAdmittedSession(status.sessionId)
+        || await admission.admitsSession(status.sessionId);
       admittedBySession.set(status.sessionId, admitted);
     }
     if (admitted) result.push(status);
