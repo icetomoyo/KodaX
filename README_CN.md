@@ -314,6 +314,13 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 [v0.7.97-alpha.4 发布清单](docs/release.md#v0797-alpha4-release-preparation)。
 所有 v0.7.96 稳定与 v0.7.97-alpha.1/alpha.2/alpha.3 契约全部保留。
 
+**v0.7.97-alpha.9 发布**：Session 准入检查改用规范身份元数据而非加载完整
+历史 transcript——元数据头可读而正文不可读(例如损坏存储上的 Windows
+ERROR_CRC 以 EIO 呈现)不再阻塞无关的 Run 列表、daemon 检查或空闲退出检查。
+准入复用围栏到仍持有 owner fence 的已初始化 Actor 控制器,其他客户端工作的
+`protected` 退出回执保持不变。详见 [v0.7.97-alpha.9 发布清单](docs/release.md#v0797-alpha9-release-preparation)。
+所有 v0.7.96 稳定与 v0.7.97-alpha.1 至 alpha.8 契约全部保留。
+
 **v0.7.97-alpha.8 发布**：Artifact SDK 并入单一主包发布——`@kodax-ai/kodax` 新增
 `/artifacts`、`/artifacts/client`、`/artifacts/runtime`、`/artifacts/kodax` 四个
 子路径导出;工作区模块转为私有(不再独立发布 npm),固定依赖上移到根包声明,

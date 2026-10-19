@@ -145,7 +145,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('may canonicalize DACL protection/inheritance control at commit');
     expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
-    expect(sandbox).toContain('v0.7.97-alpha.8 release uses Windows native shell protocol 10');
+    expect(sandbox).toContain('v0.7.97-alpha.9 release uses Windows native shell protocol 10');
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
@@ -173,7 +173,13 @@ describe('FEATURE_218 manual registry', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('The v0.7.97-alpha.8 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.97-alpha.9 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.97-alpha.9 release checks Session admission through canonical identity');
+    expect(sdk).toContain('a Windows ERROR_CRC surfacing as EIO');
+    expect(sdk).toContain('Unreadable metadata still fails closed');
+    expect(sdk).toContain('Admission reuse is fenced to initialized Actor controllers that');
+    expect(sdk).toContain("`protected` exit receipts for other clients' work are preserved.");
+    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.8 contract is retained.');
     expect(sdk).toContain('The v0.7.97-alpha.8 release ships the Artifact SDK inside the single main package');
     expect(sdk).toContain('`@kodax-ai/kodax/artifacts`, `/artifacts/client`, `/artifacts/runtime`, and');
     expect(sdk).toContain('no separate @kodax-ai/artifacts npm publication exists.');

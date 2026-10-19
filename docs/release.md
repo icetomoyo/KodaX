@@ -136,6 +136,40 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.97-alpha.9 release preparation
+
+Release state: `v0.7.97-alpha.9` is the GitHub pre-release for the exact
+tagged commit — the ninth alpha of the v0.7.97 line, shipping the
+canonical-metadata Session admission fix. The tag-triggered Release
+workflow runs the full reusable CI workflow before the build matrix; branch
+pushes do not trigger CI, so the tag is the first and only remote validation
+gate. The `-alpha` suffix marks the release as a GitHub pre-release
+automatically. npm registry publication remains a separate manual maintainer
+action.
+
+On top of v0.7.97-alpha.8 it includes:
+
+- Canonical-metadata Session admission: shared Host Run inspection checks
+  admission through canonical identity metadata instead of loading complete
+  historical transcripts. A readable metadata header with an unreadable body
+  (for example a Windows ERROR_CRC surfacing as EIO on damaged storage) no
+  longer blocks unrelated Run listing, daemon inspection, or idle-exit
+  inspection. Unreadable metadata still fails closed, active/unknown Runs
+  and Actor turns still block exit, and explicitly opening the affected
+  Session still reports its read error. The fix isolates the software
+  failure; it does not repair damaged storage or the affected Session.
+- Fenced admission reuse: Session admission during shared Host inspection
+  reuses controller state only for initialized Actor controllers that still
+  hold their owner fence (matching Actor preflight), avoiding races with
+  live persistence and trailing saves after Run completion while preserving
+  `protected` exit receipts for other clients' work; unclaimed or released
+  Sessions retain strict canonical metadata checks
+  (`docs/test-guides/ISSUE_222_v0.7.97-alpha.9_REGRESSION_GUIDE.md`).
+
+All root/workspace package versions and lockfile entries are
+`0.7.97-alpha.9`. The feature-design submodule, public guides, architecture
+documents, and `kodax_manual` track this release.
+
 ## v0.7.97-alpha.8 release preparation
 
 Release state: `v0.7.97-alpha.8` is the GitHub pre-release for the exact

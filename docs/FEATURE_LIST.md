@@ -11,8 +11,8 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-alpha.8` (Git tag / GitHub pre-release); `v0.7.96` remains the last stable release |
-| Current package version | `@kodax-ai/kodax@0.7.97-alpha.8` (npm publication remains manual) |
+| Current released version | `v0.7.97-alpha.9` (Git tag / GitHub pre-release); `v0.7.96` remains the last stable release |
+| Current package version | `@kodax-ai/kodax@0.7.97-alpha.9` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 core packages + private optional `artifacts` source workspace; one public npm package |
 | Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3` and extended with startup streamlining, Session recency ordering, draft admission, concurrent-launch recovery and shared-Session Host ownership resolution through `v0.7.97-alpha.7`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement released in alpha.4; missing visual capabilities remain unverified; [design](ADR.md#verification-responsibility-and-tradeoffs) |
@@ -524,6 +524,19 @@
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
 ---
+
+## v0.7.97-alpha.9 Release Record
+
+`v0.7.97-alpha.9` is the ninth alpha of the v0.7.97 line: shared Host Run
+inspection checks Session admission through canonical identity metadata
+instead of loading complete historical transcripts. A readable metadata
+header with an unreadable body (for example a Windows ERROR_CRC surfacing
+as EIO) no longer blocks unrelated Run listing, daemon inspection, or
+idle-exit inspection; unreadable metadata still fails closed, active or
+unknown Runs and Actor turns still block exit, and explicitly opening the
+affected Session still reports its read error. Every v0.7.96 stable and
+v0.7.97-alpha.1 through alpha.8 contract is retained. Cross-platform
+manual acceptance and npm publication remain manual maintainer steps.
 
 ## v0.7.97-alpha.8 Release Record
 

@@ -6,6 +6,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-alpha.9] - 2026-10-19
+
+Ninth alpha of the v0.7.97 line: shared Host Run inspection checks Session
+admission through canonical identity metadata instead of loading complete
+historical transcripts, so a readable metadata header with an unreadable
+body (for example a Windows ERROR_CRC surfacing as EIO) no longer blocks
+unrelated Run listing, daemon inspection, or idle-exit inspection; admission
+reuse is fenced to initialized Actor controllers so live persistence,
+trailing saves, and `protected` exit receipts for other clients' work are
+preserved. Every
+v0.7.96 stable and v0.7.97-alpha.1 through alpha.8 contract is retained.
+npm publication remains a manual maintainer action.
+
 ### Fixed
 
 - Shared Host Run inspection now checks Session admission through canonical identity metadata instead of loading complete historical transcripts. A readable metadata header with an unreadable body no longer blocks unrelated Run listing, daemon inspection, or idle-exit inspection. Unreadable metadata still fails closed, active/unknown Runs and Actor turns still block exit, and explicitly opening the affected Session still reports its read error.

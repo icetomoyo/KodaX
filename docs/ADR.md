@@ -4,6 +4,18 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-10-18
 >
+> **v0.7.97-alpha.9 release addendum:** shared Host Run inspection checks
+> Session admission through canonical identity metadata instead of loading
+> complete historical transcripts — a readable metadata header with an
+> unreadable body (for example a Windows ERROR_CRC surfacing as EIO) no
+> longer blocks unrelated Run listing, daemon inspection, or idle-exit
+> inspection, while unreadable metadata still fails closed and explicit
+> Session opens still report their read error; admission reuse is fenced to
+> initialized Actor controllers that still hold their owner fence, so live
+> persistence, trailing saves, and `protected` exit receipts are preserved.
+> Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.8 contract is
+> retained.
+>
 > **v0.7.97-alpha.8 release addendum:** the Artifact SDK ships inside the
 > single `@kodax-ai/kodax` package — four public subpaths (`/artifacts`,
 > `/artifacts/client`, `/artifacts/runtime`, `/artifacts/kodax`), a private

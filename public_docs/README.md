@@ -3,8 +3,8 @@
 Documentation for KodaX users, product-client integrators and trusted Host developers.
 
 This development tree implements the unified Product Client contract under
-FEATURE_298/299/301. The working-tree package version is `0.7.97-alpha.8`;
-`v0.7.96` remains the last stable release. `v0.7.97-alpha.8` ships the
+FEATURE_298/299/301. The working-tree package version is `0.7.97-alpha.9`;
+`v0.7.96` remains the last stable release. `v0.7.97-alpha.9` isolates unreadable Session transcript bodies from Run listing/daemon inspection via canonical-metadata admission checks; `v0.7.97-alpha.8` shipped the
 Artifact SDK inside the single main package (`/artifacts*` subpaths, Node
 floor 20.16, no separate artifacts npm package); `v0.7.97-alpha.7` resolved
 shared-Session Host ownership across daemon profiles with retryable

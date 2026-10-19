@@ -794,6 +794,16 @@ starts, upgrades, or waits. See
 Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2/alpha.3 contract is
 retained.
 
+**v0.7.97-alpha.9 release:** Checks Session admission through canonical
+identity metadata instead of loading complete historical transcripts, so a
+readable metadata header with an unreadable body (for example a Windows
+ERROR_CRC surfacing as EIO) no longer blocks unrelated Run listing, daemon
+inspection, or idle-exit inspection, with admission reuse fenced to initialized Actor controllers so
+`protected` exit receipts for other clients' work are preserved. See the
+[v0.7.97-alpha.9 release notes](docs/release.md#v0797-alpha9-release-preparation).
+Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.8 contract is
+retained.
+
 **v0.7.97-alpha.8 release:** Ships the Artifact SDK inside the single main
 package — `@kodax-ai/kodax` gains `/artifacts`, `/artifacts/client`,
 `/artifacts/runtime` and `/artifacts/kodax` subpath exports; the workspace
@@ -2105,7 +2115,7 @@ This development tree exposes 17 SDK subpaths plus the root. Shared product
 applications use `@kodax-ai/kodax/client`; independent libraries and trusted Host
 APIs remain available through the other subpaths. See the [Client contract](docs/CLIENT_CONTRACT.md)
 and [SDK migration guide](docs/SDK_MIGRATION.md). This documentation was checked
-against package version `0.7.97-alpha.8`; npm publication is separate from
+against package version `0.7.97-alpha.9`; npm publication is separate from
 the current development-tree contract.
 
 ```bash
