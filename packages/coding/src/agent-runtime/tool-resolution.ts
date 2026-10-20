@@ -64,15 +64,20 @@ import { DEFERRED_TOOL_HINTS, isDeferredTool } from '../tools/deferred-tools.js'
 import { withManualToolBranding } from '../self-knowledge/tool-description.js';
 import { projectModelToolDefinition } from '../tools/model-tool-definition.js';
 
-/** Only remove an internal alias when its builtin replacement is executable. */
+/** Retire duplicate model entries only when all builtin replacements are executable. */
 export function filterModelToolAliases<T extends KodaXToolDefinition>(tools: readonly T[]): T[] {
   const names = new Set(tools.map(tool => tool.name));
   return tools.filter(tool => {
-    const canonical = tool.name === 'multi_edit' ? 'edit'
-      : tool.name === 'changed_diff_bundle' ? 'changed_diff' : undefined;
-    return canonical === undefined || !names.has(canonical)
+    const replacements = tool.name === 'multi_edit' ? ['edit']
+      : tool.name === 'changed_diff_bundle' ? ['changed_diff']
+      : tool.name === 'tool_describe' ? ['tool_search']
+      : tool.name === 'todo_get' ? ['todo_list']
+      : tool.name === 'lsp_prepare_call_hierarchy' ? ['lsp_incoming_calls', 'lsp_outgoing_calls']
+      : [];
+    return replacements.length === 0
       || getRegisteredToolDefinition(tool.name)?.source.kind !== 'builtin'
-      || getRegisteredToolDefinition(canonical)?.source.kind !== 'builtin';
+      || !replacements.every(name => names.has(name)
+        && getRegisteredToolDefinition(name)?.source.kind === 'builtin');
   });
 }
 

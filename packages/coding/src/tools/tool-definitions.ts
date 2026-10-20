@@ -1380,7 +1380,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'todo_update',
-    description: "Patch one existing todo by stable id: status, fields or both. Omitted fields are preserved; add work with todo_create. Mark in_progress with activeForm before work, completed only after finishing; one in_progress item per owner. Avoid unchanged updates; use todo_get when state is uncertain, todo_list for unknown ids. Use the requested language, otherwise the request primary language, for subject/description/activeForm/note; retain source identifiers, paths, commands and quotes. Completion may trigger evaluator when runner evaluator wiring is active, and may be vetoed by a hook; after rejection/blocked-by-hook, re-read and revise before retrying. Inactive store: continue without more todo calls.",
+    description: "Patch one existing todo by stable id: status, fields or both. Omitted fields are preserved; add work with todo_create. Mark in_progress with activeForm before work, completed only after finishing; one in_progress item per owner. Avoid unchanged updates; read current item details when state is uncertain, list the plan for unknown ids. Use the requested language, otherwise the request primary language, for subject/description/activeForm/note; retain source identifiers, paths, commands and quotes. Completion may trigger evaluator when runner evaluator wiring is active, and may be vetoed by a hook; after rejection/blocked-by-hook, re-read and revise before retrying. Inactive store: continue without more todo calls.",
     input_schema: {
       type: 'object',
       properties: {
@@ -1401,7 +1401,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
               subject: { type: 'string', description: 'Brief imperative title shown in the plan-list row (e.g. "Run failing tests").' },
               description: {
                 type: 'string',
-                description: 'Optional fuller context / work instructions read when this item is later picked up (todo_get surface). Multi-line OK. Skip when subject alone is enough.',
+                description: 'Optional fuller context / work instructions read when this item is later picked up. Multi-line OK. Skip when subject alone is enough.',
               },
               activeForm: {
                 type: 'string',
@@ -1495,7 +1495,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
         },
         description: {
           type: 'string',
-          description: "Optional multi-line work context read via todo_get; absent from compact row. Omit when subject suffices.",
+          description: "Optional multi-line work context available in full item detail; absent from compact row. Omit when subject suffices.",
         },
         activeForm: {
           type: 'string',
@@ -1524,10 +1524,12 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'todo_list',
-    description: 'Read the current visible plan and canonical ids without changing it. Returns {ok:true,count,items}; use it to resume existing work, avoid duplicates, or recover from Unknown todo id. Refresh when runner-side status changes may have occurred. Use todo_get for one item\'s full detail. An inactive store returns {ok:false,reason}; continue without further todo calls.',
+    description: 'Read the visible plan without changing it. Without id returns {ok:true,count,items} and canonical ids; with id returns {ok:true,item} including description, status, activeForm, note, evaluator, owner and metadata. Use to resume work, avoid duplicates or recover unknown ids. Refresh only when state may have changed externally; if the patch is clear, update directly. An inactive store returns {ok:false,reason}; continue without further todo calls.',
     input_schema: {
       type: 'object',
-      properties: {},
+      properties: {
+        id: { type: 'string', description: 'Optional stable todo id for full item detail; omit to list the plan.' },
+      },
     },
     handler: toolTodoList,
     sideEffect: 'readonly',
@@ -1742,7 +1744,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'lsp_prepare_call_hierarchy',
-    description: 'Prepare call hierarchy roots for the symbol at a file position. Use this to confirm the language server can identify the callable before asking for incoming or outgoing calls.',
+    description: 'Inspect call hierarchy root metadata for a symbol at a file position. Incoming and outgoing call tools prepare roots internally; a separate prepare call is unnecessary for those queries.',
     input_schema: {
       type: 'object',
       properties: {

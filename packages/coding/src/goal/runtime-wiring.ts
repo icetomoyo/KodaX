@@ -109,7 +109,7 @@ function defaultContinuationPrompt(goal: KodaXGoalState): string {
     'Use the current worktree and external state as authoritative. Previous conversation context can help locate relevant work, but inspect the current state before relying on it. Improve, replace, or remove existing work as needed to satisfy the actual objective.',
     '',
     'Progress visibility:',
-    'If the next work is meaningfully multi-step, use `todo_create` / `todo_update` (and `todo_list` / `todo_get` for inspection) to show a concise plan tied to the real objective. Keep the list current as steps complete or the next best action changes. Skip planning overhead for trivial one-step progress, and do not treat a todo update as a substitute for doing the work.',
+    'If the next work is meaningfully multi-step, use `todo_create` / `todo_update` (and available plan readers for inspection) to show a concise plan tied to the real objective. Keep the list current as steps complete or the next best action changes. Skip planning overhead for trivial one-step progress, and do not treat a todo update as a substitute for doing the work.',
     '',
     'Fidelity:',
     '- Optimize each turn for movement toward the requested end state, not for the smallest stable-looking subset or easiest passing change.',

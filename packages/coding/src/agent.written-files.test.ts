@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -67,7 +68,7 @@ afterEach(async () => {
   clearRuntimeModelProviders();
   vi.mocked(compact).mockReset();
   vi.unstubAllEnvs();
-  rmSync(workspace, { recursive: true, force: true });
+  await rm(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 });
 
 it.each(['coding', 'managed'] as const)('returns successful file writes from %s without needing an artifact ledger', async (mode) => {

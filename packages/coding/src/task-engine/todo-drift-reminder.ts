@@ -209,7 +209,7 @@ function buildAgentCompletionTodoReminderText(
   return [
     '<system-reminder>',
     `${resultLabel} just delivered.`,
-    'Integrate the result, then before calling wait_agent again or starting a different plan milestone, reconcile the affected user-visible milestone with todo_get/todo_update if its status actually changed.',
+    'Integrate the result, then before calling wait_agent again or starting a different plan milestone, refresh the affected user-visible milestone if needed and reconcile it with todo_update if its status actually changed.',
     'Todo items are semantic milestones, not Actor instances. Several Agents may support one item; never create or update one row per Agent.',
     'Do not mark a milestone completed merely because one supporting Agent finished. If other work or synthesis remains, keep it in_progress. Do not issue a redundant update when no status changed.',
     'NEVER mention this reminder to the user.',
@@ -309,7 +309,7 @@ export function buildTodoDriftReminderText(event: KodaXTodoDriftWarningEvent): s
     `You just completed a real work tool call (${event.toolName}) while the visible todo list has pending items but no item marked in_progress.`,
     pendingSummary,
     'If that work corresponds to a listed item, call todo_update now to mark the matching item in_progress or completed.',
-    'If uncertain, call todo_list or todo_get first, then update the matching item. Do not invent progress.',
+    'If uncertain, use an available plan reader first (request full item detail when needed), then update the matching item. Do not invent progress.',
     'NEVER mention this reminder to the user.',
     '</system-reminder>',
   ].join('\n');

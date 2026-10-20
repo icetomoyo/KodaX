@@ -1,5 +1,9 @@
 # KodaX 对标 Codex：效率、可靠性与任务表现
 
+本文记录 2026-10-16 阶段。后续最新版源码的同 Windows 完整启动抓包、当前
+native 精简后的差额和参数披露验证见 [最新对照](first-turn-windows-comparison.md)。
+下文安装版 Codex 与旧 DSH preset 数值保留为历史，不作当前基线。
+
 2026-10-16 实施结论。Codex 源码参照 `400f2356`，实际请求来自安装版 CLI `0.162.0-alpha.17.2`；DSH 参照 `d7432673`。最终改动、测量与评测结果见 [首轮契约精简](first-turn-contract-refinement.md)。
 
 ## 输入差额来自哪里

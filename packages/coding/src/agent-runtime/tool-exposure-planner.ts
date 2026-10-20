@@ -70,7 +70,6 @@ export interface RuntimeToolExposurePlanInput {
 
 const PORTABLE_BRIDGE_TOOL_NAMES: ReadonlySet<string> = new Set([
   'tool_call',
-  'tool_describe',
   'tool_search',
 ]);
 

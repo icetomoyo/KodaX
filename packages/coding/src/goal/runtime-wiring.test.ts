@@ -253,6 +253,14 @@ describe('buildGoalRuntimeBinding — buildContinuationPrompt structure', () => 
     }
   });
 
+  it('does not require a particular plan reader in SDK continuation prompts', () => {
+    const prompt = getPrompt();
+    expect(prompt).toContain('available plan readers');
+    expect(prompt).not.toContain('todo_list');
+    expect(prompt).not.toContain('todo_get');
+    expect(prompt).toContain('Skip planning overhead for trivial one-step progress');
+  });
+
   it('contains both KodaX runtime-enforcement paragraphs', () => {
     const prompt = getPrompt();
     expect(prompt).toMatch(/Completion audit:/);

@@ -71,6 +71,12 @@ function pressureBudget() {
 }
 
 describe('tool exposure planner', () => {
+  it('recognizes the search and call bridge without requiring a second schema lookup entry', () => {
+    expect(hasPortableToolBridge([bridgeTool('tool_search'), bridgeTool('tool_call')])).toBe(true);
+    expect(hasPortableToolBridge([bridgeTool('tool_search')])).toBe(false);
+    expect(hasPortableToolBridge([bridgeTool('tool_describe'), bridgeTool('tool_call')])).toBe(false);
+  });
+
   it('keeps report-only mode behavior-preserving while showing bridge savings opportunity', () => {
     const plan = planToolExposure({
       tools: [readTool, moduleContextTool, webFetchTool],

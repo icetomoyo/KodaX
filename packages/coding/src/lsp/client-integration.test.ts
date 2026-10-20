@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createLspClient } from './client.js';
 import { LspService } from './service.js';
 import type { LspServerInfo } from './servers.js';
+import { toolLspIncomingCalls, toolLspOutgoingCalls, toolLspPrepareCallHierarchy } from '../tools/lsp-navigation.js';
+import type { KodaXToolExecutionContext } from '../types.js';
 
 const FIXTURE = fileURLToPath(new URL('./fake-lsp-server.fixture.mjs', import.meta.url));
 const STUBBORN_LSP_SOURCE = `
@@ -157,6 +159,21 @@ describe('LSP protocol integration (real stdio handshake)', () => {
     } finally {
       await service.shutdownAll();
     }
+  }, 15000);
+
+  it('runs incoming/outgoing tools without an explicit prepare and retains legacy root inspection', async () => {
+    const service = new LspService({ servers: [{
+      id: 'fake', languageIds: ['typescript'], rootMarkers: ['package.json', '.git'],
+      discover: () => ({ command: process.execPath, args: [FIXTURE] }), installGuidance: 'n/a',
+    }], documentTimeoutMs: 4000 });
+    const ctx = { backups: new Map(), executionCwd: tempDir, gitRoot: tempDir,
+      lspService: service } as KodaXToolExecutionContext;
+    try {
+      const input = { path: tsFile, line: 1, character: 1 };
+      expect(await toolLspIncomingCalls(input, ctx)).toContain('entry');
+      expect(await toolLspOutgoingCalls(input, ctx)).toContain('save');
+      expect(await toolLspPrepareCallHierarchy(input, ctx)).toContain('root');
+    } finally { await service.shutdownAll(); }
   }, 15000);
 
   it('reports a fresh diagnostic after a second change (didChange path)', async () => {

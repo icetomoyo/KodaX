@@ -10,6 +10,8 @@
 let buffer = Buffer.alloc(0);
 const exitDuringNextRequest = process.argv.includes('--exit-during-next-request');
 let exitOnNextData = false;
+let preparedHierarchy;
+let hierarchyTicket = 0;
 
 process.stdin.on('data', (chunk) => {
   if (exitOnNextData) process.exit(0);
@@ -124,6 +126,25 @@ function handle(message) {
         ],
       });
       return;
+    case 'textDocument/prepareCallHierarchy': {
+      const range = { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } };
+      preparedHierarchy = { name: 'root', kind: 12, uri: message.params.textDocument.uri,
+        range, selectionRange: range, data: { ticket: ++hierarchyTicket } };
+      send({ jsonrpc: '2.0', id: message.id, result: [preparedHierarchy] });
+      return;
+    }
+    case 'callHierarchy/incomingCalls':
+    case 'callHierarchy/outgoingCalls': {
+      // Opaque server data must survive the internal prepare → calls chain.
+      const valid = preparedHierarchy && message.params.item.data?.ticket === hierarchyTicket;
+      const incoming = message.method === 'callHierarchy/incomingCalls';
+      const item = { ...preparedHierarchy, name: incoming ? 'entry' : 'save' };
+      const call = incoming
+        ? { from: item, fromRanges: [item.range] }
+        : { to: item, fromRanges: [item.range] };
+      send({ jsonrpc: '2.0', id: message.id, result: valid ? [call] : [] });
+      return;
+    }
     default:
       // Answer any other server-bound request with null so nothing stalls.
       if (typeof message.id !== 'undefined' && message.method) {

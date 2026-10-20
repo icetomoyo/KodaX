@@ -36,6 +36,48 @@ describe('todo_list — soft-fail when not wired', () => {
 });
 
 describe('todo_list — populated store', () => {
+  it('reads one full item by id without losing detail or mutating the plan', async () => {
+    let changes = 0;
+    const store = createTodoStore({ onChange: () => changes++ });
+    store.init([
+      { id: 'review', subject: 'Review changes', owner: '/root/review', evaluator: 'test' },
+      { id: 'integrate', subject: 'Integrate results' },
+    ]);
+    store.patch('review', { metadata: { source: 'planner', round: 2 } });
+    store.updateStatus('review', 'completed', 'Tests passed');
+    changes = 0;
+
+    expect(JSON.parse(await toolTodoList({ id: 'review' }, makeContext({ todoStore: store })))).toEqual({
+      ok: true,
+      item: {
+        id: 'review', subject: 'Review changes', status: 'completed', note: 'Tests passed',
+        owner: '/root/review', evaluator: 'test', metadata: { source: 'planner', round: 2 },
+      },
+    });
+    expect(changes).toBe(0);
+  });
+
+  it.each(['', 42, null, undefined])('rejects an explicit invalid id (%s) instead of returning all items', async (id) => {
+    const store = createTodoStore();
+    store.init([{ id: 'review', subject: 'Review changes' }]);
+    const result = JSON.parse(await toolTodoList({ id }, makeContext({ todoStore: store }))) as {
+      ok: boolean; reason: string;
+    };
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/id.*non-empty/i);
+  });
+
+  it('reports valid ids when a requested item no longer exists', async () => {
+    const store = createTodoStore();
+    store.init([{ id: 'review', subject: 'Review changes' }]);
+    const result = JSON.parse(await toolTodoList({ id: 'missing' }, makeContext({ todoStore: store }))) as {
+      ok: boolean; reason: string;
+    };
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('Unknown todo id');
+    expect(result.reason).toContain('review');
+  });
+
   it('returns the full list with stable JSON envelope shape', async () => {
     let onChangeCalls = 0;
     const store = createTodoStore({ onChange: () => onChangeCalls++ });

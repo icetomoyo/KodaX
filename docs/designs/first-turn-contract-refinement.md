@@ -1,5 +1,9 @@
 # 首轮工具契约精简
 
+本文为首阶段记录。后续全部 native 契约精简见
+[实施记录](native-tool-contract-hygiene.md)，最新版 Codex/DSH 同 Windows 实抓见
+[最新对照](first-turn-windows-comparison.md)；下文首轮数值不代表当前版本。
+
 2026-10-16 实施结果。参考框架的机制比较见 [Codex 对标](codex-harness-parity.md)。探索过程、候选全文与原始评测证据不进入正式文档；研发笔记位于忽略的 `docs/research/`，raw 与累计账本保存在 OS 临时目录。
 
 ## 最终范围

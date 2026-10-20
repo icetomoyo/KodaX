@@ -22,6 +22,17 @@ const baseDecision: KodaXTaskRoutingDecision = {
 };
 
 describe('buildWorkerInstructions', () => {
+  it('preserves full planning guidance with the consolidated item reader', () => {
+    const output = buildWorkerInstructions(baseDecision, undefined, false, undefined,
+      ['todo_create', 'todo_update', 'todo_list', 'wait_agent']);
+    expect(output).toContain('PLAN-FIRST GUIDANCE:');
+    expect(output).toContain('Trivial tasks');
+    expect(output).toContain('do not recreate or restate it');
+    expect(output).toContain('todo_list({id})');
+    expect(output).toContain('Ordinary consecutive model turns do not require');
+    expect(output).not.toContain('todo_get');
+  });
+
   it('teaches canonical batch tools without advertising a legacy alias', () => {
     const output = buildWorkerInstructions(baseDecision, undefined, false, undefined,
       ['read', 'edit', 'changed_diff', 'todo_create', 'todo_update', 'todo_get', 'todo_list', 'wait_agent']);

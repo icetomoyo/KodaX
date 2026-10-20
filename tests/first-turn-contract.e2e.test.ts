@@ -68,11 +68,18 @@ describe('first-turn contracts through public SDK and HTTP providers', () => {
         const requests: WireRequest[] = [];
         const errors: unknown[] = [];
         const calls: FixtureCall[] = [
-          { name: 'read', input: { path: target } },
+          { name: 'tool_search', input: { query: 'select:read,todo_list,todo_get,lsp_prepare_call_hierarchy' } },
+          { name: 'tool_call', input: { name: 'read', input: { path: target } } },
           { name: 'edit', input: { path: target, edits: [
             { old_string: 'before', new_string: 'after' },
             { old_string: 'keep', new_string: 'kept' },
           ] } },
+          ...(mode === 'ama' ? [
+            { name: 'todo_create', input: { subject: '检查修改', description: '保留详情', evaluator: 'test', metadata: { provenance: 'e2e' } } },
+            { name: 'todo_list', input: { id: 'todo_1' } },
+            { name: 'tool_call', input: { name: 'todo_get', input: { id: 'todo_1' } } },
+          ] : []),
+          { name: 'tool_describe', input: { name: 'read' } },
           { name: 'ask_user_question', input: { questions: [{ question: '选择验收方式',
             header: '验收', options: [{ value: 'test', label: '运行测试' }, { value: 'review', label: '检查修改' }] }] } },
         ];
@@ -104,7 +111,7 @@ describe('first-turn contracts through public SDK and HTTP providers', () => {
         const askUserMulti = vi.fn(async () => ({ '选择验收方式': 'test' }));
         try {
           const options: KodaXOptions = {
-            provider: providerName, agentMode: mode, reasoningMode: 'off', maxIter: 6,
+            provider: providerName, agentMode: mode, reasoningMode: 'off', maxIter: 12,
             lsp: false, disablePromptCache: true,
             context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '',
               repoIntelligenceMode: 'off', resolveShellPermissionMode: () => 'full-access',
@@ -117,7 +124,7 @@ describe('first-turn contracts through public SDK and HTTP providers', () => {
           expect(result.success).toBe(true);
           expect(await readFile(target, 'utf8')).toBe('after\nkept\n');
           expect(askUserMulti).toHaveBeenCalledOnce();
-          expect(requests).toHaveLength(4);
+          expect(requests).toHaveLength(calls.length + 1);
           const first = requests[0]!;
           const tools = first.tools.map(tool => ({ name: tool.name ?? tool.function?.name,
             schema: tool.input_schema ?? tool.function?.parameters }));
@@ -128,6 +135,10 @@ describe('first-turn contracts through public SDK and HTTP providers', () => {
           expect(tools.find(tool => tool.name === 'ask_user_question')?.schema?.properties).not.toHaveProperty('agent_id');
           expect(tools.map(tool => tool.name)).not.toContain('run_skill_script');
           expect(tools.map(tool => tool.name)).not.toContain('multi_edit');
+          for (const name of ['tool_describe', 'todo_get', 'lsp_prepare_call_hierarchy']) {
+            expect(tools.map(tool => tool.name)).not.toContain(name);
+          }
+          expect(tools.find(tool => tool.name === 'todo_list')?.schema?.properties).toHaveProperty('id');
           expect(tools.find(tool => tool.name === 'edit')?.schema?.required).toEqual(['path', 'edits']);
           expect(tools.find(tool => tool.name === 'edit')?.schema?.properties).not.toHaveProperty('old_string');
           if (mode === 'ama') {
@@ -138,7 +149,7 @@ describe('first-turn contracts through public SDK and HTTP providers', () => {
             expect(instructions).not.toContain('`changed_scope`');
             expect(instructions).not.toContain('`changed_diff_bundle`');
           }
-          const resultMessages = requests[3]!.messages.filter(message => {
+          const resultMessages = requests.at(-1)!.messages.filter(message => {
             if (typeof message !== 'object' || message === null) return false;
             return 'role' in message && message.role !== 'system' && message.role !== 'assistant';
           });
@@ -146,6 +157,13 @@ describe('first-turn contracts through public SDK and HTTP providers', () => {
           expect(finalHistory).toContain('after');
           expect(finalHistory).toContain('answers');
           expect(finalHistory).not.toContain('Missing required parameter');
+          expect(finalHistory).toContain('<function>');
+          expect(finalHistory).not.toContain('[Tool Error]');
+          if (mode === 'ama') {
+            expect(finalHistory).toContain('evaluator');
+            expect(finalHistory).toContain('provenance');
+            expect(finalHistory).toContain('保留详情');
+          }
         } finally {
           clearRuntimeModelProviders();
           setAgentConfigHome(undefined);

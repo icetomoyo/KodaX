@@ -43,6 +43,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { getToolDefinition, registerTool } from '../../tools/registry.js';
+import { buildWorkerStableInstructions } from '../../agents/worker-role-prompt.js';
 
 import {
   applyToolVisibilityPolicy,
@@ -83,6 +84,48 @@ describe('model-visible file tool compatibility', () => {
       const tools = getActiveToolDefinitions(['edit', 'multi_edit']);
       expect(tools.map(tool => tool.name)).toEqual(['edit', 'multi_edit']);
       expect(tools[0]?.input_schema.required).toEqual(['custom']);
+    } finally { cleanup(); }
+  });
+});
+
+describe('model-visible consolidated read and discovery entries', () => {
+  const names = ['tool_search', 'tool_describe', 'todo_list', 'todo_get',
+    'lsp_prepare_call_hierarchy', 'lsp_incoming_calls', 'lsp_outgoing_calls'];
+
+  it('exposes canonical entries and keeps all legacy definitions executable', () => {
+    expect(getActiveToolDefinitions(names, 'full').map(tool => tool.name).sort()).toEqual(
+      ['tool_search', 'todo_list', 'lsp_incoming_calls', 'lsp_outgoing_calls'].sort(),
+    );
+    for (const name of names) expect(getToolDefinition(name)).toBeDefined();
+    const todo = getActiveToolDefinitions(names, 'full').find(tool => tool.name === 'todo_list');
+    expect(todo?.input_schema.properties).toHaveProperty('id');
+    expect(todo?.input_schema.required ?? []).not.toContain('id');
+  });
+
+  it('retains legacy-only and partially available LSP surfaces', () => {
+    for (const name of ['tool_describe', 'todo_get', 'lsp_prepare_call_hierarchy']) {
+      expect(getActiveToolDefinitions([name], 'full').map(tool => tool.name)).toEqual([name]);
+    }
+    expect(getActiveToolDefinitions(['lsp_prepare_call_hierarchy', 'lsp_incoming_calls'], 'full')
+      .map(tool => tool.name)).toContain('lsp_prepare_call_hierarchy');
+  });
+
+  it.each(['tool_search', 'todo_list', 'lsp_incoming_calls', 'tool_describe', 'todo_get',
+    'lsp_prepare_call_hierarchy'])('preserves distinct extension contracts overriding %s', (name) => {
+    const cleanup = registerTool({ name, description: 'Custom operation',
+      input_schema: { type: 'object', properties: { custom: { type: 'string' } }, required: ['custom'] },
+      sideEffect: 'readonly', handler: async () => 'custom result' });
+    try {
+      const tools = getActiveToolDefinitions(names, 'full');
+      const legacy = name.startsWith('tool_') ? 'tool_describe'
+        : name.startsWith('todo_') ? 'todo_get' : 'lsp_prepare_call_hierarchy';
+      expect(tools.map(tool => tool.name)).toContain(legacy);
+      expect(tools.find(tool => tool.name === name)?.input_schema.required).toEqual(['custom']);
+      if (name === 'todo_list') {
+        const prompt = buildWorkerStableInstructions(tools.map(tool => tool.name));
+        expect(prompt).toContain('Use `todo_get`');
+        expect(prompt).not.toContain('todo_list({id})');
+      }
     } finally { cleanup(); }
   });
 });

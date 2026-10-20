@@ -45,7 +45,7 @@ const bridgeDispatchUnavailable: ToolHandlerSync = async (_input, _context) => (
 export const TOOL_DESCRIBE_DEFINITION: LocalToolDefinition = {
   name: TOOL_DESCRIBE_NAME,
   description:
-    'Return the full bounded description and input schema for one active tool. Use this after tool_search when a tool schema is hidden behind the portable bridge.',
+    'Return the full description and input schema for active tools. Compatibility entry; tool_search query="select:NAME[,NAME...]" also returns full contracts without a second lookup.',
   input_schema: {
     type: 'object',
     properties: {

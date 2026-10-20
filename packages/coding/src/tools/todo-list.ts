@@ -32,12 +32,13 @@
  */
 
 import type { KodaXToolExecutionContext, TodoItem } from '../types.js';
+import { toolTodoGet } from './todo-get.js';
 
 interface TodoListItemDTO {
   readonly id: string;
   /** v0.7.42 — brief imperative title (renamed from `content`). */
   readonly subject: string;
-  /** v0.7.42 — optional fuller description. Use `todo_get` for full-detail. */
+  /** Optional fuller description. Pass an id for full item details. */
   readonly description?: string;
   readonly status: string;
   readonly activeForm?: string;
@@ -63,9 +64,13 @@ function jsonResult(payload: Record<string, unknown>): string {
 }
 
 export async function toolTodoList(
-  _input: Record<string, unknown>,
+  input: Record<string, unknown>,
   ctx: KodaXToolExecutionContext,
 ): Promise<string> {
+  if (Object.hasOwn(input, 'id')) {
+    return toolTodoGet(input, ctx);
+  }
+
   if (!ctx.todoStore) {
     return jsonResult({
       ok: false,

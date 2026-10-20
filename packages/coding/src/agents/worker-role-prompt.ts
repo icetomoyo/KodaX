@@ -124,7 +124,12 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
   const batchEditTool = hasTool('edit') ? 'edit' : 'multi_edit';
   const diffTool = hasTool('changed_diff') ? 'changed_diff'
     : hasTool('changed_diff_bundle') ? 'changed_diff_bundle' : undefined;
-  const fullTodo = ['todo_create', 'todo_update', 'todo_get', 'todo_list', 'wait_agent'].every(hasTool);
+  // Runtime passes model-visible names: a surviving legacy reader may be needed
+  // because the list tool is absent or overridden by a different contract.
+  const todoReader = availableToolNames?.includes('todo_get') ? 'todo_get'
+    : hasTool('todo_list') ? 'todo_list' : undefined;
+  const todoReadCall = todoReader === 'todo_list' ? 'todo_list({id})' : 'todo_get(id)';
+  const fullTodo = ['todo_create', 'todo_update', 'todo_list', 'wait_agent'].every(hasTool);
   const fullCollaboration = ['spawn_agent', 'wait_agent', 'send_message', 'followup_task', 'list_agents', 'agent_output', 'interrupt_agent'].every(hasTool);
   const managedRunContextTrust = [
     'MANAGED RUN CONTEXT TRUST:',
@@ -167,7 +172,7 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
   // and `TaskCreateTool/`).
   const planListHygiene = [
     'PLAN-LIST HYGIENE (staleness + dedup):',
-    '- BEFORE `todo_update`, call `todo_get(id)` only when another Actor/runtime event may actually have changed that item since you last saw it (for example after a wait/resume boundary). Ordinary consecutive model turns do not require a resynchronization ritual.',
+    `- BEFORE \`todo_update\`, call \`${todoReadCall}\` only when another Actor/runtime event may actually have changed that item since you last saw it (for example after a wait/resume boundary). Ordinary consecutive model turns do not require a resynchronization ritual.`,
     '- BEFORE `todo_create` mid-task, scan the existing plan list (it is visible at the top of every throttle reminder, OR call `todo_list` for an explicit snapshot) and confirm no item with the same subject is already present. Duplicate items split the user\'s progress dashboard into parallel branches of the same work — confusing and easy to over-count.',
     '- DEDUP HEURISTIC: two items are duplicates when their `subject` describes the same concrete artifact / file path / module. They are NOT duplicates when one is a parent-level summary ("Audit packages/auth") and the other a leaf ("Write test for handleLogin in packages/auth") — those are legitimately distinct rows.',
     '- INITIAL PLAN COMMITMENT (first batch of `todo_create` at the start of the task) is exempt from the dedup check — the list is empty so duplicates are impossible.',
@@ -307,12 +312,12 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
       ? '- Use `todo_create` for a small initial plan or newly discovered milestones. Supply activeForm and use evaluator only for a real deterministic check. Before adding mid-task, check visible progress for duplicate deliverables; preserve prior progress.' : undefined,
     hasTool('todo_update')
       ? '- Use `todo_update` to maintain existing items at milestone boundaries, before further waiting or final delivery. Revise or cancel disproved work; report blockers on the affected items. Do not mark work complete while synthesis remains.' : undefined,
-    hasTool('todo_get') && hasTool('todo_update')
-      ? '- Use `todo_get` before changing an item only when another Actor or runtime event may have changed it since last seen; ordinary consecutive turns need no refresh ritual.' : undefined,
+    todoReader && hasTool('todo_update')
+      ? `- Use \`${todoReader}\` with id before changing an item only when another Actor or runtime event may have changed it since last seen; ordinary consecutive turns need no refresh ritual.` : undefined,
     hasTool('todo_list')
       ? '- Use `todo_list` when the existing plan is uncertain; visible current progress is sufficient for deduplication and resume.' : undefined,
-    hasTool('todo_get') && !hasTool('todo_update')
-      ? '- Use `todo_get` when the state of an existing milestone is uncertain.' : undefined,
+    todoReader && !hasTool('todo_update')
+      ? `- Use \`${todoReader}\` with id when the state of an existing milestone is uncertain.` : undefined,
     '- Write user-visible plan text and progress in the user\'s requested language, otherwise their request\'s primary language. Preserve identifiers, paths, commands, and quoted evidence.',
   ].filter((line): line is string => line !== undefined).join('\n');
   const limitedCollaboration = [

@@ -275,6 +275,9 @@ describe('Agent completion todo checkpoint', () => {
     ]);
     expect(reminder).toContain('2 terminal child Agent results');
     expect(reminder).toContain('before calling wait_agent again');
+    expect(reminder).toContain('refresh the affected user-visible milestone if needed');
+    expect(reminder).not.toContain('todo_list');
+    expect(reminder).not.toContain('todo_get');
     expect(reminder).toContain('semantic milestones, not Actor instances');
     expect(consumeAgentCompletionTodoReminderText(state, store, [])).toBeUndefined();
   });
