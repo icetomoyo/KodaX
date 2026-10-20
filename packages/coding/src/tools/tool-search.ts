@@ -209,7 +209,7 @@ export const toolSearchHandler: ToolHandlerSync = async (input, context) => {
 export const TOOL_SEARCH_DEFINITION: LocalToolDefinition = {
   name: 'tool_search',
   description: [
-    'Look up full contracts for active tools. Native parameter schemas are already callable; look up richer selection or behavior guidance when needed.',
+    'Look up full contracts for active tools. Native tools are directly callable; use tool_call for discovered tools absent from the native list.',
     'Use query="select:NAME[,NAME...]" for exact lookup across discoverable tools. Keyword queries search compact-hint web/repo/workflow tools, with +required terms and loose ranked terms.',
     'Results include full descriptions and schemas. Use the returned contract even if later tool lists remain compact.',
   ].join(' '),
