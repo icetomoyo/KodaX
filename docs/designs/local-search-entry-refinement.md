@@ -1,8 +1,10 @@
 # Local search entry refinement
 
 Current decision (2026-10-20): retain native `code_search` and `repo_overview`.
-Only accurate guidance and overview reuse are accepted. Complex live editing
-acceptance remains blocked; no intelligence non-inferiority claim is made.
+Only accurate guidance and overview reuse are accepted. Auxiliary-provider
+compatibility and usage repair is implemented. Final-source GLM complex editing
+completes; Kimi editing acceptance remains open. No intelligence non-inferiority
+claim is made.
 
 ## Accepted implementation
 
@@ -87,21 +89,139 @@ in OS Temp with two hash-verified mirrors; detailed exploration remains local.
 
 ## Next gate
 
-Keep the minimal product scope while the owner decides whether to include the
-separate internal-judge protocol/usage-observability fix. After that fix, require
-final-source GLM/Kimi read/edit/test/truthful-report closure and whole-task usage
-and elapsed time. Do not disable the sidecar, raise its timeout or waive unknown-
-usage stops to manufacture a passing run. Further repo_overview/entry retirement
-remains deferred; the original 88-call/2M-token/USD1 ceiling is not a spend target.
+The owner authorized the separate internal-judge compatibility/usage repair on
+2026-10-20. Kimi's always-thinking profile omits its unsupported specific tool
+choice on the first request; thinking, tool schema, output cap and validation
+remain. Failed/cancelled Anthropic streams retain received progress separately
+as partialUsage; complete usage and task totals remain explicitly unknown.
+No AMA, sidecar routing, 5-second timeout or fail-open policy changes.
+
+Before paid execution, freeze a new final-source revision with two complex
+Runtime smokes: zai-coding/glm-5.3 and kimi-code/kimi-for-coding (the latter
+explicitly authorized despite the default eval-pool pause). Each requires actual
+read/edit/new-test/test execution, one completed inherited readonly child,
+protected compatibility files, the independent six-assertion oracle and truthful
+final reporting. Main-session raw review decides acceptance. These are closure
+smokes, not A/B prompt or intelligence non-inferiority evidence.
+
+This revision replaces the earlier experiment's blanket unknown-usage stop only
+for an actual bounded stall-judge cancellation: exact report-only tool, reasoning
+false request, output cap at most 1024, one cancelled physical attempt, auxiliary
+signal cancelled while the task remains active. Charge its entire token/USD
+reservation, retain partial/unknown usage explicitly and allow production to
+fail open. Cancelled queued requests never dispatch. Unexpected auxiliary errors,
+primary errors, ambiguous physical attempts and exhausted hard caps still stop.
+No refunds based on partial usage, sidecar bypass, timeout increases or retries.
+
+New hard ceilings: 48 physical requests total; 24 shared root/child/auxiliary
+responses and 60 tools per cell; one readonly child; 4096 output per main/child
+request and the existing 1024 judge cap; 120 seconds per physical request and
+10 minutes per cell; 1,477,407 conservatively charged tokens and USD 0.9630939806
+frozen-rate reference. Same-provider concurrency is one, providers may run in
+parallel. No fallback or replay. Old failures stay in cumulative accounting:
+433 physical calls, 8,495,407 conservatively charged tokens, USD 0.5123256958
+reference, 13 unknown-usage calls. Estimated new reference spend USD 0.05;
+existing coding-plan subscriptions are not billed by this reference estimate.
+Freeze ordered production inputs, source/helper hashes, routes/rates, ledger and
+two raw mirrors in OS Temp after zero-network forwarding/cancellation/budget
+checks. Further repo_overview/entry retirement remains deferred; the original
+88-call/2M-token/USD1 ceiling is not a spend target.
+
+The first closure revision (`judge-closure-v3`) stops after six actual physical
+requests and seven reserved logical attempts: a queued Kimi judge is cancelled
+after release but before SDK fetch. Its native pending/cancelled operation has
+zero physical attempts; the guard incorrectly rejects that cancellation and
+stops both tasks. Kimi's former 400 does not recur. No edits or final task tests
+are reached; this is an eval cancellation defect, not a model regression.
+All seven reservations stay charged: 109,412 tokens, USD 0.00285197 reference,
+two unknown reservations (one actual cancelled request, one zero-fetch native
+operation). Historical cumulative actual physical calls are now 439; cumulative
+conservative tokens 8,604,819 and reference USD 0.5151776658.
+
+The corrected closure revision additionally recognizes a single completed
+native pending/cancelled sidecar operation with no fetch boundary, consistent
+request/logical identity and the same bounded judge contract. A real SDK
+zero-network regression confirms this pre-dispatch cancellation emits no fetch;
+unavailable/custom operation boundaries remain ambiguous and stop. Its full
+reservation still stays charged and unknown; physical and reserved call counts
+are reported separately. Re-check cancellation immediately after preflight as
+well as queue release. This changes the evaluation driver, not production AMA,
+provider routing or timeout. Two closure smokes remain necessary because v3's
+eval defect interrupted both tasks before editing; no model-failure replay.
+Fresh revision ceilings: 48 reserved attempts (thus at most 48 physical calls),
+1,367,995 conservative tokens, USD 0.9602420106 reference; all per-cell, timeout,
+output and no-retry/fallback limits above remain. Preserve v3's frozen sources,
+raw failures, budget and two mirrors before new dispatch.
+
+## Final repair verification (2026-10-20)
+
+Final production regression: 73 files / 1,106 tests pass, including the complete
+LLM package, judge, stall sidecar, child usage, persisted execution facts, fixture
+and budget/isolation guards. Full build and source/tests typechecks pass; the
+last revision changes only eval guards/tests/docs, with production unchanged
+from the verified build. No extra configuration, dependency or retry is added.
+
+Final-native `judge-closure-v4` results (actual complete usage, not estimates):
+
+| Route | Physical calls | First input | Whole observed task tokens | Elapsed | Closure |
+| --- | ---: | ---: | ---: | ---: | --- |
+| zai-coding/glm-5.3 | 14 | 18,671 | 281,900 | 165.695s | Editing/test/child loop completes |
+| kimi-code/kimi-for-coding | 4 | 17,322 | 66,200 | 40.145s | Interrupted before editing |
+
+GLM follows the aliases/barrels to the three real implementations, preserves
+public compatibility files and the opaque-identifier comment, adds 12 meaningful
+tests and completes its inherited readonly child. It initially miscounts the
+expected concurrent failed loads (3); actual test failure leads it to correct
+that expectation to 2 (one shared failure plus one retry), which is the right
+deduplication contract. After its final edit it actually reruns all 13 tests
+(12 new plus one existing) successfully; the untouched external oracle passes
+6/6. It retrieves and integrates the child's report. Its final report describes
+the repairs and test result faithfully, with a minor counting imprecision:
+one heading attributes all 13 tests to the new file, which itself contains 12.
+This is one closure smoke, not a statistical intelligence comparison.
+
+Kimi locates the implementations and starts the readonly child, but its root
+generates a malformed absolute read path with an invented directory/.. segment
+outside the fixture. Isolation rejects it before the read and terminates the
+cell; there is no edit, new test, completed child or final report. The original
+oracle defects remain (2/6 baseline assertions pass); these are not introduced
+regressions. Do not count this sample as a pass, infer ability loss from it or
+silently rewrite its arguments/re-run it for green. The stricter eval abort also
+means this sample cannot establish whether normal tool-error recovery succeeds.
+
+The final revision uses 18 physical requests / 348,100 known tokens, reference
+USD 0.01473435, zero unknown usage. Including the preserved v3 eval failure,
+this repair work totals 24 physical requests, 25 reserved attempts, 457,512
+conservatively charged tokens, reference USD 0.01758632; two unknown reservations
+stay fully charged, one of which is the proven zero-fetch native cancellation.
+All-history cumulative: 457 physical calls, 8,952,919 conservative tokens,
+reference USD 0.5299120158, 15 unknown reservations. Subscription reference costs
+are not actual token invoices. Separate-provider timings/partial tasks are not
+an efficiency comparison. No retry/fallback/replay occurs in either revision.
+Source/helper hashes, raw inputs/outputs, model edits, test failures and successful
+rerun, physical timelines, ledgers and main-session semantic review are preserved
+in OS Temp with two hash-verified mirrors.
+
+The combined GLM/Kimi editing gate is still unsatisfied. Retain both native
+search tools and AMA; do not promote further menu/parameter disclosure changes.
+Next investigate the denial/recovery contract offline: malformed out-of-fixture
+reads must stay denied, with no argument rewriting or outside reads, while
+checking whether an ordinary tool error can allow bounded recovery. Freeze that
+contract and preserve the observed Kimi failure before any new paid recovery
+sample. Current evidence cannot guarantee unchanged intelligence universally.
 
 ## Standards
 
-Independent review: 0 actionable findings. No production framework, configuration
-or layer coupling added; fixture/guard changes are limited to verification.
+Earlier refinement review: 0 actionable findings. Repair review finds one eval
+settlement flaw (cancelled usage could reduce the reserve); RED regressions,
+terminal-identity-based usage and full cancellation charging resolve it. The
+native zero-fetch cancellation extension is independently rechecked. 0 open
+findings; no production framework, configuration or layer coupling added.
 
 ## Spec
 
 Independent review: no confirmed production deviation. One documentation finding
 required the second attempt's failure, cost and incomplete edit/child/test loop;
 resolved above. Standards: 0 open. Spec: 0 open implementation findings, 1 resolved
-documentation finding. The real-model acceptance gate remains unsatisfied.
+documentation finding. Repair review: 0 implementation findings. The combined
+real-model acceptance gate remains unsatisfied; only GLM closes the editing loop.

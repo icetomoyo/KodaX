@@ -35,6 +35,19 @@ it('reports partial physical coverage for an adapter operation lost during a cra
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+it('persists partial stream usage while keeping the complete task bill explicitly unknown', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'kodax-fact-partial-stream-'));
+  try {
+    const store = createExecutionFactsStore(dir, owner);
+    store.created('session');
+    store.provider('session', target, { ...request, state: 'cancelled',
+      partialUsage: { inputTokens: 12, outputTokens: 0, totalTokens: 12 } });
+    expect((await store.service.readRequests('session')).items[0]).toMatchObject({ state: 'cancelled',
+      partialUsage: { inputTokens: 12, outputTokens: 0, totalTokens: 12 } });
+    expect(await store.service.read('session')).toMatchObject({ requestsWithoutUsage: 1, usage: { totalTokens: 0 } });
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 it('recovers unknown executions, retains actual sandbox observations and counts stable request usage once', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'kodax-fact-recovery-'));
   try {

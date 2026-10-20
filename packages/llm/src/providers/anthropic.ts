@@ -1,5 +1,5 @@
 import { recordRejectedImage } from './rejected-image.js';
-import { observeProviderFetch } from '../provider-request-observation.js';
+import { observeProviderFetch, observeProviderStreamUsage } from '../provider-request-observation.js';
 /**
  * KodaX Anthropic Compatible Provider
  *
@@ -295,6 +295,9 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     // are localRejected, so these presets never disable.
     if (preset === 'kimi-k2.7-code' || preset === 'minimax-m2-always') {
       params.thinking = { type: 'enabled' } as Anthropic.Messages.ThinkingConfigParam;
+      // Kimi rejects specific tool choice with its required thinking mode.
+      // Keep the tool schema and thinking; avoid a known-bad first request.
+      if (preset === 'kimi-k2.7-code') delete params.tool_choice;
       return;
     }
 
@@ -1017,6 +1020,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             (event as Anthropic.Messages.RawMessageDeltaEvent).usage,
             usage,
           );
+          observeProviderStreamUsage(usage);
           const delta = (event as any).delta;
           if (delta?.stop_reason) {
             stopReason = delta.stop_reason;
@@ -1031,6 +1035,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             (event as Anthropic.Messages.RawMessageStartEvent).message?.usage as AnthropicUsageLike,
             usage,
           );
+          observeProviderStreamUsage(usage);
           if (process.env.KODAX_DEBUG_STREAM) {
             this.logStreamDiagnostic('[Stream] message_start received');
           }

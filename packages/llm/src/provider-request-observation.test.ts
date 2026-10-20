@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { withProviderRequestCredential } from './provider-credential-context.js';
-import { observeProviderAttempt, observeProviderFetch, runWithAdditionalProviderRequestObserver, runWithProviderRequestObserver, type ProviderRequestObservation } from './provider-request-observation.js';
+import { observeProviderAttempt, observeProviderFetch, observeProviderStreamUsage, runWithAdditionalProviderRequestObserver, runWithProviderRequestObserver, type ProviderRequestObservation } from './provider-request-observation.js';
 
 it('records an in-flight non-fetch adapter before completion and retains its identity', async () => {
   const facts: ProviderRequestObservation[] = [];
@@ -61,4 +61,27 @@ it('refines the pending fact at the physical fetch boundary and assigns SDK retr
     ['physical_attempt', 'failed', 1], ['physical_attempt', 'succeeded', 2],
   ]);
   expect([...final.values()].every(fact => fact.logicalRequestId === 'logical-fixture')).toBe(true);
+});
+
+it('keeps partial usage on its physical attempt and never substitutes it for final usage', async () => {
+  const facts: ProviderRequestObservation[] = [];
+  const fetcher = observeProviderFetch(async () => new Response(''));
+  await runWithProviderRequestObserver(fact => facts.push(fact), () => withProviderRequestCredential('http', 'sidecar', undefined,
+    () => observeProviderAttempt('http', 'model', async () => {
+      await fetcher('https://fixture.invalid');
+      observeProviderStreamUsage({ inputTokens: 12, outputTokens: 2, totalTokens: 14 });
+      // A replacement HTTP attempt must not inherit the first stream's progress.
+      await fetcher('https://fixture.invalid');
+      observeProviderStreamUsage({ inputTokens: Number.NaN, outputTokens: 2, totalTokens: 14 });
+      await fetcher('https://fixture.invalid');
+      observeProviderStreamUsage({ inputTokens: 4, outputTokens: 0, totalTokens: 4 });
+      return { usage: { inputTokens: 4, outputTokens: 3, totalTokens: 7 } };
+    })));
+  const terminal = facts.filter(f => f.boundary === 'physical_attempt' && f.state !== 'started');
+  expect(terminal).toHaveLength(3);
+  expect(terminal[0]).toMatchObject({ state: 'failed', partialUsage: { inputTokens: 12, outputTokens: 2, totalTokens: 14 } });
+  expect(terminal[0]?.usage).toBeUndefined();
+  expect(terminal[1]?.partialUsage).toBeUndefined();
+  expect(terminal[2]?.usage).toEqual({ inputTokens: 4, outputTokens: 3, totalTokens: 7 });
+  expect(terminal[2]?.partialUsage).toBeUndefined();
 });

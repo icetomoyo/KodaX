@@ -20,6 +20,8 @@ export interface ProviderRequestObservation {
   readonly startedAt: string;
   readonly endedAt?: string;
   readonly usage?: KodaXTokenUsage;
+  /** Received stream progress only; never a complete bill or a basis for a refund. */
+  readonly partialUsage?: KodaXTokenUsage;
 }
 type Observer = (fact: ProviderRequestObservation) => void;
 interface RequestContext {
@@ -30,7 +32,7 @@ interface RequestContext {
   operationFact?: ProviderRequestObservation;
   wire?: WireContext;
 }
-interface WireContext { readonly provider: string; readonly model?: string; current?: ProviderRequestObservation; }
+interface WireContext { readonly provider: string; readonly model?: string; current?: ProviderRequestObservation; partialUsage?: KodaXTokenUsage; }
 const observers = new AsyncLocalStorage<Observer>();
 const requests = new AsyncLocalStorage<RequestContext>();
 const wires = new AsyncLocalStorage<WireContext>();
@@ -90,12 +92,20 @@ function usageFrom(result: unknown): KodaXTokenUsage | undefined {
   }
   return normalized;
 }
+/** Retain stream progress for failed/cancelled physical attempts without inventing final usage. */
+export function observeProviderStreamUsage(usage: KodaXTokenUsage | undefined): void {
+  const wire = wires.getStore();
+  if (wire?.current?.state !== 'started') return;
+  const normalized = usageFrom({ usage });
+  if (normalized) wire.partialUsage = normalized;
+}
 function finishWire(wire: WireContext, result: unknown, error?: unknown): void {
   if (!wire.current || wire.current.state !== 'started') return;
   const cancelled = requests.getStore()?.signal?.aborted || abortSignals.getStore()?.aborted
     || (error instanceof Error && error.name === 'AbortError');
+  const usage = usageFrom(result);
   wire.current = { ...wire.current, state: error === undefined ? 'succeeded' : cancelled ? 'cancelled' : 'failed',
-    endedAt: new Date().toISOString(), usage: usageFrom(result) };
+    endedAt: new Date().toISOString(), usage, ...(!usage && wire.partialUsage ? { partialUsage: wire.partialUsage } : {}) };
   observers.getStore()?.(wire.current);
 }
 /** Actual SDK fetch boundary, including SDK-internal HTTP retries. Records no payload or secret. */
@@ -106,6 +116,7 @@ export function observeProviderFetch(fetcher: typeof globalThis.fetch): typeof g
     if (!observer || !context) return fetcher(input, init);
     const wire = wires.getStore() ?? (context.wire ??= { provider: context.provider });
     if (wire.current?.state === 'started') finishWire(wire, undefined, new Error('Provider request replaced.'));
+    wire.partialUsage = undefined;
     context.attempts += 1;
     wire.current = { requestId: context.attempts === 1 && context.operationFact ? context.operationFact.requestId : `physical_${randomUUID()}`, logicalRequestId: context.logicalRequestId,
       provider: wire.provider, model: wire.model, purpose: context.purpose, attribution: context.attribution,
