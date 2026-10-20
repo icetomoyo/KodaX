@@ -303,7 +303,7 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 `handleRuntimePermissionRequest()` 管理 SDK 权限 UI，并在 prepared Session 尾部遇到
 `data_changed` 时通过权威 delta 合并恢复；后台持久化失败会显示为诊断，不再静默丢失。
 
-**v0.7.97-alpha.4 发布**：新增独立的 `@kodax-ai/artifacts` 包——PPTX 创作、
+**v0.7.97-alpha.4 发布**：新增可独立使用的 Artifact SDK 源码模块——PPTX 创作、
 有界编辑与当前文件视觉证据（轻量渲染，可选 LibreOffice/PDF 转换），并带可选的受管 KodaX
 适配器（FEATURE_301）；同时退役旁路 Sidecar Verifier：主 Agent 在交付前用
 真实工具与渲染证据核验每条需求，由内置 `visual-review` 技能覆盖静态、分页、
@@ -313,6 +313,39 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 详见 [docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) 与
 [v0.7.97-alpha.4 发布清单](docs/release.md#v0797-alpha4-release-preparation)。
 所有 v0.7.96 稳定与 v0.7.97-alpha.1/alpha.2/alpha.3 契约全部保留。
+
+**v0.7.97-alpha.9 发布**：Session 准入检查改用规范身份元数据而非加载完整
+历史 transcript——元数据头可读而正文不可读(例如损坏存储上的 Windows
+ERROR_CRC 以 EIO 呈现)不再阻塞无关的 Run 列表、daemon 检查或空闲退出检查。
+准入复用围栏到仍持有 owner fence 的已初始化 Actor 控制器,其他客户端工作的
+`protected` 退出回执保持不变。详见 [v0.7.97-alpha.9 发布清单](docs/release.md#v0797-alpha9-release-preparation)。
+所有 v0.7.96 稳定与 v0.7.97-alpha.1 至 alpha.8 契约全部保留。
+
+**v0.7.97-alpha.8 发布**：Artifact SDK 并入单一主包发布——`@kodax-ai/kodax` 新增
+`/artifacts`、`/artifacts/client`、`/artifacts/runtime`、`/artifacts/kodax` 四个
+子路径导出;工作区模块转为私有(不再独立发布 npm),固定依赖上移到根包声明,
+Node 最低版本提升到 20.16,tarball 审计与已安装包 Release 门同步就位。
+详见 [v0.7.97-alpha.8 发布清单](docs/release.md#v0797-alpha8-release-preparation)。
+所有 v0.7.96 稳定与 v0.7.97-alpha.1 至 alpha.7 契约全部保留。
+
+**v0.7.97-alpha.7 发布**：跨 daemon profile 解析共享 Session 存储的 Host
+归属（Space #222）——启动器在原启动期限内等待启动中 owner 的已验证描述符，
+兼容 Host 直接复用而不重启工作，仅允许受控的同构建 orphan-exit 策略刷新。
+结构化 owner/profile 与升级阻塞诊断对外发布，daemon 启动与连接超时以可重试的
+`daemon_startup_failed` 与 `ETIMEDOUT` 呈现。空闲的交互式 Host 在 30 秒生命周期后
+退隐而显式 daemon/A2A 服务 owner 保留;并发 CLI 启动识别启动中的 daemon 为既有
+owner;Windows SDK attach 在原启动控制内读取精确进程身份。
+详见 [v0.7.97-alpha.7 发布清单](docs/release.md#v0797-alpha7-release-preparation)。
+所有 v0.7.96 稳定与 v0.7.97-alpha.1 至 alpha.6 契约全部保留。
+
+**v0.7.97-alpha.6 发布**：精简共享 Host 启动——历史子进程恢复在 owner fence
+下只运行一次，预检投影规范 Actor 元数据而不加载 transcript；`kodax -r`、Host
+与 SDK 的 Session 列表按真实最近消息活动排序并暴露可选 `lastMessageAt`。
+新 REPL Session 在首个被接受输入保存前保持 Host 本地草稿（Issue 368，CLI 要求
+`sessionDrafts:1`）；恢复视图保留用户图片附件；并发 resume 启动器在刷新旧 Host
+时从瞬时检查冲突中恢复，不重放停机或业务请求（Issue 369）。
+详见 [v0.7.97-alpha.6 发布清单](docs/release.md#v0797-alpha6-release-preparation)。
+所有 v0.7.96 稳定与 v0.7.97-alpha.1 至 alpha.5 契约全部保留。
 
 **v0.7.97-alpha.5 发布**：交付 FEATURE_301 统一 Artifact SDK 与格式后端——
 九项 SDK 操作（`prepare`、`readEvidence`、能力/诊断）、原生 PDF、精确
@@ -1116,6 +1149,8 @@ daemon 可承载多个 Session；不同 Session 可以并发，同一 Session �
 
 显式独立库嵌入仍可使用 `/runtime` 的 `createKodaXRuntime({mode:'embedded'})`，其 owner 和退出责任属于调用者。这不是 CLI 的可选运行模式，也不是产品客户端的连接失败回退。当前包版本与发布状态见[SDK 迁移指南](docs/SDK_MIGRATION.md)。
 
+普通 CLI 自动拉起的 Host 在最后一个客户端断开、后台工作持续空闲 30 秒后退出；重新连接会取消空闲退出。显式 `kodax daemon start` 会保留当前 Host，即使它原先是临时 Host；承载已配置 A2A 服务的 Host 也会在没有 CLI 客户端时继续常驻。
+
 ### 7. 打包成单文件二进制（无需 Node）
 
 KodaX 可以用 `bun --compile` 打包成单可执行文件 + 一个 `builtin/` sidecar 目录，目标机器**不需要安装 Node.js 或任何运行时**。
@@ -1251,7 +1286,7 @@ kodax --repo-intelligence full --repo-intelligence-trace
 
 ## 仓库结构
 
-KodaX 是基于 npm workspaces 的 TypeScript monorepo，**4 个核心 workspace 包与独立可选 Artifact SDK**（FEATURE_194 v0.7.43 包合并 — 9 → 4，ADR-036），npm 上以单 bundle 包 `@kodax-ai/kodax` 发布 + 13 个 SDK subpath exports（`/agent`、`/llm`、`/coding`、`/media`、`/repl`、`/skills`、`/mcp`、`/session`、`/client`、`/runtime`、`/sandbox`、`/a2a`、`/experimental-memory`；ADR-024 + ADR-032 + ADR-038）。核心包：
+KodaX 是基于 npm workspaces 的 TypeScript monorepo，**4 个核心 workspace 包与私有 Artifact 源码模块**（FEATURE_194 v0.7.43 包合并 — 9 → 4，ADR-036），npm 上以单 bundle 包 `@kodax-ai/kodax` 发布 + 17 个 SDK subpath exports（`/agent`、`/llm`、`/coding`、`/media`、`/repl`、`/skills`、`/mcp`、`/session`、`/client`、`/runtime`、`/sandbox`、`/a2a`、`/experimental-memory`、`/artifacts`、`/artifacts/client`、`/artifacts/runtime`、`/artifacts/kodax`；ADR-024 + ADR-032 + ADR-038）。核心包：
 
 | Workspace 包 | 作用 | 主要依赖 |
 |----|------|---------|
@@ -1266,10 +1301,10 @@ KodaX 是基于 npm workspaces 的 TypeScript monorepo，**4 个核心 workspace
 
 KodaX 有两层结构，SDK 用户需要分开理解：
 
-- **源码层**：4 个核心 workspace 包，另有独立可选 `@kodax-ai/artifacts`：PPTX 创作/限定编辑，PDF/图片/SVG 取证、DOCX 轻量预览、本地网页与 SMIL 捕获，公共准备和真实图片读取。核心启动不加载渲染依赖；桥接沿用受管权限、沙箱和取消。[SDK 支持与限制](docs/ARTIFACT_SDK.md)。
-- **当前源码打包导出**（不表示已发布到 npm）：单个 bundled 包 `@kodax-ai/kodax`，对外暴露 13 个 SDK subpath（SDK 消费者 `import` 时看到的接口）。subpath 分两种角色：
+- **源码层**：4 个核心 workspace 包，另有私有可选 Artifact 源码 workspace，经同一主包 `/artifacts` 子路径交付：PPTX 创作/限定编辑，PDF/图片/SVG 取证、DOCX 轻量预览、本地网页与 SMIL 捕获，公共准备和真实图片读取。核心启动不加载渲染依赖；桥接沿用受管权限、沙箱和取消。[SDK 支持与限制](docs/ARTIFACT_SDK.md)。
+- **当前源码打包导出**（不表示已发布到 npm）：单个 bundled 包 `@kodax-ai/kodax`，对外暴露 17 个 SDK subpath（SDK 消费者 `import` 时看到的接口）。subpath 分两种角色：
   - **完整包 subpath**（`/agent`、`/llm`、`/coding`、`/repl`）—— 每个 1:1 对应一个源码包，暴露完整公开 API。
-  - **集成与窄子集 subpath**（`/media`、`/skills`、`/mcp`、`/session`、`/client`、`/runtime`、`/sandbox`、`/a2a`、`/experimental-memory`）—— 聚焦能力或宿主集成边界；`/experimental-memory` 明确为 opt-in 不稳定接口。
+  - **集成与窄子集 subpath**（`/media`、`/skills`、`/mcp`、`/session`、`/client`、`/runtime`、`/sandbox`、`/a2a`、`/experimental-memory`、`/artifacts`、`/artifacts/client`、`/artifacts/runtime`、`/artifacts/kodax`）—— 聚焦能力或宿主集成边界；`/experimental-memory` 明确为 opt-in 不稳定接口。
 
 | 源码包 | npm subpath | 类型 | 内容 | 典型消费者 |
 |---|---|---|---|---|
@@ -1404,6 +1439,8 @@ stdin 并立即回到原 shell。历史回放保留每条持久 event 的原始�
 使用 session-root Actor queue scope，避免一个 session/child 的待处理输入被另一个
 REPL 显示、唤醒或消费。
 
+当前源码中，`kodax -r` 按最近真实对话消息排序并显示对应时间，旧记录缺少可靠消息时间时回退创建时间。SDK 的 `lastMessageAt`、Host 列表与选择器共用规则；标题、设置、Actor 保存和压缩不刷新对话时间。共享 Host 在取得所有权后统一恢复历史进程，连接客户端不重复清扫；加载提示继续使用统一启动进度契约。
+
 **外部 Agent SDK plane（FEATURE_258，v0.7.67）**：`/agent` 导出协议中立的 executor、registration、policy、credential broker、artifact policy、catalog 和 durable task 契约；`/runtime` 通过 `admin.agentRegistrations`、`agents`、`agentTasks` 向 embedded 与 daemon client 提供同一组 DTO API。Executor factory 是宿主函数，只能装入 inline owner，或在创建新的 in-process daemon owner 时装入；不能通过既有 daemon 连接或 Runtime Worker 边界注入。Plane 关闭后是终态：未完成的 wait 和后续所有服务调用都会拒绝；受限 Workflow 脚本会完整校验并传递 `phase` 与外部 `target`。完整所有权、注册、preflight、启动/等待/继续/取消/对账和安全边界见 [SDK Embedder Guide §18](public_docs/sdk/embedder-guide.md#18-external-agent-executor-plane-feature_258-v0767)。
 
 **成本受控 Workflow SDK（FEATURE_259，v0.7.67）**：SDK 调用方用 run-scoped `modelTiers` 与 `workflow.maxConcurrency` 配置路由和并发，workflow 作者只表达 `fast` / `balanced` / `deep` 语义意图。terminal workflow event 回显 tier/source/fallback/usage/duration，持久化 `run.json.efficiencyReport` 给出 token coverage、role/tier 启动数、packet-read 拓扑、review wave 和 quality gate 结果。完整配置与遥测读取方式见 [SDK Embedder Guide §20](public_docs/sdk/embedder-guide.md#20-cost-disciplined-workflow-routing-and-telemetry-feature_259-v0767)。
@@ -1439,7 +1476,7 @@ KodaX/                       # 4 workspace packages(FEATURE_194 v0.7.43)
 │   ├── kodax_cli.ts         # CLI 主入口（bin: `kodax`）
 │   └── sdk-*.ts             # SDK subpath 入口 → @kodax-ai/kodax/{agent,llm,coding,media,repl,skills,mcp,session,runtime,sandbox,a2a,experimental-memory}
 ├── scripts/
-│   ├── build-bundle.mjs     # esbuild 单 bundle 多 entry 打包（CLI + root + 13 SDK subpath + chunks）
+│   ├── build-bundle.mjs     # esbuild 单 bundle 多 entry 打包（CLI + root + 13 核心 SDK subpath + Artifact 资源 + chunks）
 │   ├── build-binary.mjs     # Bun --compile 单文件二进制打包
 │   └── release.mjs          # 发布 CI 构建的通用 tarball；本地 --pack-only 保持 private:true
 └── .github/workflows/

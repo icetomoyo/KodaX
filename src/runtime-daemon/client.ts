@@ -1392,8 +1392,8 @@ export function createRuntimeDaemonClient(
       snapshot() {
         return request('daemon.status') as Promise<RuntimeStatusSnapshot>;
       },
-      preflight() {
-        return request('daemon.preflight').then((value) => (
+      preflight(options) {
+        return request('daemon.preflight', undefined, options).then((value) => (
           normalizeRuntimeDaemonPreflight(value as RuntimeDaemonPreflightWire)
         ));
       },

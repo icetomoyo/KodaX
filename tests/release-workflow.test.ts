@@ -30,6 +30,23 @@ interface ReleaseWorkflow {
 }
 
 describe('GitHub release workflow', () => {
+  it('delivers Artifact SDK subpaths inside the single core npm candidate', () => {
+    const workflow = parse(readFileSync(resolve('.github/workflows/release.yml'), 'utf8')) as ReleaseWorkflow;
+    const steps = workflow.jobs?.['npm-package']?.steps ?? [];
+    const packIndex = steps.findIndex(step => step.name === 'Pack and audit universal npm package');
+    const gateIndex = steps.findIndex(step => step.name === 'Installed Artifact SDK gate');
+    const hashIndex = steps.findIndex(step => step.name === 'Hash npm package');
+    expect(packIndex).toBeGreaterThan(-1);
+    expect(steps[packIndex]?.run).toBe('node scripts/release.mjs --skip-build --pack-only');
+    expect(gateIndex).toBeGreaterThan(packIndex);
+    expect(steps[gateIndex]?.run).toBe('node --test tests/packed-artifacts.test.mjs');
+    expect(hashIndex).toBeGreaterThan(gateIndex);
+    expect(steps[hashIndex]?.run).toBe('sha256sum kodax-ai-kodax-*.tgz > kodax-ai-kodax-npm.sha256');
+    const upload = steps.find(step => step.name === 'Upload universal npm package');
+    expect(upload?.with?.path).not.toContain('kodax-ai-artifacts-');
+    expect(steps.some(step => step.run?.includes('--artifacts'))).toBe(false);
+  });
+
   it('publishes the exact Sidecar-audited npm tarball', () => {
     const source = readFileSync(resolve('scripts/release.mjs'), 'utf8');
 

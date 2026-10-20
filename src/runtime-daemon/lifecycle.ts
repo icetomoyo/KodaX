@@ -1,11 +1,10 @@
-import { readFileSync } from 'node:fs';
 import type { RuntimeDaemonClientTransport } from './client.js';
 import {
   claimRuntimeDaemonOwnership,
   readRuntimeDaemonLockOwner,
   readRuntimeDaemonState,
   readRuntimeDaemonToken,
-  readRuntimeOwnerProcessStartIdentity,
+  runtimeOwnerProcessState,
   type RuntimeDaemonHealthObservation,
   type RuntimeDaemonLockOwner,
   type RuntimeDaemonOwnershipDecision,
@@ -19,6 +18,8 @@ import {
 } from './transport.js';
 
 export interface RuntimeDaemonHealthCheckOptions {
+  /** Fresh startup candidates hold admission while their OS identity is checked. */
+  readonly connectionPurpose?: 'probe' | 'client' | 'startup';
   readonly connectTimeoutMs?: number;
   readonly handshakeTimeoutMs?: number;
   readonly isPidAlive?: (pid: number) => boolean;
@@ -41,7 +42,7 @@ export async function observeRuntimeDaemonHealth(
   }
 
   const lockOwner = readRuntimeDaemonLockOwner(paths.lockFile);
-  const pidAlive = options.isPidAlive
+  const readPidAlive = (): boolean => options.isPidAlive
     ? options.isPidAlive(state.pid)
     : isRuntimeDaemonOwnerPidAlive(state.pid,
       runtimeDaemonLockMatchesState(lockOwner, state) ? lockOwner?.processStartIdentity : undefined);
@@ -58,7 +59,7 @@ export async function observeRuntimeDaemonHealth(
     );
     const request = transport.request('initialize', {
       profile: state.profile,
-      connectionPurpose: 'probe',
+      connectionPurpose: options.connectionPurpose ?? 'probe',
       ...(token !== undefined ? { token } : {}),
     });
     request.catch(() => undefined);
@@ -67,8 +68,22 @@ export async function observeRuntimeDaemonHealth(
       options.handshakeTimeoutMs ?? 1_000,
       'Timed out waiting for runtime daemon handshake.',
     );
+    const pidAlive = readPidAlive();
+    let observedState = state;
+    if (state.status === 'starting') {
+      // The descriptor may become ready during authentication/OS inspection.
+      // Refresh only readiness for the exact already-verified owner; a new
+      // owner still needs its own authenticated probe and fresh OS inspection.
+      const ready = readRuntimeDaemonState(paths);
+      const readyOwner = readRuntimeDaemonLockOwner(paths.lockFile);
+      if (ready?.status === 'ready' && ready.runtimeId === state.runtimeId
+        && ready.pid === state.pid && ready.profile === state.profile && ready.endpoint === state.endpoint
+        && runtimeDaemonLockMatchesState(readyOwner, ready)
+        && readyOwner?.createdAt === lockOwner?.createdAt
+        && readyOwner?.processStartIdentity === lockOwner?.processStartIdentity) observedState = ready;
+    }
     return {
-      state,
+      state: observedState,
       initialization: initialized,
       pidAlive,
       endpointReachable: true,
@@ -80,7 +95,7 @@ export async function observeRuntimeDaemonHealth(
     if (isRuntimeDaemonTransportError(error) && error.code === 'unauthorized') {
       return {
         state,
-        pidAlive,
+        pidAlive: readPidAlive(),
         endpointReachable: true,
         identityMatches: false,
         ...(lockOwner !== undefined ? { observedLockOwner: lockOwner } : {}),
@@ -88,7 +103,7 @@ export async function observeRuntimeDaemonHealth(
     }
     return {
       state,
-      pidAlive,
+      pidAlive: readPidAlive(),
       endpointReachable: false,
       identityMatches: false,
       ...(lockOwner !== undefined ? { observedLockOwner: lockOwner } : {}),
@@ -129,14 +144,7 @@ export function runtimeDaemonEndpointFromState(
 }
 
 export function isRuntimeDaemonPidAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  if (process.platform === 'linux' && isZombiePid(pid)) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error: unknown) {
-    return isNodeProcessError(error) && error.code === 'EPERM';
-  }
+  return runtimeOwnerProcessState({ pid }) !== 'gone';
 }
 
 // Linux PID reuse is established by the recorded OS start identity. A Host
@@ -144,23 +152,7 @@ export function isRuntimeDaemonPidAlive(pid: number): boolean {
 // Missing identity evidence remains conservative; the authenticated endpoint
 // and owner fence still decide whether the caller can attach or replace it.
 export function isRuntimeDaemonOwnerPidAlive(pid: number, processStartIdentity?: string): boolean {
-  if (!isRuntimeDaemonPidAlive(pid)) return false;
-  if (process.platform !== 'linux' || processStartIdentity === undefined) return true;
-  const currentIdentity = readRuntimeOwnerProcessStartIdentity(pid);
-  return currentIdentity === undefined || currentIdentity === processStartIdentity;
-}
-
-// A zombie child answers kill(pid, 0) until its parent reaps it, but it can
-// never serve the endpoint again; treating it as dead lets crash recovery
-// claim ownership instead of refusing a "competing" owner forever.
-function isZombiePid(pid: number): boolean {
-  try {
-    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
-    const state = stat.slice(stat.lastIndexOf(') ') + 2).trimStart();
-    return state.startsWith('Z');
-  } catch {
-    return false;
-  }
+  return runtimeOwnerProcessState({ pid, processStartIdentity }) !== 'gone';
 }
 
 async function withTimeout<T>(
@@ -203,8 +195,4 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     return undefined;
   }
   return value as Record<string, unknown>;
-}
-
-function isNodeProcessError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && 'code' in error;
 }

@@ -8,6 +8,96 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.97-alpha.9] - 2026-10-19
+
+Ninth alpha of the v0.7.97 line: shared Host Run inspection checks Session
+admission through canonical identity metadata instead of loading complete
+historical transcripts, so a readable metadata header with an unreadable
+body (for example a Windows ERROR_CRC surfacing as EIO) no longer blocks
+unrelated Run listing, daemon inspection, or idle-exit inspection; admission
+reuse is fenced to initialized Actor controllers so live persistence,
+trailing saves, and `protected` exit receipts for other clients' work are
+preserved. Every
+v0.7.96 stable and v0.7.97-alpha.1 through alpha.8 contract is retained.
+npm publication remains a manual maintainer action.
+
+### Fixed
+
+- Shared Host Run inspection now checks Session admission through canonical identity metadata instead of loading complete historical transcripts. A readable metadata header with an unreadable body no longer blocks unrelated Run listing, daemon inspection, or idle-exit inspection. Unreadable metadata still fails closed, active/unknown Runs and Actor turns still block exit, and explicitly opening the affected Session still reports its read error.
+- Shared Host Run listing and inspection reuse Session admission only for initialized Actor controllers that still hold their owner fence, matching Actor preflight. This avoids racing live persistence, including trailing saves after Run completion, preserves `protected` exit receipts for other clients' work, and retains strict canonical metadata checks for unclaimed Sessions and after controller ownership is released.
+
+---
+
+## [0.7.97-alpha.8] - 2026-10-18
+
+Eighth alpha of the v0.7.97 line: the Artifact SDK ships inside the single
+main package — `@kodax-ai/kodax` gains `/artifacts`, `/artifacts/client`,
+`/artifacts/runtime` and `/artifacts/kodax` subpath exports while the
+workspace module turns private, its pinned dependencies declare in the root
+package, and the declared Node floor advances to 20.16. Every v0.7.96
+stable and v0.7.97-alpha.1 through alpha.7 contract is retained. npm
+publication remains a manual maintainer action.
+
+### Changed
+
+- Single-package Artifact distribution: the main tarball stages the existing module/worker/resource layout under `dist/artifacts/`, the tarball audit validates every export/entry/dependency, the Release workflow runs an installed-package Artifact gate, and `release.mjs` rejects a separate `--artifacts` publication. There is no separate `@kodax-ai/artifacts` npm package. Core startup stays free of renderer loading and probes.
+
+---
+
+## [0.7.97-alpha.7] - 2026-10-16
+
+Seventh alpha of the v0.7.97 line: shared-Session Host ownership resolves
+across daemon profiles — launchers wait for a starting owner's verified
+descriptor within the original startup deadline, reuse compatible Hosts
+without restarting work, and permit only a guarded same-build orphan-exit
+policy refresh — daemon startup and connection timeouts surface as
+structured, retryable failures, idle interactive Hosts retire after a
+bounded 30-second lifetime while explicit daemon/A2A service owners are
+retained, and Windows SDK attachment reads targeted exact identities within
+the original startup controls (Space #222). Every v0.7.96 stable and
+v0.7.97-alpha.1 through alpha.6 contract is retained. npm publication
+remains a manual maintainer action.
+
+### Fixed
+
+- Space Issue 222 CI regression: use one conservative process-liveness check for shared storage discovery, daemon health and verified exit, recognizing unreaped Linux zombies while retaining PID generation checks. Release temporary attachments and rediscover current ownership on bounded startup-only retries within the original deadline and cancellation signal; never replay accepted input or tool work. Gate the original crash cases and deterministic zombie/owner-handoff regressions on Linux Node 20/22 before release.
+- Bound Windows startup cleanup of unverifiable historical child records: the automatic historical sweep keeps incomplete Run trees `unknown` instead of launching a PowerShell termination helper per unverified record — a helper storm that invalidated the shared process snapshot and made startup cost grow with history (24-record fixture: 11,069ms and 48 helpers before, 10ms and none after). Exact-handle Run recovery and verified live-descendant cleanup are preserved.
+- Bound Windows SDK attachment work: fresh PID identity checks read targeted exact FILETIME identities instead of repeatedly scanning the full process table, initial Job ownership evidence is collected together, and the original startup deadline passes through readiness and attachment — expired startup stays an expired failure instead of misclassifying the launcher's own new Host as a competitor (nine isolated same-CPU callers reproduced the timeout and now pass without budget increases). Readiness keeps verified-owner status fresh after authenticated OS inspection, checks deadline/cancellation after final owner/build validation, and aborts pending socket/supervisor readiness through existing cleanup paths; discovery that has crossed its boundary no longer opens attachment leases, and the idle inspection cancels when clients attach.
+- Recognize a starting daemon as an existing owner: a concurrent CLI start while initial A2A reconciliation holds the fence before `daemon.json` exists now reports `already_running` against the actual PID/runtimeId instead of claiming a second `started: true` Host.
+- Retire idle interactive Hosts after the accepted 30-second CLI idle lifetime while retaining explicit services: daemon `start` and A2A-serving owners stay in place, explicit/service retention is authenticated separately from default SDK persistence, conflicting orphan-exit requirements are rejected before shutdown, persistent intent survives rebuild refresh, and configured services are re-evaluated in the replacement Host. Idle exit is fenced on pending memory/managed-task maintenance and unknown legacy startup intent; tracked background work blocks automatic idle exit (including the final draining check) without breaking cancellable explicit shutdown, review or compaction contracts; startup admission uses authenticated read-only checks off idle preflight scans without scanning Session history before any real client.
+- Drain a Run queued after its predecessor finishes: admission can retain its queued decision across asynchronous journal binding while the active predecessor completes and drains an empty queue; the existing guarded drain now wakes after queue publication so the queued Run starts exactly once instead of stranding.
+- Keep the preceding turn visible when submitting a new query in a restored Session with legacy display checkpoints. The Host retains its bounded 150-item tail instead of advancing to the next query and collapsing the entire view to the new input; canonical history, full-item reads and input/tool identities are preserved.
+- Keep saved history readable when its final tool call has no result yet: reaching the end of a valid cached revision no longer reports a history-change conflict. Preserve canonical tool timestamps across observed and paged history, and show the session banner only at the beginning of saved history while browsing ordinary chat, avoiding banner flashes at intermediate page boundaries.
+- Space Issue 222: resolve the daemon that owns the canonical Session directory across profiles before startup, and recheck ownership if a peer wins during bootstrap. Wait for a starting owner's descriptor within the original startup deadline and cancellation signal. Reuse compatible Hosts without restarting work. Permit guarded same-build orphan-exit policy refresh, retaining active-work preflight, exact owner identity and process-exit verification. Publish structured owner/profile and upgrade blocker diagnostics; mark transient blockers retryable.
+- Add bundled real-process shared-Host recovery to the continuous `test:bundle` gate.
+
+---
+
+## [0.7.97-alpha.6] - 2026-10-15
+
+Sixth alpha of the v0.7.97 line: shared-Host startup runs historical child
+recovery once under the owner fences and projects canonical Actor metadata
+during preflight, and `kodax -r`/Host/SDK Session lists order by genuine
+recent message activity with an optional `lastMessageAt`. New REPL Sessions
+stay Host-local drafts until their first accepted input is saved (Issue 368),
+restored views preserve user image attachments, and concurrent resume
+launchers recover from transient inspection conflicts while refreshing an
+older Host (Issue 369). Every v0.7.96 stable and v0.7.97-alpha.1 through
+alpha.5 contract is retained. npm publication remains a manual maintainer
+action.
+
+### Fixed
+
+- Retry transient initialization and read-only inspection failures during concurrent CLI/SDK Host refresh after releasing temporary clients. Account for slow preflight duration in contention backoff, retain the original deadline, and never replay shutdown or business requests (Issue 369).
+- Avoid repeated historical process sweeps during shared-Host startup and exit. Recover under the Host/storage owner fences, retain exact local-child final cleanup, batch Windows identity observations, and read canonical Actor metadata for preflight without materializing Session transcripts.
+- Order `kodax -r`, Host and SDK Session lists by genuine recent message activity. Preserve creation time, compaction/fork provenance and metadata-only writes; expose optional `lastMessageAt`, retain creation-based `before`, and continue new cursors after anchor deletion or activity changes.
+- Keep new REPL Sessions as Host-local drafts until the first accepted user input is saved. Preserve draft settings and Actor CAS in memory, avoid empty history records after exit or rejected input, and persist settings on admission. CLI requires `sessionDrafts:1`; explicit durable SDK creation keeps its existing semantics.
+- Save initial draft inputs and settings before low-level Runs dispatch, preserve settings after restart, and reuse canonical inputs when retrying failed promotion instead of duplicating them.
+- Declare `relationship_scan.depth` as an integer range from 1 to 3 for cross-protocol tool schema compatibility, preserving numeric inputs and stream completion checks.
+- Preserve user image references when restoring canonical accepted inputs into the public Session view. Resolve attachments by the original inputId, retaining item identity, order and text, including repeated identical prompts with different images.
+
+---
+
 ## [0.7.97-alpha.5] - 2026-10-13
 
 Fifth alpha of the v0.7.97 line: FEATURE_301's unified Artifact SDK and
@@ -49,7 +139,7 @@ Validation: 16,589 tests passed, with package/bundle/native/type checks recorded
 in the [regression guide](docs/test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md).
 Natural-task GLM/DeepSeek smoke observed automatic image review, but full
 repair/re-review/delivery has not passed all checks. Native DOCX fidelity and
-model-facing schema gaps remain open; see [acceptance boundaries](docs/test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#automatic-visual-review-acceptance-boundary).
+model-facing schema gaps remain open; see [E2E evidence](docs/test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#natural-task-observations-2026-10-13).
 
 ---
 

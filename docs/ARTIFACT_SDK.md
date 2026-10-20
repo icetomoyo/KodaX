@@ -1,11 +1,91 @@
 # Artifact SDK
 
-`@kodax-ai/artifacts` is an optional, independently installed ESM package (Node >=20.16). Its root entry contains pure types, request/result validation, SDK dispatch and mechanical coverage checks. The optional `/runtime` entry owns local file/browser work; `/kodax` registers admitted Host tools; `/client` binds the SDK to an existing KodaX Product Client. The core CLI does not load renderers or probe Chromium at startup.
+Artifact APIs ship inside the single ESM package `@kodax-ai/kodax` (Node >=20.16).
+`packages/artifacts` remains a private source workspace; it is not a separate
+npm delivery target. The pure SDK entry contains types, validation, dispatch and
+mechanical coverage checks. Renderer loading and Chromium preparation remain
+outside core startup.
 
-This page describes the unified Artifact SDK shipped in `v0.7.97-alpha.5`
-(developed in commit `27d08788`) and its current integration notes. The
-`v0.7.97-alpha.4` tag (`a3e8d754`) does not contain these additions; an
-installed npm package from that version does not include them.
+| Public subpath | Responsibility |
+| --- | --- |
+| `@kodax-ai/kodax/artifacts` | Pure SDK/types and evidence validation |
+| `@kodax-ai/kodax/artifacts/client` | Bind to the existing Product Client/Session |
+| `@kodax-ai/kodax/artifacts/runtime` | Explicitly authorized standalone Node file/browser work |
+| `@kodax-ai/kodax/artifacts/kodax` | Register managed tools in the existing trusted Host |
+
+## Delivery status and installation (2026-10-18)
+
+The unified operations were implemented in `27d08788` and included in the
+`v0.7.97-alpha.5` source release. On 2026-10-18 the user selected **one npm
+package**, replacing FEATURE_301's earlier separate-package distribution plan.
+
+| Delivery surface | Status |
+| --- | --- |
+| npm `@kodax-ai/kodax@0.7.97-alpha.7` | Published and reported installed by Space; does not contain these new Artifact subpath exports |
+| Current local main-package tarball | Contains the four exports and required resources; local verification only, not a new npm release |
+| `@kodax-ai/artifacts` | E404 at the earlier registry check; retired as a public npm target, not something Space should install |
+
+Build and pack the main SDK from this checkout:
+
+```sh
+npm ci
+node scripts/release.mjs --pack-only
+```
+
+Install that **one** tarball in Space, quoting paths with spaces on Windows:
+
+```sh
+npm install /absolute/path/to/kodax-ai-kodax-0.7.97-alpha.7.tgz
+```
+
+Preserve it in Space's normal reproducible dependency-delivery location. Once a
+new version containing these exports is actually published, use
+`npm install @kodax-ai/kodax@<new-version>` instead. Reinstalling the already
+published alpha.7 from the registry does not add these local changes. Installation
+includes renderer dependencies/resources but does not register tools, launch a
+browser or download Chromium.
+
+### Build, audit and release
+
+The existing `npm run build` builds the private workspace and DOCX browser
+bundle, then stages its JS, declarations, worker, skill and license under
+`dist/artifacts/`. Its nested `dist/` and `skills/` directories preserve the
+existing runtime-relative resource paths. Do not bundle just the four JS
+exports and discard that layout. Root dependencies pin the same renderer
+versions as the workspace; the build rejects drift. The main package's declared
+Node floor is now 20.16 to match the Artifact runtime.
+
+`release.mjs --skip-build --pack-only` requires a complete current build.
+The existing main-tarball audit checks all four JS/type exports, worker, DOCX
+bundle, skill, license and declared renderer dependencies. An absent/empty
+resource fails packaging. Local host-only native tarballs retain
+`private: true` and are for installation testing; normal publishing still uses
+the universal CI candidate.
+
+```sh
+node --test tests/packed-artifacts.test.mjs
+# Optional local npm inspection; does not publish:
+npm publish ./kodax-ai-kodax-0.7.97-alpha.7.tgz --dry-run --access=public --tag=alpha --registry=https://registry.npmjs.org/
+```
+
+Set `KODAX_ARTIFACT_TEST_BROWSER` to a trusted compatible Chromium executable
+for installed PPTX/PDF/DOCX pixel checks. The packed test also imports all four
+entries, exercises the worker/skill and PNG reads, compiles a pure SDK consumer
+without Node ambient types, and rejects missing DOCX resources. DOCX candidate
+pixels retain `unverified` fidelity status.
+
+The Release workflow produces one `kodax-ai-kodax-<version>.tgz`, runs the
+installed Artifact gate on it, and attaches its existing
+`kodax-ai-kodax-npm.sha256`. It does not publish to npm. After a new Release
+containing this change exists, the existing `node scripts/release.mjs --dry-run`
+verifies the CI bytes; a later authorized `node scripts/release.mjs` publishes
+that one package. Prereleases use their version tag (alpha/beta/rc), stable
+versions use latest. No independent Artifact archive, checksum or publish command
+remains; the obsolete `--artifacts` flag is rejected.
+
+This is a local delivery change, not an actual npm release or Space deployment.
+The complete model-driven repair loop and native Office fidelity retain their
+previous verification limits.
 
 ## Operations and actual support
 
@@ -36,13 +116,13 @@ Supported file rendering runs headlessly: a terminal-only system can produce PNG
 | Local HTML | `interactive`: actual `target`, `state: 'loaded'`, explicit `viewport: [width, height]`, `sequence: 0` |
 | SVG SMIL | `temporal`: `time` in seconds; samples do not certify continuous playback |
 
-For example, `sdk.capture({ target: 'diagram.svg', kind: 'static', locators: [{ kind: 'static', region: [0, 0, 320, 180] }] })` requests actual region pixels. `expectedSource`, when supplied, must be the current `VisualSource`, not a bare file hash. Use the public SDK types/validation. The model-facing static locator schema currently advertises `state/sequence/target` although the decoder accepts only `kind/region`; those extra fields reject. `readEvidence` requires structured `source/raster` arguments, and colors use six hexadecimal digits without `#`. See the [acceptance boundary](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#automatic-visual-review-acceptance-boundary).
+For example, `sdk.capture({ target: 'diagram.svg', kind: 'static', locators: [{ kind: 'static', region: [0, 0, 320, 180] }] })` requests actual region pixels. `expectedSource`, when supplied, must be the current `VisualSource`, not a bare file hash. Use the public SDK types/validation; the model-facing locator schema still has a documented [schema/decoder mismatch](ARTIFACT_SDK.md#tool-schema-gaps).
 
 ## Trusted standalone Node host
 
 ```ts
-import { createArtifactSdk, validateVisualEvidence } from '@kodax-ai/artifacts';
-import { createNodeArtifactPort } from '@kodax-ai/artifacts/runtime';
+import { createArtifactSdk, validateVisualEvidence } from '@kodax-ai/kodax/artifacts';
+import { createNodeArtifactPort } from '@kodax-ai/kodax/artifacts/runtime';
 
 const sdk = createArtifactSdk(createNodeArtifactPort({
   workspaceRoot: process.cwd(), maxRenderPages: 4,
@@ -67,25 +147,55 @@ Browser/LibreOffice executable paths and workspace authority belong to trusted r
 
 ## Existing shared KodaX Host
 
-KodaX's shared Agent guidance calls for visual review during applicable tasks without requiring a user slash command. File backend availability still requires this optional adapter to be registered once in the trusted Host and a provider that accepts actual images. Building/linking the workspace alone does not register it in a user's Host. SDK `render/capture/readEvidence` prepare and deliver evidence; the calling Agent owns visual judgment, repair and final review. Missing capabilities remain unverified. See the [automatic visual review acceptance boundary](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#automatic-visual-review-acceptance-boundary).
+KodaX's shared Agent guidance calls for visual review during applicable tasks without requiring a user slash command. File backend availability still requires this optional adapter to be registered once in the trusted Host and a provider that accepts actual images. Building/linking the workspace alone does not register it in a user's Host. SDK `render/capture/readEvidence` prepare and deliver evidence; the calling Agent owns visual judgment, repair and final review. Missing capabilities remain unverified. See [natural-task model observations and current integration gaps](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#natural-task-observations-2026-10-13).
 
 Register once in the trusted Host extension, using its admitted managed execution:
 
 ```ts
-import { registerArtifactTools } from '@kodax-ai/artifacts/kodax';
+import { registerArtifactTools } from '@kodax-ai/kodax/artifacts/kodax';
 import { executeManagedProcess } from '@kodax-ai/kodax/coding';
 export default api => registerArtifactTools(api, {
   execute: executeManagedProcess, nodeExecutable: process.execPath,
 });
 ```
 
+For Space, the Node Host extension must resolve the same installed main package
+as Space's client integration. An extension in the user's home does not
+automatically resolve Space's private `node_modules`. Use the existing extension
+loader's dependency layout, or an absolute file URL resolved from the installed
+`@kodax-ai/kodax/artifacts/kodax` and coding subpaths. Avoid source workspace paths.
+
+Place the extension in `<Host homeDir>/.kodax/extensions/artifacts.mjs` (or the
+Host's existing configured extension directory), using the same home/profile
+as Space's connection. `process.execPath` above is evaluated inside the Node
+Host; it must identify Node, not Space's Electron executable. Extensions are
+loaded by the existing Host lifecycle: a Host already running without this
+extension needs its normal safe shutdown/start before the registration appears.
+Check `client.catalog.extensions()` for load errors and `sdk.capabilities()`
+for actual backend readiness. Registration exposes nine `artifact_*` tools
+and the packaged artifact-review skill; installing the tarball alone does not.
+
 Then bind to the existing Product Client/session:
 
 ```ts
-import { createArtifactSdk } from '@kodax-ai/artifacts';
-import { createKodaXArtifactPort } from '@kodax-ai/artifacts/client';
+import { createArtifactSdk } from '@kodax-ai/kodax/artifacts';
+import { createKodaXArtifactPort } from '@kodax-ai/kodax/artifacts/client';
 const sdk = createArtifactSdk(createKodaXArtifactPort(client, sessionId));
+const capabilities = await sdk.capabilities();
+// Explicit user/Host-authorized preparation when browser operations need it:
+// await sdk.prepare();
 ```
+
+Space Main owns this connection, Session authorization and IPC forwarding.
+The Renderer consumes returned data/images through Space's existing bridge.
+Keep the package's complete `dist/artifacts` resource tree and renderer dependencies,
+as physical files accessible to the Host worker; its file-relative resources
+cannot be replaced by bundling only the JS exports. A packaged Electron app
+must provide an actual Node executable and unpack these worker/runtime assets
+from ASAR. End-to-end Electron/Space packaging is not validated by this local
+tarball test. PNG whole-image evidence needs no browser; PPTX/PDF/DOCX and other
+browser-backed operations need compatible Chromium, prepared explicitly with
+`sdk.prepare()`/`artifact_prepare` or supplied by the trusted Host.
 
 The port uses `runs.startTool/await/stop`, correlates the actual tool-call identity and its formal metadata, then reads PNG chunks through `sessions.readItem`. Image bytes are absent from worker stdout, `lastText`, history text and logs. The tool delivers existing image content blocks to agents. The client returns the same `image` shape as the Node port after hashing its assembled bytes. There is no local fallback, extra Session owner, automatic replay, new Artifact Product Client domain or model call.
 
@@ -101,8 +211,43 @@ Each operation's `ready` type requires its payload. Malformed JSON, invalid path
 
 Pass an `AbortSignal` to any SDK operation. The Host port stops only its admitted Run and awaits settlement; busy/disconnected/unknown outcomes reject and are never replayed. Cancellation does not promise rollback of already-created files. Browser and child cleanup stay with their existing owning host. A Host without the attachment-read capability fails explicitly; update the Host rather than reading its filesystem from a UI.
 
+## Integration gaps recorded on 2026-10-13
+
+At source `27d08788`, GLM-5.3-Flash and DeepSeek Flash autonomously rendered an
+ordinary PPT edit and received actual current PNG bytes in a shared test Host
+with the adapter explicitly enabled. Grounded title-occlusion findings were
+observed; complete repair/re-review/delivery was not proven under the recorded
+call limits, output-budget calibration and provider failures. The earlier Kimi
+smoke explicitly requested review and cannot prove automatic task-triggering.
+See [natural-task observations and diagnostic rounds](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#natural-task-observations-2026-10-13).
+
+The inspected local default CLI extension directories contained `read_pdf` but
+no Artifact registration. Building/linking the workspace does not register
+`registerArtifactTools`; configured extensions are loaded through the existing
+Host lifecycle. This local configuration check does not establish that every
+CLI lacks rendering tools. The user's separate observation that Space triggers
+review was not independently tested against that Space configuration. Automatic
+review when tools are enabled does not prove default CLI capability exposure.
+
+### Tool schema gaps
+
+The model-facing capture locator schema advertises fields from all four kinds in
+one object, while the SDK decoder rejects fields outside the selected kind. A
+GLM static locator containing `state`, `sequence` and `target` reproduced
+`Unknown artifact field.` with the real adapter/decoder, without another model
+request. Use the kind-specific SDK shapes above; do not infer accepted field
+combinations from that broad tool schema.
+
+`readEvidence.source/raster` and `capture.expectedSource` also lack nested shape
+guidance in the tool descriptions. PPT creation colors lack the six-digit,
+no-`#` requirement there; a DeepSeek CSS-style color was rejected by the worker.
+These are parameter-contract/diagnostic gaps, not evidence that visual triggering
+is absent. Consistent schemas, precise errors, default/needed capability exposure
+and natural-task closed-loop acceptance remain follow-up work; this migration
+does not claim a production fix or complete visual acceptance.
+
 ## Migration from the initial PPT API
 
-PPT operation inputs and their supported edits remain. `ArtifactRef.kind: 'presentation'` becomes content `format: 'pptx'`; evidence uses `source` instead of a bare batch `sourceHash`; file hashes retain their meaning. Capabilities are structured records instead of descriptive string maps. Rasters require actual dimensions, and paginated evidence requires layout. `capture` uses a kind-matched `locators` array instead of separate pages/states/times/viewport fields. Add `prepare` and `readEvidence`; do not hand-read returned paths in a shared Host UI. These are explicit pre-release contract changes, not alias-based compatibility layers. Package versions are unchanged by this implementation and remain under the repository's release workflow.
+PPT operation inputs and their supported edits remain. `ArtifactRef.kind: 'presentation'` becomes content `format: 'pptx'`; evidence uses `source` instead of a bare batch `sourceHash`; file hashes retain their meaning. Capabilities are structured records instead of descriptive string maps. Rasters require actual dimensions, and paginated evidence requires layout. `capture` uses a kind-matched `locators` array instead of separate pages/states/times/viewport fields. Add `prepare` and `readEvidence`; do not hand-read returned paths in a shared Host UI. These are explicit pre-release contract changes, not alias-based compatibility layers. This delivery fix does not change package versions. Main-package publication of these new subpaths remains pending as recorded above.
 
-See [implementation design](designs/unified-artifact-sdk.md) and [regression guide](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md).
+See [implementation design](ADR.md#unified-artifact-execution-and-evidence-boundary) and [regression guide](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md).

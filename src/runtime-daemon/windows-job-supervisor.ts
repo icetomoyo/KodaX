@@ -495,6 +495,7 @@ export interface WindowsJobContainedSpawnInput {
   readonly env: NodeJS.ProcessEnv;
   readonly logFile: string;
   readonly startupTimeoutMs?: number;
+  readonly startupSignal?: AbortSignal;
   /** @internal Enable daemon-owned publication versus startup-abort arbitration. */
   readonly startupHandoff?: boolean;
 }
@@ -511,6 +512,7 @@ export function buildWindowsCommandLine(executable: string, args: readonly strin
 export async function spawnWindowsJobContainedProcess(
   input: WindowsJobContainedSpawnInput,
 ): Promise<WindowsJobContainedProcess> {
+  input.startupSignal?.throwIfAborted();
   if (process.platform !== 'win32') {
     throw new Error('Windows Job containment is available only on Windows.');
   }
@@ -565,6 +567,7 @@ export async function spawnWindowsJobContainedProcess(
     supervisor,
     readyFile,
     input.startupTimeoutMs ?? STARTUP_TIMEOUT_MS,
+    input.startupSignal,
   ).catch(async (error: unknown) => {
     try {
       if (await terminateSupervisor(supervisor, undefined, input.startupHandoff) === 'retained') {
@@ -600,6 +603,7 @@ async function waitForSupervisorReadiness(
   supervisor: ChildProcess,
   readyFile: string,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<{ readonly processPid: number; readonly containmentSupervisorPid: number }> {
   let launchError: Error | undefined;
   let containmentSupervisorPid: number | undefined;
@@ -622,6 +626,7 @@ async function waitForSupervisorReadiness(
   const deadline = Date.now() + timeoutMs;
   try {
     while (true) {
+      signal?.throwIfAborted();
       if (launchError !== undefined) throw launchError;
       try {
         const value = readFileSync(readyFile, 'utf8').trim();

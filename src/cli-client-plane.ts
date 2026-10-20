@@ -32,7 +32,7 @@ export function createCliSessionCommands(client: KodaXProductClient): SessionCom
       return true;
     },
     recover: ({ sessionId, ...input }) => client.sessions.recoverSession(sessionId, input).then(result => result.id),
-    create: input => client.sessions.create(input).then(() => undefined),
+    create: input => client.sessions.create({ ...input, draft: true }).then(() => undefined),
   };
 }
 

@@ -1,13 +1,13 @@
 # FEATURE_301 — Managed Artifact SDK / PPT
 
-Scope: independent optional package; existing PPTX authoring/limited edits, native PDF, PNG/JPEG/WebP/SVG, candidate DOCX, local HTML loaded viewport and SMIL samples; public preparation and checked binary evidence reading through Node or the same shared Host. Four visual kinds remain. Native Office fidelity and absent owner/decoder backends remain unverified. See [actual SDK support and migration](../ARTIFACT_SDK.md).
+Scope: optional Artifact API in the single `@kodax-ai/kodax` npm package, implemented by a private source workspace; existing PPTX authoring/limited edits, native PDF, PNG/JPEG/WebP/SVG, candidate DOCX, local HTML loaded viewport and SMIL samples; public preparation and checked binary evidence reading through Node or the same shared Host. Four visual kinds remain. Native Office fidelity and absent owner/decoder backends remain unverified. See [actual SDK support and migration](../ARTIFACT_SDK.md).
 
 ## Enable the optional adapter
 
-Build the matching checkout with `npm run build`. Install/pack `@kodax-ai/artifacts` separately; it is not part of the core CLI bundle. Add a trusted extension in the configured KodaX extensions directory:
+Build the matching checkout with `npm run build`, then use `node scripts/release.mjs --skip-build --pack-only` and install that one main-package tarball. The already published alpha.7 lacks these new exports. The private Artifact workspace is not published separately; its renderer graph remains separate from core startup. Add a trusted extension in the configured Host extensions directory:
 
 ```js
-import { registerArtifactTools } from '@kodax-ai/artifacts/kodax';
+import { registerArtifactTools } from '@kodax-ai/kodax/artifacts/kodax';
 import { executeManagedProcess } from '@kodax-ai/kodax/coding';
 export default api => registerArtifactTools(api, {
   execute: executeManagedProcess,
@@ -18,12 +18,21 @@ export default api => registerArtifactTools(api, {
 
 Node >=20.16 is required; exact PNG reading/render does not require Chromium. `artifact_prepare` prepares the pinned Chromium through ordinary managed admission. A supplied browser path must identify the prepared runtime. LibreOffice is optional for PPTX conversion, explicitly selected, uses a separate profile and PDF.js pixels. It does not verify animation. `ready` never means visual approval.
 
+Supported file rendering uses headless Chromium: a terminal-only Host needs no desktop or browser window to produce PNG evidence for an image-capable provider. No manual browser path is required; the runtime uses its default Playwright Chromium unless a trusted override is supplied. Prepare missing runtime dependencies explicitly before rendering.
+
 ## Repeatable checks
 
 - `npm run typecheck`; `npm run build`; `npm test`; `npm run test:bundle`; `npm run test:native`.
-- Set `KODAX_ARTIFACT_TEST_BROWSER` to a compatible absolute Chromium path; `npx vitest run packages/artifacts/src packages/coding/src/extensions/managed-process.test.ts`.
-- `node --test tests/bundled-artifacts.test.mjs tests/packed-artifacts.test.mjs`: manifest tampering rejected; actual Host tool Runs and scripted AMA receive current images; a separately spawned Host serves Product Client evidence through the shared attachment seam; independent installation and Node-free root type checks. No external model calls.
-- Opt-in paid smoke: `KODAX_ARTIFACT_E2E=1 node tests/artifact-review-smoke.eval.mjs`. Read EVAL_GUIDELINES first. Fixed subscription route `kimi-code/k3-256k`, two cases, one provider request in flight. Physical calls, rounds, tools, tokens, reservation cost and timeout are bounded; raw protocol requests exclude transport headers/credentials and stay in OS temp.
+- After building, explicitly prepare the default Chromium for local acceptance with the existing SDK operation (may download the runtime and write its cache; a product Host uses admitted `artifact_prepare`):
+
+  ```sh
+  node --input-type=module -e 'import {executeArtifactRequest} from "@kodax-ai/kodax/artifacts/runtime"; const result = await executeArtifactRequest({operation:"prepare",input:{}},{workspaceRoot:process.cwd()}); if(result.status!=="ready") throw new Error(JSON.stringify(result));'
+  ```
+
+  This command also works in PowerShell. An optional `KODAX_ARTIFACT_TEST_BROWSER` supplies an already-prepared absolute Chromium path to the tests; it does not enable production visual review. Set it in PowerShell with `$env:KODAX_ARTIFACT_TEST_BROWSER = 'C:\path\to\chrome.exe'`, or in Bash with `export KODAX_ARTIFACT_TEST_BROWSER='/absolute/path/to/chrome'`. An explicitly supplied path remains the trusted host's responsibility.
+- `node --test tests/bundled-artifacts.test.mjs tests/packed-artifacts.test.mjs`: manifest tampering rejected; actual Host tool Runs and scripted AMA receive current images; a separately spawned Host serves Product Client evidence through the shared attachment seam; main-package-only installation, four Artifact subpaths/resources and Node-free Artifact root type checks. PPT render/hash and AMA image assertions always run, including when the test browser variable is unset and the production default runtime is used. A missing or unusable runtime fails this full acceptance; it is never counted as a visual pass. No external model calls or implicit browser installation.
+- For the source tests, set `KODAX_ARTIFACT_TEST_BROWSER` to the prepared Chromium path, then run `npx vitest run packages/artifacts/src packages/coding/src/extensions/managed-process.test.ts`. Their browser-dependent cases still explicitly skip without that test variable; those skips do not establish full visual acceptance.
+- Opt-in paid smoke, Bash: `KODAX_ARTIFACT_E2E=1 node tests/artifact-review-smoke.eval.mjs`; PowerShell: `$env:KODAX_ARTIFACT_E2E = '1'; node tests/artifact-review-smoke.eval.mjs`. Read EVAL_GUIDELINES first. Fixed subscription route `kimi-code/k3-256k`, two cases, one provider request in flight. Physical calls, rounds, tools, tokens, reservation cost and timeout are bounded; raw protocol requests exclude transport headers/credentials and stay in OS temp. In PowerShell, remove the opt-in afterward with `Remove-Item Env:KODAX_ARTIFACT_E2E`.
 
 Exercise literal Windows argv (Chinese/spaces/quotes/metacharacters), sandbox admission/host denial, cancellation, overlapping bindings, stale source, protected paths, exclusive outputs, malformed/falsely sized ZIP, duplicate shape IDs, table preservation, grouped coordinates, missing fonts/images, inherited unknown objects, 3D charts, animation and missing capture adapters. Review images after every repair; verify required source/hash/page/region/state/viewport/camera/order/frame/time scope. Samples cannot attest continuous playback.
 
@@ -57,32 +66,52 @@ Final frozen-source full suite: 1,165 files passed, one skipped; 16,589 tests pa
 
 ### Natural-task model smoke
 
-`KODAX_ARTIFACT_E2E=1 node tests/artifact-auto-review-smoke.eval.mjs` is a separate opt-in Layer 3.5 check with ZAI GLM-5.3-Flash and DeepSeek Flash. It asks only for an ordinary PPT title edit, without slash/review/tool hints, through one shared Host and two Sessions. Provider requests retain actual image hashes. Shell/child restrictions and fixed call/token/time bounds are part of the fixture. No general success percentage is inferred.
+`KODAX_ARTIFACT_E2E=1 node tests/artifact-auto-review-smoke.eval.mjs` (Bash), or `$env:KODAX_ARTIFACT_E2E = '1'; node tests/artifact-auto-review-smoke.eval.mjs` (PowerShell), is a separate opt-in Layer 3.5 check with ZAI GLM-5.3-Flash and DeepSeek Flash. Remove the PowerShell opt-in afterward with `Remove-Item Env:KODAX_ARTIFACT_E2E`. It asks only for an ordinary PPT title edit, without slash/review/tool hints, through one shared Host and two Sessions. Provider requests retain actual image hashes. Shell/child restrictions and fixed call/token/time bounds are part of the fixture. No general success percentage is inferred.
 
-2026-10-13 observations prove autonomous rendering/image delivery, and each model produced a grounded occlusion finding in a shared-Host revision. **Full repair/re-review/delivery has not passed**: preserve the registry-interference diagnostic run, output-budget calibration, final call cutoff and provider timeout rather than claiming green E2E. The earlier Kimi smoke explicitly requested visual review and cannot prove automatic task-triggering.
+2026-10-13 observations prove autonomous rendering/image delivery, and each model produced a grounded occlusion finding in a shared-Host revision. **Full repair/re-review/delivery has not passed**: preserve the registry-interference diagnostic run, output-budget calibration, final call cutoff and provider timeout rather than claiming green E2E. See [actual evidence, default adapter gap and schema mismatch](FEATURE_301_v0.7.97_TEST_GUIDE.md#natural-task-observations-2026-10-13). The earlier Kimi smoke explicitly requested visual review and cannot prove automatic task-triggering.
 
-### Automatic visual review acceptance boundary
+### Natural-task observations (2026-10-13)
 
-Historical source `27d08788`, Windows, one explicitly enabled shared Artifact Host
-and two AMA Sessions: ZAI GLM-5.3-Flash and DeepSeek Flash received an ordinary PPT
-title-edit request without review/skill/tool hints. Both rendered current PNGs
-that matched the actual provider image bytes and produced a grounded title-
-occlusion finding. This observes automatic triggering, not a full quality gate.
+Historical baseline: `27d08788`, Windows, AMA/full-access, one isolated shared
+Host with two Sessions, explicit Artifact registration and separate headless
+Chromium cache. Real routes were `zai-coding/glm-5.3-flash` and
+`deepseek/deepseek-flash`, at most one request in flight per provider, with no
+third judge or child/workflow. Production tool descriptions/prompts were used.
+The input only requested renaming the PPT title to “Quarterly revenue review”,
+saving `final.pptx` and retaining the revenue table/other content; it contained
+no slash, review, skill or tool hint. A dark overlaid rectangle hid the title.
 
-The three revisions included extension-lifecycle interference, output-budget
-calibration, a GLM transport timeout and a DeepSeek call cutoff. The accumulated
-41 physical requests include those diagnostic failures. Full repair, fresh
-re-review and final delivery remain unproven; no general success rate is claimed.
-Raw requests/images and assessments remain in OS temporary storage, not Git.
+| Model | Autonomous rendering / PNG delivered to provider | Grounded occlusion finding | Full repair/re-review/delivery |
+| --- | --- | --- | --- |
+| GLM-5.3-Flash | Observed; actual PNG SHA-256 matched request image bytes | Observed in revision 2 | Unproven; final verification hit provider termination/timeout and test cutoff |
+| DeepSeek Flash | Observed; actual PNG SHA-256 matched request image bytes | Observed in revisions 2 and 3 | Unproven; final verification reached the ten-request cell limit |
 
-The fixture supplied the optional adapter; a local default-CLI configuration
-inspection did not find it. That inspection does not establish the capabilities
-of Space or other users' Hosts. Building/linking alone does not register it.
-The static locator schema advertises fields rejected by its decoder. Structured
-source/raster arguments and six-digit colors without `#` also need clearer
-model guidance; see the [SDK contract](../ARTIFACT_SDK.md#operations-and-actual-support).
-New acceptance must verify actual image delivery, repair, fresh evidence and
-honest final scope, while keeping shared Host authority and hard budgets.
+Both models loaded `artifact-review` without being asked. GLM compared original
+and edited pixels; DeepSeek also rendered a probe to investigate text/layer
+ordering. Main-session pixel inspection agreed with the occlusion findings.
+These observations establish possible automatic triggering, not a reliability
+percentage, every-format coverage or completed final acceptance.
+
+| Revision / directory under `%TEMP%` | Actual generation requests | Diagnostic result |
+| --- | ---: | --- |
+| 1 / `kodax-artifact-auto-e2e-1cu2up` | 14 | Two in-process Runtimes interfered through extension registration; closing one invalidated the other's scope. Event callbacks did not enforce the intended AMA fixture restriction. Keep observed image delivery; do not attribute scope failure to model review ability. |
+| 2 / `kodax-artifact-auto-e2e-juzwDb` | 11 | One Host and trusted `tool:before` fixture checks removed the scope error. Both models found the defect. The normal 2,048→64,000 output-budget upgrade met the fixture's 32,768 wire cap. |
+| 3 / `kodax-artifact-auto-e2e-apjfWR` | 16 | Initial budget 8,192 allowed the existing 64,000 upgrade. DeepSeek reached the request cap; GLM had three normal responses before termination/request timeout and the 300-second cutoff. |
+
+Total: 41 actual generation requests including diagnostic failures. Per-cell
+limits were ten requests, 50 tool events and 300 seconds. Each `experiment.json`
+froze limits and accumulated prior rounds; the final conservative token/spend
+reservation was 6,171,182 / USD 26.142904, not actual usage or billing. Raw request
+bodies without auth headers, responses, tool events, source/PPT/PNG and
+`main-session-review.json` retain image hashes, decisions, attribution and limits
+in those temporary directories; generated outputs are not repository fixtures.
+
+Unmanaged shell was intentionally prohibited in revisions 2/3, so this did not
+cover ordinary CLI script/OOXML/layer-order repair alternatives. No further
+samples were added to chase a green result. The engineering recommendation was
+`recommend-iterate`. Keep the [local adapter inspection and tool schema gaps](../ARTIFACT_SDK.md#integration-gaps-recorded-on-2026-10-13)
+separate from model behavior and the user's independently reported Space behavior.
+This is migrated historical evidence, not a new paid run.
 
 ## Spec
 

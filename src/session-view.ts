@@ -4,7 +4,7 @@ import { redactScopedProviderCredential } from '@kodax-ai/llm';
 import type { KodaXMessage, KodaXSessionUiHistoryItem, KodaXSessionData } from '@kodax-ai/agent';
 import { createOutputSegmentProjection, reduceOutputSegmentProjection, effectiveOutputSegmentText } from '@kodax-ai/coding';
 import type { KodaXEvents, KodaXOutputSegmentProjection, KodaXActivityEventMeta } from '@kodax-ai/coding';
-import { createRetryHistoryItem, buildManagedLiveEventDrafts, restoreHistoryItemsFromSession, trimPersistedUiHistorySnapshot,
+import { createRetryHistoryItem, buildManagedLiveEventDrafts, restoreHistoryItemsFromSession,
   childActivityId, childActivityLabel, childActivitySource, truncateChildActivityDetail, suppressesChurnOverToolAction,
   toolActivityDetail, formatManagedTaskBreadcrumb, formatWorkflowAgentDigest, inferWorkflowLocaleFromParts } from '@kodax-ai/repl';
 import type {
@@ -21,6 +21,8 @@ import type {
 import { createSessionNoticeEvents } from './session-view-notices.js';
 import { canonicalTools, canonicalToolKey, toolResultAttachments } from './client-canonical-tools.js';
 import { readItemImage } from './session-view-image.js';
+
+const SESSION_VIEW_ITEM_LIMIT = 150;
 
 const STREAMING_RUN_PHASES = new Set(['queued', 'running', 'recovering', 'waiting_agent', 'waiting_permission', 'waiting_user_input']);
 
@@ -624,7 +626,7 @@ function sessionActivityEvents(
 function boundedViewItems(items: readonly ClientViewItem[]): ClientViewItem[] {
   // Bound the complete replacement, including escaped Unicode and tool inputs.
   // The original content stays in the Session owner for readItem/copy.
-  const window = items.slice(-150);
+  const window = items.slice(-SESSION_VIEW_ITEM_LIMIT);
   const previewSize = (text: string | undefined): number => Math.min(text?.length ?? 0, 256);
   // Reserve a readable preview for every retained field before giving the tail
   // the remaining capacity. Otherwise long outputs erase earlier query/body/input.
@@ -761,7 +763,9 @@ export function restoreSessionViewItems(
   conversation?: readonly KodaXMessage[] | null,
   liveItems: readonly ClientViewItem[] = [],
 ): ClientViewItem[] {
-  return trimPersistedUiHistorySnapshot(restoreSessionContentItems(sessionId, data, conversation, liveItems));
+  // A long turn can fill the window without its query. Advancing to the next
+  // query would discard that entire visible turn as soon as new input arrives.
+  return restoreSessionContentItems(sessionId, data, conversation, liveItems).slice(-SESSION_VIEW_ITEM_LIMIT);
 }
 
 /** Assign identities before applying the display window; item reads need every block. */
@@ -773,6 +777,13 @@ export function restoreSessionContentItems(
 ): ClientViewItem[] {
   if (!data) return [];
   const historyMessages = conversation && conversation.length > 0 ? conversation : data.messages.slice(-30);
+  const userAttachments = new Map<string, NonNullable<ClientViewItem['attachments']>>();
+  for (const message of historyMessages) {
+    if (message.role !== 'user' || message.inputId === undefined || !Array.isArray(message.content)) continue;
+    const images = message.content.flatMap(block => block.type === 'image'
+      ? [{ kind: 'image' as const, path: block.path, ...(block.mediaType ? { mediaType: block.mediaType } : {}) }] : []);
+    if (images.length > 0) userAttachments.set(message.inputId, images);
+  }
   const committedOutputs = committedSessionOutputIds(data, conversation ?? []);
   const tools = canonicalTools(historyMessages);
   const lastAssistant = [...historyMessages].reverse().find(message => message.role === 'assistant');
@@ -844,7 +855,8 @@ export function restoreSessionContentItems(
     }
     if (item.type === 'user' && item.inputId !== undefined) {
       return [{ id: `${sessionId}:input:${item.inputId}`, type: 'user', text: item.text,
-        inputId: item.inputId, ...(item.timestamp !== undefined ? { timestamp: item.timestamp } : {}) }];
+        inputId: item.inputId, ...(item.timestamp !== undefined ? { timestamp: item.timestamp } : {}),
+        ...(userAttachments.has(item.inputId) ? { attachments: userAttachments.get(item.inputId) } : {}) }];
     }
     let previous: ClientViewItem | undefined;
     if (item.inputId !== undefined) {

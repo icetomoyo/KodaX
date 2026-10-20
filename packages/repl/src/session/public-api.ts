@@ -13,6 +13,8 @@ import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import { readEffectiveSessionMetadata } from './resume-discovery.js';
+import { compareSessionRecency, validSessionTimestamp, type SessionRecency } from './session-recency.js';
 
 import {
   createSessionLineage,
@@ -173,6 +175,8 @@ export interface SessionSummary {
   readonly msgCount: number;
   readonly tag?: string;
   readonly createdAt?: string;
+  /** Latest genuine conversation message time. Lists use createdAt when absent. */
+  readonly lastMessageAt?: string;
   // FEATURE_247 (R5): surface + profileId are projected onto the list summary
   // so an embedder can filter a Partner session from a Coder session without a
   // full loadSession(). provider/model/etc. stay on the full-load runtimeInfo.
@@ -424,12 +428,7 @@ interface SessionListReadFilter {
 }
 
 async function readSessionMetaRecord(filePath: string): Promise<Record<string, unknown> | undefined> {
-  const firstLine = await readSessionFirstLine(filePath);
-  if (!firstLine) return undefined;
-  const first: unknown = JSON.parse(firstLine);
-  if (first === null || typeof first !== 'object') return undefined;
-  const meta = first as Record<string, unknown>;
-  return meta._type === 'meta' ? meta : undefined;
+  return readEffectiveSessionMetadata(filePath);
 }
 
 async function readActiveMessageCount(
@@ -485,6 +484,7 @@ async function readSessionListCandidate(
     msgCount: await readActiveMessageCount(filePath, meta),
     ...(tag !== undefined ? { tag } : {}),
     ...(createdAt !== undefined ? { createdAt } : {}),
+    ...(validSessionTimestamp(meta.lastMessageAt) !== undefined ? { lastMessageAt: meta.lastMessageAt as string } : {}),
     ...(summaryRuntime !== undefined ? { runtimeInfo: summaryRuntime } : {}),
     projectKey: deriveProjectKeyFromRoot(summaryRuntime?.gitRoot ?? summaryRuntime?.workspaceRoot).key,
     ...(archived ? { archived: true } : {}),
@@ -545,15 +545,26 @@ function resolveSessionsDir(override?: string): string {
   return override ?? KODAX_SESSIONS_DIR;
 }
 
-function encodeSessionCursor(sessionId: string): string {
-  return Buffer.from(sessionId, 'utf8').toString('base64url');
+function encodeSessionCursor(session: SessionRecency): string {
+  return Buffer.from(JSON.stringify({ v: 1, id: session.id,
+    createdAt: validSessionTimestamp(session.createdAt), lastMessageAt: validSessionTimestamp(session.lastMessageAt),
+  }), 'utf8').toString('base64url');
 }
 
-function decodeSessionCursor(cursor: string): string | undefined {
-  if (!cursor || cursor.length > 1024) return undefined;
+function decodeSessionCursor(cursor: string): { readonly anchor: SessionRecency; readonly legacy: boolean } | undefined {
+  if (!cursor || cursor.length > 2048) return undefined;
   try {
-    const sessionId = Buffer.from(cursor, 'base64url').toString('utf8');
-    return sessionId && encodeSessionCursor(sessionId) === cursor ? sessionId : undefined;
+    const decoded = Buffer.from(cursor, 'base64url').toString('utf8');
+    if (!decoded || Buffer.from(decoded, 'utf8').toString('base64url') !== cursor) return undefined;
+    if (!decoded.startsWith('{')) return { anchor: { id: decoded }, legacy: true };
+    const value: unknown = JSON.parse(decoded);
+    if (!isRecord(value) || value.v !== 1 || typeof value.id !== 'string' || !value.id
+      || (value.createdAt !== undefined && validSessionTimestamp(value.createdAt) === undefined)
+      || (value.lastMessageAt !== undefined && validSessionTimestamp(value.lastMessageAt) === undefined)) return undefined;
+    return { anchor: { id: value.id,
+      ...(typeof value.createdAt === 'string' ? { createdAt: value.createdAt } : {}),
+      ...(typeof value.lastMessageAt === 'string' ? { lastMessageAt: value.lastMessageAt } : {}),
+    }, legacy: false };
   } catch {
     return undefined;
   }
@@ -596,8 +607,8 @@ async function listSessionsImpl(
     const before = opts?.before ? Date.parse(opts.before) : undefined;
     const tag = opts?.tag;
     const surface = opts?.surface;
-    const cursorId = opts?.cursor === undefined ? undefined : decodeSessionCursor(opts.cursor);
-    if (opts?.cursor !== undefined && cursorId === undefined) return [];
+    const cursor = opts?.cursor === undefined ? undefined : decodeSessionCursor(opts.cursor);
+    if (opts?.cursor !== undefined && cursor === undefined) return [];
 
     if (
       scope === 'user'
@@ -605,7 +616,7 @@ async function listSessionsImpl(
       && !includeArchived
       && tag === undefined
       && surface === undefined
-      && cursorId === undefined
+      && cursor === undefined
     ) {
       // Fast path: delegate to storage.list() which already handles the
       // common case (head-read every meta file, sorted newest-first,
@@ -674,30 +685,26 @@ async function listSessionsImpl(
     }
 
     // Sort newest-first (mirrors FileSessionStorage.list()).
-    sessions.sort((a, b) => {
-      const at = a._createdAtMs;
-      const bt = b._createdAtMs;
-      if (Number.isFinite(at) && Number.isFinite(bt) && at !== bt) {
-        return (bt as number) - (at as number);
-      }
-      if (Number.isFinite(bt) && !Number.isFinite(at)) return 1;
-      if (Number.isFinite(at) && !Number.isFinite(bt)) return -1;
-      return b.id.localeCompare(a.id);
-    });
+    sessions.sort(compareSessionRecency);
 
-    const cursorIndex = cursorId === undefined
-      ? -1
-      : sessions.findIndex((session) => session.id === cursorId);
-    if (cursorId !== undefined && cursorIndex < 0) return [];
-    const pageStart = cursorIndex + 1;
+    let pageStart = 0;
+    if (cursor?.legacy) {
+      const index = sessions.findIndex(session => session.id === cursor.anchor.id);
+      if (index < 0) return [];
+      pageStart = index + 1;
+    } else if (cursor !== undefined) {
+      const index = sessions.findIndex(session => compareSessionRecency(session, cursor.anchor) > 0);
+      pageStart = index < 0 ? sessions.length : index;
+    }
 
-    return sessions.slice(pageStart, pageStart + limit).map(({ id, title, msgCount, tag: sessionTag, createdAt, runtimeInfo, projectKey, archived }) => ({
+    return sessions.slice(pageStart, pageStart + limit).map(({ id, title, msgCount, tag: sessionTag, createdAt, lastMessageAt, runtimeInfo, projectKey, archived }) => ({
       id,
-      cursor: encodeSessionCursor(id),
+      cursor: encodeSessionCursor({ id, createdAt, lastMessageAt }),
       title,
       msgCount,
       ...(sessionTag !== undefined ? { tag: sessionTag } : {}),
       ...(createdAt !== undefined ? { createdAt } : {}),
+      ...(lastMessageAt !== undefined ? { lastMessageAt } : {}),
       ...(runtimeInfo !== undefined ? { runtimeInfo } : {}),
       ...(projectKey !== undefined ? { projectKey } : {}),
       ...(archived ? { archived: true } : {}),
@@ -736,6 +743,7 @@ function toSessionSummary(raw: {
    * entry on the common-case call.
    */
   createdAt?: string;
+  lastMessageAt?: string;
 }): SessionSummary {
   const runtimeInfo = raw.runtimeInfo
     ? extractRuntimeInfoSummary(raw.runtimeInfo)
@@ -745,12 +753,13 @@ function toSessionSummary(raw: {
   ).key;
   return {
     id: raw.id,
-    cursor: encodeSessionCursor(raw.id),
+    cursor: encodeSessionCursor(raw),
     title: raw.title,
     msgCount: raw.msgCount,
     ...(raw.tag !== undefined ? { tag: raw.tag } : {}),
     ...(runtimeInfo !== undefined ? { runtimeInfo } : {}),
     ...(raw.createdAt !== undefined ? { createdAt: raw.createdAt } : {}),
+    ...(raw.lastMessageAt !== undefined ? { lastMessageAt: raw.lastMessageAt } : {}),
     projectKey,
   };
 }

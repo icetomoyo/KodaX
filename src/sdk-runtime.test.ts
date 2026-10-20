@@ -90,6 +90,7 @@ import { toolSkill } from "../packages/coding/src/tools/skill.js";
 const codingMock = vi.hoisted(() => ({
   runManagedTask: vi.fn(),
   startKodaX: vi.fn(),
+  beforeGoalBinding: null as null | (() => Promise<void>),
 }));
 
 const mutableNodeFs = createRequire(import.meta.url)("node:fs") as {
@@ -240,6 +241,10 @@ vi.mock("@kodax-ai/coding", async (importOriginal) => {
     ...actual,
     runManagedTask: codingMock.runManagedTask,
     startKodaX: codingMock.startKodaX,
+    async buildSessionGoalRuntimeBinding(...args: Parameters<typeof actual.buildSessionGoalRuntimeBinding>) {
+      await codingMock.beforeGoalBinding?.();
+      return actual.buildSessionGoalRuntimeBinding(...args);
+    },
   };
 });
 
@@ -302,6 +307,7 @@ describe("createKodaXRuntime", () => {
     tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "kodax-runtime-"));
     codingMock.runManagedTask.mockReset();
     codingMock.startKodaX.mockReset();
+    codingMock.beforeGoalBinding = null;
     replMock.bootstrapAutoMode.mockReset();
     replMock.compactSession.mockReset();
     replMock.beforeLoadSession = null;
@@ -1395,7 +1401,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("retires client-minted permission requests on the daemon wire (T14)", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime, waitForRuntimeDaemonShutdown } = await import("@kodax-ai/kodax/runtime");
     const profile = `space-permission-${randomUUID()}`;
     const worker = await createKodaXRuntime({
       mode: "daemon",
@@ -1436,7 +1442,17 @@ describe("createKodaXRuntime", () => {
       expect(seen).toEqual([]);
       subscription.close();
     } finally {
-      await worker.close();
+      try {
+        const daemon = worker.daemon;
+        if (!daemon) throw new Error('Expected the private fixture daemon');
+        const { owner } = await daemon.inspect();
+        if (!owner) throw new Error('Expected the private fixture daemon owner');
+        await daemon.shutdown();
+        await expect(waitForRuntimeDaemonShutdown({ configHome: path.join(tempRoot, '.kodax'),
+          profile, owner })).resolves.toMatchObject({ status: 'succeeded' });
+      } finally {
+        await worker.close();
+      }
     }
   });
 
@@ -5377,32 +5393,23 @@ describe("createKodaXRuntime", () => {
       markFirstWriteStarted = resolve;
     });
     let firstSnapshotPath: string | undefined;
+    let firstPageSettled: Promise<unknown> | undefined;
     let blockFirstSnapshotWrite = true;
     const open = vi.spyOn(nodeFsPromises, "open").mockImplementation(
       async (file, flags, mode) => {
-        const handle = await originalOpen(file, flags, mode);
         if (
-          !blockFirstSnapshotWrite
-          || !String(file).endsWith(".entries")
-          || String(flags) !== "wx"
+          blockFirstSnapshotWrite
+          && String(file).endsWith(".entries")
+          && String(flags) === "wx"
         ) {
-          return handle;
+          blockFirstSnapshotWrite = false;
+          firstSnapshotPath = String(file);
+          // Capacity is already reserved. Hold the pending materialization
+          // before opening its file so directory deletion also works on Windows.
+          markFirstWriteStarted?.();
+          await firstWriteGate;
         }
-        blockFirstSnapshotWrite = false;
-        firstSnapshotPath = String(file);
-        return {
-          write: async (
-            buffer: Uint8Array,
-            offset?: number,
-            length?: number,
-            position?: number | null,
-          ) => {
-            markFirstWriteStarted?.();
-            await firstWriteGate;
-            return handle.write(buffer, offset, length, position);
-          },
-          close: () => handle.close(),
-        } as unknown as Awaited<ReturnType<typeof originalOpen>>;
+        return originalOpen(file, flags, mode);
       },
     );
     try {
@@ -5426,22 +5433,24 @@ describe("createKodaXRuntime", () => {
       const firstPage = runtime.sessions.transcriptPage({
         sessionId: first.id,
       });
+      firstPageSettled = firstPage.then(value => ({ value }), (error: unknown) => ({ error }));
       await firstWriteStarted;
-      await fs.rm(path.dirname(firstSnapshotPath!), {
-        recursive: true,
-        force: true,
-      });
+      const snapshotDir = path.dirname(firstSnapshotPath!);
+      expect(path.dirname(snapshotDir)).toBe(path.resolve(os.tmpdir()));
+      expect(path.basename(snapshotDir)).toMatch(/^kodax-transcript-snapshots-/);
+      await fs.rm(snapshotDir, { recursive: true, force: true });
       await expect(runtime.sessions.transcriptPage({
         sessionId: second.id,
       })).rejects.toMatchObject({ code: "overloaded" });
       releaseFirstWrite?.();
-      await expect(firstPage).rejects.toMatchObject({
-        code: "resync_required",
+      await expect(firstPageSettled).resolves.toMatchObject({
+        error: { code: "resync_required" },
       });
     } finally {
       releaseFirstWrite?.();
       open.mockRestore();
       await runtime.close();
+      await firstPageSettled;
     }
   }, 30_000);
 
@@ -8388,6 +8397,49 @@ describe("createKodaXRuntime", () => {
       sessionOrder: 2,
     });
     await runtime.close();
+  });
+
+  it.each(['start', 'after_turn'] as const)('advances %s admission when its predecessor finishes before the queue entry is published', async (delivery) => {
+    const { createKodaXRuntime } = await import('./sdk-runtime.js');
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot, defaultProvider: 'mock-provider' });
+    const session = await runtime.sessions.create({ title: 'Queue handoff during admission' });
+    const starts: string[] = [];
+    const finishers: Array<(value: KodaXResult) => void> = [];
+    codingMock.startKodaX.mockImplementation((options: KodaXOptions, prompt: string) => {
+      starts.push(prompt);
+      return fakeRunningSession(options, new Promise<KodaXResult>((resolve) => finishers.push(resolve)));
+    });
+    let entered!: () => void;
+    let release!: () => void;
+    const reading = new Promise<void>((resolve) => { entered = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    try {
+      const first = await runtime.runs.start({ sessionId: session.id, prompt: 'first' });
+      codingMock.beforeGoalBinding = async () => {
+        codingMock.beforeGoalBinding = null;
+        entered();
+        await gate;
+      };
+      const starting = delivery === 'start'
+        ? runtime.runs.start({ sessionId: session.id, prompt: 'second' })
+        : runtime.runs.submitInput({ sessionId: session.id, afterRunId: first.runId,
+          delivery: 'after_turn', input: { type: 'text', text: 'second' } });
+      await reading;
+      finishers[0]!({ success: true, lastText: 'first done', messages: [], sessionId: session.id });
+      await expect(first.result).resolves.toMatchObject({ phase: 'completed' });
+      release();
+      const second = await starting;
+      if ('accepted' in second) expect(second.accepted).toBe(true);
+      if (!('runId' in second) || !second.runId) throw new Error('Second Run was not admitted');
+      await vi.waitFor(() => expect(starts).toEqual(['first', 'second']), { timeout: 1_000 });
+      finishers[1]!({ success: true, lastText: 'second done', messages: [], sessionId: session.id });
+      await expect(runtime.runs.await(second.runId)).resolves.toMatchObject({ phase: 'completed' });
+      expect(starts).toEqual(['first', 'second']);
+    } finally {
+      release();
+      codingMock.beforeGoalBinding = null;
+      await runtime.close();
+    }
   });
 
   it("creates ordered after-turn continuation runs and rejects stale delivery", async () => {

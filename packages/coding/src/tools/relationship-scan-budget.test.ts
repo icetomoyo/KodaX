@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const runtimeMocks = vi.hoisted(() => ({
   getImpactEstimate: vi.fn(),
@@ -18,6 +18,32 @@ vi.mock('./grep.js', () => grepMocks);
 import { toolRelationshipScan } from './relationship-scan.js';
 
 describe('relationship_scan budget behavior', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it.each([
+    { input: undefined, requestedDepth: undefined },
+    { input: 1, requestedDepth: undefined },
+    { input: 2, requestedDepth: 2 },
+    { input: 3, requestedDepth: 3 },
+  ])('preserves numeric depth $input and the default direct-edge scan', async ({ input, requestedDepth }) => {
+    runtimeMocks.getModuleContext.mockResolvedValueOnce(undefined);
+    runtimeMocks.getImpactEstimate.mockResolvedValueOnce(undefined);
+
+    const result = await toolRelationshipScan({ module: 'example-module', depth: input }, {
+      backups: new Map(),
+      executionCwd: 'C:/repo',
+    });
+
+    expect(result).toContain('Relationship scan for example-module');
+    if (requestedDepth === undefined) {
+      expect(result).not.toContain('Requested depth');
+    } else {
+      expect(result).toContain(`Requested depth ${requestedDepth};`);
+    }
+  });
+
   it('stops indexed follow-up calls after the first warming result', async () => {
     runtimeMocks.getSymbolContext.mockResolvedValueOnce({
       symbol: {

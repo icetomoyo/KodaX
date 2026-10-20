@@ -7,29 +7,30 @@ import path from 'node:path';
 import { expect, it, vi } from 'vitest';
 
 const contention = vi.hoisted(() => ({
-  enabled: false, calls: 0, arrivals: [] as Array<() => void>, responses: [] as Array<() => void>, snapshots: [] as unknown[],
+  enabled: false, calls: 0, snapshots: [] as unknown[],
+  firstInspected: undefined as (() => void) | undefined,
+  peerInspected: undefined as (() => void) | undefined,
+  holdFirst: undefined as Promise<void> | undefined,
 }));
 
 vi.mock('./runtime-daemon/transport.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./runtime-daemon/transport.js')>();
-  const rendezvous = (waiting: Array<() => void>): Promise<void> => new Promise(resolve => {
-    waiting.push(resolve);
-    if (waiting.length === 2) waiting.splice(0).forEach(release => release());
-  });
   return { ...actual, createRuntimeDaemonSocketClientTransport: async (
     ...args: Parameters<typeof actual.createRuntimeDaemonSocketClientTransport>
   ) => {
     const transport = await actual.createRuntimeDaemonSocketClientTransport(...args);
     return { ...transport, request: async (...request: Parameters<typeof transport.request>) => {
-      if (!contention.enabled || request[0] !== 'daemon.management.get' || contention.calls++ >= 8) {
+      if (!contention.enabled || request[0] !== 'daemon.management.get') {
         return transport.request(...request);
       }
-      // Four real overlapping inspections: neither temporary client may
-      // disconnect until both Host snapshots have observed the contention.
-      await rendezvous(contention.arrivals);
+      const first = contention.calls++ === 0;
+      if (!first) contention.peerInspected?.();
       const result = await transport.request(...request);
       contention.snapshots.push(result);
-      await rendezvous(contention.responses);
+      if (first) {
+        contention.firstInspected?.();
+        await contention.holdFirst;
+      }
       return result;
     } };
   } };
@@ -57,6 +58,12 @@ it('concurrent launchers refresh a real idle older Host and keep its saved Sessi
   let output = '';
   child.stdout.on('data', (chunk: Buffer) => { output += chunk.toString(); });
   child.stderr.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+  const cancellation = new AbortController();
+  let releaseFirst!: () => void;
+  const inspected = new Promise<void>(resolve => { contention.firstInspected = resolve; });
+  const peerInspected = new Promise<string>(resolve => { contention.peerInspected = () => resolve('peer inspected the old Host'); });
+  contention.holdFirst = new Promise<void>(resolve => { releaseFirst = resolve; });
+  const pending: Array<ReturnType<typeof ensureKodaXRuntime>> = [];
   try {
     await waitForHost(paths, () => {
       if (child.exitCode !== null || child.signalCode !== null) throw new Error(`Old Host startup failed: ${output}`);
@@ -66,17 +73,28 @@ it('concurrent launchers refresh a real idle older Host and keep its saved Sessi
     const saved = await old.sessions.create({ title: 'Keep across Host refresh' });
     await old.close();
     contention.enabled = true;
-    const connections = await Promise.allSettled([
-      ensureKodaXRuntime({ homeDir, profile, daemonStartupTimeoutMs: 60_000 }),
-      ensureKodaXRuntime({ homeDir, profile, daemonStartupTimeoutMs: 60_000 }),
-    ]);
+    const startup = { homeDir, profile, daemonStartupTimeoutMs: 60_000, daemonStartupSignal: cancellation.signal };
+    pending.push(ensureKodaXRuntime(startup));
+    await Promise.race([inspected, pending[0]!.then(() => { throw new Error('Launcher skipped the held inspection'); })]);
+    const queued = new Promise<string>(resolve => {
+      pending.push(ensureKodaXRuntime({ ...startup, onStartupProgress(progress) {
+        if (progress.stage === 'waiting' && progress.reason === 'host_starting') resolve('queued');
+      } }));
+    });
+    // The peer must wait before attaching another management Client, rather
+    // than repeatedly counting temporary launchers as real connected work.
+    await expect(Promise.race([queued, peerInspected,
+      pending[1]!.then(() => 'peer finished without queueing')])).resolves.toBe('queued');
+    expect(contention.snapshots).toHaveLength(1);
+    expect(contention.snapshots[0]).toMatchObject({ preflight: {
+      clientCount: 1, blockers: [], activeRuns: [],
+      clients: [expect.objectContaining({ name: 'kodax-host-launcher' })],
+    } });
+    releaseFirst();
+    const connections = await Promise.allSettled(pending);
     const clients = connections.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
     try {
-      expect(contention.snapshots).toHaveLength(8);
-      for (const snapshot of contention.snapshots) expect(snapshot).toMatchObject({ preflight: {
-        clientCount: 2, blockers: ['connected_clients'], activeRuns: [],
-        clients: [expect.objectContaining({ name: 'kodax-host-launcher' }), expect.objectContaining({ name: 'kodax-host-launcher' })],
-      } });
+      expect(contention.snapshots).toHaveLength(1);
       const rejected = connections.filter((result) => result.status === 'rejected');
       expect(rejected, rejected.map(result => String(result.reason)).join('\n')).toEqual([]);
       const current = clients[0]!;
@@ -88,6 +106,11 @@ it('concurrent launchers refresh a real idle older Host and keep its saved Sessi
       await Promise.all(clients.map((client) => client.close()));
     }
   } finally {
+    releaseFirst();
+    cancellation.abort(new Error('Launcher fixture cleanup'));
+    for (const result of await Promise.allSettled(pending)) {
+      if (result.status === 'fulfilled') await result.value.close();
+    }
     contention.enabled = false;
     await stopHost(paths);
     if (child.exitCode === null && child.signalCode === null) child.kill();

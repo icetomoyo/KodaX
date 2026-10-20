@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -164,6 +165,7 @@ describe('daemon CLI smoke', () => {
     let releaseCard: (() => void) | undefined;
     let observeCardRequest: (() => void) | undefined;
     let cardPort: number | undefined;
+    let runtimePromise: Promise<KodaXDaemonRuntime> | undefined;
     const cardRequest = new Promise<void>((resolve) => { observeCardRequest = resolve; });
     const cardRelease = new Promise<void>((resolve) => { releaseCard = resolve; });
     const cardServer = createServer(async (request, response) => {
@@ -222,14 +224,22 @@ describe('daemon CLI smoke', () => {
         }),
       ]);
       const paths = resolveRuntimeDaemonPaths(homeDir, profile);
+      const startingOwner = readRuntimeDaemonLockOwner(paths.lockFile);
+      expect(startingOwner).toMatchObject({ kind: 'daemon' });
+      expect(fs.existsSync(paths.stateFile)).toBe(false);
       // Keep actual discovery pending while both callers attempt to attach.
       // A fixed ready-delay window can expire before the assertions run.
 
+      const descriptorMarker = path.join(homeDir, 'initial-missing-descriptor.txt');
       const concurrentStart = runDaemonCommand([
         'start', '--home', homeDir, '--profile', profile,
         '--provider', 'mock-provider', '--timeout-ms', '30000', '--json',
-      ]);
-      const runtimePromise = ensureKodaXRuntime({
+      ], {
+        NODE_OPTIONS: `--import=${pathToFileURL(path.join(process.cwd(), 'tests/daemon-startup-observer.mjs')).href}`,
+        KODAX_TEST_DAEMON_DESCRIPTOR_FILE: paths.stateFile,
+        KODAX_TEST_DAEMON_DESCRIPTOR_MARKER: descriptorMarker,
+      });
+      runtimePromise = ensureKodaXRuntime({
         homeDir,
         profile,
         daemonStartupTimeoutMs: 30_000,
@@ -245,13 +255,22 @@ describe('daemon CLI smoke', () => {
         () => { runtimeSettled = true; },
         () => { runtimeSettled = true; },
       );
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await Promise.race([
+        waitForFile(descriptorMarker),
+        concurrentStart.then(() => { throw new Error('Concurrent start settled before initial A2A reconciliation completed.'); }),
+      ]);
       expect(concurrentStartSettled).toBe(false);
       expect(runtimeSettled).toBe(false);
 
       releaseCard?.();
-      await expect(start).resolves.toMatchObject({ started: true, health: 'healthy' });
-      await expect(concurrentStart).resolves.toMatchObject({
+      const [first, second, runtime] = await Promise.all([start, concurrentStart, runtimePromise]);
+      // Reporting a new start must not be confused with actually replacing the
+      // owner that was reconciling before either follower could attach.
+      expect(first).toMatchObject({ state: { runtimeId: startingOwner!.runtimeId, pid: startingOwner!.pid } });
+      expect(second).toMatchObject({ state: { runtimeId: startingOwner!.runtimeId, pid: startingOwner!.pid } });
+      expect(runtime.identity.runtimeId).toBe(startingOwner!.runtimeId);
+      expect(first).toMatchObject({ started: true, health: 'healthy' });
+      expect(second).toMatchObject({
         started: false,
         reason: 'already_running',
         state: { status: 'ready' },
@@ -259,17 +278,14 @@ describe('daemon CLI smoke', () => {
       expect(JSON.parse(fs.readFileSync(paths.stateFile, 'utf8'))).toMatchObject({
         configHome: path.resolve(homeDir, '.kodax'),
       });
-      const runtime = await runtimePromise;
-      try {
-        expect(runtime.capabilities).toMatchObject({
-          a2aConfigReconciler: { version: 1 },
-        });
-        await expect(runtime.admin.agentRegistrations.list()).resolves.toEqual([
-          expect.objectContaining({ agentId: 'external:delayed', enabled: true }),
-        ]);
-      } finally {
-        await runtime.close();
-      }
+      expect(runtime.capabilities).toMatchObject({
+        a2aConfigReconciler: { version: 1 },
+      });
+      await expect(runtime.admin.agentRegistrations.list()).resolves.toEqual([
+        expect.objectContaining({ agentId: 'external:delayed', enabled: true }),
+      ]);
+      await runtime.close();
+      runtimePromise = undefined;
       await expect(runDaemonCommand([
         'stop', '--home', homeDir, '--profile', profile,
         '--timeout-ms', '30000', '--json',
@@ -277,6 +293,9 @@ describe('daemon CLI smoke', () => {
       await waitForDaemonState(profile, homeDir, false);
     } finally {
       releaseCard?.();
+      // A failed CLI assertion must not leave the SDK follower attached and
+      // turn the real failure into a connected_clients cleanup rejection.
+      if (runtimePromise) await runtimePromise.then(runtime => runtime.close(), () => undefined);
       await new Promise<void>((resolve, reject) => {
         cardServer.close((error) => error ? reject(error) : resolve());
       });
@@ -422,6 +441,7 @@ describe('daemon CLI smoke', () => {
       '--import', 'tsx', path.join(process.cwd(), 'src', 'kodax_cli.ts'),
       'daemon', 'serve', '--home', homeDir, '--profile', profile,
       '--provider', 'mock-provider',
+      '--orphan-exit-ms', '150',
     ], {
       cwd: process.cwd(),
       stdio: ['ignore', 'ignore', 'pipe'],
@@ -446,6 +466,11 @@ describe('daemon CLI smoke', () => {
         throw new Error(`${String(error)}; hosted A2A exit=${child.exitCode}, signal=${child.signalCode}; ${bootstrapError}`, { cause: error });
       }
 
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const servingPid = JSON.parse(fs.readFileSync(paths.stateFile, 'utf8')) as { pid: number };
+      await expect(ensureKodaXRuntime({ homeDir, profile, daemonOrphanExitMs: 150 }))
+        .rejects.toThrow(/retained/);
+      expect((JSON.parse(fs.readFileSync(paths.stateFile, 'utf8')) as { pid: number }).pid).toBe(servingPid.pid);
       const card = await fetch(`${baseUrl}/.well-known/agent-card.json`);
       expect(card.status).toBe(200);
       const cardBody = await card.json() as { readonly name: string };
@@ -614,6 +639,22 @@ describe('daemon CLI smoke', () => {
       '--json',
     ]);
     expect(status).toMatchObject({ health: 'healthy' });
+  }, 90_000);
+
+  it('retains an existing idle-exit Host when daemon start explicitly makes it persistent', async () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-daemon-retain-'));
+    tempRoots.push(homeDir);
+    const profile = `retain-${process.pid}-${Date.now()}`;
+    const runtime = await ensureKodaXRuntime({ homeDir, profile, daemonOrphanExitMs: 150 });
+    try {
+      const started = await runDaemonCommand(['start', '--home', homeDir, '--profile', profile, '--json']);
+      expect(started).toMatchObject({ started: false, reason: 'already_running', state: { runtimeId: runtime.identity.runtimeId } });
+    } finally { await runtime.close(); }
+    await expect(ensureKodaXRuntime({ homeDir, profile, daemonOrphanExitMs: 150 }))
+      .rejects.toThrow(/retained/);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const status = await runDaemonCommand(['status', '--home', homeDir, '--profile', profile, '--json']);
+    expect(status).toMatchObject({ health: 'healthy', state: { runtimeId: runtime.identity.runtimeId } });
   }, 90_000);
 
   it('self-stops a Space-managed daemon after its final client disconnects', async () => {

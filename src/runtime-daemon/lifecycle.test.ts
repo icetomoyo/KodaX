@@ -31,6 +31,70 @@ afterEach(() => {
 });
 
 describe('runtime daemon lifecycle health checks', () => {
+  it('observes the same owner becoming ready during its authenticated probe without repeating OS identity inspection', async () => {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), 'default');
+    const starting = state({ status: 'starting' });
+    writeRuntimeDaemonState(paths, starting);
+    expect(tryAcquireRuntimeDaemonLock(paths, owner(starting.runtimeId, starting.pid))).toBeDefined();
+    let inspections = 0;
+    const observation = await observeRuntimeDaemonHealth(paths, {
+      isPidAlive: () => { inspections += 1; return true; },
+      createTransport: async () => fakeTransport({ identity: { runtimeId: starting.runtimeId, profile: starting.profile } }, () => {
+        writeRuntimeDaemonState(paths, { ...starting, status: 'ready' });
+      }),
+    });
+    expect(observation).toMatchObject({ state: { ...starting, status: 'ready' }, identityMatches: true, pidAlive: true });
+    expect(inspections).toBe(1);
+  });
+
+  it.each(['owner', 'process identity'] as const)('does not promote a replacement %s from an unauthenticated ready descriptor', async replacement => {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), 'default');
+    const starting = state({ status: 'starting' });
+    writeRuntimeDaemonState(paths, starting);
+    const original = owner(starting.runtimeId, starting.pid);
+    expect(tryAcquireRuntimeDaemonLock(paths, original)).toBeDefined();
+    const observation = await observeRuntimeDaemonHealth(paths, {
+      isPidAlive: () => true,
+      createTransport: async () => fakeTransport({ identity: { runtimeId: starting.runtimeId, profile: starting.profile } }, () => {
+        writeRuntimeDaemonState(paths, { ...starting, status: 'ready',
+          ...(replacement === 'owner' ? { runtimeId: 'replacement' } : {}) });
+        fs.writeFileSync(paths.lockFile, JSON.stringify({ ...original,
+          ...(replacement === 'owner' ? { runtimeId: 'replacement' } : { processStartIdentity: 'reused-pid' }) }));
+      }),
+    });
+    expect(observation.state).toEqual(starting);
+    expect(readRuntimeDaemonState(paths)?.status).toBe('ready');
+    expect(readRuntimeDaemonLockOwner(paths.lockFile)).toMatchObject(replacement === 'owner'
+      ? { runtimeId: 'replacement' } : { processStartIdentity: 'reused-pid' });
+  });
+
+  it('holds temporary client admission before checking a startup owner identity and always closes it', async () => {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), 'default');
+    const current = state();
+    writeRuntimeDaemonState(paths, current);
+    expect(tryAcquireRuntimeDaemonLock(paths, owner(current.runtimeId, current.pid))).toBeDefined();
+    const calls: string[] = [];
+    const observation = await observeRuntimeDaemonHealth(paths, {
+      connectionPurpose: 'client',
+      isPidAlive: () => {
+        expect(calls).toEqual(['client:initialize']);
+        calls.push('check:identity');
+        return true;
+      },
+      createTransport: async () => ({
+        async request(_method, params) {
+          expect(params).toMatchObject({ connectionPurpose: 'client' });
+          calls.push('client:initialize');
+          return { identity: { runtimeId: current.runtimeId, profile: current.profile } };
+        },
+        subscribe() { return { close() {} }; },
+        close() { calls.push('client:close'); },
+      }),
+    });
+    expect(observation).toMatchObject({ pidAlive: true, endpointReachable: true, identityMatches: true });
+    expect(calls).toEqual(['client:initialize', 'check:identity', 'client:close']);
+  });
+
   it('observes a healthy daemon through initialize handshake identity', async () => {
     const paths = resolveRuntimeDaemonPaths(tempHome(), 'default');
     const current = state();

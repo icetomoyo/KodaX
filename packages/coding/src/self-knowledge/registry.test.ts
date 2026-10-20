@@ -145,7 +145,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('may canonicalize DACL protection/inheritance control at commit');
     expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
-    expect(sandbox).toContain('v0.7.97-alpha.5 release uses Windows native shell protocol 10');
+    expect(sandbox).toContain('v0.7.97-alpha.9 release uses Windows native shell protocol 10');
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
@@ -173,7 +173,34 @@ describe('FEATURE_218 manual registry', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('The v0.7.97-alpha.5 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.97-alpha.9 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.97-alpha.9 release checks Session admission through canonical identity');
+    expect(sdk).toContain('a Windows ERROR_CRC surfacing as EIO');
+    expect(sdk).toContain('Unreadable metadata still fails closed');
+    expect(sdk).toContain('Admission reuse is fenced to initialized Actor controllers that');
+    expect(sdk).toContain("`protected` exit receipts for other clients' work are preserved.");
+    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.8 contract is retained.');
+    expect(sdk).toContain('The v0.7.97-alpha.8 release ships the Artifact SDK inside the single main package');
+    expect(sdk).toContain('`@kodax-ai/kodax/artifacts`, `/artifacts/client`, `/artifacts/runtime`, and');
+    expect(sdk).toContain('no separate @kodax-ai/artifacts npm publication exists.');
+    expect(sdk).toContain('advances to 20.16');
+    expect(sdk).toContain('never certify visual approval.');
+    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.7 contract is retained.');
+    expect(sdk).toContain('The v0.7.97-alpha.7 release resolves shared-Session Host ownership across daemon');
+    expect(sdk).toContain('guarded same-build orphan-exit policy refresh');
+    expect(sdk).toContain('`daemon_startup_failed` and `ETIMEDOUT`');
+    expect(sdk).toContain('report `already_running` by its actual');
+    expect(sdk).toContain('retire after the accepted 30-second lifetime');
+    expect(sdk).toContain('reads targeted exact process identities within the original startup controls');
+    expect(sdk).toContain('starts exactly once, and');
+    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.6 contract is retained.');
+    expect(sdk).toContain('The v0.7.97-alpha.6 release streamlines shared-Host startup');
+    expect(sdk).toContain('optional `lastMessageAt`');
+    expect(sdk).toContain('The CLI requires');
+    expect(sdk).toContain('`sessionDrafts:1`');
+    expect(sdk).toContain('while refreshing an older Host (Issue 369)');
+    expect(sdk).toContain('shutdown or business requests are never replayed.');
+    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.5 contract is retained.');
     expect(sdk).toContain("The v0.7.97-alpha.5 release ships FEATURE_301's unified Artifact SDK");
     expect(sdk).toContain('nine public operations');
     expect(sdk).toContain('safe to stop. Evidence readiness is not visual approval.');
@@ -682,7 +709,8 @@ describe('FEATURE_218 manual registry', () => {
   it('keeps the SDK topic aligned with current published subpaths', () => {
     const content = resolveKodaXManual({ topic: 'sdk' }).content;
 
-    expect(content).toContain('12 SDK subpaths');
+    expect(content).toContain('17 SDK subpaths');
+    expect(content).toContain('no separate @kodax-ai/artifacts npm publication exists.');
     expect(content).toContain('@kodax-ai/kodax/runtime');
     expect(content).toContain('@kodax-ai/kodax/sandbox');
     expect(content).toContain('@kodax-ai/kodax/experimental-memory');

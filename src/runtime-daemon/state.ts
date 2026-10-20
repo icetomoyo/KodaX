@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import path from 'node:path';
 
-import { readProcessStartIdentity } from '@kodax-ai/agent';
+import { readProcessStartIdentity, readProcessStartIdentities, readCurrentProcessWindowsJobIdentity } from '@kodax-ai/agent';
 
 let currentProcessStartIdentity: string | undefined;
 let currentProcessStartIdentityRead = false;
@@ -98,6 +98,30 @@ export function readRuntimeOwnerProcessStartIdentity(pid: number): string | unde
     currentProcessStartIdentityRead = true;
   }
   return currentProcessStartIdentity;
+}
+
+export function readRuntimeDaemonWindowsJobIdentity(): ReturnType<typeof readCurrentProcessWindowsJobIdentity> {
+  const identity = readCurrentProcessWindowsJobIdentity();
+  if (identity !== undefined) {
+    // Only our own immutable identity is cached; the supervisor evidence is
+    // returned to this startup observation and never reused for later checks.
+    currentProcessStartIdentity = identity.processStartIdentity;
+    currentProcessStartIdentityRead = true;
+  }
+  return identity;
+}
+
+/** A fresh external-PID observation; only this process's immutable identity is cached. */
+export function readRuntimeOwnerProcessStartIdentities(pids: readonly number[]): Map<number, string | undefined> {
+  const result = readProcessStartIdentities(pids.filter(pid => pid !== process.pid || !currentProcessStartIdentityRead));
+  if (pids.includes(process.pid)) {
+    if (!currentProcessStartIdentityRead) {
+      currentProcessStartIdentity = result.get(process.pid);
+      currentProcessStartIdentityRead = true;
+    }
+    result.set(process.pid, currentProcessStartIdentity);
+  }
+  return result;
 }
 
 export type RuntimeDaemonHealth =
@@ -576,11 +600,27 @@ export function readRuntimeDaemonState(paths: RuntimeDaemonPaths): RuntimeDaemon
 
 type RuntimeOwnerProcessState = 'alive' | 'gone' | 'unknown';
 
-function runtimeOwnerProcessState(owner: RuntimeDaemonLockOwner): RuntimeOwnerProcessState {
+/** Shared by owner reclamation, daemon health and verified exit waiting. */
+export function runtimeOwnerProcessState(
+  owner: Pick<RuntimeDaemonLockOwner, 'pid' | 'processStartIdentity'>,
+): RuntimeOwnerProcessState {
+  if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0) return 'gone';
   try {
     process.kill(owner.pid, 0);
   } catch (error: unknown) {
     return isNodeFileError(error) && error.code === 'ESRCH' ? 'gone' : 'unknown';
+  }
+  if (process.platform === 'linux') {
+    try {
+      const stat = fs.readFileSync(`/proc/${owner.pid}/stat`, 'utf8');
+      const fields = /^\d+ \(.*\) ([A-Za-z]) /s.exec(stat);
+      // A zombie (or a kernel-dead task) has terminated even before waitpid.
+      if (fields && ['Z', 'X', 'x'].includes(fields[1]!)) return 'gone';
+      if (!fields) return 'unknown';
+    } catch {
+      // Missing or unreadable evidence never authorizes reclaiming a lock.
+      return 'unknown';
+    }
   }
   if (owner.processStartIdentity === undefined) return 'alive';
   const currentIdentity = readRuntimeOwnerProcessStartIdentity(owner.pid);
@@ -698,7 +738,42 @@ export function tryAcquireRuntimeDaemonLock(
   }
 }
 
+/** Serialize launchers before they attach management clients to the shared Host. */
+export function tryAcquireRuntimeSessionStorageStartup(sessionsDir: string): (() => void) | undefined {
+  fs.mkdirSync(sessionsDir, { recursive: true });
+  const rootDir = path.join(fs.realpathSync(sessionsDir), '.product-host');
+  fs.mkdirSync(rootDir, { recursive: true });
+  const paths = { ownerPolicyLockFile: path.join(rootDir, 'startup.lock') };
+  const handle = tryAcquireRuntimeOwnerCoordination(paths);
+  return handle === undefined ? undefined : () => releaseRuntimeOwnerCoordination(paths, handle);
+}
+
 /** Profiles are connection names; the actual Session directory has one product writer. */
+export function findRuntimeSessionStorageHost(
+  configHome: string,
+  sessionsDir: string,
+): { readonly profile: string; readonly ownerFile: string; readonly owner: RuntimeDaemonLockOwner } | undefined {
+  if (!fs.existsSync(sessionsDir)) return undefined;
+  const ownerFile = path.join(fs.realpathSync(sessionsDir), '.product-host', 'owner.lock');
+  const owner = readRuntimeDaemonLockOwner(ownerFile);
+  if (!owner || owner.kind !== 'daemon' || runtimeOwnerProcessState(owner) === 'gone') return undefined;
+  const daemonDir = path.join(path.resolve(configHome), 'runtime', 'daemon');
+  for (const entry of fs.existsSync(daemonDir) ? fs.readdirSync(daemonDir, { withFileTypes: true }) : []) {
+    if (!entry.isDirectory() || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(entry.name)) continue;
+    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, entry.name);
+    const state = readRuntimeDaemonState(paths);
+    const candidate = readRuntimeDaemonLockOwner(paths.lockFile);
+    if (state?.profile !== entry.name || state.runtimeId !== owner.runtimeId || state.pid !== owner.pid
+      || candidate?.runtimeId !== owner.runtimeId || candidate.pid !== owner.pid
+      || (candidate.kind !== undefined && candidate.kind !== 'daemon')
+      || (candidate.processStartIdentity !== undefined && candidate.processStartIdentity !== owner.processStartIdentity)) continue;
+    return { profile: entry.name, ownerFile, owner };
+  }
+  throw Object.assign(new Error(`The shared Session storage owner ${owner.runtimeId} (PID ${owner.pid}) cannot be attached yet. Waiting for its verified daemon descriptor.`), {
+    code: 'session_storage_owned' as const, retryable: true,
+  });
+}
+
 export function acquireRuntimeSessionStorageOwner(
   sessionsDir: string,
   runtimeId: string,

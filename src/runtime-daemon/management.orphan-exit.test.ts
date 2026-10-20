@@ -21,6 +21,27 @@ afterEach(() => {
 });
 
 describe('Runtime daemon orphan idle exit', () => {
+  it('cancels an in-flight idle inspection when a real client attaches', async () => {
+    let entered = false;
+    let signal: AbortSignal | undefined;
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const requestStop = vi.fn();
+    const controller = createController({ orphanExitMs: 30_000, requestStop,
+      preflight: async options => { entered = true; signal = options?.signal; await pending; return idlePreflight(); },
+    });
+    try {
+      controller.attachClient(client('old'));
+      controller.detachClient('old');
+      await waitUntil(() => entered);
+      controller.attachClient(client('new'));
+      expect(signal?.aborted).toBe(true);
+      release();
+      await delay(0);
+      expect(requestStop).not.toHaveBeenCalled();
+    } finally { release(); controller.close(); }
+  });
+
   it('rejects an in-flight Session load before repeatedly scanning preflight state', async () => {
     const preflight = vi.fn(() => idlePreflight());
     let release!: () => void;
@@ -63,6 +84,28 @@ describe('Runtime daemon orphan idle exit', () => {
       await mutation;
       controller.close();
     }
+  });
+
+  it('does not scan historical preflight state between startup admission and the first real client', async () => {
+    vi.useFakeTimers();
+    const preflight = vi.fn(() => idlePreflight());
+    const requestStop = vi.fn();
+    const controller = createController({ orphanExitMs: 30_000, preflight, requestStop });
+    try {
+      controller.armOrphanExitAfterReady();
+      controller.attachClient(client('startup'), { persistent: false, startup: true });
+      controller.detachClient('startup');
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(preflight).not.toHaveBeenCalled();
+      controller.attachClient(client('cli'));
+      controller.detachClient('cli');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(preflight).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(requestStop).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(requestStop).toHaveBeenCalledTimes(1);
+    } finally { controller.close(); vi.useRealTimers(); }
   });
 
   it('stops only after the final logical client disconnects', async () => {
@@ -117,6 +160,76 @@ describe('Runtime daemon orphan idle exit', () => {
     active = false;
     await waitUntil(() => stopRequests === 1);
     controller.close();
+  });
+
+  it('keeps a serving A2A Host alive without scanning idle preflight state', async () => {
+    vi.useFakeTimers();
+    const preflight = vi.fn(() => idlePreflight());
+    const requestStop = vi.fn();
+    const controller = createController({ orphanExitMs: 30_000, preflight, requestStop, keepAlive: () => true });
+    try {
+      controller.armOrphanExitAfterReady();
+      controller.attachClient(client('cli'));
+      controller.detachClient('cli');
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(requestStop).not.toHaveBeenCalled();
+      expect(preflight).not.toHaveBeenCalled();
+    } finally { controller.close(); vi.useRealTimers(); }
+  });
+
+  it.each(['active_runs', 'background_work'] as const)('gives completed %s a full idle grace before exiting', async (blocker) => {
+    vi.useFakeTimers();
+    let active = true;
+    const requestStop = vi.fn();
+    const controller = createController({
+      orphanExitMs: 30_000,
+      preflight: () => ({ ...idlePreflight(),
+        canStop: blocker === 'background_work' || !active,
+        blockers: active && blocker === 'active_runs' ? ['active_runs'] : [],
+        pendingBackgroundWork: active && blocker === 'background_work' ? 1 : 0,
+      }),
+      requestStop,
+    });
+    try {
+      controller.attachClient(client('cli'));
+      controller.detachClient('cli');
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(requestStop).not.toHaveBeenCalled();
+      active = false;
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(requestStop).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(requestStop).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(requestStop).toHaveBeenCalledTimes(1);
+    } finally { controller.close(); vi.useRealTimers(); }
+  });
+
+  it('preserves background work that starts during the final idle-exit preflight', async () => {
+    vi.useFakeTimers();
+    let checks = 0;
+    const requestStop = vi.fn();
+    const controller = createController({ orphanExitMs: 30_000, requestStop,
+      preflight: () => ({ ...idlePreflight(), pendingBackgroundWork: ++checks >= 2 ? 1 : 0 }),
+    });
+    try {
+      controller.armOrphanExitAfterReady();
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(checks).toBeGreaterThanOrEqual(2);
+      expect(requestStop).not.toHaveBeenCalled();
+      expect(() => controller.attachClient(client('replacement'))).not.toThrow();
+    } finally { controller.close(); vi.useRealTimers(); }
+  });
+
+  it('allows explicit shutdown to cancel and settle optional background work', async () => {
+    const requestStop = vi.fn();
+    const controller = createController({ orphanExitMs: 30_000, requestStop,
+      preflight: () => ({ ...idlePreflight(), pendingBackgroundWork: 1 }),
+    });
+    try {
+      await expect(controller.stop()).resolves.toEqual({ ok: true });
+      expect(requestStop).toHaveBeenCalledTimes(1);
+    } finally { controller.close(); }
   });
 
   it('cancels an armed orphan exit when another client attaches during the grace period', async () => {
@@ -200,8 +313,9 @@ describe('Runtime daemon orphan idle exit', () => {
 
 function createController(input: {
   readonly orphanExitMs: number;
-  readonly preflight: () => RuntimeDaemonPreflight | Promise<RuntimeDaemonPreflight>;
+  readonly preflight: (options?: { readonly signal?: AbortSignal }) => RuntimeDaemonPreflight | Promise<RuntimeDaemonPreflight>;
   readonly requestStop: () => void;
+  readonly keepAlive?: () => boolean;
 }) {
   const configHome = mkdtempSync(path.join(os.tmpdir(), 'kodax-orphan-exit-'));
   temporaryHomes.push(configHome);
@@ -221,14 +335,15 @@ function createController(input: {
         },
       },
       status: {
-        async preflight() {
-          return input.preflight();
+        async preflight(options?: { readonly signal?: AbortSignal }) {
+          return input.preflight(options);
         },
       },
     } as unknown as KodaXRuntime,
     paths: resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder'),
     requestStop: input.requestStop,
     orphanExitMs: input.orphanExitMs,
+    keepAlive: input.keepAlive,
   });
 }
 

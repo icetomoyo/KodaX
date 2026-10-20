@@ -739,6 +739,11 @@ async function getDaemonStartResult(input: {
     input.profile,
   );
   const before = await observeRuntimeDaemonHealth(paths);
+  // Initial integration reconciliation holds the owner fence before publishing
+  // daemon.json. A later authenticated attach to that exact owner is reuse.
+  const beforeOwner = before.state === undefined
+    ? readRuntimeDaemonLockOwner(paths.lockFile)
+    : undefined;
   const cancellation = createDaemonStartupCancellation();
   try {
     const runtime = await ensureKodaXRuntime({
@@ -749,6 +754,7 @@ async function getDaemonStartResult(input: {
       defaultModel: input.model,
       daemonStartupTimeoutMs: input.timeoutMs,
       daemonStartupSignal: cancellation.signal,
+      daemonLifecycle: 'persistent',
       clientInfo: { name: 'kodax-daemon-start', clientType: 'automation' },
     });
     try {
@@ -757,7 +763,9 @@ async function getDaemonStartResult(input: {
         || observation.state.status !== 'ready' || !observation.identityMatches) {
         throw new Error('The Host owner changed while startup was being verified. Retry startup.');
       }
-      return before.state?.runtimeId === runtime.identity.runtimeId
+      const existingOwner = before.state ?? (beforeOwner?.kind === 'daemon' ? beforeOwner : undefined);
+      return existingOwner?.runtimeId === runtime.identity.runtimeId
+        && existingOwner.pid === observation.state.pid
         ? { started: false, reason: 'already_running', state: observation.state }
         : { started: true, pid: observation.state?.pid ?? null, health: 'healthy', state: observation.state };
     } finally { await runtime.close(); }
@@ -841,6 +849,7 @@ async function serveDaemonCommand(input: {
       // The host is created only after createRuntime returns, so this trusted
       // fact is never observable until reconcile and watcher startup succeed.
       ownsA2AConfigReconciler: true,
+      keepAlive: () => hostedA2AServer !== undefined,
       commitStartup,
       integrationStatuses: () => [
         ...extensions.hotReload.statuses(),
@@ -1185,7 +1194,7 @@ async function cleanupInteractiveProcessResources(input: {
   await attempt('extension Runtime', input.disposeExtensions, phaseTimeoutMs, managedChildReserveMs);
   await attempt('LSP', shutdownDefaultLspService, phaseTimeoutMs, managedChildReserveMs);
   await attempt('managed child process', async () => {
-    await cleanupRegisteredManagedChildren({ includeCurrentOwner: true });
+    await cleanupRegisteredManagedChildren({ scope: 'current-owner', includeCurrentOwner: true });
   });
   await attempt('tracing', shutdownTracing);
 
@@ -1246,6 +1255,7 @@ async function cleanupDaemonServeProcessResources(input: {
   await attempt('LSP', shutdownDefaultLspService);
   await attempt('managed child process', async () => {
     await cleanupRegisteredManagedChildren({
+      scope: 'current-owner',
       includeCurrentOwner: true,
       requireCurrentOwnerCleanup: true,
       currentOwnerJobContained: isCurrentProcessWindowsJobContained(),
@@ -3325,11 +3335,6 @@ async function runCliMain(startupProgress?: CliStartupProgress) {
       .runAsrtWindowsNetworkBrokerProcess(argv[1]);
     return;
   }
-  if (!isDaemonManagementCommand) {
-    startupProgress?.update('Checking previous processes');
-    await cleanupRegisteredManagedChildren();
-  }
-
   // FEATURE_209 (v0.7.45): activate tracing so Runner spans persist to
   // ~/.kodax/.traces/<traceId>.jsonl. FileTracingProcessor flushes per-trace
   // on completion, so completed traces are durable without the beforeExit
@@ -4624,7 +4629,8 @@ complete -c kodax -l version -d 'Show version'`);
     // and is never a product fallback.
     cliRuntime = await ensureKodaXRuntime({
       profile: 'default',
-      requirements: { productClient: 1 },
+      daemonLifecycle: 'interactive',
+      requirements: { productClient: 1, sessionDrafts: 1 },
       onStartupProgress: startupProgress === undefined ? undefined
         : (progress) => { startupProgress.update(cliStartupProgressMessage(progress)); },
       clientInfo: {
@@ -5092,7 +5098,7 @@ complete -c kodax -l version -d 'Show version'`);
       }
       cliRuntime = undefined;
       await shutdownDefaultLspService();
-      await cleanupRegisteredManagedChildren({ includeCurrentOwner: true });
+      await cleanupRegisteredManagedChildren({ scope: 'current-owner', includeCurrentOwner: true });
       await shutdownTracing();
       if (runtimeCloseError !== undefined) throw runtimeCloseError;
     }

@@ -47,6 +47,13 @@ scratch/
 # Accepted designs and regression contracts belong in tracked docs/ and tests/.
 docs/research/
 
+# Local research drafts. Promote durable decisions, contracts, and acceptance
+# evidence into the corresponding docs before referencing them from tracked files.
+/docs/research/
+
+# Local Windows PowerShell module analysis cache.
+/Microsoft/Windows/PowerShell/ModuleAnalysisCache
+
 # Logs
 *.log
 npm-debug.log*

@@ -1807,8 +1807,9 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
           description: 'Relationship direction to emphasize. Defaults to both.',
         },
         depth: {
-          type: 'number',
-          enum: [1, 2, 3],
+          type: 'integer',
+          minimum: 1,
+          maximum: 3,
           description: 'Requested traversal depth. Light mode reports bounded direct edges first.',
         },
         target_path: { type: 'string', description: 'Optional path used to resolve the repository root or narrow context' },

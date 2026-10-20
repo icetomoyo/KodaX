@@ -11,6 +11,8 @@ import { deriveCodingMemoryIdentity } from '@kodax-ai/coding';
 import { KodaXBaseProvider, registerModelProvider,
   type KodaXProviderConfig, type KodaXStreamResult } from '@kodax-ai/llm';
 import { createKodaXRuntime, type KodaXEvents, type RuntimeRunMode } from './sdk-runtime.js';
+import { createRuntimeDaemonManagementController } from './runtime-daemon/management.js';
+import { resolveRuntimeDaemonPathsFromConfigHome } from './runtime-daemon/state.js';
 
 afterEach(() => { vi.restoreAllMocks(); syncBuiltinESMExports(); vi.unstubAllEnvs(); });
 
@@ -113,6 +115,29 @@ async function fixture(existingRoot?: string) {
     },
   };
 }
+
+it('keeps idle shutdown blocked while a completed Run still owns terminal review', async () => {
+  const f = await fixture();
+  const review = reviewerGate();
+  const requestStop = vi.fn();
+  const controller = createRuntimeDaemonManagementController({ runtime: f.runtime,
+    paths: resolveRuntimeDaemonPathsFromConfigHome(path.join(f.root, '.kodax'), 'default'),
+    orphanExitMs: 20, requestStop });
+  try {
+    await expect((await f.start(review.reviewer)).result).resolves.toMatchObject({ phase: 'completed' });
+    const signal = await awaitEvent(review.entered, 'terminal reviewer started');
+    const preflight = await f.runtime.status.preflight();
+    expect(preflight).toMatchObject({ activeRuns: [], canStop: true });
+    expect(preflight.pendingBackgroundWork).toBeGreaterThan(0);
+    controller.armOrphanExitAfterReady();
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(requestStop).not.toHaveBeenCalled();
+    expect(signal.aborted).toBe(false);
+    review.release();
+    await vi.waitFor(async () => expect(requestStop).toHaveBeenCalledTimes(1));
+    expect(signal.aborted).toBe(false);
+  } finally { controller.close(); review.release(); review.finishCleanup(); await f.close(); }
+});
 
 it.each(['coding', 'managed_task'] as const)('cancels owned %s terminal review and waits for reviewer cleanup before releasing its claim', async (mode) => {
   const f = await fixture();

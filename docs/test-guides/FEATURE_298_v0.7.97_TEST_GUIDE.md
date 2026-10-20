@@ -2,9 +2,73 @@
 
 本指南验证构建后的产品入口。组件、协议和 SDK 单测继续保留，但不替代这里的真实进程与终端操作。
 
+## 2026-10-15 启动与最近消息排序回归
+
+测试边界：规范存储 Actor 投影、共享 Host 所有权与退出、SDK/Client 列表、裸 `-r` 发现及真实 ConPTY 首次可输入。所有性能样本禁止提交模型请求，使用专用 Home，不停止用户默认 Host。
+
+```powershell
+npx vitest run packages/repl/src/interactive/storage.actor-read.test.ts packages/repl/src/interactive/storage.owned-read.test.ts packages/repl/src/session/session-recency.test.ts packages/repl/src/cli-resume.test.ts packages/repl/src/session/resume-index.test.ts
+npx vitest run packages/agent/src/runtime/managed-child-processes.scope.test.ts packages/agent/src/runtime/managed-child-processes.cache.test.ts packages/agent/src/runtime/managed-child-processes.run.test.ts packages/agent/src/runtime/process-tree.identity-batch.test.ts
+npx vitest run src/sdk-runtime.host-owner.test.ts src/sdk-runtime.actors.test.ts src/sdk-client.session-recency.test.ts src/runtime-daemon/process.owner-exit.test.ts src/kodax_cli.interactive-exit.test.ts
+npx vitest run src/sdk-runtime.preflight-projection.test.ts src/sdk-runtime.shell-home.test.ts src/sdk-runtime.mcp-home.test.ts packages/agent/src/capabilities/mcp/transport-home.test.ts
+npm run typecheck
+npm run build
+```
+
+必须保留：其他项目的活跃 Actor 仍阻止停机；长首行、未知 schema、损坏与并发替换不返回 false idle；本 Owner 写队列、取消和期限仍生效。历史恢复仅在取得存储所有权后执行并绑定 Host 配置目录；Client 退出不扫描历史，自己的活进程仍需回收，未知树证据仍保留。身份批次内复用，下一轮刷新，PID 复用不误杀。
+
+忙时预检沿用已认领且验证过 admission 的现场 Actor，不因普通内容写队列或旧 flat 临时文件而失效；未认领 Actor 仍严格读取。真实目录成员变化、迁移锁/journal 不得变成空清单；旧 flat 的顶层 `archived/` 与项目内归档均不参与活跃枚举。全量回归首次检出的忙时读锁问题及复核检出的旧 flat 归档问题均有对应修正和失败后通过的用例。
+
+排序场景：旧会话新增真实消息置顶；标题/设置/Actor 保存、合成消息和压缩不置顶；压缩复制与 Fork 保留来源时间。全量保存、prepared append、索引命中/删除重建、旧记录及 SDK 快慢路径一致；相同时间稳定排序；筛选先于 limit，`before` 仍过滤创建时间。新游标锚点删除或移动后可继续；实时分页中的新增活动通过首页刷新发现。
+
+### 本次启动耗时对比
+
+2026-10-15，Windows ConPTY + xterm，110×35，等待实际出现可输入提示后发送 `/exit`。优化前后使用独立安装副本、相同的 759 条历史子进程记录及恢复会话夹具；沙箱已就绪，无模型请求。每种场景各一次配对样本，包含相同的只记录阶段/OS 调用耗时的内存探针，不代表统计分位数或首次安装沙箱的耗时。
+
+| 场景 | 优化前 | 优化后 |
+| --- | ---: | ---: |
+| 无运行中 Host，输入命令到 TUI 可输入 | 27.493 s | 17.614 s |
+| 已有同构建 Host，再次启动 | 8.344 s | 0.772 s |
+| `-r`，选择会话到 TUI 可输入 | 8.181 s | 0.621 s |
+| 同版本、同来源构建内容改变，正常切换 Host | 27.405 s | 11.699 s |
+
+刷新样本只在私有安装的 `dist/provider-capabilities.json` 末尾追加合法空白以改变构建身份，覆盖重建后的切换路径；不声称在计时期间执行了编译。所有 CLI 样本正常退出，候选 Host 最后通过 `daemon stop --home <专用 Home> --json` 返回 `stopped: true`。基线最后的停机返回 `cleanup_unverified`，进程已退出，不能将其记为已验证清理成功。
+
+阶段证据：再次启动原本约 6.77 s 的客户端全局清理已消除；候选只处理自己的精确登记，约 1–3 ms。冷启动仍保留 Host 的一次历史恢复（最终样本 9.87 s），构建身份首次读取两侧约 1.30–1.36 s。正常切换等待旧 Owner 退出由约 7.31 s 降至 0.89 s；此处仍验证真实退出及清理结果。沙箱就绪检查两侧均约 28–40 ms，配置准备约 1–4 ms，恢复会话的 Host 读取约 2–10 ms，未观察到这些阶段的新回归。大历史会话的预检读取边界另由 Actor 投影和超过 50 条会话的严格全量回归验证，不能用本夹具的预检耗时代替大库测量。
+
+本机证据目录：`%TEMP%/kodax-startup-comparison-Gtwl6A`，包含 `run.mjs`、`probe.cjs`、`comparison-state.json`、`final-candidate.json`、`comparison-results.json`、各场景 `*-result.json`、阶段 `*.jsonl` 与原始 `*.ansi`。表中候选采用最终重建后的 `after-final-*` 样本；较早候选测得冷启动 15.263 s、再次启动 0.827 s、选中后 0.586 s、切换 10.831 s，保留为额外样本，不据此选取最低值。真实用户默认 Host 未停止或重启。
+
+### 回归结果与证据边界
+
+类型检查、完整构建、SDK 声明自包含检查通过。冻结 2,884 个源码、测试和构建文件后运行默认全量：1,178 个文件，16,618 passed、10 failed、89 skipped、19 todo，耗时 1,202.85 s；结束时所有冻结哈希一致。首轮失败逐项处理如下：
+
+- Shell 恢复的 5 项旧调用参数断言现在明确检查 Host `configHome`，MCP 清理的 3 项旧 mock 改为保留真实作用域导出；相关两文件完整复验 12/12 通过，原清理结果与持久化顺序断言保留。
+- 既有 Issue 368 索引使用非标准状态导致统计失败，索引规范为 `Resolved`，详情及版本仍明确源码已修复、SDK 待发布；tracker 4/4 通过。
+- 1,005 轮 Run 存储用例遇到一次 Windows `EPERM` 原子重命名失败；生产重命名处理未变，原用例独立复验 56.384 s 通过。保留首轮失败证据，不将其写成已根治文件系统失败。
+
+以上共 17 项定向复验通过，覆盖首轮全部 10 个失败；不是第二份“全量零失败”日志。构建产物验收 42/42 通过，测试适配后的类型检查通过。证据为同目录 `regression-frozen.{log,json}`、`frozen-check.json`、`test-adaptation.log`、`retention-check.log`、`bundle.log`、`typecheck.log` 和 `final-build.log`。
+
+完整真实 ConPTY 验收通过 50/50（owned Ink 30、classic 20），覆盖启动、新建草稿、首次提交、设置、排队、停止、退出与持久会话恢复等；结果与屏幕证据为 `%TEMP%/kodax-repl-acceptance-k88a6C/results.json` 及同目录文件，入口输出为本轮证据目录的 `pty-final.log`。首次执行的旧驱动因错误期待未提交会话进入历史而失败，修正的是驱动对草稿契约的适配，生产行为未改。
+
+打包 Electron 42.5.0 验收通过（`electron.log`）：实际 Windows 沙箱执行 20 次工具查询、4 个 Session 并发、环境隔离、连接/断开、Host 关闭与重新启动。新增 `session-recency.ts` 单独测得行/函数覆盖率 100%、语句 95.83%、分支 89.36%，4 项测试通过；证据为 `coverage.log` 和 `recency-coverage/coverage-summary.json`，不代表全仓覆盖率。最后核对 2,884 个冻结文件，只有两个 mock/断言测试文件及 PTY 驱动发生已复验的适配，生产源码和构建均未改变（`final-freeze-check.json`）；`git diff --check` 通过。
+
+Standards：硬规范违反 0，仍需处理的坏味道 0。Spec：剩余需求/契约问题 0。两轴独立只读复核，未修改用户默认 Host。
+
+### 性能成本与功能回归边界
+
+目前证据未发现本次改动引入新的性能或功能退化；这不等于所有平台、磁盘条件和历史规模都已证明零回归。提交前核对以下成本与权威边界：
+
+- 预检仍枚举全部 admitted、未归档会话，成本随会话数量及元数据大小增长；未认领 Actor 的元数据每批最多 48 个并发读取，不物化正文和 lineage。已经认领的 Actor 使用经过 admission 验证的现场控制器，避免持久化写锁使忙时预检失效。损坏、迁移中或无法证明稳定的记录仍拒绝控制读取，不能误报空闲。
+- 全量保存原本需要处理完整 lineage，最近消息事实的持久字段、主文件元数据与写后缓存分别计算来源时间投影，使用临时映射，成本随各自处理的完整或精简 lineage 长度线性增长；prepared append 只处理本次新增 entries 和既有时间，不因该字段重新扫描全部历史。会话列表仍为元数据读取及排序，不为补旧时间遍历所有正文；旧索引按现有维护入口升级，裸 `-r` 不重建索引。
+- 历史清理由取得独占所有权的共享 Host 执行一次，客户端连接与退出不重复扫描其他 Owner；精确登记、私有 Home、Job/supervisor、真实退出和持久化清理结果的验证保留。未知清理记录不会为了速度被当成已成功回收。
+- Windows 身份批次只共享本次 OS 观察；仅自身不可变启动身份可缓存，外部 PID 下一批重新读取。工具执行增加的 Home 作用域不新增 OS 子进程或全局扫描，也不改变进程全局 Agent Home。
+- `lastMessageAt` 是统一展示事实，设置、标题、Actor 保存和压缩不制造新活动。新增字段可缺省，旧数据有可靠消息时间才补充；`before` 继续按创建时间过滤，分页保持明确的实时边界语义。
+
+本轮已覆盖 1,005 轮 Run 存储、真实双终端和打包 Electron；没有做全部非启动路径的吞吐量 A/B、大库生产预检延迟分位数或 macOS/Linux 实机对比。Windows 全量中的一次 `EPERM` 已独立复验通过但没有根因修复结论，保留原始证据。后续若出现新的性能或功能问题，应使用同一场景的源码/构建身份和阶段记录定位，不通过缩小预检覆盖、清除未知登记或放宽 Owner 验证规避。
+
 ## 2026-09-14 主线融合复核
 
-已实施的消费者修复以以下公开接缝和人工场景验收，均使用专用测试 HOME 和已有共享 Host：
+复核保留唯一 Host/Client 权威，不以旧内部接口删除判断能力缺失。补充以下人工场景，均使用专用测试 HOME 和已有共享 Host：
 
 1. 一个窗口等待问题，第二个客户端回答该问题。classic 窗口应撤掉旧输入；Host 下一问题可立即作答。关闭观察后输入旧答案不得发出 Host 答复。
 2. 忙时排入 `说明 @"带空格的图片.png"`，重新挂接同一 Session 后按 ↑ 取回，修改正文再提交。图片引用应可见、仅一份，后续模型请求仍有该图片附件。
@@ -14,44 +78,88 @@
 
 上述公开接缝已有自动回归；真实终端操作通过与否应单独记录，不能以单测成绩代替。
 
-## Canonical history and browse regressions
+### 2026-09-14 自动回归与边界
 
-The 2026-09-26 repairs preserve one Host authority and bounded live views.
-Verify these public seams:
+复核时当前分支 `0841fb51` 已包含主线 `7b5b1b9e`，无需再次合并。
+本轮修复了输入接受期间取消未等待真实结算、classic 失效问题占用输入、
+队列图片取回/重交丢失媒体类型（含无后缀图片和 Windows 大小写）、one-shot
+恢复设置覆盖另一 Client、ACP repo-intelligence 参数未到达 Host，以及清除
+Session Auto 审查覆盖后未回到 profile 的消费者缺口。
+`sessions.getSettingsVersioned` / `updateSettingsVersioned` 复用 Host revision/CAS，
+没有增加第二设置权威；另一 Client 修改后恢复冲突保留现状，未改写的临时旗标
+可能继续保留，不承诺逐 Run 设置隔离。
 
-| Contract | Existing regression |
-|---|---|
-| Chunked UTF-8/JSON assembly above 256 KiB; complete canonical message blocks, bounded live window | `src/sdk-client.history-boundaries.test.ts`, `packages/repl/src/ui/utils/restore-history.test.ts` |
-| Evicted input reads use stable input identity; ambiguous legacy history does not borrow a newer source | `src/sdk-client.input-read-source.test.ts` |
-| Failed Session creation releases newly acquired MCP resources, including cleanup failures | `src/sdk-client.mcp-create-rollback.test.ts` |
-| Product workflow defaults and live settings agree; old Host negotiation fails explicitly | `src/sdk-client.workflow-product-settings.test.ts` |
-| Frozen browse pages retain identity/revision, recover evicted pages in order and reject late reads | `tests/repl-history-browse-acceptance.mjs` |
+代码冻结后的历史结果：完整构建与源码/测试类型检查通过；真实构建 PTY
+Ink 21 + classic 14，共 35/35；13 文件定向回归 423/423；新增可执行行
+150/159（94.34%，非全仓覆盖率）；完整 Vitest 1,086 文件通过、1 跳过，
+15,799 用例通过、77 跳过、21 todo。初轮与修改并行、含旧模块缓存/RED 用例的
+运行和主动停止的两轮不计为最终快照。Spec 发现的无后缀媒体类型与大小写 P2
+经公开 queue 回归修复，最终 Standards/Spec 均无剩余发现。
 
-Observe's bounded live window is not complete browse history. Await real Run
-termination, check activity/input remain live while browsing, and preserve the
-screen on expired or ambiguous reads. Failed diagnostics do not certify a fix.
+该次没有真实模型或其他 OS 验收；ACP trace 开关传递不等于新增完整诊断事件面，
+浏览器 transport 也未实现。A2A 离线期间 Run 已完成后读取结果、classic 同 ID
+正文缩短等当时未独立复现的范围，不由本次成绩证明已解决。入口存在不证明
+所有配置、授权 UI 或 Learning 消费者均完成迁移；后续状态以当前契约和问题记录为准。
 
-The ordinary browse window is capped at four pages, 800 items, 2,000,000
-characters and 128 newer-page cursors; anchor hydration is capped at 1,000,000
-characters. If the reading position cannot be recovered within these limits,
-preserve the current screen and use existing Transcript full-text reads.
-This does not recover never-persisted content or assign stable input identity
-to ambiguous legacy messages. Automated paging does not certify physical mouse behavior.
+## Historical integration evidence
 
-## Mainline integration acceptance boundaries
+以下为原融合记录的定稿事实与限制，迁移不代表重新执行测试或发布新版本。
 
-The 2026-10-02 candidate `f1bb8eb87b7f367c56a799847b77224baab90a0e`
-retained Host ownership of interruption, opaque tool-call identity and cleanup
-unknowns. Tests covered actual Client IPC for SA/AMA restart, repeated callId
-ownership and off-window reads, plus layered suites, 39 bundle checks and 50
-Ink/classic PTY cases. Passing these did not certify other platforms or release.
+### 2026-10-02 integration
 
-The 2026-10-07 merge adopted the released v0.7.96 package baseline while retaining
-FEATURE_298's contract and T38–T56 state. Frozen-output checks passed 218 fast
-files / 2,203 tests and 39 bundle tests. Crash-recovery fixtures permit only
-bounded read retries for the contract's `data_changed/resync_required`, never
-lock deletion or resubmission. Customer/installed-build and cross-platform
-manual acceptance remain separate; no new verification is claimed here.
+主线 `cad8b658797976ce22a4bd70c60d2251d537e542` 合入统一 Client 分支
+`a63feede5f4b2bac8a62ddfa687d9b515d8c2021`；最终生产源码/双轴复审候选为
+`f1bb8eb87b7f367c56a799847b77224baab90a0e`。保留单一 Host、瞬态中断证据、
+outputId + opaque callId 身份、离窗全文回源、deferred cleanup unknown 和 v10
+缓存边界；未回接 REPL runner 或持久 Runtime event journal/replay。
+主线 Issues 340–344 保持身份，worktree 同号项迁为 348–352，345–347 不变。
+
+| 历史门禁 | 结果 |
+| --- | --- |
+| 最终构建与源码/测试类型检查 | 通过；14 个自包含 SDK 声明入口，纯 Client 不需 Node ambient types |
+| 冻结源码后 Fast | 218 文件通过、1 跳过；2,202 项通过、32 跳过 |
+| Unit 全量序列 | 740 文件；12,017 项通过、3 跳过 |
+| Contract 全量序列 | 117 文件；960 项通过、21 todo |
+| System 全量及 daemon 复验 | 全量 74 文件通过；daemon 最终 25/25，合计覆盖 75 文件、1,341 项通过、42 跳过 |
+| 最终构建产物 / 真实 PTY | 九个 bundle 文件 39/39；Ink 30 + classic 20，共 50/50；大历史浏览通过 |
+| 恢复模块专项覆盖 | statements 97.4%、branches 89.44%、functions 97.82%、lines 99.33%；仅新证据派生/渲染模块 |
+| Standards / Spec | 同一最终源码候选均为 0 剩余发现 |
+
+原全量 System 有三项 `launcherBuild` 失败：daemon 测试进程加载的旧源码与
+复审修复后磁盘指纹不同。冻结源码、最终重建后整份 daemon 文件 25/25 复验，
+不把原 `npm run test:full` 退出码写为成功。真实 IPC 覆盖 SA/AMA 流式中断、
+detach、Host 重启与下一轮恢复，未重跑 Provider/工具；复用
+`reused:tool:suffix` 的不同 output 在额外 160 条 canonical 消息、移除工具
+checkpoint 后仍可各自补读全文。owner-kill fixture 先结清无关 Session 写入，
+未用删除遗留锁或放宽超时规避失败。
+
+该次未执行付费模型 eval，也未替代 Linux/macOS 或跨平台人工验收。未成功
+checkpoint 的 token 不在恢复保证内；主线未解决问题保留原状态。设计子模块
+当时固定点为 `22f1c3561d24b225f057edebb25f6325e362b8e8`，保留双亲融合历史。
+
+### 2026-10-07 stable mainline integration
+
+开发起点 `f9b0fb586aa9bc8af8ffa67160d2c9ec952779b9` 吸收正式主线
+`c2c8fdc41f4e0b50fa1c2d0b24142586f155777c` 的 `v0.7.96` 发布记录，
+共同祖先为 `cad8b658`。包基线同步 `0.7.96`；FEATURE_298 已实施状态及
+单 Host/Client 契约保留，不复活旧 API。用户未选择文本工具 OS 沙箱迁移，
+继续沿用 ADR-066；没有新增迁移实施票、重置既有 tag 或宣告 v0.7.97 发布。
+设计子模块融合 `7be826fcab188720745e9a5c9374ec5c78997b56` 保留双方历史。
+
+最终历史结果：typecheck、完整构建/纯 Client 编译通过；七文件受影响测试
+69 项；冻结产物、修正只读夹具后的 Fast 为 218 文件通过、1 跳过，2,203 项
+通过、32 跳过（414.86 秒）；九个 bundle 文件 39/39。包含夹具修正的固定
+tree `b0c02b71d1e518d9a2a4ff3972cd2f0876f81037` Standards/Spec 均为 0 发现。
+
+首轮 Fast 有两个构建指纹保护失败；停止重建后专项 3/3 通过。第二轮仍有一个
+Session 只读 `data_changed` 失败，不能由窄循环通过抹去；原现场锁未捕获，
+不能断言根因。夹具仅按公开契约在原整体期限内重试
+`data_changed/resync_required` 的只读 Run/Session 查询，其他错误立即失败；
+不删除锁、不重交输入、不修改生产锁/重试，并等待 Provider 正文包含 `tool-ran`
+后才触发崩溃。保留 interrupted/unknown、工具一次、Provider 不重跑及完整观察
+断言；随后另行完成上面的最终 Fast。日志为
+`%TEMP%/kodax-stable-merge-{fast-corrected,bundle,focused}-2026-10-07.log`
+及对应崩溃专项日志。该次是主线融合，正式发布及跨平台人工验收另行跟踪。
 
 ## Windows 终端验收
 
@@ -78,6 +186,8 @@ npm run test:repl-pty:built
 
 两种终端均验证新会话启动、流式输入/输出、设置往返、完整长输入、提问、停止后继续输入、新建隔离、退出和历史续接。Ink 额外验证忙时排队撤回编辑、搜索旧消息及冻结浏览。Ink 长输入使用 bracketed paste；classic 使用原有反斜杠续行。新建会话沿用各入口原有交互：Ink 确认后创建，classic 直接创建。具体通过项以当次 `results.json` 为准；失败不能以旧测试通过数豁免。
 
+2026-10-15 驱动同步草稿契约：启动及 `/new` 从真实终端所显示的 Session ID 经公开 `read/observe` 确认目标，classic 使用 `/status` 获取完整 ID；未提交会话必须仍不在历史列表中。首次真实输入后才验证持久化与旧会话保留，不为迎合旧断言恢复空历史记录，也不增加虚假的预热输入。
+
 2026-09-09 起，Ink 同一入口额外检查以下回归：
 
 - 普通输入和完成回答各显示一次，完成后的连续采样不出现回答重影；状态栏显示夹具的 `60/65.5k`、`50→10 (60)` 和 `1/7`。
@@ -90,6 +200,12 @@ npm run test:repl-pty:built
 真实旧会话残留修复后，另加 240×64 长 AMA 输出（Tab 与中文长行），执行展开/收起、开头/末尾跳转及搜索/取消，逐行检查页脚没有混入正文，然后缩回 110×32。xterm 必须启用 Unicode 11，让 emoji 列宽与产品一致。此场景在旧代码下会出现正文标记错位，不以字符串存在替代页脚行检查。Tab 等控制字符只在显示 cell 转为空格；历史和全文复制保留原始字符。
 
 这里 Ctrl+E 表示展开/折叠完整历史，`/` 表示打开 transcript 搜索。分页期间模型继续追加、旧会话来源歧义和取消读取另有契约/显示函数回归；不把这些单测计为额外真实终端用例。
+
+普通聊天的流式翻页回归：构建后运行 `node tests/repl-pty-acceptance.mjs --streaming-scroll-only ink`。驱动在私有 Home 保存 90 轮规范问答，持续追加本地模型输出，同时用鼠标滚轮跨越最近显示窗口和多个历史页。必须能到达第一条 query，停手后阅读位置保持不动，中间页顶部不闪现会话 banner，Provider 只收到一次当前输入。此用例不调用真实模型，也不改写用户会话。
+
+旧显示 checkpoint 的恢复/提交回归：构建后运行 `node tests/repl-pty-acceptance.mjs --checkpoint-resume-only ink`。私有会话包含一轮 55 次已保存工具交互及旧 checkpoint，恢复后回滚到原 query，再用 bracketed paste 提交相同文字。模型响应受控暂停期间，上一轮末尾必须仍可见，Host 视图保留 2–150 个唯一展示项，而非只剩新 query；Provider 仅收到一次新输入。脚本不读取或写入系统剪贴板。对应 SDK 用例还验证没有重新执行旧工具，历史原文和完整补读不依赖显示窗口的 query 边界。
+
+SDK 另由 `src/sdk-client.observe-history.test.ts` 验证：末尾工具尚无结果时，首次准备与复用缓存都能读到原始 query；相同文本的不同 inputId 保持独立，复用 callId 的不同 assistantOutputId 保持独立，工具时间在 observe/readHistory 两个面保持一致。真正的版本变化仍须返回 `resync_required`（`src/sdk-client.history.test.ts`）。Ctrl+E 的 `collapse` 只证明细节已展开；完整读取失败时仍保留冻结窗口并报告失败，不代表早期记录已删除。
 
 ## 打包 Electron 与沙箱验收
 

@@ -16,6 +16,7 @@ import { runManagedTaskViaRunner } from './task-engine/runner-driven.js';
 import type { KodaXOptions } from './types.js';
 
 type Mode = 'coding' | 'managed';
+const pendingMaintenance: Promise<void>[] = [];
 function toolResponse(name: string, input: Record<string, unknown>, id = name): KodaXStreamResult {
   return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [
     { type: 'tool_use', id, name, input },
@@ -28,8 +29,12 @@ async function run(mode: Mode, context: KodaXOptions['context'] = {}, overrides:
   const options: KodaXOptions = {
     provider: providerName, reasoningMode: 'off', maxIter: 10,
     context: { executionCwd: workspace, gitRoot: workspace, managedTaskWorkspaceDir: workspace, repoIntelligenceMode: 'off', ...context },
-    events: { beforeToolExecute: async () => true },
     ...overrides,
+    events: {
+      beforeToolExecute: async () => true,
+      ...overrides.events,
+      scheduleManagedTaskMaintenance: work => { pendingMaintenance.push(work()); },
+    },
   };
   return mode === 'coding'
     ? runKodaX(options, 'Create the requested report.')
@@ -57,7 +62,8 @@ beforeEach(() => {
   vi.stubEnv('KODAX_WRITTEN_FILES_TEST_KEY', 'test');
   registerModelProvider(providerName, () => new WrittenFilesProvider());
 });
-afterEach(() => {
+afterEach(async () => {
+  await Promise.all(pendingMaintenance.splice(0));
   clearRuntimeModelProviders();
   vi.mocked(compact).mockReset();
   vi.unstubAllEnvs();

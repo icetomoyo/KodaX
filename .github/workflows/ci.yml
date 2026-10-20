@@ -1,7 +1,7 @@
 name: CI
 
-# Verifies the declared runtime floor actually holds. `engines.node` is
-# ">=20.0.0" across the root and every workspace package, but nothing was
+# Verifies the supported Node major versions. The root/Artifact runtime floor
+# is 20.16; the core source workspaces retain 20.0, but nothing was
 # proving the suite runs on anything other than the release build's Node 22.
 # This matrix runs the build + fast suite on the engines floor (20) and the
 # build version (22), then runs the expensive contract/system tiers once on
@@ -95,6 +95,10 @@ jobs:
 
       - name: Fast tests
         run: npm run test:fast
+
+      - name: Shared Host ownership recovery regressions
+        if: matrix.node == '22'
+        run: node node_modules/vitest/vitest.mjs run src/runtime-daemon/lifecycle.process-identity.test.ts src/runtime-daemon/process.owner-exit.test.ts src/sdk-runtime-daemon-upgrade.test.ts
 
       - name: Unit tests
         if: matrix.node == '20'
@@ -287,8 +291,27 @@ jobs:
       - name: Build packaged Electron gate inputs
         run: npm run build
 
+      - name: Windows concurrent Host startup and rebuild refresh
+        run: >-
+          node node_modules/vitest/vitest.mjs run -c vitest.system.config.ts
+          src/kodax_cli.daemon-smoke.test.ts src/sdk-runtime.launcher.test.ts
+          -t "does not become ready before initial A2A reconciliation completes|concurrent launchers refresh a real idle older Host|explicitly makes it persistent|A2A serving inside|self-stops"
+
       - name: Bundled Provider credentials and daemon compaction
         run: npm run test:bundle
+
+      - name: Windows SDK attachment under CPU contention
+        run: node tests/windows-sdk-attach-pressure.mjs
+
+      - name: Windows startup ownership and cancellation contracts
+        run: >-
+          node node_modules/vitest/vitest.mjs run
+          packages/agent/src/runtime/process-tree.identity-batch.test.ts
+          src/runtime-daemon/process.test.ts src/runtime-daemon/lifecycle.test.ts
+          src/runtime-daemon/manager-containment.test.ts
+          src/runtime-daemon/transport-startup.test.ts
+          src/runtime-daemon/windows-job-supervisor.test.ts
+          src/sdk-runtime-daemon-upgrade.test.ts
 
       - name: Windows native transaction and runner tests
         run: npm run test:native
@@ -317,6 +340,16 @@ jobs:
           KODAX_ELECTRON_DIST: ${{ github.workspace }}\.electron-smoke\node_modules\electron\dist
           KODAX_ELECTRON_BUILDER_CLI: ${{ github.workspace }}\.electron-smoke\node_modules\electron-builder\out\cli\cli.js
         run: npm run test:electron-daemon:built
+
+      - name: Preserve failed SDK startup evidence
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-sdk-startup-${{ github.run_id }}
+          path: .tmp/sdk-startup-failures/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
 
   trusted-text-native-platforms:
     name: trusted text and POSIX sandbox (${{ matrix.target }})

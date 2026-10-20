@@ -418,6 +418,9 @@ async function downloadReleaseAsset(slug, version, filename) {
 }
 
 async function main() {
+  if (argv.includes('--artifacts')) {
+    throw new Error('Artifact SDK ships inside @kodax-ai/kodax. Use the root release command without --artifacts.');
+  }
   // Sanity: git clean (uncommitted changes risk shipping unexpected dist).
   // Hard fail for real publish; warn-only for dry-run / pack-only (so
   // operators can still produce a local tarball or validate the pipeline
@@ -553,6 +556,7 @@ async function publishCiTarball(pkg, version) {
     tarballPath,
     '--registry=https://registry.npmjs.org/',
   ];
+  args.push(`--tag=${version.split('-')[1]?.split('.')[0] ?? 'latest'}`);
   if (isDryRun) args.push('--dry-run');
   if (otp) args.push(`--otp=${otp}`);
   log(`-- npm ${args.join(' ')}`);

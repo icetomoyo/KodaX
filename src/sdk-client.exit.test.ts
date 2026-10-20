@@ -73,6 +73,10 @@ it('durably settles only this client work, protects the other client, and resume
       if (result?.cleanup.state === 'failed') throw new Error(result.cleanup.issues.join('; '));
       return result?.cleanup.state;
     }).toBe('succeeded');
+    await expect(runtime.status.preflight()).resolves.toMatchObject({
+      canStop: false, activeRuns: expect.arrayContaining([expect.objectContaining({ runId: foreign.runId, phase: 'running' })]),
+      activeAgentTurns: expect.arrayContaining([expect.objectContaining({ actorPath: foreignActor.actorPath, turnId: foreignActor.turnId })]),
+    });
     await expect.poll(async () => (await first.lifecycle.readExit('quit-space'))?.host.state).toBe('protected');
     const settled = await first.lifecycle.readExit('quit-space');
     expect(settled).toMatchObject({ cleanup: { runIds: expect.arrayContaining([own.runId]),

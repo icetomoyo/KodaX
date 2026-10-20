@@ -4,7 +4,7 @@ import path from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { FileSessionStorage, type SessionReadOptions } from './storage.js';
 
-it.each(['read', 'readFullSnapshot'] as const)('rejects invalid %s budgets without an orphaned rejection', async method => {
+it.each(['read', 'readFullSnapshot', 'readActorSnapshot'] as const)('rejects invalid %s budgets without an orphaned rejection', async method => {
   const storage = new FileSessionStorage({ sessionsDir: path.join(os.tmpdir(), 'kodax-invalid-read') });
   const unhandled = vi.fn();
   process.on('unhandledRejection', unhandled);
@@ -84,7 +84,24 @@ it('waits for its own in-flight write before capturing a stable full snapshot', 
   } finally { await f.close(); }
 });
 
-it.each(['read', 'readFullSnapshot'] as const)('honors timeout and cancellation while %s waits for its writer', async method => {
+it('waits for an owned Actor write and rejects a foreign Actor read during replacement', async () => {
+  const f = await heldWrite();
+  let settled = false;
+  const reading = f.storage.readActorSnapshot('owned-read').then(
+    snapshot => { settled = true; return snapshot; },
+  );
+  try {
+    await expect(new FileSessionStorage({ sessionsDir: f.sessionsDir }).readActorSnapshot('owned-read'))
+      .rejects.toMatchObject({ code: 'data_changed' });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(settled).toBe(false);
+    f.release();
+    await f.writing;
+    await expect(reading).resolves.toBeUndefined();
+  } finally { await f.close(); }
+});
+
+it.each(['read', 'readFullSnapshot', 'readActorSnapshot'] as const)('honors timeout and cancellation while %s waits for its writer', async method => {
   const f = await heldWrite();
   const controller = new AbortController();
   const read = (options: SessionReadOptions) => f.storage[method]('owned-read', options);
@@ -96,7 +113,8 @@ it.each(['read', 'readFullSnapshot'] as const)('honors timeout and cancellation 
     await rejected;
     f.release();
     await f.writing;
-    await expect(read({})).resolves.toBeTruthy();
+    if (method === 'readActorSnapshot') await expect(read({})).resolves.toBeUndefined();
+    else await expect(read({})).resolves.toBeTruthy();
   } finally { await f.close(); }
 });
 

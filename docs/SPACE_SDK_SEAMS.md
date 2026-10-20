@@ -1,12 +1,18 @@
 # Space 的 Product Client / Host 接缝
 
-Space 既有接入基线为 `0.7.97-alpha.2`；本文接缝按当前工作树 `0.7.97-alpha.5` 核对，需要重新构建 SDK 与 Host，不表示 npm 已发布或 Space 已采用全部变更。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
+Space 已安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，2026-10-18 官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前工作树 `0.7.97-alpha.7` 核对，源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态，不代表当前所有包均未发布。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
 
 ## 启动进度与 Renderer 交接
 
 Main 调用 `ensureKodaXClient/connectKodaXClient` 时可传 `onStartupProgress`；如需展示，由 Space 经自己的 IPC 转发纯数据 `ClientStartupProgress`，Renderer 不导入 Node 启动器。ensure 报告 Host 检查、启动、更新、等待与连接；connect 只报告连接与就绪。该通知来自本机调用，不是 Session view、Run 事件或新 Host RPC。
 
 `ready` 只表示 Client 接口可用；Main 的 Session 读取和 Renderer 的首次渲染仍有自己的完成边界。回调应快速返回，其 Promise 不被等待，故障不改变启动结果。Space 根据启动 Promise 清除加载或展示失败，再在自身 UI 边界完成交接；不假定已存在自动 IPC 桥。REPL 使用 `onBeforeRender` 完成终端交接，桌面 UI 无需依赖它。阶段、等待原因与完整示例见 [Client 契约](CLIENT_CONTRACT.md#连接启动与所有权)和[英文指南](../public_docs/sdk/embedder-guide.md#show-local-startup-progress)。
+
+## 会话列表时间与启动职责
+
+Main 从 `client.sessions.list()` 取得 `lastMessageAt` 和 Host 排序，Renderer 以 `lastMessageAt ?? createdAt` 显示时间，不按本地 mtime 或创建时间重新排序。游标原样透传；列表分页是实时边界，活动变化后刷新首页。标题、设置、Actor 状态和压缩不构成新对话；缺少可靠时间的旧记录回退创建时间。新增字段的源码支持不代表 Space 已更新或 npm 已发布。
+
+历史进程恢复在取得所有权的共享 Host 就绪前完成。Space 连接不再重复扫描，不增加 Renderer 恢复职责；Host 退出仍保留原有进程、Job、supervisor 和持久化结果证明。启动进度继续复用 `ClientStartupProgress`。
 
 ## 可信执行授权
 
@@ -176,10 +182,80 @@ node --test tests/bundled-product-exit.test.mjs
 
 视觉评审复用当前 Run 的 tools、图片输入、artifact refs 和普通子 Actor；不新增独立 Client agent、quality API 或完成证书。静态、分页、交互和时序对象均按实际证据检查，缺少 renderer/vision 或未覆盖部分必须说明未验证。Goal 工具只更新 Host 原子 lineage；客户端继续通过 readGoal 和 view 读取。旧 verifier 实时事件及日志配置已退役，历史读取保留，详见 SDK_MIGRATION。
 
-## Artifact SDK 接入（2026-10-13）
+## Artifact SDK 接入（2026-10-18 单包分发修订）
 
-独立可选 `@kodax-ai/artifacts` 通过唯一 `ArtifactExecutionPort` 接缝提供九个公开操作：`capabilities/prepare/create/open/edit/export/render/capture/readEvidence`。Space 共享 Host 时，由可信 Host 扩展注册 `/kodax` adapter，客户端使用 `/client` 的 `createKodaXArtifactPort(client, sessionId)`。执行沿 `runs.startTool/await/stop`；PNG 经该 Run 对应的工具项和 `sessions.readItem` 附件字节块返回，不能在 UI 读 Host 路径或另起私有 renderer。取消只停止本次已接纳 Run 并等待结算；断连/busy/unknown 不透明重放。
+仅安装和发布 `@kodax-ai/kodax`。Artifact 保留私有源码 workspace，经主包的
+`/artifacts`、`/artifacts/client`、`/artifacts/runtime`、`/artifacts/kodax`
+交付，不再安装或发布 `@kodax-ai/artifacts`。这次改变分发方式，原有九项操作和
+唯一 `ArtifactExecutionPort` 保持，执行继续归同一 Host。
 
-当前支持 PPTX 创作和限定编辑、PDF/图片/SVG 取证、DOCX 轻量分页、本地 HTML 加载视口与 SVG SMIL 时间采样。DOCX 的实际页数属于渲染证据，Word/WPS 保真仍未验证；新格式没有通用编辑承诺。`prepare` 是显式准备，正常连接/启动不加载渲染依赖。具体类型、安装/注册示例、支持矩阵及 alpha.4 tag 之后的契约变更见 [Artifact SDK](ARTIFACT_SDK.md)。
+### Space 安装与启用
 
-共享 Agent 指引可以在适用任务中自动触发视觉审查，无需用户输入 slash；Space 或 CLI 必须实际提供取证工具及图片输入能力。文件取证可在纯 terminal 系统无界面执行，不等于已实现 terminal 表面的 capture。SDK 返回 `ready` 或 Run 终态均不认证视觉质量，修复与复查归现有 Agent。两模型已观察到自动取图和遮挡发现，完整修复/复查/交付尚未全部验证通过，详见[验收边界](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#automatic-visual-review-acceptance-boundary)。
+1. 在 KodaX 仓库安装依赖后执行 `node scripts/release.mjs --pack-only`，构建并审计
+   主包 `kodax-ai-kodax-0.7.97-alpha.7.tgz`。本机打包只包含本机 native authority，
+   保持 private，仅供本地安装；正式主包仍采用既有跨平台 CI 产物。
+2. 在 Space 依赖目录执行 `npm install /absolute/path/to/kodax-ai-kodax-0.7.97-alpha.7.tgz`。
+   Windows 含空格路径加引号，tarball 纳入可复现的依赖交付位置。已有 registry alpha.7
+   不含本次新出口；未来发布包含本次改动的新版本后，正常升级这一个主包即可。
+3. 在现有可信 Node Host 的扩展目录注册 adapter，例如
+   `<Host homeDir>/.kodax/extensions/artifacts.mjs`。该目录必须能解析 Space 使用的
+   同一主包；用户 home 下的扩展不会自动解析应用私有 node_modules，可沿用已有扩展
+   依赖布局或使用从已安装 subpath 解析出的绝对 file URL，不引用源码仓库路径。
+
+```js
+import { registerArtifactTools } from '@kodax-ai/kodax/artifacts/kodax';
+import { executeManagedProcess } from '@kodax-ai/kodax/coding';
+
+export default api => registerArtifactTools(api, {
+  execute: executeManagedProcess,
+  nodeExecutable: process.execPath, // 在 Node Host 求值，不能使用 Electron 可执行文件。
+});
+```
+
+扩展由既有 Host 启动生命周期加载。Space 使用相同 home/profile，已运行且尚未加载
+该扩展的 Host 需按正常安全退出/启动流程更新。`client.catalog.extensions()` 可检查
+加载错误。安装不自动注册工具、重启 Host 或准备 Chromium；模型自动审查仍需实际
+工具暴露与 Provider 的图片输入能力。
+
+Main 在已有 Client/Session 上绑定 SDK，Renderer 经现有 IPC 消费结果：
+
+```ts
+import { createArtifactSdk } from '@kodax-ai/kodax/artifacts';
+import { createKodaXArtifactPort } from '@kodax-ai/kodax/artifacts/client';
+
+const sdk = createArtifactSdk(createKodaXArtifactPort(client, sessionId));
+const capabilities = await sdk.capabilities();
+// 浏览器后端缺运行时，则在正常授权下显式 await sdk.prepare()。
+const rendered = await sdk.render({ path: 'report.pdf', pages: [1] });
+if (rendered.evidence) {
+  const image = await sdk.readEvidence({
+    source: rendered.evidence.source, raster: rendered.evidence.evidence[0]!,
+  });
+  // 经既有 IPC/图片通道消费 image；Renderer 不读取 Host 文件路径。
+}
+```
+
+保留完整 `dist/artifacts/` 树、renderer/PDF worker 依赖与真实 Node 可执行文件；
+Electron 使用 ASAR 时，worker 和其运行资源需解包为实际文件。主包安装体积会增加，
+核心启动和正常连接不加载渲染依赖。PNG 整图不需要浏览器，其它浏览器后端通过
+`prepare` 或可信 Host 配置的兼容 Chromium 准备，权限和沙箱机制保持。
+
+### 实现、发布和验收状态
+
+| 内容 | 状态 |
+| --- | --- |
+| FEATURE_301 分发设计 | 已修订为一个 npm 主包，源码 workspace 私有，旧独立发包计划撤回 |
+| 构建/打包/发布 | 既有主包 build、pack、CI checksum 和单次 publish 路径包含 Artifact；不存在第二份发布物 |
+| 文件渲染和取证 | 支持矩阵沿用现有实现；本地门禁检查四入口、资源、worker、PNG、纯类型消费，并可用显式 Chromium 验证 PPTX/PDF/DOCX |
+| npm 与 Space 部署 | 新出口尚未发布；Space 应先装本地主包 tarball 或等待新版本，应用打包和实际启用尚未在本次执行 |
+| 原有能力边界 | DOCX Word/WPS 保真、未提供的实时表面后端与完整自然任务修复/复查/交付闭环仍未验证 |
+
+本地验证：`node --test tests/packed-artifacts.test.mjs tests/bundled-artifacts.test.mjs`；
+浏览器验证先设置 `KODAX_ARTIFACT_TEST_BROWSER`。单包审计、发布与版本状态详见
+[Artifact SDK](ARTIFACT_SDK.md#delivery-status-and-installation-2026-10-18)。
+
+共享执行仍沿 `runs.startTool/await/stop`，PNG 经对应工具项和 `sessions.readItem`
+附件字节块返回，不能在 UI 读 Host 路径或另起私有 renderer。取消只停止已接纳 Run 并
+等待结算，断连/busy/unknown 不透明重放。取证 `ready` 与 Run 终态均不认证视觉质量，
+视觉判断、修复与最终交付继续由现有 Agent 完成。原有模型观察与缺口见
+[E2E 范围](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#natural-task-observations-2026-10-13)。

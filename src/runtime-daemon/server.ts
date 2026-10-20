@@ -121,7 +121,7 @@ export interface RuntimeDaemonDispatcherOptions {
   readonly authToken?: string;
   readonly status?: () => Promise<unknown> | unknown;
   readonly stop?: () => Promise<unknown> | unknown;
-  readonly preflight?: () =>
+  readonly preflight?: (signal?: AbortSignal) =>
     Promise<RuntimeDaemonPreflight> | RuntimeDaemonPreflight;
   readonly logs?: () => Promise<unknown> | unknown;
   readonly config?: () => Promise<unknown> | unknown;
@@ -496,7 +496,7 @@ export function createRuntimeDaemonDispatcher(
   let initialized = false;
   let closed = false;
   let logicalClientAttached = false;
-  let connectionPurpose: "client" | "probe" = "client";
+  let connectionPurpose: "client" | "probe" | "startup" = "client";
   let clientCapabilities: RuntimeClientCapabilities = {};
   let principalId = `client_${randomUUID().replace(/-/g, "")}`;
   let noticeIdentity = principalId;
@@ -591,7 +591,7 @@ export function createRuntimeDaemonDispatcher(
       }
       if (
         initialized &&
-        connectionPurpose === "probe" &&
+        connectionPurpose !== "client" &&
         !RUNTIME_PROBE_METHODS.has(request.method)
       ) {
         throw daemonError(
@@ -601,8 +601,8 @@ export function createRuntimeDaemonDispatcher(
       }
       if (isInitializeMethod(request.method)) {
         initializeParams = optionalRecord(request.params);
-        connectionPurpose =
-          initializeParams?.connectionPurpose === "probe" ? "probe" : "client";
+        connectionPurpose = initializeParams?.connectionPurpose === 'startup' ? 'startup'
+          : initializeParams?.connectionPurpose === 'probe' ? 'probe' : 'client';
         const token =
           typeof initializeParams?.token === "string"
             ? initializeParams.token
@@ -625,6 +625,10 @@ export function createRuntimeDaemonDispatcher(
             "conflict",
             `Runtime daemon profile mismatch: expected ${options.runtime.identity.profile}, got ${requestedProfile}.`,
           );
+        }
+        if (initializeParams?.daemonLifecycle === 'persistent'
+          && (connectionPurpose !== 'client' || !grantedScopes.has('daemon:admin'))) {
+          throw daemonError('unauthorized', 'Retaining a daemon requires a logical client with daemon:admin scope.');
         }
         principalId = parseRuntimeClientPrincipal(
           initializeParams?.clientInfo,
@@ -786,7 +790,7 @@ export function createRuntimeDaemonDispatcher(
           privateReverseBridge.close();
         }
         if (
-          connectionPurpose === "client" &&
+          connectionPurpose !== "probe" &&
           options.management !== undefined
         ) {
           try {
@@ -796,6 +800,7 @@ export function createRuntimeDaemonDispatcher(
                 principalId,
                 initializeParams?.clientInfo,
               ),
+              { persistent: initializeParams?.daemonLifecycle === 'persistent', startup: connectionPurpose === 'startup' },
             );
             logicalClientAttached = true;
           } catch (error: unknown) {
@@ -1001,6 +1006,9 @@ async function dispatchRuntimeDaemonRequest(
 ): Promise<unknown> {
   const runtime = options.runtime;
   const runRequirementSource = options.reverseBridgeHub ?? reverseBridge;
+  const retention = isInitializeMethod(request.method) && optionalRecord(request.params)?.daemonLifecycle === 'persistent'
+    ? 'explicit' : options.management?.retention;
+  const persistentDaemon = retention !== undefined || options.management?.lifecycle === 'persistent';
 
   const dispatch = async (): Promise<unknown> => {
   switch (request.method) {
@@ -1008,6 +1016,7 @@ async function dispatchRuntimeDaemonRequest(
     case "runtime.initialize":
       return {
         identity: runtime.identity,
+        ...(options.management ? { daemonLifecycle: persistentDaemon ? 'persistent' : 'interactive', daemonRetention: retention } : {}),
         capabilities: runtimeDaemonCapabilities(
           options.capabilities,
           runtime.agents.enabled,
@@ -1017,7 +1026,7 @@ async function dispatchRuntimeDaemonRequest(
           options.reverseBridgeHub !== undefined,
           options.durableHostToolInvocations === true,
           options.management !== undefined,
-          options.orphanExitEnabled === true,
+          options.orphanExitEnabled === true && !persistentDaemon,
           runtimeImplementsEventCoalescing(runtime),
           runtime.capabilities,
           options.clientLifecycle !== undefined,
@@ -1068,10 +1077,10 @@ async function dispatchRuntimeDaemonRequest(
     case "daemon.preflight":
       return augmentPreflightRunRequirements(
         await (options.management
-          ? options.management.preflight()
+          ? options.management.preflight(requestSignal)
           : options.preflight
-            ? options.preflight()
-            : runtime.status.preflight()),
+            ? options.preflight(requestSignal)
+            : runtime.status.preflight({ signal: requestSignal })),
         runRequirementSource,
       );
     case "daemon.management.get":
@@ -1091,7 +1100,7 @@ async function dispatchRuntimeDaemonRequest(
         options.reverseBridgeHub !== undefined,
         options.durableHostToolInvocations === true,
         options.management !== undefined,
-        options.orphanExitEnabled === true,
+        options.orphanExitEnabled === true && !persistentDaemon,
         runtimeImplementsEventCoalescing(runtime),
         runtime.capabilities,
         options.clientLifecycle !== undefined,
@@ -2608,6 +2617,7 @@ function runtimeDaemonCapabilities(
   delete safeOverrides.sandboxRuntime;
   delete safeOverrides.runLifecycleControl;
   delete safeOverrides.productClient;
+  delete safeOverrides.sessionDrafts;
   delete safeOverrides.productHistoryBoundaries;
   delete safeOverrides.productExecutionAuthorization;
   delete safeOverrides.productExitControl;
@@ -2647,6 +2657,8 @@ function runtimeDaemonCapabilities(
       ? { productExecutionAuthorization: { version: productExecutionAuthorization.version } } : {}),
     ...(daemonManagement && clientExitControl && isRecord(ownerCapabilities.productExitControl) && ownerCapabilities.productExitControl.version === 1
       ? { productExitControl: { version: 1 } } : {}),
+    ...(isRecord(ownerCapabilities.sessionDrafts) && ownerCapabilities.sessionDrafts.version === 1
+      ? { sessionDrafts: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.productExecutionFacts) && ownerCapabilities.productExecutionFacts.version === 1
       ? { productExecutionFacts: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.productActorAuthorization) && ownerCapabilities.productActorAuthorization.version === 1

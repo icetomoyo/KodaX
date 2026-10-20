@@ -1,7 +1,7 @@
 # KodaX SDK — Product Client and Host Integration
 
 This page describes the current FEATURE_298/299/301 development tree, checked against
-package version `0.7.97-alpha.5`. The version alone does not claim that all current
+package version `0.7.97-alpha.9`. The version alone does not claim that all current
 working-tree changes are already published to npm. Check the installed
 package exports and the connected Host's capabilities when migrating.
 
@@ -164,15 +164,16 @@ and feature-specific Host compatibility checks.
 
 ## Optional Artifact SDK
 
-Install `@kodax-ai/artifacts` separately (ESM, Node >=20.16). Its root SDK/types
-have no KodaX or renderer dependency; `/runtime` supplies an independently
-authorized Node host. For a product UI sharing KodaX, register the `/kodax`
-adapter once in the trusted Host and bind the SDK to the existing Client/Session:
+Install only `@kodax-ai/kodax` (ESM, Node >=20.16). The optional Artifact API
+uses `/artifacts` subpaths; its pure SDK/types do not load renderers.
+`/artifacts/runtime` supplies an independently authorized Node host. For a
+product UI, register `/artifacts/kodax` once in the existing trusted Host and
+bind `/artifacts/client` to the existing Client/Session:
 
 ```ts
 import type { KodaXProductClient } from '@kodax-ai/kodax/client';
-import { createArtifactSdk } from '@kodax-ai/artifacts';
-import { createKodaXArtifactPort } from '@kodax-ai/artifacts/client';
+import { createArtifactSdk } from '@kodax-ai/kodax/artifacts';
+import { createKodaXArtifactPort } from '@kodax-ai/kodax/artifacts/client';
 
 export function artifactSdk(client: KodaXProductClient, sessionId: string) {
   return createArtifactSdk(createKodaXArtifactPort(client, sessionId));
@@ -202,9 +203,11 @@ re-review and delivery have not passed all model smoke checks.
 
 See [support, setup and examples](../../docs/ARTIFACT_SDK.md),
 [pre-release contract migration](../../docs/SDK_MIGRATION.md#artifact-sdk-契约迁移2026-10-13)
-and [acceptance boundaries](../../docs/test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#automatic-visual-review-acceptance-boundary).
-These additions ship in `v0.7.97-alpha.5`; an installed npm package from an
-earlier version does not include them.
+and [E2E evidence/known schema gap](../../docs/test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#natural-task-observations-2026-10-13).
+The operations were implemented in the alpha.5 source release; the single-package
+Artifact exports were added locally on 2026-10-18 and are not in the already
+published alpha.7. Install the current local main tarball or a future npm version
+containing this distribution change; no second package or publish command is needed.
 
 ## Low-level reference and release history
 
@@ -1059,9 +1062,21 @@ interface SessionManager {
 ```
 
 `surface` is an exact filter applied before `limit`. Each returned summary may
-include an opaque `cursor`; pass the last summary's cursor back unchanged to
-continue the stable newest-first listing. Callers must not parse or construct
-cursors themselves.
+include an opaque `cursor`; pass the last summary's cursor back unchanged.
+Lists sort by `lastMessageAt` (latest genuine user/assistant conversation),
+falling back to `createdAt`, then creation time and ID descending. The optional
+`lastMessageAt` is carried by Session summaries, loaded product Sessions, and
+the shared Host Client. Actor/settings/title writes, synthetic wakes, and
+compaction do not create new conversation activity; copied history keeps its
+source time. Legacy data without a reliable message time falls back to creation,
+never filesystem mtime. These times are display facts, not event sequence IDs.
+
+Filtering and ordering precede `limit`; `before` still filters **creation** time.
+New cursors retain the returned ordering boundary even if the anchor is deleted
+or becomes active. Pagination is a live listing, not a cross-page snapshot:
+newly active Sessions may move before the boundary; refresh the first page to
+see them. Do not parse or construct cursors. Bare `kodax -r` uses the same order
+and displays message time, without starting a Host or writing an index.
 
 ### Active context vs full transcript vs UI replay
 
@@ -3257,6 +3272,38 @@ the same daemon. Simultaneous startup is expected: candidates race only for the
 atomic owner lock, then non-owners wait for and attach to the verified winner.
 A client never owns a daemon merely because it caused auto-start.
 
+When auto-start refreshes an older build, concurrent temporary clients retain
+the same client-count and ownership fences. A conflict or reconnectable
+`protocol_closed` / `transport_error` during initialization or the read-only
+upgrade inspection releases that connection before retrying against the current
+Owner. Inspection retries and client contention share the original startup
+deadline; cancellation interrupts backoff. The randomized contention window
+also accounts for the previous inspection duration so sub-second reconnects do
+not continually invalidate a slower peer. Shutdown and business requests are
+never replayed by this recovery. Corrupt data, invalid frames, client-initiated
+closure, and an unverified live Owner remain explicit failures. Passive connect
+does not gain auto-start or replacement behavior. Existing startup progress
+types are unchanged: a retried inspection reports `checking`.
+
+The shared Host performs historical managed-child recovery once after acquiring
+its Owner and Session-storage fences, before readiness, in its resolved config
+home. Clients do not repeat that sweep; process exit still verifies its own
+exact registrations. Passive connect and private embedded Runtime construction
+do not run shared-Host global recovery. Stop preflight projects canonical Actor
+metadata without materializing transcripts, while retaining all admitted active
+Session coverage, writer/file identity fences, and Owner liveness checks. Resume
+indexes never authorize stopping a Host. Claimed Actor controllers are checked
+for admission before initialization and supply live state while persistence is
+pending; unclaimed Actors use canonical metadata. Existing process/Job/supervisor and
+durable shutdown verification remain required; unavailable evidence stays unknown.
+
+Standalone MCP embedders can pass `McpProviderOptions.configHome` (or transport
+`configHome`) to bind stdio process registration and recovery to their Host;
+`cacheDir` remains a separate cache location. Product Hosts supply it for
+prewarm, lazy connection, reload and reconnect. Runtime tool execution, dynamic
+Skill context and hooks inherit the same trusted home without changing the
+process-global Agent home. Omitted standalone options retain Agent defaults.
+
 On abnormal exit, the next start validates the saved PID, endpoint, token, and
 runtime id before removing stale state. KodaX will not kill a process whose
 ownership cannot be proven. Persisted queued/running/waiting-permission runs are
@@ -4914,8 +4961,29 @@ replaces it only when preflight proves that doing so is safe. After the daemon
 has observed a logical client, final-client detach arms the requested grace
 period; a new client cancels it, and active/queued runs, Workflow, Agent turns,
 pending permission/user input, or other governed work defer exit until
-preflight is idle. Omit the option for CLI-style daemons that are intentionally
-persistent.
+preflight is idle for a complete grace period. Omit the option for SDK daemons
+that are intentionally persistent.
+
+`ensureKodaXRuntime({daemonLifecycle:'interactive'})` gives a newly spawned Host
+a 30-second idle grace and reuses a compatible persistent Host without a policy
+refresh. The product CLI uses this lifecycle. In contrast, the explicit
+`daemonOrphanExitMs` option still requires the enabled orphan-exit capability.
+`daemonLifecycle:'persistent'` retains the authenticated current Host in place,
+as used by `kodax daemon start`; only a logical Client with `daemon:admin` can
+request this. Configured A2A serving also retains its Host. An interactive
+rebuild refresh preserves a Host's declared persistent lifecycle. These options
+are startup operations; passive `connectKodaXRuntime` rejects `daemonLifecycle`.
+Old Hosts without lifetime metadata retain persistence unless a valid orphan-exit
+capability proves their temporary policy. Stopping an idle legacy Host once lets
+the next ordinary CLI startup apply its new interactive default. Pending memory
+review and managed-task maintenance defer automatic idle exit after a Run
+completes. Explicit shutdown keeps its cancellation and cleanup contract.
+An explicit `requirements.daemonOrphanExit` still takes precedence over inferred
+default/legacy persistence through the existing fenced policy-refresh path.
+An explicitly retained or A2A-serving Host instead reports a policy conflict;
+an idle-exit request cannot silently replace that service. Authenticated startup
+metadata distinguishes retained services from ordinary SDK persistence and
+preserves their intent through rebuild refresh, including default SDK launchers.
 
 An embedder can inspect `KODAX_RUNTIME_SDK_CAPABILITIES.daemonOrphanExit`
 before calling an auto-start API. This prevents an older SDK from spawning a

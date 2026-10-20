@@ -496,6 +496,8 @@ export interface KodaXSessionRuntimeInfo {
 }
 
 export interface KodaXSessionData {
+  /** Persisted latest genuine conversation message time; metadata-only writes preserve it. */
+  lastMessageAt?: string;
   messages: KodaXMessage[];
   title: string;
   gitRoot: string;
@@ -522,6 +524,8 @@ export interface KodaXSessionMeta {
   tag?: string;
   runtimeInfo?: KodaXSessionRuntimeInfo;
   createdAt: string;
+  /** Latest genuine user/assistant message time, independent of metadata writes. */
+  lastMessageAt?: string;
   scope?: KodaXSessionScope;
   uiHistory?: KodaXSessionUiHistoryItem[];
   extensionState?: KodaXExtensionSessionState;

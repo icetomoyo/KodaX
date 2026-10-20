@@ -63,7 +63,8 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
       token: stringSchema,
       autoStart: booleanSchema,
       endpoint: stringSchema,
-      connectionPurpose: { type: 'string', enum: ['client', 'probe'] },
+      connectionPurpose: { type: 'string', enum: ['client', 'probe', 'startup'] },
+      daemonLifecycle: { type: 'string', enum: ['persistent'] },
       clientInfo: objectAnySchema,
       capabilities: objectAnySchema,
     }, [], true),
@@ -78,7 +79,8 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
       token: stringSchema,
       autoStart: booleanSchema,
       endpoint: stringSchema,
-      connectionPurpose: { type: 'string', enum: ['client', 'probe'] },
+      connectionPurpose: { type: 'string', enum: ['client', 'probe', 'startup'] },
+      daemonLifecycle: { type: 'string', enum: ['persistent'] },
       clientInfo: objectAnySchema,
       capabilities: objectAnySchema,
     }, [], true),
@@ -1046,6 +1048,7 @@ function transcriptSearchResultSchema(): RuntimeDaemonJsonSchema {
 
 function createSessionParamsSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
+    draft: booleanSchema,
     mcpServers: objectAnySchema,
     temporary: booleanSchema,
     sessionId: stringSchema,

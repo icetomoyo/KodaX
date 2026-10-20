@@ -38,6 +38,7 @@ export function canonicalTools(messages: readonly KodaXMessage[]): ReadonlyMap<s
         const key = canonicalToolKey(block.id, message.outputId);
         tools.set(key, { id: message.outputId ? `output:${message.outputId}:tool:${block.id}` : `tool:${block.id}`, type: 'tool',
           text: '[Cancelled] Tool execution did not complete before the session ended.',
+          ...(timestamp !== undefined ? { timestamp } : {}),
           tool: { assistantOutputId: message.outputId, callId: block.id, name: block.name, status: resultStatus(undefined),
             inputText: JSON.stringify(block.input), startedAt: timestamp } });
         pending.set(block.id, key);

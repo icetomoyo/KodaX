@@ -8,7 +8,7 @@ Thank you for your interest in contributing to KodaX / InfCodeX.
 
 ### Prerequisites
 
-- **Node.js** >= 20.0.0
+- **Node.js** >= 20.16.0
 - **npm** (npm workspaces)
 - **TypeScript** >= 5.7.0 (root uses 5.9.x)
 

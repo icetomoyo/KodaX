@@ -1,7 +1,7 @@
 # KodaX High-Level Design
 
-Last updated: 2026-10-13. Current development tree: FEATURE_298/299/301 on package
-`0.7.97-alpha.5`, with `v0.7.96` as the last stable release; publication is separate.
+Last updated: 2026-10-18. Current development tree: FEATURE_298/299/301 on package
+`0.7.97-alpha.9`, with `v0.7.96` as the last stable release; publication is separate.
 
 Product integrations use `KodaXProductClient` through `/client`. Read the
 [Client contract](CLIENT_CONTRACT.md) and [SDK migration guide](SDK_MIGRATION.md)
@@ -9,11 +9,29 @@ for current guarantees. Version-labelled release paragraphs below are historical
 context, not promises that retired Runtime surfaces still exist. Historical
 ADRs remain records of their original decisions.
 
+## Startup recovery and conversation recency (2026-10-15 source)
+
+Shared-Host historical process recovery runs once under its exclusive Owner
+and Session-storage fences, before readiness. Client connection and private
+embedding do not repeat it. Final process cleanup retains exact local
+registrations and the existing Job/supervisor/durable-outcome proof. Preflight
+projects canonical Actor metadata across all admitted non-archived Sessions;
+resume indexes are presentation caches, never liveness authority. Windows
+identity batches share one OS observation without changing persisted encodings
+or caching external PIDs across checks.
+
+Canonical Session persistence maintains optional `lastMessageAt`. Storage,
+read-only CLI discovery, Host, and SDK lists share message-recency ordering,
+creation fallback, and deterministic ties. Metadata changes and compaction do
+not manufacture activity. New cursors carry a live ordering boundary;
+`before` remains a creation-time filter. See [Client contract](CLIENT_CONTRACT.md).
+
 ## 1. System Overview
 
 KodaX is a TypeScript monorepo with four core workspace packages published as
-one npm package with multiple SDK subpaths, plus the independently installed
-optional `@kodax-ai/artifacts` workspace:
+one public npm package with multiple SDK subpaths. The optional Artifact API
+is implemented in a private `artifacts` workspace and delivered in that same
+`@kodax-ai/kodax` tarball:
 
 ```text
 packages/
@@ -21,16 +39,19 @@ packages/
   agent/    generic Agent/Runner, orchestration, skills, MCP, tracing, workflow
   coding/   coding-agent preset, tools, prompts, sessions, workflows
   repl/     Ink terminal UI, config, commands, session management surface
-  artifacts/ optional independent file authoring/rendering and visual evidence
+  artifacts/ private file authoring/rendering and visual evidence source module
 src/        CLI entry point and binary-facing bootstrap
 clients/    optional external clients and protocol adapters
 benchmark/  eval harness, datasets, and prompt-change rules
 ```
 
-The package is `@kodax-ai/kodax`. This tree exposes the root API plus thirteen
+The package is `@kodax-ai/kodax`. This tree exposes the root API plus seventeen
 SDK subpaths: `/agent`, `/llm`, `/coding`, `/media`, `/repl`, `/skills`,
 `/mcp`, `/session`, `/client`, `/runtime`, `/sandbox`, `/a2a`, and
-`/experimental-memory`.
+`/experimental-memory`, `/artifacts`, `/artifacts/client`, `/artifacts/runtime`
+and `/artifacts/kodax`. Artifact resources are staged intact under `dist/artifacts/`;
+core startup does not load renderers. This distribution change is local and
+requires a future npm release.
 
 The v0.7.89 coding plane keeps built-in web search local and bounded: the
 default transport sequence is DuckDuckGo HTML, Bing RSS, then Bing HTML, while
@@ -570,7 +591,7 @@ and checked binary evidence reading. PPTX authoring/limited edits and PDF,
 image/SVG, candidate DOCX, local HTML/SMIL backends run on demand and headlessly;
 core startup loads no renderers. The Agent reviews actual pixels and owns repairs;
 mechanical readiness does not certify quality. See [support and integration](ARTIFACT_SDK.md)
-and the [accepted design](designs/unified-artifact-sdk.md).
+and the [accepted design](ADR.md#unified-artifact-execution-and-evidence-boundary).
 
 ## 4. Provider Architecture
 

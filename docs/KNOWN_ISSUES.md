@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-10-14_
+_Last Updated: 2026-10-18_
 
 ---
 
@@ -17,11 +17,7 @@ grounded visual findings, but full repair/re-review/delivery has not passed all
 checks under the recorded budgets/provider failures. Native Word/WPS fidelity
 remains unverified. These are not claims that Space cannot trigger review or
 that every CLI lacks tools; the default adapter inspection was local in scope.
-For static locators the schema advertises `state/sequence/target`, while the SDK
-only accepts the kind-specific `kind/region` fields; the captured request was
-rejected as `Unknown artifact field.` Nested `source/raster` objects and the
-six-digit color format without `#` also need precise model-facing contracts.
-See [acceptance evidence and limits](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#automatic-visual-review-acceptance-boundary)
+See [evidence and remaining work](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#natural-task-observations-2026-10-13)
 and [actual SDK support](ARTIFACT_SDK.md). No production fix is claimed by this
 documentation update.
 
@@ -30,6 +26,87 @@ documentation update.
 Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
+
+## Issue 369: Concurrent resume launchers fail while refreshing an older Host
+
+- Priority: High
+- Status: Resolved
+- Introduced: observed in v0.7.97-alpha.5, including `82b36118`; first affected version unknown
+- Created / Resolved: 2026-10-15
+- Fixed: `v0.7.97-alpha.6`
+
+### Original Problem
+
+Two `kodax -r` commands launched from different directories stayed at Connecting
+and failed with `Runtime state changed while daemon preflight was being read.`
+and `The original Host is still running; retry startup after it exits.` The
+default Host log records stop acceptance at 14:04:39 and completed exit at
+14:05:03 (Asia/Shanghai); its remaining startup budget was not captured. An
+unverified live Owner must still prevent replacement.
+
+A private installation with the older loaded Host, 50 large saved histories and
+two real ConPTY clients reproduced the exact preflight failure. Temporary
+connections can invalidate a peer's management revision while its read is in
+flight. The launcher retried `connected_clients` results but treated inspection
+conflicts and peer-induced handshake/inspection disconnects as terminal. Fixed
+sub-second retries can also deny a slower peer a quiet inspection window.
+
+### Resolution
+
+The SDK launcher releases temporary clients before retrying only startup
+initialization and read-only inspection conflicts/reconnectable disconnects.
+Inspection contention retains the original deadline, cancellation, exact Owner
+checks and normal shutdown. Randomized backoff also considers elapsed inspection
+time. Shutdown and business requests are not replayed; corrupt data, invalid
+frames, passive connect and live-owner exit refusal retain their boundaries.
+
+Files changed: `src/sdk-runtime.ts`, its startup regression tests, the standalone
+`tests/repl-concurrent-startup.mjs`, Client/SDK documentation and this tracker.
+Tests added: seven SDK startup cases for concurrent conflict recovery, deadline,
+cancellation, handshake/inspection disconnects, corruption and slow contention;
+the existing shutdown refusal case now uses a typed conflict. Real dual-directory
+resume verifies usable TUIs, replacement identity, clean CLI exits and verified
+Host stop. The user also confirmed both original directories can enter normally.
+Details, failures retained as evidence and verification commands are in the
+[regression guide](test-guides/ISSUE_369_v0.7.97_REGRESSION_GUIDE.md).
+
+## Issue 368: Unsubmitted REPL Sessions leave empty persisted history
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: v0.7.97 unified Host migration; eager `/new` in `3301a452` (2026-09-06), empty-title startup creation in `0914f589` (2026-09-08); present in v0.7.97-alpha.1
+- Created / Resolved: 2026-10-14
+- Fixed: `v0.7.97-alpha.6`
+
+REPL startup and `/new` previously persisted metadata before any input was
+submitted, leaving unnamed empty Sessions in Space. The production command
+binding now creates SDK drafts, with the Host advertising `sessionDrafts:1`.
+Session data, Actor CAS state and settings remain in memory until a valid user
+input is accepted and saved. Explicit durable Session creation retains its
+existing meaning. Rejected input and closing an unsubmitted draft leave no
+history; deleting a draft permits reuse of its ID.
+
+Settings stay authoritative during promotion so concurrent reads cannot reset
+them before they are saved. Tests cover the real shared Host, production REPL
+binding, invalid input, canonical input idempotency, draft deletion and settings
+restoration after Host restart. Space Issue 220 covers existing empty records.
+Follow-up review closed two admission gaps: low-level coding/managed Runs now
+save the initial canonical input and settings before Provider dispatch, and a failed
+promotion retries the already-saved input without appending another message.
+Reusing that input ID for different content is rejected before execution.
+See the [regression guide](test-guides/ISSUE_368_v0.7.97_REGRESSION_GUIDE.md).
+The next SDK release must include both this repair and `83aafb22` (restored user
+image references); no new npm version is claimed by this source repair.
+
+Git history confirms the lifecycle regression: `3301a452` wires both REPL
+surfaces' `/new` commands to durable Host creation; `0914f589` adds startup
+creation before view observation/settings, passing an empty title. The Host
+immediately saves `messages: []`. `5aa4956c` (2026-09-12) carries this behavior
+into the unified Product Client adapter. The v0.7.96 sources have no such
+Session command binding and keep new Sessions in local context until saving.
+The first release tag containing the two introducing commits is v0.7.97-alpha.1;
+alpha.5 retains the defect. This dates the code change, not the user's first
+affected installed version or the provenance of each individual old record.
 
 ## Issue 367: Daemon preflight repeatedly scans during an in-flight mutation
 
@@ -1794,6 +1871,8 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 369 | High | Resolved | Concurrent resume launchers fail while refreshing an older Host | observed in v0.7.97-alpha.5; first affected version unknown | `v0.7.97-alpha.6` | 2026-10-15 | 2026-10-15 |
+| 368 | Medium | Resolved | Unsubmitted REPL Sessions leave empty persisted history | v0.7.97-alpha.1; Host migration commits 3301a452 / 0914f589 | `v0.7.97-alpha.6` | 2026-10-14 | 2026-10-14 |
 | 367 | Medium | Resolved | Daemon preflight repeatedly scans during an in-flight mutation | observed in v0.7.97-alpha.4; first affected version unknown | `v0.7.97-alpha.5` | 2026-10-13 | 2026-10-13 |
 | 366 | Medium | Resolved | Host test readiness races cold Actor preparation | observed during v0.7.97-alpha.3 validation; first affected version unknown | post-v0.7.97-alpha.3 working tree (unreleased) | 2026-10-10 | 2026-10-10 |
 | 365 | High | Resolved | Provider fallback drops child usage and bypasses Workflow budgets | output-component regression in v0.7.97-alpha.3; earlier total loss | post-v0.7.97-alpha.3 working tree (unreleased) | 2026-10-10 | 2026-10-10 |
@@ -2159,7 +2238,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
   bundle entry points; additional bundle runs verify downward traversal through
   intervening history. They await the actual Host terminal state and verify
   activity/prompt updates while browsing. See
-  [repair verification](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#canonical-history-and-browse-regressions).
+  [repair verification](test-guides/ISSUE_348_v0.7.96-rc.11_REGRESSION_GUIDE.md#shared-contract-repairs-and-recorded-results).
 - **Tests added**: `tests/repl-pty-acceptance.mjs --prompt-scroll-only` checks
   wheel, PageUp, End and draft retention in ordinary mode. The new
   `tests/repl-history-browse-acceptance.mjs` adds the live retention cases;
@@ -2811,8 +2890,8 @@ are not guessed or deleted by SID prefix. This does not grant the independent
 account transparent access to user credentials; existing host authorization
 remains available. Installed-build/customer confirmation is still required.
 
-See the [accepted concurrency boundary](ADR.md#adr-070-windows-sandbox-coordination-is-setup-scoped-or-capability-scoped)
-and [final scope, migration and regression evidence](test-guides/ISSUE_333_v0.7.96_REGRESSION_GUIDE.md).
+See the [accepted scope and concurrency rationale](ADR.md#issue-333-acl-exclusions-and-concurrency-rationale) and
+[regression guide](test-guides/ISSUE_333_v0.7.96_REGRESSION_GUIDE.md).
 
 <!-- Full details for each issue - REQUIRED for all issues -->
 
@@ -16615,7 +16694,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 246 (37 Open, 209 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 248 (37 Open, 211 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md

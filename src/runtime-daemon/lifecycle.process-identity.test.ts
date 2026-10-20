@@ -4,9 +4,14 @@ import * as fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { waitForRuntimeDaemonOwnerExit } from './process.js';
+import { waitForRuntimeDaemonShutdown } from './shutdown-verifier.js';
+import { verifyExitReceipt } from './client-lifecycle.js';
 import { observeRuntimeDaemonHealth, resolveRuntimeDaemonOwnership } from './lifecycle.js';
-import { readRuntimeDaemonLockOwner, resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock,
-  writeRuntimeDaemonState, type RuntimeDaemonLockOwner, type RuntimeDaemonPaths } from './state.js';
+import { acquireRuntimeSessionStorageOwner, findRuntimeSessionStorageHost,
+  readRuntimeDaemonLockOwner, resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock,
+  writeRuntimeDaemonState, writeRuntimeDaemonShutdownOutcome,
+  type RuntimeDaemonLockOwner, type RuntimeDaemonPaths } from './state.js';
 
 const proc = vi.hoisted(() => new Map<string, string | Error>());
 vi.mock('node:fs', async original => {
@@ -42,6 +47,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   Object.defineProperty(process, 'platform', platform);
   proc.clear();
   if (child?.exitCode === null && child.signalCode === null) child.kill();
@@ -56,6 +62,93 @@ function publishOwner(record = owner): void {
 }
 
 const unreachable = { createTransport: async () => { throw new Error('Endpoint unavailable'); } };
+
+function publishSharedOwner(): { sessionsDir: string; ownerFile: string } {
+  publishOwner();
+  const sessionsDir = path.join(paths.configHome, 'sessions');
+  const ownerFile = path.join(sessionsDir, '.product-host', 'owner.lock');
+  fs.mkdirSync(path.dirname(ownerFile), { recursive: true });
+  fs.writeFileSync(ownerFile, JSON.stringify(owner));
+  return { sessionsDir, ownerFile };
+}
+
+it.each(['Z', 'X', 'x'])('uses the same terminated-process semantics for %s owners across discovery, health, exit and reclamation', async state => {
+  const { sessionsDir } = publishSharedOwner();
+  proc.set(`/proc/${owner.pid}/stat`, `${owner.pid} (SDK ) Host) ${state} ${'0 '.repeat(18)}42 0`);
+  expect(findRuntimeSessionStorageHost(paths.configHome, sessionsDir)).toBeUndefined();
+  expect(await observeRuntimeDaemonHealth(paths, unreachable)).toMatchObject({ pidAlive: false });
+  await expect(waitForRuntimeDaemonOwnerExit(owner, 100)).resolves.toBeUndefined();
+  expect(acquireRuntimeSessionStorageOwner(sessionsDir, 'replacement').owner.runtimeId).toBe('replacement');
+});
+
+it.each(['EACCES', 'ENOENT', 'malformed', 'EPERM', 'EINVAL'])('preserves shared and daemon ownership when evidence is %s', async evidence => {
+  const { sessionsDir, ownerFile } = publishSharedOwner();
+  if (evidence === 'EPERM' || evidence === 'EINVAL') {
+    const kill = process.kill.bind(process);
+    vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid === owner.pid && signal === 0) throw Object.assign(new Error('Cannot probe owner'), { code: evidence });
+      return kill(pid, signal);
+    });
+  } else {
+    proc.set(`/proc/${owner.pid}/stat`, evidence === 'malformed' ? 'not a process stat'
+      : Object.assign(new Error('Cannot read proc evidence'), { code: evidence }));
+  }
+  expect(findRuntimeSessionStorageHost(paths.configHome, sessionsDir)?.owner).toEqual(owner);
+  expect(await observeRuntimeDaemonHealth(paths, unreachable)).toMatchObject({ pidAlive: true });
+  await expect(waitForRuntimeDaemonOwnerExit(owner, 10)).rejects.toThrow(/Cannot verify/);
+  expect(() => acquireRuntimeSessionStorageOwner(sessionsDir, 'replacement')).toThrow(expect.objectContaining({ code: 'session_storage_owned' }));
+  expect(readRuntimeDaemonLockOwner(ownerFile)).toEqual(owner);
+  expect(readRuntimeDaemonLockOwner(paths.lockFile)).toEqual(owner);
+});
+
+it('recognizes PID reuse in shared storage without killing the replacement process', async () => {
+  const { sessionsDir } = publishSharedOwner();
+  proc.set(`/proc/${owner.pid}/stat`, `${owner.pid} (different process) S ${'0 '.repeat(18)}43 0`);
+  expect(findRuntimeSessionStorageHost(paths.configHome, sessionsDir)).toBeUndefined();
+  expect(await observeRuntimeDaemonHealth(paths, unreachable)).toMatchObject({ pidAlive: false });
+  await expect(waitForRuntimeDaemonOwnerExit(owner, 100)).resolves.toBeUndefined();
+  expect(acquireRuntimeSessionStorageOwner(sessionsDir, 'replacement').owner.runtimeId).toBe('replacement');
+  expect(() => process.kill(owner.pid, 0)).not.toThrow();
+});
+
+it('never reclaims or kills a live shared owner on timeout', async () => {
+  const { sessionsDir, ownerFile } = publishSharedOwner();
+  expect(findRuntimeSessionStorageHost(paths.configHome, sessionsDir)?.owner).toEqual(owner);
+  await expect(waitForRuntimeDaemonOwnerExit(owner, 10)).rejects.toThrow('still running');
+  expect(() => acquireRuntimeSessionStorageOwner(sessionsDir, 'replacement')).toThrow(expect.objectContaining({ code: 'session_storage_owned' }));
+  expect(readRuntimeDaemonLockOwner(ownerFile)).toEqual(owner);
+  expect(() => process.kill(owner.pid, 0)).not.toThrow();
+});
+
+it('keeps shutdown unverified when a denied PID probe cannot establish exit despite other identity evidence', async () => {
+  publishOwner();
+  writeRuntimeDaemonShutdownOutcome(paths, { version: 1, runtimeId: owner.runtimeId,
+    pid: owner.pid, status: 'succeeded', completedAt: new Date().toISOString() });
+  const kill = process.kill.bind(process);
+  vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+    if (pid === owner.pid && signal === 0) throw Object.assign(new Error('Cannot probe owner'), { code: 'EPERM' });
+    return kill(pid, signal);
+  });
+  await expect(waitForRuntimeDaemonShutdown({ configHome: paths.configHome,
+    owner: { ...owner, processStartIdentity: 'linux:41' }, timeoutMs: 10,
+  })).resolves.toMatchObject({ status: 'unverified', reason: 'daemon_active' });
+});
+
+it('preserves a pending client exit when owner liveness is unknown despite other identity evidence', async () => {
+  publishOwner();
+  proc.set(`/proc/${owner.pid}/stat`, `${owner.pid} (unconfirmed process) S ${'0 '.repeat(18)}43 0`);
+  const kill = process.kill.bind(process);
+  vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+    if (pid === owner.pid && signal === 0) throw Object.assign(new Error('Cannot probe owner'), { code: 'EPERM' });
+    return kill(pid, signal);
+  });
+  const timestamp = new Date().toISOString();
+  expect(await verifyExitReceipt(paths, { requestId: 'pending-exit', clientId: 'client',
+    runtimeId: owner.runtimeId, accepted: true, requestedAt: timestamp, updatedAt: timestamp,
+    cleanup: { state: 'pending', runIds: [], operationIds: [], actorTurns: [], withdrawnInputs: [], issues: [] },
+    host: { requested: true, state: 'pending', owner },
+  })).toMatchObject({ cleanup: { state: 'pending' }, host: { state: 'pending' } });
+});
 
 it.each([true, false])('observes a live SDK Host without daemon serve argv (start identity=%s)', async identified => {
   publishOwner(identified ? owner : { ...owner, processStartIdentity: undefined });

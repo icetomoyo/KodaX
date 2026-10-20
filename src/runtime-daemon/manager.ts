@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 
-import { isCurrentProcessWindowsJobContained, setKodaXDiagnosticSink } from '@kodax-ai/agent';
+import { setKodaXDiagnosticSink } from '@kodax-ai/agent';
 
 import type {
   KodaXRuntime,
@@ -17,7 +17,8 @@ import {
 import { appendRuntimeDiagnostic, startRuntimeDaemonHost, type RuntimeDaemonHost } from './host.js';
 import {
   assertRuntimeDaemonOwnerAllowed,
-  readRuntimeOwnerProcessStartIdentity,
+  readRuntimeOwnerProcessStartIdentities,
+  readRuntimeDaemonWindowsJobIdentity,
   releaseRuntimeDaemonLock,
   resolveRuntimeDaemonEndpointScope,
   resolveRuntimeDaemonPathsFromConfigHome,
@@ -39,6 +40,7 @@ export interface RuntimeDaemonLeaseOptions {
   readonly pollIntervalMs?: number;
   readonly healthCheck?: RuntimeDaemonHealthCheckOptions;
   readonly orphanExitMs?: number;
+  readonly keepAlive?: () => boolean;
   /** True only when this host owns the live A2A config reconciler. */
   readonly ownsA2AConfigReconciler?: boolean;
   readonly integrationStatuses?: () => readonly RuntimeIntegrationDomainStatus[];
@@ -129,13 +131,13 @@ function readOwnerIdentityWithDiagnostics(paths: RuntimeDaemonPaths, supervisorP
     if (diagnostic.source === 'runtime:windows') appendRuntimeDiagnostic(paths, diagnostic);
   });
   try {
-    const jobContained = isCurrentProcessWindowsJobContained()
+    const jobIdentity = readRuntimeDaemonWindowsJobIdentity();
+    const jobContained = jobIdentity !== undefined
       && Number.isSafeInteger(supervisorPid)
       && supervisorPid > 0;
-    const processStartIdentity = readRuntimeOwnerProcessStartIdentity(process.pid);
-    const supervisorProcessStartIdentity = jobContained
-      ? readRuntimeOwnerProcessStartIdentity(supervisorPid)
-      : undefined;
+    const processStartIdentity = jobContained ? jobIdentity.processStartIdentity
+      : readRuntimeOwnerProcessStartIdentities([process.pid]).get(process.pid);
+    const supervisorProcessStartIdentity = jobContained ? jobIdentity.supervisorProcessStartIdentity : undefined;
     return { jobContained, processStartIdentity, supervisorProcessStartIdentity };
   } finally {
     restore();
@@ -191,6 +193,7 @@ async function createClaimedDaemonLease(
       lock,
       ...(options.commitStartup ? { commitStartup: options.commitStartup } : {}),
       ...(options.orphanExitMs !== undefined ? { orphanExitMs: options.orphanExitMs } : {}),
+      keepAlive: options.keepAlive,
       ...(options.ownsA2AConfigReconciler === true
         ? { ownsA2AConfigReconciler: true }
         : {}),

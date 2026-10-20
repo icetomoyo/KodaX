@@ -138,6 +138,11 @@ const STARTUP_HEAVY_IMPORTS = [
   '@anthropic-ai/sandbox-runtime',
   'tsx',
   'vscode-languageserver-protocol',
+  '@aiden0z/pptx-renderer',
+  'docx-renderer',
+  'pdfjs-dist',
+  'playwright-core',
+  'pptxgenjs',
 ];
 const RESUME_HEAVY_IMPORTS = [
   ...STARTUP_HEAVY_IMPORTS,
@@ -612,6 +617,23 @@ log(`  ✓ helper depth contract: ${distRelativeDepth} levels (matches HELPER_SC
 // for this script).
 
 // ---- write esbuild metafile (opt-in) -----------------------------------
+
+// Preserve the workspace's module/worker/resource-relative layout. Artifact
+// subpaths stay separate from the core graph and never load renderers at startup.
+const artifactRoot = path.join(repoRoot, 'packages', 'artifacts');
+const artifactPkg = readPkg(path.join(artifactRoot, 'package.json'));
+for (const [name, version] of Object.entries(artifactPkg.dependencies)) {
+  if (rootPkg.dependencies[name] !== version) {
+    throw new Error(`Root dependency ${name} must match the Artifact workspace (${version}).`);
+  }
+}
+const artifactOutput = path.join(distDir, 'artifacts');
+cpSync(path.join(artifactRoot, 'dist'), path.join(artifactOutput, 'dist'), {
+  recursive: true, filter: (source) => !source.endsWith('.tsbuildinfo'),
+});
+cpSync(path.join(artifactRoot, 'skills'), path.join(artifactOutput, 'skills'), { recursive: true });
+cpSync(path.join(artifactRoot, 'LICENSE'), path.join(artifactOutput, 'LICENSE'));
+log('  OK Artifact subpaths/resources staged: dist/artifacts/{dist,skills,LICENSE}');
 
 if (writeMetafile) {
   const meta = {

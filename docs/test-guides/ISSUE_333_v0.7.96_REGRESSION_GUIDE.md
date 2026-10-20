@@ -67,11 +67,37 @@ roots/SSH paths. Missing nonce history, moved paths or unrelated unknown SIDs
 are not guessed or deleted by prefix. Do not claim arbitrary historical ACLs
 have been recovered without inspecting those cases.
 
-See [ADR-070](../ADR.md#adr-070-windows-sandbox-coordination-is-setup-scoped-or-capability-scoped).
-Read/write admission keeps the same persistent ACL set: independent whole-DACL
-updates from old snapshots can otherwise overwrite a concurrent writer's
-grants. A different trustee or GRANT_ACCESS does not make publication atomic.
-The SSH repair does not adopt a read-only RX publication algorithm.
+See the [accepted scope and concurrency rationale](../ADR.md#issue-333-acl-exclusions-and-concurrency-rationale)
+and the historical token probe limits below.
+
+### Historical token probes
+
+Earlier exploratory probes used an unrestricted host token, a unique test
+capability, `DISABLE_MAX_PRIVILEGE | LUA_TOKEN | WRITE_RESTRICTED`, the same
+Default DACL/desktop setup, and a disposable external file granted Everyone
+Modify but not the test capability. Only the restricting SID set changed:
+
+| Restricting SIDs | PowerShell pipeline | Node child-process pipes | External Everyone:Modify write |
+| --- | --- | --- | --- |
+| capability + account + logon + everyone | Passed | Passed | Succeeded |
+| capability only | Failed (`0xffff0000`) | Timed out at 15 seconds | Rejected |
+| capability + logon | Failed (`0xffff0000`) | Timed out at 15 seconds | Rejected |
+| capability + everyone | Passed | Failed (exit 1) | Succeeded |
+| capability + account | Failed (`0xffff0000`) | Timed out at 15 seconds | Rejected |
+
+CMD and simple Node startup passed in all five groups. A diagnostic kill-on-close
+Job was added after the first run and all five groups reproduced the same results;
+test process/handle/temp cleanup was checked. An already restricted base token
+cannot serve as this control. No real SSH files/accounts, setup, WFP, production
+control pipe or production handle-list path were exercised, and failure stderr
+was not captured: no specific DLL/object cause or complete production-token
+compatibility claim follows. These historical results reject a simple SID removal
+as a ready replacement; they do not prove every narrower token design impossible.
+
+The accepted patch instead retains fixed-ACL capability concurrency and precise
+SSH exclusions/cleanup. Ordinary roots may still receive the fixed Modify ACE
+set; this is not wholesale migration to RX or global external-write isolation.
+See the [accepted concurrency rationale](../ADR.md#issue-333-acl-exclusions-and-concurrency-rationale).
 
 ## Local validation result
 

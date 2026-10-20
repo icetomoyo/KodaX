@@ -1,8 +1,7 @@
-import { isRuntimeDaemonPidAlive } from './lifecycle.js';
+import { isRuntimeDaemonOwnerPidAlive } from './lifecycle.js';
 import {
   readRuntimeDaemonLockOwner,
   readRuntimeDaemonShutdownOutcome,
-  readRuntimeOwnerProcessStartIdentity,
   resolveRuntimeDaemonPathsFromConfigHome,
   type RuntimeDaemonShutdownOutcome,
 } from './state.js';
@@ -104,18 +103,18 @@ export async function waitForRuntimeDaemonShutdown(
     const currentOwner = readRuntimeDaemonLockOwner(paths.lockFile);
     const replacement = (
       currentOwner?.kind === 'daemon'
-      && isRuntimeDaemonPidAlive(currentOwner.pid)
+      && isRuntimeDaemonOwnerPidAlive(currentOwner.pid, currentOwner.processStartIdentity)
       && (currentOwner.runtimeId !== input.owner.runtimeId
         || currentOwner.pid !== input.owner.pid)
     ) ? currentOwner : undefined;
 
     const outcome = readRuntimeDaemonShutdownOutcome(paths, input.owner);
-    const daemonActive = isOriginalProcessGenerationActive(
+    const daemonActive = isRuntimeDaemonOwnerPidAlive(
       input.owner.pid,
       input.owner.processStartIdentity,
     );
     const containmentActive = input.owner.processContainment === 'windows-job'
-      && isOriginalSupervisorGenerationActive(input.owner);
+      && isRuntimeDaemonOwnerPidAlive(input.owner.supervisorPid!, input.owner.supervisorProcessStartIdentity);
     if (outcome?.status === 'failed') return { status: 'failed', outcome };
     if (process.platform === 'win32' && input.owner.processContainment !== 'windows-job') {
       return { status: 'unverified', reason: 'containment_unavailable' };
@@ -138,25 +137,6 @@ export async function waitForRuntimeDaemonShutdown(
     if (Date.now() >= deadline) return { status: 'unverified', reason };
     await delay(Math.min(pollIntervalMs, Math.max(1, deadline - Date.now())));
   }
-}
-
-function isOriginalSupervisorGenerationActive(
-  owner: RuntimeDaemonShutdownVerificationOwner,
-): boolean {
-  return isOriginalProcessGenerationActive(
-    owner.supervisorPid!,
-    owner.supervisorProcessStartIdentity,
-  );
-}
-
-function isOriginalProcessGenerationActive(
-  pid: number,
-  expectedIdentity: string | undefined,
-): boolean {
-  if (!isRuntimeDaemonPidAlive(pid)) return false;
-  if (expectedIdentity === undefined) return true;
-  const currentIdentity = readRuntimeOwnerProcessStartIdentity(pid);
-  return currentIdentity === undefined || currentIdentity === expectedIdentity;
 }
 
 function delay(timeoutMs: number): Promise<void> {

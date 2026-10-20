@@ -64,6 +64,46 @@ function restoreEnvironment(name: string, value: string | undefined): void {
 describe('runtime daemon dispatcher', () => {
   afterEach(() => setActiveExtensionRuntime(null));
 
+  it.each(['runtime', 'callback', 'management'] as const)('cancels the underlying %s daemon preflight scan', async (route) => {
+    const runtime = makeRuntime();
+    const original = runtime.status.preflight;
+    let signal: AbortSignal | undefined;
+    let entered!: () => void;
+    const reading = new Promise<void>(resolve => { entered = resolve; });
+    let release!: () => void;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const preflight = async (requestSignal?: AbortSignal) => {
+      signal = requestSignal;
+      entered();
+      await barrier;
+      signal?.throwIfAborted();
+      return original();
+    };
+    const management: RuntimeDaemonManagementController = {
+      lifecycle: 'persistent', retention: undefined,
+      armOrphanExitAfterReady() {}, attachClient() {}, detachClient() {}, close() {},
+      async runMutation(_method, effect) { return effect(); },
+      preflight,
+      async inspect() { throw new Error('not used'); },
+      async stop() { throw new Error('not used'); },
+    };
+    vi.spyOn(runtime.status, 'preflight').mockImplementation(options => preflight(options?.signal));
+    const dispatcher = createRuntimeDaemonDispatcher({ runtime,
+      ...(route === 'management' ? { management } : route === 'callback' ? { preflight } : {}),
+    });
+    await initializeDispatcher(dispatcher);
+    const pending = dispatcher.handle(createRuntimeDaemonRequest('preflight-scan', 'daemon.preflight'));
+    try {
+      await reading;
+      expect(signal).toBeDefined();
+      expect(await dispatcher.handle(createRuntimeDaemonRequest('cancel-preflight', 'request.cancel', { requestId: 'preflight-scan' })))
+        .toMatchObject({ kind: 'response', result: { ok: true } });
+      expect(signal?.aborted).toBe(true);
+      release();
+      expect(await pending).toMatchObject({ kind: 'error', error: { code: 'read_cancelled' } });
+    } finally { release(); await pending; dispatcher.close(); }
+  });
+
   it('waits for Learning service readiness and releases a failed registration', async () => {
     const runtime = makeRuntime();
     let fail!: (error: unknown) => void;
@@ -449,6 +489,8 @@ describe('runtime daemon dispatcher', () => {
       code: 'conflict' as const,
     });
     const management: RuntimeDaemonManagementController = {
+      lifecycle: 'persistent',
+      retention: undefined,
       armOrphanExitAfterReady() {},
       attachClient() {},
       detachClient() {},
@@ -1687,6 +1729,45 @@ describe('runtime daemon dispatcher', () => {
     if (!isRuntimeDaemonSuccessResponse(invalid)) {
       expect(invalid.error).toMatchObject({ code: 'invalid_request' });
     }
+  });
+
+  it('holds startup admission without admitting business requests or retaining the Host', async () => {
+    const attachClient = vi.fn();
+    const detachClient = vi.fn();
+    const management: RuntimeDaemonManagementController = {
+      lifecycle: 'interactive', retention: undefined, armOrphanExitAfterReady() {}, attachClient, detachClient,
+      async runMutation<T>(_method: RuntimeDaemonMethod, effect: () => Promise<T>): Promise<T> { return effect(); },
+      async preflight() { throw new Error('not used'); },
+      async inspect() { throw new Error('not used'); },
+      async stop() { throw new Error('not used'); }, close() {},
+    };
+    const runtime = makeRuntime();
+    const createSession = vi.spyOn(runtime.sessions, 'create');
+    const dispatcher = createRuntimeDaemonDispatcher({ runtime, management });
+    try {
+      expect(await dispatcher.handle(createRuntimeDaemonRequest('startup', 'initialize', {
+        profile: 'default', connectionPurpose: 'startup',
+      }))).toMatchObject({ kind: 'response' });
+      expect(attachClient).toHaveBeenCalledWith(expect.any(Object), { persistent: false, startup: true });
+      expect(await dispatcher.handle(createRuntimeDaemonRequest('ping', 'ping'))).toMatchObject({ result: { ok: true } });
+      expect(await dispatcher.handle(createRuntimeDaemonRequest('business', 'session.create', {})))
+        .toMatchObject({ error: { code: 'unauthorized' } });
+      expect(createSession).not.toHaveBeenCalled();
+    } finally { dispatcher.close(); }
+    expect(detachClient).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['observer', 'probe', 'startup'] as const)('rejects a %s attempt to retain an idle-exit Host', async (kind) => {
+    const dispatcher = createRuntimeDaemonDispatcher({ runtime: makeRuntime(),
+      ...(kind === 'observer' ? { grantedScopes: ['session:observe' as const] } : {}) });
+    try {
+      const response = await dispatcher.handle(createRuntimeDaemonRequest('retain', 'initialize', {
+        profile: 'default', daemonLifecycle: 'persistent',
+        connectionPurpose: kind === 'observer' ? 'client' : kind,
+        capabilities: { configAdmin: true },
+      }));
+      expect(response).toMatchObject({ error: { code: 'unauthorized' } });
+    } finally { dispatcher.close(); }
   });
 
   it('uses server-issued scopes instead of client capability claims for authorization', async () => {

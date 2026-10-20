@@ -39,8 +39,9 @@ export interface RuntimeDaemonHostOptions {
   readonly paths: RuntimeDaemonPaths;
   readonly endpoint: RuntimeDaemonEndpoint;
   readonly lock: RuntimeDaemonLockHandle;
-  /** Space-managed detached daemons self-stop after their final client leaves and work is idle. */
+  /** Opt-in detached daemons self-stop after their final client leaves and work is idle. */
   readonly orphanExitMs?: number;
+  readonly keepAlive?: () => boolean;
   /** Trusted owner fact; never derived from caller-advertised capabilities. */
   readonly ownsA2AConfigReconciler?: boolean;
   readonly integrationStatuses?: () => readonly RuntimeIntegrationDomainStatus[];
@@ -91,6 +92,7 @@ export async function startRuntimeDaemonHost(
     paths: options.paths,
     requestStop,
     ...(options.orphanExitMs !== undefined ? { orphanExitMs: options.orphanExitMs } : {}),
+    keepAlive: options.keepAlive,
     ...(options.integrationStatuses
       ? { integrationStatuses: options.integrationStatuses }
       : {}),

@@ -34,6 +34,7 @@ export async function createHostOwnedExtensionRuntime(
   );
   const runtime = createExtensionRuntime({ config: { ...config, extensions: configured, mcpServers: servers } });
   const mcpOptions = {
+    configHome,
     cacheDir: path.join(configHome, 'mcp-cache'),
     // Elicitation is enabled Host-wide per US20: MCP form/url requests stay
     // interactive when a surface is live and decline cleanly when none is.
@@ -85,6 +86,7 @@ export async function createHostIntegrations(configHome: string, config: Record<
       const runtime = createExtensionRuntime();
       try {
         await replaceConfiguredMcpCapabilityProvider(runtime, validated, {
+          configHome,
           cacheDir: path.join(configHome, 'mcp-cache', 'sessions', encodeURIComponent(sessionId)),
           reverse: buildMcpReverseCapabilities({ cwd: workspaceRoot, enableElicitation: true }),
         });

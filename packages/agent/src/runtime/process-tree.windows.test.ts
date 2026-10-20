@@ -20,6 +20,7 @@ const {
   killPidTree,
   readProcessStartIdentity,
   isCurrentProcessWindowsJobContained,
+  readCurrentProcessWindowsJobIdentity,
   rememberChildProcessTree,
   rememberedChildProcessTreeIsComplete,
   withSharedWindowsProcessSnapshot,
@@ -84,11 +85,25 @@ describe('Windows process-tree identity fences', () => {
     } finally { restore(); vi.unstubAllEnvs(); }
   });
 
-  it('reports unavailable process identity without changing snapshot fallback calls', () => {
+  it('reads fresh exact owner and supervisor identities in the Job membership probe', () => {
+    setWindows();
+    vi.stubEnv('KODAX_DAEMON_JOB_CONTAINED', '1');
+    vi.stubEnv('KODAX_DAEMON_JOB_NAME', 'fixture-job');
+    vi.stubEnv('KODAX_DAEMON_JOB_SUPERVISOR_PID', '1234');
+    spawnSyncMock.mockReset().mockReturnValueOnce(snapshot(`1\n${process.pid},111\n1234,222\n`))
+      .mockReturnValueOnce(snapshot(`1\n${process.pid},111\n1234,333\n`));
+    try {
+      expect(readCurrentProcessWindowsJobIdentity()).toEqual({ processStartIdentity: '111', supervisorProcessStartIdentity: '222' });
+      expect(readCurrentProcessWindowsJobIdentity()).toEqual({ processStartIdentity: '111', supervisorProcessStartIdentity: '333' });
+      expect(spawnSyncMock).toHaveBeenCalledTimes(2);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it('reports an unreadable process identity without attempting snapshot fallback', () => {
     setWindows();
     const diagnostics: KodaXDiagnostic[] = [];
     const restore = setKodaXDiagnosticSink((diagnostic) => diagnostics.push(diagnostic));
-    spawnSyncMock.mockReset().mockReturnValue(snapshot('1,0,100\n'));
+    spawnSyncMock.mockReset().mockReturnValue(snapshot('4242,0\n'));
     try {
       expect(readProcessStartIdentity(4242)).toBeUndefined();
       expect(spawnSyncMock).toHaveBeenCalledTimes(1);
@@ -98,7 +113,7 @@ describe('Windows process-tree identity fences', () => {
     } finally { restore(); }
   });
 
-  it('reports each failed existing snapshot route without adding subprocess calls', () => {
+  it('reports a failed identity query and each existing snapshot fallback without exposing subprocess content', () => {
     setWindows();
     const diagnostics: KodaXDiagnostic[] = [];
     const restore = setKodaXDiagnosticSink((diagnostic) => diagnostics.push(diagnostic));
@@ -106,8 +121,8 @@ describe('Windows process-tree identity fences', () => {
       stderr: 'secret-error', error: Object.assign(new Error('private-command'), { code: 'EACCES' }) });
     try {
       expect(readProcessStartIdentity(4242)).toBeUndefined();
-      expect(spawnSyncMock).toHaveBeenCalledTimes(3);
-      for (const stage of ['process-snapshot-native', 'process-snapshot-cim', 'process-snapshot-wmic']) {
+      expect(spawnSyncMock).toHaveBeenCalledTimes(4);
+      for (const stage of ['process-start-identities', 'process-snapshot-native', 'process-snapshot-cim', 'process-snapshot-wmic']) {
         expect(diagnostics).toContainEqual(expect.objectContaining({ detail: expect.objectContaining({
           stage, available: false, errorCode: 'EACCES',
         }) }));
@@ -250,7 +265,7 @@ describe('Windows process-tree identity fences', () => {
   it('reads the exact Windows process creation identity', () => {
     setWindows();
     spawnSyncMock.mockReturnValue(snapshot(''));
-    spawnSyncMock.mockReturnValueOnce(snapshot('4242,1,111\n'));
+    spawnSyncMock.mockReturnValueOnce(snapshot('4242,111\n'));
 
     expect(readProcessStartIdentity(4_242)).toBe('111');
   });
@@ -555,7 +570,7 @@ describe('shared cleanup snapshot scope', () => {
   it('does not cache snapshot reads outside the shared scope', async () => {
     setWindows();
     spawnSyncMock.mockReset();
-    spawnSyncMock.mockReturnValue(snapshot('4242,1,111\n'));
+    spawnSyncMock.mockReturnValueOnce(snapshot('4242,1,111\n')).mockReturnValue(snapshot('4242,111\n'));
     await withSharedWindowsProcessSnapshot(async () => {
       expect(readProcessStartIdentity(4242)).toBe('111');
       expect(readProcessStartIdentity(4242)).toBe('111');

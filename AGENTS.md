@@ -74,9 +74,13 @@ Allowed `.md` files — anything else goes under `docs/`:
 - **`docs/` (required)**: `PRD.md`, `ADR.md`, `HLD.md`, `DD.md`, `FEATURE_LIST.md`, `features/v{VERSION}.md`, `test-guides/*.md` — optional: `KNOWN_ISSUES.md`
 - **Test guide naming**: `FEATURE_{ID}_{VERSION}_TEST_GUIDE.md` / `ISSUE_{ID}_{VERSION}_REGRESSION_GUIDE.md`
 
-`docs/research/` is local exploration and is not tracked. Promote accepted designs
-to `docs/designs/` or existing formal documents; keep executable regressions in
-tests/benchmark. LLM eval raw remains in OS temporary storage per EVAL_GUIDELINES.
+`docs/research/` is local-only and ignored by Git. Do not commit research drafts,
+scratch probes, or raw experiment outputs. Before a tracked document depends on
+a research conclusion, move the necessary decision, contract, limitation, or
+acceptance evidence into the appropriate ADR, design/SDK document, issue record,
+or test guide and link there. Keep historical dates, source revisions, failures,
+and unverified scope explicit; do not turn research proposals into accepted design.
+Keep executable regressions in tests/benchmark. LLM eval raw remains in OS temporary storage per EVAL_GUIDELINES.
 
 ## Test Requirements
 

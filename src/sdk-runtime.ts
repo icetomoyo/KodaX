@@ -306,6 +306,7 @@ import type {
 import {
   McpCapabilityProvider,
   cleanupManagedRunChildProcess,
+  cleanupRegisteredManagedChildren,
   type ManagedRunChildProcessReference,
   createMcpManager,
   createAgentExecutorPlane,
@@ -441,6 +442,7 @@ import {
 import { acquireRuntimeDaemonLease } from "./runtime-daemon/manager.js";
 import {
   acquireRuntimeDaemonProcessLease,
+  RuntimeDaemonStartupError,
   waitForRuntimeDaemonOwnerExit,
   type RuntimeDaemonOwnerBootstrap,
   type RuntimeDaemonProcessLease,
@@ -454,17 +456,20 @@ export type {
 import {
   createRuntimeDaemonSocketClientTransport,
   defaultRuntimeDaemonEndpoint,
+  isRuntimeDaemonDisconnectError,
   type RuntimeDaemonEndpoint,
 } from "./runtime-daemon/transport.js";
 import {
   acquireRuntimeInlineOwner,
   acquireRuntimeSessionStorageOwner,
   enableRuntimeDaemonOwner,
+  findRuntimeSessionStorageHost,
   readRuntimeDaemonLockOwner,
   readRuntimeOwnerProcessStartIdentity,
   readRuntimeOwnerPolicy,
   readRuntimeDaemonToken,
   releaseRuntimeDaemonLock,
+  tryAcquireRuntimeSessionStorageStartup,
   resolveRuntimeDaemonEndpointScope,
   resolveRuntimeDaemonPathsFromConfigHome,
   updateRuntimeOwnerPolicy,
@@ -479,16 +484,19 @@ export class RuntimeDaemonCapabilityUpgradeError extends Error {
   readonly recoverable = true as const;
   readonly restartRequired = true as const;
   readonly capability: string;
+  readonly retryable: boolean;
 
   constructor(
     message: string,
     readonly preflight?: RuntimeDaemonPreflight,
     options?: ErrorOptions,
     capability = "runtimeAutoModeGuardrail",
+    readonly ownerProfile?: string,
   ) {
     super(message, options);
     this.name = "RuntimeDaemonCapabilityUpgradeError";
     this.capability = capability;
+    this.retryable = preflight?.canStop === false;
   }
 }
 
@@ -881,9 +889,12 @@ export interface CreateKodaXRuntimeOptions {
   readonly daemonConnectTimeoutMs?: number;
   /**
    * Auto-started daemon only: after the last logical client disconnects,
-   * stop once governed work is idle. Omit to keep the normal persistent daemon.
+   * stop after governed work has remained idle for this grace period.
+   * Omit to retain the default SDK persistence (unless daemonLifecycle is interactive).
    */
   readonly daemonOrphanExitMs?: number;
+  /** Interactive startup gives new Hosts a 30-second idle exit; persistent startup retains the attached Host. */
+  readonly daemonLifecycle?: 'interactive' | 'persistent';
   readonly daemonTransport?: RuntimeDaemonClientTransport;
   readonly daemonEndpoint?: string | RuntimeDaemonEndpoint;
   /** Defaults to true for daemon mode unless a transport or endpoint is supplied. */
@@ -960,6 +971,8 @@ export interface ConnectKodaXRuntimeOptions {
   readonly daemonConnectTimeoutMs?: number;
   /** Auto-started daemon idle-exit policy; see CreateKodaXRuntimeOptions. */
   readonly daemonOrphanExitMs?: number;
+  /** Applies an interactive default only to new Hosts, or explicitly retains the attached Host. */
+  readonly daemonLifecycle?: 'interactive' | 'persistent';
   readonly daemonToken?: string;
   readonly clientInfo?: RuntimeClientInfo;
   readonly capabilities?: RuntimeClientCapabilities;
@@ -969,6 +982,7 @@ export interface ConnectKodaXRuntimeOptions {
 /** SDK facts that embedders can inspect before auto-starting a daemon. */
 export const KODAX_RUNTIME_SDK_CAPABILITIES = Object.freeze({
   productClient: 1,
+  sessionDrafts: 1,
   actorSettlementConvergence: 2,
   conversationHistory: 2,
   crashOutcomeModel: 2,
@@ -991,6 +1005,7 @@ export interface RuntimeCapabilityRequirements {
   readonly productExecutionAuthorization?: 1 | 2;
   /** Unified product business operations and current-view lifecycle. */
   readonly productClient?: 1;
+  readonly sessionDrafts?: 1;
   /** Reject hosts that do not advertise an installed external Agent executor plane. */
   readonly externalAgents?: boolean;
   /** Require owner/revision-fenced external Agent registration administration. */
@@ -3365,6 +3380,8 @@ export interface RuntimeDaemonPreflight {
   readonly activeAgentTasks: readonly RuntimeActiveAgentTurn[];
   readonly pendingPermissions: readonly RuntimePermissionRequest[];
   readonly pendingUserInputs: readonly RuntimeUserInputRequest[];
+  /** Optional work preserved by idle exit; explicit shutdown cancels/settles it. */
+  readonly pendingBackgroundWork?: number;
   readonly blockers: readonly (
     | "connected_clients"
     | "active_runs"
@@ -3423,7 +3440,7 @@ export interface RuntimeDaemonManagementService {
 
 export interface RuntimeStatusService {
   snapshot(): Promise<RuntimeStatusSnapshot>;
-  preflight(): Promise<RuntimeDaemonPreflight>;
+  preflight(options?: { readonly signal?: AbortSignal }): Promise<RuntimeDaemonPreflight>;
 }
 
 /**
@@ -3597,6 +3614,8 @@ interface RuntimeRunRecord {
   readonly productExecutionKey?: string;
   readonly productSession?: boolean;
   readonly productInput?: { readonly inputId: string; readonly digest: string };
+  /** Initial input already saved by admission, including a low-level draft Run. */
+  canonicalInputId?: string;
   readonly runId: string;
   readonly sessionId: string;
   turnId?: string;
@@ -3810,6 +3829,7 @@ interface RuntimeInternalEventService {
 }
 
 interface RuntimePersistence {
+  readonly configHome: string;
   readonly runtimeDir: string;
   close(): void;
   nextSessionOrder(sessionId: string): number;
@@ -3846,7 +3866,7 @@ interface RuntimeSessionAdmission {
   assertCreate(input: RuntimeCreateSessionInput): void;
   assertFilter(filter: RuntimeSessionFilter | undefined): void;
   admitsData(data: KodaXSessionData): boolean;
-  admitsSummary(summary: SessionSummary): boolean;
+  admitsSummary(summary: Pick<SessionSummary, 'runtimeInfo'>): boolean;
   assertCachedIdentity(
     sessionId: string,
     identity: { readonly surface?: string; readonly profileId?: string },
@@ -4007,6 +4027,9 @@ export async function createKodaXRuntime(
     released = true;
   };
   try {
+    await cleanupRegisteredManagedChildren({
+      configHome: options.homeDir ? path.join(path.resolve(options.homeDir), '.kodax') : replApi.KODAX_DIR,
+    });
     const runtime = await createKodaXRuntimeInternal({ ...options, daemonHostRuntimeId: runtimeId });
     return {
       ...runtime,
@@ -4077,7 +4100,7 @@ async function createKodaXRuntimeInternal(
         "Trusted daemon execPolicy/autoReview options require owner auto-start; attach clients cannot change daemon administrator policy.",
       );
     }
-    return connectKodaXRuntimeInternal({
+    return connectKodaXRuntimeWithStartupCoordination({
       profile: options.profile,
       transport: options.daemonTransport,
       endpoint: options.daemonEndpoint,
@@ -4093,6 +4116,7 @@ async function createKodaXRuntimeInternal(
       ...(options.daemonOrphanExitMs !== undefined
         ? { daemonOrphanExitMs: options.daemonOrphanExitMs }
         : {}),
+      daemonLifecycle: options.daemonLifecycle,
       daemonToken: options.daemonToken,
       clientInfo: options.clientInfo,
       capabilities: options.capabilities,
@@ -4129,6 +4153,7 @@ async function createKodaXRuntimeInternal(
   // advertises on `runtime.capabilities`.
   const embeddedCapabilities: Record<string, unknown> = {
     productClient: { version: 1 },
+    sessionDrafts: { version: 1 },
     productHistoryBoundaries: { version: 1 },
     productExecutionAuthorization: { version: 2 },
     productExitControl: { version: 1 },
@@ -4421,7 +4446,7 @@ async function createKodaXRuntimeInternal(
     const [session, data, conversation] = await Promise.all([
       includeHistory || !previous ? sessionService.load(sessionId) : previous.session,
       readingData,
-      includeHistory ? readingData.then(data => readConversationHistory(sessionId, [...new Set([
+      includeHistory && !sessionManager.storage.isDraft(sessionId) ? readingData.then(data => readConversationHistory(sessionId, [...new Set([
         ...(data?.uiHistory ?? []).flatMap(item => [
           ...(item.afterInputId ? [`input:${item.afterInputId}`] : []),
           ...(item.type === 'tool_group' ? item.tools.flatMap(tool => tool.assistantOutputId
@@ -4507,7 +4532,8 @@ async function createKodaXRuntimeInternal(
       || type === 'run.started' || type === 'turn.started' || type === 'run.input.delivered' || isTerminalRuntimeEvent(type));
     if (isTerminalRuntimeEvent(type)) sessionViews.checkpoint(sessionId);
   });
-  const settingsOwner = createRuntimeSessionSettingsOwner(persistence, bus);
+  const settingsOwner = createRuntimeSessionSettingsOwner(persistence, bus,
+    sessionId => sessionManager.storage.isDraft(sessionId));
   const permissions = createRuntimePermissionRegistry(
     bus,
     options.permissionTimeoutMs ?? DEFAULT_PERMISSION_TIMEOUT_MS,
@@ -4725,6 +4751,7 @@ async function createKodaXRuntimeInternal(
     sessionManager,
     identity,
     ownerLiveness,
+    sessionAdmission,
     agentPlane,
     options.externalAgents?.defaultContext,
     onActorHealthChanged,
@@ -5098,6 +5125,7 @@ async function createKodaXRuntimeInternal(
           if (mode === 'plan') throw new Error('Dynamic context disabled by host. Skill `!`cmd`` blocks are not allowed in Plan mode.');
           if (!replApi.isBashReadCommand(command)) throw new Error('Dynamic context permits only read-only commands.');
           const output = await toolBash({ command, timeout: 10 }, {
+            configHome,
             backups: new Map(), executionCwd: cwd, gitRoot: workspace,
             abortSignal: preparationOptions?.signal,
             toolCallId: `skill-context-${randomUUID()}`,
@@ -5390,6 +5418,7 @@ async function createKodaXRuntimeInternal(
       sessionAdmission,
       workflows,
       actors: actorRegistry,
+      pendingBackgroundWork: () => pendingMemoryWork.size + pendingManagedTaskMaintenance.size,
     }),
     admin: createRuntimeAdminService(agentPlane),
     agents: createRuntimeAgentService(
@@ -5456,7 +5485,7 @@ async function createKodaXRuntimeInternal(
           entries.set(reference.registrationId, { reference, retry: async () => {
             await retry();
             if (!entries.has(reference.registrationId)) return;
-            const outcome = await cleanupManagedRunChildProcess(reference);
+            const outcome = await cleanupManagedRunChildProcess(reference, { configHome });
             if (outcome.status === 'verified') { release(); outcome.release(); }
             else release('deferred');
           } });
@@ -5680,7 +5709,7 @@ function assertRuntimeCapabilities(
     requirements?.actorControlPlane === undefined &&
     requirements?.sandboxRuntime === undefined &&
     requirements?.runtimeAutoModeGuardrail === undefined &&
-    requirements?.productClient === undefined &&
+    requirements?.sessionDrafts === undefined && requirements?.productClient === undefined &&
     requirements?.productHistoryBoundaries === undefined &&
     requirements?.productExecutionAuthorization === undefined && requirements?.productExitControl === undefined
     && requirements?.productExecutionFacts === undefined && requirements?.productActorAuthorization === undefined
@@ -5697,6 +5726,7 @@ function assertRuntimeCapabilities(
     ['productExecutionFacts', requirements.productExecutionFacts],
     ['productActorAuthorization', requirements.productActorAuthorization],
     ["productClient", requirements.productClient],
+    ['sessionDrafts', requirements.sessionDrafts],
     ["productHistoryBoundaries", requirements.productHistoryBoundaries],
     ["productExecutionAuthorization", requirements.productExecutionAuthorization],
     ["externalAgentAdmin", requirements.externalAgentAdmin],
@@ -5767,6 +5797,9 @@ export async function connectKodaXRuntime(
   if (options.autoStart === true) {
     throw new Error("connectKodaXRuntime is passive; use ensureKodaXRuntime to start or update a Host.");
   }
+  if (options.daemonLifecycle !== undefined) {
+    throw new Error('Daemon lifecycle changes require ensureKodaXRuntime; connectKodaXRuntime is passive.');
+  }
   return connectKodaXRuntimeInternal(options, false);
 }
 
@@ -5774,7 +5807,38 @@ export async function connectKodaXRuntime(
 export async function ensureKodaXRuntime(
   options: Omit<ConnectKodaXRuntimeOptions, "autoStart" | "transport"> = {},
 ): Promise<KodaXDaemonRuntime> {
-  return connectKodaXRuntimeInternal({ ...options, autoStart: true }, true);
+  return connectKodaXRuntimeWithStartupCoordination({ ...options, autoStart: true }, true);
+}
+
+async function connectKodaXRuntimeWithStartupCoordination(
+  options: ConnectKodaXRuntimeOptions,
+  allowCapabilityUpgrade: boolean,
+  ownerBootstrap?: RuntimeDaemonOwnerBootstrap,
+): Promise<KodaXDaemonRuntime> {
+  if (options.autoStart !== true || options.transport !== undefined) {
+    return connectKodaXRuntimeInternal(options, allowCapabilityUpgrade, ownerBootstrap);
+  }
+  assertRuntimeTimeout('daemonStartupTimeoutMs', options.daemonStartupTimeoutMs, 1);
+  const deadline = Date.now() + (options.daemonStartupTimeoutMs ?? 60_000);
+  const location = resolveRuntimeDaemonClientLocation(options.homeDir);
+  const sessionsDir = options.sessionsDir ?? path.join(location.configHome, 'sessions');
+  const reportProgress = createClientStartupProgressReporter(options.onStartupProgress);
+  let release: (() => void) | undefined;
+  while (release === undefined) {
+    options.daemonStartupSignal?.throwIfAborted();
+    if (Date.now() >= deadline) throw new RuntimeDaemonCapabilityUpgradeError('Host startup timed out while another launcher was initializing.');
+    release = tryAcquireRuntimeSessionStorageStartup(sessionsDir);
+    if (release === undefined) {
+      reportProgress({ stage: 'waiting', reason: 'host_starting' });
+      await waitForDaemonStartupRetry(Math.min(50, deadline - Date.now()), options.daemonStartupSignal);
+    }
+  }
+  try {
+    // Discovery occurs after acquiring the gate, including when a peer refreshed
+    // the owner while this launcher was queued. The Host owner lock stays separate.
+    return await connectKodaXRuntimeInternal(options, allowCapabilityUpgrade, ownerBootstrap,
+      2, deadline, 0, reportProgress);
+  } finally { release(); }
 }
 
 function hasVersionedRuntimeCapability(
@@ -5866,6 +5930,8 @@ interface CapabilityUpgradeInput {
   readonly lease: RuntimeDaemonProcessLease;
   readonly grantedScopes?: readonly RuntimeGrantedScope[];
   readonly requiredCapability: string;
+  readonly sharedOwnerFile?: string;
+  readonly orphanExitMs?: number;
   readonly startupDeadline: number;
   readonly startupSignal?: AbortSignal;
   readonly reportProgress: (progress: ClientStartupProgress) => void;
@@ -5912,6 +5978,7 @@ function firstUpgradeableCapability(
 ): { readonly name: string; readonly version: number } | undefined {
   const upgradeOrder = [
     "productClient",
+    'sessionDrafts',
     "productHistoryBoundaries",
     "productExecutionAuthorization", 'productExitControl', 'productExecutionFacts', 'productActorAuthorization',
     "actorSettlementConvergence",
@@ -6070,11 +6137,23 @@ function capabilityUpgradeClientInfo(): RuntimeClientInfo {
   };
 }
 
+function isDaemonStartupReadInterruption(error: unknown): boolean {
+  return (isRecord(error) && error.code === 'conflict')
+    || (isRuntimeDaemonDisconnectError(error) && error.reconnectable
+      && (error.code === 'protocol_closed' || error.code === 'transport_error'));
+}
+
+/** Retrying inspection never replays a refused or ambiguously completed shutdown. */
+class RuntimeDaemonInspectionInterruptedError extends RuntimeDaemonCapabilityUpgradeError {
+  override readonly retryable = true;
+}
+
 async function replaceRuntimeDaemonForCapabilityUpgrade(
   input: CapabilityUpgradeInput,
 ): Promise<void> {
   const runtime = createCapabilityUpgradeRuntime(input);
   let preflight: RuntimeDaemonPreflight | undefined;
+  let inspecting = false;
   try {
     if (!hasVersionedRuntimeCapability(input.capabilities, "daemonManagement", 1)) {
       throw new Error("The older Host does not support normal managed shutdown; stop it and retry startup.");
@@ -6082,16 +6161,24 @@ async function replaceRuntimeDaemonForCapabilityUpgrade(
     const sameInstallationBuildChanged = input.identity.build?.origin === LOCAL_RUNTIME_BUILD.origin
       && input.identity.build.fingerprint !== LOCAL_RUNTIME_BUILD.fingerprint
       && compareSemanticVersions(input.identity.version, replApi.KODAX_VERSION) === 0;
-    if (!sameInstallationBuildChanged && compareSemanticVersions(input.identity.version, replApi.KODAX_VERSION) !== -1) {
+    const sameBuildPolicyRefresh = input.requiredCapability === 'daemonOrphanExit' && input.orphanExitMs !== undefined
+      && input.identity.build?.fingerprint === LOCAL_RUNTIME_BUILD.fingerprint
+      && compareSemanticVersions(input.identity.version, replApi.KODAX_VERSION) === 0;
+    if (!sameInstallationBuildChanged && !sameBuildPolicyRefresh
+      && compareSemanticVersions(input.identity.version, replApi.KODAX_VERSION) !== -1) {
       throw new Error("Only a provably older Host can be refreshed automatically; use a compatible installation.");
     }
+    inspecting = true;
     const management = await runtime.daemon.inspect();
+    inspecting = false;
     preflight = management.preflight;
     if (!preflight.canStop) {
       throw new Error(`The older Host is busy: ${preflight.blockers.join(", ")}. Finish or stop that work and retry.`);
     }
     const owner = management.owner;
     const current = readRuntimeDaemonLockOwner(input.lease.paths.lockFile);
+    const shared = input.sharedOwnerFile === undefined
+      ? undefined : readRuntimeDaemonLockOwner(input.sharedOwnerFile);
     if (
       management.runtimeId !== input.identity.runtimeId
       || owner.runtimeId !== input.identity.runtimeId
@@ -6102,6 +6189,8 @@ async function replaceRuntimeDaemonForCapabilityUpgrade(
       || current.kind !== owner.kind
       || !owner.processStartIdentity
       || current.processStartIdentity !== owner.processStartIdentity
+      || (input.sharedOwnerFile !== undefined && (shared?.runtimeId !== owner.runtimeId
+        || shared.pid !== owner.pid || shared.processStartIdentity !== owner.processStartIdentity))
     ) throw new Error("The original Host process identity cannot be confirmed; retry against the current owner.");
     assertCurrentLauncherBuild();
     input.startupSignal?.throwIfAborted();
@@ -6116,11 +6205,21 @@ async function replaceRuntimeDaemonForCapabilityUpgrade(
     }
     await waitForRuntimeDaemonOwnerExit(owner, remainingStartupMs, input.startupSignal);
   } catch (error: unknown) {
-    throw new RuntimeDaemonCapabilityUpgradeError(
+    const UpgradeError = inspecting && isDaemonStartupReadInterruption(error)
+      ? RuntimeDaemonInspectionInterruptedError
+      : RuntimeDaemonCapabilityUpgradeError;
+    emitKodaXDiagnostic({
+      source: 'runtime.daemon.upgrade-blocked', level: 'warn',
+      message: error instanceof Error ? error.message : 'Host refresh failed.',
+      detail: { ownerProfile: input.identity.profile, runtimeId: input.identity.runtimeId,
+        capability: input.requiredCapability, blockers: preflight?.blockers },
+    });
+    throw new UpgradeError(
       error instanceof Error ? error.message : "The older Host could not be refreshed.",
       preflight,
       { cause: error },
       input.requiredCapability,
+      input.identity.profile,
     );
   } finally {
     await closeRejectedCapabilityUpgrade(runtime, input.lease, input.requiredCapability);
@@ -6141,6 +6240,63 @@ function waitForDaemonStartupRetry(milliseconds: number, signal?: AbortSignal): 
     };
     signal?.addEventListener('abort', cancel, { once: true });
   });
+}
+
+async function initializeRuntimeDaemonForStartup(
+  transport: RuntimeDaemonClientTransport,
+  params: unknown,
+  startupDeadline: number,
+  startupSignal: AbortSignal | undefined,
+): Promise<unknown> {
+  const controller = new AbortController();
+  const signal = startupSignal ? AbortSignal.any([controller.signal, startupSignal]) : controller.signal;
+  signal.throwIfAborted();
+  const remainingMs = startupDeadline - Date.now();
+  const timeout = new RuntimeDaemonStartupError('Host startup timed out during authenticated attachment.', 'timeout');
+  if (remainingMs <= 0) throw timeout;
+  try {
+    return await Promise.race([
+      transport.request('initialize', params, { signal }),
+      waitForDaemonStartupRetry(remainingMs, signal).then(() => {
+        controller.abort(timeout);
+        throw timeout;
+      }),
+    ]);
+  } finally {
+    controller.abort();
+  }
+}
+
+function assertRuntimeDaemonStartupActive(deadline: number, signal?: AbortSignal): void {
+  signal?.throwIfAborted();
+  if (Date.now() >= deadline) {
+    throw new RuntimeDaemonStartupError('Host startup timed out before the Client became ready.', 'timeout');
+  }
+}
+
+/** A live owner may hold its fence before publishing its authenticated endpoint. */
+async function waitForRuntimeSessionStorageHost(
+  configHome: string,
+  sessionsDir: string,
+  startupDeadline: number,
+  startupSignal: AbortSignal | undefined,
+  reportProgress: (progress: ClientStartupProgress) => void,
+): Promise<ReturnType<typeof findRuntimeSessionStorageHost>> {
+  for (;;) {
+    assertRuntimeDaemonStartupActive(startupDeadline, startupSignal);
+    try {
+      const owner = findRuntimeSessionStorageHost(configHome, sessionsDir);
+      assertRuntimeDaemonStartupActive(startupDeadline, startupSignal);
+      return owner;
+    }
+    catch (error: unknown) {
+      if (!isRecord(error) || error.code !== 'session_storage_owned' || error.retryable !== true
+        || Date.now() >= startupDeadline) throw error;
+      reportProgress({ stage: 'waiting', reason: 'host_starting' });
+      await waitForDaemonStartupRetry(Math.min(250, startupDeadline - Date.now()), startupSignal);
+      if (Date.now() >= startupDeadline) throw error;
+    }
+  }
 }
 
 async function connectKodaXRuntimeInternal(
@@ -6178,6 +6334,14 @@ async function connectKodaXRuntimeInternal(
     options.daemonOrphanExitMs,
     1,
   );
+  const orphanExitMs = options.daemonOrphanExitMs
+    ?? (options.daemonLifecycle === 'interactive' ? 30_000 : undefined);
+  if (options.daemonLifecycle === 'persistent' && options.daemonOrphanExitMs !== undefined) {
+    throw new Error('A persistent daemon cannot also request daemonOrphanExitMs.');
+  }
+  if (options.daemonLifecycle !== undefined && options.autoStart !== true) {
+    throw new Error('Daemon lifecycle changes require owner auto-start.');
+  }
   options.daemonStartupSignal?.throwIfAborted();
   if (allowCapabilityUpgrade && options.autoStart === true && Date.now() >= startupDeadline) {
     throw new RuntimeDaemonCapabilityUpgradeError('Host startup timed out before another connection attempt.', undefined, undefined, 'runtimeBuild');
@@ -6187,19 +6351,36 @@ async function connectKodaXRuntimeInternal(
       ? normalizeRuntimeDaemonEndpoint(options.endpoint)
       : undefined;
   const daemonLocation = resolveRuntimeDaemonClientLocation(options.homeDir);
-  const lease =
+  // Profiles share one Session writer. Resolve that writer before trying to
+  // start another process; only the normal authenticated shutdown path may replace it.
+  const sharedHost = allowCapabilityUpgrade && options.autoStart === true
+    && options.transport === undefined && explicitEndpoint === undefined
+    ? await waitForRuntimeSessionStorageHost(daemonLocation.configHome,
+      options.sessionsDir ?? path.join(daemonLocation.configHome, 'sessions'),
+      startupDeadline, options.daemonStartupSignal, reportProgress)
+    : undefined;
+  const connectionProfile = sharedHost?.profile ?? options.profile ?? 'default';
+  if (sharedHost && contentionAttempt === 0) emitKodaXDiagnostic({
+    source: 'runtime.daemon.storage-owner', level: 'info',
+    message: `Session storage is owned by Host profile ${sharedHost.profile}.`,
+    detail: { requestedProfile: options.profile ?? 'default', ownerProfile: sharedHost.profile,
+      runtimeId: sharedHost.owner.runtimeId, pid: sharedHost.owner.pid },
+  });
+  let lease: RuntimeDaemonProcessLease | undefined;
+  try {
+    lease =
     options.transport === undefined && options.autoStart === true
       ? await acquireRuntimeDaemonProcessLease({
           homeDir: daemonLocation.homeDir,
           configHome: daemonLocation.configHome,
-          profile: options.profile,
+          profile: connectionProfile,
           endpoint: explicitEndpoint,
           defaultProvider: options.defaultProvider,
           defaultModel: options.defaultModel,
           sessionsDir: options.sessionsDir,
           permissionTimeoutMs: options.permissionTimeoutMs,
           userInputTimeoutMs: options.userInputTimeoutMs,
-          orphanExitMs: options.daemonOrphanExitMs,
+          orphanExitMs,
           startupTimeoutMs: Math.max(1, startupDeadline - Date.now()),
           startupSignal: options.daemonStartupSignal,
           onStartupProgress: reportProgress,
@@ -6207,12 +6388,31 @@ async function connectKodaXRuntimeInternal(
           ownerBootstrap,
         })
       : undefined;
+  } catch (error: unknown) {
+    // A peer can win the shared writer after discovery but before our child
+    // starts. Recheck authority; unrelated bootstrap failures stay failures.
+    options.daemonStartupSignal?.throwIfAborted();
+    if (Date.now() >= startupDeadline) throw error;
+    const winner = allowCapabilityUpgrade && options.autoStart === true
+      && options.transport === undefined && explicitEndpoint === undefined
+      ? await waitForRuntimeSessionStorageHost(daemonLocation.configHome,
+        options.sessionsDir ?? path.join(daemonLocation.configHome, 'sessions'),
+        startupDeadline, options.daemonStartupSignal, reportProgress) : undefined;
+    if (!winner || winner.owner.runtimeId === sharedHost?.owner.runtimeId) throw error;
+    if (startupRetries > 0 && Date.now() < startupDeadline) {
+      return connectKodaXRuntimeInternal(options, true, ownerBootstrap, startupRetries - 1,
+        startupDeadline, contentionAttempt, reportProgress);
+    }
+    throw Object.assign(new Error(`Shared Host profile ${winner.profile} won Session storage startup; retry against its current owner.`, { cause: error }), {
+      code: 'session_storage_owned' as const, retryable: true, ownerProfile: winner.profile,
+    });
+  }
   const endpoint =
     explicitEndpoint ??
     lease?.endpoint ??
     (options.transport === undefined
       ? defaultRuntimeDaemonEndpoint(
-          options.profile ?? "default",
+          connectionProfile,
           resolveRuntimeDaemonEndpointScope(
             daemonLocation.homeDir,
             daemonLocation.configHome,
@@ -6233,12 +6433,13 @@ async function connectKodaXRuntimeInternal(
       "connectKodaXRuntime requires a daemon transport, endpoint, or autoStart: true.",
     );
   }
-  const token = resolveConnectDaemonToken(options);
+  const token = resolveConnectDaemonToken({ ...options, profile: connectionProfile });
   let identity: RuntimeIdentity;
   let daemonCapabilities: Readonly<Record<string, unknown>> = {};
   let grantedScopes: readonly RuntimeGrantedScope[] | undefined;
   let upgradeReleasedLease = false;
   let attaching = true;
+  let ownerChangedDuringAttachment = false;
   try {
     const requirements = daemonCapabilityRequirements(options);
     const probedDaemon = parseProbedDaemon(lease);
@@ -6275,24 +6476,49 @@ async function connectKodaXRuntimeInternal(
       ? undefined
       : capabilityUpgradeClientInfo();
     const clientInfo = upgradeClientInfo ?? requestedClientInfo;
-    const initialized = requireRuntimeRecord(
-      await transport.request("initialize", {
-        profile: options.profile ?? "default",
-        connectionPurpose: "client",
-        autoStart: options.autoStart === true,
-        ...(token !== undefined ? { token } : {}),
-        clientInfo,
-        capabilities: { ...options.capabilities },
-        ...(endpoint !== undefined ? { endpoint: endpoint.path } : {}),
-      }),
-    );
+    const initializeParams = {
+      profile: connectionProfile,
+      connectionPurpose: "client",
+      autoStart: options.autoStart === true,
+      ...(options.daemonLifecycle === 'persistent' && upgradeClientInfo === undefined
+        ? { daemonLifecycle: 'persistent' } : {}),
+      ...(token !== undefined ? { token } : {}),
+      clientInfo,
+      capabilities: { ...options.capabilities },
+      ...(endpoint !== undefined ? { endpoint: endpoint.path } : {}),
+    };
+    const initialized = requireRuntimeRecord(await (allowCapabilityUpgrade && options.autoStart === true
+      ? initializeRuntimeDaemonForStartup(transport, initializeParams, startupDeadline, options.daemonStartupSignal)
+      : transport.request('initialize', initializeParams)));
     attaching = false;
     identity = parseRuntimeIdentity(initialized.identity);
-    const expectedProfile = options.profile ?? "default";
+    const expectedProfile = connectionProfile;
     if (identity.profile !== expectedProfile) {
       throw new Error(
         `Runtime daemon profile mismatch: expected ${expectedProfile}, got ${identity.profile}`,
       );
+    }
+    let currentSharedHost = sharedHost;
+    if (sharedHost && identity.runtimeId === sharedHost.owner.runtimeId) {
+      try {
+        currentSharedHost = findRuntimeSessionStorageHost(daemonLocation.configHome,
+          options.sessionsDir ?? path.join(daemonLocation.configHome, 'sessions'));
+      } catch (error: unknown) {
+        ownerChangedDuringAttachment = isRecord(error)
+          && error.code === 'session_storage_owned' && error.retryable === true;
+        throw error;
+      }
+    }
+    if (allowCapabilityUpgrade && options.autoStart === true) {
+      assertRuntimeDaemonStartupActive(startupDeadline, options.daemonStartupSignal);
+    }
+    if (sharedHost && (identity.runtimeId !== sharedHost.owner.runtimeId
+      || currentSharedHost?.owner.runtimeId !== identity.runtimeId
+      || currentSharedHost.profile !== identity.profile)) {
+      ownerChangedDuringAttachment = true;
+      throw Object.assign(new Error('The shared Session Host changed during attachment; retry against its current owner.'), {
+        code: 'session_storage_owned' as const, retryable: true,
+      });
     }
     daemonCapabilities =
       initialized.capabilities === undefined
@@ -6312,6 +6538,7 @@ async function connectKodaXRuntimeInternal(
       probedDaemon !== undefined
       && probedDaemon.identity.runtimeId !== identity.runtimeId
     ) {
+      ownerChangedDuringAttachment = true;
       throw new RuntimeDaemonCapabilityUpgradeError(
         "Runtime daemon owner changed between capability probe and authenticated attach. Retry against the current owner.",
         undefined,
@@ -6320,6 +6547,13 @@ async function connectKodaXRuntimeInternal(
       );
     }
     if (requiredUpgrade !== undefined) {
+      if ((initialized.daemonRetention === 'explicit' || initialized.daemonRetention === 'service')
+        && requirements.daemonOrphanExit !== undefined) {
+        throw new RuntimeDaemonCapabilityUpgradeError(
+          'This Host is explicitly retained or serves A2A. Connect without an idle-exit requirement, or stop it explicitly before changing its lifetime.',
+          undefined, undefined, 'daemonOrphanExit',
+        );
+      }
       if (startupRetries < 0) {
         throw new RuntimeDaemonCapabilityUpgradeError(
           'Host startup did not converge on the requested build. Retry after the installation has finished updating.',
@@ -6349,6 +6583,7 @@ async function connectKodaXRuntimeInternal(
           requiredUpgrade.name,
         );
       }
+      const upgradeStartedAt = Date.now();
       try {
         await replaceRuntimeDaemonForCapabilityUpgrade({
           identity,
@@ -6357,6 +6592,8 @@ async function connectKodaXRuntimeInternal(
           lease,
           ...(grantedScopes !== undefined ? { grantedScopes } : {}),
           requiredCapability: requiredUpgrade.name,
+          ...(sharedHost ? { sharedOwnerFile: sharedHost.ownerFile } : {}),
+          orphanExitMs,
           startupDeadline,
           startupSignal: options.daemonStartupSignal,
           reportProgress,
@@ -6364,14 +6601,22 @@ async function connectKodaXRuntimeInternal(
       } catch (error: unknown) {
         if (
           error instanceof RuntimeDaemonCapabilityUpgradeError
-          && error.preflight?.blockers.length === 1
-          && error.preflight.blockers[0] === "connected_clients"
+          && (error instanceof RuntimeDaemonInspectionInterruptedError
+            || (error.preflight?.blockers.length === 1
+              && error.preflight.blockers[0] === "connected_clients"))
           && Date.now() < startupDeadline
         ) {
           // The rejected temporary client is already closed. Contention gets
           // the remaining startup budget, not the actual-upgrade attempt limit.
-          const backoff = 50 + Math.floor(Math.random() * Math.min(950, 100 * 2 ** Math.min(contentionAttempt, 4)));
-          reportProgress({ stage: 'waiting', reason: 'connected_clients' });
+          // A fixed sub-second retry can keep invalidating a peer's slow read.
+          const backoffWindow = Math.max(
+            Math.min(950, 100 * 2 ** Math.min(contentionAttempt, 4)),
+            2 * (Date.now() - upgradeStartedAt),
+          );
+          const backoff = 50 + Math.floor(Math.random() * backoffWindow);
+          reportProgress(error instanceof RuntimeDaemonInspectionInterruptedError
+            ? { stage: 'checking' }
+            : { stage: 'waiting', reason: 'connected_clients' });
           await waitForDaemonStartupRetry(Math.min(backoff, startupDeadline - Date.now()), options.daemonStartupSignal);
           if (Date.now() >= startupDeadline) throw error;
           return connectKodaXRuntimeInternal(options, true, ownerBootstrap, startupRetries, startupDeadline, contentionAttempt + 1, reportProgress);
@@ -6382,8 +6627,15 @@ async function connectKodaXRuntimeInternal(
         // lease's transport. Do not close the same transport again below.
         upgradeReleasedLease = true;
       }
+      const persistentLifecycle = initialized.daemonLifecycle === 'persistent'
+        || (initialized.daemonLifecycle !== 'interactive'
+          && !hasVersionedRuntimeCapability(daemonCapabilities, 'daemonOrphanExit', 1));
       return connectKodaXRuntimeInternal(
-        options,
+        options.daemonOrphanExitMs === undefined
+          && requirements.daemonOrphanExit === undefined
+          && (initialized.daemonRetention === 'explicit'
+            || (options.daemonLifecycle === 'interactive' && persistentLifecycle && initialized.daemonRetention !== 'service'))
+          ? { ...options, daemonLifecycle: initialized.daemonRetention === 'explicit' ? 'persistent' : undefined } : options,
         allowCapabilityUpgrade,
         ownerBootstrap,
         startupRetries - 1,
@@ -6394,13 +6646,30 @@ async function connectKodaXRuntimeInternal(
     }
     assertRuntimeCapabilities(daemonCapabilities, requirements);
     if (allowCapabilityUpgrade && options.autoStart === true) assertCurrentLauncherBuild();
+    // Synchronous owner/build verification can cross the boundary after the
+    // initialize timer has been cleared. Close this temporary lease on expiry.
+    if (allowCapabilityUpgrade && options.autoStart === true) {
+      assertRuntimeDaemonStartupActive(startupDeadline, options.daemonStartupSignal);
+    }
   } catch (error: unknown) {
     if (!upgradeReleasedLease) {
       if (lease !== undefined) await lease.close();
       else await transport.close?.();
     }
+    if (ownerChangedDuringAttachment && allowCapabilityUpgrade && options.autoStart === true
+      && options.transport === undefined && explicitEndpoint === undefined
+      && startupRetries > 0 && Date.now() < startupDeadline) {
+      // Only initialization is retried. Close the temporary client before
+      // rediscovering authority; never reuse the pre-start owner snapshot.
+      options.daemonStartupSignal?.throwIfAborted();
+      await waitForRuntimeSessionStorageHost(daemonLocation.configHome,
+        options.sessionsDir ?? path.join(daemonLocation.configHome, 'sessions'),
+        startupDeadline, options.daemonStartupSignal, reportProgress);
+      return connectKodaXRuntimeInternal(options, true, ownerBootstrap, startupRetries - 1,
+        startupDeadline, contentionAttempt, reportProgress);
+    }
     if (allowCapabilityUpgrade && lease && attaching && startupRetries > 0
-      && isRecord(error) && error.code === 'conflict') {
+      && isDaemonStartupReadInterruption(error)) {
       // Admission may temporarily close before shutdown is published on disk.
       // Only retry connection initialization; business operations are never replayed.
       if (Date.now() >= startupDeadline) throw error;
@@ -6508,6 +6777,7 @@ type RuntimeSessionSettingsListener = (
 ) => void;
 
 interface RuntimeSessionSettingsOwner {
+  persistCurrent(sessionId: string): Promise<void>;
   read(
     sessionId: string,
   ): Promise<RuntimeVersionedValue<RuntimeSessionSettings>>;
@@ -6527,6 +6797,7 @@ interface RuntimeSessionSettingsOwner {
 function createRuntimeSessionSettingsOwner(
   persistence: RuntimePersistence,
   bus: RuntimeEventBus,
+  isDraft: (sessionId: string) => boolean,
 ): RuntimeSessionSettingsOwner {
   const current = new Map<
     string,
@@ -6534,6 +6805,9 @@ function createRuntimeSessionSettingsOwner(
   >();
   const tails = new Map<string, Promise<void>>();
   const listeners = new Set<RuntimeSessionSettingsListener>();
+  // The canonical Session is saved before its settings. Keep draft settings
+  // authoritative until both writes finish, including concurrent reads/updates.
+  const pendingDraftSettings = new Set<string>();
 
   const enqueue = <T>(
     sessionId: string,
@@ -6572,9 +6846,19 @@ function createRuntimeSessionSettingsOwner(
   };
 
   return {
+    persistCurrent(sessionId) {
+      return enqueue(sessionId, () => {
+        if (!pendingDraftSettings.has(sessionId)) return;
+        const value = current.get(sessionId);
+        if (value) persistence.saveSessionSettingsVersioned(sessionId, value);
+        pendingDraftSettings.delete(sessionId);
+      });
+    },
     async read(sessionId) {
       await (tails.get(sessionId) ?? Promise.resolve());
-      const loaded = persistence.loadSessionSettingsVersioned(sessionId);
+      if (isDraft(sessionId)) pendingDraftSettings.add(sessionId);
+      const loaded = pendingDraftSettings.has(sessionId) ? current.get(sessionId) ?? { revision: 0, value: {} }
+        : persistence.loadSessionSettingsVersioned(sessionId);
       current.set(sessionId, loaded);
       return loaded;
     },
@@ -6583,7 +6867,9 @@ function createRuntimeSessionSettingsOwner(
     },
     update(sessionId, patch, expectedRevision, validate) {
       return enqueue(sessionId, () => {
-        const loaded = persistence.loadSessionSettingsVersioned(sessionId);
+        if (isDraft(sessionId)) pendingDraftSettings.add(sessionId);
+        const loaded = pendingDraftSettings.has(sessionId) ? current.get(sessionId) ?? { revision: 0, value: {} }
+          : persistence.loadSessionSettingsVersioned(sessionId);
         if (
           expectedRevision !== undefined &&
           loaded.revision !== expectedRevision
@@ -6597,7 +6883,7 @@ function createRuntimeSessionSettingsOwner(
         const settings = applySessionSettingsPatch(loaded.value, canonicalPatch);
         validate(settings);
         const updated = { revision: loaded.revision + 1, value: settings };
-        persistence.saveSessionSettingsVersioned(sessionId, updated);
+        if (!pendingDraftSettings.has(sessionId)) persistence.saveSessionSettingsVersioned(sessionId, updated);
         publish(sessionId, updated, canonicalPatch);
         return updated;
       });
@@ -6611,6 +6897,7 @@ function createRuntimeSessionSettingsOwner(
       };
     },
     release(sessionId) {
+      pendingDraftSettings.delete(sessionId);
       current.delete(sessionId);
       tails.delete(sessionId);
     },
@@ -6718,6 +7005,7 @@ function createRuntimeSessionService(
       ? { profileId: data.runtimeInfo.profileId }
       : {}),
     ...(createdAt ? { createdAt } : {}),
+    ...(data.lastMessageAt !== undefined ? { lastMessageAt: data.lastMessageAt } : {}),
   });
   type PreparedConversationPage = NonNullable<Awaited<
     ReturnType<SessionManager["storage"]["readConversationPageCache"]>
@@ -8042,7 +8330,9 @@ function createRuntimeSessionService(
           ownsSessionMcpConfig = true;
         }
         bus.prepareSessionEvents(sessionId);
-        if (input.sessionId === undefined) {
+        if (input.draft === true) {
+          await manager.storage.createDraft(sessionId, data);
+        } else if (input.sessionId === undefined) {
           await manager.storage.createGenerated(sessionId, data);
         } else {
           await manager.storage.save(sessionId, data);
@@ -8086,9 +8376,10 @@ function createRuntimeSessionService(
     async list(filter) {
       ensureOpen();
       admission.assertFilter(filter);
-      const summaries = await manager.listSessions(filter);
+      const summaries = await manager.listSessions({ ...filter, limit: Number.MAX_SAFE_INTEGER });
       return summaries
         .filter(admission.admitsSummary)
+        .slice(0, filter?.limit ?? 50)
         .map(toRuntimeSessionSummary);
     },
 
@@ -10797,7 +11088,7 @@ function createRuntimeRunService(deps: {
         pending.set(reference.registrationId, { reference, retry: async () => {
           await retry();
           if (!pending.has(reference.registrationId)) return;
-          const cleaned = await cleanupManagedRunChildProcess(reference);
+          const cleaned = await cleanupManagedRunChildProcess(reference, { configHome: deps.defaultConfigHome });
           if (cleaned.status === "unknown") return;
           release();
           cleaned.release();
@@ -11249,6 +11540,8 @@ function createRuntimeRunService(deps: {
       sessionId: record.sessionId,
       runId: record.runId,
     });
+    // The predecessor may finish while admission awaits storage or settings.
+    drainNext(record.sessionId);
   };
 
   const publishRunUpdate = (record: RuntimeRunRecord): boolean => {
@@ -11783,12 +12076,21 @@ function createRuntimeRunService(deps: {
       terminalEmitted: false,
       ownedByRuntime: true,
     };
-    if (productInput !== undefined) {
+    const canonicalInputId = productInput?.inputId
+      ?? (deps.sessionManager.storage.isDraft(input.sessionId) ? runId : undefined);
+    if (canonicalInputId !== undefined) {
       const session = await deps.sessionAdmission.loadExecutable(input.sessionId);
-      const messages: KodaXMessage[] = [...session.messages, {
+      const content = buildPromptMessageContent(normalizedInput.prompt, effectiveOptions.context?.inputArtifacts);
+      const savedInput = session.messages.find(message => message.role === 'user' && message.inputId === canonicalInputId);
+      if (savedInput && JSON.stringify(savedInput.content) !== JSON.stringify(content)) {
+        throw createRuntimeConflictError('Input ID already belongs to a different intent.', 0);
+      }
+      // A promotion write can fail after the canonical input is saved, before
+      // its Run is registered. Retry that save without appending another input.
+      const messages: KodaXMessage[] = savedInput ? session.messages : [...session.messages, {
         role: "user",
-        content: buildPromptMessageContent(normalizedInput.prompt, effectiveOptions.context?.inputArtifacts),
-        inputId: productInput.inputId,
+        content,
+        inputId: canonicalInputId,
         ...(trustedInput.productBatch ? { inputIds: trustedInput.productBatch } : {}),
         timestamp: startedAt,
       }];
@@ -11797,6 +12099,12 @@ function createRuntimeRunService(deps: {
         messages,
         lineage: createSessionLineage(messages, session.lineage),
       });
+      record.canonicalInputId = canonicalInputId;
+    }
+    // Promotion can fail after saving the input. Complete its settings write
+    // before dispatch, including a later low-level Run on that durable Session.
+    if (!deps.sessionManager.storage.isDraft(input.sessionId)) {
+      await deps.settingsOwner.persistCurrent(input.sessionId);
     }
     if (record.mode === 'managed_task' || record.mode === 'coding') {
       const assertWritable = (): void => {
@@ -12654,6 +12962,7 @@ function createRuntimeRunService(deps: {
       return filterAdmittedRunStatuses(
         canonicalRuntimeRunStatuses(boundedRuntimeRunStatuses(matching)),
         deps.sessionAdmission,
+        deps.actorRegistry,
       );
     },
 
@@ -12681,6 +12990,7 @@ function createRuntimeRunService(deps: {
       return filterAdmittedRunStatuses(
         canonicalRuntimeRunStatuses(boundedRuntimeRunStatuses(matching)),
         deps.sessionAdmission,
+        deps.actorRegistry,
       );
     },
 
@@ -13295,6 +13605,7 @@ function createRuntimeMcpService(
       ensureOpen();
       const servers = listRuntimeMcpServers(configFile);
       const provider = await replaceConfiguredMcpCapabilityProvider(runtime, servers, {
+        configHome: configFile === undefined ? replApi.KODAX_DIR : path.dirname(configFile),
         cacheDir: path.join(configFile === undefined ? replApi.KODAX_DIR : path.dirname(configFile), "mcp-cache"),
         reverse: buildMcpReverseCapabilities({ cwd: process.cwd(), enableElicitation: true }),
       });
@@ -14081,6 +14392,7 @@ function buildRunOptions(input: {
   const executeSkillDynamicContext = options.skillDynamicContext?.execute ?? (async (command: string) => {
     if (!replApi.isBashReadCommand(command)) throw new Error('Dynamic context permits only read-only commands.');
     const output = await toolBash({ command, timeout: 10 }, {
+      configHome: input.defaultConfigHome,
       ...ownerSafeContext, backups: new Map(), executionCwd, gitRoot: workspaceRoot,
       abortSignal: record.abortController?.signal ?? options.abortSignal,
       toolCallId: `skill-context-${randomUUID()}`, shellSandbox: restrictedModeShellSandbox,
@@ -14121,7 +14433,8 @@ function buildRunOptions(input: {
     session: {
       ...(options.session ?? {}),
       id: record.sessionId,
-      ...(record.productInput !== undefined ? { inputId: record.productInput.inputId } : {}),
+      ...((record.canonicalInputId ?? record.productInput?.inputId) !== undefined
+        ? { inputId: record.canonicalInputId ?? record.productInput?.inputId } : {}),
       storage: isForkInvocation ? undefined : sessionManager.storage,
       ...(isForkInvocation ? { initialMessages: [] } : {}),
       // The Runtime is the canonical Session owner even when a REPL client
@@ -14235,6 +14548,7 @@ function runtimeLocalListings(
 }
 
 interface RuntimeAgentActorRegistry {
+  ownsAdmittedSession(sessionId: string): boolean;
   quiesceClient(principalId: string): ReturnType<CodingActorSession['quiesceClient']>;
   forSession(
     sessionId: string,
@@ -14242,7 +14556,8 @@ interface RuntimeAgentActorRegistry {
   ): Promise<CodingActorSession>;
   root(sessionId: string): Promise<AgentActorClient>;
   activeTurns(
-    sessionIds: readonly string[],
+    admits: RuntimeSessionAdmission['admitsSummary'],
+    signal?: AbortSignal,
   ): Promise<readonly RuntimeActiveAgentTurn[]>;
   mutateSessionFile<T>(
     sessionId: string,
@@ -14256,6 +14571,7 @@ function createRuntimeAgentActorRegistry(
   sessionManager: SessionManager,
   identity: RuntimeIdentity,
   ownerLiveness: RuntimeActorOwnerLiveness,
+  admission: RuntimeSessionAdmission,
   plane?: AgentExecutorPlane,
   defaultContext?: AgentDispatchContext,
   onHealthChanged?: (
@@ -14290,6 +14606,7 @@ function createRuntimeAgentActorRegistry(
     const created = (async () => {
       const data = await sessionManager.storage.peek(sessionId);
       if (!data) throw new Error(`Session not found: ${sessionId}`);
+      admission.assertCachedIdentity(sessionId, data.runtimeInfo ?? {});
       const persistedMax = data.actorSnapshot?.maxConcurrentThreads;
       if (
         persistedMax !== undefined &&
@@ -14381,6 +14698,10 @@ function createRuntimeAgentActorRegistry(
   };
 
   return {
+    ownsAdmittedSession(sessionId) {
+      // Only initialized controllers enter ready, after Session admission.
+      return !closed && ready.get(sessionId)?.ownsDurableFence() === true;
+    },
     async quiesceClient(principalId) {
       const results = await Promise.all([...ready.values()].map(session => session.quiesceClient(principalId)));
       return { turns: results.flatMap(result => result.turns), unsettledTurnIds: results.flatMap(result => result.unsettledTurnIds) };
@@ -14389,34 +14710,43 @@ function createRuntimeAgentActorRegistry(
     async root(sessionId) {
       return (await forSession(sessionId)).rootControl();
     },
-    async activeTurns(sessionIds) {
-      const snapshots = await Promise.all(
-        sessionIds.map(async (sessionId) => {
-          if (await sessionManager.storage.isArchived(sessionId)) {
-            return undefined;
-          }
+    async activeTurns(admits, signal) {
+      signal?.throwIfAborted();
+      const sessionIds = await sessionManager.storage.listActiveSessionIds();
+      const snapshots: Array<{ sessionId: string; snapshot: Pick<AgentTreeSnapshot, 'actors'> } | undefined> = [];
+      for (let index = 0; index < sessionIds.length; index += 48) {
+        signal?.throwIfAborted();
+        snapshots.push(...await Promise.all(sessionIds.slice(index, index + 48).map(async (sessionId) => {
+          signal?.throwIfAborted();
           const existing = sessions.get(sessionId);
           if (existing) {
+            // Claimed controllers already passed admission and own the live
+            // Actor authority, including while their durable save is pending.
             return {
               sessionId,
               snapshot: (await existing).rootControl().list(),
             };
           }
-          const data = await sessionManager.storage.peek(sessionId);
-          if (!data?.actorSnapshot) return undefined;
+          const metadata = await sessionManager.storage.readActorMetadata(sessionId, { signal });
+          signal?.throwIfAborted();
+          if (metadata === undefined) throw new Error('Session disappeared during Actor preflight; retry the read.');
+          if (!admits(metadata)) return undefined;
+          const actorSnapshot = metadata.actorSnapshot;
+          if (!actorSnapshot) return undefined;
           if (
-            data.actorSnapshot.schemaVersion === 2
-            && data.actorSnapshot.owner !== undefined
-            && !await isRuntimeActorOwnerAlive(data.actorSnapshot.owner)
+            actorSnapshot.schemaVersion === 2
+            && actorSnapshot.owner !== undefined
+            && !await isRuntimeActorOwnerAlive(actorSnapshot.owner)
           ) {
             return undefined;
           }
           return {
             sessionId,
-            snapshot: data.actorSnapshot,
+            snapshot: actorSnapshot,
           };
-        }),
-      );
+        })));
+      }
+      signal?.throwIfAborted();
       return snapshots.flatMap((entry) => {
         if (!entry) return [];
         const { sessionId, snapshot } = entry;
@@ -14673,6 +15003,7 @@ function createRuntimeStatusService(deps: {
   readonly sessionAdmission: RuntimeSessionAdmission;
   readonly workflows: RuntimeWorkflowService;
   readonly actors: RuntimeAgentActorRegistry;
+  readonly pendingBackgroundWork: () => number;
 }): RuntimeStatusService {
   return {
     async snapshot() {
@@ -14692,8 +15023,10 @@ function createRuntimeStatusService(deps: {
         workflows: await deps.workflows.list({}),
       };
     },
-    async preflight() {
+    async preflight(options) {
+      options?.signal?.throwIfAborted();
       const runs = await deps.listRuns();
+      options?.signal?.throwIfAborted();
       const activeRuns = runs.filter(
         (run) =>
           isActiveRunPhase(run.phase) || run.phase === "unknown",
@@ -14706,15 +15039,11 @@ function createRuntimeStatusService(deps: {
           workflow.status !== "denied" &&
           workflow.status !== "stopped",
       );
-      const admittedSessionIds = (
-        await deps.sessionManager.listSessions({ includeArchived: true })
-      )
-        .filter(deps.sessionAdmission.admitsSummary)
-        .map((session) => session.id);
       const activeAgentTurns =
-        await deps.actors.activeTurns(admittedSessionIds);
+        await deps.actors.activeTurns(deps.sessionAdmission.admitsSummary, options?.signal);
       const pendingPermissions = await deps.permissions.service.listPending();
       const pendingUserInputs = await deps.userInputs.service.listPending();
+      options?.signal?.throwIfAborted();
       const blockers: RuntimeDaemonPreflight["blockers"][number][] = [];
       if (activeRuns.length > 0) blockers.push("active_runs");
       if (queuedRuns.length > 0) blockers.push("queued_runs");
@@ -14734,6 +15063,7 @@ function createRuntimeStatusService(deps: {
         activeAgentTasks: activeAgentTurns,
         pendingPermissions,
         pendingUserInputs,
+        pendingBackgroundWork: deps.pendingBackgroundWork(),
         blockers,
         canStop: blockers.length === 0,
       };
@@ -16265,6 +16595,7 @@ function createRuntimePersistence(
 
   return {
     runtimeDir,
+    configHome: options.homeDir ? path.join(path.resolve(options.homeDir), '.kodax') : replApi.KODAX_DIR,
     close() {
       fs.mkdirSync(runtimeDir, { recursive: true });
       withRuntimeStatusFileLock(runStatusIndexFile, () => {
@@ -16771,7 +17102,19 @@ interface RuntimeStatusLockRecord {
   readonly ticket?: number;
 }
 
-const RUNTIME_PROCESS_START_IDENTITY = readRuntimeProcessStartIdentity(process.pid);
+let runtimeProcessStartIdentity: string | undefined;
+let runtimeProcessStartIdentityRead = false;
+function currentRuntimeProcessStartIdentity(): string | undefined {
+  if (!runtimeProcessStartIdentityRead) {
+    const identity = readRuntimeOwnerProcessStartIdentity(process.pid);
+    runtimeProcessStartIdentity = process.platform === 'win32'
+      ? (identity !== undefined && /^\d+$/.test(identity)
+          ? `windows:${BigInt(identity) - 11_644_473_600_000n}` : undefined)
+      : identity;
+    runtimeProcessStartIdentityRead = true;
+  }
+  return runtimeProcessStartIdentity;
+}
 interface AbandonedRuntimeLockFile {
   readonly family: string;
   readonly token: string;
@@ -16808,13 +17151,14 @@ function runtimeStatusLockRecord(
   token: string,
   ticket?: number,
 ): RuntimeStatusLockRecord {
+  const processStartIdentity = currentRuntimeProcessStartIdentity();
   return {
     pid: process.pid,
     createdAt: Date.now(),
     token,
-    ...(RUNTIME_PROCESS_START_IDENTITY === undefined
+    ...(processStartIdentity === undefined
       ? {}
-      : { processStartIdentity: RUNTIME_PROCESS_START_IDENTITY }),
+      : { processStartIdentity }),
     ...(ticket === undefined ? {} : { ticket }),
   };
 }
@@ -16873,7 +17217,7 @@ function runtimeStatusLockOwnerState(
     }
     if (typeof parsed.processStartIdentity !== "string") return "alive";
     const currentIdentity = parsed.pid === process.pid
-      ? RUNTIME_PROCESS_START_IDENTITY
+      ? currentRuntimeProcessStartIdentity()
       : readRuntimeProcessStartIdentity(parsed.pid, processProbeTimeoutMs);
     if (currentIdentity === undefined) return "unknown";
     return currentIdentity === parsed.processStartIdentity ? "alive" : "gone";
@@ -18014,7 +18358,7 @@ async function recoverPersistedShellCleanups(status: RuntimeRunStatus, persisten
     || !references.every((reference): reference is ManagedRunChildProcessReference => isManagedRunShellReference(reference, status.runId))) return false;
   for (const reference of references) {
     let result: Awaited<ReturnType<typeof cleanupManagedRunChildProcess>> = { status: "unknown" };
-    try { result = await cleanupManagedRunChildProcess(reference); }
+    try { result = await cleanupManagedRunChildProcess(reference, { configHome: persistence.configHome }); }
     catch (error: unknown) {
       emitKodaXDiagnostic({ source: "runtime.shell-cleanup", level: "warn",
         message: `Deferring unavailable Shell cleanup for recovered Run ${status.runId}.`, detail: error });
@@ -20165,6 +20509,7 @@ function toRuntimeSessionSummary(
     ...(summary.createdAt !== undefined
       ? { createdAt: summary.createdAt }
       : {}),
+    ...(summary.lastMessageAt !== undefined ? { lastMessageAt: summary.lastMessageAt } : {}),
     ...(summary.tag !== undefined ? { tag: summary.tag } : {}),
     ...(summary.projectKey !== undefined
       ? { projectKey: summary.projectKey }
@@ -20662,9 +21007,11 @@ function createRuntimeSessionAdmission(
     },
     async admitsSession(sessionId) {
       if (!enforced) return true;
-      const data = await manager.storage.peek(sessionId);
+      // Admission depends on canonical identity metadata, not transcript bytes.
+      // A historical body's read failure must not block global Run inspection.
+      const data = await manager.storage.readActorMetadata(sessionId);
       return (
-        data !== null &&
+        data !== undefined &&
         admitted(data.runtimeInfo?.surface, data.runtimeInfo?.profileId)
       );
     },
@@ -20701,13 +21048,18 @@ function createRuntimeSessionAdmission(
 async function filterAdmittedRunStatuses(
   statuses: readonly RuntimeRunStatus[],
   admission: RuntimeSessionAdmission,
+  actors: RuntimeAgentActorRegistry,
 ): Promise<readonly RuntimeRunStatus[]> {
   const admittedBySession = new Map<string, boolean>();
   const result: RuntimeRunStatus[] = [];
   for (const status of statuses) {
     let admitted = admittedBySession.get(status.sessionId);
     if (admitted === undefined) {
-      admitted = await admission.admitsSession(status.sessionId);
+      // As in Actor preflight, a claimed live controller already passed Session
+      // admission. Its fence survives Run completion and trailing persistence.
+      // Unclaimed Sessions still require strict canonical metadata admission.
+      admitted = actors.ownsAdmittedSession(status.sessionId)
+        || await admission.admitsSession(status.sessionId);
       admittedBySession.set(status.sessionId, admitted);
     }
     if (admitted) result.push(status);

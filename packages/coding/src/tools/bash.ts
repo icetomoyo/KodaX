@@ -9,6 +9,7 @@ import {
   killChildProcessTree,
   killChildProcessTreeSync,
   registerManagedChildProcess,
+  withManagedChildProcessConfigHome,
 } from '@kodax-ai/agent';
 import { KODAX_DEFAULT_TIMEOUT, KODAX_HARD_TIMEOUT } from '../constants.js';
 import type {
@@ -459,6 +460,10 @@ export async function toolBash(
   input: Record<string, unknown>,
   ctx: KodaXToolExecutionContext,
 ): Promise<string> {
+  return withManagedChildProcessConfigHome(ctx.configHome, () => toolBashInHome(input, ctx));
+}
+
+async function toolBashInHome(input: Record<string, unknown>, ctx: KodaXToolExecutionContext): Promise<string> {
   const toolInput = { ...input };
   const permissionMode = ctx.resolveShellPermissionMode?.();
   const directHostExecution = permissionMode === 'full-access';

@@ -9,12 +9,12 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createKodaXRuntime, ensureKodaXRuntime, waitForRuntimeDaemonShutdown } from '../dist/sdk-runtime.js';
 import { connectKodaXClient } from '../dist/sdk-client.js';
-import { createArtifactSdk } from '../packages/artifacts/dist/index.js';
-import { createKodaXArtifactPort } from '../packages/artifacts/dist/client.js';
+import { createArtifactSdk } from '@kodax-ai/kodax/artifacts';
+import { createKodaXArtifactPort } from '@kodax-ai/kodax/artifacts/client';
 import { KodaXBaseProvider, registerModelProvider } from '../dist/sdk-llm.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const artifactEntry = path.join(root, 'packages/artifacts/dist/runtime-entry.js');
+const artifactEntry = fileURLToPath(new URL('./runtime-entry.js', import.meta.resolve('@kodax-ai/kodax/artifacts/runtime')));
 const run = promisify(execFile);
 test('built worker rejects a changed manifest before executing or writing artifact output', async () => {
  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'artifact tamper '));
@@ -32,7 +32,7 @@ test('built Product Client reads exact evidence bytes from the shared Host witho
  await fs.mkdir(path.join(home, '.kodax', 'extensions'), { recursive: true }); await fs.mkdir(work);
  const bytes = await fs.readFile(path.join(root, 'tests/fixtures/images/valid-png.png')); await fs.writeFile(path.join(work, 'a.png'), bytes);
  await fs.writeFile(path.join(home, '.kodax', 'extensions', 'artifacts.mjs'),
-  'import {registerArtifactTools} from ' + JSON.stringify(pathToFileURL(path.join(root, 'packages/artifacts/dist/kodax.js')).href) + ';\n' +
+  'import {registerArtifactTools} from ' + JSON.stringify(import.meta.resolve('@kodax-ai/kodax/artifacts/kodax')) + ';\n' +
   'import {executeManagedProcess} from ' + JSON.stringify(pathToFileURL(path.join(root, 'dist/sdk-coding.js')).href) + ';\n' +
   'export default api=>registerArtifactTools(api,{execute:executeManagedProcess,nodeExecutable:' + JSON.stringify(process.execPath) + '});');
  const runtime = await ensureKodaXRuntime({ homeDir: home, defaultProvider: 'openai', daemonStartupTimeoutMs: 30_000 });
@@ -63,7 +63,7 @@ test('built KodaX Host owns PPT tool Runs and returns current pixels through the
  await fs.mkdir(path.join(home, '.kodax', 'extensions'), { recursive: true }); await fs.mkdir(workspace);
  const options = { nodeExecutable: process.execPath, browserExecutable: process.env.KODAX_ARTIFACT_TEST_BROWSER };
  await fs.writeFile(path.join(home, '.kodax', 'extensions', 'artifacts.mjs'),
-  'import {registerArtifactTools} from ' + JSON.stringify(pathToFileURL(path.join(root, 'packages/artifacts/dist/kodax.js')).href) + ';\n' +
+  'import {registerArtifactTools} from ' + JSON.stringify(import.meta.resolve('@kodax-ai/kodax/artifacts/kodax')) + ';\n' +
   'import {executeManagedProcess} from ' + JSON.stringify(pathToFileURL(path.join(root, 'dist/sdk-coding.js')).href) + ';\n' +
   'export default api=>registerArtifactTools(api,{execute:executeManagedProcess,...' + JSON.stringify(options) + '});');
  let modelCalls = 0, modelScenario, modelMessages;
@@ -98,25 +98,21 @@ test('built KodaX Host owns PPT tool Runs and returns current pixels through the
   assert.equal(opened.objects[0].text, 'Current pixels');
   const capture = await invoke('artifact_capture', { kind: 'temporal', target: 'owned-surface', expectedSource: { kind: 'surface', target: 'owned-surface', observedAt: '2026-10-13T00:00:00Z' }, locators: [{ kind: 'temporal', time: 0 }] });
   assert.equal(capture.status, 'unverified');
-  if (options.browserExecutable) {
-   const rendered = await invoke('artifact_render', { path: 'deck.pptx', expectedSourceHash: opened.artifact.sourceHash, pages: [1] });
-   assert.equal(rendered.status, 'ready');
-   assert.equal(rendered.evidence.source.file.sourceHash, opened.artifact.sourceHash);
-   const raster = rendered.evidence.evidence[0];
-   assert.equal(createHash('sha256').update(await fs.readFile(raster.path)).digest('hex'), raster.sha256);
-   assert.equal(raster.locator.page, 1);
-  }
+  const rendered = await invoke('artifact_render', { path: 'deck.pptx', expectedSourceHash: opened.artifact.sourceHash, pages: [1] });
+  assert.equal(rendered.status, 'ready', 'PPT rendering requires prepared Chromium; run artifact_prepare or SDK prepare() before full acceptance. ' + JSON.stringify(rendered.diagnostics));
+  assert.equal(rendered.evidence.source.file.sourceHash, opened.artifact.sourceHash);
+  const raster = rendered.evidence.evidence[0];
+  assert.equal(createHash('sha256').update(await fs.readFile(raster.path)).digest('hex'), raster.sha256);
+  assert.equal(raster.locator.page, 1);
   assert.equal(modelCalls, 0);
-  if (options.browserExecutable) {
-   modelScenario = 'AMA render';
-   const handle = await runtime.runs.start({ sessionId: session.id, mode: 'managed_task', prompt: 'Render deck.pptx with artifact_render once and return evidence readiness only.', options: { lsp: false, maxIter: 3, reasoningMode: 'off',
-    context: { executionCwd: workspace, gitRoot: workspace, repoIntelligenceMode: 'off' } } });
-   const terminal = await handle.result;
-   assert.equal(terminal.phase, 'completed', JSON.stringify(terminal));
-   const result = modelMessages.flatMap(message => Array.isArray(message.content) ? message.content : []).find(item => item.type === 'tool_result' && item.tool_use_id === 'scripted-render');
-   assert.ok(result && Array.isArray(result.content), JSON.stringify(result));
-   assert.ok(result.content.some(item => item.type === 'image'));
-   assert.equal(JSON.parse(result.content.find(item => item.type === 'text').text).status, 'ready');
-  }
+  modelScenario = 'AMA render';
+  const handle = await runtime.runs.start({ sessionId: session.id, mode: 'managed_task', prompt: 'Render deck.pptx with artifact_render once and return evidence readiness only.', options: { lsp: false, maxIter: 3, reasoningMode: 'off',
+   context: { executionCwd: workspace, gitRoot: workspace, repoIntelligenceMode: 'off' } } });
+  const terminal = await handle.result;
+  assert.equal(terminal.phase, 'completed', JSON.stringify(terminal));
+  const result = modelMessages.flatMap(message => Array.isArray(message.content) ? message.content : []).find(item => item.type === 'tool_result' && item.tool_use_id === 'scripted-render');
+  assert.ok(result && Array.isArray(result.content), JSON.stringify(result));
+  assert.ok(result.content.some(item => item.type === 'image'));
+  assert.equal(JSON.parse(result.content.find(item => item.type === 'text').text).status, 'ready');
  } finally { await runtime.close(); unregister(); delete process.env.KODAX_ARTIFACT_TEST_KEY; await fs.rm(directory, { recursive: true, force: true }); }
 });

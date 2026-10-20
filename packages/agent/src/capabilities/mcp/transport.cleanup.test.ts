@@ -31,7 +31,8 @@ vi.mock('../../runtime/process-tree.js', () => ({
   rememberChildProcessTree: rememberChildProcessTreeMock,
 }));
 
-vi.mock('../../runtime/managed-child-processes.js', () => ({
+vi.mock('../../runtime/managed-child-processes.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../runtime/managed-child-processes.js')>(),
   registerManagedChildProcess: registerManagedChildProcessMock,
 }));
 

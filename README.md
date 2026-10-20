@@ -494,6 +494,11 @@ kodax -p "Review this repository"
 kodax daemon stop --profile default
 ```
 
+An ordinary CLI-started Host exits after its last client disconnects and governed
+work has remained idle for 30 seconds. Reconnecting cancels that idle exit.
+`kodax daemon start` retains the current Host (including an existing temporary
+Host); a Host serving configured A2A also stays available without CLI clients.
+
 Tests that start an isolated Host must close that exact Host after its work has
 settled, before removing its temporary home. Never stop arbitrary Node processes.
 With no explicit home, CLI and SDK use the resolved `KODAX_HOME`; explicit
@@ -773,8 +778,8 @@ provider's model, REPL `/compact` clears the UI only after a durable save, and
 successful reports carry bounded `summaryRequests` plus `commitMs` per
 physical summary call.
 
-**v0.7.97-alpha.4 release:** Adds the independent `@kodax-ai/artifacts`
-package — PPTX authoring, bounded editing, and current-file visual
+**v0.7.97-alpha.4 source release:** Adds the optional Artifact SDK workspace
+— PPTX authoring, bounded editing, and current-file visual
 evidence through lightweight rendering (optional LibreOffice/PDF conversion) — with an optional managed
 KodaX adapter (FEATURE_301), and retires the out-of-band Sidecar
 Verifier: the main agent now verifies requested requirements with actual
@@ -787,6 +792,55 @@ starts, upgrades, or waits. See
 [docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) and the
 [v0.7.97-alpha.4 release notes](docs/release.md#v0797-alpha4-release-preparation).
 Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2/alpha.3 contract is
+retained.
+
+**v0.7.97-alpha.9 release:** Checks Session admission through canonical
+identity metadata instead of loading complete historical transcripts, so a
+readable metadata header with an unreadable body (for example a Windows
+ERROR_CRC surfacing as EIO) no longer blocks unrelated Run listing, daemon
+inspection, or idle-exit inspection, with admission reuse fenced to initialized Actor controllers so
+`protected` exit receipts for other clients' work are preserved. See the
+[v0.7.97-alpha.9 release notes](docs/release.md#v0797-alpha9-release-preparation).
+Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.8 contract is
+retained.
+
+**v0.7.97-alpha.8 release:** Ships the Artifact SDK inside the single main
+package — `@kodax-ai/kodax` gains `/artifacts`, `/artifacts/client`,
+`/artifacts/runtime` and `/artifacts/kodax` subpath exports; the workspace
+module turns private (no separate artifacts npm package), its pinned
+dependencies declare in the root package, and the declared Node floor
+advances to 20.16, with tarball-audit and installed-package Release gates.
+See the
+[v0.7.97-alpha.8 release notes](docs/release.md#v0797-alpha8-release-preparation).
+Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.7 contract is
+retained.
+
+**v0.7.97-alpha.7 release:** Resolves shared-Session Host ownership across
+daemon profiles (Space #222) — launchers wait for a starting owner's verified
+descriptor within the original startup deadline, reuse compatible Hosts
+without restarting work, and permit only a guarded same-build orphan-exit
+policy refresh. Structured owner/profile and upgrade-blocker diagnostics
+publish, and daemon startup and connection timeouts surface as retryable
+`daemon_startup_failed` and `ETIMEDOUT` failures. Idle interactive Hosts
+retire after a bounded 30-second lifetime while explicit daemon/A2A service
+owners are retained, concurrent CLI starts recognize a starting daemon as
+the existing owner, and Windows SDK attachment reads targeted exact process
+identities within the original startup controls. See the
+[v0.7.97-alpha.7 release notes](docs/release.md#v0797-alpha7-release-preparation).
+Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.6 contract is
+retained.
+
+**v0.7.97-alpha.6 release:** Streamlines shared-Host startup — historical
+child recovery runs once under the owner fences and preflight projects
+canonical Actor metadata without loading transcripts — and orders `kodax -r`,
+Host, and SDK Session lists by genuine recent message activity with an
+optional `lastMessageAt`. New REPL Sessions stay Host-local drafts until the
+first accepted input is saved (Issue 368, the CLI requires `sessionDrafts:1`),
+restored views preserve user image attachments, and concurrent resume
+launchers recover from transient inspection conflicts while refreshing an
+older Host without replaying shutdown or business requests (Issue 369). See
+the [v0.7.97-alpha.6 release notes](docs/release.md#v0797-alpha6-release-preparation).
+Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.5 contract is
 retained.
 
 **v0.7.97-alpha.5 release:** Ships FEATURE_301's unified Artifact SDK and
@@ -1372,12 +1426,12 @@ kodax --repo-intelligence full --repo-intelligence-trace
 
 ## Architecture
 
-KodaX uses a **monorepo architecture** with npm workspaces. Four core packages ship in `@kodax-ai/kodax` with 13 SDK subpath exports (`/agent`, `/llm`, `/coding`, `/media`, `/repl`, `/skills`, `/mcp`, `/session`, `/client`, `/runtime`, `/sandbox`, `/a2a`, `/experimental-memory`; ADR-024 + ADR-032 + ADR-038, with ADR-036 consolidation). The independent optional `@kodax-ai/artifacts` package adds PPTX authoring/limited edits, PDF/image/SVG evidence, candidate DOCX preview, local HTML/SMIL capture, preparation and binary evidence reading. Core startup does not load renderers; the KodaX bridge uses managed permissions, sandbox and cancellation. [SDK support and limits](docs/ARTIFACT_SDK.md).
+KodaX uses a **monorepo architecture** with npm workspaces. Four core packages ship in `@kodax-ai/kodax` with 17 SDK subpath exports (`/agent`, `/llm`, `/coding`, `/media`, `/repl`, `/skills`, `/mcp`, `/session`, `/client`, `/runtime`, `/sandbox`, `/a2a`, `/experimental-memory`, `/artifacts`, `/artifacts/client`, `/artifacts/runtime`, `/artifacts/kodax`; ADR-024 + ADR-032 + ADR-038, with ADR-036 consolidation). The private `artifacts` source workspace adds optional APIs through the same main npm package: PPTX authoring/limited edits, PDF/image/SVG evidence, candidate DOCX preview, local HTML/SMIL capture, preparation and binary evidence reading. Core startup does not load renderers; the KodaX bridge uses managed permissions, sandbox and cancellation. [SDK support and limits](docs/ARTIFACT_SDK.md).
 
 ```
 KodaX/
 ├── packages/                # 4 core packages + optional artifacts
-│   ├── artifacts/           # Independent Artifact SDK + optional managed KodaX adapter
+│   ├── artifacts/           # Private Artifact SDK workspace; main-package subpaths
 │   ├── llm/                 # @kodax-ai/llm - LLM abstraction (16 built-in provider aliases)
 │   │   └── providers/       # Anthropic, OpenAI, DeepSeek, Kimi, MiMo, MiniMax, Zhipu, Ark, …
 │   │
@@ -1447,10 +1501,10 @@ Source-side workspace package names (`@kodax-ai/*`). npm consumers install the s
 
 KodaX has two layers that consumers should understand separately:
 
-- **Source-side**: 4 workspace packages above (what developers see when reading the repo).
-- **Current packaged exports** (not a claim of npm availability): a single bundled package `@kodax-ai/kodax` with 13 SDK subpaths (what SDK consumers `import` from). The subpaths are split into two roles:
+- **Source-side**: 4 core workspace packages plus the private Artifact workspace (what developers see when reading the repo).
+- **Current packaged exports** (not a claim of npm availability): a single bundled package `@kodax-ai/kodax` with 17 SDK subpaths (what SDK consumers `import` from). The subpaths are split into two roles:
   - **Full-package subpaths** (`/agent`, `/llm`, `/coding`, `/repl`) — each one maps 1:1 to a source workspace and exposes its complete public API.
-  - **Integration and narrow subpaths** (`/media`, `/skills`, `/mcp`, `/session`, `/client`, `/runtime`, `/sandbox`, `/a2a`, `/experimental-memory`) — focused host surfaces. `/a2a` composes the neutral F258 plane with the Runtime facade; it does not add A2A wire types to `/agent`.
+  - **Integration and narrow subpaths** (`/media`, `/skills`, `/mcp`, `/session`, `/client`, `/runtime`, `/sandbox`, `/a2a`, `/experimental-memory`, `/artifacts`, `/artifacts/client`, `/artifacts/runtime`, `/artifacts/kodax`) — focused host surfaces. `/a2a` composes the neutral F258 plane with the Runtime facade; it does not add A2A wire types to `/agent`.
 
 | Source package | npm subpath | Type | What you get | Example consumer |
 |---|---|---|---|---|
@@ -1798,7 +1852,7 @@ kodax --session my-project "Summarize it"
 kodax --session my-project "How should I fix the first issue?"
 
 # Session management
-kodax -r                    # Search, page, and select a non-empty session
+kodax -r                    # Search and page sessions, most recent conversation first
 kodax -r <session-id>       # Resume a known session directly
 kodax -r "Review runtime"   # Resume a unique exact title; duplicates open the picker
 kodax --session list        # List up to 50 non-empty sessions
@@ -2057,11 +2111,11 @@ await runKodaX({
 
 ## SDK Usage
 
-This development tree exposes 13 SDK subpaths plus the root. Shared product
+This development tree exposes 17 SDK subpaths plus the root. Shared product
 applications use `@kodax-ai/kodax/client`; independent libraries and trusted Host
 APIs remain available through the other subpaths. See the [Client contract](docs/CLIENT_CONTRACT.md)
 and [SDK migration guide](docs/SDK_MIGRATION.md). This documentation was checked
-against package version `0.7.97-alpha.5`; npm publication is separate from
+against package version `0.7.97-alpha.9`; npm publication is separate from
 the current development-tree contract.
 
 ```bash

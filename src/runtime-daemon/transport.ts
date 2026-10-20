@@ -59,6 +59,7 @@ export interface RuntimeDaemonSocketServer {
 
 export interface RuntimeDaemonSocketClientTransportOptions {
   readonly connectTimeoutMs?: number;
+  readonly signal?: AbortSignal;
   readonly maxFrameBytes?: number;
 }
 
@@ -183,13 +184,14 @@ export async function createRuntimeDaemonSocketClientTransport(
   endpoint: RuntimeDaemonEndpoint,
   options: RuntimeDaemonSocketClientTransportOptions = {},
 ): Promise<RuntimeDaemonClientTransport> {
+  options.signal?.throwIfAborted();
   const socket = net.createConnection(endpoint.path);
   socket.setEncoding('utf8');
   const socketClosed = new Promise<void>((resolve) => {
     socket.once('close', () => resolve());
   });
 
-  await waitForConnect(socket, options.connectTimeoutMs);
+  await waitForConnect(socket, options.connectTimeoutMs, options.signal);
 
   const maxFrameBytes = options.maxFrameBytes ?? RUNTIME_DAEMON_MAX_FRAME_BYTES;
   let closed = false;
@@ -635,18 +637,21 @@ function assertFrameByteSize(actualBytes: number, maxFrameBytes: number): void {
   );
 }
 
-function waitForConnect(socket: net.Socket, timeoutMs = 2_000): Promise<void> {
+function waitForConnect(socket: net.Socket, timeoutMs = 2_000, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       cleanup();
       socket.destroy();
-      reject(new Error('Timed out connecting to runtime daemon.'));
+      reject(Object.assign(new Error('Timed out connecting to runtime daemon.'), {
+        code: 'ETIMEDOUT' as const,
+      }));
     }, timeoutMs);
     timer.unref?.();
     const cleanup = (): void => {
       clearTimeout(timer);
       socket.off('connect', onConnect);
       socket.off('error', onError);
+      signal?.removeEventListener('abort', onAbort);
     };
     const onConnect = (): void => {
       cleanup();
@@ -656,8 +661,15 @@ function waitForConnect(socket: net.Socket, timeoutMs = 2_000): Promise<void> {
       cleanup();
       reject(error);
     };
+    const onAbort = (): void => {
+      cleanup();
+      socket.destroy();
+      reject(signal?.reason);
+    };
     socket.once('connect', onConnect);
     socket.once('error', onError);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
 }
 

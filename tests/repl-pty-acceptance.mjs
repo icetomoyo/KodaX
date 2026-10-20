@@ -27,6 +27,8 @@ const queueBoundaryOnly = process.argv.includes('--queue-boundary-only');
 const consumerOnly = process.argv.includes('--consumer-only');
 const exposureOnly = process.argv.includes('--exposure-only');
 const promptScrollOnly = process.argv.includes('--prompt-scroll-only');
+const streamingScrollOnly = process.argv.includes('--streaming-scroll-only');
+const checkpointResumeOnly = process.argv.includes('--checkpoint-resume-only');
 const modelNoticesOnly = process.argv.includes('--model-notices-only');
 process.stdout.write(`Artifacts: ${artifacts}\n`);
 
@@ -168,6 +170,11 @@ async function respondToModelRequest(state, request, response) {
       usage: { prompt_tokens: 50, completion_tokens: 10, total_tokens: 60 },
     })}\n\ndata: [DONE]\n\n`);
   };
+  if (token === 'ACCEPT_CHECKPOINT_HOLD') {
+    response.flushHeaders();
+    state.pending.set(token, finish);
+    return;
+  }
   if (token === 'ACCEPT_HOLD_PAINT') {
     send(Array.from({ length: 80 }, (_, index) => index + '\t' + 'BODY_中文 '.repeat(45)).join('\n') + '\n');
   }
@@ -424,6 +431,17 @@ async function check(state, name, action) {
   process.stdout.write(`PASS ${state.mode}: ${name}\n`);
 }
 
+async function displayedSessionId(state, previousId) {
+  if (state.mode === 'classic') await state.terminal.submit('/status');
+  return waitFor('displayed Session identity', () => {
+    const screen = state.terminal.screen();
+    const id = state.mode === 'ink'
+      ? screen.match(/\bsession\s+(\d{8}_\d{6}_[a-z0-9]+)/i)?.[1]
+      : [...screen.matchAll(/Session ID:\s+([a-z0-9_]+)/gi)].at(-1)?.[1];
+    return id && id !== previousId ? id : undefined;
+  });
+}
+
 async function checkStartup(state) {
   await waitFor('interactive ready', () => /acceptance-local|acceptance-model/.test(state.terminal.screen()), 45_000);
   state.client = await waitFor('Host connection', async () => {
@@ -433,10 +451,11 @@ async function checkStartup(state) {
       return undefined; // The banner may precede the socket opening.
     }
   });
-  await waitFor('cold-start Host session', async () => (await state.client.sessions.list()).length === 1);
-  const [session] = await state.client.sessions.list();
-  state.originalSessionId = session.id;
-  await observeSession(state, session.id);
+  state.originalSessionId = await displayedSessionId(state);
+  assert.equal((await state.client.sessions.read(state.originalSessionId)).id, state.originalSessionId);
+  assert.equal((await state.client.sessions.list()).length, state.fixtureSessionId ? 1 : 0,
+    'Unsubmitted startup drafts must not enter history');
+  await observeSession(state, state.originalSessionId);
   await delay(1000);
   await assertSelectedSettings(state);
 }
@@ -960,10 +979,10 @@ async function checkNewSession(state) {
     assert.equal((await state.client.sessions.list()).length, 1, 'Confirmation must precede creation');
     await state.terminal.type('y');
   }
-  const next = await waitFor('new Host session', async () =>
-    (await state.client.sessions.list()).find(session => session.id !== state.originalSessionId));
-  assert.notEqual(next.id, state.originalSessionId);
-  await observeSession(state, next.id);
+  const nextId = await displayedSessionId(state, state.originalSessionId);
+  assert.equal((await state.client.sessions.read(nextId)).id, nextId);
+  assert.equal((await state.client.sessions.list()).length, 1, 'Unsubmitted /new drafts must not enter history');
+  await observeSession(state, nextId);
   await waitFor('new-session terminal ready', () => state.mode === 'ink'
     ? /^>\s+Type a message/m.test(state.terminal.screen())
     : /^kodax:.*>\s*$/.test(state.terminal.cursorLine()));
@@ -1038,6 +1057,99 @@ async function checkPromptScroll(state) {
   await waitFor('ordinary prompt returns to latest', () => state.terminal.screen().includes('PROMPT_SCROLL_23'), 5000);
   assert.ok(state.terminal.screen().includes('UNSUBMITTED_SCROLL_DRAFT'), 'History scrolling must preserve the draft');
   await state.terminal.type('\x15');
+}
+
+async function seedStreamingScrollHistory(state) {
+  const { FileSessionStorage } = await import('../dist/sdk-repl.js');
+  const storage = new FileSessionStorage({ sessionsDir: path.join(state.homeDir, '.kodax', 'sessions'),
+    configHome: path.join(state.homeDir, '.kodax') });
+  state.fixtureSessionId = '20261017_000000_scrollprobe';
+  await storage.save(state.fixtureSessionId, { title: 'Streaming scroll fixture', gitRoot: state.homeDir,
+    messages: Array.from({ length: 90 }, (_, index) => [
+      { role: 'user', inputId: `query-${index}`, content: `SAVED_QUERY_${index}`, timestamp: '2026-10-16T00:00:00.000Z' },
+      { role: 'assistant', outputId: `reply-${index}`, content: `SAVED_REPLY_${index}\n${'Saved history body '.repeat(25)}`,
+        timestamp: '2026-10-16T00:00:01.000Z' },
+    ]).flat() });
+}
+
+async function checkStreamingPromptScroll(state) {
+  await state.terminal.submit('ACCEPT_HOLD_TRANSCRIPT');
+  await waitFor('streaming scroll reply', () => state.terminal.screen().includes('BEGIN_ACCEPT_HOLD_TRANSCRIPT'));
+  const grow = setInterval(() => state.pending.get('grow')?.(), 60);
+  const frames = [];
+  let reached = false;
+  try {
+    for (let tick = 0; tick < 240; tick += 1) {
+      state.terminal.child.write('\x1b[<64;20;8M');
+      await delay(35);
+      const screen = state.terminal.screen();
+      const queries = [...screen.matchAll(/SAVED_QUERY_(\d+)/g)].map(match => Number(match[1]));
+      const banner = screen.includes('AI Coding Agent');
+      frames.push({ tick, queries, banner });
+      reached = queries.includes(0);
+      assert.ok(!banner || queries.length === 0 || reached,
+        'Paging must not flash the session banner at the start of an intermediate saved page');
+      if (reached) break;
+    }
+    assert.ok(reached, 'Mouse wheel must reach the original saved query while output continues');
+    const body = state.terminal.screen().split('\n').slice(0, 20).join('\n');
+    await delay(500);
+    assert.equal(state.terminal.screen().split('\n').slice(0, 20).join('\n'), body,
+      'Streaming output must preserve the reading position');
+  } finally {
+    clearInterval(grow);
+    state.pending.get('ACCEPT_HOLD_TRANSCRIPT')?.();
+    await writeFile(path.join(artifacts, `${state.mode}-streaming-scroll-frames.json`), JSON.stringify(frames, null, 2));
+  }
+  await waitFor('streaming scroll round settlement', () => state.view.runs.every(run => run.phase === 'completed'));
+  await state.terminal.type('\x1b[F');
+  assert.equal(received(state, 'ACCEPT_HOLD_TRANSCRIPT').length, 1, 'Browsing must not resubmit the input');
+}
+
+async function seedCheckpointResumeHistory(state) {
+  const { FileSessionStorage } = await import('../dist/sdk-repl.js');
+  const storage = new FileSessionStorage({ sessionsDir: path.join(state.homeDir, '.kodax', 'sessions'),
+    configHome: path.join(state.homeDir, '.kodax') });
+  state.fixtureSessionId = '20261017_000000_checkpoint';
+  const messages = [{ role: 'user', inputId: 'old-query', content: 'ACCEPT_CHECKPOINT_HOLD' }];
+  const uiHistory = [];
+  for (let index = 0; index < 55; index += 1) {
+    messages.push(
+      { role: 'assistant', outputId: `saved-output-${index}`, content: [
+        { type: 'thinking', thinking: `Saved reasoning ${index}` },
+        { type: 'text', text: `CHECKPOINT_SAVED_ANSWER_${index}` },
+        { type: 'tool_use', id: `saved-call-${index}`, name: 'read', input: { path: 'fixture.txt' } },
+      ] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: `saved-call-${index}`, content: `Saved result ${index}` }] },
+    );
+    uiHistory.push({ type: 'tool_group', afterInputId: 'old-query', tools: [{ id: `saved-call-${index}`,
+      assistantOutputId: `saved-output-${index}`, name: 'read', status: 'success', output: `Saved result ${index}` }] });
+  }
+  await storage.save(state.fixtureSessionId, { messages, uiHistory, gitRoot: state.homeDir });
+}
+
+async function checkCheckpointResumeSubmit(state) {
+  await state.terminal.resize(220, 64);
+  await waitFor('previous checkpoint round visible', () => state.terminal.screen().includes('CHECKPOINT_SAVED_ANSWER_54'));
+  // Paste the original query text after browsing; keep the OS clipboard untouched.
+  for (let tick = 0; tick < 100 && !state.terminal.screen().includes('ACCEPT_CHECKPOINT_HOLD'); tick += 1) {
+    state.terminal.child.write('\x1b[<64;20;8M');
+    await delay(35);
+  }
+  assert.ok(state.terminal.screen().includes('ACCEPT_CHECKPOINT_HOLD'), 'The original query must remain browsable');
+  await state.terminal.type('\x1b[200~ACCEPT_CHECKPOINT_HOLD\x1b[201~');
+  await state.terminal.type('\r');
+  await waitFor('checkpoint input accepted', () => state.pending.has('ACCEPT_CHECKPOINT_HOLD'));
+  try {
+    await delay(400);
+    await state.terminal.save('checkpoint-new-query');
+    assert.ok(state.terminal.screen().includes('CHECKPOINT_SAVED_ANSWER_54'),
+      'Submitting from saved history must retain the preceding round instead of displaying only the new query');
+    assert.ok(state.view.items.length <= 150 && state.view.items.length > 1, 'The Host window must remain bounded and populated');
+    assert.equal(new Set(state.view.items.map(item => item.id)).size, state.view.items.length);
+    assert.equal(received(state, 'ACCEPT_CHECKPOINT_HOLD').length, 1, 'Pasting the old query must submit only once');
+  } finally { state.pending.get('ACCEPT_CHECKPOINT_HOLD')?.(); }
+  await waitFor('checkpoint round settles', () => state.view.runs.every(run => run.phase === 'completed'));
 }
 
 async function checkShortPromptScroll(state) {
@@ -1246,13 +1358,25 @@ async function run(mode) {
     // The source Host launcher resolves its --import tsx from the project cwd.
     if (sourceEntry) await symlink(path.join(repo, 'node_modules'), path.join(state.homeDir, 'node_modules'), 'junction');
     await setupHostCommands(state);
-    state.terminal = openTerminal(state.homeDir, mode);
+    if (streamingScrollOnly) await seedStreamingScrollHistory(state);
+    if (checkpointResumeOnly) await seedCheckpointResumeHistory(state);
+    state.terminal = openTerminal(state.homeDir, mode, state.fixtureSessionId ? ['--resume', state.fixtureSessionId] : []);
     await check(state, 'startup', checkStartup);
-    if (mode === 'ink' && !modelNoticesOnly && !longHistoryOnly && !queueBoundaryOnly && !consumerOnly && !exposureOnly) {
+    if (mode === 'ink' && !checkpointResumeOnly && !streamingScrollOnly && !modelNoticesOnly && !longHistoryOnly && !queueBoundaryOnly && !consumerOnly && !exposureOnly) {
       await check(state, 'short-history-wheel-return-to-live', checkShortPromptScroll);
     }
     if (modelNoticesOnly) {
       await check(state, 'model-command-visible-feedback', checkModelNotices);
+      await check(state, 'exit', checkExit);
+      return;
+    }
+    if (streamingScrollOnly) {
+      await check(state, 'streaming-prompt-saved-history-scroll', checkStreamingPromptScroll);
+      await check(state, 'exit', checkExit);
+      return;
+    }
+    if (checkpointResumeOnly) {
+      await check(state, 'checkpoint-resume-browse-paste-submit', checkCheckpointResumeSubmit);
       await check(state, 'exit', checkExit);
       return;
     }
@@ -1323,8 +1447,8 @@ async function run(mode) {
 }
 
 try {
-  const requestedModes = process.argv.slice(2).filter(argument => !['--source', '--long-history-only', '--queue-boundary-only', '--consumer-only', '--exposure-only', '--prompt-scroll-only', '--model-notices-only'].includes(argument));
-  const modes = requestedModes.length ? requestedModes : longHistoryOnly || queueBoundaryOnly || promptScrollOnly || modelNoticesOnly ? ['ink'] : ['ink', 'classic'];
+  const requestedModes = process.argv.slice(2).filter(argument => !['--source', '--long-history-only', '--queue-boundary-only', '--consumer-only', '--exposure-only', '--prompt-scroll-only', '--streaming-scroll-only', '--checkpoint-resume-only', '--model-notices-only'].includes(argument));
+  const modes = requestedModes.length ? requestedModes : longHistoryOnly || queueBoundaryOnly || promptScrollOnly || streamingScrollOnly || checkpointResumeOnly || modelNoticesOnly ? ['ink'] : ['ink', 'classic'];
   assert.ok(modes.every(mode => ['ink', 'classic'].includes(mode)), 'Modes must be ink or classic');
   for (const mode of modes) await run(mode);
 } catch (error) {

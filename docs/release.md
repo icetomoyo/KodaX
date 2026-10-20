@@ -136,6 +136,172 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.97-alpha.9 release preparation
+
+Release state: `v0.7.97-alpha.9` is the GitHub pre-release for the exact
+tagged commit — the ninth alpha of the v0.7.97 line, shipping the
+canonical-metadata Session admission fix. The tag-triggered Release
+workflow runs the full reusable CI workflow before the build matrix; branch
+pushes do not trigger CI, so the tag is the first and only remote validation
+gate. The `-alpha` suffix marks the release as a GitHub pre-release
+automatically. npm registry publication remains a separate manual maintainer
+action.
+
+On top of v0.7.97-alpha.8 it includes:
+
+- Canonical-metadata Session admission: shared Host Run inspection checks
+  admission through canonical identity metadata instead of loading complete
+  historical transcripts. A readable metadata header with an unreadable body
+  (for example a Windows ERROR_CRC surfacing as EIO on damaged storage) no
+  longer blocks unrelated Run listing, daemon inspection, or idle-exit
+  inspection. Unreadable metadata still fails closed, active/unknown Runs
+  and Actor turns still block exit, and explicitly opening the affected
+  Session still reports its read error. The fix isolates the software
+  failure; it does not repair damaged storage or the affected Session.
+- Fenced admission reuse: Session admission during shared Host inspection
+  reuses controller state only for initialized Actor controllers that still
+  hold their owner fence (matching Actor preflight), avoiding races with
+  live persistence and trailing saves after Run completion while preserving
+  `protected` exit receipts for other clients' work; unclaimed or released
+  Sessions retain strict canonical metadata checks
+  (`docs/test-guides/ISSUE_222_v0.7.97-alpha.9_REGRESSION_GUIDE.md`).
+
+All root/workspace package versions and lockfile entries are
+`0.7.97-alpha.9`. The feature-design submodule, public guides, architecture
+documents, and `kodax_manual` track this release.
+
+## v0.7.97-alpha.8 release preparation
+
+Release state: `v0.7.97-alpha.8` is the GitHub pre-release for the exact
+tagged commit — the eighth alpha of the v0.7.97 line, shipping the
+single-package Artifact distribution revision. The tag-triggered Release
+workflow runs the full reusable CI workflow before the build matrix; branch
+pushes do not trigger CI, so the tag is the first and only remote validation
+gate. The `-alpha` suffix marks the release as a GitHub pre-release
+automatically. npm registry publication remains a separate manual maintainer
+action.
+
+On top of v0.7.97-alpha.7 it includes:
+
+- Artifact SDK inside the single main package: `@kodax-ai/kodax` exposes
+  `/artifacts`, `/artifacts/client`, `/artifacts/runtime` and
+  `/artifacts/kodax`; `packages/artifacts` turns private with no separate
+  npm publication, and `release.mjs` rejects `--artifacts`.
+- Distribution integrity: the bundle build stages the existing
+  module/worker/resource layout under `dist/artifacts/`; the tarball audit
+  validates every export/entry/dependency; the Release workflow runs the
+  installed-package Artifact gate (`tests/packed-artifacts.test.mjs`) on the
+  packed candidate.
+- Declared Node floor advances from 20.0 to 20.16 (the existing Artifact
+  runtime floor); the CI matrix comment records that the core source
+  workspaces retain 20.0 while the root/Artifact floor is 20.16.
+
+All root/workspace package versions and lockfile entries are
+`0.7.97-alpha.8`. The feature-design submodule, public guides, architecture
+documents, and `kodax_manual` track this release.
+
+## v0.7.97-alpha.7 release preparation
+
+Release state: `v0.7.97-alpha.7` is the GitHub pre-release for the exact
+tagged commit — the seventh alpha of the v0.7.97 line, shipping the Space
+#222 shared-Session Host ownership resolution and the structured retryable
+daemon startup/connection timeouts. The tag-triggered Release workflow runs
+the full reusable CI workflow before the build matrix; branch pushes do not
+trigger CI, so the tag is the first and only remote validation gate. The
+`-alpha` suffix marks the release as a GitHub pre-release automatically.
+npm registry publication remains a separate manual maintainer action.
+
+On top of v0.7.97-alpha.6 it includes:
+
+- Shared-Session Host ownership resolution: the launcher resolves the daemon
+  that owns the canonical Session directory across daemon profiles before
+  startup, waits for a starting owner's verified descriptor within the
+  original startup deadline and cancellation signal, and rechecks ownership
+  if a peer wins during bootstrap (`session_storage_owned` is retryable).
+- Safe Host reuse and guarded policy refresh: compatible Hosts are reused
+  without restarting work; only a same-build orphan-exit policy refresh is
+  permitted, retaining active-work preflight, exact owner identity, and
+  process-exit verification.
+- Structured diagnostics and retryable timeouts: owner/profile and
+  upgrade-blocker diagnostics publish; daemon startup failures expose
+  retryable `daemon_startup_failed` (`timeout`/`unhealthy`) and daemon
+  connection timeouts surface as `ETIMEDOUT`, so clients can retry without
+  losing state.
+- Bundle gate growth: `test:bundle` now includes bundled real-process
+  shared-Host recovery (`tests/bundled-shared-host-recovery.test.mjs`).
+- Bounded Windows startup cleanup: the automatic historical child sweep keeps
+  unverifiable incomplete Run trees `unknown` instead of launching a
+  PowerShell termination helper per old record — a helper storm that
+  invalidated the shared process snapshot and made startup cost grow with
+  history (24-record fixture: 11,069ms/48 helpers before, 10ms/none after);
+  exact-handle Run recovery and verified live-descendant cleanup are
+  preserved (`9fd4f426`).
+- Bounded Windows SDK attachment work: fresh PID identity checks read targeted
+  exact FILETIME identities instead of full process-table scans, the original
+  startup deadline passes through readiness and attachment, discovery past
+  its boundary no longer opens leases, and a concurrent CLI start recognizes
+  a starting daemon as the existing owner (`already_running`).
+- Idle interactive Host lifetime: interactive Hosts retire after the accepted
+  30-second idle window while explicit daemon `start` and A2A-serving owners
+  are retained in place; idle exit is fenced on pending maintenance and
+  tracked background work without breaking explicit shutdown contracts.
+- Session/history repairs: restored Sessions keep the preceding turn visible
+  across the display-window limit, and saved history with a pending final
+  tool result reads without false history-change conflicts.
+- Queued Run drainage: a Run admitted while its predecessor drains now starts
+  exactly once instead of stranding after an empty-queue drain.
+
+All root/workspace package versions and lockfile entries are
+`0.7.97-alpha.7`. The feature-design submodule, public guides, architecture
+documents, and `kodax_manual` track this release.
+
+## v0.7.97-alpha.6 release preparation
+
+Release state: `v0.7.97-alpha.6` is the GitHub pre-release for the exact
+tagged commit — the sixth alpha of the v0.7.97 line, shipping the Host
+startup streamlining and Session recency ordering, REPL draft admission
+(Issue 368), preserved user image attachments in restored views, and the
+concurrent-launch Host-refresh recovery (Issue 369). The tag-triggered
+Release workflow runs the full reusable CI workflow before the build matrix;
+branch pushes do not trigger CI, so the tag is the first and only remote
+validation gate. The `-alpha` suffix marks the release as a GitHub
+pre-release automatically. npm registry publication remains a separate
+manual maintainer action.
+
+On top of v0.7.97-alpha.5 it includes:
+
+- Streamlined shared-Host startup: historical child recovery runs once under
+  the Host and storage owner fences with exact local-child cleanup retained,
+  Windows identity queries batch, and preflight projects canonical Actor
+  metadata for admitted active Sessions without loading transcripts or
+  weakening owner and writer checks.
+- Session recency ordering: `kodax -r`, Host, and SDK Session lists order by
+  genuine recent message activity and expose an optional `lastMessageAt`;
+  creation-time filters, compaction/fork provenance, and cursor boundaries
+  are preserved.
+- REPL draft admission (Issue 368): new Sessions stay Host-local drafts until
+  the first accepted user input is saved; initial inputs and settings persist
+  before Runs dispatch, restarts preserve settings, and failed promotion
+  retries reuse the canonical input. The CLI requires `sessionDrafts:1`.
+- Preserved user image attachments: restored views resolve attachments by the
+  original inputId, retaining item identity, order, and text.
+- Concurrent-launch Host-refresh recovery (Issue 369): initialization and the
+  read-only pre-upgrade inspection retry after releasing temporary clients;
+  randomized backoff accounts for the previous inspection duration under the
+  original startup deadline; shutdown and business requests are never
+  replayed, and corrupt data, invalid frames, passive connects, and unverified
+  live owners keep their boundaries.
+- `relationship_scan.depth` is declared as an integer range from 1 to 3 for
+  cross-protocol tool schema compatibility.
+- Artifact bundle acceptance requires prepared Chromium: PPT render/hash and
+  AMA image assertions always run, and a missing or unusable runtime fails
+  the gate instead of being skipped (`tests/bundled-artifacts.test.mjs`,
+  `docs/test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md`).
+
+All root/workspace package versions and lockfile entries are
+`0.7.97-alpha.6`. The feature-design submodule, public guides, architecture
+documents, and `kodax_manual` track this release.
+
 ## v0.7.97-alpha.5 release preparation
 
 Release state: `v0.7.97-alpha.5` is the GitHub pre-release for the exact

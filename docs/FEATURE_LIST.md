@@ -11,15 +11,16 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-alpha.5` (Git tag / GitHub pre-release); `v0.7.96` remains the last stable release |
-| Current package version | `@kodax-ai/kodax@0.7.97-alpha.5` (npm publication remains manual) |
-| Workspace baseline | `llm / agent / coding / repl` 4 core packages + independent optional `artifacts` |
-| Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
-| Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement released in alpha.4; missing visual capabilities remain unverified; [decision](ADR.md#2026-10-11--main-agent-result-verification-replaces-sidecar-verifier) |
+| Current released version | `v0.7.97-alpha.9` (Git tag / GitHub pre-release); `v0.7.96` remains the last stable release |
+| Current package version | `@kodax-ai/kodax@0.7.97-alpha.9` (npm publication remains manual) |
+| Workspace baseline | `llm / agent / coding / repl` 4 core packages + private optional `artifacts` source workspace; one public npm package |
+| Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3` and extended with startup streamlining, Session recency ordering, draft admission, concurrent-launch recovery and shared-Session Host ownership resolution through `v0.7.97-alpha.7`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
+| Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement released in alpha.4; missing visual capabilities remain unverified; [design](ADR.md#verification-responsibility-and-tradeoffs) |
+| Artifact distribution revision | `2026-10-18` — one `@kodax-ai/kodax` npm package; four `/artifacts` subpaths and resources staged in the main tarball; local implementation, not yet published |
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
 | Current development | `v0.7.97` / `FEATURE_298` — cross-platform/manual release verification for the alpha continues |
 | Roadmap updated | `2026-09-23` — FEATURE_300 planned for `v0.7.99`; implementation not started |
-| Artifact SDK | `2026-10-13` — subsequent implementation (unreleased): complete preparation/evidence-read SDK and existing Host bridge; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
+| Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
 | Total tracked features | `85` |
 | InProgress | `2` |
 | Planned | `17` |
@@ -523,6 +524,74 @@
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
 ---
+
+## v0.7.97-alpha.9 Release Record
+
+`v0.7.97-alpha.9` is the ninth alpha of the v0.7.97 line: shared Host Run
+inspection checks Session admission through canonical identity metadata
+instead of loading complete historical transcripts. A readable metadata
+header with an unreadable body (for example a Windows ERROR_CRC surfacing
+as EIO) no longer blocks unrelated Run listing, daemon inspection, or
+idle-exit inspection; unreadable metadata still fails closed, active or
+unknown Runs and Actor turns still block exit, and explicitly opening the
+affected Session still reports its read error. Every v0.7.96 stable and
+v0.7.97-alpha.1 through alpha.8 contract is retained. Cross-platform
+manual acceptance and npm publication remain manual maintainer steps.
+
+## v0.7.97-alpha.8 Release Record
+
+`v0.7.97-alpha.8` is the eighth alpha of the v0.7.97 line: the Artifact SDK
+ships inside the single main package. `@kodax-ai/kodax` gains
+`/artifacts`, `/artifacts/client`, `/artifacts/runtime` and
+`/artifacts/kodax` subpath exports; the workspace module turns private,
+its pinned dependencies declare in the root package, and the declared Node
+floor advances to 20.16. The main tarball stages the existing
+module/worker/resource layout under `dist/artifacts/`, the tarball audit
+validates every export/entry/dependency, the Release workflow runs an
+installed-package Artifact gate, and `release.mjs` rejects a separate
+`--artifacts` publication. Core startup stays free of renderer loading and
+probes. Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.7 contract
+is retained. Cross-platform manual acceptance and npm publication remain
+manual maintainer steps.
+
+## v0.7.97-alpha.7 Release Record
+
+`v0.7.97-alpha.7` is the seventh alpha of the v0.7.97 line: shared-Session
+Host ownership resolves across daemon profiles (Space #222) — the launcher
+finds the daemon that owns the canonical Session directory before startup,
+waits for a starting owner's verified descriptor within the original startup
+deadline and cancellation signal, and rechecks ownership if a peer wins
+during bootstrap. Compatible Hosts are reused without restarting work; only
+a guarded same-build orphan-exit policy refresh is permitted, retaining
+active-work preflight, exact owner identity, and process-exit verification.
+Structured owner/profile and upgrade-blocker diagnostics publish, and daemon
+startup and connection timeouts surface as retryable `daemon_startup_failed`
+and `ETIMEDOUT` failures. Concurrent CLI starts recognize a starting daemon as the existing
+owner; idle interactive Hosts retire after the accepted 30-second lifetime
+while explicit daemon/A2A service owners are retained; Windows SDK
+attachment reads targeted exact process identities within the original
+startup controls; queued Runs drain instead of stranding; and restored
+Sessions keep visible history across the display-window limit. The continuous `test:bundle` gate now includes
+bundled real-process shared-Host recovery. Every v0.7.96 stable and
+v0.7.97-alpha.1 through alpha.6 contract is retained. Cross-platform manual
+acceptance and npm publication remain manual maintainer steps.
+
+## v0.7.97-alpha.6 Release Record
+
+`v0.7.97-alpha.6` is the sixth alpha of the v0.7.97 line: shared-Host startup
+runs historical child recovery once under the Host and storage owner fences,
+batches Windows identity queries, and projects canonical Actor metadata for
+admitted active Sessions during preflight without loading transcripts;
+`kodax -r`, Host, and SDK Session lists order by genuine recent message
+activity with an optional `lastMessageAt`. New REPL Sessions stay Host-local
+drafts until the first accepted user input is saved (Issue 368, CLI requires
+`sessionDrafts:1`), restored views preserve user image attachments, and
+concurrent resume launchers recover from transient inspection conflicts while
+refreshing an older Host (Issue 369) without replaying shutdown or business
+requests. Artifact bundle acceptance now requires prepared Chromium and never
+counts a missing runtime as a visual pass. Every v0.7.96 stable and
+v0.7.97-alpha.1 through alpha.5 contract is retained. Cross-platform manual
+acceptance and npm publication remain manual maintainer steps.
 
 ## v0.7.97-alpha.5 Release Record
 
@@ -2057,7 +2126,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
-| `301` | Managed Artifact SDK and PPT Review Loop | Initial implementation in `v0.7.97-alpha.4`; unified Artifact SDK additions released in `v0.7.97-alpha.5` | [v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) | Independent optional SDK with nine operations and shared Host execution; PPTX authoring/limited edits, PDF/image/SVG evidence, candidate DOCX and local HTML/SMIL capture. Native Office fidelity and full natural-task model repair/re-review/delivery remain unverified; [current support](ARTIFACT_SDK.md). |
+| `301` | Managed Artifact SDK and PPT Review Loop | Initial implementation in `v0.7.97-alpha.4`; unified Artifact SDK additions released in `v0.7.97-alpha.5` | [v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) | Optional SDK in the single main npm package, with a private source workspace, nine operations and shared Host execution; PPTX authoring/limited edits, PDF/image/SVG evidence, candidate DOCX and local HTML/SMIL capture. Native Office fidelity and full natural-task model repair/re-review/delivery remain unverified; [current support](ARTIFACT_SDK.md). |
 | `299` | Unified Stop, Full Access and Extension Execution Contracts | `v0.7.96` (release pending) | [v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) | Implements legacy large metadata paging, Full Access policy provenance, lock-independent Session Stop, CLI/ACP convergence and managed extension execution with reload isolation. |
 | `297` | Codex-Aligned Permission Profiles, Sandbox Escalation, and Exec Policy | `v0.7.96-alpha.5` | [v0.7.96](features/v0.7.96.md#feature_297-codex-aligned-permission-profiles-sandbox-escalation-and-exec-policy) | Makes sandbox completion authoritative, moves Edits/Auto decisions to an exact host boundary, adds Full Access and JSONC Exec Policy, removes Auto[RULES]/envPass/global-Git blocking, and preserves a single no-replay host retry. |
 | `295` | Separate Trusted Text Mutation from Native Shell Containment | `v0.7.96-alpha.1`; alpha.6 concurrency completion | [v0.7.96](features/v0.7.96.md#feature_295-separate-trusted-text-mutation-from-native-shell-containment) | Splits trusted text transactions from platform shell containment; Issue 326/ADR-070 removes command-lifetime/global/target admission locks, uses protocol 10 + setup generation 10 (with generation 8 retained only as the legacy-migration proof), stable capability SIDs, setup-owned broad roots that are verify-only during ordinary admission, protected two-phase synchronous setup with no overlapping helper, cold interactive startup self-healing through the setup-only boundary, additive command-root convergence, unsupported Windows per-command `denyRead` rejection before target start, independent command Jobs/pipes, OS-arbitrated exact-authority brokers, and a real dual-Runtime overlap gate. |
@@ -2200,4 +2269,4 @@ Initial managed optional Artifact SDK and PPT repair/review loop implemented, te
 
 ## 2026-10-13 Unified Artifact SDK Additions
 
-Commit `27d08788` extends the same execution/evidence seam with public preparation and checked image reading, PDF/PNG/JPEG/WebP/SVG/DOCX rendering, local HTML loaded viewports and SMIL samples. Full regression: 16,589 passed. SDK ready/coverage never certifies visual quality; native DOCX fidelity remains unverified. Automatic GLM/DeepSeek image review was observed, but full repair/re-review/delivery has not passed all smoke checks and model-facing schema gaps remain. See [SDK](ARTIFACT_SDK.md), [accepted design](designs/unified-artifact-sdk.md), [regression guide](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md) and [acceptance boundary](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#automatic-visual-review-acceptance-boundary). This work ships in `v0.7.97-alpha.5`.
+Commit `27d08788` extends the same execution/evidence seam with public preparation and checked image reading, PDF/PNG/JPEG/WebP/SVG/DOCX rendering, local HTML loaded viewports and SMIL samples. Full regression: 16,589 passed. SDK ready/coverage never certifies visual quality; native DOCX fidelity remains unverified. Automatic GLM/DeepSeek image review was observed, but full repair/re-review/delivery has not passed all smoke checks and model-facing schema gaps remain. See [SDK](ARTIFACT_SDK.md), [accepted design](ADR.md#unified-artifact-execution-and-evidence-boundary), [regression guide](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md) and [E2E evidence](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#natural-task-observations-2026-10-13). This work ships in `v0.7.97-alpha.5`.

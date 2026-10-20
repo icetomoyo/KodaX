@@ -10,6 +10,7 @@ import {
   clearRuntimeDaemonShutdownOutcome,
   createRuntimeDaemonToken,
   enableRuntimeDaemonOwner,
+  findRuntimeSessionStorageHost,
   normalizeRuntimeDaemonProfile,
   readRuntimeDaemonShutdownOutcome,
   readRuntimeOwnerPolicy,
@@ -23,6 +24,7 @@ import {
   resolveRuntimeDaemonPaths,
   resolveRuntimeDaemonPathsFromConfigHome,
   tryAcquireRuntimeDaemonLock,
+  tryAcquireRuntimeSessionStorageStartup,
   updateRuntimeOwnerPolicy,
   writeRuntimeDaemonShutdownOutcome,
   writeRuntimeDaemonState,
@@ -79,6 +81,107 @@ function state(overrides: Partial<RuntimeDaemonState> = {}): RuntimeDaemonState 
 }
 
 describe('runtime daemon state paths', () => {
+  it('serializes launchers without taking or replacing the product Host owner', () => {
+    const sessionsDir = path.join(tempHome(), 'sessions');
+    const release = tryAcquireRuntimeSessionStorageStartup(sessionsDir);
+    expect(release).toBeTypeOf('function');
+    const ownerFile = path.join(sessionsDir, '.product-host', 'owner.lock');
+    const activeOwner = JSON.stringify({ runtimeId: 'live-host', pid: process.pid,
+      createdAt: new Date().toISOString(), kind: 'daemon' });
+    fs.writeFileSync(ownerFile, activeOwner);
+    try {
+      expect(tryAcquireRuntimeSessionStorageStartup(sessionsDir)).toBeUndefined();
+      expect(fs.readFileSync(ownerFile, 'utf8')).toBe(activeOwner);
+    } finally { release?.(); }
+    const next = tryAcquireRuntimeSessionStorageStartup(sessionsDir);
+    expect(next).toBeTypeOf('function');
+    next?.();
+    expect(fs.readFileSync(ownerFile, 'utf8')).toBe(activeOwner);
+  });
+
+  it('retains an unreadable startup coordinator instead of assuming it abandoned', () => {
+    const sessionsDir = path.join(tempHome(), 'sessions');
+    const directory = path.join(sessionsDir, '.product-host');
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(path.join(directory, 'startup.lock'), '{unreadable');
+    expect(tryAcquireRuntimeSessionStorageStartup(sessionsDir)).toBeUndefined();
+    expect(fs.readFileSync(path.join(directory, 'startup.lock'), 'utf8')).toBe('{unreadable');
+  });
+
+  it.each(['Z', 'unreadable'] as const)('uses conservative process evidence for a %s startup coordinator', evidence => {
+    const sessionsDir = path.join(tempHome(), 'sessions');
+    const directory = path.join(sessionsDir, '.product-host');
+    fs.mkdirSync(directory, { recursive: true });
+    const file = path.join(directory, 'startup.lock');
+    const raw = JSON.stringify({ runtimeId: 'owner-transition-fixture', nonce: 'fixture',
+      pid: process.pid, createdAt: new Date().toISOString() });
+    fs.writeFileSync(file, raw);
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    const readFile = fsDefault.readFileSync;
+    vi.spyOn(fsDefault, 'readFileSync').mockImplementation(((target, ...args) => {
+      if (target !== `/proc/${process.pid}/stat`) return readFile(target, ...args);
+      if (evidence === 'unreadable') throw Object.assign(new Error('denied'), { code: 'EACCES' });
+      return `${process.pid} (terminated launcher) Z 1 0 0`;
+    }) as typeof fsDefault.readFileSync);
+    syncBuiltinESMExports();
+    const release = tryAcquireRuntimeSessionStorageStartup(sessionsDir);
+    if (evidence === 'Z') { expect(release).toBeTypeOf('function'); release?.(); }
+    else { expect(release).toBeUndefined(); expect(fs.readFileSync(file, 'utf8')).toBe(raw); }
+  });
+
+  it('ignores an unreaped Linux zombie when discovering the shared Session Host', () => {
+    const configHome = path.join(tempHome(), '.kodax');
+    const sessionsDir = path.join(configHome, 'sessions');
+    const owner = { runtimeId: 'zombie-host', pid: process.pid, createdAt: new Date().toISOString(), kind: 'daemon' };
+    const ownerFile = path.join(sessionsDir, '.product-host', 'owner.lock');
+    fs.mkdirSync(path.dirname(ownerFile), { recursive: true });
+    fs.writeFileSync(ownerFile, JSON.stringify(owner));
+    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'default');
+    fs.mkdirSync(paths.rootDir, { recursive: true });
+    fs.writeFileSync(paths.lockFile, JSON.stringify(owner));
+    writeRuntimeDaemonState(paths, state({ runtimeId: owner.runtimeId, pid: owner.pid, configHome }));
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    const readFile = fsDefault.readFileSync;
+    vi.spyOn(fsDefault, 'readFileSync').mockImplementation(((file, ...args) =>
+      file === `/proc/${owner.pid}/stat` ? `${owner.pid} (host with ) spaces) Z 1 0 0` : readFile(file, ...args)
+    ) as typeof fsDefault.readFileSync);
+    syncBuiltinESMExports();
+
+    expect(findRuntimeSessionStorageHost(configHome, sessionsDir)).toBeUndefined();
+    expect(readRuntimeDaemonLockOwner(ownerFile)).toEqual(owner);
+  });
+
+  it('resolves the shared Session owner across profiles and canonical directory aliases', () => {
+    const configHome = path.join(tempHome(), '.kodax');
+    const sessionsDir = path.join(configHome, 'sessions');
+    const owner = { runtimeId: 'shared-default', pid: process.pid, createdAt: new Date().toISOString(), kind: 'daemon' };
+    fs.mkdirSync(path.join(sessionsDir, '.product-host'), { recursive: true });
+    fs.writeFileSync(path.join(sessionsDir, '.product-host', 'owner.lock'), JSON.stringify(owner));
+    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'default');
+    fs.mkdirSync(paths.rootDir, { recursive: true });
+    fs.writeFileSync(paths.lockFile, JSON.stringify(owner));
+    writeRuntimeDaemonState(paths, state({ runtimeId: owner.runtimeId, pid: owner.pid, configHome }));
+    const alias = path.join(configHome, 'session-alias');
+    fs.symlinkSync(sessionsDir, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    expect(findRuntimeSessionStorageHost(configHome, alias)).toMatchObject({ profile: 'default', owner });
+  });
+
+  it('does not attach an unrelated profile descriptor or mutate an unconfirmed shared owner', () => {
+    const configHome = path.join(tempHome(), '.kodax');
+    const sessionsDir = path.join(configHome, 'sessions');
+    const owner = { runtimeId: 'shared-default', pid: process.pid, createdAt: new Date().toISOString(), kind: 'daemon' };
+    const ownerFile = path.join(sessionsDir, '.product-host', 'owner.lock');
+    fs.mkdirSync(path.dirname(ownerFile), { recursive: true });
+    const original = JSON.stringify(owner);
+    fs.writeFileSync(ownerFile, original);
+    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'default');
+    fs.mkdirSync(paths.rootDir, { recursive: true });
+    fs.writeFileSync(paths.lockFile, JSON.stringify({ ...owner, runtimeId: 'unrelated' }));
+    writeRuntimeDaemonState(paths, state({ runtimeId: owner.runtimeId, pid: owner.pid, configHome }));
+    expect(() => findRuntimeSessionStorageHost(configHome, sessionsDir)).toThrow(expect.objectContaining({ code: 'session_storage_owned', retryable: true }));
+    expect(fs.readFileSync(ownerFile, 'utf8')).toBe(original);
+  });
+
   it('resolves profile-scoped daemon files under the KodaX runtime directory', () => {
     const paths = resolveRuntimeDaemonPaths('C:/Users/test', 'space');
 
