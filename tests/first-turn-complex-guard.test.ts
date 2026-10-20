@@ -16,6 +16,7 @@ describe('complex fixture execution boundary', () => {
     for (const command of commands) expect(checkComplexTool(workspace, 'bash', { command }, false), command).toBeNull();
     expect(checkComplexTool(workspace, 'glob', { path: workspace, pattern: 'src/*.js' }, true)).toBeNull();
     expect(checkComplexTool(workspace, 'write', { path: '.agent/tmp/sessions/case/neg.txt', content: '' }, false)).toBeNull();
+    expect(checkComplexTool(workspace, 'edit', { path: 'packages/cache/store.js', edits: [] }, false)).toBeNull();
     expect(checkComplexTool(workspace, 'bash', { command: 'npm test' }, true)).toBeNull();
     expect(checkComplexTool(workspace, 'bash', { command: 'node --test tests/basic.test.js' }, true)).toBeNull();
   });

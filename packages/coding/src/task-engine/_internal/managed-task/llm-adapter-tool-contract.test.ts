@@ -7,8 +7,75 @@ import {
 import { getToolDefinition, getRegisteredToolDefinition, registerTool } from '../../../tools/registry.js';
 import { buildRunnerLlmAdapter } from './llm-adapter.js';
 import { buildRunnerAgentChain } from './agent-chain.js';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
 afterEach(() => { clearRuntimeModelProviders(); vi.unstubAllEnvs(); });
+
+it('keeps native literal and provider search executable through discovery on the default Worker', async () => {
+  const workspace = await fs.mkdtemp(path.join(tmpdir(), 'kodax-search-menu-'));
+  try {
+    await fs.writeFile(path.join(workspace, 'literal.ts'), 'const value = "a.b[x]";\n');
+    const agent = buildRunnerAgentChain({ backups: new Map(), executionCwd: workspace,
+      extensionRuntime: { searchCapabilities: async () => [{ title: 'Virtual result', path: '/virtual/provider.ts' }] } as never,
+    }).worker;
+    let sent: readonly KodaXToolDefinition[] = [];
+    const adapter = buildRunnerLlmAdapter({}, async (_messages, tools) => {
+      sent = tools;
+      return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
+    });
+    await adapter([{ role: 'user', content: 'Find the implementation.' }], agent);
+    expect(sent.map(tool => tool.name)).toContain('code_search');
+    expect(sent.map(tool => tool.name)).toEqual(expect.arrayContaining(['grep', 'glob', 'read', 'repo_overview']));
+    const discover = agent.tools?.find(tool => tool.name === 'tool_search');
+    const bridge = agent.tools?.find(tool => tool.name === 'tool_call');
+    if (!discover || !bridge) throw new Error('Missing builtin bridge');
+    const contract = await discover.execute({ query: 'select:code_search' }, { agent });
+    expect(String(contract.content)).toContain('provider_id');
+    const literal = await bridge.execute({ name: 'code_search', input: { query: 'a.b[x]' } }, { agent });
+    expect(String(literal.content)).toContain('literal.ts:1');
+    const virtual = await bridge.execute({ name: 'code_search', input: { query: 'virtual', provider_id: 'fixture' } }, { agent });
+    expect(String(virtual.content)).toContain('/virtual/provider.ts');
+    expect(agent.tools?.map(tool => tool.name)).toContain('code_search');
+  } finally {
+    if (path.dirname(workspace) !== path.resolve(tmpdir()) || !path.basename(workspace).startsWith('kodax-search-menu-')) throw new Error('Unsafe fixture path');
+    await fs.rm(workspace, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
+it('preserves explicit profiles, child menus, missing replacements and extension search contracts', async () => {
+  let sent: readonly KodaXToolDefinition[] = [];
+  const capture = async (_messages: readonly KodaXMessage[], tools: readonly KodaXToolDefinition[]) => {
+    sent = tools;
+    return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
+  };
+  const context = { backups: new Map<string, string>() };
+  const worker = buildRunnerAgentChain(context).worker;
+  for (const options of [
+    { context: { currentAgentId: '/root/explorer' } },
+    { context: { agentProfile: { id: 'explicit-sdk-profile' } } },
+    { context: { toolVisibilityPolicy: () => true } },
+  ]) {
+    await buildRunnerLlmAdapter(options, capture)([{ role: 'user', content: 'Inspect.' }], worker);
+    expect(sent.map(tool => tool.name)).toContain('code_search');
+  }
+  for (const agent of [
+    { ...worker, name: 'repo-explorer' },
+    { ...worker, tools: worker.tools?.filter(tool => tool.name !== 'tool_call') },
+    { ...worker, tools: worker.tools?.filter(tool => tool.name !== 'grep') },
+  ]) {
+    await buildRunnerLlmAdapter({}, capture)([{ role: 'user', content: 'Inspect.' }], agent);
+    expect(sent.map(tool => tool.name)).toContain('code_search');
+  }
+  const builtin = getRegisteredToolDefinition('code_search');
+  if (!builtin) throw new Error('Missing search');
+  const unregister = registerTool({ ...builtin, description: 'Independent extension search.' },
+    { source: { kind: 'extension', id: 'independent-search' } });
+  try {
+    await buildRunnerLlmAdapter({}, capture)([{ role: 'user', content: 'Inspect.' }], buildRunnerAgentChain(context).worker);
+    expect(sent.find(tool => tool.name === 'code_search')?.description).toBe('Independent extension search.');
+  } finally { unregister(); }
+});
 
 it('retains native schemas on the managed path before and after compaction', async () => {
   const agent = buildRunnerAgentChain({ backups: new Map(), executionCwd: tmpdir() }).worker;

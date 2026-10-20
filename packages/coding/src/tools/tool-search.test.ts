@@ -418,7 +418,8 @@ describe('FEATURE_189 B.2 — tool_search handler', () => {
     expect(TOOL_SEARCH_DEFINITION.planModeAllowed).toBe(true);
     expect(TOOL_SEARCH_DEFINITION.description).not.toContain('get_goal / create_goal / update_goal');
     expect(TOOL_SEARCH_DEFINITION.description).not.toContain('mcp_*');
-    expect(TOOL_SEARCH_DEFINITION.description).toContain('Native parameter schemas are already callable');
+    expect(TOOL_SEARCH_DEFINITION.description).toContain('Native tools are directly callable');
+    expect(TOOL_SEARCH_DEFINITION.description).toContain('use tool_call for discovered tools absent from the native list');
     expect(TOOL_SEARCH_DEFINITION.description).toContain('even if later tool lists remain compact');
     expect(TOOL_SEARCH_DEFINITION.description).not.toContain('AMAW');
   });

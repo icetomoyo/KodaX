@@ -28,7 +28,7 @@ export function checkComplexTool(workspace: string, tool: string, input: Readonl
   if (['read', 'glob', 'grep', 'code_search', ...mutable].includes(tool) && input.path !== undefined && !inside(input.path)) return 'Path leaves the fixture workspace.';
   if (mutable.has(tool)) {
     if (readOnly || !inside(input.path)) return 'Mutation is outside the root fixture scope.';
-    if (!/^(?:src\/.+\.(?:js|mjs)|tests\/(?!basic\.test\.js$).+\.(?:js|mjs)|\.agent\/tmp\/.+)$/.test(relative(input.path))) return 'Only implementations, new tests and fixture scratch may change.';
+    if (!/^(?:(?:src|packages)\/.+\.(?:js|mjs)|tests\/(?!basic\.test\.js$).+\.(?:js|mjs)|\.agent\/tmp\/.+)$/.test(relative(input.path))) return 'Only implementations, new tests and fixture scratch may change.';
   }
   if (tool !== 'bash') return null;
   if (typeof input.command !== 'string' || !input.command.trim()) return 'Missing shell command.';
