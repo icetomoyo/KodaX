@@ -269,7 +269,7 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
     hasTool('process_context')
       ? '- Use `process_context` to trace execution from an entry point.' : undefined,
     hasTool('repo_overview')
-      ? '- Use `repo_overview` once when onboarding to a new area.' : undefined,
+      ? '- Reuse the supplied repository overview while it applies; use `repo_overview` when it is missing, outdated, or the workspace changes.' : undefined,
     hasTool('changed_scope')
       ? '- For compare-changes, what-changed-since-X, or current-worktree/change-set review, the first scope-acquisition tool MUST be `changed_scope` (one call).' : undefined,
     hasTool('spawn_agent')
@@ -280,7 +280,7 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
     lspTools.length > 0
       ? `- For exact file positions or compiler-backed symbol/call hierarchy edges, use the available LSP tools: ${lspTools.map((name) => '\`' + name + '\`').join(', ')}.` : undefined,
     hasTool('code_search')
-      ? '- Use `code_search` for ranked, likely implementations; use grep for exact strings or all occurrences.' : undefined,
+      ? '- Prefer grep/glob for local content/path lookup. `code_search` also supports literal matching and extension provider search; it does not rank local matches by relevance.' : undefined,
     hasTool('semantic_lookup')
       ? '- Use `semantic_lookup` for concepts rather than exact strings.' : undefined,
     '- Use read/grep for targeted lookups or edits in known files and for exact code or line numbers; capsules summarize.',

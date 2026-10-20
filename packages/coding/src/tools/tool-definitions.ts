@@ -940,7 +940,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'code_search',
-    description: 'Search local repository code with lower-noise output than ad hoc shell grep. Returns ranked matches with file:line refs and surrounding context, filtered by repo-aware heuristics (skips minified bundles, generated artifacts, lockfiles by default). Prefer `code_search` over `grep` for "find symbol X" / "where is this string used" investigations spanning the whole repo — the noise reduction saves token budget on the result side. Prefer raw `grep` when you need exact byte-level matching (regex anchors, character classes, multiline patterns) or when scoping is already narrow (a known single file or small subdirectory). For symbol-level intelligence (callers, callees, imports), use `symbol_context` instead — it pre-resolves the relationships that a text search would only hint at.',
+    description: 'Search paths and file contents for a literal string, or query an extension search provider with provider_id. Local search is case-insensitive by default, scans a bounded page of supported files in path order, and returns matching lines with snippets; scores do not imply relevance ranking. It excludes common dependency/build directories, but does not specially filter minified files or lockfiles. Follow SOURCE_INCOMPLETE scan_offset guidance or narrow path when the scan is incomplete. Prefer grep for ordinary local content lookup and glob for file paths. grep uses regular expressions, so escape literal metacharacters; code_search remains available for literal queries outside grep pattern limits or provider-backed results.',
     input_schema: {
       type: 'object',
       properties: {
@@ -967,7 +967,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'semantic_lookup',
-    description: 'Search repository intelligence for symbol-, module-, or process-aware semantic matches. "Repository intelligence" here is a pre-indexed structural view of the codebase (symbol definitions, module boundaries, process flows); `semantic_lookup` queries that index rather than scanning raw text. Use it when the question is structural ("what does symbol X relate to", "which module owns concept Y", "what flow does entry Z drive") rather than textual. The `kind` parameter narrows the lookup category (`symbol` / `module` / `process` / `auto`); `target_path` scopes to a subtree. `refresh: true` rebuilds the underlying index — expensive — so only set it when you have reason to believe the index is stale (e.g., right after a large bulk edit). For exact text match prefer `grep`; for ranked text search prefer `code_search`; to read a file directly prefer `read`.',
+    description: 'Search repository intelligence for symbol-, module-, or process-aware semantic matches. "Repository intelligence" here is a pre-indexed structural view of the codebase (symbol definitions, module boundaries, process flows); `semantic_lookup` queries that index rather than scanning raw text. Use it when the question is structural ("what does symbol X relate to", "which module owns concept Y", "what flow does entry Z drive") rather than textual. The `kind` parameter narrows the lookup category (`symbol` / `module` / `process` / `auto`); `target_path` scopes to a subtree. `refresh: true` rebuilds the underlying index — expensive — so only set it when you have reason to believe the index is stale (e.g., right after a large bulk edit). For local text match prefer `grep`; for literal or provider-backed search use `code_search`; to read a file directly prefer `read`.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1556,7 +1556,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'repo_overview',
-    description: 'Summarize the repository structure, key areas, entry hints, and stored repo-intelligence snapshot for the current workspace. Returns a compact top-down map: monorepo packages or top-level directories, entry files, primary languages, build/test commands. Use this once at session start (or after switching into an unfamiliar area) to orient yourself before issuing targeted reads — calling it at the start of every task is wasteful because the snapshot rarely changes within a session. The `refresh` flag rebuilds the snapshot; expensive, so only set it after a structural change to the workspace (new package added, large directory move). For drilling into a specific module, use `module_context` instead.',
+    description: 'Summarize the current workspace inventory: Git state, key areas, file counts, manifests, documentation and entry-file hints. Reuse a repository overview already supplied in the run context while it applies; no extra call is required merely because a session or task starts. Query when that overview is missing, outdated, or the workspace changes. refresh rebuilds the snapshot; reserve it for structural changes such as a new package or directory move. For drilling into a specific module, use module_context.',
     input_schema: {
       type: 'object',
       properties: {

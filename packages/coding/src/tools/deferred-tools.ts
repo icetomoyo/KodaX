@@ -37,11 +37,11 @@ export const DEFERRED_TOOL_HINTS: Readonly<Record<string, string>> = Object.free
   // Web / discovery
   web_search:      'Discover web content when no specific URL is known — call `tool_search("web_search")` for full schema.',
   web_fetch:       'Fetch a specific remote URL (HTML→markdown, cached) — call `tool_search("web_fetch")` for full schema (includes GitHub-URL gh-CLI guidance).',
-  code_search:     'Ranked text search across the repo with noise filtering — call `tool_search("code_search")` for selection heuristics vs grep / symbol_context.',
+  code_search:     'Literal path/content search, or extension provider search via provider_id. Prefer grep/glob for ordinary local lookup; tool_search returns the full contract.',
   semantic_lookup: 'Symbol-/module-/process-aware semantic queries against repo intelligence — call `tool_search("semantic_lookup")` for full schema and selection rules.',
 
   // Repo intelligence
-  repo_overview:   'Workspace structure snapshot — call ONCE at session start; `tool_search("repo_overview")` for full schema.',
+  repo_overview:   'Workspace structure snapshot. Reuse a supplied overview while applicable; query when missing or outdated. tool_search returns the full contract.',
   changed_scope:   'List files / areas changed in current git diff — for worktree, range, and other change-set reviews. After scope, fan out independent review lanes before reading every diff. `tool_search("changed_scope")` for full schema.',
   module_context:  'Compact module capsule (deps, entries, symbols, tests) — call `tool_search("module_context")` for full schema and selection rules vs symbol_context.',
   symbol_context:  'Definition + callers/callees for one symbol — call `tool_search("symbol_context")` for full schema and selection rules.',
