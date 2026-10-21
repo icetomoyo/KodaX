@@ -86,9 +86,14 @@ KodaX retains batch, flat text and expiry behavior.
   replace followup_task without changing AMA scheduling.
 
 No new tool, tool retirement, role policy or visibility change is accepted here.
-Next analysis priority is narrow repository queries versus existing
-relationship_scan, followed by Todo optional-field disclosure and anchor insertion
-versus checked edit. First measure schema savings after retaining every obligation,
+The [relationship entry coverage audit](relationship-entry-coverage.md) at
+`6a0c6a0f` subsequently found independent evidence and recovery differences;
+it recommends retaining all four native entries. Their research-only deletion
+saves 659 estimated first-input tokens, not a proven complete-task saving.
+
+The relationship audit records its remaining corrective and validation work.
+Other candidates are Todo optional-field disclosure and anchor insertion versus
+checked edit. First measure schema savings after retaining every obligation,
 then run offline output/permission/recovery equivalence and bounded real-task
 pairs if necessary. Do not introduce a generic query router, extra configuration
 or a new code runtime just to reach a numeric target.

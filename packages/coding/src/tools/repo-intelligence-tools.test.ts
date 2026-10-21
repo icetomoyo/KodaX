@@ -2,6 +2,10 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { Runner } from '@kodax-ai/agent';
+import { getToolExecutionOverride } from '../agent-runtime/permission-gate.js';
+import { buildRunnerAgentChain } from '../task-engine/runner-driven.js';
+import { registerTool } from './registry.js';
 import {
   getRepoIntelligenceIndex as getSemanticRepoIntelligenceIndex,
   getRepoRoutingSignals as getSemanticRepoRoutingSignals,
@@ -328,6 +332,121 @@ describe('repo intelligence tool surfaces', () => {
     expect(incomingPosition).toEqual({ line: 2, character: 16 });
     expect(outgoingPosition).toEqual({ line: 2, character: 16 });
   }, 15000);
+
+  it.each(['light', 'full'] as const)('keeps detailed capsule evidence available when the %s relationship summary omits it', async mode => {
+    process.env.KODAX_REPO_INTELLIGENCE = mode;
+    tempDir = mkdtempSync(join(tmpdir(), 'kodax-repo-entry-coverage-'));
+    initGitRepo(tempDir);
+    createWorkspaceFixture(tempDir);
+    writeFileSync(join(tempDir, 'packages', 'app', 'README.md'), '# App compatibility contract\n');
+    commitAll(tempDir, 'initial');
+    const sourcePath = join(tempDir, 'packages', 'app', 'src', 'create-app.ts');
+    writeFileSync(sourcePath, readFileSync(sourcePath, 'utf8') + '// Local refactor evidence\n');
+    const ctx = { backups: new Map<string, string>(), executionCwd: tempDir, gitRoot: tempDir };
+
+    const module = await toolModuleContext({ module: '@demo/app', refresh: true }, ctx);
+    const moduleScan = await toolRelationshipScan({ module: '@demo/app', direction: 'both' }, ctx);
+    expect(module).toContain('Tests: packages/app/tests/app.test.ts');
+    expect(module).toContain('Docs: packages/app/README.md');
+    expect(module).toContain('Top symbols:');
+    expect(moduleScan).toContain('Module: @demo/app');
+    expect(moduleScan).not.toContain('packages/app/tests/app.test.ts');
+    expect(moduleScan).not.toContain('packages/app/README.md');
+
+    const symbol = await toolSymbolContext({ symbol: 'createApp' }, ctx);
+    const symbolScan = await toolRelationshipScan({ symbol: 'createApp', direction: 'both' }, ctx);
+    expect(symbol).toContain('Signature: export function createApp(name: string): string');
+    expect(symbol).toContain('Imports: ../../shared/src/name-service');
+    expect(symbolScan).toContain('startServer');
+    expect(symbolScan).toContain('create-app.ts:');
+    expect(symbolScan).not.toContain('Signature:');
+    expect(symbolScan).not.toContain('Imports:');
+
+    const processCapsule = await toolProcessContext({ module: '@demo/app' }, ctx);
+    const entryScan = await toolRelationshipScan({ entry: 'startServer', direction: 'downstream' }, ctx);
+    expect(processCapsule).toContain('Steps:');
+    expect(processCapsule).toContain('startServer');
+    expect(moduleScan).not.toContain('- Process ');
+    expect(entryScan).toContain('- Process ');
+    expect(entryScan).toContain('startServer');
+    expect(processCapsule).toContain('Summary:');
+    expect(entryScan).not.toContain('Summary:');
+
+    const impact = await toolImpactEstimate({ symbol: 'createApp' }, ctx);
+    expect(impact).toContain('Changed-scope overlap: 1 file(s)');
+    expect(symbolScan).toContain('Impact');
+    expect(symbolScan).toContain('overlaps with 1 currently changed file(s)');
+    expect(symbolScan).not.toContain('Changed-scope overlap:');
+  }, 30000);
+
+  it('retains exact discovery and checked fallback without making the aggregate an extension alias', async () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'kodax-repo-entry-discovery-'));
+    createWorkspaceFixture(tempDir);
+    const ctx = { backups: new Map<string, string>(), executionCwd: tempDir, gitRoot: tempDir };
+    const unregister = registerTool({
+      name: 'module_context', description: 'Extension module contract with independent evidence.',
+      input_schema: { type: 'object', properties: { module: { type: 'string' } } },
+      sideEffect: 'readonly', handler: async () => 'EXTENSION_MODULE_EVIDENCE',
+    });
+    try {
+      const agent = buildRunnerAgentChain(ctx).worker;
+      const execute = async (name: string, input: Record<string, unknown>) => agent.tools!.find(tool => tool.name === name)!
+        .execute(input, { agent, toolCallId: name });
+      const catalog = await execute('tool_search', { query: 'select:module_context,symbol_context,process_context,impact_estimate' });
+      for (const name of ['module_context', 'symbol_context', 'process_context', 'impact_estimate']) {
+        expect(String(catalog.content)).toContain(`"name":"${name}"`);
+        expect(agent.tools!.some(tool => tool.name === name)).toBe(true);
+      }
+      expect(String(catalog.content)).toContain('Extension module contract');
+      const native = await execute('module_context', { module: '@demo/app' });
+      const fallback = await execute('tool_call', { name: 'module_context', input: { module: '@demo/app' } });
+      expect(native.content).toBe('EXTENSION_MODULE_EVIDENCE');
+      expect(fallback.content).toBe(native.content);
+      const aggregate = await execute('relationship_scan', { module: '@demo/app' });
+      expect(String(aggregate.content)).toContain('Relationship scan for @demo/app');
+      expect(String(aggregate.content)).not.toContain('EXTENSION_MODULE_EVIDENCE');
+    } finally { unregister(); }
+  }, 30000);
+
+  it.each(['module_context', 'symbol_context', 'process_context', 'impact_estimate', 'relationship_scan'])(
+    'preserves denial and later recovery at the concrete %s permission boundary', async name => {
+      tempDir = mkdtempSync(join(tmpdir(), 'kodax-repo-entry-permission-'));
+      createWorkspaceFixture(tempDir);
+      const ctx = { backups: new Map<string, string>(), executionCwd: tempDir, gitRoot: tempDir };
+      let permissions = 0;
+      const events = { beforeToolExecute: async (tool: string) => tool !== name || permissions++ > 0
+        ? true : '[Tool Error] explicit query denial' };
+      const budget = { totalBudget: 100, spentBudget: 0 };
+      const agent = buildRunnerAgentChain(ctx, undefined, budget, undefined, undefined, events).worker;
+      const input = name === 'symbol_context' || name === 'impact_estimate' ? { symbol: 'createApp' }
+        : { module: '@demo/app' };
+      let round = 0;
+      const result = await Runner.run(agent, 'Recover only after permission permits the query.', {
+        tracer: null,
+        toolObserver: { beforeTool: async call => (await getToolExecutionOverride(events, call.name, call.input, call.id)) ?? true },
+        llm: async messages => {
+          if (round === 1) {
+            expect(messages.at(-1)?.content).toEqual([expect.objectContaining({
+              type: 'tool_result', tool_use_id: 'query-1', is_error: true,
+              content: '[Tool Error] explicit query denial',
+            })]);
+            expect(budget.spentBudget).toBe(0);
+          }
+          if (round === 2) {
+            expect(messages.at(-1)?.content).toEqual([expect.objectContaining({
+              type: 'tool_result', tool_use_id: 'query-2', is_error: false,
+              content: expect.stringContaining('packages/app'),
+            })]);
+            expect(budget.spentBudget).toBe(1);
+          }
+          return round++ < 2 ? { text: '', toolCalls: [{ id: `query-${round}`, name, input }] }
+            : { text: 'Query recovered after the actual permission decision.' };
+        },
+      });
+      expect(result.output).toContain('Query recovered');
+      expect(permissions).toBe(2);
+      expect(budget.spentBudget).toBe(1);
+    }, 30000);
 
   it('reuses the light-profile semantic cache when nothing changed', async () => {
     tempDir = mkdtempSync(join(tmpdir(), 'kodax-repo-intel-cache-hit-'));
