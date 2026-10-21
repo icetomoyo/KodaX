@@ -69,18 +69,18 @@ async function capture<T>(
   }
 }
 
-function recordWarmingGap(
+function recordCapabilityGap(
   label: string,
   result: ModuleContextResult | SymbolContextResult | ProcessContextResult | ImpactEstimateResult | undefined,
   gaps: string[],
 ): boolean {
   const capability = result?.capability;
-  if (capability?.status !== 'warming') {
-    return false;
-  }
+  if (!capability) return false;
   const warning = capability.warnings.join(' ');
-  gaps.push(`${label}: ${warning || 'repo-intelligence index is still warming; retry shortly.'}`);
-  return true;
+  if (warning || capability.status !== 'ok') {
+    gaps.push(`${label}: ${warning || `repo-intelligence ${capability.status}; validate with read, grep, glob or LSP and retry when available.`}`);
+  }
+  return capability.status === 'warming';
 }
 
 function symbolRef(symbol: RepoSymbolRecord): string {
@@ -641,14 +641,18 @@ function renderRelationshipScan(
     `Confidence: ${formatConfidence(parts)}`,
     '',
   ];
-  renderIdentity(lines, parts, label);
+  const availableParts = { ...parts };
+  for (const key of ['symbolContext', 'moduleContext', 'processContext', 'impactEstimate'] as const) {
+    if (availableParts[key]?.capability?.status === 'unavailable') delete availableParts[key];
+  }
+  renderIdentity(lines, availableParts, label);
   if (direction === 'upstream' || direction === 'both') {
-    renderUpstream(lines, parts);
+    renderUpstream(lines, availableParts);
   }
   if (direction === 'downstream' || direction === 'both') {
-    renderDownstream(lines, parts);
+    renderDownstream(lines, availableParts);
   }
-  renderImpact(lines, parts.impactEstimate);
+  renderImpact(lines, availableParts.impactEstimate);
   renderEvidence(lines, parts);
   renderSupplementalEvidence(lines, 'LSP validation', lspEvidence);
   renderSupplementalEvidence(lines, 'Text-search validation', textEvidence);
@@ -689,16 +693,16 @@ export async function toolRelationshipScan(
         refresh,
         maxWaitMs,
       }));
-      indexWarming = recordWarmingGap('symbol_context', parts.symbolContext, gaps);
+      indexWarming = recordCapabilityGap('symbol_context', parts.symbolContext, gaps);
     }
     if (!indexWarming && (moduleName || filePath || parts.symbolContext)) {
       parts.moduleContext = await capture('module_context', gaps, () => getModuleContext(ctx, {
         module: moduleName ?? parts.symbolContext?.symbol.moduleId,
         targetPath,
-        refresh: false,
+        refresh: refresh && !symbolTarget,
         maxWaitMs,
       }));
-      indexWarming = recordWarmingGap('module_context', parts.moduleContext, gaps);
+      indexWarming = recordCapabilityGap('module_context', parts.moduleContext, gaps);
     }
     const shouldLoadProcessContext = (direction === 'downstream' || direction === 'both')
       && Boolean(entry || symbolTarget);
@@ -710,7 +714,7 @@ export async function toolRelationshipScan(
         refresh: false,
         maxWaitMs,
       }));
-      indexWarming = recordWarmingGap('process_context', parts.processContext, gaps);
+      indexWarming = recordCapabilityGap('process_context', parts.processContext, gaps);
     }
     if (!indexWarming) {
       parts.impactEstimate = await capture('impact_estimate', gaps, () => getImpactEstimate(ctx, {
@@ -721,7 +725,7 @@ export async function toolRelationshipScan(
         refresh: false,
         maxWaitMs,
       }));
-      indexWarming = recordWarmingGap('impact_estimate', parts.impactEstimate, gaps);
+      indexWarming = recordCapabilityGap('impact_estimate', parts.impactEstimate, gaps);
     }
 
     if (indexWarming) {

@@ -379,6 +379,66 @@ describe('repo intelligence tool surfaces', () => {
     expect(symbolScan).not.toContain('Changed-scope overlap:');
   }, 30000);
 
+  it.each(['light', 'full'] as const)('refreshes module and path scans once, then reuses the %s index', async mode => {
+    process.env.KODAX_REPO_INTELLIGENCE = mode;
+    tempDir = mkdtempSync(join(tmpdir(), 'kodax-relationship-refresh-'));
+    createWorkspaceFixture(tempDir);
+    const ctx = { backups: new Map<string, string>(), executionCwd: tempDir, gitRoot: tempDir };
+    const freshness = (output: string): string => {
+      const value = /module_context freshness=(\S+)/.exec(output)?.[1];
+      expect(value).toBeDefined();
+      expect(value).not.toBe('limited');
+      return value!;
+    };
+    let previous = freshness(await toolRelationshipScan({ module: '@demo/app' }, ctx));
+    for (const target of [{ module: '@demo/app' }, { path: 'packages/app/src/create-app.ts' }]) {
+      const refreshed = await toolRelationshipScan({ ...target, refresh: true }, ctx);
+      const current = freshness(refreshed);
+      expect(current).not.toBe(previous);
+      expect(refreshed).toContain(`impact_estimate freshness=${current}`);
+      if ('module' in target) expect(refreshed).toContain('Dependency module: packages/shared');
+      expect(freshness(await toolRelationshipScan(target, ctx))).toBe(current);
+      previous = current;
+    }
+  }, 30000);
+
+  it('reports unavailable SDK parts without false empty-edge findings and recovers when enabled', async () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'kodax-relationship-unavailable-'));
+    createWorkspaceFixture(tempDir);
+    const ctx = { backups: new Map<string, string>(), executionCwd: tempDir, gitRoot: tempDir };
+    process.env.KODAX_REPO_INTELLIGENCE = 'off';
+    const unavailable = await toolRelationshipScan({ symbol: 'createApp', module: '@demo/app' }, ctx);
+    for (const [tool, query] of [
+      ['symbol_context', 'symbol context'], ['module_context', 'module context'],
+      ['process_context', 'process context'], ['impact_estimate', 'impact estimate'],
+    ]) {
+      expect(unavailable).toContain(`${tool}: Repo intelligence ${query} unavailable`);
+    }
+    expect(unavailable).toContain('Validate critical edits with read, grep');
+    expect(unavailable).not.toContain('No additional gaps recorded');
+    expect(unavailable).not.toMatch(/No (direct callers|direct callees|module dependents|module dependencies|impacted modules) found/);
+    expect(unavailable).not.toContain('- Process ');
+
+    process.env.KODAX_REPO_INTELLIGENCE = 'light';
+    const recovered = await toolRelationshipScan({ symbol: 'createApp', module: '@demo/app' }, ctx);
+    expect(recovered).toContain('startServer');
+    expect(recovered).toContain('Dependency module: packages/shared');
+    expect(recovered).not.toContain('symbol_context: Repo intelligence symbol context unavailable');
+  }, 30000);
+
+  it('keeps valid relationships while surfacing an unavailable process part', async () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'kodax-relationship-partial-'));
+    createWorkspaceFixture(tempDir);
+    const result = await toolRelationshipScan({ symbol: 'createApp' }, {
+      backups: new Map<string, string>(), executionCwd: tempDir, gitRoot: tempDir,
+    });
+    expect(result).toContain('startServer');
+    expect(result).toContain('Dependency module: packages/shared');
+    expect(result).toContain('process_context: Repo intelligence process context unavailable');
+    expect(result).not.toContain('No additional gaps recorded');
+    expect(result).not.toContain('- Process ');
+  }, 30000);
+
   it('retains exact discovery and checked fallback without making the aggregate an extension alias', async () => {
     tempDir = mkdtempSync(join(tmpdir(), 'kodax-repo-entry-discovery-'));
     createWorkspaceFixture(tempDir);

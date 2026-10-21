@@ -141,3 +141,71 @@ smokes; complex smokes must not be used as prompt-superiority comparisons.
 Raw fixtures, complete outputs, timings, hashes, projection and recovery evidence
 remain in OS Temp with two verified copies. No production implementation, model
 schema, AMA policy, specialist capability or SDK contract changes in this revision.
+
+## Minimal corrective follow-up, 2026-10-21
+
+The follow-up starts at `9c24eb5c`; it corrects relationship_scan only. Module/path
+queries now receive refresh when no symbol query preceded them. Subsequent
+queries reuse the index. Actual light/full output tests verify a new build time
+and shared module/impact freshness, then unchanged freshness on the cached call.
+
+Every part's capability warnings now reach Gaps, with a recovery fallback for
+non-ok status without warnings. Unavailable placeholders are excluded from
+relationship findings, while their original evidence metadata and warnings
+remain visible. Valid and limited results remain usable; warming still stops
+indexed follow-ups and uses the existing explicit warming response.
+
+Offline acceptance: 63 unique tests pass across the related tool/runtime and
+existing complex budget/guard/recovery files; source/test type checks and package
+build pass. relationship_scan coverage is 90.57% statements, 83.48% branches.
+Independent Standards and Spec reviews each report zero findings. No tool schema,
+native entry, SDK export, extension handler, specialist menu or AMA policy changes.
+
+The frozen model experiment is `relationship-fix-20261021-r1`, with 823 source
+hashes, real old/fixed unavailable handler outputs and unchanged production Worker
+instructions/tool contracts. This Worker probe has 46 native entries; it is not
+the separately captured complete Host with 55. Only the tool-result bytes differ
+between paired arms. Kimi's two next responses both gather evidence; blinded
+review slightly preferred the fixed arm's direct content searches. One sample
+per arm cannot establish an overall token or intelligence improvement. GLM's
+first arm terminated in transport without output/usage; the second arm was not
+dispatched after the stop. The failed arm was not retried.
+
+Two final-source complex Runtime smokes used the existing cross-package tenant/
+TTL fixture, unchanged isolation guards and independent six-case oracle:
+
+| Route | Result | Known API tokens, including input cache | Unknown-usage calls | Conservative task token accounting | Wall time |
+| --- | --- | ---: | ---: | ---: | ---: |
+| zai-coding / glm-5.3 | 11 read calls, then transport terminated; no edit or completed report | 18,442 | 2 | 124,223 | 90.7 s |
+| kimi-code / kimi-for-coding | Read/edit/new tests/test/report; public tests 10/10, oracle 6/6; protected files unchanged | 152,185 | 1 | 167,038 | 106.5 s |
+
+Known Kimi usage is 147,779 input (including 123,136 cache-read) and 4,406 output;
+cache-read is not added again. Its one cancelled auxiliary request has no usage
+and retains its full reservation. GLM's two unknown calls are an auxiliary
+cancellation and the transport failure. The cancelled auxiliary requests use
+the existing bounded fail-open contract; no parameters or isolation rules were
+rewritten. Kimi used read/edit/write/bash; GLM only reached reads. Neither smoke
+called relationship_scan, so they verify general final-source operation, not the changed query branch.
+The public SDK offline regressions directly exercise that branch.
+
+Main-session review confirms Kimi's new tests are meaningful: replaying the exact
+test file against original implementations fails five of ten tests. Its final
+report incorrectly says eight new cases; nine were added. Keep this minor count
+error visible rather than calling the report flawless. GLM quality remains
+inconclusive because no completed implementation exists. These two smokes are
+not baseline/candidate comparisons and cannot establish intelligence parity.
+
+The experiment stopped after 14 physical requests: 190,082 known usage tokens,
+361,489 conservatively accounted tokens including four unknown reservations,
+USD 0.010055855 at frozen reference rates (coding-plan routes, not an invoice).
+Limits were 40 calls, 1.5M tokens and USD 0.10, with no retry/fallback. Raw inputs,
+outputs, failures, reviews, fixtures and hashes remain in OS Temp with two
+verified complete copies.
+
+Smaller-entry assessment: module/symbol/process retain independent evidence.
+impact_estimate is the narrower candidate, but its 191 estimated schema tokens
+compare with 350 returned tokens for exact discovery. That is a one-discovery
+diagnostic, not a whole-task break-even: repeated rounds or unused tools may
+change the result. Ranked impact detail, permission identity, extensions,
+autonomous discovery and resume remain required checks. No smaller projection
+has yet demonstrated enough value to change the default; all entries remain.
