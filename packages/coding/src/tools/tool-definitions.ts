@@ -611,7 +611,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'spawn_agent',
-    description: 'Create a named direct-child Agent and start its first turn. The Runtime mints the canonical path and atomically applies the session-wide concurrency and work-budget limits. For a broad multi-file review, start distinct read-only lanes as soon as scope is known. For implementation, use a bounded code-change lane only with disjoint write ownership: set read_only:false, keep the default shared isolation, and name the exact exclusive paths and generated outputs. Its edits appear directly in the root workspace and must not be reapplied; use worktree isolation only with an explicit merge-back strategy. Continue useful work after launch; use wait_agent only when mailbox evidence becomes critical.',
+    description: 'Start a named direct-child Agent. Runtime assigns its canonical path and atomically enforces session concurrency/work budgets. For broad multi-file reviews, launch distinct read-only lanes once scope is known. Implementation lanes require disjoint write ownership: read_only:false, shared isolation (default), and exact exclusive paths/generated outputs. Shared edits already appear in the root workspace; do not reapply them. Use worktree only with an explicit merge-back strategy. Continue useful work; wait_agent only for critical mailbox evidence.',
     input_schema: {
       type: 'object',
       properties: {
@@ -626,30 +626,30 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
         model_hint: {
           type: 'string',
           enum: ['fast', 'balanced', 'deep'],
-          description: 'Optional active routing hint for a tier-appropriate child model. "fast" selects the configured fast operator tier for short focused lookups (a few files or a simple grep); "balanced" (default; same as omit) inherits the normal child selection; "deep" selects the configured deep operator tier for heavy multi-file analysis or synthesis. If the requested tier is not configured, routing safely falls back to the inherited provider/model. Mark tiers deliberately; when in doubt, omit.',
+          description: 'Routing tier: fast for focused lookups (few files/simple grep), deep for heavy multi-file analysis/synthesis, balanced (default/omitted) for normal inherited selection. Unconfigured tiers fall back to the inherited provider/model. Omit when unsure.',
         },
         agent_id: {
           type: 'string',
-          description: 'When the task matches a registered specialist (e.g., db-reviewer for SQL changes, e2e-runner for browser tests), dispatch as that specialist instead of a generic child.',
+          description: 'Select a registered specialist matching the task instead of a generic child.',
         },
         // FEATURE_102 Phase 2 (v0.7.45) — explicit per-dispatch model targeting.
         provider: {
           type: 'string',
-          description: 'Optional. Run this child on a specific provider instead of inheriting yours. Use when you deliberately want a different model family — e.g. a second independent review of the same change by a different family, to catch blind spots a single family would share. Omit to inherit your provider (the default). An unconfigured provider falls back to yours.',
+          description: 'Override provider for a deliberate cross-family check. Omit to inherit; an unconfigured provider falls back to yours.',
         },
         model: {
           type: 'string',
-          description: 'Optional. Specific model id for this child, paired with `provider`. Omit to inherit your model.',
+          description: 'Model id paired with provider. Omit to inherit.',
         },
         effort: {
           type: 'string',
-          description: 'Optional. Reasoning effort for this child (for example off, low, medium, high, xhigh, max). Omit or use auto to inherit the parent/default effort. If subagent_type names a specialist with a declared effort, that specialist effort is locked and a different dispatch effort is rejected. Unsupported values are rejected by the selected provider/model.',
+          description: 'Reasoning effort (off, low, medium, high, xhigh, max). Omit/auto inherits parent/default. A specialist selected by agent_id locks its declared effort; conflicting dispatch or provider/model-unsupported values are rejected.',
         },
         isolation: { type: 'string', enum: ['shared', 'worktree'], description: 'Optional execution isolation.' },
         fork_turns: { description: 'History fork: all (default), none, or a positive recent-turn count.' },
         quality_strategy: {
           type: 'object',
-          description: 'Optional telemetry/provenance {schemaVersion:1,stageId,pattern,role,laneRelation?,targetEvidenceRefs?}. It helps PatternTrace reconstruction but never controls otherwise legal spawn admission; invalid metadata is ignored. Actor targets use exact agent-turn refs.',
+          description: 'Telemetry only: {schemaVersion:1,stageId,pattern,role,laneRelation?,targetEvidenceRefs?}. Does not control legal spawn admission; invalid metadata is ignored. Actor targets require exact agent-turn refs.',
         },
       },
       required: ['task_name', 'objective'],
@@ -1171,27 +1171,25 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'ask_user_question',
-    description: "Ask one question or 1–4 independent questions, shown separately. Single select: question/options. Batch: questions[]; select-only, every item requires options; overrides flat question/options. Free text: kind=input only for a flat single question. Select supports multi_select and automatic Other/custom input: do not add your own Other; allow_custom_input=false only for closed safety/protocol choices. Set default to the recommended answer: Runtime uses the validated value at expiry; select defaults must match an option value. Flat custom settings are fallbacks for batch items.",
+    description: "Ask one question (question/options), or 1–4 independent select questions (questions[] overrides flat question/options; each item needs options). Free text: kind=input, flat single question only. Select supports multi_select and automatic Other/custom input; do not add Other. allow_custom_input=false only for closed safety/protocol choices. Set default to the recommended answer: Runtime uses the validated value at expiry; select defaults must match an option value. Flat custom settings are batch fallbacks.",
     input_schema: {
       type: 'object',
       properties: {
-        question: { type: 'string', description: "Single question. Use questions[] for independent multiple questions." },
+        question: { type: 'string' },
         questions: {
           type: 'array',
-          description: "1–4 select questions shown separately; each requires options; takes precedence over flat question/options. Not free-text input.",
           items: {
             type: 'object',
             properties: {
-              question: { type: 'string', description: "One question." },
+              question: { type: 'string' },
               header: { type: 'string', description: "Short progress label, at most 12 chars." },
               options: {
                 type: 'array',
-                description: "Choices for this question.",
                 items: {
                   type: 'object',
                   properties: {
-                    label: { type: 'string', description: "Display label." },
-                    description: { type: 'string', description: "Optional option explanation." },
+                    label: { type: 'string' },
+                    description: { type: 'string' },
                     value: { type: 'string', description: "Returned value; defaults to label." },
                   },
                   required: ['label'],
@@ -1199,7 +1197,6 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
               },
               multi_select: {
                 type: 'boolean',
-                description: "Allow multiple choices; returns an array.",
               },
               min_selections: {
                 type: 'integer',
@@ -1238,7 +1235,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
         kind: {
           type: 'string',
           enum: ['select', 'input'],
-          description: "select by default; input is free text for a flat single question (options ignored); not for questions[].",
+          description: "Default select; input ignores options and does not support questions[].",
         },
         options: {
           type: 'array',
@@ -1246,8 +1243,8 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
           items: {
             type: 'object',
             properties: {
-              label: { type: 'string', description: "Display label." },
-              description: { type: 'string', description: "Optional option explanation." },
+              label: { type: 'string' },
+              description: { type: 'string' },
               value: { type: 'string', description: "Returned value; defaults to label." },
             },
             required: ['label'],

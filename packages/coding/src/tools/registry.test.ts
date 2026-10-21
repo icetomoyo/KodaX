@@ -55,12 +55,12 @@ describe('tool registry', () => {
 
     expect(description).toContain('broad multi-file review');
     expect(description).toContain('distinct read-only lanes');
-    expect(description).toContain('bounded code-change lane');
+    expect(description).toContain('generated outputs');
     expect(description).toContain('disjoint write ownership');
     expect(description).toContain('read_only:false');
-    expect(description).toContain('default shared isolation');
+    expect(description).toMatch(/shared isolation \(default\)/);
     expect(description).toContain('exact exclusive paths');
-    expect(description).toContain('directly in the root workspace');
+    expect(description).toMatch(/Shared edits.*root workspace.*do not reapply/);
     expect(description).toContain('explicit merge-back strategy');
   });
 
@@ -102,9 +102,9 @@ describe('tool registry', () => {
 
     expect({ promptDelta, schemaDeltas, toolSchemaDelta, staticInputDelta }).toEqual({
       promptDelta: 2_418,
-      schemaDeltas: [316, 215],
-      toolSchemaDelta: 531,
-      staticInputDelta: 2_949,
+      schemaDeltas: [257, 215],
+      toolSchemaDelta: 472,
+      staticInputDelta: 2_890,
     });
     expect(staticInputDelta).toBeLessThanOrEqual(3_000);
   });
@@ -140,8 +140,10 @@ describe('tool registry', () => {
     expect(props?.agent_id?.type).toBe('string');
     expect(props?.effort?.type).toBe('string');
     expect(props?.effort?.description).toMatch(/Reasoning effort/);
-    expect(props?.model_hint?.description).toMatch(/active routing hint/i);
-    expect(props?.model_hint?.description).toMatch(/configured fast operator tier/i);
+    expect(props?.model_hint?.description).toMatch(/Routing tier/);
+    expect(props?.model_hint?.description).toMatch(/fast.*focused lookups/);
+    expect(props?.model_hint?.description).toMatch(/deep.*multi-file/);
+    expect(props?.model_hint?.description).toMatch(/Unconfigured tiers.*inherited provider\/model/);
     expect(props?.model_hint?.description).not.toMatch(/no-op|future routing/i);
     expect(required).not.toContain('agent_id');
     expect(required).not.toContain('effort');

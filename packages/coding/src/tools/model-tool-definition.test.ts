@@ -3,6 +3,17 @@ import { getToolDefinition } from './index.js';
 import { projectModelToolDefinition } from './model-tool-definition.js';
 
 describe('model tool contracts', () => {
+  it('documents specialist effort locking through the actual spawn selector', () => {
+    const spawn = getToolDefinition('spawn_agent')!;
+    const effort = spawn.input_schema.properties.effort as { description: string };
+    expect(spawn.input_schema.properties).toHaveProperty('agent_id');
+    expect(spawn.input_schema.properties).not.toHaveProperty('subagent_type');
+    expect(effort.description).toContain('agent_id');
+    expect(effort.description).not.toContain('subagent_type');
+    expect(effort.description).toMatch(/lock/);
+    expect(effort.description).toMatch(/reject/);
+  });
+
   it('projects builtin changed_diff onto one-or-many paths without changing raw SDK input', () => {
     const raw = getToolDefinition('changed_diff')!;
     const before = JSON.stringify(raw);
