@@ -83,6 +83,8 @@ class AgentSettlementBlockingSaveError extends Error {
 }
 
 export interface AgentControllerOptions {
+  /** Verify executor-owned history before retaining a turn across owner changes. */
+  readonly validateCheckpoint?: (actor: AgentActor, turn: AgentTurn) => Promise<boolean>;
   readonly maxConcurrentThreadsPerSession?: number;
   readonly rootCapabilities?: AgentCapabilities;
   readonly executor?: AgentTurnExecutor;
@@ -296,6 +298,37 @@ export class AgentActorController {
       && this.durableOwner?.ownerId === this.options.owner.ownerId
       && !this.ownershipLost
       && !this.ownershipReleased;
+  }
+
+  /** Trusted Host entry: authority must be rebound before resuming the original turn. */
+  async resumeCheckpointTurn(actorPath: string, turnId: string, beforeLaunch?: () => void): Promise<void> {
+    const plan = await this.mutate(async () => {
+      const actor = this.requireActor(actorPath);
+      const turn = this.requireTurn(turnId);
+      if (turn.actorPath !== actorPath || actor.currentTurnId !== turnId || isTerminal(turn.state)
+        || turn.checkpoint === undefined || this.abortControllers.has(turnId)) {
+        throw new AgentControlError('invalid_message', 'Actor turn has no available executor checkpoint.');
+      }
+      if (!await this.options.validateCheckpoint?.(actor, turn)) {
+        throw new AgentControlError('invalid_message', 'Actor executor checkpoint no longer matches durable history.');
+      }
+      beforeLaunch?.();
+      const abortController = new AbortController();
+      this.abortControllers.set(turnId, abortController);
+      return { actor, turn, abortController, createdActor: false };
+    });
+    this.launch(plan);
+  }
+
+  private async recordCheckpoint(turnId: string, checkpoint: AgentMetadataValue | undefined): Promise<void> {
+    await this.mutate(() => {
+      const turn = this.requireTurn(turnId);
+      if (isTerminal(turn.state) || this.abortControllers.get(turnId)?.signal.aborted) {
+        throw new AgentControlError('invalid_message', 'Actor checkpoint no longer belongs to an active executor.');
+      }
+      const { checkpoint: _previous, ...rest } = turn;
+      this.turns.set(turnId, { ...rest, ...(checkpoint === undefined ? {} : { checkpoint }), revision: turn.revision + 1 });
+    });
   }
 
   bind(callerPath: string): AgentActorClient {
@@ -787,10 +820,11 @@ export class AgentActorController {
     const attempt = { active: true };
     try {
       await this.flushPendingSettlements();
+      const retained = await this.validCheckpointTurns();
       await raceSettlementAttempt(
         this.mutate(() => {
         for (const turn of this.turns.values()) {
-          if (isTerminal(turn.state)) continue;
+          if (isTerminal(turn.state) || retained.has(turn.turnId)) continue;
           this.finishTurn(turn.turnId, 'interrupted', { error: reason });
         }
         if (this.options.owner) {
@@ -1036,6 +1070,7 @@ export class AgentActorController {
         signal: abort.signal,
         drainMailbox: () => this.drainMailbox(plan.actor.path),
         reportProgress: (update) => this.recordProgress(plan.turn.turnId, update),
+        reportCheckpoint: checkpoint => this.recordCheckpoint(plan.turn.turnId, checkpoint),
       }))
       .then(
         (result) => this.trackSettlement(
@@ -1423,6 +1458,16 @@ export class AgentActorController {
     const recipientPath = actor.parentPath ?? ROOT_PATH;
     this.appendMessage(actor.path, recipientPath, summary, 'completion', 'internal', turnId);
     if (recipientPath === ROOT_PATH) this.pendingRootCompletionTurnIds.add(turnId);
+    // A restarted Workflow has no live JavaScript continuation. Preserve its
+    // own mailbox, and deliver the recovered leaf receipt to its live ancestor.
+    let recipient = this.actors.get(recipientPath);
+    while (recipient?.kind === 'workflow' && recipient.currentTurnId === undefined && recipient.parentPath) {
+      recipient = this.actors.get(recipient.parentPath);
+      if (recipient && recipient.kind !== 'workflow') {
+        this.appendMessage(actor.path, recipient.path, summary, 'completion', 'internal', turnId);
+        if (recipient.path === ROOT_PATH) this.pendingRootCompletionTurnIds.add(turnId);
+      }
+    }
   }
 
   private async drainMailbox(actorPath: string): Promise<readonly AgentMailboxMessage[]> {
@@ -2118,8 +2163,10 @@ export class AgentActorController {
   private async recoverUnmatchedTurns(): Promise<void> {
     const active = [...this.turns.values()].filter((turn) => !isTerminal(turn.state));
     if (active.length === 0) return;
+    const retained = await this.validCheckpointTurns();
     await this.mutate(() => {
       for (const turn of active) {
+        if (retained.has(turn.turnId)) continue;
         const actor = this.requireActor(turn.actorPath);
         if (actor.kind === 'external') {
           this.finishTurn(turn.turnId, 'failed', { error: 'external_state_unknown' });
@@ -2128,6 +2175,15 @@ export class AgentActorController {
         this.finishTurn(turn.turnId, 'interrupted', { error: 'runtime_recovered_without_executor' });
       }
     });
+  }
+
+  private async validCheckpointTurns(): Promise<Set<string>> {
+    const retained = new Set<string>();
+    for (const turn of this.turns.values()) {
+      if (!isTerminal(turn.state) && turn.checkpoint !== undefined
+        && await this.options.validateCheckpoint?.(this.requireActor(turn.actorPath), turn)) retained.add(turn.turnId);
+    }
+    return retained;
   }
 
   private async claimOwnership(): Promise<boolean> {

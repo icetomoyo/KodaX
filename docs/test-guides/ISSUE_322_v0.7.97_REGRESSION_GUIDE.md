@@ -42,8 +42,8 @@ independently qualify for this breaker exception.
 
 ## Live capacity recovery contract
 
-The follow-up is implemented locally, with broader acceptance still
-incomplete. Exact user messages remain canonical. Recovery first reduces eligible
+The follow-up is implemented locally; the 2026-10-22 extension below records restart,
+authority and model acceptance. Exact user messages remain canonical. Recovery first reduces eligible
 tool results, then old assistant analysis, then cumulative user text (including text blocks beside images) in the
 request copy. Saved history remains readable; protected tool state, IDs, arguments,
 images and completed receipts remain intact. Paging is disabled without an active
@@ -56,10 +56,9 @@ strict request reduction. Waiting is separate from retrying: the Host persists t
 exact transcript and `contextRecovery`, then waits without provider calls. Changed
 settings or accepted input wake the same execution; Stop prevents generation.
 SDK callers without `onContextCapacityBlocked` retain typed capacity errors.
-Managed child event construction does not forward the root wait callbacks, so
-parallel children cannot overwrite its wake slot. Children retain their existing
-failure path when bounded recovery is exhausted; this change does not yet give
-each child an independently resumable capacity wait.
+Managed children forward capacity events with their own identity, worker checkpoint
+and session control. The Host stores separate wake slots, so one child cannot
+overwrite another child or the root. Nested recovery follows direct parent edges.
 
 ## Offline acceptance matrix
 
@@ -179,14 +178,115 @@ prove that every model reads all needed pages or obeys every omitted constraint.
 Keep original evidence and completed work exact; do not substitute token reductions
 or mock success for model-quality acceptance. Do not pool changed revisions as repeats.
 
-## Outstanding acceptance
+## 2026-10-22 restart and authority acceptance
 
-Automatic continuation across Host death and expired credential scopes is not
-implemented. Persisting a recovery fact is not restoring an execution lease.
-Independently resumable capacity waits for managed children are also outstanding.
-Transient storage failures now recover in-process; permanent errors and process
-death during an uncommitted transaction remain distinct boundaries. Text in mixed
-image messages can page out, but arbitrary image/protected-state reconstruction
-and model-independent reliable paging are not established. Therefore the complete self-recovery objective remains open.
+The later implementation supersedes the incomplete delivery statements above;
+earlier failed model observations remain historical evidence.
+
+| Boundary | Regression |
+| --- | --- |
+| New SA and AMA executor | Exact checkpoint history and original turn; no repeated prompt or completed edit dispatch |
+| Host shutdown/restart | Recovering checkpoint survives; same Run ID resumes after verified dead-owner claim |
+| Independent Actor tree | Depth 0/1/2 resumes original worker Sessions and Actor turns exactly once per new executor |
+| Concurrent Hosts | Exactly one revision claim succeeds and one executor launches |
+| Stop and changed history | Stop wins; digest/lineage mismatch refuses execution |
+| Fresh daemon authorization | Public `run.recover` with new scoped credential and Host-tool leases executes under the original principal |
+| Pending user constraints | Complete body restored under fresh authority; enqueue/withdraw persistence failures leave prior state intact |
+| Restore admission | Capacity and conflicting intents checked before taking ownership |
+| Goal budget | Each extraction call is charged; exhaustion stops before another chunk or main generation |
+| Parent mailbox wait | Real AMA `spawn_agent` and `run_workflow` followed by `wait_agent`: close commits the wait receipt, restart resumes parent and original leaf |
+| Workflow reconstruction | Original native leaf/bundle/result identity; verification repair still runs, including a second restart during repair; completed receipt reaches the live ancestor |
+| Worktree isolation | Pin precedes checkpoint publication; terminal/stale sweeps retain it; restore checks repository, registered checkout and checkpoint |
+| Input ownership | Foreign principals remain unbound across multiple restarts; subsequent inputs cannot bypass their constraints |
+| Cross-Host persistence | Stale queue writes fail before memory changes; failed queue storage does not claim the recovering Run |
+| Session isolation | Identical Actor paths/turn IDs in two Sessions retain separate recovery records |
+| Original input intent | Omitted/immediate/after-turn/redirect delivery and target identity survive restart and fresh binding |
+| Mixed-Session shutdown | Ordinary Run completion/Stop persists synchronously while another Session prepares its checkpoint |
+
+Root recovery uses `runtime.runs.recover({ runId, options?, authorization? })` through
+the daemon client, or the equivalent trusted embedded binding. Independent Actors use
+`runtime.agents.followup(sessionId, actorPath, '', { resumeCheckpoint: true, ...freshAuthority })`.
+The recovery request references saved work; it is not a new user turn. Required
+callbacks must be supplied again and satisfy the original tool/provider ceilings.
+No credential value or executable callback is serialized into the recovery file.
+
+Product clients call `client.runs.recover({ sessionId, runId })`; the trusted
+`authorizeExecution` callback receives `kind: 'recovery'` and binds fresh leases.
+The request cannot inject its own authority. This adds the callable Product API;
+it does not change the REPL's existing fork-oriented `/recover` command.
+
+Native Workflow recovery resumes the checkpointed leaf, not an arbitrary JavaScript
+stack. Its original result and verification survive, and the live parent receives
+the completed leaf receipt so it can continue from evidence. Custom executors still
+require their original executable binding; no generic Actor substitutes for one.
+
+Focused coverage (2026-10-22, seven recovery modules, Vitest/V8, 54 tests): statements
+92.48%, branches 84.16%, functions 94.89%, lines 95.79%. This is scoped coverage,
+not a claim that every repository file meets those percentages.
+
+## Final local validation (2026-10-22)
+
+Validated the final implementation on Windows after `163918e5`, with source frozen
+during the final full run. No version bump or release was performed.
+
+| Check | Result |
+| --- | --- |
+| `npm test` | 1,185 files passed, 4 skipped; 16,845 tests passed, 90 skipped, 19 todo; zero failures; 703.03 seconds |
+| `npm run typecheck` | Source and test TypeScript checks passed |
+| `npm run build` | Configuration templates, packages, native build, bundles and standalone SDK declarations passed |
+| `npm run test:bundle` | 44 tests passed; zero failures/skips, including daemon compaction, credentials, shutdown and shared Host recovery |
+| Standards review | Independent read-only review; no remaining P1/P2 findings |
+| Spec review | Independent read-only review; no remaining P1/P2 findings |
+
+The repository defines no lint script. Earlier validation failures were retained
+and repaired: live cross-client input idempotency, loss of delivery/target metadata
+in pending-input snapshots, and synchronous close settlement (including a mixed
+Session checkpoint wait). These have red/green regressions. A daemon launcher
+rejected a source revision changed during an earlier test run; the final frozen
+run passed that same test without disabling its stale-build protection.
+
+Local logs and red/green evidence are retained in ignored
+`docs/research/context-recovery-validation-20261022/`. The real-model evidence and
+its narrower semantic scope are recorded separately below; offline test counts
+are not model-quality scores.
+
+## Retained model evidence: r7–r11
+
+Manifests, each exact request, extraction/read output, final response and usage are
+retained under ignored `docs/research/context-capacity-20261021-r7` through `-r11`.
+These are bounded production-helper acceptance probes, not a full autonomous task
+benchmark or a claim about all models. They use production system/read/edit/bash
+definitions; mutation handlers never execute. Different revisions are not pooled.
+
+- r7/r8 exposed request-budget and retrieved-page eviction problems; neither is a
+  semantic pass. r7 full-input outputs are semantic oracles outside the 8K limit.
+- r9 kept requests within 8K and read all pages, yet MiniMax lost the earlier binding
+  constraint after its page was evicted. DeepSeek reached the round cap. Reading alone
+  therefore did not satisfy retention.
+- r10 introduced production verbatim memory extraction. DeepSeek returned only JSON,
+  with `eu-north-1`, batch size `7`, and read-only verification of completed `MIG-042`;
+  it did not repeat `EDIT-019` or call a mutation. Estimated final request plus output
+  reserve: 6329 tokens. MiniMax over-retained repetitive background and entered the
+  capacity wait; this was not counted as a pass.
+- r11 clarified selection of repeated background and reran only the affected MiniMax
+  cell, reusing prior raw evidence. MiniMax returned only JSON with the same correct
+  values, explicitly prohibited file modification/commands and migration replay.
+  Estimated final request plus reserve: 6356 tokens. No additional tool call occurred.
+
+The main-session semantic review inspected the complete final outputs and selected
+quotations, not just numeric scores: both accepted cells obeyed the hidden constraints,
+retained completed-work awareness, and required no re-paste or reauthorization of old
+work. Ordinary fitting input bypasses the new memory path. This is scoped evidence;
+lossless original storage and exact quote validation cannot prove that every future
+model will select every relevant clause.
+
+## Recovery boundaries
+
+Continuation requires available storage, a usable model window and valid authority.
+Missing conditions preserve a verified generation checkpoint and wait; they do not
+authorize blind retries. Stop, explicit budgets, unresolved effects and corrupt or
+changed canonical history remain fences. A crash before any durable commit cannot
+be represented as a committed operation. Images/protected state remain intact and
+wait for sufficient capacity. SDK users without Host callbacks receive typed errors.
 See [the implementation record](../features/v0.7.97.md#proposed-context-capacity-self-recovery-after-feature_296)
-and the dated ADR-067 follow-up for the exact delivery boundary.
+and ADR-067 for the ownership and persistence contract.

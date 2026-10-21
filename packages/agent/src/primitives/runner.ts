@@ -64,7 +64,7 @@ import {
   emitHandoffSpan,
   replaceSystemMessage,
 } from './runner-handoff.js';
-import { ContextCapacityError } from '../context-capacity.js';
+import { ContextCapacityError, GenerationSuspensionError } from '../context-capacity.js';
 import { KodaXContextOverflowError, prepareHistoryImages } from '@kodax-ai/llm';
 import { estimateTokens } from '../tokenizer.js';
 
@@ -199,7 +199,8 @@ export interface RunOptions {
   readonly measureContextCapacityRequest?: (transcript: readonly AgentMessage[]) => Promise<number>;
   /** Wait at a generation boundary for changed capacity conditions; never replay tools. */
   readonly onContextCapacityBlocked?: (
-    transcript: readonly AgentMessage[], error: ContextCapacityError | KodaXContextOverflowError,
+    transcript: readonly AgentMessage[], error: ContextCapacityError | KodaXContextOverflowError | GenerationSuspensionError,
+    budget: { readonly remainingIterations: number; readonly remainingContinuationIterations: number },
   ) => Promise<boolean>;
   /**
    * FEATURE_101 (v0.7.31.1): callback fired once when the Runner has
@@ -996,12 +997,13 @@ async function genericRun<TData>(
         }
         break;
       } catch (error) {
-        if (!(error instanceof ContextCapacityError || error instanceof KodaXContextOverflowError)
+        if (!(error instanceof ContextCapacityError || error instanceof KodaXContextOverflowError || error instanceof GenerationSuspensionError)
           || !opts.onContextCapacityBlocked) throw error;
         const committed = readRunnerRecoveryTranscript(error);
         if (committed) transcript = transcript[0]?.role === 'system' ? [transcript[0], ...committed] : [...committed];
         throwIfAborted();
-        if (!await opts.onContextCapacityBlocked(transcript, error)) throw error;
+        if (!await opts.onContextCapacityBlocked(transcript, error, { remainingIterations: iterationLimit - iteration,
+          remainingContinuationIterations: absoluteIterationLimit - iterationLimit })) throw error;
         throwIfAborted();
         const inputs = await opts.beforeNextTurn?.({ agent: currentAgent, transcript, iteration, lastTurnToolNames: [] });
         for (const message of inputs ?? []) {
@@ -1572,6 +1574,8 @@ async function genericRun<TData>(
         sessionId: opts.session?.id,
       };
     }
+
+    if (turn.contextPreparationProgress?.()) iteration -= 1;
 
     // FEATURE_164 (v0.7.41) — mid-turn message injection hook.
     // Fires AFTER tool execution + compaction + handoff handling, BEFORE

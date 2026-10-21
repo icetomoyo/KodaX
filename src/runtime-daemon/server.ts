@@ -294,6 +294,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "input.withdraw",
     "session.cancel",
     "run.start",
+    "run.recover",
     "run.input.submit",
     "run.abort",
     "run.model.set",
@@ -730,7 +731,7 @@ export function createRuntimeDaemonDispatcher(
       let dispatched: unknown;
       try {
         const execute = () => dispatchMutation(request, options, dispatch);
-        const ownedAdmission = ['input.submit', 'run.start', 'run.input.submit', 'workflow.start', 'agents.spawn', 'agents.followup',
+        const ownedAdmission = ['input.submit', 'run.start', 'run.recover', 'run.input.submit', 'workflow.start', 'agents.spawn', 'agents.followup',
           'session.compact', 'invocations.executeCommand', 'invocations.startReview', 'invocations.startAgentsLean',
           'credential.register', 'credential.resume', 'hostTool.register', 'hostTool.resume'].includes(request.method);
         const mutation = options.clientLifecycle && ownedAdmission
@@ -1498,6 +1499,7 @@ async function dispatchRuntimeDaemonRequest(
         actorPath,
         requireStringField(params, "objective"),
         {
+          ...(params.resumeCheckpoint === true ? { resumeCheckpoint: true } : {}),
           ...(expectedRevision === undefined ? {} : { expectedRevision }),
           ...(credentialAccessFactory === undefined
             ? {}
@@ -1913,6 +1915,19 @@ async function dispatchRuntimeDaemonRequest(
         requireStringField(params, "sessionId"),
         requireStringField(params, "inputId"),
       );
+    }
+    case "run.recover": {
+      options.clientLifecycle?.assertAdmission(principalId);
+      const params = requireRecord(request.params);
+      const runId = requireStringField(params, 'runId');
+      const status = await runtime.runs.get(runId);
+      if (status.origin?.principalId !== principalId) throw daemonError('permission_denied', 'Generation recovery requires the original principal.');
+      const authorization = optionalRecord(params.authorization);
+      const bound = await bindTrustedRunInput({ params: { ...params, ...authorization }, sessionId: status.sessionId, trustedRunId: runId,
+        principalId, clientName, clientVersion, reverseBridge });
+      const handle = await runtime.runs.recover({ ...bound, runId } as Parameters<typeof runtime.runs.recover>[0]);
+      runResults.remember(handle.runId, handle.result);
+      return { runId: handle.runId, sessionId: handle.sessionId, ...(handle.turnId ? { turnId: handle.turnId } : {}) };
     }
     case "run.start": {
       options.clientLifecycle?.assertAdmission(principalId);
@@ -2386,17 +2401,18 @@ async function dispatchRuntimeDaemonRequest(
   }
   if (authorization?.tools !== undefined) throw daemonError('invalid_params', 'A tools ceiling is supported only for independent Actor turns.');
   const productExecution = ['input.submit', 'invocations.executeCommand', 'invocations.startReview',
-    'invocations.startAgentsLean', 'workflow.start'].includes(request.method);
+    'invocations.startAgentsLean', 'workflow.start', 'run.recover'].includes(request.method);
   if (authorization === undefined && !productExecution) return dispatch();
   options.clientLifecycle?.assertAdmission(principalId);
   const params = requireRecord(request.params);
   if (authorization !== undefined && (params.credential !== undefined || params.hostTools !== undefined)) {
     throw daemonError('invalid_params', 'Use one execution authorization binding.');
   }
-  const credential = optionalRecord(authorization?.credential);
-  const hostTools = optionalRecord(authorization?.hostTools);
+  const credential = optionalRecord(authorization?.credential ?? (request.method === 'run.recover' ? params.credential : undefined));
+  const hostTools = optionalRecord(authorization?.hostTools ?? (request.method === 'run.recover' ? params.hostTools : undefined));
   const workflowHostPolicy = optionalRecord(authorization?.workflowHostPolicy);
-  const sessionId = credential === undefined && hostTools === undefined
+  const sessionId = request.method === 'run.recover' ? (await runtime.runs.get(requireStringField(params, 'runId'))).sessionId
+    : credential === undefined && hostTools === undefined
     ? optionalStringField(params, 'sessionId') : requireStringField(params, 'sessionId');
   if (authorization !== undefined && credential === undefined && hostTools === undefined && workflowHostPolicy === undefined) {
     throw daemonError('invalid_params', 'Execution authorization requires a lease or Workflow policy.');
@@ -2404,7 +2420,8 @@ async function dispatchRuntimeDaemonRequest(
   // Stable scope equality lets a same-authority follow-up enter the active Run;
   // a different authority always waits for its own Run.
   const key = authorization === undefined ? undefined : JSON.stringify([principalId, sessionId,
-    credential === undefined ? null : [credential.leaseId, [...requireStringArrayField(credential, 'providers')].sort()],
+    credential === undefined ? null : [credential.leaseId, credential.mode === 'scoped'
+      ? [...requireStringArrayField(credential, 'providers')].sort() : credential.provider],
     hostTools?.leaseId ?? null,
     ...(workflowHostPolicy === undefined ? [] : [[workflowHostPolicy.maxAgents ?? null, workflowHostPolicy.tokenBudget ?? null]])]);
   return withProductExecution({ key, principalId, sessionId, assertAdmission: () => options.clientLifecycle?.assertAdmission(principalId),

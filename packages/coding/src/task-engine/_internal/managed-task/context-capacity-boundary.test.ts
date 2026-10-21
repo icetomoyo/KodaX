@@ -179,7 +179,7 @@ describe('offline context capacity boundary recovery', () => {
     const provider = new OfflineSummaryProvider(3_000);
     const requests: KodaXMessage[][] = [];
     vi.spyOn(provider, 'stream').mockImplementation(async (messages, tools) => {
-      if (tools.length === 0) throw new Error('summary unavailable');
+      if (tools.length === 0) return { textBlocks: [{ type: 'text', text: '["Original user requirement and evidence."]' }], toolBlocks: [], thinkingBlocks: [] };
       requests.push(structuredClone(messages));
       if (requests.length === 1) throw new KodaXContextOverflowError({
         contextWindow: 8192, inputTokens: estimateTokens(messages), inputTokensKind: 'exact',
@@ -212,7 +212,7 @@ describe('offline context capacity boundary recovery', () => {
       }, ...(canRead ? [{ ...readDefinition, execute: read }] : [])] });
       const running = Runner.run(agent, [user, ...latestToolPair().map(message => message.role === 'user'
         ? { ...message, content: [{ type: 'tool_result' as const, tool_use_id: 'read-1', content: 'Already executed once.' }] } : message)], {
-        llm: adapter, compactionHook: hook, tracer: null,
+        llm: adapter, compactionHook: hook, tracer: null, maxIterations: 2,
         measureContextCapacityRequest: async messages => ref.measureRequest
           ? ref.measureRequest(messages) : estimateTokens([...messages]),
       });
@@ -227,7 +227,7 @@ describe('offline context capacity boundary recovery', () => {
       const result = await running;
       expect(result.output).toBe('accepted after paging');
       expect(requests).toHaveLength(3);
-      expect(read).toHaveBeenCalledTimes(1);
+      expect(read.mock.calls.at(-1)?.[0]).toMatchObject({ offset: 1 });
       expect(result.messages).toContainEqual(user);
       expect(execute).not.toHaveBeenCalled();
     } finally {

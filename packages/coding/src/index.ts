@@ -163,6 +163,7 @@ export type {
   KodaXToolSandboxObservationUpdate,
   ProviderRecoveryEvent,
   KodaXSessionOptions,
+  KodaXGenerationCheckpoint,
   KodaXContextTokenSnapshot,
   KodaXContextOptions,
   KodaXInterruptedRunEvidence,
@@ -280,6 +281,7 @@ export type {
 } from './trusted-text-mutation.js';
 
 export { normalizeKodaXAgentMode } from './types.js';
+export { parseGenerationCheckpoint, loadGenerationCheckpoint } from './generation-checkpoint.js';
 /** @deprecated Sandbox environment pass lists are inert since 0.7.96. */
 export { parseSandboxEnvironmentPass } from './shell-execution/environment.js';
 export {

@@ -21,6 +21,8 @@ import type { ToolGuardrail } from '@kodax-ai/agent';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { createSessionLineage } from '@kodax-ai/agent';
 import { TOOL_OUTPUT_DIR_ENV } from '../tools/truncate.js';
 
 const PROVIDER_NAME = 'sa-capacity-accounting-test';
@@ -130,6 +132,28 @@ describe('runSubstrate physical request accounting', { timeout: 30_000 }, () => 
     expect(result.limitReached).not.toBe(true);
     expect(executed).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(CapacityAccountingProvider.requests.at(-1)?.messages)).toContain('Preserve the public API');
+  });
+
+  it('starts a new executor at the saved generation with exact constraints and completed receipts', async () => {
+    const messages: KodaXMessage[] = [{ role: 'user', content: 'Preserve exports. Do not rerun EDIT019.', turnId: 'original' },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'edit-once', name: 'edit', input: { path: 'already.ts' } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'edit-once', content: 'EDIT019 committed' }] }];
+    const lineage = createSessionLineage(messages);
+    const execute = vi.fn(async () => 'must not execute');
+    const result = await runSubstrate({ provider: PROVIDER_NAME, maxIter: 10, reasoningMode: 'off',
+      context: { systemPromptOverride: 'sys' }, events: { beforeToolExecute: execute },
+      session: { id: 'restart', generationCheckpoint: { version: 1, sessionId: 'restart', turnId: 'original',
+        activeEntryId: lineage.activeEntryId, messagesDigest: createHash('sha256').update(JSON.stringify(messages)).digest('hex'),
+        remainingIterations: 1, remainingContinuationIterations: 0 },
+        storage: { load: async () => ({ messages, lineage, title: 'Restart', gitRoot: '' }), save: async () => {} } },
+    }, 'Original prompt must not be appended again');
+    expect(result.success).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+    expect(CapacityAccountingProvider.requests).toHaveLength(1);
+    const sent = JSON.stringify(CapacityAccountingProvider.requests[0]!.messages);
+    expect(sent).toContain('Preserve exports');
+    expect(sent).toContain('EDIT019 committed');
+    expect(sent).not.toContain('Original prompt must not be appended');
   });
 
   it.each(['complete', 'missing_first', 'missing_last'] as const)(

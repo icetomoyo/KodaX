@@ -445,8 +445,9 @@ export async function runWorkflowFromOptions(
   if ((suppliedControl === undefined) !== (suppliedHost === undefined)) {
     throw new Error('Workflow Runtime requires actorControl and actorHost together.');
   }
-  const ownedActorSession = suppliedControl ? undefined : new CodingActorSession({
+  const ownedActorSession = suppliedControl || input.options.context?.actorSession ? undefined : new CodingActorSession({
     maxConcurrentThreadsPerSession: input.options.maxConcurrentThreadsPerSession,
+    historyStorage: input.options.session?.storage,
   });
   const sessionOptions: KodaXOptions = ownedActorSession
     ? {

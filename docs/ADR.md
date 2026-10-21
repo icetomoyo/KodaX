@@ -6127,11 +6127,49 @@ alone do not prove a replacement committed. Retry refreshes metadata, and permis
 failures still surface. Mixed user text/image messages page only text; a fixed
 request-only system notice explains runtime provenance and is included in the budget.
 
-This follow-up does **not** establish universal recovery: after Host process death
-the existing interrupted-run policy retains
-the recovery fact but does not resurrect execution or expired credential authority.
-The controlled model pilot has not established semantic non-regression for user
-paging. See the [regression and acceptance record](test-guides/ISSUE_322_v0.7.97_REGRESSION_GUIDE.md).
+**2026-10-22 completion of the local recovery follow-up (unreleased):** A generation
+checkpoint now binds the exact Session, active lineage entry, messages digest,
+original turn and remaining iteration budgets. SA and AMA reopen that boundary
+without appending the objective or dispatching completed tools again. Each child
+has its own wait, control and worker history. Independent Actors and nested children
+resume their original turns; each parent schedules only its direct children.
+
+Host shutdown preserves verified checkpoints. A new Host's `runs.recover` validates
+the old owner is dead and atomically claims the Run revision. Independent Actors
+use `agents.followup(..., '', { resumeCheckpoint: true })`. Both paths require the
+original principal and fresh required credential/Host-tool bindings. Private recovery
+instructions contain declarative configuration and binding requirements, never
+serialized authority callbacks or credentials. Changed history, competing ownership,
+Stop and unresolved effects cannot be bypassed. Pending input bodies are persisted
+before queue acceptance or withdrawal, and restored with fresh execution authority.
+
+Native Workflow leaves retain their original bundle, verification baseline and
+bounded repair attempts. Reopening does not replay the Workflow JavaScript entry;
+the original leaf result remains addressable and its completion receipt also goes
+to the live ancestor when the protocol owner has stopped. Isolated worktrees are
+pinned beside the checkout before publishing a checkpoint; both cleanup sweeps
+retain them, and recovery validates the original repository and registered checkout.
+Pure `wait_agent` calls can be woken on Host shutdown without aborting the Run:
+their original tool receipt commits before the next-generation suspension. Unknown
+or mutating in-flight effects do not use this path.
+
+Pending inputs from other principals remain queued across repeated restarts until
+those principals bind fresh authority; later input cannot bypass that queue. File
+CAS rejects stale Host writes, and queue persistence completes before the recovery
+ownership claim. Independent Actor recovery IDs include Session identity. The
+Product client exposes `runs.recover({ sessionId, runId })` through its trusted
+execution authorizer; a UI must invoke that operation to rebind process-local leases.
+
+Before oversized original text leaves the request, bounded text-only model calls
+select append-only verbatim task memory from every chunk. Quotations are checked
+against the original; subsequent chunks cannot erase prior retained constraints.
+The canonical original remains exact and readable. Invalid or excessive memory
+enters the saved recovery wait instead of acting on an incomplete preview. These
+calls use the same credential scope and timeout, are counted in cost and Goal
+budgets, and stop when the Goal budget is exhausted. Ordinary fitting inputs do not
+use this path. The controlled DeepSeek/MiniMax 8K constraint and completed-receipt
+probes now pass; they establish this fixture's behavior, not infallible model judgment.
+See the [regression and acceptance record](test-guides/ISSUE_322_v0.7.97_REGRESSION_GUIDE.md).
 The older dated decision below describes shipped behavior before this follow-up.
 
 **2026-09-07 correction (long coding sessions)**: the ladder below now also

@@ -958,7 +958,7 @@ export async function runManagedTaskViaRunner(
   const liveTurnScope = createLiveTurnScope({
     sessionId: initialSessionId,
     deliveryKind: requestedLiveTurn?.deliveryKind ?? 'initial',
-    turnId: requestedLiveTurn?.turnId,
+    turnId: baseOptionsWithSessionId.session?.generationCheckpoint?.turnId ?? requestedLiveTurn?.turnId,
     deliveryId: requestedLiveTurn?.deliveryId,
     promptId: requestedLiveTurn?.promptId,
     ...(currentAgentId !== undefined
@@ -2005,6 +2005,9 @@ async function runManagedTaskViaRunnerInner(
   //      tier and started fresh; substrate parity restores it.
   //   3. empty messages — first turn / unknown session
   const resolvedInitial = await resolveInitialMessages(options, options.session?.id ?? resolvedSessionId);
+  if (options.session?.generationCheckpoint && options.context?.runtimeRunId) {
+    await options.context.actorSession?.resumeGenerationChildren(options.context.runtimeRunId);
+  }
   // FEATURE_294: run-scoped host tools join the AMA candidate name list so the
   // lease-bound surface stays consistent with the SA path; policy filtering
   // resolves their metadata from the run-scoped map (fail-closed elsewhere).
@@ -2051,15 +2054,17 @@ async function runManagedTaskViaRunnerInner(
         ?? mapLegacyReasoningModeToEffortIntent(resolveReasoningMode(options));
     },
   });
-  const initialMessages = appendPromptIfNotDuplicate(
+  const initialMessages = options.session?.generationCheckpoint ? resolvedInitial.messages : appendPromptIfNotDuplicate(
     stripManagedRunContextMessages(resolvedInitial.messages),
     promptWithOverlay,
     options.context?.inputArtifacts,
     liveTurnController.currentTurnId(),
     options.session?.inputId,
   );
-  const currentUserIndex = options.session?.inputId === undefined ? initialMessages.length - 1
-    : initialMessages.findIndex(message => message.role === 'user' && message.inputId === options.session!.inputId);
+  const currentUserIndex = Math.max(0, options.session?.generationCheckpoint
+    ? initialMessages.findIndex(message => message.role === 'user' && message.turnId === options.session?.generationCheckpoint?.turnId)
+    : options.session?.inputId === undefined ? initialMessages.length - 1
+    : initialMessages.findIndex(message => message.role === 'user' && message.inputId === options.session!.inputId));
   const currentUserMessage = initialMessages[currentUserIndex]!;
   const nestedToolGuardrails = collectGuardrails(options.guardrails).tool;
   // AMA handlers share the existing checked dispatch and the same per-Run state.
@@ -2075,7 +2080,7 @@ async function runManagedTaskViaRunnerInner(
     });
     return results.get(id) ?? '[Tool Error] Nested tool did not return a result.';
   };
-  const currentMessageTimestamp = currentUserMessage.timestamp ?? new Date().toISOString();
+  const currentMessageTimestamp = currentUserMessage?.timestamp ?? new Date().toISOString();
   // Saved Host evidence rides only in transient request context.
   const interruptedRunRecovery = renderInterruptedRunRecovery(options.context?.interruptedRunEvidence, resolvedInitial.messages);
   const withInterruptedRunRecovery = (full: string | undefined): string | undefined =>
@@ -2530,7 +2535,10 @@ async function runManagedTaskViaRunnerInner(
   // + sessionId), not the wrapper's narrower `RunWithIdleYieldRunResult`
   // (the wrapper only requires `messages`, so the wider type is
   // structurally OK).
+  let generationBudget = options.session?.generationCheckpoint;
   const runOnce = (agent: Agent, input: readonly KodaXMessage[]) => {
+    const resumedBudget = generationBudget;
+    generationBudget = undefined;
     iterationStateRef.current = 0;
     const initialMessages = new Set(input);
     let capacityRevision = options.events?.getContextRecoveryRevision?.();
@@ -2545,8 +2553,8 @@ async function runManagedTaskViaRunnerInner(
       },
       measureContextCapacityRequest: async transcript => contextTokenSnapshotRef.measureRequest
         ? contextTokenSnapshotRef.measureRequest(transcript) : estimateTokens([...transcript]),
-      onContextCapacityBlocked: (transcript, error) => waitForContextRecovery(
-        error, transcript, options.events, options.abortSignal, capacityRevision,
+      onContextCapacityBlocked: (transcript, error, budget) => waitForContextRecovery(
+        error, transcript, options.events, options.abortSignal, capacityRevision, budget,
       ),
       toolResultBatchTransform,
       toolObserver: runnerToolObserver,
@@ -2607,8 +2615,9 @@ async function runManagedTaskViaRunnerInner(
       // A fresh idle-yield resume starts a new Runner invocation and resets
       // this counter. The fuse catches one uninterrupted runaway tool loop;
       // it never becomes a cumulative managed-task budget.
-      maxToolLoopIterations: MANAGED_RUNNER_PANIC_ITERATIONS,
-      maxTotalIterations: MANAGED_RUNNER_PANIC_ITERATIONS,
+      maxToolLoopIterations: Math.min(MANAGED_RUNNER_PANIC_ITERATIONS, resumedBudget?.remainingIterations ?? Infinity),
+      maxTotalIterations: Math.min(MANAGED_RUNNER_PANIC_ITERATIONS, resumedBudget?.remainingIterations === undefined
+        ? Infinity : resumedBudget.remainingIterations + (resumedBudget.remainingContinuationIterations ?? 0)),
     });
   };
 

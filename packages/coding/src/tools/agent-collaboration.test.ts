@@ -1084,6 +1084,19 @@ describe('F270 canonical collaboration tools', () => {
     }).map((message) => message.content)).toEqual(['answer the user first']);
   });
 
+  it('settles a pure mailbox wait for Host suspension without aborting its Actor', async () => {
+    const { ctx } = await context(new DeferredExecutor(), 'session-1');
+    let wake: (() => void) | undefined;
+    const unregister = vi.fn();
+    ctx.parentEvents = { registerGenerationWait: callback => { wake = callback; return unregister; } };
+    const waiting = executeTool('wait_agent', { timeout_ms: 10_000 }, ctx);
+    await vi.waitFor(() => expect(wake).toBeDefined());
+    wake!();
+    expect(JSON.parse(await waiting)).toMatchObject({ ok: true, status: 'interrupted' });
+    expect(unregister).toHaveBeenCalledOnce();
+    expect(ctx.abortSignal?.aborted).not.toBe(true);
+  });
+
   it('wakes when scoped user input arrives after the Actor waiter is registered', async () => {
     const { ctx } = await context(new DeferredExecutor(), 'session-1');
     const waiting = executeTool('wait_agent', { timeout_ms: 10_000 }, ctx);

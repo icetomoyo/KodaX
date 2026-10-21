@@ -70,6 +70,28 @@ const childOptions: WorkflowChildOptions = {
 };
 
 describe('createCodingWorkflowBackend — spawn + wait', () => {
+  it('keeps the exact Workflow bundle and verification evidence at a child generation boundary', async () => {
+    const { ctx, session } = actorContext();
+    let release!: () => void;
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    const backend = createCodingWorkflowBackend({ ctx, childOptions: { ...childOptions,
+      parentOptions: { events: { onContextCapacityBlocked: async () => { await waiting; return {}; } } } },
+      runId: 'original-workflow',
+      runChild: async (_bundles, _ctx, options) => {
+        expect(options.actorTurnId).toBeDefined();
+        await options.parentOptions.events!.onContextCapacityBlocked!({ checkpoint: { version: 1, sessionId: 'worker-history',
+          activeEntryId: null, messagesDigest: 'a'.repeat(64) } }, options.abortSignal);
+        return execResult();
+      } });
+    const task = await backend.spawn({ name: 'retain', prompt: 'Never repeat EDIT019.', constraints: ['JSON only'], readOnly: true });
+    try {
+      const actor = session.rootControl().list().actors.find(value => value.path !== '/root')!;
+      await vi.waitFor(() => expect(session.rootControl().get(actor.path).turns[0]?.checkpoint).toMatchObject({
+        kind: 'generation', actorPath: actor.path, actorTurnId: actor.currentTurnId,
+        workflow: { runId: 'original-workflow', bundle: { id: task.taskId, constraints: ['JSON only'] }, input: { prompt: 'Never repeat EDIT019.' } },
+      }));
+    } finally { release(); await backend.wait(task.taskId); await session.close(); }
+  });
   it('registers a zero-slot Workflow owner and leaves no ghost on global-cap rejection', async () => {
     const { ctx, session } = actorContext(4);
     ctx.actorControl = await session.createWorkflowOwner('/root', 'run-cap');

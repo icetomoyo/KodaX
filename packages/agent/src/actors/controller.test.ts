@@ -87,6 +87,31 @@ async function settle(): Promise<void> {
 }
 
 describe('F270 actor tree and scheduler', () => {
+  it('preserves an executor checkpoint through shutdown and resumes the same turn only after an explicit rebind', async () => {
+    const persisted = revisionedActorStore();
+    const firstExecutor = new DeferredExecutor();
+    const first = await createAgentActorController({ store: persisted.store, owner: FIRST_OWNER, executor: firstExecutor,
+      validateCheckpoint: async () => true });
+    const child = await first.spawn('/root', { taskName: 'recoverable', objective: 'Edit once then report.' });
+    await settle();
+    await firstExecutor.pending[0]!.input.reportCheckpoint!({ sessionId: 'worker-original', generation: 'next' });
+    await first.shutdown('Host restarting');
+    const secondExecutor = new DeferredExecutor();
+    const second = await createAgentActorController({ store: persisted.store, owner: SECOND_OWNER, executor: secondExecutor,
+      isOwnerAlive: () => false, validateCheckpoint: async () => true });
+    expect(second.output('/root', child.actorPath, child.turnId).state).toBe('running');
+    expect(secondExecutor.pending).toHaveLength(0);
+    await second.resumeCheckpointTurn(child.actorPath, child.turnId);
+    await settle();
+    expect(secondExecutor.pending[0]!.input.turn.turnId).toBe(child.turnId);
+    expect(secondExecutor.pending[0]!.input.turn.checkpoint).toEqual({ sessionId: 'worker-original', generation: 'next' });
+    await expect(second.resumeCheckpointTurn(child.actorPath, child.turnId)).rejects.toThrow();
+    await secondExecutor.pending[0]!.input.reportCheckpoint!(undefined);
+    secondExecutor.pending[0]!.resolve({ output: 'continued without replay' });
+    await settle();
+    expect(second.output('/root', child.actorPath, child.turnId)).toMatchObject({ state: 'completed', output: 'continued without replay' });
+    await second.shutdown();
+  });
   it('mints canonical recursive paths and keeps Actor and Turn state separate', async () => {
     const executor = new DeferredExecutor();
     const controller = await createAgentActorController({ executor });

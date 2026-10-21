@@ -13,6 +13,7 @@ import { toolResultText } from './tools/tool-result-content.js';
 import { persistToolOutput } from './tools/truncate.js';
 import { cleanupUserInputDegradationCache, createUserInputDegradationCache,
   degradeIrreducibleUserInputs } from './capacity-recovery.js';
+import { isPagedOriginalInput } from './transient-text-artifacts.js';
 
 export interface HistoryCapacityRecoveryInput {
   readonly messages: readonly KodaXMessage[];
@@ -78,7 +79,7 @@ async function shrinkResult(
       - estimateTokens([{ role: 'user', content: [{ ...block, content: '' }] }]);
   const guarded = await applyToolResultGuardrail(toolName, block.content, ctx, {
     existingOutputPath: outputPath,
-    maxInlineTokens: Math.max(0, contentTokens - excess),
+    maxInlineTokens: Math.max(0, contentTokens - excess - 64),
     persistOutput: (tool, content) => persistHistoryArtifact(tool, content, ctx),
   });
   ctx.abortSignal?.throwIfAborted();
@@ -107,8 +108,9 @@ export async function recoverContextHistory(input: HistoryCapacityRecoveryInput)
   const messages = [...input.messages];
   let currentTokens = input.currentTokens;
   const baseEstimate = estimateTokens(messages);
-  const maxInput = calculateMaxContextInputTokens(input.contextWindow,
+  let maxInput = calculateMaxContextInputTokens(input.contextWindow,
     Math.min(input.reservedResponseTokens, RESERVE_SHRINK_FLOOR_TOKENS));
+  const physicalMaxInput = maxInput;
   if (input.canReadPagedContent !== true) {
     if (needsHistoryCapacityRelief(input)) {
       throw new ContextCapacityError({ ...input, reservedResponseTokens: reclaimReservedResponseTokens(input) },
@@ -117,6 +119,13 @@ export async function recoverContextHistory(input: HistoryCapacityRecoveryInput)
     return { messages, currentTokens, changed: false };
   }
   const toolNames = new Map<string, string>();
+  // A read of paged user text must survive to the next request. Charge the
+  // canonical original at its wire size before evicting the retrieved pages;
+  // otherwise each read is immediately erased to make room for that original.
+  if (messages.some(message => Array.isArray(message.content) && message.content.some(block => block.type === 'tool_use'
+    && block.name === 'read' && typeof block.input.path === 'string' && isPagedOriginalInput(block.input.path)))) {
+    maxInput += await measureUserInputRelief(input);
+  }
   const ctx: KodaXToolExecutionContext = input.executionContext ?? { backups: new Map() };
   for (let index = 0; index < messages.length && currentTokens > maxInput; index += 1) {
     const message = messages[index]!;
@@ -171,7 +180,7 @@ export async function recoverContextHistory(input: HistoryCapacityRecoveryInput)
   }
   // User requirements are the last material paged out, after recoverable
   // evidence and old assistant analysis. Prefer keeping all constraints inline.
-  const userInputRelief = currentTokens > maxInput
+  const userInputRelief = currentTokens > physicalMaxInput
     ? await measureUserInputRelief({ ...input, messages, currentTokens }) : 0;
   const wireTokens = currentTokens - userInputRelief;
   if (needsHistoryCapacityRelief({ ...input, currentTokens: wireTokens })) {

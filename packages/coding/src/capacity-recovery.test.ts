@@ -11,10 +11,12 @@ import {
   createUserInputDegradationCache,
   degradeIrreducibleUserInputs,
   hasIrreducibleUserInput,
+  guardPagedInputResponse,
   type ContextReserveOverrideProvider,
 } from './capacity-recovery.js';
 import { readTransientTextArtifact } from './transient-text-artifacts.js';
 import { TOOL_OUTPUT_DIR_ENV } from './tools/truncate.js';
+import { toolRead } from './tools/read.js';
 
 function fakeProvider(base: number): ContextReserveOverrideProvider {
   return { getEffectiveMaxOutputTokens: (_model?: string) => base };
@@ -47,6 +49,39 @@ describe('capacity recovery rungs (FEATURE_296 T5/T6)', () => {
   });
 
   describe('degradeIrreducibleUserInputs', () => {
+    it('retains verbatim obligations after measurement and repeated projection without rereading tools or resummarizing', async () => {
+      const cache = createUserInputDegradationCache();
+      const original = 'background '.repeat(12000) + '\nNever rerun EDIT-019. Return JSON only.';
+      const messages: KodaXMessage[] = [{ role: 'user', content: original }];
+      const request = { currentTokens: estimateTokens(messages) + 2000, reservedResponseTokens: 1000, canReadPagedContent: true };
+      await degradeIrreducibleUserInputs(messages, { backups: new Map() }, 8192, cache, request);
+      const retainInput = vi.fn(async () => ['Never rerun EDIT-019. Return JSON only.']);
+      const wire = await degradeIrreducibleUserInputs(messages, { backups: new Map() }, 8192, cache, { ...request, retainInput });
+      const again = await degradeIrreducibleUserInputs(messages, { backups: new Map() }, 8192, cache, { ...request, retainInput });
+      expect(JSON.stringify(wire)).toContain('Never rerun EDIT-019. Return JSON only.');
+      expect(again).toEqual(wire);
+      expect(retainInput).toHaveBeenCalledTimes(1);
+      expect(messages[0]?.content).toBe(original);
+      const final = { textBlocks: [{ text: '{}' }], toolBlocks: [] };
+      expect(guardPagedInputResponse(final, cache)).toBe(final);
+      await cleanupUserInputDegradationCache(cache);
+    });
+    it('recovers unread original requirements before executing a proposed mutation or accepting a final answer', async () => {
+      const cache = createUserInputDegradationCache();
+      const messages: KodaXMessage[] = [{ role: 'user', content: Array.from({ length: 160 }, (_, i) => `${i}: keep all constraints ${'x'.repeat(150)}`).join('\n') }];
+      await degradeIrreducibleUserInputs(messages, { backups: new Map() }, 8192, cache,
+        { currentTokens: estimateTokens(messages) + 2000, reservedResponseTokens: 1500, canReadPagedContent: true });
+      const proposed = { textBlocks: [], thinkingBlocks: [], toolBlocks: [{ type: 'tool_use' as const, id: 'mutation', name: 'bash', input: { command: 'redo-migration' } }] };
+      let result = guardPagedInputResponse(proposed, cache);
+      expect(result.toolBlocks[0]?.name).toBe('read');
+      for (let page = 0; page < 20 && result !== proposed; page++) {
+        await toolRead(result.toolBlocks[0]!.input, { backups: new Map() });
+        result = guardPagedInputResponse(proposed, cache);
+      }
+      expect(result).toBe(proposed);
+      expect(guardPagedInputResponse({ ...proposed, toolBlocks: [] }, cache).toolBlocks).toEqual([]);
+      await cleanupUserInputDegradationCache(cache);
+    });
     it('pages only oversized text blocks in multimodal user input and preserves images and receipts', async () => {
       const text = 'Constraint: never deploy.\n' + 'evidence\n'.repeat(12000);
       const messages: KodaXMessage[] = [{ role: 'user', content: [

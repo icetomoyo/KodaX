@@ -1,6 +1,11 @@
 export const CONTEXT_SAFETY_FLOOR_TOKENS = 2_048;
 export const CONTEXT_SAFETY_RATIO = 0.03;
 
+/** Host-requested stop before generation, after committed tool receipts. */
+export class GenerationSuspensionError extends Error {
+  constructor() { super('Host requested a durable generation suspension.'); this.name = 'GenerationSuspensionError'; }
+}
+
 export interface ContextCapacityInput {
   readonly contextWindow: number;
   readonly currentTokens: number;

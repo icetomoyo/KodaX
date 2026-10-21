@@ -39,6 +39,8 @@ import {
   resolveConstructedAgentEntry,
 } from '../construction/agent-resolver.js';
 import { assertSupportedOutputSchema } from './structured-output.js';
+import { loadGenerationCheckpoint, parseGenerationCheckpoint } from '../generation-checkpoint.js';
+import { toAgentMetadataValue } from '../orchestration/pattern-result.js';
 import type {
   KodaXChildContextBundle,
   KodaXChildExecutionResult,
@@ -47,6 +49,7 @@ import type {
   KodaXEvents,
   KodaXToolExecutionContext,
   KodaXWireReasoningEffort,
+  KodaXOptions,
 } from '../types.js';
 
 type WorkflowChildSnapshotStatus = 'running' | 'completed' | 'failed' | 'aborted';
@@ -81,6 +84,8 @@ export type WorkflowChildOptions = Omit<
 >;
 
 export interface CodingWorkflowBackendDeps {
+  /** Internal reconstruction of one original native Actor Turn; never invokes the Workflow script. */
+  readonly recovery?: { readonly execution: AgentExecutionInput; readonly snapshot: WorkflowGenerationSnapshot };
   /** Parent tool-execution context carrying the Workflow owner's Actor binding. */
   readonly ctx: KodaXToolExecutionContext;
   /** Fixed per-run child options (parentRole / parentHarness / parentOptions
@@ -105,6 +110,39 @@ export interface CodingWorkflowBackendDeps {
   readonly kodaxAuthored?: boolean;
 }
 
+interface WorkflowGenerationSnapshot {
+  readonly repairAttempts?: number;
+  readonly runId?: string;
+  readonly bundle: KodaXChildContextBundle;
+  readonly input: WorkflowSpawnAgentInput;
+  readonly changedPathBaseline: ChangedPathSnapshot;
+  readonly mutation: Pick<MutationRecorder, 'succeededToolCalls' | 'succeededPaths' | 'succeededReadPaths'>;
+  readonly childOptions: Pick<ChildExecutorOptions, 'maxIterationsPerChild' | 'parentRole' | 'parentHarness'>;
+  readonly customExecutor: boolean;
+}
+
+/** Reconstruct the built-in leaf executor, retaining its original result ownership and verification baseline. */
+export async function resumeWorkflowGenerationTurn(execution: AgentExecutionInput,
+  ctx: KodaXToolExecutionContext, options: KodaXOptions): Promise<AgentExecutionResult> {
+  const checkpoint = execution.turn.checkpoint;
+  if (!checkpoint || typeof checkpoint !== 'object' || Array.isArray(checkpoint) || !('workflow' in checkpoint)) {
+    throw new Error('Workflow generation recovery instructions are missing.');
+  }
+  const snapshot = checkpoint.workflow as unknown as WorkflowGenerationSnapshot;
+  if (!snapshot || snapshot.customExecutor || !snapshot.bundle || !snapshot.input || !snapshot.childOptions || !snapshot.changedPathBaseline || !snapshot.mutation) {
+    throw new Error('Workflow generation recovery requires its original executor binding.');
+  }
+  const backend = createCodingWorkflowBackend({ ctx, recovery: { execution, snapshot }, runId: snapshot.runId,
+    childOptions: { ...snapshot.childOptions, historyStorage: options.session?.storage,
+      guardrails: ctx.guardrails, planModeBlockCheck: ctx.planModeBlockCheck,
+      parentOptions: { ...options, extensionRuntime: ctx.extensionRuntime, events: ctx.parentEvents } } });
+  const handle = await backend.spawn(snapshot.input);
+  const result = await backend.wait(handle.taskId);
+  if (result.status !== 'completed' && result.status !== 'completed_unverified') throw new Error(result.finalText);
+  return { output: result.finalText, structured: toAgentMetadataValue(JSON.parse(JSON.stringify({ workflowRunId: snapshot.runId, taskId: handle.taskId,
+    actorPath: execution.actor.path, turnId: execution.turn.turnId, result })) as unknown), artifacts: result.artifacts };
+}
+
 interface WorkflowStepBinding {
   readonly name: string;
   readonly input: WorkflowSpawnAgentInput;
@@ -116,6 +154,7 @@ interface WorkflowStepBinding {
     bundle: KodaXChildContextBundle,
     execution: AgentExecutionInput,
     actorControl: AgentActorClient,
+    repair?: { readonly attempt: number; readonly messages: readonly import('../types.js').KodaXMessage[] },
   ) => Promise<KodaXChildExecutionResult>;
   readonly external: boolean;
   readonly verification?: WorkflowTaskVerification;
@@ -826,11 +865,11 @@ export function createCodingWorkflowBackend(deps: CodingWorkflowBackendDeps): Wo
         };
       }
     }
-    const childId = genId();
+    const childId = deps.recovery?.snapshot.bundle.id ?? genId();
     // Step bindings hold every Agent spawned earlier in this run, so this is
     // exactly the set a
     // `task_id:` evidence ref may legitimately point back to.
-    const bundle = buildBundle(
+    const bundle = deps.recovery?.snapshot.bundle ?? buildBundle(
       childId,
       effectiveInput,
       new Set(stepBindings.keys()),
@@ -840,24 +879,51 @@ export function createCodingWorkflowBackend(deps: CodingWorkflowBackendDeps): Wo
     const resolvedVerification = resolveVerificationForInput(effectiveInput);
     const verification = resolvedVerification.verification;
     const mutationRecorder = createMutationRecorder();
+    if (deps.recovery) Object.assign(mutationRecorder, structuredClone(deps.recovery.snapshot.mutation));
     const acceptToolMutationEvidence = effectiveInput.isolation !== 'worktree';
-    const changedPathBaseline = hasVerificationWork(verification)
+    const changedPathBaseline = deps.recovery ? Promise.resolve(deps.recovery.snapshot.changedPathBaseline) : hasVerificationWork(verification)
       ? captureChangedPaths(ctx, listChangedFiles)
       : Promise.resolve({ paths: [] });
     const runBundle: WorkflowStepBinding['runBundle'] = async (
       runBundleInput,
       execution,
       childActorControl,
+      repair,
     ) => {
+    const saved = repair ? undefined : execution.turn.checkpoint;
+    const generationCheckpoint = saved && typeof saved === 'object' && !Array.isArray(saved) && 'history' in saved
+      ? parseGenerationCheckpoint(saved.history) : undefined;
+    if (generationCheckpoint) {
+      if (!childOptions.historyStorage) throw new Error('Workflow recovery requires original worker history storage.');
+      await loadGenerationCheckpoint(childOptions.historyStorage, generationCheckpoint);
+      await execution.reportCheckpoint?.(undefined);
+    }
+    const observed = wrapEventsForMutationRecording(childOptions.parentOptions.events, mutationRecorder);
     const perChild: ChildExecutorOptions = {
       ...childOptions,
       parentOptions: {
         ...childOptions.parentOptions,
-        events: wrapEventsForMutationRecording(
-          childOptions.parentOptions.events,
-          mutationRecorder,
-        ),
+        events: { ...observed, onContextCapacityBlocked: async (state, signal, meta) => {
+          if (state.checkpoint) await execution.reportCheckpoint?.(toAgentMetadataValue(JSON.parse(JSON.stringify({
+            kind: 'generation', actorPath: execution.actor.path, actorTurnId: execution.turn.turnId, history: state.checkpoint,
+            ownerRunId: ctx.runtimeRunId,
+            workflow: { runId: deps.runId, bundle: runBundleInput, input: effectiveInput, changedPathBaseline: await changedPathBaseline,
+              repairAttempts: repair?.attempt ?? deps.recovery?.snapshot.repairAttempts ?? 0,
+              mutation: { succeededToolCalls: mutationRecorder.succeededToolCalls, succeededPaths: mutationRecorder.succeededPaths,
+                succeededReadPaths: mutationRecorder.succeededReadPaths },
+              childOptions: { maxIterationsPerChild: childOptions.maxIterationsPerChild, parentRole: childOptions.parentRole, parentHarness: childOptions.parentHarness },
+              customExecutor: deps.runChild !== undefined || deps.listChangedFiles !== undefined },
+          })) as unknown));
+          if (!observed?.onContextCapacityBlocked) throw new Error('Workflow capacity recovery requires its Host binding.');
+          const selection = await observed.onContextCapacityBlocked(state, signal, meta);
+          signal?.throwIfAborted();
+          await execution.reportCheckpoint?.(undefined);
+          return selection;
+        } },
       },
+      actorTurnId: execution.turn.turnId,
+      ...(generationCheckpoint ? { generationCheckpoint, initialMessages: [] } : {}),
+      ...(repair ? { initialMessages: repair.messages } : {}),
       maxParallel: 1,
       // FEATURE_217 — every child launched through the workflow backend gets the
       // self-distill digest. This is the single workflow boundary, so it marks
@@ -915,13 +981,14 @@ export function createCodingWorkflowBackend(deps: CodingWorkflowBackendDeps): Wo
       return runChild([runBundleInput], ctx, perChild);
     };
 
-    const registered = kind === 'external'
+    const registered = kind === 'external' || deps.recovery
       ? undefined
       : registerExecution(childId, bundle, runBundle, 1);
     actorSequence += 1;
     let turn;
     try {
-      turn = await actorControl.spawn({
+      turn = deps.recovery ? { actorPath: deps.recovery.execution.actor.path, turnId: deps.recovery.execution.turn.turnId }
+        : await actorControl.spawn({
         taskName: workflowActorTaskName(effectiveInput.name, actorSequence),
         objective: effectiveInput.prompt,
         kind,
@@ -957,13 +1024,14 @@ export function createCodingWorkflowBackend(deps: CodingWorkflowBackendDeps): Wo
       actorPath: turn.actorPath,
       turnId: turn.turnId,
       ...(registered ? { promise: registered.promise } : {}),
+      ...(deps.recovery ? { promise: runBundle(bundle, deps.recovery.execution, actorControl) } : {}),
       runBundle,
       external: kind === 'external',
       verification,
       changedPathBaseline,
       mutationRecorder,
       acceptToolMutationEvidence,
-      repairAttempts: 0,
+      repairAttempts: deps.recovery?.snapshot.repairAttempts ?? 0,
     });
     return { taskId: childId, name: effectiveInput.name };
   };
@@ -1032,7 +1100,7 @@ export function createCodingWorkflowBackend(deps: CodingWorkflowBackendDeps): Wo
       const remainingMs = totalWaitTimeoutMs === undefined
         ? undefined
         : Math.max(0, totalWaitTimeoutMs - elapsedMs);
-      await waitForActorTurn(entry, remainingMs, totalWaitTimeoutMs);
+      if (!deps.recovery) await waitForActorTurn(entry, remainingMs, totalWaitTimeoutMs);
       if (!promise) throw new Error(`workflow task ${taskId} has no local execution result`);
       return promise;
     };
@@ -1099,6 +1167,16 @@ export function createCodingWorkflowBackend(deps: CodingWorkflowBackendDeps): Wo
       }, new Set(stepBindings.keys()), new Map(
         [...stepBindings].map(([knownTaskId, binding]) => [knownTaskId, binding.actorPath]),
       ), deps.kodaxAuthored === true);
+      if (deps.recovery) {
+        const checkpoint = deps.recovery.execution.turn.checkpoint;
+        const originalHistory = checkpoint && typeof checkpoint === 'object' && !Array.isArray(checkpoint) && 'history' in checkpoint
+          ? parseGenerationCheckpoint(checkpoint.history) : undefined;
+        const workerId = result.results.find(child => child.childId === taskId)?.sessionId ?? originalHistory?.sessionId;
+        const previous = workerId && childOptions.historyStorage ? await childOptions.historyStorage.load(workerId) : undefined;
+        if (!previous) throw new Error('Workflow verification repair requires its committed worker history.');
+        entry.promise = entry.runBundle(repairBundle, deps.recovery.execution, actorControl,
+          { attempt: entry.repairAttempts, messages: previous.messages });
+      } else {
       const registered = registerExecution(
         taskId,
         repairBundle,
@@ -1116,6 +1194,7 @@ export function createCodingWorkflowBackend(deps: CodingWorkflowBackendDeps): Wo
       } catch (error) {
         registered.cancel();
         throw error;
+      }
       }
       result = await waitForAttempt(entry.promise);
       totalTokensUsed += result.totalTokensUsed;

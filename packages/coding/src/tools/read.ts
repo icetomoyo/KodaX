@@ -7,7 +7,8 @@ import { prepareValidatedImageBlock, validateImageBytesInRun } from '@kodax-ai/l
 import type { KodaXToolExecutionContext } from '../types.js';
 import { resolveExecutionPath } from '../runtime-paths.js';
 import { buildReadFileUnchangedStub } from '../multi-instance/read-file-state-cache.js';
-import { readTransientTextArtifact } from '../transient-text-artifacts.js';
+import { readTransientTextArtifact, recordTransientPageRead, transientPageTokenBudget } from '../transient-text-artifacts.js';
+import { countTokens } from '../tokenizer.js';
 import {
   DEFAULT_TOOL_OUTPUT_MAX_BYTES,
   formatSize,
@@ -171,11 +172,13 @@ function sliceTransientUnicodeLine(input: {
 function selectTransientTextPage(
   content: string,
   input: Record<string, unknown>,
+  tokenBudget = Number.POSITIVE_INFINITY,
 ): TransientTextPage | { readonly error: string } {
   const { offset, limit, lineOffset } = getTransientReadWindow(input);
   const selected: string[] = [];
   let lineContinuation: LineContinuation | undefined;
   let selectedBytes = 0;
+  let selectedTokens = 0;
   let stoppedByByteLimit = false;
   let totalLines = 1;
   let lineNumber = 1;
@@ -184,17 +187,31 @@ function selectTransientTextPage(
     const newline = content.indexOf('\n', lineStart);
     const lineEnd = newline < 0 ? content.length : newline;
     if (lineNumber >= offset && selected.length < limit && !stoppedByByteLimit) {
-      const slice = sliceTransientUnicodeLine({
+      let slice = sliceTransientUnicodeLine({
         content, start: lineStart, end: lineEnd, lineNumber,
         lineOffset: lineNumber === offset ? lineOffset : 0,
       });
       if ('error' in slice) return slice;
+      if (selected.length === 0 && countTokens(slice.text) > tokenBudget) {
+        const chars = Array.from(slice.text);
+        let low = 1, high = chars.length;
+        while (low < high) {
+          const middle = Math.ceil((low + high) / 2);
+          if (countTokens(chars.slice(0, middle).join('')) <= tokenBudget) low = middle;
+          else high = middle - 1;
+        }
+        const start = lineNumber === offset ? lineOffset : 0;
+        slice = { text: chars.slice(0, low).join(''), continuation: { lineNumber, start, end: start + low - 1,
+          nextOffset: start + low, total: slice.continuation?.total ?? start + chars.length } };
+      }
       const nextBytes = Buffer.byteLength(slice.text, 'utf-8') + (selected.length > 0 ? 1 : 0);
-      if (selectedBytes + nextBytes > TRANSIENT_READ_CONTENT_MAX_BYTES) {
+      const nextTokens = countTokens(slice.text) + 1;
+      if (selectedBytes + nextBytes > TRANSIENT_READ_CONTENT_MAX_BYTES || (selected.length > 0 && selectedTokens + nextTokens > tokenBudget)) {
         stoppedByByteLimit = true;
       } else {
         selected.push(slice.text);
         selectedBytes += nextBytes;
+        selectedTokens += nextTokens;
         lineContinuation = slice.continuation;
         if (lineContinuation !== undefined) stoppedByByteLimit = true;
       }
@@ -229,8 +246,11 @@ function renderTransientTextPage(page: TransientTextPage): string {
   }));
 }
 
-function readTransientText(content: string, input: Record<string, unknown>): string {
-  const page = selectTransientTextPage(content, input);
+function readTransientText(content: string, input: Record<string, unknown>, path: string): string {
+  const page = selectTransientTextPage(content, input, transientPageTokenBudget(path));
+  if (!('error' in page)) recordTransientPageRead(path, { offset: page.offset,
+    lineOffset: getTransientReadWindow(input).lineOffset, lines: page.lines.length, totalLines: page.totalLines,
+    continuation: page.lineContinuation });
   return 'error' in page ? page.error : renderTransientTextPage(page);
 }
 
@@ -307,7 +327,7 @@ export async function toolRead(
     if (ctx.toolCallId) {
       ctx.recordToolResultArtifact?.(ctx.toolCallId, requestedPath);
     }
-    return readTransientText(transientContent, input);
+    return readTransientText(transientContent, input, requestedPath);
   }
   const filePath = resolveExecutionPath(requestedPath, ctx);
   try {

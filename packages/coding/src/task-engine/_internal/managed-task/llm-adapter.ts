@@ -34,6 +34,7 @@ import type {
   KodaXToolDefinition,
   KodaXToolUseBlock,
 } from '@kodax-ai/llm';
+import { prepareUserInputMemory } from '../../../user-input-memory.js';
 import {
   KODAX_ESCALATED_MAX_OUTPUT_TOKENS,
   KodaXProviderError,
@@ -45,6 +46,7 @@ import {
 } from '@kodax-ai/llm';
 import {
   attachRunnerRecoveryTranscript,
+  GenerationSuspensionError,
   reclaimReservedResponseTokens,
   getCachedRejectedEfforts,
   recordRejectedEffort,
@@ -112,6 +114,8 @@ import { resolveContextTokenCount } from '../../../token-accounting.js';
 import {
   applyContextCapacityReserveOverride,
   degradeIrreducibleUserInputs,
+  guardPagedInputResponse,
+  pagedInputProgress,
   type UserInputDegradationCache,
 } from '../../../capacity-recovery.js';
 import type { KodaXOutputSegmentMode } from '../../../output-segments.js';
@@ -390,6 +394,7 @@ export function buildRunnerLlmAdapter(
     let activeProviderRequestId: string | undefined;
     let outputTextFilter = createManagedOutputTextFilter();
     try {
+    if (options.events?.isGenerationSuspensionRequested?.()) throw new GenerationSuspensionError();
     const activeModel = options.modelOverride ?? options.model;
     // Strip every leading contiguous system message and concatenate their
     // content. v0.7.22-style flows pushed a single agent-instructions system
@@ -757,7 +762,15 @@ export function buildRunnerLlmAdapter(
           requireUserInputDegradationCache(),
           { currentTokens: resolveContextTokenCount(providerMessages, contextTokenSnapshotRef?.current),
             reservedResponseTokens: requestMaxOutputTokens,
-            canReadPagedContent: availableToolDefinitions.some(tool => tool.name === 'read') },
+            canReadPagedContent: availableToolDefinitions.some(tool => tool.name === 'read'),
+            retainInput: original => prepareUserInputMemory({ original, contextWindow: recoveryContextWindow,
+              provider, model: activeModel, signal: options.abortSignal, timeoutMs: API_HARD_TIMEOUT_MS,
+              goalRuntime: options.context?.goalRuntime,
+              onUsage: usage => { costTracker = recordCostUsage(costTracker, {
+                provider: providerName, model: activeModel ?? provider.getModel(), inputTokens: usage.inputTokens,
+                outputTokens: usage.outputTokens, cacheReadTokens: usage.cachedReadTokens,
+                cacheWriteTokens: usage.cachedWriteTokens }); },
+            }) },
         );
         requestMaxOutputTokens = applyContextCapacityReserveOverride(provider, {
           ...(activeModel !== undefined ? { model: activeModel } : {}),
@@ -1471,6 +1484,9 @@ export function buildRunnerLlmAdapter(
       });
     }
 
+    const preparationBefore = pagedInputProgress(userInputDegradationCache);
+    streamResult = guardPagedInputResponse({ ...streamResult, textBlocks: streamResult.textBlocks ?? [],
+      toolBlocks: streamResult.toolBlocks ?? [] }, userInputDegradationCache);
     const text = sanitizeManagedOutputText((streamResult.textBlocks ?? []).map((b) => b.text).join(''));
     const toolCalls = (streamResult.toolBlocks ?? []).map((b) => ({
       id: b.id,
@@ -1485,6 +1501,7 @@ export function buildRunnerLlmAdapter(
     // missing the thinking block in history.
     const thinkingBlocks = streamResult.thinkingBlocks;
     const runnerResult: RunnerLlmResult = {
+      contextPreparationProgress: () => preparationBefore !== pagedInputProgress(userInputDegradationCache),
       text,
       outputId,
       toolCalls,

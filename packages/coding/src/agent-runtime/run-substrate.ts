@@ -46,6 +46,7 @@ import {
 import path from 'path';
 import { createTextRecoveryState, projectTextRecovery, tryTextRecovery } from '../resilience/text-recovery.js';
 import { waitForContextRecovery } from '../context-recovery-wait.js';
+import { prepareUserInputMemory } from '../user-input-memory.js';
 import { countTokens, estimateTokens } from '../tokenizer.js';
 // FEATURE_093 (v0.7.24): `KodaXClient` is only re-exported from this module
 // for backward compatibility. Importing it here creates a cycle
@@ -128,6 +129,8 @@ import {
   cleanupUserInputDegradationCache,
   createUserInputDegradationCache,
   degradeIrreducibleUserInputs,
+  guardPagedInputResponse,
+  pagedInputProgress,
 } from '../capacity-recovery.js';
 // CAP-082 (`createEstimatedContextTokenSnapshot`) is consumed inside
 // `agent-runtime/catch-terminals.ts:runCatchCleanup` since FEATURE_100 P3.5d.
@@ -142,6 +145,7 @@ import {
   collectGuardrails,
   createAgent,
   ContextCapacityError,
+  GenerationSuspensionError,
   readRunnerRecoveryTranscript,
   createRuntimeDeliveryPredicate,
   emitKodaXDiagnostic,
@@ -795,8 +799,8 @@ async function runSubstrateInContext(
   let releaseActiveRootQueueRoute: (() => void) | undefined;
   const userInputDegradationCache = createUserInputDegradationCache();
   try {
-  const maxIter = options.maxIter ?? 200;
-  const absoluteIterationLimit = maxIter + MAX_INTERRUPT_CONTINUATION_ITERATIONS;
+  const maxIter = Math.min(options.maxIter ?? 200, options.session?.generationCheckpoint?.remainingIterations ?? Infinity);
+  const absoluteIterationLimit = maxIter + (options.session?.generationCheckpoint?.remainingContinuationIterations ?? MAX_INTERRUPT_CONTINUATION_ITERATIONS);
   let iterationLimit = maxIter;
   const reserveInterruptContinuation = (iteration: number): boolean => {
     if (iteration + 1 < iterationLimit) return true;
@@ -880,7 +884,7 @@ async function runSubstrateInContext(
   const liveTurnScope = createLiveTurnScope({
     sessionId,
     deliveryKind: requestedLiveTurn?.deliveryKind ?? 'initial',
-    turnId: requestedLiveTurn?.turnId,
+    turnId: options.session?.generationCheckpoint?.turnId ?? requestedLiveTurn?.turnId,
     deliveryId: requestedLiveTurn?.deliveryId,
     promptId: requestedLiveTurn?.promptId,
     ...(currentAgentId !== undefined
@@ -1004,7 +1008,7 @@ async function runSubstrateInContext(
   // `agent-runtime/middleware/auto-resume.ts` since FEATURE_100 P2.
   const resumed = await resolveInitialMessages(options, sessionId);
   const transcriptPrompt = options.context?.rawUserInput?.trim() || prompt;
-  let messages = appendPromptIfNotDuplicate(
+  let messages = options.session?.generationCheckpoint ? resumed.messages : appendPromptIfNotDuplicate(
     resumed.messages,
     transcriptPrompt,
     options.context?.inputArtifacts,
@@ -1063,6 +1067,9 @@ async function runSubstrateInContext(
   // that was left replayable by a crash between transcript commit and Actor
   // acknowledgement.
   await commitActorNotificationReceipts(ctx, messages);
+  if (options.session?.generationCheckpoint && options.context?.runtimeRunId) {
+    await options.context.actorSession?.resumeGenerationChildren(options.context.runtimeRunId);
+  }
   const messageQueueAgentId = ctx.actorControl
     ? ctx.actorQueueAgentId
       ?? actorQueueId(ctx.contextIdentitySessionId ?? sessionId, ctx.actorControl.callerPath)
@@ -1623,6 +1630,7 @@ async function runSubstrateInContext(
     let generationPending = true;
     const capacityRevision = events.getContextRecoveryRevision?.();
     try {
+      if (events.isGenerationSuspensionRequested?.()) throw new GenerationSuspensionError();
       if (
         options.context?.interruptInput
         && iter + 1 >= absoluteIterationLimit
@@ -2034,7 +2042,15 @@ async function runSubstrateInContext(
       const buildCapacityRequestMessages = () => degradeIrreducibleUserInputs(
         providerMessages, ctx, contextWindow, userInputDegradationCache,
         { currentTokens: resolveContextTokenCount(providerMessages, estimatedRequestTokenSnapshot), reservedResponseTokens,
-          canReadPagedContent: activeToolDefinitions.some(tool => tool.name === 'read') },
+          canReadPagedContent: activeToolDefinitions.some(tool => tool.name === 'read'),
+          retainInput: original => prepareUserInputMemory({ original, contextWindow, provider: streamProvider,
+            model: turnState.currentModelOverride, signal: options.abortSignal, timeoutMs: API_HARD_TIMEOUT_MS,
+            goalRuntime,
+            onUsage: usage => { turnState.costTracker = recordUsage(turnState.costTracker, {
+              provider: turnState.currentProviderName, model: turnState.currentModelOverride ?? streamProvider.getModel(),
+              inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
+              cacheReadTokens: usage.cachedReadTokens, cacheWriteTokens: usage.cachedWriteTokens }); },
+          }) },
       );
       let wireMessages = await buildCapacityRequestMessages();
       let requestMaxOutputTokens = applyContextCapacityReserveOverride(streamProvider, {
@@ -2430,6 +2446,10 @@ async function runSubstrateInContext(
         options.context?.agentExecutorPlane !== undefined,
       );
       result = { ...result, toolBlocks: repairToolBlockNames(result.toolBlocks, activeToolNamesForTurn) };
+      const preparedResult = guardPagedInputResponse(result, userInputDegradationCache);
+      const preparationBefore = pagedInputProgress(userInputDegradationCache);
+      if (preparedResult !== result) turnState.lastText = '';
+      result = preparedResult;
 
       const visibleToolBlocks = result.toolBlocks.filter((block) => isVisibleToolName(block.name));
 
@@ -3061,6 +3081,7 @@ async function runSubstrateInContext(
       });
       await commitActorNotificationReceipts(ctx, messages);
       contextTokenSnapshot = settleOutcome.contextTokenSnapshot;
+      if (preparationBefore !== pagedInputProgress(userInputDegradationCache)) iter -= 1;
       const consumedInterruptInput = await consumeRuntimeInterruptInput(iter + 1 < absoluteIterationLimit);
       if (consumedInterruptInput) {
         reserveInterruptContinuation(iter);
@@ -3135,7 +3156,8 @@ async function runSubstrateInContext(
         if (committed) messages = [...committed];
         try {
           if (await waitForContextRecovery(e, messages, events, options.abortSignal,
-            capacityRevision)) {
+            capacityRevision, { remainingIterations: iterationLimit - iter,
+              remainingContinuationIterations: absoluteIterationLimit - iterationLimit })) {
             await consumeRuntimeInterruptInput(true);
             contextTokenSnapshot = { currentTokens: estimateTokens(messages),
               baselineEstimatedTokens: estimateTokens(messages), source: 'estimate' };

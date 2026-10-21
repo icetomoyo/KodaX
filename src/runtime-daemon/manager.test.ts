@@ -521,6 +521,7 @@ function makeRuntime(
       async delete() {},
     },
     runs: {
+      async recover() { throw new Error('No generation checkpoint exists in this fixture.'); },
       async acceptInput() { throw new Error('Product inputs are not used by this fixture.'); },
       async getInput() { return null; },
       async withdrawInput() { throw new Error('No queued input exists in this fixture.'); },

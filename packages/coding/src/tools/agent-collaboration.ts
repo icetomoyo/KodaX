@@ -235,6 +235,7 @@ export async function toolWaitAgent(
     const waiterAbort = new AbortController();
     const forwardAbort = (): void => waiterAbort.abort(ctx.abortSignal?.reason);
     ctx.abortSignal?.addEventListener('abort', forwardAbort, { once: true });
+    const unregister = ctx.parentEvents?.registerGenerationWait?.(() => waiterAbort.abort('Host generation suspension'));
 
     try {
       const status = await waitForMailboxActivity(
@@ -250,6 +251,7 @@ export async function toolWaitAgent(
       });
     } finally {
       waiterAbort.abort('wait_agent settled');
+      unregister?.();
       ctx.abortSignal?.removeEventListener('abort', forwardAbort);
     }
   } catch (error) {

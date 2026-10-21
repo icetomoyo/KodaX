@@ -11,6 +11,37 @@ import {
 } from './event-emitter.js';
 
 describe('withDurableCompactionPersistence', () => {
+  it('forwards a child boundary through its parent without comparing it to root history', async () => {
+    const blocked = vi.fn(async () => undefined);
+    const load = vi.fn(async () => null);
+    const events = withDurableCompactionPersistence({ sessionId: 'root', events: { onContextCapacityBlocked: blocked },
+      storage: { load, save: async () => {} } });
+    const state = { checkpoint: { version: 1 as const, sessionId: 'worker', activeEntryId: null, messagesDigest: 'a'.repeat(64) } };
+    const meta = { childAgentId: '/root/worker', turnId: 'original' };
+    await events.onContextCapacityBlocked!(state, undefined, meta);
+    expect(blocked).toHaveBeenCalledWith(state, undefined, meta);
+    expect(load).not.toHaveBeenCalled();
+  });
+  it('binds a recovery checkpoint to the committed child transcript and active lineage', async () => {
+    const messages = [{ role: 'user' as const, content: 'Never run migration twice.', turnId: 'child-turn' },
+      { role: 'assistant' as const, content: [{ type: 'tool_use' as const, id: 'once', name: 'edit', input: { path: 'a' } }] },
+      { role: 'user' as const, content: [{ type: 'tool_result' as const, tool_use_id: 'once', content: 'done' }] }];
+    let saved: KodaXSessionData = { title: 'child', gitRoot: '', messages: [] };
+    const blocked = vi.fn(async () => undefined);
+    const events = withDurableCompactionPersistence({ sessionId: 'worker-child', currentAgentId: '/root/child',
+      sessionScope: 'managed-task-worker', events: { onContextCapacityBlocked: blocked },
+      storage: { load: async () => saved, save: async (_id, value) => { saved = value; } } });
+    const { waitForContextRecovery } = await import('../context-recovery-wait.js');
+    const { ContextCapacityError } = await import('@kodax-ai/agent');
+    await waitForContextRecovery(new ContextCapacityError({ contextWindow: 4096, currentTokens: 6000 }), messages, events,
+      undefined, undefined, { remainingIterations: 1, remainingContinuationIterations: 0 });
+    expect(blocked).toHaveBeenCalledWith(expect.objectContaining({ checkpoint: expect.objectContaining({
+      version: 1, sessionId: 'worker-child', turnId: 'child-turn', activeEntryId: saved.lineage?.activeEntryId,
+      messagesDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+      remainingIterations: 1, remainingContinuationIterations: 0,
+    }) }), undefined, undefined);
+    expect(saved.messages).toEqual(messages);
+  });
   it('keeps the pending commit private during I/O recovery and honors Stop', async () => {
     vi.useFakeTimers();
     try {

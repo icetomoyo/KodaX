@@ -8,6 +8,7 @@ import type { KodaXToolResultBlock } from '@kodax-ai/llm';
 import { recoverContextHistory } from './history-capacity-recovery.js';
 import { TOOL_OUTPUT_DIR_ENV } from './tools/truncate.js';
 import { createUserInputDegradationCache, degradeIrreducibleUserInputs, cleanupUserInputDegradationCache } from './capacity-recovery.js';
+import { createTransientTextArtifact, deleteTransientTextArtifact } from './transient-text-artifacts.js';
 
 let directory: string;
 beforeEach(async () => {
@@ -18,6 +19,20 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   await fs.rm(directory, { recursive: true, force: true });
+});
+
+it('retains a just-read original constraint while its oversized canonical input remains paged', async () => {
+  const original = 'background '.repeat(20000) + '\nKeep region eu-north-1, batchSize 7. Never repeat MIG042.';
+  const uri = createTransientTextArtifact(original, true);
+  const receipt = 'context '.repeat(300) + 'Keep region eu-north-1, batchSize 7. Never repeat MIG042.' + ' context'.repeat(300);
+  const messages: KodaXMessage[] = [{ role: 'user', content: original },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'page', name: 'read', input: { path: uri, offset: 2 } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'page', content: receipt }] }];
+  try {
+    const recovered = await recoverContextHistory({ messages, currentTokens: estimateTokens(messages) + 2000,
+      contextWindow: 8192, reservedResponseTokens: 1000, canReadPagedContent: true });
+    expect(recovered.messages[2]).toEqual(messages[2]);
+  } finally { deleteTransientTextArtifact(uri); }
 });
 
 it('recovers transient artifact writes without publishing a replacement early', async () => {

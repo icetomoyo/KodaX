@@ -3321,10 +3321,12 @@ Initial counter-fix validation passed 137 tests across 10 files; the follow-up
 adds further recovery coverage recorded in the guide below.
 
 See [Issue 322 regression guide](test-guides/ISSUE_322_v0.7.97_REGRESSION_GUIDE.md).
-The live recovery follow-up now includes authorized history paging, bounded generation
-retries, cancellable transient storage recovery and same-process Host waiting.
-Cross-process automatic continuation and model paging quality remain unaccepted; the broader work is not
-complete. Implementation details and remaining boundaries are recorded in
+The local recovery follow-up now includes authorized history paging, bounded generation
+retries, cancellable storage recovery, independent child waits, verified generation
+checkpoints across Host restart, and fresh authority rebinding for original root/Actor
+turns. Verbatim user-memory preparation fixes the observed loss of previously read
+constraints; controlled DeepSeek/MiniMax 8K probes pass. Restart never recreates an
+expired credential or replays a completed tool. Contracts and evidence are recorded in
 [the v0.7.97 design](features/v0.7.97.md#proposed-context-capacity-self-recovery-after-feature_296).
 
 ### 321: Every runtime cancellation terminal attributes the stop to the user, including runtime shutdown and internal aborts
@@ -16742,8 +16744,9 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
   partial summaries in SA/AMA, with red/green regressions and 137 passing
   focused tests. Fixed locally after v0.7.97-alpha.9; unreleased.
 - Recorded the broader context self-recovery proposal separately from the
-  completed breaker fix; the subsequent live recovery implementation and remaining
-  cross-process / semantic acceptance gaps are recorded in the linked guide.
+  completed breaker fix. The 2026-10-22 continuation adds independent child and
+  Host-restart recovery, fresh authorization binding and bounded real-model
+  constraint acceptance; evidence and remaining contract boundaries are in the linked guide.
 
 ### 2026-09-27: Command feedback and history boundary repairs
 

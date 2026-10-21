@@ -180,6 +180,8 @@ export interface KodaXProductClient {
     withdraw(sessionId: string, inputId: string): Promise<ClientSubmitInput>;
   };
   readonly runs: {
+    /** Resume the same saved generation after Host restart, using fresh Main authority and current Session model settings. */
+    recover(input: { readonly sessionId: string; readonly runId: string }): Promise<{ readonly runId: string; readonly sessionId: string }>;
     /** Explicit tool execution through the Host's ordinary tool gates, without a model prompt. */
     startTool(input: ClientToolInvocationInput): Promise<{ readonly runId: string; readonly sessionId: string }>;
     /** Current lifecycle facts of one Run; internal stages stay internal. */
@@ -238,7 +240,7 @@ export interface KodaXProductClient {
     detail(sessionId: string, actorPath: string): Promise<AgentDetail>;
     spawn(sessionId: string, input: AgentSpawnInput): Promise<AgentTurnRef>;
     send(sessionId: string, actorPath: string, content: string, classification?: AgentDataClassification): Promise<void>;
-    followup(sessionId: string, actorPath: string, objective: string, options?: { readonly expectedRevision?: number }): Promise<AgentFollowupResult>;
+    followup(sessionId: string, actorPath: string, objective: string, options?: { readonly expectedRevision?: number; readonly resumeCheckpoint?: boolean }): Promise<AgentFollowupResult>;
     interrupt(sessionId: string, actorPath: string, reason?: string): Promise<void>;
     output(sessionId: string, actorPath: string, turnId?: string): Promise<AgentOutput>;
     wait(sessionId: string, afterSequence?: number, timeoutMs?: number, options?: { readonly signal?: AbortSignal }): Promise<AgentEvent | undefined>;
