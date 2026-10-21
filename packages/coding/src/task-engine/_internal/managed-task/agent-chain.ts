@@ -211,6 +211,11 @@ function buildManagedToolCallBridge(
   overrides: ReadonlyMap<string, RunnableTool>,
 ): RunnableTool {
   const active = new Map(activeDefinitions.map((entry) => [entry.name, entry]));
+  const rejectCall = (content: string): RunnerToolResult => {
+    // Malformed/unavailable bridge attempts still consume one work unit.
+    if (budget) incrementManagedBudgetUsage(budget, 1);
+    return { content, isError: true };
+  };
   return {
     ...definition,
     requiresSerialExecution: input => {
@@ -222,23 +227,16 @@ function buildManagedToolCallBridge(
       runnerCtx?: RunnerToolContext,
     ): Promise<RunnerToolResult> => {
       throwIfManagedToolAborted(runnerCtx?.abortSignal);
-      if (budget) incrementManagedBudgetUsage(budget, 1);
       const parsed = parseManagedBridgeCallInput(input);
       if (!parsed.ok) {
-        return { content: `[Tool Error] ${TOOL_CALL_NAME}: ${parsed.error}`, isError: true };
+        return rejectCall(`[Tool Error] ${TOOL_CALL_NAME}: ${parsed.error}`);
       }
       const targetDefinition = active.get(parsed.name);
       if (!targetDefinition) {
-        return {
-          content: `[Tool Error] ${parsed.name}: Tool is not active in the current runtime.`,
-          isError: true,
-        };
+        return rejectCall(`[Tool Error] ${parsed.name}: Tool is not active in the current runtime.`);
       }
       if (!runnerCtx?.agent) {
-        return {
-          content: `[Tool Error] ${TOOL_CALL_NAME}: runner tool context is missing.`,
-          isError: true,
-        };
+        return rejectCall(`[Tool Error] ${TOOL_CALL_NAME}: runner tool context is missing.`);
       }
       const targetToolId = `${runnerCtx?.toolCallId ?? TOOL_CALL_NAME}:${parsed.name}`;
       const targetCall = { id: targetToolId, name: parsed.name, input: parsed.input };
@@ -259,6 +257,7 @@ function buildManagedToolCallBridge(
         : undefined;
       throwIfManagedToolAborted(runnerCtx.abortSignal);
       if (permissionOverride !== undefined) {
+        // Like native beforeTool rejection, no executable target was invoked.
         return {
           content: permissionOverride,
           isError: permissionOverride.startsWith('[Tool Error]') || permissionOverride.includes('cancelled'),
@@ -272,6 +271,7 @@ function buildManagedToolCallBridge(
       try {
         const overrideRunnable = overrides.get(parsed.name);
         if (overrideRunnable) {
+          // Role overrides already charge through their coding-tool wrapper.
           const targetResult = await overrideRunnable.execute(parsed.input, targetRunnerCtx);
           const content = targetResult.content;
           return {
@@ -288,10 +288,7 @@ function buildManagedToolCallBridge(
         const registration = getRegisteredToolDefinition(parsed.name);
         if (registration) {
           if (registration.handler.constructor.name === 'AsyncGeneratorFunction') {
-            return {
-              content: `[Tool Error] ${parsed.name}: Tool requires a managed-path wrapper and cannot be called through ${TOOL_CALL_NAME}.`,
-              isError: true,
-            };
+            return rejectCall(`[Tool Error] ${parsed.name}: Tool requires a managed-path wrapper and cannot be called through ${TOOL_CALL_NAME}.`);
           }
           const runnable = wrapCodingToolAsRunnable(
             targetDefinition,
@@ -314,6 +311,8 @@ function buildManagedToolCallBridge(
 
         const runScopedTarget = lookupRunScopedTool(ctx.extensionRuntime, parsed.name);
         if (runScopedTarget !== undefined) {
+          // This branch dispatches directly, without the native coding wrapper.
+          if (budget) incrementManagedBudgetUsage(budget, 1);
           const content = await executeRunScopedTool(targetCtx, runScopedTarget, parsed.input);
           return {
             content,
@@ -321,10 +320,7 @@ function buildManagedToolCallBridge(
           };
         }
 
-        return {
-          content: `[Tool Error] ${parsed.name}: Tool is not registered or bound to this run.`,
-          isError: true,
-        };
+        return rejectCall(`[Tool Error] ${parsed.name}: Tool is not registered or bound to this run.`);
       } finally {
         events?.onToolExecutionEnd?.({ id: targetToolId, name: parsed.name }, targetMeta);
       }

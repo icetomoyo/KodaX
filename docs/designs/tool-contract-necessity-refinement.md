@@ -5,6 +5,12 @@ Baseline `5d460529`; reference source
 Codex `3b8f43a06b`, DSH `1517a4dbca`. Preserve AMA strategy, all executable
 capabilities, SDK contracts, specialist menus and isolation. No new user mode.
 
+Follow-up: the 2/4 work-unit observation below is historical at this revision.
+The separately authorized [budget correction](native-bridge-budget-equivalence.md)
+subsequently makes it 2/2, preserving Host/override charges and execution guards.
+That correction does not enable parameter hiding or change this text-only result.
+The remaining per-tool cost is recorded in [cost attribution](tool-surface-cost-attribution.md).
+
 ## Necessity and alternatives
 
 | Surface | Source comparison and alternative | Current decision |
