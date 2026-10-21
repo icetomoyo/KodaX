@@ -36,6 +36,7 @@ describe('complex fixture execution boundary', () => {
       ['bash', { command: 'git status && curl https://example.invalid' }, false],
       ['spawn_agent', { task_name: 'nested' }, true],
       ['spawn_agent', { provider: 'unmetered' }, false],
+      ['spawn_agent', { model: 'unmetered' }, false],
       ['run_workflow', {}, false],
     ] as const) expect(checkComplexTool(workspace, tool, input, readOnly), JSON.stringify(input)).not.toBeNull();
     expect(checkComplexTool(workspace, 'read', { path: '..notes/file.js' }, true)).toBeNull();

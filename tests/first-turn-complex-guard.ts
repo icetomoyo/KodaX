@@ -1,9 +1,24 @@
 import path from 'node:path';
+import type { ToolGuardrail } from '@kodax-ai/agent';
+import { resolveToolBridgeTarget } from '../packages/coding/src/tools/tool-bridge.js';
 import { isNullDevice, parseBashCommand } from '../packages/coding/src/permissions/bash-ast.js';
 
 const mutable = new Set(['write', 'edit', 'multi_edit', 'insert_after_anchor']);
 const inspect = new Set(['rg', 'ls', 'pwd', 'cat', 'dir', 'type', 'get-content', 'get-childitem', 'get-location', 'findstr', 'select-string', 'select-object']);
 const readGit = new Set(['diff', 'status', 'ls-files', 'grep', 'show', 'log', 'rev-parse']);
+
+/** Deny actual reads before execution; leave the original call intact for recovery. */
+export function createComplexReadBoundary(workspace: string): ToolGuardrail {
+  return {
+    kind: 'tool', name: 'complex-fixture-read-boundary',
+    beforeTool: async call => {
+      const bridge = resolveToolBridgeTarget(call);
+      const target = bridge?.ok ? bridge.call : call;
+      const reason = target.name === 'read' ? checkComplexTool(workspace, target.name, target.input, false) : null;
+      return reason === null ? { action: 'allow' } : { action: 'block', reason };
+    },
+  };
+}
 
 // This is an evaluation scope check, not a general shell security sandbox.
 // The original command is executed unchanged, including syntax errors the model must repair.
@@ -24,7 +39,7 @@ export function checkComplexTool(workspace: string, tool: string, input: Readonl
   const inside = (value: unknown): value is string => typeof value === 'string' && !/^\.\.(?:\/|$)/.test(relative(value)) && !paths.isAbsolute(relative(value));
   const scratch = (value: string): boolean => inside(value) && /^\.agent\/tmp(?:\/|$)/.test(relative(value));
   if (tool === 'run_workflow') return 'Independent Workflow executor is outside this bounded evaluation.';
-  if (tool === 'spawn_agent' && (readOnly || input.read_only === false || input.provider !== undefined || input.agent_id !== undefined)) return 'Only one read-only inherited-model child is in scope.';
+  if (tool === 'spawn_agent' && (readOnly || input.read_only === false || input.provider !== undefined || input.model !== undefined || input.agent_id !== undefined)) return 'Only one read-only inherited-model child is in scope.';
   if (['read', 'glob', 'grep', 'code_search', ...mutable].includes(tool) && input.path !== undefined && !inside(input.path)) return 'Path leaves the fixture workspace.';
   if (mutable.has(tool)) {
     if (readOnly || !inside(input.path)) return 'Mutation is outside the root fixture scope.';

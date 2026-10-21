@@ -1,10 +1,10 @@
 # Local search entry refinement
 
-Current decision (2026-10-20): retain native `code_search` and `repo_overview`.
+Current decision (updated 2026-10-21): retain native `code_search` and `repo_overview`.
 Only accurate guidance and overview reuse are accepted. Auxiliary-provider
-compatibility and usage repair is implemented. Final-source GLM complex editing
-completes; Kimi editing acceptance remains open. No intelligence non-inferiority
-claim is made.
+compatibility and usage repair is implemented. GLM complex editing completes on
+2026-10-20; Kimi's single fresh closure completes on 2026-10-21 after eval-only
+path-denial recovery correction. No intelligence non-inferiority claim is made.
 
 ## Accepted implementation
 
@@ -70,7 +70,7 @@ Kimi and GLMs attempt discovery in both variants. These small samples do not
 establish causal harm or benefit. Roughly 1% first-input savings do not justify
 adoption without the full-task gate. Counts use each model's own tokenizer.
 
-**Live complex editing E2E: not passed.** The first attempt exposed an eval
+**Earlier live attempts (2026-10-20, before judge repair): not passed.** The first attempt exposed an eval
 wrapper that lost internal-judge reasoning=false, forced-tool and 1024-output
 options. A zero-network regression is RED before forwarding and GREEN after it.
 The corrected final-native attempt then records real existing auxiliary limits:
@@ -202,13 +202,128 @@ Source/helper hashes, raw inputs/outputs, model edits, test failures and success
 rerun, physical timelines, ledgers and main-session semantic review are preserved
 in OS Temp with two hash-verified mirrors.
 
-The combined GLM/Kimi editing gate is still unsatisfied. Retain both native
+At this 2026-10-20 revision, the combined editing gate is unsatisfied. Retain both native
 search tools and AMA; do not promote further menu/parameter disclosure changes.
 Next investigate the denial/recovery contract offline: malformed out-of-fixture
 reads must stay denied, with no argument rewriting or outside reads, while
 checking whether an ordinary tool error can allow bounded recovery. Freeze that
 contract and preserve the observed Kimi failure before any new paid recovery
 sample. Current evidence cannot guarantee unchanged intelligence universally.
+
+## Path-denial recovery validation (2026-10-21)
+
+The owner authorizes offline denial/recovery verification, followed by one fresh
+Kimi editing closure smoke. The original malformed absolute path is absent from
+the supplied prompt and comes from the model's own arguments; normalized, it is
+outside the fixture. Rejecting it is correct. The v4 eval's extra whole-cell
+abort prevents observing recovery, so it is too strict for that question. This
+does not establish that Kimi would or would not recover in normal execution.
+
+The bounded Runtime helper is promoted from frozen Temp code into executable
+test support. Only eval behavior changes: an existing SDK ToolGuardrail blocks
+the concrete read before execution and returns its ordinary error tool_result;
+the parent/child receives that error and can choose its next call. The canonical
+bridge resolver checks tool_call's target as well. Original tool IDs, arguments
+and responses remain intact; no correct path or repair hint is substituted.
+All preflight policies use that same canonical resolver, including trimmed
+bridge names, so whitespace cannot bypass write/shell restrictions or spawn caps.
+Mixed batches may complete legitimate reads alongside the blocked read. All
+mutation, shell, protected-file, recursive/extra-spawn and hard-budget boundaries
+retain their existing checks and termination rules. AMA, prompts, provider
+configuration, timeouts and all native/SDK/role capabilities remain unchanged.
+
+Offline acceptance uses real Runtime dispatch and existing outside sentinel files:
+native and bridged reads must return an error without leaking sentinel content;
+the scripted provider then reads valid files, edits the three implementations,
+adds/runs a test and passes the independent six-assertion oracle. An actual
+readonly child must inherit the same denial and continue to legitimate reads.
+The old driver is RED on task termination; the initial direct-only guard is RED
+on bridge leakage; the concrete-target boundary must be GREEN on both. These
+scripted tests prove the harness contract, not Kimi's reasoning ability.
+
+After offline, typecheck, inherited-child/isolation and budget preflights pass,
+freeze `kimi-path-recovery-20261021-r1` in OS Temp with two hash-verified mirrors.
+One Layer 3.5 cell on kimi-code/kimi-for-coding uses the unchanged cache task and
+one inherited readonly child; no injected failure, corrected argument, manual
+follow-up, prompt comparison or repeated run. Actual root/child/auxiliary calls
+share 24 reserved-attempt and 60-tool ceilings, 600,000 conservative tokens,
+USD 0.10 frozen-rate reference, 4096 main/child and existing 1024 judge output
+caps, 120-second request and 10-minute cell timeouts. Same-provider concurrency
+is one; no API retry, fallback or cell replay. Missing usage stays fully reserved
+and explicitly unknown under the previously verified bounded-cancellation rule.
+Estimated new reference cost is below USD 0.01; coding-plan reference is not an
+actual token invoice. Historical failures/costs remain in cumulative accounting.
+
+Main-session review checks correct implementation edits, protected files,
+meaningful new tests actually run after the final edit, independent oracle 6/6,
+completed readonly child and integrated report, truthful final scope, complete
+physical/known/unknown cost accounting and whole-cell elapsed time. Preserve any
+new failure without replay. If no bad path occurs naturally, report that live
+recovery was not exercised; do not conflate successful editing with proof of
+universal recovery or unchanged intelligence. Do not re-run the completed GLM
+cell or promote further tool retirement from this smoke alone.
+
+### Observed result
+
+Offline verification passes 21 tests across four files, plus the updated
+inherited-model refusal case and test typecheck. Real Runtime tests cover native
+and bridged denial, legitimate siblings in a mixed batch, readonly-child
+inheritance/recovery, actual edits/test/oracle closure, padded bridge
+write/bash/spawn hard stops, shared response caps, child mutation, recursion and
+second-spawn refusal. Network-call count is zero in the final offline preflights.
+Independent Standards and Spec review each find the canonical-bridge preflight
+gap; RED regressions and the shared resolver resolve it, with zero open findings.
+No production implementation, default tool menu, model prompt or AMA change.
+Targeted coverage of the two eval helpers is 87.83% statements, 81.86% branches,
+85.18% functions and 97.54% lines (eight Runtime/guard tests, zero network calls).
+
+The one preregistered kimi-code/kimi-for-coding live cell completes:
+
+| Observation | Result |
+| --- | --- |
+| Physical requests / tool calls | 19 (15 root, 3 child, 1 judge) / 52 |
+| First input | 17,311 tokens |
+| Complete reported usage | 442,674 input + 10,880 output = 453,554 tokens |
+| Unknown judge reservation | 11,231 tokens, fully retained |
+| Whole conservative total / wall time | 464,785 tokens / 281.904 seconds |
+| Frozen-rate reference | USD 0.002442965; not a subscription invoice |
+| Model tests / independent oracle | 12/12 (11 new + existing basic) / 6/6 |
+| Readonly child / protected files | Completed and integrated / unchanged |
+
+Kimi naturally emits a malformed Local/Local absolute path for src/keys.js.
+Crucially, the same original response also contains a separate correct path for
+that file. The malformed call is denied before reading, its original ID/arguments
+remain unchanged, the legitimate sibling executes, and the next model request
+receives the actual error plus successful results. Productive work continues to
+completion. This demonstrates preserved per-call refusal and batch continuation;
+it is not evidence of a reactive path retry after receiving the error. Offline
+scripted tests separately prove that later-turn and child recovery is possible.
+
+The model repairs the real three package implementations and adds 11 meaningful
+tests. It corrects an async gate-ordering error in its generated test before
+running. Its first compound negative-verification command does not complete the
+intended restore; it checks stash state, explicitly runs the old implementation
+(five regression failures), restores the fixes and reruns all 12 tests. Final
+stash is empty, the external oracle passes and the readonly child's compatibility
+report is integrated. Final repair/test-count/scope claims match the raw records.
+All intermediate mistakes and failed commands remain preserved; no manual
+follow-up, injected live error, parameter repair, API retry, fallback or replay.
+
+The judge's actual Kimi stream is accepted (no former 400), reports partial input
+1694, then reaches the unchanged short timeout. PartialUsage is retained separately;
+it is not a final bill or refund basis. Its entire reservation stays charged.
+Actual model requests have concurrency one, all hard ceilings hold, and no
+reservations remain open. Frozen source/helper hashes and two raw mirrors verify.
+All-history totals now: 476 physical calls, 9,417,704 conservative tokens,
+USD 0.5323549808 reference, 16 unknown reservations. Old failures stay unchanged.
+
+The previously requested GLM and Kimi editing closure smokes are now observed,
+on their respective dated revisions. Both the model's malformed argument and
+the eval's excessive whole-cell termination are evidenced; the evaluation fix
+preserves rejection instead of masking the argument. This is not paired
+token/time evidence, a universal intelligence guarantee, or permission to retire
+further tools. This work does not reduce first-input tokens; keep native tools
+and AMA, and evaluate any further reduction independently.
 
 ## Standards
 
@@ -217,6 +332,8 @@ settlement flaw (cancelled usage could reduce the reserve); RED regressions,
 terminal-identity-based usage and full cancellation charging resolve it. The
 native zero-fetch cancellation extension is independently rechecked. 0 open
 findings; no production framework, configuration or layer coupling added.
+Path-recovery review: one canonical-bridge preflight finding resolved with RED
+write/bash/spawn cases and GREEN canonical checks; 0 open Standards findings.
 
 ## Spec
 
@@ -224,4 +341,7 @@ Independent review: no confirmed production deviation. One documentation finding
 required the second attempt's failure, cost and incomplete edit/child/test loop;
 resolved above. Standards: 0 open. Spec: 0 open implementation findings, 1 resolved
 documentation finding. Repair review: 0 implementation findings. The combined
-real-model acceptance gate remains unsatisfied; only GLM closes the editing loop.
+real-model gate was unsatisfied on 2026-10-20. Path-recovery review resolves its
+canonical-bridge finding; the single 2026-10-21 Kimi smoke now closes editing and
+scope-reporting acceptance. Spec: 0 open findings; no statistical capability
+claim or further tool retirement is accepted from these smokes.
