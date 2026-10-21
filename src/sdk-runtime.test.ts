@@ -13167,6 +13167,110 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
+  it('keeps a capacity-blocked generation alive and wakes it on an authorized model change', async () => {
+    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, 'capacity-wait-sessions'), defaultProvider: 'mock-provider' });
+    const session = await runtime.sessions.create({ title: 'Capacity recovery' });
+    let resumed = false;
+    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => {
+      const result = (async (): Promise<KodaXResult> => {
+        await options.events!.onContextCapacityBlocked!({ requiredTokens: 40_000, availableTokens: 32_768,
+          configurationRevision: options.events!.getContextRecoveryRevision!() }, options.abortSignal);
+        resumed = true;
+        return { success: true, lastText: 'continued', messages: [], sessionId: session.id };
+      })();
+      return fakeRunningSession(options, result);
+    });
+    const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'continue' });
+    await vi.waitFor(async () => expect(await runtime.runs.get(handle.runId)).toMatchObject({
+      phase: 'recovering', contextRecovery: { requiredTokens: 40_000, availableTokens: 32_768 },
+    }));
+    expect(resumed).toBe(false);
+    await runtime.runs.setModel(handle.runId, 'larger-model');
+    expect((await handle.result).phase).toBe('completed');
+    expect(resumed).toBe(true);
+    expect((await runtime.runs.get(handle.runId))?.contextRecovery).toBeUndefined();
+    await runtime.close();
+  });
+
+  it('does not lose a model reset that happens before the capacity waiter is installed', async () => {
+    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, 'capacity-reset-sessions'), defaultProvider: 'mock-provider' });
+    const session = await runtime.sessions.create({ title: 'Reset model during recovery' });
+    let install!: () => void;
+    const gate = new Promise<void>(resolve => { install = resolve; });
+    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => fakeRunningSession(options,
+      (async (): Promise<KodaXResult> => {
+        const revision = options.events!.getContextRecoveryRevision!();
+        await gate;
+        await options.events!.onContextCapacityBlocked!({ configurationRevision: revision });
+        return { success: true, lastText: 'use default model', messages: [], sessionId: session.id };
+      })()));
+    const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'continue', options: { model: 'old-model' } });
+    await runtime.runs.setModel(handle.runId, undefined);
+    install();
+    expect((await handle.result).phase).toBe('completed');
+    await runtime.close();
+  });
+
+  it('wakes capacity recovery when a corrective interrupt input is accepted', async () => {
+    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, 'capacity-input-sessions'), defaultProvider: 'mock-provider' });
+    const session = await runtime.sessions.create({ title: 'Correct recovery' });
+    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => fakeRunningSession(options,
+      (async (): Promise<KodaXResult> => {
+        await options.events!.onContextCapacityBlocked!({ configurationRevision: options.events!.getContextRecoveryRevision!() });
+        return { success: true, lastText: 'input can now be consumed', messages: [], sessionId: session.id };
+      })()));
+    const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'continue' });
+    await vi.waitFor(async () => expect((await runtime.runs.get(handle.runId))?.phase).toBe('recovering'));
+    await runtime.runs.submitInput({ sessionId: session.id, afterRunId: handle.runId,
+      delivery: 'interrupt', input: { type: 'text', text: 'Use the smaller pending task.' } });
+    expect((await handle.result).phase).toBe('completed');
+    await runtime.close();
+  });
+
+  it('retains the capacity recovery evidence across a dead-owner restart', async () => {
+    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const runDir = path.join(tempRoot, '.kodax', 'runtime', 'runs', 'capacity-crashed');
+    await fs.mkdir(runDir, { recursive: true });
+    const contextRecovery = { waitingSince: '2026-10-21T00:00:00.000Z', requiredTokens: 40_000, availableTokens: 32_768 };
+    await fs.writeFile(path.join(runDir, 'status.json'), JSON.stringify({
+      runId: 'capacity-crashed', sessionId: 'capacity-session', phase: 'recovering',
+      startedAt: contextRecovery.waitingSince, provider: 'mock-provider', contextRecovery,
+      _runtime: { revision: 1, owner: { ownerId: 'dead-capacity-owner', runtimeId: 'dead-runtime',
+        pid: 2147483647, startedAt: contextRecovery.waitingSince } },
+    }));
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot });
+    expect(await runtime.runs.get('capacity-crashed')).toMatchObject({ contextRecovery });
+    expect(codingMock.startKodaX).not.toHaveBeenCalled();
+    await runtime.close();
+  });
+
+  it('cancels a capacity wait without resuming generation or leaving a live waiter', async () => {
+    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, 'capacity-stop-sessions'), defaultProvider: 'mock-provider' });
+    const session = await runtime.sessions.create({ title: 'Stop capacity recovery' });
+    let resumed = false;
+    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => fakeRunningSession(options,
+      (async (): Promise<KodaXResult> => {
+        await options.events!.onContextCapacityBlocked!({ requiredTokens: 40_000, availableTokens: 32_768 });
+        resumed = true;
+        return { success: true, lastText: 'incorrect resume', messages: [], sessionId: session.id };
+      })()));
+    const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'continue' });
+    await vi.waitFor(async () => expect((await runtime.runs.get(handle.runId))?.phase).toBe('recovering'));
+    await runtime.runs.abort(handle.runId);
+    await handle.result;
+    expect(resumed).toBe(false);
+    expect((await runtime.runs.get(handle.runId))?.contextRecovery).toBeUndefined();
+    await runtime.close();
+  });
+
   it("surfaces local capacity errors as context_capacity without credential masking (FEATURE_296)", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runtime = await createKodaXRuntime({

@@ -11,6 +11,29 @@ import {
 } from './event-emitter.js';
 
 describe('withDurableCompactionPersistence', () => {
+  it('keeps the pending commit private during I/O recovery and honors Stop', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const observer = vi.fn();
+      const save = vi.fn().mockRejectedValue(Object.assign(new Error('busy'), { code: 'EBUSY' }));
+      const events = withDurableCompactionPersistence({ sessionId: 'recovering',
+        signal: controller.signal, events: { onCompactedMessages: observer },
+        storage: { load: async () => ({ title: 'pending', gitRoot: '', messages: [] }), save } });
+      const outcome = events.onCompactedMessages?.([{ role: 'user', content: 'summary' }],
+        { preCompactionMessages: [{ role: 'user', content: 'Keep all constraints' }] });
+      const assertion = expect(outcome).rejects.toMatchObject({ name: 'AbortError' });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(save).toHaveBeenCalledTimes(2);
+      expect(observer).not.toHaveBeenCalled();
+      controller.abort();
+      await vi.runAllTimersAsync();
+      await assertion;
+      expect(save).toHaveBeenCalledTimes(2);
+      expect(observer).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+
   it('publishes the root compaction callback only after exact storage succeeds', async () => {
     const initial: KodaXSessionData = {
       title: 'root',

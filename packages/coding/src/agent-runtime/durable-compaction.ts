@@ -15,6 +15,7 @@ export interface DurableCompactionEventsInput {
   readonly currentAgentId?: string;
   readonly sessionScope?: KodaXSessionScope;
   readonly initialSessionData?: Omit<KodaXSessionData, 'messages' | 'lineage'>;
+  readonly signal?: AbortSignal;
 }
 
 function stripRunnerSystemMessage<T extends { readonly role: string }>(
@@ -55,7 +56,9 @@ export function withDurableCompactionPersistence(
         compactedMessages: persistentMessages,
         update: persistentUpdate,
         initialSessionData: input.initialSessionData,
+        signal: input.signal,
       });
+      input.signal?.throwIfAborted();
       try {
         await original?.(messages, update, meta);
       } catch (error) {

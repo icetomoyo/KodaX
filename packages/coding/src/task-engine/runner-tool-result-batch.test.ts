@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { RunnerToolCall, RunnerToolResult } from '@kodax-ai/agent';
+import { calculateMaxContextInputTokens } from '@kodax-ai/agent';
 
 import { estimateTokens } from '../tokenizer.js';
 import { TOOL_OUTPUT_DIR_ENV } from '../tools/truncate.js';
@@ -166,9 +167,10 @@ describe('Runner tool-result batch capacity', () => {
     };
     const currentTokens = 1_000;
     const reservedResponseTokens = 500;
-    const availableTokens = 2_500;
+    const contextWindow = 6_048;
+    const availableTokens = calculateMaxContextInputTokens(contextWindow, reservedResponseTokens) - currentTokens;
     const transformed = await transformFor(
-      currentTokens + reservedResponseTokens + 2_048 + availableTokens,
+      contextWindow,
       currentTokens,
       reservedResponseTokens,
     )({

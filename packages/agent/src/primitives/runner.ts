@@ -195,6 +195,12 @@ export interface RunOptions {
     transcript: readonly AgentMessage[],
     rejection?: KodaXContextOverflowError,
   ) => Promise<readonly AgentMessage[] | undefined>;
+  /** Include request-only paging, schemas and output reserve in overflow progress checks. */
+  readonly measureContextCapacityRequest?: (transcript: readonly AgentMessage[]) => Promise<number>;
+  /** Wait at a generation boundary for changed capacity conditions; never replay tools. */
+  readonly onContextCapacityBlocked?: (
+    transcript: readonly AgentMessage[], error: ContextCapacityError | KodaXContextOverflowError,
+  ) => Promise<boolean>;
   /**
    * FEATURE_101 (v0.7.31.1): callback fired once when the Runner has
    * resolved invariant bindings on the start agent and created an
@@ -735,12 +741,25 @@ async function recoverRejectedGeneration(
   opts.abortSignal?.throwIfAborted();
   let recovered = transcript;
   try {
-    const replacement = await opts.compactionHook(transcript, error);
-    if (replacement) recovered = [...replacement];
-    if (!replacement || estimateTokens(replacement) >= estimateTokens(transcript)) throw error;
-    opts.abortSignal?.throwIfAborted();
-    // One retry per generation after durable reduction; no tools have run.
-    return { outcome: await runGenerationTurn(agent, recovered, opts.llm!, span), messages: recovered };
+    let rejection = error;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      opts.abortSignal?.throwIfAborted();
+      const measure = opts.measureContextCapacityRequest ?? (async (messages: readonly AgentMessage[]) => estimateTokens([...messages]));
+      const previousTokens = await measure(recovered);
+      const replacement = await opts.compactionHook(recovered, rejection);
+      if (replacement) recovered = [...replacement];
+      const nextTokens = await measure(recovered);
+      if (!Number.isFinite(nextTokens) || nextTokens >= previousTokens) throw rejection;
+      opts.abortSignal?.throwIfAborted();
+      try {
+        // Retry only this rejected generation. Completed tools stay committed.
+        return { outcome: await runGenerationTurn(agent, recovered, opts.llm!, span), messages: recovered };
+      } catch (next) {
+        if (!(next instanceof KodaXContextOverflowError)) throw next;
+        rejection = next;
+      }
+    }
+    throw rejection;
   } catch (terminal) {
     if (terminal instanceof Error && !readRunnerRecoveryTranscript(terminal)) {
       attachRunnerRecoveryTranscript(terminal, recovered[0]?.role === 'system' ? recovered.slice(1) : recovered);
@@ -937,41 +956,59 @@ async function genericRun<TData>(
     //
     // Errors swallowed (same policy as before): compaction failure must
     // never abort the run, but emit a span so operators see the misbehave.
-    if (opts.compactionHook) {
+    let outcome: GenerationTurnOutcome;
+    for (;;) {
       try {
-        const compacted = await opts.compactionHook(transcript);
-        if (compacted && compacted !== transcript) {
-          transcript = [...compacted];
+        if (opts.compactionHook) {
+          try {
+            const compacted = await opts.compactionHook(transcript);
+            if (compacted && compacted !== transcript) {
+              transcript = [...compacted];
+            }
+          } catch (error) {
+            agentSpan?.addChild('compaction:hook-error', {
+              kind: 'compaction',
+              policyName: 'hook',
+              tokensUsed: 0,
+              budget: 0,
+              replacedMessageCount: 0,
+              summaryLength: 0,
+              error: error instanceof Error ? error.message : String(error),
+            }).end();
+            if (readRunnerRecoveryTranscript(error)) throw error;
+            if (error instanceof ContextCapacityError) {
+              const recoverableTranscript = transcript[0]?.role === 'system'
+                ? transcript.slice(1)
+                : transcript;
+              attachRunnerRecoveryTranscript(error, recoverableTranscript);
+              throw error;
+            }
+          }
         }
+        throwIfAborted();
+
+        try {
+          outcome = await runGenerationTurn(currentAgent, transcript, opts.llm, agentSpan);
+        } catch (error) {
+          const recovered = await recoverRejectedGeneration(currentAgent, transcript, opts, agentSpan, error);
+          transcript = recovered.messages;
+          outcome = recovered.outcome;
+        }
+        break;
       } catch (error) {
-        agentSpan?.addChild('compaction:hook-error', {
-          kind: 'compaction',
-          policyName: 'hook',
-          tokensUsed: 0,
-          budget: 0,
-          replacedMessageCount: 0,
-          summaryLength: 0,
-          error: error instanceof Error ? error.message : String(error),
-        }).end();
-        if (readRunnerRecoveryTranscript(error)) throw error;
-        if (error instanceof ContextCapacityError) {
-          const recoverableTranscript = transcript[0]?.role === 'system'
-            ? transcript.slice(1)
-            : transcript;
-          attachRunnerRecoveryTranscript(error, recoverableTranscript);
-          throw error;
+        if (!(error instanceof ContextCapacityError || error instanceof KodaXContextOverflowError)
+          || !opts.onContextCapacityBlocked) throw error;
+        const committed = readRunnerRecoveryTranscript(error);
+        if (committed) transcript = transcript[0]?.role === 'system' ? [transcript[0], ...committed] : [...committed];
+        throwIfAborted();
+        if (!await opts.onContextCapacityBlocked(transcript, error)) throw error;
+        throwIfAborted();
+        const inputs = await opts.beforeNextTurn?.({ agent: currentAgent, transcript, iteration, lastTurnToolNames: [] });
+        for (const message of inputs ?? []) {
+          transcript.push(message);
+          await commitMessage(opts, message, transcript);
         }
       }
-    }
-    throwIfAborted();
-
-    let outcome: GenerationTurnOutcome;
-    try {
-      outcome = await runGenerationTurn(currentAgent, transcript, opts.llm, agentSpan);
-    } catch (error) {
-      const recovered = await recoverRejectedGeneration(currentAgent, transcript, opts, agentSpan, error);
-      transcript = recovered.messages;
-      outcome = recovered.outcome;
     }
     const { result: turn, wasPlainString } = outcome;
     throwIfAborted();

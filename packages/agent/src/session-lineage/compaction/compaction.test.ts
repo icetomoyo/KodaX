@@ -318,7 +318,7 @@ describe('compaction', () => {
       triggerPercent: 100,
       protectionPercent: 0,
       rollingSummaryPercent: 10,
-    }, provider, 4_000)).rejects.toBeInstanceOf(ContextCapacityError);
+    }, provider, 1_000)).rejects.toBeInstanceOf(ContextCapacityError);
     expect(messages).toEqual(buildToolPair(1, 6_500));
   });
 

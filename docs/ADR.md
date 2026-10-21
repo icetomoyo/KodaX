@@ -6098,6 +6098,42 @@ concurrency/recovery reviews on 2026-08-26.
 
 ## ADR-067: Capacity-Debt Admission with a Bounded Recovery Ladder Supersedes the Issue 158 Hard Gate
 
+**2026-10-21 local implementation follow-up (after `87502cb9`, unreleased):**
+Issue 322 preserves prior summary failures on irreducible input. Capacity recovery
+now also pages older assistant text and cumulative user input, reduces excessive
+static tool schemas through the existing authorized bridge, scales the small-window
+safety floor, and permits up to four rejected-generation retries. A retry requires
+a strictly smaller measured request; it never restarts the tool-execution loop.
+
+Canonical user messages stay exact. Old assistant/tool text is saved before its
+replacement context is committed; IDs, arguments, receipts, protected control
+results and images remain intact. Ordinary user constraints take precedence over
+old assistant analysis. Request-only user references are volatile capabilities
+recreated from canonical messages, not durable history. Paging requires an active
+read tool; saved file references must also satisfy the current read policy. Missing
+read capability leaves the full input intact instead of claiming relief.
+
+A Host can implement `onContextCapacityBlocked` after the exact transcript has been
+saved. The current Host persists `contextRecovery` in the existing `recovering`
+phase, waits without provider calls, and wakes on changed model/provider/reasoning
+selection or accepted interrupt input. A revision captured before generation closes
+the settings-change race. Stop cancels the wait and prevents another generation.
+An independent SDK without this callback retains its typed capacity error.
+
+Transient Session load/save and capacity artifact I/O now retry with cancellable
+1–30 second backoff. The prepared lineage is retained; a failed save acknowledgement
+is checked against the durable active entry before rewriting. Existing entry IDs
+alone do not prove a replacement committed. Retry refreshes metadata, and permission
+failures still surface. Mixed user text/image messages page only text; a fixed
+request-only system notice explains runtime provenance and is included in the budget.
+
+This follow-up does **not** establish universal recovery: after Host process death
+the existing interrupted-run policy retains
+the recovery fact but does not resurrect execution or expired credential authority.
+The controlled model pilot has not established semantic non-regression for user
+paging. See the [regression and acceptance record](test-guides/ISSUE_322_v0.7.97_REGRESSION_GUIDE.md).
+The older dated decision below describes shipped behavior before this follow-up.
+
 **2026-09-07 correction (long coding sessions)**: the ladder below now also
 relieves committed tool-result bodies when semantic compaction plus a reclaimed
 response reserve cannot fit. It scans oldest first, including the latest

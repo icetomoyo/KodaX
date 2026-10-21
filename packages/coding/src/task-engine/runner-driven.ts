@@ -39,6 +39,7 @@ import type {
   RunnerToolObserver,
   StopHookFn,
 } from '@kodax-ai/agent';
+import { waitForContextRecovery } from '../context-recovery-wait.js';
 import {
   Runner,
   collectGuardrails,
@@ -976,6 +977,7 @@ export async function runManagedTaskViaRunner(
   const terminalTurnIds = new Set<string>();
   const durableEvents = withDurableCompactionPersistence({
     events: baseOptionsWithSessionId.events ?? {},
+    signal: baseOptionsWithSessionId.abortSignal,
     storage: baseOptionsWithSessionId.session?.storage,
     sessionId: initialSessionId,
     persistedByHost: baseOptionsWithSessionId.session?.persistedByHost,
@@ -2531,12 +2533,21 @@ async function runManagedTaskViaRunnerInner(
   const runOnce = (agent: Agent, input: readonly KodaXMessage[]) => {
     iterationStateRef.current = 0;
     const initialMessages = new Set(input);
+    let capacityRevision = options.events?.getContextRecoveryRevision?.();
     return Runner.run(agent, input, {
-      llm,
+      llm: (...args) => { capacityRevision = options.events?.getContextRecoveryRevision?.(); return llm(...args); },
       abortSignal: options.abortSignal,
       guardrails: options.guardrails,
       permissionIntent: options.context?.permissionIntent,
-      compactionHook,
+      compactionHook: compactionHook === undefined ? undefined : (...args) => {
+        if (args[1] === undefined) capacityRevision = options.events?.getContextRecoveryRevision?.();
+        return compactionHook(...args);
+      },
+      measureContextCapacityRequest: async transcript => contextTokenSnapshotRef.measureRequest
+        ? contextTokenSnapshotRef.measureRequest(transcript) : estimateTokens([...transcript]),
+      onContextCapacityBlocked: (transcript, error) => waitForContextRecovery(
+        error, transcript, options.events, options.abortSignal, capacityRevision,
+      ),
       toolResultBatchTransform,
       toolObserver: runnerToolObserver,
       onMessageCommitted: options.session?.persistedByHost === false

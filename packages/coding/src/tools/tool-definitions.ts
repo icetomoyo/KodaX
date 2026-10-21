@@ -211,6 +211,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     name: 'read',
     description: [
       'Read a file from the local filesystem with bounded output.',
+      '- Paged input: path also accepts kodax-transient://text/ references supplied by context recovery. These are valid local, run-scoped text capabilities, not network URLs. Read them directly with offset/limit to recover the original requirements; do not ask the user to re-paste them.',
       '- Text files: returns line-numbered content. Large files are capped per call; use offset/limit to continue in smaller slices. A partial-line continuation marker provides the exact line_offset cursor for lines that exceed one response chunk.',
       '- Image files (PNG, JPG, JPEG, GIF, WEBP): returns the image as inline vision content. The model is multimodal — when an image is delivered through this tool, you can see the picture directly in your next turn. Describe what you see; do NOT claim binary files are unsupported — the tool decodes the image bytes into vision content for the model, so refusing as "binary file" skips a valid read and frustrates the user.',
       '- For pasted/attached images already inlined in the user message, you already perceive them via native vision — no `read` call is needed. Use `read` on an image path only when the file is on disk and not yet in the conversation (e.g., a fresh path the user mentioned in text without attaching).',
@@ -219,7 +220,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     input_schema: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'The absolute path to the file' },
+        path: { type: 'string', description: 'The absolute file path or a kodax-transient://text/ reference supplied by context recovery' },
         offset: { type: 'number', description: 'Line number to start from (text files only)' },
         limit: { type: 'number', description: 'Number of lines to read (text files only)' },
         line_offset: {

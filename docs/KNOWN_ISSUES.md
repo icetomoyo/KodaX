@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-10-18_
+_Last Updated: 2026-10-21_
 
 ---
 
@@ -1918,7 +1918,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 | 325 | High | Resolved | Windows exit settlement crashes with `windowsAclPowerShellExecutable is not defined` after the FEATURE_295 helper cleanup left the boot-identity probe calling a deleted function | FEATURE_295 Windows boot identity probe | v0.7.96-alpha.2 | 2026-08-28 | 2026-08-28 |
 | 324 | Medium | Open | Repeated same-file edits with identical line stats still collapse, dropping every diff but the last | FEATURE_067 tool summary collapse | - | 2026-08-28 | - |
 | 323 | Medium | Open | Quota-worded non-429 provider errors retry as rate limits but report as upstream errors | v0.7.96 status-bucketed runtime failure taxonomy | - | 2026-08-28 | - |
-| 322 | Medium | Open | Irreducible-input compaction resets the summarizer circuit-breaker counter to zero, disarming protection for later ordinary turns | FEATURE_296 breaker-bounded hard-pressure compaction | - | 2026-08-28 | - |
+| 322 | Medium | Resolved | Irreducible-input compaction resets the summarizer circuit-breaker counter to zero, disarming protection for later ordinary turns | FEATURE_296 breaker-bounded hard-pressure compaction | post-v0.7.97-alpha.9 local fix (unreleased) | 2026-08-28 | 2026-10-21 |
 | 321 | Medium | Open | Every runtime cancellation terminal attributes the stop to the user, including runtime shutdown and internal aborts | v0.7.96 runtime failure-detail cancellation receipt | - | 2026-08-28 | - |
 | 320 | High | Resolved | Unix trusted text commit reads the target before locking and can misclassify a concurrent replace as a hard link | FEATURE_295 Unix trusted text transaction | v0.7.96-alpha.1 | 2026-08-28 | 2026-08-28 |
 | 319 | High | Resolved | Electron ASAR virtual stats fail native artifact identity verification despite physical unpacked bytes | FEATURE_295 packaged Electron native verification | v0.7.96-alpha.1 | 2026-08-28 | 2026-08-28 |
@@ -3262,9 +3262,12 @@ in the embedder guide.
 ### 322: Irreducible-input compaction resets the summarizer circuit-breaker counter to zero, disarming protection for later ordinary turns
 
 - **Priority**: Medium
-- **Status**: Open
+- **Status**: Resolved
 - **Introduced**: FEATURE_296 breaker-bounded hard-pressure compaction
 - **Created**: 2026-08-28
+- **Reproduced**: 2026-10-21 at `87502cb9`; both irreducible-input branches reset two prior failures to zero.
+- **Fixed**: post-v0.7.97-alpha.9 local fix (unreleased)
+- **Resolution Date**: 2026-10-21
 
 #### Problem
 
@@ -3291,6 +3294,38 @@ making the :156 throw unconditional for irreducible input: one bounded summary
 attempt per turn is intentional — the request-copy degradation rung owns the
 oversized message, and shrinking history still helps the post-degradation
 request fit — so only the counter reset and the stale comments are defects.
+
+#### Resolution
+
+The single-agent partial-success and typed-capacity-error branches now retain
+the incoming failure count. The managed compaction hook had the same reset
+after a committed, still-over-capacity result owned by irreducible input; it
+now preserves its complete breaker state. Its capacity-error branch already
+preserved that state and is covered by the parity regression.
+
+Ordinary summary failures still accumulate; a successful summary that fits
+and effective durable history relief keep their existing rearming behavior.
+An oversized input may still attempt compaction with an open breaker before
+request-only degradation; that exception no longer closes the breaker.
+
+**Files Changed:** `agent-runtime/middleware/compaction-orchestration.ts`,
+`task-engine/_internal/managed-task/compaction.ts` and `capacity-recovery.ts`
+under `packages/coding/src/`.
+**Tests Added:** CAP-060 and managed-hook regressions cover both oversized
+outcomes after prior failures, later ordinary failure/stop behavior, and the
+open-breaker exception; the successful-relief assertion now starts at two
+failures. Both reset regressions failed before their respective fixes.
+String and mixed text/image messages now receive the same treatment; only user
+text contributes to irreducible-input detection, excluding images and receipts.
+Initial counter-fix validation passed 137 tests across 10 files; the follow-up
+adds further recovery coverage recorded in the guide below.
+
+See [Issue 322 regression guide](test-guides/ISSUE_322_v0.7.97_REGRESSION_GUIDE.md).
+The live recovery follow-up now includes authorized history paging, bounded generation
+retries, cancellable transient storage recovery and same-process Host waiting.
+Cross-process automatic continuation and model paging quality remain unaccepted; the broader work is not
+complete. Implementation details and remaining boundaries are recorded in
+[the v0.7.97 design](features/v0.7.97.md#proposed-context-capacity-self-recovery-after-feature_296).
 
 ### 321: Every runtime cancellation terminal attributes the stop to the user, including runtime shutdown and internal aborts
 
@@ -16694,12 +16729,21 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 248 (37 Open, 211 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 248 (36 Open, 212 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-10-21: Issue 322 summarizer breaker repaired
+
+- Preserved prior failures across irreducible-input capacity errors and
+  partial summaries in SA/AMA, with red/green regressions and 137 passing
+  focused tests. Fixed locally after v0.7.97-alpha.9; unreleased.
+- Recorded the broader context self-recovery proposal separately from the
+  completed breaker fix; the subsequent live recovery implementation and remaining
+  cross-process / semantic acceptance gaps are recorded in the linked guide.
 
 ### 2026-09-27: Command feedback and history boundary repairs
 

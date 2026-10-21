@@ -2207,6 +2207,12 @@ export type KodaXDaemonRuntime = Omit<KodaXRuntime, "runs"> & {
 };
 
 export interface RuntimeRunStatus {
+  /** Durable evidence that execution stopped before the next generation. */
+  readonly contextRecovery?: {
+    readonly waitingSince: string;
+    readonly requiredTokens?: number;
+    readonly availableTokens?: number;
+  };
   readonly productInput?: { readonly inputId: string; readonly digest: string };
   readonly runId: string;
   readonly sessionId: string;
@@ -3609,6 +3615,9 @@ interface RuntimeAdmittedSessionContext {
 }
 
 interface RuntimeRunRecord {
+  contextRecovery?: RuntimeRunStatus['contextRecovery'];
+  resumeContextCapacity?: () => void;
+  contextRecoveryRevision?: number;
   goalRuntime?: NonNullable<NonNullable<KodaXOptions['context']>['goalRuntime']>;
   readonly independentActorRef?: { readonly actorPath: string; readonly turnId: string };
   readonly productExecutionKey?: string;
@@ -10764,6 +10773,7 @@ function createRuntimeRunService(deps: {
     const abortError = new DOMException(reason, "AbortError");
     record.running?.abort(abortError);
     record.abortController?.abort(abortError);
+    record.resumeContextCapacity?.();
     void requestManagedActorCancellation(record, reason);
     record.actorFinalizationAbortController?.abort(abortError);
     deps.permissions.rejectForRun(record.runId, reason);
@@ -11000,7 +11010,8 @@ function createRuntimeRunService(deps: {
           if (stage !== undefined) actorBase.stage = stage;
           return;
         }
-        if (record.phase === phase && (stage === undefined || record.stage === stage)) {
+        if (record.phase === phase && (stage === undefined || record.stage === stage)
+          && record.contextRecovery === undefined) {
           return;
         }
         record.phase = phase;
@@ -11642,6 +11653,8 @@ function createRuntimeRunService(deps: {
         )
           continue;
         const settings = resolveEffectiveRuntimeSessionSettings(config, current.value, record.productSession === true);
+        const priorSelection = JSON.stringify([record.provider, record.model, record.reasoning,
+          record.start?.options.effort, record.start?.options.thinking]);
         // Low-level queued Runs have already captured model selection. Product
         // inputs do not create a Run until consumption, when settings are read.
         if (record.phase !== "queued" && "provider" in patch) {
@@ -11669,6 +11682,11 @@ function createRuntimeRunService(deps: {
         record.permissionMode = settings.permissionMode;
         record.autoModeClassifierModel = settings.autoModeClassifierModel;
         publishRunUpdate(record);
+        if (priorSelection !== JSON.stringify([record.provider, record.model, record.reasoning,
+          record.start?.options.effort, record.start?.options.thinking])) {
+          record.contextRecoveryRevision = (record.contextRecoveryRevision ?? 0) + 1;
+          record.resumeContextCapacity?.();
+        }
       }
     },
   );
@@ -12340,6 +12358,7 @@ function createRuntimeRunService(deps: {
       };
       afterRun.interruptInputs.push(interrupt);
       publishRunUpdate(afterRun);
+      afterRun.resumeContextCapacity?.();
       deps.bus.emit(
         "run.input.queued",
         {
@@ -13043,9 +13062,11 @@ function createRuntimeRunService(deps: {
       const run = getRecord(runId);
       await deps.sessionAdmission.assertRunAccess(run.sessionId);
       assertRuntimeOwnsRun(run, deps.runOwner);
+      const changed = run.model !== model;
       run.model = model;
-      run.running?.setModel(model);
+      run.sessionControl?.setModel(model);
       publishRunUpdate(run);
+      if (changed) { run.contextRecoveryRevision = (run.contextRecoveryRevision ?? 0) + 1; run.resumeContextCapacity?.(); }
     },
 
     async setProvider(runId, provider) {
@@ -13053,9 +13074,11 @@ function createRuntimeRunService(deps: {
       const run = getRecord(runId);
       await deps.sessionAdmission.assertRunAccess(run.sessionId);
       assertRuntimeOwnsRun(run, deps.runOwner);
+      const changed = run.provider !== provider;
       run.provider = provider;
-      run.running?.setProvider(provider);
+      run.sessionControl?.setProvider(provider);
       publishRunUpdate(run);
+      if (changed) { run.contextRecoveryRevision = (run.contextRecoveryRevision ?? 0) + 1; run.resumeContextCapacity?.(); }
     },
 
     async setReasoning(runId, reasoning) {
@@ -13063,9 +13086,11 @@ function createRuntimeRunService(deps: {
       const run = getRecord(runId);
       await deps.sessionAdmission.assertRunAccess(run.sessionId);
       assertRuntimeOwnsRun(run, deps.runOwner);
+      const changed = run.reasoning !== reasoning;
       run.reasoning = reasoning;
-      run.running?.setReasoning(reasoning);
+      run.sessionControl?.setReasoning(reasoning);
       publishRunUpdate(run);
+      if (changed) { run.contextRecoveryRevision = (run.contextRecoveryRevision ?? 0) + 1; run.resumeContextCapacity?.(); }
     },
 
     closeAll(reason) {
@@ -17794,6 +17819,14 @@ function parseRuntimeRunStatus(value: unknown): RuntimeRunStatus | undefined {
     return undefined;
   }
   return {
+    ...(isRecord(value.contextRecovery) && typeof value.contextRecovery.waitingSince === 'string'
+      ? { contextRecovery: {
+          waitingSince: value.contextRecovery.waitingSince,
+          ...(typeof value.contextRecovery.requiredTokens === 'number' && Number.isFinite(value.contextRecovery.requiredTokens)
+            ? { requiredTokens: Math.max(0, value.contextRecovery.requiredTokens) } : {}),
+          ...(typeof value.contextRecovery.availableTokens === 'number' && Number.isFinite(value.contextRecovery.availableTokens)
+            ? { availableTokens: Math.max(0, value.contextRecovery.availableTokens) } : {}),
+        } } : {}),
     ...(isRecord(value.productInput)
       && typeof value.productInput.inputId === "string"
       && typeof value.productInput.digest === "string"
@@ -18277,6 +18310,7 @@ function recordFromPersistedStatus(
   observedOwner?: AgentActorOwner,
 ): RuntimeRunRecord {
   return {
+    ...(status.contextRecovery !== undefined ? { contextRecovery: status.contextRecovery } : {}),
     runId: status.runId,
     sessionId: status.sessionId,
     ...(status.turnId !== undefined ? { turnId: status.turnId } : {}),
@@ -20154,6 +20188,47 @@ function wrapKodaXEvents(input: {
     onTodoDriftWarning(event) {
       emit("todo.warning", event, event);
       externalCallbacks()?.onTodoDriftWarning?.(event);
+    },
+    getContextRecoveryRevision: () => record.contextRecoveryRevision ?? 0,
+    async onContextCapacityBlocked(state, signal) {
+      const abortSignal = signal ?? record.abortController?.signal;
+      abortSignal?.throwIfAborted();
+      if (actorDurabilityFenced() || record.stop !== undefined) {
+        throw new DOMException('Context recovery cancelled.', 'AbortError');
+      }
+      // Settings may have changed while the failed request or history save was
+      // in flight. Do not miss that wake and wait for another user action.
+      if (state.configurationRevision !== undefined
+        && state.configurationRevision !== (record.contextRecoveryRevision ?? 0)) return;
+      if (record.interruptInputs.some(input => input.state === 'queued')) return;
+      record.contextRecovery = { requiredTokens: state.requiredTokens,
+        availableTokens: state.availableTokens, waitingSince: new Date().toISOString() };
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const cleanup = () => {
+            abortSignal?.removeEventListener('abort', abort);
+            delete record.resumeContextCapacity;
+          };
+          const abort = () => { cleanup(); reject(new DOMException('Context recovery cancelled.', 'AbortError')); };
+          record.resumeContextCapacity = () => {
+            if (record.stop !== undefined || abortSignal?.aborted) { abort(); return; }
+            cleanup(); resolve();
+          };
+          abortSignal?.addEventListener('abort', abort, { once: true });
+          try {
+            onPhase('recovering');
+          } catch (error) {
+            cleanup(); reject(error); return;
+          }
+          if (record.phase === 'unknown' || actorDurabilityFenced()) {
+            cleanup(); reject(new Error('Cannot persist context recovery state.')); return;
+          }
+          if (abortSignal?.aborted || record.stop !== undefined) abort();
+        });
+      } finally {
+        delete record.contextRecovery;
+        if (!abortSignal?.aborted && record.stop === undefined && record.phase === 'recovering') onPhase('running');
+      }
     },
     onProviderRecovery(event, meta) {
       if (actorDurabilityFenced()) return;
@@ -22841,6 +22916,7 @@ function runtimeInterruptInputStatus(
 
 function statusFromRecord(run: RuntimeRunRecord): RuntimeRunStatus {
   return {
+    ...(run.contextRecovery !== undefined ? { contextRecovery: run.contextRecovery } : {}),
     ...(run.productInput !== undefined ? { productInput: run.productInput } : {}),
     runId: run.runId,
     sessionId: run.sessionId,

@@ -600,6 +600,19 @@ export interface KodaXEvents {
     update?: CompactionUpdate,
     meta?: KodaXActivityEventMeta,
   ) => void | Promise<void>;
+  /**
+   * Called at a durable generation boundary after capacity recovery is exhausted.
+   * Resolve only when recovery conditions change (for example a model change).
+   * The executor retains the committed transcript and retries no completed tools.
+   * Hosts must honor cancellation; without this callback the typed error is returned.
+   */
+  onContextCapacityBlocked?: (state: {
+    readonly requiredTokens?: number;
+    readonly availableTokens?: number;
+    readonly configurationRevision?: number;
+  }, signal?: AbortSignal) => Promise<void>;
+  /** Capture before generation so settings changed in flight cannot lose a wake. */
+  getContextRecoveryRevision?: () => number;
   /** Canonical, post-commit compaction fact. Legacy callbacks are projections. */
   onContextCompactionFinished?: (
     event: KodaXContextCompactionFinishedEvent,

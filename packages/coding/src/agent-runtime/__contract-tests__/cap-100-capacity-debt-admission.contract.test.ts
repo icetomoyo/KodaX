@@ -54,9 +54,8 @@ import type { ToolResultBudget } from '../../tools/tool-result-budget.js';
 import { createEnvelopeAggregateBudgetEnforcer } from '../../tools/envelope-budget.js';
 import { createRunnerToolResultBatchTransform } from '../../task-engine/runner-tool-result-batch.js';
 
-// With a context window this small the safety-margin floor (2048) exceeds the
-// whole window, so calculateMaxContextInputTokens returns 0 and every batch is
-// over budget — exactly the population the Issue 158 hard gate aborted.
+// Explicit output reservation below exhausts this small window, independent
+// of the adaptive safety margin. Completed tool evidence must still commit.
 const DEBT_CONTEXT_WINDOW = 1_200;
 
 function ctx(): KodaXToolExecutionContext {
@@ -122,7 +121,7 @@ describe('CAP-100: capacity-debt tool-result admission', () => {
       toolResultBatchTransform: createRunnerToolResultBatchTransform({
         ctx: ctx(),
         contextWindow: DEBT_CONTEXT_WINDOW,
-        reservedResponseTokens: 0,
+        reservedResponseTokens: DEBT_CONTEXT_WINDOW,
         contextTokenSnapshotRef: { current: undefined },
       }),
     });

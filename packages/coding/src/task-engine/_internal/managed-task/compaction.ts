@@ -40,6 +40,7 @@ import type {
 import { countTokens, estimateTokens } from '../../../tokenizer.js';
 import { resolveContextTokenCount, createOverflowContextTokenSnapshot } from '../../../token-accounting.js';
 import { estimateToolSchemaTokens, type RuntimeContextBudgetSnapshot } from '../../../agent-runtime/context-budget.js';
+import { fitToolSchemasToContext } from '../../../agent-runtime/tool-exposure-planner.js';
 import { createCompactionPromptCacheObserver } from '../../../agent-runtime/prompt-cache-diagnostics.js';
 import { derivePromptCacheAffinityKey } from '../../../agent-runtime/prompt-cache-affinity.js';
 import {
@@ -68,6 +69,8 @@ export type RunnerCompactionHook = (
 
 export interface ContextTokenSnapshotRef {
   current: KodaXContextTokenSnapshot | undefined;
+  contextWindow?: number;
+  measureRequest?: (messages: readonly AgentMessage[]) => Promise<number>;
   compactionBudget?: RuntimeContextBudgetSnapshot['compactionBudget'];
 }
 
@@ -762,9 +765,12 @@ async function commitManagedCompactionResult(
 
   const irreducibleInputOwnsDebt = candidate.stillOverCapacity
     && hasIrreducibleUserInput(attempt.messages, input.contextWindow);
-  state.breaker = candidate.stillOverCapacity && !irreducibleInputOwnsDebt
-    ? recordSummaryCircuitFailure(state.breaker, attempt.compactableCurrentTokens)
-    : createSummaryCircuitBreaker();
+  // Request-only input degradation must neither spend nor erase prior failures.
+  if (!irreducibleInputOwnsDebt) {
+    state.breaker = candidate.stillOverCapacity
+      ? recordSummaryCircuitFailure(state.breaker, attempt.compactableCurrentTokens)
+      : createSummaryCircuitBreaker();
+  }
   state.antiThrash = recordCompactionSavings(state.antiThrash, {
     tokensBefore: attempt.compactableCurrentTokens,
     tokensAfter: candidate.finalCompactableTokens,
@@ -982,7 +988,8 @@ export async function buildManagedTaskCompactionHook(
     const snapshot = initializeEnvelopeEstimate(
       snapshotRef,
       messages,
-      hookOptions.activeToolDefinitions ?? [],
+      fitToolSchemasToContext(hookOptions.activeToolDefinitions ?? [], { contextWindow, reservedResponseTokens,
+        systemTokens: estimateTokens(messages.filter(message => message.role === 'system')) }),
     );
     const currentTokens = snapshot
       ? resolveContextTokenCount(messages, snapshot)
@@ -1042,10 +1049,11 @@ export async function buildManagedTaskCompactionHook(
       currentProvider = options.provider;
       currentModel = model;
       contextWindow = resolved.contextWindow;
-      if (snapshotRef.current) {
-        // An upstream rejection calibrated the old model, not its replacement.
-        const { capacityWindow: _oldModelCapacity, ...snapshot } = snapshotRef.current;
-        snapshotRef.current = snapshot;
+      if (snapshotRef.current?.capacityWindow !== undefined) {
+        // Rejection calibration belongs to the old model. Successful usage
+        // still supplies the conservative pressure estimate until fresh usage
+        // arrives, preserving proactive compaction across live model changes.
+        snapshotRef.current = undefined;
       }
     }
     const reservedResponseTokens = resolved.provider.getEffectiveMaxOutputTokens(resolved.activeModel);
@@ -1054,7 +1062,10 @@ export async function buildManagedTaskCompactionHook(
       snapshotRef.current = createOverflowContextTokenSnapshot(original, rejection, contextWindow, snapshotRef.current);
       contextWindow = snapshotRef.current.capacityWindow!;
     }
-    const before = initializeEnvelopeEstimate(snapshotRef, original, hookOptions.activeToolDefinitions ?? []);
+    snapshotRef.contextWindow = contextWindow;
+    const before = initializeEnvelopeEstimate(snapshotRef, original,
+      fitToolSchemasToContext(hookOptions.activeToolDefinitions ?? [], { contextWindow, reservedResponseTokens,
+        systemTokens: estimateTokens(original.filter(message => message.role === 'system')) }));
     const beforeTokens = resolveContextTokenCount(original, before);
     let result: readonly AgentMessage[] | undefined;
     try {
@@ -1070,6 +1081,7 @@ export async function buildManagedTaskCompactionHook(
     const capacity = { contextWindow, currentTokens, reservedResponseTokens };
     if (!needsHistoryCapacityRelief(capacity)) return result;
     const recovered = await recoverContextHistory({ ...capacity, messages,
+      canReadPagedContent: hookOptions.activeToolDefinitions?.some(tool => tool.name === 'read') === true,
       executionContext: hookOptions.executionContext, persist: events?.onCompactedMessages }).catch((error: unknown) => {
       if (result && error instanceof Error) {
         attachRunnerRecoveryTranscript(error, messages[0]?.role === 'system' ? messages.slice(1) : messages);

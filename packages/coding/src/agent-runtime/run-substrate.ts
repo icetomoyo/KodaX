@@ -45,7 +45,8 @@ import {
 } from '@kodax-ai/llm';
 import path from 'path';
 import { createTextRecoveryState, projectTextRecovery, tryTextRecovery } from '../resilience/text-recovery.js';
-import { estimateTokens } from '../tokenizer.js';
+import { waitForContextRecovery } from '../context-recovery-wait.js';
+import { countTokens, estimateTokens } from '../tokenizer.js';
 // FEATURE_093 (v0.7.24): `KodaXClient` is only re-exported from this module
 // for backward compatibility. Importing it here creates a cycle
 // (agent ↔ client, since client imports `runKodaX` from this file). The
@@ -260,6 +261,7 @@ import {
 import { derivePromptCacheAffinityKey } from './prompt-cache-affinity.js';
 import {
   applyToolExposurePlan,
+  fitToolSchemasToContext,
   hasPortableToolBridge,
   planToolExposure,
   selectRuntimeContextOptimizationProfile,
@@ -902,6 +904,7 @@ async function runSubstrateInContext(
   };
   events = withDurableCompactionPersistence({
     events,
+    signal: options.abortSignal,
     storage: options.session?.storage,
     sessionId,
     persistedByHost: options.session?.persistedByHost,
@@ -1617,6 +1620,8 @@ async function runSubstrateInContext(
 
     for (let iter = 0; iter < iterationLimit; iter++) {
     const goalTurnStartedAt = Date.now();
+    let generationPending = true;
+    const capacityRevision = events.getContextRecoveryRevision?.();
     try {
       if (
         options.context?.interruptInput
@@ -1827,10 +1832,11 @@ async function runSubstrateInContext(
         nativeDeferredAvailable: false,
         unlockedDeferredTools,
       });
-      const activeToolDefinitions = applyToolExposurePlan(
+      const activeToolDefinitions = fitToolSchemasToContext(applyToolExposurePlan(
         fullActiveToolDefinitions,
         exposurePlan,
-      );
+      ), { contextWindow, systemTokens: countTokens(effectiveSystemPrompt),
+        reservedResponseTokens: streamProvider.getEffectiveMaxOutputTokens(turnState.currentModelOverride) });
       const reservedResponseTokens = streamProvider.getEffectiveMaxOutputTokens(
         turnState.currentModelOverride,
       );
@@ -2025,12 +2031,12 @@ async function runSubstrateInContext(
       // wire-level output reserve shrinks floor-bounded while the assembled
       // request is over capacity, so the provider request is legal; a
       // rejection routes to classification, never a resend.
-      let wireMessages = await degradeIrreducibleUserInputs(
-        providerMessages,
-        ctx,
-        contextWindow,
-        userInputDegradationCache,
+      const buildCapacityRequestMessages = () => degradeIrreducibleUserInputs(
+        providerMessages, ctx, contextWindow, userInputDegradationCache,
+        { currentTokens: resolveContextTokenCount(providerMessages, estimatedRequestTokenSnapshot), reservedResponseTokens,
+          canReadPagedContent: activeToolDefinitions.some(tool => tool.name === 'read') },
       );
+      let wireMessages = await buildCapacityRequestMessages();
       let requestMaxOutputTokens = applyContextCapacityReserveOverride(streamProvider, {
         ...(turnState.currentModelOverride !== undefined
           ? { model: turnState.currentModelOverride }
@@ -2038,7 +2044,7 @@ async function runSubstrateInContext(
         contextWindow,
         currentTokens: resolveContextTokenCount(wireMessages, contextTokenSnapshot),
       });
-      let capacityRecoveryUsed = false;
+      let capacityRecoveryAttempts = 0;
       let textRecoveryRetry = false;
       while (true) {
         wireMessages = projectTextRecovery(wireMessages, textRecovery);
@@ -2182,26 +2188,26 @@ async function runSubstrateInContext(
               startedAt: boundarySession.snapshot().startedAt });
             throw error;
           }
-          if (error instanceof KodaXContextOverflowError && !capacityRecoveryUsed && !options.abortSignal?.aborted) {
-            capacityRecoveryUsed = true;
+          if (error instanceof KodaXContextOverflowError && capacityRecoveryAttempts < 4 && !options.abortSignal?.aborted) {
+            capacityRecoveryAttempts += 1;
             error.requestInputReliefTokens = Math.max(0, estimateTokens(providerMessages) - estimateTokens(wireMessages));
             const rejected = createOverflowContextTokenSnapshot(providerMessages, error, contextWindow, contextTokenSnapshot);
             contextWindow = rejected.capacityWindow!;
             const recovered = await runCompactionLifecycle({ ...compactionInput, messages: providerMessages,
               currentTokens: rejected.currentTokens, contextWindow, needsCompact: true });
-            const previousEstimate = estimateTokens(providerMessages);
+            const previousEstimate = estimateTokens(wireMessages) + requestMaxOutputTokens;
             providerMessages = recovered.messages;
             messages = providerMessages;
-            if (estimateTokens(recovered.messages) >= previousEstimate) throw error;
             contextTokenSnapshot = recovered.contextTokenSnapshot ?? rebaseContextTokenSnapshot(providerMessages, rejected);
             estimatedRequestTokenSnapshot = recovered.contextTokenSnapshot ?? rejected;
             turnState.compactConsecutiveFailures = recovered.nextCompactConsecutiveFailures;
             turnState.compactAntiThrash = recovered.nextCompactionAntiThrash;
-            wireMessages = await degradeIrreducibleUserInputs(providerMessages, ctx, contextWindow, userInputDegradationCache);
+            wireMessages = await buildCapacityRequestMessages();
             requestMaxOutputTokens = applyContextCapacityReserveOverride(streamProvider, {
               model: turnState.currentModelOverride, maxOutputTokens: requestMaxOutputTokens, contextWindow,
               currentTokens: resolveContextTokenCount(wireMessages, estimatedRequestTokenSnapshot),
             });
+            if (estimateTokens(wireMessages) + requestMaxOutputTokens >= previousEstimate) throw error;
             continue;
           }
           if (error instanceof KodaXContextOverflowError) throw error;
@@ -2320,12 +2326,7 @@ async function runSubstrateInContext(
             const recovery = recoveryCoordinator.executeRecovery(providerMessages, decision);
             telemetryRecovery(decision.action, recovery);
             providerMessages = recovery.messages;
-            wireMessages = await degradeIrreducibleUserInputs(
-              providerMessages,
-              ctx,
-              contextWindow,
-              userInputDegradationCache,
-            );
+            wireMessages = await buildCapacityRequestMessages();
             streamTimers.clearAll();
             // Don't bill a retry slot for the sanitize step.
             attempt -= 1;
@@ -2370,12 +2371,7 @@ async function runSubstrateInContext(
           const recovery = recoveryCoordinator.executeRecovery(providerMessages, decision);
           telemetryRecovery(decision.action, recovery);
           providerMessages = recovery.messages;
-          wireMessages = await degradeIrreducibleUserInputs(
-            providerMessages,
-            ctx,
-            contextWindow,
-            userInputDegradationCache,
-          );
+          wireMessages = await buildCapacityRequestMessages();
 
           streamTimers.clearAll();
           await waitForRetryDelay(decision.delayMs, options.abortSignal);
@@ -2385,6 +2381,7 @@ async function runSubstrateInContext(
         }
       }
 
+      generationPending = false;
       // 流式输出结束，通知 CLI 层
       emitStreamEnd(events, activeProviderRequestId ? { providerRequestId: activeProviderRequestId } : undefined);
       await emitActiveExtensionEvent('stream:end', undefined);
@@ -3133,6 +3130,22 @@ async function runSubstrateInContext(
         signal: undefined,
       });
     } catch (e) {
+      if (generationPending) {
+        const committed = e instanceof Error ? readRunnerRecoveryTranscript(e) : undefined;
+        if (committed) messages = [...committed];
+        try {
+          if (await waitForContextRecovery(e, messages, events, options.abortSignal,
+            capacityRevision)) {
+            await consumeRuntimeInterruptInput(true);
+            contextTokenSnapshot = { currentTokens: estimateTokens(messages),
+              baselineEstimatedTokens: estimateTokens(messages), source: 'estimate' };
+            iter -= 1;
+            continue;
+          }
+        } catch (waitingError) {
+          return finalizeCaughtError(waitingError);
+        }
+      }
       return finalizeCaughtError(e);
     }
   }

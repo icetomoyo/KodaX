@@ -10,6 +10,16 @@ import {
 } from './context-capacity.js';
 
 describe('physical context capacity', () => {
+  it('does not let the safety floor consume a small model window', () => {
+    const input = { contextWindow: 4_096, currentTokens: 100, reservedResponseTokens: 3_000 };
+    expect(exceedsContextCapacity(input)).toBe(false);
+    const maximum = calculateMaxContextInputTokens(4_096, 3_000);
+    expect(maximum).toBeGreaterThan(100);
+    expect(exceedsContextCapacity({ ...input, currentTokens: maximum + 1 })).toBe(true);
+    const error = new capacityApi.ContextCapacityError({ ...input, currentTokens: 2_000 });
+    expect(error.requiredTokens).toBe(2_000 + 3_000 + error.safetyMarginTokens);
+    expect(error.safetyMarginTokens).toBeLessThan(2_048);
+  });
   it('reports the same complete token requirement that triggered rejection', () => {
     expect(new capacityApi.ContextCapacityError({ contextWindow: 131_072,
       currentTokens: 125_541, reservedResponseTokens: 3_000 }, 'History compaction')).toMatchObject({
