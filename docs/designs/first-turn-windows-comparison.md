@@ -4,7 +4,37 @@
 Codex 的剩余输入差距主要在工具契约；不能只根据首轮更小决定启用参数披露。
 本记录更新此前安装版/不完整 DSH preset 的参考值；旧设计文档中的数字仍是历史测量。
 
-## 同场景实抓
+## 2026-10-21 当前基线复测
+
+当前 `77307a32` 在相同 Windows 夹具重跑已有真实 SDK 抓包测试，16 个场景
+通过，外部模型调用为 0。下表采用与原比较完全相同的模型字段提取顺序和
+`countTokens`，不使用 mock usage，也不与 Kimi 的真实 usage 混算。
+
+| 当前 AMA 场景 | 模型字段估算 | 工具估算 | 其余输入 | native 数 |
+| --- | ---: | ---: | ---: | ---: |
+| OpenAI / Runtime Host | 20,583 | 12,816 | 7,767 | 55 |
+| Anthropic / Runtime Host | 20,223 | 12,427 | 7,796 | 55 |
+| OpenAI / 无 Host 组件路径 | 19,181 | 12,420 | 6,761 | 53 |
+| Anthropic / 无 Host 组件路径 | 18,834 | 12,045 | 6,789 | 53 |
+
+保留完整 Host 的数字作为主要基线，不能用少两个绑定的组件路径声称默认更小。
+合并主仓后的 Host 数字比前次入口收敛记录各多 48；最近的错误路径恢复修正只改
+评测，不减少注入。当前参考仓库 HEAD 仍为 Codex `3b8f43a06b` 和 DSH
+`1517a4dbca`，其 tracked 工作区无改动；重新读取原始请求并重算验证，既有
+Windows 实抓仍为 Codex Sol 17,032 / Astra 16,944、DSH Standard 9,318 /
+PTC 11,753。没有重新构建参考项目，也没有将它们称为联网最新版本。
+
+KodaX OpenAI / Codex Sol 的总差为 3,551，其中工具表示差 3,545，其他输入差
+6。剩余差距集中在工具契约，但不同产品的能力集合不同；这不是质量等价证据。
+当前 KodaX 已有 coding/agent 分层、角色提示、stable/context 分离及只缩说明的
+deferred hints。内部执行器另有压力驱动曝光规划；AMA adapter 当前则直接生成
+native wireTools，预算诊断为 report_only，不能把前者描述为已接入 AMA 的模式。
+未新增 DSH 式 Standard/PTC preset，也未默认启用大范围参数披露。
+
+原始 SDK 请求、重算脚本、参考请求副本与主会话解释位于 OS Temp 实验
+`kodax-eval-dumps/first-turn-status-20261021-PNiuXU`，另有两份哈希校验副本。
+
+## 2026-10-17 同场景实抓（历史基线）
 
 固定短任务“请简短说明你已准备好。”，Windows/PowerShell、空 workspace、隔离
 个人与项目规则、无第三方 MCP。各项目自己的官方默认能力和内置 skills 保留。
