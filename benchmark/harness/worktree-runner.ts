@@ -247,8 +247,8 @@ export interface OrphanScanResult {
  * and remove them. Run this at harness startup. Returns what was cleaned up
  * so the caller can log a summary.
  *
- * Conservative: only matches the exact prefix; never touches dirs the
- * harness didn't create. Per §Release 硬条件 — leak rate ≤ 1%.
+ * A prefix alone is not ownership evidence (eval dumps share it). Require a
+ * worktree gitfile and let this repository's Git registration authorize removal.
  */
 export async function scanAndCleanOrphanWorktrees(opts: {
   repoRoot?: string;
@@ -270,13 +270,21 @@ export async function scanAndCleanOrphanWorktrees(opts: {
     if (!entry.startsWith(WORKTREE_PREFIX)) continue;
     const orphanPath = path.join(tmpRoot, entry);
     try {
-      // Try git's view first so its admin metadata gets cleaned too.
+      const stat = await fs.lstat(orphanPath);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) continue;
+      let gitfile: string;
+      try { gitfile = await fs.readFile(path.join(orphanPath, '.git'), 'utf8'); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        throw error;
+      }
+      if (!gitfile.startsWith('gitdir: ')) continue;
+      // Never fall back to deleting a directory Git does not own or refuses.
       await execFileAsync(
         'git',
         ['worktree', 'remove', '--force', orphanPath],
         { cwd: repoRoot },
-      ).catch(() => undefined);
-      await fs.rm(orphanPath, { recursive: true, force: true });
+      );
       removed.push(orphanPath);
     } catch (e) {
       failed.push({ path: orphanPath, error: String(e) });

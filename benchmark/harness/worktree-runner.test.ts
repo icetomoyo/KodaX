@@ -124,22 +124,25 @@ describe('worktree-runner', () => {
     }
   });
 
-  it('scanAndCleanOrphanWorktrees only touches kodax-eval- prefixed dirs', { timeout: GIT_TEST_TIMEOUT }, async () => {
-    // Plant a fake orphan AND an unrelated dir; ensure only the orphan goes.
-    const fakeOrphan = path.join(tmpdir(), `kodax-eval-orphan-test-${Date.now()}`);
-    const unrelated = path.join(tmpdir(), `unrelated-dir-test-${Date.now()}`);
-    await fs.mkdir(fakeOrphan, { recursive: true });
-    await fs.mkdir(unrelated, { recursive: true });
-
+  it('preserves eval dumps and unrelated prefixed directories while removing a registered worktree', { timeout: GIT_TEST_TIMEOUT }, async () => {
+    const tmpRoot = await fs.mkdtemp(path.join(tmpdir(), 'kodax-orphan-scan-test-'));
+    const dumps = path.join(tmpRoot, 'kodax-eval-dumps');
+    const unrelated = path.join(tmpRoot, 'kodax-eval-unregistered');
+    const orphan = await setupWorktree({ repoRoot, tmpRoot, id: 'orphan-test' });
+    created.push(orphan.path);
+    await fs.mkdir(dumps);
+    await fs.writeFile(path.join(dumps, 'raw.json'), '{"evidence":"keep"}');
+    await fs.mkdir(unrelated);
     try {
-      const result = await scanAndCleanOrphanWorktrees({ repoRoot });
-      expect(result.removed).toContain(fakeOrphan);
-      expect(result.removed).not.toContain(unrelated);
-      await expect(fs.stat(fakeOrphan)).rejects.toBeDefined();
+      const result = await scanAndCleanOrphanWorktrees({ repoRoot, tmpRoot });
+      expect(result.removed).toEqual([orphan.path]);
+      expect(result.failed).toEqual([]);
+      await expect(fs.stat(orphan.path)).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await fs.readFile(path.join(dumps, 'raw.json'), 'utf8')).toBe('{"evidence":"keep"}');
       await expect(fs.stat(unrelated)).resolves.toBeDefined();
     } finally {
-      await fs.rm(unrelated, { recursive: true, force: true }).catch(() => undefined);
-      await fs.rm(fakeOrphan, { recursive: true, force: true }).catch(() => undefined);
+      await cleanupWorktree(orphan, { repoRoot });
+      await fs.rm(tmpRoot, { recursive: true, force: true });
     }
   });
 });
