@@ -9,6 +9,27 @@ import { runComplexRuntime } from './first-turn-complex-runtime.js';
 
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
+it('records the refused Runtime request when a shared response budget stops dispatch', async () => {
+  vi.stubEnv('NODE_ENV', 'production');
+  vi.stubEnv('COMPLEX_OFFLINE_KEY', 'offline-only');
+  const fetcher = vi.fn(async () => { throw new Error('Offline regression forbids network'); });
+  vi.stubGlobal('fetch', fetcher);
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-budget-admission-'));
+  const invoke = vi.fn(async (): Promise<never> => { throw new Error('Budget must stop before dispatch'); });
+  try {
+    const result = await runComplexRuntime({ id: 'budget-admission', provider: 'offline', model: 'offline', env: 'COMPLEX_OFFLINE_KEY' }, directory, invoke,
+      { calls: 0, tools: 2, timeoutMs: 15000 });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('budget-censored: shared root/child response cap');
+    expect(result.events).toEqual(expect.arrayContaining([expect.objectContaining({
+      kind: 'provider-budget-rejected', contextKind: 'root',
+      toolNames: expect.arrayContaining(['spawn_agent']), lastMessage: expect.objectContaining({ role: 'user' }),
+    })]));
+    expect(invoke).not.toHaveBeenCalled();
+    expect(fetcher).not.toHaveBeenCalled();
+  } finally { await fs.rm(directory, { recursive: true, force: true }); }
+});
+
 it.each(['read', 'tool_call'])('denies an unchanged outside %s, returns its actual tool error, and completes editing through the real Runtime', async entry => {
   vi.stubEnv('NODE_ENV', 'production');
   vi.stubEnv('COMPLEX_OFFLINE_KEY', 'offline-not-a-credential');
@@ -100,6 +121,42 @@ it('inherits the read boundary in an actual readonly child and lets that child r
     expect(record.counts.allowedSpawns).toBe(1);
     expect(JSON.stringify(record.tree)).toContain('"state":"completed"');
     expect(JSON.stringify(record.events)).not.toContain(outsideSecret);
+    expect(record.groundtruth.protectedUnchanged).toBe(true);
+    expect(fetcher).not.toHaveBeenCalled();
+  } finally { await fs.rm(directory, { recursive: true, force: true }); }
+});
+
+it('returns an unchanged rejected directory command to the readonly child for recovery without executing it', async () => {
+  vi.stubEnv('NODE_ENV', 'production');
+  vi.stubEnv('COMPLEX_OFFLINE_KEY', 'offline-only');
+  const fetcher = vi.fn(async () => { throw new Error('Offline regression forbids network'); });
+  vi.stubGlobal('fetch', fetcher);
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-child-cwd-recovery-'));
+  const command = { type: 'tool_use' as const, id: 'rejected-cwd', name: 'bash', input: { command: 'cd packages & cd .. & git diff' } };
+  const original = structuredClone(command);
+  let rootCalls = 0;
+  let childCalls = 0;
+  let childSawDenial = false;
+  try {
+    const record = await runComplexRuntime({ id: 'child-cwd-recovery', provider: 'offline', model: 'offline', env: 'COMPLEX_OFFLINE_KEY' }, directory, async input => {
+      const child = input.system.includes('focused sub-agent');
+      const round = child ? childCalls++ : rootCalls++;
+      const tools = child ? round === 0 ? [command] : round === 1
+        ? [{ type: 'tool_use' as const, id: 'inspect-root', name: 'read', input: { path: 'README.md' } }] : []
+        : round === 0 ? [{ type: 'tool_use' as const, id: 'spawn-qa', name: 'spawn_agent', input: { task_name: 'qa', objective: 'Readonly review.', read_only: true, fork_turns: 'none' } }] : [];
+      if (child && round === 1) {
+        childSawDenial = input.messages.some(message => Array.isArray(message.content) && message.content.some(block =>
+          block.type === 'tool_result' && block.tool_use_id === 'rejected-cwd' && block.is_error === true && String(block.content).includes('Directory change must target the fixture root.')));
+      }
+      const result: KodaXStreamResult = { textBlocks: tools.length ? [] : [{ type: 'text', text: 'Offline inspection finished after the denied command.' }],
+        thinkingBlocks: [], toolBlocks: tools, stopReason: tools.length ? 'tool_use' : 'end_turn' };
+      return { inputHash: inputHash(input), result, text: '', toolCalls: tools, usage: null, estimatedUsd: null, error: null, physicalRequestObservations: [], physicalAttempts: 0, durationMs: 0 };
+    }, { calls: 10, tools: 12, timeoutMs: 30000 }, true);
+    expect(record.error).toBeNull();
+    expect(record.success).toBe(true);
+    expect(childSawDenial).toBe(true);
+    expect(childCalls).toBe(3);
+    expect(command).toEqual(original);
     expect(record.groundtruth.protectedUnchanged).toBe(true);
     expect(fetcher).not.toHaveBeenCalled();
   } finally { await fs.rm(directory, { recursive: true, force: true }); }

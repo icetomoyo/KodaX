@@ -6,16 +6,18 @@ import { isNullDevice, parseBashCommand } from '../packages/coding/src/permissio
 const mutable = new Set(['write', 'edit', 'multi_edit', 'insert_after_anchor']);
 const inspect = new Set(['rg', 'ls', 'pwd', 'cat', 'dir', 'type', 'get-content', 'get-childitem', 'get-location', 'findstr', 'select-string', 'select-object']);
 const readGit = new Set(['diff', 'status', 'ls-files', 'grep', 'show', 'log', 'rev-parse']);
+export const COMPLEX_DIRECTORY_DENIAL = 'Directory change must target the fixture root.';
 
-/** Deny actual reads before execution; leave the original call intact for recovery. */
+/** Return recoverable read/navigation denials before execution, with the original call intact. */
 export function createComplexReadBoundary(workspace: string): ToolGuardrail {
   return {
     kind: 'tool', name: 'complex-fixture-read-boundary',
     beforeTool: async call => {
       const bridge = resolveToolBridgeTarget(call);
       const target = bridge?.ok ? bridge.call : call;
-      const reason = target.name === 'read' ? checkComplexTool(workspace, target.name, target.input, false) : null;
-      return reason === null ? { action: 'allow' } : { action: 'block', reason };
+      const reason = target.name === 'read' || target.name === 'bash' ? checkComplexTool(workspace, target.name, target.input, false) : null;
+      return reason !== null && (target.name === 'read' || reason === COMPLEX_DIRECTORY_DENIAL)
+        ? { action: 'block', reason } : { action: 'allow' };
     },
   };
 }
@@ -61,7 +63,7 @@ export function checkComplexTool(workspace: string, tool: string, input: Readonl
     }
     if (executable === 'cd' || executable === 'set-location') {
       const target = args[1]?.toLowerCase() === '/d' ? args[2] : args[1];
-      if (!inside(target) || relative(target) !== '') return 'Directory change must target the fixture root.';
+      if (!inside(target) || relative(target) !== '') return COMPLEX_DIRECTORY_DENIAL;
     } else if (executable === 'git') {
       if (!readGit.has(args[1] ?? '') && (readOnly || args[1] !== 'stash')) return 'Git operation is outside the fixture scope.';
     } else if (executable === 'node' || executable === 'npm') {

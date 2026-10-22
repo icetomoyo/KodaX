@@ -29,6 +29,8 @@ describe('complex fixture execution boundary', () => {
       ['edit', { path: 'tests/basic.test.js', edits: [] }, false],
       ['write', { path: 'src/cache.js', content: '' }, true],
       ['bash', { command: 'git stash pop' }, true],
+      ['bash', { command: 'cd packages & cd .. & git diff' }, true],
+      ['bash', { command: 'cd .. & git diff' }, false],
       ['bash', { command: 'npm install' }, true],
       ['bash', { command: 'node --test src/../../outside.test.js' }, false],
       ['bash', { command: 'node --test /outside/test.js' }, false],

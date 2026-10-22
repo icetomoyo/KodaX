@@ -11,7 +11,7 @@ import {createKodaXRuntime,type KodaXRuntime} from '../src/sdk-runtime.js';
 import {CACHE_FILES,CACHE_TASK,CACHE_ORACLE,writeCacheFixture} from '../benchmark/datasets/search-entry-complex/fixture.js';
 import type {FrozenInput} from './first-turn-eval-support.js';
 import type {CallEvidence,EditRoute} from './first-turn-edit-eval-support.js';
-import {checkComplexTool,createComplexReadBoundary} from './first-turn-complex-guard.js';
+import {checkComplexTool,createComplexReadBoundary,COMPLEX_DIRECTORY_DENIAL} from './first-turn-complex-guard.js';
 import {resolveToolBridgeTarget} from '../packages/coding/src/tools/tool-bridge.js';
 const sha=(v:string)=>createHash('sha256').update(v).digest('hex');
 export async function runComplexRuntime(route:Pick<EditRoute,'id'|'env'|'model'|'provider'>,directory:string,invoke:(input:FrozenInput,signal:AbortSignal,index:number,meta:{reasoning?:boolean|KodaXReasoningRequest;streamOptions?:KodaXProviderStreamOptions;taskSignal?:AbortSignal})=>Promise<CallEvidence>,limits={calls:20,tools:40,timeoutMs:480000},collaboration=false){
@@ -48,7 +48,10 @@ export async function runComplexRuntime(route:Pick<EditRoute,'id'|'env'|'model'|
    try{
     if(abort.signal.aborted)throw abort.signal.reason;
     if(signal?.aborted){events.push({kind:'cancelled-before-dispatch',toolNames:tools.map(t=>t.name)});snapshot();throw new DOMException('Queued auxiliary request cancelled','AbortError');}
-    if(calls.length>=limits.calls)return stop('budget-censored: shared root/child response cap');
+    if(calls.length>=limits.calls){
+     events.push({kind:'provider-budget-rejected',contextKind:system.includes('focused sub-agent')?'child':'root',toolNames:tools.map(tool=>tool.name),lastMessage:messages.at(-1)});
+     return stop('budget-censored: shared root/child response cap');
+    }
     if(tools.length===1&&tools[0]?.name==='commit_episode_learning_review')return stop('eval-invalid: background review reached task wrapper');
     actual++;maxActual=Math.max(maxActual,actual);
     const signal2=signal?AbortSignal.any([signal,abort.signal]):abort.signal;
@@ -67,9 +70,9 @@ export async function runComplexRuntime(route:Pick<EditRoute,'id'|'env'|'model'|
      if(!args||typeof args!=='object'||Array.isArray(args))return stop('eval boundary: malformed bridge input');
      if(bridged)toolCount++;
      const decision=await policy(target,args,{contextKind:child?'child':'root',...(child?{childAgentId:'provider-child'}:{})});
-     // Read denials are enforced by the actual SDK guardrail, which returns an
-     // error tool_result. Other isolation violations keep their hard stop.
-     if(decision!==true&&target!=='read')return stop('isolation-rejected-before-execution: '+String(decision));
+     // The SDK returns read/navigation denials as actual error tool_results.
+     // Other isolation violations keep their hard stop.
+     if(decision!==true&&target!=='read'&&!(target==='bash'&&decision==='[Tool Error] '+COMPLEX_DIRECTORY_DENIAL))return stop('isolation-rejected-before-execution: '+String(decision));
     }
     return evidence.result;
    }finally{queued--;release();}

@@ -283,3 +283,64 @@ those sealed copies retain the earlier state. r3 also has two verified copies.
 The remaining work is a valid bounded acceptance design for final Runtime/QA
 settlement, before any further default entry change; do not remove AMA behavior
 or relax isolation merely to obtain a completed label.
+
+## AMA terminal settlement and GLM closure, 2026-10-22
+
+Follow-up from `161e5cab` resolves the extra-request question without changing
+production Runtime behavior. The sealed reporting session commits the assistant
+report, then receives `msg_2_19`: the previously unconsumed QA budget-cancellation
+notification. Runner's existing terminal continuation drains that notification
+and requests another **primary** response with the same 54 native tools. This
+is normal AMA information integration, not a provider retry or stall judgment.
+
+An offline clone of the preceding saved session reproduces the ordering with
+synthetic inert reports and network forbidden: one-response budget means two
+admissions and failed Runtime; two-response budget means two admissions and
+completed Runtime. Public SDK regressions independently cover restored failed
+child notification, identical native menus, budget truncation not being success,
+single consumption, and no repeated notification after restart. No production
+loop or duplicate-delivery defect was reproduced. These synthetic controls are
+diagnostic evidence, not real-model E2E success.
+
+Only the evaluator changed: refused requests now retain context, tool names and
+the final input message. A fresh live smoke then exposed another evaluation
+problem: readonly QA's unchanged `cd packages & cd .. & git diff` was rejected
+and the wrapper aborted the whole Run. That revision remains interrupted.
+The directory rule still rejects the same command. The SDK guard now returns
+its real error tool_result before execution, allowing the model to choose a
+compliant inspection tool. There is no command rewrite or permission expansion;
+other isolation violations retain their hard stop. An exact-command regression
+was RED before this repair and GREEN afterwards, with actual readonly-child
+recovery, unchanged parameters/protected files and zero network requests.
+
+Final validation: 28 related regressions across five files and test type checks
+pass; independent Standards and Spec reviews each reported zero findings.
+Production AMA planning/dispatch, native tools, SDK, providers and roles remain
+unchanged. Tool entry consolidation remains deferred.
+
+| New evidence revision | Model requests | Known/conservative tokens | Runtime wall time | Result |
+| --- | ---: | ---: | ---: | --- |
+| `glm-runtime-closure-20261022-r1` | 13 | 264,591 | 102.1 s | Interrupted by evaluator directory-denial hard stop; public 10/10, oracle 6/6. |
+| `glm-runtime-closure-20261022-r2` | 7 | 129,709 | 80.4 s | Runtime completed, success true; actual read/edit/test/report; public 12/12, oracle 6/6. |
+
+r2 is one fresh autonomous task using the unchanged original task and optional
+readonly-child policy. Its six root requests and one auxiliary request contain
+no operator continuation or forced final-report prompt. GLM chose direct
+execution; no child was spawned, while all native tools remained available.
+Thus live child recovery remains untested in the successful smoke; the offline
+SDK regression covers that path. Eleven new tests detect six failures against
+the original implementations. Main-session review confirms the three fixes,
+actual test result, protected-file claims and stated validation limits agree
+with raw evidence. No missing QA result is presented as an independent review.
+This closes this GLM edit smoke, not statistical cross-model intelligence parity
+or proof that the historical ECONNRESET source has been repaired.
+
+The original follow-up ceiling stayed at 32 calls, 900,000 conservative tokens
+and USD 0.08 reference cost. After r1 stopped, r2 used only the remaining budget
+(19 calls maximum); no further continuation/revision was allowed. Actual total:
+20 calls, 394,300 known/conservative tokens, including 325,184 cache-read tokens
+already in input; no unknown usage. Reference cost USD 0.0200505 is not an
+invoice. The 182.5 seconds sum two Runtime segments and exclude offline repair
+gaps; the successful whole task itself took 80.4 seconds. Failed historical
+revisions remain failed. Raw, exact inputs, outputs, frozen sources and reviews
+stay in OS Temp with two verified complete copies per revision.
