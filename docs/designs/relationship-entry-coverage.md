@@ -344,3 +344,35 @@ invoice. The 182.5 seconds sum two Runtime segments and exclude offline repair
 gaps; the successful whole task itself took 80.4 seconds. Failed historical
 revisions remain failed. Raw, exact inputs, outputs, frozen sources and reviews
 stay in OS Temp with two verified complete copies per revision.
+
+## Readonly GLM child recovery attempt, 2026-10-22
+
+At `04b4ddb7`, one controlled live smoke was frozen to cover the remaining
+readonly-child gap. The task requires one inherited-model readonly QA child
+and relays the original `cd packages & cd .. & git diff` probe. No replacement
+tool or recovery answer is supplied. The frozen helper differs from the current
+helper only in that explicit task text and equivalent import URLs; production
+AMA, tool definitions, SDK, roles, isolation and execution logic are unchanged.
+The existing actual-SDK child directory-denial recovery regression was rechecked:
+one passed, seven unrelated tests skipped, network forbidden.
+
+**Live coverage remains incomplete.** The first root request to zai-coding /
+glm-5.3 received HTTP 403 with upstream code 1220 and an explicit message that
+the request IP lacks API access permission. Passive HTTP tracing confirms the
+403 JSON response. Caller/combined abort signals were false; this is an upstream
+access denial, not the earlier connection reset or Runtime budget cutoff.
+No model output, tool execution or child creation occurred. Runtime failed in
+6.7 seconds, and dispatch stopped after exactly one physical attempt without
+retry, provider fallback, network/proxy change or operator continuation.
+
+No usage was returned. The ledger conservatively retains the full 89,393-token
+reservation and USD 0.00467445 at frozen reference rates; these are not measured
+consumption or an invoice. Limits were 28 shared requests, 800,000 conservative
+tokens, USD 0.06 reference cost and one readonly child. This attempt neither
+validates live child recovery nor supports a model-intelligence conclusion;
+the prior direct smoke remains valid, and tool entry consolidation is deferred.
+Restore permitted access to the existing provider route before another live
+attempt; do not treat this failure as reason to relax isolation or rewrite a
+model call. Raw input, failed response, network trace, budget and source hashes
+are preserved in OS Temp as `glm-child-recovery-20261022-r1`, with two verified
+complete copies.
