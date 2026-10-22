@@ -7,6 +7,7 @@ import {
   hasPortableToolBridge,
   planToolExposure,
   selectRuntimeContextOptimizationProfile,
+  fitToolSchemasToContext,
 } from './tool-exposure-planner.js';
 import { getToolDefinition } from '../tools/index.js';
 
@@ -77,6 +78,26 @@ describe('tool exposure planner', () => {
     expect(hasPortableToolBridge([bridgeTool('tool_describe'), bridgeTool('tool_call')])).toBe(false);
   });
 
+  it('uses the existing bridge only when fixed schemas leave no working capacity, retaining discovery and read', () => {
+    const tools = [readTool, bridgeTool('tool_call'), bridgeTool('tool_describe'), bridgeTool('tool_search'),
+      { ...moduleContextTool, name: 'edit' }, webFetchTool];
+    const reduced = fitToolSchemasToContext(tools, { contextWindow: 4_096, reservedResponseTokens: 1_000, systemTokens: 700 });
+    expect(reduced.map(tool => tool.name)).toEqual(expect.arrayContaining(['read', 'tool_call', 'tool_describe', 'tool_search']));
+    expect(reduced.length).toBeLessThan(tools.length);
+    expect(reduced.find(tool => tool.name === 'tool_describe')?.description).toContain('edit');
+    expect(fitToolSchemasToContext(tools, { contextWindow: 200_000, reservedResponseTokens: 3_000, systemTokens: 700 })).toEqual(tools);
+    const withoutBridge = tools.filter(tool => tool.name !== 'tool_call');
+    expect(fitToolSchemasToContext(withoutBridge, { contextWindow: 4_096, reservedResponseTokens: 1_000, systemTokens: 700 })).toEqual(withoutBridge);
+  });
+  it('keeps capacity-recovery discovery visible when schema lookup is consolidated into tool_search', () => {
+    const tools = [readTool, bridgeTool('tool_call'), bridgeTool('tool_search'),
+      { ...moduleContextTool, name: 'edit' }, webFetchTool];
+    const reduced = fitToolSchemasToContext(tools, { contextWindow: 4_096, reservedResponseTokens: 1_000, systemTokens: 700 });
+    expect(reduced.map(tool => tool.name)).toEqual(expect.arrayContaining(['read', 'tool_call', 'tool_search']));
+    expect(reduced.some(tool => tool.name === 'edit')).toBe(false);
+    expect(reduced.find(tool => tool.name === 'tool_search')?.description).toContain('edit');
+    expect(fitToolSchemasToContext(tools, { contextWindow: 200_000, reservedResponseTokens: 3_000, systemTokens: 700 })).toEqual(tools);
+  });
   it('keeps report-only mode behavior-preserving while showing bridge savings opportunity', () => {
     const plan = planToolExposure({
       tools: [readTool, moduleContextTool, webFetchTool],
@@ -178,6 +199,18 @@ describe('tool exposure planner', () => {
     expect(plan.decisions[0]?.mode).toBe('resident');
     expect(plan.decisions[0]?.recommendedMode).toBe('resident');
     expect(plan.estimatedTokensSavedIfApplied).toBe(0);
+  });
+
+  it('keeps protected tool identities visible during fixed-envelope recovery', () => {
+    const tools = ['skill', 'todo_get', 'todo_list', 'edit'].map(name => ({
+      ...readTool, name, description: 'large description '.repeat(1000),
+    }));
+    const recovered = fitToolSchemasToContext([...tools, bridgeTool('tool_search'),
+      bridgeTool('tool_describe'), bridgeTool('tool_call')], {
+      contextWindow: 4096, systemTokens: 1000, reservedResponseTokens: 1000,
+    });
+    expect(recovered.map(tool => tool.name)).toEqual(expect.arrayContaining(['skill', 'todo_get', 'todo_list']));
+    expect(recovered.map(tool => tool.name)).not.toContain('edit');
   });
 
   it('selects behavior-changing profiles only when pressure or small-window schema cost justify it', () => {

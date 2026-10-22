@@ -11861,14 +11861,42 @@ describe("createKodaXRuntime", () => {
     }
   });
 
-  it("persists a latched completion before Runtime close releases owner liveness", async () => {
+  it.each([false, true])("persists a latched completion before Runtime close releases owner liveness with another checkpoint wait=%s", async (withCheckpointWait) => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const external = deferredExternalAgentFixture('mixed-close-child');
     const options = {
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
       defaultProvider: "mock-provider",
+      externalAgents: { factories: [external.factory], policy: async () => ({ allowed: true }),
+        defaultContext: { actorId: 'mixed-close-host' } },
     };
     const firstRuntime = await createKodaXRuntime(options);
+    if (withCheckpointWait) {
+      const waitingSession = await firstRuntime.sessions.create({ title: 'Another Session preparing suspension' });
+      await firstRuntime.admin.agentRegistrations.upsert(external.registration);
+      const child = await firstRuntime.agents.spawn(waitingSession.id, { taskName: 'child', kind: 'external',
+        objective: 'Wait at a checkpoint', metadata: { agentId: external.registration.agentId } });
+      codingMock.startKodaX.mockImplementationOnce((runOptions: KodaXOptions) => {
+        runOptions.events!.onToolExecutionStart!({ id: 'wait', name: 'wait_agent' });
+        runOptions.events!.registerGenerationWait!(() => {});
+        const result = (async (): Promise<KodaXResult> => {
+          const messages: KodaXMessage[] = [{ role: 'user', content: 'Preserve the child request', turnId: 'child-turn' }];
+          const lineage = createSessionLineage(messages);
+          await runOptions.session!.storage!.save(waitingSession.id, { messages, lineage, title: 'Child checkpoint', gitRoot: tempRoot });
+          await runOptions.events!.onContextCapacityBlocked!({ checkpoint: { version: 1,
+            sessionId: waitingSession.id, activeEntryId: lineage.activeEntryId,
+            messagesDigest: createHash('sha256').update(JSON.stringify(messages)).digest('hex') } },
+          runOptions.abortSignal, { childAgentId: child.actorPath, turnId: child.turnId });
+          return { success: true, lastText: '', messages, sessionId: waitingSession.id };
+        })();
+        return fakeRunningSession(runOptions, result);
+      });
+      const waiting = await firstRuntime.runs.start({ sessionId: waitingSession.id, prompt: 'Wait for child' });
+      await vi.waitFor(async () => expect(await firstRuntime.runs.get(waiting.runId)).toMatchObject({
+        contextRecovery: { children: [expect.objectContaining({ agentId: '/root/child' })] },
+      }));
+    }
     const session = await firstRuntime.sessions.create({
       title: "Completion Before Runtime Close",
     });
@@ -11897,8 +11925,8 @@ describe("createKodaXRuntime", () => {
       run.runId,
       "status.json",
     ), "utf-8")) as { readonly phase?: string };
-    expect(persistedAtClose.phase).toBe("completed");
-    await closeAttempt;
+    try { expect(persistedAtClose.phase).toBe("completed"); }
+    finally { external.finish(); await closeAttempt; }
 
     const secondRuntime = await createKodaXRuntime(options);
     await expect(secondRuntime.runs.get(run.runId)).resolves.toMatchObject({
@@ -13164,6 +13192,369 @@ describe("createKodaXRuntime", () => {
     expect(identifierResult.failureDetail).not.toHaveProperty("upstreamErrorCode");
     expect(identifierResult.failureDetail).not.toHaveProperty("requestId");
     expect(JSON.stringify(identifierResult)).not.toContain(identifierSecret);
+    await runtime.close();
+  });
+
+  it('keeps a capacity-blocked generation alive and wakes it on an authorized model change', async () => {
+    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, 'capacity-wait-sessions'), defaultProvider: 'mock-provider' });
+    const session = await runtime.sessions.create({ title: 'Capacity recovery' });
+    let resumed = false;
+    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => {
+      const result = (async (): Promise<KodaXResult> => {
+        await options.events!.onContextCapacityBlocked!({ requiredTokens: 40_000, availableTokens: 32_768,
+          configurationRevision: options.events!.getContextRecoveryRevision!() }, options.abortSignal);
+        resumed = true;
+        return { success: true, lastText: 'continued', messages: [], sessionId: session.id };
+      })();
+      return fakeRunningSession(options, result);
+    });
+    const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'continue' });
+    await vi.waitFor(async () => expect(await runtime.runs.get(handle.runId)).toMatchObject({
+      phase: 'recovering', contextRecovery: { requiredTokens: 40_000, availableTokens: 32_768 },
+    }));
+    expect(resumed).toBe(false);
+    await runtime.runs.setModel(handle.runId, 'larger-model');
+    expect((await handle.result).phase).toBe('completed');
+    expect(resumed).toBe(true);
+    expect((await runtime.runs.get(handle.runId))?.contextRecovery).toBeUndefined();
+    await runtime.close();
+  });
+
+  it('wakes both child capacity waits without replacing the root waiter or its phase', async () => {
+    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, 'child-capacity-sessions'), defaultProvider: 'mock-provider' });
+    const session = await runtime.sessions.create({ title: 'Independent child recovery' });
+    const completed: string[] = [];
+    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => fakeRunningSession(options,
+      (async (): Promise<KodaXResult> => {
+        await Promise.all(['first', 'second'].map(async child => {
+          const selection = await options.events!.onContextCapacityBlocked!({ requiredTokens: 40_000 },
+            options.abortSignal, { childAgentId: `/root/${child}`, turnId: `turn-${child}` });
+          expect(selection).toMatchObject({ model: 'larger-child-model' });
+          completed.push(child);
+        }));
+        return { success: true, lastText: 'both children continued', messages: [], sessionId: session.id };
+      })()));
+    const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'use both children' });
+    try {
+      await vi.waitFor(async () => expect(await runtime.runs.get(handle.runId)).toMatchObject({
+        phase: 'running', contextRecovery: { children: [
+          expect.objectContaining({ agentId: '/root/first', turnId: 'turn-first' }),
+          expect.objectContaining({ agentId: '/root/second', turnId: 'turn-second' }),
+        ] },
+      }));
+      await runtime.runs.setModel(handle.runId, 'larger-child-model');
+      expect((await handle.result).phase).toBe('completed');
+      expect(completed.sort()).toEqual(['first', 'second']);
+      expect((await runtime.runs.get(handle.runId))?.contextRecovery).toBeUndefined();
+    } finally { await runtime.close(); }
+  });
+
+  it('does not lose a model reset that happens before the capacity waiter is installed', async () => {
+    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, 'capacity-reset-sessions'), defaultProvider: 'mock-provider' });
+    const session = await runtime.sessions.create({ title: 'Reset model during recovery' });
+    let install!: () => void;
+    const gate = new Promise<void>(resolve => { install = resolve; });
+    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => fakeRunningSession(options,
+      (async (): Promise<KodaXResult> => {
+        const revision = options.events!.getContextRecoveryRevision!();
+        await gate;
+        await options.events!.onContextCapacityBlocked!({ configurationRevision: revision });
+        return { success: true, lastText: 'use default model', messages: [], sessionId: session.id };
+      })()));
+    const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'continue', options: { model: 'old-model' } });
+    await runtime.runs.setModel(handle.runId, undefined);
+    install();
+    expect((await handle.result).phase).toBe('completed');
+    await runtime.close();
+  });
+
+  it('wakes capacity recovery when a corrective interrupt input is accepted', async () => {
+    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, 'capacity-input-sessions'), defaultProvider: 'mock-provider' });
+    const session = await runtime.sessions.create({ title: 'Correct recovery' });
+    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => fakeRunningSession(options,
+      (async (): Promise<KodaXResult> => {
+        await options.events!.onContextCapacityBlocked!({ configurationRevision: options.events!.getContextRecoveryRevision!() });
+        return { success: true, lastText: 'input can now be consumed', messages: [], sessionId: session.id };
+      })()));
+    const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'continue' });
+    await vi.waitFor(async () => expect((await runtime.runs.get(handle.runId))?.phase).toBe('recovering'));
+    await runtime.runs.submitInput({ sessionId: session.id, afterRunId: handle.runId,
+      delivery: 'interrupt', input: { type: 'text', text: 'Use the smaller pending task.' } });
+    expect((await handle.result).phase).toBe('completed');
+    await runtime.close();
+  });
+
+  it('retains the capacity recovery evidence across a dead-owner restart', async () => {
+    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const runDir = path.join(tempRoot, '.kodax', 'runtime', 'runs', 'capacity-crashed');
+    await fs.mkdir(runDir, { recursive: true });
+    const contextRecovery = { waitingSince: '2026-10-21T00:00:00.000Z', requiredTokens: 40_000, availableTokens: 32_768 };
+    await fs.writeFile(path.join(runDir, 'status.json'), JSON.stringify({
+      runId: 'capacity-crashed', sessionId: 'capacity-session', phase: 'recovering',
+      startedAt: contextRecovery.waitingSince, provider: 'mock-provider', contextRecovery,
+      _runtime: { revision: 1, owner: { ownerId: 'dead-capacity-owner', runtimeId: 'dead-runtime',
+        pid: 2147483647, startedAt: contextRecovery.waitingSince } },
+    }));
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot });
+    expect(await runtime.runs.get('capacity-crashed')).toMatchObject({ contextRecovery });
+    expect(codingMock.startKodaX).not.toHaveBeenCalled();
+    await runtime.close();
+  });
+
+  it.each(['resume', 'stop', 'leases', 'concurrent', 'changed-history', 'queue-save-failure', 'claim-save-failure'] as const)('handles %s at a dead owner generation checkpoint without replaying admission', async action => {
+    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const sessionsDir = path.join(tempRoot, 'generation-resume-sessions');
+    const { FileSessionStorage } = await import('@kodax-ai/repl');
+    const messages: KodaXMessage[] = [{ role: 'user', content: 'Keep exports unchanged.', turnId: 'original-turn' },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'once', name: 'edit', input: { path: 'a.ts' } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'once', content: 'EDIT019 committed' }] }];
+    const lineage = createSessionLineage(messages);
+    await new FileSessionStorage({ sessionsDir }).save('generation-session', { title: 'Resume', gitRoot: tempRoot, messages, lineage });
+    const checkpoint = { version: 1, sessionId: 'generation-session', turnId: 'original-turn',
+      activeEntryId: lineage.activeEntryId, messagesDigest: createHash('sha256').update(JSON.stringify(messages)).digest('hex') };
+    const directory = path.join(tempRoot, '.kodax', 'runtime', 'runs', 'generation-run');
+    await fs.mkdir(directory, { recursive: true });
+    await fs.writeFile(path.join(directory, 'status.json'), JSON.stringify({ runId: 'generation-run', sessionId: 'generation-session',
+      turnId: 'original-turn', phase: 'recovering', startedAt: '2026-10-21T00:00:00Z', provider: 'mock-provider',
+      ...(action === 'leases' || action === 'claim-save-failure' ? { origin: { principalId: 'recovery-client' } } : {}),
+      contextRecovery: { waitingSince: '2026-10-21T00:00:00Z', checkpoint },
+      _runtime: { revision: 1, owner: { ownerId: 'dead-generation-owner', runtimeId: 'dead-runtime', pid: 2147483647, startedAt: '2026-10-21T00:00:00Z' } } }));
+    await fs.writeFile(path.join(directory, 'generation-recovery.json'), JSON.stringify({ version: 1, checkpoint,
+      start: { prompt: 'Keep exports unchanged.', options: { agentMode: 'sa', context: { systemPromptOverride: 'Keep all constraints.' } }, requiredBindings: [] },
+      requiresCredential: action === 'leases', requiresHostTools: action === 'leases', actorTurnBaseline: [],
+      ...(action === 'queue-save-failure' || action === 'claim-save-failure' ? { pendingInputs: [{ skill: false,
+        ...(action === 'claim-save-failure' ? { principalId: 'recovery-client' } : {}),
+        input: { sessionId: 'generation-session', inputId: 'pending-after', delivery: 'after_turn', text: 'Never repeat the migration.' } }] } : {}),
+      ...(action === 'leases' ? { pendingInputs: [{ principalId: 'recovery-client', skill: false,
+        input: { sessionId: 'generation-session', inputId: 'pending-after', delivery: 'after_turn', text: 'Do not change signatures.' } }] } : {}),
+      interruptInputs: [{ inputId: 'pending-exact', afterRunId: 'generation-run', delivery: 'interrupt', state: 'queued',
+        queuedAt: '2026-10-21T00:00:01Z', contentPreview: 'Keep...', input: { type: 'text', text: 'Keep every public export unchanged. Also preserve all tests.' } }] }));
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir, defaultProvider: 'mock-provider' });
+    const { withProductExecution } = await import('./product-execution-authorization.js');
+    const recover = (key = 'fresh') => action === 'claim-save-failure'
+      ? withProductExecution({ principalId: 'recovery-client', key, bindRun: async value => ({ ...value, origin: { principalId: 'recovery-client' } }) }, () => runtime.runs.recover({ runId: 'generation-run', options: { model: 'larger' } }))
+      : runtime.runs.recover({ runId: 'generation-run', options: { model: 'larger' } });
+    try {
+      expect((await runtime.runs.get('generation-run')).phase).toBe('recovering');
+      if (action === 'queue-save-failure' || action === 'claim-save-failure') {
+        const rename = nodeFs.renameSync;
+        const failure = vi.spyOn(nodeFs, 'renameSync').mockImplementation((from, to) => {
+          if (action === 'queue-save-failure' ? String(to).includes('pending-inputs') : String(to) === path.join(directory, 'status.json')) throw Object.assign(new Error('Recovery storage unavailable'), { code: 'EIO' });
+          return rename(from, to);
+        });
+        syncBuiltinESMExports();
+        try { await expect(recover('expired-binding')).rejects.toThrow(/Recovery storage/); }
+        finally { failure.mockRestore(); syncBuiltinESMExports(); }
+        expect(codingMock.startKodaX).not.toHaveBeenCalled();
+        expect(JSON.parse(await fs.readFile(path.join(directory, 'status.json'), 'utf8'))._runtime.owner.ownerId).toBe('dead-generation-owner');
+      }
+      if (action === 'changed-history') {
+        await new FileSessionStorage({ sessionsDir }).save('generation-session', { title: 'Changed', gitRoot: tempRoot,
+          messages: [...messages, { role: 'user', content: 'New authoritative instruction.' }] });
+        await expect(runtime.runs.recover({ runId: 'generation-run' })).rejects.toThrow(/history changed/);
+        expect(codingMock.startKodaX).not.toHaveBeenCalled();
+        return;
+      }
+      if (action === 'leases') {
+        const { createRuntimeDaemonDispatcher } = await import('./runtime-daemon/server.js');
+        const { createRuntimeDaemonClient } = await import('./runtime-daemon/client.js');
+        const { createRuntimeDaemonReverseBridgeHub } = await import('./runtime-daemon/reverse-bridge.js');
+        const { createRuntimeDaemonRequest, isRuntimeDaemonSuccessResponse } = await import('./runtime-daemon/protocol.js');
+        const hub = createRuntimeDaemonReverseBridgeHub();
+        let listener: ((notification: import('./runtime-daemon/protocol.js').RuntimeDaemonNotification) => void) | undefined;
+        const dispatcher = createRuntimeDaemonDispatcher({ runtime, reverseBridgeHub: hub, notify: notification => listener?.(notification) });
+        const request: RuntimeDaemonClientTransport['request'] = async (method, params) => {
+          const response = await dispatcher.handle(createRuntimeDaemonRequest(randomUUID(), method, params));
+          if (!isRuntimeDaemonSuccessResponse(response)) throw Object.assign(new Error(response.error.message), { code: response.error.code });
+          return response.result;
+        };
+        await request('initialize', { profile: 'default', clientInfo: { name: 'test', instanceId: 'recovery-client' }, capabilities: {} });
+        const client = createRuntimeDaemonClient({ identity: runtime.identity, capabilities: { providerCredentialBroker: { version: 2 } }, transport: { request,
+          subscribe: value => { listener = value; return { close: () => { listener = undefined; } }; } } });
+        try {
+          await expect(client.runs.recover({ runId: 'generation-run' })).rejects.toThrow(/credential/i);
+          expect((await runtime.runs.get('generation-run')).phase).toBe('recovering');
+          const credential = await client.credentials.registerScoped({ providers: ['mock-provider'] }, async () => 'new-recovery-test-secret');
+          const handler = vi.fn(async () => ({ content: 'fresh verification' }));
+          const hostTools = await client.hostTools.register([{ name: 'generation_fresh_read', description: 'Read-only verification',
+            inputSchema: { type: 'object' }, sideEffect: 'none' }], { generation_fresh_read: handler });
+          codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => fakeRunningSession(options, Promise.resolve().then(async () => {
+            expect(options.session?.generationCheckpoint).toEqual(checkpoint);
+            const secret = await withProviderRequestCredential('mock-provider', 'primary', options.abortSignal, () => getScopedProviderCredential('mock-provider'));
+            expect(secret).toBe('new-recovery-test-secret');
+            const queued = await options.context!.interruptInput!.consumePendingInputs!(async () => {});
+            expect(queued).toMatchObject([{ inputId: 'pending-after', content: 'Do not change signatures.' }]);
+            const extension = options.extensionRuntime!;
+            const capabilities = await extension.searchCapabilities('mcp', 'generation_fresh_read', { kind: 'tool' });
+            const capability = capabilities[0] as { id?: string } | undefined;
+            if (!capability?.id) throw new Error('Fresh tool binding missing');
+            await extension.executeCapability('mcp', capability.id, {});
+            return { success: true, lastText: 'resumed with fresh leases', messages, sessionId: 'generation-session' };
+          })));
+          const { toKodaXProductClient } = await import('./client-runtime-adapter.js');
+          const product = toKodaXProductClient(client, async request => {
+            expect(request).toEqual({ kind: 'recovery', input: { sessionId: 'generation-session', runId: 'generation-run' } });
+            return { credential: { leaseId: credential.id, mode: 'scoped', providers: ['mock-provider'] }, hostTools: { leaseId: hostTools.id } };
+          });
+          const handle = await product.runs.recover({ runId: 'generation-run', sessionId: 'generation-session' });
+          const resumedResult = await product.runs.await(handle.runId);
+          expect(resumedResult.phase, JSON.stringify(resumedResult)).toBe('completed');
+          expect(codingMock.startKodaX).toHaveBeenCalledTimes(1);
+          expect(handler).toHaveBeenCalledTimes(1);
+        } finally { await client.close(); dispatcher.close(); hub.close(); }
+        return;
+      }
+      if (action === 'stop') {
+        await runtime.runs.abort('generation-run');
+        expect((await runtime.runs.get('generation-run')).phase).toBe('cancelled');
+        await expect(runtime.runs.recover({ runId: 'generation-run' })).rejects.toThrow();
+        expect(codingMock.startKodaX).not.toHaveBeenCalled();
+        return;
+      }
+      codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions, prompt: string) => {
+        expect(getMessageQueue().peek({ agentId: actorQueueId('generation-session', '/root'), mode: 'prompt', maxPriority: 'user' }))
+          .toEqual(expect.arrayContaining([expect.objectContaining({ inputId: 'pending-exact', content: 'Keep every public export unchanged. Also preserve all tests.' })]));
+        expect(options.session?.generationCheckpoint).toEqual(checkpoint);
+        expect(options.context?.systemPromptOverride).toBe('Keep all constraints.');
+        expect(prompt).toBe('Keep exports unchanged.');
+        expect(options.toolInvocation).toBeUndefined();
+        return fakeRunningSession(options, Promise.resolve().then(async () => {
+          if (action === 'queue-save-failure' || action === 'claim-save-failure') {
+            expect(await options.context!.interruptInput!.consumePendingInputs!(async () => {}))
+              .toMatchObject([{ inputId: 'pending-after', content: 'Never repeat the migration.' }]);
+          }
+          return { success: true, lastText: 'continued', messages, sessionId: 'generation-session' };
+        }));
+      });
+      if (action === 'concurrent') {
+        const other = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir, defaultProvider: 'mock-provider' });
+        try {
+          const results = await Promise.allSettled([runtime, other].map(host => host.runs.recover({ runId: 'generation-run' })));
+          expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+          const success = results.find(result => result.status === 'fulfilled');
+          if (success?.status === 'fulfilled') expect((await success.value.result).phase).toBe('completed');
+          expect(codingMock.startKodaX).toHaveBeenCalledTimes(1);
+        } finally { await other.close(); }
+        return;
+      }
+      const handle = await recover();
+      expect(handle.runId).toBe('generation-run');
+      const outcome = await handle.result;
+      expect(outcome.phase, JSON.stringify(outcome)).toBe('completed');
+      expect(codingMock.startKodaX).toHaveBeenCalledTimes(1);
+    } finally { await runtime.close(); }
+  });
+
+  it('retains pending foreign inputs across repeated Host restarts until the original principal rebinds', async () => {
+    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const { withProductExecution } = await import('./product-execution-authorization.js');
+    const homeDir = path.join(tempRoot, 'pending-restarts');
+    const first = await createKodaXRuntime({ homeDir, defaultProvider: 'mock-provider' });
+    const session = await first.sessions.create({ title: 'Retain foreign input' });
+    await first.sessions.updateSettings(session.id, { agentMode: 'sa' });
+    await first.close();
+    const directory = path.join(homeDir, '.kodax', 'runtime', 'pending-inputs');
+    await fs.mkdir(directory, { recursive: true });
+    const input = { sessionId: session.id, inputId: 'foreign', text: 'Never repeat EDIT019.', delivery: 'after_turn' as const };
+    await fs.writeFile(path.join(directory, `${session.id}.json`), JSON.stringify([{ input, skill: false, principalId: 'client-B' }]));
+    const second = await createKodaXRuntime({ homeDir, defaultProvider: 'mock-provider' });
+    expect(await second.runs.getInput(session.id, input.inputId)).toMatchObject({ state: 'queued' });
+    expect(codingMock.startKodaX).not.toHaveBeenCalled();
+    await second.close();
+    const third = await createKodaXRuntime({ homeDir, defaultProvider: 'mock-provider' });
+    try {
+      expect(await third.runs.getInput(session.id, input.inputId)).toMatchObject({ state: 'queued' });
+      await expect(withProductExecution({ principalId: 'client-A', bindRun: async value => value }, () => third.runs.acceptInput(input))).rejects.toThrow(/principal/);
+      codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions, prompt: string) => {
+        expect(prompt).toBe(input.text);
+        return fakeRunningSession(options, Promise.resolve({ success: true, lastText: 'Confirmed', messages: [], sessionId: session.id }));
+      });
+      await withProductExecution({ principalId: 'client-B', key: 'fresh-B', bindRun: async value => value }, () => third.runs.acceptInput(input));
+      await vi.waitFor(() => expect(codingMock.startKodaX).toHaveBeenCalledTimes(1));
+      await vi.waitFor(async () => expect(await third.runs.getInput(session.id, input.inputId)).toMatchObject({ state: 'submitted' }));
+      expect(JSON.parse(await fs.readFile(path.join(directory, `${session.id}.json`), 'utf8'))).toEqual([]);
+    } finally { await third.close(); }
+  });
+
+  it('rejects stale Host queue writes instead of losing inputs accepted by another Host', async () => {
+    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const homeDir = path.join(tempRoot, 'pending-cas');
+    const seed = await createKodaXRuntime({ homeDir, defaultProvider: 'mock-provider' });
+    const session = await seed.sessions.create({ title: 'Queue CAS' });
+    await seed.close();
+    const directory = path.join(homeDir, '.kodax', 'runtime', 'pending-inputs');
+    await fs.mkdir(directory, { recursive: true });
+    const input = { sessionId: session.id, inputId: 'original', text: 'Original constraint', delivery: 'after_turn' as const };
+    const file = path.join(directory, `${session.id}.json`);
+    await fs.writeFile(file, JSON.stringify([{ input, skill: false }]));
+    const first = await createKodaXRuntime({ homeDir, defaultProvider: 'mock-provider' });
+    const stale = await createKodaXRuntime({ homeDir, defaultProvider: 'mock-provider' });
+    try {
+      await first.runs.acceptInput({ ...input, inputId: 'newer', text: 'Never repeat EDIT019.' });
+      await expect(stale.runs.withdrawInput(session.id, input.inputId)).rejects.toThrow(/another Host/);
+      expect(JSON.parse(await fs.readFile(file, 'utf8'))).toHaveLength(2);
+      expect(await stale.runs.getInput(session.id, input.inputId)).toMatchObject({ state: 'queued' });
+      expect(codingMock.startKodaX).not.toHaveBeenCalled();
+    } finally { await first.close(); await stale.close(); }
+  });
+
+  it('preserves a verified generation checkpoint when the Host closes normally', async () => {
+    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir: path.join(tempRoot, 'generation-close'), defaultProvider: 'mock-provider' });
+    const session = await runtime.sessions.create({ title: 'Close checkpoint' });
+    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => fakeRunningSession(options, (async () => {
+      const messages: KodaXMessage[] = [{ role: 'user', content: 'Preserve constraints', turnId: 'close-turn' }];
+      const lineage = createSessionLineage(messages);
+      await options.session!.storage!.save(session.id, { messages, lineage, title: 'Close checkpoint', gitRoot: tempRoot });
+      await options.events!.onContextCapacityBlocked!({ checkpoint: { version: 1, sessionId: session.id,
+        activeEntryId: lineage.activeEntryId, turnId: 'close-turn', messagesDigest: createHash('sha256').update(JSON.stringify(messages)).digest('hex') } });
+      return { success: true, lastText: 'should remain suspended', messages, sessionId: session.id };
+    })()));
+    const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'Preserve constraints', options: { agentMode: 'sa' } });
+    await vi.waitFor(async () => expect((await runtime.runs.get(handle.runId)).contextRecovery?.checkpoint).toBeDefined());
+    await runtime.close();
+    expect((await handle.result).phase).toBe('recovering');
+    const persisted = JSON.parse(await fs.readFile(path.join(tempRoot, '.kodax', 'runtime', 'runs', handle.runId, 'status.json'), 'utf8'));
+    expect(persisted).toMatchObject({ phase: 'recovering', contextRecovery: { checkpoint: { turnId: 'close-turn' } } });
+    expect(persisted.stop).toBeUndefined();
+    expect(persisted.terminal).toBeUndefined();
+    const recovery = JSON.parse(await fs.readFile(path.join(tempRoot, '.kodax', 'runtime', 'runs', handle.runId, 'generation-recovery.json'), 'utf8'));
+    expect(recovery.start.requiredBindings).toEqual([]);
+    const restarted = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir: path.join(tempRoot, 'generation-close'), defaultProvider: 'mock-provider' });
+    try {
+      codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => fakeRunningSession(options,
+        Promise.resolve({ success: true, lastText: 'resumed', messages: [], sessionId: session.id })));
+      const resumed = await restarted.runs.recover({ runId: handle.runId });
+      expect((await resumed.result).phase).toBe('completed');
+    } finally { await restarted.close(); }
+  });
+
+  it('cancels a capacity wait without resuming generation or leaving a live waiter', async () => {
+    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, 'capacity-stop-sessions'), defaultProvider: 'mock-provider' });
+    const session = await runtime.sessions.create({ title: 'Stop capacity recovery' });
+    let resumed = false;
+    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => fakeRunningSession(options,
+      (async (): Promise<KodaXResult> => {
+        await options.events!.onContextCapacityBlocked!({ requiredTokens: 40_000, availableTokens: 32_768 });
+        resumed = true;
+        return { success: true, lastText: 'incorrect resume', messages: [], sessionId: session.id };
+      })()));
+    const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'continue' });
+    await vi.waitFor(async () => expect((await runtime.runs.get(handle.runId))?.phase).toBe('recovering'));
+    await runtime.runs.abort(handle.runId);
+    await handle.result;
+    expect(resumed).toBe(false);
+    expect((await runtime.runs.get(handle.runId))?.contextRecovery).toBeUndefined();
     await runtime.close();
   });
 

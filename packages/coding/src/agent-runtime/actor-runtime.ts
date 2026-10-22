@@ -38,6 +38,7 @@ import {
 } from '@kodax-ai/llm';
 
 import { executeChildAgents } from '../child-executor.js';
+import { loadGenerationCheckpoint, parseGenerationCheckpoint } from '../generation-checkpoint.js';
 import type {
   KodaXChildContextBundle,
   KodaXChildModelHint,
@@ -63,7 +64,15 @@ export { actorQueueId } from './actor-queue.js';
 
 const DEFAULT_MAX_CHILD_ITERATIONS = 200;
 
+function readActorGenerationCheckpoint(turn: AgentTurn, actorPath: string) {
+  const value = turn.checkpoint;
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || !('kind' in value) || value.kind !== 'generation' || value.actorPath !== actorPath || value.actorTurnId !== turn.turnId) return undefined;
+  return parseGenerationCheckpoint(value.history);
+}
+
 export interface CodingActorSessionOptions {
+  readonly historyStorage?: import('@kodax-ai/agent').KodaXSessionStorage;
   readonly maxConcurrentThreadsPerSession?: number;
   readonly sessionId?: string;
   readonly store?: AgentActorStore;
@@ -136,16 +145,20 @@ export class CodingActorSession {
           if (!environment) throw new Error('Actor session is not attached to an active KodaX run.');
           if (factory !== undefined) this.environmentsByActor.set(input.actor.path, environment);
           try {
-            const operation = () => executeCodingActorTurn(
+            if (input.turn.checkpoint && environment.options.context?.runtimeRunId) {
+              await this.resumeGenerationChildren(environment.options.context.runtimeRunId, input.actor.path);
+            }
+            const execution =
             { ...input, signal: environment.signal ? AbortSignal.any([input.signal, environment.signal]) : input.signal,
               actor: environment.tools === undefined ? input.actor : { ...input.actor, capabilities: {
                 ...input.actor.capabilities, tools: environment.tools.filter(tool => input.actor.capabilities.tools.includes('*')
                   || input.actor.capabilities.tools.includes(tool)),
-              } } },
-            environment.parentCtx,
-            environment.options,
-            this.controller.bind(input.actor.path),
-            );
+              } } };
+            const operation = async () => executionKey
+              ? registered ? registered.execute(execution)
+                : (await import('../workflows/agent-adapter.js')).resumeWorkflowGenerationTurn(execution,
+                  { ...environment.parentCtx, actorHost: this, actorControl: this.controller.bind(input.actor.parentPath ?? '/root') }, environment.options)
+              : executeCodingActorTurn(execution, environment.parentCtx, environment.options, this.controller.bind(input.actor.path));
             const result = await (factory !== undefined && environment.run ? environment.run(operation) : operation());
             if (factory !== undefined) environment.release?.(result);
             return result;
@@ -191,6 +204,12 @@ export class CodingActorSession {
       },
     };
     this.controller = new AgentActorController({
+      validateCheckpoint: async (actor, turn) => {
+        const checkpoint = readActorGenerationCheckpoint(turn, actor.path);
+        if (!checkpoint || !sessionOptions.historyStorage) return false;
+        const saved = await loadGenerationCheckpoint(sessionOptions.historyStorage, checkpoint);
+        return saved.scope === 'managed-task-worker';
+      },
       maxConcurrentThreadsPerSession: sessionOptions.maxConcurrentThreadsPerSession,
       store: sessionOptions.store,
       owner: sessionOptions.owner,
@@ -238,6 +257,58 @@ export class CodingActorSession {
 
   rootControl(): AgentActorClient {
     return this.controller.bind('/root');
+  }
+
+  /** Resume a verified, dormant Actor turn using newly admitted execution bindings. */
+  async resumeCheckpointTurn(actorPath: string, turnId: string,
+    credentialAccess?: CodingActorCredentialAccessFactory, environment?: CodingActorEnvironmentFactory,
+    principalId?: string): Promise<AgentTurnRef> {
+    const actor = this.controller.get('/root', actorPath).actor;
+    const pending = this.controller.get('/root', actorPath).turns.find(turn => turn.turnId === turnId);
+    const executionKey = metadataString(pending?.metadata?.executionKey);
+    const checkpoint = pending?.checkpoint;
+    if (executionKey && !this.turnExecutors.has(executionKey)
+      && (!checkpoint || typeof checkpoint !== 'object' || Array.isArray(checkpoint) || !('workflow' in checkpoint)
+        || !checkpoint.workflow || typeof checkpoint.workflow !== 'object' || Array.isArray(checkpoint.workflow)
+        || !('customExecutor' in checkpoint.workflow) || checkpoint.workflow.customExecutor !== false)) throw new Error('Actor recovery requires its original executor binding.');
+    let installed = false;
+    try {
+      await this.controller.resumeCheckpointTurn(actorPath, turnId, () => {
+        const access = credentialAccess?.({ actorPath, turnId, providers: actor.capabilities.providers });
+        if (access && !actor.capabilities.providers.includes('*')
+          && access.allowedProviders.some(provider => !actor.capabilities.providers.includes(provider))) {
+          throw new Error('Actor recovery credentials exceed the original provider ceiling.');
+        }
+        installed = true;
+        if (access) this.turnCredentialAccess.set(turnId, access);
+        if (environment) this.turnEnvironments.set(turnId, environment);
+        if (principalId) this.clientTurnOwners.set(turnId, principalId);
+      });
+      return { actorPath, turnId, state: 'running' };
+    } catch (error) {
+      if (installed) {
+        this.turnCredentialAccess.delete(turnId);
+        this.turnEnvironments.delete(turnId);
+        this.clientTurnOwners.delete(turnId);
+      }
+      throw error;
+    }
+  }
+
+  async resumeGenerationChildren(runId: string, parentPath = '/root'): Promise<void> {
+    for (const actor of this.rootControl().list().actors) {
+      if (actor.parentPath !== parentPath) continue;
+      if (actor.kind === 'workflow') {
+        await this.resumeGenerationChildren(runId, actor.path);
+        continue;
+      }
+      if (!actor.currentTurnId) continue;
+      const turn = this.rootControl().get(actor.path).turns.find(value => value.turnId === actor.currentTurnId);
+      const value = turn?.checkpoint;
+      if (value && typeof value === 'object' && 'ownerRunId' in value && value.ownerRunId === runId) {
+        await this.resumeCheckpointTurn(actor.path, actor.currentTurnId);
+      }
+    }
   }
 
   spawnRoot(
@@ -611,8 +682,14 @@ async function executeCodingActorTurn(
     input,
     bundle.provider ?? parentConfig?.provider ?? options.provider,
   );
-  const mailbox = await input.drainMailbox();
-  const initialMessages = [
+  const generationCheckpoint = readActorGenerationCheckpoint(input.turn, input.actor.path);
+  if (generationCheckpoint) {
+    if (!options.session?.storage) throw new Error('Actor recovery requires its original worker history storage.');
+    await loadGenerationCheckpoint(options.session.storage, generationCheckpoint);
+    await input.reportCheckpoint?.(undefined);
+  }
+  const mailbox = generationCheckpoint ? [] : await input.drainMailbox();
+  const initialMessages = generationCheckpoint ? [] : [
     ...actorHistoryMessages(input.priorTurns, input.turn.forkTurns),
     ...mailbox.map((message) => mailboxMessageAsPrompt(
       message,
@@ -649,7 +726,19 @@ async function executeCodingActorTurn(
         permissionIntent: parentConfig?.permissionIntent
           ?? options.context?.permissionIntent,
         extensionRuntime: parentCtx.extensionRuntime,
-        events: parentCtx.parentEvents,
+        events: parentCtx.parentEvents?.onContextCapacityBlocked ? {
+          ...parentCtx.parentEvents,
+          onContextCapacityBlocked: async (state, signal, meta) => {
+            if (state.checkpoint) await input.reportCheckpoint?.(toAgentMetadataValue({
+              kind: 'generation', actorPath: input.actor.path, actorTurnId: input.turn.turnId, history: state.checkpoint,
+              ...(options.context?.runtimeRunId ? { ownerRunId: options.context.runtimeRunId } : {}),
+            }));
+            const selection = await parentCtx.parentEvents!.onContextCapacityBlocked!(state, signal, meta);
+            signal?.throwIfAborted();
+            await input.reportCheckpoint?.(undefined);
+            return selection;
+          },
+        } : parentCtx.parentEvents,
       },
       parentRole: 'worker',
       parentHarness: 'tool-dispatch',
@@ -661,6 +750,7 @@ async function executeCodingActorTurn(
         ? { actorParentAgentId: input.actor.parentPath }
         : {}),
       actorTurnId: input.turn.turnId,
+      ...(generationCheckpoint ? { generationCheckpoint } : {}),
       initialMessages,
       actorCapabilities: input.actor.capabilities,
       onIteration: (iteration) => progressProjector.report(

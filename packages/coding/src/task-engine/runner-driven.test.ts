@@ -18,6 +18,7 @@ import {
   vi,
 } from 'vitest';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -168,6 +169,30 @@ function makeOptions(): KodaXOptions {
 }
 
 describe('managed runner queue routing', () => {
+  it('continues a new AMA executor from exact generation history without appending the objective or replaying completed tools', async () => {
+    const messages: KodaXMessage[] = [{ role: 'user', turnId: 'original-turn', content: 'Never change public exports.' },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'done-edit', name: 'edit', input: { path: 'a.ts' } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'done-edit', content: 'EDIT-019 committed; do not repeat.' }] }];
+    let stored: KodaXSessionData = { messages, lineage: createSessionLineage(messages), title: 'Resume', gitRoot: testWorkspaceRoot };
+    const checkpoint = { version: 1 as const, sessionId: 'ama-generation', turnId: 'original-turn',
+      activeEntryId: stored.lineage!.activeEntryId, messagesDigest: createHash('sha256').update(JSON.stringify(messages)).digest('hex'),
+      remainingIterations: 1, remainingContinuationIterations: 0 };
+    const tool = vi.fn(() => { throw new Error('Completed tool must not run again'); });
+    const stream = vi.fn(async (wire: KodaXMessage[]) => {
+      expect(JSON.stringify(wire)).toContain('Never change public exports.');
+      expect(JSON.stringify(wire)).toContain('EDIT-019 committed');
+      expect(JSON.stringify(wire)).not.toContain('DO_NOT_APPEND_AGAIN');
+      return { textBlocks: [{ type: 'text' as const, text: 'Verified without replay.' }], toolBlocks: [] };
+    });
+    const result = await runManagedTaskViaRunner({ ...makeOptions(), events: { beforeToolExecute: tool },
+      session: { id: 'ama-generation', generationCheckpoint: checkpoint, persistedByHost: false,
+        storage: { load: async () => stored, save: async (_id, data) => { stored = structuredClone(data); } } },
+    }, 'DO_NOT_APPEND_AGAIN', stream);
+    expect(result.success).toBe(true);
+    expect(stream).toHaveBeenCalledTimes(1);
+    expect(tool).not.toHaveBeenCalled();
+    expect(JSON.stringify(result.messages)).toContain('EDIT-019 committed');
+  });
   it('advertises its session root during execution and releases it on error', async () => {
     const observedRoutes: Array<string | undefined> = [];
     const failure = new Error('queue-route-test-stop');
@@ -1537,7 +1562,10 @@ describe('buildRunnerLlmAdapter — max_tokens escalation (FEATURE_085 Scout par
         maxOutputTokens: 32_000,
       };
 
-      async stream(messages: KodaXMessage[]): Promise<KodaXStreamResult> {
+      async stream(messages: KodaXMessage[], _tools: import('@kodax-ai/llm').KodaXToolDefinition[], system: string): Promise<KodaXStreamResult> {
+        if (system.startsWith('Extract continuation memory from a fragment of ORIGINAL USER INPUT.')) return {
+          textBlocks: [{ type: 'text', text: '[]' }], toolBlocks: [], thinkingBlocks: [], stopReason: 'end_turn',
+        };
         artifactPath ??= JSON.stringify(messages)
           .match(/kodax-transient:\/\/text\/[0-9a-f]{64}/)?.[0];
         return {

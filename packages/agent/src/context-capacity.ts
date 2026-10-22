@@ -1,6 +1,11 @@
 export const CONTEXT_SAFETY_FLOOR_TOKENS = 2_048;
 export const CONTEXT_SAFETY_RATIO = 0.03;
 
+/** Host-requested stop before generation, after committed tool receipts. */
+export class GenerationSuspensionError extends Error {
+  constructor() { super('Host requested a durable generation suspension.'); this.name = 'GenerationSuspensionError'; }
+}
+
 export interface ContextCapacityInput {
   readonly contextWindow: number;
   readonly currentTokens: number;
@@ -24,7 +29,7 @@ export class ContextCapacityError extends Error {
       0,
       Math.floor(input.reservedResponseTokens ?? 0),
     );
-    const safetyMargin = calculateContextSafetyMargin(currentTokens);
+    const safetyMargin = calculateContextSafetyMargin(currentTokens, contextWindow);
     super(
       `${operation} cannot fit the complete input: `
         + `${currentTokens} input + ${reservedResponseTokens} reserved output `
@@ -41,10 +46,11 @@ export class ContextCapacityError extends Error {
   }
 }
 
-export function calculateContextSafetyMargin(currentTokens: number): number {
+export function calculateContextSafetyMargin(currentTokens: number, contextWindow?: number): number {
   const normalized = Math.max(0, Math.floor(currentTokens));
   return Math.max(
-    CONTEXT_SAFETY_FLOOR_TOKENS,
+    contextWindow === undefined ? CONTEXT_SAFETY_FLOOR_TOKENS
+      : Math.min(CONTEXT_SAFETY_FLOOR_TOKENS, Math.ceil(Math.max(0, contextWindow) / 8)),
     Math.ceil(normalized * CONTEXT_SAFETY_RATIO),
   );
 }
@@ -58,7 +64,7 @@ export function exceedsContextCapacity(input: ContextCapacityInput): boolean {
   );
   return currentTokens
     + reservedResponseTokens
-    + calculateContextSafetyMargin(currentTokens)
+    + calculateContextSafetyMargin(currentTokens, contextWindow)
     > contextWindow;
 }
 
@@ -106,6 +112,6 @@ export function reclaimReservedResponseTokens(input: ContextCapacityInput): numb
   if (!exceedsContextCapacity({ ...input, contextWindow: window, currentTokens: current })) {
     return base;
   }
-  const headroom = window - current - calculateContextSafetyMargin(current);
+  const headroom = window - current - calculateContextSafetyMargin(current, window);
   return Math.min(base, Math.max(Math.min(base, RESERVE_SHRINK_FLOOR_TOKENS), headroom));
 }

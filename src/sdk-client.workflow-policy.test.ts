@@ -203,9 +203,10 @@ it.each(['known', 'unknown', 'throw', 'charged-throw', 'truncated-throw'] as con
           input: { path: 'fixture.txt' } }],
         usage: { inputTokens: 10, outputTokens: 50, totalTokens: 60 },
       };
-      if (mode === 'throw' || mode === 'charged-throw' || mode === 'truncated-throw') throw new KodaXContextOverflowError({
-        contextWindow: 128_000, inputTokensKind: 'unknown',
-      }, this.name);
+      // Capacity rejection now waits for recovery. This fixture exercises
+      // terminal failed-attempt billing, so use a nonrecoverable rejection.
+      if (mode === 'throw' || mode === 'charged-throw' || mode === 'truncated-throw') throw new KodaXProviderError(
+        'Fallback fixture rejected the request', this.name, { httpStatus: 400 });
       return { textBlocks: [{ type: 'text' as const, text: 'Fallback evidence checked.' }],
         thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' as const,
         ...(mode === 'known' ? { usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 } } : {}) };

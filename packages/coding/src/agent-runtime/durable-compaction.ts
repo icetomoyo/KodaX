@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
 import {
   emitKodaXDiagnostic,
+  getSessionMessagesFromLineage,
   persistCompactedSessionHistory,
   type KodaXSessionData,
   type KodaXSessionScope,
@@ -15,6 +17,7 @@ export interface DurableCompactionEventsInput {
   readonly currentAgentId?: string;
   readonly sessionScope?: KodaXSessionScope;
   readonly initialSessionData?: Omit<KodaXSessionData, 'messages' | 'lineage'>;
+  readonly signal?: AbortSignal;
 }
 
 function stripRunnerSystemMessage<T extends { readonly role: string }>(
@@ -34,8 +37,29 @@ export function withDurableCompactionPersistence(
     return input.events;
   }
   const original = input.events.onCompactedMessages;
+  let committedDigest: string | undefined;
   return {
     ...input.events,
+    ...(input.events.onContextCapacityBlocked ? {
+      onContextCapacityBlocked: async (state, signal, meta) => {
+        if (meta?.childAgentId !== undefined && meta.childAgentId !== input.currentAgentId) {
+          return input.events.onContextCapacityBlocked!(state, signal, meta);
+        }
+        signal?.throwIfAborted();
+        const saved = await storage.load(input.sessionId);
+        const digest = saved && createHash('sha256').update(JSON.stringify(saved.messages)).digest('hex');
+        if (!saved?.lineage || !committedDigest || digest !== committedDigest) {
+          throw new Error('Context recovery checkpoint no longer matches committed history.');
+        }
+        const turnId = [...saved.messages].reverse().find(message => message.role === 'user' && message.turnId)?.turnId;
+        return input.events.onContextCapacityBlocked!({ ...state, checkpoint: {
+          ...(state.remainingIterations === undefined ? {} : { remainingIterations: state.remainingIterations }),
+          ...(state.remainingContinuationIterations === undefined ? {} : { remainingContinuationIterations: state.remainingContinuationIterations }),
+          version: 1, sessionId: input.sessionId, activeEntryId: saved.lineage.activeEntryId,
+          messagesDigest: committedDigest, ...(turnId ? { turnId } : {}),
+        } }, signal, meta);
+      },
+    } satisfies Pick<KodaXEvents, 'onContextCapacityBlocked'> : {}),
     async onCompactedMessages(messages, update, meta) {
       if (meta?.contextKind === 'child' && !isolatedChild) {
         await original?.(messages, update, meta);
@@ -49,13 +73,18 @@ export function withDurableCompactionPersistence(
         ...update,
         preCompactionMessages: stripRunnerSystemMessage(update.preCompactionMessages),
       };
-      await persistCompactedSessionHistory({
+      const lineage = await persistCompactedSessionHistory({
         storage,
         sessionId: input.sessionId,
         compactedMessages: persistentMessages,
         update: persistentUpdate,
         initialSessionData: input.initialSessionData,
+        signal: input.signal,
       });
+      // File storage projects messages from lineage, preserving original input,
+      // output and timestamp metadata that the generation transcript may omit.
+      committedDigest = createHash('sha256').update(JSON.stringify(getSessionMessagesFromLineage(lineage))).digest('hex');
+      input.signal?.throwIfAborted();
       try {
         await original?.(messages, update, meta);
       } catch (error) {

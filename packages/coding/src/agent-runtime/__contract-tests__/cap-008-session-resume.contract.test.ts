@@ -18,7 +18,8 @@
  * STATUS: ACTIVE since FEATURE_100 P2.
  */
 
-import type { KodaXSessionStorage } from '@kodax-ai/agent';
+import { createHash } from 'node:crypto';
+import { createSessionLineage, type KodaXSessionStorage } from '@kodax-ai/agent';
 import type { KodaXMessage } from '@kodax-ai/llm';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -26,6 +27,22 @@ import type { KodaXOptions } from '../../types.js';
 import { resolveInitialMessages } from '../middleware/auto-resume.js';
 
 describe('CAP-008: initialMessages session continuation contract', () => {
+  it('restores only the exact generation checkpoint, rejecting changed history and inline replacements', async () => {
+    const messages: KodaXMessage[] = [{ role: 'user', content: 'Never change the API.', turnId: 'turn-original' },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'edit-once', name: 'edit', input: { path: 'a.ts' } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'edit-once', content: 'done' }] }];
+    const lineage = createSessionLineage(messages);
+    const data = { messages, lineage, title: 'original', gitRoot: '' };
+    const options: KodaXOptions = { provider: 'test', session: { id: 'worker-exact',
+      generationCheckpoint: { version: 1, sessionId: 'worker-exact', activeEntryId: lineage.activeEntryId,
+        messagesDigest: createHash('sha256').update(JSON.stringify(messages)).digest('hex'), turnId: 'turn-original' },
+      initialMessages: [{ role: 'user', content: 'Wrong ancestor summary' }],
+      storage: { load: async () => data, save: async () => {} } } };
+    expect((await resolveInitialMessages(options, 'worker-exact')).messages).toEqual(messages);
+    data.messages = [...messages, { role: 'user', content: 'Later input' }];
+    await expect(resolveInitialMessages(options, 'worker-exact')).rejects.toThrow(/checkpoint/i);
+    await expect(resolveInitialMessages(options, 'other-worker')).rejects.toThrow(/checkpoint/i);
+  });
   it('CAP-SESSION-RESUME-001a: when options.session.initialMessages is provided, messages buffer is seeded with a CLONE (caller mutation does not leak)', async () => {
     const callerMessages: KodaXMessage[] = [
       { role: 'user', content: 'first turn' },

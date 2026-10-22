@@ -160,6 +160,15 @@ export function toKodaXProductClient(
       withdraw: (sessionId, inputId) => runtime.runs.withdrawInput(sessionId, inputId),
     },
     runs: {
+      recover: async ({ sessionId, runId }) => {
+        if ((await runtime.runs.get(runId)).sessionId !== sessionId) throw new Error('Recovery Run belongs to a different Session.');
+        const approved = await authorize({ kind: 'recovery', input: { sessionId, runId } });
+        const settings = await runtime.sessions.getSettings(sessionId);
+        const handle = await runtime.runs.recover({ runId, options: {
+          provider: settings.provider, model: settings.model, reasoningMode: settings.reasoningMode,
+        }, ...(approved.authorization === undefined ? {} : { authorization: approved.authorization }) });
+        return { runId: handle.runId, sessionId: handle.sessionId };
+      },
       startTool: async input => {
         const authorized = await authorize({ kind: 'tool', input });
         const handle = await runtime.runs.start({ sessionId: authorized.sessionId, inputId: authorized.inputId,
@@ -221,9 +230,11 @@ export function toKodaXProductClient(
         runtime.agents.send(sessionId, actorPath, content, classification),
       followup: async (sessionId, actorPath, objective, options) => {
         const approved = await authorize({ kind: 'agent_followup', input: { sessionId, actorPath, objective,
+          ...(options?.resumeCheckpoint === undefined ? {} : { resumeCheckpoint: options.resumeCheckpoint }),
           ...(options?.expectedRevision === undefined ? {} : { expectedRevision: options.expectedRevision }) } });
         return runtime.agents.followup(sessionId, actorPath, objective,
           { expectedRevision: approved.expectedRevision,
+            ...(approved.resumeCheckpoint === undefined ? {} : { resumeCheckpoint: approved.resumeCheckpoint }),
             ...(approved.authorization === undefined ? {} : { authorization: approved.authorization }) });
       },
       interrupt: (sessionId, actorPath, reason) => runtime.agents.interrupt(sessionId, actorPath, reason),

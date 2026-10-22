@@ -17,7 +17,7 @@
  * the tool-result-only firing point.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createAgent, type Agent } from './agent.js';
 import { attachRunnerRecoveryTranscript, readRunnerRecoveryTranscript, Runner } from './runner.js';
@@ -48,6 +48,85 @@ const agentNoTools: Agent = createAgent({
 });
 
 describe('Runner compactionHook — FEATURE_179 trigger parity', () => {
+  it.each(['preflight', 'provider'])('waits at the %s generation boundary and resumes the same tools and constraints', async stage => {
+    let executions = 0;
+    let calls = 0;
+    let ready = false;
+    let wake!: () => void;
+    const waiting = vi.fn(async (messages: readonly AgentMessage[]) => {
+      expect(JSON.stringify(messages)).toContain('Keep the public API');
+      expect(JSON.stringify(messages)).toContain('edit-completed-once');
+      await new Promise<void>(resolve => { wake = resolve; });
+      ready = true;
+      return true;
+    });
+    const agent = createAgent({ name: 'waiting-recovery', instructions: 'sys', tools: [{ ...noopTool,
+      execute: async () => { executions += 1; return { content: 'edit-completed-once' }; },
+    }] });
+    const pending = Runner.run(agent, 'Keep the public API', { tracer: null,
+      beforeNextTurn: async () => ready ? [{ role: 'user', content: 'New constraint while waiting: preserve the CLI.' }] : [],
+      llm: async (messages): Promise<RunnerLlmResult> => {
+        calls += 1;
+        if (calls === 1) return { text: '', toolCalls: [{ id: 'committed', name: 'noop', input: {} }] };
+        if (!ready) throw new KodaXContextOverflowError({ inputTokensKind: 'unknown' });
+        expect(JSON.stringify(messages)).toContain('New constraint while waiting: preserve the CLI.');
+        return { text: 'resumed without replay', toolCalls: [] };
+      },
+      compactionHook: async () => {
+        if (stage === 'preflight' && executions > 0 && !ready) {
+          throw new ContextCapacityError({ contextWindow: 1000, currentTokens: 2000 });
+        }
+        return undefined;
+      }, onContextCapacityBlocked: waiting,
+    });
+    await vi.waitFor(() => expect(waiting).toHaveBeenCalledTimes(1));
+    expect(executions).toBe(1);
+    const beforeWake = calls;
+    await Promise.resolve();
+    expect(calls).toBe(beforeWake);
+    wake();
+    expect((await pending).output).toBe('resumed without replay');
+    expect(executions).toBe(1);
+  });
+  it('stops a capacity wait before any retry when the caller cancels', async () => {
+    const controller = new AbortController();
+    const llm = vi.fn(async () => { throw new KodaXContextOverflowError({ inputTokensKind: 'unknown' }); });
+    let wake!: () => void;
+    const waiting = vi.fn(async () => {
+      await new Promise<void>(resolve => { wake = resolve; });
+      return true;
+    });
+    const pending = Runner.run(agentNoTools, 'keep the task', {
+      tracer: null, llm, abortSignal: controller.signal, onContextCapacityBlocked: waiting,
+    });
+    await vi.waitFor(() => expect(waiting).toHaveBeenCalledTimes(1));
+    controller.abort();
+    wake();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(llm).toHaveBeenCalledTimes(1);
+  });
+  it('continues through successive strictly smaller rejected generations without replaying a committed tool', async () => {
+    let executions = 0;
+    let calls = 0;
+    const agent = createAgent({ name: 'progressive-recovery', instructions: 'sys', tools: [{
+      ...noopTool, execute: async () => { executions += 1; return { content: 'evidence '.repeat(2000) }; },
+    }] });
+    const result = await Runner.run(agent, 'preserve constraints', { tracer: null,
+      llm: async (): Promise<RunnerLlmResult> => {
+        calls += 1;
+        if (calls === 1) return { text: '', toolCalls: [{ id: 'executed', name: 'noop', input: {} }] };
+        if (calls < 5) throw new KodaXContextOverflowError({ inputTokensKind: 'unknown' });
+        return { text: 'continued', toolCalls: [] };
+      },
+      compactionHook: async (messages, rejection) => rejection ? messages.map(message =>
+        Array.isArray(message.content) ? { ...message, content: message.content.map(block =>
+          block.type === 'tool_result' && typeof block.content === 'string'
+            ? { ...block, content: block.content.slice(0, Math.floor(block.content.length / 2)) } : block) } : message) : undefined,
+    });
+    expect(result.output).toBe('continued');
+    expect(calls).toBe(5);
+    expect(executions).toBe(1);
+  });
   it('preserves an independent network failure when caller cancellation races its rejection', async () => {
     const controller = new AbortController();
     const failure = new KodaXNetworkError('Connection reset by remote peer.', true);
@@ -215,6 +294,25 @@ describe('Runner compactionHook — FEATURE_179 trigger parity', () => {
     expect(llmSeesAtCall.length).toBe(2);
     expect(llmSeesAtCall[1]).toBe(1);
     expect(llmSeesAtCall[0]).toBeGreaterThan(1);
+  });
+
+  it('retries reduced wire projections while keeping canonical user constraints exact', async () => {
+    let requestTokens = 20_000;
+    const llm = vi.fn(async () => {
+      if (requestTokens > 10_000) throw new KodaXContextOverflowError({ inputTokensKind: 'unknown' });
+      return 'accepted';
+    });
+    const result = await Runner.run(agentNoTools, 'Keep every original constraint', {
+      llm, tracer: null,
+      measureContextCapacityRequest: async () => requestTokens,
+      compactionHook: async (_messages, rejection) => {
+        if (rejection) requestTokens -= 4_000;
+        return undefined;
+      },
+    });
+    expect(result.output).toBe('accepted');
+    expect(llm).toHaveBeenCalledTimes(4);
+    expect(result.messages).toContainEqual({ role: 'user', content: 'Keep every original constraint' });
   });
 
   it('does not abort the run when the hook throws', async () => {

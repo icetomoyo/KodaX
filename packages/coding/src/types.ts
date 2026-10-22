@@ -600,6 +600,29 @@ export interface KodaXEvents {
     update?: CompactionUpdate,
     meta?: KodaXActivityEventMeta,
   ) => void | Promise<void>;
+  /**
+   * Called at a durable generation boundary after capacity recovery is exhausted.
+   * Resolve only when recovery conditions change (for example a model change).
+   * The executor retains the committed transcript and retries no completed tools.
+   * Hosts must honor cancellation; without this callback the typed error is returned.
+   */
+  onContextCapacityBlocked?: (state: {
+    readonly remainingIterations?: number;
+    readonly remainingContinuationIterations?: number;
+    readonly checkpoint?: KodaXGenerationCheckpoint;
+    readonly requiredTokens?: number;
+    readonly availableTokens?: number;
+    readonly configurationRevision?: number;
+  }, signal?: AbortSignal, meta?: KodaXActivityEventMeta) => Promise<void | {
+    readonly provider?: string;
+    readonly model?: string;
+    readonly reasoning?: KodaXReasoningMode;
+  }>;
+  /** Capture before generation so settings changed in flight cannot lose a wake. */
+  getContextRecoveryRevision?: () => number;
+  /** Host shutdown wakes pure waits, then checkpoints before the next generation. */
+  registerGenerationWait?: (wake: () => void) => () => void;
+  isGenerationSuspensionRequested?: () => boolean;
   /** Canonical, post-commit compaction fact. Legacy callbacks are projections. */
   onContextCompactionFinished?: (
     event: KodaXContextCompactionFinishedEvent,
@@ -875,6 +898,8 @@ export interface ProviderRecoveryEvent {
 // ============== Agent 选项 ==============
 
 export interface KodaXSessionOptions {
+  /** Continue a committed generation boundary without appending or replaying the original input. */
+  generationCheckpoint?: KodaXGenerationCheckpoint;
   id?: string;
   /** Identity of the Host-accepted user input already present in the transcript. */
   inputId?: string;
@@ -908,6 +933,18 @@ export interface KodaXSessionOptions {
    * the sole writer — unchanged behaviour, fail-safe default.
    */
   persistedByHost?: boolean;
+}
+
+/** A verified durable transcript at the boundary before another generation. */
+export interface KodaXGenerationCheckpoint {
+  readonly isolation?: { readonly worktreePath: string; readonly gitRoot: string };
+  readonly remainingIterations?: number;
+  readonly remainingContinuationIterations?: number;
+  readonly version: 1;
+  readonly sessionId: string;
+  readonly turnId?: string;
+  readonly activeEntryId: string | null;
+  readonly messagesDigest: string;
 }
 
 export interface KodaXContextTokenSnapshot {

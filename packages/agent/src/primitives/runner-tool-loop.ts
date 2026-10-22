@@ -59,6 +59,8 @@ export interface RunnerToolCall {
  * terminates and `text` becomes the final output.
  */
 export interface RunnerLlmResult {
+  /** Trusted adapter: bounded request preparation earns a turn credit only after verified progress. */
+  readonly contextPreparationProgress?: () => boolean;
   readonly text: string;
   /** Identity shared by live output and the assistant message committed from this result. */
   readonly outputId?: string;

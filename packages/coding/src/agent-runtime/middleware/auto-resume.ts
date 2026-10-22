@@ -41,6 +41,7 @@
  * All extractions during FEATURE_100 P2.
  */
 
+import { loadGenerationCheckpoint } from '../../generation-checkpoint.js';
 import type {
   KodaXContentBlock,
   KodaXExtensionSessionRecord,
@@ -99,6 +100,15 @@ export async function resolveInitialMessages(
   options: KodaXOptions,
   sessionId: string | undefined,
 ): Promise<ResolvedInitialMessages> {
+  const checkpoint = options.session?.generationCheckpoint;
+  if (checkpoint) {
+    if (checkpoint.version !== 1 || checkpoint.sessionId !== sessionId || !options.session?.storage) {
+      throw new Error('Generation checkpoint requires its original durable session.');
+    }
+    const loaded = await loadGenerationCheckpoint(options.session.storage, checkpoint);
+    return { messages: [...loaded.messages], title: loaded.title, errorMetadata: loaded.errorMetadata,
+      loadedExtensionState: loaded.extensionState, loadedExtensionRecords: loaded.extensionRecords };
+  }
   if (options.session?.initialMessages && options.session.initialMessages.length > 0) {
     const messages = [...options.session.initialMessages];
     const hasHostExtensionSnapshot =

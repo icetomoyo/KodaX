@@ -28,6 +28,10 @@ import {
   type resolveManagedTaskContextCapacity,
 } from './compaction.js';
 
+import { KODAX_TOOLS } from '../../../tools/registry.js';
+
+const readDefinition = KODAX_TOOLS.find(tool => tool.name === 'read')!;
+
 const compactMock = mockedCompact as unknown as ReturnType<typeof vi.fn>;
 
 function makeMessages(): KodaXMessage[] {
@@ -112,7 +116,7 @@ describe('managed history compaction', () => {
     const capacity = resolvedCapacity(75);
     capacity.compactionConfig.enabled = false;
 
-    await expect(buildManagedTaskCompactionHook(options(), {
+    await expect(buildManagedTaskCompactionHook(options(), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: capacity,
     })).resolves.toBeTypeOf('function');
   });
@@ -120,7 +124,7 @@ describe('managed history compaction', () => {
   it('does nothing while the complete request fits physical capacity', async () => {
     const messages = makeMessages();
     const ref: ContextTokenSnapshotRef = { current: snapshot(70_000, messages) };
-    const hook = await buildManagedTaskCompactionHook(options(), {
+    const hook = await buildManagedTaskCompactionHook(options(), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: resolvedCapacity(100),
       contextTokenSnapshotRef: ref,
     });
@@ -135,7 +139,7 @@ describe('managed history compaction', () => {
     const messages = makeMessages();
     const ref: ContextTokenSnapshotRef = { current: snapshot(88_000, messages) };
     compactMock.mockResolvedValue(compactedResult(messages));
-    const hook = await buildManagedTaskCompactionHook(options(), {
+    const hook = await buildManagedTaskCompactionHook(options(), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: resolvedCapacity(100),
       contextTokenSnapshotRef: ref,
     });
@@ -158,7 +162,7 @@ describe('managed history compaction', () => {
     };
     const getModel = vi.spyOn(capacity.provider, 'getModel');
     compactMock.mockResolvedValue(compactedResult(messages));
-    const hook = await buildManagedTaskCompactionHook(options(), {
+    const hook = await buildManagedTaskCompactionHook(options(), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: capacity,
       contextTokenSnapshotRef: { current: snapshot(88_000, messages) },
     });
@@ -207,7 +211,7 @@ describe('managed history compaction', () => {
     compactMock.mockImplementation(async (messages: KodaXMessage[]) => (
       compactedResult(messages)
     ));
-    const hook = await buildManagedTaskCompactionHook(options(), {
+    const hook = await buildManagedTaskCompactionHook(options(), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: resolvedCapacity(20),
       contextTokenSnapshotRef: {
         current: snapshot(88_000, mutableMessages),
@@ -245,7 +249,7 @@ describe('managed history compaction', () => {
     compactMock.mockImplementation(async (messages: KodaXMessage[]) => (
       compactedResult(messages)
     ));
-    const hook = await buildManagedTaskCompactionHook(options(), {
+    const hook = await buildManagedTaskCompactionHook(options(), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: resolvedCapacity(20),
       contextTokenSnapshotRef: {
         current: snapshot(currentTokens, mutableMessages),
@@ -282,7 +286,7 @@ describe('managed history compaction', () => {
     compactMock.mockImplementation(async (mutable: KodaXMessage[]) => (
       compactedResult(mutable)
     ));
-    const hook = await buildManagedTaskCompactionHook(options(), {
+    const hook = await buildManagedTaskCompactionHook(options(), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: resolvedCapacity(100, contextWindow),
       contextTokenSnapshotRef: ref,
     });
@@ -345,7 +349,7 @@ describe('managed history compaction', () => {
     };
     const compacted = compactedResult(messages);
     compactMock.mockResolvedValue(compacted);
-    const hook = await buildManagedTaskCompactionHook(options(), {
+    const hook = await buildManagedTaskCompactionHook(options(), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: resolvedCapacity(20),
       contextTokenSnapshotRef: ref,
     });
@@ -362,7 +366,7 @@ describe('managed history compaction', () => {
     const original = structuredClone(messages);
     const ref: ContextTokenSnapshotRef = { current: snapshot(88_000, messages) };
     compactMock.mockRejectedValue(new Error('summary provider unavailable'));
-    const hook = await buildManagedTaskCompactionHook(options(), {
+    const hook = await buildManagedTaskCompactionHook(options(), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: resolvedCapacity(100),
       contextTokenSnapshotRef: ref,
     });
@@ -392,16 +396,16 @@ describe('managed history compaction', () => {
     };
     compactMock.mockResolvedValue(overSized);
     const onCompactEnd = vi.fn();
-    const hook = await buildManagedTaskCompactionHook(options({ onCompactEnd }), {
+    const hook = await buildManagedTaskCompactionHook(options({ onCompactEnd }), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: resolvedCapacity(100),
       contextTokenSnapshotRef: ref,
     });
 
     // FEATURE_296 (ADR-067): a still-over compaction is committed best-effort
     // instead of aborting the run; the ladder owns the next request.
-    const error = await hook?.(messages).catch((cause: unknown) => cause);
-    expect(error).toBeInstanceOf(ContextCapacityError);
-    expect(readRunnerRecoveryTranscript(error)).toEqual(oversizedMessages);
+    // Request paging can now admit this summary without deleting its canonical
+    // user-query ledger or requiring another summary request.
+    expect(await hook?.(messages)).toEqual(oversizedMessages);
     expect(onCompactEnd).toHaveBeenCalledWith(undefined, expect.objectContaining({
       outcome: 'compacted',
       stillOverCapacity: true,
@@ -413,7 +417,7 @@ describe('managed history compaction', () => {
     const ref: ContextTokenSnapshotRef = { current: snapshot(88_000, messages) };
     compactMock.mockResolvedValue(compactedResult(messages));
     const onCompactEnd = vi.fn();
-    const hook = await buildManagedTaskCompactionHook(options({ onCompactEnd }), {
+    const hook = await buildManagedTaskCompactionHook(options({ onCompactEnd }), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: resolvedCapacity(100, 100_000, 40_000),
       contextTokenSnapshotRef: ref,
     });
@@ -434,7 +438,7 @@ describe('managed history compaction', () => {
     const messages = makeMessages();
     const ref: ContextTokenSnapshotRef = { current: snapshot(75_000, messages) };
     compactMock.mockRejectedValue(new Error('temporary summary failure'));
-    const hook = await buildManagedTaskCompactionHook(options(), {
+    const hook = await buildManagedTaskCompactionHook(options(), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: resolvedCapacity(70),
       contextTokenSnapshotRef: ref,
     });
@@ -473,7 +477,7 @@ describe('managed history compaction', () => {
       onCompactStart,
       onContextCompactionSkipped,
       onContextCompactionFinished,
-    }), {
+    }), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: capacity,
       contextTokenSnapshotRef: ref,
       canonicalManagedContext: () => managedContext,
@@ -532,7 +536,7 @@ describe('managed history compaction', () => {
     });
     const hook = await buildManagedTaskCompactionHook(options({
       onContextCompactionSkipped,
-    }), {
+    }), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: resolvedCapacity(70),
       contextTokenSnapshotRef: ref,
     });
@@ -557,7 +561,7 @@ describe('managed history compaction', () => {
     const messages = makeMessages();
     const onCompactEnd = vi.fn();
     compactMock.mockRejectedValue(new Error('provider unavailable'));
-    const hook = await buildManagedTaskCompactionHook(options({ onCompactEnd }), {
+    const hook = await buildManagedTaskCompactionHook(options({ onCompactEnd }), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: resolvedCapacity(70),
       contextTokenSnapshotRef: { current: snapshot(75_000, messages) },
     });
@@ -581,7 +585,7 @@ describe('managed history compaction', () => {
       })
       .mockReturnValue(undefined);
     compactMock.mockResolvedValue(compactedResult(messages));
-    const hook = await buildManagedTaskCompactionHook(options({ onCompactEnd }), {
+    const hook = await buildManagedTaskCompactionHook(options({ onCompactEnd }), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: resolvedCapacity(70),
       contextTokenSnapshotRef: { current: snapshot(75_000, messages) },
       canonicalManagedContext,
@@ -613,7 +617,7 @@ describe('managed history compaction', () => {
       onCompactedMessages: vi.fn().mockRejectedValue(new Error('session write failed')),
       onContextCompactionFinished,
       onCompactEnd,
-    }), {
+    }), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: resolvedCapacity(70),
       contextTokenSnapshotRef: { current: snapshot(75_000, messages) },
     });
@@ -640,7 +644,7 @@ describe('managed history compaction', () => {
     const hook = await buildManagedTaskCompactionHook(options({
       onContextCompactionSkipped,
       onCompactEnd,
-    }), {
+    }), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: resolvedCapacity(70),
       contextTokenSnapshotRef: ref,
     });
@@ -686,7 +690,7 @@ describe('managed history compaction', () => {
     compactMock.mockRejectedValue(new Error('provider still unavailable'));
     const hook = await buildManagedTaskCompactionHook(options({
       onContextCompactionSkipped,
-    }), {
+    }), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: resolvedCapacity(70),
       contextTokenSnapshotRef: { current: snapshot(75_000, messages) },
     });
@@ -708,7 +712,7 @@ describe('managed history compaction', () => {
     const messages = makeMessages();
     const ref: ContextTokenSnapshotRef = { current: snapshot(75_000, messages) };
     compactMock.mockRejectedValue(new Error('temporary summary failure'));
-    const hook = await buildManagedTaskCompactionHook(options(), {
+    const hook = await buildManagedTaskCompactionHook(options(), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: resolvedCapacity(70),
       contextTokenSnapshotRef: ref,
     });
@@ -736,7 +740,7 @@ describe('managed history compaction', () => {
       currentTokens,
       reservedResponseTokens: 10_000,
     }, 'Managed compaction summary request'));
-    const hook = await buildManagedTaskCompactionHook(options(), {
+    const hook = await buildManagedTaskCompactionHook(options(), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: resolvedCapacity(100),
       contextTokenSnapshotRef: ref,
     });
@@ -749,7 +753,7 @@ describe('managed history compaction', () => {
     expect(compactMock).toHaveBeenCalledTimes(5);
   });
 
-  it('bounds repeated still-over compactions before returning typed capacity', async () => {
+  it('bounds repeated still-over compactions while request paging admits the next generation', async () => {
     const messages = makeMessages();
     const ref: ContextTokenSnapshotRef = { current: snapshot(88_000, messages) };
     const oversizedMessages = [{
@@ -762,25 +766,71 @@ describe('managed history compaction', () => {
       ...compactedResult(messages),
       messages: oversizedMessages,
     });
-    const hook = await buildManagedTaskCompactionHook(options(), {
+    const hook = await buildManagedTaskCompactionHook(options(), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: resolvedCapacity(100),
       contextTokenSnapshotRef: ref,
     });
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       ref.current = snapshot(88_000, messages);
-      await expect(hook?.(messages)).rejects.toBeInstanceOf(ContextCapacityError);
+      expect(await hook?.(messages)).toEqual(oversizedMessages);
     }
     ref.current = snapshot(98_000, messages);
-    await expect(hook?.(messages)).rejects.toBeInstanceOf(ContextCapacityError);
+    await expect(hook?.(messages)).resolves.toBeUndefined();
     expect(compactMock).toHaveBeenCalledTimes(3);
   });
+
+  it.each([
+    ['capacity error', 'string'], ['partial success', 'string'],
+    ['capacity error', 'mixed'], ['partial success', 'mixed'],
+  ] as const)(
+    'preserves prior summary failures across an irreducible-input %s (%s)',
+    async (outcome, encoding) => {
+      const ordinary = makeMessages();
+      const ref: ContextTokenSnapshotRef = { current: snapshot(75_000, ordinary) };
+      const onCompactEnd = vi.fn();
+      compactMock.mockRejectedValue(new Error('summary service unavailable'));
+      const hook = await buildManagedTaskCompactionHook(options({ onCompactEnd }), { activeToolDefinitions: [readDefinition],
+        resolvedContextCapacity: resolvedCapacity(70), contextTokenSnapshotRef: ref,
+      });
+      await hook?.(ordinary);
+      await hook?.(ordinary);
+
+      const text = 'payload '.repeat(120_000);
+      const oversized: KodaXMessage[] = [{ role: 'user', content: encoding === 'string' ? text : [
+        { type: 'text', text }, { type: 'image', path: '/proof.png' },
+      ] }];
+      const currentTokens = estimateTokens(oversized);
+      ref.current = snapshot(currentTokens, oversized);
+      if (outcome === 'capacity error') {
+        compactMock.mockRejectedValueOnce(new ContextCapacityError({
+          contextWindow: 100_000, currentTokens, reservedResponseTokens: 10_000,
+        }, 'Compaction summary request'));
+      } else {
+        compactMock.mockResolvedValueOnce({
+          ...compactedResult(oversized), messages: [...oversized], tokensAfter: currentTokens,
+        });
+      }
+      await hook?.(oversized);
+      expect(onCompactEnd).toHaveBeenLastCalledWith(undefined, expect.objectContaining({
+        consecutiveFailures: 2,
+      }));
+
+      ref.current = snapshot(88_000, ordinary);
+      await hook?.(ordinary);
+      expect(onCompactEnd).toHaveBeenLastCalledWith(undefined, expect.objectContaining({
+        consecutiveFailures: 3,
+      }));
+      await hook?.(ordinary);
+      expect(compactMock).toHaveBeenCalledTimes(4);
+    },
+  );
 
   it('rearms the breaker early after meaningful compactable growth', async () => {
     const messages = makeMessages();
     const ref: ContextTokenSnapshotRef = { current: snapshot(75_000, messages) };
     compactMock.mockRejectedValue(new Error('temporary summary failure'));
-    const hook = await buildManagedTaskCompactionHook(options(), {
+    const hook = await buildManagedTaskCompactionHook(options(), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: resolvedCapacity(70),
       contextTokenSnapshotRef: ref,
     });
@@ -811,7 +861,7 @@ describe('managed history compaction', () => {
       onCompact,
       onCompactedMessages,
       onContextCompactionFinished,
-    }), {
+    }), { activeToolDefinitions: [readDefinition],
       resolvedContextCapacity: resolvedCapacity(100),
       contextTokenSnapshotRef: { current: snapshot(88_000, messages) },
       onPostCompact,

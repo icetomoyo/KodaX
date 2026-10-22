@@ -2,16 +2,21 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { KodaXMessage } from '@kodax-ai/llm';
+import { estimateTokens } from './tokenizer.js';
 
 import {
   applyContextCapacityReserveOverride,
   cleanupUserInputDegradationCache,
   createUserInputDegradationCache,
   degradeIrreducibleUserInputs,
+  hasIrreducibleUserInput,
+  guardPagedInputResponse,
   type ContextReserveOverrideProvider,
 } from './capacity-recovery.js';
 import { readTransientTextArtifact } from './transient-text-artifacts.js';
 import { TOOL_OUTPUT_DIR_ENV } from './tools/truncate.js';
+import { toolRead } from './tools/read.js';
 
 function fakeProvider(base: number): ContextReserveOverrideProvider {
   return { getEffectiveMaxOutputTokens: (_model?: string) => base };
@@ -30,7 +35,112 @@ describe('capacity recovery rungs (FEATURE_296 T5/T6)', () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
+  it('identifies irreducible user text independently of its message encoding', () => {
+    const text = 'binding requirements '.repeat(10_000);
+    expect(hasIrreducibleUserInput([{ role: 'user', content: text }], 8192)).toBe(true);
+    expect(hasIrreducibleUserInput([{ role: 'user', content: [
+      { type: 'text', text }, { type: 'image', path: '/proof.png' },
+    ] }], 8192)).toBe(true);
+    expect(hasIrreducibleUserInput([{ role: 'assistant', content: text }], 8192)).toBe(false);
+    expect(hasIrreducibleUserInput([{ role: 'user', content: [
+      { type: 'text', text: 'Keep this image.' }, { type: 'image', path: '/proof.png' },
+      { type: 'tool_result', tool_use_id: 'done', content: text },
+    ] }], 8192)).toBe(false);
+  });
+
   describe('degradeIrreducibleUserInputs', () => {
+    it('retains verbatim obligations after measurement and repeated projection without rereading tools or resummarizing', async () => {
+      const cache = createUserInputDegradationCache();
+      const original = 'background '.repeat(12000) + '\nNever rerun EDIT-019. Return JSON only.';
+      const messages: KodaXMessage[] = [{ role: 'user', content: original }];
+      const request = { currentTokens: estimateTokens(messages) + 2000, reservedResponseTokens: 1000, canReadPagedContent: true };
+      await degradeIrreducibleUserInputs(messages, { backups: new Map() }, 8192, cache, request);
+      const retainInput = vi.fn(async () => ['Never rerun EDIT-019. Return JSON only.']);
+      const wire = await degradeIrreducibleUserInputs(messages, { backups: new Map() }, 8192, cache, { ...request, retainInput });
+      const again = await degradeIrreducibleUserInputs(messages, { backups: new Map() }, 8192, cache, { ...request, retainInput });
+      expect(JSON.stringify(wire)).toContain('Never rerun EDIT-019. Return JSON only.');
+      expect(again).toEqual(wire);
+      expect(retainInput).toHaveBeenCalledTimes(1);
+      expect(messages[0]?.content).toBe(original);
+      const final = { textBlocks: [{ text: '{}' }], toolBlocks: [] };
+      expect(guardPagedInputResponse(final, cache)).toBe(final);
+      await cleanupUserInputDegradationCache(cache);
+    });
+    it('recovers unread original requirements before executing a proposed mutation or accepting a final answer', async () => {
+      const cache = createUserInputDegradationCache();
+      const messages: KodaXMessage[] = [{ role: 'user', content: Array.from({ length: 160 }, (_, i) => `${i}: keep all constraints ${'x'.repeat(150)}`).join('\n') }];
+      await degradeIrreducibleUserInputs(messages, { backups: new Map() }, 8192, cache,
+        { currentTokens: estimateTokens(messages) + 2000, reservedResponseTokens: 1500, canReadPagedContent: true });
+      const proposed = { textBlocks: [], thinkingBlocks: [], toolBlocks: [{ type: 'tool_use' as const, id: 'mutation', name: 'bash', input: { command: 'redo-migration' } }] };
+      let result = guardPagedInputResponse(proposed, cache);
+      expect(result.toolBlocks[0]?.name).toBe('read');
+      for (let page = 0; page < 20 && result !== proposed; page++) {
+        await toolRead(result.toolBlocks[0]!.input, { backups: new Map() });
+        result = guardPagedInputResponse(proposed, cache);
+      }
+      expect(result).toBe(proposed);
+      expect(guardPagedInputResponse({ ...proposed, toolBlocks: [] }, cache).toolBlocks).toEqual([]);
+      await cleanupUserInputDegradationCache(cache);
+    });
+    it('pages only oversized text blocks in multimodal user input and preserves images and receipts', async () => {
+      const text = 'Constraint: never deploy.\n' + 'evidence\n'.repeat(12000);
+      const messages: KodaXMessage[] = [{ role: 'user', content: [
+        { type: 'text', text }, { type: 'image', path: '/proof.png' },
+        { type: 'tool_result', tool_use_id: 'finished', content: 'already executed' },
+        { type: 'text', text: 'Keep the screenshot and do not repeat completed work.' },
+      ] }];
+      const original = structuredClone(messages);
+      const cache = createUserInputDegradationCache();
+      const request = { currentTokens: estimateTokens(messages), reservedResponseTokens: 3000, canReadPagedContent: true };
+      try {
+        const wire = await degradeIrreducibleUserInputs(messages, { backups: new Map() }, 8192, cache, request);
+        expect(estimateTokens(wire)).toBeLessThan(5000);
+        expect(wire[0]!.content).toEqual(expect.arrayContaining([
+          { type: 'image', path: '/proof.png' },
+          { type: 'tool_result', tool_use_id: 'finished', content: 'already executed' },
+          { type: 'text', text: 'Keep the screenshot and do not repeat completed work.' },
+        ]));
+        expect([...cache.artifactPaths].map(readTransientTextArtifact)).toContain(text);
+        expect(messages).toEqual(original);
+        const restored = await degradeIrreducibleUserInputs(messages, { backups: new Map() }, 200000, cache, request);
+        expect(restored).toEqual(original);
+      } finally { await cleanupUserInputDegradationCache(cache); }
+    });
+
+    it('retains exact user input when the active tools cannot read paged content', async () => {
+      const messages: KodaXMessage[] = [{ role: 'user', content: 'Binding requirements. '.repeat(8000) }];
+      const cache = createUserInputDegradationCache();
+      const result = await degradeIrreducibleUserInputs(messages, { backups: new Map() }, 8192, cache,
+        { currentTokens: estimateTokens(messages), reservedResponseTokens: 3000, canReadPagedContent: false });
+      expect(result).toEqual(messages);
+      expect(cache.artifactPaths.size).toBe(0);
+    });
+    it('pages cumulative medium user inputs against the complete request budget without changing canonical constraints', async () => {
+      const messages = Array.from({ length: 6 }, (_, index) => ({ role: 'user' as const,
+        content: `Constraint ${index}: do not change API ${index}.\n` + 'evidence\n'.repeat(900) }));
+      messages.push({ role: 'user', content: 'Continue the requested implementation.' });
+      const original = structuredClone(messages);
+      const cache = createUserInputDegradationCache();
+      const wire = await degradeIrreducibleUserInputs(messages, { backups: new Map() }, 16_384, cache,
+        { canReadPagedContent: true, currentTokens: estimateTokens(messages) + 8_000, reservedResponseTokens: 3_000 });
+      expect(estimateTokens(wire)).toBeLessThan(5_000);
+      expect(wire[messages.length - 1]).toBe(messages.at(-1));
+      expect(messages).toEqual(original);
+      const saved = [...cache.artifactPaths].map(readTransientTextArtifact);
+      for (let index = 0; index < messages.length; index += 1) {
+        if (wire[index] !== messages[index]) expect(saved).toContain(messages[index]!.content);
+      }
+      await cleanupUserInputDegradationCache(cache);
+    });
+    it('restores the complete request input after moving to a larger model window', async () => {
+      const message = { role: 'user' as const, content: 'constraint and evidence '.repeat(4000) };
+      const cache = createUserInputDegradationCache();
+      const small = await degradeIrreducibleUserInputs([message], { backups: new Map() }, 8_192, cache, { currentTokens: estimateTokens([...[message]]), reservedResponseTokens: 3000, canReadPagedContent: true });
+      expect(small[0]).not.toBe(message);
+      const large = await degradeIrreducibleUserInputs([message], { backups: new Map() }, 200_000, cache, { currentTokens: estimateTokens([...[message]]), reservedResponseTokens: 3000, canReadPagedContent: true });
+      expect(large[0]).toBe(message);
+      await cleanupUserInputDegradationCache(cache);
+    });
     it('does not treat an ordinary message as degradable merely because the configured window is below the reserve floor', async () => {
       const message: KodaXMessage = { role: 'user', content: 'hello' };
       const cache = createUserInputDegradationCache();
@@ -39,7 +149,7 @@ describe('capacity recovery rungs (FEATURE_296 T5/T6)', () => {
         [message],
         { backups: new Map() },
         1_000,
-        cache,
+        cache, { currentTokens: estimateTokens([...[message]]), reservedResponseTokens: 3000, canReadPagedContent: true },
       );
 
       expect(degraded).toEqual([message]);
@@ -59,7 +169,7 @@ describe('capacity recovery rungs (FEATURE_296 T5/T6)', () => {
         messages,
         { backups: new Map() },
         100_000,
-        cache,
+        cache, { currentTokens: estimateTokens([...messages]), reservedResponseTokens: 3000, canReadPagedContent: true },
       );
 
       // The request copy is degraded; the original transcript is untouched.
@@ -68,6 +178,8 @@ describe('capacity recovery rungs (FEATURE_296 T5/T6)', () => {
       expect(degraded[1]!.content).toContain('read with offset/limit');
       expect(String(degraded[1]!.content).length).toBeLessThan(oversized.length / 10);
       expect(messages[1]!.content).toBe(oversized);
+      expect(degraded.at(-1)).toMatchObject({ role: 'system', _source: 'capacity-input-context' });
+      expect(messages.some(message => message.role === 'system' && message.content.includes('KodaX context recovery:'))).toBe(false);
       expect(degraded[0]!.content).toBe('sys');
       expect(degraded[2]!.content).toBe('ack');
       expect(cache.artifactPaths.size).toBe(1);
@@ -91,7 +203,7 @@ describe('capacity recovery rungs (FEATURE_296 T5/T6)', () => {
         [message],
         { backups: new Map() },
         100_000,
-        cache,
+        cache, { currentTokens: estimateTokens([...[message]]), reservedResponseTokens: 3000, canReadPagedContent: true },
       );
       expect(first[0]!.content).toBe(large);
       expect(await fs.readdir(tempDir)).toEqual([]);
@@ -103,7 +215,7 @@ describe('capacity recovery rungs (FEATURE_296 T5/T6)', () => {
         [oversized, message],
         { backups: new Map() },
         100_000,
-        cache,
+        cache, { currentTokens: estimateTokens([...[oversized, message]]), reservedResponseTokens: 3000, canReadPagedContent: true },
       );
       expect(second[0]!.content).toContain('KODAX_RESULT_INCOMPLETE');
       const degradedContent = second[0]!.content;
@@ -111,7 +223,7 @@ describe('capacity recovery rungs (FEATURE_296 T5/T6)', () => {
         [oversized],
         { backups: new Map() },
         100_000,
-        cache,
+        cache, { currentTokens: estimateTokens([...[oversized]]), reservedResponseTokens: 3000, canReadPagedContent: true },
       );
       expect(third[0]!.content).toBe(degradedContent);
       expect(cache.artifactPaths.size).toBe(1);
@@ -127,10 +239,10 @@ describe('capacity recovery rungs (FEATURE_296 T5/T6)', () => {
         [first, second],
         { backups: new Map() },
         100_000,
-        cache,
+        cache, { currentTokens: estimateTokens([...[first, second]]), reservedResponseTokens: 3000, canReadPagedContent: true },
       );
 
-      expect(degraded).toHaveLength(2);
+      expect(degraded.filter(message => message.role === 'user')).toHaveLength(2);
       expect(cache.artifactPaths.size).toBe(2);
       const artifactPaths = [...cache.artifactPaths];
       expect(artifactPaths.map((value) => readTransientTextArtifact(value)))
@@ -150,7 +262,7 @@ describe('capacity recovery rungs (FEATURE_296 T5/T6)', () => {
         [message],
         { backups: new Map() },
         1_000,
-        createUserInputDegradationCache(),
+        createUserInputDegradationCache(), { currentTokens: estimateTokens([...[message]]), reservedResponseTokens: 3000, canReadPagedContent: true },
       );
       expect(degraded[0]).toBe(message);
     });

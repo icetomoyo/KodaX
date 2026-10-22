@@ -743,6 +743,16 @@ export function createRuntimeDaemonClient(
           get result() { return result ??= requestRuntimeRunResult(request, runId); },
         };
       },
+      async recover(input) {
+        assertRuntimeTransportSafe(input, 'run.recover');
+        const started = requireRecord(await request('run.recover', input));
+        const runId = requireStringField(started, 'runId');
+        const sessionId = requireStringField(started, 'sessionId');
+        const turnId = optionalStringField(started, 'turnId');
+        let result: RuntimeRunHandle['result'] | undefined;
+        return { runId, sessionId, ...(turnId ? { turnId } : {}),
+          get result() { return result ??= requestRuntimeRunResult(request, runId); } };
+      },
       async submitInput(input) {
         const transportInput = input;
         assertRuntimeTransportSafe(transportInput, 'run.input.submit');

@@ -136,8 +136,66 @@ describe('CAP-060 capacity-driven semantic compaction', () => {
     expect(value.events.onCompactEnd).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    ['capacity error', 'string'], ['partial success', 'string'],
+    ['capacity error', 'mixed'], ['partial success', 'mixed'],
+  ] as const)(
+    'preserves the breaker across an irreducible-input %s (%s) and stops later ordinary retries',
+    async (outcome, encoding) => {
+      const text = 'payload '.repeat(120_000);
+      const irreducibleMessages: KodaXMessage[] = [{
+        role: 'user', content: encoding === 'string' ? text : [
+          { type: 'text', text }, { type: 'image', path: '/proof.png' },
+        ],
+      }];
+      const currentTokens = estimateTokens(irreducibleMessages);
+      if (outcome === 'capacity error') {
+        compactMock.mockRejectedValueOnce(new ContextCapacityError({
+          contextWindow: 100_000, currentTokens, reservedResponseTokens: 10_000,
+        }, 'Compaction summary request'));
+      } else {
+        compactMock.mockResolvedValueOnce({
+          ...result(irreducibleMessages),
+          messages: [...irreducibleMessages], tokensAfter: currentTokens,
+        });
+      }
+
+      const oversized = await tryIntelligentCompact({
+        ...input(currentTokens, 100, 2), messages: irreducibleMessages,
+      });
+      expect(oversized.nextCompactConsecutiveFailures).toBe(2);
+
+      compactMock.mockRejectedValueOnce(new Error('summary service still unavailable'));
+      const ordinary = await tryIntelligentCompact(input(
+        88_000, 100, oversized.nextCompactConsecutiveFailures,
+      ));
+      expect(ordinary.nextCompactConsecutiveFailures).toBe(3);
+      await expect(tryIntelligentCompact(input(
+        88_000, 100, ordinary.nextCompactConsecutiveFailures,
+      ))).rejects.toBeInstanceOf(ContextCapacityError);
+      expect(compactMock).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it('permits irreducible input recovery without closing an already open breaker', async () => {
+    const messages: KodaXMessage[] = [{ role: 'user', content: 'payload '.repeat(120_000) }];
+    const currentTokens = estimateTokens(messages);
+    compactMock.mockRejectedValueOnce(new ContextCapacityError({
+      contextWindow: 100_000, currentTokens, reservedResponseTokens: 10_000,
+    }, 'Compaction summary request'));
+    const output = await tryIntelligentCompact({
+      ...input(currentTokens, 100, 3), messages,
+    });
+    expect(output.compacted).toBe(messages);
+    expect(output.nextCompactConsecutiveFailures).toBe(3);
+    await expect(tryIntelligentCompact(input(
+      88_000, 100, output.nextCompactConsecutiveFailures,
+    ))).rejects.toBeInstanceOf(ContextCapacityError);
+    expect(compactMock).toHaveBeenCalledOnce();
+  });
+
   it('accounts for fixed envelope overhead and resets after sufficient relief', async () => {
-    const value = input(88_000, 100);
+    const value = input(88_000, 100, 2);
     compactMock.mockResolvedValue(result(value.messages));
     const output = await tryIntelligentCompact(value);
     expect(output.nextCompactConsecutiveFailures).toBe(0);

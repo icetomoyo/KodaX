@@ -44,6 +44,7 @@ import {
 import type { AgentArtifact } from './construction/types.js';
 import { createWorkflowWorktree, removeWorkflowWorktree } from './tools/worktree.js';
 import { TOOL_OUTPUT_DIR_ENV } from './tools/truncate.js';
+import { hasGenerationWorktree } from './worktree-generation.js';
 import { createExtensionRuntime } from './extensions/runtime.js';
 
 const mockRunKodaX = runKodaX as ReturnType<typeof vi.fn>;
@@ -485,6 +486,77 @@ describe('executeChildAgents — guardrails propagation (FEATURE_092 phase 2b.7b
     expect(childOptions.session?.tag).toBeUndefined();
     expect(childOptions.context?.currentAgentId).toBe('/root/reviewer');
     expect(childOptions.context?.contextIdentitySessionId).toBe('root-session');
+  });
+
+  it('resumes concurrent children at their own generation boundary with independent model controls', async () => {
+    const first = deferred<{ model: string }>();
+    const second = deferred<{ model: string }>();
+    const models = new Map<string, ReturnType<typeof vi.fn>>();
+    const waits: string[] = [];
+    const completed: string[] = [];
+    mockRunKodaX.mockImplementation(async (options: KodaXOptions) => {
+      const id = options.context!.currentAgentId!;
+      const setModel = vi.fn();
+      models.set(id, setModel);
+      options.sessionControl!._attach({ setModel, setProvider: vi.fn(), setReasoning: vi.fn() });
+      await options.events!.onContextCapacityBlocked!({ configurationRevision: 0 }, options.abortSignal);
+      completed.push(id);
+      return okResult(`continued ${id}`);
+    });
+    const operation = executeChildAgents([
+      createBundle({ id: '/root/first' }), createBundle({ id: '/root/second' }),
+    ], createCtx(), createOptions({ parentOptions: { provider: 'anthropic', events: {
+      onContextCapacityBlocked: async (_state, _signal, meta) => {
+        waits.push(meta!.childAgentId!);
+        return meta!.childAgentId === '/root/first' ? first.promise : second.promise;
+      },
+    } } }));
+    await vi.waitFor(() => expect(waits).toHaveLength(2));
+    first.resolve({ model: 'larger-first' });
+    await vi.waitFor(() => expect(completed).toEqual(['/root/first']));
+    expect(models.get('/root/first')).toHaveBeenCalledWith('larger-first');
+    expect(models.get('/root/second')).not.toHaveBeenCalled();
+    second.resolve({ model: 'larger-second' });
+    const result = await operation;
+    expect(result.results.every(child => child.status === 'completed')).toBe(true);
+    expect(models.get('/root/second')).toHaveBeenCalledWith('larger-second');
+    expect(mockRunKodaX).toHaveBeenCalledTimes(2);
+  });
+
+  it('pins the isolation worktree before publishing a checkpoint and retains it when the Host suspends', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'kodax-child-pin-'));
+    const worktree = join(root, 'worker');
+    mkdirSync(worktree);
+    mockToolWorktreeCreate.mockResolvedValue(JSON.stringify({ path: worktree }));
+    const checkpoint = { version: 1 as const, sessionId: 'worker', activeEntryId: null, messagesDigest: 'a'.repeat(64) };
+    mockRunKodaX.mockImplementationOnce(async (options: KodaXOptions) => {
+      await options.events!.onContextCapacityBlocked!({ checkpoint }, options.abortSignal);
+      throw new Error('Must stay suspended');
+    });
+    try {
+      await executeChildAgents([createBundle({ isolation: 'worktree' })], { ...createCtx(), gitRoot: root, executionCwd: root }, createOptions({
+        parentOptions: { provider: 'anthropic', events: { onContextCapacityBlocked: async state => {
+          expect(state.checkpoint?.isolation).toEqual({ worktreePath: worktree, gitRoot: root });
+          expect(hasGenerationWorktree(worktree)).toBe(true);
+          throw new DOMException('Host suspended', 'AbortError');
+        } } },
+      }));
+      expect(mockToolWorktreeRemove).not.toHaveBeenCalled();
+      expect(hasGenerationWorktree(worktree)).toBe(true);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('reopens the exact worker session when recovering an Actor turn', async () => {
+    mockRunKodaX.mockResolvedValue(okResult('continued'));
+    const checkpoint = { version: 1 as const, sessionId: 'worker-original', turnId: 'turn-original',
+      activeEntryId: 'entry-original', messagesDigest: 'a'.repeat(64) };
+    const storage = { load: vi.fn(async () => null), save: vi.fn(async () => undefined) };
+    await executeChildAgents([createBundle({ id: '/root/reviewer' })], createCtx(), createOptions({
+      actorTurnId: 'turn-original', historyStorage: storage, generationCheckpoint: checkpoint,
+      initialMessages: [{ role: 'user', content: 'Old ancestor summary' }],
+    }));
+    expect(mockRunKodaX.mock.calls[0]?.[0].session).toMatchObject({ id: 'worker-original', generationCheckpoint: checkpoint });
+    expect(mockRunKodaX.mock.calls[0]?.[0].session?.initialMessages).toBeUndefined();
   });
 
   it('applies Actor history and tool/network/user-interaction ceilings to the child runtime', async () => {

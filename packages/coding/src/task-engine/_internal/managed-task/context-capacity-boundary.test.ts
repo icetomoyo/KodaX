@@ -6,6 +6,7 @@ import path from 'node:path';
 import { TOOL_OUTPUT_DIR_ENV } from '../../../tools/truncate.js';
 import {
   estimateTokens,
+  ContextCapacityError,
   reclaimReservedResponseTokens,
 } from '@kodax-ai/agent';
 import {
@@ -19,6 +20,13 @@ import { buildManagedTaskCompactionHook, type ContextTokenSnapshotRef } from './
 import { runCompactionLifecycle } from '../../../agent-runtime/middleware/compaction-orchestration.js';
 import { Runner, createAgent } from '@kodax-ai/agent';
 import { KodaXContextOverflowError } from '@kodax-ai/llm';
+import { buildRunnerLlmAdapter } from './llm-adapter.js';
+import { createUserInputDegradationCache, cleanupUserInputDegradationCache } from '../../../capacity-recovery.js';
+
+import { KODAX_TOOLS } from '../../../tools/registry.js';
+import { toolRead } from '../../../tools/read.js';
+
+const readDefinition = KODAX_TOOLS.find(tool => tool.name === 'read')!;
 
 let outputDirectory: string;
 beforeEach(async () => {
@@ -103,7 +111,7 @@ async function makeHook(messages: KodaXMessage[], currentTokens: number, reserve
   const committed = vi.fn();
   const ref = { current: { currentTokens, baselineEstimatedTokens: estimateTokens(messages), source: 'api' as const } };
   const hook = await buildManagedTaskCompactionHook({ provider: 'offline-summary',
-    events: { onCompactedMessages: committed } } as KodaXOptions, {
+    events: { onCompactedMessages: committed } } as KodaXOptions, { activeToolDefinitions: [readDefinition],
     resolvedContextCapacity: { provider, activeModel: 'offline-model', contextWindow: 131_072,
       compactionConfig: { enabled: true, triggerPercent: 75, triggerTokens: 80_000 } },
     contextTokenSnapshotRef: ref,
@@ -126,7 +134,7 @@ describe('offline context capacity boundary recovery', () => {
     const options: KodaXOptions = { provider: 'offline-summary', modelOverride: 'offline-model',
       compaction: { triggerPercent: 90 }, events: { onCompactedMessages: committed } };
     try {
-      const hook = await buildManagedTaskCompactionHook(options, { contextTokenSnapshotRef: ref });
+      const hook = await buildManagedTaskCompactionHook(options, { activeToolDefinitions: [readDefinition], contextTokenSnapshotRef: ref });
       if (!hook) throw new Error('Expected a compaction hook');
       const recovered = await hook(messages, new KodaXContextOverflowError({
         contextWindow: 80_000, inputTokensKind: 'unknown',
@@ -167,6 +175,67 @@ describe('offline context capacity boundary recovery', () => {
     await attempt.hook(reduced);
     expect(attempt.provider.summaryCalls).toBe(4);
   });
+  it.each([true, false])('pages native AMA input only with an executable read tool (read=%s)', async canRead => {
+    const provider = new OfflineSummaryProvider(3_000);
+    const requests: KodaXMessage[][] = [];
+    vi.spyOn(provider, 'stream').mockImplementation(async (messages, tools) => {
+      if (tools.length === 0) return { textBlocks: [{ type: 'text', text: '["Original user requirement and evidence."]' }], toolBlocks: [], thinkingBlocks: [] };
+      requests.push(structuredClone(messages));
+      if (requests.length === 1) throw new KodaXContextOverflowError({
+        contextWindow: 8192, inputTokens: estimateTokens(messages), inputTokensKind: 'exact',
+      });
+      expect(estimateTokens(messages)).toBeLessThan(5_000);
+      expect(JSON.stringify(messages)).toContain('kodax-transient://text/');
+      if (requests.length === 2) {
+        const uri = JSON.stringify(messages).match(/kodax-transient:\/\/text\/[a-zA-Z0-9-]+/)?.[0];
+        expect(uri).toBeDefined();
+        return { textBlocks: [], thinkingBlocks: [], toolBlocks: [{ type: 'tool_use', id: 'page-user',
+          name: 'read', input: { path: uri, offset: 1, limit: 1 } }] };
+      }
+      expect(JSON.stringify(messages)).toContain('Original user requirement and evidence.');
+      return { textBlocks: [{ type: 'text', text: 'accepted after paging' }], toolBlocks: [], thinkingBlocks: [] };
+    });
+    registerModelProvider('offline-summary', () => provider);
+    const ref: ContextTokenSnapshotRef = { current: undefined };
+    const options: KodaXOptions = { provider: 'offline-summary', compaction: { triggerPercent: 90 } };
+    const cache = createUserInputDegradationCache();
+    const user: KodaXMessage = { role: 'user', content: 'Original user requirement and evidence.\n'.repeat(3000) };
+    try {
+      const hook = await buildManagedTaskCompactionHook(options, {
+        activeToolDefinitions: canRead ? [readDefinition] : [], contextTokenSnapshotRef: ref });
+      const adapter = buildRunnerLlmAdapter(options, undefined, undefined, undefined, ref,
+        undefined, undefined, undefined, undefined, { contextWindow: 131_072 }, undefined, cache);
+      const execute = vi.fn(async () => ({ content: 'should not repeat' }));
+      const read = vi.fn(async (input: Record<string, unknown>) => ({ content: await toolRead(input, { backups: new Map() }) }));
+      const agent = createAgent({ name: 'native-capacity-worker', instructions: 'Keep constraints and receipts.', tools: [{
+        name: 'edit', description: 'Edit', input_schema: { type: 'object', properties: {} }, execute,
+      }, ...(canRead ? [{ ...readDefinition, execute: read }] : [])] });
+      const running = Runner.run(agent, [user, ...latestToolPair().map(message => message.role === 'user'
+        ? { ...message, content: [{ type: 'tool_result' as const, tool_use_id: 'read-1', content: 'Already executed once.' }] } : message)], {
+        llm: adapter, compactionHook: hook, tracer: null, maxIterations: 2,
+        measureContextCapacityRequest: async messages => ref.measureRequest
+          ? ref.measureRequest(messages) : estimateTokens([...messages]),
+      });
+      if (!canRead) {
+        await expect(running).rejects.toBeInstanceOf(ContextCapacityError);
+        expect(requests).toHaveLength(1);
+        expect(requests[0]).toContainEqual(user);
+        expect(cache.artifactPaths.size).toBe(0);
+        expect(execute).not.toHaveBeenCalled();
+        return;
+      }
+      const result = await running;
+      expect(result.output).toBe('accepted after paging');
+      expect(requests).toHaveLength(3);
+      expect(read.mock.calls.at(-1)?.[0]).toMatchObject({ offset: 1 });
+      expect(result.messages).toContainEqual(user);
+      expect(execute).not.toHaveBeenCalled();
+    } finally {
+      await cleanupUserInputDegradationCache(cache);
+      clearRuntimeModelProviders();
+    }
+  });
+
   it('routes provider rejection through the real AMA compactor and Runner retry', async () => {
     const messages = latestToolPair();
     const attempt = await makeHook(messages, 60_000, 3_000);
@@ -188,7 +257,7 @@ describe('offline context capacity boundary recovery', () => {
   it('applies the same persisted latest-batch relief in the SA lifecycle', async () => {
     const messages = latestToolPair();
     const persist = vi.fn();
-    const result = await runCompactionLifecycle({ messages, needsCompact: true, compactConsecutiveFailures: 0,
+    const result = await runCompactionLifecycle({ toolDefinitions: [readDefinition], messages, needsCompact: true, compactConsecutiveFailures: 0,
       compactionConfig: { enabled: true, triggerPercent: 75, triggerTokens: 80_000 },
       provider: new OfflineSummaryProvider(3_000), contextWindow: 131_072, systemPrompt: '',
       currentTokens: 125_541, reservedResponseTokens: 3_000, events: { onCompactedMessages: persist },

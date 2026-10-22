@@ -37,6 +37,7 @@ import type {
   KodaXToolDefinition,
   KodaXToolUseBlock,
 } from '@kodax-ai/llm';
+import { prepareUserInputMemory } from '../../../user-input-memory.js';
 import {
   KODAX_ESCALATED_MAX_OUTPUT_TOKENS,
   KodaXProviderError,
@@ -48,6 +49,8 @@ import {
 } from '@kodax-ai/llm';
 import {
   attachRunnerRecoveryTranscript,
+  GenerationSuspensionError,
+  reclaimReservedResponseTokens,
   getCachedRejectedEfforts,
   recordRejectedEffort,
   buildAssistantMessageFromLlmResult,
@@ -91,6 +94,7 @@ import {
   type CostTracker,
 } from '../../../agent-runtime/middleware/cost-tracker.js';
 import { countTokens, estimateTokens } from '../../../tokenizer.js';
+import { fitToolSchemasToContext } from '../../../agent-runtime/tool-exposure-planner.js';
 import {
   createRuntimeContextBudgetSnapshot,
   estimateToolSchemaTokens,
@@ -113,6 +117,8 @@ import { resolveContextTokenCount } from '../../../token-accounting.js';
 import {
   applyContextCapacityReserveOverride,
   degradeIrreducibleUserInputs,
+  guardPagedInputResponse,
+  pagedInputProgress,
   type UserInputDegradationCache,
 } from '../../../capacity-recovery.js';
 import type { KodaXOutputSegmentMode } from '../../../output-segments.js';
@@ -391,6 +397,7 @@ export function buildRunnerLlmAdapter(
     let activeProviderRequestId: string | undefined;
     let outputTextFilter = createManagedOutputTextFilter();
     try {
+    if (options.events?.isGenerationSuspensionRequested?.()) throw new GenerationSuspensionError();
     const activeModel = options.modelOverride ?? options.model;
     // Strip every leading contiguous system message and concatenate their
     // content. v0.7.22-style flows pushed a single agent-instructions system
@@ -491,7 +498,7 @@ export function buildRunnerLlmAdapter(
       }
     }
 
-    const wireTools = filterModelToolAliases(agent.tools ?? []).map(t => projectModelToolDefinition({ name: t.name, description: t.description, input_schema: t.input_schema },
+    let wireTools = filterModelToolAliases(agent.tools ?? []).map(t => projectModelToolDefinition({ name: t.name, description: t.description, input_schema: t.input_schema },
       getRegisteredToolDefinition(t.name)?.source));
 
     // Reasoning single-tracking: resolve the per-turn reasoning EFFORT through
@@ -572,6 +579,14 @@ export function buildRunnerLlmAdapter(
       );
     } else {
       const provider = resolveProvider(options.provider ?? 'anthropic');
+      const availableToolDefinitions = wireTools;
+      const schemaContextWindow = contextTokenSnapshotRef?.contextWindow
+        ?? contextTokenSnapshotRef?.current?.capacityWindow ?? contextBudgetCatalogs?.contextWindow;
+      if (schemaContextWindow !== undefined) wireTools = fitToolSchemasToContext(wireTools, {
+        contextWindow: schemaContextWindow,
+        reservedResponseTokens: provider.getEffectiveMaxOutputTokens(activeModel),
+        systemTokens: countTokens(system),
+      });
       const providerName = options.provider ?? provider.name ?? 'anthropic';
       const rejectedEfforts = getCachedRejectedEfforts(providerName, activeModel ?? provider.getModel(), options.context?.configHome);
       if (providerReasoning?.effort !== undefined && rejectedEfforts.length > 0) {
@@ -734,7 +749,8 @@ export function buildRunnerLlmAdapter(
       // while the assembled request is still over capacity so the request
       // the provider receives is legal. The provider stays the authoritative
       // judge; Runner owns bounded history recovery after a confirmed rejection.
-      const recoveryContextWindow = contextTokenSnapshotRef?.current?.capacityWindow
+      const recoveryContextWindow = contextTokenSnapshotRef?.contextWindow
+        ?? contextTokenSnapshotRef?.current?.capacityWindow
         ?? contextBudgetCatalogs?.contextWindow;
       const canonicalInputEstimate = estimateTokens(providerMessages);
       let requestMaxOutputTokens = provider.getEffectiveMaxOutputTokens(activeModel);
@@ -744,6 +760,17 @@ export function buildRunnerLlmAdapter(
           userInputSpillCtx,
           recoveryContextWindow,
           requireUserInputDegradationCache(),
+          { currentTokens: resolveContextTokenCount(providerMessages, contextTokenSnapshotRef?.current),
+            reservedResponseTokens: requestMaxOutputTokens,
+            canReadPagedContent: availableToolDefinitions.some(tool => tool.name === 'read'),
+            retainInput: original => prepareUserInputMemory({ original, contextWindow: recoveryContextWindow,
+              provider, model: activeModel, signal: options.abortSignal, timeoutMs: API_HARD_TIMEOUT_MS,
+              goalRuntime: options.context?.goalRuntime,
+              onUsage: usage => { costTracker = recordCostUsage(costTracker, {
+                provider: providerName, model: activeModel ?? provider.getModel(), inputTokens: usage.inputTokens,
+                outputTokens: usage.outputTokens, cacheReadTokens: usage.cachedReadTokens,
+                cacheWriteTokens: usage.cachedWriteTokens }); },
+            }) },
         );
         requestMaxOutputTokens = applyContextCapacityReserveOverride(provider, {
           ...(activeModel !== undefined ? { model: activeModel } : {}),
@@ -753,6 +780,34 @@ export function buildRunnerLlmAdapter(
             contextTokenSnapshotRef?.current,
           ),
         });
+      }
+      if (contextTokenSnapshotRef) {
+        // Runner must compare the projected requests, not canonical history:
+        // paging or reclaiming output reserve leaves original user text intact.
+        contextTokenSnapshotRef.measureRequest = async candidate => {
+          let leading = 0;
+          while (candidate[leading]?.role === 'system') leading += 1;
+          const candidateSystem = withEffectivePermissionContext(candidate.slice(0, leading)
+            .map(message => typeof message.content === 'string' ? message.content : '').join('\n\n'), options.context);
+          const window = contextTokenSnapshotRef.contextWindow ?? recoveryContextWindow
+            ?? schemaContextWindow;
+          if (window === undefined) return estimateTokens([...candidate])
+            + availableToolDefinitions.reduce((total, tool) => total + estimateToolSchemaTokens(tool), 0);
+          const reserve = provider.getEffectiveMaxOutputTokens(activeModel);
+          const candidateTools = fitToolSchemasToContext(availableToolDefinitions, {
+            contextWindow: window, reservedResponseTokens: reserve, systemTokens: countTokens(candidateSystem),
+          });
+          const clean = validateAndFixToolHistory(cleanupIncompleteToolCalls([...candidate.slice(leading)]));
+          const projected = await degradeIrreducibleUserInputs(clean, userInputSpillCtx, window,
+            requireUserInputDegradationCache(), {
+              currentTokens: resolveContextTokenCount(clean, contextTokenSnapshotRef.current), reservedResponseTokens: reserve,
+              canReadPagedContent: candidateTools.some(tool => tool.name === 'read'),
+            });
+          return estimateTokens(projected) + countTokens(candidateSystem)
+            + candidateTools.reduce((total, tool) => total + estimateToolSchemaTokens(tool), 0)
+            + reclaimReservedResponseTokens({ contextWindow: window, reservedResponseTokens: reserve,
+              currentTokens: resolveContextTokenCount(projected, contextTokenSnapshotRef.current) });
+        };
       }
       let attempt = 0;
       let textRecoveryRetry = false;
@@ -987,7 +1042,7 @@ export function buildRunnerLlmAdapter(
         } catch (rawError) {
           let error = rawError instanceof Error ? rawError : new Error(String(rawError));
           if (textRecoveryRetry) { attachRunnerRecoveryTranscript(error, recoveryTranscript); throw error; }
-          // Runner owns canonical history and the single post-compaction retry.
+          // Runner owns canonical history and bounded recovery retries.
           if (error instanceof KodaXContextOverflowError) {
             error.requestInputReliefTokens = Math.max(0, canonicalInputEstimate - estimateTokens(providerMessages));
             throw error;
@@ -1427,6 +1482,9 @@ export function buildRunnerLlmAdapter(
       });
     }
 
+    const preparationBefore = pagedInputProgress(userInputDegradationCache);
+    streamResult = guardPagedInputResponse({ ...streamResult, textBlocks: streamResult.textBlocks ?? [],
+      toolBlocks: streamResult.toolBlocks ?? [] }, userInputDegradationCache);
     const text = sanitizeManagedOutputText((streamResult.textBlocks ?? []).map((b) => b.text).join(''));
     const toolCalls = (streamResult.toolBlocks ?? []).map((b) => ({
       id: b.id,
@@ -1441,6 +1499,7 @@ export function buildRunnerLlmAdapter(
     // missing the thinking block in history.
     const thinkingBlocks = streamResult.thinkingBlocks;
     const runnerResult: RunnerLlmResult = {
+      contextPreparationProgress: () => preparationBefore !== pagedInputProgress(userInputDegradationCache),
       text,
       outputId,
       toolCalls,

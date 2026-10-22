@@ -181,13 +181,14 @@ export interface RuntimeExecutionAuthorization {
 }
 
 export type KodaXClientExecutionRequest =
+  | { readonly kind: 'recovery'; readonly input: { readonly sessionId: string; readonly runId: string } }
   | { readonly kind: 'input'; readonly input: ClientSubmitInput }
   | { readonly kind: 'command'; readonly input: ClientCommandInput }
   | { readonly kind: 'review' | 'agents_lean'; readonly input: ClientReviewInput }
   | { readonly kind: 'tool'; readonly input: ClientToolInvocationInput }
   | { readonly kind: 'workflow'; readonly input: ClientWorkflowStartInput }
   | { readonly kind: 'agent_spawn'; readonly input: { readonly sessionId: string; readonly agent: AgentSpawnInput } }
-  | { readonly kind: 'agent_followup'; readonly input: { readonly sessionId: string; readonly actorPath: string; readonly objective: string; readonly expectedRevision?: number } }
+  | { readonly kind: 'agent_followup'; readonly input: { readonly sessionId: string; readonly actorPath: string; readonly objective: string; readonly expectedRevision?: number; readonly resumeCheckpoint?: boolean } }
   | { readonly kind: 'compaction'; readonly input: { readonly sessionId: string; readonly customInstructions?: string } };
 
 export type KodaXClientHostAuthorization = (

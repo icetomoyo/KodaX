@@ -27,6 +27,7 @@ import { assertNoGitInstallPrompt } from '@kodax-ai/agent';
 import { promisify } from 'node:util';
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
+import { hasGenerationWorktree } from '../worktree-generation.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -131,6 +132,10 @@ async function removeWorktree(
   removed: string[],
   warnings: string[],
 ): Promise<void> {
+  if (hasGenerationWorktree(entry.path)) {
+    warnings.push(`retain ${entry.path}: generation recovery checkpoint owns this worktree`);
+    return;
+  }
   if (await worktreeHasChanges(entry, runGit, warnings)) {
     warnings.push(`retain ${entry.path}: worktree has unmerged changes`);
     return;

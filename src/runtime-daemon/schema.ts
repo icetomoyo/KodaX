@@ -315,6 +315,9 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
     result: nullOrObjectSchema,
   },
   'run.start': { params: startRunParamsSchema(), result: runStartedSchema() },
+  'run.recover': { params: objectSchema({ runId: stringSchema, options: objectAnySchema, authorization: executionAuthorizationSchema(),
+    credential: credentialBindingSchema(), hostTools: objectSchema({ leaseId: stringSchema }, ['leaseId']) }, ['runId']),
+    result: runStartedSchema() },
   'run.input.submit': {
     params: objectSchema({
       sessionId: stringSchema,
@@ -767,6 +770,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
       actorPath: stringSchema,
       objective: stringSchema,
       expectedRevision: integerSchema,
+      resumeCheckpoint: booleanSchema,
       credential: credentialBindingSchema(),
       authorization: executionAuthorizationSchema(),
     }, ['sessionId', 'actorPath', 'objective']),

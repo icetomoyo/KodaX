@@ -63,6 +63,7 @@ export type RuntimeDaemonMethod =
   | 'input.submit'
   | 'input.withdraw'
   | 'run.start'
+  | 'run.recover'
   | 'run.input.submit'
   | 'input.read'
   | 'run.get'
@@ -237,6 +238,7 @@ export type RuntimeDaemonMutationMethod =
   | 'input.submit'
   | 'input.withdraw'
   | 'run.start'
+  | 'run.recover'
   | 'run.input.submit'
   | 'run.abort'
   | 'run.model.set'
@@ -420,6 +422,7 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'input.submit',
   'input.withdraw',
   'run.start',
+  'run.recover',
   'run.input.submit',
   'input.read',
   'run.get',
@@ -576,6 +579,7 @@ export const RUNTIME_DAEMON_MUTATION_METHODS: readonly RuntimeDaemonMutationMeth
   'input.submit',
   'input.withdraw',
   'run.start',
+  'run.recover',
   'run.input.submit',
   'run.abort',
   'run.model.set',

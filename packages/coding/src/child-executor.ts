@@ -39,6 +39,8 @@ import { resolveProvider } from './providers/index.js';
 import { resolveModelHintTier } from './model-hint-routing.js';
 import { invokeChildWithFallback, readChildTokenUsage } from './child-fallback.js';
 import { createWorkflowWorktree, removeWorkflowWorktree } from './tools/worktree.js';
+import { pinGenerationWorktree, restoreGenerationWorktree, releaseGenerationWorktree } from './worktree-generation.js';
+import { dirname } from 'node:path';
 import { loadAgentsFiles, formatAgentsForPrompt } from './context/agents-loader.js';
 import {
   parseBareInlineSlashReferences,
@@ -200,6 +202,7 @@ export interface WorkflowChildDigestUpdate {
 }
 
 export interface ChildExecutorOptions {
+  readonly generationCheckpoint?: import('./types.js').KodaXGenerationCheckpoint;
   readonly onIteration?: (iteration: NonNullable<KodaXChildAgentResult['iteration']>) => void;
   readonly maxParallel: number;
   readonly maxIterationsPerChild: number;
@@ -272,6 +275,13 @@ function buildChildRunSession(
   options: ChildExecutorOptions,
   initialMessages?: readonly KodaXMessage[],
 ): KodaXOptions['session'] | undefined {
+  if (options.generationCheckpoint) {
+    if (!options.historyStorage || !options.actorTurnId) {
+      throw new Error('Worker generation checkpoint requires its original Actor turn and history storage.');
+    }
+    return { id: options.generationCheckpoint.sessionId, generationCheckpoint: options.generationCheckpoint,
+      storage: options.historyStorage, scope: 'managed-task-worker' };
+  }
   if (!options.historyStorage) {
     return initialMessages && initialMessages.length > 0
       ? { initialMessages: [...initialMessages] }
@@ -525,6 +535,8 @@ function assertChildProviderAllowed(
 interface ChildIsolationScope {
   readonly ctx: KodaXToolExecutionContext;
   readonly worktreePath?: string;
+  suspended?: boolean;
+  readonly parentGitRoot?: string;
 }
 
 function readWorktreePath(raw: string): string {
@@ -542,18 +554,21 @@ function readWorktreePath(raw: string): string {
 async function prepareChildIsolationScope(
   bundle: KodaXChildContextBundle,
   parentCtx: KodaXToolExecutionContext,
+  checkpoint?: import('./types.js').KodaXGenerationCheckpoint,
 ): Promise<ChildIsolationScope> {
   if (bundle.isolation !== 'worktree') {
     return { ctx: parentCtx };
   }
 
-  const raw = await createWorkflowWorktree(
+  const raw = checkpoint?.isolation ? undefined : await createWorkflowWorktree(
     {
       description: `workflow-${bundle.id}`,
     },
     parentCtx,
   );
-  const worktreePath = readWorktreePath(raw);
+  const worktreePath = checkpoint?.isolation
+    ? await restoreGenerationWorktree(checkpoint, parentCtx.gitRoot ?? resolveExecutionCwd(parentCtx))
+    : readWorktreePath(raw!);
   return {
     ctx: {
       ...parentCtx,
@@ -561,6 +576,7 @@ async function prepareChildIsolationScope(
       executionCwd: worktreePath,
     },
     worktreePath,
+    parentGitRoot: parentCtx.gitRoot ?? resolveExecutionCwd(parentCtx),
   };
 }
 
@@ -574,8 +590,10 @@ async function cleanupChildIsolationScope(
   parentCtx: KodaXToolExecutionContext,
 ): Promise<string | undefined> {
   if (!scope.worktreePath) return undefined;
+  if (scope.suspended) return undefined;
   try {
-    await removeWorkflowWorktree(scope.worktreePath, parentCtx);
+    await releaseGenerationWorktree(scope.worktreePath);
+    await removeWorkflowWorktree(scope.worktreePath, { ...parentCtx, workflowWorktreeBaseDir: dirname(scope.worktreePath) });
     return undefined;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -1272,7 +1290,7 @@ async function executeReadChild(
   parentCtx: KodaXToolExecutionContext,
   options: ChildExecutorOptions,
 ): Promise<KodaXChildAgentResult> {
-  const scope = await prepareChildIsolationScope(bundle, parentCtx);
+  const scope = await prepareChildIsolationScope(bundle, parentCtx, options.generationCheckpoint);
   return withChildIsolationCleanup(scope, parentCtx, () =>
     runReadChildBody(bundle, scope, options),
   );
@@ -1283,6 +1301,7 @@ async function runReadChildBody(
   scope: ChildIsolationScope,
   options: ChildExecutorOptions,
 ): Promise<KodaXChildAgentResult> {
+  const recoveryControl = (await import('./running-session.js')).createSessionControl();
   let iteration: KodaXChildAgentResult['iteration'];
   const childEvents = buildChildEvents(
     bundle.id,
@@ -1295,6 +1314,7 @@ async function runReadChildBody(
     options.maxIterationsPerChild,
     true,
     (current) => { iteration = current; options.onIteration?.(current); },
+    { control: recoveryControl, turnId: options.actorTurnId, capabilities: options.actorCapabilities, isolation: scope },
   );
 
   // FEATURE_191 — specialist override switch (no-op when bundle.specialistName
@@ -1373,6 +1393,7 @@ async function runReadChildBody(
         provider,
         model,
         effort: childEffort,
+        sessionControl: recoveryControl,
         reasoningMode: options.parentOptions.reasoningMode,
         // The child stays on the direct runKodaX/Runner substrate. Preserve AMA
         // capability semantics only for Runtime Actor children so recursive
@@ -1565,7 +1586,7 @@ async function executeWriteChild(
     ...parentCtx,
     backups: new Map(),
   };
-  const scope = await prepareChildIsolationScope(bundle, baseCtx);
+  const scope = await prepareChildIsolationScope(bundle, baseCtx, options.generationCheckpoint);
   return withChildIsolationCleanup(scope, baseCtx, () =>
     runWriteChildBody(bundle, scope, options),
   );
@@ -1576,6 +1597,7 @@ async function runWriteChildBody(
   scope: ChildIsolationScope,
   options: ChildExecutorOptions,
 ): Promise<KodaXChildAgentResult> {
+  const recoveryControl = (await import('./running-session.js')).createSessionControl();
   const childCtx = scope.ctx;
   let iteration: KodaXChildAgentResult['iteration'];
   const childEvents = buildChildEvents(
@@ -1589,6 +1611,7 @@ async function runWriteChildBody(
     options.maxIterationsPerChild,
     false,
     (current) => { iteration = current; options.onIteration?.(current); },
+    { control: recoveryControl, turnId: options.actorTurnId, capabilities: options.actorCapabilities, isolation: scope },
   );
   // FEATURE_117 v2 (v0.7.38): write children inherit AGENTS.md mutation
   // policy. Read-only children stay on the bare `CHILD_AGENT_SYSTEM_PROMPT`
@@ -1682,6 +1705,7 @@ async function runWriteChildBody(
         model,
         effort: childEffort,
         reasoningMode: options.parentOptions.reasoningMode,
+        sessionControl: recoveryControl,
         // The child stays on the direct runKodaX/Runner substrate. Preserve AMA
         // capability semantics only for Runtime Actor children so recursive
         // collaboration and future AMA-gated surfaces remain truthful.
@@ -2319,6 +2343,12 @@ export function buildChildEvents(
   initialMaxIterations = 200,
   readOnly = false,
   onIteration?: ChildExecutorOptions['onIteration'],
+  recovery?: {
+    readonly control: import('./types.js').KodaXSessionMutators;
+    readonly turnId?: string;
+    readonly capabilities?: AgentCapabilities;
+    readonly isolation?: ChildIsolationScope;
+  },
 ): KodaXEvents | undefined {
   let iterationCount = 0;
   let maxIterations = initialMaxIterations;
@@ -2376,6 +2406,33 @@ export function buildChildEvents(
 
   return {
     ...(workflowCorrelation ? { workflowCorrelation } : {}),
+    ...(parentEvents?.onContextCapacityBlocked && recovery ? {
+      getContextRecoveryRevision: parentEvents.getContextRecoveryRevision,
+      registerGenerationWait: parentEvents.registerGenerationWait,
+      isGenerationSuspensionRequested: parentEvents.isGenerationSuspensionRequested,
+      onContextCapacityBlocked: async (state, signal) => {
+        const scope = recovery.isolation;
+        if (state.checkpoint && scope?.worktreePath && scope.parentGitRoot) {
+          state = { ...state, checkpoint: await pinGenerationWorktree(scope.worktreePath, scope.parentGitRoot, state.checkpoint) };
+          scope.suspended = true;
+        }
+        const selection = await parentEvents.onContextCapacityBlocked!(state, signal,
+          { ...activityEventMeta(), ...(recovery.turnId ? { turnId: recovery.turnId } : {}) });
+        signal?.throwIfAborted();
+        if (scope?.worktreePath && scope.suspended) {
+          await releaseGenerationWorktree(scope.worktreePath);
+          scope.suspended = false;
+        }
+        if (selection) {
+          if (selection.provider !== undefined) {
+            assertChildProviderAllowed(selection.provider, recovery.capabilities);
+            recovery.control.setProvider(selection.provider);
+          }
+          if ('model' in selection) recovery.control.setModel(selection.model);
+          if ('reasoning' in selection) recovery.control.setReasoning(selection.reasoning);
+        }
+      },
+    } : {}),
     ...(parentEvents?.registerShellCleanup
       ? { registerShellCleanup: parentEvents.registerShellCleanup }
       : {}),

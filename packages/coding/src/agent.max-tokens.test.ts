@@ -38,6 +38,7 @@ import {
 } from '@kodax-ai/llm';
 import { runKodaX } from './agent.js';
 import { readTransientTextArtifact } from './transient-text-artifacts.js';
+import { USER_INPUT_MEMORY_SYSTEM } from './user-input-memory.js';
 
 const TEST_PROVIDER_NAME = 'max-tokens-escalation-provider';
 const TEST_PROVIDER_API_KEY_ENV = 'MAX_TOKENS_ESCALATION_PROVIDER_API_KEY';
@@ -85,6 +86,9 @@ class MaxTokensScriptedProvider extends KodaXBaseProvider {
     streamOptions?: KodaXProviderStreamOptions,
     _signal?: AbortSignal,
   ): Promise<KodaXStreamResult> {
+    if (_system === USER_INPUT_MEMORY_SYSTEM) return {
+      textBlocks: [{ type: 'text', text: '[]' }], toolBlocks: [], thinkingBlocks: [], stopReason: 'end_turn',
+    };
     MaxTokensScriptedProvider.observedMessages.push(structuredClone(_messages));
     MaxTokensScriptedProvider.observedBudgets.push(
       streamOptions?.maxOutputTokensOverride ?? this.getEffectiveMaxOutputTokens(),

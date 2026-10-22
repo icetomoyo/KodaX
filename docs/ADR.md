@@ -4923,6 +4923,11 @@ credential, tool, and rollback state that can diverge from KodaX.
 12. The daemon never automatically resumes a queued/running run, provider
     request, continuation run, or Host Tool call after process ambiguity. Recovery
     exposes stable interrupted/unavailable/unknown facts.
+    **2026-10-22 scoped amendment (ADR-067):** a launcher may reconnect and
+    request continuation of a verified generation checkpoint with the original
+    principal and fresh required authority. The Host validates the dead owner,
+    exact canonical history, budgets, Stop and effect fences before claiming the
+    same Run. This does not authorize replay of an ambiguous operation.
 13. Reliability features are versioned capabilities separate from client UI
     hints and server-issued client scopes. Every RPC checks scope plus profile/
     resource authority. Space requires the needed versions and published Coder
@@ -6097,6 +6102,93 @@ and Job source at `2764e836`; independent architecture, security, and
 concurrency/recovery reviews on 2026-08-26.
 
 ## ADR-067: Capacity-Debt Admission with a Bounded Recovery Ladder Supersedes the Issue 158 Hard Gate
+
+**2026-10-21 local implementation follow-up (after `87502cb9`, unreleased):**
+Issue 322 preserves prior summary failures on irreducible input. Capacity recovery
+now also pages older assistant text and cumulative user input, reduces excessive
+static tool schemas through the existing authorized bridge, scales the small-window
+safety floor, and permits up to four rejected-generation retries. A retry requires
+a strictly smaller measured request; it never restarts the tool-execution loop.
+
+Canonical user messages stay exact. Old assistant/tool text is saved before its
+replacement context is committed; IDs, arguments, receipts, protected control
+results and images remain intact. Ordinary user constraints take precedence over
+old assistant analysis. Request-only user references are volatile capabilities
+recreated from canonical messages, not durable history. Paging requires an active
+read tool; saved file references must also satisfy the current read policy. Missing
+read capability leaves the full input intact instead of claiming relief.
+
+A Host can implement `onContextCapacityBlocked` after the exact transcript has been
+saved. The current Host persists `contextRecovery` in the existing `recovering`
+phase, waits without provider calls, and wakes on changed model/provider/reasoning
+selection or accepted interrupt input. A revision captured before generation closes
+the settings-change race. Stop cancels the wait and prevents another generation.
+An independent SDK without this callback retains its typed capacity error.
+
+Transient Session load/save and capacity artifact I/O now retry with cancellable
+1–30 second backoff. The prepared lineage is retained; a failed save acknowledgement
+is checked against the durable active entry before rewriting. Existing entry IDs
+alone do not prove a replacement committed. Retry refreshes metadata, and permission
+failures still surface. Mixed user text/image messages page only text; a fixed
+request-only system notice explains runtime provenance and is included in the budget.
+
+**2026-10-22 completion of the local recovery follow-up (unreleased):** A generation
+checkpoint now binds the exact Session, active lineage entry, messages digest,
+original turn and remaining iteration budgets. SA and AMA reopen that boundary
+without appending the objective or dispatching completed tools again. Each child
+has its own wait, control and worker history. Independent Actors and nested children
+resume their original turns; each parent schedules only its direct children.
+
+**2026-10-22 CLI/REPL integration:** the CLI (print, Ink and classic) and the
+Product `ensureKodaXClient` launcher retain their authenticated client identity
+in memory across Host replacement. Connection loss reuses the existing launcher,
+reopens complete Session observations and live progress subscriptions, and resumes
+observed/awaited generation checkpoints through Product `runs.recover`. Recovery
+deduplicates within one connection; business mutations are never generically
+retried. Trusted `authorizeExecution` runs again against the replacement Host.
+Explicit close/exit/shutdown and Stop suppress automatic continuation. Passive
+`connectKodaXClient` remains passive. This extends the narrowly verified boundary
+above; it does not promise recovery of uncommitted effects or a lost client secret.
+Checkpoint digests use the canonical lineage projection, including original input,
+output and timestamp metadata, rather than a reduced Runner request transcript.
+
+Host shutdown preserves verified checkpoints. A new Host's `runs.recover` validates
+the old owner is dead and atomically claims the Run revision. Independent Actors
+use `agents.followup(..., '', { resumeCheckpoint: true })`. Both paths require the
+original principal and fresh required credential/Host-tool bindings. Private recovery
+instructions contain declarative configuration and binding requirements, never
+serialized authority callbacks or credentials. Changed history, competing ownership,
+Stop and unresolved effects cannot be bypassed. Pending input bodies are persisted
+before queue acceptance or withdrawal, and restored with fresh execution authority.
+
+Native Workflow leaves retain their original bundle, verification baseline and
+bounded repair attempts. Reopening does not replay the Workflow JavaScript entry;
+the original leaf result remains addressable and its completion receipt also goes
+to the live ancestor when the protocol owner has stopped. Isolated worktrees are
+pinned beside the checkout before publishing a checkpoint; both cleanup sweeps
+retain them, and recovery validates the original repository and registered checkout.
+Pure `wait_agent` calls can be woken on Host shutdown without aborting the Run:
+their original tool receipt commits before the next-generation suspension. Unknown
+or mutating in-flight effects do not use this path.
+
+Pending inputs from other principals remain queued across repeated restarts until
+those principals bind fresh authority; later input cannot bypass that queue. File
+CAS rejects stale Host writes, and queue persistence completes before the recovery
+ownership claim. Independent Actor recovery IDs include Session identity. The
+Product client exposes `runs.recover({ sessionId, runId })` through its trusted
+execution authorizer; a UI must invoke that operation to rebind process-local leases.
+
+Before oversized original text leaves the request, bounded text-only model calls
+select append-only verbatim task memory from every chunk. Quotations are checked
+against the original; subsequent chunks cannot erase prior retained constraints.
+The canonical original remains exact and readable. Invalid or excessive memory
+enters the saved recovery wait instead of acting on an incomplete preview. These
+calls use the same credential scope and timeout, are counted in cost and Goal
+budgets, and stop when the Goal budget is exhausted. Ordinary fitting inputs do not
+use this path. The controlled DeepSeek/MiniMax 8K constraint and completed-receipt
+probes now pass; they establish this fixture's behavior, not infallible model judgment.
+See the [regression and acceptance record](test-guides/ISSUE_322_v0.7.97_REGRESSION_GUIDE.md).
+The older dated decision below describes shipped behavior before this follow-up.
 
 **2026-09-07 correction (long coding sessions)**: the ladder below now also
 relieves committed tool-result bodies when semantic compaction plus a reclaimed

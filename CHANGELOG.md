@@ -6,6 +6,37 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve prior summary failures when an irreducibly oversized user input
+  needs request-only degradation (Issue 322). Single-agent and managed
+  compaction no longer reset the breaker on an oversized partial result;
+  the single-agent capacity-error branch also retains its prior count.
+  Ordinary failures still accumulate, successful relief still rearms the
+  breaker, and oversized inputs retain their bounded recovery attempt. String
+  and mixed text/image user messages share this behavior; images and tool
+  receipts cannot independently qualify as irreducible user text.
+
+- Extend live context-capacity recovery with retrievable older assistant history,
+  cumulative request-only user-text paging (including mixed image messages),
+  budgeted runtime provenance, small-window safety accounting, and emergency
+  schema discovery through the existing tool bridge. Preserve protected tools,
+  canonical user messages, and completed execution receipts; paging requires an
+  authorized read capability and readable saved artifacts.
+- Retry rejected generations only after measured request reduction (at most four
+  recovery retries). A Host can save the transcript and wait in `recovering`, then
+  continue the same execution when model settings change or corrective input arrives.
+  Stop cancels the wait; the independent SDK keeps typed failure semantics unless
+  its caller supplies the recovery callback. Automatic continuation after Host death
+  or expired credential authority is not included.
+- Retry transient context-history and artifact I/O with cancellable backoff. Read
+  back a failed save acknowledgement before retrying, preserving newer metadata
+  and avoiding duplicate history transactions; permission failures still surface.
+
+- Keep eval dump directories and unrelated `kodax-eval-*` directories out of orphan
+  worktree cleanup. Require a worktree gitfile and successful Git-owned removal;
+  isolate the cleanup regression from the shared system temporary directory.
+
 ---
 
 ## [0.7.97-alpha.9] - 2026-10-19

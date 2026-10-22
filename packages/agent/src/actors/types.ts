@@ -62,6 +62,8 @@ export interface AgentIterationProgress {
 }
 
 export interface AgentTurn {
+  /** Executor-owned continuation; user-supplied metadata cannot create it. */
+  readonly checkpoint?: AgentMetadataValue;
   readonly iteration?: AgentIterationProgress;
   readonly terminationReason?: 'iteration_limit';
   readonly turnId: string;
@@ -228,6 +230,7 @@ export interface AgentBudgetPort {
 }
 
 export interface AgentExecutionInput {
+  reportCheckpoint?(checkpoint: AgentMetadataValue | undefined): Promise<void>;
   readonly actor: AgentActor;
   readonly turn: AgentTurn;
   readonly priorTurns: readonly AgentTurn[];

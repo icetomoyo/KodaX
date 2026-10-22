@@ -1488,6 +1488,8 @@ describe('runtime daemon dispatcher', () => {
       dispatcher.close();
 
       const implemented = isRuntimeDaemonSuccessResponse(response) || (
+        method === 'run.recover' && response.error.code === 'permission_denied'
+      ) || (
         ['daemon.management.get', 'client.exit.request', 'client.exit.read', 'client.exit.pending',
           'session.facts.read', 'session.facts.requests', 'session.facts.tools'].includes(method)
         && response.error.code === 'client_upgrade_required'
@@ -1517,7 +1519,8 @@ describe('runtime daemon dispatcher', () => {
       ));
       dispatcher.close();
 
-      const implemented = isRuntimeDaemonSuccessResponse(response);
+      const implemented = isRuntimeDaemonSuccessResponse(response)
+        || (method === 'run.recover' && response.error.code === 'permission_denied');
       expect(
         implemented,
         `${method} should dispatch without an operation envelope`,
@@ -3189,6 +3192,7 @@ const METHOD_SMOKE_PARAMS = {
     expectedRevision: 0,
   },
   'run.start': { sessionId: 'session-1', prompt: 'hello daemon' },
+  'run.recover': { runId: 'run-1' },
   'input.submit': { sessionId: 'session-1', inputId: 'input-1', text: 'hello daemon' },
   'input.read': { sessionId: 'session-1', inputId: 'input-1' },
   'input.withdraw': { sessionId: 'session-1', inputId: 'input-1' },
@@ -3611,6 +3615,7 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
       async delete() {},
     },
     runs: {
+      async recover() { throw new Error('No generation checkpoint exists in this fixture.'); },
       async acceptInput(input) {
         return { sessionId: input.sessionId, inputId: input.inputId, runId: 'run-1', state: 'submitted' };
       },

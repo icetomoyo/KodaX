@@ -120,6 +120,7 @@ export {
   CONTEXT_SAFETY_FLOOR_TOKENS,
   CONTEXT_SAFETY_RATIO,
   ContextCapacityError,
+  GenerationSuspensionError,
   calculateContextSafetyMargin,
   calculateMaxContextInputTokens,
   exceedsContextCapacity,

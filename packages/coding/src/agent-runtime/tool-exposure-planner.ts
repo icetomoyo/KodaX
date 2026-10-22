@@ -1,4 +1,5 @@
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
+import { calculateMaxContextInputTokens, RESERVE_SHRINK_FLOOR_TOKENS, PROTECTED_TOOL_NAMES } from '@kodax-ai/agent';
 import { DEFERRED_TOOL_HINTS, isDeferredTool } from '../tools/deferred-tools.js';
 import {
   estimateToolSchemaTokens,
@@ -124,6 +125,34 @@ export function hasPortableToolBridge(tools: readonly KodaXToolDefinition[]): bo
     if (!names.has(name)) return false;
   }
   return true;
+}
+
+/** Recover an impossible fixed envelope without removing executable capabilities. */
+export function fitToolSchemasToContext(
+  tools: readonly KodaXToolDefinition[],
+  input: { readonly contextWindow: number; readonly reservedResponseTokens: number; readonly systemTokens: number },
+): KodaXToolDefinition[] {
+  const available = Math.max(0, calculateMaxContextInputTokens(input.contextWindow,
+    Math.min(input.reservedResponseTokens, RESERVE_SHRINK_FLOOR_TOKENS)) - input.systemTokens);
+  const total = tools.reduce((sum, tool) => sum + estimateToolSchemaTokens(tool), 0);
+  if (total <= available || !hasPortableToolBridge(tools)) return [...tools];
+  const essential = new Set([...PORTABLE_BRIDGE_TOOL_NAMES, ...PROTECTED_TOOL_NAMES, 'read', 'session_history_read',
+    'session_history_search', 'ask_user_question']);
+  const hidden = new Set<string>();
+  let remaining = total;
+  // Leave working room for the task and returned evidence, not only schemas.
+  for (const tool of tools.filter(tool => !essential.has(tool.name))
+    .sort((a, b) => estimateToolSchemaTokens(b) - estimateToolSchemaTokens(a))) {
+    if (remaining <= available / 2) break;
+    hidden.add(tool.name);
+    remaining -= estimateToolSchemaTokens(tool);
+  }
+  const discoveryTool = tools.some(tool => tool.name === 'tool_describe' && !hidden.has(tool.name))
+    ? 'tool_describe' : 'tool_search';
+  return tools.filter(tool => !hidden.has(tool.name)).map(tool => tool.name === discoveryTool
+    ? { ...tool, description: tool.description + '\nContext capacity recovery: these active tools remain callable through tool_call after reading their schema: '
+      + [...hidden].join(', ') + '.' }
+    : tool);
 }
 
 export function applyToolExposurePlan(

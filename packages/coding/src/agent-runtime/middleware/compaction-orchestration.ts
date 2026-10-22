@@ -9,7 +9,9 @@
  * Current contract: default compaction is physical-capacity-driven and gives
  * the semantic summarizer complete evidence. Hard pressure may bypass
  * cooldown while the breaker is closed; an open breaker returns typed
- * capacity without another summary. A first still-over compacted transcript
+ * capacity without another summary, except an irreducible fresh input may
+ * attempt compaction before request-only degradation without resetting prior
+ * failures. A first still-over compacted transcript
  * commits best-effort with a `stillOverCapacity` flag (FEATURE_296).
  * Deterministic destructive pruning is an explicit legacy opt-in only.
  *
@@ -139,6 +141,8 @@ export interface TryIntelligentCompactOutput {
  * Breaker/cooldown skips apply only to optional early compaction. Hard
  * physical pressure may bypass cooldown until the breaker limit, then ends
  * with typed capacity instead of retrying the summarizer without a bound.
+ * Irreducible fresh inputs may still attempt compaction before degradation;
+ * their capacity failures preserve the existing breaker count.
  */
 export async function tryIntelligentCompact(
   input: TryIntelligentCompactInput,
@@ -341,8 +345,8 @@ export async function tryIntelligentCompact(
       } else if (hasIrreducibleInput) {
         // A fresh request that is larger than the model window cannot be
         // repaired by summarizing history. The request-copy degradation rung
-        // owns it, so it must not consume or trip the summarizer breaker.
-        nextFailures = 0;
+        // owns it, so preserve prior failures without spending its budget.
+        nextFailures = input.compactConsecutiveFailures;
       } else {
         // Counter increment is load-bearing (drives the circuit breaker) and
         // stays unconditional; only the diagnostic line is debug-gated.
@@ -395,7 +399,7 @@ export async function tryIntelligentCompact(
     // degradation below. Report the real failure through diagnostics; raw
     // console output remains forbidden because it can corrupt Ink rendering.
     nextFailures = error instanceof ContextCapacityError && hasIrreducibleInput
-      ? 0
+      ? input.compactConsecutiveFailures
       : input.compactConsecutiveFailures + 1;
     emitKodaXDiagnostic({
       source: 'coding:compaction',
@@ -655,6 +659,7 @@ export async function runCompactionLifecycle(
     reservedResponseTokens: input.reservedResponseTokens ?? 0 };
   if (!needsHistoryCapacityRelief(capacity)) return result;
   const recovered = await recoverContextHistory({ ...capacity, messages: result.messages,
+    canReadPagedContent: input.toolDefinitions?.some(tool => tool.name === 'read') === true,
     executionContext: input.executionContext, persist: input.events.onCompactedMessages }).catch((error: unknown) => {
     if (result.didCompactMessages && error instanceof Error) attachRunnerRecoveryTranscript(error, result.messages);
     throw error;

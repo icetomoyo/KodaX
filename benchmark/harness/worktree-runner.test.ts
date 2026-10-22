@@ -124,12 +124,14 @@ describe('worktree-runner', () => {
     }
   });
 
-  it('scanAndCleanOrphanWorktrees preserves eval evidence and legacy directories', { timeout: GIT_TEST_TIMEOUT }, async () => {
+  it('preserves eval evidence and unregistered directories while removing a registered worktree', { timeout: GIT_TEST_TIMEOUT }, async () => {
     const tmpRoot = await fs.mkdtemp(path.join(tmpdir(), 'kodax-worktree-scan-test-'));
     const fakeOrphan = path.join(tmpRoot, 'kodax-eval-worktree-orphan-test');
     const unrelated = path.join(tmpRoot, 'unrelated-dir-test');
     const legacy = path.join(tmpRoot, 'kodax-eval-legacy-orphan');
     const evidence = path.join(tmpRoot, 'kodax-eval-dumps', 'case', 'raw.json');
+    const orphan = await setupWorktree({ repoRoot, tmpRoot, id: 'orphan-test' });
+    created.push(orphan.path);
     await fs.mkdir(fakeOrphan, { recursive: true });
     await fs.mkdir(unrelated, { recursive: true });
     await fs.mkdir(legacy);
@@ -139,11 +141,13 @@ describe('worktree-runner', () => {
     try {
       const result = await scanAndCleanOrphanWorktrees({ repoRoot, tmpRoot });
       await expect(fs.readFile(evidence, 'utf8')).resolves.toBe('preserved raw evidence');
-      expect(result).toEqual({ removed: [fakeOrphan], failed: [] });
-      await expect(fs.stat(fakeOrphan)).rejects.toBeDefined();
+      expect(result).toEqual({ removed: [orphan.path], failed: [] });
+      await expect(fs.stat(orphan.path)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(fs.stat(fakeOrphan)).resolves.toBeDefined();
       await expect(fs.stat(unrelated)).resolves.toBeDefined();
       await expect(fs.stat(legacy)).resolves.toBeDefined();
     } finally {
+      await cleanupWorktree(orphan, { repoRoot });
       const resolvedRoot = path.resolve(tmpRoot);
       if (path.dirname(resolvedRoot) !== path.resolve(tmpdir())
         || !path.basename(resolvedRoot).startsWith('kodax-worktree-scan-test-')) {

@@ -74,7 +74,8 @@ it('AUDIT: microcompaction preserves nested image blocks as it preserves top-lev
 
 it('AUDIT: capacity recovery treats text and equivalent text/image arrays consistently', async () => {
   const body = 'large evidence '.repeat(12000);
-  const capacity = { currentTokens: 125541, contextWindow: 131072, reservedResponseTokens: 3000 };
+  const capacity = { currentTokens: 125541, contextWindow: 131072, reservedResponseTokens: 3000,
+    canReadPagedContent: true };
   const baseline = await recoverContextHistory({ ...capacity, messages: pair(body) });
   expect(baseline.changed).toBe(true);
   const result = await recoverContextHistory({ ...capacity,

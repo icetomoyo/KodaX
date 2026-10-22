@@ -12,6 +12,90 @@ import {
 import { persistCompactedSessionHistory } from './compaction-persistence.js';
 
 describe('persistCompactedSessionHistory', () => {
+  it('does not mistake an old retained entry for a committed context replacement', async () => {
+    vi.useFakeTimers();
+    try {
+      const messages = [{ role: 'user' as const, content: 'A' }, { role: 'assistant' as const, content: 'B' }];
+      let current: KodaXSessionData = { title: 'retained', gitRoot: '', messages,
+        lineage: createSessionLineage(messages) };
+      const save = vi.fn(async (_id: string, data: KodaXSessionData) => {
+        if (save.mock.calls.length === 1) throw Object.assign(new Error('not committed'), { code: 'EIO' });
+        current = data;
+      });
+      const pending = persistCompactedSessionHistory({ sessionId: 'retained', storage: { load: async () => current, save },
+        compactedMessages: messages.slice(0, 1), update: { preCompactionMessages: messages } });
+      await vi.runAllTimersAsync();
+      await pending;
+      expect(save).toHaveBeenCalledTimes(2);
+      expect(current.messages).toEqual(messages.slice(0, 1));
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('retries one exact transaction after transient save failures without duplicating history', async () => {
+    vi.useFakeTimers();
+    try {
+      let current: KodaXSessionData = { title: 'recovery', gitRoot: '', messages: [] };
+      const attempts: KodaXSessionData[] = [];
+      const save = vi.fn(async (_id: string, data: KodaXSessionData) => {
+        attempts.push(structuredClone(data));
+        if (attempts.length < 3) throw Object.assign(new Error('temporary I/O failure'), { code: 'EIO' });
+        current = structuredClone(data);
+      });
+      const pending = persistCompactedSessionHistory({
+        sessionId: 'recovery', storage: { load: async () => current, save },
+        compactedMessages: [{ role: 'user', content: 'checkpoint' }],
+        update: { preCompactionMessages: [
+          { role: 'user', content: 'Never change the database' },
+          { role: 'assistant', content: [{ type: 'tool_use', id: 'done', name: 'read', input: { path: 'schema' } }] },
+          { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'done', content: 'already inspected' }] },
+        ], anchor: { summary: 'checkpoint' } },
+      });
+      const assertion = expect(pending).resolves.toBeDefined();
+      await vi.runAllTimersAsync();
+      await assertion;
+      expect(attempts).toHaveLength(3);
+      expect(attempts[1]).toEqual(attempts[0]);
+      expect(attempts[2]).toEqual(attempts[0]);
+      expect(JSON.stringify(current.lineage)).toContain('Never change the database');
+      expect(JSON.stringify(current.lineage)).toContain('already inspected');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('retries a transient load but never retries permission failures', async () => {
+    vi.useFakeTimers();
+    try {
+      const load = vi.fn().mockRejectedValueOnce(Object.assign(new Error('busy'), { code: 'EBUSY' }))
+        .mockResolvedValue({ title: 'recovery', gitRoot: '', messages: [] });
+      const denied = Object.assign(new Error('denied'), { code: 'EACCES' });
+      const save = vi.fn().mockRejectedValue(denied);
+      const pending = persistCompactedSessionHistory({ sessionId: 'recovery',
+        storage: { load, save }, compactedMessages: [], update: { preCompactionMessages: [] } });
+      const assertion = expect(pending).rejects.toBe(denied);
+      await vi.runAllTimersAsync();
+      await assertion;
+      expect(load).toHaveBeenCalledTimes(2);
+      expect(save).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('Stop cancels a storage retry and prevents another write', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const save = vi.fn().mockRejectedValue(Object.assign(new Error('disk full'), { code: 'ENOSPC' }));
+      const pending = persistCompactedSessionHistory({ sessionId: 'recovery', signal: controller.signal,
+        storage: { load: async () => ({ title: 'recovery', gitRoot: '', messages: [] }), save },
+        compactedMessages: [], update: { preCompactionMessages: [] } });
+      const assertion = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(save).toHaveBeenCalledOnce();
+      controller.abort();
+      await assertion;
+      await vi.runAllTimersAsync();
+      expect(save).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
+
   it('persists active-run exact messages before the compacted replacement', async () => {
     const initial: KodaXSessionData = {
       title: 'durable',

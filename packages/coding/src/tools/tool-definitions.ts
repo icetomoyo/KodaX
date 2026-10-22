@@ -209,11 +209,11 @@ const RUN_WORKFLOW_DESCRIPTION = [
 const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   {
     name: 'read',
-    description: "Read a local file with bounded output. Text is line-numbered; continue using offset/limit and the exact line_offset cursor from the partial-line continuation marker. PNG/JPG/JPEG/GIF/WEBP return inline vision content: inspect them directly; do not reject them as binary. Read an image path only if it is not already attached or inlined in the conversation. For PDF content, use read_pdf; if unavailable, tell the user to enable/install that extension.",
+    description: "Read a local file with bounded output. Text is line-numbered; continue using offset/limit and the exact line_offset cursor from the partial-line continuation marker. Paged input: path also accepts kodax-transient://text/ references supplied by context recovery. These are valid local, run-scoped text capabilities, not network URLs. Read them directly with offset/limit to recover the original requirements; do not ask the user to re-paste them. PNG/JPG/JPEG/GIF/WEBP return inline vision content: inspect them directly; do not reject them as binary. Read an image path only if it is not already attached or inlined in the conversation. For PDF content, use read_pdf; if unavailable, tell the user to enable/install that extension.",
     input_schema: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'The absolute path to the file' },
+        path: { type: 'string', description: 'The absolute file path or a kodax-transient://text/ reference supplied by context recovery' },
         offset: { type: 'number', description: 'Line number to start from (text files only)' },
         limit: { type: 'number', description: 'Number of lines to read (text files only)' },
         line_offset: {

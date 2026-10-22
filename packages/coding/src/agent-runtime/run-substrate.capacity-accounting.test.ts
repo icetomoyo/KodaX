@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearRuntimeModelProviders,
   KodaXBaseProvider,
@@ -21,6 +21,8 @@ import type { ToolGuardrail } from '@kodax-ai/agent';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { createSessionLineage } from '@kodax-ai/agent';
 import { TOOL_OUTPUT_DIR_ENV } from '../tools/truncate.js';
 
 const PROVIDER_NAME = 'sa-capacity-accounting-test';
@@ -35,7 +37,7 @@ interface CapturedRequest {
 
 class CapacityAccountingProvider extends KodaXBaseProvider {
   static requests: CapturedRequest[] = [];
-  static mode: 'text' | 'tool' | 'tool_once' | 'reject_once' = 'text';
+  static mode: 'text' | 'tool' | 'tool_once' | 'reject_once' | 'reject_after_tool' = 'text';
   static usage: KodaXStreamResult['usage'] = undefined;
   static usages: KodaXStreamResult['usage'][] | undefined;
 
@@ -63,11 +65,14 @@ class CapacityAccountingProvider extends KodaXBaseProvider {
     if (CapacityAccountingProvider.mode === 'reject_once' && CapacityAccountingProvider.requests.length === 1) {
       throw new KodaXContextOverflowError({ contextWindow: CONTEXT_WINDOW, inputTokensKind: 'unknown' });
     }
+    if (CapacityAccountingProvider.mode === 'reject_after_tool' && CapacityAccountingProvider.requests.length > 1) {
+      throw new KodaXContextOverflowError({ contextWindow: 1_000, inputTokensKind: 'unknown' });
+    }
     const usage = CapacityAccountingProvider.usages
       ? CapacityAccountingProvider.usages[CapacityAccountingProvider.requests.length - 1]
       : CapacityAccountingProvider.usage;
     if (CapacityAccountingProvider.mode === 'tool'
-      || (CapacityAccountingProvider.mode === 'tool_once' && CapacityAccountingProvider.requests.length === 1)) {
+      || (['tool_once', 'reject_after_tool'].includes(CapacityAccountingProvider.mode) && CapacityAccountingProvider.requests.length === 1)) {
       return {
         textBlocks: [],
         thinkingBlocks: [],
@@ -102,6 +107,53 @@ describe('runSubstrate physical request accounting', { timeout: 30_000 }, () => 
   afterEach(() => {
     delete process.env[API_KEY_ENV];
     clearRuntimeModelProviders();
+  });
+
+  it('resumes a blocked SA generation from durable tool results without spending another iteration or replaying the tool', async () => {
+    CapacityAccountingProvider.mode = 'reject_after_tool';
+    let wake!: () => void;
+    const executed = vi.fn(async () => 'COMMITTED_READ_EVIDENCE');
+    const saved = vi.fn();
+    const blocked = vi.fn(async () => {
+      expect(saved).toHaveBeenCalled();
+      expect(JSON.stringify(saved.mock.calls.at(-1)?.[0])).toContain('COMMITTED_READ_EVIDENCE');
+      await new Promise<void>(resolve => { wake = resolve; });
+      CapacityAccountingProvider.mode = 'text';
+    });
+    const pending = runSubstrate({ provider: PROVIDER_NAME, model: 'capacity-model', maxIter: 2,
+      reasoningMode: 'off', context: { systemPromptOverride: 'sys' },
+      events: { beforeToolExecute: executed, onCompactedMessages: saved, onContextCapacityBlocked: blocked },
+    }, 'Read once. Preserve the public API.');
+    await vi.waitFor(() => expect(blocked).toHaveBeenCalledTimes(1));
+    expect(executed).toHaveBeenCalledTimes(1);
+    wake();
+    const result = await pending;
+    expect(result.success).toBe(true);
+    expect(result.limitReached).not.toBe(true);
+    expect(executed).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(CapacityAccountingProvider.requests.at(-1)?.messages)).toContain('Preserve the public API');
+  });
+
+  it('starts a new executor at the saved generation with exact constraints and completed receipts', async () => {
+    const messages: KodaXMessage[] = [{ role: 'user', content: 'Preserve exports. Do not rerun EDIT019.', turnId: 'original' },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'edit-once', name: 'edit', input: { path: 'already.ts' } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'edit-once', content: 'EDIT019 committed' }] }];
+    const lineage = createSessionLineage(messages);
+    const execute = vi.fn(async () => 'must not execute');
+    const result = await runSubstrate({ provider: PROVIDER_NAME, maxIter: 10, reasoningMode: 'off',
+      context: { systemPromptOverride: 'sys' }, events: { beforeToolExecute: execute },
+      session: { id: 'restart', generationCheckpoint: { version: 1, sessionId: 'restart', turnId: 'original',
+        activeEntryId: lineage.activeEntryId, messagesDigest: createHash('sha256').update(JSON.stringify(messages)).digest('hex'),
+        remainingIterations: 1, remainingContinuationIterations: 0 },
+        storage: { load: async () => ({ messages, lineage, title: 'Restart', gitRoot: '' }), save: async () => {} } },
+    }, 'Original prompt must not be appended again');
+    expect(result.success).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+    expect(CapacityAccountingProvider.requests).toHaveLength(1);
+    const sent = JSON.stringify(CapacityAccountingProvider.requests[0]!.messages);
+    expect(sent).toContain('Preserve exports');
+    expect(sent).toContain('EDIT019 committed');
+    expect(sent).not.toContain('Original prompt must not be appended');
   });
 
   it.each(['complete', 'missing_first', 'missing_last'] as const)(

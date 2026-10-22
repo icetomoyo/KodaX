@@ -74,7 +74,7 @@ export {
   searchSessionHistoryCooperatively,
   validateSessionHistorySearchQuery,
 } from './history-retrieval.js';
-export { persistCompactedSessionHistory } from './compaction-persistence.js';
+export { persistCompactedSessionHistory, retryContextPersistence } from './compaction-persistence.js';
 export type { PersistCompactedSessionHistoryInput } from './compaction-persistence.js';
 export type {
   KodaXSessionHistoryHit,
