@@ -376,3 +376,54 @@ attempt; do not treat this failure as reason to relax isolation or rewrite a
 model call. Raw input, failed response, network trace, budget and source hashes
 are preserved in OS Temp as `glm-child-recovery-20261022-r1`, with two verified
 complete copies.
+
+## Zhipu GLM readonly-child live recovery, 2026-10-22
+
+At `d5bf9550`, the owner explicitly selected zhipu-coding / glm-5.3 instead of
+the inaccessible ZAI route. The previous 403 remains failed under its original
+provider label. The new revision preserves the task, frozen initial QA probe,
+Runtime helper, tools, policies and 28-call / 800,000-token / USD 0.06 ceiling.
+Both providers share the existing Anthropic-compatible implementation and model
+capabilities; endpoint and credential identity differ. No production change was
+needed to select the existing Zhipu provider.
+
+**Live recovery and AMA settlement are demonstrated.** One actual inherited,
+readonly child was created. In `call-8`, it submitted the exact frozen command
+`cd packages & cd .. & git diff`. The SDK blocked it before execution and returned
+an is_error tool_result with the original tool-use ID. The child's subsequent
+assistant transcript retains the original arguments unchanged. In `call-9`,
+after seeing that error, GLM independently chose `git diff` and
+`git status --porcelain`; their actual results succeeded. No replacement command
+was supplied by the evaluator. The child continued its review, recovered from
+another failed test invocation using explicit test-file paths, and completed
+its turn. The parent received the completed QA report before its final response.
+Runtime ended completed with success true, without operator continuation.
+
+Root and child test execution both produced 11/11 passes: one unchanged old test
+and ten new tests. The independent oracle passed 6/6, protected files/comments
+remained unchanged, and the exact model-authored tests produced four failures
+against the original implementations (seven passed). This validates meaningful
+edits/test coverage as well as the real denial/recovery/notification path.
+
+**Report accuracy remains mixed.** The root first describes nine new tests,
+then gives an inconsistent explanation involving ten new tests; the source has
+ten. QA incorrectly equates the failed `node --test tests` invocation with the
+`npm test` default. The untouched package script is `node --test`, and the root's
+actual `npm test` succeeded. The parent repeats an unsupported Node-version /
+environment attribution instead of resolving that command difference. These
+original outputs remain unchanged. Successful recovery/settlement does not mean
+flawless reporting, zero regression risk, or cross-model intelligence parity.
+Recommendation: retain the demonstrated recovery evidence and report-quality
+limitations; do not enter default tool consolidation on this smoke alone.
+
+The whole task took 152.9 seconds and 15 physical model requests: eight root,
+six child and one bounded auxiliary cancellation. Known API usage was 254,275
+tokens (208,064 cache-read tokens already included in input). The cancelled
+auxiliary request has unknown usage, so its full 9,893-token reservation remains:
+264,168 conservative tokens and USD 0.0135097 reference cost overall, not an
+invoice. No primary/child request failed or retried. Production AMA planning /
+dispatch, native tools, SDK, roles and isolation remain unchanged; this is a
+controlled initial-probe recovery smoke, not a spontaneous-error-rate test.
+Raw inputs/outputs, error receipts, subsequent choices, QA/parent reports,
+counterfactual, budget and frozen sources are retained in OS Temp as
+`glm-child-recovery-20261022-r2`, with two verified complete copies.
