@@ -209,3 +209,77 @@ diagnostic, not a whole-task break-even: repeated rounds or unused tools may
 change the result. Ranked impact detail, permission identity, extensions,
 autonomous discovery and resume remain required checks. No smaller projection
 has yet demonstrated enough value to change the default; all entries remain.
+
+## GLM transport attribution and bounded closure, 2026-10-22
+
+Starting at `485855fe`, both historical failures were re-read from verified raw
+copies. They carry transport `ECONNRESET`, one physical request each, no caller or
+combined abort, and approximately 72/74 seconds elapsed. Both are below the
+frozen 120-second request deadline; the complex task deadline was 600 seconds.
+The provider's 30-second stall check only logs. The paired failure did not even
+execute the Runtime tool guard. These facts contradict a local evaluation
+timeout/cancellation or tool-admission explanation for those two failures.
+
+They do **not** identify who reset the connection. Historical records lack HTTP
+status/request IDs and response-progress timing, so provider/gateway and network
+route remain indistinguishable. Zero partial usage is not proof that no bytes
+arrived. No provider, timeout, retry, proxy setting or AMA implementation was
+changed on this evidence.
+
+Actual zai-coding adapter/SDK loopback controls distinguish server reset
+(failed transport with un-aborted caller), caller cancellation (AbortError and
+cancelled), and complete SSE (successful final usage). Passive request-owned
+network tracing passes the same controls without changing response bytes or
+copying credentials. Two unauthenticated HEAD requests returned HTTP 200 through
+direct and configured-proxy routes; this establishes current connectivity only,
+not the source of historical long-stream failures.
+
+One GLM complex edit task and saved-session continuations produced the following
+evidence. No model-output replay, automatic retry or provider fallback was used:
+
+| Revision | Model requests | Known API tokens | Conservative tokens | Runtime segment wall time | Outcome |
+| --- | ---: | ---: | ---: | ---: | --- |
+| r1 | 11 | 186,332 | 196,225 | 92.5 s | Actual edits/new tests; public 12/12, oracle 6/6. Readonly QA then hit an evaluation false rejection. |
+| r2 | 7 | 155,520 | 155,520 | 43.8 s | Original SDK session and child restored; stopped at the cumulative 18-call cap before report. |
+| r3 | 1 | 27,766 | 27,766 | 23.2 s | Separately disclosed controlled reporting request returned primary end_turn text; a subsequent Runtime request hit its one-call cap. |
+
+The false rejection was the unchanged child command's `echo ----` separator.
+An exact-command regression first failed; a two-line **evaluation-only** change
+now admits echo with exactly one pure-hyphen argument. Variable/command expansion,
+write redirection, outside paths and readonly mutations remain rejected. The SDK,
+native tools, roles and AMA remain unchanged. The 37 related regressions and test
+type checks pass; independent Standards/Spec reviews reported zero findings.
+
+The original 18-call budget was reached and stopped. r3 was a new, explicitly
+disclosed one-response reporting check on saved history, not another autonomous
+run. Its instruction requested the report without further tools; all native
+schemas remained present. It cannot establish unassisted complex-task success.
+
+All paid requests in this follow-up completed normally except one bounded
+auxiliary cancellation; no primary transport reset recurred. Actual read/edit/
+test/report actions are available. Three implementation files and 11 new tests
+remain correct under the six-case oracle, and protected files/comments remain
+unchanged. The exact new tests fail five of twelve tests against the original
+implementations, so their defect coverage is meaningful.
+
+**Complete E2E acceptance is still not passed.** No Runtime segment ended in
+completed state. The final report correctly gives 12/12 public tests and admits
+unfinished QA, but wrongly attributes both QA interruptions to isolation: the
+second was budget censorship. Keep that report error and the Runtime failures
+visible; neither a primary end_turn nor oracle success substitutes for complete
+Runtime settlement and truthful attribution. No intelligence-parity or default
+tool-consolidation conclusion follows from this run.
+
+Total: 19 physical model requests, 369,618 known tokens (307,776 cache-read tokens
+already included in input), 379,511 conservatively accounted tokens including
+one unknown auxiliary reservation, USD 0.01925915 conservative reference cost on
+the coding-plan route. The 159.4 seconds above sum Runtime segments and exclude
+offline diagnosis/repair gaps; they are not uninterrupted task latency.
+
+Frozen evidence revisions are `glm-transport-20261022-r1/r2/r3` in OS Temp. r1/r2
+were sealed with two verified complete copies before continuing their saved
+state. The original workspace path was deliberately reused for continuation;
+those sealed copies retain the earlier state. r3 also has two verified copies.
+The remaining work is a valid bounded acceptance design for final Runtime/QA
+settlement, before any further default entry change; do not remove AMA behavior
+or relax isolation merely to obtain a completed label.

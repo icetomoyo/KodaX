@@ -71,6 +71,8 @@ export function checkComplexTool(workspace: string, tool: string, input: Readonl
       if (readOnly || !args.slice(1).filter(arg => arg !== '-p').every(scratch)) return 'Directory creation must stay in fixture scratch.';
     } else if (executable === 'if') {
       if (readOnly || args.length !== 6 || args[1]?.toLowerCase() !== 'not' || args[2]?.toLowerCase() !== 'exist' || args[4]?.toLowerCase() !== 'mkdir' || !scratch(args[3]!) || !scratch(args[5]!)) return 'Only conditional fixture scratch creation is in scope.';
+    } else if (executable === 'echo') {
+      if (args.length !== 2 || !/^-+$/.test(args[1]!)) return 'Only literal review separators are in scope.';
     } else if (!inspect.has(executable)) return 'Executable is outside the fixture test and inspection scope.';
   }
   return null;

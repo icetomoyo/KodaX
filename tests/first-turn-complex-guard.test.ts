@@ -41,4 +41,15 @@ describe('complex fixture execution boundary', () => {
     ] as const) expect(checkComplexTool(workspace, tool, input, readOnly), JSON.stringify(input)).not.toBeNull();
     expect(checkComplexTool(workspace, 'read', { path: '..notes/file.js' }, true)).toBeNull();
   });
+
+  it('admits the unchanged readonly review command with literal separators while rejecting expansion and writes', () => {
+    const command = 'type src\\cache.js src\\client.js src\\keys.js 2>nul & echo ---- & dir /b src tests packages\\cache packages\\client packages\\identity examples 2>nul & echo ---- & git diff --stat README.md package.json tests/basic.test.js & git status --porcelain README.md package.json tests/basic.test.js src examples';
+    expect(checkComplexTool(workspace, 'bash', { command }, true)).toBeNull();
+    for (const unsafe of [
+      'echo %ZAI_CODING_API_KEY%', 'echo $ZAI_CODING_API_KEY',
+      'echo $(node -e "process.exit()")', 'echo ---- > README.md',
+      'echo ---- > .agent/tmp/out.txt', 'echo ---- & type ../outside.txt',
+      'echo ---- & node -e "process.exit()"',
+    ]) expect(checkComplexTool(workspace, 'bash', { command: unsafe }, true), unsafe).not.toBeNull();
+  });
 });
