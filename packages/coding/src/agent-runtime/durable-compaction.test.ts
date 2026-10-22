@@ -11,6 +11,24 @@ import {
 } from './event-emitter.js';
 
 describe('withDurableCompactionPersistence', () => {
+  it('binds recovery to canonical lineage metadata retained by file storage after a tool receipt', async () => {
+    const messages = [{ role: 'user' as const, content: 'Never repeat the append.', inputId: 'original', timestamp: '2026-10-21T00:00:00Z' },
+      { role: 'assistant' as const, content: [{ type: 'tool_use' as const, id: 'append', name: 'bash', input: { command: 'append' } }], outputId: 'out' },
+      { role: 'user' as const, content: [{ type: 'tool_result' as const, tool_use_id: 'append', content: 'done' }] }];
+    let saved: KodaXSessionData = { title: 'root', gitRoot: '', messages, lineage: createSessionLineage(messages) };
+    const blocked = vi.fn(async () => undefined);
+    const events = withDurableCompactionPersistence({ sessionId: 'root', events: { onContextCapacityBlocked: blocked },
+      storage: { load: async () => saved, save: async (_id, value) => {
+        saved = { ...value, messages: getSessionMessagesFromLineage(value.lineage!) };
+      } } });
+    const runnerMessages = messages.map(({ role, content }) => ({ role, content }));
+    await events.onCompactedMessages!(runnerMessages, { preCompactionMessages: runnerMessages });
+    await events.onContextCapacityBlocked!({}, undefined);
+    expect(blocked).toHaveBeenCalledOnce();
+    expect(saved.messages).toEqual(messages);
+    saved.messages = [...saved.messages, { role: 'user', content: 'New authoritative constraint' }];
+    await expect(events.onContextCapacityBlocked!({}, undefined)).rejects.toThrow(/no longer matches/);
+  });
   it('forwards a child boundary through its parent without comparing it to root history', async () => {
     const blocked = vi.fn(async () => undefined);
     const load = vi.fn(async () => null);

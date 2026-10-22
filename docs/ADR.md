@@ -4923,6 +4923,11 @@ credential, tool, and rollback state that can diverge from KodaX.
 12. The daemon never automatically resumes a queued/running run, provider
     request, continuation run, or Host Tool call after process ambiguity. Recovery
     exposes stable interrupted/unavailable/unknown facts.
+    **2026-10-22 scoped amendment (ADR-067):** a launcher may reconnect and
+    request continuation of a verified generation checkpoint with the original
+    principal and fresh required authority. The Host validates the dead owner,
+    exact canonical history, budgets, Stop and effect fences before claiming the
+    same Run. This does not authorize replay of an ambiguous operation.
 13. Reliability features are versioned capabilities separate from client UI
     hints and server-issued client scopes. Every RPC checks scope plus profile/
     resource authority. Space requires the needed versions and published Coder
@@ -6133,6 +6138,19 @@ original turn and remaining iteration budgets. SA and AMA reopen that boundary
 without appending the objective or dispatching completed tools again. Each child
 has its own wait, control and worker history. Independent Actors and nested children
 resume their original turns; each parent schedules only its direct children.
+
+**2026-10-22 CLI/REPL integration:** the CLI (print, Ink and classic) and the
+Product `ensureKodaXClient` launcher retain their authenticated client identity
+in memory across Host replacement. Connection loss reuses the existing launcher,
+reopens complete Session observations and live progress subscriptions, and resumes
+observed/awaited generation checkpoints through Product `runs.recover`. Recovery
+deduplicates within one connection; business mutations are never generically
+retried. Trusted `authorizeExecution` runs again against the replacement Host.
+Explicit close/exit/shutdown and Stop suppress automatic continuation. Passive
+`connectKodaXClient` remains passive. This extends the narrowly verified boundary
+above; it does not promise recovery of uncommitted effects or a lost client secret.
+Checkpoint digests use the canonical lineage projection, including original input,
+output and timestamp metadata, rather than a reduced Runner request transcript.
 
 Host shutdown preserves verified checkpoints. A new Host's `runs.recover` validates
 the old owner is dead and atomically claims the Run revision. Independent Actors

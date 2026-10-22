@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
   emitKodaXDiagnostic,
+  getSessionMessagesFromLineage,
   persistCompactedSessionHistory,
   type KodaXSessionData,
   type KodaXSessionScope,
@@ -72,7 +73,7 @@ export function withDurableCompactionPersistence(
         ...update,
         preCompactionMessages: stripRunnerSystemMessage(update.preCompactionMessages),
       };
-      await persistCompactedSessionHistory({
+      const lineage = await persistCompactedSessionHistory({
         storage,
         sessionId: input.sessionId,
         compactedMessages: persistentMessages,
@@ -80,7 +81,9 @@ export function withDurableCompactionPersistence(
         initialSessionData: input.initialSessionData,
         signal: input.signal,
       });
-      committedDigest = createHash('sha256').update(JSON.stringify(persistentMessages)).digest('hex');
+      // File storage projects messages from lineage, preserving original input,
+      // output and timestamp metadata that the generation transcript may omit.
+      committedDigest = createHash('sha256').update(JSON.stringify(getSessionMessagesFromLineage(lineage))).digest('hex');
       input.signal?.throwIfAborted();
       try {
         await original?.(messages, update, meta);

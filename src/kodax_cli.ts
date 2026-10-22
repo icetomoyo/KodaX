@@ -7,6 +7,7 @@ import {
   runOneShotClientTask,
 } from './one-shot-task.js';
 import { toKodaXProductClient } from './client-runtime-adapter.js';
+import { ensureRecoveringKodaXRuntime } from './recovering-runtime-client.js';
 
 // ── Runtime environment defaults ──
 // NODE_ENV must be set BEFORE any ESM static import is evaluated, otherwise
@@ -4639,7 +4640,7 @@ complete -c kodax -l version -d 'Show version'`);
     // daemon owner. The Host process owns extensions, configured MCP, and
     // the A2A plane; embedded construction remains a low-level SDK path
     // and is never a product fallback.
-    cliRuntime = await ensureKodaXRuntime({
+    cliRuntime = await ensureRecoveringKodaXRuntime({
       profile: 'default',
       daemonLifecycle: 'interactive',
       requirements: { productClient: 1, sessionDrafts: 1 },

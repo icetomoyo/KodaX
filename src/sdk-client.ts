@@ -1,6 +1,7 @@
 /** Product SDK entry — @kodax-ai/kodax/client. */
 import type { ClientStartupProgress, KodaXProductClient } from '@kodax-ai/coding/client-contract';
-import { connectKodaXRuntime, ensureKodaXRuntime } from './sdk-runtime.js';
+import { connectKodaXRuntime } from './sdk-runtime.js';
+import { ensureRecoveringKodaXRuntime } from './recovering-runtime-client.js';
 import type { RuntimeClientInfo } from './runtime-client-info.js';
 import { toKodaXProductClient } from './client-runtime-adapter.js';
 import type { KodaXClientHostAuthorization } from './client-host-authorization.js';
@@ -46,10 +47,10 @@ export async function readKodaXClientExits(options: {
 
 /** Local launcher. All business operations use the same product Client as passive connections. */
 export async function ensureKodaXClient(options: EnsureKodaXClientOptions = {}): Promise<KodaXProductClient> {
-  return toKodaXProductClient(await ensureKodaXRuntime({ ...options, requirements: {
+  return toKodaXProductClient(await ensureRecoveringKodaXRuntime({ ...options, requirements: {
     productClient: 1, productHistoryBoundaries: 1, productExitControl: 1, productExecutionFacts: 1,
     ...(options.authorizeExecution ? { productExecutionAuthorization: 2, productActorAuthorization: 1 } : {}),
-  } }), options.authorizeExecution);
+  } }, options.authorizeExecution), options.authorizeExecution);
 }
 
 /** Connect to an existing compatible Host without starting or replacing one. */

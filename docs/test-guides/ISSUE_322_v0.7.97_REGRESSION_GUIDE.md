@@ -282,6 +282,86 @@ model will select every relevant clause.
 
 ## Recovery boundaries
 
+### CLI/REPL automatic continuation follow-up (2026-10-22)
+
+The follow-up after `a860105e` connects print CLI, Ink, classic and the Product
+ensure launcher to the existing recovery contract. A live launcher keeps its
+authenticated principal across Host replacement; observed/awaited checkpoints
+request fresh trusted authorization. Passive connect remains passive. No input,
+tool, command or other business mutation receives generic transport retries.
+Explicit exit cancels connection backoff and cannot claim an unacknowledged Host
+exit succeeded. A second Host loss during recovery or observation setup retries
+connection and rereads Host facts before deciding whether continuation is valid.
+
+Run the built-process regression with:
+
+```powershell
+npm run build
+node --test tests/bundled-cli-host-recovery.test.mjs
+$env:KODAX_RECOVERY_PTY='1'
+node --test --test-force-exit tests/bundled-cli-host-recovery.test.mjs
+Remove-Item Env:KODAX_RECOVERY_PTY
+```
+
+The PTY variants require the external node-pty, @xterm/headless and
+@xterm/addon-unicode11 installation described in FEATURE_298's acceptance guide.
+Node 22's `--test-force-exit` closes the test driver after test completion because
+node-pty 1.1.0 retains ConPTY worker ports after natural child exit on Windows;
+the tests independently require the actual REPL process to exit before passing.
+Default `test:bundle` includes the print and scoped-authorization cases; PTY
+acceptance is explicit so machines without native terminal dependencies do not
+silently skip a purported terminal check. All fixtures use local HTTP, no model
+account or paid request.
+
+Each case executes an append, reaches a real durable generation checkpoint,
+kills the actual Host process, and waits for automatic replacement and the same
+Run's completion. Assertions check the entire pre-restart canonical message
+prefix, one original user input, the original constraint and tool receipt in the
+resumed provider request, unchanged protected content, one append and one Run.
+The scoped case confirms a new Host and new lease, with the resumed HTTP request
+using that new credential. Both terminal cases wait for a usable prompt and
+successfully submit `/exit` after recovery.
+
+The first built-process run exposed a canonical digest mismatch: file storage
+preserves lineage metadata which the Runner request transcript may omit. The fix
+hashes committed lineage messages and continues to reject a subsequently changed
+history. Other red/green cases cover two consecutive Host losses, reconnect-time
+exit, Stop/cancel, missing checkpoint/authority, invalid frames, no mutation replay,
+late old-connection deliveries and closing an in-flight observation.
+
+This is transport/process regression evidence. The real-model semantic evidence
+above is unchanged and is not replaced by scripted-provider results. Client process
+death with a lost identity/secret and uncommitted or ambiguous effects are outside
+this automatic continuation contract.
+
+#### Standards review
+
+Independent read-only review found one P2: recovery preparation was outside the
+transport-loss catch. It was fixed and a second-loss regression added. Re-review
+confirmed no remaining P1/P2 or actionable standards violations.
+
+#### Spec review
+
+Independent read-only review found the same await gap plus observation reattach
+loss and exit/backoff deadlock. All three received failing regressions and fixes;
+the focused suite passed after repair. Re-review confirmed no remaining P1/P2
+and no scope expansion. Standards: 0 remaining findings; Spec: 0 remaining findings.
+
+Follow-up validation on Windows with production source frozen during the full run:
+
+| Check | Result |
+| --- | --- |
+| Focused recovery tests | 33 passed across 3 files |
+| Scoped V8 coverage (connection recovery + durable compaction) | 94.68% statements, 89.80% branches, 97.87% functions, 99.05% lines |
+| Built CLI / scoped / Ink / classic Host-kill acceptance | 4 passed; both REPL processes exited normally after recovered work |
+| `npm run test:bundle` | 46 passed, zero failures/skips |
+| `npm run typecheck` | Source and test checks passed |
+| `npm run build` | Full build and standalone SDK declarations passed |
+| `npm test` | 1,187 files passed, 4 skipped; 16,869 tests passed, 90 skipped, 19 todo; zero failures; 804.12 seconds |
+
+The repository has no lint script. Test logs are retained locally under ignored
+`docs/research/cli-host-recovery-validation-20261022/`.
+
 Continuation requires available storage, a usable model window and valid authority.
 Missing conditions preserve a verified generation checkpoint and wait; they do not
 authorize blind retries. Stop, explicit budgets, unresolved effects and corrupt or
