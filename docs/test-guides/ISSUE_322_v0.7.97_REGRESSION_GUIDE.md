@@ -415,3 +415,105 @@ Independent read-only integration review: zero remaining findings. This round
 uses local scripted providers and makes no paid model requests. Earlier real-model
 results retain their original source scope; these checks establish recovery and
 execution contracts, not semantic equivalence of the merged revision on GLM/Kimi.
+
+### Full mainline compatibility audit (2026-10-23)
+
+The audit covers the entire difference from main `8a74c87a`, beyond the latest
+merge's four incoming commits. At integration revision `db3d6299`, main has zero
+missing commits. Of 172 differing tracked paths, both independent reviewers
+checked all 57 production-file changes against the retained optimization contracts.
+The sole main-only file is the previously retired SA selector helper,
+`packages/repl/src/common/agent-mode.ts`. Public package exports, SDK bindings,
+specialist roles, AMA planning/dispatch and the internal direct executor remain.
+The source declaration inventory retains all 78 builtin entries with unchanged
+side-effect/read-only/plan-mode metadata; this is not a model-visible tool count.
+
+Four compatibility failures received failing regressions and minimal fixes:
+
+- **Todo provenance:** only builtin `todo_update` receives the compact model
+  schema. Extension/constructed definitions retain their independent required
+  fields through active-tool publication, exact discovery and AMA publication.
+  Direct SDK execution still reaches their handler. The pre-existing AMA Todo
+  wrapper's builtin handler binding is outside this fix; these tests do not claim
+  custom Todo handler execution through that wrapper.
+- **Host prerequisites:** builtin workflow, skill, history and MCP requirements
+  no longer hide independent same-name registrations. Actual AMA runnable tests
+  verify their handlers; inventory, exclusions and visibility policy still apply.
+- **Independent Agents:** the final adapter no longer infers tool provenance from
+  a name. Only the coding factory's exact Agent object receives registry alias
+  folding and capacity-driven bridge fitting. Caller-supplied Agents and spread
+  copies retain their explicit contracts, including same-name tools. Factory
+  construction already projects its builtin contracts, so the adapter avoids
+  repeating that projection. Copies conservatively lose these optimization
+  benefits rather than having their tool definitions rewritten.
+- **Reliable capacity discovery:** when an independent `tool_search` coexists
+  with builtin `tool_describe`, small-window fitting preserves the latter and
+  places its recovery hint there. Without a builtin execution bridge and reliable
+  discovery, fitting retains the original surface.
+
+These changes retain native search/repository entries and all underlying handlers;
+they introduce no new exposure mode or AMA policy. Ordinary factory-created AMA
+continues to use the existing compact contracts. Targeted failures and passing
+reruns, source inventories and review evidence are stored locally under
+`%TEMP%/kodax-mainline-integration-audit-20261023/`.
+
+An additional extension-scope progress probe found different diagnostic
+`executionId` values for the same call. The fresh scope-call object already exists
+on main; Host, SessionView and Ink route the exercised events by call/tool ID and
+displayed progress and successful completion correctly. This is a pre-existing
+diagnostic limitation, not a demonstrated integration regression; it was not
+expanded into a runtime change.
+
+The first full run passed 17,088 tests with one failure: the delayed-review fixture
+observed two completed reviews instead of one. A single-case control passed;
+whole-file tracing showed the preceding persisted-session review entering the
+provider two cases late, after repeated five-second cleanup deadlines. That
+unchanged mainline fixture used the shared default Memory inbox. Its new ownership
+assertion failed deterministically before repair (expected two reviews completed
+before leaving the persisted case, observed zero). The fixture now gives both
+runs one isolated temporary home and waits for each run's persisted review receipt,
+matched by session and review key, before resetting counters or disposing. All
+seven extension integration tests pass, including the unchanged delayed-review
+assertion. Production reviewer behavior, output and deadlines remain unchanged.
+Both review axes confirmed this test-only repair; the failed full run and the
+diagnostic/red/green logs remain in the same temporary evidence directory.
+
+Frozen-production-source validation on Windows:
+
+| Check | Result |
+| --- | --- |
+| `npm run build` | Passed, including bundled CLI and standalone SDK declarations |
+| `npm run typecheck` | Source and test checks passed |
+| Four directly affected regression files | 93 tests passed |
+| Extension integration / persisted-review ownership | 7 tests passed |
+| Default full suite after the fixture repair | 1,215 files / 17,089 tests passed; four files / 90 tests skipped, 19 todo; zero failures; 809.62 seconds |
+| Scoped V8 coverage: model contracts, discovery, exposure planner | 94.41% statements, 88.95% branches, 95.91% functions, 95.48% lines |
+| Complete bundle suite with explicit PTY acceptance | 48 passed, zero failures/skips, including all four actual Host-kill recovery modes |
+| SDK-serialized first-request comparison against `db3d6299` | All 16 complete normalized request bodies identical |
+
+The scoped coverage figure covers the three listed modules, not the entire
+adapter or repository. A built-package factory probe also confirms that removing
+the adapter's repeated projection leaves the ordinary compact tool definitions
+identical; independent Agent contracts intentionally remain unprojected.
+The wire comparison reuses the preceding merge's capture and this full run's
+capture: OpenAI/Anthropic protocols, the two execution-mode test labels, and
+empty/AGENTS/catalog/Runtime-Host scenarios. Only fixture-created paths, session
+scratch identity and filesystem snapshot time are normalized by the existing
+capture helper; descriptions, schemas and controls remain intact. Internal direct
+execution tests do not restore the retired SA user selector. These are scripted
+requests with synthetic usage, not provider-reported token measurements.
+The second full run's independent wire capture again matches all 16 normalized
+requests. Production source stayed frozen through both full runs, bundle checks
+and the fixture-only repair. Source/test typechecks pass, including a fresh test
+typecheck after that repair; `git diff --check` passes.
+
+#### Standards
+
+Independent full-difference review and focused re-review: zero remaining findings.
+
+#### Spec
+
+Independent full-difference review and focused re-review: zero remaining P1/P2.
+No paid model requests are made for this integration. Historical GLM/Kimi results
+retain their original revision and scope; offline contracts do not establish
+model-quality equivalence for the integrated revision.

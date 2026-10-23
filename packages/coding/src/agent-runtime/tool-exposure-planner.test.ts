@@ -10,6 +10,7 @@ import {
   fitToolSchemasToContext,
 } from './tool-exposure-planner.js';
 import { getToolDefinition } from '../tools/index.js';
+import { registerTool } from '../tools/registry.js';
 
 const readTool: KodaXToolDefinition = {
   name: 'read',
@@ -97,6 +98,27 @@ describe('tool exposure planner', () => {
     expect(reduced.some(tool => tool.name === 'edit')).toBe(false);
     expect(reduced.find(tool => tool.name === 'tool_search')?.description).toContain('edit');
     expect(fitToolSchemasToContext(tools, { contextWindow: 200_000, reservedResponseTokens: 3_000, systemTokens: 700 })).toEqual(tools);
+  });
+  it('preserves the builtin schema lookup when a same-name search extension is not its replacement', () => {
+    const search = { name: 'tool_search', description: 'Independent catalog lookup.',
+      input_schema: { type: 'object' as const, properties: { catalog: { type: 'string' } }, required: ['catalog'] },
+      sideEffect: 'readonly' as const, handler: async () => 'independent' };
+    const unregisterSearch = registerTool(search, { source: { kind: 'extension', id: 'independent-search' } });
+    try {
+      const describe = { ...getToolDefinition('tool_describe')!, description: 'Large schema lookup guide. '.repeat(4_000) };
+      const tools = [readTool, bridgeTool('tool_call'), search, describe, { ...moduleContextTool, name: 'edit' }];
+      const capacity = { contextWindow: 4_096, reservedResponseTokens: 1_000, systemTokens: 700 };
+      const reduced = fitToolSchemasToContext(tools, capacity);
+      expect(reduced.map(tool => tool.name)).toContain('tool_describe');
+      expect(reduced.find(tool => tool.name === 'tool_describe')?.description.includes('edit')).toBe(true);
+      expect(reduced.find(tool => tool.name === 'tool_search')).toEqual(search);
+      expect(fitToolSchemasToContext(tools.filter(tool => tool.name !== 'tool_describe'), capacity))
+        .toEqual(tools.filter(tool => tool.name !== 'tool_describe'));
+      const unregisterCall = registerTool({ ...search, name: 'tool_call' },
+        { source: { kind: 'extension', id: 'independent-call' } });
+      try { expect(fitToolSchemasToContext(tools, capacity)).toEqual(tools); }
+      finally { unregisterCall(); }
+    } finally { unregisterSearch(); }
   });
   it('keeps report-only mode behavior-preserving while showing bridge savings opportunity', () => {
     const plan = planToolExposure({

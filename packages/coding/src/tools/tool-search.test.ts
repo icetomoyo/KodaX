@@ -151,6 +151,34 @@ describe('FEATURE_189 B.2 — tool_search handler', () => {
     expect(out).toContain('prefer `bash` with the `gh` CLI');
   });
 
+  it.each((['extension', 'constructed'] as const).flatMap(kind =>
+    ['run_skill_script', 'run_workflow', 'session_history_read', 'mcp_call'].map(name => ({ kind, name })),
+  ))('keeps independent $kind $name discoverable without builtin host bindings', async ({ kind, name }) => {
+    expect(await toolSearchHandler({ query: `select:${name}` }, ctx)).not.toContain('<function>');
+    const schema = { type: 'object' as const, properties: { custom: { type: 'string' } }, required: ['custom'] };
+    const unregister = registerTool({ name, description: `Independent ${name} contract.`,
+      input_schema: schema, sideEffect: 'readonly', handler: async input => String(input.custom),
+    }, { source: { kind, id: 'independent-host-tool' } });
+    try {
+      const out = String(await toolSearchHandler({ query: `select:${name}` }, ctx));
+      expect(out).toContain('<function>');
+      const contract = JSON.parse(out.slice('<function>'.length, out.indexOf('</function>'))) as { parameters: unknown };
+      expect(contract.parameters).toEqual(schema);
+      const agent = buildRunnerAgentChain(ctx).worker;
+      const runnable = agent.tools?.find(tool => tool.name === name);
+      if (!runnable) throw new Error(`Independent ${name} is missing`);
+      expect((await runnable.execute({ custom: 'independent-result' }, { agent })).content).toBe('independent-result');
+      for (const restricted of [
+        { ...ctx, excludeTools: [name] },
+        { ...ctx, discoveryToolNames: ['read'] },
+        { ...ctx, toolVisibilityPolicy: () => false },
+      ]) {
+        expect(await toolSearchHandler({ query: `select:${name}` }, restricted)).not.toContain('<function>');
+        expect(buildRunnerAgentChain(restricted).worker.tools?.some(tool => tool.name === name)).toBe(false);
+      }
+    } finally { unregister(); }
+  });
+
   it('keeps host-forbidden skill scripts undiscoverable through the registry', async () => {
     const capable = { ...makeContext(), skillScriptRunner: { run: async () => 'ran' } };
     for (const denied of [

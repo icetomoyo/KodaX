@@ -1,5 +1,18 @@
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
 import type { ToolDefinitionSource } from './types.js';
+import type { Agent } from '@kodax-ai/agent';
+
+const registryManagedAgents = new WeakSet<Agent>();
+
+/** Only the coding factory knows whether an Agent uses its registry contracts. */
+export function markRegistryManagedAgent(agent: Agent): Agent {
+  registryManagedAgents.add(agent);
+  return agent;
+}
+
+export function isRegistryManagedAgent(agent: Agent): boolean {
+  return registryManagedAgents.has(agent);
+}
 
 /** Keep runner-only list seeding callable internally, outside the model contract. */
 export function projectModelToolDefinition<T extends KodaXToolDefinition>(tool: T, source?: ToolDefinitionSource): T {
@@ -29,7 +42,7 @@ export function projectModelToolDefinition<T extends KodaXToolDefinition>(tool: 
       input_schema: { ...tool.input_schema, properties, required: ['paths'] },
     };
   }
-  if (tool.name !== 'todo_update') return tool;
+  if (source?.kind !== 'builtin' || tool.name !== 'todo_update') return tool;
   const { op: _op, items: _items, ...fields } = tool.input_schema.properties;
   const properties = Object.fromEntries(Object.entries(fields).map(([name, schema]) => {
     if (!schema || typeof schema !== 'object' || !('description' in schema)

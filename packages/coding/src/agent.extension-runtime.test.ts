@@ -379,11 +379,24 @@ describe('runKodaX extension runtime integration', () => {
     const runtime = createExtensionRuntime();
     await runtime.loadExtension(extensionPath);
 
+    // Own each persisted review before replacing the shared provider snapshot.
+    const context = { executionCwd: tempDir, configHome: path.join(tempDir, '.kodax') };
+    let firstReviewKey: string | undefined;
+    let firstReviewDone: () => void = () => {};
+    const firstReviewed = new Promise<void>(resolve => { firstReviewDone = resolve; });
     Feature034TestProvider.calls = [];
     await runKodaX(
       {
         provider: TEST_PROVIDER_NAME,
         extensionRuntime: runtime,
+        context,
+        events: {
+          onMemoryOutcomeDigest: digest => { firstReviewKey = digest.reviewKey; },
+          onMemoryReviewReceipt: receipt => {
+            if (receipt.sessionId === 'feature-034-persisted-session'
+              && receipt.reviewKey === firstReviewKey) firstReviewDone();
+          },
+        },
         session: {
           id: 'feature-034-persisted-session',
           storage,
@@ -391,6 +404,8 @@ describe('runKodaX extension runtime integration', () => {
       },
       'first persisted run',
     );
+    await firstReviewed;
+    await awaitLatestCodingMemoryReviewDrain(5_000);
 
     const extensionId = `api:extension:${extensionPath}`;
     const firstSaved = storage.snapshots.get('feature-034-persisted-session') as {
@@ -413,11 +428,22 @@ describe('runKodaX extension runtime integration', () => {
       ]),
     );
 
+    let secondReviewKey: string | undefined;
+    let secondReviewDone: () => void = () => {};
+    const secondReviewed = new Promise<void>(resolve => { secondReviewDone = resolve; });
     Feature034TestProvider.calls = [];
     await runKodaX(
       {
         provider: TEST_PROVIDER_NAME,
         extensionRuntime: runtime,
+        context,
+        events: {
+          onMemoryOutcomeDigest: digest => { secondReviewKey = digest.reviewKey; },
+          onMemoryReviewReceipt: receipt => {
+            if (receipt.sessionId === 'feature-034-persisted-session'
+              && receipt.reviewKey === secondReviewKey) secondReviewDone();
+          },
+        },
         session: {
           id: 'feature-034-persisted-session',
           storage,
@@ -426,6 +452,8 @@ describe('runKodaX extension runtime integration', () => {
       },
       'second persisted run',
     );
+    await secondReviewed;
+    await awaitLatestCodingMemoryReviewDrain(5_000);
 
     const secondSaved = storage.snapshots.get('feature-034-persisted-session') as {
       extensionState?: Record<string, Record<string, unknown>>;
@@ -448,6 +476,8 @@ describe('runKodaX extension runtime integration', () => {
     expect(secondSaved.extensionRecords?.filter((record) => record.type === 'turn')).toHaveLength(2);
     expect(Feature034TestProvider.calls).toHaveLength(1);
     expect(Feature034TestProvider.calls[0]?.streamOptions?.modelOverride).toBe('resumed-model');
+
+    expect(Feature034TestProvider.completedReviews).toBe(2);
 
     await runtime.dispose();
   }, 30_000);

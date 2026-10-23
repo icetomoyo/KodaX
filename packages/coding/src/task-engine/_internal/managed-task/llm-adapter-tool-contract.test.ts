@@ -135,7 +135,7 @@ it('retains custom Agent schemas even when their names match builtin discovery t
   expect(system).not.toContain('Additional Tools');
 });
 
-it.each([false, true])('projects legacy todo at the final managed boundary while preserving caller constraints (custom=%s)', async (custom) => {
+it.each([false, true])('preserves explicitly supplied Agent todo schemas without inferring their origin from the Agent name (custom=%s)', async (custom) => {
   const registered = getToolDefinition('todo_update');
   if (!registered) throw new Error('Missing todo_update');
   const original = custom ? {
@@ -169,12 +169,27 @@ it.each([false, true])('projects legacy todo at the final managed boundary while
     tools: [{ ...original, execute: async () => ({ content: 'unused' }) }],
   });
   const todo = sent.find((tool) => tool.name === 'todo_update');
-  expect(todo?.input_schema.required).toEqual(custom ? ['status', 'id'] : ['id']);
-  expect(todo?.input_schema.properties).not.toHaveProperty('op');
-  expect(todo?.input_schema.properties).not.toHaveProperty('items');
+  expect(todo?.input_schema).toEqual(original.input_schema);
   expect(original.input_schema).toEqual(before);
   if (custom) {
     expect(todo?.input_schema.properties.label).toEqual({ type: 'string' });
     expect(todo?.input_schema.properties.forbidden).toBe(false);
   }
+});
+
+it.each(['custom', 'kodax/role/worker', 'clone'])('preserves independent %s Agent tool contracts and aliases', async (name) => {
+  const names = ['edit', 'multi_edit', 'todo_update', 'todo_list', 'todo_get', 'tool_describe', 'tool_search', 'tool_call'];
+  const tools = names.map(toolName => ({ name: toolName, description: `Independent ${toolName}.`,
+    input_schema: { type: 'object' as const, properties: { custom: { type: 'string' } }, required: ['custom'] },
+    execute: async () => ({ content: 'independent' }),
+  }));
+  let sent: readonly KodaXToolDefinition[] = [];
+  const adapter = buildRunnerLlmAdapter({}, async (_messages, definitions) => {
+    sent = definitions;
+    return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
+  });
+  const agent = name === 'clone' ? { ...buildRunnerAgentChain({ backups: new Map() }).worker, tools }
+    : { name, instructions: '', tools };
+  await adapter([{ role: 'user', content: 'Inspect the independent tools.' }], agent);
+  expect(sent).toEqual(tools.map(({ execute: _execute, ...definition }) => definition));
 });

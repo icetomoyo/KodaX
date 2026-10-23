@@ -85,13 +85,14 @@ export function isToolDiscoverable(name: string, context: ToolSearchContext): bo
   if (context.discoveryToolNames && !context.discoveryToolNames.includes(name)) return false;
   if (context.excludeTools?.includes(name)) return false;
   const registered = getRegisteredToolDefinition(name);
-  if (!context.actorControl && ACTOR_BOUND_TOOL_NAMES.has(name)
-    && registered?.source.kind === 'builtin') return false;
-  if (name === 'run_workflow' && !context.workflowHost) return false;
-  if (name === 'run_skill_script' && (!context.skillScriptRunner || !context.executionCwd)) return false;
-  if (isSessionHistoryTool(name) && !context.loadSessionHistory) return false;
-  if (isMcpToolName(name)
-    && !(context.extensionRuntime?.hasCapabilityProvider?.('mcp') ?? !!context.extensionRuntime)) return false;
+  if (registered?.source.kind === 'builtin') {
+    if (!context.actorControl && ACTOR_BOUND_TOOL_NAMES.has(name)) return false;
+    if (name === 'run_workflow' && !context.workflowHost) return false;
+    if (name === 'run_skill_script' && (!context.skillScriptRunner || !context.executionCwd)) return false;
+    if (isSessionHistoryTool(name) && !context.loadSessionHistory) return false;
+    if (isMcpToolName(name)
+      && !(context.extensionRuntime?.hasCapabilityProvider?.('mcp') ?? !!context.extensionRuntime)) return false;
+  }
   if (!context.toolVisibilityPolicy) return true;
   const definition = registered
     ?? lookupRunScopedTool(context.extensionRuntime, name);

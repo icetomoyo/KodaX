@@ -20,8 +20,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { withEffectivePermissionContext } from '../../../prompts/effective-permissions.js';
-import { projectModelToolDefinition } from '../../../tools/model-tool-definition.js';
-import { getRegisteredToolDefinition } from '../../../tools/registry.js';
+import { isRegistryManagedAgent } from '../../../tools/model-tool-definition.js';
 import { filterModelToolAliases } from '../../../agent-runtime/tool-resolution.js';
 
 import type {
@@ -498,8 +497,9 @@ export function buildRunnerLlmAdapter(
       }
     }
 
-    let wireTools = filterModelToolAliases(agent.tools ?? []).map(t => projectModelToolDefinition({ name: t.name, description: t.description, input_schema: t.input_schema },
-      getRegisteredToolDefinition(t.name)?.source));
+    const registryManaged = isRegistryManagedAgent(agent);
+    let wireTools = (registryManaged ? filterModelToolAliases(agent.tools ?? []) : agent.tools ?? [])
+      .map(t => ({ name: t.name, description: t.description, input_schema: t.input_schema }));
 
     // Reasoning single-tracking: resolve the per-turn reasoning EFFORT through
     // the FEATURE_078 L1-L2 chain (effort-native):
@@ -582,7 +582,7 @@ export function buildRunnerLlmAdapter(
       const availableToolDefinitions = wireTools;
       const schemaContextWindow = contextTokenSnapshotRef?.contextWindow
         ?? contextTokenSnapshotRef?.current?.capacityWindow ?? contextBudgetCatalogs?.contextWindow;
-      if (schemaContextWindow !== undefined) wireTools = fitToolSchemasToContext(wireTools, {
+      if (registryManaged && schemaContextWindow !== undefined) wireTools = fitToolSchemasToContext(wireTools, {
         contextWindow: schemaContextWindow,
         reservedResponseTokens: provider.getEffectiveMaxOutputTokens(activeModel),
         systemTokens: countTokens(system),
@@ -794,9 +794,9 @@ export function buildRunnerLlmAdapter(
           if (window === undefined) return estimateTokens([...candidate])
             + availableToolDefinitions.reduce((total, tool) => total + estimateToolSchemaTokens(tool), 0);
           const reserve = provider.getEffectiveMaxOutputTokens(activeModel);
-          const candidateTools = fitToolSchemasToContext(availableToolDefinitions, {
+          const candidateTools = registryManaged ? fitToolSchemasToContext(availableToolDefinitions, {
             contextWindow: window, reservedResponseTokens: reserve, systemTokens: countTokens(candidateSystem),
-          });
+          }) : availableToolDefinitions;
           const clean = validateAndFixToolHistory(cleanupIncompleteToolCalls([...candidate.slice(leading)]));
           const projected = await degradeIrreducibleUserInputs(clean, userInputSpillCtx, window,
             requireUserInputDegradationCache(), {

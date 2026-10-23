@@ -30,7 +30,7 @@ import { DEFERRED_TOOL_HINTS, isDeferredTool } from '../../../tools/deferred-too
 import { TOOL_CALL_NAME, TOOL_DESCRIBE_NAME } from '../../../tools/tool-bridge.js';
 import { isToolDiscoverable } from '../../../tools/tool-search.js';
 import { withManualToolBranding } from '../../../self-knowledge/tool-description.js';
-import { projectModelToolDefinition } from '../../../tools/model-tool-definition.js';
+import { markRegistryManagedAgent, projectModelToolDefinition } from '../../../tools/model-tool-definition.js';
 import { filterModelToolAliases } from '../../../agent-runtime/tool-resolution.js';
 import type {
   KodaXEvents,
@@ -669,7 +669,7 @@ export function buildRunnerAgentChain(ctx: KodaXToolExecutionContext,
   worker.handoffs = workerHandoffs;
 
   return {
-    worker: Object.freeze(worker) as Agent,
+    worker: markRegistryManagedAgent(Object.freeze(worker) as Agent),
   };
 }
 
