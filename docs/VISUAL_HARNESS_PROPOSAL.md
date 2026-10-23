@@ -1,6 +1,6 @@
 # KodaX 通用主动视觉能力提案
 
-状态：历史提案快照，后续主稿已迁至 KodaX-next-dev 的 [首轮优化后视觉设计](../../KodaX-next-dev/docs/designs/visual-harness-after-first-turn.md)，请在目标工作树继续维护。本文不再作为后续实施入口。日期：2026-10-18。KodaX 审读基线：b0b446ec84fd20f21529025d086813eb5bcb2bd0。VISTA 审读基线：论文 v1、源码 c97c354f0a8948256545a3e8850a1848f8e5b8c1。
+状态：历史提案快照，后续主稿已迁至 KodaX-next-dev 的 [首轮优化后视觉设计](designs/visual-harness-after-first-turn.md)，请在目标工作树继续维护。本文不再作为后续实施入口。日期：2026-10-18。KodaX 审读基线：b0b446ec84fd20f21529025d086813eb5bcb2bd0。VISTA 审读基线：论文 v1、源码 c97c354f0a8948256545a3e8850a1848f8e5b8c1。
 
 ## 1. 推荐结论
 
