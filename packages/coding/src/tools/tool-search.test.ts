@@ -263,6 +263,51 @@ describe('FEATURE_189 B.2 — tool_search handler', () => {
     expect(out).toContain('"name":"list_dispatchable_agents"');
   });
 
+  it('finds compiler navigation by keyword within the executable discovery ceiling', async () => {
+    const context = { ...makeContext(), discoveryToolNames: ['tool_search', 'lsp_references'] };
+    const result = await executeTool('tool_search', { query: 'references', max_results: 1 }, context);
+    expect(result).toContain('"name":"lsp_references"');
+    expect(result).toContain('"parameters"');
+    expect(result.match(/<function>/g)).toHaveLength(1);
+    expect(result).not.toContain('"name":"lsp_definition"');
+    expect(result).not.toContain('RESULT_LIMIT_REACHED');
+  });
+
+  it('offers permitted compiler tools after a no-match without revealing excluded capabilities', async () => {
+    const context = { ...makeContext(),
+      discoveryToolNames: ['tool_search', 'lsp_references', 'web_fetch', 'read'],
+      excludeTools: ['web_fetch'],
+      toolVisibilityPolicy: (tool: KodaXToolVisibilityMeta) => tool.name !== 'read',
+    };
+    const missing = await executeTool('tool_search', { query: 'zzz_nonexistent_xyz' }, context);
+    expect(missing).toContain('lsp_references');
+    expect(missing).not.toContain('web_fetch');
+    expect(missing).not.toContain('lsp_hover');
+    expect(missing).not.toContain('<function>');
+    expect(getUnlockedDeferredTools(context).size).toBe(0);
+    const recovered = await executeTool('tool_search', { query: 'select:lsp_references' }, context);
+    expect(recovered).toContain('"name":"lsp_references"');
+  });
+
+  it('searches current run-scoped parameter metadata without leaking another lease or a revoked tool', async () => {
+    let active = true;
+    const context = { ...makeContext(), discoveryToolNames: ['leased_compiler', 'tool_search'],
+      extensionRuntime: { listRunTools: () => active ? [{
+        name: 'leased_compiler', description: 'Compiler evidence for this lease.',
+        inputSchema: { type: 'object', properties: { needle_parameter: { type: 'string' } }, required: ['needle_parameter'] },
+        capabilityId: 'host:current:compiler', sideEffect: 'readonly' as const,
+      }] : [] },
+    };
+    const found = await executeTool('tool_search', { query: 'needle_parameter', max_results: 1 }, context);
+    expect(found).toContain('"name":"leased_compiler"');
+    expect(found).toContain('"required":["needle_parameter"]');
+    expect(await executeTool('tool_search', { query: 'needle_parameter' }, makeContext())).not.toContain('leased_compiler');
+    active = false;
+    const revoked = await executeTool('tool_search', { query: 'needle_parameter' }, context);
+    expect(revoked).not.toContain('leased_compiler');
+    expect(revoked).not.toContain('<function>');
+  });
+
   it('isolates concurrent host leases and drops revoked schemas on the next invocation', async () => {
     let revoked = false;
     const makeOptions = (tenant: string) => ({
@@ -295,15 +340,32 @@ describe('FEATURE_189 B.2 — tool_search handler', () => {
   it('omits host-forbidden registered tools from the no-match directory without unlocking it', async () => {
     const restricted = {
       ...makeContext(),
+      discoveryToolNames: ['web_fetch', 'module_context', 'web_search', 'tool_search', 'read'],
       excludeTools: ['web_fetch'],
       toolVisibilityPolicy: (tool: { name: string }) => tool.name !== 'module_context',
     };
     const out = await executeTool('tool_search', { query: 'zzz_nonexistent_xyz' }, restricted);
-    expect(out).toContain('Available deferred tools');
+    expect(out).toContain('Available tools');
     expect(out).toContain('web_search');
     expect(out).not.toContain('web_fetch');
     expect(out).not.toContain('module_context');
     expect(getUnlockedDeferredTools(restricted).size).toBe(0);
+  });
+
+  it('bounds no-match directories and keeps unlisted tools exactly discoverable', async () => {
+    const names = Array.from({ length: 20 }, (_, index) => `directory_probe_${String(index).padStart(2, '0')}`);
+    const dispose = names.map(name => registerTool({ name, description: 'Scoped directory test.',
+      input_schema: { type: 'object', properties: {} }, sideEffect: 'readonly', handler: async () => 'unused',
+    }));
+    try {
+      const context = { ...makeContext(), discoveryToolNames: names };
+      const missing = await executeTool('tool_search', { query: 'zzz_nonexistent_xyz' }, context);
+      expect(String(missing).match(/directory_probe_\d+/g)).toHaveLength(15);
+      expect(missing).toContain('DIRECTORY_LIMIT_REACHED');
+      expect(missing).not.toContain('directory_probe_19');
+      const recovered = await executeTool('tool_search', { query: 'select:directory_probe_19' }, context);
+      expect(recovered).toContain('"name":"directory_probe_19"');
+    } finally { dispose.reverse().forEach(unregister => unregister()); }
   });
 
   it('requires a runner and cwd even when a skill catalog is present, and honors real registry metadata', async () => {
@@ -437,7 +499,7 @@ describe('FEATURE_189 B.2 — tool_search handler', () => {
   it('returns helpful message when nothing matches', async () => {
     const out = await toolSearchHandler({ query: 'zzz_nonexistent_xyz', max_results: 5 }, ctx);
     expect(out).toContain('No tools matched');
-    expect(out).toContain('Available deferred tools');
+    expect(out).toContain('Available tools');
   });
 
   it('TOOL_SEARCH_DEFINITION has the expected shape', () => {

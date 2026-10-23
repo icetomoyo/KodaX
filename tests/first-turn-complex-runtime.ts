@@ -11,10 +11,10 @@ import {createKodaXRuntime,type KodaXRuntime} from '../src/sdk-runtime.js';
 import {CACHE_FILES,CACHE_TASK,CACHE_ORACLE,writeCacheFixture} from '../benchmark/datasets/search-entry-complex/fixture.js';
 import type {FrozenInput} from './first-turn-eval-support.js';
 import type {CallEvidence,EditRoute} from './first-turn-edit-eval-support.js';
-import {checkComplexTool,createComplexReadBoundary,COMPLEX_DIRECTORY_DENIAL} from './first-turn-complex-guard.js';
+import {checkComplexTool,createComplexReadBoundary,isRecoverableComplexDenial} from './first-turn-complex-guard.js';
 import {resolveToolBridgeTarget} from '../packages/coding/src/tools/tool-bridge.js';
 const sha=(v:string)=>createHash('sha256').update(v).digest('hex');
-export async function runComplexRuntime(route:Pick<EditRoute,'id'|'env'|'model'|'provider'>,directory:string,invoke:(input:FrozenInput,signal:AbortSignal,index:number,meta:{reasoning?:boolean|KodaXReasoningRequest;streamOptions?:KodaXProviderStreamOptions;taskSignal?:AbortSignal})=>Promise<CallEvidence>,limits={calls:20,tools:40,timeoutMs:480000},collaboration=false){
+export async function runComplexRuntime(route:Pick<EditRoute,'id'|'env'|'model'|'provider'>,directory:string,invoke:(input:FrozenInput,signal:AbortSignal,index:number,meta:{reasoning?:boolean|KodaXReasoningRequest;streamOptions?:KodaXProviderStreamOptions;taskSignal?:AbortSignal})=>Promise<CallEvidence>,limits={calls:20,tools:40,timeoutMs:480000},collaboration=false,taskPrompt=CACHE_TASK){
  const startedAt=Date.now(); const workspace=path.join(directory,'workspace');await writeCacheFixture(workspace);
  await fs.writeFile(path.join(directory,'oracle.mjs'),CACHE_ORACLE);
  execFileSync('git',['init','-q'],{cwd:workspace,windowsHide:true});
@@ -36,7 +36,7 @@ export async function runComplexRuntime(route:Pick<EditRoute,'id'|'env'|'model'|
   toolCount++;if(toolCount>limits.tools)return stop('budget-censored: actual tool cap');
   const child=meta.contextKind==='child';let denied=checkComplexTool(workspace,tool,input,child);
   if(tool==='spawn_agent'){spawnAttempts++;if(allowedSpawns>=1)denied='At most one child per smoke case.';if(denied===null)allowedSpawns++;}
-  events.push({kind:'guard',tool,input,meta,denied});snapshot();return denied?'[Tool Error] '+denied:true;
+  events.push({kind:'guard',tool,input,meta,denied});snapshot();return denied;
  };
  const name='complex-runtime-'+randomUUID();
  class Wrapped extends KodaXBaseProvider{
@@ -70,9 +70,9 @@ export async function runComplexRuntime(route:Pick<EditRoute,'id'|'env'|'model'|
      if(!args||typeof args!=='object'||Array.isArray(args))return stop('eval boundary: malformed bridge input');
      if(bridged)toolCount++;
      const decision=await policy(target,args,{contextKind:child?'child':'root',...(child?{childAgentId:'provider-child'}:{})});
-     // The SDK returns read/navigation denials as actual error tool_results.
+     // The SDK returns recoverable refusals as actual error tool_results.
      // Other isolation violations keep their hard stop.
-     if(decision!==true&&target!=='read'&&!(target==='bash'&&decision==='[Tool Error] '+COMPLEX_DIRECTORY_DENIAL))return stop('isolation-rejected-before-execution: '+String(decision));
+     if(decision!==null&&!isRecoverableComplexDenial(target,decision))return stop('isolation-rejected-before-execution: [Tool Error] '+decision);
     }
     return evidence.result;
    }finally{queued--;release();}
@@ -82,7 +82,7 @@ export async function runComplexRuntime(route:Pick<EditRoute,'id'|'env'|'model'|
  try{
   runtime=await createKodaXRuntime({mode:'embedded',homeDir:path.join(directory,'home'),defaultProvider:name,defaultModel:route.model});
   const session=await runtime.sessions.create({projectPath:workspace});await fs.mkdir(path.join(workspace,'.agent/tmp/sessions',session.id),{recursive:true});await runtime.sessions.updateSettings(session.id,{permissionMode:'full-access',executionCwd:workspace});
-  const handle=await runtime.runs.start({sessionId:session.id,mode:'managed_task',prompt:CACHE_TASK+(collaboration?'\n另外，请派一个只读子 Agent 核对 README 和旧测试中的兼容约束；它只做检查与报告、不修改文件。主 Agent 负责修复、运行测试，并整合其结论。最多创建一个子 Agent，使用继承的模型设置。':'\n可按需要使用至多一个只读子 Agent，使用继承的模型设置；主 Agent 负责实际修复和验证。'),options:{provider:name,model:route.model,agentMode:'ama',reasoningMode:'off',effort:route.provider==='kimi-code'?'low':'none',lsp:false,maxIter:24,maxOutputTokens:4096,abortSignal:abort.signal,disablePromptCache:true,
+  const handle=await runtime.runs.start({sessionId:session.id,mode:'managed_task',prompt:taskPrompt+(collaboration?'\n另外，请派一个只读子 Agent 核对 README 和旧测试中的兼容约束；它只做检查与报告、不修改文件。主 Agent 负责修复、运行测试，并整合其结论。最多创建一个子 Agent，使用继承的模型设置。':'\n可按需要使用至多一个只读子 Agent，使用继承的模型设置；主 Agent 负责实际修复和验证。'),options:{provider:name,model:route.model,agentMode:'ama',reasoningMode:'off',effort:route.provider==='kimi-code'?'low':'none',lsp:false,maxIter:24,maxOutputTokens:4096,abortSignal:abort.signal,disablePromptCache:true,
    guardrails:[createComplexReadBoundary(workspace)],
    learningReviewer:async()=>{reviewBypasses++;return{memoryPlan:{actions:[],warnings:[]},capabilityDecision:{disposition:'discard',reasonCodes:['eval-isolated']}};},
    context:{executionCwd:workspace,gitRoot:workspace,skillsPrompt:'',skillRegistry:new SkillRegistry(workspace),repoIntelligenceMode:'auto',resolveShellPermissionMode:()=> 'full-access'},

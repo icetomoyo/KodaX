@@ -4,19 +4,17 @@
  * Capability inventory: docs/features/v0.7.29-capability-inventory.md#cap-001-repointelligencecontext-injection
  *
  * Builds a composed `repoIntelligenceContext` string injected into the
- * system-prompt before each provider call. The composition has up to six
+ * system-prompt before each provider call. The composition has up to five
  * sections (in priority order):
  *
  *   1. caller-supplied `options.context.repoIntelligenceContext` passthrough
- *   2. full bundle context from `getRepoPreturnBundle` (full mode +
- *      active-module conditions)
- *   3. `generatedContext` from `buildRepoIntelligenceContext` (Repository
- *      Overview + Changed Scope, gated by `includeRepoOverview` /
- *      `includeChangedScope` decision flags)
- *   4. `moduleContext` from `getModuleContext` + `renderModuleContext`
+ *   2. current `generatedContext` from `buildRepoIntelligenceContext`
+ *      (Repository Overview + Changed Scope, gated by the decision flags),
+ *      falling back to the bundle's baseline context if unavailable
+ *   3. `moduleContext` from `getModuleContext` + `renderModuleContext`
  *      (review/bugfix/edit/refactor task types)
- *   5. `impactContext` from `getImpactEstimate` + `renderImpactEstimate`
- *   6. `fallbackGuidance` when module/impact confidence < 0.72 OR neither
+ *   4. `impactContext` from `getImpactEstimate` + `renderImpactEstimate`
+ *   5. `fallbackGuidance` when module/impact confidence < 0.72 OR neither
  *      resolved (suggests using `module_context` / `symbol_context` /
  *      `grep` / `read` for validation)
  *
@@ -298,7 +296,7 @@ export async function buildAutoRepoIntelligenceContext(
     let moduleContext = '';
     let impactContext = '';
     let fallbackGuidance = '';
-    let fullContext = '';
+    let bundledRepoContext = '';
     let repoIntelligenceBudgetTimedOut = overviewBudget.timedOut || preturnBudget.timedOut;
 
     let moduleResult: Awaited<ReturnType<typeof getModuleContext>> | null = null;
@@ -308,7 +306,7 @@ export async function buildAutoRepoIntelligenceContext(
       emitRepoIntelligenceTrace(events, options, 'preturn', preturn, preturn.summary);
       moduleResult = preturn.moduleContext ?? null;
       impactResult = preturn.impactEstimate ?? null;
-      fullContext = preturn.repoContext ?? '';
+      bundledRepoContext = preturn.repoContext ?? '';
     }
 
     if (includeActiveModule) {
@@ -379,8 +377,10 @@ export async function buildAutoRepoIntelligenceContext(
 
     return [
       options.context?.repoIntelligenceContext,
-      fullContext,
-      generatedContext,
+      // The bundle contains the same baseline overview/scope renderer, not
+      // additional semantic evidence. Prefer this request's current snapshot
+      // over its cached copy; keep the bundle as a best-effort fallback.
+      generatedContext || bundledRepoContext,
       moduleContext,
       impactContext,
       fallbackGuidance,

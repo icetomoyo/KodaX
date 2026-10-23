@@ -1,9 +1,40 @@
 import { describe, expect, it } from 'vitest';
-import { checkComplexTool } from './first-turn-complex-guard.js';
+import { createAgent } from '@kodax-ai/agent';
+import { checkComplexTool, createComplexReadBoundary } from './first-turn-complex-guard.js';
 
 const workspace = 'C:\\eval space\\workspace';
 
 describe('complex fixture execution boundary', () => {
+  it.each(['lsp_references', 'module_context', 'symbol_context', 'process_context', 'impact_estimate'])(
+    'refuses escaped %s paths through native and bridge entries without altering the call', async name => {
+      const field = name.startsWith('lsp_') ? 'path' : 'target_path';
+      const input = { [field]: '../outside.ts', line: 1 };
+      expect(checkComplexTool(workspace, name, input, false)).toBe('Path leaves the fixture workspace.');
+      expect(checkComplexTool(workspace, name, { ...input, [field]: 'packages/cache/store.js' }, true)).toBeNull();
+      for (const call of [{ id: 'outside', name, input }, { id: 'outside', name: 'tool_call', input: { name, input } }]) {
+        const original = structuredClone(call);
+        const verdict = await createComplexReadBoundary(workspace).beforeTool?.(call, {
+          agent: createAgent({ name: 'inspection-boundary', instructions: 'Inspect only this workspace.' }),
+        });
+        expect(verdict).toEqual({ action: 'block', reason: 'Path leaves the fixture workspace.' });
+        expect(call).toEqual(original);
+      }
+    },
+  );
+
+  it.each(['bash', 'tool_call'])('blocks an unchanged non-test Node command through the SDK %s boundary', async entry => {
+    const input = { command: 'node --input-type=module -e "throw new Error(\'MUST_NOT_EXECUTE\')"' };
+    const call = entry === 'bash' ? { id: 'denied-node', name: entry, input }
+      : { id: 'denied-node', name: entry, input: { name: ' bash ', input } };
+    const original = structuredClone(call);
+    expect(checkComplexTool(workspace, 'bash', input, true)).toBe('Only local test execution is in scope.');
+    const verdict = await createComplexReadBoundary(workspace).beforeTool?.(call, {
+      agent: createAgent({ name: 'offline-command-boundary', instructions: 'Read-only fixture inspection.' }),
+    });
+    expect(verdict).toEqual({ action: 'block', reason: 'Only local test execution is in scope.' });
+    expect(call).toEqual(original);
+  });
+
   it('admits the observed Windows verification flow without changing the command', () => {
     const commands = [
       'npm test 2>&1',

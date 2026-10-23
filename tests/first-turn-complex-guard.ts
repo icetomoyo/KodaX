@@ -7,16 +7,27 @@ const mutable = new Set(['write', 'edit', 'multi_edit', 'insert_after_anchor']);
 const inspect = new Set(['rg', 'ls', 'pwd', 'cat', 'dir', 'type', 'get-content', 'get-childitem', 'get-location', 'findstr', 'select-string', 'select-object']);
 const readGit = new Set(['diff', 'status', 'ls-files', 'grep', 'show', 'log', 'rev-parse']);
 export const COMPLEX_DIRECTORY_DENIAL = 'Directory change must target the fixture root.';
+const COMPLEX_TEST_COMMAND_DENIAL = 'Only local test execution is in scope.';
+const repoInspection = new Set(['module_context', 'symbol_context', 'process_context', 'impact_estimate',
+  'relationship_scan', 'repo_overview', 'semantic_lookup', 'cyclic_dependencies']);
+const isRepoInspection = (tool: string): boolean => repoInspection.has(tool) || tool.startsWith('lsp_');
 
-/** Return recoverable read/navigation denials before execution, with the original call intact. */
+/** Feedback may recover; the rejected command must still never execute. */
+export function isRecoverableComplexDenial(tool: string, reason: string | null): boolean {
+  return reason !== null && (tool === 'read' || (isRepoInspection(tool) && reason === 'Path leaves the fixture workspace.') || (tool === 'bash'
+    && (reason === COMPLEX_DIRECTORY_DENIAL || reason === COMPLEX_TEST_COMMAND_DENIAL)));
+}
+
+/** Return recoverable read/navigation and test-command denials with the original call intact. */
 export function createComplexReadBoundary(workspace: string): ToolGuardrail {
   return {
     kind: 'tool', name: 'complex-fixture-read-boundary',
     beforeTool: async call => {
       const bridge = resolveToolBridgeTarget(call);
       const target = bridge?.ok ? bridge.call : call;
-      const reason = target.name === 'read' || target.name === 'bash' ? checkComplexTool(workspace, target.name, target.input, false) : null;
-      return reason !== null && (target.name === 'read' || reason === COMPLEX_DIRECTORY_DENIAL)
+      const reason = target.name === 'read' || target.name === 'bash' || isRepoInspection(target.name)
+        ? checkComplexTool(workspace, target.name, target.input, false) : null;
+      return reason !== null && isRecoverableComplexDenial(target.name, reason)
         ? { action: 'block', reason } : { action: 'allow' };
     },
   };
@@ -43,6 +54,7 @@ export function checkComplexTool(workspace: string, tool: string, input: Readonl
   if (tool === 'run_workflow') return 'Independent Workflow executor is outside this bounded evaluation.';
   if (tool === 'spawn_agent' && (readOnly || input.read_only === false || input.provider !== undefined || input.model !== undefined || input.agent_id !== undefined)) return 'Only one read-only inherited-model child is in scope.';
   if (['read', 'glob', 'grep', 'code_search', ...mutable].includes(tool) && input.path !== undefined && !inside(input.path)) return 'Path leaves the fixture workspace.';
+  if (isRepoInspection(tool) && ['path', 'target_path'].some(field => input[field] !== undefined && !inside(input[field]))) return 'Path leaves the fixture workspace.';
   if (mutable.has(tool)) {
     if (readOnly || !inside(input.path)) return 'Mutation is outside the root fixture scope.';
     if (!/^(?:(?:src|packages)\/.+\.(?:js|mjs)|tests\/(?!basic\.test\.js$).+\.(?:js|mjs)|\.agent\/tmp\/.+)$/.test(relative(input.path))) return 'Only implementations, new tests and fixture scratch may change.';
@@ -52,6 +64,7 @@ export function checkComplexTool(workspace: string, tool: string, input: Readonl
   if (input.cwd !== undefined && (!inside(input.cwd) || relative(input.cwd) !== '')) return 'Shell cwd must be the fixture root.';
   const tree = parseBashCommand(shellForAnalysis(input.command));
   if (tree.unparseable || !tree.statements.length) return 'Unsupported shell syntax in evaluation.';
+  let deniedTestCommand = false;
   for (const statement of tree.statements) for (const stage of statement.stages) {
     const args = stage.argv;
     const executable = args[0]?.toLowerCase();
@@ -63,12 +76,13 @@ export function checkComplexTool(workspace: string, tool: string, input: Readonl
     }
     if (executable === 'cd' || executable === 'set-location') {
       const target = args[1]?.toLowerCase() === '/d' ? args[2] : args[1];
-      if (!inside(target) || relative(target) !== '') return COMPLEX_DIRECTORY_DENIAL;
+      if ((!inside(target) || relative(target) !== '') && !deniedTestCommand) return COMPLEX_DIRECTORY_DENIAL;
     } else if (executable === 'git') {
       if (!readGit.has(args[1] ?? '') && (readOnly || args[1] !== 'stash')) return 'Git operation is outside the fixture scope.';
     } else if (executable === 'node' || executable === 'npm') {
       // Product read-only permissions still apply; the evaluator must not preempt them.
-      if (executable === 'node' ? args[1] !== '--test' : args[1] !== 'test') return 'Only local test execution is in scope.';
+      // A recoverable refusal must not hide a later escape or unknown executable.
+      if (executable === 'node' ? args[1] !== '--test' : args[1] !== 'test') deniedTestCommand = true;
     } else if (executable === 'mkdir') {
       if (readOnly || !args.slice(1).filter(arg => arg !== '-p').every(scratch)) return 'Directory creation must stay in fixture scratch.';
     } else if (executable === 'if') {
@@ -77,5 +91,5 @@ export function checkComplexTool(workspace: string, tool: string, input: Readonl
       if (args.length !== 2 || !/^-+$/.test(args[1]!)) return 'Only literal review separators are in scope.';
     } else if (!inspect.has(executable)) return 'Executable is outside the fixture test and inspection scope.';
   }
-  return null;
+  return deniedTestCommand ? COMPLEX_TEST_COMMAND_DENIAL : null;
 }

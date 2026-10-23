@@ -6,7 +6,7 @@
  *
  * Query forms:
  *   - `"select:Name1,Name2"`  — fetch exact tools by name
- *   - `"keyword"`             — keyword search in deferred tool hints
+ *   - `"keyword"`             — keyword search across discoverable tools
  *   - `"+keyword tool"`       — require all keywords (filter mode)
  *
  * Side effect: each tool name resolved is added to the per-context unlock
@@ -24,10 +24,10 @@
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
 import type { LocalToolDefinition, ToolHandlerSync } from './types.js';
 import type { KodaXToolExecutionContext } from '../types.js';
-import { getRegisteredToolDefinition, getToolDefinition } from './index.js';
+import { getRegisteredToolDefinition, getToolDefinition, listToolDefinitions } from './index.js';
 import { isMcpToolName } from './registry.js';
 import { isSessionHistoryTool } from './session-history.js';
-import { lookupRunScopedTool, toModelToolDefinition } from '../agent-runtime/run-scoped-tools.js';
+import { listRunScopedTools, lookupRunScopedTool, toModelToolDefinition } from '../agent-runtime/run-scoped-tools.js';
 
 /** Context needed for run-scoped lookup and host-backed skill availability. */
 type ToolSearchContext = Pick<KodaXToolExecutionContext,
@@ -121,12 +121,19 @@ function resolveSelectNames(
   return resolved;
 }
 
+function discoverableDefinitions(context: ToolSearchContext): KodaXToolDefinition[] {
+  const registered = listToolDefinitions();
+  const registeredNames = new Set(registered.map((definition) => definition.name));
+  return [
+    ...registered,
+    ...listRunScopedTools(context.extensionRuntime)
+      .filter((definition) => !registeredNames.has(definition.name))
+      .map(toModelToolDefinition),
+  ].filter((definition) => isToolDiscoverable(definition.name, context));
+}
+
 function searchKeywords(required: readonly string[], loose: readonly string[], maxResults: number, context: ToolSearchContext): string[] {
-  const deferredDefinitions = Object.keys(DEFERRED_TOOL_HINTS)
-    .filter((name) => isToolDiscoverable(name, context))
-    .map((name) => getToolDefinition(name))
-    .filter((definition): definition is KodaXToolDefinition => definition !== undefined);
-  const index = buildToolSearchIndex(deferredDefinitions, { hints: DEFERRED_TOOL_HINTS });
+  const index = buildToolSearchIndex(discoverableDefinitions(context), { hints: DEFERRED_TOOL_HINTS });
   return searchToolIndex(index, { required, loose }, maxResults).map((result) => result.name);
 }
 
@@ -145,10 +152,12 @@ function buildResult(
   selfManualProductName?: string,
 ): string {
   if (resolved.length === 0) {
-    return 'No tools matched the query. Available deferred tools: '
-      + Object.keys(DEFERRED_TOOL_HINTS)
-        .filter((name) => isToolDiscoverable(name, context)).join(', ')
-      + '. Use query form `select:NAME` to fetch a specific schema.';
+    const available = discoverableDefinitions(context);
+    return 'No tools matched the query. Available tools: '
+      + available.slice(0, MAX_RESULTS_CAP).map((definition) => definition.name).join(', ')
+      + '. Use query form `select:NAME` to fetch a specific schema.'
+      + (available.length > MAX_RESULTS_CAP
+        ? ` [DIRECTORY_LIMIT_REACHED: showing ${MAX_RESULTS_CAP} of ${available.length} tools. Search capability keywords or use an exact name.]` : '');
   }
   const lines: string[] = [];
   const extensionRuntime = context.extensionRuntime;
@@ -211,7 +220,7 @@ export const TOOL_SEARCH_DEFINITION: LocalToolDefinition = {
   name: 'tool_search',
   description: [
     'Look up full contracts for active tools. Native tools are directly callable; use tool_call for discovered tools absent from the native list.',
-    'Use query="select:NAME[,NAME...]" for exact lookup across discoverable tools. Keyword queries search compact-hint web/repo/workflow tools, with +required terms and loose ranked terms.',
+    'Use query="select:NAME[,NAME...]" for exact lookup across discoverable tools. Keyword queries search their names, descriptions and parameters, with +required terms and loose ranked terms.',
     'Results include full descriptions and schemas. Use the returned contract even if later tool lists remain compact.',
   ].join(' '),
   input_schema: {

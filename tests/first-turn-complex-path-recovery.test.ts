@@ -165,15 +165,20 @@ it('returns an unchanged rejected directory command to the readonly child for re
 it.each([
   { name: ' write ', input: { path: '../escape.js', content: 'outside mutation' } },
   { name: ' spawn_agent ', input: { task_name: 'writable-child', objective: 'out of scope', read_only: false } },
-  { name: ' bash ', input: { command: 'node --version' } },
-])('keeps a hard stop for a canonical bridge target: $name', async target => {
+  { name: ' bash ', input: { command: 'node --test ../outside.test.js' } },
+  { name: ' bash ', input: { command: 'node --version && type ../outside.txt' } },
+  { name: ' bash ', input: { command: 'node --version && curl https://example.invalid' } },
+  { name: ' bash ', input: { command: 'node --version && cd packages && curl https://example.invalid' } },
+].flatMap(target => (typeof target.input.command === 'string' && target.input.command.startsWith('node --version')
+  ? ['bash', 'tool_call'] : ['tool_call']).map(entry => ({ entry, target }))))('keeps a hard stop for $entry target: $target.name', async ({ entry, target }) => {
   vi.stubEnv('NODE_ENV', 'production');
   vi.stubEnv('COMPLEX_OFFLINE_KEY', 'offline-not-a-credential');
   const fetcher = vi.fn(async () => { throw new Error('Offline regression forbids network'); });
   vi.stubGlobal('fetch', fetcher);
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-bridge-hard-stop-'));
   let calls = 0;
-  const call = { type: 'tool_use' as const, id: 'forbidden-bridge', name: 'tool_call', input: target };
+  const call = { type: 'tool_use' as const, id: 'forbidden-bridge', name: entry === 'bash' ? target.name.trim() : entry,
+    input: entry === 'bash' ? target.input : target };
   const original = structuredClone(call);
   try {
     const record = await runComplexRuntime({ id: 'bridge-hard-stop', provider: 'offline', model: 'offline', env: 'COMPLEX_OFFLINE_KEY' }, directory, async input => {
