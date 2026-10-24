@@ -281,7 +281,7 @@ Repo/LSP 已知质量风险只对受影响验证用例先校正或明确记录�
 先用真实工具与受控离线流程验证边界；Windows 实跑与 macOS/Linux 平台验证分别记录，不外推。
 之后使用 `zhipu-coding/glm-5.3` 与 `kimi-code/kimi-for-coding` 做有限配对与最终无干预复杂 E2E，
 不使用 zai 别名。每阶段先固定判别任务和总调用/费用上限；用基线完成成本校准预算，不以五轮机械截断。
-不反复重跑挑好结果；失败分清模型波动、评测设计、传输和真实退化。本轮只写计划，零模型请求。
+不反复重跑挑好结果；失败分清模型波动、评测设计、传输和真实退化。当前实施只做离线验证，零模型请求。
 
 统一判据：任务正确性与报告真实性优先；记录总生成请求（含子 Agent 和辅助请求）、串行依赖轮次、
 工具数、全任务输入/输出/缓存用量、费用、耗时、拒绝及恢复。多工具同轮不算多次模型往返。
@@ -292,8 +292,9 @@ Repo/LSP 已知质量风险只对受影响验证用例先校正或明确记录�
 ## 8. 本轮交付与后续范围
 
 已完成全量归类对账与历史复核，并按用户选择补齐三模式设计、78 项分配、SDK/切换及分阶段验收。
-本次实施仅落地 A/B：`KodaXOptions.workMode?: 'agent' | 'coding'`，不传继续 Coding；底层 SDK/profile/子角色不迁移。
-三选项 UI、Runtime Session 持久化、Script 执行器与公开 Script 枚举尚未实现；无效模式明确报错，不伪装成功。
+公开入口仅落地 A/B：`KodaXOptions.workMode?: 'agent' | 'coding'`，不传继续 Coding；底层 SDK/profile/子角色不迁移。
+三选项 UI、Runtime Session 持久化与公开 Script 枚举尚未实现；无效模式明确报错，不伪装成功。
+Script 目前仅有下述内部阶段 C 执行实验，不是可选的产品模式。
 此前 LSP 明确关闭时过滤、local code_search 默认退出、别名收敛、普通编辑恢复迁移和同源去重
 作为已实施基线保留，不重复计功。LSP 合并只省约 350–400 且权限等价未完成，继续暂缓。
 具体源引用和既有失败证据留在相邻设计文件；本文件定义当前整体方向，不批准一次性删除任何候选能力。
@@ -322,4 +323,57 @@ Repo/LSP 已知质量风险只对受影响验证用例先校正或明确记录�
 最终针对回归 17 文件、379 通过、3 项原有 todo；另有 16 场景 wire inventory 通过。
 新增模式解析器覆盖率为语句/分支/函数/行 100%（仅此新模块，不冒称全仓覆盖率）；Coding 构建、
 根目录 source/test 类型检查和新增测试类型检查均通过。规范轴原 P3 已复核关闭；需求轴无阻塞发现。
-下一步才是阶段 C 的受限 Script 最小闭环；不能直接把现有 JSON bridge 当 Script，也不把 SDK opt-in 提前宣布为完整产品模式发布。
+后续阶段 C 记录如下；不能直接把现有 JSON bridge 当 Script，也不把 SDK opt-in 提前宣布为完整产品模式发布。
+
+### C 最小执行实验与限制（2026-10-24，未公开启用）
+
+提交与推送 A/B 基线：主仓库 `3f768634`，配套 feature 历史文档 `fe93035`。后续实验只在
+`packages/coding/src/agent-runtime/script/`，没有被默认装配、AMA 或公开 SDK 导入。
+`workMode` 仍只接受 `agent | coding`；Coding 默认行为和专用角色不变。
+
+- 采用独立 Worker 内的 QuickJS/WASM，guest 没有 Node 的 process/require/fs/network 接口。
+  受控工具调用是唯一宿主 RPC；工具权限仍由宿主负责，这不是给 shell 命令额外授予权限。
+  显式限制 VM 内存/栈、执行墙钟、调用数和单条传输大小；超时或取消终止 VM，并等待已准入叶调用结算。
+  Worker 的 V8 堆限制不等于总进程 RSS 限制，现有 OS shell 隔离规则也不由 QuickJS 替代。
+- 本轮仅验证五个已存在的 builtin：`read/grep/glob/edit/bash`，全部从 registry 取当前契约；
+  无发现/描述前置。pilot 名单只是本轮资格范围，不是第二份正式模式装配表。
+  使用现有 `runToolDispatch`、`applyPostToolProcessing`、原 handler、权限/guardrail、编辑恢复、
+  mutation accounting、事件及可信结果 artifact。预算在已准入叶执行边界记一次，拒绝不计执行次数；
+  `maxCalls` 另限制尝试次数，不能用一层脚本绕过工作预算。
+- 每 cell 新建 VM，叶调用暂按串行处理（包括 `Promise.all`），不引入写入调度或常驻状态。
+  仅前台 shell；后台参数明确拒绝，不能把返回 PID 当作全部副作用已结算。
+  Actor/Goal/交互/审批/通用桥接不暴露给 guest；扩展覆盖或工具撤销会拒绝原绑定。
+  **当前 pilot 拒绝带 `extensionRuntime` 的宿主**，包括装配后新增的绑定，避免本地读失败后
+  自动落入尚未验证的 MCP fallback。没有静默去掉扩展权限，也没有修改原生 fallback；此限制必须在
+  后续资格验证后才能解除，不能宣传成完整 Script 已可用。
+- 宿主保留原始结果、canonical 调用和编辑恢复/截断出处；脚本返回值不能抹掉这些回执。
+  部分写入后失败只报告实际完成的步骤，不回滚冒充原子操作，也不自动重放整段。
+  cell 的 `status` 与 `hadToolErrors` 分开：前者报告脚本失败/超时/取消，后者保留原生工具错误分类。
+  例如原生 shell 的正文可含 `[Cancelled]` 而通用错误标志不为真，取消以 cell 状态和原始回执为准。
+- 原型复核修复：函数 `toString()` 在 tsx 下依赖外部 helper，改为加载独立 Worker 模块；
+  禁止继承父进程 loader 参数/环境密钥，源码 loader 禁用磁盘缓存；非 JSON DTO 结果显式失败并保留宿主回执，
+  不允许函数、Map 等被 JSON 静默删除。补齐合并取消信号和可信 artifact metadata 传递。
+
+依赖成本：coding 包新增精确版本 `quickjs-emscripten-core@0.32.0` 与
+`@jitl/quickjs-singlefile-cjs-release-sync@0.32.0`，另有共同的 ffi-types 依赖；core 与 singlefile variant
+发布包解压体积约 0.8 MB 与 3.1 MB，**不是零体积方案**。选型依据是
+[QuickJS 上游的 WASM 嵌入与运行时限制接口](https://github.com/justjake/quickjs-emscripten)。
+已检查 Node 源码 tsx 入口和 TypeScript 编译后的模块；单文件/Node-free 发布物、macOS/Linux 尚未验证，
+不得因 Windows 测试通过提前接入产品。
+
+离线验收位于 `cell.test.ts` 与 `tests/first-turn-script-cell.test.ts`：受限运算和依赖工具组合、
+宿主全局/模块不可达、控制项拒绝、CPU/内存/传输/调用限额、权限拒绝后再次编辑、实际 Node 测试、
+预算 2/4 与原生叶计数相同、角色排除/撤销/覆盖、guardrail canonical 重写、编辑恢复、
+修改成功后测试失败且只重试测试、真实 Windows shell/Node 取消后进程退出及后续修改未执行。
+上述均为受控离线流程，不是模型自主表现证据。
+
+验证结果：Script 的 24 项测试整组通过，随后新增真实 read→grep 依赖链及路径拒绝用例单独通过，
+共 25 项；现有装配/执行契约 9 文件 108 项通过、2 项原有 todo。coding 构建、根 source/test 类型检查通过。
+24 项整组测量的宿主 `cell.ts`/`pilot.ts` 覆盖率：语句 91.48%、分支 83.50%、函数 92%、行 99.06%；
+不包含独立 Worker 内的 VM 执行，也不代表全仓覆盖率。Worker 通过上述外部行为回归验证。
+规范轴原 2 项、需求轴原 1 项发现均已修正并独立复核关闭；不因此宣称阶段 D–F 完成。
+
+默认 Coding 的 16 个 Windows 场景与 A/B 基线 `kodax-first-turn-wire-bmyHmr` 比较，归一化完整请求 hash
+全部一致，新抓包在 OS Temp `kodax-first-turn-wire-x3KyVS`。无新增首轮注入，也没有 Script token 节省结论。
+后续先解决正式宿主的嵌套资格、异步生命周期/产品打包和完整装配，再比较实际 schema 开销及完整任务的
+质量、模型往返、总 token、费用和耗时；本轮零模型调用，不以手写脚本的成功代替 GLM/Kimi 非劣验证。

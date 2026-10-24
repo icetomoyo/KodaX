@@ -75,6 +75,7 @@
     "benchmark/datasets/first-turn-tokens/*.ts",
     "packages/coding/src/task-engine/_internal/managed-task/llm-adapter-tool-contract.test.ts",
     "packages/coding/src/agent-runtime/work-mode.test.ts",
+    "packages/coding/src/agent-runtime/script/*.test.ts",
     "packages/coding/src/task-engine/_internal/managed-task/role-prompt-capabilities.test.ts"
   ]
 }
