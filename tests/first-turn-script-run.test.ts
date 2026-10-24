@@ -7,6 +7,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { FileSessionStorage } from '../packages/repl/src/interactive/storage.js';
 import { runScriptInvocation } from '../packages/coding/src/agent-runtime/script/run.js';
 import type { KodaXOptions } from '../packages/coding/src/types.js';
+import { assertTrustedTextMutationPolicy } from '../packages/coding/src/trusted-text-mutation.js';
+import { createTrustedTextMutationHost } from '../src/windows-text-transaction.js';
 
 const limits = { timeoutMs: 5000, memoryBytes: 16 * 1024 * 1024, maxCalls: 8, maxTransferBytes: 128 * 1024 };
 const directories: string[] = [];
@@ -53,7 +55,42 @@ it('durably owns partial effects and resumes evidence without replaying a previo
     .toMatchObject({ data: { value: { content: expect.stringContaining('after') } } });
 });
 
-it('waits for an admitted leaf to settle on Run cancellation, persists receipts and admits no later effect', async () => {
+it('uses the production trusted write host, retains path refusal and persists partial creation without replay', async () => {
+  const { root, storage, options } = await fixture();
+  vi.stubEnv('NODE_ENV', 'production');
+  const host = createTrustedTextMutationHost(() => [root], target => assertTrustedTextMutationPolicy(target, root));
+  const snapshot = vi.spyOn(host, 'snapshot');
+  const commit = vi.spyOn(host, 'commit');
+  const outside = path.join(path.dirname(root), path.basename(root) + '-outside.txt');
+  const input = { path: outside, content: 'must not escape' };
+  const original = structuredClone(input);
+  const bound = { ...options, context: { ...options.context, trustedTextMutationHost: host } };
+  const result = await runScriptInvocation(bound, `
+    const rejected = await tools.write(${JSON.stringify(input)});
+    if (!rejected.isError) throw new Error('Expected host path refusal');
+    const created = await tools.write({path:'created/note.txt',content:'retained'});
+    if (created.isError) throw new Error(created.content);
+    throw new Error('later script failure');
+  `, limits);
+  expect(result.scriptCell).toMatchObject({ status: 'failed', error: expect.stringContaining('later script failure') });
+  expect(result.scriptCell.receipts.map(receipt => receipt.result.isError)).toEqual([true, false]);
+  expect(result.scriptCell.receipts[0]?.input).toEqual(original);
+  expect(snapshot).toHaveBeenCalledTimes(2);
+  expect(commit).toHaveBeenCalledTimes(1);
+  await expect(readFile(outside, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  expect(await readFile(path.join(root, 'created/note.txt'), 'utf8')).toBe('retained');
+  const saved = await storage.load('script-session');
+  expect(saved?.extensionRecords?.filter(record => record.type === 'call.settled')).toHaveLength(2);
+  expect(saved?.extensionRecords?.filter(record => record.type === 'call.settled').at(-1)?.data)
+    .toMatchObject({ data: { name: 'write', input: { path: 'created/note.txt', content: 'retained' }, result: { isError: false } } });
+  const recovered = await runScriptInvocation(bound, "return await tools.read({path:'created/note.txt'});", limits);
+  expect(recovered.success).toBe(true);
+  expect(recovered.scriptCell.receipts).toHaveLength(1);
+  expect(recovered.scriptCell.receipts[0]?.result.content).toContain('retained');
+  expect(commit).toHaveBeenCalledTimes(1);
+});
+
+it.each(['edit', 'write'])('waits for an admitted leaf on Run cancellation, persists receipts and admits no later %s', async nextTool => {
   const { root, storage, options } = await fixture();
   const controller = new AbortController();
   let release!: () => void;
@@ -65,7 +102,9 @@ it('waits for an admitted leaf to settle on Run cancellation, persists receipts 
     events: { beforeToolExecute: async name => {
       if (name === 'read') { entered(); await gate; }
       return true;
-    } } }, "await tools.read({path:'value.txt'}); await tools.edit({path:'value.txt',old_string:'before',new_string:'bad'});", limits)
+    } } }, "await tools.read({path:'value.txt'}); " + (nextTool === 'write'
+    ? "await tools.write({path:'value.txt',content:'bad'});"
+    : "await tools.edit({path:'value.txt',old_string:'before',new_string:'bad'});"), limits)
     .then(result => { finished = true; return result; });
   try {
     await ready;

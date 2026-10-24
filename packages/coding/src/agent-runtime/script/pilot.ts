@@ -12,11 +12,11 @@ import { runScriptCell, type ScriptCellLimits, type ScriptCellInput } from './ce
 
 type PilotDispatch = Omit<RunToolDispatchInput, 'toolBlocks' | 'abortSignal'> & { readonly abortSignal?: AbortSignal };
 
-/** Internal phase-C probe. Not a public work mode or an alternative AMA executor.
+/** Internal Script qualification probe. Not a public work mode or an alternative AMA executor.
  * The caller supplies raw host events, not a second budget-charging wrapper.
  */
 export function createScriptPilot(dispatch: PilotDispatch, budget: KodaXManagedWorkBudget) {
-  const registrations = new Map(['read', 'grep', 'glob', 'edit', 'bash'].flatMap(name => {
+  const registrations = new Map(['read', 'grep', 'glob', 'edit', 'write', 'bash'].flatMap(name => {
     const registration = getRegisteredToolDefinition(name);
     return registration?.source.kind === 'builtin'
       && dispatch.activeToolNames?.includes(name) && isToolDiscoverable(name, dispatch.ctx)
