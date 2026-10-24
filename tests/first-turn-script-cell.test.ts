@@ -12,7 +12,7 @@ import { createExtensionRuntime, withExtensionRuntimeContext } from '../packages
 import { createContentHashCache } from '../packages/coding/src/multi-instance/content-hash-cache.js';
 
 const limits = { timeoutMs: 10_000, memoryBytes: 16 * 1024 * 1024, maxCalls: 12, maxTransferBytes: 128 * 1024 };
-const activeTools = ['read', 'grep', 'glob', 'edit', 'write', 'bash', 'spawn_agent', 'tool_call'];
+const activeTools = ['read', 'grep', 'glob', 'edit', 'write', 'insert_after_anchor', 'bash', 'spawn_agent', 'tool_call'];
 
 it('reuses real dispatch for read/edit/test, retains refusal evidence and charges only executed leaves', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-script-pilot-'));
@@ -33,7 +33,7 @@ it('reuses real dispatch for read/edit/test, retains refusal evidence and charge
       toolGuardrails: [{ kind: 'tool', name: 'fixture', beforeTool: before, afterTool: after }],
       guardrailContext: { agent: { name: 'fixture', instructions: '' }, messages: [] },
     }, budget);
-    expect(pilot.tools.map(tool => tool.name)).toEqual(['read', 'grep', 'glob', 'edit', 'write', 'bash']);
+    expect(pilot.tools.map(tool => tool.name)).toEqual(['read', 'grep', 'glob', 'edit', 'write', 'insert_after_anchor', 'bash']);
     const result = await pilot.run(`
       await tools.read({path:'value.mjs'});
       const input = {path:'value.mjs',edits:[{old_string:'value = 1',new_string:'value = 2'}]};
@@ -92,18 +92,22 @@ it.each([2, 4])('matches native leaf accounting with a %i-unit budget and stops 
   expect(nativeBudget.spentBudget).toBe(total);
 });
 
-it.each([2, 4])('qualifies write with its native contract and %i-unit execution budget', async total => {
+it.each([2, 4].flatMap(total => ['write', 'insert_after_anchor'].map(name => ({ total, name }))))(
+  'qualifies $name with its native contract and $total-unit execution budget', async ({ total, name }) => {
   const { directory, ctx, budget, dispatch } = await fixture(total);
   const nativeFixture = await fixture(total);
   ctx.mutationTracker = { files: new Map(), totalOps: 0 };
   nativeFixture.ctx.mutationTracker = { files: new Map(), totalOps: 0 };
   const pilot = createScriptPilot(dispatch, budget);
-  expect(pilot.tools.find(tool => tool.name === 'write')?.input_schema).toEqual(getToolDefinition('write')!.input_schema);
-  const native = wrapCodingToolAsRunnable(getToolDefinition('write')!, (input, context) => executeTool('write', input, context),
+  expect(pilot.tools.find(tool => tool.name === name)?.input_schema).toEqual(getToolDefinition(name)!.input_schema);
+  const native = wrapCodingToolAsRunnable(getToolDefinition(name)!, (input, context) => executeTool(name, input, context),
     nativeFixture.ctx, nativeFixture.budget);
-  for (let i = 0; i < total; i++) expect((await native.execute({ path: 'created.txt', content: 'value' + i },
+  const inputs = Array.from({ length: total + 1 }, (_, i) => name === 'write'
+    ? { path: 'created.txt', content: 'value' + i }
+    : { path: 'value.mjs', anchor: 'export const value = 1;', content: '// note' + i });
+  for (const input of inputs.slice(0, total)) expect((await native.execute(input,
     { agent: { name: 'fixture', instructions: '' } })).isError).not.toBe(true);
-  const result = await pilot.run(`for(let i=0;i<${total + 1};i++) await tools.write({path:'created.txt',content:'value'+i});`, limits);
+  const result = await pilot.run(`for(const input of ${JSON.stringify(inputs)}) await tools[${JSON.stringify(name)}](input);`, limits);
   expect(result.status, result.error).toBe('completed');
   expect(result.receipts.filter(receipt => !receipt.result.isError)).toHaveLength(total);
   expect(result.receipts.at(-1)?.result.content).toContain('budget exhausted');
@@ -111,15 +115,18 @@ it.each([2, 4])('qualifies write with its native contract and %i-unit execution 
   expect(nativeFixture.budget.spentBudget).toBe(total);
   expect(ctx.mutationTracker.totalOps).toBe(total);
   expect(nativeFixture.ctx.mutationTracker.totalOps).toBe(total);
-  expect(await readFile(path.join(directory, 'created.txt'), 'utf8')).toBe('value' + (total - 1));
-  expect(await readFile(path.join(nativeFixture.directory, 'created.txt'), 'utf8')).toBe('value' + (total - 1));
-  expect(result.receipts[0]?.result.metadata?.toolCall).toMatchObject({ name: 'write', input: { path: 'created.txt', content: 'value0' } });
+  const expected = name === 'write' ? 'value' + (total - 1) : total === 2
+    ? 'export const value = 1;\n// note1\n// note0'
+    : 'export const value = 1;\n// note3\n// note2\n// note1\n// note0';
+  expect(await readFile(path.join(directory, inputs[0]!.path), 'utf8')).toBe(expected);
+  expect(await readFile(path.join(nativeFixture.directory, inputs[0]!.path), 'utf8')).toBe(expected);
+  expect(result.receipts[0]?.result.metadata?.toolCall).toMatchObject({ name, input: inputs[0] });
 });
 
-it('honors explicit inventory, excluded tools and live revocation, without admitting control tools', async () => {
+it.each(['edit', 'insert_after_anchor'])('honors inventory, exclusion of %s and live revocation without admitting controls', async excluded => {
   const { ctx, budget, dispatch } = await fixture();
-  const pilot = createScriptPilot({ ...dispatch, ctx: { ...ctx, excludeTools: ['edit'] } }, budget);
-  expect(pilot.tools.map(tool => tool.name)).not.toContain('edit');
+  const pilot = createScriptPilot({ ...dispatch, ctx: { ...ctx, excludeTools: [excluded] } }, budget);
+  expect(pilot.tools.map(tool => tool.name)).not.toContain(excluded);
   expect(createScriptPilot({ ...dispatch, activeToolNames: undefined }, budget).tools).toEqual([]);
   dispatch.activeToolNames.splice(dispatch.activeToolNames.indexOf('read'), 1);
   const result = await pilot.run("return await tools.read({path:'value.mjs'});", limits);
@@ -194,6 +201,30 @@ it('refuses a stale write and allows recovery only after reading the peer conten
   expect(recovered.hadToolErrors).toBe(false);
   expect(await readFile(path.join(directory, 'value.mjs'), 'utf8')).toBe('export const value = 8;\n');
   expect(budget.spentBudget).toBe(4);
+});
+
+it.each([
+  { anchor: 'missing', error: 'ANCHOR_NOT_FOUND' },
+  { anchor: 'same', error: 'ANCHOR_AMBIGUOUS' },
+])('retains edit recovery after $error and clears it only after a valid insertion', async ({ anchor, error }) => {
+  const { directory, budget, dispatch } = await fixture();
+  const original = 'Header\nsame\nsame\nTail\n';
+  await writeFile(path.join(directory, 'value.mjs'), original);
+  const pilot = createScriptPilot(dispatch, budget);
+  await pilot.run("return await tools.edit({path:'value.mjs',old_string:'absent',new_string:'bad'});", limits);
+  const input = { path: 'value.mjs', anchor, content: 'must not insert' };
+  const rejected = await pilot.run(`return await tools.insert_after_anchor(${JSON.stringify(input)});`, limits);
+  expect(rejected.hadToolErrors).toBe(true);
+  expect(rejected.receipts[0]?.result.content).toContain(error);
+  expect(rejected.receipts[0]?.input).toEqual(input);
+  expect(dispatch.runtimeSessionState.blockedEditWrites.has(path.join(directory, 'value.mjs'))).toBe(true);
+  expect(await readFile(path.join(directory, 'value.mjs'), 'utf8')).toBe(original);
+  const recovered = await pilot.run("return await tools.insert_after_anchor({path:'value.mjs',anchor:'Header',content:'Inserted\\n'});", limits);
+  expect(recovered.status, recovered.error).toBe('completed');
+  expect(recovered.hadToolErrors).toBe(false);
+  expect(dispatch.runtimeSessionState.blockedEditWrites.size).toBe(0);
+  expect(await readFile(path.join(directory, 'value.mjs'), 'utf8')).toBe('Header\nInserted\nsame\nsame\nTail\n');
+  expect(budget.spentBudget).toBe(3);
 });
 
 it('honors both host cancellation signals before starting a cell', async () => {
@@ -320,13 +351,14 @@ it('joins the real extension host event frame without changing its read-only per
         await tools.read({path:'value.mjs'});
         await tools.edit({path:'value.mjs',edits:[{old_string:'value = 1',new_string:'value = 9'}]});
         await tools.write({path:'value.mjs',content:'must not overwrite'});
+        await tools.insert_after_anchor({path:'value.mjs',anchor:'export const value = 1;',content:'must not insert'});
         return await tools.read({path:'value.mjs'});
       `, limits), runtime, ctx.runtimeRunId);
     expect(result.status, result.error).toBe('completed');
-    expect(result.receipts.map(receipt => receipt.result.isError)).toEqual([false, true, true, false]);
-    expect(starts).toEqual(['read', 'edit', 'write', 'read']);
+    expect(result.receipts.map(receipt => receipt.result.isError)).toEqual([false, true, true, true, false]);
+    expect(starts).toEqual(['read', 'edit', 'write', 'insert_after_anchor', 'read']);
     expect(results).toEqual(starts);
-    expect(permission).toHaveBeenCalledTimes(4);
+    expect(permission).toHaveBeenCalledTimes(5);
     expect(budget.spentBudget).toBe(2);
     expect(ctx.extensionRuntime).toBe(runtime);
     expect(await readFile(path.join(directory, 'value.mjs'), 'utf8')).toBe('export const value = 1;\n');

@@ -55,20 +55,23 @@ it('durably owns partial effects and resumes evidence without replaying a previo
     .toMatchObject({ data: { value: { content: expect.stringContaining('after') } } });
 });
 
-it('uses the production trusted write host, retains path refusal and persists partial creation without replay', async () => {
+it.each([
+  { name: 'write', input: { path: 'created/note.txt', content: 'retained' }, expected: 'retained' },
+  { name: 'insert_after_anchor', input: { path: 'value.txt', anchor: 'before', content: 'retained' }, expected: 'before\nretained' },
+])('uses the production trusted host for $name, retains path refusal and persists partial effects without replay', async ({ name, input: allowed, expected }) => {
   const { root, storage, options } = await fixture();
   vi.stubEnv('NODE_ENV', 'production');
   const host = createTrustedTextMutationHost(() => [root], target => assertTrustedTextMutationPolicy(target, root));
   const snapshot = vi.spyOn(host, 'snapshot');
   const commit = vi.spyOn(host, 'commit');
   const outside = path.join(path.dirname(root), path.basename(root) + '-outside.txt');
-  const input = { path: outside, content: 'must not escape' };
+  const input = { ...allowed, path: outside, content: 'must not escape' };
   const original = structuredClone(input);
   const bound = { ...options, context: { ...options.context, trustedTextMutationHost: host } };
   const result = await runScriptInvocation(bound, `
-    const rejected = await tools.write(${JSON.stringify(input)});
+    const rejected = await tools[${JSON.stringify(name)}](${JSON.stringify(input)});
     if (!rejected.isError) throw new Error('Expected host path refusal');
-    const created = await tools.write({path:'created/note.txt',content:'retained'});
+    const created = await tools[${JSON.stringify(name)}](${JSON.stringify(allowed)});
     if (created.isError) throw new Error(created.content);
     throw new Error('later script failure');
   `, limits);
@@ -78,19 +81,23 @@ it('uses the production trusted write host, retains path refusal and persists pa
   expect(snapshot).toHaveBeenCalledTimes(2);
   expect(commit).toHaveBeenCalledTimes(1);
   await expect(readFile(outside, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-  expect(await readFile(path.join(root, 'created/note.txt'), 'utf8')).toBe('retained');
+  expect(await readFile(path.join(root, allowed.path), 'utf8')).toBe(expected);
   const saved = await storage.load('script-session');
   expect(saved?.extensionRecords?.filter(record => record.type === 'call.settled')).toHaveLength(2);
   expect(saved?.extensionRecords?.filter(record => record.type === 'call.settled').at(-1)?.data)
-    .toMatchObject({ data: { name: 'write', input: { path: 'created/note.txt', content: 'retained' }, result: { isError: false } } });
-  const recovered = await runScriptInvocation(bound, "return await tools.read({path:'created/note.txt'});", limits);
+    .toMatchObject({ data: { name, input: allowed, result: { isError: false } } });
+  const recovered = await runScriptInvocation(bound, `return await tools.read({path:${JSON.stringify(allowed.path)}});`, limits);
   expect(recovered.success).toBe(true);
   expect(recovered.scriptCell.receipts).toHaveLength(1);
   expect(recovered.scriptCell.receipts[0]?.result.content).toContain('retained');
   expect(commit).toHaveBeenCalledTimes(1);
 });
 
-it.each(['edit', 'write'])('waits for an admitted leaf on Run cancellation, persists receipts and admits no later %s', async nextTool => {
+it.each([
+  { name: 'edit', code: "await tools.edit({path:'value.txt',old_string:'before',new_string:'bad'});" },
+  { name: 'write', code: "await tools.write({path:'value.txt',content:'bad'});" },
+  { name: 'insert_after_anchor', code: "await tools.insert_after_anchor({path:'value.txt',anchor:'before',content:'bad'});" },
+])('waits for an admitted leaf on Run cancellation, persists receipts and admits no later $name', async ({ code }) => {
   const { root, storage, options } = await fixture();
   const controller = new AbortController();
   let release!: () => void;
@@ -102,9 +109,7 @@ it.each(['edit', 'write'])('waits for an admitted leaf on Run cancellation, pers
     events: { beforeToolExecute: async name => {
       if (name === 'read') { entered(); await gate; }
       return true;
-    } } }, "await tools.read({path:'value.txt'}); " + (nextTool === 'write'
-    ? "await tools.write({path:'value.txt',content:'bad'});"
-    : "await tools.edit({path:'value.txt',old_string:'before',new_string:'bad'});"), limits)
+    } } }, "await tools.read({path:'value.txt'}); " + code, limits)
     .then(result => { finished = true; return result; });
   try {
     await ready;
@@ -138,6 +143,43 @@ it('stops after receipt persistence fails, retaining the partial effect and refu
   expect(result.scriptCell.receipts).toHaveLength(1);
   expect(await readFile(path.join(root, 'value.txt'), 'utf8')).toBe('after');
   expect((await storage.load('script-session'))?.extensionRecords?.at(-1)?.data).toMatchObject({ data: { status: 'failed' } });
+});
+
+it('settles an admitted insertion on cancellation without committing or executing the following write', async () => {
+  const { root, storage, options } = await fixture();
+  vi.stubEnv('NODE_ENV', 'production');
+  const host = createTrustedTextMutationHost(() => [root], target => assertTrustedTextMutationPolicy(target, root));
+  const commit = host.commit.bind(host);
+  const controller = new AbortController();
+  const budget = { totalBudget: 2, spentBudget: 0, currentHarness: 'H0_DIRECT' as const };
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let entered!: () => void;
+  const ready = new Promise<void>(resolve => { entered = resolve; });
+  const committing = vi.spyOn(host, 'commit').mockImplementation(async input => {
+    entered(); await gate;
+    return commit(input);
+  });
+  let finished = false;
+  const operation = runScriptInvocation({ ...options, abortSignal: controller.signal,
+    context: { ...options.context, trustedTextMutationHost: host, managedWorkBudget: budget } },
+  "await tools.insert_after_anchor({path:'value.txt',anchor:'before',content:'bad'}); await tools.write({path:'value.txt',content:'worse'});", limits)
+    .then(result => { finished = true; return result; });
+  try {
+    await Promise.race([ready, operation.then(result => { throw new Error('Insertion did not reach commit: ' + result.lastText); })]);
+    controller.abort();
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(finished).toBe(false);
+    release();
+    const result = await operation;
+    expect(result).toMatchObject({ success: false, interrupted: true, scriptCell: { status: 'cancelled' } });
+    expect(result.scriptCell.receipts).toHaveLength(1);
+    expect(result.scriptCell.receipts[0]).toMatchObject({ name: 'insert_after_anchor', result: { isError: true } });
+    expect(committing).toHaveBeenCalledTimes(1);
+    expect(budget.spentBudget).toBe(1);
+    expect(await readFile(path.join(root, 'value.txt'), 'utf8')).toBe('before');
+    expect((await storage.load('script-session'))?.extensionRecords?.at(-1)?.data).toMatchObject({ data: { status: 'cancelled' } });
+  } finally { release(); await operation; }
 });
 
 it('refuses effects without durable storage, or if the initial boundary cannot be saved', async () => {

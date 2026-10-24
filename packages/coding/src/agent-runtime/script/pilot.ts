@@ -16,7 +16,7 @@ type PilotDispatch = Omit<RunToolDispatchInput, 'toolBlocks' | 'abortSignal'> & 
  * The caller supplies raw host events, not a second budget-charging wrapper.
  */
 export function createScriptPilot(dispatch: PilotDispatch, budget: KodaXManagedWorkBudget) {
-  const registrations = new Map(['read', 'grep', 'glob', 'edit', 'write', 'bash'].flatMap(name => {
+  const registrations = new Map(['read', 'grep', 'glob', 'edit', 'write', 'insert_after_anchor', 'bash'].flatMap(name => {
     const registration = getRegisteredToolDefinition(name);
     return registration?.source.kind === 'builtin'
       && dispatch.activeToolNames?.includes(name) && isToolDiscoverable(name, dispatch.ctx)
