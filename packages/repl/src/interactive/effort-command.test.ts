@@ -88,6 +88,34 @@ describe('/effort command', () => {
     expect(setReasoningMode).toHaveBeenCalledWith('auto');
   });
 
+  it.each([
+    ['low', 'low'],
+    ['med', 'medium'],
+    ['high', 'high'],
+    ['xhigh', 'xhigh'],
+    ['max', 'max'],
+    ['auto', undefined],
+    ['off', 'rejected'],
+  ] as const)('handles /effort %s for Kimi Code K3.1', async (input, expected) => {
+    const callbacks = {
+      setEffort: vi.fn(),
+      setReasoningMode: vi.fn(),
+    } as unknown as CommandCallbacks;
+    await effortCmd.handler([input], ctx, callbacks, createConfig({
+      provider: 'kimi-code', model: 'k3.1-pro',
+      thinking: true, reasoningMode: 'auto', effortOverride: true,
+    }));
+
+    if (expected === 'rejected') {
+      expect(callbacks.setEffort).not.toHaveBeenCalled();
+      expect(saveConfig).not.toHaveBeenCalled();
+      expect(getLoggedOutput()).toContain('does not support disabling reasoning');
+    } else {
+      expect(callbacks.setEffort).toHaveBeenCalledWith(expected);
+      expect(callbacks.setReasoningMode).toHaveBeenCalledWith('auto');
+    }
+  });
+
   it('clears explicit effort with auto and normalizes the legacy reasoning mode', async () => {
     const setEffort = vi.fn();
     const setReasoningMode = vi.fn();

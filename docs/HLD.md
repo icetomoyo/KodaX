@@ -620,6 +620,13 @@ The separate `kimi-code` subscription alias defaults to the direct upstream
 1,048,576-token `k3` tier. Both K3 routes use `thinking.effort` for reasoning
 intent, defaulting to `high`.
 
+K3.1 is separately selectable on both Kimi aliases: subscription IDs
+`k3.1-pro` / `k3.1-pro-highspeed`, public IDs `kimi-k3.1-pro` /
+`kimi-k3.1-pro-highspeed`. These routes always think and default to max
+effort; their serializers use native `output_config.effort` (Messages) or
+`reasoning_effort` (Chat Completions). See the
+[provider contract and verification status](../public_docs/configuration/providers.md#kimi-k31-routes).
+
 The v0.7.88 Zhipu Coding Plan routes keep logical model capacity separate from
 the upstream model identifier. `zhipu-coding` defaults to `glm-5.3` and keeps
 `glm-5.2`; `zai-coding` and `ark-coding` also default to `glm-5.3` while

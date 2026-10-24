@@ -186,6 +186,24 @@ function createBaseReasoningProfileFromPreset(
         disabledEfforts: ['none', 'minimal'],
         supportsDisabledThinking: true,
       };
+    case 'kimi-k3.1':
+      return {
+        reasoningPreset: preset,
+        effortStrategy: 'provider-toggle',
+        defaultEffort: 'max',
+        supportedEfforts: [
+          { value: 'low', description: 'Low thinking effort' },
+          { value: 'high', description: 'High thinking effort' },
+          { value: 'max', description: 'Maximum thinking effort', isDefault: true },
+        ],
+        effortAliases: {
+          minimal: 'low', minimum: 'low', light: 'low',
+          medium: 'high', xhigh: 'max', ultra: 'max',
+        },
+        localRejectEfforts: ['none'],
+        supportsReasoningEffort: true,
+        supportsDisabledThinking: false,
+      };
     case 'kimi-k3':
       return {
         reasoningPreset: preset,

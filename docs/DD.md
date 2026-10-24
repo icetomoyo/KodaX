@@ -761,6 +761,21 @@ effort to `high`, and preserve explicit disable semantics. Media capability
 metadata keeps `k3-256k` image-capable and video-unsupported. Public Kimi and
 Kimi For Coding credentials remain separate.
 
+The 2026-10-24 K3.1 additions use a separate `kimi-k3.1` reasoning preset:
+`kimi-code/k3.1-pro` and `k3.1-pro-highspeed` emit native Messages
+`thinking: {type: 'enabled'}` plus `output_config.effort`;
+`kimi/kimi-k3.1-pro` and
+`kimi-k3.1-pro-highspeed` emit top-level Chat Completions `reasoning_effort`.
+Both always think, default to `max`, support low/high/max, reject explicit
+`none`, and omit legacy nested `thinking.effort`. Existing defaults and K3
+contracts are retained. Capability metadata exposes up to 1M context
+(subscription plan permissions still apply); public K3.1 requests 131,072
+output tokens and subscription K3.1 retains the 32,000 per-turn cap. The
+[provider guide](../public_docs/configuration/providers.md#kimi-k31-routes)
+records official sources, the successful subscription stream/tool replay,
+the seven user-level request matrix, the unconfirmed high self-report,
+and the public-account balance limitation on live verification.
+
 For the Zhipu Coding Plan aliases, `provider-capabilities.json` defines both
 `glm-5.3` and `glm-5.2` as 1M-context routes. `zhipu-coding` and
 `zai-coding` and `ark-coding` all default to 5.3 while keeping `glm-5.2`;

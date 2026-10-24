@@ -1191,8 +1191,8 @@ dist/binary/linux-x64/
 |----------|----------|-----------|-----------|
 | anthropic | `ANTHROPIC_API_KEY` | Native | claude-sonnet-4-6（可 `/model` 切换 `claude-opus-4-6` / `claude-haiku-4-5`） |
 | openai | `OPENAI_API_KEY` | Native | gpt-5.3-codex（可 `/model` 切换 `gpt-5.4` / `gpt-5.3-codex-spark`） |
-| kimi | `KIMI_API_KEY` | Native | kimi-k2.7-code（262,144 token；可 `/model` 切换 `kimi-k3`〔1M〕/ `kimi-k2.7-code-highspeed` / `kimi-k2.6` / `kimi-k2.5`） |
-| kimi-code | `KIMI_CODE_API_KEY` | Native | k3-256k（Moderato+，256K，直接请求同名上游模型；可 `/model` 切换 `k3`〔Allegretto+，1M〕/ `kimi-for-coding`〔K2.7 Code〕/ `kimi-for-coding-highspeed`） |
+| kimi | `KIMI_API_KEY` | Native | kimi-k2.7-code（262,144 token；可 `/model` 切换 `kimi-k3.1-pro` / `kimi-k3.1-pro-highspeed` / `kimi-k3`〔1M〕/ `kimi-k2.7-code-highspeed` / `kimi-k2.6` / `kimi-k2.5`） |
+| kimi-code | `KIMI_CODE_API_KEY` | Native | k3-256k（Moderato+，256K，直接请求同名上游模型；可 `/model` 切换 `k3.1-pro` / `k3.1-pro-highspeed` / `k3`〔1M〕/ `kimi-for-coding` / `kimi-for-coding-highspeed`；K3.1 必须开启思考） |
 | qwen | `QWEN_API_KEY` | Native | qwen3.5-plus |
 | qwen-token-plan | `QWEN_TOKEN_API_KEY` | Native | qwen3.8-max（Anthropic 协议；可 `/model` 切换兼容项 `qwen3.8-max-preview` 及 `qwen3.7-max` / `qwen3.7-plus` / `qwen3.6-flash` / `glm-5.2` / `deepseek-v4-pro`；均为 1M ctx；两个 Qwen 3.8 ID / 3.7 Plus / 3.6 Flash 支持图片理解） |
 | zhipu | `ZHIPU_API_KEY` | Native | glm-5（可 `/model` 切换 `glm-5.3` / `glm-5.2`，均为 1M ctx，另有 `glm-5.1` / `glm-5-turbo`；GLM-5.3 开放平台 API 仍标注为即将上线） |

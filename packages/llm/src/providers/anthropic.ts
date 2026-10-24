@@ -298,6 +298,14 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       return;
     }
 
+    if (preset === 'kimi-k3.1') {
+      // Match the official Kimi client: explicitly enable thinking and send
+      // effort through output_config, without the legacy nested thinking.effort.
+      params.thinking = { type: 'enabled' } as Anthropic.Messages.ThinkingConfigParam;
+      setAnthropicOutputEffort(params, intent.effort ?? capability.defaultEffort);
+      return;
+    }
+
     if (preset === 'kimi-k3') {
       const useModelDefault =
         reasoning.effortSource === 'omitted' && reasoning.effort === 'none';

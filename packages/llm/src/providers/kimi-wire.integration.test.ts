@@ -34,6 +34,44 @@ const EMIT_RESULT_TOOL: KodaXToolDefinition = {
 };
 
 describe.skipIf(!RUN_INTEGRATION)('Kimi public API — real provider HTTP', () => {
+  it.each(['kimi-k3.1-pro', 'kimi-k3.1-pro-highspeed'])('streams public K3.1 model %s', async (model) => {
+    const provider = resolveProvider('kimi');
+    expect(provider.getAvailableModels()).toContain(model);
+    const result = await provider.stream(
+      [{ role: 'user', content: 'Reply with exactly: OK' }], [],
+      'Follow the user request exactly and keep the answer terse.',
+      { enabled: true, effort: 'low' },
+      { modelOverride: model, maxOutputTokensOverride: 1_024, singleAttempt: true },
+      AbortSignal.timeout(45_000),
+    );
+    expect(result.textBlocks.map(block => block.text).join('').trim()).toBe('OK');
+    expect(result.thinkingBlocks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'thinking', thinking: expect.stringMatching(/\S/) }),
+    ]));
+  }, 60_000);
+
+  it('replays K3.1 reasoning_content and tool results through the public endpoint', async () => {
+    const provider = resolveProvider('kimi');
+    const prompt = 'Call emit_result with value "ok". After the tool result, reply with exactly: OK';
+    const system = 'Use the provided tool before answering the user.';
+    const reasoning = { enabled: true, effort: 'low' } as const;
+    const options = { modelOverride: 'kimi-k3.1-pro', maxOutputTokensOverride: 2_048, singleAttempt: true };
+    const result = await provider.stream(
+      [{ role: 'user', content: prompt }], [EMIT_RESULT_TOOL], system,
+      reasoning, options, AbortSignal.timeout(45_000),
+    );
+    expect(result.toolBlocks).toEqual([
+      expect.objectContaining({ name: 'emit_result', input: { value: 'ok' } }),
+    ]);
+    const toolCall = result.toolBlocks[0]!;
+    const followUp = await provider.stream([
+      { role: 'user', content: prompt },
+      { role: 'assistant', content: [...result.thinkingBlocks, ...result.textBlocks, ...result.toolBlocks] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: '{"accepted":true}' }] },
+    ], [EMIT_RESULT_TOOL], system, reasoning, options, AbortSignal.timeout(45_000));
+    expect(followUp.textBlocks.map(block => block.text).join('').trim()).toBe('OK');
+  }, 100_000);
+
   it('streams the default K2.7 model with both thinking and text', async () => {
     const provider = resolveProvider('kimi');
 
@@ -179,12 +217,54 @@ describe.skipIf(!RUN_INTEGRATION)('Kimi public API — real provider HTTP', () =
 });
 
 describe.skipIf(!RUN_KIMI_CODE_INTEGRATION)('Kimi Code — real provider HTTP', () => {
+  it.each(['k3.1-pro', 'k3.1-pro-highspeed'])('streams K3.1 model %s with thinking enabled', async (model) => {
+    const provider = resolveProvider('kimi-code');
+    expect(provider.getAvailableModels()).toContain(model);
+
+    const result = await provider.stream(
+      [{ role: 'user', content: 'Reply with exactly: OK' }], [],
+      'Follow the user request exactly and keep the answer terse.',
+      { enabled: true, effort: 'low' },
+      { modelOverride: model, maxOutputTokensOverride: 1_024, singleAttempt: true },
+      AbortSignal.timeout(45_000),
+    );
+
+    expect(result.textBlocks.map(block => block.text).join('').trim()).toBe('OK');
+    expect(result.thinkingBlocks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'thinking', thinking: expect.stringMatching(/\S/) }),
+    ]));
+  }, 60_000);
+
+  it('replays K3.1 thinking and tool results through the subscription endpoint', async () => {
+    const provider = resolveProvider('kimi-code');
+    const prompt = 'Call emit_result with value "ok". After the tool result, reply with exactly: OK';
+    const system = 'Use the provided tool before answering the user.';
+    const reasoning = { enabled: true, effort: 'low' } as const;
+    const options = { modelOverride: 'k3.1-pro', maxOutputTokensOverride: 2_048, singleAttempt: true };
+    const result = await provider.stream(
+      [{ role: 'user', content: prompt }], [EMIT_RESULT_TOOL], system,
+      reasoning, options, AbortSignal.timeout(45_000),
+    );
+    expect(result.toolBlocks).toEqual([
+      expect.objectContaining({ name: 'emit_result', input: { value: 'ok' } }),
+    ]);
+    const toolCall = result.toolBlocks[0]!;
+    const followUp = await provider.stream([
+      { role: 'user', content: prompt },
+      { role: 'assistant', content: [...result.thinkingBlocks, ...result.textBlocks, ...result.toolBlocks] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: '{"accepted":true}' }] },
+    ], [EMIT_RESULT_TOOL], system, reasoning, options, AbortSignal.timeout(45_000));
+    expect(followUp.textBlocks.map(block => block.text).join('').trim()).toBe('OK');
+  }, 100_000);
+
   it('streams the default Moderato K3 tier over the direct k3-256k model id', async () => {
     const provider = resolveProvider('kimi-code');
 
     expect(provider.getModel()).toBe('k3-256k');
     expect(provider.getAvailableModels()).toEqual([
       'k3-256k',
+      'k3.1-pro',
+      'k3.1-pro-highspeed',
       'k3',
       'kimi-for-coding',
       'kimi-for-coding-highspeed',
