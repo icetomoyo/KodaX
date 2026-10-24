@@ -1,5 +1,9 @@
 # 工具注入模式：源码对标与最小实施边界
 
+> 后续实施状态：默认本地 root 的 code_search 入口已在兼容条件下退出模型菜单，grep.literal 和普通编辑恢复迁移通过离线验证；见[实施边界](tool-origin-and-retirement.md#2026-10-24-实施默认本地搜索入口与普通编辑恢复)。以下完整 native 结论保留为早期实验历史。
+
+> 2026-10-24：本文保留首轮实验的历史边界。最新源码、CodeMode/Only 差异、RepoIntel 演进问题与实施顺序，以 [精简默认工具面与可选程序化调用](tool-mode-design.md) 和 [全量78项工具审计](tool-necessity-comparison.md) 为准；已撤回三个固定预设的判断，补齐动态来源、辅助请求与P0–P5计划，均为待验证提案，尚未新增产品开关。
+
 2026-10-23。当前默认仍为完整 native；本轮没有新增产品模式开关、通用 JS 工具运行时或付费模型调用。
 已实施的是自动仓库上下文去重；Repo 四项与 LSP 八项仅拆成独立的测试投影。
 AMA 的规划、派发、结束策略、SDK、专用角色及底层工具能力保持不变。
@@ -29,7 +33,7 @@ KodaX 并非完全没有代码编排：`run_workflow` 用受限 JS 的 wf API �
 源码入口：
 
 - Codex：[模式选择](C:/Works/PubProj/codex/codex-rs/core/src/tools/mod.rs:65)、[工具呈现](C:/Works/PubProj/codex/codex-rs/core/src/tools/spec_plan.rs:850)、[SDK 披露](C:/Works/PubProj/codex/codex-rs/code-mode-protocol/src/description.rs:321)、[嵌套执行](C:/Works/PubProj/codex/codex-rs/core/src/tools/code_mode/mod.rs:404)。
-- DSH：[scope 呈现](C:/Works/PubProj/deepseek-harness/packages/core/agent-tool-presentation/src/index.ts:59)、[SDK 注入](C:/Works/PubProj/deepseek-harness/packages/core/tools/src/index.ts:1019)、[内层执行及排空](C:/Works/PubProj/deepseek-harness/packages/core/tools/src/ptc.ts:686)、[能力组成](C:/Works/PubProj/deepseek-harness/packages/bundle/web-app/presets/standard.patch.yml:11)。
+- DSH：此处为旧 pin 的 scope 呈现、SDK 注入和执行链；旧 `packages/core/tools/src/ptc.ts:686` 已在新版本迁移，可在参考仓用 `git show 687f282e8625c6b8d11ff58211a90524be2e4317:packages/core/tools/src/ptc.ts` 复核。[当前 PTC executor](C:/Works/PubProj/deepseek-harness/packages/core/tool-executor-ptc/src/index.ts:11) 与旧抓包不可混为一个版本，详见后续完整设计。
 - KodaX：[agent 声明](../../packages/agent/src/primitives/agent.ts)、[child 能力](../../packages/coding/src/child-executor.ts)、[AMA 工具构建](../../packages/coding/src/task-engine/_internal/managed-task/agent-chain.ts)、[单目标 bridge](../../packages/coding/src/tools/tool-bridge.ts)、[Workflow](../../packages/coding/src/tools/run-workflow.ts)、[Construction](../../packages/coding/src/construction/ctx-proxy.ts)。
 
 ## 本轮已经实施与验证

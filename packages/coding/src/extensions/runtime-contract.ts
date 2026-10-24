@@ -14,6 +14,7 @@
 
 import type {
   CapabilityKind,
+  CapabilityProvider,
   CapabilityResult,
   CapabilitySearchSnapshot,
   KodaXExtensionSessionRecord,
@@ -57,6 +58,8 @@ export interface BoundExtensionRuntimeController {
 }
 
 export interface CapabilityRuntimeContract {
+  /** Optional inventory; absence means search support is unknown, not empty. */
+  listCapabilityProviders?(): readonly Pick<CapabilityProvider, 'id' | 'search'>[];
   hasCapabilityProvider?(providerId: string): boolean;
   searchCapabilities(
     providerId: string,

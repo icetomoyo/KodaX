@@ -79,6 +79,8 @@ describe('CAP-015: edit anchor recovery + write-block contract', () => {
         '[Tool Error] edit: EDIT_NOT_FOUND: anchor missing', emptyState(), makeCtx({ executionCwd: directory }));
       expect(result).toContain('unique recovery marker current');
       expect(result).toContain('Do not use write');
+      expect(result).toContain('complete unique heading line');
+      expect(result).not.toContain('insert_after_anchor');
     } finally {
       if (path.dirname(directory) !== path.resolve(os.tmpdir()) || !path.basename(directory).startsWith('kodax-edit-array-recovery-')) {
         throw new Error('Unsafe recovery fixture cleanup');
@@ -173,6 +175,8 @@ describe('CAP-015: edit anchor recovery + write-block contract', () => {
     );
     expect(result).toContain('BLOCKED_AFTER_EDIT_FAILURE');
     expect(result).toContain(realFile);
+    expect(result).toContain('Retry with edit');
+    expect(result).not.toContain('insert_after_anchor');
     expect(state.blockedEditWrites.has(realFile)).toBe(true);
   });
 
@@ -226,8 +230,10 @@ describe('CAP-015: edit anchor recovery + write-block contract', () => {
     );
 
     expect(result).toContain('failed with EDIT_TOO_LARGE');
-    expect(result).toContain('Split the change into smaller edit calls');
-    expect(result).toContain('insert_after_anchor');
+    expect(result).toContain('one edit call');
+    expect(result).toContain('edits');
+    expect(result).toContain('earlier edits');
+    expect(result).not.toContain('insert_after_anchor');
 
     expect(state.lastToolErrorCode).toBe('EDIT_TOO_LARGE');
     expect(state.editRecoveryAttempts.get(expectedKey)).toBe(1);
@@ -257,6 +263,8 @@ describe('CAP-015: edit anchor recovery + write-block contract', () => {
 
     expect(result).toContain('automatic anchor recovery is exhausted');
     expect(result).toContain('Do not escalate to a whole-file write');
+    expect(result).toContain('retry with edit');
+    expect(result).not.toContain('insert_after_anchor');
     expect(state.editRecoveryAttempts.get(expectedKey)).toBe(3);
   });
 

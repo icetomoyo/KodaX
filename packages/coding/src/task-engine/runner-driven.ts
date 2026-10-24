@@ -1881,6 +1881,8 @@ async function runManagedTaskViaRunnerInner(
   );
   // Root and managed children both arrive here after their own role/host filters.
   // Keep executable capability separate from any deferred model-facing projection.
+  // Policy follows executable capabilities, not any later model-view projection.
+  // Hiding a native schema must not disable AMA planning or collaboration teaching.
   workerAvailableToolNames = filterModelToolAliases(chain.worker.tools ?? []).map((tool) => tool.name);
   // Per-Runner invocation LLM-turn counter. Idle-yield resumes are fresh
   // invocations and reset this event-display scope below.

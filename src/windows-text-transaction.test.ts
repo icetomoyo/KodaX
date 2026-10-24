@@ -12,11 +12,13 @@ import {
   assertTrustedTextMutationPolicy,
   toolEdit,
   toolInsertAfterAnchor,
+  toolRead,
   toolUndo,
   toolWrite,
   type KodaXToolExecutionContext,
 } from '@kodax-ai/coding';
 import { toolMultiEdit } from '../packages/coding/src/tools/multi-edit.js';
+import { createContentHashCache } from '../packages/coding/src/multi-instance/content-hash-cache.js';
 
 import {
   _internalWindowsTextTransaction,
@@ -60,6 +62,119 @@ describe('Windows trusted text transaction integration', () => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
     await fs.rm(root, { recursive: true, force: true });
+  });
+
+  portableIt.each([
+    { name: 'LF', before: '# Heading\nbody\n', anchor: '# Heading', old: '# Heading\n', next: '# Heading\nnew\n', expected: '# Heading\nnew\nbody\n' },
+    { name: 'CRLF', before: '# Heading\r\nbody\r\n', anchor: '# Heading', old: '# Heading\r\n', next: '# Heading\r\nnew\r\n', expected: '# Heading\r\nnew\r\nbody\r\n' },
+    { name: 'prefix', before: '# Heading (draft)\nbody\n', anchor: '# Heading', old: '# Heading (draft)\n', next: '# Heading (draft)\nnew\n', expected: '# Heading (draft)\nnew\nbody\n' },
+    { name: 'Unicode', before: '# “Heading”\nbody\n', anchor: '# "Heading"', old: '# “Heading”\n', next: '# “Heading”\nnew\n', expected: '# “Heading”\nnew\nbody\n' },
+  ])('read plus edit covers a small $name insertion with a real Host receipt and undo', async (fixture) => {
+    for (const entry of ['anchor', 'edit'] as const) {
+      const target = path.join(root, entry + '.md');
+      await fs.writeFile(target, fixture.before);
+      const ctx: KodaXToolExecutionContext = {
+        backups: new Map(), executionCwd: root, gitRoot: root,
+        trustedTextMutationHost: createWindowsTrustedTextMutationHost(() => [root], authorizeOrdinaryCanonicalTarget),
+        contentHashCache: createContentHashCache(),
+      };
+      expect(await toolRead({ path: target }, ctx)).toContain('body');
+      const result = entry === 'anchor'
+        ? await toolInsertAfterAnchor({ path: target, anchor: fixture.anchor, content: 'new\n' }, ctx)
+        : await toolEdit({ path: target, old_string: fixture.old, new_string: fixture.next }, ctx);
+      expect(result).not.toContain('[Tool Error]');
+      expect(await fs.readFile(target, 'utf8')).toBe(fixture.expected);
+      expect(await toolUndo({}, ctx)).toContain('Restored');
+      expect(await fs.readFile(target, 'utf8')).toBe(fixture.before);
+    }
+  });
+
+  portableIt('keeps ambiguous insertion rejection and unique-context edit recovery without another tool', async () => {
+    const target = path.join(root, 'ambiguous.md');
+    const before = '# Heading\nfirst\n# Heading\nsecond\n';
+    await fs.writeFile(target, before);
+    const ctx: KodaXToolExecutionContext = {
+      backups: new Map(), executionCwd: root,
+      trustedTextMutationHost: createWindowsTrustedTextMutationHost(() => [root], authorizeOrdinaryCanonicalTarget),
+    };
+    expect(await toolInsertAfterAnchor({ path: target, anchor: '# Heading', content: 'new\n' }, ctx)).toContain('ANCHOR_AMBIGUOUS');
+    expect(await toolEdit({ path: target, old_string: '# Heading\n', new_string: '# Heading\nnew\n' }, ctx)).toContain('EDIT_AMBIGUOUS');
+    expect(await fs.readFile(target, 'utf8')).toBe(before);
+    expect(ctx.backups.size).toBe(0);
+    expect(await toolEdit({ path: target, old_string: '# Heading\nsecond', new_string: '# Heading\nnew\nsecond' }, ctx)).toContain('File edited');
+    expect(await fs.readFile(target, 'utf8')).toBe('# Heading\nfirst\n# Heading\nnew\nsecond\n');
+  });
+
+  portableIt('requires fresh-read recovery for edit when an anchor insertion would accept the current snapshot', async () => {
+    const before = '# Heading\nbody\n', external = '# Heading\nexternal\n';
+    for (const entry of ['anchor', 'edit'] as const) {
+      const target = path.join(root, entry + '.md');
+      await fs.writeFile(target, before);
+      const ctx: KodaXToolExecutionContext = {
+        backups: new Map(), executionCwd: root, contentHashCache: createContentHashCache(),
+        trustedTextMutationHost: createWindowsTrustedTextMutationHost(() => [root], authorizeOrdinaryCanonicalTarget),
+      };
+      await toolRead({ path: target }, ctx);
+      await writeFromExternalProcess(target, external);
+      if (entry === 'anchor') {
+        expect(await toolInsertAfterAnchor({ path: target, anchor: '# Heading', content: 'new\n' }, ctx)).toContain('Content inserted');
+      } else {
+        const input = { path: target, old_string: '# Heading\n', new_string: '# Heading\nnew\n' };
+        expect(await toolEdit(input, ctx)).toContain('[Tool Error]');
+        expect(await fs.readFile(target, 'utf8')).toBe(external);
+        await toolRead({ path: target }, ctx);
+        expect(await toolEdit(input, ctx)).toContain('File edited');
+      }
+      expect(await fs.readFile(target, 'utf8')).toBe('# Heading\nnew\nexternal\n');
+    }
+  });
+
+  portableIt.each(['\n', '\r\n'])('recovers a large append in one atomic edit batch with one undo (EOL=%j)', async (eol) => {
+    const target = path.join(root, 'batch-append.md');
+    const before = ['# Heading', 'body', ''].join(eol);
+    await fs.writeFile(target, before);
+    const ctx: KodaXToolExecutionContext = {
+      backups: new Map(), executionCwd: root, contentHashCache: createContentHashCache(),
+      trustedTextMutationHost: createWindowsTrustedTextMutationHost(() => [root], authorizeOrdinaryCanonicalTarget),
+    };
+    await toolRead({ path: target }, ctx);
+    const first = Array.from({ length: 250 }, (_, i) => `added-${i}`).join(eol) + eol;
+    const second = Array.from({ length: 250 }, (_, i) => `added-${i + 250}`).join(eol) + eol;
+    const rejected = await toolEdit({ path: target, edits: [
+      { old_string: '# Heading' + eol, new_string: '# Heading' + eol + first + second },
+    ] }, ctx);
+    expect(rejected).toContain('EDIT_TOO_LARGE');
+    expect(await fs.readFile(target, 'utf8')).toBe(before);
+    const edits = [
+      { old_string: '# Heading' + eol, new_string: '# Heading' + eol + first },
+      { old_string: 'added-249' + eol, new_string: 'added-249' + eol + second },
+    ];
+    // A later failed anchor must roll back the entire batch, including the first insertion.
+    expect(await toolEdit({ path: target, edits: [edits[0],
+      { old_string: 'missing-anchor', new_string: second },
+    ] }, ctx)).toContain('[Tool Error]');
+    expect(await fs.readFile(target, 'utf8')).toBe(before);
+    expect(await toolEdit({ path: target, edits }, ctx)).not.toContain('[Tool Error]');
+    expect(await fs.readFile(target, 'utf8')).toBe('# Heading' + eol + first + second + 'body' + eol);
+    expect(await toolUndo({}, ctx)).toContain('Restored');
+    expect(await fs.readFile(target, 'utf8')).toBe(before);
+  });
+
+  portableIt('recommends the existing edit batch for large insertions while preserving anchor compatibility', async () => {
+    const target = path.join(root, 'large.md');
+    await fs.writeFile(target, '# Heading\nbody\n');
+    const ctx: KodaXToolExecutionContext = {
+      backups: new Map(), executionCwd: root,
+      trustedTextMutationHost: createWindowsTrustedTextMutationHost(() => [root], authorizeOrdinaryCanonicalTarget),
+    };
+    const content = 'new\n'.repeat(401);
+    const rejected = await toolEdit({ path: target, old_string: '# Heading\n', new_string: '# Heading\n' + content }, ctx);
+    expect(rejected).toContain('EDIT_TOO_LARGE');
+    expect(rejected).toContain('one edit call');
+    expect(rejected).toContain('edits');
+    expect(await fs.readFile(target, 'utf8')).toBe('# Heading\nbody\n');
+    expect(await toolInsertAfterAnchor({ path: target, anchor: '# Heading', content }, ctx)).toContain('Content inserted');
+    expect(await fs.readFile(target, 'utf8')).toBe('# Heading\n' + content + 'body\n');
   });
 
   portableIt('rejects cold loading development native artifacts from an authorized write root', async () => {

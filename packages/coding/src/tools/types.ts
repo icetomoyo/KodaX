@@ -104,6 +104,9 @@ export type ToolInterruptBehavior = 'cancel' | 'wait';
 export interface LocalToolDefinition extends KodaXToolDefinition {
   handler: ToolHandler;
 
+  /** Builtin specialist entry omitted from the opt-in general Agent work surface. Not an authorization rule. */
+  workSurface?: 'coding';
+
   /**
    * v0.7.42 — Required declarative side-effect class. See
    * {@link ToolSideEffect} for category definitions and rationale. Plan

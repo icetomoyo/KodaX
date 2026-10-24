@@ -217,6 +217,7 @@ export type {
   KodaXToolVisibilityPolicy,
   KodaXManagedTaskStatusEvent,
   KodaXOptions,
+  KodaXWorkMode,
   KodaXSandboxOptions,
   KodaXCompactionOverride,
   KodaXSelfManualConfig,

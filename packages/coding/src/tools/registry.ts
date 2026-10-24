@@ -88,7 +88,8 @@ function extractRequiredParams(
 }
 
 function toToolDefinition(definition: RegisteredToolDefinition): KodaXToolDefinition {
-  const { handler: _handler, registrationId: _registrationId, requiredParams: _requiredParams, source: _source, ...tool } = definition;
+  const { handler: _handler, registrationId: _registrationId, requiredParams: _requiredParams, source: _source,
+    workSurface: _workSurface, ...tool } = definition;
   return tool;
 }
 
@@ -200,7 +201,7 @@ for (const definition of BUILTIN_TOOL_DEFINITIONS) {
 }
 
 export const KODAX_TOOLS: KodaXToolDefinition[] = BUILTIN_TOOL_DEFINITIONS.map((definition) => {
-  const { handler: _handler, ...tool } = definition;
+  const { handler: _handler, workSurface: _workSurface, ...tool } = definition;
   return tool;
 });
 
@@ -233,7 +234,7 @@ export function getBuiltinToolDefinition(name: string): KodaXToolDefinition | un
   if (!definition) {
     return undefined;
   }
-  const { handler: _handler, ...tool } = definition;
+  const { handler: _handler, workSurface: _workSurface, ...tool } = definition;
   return tool;
 }
 

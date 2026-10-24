@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, w
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildRepoIntelligenceContext, getRepoOverview } from './index.js';
+import { analyzeChangedScope, buildRepoIntelligenceContext, getRepoOverview, renderChangedScope } from './index.js';
 import {
   getImpactEstimate as getSemanticImpactEstimate,
   getRepoRoutingSignals as getSemanticRepoRoutingSignals,
@@ -87,6 +87,54 @@ describe('repo overview baseline cache', () => {
       rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       tempDir = '';
     }
+  });
+
+  it.each([
+    { subdirectory: false, dirty: false },
+    { subdirectory: false, dirty: true },
+    { subdirectory: true, dirty: false },
+    { subdirectory: true, dirty: true },
+  ])('shares overview identity only in combined context: %j', async ({ subdirectory, dirty }) => {
+    tempDir = mkdtempSync(join(tmpdir(), 'kodax-repo-context-identity-'));
+    initGitRepo(tempDir);
+    createWorkspaceFixture(tempDir);
+    commitAll(tempDir, 'initial');
+    if (dirty) writeFileSync(join(tempDir, 'docs', 'PRD.md'), '# Updated requirements\n');
+    const context = { executionCwd: subdirectory ? join(tempDir, 'packages', 'app') : tempDir, gitRoot: tempDir };
+    const combined = await buildRepoIntelligenceContext(context, { includeChangedScope: true });
+    expect(combined.split('\n').filter(line => line.startsWith('Root: '))).toEqual([`Root: ${tempDir}`]);
+    expect(combined).not.toContain('Repository overview snapshot:');
+    expect(combined).toContain('Snapshot: git @ ');
+    const combinedScope = combined.split('## Repository Change Scope\n')[1]!;
+    expect(combinedScope).toMatch(/^Snapshot: \d{4}-/m);
+    expect(combinedScope).toContain(`Changed files: ${dirty ? 1 : 0}`);
+    if (dirty) expect(combinedScope).toContain('docs/PRD.md');
+
+    // Standalone composition and the SDK renderer must remain self-contained.
+    const standalone = await buildRepoIntelligenceContext(context, { includeRepoOverview: false, includeChangedScope: true });
+    const report = await analyzeChangedScope(context);
+    const rendered = renderChangedScope(report);
+    expect(rendered).toContain(`Root: ${tempDir}`);
+    expect(rendered).toContain(`Repository overview snapshot: ${report.overviewGeneratedAt}`);
+    expect(rendered).toContain(`Snapshot: ${report.analyzedAt}`);
+    const withoutAnalysisTime = (text: string) => text.replace(/^Snapshot: .*$/m, 'Snapshot: <analysis time>');
+    expect(withoutAnalysisTime(standalone)).toBe(`## Repository Change Scope\n${withoutAnalysisTime(rendered)}`);
+    const sharedIdentityRemoved = rendered.split('\n').filter(line =>
+      line !== `Root: ${tempDir}` && line !== `Repository overview snapshot: ${report.overviewGeneratedAt}`,
+    ).join('\n');
+    expect(withoutAnalysisTime(combinedScope)).toBe(withoutAnalysisTime(sharedIdentityRemoved));
+  }, 15000);
+
+  it('keeps the overview self-contained when a non-Git workspace has no change scope', async () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'kodax-repo-context-non-git-'));
+    createWorkspaceFixture(tempDir);
+    const result = await buildRepoIntelligenceContext({ executionCwd: tempDir }, { includeChangedScope: true });
+    expect(result).toContain(`Root: ${tempDir}`);
+    expect(result).toContain('Snapshot: filesystem @ ');
+    expect(result).not.toContain('## Repository Change Scope');
+    expect(await buildRepoIntelligenceContext({ executionCwd: tempDir }, {
+      includeRepoOverview: false, includeChangedScope: true,
+    })).toBe('');
   });
 
   it('replaces a filesystem overview after the workspace becomes an unborn Git repository', async () => {

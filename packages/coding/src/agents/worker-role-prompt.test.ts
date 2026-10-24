@@ -22,6 +22,13 @@ const baseDecision: KodaXTaskRoutingDecision = {
 };
 
 describe('buildWorkerInstructions', () => {
+  it('teaches direct local lookup without steering back to the retired default search entry', () => {
+    const output = buildWorkerInstructions(baseDecision, undefined, false, undefined,
+      ['grep', 'glob', 'read', 'code_search', 'todo_create', 'todo_update', 'todo_list', 'spawn_agent', 'wait_agent']);
+    expect(output).toContain('Prefer grep/glob for local content/path lookup.');
+    expect(output).not.toContain('`code_search`');
+    expect(output).toContain('PLAN-FIRST GUIDANCE:');
+  });
   it('preserves full planning guidance with the consolidated item reader', () => {
     const output = buildWorkerInstructions(baseDecision, undefined, false, undefined,
       ['todo_create', 'todo_update', 'todo_list', 'wait_agent']);

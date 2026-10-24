@@ -188,6 +188,11 @@ it('inventories first serialized requests for isolated content and real Runtime 
               return value.name ?? value.function?.name;
             });
             expect(toolNames).toContain('todo_update');
+            // These SDK fixtures explicitly disable default LSP and supply no
+            // service. The real Runtime Host retains its normal lazy service.
+            if (scenario !== 'runtime-host') {
+              expect(toolNames.filter(name => name?.startsWith('lsp_')), cell).toEqual([]);
+            }
             const components = { system: metric(system ?? systemMessages), conversation: metric(conversation), tools: metric(tools), controls: metric(controls) };
             const normalized = normalizeFixtureBody(body, root, workspace, runtimeSessionId);
             let repeatComparison: Record<string, unknown> | undefined;

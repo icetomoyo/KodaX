@@ -68,8 +68,13 @@
     "src/**/*.test.ts",
     "src/**/*.test.tsx",
     "tests/first-turn*.ts",
+    "tests/deferred-repo-lsp-support.ts",
+    "tests/deferred-repo-lsp-support.test.ts",
+    "tests/deferred-repo-lsp.eval.ts",
+    "tests/deferred-repo-lsp-runtime.test.ts",
     "benchmark/datasets/first-turn-tokens/*.ts",
     "packages/coding/src/task-engine/_internal/managed-task/llm-adapter-tool-contract.test.ts",
+    "packages/coding/src/agent-runtime/work-mode.test.ts",
     "packages/coding/src/task-engine/_internal/managed-task/role-prompt-capabilities.test.ts"
   ]
 }

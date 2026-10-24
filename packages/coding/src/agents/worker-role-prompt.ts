@@ -279,8 +279,8 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
     '- Keep an explicitly scoped file/module/repository audit inside the requested scope; unrelated worktree changes do not expand it.',
     lspTools.length > 0
       ? `- For exact file positions or compiler-backed symbol/call hierarchy edges, use the available LSP tools: ${lspTools.map((name) => '\`' + name + '\`').join(', ')}.` : undefined,
-    hasTool('code_search')
-      ? '- Prefer grep/glob for local content/path lookup. `code_search` also supports literal matching and extension provider search; it does not rank local matches by relevance.' : undefined,
+    hasTool('grep') && hasTool('glob')
+      ? '- Prefer grep/glob for local content/path lookup.' : undefined,
     hasTool('semantic_lookup')
       ? '- Use `semantic_lookup` for concepts rather than exact strings.' : undefined,
     '- Use read/grep for targeted lookups or edits in known files and for exact code or line numbers; capsules summarize.',

@@ -148,7 +148,8 @@ describe('FEATURE_189 B.2 — tool_search handler', () => {
     expect(out).toContain('<function>');
     expect(out).toContain('"name":"web_fetch"');
     // Full description should include the load-bearing teaching:
-    expect(out).toContain('prefer `bash` with the `gh` CLI');
+    expect(out).toContain('follows redirects');
+    expect(out).toContain('does not cache');
   });
 
   it.each((['extension', 'constructed'] as const).flatMap(kind =>
@@ -543,7 +544,8 @@ describe('FEATURE_189 B.2 — getActiveToolDefinitions deferred description swap
     );
     const webFetch = defs.find((d) => d.name === 'web_fetch');
     expect(webFetch).toBeDefined();
-    expect(webFetch!.description).toContain('prefer `bash` with the `gh` CLI');
+    expect(webFetch!.description).toContain('follows redirects');
+    expect(webFetch!.description).toContain('does not cache');
   });
 
   it('leaves non-deferred tools unchanged regardless of unlock set', () => {

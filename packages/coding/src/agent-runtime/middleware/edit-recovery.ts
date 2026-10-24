@@ -18,15 +18,13 @@
  *   3. **Synthesises a recovery user-message** with diagnostic content:
  *      - `EDIT_TOO_LARGE`: tells the model to split into smaller edits.
  *      - `> 2 attempts`: stops auto-recovery, tells the model to choose
- *        a manual anchor or switch to `insert_after_anchor`.
+ *        a unique anchor from current content and retry with `edit`.
  *      - `≤ 2 attempts`: includes nearby anchor candidates from
  *        `inspectEditFailure` (window 120 lines on attempt 1, 400 on
  *        attempt 2) and instructs the model to retry.
  *
- * The block is **cleared on a successful re-read** of the same path —
- * which in the SA loop today is enforced by `updateToolOutcomeTracking`
- * (still in `agent.ts`) calling `clearEditRecoveryStateForPath` after
- * a non-error `edit` or `insert_after_anchor` result.
+ * The block is cleared by `updateToolOutcomeTracking` after a non-error
+ * `edit` or compatible `insert_after_anchor` result for the same path.
  *
  * Migration history: extracted from `agent.ts:902-1032`
  * (`resolveToolTargetPath` + `clearEditRecoveryStateForPath` +
@@ -92,7 +90,7 @@ export function maybeBlockExistingFileWrite(
     return undefined;
   }
 
-  return `[Tool Error] write: BLOCKED_AFTER_EDIT_FAILURE: Refusing to rewrite existing file ${resolvedPath} while edit anchor recovery is in progress. Retry with edit using a smaller unique anchor or use insert_after_anchor.`;
+  return `[Tool Error] write: BLOCKED_AFTER_EDIT_FAILURE: Refusing to rewrite existing file ${resolvedPath} while edit anchor recovery is in progress. Retry with edit using unique existing text; use an edits array for multiple replacements.`;
 }
 
 export async function buildEditRecoveryUserMessage(
@@ -127,7 +125,7 @@ export async function buildEditRecoveryUserMessage(
     return [
       `The previous edit for ${resolvedPath} failed with ${code}.`,
       'Do not use write to replace the existing file.',
-      'Split the change into smaller edit calls, or use insert_after_anchor when you are appending a new section after a unique heading.',
+      'Split the change into smaller replacements in the edits array of one edit call; later anchors must match the result of earlier edits.',
     ].join('\n');
   }
 
@@ -141,7 +139,7 @@ export async function buildEditRecoveryUserMessage(
     return [
       `The previous edit for ${resolvedPath} failed with ${code}, and automatic anchor recovery is exhausted.`,
       'Do not escalate to a whole-file write.',
-      'Choose a smaller unique anchor manually, or switch to insert_after_anchor if this is a section append.',
+      'Choose a unique old_string from current file content and retry with edit; preserve the full anchor text when appending.',
     ].join('\n');
   }
 
@@ -166,7 +164,7 @@ export async function buildEditRecoveryUserMessage(
     `The previous edit for ${resolvedPath} failed with ${code}.`,
     'Do not use write to rewrite the existing file.',
     'Retry with edit using a smaller unique old_string.',
-    'When appending a new section after a unique heading, use insert_after_anchor instead.',
+    'For a section append, replace the complete unique heading line with that line plus the new content, preserving line breaks.',
   ];
 
   if (primary) {

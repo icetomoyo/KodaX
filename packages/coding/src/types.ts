@@ -2261,7 +2261,12 @@ export interface KodaXSkillDynamicContextPolicy {
   disable?: boolean;
 }
 
+/** Product work surface. Script will be added only with its execution runtime. */
+export type KodaXWorkMode = 'agent' | 'coding';
+
 export interface KodaXOptions {
+  /** Opt-in default-root work surface; omitted means Coding. Does not replace SDK profiles or child roles. */
+  workMode?: KodaXWorkMode;
   /** Explicit host request; Runtime runs it through ordinary tool permissions without an LLM. */
   toolInvocation?: { readonly name: string; readonly input: Record<string, unknown> };
   provider: string;
@@ -2706,6 +2711,8 @@ export type {
 };
 
 export interface KodaXToolExecutionContext {
+  /** Resolved default-root work surface; absent preserves the existing Coding/SDK inventory. */
+  workMode?: KodaXWorkMode;
   /** Internal run/role execution inventory, before model-only schema projection. */
   discoveryToolNames?: readonly string[];
   /** Trusted Runtime home for managed process registration; never model supplied. */
@@ -3069,6 +3076,12 @@ export interface KodaXToolExecutionContext {
    * from `options.context.lspService` or the process-wide default.
    */
   lspService?: import('./lsp/service.js').LspService;
+
+  /** Resolved by context assembly when default LSP is disabled and no service
+   * is bound. Omitted on raw SDK contexts; absence alone never disables tools.
+   * A subsequently bound service takes precedence over this snapshot.
+   */
+  lspNavigationDisabled?: boolean;
 
   /**
    * FEATURE_177 v0.7.42 — per-task read-file-state cache (anti-loop).

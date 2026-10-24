@@ -1202,7 +1202,8 @@ export async function buildRepoIntelligenceContext(
         scope: options.changedScope ?? 'all',
         baseRef: options.baseRef,
       });
-      sections.push(['## Repository Change Scope', renderChangedScope(report)].join('\n'));
+      // Both sections use this snapshot; standalone scope still needs its identity.
+      sections.push(['## Repository Change Scope', renderChangedScopeContent(report, !includeRepoOverview)].join('\n'));
     } catch {
       // Non-git workspaces can still benefit from repo_overview without failing prompt construction.
     }
@@ -1533,9 +1534,13 @@ function describeChangedScope(report: ChangedScopeReport): string {
 }
 
 export function renderChangedScope(report: ChangedScopeReport): string {
+  return renderChangedScopeContent(report, true);
+}
+
+function renderChangedScopeContent(report: ChangedScopeReport, includeOverviewIdentity: boolean): string {
   const lines: string[] = [
     `Changed scope for ${path.basename(report.workspaceRoot)}`,
-    `Root: ${report.workspaceRoot}`,
+    ...(includeOverviewIdentity ? [`Root: ${report.workspaceRoot}`] : []),
     `Scope: ${describeChangedScope(report)}`,
     `Snapshot: ${report.analyzedAt}`,
     `Changed files: ${report.totalChangedFiles}`,
@@ -1543,7 +1548,7 @@ export function renderChangedScope(report: ChangedScopeReport): string {
     `Categories: source=${report.categories.source} docs=${report.categories.docs} tests=${report.categories.tests} config=${report.categories.config} other=${report.categories.other}`,
   ];
 
-  if (report.overviewGeneratedAt) {
+  if (includeOverviewIdentity && report.overviewGeneratedAt) {
     lines.push(`Repository overview snapshot: ${report.overviewGeneratedAt}`);
   }
 

@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { toolCodeSearch } from './code-search.js';
+import { toolGrep } from './grep.js';
+import { toolGlob } from './glob.js';
 
 describe('toolCodeSearch', () => {
   let tempDir = '';
@@ -33,6 +35,23 @@ describe('toolCodeSearch', () => {
     expect(result).toContain('Retrieval result for code_search');
     expect(result).toContain('Scope: workspace | Trust: workspace | Freshness: snapshot');
     expect(result).toContain('alpha.ts');
+  });
+
+  it('can replace local literal content and filename lookup with existing grep and glob', async () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'kodax-search-substitution-'));
+    writeFileSync(join(tempDir, 'cache-store.ts'), 'export const TTL = "clock() >= insertedAt + ttlMs";\n', 'utf8');
+    writeFileSync(join(tempDir, 'decoy.ts'), 'export const note = "clockX >= insertedAt + ttlMs";\n', 'utf8');
+    const ctx = { backups: new Map<string, string>(), executionCwd: tempDir };
+    const local = await toolCodeSearch({ query: 'clock()', path: tempDir, case_sensitive: true }, ctx);
+    const grep = await toolGrep({ pattern: 'clock\\(\\)', path: tempDir }, ctx);
+    for (const result of [local, grep]) {
+      expect(result).toContain('cache-store.ts');
+      expect(result).toContain('insertedAt + ttlMs');
+      expect(result).not.toContain('decoy.ts');
+    }
+    expect(await toolCodeSearch({ query: 'cache-store', path: tempDir }, ctx)).toContain('cache-store.ts');
+    expect(await toolGlob({ pattern: '**/*cache-store*', path: tempDir }, ctx)).toContain('cache-store.ts');
+    expect(await toolGrep({ pattern: 'ttl', path: tempDir, ignore_case: true }, ctx)).toContain('export const TTL');
   });
 
   it('uses provider-backed code search when requested', async () => {

@@ -5,6 +5,33 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { KodaXProviderError } from '@kodax-ai/llm';
+import type { RunnerToolCall } from '@kodax-ai/agent';
+import { resolveToolBridgeTarget } from '../packages/coding/src/tools/tool-bridge.js';
+
+/** Local-only fixture experiment; callers must exclude provider-search and explicit SDK profiles. */
+export function projectLocalSearchInput(input: FrozenInput, root: boolean): FrozenInput {
+  if (!root || getRegisteredToolDefinition('code_search')?.source.kind !== 'builtin'
+    || !['code_search', 'grep', 'glob', 'read', 'tool_search', 'tool_call'].every(name =>
+      input.tools.some(tool => tool.name === name)
+      && getRegisteredToolDefinition(name)?.source.kind === 'builtin')) return input;
+  return { ...input, tools: input.tools.filter(tool => tool.name !== 'code_search') };
+}
+
+/** Experimental wording only; no schema, executor, policy, or child changes. */
+export function projectBridgeTeachingInput(input: FrozenInput, root: boolean): FrozenInput {
+  if (!root || getRegisteredToolDefinition('tool_call')?.source.kind !== 'builtin') return input;
+  return { ...input, tools: input.tools.map(tool => tool.name === 'tool_call' ? {
+    ...tool, description: tool.description + ' Supply name and input as sibling top-level fields, e.g. {"name":"read","input":{"path":"README.md"}}. Put only the target arguments inside input.',
+  } : tool) };
+}
+
+/** Let the real bridge return its validation error only when no target can dispatch. */
+export function isRejectOnlyBridgeCall(call: RunnerToolCall): boolean {
+  if (getRegisteredToolDefinition('tool_call')?.source.kind !== 'builtin') return false;
+  const target = resolveToolBridgeTarget(call);
+  return (target?.ok === false && target.error === '`name` is required.')
+    || (target?.ok === true && ['tool_call', 'tool_describe'].includes(target.call.name));
+}
 
 /** Mirrors the final-native smoke's proven local rejection contract; never excuses a physical attempt. */
 export function isAuxiliaryLocalPreflight(error: unknown, facts: readonly { boundary: string }[], tools: readonly string[]): boolean {
@@ -35,15 +62,15 @@ const LSP_NAMES: readonly string[] = Object.freeze([
 export const DEFERRED_REPO_LSP_NAMES: readonly string[] = Object.freeze([...REPO_NAMES, ...LSP_NAMES]);
 
 /** Only the root model sees the experiment; the existing bridge retains the full target inventory. */
-export function projectDeferredRepoLspInput(input: FrozenInput, root: boolean, family: 'all' | 'repo' | 'lsp' = 'all'): FrozenInput {
+export function projectDeferredRepoLspInput(input: FrozenInput, root: boolean, family: 'all' | 'repo' | 'lsp' | 'manual' = 'all'): FrozenInput {
   if (!root || !input.tools.some(tool => tool.name === 'tool_search')
     || !input.tools.some(tool => tool.name === 'tool_call')) return input;
-  const requested = family === 'repo' ? REPO_NAMES : family === 'lsp' ? LSP_NAMES : DEFERRED_REPO_LSP_NAMES;
+  const requested = family === 'manual' ? ['kodax_manual'] : family === 'repo' ? REPO_NAMES : family === 'lsp' ? LSP_NAMES : DEFERRED_REPO_LSP_NAMES;
   const deferred = input.tools.filter(tool => requested.includes(tool.name)
     && getRegisteredToolDefinition(tool.name)?.source.kind === 'builtin').map(tool => tool.name);
   if (deferred.length === 0) return input;
   const names = new Set(deferred);
-  const capabilities = family === 'repo' ? 'detailed repo context' : family === 'lsp' ? 'compiler navigation, symbols and call hierarchy'
+  const capabilities = family === 'manual' ? 'the installed product manual, including SDK-provided topics' : family === 'repo' ? 'detailed repo context' : family === 'lsp' ? 'compiler navigation, symbols and call hierarchy'
     : 'detailed repo context and compiler navigation, symbols and call hierarchy';
   const guide = '\nAdditional available capabilities (full contracts via tool_search query="select:NAME[,NAME...]"): '
     + deferred.join(', ') + '. These provide ' + capabilities + '. '

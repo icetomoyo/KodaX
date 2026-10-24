@@ -51,6 +51,18 @@ describe('toolGrep', () => {
     );
   });
 
+  it('matches long literal strings directly without weakening regex safety', async () => {
+    const pattern = 'Ab.[x](a+)+$\\'.repeat(24);
+    const dir = setup({ '源 码/target.ts': `before\r\n${pattern}\r\nafter\r\n`, 'decoy.ts': 'AbXxaaaa\n' });
+    const result = await toolGrep({ pattern, literal: true, path: dir }, ctx(dir));
+    expect(result).toContain('target.ts:2:');
+    expect(result).not.toContain('decoy.ts');
+    expect(result).not.toContain('[Tool Error]');
+    expect(await toolGrep({ pattern: pattern.toLowerCase(), literal: true, ignore_case: true, path: dir, output_mode: 'count' }, ctx(dir))).toBe('1 matches');
+    expect(await toolGrep({ pattern, path: dir }, ctx(dir))).toContain('256-character safety limit');
+    expect(await toolGrep({ pattern: '(a+)+$', literal: false, path: dir }, ctx(dir))).toContain('potentially unsafe');
+  });
+
   it('returns count in count mode', async () => {
     const dir = setup({ 'data.txt': 'foo\nbar\nfoo\nbaz\nfoo\n' });
     const result = await toolGrep(

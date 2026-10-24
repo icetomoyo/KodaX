@@ -61,13 +61,16 @@ function getUnsafeRegexReason(pattern: string): string | null {
   return null;
 }
 
-function createSafeRegex(pattern: string, flags: string): RegExp {
-  const unsafeReason = getUnsafeRegexReason(pattern);
+function createSafeRegex(pattern: string, flags: string, literal = false): RegExp {
+  const unsafeReason = literal
+    ? (!pattern.trim() ? 'Pattern must not be empty' : pattern.includes('\0') ? 'Pattern must not contain null bytes' : null)
+    : getUnsafeRegexReason(pattern);
   if (unsafeReason) {
     throw new Error(`Pattern rejected as potentially unsafe. ${unsafeReason}.`);
   }
   try {
-    return new RegExp(pattern, flags);
+    // Escaped literal text cannot introduce quantifiers, groups or backreferences.
+    return new RegExp(literal ? pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : pattern, flags);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Invalid regex pattern. ${message}`);
@@ -366,7 +369,7 @@ export async function toolGrep(
   try {
     let flags = ignoreCase ? 'i' : '';
     if (multiline) flags += 's';
-    regex = createSafeRegex(pattern, flags);
+    regex = createSafeRegex(pattern, flags, input.literal === true);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return `[Tool Error] grep: ${message}`;

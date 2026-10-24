@@ -155,8 +155,7 @@ async function runEditOnce(
       return formatEditToolError(
         'EDIT_AMBIGUOUS',
         `matched ${ambiguousBlocks.length} normalized blocks (lines ${formatLineList(blockLocations)}). `
-        + 'Include more surrounding lines so the old_string spans a unique region, '
-        + 'or use insert_after_anchor for section appends.',
+        + 'Include more surrounding lines so the old_string spans a unique region.',
       );
     }
     if (!matchedRange) {
@@ -272,7 +271,7 @@ function getEditSizeFailure(filePath: string, oldString: string, newString: stri
   ) {
     return formatEditToolError(
       'EDIT_TOO_LARGE',
-      `Edit payload for ${filePath} is too large for safe exact replacement. Split it into smaller edits or use insert_after_anchor for section appends.`,
+      `Edit payload for ${filePath} is too large for safe exact replacement. Split it into smaller replacements in the edits array of one edit call; later anchors must match the result of earlier edits.`,
     );
   }
   return undefined;

@@ -20,7 +20,8 @@
 
 import { randomUUID } from 'node:crypto';
 import { withEffectivePermissionContext } from '../../../prompts/effective-permissions.js';
-import { isRegistryManagedAgent } from '../../../tools/model-tool-definition.js';
+import { getRegistryManagedAgentContext } from '../../../tools/model-tool-definition.js';
+import { getRegisteredToolDefinition } from '../../../tools/registry.js';
 import { filterModelToolAliases } from '../../../agent-runtime/tool-resolution.js';
 
 import type {
@@ -497,9 +498,23 @@ export function buildRunnerLlmAdapter(
       }
     }
 
-    const registryManaged = isRegistryManagedAgent(agent);
+    const managedContext = getRegistryManagedAgentContext(agent);
+    const registryManaged = managedContext !== undefined;
     let wireTools = (registryManaged ? filterModelToolAliases(agent.tools ?? []) : agent.tools ?? [])
       .map(t => ({ name: t.name, description: t.description, input_schema: t.input_schema }));
+
+    // Presentation only: keep the execution inventory and AMA capability teaching intact.
+    // Unknown extension inventories and explicit SDK/child contracts retain native search.
+    if (managedContext
+      && ![managedContext, options.context].some(context =>
+        context?.currentAgentId || context?.agentProfile || context?.toolVisibilityPolicy)
+      && [managedContext.extensionRuntime, options.extensionRuntime].every(runtime =>
+        !runtime || runtime.listCapabilityProviders?.().every(provider => typeof provider.search !== 'function') === true)
+      && ['code_search', 'grep', 'glob', 'read', 'tool_search', 'tool_call'].every(name =>
+        wireTools.some(tool => tool.name === name)
+        && getRegisteredToolDefinition(name)?.source.kind === 'builtin')) {
+      wireTools = wireTools.filter(tool => tool.name !== 'code_search');
+    }
 
     // Reasoning single-tracking: resolve the per-turn reasoning EFFORT through
     // the FEATURE_078 L1-L2 chain (effort-native):

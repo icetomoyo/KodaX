@@ -669,7 +669,7 @@ export function buildRunnerAgentChain(ctx: KodaXToolExecutionContext,
   worker.handoffs = workerHandoffs;
 
   return {
-    worker: markRegistryManagedAgent(Object.freeze(worker) as Agent),
+    worker: markRegistryManagedAgent(Object.freeze(worker) as Agent, ctx),
   };
 }
 

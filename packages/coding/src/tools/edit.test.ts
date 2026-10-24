@@ -107,6 +107,23 @@ describe('edit tool', () => {
     expect(parseEditToolError(result)).toBe('EDIT_NOT_FOUND');
   });
 
+  it('keeps normalized ambiguous append recovery on edit with unique surrounding text', async () => {
+    const filePath = path.join(tempDir, 'sections.md');
+    const before = '# Heading\r\nfirst\r\n# Heading\r\nsecond\r\n';
+    await fs.writeFile(filePath, before);
+    const rejected = await toolEdit({ path: filePath, edits: [
+      { old_string: '# Heading\n', new_string: '# Heading\nnew\n' },
+    ] }, ctx);
+    expect(rejected).toContain('EDIT_AMBIGUOUS');
+    expect(rejected).toContain('surrounding lines');
+    expect(rejected).not.toContain('insert_after_anchor');
+    expect(await fs.readFile(filePath, 'utf8')).toBe(before);
+    expect(await toolEdit({ path: filePath, edits: [
+      { old_string: '# Heading\r\nsecond', new_string: '# Heading\r\nnew\r\nsecond' },
+    ] }, ctx)).not.toContain('[Tool Error]');
+    expect(await fs.readFile(filePath, 'utf8')).toBe('# Heading\r\nfirst\r\n# Heading\r\nnew\r\nsecond\r\n');
+  });
+
   it('returns a stable too-large error code', async () => {
     const filePath = path.join(tempDir, 'doc.md');
     await fs.writeFile(filePath, 'alpha\nbeta\n', 'utf8');

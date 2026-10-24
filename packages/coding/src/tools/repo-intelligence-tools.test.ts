@@ -354,13 +354,14 @@ describe('repo intelligence tool surfaces', () => {
     expect(moduleScan).not.toContain('packages/app/README.md');
 
     const symbol = await toolSymbolContext({ symbol: 'createApp' }, ctx);
-    const symbolScan = await toolRelationshipScan({ symbol: 'createApp', direction: 'both' }, ctx);
+    const symbolScan = await toolRelationshipScan({ symbol: 'createApp', direction: 'both', depth: 2 }, ctx);
     expect(symbol).toContain('Signature: export function createApp(name: string): string');
     expect(symbol).toContain('Imports: ../../shared/src/name-service');
     expect(symbolScan).toContain('startServer');
     expect(symbolScan).toContain('create-app.ts:');
     expect(symbolScan).not.toContain('Signature:');
     expect(symbolScan).not.toContain('Imports:');
+    expect(symbolScan).toContain('not a recursive traversal');
 
     const processCapsule = await toolProcessContext({ module: '@demo/app' }, ctx);
     const entryScan = await toolRelationshipScan({ entry: 'startServer', direction: 'downstream' }, ctx);

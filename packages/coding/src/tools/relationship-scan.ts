@@ -597,7 +597,7 @@ function renderGaps(
     lines.push('- Light engine uses static heuristics; compiler-accurate call hierarchy is not included yet.');
   }
   if (depth > 1) {
-    lines.push(`- Requested depth ${depth}; light-mode relationship_scan reports bounded direct edges first.`);
+    lines.push(`- Requested depth ${depth}; this scan reports bounded indexed relationships, not a recursive traversal.`);
   }
   pushList(lines, 'No additional gaps recorded.', gaps);
 }

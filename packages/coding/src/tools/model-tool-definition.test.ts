@@ -9,6 +9,21 @@ import { buildRunnerLlmAdapter } from '../task-engine/_internal/managed-task/llm
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
 
 describe('model tool contracts', () => {
+  it('publishes all four Repo capsules with their SDK parameters before discovery', async () => {
+    const worker = buildRunnerAgentChain({ backups: new Map<string, string>() }).worker;
+    let sent: readonly KodaXToolDefinition[] = [];
+    const adapter = buildRunnerLlmAdapter({}, async (_messages, tools) => {
+      sent = tools;
+      return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
+    });
+    await adapter([{ role: 'user', content: 'Inspect the repository.' }], worker);
+    for (const name of ['module_context', 'symbol_context', 'process_context', 'impact_estimate']) {
+      const native = sent.find(tool => tool.name === name);
+      expect(native).toBeDefined();
+      expect(native!.input_schema).toEqual(getToolDefinition(name)!.input_schema);
+    }
+  });
+
   it('documents specialist effort locking through the actual spawn selector', () => {
     const spawn = getToolDefinition('spawn_agent')!;
     const effort = spawn.input_schema.properties.effort as { description: string };
@@ -39,7 +54,7 @@ describe('model tool contracts', () => {
   });
 
   it.each([
-    ['grep', ['-i', '-C'], ['pattern', 'path', 'glob', 'type', 'output_mode', 'ignore_case', '-A', '-B', 'context', 'multiline', 'head_limit', 'offset', 'scan_offset']],
+    ['grep', ['-i', '-C'], ['pattern', 'literal', 'path', 'glob', 'type', 'output_mode', 'ignore_case', '-A', '-B', 'context', 'multiline', 'head_limit', 'offset', 'scan_offset']],
     ['lsp_implementation', ['column'], ['path', 'line', 'character']],
     ['lsp_prepare_call_hierarchy', ['column'], ['path', 'line', 'character']],
     ['lsp_incoming_calls', ['column'], ['path', 'line', 'character']],

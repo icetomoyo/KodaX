@@ -8,6 +8,7 @@ const inspect = new Set(['rg', 'ls', 'pwd', 'cat', 'dir', 'type', 'get-content',
 const readGit = new Set(['diff', 'status', 'ls-files', 'grep', 'show', 'log', 'rev-parse']);
 export const COMPLEX_DIRECTORY_DENIAL = 'Directory change must target the fixture root.';
 const COMPLEX_TEST_COMMAND_DENIAL = 'Only local test execution is in scope.';
+const COMPLEX_OUTPUT_FILTER_DENIAL = 'tail output filtering is outside this fixture scope. Run the local tests without this pipeline.';
 const repoInspection = new Set(['module_context', 'symbol_context', 'process_context', 'impact_estimate',
   'relationship_scan', 'repo_overview', 'semantic_lookup', 'cyclic_dependencies']);
 const isRepoInspection = (tool: string): boolean => repoInspection.has(tool) || tool.startsWith('lsp_');
@@ -15,7 +16,7 @@ const isRepoInspection = (tool: string): boolean => repoInspection.has(tool) || 
 /** Feedback may recover; the rejected command must still never execute. */
 export function isRecoverableComplexDenial(tool: string, reason: string | null): boolean {
   return reason !== null && (tool === 'read' || (isRepoInspection(tool) && reason === 'Path leaves the fixture workspace.') || (tool === 'bash'
-    && (reason === COMPLEX_DIRECTORY_DENIAL || reason === COMPLEX_TEST_COMMAND_DENIAL)));
+    && (reason === COMPLEX_DIRECTORY_DENIAL || reason === COMPLEX_TEST_COMMAND_DENIAL || reason === COMPLEX_OUTPUT_FILTER_DENIAL)));
 }
 
 /** Return recoverable read/navigation and test-command denials with the original call intact. */
@@ -65,6 +66,8 @@ export function checkComplexTool(workspace: string, tool: string, input: Readonl
   const tree = parseBashCommand(shellForAnalysis(input.command));
   if (tree.unparseable || !tree.statements.length) return 'Unsupported shell syntax in evaluation.';
   let deniedTestCommand = false;
+  let deniedOutputFilter = false;
+  let deniedDirectoryChange = false;
   for (const statement of tree.statements) for (const stage of statement.stages) {
     const args = stage.argv;
     const executable = args[0]?.toLowerCase();
@@ -76,13 +79,17 @@ export function checkComplexTool(workspace: string, tool: string, input: Readonl
     }
     if (executable === 'cd' || executable === 'set-location') {
       const target = args[1]?.toLowerCase() === '/d' ? args[2] : args[1];
-      if ((!inside(target) || relative(target) !== '') && !deniedTestCommand) return COMPLEX_DIRECTORY_DENIAL;
+      if ((!inside(target) || relative(target) !== '') && !deniedTestCommand) deniedDirectoryChange = true;
     } else if (executable === 'git') {
       if (!readGit.has(args[1] ?? '') && (readOnly || args[1] !== 'stash')) return 'Git operation is outside the fixture scope.';
     } else if (executable === 'node' || executable === 'npm') {
       // Product read-only permissions still apply; the evaluator must not preempt them.
       // A recoverable refusal must not hide a later escape or unknown executable.
       if (executable === 'node' ? args[1] !== '--test' : args[1] !== 'test') deniedTestCommand = true;
+    } else if (executable === 'tail' && args.length === 3 && args[1] === '-n' && /^\d{1,4}$/.test(args[2]!)) {
+      // Still block the whole command; never execute or rewrite the pipeline.
+      // Inspect remaining stages so this recoverable error cannot mask an escape.
+      deniedOutputFilter = true;
     } else if (executable === 'mkdir') {
       if (readOnly || !args.slice(1).filter(arg => arg !== '-p').every(scratch)) return 'Directory creation must stay in fixture scratch.';
     } else if (executable === 'if') {
@@ -91,5 +98,6 @@ export function checkComplexTool(workspace: string, tool: string, input: Readonl
       if (args.length !== 2 || !/^-+$/.test(args[1]!)) return 'Only literal review separators are in scope.';
     } else if (!inspect.has(executable)) return 'Executable is outside the fixture test and inspection scope.';
   }
-  return deniedTestCommand ? COMPLEX_TEST_COMMAND_DENIAL : null;
+  return deniedDirectoryChange ? COMPLEX_DIRECTORY_DENIAL : deniedTestCommand ? COMPLEX_TEST_COMMAND_DENIAL
+    : deniedOutputFilter ? COMPLEX_OUTPUT_FILTER_DENIAL : null;
 }

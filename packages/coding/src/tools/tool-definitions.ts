@@ -547,11 +547,12 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'grep',
-    description: 'Search for a regex pattern in file contents. Supports context lines, multiline matching, file type filtering, and pagination.',
+    description: 'Search file contents with a regex or literal text. Supports context lines, multiline matching, file type filtering, and pagination.',
     input_schema: {
       type: 'object',
       properties: {
-        pattern: { type: 'string', description: "Regex to match in file contents." },
+        pattern: { type: 'string', description: "Regex, or literal text when literal is true, to match in file contents." },
+        literal: { type: 'boolean', description: 'Match text verbatim, including long strings. Default false (regex). Use glob for paths.' },
         path: { type: 'string', description: "File or directory; defaults to cwd." },
         glob: { type: 'string', description: "File glob, e.g. *.{ts,tsx}." },
         type: { type: 'string', description: "File type such as ts (includes .ts/.tsx/.mts/.cts). Use glob for an exact extension, e.g. *.ts." },
@@ -918,7 +919,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'web_fetch',
-    description: 'Fetch a specific remote source by URL and return bounded text with provenance and trust hints. The handler converts HTML to markdown and caches each unique URL for a short window so repeated reads within the same task are free. If the response is a redirect (3xx), the tool stops and reports the new target URL — re-issue `web_fetch` against that new URL rather than chasing the redirect manually, so the cache + provenance line up with what the user actually sees. For GitHub URLs specifically (`github.com/...` / `raw.githubusercontent.com/...`), prefer `bash` with the `gh` CLI when available — `gh api` / `gh pr view` / `gh issue view` are faster, return structured output, and avoid markdown-conversion artifacts; using `web_fetch` on a github.com URL when `gh` would work is the most common "tool waste" pattern in this surface. The operation is read-only: the built-in path uses HTTP GET and provider-backed paths use readCapability. Use `web_search` first when you do not yet have a specific URL.',
+    description: 'Read a specific URL as bounded text with provenance and trust hints. The built-in HTTP GET path follows redirects, reports the final URL, converts HTML to plain text, and does not cache responses. Supply provider_id and capability_id for an extension resource read instead. Use web_search when no URL is known; for GitHub structured data, prefer an available GitHub connector or gh CLI.',
     input_schema: {
       type: 'object',
       properties: {
@@ -967,6 +968,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'semantic_lookup',
+    workSurface: 'coding',
     description: 'Search repository intelligence for symbol-, module-, or process-aware semantic matches. "Repository intelligence" here is a pre-indexed structural view of the codebase (symbol definitions, module boundaries, process flows); `semantic_lookup` queries that index rather than scanning raw text. Use it when the question is structural ("what does symbol X relate to", "which module owns concept Y", "what flow does entry Z drive") rather than textual. The `kind` parameter narrows the lookup category (`symbol` / `module` / `process` / `auto`); `target_path` scopes to a subtree. `refresh: true` rebuilds the underlying index — expensive — so only set it when you have reason to believe the index is stale (e.g., right after a large bulk edit). For local text match prefer `grep`; for literal or provider-backed search use `code_search`; to read a file directly prefer `read`.',
     input_schema: {
       type: 'object',
@@ -1553,6 +1555,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'repo_overview',
+    workSurface: 'coding',
     description: 'Summarize the current workspace inventory: Git state, key areas, file counts, manifests, documentation and entry-file hints. Reuse a repository overview already supplied in the run context while it applies; no extra call is required merely because a session or task starts. Query when that overview is missing, outdated, or the workspace changes. refresh rebuilds the snapshot; reserve it for structural changes such as a new package or directory move. For drilling into a specific module, use module_context.',
     input_schema: {
       type: 'object',
@@ -1567,6 +1570,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'changed_scope',
+    workSurface: 'coding',
     description: 'Analyze which files, areas, and categories are touched by the current git diff or a comparison range. This is the canonical entry point for current-worktree, compare-range, and other change-set review / commit-prep workflows — call it first to see that change surface before issuing per-file diffs. Do not use it to expand an explicitly scoped repository, module, or file audit into unrelated dirty-worktree changes. Returns files grouped by area/category (e.g., "tests", "docs", "core") with a one-line summary per file. The `scope` parameter selects which change set: `unstaged` (working tree vs HEAD), `staged` (index vs HEAD), `all` (working tree + index vs HEAD, default), `compare` (HEAD vs base_ref). When it reveals independent areas, fan out distinct read-only review lanes before the root fetches its own `changed_diff_bundle`.',
     input_schema: {
       type: 'object',
@@ -1587,6 +1591,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'changed_diff',
+    workSurface: 'coding',
     description: 'Read a paged diff slice for a specific changed file. Prefer this over broad git diff output during large reviews.',
     input_schema: {
       type: 'object',
@@ -1609,6 +1614,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'changed_diff_bundle',
+    workSurface: 'coding',
     description: 'Read diff slices for multiple changed files in one call. Prefer this for large reviews before drilling down with changed_diff.',
     input_schema: {
       type: 'object',
@@ -1634,7 +1640,8 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'module_context',
-    description: 'Return a task-shaped module capsule with dependencies, entry files, top-level symbols, test files, docs, and follow-up handles for further drill-down. Use this when about to read 3+ files in the same module — the capsule replaces that exploration round-trip with one structured response. Prefer `module_context` over raw `read`+`grep` for "what does this module do / what depends on what" questions. When the question is about a single function or class, use `symbol_context` instead — it is cheaper because it scopes to one symbol. When you only need exact file content (line numbers, byte-level text), fall back to `read` after the capsule narrows the target. `refresh: true` rebuilds the underlying repo-intel index, which is expensive — only set it when you have reason to believe the index is stale.',
+    workSurface: 'coding',
+    description: 'Inspect a module: dependencies/dependents, entry files, top symbols, tests, docs, process handles and evidence. Includes index freshness, confidence and capability warnings when applicable. Use symbol_context for one named symbol, or read for exact file content; the capsule is indexed context, not a substitute for source verification. Set refresh only when the index needs rebuilding.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1649,6 +1656,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'lsp_definition',
+    workSurface: 'coding',
     description: "Find the compiler-resolved definition at a file position, through imports, re-exports and overloads. Give 1-based line/character from a recent read. Prefer symbol_context for a named symbol's repo-wide callers/callees. Requires the language's server; returns install guidance if unavailable.",
     input_schema: {
       type: 'object',
@@ -1665,6 +1673,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'lsp_hover',
+    workSurface: 'coding',
     description: "Show the compiler-resolved type, signature and documentation at a 1-based file position, including resolved generics. Use before editing when you need types without reading the definition. Requires the matching language server.",
     input_schema: {
       type: 'object',
@@ -1681,6 +1690,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'lsp_references',
+    workSurface: 'coding',
     description: "List compiler-resolved references, including the declaration, at a 1-based file position before renaming or signature changes. Follows re-exports and aliases; excludes string/comment matches. Use impact_estimate for a quick name-only repo blast radius. Requires the matching language server.",
     input_schema: {
       type: 'object',
@@ -1697,6 +1707,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'lsp_document_symbols',
+    workSurface: 'coding',
     description: "Outline a file's classes, functions, methods and fields with line numbers through its language server. Use to locate a member before navigation/editing without reading the file. For a module overview use module_context. Requires the matching language server.",
     input_schema: {
       type: 'object',
@@ -1711,6 +1722,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'lsp_workspace_symbols',
+    workSurface: 'coding',
     description: 'Search project-wide symbols by name through available language servers. Use this when you know a class/function/type name but not its file, and want compiler-indexed candidates before reading files or running broader text search. An empty query asks the server for its broad symbol list when supported.',
     input_schema: {
       type: 'object',
@@ -1724,6 +1736,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'lsp_implementation',
+    workSurface: 'coding',
     description: 'Jump from an interface, abstract method, or declaration site to implementation locations using the language server. Use this when definition only lands on a contract and you need the concrete implementers before changing behavior.',
     input_schema: {
       type: 'object',
@@ -1741,6 +1754,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'lsp_prepare_call_hierarchy',
+    workSurface: 'coding',
     description: 'Inspect call hierarchy root metadata for a symbol at a file position. Incoming and outgoing call tools prepare roots internally; a separate prepare call is unnecessary for those queries.',
     input_schema: {
       type: 'object',
@@ -1758,6 +1772,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'lsp_incoming_calls',
+    workSurface: 'coding',
     description: 'List language-server incoming callers for the callable at a file position. Use this for upstream/caller questions when you have the exact symbol location.',
     input_schema: {
       type: 'object',
@@ -1775,6 +1790,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'lsp_outgoing_calls',
+    workSurface: 'coding',
     description: 'List language-server outgoing callees from the callable at a file position. Use this for downstream/callee questions when you have the exact symbol location.',
     input_schema: {
       type: 'object',
@@ -1792,7 +1808,8 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'relationship_scan',
-    description: 'Answer upstream/downstream relationship questions for a symbol, module, path, or entry point in one compact scan. Returns identity, upstream callers/dependents, downstream callees/dependencies/process steps, impact, evidence, confidence, and gaps. Use this first for "what calls this", "what depends on this", "upstream/downstream", "调用链", "上下游", and blast-radius questions before falling back to separate module_context / symbol_context / process_context calls.',
+    workSurface: 'coding',
+    description: 'Indexed upstream/downstream summary with impact, evidence, confidence and gaps. Supply symbol, module, path or entry; target_path alone is insufficient. For module details, signatures/imports, process summaries or impact alone, use module_context, symbol_context, process_context or impact_estimate directly. The aggregate omits some capsule evidence.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1809,7 +1826,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
           type: 'integer',
           minimum: 1,
           maximum: 3,
-          description: 'Requested traversal depth. Light mode reports bounded direct edges first.',
+          description: 'Requested depth (default 1). Results remain bounded indexed relationships; values above 1 report a gap, not recursive traversal.',
         },
         target_path: { type: 'string', description: 'Optional path used to resolve the repository root or narrow context' },
         refresh: { type: 'boolean', description: 'When true, rebuild repo intelligence before the first relationship lookup' },
@@ -1823,7 +1840,8 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'symbol_context',
-    description: 'Return the definition, probable callers/callees, imports, and naming alternatives for a single repository symbol. Use this when tracing the usage of one function, class, or constant — the response pre-resolves the relationships that would otherwise take several `grep -n "symbolName"` + `read` rounds to assemble. Cheaper than `module_context` when the question is symbol-scoped rather than module-scoped (the callers/callees graph is bounded by symbol degree, not module surface). The `module` parameter disambiguates when the same symbol name appears in multiple packages. For "where is this exact string used" without symbol semantics, prefer `grep` or `code_search` instead. For impact estimation before a refactor, use `impact_estimate` — it combines symbol info with changed-scope overlap.',
+    workSurface: 'coding',
+    description: 'Inspect one named repository symbol: definition, signature, probable static callers/callees, imports and naming alternatives. Includes freshness, confidence and capability warnings when applicable. Use module to disambiguate names across packages. For exact text occurrences use grep; for affected modules/symbols and current changed-scope overlap use impact_estimate. Indexed relationships may be incomplete; verify relevant source before editing. Set refresh only when the index needs rebuilding.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1839,7 +1857,8 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'process_context',
-    description: 'Return an approximate static execution/process capsule for an entry symbol, module, or path. Use this when the question is "how does this flow execute" rather than "what depends on what" — `process_context` traces from an entry point through likely call paths, giving you the sequence of file/symbol transitions without N rounds of follow-up reads. The `entry` parameter is the starting point (function name, file path, or module label); `module` is an optional disambiguating hint. Prefer over `module_context` when you care about runtime sequence, not module structure; prefer over `symbol_context` when you need the multi-hop call chain rather than just direct callers/callees. The trace is static (no runtime sampling), so it captures plausible paths, not actual hit rates.',
+    workSurface: 'coding',
+    description: 'Inspect an approximate static process capsule selected by entry, module or target_path. Returns the selected entry, summary, indexed file/symbol steps with notes, alternatives, freshness and confidence. Use module to narrow selection; inspect alternatives when ambiguous. These are static hints, not an observed runtime sequence or a complete multi-hop call graph. For direct callers/callees use symbol_context; for module structure use module_context. Set refresh only when the index needs rebuilding.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1855,7 +1874,8 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'impact_estimate',
-    description: 'Estimate the blast radius of changing a symbol, path, or module — combines repo-intelligence usage graph with current changed-scope overlap. Call this BEFORE planning a rename, refactor, or breaking change, not after the work is started — its purpose is to scope the work up front so the plan reflects reality (which packages need touching, which call sites assume current behavior, which tests must update). Returns ranked impact sites with severity hints. Prefer over guessing impact from a `grep` of the symbol name — `grep` overcounts (matches strings + comments) and undercounts (misses re-exports + structural callers). The `refresh` flag rebuilds the underlying index — expensive — so reserve it for cases where a recent large edit may have invalidated the cached graph.',
+    workSurface: 'coding',
+    description: 'Estimate affected modules/symbols and possible callers for a symbol, path or module, with current changed-scope overlap (including zero or unavailable), freshness, confidence and capability warnings when applicable. Use to scope a rename or refactor. This is an indexed estimate, not an exhaustive impact analysis or severity ranking; verify relevant source and tests. Set refresh only when the index needs rebuilding.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1872,6 +1892,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'cyclic_dependencies',
+    workSurface: 'coding',
     description: 'Detect circular import/dependency chains (Tarjan SCC) over the module-level import graph. Answers "is there a dependency cycle" — the one question the 1-hop tools (impact_estimate / module_context / symbol_context) cannot. Use when refactoring or moving modules, before merging a PR that reshapes imports, or to enforce a no-cycles rule. Returns each cycle as an ordered module chain with a hop count + severity. Distinct from impact_estimate (that is 1-hop blast radius; this is reachability cycles).',
     input_schema: {
       type: 'object',

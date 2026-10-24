@@ -9,15 +9,88 @@ import { buildRunnerLlmAdapter } from './llm-adapter.js';
 import { buildRunnerAgentChain } from './agent-chain.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createExtensionRuntime } from '../../../extensions/runtime.js';
+import type { KodaXToolExecutionContext } from '../../../types.js';
 
 afterEach(() => { clearRuntimeModelProviders(); vi.unstubAllEnvs(); });
 
-it('keeps native literal and provider search executable through discovery on the default Worker', async () => {
+it.each([false, true])('omits only local search from the default root wire menu, preserving instructions and execution (empty runtime=%s)', async (withRuntime) => {
+  const runtime = withRuntime ? createExtensionRuntime() : undefined;
+  const agent = buildRunnerAgentChain({ backups: new Map(), extensionRuntime: runtime }).worker;
+  const requests: { tools: readonly KodaXToolDefinition[]; system: string }[] = [];
+  const capture = async (_messages: readonly KodaXMessage[], tools: readonly KodaXToolDefinition[], system: string) => {
+    requests.push({ tools, system });
+    return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
+  };
+  const message = [{ role: 'user' as const, content: 'Locate the implementation.' }];
+  // An explicit profile opts out of the default menu projection, not AMA instructions.
+  await buildRunnerLlmAdapter({ context: { agentProfile: { id: 'explicit' } } }, capture)(message, agent);
+  const adapter = buildRunnerLlmAdapter({}, capture);
+  await adapter(message, agent);
+  await adapter([{ role: 'user', content: 'Resume after compaction.' }], agent);
+  const [baseline, first, resumed] = requests;
+  expect(first!.tools).toEqual(baseline!.tools.filter(tool => tool.name !== 'code_search'));
+  expect(first!.system).toBe(baseline!.system);
+  expect(resumed).toEqual(first);
+  expect(first!.tools.find(tool => tool.name === 'grep')?.input_schema.properties.literal).toBeDefined();
+  expect(agent.tools?.some(tool => tool.name === 'code_search')).toBe(true);
+});
+
+it('preserves factory-supplied SDK and child contexts, and missing or overridden builtin substitutes', async () => {
+  let sent: readonly KodaXToolDefinition[] = [];
+  const adapter = buildRunnerLlmAdapter({}, async (_messages, tools) => {
+    sent = tools;
+    return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
+  });
+  const contexts: Partial<KodaXToolExecutionContext>[] = [
+    { currentAgentId: '/root/explorer' }, { agentProfile: { id: 'explicit' } },
+    { toolVisibilityPolicy: () => true },
+    ...['grep', 'glob', 'read', 'tool_search', 'tool_call'].map(name => ({ excludeTools: [name] })),
+  ];
+  for (const context of contexts) {
+    await adapter([], buildRunnerAgentChain({ backups: new Map(), ...context }).worker);
+    expect(sent.some(tool => tool.name === 'code_search')).toBe(true);
+  }
+  for (const name of ['grep', 'glob', 'read', 'tool_search', 'tool_call']) {
+    const builtin = getRegisteredToolDefinition(name);
+    if (!builtin) throw new Error(`Missing ${name}`);
+    const unregister = registerTool({ ...builtin, description: 'Independent substitute contract.' },
+      { source: { kind: 'extension', id: 'independent-substitute' } });
+    try {
+      await adapter([], buildRunnerAgentChain({ backups: new Map() }).worker);
+      expect(sent.some(tool => tool.name === 'code_search')).toBe(true);
+    } finally { unregister(); }
+  }
+});
+
+it('retains direct provider search when a live runtime registers it after Agent construction', async () => {
+  const runtime = createExtensionRuntime();
+  const agent = buildRunnerAgentChain({ backups: new Map(), extensionRuntime: runtime }).worker;
+  let sent: readonly KodaXToolDefinition[] = [];
+  const adapter = buildRunnerLlmAdapter({}, async (_messages, tools) => {
+    sent = tools;
+    return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
+  });
+  await adapter([], agent);
+  expect(sent.some(tool => tool.name === 'code_search')).toBe(false);
+  const unregister = runtime.registerCapabilityProvider({ id: 'fixture-search', kinds: ['resource'],
+    search: async () => [{ id: 'match', title: 'Remote match', path: '/virtual/source.ts' }],
+  });
+  try {
+    await adapter([], agent);
+    expect(sent.some(tool => tool.name === 'code_search')).toBe(true);
+    const search = agent.tools?.find(tool => tool.name === 'code_search');
+    if (!search) throw new Error('Missing native search');
+    expect(String((await search.execute({ query: 'remote', provider_id: 'fixture-search' }, { agent })).content)).toContain('/virtual/source.ts');
+  } finally { unregister(); }
+});
+
+it.each([false, true])('keeps literal search executable through discovery and provider search native when needed (provider=%s)', async (withProvider) => {
   const workspace = await fs.mkdtemp(path.join(tmpdir(), 'kodax-search-menu-'));
   try {
     await fs.writeFile(path.join(workspace, 'literal.ts'), 'const value = "a.b[x]";\n');
     const agent = buildRunnerAgentChain({ backups: new Map(), executionCwd: workspace,
-      extensionRuntime: { searchCapabilities: async () => [{ title: 'Virtual result', path: '/virtual/provider.ts' }] } as never,
+      extensionRuntime: withProvider ? { searchCapabilities: async () => [{ title: 'Virtual result', path: '/virtual/provider.ts' }] } as never : undefined,
     }).worker;
     let sent: readonly KodaXToolDefinition[] = [];
     const adapter = buildRunnerLlmAdapter({}, async (_messages, tools) => {
@@ -25,7 +98,7 @@ it('keeps native literal and provider search executable through discovery on the
       return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
     });
     await adapter([{ role: 'user', content: 'Find the implementation.' }], agent);
-    expect(sent.map(tool => tool.name)).toContain('code_search');
+    expect(sent.some(tool => tool.name === 'code_search')).toBe(withProvider);
     expect(sent.map(tool => tool.name)).toEqual(expect.arrayContaining(['grep', 'glob', 'read', 'repo_overview']));
     const discover = agent.tools?.find(tool => tool.name === 'tool_search');
     const bridge = agent.tools?.find(tool => tool.name === 'tool_call');
@@ -34,8 +107,10 @@ it('keeps native literal and provider search executable through discovery on the
     expect(String(contract.content)).toContain('provider_id');
     const literal = await bridge.execute({ name: 'code_search', input: { query: 'a.b[x]' } }, { agent });
     expect(String(literal.content)).toContain('literal.ts:1');
-    const virtual = await bridge.execute({ name: 'code_search', input: { query: 'virtual', provider_id: 'fixture' } }, { agent });
-    expect(String(virtual.content)).toContain('/virtual/provider.ts');
+    if (withProvider) {
+      const virtual = await bridge.execute({ name: 'code_search', input: { query: 'virtual', provider_id: 'fixture' } }, { agent });
+      expect(String(virtual.content)).toContain('/virtual/provider.ts');
+    }
     expect(agent.tools?.map(tool => tool.name)).toContain('code_search');
   } finally {
     if (path.dirname(workspace) !== path.resolve(tmpdir()) || !path.basename(workspace).startsWith('kodax-search-menu-')) throw new Error('Unsafe fixture path');

@@ -18,6 +18,36 @@ import { buildAutoRepoIntelligenceContext } from './repo-intelligence.js';
 const plan = { decision: { primaryTask: 'review', complexity: 'simple' } } as ReasoningPlan;
 afterEach(() => vi.resetAllMocks());
 
+it('skips automatic repository scans in Agent while preserving caller-owned repository material', async () => {
+  const caller = 'Caller supplied repository facts and instructions.';
+  sources.buildRepoIntelligenceContext.mockResolvedValue('unrequested automatic repository overview');
+  const result = await buildAutoRepoIntelligenceContext({ provider: 'offline-fixture', workMode: 'agent', context: {
+    executionCwd: 'C:/agent-work-surface', repoIntelligenceContext: caller,
+  } }, plan, true);
+  expect(result).toBe(caller);
+  expect(sources.buildRepoIntelligenceContext).not.toHaveBeenCalled();
+  expect(sources.getRepoPreturnBundle).not.toHaveBeenCalled();
+  expect(sources.getModuleContext).not.toHaveBeenCalled();
+  expect(sources.getImpactEstimate).not.toHaveBeenCalled();
+});
+
+it.each([
+  { agentProfile: { id: 'custom-profile' } },
+  { currentAgentId: '/root/explorer' },
+  { systemPromptOverride: 'Custom instructions' },
+  { toolVisibilityPolicy: () => true },
+])('keeps the existing automatic repository context for explicit SDK or child declarations (%j)', async context => {
+  sources.buildRepoIntelligenceContext.mockResolvedValue('Existing repository evidence');
+  sources.getRepoPreturnBundle.mockResolvedValue(null);
+  sources.getModuleContext.mockResolvedValue(null);
+  sources.getImpactEstimate.mockResolvedValue(null);
+  const result = await buildAutoRepoIntelligenceContext({ provider: 'offline-fixture', workMode: 'agent',
+    context: { ...context, executionCwd: 'C:/custom-repo-work-surface' },
+  }, plan, true);
+  expect(sources.buildRepoIntelligenceContext).toHaveBeenCalledOnce();
+  expect(result).toContain('Existing repository evidence');
+});
+
 it('prefers the current baseline over a cached bundle without rewriting caller context or losing active evidence', async () => {
   const caller = '## Repository Intelligence\nCaller-owned notes stay verbatim.';
   sources.buildRepoIntelligenceContext.mockResolvedValue('## Repository Intelligence\ncurrent overview\n\n## Repository Change Scope\ncurrent changes');

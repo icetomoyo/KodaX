@@ -1,17 +1,18 @@
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
 import type { ToolDefinitionSource } from './types.js';
 import type { Agent } from '@kodax-ai/agent';
+import type { KodaXToolExecutionContext } from '../types.js';
 
-const registryManagedAgents = new WeakSet<Agent>();
+const registryManagedAgents = new WeakMap<Agent, KodaXToolExecutionContext>();
 
 /** Only the coding factory knows whether an Agent uses its registry contracts. */
-export function markRegistryManagedAgent(agent: Agent): Agent {
-  registryManagedAgents.add(agent);
+export function markRegistryManagedAgent(agent: Agent, context: KodaXToolExecutionContext): Agent {
+  registryManagedAgents.set(agent, context);
   return agent;
 }
 
-export function isRegistryManagedAgent(agent: Agent): boolean {
-  return registryManagedAgents.has(agent);
+export function getRegistryManagedAgentContext(agent: Agent): KodaXToolExecutionContext | undefined {
+  return registryManagedAgents.get(agent);
 }
 
 /** Keep runner-only list seeding callable internally, outside the model contract. */

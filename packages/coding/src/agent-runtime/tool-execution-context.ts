@@ -52,6 +52,7 @@ import { mergeManagedProtocolPayload } from '../managed-protocol.js';
 import { resolveExecutionCwd } from '../runtime-paths.js';
 import { getSessionScratchDir } from '../session-scratch.js';
 import { getDefaultLspService } from '../lsp/service.js';
+import { resolveWorkMode } from '../work-mode.js';
 import {
   createSessionHistoryLoader,
   SESSION_HISTORY_TOOL_NAMES,
@@ -110,9 +111,11 @@ export function buildToolExecutionContext(
   input: ToolExecutionContextInput,
 ): KodaXToolExecutionContext {
   const { options, runtime, managedProtocolPayloadRef, sessionId } = input;
+  const workMode = resolveWorkMode(options);
   const events = options.events ?? {};
   const executionCwd = resolveExecutionCwd(options.context);
   const sessionScratchDir = getSessionScratchDir(options);
+  const lspService = options.context?.lspService ?? getDefaultLspService();
   const visibleSessionHistoryTools = applyToolVisibilityPolicy(
     filterExcludedTools(
       [...SESSION_HISTORY_TOOL_NAMES],
@@ -132,6 +135,7 @@ export function buildToolExecutionContext(
     : undefined;
 
   const context: KodaXToolExecutionContext = {
+    ...(workMode === 'agent' ? { workMode } : {}),
     configHome: options.context?.configHome,
     runtimeRunId: options.context?.runtimeRunId,
     registerShellCleanup: options.events?.registerShellCleanup,
@@ -166,7 +170,8 @@ export function buildToolExecutionContext(
     // FEATURE_132 v0.7.47 — LSP service for edit-time diagnostics reflux.
     // Host-injected when present, else the process-wide default (which is
     // a no-op unless a language server is installed; `KODAX_LSP=0` disables).
-    lspService: options.context?.lspService ?? getDefaultLspService(),
+    lspService,
+    lspNavigationDisabled: lspService === undefined,
     executionCwd,
     shellExecution: options.context?.shellExecution,
     sandbox: options.sandbox,

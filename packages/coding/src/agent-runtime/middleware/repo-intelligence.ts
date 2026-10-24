@@ -64,6 +64,7 @@ import {
 } from '../../repo-intelligence/semantic-render.js';
 import { createRepoIntelligenceTraceEvent } from '../../repo-intelligence/trace-events.js';
 import type { ReasoningPlan } from '../../reasoning.js';
+import { resolveWorkMode } from '../../work-mode.js';
 
 const AUTO_CONTEXT_REPO_INTELLIGENCE_BUDGET_MS = 2_000;
 const AUTO_CONTEXT_PRETURN_STATE_TTL_MS = 60_000;
@@ -213,6 +214,7 @@ export async function buildAutoRepoIntelligenceContext(
   isNewSession: boolean,
   events?: KodaXEvents,
 ): Promise<string | undefined> {
+  if (resolveWorkMode(options) === 'agent') return options.context?.repoIntelligenceContext;
   const autoRepoMode = resolveKodaXAutoRepoMode(options.context?.repoIntelligenceMode);
   if (autoRepoMode === 'off') {
     return options.context?.repoIntelligenceContext;

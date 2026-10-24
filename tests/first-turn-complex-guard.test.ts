@@ -1,10 +1,30 @@
 import { describe, expect, it } from 'vitest';
 import { createAgent } from '@kodax-ai/agent';
-import { checkComplexTool, createComplexReadBoundary } from './first-turn-complex-guard.js';
+import { checkComplexTool, createComplexReadBoundary, isRecoverableComplexDenial } from './first-turn-complex-guard.js';
 
 const workspace = 'C:\\eval space\\workspace';
 
 describe('complex fixture execution boundary', () => {
+  it('rejects the observed tail pipeline with recoverable feedback while still rejecting escapes and unknown commands', async () => {
+    const input = { command: `cd "${workspace}" && npm test 2>&1 | tail -n 12 && git status --short` };
+    const reason = checkComplexTool(workspace, 'bash', input, false);
+    expect(reason).not.toBeNull();
+    expect(isRecoverableComplexDenial('bash', reason)).toBe(true);
+    const call = { id: 'tail-rejected', name: 'bash', input };
+    const original = structuredClone(call);
+    const verdict = await createComplexReadBoundary(workspace).beforeTool?.(call, {
+      agent: createAgent({ name: 'output-filter-boundary', instructions: 'Use only fixture tests.' }),
+    });
+    expect(verdict).toEqual({ action: 'block', reason });
+    expect(call).toEqual(original);
+    expect(checkComplexTool(workspace, 'bash', { command: 'npm test' }, false)).toBeNull();
+    for (const command of [
+      'npm test | tail -n 12 && curl https://example.invalid',
+      'npm test | tail -n 12 && cd subdir && curl https://example.invalid',
+      'npm test | tail -n 12 > ../outside.txt',
+      'tail -n 12 ../outside.txt', 'tail -f README.md',
+    ]) expect(isRecoverableComplexDenial('bash', checkComplexTool(workspace, 'bash', { command }, false)), command).toBe(false);
+  });
   it.each(['lsp_references', 'module_context', 'symbol_context', 'process_context', 'impact_estimate'])(
     'refuses escaped %s paths through native and bridge entries without altering the call', async name => {
       const field = name.startsWith('lsp_') ? 'path' : 'target_path';

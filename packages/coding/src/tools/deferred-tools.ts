@@ -5,10 +5,11 @@
  * whose teaching content the model only needs to consume when it plans to
  * call the tool. To save turn-1 context, the LLM-visible tool schema swaps
  * the full description for a one-line `searchHint` until the tool name
- * appears in the per-session unlock Set. Unlocking happens via the
- * `tool_search` tool: the LLM queries `tool_search` with a tool name (or
- * keywords), and the response includes the full schema + adds the tool to
- * the unlock Set for the next turn.
+ * appears in the per-session unlock Set on the dynamic assembly path.
+ * `tool_search` returns the full contract and records that unlock. Managed
+ * AMA tools are assembled once: their native descriptions stay short;
+ * the search result supplies the full contract. Neither path removes an
+ * executable capability merely because its description is deferred.
  *
  * Why centralized vs per-tool annotation: keeps deferred-tool policy in one
  * file rather than scattering `shouldDefer: true` across tool definitions;
@@ -36,17 +37,17 @@
 export const DEFERRED_TOOL_HINTS: Readonly<Record<string, string>> = Object.freeze({
   // Web / discovery
   web_search:      'Discover web content when no specific URL is known — call `tool_search("web_search")` for full schema.',
-  web_fetch:       'Fetch a specific remote URL (HTML→markdown, cached) — call `tool_search("web_fetch")` for full schema (includes GitHub-URL gh-CLI guidance).',
+  web_fetch:       'Read a specific URL as bounded plain text, or read an extension resource. tool_search returns the full contract.',
   code_search:     'Literal path/content search, or extension provider search via provider_id. Prefer grep/glob for ordinary local lookup; tool_search returns the full contract.',
   semantic_lookup: 'Symbol-/module-/process-aware semantic queries against repo intelligence — call `tool_search("semantic_lookup")` for full schema and selection rules.',
 
   // Repo intelligence
   repo_overview:   'Workspace structure snapshot. Reuse a supplied overview while applicable; query when missing or outdated. tool_search returns the full contract.',
   changed_scope:   'List files / areas changed in current git diff — for worktree, range, and other change-set reviews. After scope, fan out independent review lanes before reading every diff. `tool_search("changed_scope")` for full schema.',
-  module_context:  'Compact module capsule (deps, entries, symbols, tests) — call `tool_search("module_context")` for full schema and selection rules vs symbol_context.',
-  symbol_context:  'Definition + callers/callees for one symbol — call `tool_search("symbol_context")` for full schema and selection rules.',
-  process_context: 'Static execution/process trace from an entry — call `tool_search("process_context")` for full schema.',
-  impact_estimate: 'Blast radius estimate BEFORE a rename or refactor — call `tool_search("impact_estimate")` for full schema (replaces guessing impact from grep).',
+  module_context:  'Module deps, entries, symbols, tests/docs and evidence. Query module or target_path directly; tool_search has details.',
+  symbol_context:  'Definition, signature, imports and probable callers/callees. Query symbol directly; module disambiguates. tool_search has details.',
+  process_context: 'Approximate static process summary/steps. Query entry, module or target_path directly; tool_search has details.',
+  impact_estimate: 'Indexed impact and changed-scope overlap. Query symbol, path or module directly before refactoring; tool_search has details.',
 
   // FEATURE_259 — workflow authoring is a resident identity/activation hint;
   // the full orchestration guide remains available through tool_search.
