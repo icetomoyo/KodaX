@@ -1,7 +1,9 @@
 import { expect, it, vi } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { runScriptCell } from './cell.js';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { resolveScriptWorkerUrl, runScriptCell } from './cell.js';
 
 const limits = { timeoutMs: 3_000, memoryBytes: 16 * 1024 * 1024, maxCalls: 8, maxTransferBytes: 128 * 1024 };
 
@@ -126,4 +128,17 @@ it('rejects invalid limits and oversized source before creating a worker', async
   const input = { code: 'return 42;', toolNames: [], invoke: vi.fn(), limits };
   await expect(runScriptCell({ ...input, limits: { ...limits, maxCalls: 0 } })).rejects.toThrow('positive safe integers');
   await expect(runScriptCell({ ...input, limits: { ...limits, maxTransferBytes: 1 } })).rejects.toThrow('source exceeds');
+});
+
+it('resolves package, root, SDK chunk and executable sidecars according to their distribution layout', () => {
+  const root = path.resolve('fixture-dist');
+  const resolve = (relative: string) => fileURLToPath(resolveScriptWorkerUrl(pathToFileURL(path.join(root, relative)).href));
+  vi.stubEnv('KODAX_BUNDLED', 'false');
+  try {
+    expect(resolve('agent-runtime/script/cell.js')).toBe(path.join(root, 'agent-runtime/script/worker.js'));
+    expect(resolve('script-cell.mjs')).toBe(path.join(root, 'script-worker.cjs'));
+    expect(resolve('chunks/sdk-chunk.js')).toBe(path.join(root, 'script-worker.cjs'));
+    vi.stubEnv('KODAX_BUNDLED', 'true');
+    expect(resolve('embedded-entry.js')).toBe(path.join(path.dirname(process.execPath), 'script-worker.cjs'));
+  } finally { vi.unstubAllEnvs(); }
 });

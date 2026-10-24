@@ -237,7 +237,7 @@ Script 的完整 78 项 native/SDK/条件/兼容分配见[分配表](tool-mode-a
 最小研究边界：复用原工具执行链；交互/Goal/Actor 等控制动作先保持原生；程序化调用逐叶权限、
 预算、取消、出处和结果完整性不变；不能依靠外层 exec 一次批准放行所有叶调用。
 不新增 shell/patch/搜索替代器，除非证明它优于现有同轮工具组合；不默认 native + typed SDK 双份教学。
-KodaX 的 tool_call 仍是 JSON 桥接，当前没有等价 Codex/DSH 的完整 Code 执行运行时。
+KodaX 的 tool_call 仍是 JSON 桥接；下述 Script 内部执行器尚未形成对外可用、等价 Codex/DSH 的完整 Code 模式。
 
 ## 7. 改动计划与验收顺序
 
@@ -343,9 +343,9 @@ Script 目前仅有下述内部阶段 C 执行实验，不是可选的产品模�
 - 每 cell 新建 VM，叶调用暂按串行处理（包括 `Promise.all`），不引入写入调度或常驻状态。
   仅前台 shell；后台参数明确拒绝，不能把返回 PID 当作全部副作用已结算。
   Actor/Goal/交互/审批/通用桥接不暴露给 guest；扩展覆盖或工具撤销会拒绝原绑定。
-  **当前 pilot 拒绝带 `extensionRuntime` 的宿主**，包括装配后新增的绑定，避免本地读失败后
+  **首版 pilot（`0c0f0fe0`）拒绝带 `extensionRuntime` 的宿主**，包括装配后新增的绑定，避免本地读失败后
   自动落入尚未验证的 MCP fallback。没有静默去掉扩展权限，也没有修改原生 fallback；此限制必须在
-  后续资格验证后才能解除，不能宣传成完整 Script 已可用。
+  后续资格验证后才能解除，不能宣传成完整 Script 已可用。下节记录该限制的最小替代与验证。
 - 宿主保留原始结果、canonical 调用和编辑恢复/截断出处；脚本返回值不能抹掉这些回执。
   部分写入后失败只报告实际完成的步骤，不回滚冒充原子操作，也不自动重放整段。
   cell 的 `status` 与 `hadToolErrors` 分开：前者报告脚本失败/超时/取消，后者保留原生工具错误分类。
@@ -358,7 +358,7 @@ Script 目前仅有下述内部阶段 C 执行实验，不是可选的产品模�
 `@jitl/quickjs-singlefile-cjs-release-sync@0.32.0`，另有共同的 ffi-types 依赖；core 与 singlefile variant
 发布包解压体积约 0.8 MB 与 3.1 MB，**不是零体积方案**。选型依据是
 [QuickJS 上游的 WASM 嵌入与运行时限制接口](https://github.com/justjake/quickjs-emscripten)。
-已检查 Node 源码 tsx 入口和 TypeScript 编译后的模块；单文件/Node-free 发布物、macOS/Linux 尚未验证，
+首版已检查 Node 源码 tsx 入口和 TypeScript 编译后的模块；当时单文件/Node-free 发布物、macOS/Linux 尚未验证，
 不得因 Windows 测试通过提前接入产品。
 
 离线验收位于 `cell.test.ts` 与 `tests/first-turn-script-cell.test.ts`：受限运算和依赖工具组合、
@@ -377,3 +377,126 @@ Script 目前仅有下述内部阶段 C 执行实验，不是可选的产品模�
 全部一致，新抓包在 OS Temp `kodax-first-turn-wire-x3KyVS`。无新增首轮注入，也没有 Script token 节省结论。
 后续先解决正式宿主的嵌套资格、异步生命周期/产品打包和完整装配，再比较实际 schema 开销及完整任务的
 质量、模型往返、总 token、费用和耗时；本轮零模型调用，不以手写脚本的成功代替 GLM/Kimi 非劣验证。
+
+### C 后续：扩展宿主资格与发布形态探针（2026-10-24）
+
+已先提交并推送内部执行基线 `0c0f0fe0`，随后仅推进两个边界；没有公开 Script 枚举、Session/UI 接线、
+扩大五项工具名单、修改 AMA 策略或把 Script 加入默认请求。
+
+1. **保留扩展宿主，限制未验证的降级路径。** 共享 dispatch 增加内部 `allowMcpFallback` 参数，默认
+   `true` 保持原生/SDK 行为；Script 固定传 `false`，递归与 JSON bridge 继续传递此约束。
+   本地工具失败返回原始失败，不搜索或执行同名 MCP；不剥离 `extensionRuntime`，也不把整层宿主禁用。
+   仍只接受已装配的 builtin 身份，扩展同名替换、未授权工具、后台 shell 保持拒绝。
+   `createExtensionRuntime` 的真实 Run frame 回归验证 tool:start/result、只读权限拒绝与恢复、预算和文件状态；
+   原生 MCP fallback、Script 失败及后续本地恢复分别验证。此处是内部适配器的宿主资格，**不是产品 Run 已提供 Script 工具**。
+2. **打包后再运行。** 原来的运行时 `require.resolve(quickjs...)` 在干净目录复现失败，已改为 Worker
+   静态依赖，由 bundler 封入 `script-worker.cjs`，WASM 仍内嵌。使用库自带 `PromisedDefault` 处理 Node CJS
+   与 bundle 的导入差异，没有自建加载器。路径沿用现有 root/chunks/包内/独立程序 sidecar 约定。
+   `tests/first-turn-script-packaging.test.ts` 将 minified ESM 客户端与 CJS Worker 放在 OS Temp 的独立目录，
+   没有项目 `node_modules`，验证两种 bundle 布局、受控 RPC 和缺少 sidecar 时明确失败。
+
+当前 Worker 实测 **877,541 字节（约 857 KiB）**，是压缩 JS 加内嵌 WASM，不是模型首轮 token；
+在该探针阶段尚未加入默认 `build-bundle`/发布清单；下一节记录正式打包接线及新增载荷。
+`KODAX_SCRIPT_TEST_BUN` 仅供测试显式指定编译器，普通测试不自动下载安装。
+本机通过 npm 临时缓存取得 Bun **1.4.4**，实际编译 Windows 独立程序，在清空 Node 模块路径及移除 Node PATH
+后验证受控调用、guest 无 process/fetch、CPU 无限循环被终止；不修改项目依赖，不发布任何产物。
+这是独立 Script 探针，**没有验证完整 KodaX CLI 的发布包或 macOS/Linux**，不外推成正式跨平台支持。
+
+本次 Script/宿主/打包回归 3 文件 28 项通过（含包内/root/chunks/独立程序路径回归），
+现有默认装配与执行链回归 7 文件 61 项通过；coding 构建与根 source/test 类型检查通过。
+宿主 `cell.ts`/`pilot.ts` 覆盖率为语句 91.72%、分支 85.29%、函数 92%、行 99.08%，
+不包含独立 Worker 和编译后子进程的覆盖率，不代表全仓覆盖率。
+零模型调用，未增加任何模型发现或描述往返；
+这些是边界与执行证据，不是完整模型任务非劣证据。规范轴与需求轴分别复核，均无未关闭发现。
+下一步先定义正式 Run 对 cell 的所有权、取消和回执落盘，再接入实际发布清单与验收；异步后台、
+完整工具分配、模式切换和 GLM/Kimi 任务比较仍按阶段推进，不能因为这个探针通过就默认启用。
+
+
+### C 后续：Run 结算、持久化与实际发布包（2026-10-24）
+
+本批仍不公开 Script 工作模式、工具注册或 SDK 导出。内部 `runScriptInvocation` 与既有
+`runToolInvocation` 共用 `withHostInvocation`：同一 Run 身份、扩展上下文、Session 加载/保存、
+权限上下文和退出释放顺序。它是供后续产品接线使用的显式执行入口，不是 Runtime/REPL 已可选择的模式；
+不接管 AMA 主循环，也不改变专用角色或 SDK 的原生调用策略。
+
+- 沿用 Session 的 extensionRecords（`kodax.script`），保存带 runId/cellId 的 cell.started、
+  call.started、call.settled、cell.settled。call.started 只代表尝试，不能作为已执行证据；
+  call.settled 保留原始结果、canonical 调用、恢复消息及 artifact metadata。
+  开始边界先落盘；每项工具回执在 guest 收到结果、继续下一项之前落盘；取消等到已准入工具收尾后再保存终态。
+- 正式内部入口要求可写 canonical Session storage；缺失或由外部独占保存的宿主明确拒绝，
+  不伪称持久化成功。保存失败停止本 cell 的后续工具；已发生的副作用不回滚或重放。
+  工具完成与磁盘写入之间仍存在非事务性崩溃窗口：只有开始记录而无结果时，恢复必须核查实际文件，不能推断未执行。
+- 完整叶回执存为宿主证据，不重复塞入模型消息。VM 不跨 Run 存活，也不增加 exec/wait 句柄、后台命令或自动恢复执行。
+  Session 重新打开仅加载记录，未结算 cell 不作为待执行队列。产品级 Script 摘要/模式恢复仍属阶段 E。
+- 离线回归覆盖真实 edit 后脚本失败、新 Run 只读恢复、取消时等待未结算工具、禁止后续写入、
+  首次和中途保存失败，以及真实 Node 宿主强制终止后重载已保存的编辑回执；不把这些受控调用称为模型自主验证。
+
+正式 build-bundle 生成 `script-cell.js`（约 4.3 KB）与自包含 `script-worker.cjs`（877,541 bytes），
+后者含 QuickJS/WASM，无运行时 npm 依赖查找。npm 文件清单、binary 拷贝及 tar/zip 发布清单同步包含两项。
+这会增加发布物体积，但不被 Coding 启动路径加载、不增加默认请求工具或教学。没有新增公开 SDK export。
+
+本机通过完整 `npm run build`、实际 `npm pack --ignore-scripts` 产物的干净目录运行及缺少 Worker 的明确失败；
+实际 Windows x64 `build-binary --skip-tsc` 也通过。二进制验证使用发行的 KodaX 可执行文件自身的 Bun child 模式、
+清空 Node 查找路径，执行真实打包的 Script client/Worker；同时通过原有 A2A/native/技能/Provider SDK smoke。
+没有调用外部模型，也没有发布或上传产物。macOS/Linux 仅接线发布清单，仍须平台 CI 运行，不冒称本机已验收。
+
+评审中发现并修复两项宿主接线问题：内部入口现优先复用 `ctx.managedWorkBudget`，不另给已耗尽 Run 一份预算；
+Script 叶回执采集并转发 `reportShellExecutionOutcome`，实际 shell 非零退出或缺少成功证据时标记失败，
+保留原始正文及 `shellExecutionOutcome` metadata，不能把 VM 正常返回误报成测试成功。
+cell 终态也保存有界 guest 返回值，便于恢复核对；返回值不是工具副作用成功的证明。
+
+默认请求复核：16 个 Windows 场景与前一基线 `kodax-first-turn-wire-x3KyVS` 的归一化完整请求 hash
+全部相同；新抓包位于 OS Temp `kodax-first-turn-wire-fxXLeC`，外部调用数为 0。
+此结论是 Coding 默认装配不变，不是 Script 的 token/智能收益证明。
+
+针对性验收：最终 Script/真实工具/Run/独立打包四文件 37 项通过；默认装配、原生显式调用和 Run 回归九文件 76 项通过
+（两组存在重复，不相加）。Run 边界两文件共 15 项回归测得 `host-invocation.ts`/`script/run.ts`
+语句 97.50%、分支 96.87%、函数 88.88%、行 97.36%；独立 Worker 与子进程仍以外部行为验证，
+不将局部覆盖率宣称为全仓。规范轴 0 项，需求轴上述两项修复后独立复核为 0 项。
+
+最终四模块（cell/pilot/run/host-invocation）的定向覆盖率为语句 92.85%、分支 86.11%、
+函数 91.66%、行 98.71%。无效 cell 限额或超长源码在接受并持久化前即被拒绝；
+此校验复用 VM 原有规则，不另建一份参数契约。
+
+全量检查限制：首次全量为 1,225 文件通过、5 文件失败、4 文件跳过；17,216 项通过、17 项失败。
+该轮与代码修正重叠，出现旧模块缓存（validateScriptCell 缺失）和 daemon 构建身份变化，不能作为最终版本全量验收。
+固定源码后仅复核这五文件：64 项通过、2 项失败，无未处理异常；Script 与 daemon 失败均关闭，
+容量恢复两项在本次复核也通过，但在下述基线对照中又出现，应保留波动记录，不以单次通过宣称彻底解决。
+
+仍失败的两项分别位于 `tests/deferred-repo-lsp-runtime.test.ts`（repo 工作面闭环 phase 为 failed）和
+`tests/first-turn-complex-path-recovery.test.ts`（目录命令的隔离拒绝被记录为整任务错误）。
+通过 OS Temp 中的 Vite 只读 transform，将本轮修改的既有 packages TypeScript 源码映射回 `0c0f0fe0`，
+相同环境运行旧的三文件回归：相同两项失败，另有前述容量恢复两项失败，27 项通过。
+这是本轮改动源码的控制变量对照，不是完整干净 checkout 的全仓基线；不将这些失败归因于 Script，
+也不因此宣称没有旧缺陷。日志在 OS Temp 的 `kodax-script-full-tests.log`、
+`kodax-script-failure-recheck.log`、`kodax-script-baseline-recheck.log`。
+
+本轮没有修旧评测守卫、重写模型参数或运行真实模型来掩盖失败。当前内部执行与打包回归已通过，
+但全仓未达全绿，Script 不对外启用，不据此推进默认切换或宣称智能非劣；旧验收问题需独立收敛。
+
+### C 旧验收修正与冻结回归（2026-10-24）
+
+两项旧失败已离线复现并分类为 **eval-design**，本批仅修三份测试，不改生产执行链、隔离守卫或模型参数：
+
+- Repo 夹具始终设置 `lsp:false`，却要求 `lsp_references` 出现在首轮菜单，导致模拟 provider 在返回第一条响应前断言失败。
+  修正为验证原输入与 Repo 投影视图都不重新引入已关闭且未绑定的 LSP；既有 support 测试仍单独验证
+  LSP 原本可用时，Repo-only 投影保留全部八项，不删除相应能力验收。
+- 原 `cd packages & cd .. & git diff` 保持原样，验证硬拒绝、子 Agent 只有一次响应且未派发 bash。
+  评测守卫逐参数按夹具根目录检查，不模拟 shell cwd 演进，因此不能把这个保守拒绝当作产品能力退化证据。
+  新增独立 `cd packages & git diff` 案例，验证 SDK 返回原始错误回执、只读 child 随后读到 README 实际正文并正常收尾。
+  Windows/POSIX 风格路径另验证 `beforeTool` 的 block 决策与输入不变；这不是在两个 OS 上执行了该命令。
+- `onToolUseStart` 是调用尝试的显示事件，不能作为实际执行证据；Runtime 内部执行租约也不向该评测回调转发。
+  未为补断言扩展生产事件接口：硬拒绝验证没有进入派发，可恢复拒绝用 guard 的 block 决策、真实错误回执与恢复读取验证。
+
+固定源码后的全量 `npm test`：**1,229 文件通过、1 文件失败、4 文件跳过；17,235 项通过、1 项失败、
+90 项跳过、19 项 todo**，无未处理异常。上述两项旧失败及全部 Script 回归通过。
+唯一失败是未修改的 `packages/agent/src/capabilities/mcp/oauth-connect.test.ts` 中本地 OAuth 回调用例超过原有 30 秒上限；
+结束后只做一次隔离复核，该文件 3 项全部通过（测试约 248 ms）。保留全量失败，不改超时或 OAuth 代码，
+不把隔离通过冒称原全量全绿，也不据此断言已定位其偶发超时根因。
+日志分别在 OS Temp `kodax-script-frozen-full-tests.log`、`kodax-oauth-isolated-recheck.log`。
+类型检查通过；规范轴与需求轴最终独立复核均无未关闭发现。
+
+本轮全量产生的 Windows wire 抓包 `kodax-first-turn-wire-1WwIgG` 与 `kodax-first-turn-wire-x3KyVS`
+逐项比较，16 个归一化完整请求 hash 全部一致，外部调用 0。没有模型质量、token 或费用收益的新结论。
+提交该基线后，阶段 D 先只验证 `write` 一个叶工具，复用现有权限、可信写入、预算与恢复；
+不提前接 UI、公开 Script 枚举、后台 shell 或扩大全部叶工具名单。

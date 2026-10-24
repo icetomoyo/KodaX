@@ -180,6 +180,7 @@ export async function executeToolCall(
   runtimeSessionState: RuntimeSessionState,
   activeToolNames?: string[],
   abortSignal?: AbortSignal,
+  allowMcpFallback = true,
 ): Promise<ToolResult> {
   // Issue 088: Check abort signal before executing each tool
   if (abortSignal?.aborted) {
@@ -245,6 +246,7 @@ export async function executeToolCall(
       runtimeSessionState,
       activeToolNames,
       abortSignal,
+      allowMcpFallback,
     });
   }
 
@@ -277,7 +279,7 @@ export async function executeToolCall(
   const ctxWithToolHooks = createContextForToolCall(events, toolCall, ctx);
   ctxWithToolHooks.discoveryToolNames = activeToolNames ?? ctx.discoveryToolNames;
   ctxWithToolHooks.invokeCheckedTool = ctx.invokeCheckedTool ?? ((name, input) => executeToolCall(
-    events, { id: randomUUID(), name, input }, ctx, runtimeSessionState, activeToolNames, abortSignal,
+    events, { id: randomUUID(), name, input }, ctx, runtimeSessionState, activeToolNames, abortSignal, allowMcpFallback,
   ));
 
   events.onToolExecutionStart?.(
@@ -293,7 +295,7 @@ export async function executeToolCall(
     recordWrittenFile(ctx.writtenFiles, toolCall, result, resolveExecutionCwd(ctx));
 
     // MCP fallback: when a built-in tool fails, try to find a same-name MCP tool.
-    if (toolResultText(result).startsWith('[Tool Error]') && ctx.extensionRuntime) {
+    if (allowMcpFallback && toolResultText(result).startsWith('[Tool Error]') && ctx.extensionRuntime) {
       const fallbackResult = await tryMcpFallback(
         toolCall.name,
         toolCall.input ?? {},
@@ -450,6 +452,7 @@ async function executeBridgeToolCall(input: {
   readonly runtimeSessionState: RuntimeSessionState;
   readonly activeToolNames: readonly string[] | undefined;
   readonly abortSignal: AbortSignal | undefined;
+  readonly allowMcpFallback: boolean;
 }): Promise<ToolResult> {
   const resolved = resolveToolBridgeTarget(input.bridgeCall);
   if (!resolved?.ok) {
@@ -492,7 +495,7 @@ async function executeBridgeToolCall(input: {
   ctxWithToolHooks.discoveryToolNames = input.activeToolNames ?? input.ctx.discoveryToolNames;
   ctxWithToolHooks.invokeCheckedTool = input.ctx.invokeCheckedTool ?? ((name, parameters) => executeToolCall(
     input.events, { id: randomUUID(), name, input: parameters }, input.ctx, input.runtimeSessionState,
-    input.activeToolNames ? [...input.activeToolNames] : undefined, input.abortSignal,
+    input.activeToolNames ? [...input.activeToolNames] : undefined, input.abortSignal, input.allowMcpFallback,
   ));
   const recordTargetArtifact = ctxWithToolHooks.recordToolResultArtifact;
   if (recordTargetArtifact !== undefined) {
@@ -516,7 +519,7 @@ async function executeBridgeToolCall(input: {
         ? executeTool(targetName, targetInput, ctxWithToolHooks)
         : executeRunScopedTool(ctxWithToolHooks, runScopedTarget, targetInput));
     recordWrittenFile(input.ctx.writtenFiles, targetCall, result, resolveExecutionCwd(input.ctx));
-    if (toolResultText(result).startsWith('[Tool Error]') && input.ctx.extensionRuntime) {
+    if (input.allowMcpFallback && toolResultText(result).startsWith('[Tool Error]') && input.ctx.extensionRuntime) {
       const fallbackResult = await tryMcpFallback(targetName, targetInput, input.ctx);
       if (fallbackResult !== undefined) result = fallbackResult;
     }
@@ -592,6 +595,8 @@ export interface RunToolDispatchInput {
   readonly runtimeSessionState: RuntimeSessionState;
   readonly activeToolNames: string[] | undefined;
   readonly abortSignal: AbortSignal | undefined;
+  /** Internal nested-execution boundary. Omission preserves native fallback behavior. */
+  readonly allowMcpFallback?: boolean;
   readonly toolGuardrails?: readonly ToolGuardrail[];
   readonly guardrailContext?: GuardrailContext;
   /** Supplies the post-commit transcript to after-tool guardrails. */
@@ -764,6 +769,7 @@ async function executePreparedToolCall(
     input.runtimeSessionState,
     input.activeToolNames,
     input.abortSignal,
+    input.allowMcpFallback,
   );
   if (input.toolGuardrails?.length && input.guardrailContext) {
     const result = await runToolAfterGuardrails(

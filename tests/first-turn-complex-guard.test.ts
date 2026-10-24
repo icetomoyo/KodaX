@@ -5,6 +5,26 @@ import { checkComplexTool, createComplexReadBoundary, isRecoverableComplexDenial
 const workspace = 'C:\\eval space\\workspace';
 
 describe('complex fixture execution boundary', () => {
+  it.each([workspace, '/tmp/kodax-fixture/workspace'])('distinguishes directory refusal from a traversal hard stop at %s', async root => {
+    // This lexical guard does not simulate shell cwd changes. Never reinterpret
+    // the observed command or weaken the traversal boundary to make it recoverable.
+    const traversal = { command: 'cd packages & cd .. & git diff' };
+    const original = structuredClone(traversal);
+    const hardReason = checkComplexTool(root, 'bash', traversal, true);
+    expect(hardReason).toBe('Shell argument leaves the fixture workspace.');
+    expect(isRecoverableComplexDenial('bash', hardReason)).toBe(false);
+    expect(traversal).toEqual(original);
+    const call = { id: 'rejected-cwd', name: 'bash', input: { command: 'cd packages & git diff' } };
+    const originalCall = structuredClone(call);
+    const directoryReason = checkComplexTool(root, 'bash', call.input, true);
+    expect(directoryReason).toBe('Directory change must target the fixture root.');
+    expect(isRecoverableComplexDenial('bash', directoryReason)).toBe(true);
+    expect(await createComplexReadBoundary(root).beforeTool?.(call, {
+      agent: createAgent({ name: 'directory-boundary', instructions: 'Read-only fixture inspection.' }),
+    })).toEqual({ action: 'block', reason: directoryReason });
+    expect(call).toEqual(originalCall);
+  });
+
   it('rejects the observed tail pipeline with recoverable feedback while still rejecting escapes and unknown commands', async () => {
     const input = { command: `cd "${workspace}" && npm test 2>&1 | tail -n 12 && git status --short` };
     const reason = checkComplexTool(workspace, 'bash', input, false);

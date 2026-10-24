@@ -80,7 +80,12 @@ it.each(['all', 'repo', 'manual', 'manual-tail'] as const)('keeps the %s root me
         }
         const hidden = family === 'manual' ? ['kodax_manual'] : family === 'all' ? DEFERRED_REPO_LSP_NAMES : DEFERRED_REPO_LSP_NAMES.filter(name => !name.startsWith('lsp_'));
         for (const name of hidden) expect(names).not.toContain(name);
-        if (family === 'repo') expect(names).toContain('lsp_references');
+        if (family === 'repo') {
+          // This Runtime fixture explicitly disables unbound LSP. Projection must
+          // preserve that availability, not reintroduce tools to satisfy the test.
+          expect(input.tools.some(tool => tool.name.startsWith('lsp_'))).toBe(false);
+          expect(names.some(name => name.startsWith('lsp_'))).toBe(false);
+        }
         if (menu) expect(names).toEqual(menu); else menu = names;
         const results = input.messages.flatMap(message => Array.isArray(message.content) ? message.content : [])
           .filter(block => block.type === 'tool_result');
@@ -104,7 +109,7 @@ it.each(['all', 'repo', 'manual', 'manual-tail'] as const)('keeps the %s root me
         return { inputHash: inputHash(view), result: response, text: response.textBlocks.map(block => block.text).join(''), toolCalls: response.toolBlocks,
           usage: null, estimatedUsd: null, error: null, physicalRequestObservations: [], physicalAttempts: 0, durationMs: 0 };
       }, { calls: 4, tools: 8, timeoutMs: 45_000 }, false, family === 'manual' ? '只读查询当前 KodaX 扩展手册，文件路径不可用时使用内置知识。' : '只读取得 packages/cache 的完整模块证据；拒绝错误路径后恢复。');
-    expect(result.phase, result.error ?? '').toBe('completed');
+    expect(result.phase, JSON.stringify({ error: result.error, finalText: result.finalText, calls: result.calls.length })).toBe('completed');
     expect(result.error).toBeNull();
     expect(result.calls).toHaveLength(4);
     expect(result.finalText).toContain('本次只读');

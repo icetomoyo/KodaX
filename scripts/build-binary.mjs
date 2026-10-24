@@ -401,6 +401,8 @@ function buildOne(target, version) {
   cpSync(WORKER_SIDECAR, join(outDir, 'semantic-worker.js'));
   for (const [source, filename] of [
     [HANDLER_WORKER_SIDECAR, 'constructed-handler-worker.js'],
+    [join(ROOT, 'dist', 'script-cell.js'), 'script-cell.js'],
+    [join(ROOT, 'dist', 'script-worker.cjs'), 'script-worker.cjs'],
   ]) {
     if (!existsSync(source)) {
       throw new Error(`Missing ${source}. Run 'npm run build' first.`);
@@ -503,6 +505,18 @@ async function verifyHostBinary(binaryPath) {
     const packageDir = join(smokeHome, 'package');
     cpSync(dirname(binaryPath), packageDir, { recursive: true });
     const smokeBinaryPath = join(packageDir, basename(binaryPath));
+    // Exercise the shipped Script assets with the real Node-free runtime, outside the checkout.
+    const scriptProbe = join(packageDir, 'script-release-probe.mjs');
+    writeFileSync(scriptProbe, `import {runScriptCell} from './script-cell.js';
+      process.env.KODAX_BUNDLED = 'true';
+      const result = await runScriptCell({code:'const r=await tools.read({});return [Number(r.content)+1,typeof process,typeof fetch];',
+        toolNames:['read'],limits:{timeoutMs:5000,memoryBytes:16777216,maxCalls:4,maxTransferBytes:131072},invoke:async()=>({content:'41'})});
+      if(result.status !== 'completed' || JSON.stringify(result.value) !== '[42,"undefined","undefined"]' || result.receipts.length !== 1)
+        throw new Error(JSON.stringify(result));`);
+    const scriptResult = spawnSync(smokeBinaryPath, [scriptProbe], { cwd: packageDir, encoding: 'utf8', windowsHide: true,
+      env: { ...process.env, BUN_BE_BUN: '1', NODE_PATH: '', NODE_OPTIONS: '', PATH: process.env.SystemRoot ?? '/usr/bin' }, timeout: 15_000 });
+    if (scriptResult.error) throw scriptResult.error;
+    if (scriptResult.status !== 0) throw new Error(`Packaged Script smoke failed: ${scriptResult.stderr}`);
     const result = spawnSync(smokeBinaryPath, ['a2a', 'list'], {
       cwd: packageDir,
       encoding: 'utf8',

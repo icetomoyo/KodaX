@@ -537,6 +537,20 @@ const constructedHandlerWorkerResult = await build({
 const constructedHandlerWorkerBytes = statSync(path.join(distDir, 'constructed-handler-worker.js')).size;
 log(`  OK dist/constructed-handler-worker.js (${(constructedHandlerWorkerBytes / 1024).toFixed(0)} kB)`);
 
+// Internal Script executor assets, not a public SDK export or a model-visible mode.
+// Bundle QuickJS and its embedded WASM completely: no runtime node_modules lookup.
+for (const [source, output, format] of [
+  ['cell', 'script-cell.js', 'esm'],
+  ['worker', 'script-worker.cjs', 'cjs'],
+]) {
+  await build({
+    entryPoints: [path.join(repoRoot, `packages/coding/dist/agent-runtime/script/${source}.js`)],
+    outfile: path.join(distDir, output), bundle: true, platform: 'node', target: 'node20',
+    format, minify: true, keepNames: true,
+  });
+  log(`  OK dist/${output} (${statSync(path.join(distDir, output)).size} bytes)`);
+}
+
 // ---- copy builtin skill resources ---------------------------------------
 
 // Layout contract (see HLD §12.4 risk 3):

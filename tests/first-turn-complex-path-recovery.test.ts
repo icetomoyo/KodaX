@@ -126,13 +126,16 @@ it('inherits the read boundary in an actual readonly child and lets that child r
   } finally { await fs.rm(directory, { recursive: true, force: true }); }
 });
 
-it('returns an unchanged rejected directory command to the readonly child for recovery without executing it', async () => {
+it.each([
+  { commandText: 'cd packages & cd .. & git diff', recoverable: false, reason: 'Shell argument leaves the fixture workspace.' },
+  { commandText: 'cd packages & git diff', recoverable: true, reason: 'Directory change must target the fixture root.' },
+])('preserves the readonly child directory command and its refusal category: $commandText', async ({ commandText, recoverable, reason }) => {
   vi.stubEnv('NODE_ENV', 'production');
   vi.stubEnv('COMPLEX_OFFLINE_KEY', 'offline-only');
   const fetcher = vi.fn(async () => { throw new Error('Offline regression forbids network'); });
   vi.stubGlobal('fetch', fetcher);
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-child-cwd-recovery-'));
-  const command = { type: 'tool_use' as const, id: 'rejected-cwd', name: 'bash', input: { command: 'cd packages & cd .. & git diff' } };
+  const command = { type: 'tool_use' as const, id: 'rejected-cwd', name: 'bash', input: { command: commandText } };
   const original = structuredClone(command);
   let rootCalls = 0;
   let childCalls = 0;
@@ -148,14 +151,27 @@ it('returns an unchanged rejected directory command to the readonly child for re
         childSawDenial = input.messages.some(message => Array.isArray(message.content) && message.content.some(block =>
           block.type === 'tool_result' && block.tool_use_id === 'rejected-cwd' && block.is_error === true && String(block.content).includes('Directory change must target the fixture root.')));
       }
+      if (child && round === 2) expect(input.messages.some(message => Array.isArray(message.content) && message.content.some(block =>
+        block.type === 'tool_result' && block.tool_use_id === 'inspect-root' && !block.is_error && String(block.content).includes(CACHE_FILES['README.md']!)))).toBe(true);
       const result: KodaXStreamResult = { textBlocks: tools.length ? [] : [{ type: 'text', text: 'Offline inspection finished after the denied command.' }],
         thinkingBlocks: [], toolBlocks: tools, stopReason: tools.length ? 'tool_use' : 'end_turn' };
       return { inputHash: inputHash(input), result, text: '', toolCalls: tools, usage: null, estimatedUsd: null, error: null, physicalRequestObservations: [], physicalAttempts: 0, durationMs: 0 };
     }, { calls: 10, tools: 12, timeoutMs: 30000 }, true);
-    expect(record.error).toBeNull();
-    expect(record.success).toBe(true);
-    expect(childSawDenial).toBe(true);
-    expect(childCalls).toBe(3);
+    if (recoverable) {
+      expect(record.error).toBeNull();
+      expect(record.success).toBe(true);
+      expect(childSawDenial).toBe(true);
+      expect(childCalls).toBe(3);
+    } else {
+      expect(record.error).toBe('isolation-rejected-before-execution: [Tool Error] ' + reason);
+      expect(record.success).toBe(false);
+      expect(childSawDenial).toBe(false);
+      expect(childCalls).toBe(1);
+    }
+    expect(record.events).toEqual(expect.arrayContaining([expect.objectContaining({
+      kind: 'guard', tool: 'bash', input: original.input, denied: reason,
+    })]));
+    if (!recoverable) expect(record.events.some(event => event.kind === 'start' && event.name === 'bash')).toBe(false);
     expect(command).toEqual(original);
     expect(record.groundtruth.protectedUnchanged).toBe(true);
     expect(fetcher).not.toHaveBeenCalled();

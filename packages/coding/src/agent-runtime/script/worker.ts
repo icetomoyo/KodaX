@@ -1,16 +1,16 @@
-import type { QuickJSDeferredPromise, QuickJSHandle } from 'quickjs-emscripten-core';
+import { parentPort, workerData } from 'node:worker_threads';
+import { newQuickJSWASMModuleFromVariant, type QuickJSDeferredPromise, type QuickJSHandle } from 'quickjs-emscripten-core';
+import variantImport from '@jitl/quickjs-singlefile-cjs-release-sync';
 
 /** Trusted Worker entry. Guest source is only evaluated by QuickJS, never by Node. */
-export async function scriptWorkerMain(require: NodeRequire): Promise<void> {
-  const { parentPort, workerData } = require('node:worker_threads') as typeof import('node:worker_threads');
+export async function scriptWorkerMain(): Promise<void> {
   const port = parentPort!;
   const data = workerData as {
-    corePath: string; variantPath: string; code: string; toolNames: string[];
+    code: string; toolNames: string[];
     memoryBytes: number; timeoutMs: number; maxTransferBytes: number; maxCalls: number;
   };
-  const core = require(data.corePath) as typeof import('quickjs-emscripten-core');
-  const variant = require(data.variantPath) as { default: Parameters<typeof core.newQuickJSWASMModuleFromVariant>[0] };
-  const module = await core.newQuickJSWASMModuleFromVariant(variant.default);
+  // The library's PromisedDefault contract handles both Node CJS wrapping and bundled imports.
+  const module = await newQuickJSWASMModuleFromVariant(Promise.resolve(variantImport));
   const runtime = module.newRuntime();
   runtime.setMemoryLimit(data.memoryBytes);
   runtime.setMaxStackSize(Math.min(data.memoryBytes / 4, 512 * 1024));

@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { basename, dirname, join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import type { RunnerToolResult } from '@kodax-ai/agent';
 
@@ -29,14 +30,21 @@ export interface ScriptCellInput {
   readonly signal?: AbortSignal;
   /** Host-owned checked dispatcher. Must settle only after the leaf and its cancellation cleanup settle. */
   readonly invoke: (name: string, input: Record<string, unknown>, signal: AbortSignal, id: number) => Promise<RunnerToolResult>;
+  /** Required host boundaries, awaited before effects and before the guest can continue. */
+  readonly onCall?: (call: Omit<ScriptReceipt, 'result'>) => Promise<void>;
+  readonly onReceipt?: (receipt: ScriptReceipt) => Promise<void>;
 }
 
-/** Internal experiment only: no registry, default model menu, Session or public SDK activation. */
-export async function runScriptCell(input: ScriptCellInput): Promise<ScriptCellResult> {
-  for (const value of Object.values(input.limits)) {
+export function validateScriptCell(code: string, limits: ScriptCellLimits): void {
+  for (const value of Object.values(limits)) {
     if (!Number.isSafeInteger(value) || value <= 0) throw new Error('Script limits must be positive safe integers.');
   }
-  if (Buffer.byteLength(input.code) > input.limits.maxTransferBytes) throw new Error('Script source exceeds the transfer limit.');
+  if (Buffer.byteLength(code) > limits.maxTransferBytes) throw new Error('Script source exceeds the transfer limit.');
+}
+
+/** Internal VM primitive; the host owns Session persistence and Run activation. */
+export async function runScriptCell(input: ScriptCellInput): Promise<ScriptCellResult> {
+  validateScriptCell(input.code, input.limits);
   const receipts: ScriptReceipt[] = [];
   if (input.signal?.aborted) return { status: 'cancelled', receipts, hadToolErrors: false };
   const require = createRequire(import.meta.url);
@@ -48,13 +56,12 @@ export async function runScriptCell(input: ScriptCellInput): Promise<ScriptCellR
       const entry = workerData.loaderUrl
         ? await (await import(workerData.loaderUrl)).tsImport(workerData.workerUrl, workerData.workerUrl)
         : await import(workerData.workerUrl);
-      await entry.scriptWorkerMain(require);
+      await entry.scriptWorkerMain();
     })().catch(error => { throw error; });`, {
     eval: true, env: { TSX_DISABLE_CACHE: '1' }, execArgv: [], resourceLimits: { maxOldGenerationSizeMb: 64 },
     workerData: { ...input.limits, code: input.code, toolNames: input.toolNames,
-      workerUrl: new URL(sourceMode ? './worker.ts' : './worker.js', import.meta.url).href,
-      loaderUrl: sourceMode ? pathToFileURL(require.resolve('tsx/esm/api')).href : undefined,
-      corePath: require.resolve('quickjs-emscripten-core'), variantPath: require.resolve('@jitl/quickjs-singlefile-cjs-release-sync') },
+      workerUrl: resolveScriptWorkerUrl().href,
+      loaderUrl: sourceMode ? pathToFileURL(require.resolve('tsx/esm/api')).href : undefined },
   });
   const controller = new AbortController();
   const allowed = new Set(input.toolNames);
@@ -86,17 +93,23 @@ export async function runScriptCell(input: ScriptCellInput): Promise<ScriptCellR
       tail = tail.then(async () => {
         if (controller.signal.aborted) return;
         let parameters: Record<string, unknown> = {};
-        let result: RunnerToolResult;
+        let result: RunnerToolResult | undefined;
         try {
           if (!allowed.has(message.name)) throw new Error(`Tool ${message.name} is outside this Script cell.`);
           if (Buffer.byteLength(message.input) > input.limits.maxTransferBytes) throw new Error('Script tool input exceeds the transfer limit.');
           const parsed: unknown = JSON.parse(message.input);
           if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Tool input must be a JSON object.');
           parameters = parsed as Record<string, unknown>;
-          result = await input.invoke(message.name, parameters, controller.signal, message.id);
         } catch (error) { result = { content: `[Tool Error] ${String(error)}`, isError: true }; }
+        if (!result) {
+          await input.onCall?.({ id: message.id, name: message.name, input: parameters });
+          if (controller.signal.aborted) return;
+          try { result = await input.invoke(message.name, parameters, controller.signal, message.id); }
+          catch (error) { result = { content: `[Tool Error] ${String(error)}`, isError: true }; }
+        }
         receipts.push({ id: message.id, name: message.name, input: parameters, result });
         const encoded = encodeScriptResult(result);
+        await input.onReceipt?.(receipts.at(-1)!);
         if (Buffer.byteLength(encoded) > input.limits.maxTransferBytes) {
           finish({ status: 'failed', error: 'Tool result exceeds the Script transfer limit; full result retained in host receipts.' });
         } else if (!stopped) worker.postMessage({ id: message.id, result: encoded });
@@ -112,6 +125,15 @@ export async function runScriptCell(input: ScriptCellInput): Promise<ScriptCellR
   } finally {
     clearTimeout(timer!); input.signal?.removeEventListener('abort', onAbort);
   }
+}
+
+/** Same sidecar layout as existing isolated workers; no ambient module lookup in a bundle. */
+export function resolveScriptWorkerUrl(moduleUrl = import.meta.url): URL {
+  if (moduleUrl.endsWith('.ts')) return new URL('./worker.ts', moduleUrl);
+  if (process.env.KODAX_BUNDLED === 'true') return pathToFileURL(join(dirname(process.execPath), 'script-worker.cjs'));
+  const directory = dirname(fileURLToPath(moduleUrl));
+  if (basename(directory) === 'script') return new URL('./worker.js', moduleUrl);
+  return pathToFileURL(join(basename(directory) === 'chunks' ? dirname(directory) : directory, 'script-worker.cjs'));
 }
 
 /** Do not let JSON silently erase process-local metadata or turn non-finite numbers into null. */

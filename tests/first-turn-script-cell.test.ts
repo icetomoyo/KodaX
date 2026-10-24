@@ -4,9 +4,11 @@ import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createScriptPilot } from '../packages/coding/src/agent-runtime/script/pilot.js';
 import { buildRuntimeSessionState } from '../packages/coding/src/agent-runtime/runtime-session-state.js';
+import { runToolDispatch } from '../packages/coding/src/agent-runtime/tool-dispatch.js';
 import type { KodaXManagedWorkBudget, KodaXToolExecutionContext } from '../packages/coding/src/types.js';
 import { executeTool, getToolDefinition, registerTool } from '../packages/coding/src/tools/index.js';
 import { wrapCodingToolAsRunnable } from '../packages/coding/src/task-engine/_internal/managed-task/tool-wrappers.js';
+import { createExtensionRuntime, withExtensionRuntimeContext } from '../packages/coding/src/extensions/runtime.js';
 
 const limits = { timeoutMs: 10_000, memoryBytes: 16 * 1024 * 1024, maxCalls: 12, maxTransferBytes: 128 * 1024 };
 const activeTools = ['read', 'grep', 'glob', 'edit', 'bash', 'spawn_agent', 'tool_call'];
@@ -221,7 +223,7 @@ it('retains trusted recovery artifact metadata for large native shell output', a
   expect(String(result.receipts[0]?.result.content)).toContain('KODAX_RESULT_INCOMPLETE');
 }, 30_000);
 
-it('refuses unqualified extension runtimes, including one attached after assembly', async () => {
+it('keeps host extensions bound but prevents Script failures from falling back to unqualified MCP tools', async () => {
   const { ctx, budget, dispatch } = await fixture();
   const remote = vi.fn(async () => ({ kind: 'tool' as const, content: 'remote result' }));
   const extensionRuntime: NonNullable<KodaXToolExecutionContext['extensionRuntime']> = {
@@ -229,13 +231,54 @@ it('refuses unqualified extension runtimes, including one attached after assembl
     describeCapability: async () => undefined, readCapability: remote,
     getCapabilityPrompt: async () => undefined, getCapabilityPromptContext: async () => undefined,
   };
-  expect(() => createScriptPilot({ ...dispatch, ctx: { ...ctx, extensionRuntime } }, budget)).toThrow(/extension/i);
-  const pilot = createScriptPilot(dispatch, budget);
   ctx.extensionRuntime = extensionRuntime;
+  const native = await runToolDispatch({ ...dispatch, abortSignal: undefined,
+    toolBlocks: [{ type: 'tool_use', id: 'native-read', name: 'read', input: { path: 'missing.mjs' } }] });
+  expect(native.get('native-read')).toContain('MCP Fallback');
+  expect(remote).toHaveBeenCalledOnce();
+  remote.mockClear();
+  const pilot = createScriptPilot(dispatch, budget);
   const result = await pilot.run("return await tools.read({path:'missing.mjs'});", limits);
   expect(result.hadToolErrors).toBe(true);
+  expect(result.receipts[0]?.result.content).not.toContain('MCP Fallback');
   expect(remote).not.toHaveBeenCalled();
-  expect(budget.spentBudget).toBe(0);
+  expect(budget.spentBudget).toBe(1);
+  expect(ctx.extensionRuntime).toBe(extensionRuntime);
+  const recovered = await pilot.run("return await tools.read({path:'value.mjs'});", limits);
+  expect(recovered.hadToolErrors).toBe(false);
+  expect(budget.spentBudget).toBe(2);
+  const bridge = await runToolDispatch({ ...dispatch, abortSignal: undefined, allowMcpFallback: false,
+    toolBlocks: [{ type: 'tool_use', id: 'bridge-read', name: 'tool_call', input: { name: 'read', input: { path: 'missing.mjs' } } }] });
+  expect(bridge.get('bridge-read')).not.toContain('MCP Fallback');
+  expect(remote).not.toHaveBeenCalled();
+});
+
+it('joins the real extension host event frame without changing its read-only permission policy', async () => {
+  const { directory, ctx, budget, dispatch } = await fixture();
+  const runtime = createExtensionRuntime();
+  const starts: string[] = [];
+  const results: string[] = [];
+  runtime.on('tool:start', event => { starts.push(event.name); });
+  runtime.on('tool:result', event => { results.push(event.name); });
+  ctx.extensionRuntime = runtime;
+  ctx.sessionId = 'script-host-session'; ctx.runtimeRunId = 'script-host-run';
+  const permission = vi.fn(async (name: string) => name === 'read' ? true : '[Tool Error] Host is read-only');
+  try {
+    const result = await withExtensionRuntimeContext(() => createScriptPilot({ ...dispatch,
+      events: { beforeToolExecute: permission } }, budget).run(`
+        await tools.read({path:'value.mjs'});
+        await tools.edit({path:'value.mjs',edits:[{old_string:'value = 1',new_string:'value = 9'}]});
+        return await tools.read({path:'value.mjs'});
+      `, limits), runtime, ctx.runtimeRunId);
+    expect(result.status, result.error).toBe('completed');
+    expect(result.receipts.map(receipt => receipt.result.isError)).toEqual([false, true, false]);
+    expect(starts).toEqual(['read', 'edit', 'read']);
+    expect(results).toEqual(starts);
+    expect(permission).toHaveBeenCalledTimes(3);
+    expect(budget.spentBudget).toBe(2);
+    expect(ctx.extensionRuntime).toBe(runtime);
+    expect(await readFile(path.join(directory, 'value.mjs'), 'utf8')).toBe('export const value = 1;\n');
+  } finally { await runtime.dispose(); }
 });
 
 it('rejects background shell calls before permission/execution until async lifecycle is qualified', async () => {
