@@ -465,6 +465,7 @@ export type {
   UserInteraction,
   UserInteractionPromptContext,
   AskUserAnswer,
+  AskUserUnanswered,
   AskUserSelectionAnswer,
   AskUserCustomInputAnswer,
   AskUserQuestionItem,
@@ -478,6 +479,7 @@ export {
   ASK_USER_CUSTOM_INPUT_SIGNAL,
   asSingleSelection,
   isAskUserCustomInputAnswer,
+  isAskUserUnanswered,
 } from './runtime/user-interaction.js';
 
 // ============== Messaging (v0.7.36 FEATURE_115) ==============

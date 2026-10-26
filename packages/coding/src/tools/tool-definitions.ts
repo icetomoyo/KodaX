@@ -1186,7 +1186,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'ask_user_question',
-    description: 'Ask the user a question. Supports single-select (default), multi-select, free-text input, and custom input from select dialogs. Select questions are open-ended by default: KodaX adds an "Other..." custom input option automatically, so do NOT add your own Other/Custom option. Set allow_custom_input=false only for closed safety/protocol decisions. Set default to the recommended option value; the Runtime uses that validated value if the user does not answer before expiry. When you have multiple independent questions, use the "questions" array; each question is presented separately with its own options. Do NOT combine multiple questions into one string.',
+    description: 'Ask the user a question. Supports single-select (default), multi-select, free-text input, and custom input from select dialogs. Select questions are open-ended by default: KodaX adds an "Other..." custom input option automatically, so do NOT add your own Other/Custom option. Set allow_custom_input=false only for closed safety/protocol decisions. Questions wait indefinitely by default and the user may explicitly skip. Skipping or a Host-configured timeout returns a normal unanswered result; use your judgment to continue or explain what information is still needed. Only an explicit Stop interrupts the Run. Defaults are suggestions and are never submitted automatically. When you have multiple independent questions, use the "questions" array; each question is presented separately with its own options. Do NOT combine multiple questions into one string.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1226,7 +1226,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
               },
               default: {
                 type: 'string',
-                description: 'Recommended option value selected if this question expires. Must match one option value.',
+                description: 'Suggested option value for display. Never submitted automatically.',
               },
               allow_custom_input: {
                 type: 'boolean',
@@ -1300,7 +1300,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
           type: 'string',
           description: 'Optional default text for the custom input prompt.',
         },
-        default: { type: 'string', description: 'Recommended option value (for select) or text (for input) used if the interaction expires.' },
+        default: { type: 'string', description: 'Suggested option value (select) or initial text (input) for display. Never submitted automatically.' },
       },
       required: ['question'],
     },

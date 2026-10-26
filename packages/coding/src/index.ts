@@ -254,6 +254,7 @@ export type {
   KodaXSessionTreeNode,
   KodaXToolExecutionContext,
   AskUserAnswer,
+  AskUserUnanswered,
   AskUserCustomInputAnswer,
   AskUserQuestionOptions,
   AskUserQuestionItem,

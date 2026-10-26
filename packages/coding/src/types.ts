@@ -823,19 +823,19 @@ export interface KodaXEvents {
     options: AskUserQuestionOptions,
     meta?: KodaXToolEventMeta,
     context?: KodaXUserInputPromptContext,
-  ) => Promise<AskUserAnswer>;
+  ) => Promise<AskUserAnswer | AskUserUnanswered>;
   /** Ask user multiple independent questions sequentially - 澶氶棶棰橀『搴忔彁闂?*/
   askUserMulti?: (
     options: AskUserMultiOptions,
     meta?: KodaXToolEventMeta,
     context?: KodaXUserInputPromptContext,
-  ) => Promise<Record<string, AskUserAnswer> | undefined>;
+  ) => Promise<Record<string, AskUserAnswer> | AskUserUnanswered | undefined>;
   /** Ask user for free-text input - 自由文本输入 (Issue 112) */
   askUserInput?: (
     options: { question: string; default?: string },
     meta?: KodaXToolEventMeta,
     context?: KodaXUserInputPromptContext,
-  ) => Promise<string | undefined>;
+  ) => Promise<string | AskUserUnanswered | undefined>;
   /**
    * FEATURE_074: Exit plan mode with user approval. Called by the `exit_plan_mode` tool.
    * Returns:
@@ -2690,6 +2690,7 @@ export interface KodaXResult {
 // here for backward compatibility (existing `../types.js` imports keep working).
 import type {
   AskUserAnswer,
+  AskUserUnanswered,
   AskUserCustomInputAnswer,
   AskUserQuestionItem,
   AskUserMultiOptions,
@@ -2698,6 +2699,7 @@ import type {
 } from '@kodax-ai/agent';
 export type {
   AskUserAnswer,
+  AskUserUnanswered,
   AskUserCustomInputAnswer,
   AskUserQuestionItem,
   AskUserMultiOptions,
@@ -2922,11 +2924,11 @@ export interface KodaXToolExecutionContext {
   extensionRuntime?: CapabilityRuntimeContract;
   /** Ask user a question interactively (select mode) - Issue 069. Select
    *  answers may be strings, arrays, or structured custom-input answers. */
-  askUser?: (options: AskUserQuestionOptions) => Promise<AskUserAnswer>;
+  askUser?: (options: AskUserQuestionOptions) => Promise<AskUserAnswer | AskUserUnanswered>;
   /** Ask user multiple independent questions sequentially - 澶氶棶棰橀『搴忔彁闂?*/
-  askUserMulti?: (options: AskUserMultiOptions) => Promise<Record<string, AskUserAnswer> | undefined>;
+  askUserMulti?: (options: AskUserMultiOptions) => Promise<Record<string, AskUserAnswer> | AskUserUnanswered | undefined>;
   /** Ask user for free-text input - 自由文本输入 (Issue 112) */
-  askUserInput?: (options: { question: string; default?: string }) => Promise<string | undefined>;
+  askUserInput?: (options: { question: string; default?: string }) => Promise<string | AskUserUnanswered | undefined>;
   /**
    * FEATURE_074: Exit plan mode with user approval. Called by the `exit_plan_mode` tool.
    * See KodaXEvents.exitPlanMode for the tri-state return contract.

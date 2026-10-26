@@ -5638,6 +5638,22 @@ proof, or letting each host invent a timeout/replay policy.
 
 **Status**: Accepted (2026-08-17)
 
+**Amendment (2026-10-25)**: ordinary AskUser requests wait indefinitely by
+default and permit explicit skip. There is no required-answer constraint or
+model-controlled `required` flag. This replaces the five-minute ordinary-question
+deadline and automatic default selection. `userInputTimeoutMs` defaults to 0
+(no deadline); a positive Host value enables a deadline for ordinary questions.
+Skip and timeout return `{ unanswered: true, reason: 'timeout' | 'skipped' }`, which
+`ask_user_question` forwards as a normal JSON tool result. Suggested defaults
+remain presentation hints. Runtime owns settlement and optional `expiresAt`;
+clients display pending requests and respond by exact request ID. Disconnect,
+unsubscription, and page refresh do not cancel questions. The first valid
+settlement wins and late replies cannot affect another request. Dismissing a
+question (including legacy `cancel`, `userInputs.dismiss`, or an undefined host
+input result) means skipped; only explicit Run/Session Stop interrupts execution.
+Permission rejection and timeout policies are unchanged. This amends the bounded-AskUser
+and validated-default clauses below; the remaining decision still applies.
+
 **Driver**: a host prompt or permission dialog can outlive the authoritative
 Runtime request, while an interactive host can race a prepared Session append
 with another durable writer and either hang or lose the newest tail.

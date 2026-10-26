@@ -452,6 +452,10 @@ export function createRuntimeDaemonClient(
     pending: ClientInteraction,
     answer: unknown,
   ): ClientInteractionResponse | undefined => {
+    if (pending.kind !== 'permission' && typeof answer === 'object' && answer !== null
+      && 'unanswered' in answer && answer.unanswered === true && 'reason' in answer && answer.reason === 'skipped') {
+      return { kind: 'skip' };
+    }
     if (pending.kind === 'question_input') {
       return { kind: 'question_input', text: answer as string };
     }

@@ -1675,15 +1675,18 @@ const TOPICS: readonly KodaXManualTopic[] = [
       "stay host-owned when a non-empty CLI uiHistory exists.",
       "The same release requires `liveOutputSegments:1` for new daemon consumers and",
       "bundles lazy Anthropic/OpenAI SDK dependency graphs in standalone binaries.",
-      "AskUser and permission prompts have independent bounded deadlines and"
-        + " owner AbortSignals. On expiry, Runtime accepts only a validated"
-        + " default; otherwise it dismisses the request. MCP reverse elicitation"
+      "AskUser and permission prompts have independent policies and"
+        + " owner AbortSignals. Ordinary questions wait indefinitely by default"
+        + " and allow explicit skip. Skip or Host timeout returns unanswered;"
+        + " only Stop interrupts the Run,"
+        + " and defaults are never submitted automatically. MCP reverse elicitation"
         + " cancels through the same signal. `reclaimStaleKodaXFileLock` is the"
         + " public Agent helper for an explicitly identified stale learning lock;"
         + " it is not a general lock deletion primitive.",
       "Configure `userInputTimeoutMs` independently from `permissionTimeoutMs`;"
         + " both are validated before embedded, Worker, or daemon startup."
-        + " Permission timeout 0 retains its timer-disable meaning.",
+        + " Both accept 0 to disable their timer; user input defaults to 0,"
+        + " while permission timeout retains its five-minute default.",
       "",
       "Require `learningCenter:1` and `skillLearningLoop:1` when a host depends on the complete",
       "F263 project-canary contract. `runtime.learning` exposes list/get/snapshot/events/subscribe",

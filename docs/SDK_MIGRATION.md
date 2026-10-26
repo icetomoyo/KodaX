@@ -22,6 +22,17 @@ TUI、桌面 UI、IDE、自动化应用接入共享 KodaX 时，以 `KodaXProduc
 
 ## 2. 旧调用如何迁移
 
+普通提问的等待语义已调整：`ask_user_question` / `askUser` 默认无限等待，
+允许用户明确跳过，不再有 `required` 作答约束，也不自动采用默认答案。
+`userInputTimeoutMs` 默认 `0`（禁用期限）；Host 显式配置正值时才启用期限。
+提问的 `expiresAt` 现在可缺失；UI 不应据此补出本地期限。问题超时/跳过时，
+SDK 回调返回 `AskUserUnanswered`（`{ unanswered: true, reason: 'timeout' | 'skipped' }`），
+调用方应先用 `/agent` 的 `isAskUserUnanswered` 收窄，再处理答案。
+Client 用 `{ kind: 'skip' }` 显式跳过问题。普通问题的旧 `cancel` / `userInputs.dismiss`
+以及旧输入回调返回 undefined 都视为跳过，正常继续；明确 Run/Session Stop 才中断 Run。
+Space 刷新、断连或关闭订阅只清理本地展示，重连后重读同一请求并按原 ID 回答；
+权限审批的拒绝和超时策略不变。完整结算规则见 [Client 契约](CLIENT_CONTRACT.md)。
+
 当前源码增加可选 `ClientSession.lastMessageAt`（摘要同样提供）。会话列表和裸 `-r` 使用最近真实对话时间排序，缺失时回退创建时间；`before` 的创建时间过滤含义不变。UI 可用 `lastMessageAt ?? createdAt` 显示日期，继续透传不透明游标，避免本地再次按创建时间排序。分页是实时边界，不保证跨页冻结快照，新增活动后刷新首页。历史压缩、Actor/设置保存和合成消息不刷新最近对话时间。完整规则见 [Client 契约](CLIENT_CONTRACT.md)。
 
 启动提速由共享 Host 的单次历史恢复和规范 Actor 元数据投影实现，不增加 UI 配置、业务 RPC 或启动进度类型。现有 `onStartupProgress` 继续可用于 CLI、Space 和 Node SDK；被动 connect 与私有 embedded Runtime 不承担全局恢复。

@@ -357,7 +357,6 @@ describe("Runtime user-input timeout validation", () => {
       { mode: "daemon", autoStartDaemon: false },
     ];
     const invalidTimeouts = [
-      0,
       -1,
       0.5,
       Number.NaN,
@@ -369,7 +368,7 @@ describe("Runtime user-input timeout validation", () => {
         await expect(createKodaXRuntime({
           ...mode,
           userInputTimeoutMs: timeoutMs,
-        })).rejects.toThrow("userInputTimeoutMs must be a positive integer no greater than 2147483647.");
+        })).rejects.toThrow("userInputTimeoutMs must be a non-negative integer no greater than 2147483647.");
         if (timeoutMs !== 0) {
           await expect(createKodaXRuntime({
             ...mode,
@@ -383,7 +382,7 @@ describe("Runtime user-input timeout validation", () => {
   it("rejects an invalid value before a direct daemon connection", async () => {
     await expect(connectKodaXRuntime({
       userInputTimeoutMs: Number.NaN,
-    })).rejects.toThrow("userInputTimeoutMs must be a positive integer no greater than 2147483647.");
+    })).rejects.toThrow("userInputTimeoutMs must be a non-negative integer no greater than 2147483647.");
     await expect(connectKodaXRuntime({
       permissionTimeoutMs: 2_147_483_648,
     })).rejects.toThrow("permissionTimeoutMs must be a non-negative integer no greater than 2147483647.");

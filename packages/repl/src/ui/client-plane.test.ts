@@ -514,6 +514,26 @@ describe('answerClientPlaneInteraction (T17)', () => {
     permission: () => Promise.resolve({ confirmed: true }),
   };
 
+  it.each(['question', 'question_multi', 'question_input'] as const)(
+    'submits explicit skip but never a local timeout for %s', async kind => {
+      for (const reason of ['skipped', 'timeout'] as const) {
+        const plane = planeWith([]);
+        const surface: ClientPlaneDialogSurface = {
+          ...baseSurface,
+          question: async () => ({ unanswered: true, reason }),
+          questionMulti: async () => ({ unanswered: true, reason }),
+          questionInput: async () => ({ unanswered: true, reason }),
+        };
+        const pending = kind === 'question_multi'
+          ? interaction(kind, { questions: [] })
+          : kind === 'question_input' ? interaction(kind, { question: 'Optional?' })
+            : interaction(kind, { question: 'Optional?' });
+        expect(await answerClientPlaneInteraction(plane, pending, surface)).toBe(reason === 'skipped');
+        expect(plane.calls).toEqual(reason === 'skipped' ? [{ kind: 'skip' }] : []);
+      }
+    },
+  );
+
   it.each(['question', 'question_multi', 'question_input', 'permission'] as const)(
     'does not submit a %s answer when observation cleanup aborts the dialog', async (kind) => {
       const plane = planeWith([]);
@@ -553,24 +573,24 @@ describe('answerClientPlaneInteraction (T17)', () => {
     expect(plane.calls[0]).toEqual({ kind: 'question', answer: 'yes' });
   });
 
-  it('maps a cancelled question dialog to the cancel response', async () => {
+  it('maps a dismissed question dialog to skip', async () => {
     const plane = planeWith([]);
     await answerClientPlaneInteraction(
       plane,
       interaction('question', { question: 'Ship?' }),
       { ...baseSurface, question: () => Promise.resolve(CANCELLED_TOOL_RESULT_MESSAGE as AskUserAnswer) },
     );
-    expect(plane.calls[0]).toEqual({ kind: 'cancel' });
+    expect(plane.calls[0]).toEqual({ kind: 'skip' });
   });
 
-  it('maps multi-question ESC to cancel and answers to the record', async () => {
+  it('maps multi-question ESC to skip and answers to the record', async () => {
     const cancelledPlane = planeWith([]);
     await answerClientPlaneInteraction(
       cancelledPlane,
       interaction('question_multi', { questions: [{ question: 'A?' }, { question: 'B?' }] }),
       { ...baseSurface, questionMulti: () => Promise.resolve(undefined) },
     );
-    expect(cancelledPlane.calls[0]).toEqual({ kind: 'cancel' });
+    expect(cancelledPlane.calls[0]).toEqual({ kind: 'skip' });
 
     const plane = planeWith([]);
     await answerClientPlaneInteraction(
@@ -581,7 +601,7 @@ describe('answerClientPlaneInteraction (T17)', () => {
     expect(plane.calls[0]).toEqual({ kind: 'question_multi', answers: { 'Deploy?': 'later' } });
   });
 
-  it('maps a text question answer and its ESC to cancel', async () => {
+  it('maps a text question answer and its ESC to skip', async () => {
     const plane = planeWith([]);
     await answerClientPlaneInteraction(
       plane, interaction('question_input', { question: 'Name?' }), baseSurface,
@@ -594,7 +614,7 @@ describe('answerClientPlaneInteraction (T17)', () => {
       interaction('question_input', { question: 'Name?' }),
       { ...baseSurface, questionInput: () => Promise.resolve(undefined) },
     );
-    expect(cancelledPlane.calls[0]).toEqual({ kind: 'cancel' });
+    expect(cancelledPlane.calls[0]).toEqual({ kind: 'skip' });
   });
 
   it('resolves a permission decision from the confirm result and suggestions', async () => {

@@ -1799,7 +1799,7 @@ function runStageSchema(): RuntimeDaemonJsonSchema {
 /** Typed Interaction response; answer payloads are validated by the Runtime. */
 function interactionResponseSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
-    kind: { type: 'string', enum: ['question', 'question_multi', 'question_input', 'permission', 'cancel'] },
+    kind: { type: 'string', enum: ['question', 'question_multi', 'question_input', 'permission', 'cancel', 'skip'] },
     answer: anyValueSchema,
     answers: objectAnySchema,
     text: stringSchema,
@@ -1812,7 +1812,7 @@ function interactionResultSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
     requestId: stringSchema,
     accepted: booleanSchema,
-    status: { type: 'string', enum: ['answered', 'dismissed', 'already_resolved'] },
+    status: { type: 'string', enum: ['answered', 'unanswered', 'dismissed', 'already_resolved'] },
   }, ['requestId', 'accepted', 'status']);
 }
 

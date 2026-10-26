@@ -159,6 +159,20 @@ describe('elicitViaUserInteraction — form mode', () => {
     expect(await elicitViaUserInteraction(ui, formRequest({ note: { type: 'string' } }))).toEqual({ action: 'cancel' });
   });
 
+  it.each([
+    { type: 'string' },
+    { type: 'number' },
+    { type: 'boolean' },
+    { type: 'string', enum: ['first', 'second'] },
+  ])('keeps an unanswered $type field out of MCP form content', async property => {
+    const ui: UserInteraction = {
+      askUser: async ({ options }) => options?.some(option => option.value === 'send')
+        ? 'send' : { unanswered: true, reason: 'skipped' },
+      askUserInput: async () => ({ unanswered: true, reason: 'skipped' }),
+    };
+    expect(await elicitViaUserInteraction(ui, formRequest({ field: property }))).toEqual({ action: 'cancel' });
+  });
+
   it('declines a field it cannot ask (no input surface)', async () => {
     const ui: UserInteraction = { askUser: async () => 'x' };
     expect(await elicitViaUserInteraction(ui, formRequest({ note: { type: 'string' } }))).toEqual({ action: 'decline' });

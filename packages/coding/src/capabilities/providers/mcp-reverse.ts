@@ -13,6 +13,7 @@ import { pathToFileURL } from 'node:url';
 import {
   getActiveUserInteraction,
   asSingleSelection,
+  isAskUserUnanswered,
   type McpElicitRequest,
   type McpElicitResult,
   type McpReverseCapabilities,
@@ -108,27 +109,31 @@ async function elicitForm(
         label: String(value),
         value: String(index),
       }));
-      const answer = asSingleSelection(await ui.askUser({
+      const result = await ui.askUser({
         question,
         kind: 'select',
         allowCustomInput: false,
         options: choices,
-      }, context));
+      }, context);
+      if (isAskUserUnanswered(result)) return { action: 'cancel' };
+      const answer = asSingleSelection(result);
       const selectedIndex = Number(answer);
       content[key] = Number.isInteger(selectedIndex) && selectedIndex >= 0 && selectedIndex < enumValues.length
         ? enumValues[selectedIndex]
         : answer;
     } else if (prop.type === 'boolean' && ui.askUser) {
-      const answer = asSingleSelection(await ui.askUser({
+      const result = await ui.askUser({
         question,
         kind: 'select',
         allowCustomInput: false,
         options: [{ label: 'Yes', value: 'true' }, { label: 'No', value: 'false' }],
-      }, context));
+      }, context);
+      if (isAskUserUnanswered(result)) return { action: 'cancel' };
+      const answer = asSingleSelection(result);
       content[key] = answer === 'true';
     } else if (ui.askUserInput) {
       const answer = await ui.askUserInput({ question }, context);
-      if (answer === undefined) return { action: 'cancel' };
+      if (answer === undefined || isAskUserUnanswered(answer)) return { action: 'cancel' };
       content[key] = prop.type === 'number' || prop.type === 'integer' ? Number(answer) : answer;
     } else {
       return { action: 'decline' };

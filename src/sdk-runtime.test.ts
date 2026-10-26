@@ -15417,7 +15417,7 @@ describe("createKodaXRuntime", () => {
     }
   });
 
-  it("uses the validated AskUser default when a late answer beats timer dispatch", async () => {
+  it.each(['client', 'hook'] as const)("returns unanswered when a late %s answer beats timer dispatch", async source => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -15426,6 +15426,7 @@ describe("createKodaXRuntime", () => {
       userInputTimeoutMs: 60_000,
     });
     let answerDone: Promise<unknown> | undefined;
+    let resolvePrompt: ((answer: string) => void) | undefined;
     codingMock.startKodaX.mockImplementation(
       (options: KodaXOptions): RunningSession => {
         queueMicrotask(() => {
@@ -15450,7 +15451,7 @@ describe("createKodaXRuntime", () => {
       prompt: "ask after deadline",
       options: {
         events: {
-          askUser: async () => new Promise<never>(() => undefined),
+          askUser: () => new Promise<string>(resolve => { resolvePrompt = resolve; }),
         },
       },
     });
@@ -15464,22 +15465,23 @@ describe("createKodaXRuntime", () => {
       }
       const answer = answerDone;
       if (!answer) throw new Error("expected AskUser callback");
-      if (!pending) throw new Error("expected pending AskUser request");
+      if (!pending?.expiresAt) throw new Error("expected pending optional AskUser deadline");
 
       now = vi.spyOn(Date, "now").mockReturnValue(
         Date.parse(pending.expiresAt) + 1,
       );
 
-      await expect(runtime.userInputs.respond(
-        pending.id,
-        "no",
-        { expectedRevision: pending.revision, runId: handle.runId },
-      )).resolves.toEqual({
-        requestId: pending.id,
-        accepted: false,
-        status: "already_resolved",
-      });
-      await expect(answer).resolves.toBe("yes");
+      if (source === 'client') {
+        await expect(runtime.userInputs.respond(
+          pending.id,
+          "no",
+          { expectedRevision: pending.revision, runId: handle.runId },
+        )).resolves.toEqual({ requestId: pending.id, accepted: false, status: "already_resolved" });
+      } else {
+        if (!resolvePrompt) throw new Error('expected host prompt');
+        resolvePrompt('no');
+      }
+      await expect(answer).resolves.toEqual({ unanswered: true, reason: "timeout" });
       await expect(runtime.userInputs.listPending({ runId: handle.runId }))
         .resolves.toEqual([]);
     } finally {
@@ -19156,13 +19158,14 @@ describe("createKodaXRuntime", () => {
     await recreated.close();
   });
 
-  it("brokers daemon AskUser and accepts exactly one concurrent answer", async () => {
+  it.each([undefined, 0])("keeps AskUser unbounded (timeout=%s) and accepts exactly one answer", async userInputTimeoutMs => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
       defaultProvider: "mock-provider",
       sharedDaemonHost: true,
+      userInputTimeoutMs,
     });
     const session = await runtime.sessions.create({ title: "Shared AskUser" });
     let answerDone: Promise<unknown> | undefined;
@@ -19194,6 +19197,10 @@ describe("createKodaXRuntime", () => {
       runId: handle.runId,
     });
     if (!request) throw new Error("expected pending AskUser request");
+    expect(request.expiresAt).toBeUndefined();
+    await expect(runtime.runs.get(handle.runId)).resolves.toMatchObject({
+      phase: "waiting_user_input",
+    });
     const observation = await runtime.sessions.observe(
       session.id,
       () => undefined,
@@ -19203,14 +19210,21 @@ describe("createKodaXRuntime", () => {
     ]);
     observation.close();
 
-    const results = await Promise.all([
-      runtime.userInputs.respond(request.id, "yes", {
-        expectedRevision: request.revision,
-      }),
-      runtime.userInputs.respond(request.id, "no", {
-        expectedRevision: request.revision,
-      }),
-    ]);
+    // An answer well beyond the old five-minute deadline still belongs to this request.
+    const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 10 * 60_000);
+    let results: Awaited<ReturnType<typeof runtime.userInputs.respond>>[];
+    try {
+      results = await Promise.all([
+        runtime.userInputs.respond(request.id, "yes", {
+          expectedRevision: request.revision,
+        }),
+        runtime.userInputs.respond(request.id, "no", {
+          expectedRevision: request.revision,
+        }),
+      ]);
+    } finally {
+      now.mockRestore();
+    }
 
     expect(results.filter((result) => result.accepted)).toHaveLength(1);
     await expect(answerDone).resolves.toBe("yes");
@@ -19279,14 +19293,14 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
-  it("uses validated AskUser defaults at the independent user-input deadline", async () => {
+  it.each(['timeout', 'skipped'] as const)("settles ordinary questions as unanswered on %s without selecting defaults", async reason => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
       defaultProvider: "mock-provider",
       permissionTimeoutMs: 60_000,
-      userInputTimeoutMs: 10,
+      userInputTimeoutMs: reason === 'timeout' ? 10 : 0,
     });
     const session = await runtime.sessions.create({ title: "AskUser Defaults" });
     let answersDone: Promise<readonly unknown[]> | undefined;
@@ -19349,14 +19363,17 @@ describe("createKodaXRuntime", () => {
         events: {
           askUser: async (_options, _meta, context) => {
             if (context) promptSignals.push(context.signal);
+            if (reason === 'skipped') return CANCELLED_TOOL_RESULT_MESSAGE;
             return new Promise<never>(() => undefined);
           },
           askUserInput: async (_options, _meta, context) => {
             if (context) promptSignals.push(context.signal);
+            if (reason === 'skipped') return undefined;
             return new Promise<never>(() => undefined);
           },
           askUserMulti: async (_options, _meta, context) => {
             if (context) promptSignals.push(context.signal);
+            if (reason === 'skipped') return undefined;
             return new Promise<never>(() => undefined);
           },
         },
@@ -19371,11 +19388,11 @@ describe("createKodaXRuntime", () => {
     ]);
 
     expect(outcome).toEqual([
-      "yes",
-      "codex/safe-fix",
-      { "Mode?": "safe" },
-      CANCELLED_TOOL_RESULT_MESSAGE,
-      CANCELLED_TOOL_RESULT_MESSAGE,
+      { unanswered: true, reason },
+      { unanswered: true, reason },
+      { unanswered: true, reason },
+      { unanswered: true, reason },
+      { unanswered: true, reason },
     ]);
     expect(promptSignals).toHaveLength(5);
     expect(promptSignals.every((signal) => signal.aborted)).toBe(true);

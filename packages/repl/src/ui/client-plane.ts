@@ -28,13 +28,14 @@ import type {
 import {
   CANCELLED_TOOL_RESULT_MESSAGE,
   type AskUserAnswer,
+  type AskUserUnanswered,
   type AskUserMultiOptions,
   type AskUserQuestionOptions,
   type KodaXInputArtifact,
   type KodaXResult,
 } from '@kodax-ai/coding';
 import type { ClientItemReadOptions } from '@kodax-ai/coding/client-contract';
-import { emitKodaXDiagnostic } from '@kodax-ai/agent';
+import { emitKodaXDiagnostic, isAskUserUnanswered } from '@kodax-ai/agent';
 import { resolveReplRuntimePermissionDecision } from '../runtime-permission.js';
 import type { ConfirmResult } from '../permission/types.js';
 import type { HistoryItem, ToolCall, ToolCallStatus } from './types.js';
@@ -684,15 +685,15 @@ export interface ClientPlaneDialogSurface {
   readonly question: (
     options: AskUserQuestionOptions,
     signal?: AbortSignal,
-  ) => Promise<AskUserAnswer>;
+  ) => Promise<AskUserAnswer | AskUserUnanswered>;
   readonly questionMulti: (
     options: AskUserMultiOptions,
     signal?: AbortSignal,
-  ) => Promise<Record<string, AskUserAnswer> | undefined>;
+  ) => Promise<Record<string, AskUserAnswer> | AskUserUnanswered | undefined>;
   readonly questionInput: (
     options: { readonly question: string; readonly default?: string },
     signal?: AbortSignal,
-  ) => Promise<string | undefined>;
+  ) => Promise<string | AskUserUnanswered | undefined>;
   readonly permission: (
     options: ClientPermissionInteractionOptions,
     signal?: AbortSignal,
@@ -715,21 +716,24 @@ export async function answerClientPlaneInteraction(
   switch (interaction.kind) {
     case 'question': {
       const answer = await surface.question(interaction.options, signal);
-      response = answer === CANCELLED_TOOL_RESULT_MESSAGE
-        ? { kind: 'cancel' }
+      if (isAskUserUnanswered(answer) && answer.reason === 'timeout') return false;
+      response = isAskUserUnanswered(answer) || answer === CANCELLED_TOOL_RESULT_MESSAGE
+        ? { kind: 'skip' }
         : { kind: 'question', answer };
       break;
     }
     case 'question_multi': {
       const answers = await surface.questionMulti(interaction.options, signal);
-      response = answers === undefined
-        ? { kind: 'cancel' }
+      if (isAskUserUnanswered(answers) && answers.reason === 'timeout') return false;
+      response = isAskUserUnanswered(answers) || answers === undefined
+        ? { kind: 'skip' }
         : { kind: 'question_multi', answers };
       break;
     }
     case 'question_input': {
       const text = await surface.questionInput(interaction.options, signal);
-      response = text === undefined ? { kind: 'cancel' } : { kind: 'question_input', text };
+      if (isAskUserUnanswered(text) && text.reason === 'timeout') return false;
+      response = isAskUserUnanswered(text) || text === undefined ? { kind: 'skip' } : { kind: 'question_input', text };
       break;
     }
     case 'permission': {

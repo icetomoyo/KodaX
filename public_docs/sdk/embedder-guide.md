@@ -3721,15 +3721,23 @@ rechecks pending state, and makes Runtime resolution authoritative. A late UI
 answer is ignored. Embedded AskUser callbacks receive the same optional third
 argument, `{ signal }`; abort the visible prompt when it fires.
 
-`createKodaXRuntime({ userInputTimeoutMs })` and daemon auto-start use an
-independent AskUser deadline (300,000 ms by default). The value must be a
-positive integer no greater than 2,147,483,647 and is validated before
-embedded or daemon startup. The same bound applies to
-`permissionTimeoutMs`, except that its existing value `0` disables the
-permission timer. On expiry, the Runtime accepts only a model-supplied default that is
-valid for the rendered options and selection bounds; otherwise it dismisses
-the question. MCP reverse elicitation uses the same five-minute bounded UI
-lifecycle and safely cancels a stalled prompt.
+Ordinary AskUser requests wait indefinitely by default and allow explicit skip.
+There is no required-answer flag. An ordinary-question deadline is controlled
+by `createKodaXRuntime({ userInputTimeoutMs })` (also used on daemon auto-start).
+The timeout defaults to `0`, disabling it; positive values are integer
+milliseconds up to 2,147,483,647. Defaults only suggest an answer for display.
+Skip/timeout returns `{ unanswered: true, reason: 'skipped' | 'timeout' }`;
+the tool emits `{ success: true, status: 'unanswered', reason }` for the model
+to interpret normally. Permission approval keeps its separate five-minute
+default and fail-closed policy, with `permissionTimeoutMs: 0` disabling its
+timer. MCP elicitation retains its protocol-level lifecycle; an unanswered form
+field maps to the protocol's cancel result rather than being submitted as data.
+
+For ordinary questions, legacy dialog `cancel`, `userInputs.dismiss`, and an
+undefined input/multi-question callback result mean skip. They never interrupt
+the Run. A legacy select callback's cancellation sentinel also means skip unless
+the tool's owner AbortSignal is aborted. Explicit Run/Session Stop remains the
+interruption operation; question cleanup on observation close is not a response.
 
 SDK clients that create a concrete request may pass `toolInput` and
 `executionCwd` to `runtime.permissions.request(...)` in both embedded and
@@ -5555,18 +5563,26 @@ AskUser is no longer an in-process callback for daemon Coder runs. Any client
 with the responder scope can list the pending request and answer or dismiss it.
 The request revision and run binding prevent a stale UI from answering a new
 request. Exactly one concurrent answer is accepted. Runtime creation accepts
-independent `permissionTimeoutMs` and `userInputTimeoutMs` values; each defaults
-to five minutes. `userInputTimeoutMs` must be positive;
-`permissionTimeoutMs` may also be `0` to disable its timer. Positive values
+independent `permissionTimeoutMs` and `userInputTimeoutMs` values. Permissions
+default to five minutes; ordinary questions default to no deadline and can be
+explicitly skipped. `userInputTimeoutMs` defaults to `0`; a positive Host value
+enables a deadline. Both timeouts accept `0` to disable their timer. Positive values
 must not exceed 2,147,483,647.
 The same non-negative bound applies to a per-request
 `runtime.permissions.request({ timeoutMs })` override. A supplied `expiresAt`
 must be a valid date no more than 2,147,483,647 ms in the future; past dates
 fail closed immediately.
-On AskUser expiry, the Runtime selects `default` only when it
-is valid for that request (or is the free-text input default); without a valid
-default it dismisses the request. For multi-question requests every question
-must have a valid default to produce an automatic answer.
+An AskUser expiry settles as `unanswered` with reason `timeout`;
+`default` is never selected automatically. Client hosts may explicitly skip
+requests through `client.interactions.respond(id, { kind: 'skip' })`
+or the Runtime facade's `userInputs.respond(id, { unanswered: true, reason: 'skipped' })`.
+Legacy question `cancel` and `userInputs.dismiss` also settle as unanswered/skipped;
+they do not interrupt the Run. Explicit Run/Session Stop is independent.
+Permission cancellation still rejects the approval. `expiresAt` is absent for unbounded requests.
+The Host keeps pending requests through client disconnect/unsubscription or
+page refresh; clients re-read interactions after reconnect. They must not
+run local timers or submit a cancel merely because a view closed. Every reply
+uses the exact request ID; late and duplicate replies are `already_resolved`.
 
 ```ts
 for (const request of await runtime.userInputs.listPending({ sessionId })) {

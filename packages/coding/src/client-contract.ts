@@ -894,9 +894,9 @@ export interface ClientPermissionInteractionOptions {
  * payload and the typed response this request accepts.
  */
 export type ClientInteraction =
-  | ClientInteractionBase & { readonly kind: 'question'; readonly options: AskUserQuestionOptions; readonly expiresAt: string }
-  | ClientInteractionBase & { readonly kind: 'question_multi'; readonly options: AskUserMultiOptions; readonly expiresAt: string }
-  | ClientInteractionBase & { readonly kind: 'question_input'; readonly options: { readonly question: string; readonly default?: string }; readonly expiresAt: string }
+  | ClientInteractionBase & { readonly kind: 'question'; readonly options: AskUserQuestionOptions; readonly expiresAt?: string }
+  | ClientInteractionBase & { readonly kind: 'question_multi'; readonly options: AskUserMultiOptions; readonly expiresAt?: string }
+  | ClientInteractionBase & { readonly kind: 'question_input'; readonly options: { readonly question: string; readonly default?: string }; readonly expiresAt?: string }
   | ClientInteractionBase & { readonly kind: 'permission'; readonly options: ClientPermissionInteractionOptions; readonly expiresAt?: string };
 
 interface ClientInteractionBase {
@@ -912,6 +912,8 @@ export type ClientInteractionResponse =
   | { readonly kind: 'question_multi'; readonly answers: Readonly<Record<string, AskUserAnswer>> }
   | { readonly kind: 'question_input'; readonly text: string }
   | { readonly kind: 'permission'; readonly decision: ClientPermissionDecision }
+  | { readonly kind: 'skip' }
+  /** Legacy question-dialog dismissal: treated as skip. Permission cancellation remains a rejection. */
   | { readonly kind: 'cancel'; readonly reason?: string };
 
 export type ClientPermissionDecision =
@@ -925,7 +927,7 @@ export interface ClientInteractionResult {
   readonly requestId: string;
   readonly accepted: boolean;
   /** 'already_resolved' covers late, duplicate, cancelled, expired and unknown targets. */
-  readonly status: 'answered' | 'dismissed' | 'already_resolved';
+  readonly status: 'answered' | 'unanswered' | 'dismissed' | 'already_resolved';
 }
 
 export interface ClientPermissionGrant {

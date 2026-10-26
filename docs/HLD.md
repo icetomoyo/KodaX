@@ -80,10 +80,14 @@ journals served different authorities. That exit-settlement protocol and the
 durable Runtime event journal are removed in the current development tree;
 use the current Client/launcher lifecycle below.
 
-The same Runtime owner also bounds user interaction. AskUser and permission
+The same Runtime owner also settles user interaction. AskUser and permission
 callbacks receive an AbortSignal tied to the authoritative request; separate
 `userInputTimeoutMs` and `permissionTimeoutMs` values are validated before
-startup, and the SDK helper resolves permission UI through the Runtime rather
+startup. Ordinary questions wait indefinitely by default and allow explicit
+skip. A positive Host `userInputTimeoutMs` enables a deadline; 0 disables it.
+Skip and timeout return a normal unanswered tool result. Dismissing a question
+does not interrupt its Run; explicit Stop does. Defaults are never auto-submitted.
+The SDK helper resolves permission UI through the Runtime rather
 than trusting a late dialog result. Interactive hosts recover a stale prepared
 Session tail with a full authoritative delta, while background persistence
 errors remain visible diagnostics.

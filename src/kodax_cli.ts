@@ -3833,7 +3833,7 @@ complete -c kodax -l version -d 'Show version'`);
     )
     .option(
       '--user-input-timeout-ms <n>',
-      'User-input request timeout',
+      'Ordinary-question timeout in milliseconds (default: 0, no deadline)',
       parseOptionalNonNegativeInt,
     )
     .addOption(

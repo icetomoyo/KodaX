@@ -156,6 +156,20 @@ Ink 的命令结果和设置快捷键反馈通过既有 `sessions.appendNotice` 
 
 ## 身份、状态与事实权威
 
+普通提问由 Host 默认无限等待，允许用户明确跳过，不设置 `required` 作答约束。
+`expiresAt` 缺失表示没有期限。`userInputTimeoutMs` 默认 `0`（禁用期限），
+Host 显式设置正值时才启用期限。默认值和推荐项仅用于展示，不能自动提交。
+问题可用 `interactions.respond(id, { kind: 'skip' })`
+跳过，返回 `status: 'unanswered'`；超时同样结算为 unanswered，原因分别是
+`skipped` / `timeout`，并作为正常工具结果交给模型继续判断。普通问题的旧
+`cancel` / `userInputs.dismiss` 同样表示跳过，不能因此中断 Run；明确 Run/Session
+Stop 才中断。权限审批的 cancel 仍是拒绝，并保持独立的超时策略。
+
+Space/其他客户端只展示 Host 的 pending 状态并按精确 requestId 提交结果，
+不设本地自动回答/取消定时器。断连、关闭订阅、刷新页面不能自行结算问题；
+重连后读取同一 pending 请求。首个有效结算生效，迟到、重复或旧 ID 回复返回
+`already_resolved`，不能代答新请求。
+
 | 对象 | 身份/边界 | 客户端处理 |
 | --- | --- | --- |
 | Host | 底层 Runtime 的 runtimeId、启动时间和握手身份 | 产品连接完成前由启动器/连接器验证；`KodaXProductClient` 当前不直接暴露 Runtime identity |
