@@ -836,6 +836,8 @@ export interface PostToolProcessingInput {
   readonly ctx: KodaXToolExecutionContext;
   readonly runtimeSessionState: RuntimeSessionState;
   readonly toolResultBudget?: ToolResultBudget;
+  /** A parent Runner owns review teaching; keep legacy standalone behavior by default. */
+  readonly mutationScopeReflection?: boolean;
   /** Trusted artifacts recorded by tools during this dispatch. */
   readonly toolResultArtifactPaths?: ReadonlyMap<string, string>;
 }
@@ -875,7 +877,8 @@ export async function applyPostToolProcessing(
     // Scope reflection: when mutation tracker crosses threshold, append
     // once to a write tool result.
     if (
-      input.ctx.mutationTracker
+      input.mutationScopeReflection !== false
+      && input.ctx.mutationTracker
       && !input.ctx.mutationTracker.reflectionInjected
       && !isToolResultErrorContent(content)
       && isMutationTool(tc.name)

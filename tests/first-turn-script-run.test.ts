@@ -6,6 +6,7 @@ import { once } from 'node:events';
 import { afterEach, expect, it, vi } from 'vitest';
 import { FileSessionStorage } from '../packages/repl/src/interactive/storage.js';
 import { runScriptInvocation } from '../packages/coding/src/agent-runtime/script/run.js';
+import { runToolInvocation } from '../packages/coding/src/agent-runtime/tool-invocation.js';
 import type { KodaXOptions } from '../packages/coding/src/types.js';
 import { assertTrustedTextMutationPolicy } from '../packages/coding/src/trusted-text-mutation.js';
 import { createTrustedTextMutationHost } from '../src/windows-text-transaction.js';
@@ -53,6 +54,40 @@ it('durably owns partial effects and resumes evidence without replaying a previo
   expect((await storage.load('script-session'))?.extensionRecords?.filter(record => record.type === 'cell.settled')).toHaveLength(2);
   expect((await storage.load('script-session'))?.extensionRecords?.at(-1)?.data)
     .toMatchObject({ data: { value: { content: expect.stringContaining('after') } } });
+});
+
+it('preserves explicitly supplied standalone mutation tracking and once-only reflection', async () => {
+  const { options } = await fixture();
+  const tracker = { files: new Map<string, number>(), totalOps: 0, reflectionInjected: false };
+  options.context!.mutationTracker = tracker;
+  const result = await runScriptInvocation(options,
+    "for (const path of ['one.txt','two.txt','three.txt','four.txt']) await tools.write({path,content:'value'});", limits);
+  expect(result.success).toBe(true);
+  expect(tracker.files.size).toBe(4);
+  expect(tracker.totalOps).toBe(4);
+  expect(tracker.reflectionInjected).toBe(true);
+  expect(result.scriptCell.receipts.filter(receipt => String(receipt.result.content).includes('[Scope:'))).toHaveLength(1);
+});
+
+it.each(['script-run-one', 'script-run-two'])('does not recover backup authority from persisted Script receipts even with Run id %s', async runtimeRunId => {
+  const { root, storage, options } = await fixture();
+  vi.stubEnv('NODE_ENV', 'production');
+  const host = createTrustedTextMutationHost(() => [root], target => assertTrustedTextMutationPolicy(target, root));
+  const commit = vi.spyOn(host, 'commit');
+  const bound = { ...options, context: { ...options.context, trustedTextMutationHost: host } };
+  const edited = await runScriptInvocation(bound,
+    "await tools.edit({path:'value.txt',old_string:'before',new_string:'after'}); throw new Error('later failure');", limits);
+  expect(edited.scriptCell).toMatchObject({ status: 'failed', receipts: [{ name: 'edit', result: { isError: false } }] });
+  const reloaded = new FileSessionStorage({ sessionsDir: path.join(root, 'sessions'), configHome: root, cwd: root });
+  expect((await reloaded.load('script-session'))?.extensionRecords?.find(record => record.type === 'call.settled')?.data)
+    .toMatchObject({ data: { name: 'edit', result: { isError: false } } });
+  const undone = await runToolInvocation({ ...bound, session: { ...options.session, storage: reloaded },
+    context: { ...bound.context, runtimeRunId } }, { name: 'undo', input: {} });
+  // A non-error no-op is not proof of restoration; inspect the file and actual commits.
+  expect(undone).toMatchObject({ success: true, lastText: 'No backups available. Nothing to undo.' });
+  expect(await readFile(path.join(root, 'value.txt'), 'utf8')).toBe('after');
+  expect(commit).toHaveBeenCalledTimes(1);
+  expect((await storage.load('script-session'))?.extensionRecords?.filter(record => record.type === 'call.settled')).toHaveLength(1);
 });
 
 it.each([

@@ -955,6 +955,7 @@ export interface ClientSessionSettings {
   readonly reasoningMode?: 'off' | 'auto' | 'quick' | 'balanced' | 'deep';
   readonly permissionMode?: 'plan' | 'accept-edits' | 'auto' | 'full-access';
   readonly agentMode?: 'ama' | 'sa' | 'amaw';
+  readonly workMode?: 'agent' | 'coding' | 'script';
   readonly autoModeClassifierModel?: string;
   readonly compactionTriggerPercent?: number;
   readonly compactionTriggerTokens?: number;

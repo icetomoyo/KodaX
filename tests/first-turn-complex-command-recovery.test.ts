@@ -10,7 +10,8 @@ import { runComplexRuntime } from './first-turn-complex-runtime.js';
 vi.mock('node:child_process', { spy: true });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
-it.each(['bash', 'tool_call'])('returns a denied %s diagnostic to a real readonly child without executing it, then completes AMA', async entry => {
+it.each(['bash', 'tool_call'].flatMap(entry => ['diagnostic', 'readonly-write'].map(scenario => ({ entry, scenario }))))(
+  'returns a denied $entry $scenario to a real readonly child without executing it, then completes AMA', async ({ entry, scenario }) => {
   vi.stubEnv('NODE_ENV', 'production');
   vi.stubEnv('COMPLEX_OFFLINE_KEY', 'offline-only');
   const fetcher = vi.fn(async () => { throw new Error('Offline regression forbids network'); });
@@ -27,7 +28,9 @@ it.each(['bash', 'tool_call'])('returns a denied %s diagnostic to a real readonl
     return actualProcesses.spawn(...args);
   });
   const tool = (name: string, input: Record<string, unknown>, id: string) => ({ type: 'tool_use' as const, name, input, id });
-  const args = { command: 'node --input-type=module -e "throw new Error(\'MUST_NOT_EXECUTE\')"' };
+  const args = { command: scenario === 'diagnostic' ? 'node --input-type=module -e "throw new Error(\'MUST_NOT_EXECUTE\')"'
+    : 'echo --- > .agent/tmp/MUST_NOT_EXECUTE.txt' };
+  const denial = scenario === 'diagnostic' ? 'Only local test execution is in scope.' : 'Redirection leaves the permitted fixture scope.';
   const deniedCall = entry === 'bash' ? tool(entry, args, 'denied-diagnostic')
     : tool(entry, { name: ' bash ', input: args }, 'denied-diagnostic');
   const original = structuredClone(deniedCall);
@@ -47,7 +50,7 @@ it.each(['bash', 'tool_call'])('returns a denied %s diagnostic to a real readonl
         else if (round === 1) {
           sawError = input.messages.some(message => Array.isArray(message.content) && message.content.some(block =>
             block.type === 'tool_result' && block.tool_use_id === deniedCall.id && block.is_error === true
-            && String(block.content).includes('before execution: Only local test execution is in scope.')));
+            && String(block.content).includes('before execution: ' + denial)));
           expect(input.messages.some(message => Array.isArray(message.content) && message.content.some(block =>
             block.type === 'tool_use' && block.id === deniedCall.id && JSON.stringify(block.input) === JSON.stringify(original.input)))).toBe(true);
           expect(input.messages.some(message => Array.isArray(message.content) && message.content.some(block =>
@@ -84,6 +87,7 @@ it.each(['bash', 'tool_call'])('returns a denied %s diagnostic to a real readonl
     expect(record.groundtruth.protectedUnchanged).toBe(true);
     expect(deniedCall).toEqual(original);
     expect(forbiddenExecutions).toBe(0);
+    await expect(fs.stat(path.join(directory, 'workspace/.agent/tmp/MUST_NOT_EXECUTE.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
     expect(fetcher).not.toHaveBeenCalled();
   } finally { await fs.rm(directory, { recursive: true, force: true }); }
 });

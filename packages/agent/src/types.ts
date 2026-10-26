@@ -607,6 +607,8 @@ export interface KodaXExtensionStore {
 export interface KodaXSessionStorage {
   save(id: string, data: KodaXSessionData): Promise<void>;
   load(id: string): Promise<KodaXSessionData | null>;
+  /** Append durable protocol receipts without replacing the host's transcript or metadata. False means missing Session. */
+  appendSessionRecords?(id: string, records: readonly KodaXExtensionSessionRecord[]): Promise<boolean>;
   /** Atomically updates Runtime-owned Session metadata without replacing transcript state. */
   mutateRuntimeInfo?(
     id: string,

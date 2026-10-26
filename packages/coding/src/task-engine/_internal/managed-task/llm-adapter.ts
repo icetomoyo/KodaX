@@ -21,9 +21,11 @@
 import { randomUUID } from 'node:crypto';
 import { withEffectivePermissionContext } from '../../../prompts/effective-permissions.js';
 import { getRegistryManagedAgentContext } from '../../../tools/model-tool-definition.js';
+import { projectManagedToolContracts } from '../../../tools/managed-tool-contract.js';
 import { getRegisteredToolDefinition } from '../../../tools/registry.js';
 import { filterModelToolAliases } from '../../../agent-runtime/tool-resolution.js';
 
+import { canReadWithModelTools, projectScriptModelTools } from '../../../agent-runtime/script/model.js';
 import type {
   KodaXContentBlock,
   KodaXEphemeralSuffix,
@@ -516,6 +518,8 @@ export function buildRunnerLlmAdapter(
       wireTools = wireTools.filter(tool => tool.name !== 'code_search');
     }
 
+    wireTools = [...projectScriptModelTools(agent, projectManagedToolContracts(agent, wireTools, options.context))];
+
     // Reasoning single-tracking: resolve the per-turn reasoning EFFORT through
     // the FEATURE_078 L1-L2 chain (effort-native):
     //   L1 (user ceiling)  ← options.effort (or legacy reasoningMode mapped)
@@ -777,7 +781,7 @@ export function buildRunnerLlmAdapter(
           requireUserInputDegradationCache(),
           { currentTokens: resolveContextTokenCount(providerMessages, contextTokenSnapshotRef?.current),
             reservedResponseTokens: requestMaxOutputTokens,
-            canReadPagedContent: availableToolDefinitions.some(tool => tool.name === 'read'),
+            canReadPagedContent: canReadWithModelTools(agent, availableToolDefinitions),
             retainInput: original => prepareUserInputMemory({ original, contextWindow: recoveryContextWindow,
               provider, model: activeModel, signal: options.abortSignal, timeoutMs: API_HARD_TIMEOUT_MS,
               goalRuntime: options.context?.goalRuntime,
@@ -816,7 +820,7 @@ export function buildRunnerLlmAdapter(
           const projected = await degradeIrreducibleUserInputs(clean, userInputSpillCtx, window,
             requireUserInputDegradationCache(), {
               currentTokens: resolveContextTokenCount(clean, contextTokenSnapshotRef.current), reservedResponseTokens: reserve,
-              canReadPagedContent: candidateTools.some(tool => tool.name === 'read'),
+              canReadPagedContent: canReadWithModelTools(agent, candidateTools),
             });
           return estimateTokens(projected) + countTokens(candidateSystem)
             + candidateTools.reduce((total, tool) => total + estimateToolSchemaTokens(tool), 0)

@@ -120,6 +120,7 @@ import {
   breakerShouldFallback,
   analyzeAutoModeCall,
   assertTrustedTextMutationPolicy,
+  assertWorkModeAvailable,
   bashSignalCollector,
   CANCELLED_TOOL_RESULT_MESSAGE,
   checkAbsoluteDeny,
@@ -1638,6 +1639,7 @@ export interface RuntimeSessionSettings {
   readonly executionCwd?: string;
   readonly shellExecution?: KodaXShellExecutionContract;
   readonly agentMode?: KodaXOptions["agentMode"];
+  readonly workMode?: KodaXOptions["workMode"];
   readonly autoModeClassifierModel?: string;
   /** Auto-compaction percentage threshold, normalized to the inclusive 15-90 range. */
   readonly compactionTriggerPercent?: number;
@@ -1661,6 +1663,7 @@ export interface RuntimeSessionSettingsPatch {
   readonly executionCwd?: string | null;
   readonly shellExecution?: KodaXShellExecutionContract | null;
   readonly agentMode?: KodaXOptions["agentMode"] | null;
+  readonly workMode?: KodaXOptions["workMode"] | null;
   readonly autoModeClassifierModel?: string | null;
   readonly compactionTriggerPercent?: number | null;
   readonly compactionTriggerTokens?: number | null;
@@ -2173,6 +2176,7 @@ export type RuntimeDaemonKodaXOptions = Pick<
   | "thinking"
   | "reasoningMode"
   | "agentMode"
+  | "workMode"
   | "maxIter"
   | "toolInvocation"
   | "workflowHostPolicy"
@@ -4357,6 +4361,7 @@ async function createKodaXRuntimeInternal(
         "permissionMode",
         "executionCwd",
         "agentMode",
+        "workMode",
         "autoModeClassifierModel",
       ],
     },
@@ -9288,25 +9293,31 @@ function createRuntimeSessionService(
     },
 
     async updateSettings(sessionId, patch) {
-      return mutateActiveSession(sessionId, async (sessionData) => (
-        await settingsOwner.update(
+      return mutateActiveSession(sessionId, async (sessionData) => {
+        if (patch.workMode !== undefined) assertSessionMutationAllowed(sessionId, activeRunOwner);
+        if (patch.workMode === 'script') await assertWorkModeAvailable({ workMode: patch.workMode });
+        return (await settingsOwner.update(
           sessionId,
           patch,
           undefined,
           (settings) => assertSessionSettingsAllowed(sessionData, settings),
-        )
-      ).value);
+        )).value;
+      });
     },
 
     async updateSettingsVersioned(sessionId, patch, options) {
       return mutateActiveSession(
         sessionId,
-        (sessionData) => settingsOwner.update(
-          sessionId,
-          patch,
-          options.expectedRevision,
-          (settings) => assertSessionSettingsAllowed(sessionData, settings),
-        ),
+        async (sessionData) => {
+          if (patch.workMode !== undefined) assertSessionMutationAllowed(sessionId, activeRunOwner);
+          if (patch.workMode === 'script') await assertWorkModeAvailable({ workMode: patch.workMode });
+          return settingsOwner.update(
+            sessionId,
+            patch,
+            options.expectedRevision,
+            (settings) => assertSessionSettingsAllowed(sessionData, settings),
+          );
+        },
       );
     },
 
@@ -12000,6 +12011,7 @@ async function createRuntimeRunService(deps: {
       admittedSessionContext,
     );
     if (recovery) options = { ...options, session: { ...options.session, generationCheckpoint: recovery.data.checkpoint } };
+    await assertWorkModeAvailable(options);
     if (trustedInput.productSession === true || productInput !== undefined) {
       // Product Runs use the same Host-owned directory as declarative starts.
       options.workflowRunsBaseDir = path.join(deps.defaultConfigHome, 'workflow-runs',
@@ -21302,6 +21314,7 @@ function buildEffectiveRuntimeOptions(
   const reasoningMode = options.reasoningMode ?? settings.reasoningMode;
   const requestedAgentMode = options.agentMode ?? settings.agentMode;
   const agentMode = requestedAgentMode === "amaw" ? "ama" : requestedAgentMode;
+  const workMode = options.workMode ?? settings.workMode;
   const maxIter = options.maxIter ?? settings.maxIter;
   const compaction =
     options.compaction !== undefined ||
@@ -21328,6 +21341,7 @@ function buildEffectiveRuntimeOptions(
     ...(thinking !== undefined ? { thinking } : {}),
     ...(reasoningMode !== undefined ? { reasoningMode } : {}),
     ...(agentMode !== undefined ? { agentMode } : {}),
+    ...(workMode !== undefined ? { workMode } : {}),
     ...(maxIter !== undefined ? { maxIter } : {}),
     ...(compaction !== undefined ? { compaction } : {}),
     ...(Object.keys(context).length > 0 ? { context } : {}),
@@ -22251,6 +22265,7 @@ function applySessionSettingsPatch(
   applyNullablePatch(next, "thinking", patch.thinking);
   applyNullablePatch(next, "reasoningMode", patch.reasoningMode);
   applyNullablePatch(next, "agentMode", patch.agentMode);
+  applyNullablePatch(next, "workMode", patch.workMode);
   applyNullableCompactionPercentPatch(next, patch.compactionTriggerPercent);
   applyNullableCompactionTokensPatch(next, patch.compactionTriggerTokens);
   applyNullablePatch(next, "maxIter", patch.maxIter);
@@ -22264,6 +22279,9 @@ function applySessionSettingsPatch(
 function canonicalizeRuntimeSessionSettingsPatch(
   patch: RuntimeSessionSettingsPatch,
 ): RuntimeSessionSettingsPatch {
+  if (patch.workMode !== undefined && patch.workMode !== null && !['agent', 'coding', 'script'].includes(patch.workMode)) {
+    throw createRuntimeInvalidInputError('workMode must be one of: agent, coding, script');
+  }
   if (patch.planModeEffort !== undefined && patch.planModeEffort !== null
     && (typeof patch.planModeEffort !== 'string' || patch.planModeEffort.trim().length === 0)) {
     throw createRuntimeInvalidInputError('planModeEffort must be a nonempty effort string');
@@ -22477,8 +22495,10 @@ function resolveEffectiveRuntimeSessionSettings(config: unknown, overrides: Runt
   productSession = false): RuntimeSessionSettings {
   // Product defaults are effective facts only; raw overrides and low-level Run
   // callers retain their existing semantics when no permission was specified.
+  // Work mode is a Session choice; stale profile fields must not alter the Coding default.
+  const { workMode: _profileWorkMode, ...profileSettings } = parseRuntimeSessionSettings(config);
   const settings: RuntimeSessionSettings = { ...(productSession ? { permissionMode: 'accept-edits' as const, agentMode: 'ama' as const } : {}),
-    ...parseRuntimeSessionSettings(config), ...overrides };
+    ...profileSettings, ...overrides };
   if (settings.permissionMode === 'plan' && overrides.effort === undefined && overrides.planModeEffort !== undefined) {
     return { ...settings, effort: overrides.planModeEffort };
   }
@@ -22531,6 +22551,9 @@ function parseRuntimeSessionSettings(value: unknown): RuntimeSessionSettings {
   }
   setStringIfPresent(settings, "reasoningMode", value.reasoningMode);
   setStringIfPresent(settings, "agentMode", value.agentMode);
+  if (value.workMode === 'agent' || value.workMode === 'coding' || value.workMode === 'script') {
+    setMutableSetting(settings, 'workMode', value.workMode);
+  }
   if (value.compactionReasoning !== undefined) {
     setMutableSetting(settings, "compactionReasoning", parseRuntimeCompactionReasoning(value.compactionReasoning));
   }
@@ -23304,6 +23327,8 @@ function serializeSessionSettings(
   }
   if (settings.agentMode !== undefined)
     setMutableSetting(result, "agentMode", settings.agentMode);
+  if (settings.workMode !== undefined)
+    setMutableSetting(result, "workMode", settings.workMode);
   if (settings.autoModeClassifierModel !== undefined) {
     setMutableSetting(
       result,

@@ -2261,8 +2261,8 @@ export interface KodaXSkillDynamicContextPolicy {
   disable?: boolean;
 }
 
-/** Product work surface. Script will be added only with its execution runtime. */
-export type KodaXWorkMode = 'agent' | 'coding';
+/** Product work surface and invocation preset. Coding remains the default. */
+export type KodaXWorkMode = 'agent' | 'coding' | 'script';
 
 export interface KodaXOptions {
   /** Opt-in default-root work surface; omitted means Coding. Does not replace SDK profiles or child roles. */

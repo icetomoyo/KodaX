@@ -64,6 +64,7 @@ export interface CurrentConfig {
   thinking: boolean;
   reasoningMode: KodaXReasoningMode;
   agentMode: KodaXAgentMode;
+  workMode?: KodaXOptions['workMode'];
   permissionMode: PermissionMode;
   repoIntelligenceMode?: KodaXRepoIntelligenceMode;
   repoIntelligenceTrace?: boolean;
@@ -213,6 +214,7 @@ export interface CommandCallbacks {
   setEffort?: (effort?: string) => void | Promise<void>;
   setReasoningMode?: (mode: KodaXReasoningMode) => void | Promise<void>;
   setAgentMode?: (mode: KodaXAgentMode) => void | Promise<void>;
+  setWorkMode?: (mode: NonNullable<KodaXOptions['workMode']>) => void | Promise<void>;
   setPermissionMode?: (mode: PermissionMode) => void | Promise<void>;
   setRepoIntelligenceRuntime?: (update: {
     mode?: KodaXRepoIntelligenceMode;

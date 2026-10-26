@@ -2827,6 +2827,7 @@ function runtimeDaemonCapabilities(
         "permissionMode",
         "executionCwd",
         "agentMode",
+        "workMode",
         "autoModeClassifierModel",
       ],
     },

@@ -81,6 +81,8 @@ export interface BuildManagedTaskCompactionHookOptions {
   >;
   readonly contextTokenSnapshotRef?: ContextTokenSnapshotRef;
   readonly activeToolDefinitions?: readonly KodaXToolDefinition[];
+  /** Invocation presets may expose paged read through a checked Script leaf. */
+  readonly canReadPagedContent?: boolean;
   /** Exact reasoning envelope used by the managed provider request. */
   readonly reasoning?: KodaXReasoningRequest;
   readonly onPostCompact?: () => void;
@@ -1081,7 +1083,7 @@ export async function buildManagedTaskCompactionHook(
     const capacity = { contextWindow, currentTokens, reservedResponseTokens };
     if (!needsHistoryCapacityRelief(capacity)) return result;
     const recovered = await recoverContextHistory({ ...capacity, messages,
-      canReadPagedContent: hookOptions.activeToolDefinitions?.some(tool => tool.name === 'read') === true,
+      canReadPagedContent: hookOptions.canReadPagedContent ?? hookOptions.activeToolDefinitions?.some(tool => tool.name === 'read') === true,
       executionContext: hookOptions.executionContext, persist: events?.onCompactedMessages }).catch((error: unknown) => {
       if (result && error instanceof Error) {
         attachRunnerRecoveryTranscript(error, messages[0]?.role === 'system' ? messages.slice(1) : messages);

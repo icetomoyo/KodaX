@@ -674,6 +674,7 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     thinking: initialThinking,
     reasoningMode: initialReasoningMode,
     agentMode: initialAgentMode,
+    workMode: options.workMode,
     permissionMode: initialPermissionMode,
     repoIntelligenceMode: repoIntelligenceRuntime.mode,
     repoIntelligenceTrace: repoIntelligenceRuntime.trace,
@@ -1580,6 +1581,12 @@ Keyboard Shortcuts:
       await syncClientSettings({ ...currentConfig, agentMode: mode }, ['agentMode']);
       currentConfig.agentMode = mode;
       currentOptions.agentMode = mode;
+    },
+    setWorkMode: async mode => {
+      if (!options.clientPlane?.updateSettings) throw new Error('Work mode switching requires a Session settings host.');
+      await syncClientSettings({ ...currentConfig, workMode: mode }, ['workMode']);
+      currentConfig.workMode = mode;
+      currentOptions.workMode = mode;
     },
     setPermissionMode: async (mode: PermissionMode) => {
       const canonicalMode = canonicalizePermissionMode(mode);

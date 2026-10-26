@@ -295,6 +295,12 @@ jobs:
 
           echo "archive_file=$archive_file" >> "$GITHUB_OUTPUT"
 
+      - name: Offline work-mode archive gate
+        if: steps.filter.outputs.skip == 'false' && matrix.smoke
+        env:
+          KODAX_MODE_RELEASE_ARCHIVE: dist/release/${{ steps.package.outputs.archive_file }}
+        run: node --test tests/release-work-modes.test.mjs
+
       - name: Upload artifact
         if: steps.filter.outputs.skip == 'false'
         # Pinned to v6 (Node 24 runtime, classic backend) — deliberately NOT v7,

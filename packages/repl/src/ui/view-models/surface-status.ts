@@ -45,6 +45,7 @@ export interface BuildSurfaceStatusBarPropsOptions {
   sessionId: string;
   permissionMode: StatusBarProps["permissionMode"];
   agentMode: StatusBarProps["agentMode"];
+  workMode?: StatusBarProps['workMode'];
   provider: string;
   model: string;
   thinking?: boolean;
@@ -106,6 +107,7 @@ export function buildSurfaceStatusBarProps(
     hostSettings: options.hostSettings,
     permissionMode: options.permissionMode,
     agentMode: options.agentMode,
+    workMode: options.workMode,
     provider: options.provider,
     model: options.model,
     currentTool: options.streamingState.currentTool,

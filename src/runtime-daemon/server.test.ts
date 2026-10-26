@@ -2034,6 +2034,7 @@ describe('runtime daemon dispatcher', () => {
             version: 2,
             keys: expect.arrayContaining([
               'agentMode',
+              'workMode',
               'autoModeClassifierModel',
             ]),
             permissionModes: ['plan', 'accept-edits', 'auto', 'full-access'],

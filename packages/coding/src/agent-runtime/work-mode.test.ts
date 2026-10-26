@@ -130,6 +130,6 @@ it('retains AMA planning, collaboration and completion instructions across the t
   }
 });
 
-it('does not silently accept Script or unknown modes before their execution runtime exists', () => {
-  expect(() => assembly({ workMode: 'script' as KodaXOptions['workMode'] })).toThrow('Unsupported work mode');
+it('does not silently accept unknown modes', () => {
+  expect(() => assembly({ workMode: 'unknown' as KodaXOptions['workMode'] })).toThrow('Unsupported work mode');
 });

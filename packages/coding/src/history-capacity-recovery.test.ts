@@ -21,13 +21,15 @@ afterEach(async () => {
   await fs.rm(directory, { recursive: true, force: true });
 });
 
-it('retains a just-read original constraint while its oversized canonical input remains paged', async () => {
+it.each(['native', 'script'])('retains a just-read original constraint while its oversized canonical input remains paged (%s)', async mode => {
   const original = 'background '.repeat(20000) + '\nKeep region eu-north-1, batchSize 7. Never repeat MIG042.';
   const uri = createTransientTextArtifact(original, true);
   const receipt = 'context '.repeat(300) + 'Keep region eu-north-1, batchSize 7. Never repeat MIG042.' + ' context'.repeat(300);
   const messages: KodaXMessage[] = [{ role: 'user', content: original },
-    { role: 'assistant', content: [{ type: 'tool_use', id: 'page', name: 'read', input: { path: uri, offset: 2 } }] },
-    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'page', content: receipt }] }];
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'page', name: mode === 'native' ? 'read' : 'script_exec',
+      input: mode === 'native' ? { path: uri, offset: 2 } : { code: `return await tools.read({path:${JSON.stringify(uri)},offset:2});` } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'page', content: receipt,
+      ...(mode === 'script' ? { metadata: { scriptReadPaths: [uri] } } : {}) }] }];
   try {
     const recovered = await recoverContextHistory({ messages, currentTokens: estimateTokens(messages) + 2000,
       contextWindow: 8192, reservedResponseTokens: 1000, canReadPagedContent: true });

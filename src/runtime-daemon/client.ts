@@ -631,11 +631,11 @@ export function createRuntimeDaemonClient(
         return request('session.autoMode.getStats', { sessionId }) as ReturnType<KodaXRuntime['sessions']['getAutoModeStats']>;
       },
       async updateSettings(sessionId, patch) {
-        assertPlanModeEffortSupported(options.capabilities, patch);
+        assertNewSessionSettingsSupported(options.capabilities, patch);
         return request('session.settings.update', { sessionId, patch }) as Promise<RuntimeSessionSettings>;
       },
       async updateSettingsVersioned(sessionId, patch, updateOptions) {
-        assertPlanModeEffortSupported(options.capabilities, patch);
+        assertNewSessionSettingsSupported(options.capabilities, patch);
         return request(
           'session.settings.updateVersioned',
           { sessionId, patch, expectedRevision: updateOptions.expectedRevision },
@@ -2449,17 +2449,19 @@ function requireRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function assertPlanModeEffortSupported(
+function assertNewSessionSettingsSupported(
   capabilities: Readonly<Record<string, unknown>> | undefined,
-  patch: { readonly planModeEffort?: string | null },
+  patch: { readonly planModeEffort?: string | null; readonly workMode?: string | null },
 ): void {
-  if (patch.planModeEffort === undefined) return;
   const settings = capabilities?.sharedSessionSettings;
-  if (settings && typeof settings === 'object' && 'keys' in settings
-    && Array.isArray(settings.keys) && settings.keys.includes('planModeEffort')) return;
-  throw Object.assign(new Error('Host does not support Session planModeEffort. Upgrade and restart the Host.'), {
-    code: 'daemon_upgrade_required', capability: 'sharedSessionSettings', restartRequired: true,
-  });
+  for (const key of ['planModeEffort', 'workMode'] as const) {
+    if (patch[key] === undefined) continue;
+    if (settings && typeof settings === 'object' && 'keys' in settings
+      && Array.isArray(settings.keys) && settings.keys.includes(key)) continue;
+    throw Object.assign(new Error(`Host does not support Session ${key}. Upgrade and restart the Host.`), {
+      code: 'daemon_upgrade_required', capability: 'sharedSessionSettings', restartRequired: true,
+    });
+  }
 }
 
 function supportsRunLifecycleControl(

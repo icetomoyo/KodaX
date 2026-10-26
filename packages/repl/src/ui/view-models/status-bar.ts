@@ -397,7 +397,6 @@ function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[] {
   const {
     sessionId,
     permissionMode: localPermissionMode,
-    agentMode: localAgentMode,
     provider,
     model,
     tokenUsage,
@@ -429,12 +428,13 @@ function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[] {
     managedIdleWaitingPendingCount,
   } = props;
   const permissionMode = props.hostSettings ? props.hostSettings.permissionMode : localPermissionMode;
-  const agentMode = props.hostSettings ? props.hostSettings.agentMode : localAgentMode;
+  const agentMode = props.hostSettings ? props.hostSettings.agentMode : props.agentMode;
+  const workMode = (props.hostSettings ? props.hostSettings.workMode : props.workMode) ?? 'coding';
 
   const segments: StatusBarSegment[] = [
     {
       id: "agent-mode",
-      text: `KodaX - ${agentMode?.toUpperCase() ?? 'Host default'}`,
+      text: `KodaX - ${workMode[0]!.toUpperCase()}${workMode.slice(1)}`,
       color: "primary",
       bold: true,
     },

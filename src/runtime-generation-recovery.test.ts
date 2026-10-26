@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { captureGenerationResume, parseGenerationCheckpoint, rebindGenerationOptions } from './runtime-generation-recovery.js';
 
 describe('generation recovery admission', () => {
+  it.each(['agent', 'coding', 'script'] as const)('preserves %s across generation recovery without rebinding it as authority', workMode => {
+    const resume = captureGenerationResume({ prompt: 'Continue', options: { workMode } });
+    expect(resume.options.workMode).toBe(workMode);
+    expect(resume.requiredBindings).toEqual([]);
+    expect(rebindGenerationOptions(resume, undefined)).toEqual({});
+  });
+
   it('retains resolved instructions but excludes authority and already executed tool invocations', () => {
     const resume = captureGenerationResume({ prompt: 'Keep the public API.', options: {
       provider: 'deepseek', model: 'small', toolInvocation: { name: 'old-command', input: {} },

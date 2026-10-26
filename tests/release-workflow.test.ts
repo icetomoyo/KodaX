@@ -30,6 +30,21 @@ interface ReleaseWorkflow {
 }
 
 describe('GitHub release workflow', () => {
+  it('checks modes and recovery from the actual archive on all five native release runners before upload', () => {
+    const workflow = parse(readFileSync(resolve('.github/workflows/release.yml'), 'utf8')) as ReleaseWorkflow;
+    const build = workflow.jobs?.build;
+    expect(build?.strategy?.matrix?.include?.map(row => row.target)).toEqual([
+      'win-x64', 'linux-x64', 'linux-arm64', 'darwin-x64', 'darwin-arm64',
+    ]);
+    const steps = build?.steps ?? [];
+    const gate = steps.findIndex(step => step.name === 'Offline work-mode archive gate');
+    expect(gate).toBeGreaterThan(steps.findIndex(step => step.name === 'Package archive'));
+    expect(gate).toBeLessThan(steps.findIndex(step => step.name === 'Upload artifact'));
+    expect(steps[gate]?.run).toBe('node --test tests/release-work-modes.test.mjs');
+    expect(steps[gate]?.env?.KODAX_MODE_RELEASE_ARCHIVE).toBe('dist/release/${{ steps.package.outputs.archive_file }}');
+    expect(steps[gate]?.if).toBe("steps.filter.outputs.skip == 'false' && matrix.smoke");
+  });
+
   it('delivers Artifact SDK subpaths inside the single core npm candidate', () => {
     const workflow = parse(readFileSync(resolve('.github/workflows/release.yml'), 'utf8')) as ReleaseWorkflow;
     const steps = workflow.jobs?.['npm-package']?.steps ?? [];

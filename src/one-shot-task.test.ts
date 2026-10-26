@@ -171,23 +171,24 @@ it('FEATURE_298 T35 — resume submits into the newest project session and resto
     // test pins the deterministic id path.
     const options: KodaXOptions = {
       provider: 'resume-provider',
+      workMode: 'agent',
       context: { repoIntelligenceMode: 'full', repoIntelligenceTrace: true },
       session: { id: seeded.id, scope: 'user' },
     };
-    await client.sessions.updateSettings(seeded.id, { model: 'seed-model', repoIntelligenceMode: 'light', repoIntelligenceTrace: false });
+    await client.sessions.updateSettings(seeded.id, { model: 'seed-model', workMode: 'coding', repoIntelligenceMode: 'light', repoIntelligenceTrace: false });
     const result = await runOneShotClientTask({
       client, runtime: harness.runtime, options, prompt: 'Continue here.',
     });
     expect(result).toMatchObject({ success: true });
     expect(executor.options.at(-1)!.session!.id).toBe(seeded.id);
-    expect(executor.options.at(-1)).toMatchObject({ provider: 'resume-provider',
+    expect(executor.options.at(-1)).toMatchObject({ provider: 'resume-provider', workMode: 'agent',
       context: { repoIntelligenceMode: 'full', repoIntelligenceTrace: true } });
 
     // A resumed session keeps its own settings after the invocation.
     await expect.poll(async () => (await client.sessions.getSettings(seeded.id)).provider)
       .toBeUndefined();
     expect((await client.sessions.getSettings(seeded.id)).model).toBe('seed-model');
-    expect(await client.sessions.getSettings(seeded.id)).toMatchObject({ repoIntelligenceMode: 'light', repoIntelligenceTrace: false });
+    expect(await client.sessions.getSettings(seeded.id)).toMatchObject({ workMode: 'coding', repoIntelligenceMode: 'light', repoIntelligenceTrace: false });
   } finally {
     await harness.close();
   }

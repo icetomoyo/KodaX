@@ -10,6 +10,8 @@ import { executeTool, getToolDefinition, registerTool } from '../packages/coding
 import { wrapCodingToolAsRunnable } from '../packages/coding/src/task-engine/_internal/managed-task/tool-wrappers.js';
 import { createExtensionRuntime, withExtensionRuntimeContext } from '../packages/coding/src/extensions/runtime.js';
 import { createContentHashCache } from '../packages/coding/src/multi-instance/content-hash-cache.js';
+import { assertTrustedTextMutationPolicy } from '../packages/coding/src/trusted-text-mutation.js';
+import { createTrustedTextMutationHost } from '../src/windows-text-transaction.js';
 
 const limits = { timeoutMs: 10_000, memoryBytes: 16 * 1024 * 1024, maxCalls: 12, maxTransferBytes: 128 * 1024 };
 const activeTools = ['read', 'grep', 'glob', 'edit', 'write', 'insert_after_anchor', 'bash', 'spawn_agent', 'tool_call'];
@@ -79,6 +81,93 @@ async function fixture(totalBudget = 4) {
     runtimeSessionState: buildRuntimeSessionState({ activeTools, modelSelection: {} }) };
   return { directory, ctx, budget, dispatch };
 }
+
+it.each([
+  { name: 'edit', input: { path: 'value.mjs', old_string: 'value = 1', new_string: 'value = 2' }, after: 'export const value = 2;\n' },
+  { name: 'write', input: { path: 'value.mjs', content: 'replacement' }, after: 'replacement' },
+  { name: 'insert_after_anchor', input: { path: 'value.mjs', anchor: 'export const value = 1;', content: '// inserted' }, after: 'export const value = 1;\n// inserted' },
+])('keeps $name backup authority in the shared context after Script failure, denial and cancellation', async ({ name, input, after }) => {
+  const { directory, ctx, budget, dispatch } = await fixture(2);
+  vi.stubEnv('NODE_ENV', 'production');
+  ctx.trustedTextMutationHost = createTrustedTextMutationHost(() => [directory], target => assertTrustedTextMutationPolicy(target, directory));
+  const commit = vi.spyOn(ctx.trustedTextMutationHost, 'commit');
+  const names = [...activeTools, 'undo'];
+  const shared = { ...dispatch, activeToolNames: names,
+    runtimeSessionState: buildRuntimeSessionState({ activeTools: names, modelSelection: {} }) };
+  const pilot = createScriptPilot(shared, budget);
+  expect(pilot.tools.map(tool => tool.name)).not.toContain('undo');
+  const failed = await pilot.run(`await tools[${JSON.stringify(name)}](${JSON.stringify(input)}); throw new Error('later failure');`, limits);
+  expect(failed).toMatchObject({ status: 'failed', receipts: [{ name, result: { isError: false } }] });
+  expect(await readFile(path.join(directory, 'value.mjs'), 'utf8')).toBe(after);
+  expect(budget.spentBudget).toBe(1);
+  const call = { type: 'tool_use' as const, id: 'native-undo', name: 'undo', input: {} };
+  const admitted = vi.fn();
+  const denied = await runToolDispatch({ ...shared, toolBlocks: [call], abortSignal: undefined,
+    events: { beforeToolExecute: async () => '[Blocked] Fixture read-only policy', onToolExecutionStart: admitted } });
+  expect(denied.get(call.id)).toBe('[Blocked] Fixture read-only policy');
+  const controller = new AbortController();
+  controller.abort();
+  const cancelled = await runToolDispatch({ ...shared, toolBlocks: [call], abortSignal: controller.signal,
+    events: { onToolExecutionStart: admitted } });
+  expect(cancelled.get(call.id)).toContain('[Cancelled]');
+  expect(admitted).not.toHaveBeenCalled();
+  expect(commit).toHaveBeenCalledTimes(1);
+  expect(await readFile(path.join(directory, 'value.mjs'), 'utf8')).toBe(after);
+  // Existing native managed wrapper, same context and budget; not a guest undo qualification.
+  const native = wrapCodingToolAsRunnable(getToolDefinition('undo')!, (parameters, context) => executeTool('undo', parameters, context), ctx, budget);
+  const restored = await native.execute({}, { agent: { name: 'fixture', instructions: '' } });
+  expect(restored.isError).not.toBe(true);
+  expect(restored.content).toContain('Restored:');
+  expect(await readFile(path.join(directory, 'value.mjs'), 'utf8')).toBe('export const value = 1;\n');
+  expect(commit).toHaveBeenCalledTimes(2);
+  expect(ctx.backups.size).toBe(0);
+  expect(budget.spentBudget).toBe(2);
+  const exhausted = await pilot.run("return await tools.write({path:'value.mjs',content:'must not execute'});", limits);
+  expect(exhausted.receipts[0]?.result.content).toContain('budget exhausted');
+  expect(budget.spentBudget).toBe(2);
+  expect(commit).toHaveBeenCalledTimes(2);
+});
+
+it('retains a Script backup when native undo is cancelled before trusted commit, then restores in the same context', async () => {
+  const { directory, ctx, budget, dispatch } = await fixture(3);
+  vi.stubEnv('NODE_ENV', 'production');
+  const host = createTrustedTextMutationHost(() => [directory], target => assertTrustedTextMutationPolicy(target, directory));
+  ctx.trustedTextMutationHost = host;
+  const edited = await createScriptPilot(dispatch, budget).run("return await tools.write({path:'value.mjs',content:'after'});", limits);
+  expect(edited.hadToolErrors).toBe(false);
+  const commit = host.commit.bind(host);
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let entered!: () => void;
+  const ready = new Promise<void>(resolve => { entered = resolve; });
+  vi.spyOn(host, 'commit').mockImplementationOnce(async input => { entered(); await gate; return commit(input); });
+  const native = wrapCodingToolAsRunnable(getToolDefinition('undo')!, (input, context) => executeTool('undo', input, context), ctx, budget);
+  const controller = new AbortController();
+  const pending = native.execute({}, { agent: { name: 'fixture', instructions: '' }, abortSignal: controller.signal });
+  try {
+    await ready;
+    controller.abort();
+    release();
+    expect((await pending).isError).toBe(true);
+    expect(await readFile(path.join(directory, 'value.mjs'), 'utf8')).toBe('after');
+    expect(ctx.backups.size).toBe(1);
+    expect(budget.spentBudget).toBe(2);
+    expect((await native.execute({}, { agent: { name: 'fixture', instructions: '' } })).content).toContain('Restored:');
+    expect(await readFile(path.join(directory, 'value.mjs'), 'utf8')).toBe('export const value = 1;\n');
+    expect(ctx.backups.size).toBe(0);
+    expect(budget.spentBudget).toBe(3);
+  } finally { release(); await pending; }
+});
+
+it('does not treat creation of a new file as an undoable overwrite', async () => {
+  const { directory, ctx, budget, dispatch } = await fixture(2);
+  const created = await createScriptPilot(dispatch, budget).run("return await tools.write({path:'new.txt',content:'retained'});", limits);
+  expect(created.hadToolErrors).toBe(false);
+  const native = wrapCodingToolAsRunnable(getToolDefinition('undo')!, (input, context) => executeTool('undo', input, context), ctx, budget);
+  expect((await native.execute({}, { agent: { name: 'fixture', instructions: '' } })).content).toBe('No backups available. Nothing to undo.');
+  expect(await readFile(path.join(directory, 'new.txt'), 'utf8')).toBe('retained');
+  expect(budget.spentBudget).toBe(2);
+});
 
 it.each([2, 4])('matches native leaf accounting with a %i-unit budget and stops without double charging', async total => {
   const { ctx, budget, dispatch } = await fixture(total);

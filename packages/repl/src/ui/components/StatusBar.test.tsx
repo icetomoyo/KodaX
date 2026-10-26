@@ -130,7 +130,7 @@ describe("StatusBar", () => {
       model: "sonnet",
     });
 
-    expect(text).toContain("KodaX - SA");
+    expect(text).toContain("KodaX - Coding");
   });
 
   it("shows managed worker in busy status text while showing round and global work budget", () => {

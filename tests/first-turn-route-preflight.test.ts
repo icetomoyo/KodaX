@@ -2,8 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getProvider, resolveModelCapabilities } from '../packages/llm/src/index.js';
 import { observeProviderOperation, runWithProviderRequestObserver, type ProviderRequestObservation } from '../packages/llm/src/provider-request-observation.js';
 import { firstTurnReasoningFor } from './first-turn-eval-support.js';
+import { resetBuiltinProviderCache } from '../packages/llm/src/providers/registry.js';
 
-afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+afterEach(() => { resetBuiltinProviderCache(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe('first-turn routes build one physical SDK request with the frozen effort', () => {
   for (const [provider, model, environment] of [
@@ -14,7 +15,7 @@ describe('first-turn routes build one physical SDK request with the frozen effor
     ['deepseek', 'deepseek-flash', 'DEEPSEEK_API_KEY'],
     ['kimi-code', 'kimi-for-coding', 'KIMI_CODE_API_KEY'],
   ] as const) {
-    it(`${provider}/${model}: no credential or HTTP leaves the mocked fetch`, async () => {
+    it.each([2048, 8192])(`${provider}/${model}: mocked output limit %i`, async outputLimit => {
       vi.stubEnv(environment, `local-fixture-key-${provider}-${model}`);
       const requests: Record<string, unknown>[] = [];
       const facts: ProviderRequestObservation[] = [];
@@ -40,9 +41,10 @@ describe('first-turn routes build one physical SDK request with the frozen effor
       }));
       const reasoning = firstTurnReasoningFor(provider);
       expect(resolveModelCapabilities(provider, model)?.reasoningProfile?.localRejectEfforts ?? []).not.toContain(reasoning.effort);
-      const result = await runWithProviderRequestObserver(fact => facts.push(fact), () => observeProviderOperation(provider, 'utility', undefined, () => getProvider(provider).stream([{ role: 'user', content: 'hello' }], [], 'fixture system', reasoning, { modelOverride: model, singleAttempt: true, maxOutputTokensOverride: 2048 })));
+      const result = await runWithProviderRequestObserver(fact => facts.push(fact), () => observeProviderOperation(provider, 'utility', undefined, () => getProvider(provider).stream([{ role: 'user', content: 'hello' }], [], 'fixture system', reasoning, { modelOverride: model, singleAttempt: true, maxOutputTokensOverride: outputLimit })));
       expect(result.textBlocks.map(block => block.text).join('')).toBe('ok');
       expect(requests).toHaveLength(1);
+      expect(requests[0]?.max_tokens ?? requests[0]?.max_completion_tokens).toBe(outputLimit);
       expect(new Set(facts.filter(f => f.boundary === 'physical_attempt' && f.state === 'started').map(f => f.requestId)).size).toBe(1);
       if (provider === 'kimi-code') {
         expect(requests[0]).not.toHaveProperty('thinking.type', 'disabled');

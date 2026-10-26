@@ -18,6 +18,10 @@ import type {
   StopHookFn,
 } from '@kodax-ai/agent';
 import { waitForContextRecovery } from '../context-recovery-wait.js';
+import { resolveWorkMode, assertWorkModeAvailable } from '../work-mode.js';
+import { createScriptPilot } from '../agent-runtime/script/pilot.js';
+import { withScriptCells } from '../agent-runtime/script/run.js';
+import { SCRIPT_MODEL_LIMITS, SCRIPT_TOOL_NAME, withScriptModelTool, projectScriptModelTools, canReadWithModelTools } from '../agent-runtime/script/model.js';
 import {
   Runner,
   collectGuardrails,
@@ -44,6 +48,7 @@ import {
 // the only remaining V2 chain agent is the Worker.
 import { WORKER_AGENT_NAME } from '../agents/task-engine-agents.js';
 import { filterModelToolAliases } from '../agent-runtime/tool-resolution.js';
+import { markOrdinaryRootToolContract } from '../tools/managed-tool-contract.js';
 import { toolExecution } from '../agent-runtime/tool-dispatch.js';
 import { resolveProvider } from '../providers/index.js';
 import { estimateTokens } from '../tokenizer.js';
@@ -1880,6 +1885,9 @@ async function runManagedTaskViaRunnerInner(
 
   );
   // Root and managed children both arrive here after their own role/host filters.
+  if (chainPromptContext && !chainPromptContext.partnerInstructions) {
+    markOrdinaryRootToolContract(chain.worker);
+  }
   // Keep executable capability separate from any deferred model-facing projection.
   // Policy follows executable capabilities, not any later model-view projection.
   // Hiding a native schema must not disable AMA planning or collaboration teaching.
@@ -2086,7 +2094,23 @@ async function runManagedTaskViaRunnerInner(
   // missed the threshold by the system + tools schema overhead.
   // FEATURE_193 (v0.7.43): V1 chain (Scout/Planner/Generator) retired. The
   // Worker single-loop is the only entry path.
-  const entryAgent: Agent = chain.worker;
+  const scriptMode = resolveWorkMode(options) === 'script';
+  const scriptRunId = scriptMode ? options.context?.runtimeRunId ?? randomUUID() : undefined;
+  if (scriptMode && (!options.session?.storage || (options.session.persistedByHost === true && !options.session.storage.appendSessionRecords))) {
+    throw new Error('Script requires writable canonical Session storage.');
+  }
+  if (scriptMode) await assertWorkModeAvailable(options);
+  const entryAgent: Agent = scriptMode ? withScriptModelTool(chain.worker, baseCtx,
+    createScriptPilot({ ctx: baseCtx, events: {}, runtimeSessionState,
+      activeToolNames: runtimeSessionState.activeTools.filter(name => chain.worker.tools?.some(tool => tool.name === name)),
+    }, budget).tools,
+    async (code, caller) => withScriptCells({
+      options: { ...options, abortSignal: caller.abortSignal }, sessionId: resolvedSessionId,
+      runId: scriptRunId!, ctx: baseCtx, state: runtimeSessionState,
+      messages: [...caller.transcript ?? runnerInput], agent: caller.agent, toolObserver: scriptLeafObserver,
+      save: () => persistManagedBoundary(caller.transcript ?? runnerInput),
+    }, SCRIPT_MODEL_LIMITS, runCell => runCell(code)),
+  ) : chain.worker;
   const persistManagedBoundary = async (
     messages: readonly KodaXMessage[],
   ): Promise<void> => {
@@ -2103,7 +2127,8 @@ async function runManagedTaskViaRunnerInner(
     executionContext: baseCtx,
     resolvedContextCapacity,
     contextTokenSnapshotRef,
-    activeToolDefinitions: entryAgent.tools,
+    activeToolDefinitions: projectScriptModelTools(entryAgent, entryAgent.tools ?? []),
+    ...(scriptMode ? { canReadPagedContent: canReadWithModelTools(entryAgent, projectScriptModelTools(entryAgent, entryAgent.tools ?? [])) } : {}),
     get reasoning() { return resolveManagedProviderReasoning(options, entryAgent); },
     canonicalManagedContext: () => {
       const snapshot = captureManagedRunContext();
@@ -2195,6 +2220,7 @@ async function runManagedTaskViaRunnerInner(
     // CANCELLED_TOOL_RESULT_MESSAGE → cancel; other string → block
     // with that string as the synthesized tool_result content.
     beforeTool: async (call) => {
+      if (scriptMode && call.name === SCRIPT_TOOL_NAME) return true;
       if (options.events) {
         const override = await getToolExecutionOverride(
           options.events,
@@ -2309,12 +2335,28 @@ async function runManagedTaskViaRunnerInner(
         observations.at(-1)?.sequence ?? memoryRuntime.observationSequence;
     },
   };
-  const runnerToolObserver = composeToolObservers(
+  const scriptLeafObserver = composeToolObservers(stallSidecar.observer, todoDriftObserver, memoryObserver, {
+    onToolResult: (call, result) => {
+      if (result.metadata?.truncated) {
+        toolTruncationRef.truncated = true;
+        toolTruncationRef.notes.push(`${call.name}: tool returned truncated output`);
+      }
+    },
+  });
+  const nativeToolObserver = composeToolObservers(
     stallSidecar.observer,
     permissionEventsObserver,
     todoDriftObserver,
     memoryObserver,
   );
+  const observerFor = (name: string) => scriptMode && name === SCRIPT_TOOL_NAME ? permissionEventsObserver : nativeToolObserver;
+  const runnerToolObserver: RunnerToolObserver = !scriptMode ? nativeToolObserver : {
+    beforeTool: call => observerFor(call.name).beforeTool?.(call) ?? Promise.resolve(true),
+    onToolCall: call => observerFor(call.name).onToolCall?.(call),
+    onToolResult: (call, result) => observerFor(call.name).onToolResult?.(call, result),
+    onToolExecutionStart: call => observerFor(call.name).onToolExecutionStart?.(call),
+    onToolExecutionEnd: call => observerFor(call.name).onToolExecutionEnd?.(call),
+  };
 
   const composedStopHook = buildRunnerStopHook({
     getSessionId: () => sessionIdRef.current,
@@ -2653,7 +2695,7 @@ async function runManagedTaskViaRunnerInner(
     // prior turns are reflected in `rr.messages`, so the Runner's
     // transition logic will pick up where the Worker left off (the
     // handoff slot is empty, so no handoff replay races).
-    resumeAgent: () => chain.worker,
+    resumeAgent: () => entryAgent,
     // Child results stay raw at enqueue time. Immediately before resume, use
     // the same physical next-request budget as ordinary tool-result batches,
     // including any user prompt that shares this wake-up request.

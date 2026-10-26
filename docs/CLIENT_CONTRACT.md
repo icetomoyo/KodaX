@@ -130,6 +130,13 @@ Learning/Workflow 订阅的 `ready` 只表示 Host 已完成注册，不表示�
 
 Session 可选 `planModeEffort` 表达明确的计划模式默认：Host 仅在模式为 `plan` 且没有 Session `effort` 覆盖时采用它；离开计划模式后恢复原有 effort 解析，客户端无需回写缓存。`null` 清除覆盖。既有 `sharedSessionSettings.keys` 声明支持；旧 Host 未列出该键时，新 SDK 在发送包含该字段的设置 mutation 前返回 `daemon_upgrade_required`，其他设置仍可使用，不提升整个 productClient 版本。ACP 初始化只提交明确的选项/环境意图，普通 prompt 不回写缓存设置；显式 prompt effort 和模式切换仍提交对应的窄设置意图。计划批准使用完整 `options.plan`，Host 模式变化通过 ACP `current_mode_update` 显示。
 
+Session 可选 `workMode` 为 `agent | coding | script`，缺失或 `null` 清除后采用 Coding；它不是权限或 AMA 模式，也不是全局 config 字段。
+仅安全空闲时经同一 Session owner 更新，普通与 versioned mutation 都拒绝活跃 Run；不排队隐式切换、不清空历史。
+选择随 Session 重启恢复，模型切换不修改它。旧 Host 未在 `sharedSessionSettings.keys` 声明 workMode 时，客户端在 mutation 前明确拒绝并要求升级。
+Script 选择及 Run 准入进行无工具、无模型的本地 VM 可用性检查；失败保留原选择，不能先生成再发现执行器缺失。
+首轮提供完整叶契约，原生控制项、undo 和支持后台命令的 bash 保留；回执与原生错误证据保留，未结算 cell 不自动重放。
+当前 Windows 离线证据及尚未验证的完整任务效果见 [工具总计划](designs/tool-portfolio-plan.md)。
+
 `catalog.extensions()` 返回 Host 已加载的扩展和注册诊断，只有纯数据，不包含处理函数或 Node 运行时对象。`mcp.status()` 只读当前连接状态，不唤醒 lazy server；`reloadServers()` 明确重建连接集合，`listTools({forceRefresh:true})` 明确刷新目录。REPL 的 `/extensions`、`/mcp` 使用这些相同入口，客户端无需另建 extension runtime。
 
 无交互的 one-shot CLI 在订阅视图后提交输入：属于本次 Run 的权限请求及时拒绝；单选、多选、自由输入和 MCP 表单等人工提问使用既有 `cancel` 回答，不代填默认值。工具收到拒绝或取消，Run 仍按正常执行结果结算；不把取消一个问题等同于停止整个 Run。这个行为属于该 CLI 消费者，不改变 Host 的全局审批超时，也不回答其他 Run 的请求；可处理交互的 SDK/Web 消费者仍使用同一 Interaction 契约。

@@ -122,8 +122,10 @@ export async function recoverContextHistory(input: HistoryCapacityRecoveryInput)
   // A read of paged user text must survive to the next request. Charge the
   // canonical original at its wire size before evicting the retrieved pages;
   // otherwise each read is immediately erased to make room for that original.
-  if (messages.some(message => Array.isArray(message.content) && message.content.some(block => block.type === 'tool_use'
-    && block.name === 'read' && typeof block.input.path === 'string' && isPagedOriginalInput(block.input.path)))) {
+  if (messages.some(message => Array.isArray(message.content) && message.content.some(block =>
+    (block.type === 'tool_use' && block.name === 'read' && typeof block.input.path === 'string' && isPagedOriginalInput(block.input.path))
+    || (block.type === 'tool_result' && Array.isArray(block.metadata?.scriptReadPaths)
+      && block.metadata.scriptReadPaths.some((path: unknown) => typeof path === 'string' && isPagedOriginalInput(path)))))) {
     maxInput += await measureUserInputRelief(input);
   }
   const ctx: KodaXToolExecutionContext = input.executionContext ?? { backups: new Map() };

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { RunnerToolObserver } from '@kodax-ai/agent';
 import type { KodaXToolUseBlock } from '@kodax-ai/llm';
 import type { KodaXManagedWorkBudget } from '../../types.js';
 import { getRegisteredToolDefinition, getToolDefinition } from '../../tools/index.js';
@@ -10,13 +11,22 @@ import { recordMutationForTool } from '../../task-engine/_internal/managed-task/
 import { applyPostToolProcessing, runToolDispatch, type RunToolDispatchInput } from '../tool-dispatch.js';
 import { runScriptCell, type ScriptCellLimits, type ScriptCellInput } from './cell.js';
 
-type PilotDispatch = Omit<RunToolDispatchInput, 'toolBlocks' | 'abortSignal'> & { readonly abortSignal?: AbortSignal };
+type PilotDispatch = Omit<RunToolDispatchInput, 'toolBlocks' | 'abortSignal'> & {
+  readonly abortSignal?: AbortSignal;
+  readonly toolObserver?: RunnerToolObserver;
+  readonly mutationScopeReflection?: boolean;
+};
 
 /** Internal Script qualification probe. Not a public work mode or an alternative AMA executor.
  * The caller supplies raw host events, not a second budget-charging wrapper.
  */
 export function createScriptPilot(dispatch: PilotDispatch, budget: KodaXManagedWorkBudget) {
-  const registrations = new Map(['read', 'grep', 'glob', 'edit', 'write', 'insert_after_anchor', 'bash'].flatMap(name => {
+  const registrations = new Map(['read', 'grep', 'glob', 'edit', 'write', 'insert_after_anchor', 'bash', 'changed_scope', 'changed_diff',
+    'repo_overview', 'semantic_lookup', 'cyclic_dependencies', 'relationship_scan', 'module_context',
+    'symbol_context', 'process_context', 'impact_estimate',
+    'lsp_definition', 'lsp_hover', 'lsp_references', 'lsp_document_symbols', 'lsp_workspace_symbols',
+    'lsp_implementation', 'lsp_incoming_calls', 'lsp_outgoing_calls', 'memory_recall',
+    'session_history_search', 'session_history_read', 'kodax_manual', 'web_search', 'web_fetch'].flatMap(name => {
     const registration = getRegisteredToolDefinition(name);
     return registration?.source.kind === 'builtin'
       && dispatch.activeToolNames?.includes(name) && isToolDiscoverable(name, dispatch.ctx)
@@ -57,13 +67,29 @@ export function createScriptPilot(dispatch: PilotDispatch, budget: KodaXManagedW
             dispatch.ctx.recordToolResultArtifact?.(id, outputPath);
           },
         };
-        const events = { ...dispatch.events, onToolExecutionStart: (...args: Parameters<NonNullable<typeof dispatch.events.onToolExecutionStart>>) => {
+        const currentCall = () => finalToolBlocks.get(block.id) ?? block;
+        const events: typeof dispatch.events = { ...dispatch.events,
+          beforeToolExecute: async (...args) => {
+            const verdict = await dispatch.toolObserver?.beforeTool?.(currentCall());
+            if (verdict !== undefined && verdict !== true) return verdict;
+            return await dispatch.events.beforeToolExecute?.(...args) ?? true;
+          },
+          onToolUseStart: (...args) => {
+            dispatch.toolObserver?.onToolCall?.(currentCall());
+            dispatch.events.onToolUseStart?.(...args);
+          },
+          onToolExecutionEnd: (...args) => {
+            dispatch.toolObserver?.onToolExecutionEnd?.(currentCall());
+            dispatch.events.onToolExecutionEnd?.(...args);
+          },
+          onToolExecutionStart: (...args) => {
           assertActive(args[0].name);
           if (signal.aborted) throw new Error('Script cancelled before execution.');
           if (budget.spentBudget >= budget.totalBudget) throw new Error('Script work budget exhausted.');
           incrementManagedBudgetUsage(budget);
           const call = finalToolBlocks.get(block.id) ?? block;
           if (ctx.mutationTracker) recordMutationForTool(ctx.mutationTracker, call.name, call.input ?? {});
+          dispatch.toolObserver?.onToolExecutionStart?.(call);
           dispatch.events.onToolExecutionStart?.(...args);
         } };
         const resultMap = await runToolDispatch({ ...dispatch, ctx, events,
@@ -84,13 +110,16 @@ export function createScriptPilot(dispatch: PilotDispatch, budget: KodaXManagedW
         });
         const canonical = finalToolBlocks.get(block.id) ?? block;
         const processed = await applyPostToolProcessing({ toolBlocks: [canonical], resultMap, events,
-          emitActiveExtensionEvent, ctx, runtimeSessionState: dispatch.runtimeSessionState, toolResultArtifactPaths: artifacts });
+          emitActiveExtensionEvent, ctx, runtimeSessionState: dispatch.runtimeSessionState, toolResultArtifactPaths: artifacts,
+          mutationScopeReflection: dispatch.mutationScopeReflection });
         const result = processed.toolResults[0];
         if (!result) throw new Error('Script leaf produced no visible result.');
-        return { content: result.content, isError: result.is_error === true
+        const settled = { content: result.content, isError: result.is_error === true
           || (canonical.name === 'bash' && shellExecutionOutcome?.success !== true),
           metadata: { ...result.metadata, toolCall: canonical, editRecoveryMessages: processed.editRecoveryMessages,
             ...(shellExecutionOutcome ? { shellExecutionOutcome } : {}) } };
+        dispatch.toolObserver?.onToolResult?.(canonical, settled);
+        return settled;
       },
     }),
   };

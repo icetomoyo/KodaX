@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { withScriptModelTool, projectScriptModelTools, canReadWithModelTools } from '../../../agent-runtime/script/model.js';
+import { TOOL_OUTPUT_DIR_ENV } from '../../../tools/truncate.js';
 
 vi.mock('@kodax-ai/agent', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@kodax-ai/agent')>();
@@ -112,6 +117,38 @@ beforeEach(() => {
 });
 
 describe('managed history compaction', () => {
+  it('retains an authorized Script read path during failed-summary history paging', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-script-capacity-'));
+    vi.stubEnv(TOOL_OUTPUT_DIR_ENV, directory);
+    const body = 'source evidence '.repeat(15_000);
+    const messages: KodaXMessage[] = [
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'evidence', name: 'bash', input: { command: 'show evidence' } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'evidence', content: body }] },
+    ];
+    const script = withScriptModelTool({ name: 'worker', instructions: '', tools: [readDefinition] },
+      { backups: new Map() }, [readDefinition], async () => ({ status: 'completed', hadToolErrors: false, receipts: [] }));
+    const menu = projectScriptModelTools(script, script.tools!);
+    const persisted = vi.fn();
+    compactMock.mockRejectedValue(new ContextCapacityError({ contextWindow: 8192,
+      currentTokens: estimateTokens(messages), reservedResponseTokens: 1000 }, 'Compaction summary request'));
+    try {
+      const hook = await buildManagedTaskCompactionHook(options({ onCompactedMessages: persisted }), {
+        activeToolDefinitions: menu, canReadPagedContent: canReadWithModelTools(script, menu),
+        resolvedContextCapacity: resolvedCapacity(100, 8192, 1000),
+      });
+      const recovered = await hook!(messages);
+      expect(recovered).toBeDefined();
+      expect(JSON.stringify(recovered)).not.toContain(body);
+      expect(persisted).toHaveBeenCalledOnce();
+      const originals = await fs.readdir(directory);
+      expect(await Promise.all(originals.map(file => fs.readFile(path.join(directory, file), 'utf8')))).toContain(body);
+      expect(messages[1]?.content).toEqual([{ type: 'tool_result', tool_use_id: 'evidence', content: body }]);
+    } finally {
+      vi.unstubAllEnvs();
+      if (path.dirname(directory) !== path.resolve(os.tmpdir()) || !path.basename(directory).startsWith('kodax-script-capacity-')) throw new Error('Unsafe cleanup');
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
   it('builds the automatic hook even when a legacy caller passes enabled false', async () => {
     const capacity = resolvedCapacity(75);
     capacity.compactionConfig.enabled = false;

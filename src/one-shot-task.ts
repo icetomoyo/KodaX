@@ -127,6 +127,7 @@ function toOneShotSettingsPatch(
       ? { reasoningMode: options.reasoningMode }
       : {}),
     ...(options.agentMode !== undefined ? { agentMode: options.agentMode } : {}),
+    ...(options.workMode !== undefined ? { workMode: options.workMode } : {}),
     ...(options.maxIter !== undefined ? { maxIter: options.maxIter } : {}),
   };
 }

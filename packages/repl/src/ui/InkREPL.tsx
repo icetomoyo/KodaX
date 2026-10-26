@@ -4636,6 +4636,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
         hostSettings: currentConfig.hostSettings,
         permissionMode: currentConfig.permissionMode,
         agentMode: currentConfig.agentMode,
+        workMode: currentConfig.workMode,
         provider: currentConfig.provider,
         model: currentConfig.model ?? (options.clientPlane ? '—' : getProviderModel(currentConfig.provider) ?? currentConfig.provider),
         thinking: currentConfig.thinking,
@@ -4675,6 +4676,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       currentConfig.hostSettings,
       currentConfig.permissionMode,
       currentConfig.agentMode,
+      currentConfig.workMode,
       currentConfig.provider,
       currentConfig.model,
       currentConfig.thinking,
@@ -5917,6 +5919,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     reasoningMode: currentConfig.reasoningMode,
     effort: runtimeEffort,
     agentMode: currentConfig.agentMode,
+    workMode: currentConfig.workMode,
     // FEATURE_246 A5 (ADR-047): carry the workflow runs dir on the live session
     // options that flow to runAgentRound so the Worker's run_workflow tool is
     // active on NL turns (not just the /workflow command path). The mid-session
@@ -10598,6 +10601,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             }, ['agentMode']);
             currentOptionsRef.current.agentMode = mode;
           },
+          setWorkMode: async mode => {
+            if (isLoading) throw new Error('Wait for the active Run to settle before switching work mode.');
+            if (!options.clientPlane?.updateSettings) throw new Error('Work mode switching requires a Session settings host.');
+            await selectClientConfig({ ...currentConfigRef.current, workMode: mode }, ['workMode']);
+            currentOptionsRef.current.workMode = mode;
+          },
           setPermissionMode: setSessionPermissionMode,
           setRepoIntelligenceRuntime: async (update) => {
             if (options.clientPlane) {
@@ -12075,6 +12084,7 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     thinking: initialThinking,
     reasoningMode: initialReasoningMode,
     agentMode: initialAgentMode,
+    workMode: options.workMode,
     permissionMode: initialPermissionMode,
     repoIntelligenceMode: repoIntelligenceRuntime.mode,
     repoIntelligenceTrace: repoIntelligenceTraceDefault,

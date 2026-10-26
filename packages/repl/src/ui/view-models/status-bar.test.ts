@@ -30,11 +30,15 @@ const baseProps = (overrides: Partial<StatusBarProps> = {}): StatusBarProps => (
 });
 
 describe("status-bar (Ink view-model) reasoning effort display", () => {
+  it.each(['agent', 'coding', 'script'] as const)('shows %s as the work selection without an AMA prefix', workMode => {
+    const view = buildStatusBarViewModel(baseProps({ workMode }));
+    expect(view.segments[0]?.text).toBe(`KodaX - ${workMode[0]!.toUpperCase()}${workMode.slice(1)}`);
+  });
   it('shows unknown Host defaults instead of stale local mode labels', () => {
     const viewModel = buildStatusBarViewModel(baseProps({ permissionMode: 'plan', agentMode: 'ama', reasoningMode: 'deep',
       reasoningEffortLabel: 'high', thinking: true, hostSettings: {} }));
     expect(viewModel.segments.find(segment => segment.id === 'permission-mode')?.text).toBe('Host default');
-    expect(viewModel.segments.find(segment => segment.id === 'agent-mode')?.text).toBe('KodaX - Host default');
+    expect(viewModel.segments.find(segment => segment.id === 'agent-mode')?.text).toBe('KodaX - Coding');
     expect(viewModel.segments.find(segment => segment.id === 'reasoning-mode')?.text).toBe('Host default');
   });
   it("renders effort-first status instead of internal capability letters", () => {
@@ -191,7 +195,7 @@ describe("status-bar (Ink view-model) — canonical permission profiles", () => 
 
   it("renders AMA as the managed-agent label", () => {
     const text = getStatusBarText(baseProps({ agentMode: "ama" }));
-    expect(text).toContain("KodaX - AMA");
+    expect(text).toContain("KodaX - Coding");
   });
 
   it("uses the absolute trigger when it is lower than the percentage", () => {

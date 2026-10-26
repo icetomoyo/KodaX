@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { createCustomProvider, registerModelProvider, clearRuntimeModelProviders } from '@kodax-ai/llm';
-import { runKodaX, runManagedTask, type KodaXOptions } from '@kodax-ai/coding';
-import { runClientPlaneRound } from '@kodax-ai/repl';
+import { runKodaX, runManagedTask, awaitLatestCodingMemoryReviewDrain, type KodaXOptions } from '@kodax-ai/coding';
+import { runClientPlaneRound, FileSessionStorage } from '@kodax-ai/repl';
 import { formatSkillsSystemPrompt, SkillRegistry } from '@kodax-ai/agent/capabilities/skills';
 import { setAgentConfigHome } from '../packages/agent/src/runtime/agent-home.js';
 import { countTokens } from '../packages/agent/src/tokenizer.js';
@@ -16,6 +16,7 @@ import { createExtensionRuntime } from '../packages/coding/src/extensions/runtim
 import { createKodaXRuntime } from '../src/sdk-runtime.js';
 import { toKodaXProductClient } from '../src/client-runtime-adapter.js';
 import { createCliClientPlane } from '../src/cli-client-plane.js';
+import { compactContractInput } from './first-turn-compact-contract.js';
 
 // Layer 1: intercept every fetch after the real SDK serializes the request.
 // No model, network, tool execution or token-usage claims are involved.
@@ -92,9 +93,21 @@ it('inventories first serialized requests for isolated content and real Runtime 
     ?? execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true }).trim();
   const sourcePaths = [
     'packages/coding/src/tools/tool-definitions.ts',
+    'packages/coding/src/tools/managed-tool-contract.ts',
+    'packages/coding/src/tools/managed-tool-text.ts',
     'packages/coding/src/agents/worker-role-prompt.ts',
     'packages/coding/src/task-engine/runner-driven.ts',
     'packages/coding/src/prompts/builder.ts',
+    'packages/coding/src/agent-runtime/script/model.ts',
+    'packages/coding/src/agent-runtime/script/pilot.ts',
+    'packages/coding/src/work-mode.ts',
+    'packages/coding/src/task-engine/_internal/managed-task/llm-adapter.ts',
+    'packages/coding/src/agent-runtime/tool-exposure-planner.ts',
+    'src/sdk-runtime.ts',
+    ...(process.env.KODAX_COMPACT_CONTRACT_CAPTURE === 'candidate' ? [
+      'tests/first-turn-compact-contract.ts', 'tests/first-turn-compact-contract-tools.ts',
+      'tests/first-turn-compact-contract-baseline.ts',
+    ] : []),
   ];
   const sourceHashes = Object.fromEntries(await Promise.all(sourcePaths.map(async file =>
     [file, metric(await readFile(new URL(`../${file}`, import.meta.url), 'utf8')).sha256])));
@@ -107,7 +120,7 @@ it('inventories first serialized requests for isolated content and real Runtime 
   vi.stubEnv('KODAX_WIRE_FIXTURE_KEY', 'synthetic-key');
   try {
     for (const protocol of ['openai', 'anthropic'] as const) {
-      for (const mode of ['sa', 'ama'] as const) {
+      for (const mode of ['sa', 'ama', 'agent', 'script'] as const) {
         for (const scenario of scenarios) {
           const cell = `${protocol}-${mode}-${scenario}`;
           const directory = path.join(root, cell);
@@ -134,6 +147,8 @@ it('inventories first serialized requests for isolated content and real Runtime 
             extension.registerCapabilityProvider(new McpCapabilityProvider({ 'wire-fixture': { type: 'stdio', command: 'never-executed-wire-fixture' } }, { cacheDir }));
           }
           const requests: string[] = [];
+          const primaryRequests: string[] = [];
+          const captureController = new AbortController();
           let runtimeSessionId: string | undefined;
           vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
             const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
@@ -142,7 +157,13 @@ it('inventories first serialized requests for isolated content and real Runtime 
             if (!body) throw new Error('SDK request body missing');
             requests.push(body);
             await writeFile(path.join(directory, `attempt-${requests.length}.json`), body, { flag: 'wx' });
-            if (requests.length > 1) {
+            const parsed = JSON.parse(body) as Body;
+            const primary = parsed.tools?.some(tool => {
+              const item = tool as { name?: string; function?: { name: string } };
+              return (item.name ?? item.function?.name) === 'todo_update';
+            }) === true;
+            if (primary) primaryRequests.push(body);
+            if (!primary || primaryRequests.length > 1) {
               const error = new Error('Post-turn auxiliary request blocked by wire inventory');
               error.name = 'AbortError';
               throw error;
@@ -150,8 +171,18 @@ it('inventories first serialized requests for isolated content and real Runtime 
             return new Response(terminalSse(protocol), { status: 200, headers: { 'content-type': 'text/event-stream' } });
           });
           const provider = `wire-${protocol}`;
-          registerModelProvider(provider, () => createCustomProvider({ name: provider, protocol, model: 'fixture-model',
-            apiKeyEnv: 'KODAX_WIRE_FIXTURE_KEY', baseUrl: 'https://wire-fixture.invalid/v1', contextWindow: 128_000, reasoning: 'none' }));
+          registerModelProvider(provider, () => {
+            const instance = createCustomProvider({ name: provider, protocol, model: 'fixture-model',
+              apiKeyEnv: 'KODAX_WIRE_FIXTURE_KEY', baseUrl: 'https://wire-fixture.invalid/v1', contextWindow: 128_000, reasoning: 'none' });
+            if (process.env.KODAX_COMPACT_CONTRACT_CAPTURE === 'candidate') {
+              const stream = instance.stream.bind(instance);
+              instance.stream = (messages, tools, system, reasoning, options, signal) => {
+                const projected = compactContractInput({ messages, tools, system }, mode === 'ama' || mode === 'agent');
+                return stream([...projected.messages], [...projected.tools], projected.system, reasoning, options, signal);
+              };
+            }
+            return instance;
+          });
           try {
             if (scenario === 'runtime-host') {
               const runtime = await createKodaXRuntime({ homeDir: home, sharedDaemonHost: true, defaultProvider: provider, defaultModel: 'fixture-model' });
@@ -159,21 +190,28 @@ it('inventories first serialized requests for isolated content and real Runtime 
                 const plane = createCliClientPlane(toKodaXProductClient(runtime));
                 const session = await runtime.sessions.create({ title: 'Wire inventory', surface: 'repl', projectPath: workspace });
                 runtimeSessionId = session.id;
-                await runtime.sessions.updateSettings(session.id, { agentMode: mode, executionCwd: workspace, permissionMode: 'full-access' });
+                await runtime.sessions.updateSettings(session.id, { agentMode: mode === 'sa' ? 'sa' : 'ama',
+                  ...(mode === 'script' || mode === 'agent' ? { workMode: mode } : {}), executionCwd: workspace, permissionMode: 'full-access' });
                 const result = await runClientPlaneRound({ plane, sessionId: session.id, prompt: TASK });
                 expect(result.success).toBe(true);
               } finally { await runtime.close(); }
             } else {
-              const options: KodaXOptions = { provider, agentMode: mode, maxIter: 1, reasoningMode: 'off', lsp: false,
+              const options: KodaXOptions = { provider, agentMode: mode === 'sa' ? 'sa' : 'ama', maxIter: 1, reasoningMode: 'off', lsp: false,
+                abortSignal: captureController.signal,
+                ...(mode === 'agent' ? { workMode: 'agent' as const } : {}),
+                ...(mode === 'script' ? { workMode: 'script' as const, session: {
+                  storage: new FileSessionStorage({ sessionsDir: path.join(home, 'sessions'), configHome: home, cwd: workspace }),
+                } } : {}),
                 ...(scenario === 'catalogs' ? { extensionRuntime: extension } : {}),
                 context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt,
                   skillRegistry: new SkillRegistry(workspace), repoIntelligenceMode: 'off' } };
               const result = await (mode === 'sa' ? runKodaX : runManagedTask)(options, TASK);
               expect(result.success).toBe(true);
             }
-            expect(requests.length, cell).toBeGreaterThanOrEqual(1);
-            expect(requests.length, cell).toBeLessThanOrEqual(scenario === 'runtime-host' ? 2 : 1);
-            const raw = requests[0]!;
+            captureController.abort();
+            await awaitLatestCodingMemoryReviewDrain(5_000);
+            expect(primaryRequests, `${cell}: exactly one root generation, excluding captured auxiliary requests`).toHaveLength(1);
+            const raw = primaryRequests[0]!;
             const body = JSON.parse(raw) as Body;
             const { messages = [], tools = [], system, ...controls } = body;
             const systemMessages = messages.filter(message => message.role === 'system' || message.role === 'developer');
@@ -188,6 +226,18 @@ it('inventories first serialized requests for isolated content and real Runtime 
               return value.name ?? value.function?.name;
             });
             expect(toolNames).toContain('todo_update');
+            if (mode === 'agent') {
+              expect(toolNames).toContain('read');
+              expect(toolNames).not.toContain('relationship_scan');
+              expect(toolNames).not.toContain('script_exec');
+            }
+            if (mode === 'script') {
+              expect(toolNames).toContain('script_exec');
+              expect(toolNames).toContain('undo');
+              expect(toolNames).toContain('bash');
+              expect(toolNames).not.toContain('read');
+              expect(raw).toContain('Callable contracts (JSON Schema)');
+            }
             // These SDK fixtures explicitly disable default LSP and supply no
             // service. The real Runtime Host retains its normal lazy service.
             if (scenario !== 'runtime-host') {
@@ -209,17 +259,17 @@ it('inventories first serialized requests for isolated content and real Runtime 
             }
             const row = { cell, protocol, mode, scenario, boundary: 'SDK fetch serialized JSON body', wire: metric(raw), components,
               normalizedModelInput: metric(normalized.body), processedKeys: normalized.processedKeys, repeatComparison,
-              toolCount: tools.length, toolNames, auxiliaryBlockedRequests: requests.slice(1).map(body => metric(body)), fixturePaths: { workspace, home } };
+              toolCount: tools.length, toolNames, auxiliaryBlockedRequests: requests.filter(body => body !== raw).map(body => metric(body)), fixturePaths: { workspace, home } };
             await writeFile(path.join(directory, 'request.json'), raw, { flag: 'wx' });
             await writeFile(path.join(directory, 'normalized-model-input.json'), JSON.stringify(normalized.body, null, 2), { flag: 'wx' });
             rows.push(row);
             await writeFile(path.join(root, 'inventory.json'), JSON.stringify({ source, sourceHashes, externalCalls: 0,
               usageIsSynthetic: true, rows }, null, 2));
-          } finally { await extension.dispose(); clearRuntimeModelProviders(); }
+          } finally { captureController.abort(); await awaitLatestCodingMemoryReviewDrain(5_000); await extension.dispose(); clearRuntimeModelProviders(); }
         }
       }
     }
-    expect(rows).toHaveLength(16);
+    expect(rows).toHaveLength(32);
     process.stdout.write(`Wire inventory saved: ${path.join(root, 'inventory.json')}\n`);
   } finally {
     setAgentConfigHome(undefined);

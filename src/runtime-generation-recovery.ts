@@ -8,7 +8,7 @@ export interface RuntimeGenerationResume {
 }
 
 const OPTION_KEYS = new Set(['provider', 'model', 'modelOverride', 'effort', 'thinking', 'reasoningMode',
-  'agentMode', 'maxIter', 'workflowHostPolicy', 'workflowRunsBaseDir', 'modelTiers', 'maxOutputTokens',
+  'agentMode', 'workMode', 'maxIter', 'workflowHostPolicy', 'workflowRunsBaseDir', 'modelTiers', 'maxOutputTokens',
   'disablePromptCache', 'lsp', 'workflow', 'selfManual', 'compaction', 'timeouts', 'sandbox']);
 const CONTEXT_KEYS = new Set(['gitRoot', 'executionCwd', 'shellExecution', 'contextTokenSnapshot',
   'projectSnapshot', 'longRunning', 'providerPolicyHints', 'repoRoutingSignals', 'repoIntelligenceMode',

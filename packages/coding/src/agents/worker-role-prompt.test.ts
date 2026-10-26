@@ -22,6 +22,14 @@ const baseDecision: KodaXTaskRoutingDecision = {
 };
 
 describe('buildWorkerInstructions', () => {
+  it('distinguishes correctable tool errors from policy refusal without abandoning permitted work', () => {
+    const output = buildWorkerInstructions(baseDecision);
+    expect(output).toContain('Correct invalid syntax, paths or stale edit anchors using current evidence');
+    expect(output).toContain('do not pursue the prohibited effect through another command, shell or tool');
+    expect(output).toContain('retry that operation only after its blocking condition changes');
+    expect(output).toContain('Continue permitted alternatives and unaffected work');
+    expect(output).toContain('honor cancellation and exhausted budgets');
+  });
   it('teaches direct local lookup without steering back to the retired default search entry', () => {
     const output = buildWorkerInstructions(baseDecision, undefined, false, undefined,
       ['grep', 'glob', 'read', 'code_search', 'todo_create', 'todo_update', 'todo_list', 'spawn_agent', 'wait_agent']);

@@ -4646,6 +4646,20 @@ export class FileSessionStorage implements KodaXSessionStorage {
     return found;
   }
 
+  async appendSessionRecords(id: string, records: readonly KodaXExtensionSessionRecord[]): Promise<boolean> {
+    const incoming = structuredClone(records);
+    let found = false;
+    await this.serializedWrite(id, async () => {
+      const existing = await this.readSession(id);
+      if (existing === null) return;
+      found = true;
+      const merged = new Map((existing.data.extensionRecords ?? []).map(record => [record.id, record]));
+      for (const record of incoming) merged.set(record.id, record);
+      await this.mergeAndWriteInternal(id, { ...existing.data, extensionRecords: [...merged.values()] });
+    });
+    return found;
+  }
+
   async mutateLineage(
     id: string,
     mutation: (lineage: KodaXSessionLineage) => KodaXSessionLineage,

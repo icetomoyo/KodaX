@@ -5,14 +5,50 @@ import { checkComplexTool, createComplexReadBoundary, isRecoverableComplexDenial
 const workspace = 'C:\\eval space\\workspace';
 
 describe('complex fixture execution boundary', () => {
-  it.each([workspace, '/tmp/kodax-fixture/workspace'])('distinguishes directory refusal from a traversal hard stop at %s', async root => {
+  it.each([workspace, '/tmp/kodax-fixture/workspace'])('explains the fixed shell scope for cleanup variants at %s without admitting them', async root => {
+    for (const command of ['del tests/debug.test.js && npm test', 'del tests/debug.test.js',
+      'move tests/debug.test.js .agent/tmp/sessions/case/debug.test.js', 'erase tests/debug.test.js',
+      'git clean -f tests/debug.test.js', 'cmd /c del tests/debug.test.js']) {
+      const reason = checkComplexTool(root, 'bash', { command }, false);
+      expect(reason).toMatch(/^(Executable|Git operation) is outside/);
+      expect(reason).toContain('No part of this command ran.');
+      expect(reason).toContain('Shell deletion and moving files are unavailable in this fixture');
+      expect(reason).toContain('do not retry them with aliases, another shell or Git');
+      expect(reason).toContain('Continue permitted tests/inspection and report any cleanup left undone');
+      for (const call of [{ id: 'cleanup', name: 'bash', input: { command } },
+        { id: 'cleanup', name: 'tool_call', input: { name: 'bash', input: { command } } }]) {
+        const original = structuredClone(call);
+        expect(await createComplexReadBoundary(root).beforeTool?.(call, {
+          agent: createAgent({ name: 'cleanup-boundary', instructions: 'Inspect only.' }),
+        })).toEqual({ action: 'block', reason });
+        expect(call).toEqual(original);
+      }
+    }
+    expect(checkComplexTool(root, 'bash', { command: 'npm test' }, false)).toBeNull();
+    expect(checkComplexTool(root, 'bash', { command: 'git status --short' }, false)).toBeNull();
+  });
+  it.each([
+    ['changed_scope', { target_path: '../outside' }],
+    ['changed_diff', { target_path: '../outside', paths: ['file.js'] }],
+    ['changed_diff', { paths: ['packages/cache/store.js', '../outside.js'] }],
+    ['changed_diff', { paths: 'packages/cache/store.js,../outside.js' }],
+  ] as const)('checks repository targets and bundled paths for %s', (tool, input) => {
+    expect(checkComplexTool(workspace, tool, input, false)).toBe('Path leaves the fixture workspace.');
+    expect(checkComplexTool(workspace, tool, { target_path: '.', paths: ['packages/cache/store.js'] }, true)).toBeNull();
+  });
+  it.each(['web_search', 'web_fetch', 'session_history_search', 'session_history_read', 'memory_recall', 'kodax_manual'])(
+    'keeps %s outside this isolated repository fixture without removing the product capability', name => {
+      expect(checkComplexTool(workspace, name, {}, false)).toBe('External retrieval and session data are outside this bounded fixture.');
+    },
+  );
+  it.each([workspace, '/tmp/kodax-fixture/workspace'])('returns directory and traversal refusals without permitting either at %s', async root => {
     // This lexical guard does not simulate shell cwd changes. Never reinterpret
-    // the observed command or weaken the traversal boundary to make it recoverable.
+    // the observed command or permit traversal when returning recoverable feedback.
     const traversal = { command: 'cd packages & cd .. & git diff' };
     const original = structuredClone(traversal);
     const hardReason = checkComplexTool(root, 'bash', traversal, true);
     expect(hardReason).toBe('Shell argument leaves the fixture workspace.');
-    expect(isRecoverableComplexDenial('bash', hardReason)).toBe(false);
+    expect(isRecoverableComplexDenial('bash', hardReason)).toBe(true);
     expect(traversal).toEqual(original);
     const call = { id: 'rejected-cwd', name: 'bash', input: { command: 'cd packages & git diff' } };
     const originalCall = structuredClone(call);
@@ -43,7 +79,13 @@ describe('complex fixture execution boundary', () => {
       'npm test | tail -n 12 && cd subdir && curl https://example.invalid',
       'npm test | tail -n 12 > ../outside.txt',
       'tail -n 12 ../outside.txt', 'tail -f README.md',
-    ]) expect(isRecoverableComplexDenial('bash', checkComplexTool(workspace, 'bash', { command }, false)), command).toBe(false);
+    ]) {
+      const denied = checkComplexTool(workspace, 'bash', { command }, false);
+      expect(denied, command).not.toBeNull();
+      expect(await createComplexReadBoundary(workspace).beforeTool?.({ id: 'unsafe', name: 'bash', input: { command } }, {
+        agent: createAgent({ name: 'blocked-shell', instructions: 'Inspect this fixture.' }),
+      })).toEqual({ action: 'block', reason: denied });
+    }
   });
   it.each(['lsp_references', 'module_context', 'symbol_context', 'process_context', 'impact_estimate'])(
     'refuses escaped %s paths through native and bridge entries without altering the call', async name => {

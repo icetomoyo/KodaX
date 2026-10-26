@@ -57,6 +57,12 @@ it('applies Session settings to the next actual request without changing another
         };
         await client.sessions.updateSettings(first.id, initial);
         await client.sessions.updateSettings(second.id, initial);
+        // Work mode uses the same remote Session owner, including clearing an override.
+        for (const workMode of ['agent', 'coding', 'script'] as const) {
+          await client.sessions.updateSettings(first.id, { workMode });
+          expect((await client.sessions.getSettings(first.id)).workMode).toBe(workMode);
+        }
+        await client.sessions.updateSettings(first.id, { workMode: null });
         const savedDefaults = await runtime.config.read();
         await Promise.all([
           client.sessions.updateSettings(first.id, { model: 'next-model' }),

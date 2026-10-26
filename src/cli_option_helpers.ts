@@ -40,6 +40,7 @@ export interface CliOptions {
   thinking: boolean;
   reasoningMode: KodaXReasoningMode;
   agentMode: KodaXAgentMode;
+  workMode?: KodaXOptions['workMode'];
   outputMode: CliOutputMode;
   extensions?: string[];
   extensionRuntime?: KodaXExtensionRuntime;
@@ -176,6 +177,12 @@ export function parsePermissionModeOption(value: string): AcpPermissionMode {
   throw new InvalidArgumentError(
     `Expected one of: ${ACP_PERMISSION_MODES.join(', ')}.`,
   );
+}
+
+export function parseWorkModeOption(value: string): NonNullable<KodaXOptions['workMode']> {
+  const mode = value.trim().toLowerCase();
+  if (mode === 'agent' || mode === 'coding' || mode === 'script') return mode;
+  throw new InvalidArgumentError('Expected agent, coding or script.');
 }
 
 export function parseAgentModeOption(value: string): KodaXAgentMode {
@@ -360,6 +367,7 @@ export function createKodaXOptions(cliOptions: CliOptions, isPrintMode = false):
     thinking: cliOptions.effort === 'none' ? false : cliOptions.thinking,
     reasoningMode: cliOptions.effort === 'none' ? 'off' : cliOptions.reasoningMode,
     agentMode: cliOptions.agentMode,
+    ...(cliOptions.workMode !== undefined ? { workMode: cliOptions.workMode } : {}),
     maxIter: cliOptions.maxIter,
     extensionRuntime: cliOptions.extensionRuntime,
     session: buildSessionOptions(cliOptions),

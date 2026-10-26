@@ -99,6 +99,7 @@ import {
   ACP_PERMISSION_MODES,
   createKodaXOptions,
   parseAgentModeOption,
+  parseWorkModeOption,
   parseEffortOption,
   parseOptionalNonNegativeInt,
   parseOutputModeOption,
@@ -2420,6 +2421,7 @@ export function configureKodaXRootCommand(program: Command): Command {
         parseReasoningModeOption,
       )
       .addOption(new Option('--agent-mode <mode>').argParser(parseAgentModeOption).hideHelp())
+      .option('--work-mode <mode>', 'Session work mode: agent, coding (default), script', parseWorkModeOption)
       .option(
         '--repo-intelligence <mode>',
         'Repo intelligence mode: auto, full, light, off',
@@ -2727,6 +2729,7 @@ function showBasicHelp(): void {
     '  -n, --new               Legacy no-op; current CLI already starts a fresh session by default',
   );
   console.log(`  -m, --provider NAME     LLM provider (${providerNames})`);
+  process.stdout.write('  --work-mode MODE        Session work mode: agent, coding (default), script\n');
   console.log(
     '  --model NAME            Model override for the selected provider',
   );
@@ -2763,6 +2766,7 @@ function showBasicHelp(): void {
   console.log('  /exit, /quit            Exit interactive mode');
   console.log('  /clear                  Clear conversation history');
   console.log('  /status                 Show session status');
+  process.stdout.write('  /work-mode [agent|coding|script]  Select work mode while idle\n');
   console.log('  /mode [plan|accept-edits|auto|full-access]  Switch permission mode');
   console.log('  /project ...            Project workflow commands');
   console.log('  /sessions               List saved sessions\n');
@@ -4603,6 +4607,7 @@ complete -c kodax -l version -d 'Show version'`);
     thinking: reasoningMode !== 'off',
     reasoningMode,
     agentMode,
+    ...(typeof opts.workMode === 'string' ? { workMode: parseWorkModeOption(opts.workMode) } : {}),
     outputMode,
     extensions: activeExtensions,
     session: sessionFlags.session,
@@ -4945,6 +4950,7 @@ complete -c kodax -l version -d 'Show version'`);
           ...(program.getOptionValueSource('reasoning') === 'cli' || program.getOptionValueSource('thinking') === 'cli'
             ? { reasoningMode: options.reasoningMode, thinking: options.thinking } : {}),
           agentMode: 'ama' as const,
+          ...(options.workMode !== undefined ? { workMode: options.workMode } : {}),
           ...(program.getOptionValueSource('maxIter') === 'cli' ? { maxIter: options.maxIter } : {}),
           ...(program.getOptionValueSource('repoIntelligence') === 'cli'
             ? { repoIntelligenceMode: parseRepoIntelligenceModeOption(opts.repoIntelligence) } : {}),
@@ -4959,6 +4965,7 @@ complete -c kodax -l version -d 'Show version'`);
           thinking: interactiveKodaXOptions.thinking,
           reasoningMode: interactiveKodaXOptions.reasoningMode,
           agentMode: interactiveKodaXOptions.agentMode,
+          workMode: interactiveKodaXOptions.workMode,
           maxIter: interactiveKodaXOptions.maxIter,
           sandbox: interactiveKodaXOptions.sandbox,
           extensionRuntime: interactiveKodaXOptions.extensionRuntime,

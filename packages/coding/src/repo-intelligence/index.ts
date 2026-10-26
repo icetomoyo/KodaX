@@ -1228,14 +1228,14 @@ function resolveChangedStatus(rawStatus: string): ChangedFileStatus {
   return 'modified';
 }
 
-function parsePorcelainLine(line: string): { status: string; path: string; staged: boolean; unstaged: boolean } | null {
-  if (!line.trim()) {
+function parsePorcelainEntry(entry: string): { status: string; path: string; staged: boolean; unstaged: boolean } | null {
+  if (entry.length < 4) {
     return null;
   }
 
-  const status = line.slice(0, 2);
-  const payload = line.slice(3).trim();
-  const normalizedPath = normalizeRelativePath(payload.includes(' -> ') ? payload.split(' -> ').pop() ?? payload : payload);
+  const status = entry.slice(0, 2);
+  // NUL-delimited porcelain supplies the destination verbatim, without Git quoting.
+  const normalizedPath = normalizeRelativePath(entry.slice(3));
   const staged = status[0] !== ' ' && status[0] !== '?';
   const unstaged = status[1] !== ' ' && status[1] !== '?';
 
@@ -1248,7 +1248,7 @@ function parsePorcelainLine(line: string): { status: string; path: string; stage
 }
 
 function includesCandidate(
-  candidate: ReturnType<typeof parsePorcelainLine>,
+  candidate: ReturnType<typeof parsePorcelainEntry>,
   scope: 'unstaged' | 'staged' | 'all',
 ): boolean {
   if (!candidate) {
@@ -1324,32 +1324,29 @@ async function collectChangedFiles(
       debugLogRepoIntelligence(`Rejected compare base ref "${compareBase}".`, error);
       throw new Error(`Could not resolve base ref "${compareBase}".`);
     }
-    const output = await runGit(['diff', '--name-status', `${compareBase}...HEAD`], workspaceRoot);
-    return output
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        const [statusToken, ...rest] = line.split(/\s+/);
-        const candidatePath = rest.join(' ').split(' -> ').pop() ?? rest.join(' ');
-        return {
-          path: normalizeRelativePath(candidatePath),
-          status: resolveChangedStatus(statusToken ?? 'M'),
-        };
-      })
-      .filter((candidate) => !isManagedMetadataPath(candidate.path));
+    const output = await runGit(['diff', '--name-status', '-z', `${compareBase}...HEAD`], workspaceRoot);
+    const chunks = output.split('\0');
+    const candidates: ChangedFileCandidate[] = [];
+    for (let index = 0; index < chunks.length - 1;) {
+      const status = chunks[index++];
+      let candidatePath = chunks[index++];
+      // Unlike status -z, diff -z lists a rename/copy source before its destination.
+      if (status.startsWith('R') || status.startsWith('C')) candidatePath = chunks[index++];
+      const normalizedPath = normalizeRelativePath(candidatePath);
+      if (!isManagedMetadataPath(normalizedPath)) candidates.push({ path: normalizedPath, status: resolveChangedStatus(status) });
+    }
+    return candidates;
   }
 
-  const output = await runGit(['status', '--porcelain=v1', '--untracked-files=all'], workspaceRoot);
-  const candidates = output
-    .split(/\r?\n/)
-    .map(parsePorcelainLine)
-    .filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null)
-    .filter((candidate) => includesCandidate(candidate, scope));
-
+  const output = await runGit(['status', '--porcelain=v1', '-z', '--untracked-files=all'], workspaceRoot);
+  const chunks = output.split('\0');
   const deduped = new Map<string, ChangedFileCandidate>();
-  for (const candidate of candidates) {
-    if (isManagedMetadataPath(candidate.path)) {
+  for (let index = 0; index < chunks.length; index += 1) {
+    const candidate = parsePorcelainEntry(chunks[index]);
+    if (!candidate) continue;
+    // status -z has destination first, followed by a separate source field.
+    if (candidate.status.includes('R') || candidate.status.includes('C')) index += 1;
+    if (!includesCandidate(candidate, scope) || isManagedMetadataPath(candidate.path)) {
       continue;
     }
     deduped.set(candidate.path, {

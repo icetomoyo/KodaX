@@ -1,4 +1,5 @@
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
+import { SCRIPT_TOOL_NAME } from './script/model.js';
 import { calculateMaxContextInputTokens, RESERVE_SHRINK_FLOOR_TOKENS, PROTECTED_TOOL_NAMES } from '@kodax-ai/agent';
 import { DEFERRED_TOOL_HINTS, isDeferredTool } from '../tools/deferred-tools.js';
 import { getRegisteredToolDefinition } from '../tools/registry.js';
@@ -76,6 +77,7 @@ const PORTABLE_BRIDGE_TOOL_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 export const ALWAYS_RESIDENT_TOOL_NAMES: ReadonlySet<string> = new Set([
+  SCRIPT_TOOL_NAME,
   'ask_user_question',
   'bash',
   'spawn_agent',
@@ -139,7 +141,7 @@ export function fitToolSchemasToContext(
     Math.min(input.reservedResponseTokens, RESERVE_SHRINK_FLOOR_TOKENS)) - input.systemTokens);
   const total = tools.reduce((sum, tool) => sum + estimateToolSchemaTokens(tool), 0);
   if (total <= available || !hasPortableToolBridge(tools)) return [...tools];
-  const essential = new Set([...PORTABLE_BRIDGE_TOOL_NAMES, 'tool_describe', ...PROTECTED_TOOL_NAMES, 'read', 'session_history_read',
+  const essential = new Set([...PORTABLE_BRIDGE_TOOL_NAMES, SCRIPT_TOOL_NAME, 'tool_describe', ...PROTECTED_TOOL_NAMES, 'read', 'session_history_read',
     'session_history_search', 'ask_user_question']);
   const hidden = new Set<string>();
   let remaining = total;

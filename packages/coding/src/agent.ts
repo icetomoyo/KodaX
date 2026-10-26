@@ -15,6 +15,7 @@
  */
 
 import { Runner } from '@kodax-ai/agent';
+import { resolveWorkMode } from './work-mode.js';
 import { runWithScopedConfig } from '@kodax-ai/llm';
 
 import { createDefaultCodingAgent } from './coding-preset.js';
@@ -30,6 +31,7 @@ export async function runKodaX(
   options: KodaXOptions,
   prompt: string,
 ): Promise<KodaXResult> {
+  if (resolveWorkMode(options) === 'script') throw new Error('Script requires the managed Run entry: use runManagedTask with Session storage.');
   const policyOptions = await applyRuntimeSkillInvocationPolicy(options, prompt);
   const normalizedOptions: KodaXOptions = policyOptions.agentMode === undefined
     ? policyOptions

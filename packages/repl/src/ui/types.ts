@@ -7,7 +7,7 @@
 import type { CursorPosition } from "./utils/text-buffer.js";
 import type { PastedContent, PasteStore } from "./utils/paste-store.js";
 import type { PermissionMode } from "../permission/types.js";
-import type { KodaXAgentMode, KodaXReasoningMode } from "@kodax-ai/coding";
+import type { KodaXAgentMode, KodaXReasoningMode, KodaXWorkMode } from "@kodax-ai/coding";
 import type {
   LearnedCapabilityRecord,
   LearningEvent,
@@ -239,6 +239,7 @@ export interface StatusBarProps {
   sessionId: string;
   permissionMode: PermissionMode;
   agentMode: KodaXAgentMode;
+  workMode?: KodaXWorkMode;
   provider: string;
   model: string;
   tokenUsage?: {

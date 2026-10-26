@@ -7,10 +7,14 @@ import {
   type KodaXMessage, type KodaXStreamResult, type KodaXToolDefinition,
 } from '@kodax-ai/llm';
 import { runManagedTask, type KodaXWorkMode } from '@kodax-ai/coding';
+import { compactContractInput } from './first-turn-compact-contract.js';
 
 // Deterministic integration, not an intelligence eval: identical scripted decisions,
 // real read/edit/test handlers and AMA completion; no provider/network requests.
-it.each<KodaXWorkMode>(['coding', 'agent'])('completes the same direct read/edit/test task without discovery in %s', async workMode => {
+it.each<{ workMode: KodaXWorkMode; candidate: boolean }>([
+  { workMode: 'coding', candidate: false }, { workMode: 'agent', candidate: false },
+  { workMode: 'coding', candidate: true }, { workMode: 'agent', candidate: true },
+])('completes the same read/edit/test task: $workMode compact=$candidate', async ({ workMode, candidate }) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-work-mode-e2e-'));
   let calls = 0;
   const executed: string[] = [];
@@ -24,7 +28,14 @@ it.each<KodaXWorkMode>(['coding', 'agent'])('completes the same direct read/edit
     readonly name = 'work-mode-offline';
     readonly supportsThinking = false;
     protected readonly config = { apiKeyEnv: 'KODAX_WORK_MODE_TEST_KEY', model: 'fixture', supportsThinking: false };
-    async stream(messages: KodaXMessage[], tools: KodaXToolDefinition[]): Promise<KodaXStreamResult> {
+    async stream(messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string): Promise<KodaXStreamResult> {
+      expect(tools.find(tool => tool.name === 'glob')?.description).toBe('Find file paths by glob.');
+      if (candidate) {
+        const input = compactContractInput({ system, messages, tools }, true);
+        expect(input.system).not.toBe(system);
+        expect(input.messages).toBe(messages);
+        tools = [...input.tools];
+      }
       const step = calls++;
       if (step > 3) throw new Error('Unexpected extra provider request after the completed task');
       const names = tools.map(tool => tool.name);

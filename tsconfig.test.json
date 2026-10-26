@@ -68,6 +68,9 @@
     "src/**/*.test.ts",
     "src/**/*.test.tsx",
     "tests/first-turn*.ts",
+    "tests/compact-teaching.eval.ts",
+    "tests/compact-teaching-eval-support.ts",
+    "tests/compact-teaching-eval-support.test.ts",
     "tests/deferred-repo-lsp-support.ts",
     "tests/deferred-repo-lsp-support.test.ts",
     "tests/deferred-repo-lsp.eval.ts",
@@ -75,6 +78,8 @@
     "benchmark/datasets/first-turn-tokens/*.ts",
     "packages/coding/src/task-engine/_internal/managed-task/llm-adapter-tool-contract.test.ts",
     "packages/coding/src/agent-runtime/work-mode.test.ts",
+    "packages/coding/src/tools/managed-tool-contract.test.ts",
+    "tests/managed-tool-contract*.ts",
     "packages/coding/src/agent-runtime/script/*.test.ts",
     "packages/coding/src/task-engine/_internal/managed-task/role-prompt-capabilities.test.ts"
   ]

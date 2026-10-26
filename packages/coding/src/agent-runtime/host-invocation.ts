@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { Agent, RunnerToolObserver } from '@kodax-ai/agent';
 import type { KodaXOptions, KodaXToolExecutionContext } from '../types.js';
 import type { KodaXMessage } from '@kodax-ai/llm';
 import { listTools } from '../tools/registry.js';
@@ -11,7 +12,7 @@ import { appendPromptIfNotDuplicate, resolveInitialMessages } from './middleware
 import { createExtensionRuntimeSessionController } from './middleware/extension-queue.js';
 import { saveRequiredSessionSnapshot } from './middleware/session-snapshot.js';
 
-interface HostInvocation {
+export interface HostInvocation {
   readonly options: KodaXOptions;
   readonly sessionId: string;
   readonly runId: string;
@@ -19,6 +20,9 @@ interface HostInvocation {
   readonly state: RuntimeSessionState;
   readonly messages: KodaXMessage[];
   readonly save: () => Promise<void>;
+  readonly agent?: Agent;
+  /** Semantic AMA observers only; permissions and host events already run in dispatch. */
+  readonly toolObserver?: RunnerToolObserver;
 }
 
 /** Shared explicit-invocation lifetime; callers settle every effect before returning. */

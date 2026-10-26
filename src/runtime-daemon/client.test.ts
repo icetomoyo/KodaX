@@ -38,6 +38,10 @@ describe('runtime daemon client proxy', () => {
       .rejects.toMatchObject({ code: 'daemon_upgrade_required', capability: 'sharedSessionSettings' });
     await expect(client.sessions.updateSettingsVersioned('session', { planModeEffort: null }, { expectedRevision: 0 }))
       .rejects.toMatchObject({ code: 'daemon_upgrade_required', capability: 'sharedSessionSettings' });
+    await expect(client.sessions.updateSettings('session', { workMode: 'script' }))
+      .rejects.toMatchObject({ code: 'daemon_upgrade_required', capability: 'sharedSessionSettings' });
+    await expect(client.sessions.updateSettingsVersioned('session', { workMode: null }, { expectedRevision: 0 }))
+      .rejects.toMatchObject({ code: 'daemon_upgrade_required', capability: 'sharedSessionSettings' });
     expect(sent).toEqual([]);
     await client.sessions.updateSettings('session', { effort: 'high' });
     expect(sent).toEqual(['session.settings.update']);

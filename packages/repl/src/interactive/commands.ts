@@ -109,6 +109,7 @@ import { newCommand } from '../commands/new-command.js';
 import { recoverCommand } from '../commands/recover-command.js';
 import { reviewCommand } from '../commands/review-command.js';
 import { agentsCommand } from '../commands/agents-command.js';
+import { workModeCommand } from '../commands/work-mode-command.js';
 import {
   printLearningPendingForFilter,
   resolveLearningCommandCwd,
@@ -298,6 +299,7 @@ function printWorkspaceUnchangedNote(context: InteractiveContext): void {
 }
 
 export const BUILTIN_COMMANDS: Command[] = [
+  workModeCommand,
   {
     name: 'help',
     aliases: ['h', '?'],

@@ -20,6 +20,14 @@ TUI、桌面 UI、IDE、自动化应用接入共享 KodaX 时，以 `KodaXProduc
 
 根入口和上述底层导出尚未全部删除，也没有因为本次迁移就全部成为 TypeScript `@deprecated`。产品接入应迁走它们承担的业务职责；确需底层能力的受信任宿主仍可明确使用。客户端不能在连接失败时创建私有 Runtime，形成第二个 Session 写入者。
 
+工作模式使用 `sessions.updateSettings(id, { workMode: 'agent' | 'coding' | 'script' })`；Coding 默认，切换须等待 Run 结算。
+产品 Host 能力由 `sharedSessionSettings.keys` 报告；旧 Host 不支持时明确拒绝，不静默丢弃。模型/权限设置与工作模式独立。
+独立 `/coding` 的 `runManagedTask({ workMode: 'script', session: { storage }, ... }, prompt)` 要求可写 Session storage；
+`persistedByHost:true` 的宿主须实现可选 `appendSessionRecords(id, records)` 原子追加接口，以免旧的全量快照覆盖宿主历史。
+返回 false 表示 Session 已不存在；写入失败停止该 Run 的 Script 执行，不能自动重放已发生副作用。
+低层 `runKodaX/startKodaX` 不支持 Script，明确提示改用 managed Run；原 SDK 显式 profile、专用角色与工具权限不被产品预设覆盖。
+可用性检查 `assertWorkModeAvailable(options)` 仅启动无工具 VM，不产生模型请求；它不证明所选模型的智能或任务效率。
+
 ## 2. 旧调用如何迁移
 
 当前源码增加可选 `ClientSession.lastMessageAt`（摘要同样提供）。会话列表和裸 `-r` 使用最近真实对话时间排序，缺失时回退创建时间；`before` 的创建时间过滤含义不变。UI 可用 `lastMessageAt ?? createdAt` 显示日期，继续透传不透明游标，避免本地再次按创建时间排序。分页是实时边界，不保证跨页冻结快照，新增活动后刷新首页。历史压缩、Actor/设置保存和合成消息不刷新最近对话时间。完整规则见 [Client 契约](CLIENT_CONTRACT.md)。

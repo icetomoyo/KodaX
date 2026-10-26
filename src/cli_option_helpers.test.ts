@@ -4,6 +4,7 @@ import {
   buildSessionOptions,
   createKodaXOptions,
   parseAgentModeOption,
+  parseWorkModeOption,
   parseEffortOption,
   parseOptionalNonNegativeInt,
   parseOutputModeOption,
@@ -150,6 +151,15 @@ describe('normalizeCliSessionFlags', () => {
 });
 
 describe('createKodaXOptions', () => {
+  it('keeps Coding implicit by default and forwards each explicit work mode', () => {
+    expect(createKodaXOptions(createCliOptions()).workMode).toBeUndefined();
+    for (const workMode of ['agent', 'coding', 'script'] as const) {
+      expect(parseWorkModeOption(` ${workMode.toUpperCase()} `)).toBe(workMode);
+      expect(createKodaXOptions(createCliOptions({ workMode })).workMode).toBe(workMode);
+    }
+    expect(() => parseWorkModeOption('sa')).toThrow(/agent, coding or script/);
+  });
+
   it('ignores the obsolete sandbox environment pass variable', () => {
     const previous = process.env.KODAX_SANDBOX_ENV_PASS;
     process.env.KODAX_SANDBOX_ENV_PASS = 'GH_TOKEN, GITHUB_TOKEN,GH_TOKEN';

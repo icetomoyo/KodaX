@@ -5,6 +5,15 @@ import { applyClientSessionViewSettings, changedClientSessionSettings, clientSes
 const initial: CurrentConfig = { provider: 'anthropic', model: 'startup-model', permissionMode: 'accept-edits',
   agentMode: 'sa', thinking: false, reasoningMode: 'off' };
 
+it('restores or clears the work mode independently of model, permission and AMA settings', () => {
+  const selected = applyClientSessionViewSettings(initial, { settings: { workMode: 'script' } });
+  expect(selected.workMode).toBe('script');
+  expect(changedClientSessionSettings(clientSessionSettings(selected), clientSessionSettings({ ...selected, model: 'next' })))
+    .toEqual({ model: 'next' });
+  expect(applyClientSessionViewSettings(selected, { settings: {} }).workMode).toBe('coding');
+  expect(applyClientSessionViewSettings(selected, { settings: { workMode: 'agent' } }, { workMode: 'script' }).workMode).toBe('script');
+});
+
 it('retains unknown Host defaults for display without writing stale local modes on another selection', () => {
   const previous = { ...initial, permissionMode: 'plan' as const, reasoningMode: 'deep' as const, thinking: true, agentMode: 'ama' as const };
   const cleared = applyClientSessionViewSettings(previous, { settings: {} });
