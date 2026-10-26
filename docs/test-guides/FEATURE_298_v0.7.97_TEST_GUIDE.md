@@ -2,6 +2,47 @@
 
 本指南验证构建后的产品入口。组件、协议和 SDK 单测继续保留，但不替代这里的真实进程与终端操作。
 
+## 2026-10-26 客户端退出恢复收敛
+
+契约见 [客户端退出与恢复](../SPACE_SDK_SEAMS.md#客户端退出与恢复)。背景样本为
+Space `0.1.47-alpha.2` / SDK alpha.6，并在 SDK alpha.9 继续出现；本工作树为
+`0.7.97-alpha.10`，不据此声称这些源码变更已经发布。
+
+| 回归场景 | 必须观察到的结果 |
+| --- | --- |
+| 原 Host 已退出、客户端 Memory/执行仍 unknown | 精确进程/Job 与匹配成功 outcome 验证后 recovery.ready；原 cleanup、issues 和执行引用保留 |
+| 多次重启 / 旧 outcome 超过普通 32 条窗口 | 不靠重试次数放行；仍能用保留的精确证据重核验，不改写原回执 |
+| outcome 迟到 | 缺证据时 blocked；真实 outcome 到达后 ready |
+| 客户端或 Host 清理确认迟到，同毫秒 updatedAt | 采用同一 owner 最新确认；Stop 回写不能覆盖 Host cleanup 确认 |
+| 读取中 owner generation 改变 | blocked / inspect_failure，不把旧证明用到新进程 |
+| 原进程或 Job supervisor 真实存活 | pending/blocked，不能启动替换 Host |
+| 资源释放失败 / 缺精确身份 / outcome 内容属另一 Host | blocked，给出 retry_verification 或 inspect_failure |
+| 替换 Host 上重提旧退出 | 原回执不变、新任务继续运行、旧请求不建立新 fence、不 cleanup/stop 新 Host |
+| 已安全恢复的历史回执 | listPendingExits 不再阻塞；readExit / 离线查询仍保留完整历史 |
+
+定向命令：
+
+```powershell
+npx vitest run src/sdk-client.exit.test.ts src/sdk-client.exit-recovery.test.ts src/runtime-daemon/client-lifecycle.test.ts src/runtime-daemon/state.test.ts src/runtime-daemon/shutdown-verifier.test.ts src/sdk-client.host-authorization.test.ts
+npm run build:packages
+npm run typecheck
+npm run build:bundle
+npm run build:dts
+node --test tests/bundled-product-exit.test.mjs
+```
+
+新增用例先 RED 后修复。Windows 本机已通过真实 IPC 替换 Host 活动任务与重复连接
+检查；bundle 用例真实启动/退出独立 Host，并核验 Windows Job/supervisor。该用例
+在实际退出成功后注入旧客户端丢失的 unknown 确认，保留真实 owner/outcome，
+连续两轮重新启动并重提旧退出，验证原 unknown 未被伪造成成功、新 Host 不受影响。
+源级离线用例另覆盖真实存活 PID、失败/缺失证明、40 次 outcome 写入后的证据保留。
+未在 Space Renderer 内手动验收；非 Windows 平台未在本机执行。
+
+最终定向回归：12 个文件、212 项测试全部通过（含 Host、owner 状态、Windows
+身份、orphan-exit、process cleanup、Client 授权与 SDK 自知识回归）。完整包构建、
+类型检查、bundle 与 14 个入口的 DTS 构建通过；上面的两个 bundled-product-exit
+用例最终构建后再次运行，2/2 通过。没有发布 npm 包或修改 Space 代码。
+
 ## 2026-10-15 启动与最近消息排序回归
 
 测试边界：规范存储 Actor 投影、共享 Host 所有权与退出、SDK/Client 列表、裸 `-r` 发现及真实 ConPTY 首次可输入。所有性能样本禁止提交模型请求，使用专用 Home，不停止用户默认 Host。

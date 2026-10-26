@@ -22,6 +22,15 @@ TUI、桌面 UI、IDE、自动化应用接入共享 KodaX 时，以 `KodaXProduc
 
 ## 2. 旧调用如何迁移
 
+客户端退出恢复新增 `ClientExitReceipt.recovery`，由 `readExit` 和离线
+`readKodaXClientExits` 每次重新核验。Space 应用 `recovery.state` 的
+`ready/pending/blocked` 和 `nextAction`，替换仅按 `cleanup.state` 阻塞启动的
+逻辑。原 Host、精确进程/Job 身份和成功 shutdown outcome 已验证时，旧
+`cleanup.state=unknown` 可以与 `recovery.state=ready` 同时存在：旧任务结果仍
+未知，但允许安全启动/连接。初始 accepted 或旧 Host 缺少 recovery 不代表可
+放行，应由新 SDK 离线核验。旧回执保留、重试不改 unknown 为成功、旧退出
+不作用于新 Host。状态与动作表见 [客户端退出与恢复](SPACE_SDK_SEAMS.md#客户端退出与恢复)。
+
 普通提问的等待语义已调整：`ask_user_question` / `askUser` 默认无限等待，
 允许用户明确跳过，不再有 `required` 作答约束，也不自动采用默认答案。
 `userInputTimeoutMs` 默认 `0`（禁用期限）；Host 显式配置正值时才启用期限。

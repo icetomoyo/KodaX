@@ -1,5 +1,5 @@
-import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
@@ -10,6 +10,77 @@ import { connectKodaXClient, readKodaXClientExits, type KodaXClientHostAuthoriza
 import { connectKodaXRuntime, createKodaXRuntime, type RuntimeSubmitInput } from './sdk-runtime.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
+import { writeRuntimeDaemonShutdownOutcome } from './runtime-daemon/state.js';
+import { runtimeClientPrincipal } from './runtime-daemon/client-lifecycle.js';
+import { readProcessStartIdentity } from '@kodax-ai/agent';
+import type { ClientExitReceipt } from '@kodax-ai/coding/client-contract';
+
+it('keeps replacement Host work alive across reconnects and replays of a verified old unknown exit', async () => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-exit-replacement-'));
+  let release!: () => void;
+  const done = new Promise<void>(resolve => { release = resolve; });
+  let entered = false;
+  class Provider extends KodaXBaseProvider {
+    readonly name = 'exit-replacement-test'; readonly supportsThinking = false;
+    protected readonly config: KodaXProviderConfig = { apiKeyEnv: 'KODAX_EXIT_REPLACEMENT_TEST', model: 'fixture', supportsThinking: false };
+    async stream(): Promise<KodaXStreamResult> {
+      entered = true;
+      await done;
+      return { textBlocks: [{ type: 'text', text: 'replacement complete' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
+    }
+  }
+  vi.stubEnv('KODAX_EXIT_REPLACEMENT_TEST', 'fixture');
+  registerModelProvider('exit-replacement-test', () => new Provider());
+  const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'exit-replacement-test' });
+  const paths = resolveRuntimeDaemonPaths(homeDir);
+  const lock = tryAcquireRuntimeDaemonLock(paths, { runtimeId: runtime.identity.runtimeId, pid: process.pid,
+    createdAt: runtime.identity.startedAt, kind: 'daemon', processStartIdentity: readProcessStartIdentity(process.pid) });
+  if (!lock) throw new Error('Missing replacement Host lock');
+  const endpoint = { kind: process.platform === 'win32' ? 'pipe' as const : 'unix' as const,
+    path: process.platform === 'win32' ? `\\\\.\\pipe\\kodax-exit-replacement-${randomUUID()}` : path.join(homeDir, 'host.sock') };
+  const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
+  const info = { name: 'Space', instanceId: 'space-old-exit', instanceSecret: 'old-exit-recovery-secret-32-characters' };
+  let client = await connectKodaXClient({ homeDir, endpoint: endpoint.path, clientInfo: info });
+  try {
+    const old: ClientExitReceipt = { requestId: 'old-quit', clientId: runtimeClientPrincipal(info.instanceId, info.instanceSecret),
+      runtimeId: 'rt_old_exit', accepted: true, requestedAt: '2026-10-26T00:00:00.000Z', updatedAt: '2026-10-26T00:00:00.000Z',
+      cleanup: { state: 'unknown', runIds: ['old-run'], operationIds: [], actorTurns: [], withdrawnInputs: [],
+        issues: ['Client memory work remains unconfirmed.'] },
+      host: { requested: true, state: 'accepted', owner: { runtimeId: 'rt_old_exit', pid: 2_147_483_647, kind: 'daemon',
+        processStartIdentity: 'gone-host-generation', processContainment: 'windows-job', supervisorPid: 2_147_483_646,
+        supervisorProcessStartIdentity: 'gone-supervisor-generation' } } };
+    const digest = (value: string): string => createHash('sha256').update(value).digest('hex');
+    const dir = path.join(paths.rootDir, 'client-exits', digest(old.clientId));
+    await mkdir(dir, { recursive: true });
+    const file = path.join(dir, `${digest(old.requestId)}.json`);
+    const original = JSON.stringify(old);
+    await writeFile(file, original);
+    writeRuntimeDaemonShutdownOutcome(paths, { version: 1, runtimeId: old.runtimeId, pid: old.host.owner.pid,
+      status: 'succeeded', completedAt: '2026-10-26T00:01:00.000Z' });
+    const session = await client.sessions.create({ projectPath: homeDir });
+    await client.sessions.updateSettings(session.id, { provider: 'exit-replacement-test', agentMode: 'sa', permissionMode: 'full-access' });
+    const run = await client.inputs.submit({ sessionId: session.id, inputId: 'replacement-work', text: 'Keep working.' });
+    await expect.poll(() => entered).toBe(true);
+    for (let restart = 0; restart < 3; restart += 1) {
+      await client.disconnect();
+      expect((await readKodaXClientExits({ homeDir, clientInfo: info }))[0]).toMatchObject({
+        cleanup: old.cleanup, host: { replacementRunning: true }, recovery: { state: 'ready' },
+      });
+      client = await connectKodaXClient({ homeDir, endpoint: endpoint.path, clientInfo: info });
+      expect(await client.lifecycle.listPendingExits()).toEqual([]);
+      expect(await client.lifecycle.requestExit({ requestId: old.requestId, shutdownHost: true })).toMatchObject({
+        runtimeId: old.runtimeId, cleanup: old.cleanup, recovery: { state: 'ready' },
+      });
+      expect(await client.runs.read(run.runId!)).toMatchObject({ phase: 'running' });
+      expect(await readFile(file, 'utf8')).toBe(original);
+    }
+    release();
+    await expect(client.runs.await(run.runId!)).resolves.toMatchObject({ phase: 'completed' });
+  } finally {
+    release(); await client.disconnect(); await host.close(); await runtime.close();
+    clearRuntimeModelProviders(); vi.unstubAllEnvs(); await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+}, 60_000);
 
 it('durably settles only this client work, protects the other client, and resumes the receipt after disconnect', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-exit-'));

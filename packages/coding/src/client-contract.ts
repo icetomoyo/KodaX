@@ -465,6 +465,17 @@ export interface ClientStatisticsService {
   readRequests(sessionId: string, options?: { readonly cursor?: string; readonly limit?: number }): Promise<ClientExecutionFactsPage<ClientProviderRequestFact>>;
   readTools(sessionId: string, options?: { readonly cursor?: string; readonly limit?: number }): Promise<ClientExecutionFactsPage<ClientToolExecutionFact>>;
 }
+/** Fresh recovery assessment; historical cleanup results remain separate. */
+export interface ClientExitRecovery {
+  readonly state: 'ready' | 'pending' | 'blocked';
+  readonly checkedAt: string;
+  readonly reason: 'host_shutdown_verified' | 'client_cleanup_verified'
+    | 'client_cleanup_pending' | 'client_cleanup_unknown' | 'cleanup_failed' | 'host_protected'
+    | 'daemon_active' | 'containment_active' | 'containment_unavailable' | 'outcome_missing'
+    | 'owner_identity_unverified' | 'owner_identity_mismatch';
+  readonly nextAction: 'start_or_connect' | 'retry_exit' | 'retry_verification' | 'inspect_failure';
+}
+
 export interface ClientExitReceipt {
   readonly requestId: string;
   readonly clientId: string;
@@ -472,6 +483,8 @@ export interface ClientExitReceipt {
   readonly accepted: true;
   readonly requestedAt: string;
   readonly updatedAt: string;
+  /** Present on SDK recovery reads. Missing on legacy Hosts/initial acceptance; never implies readiness. */
+  readonly recovery?: ClientExitRecovery;
   readonly cleanup: {
     readonly actorTurns: readonly { readonly actorPath: string; readonly turnId: string }[];
     readonly operationIds: readonly string[];

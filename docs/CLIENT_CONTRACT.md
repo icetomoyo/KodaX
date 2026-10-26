@@ -68,7 +68,7 @@ CLI 用同一通知驱动加载动画，模块加载、旧子进程清理、Sess
 
 筛选和排序先于 `limit`。`before` 仍按 `createdAt` 过滤。新不透明游标保存返回时的排序边界，锚点删除或活动更新后仍可继续；分页是实时列表，不提供跨页快照，新活动可能使记录移到已浏览边界之前，刷新第一页获取最新结果。SDK、Host 和裸 `kodax -r` 采用相同时间与排序语义；裸恢复列表保持只读，不启动 Host 来显示列表。
 
-完整客户端退出使用 `lifecycle.requestExit/readExit/listPendingExits`，断连后使用 `/client` 的 `readKodaXClientExits` 查询持久化回执。它结算本客户端工作，保护其他客户端，并分别报告请求接受、本客户端清理、精确 Host 退出与 unknown。累计用量、请求/工具执行事实及根/子上下文快照使用 `statistics.read/readRequests/readTools`；不由最新 activity 或 permissionMode 推断。独立 `agents.spawn/followup` 使用可信 Main authorizer 的 `agent_spawn/agent_followup` 接缝，新的 native turn 单独授权。持久化、断连、Host 重启和 adapter 可观察性边界详见 [Space 接缝](SPACE_SDK_SEAMS.md)。
+完整客户端退出使用 `lifecycle.requestExit/readExit/listPendingExits`，断连后使用 `/client` 的 `readKodaXClientExits` 查询持久化回执。它结算本客户端工作，保护其他客户端，并分别报告请求接受、本客户端清理、精确 Host 退出与 unknown。恢复读提供独立 `recovery.state: ready/pending/blocked`、`reason`、`nextAction` 与 `checkedAt`；ready 只证明可以启动/连接，不把原 cleanup/执行 unknown 改成成功。Space 用 recovery 判断启动门禁；字段缺失时不能推断 ready。`listPendingExits` 排除已 ready 的历史，`readExit` 和离线查询继续保留它们。旧退出请求不能清理或停止替换 Host。累计用量、请求/工具执行事实及根/子上下文快照使用 `statistics.read/readRequests/readTools`；不由最新 activity 或 permissionMode 推断。独立 `agents.spawn/followup` 使用可信 Main authorizer 的 `agent_spawn/agent_followup` 接缝，新的 native turn 单独授权。持久化、断连、Host 重启和 adapter 可观察性边界详见 [Space 接缝](SPACE_SDK_SEAMS.md)。
 
 ## 公开域与全部方法
 

@@ -51,6 +51,21 @@ credentials at the Host, rather than passing API keys in input submissions.
 Both also accept trusted Main's optional `authorizeExecution`; see the
 [Host authorization seam](../../docs/SPACE_SDK_SEAMS.md#可信执行授权).
 
+### Recover a previous client exit
+
+Client exit recovery reads (`lifecycle.readExit` and offline
+`readKodaXClientExits`) expose `receipt.recovery` independently of historical
+`cleanup.state`: `ready`, `pending`, or `blocked`, with `reason`, `nextAction`
+and `checkedAt`. An exact old Host/process/Windows Job shutdown plus matching
+successful cleanup evidence can permit `ready` while old memory/execution work
+remains `unknown`. No retry count promotes unknown work to success, and original
+receipts are not rewritten or deleted by recovery reads. Space should gate on
+`recovery.state === 'ready'`; missing recovery is not readiness. The next action
+is `start_or_connect`, `retry_exit`, `retry_verification`, or `inspect_failure`.
+Pending lists omit ready history, while direct/offline reads retain it. Old exit
+replays only verify their exact owner and cannot stop a replacement. See the
+[exit recovery contract and integration example](../../docs/SPACE_SDK_SEAMS.md#客户端退出与恢复).
+
 ### Show local startup progress
 
 Both entries accept an optional `onStartupProgress` callback with the shared

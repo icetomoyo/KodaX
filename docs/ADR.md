@@ -5611,6 +5611,22 @@ without proving both ownership and quiescence.
 
 **Status**: Accepted (2026-08-17)
 
+**Current client-exit amendment (2026-10-26)**: the old generic exit-settlement
+ticket described below remains retired. Current client-scoped exit recovery
+adds a read-only `recovery` assessment to existing receipts, separating unknown
+past execution/cleanup acknowledgements from safe startup now. `ready` requires
+verified client cleanup on the same live, unrequested-to-stop Host, or exact
+old process/containment exit plus a matching successful shutdown outcome.
+Unknown memory work is retained as unknown. Active processes, failed resource
+cleanup, missing outcomes or exact identities remain pending/blocked with a
+bounded next action. Late receipt writes are re-read even at the same timestamp;
+evidence cannot be transferred across owner generations. Referenced outcomes
+survive the ordinary retention window. Historical exit replays never invoke
+cleanup/stop or install an admission fence on a replacement. Original receipts
+are not rewritten or deleted by verification, and no retry-count promotion is
+allowed. [Client/Space recovery contract](SPACE_SDK_SEAMS.md#客户端退出与恢复)
+defines the current surface and supersedes the historical mechanism below.
+
 **Driver**: a host crash can occur after Runtime stop acceptance but before
 containment and owner cleanup are durably understood
 

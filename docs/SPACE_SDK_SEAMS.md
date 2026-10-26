@@ -106,6 +106,48 @@ const recovered = await readKodaXClientExits({ homeDir, profile, clientInfo });
 | `host.state: accepted` | Host 接受退出控制；实际进程退出仍未证明 |
 | `host.state: succeeded` | 原 owner 的持久化清理成功记录、PID generation 和 Windows Job/supervisor 退出已核验 |
 | `host.state: unknown/failed` | 缺少证据或实际清理失败；连接 EOF 不作为成功证据 |
+| `recovery.state: ready` | 当前允许通过 SDK 启动或连接 Host；不表示旧执行结果已知 |
+| `recovery.state: pending/blocked` | 不能解除启动门禁；按 nextAction 继续核验或处理失败 |
+
+**退出恢复收敛（2026-10-26）**：`readExit`、`listPendingExits` 和离线
+`readKodaXClientExits` 返回新的 `recovery` 评估，包含 `state`、`reason`、
+`nextAction`、`checkedAt`。初始 accepted 回执及旧 Host 可以缺少该字段；缺失
+不能当成 ready，应使用包含本修复的 SDK 离线核验。查询只读，不改写原回执，
+不将 `Client memory work remains unconfirmed.`、unknown Run/Actor/operation
+或旧失败自动改成执行成功。
+
+Space 启动应检查 `recovery.state`，不再单凭 `cleanup.state !== 'succeeded'`
+持续返回 `cleanup_unverified`。即使客户端清理回执仍为 unknown，只要原 Host
+的精确 process-start identity、Windows Job supervisor identity、进程退出及
+匹配的成功 shutdown outcome 均通过核验，就可返回 ready；原回执、issues 和
+执行引用继续保留。仍存活的原 Host/Job、资源清理失败、缺失 outcome/精确身份
+继续阻塞。没有 shutdown 请求、同一原 Host 仍运行且本客户端清理已确认时，
+也可返回 ready 供新客户端实例连接；这不是关闭其他客户端工作。
+
+| `recovery.nextAction` | Space 下一步 |
+| --- | --- |
+| `start_or_connect` | 经 `ensureKodaXClient` 启动或连接；不直接生成/杀死 Host |
+| `retry_exit` | 原 Host 仍持有精确身份时，用原客户端身份和同一 requestId/意图重试清理；protected 不强制停机 |
+| `retry_verification` | 重读原回执，等待真实进程/Job 退出或迟到证据；不按重试次数放行 |
+| `inspect_failure` | 展示 issues / host.message / reason，处理身份或资源问题；不删除记录、也不忽略检查 |
+
+```ts
+const exits = await readKodaXClientExits({ homeDir, profile, clientInfo: previousClientInfo });
+const blocked = exits.filter(exit => exit.recovery?.state !== 'ready');
+if (blocked.length > 0) {
+  showExitRecovery(blocked); // Display reason/nextAction; do not start a replacement.
+} else {
+  client = await ensureKodaXClient({ homeDir, profile, clientInfo: newClientInfo });
+}
+```
+
+`listPendingExits` 排除 recovery 为 ready 的旧回执；`readExit` 与离线查询仍能
+读取完整历史。晚到的 durable 清理结果按精确 owner 重读，即使 updatedAt 相同
+也不丢弃；读取期间 owner 改变则阻塞。普通 32 条 shutdown outcome 窗口不会
+淘汰仍被退出回执引用的证据。替换 Host 上重提旧退出只重新核验，不改写旧记录、
+不建立新 Host 的退出 fence，也不执行其 cleanup/stop。这里的修复在当前源码
+工作树中，版本号本身不能证明已发布包包含该行为。
+新的退出意图应生成新的 requestId；不能复用旧退出 ID 来关闭替换 Host。
 
 取消只作用于本客户端的排队输入、Run、独立 Actor 子树、显式 compaction 与 SDK 托管的 Memory 后台工作；其他客户端的 Run、Actor 和队列继续运行。Actor 持久化 interrupted 与 executor 已结束分别判断；受管 Shell identity 保留至精确清理验证成功。回执返回 runIds、actorTurns、operationIds、withdrawnInputs 及 issues。
 
