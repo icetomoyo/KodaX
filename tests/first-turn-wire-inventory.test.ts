@@ -107,6 +107,7 @@ it('inventories first serialized requests for isolated content and real Runtime 
     'packages/coding/src/tools/managed-tool-text.ts',
     'packages/coding/src/prompts/managed-system-contract.ts',
     'packages/coding/src/prompts/compact-worker-contract.ts',
+    'packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts',
     'packages/coding/src/agents/worker-role-prompt.ts',
     'packages/coding/src/task-engine/runner-driven.ts',
     'packages/coding/src/prompts/builder.ts',

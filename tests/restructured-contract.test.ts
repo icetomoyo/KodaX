@@ -13,10 +13,36 @@ import { buildMemoryRulesSection } from '../packages/coding/src/prompts/memory-r
 import { SELF_KNOWLEDGE_ROUTING_RULE } from '../packages/coding/src/self-knowledge/routing-rule.js';
 import { getBuiltinToolDefinition } from '../packages/coding/src/tools/registry.js';
 import type { Agent } from '@kodax-ai/agent';
+import type { KodaXToolDefinition } from '../packages/llm/src/types.js';
 
 const instructions = (agent: Agent) => typeof agent.instructions === 'function' ? agent.instructions(undefined) : agent.instructions;
 
-async function fixture(script = false): Promise<FrozenInput & { scriptContracts?: ReturnType<typeof getScriptModelContracts> }> {
+// This experiment is frozen at the pre-rule-ownership checkpoint. Reconstruct
+// its three changed contracts explicitly, rather than admitting new hashes to
+// the historical projector or rewriting its recorded model outputs.
+function historicalTools(tools: readonly KodaXToolDefinition[]): KodaXToolDefinition[] {
+  return tools.map(tool => {
+    if (tool.name === 'ask_user_question') {
+      const { name, description, input_schema } = getBuiltinToolDefinition(tool.name)!;
+      return { name, description, input_schema: structuredClone(input_schema) };
+    }
+    if (!['spawn_agent', 'send_message', 'todo_create'].includes(tool.name)) return tool;
+    const frozen = structuredClone(tool);
+    const properties = frozen.input_schema.properties as Record<string, { description: string }>;
+    if (tool.name === 'spawn_agent') {
+      frozen.description = 'Start a named direct-child Agent; returns its canonical path. Runtime atomically enforces shared session concurrency/work budgets. read_only:false retains the parent ceiling; shared edits are already visible, never reapply them. Worktree requires an explicit merge-back strategy.';
+      properties.model_hint!.description = 'balanced default/inherited; fast focused lookup, deep heavy analysis/synthesis. Unconfigured tiers inherit; omit if unsure.';
+      properties.quality_strategy!.description = 'Telemetry only: {schemaVersion:1,stageId,pattern,role,laneRelation?,targetEvidenceRefs?}; invalid ignored, never admission control. Actor refs require exact agent-turn.';
+    } else if (tool.name === 'send_message') {
+      frozen.description = 'Bounded message, no new turn: running receives at next safe boundary; idle retains until next turn. Direct parent/child, admitted peer or bounded broadcast; Runtime validates forwarding lineage against cycles.';
+    } else {
+      properties.activeForm!.description = 'Present-continuous in_progress spinner label.';
+    }
+    return frozen;
+  });
+}
+
+async function fixture(script = false, historical = true): Promise<FrozenInput & { scriptContracts?: ReturnType<typeof getScriptModelContracts> }> {
   const task = 'Review the requested modules, preserve existing progress, and verify the result.';
   const controller = await createAgentActorController({ executor: { execute: async () => ({ output: 'unused' }) } });
   const context = { backups: new Map(), actorControl: controller.bind('/root'),
@@ -36,7 +62,7 @@ async function fixture(script = false): Promise<FrozenInput & { scriptContracts?
     // Keep real tool assembly but explicitly reconstruct its pre-adoption Worker.
     // Current production requests are checked in managed-system-contract.test.ts.
     expect(system).toContain('TRUST AND SCOPE');
-    captured = { messages, tools, system: instructions(worker) };
+    captured = { messages, tools: historical ? historicalTools(tools) : tools, system: instructions(worker) };
     return { textBlocks: [{ text: 'fixture' }], toolBlocks: [] };
   });
   const originalInstructions = instructions(worker);
@@ -46,6 +72,11 @@ async function fixture(script = false): Promise<FrozenInput & { scriptContracts?
   if (!captured) throw new Error('Missing real adapter request');
   return { ...captured, ...(script ? { scriptContracts: getScriptModelContracts(entry, captured.tools) } : {}) };
 }
+
+it('does not apply the frozen historical projector to newly evolved production tool contracts', async () => {
+  const current = await fixture(false, false);
+  expect(restructuredContractInput(current, true)).toBe(current);
+});
 
 it('uses structured Script contracts to share Worker decisions while retaining the exact execution protocol', async () => {
   const before = await fixture(true);

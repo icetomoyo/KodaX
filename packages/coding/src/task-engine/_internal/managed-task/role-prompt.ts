@@ -58,6 +58,27 @@ import {
 // directly in parse-helpers.ts. The worker role terminates text-only under
 // F184/F190 architecture with no emit tool.
 
+// Canonical fragments remain unchanged for SDK and specialized roles.
+export const WORKER_CLOSING_RULE = [
+    'Preserve any exact machine-readable closing contract requested by the original task.',
+    'Do not claim completion authority unless your role explicitly owns final judgment — a premature complete signal from a non-authoritative role causes the runner to terminate the task before the owning role validates the result.',
+    'Language continuity also applies to Actor-event resume summaries: match the primary natural language of the original user request.',
+    'When proposing shell commands or command examples, match the current host OS and shell. Do not assume Unix-only tools such as head on Windows.',
+  ].join('\n');
+
+export const WORKER_WORKSPACE_DISCIPLINE = [
+    'Workspace discipline:',
+    '- Helper scripts / scratch files are a last resort, not a default recovery path.',
+    '- The `write` tool creates parent directories automatically. Calling `mkdir` before `write` is redundant and may fail on Windows shells where `mkdir -p` is unsupported.',
+    '- If you truly need an empty directory: `mkdir dir` (Windows) or `mkdir -p dir` (Unix).',
+    '',
+    'Cross-platform shell:',
+    '- Move: `move` (Windows) vs `mv` (Unix/Mac).',
+    '- List: `dir` (Windows) vs `ls` (Unix/Mac).',
+    '- Delete: `del` (Windows) vs `rm` (Unix/Mac).',
+    '- If you see "not recognized", "不是内部或外部命令", or a similar lookup error, the command does not exist on this platform. Try the platform equivalent.',
+  ].join('\n');
+
 /**
  * Build the system prompt for a single managed-task role.
  *
@@ -97,12 +118,7 @@ export function createRolePrompt(
   // behaviour-neutral (the harness tier collapsed; see ADR-043 Phase 2).
   const decisionSummary = buildWorkerRoutingContext(decision);
 
-  const sharedClosingRule = [
-    'Preserve any exact machine-readable closing contract requested by the original task.',
-    'Do not claim completion authority unless your role explicitly owns final judgment — a premature complete signal from a non-authoritative role causes the runner to terminate the task before the owning role validates the result.',
-    'Language continuity also applies to Actor-event resume summaries: match the primary natural language of the original user request.',
-    'When proposing shell commands or command examples, match the current host OS and shell. Do not assume Unix-only tools such as head on Windows.',
-  ].join('\n');
+  const sharedClosingRule = WORKER_CLOSING_RULE;
 
   // v0.7.26 NEW-1 — inject the workspace environment at prompt head.
   // Legacy SA path gets this via `buildSystemPrompt` (Working Directory
@@ -186,18 +202,7 @@ export function createRolePrompt(
   // result: workers wrote scratch files to project root / system tmp
   // instead of `.agent/tmp/`. Re-inject the essential discipline as a
   // shared block prepended to every role's prompt.
-  const sharedWorkerDiscipline = [
-    'Workspace discipline:',
-    '- Helper scripts / scratch files are a last resort, not a default recovery path.',
-    '- The `write` tool creates parent directories automatically. Calling `mkdir` before `write` is redundant and may fail on Windows shells where `mkdir -p` is unsupported.',
-    '- If you truly need an empty directory: `mkdir dir` (Windows) or `mkdir -p dir` (Unix).',
-    '',
-    'Cross-platform shell:',
-    '- Move: `move` (Windows) vs `mv` (Unix/Mac).',
-    '- List: `dir` (Windows) vs `ls` (Unix/Mac).',
-    '- Delete: `del` (Windows) vs `rm` (Unix/Mac).',
-    '- If you see "not recognized", "不是内部或外部命令", or a similar lookup error, the command does not exist on this platform. Try the platform equivalent.',
-  ].join('\n');
+  const sharedWorkerDiscipline = WORKER_WORKSPACE_DISCIPLINE;
   const originalTaskSection = `Original user request:\n${originalTask}`;
   const roundInstructionSection = prompt !== originalTask
     ? `Current round instructions:\n${prompt}`

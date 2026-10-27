@@ -61,7 +61,14 @@ test('actual npm tarball runs Script in a clean directory and fails explicitly o
       try { await assertWorkModeAvailable({workMode:'script'}); }
       catch(error) { process.stdout.write(JSON.stringify({ready:false,error:String(error)})); process.exit(0); }
       assert.equal(KODAX_TOOLS.find(t=>t.name==='glob').description,'Find files matching a pattern.');
-      let calls=0; let nativeCalls=0; let workMode='script'; let scriptShell;
+      let calls=0; let nativeCalls=0; let workMode='script'; let scriptShell; let scriptQuestion;
+      function schemaStructure(value,properties=false) {
+        if(Array.isArray(value)) return value.map(item=>schemaStructure(item));
+        if(value && typeof value==='object') return Object.fromEntries(Object.entries(value)
+          .filter(([key])=>properties || key!=='description')
+          .map(([key,item])=>[key,schemaStructure(item,key==='properties')]));
+        return value;
+      }
       class Fixture extends KodaXBaseProvider {
         name='packed-script'; supportsThinking=false;
         config={apiKeyEnv:'KODAX_PACK_MODE_KEY',model:'fixture',supportsThinking:false};
@@ -76,14 +83,16 @@ test('actual npm tarball runs Script in a clean directory and fails explicitly o
             assert.equal(tools.find(t=>t.name==='glob').description,'Find file paths by glob.');
             const ask=tools.find(t=>t.name==='ask_user_question');
             const canonicalAsk=getToolDefinition('ask_user_question');
-            assert.deepEqual({name:ask.name,description:ask.description,input_schema:ask.input_schema},
-              {name:canonicalAsk.name,description:canonicalAsk.description,input_schema:canonicalAsk.input_schema});
+            assert.deepEqual(ask,scriptQuestion);
+            assert.deepEqual(schemaStructure(ask.input_schema),schemaStructure(canonicalAsk.input_schema));
+            assert.match(ask.description,/Batch custom settings inherit flat settings/);
             assert.ok(!tools.some(t=>t.name==='script_exec'));
             assert.deepEqual(tools.find(t=>t.name==='bash'),scriptShell);
             return {textBlocks:[{type:'text',text:'Native contract verified.'}],thinkingBlocks:[],toolBlocks:[],stopReason:'end_turn'};
           }
           assert.ok(tools.some(t=>t.name==='script_exec')); assert.ok(tools.some(t=>t.name==='undo')); assert.ok(tools.some(t=>t.name==='bash'));
           scriptShell=tools.find(t=>t.name==='bash');
+          scriptQuestion=tools.find(t=>t.name==='ask_user_question');
           assert.match(scriptShell.description,/Long commands: run_in_background/);
           assert.equal(scriptShell.input_schema.properties.run_in_background.type,'boolean');
           assert.ok(!tools.some(t=>t.name==='read')); assert.ok(calls<2);

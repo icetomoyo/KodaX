@@ -197,6 +197,51 @@ it('requires a fresh rule-retention audit when canonical Worker, Memory or manua
   expect(createHash('sha256').update(buildWorkerStableInstructions()).digest('hex')).toMatchInlineSnapshot(`"746936e9a5f8da1be415249d629de5c2ed21944638fc574874765f06d84f73ea"`);
 });
 
+it('gives operation teaching one owner while retaining dispatch decisions', async () => {
+  const { worker, controller } = await fixture();
+  try {
+    const original = instructions(worker);
+    markOrdinaryRootToolContract(worker);
+    const tools = projectManagedToolContracts(worker, worker.tools!);
+    const projected = projectManagedSystemContract(worker, tools, original);
+    expect(projected).not.toContain('send_message does not wake an idle actor');
+    const message = tools.find(tool => tool.name === 'send_message')!;
+    expect(message.description).toContain('idle retains until next turn');
+    expect(message.description).toContain('broadcast capped at 20');
+    const spawn = tools.find(tool => tool.name === 'spawn_agent')!;
+    expect(JSON.stringify(spawn)).toContain('evaluated read-only mechanical lookup');
+    expect(JSON.stringify(spawn)).toContain('write-capable fast stays on parent tier');
+    expect(projected).toContain('same assistant response');
+    expect(projected).toContain('root concurrency/work budgets');
+    expect(projected).toContain('never loop on wait_expired');
+    expect(projected).toContain('exactly one item per owner in_progress');
+  } finally { await controller.shutdown('Rule ownership capture finished'); }
+});
+
+it.each(['win32', 'darwin', 'linux', undefined] as const)('retains actual platform facts and safe workspace recovery: %s', async platform => {
+  const { controller, context } = await fixture();
+  try {
+    const worker = buildRunnerAgentChain(context, undefined, undefined, undefined,
+      { prompt: task, decision: buildFallbackRoutingDecision(task), contextFactory: () => ({
+        workspace: platform ? { executionCwd: '/fixture', platform } : undefined,
+      }) }).worker;
+    const original = instructions(worker);
+    markOrdinaryRootToolContract(worker);
+    const projected = projectManagedSystemContract(worker, projectManagedToolContracts(worker, worker.tools!), original);
+    expect(projected).toContain('Helper scripts / scratch files are a last resort');
+    expect(projected).toContain('Preserve any exact machine-readable closing contract');
+    if (platform) {
+      expect(projected).toContain(original.split('\n\n')[0]!);
+      expect(projected).toContain('write creates parents; do not mkdir first');
+      expect(projected).toContain('command lookup fails');
+      expect(projected).not.toContain('Cross-platform shell:');
+    } else {
+      expect(projected).toContain('Cross-platform shell:');
+    }
+    expect(projectManagedSystemContract(worker, worker.tools!, original)).toBe(original);
+  } finally { await controller.shutdown('Platform contract capture finished'); }
+});
+
 it.each([128_000, 12_000])('keeps fitted contracts, continuation and measurement aligned at a %i token window', async window => {
   const { worker, controller } = await fixture();
   markOrdinaryRootToolContract(worker);

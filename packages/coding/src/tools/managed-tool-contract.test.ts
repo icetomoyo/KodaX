@@ -59,7 +59,11 @@ describe('ordinary managed root tool presentation', () => {
         expect(description!.length, name).toBeLessThan(original.description.length);
       }
     }
-    expect(contract(sent.find(tool => tool.name === 'ask_user_question')!)).toEqual(contract(getBuiltinToolDefinition('ask_user_question')!));
+    const question = sent.find(tool => tool.name === 'ask_user_question')!;
+    expect(structural(question.input_schema)).toEqual(structural(getBuiltinToolDefinition('ask_user_question')!.input_schema));
+    expect(question.description).toContain('Batch custom settings inherit flat settings');
+    expect(question.description).toContain('expiry');
+    expect(JSON.stringify(contract(question)).length).toBeLessThan(JSON.stringify(contract(getBuiltinToolDefinition('ask_user_question')!)).length);
     expect(JSON.stringify(worker.tools)).toBe(before);
     expect(getToolDefinition('glob')!.description).not.toBe('Find file paths by glob.');
     expect(sent.find(tool => tool.name === 'todo_update')!.description).toContain('Mark in_progress with activeForm before work, completed only after finishing');
@@ -90,11 +94,11 @@ describe('ordinary managed root tool presentation', () => {
     const tools = Object.keys(managedToolText).map(name => projectModelToolDefinition(getBuiltinToolDefinition(name)!, { kind: 'builtin' }));
     const before = JSON.stringify(tools);
     // Changing canonical teaching requires re-auditing the shorter wording, not silently carrying it forward.
-    expect(createHash('sha256').update(JSON.stringify(tools.map(contract))).digest('hex')).toMatchInlineSnapshot(`"a926e1dca6399f7a5456065b3eb6f1d42e6e484e2c2d7fca8395d4e4850167a4"`);
+    expect(createHash('sha256').update(JSON.stringify(tools.filter(tool => tool.name !== 'ask_user_question').map(contract))).digest('hex')).toMatchInlineSnapshot(`"a926e1dca6399f7a5456065b3eb6f1d42e6e484e2c2d7fca8395d4e4850167a4"`);
     const agent = markRegistryManagedAgent({ name: 'worker', instructions: '', tools }, { backups: new Map() });
     markOrdinaryRootToolContract(agent);
     const projected = projectManagedToolContracts(agent, tools);
-    expect(projected).toHaveLength(32);
+    expect(projected).toHaveLength(33);
     projected.forEach((tool, index) => {
       expect(tool, tool.name).not.toEqual(tools[index]);
       expect(structural(tool.input_schema), tool.name).toEqual(structural(tools[index]!.input_schema));
@@ -108,6 +112,12 @@ describe('ordinary managed root tool presentation', () => {
     expect(JSON.stringify(tools)).toBe(before);
     // The business parameter called description is retained, unlike schema annotations.
     expect(projected.find(tool => tool.name === 'todo_create')!.input_schema.properties).toHaveProperty('description');
+    expect(JSON.stringify(projected.find(tool => tool.name === 'todo_create')!.input_schema)).toContain('Supply for each milestone');
+  });
+
+  it('requires re-audit when the canonical question contract evolves', () => {
+    expect(createHash('sha256').update(JSON.stringify(contract(getBuiltinToolDefinition('ask_user_question')!))).digest('hex'))
+      .toBe('0ec227dcdea54cc38ffe1277d08290b068226d96b12cc5bb064006e8be858fc2');
   });
 
   it('does not inherit eligibility through SDK construction or Script wrappers', () => {

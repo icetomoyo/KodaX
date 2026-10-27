@@ -126,3 +126,14 @@ change was introduced. Further token work is analysis only at this checkpoint.
 The current complete-input costs and source-backed next candidate are recorded
 in [Agent below 10K](../designs/agent-under-10k-next-plan.md); proposed savings
 there are not counted as implemented improvements.
+
+
+## Subsequent rule-ownership batch
+
+The next implementation preserves this capability baseline and changes only
+ordinary-root presentation. Its TDD, full-fast failures and focused resolutions,
+actual SDK wire comparisons, installed tarball and build/type checks are recorded
+in [the rule-ownership execution record](../designs/agent-under-10k-next-plan.md#execution-record-rule-ownership-candidate).
+Current same-counter inputs are Agent **10,712**, Coding **14,344**, Script
+**16,214**; each saves 871 versus this guide's original checkpoint. This later
+batch did not repeat paid model evaluation or the entire cross-platform matrix.

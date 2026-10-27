@@ -13,6 +13,20 @@ export function managedShellDescription(execution: 'native' | 'foreground'): str
 }
 
 export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
+  ask_user_question: {
+    description: 'Ask one flat question or 1–4 independent select questions via questions[] (overrides flat question/options; each item requires options). kind=input: flat free text only; select (default): options required. multi_select returns an array, bounded by min/max_selections. Option value defaults to label. Do not add Other: custom input defaults true; false only for closed safety/protocol choices. Batch custom settings inherit flat settings unless overridden. Set recommended default: validated expiry fallback, an option value for select or text for input.',
+    annotations: { 'properties.questions.items.properties.header': 'Progress label, ≤12 chars.',
+      'properties.questions.items.properties.options.items.properties.value': null,
+      'properties.questions.items.properties.min_selections': null, 'properties.questions.items.properties.max_selections': null,
+      'properties.questions.items.properties.default': null, 'properties.questions.items.properties.allow_custom_input': null,
+      'properties.questions.items.properties.custom_input_label': null, 'properties.questions.items.properties.custom_input_prompt': null,
+      'properties.questions.items.properties.custom_input_default': null, 'properties.kind': null, 'properties.options': null,
+      'properties.options.items.properties.value': null, 'properties.multi_select': null,
+      'properties.min_selections': null, 'properties.max_selections': null, 'properties.allow_custom_input': null,
+      'properties.custom_input_label': 'Custom-choice label; default "Other...".',
+      'properties.custom_input_prompt': 'Custom-choice prompt.', 'properties.custom_input_default': 'Custom-choice initial text.',
+      'properties.default': null },
+  },
   agent_output: { description: 'Read bounded output/activity and legacy/structured artifact references for a known controlled Actor/Turn. Tree: list_agents; waiting: wait_agent. Never poll completion here.',
     annotations: { 'properties.target': 'Canonical controlled path or direct-child name.', 'properties.turn_id': 'Exact turn; default latest.' } },
   bash: { description: managedShellDescription('native'),
@@ -59,7 +73,7 @@ export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
   read: { description: 'Read line-numbered bounded text. Continue offset/limit; partial lines require exact line_offset cursor. Context recovery’s kodax-transient://text/ is a local run-scoped capability: read directly, not network or user re-paste. PNG/JPG/JPEG/GIF/WEBP return inline vision; inspect, do not reject as binary or reread already attached/inlined images. PDF: read_pdf extension; if absent request enabling/installing it.',
     annotations: { 'properties.path': 'Absolute path or supplied kodax-transient://text/ reference.', 'properties.offset': 'Starting text line number.',
       'properties.limit': 'Text lines.', 'properties.line_offset': '0-based Unicode character offset within first line; use exact continuation cursor.' } },
-  send_message: { description: 'Bounded message, no new turn: running receives at next safe boundary; idle retains until next turn. Direct parent/child, admitted peer or bounded broadcast; Runtime validates forwarding lineage against cycles.',
+  send_message: { description: 'Message, no new turn: running receives at next safe boundary; idle retains until next turn. Direct parent/child, admitted peer or broadcast capped at 20; Runtime validates forwarding lineage against cycles.',
     annotations: { 'properties.to': 'Visible canonical path, child/peer name, parent, or * broadcast. Self rejected.', 'properties.content': 'Body; Runtime authenticates agent-message frame.',
       'properties.forwarded_message_id': 'Received agent-message ID only when forwarding; Runtime derives chain. Fresh message: omit.',
       'properties.classification': 'Default internal; cannot downgrade source classification.' } },
@@ -71,18 +85,18 @@ export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
   skill: { description: 'Invoke a discovered matching Skill before responding, per Available Skills blocking requirement. Returns expanded/resolved instructions for next turn. Load via skill, never read SKILL.md. Optional free-form args forwarded for template substitution (most ignore it).',
     annotations: { 'properties.skill': 'Skill name; leading slash accepted.', 'properties.args': null } },
   spawn_agent: {
-    description: 'Start a named direct-child Agent; returns its canonical path. Runtime atomically enforces shared session concurrency/work budgets. read_only:false retains the parent ceiling; shared edits are already visible, never reapply them. Worktree requires an explicit merge-back strategy.',
+    description: 'Start a named direct child; returns canonical path. Runtime atomically enforces shared session concurrency/work budgets. quality_strategy is optional telemetry, never admission control; invalid/conflicting data is ignored.',
     annotations: { 'properties.task_name': 'Stable direct-child name.', 'properties.objective': 'Bounded goal, constraints, evidence and output shape.', 'properties.scope': 'Bounded scope hint.',
       'properties.read_only': 'Default true; false retains parent permission ceiling.', 'properties.isolation': 'Default shared: edits are visible in the root workspace; do not reapply them. Worktree needs an explicit merge-back strategy.', 'properties.constraints': null,
       'properties.agent_id': 'Matching specialist canonical ID.', 'properties.evidence_refs': 'file:/diff:/finding:/agent-turn:<canonical-path>#turn=<id>; legacy agent:<path> means latest. Actor output must be terminal/visible.',
-      'properties.fork_turns': 'History: all (default), none, or positive recent-turn count.', 'properties.model_hint': 'balanced default/inherited; fast focused lookup, deep heavy analysis/synthesis. Unconfigured tiers inherit; omit if unsure.',
+      'properties.fork_turns': 'History: all (default), none, or positive recent-turn count.', 'properties.model_hint': 'balanced: ordinary work (default); fast: evaluated read-only mechanical lookup; deep: architecture/adversarial checks/severity/final synthesis. Unconfigured tiers inherit; write-capable fast stays on parent tier. Omit if unsure.',
       'properties.provider': 'Deliberate cross-family override; unconfigured/omitted inherits.', 'properties.model': 'Paired provider model ID; omitted inherits.',
       'properties.effort': 'off/low/medium/high/xhigh/max; omitted/auto inherits. agent_id locks specialist effort; conflicts/unsupported values rejected.',
-      'properties.quality_strategy': 'Telemetry only: {schemaVersion:1,stageId,pattern,role,laneRelation?,targetEvidenceRefs?}; invalid ignored, never admission control. Actor refs require exact agent-turn.' } },
+      'properties.quality_strategy': '{schemaVersion:1,stageId,pattern,role,laneRelation?,targetEvidenceRefs?}; Actor refs require exact agent-turn.' } },
   todo_create: {
     description: 'Add one pending semantic milestone without replacing existing items. Returns {ok:true,id}; reuse this generated id, never supply one. This records planned work, not execution; skip trivial/informational tasks. Inactive store, invalid input or extension veto returns {ok:false,reason}.',
     annotations: { 'properties.subject': 'Nonempty imperative plan-row title.', 'properties.description': 'Full-detail multiline context, absent from compact row; omit if title suffices.',
-      'properties.activeForm': 'Present-continuous in_progress spinner label.', 'properties.evaluator': 'When wired, completion runs build/test/lint = npm run build/npm test/npm run lint; failure returns stderr. Sparingly for real checks.',
+      'properties.activeForm': 'Supply for each milestone: present-continuous in_progress spinner label.', 'properties.evaluator': 'When wired, completion runs build/test/lint = npm run build/npm test/npm run lint; failure returns stderr. Sparingly for real checks.',
       'properties.metadata': 'Opaque hook/eval data, not UI; omit if unused.' } },
   todo_list: {
     description: 'Read plan and canonical ids: without id returns {ok:true,count,items}; with id returns {ok:true,item} including description/status/activeForm/note/evaluator/owner/metadata. Refresh only if state may have changed externally or is unknown; clear patches need no read. Inactive store returns {ok:false,reason}; continue without more todo calls.',
