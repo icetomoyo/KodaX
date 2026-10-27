@@ -3,6 +3,11 @@
 2026-10-27。状态：**已有输入的离线重算；0 新增真实模型调用**。
 本记录修正字符与 token 混用、基础模板与完整请求混用的问题，不评定项目智能强弱。
 
+后续 `c5c296ff` 已默认采用共享契约；当前三模式完整输入为 Agent **11,583**、
+Coding **15,215**、Script **17,085** 同口径估算 token。见
+[当前成本与后续方案](agent-under-10k-next-plan.md)。下文 A 表保留为历史 checkpoint，
+其中“候选未启用”是当时状态，不是当前默认状态。
+
 ## 统一方法
 
 所有完整请求行使用同一脚本 [first-turn-uniform-costs.ts](../../tests/first-turn-uniform-costs.ts)：

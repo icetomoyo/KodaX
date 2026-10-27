@@ -52,7 +52,7 @@ function openTerminal(homeDir, mode, extraArgs = []) {
     path.join(repo, 'src/kodax_bootstrap.ts')] : [path.join(repo, 'scripts/kodax-bin.cjs')];
   const child = pty.spawn(process.execPath, [...bootstrap,
     '--provider', 'acceptance-local', '--model', 'acceptance-model', '--effort', 'off',
-    '--agent-mode', 'sa', '--max-iter', '7', ...extraArgs], {
+    '--agent-mode', 'ama', '--max-iter', '7', ...extraArgs], {
     name: 'xterm-256color', cols: 110, rows: 32, cwd: homeDir,
     env: { ...environment, HOME: homeDir, USERPROFILE: homeDir, KODAX_HOME: path.join(homeDir, '.kodax'),
       KODAX_ACCEPTANCE_KEY: 'local-fixture-only', KODAX_TRACING: '0',
@@ -112,9 +112,12 @@ async function respondToModelRequest(state, request, response) {
   const data = JSON.parse(body);
   state.requests.push(data);
   const token = lastUserText(data.messages).match(/^(?:\/ah-run\s+)?(ACCEPT_[A-Z_]+)/)?.[1] ?? 'AUXILIARY';
-  if ((data.max_completion_tokens === 1 || token === 'ACCEPT_CAPABILITY') && data.reasoning_effort === 'high') {
+  // AMA's Worker defaults to medium under the user's high ceiling. Reject the
+  // effort actually chosen by that path; capability probes still reject high.
+  if ((data.max_completion_tokens === 1 && data.reasoning_effort === 'high')
+    || (token === 'ACCEPT_CAPABILITY' && data.reasoning_effort === 'medium')) {
     response.writeHead(400, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ error: { message: "Unsupported value: reasoning_effort 'high'.",
+    response.end(JSON.stringify({ error: { message: `Unsupported value: reasoning_effort '${data.reasoning_effort}'.`,
       type: 'invalid_request_error', param: 'reasoning_effort', code: 'unsupported_value' } }));
     return;
   }
@@ -464,7 +467,7 @@ async function assertSelectedSettings(state) {
   const settings = await state.client.sessions.getSettings(state.sessionId);
   assert.equal(settings.provider, 'acceptance-local');
   assert.equal(settings.model, 'acceptance-model');
-  assert.equal(settings.agentMode, 'sa');
+  assert.equal(settings.agentMode, 'ama');
   assert.ok(['none', 'off'].includes(settings.effort), 'Explicit effort off reaches Host');
   assert.equal(settings.permissionMode ?? 'accept-edits', 'accept-edits');
   assert.equal(settings.maxIter, 7);
@@ -495,8 +498,8 @@ async function checkProviderCapabilities(state) {
   await waitFor('explicit Host effort reaches the terminal view', () => state.view.settings.effort === 'high');
   await state.terminal.submit('ACCEPT_CAPABILITY');
   await waitFor('real execution recovers from effort rejection', () => state.terminal.screen().includes('END_ACCEPT_CAPABILITY'));
-  assert.ok(received(state, 'ACCEPT_CAPABILITY').some(request => request.reasoning_effort === 'high'));
-  assert.ok(received(state, 'ACCEPT_CAPABILITY').some(request => request.reasoning_effort !== 'high'));
+  assert.ok(received(state, 'ACCEPT_CAPABILITY').some(request => request.reasoning_effort === 'medium'));
+  assert.ok(received(state, 'ACCEPT_CAPABILITY').some(request => request.reasoning_effort !== 'medium'));
   assert.equal((await state.client.config.read()).effort, savedEffort, 'Observed rejection must not overwrite user defaults');
   await state.client.sessions.updateSettings(state.sessionId, { effort: 'off', thinking: false, reasoningMode: 'off' });
 }
@@ -508,10 +511,12 @@ async function checkRepoIntelTrace(state) {
     await waitFor('light mode observed', () => state.view.settings.repoIntelligenceMode === 'light');
     await state.terminal.submit('/repo-intel trace on');
     await waitFor('trace enabled', () => state.view.settings.repoIntelligenceTrace === true);
-    await state.terminal.submit('ACCEPT_REPO_TRACE');
+    // A continued trivial turn legitimately skips automatic repo work in AMA.
+    // Request a real review so the existing module/impact preturn path runs.
+    await state.terminal.submit('ACCEPT_REPO_TRACE Review the current repository structure and assess the impact of its changes.');
     await waitFor('trace-enabled reply', () => state.terminal.screen().includes('END_ACCEPT_REPO_TRACE'));
-    await waitFor('real engine routing trace displayed', () => state.terminal.screen().includes('[RepoIntel]')
-      && state.view.items.some(item => item.text.includes('[RepoIntel] stage=routing')));
+    await waitFor('real engine analysis trace displayed', () => state.terminal.screen().includes('[RepoIntel]')
+      && state.view.items.some(item => /\[RepoIntel\] stage=(module|impact|preturn|task-snapshot)/.test(item.text)));
     await waitFor('trace round input ready', () => state.mode === 'ink'
       ? /^>\s+Type a message/m.test(state.terminal.screen()) : /^kodax:.*>\s*$/.test(state.terminal.cursorLine()));
     await waitFor('trace round settled', () => state.view.runs.every(run => !['accepted', 'queued', 'running'].includes(run.phase)));
@@ -520,7 +525,7 @@ async function checkRepoIntelTrace(state) {
     const enabledIds = traceIds();
     await state.terminal.submit('/repo-intel trace off');
     await waitFor('trace disabled', () => state.view.settings.repoIntelligenceTrace === false);
-    await state.terminal.submit('ACCEPT_TRACE_DISABLED');
+    await state.terminal.submit('ACCEPT_TRACE_DISABLED Review the current repository structure and assess the impact of its changes.');
     await waitFor('trace-disabled reply', () => state.terminal.screen().includes('END_ACCEPT_TRACE_DISABLED'));
     assert.deepEqual(traceIds(), enabledIds, 'Disabled trace must not produce further display facts');
   } finally {
@@ -538,7 +543,6 @@ async function checkHostSettingCommands(state) {
     ['/model acceptance-local/acceptance-model', { provider: 'acceptance-local', model: 'acceptance-model' }],
     ['/effort low', { effort: 'low', reasoningMode: 'auto', thinking: true }],
     ['/reasoning auto', { reasoningMode: 'auto', thinking: true }],
-    ['/agent-mode sa', { agentMode: 'sa' }],
     ['/repo-intel mode off', { repoIntelligenceMode: 'off' }],
     ['/repo-intel trace on', { repoIntelligenceTrace: true }],
   ]) {
@@ -601,7 +605,7 @@ async function checkHostSessionList(state) {
 async function checkHostSessionTransitions(state) {
   const target = await state.client.sessions.create({ projectPath: state.homeDir, title: 'HOST_LOAD_TARGET' });
   await state.client.sessions.updateSettings(target.id, {
-    provider: 'acceptance-local', model: 'acceptance-model', agentMode: 'sa', effort: 'none', maxIter: 13,
+    provider: 'acceptance-local', model: 'acceptance-model', agentMode: 'ama', effort: 'none', maxIter: 13,
   });
   const settings = await state.client.sessions.getSettings(target.id);
   await state.terminal.submit(`/load ${target.id}`);
@@ -648,7 +652,8 @@ async function checkSettings(state) {
   // Read complete labels here; narrow/resize rendering is exercised separately.
   if (state.mode === 'ink') await state.terminal.resize(220, 32);
   for (const [command, field, expected] of [
-    ['/agent-mode ama', 'agentMode', 'ama'], ['/agent-mode sa', 'agentMode', 'sa'],
+    ['/work-mode agent', 'workMode', 'agent'], ['/work-mode script', 'workMode', 'script'],
+    ['/work-mode coding', 'workMode', 'coding'],
     ['/mode plan', 'permissionMode', 'plan'], ['/mode accept-edits', 'permissionMode', 'accept-edits'],
   ]) {
     await state.terminal.submit(command);
@@ -725,9 +730,12 @@ async function checkPrompt(state) {
     assert.equal(lines.filter(line => line === 'BEGIN_ACCEPT_HELLO END_ACCEPT_HELLO').length, 1,
       'One assistant reply must render once after persistence');
     const screen = state.terminal.screen();
-    assert.ok(screen.includes('60/65.5k'), 'Status must show API context usage against the configured window');
+    assert.ok(Number.isInteger(state.view.parentContextTokens));
+    assert.ok(screen.includes(`${state.view.parentContextTokens}/65.5k`),
+      'Idle AMA status must show the current parent context against the configured window');
     assert.ok(screen.includes('50→10') && screen.includes('(60)'), 'Status must show actual API input/output usage');
-    assert.ok(screen.includes('1/7'), 'Status must preserve the selected iteration limit');
+    assert.equal((await state.client.sessions.getSettings(state.sessionId)).maxIter, 7);
+    assert.ok(!screen.includes('1/7'), 'Idle AMA must not show the retired SA iteration counter');
   }
 }
 
@@ -751,8 +759,8 @@ async function checkAmaPresentation(state) {
   const screen = state.terminal.screen();
   assert.ok(screen.indexOf('BEGIN_ACCEPT_HELLO END_ACCEPT_HELLO') < screen.indexOf('ACCEPT_HOLD_AMA'),
     'The previous answer must remain before the next user query');
-  await state.terminal.submit('/agent-mode sa');
-  await waitFor('restore SA setting', async () => (await state.client.sessions.getSettings(state.sessionId)).agentMode === 'sa');
+  await state.terminal.submit('/work-mode coding');
+  await waitFor('Coding selection', async () => (await state.client.sessions.getSettings(state.sessionId)).workMode === 'coding');
 }
 
 async function checkToolPresentation(state) {
@@ -769,8 +777,8 @@ async function checkToolPresentation(state) {
   assert.equal(state.view.items.filter(item => item.type === 'user' && item.text === 'ACCEPT_TOOL').length, 1);
   assert.equal(state.view.items.filter(item => item.type === 'assistant' && item.text.includes('END_ACCEPT_TOOL')).length, 1);
   await waitFor('AMA tool input ready', () => /^>\s+Type a message/m.test(state.terminal.screen()));
-  await state.terminal.submit('/agent-mode sa');
-  await waitFor('restore SA after tool', async () => (await state.client.sessions.getSettings(state.sessionId)).agentMode === 'sa');
+  await state.terminal.submit('/work-mode coding');
+  await waitFor('Coding selection after tool', async () => (await state.client.sessions.getSettings(state.sessionId)).workMode === 'coding');
 }
 
 async function checkLongInput(state) {
@@ -908,7 +916,7 @@ async function checkQueueModelBoundary(state) {
   await state.client.sessions.updateSettings(state.sessionId, { agentMode: 'ama' });
   try {
     await waitFor('AMA selection reaches the Host and terminal', () => state.view.settings.agentMode === 'ama'
-      && state.terminal.screen().split('\n').slice(-2).join(' ').includes('AMA'));
+      && state.terminal.screen().split('\n').slice(-2).join(' ').includes('Coding'));
     await writeFile(path.join(state.homeDir, 'boundary.txt'), 'BOUNDARY_TOOL_COMPLETED\n');
     const boundaryRequests = () => state.requests.filter(request =>
       /^ACCEPT_BOUNDARY_(HOLD|NEXT)\b/.test(lastUserText(request.messages)));
@@ -994,8 +1002,11 @@ async function checkNewSession(state) {
   const request = received(state, 'ACCEPT_FRESH')[0];
   const userTexts = request.messages.filter(message => message.role === 'user')
     .map(message => lastUserText([message]));
-  assert.equal(userTexts.length, 1, 'New session must exclude previous user history');
-  assert.ok(userTexts[0].startsWith('ACCEPT_FRESH'), 'New session must contain the submitted prompt');
+  assert.equal(userTexts.length, 2, 'A fresh AMA request contains its managed envelope and one real user prompt');
+  assert.match(userTexts[0], /^=== Managed Run Context ===[\s\S]*=== End Managed Run Context ===$/);
+  assert.equal(userTexts[1], 'ACCEPT_FRESH', 'New session must contain the submitted prompt exactly once');
+  assert.ok(!request.messages.some(message => ['assistant', 'tool'].includes(message.role)),
+    'A fresh request must not inherit assistant responses or tool results');
   assert.ok(!JSON.stringify(request.messages).includes('ACCEPT_HELLO'), 'New session must exclude previous conversation');
   assert.equal((await state.client.sessions.list()).length, 2, 'Previous session must remain saved');
   await waitFor('new Host assistant', () => state.view.items.some(item => item.text.includes('END_ACCEPT_FRESH')));
@@ -1231,7 +1242,7 @@ async function checkTranscriptPaint(state) {
     const footer = state.terminal.screen().split('\n').slice(-3).map(row => row.trimEnd());
     assert.match(footer[0], /^ Transcript \| PgUp\/PgDn page \| j\/k scroll .* Ctrl\+O\/q\/Esc back$/, 'Transcript help row must be intact after each repaint');
     assert.match(footer[1], /^ ←\/→ enter select mode \| Ctrl\+E (show all|collapse) \| Mouse drag selects text$/, 'Selection help must not contain old transcript text');
-    assert.match(footer[2], /^ KodaX - AMA \| Edits \| off \|/, 'Status must remain on the final row');
+    assert.match(footer[2], /^ KodaX - Coding \| Edits \| off \|/, 'Status must remain on the final row');
     await state.terminal.save('paint-' + key.charCodeAt(0));
   }
   await state.terminal.resize(110, 32);
@@ -1239,8 +1250,8 @@ async function checkTranscriptPaint(state) {
   state.pending.get('ACCEPT_HOLD_PAINT')();
   await waitFor('paint round settled', () => state.view.runs.every(run => run.phase === 'completed'));
   await waitFor('paint prompt ready', () => /^>\s+Type a message/m.test(state.terminal.screen()));
-  await state.terminal.submit('/agent-mode sa');
-  await waitFor('restore SA after paint', async () => (await state.client.sessions.getSettings(state.sessionId)).agentMode === 'sa');
+  await state.terminal.submit('/work-mode coding');
+  await waitFor('Coding selection after paint', async () => (await state.client.sessions.getSettings(state.sessionId)).workMode === 'coding');
 }
 
 async function checkExit(state) {

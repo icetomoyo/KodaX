@@ -58,57 +58,83 @@ it('uses the production local-search menu through direct lookup, refusal recover
   }
 }, 60_000);
 
-it.each(['all', 'repo', 'manual', 'manual-tail'] as const)('keeps the %s root menu stable across discovery, SDK refusal, real evidence execution and AMA closure', async variant => {
+it.each(['all', 'repo', 'manual', 'manual-tail'] as const)('keeps the %s root menu stable while honoring discovery, recovery and fixture isolation', async variant => {
   const family = variant === 'manual-tail' ? 'manual' : variant;
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-deferred-runtime-'));
   vi.stubEnv('KODAX_DEFERRED_RUNTIME_TEST_KEY', 'offline-only');
   const fetcher = vi.fn(() => { throw new Error('Offline Runtime must not call a model endpoint'); });
   vi.stubGlobal('fetch', fetcher);
   let menu: string[] | undefined;
+  let providerFailure: unknown;
   try {
     const result = await runComplexRuntime({ id: 'offline-deferred', provider: 'zhipu-coding', model: 'fixture', env: 'KODAX_DEFERRED_RUNTIME_TEST_KEY' },
       directory, async (input, _signal, round) => {
-        const view = projectDeferredRepoLspInput(input, true, family);
-        const names = view.tools.map(tool => tool.name);
-        expect(view.system).toBe(input.system);
-        expect(view.messages).toBe(input.messages);
-        if (family === 'manual') {
-          for (const capability of ['spawn_agent', 'todo_create', 'wait_agent', 'agent_output']) {
-            expect(names).toContain(capability);
-            expect(view.system + JSON.stringify(view.messages)).toContain(capability);
+        try {
+          const view = projectDeferredRepoLspInput(input, true, family);
+          const names = view.tools.map(tool => tool.name);
+          expect(view.system).toBe(input.system);
+          expect(view.messages).toBe(input.messages);
+          if (family === 'manual') {
+            for (const capability of ['spawn_agent', 'todo_create', 'wait_agent', 'agent_output']) {
+              expect(names).toContain(capability);
+              // Operation teaching lives in the native tool contract; it need
+              // not also repeat every function name in the system prompt.
+              const contract = view.tools.find(tool => tool.name === capability);
+              expect(contract).toEqual(input.tools.find(tool => tool.name === capability));
+              expect(contract?.description.trim().length).toBeGreaterThan(0);
+            }
           }
+          const hidden = family === 'manual' ? ['kodax_manual'] : family === 'all' ? DEFERRED_REPO_LSP_NAMES : DEFERRED_REPO_LSP_NAMES.filter(name => !name.startsWith('lsp_'));
+          for (const name of hidden) expect(names).not.toContain(name);
+          if (family === 'repo') {
+            // This Runtime fixture explicitly disables unbound LSP. Projection must
+            // preserve that availability, not reintroduce tools to satisfy the test.
+            expect(input.tools.some(tool => tool.name.startsWith('lsp_'))).toBe(false);
+            expect(names.some(name => name.startsWith('lsp_'))).toBe(false);
+          }
+          if (menu) expect(names).toEqual(menu); else menu = names;
+          const results = input.messages.flatMap(message => Array.isArray(message.content) ? message.content : [])
+            .filter(block => block.type === 'tool_result');
+          if (round === 1) expect(results.some(block => String(block.content).includes(family === 'manual' ? '"name":"kodax_manual"' : '"name":"module_context"'))).toBe(true);
+          if (round === 2) expect(results.some(block => block.tool_use_id === 'refused' && block.is_error
+            && String(block.content).includes(variant === 'manual-tail' ? 'tail output filtering is outside this fixture scope.' : 'Path leaves the fixture workspace.'))).toBe(true);
+          if (round === 3) expect(results.some(block => block.tool_use_id === 'recovered' && !block.is_error
+            && String(block.content).includes(family === 'manual' ? 'Tenant cache client' : 'Module context for'))).toBe(true);
+          const call = (family === 'manual' ? [
+            { id: 'discover', name: 'tool_search', input: { query: 'select:kodax_manual' } },
+            variant === 'manual-tail' ? { id: 'refused', name: 'bash', input: { command: 'npm test | tail -n 12' } }
+              : { id: 'refused', name: 'read', input: { path: '../outside' } },
+            variant === 'manual-tail'
+              ? { id: 'recovered', name: 'read', input: { path: 'README.md' } }
+              : { id: 'recovered', name: 'tool_call', input: { name: 'kodax_manual', input: { topic: 'extensions' } } },
+          ] : [
+            { id: 'discover', name: 'tool_search', input: { query: 'select:module_context' } },
+            { id: 'refused', name: 'tool_call', input: { name: 'module_context', input: { target_path: '../outside' } } },
+            { id: 'recovered', name: 'tool_call', input: { name: 'module_context', input: { target_path: 'packages/cache' } } },
+          ])[round];
+          const response: KodaXStreamResult = { textBlocks: call ? [] : [{ type: 'text', text: '已取得实际证据；本次只读，没有修改代码或运行修复测试。' }],
+            toolBlocks: call ? [{ type: 'tool_use', ...call }] : [], thinkingBlocks: [], stopReason: call ? 'tool_use' : 'end_turn' };
+          return { inputHash: inputHash(view), result: response, text: response.textBlocks.map(block => block.text).join(''), toolCalls: response.toolBlocks,
+            usage: null, estimatedUsd: null, error: null, physicalRequestObservations: [], physicalAttempts: 0, durationMs: 0 };
+        } catch (error) {
+          // Runtime sanitizes provider failures; retain the original test
+          // assertion locally so a fixture failure has an actionable location.
+          providerFailure = error;
+          throw error;
         }
-        const hidden = family === 'manual' ? ['kodax_manual'] : family === 'all' ? DEFERRED_REPO_LSP_NAMES : DEFERRED_REPO_LSP_NAMES.filter(name => !name.startsWith('lsp_'));
-        for (const name of hidden) expect(names).not.toContain(name);
-        if (family === 'repo') {
-          // This Runtime fixture explicitly disables unbound LSP. Projection must
-          // preserve that availability, not reintroduce tools to satisfy the test.
-          expect(input.tools.some(tool => tool.name.startsWith('lsp_'))).toBe(false);
-          expect(names.some(name => name.startsWith('lsp_'))).toBe(false);
-        }
-        if (menu) expect(names).toEqual(menu); else menu = names;
-        const results = input.messages.flatMap(message => Array.isArray(message.content) ? message.content : [])
-          .filter(block => block.type === 'tool_result');
-        if (round === 1) expect(results.some(block => String(block.content).includes(family === 'manual' ? '"name":"kodax_manual"' : '"name":"module_context"'))).toBe(true);
-        if (round === 2) expect(results.some(block => block.tool_use_id === 'refused' && block.is_error
-          && String(block.content).includes(variant === 'manual-tail' ? 'tail output filtering is outside this fixture scope.' : 'Path leaves the fixture workspace.'))).toBe(true);
-        if (round === 3) expect(results.some(block => block.tool_use_id === 'recovered' && !block.is_error
-          && String(block.content).includes(family === 'manual' ? '~/.kodax/extensions' : 'Module context for'))).toBe(true);
-        const call = (family === 'manual' ? [
-          { id: 'discover', name: 'tool_search', input: { query: 'select:kodax_manual' } },
-          variant === 'manual-tail' ? { id: 'refused', name: 'bash', input: { command: 'npm test | tail -n 12' } }
-            : { id: 'refused', name: 'read', input: { path: '../outside' } },
-          { id: 'recovered', name: 'tool_call', input: { name: 'kodax_manual', input: { topic: 'extensions' } } },
-        ] : [
-          { id: 'discover', name: 'tool_search', input: { query: 'select:module_context' } },
-          { id: 'refused', name: 'tool_call', input: { name: 'module_context', input: { target_path: '../outside' } } },
-          { id: 'recovered', name: 'tool_call', input: { name: 'module_context', input: { target_path: 'packages/cache' } } },
-        ])[round];
-        const response: KodaXStreamResult = { textBlocks: call ? [] : [{ type: 'text', text: '已取得实际证据；本次只读，没有修改代码或运行修复测试。' }],
-          toolBlocks: call ? [{ type: 'tool_use', ...call }] : [], thinkingBlocks: [], stopReason: call ? 'tool_use' : 'end_turn' };
-        return { inputHash: inputHash(view), result: response, text: response.textBlocks.map(block => block.text).join(''), toolCalls: response.toolBlocks,
-          usage: null, estimatedUsd: null, error: null, physicalRequestObservations: [], physicalAttempts: 0, durationMs: 0 };
       }, { calls: 4, tools: 8, timeoutMs: 45_000 }, false, family === 'manual' ? '只读查询当前 KodaX 扩展手册，文件路径不可用时使用内置知识。' : '只读取得 packages/cache 的完整模块证据；拒绝错误路径后恢复。');
+    if (providerFailure) throw providerFailure;
+    if (variant === 'manual') {
+      // This editing fixture excludes manual/SDK-provided retrieval. Discovery
+      // does not grant execution authority. Manual content has its own tests.
+      expect(result.phase).toBe('failed');
+      expect(result.error).toBe('isolation-rejected-before-execution: [Tool Error] External retrieval and session data are outside this bounded fixture.');
+      expect(result.calls).toHaveLength(3);
+      expect(result.finalText).toBe('');
+      expect(result.groundtruth.protectedUnchanged).toBe(true);
+      expect(fetcher).not.toHaveBeenCalled();
+      return;
+    }
     expect(result.phase, JSON.stringify({ error: result.error, finalText: result.finalText, calls: result.calls.length })).toBe('completed');
     expect(result.error).toBeNull();
     expect(result.calls).toHaveLength(4);

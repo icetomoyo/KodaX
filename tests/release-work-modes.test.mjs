@@ -12,7 +12,6 @@ import { promisify } from 'node:util';
 import { test } from 'node:test';
 import { connectKodaXRuntime } from '../dist/sdk-runtime.js';
 import { FileSessionStorage } from '../dist/sdk-repl.js';
-import { KODAX_TOOLS } from '../dist/sdk-coding.js';
 
 const exec = promisify(execFile);
 function finish(response, delta, reason = 'stop') {
@@ -42,6 +41,7 @@ test('release archive preserves work modes, partial effects, cancellation and re
   const requests = [];
   const failures = [];
   const cases = [];
+  let nativeShellContract;
   let active;
   let client;
   let sessionId;
@@ -77,9 +77,14 @@ test('release archive preserves work modes, partial effects, cancellation and re
       assert.equal(names.includes('read'), active.mode !== 'script');
       assert.equal(names.includes('relationship_scan'), active.mode === 'coding');
       const definitions = (parsed.tools ?? []).map(tool => tool.function ?? tool);
+      const shell = definitions.find(tool => tool.name === 'bash');
+      assert.ok(shell?.description);
+      assert.equal(shell.parameters?.properties?.run_in_background?.type, 'boolean');
+      if (nativeShellContract) assert.deepEqual(shell, nativeShellContract,
+        'All work modes retain the same native shell contract');
+      else nativeShellContract = shell;
       if (active.mode === 'script') {
-        assert.equal(definitions.find(tool => tool.name === 'bash').description,
-          KODAX_TOOLS.find(tool => tool.name === 'bash').description);
+        assert.ok(definitions.find(tool => tool.name === 'script_exec').description.includes('Callable contracts (JSON Schema)'));
       } else {
         assert.equal(definitions.find(tool => tool.name === 'glob').description, 'Find file paths by glob.');
       }
@@ -99,6 +104,7 @@ test('release archive preserves work modes, partial effects, cancellation and re
       }
     } catch (error) {
       failures.push(String(error));
+      process.stderr.write(`Offline release fixture failed: ${String(error)}\n`);
       if (!response.headersSent) response.writeHead(400, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ error: { message: String(error) } }));
     }

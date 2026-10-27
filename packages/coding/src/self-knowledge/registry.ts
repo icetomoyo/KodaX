@@ -652,7 +652,7 @@ const TOPICS: readonly KodaXManualTopic[] = [
     body: [
       "All built-in REPL slash commands, grouped by purpose:",
       "- basics: /help, /status, /cost, /clear, /new, /exit, /copy, /paste.",
-      "- model/runtime: /model, /provider, /thinking, /reasoning, /effort, /agent-mode,",
+      "- model/runtime: /model, /provider, /thinking, /reasoning, /effort, /agent-mode, /work-mode,",
       "  /mode, /auto, /auto-denials, /fallback, /setup, /sandbox.",
       "`/thinking`, `/reasoning`, and `/effort` are the same native reasoning-effort control.",
       "Use `none` to disable reasoning only where the active model supports it; `auto` clears",
@@ -675,6 +675,7 @@ const TOPICS: readonly KodaXManualTopic[] = [
       "- Ctrl+T: cycle reasoning depth.",
       "- Shift+Tab: cycle permission mode.",
       "New product tasks use AMA; /agent-mode shows the effective mode. Internal SDK executors remain available.",
+      "Use /work-mode [agent|coding|script] to select the idle Session's working surface. Coding is the default; permissions and AMA strategy are unchanged.",
       "Use /help <topic> for this manual and /help for command usage.",
       "CLI: `kodax`, `kodax -c`, `kodax -r`, `kodax setup [--custom]`,",
       "`kodax setup --help`, `kodax doctor [--ping]`, and",

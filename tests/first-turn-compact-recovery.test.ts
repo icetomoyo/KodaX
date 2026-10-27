@@ -33,7 +33,7 @@ it.each(['read', 'tool_call'])('keeps a readonly child %s refusal stable, preser
   let sawRecovery = false;
   const actorPaths = new Set<string>();
   const attributions: unknown[] = [];
-  let changedRoot = 0;
+  let compactRoot = 0;
   try {
     const record = await runComplexRuntime({ id: 'compact-recovery', provider: 'offline', model: 'offline', env: 'COMPACT_RECOVERY_KEY' }, directory,
       async input => {
@@ -52,8 +52,11 @@ it.each(['read', 'tool_call'])('keeps a readonly child %s refusal stable, preser
         expect(candidate.messages).toBe(input.messages);
         if (child) expect(candidate).toBe(input);
         else {
-          expect(candidate.system.length).toBeLessThan(input.system.length);
-          changedRoot++;
+          // Exercise the adopted production contract, without stacking the
+          // retired experimental projection on top of it.
+          expect(input.system).toContain('TRUST AND SCOPE');
+          expect(candidate).toBe(input);
+          compactRoot++;
         }
         const blocks = input.messages.flatMap(message => Array.isArray(message.content) ? message.content : []);
         const resultFor = (id: string) => blocks.find(block => block.type === 'tool_result' && block.tool_use_id === id);
@@ -113,8 +116,8 @@ it.each(['read', 'tool_call'])('keeps a readonly child %s refusal stable, preser
     expect(record.success).toBe(true);
     expect(receivedChild && sawFirstDenial && sawRetryDenial && sawRecovery).toBe(true);
     expect(childCalls).toBe(3);
-    expect(changedRoot).toBe(rootCalls);
-    expect(changedRoot).toBeGreaterThan(0);
+    expect(compactRoot).toBe(rootCalls);
+    expect(compactRoot).toBeGreaterThan(0);
     expect([...actorPaths].sort()).toEqual(['/root', '/root/readonly-check']);
     expect(attributions).toHaveLength(rootCalls + childCalls);
     expect(firstRead).toEqual(originalFirst);

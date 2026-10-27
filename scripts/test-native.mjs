@@ -1,16 +1,16 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const nativeTestBase = path.join(
-  root,
-  'native',
-  'windows-text-transaction',
-  'target',
-  'test-runtime',
+// Security-label fixtures need a user-owned directory, not a checkout whose
+// inherited ACL may grant Modify without allowing integrity-label changes.
+// Honor the same explicit fixture override as the Rust tests.
+const nativeTestBase = path.resolve(
+  process.env.KODAX_NATIVE_TEST_TEMP || path.join(os.tmpdir(), 'kodax-native-tests'),
 );
 mkdirSync(nativeTestBase, { recursive: true });
 const nativeTestEnvironment = {

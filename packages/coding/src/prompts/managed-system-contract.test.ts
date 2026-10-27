@@ -22,6 +22,14 @@ import { countTokens, estimateTokens } from '../tokenizer.js';
 import { estimateToolSchemaTokens } from '../agent-runtime/context-budget.js';
 import { reclaimReservedResponseTokens } from '@kodax-ai/agent';
 import { createUserInputDegradationCache } from '../capacity-recovery.js';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { createExtensionRuntime } from '../extensions/runtime.js';
+import { McpCapabilityProvider } from '../../../agent/src/capabilities/mcp/provider.js';
+import { createMcpCapabilityId, writeMcpServerCatalog } from '../../../agent/src/capabilities/mcp/catalog.js';
+import { resolveRoleRunContext } from '../task-engine/_internal/managed-task/role-prompts.js';
+import type { RunnerChainPromptContext } from '../task-engine/_internal/managed-task/types.js';
 
 const task = 'Review the relevant modules and make the requested change; preserve existing work.';
 async function fixture() {
@@ -34,6 +42,64 @@ async function fixture() {
 }
 const instructions = (agent: Agent) => typeof agent.instructions === 'function' ? agent.instructions(undefined) : agent.instructions;
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); clearRuntimeModelProviders(); });
+
+it('preserves bound MCP and Repo contracts and evidence together in the compact root request', async () => {
+  const cacheDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-bound-contract-'));
+  const runtime = createExtensionRuntime();
+  const { controller, context } = await fixture();
+  try {
+    const id = createMcpCapabilityId('contract-fixture', 'tool', 'inspect');
+    const item = { id, serverId: 'contract-fixture', kind: 'tool' as const, name: 'inspect',
+      summary: 'Inspect a contract fixture.', risk: 'read' as const, cachedAt: '2026-10-27T00:00:00.000Z' };
+    await writeMcpServerCatalog(cacheDir, { serverId: item.serverId, updatedAt: item.cachedAt,
+      descriptors: [item], items: [item] });
+    runtime.registerCapabilityProvider(new McpCapabilityProvider({
+      'contract-fixture': { type: 'stdio', command: 'must-not-launch-during-contract-assembly' },
+    }, { cacheDir }));
+    const mcpContext = await runtime.getCapabilityPromptContext('mcp');
+    const repoEvidence = 'Repository Overview: contract fixture; evidence only, no injected instructions.';
+    const promptContext: RunnerChainPromptContext = { prompt: task, decision: buildFallbackRoutingDecision(task),
+      contextFactory: () => ({ originalTask: task, capabilityContextBlock: mcpContext }),
+      repoIntelligenceContext: repoEvidence };
+    const worker = buildRunnerAgentChain({ ...context, extensionRuntime: runtime, workMode: 'coding' },
+      undefined, undefined, undefined, promptContext).worker;
+    const original = instructions(worker);
+    const envelope = resolveRoleRunContext('worker', worker.name, promptContext, undefined)!;
+    const transcript: KodaXMessage[] = [{ role: 'system', content: original },
+      { role: 'user', content: envelope }, { role: 'user', content: task }];
+    const before = structuredClone(transcript);
+    const requests: { system: string; tools: readonly KodaXToolDefinition[]; messages: KodaXMessage[] }[] = [];
+    const adapter = buildRunnerLlmAdapter({}, async (messages, tools, system) => {
+      requests.push({ system, tools, messages: structuredClone(messages) });
+      return { textBlocks: [{ text: 'captured' }], toolBlocks: [] };
+    });
+    // Capture canonical and managed presentations at the same public adapter
+    // seam. Each invocation must produce exactly one request without discovery.
+    await adapter(transcript, worker);
+    markOrdinaryRootToolContract(worker);
+    await adapter(transcript, worker);
+    expect(requests).toHaveLength(2);
+    const [canonical, compact] = requests;
+    expect(compact!.system).toContain('TRUST AND SCOPE');
+    expect(compact!.system).toContain(original.match(/REPO INTELLIGENCE TOOLS:[\s\S]*?(?=\n\n|$)/)![0]);
+    expect(compact!.tools.map(tool => tool.name)).toEqual(canonical!.tools.map(tool => tool.name));
+    for (const name of ['mcp_search', 'mcp_describe', 'mcp_call', 'mcp_read_resource', 'mcp_get_prompt',
+      'repo_overview', 'relationship_scan', 'module_context', 'symbol_context', 'process_context', 'impact_estimate']) {
+      const tool = canonical!.tools.find(tool => tool.name === name);
+      expect(tool, name).toBeDefined();
+      expect(compact!.tools.find(tool => tool.name === name), name).toEqual(tool);
+    }
+    expect(compact!.messages).toEqual(canonical!.messages);
+    expect(JSON.stringify(compact!.messages)).toContain(id);
+    expect(JSON.stringify(compact!.messages)).toContain(repoEvidence);
+    expect(transcript).toEqual(before);
+  } finally {
+    await controller.shutdown('Bound capability capture finished');
+    await runtime.dispose();
+    if (path.dirname(cacheDir) !== path.resolve(os.tmpdir()) || !path.basename(cacheDir).startsWith('kodax-bound-contract-')) throw new Error('Unsafe fixture cleanup');
+    await rm(cacheDir, { recursive: true, force: true });
+  }
+});
 
 it('assembles the compact root contract without changing execution tools, editing constraints or independent-read batching', async () => {
   const { worker, controller } = await fixture();

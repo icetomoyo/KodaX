@@ -32,7 +32,11 @@ it.each<{ workMode: KodaXWorkMode; candidate: boolean }>([
       expect(tools.find(tool => tool.name === 'glob')?.description).toBe('Find file paths by glob.');
       if (candidate) {
         const input = compactContractInput({ system, messages, tools }, true);
-        expect(input.system).not.toBe(system);
+        // Managed roots now arrive with the adopted compact contract. The old
+        // experiment must leave this already-projected request untouched.
+        expect(system).toContain('TRUST AND SCOPE');
+        expect(input.system).toBe(system);
+        expect(input.tools).toBe(tools);
         expect(input.messages).toBe(messages);
         tools = [...input.tools];
       }
