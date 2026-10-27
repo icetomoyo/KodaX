@@ -12,11 +12,12 @@
  *      buffer and fires the sidecar invocation as a non-awaited Promise.
  *   2. The Promise resolves with a `SidecarVerdict`. If `isStuck=true`,
  *      the nudge text is stored in `pendingNudgeRef`.
- *   3. `consumePendingNudge()` is called by the next tool call's
- *      `beforeTool` gate. If a nudge is queued, it's returned as the
+ *   3. `consumePendingNudge(call)` is called by each tool call's
+ *      `beforeTool` gate. If a nudge matches that call, it's returned as the
  *      block string — synthesizing the nudge as the tool_result text
  *      the model sees. The redundant tool dispatch is suppressed for
- *      that one round; the model rethinks based on the nudge.
+ *      that one call; unrelated calls continue. Existing progress boundaries
+ *      invalidate queued and in-flight verdicts about preceding work.
  *   4. `recordToolResult(call, content)` records the tool_result into
  *      the transcript buffer so the next sidecar invocation has up-to-
  *      date evidence.
@@ -25,16 +26,15 @@
  *
  * **One-cycle latency**: we let the FIRST repeated call run because
  * `recordToolUse` returns sync (no awaiting in `onToolCall`). The
- * sidecar verdict arrives later, in time for the NEXT tool call's
- * `beforeTool` gate to consume. This bounds the wall-clock cost to one
- * extra round — acceptable since the F177 cache already serves cheap
- * stubs for the repeat.
+ * sidecar verdict arrives later, for a matching call's `beforeTool` gate
+ * to consume if repetition continues. Unrelated calls proceed normally;
+ * an existing progress boundary expires the earlier inspection verdict.
  *
  * **Why not block in beforeTool**: blocking the first redundant tool
  * with an awaited sidecar call would add up to 5s to that call's
  * latency. With async fire-and-forget the cost is amortised — the
- * sidecar runs in parallel with the tool, and only the NEXT call sees
- * the verdict-driven block.
+ * sidecar runs in parallel with the tool, and only a matching repeated
+ * call sees the verdict-driven block.
  */
 
 import type {
@@ -49,7 +49,7 @@ import {
   type SidecarVerdict,
 } from './sidecar.js';
 import { buildSidecarUserMessage } from './prompts.js';
-import type { StallDetector, StallSignal } from '../../../multi-instance/stall-detector.js';
+import { isProbeProgressBoundary, matchesStallSignal, type StallDetector, type StallSignal } from '../../../multi-instance/stall-detector.js';
 
 /**
  * How many recent tool turns the orchestrator keeps for the sidecar
@@ -107,11 +107,11 @@ export interface StallOrchestrator {
   recordToolResult(call: { id: string }, content: string): void;
 
   /**
-   * Consume any pending nudge string. Returns the nudge once, then
-   * clears it — so the next tool call sees `undefined` unless a fresh
-   * stall verdict arrived. Called by `beforeTool` gate.
+   * Consume a pending nudge only for its exact repeated call or probe family.
+   * Unrelated calls leave it pending; existing progress boundaries invalidate
+   * it in recordToolUse. Called by the beforeTool gate.
    */
-  consumePendingNudge(): string | undefined;
+  consumePendingNudge(call: { name: string; input: Record<string, unknown> }): string | undefined;
 
   /**
    * Drop all state. Called on compaction post-hook alongside
@@ -131,9 +131,10 @@ export function createStallOrchestrator(
   options: StallOrchestratorOptions,
 ): StallOrchestrator {
   const transcript: KodaXMessage[] = [];
-  let pendingNudge: string | undefined;
+  let pendingNudge: { text: string; signal: Extract<StallSignal, { kind: 'stall' }> } | undefined;
   let generation = 0;
-  let sidecarInFlight = false;
+  let progressGeneration = 0;
+  let inFlightSignal: Extract<StallSignal, { kind: 'stall' }> | undefined;
   const pendingPromises: Promise<unknown>[] = [];
 
   function pushTranscript(message: KodaXMessage): void {
@@ -149,6 +150,13 @@ export function createStallOrchestrator(
 
   return {
     recordToolUse(call) {
+      // Reuse the detector's progress boundaries. Planning alone does not
+      // discard an inspection warning, but an actual repair must not receive
+      // a delayed verdict about inspection that preceded it.
+      if (isProbeProgressBoundary(call.name, call.input)) {
+        if (pendingNudge && !matchesStallSignal(pendingNudge.signal, call.name, call.input)) pendingNudge = undefined;
+        if (inFlightSignal && !matchesStallSignal(inFlightSignal, call.name, call.input)) progressGeneration++;
+      }
       const useBlock: KodaXToolUseBlock = {
         type: 'tool_use',
         id: call.id,
@@ -159,7 +167,7 @@ export function createStallOrchestrator(
 
       const signal = options.detector.recordToolUse(call.name, call.input);
       if (signal.kind !== 'stall') return false;
-      if (sidecarInFlight) return true;
+      if (inFlightSignal) return true;
 
       const snapshot = snapshotTranscript();
       const userMessage = buildSidecarUserMessage({
@@ -174,7 +182,8 @@ export function createStallOrchestrator(
       // line reports.
       const sidecarStartedAt = Date.now();
       const signalGeneration = generation;
-      sidecarInFlight = true;
+      const signalProgressGeneration = progressGeneration;
+      inFlightSignal = signal;
       const promise = invokeStallSidecar({
         provider: options.provider,
         model: options.model,
@@ -187,8 +196,8 @@ export function createStallOrchestrator(
           if (signalGeneration !== generation) return;
           const elapsedMs = Date.now() - sidecarStartedAt;
           options.onVerdict?.(signal, verdict, elapsedMs);
-          if (verdict.isStuck && verdict.nudge) {
-            pendingNudge = verdict.nudge;
+          if (verdict.isStuck && verdict.nudge && signalProgressGeneration === progressGeneration) {
+            pendingNudge = { text: verdict.nudge, signal };
           }
         })
         .catch(() => {
@@ -197,7 +206,7 @@ export function createStallOrchestrator(
           // here in case the contract ever changes.
         })
         .finally(() => {
-          if (signalGeneration === generation) sidecarInFlight = false;
+          if (signalGeneration === generation) inFlightSignal = undefined;
         });
       pendingPromises.push(promise);
       return true;
@@ -216,17 +225,19 @@ export function createStallOrchestrator(
       });
     },
 
-    consumePendingNudge() {
+    consumePendingNudge(call) {
+      if (!pendingNudge || !matchesStallSignal(pendingNudge.signal, call.name, call.input)) return undefined;
       const nudge = pendingNudge;
       pendingNudge = undefined;
-      return nudge;
+      return nudge.text;
     },
 
     reset() {
       transcript.length = 0;
       pendingNudge = undefined;
       generation += 1;
-      sidecarInFlight = false;
+      progressGeneration = 0;
+      inFlightSignal = undefined;
       // Existing promises may resolve naturally; the generation fence makes
       // verdicts from the pre-compaction transcript a no-op.
     },

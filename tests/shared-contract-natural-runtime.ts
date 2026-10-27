@@ -26,7 +26,15 @@ const DENIAL = 'No part of this command ran. This fixture permits read-only Git 
 const COMPOSITION_DENIAL = 'This fixture accepts one foreground command per call; command lists and pipelines are not supported. No part of this command ran. Changing the executable or alias does not permit command composition. Submit individually permitted commands separately. Each command must still satisfy the path, argument and read-only restrictions.';
 
 /** Evaluation scope only, not a general sandbox for arbitrary hostile JavaScript. */
-export function checkNaturalTool(workspace: string, name: string, input: Record<string, unknown>, readOnly: boolean): string | null {
+export function checkNaturalTool(workspace: string, name: string, input: Record<string, unknown>, readOnly: boolean, feedback: 'specific' | 'legacy' = 'specific'): string | null {
+  const denied = checkNaturalToolPolicy(workspace, name, input, readOnly, feedback);
+  if (denied !== null && readOnly && name === 'bash') {
+    return `${denied} General tool availability does not override this child's read-only scope: repository execution remains unavailable. Changing the command does not change that boundary. Continue with permitted static inspection and report which execution checks were not run.`;
+  }
+  return denied;
+}
+
+function checkNaturalToolPolicy(workspace: string, name: string, input: Record<string, unknown>, readOnly: boolean, feedback: 'specific' | 'legacy'): string | null {
   if (MUTABLE_TOOLS.has(name)) {
     const paths = /^[A-Za-z]:[/\\]/.test(workspace) ? path.win32 : path;
     const target = typeof input.path === 'string' ? paths.relative(workspace, paths.resolve(workspace, input.path)).replaceAll('\\', '/') : '';
@@ -43,7 +51,7 @@ export function checkNaturalTool(workspace: string, name: string, input: Record<
   const parsed = name === 'bash' ? parseBashCommand(String(input.command)) : undefined;
   const composed = parsed && !parsed.unparseable && (parsed.statements.length > 1 || parsed.statements.some(statement => statement.stages.length > 1));
   if (existing !== null && !(publicReproducer && existing === 'Only local test execution is in scope.')) {
-    if (existing === 'Only local test execution is in scope.' && composed) return COMPOSITION_DENIAL;
+    if (feedback === 'specific' && existing === 'Only local test execution is in scope.' && composed) return COMPOSITION_DENIAL;
     return `${existing} No part of the denied operation ran.`;
   }
   if (name === 'spawn_agent' && (input.model_hint !== undefined || input.isolation === 'worktree')) return 'Children must be read-only and inherit the current provider/model in this fixture.';
@@ -52,7 +60,7 @@ export function checkNaturalTool(workspace: string, name: string, input: Record<
   if (input.run_in_background === true) return 'Use foreground execution so this fixture can retain the actual test receipt.';
   if (publicReproducer) return readOnly ? 'Read-only children cannot run repository code.' : null;
   if (!parsed || parsed.unparseable) return DENIAL;
-  if (composed) return COMPOSITION_DENIAL;
+  if (composed) return feedback === 'specific' ? COMPOSITION_DENIAL : DENIAL;
   if (parsed.statements.length !== 1 || parsed.statements[0]?.stages.length !== 1) return DENIAL;
   const stage = parsed.statements[0]?.stages[0];
   if (!stage || stage.redirections.length) return DENIAL;
@@ -66,6 +74,8 @@ export function checkNaturalTool(workspace: string, name: string, input: Record<
 }
 
 export interface NaturalRuntimeOptions {
+  /** Eval-only controlled feedback revision; admission and production tools are identical. */
+  guardFeedback?: 'specific' | 'legacy';
   workMode?: 'agent' | 'coding' | 'script';
   limits?: { calls: number; tools: number; timeoutMs: number };
   signal?: AbortSignal;
@@ -115,7 +125,7 @@ export async function runNaturalRuntime(directory: string, id: NaturalCaseId, in
     counts.tools++;
     if (call.id.includes('script')) counts.scriptLeaves++;
     if (counts.tools > limits.tools) return stop('budget-censored: tool cap');
-    let denied = checkNaturalTool(workspace, target.name, target.input, readOnly);
+    let denied = checkNaturalTool(workspace, target.name, target.input, readOnly, options.guardFeedback);
     if (target.name === 'spawn_agent' && !denied) {
       if (counts.spawns >= 1) denied = 'At most one read-only inherited-model child per natural smoke.';
       else counts.spawns++;

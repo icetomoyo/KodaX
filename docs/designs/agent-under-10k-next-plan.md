@@ -342,3 +342,12 @@ Targeted regressions passed 173/173, both type checks passed, and all 32 first-w
 requests are byte-identical to the previous capture. No model calls were made.
 The 316-token candidate remains unimplemented; actual behavioral improvement
 from the late-reminder/feedback changes is not yet measured.
+## 2026-10-27：暂停首轮精简，完成多轮开销归因与最小修复
+
+完整验收与失败记录见 [原始基线与多轮验证指南](../test-guides/FEATURE_WORK_MODES_ORIGINAL_BASELINE_TEST_GUIDE.md) 的 R1/R2 结果。24 个四组合对照任务加 3 个最终生产行为 smoke 已完成，没有为了通过替换失败样本。
+
+保留剩余工作导向的晚到 Todo 提醒；修复防循环延迟结论误拦无关 `todo_create` 的投递问题，复用既有重复签名、检查工具类别和进展边界，保持 AMA、SDK、全部能力及 Coding 默认。只读子 Agent 的评测拒绝反馈另作离线澄清，权限不变。首轮 32 组序列化请求保持一致。
+
+同版本 GLM 对照的主请求由 13/13 降为 9/10，历史补账回合消失；但不能据此宣布全模型不增轮：DeepSeek 仍有规划与检查开销，Kimi 的子审查能修复遗漏也会增加调用。最终 smoke 的独立检查为 GLM 4/5、Kimi 5/5、DeepSeek 5/5；GLM 的缺失身份问题在旧组合中同样存在。
+
+下一步聚焦已保存轨迹中的拒绝恢复和独立 Todo 回合，区分有价值的审查与空转，不关闭协作换取更少调用。暂不继续首轮精简、不再重跑整个矩阵；新的行为调整应先用已有轨迹做有明确因果的离线或固定上下文验证。一个任务族的两次抽样不代表跨任务的智能非退化证明。

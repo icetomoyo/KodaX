@@ -80,10 +80,10 @@ export function createStallSidecarToolObserver(
       // Pending-nudge consumption — when the previous tool's onToolCall
       // fired an L1 signal AND the L2 sidecar returned isStuck=true, the
       // nudge text is sitting in the orchestrator. Returning it as a
-      // string blocks the current tool with the nudge as its synthesized
+      // string blocks a matching repeated call with the nudge as its synthesized
       // tool_result — the model sees the nudge instead of the actual
       // tool output and rethinks.
-      const pendingNudge = orchestrator.consumePendingNudge();
+      const pendingNudge = orchestrator.consumePendingNudge(call);
       if (pendingNudge !== undefined) {
         return pendingNudge;
       }

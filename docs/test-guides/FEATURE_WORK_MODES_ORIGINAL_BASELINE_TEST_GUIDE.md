@@ -486,3 +486,82 @@ RED/GREEN and execution evidence is supplied by the tests above.
 existing timing/plan handling, AMA/SDK, native/Script execution, shared budget and
 cancellation paths remain. No claim of model compliance or six saved calls follows
 from the offline verification. Neither axis has an unresolved finding.
+
+
+## 2026-10-27 finite reminder × guard factorial (pre-registered before dispatch)
+
+User explicitly requested multi-sample complete-task GLM/Kimi/DeepSeek comparisons to resolve the six extra requests. This overrides the normal EVAL_GUIDELINES restriction against using free-running E2E for prompt comparisons for this finite investigation only. Results remain descriptive; neither 2 draws nor a single task family establish general non-inferiority. Offline tests cannot predict autonomous late-plan compliance, error recovery or complete-task latency.
+
+Production substrate is `edbc5afd` (full SHA in each manifest). Four arms vary **only** the empty-store reminder (c9645bc9 legacy / edbc5afd current) and test-only denial wording (legacy / specific). Cadence, initial prompts, schemas, AMA, model arguments/output, permission decisions, budgets and protected files are unchanged. No capability removal or new production options. A Vitest-scoped text-producer mock selects legacy wording; exact archived-text SHA256 is checked offline. The nullable guard admission result must match for both revisions on Windows/POSIX and read-only cases.
+
+- Routes: zhipu-coding/glm-5.3, kimi-code/kimi-for-coding, deepseek/deepseek-flash. Kimi on/low; GLM and DeepSeek off/none, matching previously validated route settings.
+- Task: unchanged natural `symptom-repair` prompt and protected recovery fixture. Two independent draws per route × arm = **24 maximum complete tasks**. This measures repeatability within one task family, not task diversity. No retry, fallback or replacement for a failed cell.
+- Pilot: first GLM block of four arms; expand only if guard isolation, actual wire factors, physical accounting and task validity are intact, regardless of model quality outcome. Order is rotated across provider lanes; second block reverses order. Different providers run concurrently; each provider is serial.
+- Per task: 32 shared root/child/auxiliary requests, 80 tool calls, 1.2M accounted tokens, 8192 output tokens/request, 180s/request and 600s/Run. GLM/Kimi $0.30 nominal accounting cap; DeepSeek $0.90 peak-price cap. Total hard envelope: 768 calls, 28.8M tokens, $12 mixed nominal/peak accounting; expected much lower (~250–400 calls, 4–7M tokens). Unknown usage charges reservation and stops that provider lane. Reservations happen before dispatch; singleAttempt=true.
+- DeepSeek official pricing read 2026-10-27: https://api-docs.deepseek.com/quick_start/pricing/ — peak USD/1M input miss 0.30, cache hit 0.006, output 1.20. Off-peak half. Use peak upper bound throughout, do not label it invoiced cost. GLM/Kimi local coding-plan rates are reference accounting only.
+- Raw root: OS Temp/kodax-eval-dumps/late-reminder-factorial-r1-20261027; per-cell raw inputs, model output, physical receipts, source hashes, immutable manifest, two backups. Existing cell directory refuses rerun. Frozen driver and pre-registration are copied before dispatch.
+- Primary quality: independent hidden safety oracle (including absent identity), actual public/new tests, unchanged protected files, AMA terminal state, truthful final report. Runtime success alone is not quality acceptance.
+- Efficiency: root/child/auxiliary physical calls, all-task input/cache/output tokens, wall time, tool calls, late retrospective Todo-only calls, repeated composition denials. Necessary repair/retest is distinguished from administrative overhead. Less testing or premature completion is never counted as an improvement.
+- Analysis: compare reminder effects holding feedback fixed and feedback effects holding reminder fixed, inspect interactions and each raw trajectory. An arm not encountering the relevant reminder/refusal is unexposed, not evidence that the change works. Blind final patches/reports for semantic assessment before linking the trajectory labels; save structured main-session review. Do not infer exact six-call savings by subtracting stochastic full-run totals.
+- Stop and inspect infrastructure/accounting or isolation failures. Quality failures stay in the sample. No unregistered full-matrix reruns or case-specific production instructions. New evidence-backed production changes require a new revision and only affected finite checks.
+
+
+### Post-panel finding: delayed stall verdict blocks unrelated planning
+
+All 24 R1 tasks finished before production changes below. In `deepseek-s1-new-old`, eight inspection rounds triggered an AMA stall judgment. At physical call 9, the model submitted three `todo_create` operations; the queued inspection nudge blocked the first and only two actual ids were minted. The model subsequently guessed `todo_3`, received an unknown-id receipt, then created the missing milestone and repeated verification. This is a concrete production delivery defect plus model receipt-handling error; it is not attributable entirely to the empty-store reminder or evaluation guard wording.
+
+Minimal correction: bind a pending verdict to the original detector's exact stable call signature or existing repository-inspection family. Unrelated plan/control calls continue without consuming it; inspection that continues still receives the warning. Reuse existing progress boundaries to invalidate queued or in-flight verdicts about preceding work. Do not change detector thresholds, family classification, LLM judgment prompt/model, AMA strategy, permissions, tool schemas or budget. An identical repeated edit must remain eligible for intervention (not misclassified as progress).
+
+The new factory-level regression failed on the old gate (legitimate `todo_create` received the read-loop nudge), then passed. Additional checks cover repository-family matching, changed read inputs, queued/in-flight expiry after edits, repeated identical edits and existing reset generations. A zero-network actual Runtime trace inspired by the paid failure verifies eight inspection requests, one real auxiliary dispatch through the injected provider, three intact Todo ids, legal edit/test/reproducer and completed AMA: exactly 12 root + 1 auxiliary requests, protected files intact, public and hidden verification passing. Scripted compliance is execution-chain evidence, not a new model-quality claim. The paid R1 matrix precedes this gate fix; do not relabel it as paid validation of the later source revision.
+
+
+### Final-source R2 smoke registration (before dispatch)
+
+After the real production stale-verdict fix and 194 offline regressions pass, run exactly one current/current `symptom-repair` task for each of GLM, Kimi and DeepSeek. No repeated factorial, retries or replacement of failures. Use unchanged task, natural prompt, model settings and per-Run caps from R1. R2 upper bound: 3 tasks, 96 physical calls, 3.6M tokens, $1.50 combined nominal/DeepSeek peak accounting, 600s per task. Freeze source hashes including all three modified stall modules and the driver; separate `late-reminder-final-smoke-r2-20261027` raw directory, mirrored backups. This checks final-source integration, not causal savings or general model non-inferiority. Whether the stochastic trace triggers the repaired delayed-verdict branch must be reported separately from its deterministic offline reproduction.
+
+
+## 2026-10-27 results and limits (R1 + final-source R2)
+
+R1 completed **24/24** isolated tasks: three routes, four combinations, two independent draws of one task family. All retained protected files and reached completed AMA; all local/public test suites passed, but the independent and semantic review below prevents interpreting that as full task correctness. Each cell was run once. The initial GLM 429/code1308 request is retained separately (one physical attempt, zero executed tools); only the user-confirmed credential replacement authorized continuation in a new raw directory.
+
+R1 means below use known API input+output tokens, cache-read included once. Calls are root requests; cancelled auxiliaries are accounted separately. Each independent check has five assertions.
+
+| Route | Reminder / feedback | Root requests (two draws) | Mean known task tokens | Mean Run seconds | Hidden checks passed (of 5, each draw) |
+|---|---|---:|---:|---:|---:|
+| zhipu-coding | old-old | 13 / 13 | 185,234 | 108.0 | 4 / 4 |
+| zhipu-coding | new-old | 10 / 9 | 129,864 | 79.5 | 4 / 5 |
+| zhipu-coding | old-new | 13 / 9 | 153,078 | 103.0 | 4 / 4 |
+| zhipu-coding | new-new | 9 / 10 | 127,826 | 81.8 | 4 / 4 |
+| kimi-code | old-old | 9 / 11 | 135,908 | 96.2 | 4 / 4 |
+| kimi-code | new-old | 7 / 8 | 96,994 | 71.4 | 2 / 2 |
+| kimi-code | old-new | 12 / 9 | 139,044 | 81.3 | 4 / 4 |
+| kimi-code | new-new | 9 / 9 | 120,368 | 82.2 | 4 / 4 |
+| deepseek | old-old | 17 / 18 | 293,187 | 55.1 | 5 / 4 |
+| deepseek | new-old | 22 / 15 | 327,138 | 53.5 | 5 / 4 |
+| deepseek | old-new | 22 / 18 | 397,674 | 66.5 | 5 / 5 |
+| deepseek | new-new | 20 / 16 | 321,016 | 60.0 | 5 / 5 |
+
+Interpretation:
+- GLM old/old produced two retrospective Todo-only requests in each draw. Current/current produced none: root requests 13/13 → 9/10; mean task tokens 185,234 → 127,826; mean time 108.0s → 81.8s. Current reminder with legacy feedback also had no late Todo-only requests. This supports retaining the remaining-work reminder; it does not assign every saved request to that text.
+- Specific feedback did not guarantee fewer requests for every route. It clarifies why a compound command is refused without widening admissions. Root-local and child execution permissions remain distinct. Kimi current-reminder/legacy-feedback tasks completed before the empty reminder fired; their identity omissions appeared before the changed feedback, so they cannot be attributed to the reminder.
+- DeepSeek root mean old/old 17.5 versus current/current 18.0: **the global no-extra-rounds target is not established**. Early planning, broader investigation, changed scope and repair choices contribute. Some runs never see the empty-store reminder; some legitimately still have multi-step work. Todo-only calls are not automatically retrospective waste.
+- Hidden pass counts are insufficient alone: blind code/report review identified unsupported fallback fields in two 5/5 patches. Offline post-hoc counterexamples confirmed they permit restart despite contradictory running/held evidence. These checks are labeled post-hoc and do not overwrite original oracle scores. Other patches kept/invented a cleanup prerequisite and did not fix the actual symptom. Missing identity is a common failure across arms, not grounds to label every candidate failure as prompt regression.
+- All 24 final patches and reports were semantically reviewed with arm labels concealed before revealing the mapping. Counts/trajectory inspection itself was unblinded; directory paths contain different arm names and timestamps, and n=2 with one fixture family is not a statistical or broad task non-inferiority claim.
+
+### Final production-source R2 (after delayed-verdict repair)
+
+| Route | Root + child + auxiliary requests | Full known tokens | Seconds | Public/new tests | Independent checks |
+|---|---:|---:|---:|---:|---:|
+| zhipu-coding | 9 + 0 + 0 | 121,160 | 79.0 | 7/7 | 4/5 |
+| kimi-code | 13 + 8 + 0 | 282,294 | 191.0 | 5/5 | 5/5 |
+| deepseek | 19 + 0 + 1 | 335,640 | 63.3 | 10/10 | 5/5 |
+
+GLM returned in 9 root requests (the historical problematic optimized run used 15), but still missed the missing-identity case seen in controls; it is not a full quality pass. Kimi independently delegated a read-only review, used its finding to repair the missing identity, and then passed all five checks. Those child calls add cost and useful quality; some additional calls were avoidable refusal retries. DeepSeek also passed all five checks, but its auxiliary judged the investigation legitimate, so R2 does not supply paid positive-verdict coverage; the real Runtime offline reproducer supplies that gate coverage.
+
+After R2, a final **eval-only** feedback patch retains the exact admission result and adds the child read-only boundary to every denied shell result. This prevents the contradictory sequence “children cannot run repository code” → “only local tests are allowed” from suggesting a test-command workaround. No command was admitted, rewritten or executed for passing the evaluation. Offline Windows/POSIX read-only/root cases, real Runtime guard/budget/cancel tests pass; no further paid calls were used. Do not claim this last wording patch has already improved autonomous model behavior.
+
+Validation: 194 tests passed across 11 focused files after the production fix; the subsequent read-only-feedback change passed 62 tests across the guard/runtime/budget subset, adding one new regression (195 distinct focused tests in total). Source and test typechecks passed. Zero-network actual SDK serialization confirmed all 32 normalized first requests byte-identical to the prior inventory (new inventory OS Temp/kodax-first-turn-wire-BthDa1/inventory.json). Production first-turn teaching, tool definitions and capabilities remain unchanged. Standards and Spec review of the production correction returned zero outstanding findings; final feedback Spec review also zero.
+
+Accounting: R1 314 physical requests; R2 50; quota failure 1 = **365 physical attempts**. Known API task usage **5,593,753 tokens**; conservative reservations including two cancelled auxiliaries and the quota rejection bring charged budget to **5,693,705 tokens**. Combined nominal/upper-bound accounting $0.225969519: this is **not an invoice**. DeepSeek peak-price estimate $0.147931824 (off-peak actual may be half); coding-plan GLM/Kimi values are local nominal rates. Cache-read tokens are part of input, not added twice. No fallback or retry-until-pass was used.
+
+Decision: retain the remaining-work reminder and precise refusal feedback; keep the narrowly scoped delayed-stall delivery repair, supported by deterministic failing→passing and real Runtime tests. Do not claim all quality/efficiency goals are closed, do not continue first-turn compression, and do not rerun the matrix for green scores. Remaining evidence gaps are general task diversity, autonomous compliance with final read-only feedback, and avoiding standalone plan updates without losing useful planning or reviewer quality. Further work should start with existing failure transcripts, not another unrestricted panel.

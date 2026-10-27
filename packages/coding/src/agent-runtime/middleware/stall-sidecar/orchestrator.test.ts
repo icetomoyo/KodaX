@@ -10,12 +10,81 @@ import type {
 import { KodaXBaseProvider } from '@kodax-ai/llm';
 import { createStallDetector } from '../../../multi-instance/stall-detector.js';
 import { createStallOrchestrator } from './orchestrator.js';
+import { createStallSidecarToolObserver } from './index.js';
 import {
   REPORT_TOOL,
   SIDECAR_SYSTEM_PROMPT,
 } from './prompts.js';
 
 const FAKE_REPORT_TOOL: KodaXToolDefinition = REPORT_TOOL;
+
+it('does not spend a delayed read-loop intervention on an unrelated plan creation', async () => {
+  let judged!: () => void;
+  const verdictReady = new Promise<void>(resolve => { judged = resolve; });
+  const handle = createStallSidecarToolObserver({
+    detector: createStallDetector({ disabled: false }),
+    provider: new CannedSidecarProvider({ isStuck: true, nudge: 'Stop the repeated inspection and edit the source.' }),
+    onVerdict: () => judged(),
+  });
+  const repeated = { id: 'read', name: 'read', input: { path: 'src/recovery.js' } };
+  for (let i = 0; i < 3; i++) await handle.observer.onToolCall?.({ ...repeated, id: `read-${i}` });
+  await verdictReady;
+  expect(await handle.observer.beforeTool?.({ id: 'plan', name: 'todo_create', input: { subject: 'Implement the remaining repair' } })).toBe(true);
+  expect(await handle.observer.beforeTool?.({ id: 'other', name: 'read', input: { path: 'another-file.js' } })).toBe(true);
+  // Planning does not disable the existing loop intervention if inspection resumes.
+  expect(await handle.observer.beforeTool?.(repeated)).toBe('Stop the repeated inspection and edit the source.');
+  expect(await handle.observer.beforeTool?.(repeated)).toBe(true);
+});
+
+it('keeps repository-family interventions relevant while allowing the repair boundary', async () => {
+  let judged!: () => void;
+  const ready = new Promise<void>(resolve => { judged = resolve; });
+  const handle = createStallSidecarToolObserver({
+    detector: createStallDetector({ disabled: false, probeFamilyThreshold: 3 }),
+    provider: new CannedSidecarProvider({ isStuck: true, nudge: 'Stop broad inspection.' }),
+    onVerdict: () => judged(),
+  });
+  for (const file of ['a', 'b', 'c']) await handle.observer.onToolCall?.({ id: file, name: 'read', input: { path: file } });
+  await ready;
+  expect(await handle.observer.beforeTool?.({ id: 'plan', name: 'todo_create', input: { subject: 'Repair' } })).toBe(true);
+  expect(await handle.observer.beforeTool?.({ id: 'grep', name: 'grep', input: { pattern: 'another broad query' } })).toBe('Stop broad inspection.');
+});
+
+it('drops an in-flight inspection verdict after an existing progress boundary', async () => {
+  const provider = new DeferredSidecarProvider();
+  const orch = createStallOrchestrator({ detector: createStallDetector({ disabled: false }), provider,
+    systemPrompt: SIDECAR_SYSTEM_PROMPT, reportTool: FAKE_REPORT_TOOL });
+  const repeated = { id: 'read', name: 'read', input: { path: 'source.js' } };
+  for (let i = 0; i < 3; i++) orch.recordToolUse({ ...repeated, id: `r${i}` });
+  orch.recordToolUse({ id: 'repair', name: 'edit', input: { path: 'source.js', edits: [] } });
+  provider.resolve('Inspection before the edit was stuck.');
+  await Promise.all(orch.debug.pendingSidecarPromises());
+  expect(orch.debug.hasPendingNudge()).toBe(false);
+});
+
+it('does not mistake another identical stalled edit for progress', async () => {
+  const provider = new DeferredSidecarProvider();
+  const orch = createStallOrchestrator({ detector: createStallDetector({ disabled: false }), provider,
+    systemPrompt: SIDECAR_SYSTEM_PROMPT, reportTool: FAKE_REPORT_TOOL });
+  const repeated = { id: 'edit', name: 'edit', input: { path: 'source.js', edits: [] } };
+  for (let i = 0; i < 4; i++) orch.recordToolUse({ ...repeated, id: `e${i}` });
+  provider.resolve('Reread the current file before retrying this edit.');
+  await Promise.all(orch.debug.pendingSidecarPromises());
+  expect(orch.consumePendingNudge(repeated)).toBe('Reread the current file before retrying this edit.');
+});
+
+it('clears a queued inspection verdict when a repair is dispatched', async () => {
+  const orch = createStallOrchestrator({ detector: createStallDetector({ disabled: false }),
+    provider: new CannedSidecarProvider({ isStuck: true, nudge: 'Stop inspection.' }),
+    systemPrompt: SIDECAR_SYSTEM_PROMPT, reportTool: FAKE_REPORT_TOOL });
+  const read = { id: 'read', name: 'read', input: { path: 'a.ts' } };
+  for (let i = 0; i < 3; i++) orch.recordToolUse({ ...read, id: `r${i}` });
+  await Promise.all(orch.debug.pendingSidecarPromises());
+  const repair = { id: 'write', name: 'write', input: { path: 'a.ts', content: 'fixed' } };
+  expect(orch.consumePendingNudge(repair)).toBeUndefined();
+  orch.recordToolUse(repair);
+  expect(orch.consumePendingNudge(read)).toBeUndefined();
+});
 
 class CannedSidecarProvider extends KodaXBaseProvider {
   readonly name = 'canned-sidecar';
@@ -158,11 +227,11 @@ describe('FEATURE_178 (v0.7.42): createStallOrchestrator', () => {
 
       // Nudge is queued for consumption.
       expect(orch.debug.hasPendingNudge()).toBe(true);
-      const consumed = orch.consumePendingNudge();
+      const consumed = orch.consumePendingNudge({ name: 'read', input: { path: 'a.ts' } });
       expect(consumed).toBe('Call interrupt_agent and report.');
       // Consuming clears the ref.
       expect(orch.debug.hasPendingNudge()).toBe(false);
-      expect(orch.consumePendingNudge()).toBeUndefined();
+      expect(orch.consumePendingNudge({ name: 'read', input: { path: 'a.ts' } })).toBeUndefined();
     });
 
     it('fires sidecar but isStuck=false → no nudge queued', async () => {
@@ -184,7 +253,7 @@ describe('FEATURE_178 (v0.7.42): createStallOrchestrator', () => {
 
       expect(provider.captured).toHaveLength(1);
       expect(orch.debug.hasPendingNudge()).toBe(false);
-      expect(orch.consumePendingNudge()).toBeUndefined();
+      expect(orch.consumePendingNudge({ name: 'read', input: { path: 'a.ts' } })).toBeUndefined();
     });
   });
 

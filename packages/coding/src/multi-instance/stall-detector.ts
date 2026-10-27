@@ -231,7 +231,7 @@ function repositoryProbeFamily(
     : undefined;
 }
 
-function isProbeProgressBoundary(toolName: string, input: unknown): boolean {
+export function isProbeProgressBoundary(toolName: string, input: unknown): boolean {
   if (PROGRESS_BOUNDARY_TOOLS.has(toolName)) return true;
   if (toolName === 'bash') return repositoryProbeFamily(toolName, input) === undefined;
   if (toolName !== 'todo_update' || input === null || typeof input !== 'object') {
@@ -239,6 +239,13 @@ function isProbeProgressBoundary(toolName: string, input: unknown): boolean {
   }
   const status = (input as Record<string, unknown>).status;
   return status === 'completed' || status === 'cancelled' || status === 'deleted';
+}
+
+/** Bind a delayed intervention to the same exact call or existing probe family. */
+export function matchesStallSignal(signal: Extract<StallSignal, { kind: 'stall' }>, toolName: string, input: unknown): boolean {
+  return signal.probeFamily !== undefined
+    ? repositoryProbeFamily(toolName, input) === signal.probeFamily
+    : signal.toolName === toolName && signal.inputJson === stableStringify(input);
 }
 
 /**

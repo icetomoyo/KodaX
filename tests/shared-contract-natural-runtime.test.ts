@@ -23,6 +23,81 @@ const result = (calls: KodaXToolUseBlock[] = [], text = ''): KodaXStreamResult =
 });
 const tool = (id: string, name: string, input: Record<string, unknown>): KodaXToolUseBlock => ({ type: 'tool_use', id, name, input });
 
+it('keeps the child read-only boundary explicit across different rejected command shapes', () => {
+  for (const workspace of ['/tmp/fixture', 'C:\\fixture']) {
+    for (const command of ['node --test', 'node --check src/recovery.js', 'npm test', 'node examples/restart.mjs']) {
+      const denied = checkNaturalTool(workspace, 'bash', { command }, true);
+      expect(denied).toContain('General tool availability does not override this child');
+      expect(denied).toContain('Continue with permitted static inspection');
+    }
+    expect(checkNaturalTool(workspace, 'bash', { command: 'git status --short' }, true)).toBeNull();
+    expect(checkNaturalTool(workspace, 'bash', { command: 'npm test' }, false)).toBeNull();
+  }
+});
+
+it('retains all plan creation receipts when a delayed inspection verdict arrives before a legitimate repair', async () => {
+  vi.stubEnv('NODE_ENV', 'production');
+  const fetcher = vi.fn(() => { throw new Error('No network'); });
+  vi.stubGlobal('fetch', fetcher);
+  let rootsSeen = 0;
+  let judgments = 0;
+  const inspections = [
+    ['read', { path: 'README.md' }], ['read', { path: 'src/recovery.js' }],
+    ['read', { path: 'test/recovery.test.js' }], ['read', { path: 'examples/restart.mjs' }],
+    ['read', { path: 'package.json' }], ['bash', { command: 'git status --short' }],
+    ['bash', { command: 'git log --oneline' }], ['grep', { pattern: 'recoverShutdown', path: 'src' }],
+  ] as const;
+  const record = await runNaturalRuntime(await root(), 'symptom-repair', async (input, _signal, _index, meta) => {
+    if (meta.kind === 'auxiliary') {
+      judgments++;
+      return result([tool('judge', 'report_stall_judgment', { isStuck: true, reason: 'Repeated repository inspection',
+        suggestedTool: 'edit', nudge: 'Stop repeated inspection and implement the repair.' })]);
+    }
+    const step = rootsSeen++;
+    const inspection = inspections[step];
+    if (inspection) return result([tool(`inspect-${step}`, inspection[0], inspection[1])]);
+    if (step === 8) return result(['Implement repair', 'Add regression coverage', 'Verify result'].map((subject, index) =>
+      tool(`plan-${index}`, 'todo_create', { subject, activeForm: subject })));
+    if (step === 9) {
+      const last = JSON.stringify(input.messages.at(-1));
+      for (const id of ['todo_1', 'todo_2', 'todo_3']) expect(last).toContain(id);
+      expect(last).not.toContain('Stop repeated inspection');
+      return result([tool('repair', 'write', { path: 'src/recovery.js', content: RECOVERY_GOLDEN })]);
+    }
+    if (step === 10) return result([tool('test', 'bash', { command: 'npm test' }), tool('example', 'bash', { command: 'node examples/restart.mjs' })]);
+    return result([], 'Repair and local verification completed; no OS integration was tested.');
+  }, { limits: { calls: 16, tools: 24, timeoutMs: 45_000 } });
+  expect(judgments).toBe(1);
+  expect(record.error).toBeNull();
+  expect(record.counts.rootRequests).toBe(12);
+  expect(record.counts.auxiliaryRequests).toBe(1);
+  expect(record.phase).toBe('completed');
+  expect(record.protectedUnchanged).toBe(true);
+  expect(record.verification.public.status).toBe(0);
+  expect(record.verification.oracle.status).toBe(0);
+  expect(fetcher).not.toHaveBeenCalled();
+}, 60_000);
+
+it('isolates legacy versus specific denial wording without changing admission, paths or read-only scope', () => {
+  for (const workspace of ['/tmp/fixture', 'C:\\fixture']) {
+    for (const readOnly of [false, true]) {
+      for (const command of ['npm test && node examples/restart.mjs', 'node --test && node examples/restart.mjs',
+        'npm test', 'node --test', 'node examples/restart.mjs', 'git status --short',
+        'npm test | node --test', 'echo x', 'node ../../escape.mjs', 'mkdir x']) {
+        const input = { command };
+        const current = checkNaturalTool(workspace, 'bash', input, readOnly);
+        const legacy = checkNaturalTool(workspace, 'bash', input, readOnly, 'legacy');
+        expect(current === null).toBe(legacy === null);
+        if (current?.includes('command lists and pipelines')) {
+          expect(legacy).not.toContain('command lists and pipelines');
+          expect(legacy).toContain('No part');
+        } else expect(legacy).toBe(current);
+        expect(input).toEqual({ command });
+      }
+    }
+  }
+});
+
 it('captures a real read-only child request and preserves refusal/recovery without invoking a network provider', async () => {
   vi.stubEnv('NODE_ENV', 'production');
   const fetcher = vi.fn(() => { throw new Error('No network'); });
