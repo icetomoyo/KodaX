@@ -293,3 +293,52 @@ must first demonstrate the remaining 713-token reduction at that actual
 provenance-aware boundary, with unchanged messages' facts and no extra lookup.
 Do not add a new router, hide parameters or run a paid matrix merely to force
 10K. The current verified reduction can stand independently of that target.
+
+### Subsequent original-version audit (2026-10-27)
+
+The real pre-optimization baseline is `bd4479d`, not the already optimized
+14,376 checkpoint. A fresh source-isolated original SDK capture and current
+`c9645bc9` capture give **28,734 → 14,344** for the same Coding Runtime Host
+fixture with uniform model-field counting (**50.08%**). Current Agent remains
+10,712 and Script 16,214; neither mode existed in the original version.
+
+The dynamic-envelope audit found at most **316** additional heuristic tokens
+from rule-preserving Skills/capacity wording candidates, giving Agent 10,396.
+No production change was made: the catalog, runtime facts, SDK formatter and
+exact-text budget attribution remain. Delta injection is already change-driven;
+there is no newly appended full Skills/route block each model round to remove.
+
+Eight bounded GLM/Kimi checkpoint calls support much smaller actual inputs but
+do **not** establish round non-inferiority: one GLM reporting pair answered
+directly in the original and requested re-verification in current; Kimi requested
+re-verification in both. Both contracts retain the evidence-reuse rule. The
+fixture's user-role receipt context and single-sample variance limit attribution.
+Do not respond with a case-specific prompt or repeated full panel.
+
+The [original-version validation record](../test-guides/FEATURE_WORK_MODES_ORIGINAL_BASELINE_TEST_GUIDE.md)
+contains raw provenance, exact input/API counts, test outcomes, the bounded
+full-task follow-up and remaining limitations. Retain existing gains while
+prioritizing complete-task evidence over forcing another small first-turn cut.
+
+The completed GLM whole-task observation sharpens that priority: original/current
+used **249,364 / 222,370** total tokens, **9 / 15** model requests and
+**83.04 / 119.12 seconds**. Both ended normally and passed 7 public/added tests,
+but both failed the same missing-identity safety case (hidden 4/5). Current's
+extra work includes its own repair, repeated compound-command refusal and late
+Todo bookkeeping after the unchanged iteration-8 reminder. Thus fewer input
+tokens do not establish full-task efficiency or intelligence equivalence.
+Next audit dynamic reminder consistency and precise fixture refusal feedback
+offline, keeping AMA planning/dispatch intact. Do not implement the 316-token
+candidate or rerun the panel merely to improve the headline numbers.
+
+The subsequent offline follow-up implemented only two corrections: the empty
+Todo reminder now concerns remaining multi-step work, with no retrospective
+completed milestones or waived verification; the natural fixture explains its
+existing command-composition refusal precisely. Cadence, existing plans, AMA
+dispatch, schemas and admission rules are unchanged. The six extra requests
+align to two repair/retest calls, one repeated compound-command attempt and
+three Todo-only calls; this is not causal proof of six removable requests.
+Targeted regressions passed 173/173, both type checks passed, and all 32 first-wire
+requests are byte-identical to the previous capture. No model calls were made.
+The 316-token candidate remains unimplemented; actual behavioral improvement
+from the late-reminder/feedback changes is not yet measured.

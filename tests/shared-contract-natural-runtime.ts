@@ -23,6 +23,7 @@ const CONTROL_TOOLS = new Set(['spawn_agent', 'list_agents', 'wait_agent', 'send
   'tool_search', 'tool_describe', 'script_exec', 'undo']);
 const MUTABLE_TOOLS = new Set(['write', 'edit', 'multi_edit', 'insert_after_anchor']);
 const DENIAL = 'No part of this command ran. This fixture permits read-only Git inspection and local tests; use built-in read/glob/grep for file inspection. Do not retry prohibited operations with aliases or another shell.';
+const COMPOSITION_DENIAL = 'This fixture accepts one foreground command per call; command lists and pipelines are not supported. No part of this command ran. Changing the executable or alias does not permit command composition. Submit individually permitted commands separately. Each command must still satisfy the path, argument and read-only restrictions.';
 
 /** Evaluation scope only, not a general sandbox for arbitrary hostile JavaScript. */
 export function checkNaturalTool(workspace: string, name: string, input: Record<string, unknown>, readOnly: boolean): string | null {
@@ -39,14 +40,20 @@ export function checkNaturalTool(workspace: string, name: string, input: Record<
   const windowsWorkspace = /^[A-Za-z]:[/\\]|^\\\\/.test(workspace);
   const publicReproducer = name === 'bash' && (input.command === 'node examples/restart.mjs'
     || (windowsWorkspace && input.command === 'node examples\\restart.mjs'));
-  if (existing !== null && !(publicReproducer && existing === 'Only local test execution is in scope.')) return `${existing} No part of the denied operation ran.`;
+  const parsed = name === 'bash' ? parseBashCommand(String(input.command)) : undefined;
+  const composed = parsed && !parsed.unparseable && (parsed.statements.length > 1 || parsed.statements.some(statement => statement.stages.length > 1));
+  if (existing !== null && !(publicReproducer && existing === 'Only local test execution is in scope.')) {
+    if (existing === 'Only local test execution is in scope.' && composed) return COMPOSITION_DENIAL;
+    return `${existing} No part of the denied operation ran.`;
+  }
   if (name === 'spawn_agent' && (input.model_hint !== undefined || input.isolation === 'worktree')) return 'Children must be read-only and inherit the current provider/model in this fixture.';
   if (name === 'undo' && readOnly) return 'Read-only children cannot undo changes.';
   if (name !== 'bash') return ['read', 'glob', 'grep'].includes(name) || CONTROL_TOOLS.has(name) ? null : 'This tool is outside the isolated natural fixture scope.';
   if (input.run_in_background === true) return 'Use foreground execution so this fixture can retain the actual test receipt.';
   if (publicReproducer) return readOnly ? 'Read-only children cannot run repository code.' : null;
-  const parsed = parseBashCommand(String(input.command));
-  if (parsed.unparseable || parsed.statements.length !== 1 || parsed.statements[0]?.stages.length !== 1) return DENIAL;
+  if (!parsed || parsed.unparseable) return DENIAL;
+  if (composed) return COMPOSITION_DENIAL;
+  if (parsed.statements.length !== 1 || parsed.statements[0]?.stages.length !== 1) return DENIAL;
   const stage = parsed.statements[0]?.stages[0];
   if (!stage || stage.redirections.length) return DENIAL;
   const [executable, operation, ...args] = stage.argv;

@@ -150,6 +150,17 @@ describe('agent transition detection', () => {
 });
 
 describe('throttle reminder text format', () => {
+  it('limits a late empty-plan reminder to remaining work without excusing unfinished verification', () => {
+    const text = buildTodoReminderText(createTodoStore(), 8);
+    expect(text).toContain('multiple execution steps remain');
+    expect(text).toContain('Do not create milestones for already completed work');
+    expect(text).toContain('one action remains, perform it directly');
+    expect(text).toContain('requested work and verification are complete, deliver the result directly');
+    expect(text).toContain('Missing or failed checks remain unfinished work');
+    expect(text).toContain('without an extra response solely for bookkeeping');
+    expect(text).not.toContain('If this task has ≥2 distinct execution steps');
+  });
+
   it('matches the design-doc literal for the standard case', () => {
     const store = makeSeededStore();
     const text = buildTodoReminderText(store);

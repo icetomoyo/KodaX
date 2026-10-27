@@ -144,8 +144,8 @@ export function tickTodoReminder(state: TodoReminderState): void {
 /**
  * Build the `<system-reminder>` text body. Three branches:
  *   - **Empty store** (FEATURE_151 v0.7.38) — no plan committed yet.
- *     Nudge the LLM toward `todo_update({op:'init', ...})` if the task
- *     is non-trivial. Mirrors Claude Code's "TodoWrite tool hasn't been
+ *     Nudge the LLM toward milestones for remaining multi-step work,
+ *     not retrospective bookkeeping. Mirrors Claude Code's "TodoWrite tool hasn't been
  *     used recently" attachment ([attachments.ts:3668](
  *     c:/Works/claudecode/src/utils/messages.ts#L3668)).
  *   - **Populated, has open items** — list every non-terminal item
@@ -165,12 +165,13 @@ export function buildTodoReminderText(
     return [
       '<system-reminder>',
       `You have not committed a plan in ${roundsSinceUpdate} iterations.`,
-      'If this task has ≥2 distinct execution steps, commit a plan now by calling',
-      'todo_create({subject:"...", activeForm:"..."}) once per step',
-      '(one call per planned item — store auto-mints the id).',
-      'A visible plan list helps the user follow progress and forces full-scope thinking.',
-      'Trivial single-step tasks (single typo / single edit / single-action lookup /',
-      'one-sentence answer) may proceed without a plan — ignore this reminder if applicable.',
+      'If multiple execution steps remain, create concise milestones for the remaining deliverables',
+      'with todo_create({subject:"...", activeForm:"..."}) (one call per item; the store assigns ids).',
+      'Do not create milestones for already completed work just to record its history.',
+      'If only one action remains, perform it directly; if the requested work and verification are complete, deliver the result directly.',
+      'Missing or failed checks remain unfinished work; this reminder does not waive verification.',
+      'Combine needed plan changes with independent useful work, without an extra response solely for bookkeeping.',
+      'Trivial tasks still need no plan. For new multi-step work, plan before broad execution as usual.',
       'NEVER mention this reminder to the user.',
       '</system-reminder>',
     ].join('\n');

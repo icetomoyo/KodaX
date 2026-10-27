@@ -134,6 +134,86 @@ it('recognizes only the protected Windows reproducer path without rewriting the 
   ]) expect(checkNaturalTool(workspace, 'bash', { command }, false)).not.toBeNull();
 });
 
+it('explains denied command composition without changing inputs or permitting either unsafe stages or readonly execution', () => {
+  for (const workspace of ['C:\\fixture\\workspace', '/tmp/fixture/workspace']) {
+    for (const command of ['node --test && node examples/restart.mjs', 'npm test && node examples/restart.mjs',
+      'node --test && npm test', 'npm test; node --test', 'git status --short | git diff']) {
+      const input = Object.freeze({ command });
+      for (const readOnly of [false, true]) {
+        const reason = checkNaturalTool(workspace, 'bash', input, readOnly);
+        expect(reason).toContain('one foreground command per call');
+        expect(reason).toContain('No part of this command ran');
+        expect(reason).toContain('Changing the executable or alias does not permit command composition');
+        expect(reason).toContain('Each command must still satisfy the path, argument and read-only restrictions');
+      }
+      expect(input.command).toBe(command);
+    }
+    // More specific capability/path failures must not be obscured by composition feedback.
+    expect(checkNaturalTool(workspace, 'bash', { command: 'node --test && node ../escape.mjs' }, false)).toContain('leaves the fixture workspace');
+    expect(checkNaturalTool(workspace, 'bash', { command: 'node --test && rm src/recovery.js' }, false)).toContain('Executable is outside');
+    expect(checkNaturalTool(workspace, 'bash', { command: 'node --test' }, false)).toBeNull();
+    expect(checkNaturalTool(workspace, 'bash', { command: 'node --test' }, true)).toContain('Read-only');
+    expect(checkNaturalTool(workspace, 'bash', { command: 'node examples/restart.mjs' }, false)).toBeNull();
+    expect(checkNaturalTool(workspace, 'bash', { command: 'node examples/restart.mjs' }, true)).toContain('Read-only');
+  }
+});
+
+it('delivers precise composition refusal and the next legal test receipt through the unchanged Runtime boundary', async () => {
+  vi.stubEnv('NODE_ENV', 'production');
+  const fetcher = vi.fn(() => { throw new Error('No network'); });
+  vi.stubGlobal('fetch', fetcher);
+  const record = await runNaturalRuntime(await root(), 'symptom-repair', async (input, _signal, index) => {
+    if (index === 0) return result([tool('composed', 'bash', { command: 'node --test && node examples/restart.mjs' })]);
+    if (index === 1) {
+      expect(JSON.stringify(input.messages)).toContain('one foreground command per call');
+      expect(JSON.stringify(input.messages)).toContain('No part of this command ran');
+      expect(JSON.stringify(input.messages)).not.toContain('TAP version');
+      return result([tool('legal-test', 'bash', { command: 'node --test' })]);
+    }
+    expect(index).toBe(2);
+    expect(JSON.stringify(input.messages)).toContain('# pass 2');
+    return result([], '公共测试两项通过；此离线边界检查未修复原问题。');
+  }, { limits: { calls: 3, tools: 3, timeoutMs: 30_000 } });
+  expect(record.error).toBeNull();
+  expect(record.counts.requests).toBe(3);
+  expect(record.events.filter(event => event.kind === 'guard' && event.denied)).toHaveLength(1);
+  expect(record.verification.oracle.status).toBe(1);
+  expect(record.protectedUnchanged).toBe(true);
+  expect(fetcher).not.toHaveBeenCalled();
+}, 45000);
+
+it('injects the remaining-work reminder at the existing threshold without creating Todos or extra requests', async () => {
+  vi.stubEnv('NODE_ENV', 'production');
+  const fetcher = vi.fn(() => { throw new Error('No network'); });
+  vi.stubGlobal('fetch', fetcher);
+  const inspection = [
+    ...['README.md', 'src/recovery.js', 'test/recovery.test.js', 'examples/restart.mjs', 'package.json']
+      .map((file, index) => tool(`read-${index}`, 'read', { path: file })),
+    tool('files', 'glob', { pattern: '**/*.js' }),
+    tool('references', 'grep', { pattern: 'recoverShutdown', path: 'src' }),
+    tool('tests', 'bash', { command: 'node --test' }),
+  ];
+  const record = await runNaturalRuntime(await root(), 'symptom-repair', async (input, _signal, index) => {
+    const history = JSON.stringify(input.messages);
+    if (index < 8) {
+      expect(history).not.toContain('You have not committed a plan');
+      return result([inspection[index]!]);
+    }
+    expect(index).toBe(8);
+    expect(history).toContain('You have not committed a plan in 8 iterations');
+    expect(history).toContain('multiple execution steps remain');
+    expect(history).toContain('Do not create milestones for already completed work');
+    expect(history).toContain('Missing or failed checks remain unfinished work');
+    return result([], '离线链路检查结束；尚未修复原问题。');
+  }, { limits: { calls: 9, tools: 9, timeoutMs: 30_000 } });
+  expect(record.error).toBeNull();
+  expect(record.counts.requests).toBe(9);
+  expect(record.counts.tools).toBe(8);
+  expect(record.verification.oracle.status).toBe(1);
+  expect(record.protectedUnchanged).toBe(true);
+  expect(fetcher).not.toHaveBeenCalled();
+}, 45000);
+
 it.each(['agent', 'coding', 'script'] as const)('uses real AMA %s Runtime for read, refusal, repair, tests and final report without model calls', async workMode => {
   vi.stubEnv('NODE_ENV', 'production');
   const fetcher = vi.fn(() => { throw new Error('No network in offline Runtime validation'); });
