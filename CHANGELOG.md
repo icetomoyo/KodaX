@@ -66,6 +66,11 @@ remains a manual maintainer action.
   construction, so a rejected server no longer leaks its data-dir lock handle;
   on Windows the leaked handle kept the data dir undeletable (`ENOTEMPTY`)
   for the life of the process.
+- Deliver observation handoff events to event-stream observers. Daemon
+  `session.observe` subscribers never read the snapshot, so events published
+  while the snapshot materialized were silently deduplicated away whenever the
+  snapshot's seq raced past them — a late `run.failed` could be lost forever.
+  Snapshot consumers keep the existing no-duplicates handoff contract.
 
 ---
 
