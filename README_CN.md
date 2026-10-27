@@ -314,7 +314,7 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 [v0.7.97-alpha.4 发布清单](docs/release.md#v0797-alpha4-release-preparation)。
 所有 v0.7.96 稳定与 v0.7.97-alpha.1/alpha.2/alpha.3 契约全部保留。
 
-**v0.7.97-alpha.10 开发预览**：Host 重启后可恢复检查点 Run 与任务树(全新作用域
+**v0.7.97-alpha.10 发布**：Host 重启后可恢复检查点 Run 与任务树(全新作用域
 授权);上下文容量恢复到达持久代边界;Kimi K3.1 供应商路由覆盖全部七档
 effort;AskUser 默认无限等待、支持显式跳过并返回带原因的 `unanswered` 结果。
 SDK 启动回调透传 Host 内部阶段；退出恢复将安全启动与历史清理未知事实分开。

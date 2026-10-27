@@ -795,7 +795,7 @@ starts, upgrades, or waits. See
 Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2/alpha.3 contract is
 retained.
 
-**v0.7.97-alpha.10 development preview:** Checkpointed Runs and task trees resume after
+**v0.7.97-alpha.10 release:** Checkpointed Runs and task trees resume after
 Host restart with fresh scoped authority on top of durable context-capacity
 recovery boundaries; Kimi K3.1 provider routes join the registry with all
 seven effort levels; AskUser questions wait indefinitely by default with

@@ -138,8 +138,8 @@ Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
 ## v0.7.97-alpha.10 release preparation
 
-Release state (2026-10-27): `v0.7.97-alpha.10` is development/release
-preparation, not a tagged or published release. It prepares the
+Release state: `v0.7.97-alpha.10` is the GitHub pre-release for the exact
+tagged commit — the tenth alpha of the v0.7.97 line, shipping the
 Host-restart Run/task-tree resume, the durable context-capacity recovery
 boundaries, Kimi K3.1 provider routes, and the answer-aware AskUser
 policies. The tag-triggered Release workflow runs the reusable CI

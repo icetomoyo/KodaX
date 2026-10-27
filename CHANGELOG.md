@@ -8,7 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [0.7.97-alpha.10] - Unreleased
+## [0.7.97-alpha.10] - 2026-10-27
 
 Tenth alpha of the v0.7.97 line: live context-capacity recovery reaches
 durable generation boundaries — checkpointed Runs and task trees resume
@@ -62,6 +62,10 @@ remains a manual maintainer action.
   worktree cleanup. Require a worktree gitfile and successful Git-owned removal;
   isolate the cleanup regression from the shared system temporary directory.
 - AskUser questions wait indefinitely by default (timeout 0) and support explicit skip; skip and Host timeout return an `unanswered` result with its reason instead of cancelling the Run, defaults are never submitted automatically, and only Stop interrupts. Permission prompts keep their five-minute default; both accept 0 to disable their timer. MCP reverse elicitation and the client plane follow the same policy.
+- Close the A2A server task store when agent-card validation fails during
+  construction, so a rejected server no longer leaks its data-dir lock handle;
+  on Windows the leaked handle kept the data dir undeletable (`ENOTEMPTY`)
+  for the life of the process.
 
 ---
 
