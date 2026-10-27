@@ -25,6 +25,7 @@ remains a manual maintainer action.
 
 ### Fixed
 
+- Repair bundled Skill shell declarations against the full-command glob contract while retaining Host authorization; make Git/TDD discoverable, separate tests-only and Skill creation/packaging/evaluation flows, and align visual preparation and unverified fallbacks. Skill Creator helpers now resolve public Skill SDK exports in installed tarballs and create fresh description-loop workspaces; semantic-screening output no longer implies observed model selection.
 - Classify trusted Skill loading and policy restoration failures as local execution failures with stable codes and path-safe Skill messages; preserve the facts through Runtime persistence, daemon IPC and Product Client outcomes without weakening trusted reloads or changing Provider error classification.
 - Resume checkpointed Runs and task trees after Host restart: original history, tool receipts, pending input intent and iteration budgets are preserved across independent child and Host recovery; scoped authority rebinds freshly, suspended worktrees stay protected, and bounded verbatim constraint memory retains oversized requests (Issue 322 follow-up).
 - Converge client exit recovery without rewriting unknown outcomes: startup readiness is separated from historical client cleanup acknowledgements, exact Host/process/Job shutdown evidence is reverified, referenced outcomes are retained with late cleanup results preserved, and old exit requests can no longer fence or stop replacement Hosts.

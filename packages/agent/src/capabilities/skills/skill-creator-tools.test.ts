@@ -272,6 +272,7 @@ Follow the workflow.
     expect(report.summary.pass_rate).toBe(1);
     expect(report.summary.precision).toBe(1);
     expect(report.summary.recall).toBe(1);
+    expect(report.meta).toMatchObject({ evaluation_kind: 'description_semantic_screening', model_catalog_visible: true });
   });
 
   it('improves descriptions without requiring a pre-existing history file', async () => {
@@ -324,10 +325,10 @@ Follow the workflow.
 
   it('runs the description optimization loop and can write back the best description', async () => {
     const skillDir = await createTempDir('kodax-loop-skill-');
-    const workspace = await createTempDir('kodax-loop-workspace-');
+    const workspace = join(await createTempDir('kodax-loop-workspace-'), 'new-iteration');
     await createExampleSkill(skillDir, 'Use this skill when users ask for notes.');
     await writeFile(
-      join(workspace, 'evals.json'),
+      join(skillDir, 'evals.json'),
       JSON.stringify({
         evals: [
           { query: '帮我写 release notes', should_trigger: true },
@@ -342,7 +343,7 @@ Follow the workflow.
     const report = await runDescriptionLoop(
       {
         skillPath: skillDir,
-        evalsPath: join(workspace, 'evals.json'),
+        evalsPath: join(skillDir, 'evals.json'),
         workspaceDir: workspace,
         maxIterations: 2,
         holdout: 0,
@@ -361,6 +362,8 @@ Follow the workflow.
             meta: {
               runs_per_query: 1,
               trigger_threshold: 0.5,
+              evaluation_kind: 'description_semantic_screening',
+              model_catalog_visible: true,
               note: 'test',
             },
           };

@@ -2442,10 +2442,25 @@ kodax "please use /skill:code-review src/"
 
 Set `disable-model-invocation: true` for a Skill that must only be loaded after an explicit slash invocation. This keeps it out of natural-language model discovery without disabling `/<name>` or `/skill:<name>`.
 
-Built-in skills include:
-- **code-review** - Code review and quality analysis
-- **tdd** - Test-driven development workflow
-- **git-workflow** - Git commit and workflow automation
+The five core built-in Skills are model-discoverable:
+
+- **code-review** — Review changes without editing; includes read-only Git inspection.
+- **tdd** — Regression-first fixes or test-first work; tests-only requests may pass on the first run and do not authorize production edits.
+- **git-workflow** — Perform requested Git operations; explaining Git alone does not invoke the workflow.
+- **skill-creator** — Create, change, validate, package or evaluate reusable Skills; packaging does not install into the user's catalog.
+- **visual-review** — Review actual visual evidence and state unchecked scope honestly.
+
+Skill shell declarations match the entire command, for example `Bash(git *, npm *)`,
+and retain Host permission and sandbox checks. The optional `artifact-review`
+Skill is registered with the [Artifact adapter](docs/ARTIFACT_SDK.md); it documents
+that adapter's supported formats and parameters. Both visual Skills may use the
+existing managed preparation flow within the task's authorization; denied or
+missing capabilities leave the affected scope unverified.
+
+Skill Creator helpers use the public SDK, with a separately configured Provider,
+model and cwd. `run-trigger-eval.js` performs single-description semantic screening;
+actual triggering requires observed `skill` calls with the complete visible catalog.
+See its [evaluation reference](packages/agent/src/capabilities/skills/builtin/skill-creator/references/evaluation.md).
 
 Skills are stored in `~/.kodax/skills/` and can be extended with custom skills.
 F263 background learning is Memory-first: a single correction does not create

@@ -2351,6 +2351,24 @@ every child step and can overwhelm users.
 
 ### Result review and historical sessions
 
+The five core Skills (`git-workflow`, `tdd`, `code-review`, `skill-creator`,
+`visual-review`) are visible to model discovery. Their `allowed-tools` shell
+patterns match full commands, for example `Bash(git *, npm *)`; these restrictions
+do not grant Host permission or bypass the sandbox. Code Review permits read-only
+Git inspection; TDD's tests-only branch allows a first-pass success without
+changing correct production code. Skill Creator packages into an archive and
+uses an explicit isolated destination when testing installation.
+
+Skill Creator's Node helpers load public SDK exports. Independent execution needs
+its own authorized Provider, model and cwd; it does not inherit Space bindings.
+`run-trigger-eval.js` labels single-description semantic screening explicitly.
+Actual model selection requires the visible full catalog and observed `skill`
+tool calls. See [the evaluation reference](../../packages/agent/src/capabilities/skills/builtin/skill-creator/references/evaluation.md).
+
+The optional `artifact-review` Skill describes registered Artifact tools and
+their format limits. Visual preparation follows the existing managed permission
+path; unavailable or denied capabilities keep the affected checks unverified.
+
 The main agent verifies each requested requirement with actual tool and rendered evidence before delivery. The built-in `visual-review` skill covers static images/charts, paginated documents/slides/sheets, interactive web/app/terminal/canvas/3D surfaces, and temporal video/animation results. Missing capabilities and unchecked scope are reported as unverified. An ordinary read-only child reviewer may contribute findings within the same Run; the main agent owns repairs and the final answer.
 
 New Runs do not emit `onSidecarMessage` or `sidecar.message`. Existing persisted sidecar items and synthetic messages remain readable, without replaying execution. Run completion, Goal status, and review findings retain separate meanings.

@@ -1,6 +1,6 @@
 ---
 name: visual-review
-description: Verify visible results when creating, changing or reviewing images, diagrams, charts, documents, spreadsheets, websites, application or terminal interfaces, canvas/3D scenes, videos or animations. Use actual rendered evidence and relevant states; source inspection alone does not establish visual correctness. Not needed for work without a visual acceptance requirement.
+description: 创建、修改或审查视觉结果时使用；包括检查网页/应用界面的布局与可读性、图像/图表、文档/幻灯片/表格、终端/Canvas/3D，以及视频/GIF/动画的字幕、转场和播放效果。用户要求截图、渲染或逐帧证据时也适用。提供通用视觉取证方法；artifact_* 工具参数由 artifact-review 补充。无视觉验收要求的代码、计算或文字任务不使用。
 user-invocable: true
 argument-hint: "[artifact, surface, or requested visual result]"
 compatibility: Uses the current session's image input and available rendering, capture or frame extraction tools. Missing capabilities are reported explicitly.
@@ -17,8 +17,12 @@ Respect review-only requests: report findings without modifying the subject.
 Identify the current result and the visual requirements to check. Discover
 available session tools and relevant format skills before choosing a renderer
 or capture method. Use the existing permission, sandbox, working-directory,
-tool and provider boundaries. Do not enable broader access, install software,
-or call an external model just to make a check appear successful.
+tool and provider boundaries. Use available managed runtime preparation when
+covered by the task's existing authorization and normal Host permissions.
+If preparation is denied or unavailable, mark the affected scope unverified
+and continue useful checks. Installing software outside that managed mechanism
+requires its own authorization; do not expand access or call an external model
+just to make a check appear successful.
 
 - **Static** images, icons, posters, diagrams, maps, plots and charts: inspect
   the actual final image. Render SVG or drawing code to pixels; use a full

@@ -13,6 +13,14 @@ outside core startup.
 | `@kodax-ai/kodax/artifacts/runtime` | Explicitly authorized standalone Node file/browser work |
 | `@kodax-ai/kodax/artifacts/kodax` | Register managed tools in the existing trusted Host |
 
+The optional `artifact-review` Skill is registered with this adapter; it describes
+the actual `artifact_*` parameters, supported formats and evidence limits. The
+core `visual-review` Skill supplies the general visual evidence method, including
+web and temporal work outside this adapter. Both may use managed preparation
+within the task's existing authorization and ordinary Host permissions. Denied
+or unavailable preparation leaves affected checks unverified; missing tools do
+not authorize registering another adapter or installing outside that mechanism.
+
 ## Delivery status and installation (2026-10-18)
 
 The unified operations were implemented in `27d08788` and included in the

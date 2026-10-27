@@ -33,6 +33,14 @@ import YAML from 'yaml';
 
 let _cachedSdk = null;
 
+/** Published single-package entry, or the standalone Agent's public Skill API. */
+export async function loadKodaXSkills() {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const bundled = path.resolve(here, '../../../sdk-skills.js');
+  if (existsSync(bundled)) return import(pathToFileURL(bundled).href);
+  return import('@kodax-ai/agent/capabilities/skills');
+}
+
 export function setKodaXSDKForSkillCreator(sdk) {
   _cachedSdk = sdk;
 }

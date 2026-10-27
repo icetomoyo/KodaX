@@ -149,7 +149,9 @@ export async function runTriggerEval(options, runner = defaultRunPrompt) {
       model: options.model ?? null,
       runs_per_query: runsPerQuery,
       trigger_threshold: threshold,
-      note: 'This is a KodaX-native description eval, not a Claude Code tool-trace replay.',
+      evaluation_kind: 'description_semantic_screening',
+      model_catalog_visible: skill.frontmatter['disable-model-invocation'] !== true,
+      note: 'Single-description semantic screening; not observed Skill tool selection from a competing catalog.',
     },
   };
 }

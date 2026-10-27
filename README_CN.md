@@ -1281,6 +1281,19 @@ KodaX 有 50+ 个内置工具，按类别分组如下（实际暴露给 LLM 是�
 | `ask_user_question` | 向用户发起单选 / 多选 / 自由文本提问 |
 | `exit_plan_mode` | 仅在当前 REPL/宿主提供审批回调时提交最终方案 |
 
+## 内置 Skills
+
+五个核心 Skill（git-workflow、tdd、code-review、skill-creator、visual-review）
+默认开放自然语言发现；概念解释与无关任务不应触发工作流。TDD 的“仅补测试”
+分支允许首次通过，不扩大生产代码改动；Skill Creator 按创建、打包、评测分支
+执行，分享包不默认安装到个人目录。`Bash(git *, npm *)` 匹配完整命令，仍保留
+Host 授权与沙箱。
+
+描述语义筛查不等于观察到真实 Skill 调用。独立 SDK 评测需明确 Provider、model、
+cwd 和预算，见[评测方法](packages/agent/src/capabilities/skills/builtin/skill-creator/references/evaluation.md)。
+可选 artifact-review 聚焦已注册 Artifact 工具；与 visual-review 一样，受管准备
+被拒绝或能力缺失时，受影响范围保留为未验证。
+
 ## Repo Intelligence（内置 full/light 引擎）
 
 KodaX 内置 repo intelligence（`repo_overview` / `module_context` / `symbol_context` / `process_context` / `impact_estimate` 等），让 coding agent 不靠零散 grep/glob 就能理解大型仓库。
