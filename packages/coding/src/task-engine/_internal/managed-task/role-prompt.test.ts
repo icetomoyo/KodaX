@@ -43,6 +43,37 @@ function callWorker(ctx: ManagedRolePromptContext): string {
 }
 
 describe('createRolePrompt — runtime identity in workspace section', () => {
+  it('presents explicit verification evidence once without losing checks or policy on resume', () => {
+    const decision = buildFallbackRoutingDecision(userQuestion);
+    const verification = {
+      summary: 'Verify the requested repair.',
+      requiredEvidence: ['Capture the failing assertion before repair.', 'Record the final test result.'],
+      requiredChecks: ['Run the targeted regression suite.'],
+      instructions: ['Report checks that could not run.'],
+    };
+    const before = structuredClone(verification);
+    const render = (mode: 'combined' | 'stable' | 'context') => createRolePrompt(
+      'worker', 'Continue from the saved milestone.', decision,
+      verification, { summary: 'Only edit the authorized fixture.' },
+      'root/worker', { checkpoint: 'saved' }, buildContext(), undefined, false, mode,
+    );
+    for (const mode of ['combined', 'context'] as const) {
+      const rendered = render(mode);
+      expect(rendered.match(/Required evidence:/g)).toHaveLength(1);
+      for (const evidence of verification.requiredEvidence) {
+        expect(rendered.split(evidence)).toHaveLength(2);
+      }
+      expect(rendered).toContain('Verification contract:\nSummary: Verify the requested repair.');
+      expect(rendered).toContain('Required checks:\n- Run the targeted regression suite.');
+      expect(rendered).toContain('Instructions:\n- Report checks that could not run.');
+      expect(rendered).toContain('Only edit the authorized fixture.');
+      expect(rendered).toContain('Current round instructions:\nContinue from the saved milestone.');
+      expect(rendered).toContain('"checkpoint": "saved"');
+    }
+    expect(render('stable')).not.toContain('Capture the failing assertion before repair.');
+    expect(verification).toEqual(before);
+  });
+
   it('presents each routing fact once while retaining assurance and the current task on resume', () => {
     const decision = buildFallbackRoutingDecision(userQuestion);
     for (const mode of ['combined', 'context'] as const) {

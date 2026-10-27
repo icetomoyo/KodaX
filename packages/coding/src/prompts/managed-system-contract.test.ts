@@ -1,0 +1,180 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import type { Agent } from '@kodax-ai/agent';
+import type { KodaXToolDefinition } from '@kodax-ai/llm';
+import { createAgentActorController } from '../../../agent/src/actors/index.js';
+import { buildRunnerAgentChain } from '../task-engine/_internal/managed-task/agent-chain.js';
+import { buildRunnerLlmAdapter } from '../task-engine/_internal/managed-task/llm-adapter.js';
+import { buildFallbackRoutingDecision } from '../reasoning.js';
+import { markOrdinaryRootToolContract } from '../tools/managed-tool-contract.js';
+import { inheritOrdinaryRootToolContract, projectManagedToolContracts } from '../tools/managed-tool-contract.js';
+import { projectManagedSystemContract } from './managed-system-contract.js';
+import { createScriptPilot } from '../agent-runtime/script/pilot.js';
+import { withScriptModelTool } from '../agent-runtime/script/model.js';
+import { buildRuntimeSessionState } from '../agent-runtime/runtime-session-state.js';
+import { buildMemoryRulesSection } from './memory-rules.js';
+import { SELF_KNOWLEDGE_ROUTING_RULE } from '../self-knowledge/routing-rule.js';
+import { buildWorkerStableInstructions } from '../agents/worker-role-prompt.js';
+import { createHash } from 'node:crypto';
+import { KodaXBaseProvider, registerModelProvider, clearRuntimeModelProviders,
+  type KodaXMessage, type KodaXStreamResult } from '@kodax-ai/llm';
+import type { ContextTokenSnapshotRef } from '../task-engine/_internal/managed-task/compaction.js';
+import { countTokens, estimateTokens } from '../tokenizer.js';
+import { estimateToolSchemaTokens } from '../agent-runtime/context-budget.js';
+import { reclaimReservedResponseTokens } from '@kodax-ai/agent';
+import { createUserInputDegradationCache } from '../capacity-recovery.js';
+
+const task = 'Review the relevant modules and make the requested change; preserve existing work.';
+async function fixture() {
+  const controller = await createAgentActorController({ executor: { execute: async () => ({ output: 'unused' }) } });
+  const context = { backups: new Map(), actorControl: controller.bind('/root'),
+    actorTurnRef: { actorPath: '/root', turnId: 'system-contract' } };
+  const worker = buildRunnerAgentChain(context, undefined, undefined, undefined,
+    { prompt: task, decision: buildFallbackRoutingDecision(task) }).worker;
+  return { worker, controller, context };
+}
+const instructions = (agent: Agent) => typeof agent.instructions === 'function' ? agent.instructions(undefined) : agent.instructions;
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); clearRuntimeModelProviders(); });
+
+it('assembles the compact root contract without changing execution tools, editing constraints or independent-read batching', async () => {
+  const { worker, controller } = await fixture();
+  const original = instructions(worker);
+  const before = JSON.stringify(worker.tools);
+  markOrdinaryRootToolContract(worker);
+  const requests: { system: string; tools: readonly KodaXToolDefinition[] }[] = [];
+  const adapter = buildRunnerLlmAdapter({}, async (_messages, tools, system) => {
+    requests.push({ system, tools });
+    return { textBlocks: [{ text: 'captured' }], toolBlocks: [] };
+  });
+  try {
+    for (const content of [task, 'Continue from the existing progress.']) {
+      await adapter([{ role: 'system', content: original }, { role: 'user', content }], worker);
+    }
+    expect(requests).toHaveLength(2);
+    expect(requests[0]!.system).toContain('TRUST AND SCOPE');
+    expect(requests[1]!.system).toBe(requests[0]!.system);
+    expect(requests[0]!.system.length).toBeLessThan(original.length - 7000);
+    const mutation = original.match(/MUTATION DISCIPLINE:[\s\S]*?(?=\n\n)/)![0];
+    expect(requests[0]!.system).toContain(mutation);
+    for (const rule of [
+      'When multiple read-only tool calls are independent, emit them in the same response so parallel mode can run them together.',
+      'Only serialize tool calls when a later call depends on an earlier result.',
+      'Keep parallel batches focused: prefer a few narrow grep/read/diff calls over many tiny sequential probes.',
+    ]) expect(requests[0]!.system).toContain(rule);
+    expect(instructions(worker)).toBe(original);
+    expect(JSON.stringify(worker.tools)).toBe(before);
+    expect(requests[1]!.tools).toEqual(requests[0]!.tools);
+  } finally { await controller.shutdown('Offline contract capture finished'); }
+});
+
+it('preserves SDK, host and incomplete or changed tool contracts, including trimmed Script disclosure', async () => {
+  const { worker, controller, context } = await fixture();
+  try {
+    const original = instructions(worker);
+    expect(projectManagedSystemContract(worker, worker.tools!, original)).toBe(original);
+    markOrdinaryRootToolContract(worker);
+    const tools = projectManagedToolContracts(worker, worker.tools!);
+    expect(projectManagedSystemContract(worker, tools, original)).not.toBe(original);
+    for (const host of [{ currentAgentId: 'child' }, { agentProfile: { id: 'reviewer' } },
+      { toolVisibilityPolicy: () => true }, { systemPromptOverride: 'Host-specific instructions' }]) {
+      expect(projectManagedSystemContract(worker, tools, original, host)).toBe(original);
+    }
+    for (const changed of [
+      tools.filter(tool => tool.name !== 'todo_update'),
+      tools.map(tool => tool.name === 'edit' ? { ...tool, description: 'trimmed' } : tool),
+      tools.map(tool => tool.name === 'read' ? { ...tool, input_schema: { type: 'object' as const, properties: {} } } : tool),
+    ]) expect(projectManagedSystemContract(worker, changed, original)).toBe(original);
+    const branded = original.replace('MUTATION DISCIPLINE:', 'MUTATION DISCIPLINE: Host restriction.');
+    expect(projectManagedSystemContract(worker, tools, branded)).toBe(branded);
+    const activeTools = worker.tools!.map(tool => tool.name);
+    const leaves = createScriptPilot({ ctx: context, events: {}, activeToolNames: activeTools,
+      runtimeSessionState: buildRuntimeSessionState({ activeTools, modelSelection: {} }) },
+    { totalBudget: 4, spentBudget: 0, currentHarness: 'H0_DIRECT' }, worker).tools;
+    const script = withScriptModelTool(worker, context, leaves, async () => { throw new Error('Never execute'); });
+    inheritOrdinaryRootToolContract(worker, script);
+    const adapter = buildRunnerLlmAdapter({}, async (_messages, sent, system) => {
+      expect(system).toContain('TRUST AND SCOPE');
+      expect(sent.some(tool => tool.name === 'read')).toBe(false);
+      expect(sent.some(tool => tool.name === 'script_exec')).toBe(true);
+      expect(projectManagedSystemContract(script, sent.filter(tool => tool.name !== 'script_exec'), original)).toBe(original);
+      expect(projectManagedSystemContract(script, sent.map(tool => tool.name === 'script_exec'
+        ? { ...tool, description: 'trimmed Script instructions' } : tool), original)).toBe(original);
+      return { textBlocks: [{ text: 'captured' }], toolBlocks: [] };
+    });
+    await adapter([{ role: 'system', content: original }, { role: 'user', content: task }], script);
+  } finally { await controller.shutdown('Offline boundary capture finished'); }
+});
+
+it('retains Memory and manual rules whenever their own complete operation contracts are unavailable', async () => {
+  const { worker, controller } = await fixture();
+  try {
+    markOrdinaryRootToolContract(worker);
+    const tools = projectManagedToolContracts(worker, worker.tools!);
+    const memory = buildMemoryRulesSection('.');
+    const original = `${instructions(worker)}\n\n${memory}\n\n${SELF_KNOWLEDGE_ROUTING_RULE}`;
+    const compact = projectManagedSystemContract(worker, tools, original);
+    expect(compact).toContain('Only remembered/updated/already_known/forgotten receipts');
+    expect(compact).toContain('version-bound first source');
+    expect(compact).not.toContain(memory);
+    const partial = projectManagedSystemContract(worker, tools.filter(tool => !['memory_intent', 'kodax_manual'].includes(tool.name)), original);
+    expect(partial).toContain('TRUST AND SCOPE');
+    expect(partial).toContain(memory);
+    expect(partial).toContain(SELF_KNOWLEDGE_ROUTING_RULE);
+    const custom = original.replace(memory, memory + '\nHost Memory limit');
+    expect(projectManagedSystemContract(worker, tools, custom)).toContain('Host Memory limit');
+  } finally { await controller.shutdown('Offline operation coverage finished'); }
+});
+
+it('requires a fresh rule-retention audit when canonical Worker, Memory or manual rules change', () => {
+  expect(createHash('sha256').update(buildMemoryRulesSection('.')).digest('hex')).toMatchInlineSnapshot(`"01871d37b8549217ed5c952d4397955e6cbc9cdba220e0eef892e019fdacd695"`);
+  expect(createHash('sha256').update(SELF_KNOWLEDGE_ROUTING_RULE).digest('hex')).toMatchInlineSnapshot(`"04524b9249e1671e767df654adf4aaa4c43afd569a1b8d3420866d0f817594c5"`);
+  // Audit checkpoint, never used to enable runtime projection or accept custom prompts.
+  expect(createHash('sha256').update(buildWorkerStableInstructions()).digest('hex')).toMatchInlineSnapshot(`"746936e9a5f8da1be415249d629de5c2ed21944638fc574874765f06d84f73ea"`);
+});
+
+it.each([128_000, 12_000])('keeps fitted contracts, continuation and measurement aligned at a %i token window', async window => {
+  const { worker, controller } = await fixture();
+  markOrdinaryRootToolContract(worker);
+  const original = instructions(worker);
+  const requests: { system: string; tools: KodaXToolDefinition[]; messages: KodaXMessage[] }[] = [];
+  class OfflineProvider extends KodaXBaseProvider {
+    readonly name = 'managed-contract-offline';
+    readonly supportsThinking = false;
+    protected readonly config = { apiKeyEnv: 'KODAX_CONTRACT_OFFLINE_KEY', model: 'fixture', supportsThinking: false,
+      reasoningCapability: 'prompt-only' as const, maxOutputTokens: 1024 };
+    async stream(messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string): Promise<KodaXStreamResult> {
+      requests.push({ messages: structuredClone(messages), tools: structuredClone(tools), system });
+      if (requests.length > 3) throw new Error('Unexpected extra provider request');
+      return { textBlocks: [{ type: 'text', text: requests.length < 3 ? 'partial' : 'finished' }],
+        toolBlocks: [], thinkingBlocks: [], stopReason: requests.length < 3 ? 'max_tokens' : 'end_turn' };
+    }
+  }
+  const provider = new OfflineProvider();
+  registerModelProvider(provider.name, () => provider);
+  vi.stubEnv('KODAX_CONTRACT_OFFLINE_KEY', 'offline-fixture');
+  vi.stubGlobal('fetch', () => { throw new Error('No network in assembly verification'); });
+  const snapshot: ContextTokenSnapshotRef = { current: undefined, contextWindow: window };
+  const adapter = buildRunnerLlmAdapter({ provider: provider.name }, undefined, undefined, undefined, snapshot,
+    undefined, undefined, undefined, undefined, undefined, undefined, createUserInputDegradationCache());
+  const transcript: KodaXMessage[] = [{ role: 'system', content: original }, { role: 'user', content: task }];
+  try {
+    await adapter(transcript, worker);
+    expect(requests).toHaveLength(3); // Existing escalation + continuation, never a new projection round.
+    expect(new Set(requests.map(request => request.system)).size).toBe(1);
+    expect(requests.every(request => JSON.stringify(request.tools) === JSON.stringify(requests[0]!.tools))).toBe(true);
+    const first = requests[0]!;
+    if (window === 128_000) expect(first.system).toContain('TRUST AND SCOPE');
+    else {
+      expect(first.system).toBe(original);
+      expect(first.tools.some(tool => tool.name === 'tool_search' && tool.description.includes('Context capacity recovery'))).toBe(true);
+    }
+    const reserve = provider.getEffectiveMaxOutputTokens();
+    const expected = estimateTokens(first.messages) + countTokens(first.system)
+      + first.tools.reduce((total, tool) => total + estimateToolSchemaTokens(tool), 0)
+      + reclaimReservedResponseTokens({ contextWindow: window, reservedResponseTokens: reserve,
+        currentTokens: estimateTokens(first.messages) });
+    // Clear the later response's usage snapshot: compare this exact initial wire envelope.
+    snapshot.current = undefined;
+    expect(await snapshot.measureRequest!(transcript)).toBe(expected);
+    expect(transcript[0]!.content).toBe(original);
+  } finally { await controller.shutdown('Offline retry capture finished'); }
+});

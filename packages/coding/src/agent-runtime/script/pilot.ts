@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import type { RunnerToolObserver } from '@kodax-ai/agent';
+import { isDeepStrictEqual } from 'node:util';
+import type { Agent, RunnerToolObserver } from '@kodax-ai/agent';
 import type { KodaXToolUseBlock } from '@kodax-ai/llm';
 import type { KodaXManagedWorkBudget } from '../../types.js';
 import { getRegisteredToolDefinition, getToolDefinition } from '../../tools/index.js';
 import { isToolDiscoverable } from '../../tools/tool-search.js';
 import { projectModelToolDefinition } from '../../tools/model-tool-definition.js';
+import { canProjectManagedToolContracts, projectManagedToolContract } from '../../tools/managed-tool-contract.js';
+import { managedShellDescription } from '../../tools/managed-tool-text.js';
 import { emitActiveExtensionEvent } from '../../extensions/runtime.js';
 import { incrementManagedBudgetUsage } from '../../task-engine/_internal/managed-task/budget.js';
 import { recordMutationForTool } from '../../task-engine/_internal/managed-task/tool-wrappers.js';
@@ -20,7 +23,7 @@ type PilotDispatch = Omit<RunToolDispatchInput, 'toolBlocks' | 'abortSignal'> & 
 /** Internal Script qualification probe. Not a public work mode or an alternative AMA executor.
  * The caller supplies raw host events, not a second budget-charging wrapper.
  */
-export function createScriptPilot(dispatch: PilotDispatch, budget: KodaXManagedWorkBudget) {
+export function createScriptPilot(dispatch: PilotDispatch, budget: KodaXManagedWorkBudget, ordinaryRoot?: Agent) {
   const registrations = new Map(['read', 'grep', 'glob', 'edit', 'write', 'insert_after_anchor', 'bash', 'changed_scope', 'changed_diff',
     'repo_overview', 'semantic_lookup', 'cyclic_dependencies', 'relationship_scan', 'module_context',
     'symbol_context', 'process_context', 'impact_estimate',
@@ -32,10 +35,15 @@ export function createScriptPilot(dispatch: PilotDispatch, budget: KodaXManagedW
       && dispatch.activeToolNames?.includes(name) && isToolDiscoverable(name, dispatch.ctx)
       ? [[name, registration] as const] : [];
   }));
+  const shareContracts = ordinaryRoot !== undefined && canProjectManagedToolContracts(ordinaryRoot, dispatch.ctx);
   const tools = [...registrations].map(([name, registration]) => {
-    const tool = projectModelToolDefinition(getToolDefinition(name)!, registration.source);
+    const original = projectModelToolDefinition(getToolDefinition(name)!, registration.source);
+    const rootTool = ordinaryRoot?.tools?.find(tool => tool.name === name);
+    const tool = shareContracts && rootTool?.description === original.description
+      && isDeepStrictEqual(rootTool.input_schema, original.input_schema) ? projectManagedToolContract(original) : original;
     if (name !== 'bash') return tool;
-    return { ...tool, description: `${tool.description} This Script pilot supports foreground commands only.`,
+    return { ...tool, description: tool !== original ? managedShellDescription('foreground')
+      : `${tool.description} This Script pilot supports foreground commands only.`,
       input_schema: { ...tool.input_schema, properties: { ...tool.input_schema.properties,
         run_in_background: { type: 'boolean', const: false, description: 'Must be false in this Script pilot.' } } } };
   });

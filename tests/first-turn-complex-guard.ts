@@ -96,7 +96,8 @@ export function checkComplexTool(workspace: string, tool: string, input: Readonl
       // Product read-only permissions still apply; the evaluator must not preempt them.
       // A recoverable refusal must not hide a later escape or unknown executable.
       if (executable === 'node' ? args[1] !== '--test' : args[1] !== 'test') deniedTestCommand = true;
-    } else if (executable === 'tail' && args.length === 3 && args[1] === '-n' && /^\d{1,4}$/.test(args[2]!)) {
+    } else if (executable === 'tail' && ((args.length === 3 && args[1] === '-n' && /^\d{1,4}$/.test(args[2]!))
+      || (args.length === 2 && /^-\d{1,4}$/.test(args[1]!)))) {
       // Still block the whole command; never execute or rewrite the pipeline.
       // Inspect remaining stages so this recoverable error cannot mask an escape.
       deniedOutputFilter = true;

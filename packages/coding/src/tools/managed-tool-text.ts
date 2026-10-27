@@ -5,10 +5,17 @@ export interface ManagedToolText {
   annotations?: Readonly<Record<string, string | null>>;
 }
 
+/** Shared shell semantics, with the invocation boundary stated before serialization. */
+export function managedShellDescription(execution: 'native' | 'foreground'): string {
+  return 'Shell: tests/build/lint, packages, Git/processes, queries without dedicated tools, computed/template multi-file generation. Searches: grep/glob; known file content: write/edit, not shell redirection/wrappers. '
+    + (execution === 'native' ? 'Long commands: run_in_background. ' : 'Foreground commands only; use native bash for background commands. ')
+    + 'Full output captured; only next-request capacity overflow yields recoverable artifact preview.';
+}
+
 export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
   agent_output: { description: 'Read bounded output/activity and legacy/structured artifact references for a known controlled Actor/Turn. Tree: list_agents; waiting: wait_agent. Never poll completion here.',
     annotations: { 'properties.target': 'Canonical controlled path or direct-child name.', 'properties.turn_id': 'Exact turn; default latest.' } },
-  bash: { description: 'Shell: tests/build/lint, packages, Git/processes, queries without dedicated tools, computed/template multi-file generation. Searches: grep/glob; known file content: write/edit, not shell redirection/wrappers. Long commands: run_in_background. Full output captured; only next-request capacity overflow yields recoverable artifact preview.',
+  bash: { description: managedShellDescription('native'),
     annotations: { 'properties.command': null, 'properties.description': 'Concise command purpose.', 'properties.run_in_background': 'Return immediately with output path; read it later.', 'properties.timeout': 'Seconds.' } },
   create_goal: { description: 'Create only on explicit user/system/developer request, never infer from ordinary tasks. token_budget only if explicitly requested. Fails if a goal exists; update_goal changes status only.',
     annotations: { 'properties.objective': 'Concrete target end-state across turns.', 'properties.token_budget': 'Positive integer total budget; otherwise omit.' } },
@@ -64,6 +71,7 @@ export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
   skill: { description: 'Invoke a discovered matching Skill before responding, per Available Skills blocking requirement. Returns expanded/resolved instructions for next turn. Load via skill, never read SKILL.md. Optional free-form args forwarded for template substitution (most ignore it).',
     annotations: { 'properties.skill': 'Skill name; leading slash accepted.', 'properties.args': null } },
   spawn_agent: {
+    description: 'Start a named direct-child Agent; returns its canonical path. Runtime atomically enforces shared session concurrency/work budgets. read_only:false retains the parent ceiling; shared edits are already visible, never reapply them. Worktree requires an explicit merge-back strategy.',
     annotations: { 'properties.task_name': 'Stable direct-child name.', 'properties.objective': 'Bounded goal, constraints, evidence and output shape.', 'properties.scope': 'Bounded scope hint.',
       'properties.read_only': 'Default true; false retains parent permission ceiling.', 'properties.isolation': 'Default shared: edits are visible in the root workspace; do not reapply them. Worktree needs an explicit merge-back strategy.', 'properties.constraints': null,
       'properties.agent_id': 'Matching specialist canonical ID.', 'properties.evidence_refs': 'file:/diff:/finding:/agent-turn:<canonical-path>#turn=<id>; legacy agent:<path> means latest. Actor output must be terminal/visible.',
@@ -72,12 +80,15 @@ export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
       'properties.effort': 'off/low/medium/high/xhigh/max; omitted/auto inherits. agent_id locks specialist effort; conflicts/unsupported values rejected.',
       'properties.quality_strategy': 'Telemetry only: {schemaVersion:1,stageId,pattern,role,laneRelation?,targetEvidenceRefs?}; invalid ignored, never admission control. Actor refs require exact agent-turn.' } },
   todo_create: {
+    description: 'Add one pending semantic milestone without replacing existing items. Returns {ok:true,id}; reuse this generated id, never supply one. This records planned work, not execution; skip trivial/informational tasks. Inactive store, invalid input or extension veto returns {ok:false,reason}.',
     annotations: { 'properties.subject': 'Nonempty imperative plan-row title.', 'properties.description': 'Full-detail multiline context, absent from compact row; omit if title suffices.',
       'properties.activeForm': 'Present-continuous in_progress spinner label.', 'properties.evaluator': 'When wired, completion runs build/test/lint = npm run build/npm test/npm run lint; failure returns stderr. Sparingly for real checks.',
       'properties.metadata': 'Opaque hook/eval data, not UI; omit if unused.' } },
   todo_list: {
+    description: 'Read plan and canonical ids: without id returns {ok:true,count,items}; with id returns {ok:true,item} including description/status/activeForm/note/evaluator/owner/metadata. Refresh only if state may have changed externally or is unknown; clear patches need no read. Inactive store returns {ok:false,reason}; continue without more todo calls.',
     annotations: { 'properties.id': 'Stable item ID; omitted lists plan.' } },
   todo_update: {
+    description: 'Patch one existing todo by stable id; omitted fields survive. Add work with todo_create. Mark in_progress with activeForm before work, completed only after finishing. Completion may run its evaluator and be vetoed by a hook: after rejection/blocked-by-hook re-read and revise before retrying. Avoid unchanged updates; read details when state is uncertain, list for unknown ids. Inactive store: continue without more todo calls.',
     annotations: { 'properties.id': 'Canonical current-plan ID.', 'properties.subject': 'Nonempty replacement imperative title.', 'properties.description': 'Replacement multiline context; empty clears.',
       'properties.activeForm': 'Required present-continuous label for in_progress; omit terminal transition to preserve.',
       'properties.evaluator': 'When wired: build/test/lint → npm run build/npm test/npm run lint on completion; failure returns stderr.',
@@ -90,6 +101,7 @@ export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
   update_goal: { description: 'Complete only when objective and all requirements are evidenced; disclose unverified scope. Bookkeeping is not quality certification. blocked requires external unblock and same blocker_kind for 3 consecutive turns; Runtime rejects earlier. Pause/resume/budget-limited are user-controlled. Never call merely to stop work.',
     annotations: { 'properties.status': null, 'properties.blocker_kind': 'Required blocked: stable obstacle ID compared across turns, e.g. awaiting-user-permission.' } },
   wait_agent: {
+    description: 'Yield for Agent mailbox evidence, root user input, interruption or timeout. Progress is UI/SDK-only and never wakes the model. Returns a wake acknowledgement, not the evidence: read the following mailbox. After any mailbox evidence, integrate it and reconcile the affected semantic milestone before waiting again.',
     annotations: { 'properties.timeout_ms': 'Milliseconds; default 120000. Longer waits cost no model call; user input wakes promptly.' } },
   worktree_create: { description: 'Create isolated Git worktree/branch for Agent work.',
     annotations: { 'properties.branch_name': 'Explicit branch; optional.', 'properties.description': 'Input used to generate a branch name.' } },

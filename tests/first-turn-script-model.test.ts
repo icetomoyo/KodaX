@@ -6,14 +6,17 @@ import { KodaXBaseProvider, registerModelProvider, clearRuntimeModelProviders,
   type KodaXMessage, type KodaXToolDefinition, type KodaXStreamResult } from '@kodax-ai/llm';
 import { runManagedTask } from '@kodax-ai/coding';
 import { FileSessionStorage } from '../packages/repl/src/interactive/storage.js';
+import type { ScriptCellResult } from '../packages/coding/src/agent-runtime/script/cell.js';
 
-it.each([false, true].flatMap(persistedByHost => ['success', 'denied', 'failed', 'cancelled'].map(scenario => ({ persistedByHost, scenario }))))(
+it.each([false, true].flatMap(persistedByHost => ['success', 'projected', 'denied', 'failed', 'cancelled'].map(scenario => ({ persistedByHost, scenario }))))(
   'assembles full contracts and settles $scenario (host persistence=$persistedByHost)', async ({ persistedByHost, scenario }) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-script-model-'));
   const storage = new FileSessionStorage({ sessionsDir: path.join(root, 'sessions'), configHome: root, cwd: root });
   let requests = 0;
   const executed: string[] = [];
   const results: string[] = [];
+  let restoredValue: Record<string, unknown> | undefined;
+  let generatedContent: string | undefined;
   const budget = { totalBudget: 12, spentBudget: 0, currentHarness: 'H0_DIRECT' as const };
   const controller = new AbortController();
   const fetcher = vi.fn(() => { throw new Error('No external requests permitted'); });
@@ -21,7 +24,8 @@ it.each([false, true].flatMap(persistedByHost => ['success', 'denied', 'failed',
   vi.stubEnv('KODAX_SCRIPT_TEST_KEY', 'offline');
   vi.stubEnv('KODAX_HOME', root);
   await writeFile(path.join(root, 'value.mjs'), 'export const value = 1;\n');
-  await writeFile(path.join(root, 'check.mjs'), "import {value} from './value.mjs'; if(value!==2) throw Error('wrong value');\n");
+  await writeFile(path.join(root, 'check.mjs'), "import {value} from './value.mjs'; if(value!==2) throw Error('wrong value');\n"
+    + (scenario === 'projected' ? "process.stdout.write('checked-value=2\\n'.repeat(80));\n" : ''));
   await storage.save('script-session', { messages: [{ role: 'user', content: 'host-owned history' }], title: 'Host title', gitRoot: root });
   class Fixture extends KodaXBaseProvider {
     readonly name = 'script-model-offline';
@@ -43,17 +47,41 @@ it.each([false, true].flatMap(persistedByHost => ['success', 'denied', 'failed',
           .find(block => block.type === 'tool_result' && block.tool_use_id === 'cell-1');
         expect(receipt?.type).toBe('tool_result');
         if (receipt?.type !== 'tool_result') throw new Error('missing cell receipt');
-        expect(receipt.is_error === true).toBe(scenario !== 'success');
+        expect(receipt.is_error === true).toBe(scenario !== 'success' && scenario !== 'projected');
         expect(String(receipt.content)).toContain('"name":"read"');
         if (scenario === 'denied') expect(String(receipt.content)).toMatch(/block|denied/i);
         if (scenario === 'failed') expect(String(receipt.content)).toMatch(/not found|no match/i);
+        if (scenario === 'projected') {
+          const cell = JSON.parse(String(receipt.content)) as ScriptCellResult & {
+            value_fields_from_receipts: Record<string, { id: number; field: 'result' | 'content' }>;
+            value_reference_note: string;
+          };
+          const reference = cell.value_fields_from_receipts.output!;
+          expect(reference.field).toBe('content');
+          const outputReceipt = cell.receipts.find(item => item.id === reference.id)!;
+          expect(outputReceipt.name).toBe('bash');
+          expect(outputReceipt.result.isError).toBe(false);
+          expect(String(outputReceipt.result.content).match(/checked-value=2/g)).toHaveLength(80);
+          expect(cell.value).toEqual({ summary: 'fixture checks passed' });
+          restoredValue = { ...(cell.value as Record<string, unknown>), output: outputReceipt.result.content };
+          const source = cell.receipts.find(item => item.name === 'read')!;
+          generatedContent = String(source.result.content).toUpperCase();
+          const written = cell.receipts.find(item => item.name === 'write')!;
+          expect(written.result.metadata?.toolCall).toMatchObject({ name: 'write',
+            input: { path: 'generated.txt', content: generatedContent } });
+          expect(cell.value_reference_note).toContain('no additional tool call');
+          const { value_fields_from_receipts: _references, value_reference_note: _note, ...sameEvidence } = cell;
+          expect(String(receipt.content).length).toBeLessThan(JSON.stringify({ ...sameEvidence, value: restoredValue }).length);
+        }
       }
       return { textBlocks: step ? [{ type: 'text', text: 'Changed value to 2 and ran node check.mjs successfully.' }] : [],
         thinkingBlocks: [], toolBlocks: step ? [] : [{ type: 'tool_use', id: 'cell-1', name: 'script_exec', input: {
           code: (scenario === 'denied' ? "await tools.write({path:'blocked.txt',content:'never'});" : '')
-            + "await tools.read({path:'value.mjs'});"
+            + "const source = await tools.read({path:'value.mjs'});"
+            + (scenario === 'projected' ? "const generated = String(source.content).toUpperCase(); const written = await tools.write({path:'generated.txt',content:generated}); if(written.metadata.toolCall.input.content !== generated) throw Error('Guest lost canonical input');" : '')
             + (scenario === 'failed' ? "await tools.edit({path:'value.mjs',edits:[{old_string:'missing anchor',new_string:'wrong'}]}); await tools.read({path:'value.mjs'});" : '')
-            + "await tools.edit({path:'value.mjs',edits:[{old_string:'value = 1',new_string:'value = 2'}]}); return await tools.bash({command:'node check.mjs'});",
+            + "await tools.edit({path:'value.mjs',edits:[{old_string:'value = 1',new_string:'value = 2'}]}); const checked = await tools.bash({command:'node check.mjs'});"
+            + (scenario === 'projected' ? "return {output:checked.content,summary:'fixture checks passed'};" : 'return checked;'),
         } }], stopReason: step ? 'end_turn' : 'tool_use' };
     }
   }
@@ -62,13 +90,13 @@ it.each([false, true].flatMap(persistedByHost => ['success', 'denied', 'failed',
     const running = runManagedTask({ provider: 'script-model-offline', workMode: 'script', agentMode: 'ama',
       reasoningMode: 'off', lsp: false, abortSignal: controller.signal, session: { id: 'script-session', storage, persistedByHost },
       context: { executionCwd: root, gitRoot: root, repoIntelligenceMode: 'off', managedWorkBudget: budget },
-      events: { beforeToolExecute: async name => { executed.push(name); return ['read', 'edit', 'bash'].includes(name); },
+      events: { beforeToolExecute: async name => { executed.push(name); return ['read', 'edit', 'bash', ...(scenario === 'projected' ? ['write'] : [])].includes(name); },
         onToolResult: receipt => { results.push(receipt.name); if (scenario === 'cancelled' && receipt.name === 'read') controller.abort(); } },
     }, 'Read value.mjs, change value 1 to 2, run node check.mjs and report the result.');
     if (scenario === 'cancelled') await expect(running).rejects.toMatchObject({ name: 'AbortError' });
     else expect((await running).success).toBe(true);
     expect(await readFile(path.join(root, 'value.mjs'), 'utf8')).toContain(scenario === 'cancelled' ? 'value = 1' : 'value = 2');
-    const expected = scenario === 'cancelled' ? ['read'] : scenario === 'denied' ? ['write', 'read', 'edit', 'bash']
+    const expected = scenario === 'cancelled' ? ['read'] : scenario === 'projected' ? ['read', 'write', 'edit', 'bash'] : scenario === 'denied' ? ['write', 'read', 'edit', 'bash']
       : scenario === 'failed' ? ['read', 'edit', 'read', 'edit', 'bash'] : ['read', 'edit', 'bash'];
     expect(executed).toEqual(expected);
     expect(results.filter(name => name !== 'script_exec')).toEqual(expected);
@@ -78,6 +106,22 @@ it.each([false, true].flatMap(persistedByHost => ['success', 'denied', 'failed',
     const records = (await storage.load('script-session'))?.extensionRecords ?? [];
     expect(records.filter(record => record.type === 'call.settled')).toHaveLength(expected.length);
     expect(records.filter(record => record.type === 'cell.settled')).toHaveLength(1);
+    if (scenario === 'projected') {
+      expect(await readFile(path.join(root, 'generated.txt'), 'utf8')).toBe(generatedContent);
+      expect(records.filter(record => record.type === 'call.settled')).toEqual(expect.arrayContaining([
+        expect.objectContaining({ data: expect.objectContaining({ data: expect.objectContaining({ name: 'write',
+          input: { path: 'generated.txt', content: generatedContent },
+          result: expect.objectContaining({ metadata: expect.objectContaining({ toolCall: expect.objectContaining({
+            name: 'write', input: { path: 'generated.txt', content: generatedContent },
+          }) }) }),
+        }) }) }),
+      ]));
+      expect(records.find(record => record.type === 'cell.settled')).toMatchObject({
+        data: { data: { value: restoredValue, spentBudget: 4 } },
+      });
+      expect(restoredValue?.output).toBeDefined();
+      expect(JSON.stringify(records)).not.toContain('value_fields_from_receipts');
+    }
     if (persistedByHost) {
       const saved = await storage.load('script-session');
       expect(saved?.title).toBe('Host title');

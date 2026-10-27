@@ -46,6 +46,7 @@ import { createWorkflowWorktree, removeWorkflowWorktree } from './tools/worktree
 import { TOOL_OUTPUT_DIR_ENV } from './tools/truncate.js';
 import { hasGenerationWorktree } from './worktree-generation.js';
 import { createExtensionRuntime } from './extensions/runtime.js';
+import { TOOL_RECOVERY_GUIDANCE } from './prompts/execution-guidance.js';
 
 const mockRunKodaX = runKodaX as ReturnType<typeof vi.fn>;
 const mockToolWorktreeCreate = vi.mocked(createWorkflowWorktree);
@@ -170,6 +171,25 @@ describe('executeChildAgents — guardrails propagation (FEATURE_092 phase 2b.7b
       expect(standalone.events?.registerShellCleanup).toBeUndefined();
     },
   );
+
+  it.each([true, false])('teaches default readOnly=%s children refusal and legal recovery without changing ceilings', async readOnly => {
+    mockRunKodaX.mockResolvedValue(okResult('inspected'));
+    const managedWorkBudget = { totalBudget: 200, spentBudget: 7, currentHarness: 'H0_DIRECT' as const };
+    const guardrail = { kind: 'tool' as const, name: 'parent-boundary', beforeTool: async () => ({ action: 'block' as const, reason: 'Parent policy refusal' }) };
+    await executeChildAgents([createBundle({ readOnly })], { ...createCtx(), managedWorkBudget }, createOptions({
+      maxIterationsPerChild: 7,
+      guardrails: [guardrail],
+      parentOptions: { provider: 'anthropic', permissionIntent: { rootUserIntent: 'Inspect the assigned task', bindingConstraints: ['Do not publish'] } },
+    }));
+    const options = mockRunKodaX.mock.calls[0]?.[0] as KodaXOptions;
+    expect(options.context?.systemPromptOverride).toContain(`- ${TOOL_RECOVERY_GUIDANCE}`);
+    expect(options.context?.systemPromptOverride?.split(TOOL_RECOVERY_GUIDANCE)).toHaveLength(2);
+    expect(options.guardrails).toEqual([guardrail]);
+    expect(options.context?.permissionIntent).toMatchObject({ readOnly, rootUserIntent: 'Inspect the assigned task', bindingConstraints: ['Do not publish'] });
+    expect(options.context?.managedWorkBudget).toBe(managedWorkBudget);
+    expect(options.maxIter).toBe(7);
+    expect(managedWorkBudget.spentBudget).toBe(7);
+  });
 
   it('forwards the shared managed-run budget into a child runtime', async () => {
     mockRunKodaX.mockResolvedValue(okResult('inspected'));
@@ -2639,6 +2659,7 @@ describe('executeChildAgents — FEATURE_191 specialist routing (A.2b)', () => {
       context?: { systemPromptOverride?: string; excludeTools?: readonly string[] };
     };
     expect(childOptions.context?.systemPromptOverride).toBe('SPECIALIST DB-REVIEWER PROMPT');
+    expect(childOptions.context?.systemPromptOverride).not.toContain(TOOL_RECOVERY_GUIDANCE);
   });
 
   it('preserves base and project mutation rules for a write specialist', async () => {
@@ -2673,6 +2694,7 @@ describe('executeChildAgents — FEATURE_191 specialist routing (A.2b)', () => {
       const systemPrompt = childOptions.context?.systemPromptOverride ?? '';
       expect(systemPrompt.startsWith('SPECIALIST DB-REVIEWER PROMPT')).toBe(true);
       expect(systemPrompt).not.toContain(CHILD_AGENT_SYSTEM_PROMPT);
+      expect(systemPrompt).not.toContain(TOOL_RECOVERY_GUIDANCE);
       expect(systemPrompt).toContain(sentinel);
       expect(systemPrompt).toContain('SPECIALIST DB-REVIEWER PROMPT');
       expect(systemPrompt.indexOf(sentinel)).toBeGreaterThan(

@@ -69,8 +69,8 @@ export type {
 
 // === 交互式命令系统 ===
 export {
-  InteractiveContext,
-  InteractiveMode,
+  type InteractiveContext,
+  type InteractiveMode,
   createInteractiveContext,
   touchContext,
 } from "./interactive/context.js";

@@ -16,6 +16,7 @@ import { settleComplexAttempt } from './first-turn-complex-budget.js';
 import type { CallEvidence } from './first-turn-edit-eval-support.js';
 import { CACHE_TASK } from '../benchmark/datasets/search-entry-complex/fixture.js';
 import { compactContractInput } from './first-turn-compact-contract.js';
+import { restructuredContractInput } from './restructured-contract.js';
 import { runWithProviderRequestAttribution as publicAttribution } from '@kodax-ai/llm';
 import { runWithProviderRequestAttribution as sourceAttribution } from '../packages/llm/src/provider-request-observation.js';
 
@@ -26,13 +27,14 @@ if (publicAttribution !== sourceAttribution) throw new Error('Mixed source/build
 // Separate frozen revision; the legacy compact-teaching evidence is never overwritten.
 const workModes = process.argv.includes('--work-modes');
 const contract = process.argv.includes('--contract');
-if (workModes && contract) throw new Error('Select one frozen experiment');
-const ROOT = path.join(os.tmpdir(), 'kodax-eval-dumps', contract ? 'compact-contract-full-complex-20261025-r2' : workModes ? 'work-modes-full-complex-20261025-r3' : 'compact-full-complex-20261025-r1');
+const restructured = process.argv.includes('--restructured');
+if ([workModes, contract, restructured].filter(Boolean).length > 1) throw new Error('Select one frozen experiment');
+const ROOT = path.join(os.tmpdir(), 'kodax-eval-dumps', restructured ? 'restructured-full-complex-20261027-r1' : contract ? 'compact-contract-full-complex-20261025-r2' : workModes ? 'work-modes-full-complex-20261025-r3' : 'compact-full-complex-20261025-r1');
 const routes = [
-  { id: 'glm', provider: 'zhipu-coding', model: 'glm-5.3', env: 'ZHIPU_CODING_API_KEY', order: contract ? ['candidate'] : workModes ? [] : ['baseline', 'candidate'] },
-  { id: 'kimi', provider: 'kimi-code', model: 'kimi-for-coding', env: 'KIMI_CODE_API_KEY', order: contract ? ['baseline', 'candidate'] : workModes ? ['agent', 'script'] : ['candidate', 'baseline'] },
+  { id: 'glm', provider: 'zhipu-coding', model: 'glm-5.3', env: 'ZHIPU_CODING_API_KEY', order: restructured || contract ? ['candidate'] : workModes ? [] : ['baseline', 'candidate'] },
+  { id: 'kimi', provider: 'kimi-code', model: 'kimi-for-coding', env: 'KIMI_CODE_API_KEY', order: restructured ? ['candidate'] : contract ? ['baseline', 'candidate'] : workModes ? ['agent', 'script'] : ['candidate', 'baseline'] },
 ] as const;
-const limits = { calls: 32, tools: 80, timeoutMs: 900000, tokens: contract ? 1500000 : 1200000, usd: contract ? 0.30 : 0.15, output: contract ? 8192 : 4096, requestMs: 180000 };
+const limits = { calls: 32, tools: 80, timeoutMs: 900000, tokens: contract || restructured ? 1500000 : 1200000, usd: contract || restructured ? 0.30 : 0.15, output: contract || restructured ? 8192 : 4096, requestMs: 180000 };
 const hash = (data: string | Buffer) => createHash('sha256').update(data).digest('hex');
 const save = async (file: string, value: unknown, exclusive = false) => {
   await fs.mkdir(path.dirname(file), { recursive: true });
@@ -55,8 +57,8 @@ if (command === 'prepare') {
     const target = path.join(ROOT, 'frozen-source', file);
     await fs.mkdir(path.dirname(target), { recursive: true }); await fs.copyFile(file, target);
   }
-  await save(path.join(ROOT, 'manifest.json'), { sourceHashes, routes, limits, workModes, contract,
-    design: contract ? 'Layer 3.5: only after controlled compact-contract qualification. Three Agent Runs total: Kimi baseline then candidate; GLM candidate. Preserve AMA, native tools, one readonly child and persistent real read refusal. Root-only compactContractInput; child/aux unchanged. Each Run 32 provider requests, 80 tool attempts, 1.5M token, USD0.30 reference, 15min; output8192 and maxIter24. No retries, no fourth Run, no causal prompt ranking. DeepSeek covered by controlled probes only.' : workModes
+  await save(path.join(ROOT, 'manifest.json'), { sourceHashes, routes, limits, workModes, contract, restructured,
+    design: restructured ? 'Layer 3.5 observational smoke after reviewed L2 restructured-contract qualification; not a causal comparison. At most two candidate-only Agent Runs: GLM once and Kimi once, separate provider lanes may run concurrently. Root-only restructuredContractInput on authenticated eligible actor; child, auxiliary, SDK, AMA and all tools/guardrails unchanged. Real readonly child refusal and autonomous legal recovery retained. Per Run: 32 calls, 80 tools, 15min, 1.5M tokens, USD0.30 reference, output8192 and maxIter24; total at most 64 calls/3M tokens/USD0.60. No retries, reruns, fallback or output/parameter rewriting. No production default change or non-inferiority claim from n=1.' : contract ? 'Layer 3.5: only after controlled compact-contract qualification. Three Agent Runs total: Kimi baseline then candidate; GLM candidate. Preserve AMA, native tools, one readonly child and persistent real read refusal. Root-only compactContractInput; child/aux unchanged. Each Run 32 provider requests, 80 tool attempts, 1.5M token, USD0.30 reference, 15min; output8192 and maxIter24. No retries, no fourth Run, no causal prompt ranking. DeepSeek covered by controlled probes only.' : workModes
       ? 'Layer 3.5 r3 final qualification: one fixture, Kimi Agent and Script once each sequentially; at most two runs, 64 calls/2.4M tokens/USD0.30 nominal maximum. GLM completed evidence retained, no GLM rerun. Minimal production change suppresses legacy standalone reflection only in borrowed parent Runner Script cells; tracking, budgets, recovery and standalone SDK behavior retained. No compact transform. AMA retained, one inherited-model readonly child. Child first read target stays refused by that tool; other legal tools remain available. All shell refusals return original errors, with unchanged allowlists, parsing and path checks. No forbidden execution, retries, fallback, output rewriting or budget extensions. Nonblocking observations recorded without starting another experiment. Stop further runs only on isolation, unbounded execution or invalid-evaluation defects. Historical Coding/r1/r2 runs are descriptive context, not a causal baseline. Same provider has one in-flight request.'
       : 'One complex fixture, one observation per route/arm, four runs total; 128 calls/4.8M tokens/USD0.60 nominal maximum. Full task data are descriptive, not causal prompt comparison. Earlier controlled probes provide decision-point evidence. Root ordinary Worker teaching only; all tool schemas and child/specialist/partial SDK prompts unchanged. First child read target is persistently denied through a real guardrail; model must recover without intervention. No forbidden command executed. No retries or reruns to force success.',
     rubric: 'Inspect quality before token/time: three source fixes, new regression tests, actual node tests, independent six-test oracle, original protected files, real readonly child refusal delivered unchanged and subsequent allowed evidence, truthful child/report limitations, root integration, AMA terminal state and no live abandoned children. Record missing coverage, censoring, provider errors separately. Runtime completion alone is not quality. No default enablement based on n=1.',
@@ -86,7 +88,7 @@ if (command === 'prepare') {
       if (!auxiliary && attribution?.kind !== 'actor_turn') throw new Error('Missing authenticated evaluation actor attribution');
       const eligible = attribution?.kind === 'actor_turn' && attribution.actorPath === '/root';
       if (workModes && index === 0 && eligible && original.tools.some(tool => tool.name === 'script_exec') !== (arm === 'script')) throw new Error('Work-mode menu does not match the registered cell');
-      const input: FrozenInput = arm === 'candidate' ? (contract ? compactContractInput(original, eligible) : compactManagedWorkerInput(original, eligible)) : original;
+      const input: FrozenInput = arm === 'candidate' ? (restructured ? restructuredContractInput(original, eligible) : contract ? compactContractInput(original, eligible) : compactManagedWorkerInput(original, eligible)) : original;
       if (arm === 'candidate' && eligible && !auxiliary && input === original) throw new Error('Candidate did not replace ordinary root teaching');
       const outputCap = Math.min(limits.output, meta.streamOptions?.maxOutputTokensOverride ?? limits.output);
       const reservedInput = Buffer.byteLength(JSON.stringify(input)) + 4096;
@@ -121,7 +123,7 @@ if (command === 'prepare') {
       await save(file + '.json', { ...evidence, settlement }); await save(path.join(directory, 'ledger.json'), budget);
       return evidence;
     };
-    const record = await runComplexRuntime(route, directory, invoke, limits, true, CACHE_TASK, [fault.guardrail], contract ? 'agent' : arm === 'agent' || arm === 'script' ? arm : 'coding');
+    const record = await runComplexRuntime(route, directory, invoke, limits, true, CACHE_TASK, [fault.guardrail], contract || restructured ? 'agent' : arm === 'agent' || arm === 'script' ? arm : 'coding');
     await save(path.join(directory, 'fault.json'), fault.events);
     await save(path.join(directory, 'summary.json'), { phase: record.phase, success: record.success, error: record.error, counts: record.counts, wallMs: record.wallMs, budget });
     process.stdout.write(JSON.stringify({ route: route.id, arm, phase: record.phase, error: record.error, calls: budget.calls, elapsedMs: record.wallMs }) + '\n');

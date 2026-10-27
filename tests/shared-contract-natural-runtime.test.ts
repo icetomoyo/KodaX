@@ -1,0 +1,249 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import { afterEach, expect, it, vi } from 'vitest';
+import type { KodaXStreamResult, KodaXToolUseBlock } from '@kodax-ai/llm';
+import { RECOVERY_FILES, RECOVERY_GOLDEN } from '../benchmark/datasets/shared-contract-natural/fixture.js';
+import { checkNaturalTool, runNaturalRuntime } from './shared-contract-natural-runtime.js';
+
+const roots: string[] = [];
+afterEach(async () => {
+  vi.unstubAllEnvs(); vi.unstubAllGlobals();
+  for (const directory of roots.splice(0)) {
+    if (path.dirname(directory) !== path.resolve(os.tmpdir()) || !path.basename(directory).startsWith('kodax-natural-runtime-')) throw new Error('Unsafe cleanup');
+    await fs.rm(directory, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+async function root() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-natural-runtime-'));
+  roots.push(directory); return directory;
+}
+const result = (calls: KodaXToolUseBlock[] = [], text = ''): KodaXStreamResult => ({
+  toolBlocks: calls, textBlocks: text ? [{ type: 'text', text }] : [], thinkingBlocks: [], stopReason: calls.length ? 'tool_use' : 'end_turn',
+});
+const tool = (id: string, name: string, input: Record<string, unknown>): KodaXToolUseBlock => ({ type: 'tool_use', id, name, input });
+
+it('captures a real read-only child request and preserves refusal/recovery without invoking a network provider', async () => {
+  vi.stubEnv('NODE_ENV', 'production');
+  const fetcher = vi.fn(() => { throw new Error('No network'); });
+  vi.stubGlobal('fetch', fetcher);
+  let childCalls = 0;
+  let rootCalls = 0;
+  const record = await runNaturalRuntime(await root(), 'symptom-repair', async (input, _signal, _index, meta) => {
+    if (meta.kind === 'child') {
+      expect(input.tools.length).toBeGreaterThan(0);
+      for (const definition of input.tools) expect(Object.keys(definition).sort()).toEqual(['description', 'input_schema', 'name']);
+      childCalls++;
+      if (childCalls === 1) return result([tool('child-read', 'read', { path: 'src/recovery.js' })]);
+      if (childCalls === 2) return result([tool('child-denied', 'write', { path: 'src/recovery.js', content: RECOVERY_GOLDEN })]);
+      expect(JSON.stringify(input.messages)).toMatch(/read.only|Read.only|Only root/i);
+      return result([], '只读检查完成；写入被拒绝，未修改文件，也未运行测试。');
+    }
+    if (meta.kind !== 'root') throw new Error('Unexpected auxiliary in offline child trace');
+    rootCalls++;
+    if (rootCalls === 1) return result([tool('spawn-review', 'spawn_agent', { task_name: 'readonly-review', objective: '只读核实源码，不改动文件。', read_only: true })]);
+    const history = JSON.stringify(input.messages);
+    if (history.includes('<agent-completed')) return result([], '子 Agent 已结束；这是离线链路检查，尚未完成修复。');
+    return result([tool(`wait-${rootCalls}`, 'wait_agent', { timeout_ms: 1000 })]);
+  }, { limits: { calls: 12, tools: 15, timeoutMs: 30_000 } });
+  expect(record.error).toBeNull();
+  expect(childCalls).toBe(3);
+  expect(record.counts.childRequests).toBe(3);
+  expect(record.calls).toHaveLength(record.counts.requests);
+  expect(record.calls.every(call => !call.error)).toBe(true);
+  expect(record.counts.maxConcurrentRequests).toBe(1);
+  expect(record.protectedUnchanged).toBe(true);
+  expect(record.verification.oracle.status).toBe(1);
+  expect(fetcher).not.toHaveBeenCalled();
+}, 45_000);
+
+it.each(['budget', 'cancel'] as const)('keeps real child requests within the shared %s boundary', async boundary => {
+  vi.stubEnv('NODE_ENV', 'production');
+  const fetcher = vi.fn(() => { throw new Error('No network'); });
+  vi.stubGlobal('fetch', fetcher);
+  const controller = new AbortController();
+  const directory = await root();
+  let children = 0;
+  let cancelledAtRequestCount: number | undefined;
+  const record = await runNaturalRuntime(directory, 'symptom-repair', async (_input, _signal, index, meta) => {
+    if (meta.kind === 'child') {
+      children++;
+      if (boundary === 'cancel') {
+        cancelledAtRequestCount = index + 1;
+        controller.abort(new Error('Offline cancellation during child request'));
+        return result([tool('cancelled-child-write', 'write', { path: 'src/recovery.js', content: RECOVERY_GOLDEN })]);
+      }
+      return result([tool(`child-read-${index}`, 'read', { path: 'src/recovery.js' })]);
+    }
+    if (index === 0) return result([tool('spawn-bounded', 'spawn_agent', { task_name: 'bounded-review', objective: '只读核实源码。', read_only: true })]);
+    return result([tool(`bounded-wait-${index}`, 'wait_agent', { timeout_ms: 1000 })]);
+  }, { signal: controller.signal, limits: { calls: 4, tools: 12, timeoutMs: 20_000 } });
+  expect(children).toBeGreaterThan(0);
+  expect(record.counts.requests).toBeLessThanOrEqual(4);
+  expect(record.calls).toHaveLength(record.counts.requests);
+  expect(record.success).toBe(false);
+  if (boundary === 'budget') expect(record.error).toContain('request cap');
+  else {
+    expect(record.counts.requests).toBe(cancelledAtRequestCount);
+    expect(record.phase).toBe('interrupted');
+    expect(record.error).toBeNull();
+  }
+  expect(record.counts.maxConcurrentRequests).toBe(1);
+  expect(await fs.readFile(path.join(directory, 'workspace/src/recovery.js'), 'utf8')).toBe(RECOVERY_FILES['src/recovery.js']);
+  expect(fetcher).not.toHaveBeenCalled();
+}, 45_000);
+
+it('narrows the existing guard without admitting shell mutation, external paths, readonly writes or test flags', () => {
+  for (const workspace of ['C:\\fixture\\workspace', '/tmp/fixture/workspace']) {
+    expect(checkNaturalTool(workspace, 'read', { path: 'src/recovery.js' }, false)).toBeNull();
+    expect(checkNaturalTool(workspace, 'write', { path: 'src/recovery.js', content: '' }, false)).toBeNull();
+    expect(checkNaturalTool(workspace, 'write', { path: 'src/recovery.js', content: '' }, true)).not.toBeNull();
+    expect(checkNaturalTool(workspace, 'read', { path: '../oracle.mjs' }, false)).not.toBeNull();
+    expect(checkNaturalTool(workspace, 'write', { path: 'package.json', content: '' }, false)).not.toBeNull();
+    expect(checkNaturalTool(workspace, 'write', { path: 'test/regression.test.js', content: '' }, false)).toBeNull();
+    expect(checkNaturalTool(workspace, 'write', { path: 'tests/regression.test.js', content: '' }, false)).toBeNull();
+    expect(checkNaturalTool(workspace, 'edit', { path: 'test/recovery.test.js', edits: [] }, false)).not.toBeNull();
+    expect(checkNaturalTool(workspace, 'edit', { path: 'test/RECOVERY.test.js', edits: [] }, false)).not.toBeNull();
+    expect(checkNaturalTool(workspace, 'write', { path: 'examples/restart.mjs', content: '' }, false)).not.toBeNull();
+    for (const command of ['mkdir src/extra', 'git stash', 'git clean -f', 'node --test --import ../escape.mjs', 'npm test -- --import=../escape.mjs', 'git show --ext-diff', 'node examples/other.mjs', 'node examples/restart.mjs --import ../escape.mjs']) {
+      expect(checkNaturalTool(workspace, 'bash', { command }, false)).not.toBeNull();
+    }
+    expect(checkNaturalTool(workspace, 'bash', { command: 'node --test' }, false)).toBeNull();
+    expect(checkNaturalTool(workspace, 'bash', { command: 'node examples/restart.mjs' }, false)).toBeNull();
+    expect(checkNaturalTool(workspace, 'bash', { command: 'node examples/restart.mjs' }, true)).not.toBeNull();
+    expect(checkNaturalTool(workspace, 'bash', { command: 'git diff base..HEAD' }, true)).toBeNull();
+    expect(checkNaturalTool(workspace, 'spawn_agent', { objective: 'review', read_only: true, model_hint: 'fast' }, false)).not.toBeNull();
+  }
+});
+
+it('recognizes only the protected Windows reproducer path without rewriting the command or broadening execution', () => {
+  const workspace = 'C:\\fixture\\workspace';
+  const input = Object.freeze({ command: 'node examples\\restart.mjs' });
+  expect(checkNaturalTool(workspace, 'bash', input, false)).toBeNull();
+  expect(input).toEqual({ command: 'node examples\\restart.mjs' });
+  expect(checkNaturalTool(workspace, 'bash', input, true)).not.toBeNull();
+  expect(checkNaturalTool(workspace, 'bash', { ...input, run_in_background: true }, false)).not.toBeNull();
+  expect(checkNaturalTool(workspace, 'bash', { ...input, cwd: '..' }, false)).not.toBeNull();
+  expect(checkNaturalTool('/tmp/fixture/workspace', 'bash', input, false)).not.toBeNull();
+  for (const command of [
+    'node examples\\other.mjs', 'node examples\\restart.mjs --import other.mjs',
+    'node --import other.mjs examples\\restart.mjs', 'node examples\\restart.mjs && node --test',
+    'node examples\\restart.mjs & node --test', 'node examples\\restart.mjs | node --test',
+    'node examples\\restart.mjs > tests/result.txt', 'node ..\\examples\\restart.mjs',
+    'node examples\\..\\restart.mjs', 'node C:\\fixture\\workspace\\examples\\restart.mjs',
+  ]) expect(checkNaturalTool(workspace, 'bash', { command }, false)).not.toBeNull();
+});
+
+it.each(['agent', 'coding', 'script'] as const)('uses real AMA %s Runtime for read, refusal, repair, tests and final report without model calls', async workMode => {
+  vi.stubEnv('NODE_ENV', 'production');
+  const fetcher = vi.fn(() => { throw new Error('No network in offline Runtime validation'); });
+  vi.stubGlobal('fetch', fetcher);
+  const directory = await root();
+  const record = await runNaturalRuntime(directory, 'symptom-repair', async (input, _signal, index) => {
+    expect(input.system).not.toContain('RECOVERY_ORACLE');
+    expect(JSON.stringify(input.messages)).not.toContain('请派一个只读子 Agent');
+    if (index === 2) {
+      const receipt = input.messages.flatMap(message => Array.isArray(message.content) ? message.content : [])
+        .find(block => block.type === 'tool_result' && block.tool_use_id === 'step-1');
+      expect(receipt?.type === 'tool_result' && receipt.is_error).toBe(true);
+      expect(JSON.stringify(receipt)).toContain('No part');
+    }
+    if (index === 4) {
+      expect(JSON.stringify(input.messages)).toContain('# pass 2');
+      return result([], '已修复安全恢复决策，执行 node --test：两项公共测试通过。未实测真实 Host 或操作系统进程。');
+    }
+    const calls = [
+      tool('step-0', 'read', { path: 'src/recovery.js' }),
+      tool('step-1', 'bash', { command: 'mkdir src/extra' }),
+      tool('step-2', 'edit', { path: 'src/recovery.js', edits: [{ old_string: RECOVERY_FILES['src/recovery.js'], new_string: RECOVERY_GOLDEN }] }),
+      tool('step-3', 'bash', { command: 'node --test' }),
+    ];
+    const call = calls[index];
+    if (!call) throw new Error(`Unexpected scripted Runtime request ${index}`);
+    return result([workMode === 'script' ? tool(call.id, 'script_exec', { code: `return await tools.${call.name}(${JSON.stringify(call.input)});` }) : call]);
+  }, { workMode, limits: { calls: 8, tools: 12, timeoutMs: 45_000 } });
+  expect(record.error).toBeNull();
+  expect(record.success).toBe(true);
+  expect(record.counts.requests).toBe(5);
+  expect(record.counts.maxConcurrentRequests).toBe(1);
+  expect(record.counts.childRequests).toBe(0);
+  expect(record.verification.public.status).toBe(0);
+  expect(record.verification.oracle.status).toBe(0);
+  expect(record.protectedUnchanged).toBe(true);
+  expect(record.events.filter(event => event.kind === 'guard' && event.denied).length).toBe(1);
+  expect(record.counts.scriptLeaves).toBe(workMode === 'script' ? 4 : 0);
+  await expect(fs.stat(path.join(directory, 'workspace/src/extra'))).rejects.toMatchObject({ code: 'ENOENT' });
+  expect(fetcher).not.toHaveBeenCalled();
+}, 60_000);
+
+it('stops at the shared request cap and records the incomplete task without manufacturing success', async () => {
+  vi.stubEnv('NODE_ENV', 'production');
+  vi.stubGlobal('fetch', vi.fn(() => { throw new Error('No network'); }));
+  const record = await runNaturalRuntime(await root(), 'symptom-repair', async () => result([tool('only-read', 'read', { path: 'src/recovery.js' })]),
+    { limits: { calls: 1, tools: 4, timeoutMs: 20_000 } });
+  expect(record.counts.requests).toBe(1);
+  expect(record.error).toContain('request cap');
+  expect(record.verification.oracle.status).toBe(1);
+  expect(record.protectedUnchanged).toBe(true);
+}, 45_000);
+
+it('returns a bridged refusal unchanged and allows the next legal read', async () => {
+  vi.stubEnv('NODE_ENV', 'production');
+  vi.stubGlobal('fetch', vi.fn(() => { throw new Error('No network'); }));
+  const record = await runNaturalRuntime(await root(), 'review', async (input, _signal, index) => {
+    if (index === 0) return result([tool('denied-bridge', 'tool_call', { name: 'read', input: { path: '../oracle.mjs' } })]);
+    if (index === 1) {
+      expect(JSON.stringify(input.messages)).toContain('Path leaves the fixture workspace.');
+      return result([tool('legal-read', 'tool_call', { name: 'read', input: { path: 'README.md' } })]);
+    }
+    return result([], '已读取公共契约；越界读取被拒绝，尚未完成源码评审。');
+  }, { limits: { calls: 4, tools: 6, timeoutMs: 20_000 } });
+  expect(record.error).toBeNull();
+  expect(record.counts.requests).toBe(3);
+  expect(record.counts.tools).toBe(2);
+  expect(record.events.filter(event => event.kind === 'guard' && event.denied)).toHaveLength(1);
+  expect(record.protectedUnchanged).toBe(true);
+}, 45_000);
+
+it('blocks a second tool at the shared tool cap before its mutation', async () => {
+  vi.stubEnv('NODE_ENV', 'production');
+  vi.stubGlobal('fetch', vi.fn(() => { throw new Error('No network'); }));
+  const directory = await root();
+  const record = await runNaturalRuntime(directory, 'symptom-repair', async (_input, _signal, index) => index === 0
+    ? result([tool('initial-read', 'read', { path: 'src/recovery.js' })])
+    : result([tool('over-budget-write', 'write', { path: 'src/recovery.js', content: RECOVERY_GOLDEN })]),
+  { limits: { calls: 4, tools: 1, timeoutMs: 20_000 } });
+  expect(record.error).toContain('tool cap');
+  expect(record.counts.requests).toBe(2);
+  expect(await fs.readFile(path.join(directory, 'workspace/src/recovery.js'), 'utf8')).toBe(RECOVERY_FILES['src/recovery.js']);
+  expect(record.verification.oracle.status).toBe(1);
+}, 45_000);
+
+it('cancels before a proposed mutation executes and retains the unfixed oracle outcome', async () => {
+  vi.stubEnv('NODE_ENV', 'production');
+  vi.stubGlobal('fetch', vi.fn(() => { throw new Error('No network'); }));
+  const controller = new AbortController();
+  const directory = await root();
+  const record = await runNaturalRuntime(directory, 'symptom-repair', async () => {
+    controller.abort(new Error('offline cancellation'));
+    return result([tool('must-not-write', 'write', { path: 'src/recovery.js', content: RECOVERY_GOLDEN })]);
+  }, { signal: controller.signal, limits: { calls: 3, tools: 4, timeoutMs: 20_000 } });
+  expect(record.counts.requests).toBe(1);
+  expect(record.success).toBe(false);
+  expect(await fs.readFile(path.join(directory, 'workspace/src/recovery.js'), 'utf8')).toBe(RECOVERY_FILES['src/recovery.js']);
+  expect(record.verification.oracle.status).toBe(1);
+}, 45_000);
+
+it('passes Runtime thinking/low and the Run signal to the callback without rewriting provider output', async () => {
+  vi.stubEnv('NODE_ENV', 'production');
+  vi.stubGlobal('fetch', vi.fn(() => { throw new Error('No network'); }));
+  const record = await runNaturalRuntime(await root(), 'verification-followup', async (_input, signal, _index, meta) => {
+    expect(meta.kind).toBe('root');
+    expect(meta.reasoning).toMatchObject({ enabled: true, effort: 'low' });
+    expect(meta.taskSignal).toBeInstanceOf(AbortSignal);
+    expect(signal.aborted).toBe(false);
+    return result([], '两项公共测试通过，并运行了复现示例；没有实测真实 Host 和操作系统进程，不能保证全部边界。');
+  }, { reasoning: 'auto', effort: 'low', maxOutputTokens: 8192, limits: { calls: 2, tools: 2, timeoutMs: 20_000 } });
+  expect(record.error).toBeNull();
+  expect(record.counts.requests).toBe(1);
+}, 45_000);

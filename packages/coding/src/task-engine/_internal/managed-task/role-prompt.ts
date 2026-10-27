@@ -42,7 +42,6 @@ import {
   formatRoleRoundSummarySection,
   formatSkillInvocationSummary,
   formatSkillMapSection,
-  formatTaskContract,
   formatTaskMetadata,
   formatToolPolicy,
   formatVerificationContract,
@@ -204,28 +203,9 @@ export function createRolePrompt(
     ? `Current round instructions:\n${prompt}`
     : undefined;
 
-  const contractSection = formatTaskContract({
-    taskId: 'preview',
-    surface: 'cli',
-    objective: originalTask,
-    createdAt: '',
-    updatedAt: '',
-    status: 'running',
-    primaryTask: decision.primaryTask,
-    workIntent: decision.workIntent,
-    complexity: decision.complexity,
-    riskLevel: decision.riskLevel,
-    harnessProfile: decision.harnessProfile,
-    recommendedMode: decision.recommendedMode,
-    requiresBrainstorm: decision.requiresBrainstorm,
-    reason: decision.reason,
-    contractSummary: undefined,
-    successCriteria: [],
-    requiredEvidence: verification?.requiredEvidence ?? [],
-    constraints: [],
-    metadata,
-    verification,
-  });
+  // Explicit evidence belongs to the verification block below. The former
+  // preview task contract only repeated that same array; it supplied no
+  // independent summary, success criteria, or constraints.
   const metadataSection = formatTaskMetadata(metadata);
   const verificationSection = formatVerificationContract(verification);
   const toolPolicySection = formatToolPolicy(toolPolicy);
@@ -326,7 +306,6 @@ export function createRolePrompt(
           workerSkillSection,
           roundInstructionSection,
           metadataSection,
-          contractSection,
           previousRoleSummarySection,
           teamModeSection,
           capabilityContextSection,
@@ -347,7 +326,6 @@ export function createRolePrompt(
         originalTaskSection,
         roundInstructionSection,
         agentSection,
-        contractSection,
         metadataSection,
         verificationSection,
         toolPolicySection,

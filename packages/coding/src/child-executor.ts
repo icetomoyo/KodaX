@@ -35,6 +35,7 @@ import type {
 import { resolveExecutionCwd, resolveExecutionPath } from './runtime-paths.js';
 import { actorQueueId } from './agent-runtime/actor-queue.js';
 import { countTokens } from './tokenizer.js';
+import { TOOL_RECOVERY_GUIDANCE } from './prompts/execution-guidance.js';
 import { resolveProvider } from './providers/index.js';
 import { resolveModelHintTier } from './model-hint-routing.js';
 import { invokeChildWithFallback, readChildTokenUsage } from './child-fallback.js';
@@ -2204,6 +2205,7 @@ export const CHILD_AGENT_SYSTEM_PROMPT = [
   '- Open broad with a parallel fan-out covering the obvious scope axes, then narrow on follow-up turns. Prefer a few targeted calls over many tiny sequential probes.',
   '',
   '## Execution Guidelines',
+  `- ${TOOL_RECOVERY_GUIDANCE}`,
   '- Focus on the objective described in the user message. Do not deviate.',
   '- Write your final report in the same natural language as the objective you were given, so it reaches the user in their language. Keep code, file paths, and quoted evidence in their source language.',
   '- When you have sufficient evidence, stop investigating and synthesize your findings.',

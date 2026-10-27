@@ -61,12 +61,16 @@ test('actual npm tarball runs Script in a clean directory and fails explicitly o
       try { await assertWorkModeAvailable({workMode:'script'}); }
       catch(error) { process.stdout.write(JSON.stringify({ready:false,error:String(error)})); process.exit(0); }
       assert.equal(KODAX_TOOLS.find(t=>t.name==='glob').description,'Find files matching a pattern.');
-      let calls=0; let nativeCalls=0; let workMode='script';
+      let calls=0; let nativeCalls=0; let workMode='script'; let scriptShell;
       class Fixture extends KodaXBaseProvider {
         name='packed-script'; supportsThinking=false;
         config={apiKeyEnv:'KODAX_PACK_MODE_KEY',model:'fixture',supportsThinking:false};
-        async stream(messages,tools) {
+        async stream(messages,tools,system) {
+          try {
           if(!tools.some(t=>t.name==='todo_update')) { const e=Error('Auxiliary request outside fixture');e.name='AbortError';throw e; }
+          if(tools.some(t=>t.name==='spawn_agent')) assert.match(system,/TRUST AND SCOPE/);
+          else assert.match(system,/LOCAL EXECUTION: Delegation is unavailable/);
+          assert.match(system,/MUTATION DISCIPLINE:/);
           if(workMode!=='script') {
             nativeCalls++;
             assert.equal(tools.find(t=>t.name==='glob').description,'Find file paths by glob.');
@@ -75,20 +79,32 @@ test('actual npm tarball runs Script in a clean directory and fails explicitly o
             assert.deepEqual({name:ask.name,description:ask.description,input_schema:ask.input_schema},
               {name:canonicalAsk.name,description:canonicalAsk.description,input_schema:canonicalAsk.input_schema});
             assert.ok(!tools.some(t=>t.name==='script_exec'));
+            assert.deepEqual(tools.find(t=>t.name==='bash'),scriptShell);
             return {textBlocks:[{type:'text',text:'Native contract verified.'}],thinkingBlocks:[],toolBlocks:[],stopReason:'end_turn'};
           }
           assert.ok(tools.some(t=>t.name==='script_exec')); assert.ok(tools.some(t=>t.name==='undo')); assert.ok(tools.some(t=>t.name==='bash'));
-          assert.equal(tools.find(t=>t.name==='bash').description,KODAX_TOOLS.find(t=>t.name==='bash').description);
+          scriptShell=tools.find(t=>t.name==='bash');
+          assert.match(scriptShell.description,/Long commands: run_in_background/);
+          assert.equal(scriptShell.input_schema.properties.run_in_background.type,'boolean');
           assert.ok(!tools.some(t=>t.name==='read')); assert.ok(calls<2);
           const first=calls++===0;
-          if(!first) assert.match(JSON.stringify(messages),/PACKED_REAL_READ/);
+          if(!first) {
+            const block=messages.flatMap(m=>Array.isArray(m.content)?m.content:[])
+              .find(b=>b.type==='tool_result' && b.tool_use_id==='packed-cell');
+            const cell=JSON.parse(block.content);
+            assert.match(JSON.stringify(cell.receipts),/PACKED_REAL_READ/);
+            assert.deepEqual(cell.value,{});
+            assert.deepEqual(cell.value_fields_from_receipts,{output:{id:1,field:'content'}});
+            assert.match(cell.value_reference_note,/no additional tool call/);
+          }
           return {textBlocks:first?[]:[{type:'text',text:'Read verified.'}],thinkingBlocks:[],
-            toolBlocks:first?[{type:'tool_use',id:'packed-cell',name:'script_exec',input:{code:"await tools.read({path:'input.txt'});"}}]:[],
+            toolBlocks:first?[{type:'tool_use',id:'packed-cell',name:'script_exec',input:{code:"const read=await tools.read({path:'input.txt'});return {output:read.content};"}}]:[],
             stopReason:first?'tool_use':'end_turn'};
+          } catch(error) { process.stderr.write(String(error.stack ?? error)); throw error; }
         }
       }
       registerModelProvider('packed-script',()=>new Fixture());
-      await writeFile('input.txt','PACKED_REAL_READ');
+      await writeFile('input.txt','PACKED_REAL_READ '.repeat(80));
       const storage=new FileSessionStorage({sessionsDir:path.join(process.cwd(),'sessions'),configHome:process.env.KODAX_HOME,cwd:process.cwd()});
       const controller=new AbortController();
       const result=await runManagedTask({provider:'packed-script',workMode:'script',reasoningMode:'off',lsp:false,abortSignal:controller.signal,
@@ -98,6 +114,9 @@ test('actual npm tarball runs Script in a clean directory and fails explicitly o
       assert.equal(result.success,true); assert.equal(calls,2);
       const saved=await storage.load(result.sessionId);
       assert.equal(saved.extensionRecords.filter(r=>r.type==='call.settled').length,1);
+      const settled=saved.extensionRecords.find(r=>r.type==='cell.settled').data.data;
+      assert.match(settled.value.output,/PACKED_REAL_READ/);
+      assert.equal(settled.value_fields_from_receipts,undefined);
       for(workMode of ['agent','coding']) {
         const nativeController=new AbortController();
         const nativeResult=await runManagedTask({provider:'packed-script',workMode,reasoningMode:'off',lsp:false,
@@ -107,8 +126,14 @@ test('actual npm tarball runs Script in a clean directory and fails explicitly o
       }
       assert.equal(nativeCalls,2);
       process.stdout.write(JSON.stringify({ready:true,calls}));`);
-    const mode = async () => JSON.parse((await exec(process.execPath, ['mode-probe.mjs'], { cwd,
-      env: { ...process.env, NODE_PATH: '', NODE_OPTIONS: '' }, windowsHide: true, timeout: 30_000 })).stdout);
+    const mode = async () => {
+      try {
+        return JSON.parse((await exec(process.execPath, ['mode-probe.mjs'], { cwd,
+          env: { ...process.env, NODE_PATH: '', NODE_OPTIONS: '' }, windowsHide: true, timeout: 30_000 })).stdout);
+      } catch (error) {
+        throw new Error(`Packed mode probe failed: ${error.stderr || error.message}`, { cause: error });
+      }
+    };
     assert.deepEqual(await mode(), { ready: true, calls: 2 });
     await rm(join(cwd, 'dist/script-worker.cjs'));
     const missing = await run();

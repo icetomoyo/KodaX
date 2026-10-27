@@ -48,7 +48,7 @@ import {
 // the only remaining V2 chain agent is the Worker.
 import { WORKER_AGENT_NAME } from '../agents/task-engine-agents.js';
 import { filterModelToolAliases } from '../agent-runtime/tool-resolution.js';
-import { markOrdinaryRootToolContract } from '../tools/managed-tool-contract.js';
+import { inheritOrdinaryRootToolContract, markOrdinaryRootToolContract } from '../tools/managed-tool-contract.js';
 import { toolExecution } from '../agent-runtime/tool-dispatch.js';
 import { resolveProvider } from '../providers/index.js';
 import { estimateTokens } from '../tokenizer.js';
@@ -2103,7 +2103,7 @@ async function runManagedTaskViaRunnerInner(
   const entryAgent: Agent = scriptMode ? withScriptModelTool(chain.worker, baseCtx,
     createScriptPilot({ ctx: baseCtx, events: {}, runtimeSessionState,
       activeToolNames: runtimeSessionState.activeTools.filter(name => chain.worker.tools?.some(tool => tool.name === name)),
-    }, budget).tools,
+    }, budget, chain.worker).tools,
     async (code, caller) => withScriptCells({
       options: { ...options, abortSignal: caller.abortSignal }, sessionId: resolvedSessionId,
       runId: scriptRunId!, ctx: baseCtx, state: runtimeSessionState,
@@ -2111,6 +2111,7 @@ async function runManagedTaskViaRunnerInner(
       save: () => persistManagedBoundary(caller.transcript ?? runnerInput),
     }, SCRIPT_MODEL_LIMITS, runCell => runCell(code)),
   ) : chain.worker;
+  if (scriptMode) inheritOrdinaryRootToolContract(chain.worker, entryAgent, options.context);
   const persistManagedBoundary = async (
     messages: readonly KodaXMessage[],
   ): Promise<void> => {

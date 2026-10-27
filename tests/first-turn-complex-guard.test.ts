@@ -61,6 +61,28 @@ describe('complex fixture execution boundary', () => {
     expect(call).toEqual(originalCall);
   });
 
+  it.each(['npm test 2>&1 | tail -30', 'node --test tests/ 2>&1 | tail -40'])(
+    'returns precise blocked feedback for observed shorthand filter: %s', async command => {
+      const reason = 'tail output filtering is outside this fixture scope. Run the local tests without this pipeline.';
+      for (const readOnly of [true, false]) expect(checkComplexTool(workspace, 'bash', { command }, readOnly)).toBe(reason);
+      for (const call of [{ id: 'tail-shorthand', name: 'bash', input: { command } },
+        { id: 'tail-shorthand', name: 'tool_call', input: { name: 'bash', input: { command } } }]) {
+        const original = structuredClone(call);
+        expect(await createComplexReadBoundary(workspace).beforeTool?.(call, {
+          agent: createAgent({ name: 'tail-boundary', instructions: 'Inspect this fixture.' }),
+        })).toEqual({ action: 'block', reason });
+        expect(call).toEqual(original);
+      }
+    },
+  );
+  it.each([
+    ['npm test | tail -30 && cat ../outside.txt', 'Shell argument leaves the fixture workspace.'],
+    ['node --test tests/ | tail -40 && npm test > ../outside.txt', 'Redirection leaves the permitted fixture scope.'],
+    ['npm test | tail -30 && curl https://example.invalid', 'Executable is outside the fixture test and inspection scope.'],
+    ['npm test | tail -30 && cd subdir', 'Directory change must target the fixture root.'],
+  ])('continues checking stages after shorthand rejection: %s', (command, reason) => {
+    expect(checkComplexTool(workspace, 'bash', { command }, true)).toMatch(reason!);
+  });
   it('rejects the observed tail pipeline with recoverable feedback while still rejecting escapes and unknown commands', async () => {
     const input = { command: `cd "${workspace}" && npm test 2>&1 | tail -n 12 && git status --short` };
     const reason = checkComplexTool(workspace, 'bash', input, false);

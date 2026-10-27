@@ -22,6 +22,7 @@ import { randomUUID } from 'node:crypto';
 import { withEffectivePermissionContext } from '../../../prompts/effective-permissions.js';
 import { getRegistryManagedAgentContext } from '../../../tools/model-tool-definition.js';
 import { projectManagedToolContracts } from '../../../tools/managed-tool-contract.js';
+import { projectManagedSystemContract } from '../../../prompts/managed-system-contract.js';
 import { getRegisteredToolDefinition } from '../../../tools/registry.js';
 import { filterModelToolAliases } from '../../../agent-runtime/tool-resolution.js';
 
@@ -519,6 +520,8 @@ export function buildRunnerLlmAdapter(
     }
 
     wireTools = [...projectScriptModelTools(agent, projectManagedToolContracts(agent, wireTools, options.context))];
+    const buildWireSystem = (source: string, tools: readonly KodaXToolDefinition[]) =>
+      withEffectivePermissionContext(projectManagedSystemContract(agent, tools, source, options.context), options.context);
 
     // Reasoning single-tracking: resolve the per-turn reasoning EFFORT through
     // the FEATURE_078 L1-L2 chain (effort-native):
@@ -590,6 +593,7 @@ export function buildRunnerLlmAdapter(
       usage?: KodaXTokenUsage;
     };
     if (overrideStream) {
+      system = buildWireSystem(baseSystem, wireTools);
       streamResult = await overrideStream(
         transcript,
         wireTools,
@@ -606,6 +610,9 @@ export function buildRunnerLlmAdapter(
         reservedResponseTokens: provider.getEffectiveMaxOutputTokens(activeModel),
         systemTokens: countTokens(system),
       });
+      // Fit conservatively against the existing full instructions, then project
+      // using the actual disclosed contracts. No iterative fitting or tool loss.
+      system = buildWireSystem(baseSystem, wireTools);
       const providerName = options.provider ?? provider.name ?? 'anthropic';
       const rejectedEfforts = getCachedRejectedEfforts(providerName, activeModel ?? provider.getModel(), options.context?.configHome);
       if (providerReasoning?.effort !== undefined && rejectedEfforts.length > 0) {
@@ -806,16 +813,19 @@ export function buildRunnerLlmAdapter(
         contextTokenSnapshotRef.measureRequest = async candidate => {
           let leading = 0;
           while (candidate[leading]?.role === 'system') leading += 1;
-          const candidateSystem = withEffectivePermissionContext(candidate.slice(0, leading)
-            .map(message => typeof message.content === 'string' ? message.content : '').join('\n\n'), options.context);
+          const candidateBaseSystem = candidate.slice(0, leading)
+            .map(message => typeof message.content === 'string' ? message.content : '').join('\n\n');
+          const candidateFullSystem = withEffectivePermissionContext(candidateBaseSystem, options.context);
           const window = contextTokenSnapshotRef.contextWindow ?? recoveryContextWindow
             ?? schemaContextWindow;
-          if (window === undefined) return estimateTokens([...candidate])
+          if (window === undefined) return estimateTokens(candidate.slice(leading))
+            + countTokens(buildWireSystem(candidateBaseSystem, availableToolDefinitions))
             + availableToolDefinitions.reduce((total, tool) => total + estimateToolSchemaTokens(tool), 0);
           const reserve = provider.getEffectiveMaxOutputTokens(activeModel);
           const candidateTools = registryManaged ? fitToolSchemasToContext(availableToolDefinitions, {
-            contextWindow: window, reservedResponseTokens: reserve, systemTokens: countTokens(candidateSystem),
+            contextWindow: window, reservedResponseTokens: reserve, systemTokens: countTokens(candidateFullSystem),
           }) : availableToolDefinitions;
+          const candidateSystem = buildWireSystem(candidateBaseSystem, candidateTools);
           const clean = validateAndFixToolHistory(cleanupIncompleteToolCalls([...candidate.slice(leading)]));
           const projected = await degradeIrreducibleUserInputs(clean, userInputSpillCtx, window,
             requireUserInputDegradationCache(), {
@@ -852,7 +862,7 @@ export function buildRunnerLlmAdapter(
       let nextRequestMode: KodaXOutputSegmentMode = 'append';
       while (true) {
         outputTextFilter = createManagedOutputTextFilter();
-        system = withEffectivePermissionContext(baseSystem, options.context);
+        system = buildWireSystem(baseSystem, wireTools);
         throwIfManagedProviderAborted(options.abortSignal, recoveryTranscript);
         attempt += 1;
         const wireProviderMessages = lowerProviderMessages(providerMessages);
@@ -1357,7 +1367,7 @@ export function buildRunnerLlmAdapter(
             attempt + l5Retries,
             false,
           );
-          system = withEffectivePermissionContext(baseSystem, options.context);
+          system = buildWireSystem(baseSystem, wireTools);
           const continuationRequest = boundaryTracker.snapshot();
           telemetryBoundary(continuationRequest);
           const continuationMeta = {

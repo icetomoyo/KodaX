@@ -8,7 +8,7 @@ import { buildRunnerLlmAdapter } from '../task-engine/_internal/managed-task/llm
 import { buildFallbackRoutingDecision } from '../reasoning.js';
 import { getToolDefinition, getBuiltinToolDefinition, registerTool } from './registry.js';
 import { markRegistryManagedAgent, projectModelToolDefinition } from './model-tool-definition.js';
-import { markOrdinaryRootToolContract, projectManagedToolContracts } from './managed-tool-contract.js';
+import { inheritOrdinaryRootToolContract, markOrdinaryRootToolContract, projectManagedToolContracts } from './managed-tool-contract.js';
 import { managedToolText } from './managed-tool-text.js';
 import { withScriptModelTool } from '../agent-runtime/script/model.js';
 
@@ -42,7 +42,7 @@ async function capture(agent: Agent, context?: KodaXContextOptions) {
 }
 
 describe('ordinary managed root tool presentation', () => {
-  it('shortens builtin contracts without changing Worker instructions, parameters or strategy descriptions', async () => {
+  it('shortens duplicate tool teaching without changing Worker instructions, parameters or strategy', async () => {
     const worker = makeWorker(); const before = JSON.stringify(worker.tools);
     const sent = await capture(worker);
     expect(sent.find(tool => tool.name === 'glob')!.description).toBe('Find file paths by glob.');
@@ -51,11 +51,18 @@ describe('ordinary managed root tool presentation', () => {
       expect(structural(tool.input_schema), tool.name).toEqual(structural(original.input_schema));
     }
     for (const name of ['spawn_agent', 'todo_create', 'todo_update', 'todo_list', 'wait_agent']) {
-      expect(sent.find(tool => tool.name === name)?.description).toBe(worker.tools!.find(tool => tool.name === name)?.description);
+      const description = managedToolText[name]?.description;
+      expect(description, name).toBeDefined();
+      const original = worker.tools!.find(tool => tool.name === name);
+      if (original) {
+        expect(sent.find(tool => tool.name === name)?.description).toBe(description);
+        expect(description!.length, name).toBeLessThan(original.description.length);
+      }
     }
     expect(contract(sent.find(tool => tool.name === 'ask_user_question')!)).toEqual(contract(getBuiltinToolDefinition('ask_user_question')!));
     expect(JSON.stringify(worker.tools)).toBe(before);
     expect(getToolDefinition('glob')!.description).not.toBe('Find file paths by glob.');
+    expect(sent.find(tool => tool.name === 'todo_update')!.description).toContain('Mark in_progress with activeForm before work, completed only after finishing');
   });
 
   it('keeps fallback SDK, children, custom instructions and consumer visibility contracts intact', async () => {
@@ -110,6 +117,30 @@ describe('ordinary managed root tool presentation', () => {
     const script = withScriptModelTool(worker, { backups: new Map() }, worker.tools!,
       async () => ({ status: 'completed', receipts: [], hadToolErrors: false }));
     expect(projectManagedToolContracts(script, script.tools!)).toBe(script.tools);
+  });
+
+  it('shares native Script control wording only after explicit eligible-root transfer', () => {
+    const worker = makeWorker();
+    const wrap = () => withScriptModelTool({ ...worker, tools: [...worker.tools!, getBuiltinToolDefinition('agent_output')!] }, { backups: new Map() }, [],
+      async () => ({ status: 'completed', receipts: [], hadToolErrors: false }));
+    const script = wrap();
+    inheritOrdinaryRootToolContract(worker, script);
+    const sent = projectManagedToolContracts(script, script.tools!);
+    expect(sent.find(tool => tool.name === 'agent_output')!.description).toBe(managedToolText.agent_output!.description);
+    for (const name of ['spawn_agent', 'todo_create', 'todo_update', 'todo_list', 'wait_agent']) {
+      const original = script.tools!.find(tool => tool.name === name);
+      if (original) expect(sent.find(tool => tool.name === name)?.description, name).toBe(managedToolText[name]!.description);
+    }
+    expect(sent.find(tool => tool.name === 'script_exec')).toBe(script.tools!.find(tool => tool.name === 'script_exec'));
+    for (const source of [makeWorker({}, false), makeWorker({ currentAgentId: 'child' }),
+      makeWorker({ toolVisibilityPolicy: () => true }), makeWorker({ agentProfile: { id: 'reviewer' } })]) {
+      const unqualified = wrap();
+      inheritOrdinaryRootToolContract(source, unqualified);
+      expect(projectManagedToolContracts(unqualified, unqualified.tools!)).toBe(unqualified.tools);
+    }
+    const custom = wrap();
+    inheritOrdinaryRootToolContract(worker, custom, { systemPromptOverride: 'Host instructions' });
+    expect(projectManagedToolContracts(custom, custom.tools!)).toBe(custom.tools);
   });
 
   it('preserves host-modified same-name contracts and extension registrations', async () => {

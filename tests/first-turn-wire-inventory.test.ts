@@ -17,6 +17,9 @@ import { createKodaXRuntime } from '../src/sdk-runtime.js';
 import { toKodaXProductClient } from '../src/client-runtime-adapter.js';
 import { createCliClientPlane } from '../src/cli-client-plane.js';
 import { compactContractInput } from './first-turn-compact-contract.js';
+import { restructuredContractInput } from './restructured-contract.js';
+import * as scriptModel from '../packages/coding/src/agent-runtime/script/model.js';
+import type { Agent } from '@kodax-ai/agent';
 
 // Layer 1: intercept every fetch after the real SDK serializes the request.
 // No model, network, tool execution or token-usage claims are involved.
@@ -87,6 +90,13 @@ function terminalSse(protocol: Protocol): string {
 }
 
 it('inventories first serialized requests for isolated content and real Runtime Host scenarios', async () => {
+  const wrappers: Agent[] = [];
+  const originalScriptWrapper = scriptModel.withScriptModelTool;
+  const scriptSpy = vi.spyOn(scriptModel, 'withScriptModelTool').mockImplementation((...args) => {
+    const wrapped = originalScriptWrapper(...args);
+    wrappers.push(wrapped);
+    return wrapped;
+  });
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-first-turn-wire-'));
   const rows: Array<Record<string, unknown>> = [];
   const source = process.env.KODAX_FIRST_TURN_SOURCE_COMMIT
@@ -95,6 +105,8 @@ it('inventories first serialized requests for isolated content and real Runtime 
     'packages/coding/src/tools/tool-definitions.ts',
     'packages/coding/src/tools/managed-tool-contract.ts',
     'packages/coding/src/tools/managed-tool-text.ts',
+    'packages/coding/src/prompts/managed-system-contract.ts',
+    'packages/coding/src/prompts/compact-worker-contract.ts',
     'packages/coding/src/agents/worker-role-prompt.ts',
     'packages/coding/src/task-engine/runner-driven.ts',
     'packages/coding/src/prompts/builder.ts',
@@ -107,6 +119,9 @@ it('inventories first serialized requests for isolated content and real Runtime 
     ...(process.env.KODAX_COMPACT_CONTRACT_CAPTURE === 'candidate' ? [
       'tests/first-turn-compact-contract.ts', 'tests/first-turn-compact-contract-tools.ts',
       'tests/first-turn-compact-contract-baseline.ts',
+    ] : []),
+    ...(process.env.KODAX_COMPACT_CONTRACT_CAPTURE === 'restructured' ? [
+      'tests/restructured-contract.ts', 'tests/restructured-worker-contract.ts',
     ] : []),
   ];
   const sourceHashes = Object.fromEntries(await Promise.all(sourcePaths.map(async file =>
@@ -174,10 +189,13 @@ it('inventories first serialized requests for isolated content and real Runtime 
           registerModelProvider(provider, () => {
             const instance = createCustomProvider({ name: provider, protocol, model: 'fixture-model',
               apiKeyEnv: 'KODAX_WIRE_FIXTURE_KEY', baseUrl: 'https://wire-fixture.invalid/v1', contextWindow: 128_000, reasoning: 'none' });
-            if (process.env.KODAX_COMPACT_CONTRACT_CAPTURE === 'candidate') {
+            if (['candidate', 'restructured'].includes(process.env.KODAX_COMPACT_CONTRACT_CAPTURE ?? '')) {
               const stream = instance.stream.bind(instance);
               instance.stream = (messages, tools, system, reasoning, options, signal) => {
-                const projected = compactContractInput({ messages, tools, system }, mode === 'ama' || mode === 'agent');
+                const script = wrappers.map(agent => scriptModel.getScriptModelContracts(agent, tools)).find(Boolean);
+                const projected = process.env.KODAX_COMPACT_CONTRACT_CAPTURE === 'restructured'
+                  ? restructuredContractInput({ messages, tools, system }, mode !== 'sa', script)
+                  : compactContractInput({ messages, tools, system }, mode === 'ama' || mode === 'agent');
                 return stream([...projected.messages], [...projected.tools], projected.system, reasoning, options, signal);
               };
             }
@@ -216,6 +234,9 @@ it('inventories first serialized requests for isolated content and real Runtime 
             const { messages = [], tools = [], system, ...controls } = body;
             const systemMessages = messages.filter(message => message.role === 'system' || message.role === 'developer');
             const conversation = messages.filter(message => message.role !== 'system' && message.role !== 'developer');
+            if (!process.env.KODAX_COMPACT_CONTRACT_CAPTURE && mode !== 'sa') {
+              expect(JSON.stringify(system ?? systemMessages), `${cell}: default assembled contract`).toContain('TRUST AND SCOPE');
+            }
             if (scenario === 'agents' || scenario === 'catalogs') expect(raw).toContain('WIRE_AGENTS_FIXTURE');
             if (scenario === 'catalogs') {
               expect(raw).toContain('WIRE_SKILLS_FIXTURE');
@@ -272,6 +293,7 @@ it('inventories first serialized requests for isolated content and real Runtime 
     expect(rows).toHaveLength(32);
     process.stdout.write(`Wire inventory saved: ${path.join(root, 'inventory.json')}\n`);
   } finally {
+    scriptSpy.mockRestore();
     setAgentConfigHome(undefined);
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
