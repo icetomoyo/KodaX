@@ -1661,7 +1661,7 @@ async function dispatchRuntimeDaemonRequest(
             subscriptionId,
             augmentRuntimeEventRequirements(event, runRequirementSource),
           ),
-        runtimeReadOptions(request.params, requestSignal),
+        { ...runtimeReadOptions(request.params, requestSignal), deliverHandoffEvents: true },
       );
       if (requestSignal.aborted) {
         observation.close();

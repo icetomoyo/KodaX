@@ -1476,6 +1476,15 @@ export interface RuntimeReadOptions {
   readonly signal?: AbortSignal;
 }
 
+export interface RuntimeSessionObserveOptions extends RuntimeReadOptions {
+  /**
+   * Event-stream observers never read the snapshot, so handoff events the
+   * snapshot already reflects are delivered instead of deduplicated against
+   * the snapshot seq.
+   */
+  readonly deliverHandoffEvents?: boolean;
+}
+
 export interface RuntimeSessionDiagnosticsInput extends RuntimeReadOptions {
   readonly sessionId: string;
   /** Select one Run control record; otherwise the authoritative Session Run is used. */
@@ -1913,7 +1922,7 @@ export interface RuntimeSessionService {
   observe(
     sessionId: string,
     listener: RuntimeEventListener,
-    options?: RuntimeReadOptions,
+    options?: RuntimeSessionObserveOptions,
   ): Promise<RuntimeSessionObservation>;
   /**
    * Captures a bounded, read-only diagnostic boundary without recovering,
@@ -9075,6 +9084,22 @@ function createRuntimeSessionService(
           if (event.seq === lastSeq) return;
         }
         lastSeq = event.seq;
+        emit(event);
+      };
+      // Handoff events were published while the snapshot materialized, so the
+      // snapshot's seq may already be at or past them. Snapshot consumers keep
+      // the dedupe (the snapshot already reflects those events); event-stream
+      // observers never read the snapshot and receive every handoff event.
+      const deliverHandoff = (event: RuntimeEvent): void => {
+        if (closed || invalidated) return;
+        if (options?.deliverHandoffEvents !== true) {
+          deliver(event);
+          return;
+        }
+        if (lastSeq === undefined || event.seq > lastSeq) lastSeq = event.seq;
+        emit(event);
+      };
+      const emit = (event: RuntimeEvent): void => {
         try {
           listener(event);
         } catch (error: unknown) {
@@ -9141,7 +9166,7 @@ function createRuntimeSessionService(
             const batch = pending
               .splice(0)
               .sort((left, right) => left.seq - right.seq);
-            for (const event of batch) deliver(event);
+            for (const event of batch) deliverHandoff(event);
           }
           live = true;
         }));

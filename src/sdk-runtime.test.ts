@@ -4676,6 +4676,61 @@ describe("createKodaXRuntime", () => {
     }
   });
 
+  it("delivers handoff events the snapshot raced past to event observers", async () => {
+    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const sessionsDir = path.join(tempRoot, "snapshot-handoff-race-sessions");
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
+    const session = await runtime.sessions.create({
+      sessionId: "snapshot-handoff-race",
+      title: "Snapshot handoff race",
+    });
+    await runtime.sessions.appendNotice({
+      sessionId: session.id,
+      source: "handoff-race",
+      content: "materializes the transcript",
+    });
+    const originalOpen = nodeFsPromises.open.bind(nodeFsPromises);
+    let releaseMaterialization: (() => void) | undefined;
+    let markMaterializationStarted: (() => void) | undefined;
+    const materializationGate = new Promise<void>((resolve) => {
+      releaseMaterialization = resolve;
+    });
+    const materializationStarted = new Promise<void>((resolve) => {
+      markMaterializationStarted = resolve;
+    });
+    const open = vi.spyOn(nodeFsPromises, "open").mockImplementation(
+      async (file, flags, mode) => {
+        if (String(file).endsWith(".entries") && String(flags) === "wx") {
+          markMaterializationStarted?.();
+          await materializationGate;
+        }
+        return originalOpen(file, flags, mode);
+      },
+    );
+    try {
+      const observed: RuntimeEvent[] = [];
+      const observationRequest = runtime.sessions.observe(session.id, (event) => {
+        observed.push(event);
+      }, { deliverHandoffEvents: true });
+      await materializationStarted;
+      await runtime.sessions.appendNotice({
+        sessionId: session.id,
+        source: "handoff-race",
+        content: "published while the snapshot materialized",
+      });
+      releaseMaterialization?.();
+      const observation = await observationRequest;
+      await vi.waitFor(() => {
+        expect(observed.some((event) => event.type === "session.notice.appended")).toBe(true);
+      });
+      observation.close();
+    } finally {
+      releaseMaterialization?.();
+      open.mockRestore();
+      await runtime.close();
+    }
+  });
+
   it("batches transcript snapshot writes for long sessions", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const sessionsDir = path.join(tempRoot, "snapshot-batched-write-sessions");
