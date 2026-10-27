@@ -21,6 +21,8 @@ test('ordinary CLI Host exits after 30 idle seconds and releases ownership', { t
     execFileSync(process.execPath, [cli, '--session', 'list'], {
       env: environment, windowsHide: true, timeout: 30_000, encoding: 'utf8',
     });
+    assert.doesNotMatch(await fs.readFile(path.join(ownerDir, 'bootstrap.log'), 'utf8'), /\[kodax-startup\]/,
+      'A non-interactive launch without a progress observer must not enable Host progress records');
     const idleAt = performance.now();
     const state = JSON.parse(await fs.readFile(path.join(ownerDir, 'daemon.json'), 'utf8'));
     ownerPid = state.pid;
@@ -76,16 +78,19 @@ test('ensure recovers a shared Session directory from an idle default-profile Ho
   process.env.KODAX_HOME = configHome;
   const sdk = await import('../dist/sdk-runtime.js');
   const trace = [];
-  let phase = 'initial';
+  let attempt = 'initial';
   let startedAt = performance.now();
-  const onStartupProgress = event => { trace.push({ phase, ms: Math.round(performance.now() - startedAt), ...event }); };
+  const onStartupProgress = event => { trace.push({ attempt, ms: Math.round(performance.now() - startedAt), ...event }); };
   let runtime;
   try {
     runtime = await sdk.ensureKodaXRuntime({ homeDir, profile: 'default', daemonStartupTimeoutMs: 15_000, onStartupProgress });
     context.diagnostic(`Initial SDK attachment: ${Math.round(performance.now() - startedAt)}ms`);
+    assert.ok(trace.some(event => event.stage === 'initializing'), 'Packaged Host must forward its actual initialization phase');
+    assert.equal(trace.at(-1).stage, 'ready');
+    assert.ok(trace.findIndex(event => event.stage === 'connecting') > trace.findLastIndex(event => event.stage === 'initializing'));
     await runtime.close();
     runtime = undefined;
-    phase = 'refresh';
+    attempt = 'refresh';
     startedAt = performance.now();
     runtime = await sdk.ensureKodaXRuntime({
       homeDir,

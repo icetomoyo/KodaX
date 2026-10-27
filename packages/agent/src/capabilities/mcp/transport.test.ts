@@ -1,8 +1,9 @@
 import http from 'node:http';
+import { once } from 'node:events';
 import os from 'node:os';
 import path from 'node:path';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createMcpTransport,
   createSseTransport,
@@ -13,6 +14,24 @@ import {
 // ---------------------------------------------------------------------------
 // Minimal SSE server for testing
 // ---------------------------------------------------------------------------
+
+/** Windows can assign a dynamic port forbidden by Fetch; retry only that fixture condition. */
+async function listenForFetch(server: http.Server): Promise<{ url: string }> {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    try {
+      const probe = await fetch(url);
+      await probe.arrayBuffer();
+      return { url };
+    } catch (error) {
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      if (!(error instanceof Error && error.cause instanceof Error && error.cause.message === 'bad port')) throw error;
+    }
+  }
+  throw new Error('Could not allocate a Fetch-compatible fixture port.');
+}
 
 function createTestSseServer(): {
   server: http.Server;
@@ -89,14 +108,11 @@ function createTestSseServer(): {
     authorizationHeaders,
     postEndpoint,
     sendEvent,
-    start: () => new Promise<{ url: string }>((resolve) => {
-      server.listen(0, '127.0.0.1', () => {
-        const addr = server.address() as { port: number };
-        const url = `http://127.0.0.1:${addr.port}`;
-        postEndpoint = `${url}/messages`;
-        resolve({ url });
-      });
-    }),
+    start: async () => {
+      const { url } = await listenForFetch(server);
+      postEndpoint = `${url}/messages`;
+      return { url };
+    },
     stop: () => new Promise<void>((resolve) => {
       sseResponse?.end();
       server.close(() => resolve());
@@ -171,12 +187,7 @@ function createTestStreamableHttpServer(): {
     authorizationHeaders,
     get mode() { return state.mode; },
     set mode(m) { state.mode = m; },
-    start: () => new Promise<{ url: string }>((resolve) => {
-      server.listen(0, '127.0.0.1', () => {
-        const addr = server.address() as { port: number };
-        resolve({ url: `http://127.0.0.1:${addr.port}` });
-      });
-    }),
+    start: () => listenForFetch(server),
     stop: () => new Promise<void>((resolve) => {
       server.close(() => resolve());
     }),
@@ -313,12 +324,7 @@ function createSessionStreamableHttpServer(): {
     deleteSessionHeaders,
     deleteProtocolHeaders,
     sessionId,
-    start: () => new Promise<{ url: string }>((resolve) => {
-      server.listen(0, '127.0.0.1', () => {
-        const addr = server.address() as { port: number };
-        resolve({ url: `http://127.0.0.1:${addr.port}` });
-      });
-    }),
+    start: () => listenForFetch(server),
     stop: () => new Promise<void>((resolve) => {
       server.close(() => resolve());
     }),
@@ -554,6 +560,40 @@ describe('SSE transport', () => {
     expect(parsed.result.echo).toBe('test/echo');
 
     await transport.close();
+  });
+
+  it('rebinds a fixture port rejected by Fetch before testing the SSE transport', async () => {
+    const mock = createTestSseServer();
+    servers.push(mock);
+    const listening = vi.fn();
+    mock.server.on('listening', listening);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
+      new TypeError('fetch failed', { cause: new Error('bad port') }));
+    let transport: ReturnType<typeof createSseTransport> | undefined;
+    try {
+      const { url } = await mock.start();
+      transport = createSseTransport({ url });
+      await transport.open({ onMessage: () => {}, onError: () => {}, onClose: () => {} });
+      expect(transport.connected).toBe(true);
+      expect(listening).toHaveBeenCalledTimes(2);
+    } finally {
+      await transport?.close();
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('surfaces other fixture startup errors without retrying', async () => {
+    const mock = createTestSseServer();
+    servers.push(mock);
+    const listening = vi.fn();
+    mock.server.on('listening', listening);
+    const failure = new TypeError('fetch failed', { cause: new Error('Connection refused') });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(failure);
+    try {
+      await expect(mock.start()).rejects.toBe(failure);
+      expect(listening).toHaveBeenCalledOnce();
+      expect(mock.server.listening).toBe(false);
+    } finally { fetchSpy.mockRestore(); }
   });
 
   it('expands environment references embedded in SSE headers', async () => {

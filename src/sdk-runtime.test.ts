@@ -13309,7 +13309,7 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
-  it.each(['resume', 'stop', 'leases', 'concurrent', 'changed-history', 'queue-save-failure', 'claim-save-failure'] as const)('handles %s at a dead owner generation checkpoint without replaying admission', async action => {
+  it.each(['resume', 'stop', 'session-stop', 'earlier-session-stop', 'session-stop-repair', 'session-stop-unverified-owner', 'leases', 'concurrent', 'changed-history', 'queue-save-failure', 'claim-save-failure'] as const)('handles %s at a dead owner generation checkpoint without replaying admission', async action => {
     const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
     const sessionsDir = path.join(tempRoot, 'generation-resume-sessions');
     const { FileSessionStorage } = await import('@kodax-ai/repl');
@@ -13324,9 +13324,11 @@ describe("createKodaXRuntime", () => {
     await fs.mkdir(directory, { recursive: true });
     await fs.writeFile(path.join(directory, 'status.json'), JSON.stringify({ runId: 'generation-run', sessionId: 'generation-session',
       turnId: 'original-turn', phase: 'recovering', startedAt: '2026-10-21T00:00:00Z', provider: 'mock-provider',
+      ...(action === 'session-stop-repair' || action === 'session-stop-unverified-owner' ? { sessionOrder: 1 } : {}),
       ...(action === 'leases' || action === 'claim-save-failure' ? { origin: { principalId: 'recovery-client' } } : {}),
       contextRecovery: { waitingSince: '2026-10-21T00:00:00Z', checkpoint },
-      _runtime: { revision: 1, owner: { ownerId: 'dead-generation-owner', runtimeId: 'dead-runtime', pid: 2147483647, startedAt: '2026-10-21T00:00:00Z' } } }));
+      _runtime: { revision: 1, owner: { ownerId: 'dead-generation-owner', runtimeId: 'dead-runtime',
+        pid: action === 'session-stop-unverified-owner' ? process.pid : 2147483647, startedAt: '2026-10-21T00:00:00Z' } } }));
     await fs.writeFile(path.join(directory, 'generation-recovery.json'), JSON.stringify({ version: 1, checkpoint,
       start: { prompt: 'Keep exports unchanged.', options: { agentMode: 'sa', context: { systemPromptOverride: 'Keep all constraints.' } }, requiredBindings: [] },
       requiresCredential: action === 'leases', requiresHostTools: action === 'leases', actorTurnBaseline: [],
@@ -13337,13 +13339,40 @@ describe("createKodaXRuntime", () => {
         input: { sessionId: 'generation-session', inputId: 'pending-after', delivery: 'after_turn', text: 'Do not change signatures.' } }] } : {}),
       interruptInputs: [{ inputId: 'pending-exact', afterRunId: 'generation-run', delivery: 'interrupt', state: 'queued',
         queuedAt: '2026-10-21T00:00:01Z', contentPreview: 'Keep...', input: { type: 'text', text: 'Keep every public export unchanged. Also preserve all tests.' } }] }));
+    if (action === 'session-stop' || action === 'earlier-session-stop' || action === 'session-stop-repair' || action === 'session-stop-unverified-owner') {
+      const stops = path.join(tempRoot, '.kodax', 'runtime', 'session-stops');
+      await fs.mkdir(stops, { recursive: true });
+      const repair = action === 'session-stop-repair' || action === 'session-stop-unverified-owner';
+      const key = createHash('sha256').update(JSON.stringify(['generation-session', 'partial-stop'])).digest('hex');
+      await fs.writeFile(path.join(stops, `${key}.json`), JSON.stringify({ version: 1,
+        sessionId: 'generation-session', expectedRunId: repair ? 'generation-run' : 'queued-stop-target', requestId: 'partial-stop',
+        frontier: 1, runIds: repair ? ['generation-run'] : action === 'session-stop' ? ['queued-stop-target', 'generation-run'] : ['queued-stop-target'], identity: {} }));
+    }
     const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir, defaultProvider: 'mock-provider' });
     const { withProductExecution } = await import('./product-execution-authorization.js');
     const recover = (key = 'fresh') => action === 'claim-save-failure'
       ? withProductExecution({ principalId: 'recovery-client', key, bindRun: async value => ({ ...value, origin: { principalId: 'recovery-client' } }) }, () => runtime.runs.recover({ runId: 'generation-run', options: { model: 'larger' } }))
       : runtime.runs.recover({ runId: 'generation-run', options: { model: 'larger' } });
     try {
-      expect((await runtime.runs.get('generation-run')).phase).toBe('recovering');
+      expect((await runtime.runs.get('generation-run')).phase).toBe(action === 'session-stop-unverified-owner' ? 'unknown' : 'recovering');
+      if (action === 'session-stop-repair' || action === 'session-stop-unverified-owner') {
+        const stop = runtime.sessions.cancel({ sessionId: 'generation-session', expectedRunId: 'generation-run', requestId: 'partial-stop' });
+        if (action === 'session-stop-unverified-owner') await expect(stop).rejects.toMatchObject({ code: 'conflict' });
+        else {
+          await expect(stop).resolves.toMatchObject({ receipts: [{ runId: 'generation-run', state: 'confirmed', outcome: 'cancelled' }] });
+          expect((await runtime.runs.get('generation-run')).phase).toBe('cancelled');
+        }
+        expect(codingMock.startKodaX).not.toHaveBeenCalled();
+        return;
+      }
+      if (action === 'session-stop') {
+        codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => fakeRunningSession(options,
+          Promise.resolve({ success: true, lastText: 'Unexpected recovery', messages, sessionId: 'generation-session' })));
+        await expect(recover()).rejects.toMatchObject({ code: 'conflict' });
+        expect(codingMock.startKodaX).not.toHaveBeenCalled();
+        expect((await runtime.runs.get('generation-run')).phase).toBe('recovering');
+        return;
+      }
       if (action === 'queue-save-failure' || action === 'claim-save-failure') {
         const rename = nodeFs.renameSync;
         const failure = vi.spyOn(nodeFs, 'renameSync').mockImplementation((from, to) => {
@@ -15417,7 +15446,7 @@ describe("createKodaXRuntime", () => {
     }
   });
 
-  it.each(['client', 'hook'] as const)("returns unanswered when a late %s answer beats timer dispatch", async source => {
+  it.each(['client', 'hook', 'hook_error'] as const)("returns unanswered when a late %s answer beats timer dispatch", async source => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -15427,6 +15456,7 @@ describe("createKodaXRuntime", () => {
     });
     let answerDone: Promise<unknown> | undefined;
     let resolvePrompt: ((answer: string) => void) | undefined;
+    let rejectPrompt: ((error: Error) => void) | undefined;
     codingMock.startKodaX.mockImplementation(
       (options: KodaXOptions): RunningSession => {
         queueMicrotask(() => {
@@ -15451,7 +15481,7 @@ describe("createKodaXRuntime", () => {
       prompt: "ask after deadline",
       options: {
         events: {
-          askUser: () => new Promise<string>(resolve => { resolvePrompt = resolve; }),
+          askUser: () => new Promise<string>((resolve, reject) => { resolvePrompt = resolve; rejectPrompt = reject; }),
         },
       },
     });
@@ -15477,6 +15507,9 @@ describe("createKodaXRuntime", () => {
           "no",
           { expectedRevision: pending.revision, runId: handle.runId },
         )).resolves.toEqual({ requestId: pending.id, accepted: false, status: "already_resolved" });
+      } else if (source === 'hook_error') {
+        if (!rejectPrompt) throw new Error('expected host prompt');
+        rejectPrompt(new Error('Prompt failed after its deadline'));
       } else {
         if (!resolvePrompt) throw new Error('expected host prompt');
         resolvePrompt('no');
@@ -15486,6 +15519,46 @@ describe("createKodaXRuntime", () => {
         .resolves.toEqual([]);
     } finally {
       now?.mockRestore();
+      await runtime.runs.abort(handle.runId);
+      await runtime.close();
+    }
+  });
+
+  it('ignores a superseded prompt failure while a new question remains pending', async () => {
+    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot, defaultProvider: 'mock-provider' });
+    const session = await runtime.sessions.create({ title: 'Late prompt failure' });
+    const prompt = { question: 'Continue?', options: [{ label: 'Yes', value: 'yes' }] };
+    let wrapped: KodaXOptions['events'];
+    let firstAnswer: Promise<unknown> | undefined;
+    let rejectOld!: (error: Error) => void;
+    let calls = 0;
+    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+      wrapped = options.events;
+      queueMicrotask(() => { firstAnswer = wrapped?.askUser?.(prompt); });
+      return fakeRunningSession(options, new Promise<KodaXResult>(() => undefined));
+    });
+    const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'Ask twice', options: {
+      events: { askUser: () => ++calls === 1
+        ? new Promise<string>((_resolve, reject) => { rejectOld = reject; })
+        : new Promise<string>(() => undefined) },
+    } });
+    try {
+      await flushMicrotasks();
+      const [old] = await runtime.userInputs.listPending({ runId: handle.runId });
+      if (!old || !firstAnswer) throw new Error('Expected first question');
+      await runtime.userInputs.respond(old.id, 'yes');
+      await expect(firstAnswer).resolves.toBe('yes');
+      const secondAnswer = wrapped?.askUser?.(prompt);
+      const [current] = await runtime.userInputs.listPending({ runId: handle.runId });
+      if (!current) throw new Error('Expected second question');
+      expect(current.id).not.toBe(old.id);
+      rejectOld(new Error('Old prompt failed late'));
+      await flushMicrotasks();
+      expect((await runtime.userInputs.listPending({ runId: handle.runId })).map(item => item.id)).toEqual([current.id]);
+      await runtime.userInputs.respond(current.id, 'yes');
+      await expect(secondAnswer).resolves.toBe('yes');
+    } finally {
       await runtime.runs.abort(handle.runId);
       await runtime.close();
     }
@@ -19293,7 +19366,7 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
-  it.each(['timeout', 'skipped'] as const)("settles ordinary questions as unanswered on %s without selecting defaults", async reason => {
+  it.each(['timeout', 'skipped', 'non_interactive'] as const)("settles ordinary questions as unanswered on %s without selecting defaults", async reason => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -19363,16 +19436,19 @@ describe("createKodaXRuntime", () => {
         events: {
           askUser: async (_options, _meta, context) => {
             if (context) promptSignals.push(context.signal);
+            if (reason === 'non_interactive') return { unanswered: true, reason };
             if (reason === 'skipped') return CANCELLED_TOOL_RESULT_MESSAGE;
             return new Promise<never>(() => undefined);
           },
           askUserInput: async (_options, _meta, context) => {
             if (context) promptSignals.push(context.signal);
+            if (reason === 'non_interactive') return { unanswered: true, reason };
             if (reason === 'skipped') return undefined;
             return new Promise<never>(() => undefined);
           },
           askUserMulti: async (_options, _meta, context) => {
             if (context) promptSignals.push(context.signal);
+            if (reason === 'non_interactive') return { unanswered: true, reason };
             if (reason === 'skipped') return undefined;
             return new Promise<never>(() => undefined);
           },

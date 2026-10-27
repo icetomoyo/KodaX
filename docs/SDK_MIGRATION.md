@@ -1,6 +1,6 @@
 # SDK 统一 Client 契约迁移指南
 
-适用范围：当前工作树的 FEATURE_298/299/301 实现；本次核对的包版本为 `0.7.97-alpha.9`。版本号不表示 npm 已发布当前工作树中的所有变更。接入前应核对所安装包的导出和 Host 能力。
+适用范围：当前工作树的 FEATURE_298/299/301 实现；本次核对的包版本为 `0.7.97-alpha.10`。版本号不表示 npm 已发布当前工作树中的所有变更。接入前应核对所安装包的导出和 Host 能力。
 
 Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附件/统计与退出恢复范围见 [SDK/Host 接缝](SPACE_SDK_SEAMS.md)。
 
@@ -35,10 +35,12 @@ TUI、桌面 UI、IDE、自动化应用接入共享 KodaX 时，以 `KodaXProduc
 允许用户明确跳过，不再有 `required` 作答约束，也不自动采用默认答案。
 `userInputTimeoutMs` 默认 `0`（禁用期限）；Host 显式配置正值时才启用期限。
 提问的 `expiresAt` 现在可缺失；UI 不应据此补出本地期限。问题超时/跳过时，
-SDK 回调返回 `AskUserUnanswered`（`{ unanswered: true, reason: 'timeout' | 'skipped' }`），
+SDK 回调返回 `AskUserUnanswered`（`{ unanswered: true, reason: 'timeout' | 'skipped' | 'non_interactive' }`），
 调用方应先用 `/agent` 的 `isAskUserUnanswered` 收窄，再处理答案。
 Client 用 `{ kind: 'skip' }` 显式跳过问题。普通问题的旧 `cancel` / `userInputs.dismiss`
 以及旧输入回调返回 undefined 都视为跳过，正常继续；明确 Run/Session Stop 才中断 Run。
+非交互客户端用 `{ kind: 'skip', reason: 'non_interactive' }`，保留无法回答的原因；
+`timeout` 仍由 Host 期限产生，客户端不能伪造。MCP 无回答仍转换为协议 `cancel`。
 Space 刷新、断连或关闭订阅只清理本地展示，重连后重读同一请求并按原 ID 回答；
 权限审批的拒绝和超时策略不变。完整结算规则见 [Client 契约](CLIENT_CONTRACT.md)。
 
@@ -131,6 +133,12 @@ Session Stop 的 `expectedRunId` 来自用户点击时观察的 Run，`requestId
 ### 启动进度与 UI 交接
 
 两个产品入口都接受可选 `onStartupProgress(progress)`，`ClientStartupProgress` 可从 `/client` 或纯契约入口作类型导入。底层 `ensureKodaXRuntime/connectKodaXRuntime` 使用同一类型和回调。ensure 报告实际 `checking/starting/upgrading/waiting/connecting/ready` 阶段；被动 connect 只报告 `connecting/ready`。`waiting.reason` 为 `connected_clients/host_starting/host_stopping`，沿用现有等待与期限，不强停其他客户端。
+
+新 Host 还会通过同一回调报告 `stage: 'initializing'`，`phase` 为
+modules/extensions/runtime/recovery/mcp/sessions/a2a/listener。显示层应增加这一分支；
+原样接收纯数据即可，不需要另建探测。阶段可能合并或重复，不表示百分比或 Ready。
+SDK 复用既有启动轮询和 bootstrap 日志尾部，无回调时不启用该通道；
+`createKodaXRuntime` 也可用同一回调观察其本机初始化步骤。
 
 启动 `ready` 只表示认证、身份及能力校验完成，Client 接口可用；不表示 Session 已加载、订阅已同步或 UI 已渲染。以返回 Promise 的结果处理成功/失败，在 `finally` 清除启动显示。阶段可以重复，连续相同通知会合并。回调在本机调用、不被等待；抛错或异步拒绝走现有诊断，不改变启动结果。已有无回调调用无需改动。
 

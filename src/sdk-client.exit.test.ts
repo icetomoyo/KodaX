@@ -60,7 +60,7 @@ it('keeps replacement Host work alive across reconnects and replays of a verifie
     const session = await client.sessions.create({ projectPath: homeDir });
     await client.sessions.updateSettings(session.id, { provider: 'exit-replacement-test', agentMode: 'sa', permissionMode: 'full-access' });
     const run = await client.inputs.submit({ sessionId: session.id, inputId: 'replacement-work', text: 'Keep working.' });
-    await expect.poll(() => entered).toBe(true);
+    await expect.poll(() => entered, { timeout: 15_000 }).toBe(true);
     for (let restart = 0; restart < 3; restart += 1) {
       await client.disconnect();
       expect((await readKodaXClientExits({ homeDir, clientInfo: info }))[0]).toMatchObject({

@@ -1,10 +1,15 @@
 # Space 的 Product Client / Host 接缝
 
-Space 已安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，2026-10-18 官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前工作树 `0.7.97-alpha.7` 核对，源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态，不代表当前所有包均未发布。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
+2026-10-18 的 Space 核查样本安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，当时官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前开发树 `0.7.97-alpha.10` 核对，不据此推断 Space 已升级；源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
 
 ## 启动进度与 Renderer 交接
 
 Main 调用 `ensureKodaXClient/connectKodaXClient` 时可传 `onStartupProgress`；如需展示，由 Space 经自己的 IPC 转发纯数据 `ClientStartupProgress`，Renderer 不导入 Node 启动器。ensure 报告 Host 检查、启动、更新、等待与连接；connect 只报告连接与就绪。该通知来自本机调用，不是 Session view、Run 事件或新 Host RPC。
+
+新 Host 的主要内部步骤也通过同一回调报告 `stage: 'initializing'` 和固定 `phase`：
+modules、extensions、runtime、recovery、mcp、sessions、a2a、listener。Space 可原样
+转发并映射展示文案，无需自行探测 Host。阶段可跳过/重复，不表示百分比或就绪；
+Host 的内部日志与启动 ID 仅用于 SDK 本机观测，不进入 Renderer 契约。
 
 `ready` 只表示 Client 接口可用；Main 的 Session 读取和 Renderer 的首次渲染仍有自己的完成边界。回调应快速返回，其 Promise 不被等待，故障不改变启动结果。Space 根据启动 Promise 清除加载或展示失败，再在自身 UI 边界完成交接；不假定已存在自动 IPC 桥。REPL 使用 `onBeforeRender` 完成终端交接，桌面 UI 无需依赖它。阶段、等待原因与完整示例见 [Client 契约](CLIENT_CONTRACT.md#连接启动与所有权)和[英文指南](../public_docs/sdk/embedder-guide.md#show-local-startup-progress)。
 
@@ -13,6 +18,21 @@ Main 调用 `ensureKodaXClient/connectKodaXClient` 时可传 `onStartupProgress`
 Main 从 `client.sessions.list()` 取得 `lastMessageAt` 和 Host 排序，Renderer 以 `lastMessageAt ?? createdAt` 显示时间，不按本地 mtime 或创建时间重新排序。游标原样透传；列表分页是实时边界，活动变化后刷新首页。标题、设置、Actor 状态和压缩不构成新对话；缺少可靠时间的旧记录回退创建时间。新增字段的源码支持不代表 Space 已更新或 npm 已发布。
 
 历史进程恢复在取得所有权的共享 Host 就绪前完成。Space 连接不再重复扫描，不增加 Renderer 恢复职责；Host 退出仍保留原有进程、Job、supervisor 和持久化结果证明。启动进度继续复用 `ClientStartupProgress`。
+
+## 普通问题与权限审批
+
+普通问题的等待与结算由 Host 管理：默认无限等待，用户可明确 skip；Space 仅展示
+pending 并按 requestId 提交回答或 `{ kind: 'skip' }`。断连或刷新不能自行结算。
+`unanswered` 工具结果区分用户 `skipped`、Host `timeout` 与非交互客户端
+`non_interactive`；明确 Stop 才中断 Run，权限审批仍保留独立拒绝与超时策略。
+非交互客户端用 `{ kind: 'skip', reason: 'non_interactive' }` 表达无法回答；
+one-shot CLI 仅处理自己的 Run，MCP elicitation 无回答仍转换成协议 `cancel`。
+完整规则见 [交互事实权威](CLIENT_CONTRACT.md#身份状态与事实权威)。
+
+Main 可在 `ensureKodaXClient` 启动新 Host 时传 `userInputTimeoutMs`，默认 `0`
+无限等待，正值为毫秒；连接已有 Host 不会热更新等待策略。UI 回调故障是工具
+错误，不能显示成用户跳过。Stop 边界由 Host 固定，过期 Stop 不得阻塞其后的 Run；
+部分交付的持久 Stop 仍阻止原成员及其子 Actor 自动恢复，原请求可继续核验并完成。
 
 ## 可信执行授权
 

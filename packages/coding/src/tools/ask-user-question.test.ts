@@ -20,7 +20,7 @@ describe('toolAskUserQuestion - single select', () => {
     expect(JSON.parse(result)).toEqual({ success: true, answers: { kind: 'unanswered', reason: 'timeout' } });
   });
 
-  it.each(['timeout', 'skipped'] as const)('returns an explicit unanswered result for an ordinary question (%s)', async reason => {
+  it.each(['timeout', 'skipped', 'non_interactive'] as const)('returns an explicit unanswered result for an ordinary question (%s)', async reason => {
     const askUser = vi.fn(async () => ({ unanswered: true as const, reason }));
     const result = await toolAskUserQuestion(
       { question: 'Color?', default: 'blue', options: [{ label: 'Blue', value: 'blue' }] },

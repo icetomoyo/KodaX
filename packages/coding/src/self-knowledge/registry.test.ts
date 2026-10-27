@@ -145,7 +145,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('may canonicalize DACL protection/inheritance control at commit');
     expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
-    expect(sandbox).toContain('v0.7.97-alpha.9 release uses Windows native shell protocol 10');
+    expect(sandbox).toContain('v0.7.97-alpha.10 development tree uses Windows native shell protocol 10');
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
@@ -173,7 +173,13 @@ describe('FEATURE_218 manual registry', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('The v0.7.97-alpha.9 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.97-alpha.10 development tree advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.97-alpha.10 development tree resumes checkpointed Runs and task trees after Host');
+    expect(sdk).toContain('wait in `recovering`');
+    expect(sdk).toContain('Kimi K3.1 provider routes join the registry with all seven effort levels mapped');
+    expect(sdk).toContain('skip or Host timeout returns `unanswered` with its reason.');
+    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.9 contract is retained.');
+    expect(sdk).toContain('The v0.7.97-alpha.9 release checks Session admission through canonical identity');
     expect(sdk).toContain('The v0.7.97-alpha.9 release checks Session admission through canonical identity');
     expect(sdk).toContain('a Windows ERROR_CRC surfacing as EIO');
     expect(sdk).toContain('Unreadable metadata still fails closed');
@@ -210,6 +216,9 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('Main-agent result verification replaces the out-of-band Sidecar Verifier');
     expect(sdk).toContain('`KODAX_VERIFIER_*`');
     expect(sdk).toContain('`onStartupProgress` observer over the pure-data');
+    expect(sdk).toContain('`initializing` with Host phases');
+    expect(sdk).toContain('/client, /runtime, /sandbox');
+    expect(sdk).toContain('modules/extensions/runtime/recovery/mcp/sessions/a2a/listener');
     expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2/alpha.3 contract is retained.');
     expect(sdk).toContain('The v0.7.97-alpha.3 release lets trusted Main bound Product Workflows');
     expect(sdk).toContain('race-safe spawn-slot reservations');

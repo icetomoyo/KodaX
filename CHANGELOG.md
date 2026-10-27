@@ -6,7 +6,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-alpha.10] - Unreleased
+
+Tenth alpha of the v0.7.97 line: live context-capacity recovery reaches
+durable generation boundaries — checkpointed Runs and task trees resume
+after Host restart with fresh scoped authority, Kimi K3.1 routes join the
+provider registry with full effort coverage, and AskUser interactions gain
+answer-aware policies with explicit skip semantics. Every v0.7.96 stable
+and v0.7.97-alpha.1 through alpha.9 contract is retained. npm publication
+remains a manual maintainer action.
+
+### Added
+
+- Forward actual Host initialization phases through the existing SDK startup callback and CLI indicator, including MCP prewarm and task recovery; reuse bounded bootstrap-log observation without extra readiness probes or waits.
+- Kimi K3.1 provider routes: all seven user effort levels map through the Anthropic-compatible endpoint exactly like the official Kimi client (explicit thinking enablement plus output_config effort), with live subscription results, inconclusive high self-reports, and the public account balance limitation documented.
+
 ### Fixed
+
+- Resume checkpointed Runs and task trees after Host restart: original history, tool receipts, pending input intent and iteration budgets are preserved across independent child and Host recovery; scoped authority rebinds freshly, suspended worktrees stay protected, and bounded verbatim constraint memory retains oversized requests (Issue 322 follow-up).
+- Converge client exit recovery without rewriting unknown outcomes: startup readiness is separated from historical client cleanup acknowledgements, exact Host/process/Job shutdown evidence is reverified, referenced outcomes are retained with late cleanup results preserved, and old exit requests can no longer fence or stop replacement Hosts.
+- Preserve non-interactive question settlement in one-shot CLI: report normal `unanswered/non_interactive` results without default answers or Run interruption, retain MCP protocol cancellation and independent permission rejection, and update the adjacent regression assertions.
+- Close adjacent question/restart regressions: retain checkpoints on unanswered recovery prompts, cancel unanswered MCP confirmation/URL requests, preserve UI callback errors through the SDK MCP bridge for protocol cancellation, surface ordinary prompt callback errors without overriding prior settlements, scope client Stop intent to its exact Run, and persist thread concurrency limits. Expose the existing new-Host question deadline through the Product launcher; repair classic assertions and capacity-test cleanup.
+- Honor a partially delivered durable Session Stop during Root/Actor generation recovery; its original request can finish through verified dead-owner checkpoint Stop takeover, while later Runs remain outside the old frontier.
 
 - Preserve prior summary failures when an irreducibly oversized user input
   needs request-only degradation (Issue 322). Single-agent and managed
@@ -36,6 +59,7 @@ All notable changes to this project will be documented in this file.
 - Keep eval dump directories and unrelated `kodax-eval-*` directories out of orphan
   worktree cleanup. Require a worktree gitfile and successful Git-owned removal;
   isolate the cleanup regression from the shared system temporary directory.
+- AskUser questions wait indefinitely by default (timeout 0) and support explicit skip; skip and Host timeout return an `unanswered` result with its reason instead of cancelling the Run, defaults are never submitted automatically, and only Stop interrupts. Permission prompts keep their five-minute default; both accept 0 to disable their timer. MCP reverse elicitation and the client plane follow the same policy.
 
 ---
 

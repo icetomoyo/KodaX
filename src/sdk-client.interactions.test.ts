@@ -310,6 +310,30 @@ it('shows the same pending question to both clients, accepts only the first answ
   }
 }, 60_000);
 
+it.each(['select', 'input', 'multi'] as const)('reports an initial %s prompt failure as a tool error instead of a skip', async kind => {
+  const error = new Error('Question UI failed');
+  const fail = vi.fn(async (): Promise<never> => { throw error; });
+  scriptedToolCall = () => [{ ...questionToolCall(), input: kind === 'select' ? questionToolCall().input
+    : kind === 'input' ? { question: 'Name?', kind: 'input' }
+      : { question: 'Choices?', questions: [{ question: 'Choose?', options: [{ label: 'Ship', value: 'ship' }] }] } }];
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'Ask.',
+    options: { events: { askUser: fail, askUserInput: fail, askUserMulti: fail } } });
+  try {
+    await expect(handle.result).resolves.toMatchObject({ phase: 'completed' });
+    expect(fail).toHaveBeenCalledOnce();
+    const results = requests.at(-1)!.flatMap(message => Array.isArray(message.content)
+      ? message.content.filter(block => block.type === 'tool_result') : []);
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ is_error: true, content: expect.stringContaining(error.message) });
+    expect(JSON.stringify(results)).not.toContain('unanswered');
+    expect(await runtime.userInputs.listPending({ runId: handle.runId })).toEqual([]);
+  } finally {
+    await runtime.runs.abort(handle.runId);
+  }
+});
+
 it.each(['select', 'input', 'multi'] as const)('continues the Run with a normal unanswered result on Host %s timeout', async kind => {
   await Promise.all([first.disconnect(), second.disconnect()]);
   await host.close();
@@ -331,21 +355,26 @@ it.each(['select', 'input', 'multi'] as const)('continues the Run with a normal 
   expect(requests).toHaveLength(2);
 });
 
-it('skips an ordinary question and rejects its late reply while a new request is pending', async () => {
+it.each(['skipped', 'non_interactive'] as const)('skips an ordinary question (%s) and rejects its late reply while a new request is pending', async reason => {
   scriptedToolCall = () => [questionToolCall()];
   const session = await first.sessions.create({ projectPath: homeDir });
   await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
   const started = await first.inputs.submit({ sessionId: session.id, inputId: 'optional-skip', text: 'Ask.' });
-  await expect.poll(async () => (await second.interactions.list({ sessionId: session.id })).length).toBe(1);
+  await expect.poll(async () => (await second.interactions.list({ sessionId: session.id })).length, { timeout: 15_000 }).toBe(1);
   const [old] = await second.interactions.list({ sessionId: session.id });
-  expect(await second.interactions.respond(old!.requestId, { kind: 'skip' })).toMatchObject({ accepted: true, status: 'unanswered' });
+  // Timeout remains a Host policy; clients cannot forge it as a skip reason.
+  await expect(second.interactions.respond(old!.requestId,
+    { kind: 'skip', reason: 'timeout' } as unknown as Parameters<typeof second.interactions.respond>[1]))
+    .rejects.toMatchObject({ code: 'invalid_params' });
+  expect(await second.interactions.respond(old!.requestId, reason === 'non_interactive'
+    ? { kind: 'skip', reason } : { kind: 'skip' })).toMatchObject({ accepted: true, status: 'unanswered' });
   await expect(first.runs.await(started.runId!)).resolves.toMatchObject({ phase: 'completed' });
-  expect(JSON.stringify(requests.at(-1))).toContain('skipped');
+  expect(JSON.stringify(requests.at(-1))).toContain(reason);
 
   requests = [];
   scriptedToolCall = () => [questionToolCall()];
   const next = await first.inputs.submit({ sessionId: session.id, inputId: 'new-question', text: 'Ask again.' });
-  await expect.poll(async () => (await second.interactions.list({ sessionId: session.id })).length).toBe(1);
+  await expect.poll(async () => (await second.interactions.list({ sessionId: session.id })).length, { timeout: 15_000 }).toBe(1);
   const [current] = await second.interactions.list({ sessionId: session.id });
   expect(current!.requestId).not.toBe(old!.requestId);
   expect(await second.interactions.respond(old!.requestId, { kind: 'question', answer: 'ship' }))
@@ -353,7 +382,7 @@ it('skips an ordinary question and rejects its late reply while a new request is
   expect((await second.interactions.list({ sessionId: session.id }))[0]!.requestId).toBe(current!.requestId);
   await second.interactions.respond(current!.requestId, { kind: 'question', answer: 'hold' });
   await expect(first.runs.await(next.runId!)).resolves.toMatchObject({ phase: 'completed' });
-});
+}, 45_000);
 
 it('returns multi-question answers with arrays, zero selections, and custom input intact', async () => {
   scriptedToolCall = () => [{

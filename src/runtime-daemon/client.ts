@@ -100,7 +100,7 @@ import type {
   McpServerConfig,
   McpServerToolList,
 } from '@kodax-ai/agent';
-import { emitKodaXDiagnostic } from '@kodax-ai/agent';
+import { emitKodaXDiagnostic, isAskUserUnanswered } from '@kodax-ai/agent';
 import { KODAX_VERSION } from '@kodax-ai/repl';
 import type {
   RuntimeDaemonMethod,
@@ -452,9 +452,8 @@ export function createRuntimeDaemonClient(
     pending: ClientInteraction,
     answer: unknown,
   ): ClientInteractionResponse | undefined => {
-    if (pending.kind !== 'permission' && typeof answer === 'object' && answer !== null
-      && 'unanswered' in answer && answer.unanswered === true && 'reason' in answer && answer.reason === 'skipped') {
-      return { kind: 'skip' };
+    if (pending.kind !== 'permission' && isAskUserUnanswered(answer) && answer.reason !== 'timeout') {
+      return answer.reason === 'non_interactive' ? { kind: 'skip', reason: 'non_interactive' } : { kind: 'skip' };
     }
     if (pending.kind === 'question_input') {
       return { kind: 'question_input', text: answer as string };

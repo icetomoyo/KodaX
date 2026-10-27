@@ -34,9 +34,13 @@ import type {
 } from './client-domains.js';
 export type * from './client-domains.js';
 
+export type ClientHostStartupPhase =
+  | 'modules' | 'extensions' | 'runtime' | 'recovery' | 'mcp' | 'sessions' | 'a2a' | 'listener';
+
 /** Local launcher facts. `ready` means the Client is usable, not that a UI has rendered. */
 export type ClientStartupProgress =
   | { readonly stage: 'checking' | 'starting' | 'upgrading' | 'connecting' | 'ready' }
+  | { readonly stage: 'initializing'; readonly phase: ClientHostStartupPhase }
   | { readonly stage: 'waiting'; readonly reason: 'connected_clients' | 'host_starting' | 'host_stopping' };
 
 /** Display facts only; extension handlers and Host execution types stay private. */
@@ -925,7 +929,7 @@ export type ClientInteractionResponse =
   | { readonly kind: 'question_multi'; readonly answers: Readonly<Record<string, AskUserAnswer>> }
   | { readonly kind: 'question_input'; readonly text: string }
   | { readonly kind: 'permission'; readonly decision: ClientPermissionDecision }
-  | { readonly kind: 'skip' }
+  | { readonly kind: 'skip'; readonly reason?: 'non_interactive' }
   /** Legacy question-dialog dismissal: treated as skip. Permission cancellation remains a rejection. */
   | { readonly kind: 'cancel'; readonly reason?: string };
 

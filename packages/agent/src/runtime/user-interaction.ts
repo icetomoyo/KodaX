@@ -95,13 +95,14 @@ export type AskUserAnswer = AskUserSelectionAnswer | AskUserSelectionAnswer[];
 export interface AskUserUnanswered {
   /** Boolean discriminant cannot collide with a multi-question string answer map. */
   readonly unanswered: true;
-  readonly reason: 'timeout' | 'skipped';
+  readonly reason: 'timeout' | 'skipped' | 'non_interactive';
 }
 
 export function isAskUserUnanswered(value: unknown): value is AskUserUnanswered {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
-  return record.unanswered === true && (record.reason === 'timeout' || record.reason === 'skipped');
+  return record.unanswered === true
+    && (record.reason === 'timeout' || record.reason === 'skipped' || record.reason === 'non_interactive');
 }
 
 /**
@@ -158,7 +159,7 @@ export interface UserInteraction {
    * return `{ kind: 'customInput', value }` in the single or array position.
    * Plain string/string[] hosts remain valid for backward compatibility.
    * Questions can return `AskUserUnanswered`; only the owner sets a
-   * timeout result. Hosts may explicitly skip with reason `skipped`.
+   * timeout result. Hosts may skip with reason `skipped` or `non_interactive`.
    */
   askUser?: (
     options: AskUserQuestionOptions,

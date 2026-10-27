@@ -136,6 +136,59 @@ Before tagging, all of the following must be true:
 
 Only after these gates pass may the exact commit be tagged `v0.7.90`.
 
+## v0.7.97-alpha.10 release preparation
+
+Release state (2026-10-27): `v0.7.97-alpha.10` is development/release
+preparation, not a tagged or published release. It prepares the
+Host-restart Run/task-tree resume, the durable context-capacity recovery
+boundaries, Kimi K3.1 provider routes, and the answer-aware AskUser
+policies. The tag-triggered Release workflow runs the reusable CI
+workflow before the build matrix; branch pushes do not trigger it, while
+CI can also be dispatched manually. The eventual `-alpha` tag suffix
+marks the release as a GitHub pre-release automatically. npm registry
+publication remains a separate manual maintainer action.
+
+On top of v0.7.97-alpha.9 it includes:
+
+- Checkpoint resume after Host restart: original history, tool receipts,
+  pending input intent and iteration budgets are preserved across
+  independent child and Host recovery; scoped authority rebinds freshly,
+  suspended worktrees stay protected, and bounded verbatim constraint
+  memory retains oversized requests (Issue 322 follow-up).
+- Durable context-capacity recovery: retrievable older assistant history,
+  cumulative request-only user-text paging (including mixed image
+  messages), budgeted runtime provenance, small-window safety accounting,
+  emergency schema discovery through the existing tool bridge, at most four
+  measured-reduction retries, and a `recovering` wait that continues the
+  same execution when model settings change or corrective input arrives.
+- Kimi K3.1 provider routes with all seven effort levels mapped exactly
+  like the official Kimi client.
+- Answer-aware AskUser policies: indefinite default wait (timeout 0) with
+  explicit skip, `unanswered` results carrying their reason instead of Run
+  cancellation, no automatic default submission; permission prompts keep
+  their five-minute default and both timers accept 0 to disable.
+- One-shot CLI questions return normal `unanswered/non_interactive` results,
+  preserving the reason no answer was supplied without interrupting the Run.
+  MCP protocol cancellation and permission rejection remain independent.
+- SDK question bridges preserve initial UI failures for MCP protocol `cancel`,
+  retain checkpoints on unanswered recovery prompts, and keep durable Session
+  Stop frontiers isolated from later Runs across Host restart.
+- New Host initialization phases reach SDK/CLI startup callbacks through
+  bounded observation of the existing bootstrap log; no extra health probes,
+  RPCs, timers or waits are introduced, and readiness authority is unchanged.
+- Eval evidence preservation: orphan worktree cleanup keeps eval dump
+  directories and unrelated `kodax-eval-*` directories, requiring a
+  worktree gitfile and Git-owned removal.
+- Client exit recovery convergence: startup readiness is separated from
+  historical client cleanup acknowledgements; exact Host/process/Job
+  shutdown evidence is reverified, referenced outcomes are retained with
+  late cleanup results preserved, and old exit requests cannot fence or
+  stop replacement Hosts.
+
+All root/workspace package versions and lockfile entries are
+`0.7.97-alpha.10`. The feature-design submodule, public guides,
+architecture documents, and `kodax_manual` track this release.
+
 ## v0.7.97-alpha.9 release preparation
 
 Release state: `v0.7.97-alpha.9` is the GitHub pre-release for the exact

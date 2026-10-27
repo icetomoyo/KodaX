@@ -98,7 +98,7 @@ try {
 
 `connectKodaXClient` 只连接已有兼容 Host；`ensureKodaXClient` 通过统一启动器启动或正常更新空闲 Host。Node 连接器不提供浏览器 HTTP/WebSocket transport。
 
-两个产品入口均支持可选 `onStartupProgress` 和共享 `ClientStartupProgress` 类型。启动 `ready` 表示 Client 接口可用；Session 加载与 UI 渲染仍有独立完成边界。详见[启动进度示例](public_docs/sdk/embedder-guide.md#show-local-startup-progress)。
+两个产品入口均支持可选 `onStartupProgress` 和共享 `ClientStartupProgress` 类型；新 Host 通过 `initializing/phase` 报告内部初始化步骤，不增加额外探测或等待。启动 `ready` 表示 Client 接口可用；Session 加载与 UI 渲染仍有独立完成边界。详见[启动进度示例](public_docs/sdk/embedder-guide.md#show-local-startup-progress)。
 
 底层 `/runtime` 仍支持显式 inline embedded 与 daemon，供受信任宿主处理凭据桥、Host Tools、启动和诊断；Worker-hosted embedded、通用 operation receipt/journal 已移除。不能在产品连接失败时退回私有 Runtime。下方结构化 Runtime 错误说明仅属于底层接口，不能假定 Product Client 暴露相同字段。
 
@@ -313,6 +313,14 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 详见 [docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) 与
 [v0.7.97-alpha.4 发布清单](docs/release.md#v0797-alpha4-release-preparation)。
 所有 v0.7.96 稳定与 v0.7.97-alpha.1/alpha.2/alpha.3 契约全部保留。
+
+**v0.7.97-alpha.10 开发预览**：Host 重启后可恢复检查点 Run 与任务树(全新作用域
+授权);上下文容量恢复到达持久代边界;Kimi K3.1 供应商路由覆盖全部七档
+effort;AskUser 默认无限等待、支持显式跳过并返回带原因的 `unanswered` 结果。
+SDK 启动回调透传 Host 内部阶段；退出恢复将安全启动与历史清理未知事实分开。
+代码提交、版本标签与实际发布分别判断。
+详见 [v0.7.97-alpha.10 发布清单](docs/release.md#v0797-alpha10-release-preparation)。
+所有 v0.7.96 稳定与 v0.7.97-alpha.1 至 alpha.9 契约全部保留。
 
 **v0.7.97-alpha.9 发布**：Session 准入检查改用规范身份元数据而非加载完整
 历史 transcript——元数据头可读而正文不可读(例如损坏存储上的 Windows

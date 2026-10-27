@@ -448,7 +448,8 @@ Worker-hosted embedded Runtime is removed. The following structured-failure
 reference is scoped to that low-level API, not fields promised by Product Client.
 
 Both product entries accept optional `onStartupProgress` with the shared
-`ClientStartupProgress` type. Launcher `ready` means the Client is usable;
+`ClientStartupProgress` type, including `initializing` with actual Host phases
+for new Hosts. Phase observation adds no extra probes or waits. Launcher `ready` means the Client is usable;
 Session loading and UI rendering have separate boundaries. See the
 [startup progress example](public_docs/sdk/embedder-guide.md#show-local-startup-progress).
 
@@ -792,6 +793,17 @@ starts, upgrades, or waits. See
 [docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) and the
 [v0.7.97-alpha.4 release notes](docs/release.md#v0797-alpha4-release-preparation).
 Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2/alpha.3 contract is
+retained.
+
+**v0.7.97-alpha.10 development preview:** Checkpointed Runs and task trees resume after
+Host restart with fresh scoped authority on top of durable context-capacity
+recovery boundaries; Kimi K3.1 provider routes join the registry with all
+seven effort levels; AskUser questions wait indefinitely by default with
+explicit skip and `unanswered` results. SDK startup callbacks expose internal
+Host phases, and exit recovery separates safe startup from historical unknown
+cleanup acknowledgements. Tagging and publication remain separate. See the
+[v0.7.97-alpha.10 release notes](docs/release.md#v0797-alpha10-release-preparation).
+Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.9 contract is
 retained.
 
 **v0.7.97-alpha.9 release:** Checks Session admission through canonical
@@ -2115,7 +2127,7 @@ This development tree exposes 17 SDK subpaths plus the root. Shared product
 applications use `@kodax-ai/kodax/client`; independent libraries and trusted Host
 APIs remain available through the other subpaths. See the [Client contract](docs/CLIENT_CONTRACT.md)
 and [SDK migration guide](docs/SDK_MIGRATION.md). This documentation was checked
-against package version `0.7.97-alpha.9`; npm publication is separate from
+against package version `0.7.97-alpha.10`; npm publication is separate from
 the current development-tree contract.
 
 ```bash

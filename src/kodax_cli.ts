@@ -2,6 +2,7 @@
 import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
 import { cliStartupProgressMessage, createCliStartupProgress, isInteractiveCliStartup, type CliStartupProgress } from './cli-startup-progress.js';
 import { createHostOwnedExtensionRuntime } from "./host-integrations.js";
+import { reportDaemonStartupPhase } from './runtime-daemon/startup-progress.js';
 import {
   exitCodeForOneShotResult,
   runOneShotClientTask,
@@ -816,6 +817,7 @@ async function serveDaemonCommand(input: {
       );
     }
   }
+  reportDaemonStartupPhase('extensions');
   const extensions = await createDaemonOwnedExtensionRuntime(daemonConfigHome);
   const a2aIntegration = createConfiguredA2ARuntimeIntegration({
     configHome: daemonConfigHome,
@@ -874,12 +876,16 @@ async function serveDaemonCommand(input: {
           userInputTimeoutMs: input.userInputTimeoutMs,
           sharedDaemonHost: true,
           daemonHostRuntimeId: runtimeId,
+          onStartupProgress: progress => {
+            if (progress.stage === 'initializing') reportDaemonStartupPhase(progress.phase);
+          },
           externalAgents: a2aIntegration.runtimeOptions,
           execPolicy: ownerBootstrap?.execPolicy,
           autoReview: ownerBootstrap?.autoReview,
         });
         ownedRuntime = runtime;
         try {
+          reportDaemonStartupPhase('a2a');
           a2aHandle = await a2aIntegration.start(runtime);
           // FEATURE_298 T21 — restricted local-Agent preparation, workspace
           // binding, and A2A serving all execute in this Host process when
@@ -950,6 +956,7 @@ async function serveDaemonCommand(input: {
             });
             hostedA2AConfigController.startWatching();
           }
+          reportDaemonStartupPhase('listener');
           return runtime;
         } catch (error: unknown) {
           await closeHostedA2AServing();
@@ -1283,6 +1290,7 @@ async function createDaemonOwnedExtensionRuntime(configHome: string): Promise<{
     configHome,
     prepareRuntimeConfig(),
     (message) => console.error(chalk.dim(`[integrations] ${message}`)),
+    progress => { if (progress.stage === 'initializing') reportDaemonStartupPhase(progress.phase); },
   );
   owned.runtime.activate();
   return owned;

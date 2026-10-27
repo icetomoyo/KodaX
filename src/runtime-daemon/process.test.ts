@@ -12,6 +12,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
+import { setKodaXDiagnosticSink } from '@kodax-ai/agent';
+import { DAEMON_STARTUP_PROGRESS_ENV } from './startup-progress.js';
 
 import {
   acquireRuntimeDaemonProcessLease,
@@ -37,6 +39,12 @@ import {
 } from "./state.js";
 
 describe("runtime daemon child process environment", () => {
+  it('passes only the requested startup observation ID, never an inherited one', () => {
+    const input = { homeDir: '/test', parentEnv: { [DAEMON_STARTUP_PROGRESS_ENV]: 'old-startup' } };
+    expect(createRuntimeDaemonServeEnvironment(input)[DAEMON_STARTUP_PROGRESS_ENV]).toBeUndefined();
+    expect(createRuntimeDaemonServeEnvironment({ ...input, startupProgressId: 'new-startup' })[DAEMON_STARTUP_PROGRESS_ENV])
+      .toBe('new-startup');
+  });
   it("passes trusted owner policy through a one-shot daemon bootstrap file", () => {
     const configHome = mkdtempSync(
       path.join(os.tmpdir(), "kodax-daemon-owner-bootstrap-"),
@@ -442,6 +450,72 @@ describe("runtime daemon child startup", () => {
     pidAlive: true,
     endpointReachable: true,
     identityMatches: true,
+  });
+
+  it('forwards this startup phase without extra health checks or awaiting the observer', async () => {
+    const configHome = mkdtempSync(path.join(os.tmpdir(), 'kodax-startup-phases-'));
+    const phasePaths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'default');
+    const descriptor = openRuntimeDaemonBootstrapLog(phasePaths);
+    closeSync(descriptor);
+    const progress: unknown[] = [];
+    const child: RuntimeDaemonStartupProcess = {
+      pid: 778, startupProgressId: 'current-startup', exit: new Promise(() => undefined),
+      unref: vi.fn(), terminate: vi.fn(async () => undefined),
+    };
+    let healthChecks = 0;
+    try {
+      await waitForHealthyDaemonStartup(phasePaths, {
+        startupTimeoutMs: 1_000, pollIntervalMs: 1,
+        onStartupProgress: event => { progress.push(event); return new Promise<void>(() => undefined); },
+      }, child, async () => {
+        healthChecks += 1;
+        const record = (startupId: string, pid: number, phase: string): string =>
+          `[kodax-startup] ${JSON.stringify({ startupId, pid, phase })}\n`;
+        writeFileSync(runtimeDaemonBootstrapLogPath(phasePaths),
+          record('current-startup', 778, healthChecks < 3 ? 'modules' : 'mcp')
+          + record('old-startup', 778, 'extensions')
+          + record('current-startup', 999, 'sessions')
+          + record('current-startup', 778, 'invalid-phase')
+          + '[kodax-startup] {incomplete');
+        return healthChecks < 3 ? missingHealth() : healthy(778)();
+      });
+      expect(progress).toEqual([
+        { stage: 'waiting', reason: 'host_starting' },
+        { stage: 'initializing', phase: 'modules' },
+        { stage: 'initializing', phase: 'mcp' },
+      ]);
+      expect(healthChecks).toBe(3);
+      expect(child.unref).toHaveBeenCalledOnce();
+      expect(child.terminate).not.toHaveBeenCalled();
+    } finally {
+      rmSync(configHome, { recursive: true, force: true });
+    }
+  });
+
+  it.each([true, false])('keeps progress I/O observational (observer=%s)', async observeProgress => {
+    const configHome = mkdtempSync(path.join(os.tmpdir(), 'kodax-startup-progress-error-'));
+    const phasePaths = { ...resolveRuntimeDaemonPathsFromConfigHome(configHome, 'default'),
+      rootDir: path.join(configHome, 'unreadable\0progress') }; // Deterministic read failure on every platform.
+    const diagnostics: string[] = [];
+    const restore = setKodaXDiagnosticSink(event => { if (event.source === 'client.startup-progress') diagnostics.push(event.message); });
+    const child: RuntimeDaemonStartupProcess = {
+      pid: 778, startupProgressId: 'current-startup', exit: new Promise(() => undefined),
+      unref: vi.fn(), terminate: vi.fn(async () => undefined),
+    };
+    let healthChecks = 0;
+    try {
+      await expect(waitForHealthyDaemonStartup(phasePaths, {
+        startupTimeoutMs: 1_000, pollIntervalMs: 1,
+        onStartupProgress: observeProgress ? () => {} : undefined,
+      }, child, async () => ++healthChecks < 3 ? missingHealth() : healthy(778)()))
+        .resolves.toMatchObject({ state: { status: 'ready' } });
+      expect(diagnostics).toEqual(observeProgress ? ['Host startup progress could not be read.'] : []);
+      expect(healthChecks).toBe(3);
+      expect(child.terminate).not.toHaveBeenCalled();
+    } finally {
+      restore();
+      rmSync(configHome, { recursive: true, force: true });
+    }
   });
 
   it("fails immediately and reclaims the child when it exits before becoming healthy", async () => {

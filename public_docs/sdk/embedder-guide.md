@@ -1,7 +1,7 @@
 # KodaX SDK — Product Client and Host Integration
 
 This page describes the current FEATURE_298/299/301 development tree, checked against
-package version `0.7.97-alpha.9`. The version alone does not claim that all current
+package version `0.7.97-alpha.10`. The version alone does not claim that all current
 working-tree changes are already published to npm. Check the installed
 package exports and the connected Host's capabilities when migrating.
 
@@ -70,13 +70,27 @@ replays only verify their exact owner and cannot stop a replacement. See the
 
 Both entries accept an optional `onStartupProgress` callback with the shared
 `ClientStartupProgress` data type. Its stages are `checking`, `starting`,
-`upgrading`, `waiting`, `connecting` and `ready`. `ensure` reports the actual
+`upgrading`, `waiting`, `initializing`, `connecting` and `ready`. `ensure` reports the actual
 local launcher stages; passive `connect` only reports `connecting` and `ready`.
 For `waiting`, `reason` is `connected_clients`, `host_starting` or `host_stopping`:
 waiting for other clients to disconnect, a Host to start, or the previous Host
 to exit. It does not forcibly stop busy clients or work. The low-level
 `ensureKodaXRuntime` / `connectKodaXRuntime` entries accept the same callback;
 the type is also exported by `/runtime` and the pure contract entry.
+
+New Hosts report `{ stage: 'initializing', phase }` before real initialization
+work. Phases are `modules`, `extensions`, `runtime`, `recovery`, `mcp`,
+`sessions`, `a2a`, and `listener`. This covers module loading, extension loading,
+previous-process/task recovery, MCP prewarm, session resources and connection
+setup. Fast phases may be coalesced; this is current display state, not a replay
+log or percentage. Existing Hosts and queued launchers retain the original
+waiting/connection events. Direct `createKodaXRuntime` accepts the same callback
+for its local initialization steps.
+
+The launcher reuses its existing readiness poll and reads at most 4 KiB from
+the existing bootstrap log, matching the current launch ID and process. There
+are no extra health probes, RPCs, timers or fixed delays. Without an observer,
+this channel is disabled. Phase records never establish readiness or ownership.
 
 ```ts
 import { ensureKodaXClient, type ClientStartupProgress } from '@kodax-ai/kodax/client';
@@ -96,7 +110,7 @@ export async function openProductClient(
 `ready` means authentication and capability checks have passed and Client APIs
 are usable. It does not mean a UI has rendered or a Session has loaded. Stages
 may repeat during existing retries; identical consecutive events are merged.
-No per-poll event stream or persistent startup log is added. Callbacks run
+No per-poll event stream or separate startup log is added. Callbacks run
 locally and are not awaited; synchronous errors and rejected promises go to
 the existing diagnostic sink without changing startup's result. Keep rendering
 callbacks quick. Existing calls without the callback continue to work.
@@ -3738,10 +3752,14 @@ argument, `{ signal }`; abort the visible prompt when it fires.
 
 Ordinary AskUser requests wait indefinitely by default and allow explicit skip.
 There is no required-answer flag. An ordinary-question deadline is controlled
-by `createKodaXRuntime({ userInputTimeoutMs })` (also used on daemon auto-start).
+by `createKodaXRuntime({ userInputTimeoutMs })` or, for a newly started shared
+Host, `ensureKodaXClient({ userInputTimeoutMs })` / `ensureKodaXRuntime`.
+Connecting to an existing Host does not change its policy. The CLI equivalent
+is `kodax daemon serve --user-input-timeout-ms <milliseconds>`; this is not a
+`config.json` setting.
 The timeout defaults to `0`, disabling it; positive values are integer
 milliseconds up to 2,147,483,647. Defaults only suggest an answer for display.
-Skip/timeout returns `{ unanswered: true, reason: 'skipped' | 'timeout' }`;
+Skip/timeout returns `{ unanswered: true, reason: 'skipped' | 'timeout' | 'non_interactive' }`;
 the tool emits `{ success: true, status: 'unanswered', reason }` for the model
 to interpret normally. Permission approval keeps its separate five-minute
 default and fail-closed policy, with `permissionTimeoutMs: 0` disabling its
@@ -3753,6 +3771,11 @@ undefined input/multi-question callback result mean skip. They never interrupt
 the Run. A legacy select callback's cancellation sentinel also means skip unless
 the tool's owner AbortSignal is aborted. Explicit Run/Session Stop remains the
 interruption operation; question cleanup on observation close is not a response.
+An initial ordinary prompt callback failure is a tool error, never a skipped answer.
+The SDK MCP bridge preserves the first UI callback error for the MCP boundary
+to return protocol `cancel`; an explicit user decline still returns `decline`.
+Late callback errors cannot replace an answer, deadline, or Stop already settled
+by the owner. Skipping a previous-task recovery question retains its checkpoint.
 
 SDK clients that create a concrete request may pass `toolInput` and
 `executionCwd` to `runtime.permissions.request(...)` in both embedded and
@@ -5591,6 +5614,9 @@ An AskUser expiry settles as `unanswered` with reason `timeout`;
 `default` is never selected automatically. Client hosts may explicitly skip
 requests through `client.interactions.respond(id, { kind: 'skip' })`
 or the Runtime facade's `userInputs.respond(id, { unanswered: true, reason: 'skipped' })`.
+Non-interactive clients use `{ kind: 'skip', reason: 'non_interactive' }` (or
+the same reason in the Runtime facade's unanswered value). The Host preserves
+that reason in the normal tool result; only the Host may originate `timeout`.
 Legacy question `cancel` and `userInputs.dismiss` also settle as unanswered/skipped;
 they do not interrupt the Run. Explicit Run/Session Stop is independent.
 Permission cancellation still rejects the approval. `expiresAt` is absent for unbounded requests.

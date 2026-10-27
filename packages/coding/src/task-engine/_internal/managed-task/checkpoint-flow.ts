@@ -22,7 +22,7 @@
 
 import path from 'node:path';
 
-import { asSingleSelection } from '@kodax-ai/agent';
+import { asSingleSelection, isAskUserUnanswered } from '@kodax-ai/agent';
 import type {
   KodaXHarnessProfile,
   KodaXManagedTask,
@@ -90,7 +90,7 @@ export async function handlePreRunCheckpoint(
   }
 
   const useChinese = /[一-鿿]/.test(validated.managedTask.contract.objective ?? '');
-  const answer = asSingleSelection(await options.events.askUser({
+  const result = await options.events.askUser({
     question: useChinese ? '发现未完成的任务' : 'Found incomplete task',
     allowCustomInput: false,
     options: [
@@ -118,7 +118,10 @@ export async function handlePreRunCheckpoint(
       },
     ],
     default: 'resume',
-  }));
+  });
+  // Leave the earlier task untouched; the current request has not chosen it.
+  if (isAskUserUnanswered(result)) return undefined;
+  const answer = asSingleSelection(result);
   if (answer === 'cancel') {
     await deleteSafely();
     throw new Error('Runner-driven path: user cancelled due to pre-existing checkpoint');
@@ -129,7 +132,7 @@ export async function handlePreRunCheckpoint(
     // state and feeds it into the prompt.
     return { resumeFrom: validated };
   }
-  await deleteSafely();
+  if (answer === 'restart') await deleteSafely();
   return undefined;
 }
 

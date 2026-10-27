@@ -89,6 +89,16 @@ describe('buildMcpReverseCapabilities', () => {
 });
 
 describe('elicitViaUserInteraction — form mode', () => {
+  it.each(['skipped', 'timeout', 'non_interactive'] as const)('cancels unanswered confirmation and URL requests (%s)', async reason => {
+    const ui: UserInteraction = { askUser: async () => ({ unanswered: true, reason }) };
+    for (const request of [
+      { mode: 'form' as const, message: 'Proceed?' },
+      { mode: 'url' as const, url: 'https://auth.example.test', message: 'Authorize?' },
+    ]) {
+      expect(await elicitViaUserInteraction(ui, request)).toEqual({ action: 'cancel' });
+    }
+  });
+
   it('confirm-only form (no fields) maps to a single approve prompt → accept {}', async () => {
     const ui: UserInteraction = { askUser: async () => 'accept' };
     const result = await elicitViaUserInteraction(ui, { mode: 'form', message: 'Proceed?' });

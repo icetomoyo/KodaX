@@ -2,8 +2,9 @@ import { mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { __checkpointTestables } from './task-engine.js';
+import { handlePreRunCheckpoint } from './task-engine/_internal/managed-task/checkpoint-flow.js';
 
 const {
   writeCheckpoint,
@@ -111,6 +112,23 @@ describe('Checkpoint: writeCheckpoint + deleteCheckpoint', () => {
 });
 
 describe('Checkpoint: findValidCheckpoint', () => {
+  it.each(['skipped', 'timeout', 'non_interactive'] as const)('preserves prior work without choosing resume or restart when unanswered (%s)', async reason => {
+    const root = await createTempDir('ckpt-unanswered-');
+    const taskDir = path.join(root, 'task-001');
+    await mkdir(taskDir);
+    const checkpoint = JSON.stringify(buildValidCheckpoint({ gitCommit: '', sessionId: 'session-current' }));
+    const managedTask = JSON.stringify(buildMinimalManagedTask('task-001'));
+    await writeFile(path.join(taskDir, CHECKPOINT_FILE), checkpoint);
+    await writeFile(path.join(taskDir, 'managed-task.json'), managedTask);
+    const askUser = vi.fn(async () => ({ unanswered: true as const, reason }));
+    const result = await handlePreRunCheckpoint({ provider: 'test', session: { id: 'session-current' },
+      context: { managedTaskWorkspaceDir: root, gitRoot: root }, events: { askUser } });
+    expect(askUser).toHaveBeenCalledOnce();
+    expect(result).toBeUndefined();
+    expect(await readFile(path.join(taskDir, CHECKPOINT_FILE), 'utf8')).toBe(checkpoint);
+    expect(await readFile(path.join(taskDir, 'managed-task.json'), 'utf8')).toBe(managedTask);
+  });
+
   it('returns undefined when no managed-tasks directory exists', async () => {
     const dir = await createTempDir('ckpt-no-root-');
     const result = await findValidCheckpoint({

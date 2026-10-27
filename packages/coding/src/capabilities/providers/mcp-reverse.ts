@@ -88,12 +88,14 @@ async function elicitForm(
   // Confirm-only form (no fields) -> a single approve/decline prompt.
   if (!properties || Object.keys(properties).length === 0) {
     if (!ui.askUser) return { action: 'decline' };
-    const answer = asSingleSelection(await ui.askUser({
+    const result = await ui.askUser({
       question: `${banner}${detail}`,
       kind: 'select',
       allowCustomInput: false,
       options: [{ label: 'Approve', value: 'accept' }, { label: 'Decline', value: 'decline' }],
-    }, context));
+    }, context);
+    if (isAskUserUnanswered(result)) return { action: 'cancel' };
+    const answer = asSingleSelection(result);
     return answer === 'accept' ? { action: 'accept', content: {} } : { action: 'decline' };
   }
 
@@ -176,7 +178,7 @@ async function elicitUrl(
   }
   const banner = `${whoIsAsking(request)} is requesting browser authorization.`;
   const detail = request.message ? `\n\n${request.message}` : '';
-  const answer = asSingleSelection(await ui.askUser({
+  const result = await ui.askUser({
     question:
       `${banner}${detail}\n\n`
       + `URL: ${url}\nDomain: ${domain}\n\nOnly continue if you trust this domain. KodaX will NOT open it automatically.`,
@@ -186,7 +188,9 @@ async function elicitUrl(
       { label: 'I trust this — open it myself and continue', value: 'accept' },
       { label: 'Decline', value: 'decline' },
     ],
-  }, context));
+  }, context);
+  if (isAskUserUnanswered(result)) return { action: 'cancel' };
+  const answer = asSingleSelection(result);
   return answer === 'accept' ? { action: 'accept', content: {} } : { action: 'decline' };
 }
 

@@ -42,7 +42,6 @@ export function createRecoveringRuntimeClient(initial: KodaXRuntime,
   const reattach = new Set<() => Promise<void>>();
   const recoveries = new Map<string, Promise<void>>();
   const stopped = new Set<string>();
-  const cancelledSessions = new Set<string>();
   const connectionWaiters = new Set<() => void>();
   const report = (next: RuntimeConnectionState): void => {
     state = next;
@@ -116,7 +115,7 @@ export function createRecoveringRuntimeClient(initial: KodaXRuntime,
     const host = current;
     const attempt = (async () => {
       const status = await host.runs.get(runId);
-      if (closed || stopped.has(runId) || cancelledSessions.has(status.sessionId)
+      if (closed || stopped.has(runId)
         || status.stop || status.phase !== 'recovering' || !status.contextRecovery?.checkpoint) return;
       // Reuses the same trusted Product authorization boundary as explicit recovery.
       await toKodaXProductClient(host, authorize).runs.recover({ sessionId: status.sessionId, runId });
@@ -153,11 +152,10 @@ export function createRecoveringRuntimeClient(initial: KodaXRuntime,
     return current.runs.abort(runId, ...rest);
   };
   const cancel: KodaXRuntime['sessions']['cancel'] = async input => {
-    cancelledSessions.add(input.sessionId);
+    // Match runs.abort: preserve Stop intent only for the exact target Run.
+    stopped.add(input.expectedRunId);
     if (connecting) await connecting;
-    const result = await current.sessions.cancel(input);
-    cancelledSessions.delete(input.sessionId);
-    return result;
+    return current.sessions.cancel(input);
   };
   const observeView: KodaXRuntime['sessions']['observeView'] = async (sessionId, deliver, options) => {
     let disposed = false;

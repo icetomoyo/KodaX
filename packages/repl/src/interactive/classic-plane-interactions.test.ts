@@ -92,7 +92,7 @@ describe('createClassicPlaneDialogSurface via answerClientPlaneInteraction (T18)
     expect(calls[0]).toEqual({ kind: 'question', answer: 'ship' });
   });
 
-  it('maps free text to the customInput answer and empty input to cancel', async () => {
+  it('maps free text to the customInput answer and empty input to skip', async () => {
     const custom: unknown[] = [];
     await answerClientPlaneInteraction(
       planeWith(custom), interaction('question', 'Deploy?'), surfaceWith(['after lunch']),
@@ -103,10 +103,10 @@ describe('createClassicPlaneDialogSurface via answerClientPlaneInteraction (T18)
     await answerClientPlaneInteraction(
       planeWith(cancelled), interaction('question', 'Deploy?'), surfaceWith(['']),
     );
-    expect(cancelled[0]).toEqual({ kind: 'cancel' });
+    expect(cancelled[0]).toEqual({ kind: 'skip' });
   });
 
-  it('answers a text question and maps empty input to cancel', async () => {
+  it('answers a text question and maps empty input to skip', async () => {
     const calls: unknown[] = [];
     await answerClientPlaneInteraction(
       planeWith(calls), interaction('question_input', 'Name?'), surfaceWith(['kodax']),
@@ -117,6 +117,6 @@ describe('createClassicPlaneDialogSurface via answerClientPlaneInteraction (T18)
     await answerClientPlaneInteraction(
       planeWith(cancelled), interaction('question_input', 'Name?'), surfaceWith(['  ']),
     );
-    expect(cancelled[0]).toEqual({ kind: 'cancel' });
+    expect(cancelled[0]).toEqual({ kind: 'skip' });
   });
 });

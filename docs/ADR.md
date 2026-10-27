@@ -4,6 +4,15 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 
 > Last updated: 2026-10-18
 >
+> **v0.7.97-alpha.10 release addendum:** checkpointed Runs and task trees
+> resume after Host restart with fresh scoped authority on top of the
+> durable context-capacity recovery boundaries (Issue 322); Kimi K3.1
+> provider routes join the registry with all seven effort levels; AskUser
+> questions wait indefinitely by default with explicit skip and
+> `unanswered` results while permission prompts keep their five-minute
+> default. Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.9
+> contract is retained.
+>
 > **v0.7.97-alpha.9 release addendum:** shared Host Run inspection checks
 > Session admission through canonical identity metadata instead of loading
 > complete historical transcripts — a readable metadata header with an
@@ -5659,7 +5668,7 @@ default and permit explicit skip. There is no required-answer constraint or
 model-controlled `required` flag. This replaces the five-minute ordinary-question
 deadline and automatic default selection. `userInputTimeoutMs` defaults to 0
 (no deadline); a positive Host value enables a deadline for ordinary questions.
-Skip and timeout return `{ unanswered: true, reason: 'timeout' | 'skipped' }`, which
+Skip and timeout return `{ unanswered: true, reason: 'timeout' | 'skipped' | 'non_interactive' }`, which
 `ask_user_question` forwards as a normal JSON tool result. Suggested defaults
 remain presentation hints. Runtime owns settlement and optional `expiresAt`;
 clients display pending requests and respond by exact request ID. Disconnect,
@@ -5667,6 +5676,9 @@ unsubscription, and page refresh do not cancel questions. The first valid
 settlement wins and late replies cannot affect another request. Dismissing a
 question (including legacy `cancel`, `userInputs.dismiss`, or an undefined host
 input result) means skipped; only explicit Run/Session Stop interrupts execution.
+Non-interactive clients explicitly skip with reason `non_interactive`, preserving
+why no answer was supplied instead of presenting it as a user cancellation.
+Only the Host may originate timeout; MCP maps no answer to its protocol `cancel`.
 Permission rejection and timeout policies are unchanged. This amends the bounded-AskUser
 and validated-default clauses below; the remaining decision still applies.
 

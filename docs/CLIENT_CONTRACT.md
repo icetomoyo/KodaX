@@ -35,10 +35,20 @@ Shell 清理重试耗尽时保留 deferred 进程身份，允许后续对话和 
 | `endpoint?: string` | 支持 | 不支持 | 指定本地 socket/Windows named pipe；省略时从本地 profile 解析 |
 | `token?: string` | 支持 | 不支持 | 显式 Host token；省略时从所选本地 profile 读取 |
 | `daemonStartupTimeoutMs?: number` | 不支持 | 支持 | 本机 Host 启动等待期限，单位毫秒；省略时采用运行时默认值 |
+| `userInputTimeoutMs?: number` | 不支持 | 支持 | 新 Host 的普通提问期限，默认 `0` 无限等待；正值到期返回 unanswered，不修改已运行 Host |
 | `onStartupProgress?: (progress: ClientStartupProgress) => void \| Promise<void>` | 支持 | 支持 | 本机启动/连接阶段观察；不等待显示工作，不改变启动结果 |
 | `authorizeExecution?: KodaXClientHostAuthorization` | 支持 | 支持 | 可信 Main 的执行授权回调；binding 与 Workflow 上限见 [Space SDK/Host 接缝](SPACE_SDK_SEAMS.md#可信执行授权) |
 
 `ClientStartupProgress` 是纯数据契约，由统一 Node 启动器报告实际阶段：`checking` 检查本机 Host，`starting` 创建 Host，`upgrading` 对符合条件的空闲旧 Host 发起正常更新，`connecting` 建立并认证 Client，`ready` 表示 Client 已通过身份与能力校验、接口可用。`waiting` 附带实际等待原因：`connected_clients` 等待其他客户端退出以允许更新，`host_starting` 等待 Host 就绪，`host_stopping` 等待原 Host 退出。被动 connect 只报告连接阶段，不启动或更新 Host；阶段可以随既有重试重复，连续相同通知会合并，轮询不逐次发通知。
+
+启动新 Host 时还会报告 `{ stage: 'initializing', phase }`：`modules` 加载模块，
+`extensions` 发现/加载扩展，`runtime` 装配 Runtime，`recovery` 清理历史子进程并恢复
+任务状态，`mcp` 初始化/预热 MCP，`sessions` 恢复会话资源，`a2a` 初始化 Agent 连接，
+`listener` 打开 Client 连接入口。阶段在真实操作前报告，快速阶段可能被轮询合并，
+不承诺完整重放或百分比；连接已有 Host/等待其他启动者时仍可只报告原有阶段。
+父进程复用原就绪轮询，读取既有 bootstrap 日志尾部最多 4 KiB，以本次启动标识和
+PID 匹配固定阶段；不增加 RPC、探测、定时器、等待或 owner 状态文件。没有回调时
+不启用该日志通道；进度不参与 Ready、超时、清理或所有权裁决。
 
 回调可省略；同步抛错或异步拒绝通过现有诊断报告，不改变认证、更新、等待期限、取消、清理或 Promise 结果。回调不被等待，显示层应快速返回。失败或取消不会报告 `ready`，成功仍以返回的 Client 为准。通知仅在本机调用期间产生，不新增 Host RPC、Run 状态或持久事件日志；不包含 token、命令、进程身份或构建指纹。
 
@@ -132,7 +142,7 @@ Session 可选 `planModeEffort` 表达明确的计划模式默认：Host 仅在�
 
 `catalog.extensions()` 返回 Host 已加载的扩展和注册诊断，只有纯数据，不包含处理函数或 Node 运行时对象。`mcp.status()` 只读当前连接状态，不唤醒 lazy server；`reloadServers()` 明确重建连接集合，`listTools({forceRefresh:true})` 明确刷新目录。REPL 的 `/extensions`、`/mcp` 使用这些相同入口，客户端无需另建 extension runtime。
 
-无交互的 one-shot CLI 在订阅视图后提交输入：属于本次 Run 的权限请求及时拒绝；单选、多选、自由输入和 MCP 表单等人工提问使用既有 `cancel` 回答，不代填默认值。工具收到拒绝或取消，Run 仍按正常执行结果结算；不把取消一个问题等同于停止整个 Run。这个行为属于该 CLI 消费者，不改变 Host 的全局审批超时，也不回答其他 Run 的请求；可处理交互的 SDK/Web 消费者仍使用同一 Interaction 契约。
+无交互的 one-shot CLI 在订阅视图后提交输入：属于本次 Run 的权限请求及时拒绝；单选、多选、自由输入等普通问题使用 `{ kind: 'skip', reason: 'non_interactive' }`，不代填默认值；MCP 映射为协议 `cancel`。模型收到正常的 `unanswered/non_interactive` 工具结果，Run 按实际执行结果结算；不把跳过一个问题等同于停止整个 Run。这个行为属于该 CLI 消费者，不改变 Host 的全局审批超时，也不回答其他 Run 的请求；可处理交互的 SDK/Web 消费者仍使用同一 Interaction 契约。
 
 one-shot 的调用设置仍临时写入共享 Session，并非独立的 Run 设置层。持久 Session 只在设置版本仍等于该次写入的版本时恢复；另一 Client 修改过任意设置后，保留新的设置事实并报告恢复冲突，调用旗标中未被覆盖的字段可能继续保留。初次应用也使用读到的版本，避免在读取与应用之间覆盖新编辑。不通过读后无条件写入、重试旧恢复或创建第二份设置权威来消除冲突。
 
@@ -159,16 +169,34 @@ Ink 的命令结果和设置快捷键反馈通过既有 `sessions.appendNotice` 
 普通提问由 Host 默认无限等待，允许用户明确跳过，不设置 `required` 作答约束。
 `expiresAt` 缺失表示没有期限。`userInputTimeoutMs` 默认 `0`（禁用期限），
 Host 显式设置正值时才启用期限。默认值和推荐项仅用于展示，不能自动提交。
+Product 启动器可传 `ensureKodaXClient({ userInputTimeoutMs })`；仅用于新 Host，
+连接已有 Host 不会修改其策略。CLI 对应 `daemon serve --user-input-timeout-ms`，
+不新增 `config.json` 配置项。
 问题可用 `interactions.respond(id, { kind: 'skip' })`
 跳过，返回 `status: 'unanswered'`；超时同样结算为 unanswered，原因分别是
 `skipped` / `timeout`，并作为正常工具结果交给模型继续判断。普通问题的旧
 `cancel` / `userInputs.dismiss` 同样表示跳过，不能因此中断 Run；明确 Run/Session
 Stop 才中断。权限审批的 cancel 仍是拒绝，并保持独立的超时策略。
 
+非交互客户端无法回答时使用 `{ kind: 'skip', reason: 'non_interactive' }`，
+Host 将其结算为正常的 `unanswered/non_interactive` 工具结果，区别于用户主动
+`skipped` 和 Host `timeout`。客户端不能用 skip 伪造 timeout。one-shot CLI
+只跳过本次接收 Run 的问题；MCP elicitation 的无回答仍映射为协议 `cancel`。
+
 Space/其他客户端只展示 Host 的 pending 状态并按精确 requestId 提交结果，
 不设本地自动回答/取消定时器。断连、关闭订阅、刷新页面不能自行结算问题；
 重连后读取同一 pending 请求。首个有效结算生效，迟到、重复或旧 ID 回复返回
 `already_resolved`，不能代答新请求。
+
+普通提问回调首次失败应作为真实工具错误上报，不能转成用户跳过。MCP 桥接须
+将首次 UI 异常交给既有 MCP 外层转换为协议 `cancel`，不能先改成字符串
+`"cancel"` 而误报为 `decline`；用户明确拒绝仍为 `decline`。已经由回答、
+Host 超时或 Stop 结算后才到达的回调异常不能改写结果。未回答恢复旧任务的
+提示时，保留旧检查点并继续当前请求，不默认选择 Resume 或 Restart。
+
+生成恢复也受已持久化 Session Stop 的精确 Run 边界约束：部分交付时不恢复其
+剩余成员或子 Actor，后来 Run 不属于旧边界。原请求重试复用 Run Stop 的 owner
+核验和检查点接管；不能接管活跃或无法确认的 owner，也不能删除 Stop 记录放行。
 
 | 对象 | 身份/边界 | 客户端处理 |
 | --- | --- | --- |
@@ -202,7 +230,7 @@ delivery 的队列行为如下；空 queue 不能证明所有已知输入已经�
 
 即时、after_turn 与 redirect 输入的 Skill 引用使用同一 Host registry 识别规则，包含正文中间的 `/name` 和 `/skill:name`。未知斜杠词、路径及 URL 保持普通文本，多引用限制只计算已知 Skill。入队仅确认身份并保存原文和独立消费边界，不执行动态上下文或 hooks；实际消费时重新通过 registry 解析可信定义，沿用其缓存与显式重载语义。已入队的 Skill 若届时无法解析，沿用未知引用的原文回退并保留其既定队列边界。客户端不提交 Skill 执行元数据，原始输入去重与 Stop 保留规则不变。
 
-Interaction 的 kind 决定 options 和 response：单选问题、多问题、文本输入或权限；取消用 `kind: 'cancel'`。权限答案为 allow_once、带 suggestionId 的 allow_session/allow_always、或 reject；suggestionId 来自当前请求，不能自行拼装。`accepted: false` / `already_resolved` 覆盖迟到、重复、取消、过期或未知目标；不要无限重答。
+Interaction 的 kind 决定 options 和 response：单选问题、多问题、文本输入或权限。普通问题通过 `kind: 'skip'` 跳过，旧 `kind: 'cancel'` 同样按跳过兼容；权限取消仍为拒绝。权限答案为 allow_once、带 suggestionId 的 allow_session/allow_always、或 reject；suggestionId 来自当前请求，不能自行拼装。`accepted: false` / `already_resolved` 覆盖迟到、重复、取消、过期或未知目标；不要无限重答。
 
 `readLineage` 在尚无 lineage 的旧 Session 可返回 null。会话读取、lineage、设置读取及 fork/recover 都先等待同 Host 已发起的显示快照保存，再进行原有准入和存储一致性检查；调用者不必先读一次历史来触发同步。保存失败会传递给调用者，外部写入造成的不稳定边界仍明确拒绝。Run 终态本身不等于所有显示快照已保存。
 
@@ -436,7 +464,7 @@ export async function watchSession(
 | 导出入口 | 可导入内容 |
 | --- | --- |
 | `@kodax-ai/kodax/client` 值 | `connectKodaXClient`、`ensureKodaXClient`、离线退出恢复查询 `readKodaXClientExits` |
-| `/client` 类型 | `ConnectKodaXClientOptions`、`EnsureKodaXClientOptions`、`RuntimeClientInfo`、`KodaXClientHostAuthorization`、`KodaXClientExecutionRequest`、`RuntimeExecutionAuthorization`、`KodaXClientWorkflowHostPolicy`，以及 `export type *` 转出的所有纯契约声明，包括 ClientStartupProgress、ClientSessionView、ClientViewItem、ClientRunOutcome、ClientObservation |
+| `/client` 类型 | `ConnectKodaXClientOptions`、`EnsureKodaXClientOptions`、`RuntimeClientInfo`、`KodaXClientHostAuthorization`、`KodaXClientExecutionRequest`、`RuntimeExecutionAuthorization`、`KodaXClientWorkflowHostPolicy`，以及 `export type *` 转出的所有纯契约声明，包括 ClientStartupProgress、ClientHostStartupPhase、ClientExitRecovery、ClientSessionView、ClientViewItem、ClientRunOutcome、ClientObservation |
 | `@kodax-ai/coding/client-contract` 类型 | `KodaXProductClient` 及纯产品数据契约；不包含 Node 连接器、启动器或诊断错误类 |
 | `@kodax-ai/kodax/runtime` 类型 | 底层 `RuntimeIdentity`、`RuntimeBuildIdentity`，以及同一 `ClientStartupProgress`；RuntimeIdentity.build 可选，RuntimeBuildIdentity 明确声明 origin/fingerprint，不将它加入业务 view |
 | `/runtime` Node 诊断值 | 既有 `RuntimeDaemonCapabilityUpgradeError`；仅底层 Node 宿主按需导入 |

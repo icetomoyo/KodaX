@@ -8,7 +8,8 @@ export function createClientStartupProgressReporter(
   let previous: string | undefined;
   return (progress) => {
     if (observer === undefined) return;
-    const key = progress.stage === 'waiting' ? `${progress.stage}:${progress.reason}` : progress.stage;
+    const key = progress.stage === 'waiting' ? `${progress.stage}:${progress.reason}`
+      : progress.stage === 'initializing' ? `${progress.stage}:${progress.phase}` : progress.stage;
     if (previous === key) return;
     previous = key;
     const reportFailure = (error: unknown): void => {

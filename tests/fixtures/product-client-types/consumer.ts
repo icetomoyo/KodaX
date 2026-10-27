@@ -18,6 +18,9 @@ import {
   type ClientWorkflowStartInput,
   type ClientWorkflowStartResult,
   type KodaXClientWorkflowHostPolicy,
+  type ClientStartupProgress,
+  type ClientHostStartupPhase,
+  type ClientExitRecovery,
 } from '@kodax-ai/kodax/client';
 // @ts-expect-error Host adaptation is internal, not a product SDK export.
 import { toKodaXProductClient } from '@kodax-ai/kodax/client';
@@ -46,11 +49,27 @@ void workflowOptions;
 // @ts-expect-error Concurrency uses the existing Host config, not another per-input setting.
 const extraWorkflowPolicy: KodaXClientWorkflowHostPolicy = { maxConcurrency: 8 };
 void extraWorkflowPolicy;
-const ensureOptions: EnsureKodaXClientOptions = { clientInfo, daemonStartupTimeoutMs: 30_000 };
+const initialPhase: ClientHostStartupPhase = 'mcp';
+const initialProgress: ClientStartupProgress = { stage: 'initializing', phase: initialPhase };
+const ensureOptions: EnsureKodaXClientOptions = { clientInfo, daemonStartupTimeoutMs: 30_000,
+  userInputTimeoutMs: 0, onStartupProgress(progress) {
+    if (progress.stage === 'initializing') {
+      const phase: ClientHostStartupPhase = progress.phase;
+      void phase;
+    }
+  } };
+void initialProgress;
+// @ts-expect-error Initialization phases use the shared finite Host contract.
+const invalidProgress: ClientStartupProgress = { stage: 'initializing', phase: 'unknown' };
+void invalidProgress;
 await connectKodaXClient(connectOptions);
 await ensureKodaXClient(ensureOptions);
 const sessions: readonly ClientSessionSummary[] = await client.sessions.list();
 const exit = await client.lifecycle.requestExit({ requestId: 'quit', shutdownHost: true });
+const recoveryState: ClientExitRecovery['state'] | undefined = exit.recovery?.state;
+const recoveryAction: ClientExitRecovery['nextAction'] | undefined = exit.recovery?.nextAction;
+const historicalCleanup: 'pending' | 'succeeded' | 'unknown' | 'failed' = exit.cleanup.state;
+void [recoveryState, recoveryAction, historicalCleanup];
 const pending = await client.lifecycle.listPendingExits();
 const statistics = await client.statistics.read('session-id');
 const physicalRequests: number = statistics.physicalRequestCount;

@@ -1,7 +1,7 @@
 # KodaX Detailed Design
 
-Last updated: 2026-10-16. Current development tree: FEATURE_298/299/301 on package
-`0.7.97-alpha.9`; `v0.7.96` is the last stable release.
+Last updated: 2026-10-27. Current development tree: FEATURE_298/299/301 on package
+`0.7.97-alpha.10`; `v0.7.96` is the last stable release.
 
 The [Client contract](CLIENT_CONTRACT.md) and [SDK migration guide](SDK_MIGRATION.md)
 define current product integration. Version-labelled release context below does
@@ -62,7 +62,7 @@ reference and does not duplicate every type. It should answer three questions:
 
 ## 2. Published Package And Build Entries
 
-The development package version is `@kodax-ai/kodax@0.7.97-alpha.9`, which includes the v2
+The development package version is `@kodax-ai/kodax@0.7.97-alpha.10`, which includes the v2
 scoped Provider credential broker (ADR-068) and bounded daemon client
 inventory on top of the v0.7.96-alpha.1 feature set and the v0.7.96-alpha.2
 Windows boot-identity hotfix. The v0.7.96-alpha.1
@@ -449,6 +449,10 @@ limits. Product methods do not expose Runtime events, storage or execution callb
 `onStartupProgress` on product and Runtime connection entries observes the same
 local launcher facts without new Host RPCs or polling. Observer work is not
 awaited; failures use existing diagnostics and leave startup's result intact.
+`initializing` carries one of modules/extensions/runtime/recovery/mcp/sessions/a2a/listener.
+The child writes fixed display records into the existing bootstrap log; the parent
+matches launch ID/PID and reads at most 4 KiB during an existing startup poll.
+Absent observers disable the channel; no new RPC, health probe, timer or owner state is added.
 Client `ready` and REPL `onBeforeRender` are separate connection/display boundaries;
 see the [Client contract](CLIENT_CONTRACT.md#连接启动与所有权).
 

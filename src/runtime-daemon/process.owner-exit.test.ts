@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
+import type { ClientStartupProgress } from '@kodax-ai/coding/client-contract';
 import { acquireRuntimeDaemonProcessLease, waitForRuntimeDaemonOwnerExit } from './process.js';
 import { observeRuntimeDaemonHealth } from './lifecycle.js';
 import {
@@ -90,7 +91,7 @@ describe('Host launcher waits for the original process', () => {
     const exited = once(child, 'exit');
     let releaseTimer: ReturnType<typeof setTimeout> | undefined;
     let lease: Awaited<ReturnType<typeof acquireRuntimeDaemonProcessLease>> | undefined;
-    const progress: unknown[] = [];
+    const progress: ClientStartupProgress[] = [];
     try {
       await once(child.stdout, 'data');
       const pid = child.pid;
@@ -128,7 +129,8 @@ describe('Host launcher waits for the original process', () => {
       const originalExitedBeforeLease = child.exitCode === 0;
       await lease.transport.request('initialize', { profile: paths.profile, token: readRuntimeDaemonToken(paths) });
       expect(originalExitedBeforeLease).toBe(true);
-      expect(progress).toEqual([
+      expect(progress.some(event => event.stage === 'initializing')).toBe(true);
+      expect(progress.filter(event => event.stage !== 'initializing')).toEqual([
         { stage: 'checking' }, { stage: 'waiting', reason: 'host_stopping' }, { stage: 'checking' },
         { stage: 'starting' }, { stage: 'waiting', reason: 'host_starting' }, { stage: 'connecting' },
       ]);

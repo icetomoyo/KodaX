@@ -186,6 +186,7 @@ import {
   appendSessionLineageLabel,
   clearCapabilityCache,
   extractAssistantTextFromMessage,
+  isAskUserUnanswered,
   readLatestGoalState,
 } from "@kodax-ai/agent";
 import type {
@@ -871,6 +872,8 @@ export interface RuntimeExternalAgentsOptions {
 }
 
 export interface CreateKodaXRuntimeOptions {
+  /** Local startup observations; callback work is not awaited and cannot change readiness. */
+  readonly onStartupProgress?: (progress: ClientStartupProgress) => void | Promise<void>;
   /** Runtime ownership form. Defaults to a caller-owned embedded Runtime. */
   readonly mode?: KodaXRuntimeMode;
   /** Base directory that owns `.kodax`, matching CLI `--home`; not the `.kodax` directory used by `KODAX_HOME`. */
@@ -3289,7 +3292,7 @@ export interface RuntimeUserInputService {
   ): Promise<readonly RuntimeUserInputRequest[]>;
   respond(
     requestId: string,
-    /** An answer, or `{ unanswered: true, reason: 'skipped' }` to skip the question. */
+    /** An answer, or `{ unanswered: true, reason: 'skipped' | 'non_interactive' }` to skip. */
     answer: unknown,
     options?: { readonly expectedRevision?: number; readonly runId?: string },
   ): Promise<RuntimeUserInputResolution>;
@@ -4124,6 +4127,7 @@ export async function createKodaXRuntime(
     released = true;
   };
   try {
+    createClientStartupProgressReporter(options.onStartupProgress)({ stage: 'initializing', phase: 'recovery' });
     await cleanupRegisteredManagedChildren({
       configHome: options.homeDir ? path.join(path.resolve(options.homeDir), '.kodax') : replApi.KODAX_DIR,
     });
@@ -4198,6 +4202,7 @@ async function createKodaXRuntimeInternal(
       );
     }
     return connectKodaXRuntimeWithStartupCoordination({
+      onStartupProgress: options.onStartupProgress,
       profile: options.profile,
       transport: options.daemonTransport,
       endpoint: options.daemonEndpoint,
@@ -4245,6 +4250,8 @@ async function createKodaXRuntimeInternal(
   if (options.mode !== undefined && options.mode !== "embedded") {
     throw new Error(`Unsupported KodaX runtime mode: ${String(options.mode)}`);
   }
+  const reportStartupProgress = createClientStartupProgressReporter(options.onStartupProgress);
+  reportStartupProgress({ stage: 'initializing', phase: 'runtime' });
   // Single capability source for both the requirement gate and the public facade
   // metadata: what the embedded Runtime asserts it can satisfy is exactly what it
   // advertises on `runtime.capabilities`.
@@ -4851,6 +4858,7 @@ async function createKodaXRuntimeInternal(
     options.externalAgents?.defaultContext,
     onActorHealthChanged,
   );
+  reportStartupProgress({ stage: 'initializing', phase: 'recovery' });
   const recoveredSessionOrders = new Map<string, number>();
   const persistedStatuses = [
     ...recentRunStatuses(persistence.loadRunStatuses()),
@@ -4990,7 +4998,9 @@ async function createKodaXRuntimeInternal(
     }
   };
 
-  const integrations = await createHostIntegrations(configHome, readRuntimeConfig(path.join(configHome, "config.json")));
+  reportStartupProgress({ stage: 'initializing', phase: 'mcp' });
+  const integrations = await createHostIntegrations(configHome,
+    readRuntimeConfig(path.join(configHome, "config.json")), reportStartupProgress);
   // FEATURE_298 T12: per-Session MCP resources persist Host-side so a restart
   // rebuilds them. A deleted Session drops its record; an archived Session
   // keeps it for the unarchive rebuild while its live resources are released.
@@ -5095,7 +5105,7 @@ async function createKodaXRuntimeInternal(
       void pending.catch(() => {});
       return dismissed;
     }
-    return new Promise<T>((resolve) => {
+    return new Promise<T>((resolve, reject) => {
       const onAbort = (): void => resolve(dismissed);
       signal.addEventListener("abort", onAbort, { once: true });
       void pending.then(
@@ -5103,9 +5113,10 @@ async function createKodaXRuntimeInternal(
           signal.removeEventListener("abort", onAbort);
           resolve(value);
         },
-        () => {
+        (error: unknown) => {
           signal.removeEventListener("abort", onAbort);
-          resolve(dismissed);
+          // The MCP boundary converts the first UI failure to protocol cancel.
+          reject(error);
         },
       );
     });
@@ -5144,6 +5155,7 @@ async function createKodaXRuntimeInternal(
   };
   setActiveUserInteraction(sharedElicitSurface);
   if (fs.existsSync(sessionMcpDir)) {
+    reportStartupProgress({ stage: 'initializing', phase: 'sessions' });
     const summaries = await sessionManager.listSessions({ includeArchived: true });
     const knownSessions = new Set(summaries.map((summary) => summary.id));
     const archivedSessions = new Set(
@@ -5655,6 +5667,8 @@ async function createKodaXRuntimeInternal(
           throw createRuntimeConflictError(`Actor has no available generation recovery boundary (phase=${saved?.status.phase}, checkpoint=${Boolean(recovery)}, owner=${saved?.owner ? await inspectRuntimeActorOwner(saved.owner) : 'missing'}).`, saved?.revision ?? 0);
         }
         if (saved.status.origin?.principalId !== trusted.origin?.principalId) throw new Error('Actor recovery requires the original principal.');
+        assertGenerationOutsideSessionStops(persistence.runtimeDir, sessionId,
+          [runId, ...(recovery.parentRunId ? [recovery.parentRunId] : [])]);
         if (recovery.requiresCredential && !trusted.providerCredentialAccessFactory) throw createRuntimeCredentialUnavailableError('Actor recovery requires a fresh credential binding.');
         if (recovery.requiresHostTools && !trusted.actorExtensionRuntime) throw new Error('Actor recovery requires newly bound Host tools.');
         rebindGenerationOptions(recovery.start, trusted.actorExtensionRuntime ? { extensionRuntime: integrations.forSession(sessionId) } : {});
@@ -6517,7 +6531,7 @@ async function connectKodaXRuntimeInternal(
           orphanExitMs,
           startupTimeoutMs: Math.max(1, startupDeadline - Date.now()),
           startupSignal: options.daemonStartupSignal,
-          onStartupProgress: reportProgress,
+          onStartupProgress: options.onStartupProgress === undefined ? undefined : reportProgress,
           connectTimeoutMs: options.daemonConnectTimeoutMs,
           ownerBootstrap,
         })
@@ -12885,6 +12899,7 @@ async function createRuntimeRunService(deps: {
           || activeRunBySession.has(record.sessionId) || hasPersistedBlockingShellCleanups(persisted)) {
           throw createRuntimeConflictError('Run is not at an available generation recovery boundary.', persisted?.revision ?? 0);
         }
+        assertGenerationOutsideSessionStops(deps.persistence.runtimeDir, record.sessionId, [input.runId]);
         if (!persisted.owner || await inspectRuntimeActorOwner(persisted.owner) !== 'dead') {
           throw createRuntimeConflictError('Generation recovery owner has not been confirmed stopped.', persisted.revision);
         }
@@ -13044,13 +13059,11 @@ async function createRuntimeRunService(deps: {
               || entry.status.sessionOrder > record.frontier) {
               throw sessionStopConflict("Session Stop control history is inconsistent", "control_record");
             }
-            if (!isTerminalRunPhase(entry.status.phase) && entry.owner?.ownerId !== deps.runOwner.ownerId) {
-              throw sessionStopConflict("Session Stop target has another Runtime owner", "run_ownership");
-            }
             return entry;
           });
           const receipts: RuntimeRunStopReceipt[] = [];
           for (const entry of targets) {
+            // abort owns the live/dead owner checks and verified checkpoint takeover.
             receipts.push(isTerminalRunPhase(entry.status.phase)
               ? runtimeRunStopReceipt({ ...entry, accepted: false, effectDeliveryAllowed: false })
               : await this.abort(entry.status.runId));
@@ -18994,7 +19007,7 @@ function createRuntimeUserInputRegistry(
     ) {
       return { requestId, accepted: false, status: "already_resolved" };
     }
-    if (resolution.status !== "dismissed" && reason !== "timeout" && runtimeDeadlineReached(item.request.expiresAt)) {
+    if ((resolution.status !== "dismissed" || reason === "host_failed") && reason !== "timeout" && runtimeDeadlineReached(item.request.expiresAt)) {
       settlePending(
         item,
         { status: "unanswered", reason: "timeout" },
@@ -19093,8 +19106,8 @@ function createRuntimeUserInputRegistry(
         );
     },
     async respond(requestId, answer, options) {
-      if (isRecord(answer) && answer.unanswered === true && answer.reason === "skipped") {
-        return resolvePending(requestId, { status: "unanswered", reason: "skipped" }, options);
+      if (isAskUserUnanswered(answer) && answer.reason !== "timeout") {
+        return resolvePending(requestId, { status: "unanswered", reason: answer.reason }, options);
       }
       return resolvePending(requestId, { status: "answered", answer }, options);
     },
@@ -19932,12 +19945,12 @@ async function waitForRuntimeUserInput<T>(
 ): Promise<RuntimePendingUserInputResolution> {
   if (execute === undefined) return pendingInput.response;
   const controller = new AbortController();
+  let failure: { readonly error: unknown } | undefined;
   const hook = Promise.resolve()
     .then(() => execute(controller.signal))
     .then((answer) => {
-      const resolution: RuntimePendingUserInputResolution = isRecord(answer) && answer.unanswered === true
-        && answer.reason === "skipped"
-        ? { status: "unanswered", reason: "skipped" }
+      const resolution: RuntimePendingUserInputResolution = isAskUserUnanswered(answer) && answer.reason !== "timeout"
+        ? { status: "unanswered", reason: answer.reason }
         : answer === undefined || answer === CANCELLED_TOOL_RESULT_MESSAGE
           ? { status: "unanswered", reason: "skipped" }
           : { status: "answered", answer };
@@ -19947,12 +19960,16 @@ async function waitForRuntimeUserInput<T>(
     })
     .catch((error: unknown) => {
       const result = userInputs.resolve(pendingInput.request.id, { status: "dismissed" }, undefined, "host_failed");
-      if (result.accepted) throw error;
+      // Settlement resolves pendingInput synchronously; preserve its error even
+      // when that promise wins the race below.
+      if (result.accepted) failure = { error };
       // A superseded callback cannot change the owner's settled outcome.
       return pendingInput.response;
     });
   try {
-    return await Promise.race([pendingInput.response, hook]);
+    const resolution = await Promise.race([pendingInput.response, hook]);
+    if (failure) throw failure.error;
+    return resolution;
   } finally {
     controller.abort();
   }
@@ -23421,6 +23438,24 @@ function readRuntimeSessionStopRecord(file: string): RuntimeSessionStopRecord | 
     throw sessionStopConflict("Session Stop control record is invalid", "control_record");
   }
   return value as unknown as RuntimeSessionStopRecord;
+}
+
+/** A partially delivered durable Stop still owns every member of its fixed frontier. */
+function assertGenerationOutsideSessionStops(runtimeDir: string, sessionId: string, runIds: readonly string[]): void {
+  const directory = path.join(runtimeDir, 'session-stops');
+  let files: string[];
+  try { files = fs.readdirSync(directory); }
+  catch (error) {
+    if (isRecord(error) && error.code === 'ENOENT') return;
+    throw error;
+  }
+  for (const file of files) {
+    if (!file.endsWith('.json')) continue;
+    const stop = readRuntimeSessionStopRecord(path.join(directory, file));
+    if (stop?.sessionId === sessionId && runIds.some(runId => stop.runIds.includes(runId))) {
+      throw sessionStopConflict('Generation recovery is blocked by a durable Session Stop.', 'session_stop');
+    }
+  }
 }
 
 function runtimeRunStopReceipt(

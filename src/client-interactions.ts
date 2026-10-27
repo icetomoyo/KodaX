@@ -56,7 +56,12 @@ export async function respondToClientInteraction(
   const pendingQuestion = (await registries.userInputs.listPending())
     .find((request) => request.id === requestId);
   if (pendingQuestion !== undefined) {
-    if (response.kind === 'skip') return registries.userInputs.respond(requestId, { unanswered: true, reason: 'skipped' });
+    if (response.kind === 'skip') {
+      if (response.reason !== undefined && response.reason !== 'non_interactive') {
+        throw invalidClientInteractionInput('Skip reason must be non_interactive or omitted.');
+      }
+      return registries.userInputs.respond(requestId, { unanswered: true, reason: response.reason ?? 'skipped' });
+    }
     if (response.kind === 'cancel') return registries.userInputs.dismiss(requestId);
     if (response.kind === 'question' && pendingQuestion.kind === 'askUser') {
       return registries.userInputs.respond(requestId, response.answer);

@@ -20,6 +20,7 @@ import path from "node:path";
 
 import {
   ELECTRON_RUN_AS_NODE_ENV,
+  emitKodaXDiagnostic,
   killChildProcessTree,
   isChildProcessExited,
   prepareInternalNodeLaunch,
@@ -55,6 +56,7 @@ import {
 import { spawnWindowsJobContainedProcess } from "./windows-job-supervisor.js";
 import { createClientStartupProgressReporter } from '../client-startup-progress.js';
 import type { ClientStartupProgress } from '@kodax-ai/coding/client-contract';
+import { DAEMON_STARTUP_PROGRESS_ENV, readDaemonStartupPhase } from './startup-progress.js';
 
 export interface RuntimeDaemonProcessLeaseOptions {
   readonly onStartupProgress?: (progress: ClientStartupProgress) => void | Promise<void>;
@@ -107,6 +109,7 @@ export interface RuntimeDaemonStartupExit {
 
 export interface RuntimeDaemonStartupProcess {
   readonly pid: number | undefined;
+  readonly startupProgressId?: string;
   readonly exit: Promise<RuntimeDaemonStartupExit>;
   hasExited?(): boolean;
   unref(): void;
@@ -473,6 +476,7 @@ export async function acquireRuntimeDaemonProcessLease(
       startupTimeoutMs: Math.max(1, startupDeadline - Date.now()),
       startupSignal: options.startupSignal,
       ownerBootstrapFile,
+      startupProgressId: options.onStartupProgress === undefined ? undefined : randomUUID(),
     });
     const observation = await waitForHealthyDaemonStartup(paths, options, child, undefined, startupDeadline);
     const ownsHost = observation.state.pid === child.pid;
@@ -576,6 +580,7 @@ export async function waitForHealthyDaemonStartup(
   const reportProgress = createClientStartupProgressReporter(options.onStartupProgress);
   try {
     reportProgress({ stage: 'waiting', reason: 'host_starting' });
+    let observeProgress = options.onStartupProgress !== undefined && child.startupProgressId !== undefined;
     while (true) {
       if (options.startupSignal?.aborted) throw runtimeDaemonStartupCancelled();
       if (Date.now() >= deadline) throw runtimeDaemonStartupTimeout(paths);
@@ -588,6 +593,16 @@ export async function waitForHealthyDaemonStartup(
       );
       if (options.startupSignal?.aborted) throw runtimeDaemonStartupCancelled();
       if (Date.now() >= deadline) throw runtimeDaemonStartupTimeout(paths);
+      if (observeProgress && child.pid !== undefined && child.startupProgressId !== undefined) {
+        try {
+          const phase = readDaemonStartupPhase(runtimeDaemonBootstrapLogPath(paths), child.startupProgressId, child.pid);
+          if (phase) reportProgress({ stage: 'initializing', phase });
+        } catch (error: unknown) {
+          observeProgress = false;
+          emitKodaXDiagnostic({ source: 'client.startup-progress', level: 'warn',
+            message: 'Host startup progress could not be read.', detail: error });
+        }
+      }
       const health = classifyRuntimeDaemonHealth(observation);
       if (health === "healthy" && observation.state?.status === "ready") {
         if (observation.state.pid === child.pid) child.unref();
@@ -799,6 +814,7 @@ function runtimeDaemonStartupTimeout(
 }
 
 export interface RuntimeDaemonServeProcessInput {
+  readonly startupProgressId?: string;
   readonly profile: string;
   readonly homeDir: string;
   readonly configHome: string;
@@ -864,6 +880,7 @@ export async function spawnRuntimeDaemonServeProcess(
       configHome: input.configHome,
       parentEnv: process.env,
       ownerBootstrapFile: input.ownerBootstrapFile,
+      startupProgressId: input.startupProgressId,
     }),
     isElectron: process.versions.electron !== undefined,
   });
@@ -917,13 +934,10 @@ export async function spawnRuntimeDaemonServeProcess(
   // The Windows startup supervisor owns the Job and its cleanup handle. Its
   // termination path never consumes a PID-tree snapshot of the wrapper.
   if (terminateContainedProcess === undefined) rememberChildProcessTree(child);
-  return createRuntimeDaemonStartupProcess(
-    child,
-    exit,
-    daemonPid,
-    terminateContainedProcess,
-    releaseContainedProcess,
-  );
+  return {
+    ...createRuntimeDaemonStartupProcess(child, exit, daemonPid, terminateContainedProcess, releaseContainedProcess),
+    startupProgressId: input.startupProgressId,
+  };
 }
 
 async function terminateCompetingStartupChild(
@@ -1023,6 +1037,7 @@ export function createRuntimeDaemonServeEnvironment(input: {
   readonly homeDir: string;
   readonly configHome?: string;
   readonly parentEnv: NodeJS.ProcessEnv;
+  readonly startupProgressId?: string;
   readonly ownerBootstrapFile?: string;
 }): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
@@ -1032,6 +1047,8 @@ export function createRuntimeDaemonServeEnvironment(input: {
   };
   delete env[ELECTRON_RUN_AS_NODE_ENV];
   delete env[RUNTIME_DAEMON_OWNER_BOOTSTRAP_ENV];
+  delete env[DAEMON_STARTUP_PROGRESS_ENV];
+  if (input.startupProgressId !== undefined) env[DAEMON_STARTUP_PROGRESS_ENV] = input.startupProgressId;
   if (input.ownerBootstrapFile !== undefined) {
     env[RUNTIME_DAEMON_OWNER_BOOTSTRAP_ENV] = input.ownerBootstrapFile;
   }

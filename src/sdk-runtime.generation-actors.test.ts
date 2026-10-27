@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -66,7 +66,8 @@ it('preserves and resumes an original Workflow leaf after Host restart without i
   } finally { await restarted.close(); }
 }, 30_000);
 
-it.each([0, 1, 2])('resumes an independently authorized Actor and its nested checkpoints after Host restart (depth=%s)', async depth => {
+it.each([0, 1, 2, 'session-stop'] as const)('resumes an independently authorized Actor and its nested checkpoints after Host restart (depth=%s)', async scenario => {
+  const depth = scenario === 'session-stop' ? 0 : scenario;
   const homeDir = await mkdtemp(join(tmpdir(), 'kodax-actor-generation-'));
   directories.push(homeDir);
   const first = await createKodaXRuntime({ homeDir, defaultProvider: 'deepseek' });
@@ -102,6 +103,13 @@ it.each([0, 1, 2])('resumes an independently authorized Actor and its nested che
   await vi.waitFor(() => expect(nestedTurns).toHaveLength(depth));
   for (const nestedTurn of nestedTurns) await vi.waitFor(async () => expect((await first.agents.detail(session.id, nestedTurn.actorPath)).turns[0]?.checkpoint).toBeDefined());
   await first.close();
+  if (scenario === 'session-stop') {
+    const stops = join(homeDir, '.kodax', 'runtime', 'session-stops');
+    await mkdir(stops, { recursive: true });
+    await writeFile(join(stops, 'partial-stop.json'), JSON.stringify({ version: 1,
+      sessionId: session.id, expectedRunId: 'queued-stop-target', requestId: 'partial-stop',
+      frontier: 1, runIds: ['queued-stop-target', actorRunId], identity: {} }));
+  }
   const restarted = await createKodaXRuntime({ homeDir, defaultProvider: 'deepseek' });
   try {
     expect(await restarted.runs.get(actorRunId)).toMatchObject({ phase: 'recovering', contextRecovery: { checkpoint } });
@@ -114,6 +122,12 @@ it.each([0, 1, 2])('resumes an independently authorized Actor and its nested che
       return { results: [{ childId: turn.actorPath, fanoutClass: 'evidence-scan', status: 'completed', disposition: 'valid',
         summary: 'Verified EDIT019 without replay', evidenceRefs: [], contradictions: [] }], mergedFindings: [], mergedArtifacts: [], totalTokensUsed: 0, cancelledChildren: [] };
     });
+    if (scenario === 'session-stop') {
+      await expect(restarted.agents.followup(session.id, turn.actorPath, '', { ...authority, resumeCheckpoint: true }))
+        .rejects.toMatchObject({ code: 'conflict' });
+      expect(executeChildAgents).toHaveBeenCalledTimes(1);
+      return;
+    }
     const recovered = await restarted.agents.followup(session.id, turn.actorPath, '', { ...authority, resumeCheckpoint: true });
     expect(recovered.turn.turnId).toBe(turn.turnId);
     await vi.waitFor(async () => expect((await restarted.agents.output(session.id, turn.actorPath, turn.turnId)).state).toBe('completed'));
@@ -122,7 +136,8 @@ it.each([0, 1, 2])('resumes an independently authorized Actor and its nested che
   } finally { await restarted.close(); }
 }, 20_000);
 
-it.each(['actor', 'workflow'] as const)('checkpoints the parent mailbox receipt and resumes its child after Host restart (%s)', async kind => {
+it.each(['actor', 'workflow', 'stopped-actor'] as const)('checkpoints the parent mailbox receipt and resumes its child after Host restart (%s)', async scenario => {
+  const kind = scenario === 'stopped-actor' ? 'actor' : scenario;
   const agentMode = 'ama';
   const homeDir = await mkdtemp(join(tmpdir(), 'kodax-wait-generation-'));
   directories.push(homeDir);
@@ -164,9 +179,22 @@ it.each(['actor', 'workflow'] as const)('checkpoints the parent mailbox receipt 
   } catch (error) { await first.close(); throw error; }
   const actor = (await first.agents.tree(session.id)).actors.find(actor => actor.path !== '/root' && actor.kind !== 'workflow')!;
   await first.close();
+  if (scenario === 'stopped-actor') {
+    const stops = join(homeDir, '.kodax', 'runtime', 'session-stops');
+    await mkdir(stops, { recursive: true });
+    await writeFile(join(stops, 'partial-stop.json'), JSON.stringify({ version: 1,
+      sessionId: session.id, expectedRunId: 'queued-stop-target', requestId: 'partial-stop',
+      frontier: 1, runIds: ['queued-stop-target', handle.runId], identity: {} }));
+  }
   const restarted = await createKodaXRuntime({ homeDir, defaultProvider: 'generation-fixture' });
   try {
     expect(await restarted.runs.get(handle.runId)).toMatchObject({ phase: 'recovering', contextRecovery: { checkpoint: expect.anything() } });
+    if (scenario === 'stopped-actor') {
+      await expect(restarted.agents.followup(session.id, actor.path, '', { resumeCheckpoint: true }))
+        .rejects.toMatchObject({ code: 'conflict' });
+      expect(executeChildAgents).toHaveBeenCalledTimes(1);
+      return;
+    }
     resumed = true;
     vi.mocked(executeChildAgents).mockImplementationOnce(async (bundles, _ctx, child) => {
       expect(child.generationCheckpoint?.sessionId).toBe('wait-worker');

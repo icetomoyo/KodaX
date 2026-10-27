@@ -1,7 +1,7 @@
 # KodaX High-Level Design
 
-Last updated: 2026-10-18. Current development tree: FEATURE_298/299/301 on package
-`0.7.97-alpha.9`, with `v0.7.96` as the last stable release; publication is separate.
+Last updated: 2026-10-27. Current development tree: FEATURE_298/299/301 on package
+`0.7.97-alpha.10`, with `v0.7.96` as the last stable release; publication is separate.
 
 Product integrations use `KodaXProductClient` through `/client`. Read the
 [Client contract](CLIENT_CONTRACT.md) and [SDK migration guide](SDK_MIGRATION.md)
@@ -418,6 +418,10 @@ building an authority from raw event deltas or writing Session files.
 Both connection entries expose optional local `onStartupProgress` using the
 shared pure `ClientStartupProgress` type. Launcher `ready` means Client APIs
 are usable; REPL `onBeforeRender` handles the later terminal display handoff.
+New Hosts report `initializing/phase` at actual module, extension, Runtime,
+recovery, MCP, Session-resource, A2A and listener boundaries. The launcher reuses
+its readiness poll and bounded bootstrap-log tail; these display observations
+do not change readiness, ownership or startup deadlines.
 See the [Client contract](CLIENT_CONTRACT.md#连接启动与所有权) for these boundaries.
 
 Inline embedding remains a low-level option for independent callers. The
