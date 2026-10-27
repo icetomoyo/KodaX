@@ -12949,6 +12949,38 @@ describe("createKodaXRuntime", () => {
     expect(await readDirectoryText(tempRoot)).not.toContain(secret);
   });
 
+  it.each(['skill_not_found', 'skill_not_registered', 'skill_registry_unavailable', 'skill_policy_restore_failed'] as const)(
+    'preserves serialized local Skill failure facts (%s) through status, diagnostics and restart', async code => {
+      const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+      const options = { homeDir: tempRoot, sessionsDir: path.join(tempRoot, 'skill-failure-sessions'), defaultProvider: 'mock-provider' };
+      const runtime = await createKodaXRuntime(options);
+      const session = await runtime.sessions.create({ title: 'Local Skill failure' });
+      const events = collectEvents(runtime, session.id, 'run.failed');
+      try {
+      const facts = JSON.parse(JSON.stringify({ source: 'local', code, skillName: 'draft-response' })) as Record<string, unknown>;
+      const error = Object.assign(new Error('EACCES C:\\private\\skill-credentials'), facts);
+      codingMock.startKodaX.mockImplementationOnce(input => fakeRunningSession(input, Promise.reject(error)));
+      const run = await runtime.runs.start({ sessionId: session.id, prompt: 'invoke skill' });
+      const result = await run.result;
+      const detail = { failureKind: 'local_execution', providerErrorCode: code, skillName: 'draft-response',
+        stage: code === 'skill_policy_restore_failed' ? 'skill_policy' : 'skill_load' };
+      expect(result).toMatchObject({ phase: 'failed', failureDetail: detail, terminal: { failureKind: 'local_execution' } });
+      expect(result.failureDetail?.safeMessage).toContain('draft-response');
+      expect(result.failureDetail).not.toHaveProperty('upstreamErrorCode');
+      expect(result.failureDetail).not.toHaveProperty('httpStatus');
+      await expect(runtime.runs.get(run.runId)).resolves.toMatchObject({ failureDetail: result.failureDetail });
+      expect((await runtime.sessions.diagnostics({ sessionId: session.id })).run.failureDetail).toEqual(result.failureDetail);
+      expect(events.events.find(event => event.type === 'run.failed')?.payload).toMatchObject({ failureDetail: result.failureDetail });
+      expect(JSON.stringify({ result, events: events.events })).not.toContain('private');
+      await runtime.close();
+      const restarted = await createKodaXRuntime(options);
+      try {
+        await expect(restarted.runs.get(run.runId)).resolves.toMatchObject({ failureDetail: result.failureDetail });
+        await expect(restarted.runs.await(run.runId)).resolves.toMatchObject({ failureDetail: result.failureDetail });
+      } finally { await restarted.close(); }
+      } finally { events.subscription.close(); await runtime.close(); }
+    });
+
   it.each(["KODAX_LOCAL_EXECUTION_ERROR", "ERR_INVALID_ARG_TYPE"])(
     "retains local execution failures (%s) across result, events, status and restart", async (code) => {
     const { createKodaXRuntime, captureRuntimeSessionDiagnostics } = await import("@kodax-ai/kodax/runtime");

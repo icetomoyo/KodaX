@@ -386,6 +386,20 @@ Host 在完整内容投影中分配显示项身份，再应用已有显示窗口
 
 公开方法以 Promise 拒绝报告操作失败；部分领域另外返回 null、undefined、boolean 或判别联合，必须按方法声明解释。当前纯契约没有统一导出的 `ClientError` 联合，不能承诺所有错误都拥有同一形状。Node/RPC 实现中的错误可能带 `code`，调用方应先收窄 `unknown`，保留消息和原始原因。
 
+已结算 Run 的 `runs.read` / `runs.await` 保留可选 `failureDetail`，包含
+`failureKind`、`stage`、稳定的 `providerErrorCode`、`safeMessage` 和可选
+`skillName`。该字段名沿用 Runtime 契约，也承载本地错误，不表示已经请求 Provider。
+Skill 可信重载失败属于 `local_execution`：`skill_load` 阶段区分
+`skill_not_found`（可信发现没有该技能）、`skill_not_registered`（绑定注册表排除
+该技能）、`skill_registry_unavailable`（可信注册表发现失败或不完整）；`skill_policy`
+阶段的 `skill_policy_restore_failed` 表示完整可信策略加载失败。提示只含安全技能
+名与固定原因，不包含客户端传入路径或原始文件系统报错，不附加 Provider HTTP 事实。
+这些事实跨 Runtime 结果、事件、持久状态、诊断及 daemon IPC 保留；主进程能发现
+Skill 不代表独立 daemon 已注册。Host 仍从可信来源重载并执行 `enforceAtRuntime`，
+Space 的注册和调用前检查由 Space 单独接入。
+源扫描不完整时，已发现的技能继续可用；缺失目标不能被断言为不存在，须返回
+注册表不可用。修复来源后重新发现会更新该事实；可选来源缺失不算扫描失败。
+
 常见边界包括 conflict（意图或 revision 冲突）、not_found、permission_denied、unauthorized、version_incompatible/client_upgrade_required、resync_required/data_changed、runtime_changed、observation_invalidated 和读取超时/取消。不要将这些错误统一吞为“没有数据”或“已完成”。具体码以 [daemon protocol](../src/runtime-daemon/protocol.ts) 及执行域为准，当前协议码表不是纯产品 SDK 的穷尽错误类型。
 
 普通产品消费者将错误视为 unknown，收窄后展示错误消息；不需要导入底层诊断错误类。低层 Node 宿主可从 `/runtime` 导入既有 `RuntimeDaemonCapabilityUpgradeError`：其 code 为 `daemon_capability_upgrade_required`，包含 capability、recoverable、restartRequired 和可选 preflight。例如构建或旧启动器问题可标为 runtimeBuild/launcherBuild；应展示具体原因，不据这些字符串构建 UI 业务能力矩阵。recoverable/restartRequired 不授权强停忙碌 Host，也不意味着可以自动重试所有操作。该类不从 `/client` 导出，不属于纯数据契约，也不覆盖全部连接/执行错误。

@@ -22,6 +22,14 @@ TUI、桌面 UI、IDE、自动化应用接入共享 KodaX 时，以 `KodaXProduc
 
 ## 2. 旧调用如何迁移
 
+产品 `runs.read` / `runs.await` 新增可选 `failureDetail`，透传 Runtime 的本地
+Skill 失败事实。应优先按稳定 `providerErrorCode` 与 `stage` 处理，再展示
+`safeMessage`，不要将所有失败统一标为 Provider 错误；`skillName` 是安全标识，
+不使用调用方路径作为可信来源。`skill_not_found / skill_not_registered /
+skill_registry_unavailable / skill_policy_restore_failed` 均为本地失败，阶段为
+`skill_load / skill_policy`。旧结果没有该字段时保留原失败事实，不推断 Provider
+已被调用。具体语义及 Space 的独立注册职责见 [错误契约](CLIENT_CONTRACT.md#错误断连与重连)。
+
 客户端退出恢复新增 `ClientExitReceipt.recovery`，由 `readExit` 和离线
 `readKodaXClientExits` 每次重新核验。Space 应用 `recovery.state` 的
 `ready/pending/blocked` 和 `nextAction`，替换仅按 `cleanup.state` 阻塞启动的

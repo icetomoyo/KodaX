@@ -134,6 +134,8 @@ export type ResolvedSkillSource = SkillSource | 'learned';
  * Skill registry interface for managing discovered skills
  */
 export interface ISkillRegistry {
+  /** At least one trusted source could not be scanned; absence is not conclusive. */
+  readonly discoveryIncomplete?: boolean;
   /** Read-only view of discovered skill metadata */
   readonly skills: ReadonlyMap<string, SkillMetadata>;
 

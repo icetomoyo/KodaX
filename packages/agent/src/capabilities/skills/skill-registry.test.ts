@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdir, writeFile } from "fs/promises";
+import { mkdir, unlink, writeFile } from "fs/promises";
 import { join } from "path";
 import { SkillRegistry } from "./skill-registry.js";
 import { createTempDir, removeTempDir } from "./test-utils/temp-dir.js";
@@ -36,6 +36,25 @@ ${description}
 }
 
 describe("SkillRegistry", () => {
+  it('retains incomplete discovery without losing valid Skills and clears it after source repair', async () => {
+    const root = await createTempDir('kodax-skill-discovery-failure-');
+    tempDirs.push(root);
+    const unavailable = join(root, 'configured-source');
+    await writeFile(unavailable, 'not a directory');
+    await writeSkill(root, 'valid', 'available-skill', 'A valid Skill');
+    const registry = new SkillRegistry(root, { projectPaths: [unavailable, join(root, 'valid')],
+      userPaths: [], pluginPaths: [], builtinPath: join(root, 'absent-builtins') });
+    await registry.discover();
+    expect(registry.discoveryIncomplete).toBe(true);
+    expect(registry.has('available-skill')).toBe(true);
+    await expect(registry.loadFull('available-skill')).resolves.toMatchObject({ name: 'available-skill' });
+    await unlink(unavailable);
+    await mkdir(unavailable);
+    await registry.discover();
+    expect(registry.discoveryIncomplete).toBe(false);
+    expect(registry.has('available-skill')).toBe(true);
+  });
+
   it("discovers skills, exposes read-only list accessors, and caches full skill loads", async () => {
     const rootDir = await createTempDir("kodax-skill-registry-");
     tempDirs.push(rootDir);

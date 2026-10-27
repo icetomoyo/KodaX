@@ -21,6 +21,12 @@ Main 从 `client.sessions.list()` 取得 `lastMessageAt` 和 Host 排序，Rende
 
 ## 普通问题与权限审批
 
+SDK 的 Run 状态与终态结果保留可选 `failureDetail`。Skill 本地失败应按其
+`local_execution` 分类、`skill_load/skill_policy` 阶段和稳定码展示，不能统一显示
+Provider 请求失败；安全提示见 `safeMessage`，技能名见 `skillName`。Main 已发现
+Skill 不代表独立 Host 已注册；Space 仍负责 Host 注册与调用前检查，SDK 继续
+可信重载并执行运行时策略校验。完整码表见 [Client 契约](CLIENT_CONTRACT.md#错误断连与重连)。
+
 普通问题的等待与结算由 Host 管理：默认无限等待，用户可明确 skip；Space 仅展示
 pending 并按 requestId 提交回答或 `{ kind: 'skip' }`。断连或刷新不能自行结算。
 `unanswered` 工具结果区分用户 `skipped`、Host `timeout` 与非交互客户端

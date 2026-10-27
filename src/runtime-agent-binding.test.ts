@@ -112,6 +112,27 @@ function host(): RuntimeAgentBindingHost {
 }
 
 describe('FEATURE_267 Runtime local Agent binding', () => {
+  it.each([true, false])('preserves discovery uncertainty through bound registries (wildcard=%s)', async wildcard => {
+    writeAgent({ tools: '[read, skill]', skills: wildcard ? '["*"]' : '[office-reports]' });
+    writeSkill();
+    mkdirSync(path.join(workspace, '.kodax'), { recursive: true });
+    writeFileSync(path.join(workspace, '.kodax', 'skills'), 'Invalid trusted source');
+    const service = createRuntimeAgentBindingService(host());
+    const owner = await service.openOwnerSession();
+    try {
+      const binding = await service.bindLocal({ ownerSessionId: owner.ownerSessionId,
+        ref: { source: 'markdown:user', name: 'office-agent' }, workspace: { mode: 'fixed', root: workspace }, toolPolicy: policy() });
+      await service.startLocal({ ownerSessionId: owner.ownerSessionId, bindingId: binding.bindingId,
+        expectedConfigurationRevision: binding.configurationRevision,
+        expectedExecutionPolicyRevision: binding.executionPolicyRevision, sessionId: 'bound-skills',
+        input: { type: 'text', text: 'Use bound Skills.' } });
+      const registry = starts[0]?.options?.context?.skillRegistry;
+      expect(registry?.discoveryIncomplete).toBe(wildcard);
+      expect(registry?.has('office-reports')).toBe(true);
+      expect(registry?.has('draft-response')).toBe(false);
+    } finally { await service.closeOwnerSession(owner.ownerSessionId); }
+  });
+
   it('pins a user Markdown Agent, selected Skills, tools, and run options', async () => {
     writeAgent({
       tools: '[read, grep, write, skill]',

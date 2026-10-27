@@ -2,6 +2,48 @@
 
 本指南验证构建后的产品入口。组件、协议和 SDK 单测继续保留，但不替代这里的真实进程与终端操作。
 
+## 2026-10-27 本地 Skill 失败分类
+
+基线 `6d101b59` 的真实独立 daemon 回归先 RED：Main 已通过自己的可信路径准备
+`draft-response`，daemon 未注册该来源；Provider HTTP 请求数为 0，Run 却返回
+`provider / transport / provider_error`。新增本地 Skill 错误事实后，Runtime 结果、
+事件、状态、诊断、重启读取及 IPC 保留同一分类；产品 `/client` 的 await 适配器
+漏传 failureDetail 亦经真实链路 RED 后修复。Skill 重载和 enforceAtRuntime 保留。
+
+稳定码为 skill_not_found、skill_not_registered、skill_registry_unavailable、
+skill_policy_restore_failed，分类为 local_execution，阶段为 skill_load / skill_policy。
+安全提示仅含安全技能名和固定原因，不回传路径或原始 IO 报错，不带 Provider HTTP
+事实。扫描失败与未找到分开：保留既有 DiscoveryResult.errors 的非 ENOENT 错误，
+通过可选 discoveryIncomplete 留存不完整发现；已发现技能仍可用，来源修复后重新
+发现可清除该事实。真实来源不是目录、策略文件在发现后损坏、Runtime 绑定包装层
+的 wildcard/显式名单均有回归，相关新增断言先 RED 后 GREEN。
+
+`tests/sdk-skill-failure.test.ts` 在 system tier 启动独立 Host（验证 PID 不同）：
+未注册时请求数 0，可信注册后同一调用完成；重连及 Product Client 仍保留错误；
+真实 HTTP 401、429 和连接中断继续分类为鉴权、限流和网络错误，Provider 错误体
+故意包含 skill_not_found 字样，不能据此误判本地错误。测试仅使用本机 HTTP fixture，
+无付费模型请求；Host、Windows Job 和 HTTP 服务均收尾。
+
+第一轮 Provider 回归因沿用生产限流恢复等待达到 120 秒测试预算；保留失败记录，
+fixture 改用既有 timeouts.llm.maxRetryDelaySec=0.01 后完整通过（21.55 秒测试时间）。
+不修改生产重试默认值。成文规范与需求双轴复核的发现均已修复，最终各 0 项。
+最终重建后的相邻门通过：16 文件、544/544 passed、0 skipped，两 worker、retry=0，
+耗时 246.61 秒。其中 Runtime 文件完整执行 336 项，包含普通提问与权限边界；
+独立 daemon 完整用例在该门内再次通过。构建包门 EXIT 0，46/46 passed、0 skipped。
+源码/测试类型检查、package/bundle 构建、14 入口 DTS 与无 Node ambient types 的真实
+Product Client 消费 fixture 均通过。核对 2783 个源码/配置与 3748 个构建文件的
+SHA-256，与门开始前冻结快照完全一致。此次未重跑全仓门，不将下节历史完整门
+结果算作本增量验证。本记录不代表 Space 接入或新版本发布。
+
+```powershell
+npx vitest run tests/sdk-skill-failure.test.ts --retry=0
+npm run typecheck
+npm run build:packages
+npm run build:bundle
+npm run build:dts
+npm run test:bundle
+```
+
 ## 2026-10-27 SDK 一致性与提交前验证
 
 核对源码连接器、Host 启动透传、17 个公开 SDK 子路径、生成声明以及无 Node

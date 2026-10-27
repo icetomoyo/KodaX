@@ -24,6 +24,7 @@ import { mapLegacyReasoningModeToEffortIntent, runWithScopedConfig } from '@koda
 import { SkillRegistry, formatSkillsSystemPrompt } from '@kodax-ai/agent';
 import { runKodaX } from './agent.js';
 import { deriveRunScopedConfig } from './run-scoped-config.js';
+import { KodaXSkillInvocationError } from './skill-invocation-error.js';
 import {
   applyRuntimeSkillInvocationPolicy,
   awaitRuntimeSkillInvocationPolicy,
@@ -126,7 +127,14 @@ export async function ensureManagedSkillCatalog(
     ?? options.context?.executionCwd
     ?? process.cwd();
   const registry = boundRegistry ?? new SkillRegistry(projectRoot);
-  if (!boundRegistry) await registry.discover();
+  if (!boundRegistry) {
+    try { await registry.discover(); }
+    catch (cause: unknown) {
+      const invocation = options.context?.skillInvocation;
+      if (!invocation?.runtimePolicy?.enforceAtRuntime || cause instanceof Error && cause.name === 'AbortError') throw cause;
+      throw new KodaXSkillInvocationError('skill_registry_unavailable', invocation.name, { cause });
+    }
+  }
 
   return {
     ...options,

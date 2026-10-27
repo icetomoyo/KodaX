@@ -3548,9 +3548,10 @@ failureSub.close();
 | Field | Stability and use |
 |---|---|
 | `failureKind` | Bounded broad category for UI grouping and coarse policy. |
-| `stage` | Failure boundary: `catalog`, `credential`, `request_build`, `transport`, `response_stream`, `runtime_control`, or `runtime_settlement`. This is separate from the Run lifecycle `stage`. |
+| `stage` | Failure boundary: `catalog`, `credential`, `request_build`, `transport`, `response_stream`, `runtime_control`, `local_execution`, `skill_load`, `skill_policy`, or `runtime_settlement`. This is separate from the Run lifecycle `stage`. |
 | `providerErrorCode` | Stable KodaX-owned code. Use this field for programmatic handling. |
 | `safeMessage` | Non-empty, at most 1,024 characters, and owned by KodaX. Safe for ordinary user display, but still treat it as text rather than markup. |
+| `skillName` | Optional safe Skill identifier for local Skill loading/policy failures; never a filesystem path. |
 | `httpStatus` | Optional validated HTTP status. It is not sufficient by itself to identify a model or endpoint error. |
 | `upstreamErrorCode` | Optional provider-controlled identifier. Useful for support only; not part of KodaX compatibility. |
 | `requestId` | Optional bounded upstream request identifier for provider support. |
@@ -3572,6 +3573,9 @@ The stable classification is:
 | `cancelled` | `runtime_control` | `cancelled` |
 | `provider_aborted` | `transport` | `cancelled` |
 | `runtime_cleanup` | `runtime_settlement` | `runtime_settlement_failed` |
+| `local_execution` | `local_execution` | `local_execution_error` |
+| `local_execution` | `skill_load` | `skill_not_found`, `skill_not_registered`, `skill_registry_unavailable` |
+| `local_execution` | `skill_policy` | `skill_policy_restore_failed` |
 | `context_capacity` | `runtime_control` | `context_capacity_exceeded` |
 | `provider` | `catalog`, `transport`, or `response_stream` | `catalog_error`, `provider_error` |
 
@@ -3585,6 +3589,22 @@ otherwise it remains `resource_not_found`. This prevents a generic status from
 claiming certainty KodaX does not have. User cancellation and an isolated
 provider-side abort share the stable `cancelled` code but remain distinguishable
 by `failureKind` and `stage`.
+
+An enforced Skill invocation reloads policy inside the executing Host. If Main
+discovers a local Skill but the independent daemon does not have that trusted
+registration, execution fails before any Provider request. `skill_not_found`
+means trusted discovery did not find the Skill; `skill_not_registered` means a
+bound trusted registry excludes it; `skill_registry_unavailable` means registry
+discovery failed or is incomplete; `skill_policy_restore_failed` means trusted full policy loading
+failed. Results, failure events, status, diagnostics and daemon IPC preserve these
+facts. Safe messages name the Skill and a fixed reason, without raw paths or IO
+errors. These local failures do not acquire Provider HTTP/upstream fields.
+The legacy field name `providerErrorCode` also carries these local KodaX codes.
+Clients must register trusted sources in their Host separately; serialized Main
+paths or policy fields never bypass reloading or `enforceAtRuntime` checks.
+Incomplete discovery does not block already discovered Skills. It prevents a
+missing name from being declared absent until trusted sources can be scanned.
+Rediscovery refreshes this fact; absent optional sources are not scan errors.
 Local context exhaustion is reported as `context_capacity` /
 `runtime_control` / `context_capacity_exceeded`; when available,
 `contextTokens.required` is the estimated complete request and

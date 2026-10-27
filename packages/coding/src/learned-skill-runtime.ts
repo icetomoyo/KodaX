@@ -278,6 +278,10 @@ class CompositeSkillRegistry implements ISkillRegistry {
     private readonly learned: ISkillRegistry,
   ) {}
 
+  get discoveryIncomplete(): boolean {
+    return this.formal.discoveryIncomplete === true || this.learned.discoveryIncomplete === true;
+  }
+
   get skills(): ReadonlyMap<string, SkillMetadata> {
     return new Map(this.list().map((skill) => [skill.name, skill]));
   }

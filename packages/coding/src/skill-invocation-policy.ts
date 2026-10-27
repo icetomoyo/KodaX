@@ -7,6 +7,7 @@ import {
 } from '@kodax-ai/agent';
 import type { KodaXOptions, KodaXShellExecutionContract } from './types.js';
 import { toolBash } from './tools/bash.js';
+import { KodaXSkillInvocationError } from './skill-invocation-error.js';
 
 const TOOL_NAME_ALIASES: Readonly<Record<string, string>> = {
   read: 'read',
@@ -257,19 +258,25 @@ async function runHooks(
 
 async function loadTrustedInvokedSkill(options: KodaXOptions, name: string): Promise<Skill> {
   const boundRegistry = options.context?.skillRegistry;
-  if (boundRegistry) {
-    if (!boundRegistry.has(name)) {
-      throw new Error(`Cannot rehydrate runtime policy: Skill "${name}" is absent from the bound Skill registry.`);
-    }
-    return boundRegistry.loadFull(name);
-  }
   const projectRoot = options.context?.gitRoot ?? options.context?.executionCwd ?? process.cwd();
-  const registry = new SkillRegistry(projectRoot);
-  await registry.discover();
-  if (!registry.has(name)) {
-    throw new Error(`Cannot rehydrate runtime policy for unknown Skill "${name}".`);
+  const registry = boundRegistry ?? new SkillRegistry(projectRoot);
+  let registered: boolean;
+  try {
+    if (!boundRegistry) await registry.discover();
+    registered = registry.has(name);
+  } catch (cause: unknown) {
+    if (cause instanceof Error && cause.name === 'AbortError') throw cause;
+    throw new KodaXSkillInvocationError('skill_registry_unavailable', name, { cause });
   }
-  return registry.loadFull(name);
+  if (!registered) {
+    if (registry.discoveryIncomplete) throw new KodaXSkillInvocationError('skill_registry_unavailable', name);
+    throw new KodaXSkillInvocationError(boundRegistry ? 'skill_not_registered' : 'skill_not_found', name);
+  }
+  try { return await registry.loadFull(name); }
+  catch (cause: unknown) {
+    if (cause instanceof Error && cause.name === 'AbortError') throw cause;
+    throw new KodaXSkillInvocationError('skill_policy_restore_failed', name, { cause });
+  }
 }
 
 export function resolveSkillModelOverride(provider: string, model: string | undefined): string | undefined {

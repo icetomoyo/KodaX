@@ -25,6 +25,7 @@ remains a manual maintainer action.
 
 ### Fixed
 
+- Classify trusted Skill loading and policy restoration failures as local execution failures with stable codes and path-safe Skill messages; preserve the facts through Runtime persistence, daemon IPC and Product Client outcomes without weakening trusted reloads or changing Provider error classification.
 - Resume checkpointed Runs and task trees after Host restart: original history, tool receipts, pending input intent and iteration budgets are preserved across independent child and Host recovery; scoped authority rebinds freshly, suspended worktrees stay protected, and bounded verbatim constraint memory retains oversized requests (Issue 322 follow-up).
 - Converge client exit recovery without rewriting unknown outcomes: startup readiness is separated from historical client cleanup acknowledgements, exact Host/process/Job shutdown evidence is reverified, referenced outcomes are retained with late cleanup results preserved, and old exit requests can no longer fence or stop replacement Hosts.
 - Preserve non-interactive question settlement in one-shot CLI: report normal `unanswered/non_interactive` results without default answers or Run interruption, retain MCP protocol cancellation and independent permission rejection, and update the adjacent regression assertions.

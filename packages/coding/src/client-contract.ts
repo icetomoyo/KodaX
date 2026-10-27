@@ -822,6 +822,7 @@ export interface ClientRunTerminal {
 }
 
 export interface ClientRunStatus {
+  readonly failureDetail?: ClientRunFailureDetail;
   readonly terminal?: ClientRunTerminal;
   readonly runId: string;
   readonly sessionId: string;
@@ -872,6 +873,16 @@ export interface ClientToolInvocationInput {
   readonly rawInput: string;
 }
 
+/** Safe execution failure facts shared by read and terminal outcomes. */
+export interface ClientRunFailureDetail {
+  readonly failureKind: string;
+  readonly stage: string;
+  /** Stable KodaX code, including local failures despite the historical field name. */
+  readonly providerErrorCode: string;
+  readonly safeMessage: string;
+  readonly skillName?: string;
+}
+
 /**
  * Terminal facts of one Run. `result` is present only for settled runs the
  * Host could observe; `phase: 'unknown'` means settlement could not be
@@ -879,6 +890,7 @@ export interface ClientToolInvocationInput {
  * reject separately. Unknown is never success or cancellation.
  */
 export interface ClientRunOutcome {
+  readonly failureDetail?: ClientRunFailureDetail;
   readonly terminal?: ClientRunTerminal;
   readonly stop?: ClientRunStatus['stop'];
   readonly runId: string;

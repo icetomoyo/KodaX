@@ -368,7 +368,8 @@ class PinnedSkillRegistry implements ISkillRegistry {
   readonly #delegate: ISkillRegistry;
   readonly #metadata: ReadonlyMap<string, SkillMetadata>;
 
-  constructor(delegate: ISkillRegistry, metadata: readonly SkillMetadata[]) {
+  constructor(delegate: ISkillRegistry, metadata: readonly SkillMetadata[],
+    readonly discoveryIncomplete = delegate.discoveryIncomplete === true) {
     this.#delegate = delegate;
     this.#metadata = new Map(metadata.map((item) => [item.name, item]));
   }
@@ -410,6 +411,10 @@ class CompositeSkillRegistry implements ISkillRegistry {
     private readonly formal: ISkillRegistry,
     private readonly learned: ISkillRegistry,
   ) {}
+
+  get discoveryIncomplete(): boolean {
+    return this.formal.discoveryIncomplete === true || this.learned.discoveryIncomplete === true;
+  }
 
   get skills(): ReadonlyMap<string, SkillMetadata> {
     return new Map(this.list().map((skill) => [skill.name, skill]));
@@ -500,7 +505,7 @@ async function resolveSkills(input: {
       refs.push({ name: metadata.name, source: skillSource(metadata.source), revision });
     }
     const result = {
-      registry: new PinnedSkillRegistry(registry, selected),
+      registry: new PinnedSkillRegistry(registry, selected, wildcard && registry.discoveryIncomplete),
       refs,
       revision: stableHash(refs),
       protectedFormalSkillNames: all

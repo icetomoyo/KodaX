@@ -21,6 +21,7 @@ import {
   type ClientStartupProgress,
   type ClientHostStartupPhase,
   type ClientExitRecovery,
+  type ClientRunFailureDetail,
 } from '@kodax-ai/kodax/client';
 // @ts-expect-error Host adaptation is internal, not a product SDK export.
 import { toKodaXProductClient } from '@kodax-ai/kodax/client';
@@ -59,6 +60,9 @@ const ensureOptions: EnsureKodaXClientOptions = { clientInfo, daemonStartupTimeo
     }
   } };
 void initialProgress;
+const skillFailure: ClientRunFailureDetail = { failureKind: 'local_execution', stage: 'skill_load',
+  providerErrorCode: 'skill_not_registered', safeMessage: 'Skill registration is missing.', skillName: 'draft-response' };
+void skillFailure;
 // @ts-expect-error Initialization phases use the shared finite Host contract.
 const invalidProgress: ClientStartupProgress = { stage: 'initializing', phase: 'unknown' };
 void invalidProgress;

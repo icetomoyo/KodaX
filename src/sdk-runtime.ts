@@ -141,6 +141,8 @@ import {
   registerCustomProviders,
   resolveProviderModelDescriptors,
   resolveSkillModelOverride,
+  KodaXSkillInvocationError,
+  type KodaXSkillInvocationErrorCode,
   reduceOutputSegmentProjection,
   runManagedTask,
   runToolInvocation,
@@ -2394,9 +2396,12 @@ export type RuntimeFailureStage =
   | "response_stream"
   | "runtime_control"
   | "local_execution"
+  | "skill_load"
+  | "skill_policy"
   | "runtime_settlement";
 
 export type RuntimeProviderErrorCode =
+  | KodaXSkillInvocationErrorCode
   | "credential_unavailable"
   | "authentication_failed"
   | "rate_limited"
@@ -2426,6 +2431,8 @@ export interface RuntimeFailureDetail {
   readonly providerErrorCode: RuntimeProviderErrorCode;
   /** Bounded KodaX-owned display text; never derived from provider response bodies. */
   readonly safeMessage: string;
+  /** Safe Skill identifier for local loading/policy failures; never a filesystem path. */
+  readonly skillName?: string;
   readonly httpStatus?: number;
   /** Provider-controlled code; informative only and not part of KodaX compatibility. */
   readonly upstreamErrorCode?: string;
@@ -18609,6 +18616,8 @@ function parseRuntimeFailureDetail(
     stage: value.stage,
     providerErrorCode: value.providerErrorCode,
     safeMessage: value.safeMessage,
+    ...(typeof value.skillName === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value.skillName)
+      ? { skillName: value.skillName } : {}),
     ...(isHttpStatus(value.httpStatus) ? { httpStatus: value.httpStatus } : {}),
     ...(isSafeDiagnosticIdentifier(value.upstreamErrorCode)
       ? { upstreamErrorCode: value.upstreamErrorCode }
@@ -18695,6 +18704,8 @@ function isRuntimeFailureStage(value: unknown): value is RuntimeFailureStage {
     || value === "response_stream"
     || value === "runtime_control"
     || value === "local_execution"
+    || value === "skill_load"
+    || value === "skill_policy"
     || value === "runtime_settlement";
 }
 
@@ -23920,6 +23931,7 @@ function classifyRuntimeRunFailure(error: unknown): {
 const RUNTIME_SAFE_FAILURE_MESSAGE_LIMIT = 1_024;
 const RUNTIME_MAX_RETRY_AFTER_MS = 86_400_000;
 const RUNTIME_PROVIDER_ERROR_CODES: ReadonlySet<string> = new Set<RuntimeProviderErrorCode>([
+  "skill_not_found", "skill_not_registered", "skill_registry_unavailable", "skill_policy_restore_failed",
   "credential_unavailable",
   "authentication_failed",
   "rate_limited",
@@ -23947,6 +23959,7 @@ interface RuntimeFailureClassification {
   readonly failureKind: RuntimeRunFailureKind;
   readonly stage: RuntimeFailureStage;
   readonly providerErrorCode: RuntimeProviderErrorCode;
+  readonly skillName?: string;
 }
 
 interface RuntimeFailureFacts {
@@ -23985,6 +23998,11 @@ function buildRuntimeFailureDetail(
 ): RuntimeFailureDetail {
   const source = readRuntimeExecutionFailure(error) ?? error;
   const classification = classifyRuntimeFailureDetail(source);
+  if (classification.skillName !== undefined) {
+    const local = { ...classification,
+      skillName: filterRuntimeFailureIdentifier(classification.skillName, run) ?? 'unknown' };
+    return { ...local, safeMessage: runtimeFailurePublicMessage(local) };
+  }
   const httpStatus = readRuntimeHttpStatus(source);
   const upstreamErrorCode = filterRuntimeDiagnosticIdentifier(
     readRuntimeUpstreamCode(source),
@@ -24077,6 +24095,13 @@ function isNonNegativeSafeInteger(value: number | undefined): value is number {
 function classifyRuntimeFailureDetail(
   error: unknown,
 ): RuntimeFailureClassification {
+  const skillCode = readStringErrorField(error, 'code');
+  if (readStringErrorField(error, 'source') === 'local'
+    && (skillCode === 'skill_not_found' || skillCode === 'skill_not_registered'
+      || skillCode === 'skill_registry_unavailable' || skillCode === 'skill_policy_restore_failed')) {
+    const skill = new KodaXSkillInvocationError(skillCode, readStringErrorField(error, 'skillName') ?? 'unknown');
+    return { failureKind: 'local_execution', stage: skill.stage, providerErrorCode: skill.code, skillName: skill.skillName };
+  }
   if (error instanceof KodaXContextOverflowError) {
     return runtimeFailure("context_capacity", "transport", "context_capacity_exceeded");
   }
@@ -24456,6 +24481,11 @@ function runtimeFailurePublicMessage(
     return "Provider request was aborted.";
   }
   switch (classification.providerErrorCode) {
+    case 'skill_not_found':
+    case 'skill_not_registered':
+    case 'skill_registry_unavailable':
+    case 'skill_policy_restore_failed':
+      return new KodaXSkillInvocationError(classification.providerErrorCode, classification.skillName ?? 'unknown').message;
     case "credential_unavailable": return "Provider credential is unavailable.";
     case "authentication_failed": return "Provider authentication failed.";
     case "rate_limited": return "Provider rate limit exceeded.";

@@ -55,6 +55,8 @@ export function formatSkillsSystemPrompt(
 export class SkillRegistry implements ISkillRegistry {
   private readonly skillsByName = new Map<string, SkillMetadata>();
   private readonly fullSkillsByName = new Map<string, Skill>();
+  private incompleteDiscovery = false;
+  get discoveryIncomplete(): boolean { return this.incompleteDiscovery; }
   private readonly projectRoot?: string;
   private readonly customPaths?: Readonly<Partial<SkillPathsConfig>>;
 
@@ -68,6 +70,7 @@ export class SkillRegistry implements ISkillRegistry {
    */
   async discover(): Promise<void> {
     const result = await discoverSkills(this.projectRoot, this.customPaths);
+    this.incompleteDiscovery = result.errors.length > 0;
     this.skillsByName.clear();
     for (const [name, metadata] of result.skills) {
       this.skillsByName.set(name, metadata);

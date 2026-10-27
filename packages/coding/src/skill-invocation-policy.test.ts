@@ -93,6 +93,100 @@ async function optionsWithSkill(input: {
 }
 
 describe('applyRuntimeSkillInvocationPolicy', () => {
+  it('reports an unregistered Skill as a local loading failure', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-skill-unregistered-'));
+    tempDirs.push(root);
+    await expect(applyRuntimeSkillInvocationPolicy({
+      provider: 'mock-provider',
+      context: {
+        gitRoot: root,
+        skillRegistry: new SkillRegistry(root),
+        skillInvocation: { name: 'draft-response', runtimePolicy: { enforceAtRuntime: true } },
+      },
+    })).rejects.toMatchObject({
+      code: 'skill_not_registered', source: 'local', stage: 'skill_load', skillName: 'draft-response',
+    });
+  });
+
+  it('reports a Skill absent from trusted discovery without echoing its supplied path', async () => {
+    const { options, root } = await optionsWithSkill({});
+    options.context!.skillInvocation = { name: 'kodax-missing-skill', path: path.join(root, 'private', 'SKILL.md'),
+      runtimePolicy: { enforceAtRuntime: true } };
+    await expect(applyRuntimeSkillInvocationPolicy(options)).rejects.toMatchObject({
+      code: 'skill_not_found', source: 'local', stage: 'skill_load', skillName: 'kodax-missing-skill',
+      message: expect.not.stringContaining(root),
+    });
+  });
+
+  it.each(['discover', 'loadFull'] as const)('keeps a %s failure local without exposing filesystem errors', async method => {
+    const { options, root } = await optionsWithSkill({});
+    const failing = vi.spyOn(SkillRegistry.prototype, method).mockRejectedValue(new Error(`EACCES ${root}/private/credentials`));
+    try {
+      await expect(applyRuntimeSkillInvocationPolicy(options)).rejects.toMatchObject({
+        code: method === 'discover' ? 'skill_registry_unavailable' : 'skill_policy_restore_failed',
+        source: 'local', stage: method === 'discover' ? 'skill_load' : 'skill_policy', skillName: 'transport-skill',
+        message: expect.not.stringContaining(root),
+      });
+    } finally { failing.mockRestore(); }
+  });
+
+  it('classifies a broken bound registry without using its supplied path', async () => {
+    const { options, root } = await optionsWithSkill({});
+    options.context!.skillRegistry = new SkillRegistry(root);
+    const failing = vi.spyOn(options.context!.skillRegistry, 'has').mockImplementation(() => {
+      throw new Error(`Registry unavailable at ${root}`);
+    });
+    try {
+      await expect(applyRuntimeSkillInvocationPolicy(options)).rejects.toMatchObject({
+        code: 'skill_registry_unavailable', source: 'local', stage: 'skill_load',
+        skillName: 'transport-skill', message: expect.not.stringContaining(root),
+      });
+    } finally { failing.mockRestore(); }
+  });
+
+  it('does not claim a Skill is missing when a real trusted source cannot be scanned', async () => {
+    const { options, root } = await optionsWithSkill({});
+    const source = path.join(root, 'private-skill-source');
+    await writeFile(source, 'This configured source is a file, not a directory.');
+    const registry = new SkillRegistry(root, { projectPaths: [source], userPaths: [], pluginPaths: [],
+      builtinPath: path.join(root, 'absent-builtins') });
+    await registry.discover();
+    options.context!.skillRegistry = registry;
+    await expect(applyRuntimeSkillInvocationPolicy(options)).rejects.toMatchObject({
+      code: 'skill_registry_unavailable', source: 'local', stage: 'skill_load',
+      message: expect.not.stringContaining(root),
+    });
+  });
+
+  it('reports real policy reload failure after trusted metadata was discovered', async () => {
+    const { options, root } = await optionsWithSkill({});
+    const registry = new SkillRegistry(root);
+    await registry.discover();
+    options.context!.skillRegistry = registry;
+    await writeFile(path.join(root, '.kodax', 'skills', 'transport-skill', 'SKILL.md'), 'Invalid replacement policy');
+    await expect(applyRuntimeSkillInvocationPolicy(options)).rejects.toMatchObject({
+      code: 'skill_policy_restore_failed', source: 'local', stage: 'skill_policy',
+      skillName: 'transport-skill', message: expect.not.stringContaining(root),
+    });
+  });
+
+  it('does not display a path-shaped Skill identifier', async () => {
+    const { options, root } = await optionsWithSkill({});
+    options.context!.skillRegistry = new SkillRegistry(root);
+    options.context!.skillInvocation!.name = 'C:\\private\\skill-key';
+    await expect(applyRuntimeSkillInvocationPolicy(options)).rejects.toMatchObject({
+      code: 'skill_not_registered', skillName: 'unknown', message: expect.not.stringContaining('private'),
+    });
+  });
+
+  it.each(['discover', 'loadFull'] as const)('preserves explicit abort during %s', async method => {
+    const { options } = await optionsWithSkill({});
+    const aborted = Object.assign(new Error('Stopped'), { name: 'AbortError' });
+    const failing = vi.spyOn(SkillRegistry.prototype, method).mockRejectedValue(aborted);
+    try { await expect(applyRuntimeSkillInvocationPolicy(options)).rejects.toBe(aborted); }
+    finally { failing.mockRestore(); }
+  });
+
   it('does not rewrite settled invocation results when a terminal observer throws', async () => {
     const diagnostics: KodaXDiagnostic[] = [];
     const restore = setKodaXDiagnosticSink(diagnostic => diagnostics.push(diagnostic));
@@ -369,17 +463,17 @@ describe('applyRuntimeSkillInvocationPolicy', () => {
     await restrictedRegistry.discover();
     fixture.options.context!.skillRegistry = restrictedRegistry;
 
-    await expect(applyRuntimeSkillInvocationPolicy(fixture.options)).rejects.toThrow(
-      'absent from the bound Skill registry',
-    );
+    await expect(applyRuntimeSkillInvocationPolicy(fixture.options)).rejects.toMatchObject({
+      code: 'skill_not_registered', source: 'local', stage: 'skill_load', skillName: 'transport-skill',
+    });
   });
 
   it('fails closed when the transport names a Skill absent from trusted discovery', async () => {
     const fixture = await optionsWithSkill({});
     fixture.options.context!.skillInvocation!.name = 'untrusted-skill';
 
-    await expect(applyRuntimeSkillInvocationPolicy(fixture.options)).rejects.toThrow(
-      'Cannot rehydrate runtime policy for unknown Skill',
-    );
+    await expect(applyRuntimeSkillInvocationPolicy(fixture.options)).rejects.toMatchObject({
+      code: 'skill_not_found', source: 'local', stage: 'skill_load', skillName: 'untrusted-skill',
+    });
   });
 });
