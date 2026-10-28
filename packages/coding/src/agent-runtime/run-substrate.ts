@@ -2044,19 +2044,22 @@ async function runSubstrateInContext(
       // wire-level output reserve shrinks floor-bounded while the assembled
       // request is over capacity, so the provider request is legal; a
       // rejection routes to classification, never a resend.
-      const buildCapacityRequestMessages = () => degradeIrreducibleUserInputs(
-        providerMessages, ctx, contextWindow, userInputDegradationCache,
-        { currentTokens: resolveContextTokenCount(providerMessages, estimatedRequestTokenSnapshot), reservedResponseTokens,
-          canReadPagedContent: activeToolDefinitions.some(tool => tool.name === 'read'),
-          retainInput: original => prepareUserInputMemory({ original, contextWindow, provider: streamProvider,
-            model: turnState.currentModelOverride, signal: options.abortSignal, timeoutMs: API_HARD_TIMEOUT_MS,
-            goalRuntime,
-            onUsage: usage => { turnState.costTracker = recordUsage(turnState.costTracker, {
-              provider: turnState.currentProviderName, model: turnState.currentModelOverride ?? streamProvider.getModel(),
-              inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
-              cacheReadTokens: usage.cachedReadTokens, cacheWriteTokens: usage.cachedWriteTokens }); },
-          }) },
-      );
+      const buildCapacityRequestMessages = () => {
+        const requestMessages = ctx.toolResultRecovery?.project(providerMessages) ?? providerMessages;
+        return degradeIrreducibleUserInputs(
+          requestMessages, ctx, contextWindow, userInputDegradationCache,
+          { currentTokens: resolveContextTokenCount(requestMessages, estimatedRequestTokenSnapshot), reservedResponseTokens,
+            canReadPagedContent: activeToolDefinitions.some(tool => tool.name === 'read'),
+            retainInput: original => prepareUserInputMemory({ original, contextWindow, provider: streamProvider,
+              model: turnState.currentModelOverride, signal: options.abortSignal, timeoutMs: API_HARD_TIMEOUT_MS,
+              goalRuntime,
+              onUsage: usage => { turnState.costTracker = recordUsage(turnState.costTracker, {
+                provider: turnState.currentProviderName, model: turnState.currentModelOverride ?? streamProvider.getModel(),
+                inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
+                cacheReadTokens: usage.cachedReadTokens, cacheWriteTokens: usage.cachedWriteTokens }); },
+            }) },
+        );
+      };
       let wireMessages = await buildCapacityRequestMessages();
       let requestMaxOutputTokens = applyContextCapacityReserveOverride(streamProvider, {
         ...(turnState.currentModelOverride !== undefined

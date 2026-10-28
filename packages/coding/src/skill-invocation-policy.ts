@@ -8,6 +8,7 @@ import {
 import type { KodaXOptions, KodaXShellExecutionContract, KodaXToolExecutionContext } from './types.js';
 import { toolBash } from './tools/bash.js';
 import { KodaXSkillInvocationError } from './skill-invocation-error.js';
+import { createToolResultRecovery } from './tool-result-recovery.js';
 
 const TOOL_NAME_ALIASES: Readonly<Record<string, string>> = {
   read: 'read',
@@ -327,6 +328,7 @@ export async function awaitRuntimeSkillInvocationPolicy(options: KodaXOptions, e
 
 export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions, prompt?: string): Promise<KodaXOptions> {
   const explicit = await applyExplicitSkillInvocationPolicy(options, prompt);
+  const recovery = createToolResultRecovery(explicit.context?.executionCwd ?? explicit.context?.gitRoot ?? process.cwd());
   let activeEvents = explicit.events ?? {};
   const activated: KodaXOptions[] = [];
   const dynamicPolicies: AllowedToolPolicy[] = [
@@ -346,7 +348,9 @@ export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions, p
   const scoped: KodaXOptions = {
     ...explicit,
     context: { ...explicit.context,
-      isPagedContentRecoveryAllowed: () => explicit.context?.isPagedContentRecoveryAllowed?.() !== false
+      toolResultRecovery: recovery,
+      isPagedContentRecoveryAllowed: () => recovery.available()
+        && explicit.context?.isPagedContentRecoveryAllowed?.() !== false
         && activated.every(applied => applied.context?.isPagedContentRecoveryAllowed?.() !== false),
       activateModelSkill: (requested, args, registry, provider = explicit.provider) => {
       const activation = activationTail.then(async () => {
@@ -388,9 +392,11 @@ export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions, p
     },
   };
   invocationWork.set(scoped, { pending: new Set(), trustedSkill: initial, finalize: async error => {
-    await activationTail;
-    for (const applied of [...activated].reverse()) await awaitRuntimeSkillInvocationPolicy(applied, error);
-    await awaitRuntimeSkillInvocationPolicy(explicit, error);
+    try {
+      await activationTail;
+      for (const applied of [...activated].reverse()) await awaitRuntimeSkillInvocationPolicy(applied, error);
+      await awaitRuntimeSkillInvocationPolicy(explicit, error);
+    } finally { recovery.clear(); }
   } });
   return scoped;
 }

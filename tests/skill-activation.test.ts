@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -63,6 +63,73 @@ it('SDK discovers and loads a repository Skill from a subdirectory', async () =>
     events: { onToolResult: result => { results.push(result.content); } } }, 'Inspect project code.');
   expect(provider.requests[0]?.system).toContain('- audit-project:');
   expect(results.join('\n')).toContain('Inspect source before answering.');
+});
+
+it.each(['sa', 'ama'] as const)('recovers owned MCP output after refusal without widening read authority in %s', async agentMode => {
+ for (const refusal of ['host', 'bridge', 'guardrail', 'missing', 'unrelated', 'guardrail-batch', 'missing-batch'] as const) {
+  const readMode = refusal.replace('-batch', '');
+  const sameBatch = refusal.endsWith('-batch');
+  const f = await fixture();
+  const body = `HEAD\n${'A'.repeat(35_000)}\nMCP_MIDDLE_EVIDENCE\n${'B'.repeat(35_000)}\nTAIL`;
+  const readInput = { path: '' };
+  let restoredAtProvider = false;
+  let subsequentOutputComplete = false;
+  const mcpCall = { name: 'mcp_call', input: { id: 'mcp:fixture:tool:huge', args: {} } };
+  const readCall = { name: readMode === 'bridge' ? 'tool_call' : 'read', input: readMode === 'bridge'
+    ? { name: 'read', input: readInput } : readInput };
+  const provider = scriptedProvider([
+    mcpCall,
+    sameBatch ? [readCall, mcpCall] : readCall,
+    ...(sameBatch ? [] : [mcpCall]),
+  ], async (index, messages) => {
+    const results = messages.flatMap(message => Array.isArray(message.content)
+      ? message.content.filter(block => block.type === 'tool_result') : []);
+    if (index === 1) {
+      const preview = String(results.at(-1)?.content);
+      expect(preview.includes('MCP_MIDDLE_EVIDENCE')).toBe(false);
+      const locator = /Full output saved to: ([\s\S]*?\.txt)\./.exec(preview)?.[1];
+      expect(locator).toBeTruthy();
+      expect(path.resolve(locator!).startsWith(path.join(f.root, 'outputs') + path.sep)).toBe(true);
+      readInput.path = readMode === 'unrelated' ? path.join(f.root, 'private.txt') : locator!;
+      // Recovery must use the already authorized value, never open the file
+      // behind a refused read or depend on that file still existing.
+      await unlink(locator!);
+    }
+    if (index === 2) {
+      const original = results.find(result => result.tool_use_id === 'action-1-0');
+      restoredAtProvider = String(original?.content).includes(body);
+      const read = results.find(result => result.tool_use_id === 'action-2-0');
+      if (readMode !== 'unrelated') expect(original?.metadata?.truncated).toBe(false);
+      if (readMode === 'guardrail') expect(String(read?.content)).toContain('Fixture guardrail refused read');
+      else if (readMode === 'missing') expect(read?.is_error).toBe(true);
+      else expect(String(read?.content)).toContain('Host refused this read.');
+      if (sameBatch) subsequentOutputComplete = String(results.at(-1)?.content).includes(body);
+    }
+    if (index === 3) subsequentOutputComplete = String(results.at(-1)?.content).includes(body);
+  });
+  const executeCapability = vi.fn(async () => ({ content: body }));
+  const authorize = vi.fn(async (name: string) => name === 'read' && readMode !== 'missing'
+    ? 'Host refused this read.' : true);
+  vi.stubEnv('KODAX_TOOL_OUTPUT_DIR', path.join(f.root, 'outputs'));
+  const outcome = await (agentMode === 'sa' ? runKodaX : runManagedTask)({ provider: provider.provider, agentMode, maxIter: 5, reasoningMode: 'off',
+    context: { ...f.context, excludeTools: ['skill'] },
+    extensionRuntime: { getCapabilityPromptContext: async () => '', executeCapability,
+      searchCapabilities: async () => [], describeCapability: async () => ({}) } as KodaXOptions['extensionRuntime'],
+    ...(readMode === 'guardrail' ? { guardrails: [{ kind: 'tool' as const, name: 'refuse-recovery',
+      beforeTool: async (call: { name: string }) => call.name === 'read'
+        ? { action: 'block' as const, reason: 'Fixture guardrail refused read' } : { action: 'pass' as const } }] } : {}),
+    events: { beforeToolExecute: authorize },
+  }, 'Inspect the MCP report.');
+  expect(restoredAtProvider, refusal).toBe(readMode !== 'unrelated');
+  expect(subsequentOutputComplete, refusal).toBe(readMode !== 'unrelated');
+  expect(authorize.mock.calls.filter(([name]) => name === 'read')).toHaveLength(readMode === 'guardrail' ? 0 : 1);
+  expect(executeCapability).toHaveBeenCalledTimes(2);
+  const canonical = outcome.messages.flatMap(message => Array.isArray(message.content)
+    ? message.content.filter(block => block.type === 'tool_result') : [])
+    .find(result => result.tool_use_id === 'action-1-0');
+  expect(String(canonical?.content).includes('MCP_MIDDLE_EVIDENCE')).toBe(false);
+  expect(canonical?.metadata?.truncated).toBe(true);
+ }
 });
 
 it.each([['sa', 'model'], ['ama', 'model'], ['sa', 'explicit'], ['ama', 'explicit']] as const)(

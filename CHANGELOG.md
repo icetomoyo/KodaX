@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Restore already-authorized tool evidence to the next model request when an actual Host/guardrail refusal or failed read makes its saved preview unrecoverable; retain read denials and Run isolation. Unknown Skill errors no longer enumerate hidden or budget-omitted registry entries.
 - Preserve complete MCP/tool results inline when active Skill restrictions or read hooks could block recovery, without speculative hook execution or permission bypasses.
 - Discover project `.agents/skills` and nested Skill collections with native-source precedence, support-directory boundaries and cycle protection; report shadowed sources and bound model Skill catalogs with visible shortening/omission diagnostics.
 - Keep Skill discovery rooted at the repository when the SDK runs from a

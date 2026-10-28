@@ -70,12 +70,9 @@ export async function toolSkill(
   }
 
   if (!registry.has(skillName)) {
-    const available = registry
-      .list()
-      .map((s) => s.name)
-      .sort()
-      .join(', ');
-    return `[Tool Error] skill: unknown skill "${skillName}". Available skills: ${available || '(none)'}.`;
+    const displayName = skillName.length <= 128 ? skillName
+      : `${skillName.slice(0, 127).replace(/[\uD800-\uDBFF]$/, '')}…`;
+    return `[Tool Error] skill: unknown skill ${JSON.stringify(displayName)}. Use an exact name from the available Skill catalog.`;
   }
 
   try {

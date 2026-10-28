@@ -1196,6 +1196,9 @@ Shortening or omission is reported both in the prompt and through the
 `skill_catalog_shortened` diagnostic. Omitted entries remain registered and
 explicitly invocable. This bounds disclosure; it does not rank Skills for a
 particular natural-language request or add automatic filesystem watching.
+Unknown-Skill errors refer callers to that disclosed catalog, without repeating
+registered names (including disabled and budget-omitted entries). The requested
+name is JSON-escaped and bounded before it is echoed.
 
 Recoverable result truncation also observes the active invocation's read
 policy. If `allowed-tools` excludes `read`, or any matching `PreToolUse` hook
@@ -1206,6 +1209,19 @@ Skills share this rule, and multiple active policies intersect. Existing
 capacity-debt handling remains responsible when an intact result cannot fit.
 AMA input paging uses the same live policy and restores canonical input before
 reusing a cached page when recovery authority changes.
+
+Arbitrary Host callbacks are evaluated only for real calls. A Run retains
+snapshots of its already-authorized spilled results. If an actual `read` of an
+owned locator is refused or fails, the next Provider request restores the
+matching prior result from memory, including native images, while retaining the
+read failure unchanged. Both direct and bridged calls use this rule; unrelated
+paths and modified receipts cannot restore content. This grants no filesystem
+authority and works even after the saved file disappears. Further spills in
+that Run remain inline, and cached user-input pages return to canonical input.
+Canonical history stays unchanged; snapshots are cleared when the Run settles
+and are not durable across Runs or Host restart. Normal capacity handling still
+applies to the restored request; restoration does not promise that arbitrarily
+large originals fit a model context or survive transcript compaction verbatim.
 
 `user-invocable` remains parse-compatible with existing `SKILL.md` files, but
 enabled Skills always report as user-invocable and the field is not used as an

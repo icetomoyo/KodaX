@@ -237,3 +237,86 @@ npx vitest run -c vitest.system.config.ts --maxWorkers=1 --retry=0
 $bundleFiles = ((Get-Content package.json -Raw | ConvertFrom-Json).scripts.'test:bundle' -replace '^node --test ', '') -split ' '
 node --test --test-concurrency=1 @bundleFiles
 ```
+
+## Host recovery and unknown Skill error follow-up (2026-10-28)
+
+Baseline `edf21dad`; source/build verification, not an npm publication.
+
+- Unknown Skill errors must not re-enumerate the registry, disclose disabled or
+  budget-omitted names, or echo an unbounded requested name. They point back to
+  the disclosed catalog. Direct and built-SDK scripted Provider checks cover it.
+- Dynamic Host callbacks run only on actual calls, never as a spill preflight.
+  After a refused/failed read of a Run-owned spill, its matching prior result
+  must be complete in the next Provider request. The read refusal remains
+  intact; no refused file is opened and MCP is not replayed. Direct, bridged,
+  guardrail and missing-file paths run in both SA/AMA. An unrelated denied file
+  must neither restore evidence nor disable ordinary paging.
+- Native images, successive preview reductions and canonical history remain
+  intact, including already-admitted image bytes after source-file deletion.
+  Failed reads are observed before admitting sibling results from the same
+  batch. Forged locators/modified previews cannot restore content. Snapshots
+  are Run-local and cleared on settlement. A refused owned transient input
+  read invalidates the cached paging projection and preserves canonical input.
+- The built SDK additionally uses a real stdio MCP child and local HTTP
+  scripted Provider with an embedded Host callback in both SA/AMA. These two
+  scenarios first failed against the previous bundle at the precise missing
+  evidence assertion. Existing six independent-daemon cases continue to cover
+  normal recovery, explicit/model Skill restrictions, SDK original reads,
+  restart, unavailable read, storage failure and an unrelated-hook control.
+
+These are deterministic content/permission/wiring checks. They do not measure
+natural-language Skill selection quality of real models. Remaining known
+differences include automatic directory watching, semantic lookup of catalog
+entries omitted by the budget, and model-triggered `context: fork` (explicit
+Host invocation is required). No claim of complete MCP protocol equivalence,
+universal bug absence or cross-harness model-quality superiority follows from
+these tests. Restored evidence still obeys model context capacity; Run-local
+snapshots are not a new persistent recovery channel.
+
+Comparison evidence is pinned to local DSH `22ddee3792`, Pi `136b87e8a`
+and Codex `970111f6cb`; their suites were not run here. Pi's
+`packages/coding-agent/src/core/skills.ts` likewise exposes descriptions for
+model-selected file loading. KodaX's catalog-to-loader path is tested, but
+this is not a deterministic natural-language router. DSH's
+`packages/skill/skill-filesystem/src/index.ts` enables watching by default;
+`packages/skill/tool-skill/src/index.ts` refreshes the catalog at pre-step.
+Its documented local provider scans direct bundles/flat Markdown entries,
+whereas KodaX and Pi support nested formal Skill collections. Codex's
+`codex-rs/ext/skills/src/render.rs` additionally supports context-window-aware
+metadata budgets; KodaX deliberately uses the existing fixed catalog bound.
+
+One concrete reliability advantage over Pi's inspected model-text path is
+storage failure: `packages/coding-agent/src/extensions/mcp/tools.ts` reports a
+failed save while retaining truncated text, whereas KodaX's regression requires
+complete inline content. This does not describe Pi's separate codemode result:
+that path receives the full normalized `CallToolResult`, including structured
+content. KodaX's tested SDK original paging across Host restart and dynamic
+Host-denial recovery are useful reliability properties; neither establishes
+that every other harness lacks an equivalent mechanism.
+
+The scoped coverage gate passed 11 files / 161 tests with retry 0 and a single
+worker. Eight measured modules achieved 91.65% line, 82.39% branch, 90.60%
+statement and 92.90% function coverage; the new recovery module reached 100%
+line / 90.90% branch coverage. These are scoped measurements, not repository-wide
+coverage. Review independently reproduced three implementation boundary bugs
+(SA canonical writeback, same-batch failed-read ordering, and native-image
+admitted-cache identity); each received a failing regression before its minimal
+fix. Final independent review: Standards 0, Spec 0 unresolved findings.
+
+The first full fast run had one Windows `ENOTEMPTY` teardown failure removing
+an isolated `sdk-client.observe.test.ts` Session directory; 2,474 other tests
+passed. That file passed unchanged in isolation (5/5), then the complete fast
+tier passed unchanged (2,475 passed / 44 existing skips), all with retry 0.
+No unrelated product or test cleanup behavior was modified to obtain that pass.
+
+Final Windows source gates: build and source/test typechecks passed; fast
+2,475 passed / 44 skipped, unit 12,122 passed / 4 skipped, contract 962 passed /
+19 TODOs, and serial system 1,485 passed / 42 skipped. All four tiers total
+17,044 passed with the same 90 existing skips and 19 TODOs, retry 0. System
+testing retained the previously observed Node `beforeExit` listener warning;
+this patch adds no process listeners and does not suppress that diagnostic.
+The complete built-SDK suite passed 55/55 with files run serially, including
+eight MCP scenarios (six independent-daemon controls and two embedded Host
+refusals with real stdio MCP / local HTTP Provider boundaries). All 30 scripted
+Skill activation tests passed; the two recovery tests exercise 14 mode/refusal
+combinations. No paid Provider or cross-harness model benchmark was run.

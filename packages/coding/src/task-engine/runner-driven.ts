@@ -2241,6 +2241,7 @@ async function runManagedTaskViaRunnerInner(
           call.id,
           options.context?.executionCwd,
           options.context?.gitRoot ?? undefined,
+          baseCtx.toolResultRecovery,
         );
         if (override === undefined) return true;
         return override;

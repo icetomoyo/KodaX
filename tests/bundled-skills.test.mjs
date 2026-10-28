@@ -44,8 +44,8 @@ test('built SDK preserves Skill discovery, activation, permissions and refresh a
   class Provider extends KodaXBaseProvider {
     name = 'bundled-skill-fixture';
     config = { name: this.name, model: 'fixture', apiKeyEnv: 'KODAX_BUNDLED_SKILL_KEY' };
-    async stream(_messages, tools, system) {
-      requests.push({ system, tools: tools.map(tool => tool.name) });
+    async stream(messages, tools, system) {
+      requests.push({ system, tools: tools.map(tool => tool.name), messages: structuredClone(messages) });
       const action = actions[cursor++];
       return { textBlocks: action ? [] : [{ type: 'text', text: 'Done.' }], thinkingBlocks: [],
         toolBlocks: action ? [{ type: 'tool_use', id: `call-${cursor}`, ...action }] : [],
@@ -114,6 +114,16 @@ test('built SDK preserves Skill discovery, activation, permissions and refresh a
   assert.ok(catalog.length <= 8_000);
   assert.match(catalog, /Skills omitted/);
   assert.ok(!catalog.includes('- z-catalog-39:'));
+  cursor = 0; requests = [];
+  actions = [{ name: 'skill', input: { skill: 'missing' } }];
+  await runKodaX({ ...base, context: { ...base.context, skillRegistry: registry,
+    skillsPrompt: catalog } }, 'Inspect source code.');
+  const unknown = requests[1].messages.flatMap(message => Array.isArray(message.content)
+    ? message.content.filter(block => block.type === 'tool_result') : []).at(-1);
+  assert.match(String(unknown.content), /unknown skill "missing"/);
+  assert.ok(String(unknown.content).length <= 8_000);
+  assert.ok(!String(unknown.content).includes('bundle-audit'));
+  assert.ok(!String(unknown.content).includes('z-catalog-39'));
   for (const activation of ['model', 'explicit']) {
     cursor = 0; requests = [];
     const name = activation === 'model' ? 'z-catalog-00' : 'z-catalog-39';

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { connectKodaXClient } from '../dist/sdk-client.js';
-import { ensureKodaXRuntime, waitForRuntimeDaemonShutdown } from '../dist/sdk-runtime.js';
+import { createKodaXRuntime, ensureKodaXRuntime, waitForRuntimeDaemonShutdown } from '../dist/sdk-runtime.js';
 
 const body = JSON.stringify({ prefix: '你😀'.repeat(12_000), middle: 'MCP_MIDDLE_EVIDENCE',
   suffix: 'Ω'.repeat(35_000), tail: 'MCP_TAIL_EVIDENCE' });
@@ -31,7 +31,8 @@ async function readAll(read) {
 }
 
 for (const scenario of ['recoverable', 'without-read', 'storage-failure',
-  'skill-model-denied-read', 'skill-explicit-denied-read', 'skill-model-unrelated-hook']) {
+  'skill-model-denied-read', 'skill-explicit-denied-read', 'skill-model-unrelated-hook',
+  'host-denied-sa', 'host-denied-ama']) {
   test(`bundled SDK preserves MCP output end to end: ${scenario}`, { timeout: 120_000 }, async (t) => {
     const homeDir = await mkdtemp(path.join(tmpdir(), 'kodax-bundle-mcp-output-'));
     const configHome = path.join(homeDir, '.kodax');
@@ -39,14 +40,18 @@ for (const scenario of ['recoverable', 'without-read', 'storage-failure',
     const usesSkill = scenario.startsWith('skill-');
     const modelSkill = usesSkill && !scenario.includes('explicit');
     const deniedRead = usesSkill && scenario.includes('denied-read');
-    const recoverable = scenario === 'recoverable' || scenario === 'skill-model-unrelated-hook';
+    const hostRecovery = scenario.startsWith('host-denied-');
+    const agentMode = scenario.endsWith('-ama') ? 'ama' : 'sa';
+    const recoverable = scenario === 'recoverable' || scenario === 'skill-model-unrelated-hook' || hostRecovery;
     const skillDir = path.join(homeDir, '.kodax', 'skills', 'report-only');
     const skillFile = path.join(skillDir, 'SKILL.md');
     const hookLog = path.join(homeDir, 'read-hooks.txt');
     const previousHome = process.env.KODAX_HOME;
     const previousOutputDir = process.env.KODAX_TOOL_OUTPUT_DIR;
+    const previousKey = process.env.KODAX_MCP_E2E_UNUSED_KEY;
     process.env.KODAX_HOME = configHome;
     process.env.KODAX_TOOL_OUTPUT_DIR = outputDir;
+    if (hostRecovery) process.env.KODAX_MCP_E2E_UNUSED_KEY = 'synthetic-embedded-fixture-key';
     let runtime;
     let client;
     let owner;
@@ -97,7 +102,12 @@ for (const scenario of ['recoverable', 'without-read', 'storage-failure',
               answer = 'MCP-E2E complete without losing content.';
             }
           } else if (result?.tool_call_id === 'mcp-output-read') {
-            if (deniedRead) {
+            if (hostRecovery) {
+              observedReadDenial = String(result.content) === 'Host refused this recovery read.';
+              const prior = payload.messages.find(message => message.role === 'tool' && message.tool_call_id === 'mcp-output-call');
+              observedCompleteMcp = String(prior?.content).includes(body) && String(prior?.content).includes('STRUCTURED_EVIDENCE');
+              answer = 'MCP-E2E restored prior evidence and retained Host refusal.';
+            } else if (deniedRead) {
               observedReadDenial = /PreToolUse hook blocked 'read'/.test(String(result.content));
               answer = 'MCP-E2E retained evidence and respected Skill denial.';
             } else {
@@ -136,7 +146,7 @@ for (const scenario of ['recoverable', 'without-read', 'storage-failure',
     const stopHost = async () => {
       await client?.disconnect();
       client = undefined;
-      try { await runtime?.daemon.shutdown(); }
+      try { if (!hostRecovery) await runtime?.daemon.shutdown(); }
       finally { await runtime?.close(); runtime = undefined; }
       if (owner) {
         const stopped = await waitForRuntimeDaemonShutdown({ configHome, profile: connection.profile, owner });
@@ -157,6 +167,8 @@ for (const scenario of ['recoverable', 'without-read', 'storage-failure',
           else process.env.KODAX_HOME = previousHome;
           if (previousOutputDir === undefined) delete process.env.KODAX_TOOL_OUTPUT_DIR;
           else process.env.KODAX_TOOL_OUTPUT_DIR = previousOutputDir;
+          if (previousKey === undefined) delete process.env.KODAX_MCP_E2E_UNUSED_KEY;
+          else process.env.KODAX_MCP_E2E_UNUSED_KEY = previousKey;
           assert.equal(path.dirname(homeDir), path.resolve(tmpdir()));
           await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
         }
@@ -196,30 +208,39 @@ for (const scenario of ['recoverable', 'without-read', 'storage-failure',
         process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }) + '\\n');
       });
     `);
-    runtime = await ensureKodaXRuntime(connection);
-    owner = (await runtime.daemon.inspect()).owner;
-    assert.ok(owner);
-    assert.notEqual(owner.pid, process.pid, 'The published SDK must use a separate daemon process');
-    const lease = await runtime.credentials.registerScoped({ providers: [provider] }, async () => 'synthetic-mcp-test-key');
+    runtime = hostRecovery ? await createKodaXRuntime(connection) : await ensureKodaXRuntime(connection);
+    if (!hostRecovery) {
+      owner = (await runtime.daemon.inspect()).owner;
+      assert.ok(owner);
+      assert.notEqual(owner.pid, process.pid, 'The published SDK must use a separate daemon process');
+    }
+    const lease = hostRecovery ? undefined
+      : await runtime.credentials.registerScoped({ providers: [provider] }, async () => 'synthetic-mcp-test-key');
     const session = await runtime.sessions.create({ projectPath: homeDir, mcpServers: {
       demo: { type: 'stdio', command: process.execPath, args: [serverPath] },
     } });
-    await runtime.sessions.updateSettings(session.id, { provider, model: 'fixture', agentMode: 'sa', permissionMode: 'full-access' });
+    await runtime.sessions.updateSettings(session.id, { provider, model: 'fixture', agentMode,
+      permissionMode: hostRecovery ? 'accept-edits' : 'full-access' });
     const prepared = usesSkill && !modelSkill
       ? await runtime.invocations.prepareSkill({ projectRoot: homeDir, name: 'report-only', sessionId: session.id }) : undefined;
     if (prepared) assert.equal(prepared.kind, 'prepared');
     const run = await runtime.runs.start({ sessionId: session.id, prompt: prepared?.invocation.prompt ?? `MCP-E2E ${scenario}`,
-      options: { agentMode: 'sa', context: { repoIntelligenceMode: 'off',
+      options: { agentMode, ...(hostRecovery ? { events: { beforeToolExecute: async name =>
+        name === 'read' ? 'Host refused this recovery read.' : true } } : {}), context: { repoIntelligenceMode: 'off',
         ...(prepared ? { skillInvocation: prepared.invocation.skillInvocation } : {}),
         ...(scenario === 'without-read' ? { excludeTools: ['read'] } : {}) } },
-      credential: { leaseId: lease.id, mode: 'scoped', providers: [provider] },
+      ...(lease ? { credential: { leaseId: lease.id, mode: 'scoped', providers: [provider] } } : {}),
     });
     const outcome = await run.result;
     assert.deepEqual(requestErrors, []);
     assert.equal(outcome.phase, 'completed', JSON.stringify(outcome));
     assert.equal(observedMcp, true);
     assert.equal(primaryRequests, (recoverable || deniedRead ? 3 : 2) + (modelSkill ? 1 : 0));
-    assert.equal(recoveredMiddle, recoverable);
+    assert.equal(recoveredMiddle, recoverable && !hostRecovery);
+    if (hostRecovery) {
+      assert.equal(observedReadDenial, true);
+      assert.equal(observedCompleteMcp, true, 'A real Host refusal must restore the original to the next HTTP Provider request');
+    }
     if (deniedRead) {
       assert.equal(observedCompleteMcp, true, 'A Skill-blocked recovery path must retain the complete MCP result inline');
       assert.equal(observedReadDenial, true, 'Preserving evidence must not bypass Skill permissions');
@@ -236,17 +257,18 @@ for (const scenario of ['recoverable', 'without-read', 'storage-failure',
         owner = (await runtime.daemon.inspect()).owner;
         assert.notEqual(runtime.identity.runtimeId, originalRuntimeId);
       }
-      client = await connectKodaXClient({ homeDir, profile: connection.profile });
-      const history = await client.sessions.readHistory(session.id);
+      client = hostRecovery ? undefined : await connectKodaXClient({ homeDir, profile: connection.profile });
+      const sessionApi = client?.sessions ?? runtime.sessions;
+      const history = await sessionApi.readHistory(session.id);
       const item = history.items.find(entry => entry.tool?.callId === 'mcp-output-call');
       assert.ok(item);
-      const full = await readAll(offset => client.sessions.readHistoryEntry(session.id, item.id, { offset, part: 'original' }));
+      const full = await readAll(offset => sessionApi.readHistoryEntry(session.id, item.id, { offset, part: 'original' }));
       assert.ok(full.includes(body));
       assert.ok(full.includes('STRUCTURED_EVIDENCE'));
       assert.doesNotMatch(full, /KODAX_RESULT_INCOMPLETE/);
       if (original !== undefined) assert.equal(full, original);
       original = full;
-      const preview = await readAll(offset => client.sessions.readHistoryEntry(session.id, item.id, { offset }));
+      const preview = await readAll(offset => sessionApi.readHistoryEntry(session.id, item.id, { offset }));
       if (recoverable) {
         assert.match(preview, /KODAX_RESULT_INCOMPLETE/);
         assert.ok(!preview.includes('MCP_MIDDLE_EVIDENCE'));
@@ -257,7 +279,7 @@ for (const scenario of ['recoverable', 'without-read', 'storage-failure',
       }
       assert.equal(await readFile(callLog, 'utf8'), 'called\n', 'Reading originals must never replay the MCP operation');
       assert.equal(primaryRequests, requestsBeforeReading, 'Reading or restarting must not invoke the model');
-      await client.disconnect();
+      await client?.disconnect();
       client = undefined;
     }
   });

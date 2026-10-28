@@ -263,6 +263,7 @@ function buildManagedToolCallBridge(
           targetToolId,
           ctx.executionCwd,
           ctx.gitRoot,
+          ctx.toolResultRecovery,
         )
         : undefined;
       throwIfManagedToolAborted(runnerCtx.abortSignal);
