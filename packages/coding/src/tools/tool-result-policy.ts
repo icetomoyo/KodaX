@@ -308,7 +308,9 @@ export async function applyToolResultGuardrail(
     return guardMultimodalToolResult(toolName, content, ctx, options);
   }
   const policy = getToolResultPolicy(toolName);
-  if (ctx.canReadPagedContent === false) return { content, truncated: false, policy };
+  if (ctx.canReadPagedContent === false || ctx.isPagedContentRecoveryAllowed?.() === false) {
+    return { content, truncated: false, policy };
+  }
   const maxInlineTokens = options?.maxInlineTokens
     ?? options?.toolResultBudget?.aggregateInlineTokens;
   const existingOutputPath = options?.existingOutputPath;

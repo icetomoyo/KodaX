@@ -359,10 +359,11 @@ export function getDefaultSkillPaths(projectRoot?: string): SkillPathsConfig {
   const home = homedir();
 
   return {
-    // Project-level (highest priority) - .kodax/skills/
+    // Project-level (highest priority) - native Skills override shared Skills.
     projectPaths: projectRoot
       ? [
           path.join(projectRoot, '.kodax', 'skills'),
+          path.join(projectRoot, '.agents', 'skills'),
         ]
       : [],
 

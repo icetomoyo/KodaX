@@ -31,7 +31,7 @@ async function fixture() {
 }
 
 type Action = { name: string; input: Record<string, unknown> };
-function scriptedProvider(actions: readonly (Action | readonly Action[])[], beforeRequest?: (index: number) => Promise<void>) {
+function scriptedProvider(actions: readonly (Action | readonly Action[])[], beforeRequest?: (index: number, messages: KodaXMessage[]) => Promise<void>) {
   const name = `skill-fixture-${++providerNumber}`;
   let cursor = 0;
   const requests: { system: string; tools: string[]; model?: string }[] = [];
@@ -41,7 +41,7 @@ function scriptedProvider(actions: readonly (Action | readonly Action[])[], befo
     readonly config = { name, model: 'fixture', apiKeyEnv: 'KODAX_SKILL_TEST_KEY' };
     async stream(_messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string,
       _reasoning?: Parameters<KodaXBaseProvider['stream']>[3], streamOptions?: KodaXProviderStreamOptions): Promise<KodaXStreamResult> {
-      await beforeRequest?.(cursor);
+      await beforeRequest?.(cursor, _messages);
       requests.push({ system, tools: tools.map(tool => tool.name), model: streamOptions?.modelOverride });
       const action = actions[cursor++];
       const batch: readonly Action[] = action === undefined ? [] : 'name' in action ? [action] : action;
@@ -63,6 +63,52 @@ it('SDK discovers and loads a repository Skill from a subdirectory', async () =>
     events: { onToolResult: result => { results.push(result.content); } } }, 'Inspect project code.');
   expect(provider.requests[0]?.system).toContain('- audit-project:');
   expect(results.join('\n')).toContain('Inspect source before answering.');
+});
+
+it.each([['sa', 'model'], ['ama', 'model'], ['sa', 'explicit'], ['ama', 'explicit']] as const)(
+  'preserves MCP evidence when a Skill can block recovery in %s/%s', async (agentMode, activation) => {
+  const f = await fixture();
+  const hookLog = path.join(f.root, 'read-hooks.txt');
+  const source = `require('node:fs').appendFileSync(${JSON.stringify(hookLog)},'read\\n');process.stdout.write(JSON.stringify({allow:false}))`;
+  const command = `node -e "eval(Buffer.from('${Buffer.from(source).toString('base64')}','base64').toString())"`;
+  await writeFile(path.join(f.skillDir, 'SKILL.md'), `---\nname: audit-project\ndescription: Inspect project code\nallowed-tools: "*"\nhooks:\n  PreToolUse:\n    - matcher: read\n      command: ${JSON.stringify(command)}\n---\nInspect the MCP report.\n`);
+  const registry = new SkillRegistry(f.root, { userPaths: [], pluginPaths: [], builtinPath: path.join(f.root, 'none') });
+  await registry.discover();
+  const skill = await registry.loadFull('audit-project');
+  const body = `HEAD\n${'A'.repeat(80_000)}\nMCP_MIDDLE_EVIDENCE\n${'B'.repeat(80_000)}\nTAIL`;
+  let modelSawEvidence = false;
+  const provider = scriptedProvider([
+    ...(activation === 'model' ? [{ name: 'skill', input: { skill: 'audit-project' } }] : []),
+    { name: 'mcp_call', input: { id: 'mcp:fixture:tool:huge', args: {} } },
+    { name: 'read', input: { path: path.join(f.skillDir, 'SKILL.md') } },
+  ], async (_index, messages) => {
+    for (const message of messages) {
+      if (!Array.isArray(message.content)) continue;
+      for (const block of message.content) {
+        if (block.type === 'tool_result' && String(block.content).includes('MCP_MIDDLE_EVIDENCE')) {
+          modelSawEvidence = true;
+        }
+      }
+    }
+  });
+  const executeCapability = vi.fn(async () => ({ content: body }));
+  const results: { name: string; content: string }[] = [];
+  vi.stubEnv('KODAX_TOOL_OUTPUT_DIR', path.join(f.root, 'outputs'));
+  await runManagedTask({ provider: provider.provider, agentMode, maxIter: 5, reasoningMode: 'off', context: {
+    ...f.context, skillRegistry: registry,
+    ...(activation === 'explicit' ? { skillInvocation: { name: skill.name, path: skill.skillFilePath,
+      expandedContent: skill.content, runtimePolicy: { enforceAtRuntime: true } } } : {}),
+  },
+    extensionRuntime: { getCapabilityPromptContext: async () => '', executeCapability,
+      searchCapabilities: async () => [], describeCapability: async () => ({}) } as KodaXOptions['extensionRuntime'],
+    events: { beforeToolExecute: async () => true,
+      onToolResult: result => { results.push({ name: result.name, content: result.content }); } },
+  }, 'Inspect the MCP report and its middle evidence.');
+  expect(results.find(result => result.name === 'mcp_call')?.content.includes(body)).toBe(true);
+  expect(modelSawEvidence).toBe(true);
+  expect(results.find(result => result.name === 'read')?.content).toContain("PreToolUse hook blocked 'read'");
+  expect(await readFile(hookLog, 'utf8')).toBe('read\n');
+  expect(executeCapability).toHaveBeenCalledOnce();
 });
 
 it.each(['explicit', 'model'] as const)('public Runner installs and settles the %s Skill policy', async activation => {

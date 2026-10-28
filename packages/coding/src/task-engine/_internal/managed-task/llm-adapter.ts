@@ -372,7 +372,8 @@ export function buildRunnerLlmAdapter(
   // FEATURE_296 T5/T6 (ADR-067): per-run request-recovery state — the cache
   // of degraded copies for irreducibly oversized fresh user inputs, and the
   // tool-execution context backing the spill artifact.
-  const userInputSpillCtx: KodaXToolExecutionContext = { backups: new Map() };
+  const userInputSpillCtx: KodaXToolExecutionContext = { backups: new Map(),
+    isPagedContentRecoveryAllowed: options.context?.isPagedContentRecoveryAllowed };
 
   const requireUserInputDegradationCache = (): UserInputDegradationCache => {
     if (userInputDegradationCache === undefined) {

@@ -137,7 +137,8 @@ export async function degradeIrreducibleUserInputs(
     readonly retainInput?: (original: string) => Promise<readonly string[]> },
 ): Promise<KodaXMessage[]> {
   cache.activePaths.clear();
-  if (request?.canReadPagedContent !== true) return [...messages];
+  if (request?.canReadPagedContent !== true || ctx.canReadPagedContent === false
+    || ctx.isPagedContentRecoveryAllowed?.() === false) return [...messages];
   let remaining = estimateTokens([...messages]);
   const fixedInput = Math.max(0, (request?.currentTokens ?? remaining) - remaining);
   let maxInput = Math.max(0, calculateMaxContextInputTokens(contextWindow,

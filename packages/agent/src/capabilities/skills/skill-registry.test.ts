@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdir, unlink, writeFile } from "fs/promises";
+import { mkdir, symlink, unlink, writeFile } from "fs/promises";
 import { join } from "path";
-import { SkillRegistry } from "./skill-registry.js";
+import { formatSkillsSystemPrompt, SkillRegistry } from "./skill-registry.js";
+import { setKodaXDiagnosticSink, type KodaXDiagnostic } from '../../diagnostics.js';
 import { createTempDir, removeTempDir } from "./test-utils/temp-dir.js";
 
 const tempDirs: string[] = [];
@@ -46,6 +47,90 @@ ${description}
 }
 
 describe("SkillRegistry", () => {
+  it('discovers project .agents Skills while retaining .kodax precedence', async () => {
+    const root = await createTempDir('kodax-skill-compatible-');
+    tempDirs.push(root);
+    await writeSkill(root, '.agents/skills', 'shared-only', 'Shared project Skill');
+    await writeSkill(root, '.agents/skills', 'overridden', 'Shared fallback');
+    await writeSkill(root, '.kodax/skills', 'overridden', 'Native project winner');
+    const registry = new SkillRegistry(root, { userPaths: [], pluginPaths: [], builtinPath: join(root, 'none') });
+    await registry.discover();
+    expect(registry.get('shared-only')?.source).toBe('project');
+    expect((await registry.loadFull('overridden')).content).toContain('Native project winner');
+  });
+  it('finds nested Skills without scanning support trees or following directory cycles', async () => {
+    const root = await createTempDir('kodax-skill-nested-');
+    tempDirs.push(root);
+    await writeSkill(root, 'project/group/subgroup', 'nested', 'Nested Skill');
+    await writeSkill(root, 'project', 'parent', 'Parent Skill');
+    await writeSkill(root, 'project/parent/support', 'private', 'Support content is not a separate Skill');
+    await writeSkill(root, 'project/.hidden', 'hidden', 'Hidden content');
+    await writeSkill(root, 'project/node_modules', 'dependency', 'Dependency content');
+    await symlink(join(root, 'project'), join(root, 'project/group/back'), process.platform === 'win32' ? 'junction' : 'dir');
+    const registry = new SkillRegistry(root, { projectPaths: [join(root, 'project')],
+      userPaths: [], pluginPaths: [], builtinPath: join(root, 'none') });
+    await registry.discover();
+    expect(registry.list().map(skill => skill.name)).toEqual(['nested', 'parent']);
+    expect(registry.discoveryIncomplete).toBe(false);
+  });
+  it('reports shadowed Skill paths without treating precedence as incomplete discovery', async () => {
+    const root = await createTempDir('kodax-skill-shadowed-');
+    tempDirs.push(root);
+    await writeSkill(root, 'project', 'same-name', 'Project winner');
+    await writeSkill(root, 'user', 'same-name', 'User fallback');
+    const diagnostics: KodaXDiagnostic[] = [];
+    const restore = setKodaXDiagnosticSink(diagnostic => diagnostics.push(diagnostic));
+    try {
+      const registry = new SkillRegistry(root, { projectPaths: [join(root, 'project')],
+        userPaths: [join(root, 'user')], pluginPaths: [], builtinPath: join(root, 'none') });
+      await registry.discover();
+      expect(registry.discoveryIncomplete).toBe(false);
+      expect((await registry.loadFull('same-name')).description).toBe('Project winner');
+      expect(diagnostics).toContainEqual(expect.objectContaining({ source: 'agent:skills', level: 'warn',
+        detail: { code: 'skill_shadowed', name: 'same-name',
+          selectedPath: join(root, 'project/same-name/SKILL.md'),
+          shadowedPath: join(root, 'user/same-name/SKILL.md') } }));
+    } finally { restore(); }
+  });
+  it('bounds a large model catalog and reports omissions without disabling explicit invocation', async () => {
+    const root = await createTempDir('kodax-skill-catalog-');
+    tempDirs.push(root);
+    for (let index = 0; index < 40; index++) {
+      await writeSkill(root, 'project', `skill-${String(index).padStart(2, '0')}`,
+        `Inspect case ${index}: ${'详细说明😀'.repeat(180)}`);
+    }
+    await writeSkill(root, 'project', 'explicit-only', 'Private trigger', 'disable-model-invocation: true');
+    const registry = new SkillRegistry(root, { projectPaths: [join(root, 'project')],
+      userPaths: [], pluginPaths: [], builtinPath: join(root, 'none') });
+    await registry.discover();
+    const diagnostics: KodaXDiagnostic[] = [];
+    const restore = setKodaXDiagnosticSink(diagnostic => diagnostics.push(diagnostic));
+    let snippet: string;
+    try { snippet = registry.getSystemPromptSnippet(); }
+    finally { restore(); }
+    expect(snippet.length).toBeLessThanOrEqual(8_000);
+    expect(snippet).toContain('- skill-00: Inspect case 0:');
+    expect(snippet).toMatch(/\d+ Skills omitted/);
+    expect(snippet).not.toContain('explicit-only');
+    expect(snippet).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/u);
+    const included = snippet.split('\n').filter(line => line.startsWith('- skill-')).length;
+    expect(diagnostics).toContainEqual(expect.objectContaining({ detail: expect.objectContaining({
+      code: 'skill_catalog_shortened', total: 40, included, omitted: 40 - included,
+    }) }));
+    expect(registry.size).toBe(41);
+    const invocation = await registry.invoke('skill-39', '', { workingDirectory: root, projectRoot: root });
+    expect(invocation.success).toBe(true);
+    expect(invocation.content).toContain('Inspect case 39:');
+  });
+
+  it('renders catalog metadata on one line without letting a long hint consume the catalog', () => {
+    const snippet = formatSkillsSystemPrompt([{ name: 'inspect', description: 'Inspect\nsource\tfiles',
+      argumentHint: 'arg '.repeat(5_000), path: '/skills/inspect', source: 'project',
+      userInvocable: true, disableModelInvocation: false }]);
+    expect(snippet.length).toBeLessThanOrEqual(8_000);
+    expect(snippet).toContain('Inspect source files');
+    expect(snippet).toContain('- inspect:');
+  });
   it('does not republish an in-flight body from an older discovery', async () => {
     const root = await createTempDir('kodax-skill-concurrent-');
     tempDirs.push(root);

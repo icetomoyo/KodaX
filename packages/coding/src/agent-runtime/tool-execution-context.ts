@@ -161,6 +161,7 @@ export function buildToolExecutionContext(
     activateModelSkill: options.context?.activateModelSkill,
     admitLearnedSkillInvocation: options.context?.admitLearnedSkillInvocation,
     skillScriptRunner: options.context?.skillScriptRunner,
+    isPagedContentRecoveryAllowed: options.context?.isPagedContentRecoveryAllowed,
     assertReadablePath: options.context?.assertReadablePath,
     toolVisibilityPolicy: options.context?.toolVisibilityPolicy,
     excludeTools: options.context?.excludeTools,

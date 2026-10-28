@@ -178,3 +178,62 @@ run recorded a loopback `transport/network_error`; the same fixture passed in
 isolation, then the complete serial bundle suite passed. The final context
 regression confirms Host overlays stay in the system prompt and are not copied
 into Skill tool output. Final independent review: Standards 0, Spec 0 findings.
+
+## MCP recovery and Skill catalog follow-up (2026-10-28)
+
+Baseline `0d723c6e`; source/build verification, not an npm release.
+Acceptance uses the existing public SDK/Registry, actual SA/AMA tool dispatch,
+and the built Runtime daemon/stdio MCP/HTTP Provider boundaries.
+
+- A model-loaded or explicit Skill whose `PreToolUse` hook refuses `read`
+  must leave MCP evidence complete in the actual next Provider request.
+  A subsequent real `read` must still be refused. The hook runs exactly once
+  for that real call, never as a truncation preflight; MCP executes once.
+- An unrelated hook must not disable normal spill-and-read recovery. The
+  built split SDK also preserves originals through history APIs and restart.
+- Default project discovery includes `.agents/skills`, retaining higher
+  `.kodax/skills` precedence. Nested collections load; Skill support trees,
+  hidden/dependency directories and symlink/junction cycles do not produce
+  unintended entries. Shadow diagnostics identify both paths without marking
+  successful precedence resolution as incomplete discovery.
+- The complete model catalog stays within 8,000 UTF-16 code units, with
+  single-line descriptions/hints and intact surrogate pairs. Shortening and
+  omission are visible in the prompt and diagnostic receipt. Omitted entries
+  remain explicitly invocable; disabled entries remain undisclosed.
+
+The source recovery regression failed first in both SA/AMA, and the built
+daemon/MCP regression failed against the previous build at the inline evidence
+assertion. Directory discovery, shadow diagnostics and catalog budget tests
+also failed before their minimal implementations. These scripted Providers
+verify wiring and content fidelity, not real-model Skill selection quality.
+Review also found AMA's separate oversized-input paging context and cached
+pages. Regressions failed before forwarding the same live read policy and
+checking it before cache reuse; the Provider now receives intact input when
+Skill recovery is unavailable.
+
+Final isolated Windows gates: build and source/test typechecks passed; fast
+2,468 passed / 44 skipped; unit 12,121 passed / 4 skipped; contract 962 passed /
+19 TODOs; system 1,485 passed / 42 skipped. All four layers total 17,036 passed,
+with the same 90 existing skips and 19 TODOs, retry 0. The full built-SDK suite
+passed 53/53, including six daemon + stdio MCP + HTTP Provider scenarios.
+Those cover explicit/model read denial and an unrelated-hook control alongside
+normal recovery, unavailable read and storage failure.
+
+The focused coverage gate passed 8 files / 133 tests, including 28 scripted
+Skill activation cases. The five measured core modules (discovery, Registry,
+invocation policy, tool-result policy and capacity recovery) achieved 91.72%
+line, 83.44% branch, 90.65% statement and 91.24% function coverage. These scoped
+numbers are not whole-repository coverage. Final independent review:
+Standards 0, Spec 0 unresolved findings. The initial Spec finding about AMA
+input paging was fixed and independently reverified with its two regressions.
+
+```powershell
+npm run build
+npm run typecheck
+npm run test:fast -- --retry=0
+npm run test:unit -- --retry=0
+npm run test:contract -- --retry=0
+npx vitest run -c vitest.system.config.ts --maxWorkers=1 --retry=0
+$bundleFiles = ((Get-Content package.json -Raw | ConvertFrom-Json).scripts.'test:bundle' -replace '^node --test ', '') -split ' '
+node --test --test-concurrency=1 @bundleFiles
+```

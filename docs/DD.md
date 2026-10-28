@@ -1181,6 +1181,32 @@ and Learned Area identity. SA/AMA omit the model catalog when the Skill loader
 is unavailable; an already expanded explicit invocation remains usable.
 Rediscovery invalidates full-body caches, including loads still in flight.
 
+Project discovery checks `.kodax/skills` before `.agents/skills`, then the
+existing user/plugin/built-in roots. Formal roots are scanned recursively in
+stable name order, stopping at each `SKILL.md` directory so support files do
+not become separate Skills. Hidden directories and `node_modules` are skipped;
+physical-directory tracking prevents symlink/junction cycles. Same-name
+precedence emits a `skill_shadowed` diagnostic with both source paths without
+marking discovery incomplete.
+
+The model catalog, including its instructions and notices, is bounded to
+8,000 UTF-16 code units. Single-line descriptions use at most 500 units and
+argument hints 80; complete entries are included in discovery priority order.
+Shortening or omission is reported both in the prompt and through the
+`skill_catalog_shortened` diagnostic. Omitted entries remain registered and
+explicitly invocable. This bounds disclosure; it does not rank Skills for a
+particular natural-language request or add automatic filesystem watching.
+
+Recoverable result truncation also observes the active invocation's read
+policy. If `allowed-tools` excludes `read`, or any matching `PreToolUse` hook
+could refuse it, results remain complete inline. This check is conservative,
+including hooks that might ultimately allow the read; it never runs a hook
+speculatively or bypasses Host/Skill authorization. Explicit and model-loaded
+Skills share this rule, and multiple active policies intersect. Existing
+capacity-debt handling remains responsible when an intact result cannot fit.
+AMA input paging uses the same live policy and restores canonical input before
+reusing a cached page when recovery authority changes.
+
 `user-invocable` remains parse-compatible with existing `SKILL.md` files, but
 enabled Skills always report as user-invocable and the field is not used as an
 execution gate.

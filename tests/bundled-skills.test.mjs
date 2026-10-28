@@ -26,7 +26,7 @@ test('split SDK discovers packaged built-in skills from the installed distributi
 test('built SDK preserves Skill discovery, activation, permissions and refresh across public entry points', async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-bundled-skill-'));
   t.after(() => rm(root, { recursive: true, force: true, maxRetries: 5 }));
-  const skillDir = path.join(root, '.kodax', 'skills', 'bundle-audit');
+  const skillDir = path.join(root, '.agents', 'skills', 'team', 'bundle-audit');
   const cwd = path.join(root, 'src');
   await mkdir(skillDir, { recursive: true });
   await mkdir(cwd);
@@ -101,4 +101,32 @@ test('built SDK preserves Skill discovery, activation, permissions and refresh a
     skillsPrompt: registry.getSystemPromptSnippet() },
     events: { onToolResult: event => refused.push(event.content) } }, 'Inspect source code.');
   assert.match(refused[0], /model invocation disabled/);
+
+  for (let index = 0; index < 40; index++) {
+    const name = `z-catalog-${String(index).padStart(2, '0')}`;
+    const directory = path.join(root, '.agents', 'skills', 'collection', name);
+    await mkdir(directory, { recursive: true });
+    await writeFile(path.join(directory, 'SKILL.md'),
+      `---\nname: ${name}\ndescription: ${'Inspect detailed project evidence. '.repeat(40)}\n---\nCATALOG_BODY_${index}\n`);
+  }
+  await registry.discover();
+  const catalog = registry.getSystemPromptSnippet();
+  assert.ok(catalog.length <= 8_000);
+  assert.match(catalog, /Skills omitted/);
+  assert.ok(!catalog.includes('- z-catalog-39:'));
+  for (const activation of ['model', 'explicit']) {
+    cursor = 0; requests = [];
+    const name = activation === 'model' ? 'z-catalog-00' : 'z-catalog-39';
+    const skill = await registry.loadFull(name);
+    actions = activation === 'model' ? [{ name: 'skill', input: { skill: name } }] : [];
+    const outputs = [];
+    await runKodaX({ ...base, context: { ...base.context, skillRegistry: registry,
+      skillsPrompt: catalog,
+      ...(activation === 'explicit' ? { skillInvocation: { name, path: skill.skillFilePath,
+        expandedContent: skill.content, runtimePolicy: { enforceAtRuntime: true } } } : {}),
+    }, events: { onToolResult: event => outputs.push(event.content) } }, 'Inspect source code.');
+    assert.ok(requests[0].system.includes(catalog.trim()), 'The actual Provider must receive the bounded catalog');
+    if (activation === 'model') assert.match(outputs[0], /CATALOG_BODY_0/);
+    else assert.match(requests[0].system, /CATALOG_BODY_39/);
+  }
 });

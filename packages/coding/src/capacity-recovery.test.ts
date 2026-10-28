@@ -141,6 +141,21 @@ describe('capacity recovery rungs (FEATURE_296 T5/T6)', () => {
       expect(large[0]).toBe(message);
       await cleanupUserInputDegradationCache(cache);
     });
+    it('restores original input instead of reusing a page after Skill recovery permission changes', async () => {
+      const message: KodaXMessage = { role: 'user', content: 'original requirement and evidence '.repeat(4000) };
+      const cache = createUserInputDegradationCache();
+      let recoveryAllowed = true;
+      const ctx = { backups: new Map(), isPagedContentRecoveryAllowed: () => recoveryAllowed };
+      const request = { currentTokens: estimateTokens([message]), reservedResponseTokens: 3000, canReadPagedContent: true };
+      try {
+        const first = await degradeIrreducibleUserInputs([message], ctx, 8_192, cache, request);
+        expect(first[0]).not.toBe(message);
+        recoveryAllowed = false;
+        const second = await degradeIrreducibleUserInputs([message], ctx, 8_192, cache, request);
+        expect(second[0] === message).toBe(true);
+        expect(cache.activePaths.size).toBe(0);
+      } finally { await cleanupUserInputDegradationCache(cache); }
+    });
     it('does not treat an ordinary message as degradable merely because the configured window is below the reserve floor', async () => {
       const message: KodaXMessage = { role: 'user', content: 'hello' };
       const cache = createUserInputDegradationCache();

@@ -2073,6 +2073,8 @@ export interface KodaXContextOptions {
   }) => Promise<void>;
   /** Remote-runtime broker for explicitly admitted, OS-sandboxed Skill scripts. */
   skillScriptRunner?: KodaXSkillScriptRunner;
+  /** @internal Run-owned policy check; never executes hooks or grants read authority. */
+  isPagedContentRecoveryAllowed?: () => boolean;
   rawUserInput?: string;
   skillInvocation?: KodaXSkillInvocationContext;
   /** Trusted Host execution only; never accepted from the product wire. */
@@ -2910,6 +2912,8 @@ export interface KodaXToolExecutionContext {
   toolResultCapacityTokens?: number;
   /** @internal Derived from the active tool set; false forbids lossy delivery to unreadable artifacts. */
   canReadPagedContent?: boolean;
+  /** @internal False retains complete results when Skill policy may deny their recovery read. */
+  isPagedContentRecoveryAllowed?: () => boolean;
   /** Runner path resolver for the transcript that the current batch extends. */
   resolveToolResultCapacityTokens?: (messages: readonly KodaXMessage[]) => number;
   /** Trusted side-channel for a tool-owned recovery artifact. */

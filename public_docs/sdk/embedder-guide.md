@@ -602,6 +602,19 @@ Skill loading defers other actions to a later batch so the model can read the
 instructions or resolve a refusal first. `context: fork` requires explicit Host
 invocation and is refused before model-side dynamic expansion.
 
+Skill discovery also accepts project `.agents/skills` after `.kodax/skills`
+and scans nested Skill collections. It stops at a Skill's own directory,
+skips hidden/dependency directories and prevents directory-link cycles.
+The model catalog has a fixed 8,000-character UTF-16 budget; shortened or
+omitted metadata is reported in the catalog and diagnostics. Omitted Skills
+remain available to explicit invocation. Same-name source overrides emit a
+diagnostic identifying the selected and shadowed paths.
+
+When active Skill restrictions exclude `read` or a matching `PreToolUse` hook
+could block it, tool results stay complete inline instead of relying on an
+unusable recovery file. Hooks still run only for actual calls. Large intact
+results remain subject to the normal model-capacity handling.
+
 The `SkillContext` hook above covers Skills your host explicitly expands via
 `resolveSkillContent` or `SkillRegistry.invoke()`. A model-visible Skill can
 also be **auto-triggered by the model** through the built-in `skill` tool — and

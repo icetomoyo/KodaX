@@ -345,7 +345,10 @@ export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions, p
   let activationTail: Promise<unknown> = Promise.resolve();
   const scoped: KodaXOptions = {
     ...explicit,
-    context: { ...explicit.context, activateModelSkill: (requested, args, registry, provider = explicit.provider) => {
+    context: { ...explicit.context,
+      isPagedContentRecoveryAllowed: () => explicit.context?.isPagedContentRecoveryAllowed?.() !== false
+        && activated.every(applied => applied.context?.isPagedContentRecoveryAllowed?.() !== false),
+      activateModelSkill: (requested, args, registry, provider = explicit.provider) => {
       const activation = activationTail.then(async () => {
         const name = requested.name;
         const skill = await registry.loadFull(name);
@@ -418,6 +421,10 @@ async function applyExplicitSkillInvocationPolicy(options: KodaXOptions, prompt?
     hooks: trustedSkill.hooks, model: trustedSkill.model, context: trustedSkill.context, agent: trustedSkill.agent,
   } : commandInvocation!;
   const allowedTools = parseAllowedTools(policy.allowedTools);
+  // A matching hook is an arbitrary runtime decision. Do not execute it early
+  // or assume it will allow a later recovery read; retain the original inline.
+  const recoveryReadAllowed = isToolAllowed(allowedTools, 'read', {})
+    && !policy.hooks?.PreToolUse?.some(hook => hookMatches(hook, 'read'));
   const baseEvents = options.events ?? {};
   const cwd = options.context?.executionCwd ?? options.context?.gitRoot ?? process.cwd();
   let dispatchingNotification = false;
@@ -482,6 +489,8 @@ async function applyExplicitSkillInvocationPolicy(options: KodaXOptions, prompt?
     ...(modelOverride !== undefined ? { modelOverride } : {}),
     context: {
       ...options.context,
+      isPagedContentRecoveryAllowed: () => recoveryReadAllowed
+        && options.context?.isPagedContentRecoveryAllowed?.() !== false,
       rawUserInput,
       ...(promptOverlay ? { promptOverlay } : {}),
       ...(trustedSkill && skillInvocation ? { skillInvocation: {
