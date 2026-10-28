@@ -138,6 +138,7 @@ export function buildToolExecutionContext(
     ...(workMode === 'agent' ? { workMode } : {}),
     configHome: options.context?.configHome,
     runtimeRunId: options.context?.runtimeRunId,
+    visualObservationOwner: options.context?.visualObservationOwner?.ownerId === sessionId ? options.context?.visualObservationOwner : undefined,
     registerShellCleanup: options.events?.registerShellCleanup,
     backups: new Map(),
     actorControl: options.context?.actorControl,

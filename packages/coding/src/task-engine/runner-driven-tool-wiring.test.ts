@@ -43,6 +43,7 @@ import {
 import { DEFERRED_TOOL_HINTS } from '../tools/deferred-tools.js';
 import { createExtensionRuntime } from '../extensions/index.js';
 import type { KodaXEvents, KodaXToolExecutionContext } from '../types.js';
+import { createFileVisualObservationOwner } from '@kodax-ai/agent/media';
 
 const cleanupToolRegistrations: Array<() => void> = [];
 let actorControl: AgentActorClient;
@@ -67,6 +68,7 @@ function makeCtx(hasCapabilityRuntime = true, hasWorkflowHost = true): KodaXTool
     gitRoot: process.cwd(),
     executionCwd: process.cwd(),
     actorControl,
+    visualObservationOwner: createFileVisualObservationOwner({ ownerId: 'inventory', directory: 'unused-media-inventory', list: async () => [] }),
     skillScriptRunner: { run: async () => 'ran' },
     ...(hasCapabilityRuntime
       ? { extensionRuntime: {} as KodaXToolExecutionContext['extensionRuntime'] }

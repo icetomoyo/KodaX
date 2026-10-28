@@ -11,6 +11,8 @@ import type {
   KodaXToolResultContentItem,
 } from '@kodax-ai/llm';
 import { mapLegacyReasoningModeToEffortIntent, withPreparedImageHistory } from '@kodax-ai/llm';
+import { createVisualOutputReservations } from './visual-output-reservations.js';
+import { bindVisualObservationAdmission } from '../media/visual-owner.js';
 import type {
   Agent,
   QueuedMessage,
@@ -1433,6 +1435,8 @@ async function runManagedTaskViaRunnerInner(
   const writtenFiles = new Map<string, KodaXWrittenFile>();
   const baseCtx: KodaXToolExecutionContext = {
     ...substrateBaseCtx,
+    visualModelSelection: () => ({ provider: options.provider ?? 'anthropic', model: options.modelOverride ?? options.model }),
+    ...(substrateBaseCtx.visualObservationOwner ? { visualOutputReservations: createVisualOutputReservations() } : {}),
     writtenFiles,
     mutationTracker,
     todoStore,
@@ -2014,6 +2018,7 @@ async function runManagedTaskViaRunnerInner(
     },
     thinkingLevel: resolveInitialRuntimeThinkingLevel(options),
   });
+  bindVisualObservationAdmission(baseCtx, options, runtimeSessionState);
   bindModelSkillSelection(baseCtx, model => {
     options.modelOverride = model;
     runtimeSessionState.modelSelection.model = model;

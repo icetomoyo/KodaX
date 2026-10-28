@@ -103,6 +103,8 @@ export interface KodaXSessionMessageEntry extends KodaXSessionEntryBase {
 export interface KodaXSessionCompactionEntry extends KodaXSessionEntryBase {
   type: 'compaction';
   summary: string;
+  /** Exact pre-compaction leaf for evidence visibility across islands; never a model-context parent. */
+  compactedFromEntryId?: string;
   firstKeptEntryId?: string;
   tokensBefore?: number;
   tokensAfter?: number;

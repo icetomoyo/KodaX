@@ -411,7 +411,9 @@ assertStartupImportBoundary('CLI', cliResult, { eagerOnly: true });
 assertSingleProviderCredentialModule('CLI', cliResult);
 
 const cliBytes = statSync(path.join(distDir, 'kodax_cli.js')).size;
-assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024);
+// P0–P2 adds the bounded visual owner and evidence tools. Keep the audited
+// eager dependency/input guards; allow 32 KiB for this concrete capability.
+assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024 + 32 * 1024);
 log(`  ✓ dist/kodax_cli.js (${(cliBytes / 1024).toFixed(0)} kB)`);
 
 // Bare `-r` must show the picker without evaluating the full CLI graph.

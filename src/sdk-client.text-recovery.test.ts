@@ -101,7 +101,12 @@ it.each((['sa', 'ama'] as const).flatMap(agentMode =>
     expect(await client.inputs.read(queueSession.id, 'followup')).toMatchObject({ state: 'queued' });
     await client.inputs.withdraw(queueSession.id, 'followup');
     const transcript = await runtime.sessions.transcript(session.id);
-    expect(JSON.stringify(transcript)).toContain(imagePath.replaceAll('\\', '\\\\'));
+    if (!transcript) throw new Error('Expected retained canonical transcript.');
+    const retained = transcript.messages.flatMap(message => Array.isArray(message.content)
+      ? message.content.filter(block => block.type === 'image') : []);
+    expect(retained).toHaveLength(1);
+    expect(retained[0]!.path).not.toBe(imagePath);
+    expect(await readFile(retained[0]!.path)).toEqual(await readFile(imagePath));
   } finally {
     releaseOther();
     await client.disconnect();

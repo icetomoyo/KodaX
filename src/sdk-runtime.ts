@@ -56,6 +56,9 @@ import { createExecutionFactsStore, type ExecutionFactsStore } from './execution
 export type { RuntimeExecutionAuthorization } from './client-host-authorization.js';
 export type { RuntimeBuildIdentity } from './runtime-build-identity.js';
 import { createHash, randomUUID } from "node:crypto";
+import { prepareRuntimeVisualInput } from './runtime-visual-input.js';
+import { createSessionVisualObservationOwner } from '@kodax-ai/coding';
+import { sessionVisualMediaDirectory } from '@kodax-ai/agent/media';
 import { captureGenerationResume, parseGenerationCheckpoint, rebindGenerationOptions, type RuntimeGenerationResume } from './runtime-generation-recovery.js';
 import type {
   ClientSession,
@@ -12328,7 +12331,11 @@ async function createRuntimeRunService(deps: {
       ?? (deps.sessionManager.storage.isDraft(input.sessionId) ? runId : undefined);
     if (canonicalInputId !== undefined && !recovery) {
       const session = await deps.sessionAdmission.loadExecutable(input.sessionId);
-      const content = buildPromptMessageContent(normalizedInput.prompt, effectiveOptions.context?.inputArtifacts);
+      const originalContent = buildPromptMessageContent(normalizedInput.prompt, effectiveOptions.context?.inputArtifacts);
+      const visualInput = await prepareRuntimeVisualInput({ sessionId: input.sessionId, inputId: canonicalInputId,
+        sessionsDir: deps.sessionManager.storage.getSessionsDir(), content: originalContent, session, runId,
+        productIntentDigest: record.productInput?.digest });
+      const content = visualInput.content;
       const savedInput = session.messages.find(message => message.role === 'user' && message.inputId === canonicalInputId);
       if (savedInput && JSON.stringify(savedInput.content) !== JSON.stringify(content)) {
         throw createRuntimeConflictError('Input ID already belongs to a different intent.', 0);
@@ -12345,6 +12352,9 @@ async function createRuntimeRunService(deps: {
       await deps.sessionManager.storage.save(input.sessionId, {
         ...session,
         messages,
+        ...(visualInput.records.length ? { extensionRecords: [
+          ...(session.extensionRecords ?? []).filter(record => !visualInput.records.some(next => next.id === record.id)), ...visualInput.records,
+        ] } : {}),
         lineage: createSessionLineage(messages, session.lineage),
       });
       record.canonicalInputId = canonicalInputId;
@@ -13045,6 +13055,25 @@ async function createRuntimeRunService(deps: {
             throw createRuntimeConflictError("Input ID already belongs to a different intent.", 0);
           }
           return { sessionId: accepted.sessionId, inputId: productInput.inputId, runId: accepted.runId, state: "submitted" as const };
+        }
+        if (productInput.inputArtifacts?.some(artifact => artifact.kind === 'image')) {
+          const saved = await deps.sessionAdmission.loadExecutable(input.sessionId);
+          const receipt = saved.extensionRecords?.find(record => record.extensionId === 'kodax.visual' && record.type === 'input'
+            && record.data && typeof record.data === 'object' && !Array.isArray(record.data) && record.data.inputId === productInput.inputId);
+          const data = receipt?.data;
+          if (data && typeof data === 'object' && !Array.isArray(data) && data.ownerId === input.sessionId && typeof data.runId === 'string') {
+            if (data.productIntentDigest !== inputIntentDigest(productInput, currentProductExecution()?.key)) {
+              throw createRuntimeConflictError('Input ID already belongs to a different intent.', 0);
+            }
+            const owner = createSessionVisualObservationOwner(deps.sessionManager.storage, input.sessionId,
+              sessionVisualMediaDirectory(deps.sessionManager.storage.getSessionsDir(), input.sessionId));
+            if (!(await owner.list()).some(observation => observation.originEntryId === `input:${productInput.inputId}`)) {
+              throw createRuntimeConflictError('Visual input is unavailable in the active lineage.', 0);
+            }
+            if (deps.persistence.loadRunStatus(data.runId)?.status.sessionId === input.sessionId) {
+              return { sessionId: input.sessionId, inputId: productInput.inputId, runId: data.runId, state: 'submitted' as const };
+            }
+          }
         }
         assertSessionNotCompacting(input.sessionId);
         if (productInput.delivery === "steer") {
@@ -14840,6 +14869,8 @@ function buildRunOptions(input: {
     events,
     context: {
       ...ownerSafeContext,
+      visualObservationOwner: isForkInvocation ? undefined : createSessionVisualObservationOwner(sessionManager.storage,
+        record.sessionId, sessionVisualMediaDirectory(sessionManager.storage.getSessionsDir(), record.sessionId)),
       ...(!isForkInvocation && record.goalRuntime ? { goalRuntime: record.goalRuntime } : {}),
       runtimeRunId: record.runId,
       configHome: input.defaultConfigHome,

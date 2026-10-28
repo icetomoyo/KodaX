@@ -910,6 +910,7 @@ export function applySessionCompaction(
     type: 'compaction',
     id: compactionEntryId,
     parentId: null,
+    ...(lineage?.activeEntryId ? { compactedFromEntryId: lineage.activeEntryId } : {}),
     logicalId: compactionEntryId,
     timestamp: new Date().toISOString(),
     summary: anchor.summary,

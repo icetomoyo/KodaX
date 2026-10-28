@@ -2977,6 +2977,7 @@ describe("createKodaXRuntime", () => {
       });
     });
 
+    await fs.writeFile(path.join(tempRoot, "screen.png"), await fs.readFile("tests/fixtures/images/valid-png.png"));
     const accepted = await runtime.runs.acceptInput({
       sessionId: session.id,
       inputId: "cli-artifact-1",

@@ -73,7 +73,8 @@ export async function withScriptCells<T>(
       catch (error) { closed = true; throw error; }
     };
     await persist('cell.started', { code });
-    const pilot = createScriptPilot({ ctx, events: options.events ?? {}, runtimeSessionState: state,
+    const pilot = createScriptPilot({ ctx: { ...ctx, visualSource: { imageOrdinal: 0, runId, cellId, inputId: options.session?.inputId } },
+      events: options.events ?? {}, runtimeSessionState: state,
       // Borrowed Runner cells retain tracking, but the parent owns review policy.
       mutationScopeReflection: host.agent === undefined,
       get activeToolNames() { return state.activeTools; },

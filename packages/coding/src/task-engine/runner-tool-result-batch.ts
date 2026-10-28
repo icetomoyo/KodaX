@@ -43,6 +43,7 @@ async function transformRunnerToolResultBatch(
   const entries = collectToolResultEntries(batch);
   const guarded = await applyToolResultBatchGuardrail(entries, options.ctx, budget);
   const transformed = mergeGuardedResults(batch, guarded.entries, options);
+  options.ctx.visualOutputReservations?.settle(batch.transcript);
   const finalTokens = estimateRunnerToolResultBatchTokens(batch.calls, transformed);
   const capacityDebt = shouldStampRunnerCapacityDebt(
     guarded.capacityDebt !== undefined,

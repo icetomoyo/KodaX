@@ -1400,6 +1400,7 @@ async function genericRun<TData>(
           abortSignal: opts.abortSignal,
           agentSpan,
           transcript,
+          toolCallIndex: index,
         });
       } finally {
         opts.toolObserver?.onToolExecutionEnd?.(call);

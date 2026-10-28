@@ -131,6 +131,8 @@ export interface RunnerToolContext {
   readonly toolCallId?: string;
   /** Exact prepared invocation; Provider ids alone need not be unique. */
   readonly toolCall?: RunnerToolCall;
+  /** Exact ordinal in the prepared batch; provider call IDs may repeat. */
+  readonly toolCallIndex?: number;
 }
 
 /**

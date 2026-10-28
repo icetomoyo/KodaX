@@ -72,7 +72,7 @@ it('executes explicit tools from daemon negotiation with permissions, events and
       const imageTerminal = await imageRun.result;
       expect(imageTerminal.result?.success, imageTerminal.result?.lastText).toBe(true);
       let imageItemId: string | undefined;
-      const imageObservation = await client.sessions.observeView(session.id, view => { imageItemId = view.items.find(item => item.attachments?.some(a => a.path === imagePath))?.id; });
+      const imageObservation = await client.sessions.observeView(session.id, view => { imageItemId = view.items.find(item => item.attachments?.some(a => a.kind === 'image'))?.id; });
       try {
         expect(imageItemId).toBeDefined();
         const attachment = await client.sessions.readViewItem(session.id, imageItemId!, { part: 'attachment', attachmentIndex: 0, expectedImageSha256: createHash('sha256').update(bytes).digest('hex') });

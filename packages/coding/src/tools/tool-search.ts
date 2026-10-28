@@ -22,6 +22,7 @@
  */
 
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
+import { VISUAL_TOOL_NAMES } from '@kodax-ai/agent/media';
 import type { LocalToolDefinition, ToolHandlerSync } from './types.js';
 import type { KodaXToolExecutionContext } from '../types.js';
 import { getRegisteredToolDefinition, getToolDefinition, listToolDefinitions } from './index.js';
@@ -33,7 +34,7 @@ import { listRunScopedTools, lookupRunScopedTool, toModelToolDefinition } from '
 type ToolSearchContext = Pick<KodaXToolExecutionContext,
   'extensionRuntime' | 'skillScriptRunner' | 'executionCwd' | 'excludeTools' | 'toolVisibilityPolicy'
   | 'discoveryToolNames' | 'workflowHost' | 'loadSessionHistory' | 'actorControl'
-  | 'lspService' | 'lspNavigationDisabled' | 'workMode'>;
+  | 'lspService' | 'lspNavigationDisabled' | 'workMode' | 'visualObservationOwner'>;
 
 const LSP_NAVIGATION_TOOL_NAMES = new Set([
   'lsp_definition', 'lsp_hover', 'lsp_references', 'lsp_document_symbols',
@@ -93,6 +94,7 @@ export function isToolDiscoverable(name: string, context: ToolSearchContext): bo
   if (context.excludeTools?.includes(name)) return false;
   const registered = getRegisteredToolDefinition(name);
   if (registered?.source.kind === 'builtin') {
+    if (VISUAL_TOOL_NAMES.has(name) && !context.visualObservationOwner) return false;
     if (context.workMode === 'agent' && registered.workSurface === 'coding') return false;
     if (context.lspNavigationDisabled === true && !context.lspService
       && LSP_NAVIGATION_TOOL_NAMES.has(name)) return false;

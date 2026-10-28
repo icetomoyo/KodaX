@@ -10,6 +10,7 @@ import { normalizeMcpCapabilityId, parseMcpCapabilityId } from '@kodax-ai/agent'
 import type { LocalToolDefinition } from './types.js';
 import { mcpToClassifierInput } from './classifier-projection.js';
 import { toolRead } from './read.js';
+import { VISUAL_CODING_TOOLS } from './visual.js';
 import {
   MEMORY_RECALL_TOOL_DESCRIPTION,
   MEMORY_RECALL_TOOL_NAME,
@@ -2183,4 +2184,4 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
 ];
 
 export const BUILTIN_TOOL_DEFINITIONS: LocalToolDefinition[] =
-  BUILTIN_TOOL_DEFINITION_SOURCE;
+  [...BUILTIN_TOOL_DEFINITION_SOURCE, ...VISUAL_CODING_TOOLS];

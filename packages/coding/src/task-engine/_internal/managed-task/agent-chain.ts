@@ -269,7 +269,8 @@ function buildManagedToolCallBridge(
 
       const { toolExecution, createToolEventMeta, createContextForToolCall } = await import('../../../agent-runtime/tool-dispatch.js');
       const targetMeta = createToolEventMeta(events ?? {}, targetToolId, toolExecution(targetCall).id);
-      const targetCtx = createContextForToolCall(events ?? {}, targetCall, ctx);
+      const liveCtx = { ...ctx, discoveryToolNames: [...active.keys()] };
+      const targetCtx = createContextForToolCall(events ?? {}, targetCall, liveCtx);
       events?.onToolExecutionStart?.({ id: targetToolId, name: parsed.name }, targetMeta);
       try {
         const overrideRunnable = overrides.get(parsed.name);
@@ -299,7 +300,7 @@ function buildManagedToolCallBridge(
               targetInput: Record<string, unknown>,
               execCtx: KodaXToolExecutionContext,
             ) => Promise<RunnerToolResult['content']>,
-            ctx,
+            liveCtx,
             budget,
             events,
           );
@@ -398,7 +399,7 @@ function buildAgentToolsFromRegistry(
       continue;
     }
     if (def.name === TOOL_CALL_NAME) {
-      tools.push(buildManagedToolCallBridge(def, bridgeTargetDefinitions, discoveryCtx, budget, events, overrides));
+      tools.push(buildManagedToolCallBridge(def, bridgeTargetDefinitions, ctx, budget, events, overrides));
       continue;
     }
 

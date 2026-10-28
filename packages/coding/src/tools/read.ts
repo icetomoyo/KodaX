@@ -381,13 +381,14 @@ export async function toolRead(
     const notice = validation.status === 'unverified'
       ? ` Local validation unavailable (${validation.reason}); original bytes retained.` : '';
     const image = { type: 'image' as const, path: filePath, mediaType };
-    prepareValidatedImageBlock(image, bytes, validation);
+    const accepted = ctx.admitVisualImage ? await ctx.admitVisualImage(bytes, image, validation, `read:${filePath}`, ctx.abortSignal, ctx.visualSource) : undefined;
+    if (!accepted) prepareValidatedImageBlock(image, bytes, validation);
     return [
       {
         type: 'text',
         text: `[Read image: ${filePath} (${formatSize(stat.size)}, ${mediaType})] — image content delivered as inline vision below; describe what you see in your next response.${notice}`,
       },
-      image,
+      ...accepted ?? [image],
     ];
   }
 

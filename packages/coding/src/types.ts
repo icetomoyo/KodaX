@@ -1922,6 +1922,8 @@ export interface KodaXInterruptedRunEvidence {
 }
 
 export interface KodaXContextOptions {
+  /** Host-injected media owner; absent leaves the visual tools unavailable. */
+  visualObservationOwner?: import('@kodax-ai/agent/media').VisualObservationOwner;
   /** Host-owned Run identity for extension effects; standalone runs mint their own. */
   runtimeRunId?: string;
   /**
@@ -2719,6 +2721,14 @@ export type {
 };
 
 export interface KodaXToolExecutionContext {
+  visualModelSelection?: () => { provider: string; model?: string };
+  visualSource?: import('@kodax-ai/agent/media').VisualObservationSource;
+  visualObservationOwner?: import('@kodax-ai/agent/media').VisualObservationOwner;
+  reserveVisualOutput?: (tokens: number) => import('@kodax-ai/agent/media').VisualOutputReservation;
+  visualOutputReservations?: ReturnType<typeof import('./task-engine/visual-output-reservations.js').createVisualOutputReservations>;
+  admitVisualImage?: (bytes: Buffer, image: import('@kodax-ai/llm').KodaXToolResultImageItem,
+    validation: import('@kodax-ai/llm').ImageValidation, sourceKey: string, signal?: AbortSignal,
+    source?: import('@kodax-ai/agent/media').VisualObservationSource) => Promise<readonly import('@kodax-ai/llm').KodaXToolResultContentItem[]>;
   /** Resolved default-root work surface; absent preserves the existing Coding/SDK inventory. */
   workMode?: KodaXWorkMode;
   /** Internal run/role execution inventory, before model-only schema projection. */

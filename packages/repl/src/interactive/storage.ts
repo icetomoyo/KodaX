@@ -8,6 +8,7 @@ import path from 'path';
 import { createHash, randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { isDeepStrictEqual } from 'node:util';
+import { readVisualObservationRecord, sessionVisualMediaDirectory } from '@kodax-ai/agent/media';
 import chalk from 'chalk';
 import { compareSessionRecency, latestSessionMessageAt, validSessionTimestamp } from '../session/session-recency.js';
 import type {
@@ -1624,6 +1625,7 @@ function isKodaXSessionEntry(value: unknown): value is KodaXSessionEntry {
       return isKodaXMessage(entry.message);
     case 'compaction':
       return typeof entry.summary === 'string'
+        && (entry.compactedFromEntryId === undefined || typeof entry.compactedFromEntryId === 'string')
         && (entry.firstKeptEntryId === undefined || typeof entry.firstKeptEntryId === 'string')
         && (entry.tokensBefore === undefined || typeof entry.tokensBefore === 'number');
     case 'branch_summary':
@@ -5304,6 +5306,31 @@ export class FileSessionStorage implements KodaXSessionStorage {
           },
           lineage: createSessionLineage(cleaned, latest.data.lineage),
         };
+        const priorVisible = new Set(latest.data.lineage ? getSessionLineagePath(latest.data.lineage).map(entry => entry.id) : []);
+        const cleanedVisible = new Set(getSessionLineagePath(next.lineage!).map(entry => entry.id));
+        const receipts = latest.data.extensionRecords ?? [];
+        const recoveredImages = receipts.flatMap(record => {
+          const observation = readVisualObservationRecord(record);
+          const source = observation?.source;
+          if (!observation || observation.ownerId !== id || !source?.cellId || !priorVisible.has(observation.originEntryId)
+            || cleanedVisible.has(observation.originEntryId)) return [];
+          return receipts.some(candidate => {
+            const value = candidate.data;
+            return candidate.extensionId === 'kodax.script' && candidate.type === 'call.settled'
+              && value && typeof value === 'object' && !Array.isArray(value) && value.cellId === source.cellId && value.runId === source.runId
+              && value.data && typeof value.data === 'object' && !Array.isArray(value.data) && value.data.id === source.leafReceiptId;
+          }) ? [observation.observationId] : [];
+        });
+        if (recoveredImages.length && next.lineage!.activeEntryId && latest.data.lineage?.activeEntryId) {
+          const recoveredLineage = setSessionLineageActiveEntry({ ...next.lineage!, activeEntryId: latest.data.lineage.activeEntryId },
+            next.lineage!.activeEntryId, { summarizeCurrentBranch: true });
+          const witness = recoveredLineage?.entries.find(entry => entry.id === recoveredLineage.activeEntryId);
+          if (witness?.type !== 'branch_summary') throw new Error('Visual Script recovery requires its canonical branch witness.');
+          witness.summary = 'Interrupted Script has committed historical image evidence. Use visual_history to recall it; do not replay settled leaves.';
+          witness.details = { visualRecoveryObservationIds: recoveredImages };
+          next.lineage = recoveredLineage!;
+          next.messages = getSessionMessagesFromLineage(next.lineage);
+        }
         const completeLineage = await this.completeConversationLineage(
           id,
           latest.filePath,
@@ -6210,6 +6237,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
   private async removeFileSetAtomically(
     id: string,
     targets: readonly string[],
+    directories: ReadonlySet<string> = new Set(),
   ): Promise<number> {
     const staged: Array<{ readonly source: string; readonly tombstone: string }> = [];
     try {
@@ -6242,7 +6270,8 @@ export class FileSessionStorage implements KodaXSessionStorage {
 
     for (const entry of staged) {
       try {
-        await fs.unlink(entry.tombstone);
+        if (directories.has(entry.source)) await fs.rm(entry.tombstone, { recursive: true });
+        else await fs.unlink(entry.tombstone);
       } catch (error: unknown) {
         reportStorageDiagnostic(
           'warn',
@@ -6251,7 +6280,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
         );
       }
     }
-    return staged.length;
+    return staged.filter(entry => !directories.has(entry.source)).length;
   }
 
   private assertActorFileOwner(
@@ -6310,7 +6339,12 @@ export class FileSessionStorage implements KodaXSessionStorage {
       if (!resolved) return;
       this.assertActorFileOwner(resolved.data.actorSnapshot, expectedOwnerId);
 
-      if (this.drafts.delete(id)) return;
+      if (this.drafts.has(id)) {
+        const mediaDirectory = sessionVisualMediaDirectory(this.sessionsDir, id);
+        await this.removeFileSetAtomically(id, [mediaDirectory], new Set([mediaDirectory]));
+        this.drafts.delete(id);
+        return;
+      }
       const located = resolved.filePath;
       const targets: string[] = [];
       const addTarget = (target: string): void => {
@@ -6320,6 +6354,8 @@ export class FileSessionStorage implements KodaXSessionStorage {
       addTarget(located.replace(/\.jsonl$/, '.islands.jsonl'));
       addTarget(this.legacyFlatArchivePath(id));
       addTarget(this.legacyFlatPath(id));
+      const mediaDirectory = sessionVisualMediaDirectory(this.sessionsDir, id);
+      addTarget(mediaDirectory);
       const earlierIndex = targets.indexOf(located);
       if (earlierIndex >= 0) targets.splice(earlierIndex, 1);
       targets.push(located);
@@ -6328,7 +6364,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
       // attached and the whole operation safe to retry.
       await this.removeSessionConversationCaches(id, located);
       await this.withSessionLocationTopologyChange(
-        () => this.removeFileSetAtomically(id, targets),
+        () => this.removeFileSetAtomically(id, targets, new Set([mediaDirectory])),
       );
       await this.removeResumeMembership(id, located);
       this.sessionLocations.delete(id);
@@ -6411,8 +6447,9 @@ export class FileSessionStorage implements KodaXSessionStorage {
             () => this.removeFileSetAtomically(id, [
               filePath.replace(/\.jsonl$/, '.archive.jsonl'),
               filePath.replace(/\.jsonl$/, '.islands.jsonl'),
+              sessionVisualMediaDirectory(this.sessionsDir, id),
               filePath,
-            ]),
+            ], new Set([sessionVisualMediaDirectory(this.sessionsDir, id)])),
           );
           this.sessionLocations.delete(id);
         });

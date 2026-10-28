@@ -349,6 +349,9 @@ export function createContextForToolCall(
   ctx: KodaXToolExecutionContext,
 ): KodaXToolExecutionContext {
   const toolMeta = createToolEventMeta(events, toolCall.id, toolExecution(toolCall).id);
+  const visualSource = ctx.visualObservationOwner ? { visualSource: { ...ctx.visualSource, imageOrdinal: 0,
+    toolCallId: toolCall.id, executionId: toolExecution(toolCall).id,
+    callOrdinal: toolExecution(toolCall).ordinal ?? ctx.visualSource?.callOrdinal } } : {};
   return events.onToolProgress
       || events.onToolSandboxObservation
       || events.askUser
@@ -356,6 +359,7 @@ export function createContextForToolCall(
       || events.askUserInput
     ? {
         ...ctx,
+        ...visualSource,
         toolCallId: toolCall.id,
         ...(ctx.recordToolResultArtifact ? { recordToolResultArtifact: (sourceId: string, outputPath: string) =>
           ctx.recordToolResultArtifact!(sourceId === toolCall.id ? toolExecution(toolCall).resultKey : sourceId, outputPath) } : {}),
@@ -387,6 +391,7 @@ export function createContextForToolCall(
           : {}),
       }
     : { ...ctx, toolCallId: toolCall.id,
+      ...visualSource,
       ...(ctx.recordToolResultArtifact ? { recordToolResultArtifact: (sourceId: string, outputPath: string) =>
         ctx.recordToolResultArtifact!(sourceId === toolCall.id ? toolExecution(toolCall).resultKey : sourceId, outputPath) } : {}) };
 }
@@ -614,7 +619,7 @@ interface PreparedToolCall {
   readonly blockedContent?: ToolResult;
 }
 
-const toolExecutions = new WeakMap<object, { readonly id: string; readonly resultKey: string }>();
+const toolExecutions = new WeakMap<object, { readonly id: string; readonly resultKey: string; readonly ordinal?: number }>();
 export function toolExecution(call: { readonly id: string }) {
   let execution = toolExecutions.get(call);
   if (!execution) { execution = { id: `execution_${randomUUID()}`, resultKey: call.id }; toolExecutions.set(call, execution); }
@@ -749,7 +754,7 @@ async function prepareToolBlock(
       : { index, call: outcome.call };
   }
   const id = `execution_${randomUUID()}`;
-  const execution = { id, resultKey: input.toolBlocks.filter(candidate => candidate.id === block.id).length > 1 ? id : block.id };
+  const execution = { id, resultKey: input.toolBlocks.filter(candidate => candidate.id === block.id).length > 1 ? id : block.id, ordinal: index };
   toolExecutions.set(prepared.call, execution);
   toolExecutions.set(block, execution);
   input.finalToolBlocks?.set(block.id, runnerCallToToolBlock(prepared.call));

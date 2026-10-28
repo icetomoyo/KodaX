@@ -60,3 +60,10 @@ export {
   type EnqueueWithArtifactsInput,
 } from './queue.js';
 export { validateImageBytes, type ImageValidation } from '@kodax-ai/llm';
+export {
+  createFileVisualObservationOwner, sessionVisualMediaDirectory, visualObservationRecord,
+  readVisualObservationRecord, visualObservationLabel, visualObservationImage,
+  type VisualObservation, type VisualObservationOwner, type VisualObservationSource,
+} from './visual-observations.js';
+export { createVisualTools, executeVisualTool, VISUAL_TOOL_DEFINITIONS, VISUAL_TOOL_NAMES,
+  type VisualToolBinding, type VisualOutputReservation } from './visual-tools.js';

@@ -66,6 +66,8 @@ export function createScriptPilot(dispatch: PilotDispatch, budget: KodaXManagedW
         const artifacts = new Map<string, string>();
         let shellExecutionOutcome: { success: boolean } | undefined;
         const ctx = { ...dispatch.ctx, abortSignal: signal,
+          ...(dispatch.ctx.visualObservationOwner ? { visualSource: { ...dispatch.ctx.visualSource,
+            imageOrdinal: 0, leafReceiptId: sequence } } : {}),
           reportShellExecutionOutcome: (outcome: { success: boolean }) => {
             shellExecutionOutcome = outcome;
             dispatch.ctx.reportShellExecutionOutcome?.(outcome);

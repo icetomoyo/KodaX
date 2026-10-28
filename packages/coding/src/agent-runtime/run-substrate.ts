@@ -225,6 +225,8 @@ import {
 } from '../tools/session-history.js';
 import { assertProviderConfigured } from './provider-config-check.js';
 import { buildToolExecutionContext } from './tool-execution-context.js';
+import { bindVisualObservationAdmission } from '../media/visual-owner.js';
+import { createVisualOutputReservations } from '../task-engine/visual-output-reservations.js';
 import { applyAccountingDelta } from '../goal/state.js';
 import { turnWallTimeDelta } from '../goal/accounting.js';
 import { resolvePerTurnReasoning } from './per-turn-reasoning.js';
@@ -1199,6 +1201,9 @@ async function runSubstrateInContext(
     },
     thinkingLevel: turnState.runtimeThinkingLevel,
   });
+  bindVisualObservationAdmission(ctx, options, runtimeSessionState);
+  ctx.visualModelSelection = () => ({ provider: turnState.currentProviderName, model: turnState.currentModelOverride });
+  if (ctx.visualObservationOwner) ctx.visualOutputReservations = createVisualOutputReservations();
   bindModelSkillSelection(ctx, model => {
     options.modelOverride = model;
     runtimeSessionState.modelSelection.model = model;
@@ -1795,6 +1800,7 @@ async function runSubstrateInContext(
         options.selfManual?.productName,
         options.context?.agentExecutorPlane !== undefined,
         runScopedToolDefs,
+        ctx.visualObservationOwner !== undefined,
       );
       // Apply the same host ceiling to model definitions and dispatch names,
       // before optional model-only schema hiding. Children use this path too.
@@ -2849,6 +2855,8 @@ async function runSubstrateInContext(
         const toolResultArtifactPaths = new Map<string, string>();
         ctx.maximumInputTokens = toolResultCurrentTokens + toolResultBudget.aggregateInlineTokens;
         ctx.toolResultCapacityTokens = toolResultBudget.aggregateInlineTokens;
+        if (ctx.visualOutputReservations) ctx.reserveVisualOutput = tokens => ctx.visualOutputReservations!.reserve(
+          messages, toolResultBudget.aggregateInlineTokens, tokens);
         ctx.recordToolResultArtifact = (toolCallId, outputPath) => {
           toolResultArtifactPaths.set(toolCallId, outputPath);
           previousArtifactRecorder?.(toolCallId, outputPath);
@@ -2900,6 +2908,8 @@ async function runSubstrateInContext(
               : {}),
           });
         } finally {
+          ctx.visualOutputReservations?.settle(messages);
+          delete ctx.reserveVisualOutput;
           if (previousToolResultCapacity === undefined) delete ctx.toolResultCapacityTokens;
           else ctx.toolResultCapacityTokens = previousToolResultCapacity;
           if (previousArtifactRecorder === undefined) delete ctx.recordToolResultArtifact;

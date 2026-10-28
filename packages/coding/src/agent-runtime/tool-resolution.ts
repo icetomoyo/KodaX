@@ -48,6 +48,7 @@
 
 import type { KodaXRepoIntelligenceMode, KodaXToolVisibilityPolicy } from '../types.js';
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
+import { VISUAL_TOOL_NAMES } from '@kodax-ai/agent/media';
 import type { RunScopedToolDefinition } from '../extensions/runtime-contract.js';
 import { toModelToolDefinition } from './run-scoped-tools.js';
 import {
@@ -149,6 +150,7 @@ export function getActiveToolDefinitions(
   selfManualProductName?: string,
   hasAgentExecutorPlane = false,
   runScopedTools?: readonly RunScopedToolDefinition[],
+  hasVisualObservationOwner = false,
 ): ReturnType<typeof listToolDefinitions> {
   const registryTools = listToolDefinitions();
   const registeredNames = new Set(registryTools.map((tool) => tool.name));
@@ -174,6 +176,8 @@ export function getActiveToolDefinitions(
   return filterModelToolAliases(allTools
     .filter((tool) => (
       allowed.has(tool.name)
+      && (hasVisualObservationOwner || !VISUAL_TOOL_NAMES.has(tool.name)
+        || getRegisteredToolDefinition(tool.name)?.source.kind !== 'builtin')
       && (allowManagedProtocolTool || !isManagedProtocolToolName(tool.name))
     )))
     .map((tool) => {

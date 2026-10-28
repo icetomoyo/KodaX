@@ -160,9 +160,15 @@ export function wrapCodingToolAsRunnable(
       const call = runnerCtx?.toolCall ?? { id: toolCallId ?? definition.name, name: definition.name, input };
       const ctxForCall = createContextForToolCall(events ?? {}, call, {
         ...baseCtx,
+        ...(baseCtx.visualObservationOwner ? { visualSource: { ...baseCtx.visualSource, imageOrdinal: 0,
+          runId: baseCtx.runtimeRunId, callOrdinal: runnerCtx?.toolCallIndex } } : {}),
         ...(runnerCtx?.abortSignal ? { abortSignal: runnerCtx.abortSignal } : {}),
         ...(toolCallId ? { toolCallId } : {}),
         ...(toolResultCapacityTokens !== undefined ? { toolResultCapacityTokens } : {}),
+        ...(runnerCtx?.transcript && baseCtx.visualOutputReservations ? {
+          reserveVisualOutput: (tokens: number) => baseCtx.visualOutputReservations!.reserve(
+            runnerCtx.transcript!, toolResultCapacityTokens ?? 0, tokens),
+        } : {}),
         ...(toolCallId
           ? {
               recordToolResultArtifact: (recordedToolCallId, recordedOutputPath) => {
