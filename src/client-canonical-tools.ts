@@ -11,6 +11,15 @@ export function toolResultAttachments(content: KodaXToolResultBlock['content']):
     ? [{ kind: 'image' as const, path: item.path, ...(item.mediaType ? { mediaType: item.mediaType } : {}) }] : []);
 }
 
+/** Recovery paths come from structured execution metadata, never provider text markers. */
+export function toolResultOutputPath(result: KodaXToolResultBlock | undefined): string | undefined {
+  const metadata = result?.metadata;
+  return (metadata?.truncated === true || metadata?.capacityFallback === true)
+    && typeof metadata.outputPath === 'string' && metadata.outputPath.length > 0
+    && !metadata.outputPath.startsWith('kodax-transient:')
+    ? metadata.outputPath : undefined;
+}
+
 function resultStatus(result: KodaXToolResultBlock | undefined): NonNullable<ClientViewItem['tool']>['status'] {
   if (!result) return 'cancelled';
   if (result.metadata?.cancelled === true) return 'cancelled';
@@ -49,7 +58,8 @@ export function canonicalTools(messages: readonly KodaXMessage[]): ReadonlyMap<s
         const attachments = toolResultAttachments(block.content)!;
         tools.set(key, { ...item, text: toolResultText(block.content),
           ...(attachments.length > 0 ? { attachments } : {}), tool: { ...item.tool,
-          status: resultStatus(block), endedAt: timestamp } });
+          status: resultStatus(block), endedAt: timestamp,
+          ...(toolResultOutputPath(block) ? { outputPath: toolResultOutputPath(block) } : {}) } });
         pending.delete(block.tool_use_id);
       }
     }

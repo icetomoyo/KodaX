@@ -567,6 +567,9 @@ export function createRuntimeDaemonClient(
         ) as Promise<RuntimeConversationHistoryEntryChunk | null>);
       },
       readHistoryEntry(sessionId, itemId, options) {
+        if (options?.part === 'original') {
+          return request('session.view.item', { sessionId, itemId, ...options }) as Promise<ClientItemContent | null>;
+        }
         const transcript = itemId.startsWith(`${sessionId}:transcript:`);
         return readConversationHistoryEntry(
           sessionId,

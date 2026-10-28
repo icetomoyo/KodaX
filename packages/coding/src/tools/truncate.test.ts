@@ -11,6 +11,7 @@ import {
   trimBufferStartToUtf8Boundary,
   truncateHead,
   truncateLine,
+  truncateMiddle,
   truncateTail,
 } from './truncate.js';
 
@@ -59,6 +60,14 @@ describe('truncate helpers', () => {
     const result = truncateLine(line, 10);
     expect(result.wasTruncated).toBe(true);
     expect(result.text).toContain('[truncated]');
+  });
+
+  it('keeps both ends within the middle-preview line and byte limits', () => {
+    expect(truncateMiddle('a\nb\nc\nd\ne', { maxLines: 3, maxBytes: 100 }).content).toBe('a\n[...]\ne');
+    expect(truncateMiddle('complete', { maxLines: 3, maxBytes: 100 }).content).toBe('complete');
+    const tiny = truncateMiddle('long single line', { maxBytes: 3 });
+    expect(tiny.content).toBe('');
+    expect(tiny.outputBytes).toBe(0);
   });
 
   it('trims buffer starts to a UTF-8 boundary', () => {

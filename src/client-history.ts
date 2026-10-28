@@ -5,7 +5,8 @@
  * large-entry reads stay unambiguous.
  */
 import { restoreHistoryItemsFromSession } from '@kodax-ai/repl';
-import { canonicalTools, canonicalToolKey, toolResultText } from './client-canonical-tools.js';
+import { canonicalTools, canonicalToolKey, toolResultText, toolResultOutputPath } from './client-canonical-tools.js';
+import { readSavedToolOutput } from './tool-output-reader.js';
 import { emitKodaXDiagnostic, type KodaXMessage } from '@kodax-ai/agent';
 import type {
   ClientHistoryPage,
@@ -99,7 +100,7 @@ export async function readConversationHistoryEntry(
   const selected = parsed.ordinal === undefined ? undefined
     : projectHistoryEntry(sessionId, parsed.revision, parsed.entryIndex, [entry.message])[parsed.ordinal];
   if (parsed.ordinal !== undefined && selected === undefined) return null;
-  let text = selected?.text ?? entryBody(entry.message, options.part ?? 'text');
+  let text = selected?.text ?? entryBody(entry.message, options.part === 'input' ? 'input' : 'text');
   if (selected?.tool !== undefined) {
     const blocks = Array.isArray(entry.message.content) ? entry.message.content : [];
     const call = blocks.find((block) => block.type === 'tool_use' && block.id === selected.tool?.callId);
@@ -111,6 +112,8 @@ export async function readConversationHistoryEntry(
       const results = Array.isArray(next?.content) ? next.content : [];
       const result = results.find((block) => block.type === 'tool_result' && block.tool_use_id === selected.tool?.callId);
       if (result?.type !== 'tool_result') return null;
+      const outputPath = toolResultOutputPath(result);
+      if (options.part === 'original' && outputPath) return readSavedToolOutput(outputPath, itemId, options.offset);
       text = toolResultText(result.content);
     }
   }

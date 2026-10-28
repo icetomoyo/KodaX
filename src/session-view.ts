@@ -19,8 +19,9 @@ import type {
   ClientItemContent,
 } from '@kodax-ai/coding/client-contract';
 import { createSessionNoticeEvents } from './session-view-notices.js';
-import { canonicalTools, canonicalToolKey, toolResultAttachments } from './client-canonical-tools.js';
+import { canonicalTools, canonicalToolKey, toolResultAttachments, toolResultOutputPath } from './client-canonical-tools.js';
 import { readItemImage } from './session-view-image.js';
+import { readSavedToolOutput } from './tool-output-reader.js';
 
 const SESSION_VIEW_ITEM_LIMIT = 150;
 
@@ -267,7 +268,8 @@ export class SessionViewOwner {
           : /^\[(?:Cancelled|Blocked)\]/.test(result.content) ? 'cancelled' : 'success';
         upsert({ id: toolItemId(result.id), type: 'tool', text: result.content, timestamp: Date.now(),
           ...(result.toolResult ? { attachments: toolResultAttachments(result.toolResult.content) } : {}),
-          sourceTurnId: meta?.turnId ?? previous?.sourceTurnId, tool: { ...previous?.tool, resultRecorded: true, callId: result.id, name: result.name, status, endedAt: Date.now(), progress: undefined } });
+          sourceTurnId: meta?.turnId ?? previous?.sourceTurnId, tool: { ...previous?.tool, resultRecorded: true, callId: result.id, name: result.name, status, endedAt: Date.now(), progress: undefined,
+            outputPath: toolResultOutputPath(result.toolResult) } });
         this.checkpoint(sessionId);
       },
       onManagedTaskStatus: (status) => {
@@ -408,6 +410,9 @@ export class SessionViewOwner {
     if (!item) return null;
     if (options.part === 'attachment') return { id: item.id, text: '', offset: 0, totalLength: 0,
       image: await readItemImage(item, options) };
+    if (options.part === 'original' && item.tool?.outputPath) {
+      return readSavedToolOutput(item.tool.outputPath, item.id, offset);
+    }
     const content = options.part === 'input' ? item.tool?.inputText ?? '' : item.text;
     const text = content.slice(offset, offset + 64 * 1024);
     const nextOffset = offset + text.length;

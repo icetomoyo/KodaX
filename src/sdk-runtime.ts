@@ -8982,6 +8982,9 @@ function createRuntimeSessionService(
     },
     readViewItem(sessionId, itemId, options) {
       ensureOpen();
+      if (itemId.startsWith(`${sessionId}:history:`) || itemId.startsWith(`${sessionId}:transcript:`)) {
+        return service.readHistoryEntry(sessionId, itemId, options);
+      }
       return sessionViews.readItem(sessionId, itemId, options);
     },
     async readHistory(sessionId, options) {

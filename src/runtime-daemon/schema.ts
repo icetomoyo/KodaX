@@ -179,7 +179,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   },
   'session.view.item': {
     params: objectSchema({ sessionId: stringSchema, itemId: stringSchema, offset: integerSchema,
-      part: { type: 'string', enum: ['text', 'input', 'attachment'] }, attachmentIndex: integerSchema,
+      part: { type: 'string', enum: ['text', 'input', 'attachment', 'original'] }, attachmentIndex: integerSchema,
       attachmentOffset: integerSchema, expectedImageSha256: stringSchema }, ['sessionId', 'itemId']),
     result: nullOrObjectSchema,
   },

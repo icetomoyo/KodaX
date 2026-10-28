@@ -929,7 +929,7 @@ async function admitAndEmitVisibleToolResults(
         ? { outputPath: result.metadata.outputPath }
         : {}),
     })),
-    input.ctx,
+    { ...input.ctx, canReadPagedContent: input.runtimeSessionState.activeTools.includes('read') },
     input.toolResultBudget,
     recoveryMessageTokens,
   );

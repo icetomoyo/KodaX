@@ -2900,6 +2900,8 @@ export interface KodaXToolExecutionContext {
   maximumInputTokens?: number;
   /** Remaining capacity for the complete tool-result batch in this request. */
   toolResultCapacityTokens?: number;
+  /** @internal Derived from the active tool set; false forbids lossy delivery to unreadable artifacts. */
+  canReadPagedContent?: boolean;
   /** Runner path resolver for the transcript that the current batch extends. */
   resolveToolResultCapacityTokens?: (messages: readonly KodaXMessage[]) => number;
   /** Trusted side-channel for a tool-owned recovery artifact. */

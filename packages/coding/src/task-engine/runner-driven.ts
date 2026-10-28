@@ -2181,6 +2181,7 @@ async function runManagedTaskViaRunnerInner(
       );
     },
   };
+  baseCtx.canReadPagedContent = entryAgent.tools?.some(tool => tool.name === 'read') === true;
   baseCtx.maximumInputTokens = resolvedContextCapacity.contextWindow;
   baseCtx.resolveToolResultCapacityTokens = (messages) => (
     resolveRunnerToolResultBudget(messages, toolResultBatchOptions).aggregateInlineTokens

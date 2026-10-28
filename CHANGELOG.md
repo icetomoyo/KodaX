@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve complete MCP tool output behind explicit SDK `part: 'original'`
+  reads, including daemon IPC and Host restart, while retaining existing preview
+  offsets. Keep results inline when recovery cannot be read, improve long JSON
+  previews, and stop Session-local automatic cleanup from deleting shared output
+  artifacts. Add simulated-provider/MCP E2E coverage against the built SDK.
+
 ---
 
 ## [0.7.97-alpha.10] - 2026-10-27

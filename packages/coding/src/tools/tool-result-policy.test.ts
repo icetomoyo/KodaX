@@ -13,6 +13,7 @@ import { buildToolResultBudgetFromUsage } from './tool-result-budget.js';
 import { TOOL_OUTPUT_DIR_ENV } from './truncate.js';
 import { countTokens } from '../tokenizer.js';
 import * as tokenizer from '../tokenizer.js';
+import { toolRead } from './read.js';
 import {
   createTransientTextArtifact,
   deleteTransientTextArtifact,
@@ -69,6 +70,54 @@ describe('tool result guardrail', () => {
     expect(result.content).toBe('small output');
   });
 
+  it('keeps the full MCP result inline when the Host read policy rejects its recovery artifact', async () => {
+    const content = JSON.stringify({ payload: 'x'.repeat(60_000), tail: 'MCP_TAIL_EVIDENCE' });
+    const ctx = { backups: new Map<string, string>(), executionCwd: tempDir,
+      assertReadablePath: () => { throw new Error('Denied by Host read policy'); } };
+    const result = await applyToolResultBatchGuardrail([
+      { id: 'mcp-result', toolName: 'mcp_call', content },
+    ], ctx, { aggregateInlineTokens: 200_000 });
+    const saved = (await fs.readdir(tempDir))[0];
+    if (saved) expect(await toolRead({ path: path.join(tempDir, saved) }, ctx)).toContain('unavailable under the active read policy');
+    expect(result.entries[0]?.content === content).toBe(true);
+    expect(result.entries[0]?.outputPath).toBeUndefined();
+  });
+
+  it('retains the original MCP result as capacity debt when no read tool is available', async () => {
+    const content = 'MCP evidence\n'.repeat(5000);
+    const result = await applyToolResultBatchGuardrail([
+      { id: 'mcp-result', toolName: 'mcp_call', content },
+    ], { backups: new Map(), canReadPagedContent: false }, { aggregateInlineTokens: 1 });
+    expect(result.entries[0]?.content === content).toBe(true);
+    expect(result.entries[0]?.outputPath).toBeUndefined();
+    expect(result.capacityDebt).toBeDefined();
+    expect(await fs.readdir(tempDir)).toEqual([]);
+  });
+
+  it('previews both ends of a long single-line MCP JSON result without breaking UTF-8', async () => {
+    const content = JSON.stringify({ payload: '中😀'.repeat(10_000), tail: 'MCP_TAIL_EVIDENCE' });
+    const result = await applyToolResultGuardrail('mcp_call', content, { backups: new Map() });
+    expect(result.content).toContain('{"payload":');
+    expect(result.content).toContain('"tail":"MCP_TAIL_EVIDENCE"}');
+    expect(result.content).toContain('KODAX_RESULT_INCOMPLETE');
+    expect(result.content).not.toContain('\uFFFD');
+    expect(Buffer.byteLength(result.content, 'utf8')).toBeLessThan(42 * 1024);
+    expect(await fs.readFile(result.outputPath!, 'utf8')).toBe(content);
+  });
+
+  it('fits a complete MCP head/tail preview and recovery marker within the batch token budget', async () => {
+    const content = JSON.stringify({ payload: '中😀'.repeat(10_000), tail: 'MCP_TAIL_EVIDENCE' });
+    const result = await applyToolResultBatchGuardrail([
+      { id: 'mcp-result', toolName: 'mcp_call', content },
+    ], { backups: new Map() }, { aggregateInlineTokens: 500 });
+    const entry = result.entries[0]!;
+    expect(result.capacityDebt).toBeUndefined();
+    expect(countTokens(entry.content) + 8).toBeLessThanOrEqual(500);
+    expect(entry.content).toContain('MCP_TAIL_EVIDENCE');
+    expect(await fs.readFile(entry.outputPath!, 'utf8')).toBe(content);
+    expect(await fs.readdir(tempDir)).toHaveLength(1);
+  });
+
   it('preserves images while spilling oversized multimodal text and recording image capacity debt', async () => {
     const text = 'image evidence\n'.repeat(10_000);
     const image = { type: 'image', path: '/pixel.png', mediaType: 'image/png' } as const;
@@ -111,6 +160,17 @@ describe('tool result guardrail', () => {
     expect(second.outputPath).toBe(first.outputPath);
     expect((second.content.match(/KODAX_RESULT_INCOMPLETE/g) ?? [])).toHaveLength(1);
     expect((second.content.match(/Full output saved to:/g) ?? [])).toHaveLength(1);
+    expect(await fs.readdir(tempDir)).toHaveLength(1);
+  });
+
+  it('does not further shorten an existing MCP preview after its recovery path becomes unreadable', async () => {
+    const content = 'Original MCP evidence\n'.repeat(5000);
+    const first = await applyToolResultGuardrail('mcp_call', content, { backups: new Map() });
+    const second = await applyToolResultGuardrail('mcp_call', first.content, {
+      backups: new Map(), assertReadablePath: () => { throw new Error('Recovery no longer authorized'); },
+    }, { existingOutputPath: first.outputPath, maxInlineTokens: 1 });
+    expect(second.content === first.content).toBe(true);
+    expect(second.outputPath).toBe(first.outputPath);
     expect(await fs.readdir(tempDir)).toHaveLength(1);
   });
 

@@ -208,6 +208,25 @@ export function trimBufferStartToUtf8Boundary(buffer: Buffer, start: number): Bu
   return buffer.subarray(safeStart);
 }
 
+/** Keep both ends of structured output, including partial long lines, within byte/line limits. */
+export function truncateMiddle(content: string, options: TruncationOptions = {}): TruncationResult {
+  const result = truncateHead(content, options);
+  if (!result.truncated) return result;
+  const gap = '\n[...]\n';
+  const remainingBytes = Math.max(0, result.maxBytes - Buffer.byteLength(gap));
+  if (remainingBytes < 2 || result.maxLines < 3) return { ...result, content: '', outputLines: 0, outputBytes: 0 };
+  const bytes = Buffer.from(content, 'utf8');
+  let headEnd = Math.floor(remainingBytes / 2);
+  while (headEnd > 0 && (bytes[headEnd]! & 0xc0) === 0x80) headEnd--;
+  const head = bytes.subarray(0, headEnd).toString('utf8')
+    .split('\n').slice(0, Math.floor((result.maxLines - 1) / 2)).join('\n');
+  const tail = trimBufferStartToUtf8Boundary(bytes, bytes.length - Math.ceil(remainingBytes / 2)).toString('utf8')
+    .split('\n').slice(-Math.floor((result.maxLines - 1) / 2)).join('\n');
+  const preview = `${head}${gap}${tail}`;
+  return { ...result, content: preview, outputLines: preview.split('\n').length,
+    outputBytes: Buffer.byteLength(preview, 'utf8'), firstLineExceedsLimit: false, lastLinePartial: true };
+}
+
 function truncateStringToBytesFromEnd(content: string, maxBytes: number): string {
   const buffer = Buffer.from(content, 'utf-8');
   if (buffer.length <= maxBytes) {

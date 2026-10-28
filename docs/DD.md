@@ -1310,6 +1310,39 @@ The published `@kodax-ai/kodax/mcp` subpath exposes a focused MCP surface.
 Coding tools consume MCP through capability providers rather than duplicating
 connection logic.
 
+MCP tool-output recovery keeps the model preview separate from SDK full reads.
+Direct MCP provider calls return complete normalized content and structured
+content. Coding results exceeding byte, line, attention, or request budgets
+save their complete formatted text before exposing an incomplete preview.
+MCP previews retain both ends, including long single-line JSON, on UTF-8
+boundaries. Saving failure, a denied recovery path, or an active tool set without
+`read` keeps the complete result inline; an oversized batch remains capacity
+debt for the existing recovery ladder.
+
+`ClientViewItem.tool.outputPath` carries the structured saved-original path;
+text markers alone never authorize a file read. With `part: 'original'`,
+`sessions.readItem` and tool items returned by `sessions.readHistoryEntry` read originals on the Host in
+65,536-character pages with UTF-16 offsets. The same item-read IPC route is used
+after reconnect or Host restart. Views and canonical model history retain their
+bounded previews, and default `text` reads retain their existing lengths and
+offsets. A missing original rejects explicitly instead of returning a
+preview as if complete. Request-only input capabilities are not durable original
+files and retain their existing page content.
+
+Session managers never automatically sweep the shared tool-output directory:
+one `sessionsDir` cannot establish references held by other SDK storage roots or
+processes. Saved originals remain until explicit operator cleanup. The existing
+reference-aware cleanup API requires a complete live-reference set, including
+recovery-manifest dependencies; discovery failure cancels cleanup.
+
+`tests/bundled-mcp-output-recovery.test.mjs` exercises the built SDK against a
+local scripted OpenAI HTTP endpoint, an independent daemon, and a stdio MCP
+process. It verifies recovery of omitted middle evidence through the actual
+`read` tool, structured-content retention, SDK original paging after Host
+restart without repeating the MCP operation, and complete inline delivery when
+`read` is excluded or artifact persistence fails. It runs with `npm run
+test:bundle` after `npm run build`; no live provider credentials are needed.
+
 A2A lives under `src/a2a` and is published through `@kodax-ai/kodax/a2a`:
 
 - `config.ts` reads version 1 compatibility input and writes version 2; a

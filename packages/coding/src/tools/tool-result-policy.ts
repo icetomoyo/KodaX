@@ -8,6 +8,7 @@ import {
   formatSize,
   persistToolOutput,
   truncateHead,
+  truncateMiddle,
   truncateTail,
 } from './truncate.js';
 import type { ToolResultCapacity } from './tool-result-budget.js';
@@ -15,9 +16,11 @@ import type { ToolResultCapacity } from './tool-result-budget.js';
 export interface ToolResultPolicy {
   maxLines: number;
   maxBytes: number;
-  direction: 'head' | 'tail';
+  direction: 'head' | 'tail' | 'middle';
   spillToFile: boolean;
 }
+
+const TRUNCATORS = { head: truncateHead, tail: truncateTail, middle: truncateMiddle };
 
 export interface GuardedToolResult<T extends ToolResult = string> {
   content: T;
@@ -25,7 +28,7 @@ export interface GuardedToolResult<T extends ToolResult = string> {
   outputPath?: string;
   policy: ToolResultPolicy;
   /**
-   * FEATURE_121 v0.7.40 — set when `persistToolOutput` threw and
+   * FEATURE_121 v0.7.40 — set when saving or authorizing recovery failed and
    * `content` was returned inline as the data-loss-guard fallback.
    * Callers that need an LLM-summary follow-up (`dispatch-child-tasks`
    * for `child_task_summary`) branch on this flag. Undefined/false
@@ -34,9 +37,8 @@ export interface GuardedToolResult<T extends ToolResult = string> {
   spillFailed?: boolean;
 }
 
-// These are preview-shape ceilings used only after the request-level batch
-// owner has proven that complete delivery cannot fit. They are not spill
-// triggers and never shorten an otherwise admissible result.
+// Byte/line ceilings bound previews before token estimation; request capacity
+// and attention budgets may require a smaller recoverable preview afterward.
 const DEFAULT_POLICY: ToolResultPolicy = {
   maxLines: 1200,
   maxBytes: 40 * 1024,
@@ -44,7 +46,12 @@ const DEFAULT_POLICY: ToolResultPolicy = {
   spillToFile: true,
 };
 
+const MCP_RESULT_POLICY: ToolResultPolicy = { ...DEFAULT_POLICY, direction: 'middle' };
+
 const TOOL_RESULT_POLICIES: Record<string, ToolResultPolicy> = {
+  mcp_call: MCP_RESULT_POLICY,
+  mcp_read_resource: MCP_RESULT_POLICY,
+  mcp_get_prompt: MCP_RESULT_POLICY,
   read: {
     maxLines: 2000,
     maxBytes: 50 * 1024,
@@ -194,7 +201,7 @@ function buildToolResultHint(toolName: string): string {
     case 'user_input':
       return 'Use read with offset/limit on the saved output file to page through the full input.';
     default:
-      return 'Use a narrower follow-up tool call to inspect the missing details.';
+      return 'Use read with offset/limit on the saved output file; use line_offset for a long single line.';
   }
 }
 
@@ -301,14 +308,23 @@ export async function applyToolResultGuardrail(
     return guardMultimodalToolResult(toolName, content, ctx, options);
   }
   const policy = getToolResultPolicy(toolName);
+  if (ctx.canReadPagedContent === false) return { content, truncated: false, policy };
   const maxInlineTokens = options?.maxInlineTokens
     ?? options?.toolResultBudget?.aggregateInlineTokens;
   const existingOutputPath = options?.existingOutputPath;
   const existingGuard = existingOutputPath
     ? splitGuardedContent(content)
     : undefined;
-  if (existingGuard) {
+  if (existingGuard && existingOutputPath) {
     const outputPath = existingOutputPath;
+    try {
+      if (!hasTransientTextArtifact(outputPath)) ctx.assertReadablePath?.(outputPath);
+    } catch (error: unknown) {
+      emitKodaXDiagnostic({ source: 'coding:tool-result-policy', level: 'warn',
+        message: `Recovery path unavailable for ${toolName}; retaining the current preview without further truncation.`,
+        detail: error });
+      return { content, truncated: true, outputPath, policy };
+    }
     return {
       content: maxInlineTokens !== undefined && countTokens(content) > maxInlineTokens
         ? fitExistingGuardedContentToTokenBudget(existingGuard, policy, maxInlineTokens)
@@ -351,10 +367,7 @@ export async function applyToolResultGuardrail(
     : options?.forceSpill
     ? { ...policy, maxBytes: Math.min(policy.maxBytes, 2 * 1024), maxLines: Math.min(policy.maxLines, 20) }
     : policy;
-  const truncation =
-    effectivePolicy.direction === 'tail'
-      ? truncateTail(content, effectivePolicy)
-      : truncateHead(content, effectivePolicy);
+  const truncation = TRUNCATORS[effectivePolicy.direction](content, effectivePolicy);
 
   let outputPath: string | undefined;
   let spillFailed = false;
@@ -364,6 +377,7 @@ export async function applyToolResultGuardrail(
       outputPath = options?.persistOutput
         ? await options.persistOutput(toolName, content)
         : await persistToolOutput(toolName, content, ctx, options?.outputDirectory);
+      if (!hasTransientTextArtifact(outputPath)) ctx.assertReadablePath?.(outputPath);
     } catch (err) {
       outputPath = undefined;
       spillFailed = true;
@@ -400,7 +414,7 @@ export async function applyToolResultGuardrail(
       source: 'coding:tool-result-policy',
       level: 'error',
       message:
-        `persistToolOutput failed for ${toolName}; ` +
+        `persistToolOutput failed for ${toolName} or its recovery path is unreadable; ` +
         `inlining ${Buffer.byteLength(content, 'utf-8')} bytes to preserve data.`,
       detail: spillError,
     });
@@ -640,7 +654,7 @@ function fitExistingGuardedContentToTokenBudget(
     return guarded.marker;
   }
 
-  const truncate = policy.direction === 'tail' ? truncateTail : truncateHead;
+  const truncate = TRUNCATORS[policy.direction];
   let best = guarded.marker;
   let low = 1;
   let high = Buffer.byteLength(guarded.preview, 'utf-8');
@@ -668,7 +682,7 @@ function fitGuardedContentToTokenBudget(
   outputPath: string | undefined,
   maxInlineTokens: number,
 ): string {
-  const truncate = policy.direction === 'tail' ? truncateTail : truncateHead;
+  const truncate = TRUNCATORS[policy.direction];
   const markerOnly = formatGuardedContent(
     toolName,
     policy,
@@ -720,8 +734,11 @@ function formatGuardedContent(
     ? 'Tool output truncated to the most recent portion.'
     : 'Tool output truncated.';
   const summary =
-    `${prefix} Showing ${truncation.outputLines} of ${truncation.totalLines} lines `
-    + `(${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)}).`;
+    policy.direction === 'middle'
+      ? `Tool output truncated in the middle. Showing the beginning and end `
+        + `(${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)}; ${truncation.totalLines} original lines).`
+      : `${prefix} Showing ${truncation.outputLines} of ${truncation.totalLines} lines `
+        + `(${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)}).`;
   const saved = outputPath ? ` Full output saved to: ${outputPath}.` : '';
   const hint = ` ${buildToolResultHint(toolName)}`;
   const marker = `[${TOOL_RESULT_INCOMPLETE_MARKER}. ${summary}${saved}${hint}]`;

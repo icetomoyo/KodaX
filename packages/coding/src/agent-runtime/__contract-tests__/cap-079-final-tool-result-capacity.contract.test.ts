@@ -143,7 +143,7 @@ describe('CAP-079: final visible tool-result batch owns capacity', () => {
     const resultOnlyTokens = 4 + countTokens(rawResult) + 4;
     const toolBlocks = [tool('edit-1', 'edit', { path: path.join(tempDir, 'target.ts') })];
     const runtimeSessionState = buildRuntimeSessionState({
-      activeTools: ['edit'],
+      activeTools: ['edit', 'read'],
       modelSelection: {},
     });
 
@@ -175,7 +175,7 @@ describe('CAP-079: final visible tool-result batch owns capacity', () => {
     const resultOnlyTokens = 4 + countTokens(rawResult) + 4;
     const toolBlocks = [tool('edit-1', 'edit', { path: path.join(tempDir, 'target.ts') })];
     const runtimeSessionState = buildRuntimeSessionState({
-      activeTools: ['edit'],
+      activeTools: ['edit', 'read'],
       modelSelection: {},
     });
 
@@ -214,5 +214,21 @@ describe('CAP-079: final visible tool-result batch owns capacity', () => {
     expect(capacitySetup).not.toContain('Math.ceil(');
     expect(capacitySetup).not.toContain('2_048');
     expect(capacitySetup).not.toContain('cachedReadTokens');
+  });
+
+  it('keeps an oversized visible result and capacity debt when the active tool set cannot read originals', async () => {
+    const original = 'MCP complete evidence\n'.repeat(5000);
+    const runtimeSessionState = buildRuntimeSessionState({ activeTools: ['mcp_call'], modelSelection: {} });
+    const processed = await applyPostToolProcessing({
+      toolBlocks: [tool('mcp-result', 'mcp_call')],
+      resultMap: new Map([['mcp-result', original]]),
+      events: {}, emitActiveExtensionEvent: async () => undefined,
+      ctx: { ...ctx(), canReadPagedContent: true },
+      runtimeSessionState, toolResultBudget: budget(1),
+    });
+    expect(processed.toolResults[0]?.content === original).toBe(true);
+    expect(processed.toolResults[0]?.metadata?.capacityDebt).toBe(true);
+    expect(processed.toolResults[0]?.metadata?.outputPath).toBeUndefined();
+    expect(await fs.readdir(tempDir)).toEqual([]);
   });
 });

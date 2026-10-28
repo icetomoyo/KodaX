@@ -232,6 +232,7 @@ describe('FEATURE_254 portable bridge dispatch', () => {
       } as never];
       const executionContext = makeCtx();
       const runtimeSessionState = freshState();
+      runtimeSessionState.activeTools = [TOOL_CALL_NAME, 'bridge_large_target', 'read'];
       const toolResultBudget = {
         aggregateInlineTokens: 1_200,
       };
@@ -240,7 +241,7 @@ describe('FEATURE_254 portable bridge dispatch', () => {
         events: {} as KodaXEvents,
         ctx: executionContext,
         runtimeSessionState,
-        activeToolNames: [TOOL_CALL_NAME, 'bridge_large_target'],
+        activeToolNames: runtimeSessionState.activeTools,
         abortSignal: undefined,
       });
       const processed = await applyPostToolProcessing({

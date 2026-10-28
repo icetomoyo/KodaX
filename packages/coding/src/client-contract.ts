@@ -384,7 +384,8 @@ export interface ClientCapabilityProbeResult {
 
 export interface ClientItemReadOptions {
   readonly offset?: number;
-  readonly part?: 'text' | 'input' | 'attachment';
+  /** original reads a saved full tool result; text keeps display-preview offsets unchanged. */
+  readonly part?: 'text' | 'input' | 'attachment' | 'original';
   /** Reads a PNG already attached to this Host item; never accepts a client file path. */
   readonly attachmentIndex?: number;
   readonly attachmentOffset?: number;
@@ -752,6 +753,8 @@ export interface ClientViewItem {
     readonly status: 'running' | 'success' | 'error' | 'cancelled' | 'awaiting_approval';
     readonly inputText?: string;
     readonly totalInputLength?: number;
+    /** Saved original text; read it through sessions.readItem with part: 'original'. */
+    readonly outputPath?: string;
     readonly progress?: string;
     readonly startedAt?: number;
     readonly endedAt?: number;
