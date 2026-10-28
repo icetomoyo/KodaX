@@ -30,13 +30,19 @@ test('built Product SDK preserves task reports through independent daemon IPC an
     ...(index === 2 ? { runId: 'workflow-run' } : {}) }));
   const envelope = index => `<agent-completed turn_id="task-${index}" state="${metadata[index].status}">\n${xml(bodies[index])}\n</agent-completed>`;
   const messages = [{ role: 'user', content: 'Saved task reports.' },
-    { role: 'user', _synthetic: true, _source: 'agent-completed', content: envelope(0), _taskResult: metadata[0] },
+    { role: 'user', _synthetic: true, _source: 'agent-completed', inputId: 'task-input', turnId: 'parent-turn',
+      content: envelope(0), _taskResult: metadata[0] },
     { role: 'user', _synthetic: true, _source: 'agent-completed', content: envelope(1) + '\n' + envelope(2), _taskResults: metadata.slice(1) },
     { role: 'user', _synthetic: true, _source: 'task-completed', content: `<task-completed task_id="legacy">${bodies[3]}</task-completed>` }];
   let client;
   try {
     await storage.save('reports', { title: 'Reports', gitRoot: root, scope: 'user', messages,
-      uiHistory: [{ type: 'info', text: envelope(0), presentationOnly: true }] });
+      uiHistory: [
+        { id: 'task-mirror', type: 'info', inputId: 'task-input', sourceTurnId: 'parent-turn', text: envelope(0), presentationOnly: true },
+        { id: 'report-mirror', type: 'event', inputId: 'task-input', sourceTurnId: 'parent-turn', text: bodies[0], presentationOnly: true },
+        { id: 'independent-notice', type: 'info', sourceRunId: 'notice-run', sourceTurnId: 'notice-turn', text: envelope(0), presentationOnly: true },
+        { id: 'same-report-notice', type: 'event', text: bodies[1], presentationOnly: true },
+      ] });
     let identities;
     for (let restart = 0; restart < 2; restart++) {
       client = await ensureKodaXClient({ homeDir: root, daemonStartupTimeoutMs: 60_000 });
@@ -44,7 +50,12 @@ test('built Product SDK preserves task reports through independent daemon IPC an
       const snapshot = new Promise(resolve => { receive = resolve; });
       const observation = await client.sessions.observe('reports', receive);
       try {
-        const view = tasks((await snapshot).items);
+        const items = (await snapshot).items;
+        assert.ok(!items.some(item => item.id === 'task-mirror'));
+        assert.ok(!items.some(item => item.id === 'report-mirror'));
+        assert.ok(items.some(item => item.id === 'independent-notice' && item.sourceRunId === 'notice-run' && item.sourceTurnId === 'notice-turn'));
+        assert.ok(items.some(item => item.id === 'same-report-notice' && item.text === bodies[1]));
+        const view = tasks(items);
         assert.equal(view.length, 4);
         assert.deepEqual(view.map(item => item.taskResult.status), ['failed', 'cancelled', 'completed', 'unknown']);
         if (identities) assert.deepEqual(view.map(item => item.id), identities);

@@ -302,7 +302,10 @@ Actor mailbox 的投递 `id` 不冒充 `taskId`。`status` 明确为
 同一唤醒消息两个元数据字段中的同任务引用按 source/runId/taskId 去重，内容相同但
 任务身份不同的报告仍分别保留。已知 taskId 的 view 身份不依赖报告文案或显示时钟。
 不同读取面的 item ID 仍遵循各自原有契约，不能互换；报告逻辑身份使用任务字段。
-旧 UI 封装快照不能再次覆盖或重复规范任务报告。子任务 `failed/cancelled` 不是主
+旧 UI 展示仅在 inputId（含 canonical inputIds 别名）明确关联同一任务消息、已知
+来源 Turn 不冲突且完整封装或规范报告正文相同时作为镜像去重；不能按正文、Run/Turn 边界或时间
+相同就推断同一记录。独立通知及缺少消息身份的旧展示保留，即使正文相同；因此
+来源不足的旧封装可能仍以中性信息显示。子任务 `failed/cancelled` 不是主
 Run 的 Provider 失败，主任务结果继续读取 `runs` 及其 `failureDetail`。无新分页接口。
 
 纯契约没有 item.streaming、item.isFinal 或逐 token 事件。Host 收到 assistant/thinking delta 后更新同一显示项的完整当前文本；一次刷新可以合并多次内部事件。Provider retry/输出段替换可以移除旧项或替换正文，不能要求 text 永远只增长。工具开始、progress、result 也更新同一个工具项；状态由 Host 生成，客户端不解析文本前缀再猜一次状态。

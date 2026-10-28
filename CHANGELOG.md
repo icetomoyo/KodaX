@@ -13,7 +13,8 @@ All notable changes to this project will be documented in this file.
   Markdown report bodies. Preserve multi-report order, literal report content,
   existing full-body reads and raw canonical envelopes; decode only explicitly
   sourced legacy deliveries and keep child failures separate from root Provider
-  errors. Reconcile old UI envelopes without duplicating canonical reports.
+  errors. Deduplicate only identified task-message mirrors; preserve independent
+  same-text notices and ambiguous old UI records during history restoration.
 
 - Keep Skill discovery rooted at the repository when the SDK runs from a
   subdirectory, synchronize catalogs with loader availability in SA/AMA, and

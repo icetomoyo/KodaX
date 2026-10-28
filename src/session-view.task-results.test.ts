@@ -5,6 +5,53 @@ import { persistSessionViewItems, restoreSessionViewItems } from './session-view
 import { projectConversationHistoryPage, readConversationHistoryEntry } from './client-history.js';
 import type { RuntimeConversationHistorySlice } from './sdk-runtime.js';
 
+it.each(['event', 'info'] as const)('retains an independent same-text %s beside a canonical task report', type => {
+  const data = { title: 'Reports', gitRoot: '.', messages: [{ role: 'user' as const,
+    _source: 'agent-completed', content: 'Task completed', _taskResult: {
+      type: 'task_result' as const, source: 'child_task' as const, taskId: 'child', runId: 'child-run',
+      status: 'completed' as const, summary: '# Child report',
+    } }], uiHistory: [{ id: 'independent-notice', type, text: 'Task completed',
+      sourceRunId: 'notice-run', sourceTurnId: 'notice-turn', presentationOnly: true as const }] };
+  const items = restoreSessionViewItems('session', data);
+  expect(items).toHaveLength(2);
+  expect(items).toContainEqual(expect.objectContaining({ id: 'independent-notice', type,
+    text: 'Task completed', sourceRunId: 'notice-run', sourceTurnId: 'notice-turn' }));
+  expect(items.filter(item => item.taskResult)).toHaveLength(1);
+});
+
+it.each(['event', 'info'] as const)('retains a %s whose body equals the structured report without borrowing its identity', type => {
+  const data = { title: 'Reports', gitRoot: '.', messages: [{ role: 'user' as const,
+    _source: 'agent-completed', content: '<agent-completed>Task completed</agent-completed>', _taskResult: {
+      type: 'task_result' as const, source: 'child_task' as const, taskId: 'child',
+      status: 'completed' as const, summary: 'Task completed',
+    } }], uiHistory: [{ id: 'independent-notice', type, text: 'Task completed', timestamp: 123,
+      sourceRunId: 'notice-run', sourceTurnId: 'notice-turn', presentationOnly: true as const }] };
+  const items = restoreSessionViewItems('session', data);
+  expect(items).toHaveLength(2);
+  expect(items.find(item => item.taskResult)).not.toHaveProperty('timestamp');
+  expect(items.find(item => item.id === 'independent-notice')).toMatchObject({ type, timestamp: 123 });
+});
+
+it.each([
+  { label: 'missing provenance', inputId: undefined, sourceTurnId: undefined, count: 2 },
+  { label: 'same Turn without message identity', inputId: undefined, sourceTurnId: 'parent-turn', count: 2 },
+  { label: 'different message identity', inputId: 'another-input', sourceTurnId: 'parent-turn', count: 2 },
+  { label: 'conflicting Turn despite a matching input', inputId: 'task-input', sourceTurnId: 'another-turn', count: 2 },
+  { label: 'proven message mirror', inputId: 'task-input', sourceTurnId: 'parent-turn', count: 1 },
+  { label: 'proven report-body mirror', inputId: 'task-input', sourceTurnId: 'parent-turn', text: '# Child report', count: 1 },
+])('handles an old task display with $label', ({ inputId, sourceTurnId, count, text }) => {
+  const content = '<agent-completed turn_id="child"># Child report</agent-completed>';
+  const data = { title: 'Reports', gitRoot: '.', messages: [{ role: 'user' as const,
+    _source: 'agent-completed', turnId: 'parent-turn', inputId: 'task-input', content }],
+    uiHistory: [{ id: 'old-display', type: 'event' as const, inputId, sourceTurnId, text: text ?? content,
+      presentationOnly: true as const }] };
+  const items = restoreSessionViewItems('session', data);
+  expect(items).toHaveLength(count);
+  expect(items.filter(item => item.taskResult)).toHaveLength(1);
+  expect(items.some(item => item.id === 'old-display')).toBe(count === 2);
+  expect(restoreSessionViewItems('session', structuredClone(data))).toEqual(items);
+});
+
 it('projects canonical child metadata as a report rather than its model-facing XML envelope', () => {
   const report = '\n# Child report\n\n```ts\nconst text = "<tag> &amp; literal";\n```\n';
   const message: KodaXMessage = { role: 'user', _synthetic: true, _source: 'agent-completed',
@@ -54,11 +101,11 @@ it('keeps single and multiple reports in canonical order without replaying an ol
     { type: 'task_result', source: 'child_task', taskId: 'task-b', status: 'cancelled', summary: '# Same report' },
     { type: 'task_result', source: 'child_task', taskId: 'task-c', status: 'failed', summary: '[Tool Error] child failed' },
   ];
-  const message: KodaXMessage = { role: 'user', _synthetic: true, _source: 'agent-completed',
+  const message: KodaXMessage = { role: 'user', _synthetic: true, _source: 'agent-completed', inputId: 'wake-input',
     content: results.map(result => `<agent-completed turn_id="${result.taskId}">wire report</agent-completed>`).join('\n'),
     _taskResult: results[0], _taskResults: results, timestamp: '2026-10-28T00:00:00Z' };
   const data = { title: 'Reports', gitRoot: '.', messages: [message], uiHistory: [
-    { id: 'old-ui', type: 'info' as const, text: String(message.content), presentationOnly: true as const },
+    { id: 'old-ui', inputId: 'wake-input', type: 'info' as const, text: String(message.content), presentationOnly: true as const },
   ] };
   const view = restoreSessionViewItems('session', data);
   expect(view.map(item => item.taskResult?.taskId)).toEqual(['task-a', 'task-b', 'task-c']);
