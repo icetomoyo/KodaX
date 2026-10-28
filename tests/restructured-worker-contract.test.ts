@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { buildWorkerStableInstructions } from '../packages/coding/src/agents/worker-role-prompt.js';
-import { TOOL_RECOVERY_GUIDANCE } from '../packages/coding/src/prompts/execution-guidance.js';
+import { buildWorkerStableInstructions as currentWorkerInstructions } from '../packages/coding/src/agents/worker-role-prompt.js';
+import { PLAN_BATCH_GUIDANCE, TOOL_RECOVERY_GUIDANCE } from '../packages/coding/src/prompts/execution-guidance.js';
 import { buildRestructuredWorkerContract } from './restructured-worker-contract.js';
 
 const baseTools = ['read', 'write', 'edit', 'bash', 'grep', 'glob',
   'todo_create', 'todo_update', 'todo_list', 'spawn_agent', 'wait_agent',
   'send_message', 'followup_task', 'list_agents', 'agent_output', 'interrupt_agent'];
+
+// Replay the audited checkpoint before 8a1afc77 added plan batching.
+const buildWorkerStableInstructions = (tools?: readonly string[]) =>
+  currentWorkerInstructions(tools).replace(`- ${PLAN_BATCH_GUIDANCE}\n`, '');
 
 describe('restructured Worker experiment', () => {
   it('does not infer executable tool variants from verbatim repository policy text', () => {
@@ -82,6 +86,7 @@ describe('restructured Worker experiment', () => {
   it('leaves unknown, partial, duplicated or host-augmented Worker teaching unchanged', () => {
     const original = buildWorkerStableInstructions(baseTools);
     for (const unsupported of [
+      currentWorkerInstructions(baseTools),
       '', 'Host-specific system policy', buildWorkerStableInstructions(['read']),
       `${original}\nHost says: retain this added obligation.`, `${original}\n\n${original}`,
       original.replace('Trivial tasks', 'Unreviewed custom tasks'),
