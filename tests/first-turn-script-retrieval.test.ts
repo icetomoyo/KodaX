@@ -236,16 +236,19 @@ it('keeps HTTP failure evidence and invalid-URL recovery without extra fetch att
 
 it('preserves native capacity fallback and the complete acquired evidence in its recovery artifact', async () => {
   const { ctx, budget, dispatch, inputs, setPage } = await fixture(1);
+  // Artifact previews are admissible only when the same Run can page them.
+  const pagedDispatch = { ...dispatch, activeToolNames: [...names, 'read'],
+    runtimeSessionState: buildRuntimeSessionState({ activeTools: [...names, 'read'], modelSelection: {} }) };
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-script-retrieval-'));
   directories.push(directory);
   vi.stubEnv('KODAX_TOOL_OUTPUT_DIR', directory);
   setPage('x'.repeat(600 * 1024));
   const baseline = await executeTool('web_fetch', inputs.web_fetch!, ctx);
   const toolBlocks = [{ type: 'tool_use' as const, id: 'native-large', name: 'web_fetch', input: inputs.web_fetch! }];
-  const resultMap = await runToolDispatch({ ...dispatch, abortSignal: undefined, toolBlocks });
-  const native = await applyPostToolProcessing({ ...dispatch, toolBlocks, resultMap, emitActiveExtensionEvent });
+  const resultMap = await runToolDispatch({ ...pagedDispatch, abortSignal: undefined, toolBlocks });
+  const native = await applyPostToolProcessing({ ...pagedDispatch, toolBlocks, resultMap, emitActiveExtensionEvent });
   const nativeOutputPath = native.toolResults[0]?.metadata?.outputPath;
-  const result = await createScriptPilot(dispatch, budget).run(`return await tools.web_fetch(${JSON.stringify(inputs.web_fetch)});`, limits);
+  const result = await createScriptPilot(pagedDispatch, budget).run(`return await tools.web_fetch(${JSON.stringify(inputs.web_fetch)});`, limits);
   expect(result.status, result.error).toBe('completed');
   const outputPath = result.receipts[0]?.result.metadata?.outputPath;
   expect(typeof outputPath).toBe('string');

@@ -12,6 +12,7 @@ import { createAgentActorController } from '../packages/agent/src/actors/index.j
 import { buildMemoryRulesSection } from '../packages/coding/src/prompts/memory-rules.js';
 import { SELF_KNOWLEDGE_ROUTING_RULE } from '../packages/coding/src/self-knowledge/routing-rule.js';
 import { getBuiltinToolDefinition } from '../packages/coding/src/tools/registry.js';
+import { PLAN_BATCH_GUIDANCE } from '../packages/coding/src/prompts/execution-guidance.js';
 import type { Agent } from '@kodax-ai/agent';
 import type { KodaXToolDefinition } from '../packages/llm/src/types.js';
 
@@ -36,6 +37,8 @@ function historicalTools(tools: readonly KodaXToolDefinition[]): KodaXToolDefini
     } else if (tool.name === 'send_message') {
       frozen.description = 'Bounded message, no new turn: running receives at next safe boundary; idle retains until next turn. Direct parent/child, admitted peer or bounded broadcast; Runtime validates forwarding lineage against cycles.';
     } else {
+      frozen.description = frozen.description.replace('Add one semantic milestone', 'Add one pending semantic milestone');
+      delete properties.status;
       properties.activeForm!.description = 'Present-continuous in_progress spinner label.';
     }
     return frozen;
@@ -62,7 +65,8 @@ async function fixture(script = false, historical = true): Promise<FrozenInput &
     // Keep real tool assembly but explicitly reconstruct its pre-adoption Worker.
     // Current production requests are checked in managed-system-contract.test.ts.
     expect(system).toContain('TRUST AND SCOPE');
-    captured = { messages, tools: historical ? historicalTools(tools) : tools, system: instructions(worker) };
+    captured = { messages, tools: historical ? historicalTools(tools) : tools,
+      system: historical ? instructions(worker).replace(`- ${PLAN_BATCH_GUIDANCE}\n`, '') : instructions(worker) };
     return { textBlocks: [{ text: 'fixture' }], toolBlocks: [] };
   });
   const originalInstructions = instructions(worker);
@@ -132,7 +136,8 @@ it('keeps historical evaluation inputs replayable while retaining the adopted To
   const current = await fixture();
   const names = ['spawn_agent', 'todo_create', 'todo_list', 'todo_update', 'wait_agent'];
   const historical = { ...current, tools: current.tools.map(tool => names.includes(tool.name)
-    ? { ...tool, description: getBuiltinToolDefinition(tool.name)!.description } : tool) };
+    ? { ...tool, description: getBuiltinToolDefinition(tool.name)!.description
+      .replace('Add one semantic milestone', 'Add one pending semantic milestone') } : tool) };
   const oldCandidate = restructuredContractInput(historical, true);
   const newCandidate = restructuredContractInput(current, true);
   expect(oldCandidate.system).not.toBe(historical.system);

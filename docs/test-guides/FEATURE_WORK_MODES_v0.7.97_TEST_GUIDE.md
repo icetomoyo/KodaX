@@ -137,3 +137,104 @@ in [the rule-ownership execution record](../designs/agent-under-10k-next-plan.md
 Current same-counter inputs are Agent **10,712**, Coding **14,344**, Script
 **16,214**; each saves 871 versus this guide's original checkpoint. This later
 batch did not repeat paid model evaluation or the entire cross-platform matrix.
+
+## Mainline merge regression (2026-10-28)
+
+`KodaX` fast-forwarded from `97852533` to `2682557e`, retaining the Ark,
+MiMo and MiniMax refresh alongside the Agent/Coding/Script work modes. The
+`docs/features` submodule was synchronized to `8ff7cbee`. Version remains
+`0.7.97-alpha.10`. Environment: Windows x64, Node 22.23.1, Bun 1.4.2,
+Electron 42.5.0 and Chromium 1248. No real-provider requests were made.
+
+The main checkout initially lacked the new QuickJS dependencies. Dependency
+synchronization installed three packages without changing the lockfile; the
+subsequent full build passed. No production code was changed during this run.
+Raw logs and temporary drivers remain under
+`%TEMP%/kodax-merge-validation-2682557e/`; they are not committed.
+
+| Check | Final result |
+| --- | --- |
+| full build | Package, native, bundle, browser assets and SDK declarations passed. |
+| source/test types | Passed; test types also passed after the fixture repairs. |
+| fast | 3,037 passed, 39 skipped; 310 files passed, 3 skipped. Complete tier rerun after repairs. |
+| unit | 12,413 passed, 4 skipped; 770 files passed. |
+| contract | 977 passed, 19 TODO; 117 files passed. TODO is not pass. |
+| system | 1,505 passed, 42 skipped; 86 files passed, serial with frozen build outputs. |
+| bundle | 53 passed, including actual tarball Script execution and missing-worker refusal, MCP originals and SDK task reports. |
+| Artifact built/installed | 4 passed, including actual browser pixels and installed consumer declarations. |
+| native / packed native | Rust suites and native binding passed; installed tarball loaded protocol 5. Native ignored/filtered cases remain explicit in the log. |
+| Windows SDK pressure | Three concurrent workers, three attachment/recovery repetitions each, passed. |
+| actual terminal | 50/50 passed across Ink and classic: tool output, questions, queueing, stop, session isolation and persisted resume. |
+| Windows standalone archive | Build and shipped-runtime smokes passed; all three modes, partial effects, cancellation, restart and receipts passed without Node/Bun in the child PATH. |
+| real Windows v2 policy | Complete 30/30 passed with short isolated profile/cache paths and the installed Rust compiler available. Includes cold 24k-entry trees, cross-policy isolation, Job drainage and private namespaces. |
+| packaged Electron | Passed for Electron 42.5.0: 20 sandboxed commands, four concurrent Sessions, cross-process policy sharing and Host lifecycle. |
+| built provider SDK | New defaults, exact capacities, six Ark routes and image gates passed through built SDK exports. |
+| original profile cleanup | Original sandbox doctor returned `ready:true`, `setupRequired:false`; temporary broker-store aliases were removed. |
+
+The four disjoint source tiers total **17,932 passed, 85 skipped and 19 TODO**.
+The original `test:full` command stopped at fast's 17 failures; unit, contract
+and system were then run explicitly, and the complete fast tier was rerun after
+repair. Independent gates above overlap source capabilities and are not added
+to that total. This is an offline regression result, not a measured coverage
+percentage, model-intelligence comparison or cross-platform certification.
+
+### Initial failures and retained contracts
+
+- Six source-test files initially failed 17 cases. Historical Worker/Todo
+  fixtures now reconstruct their pre-`8a1afc77` input, including the old
+  `todo_create` schema; frozen projector fingerprints remain unchanged. Current
+  Worker instructions still fail closed, and evolved question/Todo contracts
+  remain outside the historical compact audit. The positive schema test uses
+  the still-audited `todo_update` contract.
+- The Skill fixture binds and finalizes the real Run-owned activation policy.
+  The large Script retrieval fixture supplies the actual `read` capability
+  required to recover paged artifacts. Its transfer limit and complete-evidence
+  assertions were retained. The GIF case selects current MiMo V2.6 Flash.
+- The initial PTY tool case waited while a real Shell approval remained open.
+  A later healthy-sandbox run completed that command automatically. The fixture
+  now supports both paths, validates any actual approval before pressing `y`,
+  and retains tool-success/output/Run-completion assertions. Cleanup recognizes
+  the public `waiting_permission` and `waiting_user_input` phases. The final
+  passing Shell case was automatic admission; it is not evidence that the
+  conditional Shell approval branch was exercised in that final run.
+- The initial opt-in Windows policy run deliberately corrupted the shared
+  control ACL, then encountered old control records whose PID had been reused
+  by an unrelated process. Conservative repair refused to remove those records;
+  subsequent policy/Electron failures cascaded from the test-injected ACL. Only
+  that exact injected Users rule was removed, restoring host/SYSTEM protection;
+  unrelated processes and existing control files were preserved. Official setup
+  restored readiness, and Electron passed on rerun.
+- Real Windows policy acceptance then used an isolated short profile and native
+  cache while reusing the existing private ASRT broker store through a temporary
+  alias. Longer test paths exceeded a Windows file-interface limit. A first
+  isolated run passed 28 cases but could not compile two probes because its PATH
+  omitted Rust; adding the existing compiler allowed a complete 30/30 rerun.
+  No policy assertions, production permissions or timeouts were weakened.
+
+System logs include a `MaxListenersExceededWarning` during repeated fixtures;
+all system assertions and its exit status passed. Initial failed runs remain
+in the raw logs. Live providers, other operating systems/architectures, arbitrary
+external servers and statistical model-quality/latency claims remain outside
+this acceptance.
+
+The following independent reviews cover the seven test/fixture changes against
+`2682557e`; reviewers did not modify files or run tests.
+
+## Standards
+
+Written-standard violations: 0. No violation of AGENTS.md's minimalism, layering,
+`any` prohibition or error-handling rules was found. Actionable baseline smells:
+0; the local historical conversions and conditional PTY flow did not justify
+additional abstractions. TDD order was established by the retained red/green
+execution logs, rather than inferred from the diff.
+
+## Spec
+
+Findings: 0 for missing requirements, scope expansion or incorrect implementation.
+Historical input reconstruction preserves current production guards; CAP-079
+retains complete evidence and capacity debt without `read`. The PTY flow checks
+real permission requests without changing permission mode, and its cleanup
+matches the public Runtime phases. Passing deterministic contracts do not
+certify external services or model intelligence.
+
+Standards: 0 findings, no most-severe item. Spec: 0 findings, no most-severe item.

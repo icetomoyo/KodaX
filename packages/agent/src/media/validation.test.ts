@@ -55,7 +55,7 @@ describe('validateInputArtifactsForModel', () => {
       },
     ], {
       provider: 'mimo-coding',
-      model: 'mimo-v2.5',
+      model: 'mimo-v2.6-flash',
     })).not.toThrow();
   });
 

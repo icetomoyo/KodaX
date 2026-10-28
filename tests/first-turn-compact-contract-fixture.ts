@@ -14,6 +14,7 @@ import { createAgentActorController } from '../packages/agent/src/actors/index.j
 import { toolSpawnAgent } from '../packages/coding/src/tools/agent-collaboration.js';
 import { createTrustedTextMutationHost } from '../src/windows-text-transaction.js';
 import { assertTrustedTextMutationPolicy } from '../packages/coding/src/trusted-text-mutation.js';
+import { applyRuntimeSkillInvocationPolicy, awaitRuntimeSkillInvocationPolicy } from '../packages/coding/src/skill-invocation-policy.js';
 
 /** Preparation executes only these bounded local fixture operations, never model-chosen tools. */
 export async function prepareContractFixture(directory: string) {
@@ -47,9 +48,15 @@ export async function prepareContractFixture(directory: string) {
   const complete = await toolTodoUpdate({ id: 'todo_2', status: 'completed' }, todoContext);
   const listAfter = { all: await toolTodoList({}, todoContext), item: await toolTodoList({ id: 'todo_2' }, todoContext) };
   const skillRegistry = new SkillRegistry(workspace, { projectPaths: [], userPaths: [], pluginPaths: [], builtinPath: path.resolve('packages/agent/src/capabilities/skills/builtin') });
-  const reviewSkill = await toolSkill({ skill: 'code-review', args: 'packages/identity packages/cache' },
-    { ...context, skillRegistry, skillDynamicContext: { disable: true } });
-  if (reviewSkill.startsWith('[Tool Error]')) throw new Error('Builtin review skill failed to expand');
+  const skillScope = await applyRuntimeSkillInvocationPolicy({ provider: 'anthropic',
+    context: { executionCwd: workspace, skillRegistry } });
+  let reviewSkill: string;
+  try {
+    reviewSkill = await toolSkill({ skill: 'code-review', args: 'packages/identity packages/cache' },
+      { ...context, skillRegistry, skillDynamicContext: { disable: true },
+        activateModelSkill: skillScope.context?.activateModelSkill });
+    if (reviewSkill.startsWith('[Tool Error]')) throw new Error(`Builtin review skill failed to expand: ${reviewSkill}`);
+  } finally { await awaitRuntimeSkillInvocationPolicy(skillScope); }
   const controller = await createAgentActorController({ executor: { execute: input => new Promise(resolve => {
     const finish = () => resolve({ output: 'Offline fixture cleanup' });
     if (input.signal.aborted) finish(); else input.signal.addEventListener('abort', finish, { once: true });

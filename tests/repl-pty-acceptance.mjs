@@ -768,6 +768,17 @@ async function checkToolPresentation(state) {
   await waitFor('AMA tool setting', async () => (await state.client.sessions.getSettings(state.sessionId)).agentMode === 'ama');
   await delay(300);
   await state.terminal.submit('ACCEPT_TOOL');
+  const started = await waitFor('tool completion or permission request', () => {
+    const approval = state.view.interactions.find(interaction =>
+      interaction.kind === 'permission' && interaction.options?.toolCallId === 'acceptance-bash');
+    if (approval) return { approval };
+    if (state.terminal.screen().includes('END_ACCEPT_TOOL')) return { completed: true };
+  });
+  if (started.approval) {
+    assert.ok(started.approval.options.inputPreview.includes('echo ACCEPT_TOOL_RESULT'));
+    await waitFor('tool permission prompt', () => state.terminal.screen().includes('Execute bash command?'));
+    await state.terminal.type('y');
+  }
   await waitFor('tool round completed', () => state.terminal.screen().includes('END_ACCEPT_TOOL'));
   await waitFor('tool summary preserves command', () => state.terminal.screen().includes('cmd=echo ACCEPT_TOOL_RESULT'));
   const tool = state.view.items.find(item => item.tool?.callId === 'acceptance-bash');
@@ -1322,7 +1333,7 @@ async function cleanupHost(state) {
   try {
     for (const view of state.views.values()) {
       for (const run of view.runs) {
-        if (['accepted', 'queued', 'running', 'waiting_user', 'waiting_agent', 'recovering'].includes(run.phase)) {
+        if (['queued', 'running', 'waiting_user_input', 'waiting_permission', 'waiting_agent', 'recovering'].includes(run.phase)) {
           await state.client.runs.stop(run.runId);
           await state.client.runs.await(run.runId);
         }
