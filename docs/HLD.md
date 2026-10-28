@@ -643,6 +643,20 @@ IDs verbatim, without a
 synthetic `[1m]` suffix. GLM-5.3's always-thinking contract lowers `off` /
 `none` to low effort at the provider boundary.
 
+The 2026-10-28 Ark refresh adds six documented DeepSeek/GLM/Kimi routes on
+the same Coding endpoint. Per-model capacity and media gates stay separate
+from direct-provider metadata. Ark V4.1's effort requires adaptive thinking;
+K3.1's forced-tool rejection falls back to automatic tool choice while
+retaining thinking. See the
+[Ark model contract and live verification](../public_docs/configuration/providers.md#ark-coding-catalog-refresh-2026-10-28).
+
+MiMo Coding and its public mirror now select V2.6 Pro/Flash; retired V2.5
+names leave the catalog. MiniMax Coding selects M3.1 Flash with native
+five-level effort and always-on thinking. Provider metadata owns exact
+capacities, the documented M Plan endpoint, and off rejection. These
+updates have offline verification only; see the
+[MiMo/MiniMax contract and sources](../public_docs/configuration/providers.md#mimo-and-minimax-coding-refresh-2026-10-28).
+
 Provider-specific logic belongs at the provider boundary: request shape,
 reasoning parameters, token caps, image support, forced tool choice support,
 retry behavior, and stream watchdogs. Prompt prose should not fork by provider

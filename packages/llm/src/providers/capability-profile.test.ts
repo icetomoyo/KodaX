@@ -127,10 +127,9 @@ describe('provider capability profiles', () => {
   });
 
   it('exposes the current MiniMax coding model lineup in snapshot metadata', () => {
-    // 2026-06: M2.5 / M2.1 / M2 (+ their -highspeed variants) retired
-    // by the upstream gateway — only the M2.7 GA pair and the M3
-    // Frontier Coding model remain.
+    // The documented M Plan default changes; historical explicit IDs remain.
     expect(getProviderModels('minimax-coding')).toEqual([
+      'MiniMax-M3.1-Flash',
       'MiniMax-M3',
       'MiniMax-M2.7-highspeed',
       'MiniMax-M2.7',
@@ -138,7 +137,7 @@ describe('provider capability profiles', () => {
 
     expect(
       getProviderList().find((provider) => provider.name === 'minimax-coding')?.model,
-    ).toBe('MiniMax-M3');
+    ).toBe('MiniMax-M3.1-Flash');
   });
 
   it('lists each built-in provider model once with the default first', () => {

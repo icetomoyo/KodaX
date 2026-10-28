@@ -379,7 +379,9 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
 
     if (preset === 'deepseek-v4-anthropic') {
       params.thinking = {
-        type: 'enabled',
+        // Ark V4.1 requires adaptive thinking for output_config.effort;
+        // direct DeepSeek and the existing V4 routes retain enabled.
+        type: capability.thinkingStrategy === 'anthropic-adaptive' ? 'adaptive' : 'enabled',
       } as Anthropic.Messages.ThinkingConfigParam;
       setAnthropicOutputEffort(params, intent.effort);
       return;

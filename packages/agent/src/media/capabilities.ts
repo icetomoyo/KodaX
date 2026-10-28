@@ -58,6 +58,16 @@ export const KODAX_FILE_MEDIA_TYPES: readonly string[] = [];
 
 const OFFICIAL_IMAGE_PROVIDERS = new Set(['anthropic', 'openai']);
 const SOURCE_BACKED_IMAGE_ROUTES = new Set([
+  // Token Plan explicitly confirms image input; video entitlement is unverified.
+  'mimo-coding/mimo-v2.6-pro',
+  'mimo-coding/mimo-v2.6-flash',
+  // Ark Coding's 2026-10-28 OpenCode catalog explicitly lists image input.
+  'ark-coding/deepseek-v4.1-flash',
+  'ark-coding/deepseek-v4.1-flash-economy',
+  'ark-coding/glm-5.3-flash',
+  'ark-coding/kimi-k3.1-pro',
+  'ark-coding/kimi-k3',
+  'ark-coding/kimi-k2.8-preview',
   'ark-coding/doubao-seed-2.0-code',
   'ark-coding/doubao-seed-2.0-pro',
   'ark-coding/kimi-k2.6',
@@ -75,6 +85,9 @@ const SOURCE_BACKED_IMAGE_ROUTES = new Set([
   'qwen-token-plan/qwen3.6-flash',
 ]);
 const SOURCE_BACKED_NATIVE_MEDIA_ROUTES = new Set([
+  'minimax-coding/minimax-m3.1-flash',
+  'mimo/mimo-v2.6-pro',
+  'mimo/mimo-v2.6-flash',
   'kimi-code/kimi-for-coding',
   'kimi-code/kimi-for-coding-highspeed',
   'kimi-code/k3',
@@ -85,8 +98,6 @@ const SOURCE_BACKED_NATIVE_MEDIA_ROUTES = new Set([
   'kimi/kimi-k2.7-code-highspeed',
   'minimax-coding/minimax-m3',
   'minimax/minimax-m3',
-  'mimo-coding/mimo-v2.5',
-  'mimo/mimo-v2.5',
   // GLM-5.3 Flash (2026-08-26): first natively multimodal GLM (image,
   // video, file input per docs.bigmodel.cn). Same route on the public
   // API, CN Coding Plan, and the api.z.ai overseas mirror.

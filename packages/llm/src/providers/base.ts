@@ -564,6 +564,7 @@ export abstract class KodaXBaseProvider {
       message.includes('unknown parameter') ||
       message.includes('invalid parameter') ||
       message.includes('unsupported') ||
+      message.includes('does not support') ||
       message.includes('incompatible')
     );
     if (explicitToolChoiceRejection) {

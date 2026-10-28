@@ -2323,10 +2323,10 @@ await runInkInteractiveMode({ provider: 'zhipu-coding', effort: 'auto' });
 | zhipu | `ZHIPU_API_KEY` | Native | glm-5 (`glm-5.3` / `glm-5.2` 1M ctx, plus `glm-5.1` / `glm-5-turbo` via `/model`; GLM-5.3 is pre-registered while the public API remains marked upcoming) |
 | zhipu-coding | `ZHIPU_CODING_API_KEY` | Native | glm-5.3 (1M ctx, 128K output; `glm-5.2` rollback plus `glm-5-turbo` / `glm-4.7` via `/model`; raw upstream IDs) |
 | zai-coding | `ZAI_CODING_API_KEY` | Native | glm-5.3 (`glm-5.2` rollback; raw upstream IDs; switched from glm-5.2 default on 2026-08-15) |
-| minimax-coding | `MINIMAX_CODING_API_KEY` | Native | MiniMax-M3 (Frontier Coding, native multimodal + 1M ctx; legacy `MiniMax-M2.7` / `MiniMax-M2.7-highspeed` remain selectable via `/model`) |
-| mimo | `MIMO_API_KEY` | Native | mimo-v2.5-pro (Xiaomi MiMo pay-per-token, Anthropic-compat) |
-| mimo-coding | `MIMO_CODING_API_KEY` | Native | mimo-v2.5-pro (Xiaomi Token Plan, Anthropic-compat) |
-| ark-coding | `ARK_CODING_API_KEY` | Native | glm-5.3 (Volcengine Ark Coding Plan — GLM-5.3 (1M ctx, 128K out) · GLM-5.2 (alias: `glm-latest`) · Kimi K2.7 Code / K2.6 · MiniMax M3 / M2.7 · DeepSeek V4 Pro / V4 Flash · Doubao Seed 2.0 Code / Pro / Lite · Doubao Seed Code) |
+| minimax-coding | `MINIMAX_CODING_API_KEY` | Native | MiniMax-M3.1-Flash (M Plan, 1M ctx, five effort levels; always-on thinking) |
+| mimo | `MIMO_API_KEY` | Native | mimo-v2.6-pro (Xiaomi MiMo pay-per-token; V2.6 Flash also selectable) |
+| mimo-coding | `MIMO_CODING_API_KEY` | Native | mimo-v2.6-pro (Xiaomi Token Plan; V2.6 Flash also selectable, image input, thinking on/off) |
+| ark-coding | `ARK_CODING_API_KEY` | Native | glm-5.3 (Ark Coding Plan; new `deepseek-v4.1-flash` / `deepseek-v4.1-flash-economy`, `glm-5.3-flash`, `kimi-k3.1-pro` / `kimi-k3` / `kimi-k2.8-preview`; all six accept images; previous configured IDs retained) |
 | deepseek | `DEEPSEEK_API_KEY` | Native | deepseek-flash (Anthropic-compat; DeepSeek-V4.1-Flash, 1M ctx, native image input; legacy text-only `deepseek-v4-pro`, via `/model`) |
 | gemini-cli | Provider CLI authentication (no KodaX API-key variable) | Prompt-only / CLI bridge | (via gemini CLI) |
 | codex-cli | Provider CLI authentication (no KodaX API-key variable) | Prompt-only / CLI bridge | (via codex CLI) |

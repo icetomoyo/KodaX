@@ -1206,10 +1206,10 @@ dist/binary/linux-x64/
 | zhipu | `ZHIPU_API_KEY` | Native | glm-5（可 `/model` 切换 `glm-5.3` / `glm-5.2`，均为 1M ctx，另有 `glm-5.1` / `glm-5-turbo`；GLM-5.3 开放平台 API 仍标注为即将上线） |
 | zhipu-coding | `ZHIPU_CODING_API_KEY` | Native | glm-5.3（1M ctx、128K 最大输出；可回退到 `glm-5.2`，也可切换 `glm-5-turbo` / `glm-4.7`；原样发送上游 ID） |
 | zai-coding | `ZAI_CODING_API_KEY` | Native | glm-5.3（保留 `glm-5.2` 回退；原样发送上游 ID；2026-08-15 起默认从 glm-5.2 切换） |
-| minimax-coding | `MINIMAX_CODING_API_KEY` | Native | MiniMax-M3（Frontier Coding，原生多模态 + 1M ctx；仍可通过 `/model` 显式选择兼容模型 `MiniMax-M2.7` / `MiniMax-M2.7-highspeed`） |
-| mimo | `MIMO_API_KEY` | Native | mimo-v2.5-pro（小米 MiMo 按量计费，Anthropic 协议） |
-| mimo-coding | `MIMO_CODING_API_KEY` | Native | mimo-v2.5-pro（小米 MiMo Token Plan，Anthropic 协议） |
-| ark-coding | `ARK_CODING_API_KEY` | Native | glm-5.3（火山方舟 Coding Plan — GLM-5.3（1M ctx、128K out） · GLM-5.2（别名 `glm-latest`） · Kimi K2.7 Code / K2.6 · MiniMax M3 / M2.7 · DeepSeek V4 Pro / V4 Flash · Doubao Seed 2.0 Code / Pro / Lite · Doubao Seed Code） |
+| minimax-coding | `MINIMAX_CODING_API_KEY` | Native | MiniMax-M3.1-Flash（M Plan，1M 上下文，原生五档推理，思考始终开启） |
+| mimo | `MIMO_API_KEY` | Native | mimo-v2.6-pro（小米 MiMo 按量计费，也可选 V2.6 Flash） |
+| mimo-coding | `MIMO_CODING_API_KEY` | Native | mimo-v2.6-pro（小米 MiMo Token Plan，也可选 V2.6 Flash；支持图片、思考开关） |
+| ark-coding | `ARK_CODING_API_KEY` | Native | glm-5.3（方舟 Coding Plan；新增 `deepseek-v4.1-flash` / `deepseek-v4.1-flash-economy`、`glm-5.3-flash`、`kimi-k3.1-pro` / `kimi-k3` / `kimi-k2.8-preview`；六款均支持图片；保留历史配置 ID） |
 | deepseek | `DEEPSEEK_API_KEY` | Native | deepseek-flash（Anthropic 协议；DeepSeek-V4.1-Flash，1M ctx，原生图片理解；可 `/model` 切换纯文本兼容名 `deepseek-v4-pro`） |
 | gemini-cli | 由 Provider CLI 完成认证（无 KodaX API-key 环境变量） | Prompt-only / CLI bridge | （通过 gemini CLI） |
 | codex-cli | 由 Provider CLI 完成认证（无 KodaX API-key 环境变量） | Prompt-only / CLI bridge | （通过 codex CLI） |

@@ -5,6 +5,12 @@ import { registerCustomProviders } from '@kodax-ai/llm';
 import { getModelInputCapabilities } from './capabilities.js';
 
 const ARK_CODING_IMAGE_MODELS = [
+  'deepseek-v4.1-flash',
+  'deepseek-v4.1-flash-economy',
+  'glm-5.3-flash',
+  'kimi-k3.1-pro',
+  'kimi-k3',
+  'kimi-k2.8-preview',
   'doubao-seed-2.0-code',
   'doubao-seed-2.0-pro',
   'kimi-k2.7-code',
@@ -115,8 +121,23 @@ describe('getModelInputCapabilities', () => {
     expect(supported.file.maxCount).toBe(0);
 
     expect(getModelInputCapabilities({ provider: 'minimax-coding' }).image.status).toBe('supported');
-    expect(getModelInputCapabilities({ provider: 'mimo-coding' }).image.status).toBe('unsupported');
-    expect(getModelInputCapabilities({ provider: 'mimo-coding', model: 'mimo-v2.5' }).image.status).toBe('supported');
+    expect(getModelInputCapabilities({ provider: 'mimo-coding' }).image.status).toBe('supported');
+  });
+
+  it.each(['mimo-v2.6-pro', 'mimo-v2.6-flash'])('supports images on both %s routes without assuming Token Plan video', (model) => {
+    for (const provider of ['mimo', 'mimo-coding']) {
+      const caps = getModelInputCapabilities({ provider, model });
+      expect(caps.image.status).toBe('supported');
+      expect(caps.video.status).toBe(provider === 'mimo' ? 'provider-native-unwired' : 'unsupported');
+      expect(caps.video.sdkSupported).toBe(false);
+    }
+  });
+
+  it('supports documented MiniMax M3.1 Flash images and keeps native video unwired', () => {
+    const caps = getModelInputCapabilities({ provider: 'minimax-coding', model: 'MiniMax-M3.1-Flash' });
+    expect(caps.image.status).toBe('supported');
+    expect(caps.video.status).toBe('provider-native-unwired');
+    expect(caps.video.sdkSupported).toBe(false);
   });
 
   it.each([

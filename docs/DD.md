@@ -790,6 +790,31 @@ serializer emits adaptive thinking plus `output_config.effort`; an attempted
 disable is normalized to low because this model does not support disabled
 thinking.
 
+The 2026-10-28 Ark catalog adds DeepSeek V4.1 Flash/Economy, GLM-5.3 Flash,
+and Kimi K3.1 Pro/K3/K2.8 Preview without changing the Coding endpoint or
+default model. Model capacities follow Ark's exact integers, not direct-provider
+limits; image admission is enabled per route in the Agent media registry.
+DeepSeek V4.1 overrides the existing Anthropic preset's thinking strategy to
+adaptive, which Ark requires for effort. Its low/high/max mapping differs
+from the old direct-DeepSeek profile (xhigh maps to high on Ark V4.1).
+The existing forced-tool fallback also recognizes Ark's "does not support"
+rejection so K3.1 can recover without disabling thinking. The
+[Ark provider contract](../public_docs/configuration/providers.md#ark-coding-catalog-refresh-2026-10-28)
+records capacity sources, live text/image/tool acceptance, Kimi toggle
+differences, and legacy model retirement limits.
+
+The same-date MiMo/MiniMax refresh is documentation-based only. MiMo Coding
+and its existing public mirror replace retired V2.5 IDs with V2.6 Pro/Flash,
+using exact 1,048,576 context / 131,072 output limits and the generic thinking
+toggle. MiniMax Coding defaults to M3.1 Flash at the documented `.cn`
+Anthropic endpoint: native five-level output effort, always-on adaptive
+thinking, server-default max for auto, and local rejection of explicit off.
+Its 524,288 output ceiling is distinct from the recommended 131,072 budget.
+Historical MiniMax descriptors pin their previous profiles and output caps.
+The [provider contract](../public_docs/configuration/providers.md#mimo-and-minimax-coding-refresh-2026-10-28)
+records official sources and offline verification; no credential or model
+request was made for these changes.
+
 OpenAI-compatible provider configuration carries
 `maxOutputTokensField: 'max_tokens' | 'max_completion_tokens'`. A model
 descriptor overrides the provider value; absent configuration uses
