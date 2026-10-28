@@ -186,6 +186,7 @@ import {
   runOwnedMemoryWork,
 } from '../memory-runtime.js';
 import { prepareCodingLearnedSkillBinding } from '../learned-skill-runtime.js';
+import { bindModelSkillSelection } from '../skill-invocation-policy.js';
 import {
   installProductionLearningReviewer,
 } from '../learning-reviewer.js';
@@ -1197,6 +1198,10 @@ async function runSubstrateInContext(
     },
     thinkingLevel: turnState.runtimeThinkingLevel,
   });
+  bindModelSkillSelection(ctx, model => {
+    options.modelOverride = model;
+    runtimeSessionState.modelSelection.model = model;
+  }, () => runtimeSessionState.modelSelection.provider ?? options.provider);
   const terminalLiveTurnIds = new Set<string>();
   const emitLiveTurnCompletedOnce = (
     status: 'completed' | 'interrupted',

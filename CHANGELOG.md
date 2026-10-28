@@ -8,6 +8,12 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Keep Skill discovery rooted at the repository when the SDK runs from a
+  subdirectory, synchronize catalogs with loader availability in SA/AMA, and
+  invalidate stale bodies across rediscovery and in-flight reads. Model loads
+  now apply the existing Skill action policies, lifecycle hooks and model
+  preference, retaining Host authorization and safe multi-Skill composition.
+
 - Preserve complete MCP tool output behind explicit SDK `part: 'original'`
   reads, including daemon IPC and Host restart, while retaining existing preview
   offsets. Keep results inline when recovery cannot be read, improve long JSON

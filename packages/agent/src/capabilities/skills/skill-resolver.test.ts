@@ -2,6 +2,19 @@ import { describe, expect, it, vi } from 'vitest';
 import { resolveSkillContent } from './skill-resolver.js';
 
 describe('resolveSkillContent', () => {
+  it.each([false, true])('checks substituted commands before execution (Host executor: %s)', async useHost => {
+    const execute = vi.fn(async () => 'EXECUTED');
+    const resolved = await resolveSkillContent('Output: !`echo $ARGUMENTS`', 'policy-marker', {
+      workingDirectory: process.cwd(),
+      ...(useHost ? { executeDynamicContext: execute } : {}),
+      assertDynamicContextAllowed(command) {
+        expect(command).toBe('echo policy-marker');
+        throw new Error('Skill policy refused execution');
+      },
+    });
+    expect(resolved).toBe('Output: [Error: Skill policy refused execution]');
+    expect(execute).not.toHaveBeenCalled();
+  });
   it('blocks unsafe dynamic context commands', async () => {
     const environment = Object.fromEntries(
       Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),

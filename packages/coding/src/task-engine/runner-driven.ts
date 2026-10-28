@@ -272,6 +272,8 @@ import { listToolDefinitions } from '../tools/index.js';
 import { activateSessionHistoryTools } from '../tools/session-history.js';
 import { runToolDispatch } from '../agent-runtime/tool-dispatch.js';
 import { randomUUID } from 'node:crypto';
+import { bindModelSkillSelection } from '../skill-invocation-policy.js';
+import { isSkillToolCall, SKILL_ACTION_DEFERRED } from '../tools/skill.js';
 import {
   MANAGED_RUNNER_PANIC_ITERATIONS,
   MANAGED_TASK_IDLE_YIELD_ITERATIONS,
@@ -2020,7 +2022,7 @@ async function runManagedTaskViaRunnerInner(
       applyToolVisibilityPolicy(
         filterExcludedTools(
           [
-            ...listToolDefinitions().map((tool) => tool.name),
+            ...(extensionRuntime?.getDefaults?.().activeTools ?? listToolDefinitions().map((tool) => tool.name)),
             ...runScopedToolDefs.map((definition) => definition.name),
           ],
           options.context?.excludeTools,
@@ -2036,6 +2038,10 @@ async function runManagedTaskViaRunnerInner(
     },
     thinkingLevel: resolveInitialRuntimeThinkingLevel(options),
   });
+  bindModelSkillSelection(baseCtx, model => {
+    options.modelOverride = model;
+    runtimeSessionState.modelSelection.model = model;
+  }, () => runtimeSessionState.modelSelection.provider ?? options.provider);
   options.sessionControl?._attach({
     setProvider: (provider) => {
       options.provider = provider;
@@ -2214,6 +2220,7 @@ async function runManagedTaskViaRunnerInner(
   // composeToolObservers short-circuits beforeTool on the first
   // non-pass verdict (so stall nudge correctly blocks downstream
   // permission); fans out onToolCall / onToolResult to every observer.
+  let skillLoadBatch = false;
   const permissionEventsObserver: RunnerToolObserver = {
     // CAP-010 tri-state permission gate: plan-mode / accept-edits /
     // extension "tool:before" hooks run here. Delegates to the shared
@@ -2225,6 +2232,7 @@ async function runManagedTaskViaRunnerInner(
     // CANCELLED_TOOL_RESULT_MESSAGE → cancel; other string → block
     // with that string as the synthesized tool_result content.
     beforeTool: async (call) => {
+      if (skillLoadBatch && !isSkillToolCall(call)) return SKILL_ACTION_DEFERRED;
       if (options.events) {
         const override = await getToolExecutionOverride(
           options.events,
@@ -2543,6 +2551,12 @@ async function runManagedTaskViaRunnerInner(
     iterationStateRef.current = 0;
     const initialMessages = new Set(input);
     let capacityRevision = options.events?.getContextRecoveryRevision?.();
+    const commitManagedMessage = options.session?.persistedByHost === false
+      ? async (message: KodaXMessage, transcript: readonly KodaXMessage[]) => {
+          if (!initialMessages.has(message)) await persistManagedBoundary(transcript);
+          await commitActorNotificationReceipts(baseCtx, [message]);
+        }
+      : (message: KodaXMessage) => commitActorNotificationReceipts(baseCtx, [message]);
     return Runner.run(agent, input, {
       llm: (...args) => { capacityRevision = options.events?.getContextRecoveryRevision?.(); return llm(...args); },
       abortSignal: options.abortSignal,
@@ -2559,14 +2573,13 @@ async function runManagedTaskViaRunnerInner(
       ),
       toolResultBatchTransform,
       toolObserver: runnerToolObserver,
-      onMessageCommitted: options.session?.persistedByHost === false
-        ? async (message, transcript) => {
-            // Save Runner's actual transcript, including compaction and injected turn identities,
-            // before tools or another generation can hang or the owner process can exit.
-            if (!initialMessages.has(message)) await persistManagedBoundary(transcript);
-            await commitActorNotificationReceipts(baseCtx, [message]);
-          }
-        : (message) => commitActorNotificationReceipts(baseCtx, [message]),
+      onMessageCommitted: (message, transcript) => {
+        if (message.role === 'assistant') {
+          skillLoadBatch = Array.isArray(message.content)
+            && message.content.some(block => block.type === 'tool_use' && isSkillToolCall(block));
+        }
+        return commitManagedMessage(message, transcript);
+      },
       // FEATURE_164 (v0.7.41) — mid-turn user-prompt injection.
       // FEATURE_192 v0.7.44 Phase F — wrapped with `withGoalBeforeNextTurn`
       // when an active `/goal` binding is present (no-op otherwise).

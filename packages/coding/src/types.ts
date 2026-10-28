@@ -2043,6 +2043,12 @@ export interface KodaXContextOptions {
   skillsPrompt?: string;
   /** Optional run-scoped registry used to pin and restrict Skill invocation. */
   skillRegistry?: ISkillRegistry;
+  /** @internal Run-owned model activation; never accepted from the product wire. */
+  activateModelSkill?: (skill: import('@kodax-ai/agent').Skill, args: string, registry: ISkillRegistry, provider?: string) => Promise<{
+    readonly modelOverride?: string;
+    readonly additionalContext?: string;
+    readonly assertDynamicContextAllowed?: (command: string) => void;
+  }>;
   /** Runtime-owned complete formal-name inventory used to prevent learned Skill shadowing. */
   protectedFormalSkillNames?: readonly string[];
   /**
@@ -2865,6 +2871,8 @@ export interface KodaXToolExecutionContext {
   skillDynamicContext?: KodaXSkillDynamicContextPolicy;
   /** Runtime-bound Skill registry; avoids process-global cross-session drift. */
   skillRegistry?: ISkillRegistry;
+  /** @internal Activates the same run policies used by explicit Skill invocation. */
+  activateModelSkill?: KodaXContextOptions['activateModelSkill'];
   /** Runtime-owner admission for exact learned Skill revisions. */
   admitLearnedSkillInvocation?: KodaXContextOptions['admitLearnedSkillInvocation'];
   /** Present only when the host admitted exact Skill scripts for this run. */

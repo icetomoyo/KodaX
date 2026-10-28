@@ -1158,6 +1158,29 @@ Host registry objects and hook command strings never cross the JSON boundary.
 Hook shell commands still require the runtime permission broker, and runtime
 completion waits for all admitted `PostToolUse` hooks to settle.
 
+Model `skill` loads use this same policy/hook lifecycle within their owning Run.
+The public `Runner.run(createDefaultCodingAgent())` substrate entry installs
+and settles that lifecycle too, without duplicating a `runKodaX` owner.
+Static instruction loading remains available under action restrictions and
+still passes Host authorization. Activated action policies compose by
+intersection; fully substituted inline dynamic commands pass the same Skill
+restrictions before either the Host executor or the standalone safe executor.
+Repeated loads of the same revision do not restart hooks. A changed active
+Skill requires a new Run, preventing new instructions from using old authority.
+When a tool batch contains Skill loading, its other actions are deferred until
+the next batch, including when loading was denied or cancelled. The model must
+read the instruction or failure result before planning those actions.
+Model preferences apply to the next Provider request. `context: fork` requires
+explicit Host invocation and is rejected before model-side dynamic expansion;
+the model tool does not create a second execution boundary.
+Skill tool results include only the Skill expansion and newly supplied Skill
+guidance; existing Host prompt overlays remain in system context.
+
+Formal discovery uses `gitRoot` when supplied, independently of execution cwd
+and Learned Area identity. SA/AMA omit the model catalog when the Skill loader
+is unavailable; an already expanded explicit invocation remains usable.
+Rediscovery invalidates full-body caches, including loads still in flight.
+
 `user-invocable` remains parse-compatible with existing `SKILL.md` files, but
 enabled Skills always report as user-invocable and the field is not used as an
 execution gate.

@@ -34,6 +34,7 @@ import type { MemoryDecisionReceipt } from '@kodax-ai/agent/experimental-memory'
 
 import { runSubstrate } from './agent-runtime/run-substrate.js';
 import { withMemoryDecisionTrace } from './memory/decision-trace.js';
+import { applyRuntimeSkillInvocationPolicy, awaitRuntimeSkillInvocationPolicy } from './skill-invocation-policy.js';
 import type { KodaXOptions, KodaXResult } from './types.js';
 
 /** Stable name used as the dispatch key for the built-in coding preset. */
@@ -170,16 +171,23 @@ const codingSubstrate: PresetDispatcher = async (
     : null;
 
   let result: KodaXResult;
+  const ownsSkillPolicy = merged.context?.activateModelSkill === undefined;
+  let runtimeOptions = merged;
+  let failure: unknown;
   try {
+    if (ownsSkillPolicy) runtimeOptions = await applyRuntimeSkillInvocationPolicy(merged, prompt);
     result = tracingContext === undefined
-      ? await runSubstrate(merged, prompt, agent)
-      : await withMemoryDecisionTrace(memoryDecisionReceipts, () => runSubstrate(merged, prompt, agent));
+      ? await runSubstrate(runtimeOptions, prompt, agent)
+      : await withMemoryDecisionTrace(memoryDecisionReceipts, () => runSubstrate(runtimeOptions, prompt, agent));
   } catch (err) {
+    failure = err;
     if (genSpan) {
       genSpan.setError(err instanceof Error ? err : new Error(String(err)));
       genSpan.end();
     }
     throw err;
+  } finally {
+    if (ownsSkillPolicy) await awaitRuntimeSkillInvocationPolicy(runtimeOptions, failure);
   }
   if (genSpan) {
     genSpan.end();

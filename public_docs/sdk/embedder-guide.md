@@ -594,6 +594,14 @@ host UI mediates everything else).
 
 ### The LLM-triggered `skill` tool path — `KodaXOptions.skillDynamicContext` (v0.7.58)
 
+Model-selected Skills use the owning Run's existing `allowed-tools`, lifecycle
+hooks and model preference, while concrete actions retain Host authorization.
+Multiple active Skill restrictions intersect; unchanged repeated loads do not
+restart hooks. Changing an active Skill requires a new Run. A batch containing
+Skill loading defers other actions to a later batch so the model can read the
+instructions or resolve a refusal first. `context: fork` requires explicit Host
+invocation and is refused before model-side dynamic expansion.
+
 The `SkillContext` hook above covers Skills your host explicitly expands via
 `resolveSkillContent` or `SkillRegistry.invoke()`. A model-visible Skill can
 also be **auto-triggered by the model** through the built-in `skill` tool — and

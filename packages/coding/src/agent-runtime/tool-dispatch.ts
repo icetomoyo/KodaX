@@ -106,6 +106,7 @@ import type { ToolResult } from '../tools/types.js';
 import { recordWrittenFile } from './written-files.js';
 import { resolveExecutionCwd } from '../runtime-paths.js';
 import { toolResultText } from '../tools/tool-result-content.js';
+import { isSkillToolCall, SKILL_ACTION_DEFERRED } from '../tools/skill.js';
 import type {
   KodaXEvents,
   KodaXToolEventMeta,
@@ -657,6 +658,22 @@ export async function runToolDispatch(
     resultMap.set(toolExecution(prepared.call).resultKey, prepared.blockedContent);
   }
 
+  // Read Skill results before planning task actions. Defer sibling actions
+  // even on refused loads, including bridge and guardrail-blocked calls.
+  const skillCalls = preparedCalls.filter(prepared => isSkillToolCall(prepared.call));
+  for (const prepared of skillCalls) {
+    const content = prepared.blockedContent ?? await executePreparedToolCall(input, prepared.call);
+    resultMap.set(toolExecution(prepared.call).resultKey, content);
+  }
+  if (skillCalls.length > 0) {
+    for (const sibling of preparedCalls) {
+      const key = toolExecution(sibling.call).resultKey;
+      if (resultMap.has(key)) continue;
+      await emitToolCallStart(input.events, sibling.call);
+      resultMap.set(key, input.abortSignal?.aborted ? CANCELLED_TOOL_RESULT_MESSAGE : SKILL_ACTION_DEFERRED);
+    }
+    return resultMap;
+  }
   const parallel = preparedCalls.filter((prepared) => (
     prepared.blockedContent === undefined
     && input.toolBlocks[prepared.index]!.name !== 'bash'

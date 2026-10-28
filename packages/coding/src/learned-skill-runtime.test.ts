@@ -34,6 +34,25 @@ afterEach(async () => {
 });
 
 describe('FEATURE_263 coding root learned Skill binding', () => {
+  it('discovers formal project Skills at gitRoot while executing from a subdirectory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kodax-skill-subdirectory-'));
+    roots.push(root);
+    const configHome = join(root, 'home');
+    const projectRoot = join(root, 'project');
+    const cwd = join(projectRoot, 'src');
+    const skillDir = join(projectRoot, '.kodax', 'skills', 'root-skill');
+    await mkdir(cwd, { recursive: true });
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(join(skillDir, 'SKILL.md'), '---\nname: root-skill\ndescription: Inspect project code\n---\nRoot instructions\n');
+    const binding = await prepareCodingLearnedSkillBinding({ provider: 'test',
+      context: { configHome, gitRoot: projectRoot, executionCwd: cwd } }, {
+      configHome, tenantId: 'tenant', projectId: 'project', sessionId: 'session',
+    }, 'session');
+    try {
+      expect(binding?.context.skillsPrompt).toContain('root-skill');
+      expect((await binding?.context.skillRegistry?.loadFull('root-skill'))?.content).toContain('Root instructions');
+    } finally { await binding?.release(); }
+  });
   it('releases a canary admitted in one root when a later root fails to initialize', async () => {
     const root = await mkdtemp(join(tmpdir(), 'kodax-coding-learned-partial-'));
     roots.push(root);

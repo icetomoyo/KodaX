@@ -63,6 +63,7 @@ import { wrapCodingToolAsRunnable } from './tool-wrappers.js';
 import { getToolExecutionOverride } from '../../../agent-runtime/permission-gate.js';
 import { NULL_OBSERVER } from './observer-bridge.js';
 import type { AmaRole, ObserverBridge, RunnerChainPromptContext } from './types.js';
+import type { ExtensionRuntimeContract } from '../../../extensions/runtime-contract.js';
 
 interface TodoToolBundle {
   readonly todoUpdate: RunnableTool;
@@ -110,6 +111,8 @@ function isManagedToolVisibleForContext(
 ): boolean {
   if (exclude.has(name)) return false;
   if (ctx.excludeTools?.includes(name)) return false;
+  const activeTools = (ctx.extensionRuntime as ExtensionRuntimeContract | undefined)?.getDefaults?.().activeTools;
+  if (activeTools && !activeTools.includes(name) && !lookupRunScopedTool(ctx.extensionRuntime, name)) return false;
   if (!ctx.extensionRuntime && isMcpToolName(name)) return false;
   if (name === 'run_workflow' && !ctx.workflowHost) return false;
   if (isSessionHistoryTool(name) && !ctx.loadSessionHistory) return false;

@@ -71,6 +71,8 @@ export class SkillRegistry implements ISkillRegistry {
   async discover(): Promise<void> {
     const result = await discoverSkills(this.projectRoot, this.customPaths);
     this.incompleteDiscovery = result.errors.length > 0;
+    // A published catalog and its bodies must describe the same discovery.
+    this.fullSkillsByName.clear();
     this.skillsByName.clear();
     for (const [name, metadata] of result.skills) {
       this.skillsByName.set(name, metadata);
@@ -119,6 +121,7 @@ export class SkillRegistry implements ISkillRegistry {
 
     // Load full skill
     const skill = await loadFullSkill(metadata.path, metadata.source);
+    if (this.skillsByName.get(name) !== metadata) return this.loadFull(name);
     if (!skill) {
       throw new Error(`Failed to load skill: ${name}`);
     }

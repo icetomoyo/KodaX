@@ -119,6 +119,19 @@ describe('buildCapabilityContextSections', () => {
     }
   });
 
+  it.each(['excluded', 'policy', 'runtime'] as const)('omits model Skill guidance when the loader is unavailable: %s', async (reason) => {
+    const cwd = await createTempDir('kodax-skill-visibility-');
+    cleanupDirs.push(cwd);
+    const options = makeOptions({ executionCwd: cwd, gitRoot: cwd, skillsPrompt: 'Load audit-skill with the skill tool.' });
+    if (reason === 'excluded') options.context!.excludeTools = ['skill'];
+    if (reason === 'policy') options.context!.toolVisibilityPolicy = ({ name }) => name !== 'skill';
+    if (reason === 'runtime') options.extensionRuntime = { getDefaults: () => ({ activeTools: ['read'] }),
+      getCapabilityPromptContext: async () => undefined } as KodaXOptions['extensionRuntime'];
+    const sections = await buildCapabilityContextSections(options, false);
+    expect(ids(sections)).not.toContain('skills-addendum');
+    expect(sections.map(section => section.content).join('\n')).not.toContain('Load audit-skill');
+  });
+
   it('always emits base-system, environment-context, working-directory in canonical order (minimal options)', async () => {
     const cwd = await createTempDir('kodax-capsec-min-');
     cleanupDirs.push(cwd);

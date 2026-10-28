@@ -227,6 +227,8 @@ export interface SkillContext {
    * (whitelist + 5s timeout). When absent, the legacy whitelist path runs.
    */
   executeDynamicContext?: SkillDynamicContextExecutor;
+  /** Runtime Skill restrictions, checked on the fully substituted command before either executor. */
+  assertDynamicContextAllowed?: (command: string) => void;
   /**
    * v0.7.42 — hard-disable `!`cmd`` resolution.
    * When `true`, encountering a `!`cmd`` token throws
