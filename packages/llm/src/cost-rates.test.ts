@@ -58,6 +58,15 @@ describe('cost-rates', () => {
       });
     });
 
+    it.each([
+      'deepseek-v4.1-flash', 'deepseek-v4.1-flash-economy',
+      'glm-5.3-flash', 'kimi-k3.1-pro', 'kimi-k3', 'kimi-k2.8-preview',
+    ])('keeps subscription accounting nonzero for Ark %s', (model) => {
+      const rate = getCostRate('ark-coding', model);
+      expect(rate?.inputPer1M).toBeGreaterThan(0);
+      expect(rate?.outputPer1M).toBeGreaterThan(0);
+    });
+
     it('should price every routed Kimi model, including public K3', () => {
       const kimi = DEFAULT_COST_RATES.kimi;
       expect(Object.keys(kimi)).toEqual([

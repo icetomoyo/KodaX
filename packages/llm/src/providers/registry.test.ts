@@ -68,8 +68,8 @@ describe('provider registry', () => {
     ['kimi-code', 'k3'],
     ['kimi-code', 'k3-256k'],
     ['minimax-coding', 'MiniMax-M3'],
-    ['mimo-coding', 'mimo-v2.5-pro'],
-    ['mimo', 'mimo-v2.5-pro'],
+    ['mimo-coding', 'mimo-v2.6-pro'],
+    ['mimo', 'mimo-v2.6-pro'],
     ['ark-coding', 'glm-5.2'],
     ['ark-coding', 'kimi-k2.6'],
     ['ark-coding', 'MiniMax-M3'],
@@ -91,6 +91,7 @@ describe('provider registry', () => {
     ['kimi-code', 'kimi-for-coding-highspeed'],
     ['minimax-coding', 'MiniMax-M2.7'],
     ['minimax-coding', 'MiniMax-M2.7-highspeed'],
+    ['minimax-coding', 'MiniMax-M3.1-Flash'],
     ['ark-coding', 'kimi-k2.7-code'],
     ['ark-coding', 'MiniMax-M2.7'],
     ['qwen-token-plan', 'qwen3.8-max'],
@@ -119,14 +120,14 @@ describe('provider registry', () => {
 
   it('registers MiniMax Coding Plan as minimax-coding (Anthropic-compat, MINIMAX_CODING_API_KEY)', () => {
     // Pin the load-bearing pieces of the multi-model gateway: the provider
-    // default (M3 at the 1M provider window) and the legacy explicit M2.7
+    // default (M3.1 Flash at the 1M provider window) and the legacy explicit M2.7
     // override (204K). Guard both so a default change cannot silently drop
     // backwards-compatible explicit model selection.
     vi.stubEnv('MINIMAX_CODING_API_KEY', 'mm-test-key');
     const minimax = getProvider('minimax-coding');
     expect(minimax.name).toBe('minimax-coding');
     expect(getProviderList().find((provider) => provider.name === 'minimax-coding')?.model)
-      .toBe('MiniMax-M3');
+      .toBe('MiniMax-M3.1-Flash');
     expect(minimax.getEffectiveContextWindow('MiniMax-M2.7')).toBe(204_800);
     expect(minimax.getEffectiveContextWindow('MiniMax-M2.7-highspeed')).toBe(204_800);
     expect(minimax.getEffectiveContextWindow('MiniMax-M3')).toBe(1_000_000);
@@ -141,10 +142,10 @@ describe('provider registry', () => {
     vi.stubEnv('MIMO_CODING_API_KEY', 'tp-test-key');
     const mimo = getProvider('mimo-coding');
     expect(mimo.name).toBe('mimo-coding');
-    expect(mimo.getEffectiveContextWindow('mimo-v2.5-pro')).toBe(1_000_000);
-    expect(mimo.getEffectiveContextWindow('mimo-v2.5')).toBe(1_000_000);
-    expect(getProviderConfiguredReasoningCapability('mimo-coding', 'mimo-v2.5-pro')).toBe('native-toggle');
-    expectReasoningPreset('mimo-coding', 'mimo-v2.5-pro', 'mimo-v2.5-toggle');
+    expect(mimo.getEffectiveContextWindow('mimo-v2.6-pro')).toBe(1_048_576);
+    expect(mimo.getEffectiveContextWindow('mimo-v2.6-flash')).toBe(1_048_576);
+    expect(getProviderConfiguredReasoningCapability('mimo-coding', 'mimo-v2.6-pro')).toBe('native-toggle');
+    expectReasoningPreset('mimo-coding', 'mimo-v2.6-pro', 'generic-thinking-toggle');
   });
 
   it('registers Alibaba Cloud Token Plan as qwen-token-plan (Anthropic-compat)', () => {
@@ -212,10 +213,10 @@ describe('provider registry', () => {
     vi.stubEnv('MIMO_API_KEY', 'sk-test-key');
     const mimo = getProvider('mimo');
     expect(mimo.name).toBe('mimo');
-    expect(mimo.getEffectiveContextWindow('mimo-v2.5-pro')).toBe(1_000_000);
-    expect(mimo.getEffectiveContextWindow('mimo-v2.5')).toBe(1_000_000);
-    expect(getProviderConfiguredReasoningCapability('mimo', 'mimo-v2.5-pro')).toBe('native-toggle');
-    expectReasoningPreset('mimo', 'mimo-v2.5-pro', 'mimo-v2.5-toggle');
+    expect(mimo.getEffectiveContextWindow('mimo-v2.6-pro')).toBe(1_048_576);
+    expect(mimo.getEffectiveContextWindow('mimo-v2.6-flash')).toBe(1_048_576);
+    expect(getProviderConfiguredReasoningCapability('mimo', 'mimo-v2.6-pro')).toBe('native-toggle');
+    expectReasoningPreset('mimo', 'mimo-v2.6-pro', 'generic-thinking-toggle');
   });
 
   it('registers the complete Kimi Code K3/K2.7 subscription lineup', () => {
@@ -246,19 +247,22 @@ describe('provider registry', () => {
     const ark = getProvider('ark-coding');
     expect(ark.name).toBe('ark-coding');
 
-    // Default + alts must cover all 12 models Ark's Coding Plan console
-    // lists. Retired: glm-5.1 / glm-4.7 / deepseek-v3.2 (wire returns
-    // UnsupportedModel 404). 2026-08-15: GLM-5.3 added and promoted to
-    // default (live probe: glm-5.3 200; glm-latest and glm-5.2 both
-    // currently resolve upstream to glm-5.3).
+    // 2026-10-28: six documented routes added; previous identifiers remain
+    // available for existing configurations, not as an availability guarantee.
     const models = ark.getAvailableModels();
     expect(models).toEqual([
       'glm-5.3',
+      'glm-5.3-flash',
+      'kimi-k3.1-pro',
+      'kimi-k3',
+      'kimi-k2.8-preview',
       'glm-5.2',
       'kimi-k2.7-code',
       'kimi-k2.6',
       'MiniMax-M3',
       'MiniMax-M2.7',
+      'deepseek-v4.1-flash',
+      'deepseek-v4.1-flash-economy',
       'deepseek-v4-pro',
       'deepseek-v4-flash',
       'doubao-seed-2.0-code',

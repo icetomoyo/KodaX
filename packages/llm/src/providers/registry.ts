@@ -234,7 +234,7 @@ class KimiCodeProvider extends KodaXAnthropicCompatProvider {
 class MiniMaxCodingProvider extends KodaXAnthropicCompatProvider {
   readonly name = 'minimax-coding';
   protected readonly config: KodaXProviderConfig = buildProviderConfig('minimax-coding', {
-    baseUrl: 'https://api.minimaxi.com/anthropic',
+    baseUrl: 'https://api.minimax.cn/anthropic',
   });
 }
 
@@ -253,8 +253,8 @@ class MimoProvider extends KodaXAnthropicCompatProvider {
   protected readonly config: KodaXProviderConfig = buildProviderConfig('mimo', {
     // Xiaomi MiMo public pay-per-token Anthropic-compat endpoint
     // (https://platform.xiaomimimo.com/docs/zh-CN/api/chat/anthropic-api).
-    // Same upstream model family as `mimo-coding` (mimo-v2.5-pro /
-    // mimo-v2.5) — the two providers differ only in baseUrl and the
+    // Same upstream model family as `mimo-coding` (mimo-v2.6-pro /
+    // mimo-v2.6-flash) — the two providers differ only in baseUrl and the
     // billing model (pay-per-token here vs Token-Plan subscription on
     // mimo-coding). All capability fields (context window, thinking
     // budget, max_tokens, etc.) come from `provider-capabilities.json`.

@@ -145,10 +145,9 @@ export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string,
     'glm-4.7': { inputPer1M: 0.01, outputPer1M: 0.03 },
   },
   'minimax-coding': {
-    // 2026-06: official MiniMax Coding Plan endpoint retired the
-    // M2.x family (M2.5 / M2.1 / M2 + their -highspeed variants).
-    // Only M2.7 / M2.7-highspeed (legacy GA) and M3 (Frontier
-    // Coding) remain on the gateway.
+    // Nominal subscription accounting; historical entries do not guarantee
+    // current M Plan entitlement or model availability.
+    'MiniMax-M3.1-Flash': { inputPer1M: 0.01, outputPer1M: 0.03 },
     'MiniMax-M3': { inputPer1M: 0.01, outputPer1M: 0.03 },
     'MiniMax-M2.7': { inputPer1M: 0.01, outputPer1M: 0.03 },
     'MiniMax-M2.7-highspeed': { inputPer1M: 0.01, outputPer1M: 0.03 },
@@ -157,6 +156,9 @@ export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string,
     // MiMo Token Plan is a flat-rate subscription — per-token rates here are
     // a nominal placeholder for cost-tracker accounting; real-world cost is
     // the monthly fee plus request-quota.
+    'mimo-v2.6-pro': { inputPer1M: 0.01, outputPer1M: 0.03 },
+    'mimo-v2.6-flash': { inputPer1M: 0.01, outputPer1M: 0.03 },
+    // Retained only for historical usage accounting; V2.5 is retired.
     'mimo-v2.5-pro': { inputPer1M: 0.01, outputPer1M: 0.03 },
     'mimo-v2.5': { inputPer1M: 0.01, outputPer1M: 0.03 },
   },
@@ -166,6 +168,8 @@ export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string,
     // Same model family as mimo-coding but billed per token. Placeholders
     // mirror mimo-coding so cost-tracker output is non-zero until the
     // user supplies real CNY rates via `~/.kodax/config.json`.
+    'mimo-v2.6-pro': { inputPer1M: 0.01, outputPer1M: 0.03 },
+    'mimo-v2.6-flash': { inputPer1M: 0.01, outputPer1M: 0.03 },
     'mimo-v2.5-pro': { inputPer1M: 0.01, outputPer1M: 0.03 },
     'mimo-v2.5': { inputPer1M: 0.01, outputPer1M: 0.03 },
   },
@@ -184,6 +188,14 @@ export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string,
     // Coding Plan wire: glm-5.3 returns HTTP 200; glm-latest and glm-5.2
     // both currently resolve upstream to glm-5.3 as well.
     'glm-5.3': { inputPer1M: 0.005, outputPer1M: 0.015 },
+    // 2026-10-28 catalog additions retain nominal subscription accounting;
+    // these placeholders do not represent model-specific AFP deductions.
+    'glm-5.3-flash': { inputPer1M: 0.005, outputPer1M: 0.015 },
+    'kimi-k3.1-pro': { inputPer1M: 0.005, outputPer1M: 0.015 },
+    'kimi-k3': { inputPer1M: 0.005, outputPer1M: 0.015 },
+    'kimi-k2.8-preview': { inputPer1M: 0.005, outputPer1M: 0.015 },
+    'deepseek-v4.1-flash': { inputPer1M: 0.005, outputPer1M: 0.015 },
+    'deepseek-v4.1-flash-economy': { inputPer1M: 0.005, outputPer1M: 0.015 },
     'glm-5.2': { inputPer1M: 0.005, outputPer1M: 0.015 },
     'kimi-k2.7-code': { inputPer1M: 0.005, outputPer1M: 0.015 },
     'kimi-k2.6': { inputPer1M: 0.005, outputPer1M: 0.015 },

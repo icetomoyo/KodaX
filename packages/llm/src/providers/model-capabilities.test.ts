@@ -261,10 +261,9 @@ describe('built-in provider model capabilities (no API key required)', () => {
     expect(anthropicDefault?.isDefault).toBe(true);
     const haiku = list.find((c) => c.provider === 'anthropic' && c.model === 'claude-haiku-4-5');
     expect(haiku?.isDefault).toBe(false);
-    // Spot-check coverage: minimax-coding listing carries both the M2.7
-    // GA default and the M3 Frontier Coding model (2026-06 gateway
-    // retired the M2.5 / M2.1 / M2 family).
+    // Spot-check the current default and preserved historical explicit IDs.
     const minimaxModels = list.filter((c) => c.provider === 'minimax-coding').map((c) => c.model);
+    expect(minimaxModels).toContain('MiniMax-M3.1-Flash');
     expect(minimaxModels).toContain('MiniMax-M2.7');
     expect(minimaxModels).toContain('MiniMax-M3');
   });
