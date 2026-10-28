@@ -225,6 +225,8 @@ describe('provider registry', () => {
     expect(kimiCode.getModel()).toBe('k3-256k');
     expect(kimiCode.getAvailableModels()).toEqual([
       'k3-256k',
+      'k3.1-pro',
+      'k3.1-pro-highspeed',
       'k3',
       'kimi-for-coding',
       'kimi-for-coding-highspeed',
@@ -382,6 +384,8 @@ describe('provider registry', () => {
     expect(kimi.getModel()).toBe('kimi-k2.7-code');
     expect(kimi.getAvailableModels()).toEqual([
       'kimi-k2.7-code',
+      'kimi-k3.1-pro',
+      'kimi-k3.1-pro-highspeed',
       'kimi-k3',
       'kimi-k2.7-code-highspeed',
       'kimi-k2.6',

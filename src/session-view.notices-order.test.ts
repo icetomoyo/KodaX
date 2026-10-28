@@ -52,6 +52,24 @@ it('prefers a proven legacy message reference over a later identical occurrence'
   expect(restoreSessionViewItems('session', data, [structuredClone(earlier)]).map(item => item.text)).toEqual(['Repeat', 'Between']);
 });
 
+it('anchors notices between distinct task reports with identical bodies', () => {
+  const query: KodaXMessage = { role: 'user', inputId: 'query', content: 'Query' };
+  const report = (taskId: string): KodaXMessage => ({ role: 'user', _source: 'agent-completed', _synthetic: true,
+    content: `<agent-completed turn_id="${taskId}">same</agent-completed>`,
+    _taskResult: { type: 'task_result', source: 'child_task', taskId, status: 'completed', summary: 'same' } });
+  const first = report('first'), second = report('second');
+  const data: KodaXSessionData = { title: 'Task anchors', gitRoot: '', messages: [query, first, second],
+    lineage: { version: 2, activeEntryId: 'second', entries: [
+      { type: 'message', id: 'query', parentId: null, timestamp: '2026-10-28T00:00:00Z', message: query },
+      { type: 'client_notice', id: 'before', parentId: 'query', timestamp: '2026-10-28T00:00:00Z', source: 'client', content: 'Before' },
+      { type: 'message', id: 'first', parentId: 'query', timestamp: '2026-10-28T00:00:00Z', message: first },
+      { type: 'client_notice', id: 'between', parentId: 'first', timestamp: '2026-10-28T00:00:00Z', source: 'client', content: 'Between' },
+      { type: 'message', id: 'second', parentId: 'first', timestamp: '2026-10-28T00:00:00Z', message: second },
+    ] } };
+  expect(restoreSessionViewItems('session', data, structuredClone(data.messages)).map(item => item.text))
+    .toEqual(['Query', 'Before', 'same', 'Between', 'same']);
+});
+
 it('positions a notice before retained tools outside the conversation page by call identity', () => {
   const messages: KodaXMessage[] = [
     { role: 'assistant', content: [{ type: 'tool_use', id: 'old', name: 'read', input: {} }] },

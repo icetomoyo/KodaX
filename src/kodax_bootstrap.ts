@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { createCliStartupProgress, isInteractiveCliStartup, type CliStartupProgress } from './cli-startup-progress.js';
+import { reportDaemonStartupPhase } from './runtime-daemon/startup-progress.js';
 
 export type BootstrapResumeRoute =
   | { readonly kind: 'continue'; readonly argv: readonly string[] }
@@ -62,6 +63,7 @@ export async function runKodaXBootstrap(options: KodaXBootstrapOptions = {}): Pr
   const loadCli = options.loadCli ?? (() => import('./kodax_cli.js'));
   let cliModulePromise: Promise<CliModule> | undefined;
   const loadCliOnce = (): Promise<CliModule> => {
+    if (cliModulePromise === undefined) reportDaemonStartupPhase('modules');
     cliModulePromise ??= loadCli();
     return cliModulePromise;
   };

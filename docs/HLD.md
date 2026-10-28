@@ -1,7 +1,7 @@
 # KodaX High-Level Design
 
-Last updated: 2026-10-18. Current development tree: FEATURE_298/299/301 on package
-`0.7.97-alpha.9`, with `v0.7.96` as the last stable release; publication is separate.
+Last updated: 2026-10-27. Current development tree: FEATURE_298/299/301 on package
+`0.7.97-alpha.10`, with `v0.7.96` as the last stable release; publication is separate.
 
 Product integrations use `KodaXProductClient` through `/client`. Read the
 [Client contract](CLIENT_CONTRACT.md) and [SDK migration guide](SDK_MIGRATION.md)
@@ -80,10 +80,14 @@ journals served different authorities. That exit-settlement protocol and the
 durable Runtime event journal are removed in the current development tree;
 use the current Client/launcher lifecycle below.
 
-The same Runtime owner also bounds user interaction. AskUser and permission
+The same Runtime owner also settles user interaction. AskUser and permission
 callbacks receive an AbortSignal tied to the authoritative request; separate
 `userInputTimeoutMs` and `permissionTimeoutMs` values are validated before
-startup, and the SDK helper resolves permission UI through the Runtime rather
+startup. Ordinary questions wait indefinitely by default and allow explicit
+skip. A positive Host `userInputTimeoutMs` enables a deadline; 0 disables it.
+Skip and timeout return a normal unanswered tool result. Dismissing a question
+does not interrupt its Run; explicit Stop does. Defaults are never auto-submitted.
+The SDK helper resolves permission UI through the Runtime rather
 than trusting a late dialog result. Interactive hosts recover a stale prepared
 Session tail with a full authoritative delta, while background persistence
 errors remain visible diagnostics.
@@ -414,6 +418,10 @@ building an authority from raw event deltas or writing Session files.
 Both connection entries expose optional local `onStartupProgress` using the
 shared pure `ClientStartupProgress` type. Launcher `ready` means Client APIs
 are usable; REPL `onBeforeRender` handles the later terminal display handoff.
+New Hosts report `initializing/phase` at actual module, extension, Runtime,
+recovery, MCP, Session-resource, A2A and listener boundaries. The launcher reuses
+its readiness poll and bounded bootstrap-log tail; these display observations
+do not change readiness, ownership or startup deadlines.
 See the [Client contract](CLIENT_CONTRACT.md#连接启动与所有权) for these boundaries.
 
 Inline embedding remains a low-level option for independent callers. The
@@ -619,6 +627,13 @@ The separate `kimi-code` subscription alias defaults to the direct upstream
 `k3-256k` Model ID, retains `kimi-for-coding` for K2.7 Code, and offers a
 1,048,576-token `k3` tier. Both K3 routes use `thinking.effort` for reasoning
 intent, defaulting to `high`.
+
+K3.1 is separately selectable on both Kimi aliases: subscription IDs
+`k3.1-pro` / `k3.1-pro-highspeed`, public IDs `kimi-k3.1-pro` /
+`kimi-k3.1-pro-highspeed`. These routes always think and default to max
+effort; their serializers use native `output_config.effort` (Messages) or
+`reasoning_effort` (Chat Completions). See the
+[provider contract and verification status](../public_docs/configuration/providers.md#kimi-k31-routes).
 
 The v0.7.88 Zhipu Coding Plan routes keep logical model capacity separate from
 the upstream model identifier. `zhipu-coding` defaults to `glm-5.3` and keeps

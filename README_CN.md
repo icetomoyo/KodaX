@@ -98,7 +98,7 @@ try {
 
 `connectKodaXClient` 只连接已有兼容 Host；`ensureKodaXClient` 通过统一启动器启动或正常更新空闲 Host。Node 连接器不提供浏览器 HTTP/WebSocket transport。
 
-两个产品入口均支持可选 `onStartupProgress` 和共享 `ClientStartupProgress` 类型。启动 `ready` 表示 Client 接口可用；Session 加载与 UI 渲染仍有独立完成边界。详见[启动进度示例](public_docs/sdk/embedder-guide.md#show-local-startup-progress)。
+两个产品入口均支持可选 `onStartupProgress` 和共享 `ClientStartupProgress` 类型；新 Host 通过 `initializing/phase` 报告内部初始化步骤，不增加额外探测或等待。启动 `ready` 表示 Client 接口可用；Session 加载与 UI 渲染仍有独立完成边界。详见[启动进度示例](public_docs/sdk/embedder-guide.md#show-local-startup-progress)。
 
 底层 `/runtime` 仍支持显式 inline embedded 与 daemon，供受信任宿主处理凭据桥、Host Tools、启动和诊断；Worker-hosted embedded、通用 operation receipt/journal 已移除。不能在产品连接失败时退回私有 Runtime。下方结构化 Runtime 错误说明仅属于底层接口，不能假定 Product Client 暴露相同字段。
 
@@ -313,6 +313,14 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 详见 [docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) 与
 [v0.7.97-alpha.4 发布清单](docs/release.md#v0797-alpha4-release-preparation)。
 所有 v0.7.96 稳定与 v0.7.97-alpha.1/alpha.2/alpha.3 契约全部保留。
+
+**v0.7.97-alpha.10 发布**：Host 重启后可恢复检查点 Run 与任务树(全新作用域
+授权);上下文容量恢复到达持久代边界;Kimi K3.1 供应商路由覆盖全部七档
+effort;AskUser 默认无限等待、支持显式跳过并返回带原因的 `unanswered` 结果。
+SDK 启动回调透传 Host 内部阶段；退出恢复将安全启动与历史清理未知事实分开。
+代码提交、版本标签与实际发布分别判断。
+详见 [v0.7.97-alpha.10 发布清单](docs/release.md#v0797-alpha10-release-preparation)。
+所有 v0.7.96 稳定与 v0.7.97-alpha.1 至 alpha.9 契约全部保留。
 
 **v0.7.97-alpha.9 发布**：Session 准入检查改用规范身份元数据而非加载完整
 历史 transcript——元数据头可读而正文不可读(例如损坏存储上的 Windows
@@ -1191,8 +1199,8 @@ dist/binary/linux-x64/
 |----------|----------|-----------|-----------|
 | anthropic | `ANTHROPIC_API_KEY` | Native | claude-sonnet-4-6（可 `/model` 切换 `claude-opus-4-6` / `claude-haiku-4-5`） |
 | openai | `OPENAI_API_KEY` | Native | gpt-5.3-codex（可 `/model` 切换 `gpt-5.4` / `gpt-5.3-codex-spark`） |
-| kimi | `KIMI_API_KEY` | Native | kimi-k2.7-code（262,144 token；可 `/model` 切换 `kimi-k3`〔1M〕/ `kimi-k2.7-code-highspeed` / `kimi-k2.6` / `kimi-k2.5`） |
-| kimi-code | `KIMI_CODE_API_KEY` | Native | k3-256k（Moderato+，256K，直接请求同名上游模型；可 `/model` 切换 `k3`〔Allegretto+，1M〕/ `kimi-for-coding`〔K2.7 Code〕/ `kimi-for-coding-highspeed`） |
+| kimi | `KIMI_API_KEY` | Native | kimi-k2.7-code（262,144 token；可 `/model` 切换 `kimi-k3.1-pro` / `kimi-k3.1-pro-highspeed` / `kimi-k3`〔1M〕/ `kimi-k2.7-code-highspeed` / `kimi-k2.6` / `kimi-k2.5`） |
+| kimi-code | `KIMI_CODE_API_KEY` | Native | k3-256k（Moderato+，256K，直接请求同名上游模型；可 `/model` 切换 `k3.1-pro` / `k3.1-pro-highspeed` / `k3`〔1M〕/ `kimi-for-coding` / `kimi-for-coding-highspeed`；K3.1 必须开启思考） |
 | qwen | `QWEN_API_KEY` | Native | qwen3.5-plus |
 | qwen-token-plan | `QWEN_TOKEN_API_KEY` | Native | qwen3.8-max（Anthropic 协议；可 `/model` 切换兼容项 `qwen3.8-max-preview` 及 `qwen3.7-max` / `qwen3.7-plus` / `qwen3.6-flash` / `glm-5.2` / `deepseek-v4-pro`；均为 1M ctx；两个 Qwen 3.8 ID / 3.7 Plus / 3.6 Flash 支持图片理解） |
 | zhipu | `ZHIPU_API_KEY` | Native | glm-5（可 `/model` 切换 `glm-5.3` / `glm-5.2`，均为 1M ctx，另有 `glm-5.1` / `glm-5-turbo`；GLM-5.3 开放平台 API 仍标注为即将上线） |
@@ -1272,6 +1280,19 @@ KodaX 有 50+ 个内置工具，按类别分组如下（实际暴露给 LLM 是�
 | `agent_output` | 读取有权限的 Actor/Turn 有界持久输出。 |
 | `ask_user_question` | 向用户发起单选 / 多选 / 自由文本提问 |
 | `exit_plan_mode` | 仅在当前 REPL/宿主提供审批回调时提交最终方案 |
+
+## 内置 Skills
+
+五个核心 Skill（git-workflow、tdd、code-review、skill-creator、visual-review）
+默认开放自然语言发现；概念解释与无关任务不应触发工作流。TDD 的“仅补测试”
+分支允许首次通过，不扩大生产代码改动；Skill Creator 按创建、打包、评测分支
+执行，分享包不默认安装到个人目录。`Bash(git *, npm *)` 匹配完整命令，仍保留
+Host 授权与沙箱。
+
+描述语义筛查不等于观察到真实 Skill 调用。独立 SDK 评测需明确 Provider、model、
+cwd 和预算，见[评测方法](packages/agent/src/capabilities/skills/builtin/skill-creator/references/evaluation.md)。
+可选 artifact-review 聚焦已注册 Artifact 工具；与 visual-review 一样，受管准备
+被拒绝或能力缺失时，受影响范围保留为未验证。
 
 ## Repo Intelligence（内置 full/light 引擎）
 

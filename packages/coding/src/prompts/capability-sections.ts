@@ -60,6 +60,7 @@ import { getSessionScratchDir } from '../session-scratch.js';
 import type { KodaXOptions } from '../types.js';
 import { formatFullSkillSection } from '../skill-invocation-format.js';
 import { isToolDiscoverable } from '../tools/tool-search.js';
+import { applyToolVisibilityPolicy, filterExcludedTools } from '../agent-runtime/tool-resolution.js';
 
 import { buildMemoryRulesSection } from './memory-rules.js';
 import { createPromptSection, type KodaXPromptSection } from './sections.js';
@@ -314,7 +315,11 @@ export async function buildCapabilityContextSections(
     ),
   );
 
-  if (options.context?.skillsPrompt?.trim()) {
+  const skillLoaderAvailable = applyToolVisibilityPolicy(
+    filterExcludedTools(options.extensionRuntime?.getDefaults?.().activeTools ?? ['skill'], options.context?.excludeTools),
+    options.context?.toolVisibilityPolicy,
+  ).includes('skill');
+  if (skillLoaderAvailable && options.context?.skillsPrompt?.trim()) {
     sections.push(
       createPromptSection(
         'skills-addendum',

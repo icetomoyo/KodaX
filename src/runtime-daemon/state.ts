@@ -668,7 +668,9 @@ function pruneRuntimeDaemonShutdownOutcomes(
 ): readonly Error[] {
   const failures: Error[] = [];
   let candidates: Array<{ readonly path: string; readonly mtimeMs: number }> = [];
+  let referenced: ReadonlySet<string>;
   try {
+    referenced = clientExitShutdownOutcomes(paths);
     candidates = fs.readdirSync(paths.rootDir, { withFileTypes: true })
       .filter((entry) => entry.isFile()
         && entry.name.startsWith('shutdown-outcome.')
@@ -682,7 +684,7 @@ function pruneRuntimeDaemonShutdownOutcomes(
   } catch (error: unknown) {
     return [error instanceof Error ? error : new Error(String(error))];
   }
-  const removable = candidates.filter((candidate) => candidate.path !== preservedPath)
+  const removable = candidates.filter((candidate) => candidate.path !== preservedPath && !referenced.has(candidate.path))
     .slice(MAX_RETAINED_SHUTDOWN_OUTCOMES - 1);
   for (const candidate of removable) {
     try {
@@ -694,6 +696,27 @@ function pruneRuntimeDaemonShutdownOutcomes(
   return failures;
 }
 
+/** Exit recovery must outlive the ordinary multi-reader retention window. */
+function clientExitShutdownOutcomes(paths: RuntimeDaemonPaths): ReadonlySet<string> {
+  const referenced = new Set<string>();
+  const root = path.join(paths.rootDir, 'client-exits');
+  if (!fs.existsSync(root)) return referenced;
+  for (const client of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!client.isDirectory()) continue;
+    for (const file of fs.readdirSync(path.join(root, client.name))) {
+      if (!file.endsWith('.json')) continue;
+      const receipt: unknown = JSON.parse(fs.readFileSync(path.join(root, client.name, file), 'utf8'));
+      if (!isRecord(receipt) || !isRecord(receipt.host) || !isRecord(receipt.host.owner)
+        || typeof receipt.host.owner.runtimeId !== 'string' || typeof receipt.host.owner.pid !== 'number'
+        || !Number.isSafeInteger(receipt.host.owner.pid) || receipt.host.owner.pid <= 0) {
+        throw new Error('Cannot prune shutdown evidence while a client exit owner is invalid.');
+      }
+      referenced.add(runtimeDaemonShutdownOutcomePath(paths, { runtimeId: receipt.host.owner.runtimeId, pid: receipt.host.owner.pid }));
+    }
+  }
+  return referenced;
+}
+
 export function readRuntimeDaemonShutdownOutcome(
   paths: RuntimeDaemonPaths,
   identity: RuntimeDaemonShutdownIdentity,
@@ -702,7 +725,8 @@ export function readRuntimeDaemonShutdownOutcome(
     const parsed: unknown = JSON.parse(
       fs.readFileSync(runtimeDaemonShutdownOutcomePath(paths, identity), 'utf8'),
     );
-    return isRuntimeDaemonShutdownOutcome(parsed) ? parsed : undefined;
+    return isRuntimeDaemonShutdownOutcome(parsed) && parsed.runtimeId === identity.runtimeId && parsed.pid === identity.pid
+      ? parsed : undefined;
   } catch {
     return undefined;
   }

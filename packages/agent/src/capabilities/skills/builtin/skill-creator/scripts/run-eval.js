@@ -3,9 +3,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { expandSkillForLLM } from '../../../skill-expander.js';
-import { loadFullSkill } from '../../../skill-loader.js';
-import { ensureDirectory, loadKodaXSDK } from './utils.js';
+import { ensureDirectory, loadKodaXSDK, loadKodaXSkills } from './utils.js';
 
 function normalizeAssertion(assertion) {
   if (typeof assertion === 'string') {
@@ -124,6 +122,7 @@ async function defaultRunAgent(prompt, options) {
 
 async function prepareConfigPrompt(configName, skill, taskPrompt, options) {
   if (configName === 'with_skill') {
+    const { expandSkillForLLM } = await loadKodaXSkills();
     const expanded = await expandSkillForLLM(
       skill,
       taskPrompt,
@@ -196,6 +195,7 @@ export async function runEvalWorkspace(
   options,
   runner = defaultRunAgent
 ) {
+  const { loadFullSkill } = await loadKodaXSkills();
   const skill = await loadFullSkill(path.resolve(options.skillPath), 'user');
   if (!skill) {
     throw new Error(`Failed to load skill from ${options.skillPath}`);

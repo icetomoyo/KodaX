@@ -9,6 +9,17 @@ export function cliStartupProgressMessage(progress: ClientStartupProgress): stri
     case 'upgrading': return 'Updating KodaX';
     case 'connecting': return 'Connecting to KodaX';
     case 'ready': return 'Connected to KodaX';
+    case 'initializing':
+      switch (progress.phase) {
+        case 'modules': return 'Loading KodaX modules';
+        case 'extensions': return 'Loading extensions';
+        case 'runtime': return 'Initializing KodaX runtime';
+        case 'recovery': return 'Recovering previous tasks';
+        case 'mcp': return 'Initializing MCP integrations';
+        case 'sessions': return 'Restoring session resources';
+        case 'a2a': return 'Initializing Agent connections';
+        case 'listener': return 'Opening KodaX connection';
+      }
     case 'waiting':
       switch (progress.reason) {
         case 'connected_clients': return 'Waiting for other clients to disconnect';

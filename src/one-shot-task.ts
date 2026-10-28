@@ -209,7 +209,7 @@ export async function runOneShotClientTask(
       handled.add(interaction.requestId);
       void client.interactions.respond(interaction.requestId, interaction.kind === 'permission' ? { kind: 'permission', decision: {
         type: 'reject', reason: 'The non-interactive CLI cannot approve permission requests. Run interactively to review this action.',
-      } } : { kind: 'cancel', reason: 'The non-interactive CLI cannot answer questions. Run interactively to respond.' }).catch((error: unknown) => {
+      } } : { kind: 'skip', reason: 'non_interactive' }).catch((error: unknown) => {
         emitKodaXDiagnostic({ source: 'kodax.one-shot', level: 'error',
           message: 'Failed to dismiss an unattended interaction.', detail: error });
         options.events?.onError?.(error instanceof Error ? error : new Error(String(error)));

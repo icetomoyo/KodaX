@@ -2,7 +2,7 @@
 name: code-review
 description: 审查代码、diff、提交或当前 git 改动，重点发现 bug、行为回归、边界条件遗漏、安全风险、性能问题和缺失测试。当用户提到 code review、review 这段代码、帮我看看改动有没有问题、审查 PR/提交时使用；不要用于单纯解释代码或直接实现需求。
 user-invocable: true
-allowed-tools: "Read, Grep, Glob, Bash(npm:*, node:*, npx:*)"
+allowed-tools: "Read, Grep, Glob, Bash(git status, git status *, git diff, git diff *, git log, git log *, git show, git show *, git ls-files, git ls-files *, git rev-parse, git rev-parse *, git ls-tree, git ls-tree *, git blame, git blame *, git cat-file *, npm *, node *, npx *)"
 argument-hint: "[file-or-directory]"
 compatibility: "Works best in a git repository or when the review target is provided explicitly."
 ---
@@ -14,8 +14,10 @@ compatibility: "Works best in a git repository or when the review target is prov
 ## 范围判定
 
 - 如果提供了 `$ARGUMENTS`，审查对应文件、目录、diff 或提交范围。
-- 如果没有提供参数，优先审查当前 git 改动；如果不在 git 仓库中，就明确说明缺少范围并请求更具体的目标。
+- 如果没有提供参数，先用 git status 清点任务相关的已暂存、未暂存与未跟踪文件，分别读取 staged/unstaged diff，并用 Read 检查相关未跟踪文件。一次 git diff 不代表审完全部改动。
+- PR/提交范围使用明确基线，只审该范围，不混入当前工作区的无关修改；不在仓库且没有目标时才补齐范围。
 - 在下结论前，尽量查看相邻实现、调用方、测试和相关配置，避免脱离上下文的误报。
+- review-only 只报告，不编辑实现或暂存文件。测试前查看脚本副作用，沿用宿主授权；不为审查自动运行安装、--fix 或破坏性 Git 命令。
 
 ## 审查重点
 
@@ -39,22 +41,8 @@ compatibility: "Works best in a git repository or when the review target is prov
   - 具体文件和行号
   - 为什么这是问题，可能造成什么影响
   - 建议的修复方向
-- 如果没有发现值得报告的问题，明确写 `No findings.`，然后补充剩余风险或测试空白。
+- 如果没有发现值得报告的问题，明确写 `No findings.`，并说明实际覆盖和未验证范围；不能暗示未运行的测试已通过。
 - 需要时再追加 `## Open Questions` 或 `## Change Summary`，但不要用总体打分或“亮点”冲淡问题。
-
-## 输出模板
-
-```markdown
-## Findings
-- [High] Title — `path/to/file.ts:42`
-  Why it matters and what to change.
-
-## Open Questions
-- Optional clarification or assumption.
-
-## Change Summary
-- Optional short summary only after findings.
-```
 
 ## 使用示例
 

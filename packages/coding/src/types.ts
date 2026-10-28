@@ -823,19 +823,19 @@ export interface KodaXEvents {
     options: AskUserQuestionOptions,
     meta?: KodaXToolEventMeta,
     context?: KodaXUserInputPromptContext,
-  ) => Promise<AskUserAnswer>;
+  ) => Promise<AskUserAnswer | AskUserUnanswered>;
   /** Ask user multiple independent questions sequentially - 澶氶棶棰橀『搴忔彁闂?*/
   askUserMulti?: (
     options: AskUserMultiOptions,
     meta?: KodaXToolEventMeta,
     context?: KodaXUserInputPromptContext,
-  ) => Promise<Record<string, AskUserAnswer> | undefined>;
+  ) => Promise<Record<string, AskUserAnswer> | AskUserUnanswered | undefined>;
   /** Ask user for free-text input - 自由文本输入 (Issue 112) */
   askUserInput?: (
     options: { question: string; default?: string },
     meta?: KodaXToolEventMeta,
     context?: KodaXUserInputPromptContext,
-  ) => Promise<string | undefined>;
+  ) => Promise<string | AskUserUnanswered | undefined>;
   /**
    * FEATURE_074: Exit plan mode with user approval. Called by the `exit_plan_mode` tool.
    * Returns:
@@ -2043,6 +2043,12 @@ export interface KodaXContextOptions {
   skillsPrompt?: string;
   /** Optional run-scoped registry used to pin and restrict Skill invocation. */
   skillRegistry?: ISkillRegistry;
+  /** @internal Run-owned model activation; never accepted from the product wire. */
+  activateModelSkill?: (skill: import('@kodax-ai/agent').Skill, args: string, registry: ISkillRegistry, provider?: string) => Promise<{
+    readonly modelOverride?: string;
+    readonly additionalContext?: string;
+    readonly assertDynamicContextAllowed?: (command: string) => void;
+  }>;
   /** Runtime-owned complete formal-name inventory used to prevent learned Skill shadowing. */
   protectedFormalSkillNames?: readonly string[];
   /**
@@ -2695,6 +2701,7 @@ export interface KodaXResult {
 // here for backward compatibility (existing `../types.js` imports keep working).
 import type {
   AskUserAnswer,
+  AskUserUnanswered,
   AskUserCustomInputAnswer,
   AskUserQuestionItem,
   AskUserMultiOptions,
@@ -2703,6 +2710,7 @@ import type {
 } from '@kodax-ai/agent';
 export type {
   AskUserAnswer,
+  AskUserUnanswered,
   AskUserCustomInputAnswer,
   AskUserQuestionItem,
   AskUserMultiOptions,
@@ -2872,6 +2880,8 @@ export interface KodaXToolExecutionContext {
   skillDynamicContext?: KodaXSkillDynamicContextPolicy;
   /** Runtime-bound Skill registry; avoids process-global cross-session drift. */
   skillRegistry?: ISkillRegistry;
+  /** @internal Activates the same run policies used by explicit Skill invocation. */
+  activateModelSkill?: KodaXContextOptions['activateModelSkill'];
   /** Runtime-owner admission for exact learned Skill revisions. */
   admitLearnedSkillInvocation?: KodaXContextOptions['admitLearnedSkillInvocation'];
   /** Present only when the host admitted exact Skill scripts for this run. */
@@ -2907,6 +2917,8 @@ export interface KodaXToolExecutionContext {
   maximumInputTokens?: number;
   /** Remaining capacity for the complete tool-result batch in this request. */
   toolResultCapacityTokens?: number;
+  /** @internal Derived from the active tool set; false forbids lossy delivery to unreadable artifacts. */
+  canReadPagedContent?: boolean;
   /** Runner path resolver for the transcript that the current batch extends. */
   resolveToolResultCapacityTokens?: (messages: readonly KodaXMessage[]) => number;
   /** Trusted side-channel for a tool-owned recovery artifact. */
@@ -2931,11 +2943,11 @@ export interface KodaXToolExecutionContext {
   extensionRuntime?: CapabilityRuntimeContract;
   /** Ask user a question interactively (select mode) - Issue 069. Select
    *  answers may be strings, arrays, or structured custom-input answers. */
-  askUser?: (options: AskUserQuestionOptions) => Promise<AskUserAnswer>;
+  askUser?: (options: AskUserQuestionOptions) => Promise<AskUserAnswer | AskUserUnanswered>;
   /** Ask user multiple independent questions sequentially - 澶氶棶棰橀『搴忔彁闂?*/
-  askUserMulti?: (options: AskUserMultiOptions) => Promise<Record<string, AskUserAnswer> | undefined>;
+  askUserMulti?: (options: AskUserMultiOptions) => Promise<Record<string, AskUserAnswer> | AskUserUnanswered | undefined>;
   /** Ask user for free-text input - 自由文本输入 (Issue 112) */
-  askUserInput?: (options: { question: string; default?: string }) => Promise<string | undefined>;
+  askUserInput?: (options: { question: string; default?: string }) => Promise<string | AskUserUnanswered | undefined>;
   /**
    * FEATURE_074: Exit plan mode with user approval. Called by the `exit_plan_mode` tool.
    * See KodaXEvents.exitPlanMode for the tri-state return contract.

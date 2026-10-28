@@ -5,6 +5,44 @@ import { createRecoveringRuntimeClient } from './recovering-runtime-client.js';
 import { createCliClientPlane } from './cli-client-plane.js';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
 
+it.each(['rejected', 'pending'] as const)('does not apply a stale Session Stop to a later Run (%s)', async state => {
+  let disconnect!: (value: RuntimeConnectionState) => void;
+  let rejectStop!: (error: Error) => void;
+  const conflict = Object.assign(new Error('Stale Run'), { code: 'conflict' });
+  const first = { identity: { runtimeId: 'old' }, close: async () => {}, runs: {},
+    connection: { current: () => ({ state: 'connected' }), subscribe: (listener: typeof disconnect) => {
+      disconnect = listener; return { close() {} };
+    } },
+    sessions: { cancel: async () => {
+      if (state === 'rejected') throw conflict;
+      return new Promise((_resolve, reject) => { rejectStop = reject; });
+    } },
+  } as unknown as KodaXRuntime;
+  const recover = vi.fn(async () => ({ runId: 'later', sessionId: 's' }));
+  const next = { identity: { runtimeId: 'new' }, close: async () => {}, sessions: { getSettings: async () => ({}) },
+    runs: { get: async () => ({ runId: 'later', sessionId: 's', phase: 'recovering', contextRecovery: { checkpoint: {} } }),
+      recover, await: async () => ({ phase: recover.mock.calls.length ? 'completed' : 'recovering' }) },
+  } as unknown as KodaXRuntime;
+  const runtime = createRecoveringRuntimeClient(first, async () => next);
+  const stop = runtime.sessions.cancel({ sessionId: 's', expectedRunId: 'old-run', requestId: 'old-stop' });
+  const stopped = expect(stop).rejects.toMatchObject({ code: 'conflict' });
+  let result: Promise<unknown> | undefined;
+  try {
+    if (state === 'rejected') await stopped;
+    disconnect({ state: 'disconnected', connectionId: 'old', runtimeEpoch: 'old', code: 'protocol_closed', reconnectable: true });
+    result = runtime.runs.await('later');
+    // Attach a rejection handler so cleanup can close a still-waiting client on RED.
+    void result.catch(() => undefined);
+    await vi.waitFor(() => expect(recover).toHaveBeenCalledOnce());
+    await expect(result).resolves.toMatchObject({ phase: 'completed' });
+  } finally {
+    if (state === 'pending') rejectStop(conflict);
+    await stopped;
+    await runtime.close();
+    if (result) await Promise.allSettled([result]);
+  }
+});
+
 it.each(['recovery', 'observation'])('survives a second Host loss during %s', async stage => {
   const listeners: Array<(state: RuntimeConnectionState) => void> = [];
   const loss = Object.assign(new Error('second Host died'), { code: 'protocol_closed' });

@@ -43,6 +43,14 @@ describe('CLI startup progress', () => {
       [{ stage: 'waiting', reason: 'connected_clients' }, 'Waiting for other clients to disconnect'],
       [{ stage: 'waiting', reason: 'host_starting' }, 'Waiting for KodaX to start'],
       [{ stage: 'waiting', reason: 'host_stopping' }, 'Waiting for previous KodaX to exit'],
+      [{ stage: 'initializing', phase: 'modules' }, 'Loading KodaX modules'],
+      [{ stage: 'initializing', phase: 'extensions' }, 'Loading extensions'],
+      [{ stage: 'initializing', phase: 'runtime' }, 'Initializing KodaX runtime'],
+      [{ stage: 'initializing', phase: 'recovery' }, 'Recovering previous tasks'],
+      [{ stage: 'initializing', phase: 'mcp' }, 'Initializing MCP integrations'],
+      [{ stage: 'initializing', phase: 'sessions' }, 'Restoring session resources'],
+      [{ stage: 'initializing', phase: 'a2a' }, 'Initializing Agent connections'],
+      [{ stage: 'initializing', phase: 'listener' }, 'Opening KodaX connection'],
     ];
     for (const [event, message] of cases) expect(cliStartupProgressMessage(event)).toBe(message);
   });

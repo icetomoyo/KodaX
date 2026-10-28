@@ -265,6 +265,8 @@ export class VariableResolver implements IVariableResolver {
       );
     }
 
+    this.context.assertDynamicContextAllowed?.(command);
+
     // Tier 2: embedder-provided hook — host mediates shell execution
     // (permission broker / audit / policy). The hook owns the entire
     // execution policy; KodaX's built-in whitelist does NOT run in front

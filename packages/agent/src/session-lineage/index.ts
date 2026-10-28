@@ -22,6 +22,7 @@ export type {
   LineageTreeNode,
 } from './lineage.js';
 export { LINEAGE_ENTRY_TYPES, LineageExtension } from './lineage.js';
+export { readTaskResultReports, type KodaXTaskResultReport } from './task-results.js';
 
 export type { LineageCompactionDelegates } from './compaction.js';
 export { LineageCompaction } from './compaction.js';

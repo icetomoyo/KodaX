@@ -27,6 +27,31 @@ const RUN_LIFECYCLE_CAPABILITIES = {
 } as const;
 
 describe('runtime daemon client proxy', () => {
+  it.each(['skipped', 'non_interactive'] as const)('preserves %s when skipping a question through the Runtime facade', async reason => {
+    let response: unknown;
+    const client = createRuntimeDaemonClient({
+      identity: { runtimeId: 'question-skip', mode: 'daemon', profile: 'default', startedAt: '2026-10-26T00:00:00Z', version: KODAX_VERSION },
+      transport: {
+        async request(method, params) {
+          if (method === 'interaction.list') return [{
+            requestId: 'question-1', sessionId: 'session-1', runId: 'run-1',
+            kind: 'question_input', createdAt: '2026-10-26T00:00:00Z', options: { question: 'Name?' },
+          }];
+          if (method === 'interaction.respond') {
+            response = params;
+            return { requestId: 'question-1', accepted: true, status: 'unanswered' };
+          }
+          throw new Error(`Unexpected request: ${method}`);
+        },
+        subscribe() { return { close() {} }; },
+      },
+    });
+    await expect(client.userInputs.respond('question-1', { unanswered: true, reason }, { runId: 'run-1' }))
+      .resolves.toMatchObject({ accepted: true, status: 'unanswered' });
+    expect(response).toEqual({ requestId: 'question-1', response: reason === 'non_interactive'
+      ? { kind: 'skip', reason } : { kind: 'skip' } });
+  });
+
   it('rejects unsupported plan-mode Session effort before sending a settings mutation', async () => {
     const sent: string[] = [];
     const client = createRuntimeDaemonClient({

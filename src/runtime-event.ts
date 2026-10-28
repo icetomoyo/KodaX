@@ -255,7 +255,8 @@ function validateKnownRuntimeEventPayload(
   }
   if (type === 'user_input.requested') {
     const sharedRequest = isRecord(payload)
-      && hasStrings(payload, ['id', 'sessionId', 'runId', 'kind', 'createdAt', 'expiresAt'])
+      && hasStrings(payload, ['id', 'sessionId', 'runId', 'kind', 'createdAt'])
+      && (payload.expiresAt === undefined || typeof payload.expiresAt === 'string')
       && Number.isSafeInteger(payload.revision);
     const embeddedRequest = isRecord(payload)
       && hasStrings(payload, ['requestId', 'kind'])

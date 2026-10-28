@@ -142,6 +142,8 @@ import {
   registerCustomProviders,
   resolveProviderModelDescriptors,
   resolveSkillModelOverride,
+  KodaXSkillInvocationError,
+  type KodaXSkillInvocationErrorCode,
   reduceOutputSegmentProjection,
   runManagedTask,
   runToolInvocation,
@@ -187,6 +189,7 @@ import {
   appendSessionLineageLabel,
   clearCapabilityCache,
   extractAssistantTextFromMessage,
+  isAskUserUnanswered,
   readLatestGoalState,
 } from "@kodax-ai/agent";
 import type {
@@ -198,6 +201,7 @@ import * as replApi from "@kodax-ai/repl";
 import type { KodaXExtensionSessionRecord } from "@kodax-ai/agent";
 import type {
   AskUserAnswer,
+  AskUserUnanswered,
   AskUserMultiOptions,
   AskUserQuestionOptions,
   ExtensionCommandDefinition,
@@ -871,6 +875,8 @@ export interface RuntimeExternalAgentsOptions {
 }
 
 export interface CreateKodaXRuntimeOptions {
+  /** Local startup observations; callback work is not awaited and cannot change readiness. */
+  readonly onStartupProgress?: (progress: ClientStartupProgress) => void | Promise<void>;
   /** Runtime ownership form. Defaults to a caller-owned embedded Runtime. */
   readonly mode?: KodaXRuntimeMode;
   /** Base directory that owns `.kodax`, matching CLI `--home`; not the `.kodax` directory used by `KODAX_HOME`. */
@@ -881,7 +887,7 @@ export interface CreateKodaXRuntimeOptions {
   readonly defaultModel?: string;
   /** Fail-closed permission deadline in milliseconds; 0 disables it. Defaults to five minutes. */
   readonly permissionTimeoutMs?: number;
-  /** AskUser deadline in milliseconds. A validated default wins on expiry. Defaults to five minutes. */
+  /** Ordinary-question deadline in milliseconds; 0 (default) waits indefinitely. Expiry returns unanswered. */
   readonly userInputTimeoutMs?: number;
   /** Internal daemon-host switch; keeps ordinary embedded runs non-interactive by default. */
   readonly sharedDaemonHost?: boolean;
@@ -965,7 +971,7 @@ export interface ConnectKodaXRuntimeOptions {
   readonly defaultModel?: string;
   /** Applied when this connection starts a new daemon owner; 0 disables it. Defaults to five minutes. */
   readonly permissionTimeoutMs?: number;
-  /** AskUser deadline for a newly started daemon. Defaults to five minutes. */
+  /** Ordinary-question deadline for a new daemon; 0 (default) waits indefinitely. Expiry returns unanswered. */
   readonly userInputTimeoutMs?: number;
   readonly daemonStartupTimeoutMs?: number;
   /** Local startup cancellation; never crosses the Host protocol. */
@@ -1471,6 +1477,15 @@ export interface RuntimeReadOptions {
   readonly signal?: AbortSignal;
 }
 
+export interface RuntimeSessionObserveOptions extends RuntimeReadOptions {
+  /**
+   * Event-stream observers never read the snapshot, so handoff events the
+   * snapshot already reflects are delivered instead of deduplicated against
+   * the snapshot seq.
+   */
+  readonly deliverHandoffEvents?: boolean;
+}
+
 export interface RuntimeSessionDiagnosticsInput extends RuntimeReadOptions {
   readonly sessionId: string;
   /** Select one Run control record; otherwise the authoritative Session Run is used. */
@@ -1910,7 +1925,7 @@ export interface RuntimeSessionService {
   observe(
     sessionId: string,
     listener: RuntimeEventListener,
-    options?: RuntimeReadOptions,
+    options?: RuntimeSessionObserveOptions,
   ): Promise<RuntimeSessionObservation>;
   /**
    * Captures a bounded, read-only diagnostic boundary without recovering,
@@ -2394,9 +2409,12 @@ export type RuntimeFailureStage =
   | "response_stream"
   | "runtime_control"
   | "local_execution"
+  | "skill_load"
+  | "skill_policy"
   | "runtime_settlement";
 
 export type RuntimeProviderErrorCode =
+  | KodaXSkillInvocationErrorCode
   | "credential_unavailable"
   | "authentication_failed"
   | "rate_limited"
@@ -2426,6 +2444,8 @@ export interface RuntimeFailureDetail {
   readonly providerErrorCode: RuntimeProviderErrorCode;
   /** Bounded KodaX-owned display text; never derived from provider response bodies. */
   readonly safeMessage: string;
+  /** Safe Skill identifier for local loading/policy failures; never a filesystem path. */
+  readonly skillName?: string;
   readonly httpStatus?: number;
   /** Provider-controlled code; informative only and not part of KodaX compatibility. */
   readonly upstreamErrorCode?: string;
@@ -3271,7 +3291,8 @@ export interface RuntimeUserInputRequest {
   readonly kind: RuntimeUserInputKind;
   readonly options: unknown;
   readonly createdAt: string;
-  readonly expiresAt: string;
+  /** Absent when this request waits indefinitely under Host policy. */
+  readonly expiresAt?: string;
 }
 
 export interface RuntimeUserInputFilter {
@@ -3282,7 +3303,7 @@ export interface RuntimeUserInputFilter {
 export interface RuntimeUserInputResolution {
   readonly requestId: string;
   readonly accepted: boolean;
-  readonly status: "answered" | "dismissed" | "already_resolved";
+  readonly status: "answered" | "unanswered" | "dismissed" | "already_resolved";
 }
 
 export interface RuntimeUserInputService {
@@ -3291,9 +3312,11 @@ export interface RuntimeUserInputService {
   ): Promise<readonly RuntimeUserInputRequest[]>;
   respond(
     requestId: string,
+    /** An answer, or `{ unanswered: true, reason: 'skipped' | 'non_interactive' }` to skip. */
     answer: unknown,
     options?: { readonly expectedRevision?: number; readonly runId?: string },
   ): Promise<RuntimeUserInputResolution>;
+  /** Legacy question dismissal: settles as unanswered/skipped, never stops its Run. */
   dismiss(
     requestId: string,
     options?: { readonly expectedRevision?: number; readonly runId?: string },
@@ -3777,13 +3800,13 @@ interface RuntimePermissionGrantContext {
 interface PendingUserInput {
   readonly request: RuntimeUserInputRequest;
   readonly resolve: (resolution: RuntimePendingUserInputResolution) => void;
-  readonly timer: ReturnType<typeof setTimeout>;
+  readonly timer?: ReturnType<typeof setTimeout>;
 }
 
-interface RuntimePendingUserInputResolution {
-  readonly status: "answered" | "dismissed";
-  readonly answer?: unknown;
-}
+type RuntimePendingUserInputResolution =
+  | { readonly status: "answered"; readonly answer: unknown }
+  | { readonly status: "unanswered"; readonly reason: AskUserUnanswered['reason'] }
+  | { readonly status: "dismissed" };
 
 type RuntimeEventBus = ReturnType<typeof createRuntimeEventBus>;
 type RuntimePermissionRegistry = ReturnType<
@@ -4010,7 +4033,7 @@ class RuntimeStatusLockTimeoutError extends Error {
 }
 
 const DEFAULT_PERMISSION_TIMEOUT_MS = 5 * 60_000;
-const DEFAULT_USER_INPUT_TIMEOUT_MS = 5 * 60_000;
+const DEFAULT_USER_INPUT_TIMEOUT_MS = 0;
 const MAX_RUNTIME_TIMEOUT_MS = 2_147_483_647;
 const MAX_RUNTIME_PENDING_EVENTS = 1_024;
 const MAX_RUNTIME_PENDING_EVENT_BYTES = 1024 * 1024;
@@ -4124,6 +4147,7 @@ export async function createKodaXRuntime(
     released = true;
   };
   try {
+    createClientStartupProgressReporter(options.onStartupProgress)({ stage: 'initializing', phase: 'recovery' });
     await cleanupRegisteredManagedChildren({
       configHome: options.homeDir ? path.join(path.resolve(options.homeDir), '.kodax') : replApi.KODAX_DIR,
     });
@@ -4164,7 +4188,7 @@ async function createKodaXRuntimeInternal(
   assertRuntimeTimeout(
     "userInputTimeoutMs",
     options.userInputTimeoutMs,
-    1,
+    0,
   );
   if (
     options.daemonHostRuntimeId !== undefined &&
@@ -4198,6 +4222,7 @@ async function createKodaXRuntimeInternal(
       );
     }
     return connectKodaXRuntimeWithStartupCoordination({
+      onStartupProgress: options.onStartupProgress,
       profile: options.profile,
       transport: options.daemonTransport,
       endpoint: options.daemonEndpoint,
@@ -4245,6 +4270,8 @@ async function createKodaXRuntimeInternal(
   if (options.mode !== undefined && options.mode !== "embedded") {
     throw new Error(`Unsupported KodaX runtime mode: ${String(options.mode)}`);
   }
+  const reportStartupProgress = createClientStartupProgressReporter(options.onStartupProgress);
+  reportStartupProgress({ stage: 'initializing', phase: 'runtime' });
   // Single capability source for both the requirement gate and the public facade
   // metadata: what the embedded Runtime asserts it can satisfy is exactly what it
   // advertises on `runtime.capabilities`.
@@ -4854,6 +4881,7 @@ async function createKodaXRuntimeInternal(
     options.externalAgents?.defaultContext,
     onActorHealthChanged,
   );
+  reportStartupProgress({ stage: 'initializing', phase: 'recovery' });
   const recoveredSessionOrders = new Map<string, number>();
   const persistedStatuses = [
     ...recentRunStatuses(persistence.loadRunStatuses()),
@@ -4993,7 +5021,9 @@ async function createKodaXRuntimeInternal(
     }
   };
 
-  const integrations = await createHostIntegrations(configHome, readRuntimeConfig(path.join(configHome, "config.json")));
+  reportStartupProgress({ stage: 'initializing', phase: 'mcp' });
+  const integrations = await createHostIntegrations(configHome,
+    readRuntimeConfig(path.join(configHome, "config.json")), reportStartupProgress);
   // FEATURE_298 T12: per-Session MCP resources persist Host-side so a restart
   // rebuilds them. A deleted Session drops its record; an archived Session
   // keeps it for the unarchive rebuild while its live resources are released.
@@ -5098,7 +5128,7 @@ async function createKodaXRuntimeInternal(
       void pending.catch(() => {});
       return dismissed;
     }
-    return new Promise<T>((resolve) => {
+    return new Promise<T>((resolve, reject) => {
       const onAbort = (): void => resolve(dismissed);
       signal.addEventListener("abort", onAbort, { once: true });
       void pending.then(
@@ -5106,9 +5136,10 @@ async function createKodaXRuntimeInternal(
           signal.removeEventListener("abort", onAbort);
           resolve(value);
         },
-        () => {
+        (error: unknown) => {
           signal.removeEventListener("abort", onAbort);
-          resolve(dismissed);
+          // The MCP boundary converts the first UI failure to protocol cancel.
+          reject(error);
         },
       );
     });
@@ -5147,6 +5178,7 @@ async function createKodaXRuntimeInternal(
   };
   setActiveUserInteraction(sharedElicitSurface);
   if (fs.existsSync(sessionMcpDir)) {
+    reportStartupProgress({ stage: 'initializing', phase: 'sessions' });
     const summaries = await sessionManager.listSessions({ includeArchived: true });
     const knownSessions = new Set(summaries.map((summary) => summary.id));
     const archivedSessions = new Set(
@@ -5658,6 +5690,8 @@ async function createKodaXRuntimeInternal(
           throw createRuntimeConflictError(`Actor has no available generation recovery boundary (phase=${saved?.status.phase}, checkpoint=${Boolean(recovery)}, owner=${saved?.owner ? await inspectRuntimeActorOwner(saved.owner) : 'missing'}).`, saved?.revision ?? 0);
         }
         if (saved.status.origin?.principalId !== trusted.origin?.principalId) throw new Error('Actor recovery requires the original principal.');
+        assertGenerationOutsideSessionStops(persistence.runtimeDir, sessionId,
+          [runId, ...(recovery.parentRunId ? [recovery.parentRunId] : [])]);
         if (recovery.requiresCredential && !trusted.providerCredentialAccessFactory) throw createRuntimeCredentialUnavailableError('Actor recovery requires a fresh credential binding.');
         if (recovery.requiresHostTools && !trusted.actorExtensionRuntime) throw new Error('Actor recovery requires newly bound Host tools.');
         rebindGenerationOptions(recovery.start, trusted.actorExtensionRuntime ? { extensionRuntime: integrations.forSession(sessionId) } : {});
@@ -6454,7 +6488,7 @@ async function connectKodaXRuntimeInternal(
   assertRuntimeTimeout(
     "userInputTimeoutMs",
     options.userInputTimeoutMs,
-    1,
+    0,
   );
   assertRuntimeTimeout(
     "daemonStartupTimeoutMs",
@@ -6520,7 +6554,7 @@ async function connectKodaXRuntimeInternal(
           orphanExitMs,
           startupTimeoutMs: Math.max(1, startupDeadline - Date.now()),
           startupSignal: options.daemonStartupSignal,
-          onStartupProgress: reportProgress,
+          onStartupProgress: options.onStartupProgress === undefined ? undefined : reportProgress,
           connectTimeoutMs: options.daemonConnectTimeoutMs,
           ownerBootstrap,
         })
@@ -8955,6 +8989,9 @@ function createRuntimeSessionService(
     },
     readViewItem(sessionId, itemId, options) {
       ensureOpen();
+      if (itemId.startsWith(`${sessionId}:history:`) || itemId.startsWith(`${sessionId}:transcript:`)) {
+        return service.readHistoryEntry(sessionId, itemId, options);
+      }
       return sessionViews.readItem(sessionId, itemId, options);
     },
     async readHistory(sessionId, options) {
@@ -9057,6 +9094,22 @@ function createRuntimeSessionService(
           if (event.seq === lastSeq) return;
         }
         lastSeq = event.seq;
+        emit(event);
+      };
+      // Handoff events were published while the snapshot materialized, so the
+      // snapshot's seq may already be at or past them. Snapshot consumers keep
+      // the dedupe (the snapshot already reflects those events); event-stream
+      // observers never read the snapshot and receive every handoff event.
+      const deliverHandoff = (event: RuntimeEvent): void => {
+        if (closed || invalidated) return;
+        if (options?.deliverHandoffEvents !== true) {
+          deliver(event);
+          return;
+        }
+        if (lastSeq === undefined || event.seq > lastSeq) lastSeq = event.seq;
+        emit(event);
+      };
+      const emit = (event: RuntimeEvent): void => {
         try {
           listener(event);
         } catch (error: unknown) {
@@ -9123,7 +9176,7 @@ function createRuntimeSessionService(
             const batch = pending
               .splice(0)
               .sort((left, right) => left.seq - right.seq);
-            for (const event of batch) deliver(event);
+            for (const event of batch) deliverHandoff(event);
           }
           live = true;
         }));
@@ -12895,6 +12948,7 @@ async function createRuntimeRunService(deps: {
           || activeRunBySession.has(record.sessionId) || hasPersistedBlockingShellCleanups(persisted)) {
           throw createRuntimeConflictError('Run is not at an available generation recovery boundary.', persisted?.revision ?? 0);
         }
+        assertGenerationOutsideSessionStops(deps.persistence.runtimeDir, record.sessionId, [input.runId]);
         if (!persisted.owner || await inspectRuntimeActorOwner(persisted.owner) !== 'dead') {
           throw createRuntimeConflictError('Generation recovery owner has not been confirmed stopped.', persisted.revision);
         }
@@ -13054,13 +13108,11 @@ async function createRuntimeRunService(deps: {
               || entry.status.sessionOrder > record.frontier) {
               throw sessionStopConflict("Session Stop control history is inconsistent", "control_record");
             }
-            if (!isTerminalRunPhase(entry.status.phase) && entry.owner?.ownerId !== deps.runOwner.ownerId) {
-              throw sessionStopConflict("Session Stop target has another Runtime owner", "run_ownership");
-            }
             return entry;
           });
           const receipts: RuntimeRunStopReceipt[] = [];
           for (const entry of targets) {
+            // abort owns the live/dead owner checks and verified checkpoint takeover.
             receipts.push(isTerminalRunPhase(entry.status.phase)
               ? runtimeRunStopReceipt({ ...entry, accepted: false, effectDeliveryAllowed: false })
               : await this.abort(entry.status.runId));
@@ -18606,6 +18658,8 @@ function parseRuntimeFailureDetail(
     stage: value.stage,
     providerErrorCode: value.providerErrorCode,
     safeMessage: value.safeMessage,
+    ...(typeof value.skillName === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value.skillName)
+      ? { skillName: value.skillName } : {}),
     ...(isHttpStatus(value.httpStatus) ? { httpStatus: value.httpStatus } : {}),
     ...(isSafeDiagnosticIdentifier(value.upstreamErrorCode)
       ? { upstreamErrorCode: value.upstreamErrorCode }
@@ -18692,6 +18746,8 @@ function isRuntimeFailureStage(value: unknown): value is RuntimeFailureStage {
     || value === "response_stream"
     || value === "runtime_control"
     || value === "local_execution"
+    || value === "skill_load"
+    || value === "skill_policy"
     || value === "runtime_settlement";
 }
 
@@ -18969,7 +19025,7 @@ function createRuntimeUserInputRegistry(
     reason?: string,
   ): void => {
     pending.delete(item.request.id);
-    clearTimeout(item.timer);
+    if (item.timer) clearTimeout(item.timer);
     item.resolve(resolution);
     bus.emit(
       "user_input.resolved",
@@ -19004,13 +19060,10 @@ function createRuntimeUserInputRegistry(
     ) {
       return { requestId, accepted: false, status: "already_resolved" };
     }
-    if (reason !== "timeout" && runtimeDeadlineReached(item.request.expiresAt)) {
-      const defaultAnswer = resolveRuntimeUserInputDefault(item.request);
+    if ((resolution.status !== "dismissed" || reason === "host_failed") && reason !== "timeout" && runtimeDeadlineReached(item.request.expiresAt)) {
       settlePending(
         item,
-        defaultAnswer === undefined
-          ? { status: "dismissed" }
-          : { status: "answered", answer: defaultAnswer },
+        { status: "unanswered", reason: "timeout" },
         "timeout",
       );
       return { requestId, accepted: false, status: "already_resolved" };
@@ -19018,7 +19071,7 @@ function createRuntimeUserInputRegistry(
     if (resolution.status === "answered") {
       assertRuntimeUserInputAnswer(item.request, resolution.answer);
     }
-    settlePending(item, resolution, reason);
+    settlePending(item, resolution, reason ?? (resolution.status === "unanswered" ? resolution.reason : undefined));
     return { requestId, accepted: true, status: resolution.status };
   };
 
@@ -19037,6 +19090,7 @@ function createRuntimeUserInputRegistry(
   } => {
     const id = `input_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
     const createdAt = new Date();
+    const hasDeadline = timeoutMs > 0;
     const request: RuntimeUserInputRequest = {
       id,
       revision: 0,
@@ -19046,7 +19100,7 @@ function createRuntimeUserInputRegistry(
       kind: input.kind,
       options: input.options,
       createdAt: createdAt.toISOString(),
-      expiresAt: new Date(createdAt.getTime() + timeoutMs).toISOString(),
+      ...(hasDeadline ? { expiresAt: new Date(createdAt.getTime() + timeoutMs).toISOString() } : {}),
     };
     let resolveResponse: (
       resolution: RuntimePendingUserInputResolution,
@@ -19056,21 +19110,18 @@ function createRuntimeUserInputRegistry(
         resolveResponse = resolve;
       },
     );
-    const timer = setTimeout(
+    const timer = hasDeadline ? setTimeout(
       () => {
-        const defaultAnswer = resolveRuntimeUserInputDefault(request);
         resolvePending(
           id,
-          defaultAnswer === undefined
-            ? { status: "dismissed" }
-            : { status: "answered", answer: defaultAnswer },
+          { status: "unanswered", reason: "timeout" },
           undefined,
           "timeout",
         );
       },
       Math.max(1, timeoutMs),
-    );
-    timer.unref?.();
+    ) : undefined;
+    timer?.unref?.();
     pending.set(id, { request, resolve: resolveResponse, timer });
     bus.emit("user_input.requested", request, {
       sessionId: request.sessionId,
@@ -19108,14 +19159,16 @@ function createRuntimeUserInputRegistry(
         );
     },
     async respond(requestId, answer, options) {
+      if (isAskUserUnanswered(answer) && answer.reason !== "timeout") {
+        return resolvePending(requestId, { status: "unanswered", reason: answer.reason }, options);
+      }
       return resolvePending(requestId, { status: "answered", answer }, options);
     },
     async dismiss(requestId, options) {
       return resolvePending(
         requestId,
-        { status: "dismissed" },
+        { status: "unanswered", reason: "skipped" },
         options,
-        "client_dismissed",
       );
     },
   };
@@ -19180,59 +19233,6 @@ function isRuntimeMultiQuestionAnswer(options: unknown, answer: unknown): boolea
     isRecord(question) && typeof question.question === "string"
       && Object.hasOwn(answer, question.question)
       && isRuntimeQuestionAnswer(question, answer[question.question]));
-}
-
-function resolveRuntimeUserInputDefault(
-  request: RuntimeUserInputRequest,
-): unknown | undefined {
-  if (!isRecord(request.options)) return undefined;
-  if (request.kind === "askUserInput") {
-    return typeof request.options.default === "string"
-      ? request.options.default
-      : undefined;
-  }
-  if (request.kind === "askUser") {
-    return resolveRuntimeAskUserSelectionDefault(request.options);
-  }
-  const questions = request.options.questions;
-  if (!Array.isArray(questions) || questions.length === 0) return undefined;
-  const answers: Record<string, AskUserAnswer> = {};
-  for (const question of questions) {
-    if (!isRecord(question) || typeof question.question !== "string") {
-      return undefined;
-    }
-    const answer = resolveRuntimeAskUserSelectionDefault(question);
-    if (answer === undefined) return undefined;
-    answers[question.question] = answer;
-  }
-  return answers;
-}
-
-function resolveRuntimeAskUserSelectionDefault(
-  options: Readonly<Record<string, unknown>>,
-): AskUserAnswer | undefined {
-  const defaultValue = options.default;
-  if (typeof defaultValue !== "string") return undefined;
-  if (options.kind === "input") return defaultValue;
-  if (!Array.isArray(options.options)) return undefined;
-  const matchesOption = options.options.some((option) => {
-    if (!isRecord(option)) return false;
-    const value = typeof option.value === "string"
-      ? option.value
-      : typeof option.label === "string"
-        ? option.label
-        : undefined;
-    return value === defaultValue;
-  });
-  if (!matchesOption) return undefined;
-  if (options.multiSelect !== true) return defaultValue;
-  const minSelections = options.minSelections;
-  const maxSelections = options.maxSelections;
-  if (
-    (typeof minSelections === "number" && minSelections > 1) ||
-    (typeof maxSelections === "number" && maxSelections < 1)
-  ) return undefined;
-  return [defaultValue];
 }
 
 function createRuntimePermissionRegistry(
@@ -19998,32 +19998,34 @@ async function waitForRuntimeUserInput<T>(
 ): Promise<RuntimePendingUserInputResolution> {
   if (execute === undefined) return pendingInput.response;
   const controller = new AbortController();
-  const outcome = await Promise.race([
-    pendingInput.response.then((resolution) => ({
-      source: "runtime" as const,
-      resolution,
-    })),
-    Promise.resolve()
-      .then(() => execute(controller.signal))
-      .then((answer): RuntimePendingUserInputResolution => ({
-        status: answer === undefined ? "dismissed" : "answered",
-        ...(answer !== undefined ? { answer } : {}),
-      }))
-      .then((resolution) => {
-        userInputs.resolve(pendingInput.request.id, resolution);
-        return { source: "hook" as const, resolution };
-      })
-      .catch((error: unknown) => ({ source: "hook_error" as const, error })),
-  ]);
-  if (outcome.source === "runtime") controller.abort();
-  if (outcome.source !== "hook_error") return outcome.resolution;
-  userInputs.resolve(
-    pendingInput.request.id,
-    { status: "dismissed" },
-    undefined,
-    "host_failed",
-  );
-  throw outcome.error;
+  let failure: { readonly error: unknown } | undefined;
+  const hook = Promise.resolve()
+    .then(() => execute(controller.signal))
+    .then((answer) => {
+      const resolution: RuntimePendingUserInputResolution = isAskUserUnanswered(answer) && answer.reason !== "timeout"
+        ? { status: "unanswered", reason: answer.reason }
+        : answer === undefined || answer === CANCELLED_TOOL_RESULT_MESSAGE
+          ? { status: "unanswered", reason: "skipped" }
+          : { status: "answered", answer };
+      userInputs.resolve(pendingInput.request.id, resolution);
+      // A deadline or competing response may have won before this callback.
+      return pendingInput.response;
+    })
+    .catch((error: unknown) => {
+      const result = userInputs.resolve(pendingInput.request.id, { status: "dismissed" }, undefined, "host_failed");
+      // Settlement resolves pendingInput synchronously; preserve its error even
+      // when that promise wins the race below.
+      if (result.accepted) failure = { error };
+      // A superseded callback cannot change the owner's settled outcome.
+      return pendingInput.response;
+    });
+  try {
+    const resolution = await Promise.race([pendingInput.response, hook]);
+    if (failure) throw failure.error;
+    return resolution;
+  } finally {
+    controller.abort();
+  }
 }
 
 function wrapKodaXEvents(input: {
@@ -20250,7 +20252,7 @@ function wrapKodaXEvents(input: {
     execute: ((signal: AbortSignal) => Promise<T>) | undefined,
     dismissed: T,
     stopped: T = dismissed,
-  ): Promise<T> => {
+  ): Promise<T | AskUserUnanswered> => {
     if (managedStopDecision() !== undefined) return stopped;
     const pendingInput = userInputs.trackAndWait({
       sessionId: meta?.sessionId ?? record.sessionId,
@@ -20270,7 +20272,9 @@ function wrapKodaXEvents(input: {
       );
       return resolution.status === "answered"
         ? (resolution.answer as T)
-        : dismissed;
+        : resolution.status === "unanswered"
+          ? { unanswered: true, reason: resolution.reason }
+          : dismissed;
     } finally {
       leaveUserInputPhase();
     }
@@ -20948,7 +20952,7 @@ function wrapKodaXEvents(input: {
           askUser: (
             options: AskUserQuestionOptions,
             meta?: KodaXToolEventMeta,
-          ): Promise<AskUserAnswer> =>
+          ): Promise<AskUserAnswer | AskUserUnanswered> =>
             runWithUserInputPhase(
               "askUser",
               options,
@@ -20966,7 +20970,7 @@ function wrapKodaXEvents(input: {
           askUserMulti: (
             options: AskUserMultiOptions,
             meta?: KodaXToolEventMeta,
-          ): Promise<Record<string, AskUserAnswer> | undefined> =>
+          ): Promise<Record<string, AskUserAnswer> | AskUserUnanswered | undefined> =>
             runWithUserInputPhase(
               "askUserMulti",
               options,
@@ -20983,7 +20987,7 @@ function wrapKodaXEvents(input: {
           askUserInput: (
             options: { question: string; default?: string },
             meta?: KodaXToolEventMeta,
-          ): Promise<string | undefined> =>
+          ): Promise<string | AskUserUnanswered | undefined> =>
             runWithUserInputPhase(
               "askUserInput",
               options,
@@ -23502,6 +23506,24 @@ function readRuntimeSessionStopRecord(file: string): RuntimeSessionStopRecord | 
   return value as unknown as RuntimeSessionStopRecord;
 }
 
+/** A partially delivered durable Stop still owns every member of its fixed frontier. */
+function assertGenerationOutsideSessionStops(runtimeDir: string, sessionId: string, runIds: readonly string[]): void {
+  const directory = path.join(runtimeDir, 'session-stops');
+  let files: string[];
+  try { files = fs.readdirSync(directory); }
+  catch (error) {
+    if (isRecord(error) && error.code === 'ENOENT') return;
+    throw error;
+  }
+  for (const file of files) {
+    if (!file.endsWith('.json')) continue;
+    const stop = readRuntimeSessionStopRecord(path.join(directory, file));
+    if (stop?.sessionId === sessionId && runIds.some(runId => stop.runIds.includes(runId))) {
+      throw sessionStopConflict('Generation recovery is blocked by a durable Session Stop.', 'session_stop');
+    }
+  }
+}
+
 function runtimeRunStopReceipt(
   stop: PersistedRuntimeRunStop,
 ): RuntimeRunStopReceipt {
@@ -23964,6 +23986,7 @@ function classifyRuntimeRunFailure(error: unknown): {
 const RUNTIME_SAFE_FAILURE_MESSAGE_LIMIT = 1_024;
 const RUNTIME_MAX_RETRY_AFTER_MS = 86_400_000;
 const RUNTIME_PROVIDER_ERROR_CODES: ReadonlySet<string> = new Set<RuntimeProviderErrorCode>([
+  "skill_not_found", "skill_not_registered", "skill_registry_unavailable", "skill_policy_restore_failed",
   "credential_unavailable",
   "authentication_failed",
   "rate_limited",
@@ -23991,6 +24014,7 @@ interface RuntimeFailureClassification {
   readonly failureKind: RuntimeRunFailureKind;
   readonly stage: RuntimeFailureStage;
   readonly providerErrorCode: RuntimeProviderErrorCode;
+  readonly skillName?: string;
 }
 
 interface RuntimeFailureFacts {
@@ -24029,6 +24053,11 @@ function buildRuntimeFailureDetail(
 ): RuntimeFailureDetail {
   const source = readRuntimeExecutionFailure(error) ?? error;
   const classification = classifyRuntimeFailureDetail(source);
+  if (classification.skillName !== undefined) {
+    const local = { ...classification,
+      skillName: filterRuntimeFailureIdentifier(classification.skillName, run) ?? 'unknown' };
+    return { ...local, safeMessage: runtimeFailurePublicMessage(local) };
+  }
   const httpStatus = readRuntimeHttpStatus(source);
   const upstreamErrorCode = filterRuntimeDiagnosticIdentifier(
     readRuntimeUpstreamCode(source),
@@ -24121,6 +24150,13 @@ function isNonNegativeSafeInteger(value: number | undefined): value is number {
 function classifyRuntimeFailureDetail(
   error: unknown,
 ): RuntimeFailureClassification {
+  const skillCode = readStringErrorField(error, 'code');
+  if (readStringErrorField(error, 'source') === 'local'
+    && (skillCode === 'skill_not_found' || skillCode === 'skill_not_registered'
+      || skillCode === 'skill_registry_unavailable' || skillCode === 'skill_policy_restore_failed')) {
+    const skill = new KodaXSkillInvocationError(skillCode, readStringErrorField(error, 'skillName') ?? 'unknown');
+    return { failureKind: 'local_execution', stage: skill.stage, providerErrorCode: skill.code, skillName: skill.skillName };
+  }
   if (error instanceof KodaXContextOverflowError) {
     return runtimeFailure("context_capacity", "transport", "context_capacity_exceeded");
   }
@@ -24500,6 +24536,11 @@ function runtimeFailurePublicMessage(
     return "Provider request was aborted.";
   }
   switch (classification.providerErrorCode) {
+    case 'skill_not_found':
+    case 'skill_not_registered':
+    case 'skill_registry_unavailable':
+    case 'skill_policy_restore_failed':
+      return new KodaXSkillInvocationError(classification.providerErrorCode, classification.skillName ?? 'unknown').message;
     case "credential_unavailable": return "Provider credential is unavailable.";
     case "authentication_failed": return "Provider authentication failed.";
     case "rate_limited": return "Provider rate limit exceeded.";

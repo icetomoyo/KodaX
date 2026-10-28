@@ -513,7 +513,7 @@ const TOPICS: readonly KodaXManualTopic[] = [
       "Workspace-local .kodax/runtime state remains readable but is denied to shell writes even when the workspace root is writable.",
       "Its recoverable Session sequence cursor uses a lock-held durable write and reconstructs from event ledgers after truncation.",
       "Beta.3 repairs Windows WFP probe allocation in doctor and bundled ASRT 0.0.65; SDK installs with --ignore-scripts include the fix.",
-      "The v0.7.97-alpha.9 release uses Windows native shell protocol 10. It uses two authenticated, nonce-bound protocol streams,",
+      "The v0.7.97-alpha.10 release uses Windows native shell protocol 10. It uses two authenticated, nonce-bound protocol streams,",
       "keeps control available after target stdin EOF, and accepts timeout/cancellation only after validating a",
       "nonce-bound terminal record that proves the command Job drained. Runtime capability `sandboxRuntime:11`",
       "prevents an older daemon from silently serving this authority split.",
@@ -1307,10 +1307,11 @@ const TOPICS: readonly KodaXManualTopic[] = [
       "@kodax-ai/artifacts module): @kodax-ai/llm, @kodax-ai/agent,",
       "@kodax-ai/coding, and @kodax-ai/repl. The published @kodax-ai/kodax bundle exposes",
       "17 SDK subpaths: /agent, /llm, /coding, /media, /repl, /skills, /mcp, /session,",
-      "/runtime, /sandbox, /a2a, /experimental-memory, /artifacts, /artifacts/client,",
+      "/client, /runtime, /sandbox, /a2a, /experimental-memory, /artifacts, /artifacts/client,",
       "/artifacts/runtime, and /artifacts/kodax. The Artifact SDK ships only inside",
       "the main package — there is no separate @kodax-ai/artifacts npm publication.",
-      "Use @kodax-ai/kodax/coding for coding tasks; @kodax-ai/kodax/runtime for embedded",
+      "Use @kodax-ai/kodax/client for shared-Session product integrations;",
+      "@kodax-ai/kodax/coding for independent coding tasks; @kodax-ai/kodax/runtime for embedded",
       "or local-daemon sessions/runs/events/permissions;",
       "@kodax-ai/kodax/sandbox for explicit host-owned ASRT containment;",
       "@kodax-ai/kodax/a2a for the A2A 1.0 JSON-RPC/SSE client/server edge; and",
@@ -1352,9 +1353,27 @@ const TOPICS: readonly KodaXManualTopic[] = [
       "The v0.7.94 SDK keeps `sandboxRuntime:4` and `crashOutcomeModel:2`.",
       "The v0.7.95 SDK advertises Windows `sandboxRuntime:5` and local",
       "`runtimeExitSettlement:2`; `crashOutcomeModel:2` is unchanged and publication remains manual.",
-      "The v0.7.97-alpha.9 release advertises Windows `sandboxRuntime:11`; setup generation 11; `runtimeExitSettlement:2`",
+      "The v0.7.97-alpha.10 release advertises Windows `sandboxRuntime:11`; setup generation 11; `runtimeExitSettlement:2`",
       "and `crashOutcomeModel:2` are unchanged. Linux native text authorities build in digest-pinned",
       "`manylinux_2_28` images and require no `GLIBC_*` symbol newer than 2.28 (Issue 328).",
+      "The v0.7.97-alpha.10 release resumes checkpointed Runs and task trees after Host",
+      "restart with fresh scoped authority, preserving original history, tool receipts,",
+      "pending input intent and iteration budgets. Live context-capacity recovery reaches",
+      "durable generation boundaries with retrievable older assistant history, cumulative",
+      "request-only user-text paging, budgeted runtime provenance, and at most four",
+      "measured-reduction retries; a Host can save the transcript and wait in `recovering`.",
+      "Kimi K3.1 provider routes join the registry with all seven effort levels mapped",
+      "like the official Kimi client. AskUser questions wait indefinitely by default and",
+      "support explicit skip; skip or Host timeout returns `unanswered` with its reason.",
+      "Current startup callbacks also report `initializing` with Host phases",
+      "modules/extensions/runtime/recovery/mcp/sessions/a2a/listener. The launcher reuses its",
+      "readiness poll and bounded bootstrap-log tail; no extra health probes or waits are added.",
+      "Fast phases may be coalesced; these display facts never establish readiness or ownership.",
+      "Without an observer the phase channel is disabled. Release tagging and publication remain separate.",
+      "Client exit recovery converges without rewriting unknown outcomes: startup",
+      "readiness is separate from historical client cleanup acknowledgements, and old",
+      "exit requests never fence or stop replacement Hosts.",
+      "Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.9 contract is retained.",
       "The v0.7.97-alpha.9 release checks Session admission through canonical identity",
       "metadata instead of loading complete historical transcripts: a readable metadata",
       "header with an unreadable body (for example a Windows ERROR_CRC surfacing as EIO)",
@@ -1456,7 +1475,10 @@ const TOPICS: readonly KodaXManualTopic[] = [
       "at consumption time, steers keep the target Run's authorization, redirects carry their own, and",
       "different authorizations never merge or widen. Every provider wire request carries its execution",
       "attribution; `lifecycle.requestExit` settles client work and records durable exit receipts that",
-      "`readKodaXClientExits` verifies after reconnect; the daemon exposes execution facts and",
+      "`readKodaXClientExits` verifies after reconnect. Receipt `recovery.state` separates safe startup",
+      "from historical cleanup unknown: ready permits start/connect after exact owner/process/Job",
+      "and matching shutdown evidence; pending/blocked provide nextAction. Original unknown work stays",
+      "unknown, late results are re-read, and an old exit cannot stop a replacement. The daemon exposes execution facts and",
       "per-session statistics. Every v0.7.96 stable and v0.7.97-alpha.1 contract is retained.",
       "The v0.7.97-alpha.1 release lands FEATURE_298's unified product Host and client contract:",
       "the REPL pins to the independent Host, `KodaXProductClient` ships through `/client` with",
@@ -1676,15 +1698,18 @@ const TOPICS: readonly KodaXManualTopic[] = [
       "stay host-owned when a non-empty CLI uiHistory exists.",
       "The same release requires `liveOutputSegments:1` for new daemon consumers and",
       "bundles lazy Anthropic/OpenAI SDK dependency graphs in standalone binaries.",
-      "AskUser and permission prompts have independent bounded deadlines and"
-        + " owner AbortSignals. On expiry, Runtime accepts only a validated"
-        + " default; otherwise it dismisses the request. MCP reverse elicitation"
+      "AskUser and permission prompts have independent policies and"
+        + " owner AbortSignals. Ordinary questions wait indefinitely by default"
+        + " and allow explicit skip. Skip or Host timeout returns unanswered;"
+        + " only Stop interrupts the Run,"
+        + " and defaults are never submitted automatically. MCP reverse elicitation"
         + " cancels through the same signal. `reclaimStaleKodaXFileLock` is the"
         + " public Agent helper for an explicitly identified stale learning lock;"
         + " it is not a general lock deletion primitive.",
       "Configure `userInputTimeoutMs` independently from `permissionTimeoutMs`;"
         + " both are validated before embedded, Worker, or daemon startup."
-        + " Permission timeout 0 retains its timer-disable meaning.",
+        + " Both accept 0 to disable their timer; user input defaults to 0,"
+        + " while permission timeout retains its five-minute default.",
       "",
       "Require `learningCenter:1` and `skillLearningLoop:1` when a host depends on the complete",
       "F263 project-canary contract. `runtime.learning` exposes list/get/snapshot/events/subscribe",

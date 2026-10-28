@@ -9,6 +9,13 @@ describe('generation recovery admission', () => {
     expect(rebindGenerationOptions(resume, undefined)).toEqual({});
   });
 
+  it('retains the thread concurrency limit as configuration without requiring a new authority binding', () => {
+    const resume = captureGenerationResume({ prompt: 'Continue', options: { maxConcurrentThreadsPerSession: 2 } });
+    expect(resume.options.maxConcurrentThreadsPerSession).toBe(2);
+    expect(resume.requiredBindings).toEqual([]);
+    expect(rebindGenerationOptions(resume, {})).toEqual({});
+  });
+
   it('retains resolved instructions but excludes authority and already executed tool invocations', () => {
     const resume = captureGenerationResume({ prompt: 'Keep the public API.', options: {
       provider: 'deepseek', model: 'small', toolInvocation: { name: 'old-command', input: {} },

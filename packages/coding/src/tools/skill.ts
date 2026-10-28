@@ -21,14 +21,23 @@
  * `tool_result`. The model invokes by name, not by file path; the tool
  * does the loading + variable resolution.
  *
- * KodaX skill tool — minimal port. Replicates the invocation surface
- * (`{skill: string, args?: string}`) and content delivery, without the
- * sub-agent forking / permission UI / model-override coordination
- * claudecode layers on top (those can come incrementally if needed).
+ * KodaX retains this invocation surface and delegates action policies,
+ * hooks and model selection to the owning Run. Host authorization remains
+ * authoritative; fork execution requires an explicit Host invocation.
  */
 
 import { expandSkillForLLM, getSkillRegistry, initializeSkillRegistry } from '@kodax-ai/agent';
 import type { KodaXToolExecutionContext } from '../types.js';
+import { TOOL_CALL_NAME } from './tool-bridge.js';
+
+/** Includes attempted bridge loads even when their inner arguments are invalid. */
+export function isSkillToolCall(call: { readonly name: string; readonly input?: Record<string, unknown> }): boolean {
+  if (call.name === 'skill') return true;
+  const name = call.input?.name ?? call.input?.tool_name;
+  return call.name === TOOL_CALL_NAME && typeof name === 'string' && name.trim() === 'skill';
+}
+
+export const SKILL_ACTION_DEFERRED = '[Blocked] Task actions were deferred until after Skill loading. Read the Skill result, resolve any activation error, then retry these actions in a separate tool batch.';
 
 function normalizeSkillToolName(rawSkill: string): string {
   const trimmed = rawSkill.trim();
@@ -74,6 +83,12 @@ export async function toolSkill(
     if (fullSkill.disableModelInvocation) {
       return `[Tool Error] skill ${skillName}: Skill "${skillName}" has model invocation disabled`;
     }
+    if (fullSkill.context === 'fork') {
+      return `[Tool Error] skill ${skillName}: context: fork requires explicit invocation so the Host can create its execution boundary.`;
+    }
+    if (!ctx.activateModelSkill && (fullSkill.allowedTools || fullSkill.hooks || fullSkill.model || fullSkill.agent)) {
+      return `[Tool Error] skill ${skillName}: runtime Skill activation is unavailable.`;
+    }
     const metadata = registry.get(skillName);
     if (metadata?.source === 'learned') {
       if (metadata.learned === undefined
@@ -89,6 +104,7 @@ export async function toolSkill(
       });
     }
 
+    const activation = await ctx.activateModelSkill?.(fullSkill, args, registry);
     const expanded = await expandSkillForLLM(fullSkill, args, {
       workingDirectory: cwd,
       projectRoot,
@@ -98,9 +114,10 @@ export async function toolSkill(
       // (unchanged for the trusted standalone CLI).
       executeDynamicContext: ctx.skillDynamicContext?.execute,
       disableDynamicContext: ctx.skillDynamicContext?.disable,
+      assertDynamicContextAllowed: activation?.assertDynamicContextAllowed,
     });
 
-    return expanded.content;
+    return [expanded.content, activation?.additionalContext].filter(Boolean).join('\n\n');
   } catch (error) {
     return `[Tool Error] skill ${skillName}: ${error instanceof Error ? error.message : String(error)}`;
   }

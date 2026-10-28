@@ -37,7 +37,7 @@ export interface AskUserQuestionItem {
    * of parsing it out of natural-language question text.
    */
   maxSelections?: number;
-  /** Runtime-validated option value selected if the interaction expires. */
+  /** Suggested option for display; never submitted automatically. */
   default?: string;
   /**
    * Choice surfaces are open-ended by default: hosts SHOULD offer a synthetic
@@ -69,7 +69,7 @@ export interface AskUserQuestionOptions {
   minSelections?: number;
   /** FEATURE_222 — see {@link AskUserQuestionItem.maxSelections}. */
   maxSelections?: number;
-  /** Input text or a Runtime-validated option value selected on expiry. */
+  /** Suggested input or option for display; never submitted automatically. */
   default?: string;
   /**
    * Choice surfaces are open-ended by default: hosts SHOULD offer a synthetic
@@ -90,6 +90,20 @@ export interface AskUserCustomInputAnswer {
 
 export type AskUserSelectionAnswer = string | AskUserCustomInputAnswer;
 export type AskUserAnswer = AskUserSelectionAnswer | AskUserSelectionAnswer[];
+
+/** Normal settlement of a question without a user answer. */
+export interface AskUserUnanswered {
+  /** Boolean discriminant cannot collide with a multi-question string answer map. */
+  readonly unanswered: true;
+  readonly reason: 'timeout' | 'skipped' | 'non_interactive';
+}
+
+export function isAskUserUnanswered(value: unknown): value is AskUserUnanswered {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return record.unanswered === true
+    && (record.reason === 'timeout' || record.reason === 'skipped' || record.reason === 'non_interactive');
+}
 
 /**
  * FEATURE_222 — reserved option value a host may append as a synthetic option
@@ -119,12 +133,13 @@ export function isAskUserCustomInputAnswer(value: unknown): value is AskUserCust
  * an unexpected array to its first element so a mis-configured host degrades
  * predictably instead of leaking `[object Array]` into a string comparison.
  */
-export function asSingleSelection(answer: AskUserAnswer): string {
+export function asSingleSelection(answer: AskUserAnswer | AskUserUnanswered): string {
+  if (isAskUserUnanswered(answer)) return '';
   const first = Array.isArray(answer) ? answer[0] : answer;
   return isAskUserCustomInputAnswer(first) ? first.value : first ?? '';
 }
 
-/** Lifecycle signal supplied by a bounded interaction owner. */
+/** Lifecycle signal supplied by the interaction owner. */
 export interface UserInteractionPromptContext {
   /** Aborted when the interaction expires or its owner settles it elsewhere. */
   readonly signal: AbortSignal;
@@ -143,23 +158,25 @@ export interface UserInteraction {
    * as an array. If the user chooses the host-provided custom-input option,
    * return `{ kind: 'customInput', value }` in the single or array position.
    * Plain string/string[] hosts remain valid for backward compatibility.
+   * Questions can return `AskUserUnanswered`; only the owner sets a
+   * timeout result. Hosts may skip with reason `skipped` or `non_interactive`.
    */
   askUser?: (
     options: AskUserQuestionOptions,
     context?: UserInteractionPromptContext,
-  ) => Promise<AskUserAnswer>;
+  ) => Promise<AskUserAnswer | AskUserUnanswered>;
   /** Ask several independent questions sequentially. Resolves a per-question
    *  value map using the same `AskUserAnswer` shape as `askUser`, or undefined
-   *  when the user cancels. */
+   *  when the user skips (legacy hosts). Requests may return `AskUserUnanswered`. */
   askUserMulti?: (
     options: AskUserMultiOptions,
     context?: UserInteractionPromptContext,
-  ) => Promise<Record<string, AskUserAnswer> | undefined>;
-  /** Ask for free-text input. Resolves the text, or undefined when cancelled. */
+  ) => Promise<Record<string, AskUserAnswer> | AskUserUnanswered | undefined>;
+  /** Free-text input, an unanswered result, or undefined when skipped (legacy hosts). */
   askUserInput?: (
     options: { question: string; default?: string },
     context?: UserInteractionPromptContext,
-  ) => Promise<string | undefined>;
+  ) => Promise<string | AskUserUnanswered | undefined>;
 }
 
 /**

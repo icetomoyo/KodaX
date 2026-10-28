@@ -10,6 +10,7 @@ import {
   ASK_USER_BACK_SIGNAL,
   ASK_USER_CUSTOM_INPUT_SIGNAL,
   isAskUserCustomInputAnswer,
+  isAskUserUnanswered,
   type AskUserAnswer,
   type AskUserQuestionItem,
   type AskUserQuestionOptions,
@@ -243,8 +244,12 @@ export async function toolAskUserQuestion(
         }),
       });
 
+      if (ctx.abortSignal?.aborted) return CANCELLED_TOOL_RESULT_MESSAGE;
+      if (isAskUserUnanswered(answers)) {
+        return JSON.stringify({ success: true, status: 'unanswered', reason: answers.reason });
+      }
       if (answers === undefined) {
-        return CANCELLED_TOOL_RESULT_MESSAGE;
+        return JSON.stringify({ success: true, status: 'unanswered', reason: 'skipped' });
       }
 
       const normalized = normalizeAnswerMap(answers);
@@ -279,8 +284,12 @@ export async function toolAskUserQuestion(
         default: input.default as string | undefined,
       });
 
+      if (ctx.abortSignal?.aborted) return CANCELLED_TOOL_RESULT_MESSAGE;
+      if (isAskUserUnanswered(userText)) {
+        return JSON.stringify({ success: true, status: 'unanswered', reason: userText.reason });
+      }
       if (userText === undefined) {
-        return CANCELLED_TOOL_RESULT_MESSAGE;
+        return JSON.stringify({ success: true, status: 'unanswered', reason: 'skipped' });
       }
 
       return JSON.stringify({
@@ -332,8 +341,13 @@ export async function toolAskUserQuestion(
 
     const userChoice = await ctx.askUser(askOptions);
 
+    if (ctx.abortSignal?.aborted) return CANCELLED_TOOL_RESULT_MESSAGE;
+    if (isAskUserUnanswered(userChoice)) {
+      return JSON.stringify({ success: true, status: 'unanswered', reason: userChoice.reason });
+    }
+
     if (typeof userChoice === 'string' && userChoice.startsWith(CANCELLED_TOOL_RESULT_PREFIX)) {
-      return userChoice;
+      return JSON.stringify({ success: true, status: 'unanswered', reason: 'skipped' });
     }
 
     const normalized = normalizeAskUserAnswer(userChoice);

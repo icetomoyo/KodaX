@@ -11,8 +11,8 @@
  * LLM-facing schema nudges real models toward the intended call shape.
  *
  * Run modes (env var `KODAX_ASK_USER_CUSTOM_INPUT_PROBE`):
- * - `pilot`: ark/v4flash x 3 cases x 1 run (~3 calls).
- * - `panel`: zhipu/glm52, kimi, mmx/m3, ark/v4pro, ark/v4flash x 3 cases.
+ * - `pilot`: ark/v4flash x 4 cases x 1 run (4 calls, <=4096 output tokens).
+ * - `panel`: five aliases x 4 cases (20 calls, <=20480 output tokens).
  * - `off`: compile/no-cost smoke path.
  *
  * Raw dump path:
@@ -25,6 +25,7 @@ import { join } from 'node:path';
 
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
 import { describe, expect, it } from 'vitest';
+import { KODAX_TOOLS } from '@kodax-ai/coding';
 
 import { availableAliases, type ModelAlias } from '../benchmark/harness/aliases.js';
 import { runOneShot } from '../benchmark/harness/harness.js';
@@ -54,75 +55,9 @@ const PANEL_ALIASES: readonly ModelAlias[] = [
 const REQUESTED_ALIASES: readonly ModelAlias[] =
   MODE === 'pilot' ? (['ark/v4flash'] as const) : PANEL_ALIASES;
 const DUMP_ROOT = join(tmpdir(), 'kodax-eval-dumps', 'ask-user-custom-input');
-const ASK_USER_TOOL: KodaXToolDefinition = {
-  name: 'ask_user_question',
-  description:
-    'Ask the user a question. Supports single-select (default), multi-select, free-text input, and custom input from select dialogs. Select questions are open-ended by default: KodaX adds an "Other..." custom input option automatically, so do NOT add your own Other/Custom option. Set allow_custom_input=false only for closed safety/protocol decisions. When you have multiple independent questions, use the "questions" array; each question is presented separately with its own options. Do NOT combine multiple questions into one string.',
-  input_schema: {
-    type: 'object',
-    properties: {
-      question: { type: 'string', description: 'The question to ask the user.' },
-      questions: {
-        type: 'array',
-        description: 'Multiple independent questions. Use this instead of combining multiple questions into one string.',
-        items: {
-          type: 'object',
-          properties: {
-            question: { type: 'string' },
-            options: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  label: { type: 'string' },
-                  description: { type: 'string' },
-                  value: { type: 'string' },
-                },
-                required: ['label'],
-              },
-            },
-            multi_select: { type: 'boolean' },
-            allow_custom_input: {
-              type: 'boolean',
-              description: 'Defaults to true. Set false only for closed safety/protocol choices.',
-            },
-            custom_input_label: { type: 'string' },
-            custom_input_prompt: { type: 'string' },
-            custom_input_default: { type: 'string' },
-          },
-          required: ['question', 'options'],
-        },
-      },
-      kind: {
-        type: 'string',
-        enum: ['select', 'input'],
-        description: 'Use input when the user needs to type arbitrary free text.',
-      },
-      options: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            label: { type: 'string' },
-            description: { type: 'string' },
-            value: { type: 'string' },
-          },
-          required: ['label'],
-        },
-      },
-      multi_select: { type: 'boolean' },
-      allow_custom_input: {
-        type: 'boolean',
-        description: 'Defaults to true. Set false only for closed safety/protocol choices.',
-      },
-      custom_input_label: { type: 'string' },
-      custom_input_prompt: { type: 'string' },
-      custom_input_default: { type: 'string' },
-      default: { type: 'string' },
-    },
-    required: ['question'],
-  },
-};
+const definition = KODAX_TOOLS.find(tool => tool.name === 'ask_user_question');
+if (!definition) throw new Error('Production AskUser definition is missing.');
+const ASK_USER_TOOL: KodaXToolDefinition = { name: definition.name, description: definition.description, input_schema: definition.input_schema };
 const SYSTEM_PROMPT = [
   'You are KodaX, an AI coding assistant.',
   'When the user explicitly asks you to ask them a question, call the ask_user_question tool directly.',
@@ -130,6 +65,17 @@ const SYSTEM_PROMPT = [
 ].join('\n');
 
 const CASES: readonly AskUserEvalCase[] = [
+  {
+    id: 'skippable_question_has_no_required_flag',
+    userMessage: 'Use ask_user_question to ask which module to review: Runtime or Client. Allow me to skip this question.',
+    judges: [mustCallAskUser(), {
+      name: 'no_required_answer_flag', category: 'correctness',
+      judge(_output, context) {
+        const input = askUserInputs(context?.toolCalls ?? [])[0];
+        return { passed: input !== undefined && !Object.hasOwn(input, 'required') };
+      },
+    }],
+  },
   {
     id: 'open_select_no_manual_other_option',
     userMessage:
@@ -189,6 +135,8 @@ describe(`Eval: ask_user_question custom input (${MODE})`, () => {
             systemPrompt: SYSTEM_PROMPT,
             userMessage: testCase.userMessage,
             tools: [ASK_USER_TOOL],
+            maxOutputTokens: 1024,
+            timeoutMs: 60_000,
           });
           const judgeRun = runJudges(result.text, testCase.judges, {
             toolCalls: result.toolCalls,
@@ -333,5 +281,5 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 
 function parseMode(value: string | undefined): Mode {
   if (value === 'off' || value === 'pilot' || value === 'panel') return value;
-  return 'pilot';
+  return 'off';
 }

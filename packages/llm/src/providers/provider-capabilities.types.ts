@@ -143,6 +143,7 @@ const VALID_REASONING_PRESETS: readonly KodaXReasoningPresetName[] = [
   'deepseek-v4-anthropic',
   'deepseek-toggle',
   'kimi-k3',
+  'kimi-k3.1',
   'kimi-k2.7-code',
   'kimi-hybrid-toggle',
   'minimax-m3',

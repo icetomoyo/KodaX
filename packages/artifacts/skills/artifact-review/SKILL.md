@@ -1,16 +1,53 @@
 ---
 name: artifact-review
-description: Author, import, repair and visually review PPTX with the optional Artifact SDK and require current evidence for other visual tasks.
+description: Use already registered Artifact tools to create/edit PPTX or render and inspect supported PPTX, PDF, DOCX and image artifacts. Apply this adapter when the task uses artifact_* tools; use visual-review for general visual methods, websites, video or unsupported formats.
 ---
 
-Use artifact_capabilities to inspect runtime preparation. If Chromium is missing, artifact_prepare installs the pinned runtime through normal managed permissions. Use artifact_create/open/edit/export for PPTX content and artifact_render for current exported pixels. Geometry is in inches. Editing requires object IDs and the current sourceHash; output is always a new file.
+# Artifact tool adapter
 
-Review actual returned images. `ready` means evidence is prepared, never visual approval. Check every required page in batches of at most four. Look for clipping, overlap, missing images, wrong alignment, unreadable text and rendering differences. After repair, render the new output; old-source evidence cannot approve a new revision. Report path, hash, page coverage and remaining limitations.
+## Available tools and preparation
 
-Lightweight rendering needs compatible Chromium, not PowerPoint or LibreOffice. Missing dependencies, unsupported objects, missing fonts/resources, animations and transitions remain unverified for affected requirements. LibreOffice is optional static conversion; static pixels never verify animation.
+Use the current registered tool catalog and artifact_capabilities. When runtime
+preparation is needed, use artifact_prepare within the task's existing authorization
+and normal managed Host permissions. If preparation is denied or unavailable,
+report the affected scope as unverified and continue useful checks. Installation
+outside that managed mechanism needs separate authorization. Missing tools do not
+authorize registering a new adapter, expanding access or inventing a tool result.
 
-Use artifact_open for actual format/source identity. artifact_render supports PPTX/PDF/DOCX pages and PNG/JPEG/WebP/SVG pixels. DOCX pagination belongs to the render layout; its lightweight candidate always retains unverified Word/WPS fidelity. It does not require LibreOffice. Native PDF records each page's actual dimensions and rotation. artifact_read_evidence checks returned source/dependencies, raster provenance, hash and geometry before delivering the PNG.
+Use visual-review for the general evidence method. This Skill supplies Artifact
+parameters and format limits; avoid repeating a second full review process.
 
-artifact_capture requires kind-matched locators: static region; paginated page; interactive target/state/viewport/sequence; temporal time. Local HTML supports only loaded state and sequence 0 at the requested viewport; native/live surfaces require their existing authorized owner. SVG temporal capture samples actual SMIL seconds, not CSS/script animation. Spreadsheet native display/calculation, video/GIF/audio, EPUB and 3D/CAD remain unsupported by this default runtime. Use existing authorized tools when present and state actual coverage; never fabricate states, continuous coverage or a pass when adapter, vision or evidence is missing.
+## Author and edit
 
-The main agent owns repair. If independent review is required, a static reviewer receives frozen pixels and requirements with read-only tools. Interactive testing needs narrowly authorized interaction tools; keep readOnly policy. Rendering uses normal KodaX managed permissions, sandbox, cancellation and settlement. Do not create a verifier daemon, notifications or configuration.
+Use artifact_create/open/edit/export for supported PPTX work. Geometry is in inches;
+edits require object IDs and the current sourceHash. Output is a new file. Respect
+review-only requests. Use artifact_open to establish actual format and source identity.
+
+## Render and inspect
+
+artifact_render supports PPTX/PDF/DOCX pages and PNG/JPEG/WebP/SVG pixels. Inspect
+actual returned images, at most four pages per batch. `ready` means evidence is
+prepared, never visual approval. Check clipping, overlap, missing resources,
+alignment and legibility. After edits, render the new source; old evidence cannot
+approve a new revision. Report source hash, actual coverage and unverified scope.
+
+artifact_read_evidence validates source/dependencies, raster provenance, hash and
+geometry before returning PNG evidence. artifact_capture uses kind-matched locators:
+static region; paginated page; interactive target/state/viewport/sequence; temporal
+time. A receipt or image path does not establish that pixels were inspected.
+
+## Limits and fallback
+
+Lightweight rendering uses compatible Chromium, not PowerPoint or LibreOffice.
+DOCX lightweight pagination remains unverified for Word/WPS fidelity. Native PDF
+retains each page's dimensions and rotation. Missing fonts/resources and unsupported
+objects remain unverified for affected requirements; optional static conversion
+cannot verify animation or transitions.
+
+Local HTML capture supports loaded state and sequence 0 at the requested viewport.
+Native/live surfaces need their existing authorized owner. SVG temporal capture
+samples actual SMIL seconds, not CSS/script animation. Spreadsheet native display
+and calculation, video/GIF/audio, EPUB and 3D/CAD are unsupported by this default
+adapter. Use existing authorized tools when available; report the exact remaining
+gap without fabricating states or continuous coverage. Keep normal sandbox,
+cancellation and settlement; no verifier daemon or separate completion API.

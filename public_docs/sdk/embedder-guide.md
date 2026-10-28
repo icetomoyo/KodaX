@@ -1,7 +1,7 @@
 # KodaX SDK — Product Client and Host Integration
 
 This page describes the current FEATURE_298/299/301 development tree, checked against
-package version `0.7.97-alpha.9`. The version alone does not claim that all current
+package version `0.7.97-alpha.10`. The version alone does not claim that all current
 working-tree changes are already published to npm. Check the installed
 package exports and the connected Host's capabilities when migrating.
 
@@ -51,17 +51,46 @@ credentials at the Host, rather than passing API keys in input submissions.
 Both also accept trusted Main's optional `authorizeExecution`; see the
 [Host authorization seam](../../docs/SPACE_SDK_SEAMS.md#可信执行授权).
 
+### Recover a previous client exit
+
+Client exit recovery reads (`lifecycle.readExit` and offline
+`readKodaXClientExits`) expose `receipt.recovery` independently of historical
+`cleanup.state`: `ready`, `pending`, or `blocked`, with `reason`, `nextAction`
+and `checkedAt`. An exact old Host/process/Windows Job shutdown plus matching
+successful cleanup evidence can permit `ready` while old memory/execution work
+remains `unknown`. No retry count promotes unknown work to success, and original
+receipts are not rewritten or deleted by recovery reads. Space should gate on
+`recovery.state === 'ready'`; missing recovery is not readiness. The next action
+is `start_or_connect`, `retry_exit`, `retry_verification`, or `inspect_failure`.
+Pending lists omit ready history, while direct/offline reads retain it. Old exit
+replays only verify their exact owner and cannot stop a replacement. See the
+[exit recovery contract and integration example](../../docs/SPACE_SDK_SEAMS.md#客户端退出与恢复).
+
 ### Show local startup progress
 
 Both entries accept an optional `onStartupProgress` callback with the shared
 `ClientStartupProgress` data type. Its stages are `checking`, `starting`,
-`upgrading`, `waiting`, `connecting` and `ready`. `ensure` reports the actual
+`upgrading`, `waiting`, `initializing`, `connecting` and `ready`. `ensure` reports the actual
 local launcher stages; passive `connect` only reports `connecting` and `ready`.
 For `waiting`, `reason` is `connected_clients`, `host_starting` or `host_stopping`:
 waiting for other clients to disconnect, a Host to start, or the previous Host
 to exit. It does not forcibly stop busy clients or work. The low-level
 `ensureKodaXRuntime` / `connectKodaXRuntime` entries accept the same callback;
 the type is also exported by `/runtime` and the pure contract entry.
+
+New Hosts report `{ stage: 'initializing', phase }` before real initialization
+work. Phases are `modules`, `extensions`, `runtime`, `recovery`, `mcp`,
+`sessions`, `a2a`, and `listener`. This covers module loading, extension loading,
+previous-process/task recovery, MCP prewarm, session resources and connection
+setup. Fast phases may be coalesced; this is current display state, not a replay
+log or percentage. Existing Hosts and queued launchers retain the original
+waiting/connection events. Direct `createKodaXRuntime` accepts the same callback
+for its local initialization steps.
+
+The launcher reuses its existing readiness poll and reads at most 4 KiB from
+the existing bootstrap log, matching the current launch ID and process. There
+are no extra health probes, RPCs, timers or fixed delays. Without an observer,
+this channel is disabled. Phase records never establish readiness or ownership.
 
 ```ts
 import { ensureKodaXClient, type ClientStartupProgress } from '@kodax-ai/kodax/client';
@@ -81,7 +110,7 @@ export async function openProductClient(
 `ready` means authentication and capability checks have passed and Client APIs
 are usable. It does not mean a UI has rendered or a Session has loaded. Stages
 may repeat during existing retries; identical consecutive events are merged.
-No per-poll event stream or persistent startup log is added. Callbacks run
+No per-poll event stream or separate startup log is added. Callbacks run
 locally and are not awaited; synchronous errors and rejected promises go to
 the existing diagnostic sink without changing startup's result. Keep rendering
 callbacks quick. Existing calls without the callback continue to work.
@@ -564,6 +593,14 @@ hosts have a different trust boundary (user trusts the host UI,
 host UI mediates everything else).
 
 ### The LLM-triggered `skill` tool path — `KodaXOptions.skillDynamicContext` (v0.7.58)
+
+Model-selected Skills use the owning Run's existing `allowed-tools`, lifecycle
+hooks and model preference, while concrete actions retain Host authorization.
+Multiple active Skill restrictions intersect; unchanged repeated loads do not
+restart hooks. Changing an active Skill requires a new Run. A batch containing
+Skill loading defers other actions to a later batch so the model can read the
+instructions or resolve a refusal first. `context: fork` requires explicit Host
+invocation and is refused before model-side dynamic expansion.
 
 The `SkillContext` hook above covers Skills your host explicitly expands via
 `resolveSkillContent` or `SkillRegistry.invoke()`. A model-visible Skill can
@@ -2322,6 +2359,24 @@ every child step and can overwhelm users.
 
 ### Result review and historical sessions
 
+The five core Skills (`git-workflow`, `tdd`, `code-review`, `skill-creator`,
+`visual-review`) are visible to model discovery. Their `allowed-tools` shell
+patterns match full commands, for example `Bash(git *, npm *)`; these restrictions
+do not grant Host permission or bypass the sandbox. Code Review permits read-only
+Git inspection; TDD's tests-only branch allows a first-pass success without
+changing correct production code. Skill Creator packages into an archive and
+uses an explicit isolated destination when testing installation.
+
+Skill Creator's Node helpers load public SDK exports. Independent execution needs
+its own authorized Provider, model and cwd; it does not inherit Space bindings.
+`run-trigger-eval.js` labels single-description semantic screening explicitly.
+Actual model selection requires the visible full catalog and observed `skill`
+tool calls. See [the evaluation reference](../../packages/agent/src/capabilities/skills/builtin/skill-creator/references/evaluation.md).
+
+The optional `artifact-review` Skill describes registered Artifact tools and
+their format limits. Visual preparation follows the existing managed permission
+path; unavailable or denied capabilities keep the affected checks unverified.
+
 The main agent verifies each requested requirement with actual tool and rendered evidence before delivery. The built-in `visual-review` skill covers static images/charts, paginated documents/slides/sheets, interactive web/app/terminal/canvas/3D surfaces, and temporal video/animation results. Missing capabilities and unchecked scope are reported as unverified. An ordinary read-only child reviewer may contribute findings within the same Run; the main agent owns repairs and the final answer.
 
 New Runs do not emit `onSidecarMessage` or `sidecar.message`. Existing persisted sidecar items and synthetic messages remain readable, without replaying execution. Run completion, Goal status, and review findings retain separate meanings.
@@ -3519,9 +3574,10 @@ failureSub.close();
 | Field | Stability and use |
 |---|---|
 | `failureKind` | Bounded broad category for UI grouping and coarse policy. |
-| `stage` | Failure boundary: `catalog`, `credential`, `request_build`, `transport`, `response_stream`, `runtime_control`, or `runtime_settlement`. This is separate from the Run lifecycle `stage`. |
+| `stage` | Failure boundary: `catalog`, `credential`, `request_build`, `transport`, `response_stream`, `runtime_control`, `local_execution`, `skill_load`, `skill_policy`, or `runtime_settlement`. This is separate from the Run lifecycle `stage`. |
 | `providerErrorCode` | Stable KodaX-owned code. Use this field for programmatic handling. |
 | `safeMessage` | Non-empty, at most 1,024 characters, and owned by KodaX. Safe for ordinary user display, but still treat it as text rather than markup. |
+| `skillName` | Optional safe Skill identifier for local Skill loading/policy failures; never a filesystem path. |
 | `httpStatus` | Optional validated HTTP status. It is not sufficient by itself to identify a model or endpoint error. |
 | `upstreamErrorCode` | Optional provider-controlled identifier. Useful for support only; not part of KodaX compatibility. |
 | `requestId` | Optional bounded upstream request identifier for provider support. |
@@ -3543,6 +3599,9 @@ The stable classification is:
 | `cancelled` | `runtime_control` | `cancelled` |
 | `provider_aborted` | `transport` | `cancelled` |
 | `runtime_cleanup` | `runtime_settlement` | `runtime_settlement_failed` |
+| `local_execution` | `local_execution` | `local_execution_error` |
+| `local_execution` | `skill_load` | `skill_not_found`, `skill_not_registered`, `skill_registry_unavailable` |
+| `local_execution` | `skill_policy` | `skill_policy_restore_failed` |
 | `context_capacity` | `runtime_control` | `context_capacity_exceeded` |
 | `provider` | `catalog`, `transport`, or `response_stream` | `catalog_error`, `provider_error` |
 
@@ -3556,6 +3615,22 @@ otherwise it remains `resource_not_found`. This prevents a generic status from
 claiming certainty KodaX does not have. User cancellation and an isolated
 provider-side abort share the stable `cancelled` code but remain distinguishable
 by `failureKind` and `stage`.
+
+An enforced Skill invocation reloads policy inside the executing Host. If Main
+discovers a local Skill but the independent daemon does not have that trusted
+registration, execution fails before any Provider request. `skill_not_found`
+means trusted discovery did not find the Skill; `skill_not_registered` means a
+bound trusted registry excludes it; `skill_registry_unavailable` means registry
+discovery failed or is incomplete; `skill_policy_restore_failed` means trusted full policy loading
+failed. Results, failure events, status, diagnostics and daemon IPC preserve these
+facts. Safe messages name the Skill and a fixed reason, without raw paths or IO
+errors. These local failures do not acquire Provider HTTP/upstream fields.
+The legacy field name `providerErrorCode` also carries these local KodaX codes.
+Clients must register trusted sources in their Host separately; serialized Main
+paths or policy fields never bypass reloading or `enforceAtRuntime` checks.
+Incomplete discovery does not block already discovered Skills. It prevents a
+missing name from being declared absent until trusted sources can be scanned.
+Rediscovery refreshes this fact; absent optional sources are not scan errors.
 Local context exhaustion is reported as `context_capacity` /
 `runtime_control` / `context_capacity_exceeded`; when available,
 `contextTokens.required` is the estimated complete request and
@@ -3721,15 +3796,32 @@ rechecks pending state, and makes Runtime resolution authoritative. A late UI
 answer is ignored. Embedded AskUser callbacks receive the same optional third
 argument, `{ signal }`; abort the visible prompt when it fires.
 
-`createKodaXRuntime({ userInputTimeoutMs })` and daemon auto-start use an
-independent AskUser deadline (300,000 ms by default). The value must be a
-positive integer no greater than 2,147,483,647 and is validated before
-embedded or daemon startup. The same bound applies to
-`permissionTimeoutMs`, except that its existing value `0` disables the
-permission timer. On expiry, the Runtime accepts only a model-supplied default that is
-valid for the rendered options and selection bounds; otherwise it dismisses
-the question. MCP reverse elicitation uses the same five-minute bounded UI
-lifecycle and safely cancels a stalled prompt.
+Ordinary AskUser requests wait indefinitely by default and allow explicit skip.
+There is no required-answer flag. An ordinary-question deadline is controlled
+by `createKodaXRuntime({ userInputTimeoutMs })` or, for a newly started shared
+Host, `ensureKodaXClient({ userInputTimeoutMs })` / `ensureKodaXRuntime`.
+Connecting to an existing Host does not change its policy. The CLI equivalent
+is `kodax daemon serve --user-input-timeout-ms <milliseconds>`; this is not a
+`config.json` setting.
+The timeout defaults to `0`, disabling it; positive values are integer
+milliseconds up to 2,147,483,647. Defaults only suggest an answer for display.
+Skip/timeout returns `{ unanswered: true, reason: 'skipped' | 'timeout' | 'non_interactive' }`;
+the tool emits `{ success: true, status: 'unanswered', reason }` for the model
+to interpret normally. Permission approval keeps its separate five-minute
+default and fail-closed policy, with `permissionTimeoutMs: 0` disabling its
+timer. MCP elicitation retains its protocol-level lifecycle; an unanswered form
+field maps to the protocol's cancel result rather than being submitted as data.
+
+For ordinary questions, legacy dialog `cancel`, `userInputs.dismiss`, and an
+undefined input/multi-question callback result mean skip. They never interrupt
+the Run. A legacy select callback's cancellation sentinel also means skip unless
+the tool's owner AbortSignal is aborted. Explicit Run/Session Stop remains the
+interruption operation; question cleanup on observation close is not a response.
+An initial ordinary prompt callback failure is a tool error, never a skipped answer.
+The SDK MCP bridge preserves the first UI callback error for the MCP boundary
+to return protocol `cancel`; an explicit user decline still returns `decline`.
+Late callback errors cannot replace an answer, deadline, or Stop already settled
+by the owner. Skipping a previous-task recovery question retains its checkpoint.
 
 SDK clients that create a concrete request may pass `toolInput` and
 `executionCwd` to `runtime.permissions.request(...)` in both embedded and
@@ -5555,18 +5647,29 @@ AskUser is no longer an in-process callback for daemon Coder runs. Any client
 with the responder scope can list the pending request and answer or dismiss it.
 The request revision and run binding prevent a stale UI from answering a new
 request. Exactly one concurrent answer is accepted. Runtime creation accepts
-independent `permissionTimeoutMs` and `userInputTimeoutMs` values; each defaults
-to five minutes. `userInputTimeoutMs` must be positive;
-`permissionTimeoutMs` may also be `0` to disable its timer. Positive values
+independent `permissionTimeoutMs` and `userInputTimeoutMs` values. Permissions
+default to five minutes; ordinary questions default to no deadline and can be
+explicitly skipped. `userInputTimeoutMs` defaults to `0`; a positive Host value
+enables a deadline. Both timeouts accept `0` to disable their timer. Positive values
 must not exceed 2,147,483,647.
 The same non-negative bound applies to a per-request
 `runtime.permissions.request({ timeoutMs })` override. A supplied `expiresAt`
 must be a valid date no more than 2,147,483,647 ms in the future; past dates
 fail closed immediately.
-On AskUser expiry, the Runtime selects `default` only when it
-is valid for that request (or is the free-text input default); without a valid
-default it dismisses the request. For multi-question requests every question
-must have a valid default to produce an automatic answer.
+An AskUser expiry settles as `unanswered` with reason `timeout`;
+`default` is never selected automatically. Client hosts may explicitly skip
+requests through `client.interactions.respond(id, { kind: 'skip' })`
+or the Runtime facade's `userInputs.respond(id, { unanswered: true, reason: 'skipped' })`.
+Non-interactive clients use `{ kind: 'skip', reason: 'non_interactive' }` (or
+the same reason in the Runtime facade's unanswered value). The Host preserves
+that reason in the normal tool result; only the Host may originate `timeout`.
+Legacy question `cancel` and `userInputs.dismiss` also settle as unanswered/skipped;
+they do not interrupt the Run. Explicit Run/Session Stop is independent.
+Permission cancellation still rejects the approval. `expiresAt` is absent for unbounded requests.
+The Host keeps pending requests through client disconnect/unsubscription or
+page refresh; clients re-read interactions after reconnect. They must not
+run local timers or submit a cancel merely because a view closed. Every reply
+uses the exact request ID; late and duplicate replies are `already_resolved`.
 
 ```ts
 for (const request of await runtime.userInputs.listPending({ sessionId })) {
@@ -7002,6 +7105,26 @@ current display; `readItem` expands display references, while `readHistory`,
 `readHistoryEntry` and `searchHistory` provide canonical history and its own
 readable references. A display preview is not the full
 message. The Runtime-to-product adapter is internal and is not an SDK export.
+
+Task reports are neutral `event` items with `taskResult` metadata in both live
+views and history. Its `source` is `child_task` or `workflow`; optional `taskId`,
+`runId`, `title` and `artifactRefs` retain known task facts. `status` is
+`completed`, `failed`, `cancelled` or `unknown`. A child failure/cancellation is
+independent of the root Run's phase and `failureDetail`.
+
+`taskResult.reportFormat` is `markdown`; the body lives in `item.text`, expanded
+through existing `readItem`/`readHistoryEntry` methods when bounded. Canonical
+metadata bodies retain code fences, whitespace and literal entities. Only old
+messages with an explicit task-delivery source have their envelope removed and
+transport escapes decoded once. Missing status remains unknown; prose such as
+`failed:` and a `<task-completed>` tag alone do not establish terminal state.
+The known legacy Actor `state="interrupted"` maps to cancellation. Mixed old/new
+deliveries retain unmatched old envelopes at their proven neighboring boundary;
+budgeted model-only fragments never reorder authoritative metadata.
+An old mailbox delivery ID is not an Actor Turn ID. The raw canonical message
+is preserved. Report order follows canonical delivery order; matching text does
+not merge different tasks. Existing per-surface item-ID boundaries still apply.
+This adds no pagination operation.
 
 Keep an input's original text, artifacts and `inputId` until its outcome is
 known. After a lost response, query that same Host with `inputs.read`; only a

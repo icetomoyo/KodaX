@@ -1,6 +1,6 @@
 # SDK 统一 Client 契约迁移指南
 
-适用范围：当前工作树的 FEATURE_298/299/301 实现；本次核对的包版本为 `0.7.97-alpha.9`。版本号不表示 npm 已发布当前工作树中的所有变更。接入前应核对所安装包的导出和 Host 能力。
+适用范围：当前工作树的 FEATURE_298/299/301 实现；本次核对的包版本为 `0.7.97-alpha.10`。版本号不表示 npm 已发布当前工作树中的所有变更。接入前应核对所安装包的导出和 Host 能力。
 
 Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附件/统计与退出恢复范围见 [SDK/Host 接缝](SPACE_SDK_SEAMS.md)。
 
@@ -29,6 +29,36 @@ TUI、桌面 UI、IDE、自动化应用接入共享 KodaX 时，以 `KodaXProduc
 可用性检查 `assertWorkModeAvailable(options)` 仅启动无工具 VM，不产生模型请求；它不证明所选模型的智能或任务效率。
 
 ## 2. 旧调用如何迁移
+
+产品 `runs.read` / `runs.await` 新增可选 `failureDetail`，透传 Runtime 的本地
+Skill 失败事实。应优先按稳定 `providerErrorCode` 与 `stage` 处理，再展示
+`safeMessage`，不要将所有失败统一标为 Provider 错误；`skillName` 是安全标识，
+不使用调用方路径作为可信来源。`skill_not_found / skill_not_registered /
+skill_registry_unavailable / skill_policy_restore_failed` 均为本地失败，阶段为
+`skill_load / skill_policy`。旧结果没有该字段时保留原失败事实，不推断 Provider
+已被调用。具体语义及 Space 的独立注册职责见 [错误契约](CLIENT_CONTRACT.md#错误断连与重连)。
+
+客户端退出恢复新增 `ClientExitReceipt.recovery`，由 `readExit` 和离线
+`readKodaXClientExits` 每次重新核验。Space 应用 `recovery.state` 的
+`ready/pending/blocked` 和 `nextAction`，替换仅按 `cleanup.state` 阻塞启动的
+逻辑。原 Host、精确进程/Job 身份和成功 shutdown outcome 已验证时，旧
+`cleanup.state=unknown` 可以与 `recovery.state=ready` 同时存在：旧任务结果仍
+未知，但允许安全启动/连接。初始 accepted 或旧 Host 缺少 recovery 不代表可
+放行，应由新 SDK 离线核验。旧回执保留、重试不改 unknown 为成功、旧退出
+不作用于新 Host。状态与动作表见 [客户端退出与恢复](SPACE_SDK_SEAMS.md#客户端退出与恢复)。
+
+普通提问的等待语义已调整：`ask_user_question` / `askUser` 默认无限等待，
+允许用户明确跳过，不再有 `required` 作答约束，也不自动采用默认答案。
+`userInputTimeoutMs` 默认 `0`（禁用期限）；Host 显式配置正值时才启用期限。
+提问的 `expiresAt` 现在可缺失；UI 不应据此补出本地期限。问题超时/跳过时，
+SDK 回调返回 `AskUserUnanswered`（`{ unanswered: true, reason: 'timeout' | 'skipped' | 'non_interactive' }`），
+调用方应先用 `/agent` 的 `isAskUserUnanswered` 收窄，再处理答案。
+Client 用 `{ kind: 'skip' }` 显式跳过问题。普通问题的旧 `cancel` / `userInputs.dismiss`
+以及旧输入回调返回 undefined 都视为跳过，正常继续；明确 Run/Session Stop 才中断 Run。
+非交互客户端用 `{ kind: 'skip', reason: 'non_interactive' }`，保留无法回答的原因；
+`timeout` 仍由 Host 期限产生，客户端不能伪造。MCP 无回答仍转换为协议 `cancel`。
+Space 刷新、断连或关闭订阅只清理本地展示，重连后重读同一请求并按原 ID 回答；
+权限审批的拒绝和超时策略不变。完整结算规则见 [Client 契约](CLIENT_CONTRACT.md)。
 
 当前源码增加可选 `ClientSession.lastMessageAt`（摘要同样提供）。会话列表和裸 `-r` 使用最近真实对话时间排序，缺失时回退创建时间；`before` 的创建时间过滤含义不变。UI 可用 `lastMessageAt ?? createdAt` 显示日期，继续透传不透明游标，避免本地再次按创建时间排序。分页是实时边界，不保证跨页冻结快照，新增活动后刷新首页。历史压缩、Actor/设置保存和合成消息不刷新最近对话时间。完整规则见 [Client 契约](CLIENT_CONTRACT.md)。
 
@@ -119,6 +149,12 @@ Session Stop 的 `expectedRunId` 来自用户点击时观察的 Run，`requestId
 ### 启动进度与 UI 交接
 
 两个产品入口都接受可选 `onStartupProgress(progress)`，`ClientStartupProgress` 可从 `/client` 或纯契约入口作类型导入。底层 `ensureKodaXRuntime/connectKodaXRuntime` 使用同一类型和回调。ensure 报告实际 `checking/starting/upgrading/waiting/connecting/ready` 阶段；被动 connect 只报告 `connecting/ready`。`waiting.reason` 为 `connected_clients/host_starting/host_stopping`，沿用现有等待与期限，不强停其他客户端。
+
+新 Host 还会通过同一回调报告 `stage: 'initializing'`，`phase` 为
+modules/extensions/runtime/recovery/mcp/sessions/a2a/listener。显示层应增加这一分支；
+原样接收纯数据即可，不需要另建探测。阶段可能合并或重复，不表示百分比或 Ready。
+SDK 复用既有启动轮询和 bootstrap 日志尾部，无回调时不启用该通道；
+`createKodaXRuntime` 也可用同一回调观察其本机初始化步骤。
 
 启动 `ready` 只表示认证、身份及能力校验完成，Client 接口可用；不表示 Session 已加载、订阅已同步或 UI 已渲染。以返回 Promise 的结果处理成功/失败，在 `finally` 清除启动显示。阶段可以重复，连续相同通知会合并。回调在本机调用、不被等待；抛错或异步拒绝走现有诊断，不改变启动结果。已有无回调调用无需改动。
 

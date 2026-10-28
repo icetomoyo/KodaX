@@ -1,12 +1,22 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { mkdir, writeFile } from "fs/promises";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdir, unlink, writeFile } from "fs/promises";
 import { join } from "path";
 import { SkillRegistry } from "./skill-registry.js";
 import { createTempDir, removeTempDir } from "./test-utils/temp-dir.js";
 
 const tempDirs: string[] = [];
+const io = vi.hoisted(() => ({ afterRead: undefined as ((file: string) => Promise<void>) | undefined }));
+vi.mock('fs/promises', async original => {
+  const actual = await original<typeof import('fs/promises')>();
+  return { ...actual, readFile: async (...args: Parameters<typeof actual.readFile>) => {
+    const data = await actual.readFile(...args);
+    await io.afterRead?.(String(args[0]));
+    return data;
+  } };
+});
 
 afterEach(async () => {
+  io.afterRead = undefined;
   await Promise.all(tempDirs.splice(0).map((dir) => removeTempDir(dir)));
 });
 
@@ -36,6 +46,72 @@ ${description}
 }
 
 describe("SkillRegistry", () => {
+  it('does not republish an in-flight body from an older discovery', async () => {
+    const root = await createTempDir('kodax-skill-concurrent-');
+    tempDirs.push(root);
+    await writeSkill(root, 'user', 'refreshable', 'Old body');
+    const registry = new SkillRegistry(root, { projectPaths: [join(root, 'project')],
+      userPaths: [join(root, 'user')], pluginPaths: [], builtinPath: join(root, 'builtin') });
+    await registry.discover();
+    let release!: () => void;
+    let entered!: () => void;
+    const reading = new Promise<void>(resolve => { entered = resolve; });
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    io.afterRead = async file => {
+      if (file !== join(root, 'user', 'refreshable', 'SKILL.md')) return;
+      io.afterRead = undefined;
+      entered();
+      await blocked;
+    };
+    const pending = registry.loadFull('refreshable');
+    try {
+      await reading;
+      await writeSkill(root, 'project', 'refreshable', 'New body', 'disable-model-invocation: true');
+      await registry.discover();
+    } finally { release(); }
+    const loaded = await pending;
+    expect(loaded.source).toBe('project');
+    expect(loaded.disableModelInvocation).toBe(true);
+    expect((await registry.loadFull('refreshable')).content).toContain('New body');
+  });
+  it('rediscovery replaces cached bodies, invocation flags and source precedence', async () => {
+    const root = await createTempDir('kodax-skill-rediscover-');
+    tempDirs.push(root);
+    await writeSkill(root, 'user', 'refreshable', 'Old body');
+    const registry = new SkillRegistry(root, { projectPaths: [join(root, 'project')],
+      userPaths: [join(root, 'user')], pluginPaths: [], builtinPath: join(root, 'builtin') });
+    await registry.discover();
+    expect((await registry.loadFull('refreshable')).content).toContain('Old body');
+    await writeSkill(root, 'project', 'refreshable', 'New body', 'disable-model-invocation: true');
+    await registry.discover();
+    const current = await registry.loadFull('refreshable');
+    expect(current.content).toContain('New body');
+    expect(current.source).toBe('project');
+    expect(current.disableModelInvocation).toBe(true);
+    await unlink(join(root, 'project', 'refreshable', 'SKILL.md'));
+    await unlink(join(root, 'user', 'refreshable', 'SKILL.md'));
+    await registry.discover();
+    await expect(registry.loadFull('refreshable')).rejects.toThrow('Skill not found');
+  });
+  it('retains incomplete discovery without losing valid Skills and clears it after source repair', async () => {
+    const root = await createTempDir('kodax-skill-discovery-failure-');
+    tempDirs.push(root);
+    const unavailable = join(root, 'configured-source');
+    await writeFile(unavailable, 'not a directory');
+    await writeSkill(root, 'valid', 'available-skill', 'A valid Skill');
+    const registry = new SkillRegistry(root, { projectPaths: [unavailable, join(root, 'valid')],
+      userPaths: [], pluginPaths: [], builtinPath: join(root, 'absent-builtins') });
+    await registry.discover();
+    expect(registry.discoveryIncomplete).toBe(true);
+    expect(registry.has('available-skill')).toBe(true);
+    await expect(registry.loadFull('available-skill')).resolves.toMatchObject({ name: 'available-skill' });
+    await unlink(unavailable);
+    await mkdir(unavailable);
+    await registry.discover();
+    expect(registry.discoveryIncomplete).toBe(false);
+    expect(registry.has('available-skill')).toBe(true);
+  });
+
   it("discovers skills, exposes read-only list accessors, and caches full skill loads", async () => {
     const rootDir = await createTempDir("kodax-skill-registry-");
     tempDirs.push(rootDir);

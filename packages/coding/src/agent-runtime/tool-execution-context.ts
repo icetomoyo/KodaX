@@ -162,6 +162,7 @@ export function buildToolExecutionContext(
     // (or refuses) instead of the built-in execSync fallback.
     skillDynamicContext: options.skillDynamicContext,
     skillRegistry: options.context?.skillRegistry,
+    activateModelSkill: options.context?.activateModelSkill,
     admitLearnedSkillInvocation: options.context?.admitLearnedSkillInvocation,
     skillScriptRunner: options.context?.skillScriptRunner,
     assertReadablePath: options.context?.assertReadablePath,

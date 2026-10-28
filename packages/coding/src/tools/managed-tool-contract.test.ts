@@ -71,7 +71,9 @@ describe('ordinary managed root tool presentation', () => {
     const question = sent.find(tool => tool.name === 'ask_user_question')!;
     expect(structural(question.input_schema)).toEqual(structural(getBuiltinToolDefinition('ask_user_question')!.input_schema));
     expect(question.description).toContain('Batch custom settings inherit flat settings');
-    expect(question.description).toContain('expiry');
+    expect(question.description).toContain('never submitted automatically');
+    expect(question.description).toContain('unanswered');
+    expect(question.description).not.toContain('expiry fallback');
     expect(JSON.stringify(contract(question)).length).toBeLessThan(JSON.stringify(contract(getBuiltinToolDefinition('ask_user_question')!)).length);
     expect(JSON.stringify(worker.tools)).toBe(before);
     expect(getToolDefinition('glob')!.description).not.toBe('Find file paths by glob.');
@@ -126,7 +128,7 @@ describe('ordinary managed root tool presentation', () => {
 
   it('requires re-audit when the canonical question contract evolves', () => {
     expect(createHash('sha256').update(JSON.stringify(contract(getBuiltinToolDefinition('ask_user_question')!))).digest('hex'))
-      .toBe('0ec227dcdea54cc38ffe1277d08290b068226d96b12cc5bb064006e8be858fc2');
+      .toBe('0b712ab5ff41445ed079e6b50fcc5a38acf77b45f9aaceef1b6cd38442f74672');
   });
 
   it('does not inherit eligibility through SDK construction or Script wrappers', () => {

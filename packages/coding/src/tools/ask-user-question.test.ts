@@ -10,6 +10,25 @@ function makeCtx(overrides: Partial<KodaXToolExecutionContext>): KodaXToolExecut
 }
 
 describe('toolAskUserQuestion - single select', () => {
+  it('keeps multi-question answers named kind and reason distinct from unanswered results', async () => {
+    const result = await toolAskUserQuestion({
+      questions: [
+        { question: 'kind', options: [{ label: 'unanswered' }] },
+        { question: 'reason', options: [{ label: 'timeout' }] },
+      ],
+    }, makeCtx({ askUserMulti: async () => ({ kind: 'unanswered', reason: 'timeout' }) }));
+    expect(JSON.parse(result)).toEqual({ success: true, answers: { kind: 'unanswered', reason: 'timeout' } });
+  });
+
+  it.each(['timeout', 'skipped', 'non_interactive'] as const)('returns an explicit unanswered result for an ordinary question (%s)', async reason => {
+    const askUser = vi.fn(async () => ({ unanswered: true as const, reason }));
+    const result = await toolAskUserQuestion(
+      { question: 'Color?', default: 'blue', options: [{ label: 'Blue', value: 'blue' }] },
+      makeCtx({ askUser }),
+    );
+    expect(JSON.parse(result)).toEqual({ success: true, status: 'unanswered', reason });
+  });
+
   it('emits {choice} for a string answer', async () => {
     const ctx = makeCtx({ askUser: async () => 'blue' });
     const result = await toolAskUserQuestion(
@@ -19,14 +38,24 @@ describe('toolAskUserQuestion - single select', () => {
     expect(JSON.parse(result)).toEqual({ success: true, choice: 'blue' });
   });
 
-  it('passes a cancellation sentinel through verbatim', async () => {
+  it('treats legacy dialog cancellation as a normal skipped result', async () => {
     const cancelled = `${CANCELLED_TOOL_RESULT_PREFIX} Operation cancelled by user`;
     const ctx = makeCtx({ askUser: async () => cancelled });
     const result = await toolAskUserQuestion(
       { question: 'Color?', options: [{ label: 'Blue', value: 'blue' }] },
       ctx,
     );
-    expect(result).toBe(cancelled);
+    expect(JSON.parse(result)).toEqual({ success: true, status: 'unanswered', reason: 'skipped' });
+  });
+
+  it('preserves an explicit Stop when the tool abort signal is set', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const result = await toolAskUserQuestion(
+      { question: 'Color?', options: [{ label: 'Blue', value: 'blue' }] },
+      makeCtx({ abortSignal: controller.signal, askUser: async () => CANCELLED_TOOL_RESULT_MESSAGE }),
+    );
+    expect(result).toBe(CANCELLED_TOOL_RESULT_MESSAGE);
   });
 
   it('enables custom input by default and emits compatible custom metadata', async () => {
@@ -219,13 +248,13 @@ describe('toolAskUserQuestion - free-text input', () => {
     expect(JSON.parse(result)).toEqual({ success: true, choice: 'typed answer' });
   });
 
-  it('cancels free-text input when the host returns undefined', async () => {
+  it('skips free-text input normally when the host returns undefined', async () => {
     const ctx = makeCtx({ askUserInput: async () => undefined });
     const result = await toolAskUserQuestion(
       { question: 'What else?', kind: 'input' },
       ctx,
     );
-    expect(result).toBe(CANCELLED_TOOL_RESULT_MESSAGE);
+    expect(JSON.parse(result)).toEqual({ success: true, status: 'unanswered', reason: 'skipped' });
   });
 });
 
@@ -274,13 +303,13 @@ describe('toolAskUserQuestion - multi question', () => {
     expect(result).toContain('reserved');
   });
 
-  it('cancels when the host returns undefined', async () => {
+  it('skips normally when the host returns undefined', async () => {
     const ctx = makeCtx({ askUserMulti: async () => undefined });
     const result = await toolAskUserQuestion(
       { questions: [{ question: 'q', options: [{ label: 'A', value: 'a' }] }] },
       ctx,
     );
-    expect(result).toBe(CANCELLED_TOOL_RESULT_MESSAGE);
+    expect(JSON.parse(result)).toEqual({ success: true, status: 'unanswered', reason: 'skipped' });
   });
 
   it('threads custom input config and normalizes per-question custom answers', async () => {

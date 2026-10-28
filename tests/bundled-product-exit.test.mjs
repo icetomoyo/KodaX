@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -12,7 +12,7 @@ async function verifiedExit(homeDir, clientInfo, requestId) {
   do {
     const receipt = (await readKodaXClientExits({ homeDir, clientInfo })).find(row => row.requestId === requestId);
     if (receipt?.host.state === 'failed') assert.fail(receipt.host.message);
-    if (receipt?.host.state === 'succeeded') return receipt;
+    if (receipt?.host.state === 'succeeded' && receipt.recovery?.state === 'ready') return receipt;
     await delay(50);
   } while (Date.now() < deadline);
   assert.fail('Exact Host exit was not verified.');
@@ -61,18 +61,37 @@ test('Product quit verifies exact process cleanup offline and never quits a repl
     assert.equal(completed.cleanup.state, 'succeeded', JSON.stringify(completed));
     assert.equal(completed.host.cleanup, 'succeeded');
     assert.equal(completed.host.owner.runtimeId, accepted.runtimeId);
-
-    client = await ensureKodaXClient({ homeDir, clientInfo });
-    const recovered = await client.lifecycle.readExit('quit-original');
-    assert.equal(recovered.host.state, 'succeeded');
-    assert.equal(recovered.host.replacementRunning, true);
-    await client.lifecycle.requestExit({ requestId: 'quit-original', shutdownHost: true });
-    await delay(100);
-    assert.ok((await client.sessions.create({ projectPath: homeDir })).id);
-    const replacement = await client.lifecycle.requestExit({ requestId: 'quit-replacement', shutdownHost: true });
-    assert.notEqual(replacement.runtimeId, accepted.runtimeId);
-    await client.disconnect();
-    await verifiedExit(homeDir, clientInfo, 'quit-replacement');
+    // Emulate the legacy client's lost acknowledgement after a real verified
+    // process/Job shutdown. Keep the actual owner and shutdown evidence intact.
+    const digest = value => createHash('sha256').update(value).digest('hex');
+    const file = path.join(homeDir, '.kodax', 'runtime', 'daemon', 'default', 'client-exits',
+      digest(accepted.clientId), `${digest(accepted.requestId)}.json`);
+    const original = JSON.parse(await readFile(file, 'utf8'));
+    const unconfirmed = JSON.stringify({ ...original, cleanup: { ...original.cleanup, state: 'unknown',
+      issues: ['Client memory work remains unconfirmed.'] } });
+    await writeFile(file, unconfirmed);
+    for (let restart = 0; restart < 2; restart += 1) {
+      const offline = await verifiedExit(homeDir, clientInfo, 'quit-original');
+      assert.equal(offline.cleanup.state, 'unknown');
+      assert.equal(offline.recovery.nextAction, 'start_or_connect');
+      client = await ensureKodaXClient({ homeDir, clientInfo });
+      const recovered = await client.lifecycle.readExit('quit-original');
+      assert.equal(recovered.cleanup.state, 'unknown');
+      assert.equal(recovered.recovery.state, 'ready');
+      assert.equal(recovered.host.replacementRunning, true);
+      assert.deepEqual(await client.lifecycle.listPendingExits(), []);
+      const replayed = await client.lifecycle.requestExit({ requestId: 'quit-original', shutdownHost: true });
+      assert.equal(replayed.runtimeId, accepted.runtimeId);
+      assert.equal(replayed.recovery.state, 'ready');
+      await delay(100);
+      assert.ok((await client.sessions.create({ projectPath: homeDir })).id);
+      assert.equal(await readFile(file, 'utf8'), unconfirmed);
+      const requestId = `quit-replacement-${restart}`;
+      const replacement = await client.lifecycle.requestExit({ requestId, shutdownHost: true });
+      assert.notEqual(replacement.runtimeId, accepted.runtimeId);
+      await client.disconnect();
+      await verifiedExit(homeDir, clientInfo, requestId);
+    }
   } finally {
     if (client) {
       try { await client.lifecycle.requestExit({ requestId: 'test-cleanup', shutdownHost: true }); }

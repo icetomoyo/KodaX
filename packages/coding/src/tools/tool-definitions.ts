@@ -1173,7 +1173,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'ask_user_question',
-    description: "Ask one question (question/options), or 1–4 independent select questions (questions[] overrides flat question/options; each item needs options). Free text: kind=input, flat single question only. Select supports multi_select and automatic Other/custom input; do not add Other. allow_custom_input=false only for closed safety/protocol choices. Set default to the recommended answer: Runtime uses the validated value at expiry; select defaults must match an option value. Flat custom settings are batch fallbacks.",
+    description: "Ask one question (question/options), or 1–4 independent select questions (questions[] overrides flat question/options; each item needs options). Free text: kind=input, flat single question only. Select supports multi_select and automatic Other/custom input; do not add Other. allow_custom_input=false only for closed safety/protocol choices. Questions wait indefinitely by default; skip or Host timeout returns unanswered, and only Stop interrupts the Run. Defaults are suggestions, never submitted automatically. Continue or explain missing information after an unanswered result. Flat custom settings are batch fallbacks.",
     input_schema: {
       type: 'object',
       properties: {
@@ -1210,7 +1210,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
               },
               default: {
                 type: 'string',
-                description: "Validated expiry fallback; must match an option value.",
+                description: 'Suggested option value for display. Never submitted automatically.',
               },
               allow_custom_input: {
                 type: 'boolean',
@@ -1280,7 +1280,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
           type: 'string',
           description: "Initial text for the automatic custom choice.",
         },
-        default: { type: 'string', description: "Validated expiry fallback: select option value or input text." },
+        default: { type: 'string', description: 'Suggested option value (select) or initial text (input) for display. Never submitted automatically.' },
       },
       // The handler validates either a single question or a questions-only batch.
     },

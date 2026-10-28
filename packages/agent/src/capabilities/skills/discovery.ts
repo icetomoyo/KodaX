@@ -55,7 +55,7 @@ export async function discoverSkills(
   // Scan each path in priority order
   for (const { path, source } of pathsFlat) {
     try {
-      const discovered = await scanSkillDirectory(path, source);
+      const discovered = await scanSkillDirectory(path, source, errors);
 
       for (const skill of discovered) {
         // Don't override if already found (higher priority)
@@ -276,13 +276,14 @@ function sha256(value: string): string {
  */
 async function scanSkillDirectory(
   dirPath: string,
-  source: ResolvedSkillSource
+  source: ResolvedSkillSource,
+  errors: DiscoveryResult['errors'],
 ): Promise<SkillMetadata[]> {
   const skills: SkillMetadata[] = [];
 
   try {
     const dirStat = await stat(dirPath);
-    if (!dirStat.isDirectory()) return skills;
+    if (!dirStat.isDirectory()) throw new Error('Configured Skill source is not a directory.');
 
     const entries = await readdir(dirPath);
 
@@ -301,21 +302,29 @@ async function scanSkillDirectory(
               const metadata = await loadSkillMetadata(entryPath, source);
               if (metadata) {
                 skills.push(metadata);
+              } else {
+                errors.push({ path: skillFile, error: 'Skill metadata could not be loaded.' });
               }
             }
-          } catch {
-            // Not a skill directory, skip
+          } catch (error) {
+            recordDiscoveryError(errors, skillFile, error);
           }
         }
-      } catch {
-        // Skip entries we can't access
+      } catch (error) {
+        recordDiscoveryError(errors, entryPath, error);
       }
     }
-  } catch {
-    // Directory doesn't exist or can't be accessed
+  } catch (error) {
+    recordDiscoveryError(errors, dirPath, error);
   }
 
   return skills;
+}
+
+function recordDiscoveryError(errors: DiscoveryResult['errors'], path: string, error: unknown): void {
+  // Optional absent sources and ordinary non-Skill folders remain harmless.
+  if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return;
+  errors.push({ path, error: error instanceof Error ? error.message : String(error) });
 }
 
 /**

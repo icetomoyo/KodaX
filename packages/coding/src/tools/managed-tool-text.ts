@@ -14,7 +14,7 @@ export function managedShellDescription(execution: 'native' | 'foreground'): str
 
 export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
   ask_user_question: {
-    description: 'Ask one flat question or 1–4 independent select questions via questions[] (overrides flat question/options; each item requires options). kind=input: flat free text only; select (default): options required. multi_select returns an array, bounded by min/max_selections. Option value defaults to label. Do not add Other: custom input defaults true; false only for closed safety/protocol choices. Batch custom settings inherit flat settings unless overridden. Set recommended default: validated expiry fallback, an option value for select or text for input.',
+    description: 'Ask one flat question or 1–4 independent select questions via questions[] (overrides flat question/options; each item requires options). kind=input: flat free text only; select (default): options required. multi_select returns an array, bounded by min/max_selections. Option value defaults to label. Do not add Other: custom input defaults true; false only for closed safety/protocol choices. Batch custom settings inherit flat settings unless overridden. Defaults are suggestions, never submitted automatically. Wait indefinitely unless the Host sets a timeout. Skip/timeout returns unanswered; only Stop interrupts the Run. Continue or explain missing information.',
     annotations: { 'properties.questions.items.properties.header': 'Progress label, ≤12 chars.',
       'properties.questions.items.properties.options.items.properties.value': null,
       'properties.questions.items.properties.min_selections': null, 'properties.questions.items.properties.max_selections': null,

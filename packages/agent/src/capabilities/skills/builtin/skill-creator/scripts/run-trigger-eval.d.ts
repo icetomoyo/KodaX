@@ -33,6 +33,8 @@ export interface TriggerEvalReport {
     model?: string | null;
     runs_per_query: number;
     trigger_threshold: number;
+    evaluation_kind: 'description_semantic_screening';
+    model_catalog_visible: boolean;
     note: string;
   };
 }

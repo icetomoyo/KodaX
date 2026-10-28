@@ -1396,3 +1396,36 @@ git diff --check
 
 当前默认继续保持。验收漏检已修正、无效环境已前置阻断；新的无 Git 根目录执行环境仍是
 受限的未完成项，只有确需恢复该类完整任务评测时再独立处理，不阻断已接受产品默认。
+
+#### 2026-10-28 主仓库 KodaX 分支融合验收
+
+先将上述离线维护提交并推送为 `d0638686`，再合并主仓库 `KodaX` / `origin/KodaX` 的
+`70aedacd`：当前分支尚未包含的 14 个提交全部纳入，包括问答跳过语义、技能生命周期、MCP
+原文恢复、客户端退出/启动恢复、任务报告投影及 Kimi K3.1 路由。主工作区当时仍有未提交修改，
+未复制、暂存或改动这些内容。本记录只验收已提交分支的融合。
+
+8 个冲突路径（含设计子模块）逐项融合：
+
+- 保留 Coding 默认、Agent/Script 工作面、AMA、SDK 兼容及全部工具能力；恢复快照同时保留
+  `workMode` 和主线新增的 `maxConcurrentThreadsPerSession`。
+- 工具装配同时保留主线的 `activeTools` 约束与本分支共享 `isToolDiscoverable` 边界。
+- 技能同批隔离先于 Script 外壳放行；新增 native/bridge 两个离线用例，验证同批 cell 延后、
+  下批叶工具仍受已激活技能权限限制，以及三个既定请求完成，不旁路权限。
+- 原生与精简问答契约统一主线语义：默认值仅建议、不自动提交；默认无限等待，Skip/Host timeout
+  返回 unanswered，只有 Stop 中断。先复现旧精简说明不匹配，再修文案并更新经重新审核的契约哈希。
+- 发布包脚本同时保留 Script 检查和新增 MCP/任务报告检查。`docs/features` 合并两侧历史为
+  `8ff7cbe`，并已推送对应子模块分支，避免父提交引用不可取得的提交。
+
+离线验收：`npm run build:packages`、`node scripts/build-bundle.mjs`、`npm run build:dts`、
+构建后的 `npx tsc --noEmit -p tsconfig.test.json` 均通过。选择合并变更中的测试及三模式/评测
+回归共 62 个文件；Vitest 默认排除真实 provider 的 `kimi-wire.integration.test.ts`，实际运行
+**61 文件、1,288 项通过、1 项跳过**，没有开启该真实模型集成测试。
+额外运行 `bundled-mcp-output-recovery`、`bundled-task-results`、`bundled-skills`、
+`script-release`、`bundled-product-exit` 五个发布包文件，**10 项全部通过**，含真实 npm tarball
+在干净目录中的 Script 执行及缺失 worker 失败、MCP 原文恢复和守护进程重启后的任务报告读取。
+最初类型检查先于工作区包声明构建完成而读到旧声明；依赖构建完成后及最终包构建后检查均通过，
+未因此修改接口或放宽类型。
+
+独立 Standards / Spec 静态评审均无阻塞发现；范围为重点冲突及相邻执行契约，不声称逐行审计
+全部变更。仅 Windows 实测、真实模型调用 0；本次不新增首轮 token 或智能等价的统计结论。
+前述目录拓扑限制继续明确保留，不因合并主线而改写历史评测结果。

@@ -18,6 +18,7 @@ import type {
   KodaXGoalState,
   KodaXInputArtifact,
   KodaXSessionEntry,
+  KodaXTaskResultReport,
 } from '@kodax-ai/agent';
 import type { KodaXResult } from './types.js';
 import type { KodaXShellSandboxObservation } from './types.js';
@@ -34,9 +35,13 @@ import type {
 } from './client-domains.js';
 export type * from './client-domains.js';
 
+export type ClientHostStartupPhase =
+  | 'modules' | 'extensions' | 'runtime' | 'recovery' | 'mcp' | 'sessions' | 'a2a' | 'listener';
+
 /** Local launcher facts. `ready` means the Client is usable, not that a UI has rendered. */
 export type ClientStartupProgress =
   | { readonly stage: 'checking' | 'starting' | 'upgrading' | 'connecting' | 'ready' }
+  | { readonly stage: 'initializing'; readonly phase: ClientHostStartupPhase }
   | { readonly stage: 'waiting'; readonly reason: 'connected_clients' | 'host_starting' | 'host_stopping' };
 
 /** Display facts only; extension handlers and Host execution types stay private. */
@@ -380,7 +385,8 @@ export interface ClientCapabilityProbeResult {
 
 export interface ClientItemReadOptions {
   readonly offset?: number;
-  readonly part?: 'text' | 'input' | 'attachment';
+  /** original reads a saved full tool result; text keeps display-preview offsets unchanged. */
+  readonly part?: 'text' | 'input' | 'attachment' | 'original';
   /** Reads a PNG already attached to this Host item; never accepts a client file path. */
   readonly attachmentIndex?: number;
   readonly attachmentOffset?: number;
@@ -465,6 +471,17 @@ export interface ClientStatisticsService {
   readRequests(sessionId: string, options?: { readonly cursor?: string; readonly limit?: number }): Promise<ClientExecutionFactsPage<ClientProviderRequestFact>>;
   readTools(sessionId: string, options?: { readonly cursor?: string; readonly limit?: number }): Promise<ClientExecutionFactsPage<ClientToolExecutionFact>>;
 }
+/** Fresh recovery assessment; historical cleanup results remain separate. */
+export interface ClientExitRecovery {
+  readonly state: 'ready' | 'pending' | 'blocked';
+  readonly checkedAt: string;
+  readonly reason: 'host_shutdown_verified' | 'client_cleanup_verified'
+    | 'client_cleanup_pending' | 'client_cleanup_unknown' | 'cleanup_failed' | 'host_protected'
+    | 'daemon_active' | 'containment_active' | 'containment_unavailable' | 'outcome_missing'
+    | 'owner_identity_unverified' | 'owner_identity_mismatch';
+  readonly nextAction: 'start_or_connect' | 'retry_exit' | 'retry_verification' | 'inspect_failure';
+}
+
 export interface ClientExitReceipt {
   readonly requestId: string;
   readonly clientId: string;
@@ -472,6 +489,8 @@ export interface ClientExitReceipt {
   readonly accepted: true;
   readonly requestedAt: string;
   readonly updatedAt: string;
+  /** Present on SDK recovery reads. Missing on legacy Hosts/initial acceptance; never implies readiness. */
+  readonly recovery?: ClientExitRecovery;
   readonly cleanup: {
     readonly actorTurns: readonly { readonly actorPath: string; readonly turnId: string }[];
     readonly operationIds: readonly string[];
@@ -696,6 +715,8 @@ export interface ClientSessionActivity {
 }
 
 export interface ClientViewItem {
+  /** Structured task delivery. Body is text/readItem, never model-facing XML. */
+  readonly taskResult?: Omit<KodaXTaskResultReport, 'summary'>;
   /** Image references proven by canonical user/tool content; does not include file bytes. */
   readonly attachments?: readonly { readonly kind: 'image'; readonly path: string; readonly mediaType?: string }[];
   /** Boundary after the complete canonical message, shared by all its display blocks. */
@@ -735,6 +756,8 @@ export interface ClientViewItem {
     readonly status: 'running' | 'success' | 'error' | 'cancelled' | 'awaiting_approval';
     readonly inputText?: string;
     readonly totalInputLength?: number;
+    /** Saved original text; read it through sessions.readItem with part: 'original'. */
+    readonly outputPath?: string;
     readonly progress?: string;
     readonly startedAt?: number;
     readonly endedAt?: number;
@@ -805,6 +828,7 @@ export interface ClientRunTerminal {
 }
 
 export interface ClientRunStatus {
+  readonly failureDetail?: ClientRunFailureDetail;
   readonly terminal?: ClientRunTerminal;
   readonly runId: string;
   readonly sessionId: string;
@@ -855,6 +879,16 @@ export interface ClientToolInvocationInput {
   readonly rawInput: string;
 }
 
+/** Safe execution failure facts shared by read and terminal outcomes. */
+export interface ClientRunFailureDetail {
+  readonly failureKind: string;
+  readonly stage: string;
+  /** Stable KodaX code, including local failures despite the historical field name. */
+  readonly providerErrorCode: string;
+  readonly safeMessage: string;
+  readonly skillName?: string;
+}
+
 /**
  * Terminal facts of one Run. `result` is present only for settled runs the
  * Host could observe; `phase: 'unknown'` means settlement could not be
@@ -862,6 +896,7 @@ export interface ClientToolInvocationInput {
  * reject separately. Unknown is never success or cancellation.
  */
 export interface ClientRunOutcome {
+  readonly failureDetail?: ClientRunFailureDetail;
   readonly terminal?: ClientRunTerminal;
   readonly stop?: ClientRunStatus['stop'];
   readonly runId: string;
@@ -894,9 +929,9 @@ export interface ClientPermissionInteractionOptions {
  * payload and the typed response this request accepts.
  */
 export type ClientInteraction =
-  | ClientInteractionBase & { readonly kind: 'question'; readonly options: AskUserQuestionOptions; readonly expiresAt: string }
-  | ClientInteractionBase & { readonly kind: 'question_multi'; readonly options: AskUserMultiOptions; readonly expiresAt: string }
-  | ClientInteractionBase & { readonly kind: 'question_input'; readonly options: { readonly question: string; readonly default?: string }; readonly expiresAt: string }
+  | ClientInteractionBase & { readonly kind: 'question'; readonly options: AskUserQuestionOptions; readonly expiresAt?: string }
+  | ClientInteractionBase & { readonly kind: 'question_multi'; readonly options: AskUserMultiOptions; readonly expiresAt?: string }
+  | ClientInteractionBase & { readonly kind: 'question_input'; readonly options: { readonly question: string; readonly default?: string }; readonly expiresAt?: string }
   | ClientInteractionBase & { readonly kind: 'permission'; readonly options: ClientPermissionInteractionOptions; readonly expiresAt?: string };
 
 interface ClientInteractionBase {
@@ -912,6 +947,8 @@ export type ClientInteractionResponse =
   | { readonly kind: 'question_multi'; readonly answers: Readonly<Record<string, AskUserAnswer>> }
   | { readonly kind: 'question_input'; readonly text: string }
   | { readonly kind: 'permission'; readonly decision: ClientPermissionDecision }
+  | { readonly kind: 'skip'; readonly reason?: 'non_interactive' }
+  /** Legacy question-dialog dismissal: treated as skip. Permission cancellation remains a rejection. */
   | { readonly kind: 'cancel'; readonly reason?: string };
 
 export type ClientPermissionDecision =
@@ -925,7 +962,7 @@ export interface ClientInteractionResult {
   readonly requestId: string;
   readonly accepted: boolean;
   /** 'already_resolved' covers late, duplicate, cancelled, expired and unknown targets. */
-  readonly status: 'answered' | 'dismissed' | 'already_resolved';
+  readonly status: 'answered' | 'unanswered' | 'dismissed' | 'already_resolved';
 }
 
 export interface ClientPermissionGrant {

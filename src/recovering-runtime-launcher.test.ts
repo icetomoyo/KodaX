@@ -2,8 +2,19 @@ import { expect, it, vi } from 'vitest';
 import type { KodaXRuntime, RuntimeConnectionState } from './sdk-runtime.js';
 import { ensureKodaXRuntime } from './sdk-runtime.js';
 import { ensureRecoveringKodaXRuntime } from './recovering-runtime-client.js';
+import { ensureKodaXClient, type EnsureKodaXClientOptions } from './sdk-client.js';
 
 vi.mock('./sdk-runtime.js', () => ({ ensureKodaXRuntime: vi.fn() }));
+
+it.each([0, 300_000])('forwards the Product launcher ordinary-question deadline (%s) to a new Host', async userInputTimeoutMs => {
+  const host = { close: async () => {} } as unknown as Awaited<ReturnType<typeof ensureKodaXRuntime>>;
+  vi.mocked(ensureKodaXRuntime).mockReset().mockResolvedValue(host);
+  const options: EnsureKodaXClientOptions = { userInputTimeoutMs };
+  const client = await ensureKodaXClient(options);
+  try {
+    expect(ensureKodaXRuntime).toHaveBeenCalledWith(expect.objectContaining({ userInputTimeoutMs }));
+  } finally { await client.disconnect(); }
+});
 
 it.each([false, true])('keeps the authenticated identity across Host connections (supplied=%s)', async supplied => {
   let disconnect!: (state: RuntimeConnectionState) => void;

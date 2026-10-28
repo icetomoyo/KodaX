@@ -89,6 +89,16 @@ describe('buildMcpReverseCapabilities', () => {
 });
 
 describe('elicitViaUserInteraction — form mode', () => {
+  it.each(['skipped', 'timeout', 'non_interactive'] as const)('cancels unanswered confirmation and URL requests (%s)', async reason => {
+    const ui: UserInteraction = { askUser: async () => ({ unanswered: true, reason }) };
+    for (const request of [
+      { mode: 'form' as const, message: 'Proceed?' },
+      { mode: 'url' as const, url: 'https://auth.example.test', message: 'Authorize?' },
+    ]) {
+      expect(await elicitViaUserInteraction(ui, request)).toEqual({ action: 'cancel' });
+    }
+  });
+
   it('confirm-only form (no fields) maps to a single approve prompt → accept {}', async () => {
     const ui: UserInteraction = { askUser: async () => 'accept' };
     const result = await elicitViaUserInteraction(ui, { mode: 'form', message: 'Proceed?' });
@@ -157,6 +167,20 @@ describe('elicitViaUserInteraction — form mode', () => {
   it('cancels when the user dismisses a free-text field', async () => {
     const ui: UserInteraction = { askUserInput: async () => undefined };
     expect(await elicitViaUserInteraction(ui, formRequest({ note: { type: 'string' } }))).toEqual({ action: 'cancel' });
+  });
+
+  it.each([
+    { type: 'string' },
+    { type: 'number' },
+    { type: 'boolean' },
+    { type: 'string', enum: ['first', 'second'] },
+  ])('keeps an unanswered $type field out of MCP form content', async property => {
+    const ui: UserInteraction = {
+      askUser: async ({ options }) => options?.some(option => option.value === 'send')
+        ? 'send' : { unanswered: true, reason: 'skipped' },
+      askUserInput: async () => ({ unanswered: true, reason: 'skipped' }),
+    };
+    expect(await elicitViaUserInteraction(ui, formRequest({ field: property }))).toEqual({ action: 'cancel' });
   });
 
   it('declines a field it cannot ask (no input surface)', async () => {

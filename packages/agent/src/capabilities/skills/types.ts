@@ -22,7 +22,7 @@ export interface SkillFrontmatter {
   disableModelInvocation?: boolean;
   /** @deprecated Enabled skills are always explicitly user-invocable. */
   userInvocable?: boolean;
-  /** Tool restrictions, e.g., "Read, Grep, Bash(python:*)" */
+  /** Tool restrictions, e.g., "Read, Grep, Bash(python *)"; shell patterns match the full command. */
   allowedTools?: string;
   /** Execution context - 'fork' for sub-agent execution */
   context?: 'fork';
@@ -134,6 +134,8 @@ export type ResolvedSkillSource = SkillSource | 'learned';
  * Skill registry interface for managing discovered skills
  */
 export interface ISkillRegistry {
+  /** At least one trusted source could not be scanned; absence is not conclusive. */
+  readonly discoveryIncomplete?: boolean;
   /** Read-only view of discovered skill metadata */
   readonly skills: ReadonlyMap<string, SkillMetadata>;
 
@@ -225,6 +227,8 @@ export interface SkillContext {
    * (whitelist + 5s timeout). When absent, the legacy whitelist path runs.
    */
   executeDynamicContext?: SkillDynamicContextExecutor;
+  /** Runtime Skill restrictions, checked on the fully substituted command before either executor. */
+  assertDynamicContextAllowed?: (command: string) => void;
   /**
    * v0.7.42 — hard-disable `!`cmd`` resolution.
    * When `true`, encountering a `!`cmd`` token throws

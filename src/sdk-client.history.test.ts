@@ -15,6 +15,9 @@ import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
 import { FileSessionStorage } from '@kodax-ai/repl';
+import type { ClientItemContent } from '@kodax-ai/coding/client-contract';
+import { createClassicPlaneDisplayDiffer } from '../packages/repl/src/interactive/classic-plane-display.js';
+import { clientViewToHistoryItems, readFrozenClientPlaneItems } from '../packages/repl/src/ui/client-plane.js';
 
 it('projects the actual request compaction capacity including Memory reserve without enabling diagnostics', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });
@@ -59,6 +62,10 @@ class HistoryProvider extends KodaXBaseProvider {
       ? lastUser.content
       : JSON.stringify(lastUser?.content ?? '');
     const huge = userText.includes('HUGE-REQUEST');
+    if (userText.includes('MCP-REQUEST')) return {
+      textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use',
+      toolBlocks: [{ type: 'tool_use', id: 'call-mcp-history', name: 'mcp_call', input: { id: 'mcp:demo:tool:huge' } }],
+    };
     if (userText.includes('ERROR-REQUEST')) {
       return {
         textBlocks: [{ type: 'text', text: 'Checking two missing files.' }], thinkingBlocks: [],
@@ -84,12 +91,7 @@ let host: Awaited<ReturnType<typeof startRuntimeDaemonHost>>;
 let client: Awaited<ReturnType<typeof connectKodaXClient>>;
 let reconnect: Awaited<ReturnType<typeof connectKodaXClient>> | undefined;
 
-beforeEach(async () => {
-  homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-history-'));
-  vi.stubEnv('KODAX_HOME', path.join(homeDir, '.kodax'));
-  vi.stubEnv('KODAX_MAX_OUTPUT_TOKENS', '10000');
-  registerModelProvider('product-history-page-test', () => new HistoryProvider(() => undefined));
-  vi.stubEnv('KODAX_PRODUCT_HISTORY_PAGE_TEST_KEY', 'test-only');
+async function startHistoryHost(): Promise<void> {
   runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'product-history-page-test' });
   const paths = resolveRuntimeDaemonPaths(homeDir);
   const lock = tryAcquireRuntimeDaemonLock(paths, {
@@ -104,6 +106,15 @@ beforeEach(async () => {
     : { kind: 'unix' as const, path: endpointPath };
   host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
   client = await connectKodaXClient({ homeDir, endpoint: endpointPath });
+}
+
+beforeEach(async () => {
+  homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-history-'));
+  vi.stubEnv('KODAX_HOME', path.join(homeDir, '.kodax'));
+  vi.stubEnv('KODAX_MAX_OUTPUT_TOKENS', '10000');
+  registerModelProvider('product-history-page-test', () => new HistoryProvider(() => undefined));
+  vi.stubEnv('KODAX_PRODUCT_HISTORY_PAGE_TEST_KEY', 'test-only');
+  await startHistoryHost();
 });
 
 afterEach(async () => {
@@ -127,6 +138,87 @@ async function toolRound(sessionId: string): Promise<void> {
   const accepted = await client.inputs.submit({ sessionId, inputId: 'tool-round', text: 'TOOL-REQUEST run the echo' });
   await runtime.runs.await(accepted.runId!);
 }
+
+it('reads complete MCP originals over IPC and after Host restart while history keeps bounded previews', async () => {
+  const body = JSON.stringify({ payload: 'x'.repeat(80_000), tail: 'MCP_TAIL_EVIDENCE' });
+  const server = path.join(homeDir, 'mcp-server.cjs');
+  await fs.writeFile(server, `
+    require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
+      const message = JSON.parse(line); if (message.id === undefined) return;
+      let result = {};
+      if (message.method === 'initialize') result = { protocolVersion: '2025-11-25', capabilities: { tools: {} }, serverInfo: { name: 'test', version: '1' } };
+      if (message.method === 'tools/list') result = { tools: [{ name: 'huge', inputSchema: { type: 'object' } }] };
+      if (message.method === 'tools/call') result = { content: [{ type: 'text', text: ${JSON.stringify(body)} }] };
+      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }) + '\\n');
+    });
+  `);
+  vi.stubEnv('KODAX_TOOL_OUTPUT_DIR', path.join(homeDir, 'tool-results'));
+  const session = await client.sessions.create({ projectPath: homeDir, mcpServers: {
+    demo: { type: 'stdio', command: process.execPath, args: [server] },
+  } });
+  await client.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  const accepted = await client.inputs.submit({ sessionId: session.id, inputId: 'mcp-original', text: 'MCP-REQUEST' });
+  expect(await client.runs.await(accepted.runId!)).toMatchObject({ phase: 'completed' });
+
+  const readAll = async (read: (offset: number) => Promise<ClientItemContent | null>): Promise<string> => {
+    let output = '', offset = 0;
+    for (;;) {
+      const chunk = await read(offset);
+      expect(chunk).not.toBeNull();
+      expect(chunk!.text.length).toBeLessThanOrEqual(65_536);
+      output += chunk!.text;
+      if (chunk!.nextOffset === undefined) {
+        expect(output.length).toBe(chunk!.totalLength);
+        return output;
+      }
+      expect(chunk!.nextOffset).toBeGreaterThan(offset);
+      offset = chunk!.nextOffset;
+    }
+  };
+  let original: string | undefined;
+  for (const restart of [false, true]) {
+    if (restart) {
+      await client.disconnect(); await host.close(); await runtime.close();
+      await startHistoryHost();
+    }
+    const page = await client.sessions.readHistory(session.id);
+    const item = page.items.find(entry => entry.tool?.callId === 'call-mcp-history')!;
+    expect(typeof item.tool?.outputPath).toBe('string');
+    expect(item.text.length).toBeLessThan(10_000);
+    const preview = await readAll(offset => client.sessions.readHistoryEntry(session.id, item.id, { offset }));
+    expect(preview).toContain('KODAX_RESULT_INCOMPLETE');
+    const history = await readAll(offset => client.sessions.readHistoryEntry(session.id, item.id, { offset, part: 'original' }));
+    expect(history).toContain(body);
+    expect(history).not.toContain('KODAX_RESULT_INCOMPLETE');
+    if (original !== undefined) expect(history).toBe(original);
+    original = history;
+    expect(await readAll(offset => client.sessions.readItem(session.id, item.id, { offset, part: 'original' }))).toBe(original);
+    expect(await readAll(offset => runtime.sessions.readHistoryEntry(session.id, item.id, { offset, part: 'original' }))).toBe(original);
+    const views: ClientSessionView[] = [];
+    const observation = await client.sessions.observe(session.id, view => views.push(view));
+    try {
+      const viewItem = views.at(-1)!.items.find(entry => entry.tool?.callId === 'call-mcp-history')!;
+      expect(await readAll(offset => client.sessions.readItem(session.id, viewItem.id, { offset, part: 'original' }))).toBe(original);
+      expect(await readAll(offset => client.sessions.readItem(session.id, viewItem.id, { offset }))).toBe(preview);
+      const lines: string[] = [];
+      const display = createClassicPlaneDisplayDiffer(line => lines.push(line),
+        (id, options) => client.sessions.readItem(session.id, id, options));
+      await display([]);
+      await display([viewItem]);
+      expect(lines.some(line => line.endsWith(preview))).toBe(true);
+      const [frozen] = await readFrozenClientPlaneItems({
+        readItem: (sessionId, id, options) => client.sessions.readItem(sessionId, id,
+          typeof options === 'number' ? { offset: options } : options),
+      }, session.id, clientViewToHistoryItems([viewItem]));
+      expect(frozen?.type === 'tool_group' && frozen.tools[0]?.output === preview).toBe(true);
+      if (restart) {
+        await fs.rm(item.tool!.outputPath!);
+        await expect(client.sessions.readHistoryEntry(session.id, item.id, { part: 'original' }))
+          .rejects.toMatchObject({ code: 'not_found', message: 'Saved tool output is unavailable.' });
+      }
+    } finally { observation.close(); }
+  }
+}, 60_000);
 
 it.each(['page', 'entry'] as const)('waits for the Host display checkpoint before reading a prepared history %s', async kind => {
   const session = await client.sessions.create({ projectPath: homeDir });

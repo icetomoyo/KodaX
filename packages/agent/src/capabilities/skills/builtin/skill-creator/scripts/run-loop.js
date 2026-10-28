@@ -3,7 +3,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadSkill, pathExists, writeSkill } from './utils.js';
+import { ensureDirectory, loadSkill, pathExists, writeSkill } from './utils.js';
 import { improveDescription } from './improve-description.js';
 import { runTriggerEval } from './run-trigger-eval.js';
 
@@ -73,6 +73,7 @@ export async function runDescriptionLoop(
     ...dependencies,
   };
   const skill = await loadSkill(options.skillPath);
+  await ensureDirectory(options.workspaceDir);
   const evalFile = JSON.parse(await readFile(options.evalsPath, 'utf8'));
   const allEvals = Array.isArray(evalFile.evals) ? evalFile.evals : [];
   const { train, test } = splitEvalSet(allEvals, options.holdout, options.seed);

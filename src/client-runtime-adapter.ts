@@ -184,6 +184,7 @@ export function toKodaXProductClient(
           runId: outcome.runId,
           sessionId: outcome.sessionId,
           phase: outcome.phase,
+          ...(outcome.failureDetail !== undefined ? { failureDetail: outcome.failureDetail } : {}),
           ...(outcome.result !== undefined ? { result: outcome.result } : {}),
             ...(outcome.error !== undefined ? { error: outcome.error.message } : {}),
             ...(outcome.terminal !== undefined ? { terminal: outcome.terminal } : {}),

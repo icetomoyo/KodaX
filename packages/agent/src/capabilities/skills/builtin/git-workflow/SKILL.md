@@ -2,10 +2,9 @@
 name: git-workflow
 description: 执行明确的 Git 操作，例如查看状态、提交、建分支、push、stash 或创建 PR。只有在用户明确要求实际执行这些 Git 操作时才使用；不要用于单纯解释 Git 概念或讨论策略。
 user-invocable: true
-disable-model-invocation: true
-allowed-tools: "Read, Grep, Glob, Bash(git:*, gh:*)"
+allowed-tools: "Read, Grep, Glob, Bash(git *, gh *, node *)"
 argument-hint: "[status|commit|branch|push|pr|stash] [args]"
-compatibility: "Requires a Git repository. Pull request creation works best when GitHub CLI (gh) is installed and authenticated."
+compatibility: "Requires Git for local operations. Remote actions use an available, authorized hosting tool and the repository's authentication rules."
 ---
 
 # Git Workflow Skill
@@ -15,8 +14,8 @@ compatibility: "Requires a Git repository. Pull request creation works best when
 ## 总流程
 
 1. 先检查仓库状态，例如 `git status --short --branch`，必要时补充 `git diff --stat`、`git diff --cached`、`git log --oneline`。
-2. 根据第一个参数判断操作类型；如果用户表达明确，就直接执行对应流程。
-3. 对会改写历史、删除数据或影响远程分支的操作，先说明风险；只有在用户明确要求时才继续。
+2. 从自然语言或参数确定操作类型与文件范围；沿用当前会话已有的授权，明确的 commit/push 请求直接推进。
+3. 历史改写、强推或删除须有对应授权；普通已授权提交和推送不重复确认。宿主授权与执行策略始终生效。
 4. 所有 Git 命令都使用非交互方式执行。
 
 ## 支持的操作
@@ -41,7 +40,7 @@ compatibility: "Requires a Git repository. Pull request creation works best when
 
 ### branch
 - `create` / `new`: 创建新分支。除非用户指定，否则遵循仓库已有命名风格。
-- `switch` / `checkout`: 切换分支前，先检查当前工作区是否干净。
+- `switch` / `checkout`: 先检查工作区；只有会覆盖或混入当前改动时才处理冲突，保留无关修改。
 - `list`: 列出本地/远程分支，并在有帮助时指出当前分支。
 - `delete` / `remove`: 仅在删除条件安全且用户请求明确时执行。
 
@@ -53,7 +52,9 @@ compatibility: "Requires a Git repository. Pull request creation works best when
 ### pr
 - 检查当前分支是否已 push，必要时先推送。
 - 基于 diff 和提交历史生成简洁的 PR 标题与描述。
-- 使用 `gh pr create` 前确认 `gh` 可用且已认证；否则清楚说明阻塞点。
+- 使用当前宿主和 Skill 策略允许的、已经授权的 Git 托管连接器、CLI 或 API；遵守仓库认证约定，不回显凭据、不主动切换认证或交互登录。
+- 没有可用的 `gh` 时，声明允许经 Node 调用托管 API；仅为当前已授权的 Git 操作使用现有凭据，仍通过普通 Host 授权与沙箱。不要假定任意连接器工具都已被当前 Skill 策略放行。
+- `gh` 可用时可用 `gh pr create`，但它不是所有宿主的前提。没有允许的创建路径时，保留已完成的提交与推送，说明缺少的能力。
 
 ### stash
 - `save`: 有上下文时附带说明性消息。
@@ -65,7 +66,7 @@ compatibility: "Requires a Git repository. Pull request creation works best when
 
 - 不要使用 `git reset --hard`、`git checkout --`、`git clean -fd`、`git commit --amend`、强推、历史改写等危险操作，除非用户明确要求。
 - 不要回滚、覆盖或丢弃用户的无关改动。
-- 遇到脏工作区、冲突、无 upstream、权限不足、缺少 `gh` 等阻塞时，要先解释现状再继续。
+- 按实际操作处理冲突、无 upstream 或权限不足；脏工作区及缺少 `gh` 本身不阻塞所有 Git 任务。
 - 对“合并分支”“rebase”“cherry-pick”等这里没有明确定义的操作，如果用户明确提出，可以按 Git 最佳实践执行，但要先说明风险和计划。
 
 ## 汇报方式

@@ -256,6 +256,7 @@ export type {
   KodaXSessionTreeNode,
   KodaXToolExecutionContext,
   AskUserAnswer,
+  AskUserUnanswered,
   AskUserCustomInputAnswer,
   AskUserQuestionOptions,
   AskUserQuestionItem,
@@ -1507,3 +1508,4 @@ export {
 } from './agent-runtime/actor-runtime.js';
 export type { CodingActorSessionOptions, CodingActorCredentialAccessFactory, CodingActorEnvironmentFactory } from './agent-runtime/actor-runtime.js';
 export { resolveSkillModelOverride } from './skill-invocation-policy.js';
+export { KodaXSkillInvocationError, type KodaXSkillInvocationErrorCode } from './skill-invocation-error.js';

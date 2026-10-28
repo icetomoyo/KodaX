@@ -1506,6 +1506,7 @@ describe('Session Management Public SDK', () => {
           status: 'completed',
           title: 'Review workflow',
           summary: 'Workflow finished.',
+          reportFormat: 'markdown',
         },
         taskResults: [
           {
@@ -1516,6 +1517,7 @@ describe('Session Management Public SDK', () => {
             status: 'completed',
             title: 'Review workflow',
             summary: 'Workflow finished.',
+            reportFormat: 'markdown',
           },
         ],
       }),
@@ -1570,13 +1572,13 @@ describe('Session Management Public SDK', () => {
       source: 'child_task',
       payload: expect.objectContaining({
         results: [
-          expect.objectContaining({ taskId: 'child-a', status: 'completed', summary: 'alpha done' }),
-          expect.objectContaining({ taskId: 'child-b', status: 'failed', summary: 'failed: beta exploded' }),
+          expect.objectContaining({ taskId: 'child-a', status: 'unknown', summary: 'alpha done' }),
+          expect.objectContaining({ taskId: 'child-b', status: 'unknown', summary: 'failed: beta exploded' }),
         ],
       }),
       taskResults: [
-        expect.objectContaining({ taskId: 'child-a', status: 'completed', summary: 'alpha done' }),
-        expect.objectContaining({ taskId: 'child-b', status: 'failed', summary: 'failed: beta exploded' }),
+        expect.objectContaining({ taskId: 'child-a', status: 'unknown', summary: 'alpha done' }),
+        expect.objectContaining({ taskId: 'child-b', status: 'unknown', summary: 'failed: beta exploded' }),
       ],
     }));
   });

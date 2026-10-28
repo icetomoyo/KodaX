@@ -16,6 +16,56 @@ function createViewOwner() {
     settings: {}, queue: [], interactions: [], runs: [], items: [] }), async () => {});
 }
 
+it('reads the saved full MCP result through SDK item paging, live and after history restoration', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-view-full-result-'));
+  const content = JSON.stringify({ payload: '中😀'.repeat(30_000), tail: 'MCP_TAIL_EVIDENCE' });
+  const outputPath = path.join(directory, 'original.txt');
+  await writeFile(outputPath, content);
+  const toolResult = { type: 'tool_result' as const, tool_use_id: 'mcp-result',
+    content: '[KODAX_RESULT_INCOMPLETE. Full output saved to the original artifact.]',
+    metadata: { truncated: true, outputPath } };
+  const owner = createViewOwner();
+  const restored = new SessionViewOwner(async () => ({ session: { id: 'session', title: 'Tools' },
+    settings: {}, queue: [], interactions: [], runs: [], items: restoreSessionViewItems('session', {
+      title: 'Tools', gitRoot: '', messages: [
+        { role: 'assistant', content: [{ type: 'tool_use', id: 'mcp-result', name: 'mcp_call', input: { id: 'remote' } }] },
+        { role: 'user', content: [toolResult] },
+      ],
+    }) }), async () => undefined);
+  try {
+    const events = owner.events('session', 'run');
+    events.onToolUseStart?.({ id: 'mcp-result', name: 'mcp_call', input: { id: 'remote' } });
+    events.onToolResult?.({ id: 'mcp-result', name: 'mcp_call', content: toolResult.content, toolResult });
+    for (const [reader, id] of [[owner, 'run:tool:mcp-result'], [restored, 'tool:mcp-result']] as const) {
+      expect(await reader.readItem('session', id)).toMatchObject({ text: toolResult.content, totalLength: toolResult.content.length });
+      const first = await reader.readItem('session', id, { part: 'original' });
+      expect(first?.totalLength).toBe(content.length);
+      expect(first?.text).toBe(content.slice(0, 65_536));
+      expect(first?.nextOffset).toBe(65_536);
+      const last = await reader.readItem('session', id, { offset: first!.nextOffset, part: 'original' });
+      expect(first!.text + last!.text).toBe(content);
+      expect(last?.nextOffset).toBeUndefined();
+      expect(await reader.readItem('session', id, { part: 'input' })).toMatchObject({ text: '{"id":"remote"}' });
+    }
+    await rm(outputPath);
+    await expect(owner.readItem('session', 'run:tool:mcp-result', { part: 'original' })).rejects.toMatchObject({ code: 'not_found' });
+    expect(await owner.readItem('session', 'run:tool:mcp-result')).toMatchObject({ text: toolResult.content });
+  } finally {
+    await owner.close(); await restored.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it('keeps request-only input capabilities out of persisted tool-original file reads', async () => {
+  const owner = createViewOwner();
+  try {
+    owner.events('session', 'run').onToolResult?.({ id: 'page', name: 'read', content: 'One original input page',
+      toolResult: { type: 'tool_result', tool_use_id: 'page', content: 'One original input page',
+        metadata: { truncated: true, outputPath: 'kodax-transient://text/request-only' } } });
+    expect(await owner.readItem('session', 'run:tool:page')).toMatchObject({ text: 'One original input page' });
+  } finally { await owner.close(); }
+});
+
 it('keeps an actual pre-dispatch cancellation consistent between the Host event and resumed history', async () => {
   const owner = createViewOwner();
   const events = owner.events('session', 'run');

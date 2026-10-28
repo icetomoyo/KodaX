@@ -448,7 +448,8 @@ Worker-hosted embedded Runtime is removed. The following structured-failure
 reference is scoped to that low-level API, not fields promised by Product Client.
 
 Both product entries accept optional `onStartupProgress` with the shared
-`ClientStartupProgress` type. Launcher `ready` means the Client is usable;
+`ClientStartupProgress` type, including `initializing` with actual Host phases
+for new Hosts. Phase observation adds no extra probes or waits. Launcher `ready` means the Client is usable;
 Session loading and UI rendering have separate boundaries. See the
 [startup progress example](public_docs/sdk/embedder-guide.md#show-local-startup-progress).
 
@@ -792,6 +793,17 @@ starts, upgrades, or waits. See
 [docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) and the
 [v0.7.97-alpha.4 release notes](docs/release.md#v0797-alpha4-release-preparation).
 Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2/alpha.3 contract is
+retained.
+
+**v0.7.97-alpha.10 release:** Checkpointed Runs and task trees resume after
+Host restart with fresh scoped authority on top of durable context-capacity
+recovery boundaries; Kimi K3.1 provider routes join the registry with all
+seven effort levels; AskUser questions wait indefinitely by default with
+explicit skip and `unanswered` results. SDK startup callbacks expose internal
+Host phases, and exit recovery separates safe startup from historical unknown
+cleanup acknowledgements. Tagging and publication remain separate. See the
+[v0.7.97-alpha.10 release notes](docs/release.md#v0797-alpha10-release-preparation).
+Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.9 contract is
 retained.
 
 **v0.7.97-alpha.9 release:** Checks Session admission through canonical
@@ -2115,7 +2127,7 @@ This development tree exposes 17 SDK subpaths plus the root. Shared product
 applications use `@kodax-ai/kodax/client`; independent libraries and trusted Host
 APIs remain available through the other subpaths. See the [Client contract](docs/CLIENT_CONTRACT.md)
 and [SDK migration guide](docs/SDK_MIGRATION.md). This documentation was checked
-against package version `0.7.97-alpha.9`; npm publication is separate from
+against package version `0.7.97-alpha.10`; npm publication is separate from
 the current development-tree contract.
 
 ```bash
@@ -2304,8 +2316,8 @@ await runInkInteractiveMode({ provider: 'zhipu-coding', effort: 'auto' });
 |----------|----------------------|-------------------|---------------|
 | anthropic | `ANTHROPIC_API_KEY` | Native | claude-sonnet-4-6 (`claude-opus-4-6` / `claude-haiku-4-5` via `/model`) |
 | openai | `OPENAI_API_KEY` | Native | gpt-5.3-codex (`gpt-5.4` / `gpt-5.3-codex-spark` via `/model`) |
-| kimi | `KIMI_API_KEY` | Native | kimi-k2.7-code (262,144-token context; `kimi-k3` 1M / `kimi-k2.7-code-highspeed` / `kimi-k2.6` / `kimi-k2.5` via `/model`) |
-| kimi-code | `KIMI_CODE_API_KEY` | Native | k3-256k (Moderato+, 256K, direct upstream ID; `k3` 1M / `kimi-for-coding` K2.7 Code / `kimi-for-coding-highspeed` via `/model`) |
+| kimi | `KIMI_API_KEY` | Native | kimi-k2.7-code (262,144-token context; `kimi-k3.1-pro` / `kimi-k3.1-pro-highspeed` / `kimi-k3` 1M / `kimi-k2.7-code-highspeed` / `kimi-k2.6` / `kimi-k2.5` via `/model`) |
+| kimi-code | `KIMI_CODE_API_KEY` | Native | k3-256k (Moderato+, 256K, direct upstream ID; `k3.1-pro` / `k3.1-pro-highspeed` / `k3` 1M / `kimi-for-coding` / `kimi-for-coding-highspeed` via `/model`; K3.1 requires thinking) |
 | qwen | `QWEN_API_KEY` | Native | qwen3.5-plus |
 | qwen-token-plan | `QWEN_TOKEN_API_KEY` | Native | qwen3.8-max (Anthropic-compat; legacy `qwen3.8-max-preview` plus `qwen3.7-max` / `qwen3.7-plus` / `qwen3.6-flash` / `glm-5.2` / `deepseek-v4-pro` via `/model`; all 1M context; image input on both Qwen 3.8 IDs / 3.7 Plus / 3.6 Flash) |
 | zhipu | `ZHIPU_API_KEY` | Native | glm-5 (`glm-5.3` / `glm-5.2` 1M ctx, plus `glm-5.1` / `glm-5-turbo` via `/model`; GLM-5.3 is pre-registered while the public API remains marked upcoming) |
@@ -2430,10 +2442,25 @@ kodax "please use /skill:code-review src/"
 
 Set `disable-model-invocation: true` for a Skill that must only be loaded after an explicit slash invocation. This keeps it out of natural-language model discovery without disabling `/<name>` or `/skill:<name>`.
 
-Built-in skills include:
-- **code-review** - Code review and quality analysis
-- **tdd** - Test-driven development workflow
-- **git-workflow** - Git commit and workflow automation
+The five core built-in Skills are model-discoverable:
+
+- **code-review** — Review changes without editing; includes read-only Git inspection.
+- **tdd** — Regression-first fixes or test-first work; tests-only requests may pass on the first run and do not authorize production edits.
+- **git-workflow** — Perform requested Git operations; explaining Git alone does not invoke the workflow.
+- **skill-creator** — Create, change, validate, package or evaluate reusable Skills; packaging does not install into the user's catalog.
+- **visual-review** — Review actual visual evidence and state unchecked scope honestly.
+
+Skill shell declarations match the entire command, for example `Bash(git *, npm *)`,
+and retain Host permission and sandbox checks. The optional `artifact-review`
+Skill is registered with the [Artifact adapter](docs/ARTIFACT_SDK.md); it documents
+that adapter's supported formats and parameters. Both visual Skills may use the
+existing managed preparation flow within the task's authorization; denied or
+missing capabilities leave the affected scope unverified.
+
+Skill Creator helpers use the public SDK, with a separately configured Provider,
+model and cwd. `run-trigger-eval.js` performs single-description semantic screening;
+actual triggering requires observed `skill` calls with the complete visible catalog.
+See its [evaluation reference](packages/agent/src/capabilities/skills/builtin/skill-creator/references/evaluation.md).
 
 Skills are stored in `~/.kodax/skills/` and can be extended with custom skills.
 F263 background learning is Memory-first: a single correction does not create

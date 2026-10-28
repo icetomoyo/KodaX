@@ -224,9 +224,8 @@ class ZaiCodingProvider extends KodaXAnthropicCompatProvider {
 class KimiCodeProvider extends KodaXAnthropicCompatProvider {
   readonly name = 'kimi-code';
   protected readonly config: KodaXProviderConfig = buildProviderConfig('kimi-code', {
-    // The subscription endpoint now routes three explicit model ids:
-    // K3 plus K2.7 Code Standard / HighSpeed. Keep the Anthropic-compatible
-    // path for native tool_use and preserved-thinking history fidelity.
+    // Use native Messages for subscription models, including K3.1 Pro,
+    // with tool_use and preserved-thinking history fidelity.
     baseUrl: 'https://api.kimi.com/coding/',
     promptCacheAffinity: true,
   });

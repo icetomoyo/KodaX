@@ -15,13 +15,17 @@ import {
 } from '@kodax-ai/coding';
 import { parseMcpIntegrationDocument, readExtensionsIntegration, readMcpIntegration } from '@kodax-ai/repl';
 import { startIntegrationHotReload, type IntegrationHotReloadHandle } from './integration-hot-reload.js';
+import type { ClientStartupProgress } from '@kodax-ai/coding/client-contract';
+import { createClientStartupProgressReporter } from './client-startup-progress.js';
 
 /** Shared bootstrap for the CLI Host and an SDK-created Host. */
 export async function createHostOwnedExtensionRuntime(
   configHome: string,
   config: Record<string, unknown>,
   onEvent: (message: string) => void = (message) => emitKodaXDiagnostic({ source: 'host-integrations', level: 'info', message }),
+  onStartupProgress?: (progress: ClientStartupProgress) => void | Promise<void>,
 ): Promise<{ readonly runtime: KodaXExtensionRuntime; readonly hotReload: IntegrationHotReloadHandle }> {
+  const reportProgress = createClientStartupProgressReporter(onStartupProgress);
   let configuredPaths: readonly string[] = [];
   let servers: Record<string, McpServerConfig> = {};
   try { configuredPaths = readExtensionsIntegration(configHome).document.paths; }
@@ -41,7 +45,9 @@ export async function createHostOwnedExtensionRuntime(
     reverse: buildMcpReverseCapabilities({ cwd: process.cwd(), enableElicitation: true }),
   };
   try {
+    reportProgress({ stage: 'initializing', phase: 'mcp' });
     await registerConfiguredMcpCapabilityProvider(runtime, servers, mcpOptions);
+    reportProgress({ stage: 'initializing', phase: 'extensions' });
     await runtime.loadExtensions(discovered, { continueOnError: true, loadSource: 'discovery' });
     await runtime.loadExtensions(configured, { continueOnError: true, loadSource: 'config' });
     const hotReload = await startIntegrationHotReload({ runtime, configHome, mcpOptions, onEvent });
@@ -54,7 +60,8 @@ export async function createHostOwnedExtensionRuntime(
 }
 
 /** A Host reuses bootstrap integrations; a direct Host owns its own instance. */
-export async function createHostIntegrations(configHome: string, config: Record<string, unknown>): Promise<{
+export async function createHostIntegrations(configHome: string, config: Record<string, unknown>,
+  onStartupProgress?: (progress: ClientStartupProgress) => void | Promise<void>): Promise<{
   readonly global: KodaXExtensionRuntime;
   forSession(sessionId: string): KodaXOptions['extensionRuntime'];
   createSession(sessionId: string, workspaceRoot: string, servers?: Readonly<Record<string, McpServerConfig>>): Promise<void>;
@@ -62,7 +69,7 @@ export async function createHostIntegrations(configHome: string, config: Record<
   close(): Promise<void>;
 }> {
   const existing = getActiveExtensionRuntime();
-  const owned = existing ? undefined : await createHostOwnedExtensionRuntime(configHome, config);
+  const owned = existing ? undefined : await createHostOwnedExtensionRuntime(configHome, config, undefined, onStartupProgress);
   // Activate the owned instance so Host features that resolve the active
   // runtime (command listing, reverse bridge) see it, matching the CLI path.
   owned?.runtime.activate();

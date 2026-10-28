@@ -43,7 +43,11 @@ function handleRequest(message) {
   if (method === 'tools/call') {
     const elicId = nextServerId++;
     pendingElicit.set(elicId, id);
-    writeMessage({ jsonrpc: '2.0', id: elicId, method: 'elicitation/create', params: {
+    writeMessage({ jsonrpc: '2.0', id: elicId, method: 'elicitation/create', params: params.arguments.text === 'confirm' ? {
+      message: 'Approve sharing?', mode: 'form', requestedSchema: { type: 'object', properties: {} },
+    } : params.arguments.text === 'url' ? {
+      message: 'Authorize sharing?', mode: 'url', url: 'https://example.test/authorize', elicitationId: 'authorization-1',
+    } : {
       message: 'Share the draft with the Host?',
       mode: 'form',
       requestedSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
@@ -82,13 +86,13 @@ class ElicitProvider extends KodaXBaseProvider {
   protected readonly config: KodaXProviderConfig = {
     apiKeyEnv: 'KODAX_PRODUCT_MCP_ELICIT_TEST_KEY', model: 'mcp-elicit-test', supportsThinking: false,
   };
-  constructor(private readonly results: string[]) { super(); }
+  constructor(private readonly results: string[], private readonly request: 'please' | 'confirm' | 'url' = 'please') { super(); }
   async stream(...args: Parameters<KodaXBaseProvider['stream']>): Promise<KodaXStreamResult> {
     const last = args[0].at(-1);
     if (last?.role === 'user' && last.content === 'Elicit from the shared server.') {
       return {
         textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use',
-        toolBlocks: [{ type: 'tool_use', id: randomUUID(), name: 'mcp_call', input: { id: TOOL_ID, args: { text: 'please' } } }],
+        toolBlocks: [{ type: 'tool_use', id: randomUUID(), name: 'mcp_call', input: { id: TOOL_ID, args: { text: this.request } } }],
       };
     }
     if (last?.role === 'user' && Array.isArray(last.content)) {
@@ -184,3 +188,46 @@ it.each(['sa', 'ama'] as const)('attributes a shared MCP server elicitation to i
     await rm(homeDir, { recursive: true, force: true, maxRetries: 3 });
   }
 }, 120_000);
+
+it.each(['confirm', 'url'] as const)('maps an initial UI failure through the real SDK MCP bridge to cancel (%s)', async request => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-mcp-error-'));
+  const scriptPath = path.join(homeDir, 'elicit-server.cjs');
+  await writeFile(scriptPath, ELICIT_SERVER_SOURCE, 'utf8');
+  const results: string[] = [];
+  registerModelProvider('product-mcp-elicit-test', () => new ElicitProvider(results, request));
+  vi.stubEnv('KODAX_PRODUCT_MCP_ELICIT_TEST_KEY', 'test-only');
+  writeIntegrationDocument({
+    domain: 'mcp', configHome: path.join(homeDir, '.kodax'),
+    document: {
+      version: 1,
+      servers: { [SERVER_ID]: { type: 'stdio', command: process.execPath, args: [scriptPath], connect: 'prewarm' } },
+    },
+    validate: parseMcpIntegrationDocument,
+  });
+  const runtime = await createKodaXRuntime({ homeDir, profile: 'mcp-error', sharedDaemonHost: true });
+  try {
+    const session = await runtime.sessions.create({ projectPath: homeDir });
+    await runtime.sessions.updateSettings(session.id, {
+      provider: 'product-mcp-elicit-test', permissionMode: 'full-access', agentMode: 'sa',
+    });
+    for (const outcome of ['error', 'decline'] as const) {
+      const askUser = vi.fn(async () => {
+        if (outcome === 'error') throw new Error('MCP confirmation UI failed');
+        return 'decline';
+      });
+      const run = await runtime.runs.start({ sessionId: session.id, prompt: 'Elicit from the shared server.',
+        options: { events: { askUser } } });
+      await expect(run.result).resolves.toMatchObject({ phase: 'completed' });
+      expect(askUser).toHaveBeenCalledOnce();
+      expect(results.at(-1)).toContain(`elicit:${outcome === 'error' ? 'cancel' : 'decline'}:`);
+      expect(await runtime.userInputs.listPending({ runId: run.runId })).toEqual([]);
+    }
+    expect(results).toHaveLength(2);
+  } finally {
+    await runtime.close();
+    await awaitLatestCodingMemoryReviewDrain(5_000);
+    clearRuntimeModelProviders();
+    vi.unstubAllEnvs();
+    await rm(homeDir, { recursive: true, force: true, maxRetries: 3 });
+  }
+}, 60_000);

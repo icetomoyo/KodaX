@@ -744,7 +744,13 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       return;
     }
 
-    // Kimi's OpenAI-compatible endpoint uses the same nested thinking.effort shape.
+    if (preset === 'kimi-k3.1') {
+      // K3.1 always thinks; Chat Completions accepts top-level effort only.
+      params.reasoning_effort = intent.effort ?? capability.defaultEffort;
+      return;
+    }
+
+    // Legacy K3 routes retain their existing nested thinking.effort shape.
     if (preset === 'kimi-k3') {
       const useModelDefault =
         reasoning.effortSource === 'omitted' && reasoning.effort === 'none';

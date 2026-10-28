@@ -5,8 +5,9 @@ import {
   type SkillHook,
   type SkillHooks,
 } from '@kodax-ai/agent';
-import type { KodaXOptions, KodaXShellExecutionContract } from './types.js';
+import type { KodaXOptions, KodaXShellExecutionContract, KodaXToolExecutionContext } from './types.js';
 import { toolBash } from './tools/bash.js';
+import { KodaXSkillInvocationError } from './skill-invocation-error.js';
 
 const TOOL_NAME_ALIASES: Readonly<Record<string, string>> = {
   read: 'read',
@@ -257,19 +258,25 @@ async function runHooks(
 
 async function loadTrustedInvokedSkill(options: KodaXOptions, name: string): Promise<Skill> {
   const boundRegistry = options.context?.skillRegistry;
-  if (boundRegistry) {
-    if (!boundRegistry.has(name)) {
-      throw new Error(`Cannot rehydrate runtime policy: Skill "${name}" is absent from the bound Skill registry.`);
-    }
-    return boundRegistry.loadFull(name);
-  }
   const projectRoot = options.context?.gitRoot ?? options.context?.executionCwd ?? process.cwd();
-  const registry = new SkillRegistry(projectRoot);
-  await registry.discover();
-  if (!registry.has(name)) {
-    throw new Error(`Cannot rehydrate runtime policy for unknown Skill "${name}".`);
+  const registry = boundRegistry ?? new SkillRegistry(projectRoot);
+  let registered: boolean;
+  try {
+    if (!boundRegistry) await registry.discover();
+    registered = registry.has(name);
+  } catch (cause: unknown) {
+    if (cause instanceof Error && cause.name === 'AbortError') throw cause;
+    throw new KodaXSkillInvocationError('skill_registry_unavailable', name, { cause });
   }
-  return registry.loadFull(name);
+  if (!registered) {
+    if (registry.discoveryIncomplete) throw new KodaXSkillInvocationError('skill_registry_unavailable', name);
+    throw new KodaXSkillInvocationError(boundRegistry ? 'skill_not_registered' : 'skill_not_found', name);
+  }
+  try { return await registry.loadFull(name); }
+  catch (cause: unknown) {
+    if (cause instanceof Error && cause.name === 'AbortError') throw cause;
+    throw new KodaXSkillInvocationError('skill_policy_restore_failed', name, { cause });
+  }
 }
 
 export function resolveSkillModelOverride(provider: string, model: string | undefined): string | undefined {
@@ -286,6 +293,8 @@ export function resolveSkillModelOverride(provider: string, model: string | unde
 const invocationWork = new WeakMap<KodaXOptions, {
   readonly pending: Set<Promise<void>>;
   readonly finalize: (error?: unknown) => Promise<void>;
+  readonly trustedSkill?: Skill;
+  readonly additionalContext?: string;
 }>();
 
 function trackPostHook(options: KodaXOptions, task: Promise<HookResponse>): void {
@@ -317,6 +326,88 @@ export async function awaitRuntimeSkillInvocationPolicy(options: KodaXOptions, e
 }
 
 export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions, prompt?: string): Promise<KodaXOptions> {
+  const explicit = await applyExplicitSkillInvocationPolicy(options, prompt);
+  let activeEvents = explicit.events ?? {};
+  const activated: KodaXOptions[] = [];
+  const dynamicPolicies: AllowedToolPolicy[] = [
+    parseAllowedTools(explicit.context?.skillInvocation?.allowedTools),
+    parseAllowedTools(explicit.context?.commandInvocation?.allowedTools),
+  ];
+  const assertDynamicContextAllowed = (command: string) => {
+    if (dynamicPolicies.some(policy => !isToolAllowed(policy, 'bash', { command }))) {
+      throw new Error('Dynamic context command is not allowed by the active Skill policy.');
+    }
+  };
+  const policyIdentity = (policy: Skill) => JSON.stringify([policy.skillFilePath, policy.rawContent,
+    policy.allowedTools, policy.hooks, policy.model, policy.context, policy.agent]);
+  const initial = invocationWork.get(explicit)?.trustedSkill;
+  const identities = new Map<string, string>(initial ? [[initial.name, policyIdentity(initial)]] : []);
+  let activationTail: Promise<unknown> = Promise.resolve();
+  const scoped: KodaXOptions = {
+    ...explicit,
+    context: { ...explicit.context, activateModelSkill: (requested, args, registry, provider = explicit.provider) => {
+      const activation = activationTail.then(async () => {
+        const name = requested.name;
+        const skill = await registry.loadFull(name);
+        if (policyIdentity(skill) !== policyIdentity(requested)) {
+          throw new Error(`Skill "${name}" changed while loading; load it again before taking task actions.`);
+        }
+        if (skill.disableModelInvocation) throw new Error(`Skill "${name}" has model invocation disabled`);
+        if (skill.context === 'fork') {
+          throw new Error(`Skill "${name}" uses context: fork; invoke it explicitly so the Host can create its execution boundary.`);
+        }
+        const identity = policyIdentity(skill);
+        const previous = identities.get(name);
+        if (previous !== undefined && previous !== identity) {
+          throw new Error(`Skill "${name}" changed after activation; start a new Run to apply its updated policy.`);
+        }
+        if (previous !== undefined) return { assertDynamicContextAllowed };
+        const applied = await applyExplicitSkillInvocationPolicy({ ...explicit, provider, events: activeEvents,
+          context: { ...explicit.context, skillRegistry: registry, commandInvocation: undefined,
+            skillInvocation: { name, arguments: args, path: skill.skillFilePath, expandedContent: skill.content,
+              runtimePolicy: { enforceAtRuntime: true } } } }, prompt);
+        activated.push(applied);
+        dynamicPolicies.push(parseAllowedTools(skill.allowedTools));
+        activeEvents = applied.events ?? activeEvents;
+        identities.set(name, identity);
+        return { modelOverride: resolveSkillModelOverride(provider, skill.model),
+          additionalContext: invocationWork.get(applied)?.additionalContext, assertDynamicContextAllowed };
+      });
+      // A refused activation must not poison later, independent loads.
+      activationTail = activation.catch(() => undefined);
+      return activation;
+    } },
+    events: { ...activeEvents,
+      beforeToolExecute: async (...args) => activeEvents.beforeToolExecute?.(...args) ?? true,
+      onToolResult: (...args) => activeEvents.onToolResult?.(...args),
+      onComplete: (...args) => activeEvents.onComplete?.(...args),
+      onError: (...args) => activeEvents.onError?.(...args),
+    },
+  };
+  invocationWork.set(scoped, { pending: new Set(), trustedSkill: initial, finalize: async error => {
+    await activationTail;
+    for (const applied of [...activated].reverse()) await awaitRuntimeSkillInvocationPolicy(applied, error);
+    await awaitRuntimeSkillInvocationPolicy(explicit, error);
+  } });
+  return scoped;
+}
+
+/** Bind model changes to the executor that owns the next Provider request. */
+export function bindModelSkillSelection(
+  ctx: KodaXToolExecutionContext,
+  setModel: (model: string) => void,
+  getProvider: () => string,
+): void {
+  const activate = ctx.activateModelSkill;
+  if (!activate) return;
+  ctx.activateModelSkill = async (skill, args, registry) => {
+    const selected = await activate(skill, args, registry, getProvider());
+    if (selected.modelOverride !== undefined) setModel(selected.modelOverride);
+    return selected;
+  };
+}
+
+async function applyExplicitSkillInvocationPolicy(options: KodaXOptions, prompt?: string): Promise<KodaXOptions> {
   const skillInvocation = options.context?.skillInvocation;
   const commandInvocation = options.context?.commandInvocation;
   if (!skillInvocation?.runtimePolicy?.enforceAtRuntime && !commandInvocation?.runtimePolicy?.enforceAtRuntime) return options;
@@ -374,10 +465,10 @@ export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions, p
       code: 'skill_invocation_blocked' as const,
     });
   }
-  const promptOverlay = [options.context?.promptOverlay,
-    policy.agent ? `Preferred agent: ${policy.agent}` : undefined,
+  const additionalContext = [policy.agent ? `Preferred agent: ${policy.agent}` : undefined,
     started.additionalContext, submitted.additionalContext]
     .filter((value): value is string => Boolean(value)).join('\n\n');
+  const promptOverlay = [options.context?.promptOverlay, additionalContext].filter(Boolean).join('\n\n');
   const pending = new Set<Promise<void>>();
   let terminalNotification: (() => void) | undefined;
   const modelOverride = resolveSkillModelOverride(options.provider, policy.model);
@@ -405,7 +496,9 @@ export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions, p
       onComplete: (meta) => { terminalNotification = () => baseEvents.onComplete?.(meta); },
       onError: (error, meta) => { terminalNotification = () => baseEvents.onError?.(error, meta); },
       beforeToolExecute: async (tool, input, meta) => {
-        if (!isToolAllowed(allowedTools, tool, input)) {
+        // Loading instructions is separate from their concrete actions. Inline
+        // dynamic commands are checked independently before execution.
+        if (tool !== 'skill' && !isToolAllowed(allowedTools, tool, input)) {
           return `[Blocked] Tool '${tool}' is not allowed by ${invocation.name}`;
         }
         if ((await runHooks(
@@ -443,7 +536,7 @@ export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions, p
     },
   };
   let finalization: Promise<void> | undefined;
-  invocationWork.set(runtimeOptions, { pending, finalize: (error) => {
+  invocationWork.set(runtimeOptions, { pending, trustedSkill, additionalContext, finalize: (error) => {
     const event = policy.context === 'fork' ? 'SubagentStop' : 'Stop';
     finalization ??= runHooks(
       event, policy.hooks?.[event], invocation.name,

@@ -76,7 +76,7 @@ const cases = [
   { name: 'MCP form', kind: 'question_input', input: { id: 'mcp:shared-elicit:tool:elicit_tool', args: { text: 'please' } } },
 ] as const;
 
-it.each(cases)('cancels only its own $name without inventing an answer, including a view before the receipt', async (scenario) => {
+it.each(cases)('skips only its own $name as non-interactive without inventing an answer, including a view before the receipt', async (scenario) => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-one-shot-question-'));
   if (scenario.name === 'MCP form') {
     const scriptPath = path.join(homeDir, 'elicit-server.cjs');
@@ -151,11 +151,23 @@ it.each(cases)('cancels only its own $name without inventing an answer, includin
     expect((await client.interactions.list({ sessionId: foreign.id })).some(item => item.kind === scenario.kind)).toBe(true);
     expect(await client.sessions.getSettings(session.id)).toMatchObject({ permissionMode: 'full-access' });
     expect(responded).toHaveBeenCalledTimes(1);
-    expect(responded.mock.calls[0]?.[1]).toMatchObject({ kind: 'cancel', reason: expect.stringContaining('non-interactive') });
+    expect(responded.mock.calls[0]?.[1]).toEqual({ kind: 'skip', reason: 'non_interactive' });
     const result = await pending;
+    expect(result.success).toBe(true);
+    expect(result.interrupted).not.toBe(true);
     const toolResults = result.messages.flatMap(message => Array.isArray(message.content)
       ? message.content.filter(block => block.type === 'tool_result') : []);
-    expect(JSON.stringify(toolResults)).toContain(scenario.name === 'MCP form' ? 'elicit:cancel:' : 'cancel');
+    expect(toolResults).toHaveLength(1);
+    expect(toolResults[0]?.is_error).toBe(false);
+    const content = toolResults[0]?.content;
+    if (typeof content !== 'string') throw new Error('Expected a text tool result.');
+    if (scenario.name === 'MCP form') {
+      expect(content).toContain('elicit:cancel:');
+    } else {
+      expect(JSON.parse(content)).toEqual({
+        success: true, status: 'unanswered', reason: 'non_interactive',
+      });
+    }
     expect(JSON.stringify(toolResults)).not.toContain('must-not-answer');
     expect(JSON.stringify(toolResults)).not.toContain('"choice":"ship"');
   } finally {

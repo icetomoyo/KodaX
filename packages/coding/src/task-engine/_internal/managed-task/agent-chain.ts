@@ -65,6 +65,7 @@ import { wrapCodingToolAsRunnable } from './tool-wrappers.js';
 import { getToolExecutionOverride } from '../../../agent-runtime/permission-gate.js';
 import { NULL_OBSERVER } from './observer-bridge.js';
 import type { AmaRole, ObserverBridge, RunnerChainPromptContext } from './types.js';
+import type { ExtensionRuntimeContract } from '../../../extensions/runtime-contract.js';
 
 interface TodoToolBundle {
   readonly todoUpdate: RunnableTool;
@@ -112,6 +113,8 @@ function isManagedToolVisibleForContext(
   ctx: KodaXToolExecutionContext,
 ): boolean {
   if (exclude.has(name)) return false;
+  const activeTools = (ctx.extensionRuntime as ExtensionRuntimeContract | undefined)?.getDefaults?.().activeTools;
+  if (activeTools && !activeTools.includes(name) && !lookupRunScopedTool(ctx.extensionRuntime, name)) return false;
   return isToolDiscoverable(name, ctx);
 }
 

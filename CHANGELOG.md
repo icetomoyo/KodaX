@@ -8,6 +8,53 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Project existing task-result metadata into Product live views and recovered
+  history with explicit source, task identity, terminal/unknown status and
+  Markdown report bodies. Preserve multi-report order, literal report content,
+  existing full-body reads and raw canonical envelopes; decode only explicitly
+  sourced legacy deliveries and keep child failures separate from root Provider
+  errors. Deduplicate only identified task-message mirrors; preserve independent
+  same-text notices and ambiguous old UI records during history restoration.
+
+- Keep Skill discovery rooted at the repository when the SDK runs from a
+  subdirectory, synchronize catalogs with loader availability in SA/AMA, and
+  invalidate stale bodies across rediscovery and in-flight reads. Model loads
+  now apply the existing Skill action policies, lifecycle hooks and model
+  preference, retaining Host authorization and safe multi-Skill composition.
+
+- Preserve complete MCP tool output behind explicit SDK `part: 'original'`
+  reads, including daemon IPC and Host restart, while retaining existing preview
+  offsets. Keep results inline when recovery cannot be read, improve long JSON
+  previews, and stop Session-local automatic cleanup from deleting shared output
+  artifacts. Add simulated-provider/MCP E2E coverage against the built SDK.
+
+---
+
+## [0.7.97-alpha.10] - 2026-10-27
+
+Tenth alpha of the v0.7.97 line: live context-capacity recovery reaches
+durable generation boundaries — checkpointed Runs and task trees resume
+after Host restart with fresh scoped authority, Kimi K3.1 routes join the
+provider registry with full effort coverage, and AskUser interactions gain
+answer-aware policies with explicit skip semantics. Every v0.7.96 stable
+and v0.7.97-alpha.1 through alpha.9 contract is retained. npm publication
+remains a manual maintainer action.
+
+### Added
+
+- Forward actual Host initialization phases through the existing SDK startup callback and CLI indicator, including MCP prewarm and task recovery; reuse bounded bootstrap-log observation without extra readiness probes or waits.
+- Kimi K3.1 provider routes: all seven user effort levels map through the Anthropic-compatible endpoint exactly like the official Kimi client (explicit thinking enablement plus output_config effort), with live subscription results, inconclusive high self-reports, and the public account balance limitation documented.
+
+### Fixed
+
+- Repair bundled Skill shell declarations against the full-command glob contract while retaining Host authorization; make Git/TDD discoverable, separate tests-only and Skill creation/packaging/evaluation flows, and align visual preparation and unverified fallbacks. Skill Creator helpers now resolve public Skill SDK exports in installed tarballs and create fresh description-loop workspaces; semantic-screening output no longer implies observed model selection.
+- Classify trusted Skill loading and policy restoration failures as local execution failures with stable codes and path-safe Skill messages; preserve the facts through Runtime persistence, daemon IPC and Product Client outcomes without weakening trusted reloads or changing Provider error classification.
+- Resume checkpointed Runs and task trees after Host restart: original history, tool receipts, pending input intent and iteration budgets are preserved across independent child and Host recovery; scoped authority rebinds freshly, suspended worktrees stay protected, and bounded verbatim constraint memory retains oversized requests (Issue 322 follow-up).
+- Converge client exit recovery without rewriting unknown outcomes: startup readiness is separated from historical client cleanup acknowledgements, exact Host/process/Job shutdown evidence is reverified, referenced outcomes are retained with late cleanup results preserved, and old exit requests can no longer fence or stop replacement Hosts.
+- Preserve non-interactive question settlement in one-shot CLI: report normal `unanswered/non_interactive` results without default answers or Run interruption, retain MCP protocol cancellation and independent permission rejection, and update the adjacent regression assertions.
+- Close adjacent question/restart regressions: retain checkpoints on unanswered recovery prompts, cancel unanswered MCP confirmation/URL requests, preserve UI callback errors through the SDK MCP bridge for protocol cancellation, surface ordinary prompt callback errors without overriding prior settlements, scope client Stop intent to its exact Run, and persist thread concurrency limits. Expose the existing new-Host question deadline through the Product launcher; repair classic assertions and capacity-test cleanup.
+- Honor a partially delivered durable Session Stop during Root/Actor generation recovery; its original request can finish through verified dead-owner checkpoint Stop takeover, while later Runs remain outside the old frontier.
+
 - Preserve prior summary failures when an irreducibly oversized user input
   needs request-only degradation (Issue 322). Single-agent and managed
   compaction no longer reset the breaker on an oversized partial result;
@@ -36,6 +83,16 @@ All notable changes to this project will be documented in this file.
 - Keep eval dump directories and unrelated `kodax-eval-*` directories out of orphan
   worktree cleanup. Require a worktree gitfile and successful Git-owned removal;
   isolate the cleanup regression from the shared system temporary directory.
+- AskUser questions wait indefinitely by default (timeout 0) and support explicit skip; skip and Host timeout return an `unanswered` result with its reason instead of cancelling the Run, defaults are never submitted automatically, and only Stop interrupts. Permission prompts keep their five-minute default; both accept 0 to disable their timer. MCP reverse elicitation and the client plane follow the same policy.
+- Close the A2A server task store when agent-card validation fails during
+  construction, so a rejected server no longer leaks its data-dir lock handle;
+  on Windows the leaked handle kept the data dir undeletable (`ENOTEMPTY`)
+  for the life of the process.
+- Deliver observation handoff events to event-stream observers. Daemon
+  `session.observe` subscribers never read the snapshot, so events published
+  while the snapshot materialized were silently deduplicated away whenever the
+  snapshot's seq raced past them — a late `run.failed` could be lost forever.
+  Snapshot consumers keep the existing no-duplicates handoff contract.
 
 ---
 

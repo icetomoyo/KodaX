@@ -100,7 +100,7 @@ import type {
   McpServerConfig,
   McpServerToolList,
 } from '@kodax-ai/agent';
-import { emitKodaXDiagnostic } from '@kodax-ai/agent';
+import { emitKodaXDiagnostic, isAskUserUnanswered } from '@kodax-ai/agent';
 import { KODAX_VERSION } from '@kodax-ai/repl';
 import type {
   RuntimeDaemonMethod,
@@ -452,6 +452,9 @@ export function createRuntimeDaemonClient(
     pending: ClientInteraction,
     answer: unknown,
   ): ClientInteractionResponse | undefined => {
+    if (pending.kind !== 'permission' && isAskUserUnanswered(answer) && answer.reason !== 'timeout') {
+      return answer.reason === 'non_interactive' ? { kind: 'skip', reason: 'non_interactive' } : { kind: 'skip' };
+    }
     if (pending.kind === 'question_input') {
       return { kind: 'question_input', text: answer as string };
     }
@@ -564,6 +567,9 @@ export function createRuntimeDaemonClient(
         ) as Promise<RuntimeConversationHistoryEntryChunk | null>);
       },
       readHistoryEntry(sessionId, itemId, options) {
+        if (options?.part === 'original') {
+          return request('session.view.item', { sessionId, itemId, ...options }) as Promise<ClientItemContent | null>;
+        }
         const transcript = itemId.startsWith(`${sessionId}:transcript:`);
         return readConversationHistoryEntry(
           sessionId,

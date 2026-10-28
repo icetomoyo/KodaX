@@ -84,6 +84,7 @@ async function prepareCodingLearnedSkillBindingUnsafe(
   pinnedRegistry: ISkillRegistry | undefined,
 ): Promise<CodingLearnedSkillBinding> {
   const projectRoot = resolveExecutionCwd(options.context);
+  const skillProjectRoot = options.context?.gitRoot ?? projectRoot;
   const localProjectId = `local:${path.resolve(projectRoot).toLowerCase()}`;
   const projectIds = [...new Set([identity.projectId, localProjectId])];
   const scopes = projectIds.map((projectId) => createLearnedCapabilityScope(identity.configHome, {
@@ -147,11 +148,11 @@ async function prepareCodingLearnedSkillBindingUnsafe(
         learnedArea,
       });
   const registry = pinnedRegistry === undefined
-    ? createProjectRegistry(projectRoot, identity.configHome, learnedArea)
+    ? createProjectRegistry(skillProjectRoot, identity.configHome, learnedArea)
     : new CompositeSkillRegistry(pinnedRegistry, learnedRegistry!);
   const formalInventory = pinnedRegistry === undefined
     ? undefined
-    : createFormalProjectRegistry(projectRoot, identity.configHome);
+    : createFormalProjectRegistry(skillProjectRoot, identity.configHome);
   try {
     await Promise.all(stores.map(({ store }) => reconcileLearnedSkillBindingOutcomes(store, {
       sessionId: rootSessionId,
@@ -277,6 +278,10 @@ class CompositeSkillRegistry implements ISkillRegistry {
     private readonly formal: ISkillRegistry,
     private readonly learned: ISkillRegistry,
   ) {}
+
+  get discoveryIncomplete(): boolean {
+    return this.formal.discoveryIncomplete === true || this.learned.discoveryIncomplete === true;
+  }
 
   get skills(): ReadonlyMap<string, SkillMetadata> {
     return new Map(this.list().map((skill) => [skill.name, skill]));

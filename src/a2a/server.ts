@@ -609,7 +609,14 @@ class KodaXA2AServerRuntime implements KodaXA2AServer {
     securityRealm(options.authentication);
     this.#now = options.now ?? (() => new Date());
     this.#store = new A2AFileTaskStore(options.dataDir);
-    this.#card = buildCard(options);
+    try {
+      this.#card = buildCard(options);
+    } catch (error: unknown) {
+      // The store holds an open lock FD; on Windows a leaked handle keeps the
+      // dataDir undeletable (ENOTEMPTY) for the life of the process.
+      this.#store.close();
+      throw error;
+    }
     this.#ready = this.recover();
   }
 

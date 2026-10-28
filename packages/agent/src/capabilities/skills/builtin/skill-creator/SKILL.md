@@ -1,127 +1,57 @@
 ---
 name: skill-creator
-description: 创建、重写、迁移和优化 KodaX/Agent Skills。当用户想新建 skill、把外部 skill 迁移到 KodaX、改进触发描述、整理 supporting files、设计评测用例、补齐 grading/benchmark/review/comparison 流程或验证 skill 结构时使用。即使用户没有明确说“skill”，只要目标是在沉淀可复用的代理工作流、提示词或脚本能力，也应该使用这个 skill。
+description: 创建、修改、迁移、验证或打包 Skill，或优化其描述与评测时使用；也用于把已有工作流沉淀成可反复调用的代理能力。不用于普通一次性写作、代码实现或仅使用某项既有 Skill 完成业务任务。
 user-invocable: true
-allowed-tools: "Read, Grep, Glob, Write, Edit, Bash(node:*, npm:*, npx:*)"
+allowed-tools: "Read, Grep, Glob, Write, Edit, Bash(node *, npm *, npx *)"
 argument-hint: "[skill-name-or-task]"
-compatibility: "Optimized for KodaX and Agent Skills style directories. Bundled helper scripts use Node.js instead of Python."
+compatibility: "KodaX/Agent Skills directories; helpers are plain Node ESM. Model evaluation needs a separately configured, authorized SDK Provider."
 ---
 
 # Skill Creator
 
-把用户的工作流整理成一个可维护、可触发、可评估的 skill。优先适配 KodaX 的 skill 运行方式，而不是逐字复制外部平台的实现。
+复用当前会话已有的目标、样例、范围和授权，区分用户要创建/修改、验证、打包还是
+评测。仅补齐会改变结果的缺失信息；小改描述不必扩展成完整模型评测。
 
-## 何时使用
+下面的 scripts/ 与 references/ 都相对本 Skill 目录。保留目标工作区语境，执行
+helper 时给脚本路径和目标路径，不假定当前目录就是 Skill 目录。
 
-- 用户要新建 skill，或把一次对话里的工作流沉淀成 skill。
-- 用户要改已有 skill 的触发描述、结构、supporting files 或提示词。
-- 用户要把 Claude / Anthropic / 其他平台的 skill 移植到 KodaX。
-- 用户要为 skill 设计测试提示、评估结构、人工 review 流程或 benchmark 汇总。
+## 创建、修改与迁移
 
-## 工作方式
+- 新建时先起草，或用 `node scripts/init-skill.js <name> --path <skills-dir>` 初始化，
+  再按真实任务填写；已有 Skill 在原目录做必要修改。验证-only 只报告问题，不改文件。
+- description 写任务与调用边界；默认开放模型发现。只有用户要求显式调用时才设
+  `disable-model-invocation: true`。每个已启用 Skill 仍接受 `/<name>` 和 `/skill:<name>`；
+  `user-invocable` 是兼容字段，不是执行权限。
+- SKILL.md 保留共同方法和分支入口。机械步骤放 scripts/，分支细节放 references/，
+  模板放 assets/；只有实际需要时才新增支持文件。内置脚本使用 plain Node ESM `.js`，
+  `.ts` 需要相应构建链，不能假定被直接复制的 TypeScript 可以执行。
+- allowed-tools 遵守当前宿主契约，例如 `Bash(npm *, node *)` 匹配完整命令文本，
+  不是 `npm:*` 冒号前缀。Skill 声明不会授予宿主权限，仍执行原有授权与沙箱检查。
+- 移植时核对工具、路径、依赖和事件语义，保留真正可用的行为。记录可核实的来源
+  URL、revision、许可与改写范围；未核实的来源明确标未知，不追认一个上游版本。
 
-### 1. 先收敛目标
+完成后用 `node scripts/quick-validate.js <skill-dir>` 做结构检查，并核对正例、相邻
+任务反例及支持文件引用。结构通过不等于真实触发或脚本执行已验证。交付实际修改
+和证据；工具不足时继续有依据的起草/检查，明确未运行部分。
 
-先明确四件事：
-1. 这个 skill 要解决什么任务。
-2. 什么时候应该触发，什么时候不应该触发。
-3. 输出是什么形态。
-4. 是否需要评测和人工 review。
+## 打包与分享
 
-如果用户已经给了样例对话、提示词或外部 skill 仓库，先从已有材料里提炼，不要重复让用户描述。
+`node scripts/package-skill.js <skill-dir> --output <file.skill>` 校验并生成归档。
+用户只要分享包时，交付归档和验证结果即可，不默认安装到个人技能库。
 
-### 2. 适配 KodaX，而不是照抄外部 skill
+需要验证安装链路时，用临时隔离目录：
+`node scripts/install-skill.js <file.skill> --dest <isolated-dir>`，再检查解包内容和引用。
+仅在任务要求真实安装时写入用户指定目录，沿用已有授权；不以 --force 绕过同名冲突。
 
-迁移外部 skill 时，拆成三类：
-- 可直接复用：SKILL.md 的思路、评测结构、参考文档组织方式。
-- 需要改写：路径约定、触发描述、支持的 frontmatter 字段、命令示例。
-- 不要硬搬：强依赖 Claude Code、`claude -p`、Cowork、Python stdlib 或专有事件流的部分。
+## 评测或优化描述
 
-如果外部 skill 依赖特定宿主能力，优先改成 KodaX 当前能承接的手工流程或 Node 工具，而不是留下名不副实的说明。
+先读 [评测方法与命令](references/evaluation.md)，只执行需要的分支。
 
-### 3. 写 KodaX 风格的 skill
+- quick-validate 是结构检查；run-trigger-eval 是单条描述的**语义筛查**，不是实际触发率。
+- 真实触发需使用实际注册、可见的完整 catalog 和真实 skill 工具定义，记录是否真的
+  调用了 skill；包含自然语言正例和相邻任务反例，不能以判断题分数代替调用证据。
+- run-eval 是独立 SDK 执行，必须明确 Provider、model、cwd、输入/输出路径与预算；
+  不自动继承 Space 当前会话凭据或工具。没有已授权模型能力时仍可完成静态工作。
 
-- `description` 要写“做什么 + 什么时候用”，并稍微主动一点，避免 under-trigger。
-- `SKILL.md` 负责主流程，不要把所有细节都塞进去。
-- 重复性、机械性、易出错的步骤，放到 `scripts/`。
-- 大块参考资料放到 `references/`。
-- 模板或静态文件放到 `assets/`。
-- 如果某个专家流程只服务这个 skill，可以放进 `agents/`，但先把它当私有 contract，不要自动上升成全局产品概念。
-- `description` 同时决定模型发现。自然语言只会看到未设置 `disable-model-invocation: true` 的 name/description。
-- 需要只在显式 slash 后加载时，写 `disable-model-invocation: true`。这只关闭模型 catalog 与模型 `skill` 工具。
-- 每个已启用 Skill 都接受 `/<name>` 和 `/skill:<name>`。
-- token 可在 query 头部或中间。后续文本是 Skill 参数。
-- `user-invocable` 只保留解析兼容。不要把它当成执行权限：宿主忽略该字段后，作者会误以为 `false` 能禁止 slash/SDK 调用。
-
-### 4. Bundled scripts 默认用 Node.js
-
-KodaX 当前会把 builtin skill 目录直接复制到 `dist/`。因此：
-
-- skill 内的可执行脚本默认使用 plain Node ESM `.js`。
-- 只有在你同时修改了构建链、确保脚本会被编译时，才在 skill 内使用 `.ts`。
-- 如果用户只是想“改成 node/typescript”，默认先落成 Node `.js`，这是最稳妥的内建交付方式。
-
-### 5. 先验证，再评估
-
-起草完成后，优先按下面的顺序推进：
-
-1. 用 `node scripts/quick-validate.js <skill-dir>` 做结构检查。
-2. 如果还没有 skill 骨架，用 `node scripts/init-skill.js <skill-name> --path <skills-dir>` 初始化。
-3. 设计 2 到 3 个真实用户会说的测试提示。
-4. 如果要跑端到端 skill eval，把提示整理到 `evals/evals.json`，再用 `node scripts/run-eval.js --skill-path <skill-dir> --evals <evals.json> --workspace <iteration-dir>` 生成 `with_skill` / `without_skill` workspace。
-5. 如果要补第 3 阶段的专家评测流，先用 `node scripts/grade-evals.js <workspace>` 生成 `grading.json`，再用 `node scripts/aggregate-benchmark.js <workspace> --skill-name <name>` 聚合 benchmark，用 `node scripts/analyze-benchmark.js <workspace>` 产出分析结论，用 `node scripts/compare-runs.js <workspace>` 做 blind comparison。
-6. 如果要评估 description 的触发效果，再用 `node scripts/run-trigger-eval.js --skill-path <skill-dir> --evals <evals.json>` 跑一轮触发评测。
-7. 如果要迭代 description，可以用 `node scripts/improve-description.js --skill-path <skill-dir> --eval-results <results.json>` 生成候选描述，或用 `node scripts/run-loop.js --skill-path <skill-dir> --evals <evals.json> --workspace <workspace-dir>` 跑多轮优化。
-8. 如果需要人工 review，把运行结果整理到 workspace，再用 `node scripts/generate-review.js <workspace> --static <html-file>` 或本地服务模式生成 review 页面。
-9. 如果要分享给别的 KodaX/Agent Skills 风格环境，用 `node scripts/package-skill.js <skill-dir>` 打包，再用 `node scripts/install-skill.js <archive-or-dir>` 验证安装链路。
-
-## 评估建议
-
-- 客观任务：优先写断言、grading 结构和 benchmark。
-- 主观任务：优先给人类 review 页面，再用 comparator 做 blind comparison，而不是强行只看单一分数。
-- 描述优化：先整理误触发/漏触发样例，再跑 `run-trigger-eval`，需要时再用 `improve-description` 或 `run-loop` 迭代。
-- 如果需要专家提示词，把 `agents/grader.md`、`agents/analyzer.md`、`agents/comparator.md` 当作私有专家 contract 使用，不要先把它们产品化成通用 swarm 概念。
-
-## 输出要求
-
-默认给出：
-- 修改后的 `SKILL.md`
-- 新增或更新的 supporting files
-- 简短的 trigger/eval 样例
-- 还没覆盖的风险或后续建议
-
-如果用户是在移植外部 skill，还要额外说明：
-- 哪些能力已经迁移
-- 哪些能力因为宿主差异被删减或改写
-- 哪些部分后续值得继续产品化
-
-## 可用工具
-
-- `agents/grader.md`：给 `grade-evals.js` 使用的专家评分契约。
-- `agents/analyzer.md`：给 `analyze-benchmark.js` 使用的分析契约。
-- `agents/comparator.md`：给 `compare-runs.js` 使用的盲比契约。
-- `scripts/quick-validate.js`：校验 skill 结构和 frontmatter。
-- `scripts/init-skill.js`：初始化一个新的 skill 骨架，并可一并创建 `evals/evals.json`。
-- `scripts/run-eval.js`：运行端到端 skill eval，生成 `with_skill` / `without_skill` workspace 结果。
-- `scripts/grade-evals.js`：消费 workspace，给每个 run 生成 `grading.json` 与 `grading-summary.json`。
-- `scripts/aggregate-benchmark.js`：聚合 `grading.json` / `timing.json` 生成 `benchmark.json` 与 `benchmark.md`。
-- `scripts/analyze-benchmark.js`：基于 benchmark 和 grading 产出 `analysis.json` 与 `analysis.md`。
-- `scripts/compare-runs.js`：对两个 config 做 blind comparison，生成 `comparison.json` 与 `comparison.md`。
-- `scripts/run-trigger-eval.js`：对 description 做 KodaX 原生触发评测，检查误触发和漏触发。
-- `scripts/improve-description.js`：基于评测结果生成新的 description 候选。
-- `scripts/run-loop.js`：把触发评测和 description 改写串成可重复的多轮优化流程。
-- `scripts/generate-review.js`：把 workspace 结果生成静态或本地服务版 HTML review 页面。
-- `scripts/package-skill.js`：把 skill 目录打成 `.skill` 归档，便于分享与分发。
-- `scripts/install-skill.js`：把 `.skill` 归档或目录安装到目标 skills 目录。
-- `references/schemas.md`：评测相关 JSON 结构参考。
-
-这里的 description eval、loop、grading、analysis、comparison 和 packaging 都已经是 KodaX 原生实现，不再依赖 Anthropic 的 Python 脚本或 Claude Code 专有宿主能力。
-
-## 使用示例
-
-- `/skill:skill-creator 把这个 Claude skill 迁移成 KodaX builtin`
-- `/skill:skill-creator 新建一个 release-notes skill`
-- `/skill:skill-creator 优化现有 skill 的 description 和 evals`
-- `/skill:skill-creator 给这个 skill 补 trigger eval、grading、benchmark、comparison 和 review 流程`
-- `/skill:skill-creator 把这个 skill 打成可分享的 .skill 包`
-- `/skill:skill-creator 初始化一个新 skill 骨架并生成 eval workspace`
+需要运行结果评审时再加载 agents/grader.md、agents/analyzer.md 或 agents/comparator.md；
+它们是该流程的私有契约，不需要创建通用 swarm 或独立后台任务。

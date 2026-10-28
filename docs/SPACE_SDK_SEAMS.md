@@ -1,10 +1,15 @@
 # Space 的 Product Client / Host 接缝
 
-Space 已安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，2026-10-18 官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前工作树 `0.7.97-alpha.7` 核对，源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态，不代表当前所有包均未发布。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
+2026-10-18 的 Space 核查样本安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，当时官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前开发树 `0.7.97-alpha.10` 核对，不据此推断 Space 已升级；源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
 
 ## 启动进度与 Renderer 交接
 
 Main 调用 `ensureKodaXClient/connectKodaXClient` 时可传 `onStartupProgress`；如需展示，由 Space 经自己的 IPC 转发纯数据 `ClientStartupProgress`，Renderer 不导入 Node 启动器。ensure 报告 Host 检查、启动、更新、等待与连接；connect 只报告连接与就绪。该通知来自本机调用，不是 Session view、Run 事件或新 Host RPC。
+
+新 Host 的主要内部步骤也通过同一回调报告 `stage: 'initializing'` 和固定 `phase`：
+modules、extensions、runtime、recovery、mcp、sessions、a2a、listener。Space 可原样
+转发并映射展示文案，无需自行探测 Host。阶段可跳过/重复，不表示百分比或就绪；
+Host 的内部日志与启动 ID 仅用于 SDK 本机观测，不进入 Renderer 契约。
 
 `ready` 只表示 Client 接口可用；Main 的 Session 读取和 Renderer 的首次渲染仍有自己的完成边界。回调应快速返回，其 Promise 不被等待，故障不改变启动结果。Space 根据启动 Promise 清除加载或展示失败，再在自身 UI 边界完成交接；不假定已存在自动 IPC 桥。REPL 使用 `onBeforeRender` 完成终端交接，桌面 UI 无需依赖它。阶段、等待原因与完整示例见 [Client 契约](CLIENT_CONTRACT.md#连接启动与所有权)和[英文指南](../public_docs/sdk/embedder-guide.md#show-local-startup-progress)。
 
@@ -13,6 +18,41 @@ Main 调用 `ensureKodaXClient/connectKodaXClient` 时可传 `onStartupProgress`
 Main 从 `client.sessions.list()` 取得 `lastMessageAt` 和 Host 排序，Renderer 以 `lastMessageAt ?? createdAt` 显示时间，不按本地 mtime 或创建时间重新排序。游标原样透传；列表分页是实时边界，活动变化后刷新首页。标题、设置、Actor 状态和压缩不构成新对话；缺少可靠时间的旧记录回退创建时间。新增字段的源码支持不代表 Space 已更新或 npm 已发布。
 
 历史进程恢复在取得所有权的共享 Host 就绪前完成。Space 连接不再重复扫描，不增加 Renderer 恢复职责；Host 退出仍保留原有进程、Job、supervisor 和持久化结果证明。启动进度继续复用 `ClientStartupProgress`。
+
+## 子任务报告
+
+Product view/history 的任务项为中性 `event`，提供 `taskResult`：source、可选 taskId、
+runId、title、artifactRefs，独立的 completed/failed/cancelled/unknown 状态，以及
+固定 `reportFormat: 'markdown'`。正文使用 item.text；大报告通过现有 readItem 或
+readHistoryEntry 获取，不能把有界预览当成全文。SDK 不再让 Space 从完成标签、
+正文前缀或 XML 转义猜状态，也不因子任务失败设置主 Run 的 Provider 错误。
+
+元数据及原始报告优先，实时和恢复共用投影；只对明确任务来源的旧记录兼容解封装。
+未知状态和标识继续未知，mailbox 投递 ID 不充当 Actor Turn ID。Space 按 Host 顺序
+和给定 item ID 展示；跨 view/history 的任务关联使用 source/runId/taskId，不解析
+item ID，也不按正文全局去重。已有中性展示与历史滚动实现保留，不新增分页接口。
+这说明当前源码契约，不表示 Space 已升级或新 SDK 已发布。
+
+## 普通问题与权限审批
+
+SDK 的 Run 状态与终态结果保留可选 `failureDetail`。Skill 本地失败应按其
+`local_execution` 分类、`skill_load/skill_policy` 阶段和稳定码展示，不能统一显示
+Provider 请求失败；安全提示见 `safeMessage`，技能名见 `skillName`。Main 已发现
+Skill 不代表独立 Host 已注册；Space 仍负责 Host 注册与调用前检查，SDK 继续
+可信重载并执行运行时策略校验。完整码表见 [Client 契约](CLIENT_CONTRACT.md#错误断连与重连)。
+
+普通问题的等待与结算由 Host 管理：默认无限等待，用户可明确 skip；Space 仅展示
+pending 并按 requestId 提交回答或 `{ kind: 'skip' }`。断连或刷新不能自行结算。
+`unanswered` 工具结果区分用户 `skipped`、Host `timeout` 与非交互客户端
+`non_interactive`；明确 Stop 才中断 Run，权限审批仍保留独立拒绝与超时策略。
+非交互客户端用 `{ kind: 'skip', reason: 'non_interactive' }` 表达无法回答；
+one-shot CLI 仅处理自己的 Run，MCP elicitation 无回答仍转换成协议 `cancel`。
+完整规则见 [交互事实权威](CLIENT_CONTRACT.md#身份状态与事实权威)。
+
+Main 可在 `ensureKodaXClient` 启动新 Host 时传 `userInputTimeoutMs`，默认 `0`
+无限等待，正值为毫秒；连接已有 Host 不会热更新等待策略。UI 回调故障是工具
+错误，不能显示成用户跳过。Stop 边界由 Host 固定，过期 Stop 不得阻塞其后的 Run；
+部分交付的持久 Stop 仍阻止原成员及其子 Actor 自动恢复，原请求可继续核验并完成。
 
 ## 可信执行授权
 
@@ -106,6 +146,48 @@ const recovered = await readKodaXClientExits({ homeDir, profile, clientInfo });
 | `host.state: accepted` | Host 接受退出控制；实际进程退出仍未证明 |
 | `host.state: succeeded` | 原 owner 的持久化清理成功记录、PID generation 和 Windows Job/supervisor 退出已核验 |
 | `host.state: unknown/failed` | 缺少证据或实际清理失败；连接 EOF 不作为成功证据 |
+| `recovery.state: ready` | 当前允许通过 SDK 启动或连接 Host；不表示旧执行结果已知 |
+| `recovery.state: pending/blocked` | 不能解除启动门禁；按 nextAction 继续核验或处理失败 |
+
+**退出恢复收敛（2026-10-26）**：`readExit`、`listPendingExits` 和离线
+`readKodaXClientExits` 返回新的 `recovery` 评估，包含 `state`、`reason`、
+`nextAction`、`checkedAt`。初始 accepted 回执及旧 Host 可以缺少该字段；缺失
+不能当成 ready，应使用包含本修复的 SDK 离线核验。查询只读，不改写原回执，
+不将 `Client memory work remains unconfirmed.`、unknown Run/Actor/operation
+或旧失败自动改成执行成功。
+
+Space 启动应检查 `recovery.state`，不再单凭 `cleanup.state !== 'succeeded'`
+持续返回 `cleanup_unverified`。即使客户端清理回执仍为 unknown，只要原 Host
+的精确 process-start identity、Windows Job supervisor identity、进程退出及
+匹配的成功 shutdown outcome 均通过核验，就可返回 ready；原回执、issues 和
+执行引用继续保留。仍存活的原 Host/Job、资源清理失败、缺失 outcome/精确身份
+继续阻塞。没有 shutdown 请求、同一原 Host 仍运行且本客户端清理已确认时，
+也可返回 ready 供新客户端实例连接；这不是关闭其他客户端工作。
+
+| `recovery.nextAction` | Space 下一步 |
+| --- | --- |
+| `start_or_connect` | 经 `ensureKodaXClient` 启动或连接；不直接生成/杀死 Host |
+| `retry_exit` | 原 Host 仍持有精确身份时，用原客户端身份和同一 requestId/意图重试清理；protected 不强制停机 |
+| `retry_verification` | 重读原回执，等待真实进程/Job 退出或迟到证据；不按重试次数放行 |
+| `inspect_failure` | 展示 issues / host.message / reason，处理身份或资源问题；不删除记录、也不忽略检查 |
+
+```ts
+const exits = await readKodaXClientExits({ homeDir, profile, clientInfo: previousClientInfo });
+const blocked = exits.filter(exit => exit.recovery?.state !== 'ready');
+if (blocked.length > 0) {
+  showExitRecovery(blocked); // Display reason/nextAction; do not start a replacement.
+} else {
+  client = await ensureKodaXClient({ homeDir, profile, clientInfo: newClientInfo });
+}
+```
+
+`listPendingExits` 排除 recovery 为 ready 的旧回执；`readExit` 与离线查询仍能
+读取完整历史。晚到的 durable 清理结果按精确 owner 重读，即使 updatedAt 相同
+也不丢弃；读取期间 owner 改变则阻塞。普通 32 条 shutdown outcome 窗口不会
+淘汰仍被退出回执引用的证据。替换 Host 上重提旧退出只重新核验，不改写旧记录、
+不建立新 Host 的退出 fence，也不执行其 cleanup/stop。这里的修复在当前源码
+工作树中，版本号本身不能证明已发布包包含该行为。
+新的退出意图应生成新的 requestId；不能复用旧退出 ID 来关闭替换 Host。
 
 取消只作用于本客户端的排队输入、Run、独立 Actor 子树、显式 compaction 与 SDK 托管的 Memory 后台工作；其他客户端的 Run、Actor 和队列继续运行。Actor 持久化 interrupted 与 executor 已结束分别判断；受管 Shell identity 保留至精确清理验证成功。回执返回 runIds、actorTurns、operationIds、withdrawnInputs 及 issues。
 

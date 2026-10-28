@@ -32,6 +32,8 @@ export interface ConnectKodaXClientOptions {
 
 export interface EnsureKodaXClientOptions extends Omit<ConnectKodaXClientOptions, 'endpoint' | 'token'> {
   readonly daemonStartupTimeoutMs?: number;
+  /** Deadline for ordinary questions on a newly started Host; 0 (default) waits indefinitely. */
+  readonly userInputTimeoutMs?: number;
 }
 
 /** Offline recovery query. Does not connect, start a Host, replay work, or clean Space resources. */

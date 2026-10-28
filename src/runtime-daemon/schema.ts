@@ -179,7 +179,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   },
   'session.view.item': {
     params: objectSchema({ sessionId: stringSchema, itemId: stringSchema, offset: integerSchema,
-      part: { type: 'string', enum: ['text', 'input', 'attachment'] }, attachmentIndex: integerSchema,
+      part: { type: 'string', enum: ['text', 'input', 'attachment', 'original'] }, attachmentIndex: integerSchema,
       attachmentOffset: integerSchema, expectedImageSha256: stringSchema }, ['sessionId', 'itemId']),
     result: nullOrObjectSchema,
   },
@@ -1634,6 +1634,8 @@ function runtimeFailureDetailSchema(): RuntimeDaemonJsonSchema {
         'response_stream',
         'runtime_control',
         'local_execution',
+          'skill_load',
+          'skill_policy',
         'runtime_settlement',
       ],
     },
@@ -1658,11 +1660,16 @@ function runtimeFailureDetailSchema(): RuntimeDaemonJsonSchema {
         'cancelled',
         'runtime_settlement_failed',
         'local_execution_error',
+          'skill_not_found',
+          'skill_not_registered',
+          'skill_registry_unavailable',
+          'skill_policy_restore_failed',
         'context_capacity_exceeded',
         'provider_error',
       ],
     },
     safeMessage: { type: 'string', maxLength: 1_024 },
+      skillName: { type: 'string', maxLength: 128 },
     httpStatus: { type: 'integer', minimum: 100, maximum: 599 },
     upstreamErrorCode: { type: 'string', maxLength: 200 },
     requestId: { type: 'string', maxLength: 200 },
@@ -1799,7 +1806,7 @@ function runStageSchema(): RuntimeDaemonJsonSchema {
 /** Typed Interaction response; answer payloads are validated by the Runtime. */
 function interactionResponseSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
-    kind: { type: 'string', enum: ['question', 'question_multi', 'question_input', 'permission', 'cancel'] },
+    kind: { type: 'string', enum: ['question', 'question_multi', 'question_input', 'permission', 'cancel', 'skip'] },
     answer: anyValueSchema,
     answers: objectAnySchema,
     text: stringSchema,
@@ -1812,7 +1819,7 @@ function interactionResultSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
     requestId: stringSchema,
     accepted: booleanSchema,
-    status: { type: 'string', enum: ['answered', 'dismissed', 'already_resolved'] },
+    status: { type: 'string', enum: ['answered', 'unanswered', 'dismissed', 'already_resolved'] },
   }, ['requestId', 'accepted', 'status']);
 }
 

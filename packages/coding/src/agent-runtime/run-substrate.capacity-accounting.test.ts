@@ -111,6 +111,7 @@ describe('runSubstrate physical request accounting', { timeout: 30_000 }, () => 
 
   it('resumes a blocked SA generation from durable tool results without spending another iteration or replaying the tool', async () => {
     CapacityAccountingProvider.mode = 'reject_after_tool';
+    const controller = new AbortController();
     let wake!: () => void;
     const executed = vi.fn(async () => 'COMMITTED_READ_EVIDENCE');
     const saved = vi.fn();
@@ -121,17 +122,25 @@ describe('runSubstrate physical request accounting', { timeout: 30_000 }, () => 
       CapacityAccountingProvider.mode = 'text';
     });
     const pending = runSubstrate({ provider: PROVIDER_NAME, model: 'capacity-model', maxIter: 2,
+      abortSignal: controller.signal,
       reasoningMode: 'off', context: { systemPromptOverride: 'sys' },
       events: { beforeToolExecute: executed, onCompactedMessages: saved, onContextCapacityBlocked: blocked },
     }, 'Read once. Preserve the public API.');
-    await vi.waitFor(() => expect(blocked).toHaveBeenCalledTimes(1));
-    expect(executed).toHaveBeenCalledTimes(1);
-    wake();
-    const result = await pending;
-    expect(result.success).toBe(true);
-    expect(result.limitReached).not.toBe(true);
-    expect(executed).toHaveBeenCalledTimes(1);
-    expect(JSON.stringify(CapacityAccountingProvider.requests.at(-1)?.messages)).toContain('Preserve the public API');
+    void pending.catch(() => undefined);
+    try {
+      await vi.waitFor(() => expect(blocked).toHaveBeenCalledTimes(1), { timeout: 15_000 });
+      expect(executed).toHaveBeenCalledTimes(1);
+      wake();
+      const result = await pending;
+      expect(result.success).toBe(true);
+      expect(result.limitReached).not.toBe(true);
+      expect(executed).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(CapacityAccountingProvider.requests.at(-1)?.messages)).toContain('Preserve the public API');
+    } finally {
+      controller.abort();
+      wake?.();
+      await Promise.allSettled([pending]);
+    }
   });
 
   it('starts a new executor at the saved generation with exact constraints and completed receipts', async () => {

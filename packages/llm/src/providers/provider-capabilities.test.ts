@@ -267,6 +267,8 @@ describe('FEATURE_198 — provider-capabilities loader', () => {
       expect(k.maxOutputTokens).toBe(32000);
       expect(k.contextWindow).toBe(262_144);
       expect(k.models?.map((model) => model.id)).toEqual([
+        'k3.1-pro',
+        'k3.1-pro-highspeed',
         'k3',
         'k3-256k',
         'kimi-for-coding',
@@ -309,6 +311,8 @@ describe('FEATURE_198 — provider-capabilities loader', () => {
         localRejectEfforts: ['none', 'minimal'],
       }));
       expect(k.models?.map((model) => model.id)).toEqual([
+        'kimi-k3.1-pro',
+        'kimi-k3.1-pro-highspeed',
         'kimi-k3',
         'kimi-k2.7-code-highspeed',
         'kimi-k2.6',

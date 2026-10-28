@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-10",
+  "updatedAt": "2026-10-24",
   "providers": {
     "anthropic": {
       "apiKeyEnv": "ANTHROPIC_API_KEY",
@@ -198,6 +198,86 @@
       "model": "kimi-k2.7-code",
       "models": [
         {
+          "id": "kimi-k3.1-pro",
+          "displayName": "Kimi K3.1 Pro",
+          "contextWindow": 1048576,
+          "maxOutputTokens": 131072,
+          "reasoningCapability": "native-effort",
+          "reasoningProfile": {
+            "reasoningPreset": "kimi-k3.1",
+            "effortStrategy": "provider-toggle",
+            "defaultEffort": "max",
+            "supportedEfforts": [
+              {
+                "value": "low",
+                "description": "Low thinking effort"
+              },
+              {
+                "value": "high",
+                "description": "High thinking effort"
+              },
+              {
+                "value": "max",
+                "description": "Maximum thinking effort",
+                "isDefault": true
+              }
+            ],
+            "effortAliases": {
+              "minimal": "low",
+              "minimum": "low",
+              "light": "low",
+              "medium": "high",
+              "xhigh": "max",
+              "ultra": "max"
+            },
+            "localRejectEfforts": [
+              "none"
+            ],
+            "supportsReasoningEffort": true,
+            "supportsDisabledThinking": false
+          }
+        },
+        {
+          "id": "kimi-k3.1-pro-highspeed",
+          "displayName": "Kimi K3.1 Pro Highspeed",
+          "contextWindow": 1048576,
+          "maxOutputTokens": 131072,
+          "reasoningCapability": "native-effort",
+          "reasoningProfile": {
+            "reasoningPreset": "kimi-k3.1",
+            "effortStrategy": "provider-toggle",
+            "defaultEffort": "max",
+            "supportedEfforts": [
+              {
+                "value": "low",
+                "description": "Low thinking effort"
+              },
+              {
+                "value": "high",
+                "description": "High thinking effort"
+              },
+              {
+                "value": "max",
+                "description": "Maximum thinking effort",
+                "isDefault": true
+              }
+            ],
+            "effortAliases": {
+              "minimal": "low",
+              "minimum": "low",
+              "light": "low",
+              "medium": "high",
+              "xhigh": "max",
+              "ultra": "max"
+            },
+            "localRejectEfforts": [
+              "none"
+            ],
+            "supportsReasoningEffort": true,
+            "supportsDisabledThinking": false
+          }
+        },
+        {
           "id": "kimi-k3",
           "displayName": "Kimi K3",
           "contextWindow": 1048576,
@@ -296,6 +376,84 @@
       "apiKeyEnv": "KIMI_CODE_API_KEY",
       "model": "k3-256k",
       "models": [
+        {
+          "id": "k3.1-pro",
+          "displayName": "Kimi K3.1 Pro",
+          "contextWindow": 1048576,
+          "reasoningCapability": "native-effort",
+          "reasoningProfile": {
+            "reasoningPreset": "kimi-k3.1",
+            "effortStrategy": "provider-toggle",
+            "defaultEffort": "max",
+            "supportedEfforts": [
+              {
+                "value": "low",
+                "description": "Low thinking effort"
+              },
+              {
+                "value": "high",
+                "description": "High thinking effort"
+              },
+              {
+                "value": "max",
+                "description": "Maximum thinking effort",
+                "isDefault": true
+              }
+            ],
+            "effortAliases": {
+              "minimal": "low",
+              "minimum": "low",
+              "light": "low",
+              "medium": "high",
+              "xhigh": "max",
+              "ultra": "max"
+            },
+            "localRejectEfforts": [
+              "none"
+            ],
+            "supportsReasoningEffort": true,
+            "supportsDisabledThinking": false
+          }
+        },
+        {
+          "id": "k3.1-pro-highspeed",
+          "displayName": "Kimi K3.1 Pro Highspeed",
+          "contextWindow": 1048576,
+          "reasoningCapability": "native-effort",
+          "reasoningProfile": {
+            "reasoningPreset": "kimi-k3.1",
+            "effortStrategy": "provider-toggle",
+            "defaultEffort": "max",
+            "supportedEfforts": [
+              {
+                "value": "low",
+                "description": "Low thinking effort"
+              },
+              {
+                "value": "high",
+                "description": "High thinking effort"
+              },
+              {
+                "value": "max",
+                "description": "Maximum thinking effort",
+                "isDefault": true
+              }
+            ],
+            "effortAliases": {
+              "minimal": "low",
+              "minimum": "low",
+              "light": "low",
+              "medium": "high",
+              "xhigh": "max",
+              "ultra": "max"
+            },
+            "localRejectEfforts": [
+              "none"
+            ],
+            "supportsReasoningEffort": true,
+            "supportsDisabledThinking": false
+          }
+        },
         {
           "id": "k3",
           "displayName": "Kimi K3 (1M, Allegretto+)",

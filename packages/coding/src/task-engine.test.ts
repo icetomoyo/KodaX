@@ -3,6 +3,7 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { SkillRegistry } from '@kodax-ai/agent';
 import type { ReasoningPlan } from './reasoning.js';
 import type { KodaXManagedTaskStatusEvent, KodaXRepoRoutingSignals, KodaXTaskRoutingDecision } from './types.js';
 
@@ -398,6 +399,16 @@ describe('runManagedTask', () => {
     };
 
     await expect(ensureManagedSkillCatalog(options)).resolves.toBe(options);
+  });
+
+  it('keeps enforced Skill catalog discovery failures local before managed dispatch', async () => {
+    const cause = new Error('Unreadable private Skill source');
+    const discover = vi.spyOn(SkillRegistry.prototype, 'discover').mockRejectedValue(cause);
+    try {
+      await expect(ensureManagedSkillCatalog({ provider: 'anthropic', context: {
+        skillInvocation: { name: 'draft-response', runtimePolicy: { enforceAtRuntime: true } },
+      } })).rejects.toMatchObject({ code: 'skill_registry_unavailable', source: 'local', stage: 'skill_load' });
+    } finally { discover.mockRestore(); }
   });
 
   it('waits for runtime-owned PostToolUse hooks before returning', async () => {

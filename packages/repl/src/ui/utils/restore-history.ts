@@ -3,8 +3,10 @@ import type {
   KodaXSessionUiHistoryItem,
 } from "@kodax-ai/agent";
 import type { CreatableHistoryItem } from "../types.js";
+import { readTaskResultReports } from '@kodax-ai/agent';
 import {
   extractHistorySeedsFromMessages,
+  extractTextContent,
   seedToHistoryItem,
   toolCallSeedToHistoryToolCall,
 } from "./message-utils.js";
@@ -13,6 +15,8 @@ const MAX_PERSISTED_UI_HISTORY_ITEMS = 150;
 const MAX_PERSISTED_UI_HISTORY_ROUNDS = 50;
 
 export interface RestoreHistoryItemsFromSessionInput {
+  /** Product owns canonical task reports; CLI keeps its existing presentation ownership. */
+  structuredTaskResults?: boolean;
   messages: readonly KodaXMessage[];
   uiHistory?: readonly KodaXSessionUiHistoryItem[];
   /** Canonical history pages must retain all blocks; live restoration stays bounded. */
@@ -167,6 +171,9 @@ function matchesTimestampSource(
   candidate: CreatableHistoryItem,
 ): boolean {
   if (item.type !== candidate.type) return false;
+  // Task mirrors are retired by message identity before alignment. A same-text
+  // notice has independent ownership and must not supply the report's anchor.
+  if (item.taskResult !== undefined || candidate.taskResult !== undefined) return false;
   // Identified generated output is owned by its canonical message, never by
   // an unrelated same-text display item (including a legacy item).
   if (item.outputId !== undefined || candidate.outputId !== undefined) return false;
@@ -482,10 +489,20 @@ export function restoreHistoryItemsFromSession(
   input: RestoreHistoryItemsFromSessionInput,
 ): CreatableHistoryItem[] {
   const committedOutputs = new Set(input.messages.flatMap(message => message.outputId ? [message.outputId] : []));
+  const taskMessages = input.structuredTaskResults ? input.messages
+    .filter(message => message.inputId !== undefined)
+    .map(message => ({ message, reports: readTaskResultReports(message) }))
+    .filter(({ reports }) => reports.length > 0) : [];
   const persistedHistory = normalizePersistedUiHistory(input.uiHistory?.filter(item =>
-    item.type === 'tool_group' || !item.outputId || !committedOutputs.has(item.outputId)));
+    (item.type === 'tool_group' || !item.outputId || !committedOutputs.has(item.outputId))
+    // Body equality is not provenance. Only an identified mirror of this exact
+    // task message can retire its old presentation; ambiguous notices survive.
+    && (item.type !== 'event' && item.type !== 'info' || !taskMessages.some(({ message, reports }) =>
+      item.inputId !== undefined && (message.inputId === item.inputId || message.inputIds?.includes(item.inputId))
+      && (item.sourceTurnId === undefined || message.turnId === item.sourceTurnId)
+      && (item.text === extractTextContent(message.content) || reports.some(report => item.text === report.summary))))));
   const hasPersistedUiHistory = Boolean(persistedHistory?.length);
-  const fullDerivedItems = extractHistorySeedsFromMessages(input.messages)
+  const fullDerivedItems = extractHistorySeedsFromMessages(input.messages, input.structuredTaskResults)
     .filter((seed) => !hasPersistedUiHistory || seed.type !== "task_completed")
     .map(seedToHistoryItem);
   const derivedItems = input.historyScope === 'all' ? fullDerivedItems : trimHistoryWindow(fullDerivedItems);

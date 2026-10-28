@@ -1,7 +1,7 @@
 # KodaX Detailed Design
 
-Last updated: 2026-10-16. Current development tree: FEATURE_298/299/301 on package
-`0.7.97-alpha.9`; `v0.7.96` is the last stable release.
+Last updated: 2026-10-27. Current development tree: FEATURE_298/299/301 on package
+`0.7.97-alpha.10`; `v0.7.96` is the last stable release.
 
 The [Client contract](CLIENT_CONTRACT.md) and [SDK migration guide](SDK_MIGRATION.md)
 define current product integration. Version-labelled release context below does
@@ -62,7 +62,7 @@ reference and does not duplicate every type. It should answer three questions:
 
 ## 2. Published Package And Build Entries
 
-The development package version is `@kodax-ai/kodax@0.7.97-alpha.9`, which includes the v2
+The development package version is `@kodax-ai/kodax@0.7.97-alpha.10`, which includes the v2
 scoped Provider credential broker (ADR-068) and bounded daemon client
 inventory on top of the v0.7.96-alpha.1 feature set and the v0.7.96-alpha.2
 Windows boot-identity hotfix. The v0.7.96-alpha.1
@@ -449,6 +449,10 @@ limits. Product methods do not expose Runtime events, storage or execution callb
 `onStartupProgress` on product and Runtime connection entries observes the same
 local launcher facts without new Host RPCs or polling. Observer work is not
 awaited; failures use existing diagnostics and leave startup's result intact.
+`initializing` carries one of modules/extensions/runtime/recovery/mcp/sessions/a2a/listener.
+The child writes fixed display records into the existing bootstrap log; the parent
+matches launch ID/PID and reads at most 4 KiB during an existing startup poll.
+Absent observers disable the channel; no new RPC, health probe, timer or owner state is added.
 Client `ready` and REPL `onBeforeRender` are separate connection/display boundaries;
 see the [Client contract](CLIENT_CONTRACT.md#连接启动与所有权).
 
@@ -760,6 +764,21 @@ serializers carry K3 reasoning through `thinking.effort`, default omitted
 effort to `high`, and preserve explicit disable semantics. Media capability
 metadata keeps `k3-256k` image-capable and video-unsupported. Public Kimi and
 Kimi For Coding credentials remain separate.
+
+The 2026-10-24 K3.1 additions use a separate `kimi-k3.1` reasoning preset:
+`kimi-code/k3.1-pro` and `k3.1-pro-highspeed` emit native Messages
+`thinking: {type: 'enabled'}` plus `output_config.effort`;
+`kimi/kimi-k3.1-pro` and
+`kimi-k3.1-pro-highspeed` emit top-level Chat Completions `reasoning_effort`.
+Both always think, default to `max`, support low/high/max, reject explicit
+`none`, and omit legacy nested `thinking.effort`. Existing defaults and K3
+contracts are retained. Capability metadata exposes up to 1M context
+(subscription plan permissions still apply); public K3.1 requests 131,072
+output tokens and subscription K3.1 retains the 32,000 per-turn cap. The
+[provider guide](../public_docs/configuration/providers.md#kimi-k31-routes)
+records official sources, the successful subscription stream/tool replay,
+the seven user-level request matrix, the unconfirmed high self-report,
+and the public-account balance limitation on live verification.
 
 For the Zhipu Coding Plan aliases, `provider-capabilities.json` defines both
 `glm-5.3` and `glm-5.2` as 1M-context routes. `zhipu-coding` and
@@ -1139,6 +1158,29 @@ Host registry objects and hook command strings never cross the JSON boundary.
 Hook shell commands still require the runtime permission broker, and runtime
 completion waits for all admitted `PostToolUse` hooks to settle.
 
+Model `skill` loads use this same policy/hook lifecycle within their owning Run.
+The public `Runner.run(createDefaultCodingAgent())` substrate entry installs
+and settles that lifecycle too, without duplicating a `runKodaX` owner.
+Static instruction loading remains available under action restrictions and
+still passes Host authorization. Activated action policies compose by
+intersection; fully substituted inline dynamic commands pass the same Skill
+restrictions before either the Host executor or the standalone safe executor.
+Repeated loads of the same revision do not restart hooks. A changed active
+Skill requires a new Run, preventing new instructions from using old authority.
+When a tool batch contains Skill loading, its other actions are deferred until
+the next batch, including when loading was denied or cancelled. The model must
+read the instruction or failure result before planning those actions.
+Model preferences apply to the next Provider request. `context: fork` requires
+explicit Host invocation and is rejected before model-side dynamic expansion;
+the model tool does not create a second execution boundary.
+Skill tool results include only the Skill expansion and newly supplied Skill
+guidance; existing Host prompt overlays remain in system context.
+
+Formal discovery uses `gitRoot` when supplied, independently of execution cwd
+and Learned Area identity. SA/AMA omit the model catalog when the Skill loader
+is unavailable; an already expanded explicit invocation remains usable.
+Rediscovery invalidates full-body caches, including loads still in flight.
+
 `user-invocable` remains parse-compatible with existing `SKILL.md` files, but
 enabled Skills always report as user-invocable and the field is not used as an
 execution gate.
@@ -1290,6 +1332,39 @@ Core modules:
 The published `@kodax-ai/kodax/mcp` subpath exposes a focused MCP surface.
 Coding tools consume MCP through capability providers rather than duplicating
 connection logic.
+
+MCP tool-output recovery keeps the model preview separate from SDK full reads.
+Direct MCP provider calls return complete normalized content and structured
+content. Coding results exceeding byte, line, attention, or request budgets
+save their complete formatted text before exposing an incomplete preview.
+MCP previews retain both ends, including long single-line JSON, on UTF-8
+boundaries. Saving failure, a denied recovery path, or an active tool set without
+`read` keeps the complete result inline; an oversized batch remains capacity
+debt for the existing recovery ladder.
+
+`ClientViewItem.tool.outputPath` carries the structured saved-original path;
+text markers alone never authorize a file read. With `part: 'original'`,
+`sessions.readItem` and tool items returned by `sessions.readHistoryEntry` read originals on the Host in
+65,536-character pages with UTF-16 offsets. The same item-read IPC route is used
+after reconnect or Host restart. Views and canonical model history retain their
+bounded previews, and default `text` reads retain their existing lengths and
+offsets. A missing original rejects explicitly instead of returning a
+preview as if complete. Request-only input capabilities are not durable original
+files and retain their existing page content.
+
+Session managers never automatically sweep the shared tool-output directory:
+one `sessionsDir` cannot establish references held by other SDK storage roots or
+processes. Saved originals remain until explicit operator cleanup. The existing
+reference-aware cleanup API requires a complete live-reference set, including
+recovery-manifest dependencies; discovery failure cancels cleanup.
+
+`tests/bundled-mcp-output-recovery.test.mjs` exercises the built SDK against a
+local scripted OpenAI HTTP endpoint, an independent daemon, and a stdio MCP
+process. It verifies recovery of omitted middle evidence through the actual
+`read` tool, structured-content retention, SDK original paging after Host
+restart without repeating the MCP operation, and complete inline delivery when
+`read` is excluded or artifact persistence fails. It runs with `npm run
+test:bundle` after `npm run build`; no live provider credentials are needed.
 
 A2A lives under `src/a2a` and is published through `@kodax-ai/kodax/a2a`:
 

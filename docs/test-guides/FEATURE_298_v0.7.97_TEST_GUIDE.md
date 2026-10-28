@@ -2,6 +2,364 @@
 
 本指南验证构建后的产品入口。组件、协议和 SDK 单测继续保留，但不替代这里的真实进程与终端操作。
 
+## 2026-10-28 任务报告去重复审补充
+
+针对下节首轮提交 `d244ddfa` 的后续复审，先用公开 restoreSessionViewItems 复现
+同文独立 event/info 丢失（2 项应保留，实际仅 1 项）。入口不再按正文全局删除；
+旧展示须通过 inputId（含 inputIds 别名）关联同一任务消息、来源 Turn 无已知冲突，
+且正文等于完整封装或规范报告正文，才可认定为镜像。来源不足、同 Turn 但无消息
+身份、消息身份不同、Turn 冲突的记录均保留；不将子任务 runId 当成 Host Run 身份。
+不能确证的旧封装允许作为中性展示留下，不能为消除视觉重复而删除未知事实。
+
+定向回归还先后 RED 捕获两条相邻路径：历史对齐把同文 event 合入任务报告并借用
+其时间，以及确证身份的正文镜像仍重复。任务报告不再参与普通文本对齐；确证镜像
+同时支持完整 wire 和规范报告正文，仍保留身份前提。未增加接口、配置或历史分页。
+
+最终源码/测试类型检查、workspace/bundle 构建、14 个 SDK 声明入口和 Node-free
+Product 类型消费者检查通过。相邻回归 25 文件 / 327 项（2 workers、retry=0）全部
+通过；JSON 为 `%TEMP%/kodax-task-notice-regression-results.json`。其中定向 3 文件 /
+60 项的 restore-history.ts 覆盖率为语句 94.69%、分支 83.64%、函数 98.07%、行
+96.56%，不是全仓覆盖率。构建后 `node --test tests/bundled-task-results.test.mjs`
+1/1 通过：真实独立 daemon、IPC 和两次启动中，同文独立通知及无身份展示均保留，
+完整封装和正文镜像均去重，四份报告身份/状态/顺序及全文哈希保持一致。
+
+后续独立双轴复审：Standards 0 项；Spec 最初发现正文镜像遗漏，补回归并修复后
+最终 0 项。该结论仅覆盖本修复，不替代完整发布矩阵；未发布 npm 或更新 Space。
+
+## 2026-10-28 Product 任务报告
+
+本轮在 `0d723c6e` 后修复任务报告投影；属于 alpha.10 发布后的源码修改，不据此
+声称新 npm 包或 Space 已交付。复用现有 `_taskResult/_taskResults`，新增共享的报告
+读取投影，未改变 canonical 消息、执行状态机、权限策略或历史分页接口。
+
+Product `ClientViewItem.taskResult` 提供 source、已知的 taskId/runId/title/artifactRefs、
+completed/failed/cancelled/unknown 和 `reportFormat: 'markdown'`；正文由 item.text
+及原有全文读取方法交付。各报告是中性 event，不将子任务失败转换成主 Run 的
+Provider 错误。跨显示面 item ID 仍不可互换，任务字段保留逻辑身份。旧 Actor 的
+mailbox 投递 id 不冒充 Turn ID；缺状态不从完成标签或 `failed:` 文本推测。
+
+```text
+npx vitest run packages/agent/src/session-lineage/task-results.test.ts src/session-view.task-results.test.ts src/sdk-client.task-results.test.ts packages/repl/src/session/public-api.test.ts --maxWorkers=2 --retry=0
+```
+
+最初的单项回归确实 RED：输出仍是 XML，缺少任务元数据。扩展测试另捕获历史
+超大项读取返回封装、显示身份依赖时间，以及旧投递 ID 被错误当成任务 ID；这些
+均修复后复验。多任务、相同正文的不同任务、两个 metadata 字段的重复引用、旧
+UI 封装快照、显式失败/取消、未知旧状态和普通用户 XML 文本均独立覆盖。
+
+独立需求复审再捕获并补回归：混合新旧通知时旧报告丢失、旧 interrupted 终态未
+映射取消，以及通知仍按 XML 锚定造成次序变化。另用真实队列测试确认模型侧的
+预算封装可能重排，显示仍以结构化 metadata 顺序为准；缩写后的无封装文本不
+额外制造未知任务。配对也拒绝明确的 source/runId/taskId 冲突，避免吞掉另一份
+同名任务报告；缺失字段仅在无已知冲突时兼容。以上已分别 RED → GREEN。
+
+真实 Product Client/IPC 用例通过受信任 MessageQueue 注入确定性的任务结果，使用
+实际 AMA Run、规范历史、Host socket、公开 Client、重连与 Host 重启；Provider
+仅由离线固定响应替代，不是付费模型评测或真实子任务业务质量验收。单条和三条
+报告顺序一致、view ID 恢复稳定，历史与实时元数据一致，主 Run 始终 completed
+且无 failureDetail。报告包含 Markdown、代码、文字实体及大于 128 KiB 的 Unicode
+正文，经 readItem/readHistoryEntry 的完整重组 SHA256 相等。旧历史也经过 IPC。
+
+共享报告读取模块的最终定向 V8 覆盖：语句/行/函数 100%，分支 92.17%。原有 CLI
+展示所有权保持，未因 Product 的新投影而额外展示子任务全文。没有来源的独立
+UI-only 文本不能提供可靠任务事实；保持中性，不猜测旧任务成功。
+
+最终源码及测试类型检查、workspace/bundle 构建、14 个 SDK 声明入口和 Node-free
+Product 类型消费检查均通过。相邻回归 28 文件 / 333 项（2 workers、retry=0）
+全部通过，无跳过或未处理错误；JSON 为 `%TEMP%/kodax-task-report-final-results.json`。
+完整 bundle 门禁 51/51，包括构建后公开 SDK 与真实独立 daemon 的 IPC、旧历史、
+四份报告及 Host 重启，两个读取面的全文哈希一致。该新用例已加入 test:bundle。
+最终独立 Standards / Spec 复审均无剩余 finding；不以这些定向结果替代完整发布矩阵，
+也不宣称 Space 已消费新字段或已发布 npm。
+
+## 2026-10-27 本地 Skill 失败分类
+
+基线 `6d101b59` 的真实独立 daemon 回归先 RED：Main 已通过自己的可信路径准备
+`draft-response`，daemon 未注册该来源；Provider HTTP 请求数为 0，Run 却返回
+`provider / transport / provider_error`。新增本地 Skill 错误事实后，Runtime 结果、
+事件、状态、诊断、重启读取及 IPC 保留同一分类；产品 `/client` 的 await 适配器
+漏传 failureDetail 亦经真实链路 RED 后修复。Skill 重载和 enforceAtRuntime 保留。
+
+稳定码为 skill_not_found、skill_not_registered、skill_registry_unavailable、
+skill_policy_restore_failed，分类为 local_execution，阶段为 skill_load / skill_policy。
+安全提示仅含安全技能名和固定原因，不回传路径或原始 IO 报错，不带 Provider HTTP
+事实。扫描失败与未找到分开：保留既有 DiscoveryResult.errors 的非 ENOENT 错误，
+通过可选 discoveryIncomplete 留存不完整发现；已发现技能仍可用，来源修复后重新
+发现可清除该事实。真实来源不是目录、策略文件在发现后损坏、Runtime 绑定包装层
+的 wildcard/显式名单均有回归，相关新增断言先 RED 后 GREEN。
+
+`tests/sdk-skill-failure.test.ts` 在 system tier 启动独立 Host（验证 PID 不同）：
+未注册时请求数 0，可信注册后同一调用完成；重连及 Product Client 仍保留错误；
+真实 HTTP 401、429 和连接中断继续分类为鉴权、限流和网络错误，Provider 错误体
+故意包含 skill_not_found 字样，不能据此误判本地错误。测试仅使用本机 HTTP fixture，
+无付费模型请求；Host、Windows Job 和 HTTP 服务均收尾。
+
+第一轮 Provider 回归因沿用生产限流恢复等待达到 120 秒测试预算；保留失败记录，
+fixture 改用既有 timeouts.llm.maxRetryDelaySec=0.01 后完整通过（21.55 秒测试时间）。
+不修改生产重试默认值。成文规范与需求双轴复核的发现均已修复，最终各 0 项。
+最终重建后的相邻门通过：16 文件、544/544 passed、0 skipped，两 worker、retry=0，
+耗时 246.61 秒。其中 Runtime 文件完整执行 336 项，包含普通提问与权限边界；
+独立 daemon 完整用例在该门内再次通过。构建包门 EXIT 0，46/46 passed、0 skipped。
+源码/测试类型检查、package/bundle 构建、14 入口 DTS 与无 Node ambient types 的真实
+Product Client 消费 fixture 均通过。核对 2783 个源码/配置与 3748 个构建文件的
+SHA-256，与门开始前冻结快照完全一致。此次未重跑全仓门，不将下节历史完整门
+结果算作本增量验证。本记录不代表 Space 接入或新版本发布。
+
+```powershell
+npx vitest run tests/sdk-skill-failure.test.ts --retry=0
+npm run typecheck
+npm run build:packages
+npm run build:bundle
+npm run build:dts
+npm run test:bundle
+```
+
+## 2026-10-27 SDK 一致性与提交前验证
+
+核对源码连接器、Host 启动透传、17 个公开 SDK 子路径、生成声明以及无 Node
+ambient types 的真实 `/client` 消费者。消费 fixture 覆盖 initializing/phase、
+ClientHostStartupPhase、`userInputTimeoutMs: 0`、退出 recovery.state/nextAction 和
+独立的历史 cleanup.state。类型检查和 14 个 SDK 入口声明构建通过。
+README/中文 README、SDK 迁移、Client/Space 接缝、HLD/DD、内置手册、发布准备和
+设计子模块同步；alpha.10 明确为开发/发布准备，不将提交推送冒称标签或实际发布。
+
+本轮完整门首轮 16955 passed / 1 failed / 90 skipped / 19 todo，无 worker 异常。
+唯一失败为 SDK 问答回归在等第一条 pending 时触发 expect.poll 默认 1 秒预算
+（`sdk-client.interactions.test.ts` 原第 363 行），尚未收到请求即断言失败。
+该用例两次 IPC 等待与相邻用例对齐为 15 秒，总测试预算 45 秒；原因、Host-only
+timeout、旧 ID 拒绝、新请求保留和正常 Run 完成断言均保留。不修改生产提问期限。
+同时补齐内置手册清单漏写的 `/client`，该增量与问答文件复验 66/66。
+Standards 最终复审 0 项；Spec 的一项设计文字歧义已澄清，最终 0 项。
+首轮日志保留；最终冻结门结果见下。
+
+原四 worker 复验为 16954 passed / 2 failed：问答文件已全部通过；退出回归在
+Provider entered 的默认 1 秒等待失败，已仅对齐为 15 秒；终态缓存保留用例则
+在 Windows 临时 Session 文件的 atomic rename 处抛出 EPERM，并非测试超时。
+持久化生产代码及其重试/安全策略未改；该 1005 次 Run 的保留用例独立复验通过，
+退出文件 4/4 通过。考虑本机 I/O 争用，最终完整门采用 `--maxWorkers=2 --retry=0`，
+保持同一 1193 文件集合，不用跳过或自动重试掩盖上述失败；两轮记录均保留。
+
+最终冻结完整门通过：1193 文件中 1189 passed / 4 skipped；测试为
+16956 passed / 90 skipped / 19 todo，0 failed，JSON success=true。
+配置为两 worker、`retry=0`，耗时 1465.95 秒；Runtime 文件完整执行 332 项，
+包括 1005 次 Run 的缓存保留用例。没有为本轮新跳过用例，亦无真实模型请求。
+此前四 worker 的 Windows EPERM 记录保留，不能据本机复验宣告跨平台验收完成。
+
+最终构建包门 EXIT 0，46/46 passed、0 skipped，包含实际 SDK 初始化阶段和
+Windows 退出/重启回归。真实无 Node ambient types 的 `/client` fixture 再次编译
+通过，主仓库与设计子模块 diff check 通过。核验 2782 个源码/配置文件及 3745 个
+构建文件的 SHA-256，与完整门开始前快照完全一致；验证后只补写本文验收记录。
+源码/测试类型检查、package/bundle/DTS 构建与离线 eval 已通过，未付费调用模型。
+
+## 2026-10-27 Host 内部初始化进度
+
+`ClientStartupProgress` 新增 `{ stage: 'initializing', phase }`，复用现有 callback、
+CLI 动画与 elapsed time。固定阶段为 modules、extensions、runtime、recovery、mcp、
+sessions、a2a、listener，分别对应真实模块/扩展加载、Runtime 装配、旧子进程及任务
+恢复、MCP 预热、会话资源恢复、Agent 连接和 Client 入口初始化。快速阶段可能合并；
+不为展示增加停顿，不将这些观察当作百分比或 Ready。
+
+新 Host 仅在有进度观察者时向既有 bootstrap.log 写少量固定阶段记录。父进程
+复用原就绪轮询，每次最多读取尾部 4 KiB，并匹配本次启动 UUID 和 Host PID；
+不新增 RPC、健康探测、定时器或运行时文件，不改 owner 状态。无 observer 时保留 undefined
+穿过 SDK 包装层，不生成启动 ID，也不读写进度记录。重复阶段去重，坏记录忽略；
+读取失败只诊断一次并停用该次日志观察，不影响原有就绪、超时、停止或清理。
+
+TDD：新文案映射、启动轮询透传、实际 SDK 启动、受控慢 MCP 和旧构建包的
+进度断言分别先 RED。慢 MCP 用例确认服务仍在 initialize 时显示 mcp，而不是
+extensions，且不能提前报告 ready；明确 release 后才继续启动并完整关闭测试 Host。
+无 observer 和读取失败、旧 ID/错误 PID/无效或半条记录、重复阶段、永不返回的
+观察回调都有定向覆盖。Windows 目录零长读取未触发预期错误，故障注入改为
+跨平台的非法路径；没有为该夹具修改生产读取行为。
+
+源码初轮相邻门 187 passed / 3 failed：仅旧 owner-exit 通知数组不认识新增阶段。
+保留原顺序、旧 PID 已退出、新 owner 就绪等断言，同时验证 initializing；最终
+12 文件 190 passed / 1 平台限定 skipped。类型检查、包、bundle 与 14 入口 DTS
+构建通过；Standards/Spec 独立复审各 0 项。
+
+重建后构建包门 EXIT 0，46/46 通过、0 跳过；实际 packaged SDK 收到初始化阶段，
+仍在认证/能力检查后才收到 ready；无观察者的非交互 CLI 不产生阶段记录。实际
+Host 退出、重启和 Windows Job 相关构建包回归均通过。源慢 MCP 用例还验证解除
+阻塞后启动 Promise 成功并最终报告 ready，不只验证中途显示。
+
+```powershell
+npx vitest run src/sdk-client.startup.test.ts src/runtime-daemon/process.test.ts src/sdk-runtime-daemon-upgrade.test.ts src/runtime-daemon/process.owner-exit.test.ts src/sdk-runtime.launcher.test.ts src/sdk-client.mcp-elicit.test.ts src/sdk-client.command-mcp-elicit.test.ts src/sdk-client.interactions.test.ts src/kodax_cli.sandbox-startup.test.ts src/cli-startup-progress.test.ts src/kodax_bootstrap.test.ts src/integration-hot-reload.test.ts --retry=0
+npm run typecheck
+npm run build:packages
+npm run build:bundle
+npm run build:dts
+npm run test:bundle
+```
+
+以下完整门和前次补漏结果保留各自历史范围，不作为本次进度增量的完整门结果。
+本次验证不发送真实模型请求，不停止用户默认 Host；未发布 npm 或改动 Space UI。
+
+## 2026-10-27 MCP SDK 桥接首次 UI 异常补漏
+
+此前只测了直接 MCP reverse 入口，漏掉 SDK 的 `raceElicitAbort`：异步 UI 回调
+失败被改成字符串 `"cancel"`，确认框和 URL 授权将它当作未选中 Approve，
+错误地回复 `decline`。本次仅让该 Promise 的拒绝分支保留原异常，由已有 MCP
+外层统一转换为协议 `cancel`；不新增状态或结果类型，用户明确拒绝仍为 `decline`。
+
+新增 `src/sdk-client.mcp-elicit.test.ts` 两项回归，经过真实 SDK Run、共享 stdio
+MCP 服务与 UI 回调，修复前稳定复现 `elicit:decline:`，期望为 `elicit:cancel:`。
+修复后确认框和 URL 均返回 `cancel`；同一 Session 的后续明确 Decline 仍为
+`decline`，每个回调只执行一次，Run 正常完成，pending 请求清空。该文件 3/3；
+相邻 9 文件共 156 项通过，等待期限/超时/迟到回调定向 9/9（其余 323 项按名称
+过滤未运行），源码与测试类型检查通过。Standards/Spec 本轮增量复审各 0 项。
+
+```powershell
+npx vitest run src/sdk-client.mcp-elicit.test.ts src/sdk-client.command-mcp-elicit.test.ts src/sdk-client.interactions.test.ts src/sdk-runtime.interactions.test.ts src/runtime-daemon/client.test.ts src/one-shot-questions.test.ts src/one-shot-permissions.test.ts packages/coding/src/capabilities/providers/mcp-reverse.test.ts packages/coding/src/tools/ask-user-question.test.ts --retry=0
+npx vitest run src/sdk-runtime.test.ts -t 'returns unanswered when a late|ignores a superseded prompt failure|keeps AskUser unbounded|settles ordinary questions' --retry=0
+npm run typecheck
+npm run build:bundle
+npm run build:dts
+npm run test:bundle
+```
+
+bundle 与 14 个 SDK 入口 DTS 已重建。下节 16949 项的完整门记录对应本次补漏
+之前的冻结版本，不作为本增量的完整门结果。Space 仍需升级依赖并消费
+`recovery.state`；本 SDK 修复不等于 Space Renderer 已完成接入验收。
+
+重建后的 `npm run test:bundle` EXIT 0，46/46 通过（含实际 Windows 退出/重启
+两项），无跳过。与上轮完整门冻结源码比较，仅 SDK Runtime 的上述拒绝分支和
+本次真实桥接测试文件变化；未改动退出恢复、权限审批或等待期限实现。
+
+## 2026-10-27 整体评审后的相邻回归修复
+
+修复范围：未回答的 MCP 空表单/URL 返回 cancel；旧任务提示不代选 Resume/Restart、
+保留旧检查点；首次 UI 回调错误作为工具错误交给模型，回答/超时/Stop 已结算后的
+迟到错误不改写结果；客户端 Stop 只标记 expectedRunId，不对整个 Session 留下屏障；
+生成恢复快照保留 maxConcurrentThreadsPerSession。权限审批和默认无限等待保持独立。
+复审追加：部分交付的 Session Stop 固定边界也约束生成恢复。Host 复用已有持久
+Stop 记录，仅阻止其中列出的 Run，以及属于该 Run 的 Actor/child 恢复；后续 Run
+不受旧边界影响，Stop 修复/查询入口不增加限制，不新建客户端 Session 状态机。
+同一 Stop 请求在重启后重试时，通过已有 runs.abort 路径核验 owner；只有已验证
+死 owner 的有效检查点允许接管并停止，活跃或无法确认的 owner 继续拒绝。
+`ensureKodaXClient({ userInputTimeoutMs })` 将已有启动策略透传给新 Host，0 表示
+无限等待；已有 Host 的策略不变，不增加 config.json 设置。
+
+新增真实 MCP、检查点文件、SDK 工具结果、重连与启动器类型用例先 RED 后修复。
+classic 两项旧 cancel 断言同步为 skip；容量恢复测试保留一次工具/一次恢复请求
+断言，等待明确 blocked 状态并在 finally 中 abort、唤醒和等待 pending，避免污染
+下一用例。此前 16921 passed / 4 failed 的完整门记录保留在本地评审产物中，
+不将本轮定向通过回写为此前全绿。
+
+```powershell
+npx vitest run packages/coding/src/capabilities/providers/mcp-reverse.test.ts packages/coding/src/checkpoint.test.ts src/runtime-generation-recovery.test.ts src/recovering-runtime-client.test.ts src/recovering-runtime-launcher.test.ts src/sdk-client.interactions.test.ts packages/repl/src/interactive/classic-plane-interactions.test.ts packages/coding/src/agent-runtime/run-substrate.capacity-accounting.test.ts
+npx vitest run src/sdk-runtime.test.ts -t 'returns unanswered when a late|ignores a superseded prompt failure'
+npm run typecheck
+npm run build:packages
+npm run build:bundle
+npm run build:dts
+npm test -- --retry=0
+npm run test:bundle
+```
+
+AskUser eval 改用生产工具定义并新增无 required 标记的用例；新增 continuation-memory
+版本化用例使用生产提示与真实 helper，默认不调用模型。两份 eval 的离线入口以
+各自 `KODAX_*_PROBE=off` 运行；不将离线通过称为模型质量验收。本轮不自动跑付费
+eval、tag、Release 或 npm 发布。最终门禁结果在完成后追加。
+
+本轮完整门首轮为 16945 passed / 2 failed：失败仅在未改动的 MCP transport
+夹具，详细原因均为 Node Fetch 的 `bad port`（随机端口落入 Fetch 禁用集合），
+不是环境变量展开失败；单文件复验 25/25。新增确定性 bad-port 注入先 RED，再让
+夹具启动前检测并仅对此错误重新绑定端口，其他网络故障照常失败；不修改生产
+transport 或增加业务重试。原完整门日志保留，最终冻结门另行记录。
+
+第二轮冻结门为 16911 passed、0 项断言失败，但存在一个 worker 意外退出，
+进程退出码为 1；MCP reverse 文件的 38 项未被收集，不能记为全绿，即使 JSON
+报告的 success 为 true。该文件独立复验 38/38；本机 Application/System 日志
+未发现对应崩溃记录。保持源码和构建不变，再以原四 worker、retry=0 完整复验，
+临时父进程诊断仅记录 worker 的退出码，不注入测试子进程或修改依赖。
+
+最终冻结复验 EXIT 0：1189 文件通过、4 跳过；16949 项通过、90 跳过、19 todo，
+0 失败、0 unhandled error，MCP reverse 38 项全部收集并通过。上一轮 worker 退出
+未复现，原因仍未确定；保留失败日志，不将其描述为已修复的产品缺陷。源码/测试
+类型检查、workspace 包、bundle 和 14 个 SDK 入口 DTS 构建均通过。冻结前后的
+2781 个源码/配置文件、3745 个构建文件及 HEAD 哈希一致。
+
+Standards/Spec 独立复审最终均为 0 项待处理问题。额外真实 Runtime 探针验证：
+活 owner 拒绝旧 Stop 修复、Host 退出后旧 Run 不被自动恢复、原 Stop 请求可确认
+关闭两项固定成员、替换 expectedRunId 被拒绝，后续新 Run 可恢复；旧 Run 的
+Provider 调用为 0，后续新 Run 恰好调用 1 次。
+
+最终 `npm run test:bundle` EXIT 0，46/46 通过、0 跳过，包括实际 Windows Host
+退出、重复连接与重启恢复。构建包验收后的源码/构建哈希再核对一致。以上为
+本机 SDK/Host 验证，不替代 Space Renderer 接入 `recovery` 后的人工验收，
+也不声称完成跨平台覆盖率或付费模型质量验收。
+
+## 2026-10-26 one-shot 普通问题结算回归
+
+`a92a9577` 改为普通问题正常 unanswered 后，相邻 one-shot 的三项旧断言仍要求
+`cancel` 字样；实跑为 3 failed / 1 passed。one-shot 也仍发送旧 cancel，导致模型
+只看到 `skipped`，丢失非交互环境无法回答的原因。按既定“只有 Stop 中断 Run”
+语义修复：发送 `{ kind: 'skip', reason: 'non_interactive' }`，由 Host 结算并将
+`unanswered/non_interactive` 正常工具结果交给模型。用户主动跳过为 `skipped`，
+Host 期限到达为 `timeout`；客户端不能将 skip 伪造为 timeout。
+
+回归边界：真实 Host/IPC 的单选、多问、输入和 MCP form；pending view 先于接收
+回执时也只处理本次 Run，其他 Run 的问题仍 pending，默认值不自动提交，Run
+成功完成且非 interrupted。MCP 仍为协议 cancel；非交互权限仍明确拒绝且不执行
+工具。另核验嵌入式回调、Runtime facade 原样保留原因，迟到回复不能作用于新问题。
+
+```powershell
+npx vitest run src/one-shot-questions.test.ts src/one-shot-permissions.test.ts src/one-shot-task.test.ts src/sdk-client.interactions.test.ts src/sdk-runtime.interactions.test.ts src/runtime-daemon/client.test.ts packages/coding/src/tools/ask-user-question.test.ts
+npx vitest run src/sdk-runtime.test.ts -t 'settles ordinary questions|keeps AskUser unbounded|returns unanswered when a late'
+npm run test:fast
+npm run build:packages
+npm run typecheck
+```
+
+新增 one-shot 明确原因/正常成功断言先 RED（4 项），修复后 4/4。首次相邻集
+116 passed / 2 failed；两处新断言将 IPC 参数错误码写成了内部的 invalid_input，
+按既有传输契约修正为 invalid_params，Client 交互与 Runtime facade 复验 72/72。
+最终 fast 门 EXIT 0：242 文件通过、4 跳过；2404 项通过、44 跳过，0 失败。
+嵌入式默认无限等待、三种未回答原因与迟到结算定向 7/7（其余 319 项因名称
+过滤未运行）；workspace 包、bundle 和 14 个 SDK 入口 DTS 构建，以及源码/测试
+类型检查通过。本轮不替代发布全门、覆盖率测量或 Space GUI 人工验收。
+
+## 2026-10-26 客户端退出恢复收敛
+
+契约见 [客户端退出与恢复](../SPACE_SDK_SEAMS.md#客户端退出与恢复)。背景样本为
+Space `0.1.47-alpha.2` / SDK alpha.6，并在 SDK alpha.9 继续出现；本工作树为
+`0.7.97-alpha.10`，不据此声称这些源码变更已经发布。
+
+| 回归场景 | 必须观察到的结果 |
+| --- | --- |
+| 原 Host 已退出、客户端 Memory/执行仍 unknown | 精确进程/Job 与匹配成功 outcome 验证后 recovery.ready；原 cleanup、issues 和执行引用保留 |
+| 多次重启 / 旧 outcome 超过普通 32 条窗口 | 不靠重试次数放行；仍能用保留的精确证据重核验，不改写原回执 |
+| outcome 迟到 | 缺证据时 blocked；真实 outcome 到达后 ready |
+| 客户端或 Host 清理确认迟到，同毫秒 updatedAt | 采用同一 owner 最新确认；Stop 回写不能覆盖 Host cleanup 确认 |
+| 读取中 owner generation 改变 | blocked / inspect_failure，不把旧证明用到新进程 |
+| 原进程或 Job supervisor 真实存活 | pending/blocked，不能启动替换 Host |
+| 资源释放失败 / 缺精确身份 / outcome 内容属另一 Host | blocked，给出 retry_verification 或 inspect_failure |
+| 替换 Host 上重提旧退出 | 原回执不变、新任务继续运行、旧请求不建立新 fence、不 cleanup/stop 新 Host |
+| 已安全恢复的历史回执 | listPendingExits 不再阻塞；readExit / 离线查询仍保留完整历史 |
+
+定向命令：
+
+```powershell
+npx vitest run src/sdk-client.exit.test.ts src/sdk-client.exit-recovery.test.ts src/runtime-daemon/client-lifecycle.test.ts src/runtime-daemon/state.test.ts src/runtime-daemon/shutdown-verifier.test.ts src/sdk-client.host-authorization.test.ts
+npm run build:packages
+npm run typecheck
+npm run build:bundle
+npm run build:dts
+node --test tests/bundled-product-exit.test.mjs
+```
+
+新增用例先 RED 后修复。Windows 本机已通过真实 IPC 替换 Host 活动任务与重复连接
+检查；bundle 用例真实启动/退出独立 Host，并核验 Windows Job/supervisor。该用例
+在实际退出成功后注入旧客户端丢失的 unknown 确认，保留真实 owner/outcome，
+连续两轮重新启动并重提旧退出，验证原 unknown 未被伪造成成功、新 Host 不受影响。
+源级离线用例另覆盖真实存活 PID、失败/缺失证明、40 次 outcome 写入后的证据保留。
+未在 Space Renderer 内手动验收；非 Windows 平台未在本机执行。
+
+最终定向回归：12 个文件、212 项测试全部通过（含 Host、owner 状态、Windows
+身份、orphan-exit、process cleanup、Client 授权与 SDK 自知识回归）。完整包构建、
+类型检查、bundle 与 14 个入口的 DTS 构建通过；上面的两个 bundled-product-exit
+用例最终构建后再次运行，2/2 通过。没有发布 npm 包或修改 Space 代码。
+
 ## 2026-10-15 启动与最近消息排序回归
 
 测试边界：规范存储 Actor 投影、共享 Host 所有权与退出、SDK/Client 列表、裸 `-r` 发现及真实 ConPTY 首次可输入。所有性能样本禁止提交模型请求，使用专用 Home，不停止用户默认 Host。
