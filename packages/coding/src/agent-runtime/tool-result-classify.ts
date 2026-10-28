@@ -27,7 +27,7 @@
  *     <CODE>:` envelope is present, pull out the `<CODE>` token
  *     (`[A-Z_]+`) for downstream policy decisions (e.g. retry-decision
  *     middleware reads `runtimeSessionState.lastToolErrorCode`).
- *     Also recognizes Exec Policy JSON rejection codes so policy failures
+ *     Also recognizes source-owned Todo failures and Exec Policy JSON rejection codes so policy failures
  *     retain error status and provenance. Returns `undefined` otherwise.
  *
  * The three operate as a coherent triple — `isToolResultErrorContent`
@@ -49,7 +49,7 @@ import { CANCELLED_TOOL_RESULT_PREFIX } from '../constants.js';
 export function isToolResultErrorContent(content: ToolResult): boolean {
   const text = toolResultText(content);
   return /^\[(?:Tool Error|Cancelled|Blocked|Error)\]/.test(text)
-    || execPolicyErrorCode(text) !== undefined;
+    || structuredJsonErrorCode(text) !== undefined;
 }
 
 export function isCancelledToolResultContent(content: ToolResult): boolean {
@@ -59,10 +59,10 @@ export function isCancelledToolResultContent(content: ToolResult): boolean {
 export function extractStructuredToolErrorCode(content: ToolResult): string | undefined {
   const text = toolResultText(content).trim();
   const match = /^\[Tool Error\]\s+[^:]+:\s+([A-Z_]+):/.exec(text);
-  return match?.[1] ?? execPolicyErrorCode(text);
+  return match?.[1] ?? structuredJsonErrorCode(text);
 }
 
-function execPolicyErrorCode(text: string): string | undefined {
+function structuredJsonErrorCode(text: string): string | undefined {
   if (!text.trimStart().startsWith('{')) return undefined;
   let value: unknown;
   try {
@@ -71,6 +71,12 @@ function execPolicyErrorCode(text: string): string | undefined {
     return undefined; // Ordinary tool text is not required to be JSON.
   }
   if (value === null || typeof value !== 'object') return undefined;
+  if ('ok' in value && value.ok === false
+    && 'reason' in value && typeof value.reason === 'string'
+    && 'code' in value && typeof value.code === 'string'
+    && ['todo_invalid_input', 'todo_unavailable', 'todo_hook_veto', 'todo_state_conflict'].includes(value.code)) {
+    return value.code;
+  }
   if (!('retryable' in value) || value.retryable !== false
     || !('denialSource' in value) || !('code' in value)) return undefined;
   if (!['explicit_rule', 'builtin_fallback', 'policy_configuration'].includes(String(value.denialSource))) {

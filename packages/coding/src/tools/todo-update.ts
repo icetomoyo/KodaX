@@ -70,8 +70,8 @@
  *   Output (string, JSON-stringified):
  *     {ok: true}                                — op:'update' success.
  *     {ok: true, count: N}                      — op:'init' success.
- *     {ok: false, reason: "Unknown todo id ..."} — id not in store on update.
- *     {ok: false, reason: "..."}                — validation error OR
+ *     {ok: false, code: 'todo_state_conflict', reason: "Unknown todo id ..."} — id not in store on update.
+ *     {ok: false, code: "todo_...", reason: "..."}                — validation error OR
  *                                                   extension hook
  *                                                   `'todo:before-complete'`
  *                                                   blocked the completion.
@@ -238,6 +238,7 @@ function executeInitOp(
   if (!Array.isArray(input.items)) {
     return jsonResult({
       ok: false,
+      code: 'todo_invalid_input',
       reason:
         "Invalid op:'init' payload: `items` must be an array of " +
         '{id, content, activeForm?} objects (>= 1 entry).',
@@ -261,6 +262,7 @@ function executeInitOp(
   if (rawItems.length === 0) {
     return jsonResult({
       ok: false,
+      code: 'todo_invalid_input',
       reason:
         "Invalid op:'init' payload: `items` array must contain >= 1 entry. " +
         'Use op:\'update\' (or pass a non-empty list) instead of an empty init.',
@@ -280,6 +282,7 @@ function executeInitOp(
     if (raw === null || raw === undefined || typeof raw !== 'object') {
       return jsonResult({
         ok: false,
+        code: 'todo_invalid_input',
         reason: `Invalid op:'init' items[${i}]: must be an object {id, subject, description?, activeForm?}.`,
       });
     }
@@ -287,12 +290,14 @@ function executeInitOp(
     if (typeof id !== 'string' || id.length === 0) {
       return jsonResult({
         ok: false,
+        code: 'todo_invalid_input',
         reason: `Invalid op:'init' items[${i}].id: must be a non-empty string.`,
       });
     }
     if (seenIds.has(id)) {
       return jsonResult({
         ok: false,
+        code: 'todo_invalid_input',
         reason:
           `Invalid op:'init' items[${i}].id: duplicate id ${JSON.stringify(id)}. ` +
           'Each item id must be unique within the list.',
@@ -302,6 +307,7 @@ function executeInitOp(
     if (typeof subject !== 'string' || subject.length === 0) {
       return jsonResult({
         ok: false,
+        code: 'todo_invalid_input',
         reason:
           `Invalid op:'init' items[${i}].subject: must be a non-empty string ` +
           '(brief imperative title shown in the plan-list row).',
@@ -310,6 +316,7 @@ function executeInitOp(
     if (description !== undefined && typeof description !== 'string') {
       return jsonResult({
         ok: false,
+        code: 'todo_invalid_input',
         reason:
           `Invalid op:'init' items[${i}].description: when provided, must be a string ` +
           '(fuller context / work instructions; multi-line OK).',
@@ -318,6 +325,7 @@ function executeInitOp(
     if (activeForm !== undefined && typeof activeForm !== 'string') {
       return jsonResult({
         ok: false,
+        code: 'todo_invalid_input',
         reason:
           `Invalid op:'init' items[${i}].activeForm: when provided, must be a string ` +
           '(present-continuous form, e.g. "Running tests").',
@@ -327,6 +335,7 @@ function executeInitOp(
     if (evaluator !== undefined && (typeof evaluator !== 'string' || !ALLOWED_EVALUATOR_HINTS.has(evaluator))) {
       return jsonResult({
         ok: false,
+        code: 'todo_invalid_input',
         reason:
           `Invalid op:'init' items[${i}].evaluator: when provided, must be one of ` +
           `'build' | 'test' | 'lint'. Got ${JSON.stringify(evaluator)}.`,
@@ -369,6 +378,7 @@ export async function toolTodoUpdate(
     // Surface this clearly so the model knows the tool call did nothing.
     return jsonResult({
       ok: false,
+      code: 'todo_unavailable',
       reason:
         'todo_update is not active in this run (no plan list was seeded). ' +
         'You may continue working without calling todo_update.',
@@ -381,6 +391,7 @@ export async function toolTodoUpdate(
   if (typeof effectiveOp !== 'string' || !ALLOWED_OPS.has(effectiveOp)) {
     return jsonResult({
       ok: false,
+      code: 'todo_invalid_input',
       reason:
         `Invalid op: ${JSON.stringify(op)}. ` +
         `Allowed: 'init' | 'update' (omit for default 'update').`,
@@ -395,6 +406,7 @@ export async function toolTodoUpdate(
   if (typeof id !== 'string' || id.length === 0) {
     return jsonResult({
       ok: false,
+      code: 'todo_invalid_input',
       reason: 'Missing or invalid required parameter: id (non-empty string).',
     });
   }
@@ -406,6 +418,7 @@ export async function toolTodoUpdate(
   if (status !== undefined && (typeof status !== 'string' || !ALLOWED_STATUSES_FOR_UPDATE.has(status))) {
     return jsonResult({
       ok: false,
+      code: 'todo_invalid_input',
       reason:
         `Invalid status: ${JSON.stringify(status)}. ` +
         `Allowed: in_progress | completed | failed | skipped | cancelled | deleted.`,
@@ -422,6 +435,7 @@ export async function toolTodoUpdate(
   ) {
     return jsonResult({
       ok: false,
+      code: 'todo_invalid_input',
       reason:
         "Empty op:'update' payload. Supply at least one of: status, subject, " +
         'description, activeForm, note, evaluator, metadata.',
@@ -436,6 +450,7 @@ export async function toolTodoUpdate(
         : validIds.join(', ');
     return jsonResult({
       ok: false,
+      code: 'todo_state_conflict',
       reason:
         `Unknown todo id: ${JSON.stringify(id)}. ` +
         `Current valid ids: ${validList}. ` +
@@ -455,7 +470,7 @@ export async function toolTodoUpdate(
     const removed = ctx.todoStore.remove(id);
     if (!removed || !before) {
       // Shouldn't happen — we just verified `has(id)` above. Defensive.
-      return jsonResult({ ok: false, reason: `Failed to delete ${JSON.stringify(id)}.` });
+      return jsonResult({ ok: false, code: 'todo_state_conflict', reason: `Failed to delete ${JSON.stringify(id)}.` });
     }
     await emitActiveExtensionEvent('todo:deleted', {
       id,
@@ -479,6 +494,7 @@ export async function toolTodoUpdate(
   if (note !== undefined && typeof note !== 'string') {
     return jsonResult({
       ok: false,
+      code: 'todo_invalid_input',
       reason: 'Invalid note: when provided, must be a string.',
     });
   }
@@ -486,6 +502,7 @@ export async function toolTodoUpdate(
   if (activeForm !== undefined && typeof activeForm !== 'string') {
     return jsonResult({
       ok: false,
+      code: 'todo_invalid_input',
       reason: 'Invalid activeForm: when provided, must be a string (present-continuous, e.g. "Running tests").',
     });
   }
@@ -493,6 +510,7 @@ export async function toolTodoUpdate(
   if (subject !== undefined && (typeof subject !== 'string' || subject.length === 0)) {
     return jsonResult({
       ok: false,
+      code: 'todo_invalid_input',
       reason:
         'Invalid subject: when provided, must be a non-empty string ' +
         '(brief imperative title for the plan-list row).',
@@ -502,6 +520,7 @@ export async function toolTodoUpdate(
   if (description !== undefined && typeof description !== 'string') {
     return jsonResult({
       ok: false,
+      code: 'todo_invalid_input',
       reason:
         'Invalid description: when provided, must be a string ' +
         '(fuller context; pass empty string to clear).',
@@ -514,6 +533,7 @@ export async function toolTodoUpdate(
   ) {
     return jsonResult({
       ok: false,
+      code: 'todo_invalid_input',
       reason:
         `Invalid evaluator: when provided, must be one of 'build' | 'test' | 'lint'. ` +
         `Got ${JSON.stringify(evaluator)}.`,
@@ -525,6 +545,7 @@ export async function toolTodoUpdate(
   if (metadata !== undefined && metadata !== null && !isPlainObject(metadata)) {
     return jsonResult({
       ok: false,
+      code: 'todo_invalid_input',
       reason: 'Invalid metadata: when provided, must be a plain object or null (to clear).',
     });
   }
@@ -532,7 +553,7 @@ export async function toolTodoUpdate(
   // ── Standard patch path ──────────────────────────────────────────────
   const before = ctx.todoStore.getAll().find((it) => it.id === id);
   if (!before) {
-    return jsonResult({ ok: false, reason: `Failed to read ${JSON.stringify(id)} before patch.` });
+    return jsonResult({ ok: false, code: 'todo_state_conflict', reason: `Failed to read ${JSON.stringify(id)} before patch.` });
   }
 
   // FEATURE_170 — `'todo:before-complete'` gates the LLM-driven
@@ -551,10 +572,10 @@ export async function toolTodoUpdate(
       item: before as KodaXTodoItem,
     });
     if (typeof hookResult === 'string') {
-      return jsonResult({ ok: false, reason: hookResult });
+      return jsonResult({ ok: false, code: 'todo_hook_veto', reason: hookResult });
     }
     if (hookResult === false) {
-      return jsonResult({ ok: false, reason: 'blocked-by-hook' });
+      return jsonResult({ ok: false, code: 'todo_hook_veto', reason: 'blocked-by-hook' });
     }
   }
 

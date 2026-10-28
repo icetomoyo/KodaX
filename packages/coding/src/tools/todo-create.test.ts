@@ -12,6 +12,7 @@ import {
   getActiveExtensionRuntime,
 } from '../extensions/index.js';
 import { toolTodoCreate } from './todo-create.js';
+import { extractStructuredToolErrorCode, isToolResultErrorContent } from '../agent-runtime/tool-result-classify.js';
 
 function makeContext(
   overrides: Partial<KodaXToolExecutionContext> = {},
@@ -93,6 +94,16 @@ describe('todo_create happy path', () => {
 });
 
 describe('todo_create validation', () => {
+  it('reports invalid input as a tool failure with its original reason and a source-owned code', async () => {
+    const { ctx, store } = makeContextWithStore();
+    const out = await toolTodoCreate({ subject: 'Verify', status: 'completed' }, ctx);
+    expect(JSON.parse(out)).toEqual({ ok: false,
+      reason: 'Invalid status: use pending (default) or in_progress for work starting now.', code: 'todo_invalid_input' });
+    expect(isToolResultErrorContent(out)).toBe(true);
+    expect(extractStructuredToolErrorCode(out)).toBe('todo_invalid_input');
+    expect(store.hasItems()).toBe(false);
+  });
+
   it.each(['completed', 'failed', 'cancelled', 'skipped', null, 1])('rejects initial status %s without allocating an item', async status => {
     const { ctx, store } = makeContextWithStore();
     expect(JSON.parse(await toolTodoCreate({ subject: 'Verify', status }, ctx))).toMatchObject({ ok: false });
@@ -202,7 +213,7 @@ describe('todo_create extension hook gating', () => {
       if (seed.status === 'in_progress' && seed.subject === 'Blocked') return 'not authorized';
     });
     const { ctx, store } = makeContextWithStore();
-    expect(JSON.parse(await toolTodoCreate({ subject: 'Blocked', status: 'in_progress' }, ctx))).toEqual({ ok: false, reason: 'not authorized' });
+    expect(JSON.parse(await toolTodoCreate({ subject: 'Blocked', status: 'in_progress' }, ctx))).toEqual({ ok: false, code: 'todo_hook_veto', reason: 'not authorized' });
     expect(store.hasItems()).toBe(false);
     expect(received).toEqual([]);
     expect(JSON.parse(await toolTodoCreate({ subject: 'Allowed', status: 'in_progress' }, ctx))).toEqual({ ok: true, id: 'todo_1' });

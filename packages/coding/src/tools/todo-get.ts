@@ -32,7 +32,7 @@
  *
  *   Output (JSON string):
  *     {ok: true,  item: {id, subject, description?, status, activeForm?, note?, evaluator?, metadata?}}
- *     {ok: false, reason: "..."}   — store not wired, OR id not found.
+ *     {ok: false, code: "todo_...", reason: "..."}   — store not wired, OR id not found.
  *
  *   Unknown-id response carries the same `Current valid ids: …` hint
  *   `todo_update` returns so the model can recover on the next turn
@@ -92,6 +92,7 @@ export async function toolTodoGet(
   if (!ctx.todoStore) {
     return jsonResult({
       ok: false,
+      code: 'todo_unavailable',
       reason:
         'todo_get is not active in this run (no plan list infrastructure ' +
         'is wired). Either no managed task is active, or the runtime did ' +
@@ -103,6 +104,7 @@ export async function toolTodoGet(
   if (typeof id !== 'string' || id.length === 0) {
     return jsonResult({
       ok: false,
+      code: 'todo_invalid_input',
       reason: 'Missing or invalid required parameter: id (non-empty string).',
     });
   }
@@ -119,6 +121,7 @@ export async function toolTodoGet(
         : validIds.join(', ');
     return jsonResult({
       ok: false,
+      code: 'todo_state_conflict',
       reason:
         `Unknown todo id: ${JSON.stringify(id)}. ` +
         `Current valid ids: ${validList}. ` +

@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { KodaXStreamResult, KodaXToolUseBlock } from '@kodax-ai/llm';
 import { RECOVERY_FILES, RECOVERY_GOLDEN } from '../benchmark/datasets/shared-contract-natural/fixture.js';
 import { checkNaturalTool, runNaturalRuntime } from './shared-contract-natural-runtime.js';
+import { PRODUCT_CASES } from '../benchmark/datasets/product-multiturn/fixture.js';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -22,6 +23,160 @@ const result = (calls: KodaXToolUseBlock[] = [], text = ''): KodaXStreamResult =
   toolBlocks: calls, textBlocks: text ? [{ type: 'text', text }] : [], thinkingBlocks: [], stopReason: calls.length ? 'tool_use' : 'end_turn',
 });
 const tool = (id: string, name: string, input: Record<string, unknown>): KodaXToolUseBlock => ({ type: 'tool_use', id, name, input });
+
+it('recovers oversized test output using the existing isolated output binding without permitting outside reads', async () => {
+  vi.stubEnv('NODE_ENV', 'production');
+  const directory = await root();
+  const workspace = path.join(directory, 'workspace');
+  vi.stubEnv('KODAX_TOOL_OUTPUT_DIR', path.join(workspace, '.agent/tmp/tool-results'));
+  const outside = path.join(directory, 'private.txt');
+  await fs.writeFile(outside, 'PRIVATE_SENTINEL');
+  const record = await runNaturalRuntime(directory, 'tenant-cache', async (input, _signal, index) => {
+    const receipt = (id: string) => input.messages.flatMap(message => Array.isArray(message.content) ? message.content : [])
+      .find(block => block.type === 'tool_result' && block.tool_use_id === id);
+    if (index === 0) return result([tool('large-test', 'write', { path: 'tests/output-recovery.test.js', content:
+      "import test from 'node:test';\ntest('large diagnostic', () => { process.stdout.write('noise\\n'.repeat(2200)); throw new Error('RECOVERY_FAILURE_SENTINEL'); });\n" })]);
+    if (index === 1) return result([tool('run-large-test', 'bash', { command: 'node --test' })]);
+    if (index === 2) {
+      const text = JSON.stringify(receipt('run-large-test'));
+      expect(text).toContain('Exit: 1');
+      const block = receipt('run-large-test');
+      if (!block || block.type !== 'tool_result' || typeof block.content !== 'string') throw new Error('Missing test output');
+      const artifact = block.content.match(/stdout recovery: ([^\r\n]+)/)?.[1];
+      if (!artifact) throw new Error('Expected real oversized output artifact');
+      expect(checkNaturalTool(workspace, 'read', { path: artifact }, false)).toBeNull();
+      return result([
+        tool('recover-output', 'grep', { path: artifact, pattern: 'RECOVERY_FAILURE_SENTINEL', output_mode: 'content' }),
+        tool('outside-read', 'read', { path: outside }),
+      ]);
+    }
+    expect(index).toBe(3);
+    expect(receipt('recover-output')).toMatchObject({ is_error: false, content: expect.stringContaining('RECOVERY_FAILURE_SENTINEL') });
+    expect(receipt('outside-read')).toMatchObject({ is_error: true, content: expect.stringContaining('Path leaves the fixture workspace') });
+    expect(JSON.stringify(input.messages)).not.toContain('PRIVATE_SENTINEL');
+    return result([], '测试失败；已读取原始诊断，未访问隔离范围外的文件。');
+  }, { limits: { calls: 4, tools: 4, timeoutMs: 60000 } });
+  expect(record.error).toBeNull(); expect(record.counts.requests).toBe(4);
+  expect(record.protectedUnchanged).toBe(true);
+});
+
+it.each(['tenant-cache', 'config-precedence'] as const)('runs two real user turns for %s with protected tests and actual edits', async id => {
+  vi.stubEnv('NODE_ENV', 'production');
+  const fetcher = vi.fn(() => { throw new Error('No network'); }); vi.stubGlobal('fetch', fetcher);
+  const definition = PRODUCT_CASES[id];
+  const record = await runNaturalRuntime(await root(), id, async (input, _signal, index) => {
+    if (index === 0) return result([tool('protect-public', 'write', { path: 'tests/basic.test.js', content: '' })]);
+    if (index === 1) {
+      expect(JSON.stringify(input.messages)).toContain('Original public fixture files are protected');
+      return result(Object.entries(definition.golden).map(([path, content]) => tool('repair', 'write', { path, content })));
+    }
+    if (index === 2) return result([], '已修复，尚未运行测试。');
+    if (index === 3) {
+      expect(JSON.stringify(input.messages)).toContain('已修复，尚未运行测试。');
+      return result([tool('test', 'bash', { command: 'node --test' })]);
+    }
+    expect(index).toBe(4); expect(JSON.stringify(input.messages)).toContain('# fail 0');
+    return result([], '已运行公共测试；未做外部集成验证。');
+  }, { followUps: [{ prompt: definition.followUp, permissionMode: 'full-access' }] });
+  expect(record.error).toBeNull(); expect(record.runs.map(run => run.requests)).toEqual([3, 2]);
+  expect(record.protectedUnchanged).toBe(true); expect(record.verification.oracle.status).toBe(0);
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it('distinguishes a missing edit path from denied effects and permits a corrected root edit', async () => {
+  for (const workspace of ['/tmp/fixture', 'C:\\fixture']) {
+    for (const name of ['edit', 'multi_edit', 'insert_after_anchor', 'write']) {
+      for (const invalid of [undefined, '', '   ', 42]) {
+        expect(checkNaturalTool(workspace, name, { path: invalid }, false)).toContain('non-empty path');
+        expect(checkNaturalTool(workspace, name, { path: invalid }, true)).toContain('Only root source files');
+      }
+      expect(checkNaturalTool(workspace, name, { path: '../outside.js' }, false)).toContain('Only root source files');
+      expect(checkNaturalTool(workspace, name, { path: 'tests/basic.test.js' }, false, 'specific', PRODUCT_CASES['tenant-cache'].files)).toContain('protected');
+    }
+  }
+  vi.stubEnv('NODE_ENV', 'production');
+  const record = await runNaturalRuntime(await root(), 'tenant-cache', async (input, _signal, index) => {
+    if (index === 0) return result([tool('missing-path', 'edit', { edits: [{}, 'old_string'] })]);
+    if (index === 1) {
+      expect(JSON.stringify(input.messages)).toContain('non-empty path');
+      return result([tool('valid-repair', 'edit', { path: 'src/client.js', old_string: 'const identity = key;', new_string: 'const identity = JSON.stringify([tenant, key]);' })]);
+    }
+    expect(index).toBe(2);
+    expect(JSON.stringify(input.messages)).toContain('File edited:');
+    return result([], '已修复身份匹配，尚未验证重试语义。');
+  }, { limits: { calls: 3, tools: 2, timeoutMs: 60000 } });
+  expect(record.error).toBeNull();
+  expect(record.counts.rootRequests).toBe(3);
+  expect(record.events.filter(event => event.kind === 'guard' && event.denied)).toHaveLength(1);
+  expect(record.protectedUnchanged).toBe(true);
+});
+
+it('caps proposed control calls independently of execution and UI events', async () => {
+  vi.stubEnv('NODE_ENV', 'production');
+  const record = await runNaturalRuntime(await root(), 'symptom-repair', async () => result([
+    tool('one', 'todo_list', {}), tool('two', 'todo_get', { id: 'absent' }),
+  ]), { limits: { calls: 2, tools: 1, timeoutMs: 60000 } });
+  expect(record.error).toContain('budget-censored: proposed tool cap');
+  expect(record.counts.proposedTools).toBe(2);
+});
+
+it('explains rejected role selection without changing child permissions or consuming a child slot', async () => {
+  for (const readOnly of [false, true]) for (const childWrite of [undefined, false, true]) {
+    for (const agentId of [undefined, 'worker', 'reviewer']) for (const provider of [undefined, 'override']) for (const model of [undefined, 'override']) {
+      const input = { task_name: 'review', objective: 'Static review', read_only: childWrite, agent_id: agentId, provider, model };
+      const denied = checkNaturalTool('C:\\fixture', 'spawn_agent', input, readOnly);
+      const previouslyDenied = readOnly || childWrite === false || agentId !== undefined || provider !== undefined || model !== undefined;
+      expect(denied !== null).toBe(previouslyDenied);
+      if (!readOnly && childWrite !== false && provider === undefined && model === undefined && agentId !== undefined) {
+        expect(denied).toContain('agent_id');
+        expect(denied).toContain('No child was started');
+      }
+    }
+  }
+  vi.stubEnv('NODE_ENV', 'production');
+  let stage = 0;
+  let children = 0;
+  const record = await runNaturalRuntime(await root(), 'tenant-cache', async (input, _signal, _index, meta) => {
+    const history = JSON.stringify(input.messages);
+    if (meta.kind === 'child') {
+      children++;
+      expect(input.system).toContain('Current task scope: read-only');
+      return result([], '只读子任务已完成；未执行测试或修改。');
+    }
+    if (stage++ === 0) return result([tool('explicit-role', 'spawn_agent', { task_name: 'review', objective: 'Static review', read_only: true, agent_id: 'worker' })]);
+    if (stage === 2) {
+      expect(history).toContain('agent_id'); expect(history).toContain('No child was started');
+      return result([tool('default-role', 'spawn_agent', { task_name: 'review', objective: 'Static review', read_only: true })]);
+    }
+    if (!history.includes('<agent-completed')) return result([tool('wait-child', 'wait_agent', { timeout_ms: 1000 })]);
+    return result([], '子任务仅完成静态检查，未运行测试。');
+  }, { limits: { calls: 10, tools: 8, timeoutMs: 45000 } });
+  expect(record.error).toBeNull(); expect(record.counts.spawns).toBe(1); expect(children).toBe(1);
+  expect(record.events.filter(event => event.kind === 'guard' && event.denied)).toHaveLength(1);
+  expect(record.protectedUnchanged).toBe(true);
+}, 60000);
+
+it.each(['agent', 'coding', 'script'] as const)('delivers source-owned Todo errors and allows valid recovery in %s', async workMode => {
+  vi.stubEnv('NODE_ENV', 'production');
+  const fetcher = vi.fn(() => { throw new Error('No network'); });
+  vi.stubGlobal('fetch', fetcher);
+  const record = await runNaturalRuntime(await root(), 'symptom-repair', async (input, _signal, index) => {
+    const receipt = (id: string) => input.messages.flatMap(message => Array.isArray(message.content) ? message.content : [])
+      .find(block => block.type === 'tool_result' && block.tool_use_id === id);
+    if (index === 0) return result([tool('invalid-status', 'todo_create', { subject: 'Verify', status: 'completed' })]);
+    if (index === 1) {
+      expect(receipt('invalid-status')).toMatchObject({ is_error: true, content: expect.stringContaining('todo_invalid_input') });
+      return result([tool('valid-create', 'todo_create', { subject: 'Verify', status: 'in_progress' })]);
+    }
+    expect(index).toBe(2);
+    expect(receipt('valid-create')).toMatchObject({ content: '{"ok":true,"id":"todo_1"}' });
+    return result([], '已创建进行中的事项；尚未修改或测试代码。');
+  }, { workMode, limits: { calls: 3, tools: 2, timeoutMs: 60_000 } });
+  expect(record.error).toBeNull();
+  expect(record.runs.map(run => run.requests)).toEqual([3]);
+  expect(record.protectedUnchanged).toBe(true);
+  expect(fetcher).not.toHaveBeenCalled();
+}, 70_000);
 
 it.each(['agent', 'coding', 'script'] as const)('preserves history but isolates task plans across user turns and cold reopen in %s', async workMode => {
   vi.stubEnv('NODE_ENV', 'production');

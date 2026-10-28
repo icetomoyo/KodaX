@@ -134,6 +134,44 @@ test('actual npm tarball runs Script in a clean directory and fails explicitly o
         assert.equal(nativeResult.success,true);
       }
       assert.equal(nativeCalls,2);
+      // Exercise the changed Todo receipt through the packed public SDK, not a
+      // source import. All modes retain native Todo calls and the same recovery.
+      let todoCalls=0;
+      class TodoFixture extends KodaXBaseProvider {
+        name='packed-todo'; supportsThinking=false;
+        config={apiKeyEnv:'KODAX_PACK_MODE_KEY',model:'fixture',supportsThinking:false};
+        async stream(messages,tools) {
+          if(!tools.some(t=>t.name==='todo_create')) { const e=Error('Auxiliary request outside fixture');e.name='AbortError';throw e; }
+          const step=todoCalls++;
+          assert.ok(step<3,'Unexpected additional Todo recovery generation');
+          if(step>0) {
+            const receipt=messages.flatMap(m=>Array.isArray(m.content)?m.content:[])
+              .find(b=>b.type==='tool_result' && b.tool_use_id===(step===1?'invalid-todo':'valid-todo'));
+            assert.ok(receipt,'Missing original Todo receipt');
+            if(step===1) {
+              assert.equal(receipt.is_error,true);
+              assert.equal(JSON.parse(receipt.content).code,'todo_invalid_input');
+              assert.match(JSON.parse(receipt.content).reason,/Invalid status/);
+            } else {
+              assert.notEqual(receipt.is_error,true);
+              assert.deepEqual(JSON.parse(receipt.content),{ok:true,id:'todo_1'});
+            }
+          }
+          return {textBlocks:step===2?[{type:'text',text:'Plan item created; no edits or tests performed.'}]:[],thinkingBlocks:[],
+            toolBlocks:step<2?[{type:'tool_use',id:step===0?'invalid-todo':'valid-todo',name:'todo_create',
+              input:{subject:'Verify',status:step===0?'completed':'in_progress'}}]:[],stopReason:step<2?'tool_use':'end_turn'};
+        }
+      }
+      registerModelProvider('packed-todo',()=>new TodoFixture());
+      for(const mode of ['agent','coding','script']) {
+        todoCalls=0;
+        const recoveryController=new AbortController();
+        try {
+          const recovery=await runManagedTask({provider:'packed-todo',workMode:mode,reasoningMode:'off',lsp:false,
+            abortSignal:recoveryController.signal,session:{storage},context:{executionCwd:process.cwd(),gitRoot:process.cwd(),repoIntelligenceMode:'off'}},'Create a plan item and report its state.');
+          assert.equal(recovery.success,true); assert.equal(todoCalls,3);
+        } finally { recoveryController.abort(); await awaitLatestCodingMemoryReviewDrain(5000); }
+      }
       process.stdout.write(JSON.stringify({ready:true,calls}));`);
     const mode = async () => {
       try {

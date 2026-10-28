@@ -59,7 +59,11 @@ export function checkComplexTool(workspace: string, tool: string, input: Readonl
   const scratch = (value: string): boolean => inside(value) && /^\.agent\/tmp(?:\/|$)/.test(relative(value));
   if (['web_search', 'web_fetch', 'session_history_search', 'session_history_read', 'memory_recall', 'kodax_manual'].includes(tool)) return 'External retrieval and session data are outside this bounded fixture.';
   if (tool === 'run_workflow') return 'Independent Workflow executor is outside this bounded evaluation.';
-  if (tool === 'spawn_agent' && (readOnly || input.read_only === false || input.provider !== undefined || input.model !== undefined || input.agent_id !== undefined)) return 'Only one read-only inherited-model child is in scope.';
+  if (tool === 'spawn_agent') {
+    if (readOnly || input.read_only === false) return 'Only one read-only inherited-model child is in scope.';
+    if (input.provider !== undefined || input.model !== undefined) return 'Explicit provider/model overrides are outside this fixture scope. Omit these fields to inherit the configured model; read-only and child-count limits still apply. No child was started.';
+    if (input.agent_id !== undefined) return 'Explicit agent_id selection is outside this fixture scope. Omit agent_id to use the default child role; read-only, inherited-model and child-count limits still apply. No child was started.';
+  }
   if (['read', 'glob', 'grep', 'code_search', ...mutable].includes(tool) && input.path !== undefined && !inside(input.path)) return 'Path leaves the fixture workspace.';
   if (isRepoInspection(tool) && ['path', 'target_path'].some(field => input[field] !== undefined && !inside(input[field]))) return 'Path leaves the fixture workspace.';
   if (tool === 'changed_diff' || tool === 'change_bundle') {

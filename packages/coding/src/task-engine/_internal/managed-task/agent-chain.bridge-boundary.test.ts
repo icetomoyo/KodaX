@@ -10,6 +10,36 @@ import type { KodaXEvents, KodaXToolExecutionContext } from '../../../types.js';
 import { buildRunnerAgentChain } from './agent-chain.js';
 import type { ManagedTaskBudgetController } from './budget.js';
 
+it('preserves Todo failure provenance and legitimate recovery with equal native/bridge charges', async () => {
+  const observations: unknown[][] = [];
+  for (const bridged of [false, true]) {
+    const budget: ManagedTaskBudgetController = { totalBudget: 100, spentBudget: 0 };
+    const store = createTodoStore();
+    const agent = buildRunnerAgentChain({ backups: new Map(), todoStore: store }, undefined, budget).worker;
+    const observed = [];
+    for (const [name, input] of [
+      ['todo_create', { subject: 'Verify', status: 'completed' }],
+      ['todo_create', { subject: 'Verify', status: 'in_progress' }],
+      ['todo_update', { id: 'old_run_id', status: 'completed' }],
+      ['todo_update', { id: 'todo_1', status: 'completed' }],
+    ] as const) {
+      const executable = agent.tools!.find(t => t.name === (bridged ? 'tool_call' : name))!;
+      const args = bridged ? { name, input } : input;
+      const original = structuredClone(args);
+      const receipt = await executable.execute(args, { agent, toolCallId: String(observed.length) });
+      observed.push({ content: receipt.content, isError: receipt.isError === true });
+      expect(args).toEqual(original);
+    }
+    expect(observed.map(item => item.isError)).toEqual([true, false, true, false]);
+    expect(JSON.parse(String(observed[0]!.content))).toMatchObject({ code: 'todo_invalid_input' });
+    expect(JSON.parse(String(observed[2]!.content))).toMatchObject({ code: 'todo_state_conflict' });
+    expect(store.getAll()).toMatchObject([{ id: 'todo_1', status: 'completed' }]);
+    expect(budget.spentBudget).toBe(4);
+    observations.push(observed);
+  }
+  expect(observations[0]).toEqual(observations[1]);
+});
+
 it('charges read errors and successful recovery once through native and bridge entries', async () => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-bridge-budget-'));
   try {

@@ -44,13 +44,13 @@
  *
  *   Output (JSON string):
  *     {ok: true, id: "todo_<n>"}     — success; `n` is the new monotonic id.
- *     {ok: false, reason: "..."}     — validation error, store not wired,
+ *     {ok: false, code: "todo_...", reason: "..."}     — validation error, store not wired,
  *                                       OR extension hook
  *                                       `'todo:before-create'` blocked.
  *
- * The blocked-by-hook envelope is structurally identical to validation
- * failures so the LLM can recover via the same retry path (no exception
- * propagation per ADR-021 unified tool-result envelope).
+ * Failures retain the original reason and identify their source. A hook veto
+ * does not imply that retrying is permitted or that it is permanently blocked.
+ * No exception propagation per ADR-021 unified tool-result envelope.
  */
 
 import { runActiveExtensionHook, emitActiveExtensionEvent } from '../extensions/runtime.js';
@@ -92,6 +92,7 @@ export async function toolTodoCreate(
   if (!ctx.todoStore) {
     return jsonResult({
       ok: false,
+      code: 'todo_unavailable',
       reason:
         'todo_create is not active in this run (no plan list was seeded). ' +
         'You may continue working without calling todo_create.',
@@ -104,6 +105,7 @@ export async function toolTodoCreate(
   if (typeof subject !== 'string' || subject.length === 0) {
     return jsonResult({
       ok: false,
+      code: 'todo_invalid_input',
       reason:
         'Missing or invalid required parameter: subject (non-empty string). ' +
         'Provide a brief imperative title for the plan-list row, e.g. ' +
@@ -114,6 +116,7 @@ export async function toolTodoCreate(
   if (description !== undefined && typeof description !== 'string') {
     return jsonResult({
       ok: false,
+      code: 'todo_invalid_input',
       reason:
         'Invalid description: when provided, must be a string ' +
         '(fuller context / work instructions; multi-line OK).',
@@ -121,12 +124,13 @@ export async function toolTodoCreate(
   }
 
   if (status !== undefined && status !== 'pending' && status !== 'in_progress') {
-    return jsonResult({ ok: false, reason: 'Invalid status: use pending (default) or in_progress for work starting now.' });
+    return jsonResult({ ok: false, code: 'todo_invalid_input', reason: 'Invalid status: use pending (default) or in_progress for work starting now.' });
   }
 
   if (activeForm !== undefined && typeof activeForm !== 'string') {
     return jsonResult({
       ok: false,
+      code: 'todo_invalid_input',
       reason:
         'Invalid activeForm: when provided, must be a string ' +
         '(present-continuous form, e.g. "Running tests").',
@@ -139,6 +143,7 @@ export async function toolTodoCreate(
   ) {
     return jsonResult({
       ok: false,
+      code: 'todo_invalid_input',
       reason:
         `Invalid evaluator: when provided, must be one of 'build' | 'test' | 'lint'. ` +
         `Got ${JSON.stringify(evaluator)}.`,
@@ -148,6 +153,7 @@ export async function toolTodoCreate(
   if (metadata !== undefined && !isPlainObject(metadata)) {
     return jsonResult({
       ok: false,
+      code: 'todo_invalid_input',
       reason: 'Invalid metadata: when provided, must be a plain object.',
     });
   }
@@ -166,10 +172,10 @@ export async function toolTodoCreate(
   };
   const hookResult = await runActiveExtensionHook('todo:before-create', { seed });
   if (typeof hookResult === 'string') {
-    return jsonResult({ ok: false, reason: hookResult });
+    return jsonResult({ ok: false, code: 'todo_hook_veto', reason: hookResult });
   }
   if (hookResult === false) {
-    return jsonResult({ ok: false, reason: 'blocked-by-hook' });
+    return jsonResult({ ok: false, code: 'todo_hook_veto', reason: 'blocked-by-hook' });
   }
 
   const id = ctx.todoStore.add(seed);

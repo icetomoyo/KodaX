@@ -22,7 +22,7 @@
  * Output: JSON-stringified `{ ok: true, items: [...] }` matching the
  * `TodoItem` shape KodaX already exposes via `KodaXEvents.onTodoUpdate`.
  * When the store is unwired (Scout obligations < 2 and no LLM-driven
- * init), returns `{ ok: false, reason: "todo_list is not active ..." }`
+ * init), returns `{ ok: false, code: 'todo_unavailable', reason: "todo_list is not active ..." }`
  * — same soft-fail contract as `todo_update`.
  *
  * Tool surface visibility: like `todo_update`, this tool is invisible to
@@ -74,6 +74,7 @@ export async function toolTodoList(
   if (!ctx.todoStore) {
     return jsonResult({
       ok: false,
+      code: 'todo_unavailable',
       reason:
         'todo_list is not active in this run (no plan list infrastructure ' +
         'is wired). Either no managed task is active, or the runtime did ' +

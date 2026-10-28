@@ -17,6 +17,7 @@ import { prepareNaturalCase, RECOVERY_FILES } from '../benchmark/datasets/shared
 import { RECOVERY_ORACLE } from '../benchmark/datasets/shared-contract-natural/oracle.js';
 import type { NaturalCaseId } from '../benchmark/datasets/shared-contract-natural/cases.js';
 import type { FrozenInput } from './first-turn-eval-support.js';
+import { PRODUCT_CASES, prepareProductCase, type ProductCaseId } from '../benchmark/datasets/product-multiturn/fixture.js';
 
 const CONTROL_TOOLS = new Set(['spawn_agent', 'list_agents', 'wait_agent', 'send_message', 'interrupt_agent', 'agent_output',
   'todo_create', 'todo_update', 'todo_list', 'todo_get', 'ask_user_question', 'enter_plan_mode', 'exit_plan_mode',
@@ -26,20 +27,23 @@ const DENIAL = 'No part of this command ran. This fixture permits read-only Git 
 const COMPOSITION_DENIAL = 'This fixture accepts one foreground command per call; command lists and pipelines are not supported. No part of this command ran. Changing the executable or alias does not permit command composition. Submit individually permitted commands separately. Each command must still satisfy the path, argument and read-only restrictions.';
 
 /** Evaluation scope only, not a general sandbox for arbitrary hostile JavaScript. */
-export function checkNaturalTool(workspace: string, name: string, input: Record<string, unknown>, readOnly: boolean, feedback: 'specific' | 'legacy' = 'specific'): string | null {
-  const denied = checkNaturalToolPolicy(workspace, name, input, readOnly, feedback);
+export function checkNaturalTool(workspace: string, name: string, input: Record<string, unknown>, readOnly: boolean, feedback: 'specific' | 'legacy' = 'specific', fixtureFiles: Readonly<Record<string, string>> = RECOVERY_FILES): string | null {
+  const denied = checkNaturalToolPolicy(workspace, name, input, readOnly, feedback, fixtureFiles);
   if (denied !== null && readOnly && name === 'bash') {
     return `${denied} General tool availability does not override this child's read-only scope: repository execution remains unavailable. Changing the command does not change that boundary. Continue with permitted static inspection and report which execution checks were not run.`;
   }
   return denied;
 }
 
-function checkNaturalToolPolicy(workspace: string, name: string, input: Record<string, unknown>, readOnly: boolean, feedback: 'specific' | 'legacy'): string | null {
+function checkNaturalToolPolicy(workspace: string, name: string, input: Record<string, unknown>, readOnly: boolean, feedback: 'specific' | 'legacy', fixtureFiles: Readonly<Record<string, string>>): string | null {
   if (MUTABLE_TOOLS.has(name)) {
+    if (!readOnly && (typeof input.path !== 'string' || input.path.trim().length === 0)) {
+      return 'Invalid tool arguments: provide a non-empty path. No operation ran. Correct the arguments for an otherwise permitted edit; this does not grant access to protected or outside files.';
+    }
     const paths = /^[A-Za-z]:[/\\]/.test(workspace) ? path.win32 : path;
     const target = typeof input.path === 'string' ? paths.relative(workspace, paths.resolve(workspace, input.path)).replaceAll('\\', '/') : '';
     if (readOnly || !/^(?:src|tests?)\/.+\.(?:js|mjs)$/.test(target)) return 'Only root source files and new tests may be changed.';
-    if (!target.startsWith('src/') && Object.keys(RECOVERY_FILES).some(file => file.toLowerCase() === target.toLowerCase())) return 'Original public fixture files are protected; add a new regression test.';
+    if (!target.startsWith('src/') && Object.keys(fixtureFiles).some(file => file.toLowerCase() === target.toLowerCase())) return 'Original public fixture files are protected; add a new regression test.';
     return null;
   }
   const existing = checkComplexTool(workspace, name, input, readOnly);
@@ -91,22 +95,25 @@ export type NaturalInvoke = (input: FrozenInput, signal: AbortSignal, index: num
 }) => Promise<KodaXStreamResult>;
 
 /** Formal AMA Run with injected provider callback. No network/provider dispatch is built into this helper. */
-export async function runNaturalRuntime(directory: string, id: NaturalCaseId, invoke: NaturalInvoke, options: NaturalRuntimeOptions = {}) {
+export async function runNaturalRuntime(directory: string, id: NaturalCaseId | ProductCaseId, invoke: NaturalInvoke, options: NaturalRuntimeOptions = {}) {
   const relative = path.relative(os.tmpdir(), path.resolve(directory));
   if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('Natural evaluation output must stay in OS temporary storage');
   const limits = options.limits ?? { calls: 32, tools: 80, timeoutMs: 600_000 };
   if (Object.values(limits).some(value => !Number.isInteger(value) || value < 1)) throw new Error('Invalid natural Runtime limits');
   const started = Date.now();
-  const prepared = await prepareNaturalCase(directory, id);
+  const productId = id === 'tenant-cache' || id === 'config-precedence' ? id : undefined;
+  const definition = productId ? PRODUCT_CASES[productId] : undefined;
+  const fixtureFiles = definition?.files ?? RECOVERY_FILES;
+  const prepared = productId ? await prepareProductCase(directory, productId) : await prepareNaturalCase(directory, id as NaturalCaseId);
   const { workspace } = prepared;
   await fs.mkdir(path.join(workspace, '.git/info'), { recursive: true });
   await fs.appendFile(path.join(workspace, '.git/info/exclude'), '\n.agent/\n');
-  const protectedFiles = Object.keys(RECOVERY_FILES).filter(file => !file.startsWith('src/'));
+  const protectedFiles = Object.keys(fixtureFiles).filter(file => !file.startsWith('src/'));
   const original = new Map(await Promise.all(protectedFiles.map(async file => [file, await fs.readFile(path.join(workspace, file), 'utf8')] as const)));
   const events: Record<string, unknown>[] = [];
-  const runs: { sessionId: string; phase: string; requests: number }[] = [];
+  const runs: { sessionId: string; phase: string; requests: number; finalText: string }[] = [];
   const calls: { index: number; kind: 'root' | 'child' | 'auxiliary'; input: FrozenInput; result?: KodaXStreamResult; error?: string; wallMs?: number }[] = [];
-  const counts = { requests: 0, rootRequests: 0, childRequests: 0, auxiliaryRequests: 0, tools: 0, scriptLeaves: 0, spawns: 0, maxConcurrentRequests: 0 };
+  const counts = { requests: 0, rootRequests: 0, childRequests: 0, auxiliaryRequests: 0, tools: 0, proposedTools: 0, scriptLeaves: 0, spawns: 0, maxConcurrentRequests: 0 };
   let concurrent = 0;
   let error: string | null = null;
   let success = false;
@@ -128,7 +135,7 @@ export async function runNaturalRuntime(directory: string, id: NaturalCaseId, in
     counts.tools++;
     if (call.id.includes('script')) counts.scriptLeaves++;
     if (counts.tools > limits.tools) return stop('budget-censored: tool cap');
-    let denied = checkNaturalTool(workspace, target.name, target.input, readOnly, options.guardFeedback);
+    let denied = checkNaturalTool(workspace, target.name, target.input, readOnly, options.guardFeedback, fixtureFiles);
     if (target.name === 'spawn_agent' && !denied) {
       if (counts.spawns >= 1) denied = 'At most one read-only inherited-model child per natural smoke.';
       else counts.spawns++;
@@ -163,7 +170,12 @@ export async function runNaturalRuntime(directory: string, id: NaturalCaseId, in
         calls.push(entry);
         concurrent++; counts.maxConcurrentRequests = Math.max(counts.maxConcurrentRequests, concurrent);
         const start = Date.now();
-        try { entry.result = await invoke(entry.input, combined, entry.index, { kind, reasoning, streamOptions, taskSignal: signal }); return entry.result; }
+        try {
+          entry.result = await invoke(entry.input, combined, entry.index, { kind, reasoning, streamOptions, taskSignal: signal });
+          counts.proposedTools += entry.result.toolBlocks.length;
+          if (counts.proposedTools > limits.tools) return stop('budget-censored: proposed tool cap');
+          return entry.result;
+        }
         catch (cause) { entry.error = cause instanceof Error ? cause.message : String(cause); throw cause; }
         finally { concurrent--; entry.wallMs = Date.now() - start; await snapshot(); }
       } finally { release(); }
@@ -196,14 +208,14 @@ export async function runNaturalRuntime(directory: string, id: NaturalCaseId, in
       const settled = await handle.result;
       phase = settled.phase; success = settled.result?.success === true; finalText = settled.result?.lastText ?? '';
       if (settled.error) error ??= `${settled.error.name}: ${settled.error.message}`;
-      runs.push({ sessionId: session.id, phase: settled.phase, requests: counts.requests - startRequests });
+      runs.push({ sessionId: session.id, phase: settled.phase, requests: counts.requests - startRequests, finalText });
       if (settled.phase !== 'completed' || error) break;
     }
   } catch (cause) { error ??= cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause); abort.abort(cause); }
   finally { clearTimeout(timer); try { await runtime?.close(); } finally { unregister(); await snapshot(); } }
   // Only now create and execute the hidden oracle, outside the model workspace.
   const oraclePath = path.join(directory, 'oracle.mjs');
-  await fs.writeFile(oraclePath, RECOVERY_ORACLE, { flag: 'wx' });
+  await fs.writeFile(oraclePath, definition?.oracle ?? RECOVERY_ORACLE, { flag: 'wx' });
   const execute = (cwd: string, args: string[], env: Record<string, string> = {}) => {
     const result = spawnSync(process.execPath, args, { cwd, encoding: 'utf8', windowsHide: true, timeout: 15_000, env: { ...process.env, ...env } });
     return { status: result.status, stdout: result.stdout, stderr: result.stderr, error: result.error?.message };
@@ -211,7 +223,7 @@ export async function runNaturalRuntime(directory: string, id: NaturalCaseId, in
   const protectedUnchanged = (await Promise.all([...original].map(async ([file, bytes]) => await fs.readFile(path.join(workspace, file), 'utf8') === bytes))).every(Boolean);
   const record = { kind: 'natural-runtime-smoke-not-causal-comparison', workMode: options.workMode ?? 'coding', caseId: id,
     wallMs: Date.now() - started, prepared, success, phase, error, finalText, counts, calls, runs, events, protectedUnchanged,
-    sourceSha256: createHash('sha256').update(await fs.readFile(path.join(workspace, 'src/recovery.js'))).digest('hex'),
+    sourceSha256: createHash('sha256').update(await fs.readFile(path.join(workspace, definition?.entry ?? 'src/recovery.js'))).digest('hex'),
     verification: { public: execute(workspace, ['--test']), oracle: execute(directory, ['--test', oraclePath], { NATURAL_ORACLE_WORKSPACE: workspace }) } };
   await fs.writeFile(path.join(directory, 'result.json'), JSON.stringify(record, null, 2), { flag: 'wx' });
   return record;
