@@ -70,6 +70,7 @@
     "tests/first-turn*.ts",
     "tests/shared-contract*.ts",
     "tests/product-multiturn-fixtures.test.ts",
+    "tests/natural-eval-environment.test.ts",
     "tests/contract-evidence-checkpoints.test.ts",
     "tests/compact-teaching.eval.ts",
     "tests/compact-teaching-eval-support.ts",

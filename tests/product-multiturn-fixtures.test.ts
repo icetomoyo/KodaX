@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { expect, it } from 'vitest';
 import { PRODUCT_CASES, prepareProductCase } from '../benchmark/datasets/product-multiturn/fixture.js';
 
-it.each(['tenant-cache', 'config-precedence'] as const)('distinguishes the reported defect, incomplete fixes and complete repair in %s', async id => {
+it.each(['tenant-cache', 'config-precedence', 'output-retention', 'skill-discovery', 'history-replay'] as const)('distinguishes the reported defect, incomplete fixes and complete repair in %s', async id => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-product-fixture-'));
   try {
     const definition = PRODUCT_CASES[id];
@@ -27,6 +27,18 @@ it.each(['tenant-cache', 'config-precedence'] as const)('distinguishes the repor
       await fs.writeFile(file, definition.golden['src/client.js']!.replace('JSON.stringify([tenant, key])', '`${tenant} ${key}`'));
       expect(run().status, 'A delimiter-based key must not satisfy arbitrary-string pair isolation').toBe(1);
       await fs.writeFile(file, definition.golden['src/client.js']!);
+    }
+    if (id === 'history-replay') {
+      const file = path.join(prepared.workspace, 'src/history.js');
+      const golden = definition.golden['src/history.js']!;
+      for (const mutation of [
+        golden.replace('JSON.stringify(parts)', "parts.join('|')"),
+        golden.replace("parts.every(part => typeof part === 'string' && part.length > 0)", 'true'),
+      ]) {
+        await fs.writeFile(file, mutation);
+        expect(run().status, 'Identity collisions and incomplete identity merging must fail acceptance').toBe(1);
+      }
+      await fs.writeFile(file, golden);
     }
     const publicTests = spawnSync(process.execPath, ['--test'], { cwd: prepared.workspace, encoding: 'utf8', windowsHide: true, timeout: 15000 });
     expect(publicTests.status, publicTests.stdout + publicTests.stderr).toBe(0);

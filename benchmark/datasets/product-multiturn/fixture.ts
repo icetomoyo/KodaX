@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-export type ProductCaseId = 'tenant-cache' | 'config-precedence';
+export type ProductCaseId = 'tenant-cache' | 'config-precedence' | 'output-retention' | 'skill-discovery' | 'history-replay';
 interface ProductCase {
   prompt: string;
   followUp: string;
@@ -13,6 +13,49 @@ interface ProductCase {
   golden: Readonly<Record<string, string>>;
 }
 const packageFile = JSON.stringify({ private: true, type: 'module', scripts: { test: 'node --test' } });
+const historySource = `import { toView } from './view.js';
+export function restoreHistory(records) {
+  const seen = new Set();
+  return records.map(toView).filter(view => {
+    if (seen.has(view.text)) return false;
+    seen.add(view.text);
+    return true;
+  });
+}
+`;
+const historyGolden = `import { toView } from './view.js';
+function identity(value) {
+  const parts = [value?.runId, value?.turnId, value?.taskId];
+  return parts.every(part => typeof part === 'string' && part.length > 0) ? JSON.stringify(parts) : undefined;
+}
+export function restoreHistory(records) {
+  const reports = new Set(records.filter(record => record.kind === 'task').map(identity).filter(key => key !== undefined));
+  const seen = new Set();
+  const views = [];
+  for (const record of records) {
+    if (record.kind === 'notice') {
+      const mirror = identity(record.mirrorOf);
+      if (mirror !== undefined && reports.has(mirror)) continue;
+    } else {
+      const key = identity(record);
+      if (key !== undefined) {
+        if (seen.has(key)) continue;
+        seen.add(key);
+      }
+    }
+    views.push(toView(record));
+  }
+  return views;
+}
+`;
+const historyViewSource = `export function toView(record) {
+  if (record.kind === 'notice') return { kind: 'notice', text: record.text, runId: record.runId, turnId: record.turnId };
+  return { kind: 'task', taskId: record.taskId, runId: record.runId, turnId: record.turnId,
+    status: record.status === 'running' ? 'running' : 'completed', text: record.text.trim(), format: record.format ?? 'text' };
+}
+`;
+const historyViewGolden = historyViewSource.replace("record.status === 'running' ? 'running' : 'completed'", "['running', 'completed', 'failed', 'cancelled'].includes(record.status) ? record.status : 'unknown'")
+  .replace('record.text.trim()', 'record.text');
 const oracleHeader = `import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -54,7 +97,250 @@ export function resolveConfig(file = {}, env = {}, cli = {}) {
   return result;
 }
 `;
+const outputStoreSource = `import { previewText } from './preview.js';
+export function createOutputStore() {
+  const values = new Map();
+  let sequence = 0;
+  return {
+    publish(owner, text, limit = 80) {
+      const id = 'output-' + ++sequence;
+      const preview = previewText(text, limit);
+      values.set(id, { owner, text: preview });
+      return { id, preview, truncated: text.length > limit };
+    },
+    read(owner, id) { return values.get(id)?.text; },
+    release(owner) { values.clear(); },
+  };
+}
+`;
+const outputPartial = outputStoreSource.replace('text: preview', 'text');
+const outputGolden = outputPartial.replace('return values.get(id)?.text;', 'const item = values.get(id); return item?.owner === owner ? item.text : undefined;')
+  .replace('values.clear();', 'for (const [id, item] of values) if (item.owner === owner) values.delete(id);');
+const skillRootSource = `import path from 'node:path';
+export async function projectRoot(cwd) { return path.resolve(cwd); }
+`;
+const skillRootGolden = `import path from 'node:path';
+import fs from 'node:fs/promises';
+export async function projectRoot(cwd) {
+  const start = path.resolve(cwd);
+  let current = start;
+  for (;;) {
+    try { await fs.stat(path.join(current, '.git')); return current; }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    const parent = path.dirname(current);
+    if (parent === current) return start;
+    current = parent;
+  }
+}
+`;
+const skillRegistrySource = `import fs from 'node:fs/promises';
+import path from 'node:path';
+import { projectRoot } from './root.js';
+export function createSkillRegistry() {
+  const cache = new Map();
+  async function list(cwd) {
+    const root = await projectRoot(cwd);
+    if (cache.has(root)) return cache.get(root);
+    const directory = path.join(root, '.kodax', 'skills');
+    let entries;
+    try { entries = await fs.readdir(directory, { withFileTypes: true }); }
+    catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+    const skills = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const file = path.join(directory, entry.name, 'SKILL.md');
+      let content;
+      try { content = await fs.readFile(file, 'utf8'); }
+      catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+      const description = /^description: (.*)$/m.exec(content)?.[1] ?? '';
+      skills.push({ name: entry.name, description, path: file });
+    }
+    skills.sort((a, b) => a.name.localeCompare(b.name));
+    cache.set(root, skills);
+    return skills;
+  }
+  return { list, async load(cwd, name) {
+    const item = (await list(cwd)).find(skill => skill.name === name);
+    return item ? { ...item, content: await fs.readFile(item.path, 'utf8') } : undefined;
+  } };
+}
+`;
+const skillRegistryGolden = skillRegistrySource.replace('  const cache = new Map();\n', '')
+  .replace('    if (cache.has(root)) return cache.get(root);\n', '').replace('    cache.set(root, skills);\n', '');
+const skillOracleSetup = `import fs from 'node:fs/promises';
+import os from 'node:os';
+async function fixture(work) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-contract-'));
+  try {
+    await fs.mkdir(path.join(root, '.git'));
+    await fs.mkdir(path.join(root, 'packages', 'client'), { recursive: true });
+    await work(root, path.join(root, 'packages', 'client'));
+  } finally {
+    if (path.dirname(root) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('skill-contract-')) throw Error('Unsafe cleanup');
+    await fs.rm(root, { recursive: true, force: true });
+  }
+}
+async function skill(root, name, description) {
+  const directory = path.join(root, '.kodax', 'skills', name);
+  await fs.mkdir(directory, { recursive: true });
+  await fs.writeFile(path.join(directory, 'SKILL.md'), '---\\ndescription: ' + description + '\\n---\\nBody: ' + description);
+}
+`;
 export const PRODUCT_CASES: Readonly<Record<ProductCaseId, ProductCase>> = {
+  'history-replay': {
+    prompt: '恢复历史后，有些内容相同但来源不同的通知消失了。请修复去重，确实重复的任务报告仍然只显示一次，保持现有接口并加回归测试。',
+    followUp: '再核对任务报告的失败、取消和旧记录缺失状态，以及 Markdown、代码块和首尾空白的恢复。不能把未知状态说成成功，正文也不能丢。请验证后说明结果。',
+    entry: 'src/history.js',
+    files: {
+      'package.json': packageFile,
+      'README.md': `# History replay view
+restoreHistory(records) in src/index.js is a pure synchronous projection. It returns views in source order, without mutating inputs. No transport, filesystem, live status updates or external dependencies are involved.
+Records are kind=notice or kind=task, with text as an exact string. Task records may carry runId, turnId, taskId, status and format. Notices may carry runId, turnId and mirrorOf={runId,turnId,taskId}.
+Only three nonempty string identifiers together prove task identity; arbitrary strings are valid identifiers. Keep the first task record for each complete identity. Different identities, or incomplete identities, remain independent even if their text matches.
+A notice is a redundant legacy mirror only if its complete mirrorOf identity matches a task record anywhere in the same input. Drop only that proven mirror. Without proof, keep the notice. Equal text is not identity; partial or absent identities must never be guessed. Stable order is the order of retained source records.
+Task views contain kind, taskId, runId, turnId, status, text, format. Preserve known statuses running/completed/failed/cancelled; absent or unrecognized status becomes unknown. Preserve text exactly, including Markdown, code, escapes, newlines and surrounding whitespace; preserve format, defaulting only absent format to text. Notice views contain kind, text, runId, turnId. Missing identifier fields remain undefined. Do not infer status from body text.
+Run node --test. Existing public tests and README are reference inputs; add regressions under tests/.
+`,
+      'src/index.js': "export { restoreHistory } from './history.js';\n",
+      'src/history.js': historySource,
+      'src/view.js': historyViewSource,
+      'tests/basic.test.js': `import test from 'node:test';
+import assert from 'node:assert/strict';
+import { restoreHistory } from '../src/index.js';
+test('projects a plain completed report and a notice', () => {
+  const records=[{kind:'task',runId:'r',turnId:'t',taskId:'a',status:'completed',text:'done'}, {kind:'notice',text:'other'}];
+  const views=restoreHistory(records);
+  assert.equal(views.length,2); assert.equal(views[0].status,'completed'); assert.equal(views[0].text,'done');
+  assert.equal(views[1].kind,'notice'); assert.equal(views[1].text,'other');
+});
+`,
+    },
+    partial: { 'src/history.js': historyGolden },
+    golden: { 'src/history.js': historyGolden, 'src/view.js': historyViewGolden },
+    oracle: oracleHeader + `
+const task=(taskId,extra={})=>({kind:'task',runId:'run',turnId:'turn',taskId,status:'completed',text:'Task completed',...extra});
+test('preserves independent same-text notices and tasks, only removes proven mirrors',()=>{
+  const a=task('a'); const b=task('b');
+  const early={kind:'notice',text:'old wrapper',mirrorOf:{runId:'run',turnId:'turn',taskId:'a'}};
+  const independent={kind:'notice',text:a.text,runId:'another',turnId:'turn'};
+  const unknown={kind:'notice',text:a.text,mirrorOf:{runId:'run',turnId:'turn',taskId:'absent'}};
+  const partial={kind:'notice',text:a.text,mirrorOf:{taskId:'a'}};
+  const views=api.restoreHistory([early,independent,a,b,{...a},unknown,partial,{kind:'notice',text:a.text}]);
+  assert.deepEqual(views.map(v=>[v.kind,v.taskId,v.text]),[
+    ['notice',undefined,a.text],['task','a',a.text],['task','b',a.text],
+    ['notice',undefined,a.text],['notice',undefined,a.text],['notice',undefined,a.text]]);
+});
+test('identity needs all fields and cannot collide through delimiters',()=>{
+  const records=[task('x',{runId:'a|b',turnId:'c'}),task('x',{runId:'a',turnId:'b|c'}),
+    task('x',{runId:'a',turnId:'different'}),task(undefined),task(undefined),task('x',{runId:''}),task('x',{runId:''})];
+  assert.equal(api.restoreHistory(records).length,records.length);
+  assert.equal(api.restoreHistory([records[0],{...records[0],text:'second snapshot'}])[0].text,'Task completed');
+});
+test('retains status meaning, exact body and format without mutation',()=>{
+  const body='  # Report\\n\\n~~~js\\nconst s = "<tag>&\\\\n";\\n~~~\\n  ';
+  const statuses=['running','completed','failed','cancelled',undefined,'future'];
+  const records=statuses.map((status,i)=>Object.freeze(task(String(i),{status,text:body,format:'markdown'})));
+  const before=JSON.stringify(records); const result=api.restoreHistory(Object.freeze(records));
+  assert.deepEqual(result.map(v=>v.status),['running','completed','failed','cancelled','unknown','unknown']);
+  assert.ok(result.every(v=>v.text===body&&v.format==='markdown'));
+  assert.equal(JSON.stringify(records),before);
+  assert.equal(api.restoreHistory([task('plain',{text:'',status:undefined})])[0].format,'text');
+  assert.equal(api.restoreHistory([task('plain',{text:'success!',status:undefined})])[0].status,'unknown');
+});
+`,
+  },
+  'output-retention': {
+    prompt: 'SDK 返回的长结果在预览截断后，按引用读取也拿不到全文。请定位并修复，保持现有接口，补上回归测试。',
+    followUp: '再检查多个会话同时使用时的隔离和清理。释放一个会话的结果，不能影响另一个会话；读错归属也不能拿到别人的内容。请一起验证。',
+    entry: 'src/store.js',
+    files: {
+      'package.json': packageFile,
+      'README.md': `# Recoverable SDK output
+The public createOutputStore API is exported from src/index.js. publish(owner, text, limit=80) accepts string owners and text, and a nonnegative integer preview limit.
+It returns {id, preview, truncated}. Only the preview is shortened; read(owner,id) must return the exact original text, including Unicode, whitespace and empty strings.
+The limit counts JavaScript string code units. A zero limit is valid. Short outputs retain a reference too.
+References belong to their publishing owner. Missing, released or wrong-owner references read as undefined.
+release(owner) is idempotent and affects only that owner's references. Future publish calls still work.
+Run node --test. Existing public tests and documentation are reference inputs; add new tests under tests/.
+`,
+      'src/index.js': "export { createOutputStore } from './store.js';\n",
+      'src/preview.js': 'export function previewText(text, limit) { return text.slice(0, limit); }\n',
+      'src/store.js': outputStoreSource,
+      'tests/basic.test.js': "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport {createOutputStore} from '../src/index.js';\ntest('short result reference',()=>{const store=createOutputStore();const result=store.publish('one','hello');assert.equal(result.preview,'hello');assert.equal(result.truncated,false);assert.equal(store.read('one',result.id),'hello');});\n",
+    },
+    partial: { 'src/store.js': outputPartial },
+    golden: { 'src/store.js': outputGolden },
+    oracle: oracleHeader + `
+test('preview does not replace exact SDK output', () => {
+  const store = api.createOutputStore();
+  for (const text of ['', '短😀\\n', JSON.stringify({records: Array.from({length: 30}, (_, i) => ({id: i, result: '末尾'}))})]) {
+    for (const limit of [0, 3, 80]) {
+      const result = store.publish('one', text, limit);
+      assert.equal(result.preview, text.slice(0, limit)); assert.equal(result.truncated, text.length > limit);
+      assert.equal(store.read('one', result.id), text);
+    }
+  }
+});
+test('ownership, cleanup and future writes remain independent', () => {
+  const store = api.createOutputStore();
+  const a = store.publish('one', 'first'); const b = store.publish('two', 'second');
+  assert.equal(store.read('two', a.id), undefined); assert.equal(store.read('one', b.id), undefined);
+  assert.equal(store.read('one', 'missing'), undefined);
+  store.release('one'); store.release('one');
+  assert.equal(store.read('one', a.id), undefined); assert.equal(store.read('two', b.id), 'second');
+  const next = store.publish('one', 'new'); assert.equal(store.read('one', next.id), 'new');
+  assert.notEqual(next.id, a.id);
+});
+`,
+  },
+  'skill-discovery': {
+    prompt: '从项目子目录通过 SDK 启动时，技能列表是空的，但项目根目录确实有技能。请修复发现路径，保持现有 API，并加回归测试。',
+    followUp: '再检查同一进程里新增、修改和删除技能后的表现。列表和按名称读取必须及时保持一致，也不能串到别的项目；请验证并修好。',
+    entry: 'src/registry.js',
+    files: {
+      'package.json': packageFile,
+      'README.md': `# Project skill registry
+createSkillRegistry() exposes async list(cwd) and load(cwd,name) through src/index.js.
+The nearest ancestor containing a .git marker (directory or file) is the project root. Without a marker, use the supplied cwd. Never consult global user skills.
+Skills are direct directories under <root>/.kodax/skills, each with SKILL.md; the directory name is the skill name. Missing skill files are ignored; other I/O errors propagate.
+list returns name-sorted {name,description,path} entries. This fixture's frontmatter uses one description: line.
+load returns the same metadata plus full content, or undefined for a missing skill. Every call observes edits made before the call; discovery and loading must agree across SDK cwd values and projects. No watcher API is required.
+Run node --test. Existing public tests and documentation are reference inputs; add new tests under tests/.
+`,
+      'src/index.js': "export { createSkillRegistry } from './registry.js';\n",
+      'src/root.js': skillRootSource,
+      'src/registry.js': skillRegistrySource,
+      'tests/basic.test.js': "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport fs from 'node:fs/promises';\nimport os from 'node:os';\nimport path from 'node:path';\nimport {createSkillRegistry} from '../src/index.js';\ntest('empty directory has no skills',async()=>{const root=await fs.mkdtemp(path.join(os.tmpdir(),'public-skill-'));try{assert.deepEqual(await createSkillRegistry().list(root),[]);}finally{await fs.rm(root,{recursive:true,force:true});}});\n",
+    },
+    partial: { 'src/root.js': skillRootGolden },
+    golden: { 'src/root.js': skillRootGolden, 'src/registry.js': skillRegistryGolden },
+    oracle: oracleHeader + skillOracleSetup + `
+test('discovers from nested cwd and supports worktree marker files', async () => fixture(async (root, child) => {
+  await skill(root, 'review', 'Review code');
+  const registry = api.createSkillRegistry();
+  assert.deepEqual((await registry.list(child)).map(x => x.name), ['review']);
+  const loaded = await registry.load(child, 'review'); assert.equal(loaded.description, 'Review code');
+  assert.match(loaded.content, /Body: Review code/);
+  await fs.rmdir(path.join(root, '.git')); await fs.writeFile(path.join(root, '.git'), 'gitdir: elsewhere');
+  assert.equal((await registry.list(child))[0].name, 'review');
+}));
+test('refreshes additions, edits and deletions without leaking projects', async () => fixture(async (root, child) => {
+  const registry = api.createSkillRegistry();
+  await skill(root, 'zeta', 'old'); await registry.list(child);
+  await skill(root, 'alpha', 'added'); await skill(root, 'zeta', 'updated');
+  const fresh = await registry.list(root); assert.deepEqual(fresh.map(x => [x.name, x.description]), [['alpha','added'], ['zeta','updated']]);
+  assert.match((await registry.load(child, 'zeta')).content, /updated/);
+  await fs.unlink(path.join(root, '.kodax', 'skills', 'zeta', 'SKILL.md'));
+  assert.deepEqual((await registry.list(child)).map(x => x.name), ['alpha']);
+  assert.equal(await registry.load(child, 'zeta'), undefined);
+  await fixture(async (other, nested) => {
+    await skill(other, 'other', 'independent');
+    assert.deepEqual((await registry.list(nested)).map(x => x.name), ['other']);
+    assert.equal(await registry.load(nested, 'alpha'), undefined);
+  });
+}));
+`,
+  },
   'tenant-cache': {
     prompt: '缓存客户端在切换租户后偶尔读到别人的结果。请定位并修复，加上回归测试，保持现有 API。',
     followUp: '再检查一下上游请求失败后能不能正常重试，以及并发请求会不会重复加载。有问题就一起修好并验证。',

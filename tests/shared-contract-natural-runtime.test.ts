@@ -60,7 +60,7 @@ it('recovers oversized test output using the existing isolated output binding wi
   expect(record.protectedUnchanged).toBe(true);
 });
 
-it.each(['tenant-cache', 'config-precedence'] as const)('runs two real user turns for %s with protected tests and actual edits', async id => {
+it.each(['tenant-cache', 'config-precedence', 'output-retention', 'skill-discovery', 'history-replay'] as const)('runs two real user turns for %s with protected tests and actual edits', async id => {
   vi.stubEnv('NODE_ENV', 'production');
   const fetcher = vi.fn(() => { throw new Error('No network'); }); vi.stubGlobal('fetch', fetcher);
   const definition = PRODUCT_CASES[id];
@@ -68,7 +68,7 @@ it.each(['tenant-cache', 'config-precedence'] as const)('runs two real user turn
     if (index === 0) return result([tool('protect-public', 'write', { path: 'tests/basic.test.js', content: '' })]);
     if (index === 1) {
       expect(JSON.stringify(input.messages)).toContain('Original public fixture files are protected');
-      return result(Object.entries(definition.golden).map(([path, content]) => tool('repair', 'write', { path, content })));
+      return result(Object.entries(definition.golden).map(([path, content], fileIndex) => tool(`repair-${fileIndex}`, 'write', { path, content })));
     }
     if (index === 2) return result([], '已修复，尚未运行测试。');
     if (index === 3) {
@@ -79,7 +79,7 @@ it.each(['tenant-cache', 'config-precedence'] as const)('runs two real user turn
     return result([], '已运行公共测试；未做外部集成验证。');
   }, { followUps: [{ prompt: definition.followUp, permissionMode: 'full-access' }] });
   expect(record.error).toBeNull(); expect(record.runs.map(run => run.requests)).toEqual([3, 2]);
-  expect(record.protectedUnchanged).toBe(true); expect(record.verification.oracle.status).toBe(0);
+  expect(record.protectedUnchanged).toBe(true); expect(record.verification.oracle.status, record.verification.oracle.stdout + record.verification.oracle.stderr).toBe(0);
   expect(fetcher).not.toHaveBeenCalled();
 });
 
@@ -237,7 +237,7 @@ it.each(['agent', 'coding', 'script'] as const)('preserves history but isolates 
   expect(record.error, JSON.stringify(record.calls.map(({ index, error }) => ({ index, error })))).toBeNull();
   expect(record.runs.map(run => [run.phase, run.requests])).toEqual([['completed', 2], ['completed', 2], ['completed', 2]]);
   expect(new Set(record.runs.map(run => run.sessionId)).size).toBe(1);
-  expect(record.verification.oracle.status).toBe(0);
+  expect(record.verification.oracle.status, record.verification.oracle.stdout + record.verification.oracle.stderr).toBe(0);
   expect(record.protectedUnchanged).toBe(true);
   expect(fetcher).not.toHaveBeenCalled();
 }, 100_000);
@@ -291,7 +291,7 @@ it.each(['agent', 'coding', 'script'] as const)('batches independent plan progre
   expect(record.counts.childRequests + record.counts.auxiliaryRequests).toBe(0);
   expect(record.protectedUnchanged).toBe(true);
   expect(record.verification.public.status).toBe(0);
-  expect(record.verification.oracle.status).toBe(0);
+  expect(record.verification.oracle.status, record.verification.oracle.stdout + record.verification.oracle.stderr).toBe(0);
   expect(record.events.filter(event => event.kind === 'guard' && event.denied)).toHaveLength(0);
   expect(fetcher).not.toHaveBeenCalled();
 }, 60_000);
@@ -360,7 +360,7 @@ it('rejects a child execution and attempted writable delegation while root still
   expect(record.counts.auxiliaryRequests).toBe(0);
   expect(record.events.filter(event => event.kind === 'guard' && event.denied)).toHaveLength(2);
   expect(record.verification.public.status).toBe(0);
-  expect(record.verification.oracle.status).toBe(0);
+  expect(record.verification.oracle.status, record.verification.oracle.stdout + record.verification.oracle.stderr).toBe(0);
   expect(record.protectedUnchanged).toBe(true);
   expect(fetcher).not.toHaveBeenCalled();
 }, 60_000);
@@ -404,7 +404,7 @@ it('retains all plan creation receipts when a delayed inspection verdict arrives
   expect(record.phase).toBe('completed');
   expect(record.protectedUnchanged).toBe(true);
   expect(record.verification.public.status).toBe(0);
-  expect(record.verification.oracle.status).toBe(0);
+  expect(record.verification.oracle.status, record.verification.oracle.stdout + record.verification.oracle.stderr).toBe(0);
   expect(fetcher).not.toHaveBeenCalled();
 }, 60_000);
 
@@ -653,7 +653,7 @@ it.each(['agent', 'coding', 'script'] as const)('uses real AMA %s Runtime for re
   expect(record.counts.maxConcurrentRequests).toBe(1);
   expect(record.counts.childRequests).toBe(0);
   expect(record.verification.public.status).toBe(0);
-  expect(record.verification.oracle.status).toBe(0);
+  expect(record.verification.oracle.status, record.verification.oracle.stdout + record.verification.oracle.stderr).toBe(0);
   expect(record.protectedUnchanged).toBe(true);
   expect(record.events.filter(event => event.kind === 'guard' && event.denied).length).toBe(1);
   expect(record.counts.scriptLeaves).toBe(workMode === 'script' ? 4 : 0);

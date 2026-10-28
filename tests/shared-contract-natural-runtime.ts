@@ -18,6 +18,7 @@ import { RECOVERY_ORACLE } from '../benchmark/datasets/shared-contract-natural/o
 import type { NaturalCaseId } from '../benchmark/datasets/shared-contract-natural/cases.js';
 import type { FrozenInput } from './first-turn-eval-support.js';
 import { PRODUCT_CASES, prepareProductCase, type ProductCaseId } from '../benchmark/datasets/product-multiturn/fixture.js';
+import { prepareNaturalExecutionEnvironment } from '../benchmark/harness/natural-execution-environment.js';
 
 const CONTROL_TOOLS = new Set(['spawn_agent', 'list_agents', 'wait_agent', 'send_message', 'interrupt_agent', 'agent_output',
   'todo_create', 'todo_update', 'todo_list', 'todo_get', 'ask_user_question', 'enter_plan_mode', 'exit_plan_mode',
@@ -67,9 +68,15 @@ function checkNaturalToolPolicy(workspace: string, name: string, input: Record<s
   if (composed) return feedback === 'specific' ? COMPOSITION_DENIAL : DENIAL;
   if (parsed.statements.length !== 1 || parsed.statements[0]?.stages.length !== 1) return DENIAL;
   const stage = parsed.statements[0]?.stages[0];
-  if (!stage || stage.redirections.length) return DENIAL;
+  if (!stage) return DENIAL;
+  if (stage.redirections.length) return feedback === 'specific' && !readOnly
+    ? 'Shell redirection is outside this fixture scope. No part of this command ran. Submit an otherwise permitted command without redirection; local tests remain permitted and output is captured by the tool.'
+    : DENIAL;
   const [executable, operation, ...args] = stage.argv;
   if (executable === 'node' && operation === '--test' && args.every(arg => /^(?:\.\/)?tests?\/[\w./-]+\.(?:m?js)$/.test(arg))) return readOnly ? 'Read-only children cannot run repository code.' : null;
+  if (executable === 'node' && operation === '--test' && feedback === 'specific' && !readOnly) {
+    return 'Unsupported node --test arguments in this fixture. Directory arguments and additional flags are not admitted. No command ran. Use node --test without arguments or with explicit .js/.mjs files under test/ or tests/; path and read-only restrictions still apply.';
+  }
   if (executable === 'npm' && operation === 'test' && args.length === 0) return readOnly ? 'Read-only children cannot run repository code.' : null;
   if (executable !== 'git' || !['diff', 'status', 'show', 'log', 'ls-files', 'rev-parse', 'grep'].includes(operation ?? '')) return DENIAL;
   const safeFlags = /^(?:--(?:short|porcelain|stat|name-only|name-status|oneline|cached|staged|no-pager|no-ext-diff|no-textconv)|--(?:max-count|abbrev)=\d+|-n\d*|--|-[0-9]+)$/;
@@ -101,11 +108,12 @@ export async function runNaturalRuntime(directory: string, id: NaturalCaseId | P
   const limits = options.limits ?? { calls: 32, tools: 80, timeoutMs: 600_000 };
   if (Object.values(limits).some(value => !Number.isInteger(value) || value < 1)) throw new Error('Invalid natural Runtime limits');
   const started = Date.now();
-  const productId = id === 'tenant-cache' || id === 'config-precedence' ? id : undefined;
+  const productId = Object.hasOwn(PRODUCT_CASES, id) ? id as ProductCaseId : undefined;
   const definition = productId ? PRODUCT_CASES[productId] : undefined;
   const fixtureFiles = definition?.files ?? RECOVERY_FILES;
   const prepared = productId ? await prepareProductCase(directory, productId) : await prepareNaturalCase(directory, id as NaturalCaseId);
   const { workspace } = prepared;
+  const execution = await prepareNaturalExecutionEnvironment(workspace);
   await fs.mkdir(path.join(workspace, '.git/info'), { recursive: true });
   await fs.appendFile(path.join(workspace, '.git/info/exclude'), '\n.agent/\n');
   const protectedFiles = Object.keys(fixtureFiles).filter(file => !file.startsWith('src/'));
@@ -201,7 +209,8 @@ export async function runNaturalRuntime(directory: string, id: NaturalCaseId | P
           lsp: false, reasoningMode: options.reasoning ?? 'off', effort: options.effort ?? 'none', maxIter: limits.calls, maxOutputTokens: options.maxOutputTokens ?? 4096, abortSignal: signal, disablePromptCache: true,
           guardrails: [boundary],
           learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['eval-isolated'] } }),
-          context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '', skillRegistry: new SkillRegistry(workspace), repoIntelligenceMode: 'off', resolveShellPermissionMode: () => turn.permissionMode },
+          context: { executionCwd: workspace, gitRoot: workspace, shellExecution: execution.shellExecution,
+            skillsPrompt: '', skillRegistry: new SkillRegistry(workspace), repoIntelligenceMode: 'off', resolveShellPermissionMode: () => turn.permissionMode },
           events: { onToolUseStart: (tool, meta) => { events.push({ kind: 'start', ...tool, meta }); }, onToolResult: (receipt, meta) => { events.push({ kind: 'result', ...receipt, meta }); } },
         },
       }));
@@ -214,17 +223,19 @@ export async function runNaturalRuntime(directory: string, id: NaturalCaseId | P
   } catch (cause) { error ??= cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause); abort.abort(cause); }
   finally { clearTimeout(timer); try { await runtime?.close(); } finally { unregister(); await snapshot(); } }
   // Only now create and execute the hidden oracle, outside the model workspace.
-  const oraclePath = path.join(directory, 'oracle.mjs');
+  const oracleDirectory = path.join(directory, 'acceptance');
+  await fs.mkdir(oracleDirectory, { recursive: true });
+  const oraclePath = path.join(oracleDirectory, 'oracle.mjs');
   await fs.writeFile(oraclePath, definition?.oracle ?? RECOVERY_ORACLE, { flag: 'wx' });
   const execute = (cwd: string, args: string[], env: Record<string, string> = {}) => {
-    const result = spawnSync(process.execPath, args, { cwd, encoding: 'utf8', windowsHide: true, timeout: 15_000, env: { ...process.env, ...env } });
+    const result = spawnSync(process.execPath, args, { cwd, encoding: 'utf8', windowsHide: true, timeout: 15_000, env: { ...execution.environment(cwd === oracleDirectory ? oracleDirectory : undefined), ...env } });
     return { status: result.status, stdout: result.stdout, stderr: result.stderr, error: result.error?.message };
   };
   const protectedUnchanged = (await Promise.all([...original].map(async ([file, bytes]) => await fs.readFile(path.join(workspace, file), 'utf8') === bytes))).every(Boolean);
   const record = { kind: 'natural-runtime-smoke-not-causal-comparison', workMode: options.workMode ?? 'coding', caseId: id,
     wallMs: Date.now() - started, prepared, success, phase, error, finalText, counts, calls, runs, events, protectedUnchanged,
     sourceSha256: createHash('sha256').update(await fs.readFile(path.join(workspace, definition?.entry ?? 'src/recovery.js'))).digest('hex'),
-    verification: { public: execute(workspace, ['--test']), oracle: execute(directory, ['--test', oraclePath], { NATURAL_ORACLE_WORKSPACE: workspace }) } };
+    verification: { public: execute(workspace, ['--test']), oracle: execute(oracleDirectory, ['--test', './oracle.mjs'], { NATURAL_ORACLE_WORKSPACE: workspace }) } };
   await fs.writeFile(path.join(directory, 'result.json'), JSON.stringify(record, null, 2), { flag: 'wx' });
   return record;
 }
