@@ -17,8 +17,8 @@ import { prepareNaturalCase, RECOVERY_FILES } from '../benchmark/datasets/shared
 import { RECOVERY_ORACLE } from '../benchmark/datasets/shared-contract-natural/oracle.js';
 import type { NaturalCaseId } from '../benchmark/datasets/shared-contract-natural/cases.js';
 import type { FrozenInput } from './first-turn-eval-support.js';
-import { PRODUCT_CASES, prepareProductCase, type ProductCaseId } from '../benchmark/datasets/product-multiturn/fixture.js';
-import { prepareNaturalExecutionEnvironment } from '../benchmark/harness/natural-execution-environment.js';
+import { PRODUCT_CASES, PRODUCT_ORACLE_REVISION, prepareProductCase, type ProductCaseId } from '../benchmark/datasets/product-multiturn/fixture.js';
+import { checkUnmarkedTemporaryRoot, NATURAL_ENVIRONMENT_REVISION, prepareNaturalExecutionEnvironment } from '../benchmark/harness/natural-execution-environment.js';
 
 const CONTROL_TOOLS = new Set(['spawn_agent', 'list_agents', 'wait_agent', 'send_message', 'interrupt_agent', 'agent_output',
   'todo_create', 'todo_update', 'todo_list', 'todo_get', 'ask_user_question', 'enter_plan_mode', 'exit_plan_mode',
@@ -114,6 +114,16 @@ export async function runNaturalRuntime(directory: string, id: NaturalCaseId | P
   const prepared = productId ? await prepareProductCase(directory, productId) : await prepareNaturalCase(directory, id as NaturalCaseId);
   const { workspace } = prepared;
   const execution = await prepareNaturalExecutionEnvironment(workspace);
+  const preflight = definition?.requiresUnmarkedTemporaryRoot
+    ? checkUnmarkedTemporaryRoot(execution.environment())
+    : { status: 'ready' as const, reason: 'unmarked-ancestry-not-required' };
+  await fs.writeFile(path.join(directory, 'environment-preflight.json'), JSON.stringify({
+    revision: NATURAL_ENVIRONMENT_REVISION, oracleRevision: productId ? PRODUCT_ORACLE_REVISION : undefined,
+    ...preflight,
+  }, null, 2), { flag: 'wx' });
+  if (preflight.status === 'eval-invalid') {
+    throw new Error(`eval-invalid: temporary-root topology (${preflight.reason}); no provider calls dispatched`);
+  }
   await fs.mkdir(path.join(workspace, '.git/info'), { recursive: true });
   await fs.appendFile(path.join(workspace, '.git/info/exclude'), '\n.agent/\n');
   const protectedFiles = Object.keys(fixtureFiles).filter(file => !file.startsWith('src/'));
@@ -233,6 +243,7 @@ export async function runNaturalRuntime(directory: string, id: NaturalCaseId | P
   };
   const protectedUnchanged = (await Promise.all([...original].map(async ([file, bytes]) => await fs.readFile(path.join(workspace, file), 'utf8') === bytes))).every(Boolean);
   const record = { kind: 'natural-runtime-smoke-not-causal-comparison', workMode: options.workMode ?? 'coding', caseId: id,
+    environmentRevision: NATURAL_ENVIRONMENT_REVISION, oracleRevision: productId ? PRODUCT_ORACLE_REVISION : undefined,
     wallMs: Date.now() - started, prepared, success, phase, error, finalText, counts, calls, runs, events, protectedUnchanged,
     sourceSha256: createHash('sha256').update(await fs.readFile(path.join(workspace, definition?.entry ?? 'src/recovery.js'))).digest('hex'),
     verification: { public: execute(workspace, ['--test']), oracle: execute(oracleDirectory, ['--test', './oracle.mjs'], { NATURAL_ORACLE_WORKSPACE: workspace }) } };

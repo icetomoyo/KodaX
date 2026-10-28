@@ -33,12 +33,40 @@ it.each(['tenant-cache', 'config-precedence', 'output-retention', 'skill-discove
       const golden = definition.golden['src/history.js']!;
       for (const mutation of [
         golden.replace('JSON.stringify(parts)', "parts.join('|')"),
+        golden.replace('JSON.stringify(parts)', "parts.join('\\0')"),
         golden.replace("parts.every(part => typeof part === 'string' && part.length > 0)", 'true'),
       ]) {
         await fs.writeFile(file, mutation);
         expect(run().status, 'Identity collisions and incomplete identity merging must fail acceptance').toBe(1);
       }
       await fs.writeFile(file, golden);
+      const view = path.join(prepared.workspace, 'src/view.js');
+      await fs.writeFile(view, definition.golden['src/view.js']!.replace(
+        "['running', 'completed', 'failed', 'cancelled'].includes(record.status) ? record.status : 'unknown'",
+        "({running:'running',completed:'completed',failed:'failed',cancelled:'cancelled'})[record.status] ?? 'unknown'",
+      ));
+      expect(run().status, 'Inherited object properties are not valid task statuses').toBe(1);
+      await fs.writeFile(view, definition.golden['src/view.js']!);
+    }
+    if (id === 'skill-discovery') {
+      const file = path.join(prepared.workspace, 'src/root.js');
+      const golden = definition.golden['src/root.js']!;
+      for (const mutation of [
+        golden.replace("path.join(current, '.git')", "path.join(current, '.kodax')"),
+        golden.replace("if (error.code !== 'ENOENT') throw error;", ''),
+      ]) {
+        await fs.writeFile(file, mutation);
+        expect(run().status, 'Wrong root markers and swallowed I/O failures must fail acceptance').toBe(1);
+      }
+      await fs.writeFile(file, golden);
+      const registry = path.join(prepared.workspace, 'src/registry.js');
+      const content = definition.golden['src/registry.js']!;
+      await fs.writeFile(registry, content.replace('  async function list(cwd) {',
+        '  const cache = new Map();\n  async function list(cwd) {')
+        .replace("const description = /^description: (.*)$/m.exec(content)?.[1] ?? '';",
+          "const stamp = (await fs.stat(file)).mtimeMs; const previous = cache.get(file);\n      const description = previous?.stamp === stamp ? previous.description : /^description: (.*)$/m.exec(content)?.[1] ?? '';\n      cache.set(file, { stamp, description });"));
+      expect(run().status, 'A timestamp-only metadata cache misses completed same-size edits').toBe(1);
+      await fs.writeFile(registry, content);
     }
     const publicTests = spawnSync(process.execPath, ['--test'], { cwd: prepared.workspace, encoding: 'utf8', windowsHide: true, timeout: 15000 });
     expect(publicTests.status, publicTests.stdout + publicTests.stderr).toBe(0);

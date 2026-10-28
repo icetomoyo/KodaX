@@ -4,6 +4,41 @@ import path from 'node:path';
 import { expect, it, vi } from 'vitest';
 import type { KodaXStreamResult, KodaXToolUseBlock } from '@kodax-ai/llm';
 import { runNaturalRuntime } from './shared-contract-natural-runtime.js';
+import { checkUnmarkedTemporaryRoot, prepareNaturalExecutionEnvironment } from '../benchmark/harness/natural-execution-environment.js';
+
+it('reports unreadable ancestors as an invalid environment without granting host reads', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-eval-environment-'));
+  try {
+    const workspace = path.join(directory, 'workspace');
+    const execution = await prepareNaturalExecutionEnvironment(workspace);
+    const environment = execution.environment();
+    const options = environment.NODE_OPTIONS;
+    expect(checkUnmarkedTemporaryRoot(environment)).toEqual({ status: 'eval-invalid', reason: 'ancestor-probe-ERR_ACCESS_DENIED' });
+    expect(environment.NODE_OPTIONS).toBe(options);
+    expect(await fs.readdir(environment.TEMP!)).toEqual([]);
+  } finally {
+    if (path.dirname(directory) !== path.resolve(os.tmpdir()) || !path.basename(directory).startsWith('kodax-eval-environment-')) throw new Error('Unsafe cleanup');
+    await fs.rm(directory, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
+it('rejects a gitless-root evaluation before provider dispatch when temporary directories inherit the fixture repository', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-eval-environment-'));
+  const invoke = vi.fn(async (): Promise<KodaXStreamResult> => ({
+    toolBlocks: [], textBlocks: [{ type: 'text', text: 'done' }], thinkingBlocks: [], stopReason: 'end_turn',
+  }));
+  try {
+    await expect(runNaturalRuntime(directory, 'skill-discovery', invoke))
+      .rejects.toThrow('eval-invalid: temporary-root topology');
+    expect(invoke).not.toHaveBeenCalled();
+    const preflight = JSON.parse(await fs.readFile(path.join(directory, 'environment-preflight.json'), 'utf8')) as { status: string; reason: string };
+    expect(preflight.status).toBe('eval-invalid');
+    expect(preflight.reason).toContain('git-ancestor');
+  } finally {
+    if (path.dirname(directory) !== path.resolve(os.tmpdir()) || !path.basename(directory).startsWith('kodax-eval-environment-')) throw new Error('Unsafe cleanup');
+    await fs.rm(directory, { recursive: true, force: true, maxRetries: 3 });
+  }
+}, 90000);
 
 it('keeps node and npm test descendants inside the fixture environment without changing their commands', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-eval-environment-'));

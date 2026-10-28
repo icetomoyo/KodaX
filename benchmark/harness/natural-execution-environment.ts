@@ -1,7 +1,30 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import type { KodaXShellExecutionContract } from '../../packages/coding/src/types.js';
 import { buildShellProbeEnvironment } from '../../packages/coding/src/shell-execution/environment.js';
+
+export const NATURAL_ENVIRONMENT_REVISION = '2026-10-28-topology-preflight-v2';
+
+/** Host preflight, never a model tool or an expansion of the execution allowlist. */
+export function checkUnmarkedTemporaryRoot(environment: NodeJS.ProcessEnv): { status: 'ready' | 'eval-invalid'; reason: string } {
+  const probe = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
+    let current = fs.mkdtempSync(path.join(os.tmpdir(), 'topology-probe-'));
+    const root = current;
+    let reason = 'unmarked-ancestors';
+    try {
+      for (;;) {
+        try { fs.statSync(path.join(current, '.git')); reason = 'git-ancestor'; break; }
+        catch (error) { if (error.code !== 'ENOENT') { reason = 'ancestor-probe-' + error.code; break; } }
+        const parent = path.dirname(current); if (parent === current) break; current = parent;
+      }
+    } finally { fs.rmdirSync(root); }
+    process.stdout.write(reason);
+  `], { env: environment, encoding: 'utf8', windowsHide: true, timeout: 10000 });
+  const reason = probe.status === 0 ? probe.stdout.trim() : 'probe-execution-failed';
+  return { status: reason === 'unmarked-ancestors' ? 'ready' : 'eval-invalid', reason };
+}
 
 /** Controlled Node fixtures, not a security sandbox for hostile programs. */
 export async function prepareNaturalExecutionEnvironment(workspace: string) {

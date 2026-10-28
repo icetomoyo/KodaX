@@ -60,7 +60,9 @@ it('recovers oversized test output using the existing isolated output binding wi
   expect(record.protectedUnchanged).toBe(true);
 });
 
-it.each(['tenant-cache', 'config-precedence', 'output-retention', 'skill-discovery', 'history-replay'] as const)('runs two real user turns for %s with protected tests and actual edits', async id => {
+// skill-discovery requires gitless temporary ancestry; its invalid topology is
+// tested before dispatch in natural-eval-environment.test.ts, not scored as model failure.
+it.each(['tenant-cache', 'config-precedence', 'output-retention', 'history-replay'] as const)('runs two real user turns for %s with protected tests and actual edits', async id => {
   vi.stubEnv('NODE_ENV', 'production');
   const fetcher = vi.fn(() => { throw new Error('No network'); }); vi.stubGlobal('fetch', fetcher);
   const definition = PRODUCT_CASES[id];

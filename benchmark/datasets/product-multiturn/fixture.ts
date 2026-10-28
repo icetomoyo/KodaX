@@ -3,7 +3,10 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 export type ProductCaseId = 'tenant-cache' | 'config-precedence' | 'output-retention' | 'skill-discovery' | 'history-replay';
+/** Scorer-only revision; historical raw results retain their original verdicts. */
+export const PRODUCT_ORACLE_REVISION = '2026-10-28-boundary-v2';
 interface ProductCase {
+  requiresUnmarkedTemporaryRoot?: boolean;
   prompt: string;
   followUp: string;
   files: Readonly<Record<string, string>>;
@@ -168,6 +171,7 @@ export function createSkillRegistry() {
 const skillRegistryGolden = skillRegistrySource.replace('  const cache = new Map();\n', '')
   .replace('    if (cache.has(root)) return cache.get(root);\n', '').replace('    cache.set(root, skills);\n', '');
 const skillOracleSetup = `import fs from 'node:fs/promises';
+import { mock } from 'node:test';
 import os from 'node:os';
 async function fixture(work) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-contract-'));
@@ -231,6 +235,13 @@ test('preserves independent same-text notices and tasks, only removes proven mir
     ['notice',undefined,a.text],['notice',undefined,a.text],['notice',undefined,a.text]]);
 });
 test('identity needs all fields and cannot collide through delimiters',()=>{
+  for (const separator of ['|', '\\0', ':', '\\n']) {
+    const a=task('x',{runId:'a'+separator+'b',turnId:'c'});
+    const b=task('x',{runId:'a',turnId:'b'+separator+'c'});
+    const notice={kind:'notice',text:'independent',mirrorOf:{runId:b.runId,turnId:b.turnId,taskId:b.taskId}};
+    assert.equal(api.restoreHistory([a,b]).length,2);
+    assert.equal(api.restoreHistory([a,notice]).length,2);
+  }
   const records=[task('x',{runId:'a|b',turnId:'c'}),task('x',{runId:'a',turnId:'b|c'}),
     task('x',{runId:'a',turnId:'different'}),task(undefined),task(undefined),task('x',{runId:''}),task('x',{runId:''})];
   assert.equal(api.restoreHistory(records).length,records.length);
@@ -238,10 +249,10 @@ test('identity needs all fields and cannot collide through delimiters',()=>{
 });
 test('retains status meaning, exact body and format without mutation',()=>{
   const body='  # Report\\n\\n~~~js\\nconst s = "<tag>&\\\\n";\\n~~~\\n  ';
-  const statuses=['running','completed','failed','cancelled',undefined,'future'];
+  const statuses=['running','completed','failed','cancelled',undefined,'future','constructor','toString','__proto__'];
   const records=statuses.map((status,i)=>Object.freeze(task(String(i),{status,text:body,format:'markdown'})));
   const before=JSON.stringify(records); const result=api.restoreHistory(Object.freeze(records));
-  assert.deepEqual(result.map(v=>v.status),['running','completed','failed','cancelled','unknown','unknown']);
+  assert.deepEqual(result.map(v=>v.status),['running','completed','failed','cancelled','unknown','unknown','unknown','unknown','unknown']);
   assert.ok(result.every(v=>v.text===body&&v.format==='markdown'));
   assert.equal(JSON.stringify(records),before);
   assert.equal(api.restoreHistory([task('plain',{text:'',status:undefined})])[0].format,'text');
@@ -294,6 +305,7 @@ test('ownership, cleanup and future writes remain independent', () => {
 `,
   },
   'skill-discovery': {
+    requiresUnmarkedTemporaryRoot: true,
     prompt: '从项目子目录通过 SDK 启动时，技能列表是空的，但项目根目录确实有技能。请修复发现路径，保持现有 API，并加回归测试。',
     followUp: '再检查同一进程里新增、修改和删除技能后的表现。列表和按名称读取必须及时保持一致，也不能串到别的项目；请验证并修好。',
     entry: 'src/registry.js',
@@ -339,6 +351,71 @@ test('refreshes additions, edits and deletions without leaking projects', async 
     assert.equal(await registry.load(nested, 'alpha'), undefined);
   });
 }));
+test('an empty nested Git project must not inherit outer project skills', async () => fixture(async (root, child) => {
+  await skill(root, 'outer-only', 'outer');
+  await fs.writeFile(path.join(child, '.git'), 'gitdir: elsewhere');
+  await fs.mkdir(path.join(child, 'nested'));
+  const registry = api.createSkillRegistry();
+  assert.deepEqual(await registry.list(path.join(child, 'nested')), []);
+  assert.equal(await registry.load(child, 'outer-only'), undefined);
+}));
+test('completed edits with the same size and timestamp refresh both metadata and body', async () => fixture(async (root, child) => {
+  const registry = api.createSkillRegistry();
+  await skill(root, 'review', 'old');
+  const file = path.join(root, '.kodax', 'skills', 'review', 'SKILL.md');
+  const time = new Date('2020-01-01T00:00:00Z');
+  await fs.utimes(file, time, time);
+  const before = await fs.stat(file);
+  assert.equal((await registry.list(child))[0].description, 'old');
+  await skill(root, 'review', 'new'); await fs.utimes(file, time, time);
+  const after = await fs.stat(file);
+  assert.equal(after.size, before.size); assert.equal(after.mtimeMs, before.mtimeMs);
+  assert.equal((await registry.list(child))[0].description, 'new');
+  const loaded = await registry.load(root, 'review');
+  assert.equal(loaded.description, 'new'); assert.match(loaded.content, /Body: new/);
+}));
+test('root lookup propagates filesystem denials instead of guessing another root', async () => fixture(async (root, child) => {
+  await skill(root, 'review', 'visible');
+  for (const code of ['EACCES', 'ERR_ACCESS_DENIED']) {
+    let hits = 0;
+    const denial = Object.assign(new Error('controlled root lookup denial'), {code});
+    const hooks = ['stat', 'lstat', 'access'].map(name => {
+      const original = fs[name];
+      return mock.method(fs, name, async (...args) => {
+        if (String(args[0]) === path.join(child, '.git')) { hits++; throw denial; }
+        return original(...args);
+      });
+    });
+    try {
+      let thrown;
+      try { await api.createSkillRegistry().list(child); } catch (error) { thrown = error; }
+      // An unobserved implementation is unsupported by this injection seam, never a pass.
+      assert.ok(hits > 0, 'eval-invalid: root error injection was not exercised');
+      assert.equal(thrown, denial);
+    } finally { for (const hook of hooks) hook.mock.restore(); }
+  }
+}));
+test('without a Git marker, cwd wins over an ancestor skill directory', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-contract-'));
+  try {
+    let ancestor = root;
+    for (;;) {
+      try { await fs.stat(path.join(ancestor, '.git')); throw Error('eval-invalid: git ancestor in unmarked-root fixture'); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+      const parent = path.dirname(ancestor); if (parent === ancestor) break; ancestor = parent;
+    }
+    const cwd = path.join(root, 'child'); await fs.mkdir(cwd);
+    await skill(root, 'parent-only', 'parent');
+    const registry = api.createSkillRegistry();
+    assert.deepEqual(await registry.list(cwd), []);
+    await skill(cwd, 'local', 'local');
+    assert.deepEqual((await registry.list(cwd)).map(x => x.name), ['local']);
+    assert.equal(await registry.load(cwd, 'parent-only'), undefined);
+  } finally {
+    if (path.dirname(root) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('skill-contract-')) throw Error('Unsafe cleanup');
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
 `,
   },
   'tenant-cache': {
