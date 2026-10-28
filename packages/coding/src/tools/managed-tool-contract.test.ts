@@ -42,6 +42,15 @@ async function capture(agent: Agent, context?: KodaXContextOptions) {
 }
 
 describe('ordinary managed root tool presentation', () => {
+  it('exposes the bounded initial Todo status in both canonical and compact contracts', async () => {
+    for (const full of [false, true]) {
+      const sent = await capture(makeWorker({}, full));
+      expect(sent.find(tool => tool.name === 'todo_create')?.input_schema.properties?.status).toMatchObject({
+        type: 'string', enum: ['pending', 'in_progress'],
+      });
+    }
+  });
+
   it('shortens duplicate tool teaching without changing Worker instructions, parameters or strategy', async () => {
     const worker = makeWorker(); const before = JSON.stringify(worker.tools);
     const sent = await capture(worker);
@@ -94,7 +103,7 @@ describe('ordinary managed root tool presentation', () => {
     const tools = Object.keys(managedToolText).map(name => projectModelToolDefinition(getBuiltinToolDefinition(name)!, { kind: 'builtin' }));
     const before = JSON.stringify(tools);
     // Changing canonical teaching requires re-auditing the shorter wording, not silently carrying it forward.
-    expect(createHash('sha256').update(JSON.stringify(tools.filter(tool => tool.name !== 'ask_user_question').map(contract))).digest('hex')).toMatchInlineSnapshot(`"a926e1dca6399f7a5456065b3eb6f1d42e6e484e2c2d7fca8395d4e4850167a4"`);
+    expect(createHash('sha256').update(JSON.stringify(tools.filter(tool => tool.name !== 'ask_user_question').map(contract))).digest('hex')).toMatchInlineSnapshot(`"8dfb23b5c6bae9636beba0d5e16cd22ecdc360520917cb8f3672a25c6b8aecfd"`);
     const agent = markRegistryManagedAgent({ name: 'worker', instructions: '', tools }, { backups: new Map() });
     markOrdinaryRootToolContract(agent);
     const projected = projectManagedToolContracts(agent, tools);

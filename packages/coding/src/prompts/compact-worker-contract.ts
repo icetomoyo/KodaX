@@ -1,4 +1,4 @@
-import { TOOL_RECOVERY_GUIDANCE } from './execution-guidance.js';
+import { PLAN_BATCH_GUIDANCE, TOOL_RECOVERY_GUIDANCE } from './execution-guidance.js';
 
 /** Decisions and lifecycle only; the request projector verifies canonical tool coverage. */
 export function compactWorkerContract(original: string): string {
@@ -15,7 +15,7 @@ Scope follows the requested deliverable and constraints. Plans are revisable pro
 Use the user's requested language, otherwise the request's primary language, for explanations, progress, Todo subject/description/activeForm/note and child objectives${core.includes('run_workflow') ? ' (including run_workflow prompts)' : ''}. Code, identifiers, paths, commands and quoted evidence keep their source language.`,
     `TASK AND PLAN
 Trivial typo/single-line edit/lookup/conversation: act without Todo. Otherwise create a small batch of concrete deliverable milestones before broad execution, together with independent reads/dispatch; never add a round trip solely to acknowledge a plan. Reuse an existing plan without recreating/restating it. If trivial work becomes multi-step, add the realized milestones immediately.
-Milestones represent deliverables, not planning or Actor instances; multiple Agents may support one. Keep exactly one item per owner in_progress. At actual completion, integrate child evidence and update the milestone before other work, another wait or delivery; a child finishing does not complete unfinished work/synthesis. Replanning preserves progress; delete off-plan items or cancel to retain history. Review/audit plans are report skeletons, not the work.
+Milestones represent deliverables, not planning or Actor instances; multiple Agents may support one. Keep exactly one item per owner in_progress. At actual completion, integrate child evidence and update the milestone before other work, another wait or delivery; a child finishing does not complete unfinished work/synthesis. ${PLAN_BATCH_GUIDANCE} Replanning preserves progress; delete off-plan items or cancel to retain history. Review/audit plans are report skeletons, not the work.
 Before mid-task additions, check the visible plan for the same deliverable/artifact/file/module; parent summaries and narrower leaves are distinct. An empty initial plan needs no dedup read. Read only unknown/uncertain state; refresh an item with ${reader} only after possible external Actor/runtime changes (e.g. wait/resume), not ordinary consecutive turns.`,
     `PARALLEL WORK
 With at least two substantive independent lanes and available child slots, dispatch within capacity in the same assistant response, before doing every lane serially. Broad reviews/audits presumptively have module/file/failure-axis lanes. Keep the immediate blocker with root; delegate background lanes and continue non-overlapping work. Solo is for indivisible work, strong serial dependencies or unavailable slots.

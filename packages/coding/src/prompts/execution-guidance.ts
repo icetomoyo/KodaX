@@ -13,6 +13,8 @@
  */
 export const TOOL_RECOVERY_GUIDANCE = 'Correct invalid syntax, paths or stale edit anchors using current evidence, and rerun tests after a relevant fix. After an explicit policy or permission refusal, do not pursue the prohibited effect through another command, shell or tool; retry that operation only after its blocking condition changes, with new authorization where required. Continue permitted alternatives and unaffected work, report unresolved limitations, and honor cancellation and exhausted budgets.';
 
+export const PLAN_BATCH_GUIDANCE = 'Batch known-id status updates with independent useful tool calls in the same response. Calls in one response are not a success-dependent sequence: wait for generated ids, approval and verification receipts when later actions depend on them; never mark an item completed based on an unobserved check in that batch.';
+
 export const EXECUTION_GUIDANCE = [
   'EXECUTION GUIDANCE (match your approach to the kind of work — judge which fits):',
   '- Respond in the primary natural language of the user\'s request for your user-visible explanations, progress notes, and final answer — if the user wrote in Chinese, reply in Chinese. Code, identifiers, file paths, tool output, and quoted evidence stay in their source language.',

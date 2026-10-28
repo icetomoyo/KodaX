@@ -4,7 +4,14 @@
 import { describe, expect, it } from 'vitest';
 
 import type { TodoList, TodoStatus } from '../types.js';
-import { createTodoStore, type TodoInit } from './todo-store.js';
+import { createTodoStore, type TodoAddSeed, type TodoInit } from './todo-store.js';
+
+it('does not let untyped SDK creation mark a milestone completed', () => {
+  const store = createTodoStore();
+  const seed = { subject: 'Unverified work', status: 'completed' } as unknown as TodoAddSeed;
+  store.add(seed);
+  expect(store.getAll()[0]?.status).toBe('pending');
+});
 
 const SEEDS: readonly TodoInit[] = Object.freeze([
   { id: 'todo_1', subject: 'Rename function', owner: 'main', sourceObligationIndex: 0 },

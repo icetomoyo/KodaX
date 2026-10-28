@@ -194,7 +194,7 @@ it('requires a fresh rule-retention audit when canonical Worker, Memory or manua
   expect(createHash('sha256').update(buildMemoryRulesSection('.')).digest('hex')).toMatchInlineSnapshot(`"01871d37b8549217ed5c952d4397955e6cbc9cdba220e0eef892e019fdacd695"`);
   expect(createHash('sha256').update(SELF_KNOWLEDGE_ROUTING_RULE).digest('hex')).toMatchInlineSnapshot(`"04524b9249e1671e767df654adf4aaa4c43afd569a1b8d3420866d0f817594c5"`);
   // Audit checkpoint, never used to enable runtime projection or accept custom prompts.
-  expect(createHash('sha256').update(buildWorkerStableInstructions()).digest('hex')).toMatchInlineSnapshot(`"746936e9a5f8da1be415249d629de5c2ed21944638fc574874765f06d84f73ea"`);
+  expect(createHash('sha256').update(buildWorkerStableInstructions()).digest('hex')).toMatchInlineSnapshot(`"b26c62f8d5badcbf667c68db82e625df3c8dc6101a4505e699417484d9f8c320"`);
 });
 
 it('gives operation teaching one owner while retaining dispatch decisions', async () => {
@@ -215,6 +215,12 @@ it('gives operation teaching one owner while retaining dispatch decisions', asyn
     expect(projected).toContain('root concurrency/work budgets');
     expect(projected).toContain('never loop on wait_expired');
     expect(projected).toContain('exactly one item per owner in_progress');
+    for (const text of [original, projected]) {
+      expect(text).toContain('Batch known-id status updates with independent useful tool calls in the same response');
+      expect(text).toContain('Calls in one response are not a success-dependent sequence');
+      expect(text).toContain('wait for generated ids, approval and verification receipts when later actions depend on them');
+      expect(text).toContain('never mark an item completed based on an unobserved check in that batch');
+    }
   } finally { await controller.shutdown('Rule ownership capture finished'); }
 });
 

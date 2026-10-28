@@ -94,7 +94,7 @@ export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
       'properties.effort': 'off/low/medium/high/xhigh/max; omitted/auto inherits. agent_id locks specialist effort; conflicts/unsupported values rejected.',
       'properties.quality_strategy': '{schemaVersion:1,stageId,pattern,role,laneRelation?,targetEvidenceRefs?}; Actor refs require exact agent-turn.' } },
   todo_create: {
-    description: 'Add one pending semantic milestone without replacing existing items. Returns {ok:true,id}; reuse this generated id, never supply one. This records planned work, not execution; skip trivial/informational tasks. Inactive store, invalid input or extension veto returns {ok:false,reason}.',
+    description: 'Add one semantic milestone without replacing existing items. Returns {ok:true,id}; reuse this generated id, never supply one. This records planned work, not execution; skip trivial/informational tasks. Inactive store, invalid input or extension veto returns {ok:false,reason}.',
     annotations: { 'properties.subject': 'Nonempty imperative plan-row title.', 'properties.description': 'Full-detail multiline context, absent from compact row; omit if title suffices.',
       'properties.activeForm': 'Supply for each milestone: present-continuous in_progress spinner label.', 'properties.evaluator': 'When wired, completion runs build/test/lint = npm run build/npm test/npm run lint; failure returns stderr. Sparingly for real checks.',
       'properties.metadata': 'Opaque hook/eval data, not UI; omit if unused.' } },

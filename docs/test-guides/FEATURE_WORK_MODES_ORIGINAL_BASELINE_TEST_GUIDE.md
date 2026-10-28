@@ -565,3 +565,119 @@ Validation: 194 tests passed across 11 focused files after the production fix; t
 Accounting: R1 314 physical requests; R2 50; quota failure 1 = **365 physical attempts**. Known API task usage **5,593,753 tokens**; conservative reservations including two cancelled auxiliaries and the quota rejection bring charged budget to **5,693,705 tokens**. Combined nominal/upper-bound accounting $0.225969519: this is **not an invoice**. DeepSeek peak-price estimate $0.147931824 (off-peak actual may be half); coding-plan GLM/Kimi values are local nominal rates. Cache-read tokens are part of input, not added twice. No fallback or retry-until-pass was used.
 
 Decision: retain the remaining-work reminder and precise refusal feedback; keep the narrowly scoped delayed-stall delivery repair, supported by deterministic failing→passing and real Runtime tests. Do not claim all quality/efficiency goals are closed, do not continue first-turn compression, and do not rerun the matrix for green scores. Remaining evidence gaps are general task diversity, autonomous compliance with final read-only feedback, and avoiding standalone plan updates without losing useful planning or reviewer quality. Further work should start with existing failure transcripts, not another unrestricted panel.
+## 2026-10-27：拒绝恢复与独立 Todo 回合的定向续验
+
+基准提交为 `f2661c2e`（已推送）。先重读 R2 原始轨迹，不再跑完整矩阵。
+
+- DeepSeek R2 的纯 Todo 请求为 9、10、12、16、18：9 创建尚未执行的里程碑并取得 ID；10/12/16 是可与独立工作合并的状态推进候选；18 的最终状态回执仍须确认。不能直接把这五次都视为浪费。第 17 次的 `npm test` 与第 15 次 `node --test` 在该 fixture 中等价，但同时含尚未读取的 diff，不能把整次请求算成零价值。
+- Kimi R2 子 Agent 捕获了真实的身份边界遗漏，审查和随后修复、复测必须保留。其 `node --test` → `node --check` → `npm test` 的拒绝恢复，已在上一版统一只读范围反馈；禁止命令从未执行。
+- 现有 Runner 同轮非 shell 工具可并行，不能把调用列表当作“前项成功后才执行后项”。本次候选只澄清已知 ID 的状态更新可随独立工作同轮提交；依赖新 ID、审批、验证结果的操作必须等待回执，不能提前宣称通过。无工具、调度、权限、AMA 策略变更。
+
+离线验收：三模式实际 Runtime 中批量计划/独立读取 → 已知 ID 更新/编辑 → 状态推进/测试 → 收到测试结果后完成验证项/独立 diff → 最终报告；另测只读子 Agent 拒绝执行、静态审查、主 Agent 修复和验证的完整链路。预设回调只证明运行机制，不证明模型自发选择或实际任务轮次下降。
+
+**单轮补测预注册**（`todo-recovery-checkpoints-r3-20261027`）：Layer 1 无法判断模型能否自发采用批量进度更新、停止权限同效重试，故只重用 R2 原始历史的三个 checkpoint。DeepSeek call 10 / 12 各比较原共享契约与新增共享教学；Kimi call 14 比较旧只读拒绝和已提交的新拒绝反馈。每格一次，共最多 6 次物理请求，单格 1 回合、8,192 输出 token、180 秒；总上限 800,000 token / $0.50 参考费用。DeepSeek 使用同日官方价格峰时上界，Kimi 使用本地 coding-plan 名义计费，不视为账单。先跑 DeepSeek call 10 两格 pilot，经主会话盲化语义评审后才继续其余四格；异常或用量未知立即停，不补跑。保留原生产工具 schema、完整历史和推理设置，只改变指定变量；不执行生成工具、不改写返回参数。当前主会话先评审隐去 arm/usage 的输出，再揭盲：是否维持有效计划、采取独立实际工作、未提前完成验证，以及拒绝后继续合法静态审查。少量 checkpoint 只能支持方向判断，不能替代完整任务质量/轮次/耗时结论。
+
+原始输入、输出、源文件哈希、双备份、费用和盲评存 OS 临时目录；研究驱动保存在忽略的 `docs/research/` 并随 raw 冻结，不进入产品代码。
+
+### R3 结果与采用边界
+
+6/6 物理请求完成，未知用量 0，无重试、无生成工具执行；合计 **97,133 API token**，**$0.00932789 混合参考费用**，不等于真实账单。各格 token 为该次完整请求的输入加输出，耗时为该次请求，不是整项任务。
+
+| 检查点 | 基线下一响应 | 候选下一响应 | token 基线 / 候选 | 耗时秒 基线 / 候选 | 结论 |
+|---|---|---|---:|---:|---|
+| DeepSeek 已取得 Todo ID，准备开始修复 | 只更新 in_progress | 同一响应更新 in_progress + 写入修复 | 17,085 / 17,552 | 1.08 / 2.90 | 有批量推进信号，未提前宣称验证通过；候选增加身份类型检查，完整兼容性未由该单轮证明 |
+| DeepSeek 已收到修复回执，准备补测试 | 编辑受保护原测试，未更新 Todo | 写入受保护原测试，未更新 Todo | 19,155 / 19,543 | 4.00 / 5.68 | 两版都有越界尝试及漏更新，无批量收益；不能因基线也失败就声称候选正确，也不能据此认定精简退化 |
+| Kimi 子 Agent 收到只读执行拒绝 | 改试 `node --check` | 尝试 `read_only:false` 子 Agent 执行测试 | 11,821 / 11,977 | 4.56 / 6.83 | 两版都未自主恢复；更明确反馈仍不足以阻止改入口追求被禁止效果 |
+
+评审限制：pilot 两格已在揭盲前完成主会话语义评审；揭盲时误输出了完整 mapping，因此剩余四格主会话评审为**非盲**。该偏差原样记录于 raw，不为恢复盲化而重新生成。样本少、历史路径保留、cache 命中不同；费用和单轮时长不能作为全任务降本或非劣结论。
+
+实际采用为一条共享的安全批量教学，供普通 Worker 原契约与 Agent/Coding/Script 紧凑契约共用。保留已有的里程碑时机、子 Agent 审查、权限及全部工具，不新增工具、自动合并器或阻断机制。此处是对已有调用能力的澄清，不宣称解决全部额外回合。首轮 32 格 SDK 离线抓包中工具菜单/schema 均不变；三模式完整 Host 输入按同一仓库启发式增加 **78–79 token**（OpenAI 场景 Agent 10,739→10,818、Coding 14,371→14,449、Script 16,241→16,319；该 fixture/估算口径不等同 API 用量）。接受这点教学开销是为了完整任务效率，未继续削减有效规则。
+
+拒绝恢复方面，不再根据单个失败继续堆叠提示。离线确认子 Agent 已有通用拒绝恢复规则，生产 Actor 能力上界禁止从只读父级派可写子级，fixture 也拒绝嵌套派发；并未发现可执行的提权。新增真实 Runtime 回放覆盖执行拒绝 → 尝试可写派发且被拒绝 → 静态审查 → 主 Agent 修复、测试、复现与如实报告；生产 `cannot escalate a read-only Actor to a write child` 回归另行通过。该回放证明安全与恢复路径可用，**不证明模型已自发遵守**。
+
+验证合计 **298 项不同的定向测试通过**：264 项 Runtime/预算/守卫/stall/Todo 回归，32 项共享契约与 Worker 测试，1 项 32 格首轮抓包，1 项生产 Actor 权限上界。子 Agent 回放随后加入 R3 可写派发反例并再次通过，不重复累计测试数量。类型检查通过；Standards / Spec 独立代码评审各 0 项发现。当前仍未达到“所有模型完整任务不增加回合”的证明标准；后续应在下一次有实际功能改动的完整任务验收中检查这一指标，保留失败与有价值审查，不再为这一条教学重复跑矩阵。
+## 2026-10-27 R4：原始产品版本与当前版本的多轮配对
+
+用户在 R3 后明确要求多轮完整工作验证并对照优化前。本次据此作为有限的产品版本比较例外执行，保留 EVAL_GUIDELINES 的冻结输入、预算、隔离、不重跑和语义评审要求；单轮证据不再替代完整任务结果。
+
+原版固定 `bd4479d59cab3d082f07c2d34681fff198d82fa0`，当前为 `f2661c2e` 加已记录的共享批量教学工作区 diff。使用原版新 Git archive 和本版源码各自的 Runtime、提示与工具 schema；原版仅复制共同评测辅助文件，生产源码不适配。两边同一当前 guard、相同任务、相同自然中文 prompt、相同额度、隔离和 reasoning；不是原版旧 guard 对新版新 guard。原版复用外部 node_modules 与经同源核对的 Windows 原生文件事务产物，须保留依赖差异与非历史二进制验收限制。先以离线 read/write/refusal/child/budget/cancel 回归检查两端装配。
+
+固定 10 个完整任务样本：GLM/Kimi/DeepSeek 三路各一对 `symptom-repair`，Kimi/DeepSeek 各一对 `incremental-review`。两种任务均源自既有自然任务重建，仍共用一个小仓库，不能宣称跨仓库智能非劣。GLM 修复两格为 pilot；若隔离、用量或实验装配有错误立即停并保留证据，不以模型任务失败为理由重跑。pilot 有效后，其他八格每格一次，不为获得通过重复。原版/新版顺序按 route/task 交错；同 provider 串行，不同 provider 可并行。
+
+每 Run 最多 32 次物理请求（root/child/aux 共用）、80 工具、1,500,000 token、8,192 输出 token/请求、180 秒/请求、600 秒/Run；GLM/Kimi 各 $0.30 名义费用上限、DeepSeek $0.90 峰时参考上限。整个已登记集合不超过 320 次请求、15,000,000 token、$5.40 参考费用；不会一次性烧满预算。原始输入/输出、全部回执、独立 oracle、最终补丁、模型报告、时间和双备份保存在新的 OS Temp 根目录，旧 R1–R3 不变。
+
+主会话先审阅去版本标签/用量的配对补丁、报告和验证证据，再揭盲比较：完整需求与安全边界、是否修复/正确评审、公开与独立测试、报告真实性；随后分解 root/child/aux、首轮输入、全任务输入/输出/cache、费用、耗时，以及规划、拒绝、修复复测、审查等回合。审查任务不得以“源码仍含待报告缺陷，oracle 未通过”判失败；是否指出新身份漏洞、区分旧缺陷已修复、不擅自编辑才是验收重点。必要复测与有价值子审查不能算浪费。
+
+产品版本结果受模型波动、Runtime/工具演进、外部依赖和路径差异影响，不能独立归因提示精简。若发现仅当前失败的具体边界，先对源码与既有轨迹定位遗漏/冲突，再另登记最小控制变量复核；不自动追加矩阵，不直接移植其他 agent 的整个提示或执行壳。本轮不预先修改产品契约以追逐样本。
+### R4 后的窄修复与 R5 有界恢复验证
+
+R4 全部原定样本均已尝试（旧 Kimi 增量审查在 sidecar 400 后失败保留；全局停止暂缓的唯一未开始样本另根续跑，未重试失败样本）。结束后才修改 `withEffectivePermissionContext`：存在 `permissionIntent.readOnly` 时显式披露任务只读上界，替代该任务不适用的 full-access mutation 教学；宿主模式未知时不猜测模式，也披露已知只读范围。普通 root 原字节不变；不改 guard、能力上界、SDK 接口、工具菜单或 AMA。该缺口在 `bd4479d` 已存在，不能归因首轮精简。
+
+R5 (`readonly-scope-recovery-r5-20261027`) 只比较这项上下文事实修复。复用 R2 Kimi child call 14 的真实历史与工具定义，把旧短拒绝回执在两臂统一为当前 guard 文案；baseline 保留旧 full-access 说明，candidate 用实际当前 formatter 提供 read-only scope，其他内容相同。Kimi 每臂最多 3 次请求，最多共 6 次，8192 输出/请求、180秒/请求、400,000总token/$0.10名义费用上限。每格一次，无重试。每轮仅调用现有 guard 计算拒绝；若所有调用都被拒绝，原样保留模型 assistant blocks 并追加同 guard 错误进入下一轮；若出现允许的工具调用或终止文本则停止，不执行生成工具、不伪造读取结果或任务成功。该 L3 检查能回答是否持续追求被禁效果、是否改用合法读取/向调用方报告，不能代替完整编辑 E2E 或证明后续任务质量。该补测不与 R4 的完整任务次数合并。先主会话隐去臂标签/用量评审，再揭盲，不根据结果追加样本。
+
+### R4 完整结果：产品版本差异，不是单条提示的因果试验
+
+原版为 `bd4479d59cab3d082f07c2d34681fff198d82fa0`，当前版为 `f2661c2e` 加安全批量教学的未提交修改；**均在 R5 权限事实修复之前冻结**。两版分别使用自己的生产 Runtime 和真实工具契约，使用相同当前 guard、任务与独立检查。原版 archive 的 1,054 个生产 TS 文件与 Git blob 比较无语义差异（1,049 个仅导出换行不同）；外部依赖借用当前安装，原版 dist 来自已有同提交构建，不能称为历史发行二进制复验。首次离线预检因未备好 dist 失败，补齐后 4 个零网络预检通过，之后才开始模型调用。
+
+| 任务 / 模型 | 主请求 原 / 今 | 首轮 API input 原 / 今 | 全任务已知 API token 原 / 今 | 秒 原 / 今 | 实质结果 |
+|---|---:|---:|---:|---:|---|
+| 修复 / GLM 5.3 | 9 / 10 | 24,935 / 11,168 | 248,009 / 135,796 | 78.33 / 75.45 | 都修好主要症状、独立 4/5；都漏双方身份字段缺失，并过度报告安全覆盖 |
+| 修复 / Kimi | 16 / 13 | 23,272 / 10,062 | 458,839 / 188,392* | 151.01 / 141.71 | 都修好主要症状、独立 4/5；同一身份缺口，当前少 3 个主请求 |
+| 修复 / DeepSeek Flash | 27 / 19 | 25,753 / 11,614 | 883,933* / 343,559 | 82.85 / 67.03 | 原版保留旧 cleanup 前提，未修好主症状；当前修复且独立 5/5，但新增身份类型约束的广泛兼容性未验证 |
+| 增量审查 / DeepSeek Flash | 8 / 16 | 26,641 / 12,499 | 224,941 / 249,855 | 25.81 / 43.78 | 原版漏身份漏洞；当前发现，但误称新引入、低估缺失字段问题，并残留临时文件，报告不完全准确 |
+| 增量审查 / Kimi | 6 后失败 / 10 | 24,113 / 10,909 | 148,831* / 149,351* | 25.27 / 159.06 | 原版辅助请求触发 provider 400，无最终报告；当前完成并指出身份漏洞，不能据此归因推理提升 |
+
+星号表示另有无实际 API usage 的物理请求，不能把已知用量当完整账单：Kimi 修复当前、DeepSeek 修复原版、Kimi 审查当前各有一次有界取消的辅助请求；Kimi 审查原版一次 400。含保守预留的预算 token 分别为 202,339、899,313、162,454、161,421。其余已知与预算 token 相等；cache 是 input 的子集，不重复加总。
+
+修复原/今参考费用：GLM $0.012532/$0.006906，Kimi $0.002356/$0.001075，DeepSeek $0.031917/$0.016672；审查原/今：DeepSeek $0.012102/$0.011270，Kimi $0.000827/$0.000884（失败与取消包含保守预留）。编码套餐是本地名义费率，DeepSeek 是当日峰时上界，均非账单。全批 **142 次物理请求、3,031,506 已知 API token、3,086,526 预算 token、$0.096539957 混合参考费用**。不以较高 cache 命中下的低费用掩盖增加的请求与耗时。
+
+归因与限制：
+
+- GLM 当前多 1 次主要对应读取顺序：原版早期一起读 `package.json`，当前后读；两版都遇到一次保护测试拒绝和一次复合命令拒绝，均未使用 Todo。因此不是这次晚到 Todo 补账的复现，也不是已经证明的压缩退化。
+- DeepSeek 审查多出的工作包含发现真实漏洞所需的探查，也包含 `node -e` → `--eval` 同效重试、越界写入和临时文件清理拒绝。不能把多 8 轮全部当成智能退化，也不能全部解释为必要质量成本。当前的“工作区干净”与残留空临时测试文件相矛盾，应记录为报告缺陷。
+- 原 Kimi 400 为 `tool_choice 'specified' is incompatible with thinking enabled`，来自旧辅助链。当前 `packages/llm/src/providers/anthropic.ts` 已有 Kimi 参数兼容处理，本轮未修改旧版生产代码来让它通过。全局停下后仅在新目录启动唯一尚未开始的 cell-09，未重跑失败格。
+- 两版最终补丁/报告先作主会话隐去版本与用量的语义评审。旧 Kimi 400 为诊断先读取身份；续跑唯一剩余格的身份可推断，不能宣称该格严格盲化。单格一次、两个同族任务，不作统计非劣结论。
+- **这 10 格没有实际 child 模型请求**。固定评测守卫拒绝了模型主动选择的 `model_hint`/专用角色等参数，未改写参数、未放宽白名单。源码权限与离线 child 闭环通过，R2 曾有真实有价值的 child 审查，但不能用 R4 宣称当前全部协作能力均已完成真实 E2E。
+- **多轮模型调用不等于多条用户消息的连续会话**。R4 增量审查以既有变更和已保存的上下文模拟后续任务，实际是新 Session 的一次 Run；尚未覆盖同 Session 两次用户输入、冷恢复、跨 Run Todo 状态保留。后续必须单列这些边界，不能把 R4 表格改名为完整多用户轮验收。
+
+Raw：OS Temp `kodax-eval-dumps/product-multiturn-r4-20261027` 和 `product-multiturn-r4-unstarted-20261027`，含固定源码、生产输入/输出、独立检查、语义评审、`complete-metrics.json` 和两份备份。保留基础优化与当前最小修复；**总体不增轮目标尚未证明，不继续为小首轮收益跑矩阵**。
+
+### R5 结果与最终离线验收
+
+实际仅 3 次请求，没有执行模型生成的工具：原版 A 直接静态报告（1 次、13,058 token、34.15 秒），权限事实修复版 B 先尝试 `dir` 读取工作区父级评测目录，被守卫拒绝后静态报告（2 次、25,670 token、47.57 秒）。合计 38,728 已知 API token，$0.0002273 名义费用；无失败重跑、未知 usage 或放宽守卫。评审在 mapping/usage 揭盲前落盘。
+
+两版都不再尝试仓库代码执行，也诚实说明未跑测试；但候选有一次不必要的越界读取，**本配对没有显示减少请求的收益**。两版都提到缺失身份却错误降低其严重性，原版还有错误的状态兜底推断；不能认为静态审查通过。正确区分：权限事实修复有源码与离线依据，模型恢复效率和审查准确性仍未达标，不为获得更好分数继续重跑。
+
+三个 formatter 回归先 RED，再修复 GREEN。修复后 5 个文件 **203 项测试通过**（权限上下文、真实 Runtime、child executor、协作工具、Kimi 辅助链兼容），`npm run typecheck` 通过。实际 SDK 离线序列化 **32/32 请求与修复前逐字节一致**（包括普通 root 三模式、SDK 及 Script 叶工具），新 inventory 为 OS Temp `kodax-first-turn-wire-687uWH/inventory.json`，比较基准 `kodax-first-turn-wire-tUdtLt/inventory.json`。子请求的只读上下文则有意变化，测试证明不持久化入历史、下次重新读取权限意图。Standards 审查 0 项，Spec 审查 0 项。此次没有重新跑全仓/发布包/非 Windows 平台，也没有模型非退化的全面证明。
+
+### 2026-10-27 后续：初始 Todo 状态与真实连续 Session 离线回归
+
+本批无付费模型调用。沿用上一节的产品计划，完成最小 `todo_create.status` 可选参数（pending 默认 / in_progress），未新增 batch 工具或发现调用。创建 completed/failed/skipped/cancelled、null、数字均在分配 ID 前拒绝；默认调用仍创建 pending。状态作为同一 seed 通过 before-create，允许后只发一次最终 store 通知和 todo:created，否决不分配 ID。原生与桥接各按原预算计一次；in_progress 创建不跑 evaluator，后续 completed 仍跑原检查并回传失败，重复 completed 不重复检查。
+
+TDD：新增单次创建 in_progress 测试在旧实现得到 pending（RED），最小实现后通过；终态/非法类型六例在未校验实现错误通过（RED），加窄校验后全部拒绝；canonical/compact 实际装配测试先缺失 status（RED），加入公共 schema 后通过。旧 todo-create 测试 helper 的 s.content 改为正确的 s.subject，避免验证已删除字段。已审计的紧凑契约哈希仅随这一 description 变更更新，其他工具结构一致。
+
+连续用户任务测试使用真实 Runtime、同一 Session，Agent/Coding/Script 各运行 3 个 Run：
+
+1. 创建 in_progress Todo，与独立真实修改同响应；如实报告尚未运行测试。
+2. 用户追加只读审查，Session 切 Plan；读回修改，Todo 列表为空；调用 undo 被明确 Plan 权限拒绝，前一 Run 修改仍保留。
+3. 关闭 Runtime、创建新 Runtime 使用同一 home 和 Session，用户追加实际测试并切回 full-access；请求含前两次用户/助手历史，Todo 仍为空；实际运行 node --test，收到 2 项通过回执后报告。最终隐藏检查通过、保护文件未改。
+
+每模式为预设 **3 用户轮 × 2 模型回调 = 6 回调**，总请求上限跨 Run 共用；无网络。这个次数是机制断言，不是 LLM 自主选择的效率证据。任务计划按既有定义隔离，不能宣称复活了旧 task 的活动 Todo。未覆盖崩溃中断任务恢复或真实模型多用户轮表现。
+
+评测设计修正全部离线保留解释：初版误以为 Plan 会禁止 OS Temp fixture 的普通写入，源码 permission.ts 明确允许系统临时目录写入，所以该测试前提无效；改为生产明确禁止的 undo，未改生产权限或放宽 fixture。另一个取消初稿直接调用原生 execute，绕过真实 Runner observer，而桥接内置权限检查，不能公平类比；改为两路都从 Runner 经过相同 observer，取消后都无状态变更、预算为零。JSON 历史中的嵌套转义也改为检查实际 tool_result 回执；最终拒绝断言针对具体 undo 的 Plan 回执，不靠历史任意 Error 字样。
+
+32 格零网络实际 SDK 序列化：OS Temp `kodax-first-turn-wire-DtufjL/inventory.json`，比较 `kodax-first-turn-wire-687uWH/inventory.json`。逐字段差异检查确认所有请求只改变 todo_create.description 和可选 status，工具清单及其他所有输入不变。归一完整 Host 估算 token：OpenAI Agent 10,866 / Coding 14,497 / Script 16,367；Anthropic Agent 10,630 / Coding 14,132 / Script 16,212；均较本批前 +48。不可与 API 计费 token 混用。SA 行仅是保留 SDK 基线场景，不代表恢复 SA 用户入口。
+
+TodoStore/todo-create 定向覆盖率（连同桥接回归共 112 测试）：语句 98.70%，分支 94.65%，函数 100%，行 99.22%；覆盖输出位于 OS Temp `kodax-todo-initial-status-final-coverage-20261027`，不是全仓覆盖率。`npm run typecheck` 与 `npm run build:packages` 通过。未重新验收完整发行二进制、全部仓库测试、其他平台或真实模型效果。
+
+额外 SDK 边界先 RED 后 GREEN：无类型 JavaScript 消费者若传入未支持的 completed，store.add 保持原有 pending 行为，仅显式 in_progress 可改变初态，不能通过跳过 TypeScript 校验在创建时标完成；模型工具层对非法 status 则明确报错。该窄防护不改变已有 patch/update 能力。
+
+最终离线回归：本批涉及的 9 个定向测试文件累计 **241 项通过**；其中连续会话文件完整 26 项通过，随后加强具体 undo 拒绝断言的三模式 3 项再次通过。新增 SDK 边界后的 Todo/Store/桥接 112 项通过。32 格首轮抓包单独通过。最终类型检查、workspace 构建和 git diff --check 通过。不存在未解决的已运行检查失败；这不表示重跑了全仓或全部智能能力评估。
+
+#### Standards
+
+0 项成文规范违反，0 项可行动 smell；独立审查覆盖本批生产与测试改动，最终 SDK 和取消边界修订也已复核。
+
+#### Spec
+
+0 项未解决发现；确认接口兼容、任务隔离和实际验证范围，未将预设模型回调等同于真实模型非退化。模型补测、完整发行包及其他平台仍按前述范围未验证。

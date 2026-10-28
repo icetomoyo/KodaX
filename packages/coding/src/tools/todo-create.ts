@@ -1,7 +1,7 @@
 /**
  * KodaX `todo_create` Tool — FEATURE_170 (v0.7.41) + v0.7.42 schema split.
  *
- * Insert ONE new pending item into the visible plan list, with a
+ * Insert ONE new pending or in-progress item into the visible plan list, with a
  * store-generated monotonic id. Companion to `todo_update` (single-item
  * state transition) and `todo_update({op:'init', ...})` (whole-list
  * batch seed; deprecated for LLM use in v0.7.42 — see Step 4).
@@ -20,6 +20,8 @@
  *     subject     string     — required. Brief imperative title shown in
  *                              the plan-list row (e.g. "Audit handleAuth
  *                              callers"). Keep short (≤80 chars).
+ *     status      enum?      — pending (default) or in_progress for work starting now.
+ *                              Terminal states require todo_update and its checks.
  *     description string?    — optional. Fuller context / work instructions
  *                              read when the executing role picks up this
  *                              item (claudecode V2 TaskGet-style detail).
@@ -62,6 +64,7 @@ const ALLOWED_EVALUATOR_HINTS: ReadonlySet<string> = new Set(['build', 'test', '
 
 interface TodoCreateInput {
   subject?: unknown;
+  status?: unknown;
   description?: unknown;
   activeForm?: unknown;
   evaluator?: unknown;
@@ -84,7 +87,7 @@ export async function toolTodoCreate(
   input: Record<string, unknown>,
   ctx: KodaXToolExecutionContext,
 ): Promise<string> {
-  const { subject, description, activeForm, evaluator, metadata } = input as TodoCreateInput;
+  const { subject, status, description, activeForm, evaluator, metadata } = input as TodoCreateInput;
 
   if (!ctx.todoStore) {
     return jsonResult({
@@ -115,6 +118,10 @@ export async function toolTodoCreate(
         'Invalid description: when provided, must be a string ' +
         '(fuller context / work instructions; multi-line OK).',
     });
+  }
+
+  if (status !== undefined && status !== 'pending' && status !== 'in_progress') {
+    return jsonResult({ ok: false, reason: 'Invalid status: use pending (default) or in_progress for work starting now.' });
   }
 
   if (activeForm !== undefined && typeof activeForm !== 'string') {
@@ -151,6 +158,7 @@ export async function toolTodoCreate(
   // 'todo:created' event downstream and no allocated id.
   const seed: ExtensionTodoCreateSeed = {
     subject,
+    ...(status !== undefined ? { status } : {}),
     ...(typeof description === 'string' ? { description } : {}),
     ...(typeof activeForm === 'string' ? { activeForm } : {}),
     ...(typeof evaluator === 'string' ? { evaluator: evaluator as TodoEvaluatorHint } : {}),

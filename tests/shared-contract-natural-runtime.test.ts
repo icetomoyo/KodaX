@@ -23,6 +23,124 @@ const result = (calls: KodaXToolUseBlock[] = [], text = ''): KodaXStreamResult =
 });
 const tool = (id: string, name: string, input: Record<string, unknown>): KodaXToolUseBlock => ({ type: 'tool_use', id, name, input });
 
+it.each(['agent', 'coding', 'script'] as const)('preserves history but isolates task plans across user turns and cold reopen in %s', async workMode => {
+  vi.stubEnv('NODE_ENV', 'production');
+  const fetcher = vi.fn(() => { throw new Error('No network'); });
+  vi.stubGlobal('fetch', fetcher);
+  const directory = await root();
+  const record = await runNaturalRuntime(directory, 'symptom-repair', async (input, _signal, index) => {
+    const history = JSON.stringify(input.messages);
+    const planReceipt = (id: string) => input.messages.flatMap(message => Array.isArray(message.content) ? message.content : [])
+      .filter(block => block.type === 'tool_result' && block.tool_use_id === id).at(-1);
+    const leaf = (id: string, name: string, args: Record<string, unknown>) => workMode === 'script'
+      ? tool(id, 'script_exec', { code: `return await tools.${name}(${JSON.stringify(args)});` })
+      : tool(id, name, args);
+    if (index === 0) return result([
+      tool('initial-plan', 'todo_create', { subject: '修复恢复判断', status: 'in_progress', activeForm: '修复恢复判断' }),
+      leaf('initial-repair', 'write', { path: 'src/recovery.js', content: RECOVERY_GOLDEN }),
+    ]);
+    if (index === 1) {
+      expect(history).toContain('todo_1');
+      expect(history).toContain('File updated:');
+      return result([], '初版已修改，尚未运行测试。');
+    }
+    if (index === 2) {
+      expect(history).toContain('初版已修改，尚未运行测试。');
+      expect(history).toContain('请先只读审查');
+      expect(input.system).toContain('Current permission mode: plan');
+      return result([
+        tool('followup-plan', 'todo_list', {}),
+        leaf('review-read', 'read', { path: 'src/recovery.js' }),
+        // Plan intentionally permits temporary-file writes; this fixture is in
+        // OS Temp. Undo is forbidden in Plan even here and must not roll back
+        // the prior Run's real edit. Script also keeps undo native.
+        tool('forbidden-undo', 'undo', {}),
+      ]);
+    }
+    if (index === 3) {
+      expect(planReceipt('followup-plan')).toMatchObject({ content: expect.stringContaining('"count":0') });
+      expect(planReceipt('forbidden-undo')).toMatchObject({ is_error: true,
+        content: expect.stringContaining("Tool 'undo' has side effects and is not permitted in plan mode") });
+      expect(await fs.readFile(path.join(directory, 'workspace/src/recovery.js'), 'utf8')).toBe(RECOVERY_GOLDEN);
+      return result([], '只读审查已完成，测试仍未执行。');
+    }
+    if (index === 4) {
+      expect(history).toContain('初版已修改，尚未运行测试。');
+      expect(history).toContain('只读审查已完成，测试仍未执行。');
+      expect(history).toContain('现在请运行测试');
+      expect(input.system).toContain('Current permission mode: full-access');
+      return result([tool('reopened-plan', 'todo_list', {}), leaf('actual-tests', 'bash', { command: 'node --test' })]);
+    }
+    expect(index).toBe(5);
+    expect(planReceipt('reopened-plan')).toMatchObject({ content: expect.stringContaining('"count":0') });
+    expect(history, JSON.stringify(planReceipt('actual-tests'))).toContain('# pass 2');
+    return result([], '已实际运行测试：2 项通过。');
+  }, { workMode, limits: { calls: 6, tools: 12, timeoutMs: 90_000 }, followUps: [
+    { prompt: '请先只读审查刚才的修改，不要改文件或运行仓库代码。', permissionMode: 'plan' },
+    { prompt: '现在请运行测试，保留刚才的修改，并据实报告。', permissionMode: 'full-access', reopen: true },
+  ] });
+  expect(record.error, JSON.stringify(record.calls.map(({ index, error }) => ({ index, error })))).toBeNull();
+  expect(record.runs.map(run => [run.phase, run.requests])).toEqual([['completed', 2], ['completed', 2], ['completed', 2]]);
+  expect(new Set(record.runs.map(run => run.sessionId)).size).toBe(1);
+  expect(record.verification.oracle.status).toBe(0);
+  expect(record.protectedUnchanged).toBe(true);
+  expect(fetcher).not.toHaveBeenCalled();
+}, 100_000);
+
+it.each(['agent', 'coding', 'script'] as const)('batches independent plan progress in %s without skipping receipts, verification or final reconciliation', async workMode => {
+  vi.stubEnv('NODE_ENV', 'production');
+  const fetcher = vi.fn(() => { throw new Error('No network'); });
+  vi.stubGlobal('fetch', fetcher);
+  const record = await runNaturalRuntime(await root(), 'symptom-repair', async (input, _signal, index) => {
+    expect(input.system).toContain('Calls in one response are not a success-dependent sequence');
+    const history = JSON.stringify(input.messages);
+    const leaf = (id: string, name: string, args: Record<string, unknown>) => workMode === 'script'
+      ? tool(id, 'script_exec', { code: `return await tools.${name}(${JSON.stringify(args)});` })
+      : tool(id, name, args);
+    if (index === 0) return result([
+      tool('plan-repair', 'todo_create', { subject: '修复安全恢复判断', activeForm: '修复安全恢复判断' }),
+      tool('plan-check', 'todo_create', { subject: '验证修复结果', activeForm: '验证修复结果' }),
+      leaf('source', 'read', { path: 'src/recovery.js' }),
+    ]);
+    if (index === 1) {
+      expect(history).toContain('todo_1'); expect(history).toContain('todo_2');
+      return result([
+        tool('claim', 'todo_update', { id: 'todo_1', status: 'in_progress' }),
+        leaf('repair', 'write', { path: 'src/recovery.js', content: RECOVERY_GOLDEN }),
+      ]);
+    }
+    if (index === 2) {
+      expect(history).toContain('File updated:');
+      return result([
+        tool('repair-done', 'todo_update', { id: 'todo_1', status: 'completed' }),
+        tool('verify-start', 'todo_update', { id: 'todo_2', status: 'in_progress' }),
+        leaf('tests', 'bash', { command: 'node --test' }),
+        leaf('reproducer', 'bash', { command: 'node examples/restart.mjs' }),
+      ]);
+    }
+    if (index === 3) {
+      expect(history).toContain('# pass 2');
+      expect(history).toContain('readyToStart');
+      return result([
+        tool('verify-done', 'todo_update', { id: 'todo_2', status: 'completed' }),
+        leaf('review', 'bash', { command: 'git diff -- src/recovery.js' }),
+      ]);
+    }
+    expect(index).toBe(4);
+    expect(history).not.toContain('Unknown todo');
+    return result([], '已修复并通过公共测试与复现检查；尚未实测操作系统集成。');
+  }, { workMode, limits: { calls: 5, tools: 20, timeoutMs: 45_000 } });
+  expect(record.error).toBeNull();
+  expect(record.phase).toBe('completed');
+  expect(record.counts.rootRequests).toBe(5);
+  expect(record.counts.childRequests + record.counts.auxiliaryRequests).toBe(0);
+  expect(record.protectedUnchanged).toBe(true);
+  expect(record.verification.public.status).toBe(0);
+  expect(record.verification.oracle.status).toBe(0);
+  expect(record.events.filter(event => event.kind === 'guard' && event.denied)).toHaveLength(0);
+  expect(fetcher).not.toHaveBeenCalled();
+}, 60_000);
+
 it('keeps the child read-only boundary explicit across different rejected command shapes', () => {
   for (const workspace of ['/tmp/fixture', 'C:\\fixture']) {
     for (const command of ['node --test', 'node --check src/recovery.js', 'npm test', 'node examples/restart.mjs']) {
@@ -34,6 +152,63 @@ it('keeps the child read-only boundary explicit across different rejected comman
     expect(checkNaturalTool(workspace, 'bash', { command: 'npm test' }, false)).toBeNull();
   }
 });
+
+it('rejects a child execution and attempted writable delegation while root still repairs and verifies', async () => {
+  vi.stubEnv('NODE_ENV', 'production');
+  const fetcher = vi.fn(() => { throw new Error('No network'); });
+  vi.stubGlobal('fetch', fetcher);
+  let childCalls = 0;
+  let rootStage = 0;
+  const record = await runNaturalRuntime(await root(), 'symptom-repair', async (input, _signal, _index, meta) => {
+    const history = JSON.stringify(input.messages);
+    if (meta.kind === 'child') {
+      expect(input.system).toContain('Current task scope: read-only');
+      expect(input.system).not.toContain('Shell runs on the host without sandbox or approval prompts');
+      expect(history).not.toContain('Current task scope: read-only');
+      childCalls++;
+      if (childCalls === 1) return result([tool('restricted-check', 'bash', { command: 'node --test' })]);
+      if (childCalls === 2) {
+        expect(history).toContain('repository execution remains unavailable');
+        expect(history).toContain('Changing the command does not change that boundary');
+        return result([tool('restricted-delegation', 'spawn_agent', { task_name: 'run-tests', objective: 'Run node --test and report the output.', read_only: false })]);
+      }
+      if (childCalls === 3) {
+        expect(history).toContain('Only one read-only inherited-model child is in scope');
+        return result([tool('static-source', 'read', { path: 'src/recovery.js' }), tool('static-contract', 'read', { path: 'README.md' })]);
+      }
+      expect(childCalls).toBe(4);
+      return result([], '静态审查发现缺少进程身份检查；只读限制拒绝了执行检查，未运行测试。请主 Agent 修复并验证。');
+    }
+    expect(meta.kind).toBe('root');
+    expect(input.system).not.toContain('Current task scope: read-only');
+    if (rootStage === 0) {
+      rootStage++;
+      return result([tool('review-child', 'spawn_agent', { task_name: 'review', objective: '只读审查恢复安全边界并报告遗漏。', read_only: true })]);
+    }
+    if (rootStage === 1) {
+      if (!history.includes('<agent-completed')) return result([tool('wait-review', 'wait_agent', { timeout_ms: 1000 })]);
+      expect(history).toContain('未运行测试');
+      expect(history).toContain('缺少进程身份检查');
+      rootStage++;
+      return result([tool('root-repair', 'write', { path: 'src/recovery.js', content: RECOVERY_GOLDEN })]);
+    }
+    if (rootStage === 2) {
+      rootStage++;
+      return result([tool('root-tests', 'bash', { command: 'node --test' }), tool('root-reproducer', 'bash', { command: 'node examples/restart.mjs' })]);
+    }
+    expect(history).toContain('# pass 2');
+    return result([], '修复并通过主 Agent 测试与复现验证；子 Agent 仅静态审查，执行检查被拒绝。未实测操作系统集成。');
+  }, { limits: { calls: 10, tools: 15, timeoutMs: 45_000 } });
+  expect(record.error).toBeNull();
+  expect(record.phase).toBe('completed');
+  expect(record.counts.childRequests).toBe(4);
+  expect(record.counts.auxiliaryRequests).toBe(0);
+  expect(record.events.filter(event => event.kind === 'guard' && event.denied)).toHaveLength(2);
+  expect(record.verification.public.status).toBe(0);
+  expect(record.verification.oracle.status).toBe(0);
+  expect(record.protectedUnchanged).toBe(true);
+  expect(fetcher).not.toHaveBeenCalled();
+}, 60_000);
 
 it('retains all plan creation receipts when a delayed inspection verdict arrives before a legitimate repair', async () => {
   vi.stubEnv('NODE_ENV', 'production');

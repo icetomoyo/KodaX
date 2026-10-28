@@ -65,6 +65,30 @@ it('charges Todo role overrides once and preserves their state transitions', asy
   }
 });
 
+it.each([false, true])('starts Todo once and retains completion verification and recovery (bridge=%s)', async bridged => {
+  const budget: ManagedTaskBudgetController = { totalBudget: 100, spentBudget: 0 };
+  const store = createTodoStore();
+  let checks = 0;
+  const agent = buildRunnerAgentChain({ backups: new Map(), todoStore: store }, undefined, budget,
+    undefined, undefined, undefined, store, undefined, process.cwd(), async () => {
+      checks++;
+      return { hint: 'test', command: 'npm test', status: 'fail', exitCode: 1, stderrTail: 'Verification failed', stdoutTail: '', durationMs: 1 };
+    }).worker;
+  const invoke = (name: string, input: Record<string, unknown>) => agent.tools!.find(t => t.name === (bridged ? 'tool_call' : name))!
+    .execute(bridged ? { name, input } : input, { agent, toolCallId: name });
+  expect(JSON.parse(String((await invoke('todo_create', { subject: 'Verify', status: 'in_progress', evaluator: 'test' })).content))).toEqual({ ok: true, id: 'todo_1' });
+  expect(store.getAll()[0]?.status).toBe('in_progress');
+  expect(checks).toBe(0);
+  expect(JSON.parse(String((await invoke('todo_create', { subject: 'Skip verification', status: 'completed' })).content))).toMatchObject({ ok: false });
+  expect(store.allIds()).toEqual(['todo_1']);
+  const completed = await invoke('todo_update', { id: 'todo_1', status: 'completed' });
+  expect(String(completed.content)).toContain('Verification failed');
+  expect(checks).toBe(1);
+  await invoke('todo_update', { id: 'todo_1', status: 'completed' });
+  expect(checks).toBe(1);
+  expect(budget.spentBudget).toBe(4);
+});
+
 it('keeps one charge and one capability dispatch for run-scoped Host tools', async () => {
   const results: unknown[] = [];
   for (const bridged of [false, true]) {
@@ -152,12 +176,19 @@ it.each([false, true])('keeps permission denial free of target work and permits 
   } finally { unregister(); }
 });
 
-it('does not charge or execute a target cancelled while permission is pending', async () => {
+it.each([false, true])('does not charge or start Todo cancelled while permission is pending (bridge=%s)', async bridged => {
   const abort = new AbortController();
   const budget: ManagedTaskBudgetController = { totalBudget: 100, spentBudget: 0 };
   const events: KodaXEvents = { beforeToolExecute: async () => { abort.abort(); return true; } };
-  const agent = buildRunnerAgentChain({ backups: new Map() }, undefined, budget, undefined, undefined, events).worker;
-  await expect(agent.tools!.find(t => t.name === 'tool_call')!.execute({ name: 'todo_create', input: { subject: 'Never execute' } },
-    { agent, toolCallId: 'cancelled', abortSignal: abort.signal })).rejects.toMatchObject({ name: 'AbortError' });
+  const store = createTodoStore();
+  const agent = buildRunnerAgentChain({ backups: new Map(), todoStore: store }, undefined, budget, undefined, undefined, events).worker;
+  const input = { subject: 'Never execute', status: 'in_progress' };
+  await expect(Runner.run(agent, 'Start the remaining milestone.', {
+    tracer: null, abortSignal: abort.signal,
+    toolObserver: { beforeTool: async call => (await getToolExecutionOverride(events, call.name, call.input, call.id)) ?? true },
+    llm: async () => ({ text: '', toolCalls: [{ id: 'cancelled', name: bridged ? 'tool_call' : 'todo_create',
+      input: bridged ? { name: 'todo_create', input } : input }] }),
+  })).rejects.toMatchObject({ name: 'AbortError' });
   expect(budget.spentBudget).toBe(0);
+  expect(store.hasItems()).toBe(false);
 });

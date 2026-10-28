@@ -1484,13 +1484,18 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'todo_create',
-    description: "Add one pending semantic milestone; preserve existing items. Returns {ok:true,id}; reuse the stable generated id, never supply one. Plan non-trivial work; skip trivial/informational tasks. Resume the existing plan; use todo_list if uncertain to avoid duplicates. Milestones are deliverables, not child Agents; several Agents may support one. This records planned work, not execution. Use the requested language, otherwise the request primary language, for subject/description/activeForm; keep source identifiers, paths, commands and quotes. Inactive store, invalid input or extension veto returns {ok:false,reason}.",
+    description: "Add one semantic milestone; preserve existing items. Returns {ok:true,id}; reuse the stable generated id, never supply one. Plan non-trivial work; skip trivial/informational tasks. Resume the existing plan; use todo_list if uncertain to avoid duplicates. Milestones are deliverables, not child Agents; several Agents may support one. This records planned work, not execution. Use the requested language, otherwise the request primary language, for subject/description/activeForm; keep source identifiers, paths, commands and quotes. Inactive store, invalid input or extension veto returns {ok:false,reason}.",
     input_schema: {
       type: 'object',
       properties: {
         subject: {
           type: 'string',
           description: "Non-empty imperative milestone title shown in the plan row.",
+        },
+        status: {
+          type: 'string',
+          enum: ['pending', 'in_progress'],
+          description: 'Default pending; use in_progress for work starting now, avoiding a separate activation call. Creation never completes work.',
         },
         description: {
           type: 'string',

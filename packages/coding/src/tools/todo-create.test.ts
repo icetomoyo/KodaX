@@ -27,7 +27,7 @@ function makeContextWithStore(
 ): { ctx: KodaXToolExecutionContext; store: ReturnType<typeof createTodoStore> } {
   const store = createTodoStore();
   if (seeds.length > 0) {
-    store.init(seeds.map((s) => ({ id: s.id, subject: s.content })));
+    store.init(seeds.map((s) => ({ id: s.id, subject: s.subject })));
   }
   return {
     ctx: makeContext({ todoStore: store }),
@@ -36,6 +36,18 @@ function makeContextWithStore(
 }
 
 describe('todo_create happy path', () => {
+  it('starts work at creation without a second status mutation or changing existing progress', async () => {
+    const changes: string[][] = [];
+    const store = createTodoStore({ onChange: items => changes.push(items.map(item => item.status)) });
+    const prior = store.add({ subject: 'Earlier work' });
+    store.updateStatus(prior, 'completed');
+    changes.length = 0;
+    const out = await toolTodoCreate({ subject: 'Implement follow-up', status: 'in_progress', evaluator: 'test' }, makeContext({ todoStore: store }));
+    expect(JSON.parse(out)).toEqual({ ok: true, id: 'todo_2' });
+    expect(changes).toEqual([['completed', 'in_progress']]);
+    expect(store.getAll()[1]).toMatchObject({ subject: 'Implement follow-up', status: 'in_progress', evaluator: 'test' });
+  });
+
   it('returns {ok:true, id} and inserts a pending item', async () => {
     const { ctx, store } = makeContextWithStore([
       { id: 'todo_1', subject: 'First' },
@@ -81,6 +93,13 @@ describe('todo_create happy path', () => {
 });
 
 describe('todo_create validation', () => {
+  it.each(['completed', 'failed', 'cancelled', 'skipped', null, 1])('rejects initial status %s without allocating an item', async status => {
+    const { ctx, store } = makeContextWithStore();
+    expect(JSON.parse(await toolTodoCreate({ subject: 'Verify', status }, ctx))).toMatchObject({ ok: false });
+    expect(store.getAll()).toEqual([]);
+    expect(JSON.parse(await toolTodoCreate({ subject: 'Valid work', status: 'pending' }, ctx))).toEqual({ ok: true, id: 'todo_1' });
+  });
+
   it('returns {ok:false} when store is not wired', async () => {
     const ctx = makeContext({ todoStore: undefined });
     const out = await toolTodoCreate({ subject: 'X' }, ctx);
@@ -173,6 +192,21 @@ describe('todo_create extension hook gating', () => {
       await runtime.dispose();
       runtime = null;
     }
+  });
+
+  it('exposes requested initial state to the gate and emits only the admitted final state', async () => {
+    runtime = createExtensionRuntime().activate();
+    const received: string[] = [];
+    runtime.on('todo:created', event => { received.push(event.item.status); });
+    runtime.registerHook('todo:before-create', ({ seed }) => {
+      if (seed.status === 'in_progress' && seed.subject === 'Blocked') return 'not authorized';
+    });
+    const { ctx, store } = makeContextWithStore();
+    expect(JSON.parse(await toolTodoCreate({ subject: 'Blocked', status: 'in_progress' }, ctx))).toEqual({ ok: false, reason: 'not authorized' });
+    expect(store.hasItems()).toBe(false);
+    expect(received).toEqual([]);
+    expect(JSON.parse(await toolTodoCreate({ subject: 'Allowed', status: 'in_progress' }, ctx))).toEqual({ ok: true, id: 'todo_1' });
+    expect(received).toEqual(['in_progress']);
   });
 
   it('returns {ok:false} with the hook-supplied string reason when hook blocks via string', async () => {

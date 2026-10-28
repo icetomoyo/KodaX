@@ -315,6 +315,7 @@ export type TodoMutationSource = 'tool' | 'internal';
  */
 export interface ExtensionTodoCreateSeed {
   readonly subject: string;
+  readonly status?: 'pending' | 'in_progress';
   readonly description?: string;
   readonly activeForm?: string;
   readonly evaluator?: 'build' | 'test' | 'lint';

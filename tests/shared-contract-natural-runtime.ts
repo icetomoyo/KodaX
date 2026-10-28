@@ -76,6 +76,8 @@ function checkNaturalToolPolicy(workspace: string, name: string, input: Record<s
 export interface NaturalRuntimeOptions {
   /** Eval-only controlled feedback revision; admission and production tools are identical. */
   guardFeedback?: 'specific' | 'legacy';
+  /** Offline continuity checks: real user turns in one Session, optionally reopening the host. */
+  followUps?: readonly { prompt: string; permissionMode: 'plan' | 'full-access'; reopen?: boolean }[];
   workMode?: 'agent' | 'coding' | 'script';
   limits?: { calls: number; tools: number; timeoutMs: number };
   signal?: AbortSignal;
@@ -102,6 +104,7 @@ export async function runNaturalRuntime(directory: string, id: NaturalCaseId, in
   const protectedFiles = Object.keys(RECOVERY_FILES).filter(file => !file.startsWith('src/'));
   const original = new Map(await Promise.all(protectedFiles.map(async file => [file, await fs.readFile(path.join(workspace, file), 'utf8')] as const)));
   const events: Record<string, unknown>[] = [];
+  const runs: { sessionId: string; phase: string; requests: number }[] = [];
   const calls: { index: number; kind: 'root' | 'child' | 'auxiliary'; input: FrozenInput; result?: KodaXStreamResult; error?: string; wallMs?: number }[] = [];
   const counts = { requests: 0, rootRequests: 0, childRequests: 0, auxiliaryRequests: 0, tools: 0, scriptLeaves: 0, spawns: 0, maxConcurrentRequests: 0 };
   let concurrent = 0;
@@ -171,21 +174,31 @@ export async function runNaturalRuntime(directory: string, id: NaturalCaseId, in
     runtime = await createKodaXRuntime({ mode: 'embedded', homeDir: path.join(directory, 'home'), defaultProvider: providerName, defaultModel: options.model ?? 'fixture' });
     const session = await runtime.sessions.create({ projectPath: workspace });
     await fs.mkdir(path.join(workspace, '.agent/tmp/sessions', session.id), { recursive: true });
-    await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', executionCwd: workspace });
-    const active = runtime;
-    const handle = await runWithProviderRequestAttribution({ kind: 'actor_turn', actorPath: '/root', turnId: `natural-fixture-${randomUUID()}` }, () => active.runs.start({
-      sessionId: session.id, mode: 'managed_task', prompt: [prepared.priorContext, prepared.prompt].filter(Boolean).join('\n\n'),
-      options: { provider: providerName, model: options.model ?? 'fixture', agentMode: 'ama', workMode: options.workMode ?? 'coding',
-        lsp: false, reasoningMode: options.reasoning ?? 'off', effort: options.effort ?? 'none', maxIter: limits.calls, maxOutputTokens: options.maxOutputTokens ?? 4096, abortSignal: signal, disablePromptCache: true,
-        guardrails: [boundary],
-        learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['eval-isolated'] } }),
-        context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '', skillRegistry: new SkillRegistry(workspace), repoIntelligenceMode: 'off', resolveShellPermissionMode: () => 'full-access' },
-        events: { onToolUseStart: (tool, meta) => { events.push({ kind: 'start', ...tool, meta }); }, onToolResult: (receipt, meta) => { events.push({ kind: 'result', ...receipt, meta }); } },
-      },
-    }));
-    const settled = await handle.result;
-    phase = settled.phase; success = settled.result?.success === true; finalText = settled.result?.lastText ?? '';
-    if (settled.error) error ??= `${settled.error.name}: ${settled.error.message}`;
+    const turns = [{ prompt: [prepared.priorContext, prepared.prompt].filter(Boolean).join('\n\n'), permissionMode: 'full-access' as const, reopen: false }, ...(options.followUps ?? [])];
+    for (const turn of turns) {
+      if (turn.reopen) {
+        await runtime.close();
+        runtime = await createKodaXRuntime({ mode: 'embedded', homeDir: path.join(directory, 'home'), defaultProvider: providerName, defaultModel: options.model ?? 'fixture' });
+      }
+      await runtime.sessions.updateSettings(session.id, { permissionMode: turn.permissionMode, executionCwd: workspace });
+      const startRequests = counts.requests;
+      const active = runtime;
+      const handle = await runWithProviderRequestAttribution({ kind: 'actor_turn', actorPath: '/root', turnId: `natural-fixture-${randomUUID()}` }, () => active.runs.start({
+        sessionId: session.id, mode: 'managed_task', prompt: turn.prompt,
+        options: { provider: providerName, model: options.model ?? 'fixture', agentMode: 'ama', workMode: options.workMode ?? 'coding',
+          lsp: false, reasoningMode: options.reasoning ?? 'off', effort: options.effort ?? 'none', maxIter: limits.calls, maxOutputTokens: options.maxOutputTokens ?? 4096, abortSignal: signal, disablePromptCache: true,
+          guardrails: [boundary],
+          learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['eval-isolated'] } }),
+          context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '', skillRegistry: new SkillRegistry(workspace), repoIntelligenceMode: 'off', resolveShellPermissionMode: () => turn.permissionMode },
+          events: { onToolUseStart: (tool, meta) => { events.push({ kind: 'start', ...tool, meta }); }, onToolResult: (receipt, meta) => { events.push({ kind: 'result', ...receipt, meta }); } },
+        },
+      }));
+      const settled = await handle.result;
+      phase = settled.phase; success = settled.result?.success === true; finalText = settled.result?.lastText ?? '';
+      if (settled.error) error ??= `${settled.error.name}: ${settled.error.message}`;
+      runs.push({ sessionId: session.id, phase: settled.phase, requests: counts.requests - startRequests });
+      if (settled.phase !== 'completed' || error) break;
+    }
   } catch (cause) { error ??= cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause); abort.abort(cause); }
   finally { clearTimeout(timer); try { await runtime?.close(); } finally { unregister(); await snapshot(); } }
   // Only now create and execute the hidden oracle, outside the model workspace.
@@ -197,7 +210,7 @@ export async function runNaturalRuntime(directory: string, id: NaturalCaseId, in
   };
   const protectedUnchanged = (await Promise.all([...original].map(async ([file, bytes]) => await fs.readFile(path.join(workspace, file), 'utf8') === bytes))).every(Boolean);
   const record = { kind: 'natural-runtime-smoke-not-causal-comparison', workMode: options.workMode ?? 'coding', caseId: id,
-    wallMs: Date.now() - started, prepared, success, phase, error, finalText, counts, calls, events, protectedUnchanged,
+    wallMs: Date.now() - started, prepared, success, phase, error, finalText, counts, calls, runs, events, protectedUnchanged,
     sourceSha256: createHash('sha256').update(await fs.readFile(path.join(workspace, 'src/recovery.js'))).digest('hex'),
     verification: { public: execute(workspace, ['--test']), oracle: execute(directory, ['--test', oraclePath], { NATURAL_ORACLE_WORKSPACE: workspace }) } };
   await fs.writeFile(path.join(directory, 'result.json'), JSON.stringify(record, null, 2), { flag: 'wx' });

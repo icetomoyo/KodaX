@@ -10,8 +10,12 @@ const MODE_GUIDANCE: Record<KodaXShellPermissionMode, string> = {
 /** Request-only live authority: never persist a stale mode into conversation history. */
 export function withEffectivePermissionContext(system: string, context: KodaXContextOptions | undefined): string {
   const mode = context?.resolveShellPermissionMode?.();
-  if (mode === undefined) return system;
-  return `${system}\n\n## Effective permissions (host authority)\nCurrent permission mode: ${mode}\n${MODE_GUIDANCE[mode]}\n`
+  const readOnly = context?.permissionIntent?.readOnly === true;
+  if (mode === undefined && !readOnly) return system;
+  const scope = readOnly
+    ? 'Current task scope: read-only. The host mode does not authorize mutation or writable delegation from this task. Continue permitted inspection and report checks requiring broader authority to the caller.'
+    : MODE_GUIDANCE[mode!];
+  return `${system}\n\n## Effective permissions (host authority)\n${mode === undefined ? '' : `Current permission mode: ${mode}\n`}${scope}\n`
     + 'This live host context is authoritative for this request. config.json contains defaults, not the current Session mode. '
     + 'The host may change the mode during a Run; use the fresh context on each request. '
     + 'Explicit forbids, protected Runtime/control files, and native file transaction integrity checks still apply. '

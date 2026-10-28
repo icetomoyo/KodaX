@@ -4,7 +4,7 @@ import type {
   KodaXTaskRoutingDecision,
   KodaXTaskVerificationContract,
 } from '../types.js';
-import { EXECUTION_GUIDANCE } from '../prompts/execution-guidance.js';
+import { EXECUTION_GUIDANCE, PLAN_BATCH_GUIDANCE } from '../prompts/execution-guidance.js';
 // F270 keeps the prompt on the canonical Actor wait/completion vocabulary;
 // the runner may still use its generic wake loop internally.
 
@@ -152,6 +152,7 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
     '- Track each milestone with the todo status contract. Mark exactly ONE item per owner `in_progress` at a time.',
     '- Todo items are user-visible semantic milestones, not Actor instances. Several Agents may support one milestone; create separate items only for genuinely separate deliverables.',
     '- After a milestone is actually finished, update it before starting the next item, calling `wait_agent` again, or writing the final response. Do not defer multiple status changes to final cleanup.',
+    `- ${PLAN_BATCH_GUIDANCE}`,
     '- Replan incrementally: add new milestones with `todo_create` and refine existing items with `todo_update`. Preserve existing progress; delete wholly off-plan items, or cancel them when the discarded record helps the user.',
   ].join('\n');
 

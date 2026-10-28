@@ -57,12 +57,13 @@ export interface TodoInit {
 
 /**
  * FEATURE_170 v0.7.41 — input shape for `add()`. No `id` (auto-generated
- * by the store), no `status` (always created as `pending`).
+ * by the store). Status defaults to `pending`; work starting now may use `in_progress`.
  *
  * v0.7.42 — `content` renamed to `subject` + optional `description`.
  */
 export interface TodoAddSeed {
   readonly subject: string;
+  readonly status?: 'pending' | 'in_progress';
   readonly description?: string;
   readonly activeForm?: string;
   readonly evaluator?: TodoEvaluatorHint;
@@ -152,10 +153,10 @@ export interface TodoStore {
    */
   updateStatus(id: string, status: TodoStatus, note?: string, activeForm?: string): boolean;
   /**
-   * FEATURE_170 v0.7.41 — insert a new pending item with a store-generated
+   * FEATURE_170 v0.7.41 — insert a new item with a store-generated
    * id. Returns the new id. Counter is monotonic across the lifetime of
    * the store (does NOT reuse ids of items deleted via `remove()`).
-   * Status is always `pending`.
+   * Status defaults to `pending`; creation cannot mark work completed.
    */
   add(seed: TodoAddSeed): string;
   /**
@@ -365,7 +366,7 @@ export function createTodoStore(options: TodoStoreOptions = {}): TodoStore {
         id,
         subject: seed.subject,
         description: seed.description,
-        status: 'pending' as TodoStatus,
+        status: seed.status === 'in_progress' ? 'in_progress' : 'pending',
         owner: seed.owner,
         sourceObligationIndex: seed.sourceObligationIndex,
         activeForm: seed.activeForm,

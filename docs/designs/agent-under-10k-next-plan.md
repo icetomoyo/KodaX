@@ -351,3 +351,46 @@ from the late-reminder/feedback changes is not yet measured.
 同版本 GLM 对照的主请求由 13/13 降为 9/10，历史补账回合消失；但不能据此宣布全模型不增轮：DeepSeek 仍有规划与检查开销，Kimi 的子审查能修复遗漏也会增加调用。最终 smoke 的独立检查为 GLM 4/5、Kimi 5/5、DeepSeek 5/5；GLM 的缺失身份问题在旧组合中同样存在。
 
 下一步聚焦已保存轨迹中的拒绝恢复和独立 Todo 回合，区分有价值的审查与空转，不关闭协作换取更少调用。暂不继续首轮精简、不再重跑整个矩阵；新的行为调整应先用已有轨迹做有明确因果的离线或固定上下文验证。一个任务族的两次抽样不代表跨任务的智能非退化证明。
+### 2026-10-27 续验：安全批量推进，不压缩有价值审查
+
+`f2661c2e` 已提交并推送延迟 stall 提示归属修复及 R1/R2 证据。本轮沿用现有调用链，只把“已知 ID 的 Todo 状态更新可与独立工作同轮提交；ID、审批、验证依赖必须等待回执”收拢为两种 Worker 契约共用的一条说明。三模式离线完整编辑/验证/收尾通过；工具菜单、SDK、专用角色和 AMA 策略不变。首轮抓包增加约 78–79 启发式 token，未以删除规则换取下降。
+
+最多 6 次单轮历史检查点补测实际花费 97,133 API token：DeepSeek 开始修复检查点出现合并收益，后续里程碑检查点两版均有保护测试越界尝试；Kimi 拒绝恢复两版仍尝试同效操作，候选改为派可写子 Agent。生产权限上界和 fixture 均能拒绝，离线恢复闭环已补；不据此减少审查、扩大权限或继续堆叠提示。该结果只支持窄范围教学澄清，未证明全任务轮次全面下降。完整数据、非盲评审限制及验证范围见 [原版本对照验收指南](../test-guides/FEATURE_WORK_MODES_ORIGINAL_BASELINE_TEST_GUIDE.md#2026-10-27拒绝恢复与独立-todo-回合的定向续验)。不为本项再跑完整矩阵；后续随实际功能验收观察完整质量与效率。
+
+### 2026-10-27：把优化单位从提示字数提升到完整工作流
+
+本轮原始产品版本对照及窄修复结果见[验收记录 R4/R5](../test-guides/FEATURE_WORK_MODES_ORIGINAL_BASELINE_TEST_GUIDE.md#r4-完整结果产品版本差异不是单条提示的因果试验)。真实修复任务的首轮 API 输入约下降 55%–57%；GLM/Kimi 遗漏相同边界，DeepSeek 当前完成原版未修好的症状。完整请求并非全线减少，审查质量与拒绝恢复仍有缺口。现阶段最优方向是让既有能力更容易正确调用，不再以继续删规则或关闭审查换取短输入。
+
+本地一手源码版本：Pi `136b87e8a7f5a3e5186de0289523ba327dc592fc`，Codex `970111f6cb62cc02fe36a82ea7d71b37a2889c97`，DSH `22ddee3792402c3e70ec5f86a63c3e3e895a2f60`。以下为源码机制对比与工程推论，不是这些项目同任务模型成绩；尚未运行跨产品真实模型对照。
+
+| 借鉴点 | 具体源码证据 | KodaX 取舍 |
+|---|---|---|
+| Pi 扩展能提供规划、交互和子 Agent | `packages/coding-agent/examples/extensions/plan-mode/index.ts` 的 active-tools/拦截；`todo.ts:106–140` 从当前分支 toolResult.details 恢复状态；`questionnaire.ts:396–413`；`subagent/index.ts:458–479` 单个/并行/链式派发 | 可学习按职责装配及权威状态恢复。不能说 Pi 的少量核心 token 已经包含全部扩展成本；示例的 toggle 非幂等、clear 重置 ID，也不能直接替代 KodaX 的稳定 ID、owner、evaluator 和 Actor 生命周期。 |
+| Pi 区分注册、可见和可调用 | `packages/coding-agent/src/core/extensions/types.ts:501–516`：direct/model-only/codemode/deferred/hidden | 对照已有 Agent/Coding/Script 装配边界，保持交互原生、脚本调用复用执行链。不新建第二套路由，不把常用能力藏到发现调用后。 |
+| Codex/DSH 一次写入完整计划及状态 | Codex `codex-rs/core/src/tools/handlers/plan.rs:87–110`、`plan_spec.rs:8–38`；DSH `packages/todo/tool-todo/src/index.ts:120–153,193–208` | 学习消除 create→取得 ID→激活首项的接口依赖；不直接照抄整表替换。DSH 新 turn 会清空计划；KodaX `todo_create.ts:4–15` 的历史明确说明独立创建正是为避免整表初始化擦掉进度。 |
+| DSH 子任务说明与权限范围对齐 | `packages/subagent/subagent/src/child-agent.ts:166–175,220–277` | 已最小修复 KodaX task read-only 与 host full-access 的说明冲突，权限执行不变。不照抄 DSH 固定授权策略覆盖 KodaX 现有实时检查。R5 未证明少轮次，保留为事实纠正。 |
+| 工具返回区分错误来源 | DSH `packages/core/tools/src/contracts.ts:152–164,263–282,348–370`；Pi `packages/agent/src/agent-loop.ts` 的 beforeToolCall block/terminate；KodaX `agent-runtime/tool-result-classify.ts:49–83` 已识别部分 exec-policy 结果 | 复用已有 code、retryable、denialSource；仅在宿主确知来源时补足信息，不建立按英文字符串猜类别的分类器，也不新增自动反复重试。 |
+| 已注册角色可以随工具直接呈现 | Codex `codex-rs/core/src/tools/handlers/multi_agents_spec.rs:28–47,71–97`；DSH `packages/subagent/tool-subagent/src/preset-selection.ts:44–68,87–95` | 先核实 KodaX `list-dispatchable-agents.ts:28–80` 与实际注入是否重复。只有发现真实无益 list 前置才调整，目录必须来自现成 registry，不能增加远程发现延迟。 |
+
+**后续改动计划（待对应验证，不是已经采用）**：
+
+1. **优先简化 Todo 的真实依赖**。先评估在现有创建路径允许首项直接 `in_progress`，以及已有 ID 多项更新能否继续用同响应调用达到同样效果；若足够，不新增大而全 batch 工具。只有确定多项创建/推进仍需模型回合，才做稳定 ID 的增量批量入口。保留旧 SDK、专用角色、hooks、事件及 evaluator，逐项报告部分成功，不靠强制整表替换或事务回滚掩盖已发生的操作。首轮 schema 增量与完整任务节省一起比较。
+2. **对已确认来源的拒绝提供准确回执**。保留原始原因与多模态内容，区分参数可纠正、能力未绑定、权限拒绝、取消和执行失败。未知 hook veto 不推定永久禁止或可以重试；授权变更后允许重新判断。此项可以独立验证，不能承诺结构化标签必然解决模型重试，也不把 R5 的单个越界案例写进专用提示。
+3. **保留协作、收敛选择成本**。有价值的子审查与父级验证继续保留；先查实际请求中已有角色目录及发现成本，再决定是否同源预装简短目录。暂不改 Actor 调度，也不依据 bash/非 bash 与外部项目不同就引入新并发框架，尚无竞态复现。
+4. **补真正连续会话验收**。先用同 Session 两次 `runs.start` 的离线测试验证历史、当前权限、执行回执和计划状态；另测新 Runtime 冷恢复，不把同对象 resume 当持久化。当前仅查明 TodoStore 是 task-scoped in-memory，尚未找到默认冷恢复完整 TodoItem[] 的证明；不得宣称已覆盖或擅自承诺跨 Run 共享。若生产契约本就按任务隔离，测试应验证正确隔离而非强行复用。
+
+验证案例以自然任务与实际回执为准，至少区分三个家族：修复后用户追加相关边界（相关修改才复测）；首次定位后用户要求局部实现（复用仍有效证据但不冒用旧测试结果）；只读审查受限后父级合法验证（拒绝不换工具绕过、也不放弃静态工作）。参数错误可纠正、用户取消需停止、明确授权变化可恢复作为离线反例。既有缺失身份错误只作一项边界，不围绕单个 fixture 定制契约。
+
+实施顺序为一次一个接口候选，先真实 store/hooks/evaluator、权限、取消、预算、原生/桥接/Script 和 SDK 等价测试，再冻结真实生产输入。必要的模型验证只做受影响的有限连续会话配对，复用未改基线，不重跑全矩阵；完整任务记录 root/child/aux、用户轮与模型轮、已知 usage/未知预留、费用、延迟、最终补丁和报告准确性。新增调用必须区分实际质量收益与可避免空转；候选有可信质量退化或固定额外发现回合则不默认采用。尚未预注册新付费实验，本计划不是开放预算或已经证明的非退化结果。
+
+### 2026-10-27：Todo 初始状态与连续会话的离线落实
+
+已落实计划第 1 项的最小接口改良：`todo_create` 增加可选 `status: pending | in_progress`，省略仍为 pending。创建时可直接开始工作，无需先取得 ID 再额外激活；已有 ID 的独立更新继续用同一响应，无新 batch 工具、路由或配置。创建终态会拒绝且不分配 ID，完成仍走 todo_update 的原有钩子和 evaluator。新增状态进入 before-create seed 和 created 事件，一次创建只发布一次最终状态，原有进度不被整表替换。SDK/专用角色使用同一兼容参数，旧默认、AMA 和 Coding 默认不变。
+
+补充了三模式实际 Runtime 的三个连续用户 Run：修改 → Plan 下静态审查 → 关闭并重开 Runtime 后运行真实测试。同一 Session 历史与执行回执保留，新任务 TodoStore 为空，这是现有 task-scoped 契约；没有引入跨 Run Todo 持久化。此处冷恢复是已结束 Run 后继续同一 Session，不是崩溃中断任务恢复。模型响应由离线回调预设，不证明真实模型会自主使用新参数、少轮次或质量不下降。
+
+实际 32 格 SDK 抓包与修改前相比，只有 todo_create 的可选 status schema 和去掉“仅 pending”的一句说明变化；其他工具菜单、参数、消息、system、controls 完全一致。三模式完整 Host 输入同口径约增加 48 个估算 token（OpenAI Agent 10,818→10,866；Coding 14,449→14,497；Script 16,319→16,367）。这是完整工作流优化的接口成本，不是首轮精简成果，不把潜在少一次工具调用等同于实际少一次模型往返。
+
+原生/桥接预算与完成检查、取消、创建 hook 否决和既有调用兼容均有离线覆盖。生产改动先 RED→GREEN，类型检查与 workspace 构建通过；覆盖率与最终测试证据见验收指南。本轮无付费模型调用。
+
+下一批仍按原顺序：从已有错误来源审计回执，不靠模型猜错误类别；角色目录只在发现真实重复成本时改。连续会话机制已有离线证据，真实模型的连续用户任务表现与完整质量/轮次仍需独立有限配对。暂不同时引入批量 Todo、更大协作改造或继续削减教学。
