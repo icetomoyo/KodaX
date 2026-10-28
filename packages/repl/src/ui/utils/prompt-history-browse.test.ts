@@ -86,17 +86,65 @@ describe('ordinary saved history browsing', () => {
     expect(readHistoryEntry).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects changed revisions and ambiguous sources without returning a mixed window', async () => {
+  it.each(['revision', 'resync_required'])('resyncs %s around the visible source without mixing windows', async mode => {
+    const anchor = { source: 'tool:call-2', character: -1, screenRow: 0 };
+    const previous = await readPromptBrowseWindow({ readHistory: async () => ({
+      revision: 'r1', oversized: [], items: [tool(2)], nextCursor: 'older',
+    }) }, 's', anchor);
+    const readHistory = vi.fn(async (_session: string, options?: { cursor?: string }) => ({
+      revision: 'r2', oversized: [], items: [tool(2), tool(3)],
+      ...(options?.cursor ? {} : { nextCursor: 'older-r2' }),
+    }));
+    if (mode === 'resync_required') readHistory.mockRejectedValueOnce(
+      Object.assign(new Error('The saved cursor is stale.'), { code: 'resync_required' }));
+    const next = await readPromptBrowseWindow({ readHistory }, 's', anchor, previous);
+    expect(next.revision).toBe('r2');
+    expect(next.items).toMatchObject([
+      { tools: [{ id: 'call-2' }] }, { tools: [{ id: 'call-3' }] },
+    ]);
+    expect(readHistory).toHaveBeenCalledTimes(2);
+    expect(readHistory.mock.calls[1]?.[1]?.cursor).toBeUndefined();
+  });
+
+  it('rejects missing or ambiguous sources without returning a mixed window', async () => {
     const anchor = { source: 'tool:call-2', character: 0, screenRow: 0 };
     const first = await readPromptBrowseWindow({ readHistory: async () => ({
       revision: 'r1', oversized: [], items: [tool(2)], nextCursor: 'older',
     }) }, 's', anchor);
     await expect(readPromptBrowseWindow({ readHistory: async () => ({
       revision: 'r2', oversized: [], items: [tool(1)],
-    }) }, 's', anchor, first)).rejects.toThrow('changed');
+    }) }, 's', anchor, first)).rejects.toThrow('unavailable');
     await expect(readPromptBrowseWindow({ readHistory: async () => ({
       revision: 'r1', oversized: [], items: [tool(2), { ...tool(2), id: 'ambiguous' }],
     }) }, 's', anchor)).rejects.toThrow('unavailable');
+  });
+
+  it('relocates a stale cursor more than four pages from live while retaining the window budget', async () => {
+    const source = Array.from({ length: 400 }, (_, index) => tool(index));
+    let revision = 'r1';
+    const readHistory = async (_session: string, options?: { cursor?: string }) => {
+      if (options?.cursor && !options.cursor.startsWith(revision)) {
+        throw Object.assign(new Error('Stale cursor'), { code: 'resync_required' });
+      }
+      const end = options?.cursor ? Number(options.cursor.split(':')[1]) : source.length;
+      const start = Math.max(0, end - 40);
+      return { revision, oversized: [], items: source.slice(start, end),
+        ...(start ? { nextCursor: `${revision}:${start}` } : {}) };
+    };
+    let window = await readPromptBrowseWindow({ readHistory }, 's',
+      { source: 'tool:call-399', character: -1, screenRow: 0 });
+    for (let count = 0; count < 9; count++) {
+      const anchor = capturePromptBrowseAnchor(window.items, renderRows(window.items), 0)!;
+      window = await readPromptBrowseWindow({ readHistory }, 's', anchor, window);
+    }
+    const anchor = capturePromptBrowseAnchor(window.items, renderRows(window.items), 0)!;
+    revision = 'r2';
+    const next = await readPromptBrowseWindow({ readHistory }, 's', anchor, window, undefined, 'newer');
+    expect(next.revision).toBe('r2');
+    expect(next.pages).toHaveLength(4);
+    expect(next.items).toHaveLength(160);
+    expect(resolvePromptBrowseAnchor(next.items, renderRows(next.items), anchor)).toBe(0);
+    expect(next.items.at(-1)).toMatchObject({ tools: [{ id: 'call-159' }] });
   });
 
   it('does not let an oversized entry prevent browsing earlier entries', async () => {
@@ -145,7 +193,7 @@ describe('ordinary saved history browsing', () => {
     expect(window.items[0]).toMatchObject({ tools: [{ id: 'call-120' }] });
     expect(window.newerCursors).toHaveLength(1);
     await expect(readPromptBrowseWindow({ readHistory: async () => ({ revision: 'changed', oversized: [], items: [] }) },
-      's', anchor, window, undefined, 'newer')).rejects.toThrow('changed');
+      's', anchor, window, undefined, 'newer')).rejects.toThrow('unavailable');
     expect(window.items[0]).toMatchObject({ tools: [{ id: 'call-120' }] });
   });
 

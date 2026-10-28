@@ -1124,6 +1124,29 @@ async function checkStreamingPromptScroll(state) {
     await writeFile(path.join(artifacts, `${state.mode}-streaming-scroll-frames.json`), JSON.stringify(frames, null, 2));
   }
   await waitFor('streaming scroll round settlement', () => state.view.runs.every(run => run.phase === 'completed'));
+  for (let tick = 0; tick < 300; tick += 1) {
+    state.terminal.child.write('\x1b[<65;20;8M');
+    await delay(35);
+    if (state.terminal.screen().includes('LATE_AFTER_FREEZE_MARKER')) break;
+  }
+  await state.terminal.save('streaming-scroll-wheel-return');
+  await waitFor('long saved history wheel returns to live without End', () =>
+    state.terminal.screen().includes('LATE_AFTER_FREEZE_MARKER'), 1500);
+  assert.ok(!state.terminal.screen().includes('Queue a follow-up'), 'A settled Run must restore the idle prompt');
+  for (let tick = 0; tick < 240; tick += 1) {
+    state.terminal.child.write('\x1b[<64;20;8M');
+    await delay(35);
+    if (state.terminal.screen().includes('SAVED_QUERY_0')) break;
+  }
+  assert.ok(state.terminal.screen().includes('SAVED_QUERY_0'), 'Idle history must remain reachable');
+  for (let tick = 0; tick < 300; tick += 1) {
+    state.terminal.child.write('\x1b[<65;20;8M');
+    await delay(35);
+    if (state.terminal.screen().includes('LATE_AFTER_FREEZE_MARKER')) break;
+  }
+  await state.terminal.save('idle-scroll-wheel-return');
+  assert.ok(state.terminal.screen().includes('LATE_AFTER_FREEZE_MARKER'),
+    'Idle long history must return to live with only the mouse wheel');
   await state.terminal.type('\x1b[F');
   assert.equal(received(state, 'ACCEPT_HOLD_TRANSCRIPT').length, 1, 'Browsing must not resubmit the input');
 }

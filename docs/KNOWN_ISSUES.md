@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-10-21_
+_Last Updated: 2026-10-28_
 
 ---
 
@@ -26,6 +26,78 @@ documentation update.
 Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
+
+## Issue 371: Intermittent slow shared Host startup and first Session read
+
+- Priority: Medium
+- Status: Open
+- Introduced: observed in v0.7.97-alpha.10 at `ec442c75`; first affected version unknown
+- Created: 2026-10-28
+- Fixed: —
+
+### Original Problem
+
+Two concurrent `kodax -r` launchers in different directories exceeded 30 seconds.
+On Windows, the shared Host process began at 22:33:33.074 and logged ready at
+22:34:22.291 (Asia/Shanghai), approximately 49.2 seconds later. A subsequent
+read-only SDK attachment took 615 ms and its first selected Session read took
+16,011 ms. No exception or causal connection to the preceding merge was established.
+
+### Diagnosis and remaining evidence
+
+The delay is not currently reproducible: subsequent existing-Host views took
+4–7 ms, direct strict storage reads took 19–27 ms, an empty isolated Host started
+in 1,536 ms, and an isolated Host with 1,191 copied child-record shapes started
+in 1,940 ms. The copied records had a live probe owner with unknown start identity
+and a verified absent child PID; this exercises registry traversal without
+authorizing cleanup of user processes, **not** the original stale-tree recovery.
+Read-only Windows identity probes took 187 ms (targeted) and 305 ms (shared snapshot).
+These measurements do not explain or resolve the original cold-start delay.
+Per-phase duration evidence from an affected startup is still needed; the existing
+bootstrap phase records have no timestamps. Do not remove recovery fences, clear
+the user's process registry, or force-replace a working Host to mask the delay.
+
+The separate post-answer example is not verifier execution: the persisted last
+answer timestamp is 22:38:58.698, `memory_outcome_digest` is 22:39:10.105, and Run
+terminal is 22:39:13.749. The substrate awaits memory completion/persistence and
+other finalization work; a generic Worker timer does not identify that stage.
+The timestamps establish the approximately 15-second finalization interval,
+not a breakdown attributing every second to memory or a guarantee that the UI
+never retains an older status. Sidecar Verifier retirement remains as specified
+in ADR's v0.7.97-alpha.4 addendum.
+
+## Issue 370: Long history wheel navigation cannot return after a saved revision changes
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: observed in v0.7.97-alpha.10 at `ec442c75`; first affected version unknown
+- Created / Resolved: 2026-10-28
+- Fixed: post-v0.7.97-alpha.10 working tree (unreleased)
+
+### Original Problem
+
+After scrolling upward across saved-history pages while a Run was active,
+scrolling downward stopped at an intermediate boundary. End returned to live
+output. The problem persisted after the Run completed and saved a new revision.
+
+### Resolution
+
+The bounded browse window retained cursors from its captured revision. Reading
+an evicted newer page after persistence either returned a different revision
+(including a cursor-less newest page) or rejected with `resync_required`;
+repeating wheel input retried the same stale window indefinitely.
+On either stale boundary, rebuild one consistent saved window around the same
+source anchor. Never combine revisions. Resync retains the existing 4-page,
+800-item, 2 MB window budget and 15-second gesture deadline, and searches at most
+128 pages. Missing/ambiguous sources and concurrent changes during resync still
+fail without replacing the captured content; End remains available.
+
+Files: `packages/repl/src/ui/utils/prompt-history-browse.ts` and its adjacent tests;
+`tests/repl-pty-acceptance.mjs`. Unit regressions cover changed revisions, stale
+cursors, missing sources, cancellation and paging. The Windows PTY regression
+first failed after 300 downward wheel events, then passed after the fix with
+continued output, Run settlement, and a second idle-history browse. See
+[regression evidence](test-guides/ISSUE_370_v0.7.97_REGRESSION_GUIDE.md).
 
 ## Issue 369: Concurrent resume launchers fail while refreshing an older Host
 
@@ -1871,6 +1943,8 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 371 | Medium | Open | Intermittent slow shared Host startup and first Session read | observed in v0.7.97-alpha.10; first affected version unknown | — | 2026-10-28 | — |
+| 370 | Medium | Resolved | Long history wheel navigation cannot return after a saved revision changes | observed in v0.7.97-alpha.10; first affected version unknown | post-alpha.10 working tree (unreleased) | 2026-10-28 | 2026-10-28 |
 | 369 | High | Resolved | Concurrent resume launchers fail while refreshing an older Host | observed in v0.7.97-alpha.5; first affected version unknown | `v0.7.97-alpha.6` | 2026-10-15 | 2026-10-15 |
 | 368 | Medium | Resolved | Unsubmitted REPL Sessions leave empty persisted history | v0.7.97-alpha.1; Host migration commits 3301a452 / 0914f589 | `v0.7.97-alpha.6` | 2026-10-14 | 2026-10-14 |
 | 367 | Medium | Resolved | Daemon preflight repeatedly scans during an in-flight mutation | observed in v0.7.97-alpha.4; first affected version unknown | `v0.7.97-alpha.5` | 2026-10-13 | 2026-10-13 |
@@ -16731,7 +16805,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 248 (36 Open, 212 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 250 (37 Open, 213 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
