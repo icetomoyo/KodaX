@@ -580,6 +580,11 @@ async function toolBashInHome(input: Record<string, unknown>, ctx: KodaXToolExec
     observationReason?: 'not_ready' | 'prepare_failed' | 'backend_failed',
   ): Promise<string> => {
     if (ctx.abortSignal?.aborted) return cancelledCommandResult(command);
+    if (reason !== 'direct-host' && diagnostic !== undefined) {
+      emitKodaXDiagnostic({ source: 'coding:bash', level: 'warn',
+        message: 'Sandbox target did not start; requesting host-boundary authorization.',
+        detail: { reason, diagnostic, toolCallId: ctx.toolCallId, runtimeRunId: ctx.runtimeRunId } });
+    }
     const authorize = ctx.authorizeShellHostExecution;
     if (authorize === undefined) {
       return reason === 'direct-host'

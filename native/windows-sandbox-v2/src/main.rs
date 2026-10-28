@@ -19,6 +19,16 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use sha2::{Digest, Sha256};
 
 #[cfg(windows)]
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct VerifyAccountCapabilitiesRequest {
+    sandbox_sid: String,
+    sandbox_group_sid: String,
+    filesystem_capability_nonce: String,
+    read_roots: Vec<String>,
+}
+
+#[cfg(windows)]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SetupAccountCapabilitiesRequest {
@@ -324,6 +334,31 @@ fn run() -> anyhow::Result<u32> {
                 )?,
                 "Setup account capability marker changed during ACL preparation",
             );
+            Ok(0)
+        }
+        "__verify-account-capabilities" => {
+            use std::io::Read;
+            ensure!(
+                args.next().is_none(),
+                "Capability verification accepts only stdin"
+            );
+            let request: VerifyAccountCapabilitiesRequest =
+                serde_json::from_reader(std::io::stdin().take(1024 * 1024 + 1))
+                    .context("decode setup capability verification")?;
+            ensure!(
+                request.read_roots.len() <= 1024,
+                "Too many setup read roots"
+            );
+            ensure!(
+                uuid::Uuid::parse_str(&request.filesystem_capability_nonce)?.get_version_num() == 4,
+                "Invalid filesystem capability nonce"
+            );
+            acl::verify_setup_read_capabilities(
+                &request.read_roots,
+                &request.sandbox_sid,
+                &request.sandbox_group_sid,
+                &request.filesystem_capability_nonce,
+            )?;
             Ok(0)
         }
         "__verify-null-device" => {

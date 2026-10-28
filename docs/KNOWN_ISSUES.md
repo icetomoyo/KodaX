@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-10-28_
+_Last Updated: 2026-10-29_
 
 ---
 
@@ -26,6 +26,67 @@ documentation update.
 Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
+
+## Issue 372: Windows setup readiness misses filesystem capability failures seen by a console Host
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: observed in v0.7.97-alpha.10; first affected version unknown
+- Created / Resolved: 2026-10-29 (original incident 2026-10-28)
+- Fixed: post-v0.7.97-alpha.10 working tree (unreleased)
+
+### Original Problem
+
+The console Session's six Bash calls recorded `fallback / backend_failed`;
+another Session on the same Host recorded 137 such calls. Commands ran as the
+ordinary host account after permission approval. This was pre-start fallback,
+not evidence that an attested sandbox target later escaped. A doctor/identity
+probe launched from the coding tool environment passed, while the existing
+console Host's identity probe returned the host account.
+
+### Confirmed cause and evidence limits
+
+Replaying the same source Bash path under the existing Host's inherited
+environment, with host fallback denied, repeatedly captured
+`windows_v2_setup_required`: the setup-owned filesystem capability ACE set
+was incomplete at `C:\Users\ADMIN\AppData`. The deny-write capability ACE and
+write capability ACE were missing there. The account, NUL device and marker
+checks still passed, so the interactive startup shortcut incorrectly skipped
+setup. Existing doctor readiness also omitted this filesystem verification.
+
+Targeted native probes observed different NTFS file IDs for that same logical
+AppData path in the coding tool process and the console Host process, on the
+same volume. The request policies, filesystem capability nonce, native image
+and setup marker matched. Therefore tool-environment success did not verify
+the filesystem object used by the console Host. The mechanism producing the
+different path views, and the historical operation that first caused their
+ACL divergence, were not established; do not label it MSIX redirection or a
+merge regression without further evidence. A separate transient read also
+hit a test directory removed between policy preparation and native startup.
+
+### Resolution
+
+Interactive setup-current and doctor checks now perform a bounded read-only
+native verification of existing setup read roots, using the same capability
+schema and ACL checks as command admission. Missing or unsafe capabilities
+report the failing path and enter the existing explicit/interactive setup
+boundary. Verification does not install ACLs, elevate, rotate accounts or
+relax permission fallback. Pre-start Bash failures now retain their cause and
+Run/tool identity in the diagnostic sink before host authorization.
+
+The real console context was repaired through official setup. The first
+attempt, invoked through Bash, hit its 300-second hard limit and left the
+protected marker in `installing`; the failed attempt was not counted as repair.
+Official setup then completed in an independent Windows Terminal process at
+2026-10-29 00:07:30 (Asia/Shanghai). Doctor became ready; host-fallback-disabled
+source Bash returned `srt-sandbox`; and the original existing Host passed
+public SDK identity acceptance for both reported workspaces concurrently.
+Sandbox account SID, group SID and filesystem capability nonce were unchanged.
+The marker was confirmed no longer installing. No user Host was force-replaced.
+
+See [regression guide](test-guides/ISSUE_372_v0.7.97_REGRESSION_GUIDE.md) for the
+readiness/repair regression, native non-mutation proof and existing-Host
+acceptance. Issue 371's intermittent startup delay remains separately open.
 
 ## Issue 371: Intermittent slow shared Host startup and first Session read
 
@@ -1943,6 +2004,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 372 | Medium | Resolved | Windows setup readiness misses filesystem capability failures seen by a console Host | observed in v0.7.97-alpha.10; first affected version unknown | post-alpha.10 working tree (unreleased) | 2026-10-29 | 2026-10-29 |
 | 371 | Medium | Open | Intermittent slow shared Host startup and first Session read | observed in v0.7.97-alpha.10; first affected version unknown | — | 2026-10-28 | — |
 | 370 | Medium | Resolved | Long history wheel navigation cannot return after a saved revision changes | observed in v0.7.97-alpha.10; first affected version unknown | post-alpha.10 working tree (unreleased) | 2026-10-28 | 2026-10-28 |
 | 369 | High | Resolved | Concurrent resume launchers fail while refreshing an older Host | observed in v0.7.97-alpha.5; first affected version unknown | `v0.7.97-alpha.6` | 2026-10-15 | 2026-10-15 |
@@ -16805,7 +16867,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 250 (37 Open, 213 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 251 (37 Open, 214 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md

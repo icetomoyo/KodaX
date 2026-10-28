@@ -1270,8 +1270,9 @@ function readWindowsSandboxV2CutoverMarker(): WindowsSandboxV2CutoverMarker | un
 
 /**
  * Read-only interactive-startup check. The durable setup marker survives a
- * reboot, but the NUL device's account ACE does not. Verify both before skipping
- * setup; command admission still performs the complete sandbox verification.
+ * reboot, but device/profile ACLs can differ from the recorded setup. Verify
+ * NUL and setup filesystem capabilities in this process's view before skipping
+ * setup; command admission still performs its own complete verification.
  */
 export function isWindowsSandboxV2SetupCurrent(): boolean {
   if (process.platform !== 'win32') return true;
@@ -1279,7 +1280,7 @@ export function isWindowsSandboxV2SetupCurrent(): boolean {
     const marker = readWindowsSandboxV2CutoverMarker();
     if (marker === undefined) return false;
     const artifact = resolveWindowsSandboxV2Executable({ provision: false });
-    verifyWindowsV2AccountCompatibility(marker.sandboxUserSid, artifact.path);
+    verifyWindowsV2AccountCompatibility(marker, artifact.path);
     return true;
   } catch {
     return false;
@@ -2340,7 +2341,7 @@ async function inspectSandboxRuntime(): Promise<SandboxRuntimeDoctorResult> {
         verifyWindowsSandboxControlDirectory();
         try {
           cachedWindowsSandboxV2Cutover = assertWindowsSandboxV2Cutover(user);
-          verifyWindowsV2AccountCompatibility(user.sid, controller.path);
+          verifyWindowsV2AccountCompatibility(cachedWindowsSandboxV2Cutover, controller.path);
           await verifyPreparedWindowsWfp(runner);
         } catch (error: unknown) {
           setupRequired = true;
@@ -2512,12 +2513,12 @@ function pendingWindowsSshAclCleanup(
 }
 
 function verifyWindowsV2AccountCompatibility(
-  sandboxSid: string,
+  marker: WindowsSandboxV2CutoverMarker,
   executable: string,
 ): void {
   const result = spawnSync(
     executable,
-    ['__verify-null-device', sandboxSid],
+    ['__verify-null-device', marker.sandboxUserSid],
     {
       env: sanitizedEnvironment(),
       encoding: 'utf8',
@@ -2531,6 +2532,20 @@ function verifyWindowsV2AccountCompatibility(
     throw windowsSandboxV2CutoverError(
       `The sandbox account NUL-device compatibility ACE is missing or unsafe: ${reason}`,
     );
+  }
+  const home = path.resolve(process.env.USERPROFILE ?? os.homedir());
+  const readRoots = existingMinimalWindowsAclGuardRoots(windowsSandboxAclRoots(
+    marker.setupReadRoots, home, windowsSandboxAclExclusions(home),
+  ));
+  if (readRoots.length === 0) return;
+  const readProof = spawnSync(executable, ['__verify-account-capabilities'], {
+    env: sanitizedEnvironment(), encoding: 'utf8', shell: false, windowsHide: true, timeout: 5_000,
+    input: JSON.stringify({ sandboxSid: marker.sandboxUserSid, sandboxGroupSid: marker.sandboxGroupSid,
+      filesystemCapabilityNonce: marker.filesystemCapabilityNonce, readRoots }),
+  });
+  if (readProof.error !== undefined || readProof.status !== 0) {
+    const reason = readProof.error?.message ?? (readProof.stderr.trim() || `exit ${String(readProof.status)}`);
+    throw new Error(`Windows sandbox setup filesystem capabilities are missing or unsafe: ${reason}`);
   }
 }
 

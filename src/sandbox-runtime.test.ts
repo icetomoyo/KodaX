@@ -206,6 +206,7 @@ const windowsSandboxMock = vi.hoisted(() => ({
   hostUserSid: 'S-1-5-21-9000',
   runnerSource: '',
   nullDeviceReady: true,
+  readCapabilitiesReady: true,
   deleteArtifactDuringControlVerification: undefined as string | undefined,
   wfpOutcome: 'blocked' as 'blocked' | 'connected' | 'access_denied' | 'timeout',
   aclRecoveryOutcome: 'success' as 'success' | 'failure' | 'malformed',
@@ -351,6 +352,10 @@ vi.mock('node:child_process', async (importOriginal) => {
             ? ''
             : 'missing exact sandbox-account ACE or executable',
         };
+      }
+      if (args.length === 1 && args[0] === '__verify-account-capabilities') {
+        return { status: windowsSandboxMock.readCapabilitiesReady ? 0 : 2, signal: null, stdout: '',
+          stderr: windowsSandboxMock.readCapabilitiesReady ? '' : 'Missing setup read capability at AppData' };
       }
       if (args.length === 2 && args[0] === '__recover-execution-denies') {
         return {
@@ -1551,6 +1556,7 @@ afterEach(async () => {
   sandboxInitialize.mockResolvedValue();
   windowsSandboxMock.runnerSource = '';
   windowsSandboxMock.nullDeviceReady = true;
+  windowsSandboxMock.readCapabilitiesReady = true;
   windowsSandboxMock.deleteArtifactDuringControlVerification = undefined;
   windowsSandboxMock.wfpOutcome = 'blocked';
   windowsSandboxMock.aclRecoveryOutcome = 'success';
@@ -4162,6 +4168,30 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       diagnostic: expect.stringContaining('denyRead is unsupported'),
     });
     expect(capturedBrokerRequests).toHaveLength(brokerRequestCount);
+  });
+
+  it('rejects startup and doctor readiness when setup read capabilities are missing despite a healthy account and NUL', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-missing-read-capability-'));
+    tempRoots.push(root);
+    const marker = JSON.parse(await readFile(cutoverMarkerFile(), 'utf8')) as Record<string, unknown>;
+    await writeFile(cutoverMarkerFile(), JSON.stringify({ ...marker, setupReadRoots: [root] }));
+    windowsSandboxMock.readCapabilitiesReady = false;
+    expect(isWindowsSandboxV2SetupCurrent()).toBe(false);
+    await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({
+      ready: false, setupRequired: true,
+      diagnostics: expect.arrayContaining([expect.stringContaining('Missing setup read capability')]),
+    });
+    expect(windowsSandboxMock.installCalls).toBe(0);
+    expect(windowsSandboxMock.uninstallCalls).toBe(0);
+    const accountSid = windowsSandboxMock.user.sid;
+    const restore = overrideWindowsSetupCapabilityInstallerForTest(() => {
+      windowsSandboxMock.readCapabilitiesReady = true;
+    });
+    try {
+      await expect(prepareSandboxRuntimeForSetup()).resolves.toMatchObject({ status: 'ready', attempted: true });
+      expect(windowsSandboxMock.user.sid).toBe(accountSid);
+      expect(windowsSandboxMock.uninstallCalls).toBe(0);
+    } finally { restore(); }
   });
 
   it('reinstalls a missing NUL compatibility ACE without rotating the current v2 account', async () => {

@@ -2,7 +2,7 @@ import { ChildProcess, spawnSync } from 'node:child_process';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { cleanupRegisteredManagedChildren, setAgentConfigHome } from '@kodax-ai/agent';
+import { cleanupRegisteredManagedChildren, setAgentConfigHome, setKodaXDiagnosticSink, type KodaXDiagnostic } from '@kodax-ai/agent';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { KodaXShellSandbox, KodaXToolExecutionContext } from '../types.js';
 import { toolBash } from './bash.js';
@@ -776,6 +776,25 @@ describe('toolBash', () => {
 
     expect(result).toContain('[Denied] reviewer refused host execution');
     expect(result).not.toContain('declined sandbox fallback completed');
+  });
+
+  it('retains the sandbox pre-start cause even when host fallback is denied', async () => {
+    const diagnostics: KodaXDiagnostic[] = [];
+    const restore = setKodaXDiagnosticSink(diagnostic => diagnostics.push(diagnostic));
+    try {
+      const result = await toolBash({ command: nodeOutputCommand('must not run') }, {
+        backups: new Map(), toolCallId: 'sandbox-pre-start-diagnostic',
+        shellSandbox: { prepare: async () => ({ executable: process.execPath,
+          args: ['-e', 'process.exit(1)'], env: process.env,
+          cleanup: async () => ({ version: 1 as const, state: 'pre_start_unavailable' as const,
+            diagnostic: 'Setup capability missing at AppData' }) }) },
+        authorizeShellHostExecution: async () => false,
+      });
+      expect(result).toContain('Host execution was not authorized');
+      expect(diagnostics).toContainEqual(expect.objectContaining({ source: 'coding:bash', level: 'warn',
+        detail: expect.objectContaining({ toolCallId: 'sandbox-pre-start-diagnostic',
+          reason: 'sandbox_unavailable', diagnostic: 'Setup capability missing at AppData' }) }));
+    } finally { restore(); }
   });
 
   it('retries on the host once when sandbox cleanup proves the target never started', async () => {
