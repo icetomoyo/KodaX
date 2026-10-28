@@ -7106,6 +7106,26 @@ current display; `readItem` expands display references, while `readHistory`,
 readable references. A display preview is not the full
 message. The Runtime-to-product adapter is internal and is not an SDK export.
 
+Task reports are neutral `event` items with `taskResult` metadata in both live
+views and history. Its `source` is `child_task` or `workflow`; optional `taskId`,
+`runId`, `title` and `artifactRefs` retain known task facts. `status` is
+`completed`, `failed`, `cancelled` or `unknown`. A child failure/cancellation is
+independent of the root Run's phase and `failureDetail`.
+
+`taskResult.reportFormat` is `markdown`; the body lives in `item.text`, expanded
+through existing `readItem`/`readHistoryEntry` methods when bounded. Canonical
+metadata bodies retain code fences, whitespace and literal entities. Only old
+messages with an explicit task-delivery source have their envelope removed and
+transport escapes decoded once. Missing status remains unknown; prose such as
+`failed:` and a `<task-completed>` tag alone do not establish terminal state.
+The known legacy Actor `state="interrupted"` maps to cancellation. Mixed old/new
+deliveries retain unmatched old envelopes at their proven neighboring boundary;
+budgeted model-only fragments never reorder authoritative metadata.
+An old mailbox delivery ID is not an Actor Turn ID. The raw canonical message
+is preserved. Report order follows canonical delivery order; matching text does
+not merge different tasks. Existing per-surface item-ID boundaries still apply.
+This adds no pagination operation.
+
 Keep an input's original text, artifacts and `inputId` until its outcome is
 known. After a lost response, query that same Host with `inputs.read`; only a
 confirmed withdrawal returns a queued input to the editor. A replacement Host

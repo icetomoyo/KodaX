@@ -9,6 +9,7 @@ import type {
   KodaXSessionUiToolCallStatus,
 } from "@kodax-ai/agent";
 import { ToolCallStatus, type CreatableHistoryItem, type ToolCall } from "../types.js";
+import { readTaskResultReports, type KodaXTaskResultMetadata, type KodaXTaskResultReport } from '@kodax-ai/agent';
 import {
   sanitizeToolInput,
   stringifyToolReplayValue,
@@ -22,6 +23,7 @@ export type RestoredHistorySeed = (
   | { type: "thinking"; text: string }
   | { type: "sidecar"; text: string; verdict?: "revise" | "blocked" }
   | { type: "task_completed"; text: string }
+  | { type: 'task_result'; text: string; taskResult: KodaXTaskResultReport }
   | { type: "tool_summary"; text: string }
   | { type: "tool_group"; tools: KodaXSessionUiToolCall[] }
 ) & { timestamp?: number; outputId?: string };
@@ -30,11 +32,16 @@ export type RestoredHistorySeed = (
 export function seedToHistoryItem(
   seed: RestoredHistorySeed,
 ): CreatableHistoryItem {
+  if (seed.type === 'task_result') {
+    const { summary, ...taskResult } = seed.taskResult;
+    return { type: 'event', text: summary, taskResult,
+      ...(seed.timestamp === undefined ? {} : { timestamp: seed.timestamp }) };
+  }
   if (seed.type === "tool_summary" || seed.type === "task_completed") {
     return {
       type: "event" as const,
       text: seed.text,
-      icon: "tool",
+      icon: 'tool',
       ...(seed.timestamp === undefined ? {} : { timestamp: seed.timestamp }),
     };
   }
@@ -249,7 +256,7 @@ function extractAssistantTextOnly(content: string | readonly unknown[]): string 
 
 function pushSeed(
   items: RestoredHistorySeed[],
-  type: Exclude<RestoredHistorySeed["type"], "tool_group">,
+  type: Exclude<RestoredHistorySeed["type"], "tool_group" | 'task_result'>,
   text: string
 ): void {
   if (text.trim().length === 0) {
@@ -414,6 +421,8 @@ function extractAssistantHistorySeeds(
  * Minimal message shape required to restore UI history items.
  */
 export interface HistorySeedSourceMessage {
+  _taskResult?: KodaXTaskResultMetadata;
+  _taskResults?: KodaXTaskResultMetadata[];
   outputId?: string;
   inputId?: string;
   role: KodaXMessage["role"];
@@ -530,6 +539,7 @@ export function extractHistorySeedsFromMessage(
 
 export function extractHistorySeedsFromMessages(
   messages: readonly HistorySeedSourceMessage[],
+  structuredTaskResults = false,
 ): RestoredHistorySeed[] {
   const seeds: RestoredHistorySeed[] = [];
 
@@ -537,6 +547,14 @@ export function extractHistorySeedsFromMessages(
     const message = messages[index];
     if (!message) {
       continue;
+    }
+    if (structuredTaskResults) {
+      const reports = readTaskResultReports(message);
+      if (reports.length > 0) {
+        seeds.push(...withMessageTimestamp(reports.map(taskResult => ({ type: 'task_result' as const,
+          text: taskResult.summary, taskResult })), message.timestamp));
+        continue;
+      }
     }
 
     if (message.role === "assistant") {

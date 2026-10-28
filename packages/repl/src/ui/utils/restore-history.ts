@@ -3,8 +3,10 @@ import type {
   KodaXSessionUiHistoryItem,
 } from "@kodax-ai/agent";
 import type { CreatableHistoryItem } from "../types.js";
+import { readTaskResultReports } from '@kodax-ai/agent';
 import {
   extractHistorySeedsFromMessages,
+  extractTextContent,
   seedToHistoryItem,
   toolCallSeedToHistoryToolCall,
 } from "./message-utils.js";
@@ -13,6 +15,8 @@ const MAX_PERSISTED_UI_HISTORY_ITEMS = 150;
 const MAX_PERSISTED_UI_HISTORY_ROUNDS = 50;
 
 export interface RestoreHistoryItemsFromSessionInput {
+  /** Product owns canonical task reports; CLI keeps its existing presentation ownership. */
+  structuredTaskResults?: boolean;
   messages: readonly KodaXMessage[];
   uiHistory?: readonly KodaXSessionUiHistoryItem[];
   /** Canonical history pages must retain all blocks; live restoration stays bounded. */
@@ -482,10 +486,14 @@ export function restoreHistoryItemsFromSession(
   input: RestoreHistoryItemsFromSessionInput,
 ): CreatableHistoryItem[] {
   const committedOutputs = new Set(input.messages.flatMap(message => message.outputId ? [message.outputId] : []));
+  const taskEnvelopes = new Set(input.structuredTaskResults ? input.messages
+    .filter(message => readTaskResultReports(message).length > 0)
+    .map(message => extractTextContent(message.content).trim()) : []);
   const persistedHistory = normalizePersistedUiHistory(input.uiHistory?.filter(item =>
-    item.type === 'tool_group' || !item.outputId || !committedOutputs.has(item.outputId)));
+    (item.type === 'tool_group' || !item.outputId || !committedOutputs.has(item.outputId))
+    && (item.type !== 'event' && item.type !== 'info' || !taskEnvelopes.has(item.text.trim()))));
   const hasPersistedUiHistory = Boolean(persistedHistory?.length);
-  const fullDerivedItems = extractHistorySeedsFromMessages(input.messages)
+  const fullDerivedItems = extractHistorySeedsFromMessages(input.messages, input.structuredTaskResults)
     .filter((seed) => !hasPersistedUiHistory || seed.type !== "task_completed")
     .map(seedToHistoryItem);
   const derivedItems = input.historyScope === 'all' ? fullDerivedItems : trimHistoryWindow(fullDerivedItems);

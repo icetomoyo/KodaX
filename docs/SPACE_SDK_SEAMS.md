@@ -19,6 +19,20 @@ Main 从 `client.sessions.list()` 取得 `lastMessageAt` 和 Host 排序，Rende
 
 历史进程恢复在取得所有权的共享 Host 就绪前完成。Space 连接不再重复扫描，不增加 Renderer 恢复职责；Host 退出仍保留原有进程、Job、supervisor 和持久化结果证明。启动进度继续复用 `ClientStartupProgress`。
 
+## 子任务报告
+
+Product view/history 的任务项为中性 `event`，提供 `taskResult`：source、可选 taskId、
+runId、title、artifactRefs，独立的 completed/failed/cancelled/unknown 状态，以及
+固定 `reportFormat: 'markdown'`。正文使用 item.text；大报告通过现有 readItem 或
+readHistoryEntry 获取，不能把有界预览当成全文。SDK 不再让 Space 从完成标签、
+正文前缀或 XML 转义猜状态，也不因子任务失败设置主 Run 的 Provider 错误。
+
+元数据及原始报告优先，实时和恢复共用投影；只对明确任务来源的旧记录兼容解封装。
+未知状态和标识继续未知，mailbox 投递 ID 不充当 Actor Turn ID。Space 按 Host 顺序
+和给定 item ID 展示；跨 view/history 的任务关联使用 source/runId/taskId，不解析
+item ID，也不按正文全局去重。已有中性展示与历史滚动实现保留，不新增分页接口。
+这说明当前源码契约，不表示 Space 已升级或新 SDK 已发布。
+
 ## 普通问题与权限审批
 
 SDK 的 Run 状态与终态结果保留可选 `failureDetail`。Skill 本地失败应按其

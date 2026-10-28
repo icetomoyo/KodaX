@@ -18,6 +18,7 @@ import type {
   KodaXGoalState,
   KodaXInputArtifact,
   KodaXSessionEntry,
+  KodaXTaskResultReport,
 } from '@kodax-ai/agent';
 import type { KodaXResult } from './types.js';
 import type { KodaXShellSandboxObservation } from './types.js';
@@ -714,6 +715,8 @@ export interface ClientSessionActivity {
 }
 
 export interface ClientViewItem {
+  /** Structured task delivery. Body is text/readItem, never model-facing XML. */
+  readonly taskResult?: Omit<KodaXTaskResultReport, 'summary'>;
   /** Image references proven by canonical user/tool content; does not include file bytes. */
   readonly attachments?: readonly { readonly kind: 'image'; readonly path: string; readonly mediaType?: string }[];
   /** Boundary after the complete canonical message, shared by all its display blocks. */

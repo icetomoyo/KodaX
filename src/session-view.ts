@@ -707,7 +707,7 @@ function locateLineageMessages(data: KodaXSessionData, messages: readonly KodaXM
   return located;
 }
 
-type NoticeAnchor = Pick<ClientViewItem, 'type' | 'text' | 'inputId' | 'outputId'> & { entryIndex: number; callId?: string; assistantOutputId?: string };
+type NoticeAnchor = Pick<ClientViewItem, 'type' | 'text' | 'inputId' | 'outputId' | 'taskResult'> & { entryIndex: number; callId?: string; assistantOutputId?: string };
 
 function noticeAnchors(data: KodaXSessionData, messages: readonly KodaXMessage[], items: readonly ClientViewItem[]): NoticeAnchor[] {
   const located = locateLineageMessages(data, messages);
@@ -716,9 +716,9 @@ function noticeAnchors(data: KodaXSessionData, messages: readonly KodaXMessage[]
     if (!located.has(entryIndex)) return entry.type !== 'message' || typeof entry.message.content === 'string' ? []
       : entry.message.content.flatMap(block => block.type === 'tool_use' && visibleCalls.has(canonicalToolKey(block.id, entry.message.outputId))
         ? [{ entryIndex, type: 'tool', callId: block.id, assistantOutputId: entry.message.outputId, text: '' }] : []);
-    return restoreHistoryItemsFromSession({ messages: [located.get(entryIndex)!] }).flatMap((item): NoticeAnchor[] => item.type === 'tool_group'
+    return restoreHistoryItemsFromSession({ messages: [located.get(entryIndex)!], structuredTaskResults: true }).flatMap((item): NoticeAnchor[] => item.type === 'tool_group'
       ? item.tools.map(tool => ({ entryIndex, type: 'tool' as const, callId: tool.id, assistantOutputId: tool.assistantOutputId, inputId: undefined, outputId: undefined, text: '' }))
-      : [{ entryIndex, type: item.type, callId: undefined, inputId: item.inputId, outputId: item.outputId, text: item.text }]);
+      : [{ entryIndex, type: item.type, callId: undefined, inputId: item.inputId, outputId: item.outputId, text: item.text, taskResult: item.taskResult }]);
   });
 }
 
@@ -734,6 +734,9 @@ function restoreLineageNotices(data: KodaXSessionData, messages: readonly KodaXM
       const source = sources[sourceIndex]!;
       if (item.type !== source.type) continue;
       const matches = item.tool ? item.tool.callId === source.callId && item.tool.assistantOutputId === source.assistantOutputId
+        : item.taskResult?.taskId !== undefined || source.taskResult?.taskId !== undefined
+          ? item.taskResult?.source === source.taskResult?.source && item.taskResult?.runId === source.taskResult?.runId
+            && item.taskResult?.taskId === source.taskResult?.taskId
         : item.outputId !== undefined || source.outputId !== undefined ? item.outputId === source.outputId
         : item.inputId !== undefined || source.inputId !== undefined ? item.inputId === source.inputId
         : item.text === source.text;
@@ -826,9 +829,18 @@ export function restoreSessionContentItems(
     return undefined;
   };
   const occurrences = new Map<string, number>();
-  const restored = restoreHistoryItemsFromSession({ historyScope: 'all', messages: historyMessages, uiHistory: uiHistory.filter(item =>
+  const restored = restoreHistoryItemsFromSession({ structuredTaskResults: true, historyScope: 'all', messages: historyMessages, uiHistory: uiHistory.filter(item =>
     item.type === 'tool_group' || !item.outputId || !committedOutputs.has(item.outputId)) });
   const items = restored.flatMap((item): ClientViewItem[] => {
+    if (item.type !== 'tool_group' && item.taskResult) {
+      const taskResult = item.taskResult;
+      const identity = createHash('sha256').update(JSON.stringify([taskResult.source, taskResult.runId,
+        taskResult.taskId ?? item.text, taskResult.taskId ? undefined : item.timestamp])).digest('hex');
+      const ordinal = occurrences.get(identity) ?? 0;
+      occurrences.set(identity, ordinal + 1);
+      return [{ id: `${sessionId}:task-result:${identity}:${ordinal}`, type: 'event', text: item.text,
+        taskResult, ...(item.timestamp !== undefined ? { timestamp: item.timestamp } : {}) }];
+    }
     if (item.type === 'tool_group') return item.tools.map((tool) => {
       const previous = persisted.find(candidate => candidate.tool?.callId === tool.id
         && candidate.tool.assistantOutputId === tool.assistantOutputId);
@@ -886,7 +898,7 @@ export function restoreSessionContentItems(
 
 export function persistSessionViewItems(items: readonly ClientViewItem[]): KodaXSessionUiHistoryItem[] {
   return items.flatMap((item): KodaXSessionUiHistoryItem[] => {
-    if (item.outputState === 'committed') return [];
+    if (item.outputState === 'committed' || item.taskResult) return [];
     if (item.type !== 'tool') {
       const { sidecar, outputState: _state, ...persisted } = item;
       return [{ ...persisted, type: item.type, ...(item.outputId ? {} : { presentationOnly: true as const }),

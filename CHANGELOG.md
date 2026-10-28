@@ -8,6 +8,13 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Project existing task-result metadata into Product live views and recovered
+  history with explicit source, task identity, terminal/unknown status and
+  Markdown report bodies. Preserve multi-report order, literal report content,
+  existing full-body reads and raw canonical envelopes; decode only explicitly
+  sourced legacy deliveries and keep child failures separate from root Provider
+  errors. Reconcile old UI envelopes without duplicating canonical reports.
+
 - Keep Skill discovery rooted at the repository when the SDK runs from a
   subdirectory, synchronize catalogs with loader availability in SA/AMA, and
   invalidate stale bodies across rediscovery and in-flight reads. Model loads

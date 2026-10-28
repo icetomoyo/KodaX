@@ -7,7 +7,7 @@
 import { restoreHistoryItemsFromSession } from '@kodax-ai/repl';
 import { canonicalTools, canonicalToolKey, toolResultText, toolResultOutputPath } from './client-canonical-tools.js';
 import { readSavedToolOutput } from './tool-output-reader.js';
-import { emitKodaXDiagnostic, type KodaXMessage } from '@kodax-ai/agent';
+import { emitKodaXDiagnostic, readTaskResultReports, type KodaXMessage } from '@kodax-ai/agent';
 import type {
   ClientHistoryPage,
   ClientItemContent,
@@ -76,9 +76,10 @@ export async function projectConversationHistoryPage(
 }
 
 /**
- * Read the raw body of one history entry (an oversized entry, or any entry a
+ * Read the body of one history entry (an oversized entry, or any entry a
  * page item id refers to). `text` returns the entry's text and tool-result
  * content; `input` returns its tool-call parameters verbatim.
+ * Task history returns report Markdown; the raw transcript namespace retains envelopes.
  */
 export async function readConversationHistoryEntry(
   sessionId: string,
@@ -100,7 +101,10 @@ export async function readConversationHistoryEntry(
   const selected = parsed.ordinal === undefined ? undefined
     : projectHistoryEntry(sessionId, parsed.revision, parsed.entryIndex, [entry.message])[parsed.ordinal];
   if (parsed.ordinal !== undefined && selected === undefined) return null;
-  let text = selected?.text ?? entryBody(entry.message, options.part === 'input' ? 'input' : 'text');
+  const reports = namespace === 'history' && parsed.ordinal === undefined && options.part !== 'input'
+    ? readTaskResultReports(entry.message) : [];
+  let text = selected?.text ?? (reports.length > 0 ? reports.map(report => report.summary).join('\n\n')
+    : entryBody(entry.message, options.part === 'input' ? 'input' : 'text'));
   if (selected?.tool !== undefined) {
     const blocks = Array.isArray(entry.message.content) ? entry.message.content : [];
     const call = blocks.find((block) => block.type === 'tool_use' && block.id === selected.tool?.callId);
@@ -210,7 +214,7 @@ function projectHistoryEntry(
 ): ClientViewItem[] {
   // A single entry may exceed the live display window. Keep all its blocks
   // under the same entry anchor; ordinals count emitted items flatly.
-  const restored = restoreHistoryItemsFromSession({ messages, historyScope: 'all' });
+  const restored = restoreHistoryItemsFromSession({ messages, historyScope: 'all', structuredTaskResults: true });
   const tools = canonicalTools(messages);
   const items: ClientViewItem[] = [];
   let ordinal = 0;
@@ -231,6 +235,7 @@ function projectHistoryEntry(
       id: historyItemId(sessionId, revision, entryIndex, ordinal),
       type: item.type as ClientViewItem['type'],
       text: item.text,
+      ...(item.taskResult ? { taskResult: item.taskResult } : {}),
       ...(item.inputId !== undefined ? { inputId: item.inputId } : {}),
       ...(item.outputId !== undefined ? {
         outputId: item.outputId, outputState: 'committed' as const, textRevision: 0,

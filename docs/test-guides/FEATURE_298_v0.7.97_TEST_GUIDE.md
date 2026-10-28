@@ -2,6 +2,52 @@
 
 本指南验证构建后的产品入口。组件、协议和 SDK 单测继续保留，但不替代这里的真实进程与终端操作。
 
+## 2026-10-28 Product 任务报告
+
+本轮在 `0d723c6e` 后修复任务报告投影；属于 alpha.10 发布后的源码修改，不据此
+声称新 npm 包或 Space 已交付。复用现有 `_taskResult/_taskResults`，新增共享的报告
+读取投影，未改变 canonical 消息、执行状态机、权限策略或历史分页接口。
+
+Product `ClientViewItem.taskResult` 提供 source、已知的 taskId/runId/title/artifactRefs、
+completed/failed/cancelled/unknown 和 `reportFormat: 'markdown'`；正文由 item.text
+及原有全文读取方法交付。各报告是中性 event，不将子任务失败转换成主 Run 的
+Provider 错误。跨显示面 item ID 仍不可互换，任务字段保留逻辑身份。旧 Actor 的
+mailbox 投递 id 不冒充 Turn ID；缺状态不从完成标签或 `failed:` 文本推测。
+
+```text
+npx vitest run packages/agent/src/session-lineage/task-results.test.ts src/session-view.task-results.test.ts src/sdk-client.task-results.test.ts packages/repl/src/session/public-api.test.ts --maxWorkers=2 --retry=0
+```
+
+最初的单项回归确实 RED：输出仍是 XML，缺少任务元数据。扩展测试另捕获历史
+超大项读取返回封装、显示身份依赖时间，以及旧投递 ID 被错误当成任务 ID；这些
+均修复后复验。多任务、相同正文的不同任务、两个 metadata 字段的重复引用、旧
+UI 封装快照、显式失败/取消、未知旧状态和普通用户 XML 文本均独立覆盖。
+
+独立需求复审再捕获并补回归：混合新旧通知时旧报告丢失、旧 interrupted 终态未
+映射取消，以及通知仍按 XML 锚定造成次序变化。另用真实队列测试确认模型侧的
+预算封装可能重排，显示仍以结构化 metadata 顺序为准；缩写后的无封装文本不
+额外制造未知任务。配对也拒绝明确的 source/runId/taskId 冲突，避免吞掉另一份
+同名任务报告；缺失字段仅在无已知冲突时兼容。以上已分别 RED → GREEN。
+
+真实 Product Client/IPC 用例通过受信任 MessageQueue 注入确定性的任务结果，使用
+实际 AMA Run、规范历史、Host socket、公开 Client、重连与 Host 重启；Provider
+仅由离线固定响应替代，不是付费模型评测或真实子任务业务质量验收。单条和三条
+报告顺序一致、view ID 恢复稳定，历史与实时元数据一致，主 Run 始终 completed
+且无 failureDetail。报告包含 Markdown、代码、文字实体及大于 128 KiB 的 Unicode
+正文，经 readItem/readHistoryEntry 的完整重组 SHA256 相等。旧历史也经过 IPC。
+
+共享报告读取模块的最终定向 V8 覆盖：语句/行/函数 100%，分支 92.17%。原有 CLI
+展示所有权保持，未因 Product 的新投影而额外展示子任务全文。没有来源的独立
+UI-only 文本不能提供可靠任务事实；保持中性，不猜测旧任务成功。
+
+最终源码及测试类型检查、workspace/bundle 构建、14 个 SDK 声明入口和 Node-free
+Product 类型消费检查均通过。相邻回归 28 文件 / 333 项（2 workers、retry=0）
+全部通过，无跳过或未处理错误；JSON 为 `%TEMP%/kodax-task-report-final-results.json`。
+完整 bundle 门禁 51/51，包括构建后公开 SDK 与真实独立 daemon 的 IPC、旧历史、
+四份报告及 Host 重启，两个读取面的全文哈希一致。该新用例已加入 test:bundle。
+最终独立 Standards / Spec 复审均无剩余 finding；不以这些定向结果替代完整发布矩阵，
+也不宣称 Space 已消费新字段或已发布 npm。
+
 ## 2026-10-27 本地 Skill 失败分类
 
 基线 `6d101b59` 的真实独立 daemon 回归先 RED：Main 已通过自己的可信路径准备

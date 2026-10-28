@@ -275,12 +275,35 @@ Interaction 的 kind 决定 options 和 response：单选问题、多问题、�
 | `timestamp?` | Unix 毫秒时间；实时项生成时取时钟，后续同 ID 更新保留原时间，恢复项采用保存的信息 | 保持 Host 数组顺序，不按本地到达时间重排；缺失不补成“现在” |
 | `icon?` | Host 附带的展示提示字符串，例如 sidecar 裁决提示 | 仅展示；未知值用通用图标，不据它判 Run/工具终态 |
 | `compactText?` | Host 提供的可选紧凑展示文本 | 折叠可使用，复制/全文仍取 text 的完整内容 |
+| `taskResult?` | 任务报告的结构化事实；通常与 type=event 配合 | 独立于主 Run、Provider 错误和图标，按下述来源及状态呈现 |
 | `tool?` | 工具显示事实；通常与 type=tool 配合 | 缺失时保留可读正文，不能自行捏造工具调用 |
 | `tool.callId`, `tool.name` | 工具调用身份与工具名 | callId 用于关联状态更新；name 不是调用身份 |
 | `tool.status` | running/success/error/cancelled/awaiting_approval | success 仅表示此工具结果，不代表 Run 成功。类型允许等待审批，不承诺每个路径逐一发出所有中间状态 |
 | `tool.inputText?`, `tool.totalInputLength?` | Host 序列化的工具参数文本及可选完整 UTF-16 长度 | 输入与输出分开；补读使用 part=input，不能把预览重解析后当作原始参数 |
 | `tool.progress?` | 最近的工具进度消息 | 当前提示而非追加日志；完成时可被清除 |
 | `tool.startedAt?`, `tool.endedAt?` | 工具开始/结束的 Unix 毫秒时间 | 两者具备时才可计算执行耗时；不存在 endedAt 不等于当前一定还运行 |
+
+任务报告复用 canonical 消息中的 `_taskResult/_taskResults`：`taskResult.source`
+为 `child_task/workflow`，`taskId?` 是任务/Actor Turn 标识，`runId?` 沿用原元数据的
+任务运行标识；`title?` 与 `artifactRefs?` 保留原元数据。字段缺失不补造标识，
+Actor mailbox 的投递 `id` 不冒充 `taskId`。`status` 明确为
+`completed/failed/cancelled/unknown`；缺失状态不从报告标题、正文前缀或封装名称推断。
+旧 Actor 明确的 `state="interrupted"` 按其原契约映射为 cancelled。
+
+`taskResult.reportFormat: 'markdown'` 描述报告正文格式。正文在 `item.text`，不重复
+塞进元数据；有界片段按既有 `readItem/readHistoryEntry` 补读。保留 Markdown、代码、
+换行及文字中的实体；元数据正文不再 XML 解码。只有明确 `_source` 为
+`agent-completed/task-completed` 的旧消息才兼容解封装并解码一次传输转义；普通用户
+文本中的同类标签不产生任务事实。原始消息及封装仍保留在规范历史中。
+
+实时 view 和历史页每份报告各占一项，顺序取 canonical 消息和元数据顺序。
+同一消息混合新旧报告时，未配对的旧封装保留在可证明的邻接位置；给模型的封装
+可能被预算机制重排或缩写，不能据它重排结构化元数据或额外猜出一个任务。
+同一唤醒消息两个元数据字段中的同任务引用按 source/runId/taskId 去重，内容相同但
+任务身份不同的报告仍分别保留。已知 taskId 的 view 身份不依赖报告文案或显示时钟。
+不同读取面的 item ID 仍遵循各自原有契约，不能互换；报告逻辑身份使用任务字段。
+旧 UI 封装快照不能再次覆盖或重复规范任务报告。子任务 `failed/cancelled` 不是主
+Run 的 Provider 失败，主任务结果继续读取 `runs` 及其 `failureDetail`。无新分页接口。
 
 纯契约没有 item.streaming、item.isFinal 或逐 token 事件。Host 收到 assistant/thinking delta 后更新同一显示项的完整当前文本；一次刷新可以合并多次内部事件。Provider retry/输出段替换可以移除旧项或替换正文，不能要求 text 永远只增长。工具开始、progress、result 也更新同一个工具项；状态由 Host 生成，客户端不解析文本前缀再猜一次状态。
 

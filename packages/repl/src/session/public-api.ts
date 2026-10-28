@@ -20,6 +20,7 @@ import {
   createSessionLineage,
   discoverInstances,
   emitKodaXDiagnostic,
+  readTaskResultReports,
 } from '@kodax-ai/agent';
 import type {
   KodaXJsonValue,
@@ -28,7 +29,7 @@ import type {
   KodaXSessionEntry,
   KodaXSessionLineage,
   KodaXSessionRuntimeInfo,
-  KodaXTaskResultMetadata,
+  KodaXTaskResultReport,
 } from '@kodax-ai/agent';
 
 import {
@@ -231,7 +232,7 @@ export interface SessionTranscriptEntry {
   readonly active: boolean;
   readonly summary?: string;
   readonly payload?: unknown;
-  readonly taskResults?: readonly KodaXTaskResultMetadata[];
+  readonly taskResults?: readonly KodaXTaskResultReport[];
 }
 
 export interface FullTranscriptSessionData extends Omit<SessionData, 'messages'> {
@@ -756,55 +757,7 @@ function messageSource(message: KodaXMessage): SessionTranscriptEntrySource | un
   return undefined;
 }
 
-function isTaskResultMetadata(value: unknown): value is KodaXTaskResultMetadata {
-  if (!isRecord(value)) return false;
-  return value.type === 'task_result'
-    && (value.source === 'workflow' || value.source === 'child_task')
-    && typeof value.taskId === 'string'
-    && (
-      value.status === 'completed'
-      || value.status === 'failed'
-      || value.status === 'cancelled'
-    )
-    && (value.runId === undefined || typeof value.runId === 'string')
-    && (value.title === undefined || typeof value.title === 'string')
-    && (value.summary === undefined || typeof value.summary === 'string')
-    && (
-      value.artifactRefs === undefined
-      || (Array.isArray(value.artifactRefs) && value.artifactRefs.every((item) => typeof item === 'string'))
-    );
-}
-
-function taskResultsFromMessage(message: KodaXMessage): KodaXTaskResultMetadata[] {
-  if (isTaskResultMetadata(message._taskResult)) {
-    return [message._taskResult];
-  }
-  if (Array.isArray(message._taskResults)) {
-    return message._taskResults.filter(isTaskResultMetadata);
-  }
-  if (message._source !== 'task-completed' || typeof message.content !== 'string') {
-    return [];
-  }
-  const results: KodaXTaskResultMetadata[] = [];
-  const pattern = /<task-completed\s+task_id="([^"]+)">([\s\S]*?)<\/task-completed>/g;
-  for (const match of message.content.matchAll(pattern)) {
-    const taskId = match[1];
-    if (!taskId) continue;
-    const summary = match[2]?.trim() ?? '';
-    results.push({
-      type: 'task_result',
-      source: 'child_task',
-      taskId,
-      status: summary.startsWith('failed:') || summary.startsWith('[Tool Error]')
-        ? 'failed'
-        : 'completed',
-      ...(summary.length > 0 ? { summary } : {}),
-    });
-  }
-  return results;
-}
-
-function taskResultPayload(results: readonly KodaXTaskResultMetadata[]): unknown {
+function taskResultPayload(results: readonly KodaXTaskResultReport[]): unknown {
   if (results.length === 1) {
     return results[0];
   }
@@ -812,9 +765,6 @@ function taskResultPayload(results: readonly KodaXTaskResultMetadata[]): unknown
   return first
     ? {
         type: 'task_result',
-        source: first.source,
-        taskId: first.taskId,
-        status: first.status,
         results,
       }
     : undefined;
@@ -877,14 +827,14 @@ function toTranscriptEntry(
   const active = transcriptEntryActive(entry, activeIds, activeEntryId);
   switch (entry.type) {
     case 'message': {
-      const taskResults = taskResultsFromMessage(entry.message);
+      const taskResults = readTaskResultReports(entry.message);
       if (taskResults.length > 0) {
         const first = taskResults[0]!;
         return {
           ...transcriptEntryIdentity(entry),
           timestamp: entry.timestamp,
           type: 'task_result',
-          source: first.source,
+          source: taskResults.every(result => result.source === first.source) ? first.source : undefined,
           turnId: messageStringField(entry.message, 'turnId'),
           message: entry.message,
           active,
