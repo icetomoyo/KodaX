@@ -2881,9 +2881,9 @@ runKodaX({
 ### What each field / companion gates
 
 - **R1 — identity + instructions.** `agentProfile.instructions` is prepended to the
-  AMA/AMAW Worker role prompt; the SA path uses `context.systemPromptOverride`
-  (mapped from `instructions` by `startKodaX`), so a profile behaves consistently
-  across both execution modes.
+  Adaptive Worker prompt and serves as the Solo base prompt while retaining the
+  admitted Skill catalog. Profile instructions remain distinct from an explicit
+  `context.systemPromptOverride`, which keeps complete-replacement priority.
 - **R2 — `context.toolVisibilityPolicy`.** A predicate applied when the
   model-visible tool list is built (in addition to `excludeTools`); tools it returns
   `false` for are hidden from the model.

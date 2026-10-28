@@ -9,6 +9,7 @@ import { getDefaultSkillPaths, initializeSkillRegistry, SkillRegistry } from '..
 import { KodaXBaseProvider, registerModelProvider } from '../dist/sdk-llm.js';
 import { createDefaultCodingAgent, runKodaX } from '../dist/sdk-coding.js';
 import { Runner } from '../dist/sdk-agent.js';
+import { createKodaXRuntime } from '../dist/sdk-runtime.js';
 
 test('split SDK discovers packaged built-in skills from the installed distribution', async () => {
   const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -22,6 +23,90 @@ test('split SDK discovers packaged built-in skills from the installed distributi
   assert.equal(skill?.source, 'builtin');
   assert.match((await registry.loadFull('visual-review')).content, /Temporal/);
 });
+
+for (const agentMode of ['sa', 'ama']) for (const kind of ['default', 'markdown']) {
+  test(`built Runtime retains a bounded Skill catalog and profile instructions: ${agentMode}/${kind}`, async t => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-bundle-profile-catalog-'));
+    const workspace = path.join(root, 'workspace');
+    await mkdir(workspace);
+    const configHome = path.join(root, '.kodax');
+    const names = Array.from({ length: 40 }, (_, index) => `audit-${String(index).padStart(2, '0')}`);
+    for (const name of names) {
+      const directory = path.join(configHome, 'skills', name);
+      await mkdir(directory, { recursive: true });
+      await writeFile(path.join(directory, 'SKILL.md'), `---\nname: ${name}\ndescription: ${'Inspect detailed catalog evidence. '.repeat(25)}\n---\nBODY_${name}\n`);
+    }
+    await mkdir(path.join(configHome, 'agents'));
+    await writeFile(path.join(configHome, 'agents', 'evidence-agent.md'),
+      `---\nname: evidence-agent\ndescription: Inspect evidence\ntools: [read, skill]\nskills: [${names.join(', ')}]\n---\nPROFILE_BUNDLED\n`);
+    const oldKey = process.env.KODAX_BUNDLE_PROFILE_KEY;
+    process.env.KODAX_BUNDLE_PROFILE_KEY = 'offline-fixture';
+    let loaded = false;
+    const requests = [];
+    const observedTools = [];
+    const providerName = `bundle-profile-${agentMode}-${kind}`;
+    class Provider extends KodaXBaseProvider {
+      name = providerName;
+      config = { name: providerName, model: 'fixture', apiKeyEnv: 'KODAX_BUNDLE_PROFILE_KEY' };
+      async stream(messages, tools, system) {
+        observedTools.push(tools.map(tool => tool.name));
+        if (tools.some(tool => tool.name === 'commit_episode_learning_review')) {
+          return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [{ type: 'tool_use', id: 'review',
+            name: 'commit_episode_learning_review', input: { memoryPlan: { actions: [], warnings: [] },
+              capabilityDecision: { disposition: 'discard', reasonCodes: ['fixture-no-reusable-method'] } } }] };
+        }
+        const surfaces = [system, ...messages.flatMap(message => typeof message.content === 'string' ? [message.content]
+          : message.content.filter(block => block.type === 'text').map(block => block.text))];
+        const context = surfaces.join('\n');
+        const primary = tools.some(tool => tool.name === 'skill');
+        if (primary) requests.push({ context, messages: structuredClone(messages) });
+        const load = primary && !loaded && context.includes('- audit-00:');
+        if (load) loaded = true;
+        return { textBlocks: load ? [] : [{ type: 'text', text: 'Done.' }], thinkingBlocks: [],
+          toolBlocks: load ? [{ type: 'tool_use', id: 'load-audit', name: 'skill', input: { skill: 'audit-00' } }] : [],
+          stopReason: load ? 'tool_use' : 'end_turn' };
+      }
+    }
+    registerModelProvider(providerName, () => new Provider());
+    const runtime = await createKodaXRuntime({ homeDir: root, defaultProvider: providerName });
+    const execution = runtime.agents.execution;
+    let owner;
+    t.after(async () => {
+      try { if (owner) await execution.closeOwnerSession(owner.ownerSessionId); }
+      finally {
+        try { await runtime.close(); }
+        finally {
+          if (oldKey === undefined) delete process.env.KODAX_BUNDLE_PROFILE_KEY;
+          else process.env.KODAX_BUNDLE_PROFILE_KEY = oldKey;
+          assert.equal(path.dirname(root), path.resolve(os.tmpdir()));
+          await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+        }
+      }
+    });
+    assert.ok(execution);
+    owner = await execution.openOwnerSession();
+    const session = await runtime.sessions.create({ projectPath: workspace });
+    await runtime.sessions.updateSettings(session.id, { provider: providerName, model: 'fixture', agentMode, permissionMode: 'full-access' });
+    const base = { ownerSessionId: owner.ownerSessionId, workspace: { mode: 'fixed', root: workspace },
+      toolPolicy: { workspace: 'write', process: 'deny', network: { mode: 'deny' }, tools: [], mcp: {}, skillScripts: {}, subagents: 'deny' } };
+    const binding = kind === 'default' ? await execution.bindDefault(base)
+      : await execution.bindLocal({ ...base, ref: { source: 'markdown:user', name: 'evidence-agent' } });
+    const request = { ownerSessionId: owner.ownerSessionId, bindingId: binding.bindingId,
+      expectedExecutionPolicyRevision: binding.executionPolicyRevision, sessionId: session.id, input: { type: 'text', text: 'Inspect evidence.' } };
+    const run = kind === 'default' ? await execution.startDefault(request)
+      : await execution.startLocal({ ...request, expectedConfigurationRevision: binding.configurationRevision });
+    assert.equal((await run.result).phase, 'completed');
+    assert.ok(requests[0]?.context.includes('- audit-00:'),
+      `The actual Provider must see the admitted Skill catalog: ${JSON.stringify(observedTools)}`);
+    const catalog = /## Available Skills\n[\s\S]*?\[Skill catalog shortened:[^\n]*\]/.exec(requests[0].context)?.[0];
+    assert.ok(catalog, 'A large catalog must announce its omissions');
+    assert.ok(catalog.length <= 8_000);
+    assert.ok(!catalog.includes('- audit-39:'));
+    if (kind === 'markdown') assert.equal(requests[0].context.split('PROFILE_BUNDLED').length, 2);
+    assert.ok(JSON.stringify(requests[1]?.messages).includes('BODY_audit-00'), 'The model-selected Skill must actually load');
+    assert.equal(binding.effectiveSkills.filter(skill => names.includes(skill.name)).length, 40);
+  });
+}
 
 test('built SDK preserves Skill discovery, activation, permissions and refresh across public entry points', async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-bundled-skill-'));

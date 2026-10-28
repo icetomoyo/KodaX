@@ -59,7 +59,7 @@ import { resolveExecutionCwd } from '../runtime-paths.js';
 import { getSessionScratchDir } from '../session-scratch.js';
 import type { KodaXOptions } from '../types.js';
 import { formatFullSkillSection } from '../skill-invocation-format.js';
-import { applyToolVisibilityPolicy, filterExcludedTools } from '../agent-runtime/tool-resolution.js';
+import { getModelSkillCatalog } from '../agent-runtime/tool-resolution.js';
 
 import { buildMemoryRulesSection } from './memory-rules.js';
 import { createPromptSection, type KodaXPromptSection } from './sections.js';
@@ -312,15 +312,12 @@ export async function buildCapabilityContextSections(
     ),
   );
 
-  const skillLoaderAvailable = applyToolVisibilityPolicy(
-    filterExcludedTools(options.extensionRuntime?.getDefaults?.().activeTools ?? ['skill'], options.context?.excludeTools),
-    options.context?.toolVisibilityPolicy,
-  ).includes('skill');
-  if (skillLoaderAvailable && options.context?.skillsPrompt?.trim()) {
+  const skillsCatalog = getModelSkillCatalog(options);
+  if (skillsCatalog) {
     sections.push(
       createPromptSection(
         'skills-addendum',
-        options.context.skillsPrompt,
+        skillsCatalog,
         'Append skill-specific guidance after project rules as a bounded dynamic addendum.',
       ),
     );

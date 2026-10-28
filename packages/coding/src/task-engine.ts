@@ -9,8 +9,7 @@
  *
  * Dispatch:
  *   - SA mode  -> `runKodaX` with a direct-path prompt overlay.
- *   - AMA mode -> `runManagedTaskViaRunner` (Scout → Planner? → Generator
- *                 → Evaluator via Layer-A Runner + protocol emit tools).
+ *   - AMA mode -> `runManagedTaskViaRunner` (Worker single-loop via Runner).
  *
  * The outer wrapper also runs `reshapeToUserConversation` so
  * `result.messages` surfaces a clean user-facing {user, assistant} pair
@@ -244,12 +243,6 @@ export async function dispatchManagedTask(
           intentGate.taskFamily,
           [options.context?.promptOverlay],
         ),
-        // FEATURE_247 (R1): on the SA path a profile's instructions map to the
-        // already-honored `systemPromptOverride` (consumed in
-        // reasoning-plan-entry.ts). An explicit caller-set override still wins;
-        // when neither is set this stays undefined ⇒ byte-identical default.
-        systemPromptOverride: options.context?.systemPromptOverride
-          ?? options.context?.agentProfile?.instructions,
         excludeTools,
       },
     };

@@ -320,3 +320,72 @@ eight MCP scenarios (six independent-daemon controls and two embedded Host
 refusals with real stdio MCP / local HTTP Provider boundaries). All 30 scripted
 Skill activation tests passed; the two recovery tests exercise 14 mode/refusal
 combinations. No paid Provider or cross-harness model benchmark was run.
+
+## Runtime binding and profile catalog follow-up (2026-10-28)
+
+Baseline `38629a1f`; source/build verification, not an npm publication.
+
+- Runtime default and Markdown bindings use the bounded model-catalog formatter
+  over admitted metadata. A 40-Skill catalog remains within 8,000 UTF-16 units
+  and announces omissions. Omitted Skills remain in the pinned Registry and
+  remain loadable by an authorized known name; reload still requires rebinding.
+- Profile instructions stay distinct from an explicit complete prompt override.
+  Actual Provider requests contain the profile and admitted catalog in direct
+  `runKodaX`, managed Solo/Adaptive and public Runner paths. Model-selected Skill
+  bodies really load; disabled and unselected entries do not leak. The catalog
+  is hidden with the loader, while the profile remains. A complete caller
+  `systemPromptOverride` retains its priority and exact Solo request content.
+  Profile-default evidence and per-task verification checks also reach the
+  actual Provider together with execution guidance. Independent review caught
+  this context gate after the profile/override separation; its new regression
+  failed in three Solo entries before widening that gate.
+- The built SDK additionally exercises actual embedded Runtime
+  `agents.execution.bindDefault/bindLocal/startDefault/startLocal`, Session mode
+  settings and scripted Providers in four Solo/Adaptive × default/Markdown cases.
+  The application config home is separate from the workspace so user Skills do
+  not become project-scoped candidates that default bindings correctly exclude.
+- Source budget regressions failed first at 38,401 / 35,655 characters. Source
+  profile regressions failed before composition was fixed. AMA may carry the
+  catalog in request messages, so E2E checks the actual system and message
+  surfaces rather than requiring one exact transport slot. These simulations
+  establish wiring, not natural-language selection accuracy of a real model.
+
+Solo is live production behavior, not dead compatibility code:
+`agentMode: 'sa'` dispatches through `runKodaX -> Runner -> runSubstrate`;
+Runtime coding Runs use this substrate too. Retired V1 multi-role orchestration,
+Sidecar Verifier, and the normalized `amaw` spelling are separate concepts.
+ADR-020 also retired the separate SA execution body and Option Y facade while
+retaining the Solo product mode and thin SDK entry; the current `sa` dispatch
+does not reinstate that retired engine.
+No execution mode is removed or reinstated by this fix. No watcher, semantic
+search, automatic Skill fork, new configuration or paid-model eval is added.
+
+Independent review finished with Standards 0 / Spec 0 unresolved findings after
+fixing the verification-context gate. The scoped coverage gate passed 11 files /
+134 tests, including the existing real Host/A2A binding contract, at one worker:
+80.98% line, 71.16% branch, 78.74% statement and 82.81% function coverage across
+five measured modules. This meets the 80% line threshold; it is not a claim of
+80% branch or whole-repository coverage. The initial ten-file selection measured
+78.45% line / 68.08% branch and failed its coverage gate before the related Host
+contract was included; no implementation or test was changed to hide that result.
+
+One full fast attempt recorded a 30-second Provider-admission wait timeout in
+`sdk-classic-plane.test.ts`; 2,480 other tests passed. That unchanged file passed
+2/2 in isolation. The complete fast tier then passed unchanged with two workers
+(2,481 passed / 44 existing skips) and the same deadlines. Other tiers retain
+their normal settings, including serial system and built-SDK checks. No timeout
+or unrelated product behavior is relaxed.
+
+Final source gates passed build and both source/test typechecks. Fast passed
+2,481 tests / 44 skipped; unit 12,122 / 4 skipped; contract 962 / 19 TODOs; serial
+system 1,485 / 42 skipped (1,144.29 seconds). The four tiers total 17,050 passed,
+90 existing skips and 19 TODOs, all with retry 0. The existing Node `beforeExit`
+listener warning remains visible; this change adds no process listeners.
+
+The complete built-SDK suite passed 59/59 in 189.22 seconds with file concurrency
+1, no retries or skips. This includes all eight existing MCP recovery scenarios
+and the four new actual Runtime binding / scripted Provider catalog cases.
+Source and built Skill activation tests verify discovery-to-load wiring; no paid
+model call or same-model cross-harness selection-quality comparison was run.
+The change is verified from source and local build artifacts, not published to
+npm by this task.

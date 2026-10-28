@@ -1181,6 +1181,25 @@ and Learned Area identity. SA/AMA omit the model catalog when the Skill loader
 is unavailable; an already expanded explicit invocation remains usable.
 Rediscovery invalidates full-body caches, including loads still in flight.
 
+Markdown Agent bindings pass their behavior instructions through `agentProfile`
+instead of converting them into a complete prompt override. Solo composes that
+profile base with the admitted model catalog and any explicit active Skill;
+Adaptive retains the profile instructions in its Worker prompt. Direct SDK,
+managed Solo and public Runner entries share the same final Solo composition.
+A caller's explicit `systemPromptOverride` keeps its complete-replacement
+semantics and priority; it does not acquire an automatic catalog. Both prompt
+paths use the same loader-visibility check before disclosing a catalog.
+Profile verification defaults, per-task verification overrides and execution
+guidance still reach Solo requests through their request-only Run context;
+retaining the Skill catalog does not drop those existing obligations.
+
+Runtime default and Markdown bindings use the common bounded formatter over
+their admitted Registry entries. Catalog omission never changes the binding's
+authorized names or revisions; the pinned Registry still rejects rediscovery
+and requires a new binding to adopt changes. Caller-supplied opaque Skill prompt
+contracts retain their existing semantics, including the formal/learned
+composition path; this fix does not silently rewrite those Host instructions.
+
 Project discovery checks `.kodax/skills` before `.agents/skills`, then the
 existing user/plugin/built-in roots. Formal roots are scanned recursively in
 stable name order, stopping at each `SKILL.md` directory so support files do

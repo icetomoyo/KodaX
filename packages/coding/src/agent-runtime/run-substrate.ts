@@ -1025,7 +1025,7 @@ async function runSubstrateInContext(
     options.context?.interruptedRunEvidence,
     messages,
   );
-  const verificationRunContext = options.context?.systemPromptOverride
+  const verificationRunContext = (options.context?.systemPromptOverride || options.context?.agentProfile?.instructions)
     ? [options.context.agentProfile ? EXECUTION_GUIDANCE : undefined,
         formatVerificationContract(resolveEffectiveVerification(options))]
         .filter((section): section is string => Boolean(section)).join('\n\n')

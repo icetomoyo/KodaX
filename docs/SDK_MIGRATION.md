@@ -4,6 +4,12 @@
 
 Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附件/统计与退出恢复范围见 [SDK/Host 接缝](SPACE_SDK_SEAMS.md)。
 
+Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` 保留，
+Solo 和 Adaptive 都会向模型提供可用且已授权的 Skill 目录。运行时绑定生成的
+目录共用 8,000 UTF-16 单元上限；省略目录项不会删除已绑定的授权。
+调用方显式设置的 `systemPromptOverride` 仍是 Solo 的完整提示覆盖，不自动追加
+可选 Skill 目录。`sa` 当前仍是可执行的 Solo 模式；`amaw` 才是归一为 `ama` 的旧别名。
+
 ## 1. 替换范围与文档权威
 
 TUI、桌面 UI、IDE、自动化应用接入共享 KodaX 时，以 `KodaXProductClient` 为业务契约。入口是 `@kodax-ai/kodax/client`；[完整行为契约](CLIENT_CONTRACT.md)与[类型定义](../packages/coding/src/client-contract.ts)共同说明方法、数据和错误语义。[英文接入指南](../public_docs/sdk/embedder-guide.md#product-client-integration)提供最小生命周期示例。
