@@ -86,15 +86,16 @@ The marker was confirmed no longer installing. No user Host was force-replaced.
 
 See [regression guide](test-guides/ISSUE_372_v0.7.97_REGRESSION_GUIDE.md) for the
 readiness/repair regression, native non-mutation proof and existing-Host
-acceptance. Issue 371's intermittent startup delay remains separately open.
+acceptance. Issue 371 now has a confirmed startup-recovery fix; its historical
+16-second first-read observation remains separately un-attributed.
 
 ## Issue 371: Intermittent slow shared Host startup and first Session read
 
 - Priority: Medium
-- Status: Open
+- Status: Open (startup recovery fixed; historical first-read delay not attributed)
 - Introduced: observed in v0.7.97-alpha.10 at `ec442c75`; first affected version unknown
 - Created: 2026-10-28
-- Fixed: —
+- Fixed: startup recovery only, post-v0.7.97-alpha.10 working tree (unreleased)
 
 ### Original Problem
 
@@ -104,19 +105,50 @@ On Windows, the shared Host process began at 22:33:33.074 and logged ready at
 read-only SDK attachment took 615 ms and its first selected Session read took
 16,011 ms. No exception or causal connection to the preceding merge was established.
 
-### Diagnosis and remaining evidence
+### Confirmed startup cause and resolution (2026-10-29)
 
-The delay is not currently reproducible: subsequent existing-Host views took
-4–7 ms, direct strict storage reads took 19–27 ms, an empty isolated Host started
-in 1,536 ms, and an isolated Host with 1,191 copied child-record shapes started
-in 1,940 ms. The copied records had a live probe owner with unknown start identity
-and a verified absent child PID; this exercises registry traversal without
-authorizing cleanup of user processes, **not** the original stale-tree recovery.
-Read-only Windows identity probes took 187 ms (targeted) and 305 ms (shared snapshot).
-These measurements do not explain or resolve the original cold-start delay.
-Per-phase duration evidence from an affected startup is still needed; the existing
-bootstrap phase records have no timestamps. Do not remove recovery fences, clear
-the user's process registry, or force-replace a working Host to mask the delay.
+A fresh default-Host startup reproduced 23,360 ms, with approximately 21.7 seconds
+between recovery and MCP initialization. Its stale-child sweep retired 160 of
+1,352 registered records. The remaining 1,192 records all referenced Runs and
+retained incomplete trees. The previous copied-record probe used a live owner
+with unknown identity and skipped cleanup; its fast result missed this branch.
+
+Windows cleanup already shared a process snapshot, but still synchronously
+started a PowerShell termination helper for every stale tree even when that
+snapshot proved the entire retained complete tree had exited. The helper then
+invalidated the snapshot, causing another snapshot probe on the next record.
+An isolated public-SDK fixture with 220 complete exited trees exceeded the
+60-second Host startup deadline before the fix. With the same record shapes,
+the fix started in 1,952 ms and reclaimed all 220 records.
+
+Cleanup now uses its existing complete-tree/PID/start-identity proof before
+spawning a terminator, reusing the snapshot already read for capture. Live,
+incomplete, unreadable and unavailable-snapshot paths retain their termination
+or unknown outcomes. Owner checks, Run cleanup requirements and quarantine
+rules are unchanged. Bootstrap phase records now include UTC timestamps.
+
+The permanent bundled regression starts two concurrent resume clients with
+220 exited records and 400 saved messages. Cold readiness took 2,282 ms;
+the first concurrent Session/history reads took 47 ms. A combined run with
+existing shared-Host lifecycle regressions took 2,457 ms / 46 ms. Two packaged
+`kodax -r` PTYs in different directories restored history and emitted the prompt
+in 3,161 ms and 3,497 ms with the same 220-record scenario. Actual default
+Host readiness after the fix took 1,896 ms; the two reported Sessions read in
+23 ms and 8 ms. The real 160 retired records had already been reclaimed by the
+slow baseline, so this last real-home timing is acceptance, not a same-input
+before/after comparison. No registry was cleared or user Host force-replaced.
+
+### Remaining first-read evidence
+
+The historical 16,011-ms read has not been independently reproduced or causally
+attributed. Subsequent direct storage reads were 19–27 ms and existing-Host views
+4–7 ms. A separate isolated Host running 16 harmless shell identity commands
+completed all Runs; 63 sampled Session reads peaked at 1,444 ms (first: 14 ms).
+This shows runtime contention without reproducing the historical 16 seconds.
+Do not claim that all first-read latency or post-answer finalization is fixed.
+Issue 371 remains Open for that un-attributed observation. See the
+[regression guide](test-guides/ISSUE_371_v0.7.97_REGRESSION_GUIDE.md) for the
+confirmed reproducer, safety boundaries and remaining scope.
 
 The separate post-answer example is not verifier execution: the persisted last
 answer timestamp is 22:38:58.698, `memory_outcome_digest` is 22:39:10.105, and Run
@@ -2005,7 +2037,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
 | 372 | Medium | Resolved | Windows setup readiness misses filesystem capability failures seen by a console Host | observed in v0.7.97-alpha.10; first affected version unknown | post-alpha.10 working tree (unreleased) | 2026-10-29 | 2026-10-29 |
-| 371 | Medium | Open | Intermittent slow shared Host startup and first Session read | observed in v0.7.97-alpha.10; first affected version unknown | — | 2026-10-28 | — |
+| 371 | Medium | Open | Intermittent slow shared Host startup and first Session read | observed in v0.7.97-alpha.10; first affected version unknown | startup recovery only: post-alpha.10 working tree (unreleased) | 2026-10-28 | — |
 | 370 | Medium | Resolved | Long history wheel navigation cannot return after a saved revision changes | observed in v0.7.97-alpha.10; first affected version unknown | post-alpha.10 working tree (unreleased) | 2026-10-28 | 2026-10-28 |
 | 369 | High | Resolved | Concurrent resume launchers fail while refreshing an older Host | observed in v0.7.97-alpha.5; first affected version unknown | `v0.7.97-alpha.6` | 2026-10-15 | 2026-10-15 |
 | 368 | Medium | Resolved | Unsubmitted REPL Sessions leave empty persisted history | v0.7.97-alpha.1; Host migration commits 3301a452 / 0914f589 | `v0.7.97-alpha.6` | 2026-10-14 | 2026-10-14 |

@@ -966,7 +966,14 @@ export function captureWindowsProcessTree(
   pid: number,
   expectedProcessStartIdentity: string,
 ): WindowsProcessTreeCapture | null | undefined {
-  const snapshot = readWindowsProcessSnapshot();
+  return captureWindowsProcessTreeInSnapshot(pid, expectedProcessStartIdentity, readWindowsProcessSnapshot());
+}
+
+function captureWindowsProcessTreeInSnapshot(
+  pid: number,
+  expectedProcessStartIdentity: string,
+  snapshot: readonly WindowsProcessIdentity[] | undefined,
+): WindowsProcessTreeCapture | null | undefined {
   if (snapshot === undefined) return undefined;
   const root = snapshot.find((identity) => identity.pid === pid);
   if (root === undefined) return null;
@@ -993,7 +1000,11 @@ async function killCapturedWindowsTree(
   capture: WindowsProcessTreeCapture,
   taskkillMs: number,
   forceMs: number,
+  snapshot: readonly WindowsProcessIdentity[] | undefined,
 ): Promise<ProcessTreeKillResult> {
+  // A fresh complete capture can already prove exit. Starting a PowerShell
+  // terminator for every dead tree needlessly blocks startup and the Host loop.
+  if (snapshot !== undefined && capturedWindowsProcessesGone(capture, snapshot) === true) return ALREADY_EXITED;
   const captured = [capture.root, ...capture.descendants];
   const termination = terminateCapturedWindowsProcesses(
     captured,
@@ -1053,11 +1064,12 @@ export async function killPidTree(
       options.expectedProcessTreeIdentities,
       options.expectedProcessTreeComplete === true,
     );
-    const capturedNow = captureWindowsProcessTree(pid, expectedIdentity);
+    const snapshot = readWindowsProcessSnapshot();
+    const capturedNow = captureWindowsProcessTreeInSnapshot(pid, expectedIdentity, snapshot);
     const capture = mergeWindowsProcessTreeCaptures(capturedNow, retainedCapture);
     if (capture === undefined) return UNKNOWN;
     if (capture === null) return UNKNOWN;
-    return killCapturedWindowsTree(capture, taskkillMs, forceMs);
+    return killCapturedWindowsTree(capture, taskkillMs, forceMs, snapshot);
   }
 
   if (options.expectedProcessStartIdentity !== undefined) {
@@ -1097,12 +1109,15 @@ export async function killChildProcessTree(
   const trackedWindowsCapture = process.platform === 'win32'
     ? windowsCaptureByChild.get(child)
     : undefined;
+  const windowsSnapshot = process.platform === 'win32' && child.pid !== undefined && trackedWindowsCapture !== undefined
+    ? readWindowsProcessSnapshot() : undefined;
   const capturedNow = process.platform === 'win32'
     && child.pid !== undefined
     && trackedWindowsCapture !== undefined
-    ? captureWindowsProcessTree(
+    ? captureWindowsProcessTreeInSnapshot(
         child.pid,
         trackedWindowsCapture.root.creationTime,
+        windowsSnapshot,
       )
     : undefined;
   const reusableWindowsCapture = mergeWindowsProcessTreeCaptures(capturedNow, trackedWindowsCapture);
@@ -1144,6 +1159,7 @@ export async function killChildProcessTree(
       reusableWindowsCapture,
       options.taskkillMs ?? DEFAULT_TASKKILL_MS,
       forceMs,
+      windowsSnapshot,
     );
   }
 
@@ -1153,6 +1169,7 @@ export async function killChildProcessTree(
       reusableWindowsCapture,
       options.taskkillMs ?? DEFAULT_TASKKILL_MS,
       forceMs,
+      windowsSnapshot,
     );
     if (await waitForChildProcessExit(child, forceMs)) {
       return windowsTreeResult.status === 'unknown' ? UNKNOWN : TERMINATED;
