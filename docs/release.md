@@ -50,6 +50,14 @@ The workflow contracts are covered by `tests/release-workflow.test.ts`. Local
 Windows archive verification passed on 2026-10-29; this does not substitute for
 the final tag's five-platform Actions results or manual acceptance.
 
+The first parallel alpha.11 run (`40883484202`, candidate `2321291c`) exposed
+the Windows archive failure in about three minutes: the startup Job membership
+probe hit its five-second limit and the resulting Host lacked shutdown
+verification capability. The follow-up gives this cold-compiling probe a
+15-second limit and refuses to publish a supervised Host when OS containment
+cannot be verified. Process identities and the same-version upgrade fence are
+unchanged; runner validation of that follow-up remains required.
+
 ## Distribution layout
 
 Each archive (`tar.gz` for Linux/macOS, `zip` for Windows) contains the

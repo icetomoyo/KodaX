@@ -34,6 +34,21 @@ afterEach(() => {
 });
 
 describe('runtime daemon containment ownership', () => {
+  it('rejects an unverified supervised Host before publishing incomplete capabilities', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    vi.stubEnv('KODAX_DAEMON_JOB_CONTAINED', '1');
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-daemon-unverified-job-'));
+    temporaryDirectories.push(homeDir);
+    jobProbe.mockReturnValue(undefined);
+    vi.spyOn(daemonState, 'readRuntimeOwnerProcessStartIdentities').mockReturnValue(new Map([[process.pid, 'fixture']]));
+    const createRuntime = vi.fn(async () => { throw new Error('Must not publish an unverified Host.'); });
+    try {
+      await expect(acquireRuntimeDaemonLease({ homeDir, createRuntime }))
+        .rejects.toThrow('Could not verify the Windows Job containment');
+      expect(createRuntime).not.toHaveBeenCalled();
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it.each([[false, false], [false, true], [true, false], [true, true]])(
     'captures pre-host probes and restores the sink (log failure=%s, probe throws=%s)', async (logFailure, probeThrows) => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-daemon-probe-log-'));

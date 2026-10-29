@@ -83,6 +83,9 @@ export async function acquireRuntimeDaemonLease(
   );
   const { jobContained, processStartIdentity, supervisorProcessStartIdentity } =
     readOwnerIdentityWithDiagnostics(paths, supervisorPid);
+  if (process.platform === 'win32' && process.env.KODAX_DAEMON_JOB_CONTAINED === '1' && !jobContained) {
+    throw new Error('Could not verify the Windows Job containment; refusing to publish an unverified Host.');
+  }
   if (jobContained && supervisorProcessStartIdentity === undefined) {
     throw new Error(
       'Could not read the Windows Job supervisor process identity; refusing PID-only ownership.',
