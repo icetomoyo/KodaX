@@ -3,6 +3,8 @@ import { permissionModeDisplayName } from "../../permission/types.js";
 import { resolveCompactionThresholdTokens } from "../../common/compaction-display.js";
 import type { ClientSessionActivity } from '@kodax-ai/coding/client-contract';
 import { estimateOutputTokens } from '../../common/streaming-token-estimate.js';
+import { formatTokenCount } from '../../common/token-format.js';
+export { formatTokenCount } from '../../common/token-format.js';
 
 const ITERATION_SYMBOL = "\u{1F504}";
 const BAR_FILLED = "\u2588";
@@ -73,16 +75,6 @@ function getReasoningColor(label: string): string {
     default:
       return "cyan";
   }
-}
-
-export function formatTokenCount(count: number): string {
-  if (count >= 1_000_000) {
-    return `${(count / 1_000_000).toFixed(1)}M`;
-  }
-  if (count >= 1000) {
-    return `${(count / 1000).toFixed(1)}k`;
-  }
-  return String(count);
 }
 
 /** Display Host estimates consistently; old Hosts may omit the estimate. */

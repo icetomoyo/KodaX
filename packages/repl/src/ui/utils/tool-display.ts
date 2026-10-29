@@ -8,7 +8,7 @@ import {
 
 import { ToolCallStatus, type ToolCall } from "../types.js";
 import { estimateOutputTokens } from '../../common/streaming-token-estimate.js';
-import { formatTokenCount } from '../view-models/status-bar.js';
+import { formatTokenCount } from '../../common/token-format.js';
 
 type ToolInputValue = Record<string, unknown> | string | undefined;
 

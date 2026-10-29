@@ -7,7 +7,7 @@ import { buildStatusBarViewModel } from "../view-models/status-bar.js";
 const BULLET_SEPARATOR = " \u00B7 ";
 
 describe("StatusBar", () => {
-  it("includes thinking char counts in budget text", () => {
+  it("includes estimated thinking tokens in busy text", () => {
     const text = getStatusBarText({
       sessionId: "session-1",
       permissionMode: "accept-edits",
@@ -21,10 +21,10 @@ describe("StatusBar", () => {
     });
 
     expect(text).toContain("Thinking");
-    expect(text).toContain("42 chars");
+    expect(text).toContain("~11 tokens");
   });
 
-  it("includes tool char counts in budget text", () => {
+  it("includes estimated tool tokens in busy text", () => {
     const text = getStatusBarText({
       sessionId: "session-1",
       permissionMode: "accept-edits",
@@ -36,7 +36,7 @@ describe("StatusBar", () => {
     });
 
     expect(text).toContain("Bash");
-    expect(text).toContain("12 chars");
+    expect(text).toContain("~3 tokens");
   });
 
   it("renders the visible busy status", () => {
@@ -60,7 +60,7 @@ describe("StatusBar", () => {
     const props = {
       sessionId: "session-1",
       permissionMode: "accept-edits" as const,
-      agentMode: "ama" as any,
+      agentMode: "ama" as const,
       provider: "anthropic",
       model: "sonnet",
       currentTool: "shell_command",
@@ -118,7 +118,7 @@ describe("StatusBar", () => {
     });
 
     expect(text).toContain("session-1");
-    expect(text).not.toContain("Bash (12 chars)");
+    expect(text).not.toContain("Bash");
   });
 
   it("shows agent mode in the first status segment", () => {
@@ -155,7 +155,7 @@ describe("StatusBar", () => {
     expect(text).toContain("Planner");
     expect(text).not.toContain("AMA H2 - Planner");
     expect(text).not.toContain("H2 - Planner");
-    expect(text).toContain("42 chars");
+    expect(text).toContain("~11 tokens");
     expect(text).toContain("Round 2/6");
     expect(text).toContain("Work 87/200");
     expect(text).not.toContain("Iter 14/24");
@@ -179,8 +179,8 @@ describe("StatusBar", () => {
     expect(text).toContain("Planner");
     expect(text).not.toContain("AMA H2 - Planner");
     expect(text).not.toContain("H2 - Planner");
-    expect(text).toContain("Planner - Bash (12 chars)");
-    expect(text).toContain("Bash (12 chars)");
+    expect(text).toContain("Planner - Bash (~3 tokens)");
+    expect(text).toContain("Bash (~3 tokens)");
     expect(text).toContain("session-1 | Planner");
   });
 
@@ -218,7 +218,7 @@ describe("StatusBar", () => {
     });
 
     expect(text).toContain("session-1 | Scout - 3 tools running");
-    expect(text).not.toContain("Bash (120 chars)");
+    expect(text).not.toContain("Bash");
   });
 
   it("hides the initial round counter for AMA and only shows work on the first pass", () => {
@@ -255,7 +255,7 @@ describe("StatusBar", () => {
       toolInputCharCount: 12,
     });
 
-    expect(text).toContain("session-1 | Routing - changed_scope (12 chars)");
+    expect(text).toContain("session-1 | Routing - changed_scope (~3 tokens)");
     expect(text).not.toContain("H1");
     expect(text).not.toContain("H2");
   });
@@ -275,7 +275,7 @@ describe("StatusBar", () => {
     });
 
     expect(text).toContain("session-1 | Scout");
-    expect(text).toContain("42 chars");
+    expect(text).toContain("~11 tokens");
     expect(text).not.toContain("H2");
   });
 

@@ -9,7 +9,7 @@ import React, { useState, useEffect } from "react";
 import { Box, Text } from "../tui.js";
 import { getTheme } from "../themes/index.js";
 import type { Theme } from "../types.js";
-import { formatTokenCount } from "../view-models/status-bar.js";
+import { formatTokenCount } from "../../common/token-format.js";
 import { estimateOutputTokens } from '../../common/streaming-token-estimate.js';
 export { estimateOutputTokens } from '../../common/streaming-token-estimate.js';
 

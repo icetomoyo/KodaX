@@ -711,7 +711,7 @@ describe("transcript-layout", () => {
     expect(text).not.toContain("* tools: read_file");
   });
 
-  it("shows thinking char counts while the model is still thinking", () => {
+  it("shows estimated tokens while the model is still thinking", () => {
     const rows = buildTranscriptRows({
       items: [],
       viewportWidth: 60,
@@ -721,7 +721,26 @@ describe("transcript-layout", () => {
     });
 
     const text = rows.map((row) => row.text).join("\n");
-    expect(text).toContain("[Thinking] 42 chars...");
+    expect(text).toContain("[Thinking] ~11 tokens...");
+  });
+
+  it("uses estimated tokens in completed iteration thinking and response summaries", () => {
+    const rows = buildTranscriptRows({
+      items: [],
+      viewportWidth: 80,
+      iterationHistory: [{
+        iteration: 1,
+        thinkingSummary: "summary",
+        thinkingLength: 120,
+        response: "a".repeat(240),
+        toolsUsed: [],
+      }],
+    });
+
+    const text = rows.map((row) => row.text).join("\n");
+    expect(text).toContain("summary (~30 tokens total)");
+    expect(text).toContain("... (~60 tokens total)");
+    expect(text).not.toContain("chars total");
   });
 
   it("truncates live thinking to a 400 character preview", () => {
@@ -993,7 +1012,7 @@ describe("transcript-layout", () => {
     });
 
     const text = rows.map((row) => row.text).join("\n");
-    expect(text).toContain("[AMA Planner] 42 chars round 2/6...");
+    expect(text).toContain("[AMA Planner] ~11 tokens round 2/6...");
     expect(text).not.toContain("[AMA H2");
   });
 
@@ -1011,7 +1030,7 @@ describe("transcript-layout", () => {
     });
 
     const text = rows.map((row) => row.text).join("\n");
-    expect(text).toContain("[AMA Scout] 42 chars...");
+    expect(text).toContain("[AMA Scout] ~11 tokens...");
     expect(text).not.toContain("[AMA H2");
   });
 
@@ -1033,7 +1052,7 @@ describe("transcript-layout", () => {
     });
 
     const text = rows.map((row) => row.text).join("\n");
-    expect(text).toContain("[AMA Worker] 42 chars...");
+    expect(text).toContain("[AMA Worker] ~11 tokens...");
     expect(text).not.toContain("[AMA Scout");
   });
 
@@ -1112,7 +1131,7 @@ describe("transcript-layout", () => {
     });
 
     const text = rows.map((row) => row.text).join("\n");
-    expect(text).toContain("[AMA Planner] 42 chars...");
+    expect(text).toContain("[AMA Planner] ~11 tokens...");
     expect(text).not.toContain("[AMA H2");
     expect(text).not.toContain("round 1/2");
   });
@@ -1143,7 +1162,7 @@ describe("transcript-layout", () => {
     });
 
     const text = rows.map((row) => row.text).join("\n");
-    expect(text).toContain("[AMA Planner] [Tools] changed_diff (18 chars)...");
+    expect(text).toContain("[AMA Planner] [Tools] changed_diff (~5 tokens)...");
     expect(text).not.toContain("[AMA H2");
   });
 

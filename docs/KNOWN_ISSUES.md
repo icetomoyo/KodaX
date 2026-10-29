@@ -54,6 +54,9 @@ with only character totals retain the documented coarse characters/4 fallback.
 Every estimate shows `~`; Provider usage and context baselines are unchanged.
 Legacy counters also reset for retry/replacement requests and key by request
 and call identity when segment events are unavailable.
+The follow-up audit also corrects legacy transcript thinking and completed-round
+summary counters. Compact token formatting is dependency-free, avoiding the
+unrelated permission/runtime imports introduced into transcript helpers.
 
 See [regression guide](test-guides/ISSUE_373_v0.7.97_REGRESSION_GUIDE.md) for
 RED/GREEN coverage, multilingual/chunk/call isolation, unchanged API usage and

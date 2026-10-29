@@ -12,6 +12,12 @@ relabelled as actual tokens or added to Provider usage, billing or the context
 baseline. Pasted-text lengths remain character counts because they measure text
 size rather than model progress.
 
+The follow-up audit also covers legacy transcript thinking spinners and the
+completed-iteration thinking/response summary counters. Those surfaces use the
+same visibly approximate fallback as other character-only legacy paths.
+Character-based selection sizes, pasted text, file content sizes and hard text
+truncation limits retain their actual units; they are not model usage counters.
+
 The Host estimates each identified call's complete received argument text using
 the same `countTokens` estimator used for live thinking. Estimate once per
 coalesced Session view, not on every incoming fragment. Preserve CJK and split
@@ -86,3 +92,38 @@ packaged Ink/Classic PTY startup/progress/exit passed. Production/test typecheck
 workspace and bundle builds, and all 14 SDK declaration bundles passed. The
 Issue 371 concurrent cold-resume/verified-shutdown/restart fixture also passed
 against the rebuilt bundle. Standards and Spec review have no open findings.
+
+## Follow-up audit (2026-10-29)
+
+The initial focused suite missed legacy transcript thinking and iteration
+summary labels. New regressions failed on `42 chars`, `120 chars total` and
+`240 chars total`, then passed with `~11 tokens`, `~30 tokens total` and
+`~60 tokens total`. Managed-role prefixes and round labels remain intact.
+The older StatusBar component assertions and one thinking-state golden row
+also needed the new unit; no unrelated golden output changes are expected.
+
+The audit also found that importing the token formatter through the status-bar
+module made lightweight transcript helpers load permission/coding runtime
+modules. The existing narrowly mocked transcript suite could no longer collect.
+The formatter now lives in a dependency-free common module, and the original
+status-bar export remains available. This corrects the dependency rather than
+expanding mocks to hide it.
+
+Follow-up validation passed: all 256 REPL test files (2,995 cases passed,
+one skipped); production and test typechecks; workspace, executable bundle and
+14 SDK declaration builds; packaged Ink and Classic token-stream startup,
+display and normal exit. The rebuilt-bundle cold-resume fixture also passed:
+220 exited records, ready in 2,705 ms, concurrent history reads in 48 ms and
+verified shutdown/restart in 1,527 ms. These fixture measurements do not resolve
+Issue 371's historical, un-attributed 16-second read. Independent Standards and
+Spec follow-up review each have zero open findings.
+
+```powershell
+npx vitest run packages/repl/src --maxWorkers=2
+npm run typecheck
+npm run build:packages
+npm run build:bundle
+npm run build:dts
+node tests/repl-pty-acceptance.mjs --streaming-tokens-only
+node --test tests/bundled-startup-recovery.test.mjs
+```
