@@ -137,17 +137,19 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
     const meta = { providerRequestId };
     events!.onOutputSegmentStart?.({ responseId: `streaming-response-${surface}`, providerRequestId, mode: 'append' });
     events!.onThinkingDelta?.('think', meta);
-    await expect.poll(output).toContain(surface === 'ink' ? 'Thinking(~2tokens)' : 'Thinking(~2tokensreceivedsofar)');
+    await expect.poll(output).toContain('Thinking(~2tokens)');
     const beforeThinkingUpdate = output().length;
     events!.onThinkingDelta?.(' more more more more more more more more', meta);
     // The owned renderer updates only changed cells, so the stable label is not repeated.
     if (surface === 'ink') await expect.poll(() => output().slice(beforeThinkingUpdate)).toContain('12tokens)');
     events!.onThinkingEnd?.('think more more more more more more more more', meta);
     events!.onToolInputDelta?.('read', '{"path":', { ...meta, toolId: `tool-${surface}` });
-    await expect.poll(output).toContain(surface === 'ink' ? 'Receivingread(8chars)' : 'Receivingread(8charsreceivedsofar)');
+    await expect.poll(output).toContain('Receivingread(~2tokens)');
     const beforeInputUpdate = output().length;
     events!.onToolInputDelta?.('read', '"x"}', { ...meta, toolId: `tool-${surface}` });
-    if (surface === 'ink') await expect.poll(() => output().slice(beforeInputUpdate)).toContain('12chars)');
+    // Classic prints one snapshot per phase; Ink also renders count updates.
+    if (surface === 'ink') await expect.poll(() => output().slice(beforeInputUpdate)).toContain('Receivingread(~3tokens)');
+    expect(output()).not.toMatch(/Receivingread\([^)]*chars/);
     events!.onStreamEnd?.(meta);
   };
   let repl: Promise<void> | undefined;

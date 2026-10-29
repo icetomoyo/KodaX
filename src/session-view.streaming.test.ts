@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
 import { SessionViewOwner } from './session-view.js';
 
-it('projects current thinking and tool input progress without retaining partial arguments', async () => {
+it('projects current thinking and tool input progress without exposing or persisting partial arguments', async () => {
   const saved: unknown[] = [];
   const owner = new SessionViewOwner(async () => ({ session: { id: 'session', title: 'Streaming' },
     settings: {}, items: [], queue: [], interactions: [], runs: [{ runId: 'run', phase: 'running', provider: 'test' }] }),
@@ -19,7 +19,7 @@ it('projects current thinking and tool input progress without retaining partial 
     });
     events.onToolInputDelta?.('read', '{"partial-secret":', { providerRequestId: 'request', toolId: 'call' });
     await expect.poll(() => views.at(-1)?.activity?.streaming).toEqual({
-      kind: 'tool-input', providerRequestId: 'request', toolName: 'read', callId: 'call', charCount: 18,
+      kind: 'tool-input', providerRequestId: 'request', toolName: 'read', callId: 'call', charCount: 18, estimatedTokenCount: 5,
     });
     owner.checkpoint('session');
     await owner.flush('session');

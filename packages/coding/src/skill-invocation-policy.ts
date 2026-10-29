@@ -8,6 +8,7 @@ import {
 import type { KodaXOptions, KodaXShellExecutionContract, KodaXToolExecutionContext } from './types.js';
 import { toolBash } from './tools/bash.js';
 import { KodaXSkillInvocationError } from './skill-invocation-error.js';
+import { parseBashCommand } from './permissions/bash-ast.js';
 
 const TOOL_NAME_ALIASES: Readonly<Record<string, string>> = {
   read: 'read',
@@ -92,6 +93,7 @@ function isToolAllowed(
   policy: AllowedToolPolicy,
   tool: string,
   input: Record<string, unknown>,
+  shellExecution?: KodaXShellExecutionContract,
 ): boolean {
   if (!policy.configured) return true;
   if (policy.rules.length === 0) return false;
@@ -100,6 +102,37 @@ function isToolAllowed(
   return policy.rules.some((rule) => {
     if (rule.tool !== '*' && rule.tool !== normalizedTool) return false;
     if (!rule.patterns?.length || normalizedTool !== 'bash') return true;
+    const shellKind = shellExecution?.shell.kind ?? (process.platform === 'win32' ? 'cmd' : 'bash');
+    if (shellKind === 'cmd') {
+      // cmd expands variables before parsing and does not recognize single
+      // quotes. Do not let POSIX quoting hide executable cmd syntax.
+      if (/[%!^\r\n]/.test(command)) return false;
+      let quoted = false;
+      for (const character of command) {
+        if (character === '"') quoted = !quoted;
+        else if (!quoted && /[&|<>()]/.test(character)) return false;
+      }
+      if (quoted) return false;
+    }
+    if (shellKind === 'powershell' || shellKind === 'pwsh') {
+      // PowerShell does not use POSIX backslash escapes. Reject ambiguous
+      // escapes/smart quotes, then check its own quote boundaries as well.
+      if (/[`\r\n\u2018\u2019\u201c\u201d]/.test(command)) return false;
+      let quote: "'" | '"' | undefined;
+      for (const character of command) {
+        if (character === quote) quote = undefined;
+        else if (!quote && (character === '"' || character === "'")) quote = character;
+        else if (!quote && /[;&|<>(){}]/.test(character)) return false;
+      }
+      if (quote) return false;
+    }
+    // A constrained pattern authorizes one simple command, not extra shell
+    // effects absorbed by a wildcard. Unrestricted Bash still uses Host admission.
+    const tree = parseBashCommand(command);
+    const stage = tree.statements[0]?.stages[0];
+    if (tree.unparseable || tree.statements.length !== 1
+      || tree.statements[0]!.stages.length !== 1 || !stage?.argv.length
+      || stage.redirections.length > 0) return false;
     return rule.patterns.some((pattern) => matchesPattern(pattern, command));
   });
 }
@@ -226,7 +259,7 @@ async function runHooks(
   for (const hook of hooks ?? []) {
     if (!hookMatches(hook, target)) continue;
     const hookInput = hookToolInput(event, hook);
-    if (!isToolAllowed(allowedTools, 'bash', hookInput)) {
+    if (!isToolAllowed(allowedTools, 'bash', hookInput, options.context?.shellExecution)) {
       emitKodaXDiagnostic({
         source: 'coding:skill-invocation',
         level: 'warn',
@@ -334,7 +367,7 @@ export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions, p
     parseAllowedTools(explicit.context?.commandInvocation?.allowedTools),
   ];
   const assertDynamicContextAllowed = (command: string) => {
-    if (dynamicPolicies.some(policy => !isToolAllowed(policy, 'bash', { command }))) {
+    if (dynamicPolicies.some(policy => !isToolAllowed(policy, 'bash', { command }, explicit.context?.shellExecution))) {
       throw new Error('Dynamic context command is not allowed by the active Skill policy.');
     }
   };
@@ -498,7 +531,7 @@ async function applyExplicitSkillInvocationPolicy(options: KodaXOptions, prompt?
       beforeToolExecute: async (tool, input, meta) => {
         // Loading instructions is separate from their concrete actions. Inline
         // dynamic commands are checked independently before execution.
-        if (tool !== 'skill' && !isToolAllowed(allowedTools, tool, input)) {
+        if (tool !== 'skill' && !isToolAllowed(allowedTools, tool, input, options.context?.shellExecution)) {
           return `[Blocked] Tool '${tool}' is not allowed by ${invocation.name}`;
         }
         if ((await runHooks(

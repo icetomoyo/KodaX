@@ -127,3 +127,21 @@ npm run build:dts
 node tests/repl-pty-acceptance.mjs --streaming-tokens-only
 node --test tests/bundled-startup-recovery.test.mjs
 ```
+
+The later whole-repository run also found stale `chars` assertions in
+`src/sdk-client.repl-activity.test.ts`, outside the REPL package suite. A focused
+RED run confirmed that the actual Host-to-Ink output already used `~2 tokens`.
+The bridge fixture now requires token snapshots for both Ink and Classic, the
+updated cumulative `~3 tokens` for Ink, and no character-unit receiving line.
+Classic retains its existing one-snapshot-per-phase behavior; the test does not
+require repeated count lines or change production behavior.
+Two other root fixtures (`sdk-client.streaming.test.ts` and
+`session-view.streaming.test.ts`) still required the old tool-input object without
+`estimatedTokenCount`. Independent RED runs confirmed that only the additive
+estimate field broke those assertions. They retain exact object comparisons and
+private-text checks, now including explicit token estimates. All 30 cases across
+the four files below then passed; no production change was needed.
+
+```powershell
+npx vitest run src/sdk-client.repl-activity.test.ts src/sdk-client.streaming.test.ts src/session-view.streaming.test.ts packages/repl/src/interactive/classic-plane-display.test.ts --maxWorkers=2
+```

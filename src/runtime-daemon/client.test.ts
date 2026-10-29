@@ -27,6 +27,30 @@ const RUN_LIFECYCLE_CAPABILITIES = {
 } as const;
 
 describe('runtime daemon client proxy', () => {
+  it.each(['question', 'question_multi', 'question_input'] as const)('rejects a local timeout without sending a malformed %s answer', async kind => {
+    const sent: string[] = [];
+    const client = createRuntimeDaemonClient({
+      identity: { runtimeId: 'timeout-probe', mode: 'daemon', profile: 'default', startedAt: '2026-10-29T00:00:00Z', version: KODAX_VERSION },
+      transport: {
+        async request(method) {
+          sent.push(method);
+          if (method === 'interaction.list') return [{ requestId: 'q', sessionId: 's', runId: 'r',
+            kind, createdAt: '2026-10-29T00:00:00Z', options: { question: 'Test' } }];
+          return { requestId: 'q', accepted: true, status: 'answered' };
+        },
+        subscribe() { return { close() {} }; },
+      },
+    });
+    await expect(client.userInputs.respond('q', { unanswered: true, reason: 'timeout' }, { runId: 'r' }))
+      .rejects.toMatchObject({ code: 'invalid_input' });
+    expect(sent).toEqual(['interaction.list']);
+    await expect(client.userInputs.respond('q', { unanswered: true, reason: 'timeout' }, { runId: 'other' }))
+      .resolves.toMatchObject({ accepted: false, status: 'already_resolved' });
+    expect(sent).not.toContain('interaction.respond');
+    await client.userInputs.respond('q', { unanswered: true, reason: 'non_interactive' }, { runId: 'r' });
+    expect(sent.at(-1)).toBe('interaction.respond');
+  });
+
   it.each(['skipped', 'non_interactive'] as const)('preserves %s when skipping a question through the Runtime facade', async reason => {
     let response: unknown;
     const client = createRuntimeDaemonClient({

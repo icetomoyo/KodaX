@@ -516,7 +516,7 @@ describe('answerClientPlaneInteraction (T17)', () => {
 
   it.each(['question', 'question_multi', 'question_input'] as const)(
     'submits explicit skip but never a local timeout for %s', async kind => {
-      for (const reason of ['skipped', 'timeout'] as const) {
+      for (const reason of ['skipped', 'non_interactive', 'timeout'] as const) {
         const plane = planeWith([]);
         const surface: ClientPlaneDialogSurface = {
           ...baseSurface,
@@ -528,8 +528,9 @@ describe('answerClientPlaneInteraction (T17)', () => {
           ? interaction(kind, { questions: [] })
           : kind === 'question_input' ? interaction(kind, { question: 'Optional?' })
             : interaction(kind, { question: 'Optional?' });
-        expect(await answerClientPlaneInteraction(plane, pending, surface)).toBe(reason === 'skipped');
-        expect(plane.calls).toEqual(reason === 'skipped' ? [{ kind: 'skip' }] : []);
+        expect(await answerClientPlaneInteraction(plane, pending, surface)).toBe(reason !== 'timeout');
+        expect(plane.calls).toEqual(reason === 'timeout' ? []
+          : reason === 'non_interactive' ? [{ kind: 'skip', reason }] : [{ kind: 'skip' }]);
       }
     },
   );

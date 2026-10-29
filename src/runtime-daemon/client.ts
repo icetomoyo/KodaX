@@ -452,7 +452,10 @@ export function createRuntimeDaemonClient(
     pending: ClientInteraction,
     answer: unknown,
   ): ClientInteractionResponse | undefined => {
-    if (pending.kind !== 'permission' && isAskUserUnanswered(answer) && answer.reason !== 'timeout') {
+    if (pending.kind !== 'permission' && isAskUserUnanswered(answer)) {
+      if (answer.reason === 'timeout') {
+        throw Object.assign(new Error('A client cannot submit a timeout as an answer; the Host owns the question deadline.'), { code: 'invalid_input' as const });
+      }
       return answer.reason === 'non_interactive' ? { kind: 'skip', reason: 'non_interactive' } : { kind: 'skip' };
     }
     if (pending.kind === 'question_input') {
@@ -861,8 +864,11 @@ export function createRuntimeDaemonClient(
         options?: { readonly expectedRevision?: number; readonly runId?: string },
       ) {
         const pending = await findInteraction(requestId);
-        const response = pending === undefined ? undefined : questionResponseFor(pending, answer);
-        if (response === undefined || !matchesUserInputBindings(pending!, options)) {
+        if (pending === undefined || !matchesUserInputBindings(pending, options)) {
+          return { requestId, accepted: false, status: 'already_resolved' as const };
+        }
+        const response = questionResponseFor(pending, answer);
+        if (response === undefined) {
           return { requestId, accepted: false, status: 'already_resolved' as const };
         }
         return request('interaction.respond', { requestId, response }) as Promise<RuntimeUserInputResolution>;

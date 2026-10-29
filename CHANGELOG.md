@@ -6,7 +6,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Add explicit Agent, Coding and experimental Script work modes through the
+  CLI, interactive `/work-mode` command and managed SDK/Session paths. Coding
+  remains the default. Script executes supported leaf tools through the existing
+  permission and receipt boundaries; SDK profiles and specialist agents retain
+  their declared capabilities.
+
+- Refresh Ark, MiMo and MiniMax model catalogs and their reasoning/capacity
+  metadata. Provider-specific mappings and validation limits are documented in
+  the provider configuration guide.
+
 ### Fixed
+
+- Preserve non-interactive question outcomes through the REPL client and reject
+  client-supplied timeout answers before daemon submission; the Host owns deadlines.
+- Constrain Skill `Bash(pattern)` rules to a single parsed command, preventing
+  wildcard matches from admitting additional shell statements, pipelines,
+  redirects or command substitutions. Bare Bash and absent Skill restrictions
+  continue through normal Host authorization.
+- Correct Windows stale-process recovery startup overhead and history browsing
+  cursor resynchronization; validate sandbox filesystem capabilities at startup.
+  Historical intermittent first-read latency remains under investigation.
+- Display estimated tokens consistently across model streaming progress surfaces.
 
 - Project existing task-result metadata into Product live views and recovered
   history with explicit source, task identity, terminal/unknown status and

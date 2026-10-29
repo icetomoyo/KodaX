@@ -70,14 +70,16 @@ it.each(['sa', 'ama'] as const)('exposes bounded live thinking and tool input fa
   try {
     const accepted = await client.inputs.submit({ sessionId: session.id, inputId: 'stream', text: 'Read fixture.txt and finish.' });
     runId = accepted.runId;
-    await expect.poll(() => views.at(-1)?.activity?.streaming, { timeout: 15_000 }).toMatchObject({ kind: 'thinking', charCount: thought.length });
+    await expect.poll(() => views.at(-1)?.activity?.streaming, { timeout: 15_000 })
+      .toMatchObject({ kind: 'thinking', charCount: thought.length, estimatedTokenCount: 7 });
     const thinking = views.at(-1)!.activity!.streaming!;
     expect(thinking.providerRequestId).toBeTruthy();
     if (thinking.kind !== 'thinking') throw new Error('Expected a thinking item');
     expect(views.at(-1)!.items.find(item => item.id === thinking.itemId)?.text).toBe(thought);
     releaseThinking();
     await expect.poll(() => views.at(-1)?.activity?.streaming).toEqual({ kind: 'tool-input',
-      providerRequestId: thinking.providerRequestId, toolName: 'read', callId: 'read-fixture', charCount: toolInput.length });
+      providerRequestId: thinking.providerRequestId, toolName: 'read', callId: 'read-fixture',
+      charCount: toolInput.length, estimatedTokenCount: 6 });
     expect(JSON.stringify(views.at(-1)?.activity?.streaming)).not.toContain('fixture.txt');
     releaseTool();
     const result = await client.runs.await(runId!);

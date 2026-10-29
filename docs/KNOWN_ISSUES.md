@@ -27,6 +27,40 @@ Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
 
+## Issue 375: Constrained Skill shell patterns admit extra effects
+
+- Priority: High
+- Status: Resolved
+- Introduced: observed on aeb16fef; first affected version unknown
+- Created / Resolved: 2026-10-29
+- Fixed: post-v0.7.97-alpha.10 working tree (unreleased)
+
+`Bash(git diff *)` matched an entire compound command, so a second command
+could escape the Skill's narrower restriction. Host authorization and sandbox
+checks still applied; this was not a Host authorization bypass.
+
+Constrained rules now require one parsed command without pipelines, redirects
+or unsupported syntax. cmd and PowerShell receive additional dialect checks so
+POSIX quoting cannot conceal executable operators. Bare Bash, wildcard and
+omitted restrictions retain Host authorization. See the
+[regression contract and dialect limits](test-guides/ISSUE_375_v0.7.97_REGRESSION_GUIDE.md).
+
+## Issue 374: Client question adapters lose unanswered semantics
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: observed on aeb16fef; first affected version unknown
+- Created / Resolved: 2026-10-29
+- Fixed: post-v0.7.97-alpha.10 working tree (unreleased)
+
+The REPL flattened `non_interactive` into an ordinary skip; the daemon SDK
+facade could submit a timeout object as a question answer. Question, multi-question
+and input adapters now preserve non-interactive reasons. The facade rejects local
+timeout answers with `invalid_input`; only the Host settles question deadlines.
+Missing requests and stale Run/revision bindings retain `already_resolved`.
+Permission decisions and cancel/stop behavior are unchanged. See the
+[regression contract](test-guides/ISSUE_374_v0.7.97_REGRESSION_GUIDE.md).
+
 ## Issue 373: Streaming progress mixes character and token units
 
 - Priority: Low
@@ -2072,6 +2106,8 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 375 | High | Resolved | Constrained Skill shell patterns admit extra effects | observed on aeb16fef; first affected version unknown | post-alpha.10 working tree (unreleased) | 2026-10-29 | 2026-10-29 |
+| 374 | Medium | Resolved | Client question adapters lose unanswered semantics | observed on aeb16fef; first affected version unknown | post-alpha.10 working tree (unreleased) | 2026-10-29 | 2026-10-29 |
 | 373 | Low | Resolved | Streaming progress mixes character and token units | observed in v0.7.97-alpha.10; first affected version unknown | post-alpha.10 working tree (unreleased) | 2026-10-29 | 2026-10-29 |
 | 372 | Medium | Resolved | Windows setup readiness misses filesystem capability failures seen by a console Host | observed in v0.7.97-alpha.10; first affected version unknown | post-alpha.10 working tree (unreleased) | 2026-10-29 | 2026-10-29 |
 | 371 | Medium | Open | Intermittent slow shared Host startup and first Session read | observed in v0.7.97-alpha.10; first affected version unknown | startup recovery only: post-alpha.10 working tree (unreleased) | 2026-10-28 | — |
@@ -16936,12 +16972,19 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 252 (37 Open, 215 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 254 (37 Open, 217 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-10-29: Issues 374 and 375
+
+- Preserved non-interactive outcomes and rejected client-authored question timeouts.
+- Closed constrained Skill shell-pattern command chaining, including cmd and
+  PowerShell quoting differences; unrestricted rules still obey Host authorization.
+- Added deterministic regressions and linked acceptance contracts above.
 
 ### 2026-10-21: Issue 322 summarizer breaker repaired
 
