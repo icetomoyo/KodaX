@@ -7,6 +7,8 @@ import {
 } from "@kodax-ai/agent";
 
 import { ToolCallStatus, type ToolCall } from "../types.js";
+import { estimateOutputTokens } from '../../common/streaming-token-estimate.js';
+import { formatTokenCount } from '../view-models/status-bar.js';
 
 type ToolInputValue = Record<string, unknown> | string | undefined;
 
@@ -875,7 +877,7 @@ export function formatLiveToolLabel(
     return `[Tools] ${summary}`;
   }
   if (toolInputCharCount > 0) {
-    return `[Tools] ${normalizeDisplayToolName(toolName)} (${toolInputCharCount} chars)`;
+    return `[Tools] ${normalizeDisplayToolName(toolName)} (~${formatTokenCount(estimateOutputTokens(toolInputCharCount))} tokens)`;
   }
   return `[Tools] ${normalizeDisplayToolName(toolName)}`;
 }

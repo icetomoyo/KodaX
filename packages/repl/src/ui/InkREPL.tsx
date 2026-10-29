@@ -525,7 +525,7 @@ import {
   type SelectOption,
 } from "./utils/ask-user.js";
 import { buildHelpMenuSections } from "./constants/layout.js";
-import { buildStatusBarViewModel, formatTokenCount } from "./view-models/status-bar.js";
+import { buildStatusBarViewModel, formatStreamingActivity } from "./view-models/status-bar.js";
 import {
   dismissLearningRecoveryAfterQuerySubmit,
   formatLearningRecoverySummary,
@@ -4729,11 +4729,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       });
       if (activity?.kind !== 'busy' || !hostStreamingActivity || isLivePaused || workflowBuilderMessage
         || (sessionView?.activity?.compacting ?? promptControlStreamingState.isCompacting)) return activity;
-      const label = hostStreamingActivity.kind === 'thinking' ? 'Thinking' : `Receiving ${hostStreamingActivity.toolName}`;
-      const count = hostStreamingActivity.kind === 'thinking'
-        ? hostStreamingActivity.estimatedTokenCount === undefined ? '' : ` (~${formatTokenCount(hostStreamingActivity.estimatedTokenCount)} tokens)`
-        : hostStreamingActivity.charCount === undefined ? '' : ` (${hostStreamingActivity.charCount} chars)`;
-      return { ...activity, text: `${label}${count}` };
+      return { ...activity, text: formatStreamingActivity(hostStreamingActivity) };
     },
     [
       hostStreamingActivity,

@@ -679,6 +679,8 @@ export interface ClientSessionActivity {
     readonly toolName: string; readonly callId?: string;
     /** Cumulative characters for this call; absent when the Provider supplied no call identity. */
     readonly charCount?: number;
+    /** Host estimate for this call's received arguments, not Provider usage. */
+    readonly estimatedTokenCount?: number;
   };
   readonly workflow?: ClientWorkflowProcess;
   /** Latest execution budget, whose model and scope may differ from the current Session selection. */

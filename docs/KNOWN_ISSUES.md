@@ -27,6 +27,39 @@ Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
 
+## Issue 373: Streaming progress mixes character and token units
+
+- Priority: Low
+- Status: Resolved
+- Introduced: observed in v0.7.97-alpha.10; first affected version unknown
+- Created / Resolved: 2026-10-29
+- Fixed: post-v0.7.97-alpha.10 working tree (unreleased)
+
+### Original Problem
+
+`Receiving spawn_agent (2169 chars)` still measured raw tool-argument length,
+while thinking progress displayed estimated tokens. The Host supplied a token
+estimate only for thinking; Ink, Classic and legacy spinner paths retained
+character labels for arguments. This did not establish an error in Provider
+usage, billing or context accounting.
+
+### Resolution
+
+The Host now estimates cumulative, identified tool arguments using its existing
+multilingual `countTokens`, once per coalesced view. Interleaved calls and
+requests remain separate, child output is excluded, and temporary text is
+released with its stream/Run/Session lifecycle. Ink and Classic share one token
+formatter; missing estimates from old Hosts omit the quantity. Legacy paths
+with only character totals retain the documented coarse characters/4 fallback.
+Every estimate shows `~`; Provider usage and context baselines are unchanged.
+Legacy counters also reset for retry/replacement requests and key by request
+and call identity when segment events are unavailable.
+
+See [regression guide](test-guides/ISSUE_373_v0.7.97_REGRESSION_GUIDE.md) for
+RED/GREEN coverage, multilingual/chunk/call isolation, unchanged API usage and
+source/packaged terminal acceptance. This display correction does not close
+Issue 371's un-attributed historical first-read latency.
+
 ## Issue 372: Windows setup readiness misses filesystem capability failures seen by a console Host
 
 - Priority: Medium
@@ -2036,6 +2069,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 373 | Low | Resolved | Streaming progress mixes character and token units | observed in v0.7.97-alpha.10; first affected version unknown | post-alpha.10 working tree (unreleased) | 2026-10-29 | 2026-10-29 |
 | 372 | Medium | Resolved | Windows setup readiness misses filesystem capability failures seen by a console Host | observed in v0.7.97-alpha.10; first affected version unknown | post-alpha.10 working tree (unreleased) | 2026-10-29 | 2026-10-29 |
 | 371 | Medium | Open | Intermittent slow shared Host startup and first Session read | observed in v0.7.97-alpha.10; first affected version unknown | startup recovery only: post-alpha.10 working tree (unreleased) | 2026-10-28 | — |
 | 370 | Medium | Resolved | Long history wheel navigation cannot return after a saved revision changes | observed in v0.7.97-alpha.10; first affected version unknown | post-alpha.10 working tree (unreleased) | 2026-10-28 | 2026-10-28 |
@@ -16899,7 +16933,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 251 (37 Open, 214 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 252 (37 Open, 215 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md

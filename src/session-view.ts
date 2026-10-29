@@ -46,6 +46,7 @@ interface ObservedSession {
   persistFailure?: unknown;
   activity?: ClientSessionActivity;
   activityRunId?: string;
+  toolInputTexts?: Map<string, string>;
   costReport?: NonNullable<KodaXEvents['getCostReport']>;
 }
 
@@ -103,7 +104,8 @@ export class SessionViewOwner {
     let outputId: string | undefined;
     const toolItemId = (callId: string): string => outputId
       ? outputItemId(sessionId, outputId, `tool:${callId}`) : `${runId}:tool:${callId}`;
-    const toolInputLengths = new Map<string, number>();
+    const toolInputTexts = new Map<string, string>();
+    state.toolInputTexts = toolInputTexts;
     const startedTools = new Set<string>();
     let streamEnded = false;
     const isPrimary = (meta?: KodaXActivityEventMeta) =>
@@ -179,7 +181,7 @@ export class SessionViewOwner {
           : state.segments.get(runId) ?? createOutputSegmentProjection();
         outputId = segment.outputId;
         if (current.active?.providerRequestId !== segment.providerRequestId) {
-          toolInputLengths.clear(); startedTools.clear(); streamEnded = false;
+          toolInputTexts.clear(); startedTools.clear(); streamEnded = false;
           if (startsOutput || !outputId) segmentInputId = inputSource?.();
           activity({ streaming: undefined });
         }
@@ -207,10 +209,10 @@ export class SessionViewOwner {
       onThinkingDelta: (text, meta) => delta('thinking', text, meta),
       onToolInputDelta: (toolName, partialJson, meta) => {
         if (!currentStream(meta) || !meta?.providerRequestId || (meta.toolId && startedTools.has(meta.toolId))) return;
-        const charCount = meta.toolId ? (toolInputLengths.get(meta.toolId) ?? 0) + partialJson.length : undefined;
-        if (meta.toolId && charCount !== undefined) toolInputLengths.set(meta.toolId, charCount);
+        const text = meta.toolId ? (toolInputTexts.get(meta.toolId) ?? '') + partialJson : undefined;
+        if (meta.toolId && text !== undefined) toolInputTexts.set(meta.toolId, text);
         activity({ streaming: { kind: 'tool-input', providerRequestId: meta.providerRequestId, toolName,
-          ...(meta.toolId ? { callId: meta.toolId, charCount } : {}) } });
+          ...(meta.toolId ? { callId: meta.toolId, charCount: text?.length } : {}) } });
       },
       onThinkingEnd: (text, meta) => {
         if (!isPrimary(meta)) return;
@@ -229,7 +231,7 @@ export class SessionViewOwner {
       onStreamEnd: meta => {
         if (!currentStream(meta)) return;
         streamEnded = true;
-        toolInputLengths.clear(); startedTools.clear();
+        toolInputTexts.clear(); startedTools.clear();
         activity({ streaming: undefined });
         this.checkpoint(sessionId);
       },
@@ -239,7 +241,7 @@ export class SessionViewOwner {
           || (meta?.providerRequestId === undefined && state.activity?.streaming?.kind === 'tool-input'
             && state.activity.streaming.callId === tool.id))) {
           startedTools.add(tool.id);
-          toolInputLengths.delete(tool.id);
+          toolInputTexts.delete(tool.id);
           activity({ streaming: undefined });
         }
         const timestamp = Date.now();
@@ -426,6 +428,7 @@ export class SessionViewOwner {
     const checkpoints = await Promise.allSettled([...this.sessions.keys()].map(sessionId => this.flush(sessionId)));
     for (const state of this.sessions.values()) {
       if (state.timer) clearTimeout(state.timer);
+      state.toolInputTexts?.clear();
       for (const report of state.listeners.values()) report({ state: 'closed', reason: 'unavailable' });
       state.listeners.clear();
     }
@@ -444,6 +447,7 @@ export class SessionViewOwner {
   release(sessionId: string): void {
     const state = this.sessions.get(sessionId);
     if (state?.timer) clearTimeout(state.timer);
+    state?.toolInputTexts?.clear();
     if (state) for (const report of state.listeners.values()) report({ state: 'closed', reason: 'unavailable' });
     state?.listeners.clear();
     this.sessions.delete(sessionId);
@@ -470,6 +474,7 @@ export class SessionViewOwner {
       const items = mergeSessionViewItems(state.history, state.items);
       const costReport = state.costReport?.current?.();
       if (state.activityRunId && view.runs.some(run => run.runId === state.activityRunId && !STREAMING_RUN_PHASES.has(run.phase))) {
+        state.toolInputTexts?.clear();
         if (state.activity?.streaming) state.activity = { ...state.activity, streaming: undefined };
       }
       const streaming = state.activity?.streaming;
@@ -479,6 +484,14 @@ export class SessionViewOwner {
           // Estimate once per coalesced view, before presentation text is bounded.
           state.activity = { ...state.activity, streaming: { ...streaming,
             estimatedTokenCount: countTokens(segment.thinkingText) } };
+        }
+      }
+      if (state.activity && streaming?.kind === 'tool-input' && streaming.callId) {
+        const text = state.toolInputTexts?.get(streaming.callId);
+        if (text !== undefined) {
+          // Like thinking, estimate once per coalesced view from the complete
+          // input received so far, independent of chunk boundaries or billing.
+          state.activity = { ...state.activity, streaming: { ...streaming, estimatedTokenCount: countTokens(text) } };
         }
       }
       const { committedOutputIds: _committed, ...publicView } = view;

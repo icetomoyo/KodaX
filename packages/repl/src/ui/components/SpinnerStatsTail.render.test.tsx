@@ -41,7 +41,7 @@ describe("SpinnerStatsTail render output", () => {
     const handle = render(
       <SpinnerStatsTail roundStartedAt={startedAt} charCount={40} />,
     );
-    expect(handle.lastFrame()).toMatch(/\(\d+s · ↓ 10 tokens\)/u);
+    expect(handle.lastFrame()).toMatch(/\(\d+s · ↓ ~10 tokens\)/u);
     handle.unmount();
   });
 

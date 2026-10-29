@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { ToolCallStatus } from "../types.js";
 import type { StatusBarProps } from "../types.js";
-import { buildStatusBarViewModel, getStatusBarText } from "./status-bar.js";
+import { buildStatusBarViewModel, getStatusBarText, formatStreamingActivity } from "./status-bar.js";
 
 const baseProps = (overrides: Partial<StatusBarProps> = {}): StatusBarProps => ({
   sessionId: "s1",
@@ -27,6 +27,26 @@ const baseProps = (overrides: Partial<StatusBarProps> = {}): StatusBarProps => (
   toolInputContent: "",
   activeToolCount: 0,
   ...overrides,
+});
+
+describe('Host streaming progress units', () => {
+  it('marks legacy character-only progress as an approximate token estimate', () => {
+    expect(getStatusBarText(baseProps({ showBusyStatus: true, isThinkingActive: true, thinkingCharCount: 8 })))
+      .toContain('Thinking (~2 tokens)');
+  });
+  it('uses the Host token estimate rather than relabeling characters', () => {
+    expect(formatStreamingActivity({ kind: 'tool-input', providerRequestId: 'request',
+      toolName: 'spawn_agent', callId: 'call', charCount: 2169, estimatedTokenCount: 731 }))
+      .toBe('Receiving spawn_agent (~731 tokens)');
+  });
+  it('does not invent tokens from an older Host or an anonymous call', () => {
+    expect(formatStreamingActivity({ kind: 'tool-input', providerRequestId: 'request',
+      toolName: 'spawn_agent', callId: 'call', charCount: 2169 })).toBe('Receiving spawn_agent');
+  });
+  it('uses the same compact token format for thinking and arguments', () => {
+    expect(formatStreamingActivity({ kind: 'thinking', providerRequestId: 'request',
+      itemId: 'thought', charCount: 8000, estimatedTokenCount: 2000 })).toBe('Thinking (~2.0k tokens)');
+  });
 });
 
 describe("status-bar (Ink view-model) reasoning effort display", () => {

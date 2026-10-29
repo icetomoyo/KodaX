@@ -10,6 +10,8 @@ import { Box, Text } from "../tui.js";
 import { getTheme } from "../themes/index.js";
 import type { Theme } from "../types.js";
 import { formatTokenCount } from "../view-models/status-bar.js";
+import { estimateOutputTokens } from '../../common/streaming-token-estimate.js';
+export { estimateOutputTokens } from '../../common/streaming-token-estimate.js';
 
 // === Types ===
 
@@ -222,18 +224,6 @@ export const Spinner: React.FC<SpinnerProps> = ({ color, theme: themeProp }) => 
 };
 
 /**
- * Token estimation heuristic — characters / 4 — matches claudecode
- * `c:/Works/claudecode/src/utils/tokens.ts:172-199`. Not pulled from
- * provider `usage.output_tokens` because that only lands at message-end;
- * char-count is available every 80ms via the streaming flush, so the
- * spinner-tail can show live progress.
- */
-export function estimateOutputTokens(charCount: number): number {
-  if (charCount <= 0) return 0;
-  return Math.round(charCount / 4);
-}
-
-/**
  * Format milliseconds as a compact elapsed-duration string with
  * magnitude-aware rollover. Stat-tail wants a glanceable number that
  * stays readable as a query runs from a few seconds through long
@@ -308,7 +298,7 @@ export function buildSpinnerStatsText(elapsedMs: number, charCount: number): str
   const elapsed = formatElapsedDuration(elapsedMs);
   const tokens = estimateOutputTokens(charCount);
   return tokens > 0
-    ? ` (${elapsed} · ↓ ${formatTokenCount(tokens)} tokens)`
+    ? ` (${elapsed} · ↓ ~${formatTokenCount(tokens)} tokens)`
     : ` (${elapsed})`;
 }
 

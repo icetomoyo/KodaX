@@ -1,6 +1,8 @@
 import type { StatusBarProps } from "../types.js";
 import { permissionModeDisplayName } from "../../permission/types.js";
 import { resolveCompactionThresholdTokens } from "../../common/compaction-display.js";
+import type { ClientSessionActivity } from '@kodax-ai/coding/client-contract';
+import { estimateOutputTokens } from '../../common/streaming-token-estimate.js';
 
 const ITERATION_SYMBOL = "\u{1F504}";
 const BAR_FILLED = "\u2588";
@@ -81,6 +83,13 @@ export function formatTokenCount(count: number): string {
     return `${(count / 1000).toFixed(1)}k`;
   }
   return String(count);
+}
+
+/** Display Host estimates consistently; old Hosts may omit the estimate. */
+export function formatStreamingActivity(streaming: NonNullable<ClientSessionActivity['streaming']>): string {
+  const label = streaming.kind === 'thinking' ? 'Thinking' : `Receiving ${streaming.toolName}`;
+  return streaming.estimatedTokenCount === undefined
+    ? label : `${label} (~${formatTokenCount(streaming.estimatedTokenCount)} tokens)`;
 }
 
 function createMiniProgressBar(percent: number): string {
@@ -187,7 +196,7 @@ function formatToolAction(currentTool: string): string {
 
 function formatThinkingStatus(label: string, thinkingCharCount?: number): string {
   return thinkingCharCount && thinkingCharCount > 0
-    ? `${label} (${thinkingCharCount} chars)`
+    ? `${label} (~${formatTokenCount(estimateOutputTokens(thinkingCharCount))} tokens)`
     : label;
 }
 
@@ -201,7 +210,7 @@ function formatToolStatus(
     return `${action} (${toolInputContent}...)`;
   }
   if (toolInputCharCount && toolInputCharCount > 0) {
-    return `${action} (${toolInputCharCount} chars)`;
+    return `${action} (~${formatTokenCount(estimateOutputTokens(toolInputCharCount))} tokens)`;
   }
   return action;
 }

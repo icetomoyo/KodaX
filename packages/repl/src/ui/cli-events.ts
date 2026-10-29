@@ -6,9 +6,11 @@
 
 import chalk from 'chalk';
 import readline from 'readline';
-import type { KodaXEvents } from '@kodax-ai/coding';
+import type { KodaXEvents, KodaXActivityEventMeta } from '@kodax-ai/coding';
 import { buildToolConfirmationDisplay } from '../common/tool-confirmation.js';
 import type { ConfirmResult } from '../permission/types.js';
+import { estimateOutputTokens } from '../common/streaming-token-estimate.js';
+import { formatTokenCount } from './view-models/status-bar.js';
 
 // ============== Spinner Animation - Spinner 动画 ==============
 
@@ -102,9 +104,21 @@ async function confirmAction(name: string, input: Record<string, unknown>): Prom
 export function createCliEvents(showSessionId = true): KodaXEvents {
   let spinner: ReturnType<typeof startWaitingDots> | null = null;
   let thinkingCharCount = 0;
+  const toolInputLengths = new Map<string, number>();
+  let providerRequestId: string | undefined;
+  const isPrimary = (meta?: KodaXActivityEventMeta): boolean => meta?.contextKind !== 'child'
+    && !meta?.childAgentId && !meta?.workflowCorrelation?.workflowRunId && !meta?.workflowCorrelation?.childAgentId;
+  const isCurrentStream = (meta?: KodaXActivityEventMeta): boolean => isPrimary(meta)
+    && (!providerRequestId || !meta?.providerRequestId || meta.providerRequestId === providerRequestId);
   let needNewline = false;  // 是否需要在 onStreamEnd 中换行
 
   const events: KodaXEvents = {
+    onOutputSegmentStart: (segment, meta) => {
+      if (!isPrimary(meta) || segment.providerRequestId === providerRequestId) return;
+      providerRequestId = segment.providerRequestId;
+      thinkingCharCount = 0;
+      toolInputLengths.clear();
+    },
     onSessionStart: (info: { provider: string; sessionId: string }) => {
       if (showSessionId) {
         console.log(chalk.cyan(`[KodaX] Provider: ${info.provider} | Session: ${info.sessionId}`));
@@ -120,10 +134,11 @@ export function createCliEvents(showSessionId = true): KodaXEvents {
       needNewline = true;  // Has text output, need newline later - 有文本输出，后续需要换行
     },
 
-    onThinkingDelta: (text: string) => {
+    onThinkingDelta: (text, meta) => {
+      if (!isCurrentStream(meta)) return;
       thinkingCharCount += text.length;
       if (!spinner) spinner = startWaitingDots();
-      spinner.updateText(`Thinking... (${thinkingCharCount} chars)`);
+      spinner.updateText(`Thinking... (~${formatTokenCount(estimateOutputTokens(thinkingCharCount))} tokens)`);
     },
 
     onThinkingEnd: (thinking: string) => {
@@ -150,10 +165,14 @@ export function createCliEvents(showSessionId = true): KodaXEvents {
       spinner.updateText(`Executing ${tool.name}...`);
     },
 
-    onToolInputDelta: (toolName: string, json: string, _meta?: { toolId?: string }) => {
-      const charCount = json.length;
+    onToolInputDelta: (toolName, json, meta) => {
+      if (!isCurrentStream(meta)) return;
+      const key = meta?.toolId ? JSON.stringify([meta.providerRequestId, meta.toolId]) : undefined;
+      const charCount = key ? (toolInputLengths.get(key) ?? 0) + json.length : undefined;
+      if (key && charCount !== undefined) toolInputLengths.set(key, charCount);
+      const count = charCount === undefined ? '' : ` (~${formatTokenCount(estimateOutputTokens(charCount))} tokens)`;
       if (spinner && !spinner.isStopped()) {
-        spinner.updateText(`Receiving ${toolName}... (${charCount} chars)`);
+        spinner.updateText(`Receiving ${toolName}...${count}`);
       } else if (!spinner || spinner.isStopped()) {
         // If spinner stopped (after thinking ended), newline first then create spinner - 如果 spinner 已停止（因为 thinking 结束后），先换行再创建 spinner
         // Consistent with kodax.ts behavior - 与 kodax.ts 行为一致
@@ -163,11 +182,12 @@ export function createCliEvents(showSessionId = true): KodaXEvents {
           needNewline = false;  // Already newlined, onStreamEnd doesn't need to newline - 已经换行，onStreamEnd 不需要再换行
         }
         spinner = startWaitingDots();
-        spinner.updateText(`Receiving ${toolName}... (${charCount} chars)`);
+        spinner.updateText(`Receiving ${toolName}...${count}`);
       }
     },
 
-    onToolResult: (result: { id: string; name: string; content: string }) => {
+    onToolResult: (result, meta) => {
+      toolInputLengths.delete(JSON.stringify([meta?.providerRequestId, result.id]));
       if (spinner) { spinner.stop(); spinner = null; }
       console.log(chalk.green(`[Result] ${result.content.slice(0, 300)}${result.content.length > 300 ? '...' : ''}`));
     },
@@ -177,7 +197,10 @@ export function createCliEvents(showSessionId = true): KodaXEvents {
       console.log(chalk.dim(`[RepoIntel] ${event.summary}`));
     },
 
-    onStreamEnd: () => {
+    onStreamEnd: (meta) => {
+      if (!isCurrentStream(meta)) return;
+      toolInputLengths.clear();
+      thinkingCharCount = 0;
       // Stop globalSpinner (may be created in input_json_delta) - 停止 globalSpinner（在 input_json_delta 中可能创建的）
       if (globalSpinner && !globalSpinner.isStopped()) {
         globalSpinner.stop();
@@ -199,6 +222,9 @@ export function createCliEvents(showSessionId = true): KodaXEvents {
     },
 
     onIterationStart: (_iter: number, _maxIter: number) => {
+      providerRequestId = undefined;
+      toolInputLengths.clear();
+      thinkingCharCount = 0;
       // Stop existing spinner first (avoid multiple intervals running) - 先停止已有的 spinner（避免多个 interval 同时运行）
       if (spinner && !spinner.isStopped()) {
         spinner.stop();
