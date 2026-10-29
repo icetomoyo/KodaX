@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import type { CapabilityResult } from '@kodax-ai/llm';
 import { toolMcpCall } from './mcp-call.js';
+import { toolMcpReadResource } from './mcp-read-resource.js';
 import { toolWebFetch } from './web-fetch.js';
 import { executeRunScopedTool } from '../agent-runtime/run-scoped-tools.js';
 import { tryMcpFallback } from '../agent-runtime/tool-dispatch.js';
@@ -10,7 +11,7 @@ import type { KodaXToolExecutionContext } from '../types.js';
 const image = { type: 'image', path: '/retained-image.png', mediaType: 'image/png' } as const;
 const content = [{ type: 'text', text: 'before' }, image, { type: 'text', text: 'after' }] as const;
 
-it.each(['mcp_call', 'run-scoped', 'fallback', 'resource'])(
+it.each(['mcp_call', 'run-scoped', 'fallback', 'resource', 'mcp_resource'])(
   '%s preserves image order and explicit provider failure alongside structured evidence', async (route) => {
     const result: CapabilityResult = { kind: 'tool', content, isError: true,
       structuredContent: { title: 'independent evidence' } };
@@ -19,6 +20,7 @@ it.each(['mcp_call', 'run-scoped', 'fallback', 'resource'])(
       searchCapabilities: async () => [{ id: 'mcp:test:tool:read', name: 'read' }],
     } } as unknown as KodaXToolExecutionContext;
     const actual = route === 'mcp_call' ? await toolMcpCall({ id: 'mcp:test:tool:read' }, ctx)
+      : route === 'mcp_resource' ? await toolMcpReadResource({ id: 'mcp:test:resource:image' }, ctx)
       : route === 'resource' ? await toolWebFetch({ provider_id: 'mcp', capability_id: 'image://test' }, ctx)
       : route === 'fallback' ? await tryMcpFallback('read', {}, ctx)
       : await executeRunScopedTool(ctx, { name: 'host_read', description: 'read',

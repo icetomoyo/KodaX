@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { link, mkdir, open, readFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { ImageValidation, KodaXToolResultContentItem } from '@kodax-ai/llm';
 import { prepareValidatedImageBlock } from '@kodax-ai/llm';
@@ -117,7 +117,15 @@ export function createFileVisualObservationOwner(options: {
       return file;
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     const temporary = `${file}.${randomUUID()}.tmp`;
-    try { await writeFile(temporary, bytes, { flag: 'wx' }); await rename(temporary, file); }
+    try {
+      await writeFile(temporary, bytes, { flag: 'wx' });
+      try { await link(temporary, file); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        if (!bytes.equals(await readFile(file))) throw new Error('Visual observation hash mismatch.');
+      }
+      await unlink(temporary);
+    }
     catch (error) {
       try { await unlink(temporary); }
       catch (cleanupError) { if ((cleanupError as NodeJS.ErrnoException).code !== 'ENOENT') throw new AggregateError([error, cleanupError], 'Visual snapshot write and cleanup failed.'); }

@@ -67,5 +67,6 @@ export {
 } from './visual-observations.js';
 export { visibleVisualObservations } from './visual-lineage.js';
 export { sourceRaster as preflightVisualPng } from './visual-raster.js';
+export { withVisualImageAdmission, getVisualImageAdmission, type VisualImageAdmission } from './visual-admission.js';
 export { createVisualTools, executeVisualTool, VISUAL_TOOL_DEFINITIONS, VISUAL_TOOL_NAMES,
   type VisualToolBinding, type VisualOutputReservation } from './visual-tools.js';

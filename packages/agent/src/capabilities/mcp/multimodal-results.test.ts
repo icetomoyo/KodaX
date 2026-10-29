@@ -3,8 +3,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { McpServerRuntime } from './runtime.js';
-import { prepareImageBlock, withPreparedImageHistory } from '../../../../llm/src/providers/image-serialization.js';
+import { getPreparedImageDiagnostic, prepareImageBlock, withPreparedImageHistory } from '../../../../llm/src/providers/image-serialization.js';
+import { createHash } from 'node:crypto';
 import * as validation from '../../../../llm/src/image-validation.js';
+import { prepareValidatedImageBlock } from '@kodax-ai/llm';
+import { withVisualImageAdmission } from '../../media/visual-admission.js';
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAKAAAAAuCAYAAACvdRKFAAAAhUlEQVR4Ae3BQQGAMADEsO6kIG5q8QQy+mlynvt+JJKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiEYiGoloJKKRiH7i7gKvb5ZrbwAAAABJRU5ErkJggg==';
 let directory: string;
@@ -30,6 +33,7 @@ beforeEach(async () => {
           mimeType: m.params.name === 'unsupported-mime' ? 'image/svg+xml' : 'image/jpeg',
           data: m.params.name === 'malformed-base64' ? '@@@' : '/9j/4AAQSkZJRgABAQAAAQABAAD/2Q==' }] : [])
       ], structuredContent: { reason: 'Denied' } };
+      if (m.method === 'tools/call' && m.params.name === 'two-good') result.content.push({type:'image',mimeType:'image/png',data:'${PNG}'});
       process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result }) + '\\n');
     });
   `);
@@ -126,4 +130,59 @@ it('prepares MCP bytes at receipt before the persisted attachment can be changed
     expect(await prepareImageBlock(image)).toMatchObject({ data: PNG, mediaType: 'image/png' });
     expect(result).toEqual(original);
   });
+});
+
+it('reserves typed output before image validation and preserves exact scoped source slots', async () => {
+  const received: { source: string; ordinal: number; bytes: Buffer }[] = [];
+  const cancel = vi.fn();
+  const reserve = vi.fn(() => ({ cancel }));
+  const result = await withVisualImageAdmission({ reserve, async admit(bytes, _mediaType, _verdict, source, ordinal) {
+    received.push({ source, ordinal, bytes }); return [{ type: 'text', text: 'accepted typed bytes' }];
+  } }, () => runtime.callTool('mixed', {}));
+  expect(reserve).toHaveBeenCalledWith(2, 'mcp:media:tool:mixed');
+  expect(received).toEqual([{ source: 'mcp:media:tool:mixed', ordinal: 0, bytes: Buffer.from(PNG, 'base64') }]);
+  expect(cancel).not.toHaveBeenCalled();
+  expect(JSON.stringify(result)).toContain('Server evidence');
+  expect(JSON.stringify(result)).toContain('MCP image unavailable');
+});
+
+it('rejects insufficient output capacity before local decode/admission without guessing structuredContent paths', async () => {
+  const inspect = vi.spyOn(validation, 'validateImageBytes'); const admit = vi.fn();
+  await expect(withVisualImageAdmission({ reserve() { throw new Error('batch full'); }, admit }, () => runtime.callTool('image', {}))).rejects.toThrow('batch full');
+  expect(inspect).not.toHaveBeenCalled(); expect(admit).not.toHaveBeenCalled();
+});
+
+it('cancels validation before scoped admission and refunds exactly once', async () => {
+  let started!: () => void; let finish!: (value: validation.ImageValidation) => void;
+  const entered = new Promise<void>(resolve => { started = resolve; });
+  const pendingValidation = new Promise<validation.ImageValidation>(resolve => { finish = resolve; });
+  vi.spyOn(validation, 'validateImageBytes').mockImplementation(() => { started(); return pendingValidation; });
+  const abort = new AbortController(); const cancel = vi.fn(); const admit = vi.fn();
+  const outcome = withVisualImageAdmission({ reserve: () => ({ cancel }), admit }, () =>
+    withPreparedImageHistory(() => runtime.callTool('mixed', {}), abort.signal)).then(() => 'fulfilled', error => error as Error);
+  try {
+    await entered; abort.abort();
+    expect(await outcome).toMatchObject({ name: 'AbortError' });
+    expect(admit).not.toHaveBeenCalled(); expect(cancel).toHaveBeenCalledOnce();
+  } finally { finish({ status: 'valid', mediaType: 'image/png' }); await outcome; }
+});
+
+it.each(['archive', 'cancel'])('preserves real prepared first bytes after a later %s failure', async reason => {
+  const cancel = vi.fn(); let admitted = 0;
+  const abort = new AbortController();
+  await withPreparedImageHistory(async () => {
+    const result = await withVisualImageAdmission({ reserve: () => ({ cancel }), async admit(bytes, mediaType, verdict) {
+      if (++admitted === 2) { if (reason === 'cancel') abort.abort(); throw new Error('second image admission failed'); }
+      const image = { type: 'image' as const, path: path.join(directory, 'admitted.png'), mediaType };
+      await writeFile(image.path, bytes); prepareValidatedImageBlock(image, bytes, verdict);
+      return [{ type: 'text', text: 'first image accepted' }, image];
+    } }, () => runtime.callTool('two-good', {}));
+    expect(JSON.stringify(result)).toContain('first image accepted');
+    expect(JSON.stringify(result)).toContain('second image admission failed');
+    if (!Array.isArray(result.content)) throw new Error('Expected retained typed content.');
+    const retained = result.content.find(item => item.type === 'image')!;
+    expect(getPreparedImageDiagnostic(retained)).toMatchObject({ dataHash: createHash('sha256').update(Buffer.from(PNG, 'base64')).digest('hex') });
+    if (reason !== 'cancel') expect(await prepareImageBlock(retained)).toMatchObject({ data: PNG });
+    expect(cancel).not.toHaveBeenCalled();
+  }, abort.signal);
 });

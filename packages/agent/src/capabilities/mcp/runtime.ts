@@ -3,6 +3,7 @@ import { getActiveMcpCallContext, runWithMcpCallContext } from './call-context.j
 import type { CapabilityResult, KodaXToolResultContentItem } from '@kodax-ai/llm';
 import { prepareValidatedImageBlock, validateImageBytesInRun } from '@kodax-ai/llm';
 import { persistImageAsBlock } from '../../media/persist-image.js';
+import { getVisualImageAdmission } from '../../media/visual-admission.js';
 import { getAgentConfigPath } from '../../runtime/agent-home.js';
 import {
   buildCatalogSearchText,
@@ -197,44 +198,60 @@ function flattenMcpContent(value: unknown): string | undefined {
 }
 
 /** Media becomes a durable local attachment, never base64 text in model history. */
-async function normalizeMcpContent(value: unknown): Promise<CapabilityResult['content']> {
+async function normalizeMcpContent(value: unknown, sourceKey: string): Promise<CapabilityResult['content']> {
   if (!Array.isArray(value)) return flattenMcpContent(value);
   const hasImage = value.some((entry) => mcpImageRecord(entry) !== undefined);
   if (!hasImage) return flattenMcpContent(value);
+  const admission = getVisualImageAdmission();
+  const reservation = admission?.reserve(value.filter(entry => mcpImageRecord(entry) !== undefined).length, sourceKey);
+  let retained = false; let imageOrdinal = 0;
   const items: KodaXToolResultContentItem[] = [];
-  for (const entry of value) {
-    const record = mcpImageRecord(entry);
-    const data = record?.type === 'image' ? record.data : record?.blob;
-    if (record) {
-      const mediaType = record?.mimeType;
-      if (mediaType !== 'image/png' && mediaType !== 'image/jpeg' && mediaType !== 'image/gif' && mediaType !== 'image/webp') {
-        items.push({ type: 'text', text: '[MCP image unavailable: unsupported media type. Return this attachment as PNG, JPEG, GIF or WebP; other results remain available.]' });
-        continue;
+  try {
+    for (const entry of value) {
+      const record = mcpImageRecord(entry);
+      const data = record?.type === 'image' ? record.data : record?.blob;
+      if (record) {
+        const ordinal = imageOrdinal++;
+        const mediaType = record?.mimeType;
+        if (mediaType !== 'image/png' && mediaType !== 'image/jpeg' && mediaType !== 'image/gif' && mediaType !== 'image/webp') {
+          items.push({ type: 'text', text: '[MCP image unavailable: unsupported media type. Return this attachment as PNG, JPEG, GIF or WebP; other results remain available.]' });
+          continue;
+        }
+        if (typeof data !== 'string' || !data.length || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) {
+          items.push({ type: 'text', text: '[MCP image unavailable: invalid base64 data. Return this attachment with valid encoding; other results remain available.]' });
+          continue;
+        }
+        const buffer = Buffer.from(data, 'base64');
+        const validation = await validateImageBytesInRun(buffer);
+        if (validation.status === 'invalid') {
+          items.push({ type: 'text', text: '[MCP image unavailable: this attachment cannot be decoded. Re-extract or replace this image; other results remain available.]' });
+          continue;
+        }
+        if (validation.status === 'unverified') {
+          items.push({ type: 'text', text: `[Local MCP image validation unavailable (${validation.reason}); original bytes retained.]` });
+        }
+        if (admission) {
+          items.push(...await admission.admit(buffer, validation.mediaType ?? mediaType, validation, sourceKey, ordinal));
+          retained = true;
+          continue;
+        }
+        const image = await persistImageAsBlock({ buffer, mediaType: validation.mediaType ?? mediaType }, {
+          directory: getAgentConfigPath('media', 'mcp'), fileNamePrefix: 'mcp',
+        });
+        prepareValidatedImageBlock(image, buffer, validation);
+        items.push(image);
+      } else {
+        const text = flattenMcpContent([entry]);
+        if (text !== undefined) items.push({ type: 'text', text });
       }
-      if (typeof data !== 'string' || !data.length || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) {
-        items.push({ type: 'text', text: '[MCP image unavailable: invalid base64 data. Return this attachment with valid encoding; other results remain available.]' });
-        continue;
-      }
-      const buffer = Buffer.from(data, 'base64');
-      const validation = await validateImageBytesInRun(buffer);
-      if (validation.status === 'invalid') {
-        items.push({ type: 'text', text: '[MCP image unavailable: this attachment cannot be decoded. Re-extract or replace this image; other results remain available.]' });
-        continue;
-      }
-      if (validation.status === 'unverified') {
-        items.push({ type: 'text', text: `[Local MCP image validation unavailable (${validation.reason}); original bytes retained.]` });
-      }
-      const image = await persistImageAsBlock({ buffer, mediaType: validation.mediaType ?? mediaType }, {
-        directory: getAgentConfigPath('media', 'mcp'), fileNamePrefix: 'mcp',
-      });
-      prepareValidatedImageBlock(image, buffer, validation);
-      items.push(image);
-    } else {
-      const text = flattenMcpContent([entry]);
-      if (text !== undefined) items.push({ type: 'text', text });
     }
-  }
-  return items;
+    return items;
+  } catch (error) {
+    if (!retained) throw error;
+    const reason = error instanceof Error ? error.message : String(error);
+    items.push({ type: 'text', text: `[MCP image partial at ordinal ${imageOrdinal - 1}: ${reason.slice(0, 200)}. Remaining attachments not processed.]` });
+    return items;
+  } finally { if (!retained) reservation?.cancel(); }
 }
 
 function mcpImageRecord(entry: unknown): Record<string, unknown> | undefined {
@@ -670,7 +687,7 @@ export class McpServerRuntime {
         const record = asRecord(response);
         const contentMetadata = collectContentMetadata(record?.content);
         return {
-          content: await normalizeMcpContent(record?.content),
+          content: await normalizeMcpContent(record?.content, `mcp:${this.serverId}:tool:${name}`),
           isError: readBoolean(record?.isError) ?? readBoolean(record?.is_error) ?? false,
           structuredContent: record?.structuredContent ?? record?.structured_content,
           metadata: {
@@ -759,7 +776,7 @@ export class McpServerRuntime {
     const contents = Array.isArray(record?.contents) ? record.contents : [];
     const contentMetadata = collectContentMetadata(contents);
     return {
-      content: await normalizeMcpContent(contents),
+      content: await normalizeMcpContent(contents, `mcp:${this.serverId}:resource:${name}`),
       structuredContent: record?.structuredContent,
       metadata: {
         serverId: this.serverId,

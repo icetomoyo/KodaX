@@ -11,7 +11,7 @@
 | P4c | 已实现并定向验证 | owned 历史图片自动重装配的 hash 校验；P4 按下述通道及未验边界声明 |
 | P6a | 已实现并定向验证 | native/checked bridge、managed/兼容入口透传 serial 谓词；不提供环境时效锁 |
 | P6b | 已实现限定消费者并定向验证 | 本地可暂停 PNG 卡片；current/version、动作事实、unknown 与补观察；子 Actor 无 owner 时拒绝 |
-| P5 | 待实施 | 先评估 MCP typed-image；Artifact/额外 Host/standalone 未声明支持 |
+| P5 | 已实现选定 MCP 来源并定向验证 | typed tool/resource、SA fallback；Artifact/额外 Host/standalone 未声明支持 |
 | P7 | 持续收集机械证据 | 最终成本、支持边界与受控行为实验方案；未发起付费调用 |
 
 ## P3a：有序多观察检查
@@ -165,6 +165,32 @@ compiled public prepared-image scope 本机单样本（先暖原件验证缓存�
 P4a/b/c 至此完成上表限定的工程接线与定向验证；未交付 steer 的 crash checkpoint 重放、historyBoundary UI 及未列宿主仍保留未验状态。动态来源版本/current/reset 的续接认识继续由 P6 验证；P7 行为部分尚未执行，不以这些机械证据替代。
 
 ## 持续保留的失败与未验证范围
+
+## P5：选定 MCP typed image
+
+本片只选择已有 MCP typed tool/resource（及兼容 SA 的同名 fallback）。MCP normalization 仍持 base64 解出的实际 Buffer 时，经 agent 层窄 AsyncLocalStorage callback 接纳到同一 Runtime owner；没有把字符串/structuredContent 中的路径猜成媒体。callback 在普通扩展执行 scope 绑定，sourceKey 为 server + tool/resource，source 保留精确 executionId、toolCallId、callOrdinal 与 typed imageOrdinal。checked bridge 继续使用既有目标 call ID 后缀，例如 `:mcp_call`，不伪装成外层 provider ID。
+
+整批 typed 图片在解码/重输出前按图数、来源标签预留，沿同一 batch capacity；无有效接纳时取消一次，有已准备图片时保留到原批次结算。合法/不合法 MIME/base64/解码错误不换槽位；晚归档或取消失败保留首张实际 prepared bytes，返回 partial 和未处理说明。不在取消 signal 下继续发模型请求，诊断核对已准备 hash；新 Run 沿原件回取。原始大图仍沿 P1 unverified 保存语义，未把派生图护栏变成所有来源的上传限制。没有 owner 的 SDK 保持旧 temporary attachment 行为，不因此获得 durable 观察保证。
+
+评审补修两条真实缺口：SA fallback 原在 scope 外、还用原 ctx；现整个回退在原精确 per-call scope 内执行，仍保留原 allow-list/权限。`mcp_read_resource` 原将 typed 数组 JSON 化；现复用同一 typed renderer，文本 metadata/structuredContent/isError 仍保留。Artifact 当前 readEvidence、额外 Host string/structuredContent materialization、standalone durable 与子 Actor owner 继续未接入，不将本片称为所有 P5 来源完成。
+
+真实公共 Runtime 支持矩阵：Coding × AMA/SA × OpenAI/Anthropic × native/checked bridge，8 格各发两个相同 provider ID 的 MCP 调用，每调用两图，**四个独立观察**按 executionId/ordinal 严格核对；输入意图重试不再 RPC，覆盖/删除 producer 原路径、close/reopen 后可 inspect 原 bytes，plan 阻止 mutating MCP 远端调用。8 格还运行 typed resource→canonical tool result→生产 serializer；SA/OpenAI native/bridge 另验证缺失 read→真实 stdio MCP fallback→新观察与图片。AMA/OpenAI native 注入 canonical 保存失败，Run failed 且不发布 provisional 观察。以上均为实际本地 stdio + 离线 SDK serializer，不是远端 provider 接受或模型选择证明。
+
+初始扩展回归未按预期收齐四图，诊断保留为 `kodax-visual-p5-diagnostic8.log`；原因是 Windows 两个相同原件竞争 rename 的 **EPERM**，不能归为 provider ID 或容量。20 个独立 file owner 并行 pin 相同 bytes 的公共回归先 RED；改为同文件系统临时文件 hardlink 独占发布，EEXIST 时逐 byte 核对才能复用，临时文件删除后仅留一个独立 owned 文件。错误/cleanup 保持上抛，未建全局引用计数或 worker 池。其后八格严格四图通过，没有放宽断言。选中用例名的第一次 `-t` 写法曾跳过用例，未记作 RED 或通过；启用新接纳前实际单格因 0 观察失败，启用后 GREEN。typed resource、fallback、后续图片失败及并行发布也分别保留实际 RED→GREEN。
+
+最终 7 文件 **101 项通过**；raw `kodax-visual-p5-final-tests.log`、`kodax-visual-p5-final-coverage-20261029`。四个实际实现模块合计语句 **84.21%**、分支 **71.53%**、函数 **89.07%**、行 **85.98%**；不是全仓或各模块各指标均达 80%（visual-observations 语句 76.23%、resource wrapper 73.33%）。typecheck/build 通过，CLI **5,151 KiB**、bootstrap 4,042 bytes，未提高 5,152 KiB 门槛，14 SDK 声明检查保持。全仓集成另记。
+
+默认成本 `p5-mcp` 32 格实际捕获 `kodax-first-turn-wire-2XNJsB`：相对 P3b/P4/P6 **+0**，24 个无 owner SDK 格不增模型合同。对 30310e00 OpenAI +365～366、Anthropic +358，对 P0 累计 +748/+726，仍为完整字段启发式估算。MCP 首次图片会附每张 observation 标签，其长度随实际 sourceKey/ID/时间/维度/hash 变化，结果本身按真实请求计量；不能把默认首轮 +0 说成使用 MCP 后的总体任务 +0。
+
+本机 compiled public validation fixture：两张 2×1 PNG 各 **72 bytes**，绿 SHA `18ef183350314663b8b055cb6a44f7d633efe96db840232d58ebbcffdec92649`、红 SHA `58071d8eeb0d777fb1c5932943ecddfac227c7d1552312958f9c558b02597f6f`，验证为 valid，约 **29.58/25.16 ms**；没有派生编码。raw `kodax-visual-mcp-profile-2NWUnk`。先前 `--input-type=module -e` 入口得到 decoder_unavailable/unverified（23.10/19.03 ms），保留为未验证样本，不混作成功 decoder 耗时。单机两小图不是网络、视觉计费或模型价值结论。
+
+### Standards
+
+独立只读最终评审：**0 项成文规范违反、0 项 smell 判断**，含独占发布补修。
+
+### Spec
+
+两项 scope/typed wrapper 发现均按上述反例修复；独立最终复核：**0 项剩余发现**。未把未选来源或付费行为写成通过。
 
 ## P6b：受控本地动态消费者
 

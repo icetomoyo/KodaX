@@ -115,6 +115,8 @@ import type {
 } from '../types.js';
 import type { KodaXToolUseBlock } from '@kodax-ai/llm';
 import { renderCapabilityToolResult } from '../tools/capability-result.js';
+import { withVisualImageAdmission } from '@kodax-ai/agent/media';
+import { countTokens } from '@kodax-ai/agent';
 import { projectModelToolDefinition } from '../tools/model-tool-definition.js';
 import {
   emitKodaXDiagnostic,
@@ -290,21 +292,18 @@ export async function executeToolCall(
   );
   let result: ToolResult;
   try {
-    const execute = () => runScopedDefinition === undefined
-      ? executeTool(toolCall.name, toolCall.input ?? {}, ctxWithToolHooks)
-      : executeRunScopedTool(ctxWithToolHooks, runScopedDefinition, toolCall.input ?? {});
+    const execute = async () => {
+      let output = await (runScopedDefinition === undefined
+        ? executeTool(toolCall.name, toolCall.input ?? {}, ctxWithToolHooks)
+        : executeRunScopedTool(ctxWithToolHooks, runScopedDefinition, toolCall.input ?? {}));
+      if (allowMcpFallback && toolResultText(output).startsWith('[Tool Error]') && ctxWithToolHooks.extensionRuntime) {
+        output = await tryMcpFallback(toolCall.name, toolCall.input ?? {}, ctxWithToolHooks) ?? output;
+      }
+      return output;
+    };
     result = await executeInExtensionScope(toolCall, ctxWithToolHooks, abortSignal, events, execute);
     recordWrittenFile(ctx.writtenFiles, toolCall, result, resolveExecutionCwd(ctx));
 
-    // MCP fallback: when a built-in tool fails, try to find a same-name MCP tool.
-    if (allowMcpFallback && toolResultText(result).startsWith('[Tool Error]') && ctx.extensionRuntime) {
-      const fallbackResult = await tryMcpFallback(
-        toolCall.name,
-        toolCall.input ?? {},
-        ctx,
-      );
-      if (fallbackResult !== undefined) result = fallbackResult;
-    }
   } finally {
     events.onToolExecutionEnd?.(
       { id: toolCall.id, name: toolCall.name },
@@ -318,7 +317,16 @@ export function executeInExtensionScope(
   call: RunnableToolCall, ctx: KodaXToolExecutionContext, signal: AbortSignal | undefined,
   events: KodaXEvents, execute: () => Promise<ToolResult>,
 ): Promise<ToolResult> {
-  if (!ctx.sessionId || !ctx.runtimeRunId || !ctx.invokeCheckedTool) return execute();
+  const admitted = () => withVisualImageAdmission(ctx.admitVisualObservation ? {
+    reserve: (count, sourceKey) => {
+      if (!ctx.reserveVisualOutput) throw new Error('MCP image output capacity unavailable.');
+      return ctx.reserveVisualOutput(count * (2012 + countTokens(sourceKey)));
+    },
+    admit: async (bytes, mediaType, validation, sourceKey, imageOrdinal) => (await ctx.admitVisualObservation!(bytes, {
+      validation, sourceKey, mediaType, signal: signal ?? ctx.abortSignal, source: { ...ctx.visualSource, imageOrdinal },
+    })).content,
+  } : undefined, execute);
+  if (!ctx.sessionId || !ctx.runtimeRunId || !ctx.invokeCheckedTool) return admitted();
   const identity = { version: 1 as const, sessionId: ctx.sessionId, runId: ctx.runtimeRunId,
     invocationId: call.id, extensionId: getRegisteredToolDefinition(call.name)?.source.id ?? `tool:${call.name}` };
   return withExtensionExecutionScope({ ...identity, signal: signal ?? ctx.abortSignal ?? new AbortController().signal,
@@ -329,7 +337,7 @@ export function executeInExtensionScope(
           data: progress.data } }, createToolEventMeta(events, call.id, toolExecution(call).id));
       else ctx.reportToolProgress?.(progress.message);
     },
-  }, (scope) => { ctx.extensionExecution = scope; return execute(); });
+  }, (scope) => { ctx.extensionExecution = scope; return admitted(); });
 }
 
 export function createToolEventMeta(
@@ -521,15 +529,16 @@ async function executeBridgeToolCall(input: {
   );
   let result: ToolResult;
   try {
-    result = await executeInExtensionScope(targetCall, ctxWithToolHooks, input.abortSignal, input.events,
-      () => runScopedTarget === undefined
+    result = await executeInExtensionScope(targetCall, ctxWithToolHooks, input.abortSignal, input.events, async () => {
+      let output = await (runScopedTarget === undefined
         ? executeTool(targetName, targetInput, ctxWithToolHooks)
         : executeRunScopedTool(ctxWithToolHooks, runScopedTarget, targetInput));
+      if (input.allowMcpFallback && toolResultText(output).startsWith('[Tool Error]') && ctxWithToolHooks.extensionRuntime) {
+        output = await tryMcpFallback(targetName, targetInput, ctxWithToolHooks) ?? output;
+      }
+      return output;
+    });
     recordWrittenFile(input.ctx.writtenFiles, targetCall, result, resolveExecutionCwd(input.ctx));
-    if (input.allowMcpFallback && toolResultText(result).startsWith('[Tool Error]') && input.ctx.extensionRuntime) {
-      const fallbackResult = await tryMcpFallback(targetName, targetInput, input.ctx);
-      if (fallbackResult !== undefined) result = fallbackResult;
-    }
   } finally {
     input.events.onToolExecutionEnd?.(
       { id: targetCall.id, name: targetName },
