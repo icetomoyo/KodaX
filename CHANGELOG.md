@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Refresh `kodax_manual` topic guidance for retired verification/journal paths,
+  work modes, original tool results, token estimates, task reports, question
+  deadlines, Skill policy and sandbox readiness. Exact query IDs/aliases now
+  take precedence over keyword ranking, preserving custom SDK manual topics.
+
 ---
 
 ## [0.7.97-alpha.11] - 2026-10-29

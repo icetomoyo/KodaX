@@ -32,12 +32,39 @@ describe('FEATURE_218 resolveKodaXManual', () => {
     expect(['providers', 'custom-providers', 'config']).toContain(r.matchedTopic);
   });
 
+  it('prefers an exact query topic or alias over incidental keyword matches', () => {
+    expect(resolveKodaXManual({ query: ' SDK ' }).matchedTopic).toBe('sdk');
+    expect(resolveKodaXManual({ query: 'sdk' }).matchedTopic).toBe('sdk');
+    const result = resolveKodaXManual({ query: 'space config' }, {
+      baseTopics: ['config'],
+      productName: 'Space',
+      extraTopics: [{ id: 'SpaceHelp', title: 'Help', summary: 'Product help',
+        aliases: ['space config'], body: 'Open Space settings.' }],
+    });
+    expect(result.matchedTopic).toBe('SpaceHelp');
+    expect(result.content).toContain('Open Space settings.');
+    expect(resolveKodaXManual({ query: 'SpaceHelp' }, {
+      baseTopics: [], extraTopics: [{ id: 'SpaceHelp', title: 'Help', summary: '', body: 'Consumer help' }],
+    }).matchedTopic).toBe('SpaceHelp');
+    expect(resolveKodaXManual({ query: 'SDK' }, { baseTopics: [] }).matchedTopic).toBe('index');
+  });
+
   it('resolves extension authoring questions', () => {
     const r = resolveKodaXManual({ query: 'how do I write a KodaX extension' });
     expect(r.matchedTopic).toBe('extensions');
     expect(r.content).toContain('~/.kodax/extensions');
     expect(r.content).toContain('/extensions');
   });
+
+  it.each(['work-mode', 'workMode', 'script', '工作模式', 'Script 模式', '怎么切换工作模式？'])(
+    'finds work-mode instructions for %s', (query) => {
+      const result = resolveKodaXManual({ query });
+      expect(result.matchedTopic).toBe('commands');
+      expect(result.content).toContain('--work-mode');
+      expect(result.content).toContain('experimental');
+      expect(result.content).toContain('Coding is the default');
+    },
+  );
 
   it('resolves a Chinese free-text query', () => {
     const r = resolveKodaXManual({ query: '怎么 resume 上一次 session' });

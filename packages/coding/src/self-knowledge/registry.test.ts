@@ -4,6 +4,30 @@ import { resolveKodaXManual } from './resolver.js';
 import { MANUAL_PROVIDER_NAMES, MANUAL_REGISTRY, MANUAL_TOPIC_IDS } from './registry.js';
 
 describe('FEATURE_218 manual registry', () => {
+  it('keeps current topic guidance consistent with retired verifier and journal contracts', () => {
+    const agents = resolveKodaXManual({ topic: 'agents' }).content;
+    const sessions = resolveKodaXManual({ topic: 'sessions' }).content;
+    const tools = resolveKodaXManual({ topic: 'tools' }).content;
+    expect(agents).not.toContain('The existing Sidecar remains the sole');
+    expect(agents).toContain('automatic Sidecar Verifier is retired');
+    expect(sessions).not.toContain('a verifier checks completion');
+    expect(sessions).toContain('main agent verifies');
+    expect(tools).not.toContain('Raw Runtime journals retain every attempt');
+    expect(tools).toContain('no durable event journal or replay');
+  });
+
+  it.each([
+    ['token', 'tools', ['estimatedTokenCount', 'Provider usage', 'UTF-16']],
+    ['工具原文', 'tools', ["part:'original'", 'not_found', 'tool item ID']],
+    ['任务报告', 'sessions', ['taskResult', 'unknown', 'KodaXTaskResultReport']],
+    ['sidecar', 'agents', ['automatic Sidecar Verifier is retired']],
+    ['Bash(pattern)', 'skills', ['single parsed command', 'Host authorization']],
+  ] as const)('answers %s from its relevant current topic', (query, topic, facts) => {
+    const result = resolveKodaXManual({ query });
+    expect(result.matchedTopic).toBe(topic);
+    for (const fact of facts) expect(result.content).toContain(fact);
+  });
+
   it('has a topic for every id and the topic.id matches its key', () => {
     for (const id of MANUAL_TOPIC_IDS) {
       const topic = MANUAL_REGISTRY[id];
@@ -456,7 +480,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(agents).toContain('not a Worker dispatch gate');
     expect(agents).toContain('quality_strategy');
     expect(agents).toContain('PatternTrace');
-    expect(agents).toMatch(/sole\s+terminal-answer quality adjudicator/);
+    expect(agents).toContain('automatic Sidecar Verifier is retired');
     expect(agents).toContain('500 tool-loop');
     expect(agents).toContain('RunnerIterationLimitError');
     expect(agents).toContain('readRunnerRecoveryTranscript');
