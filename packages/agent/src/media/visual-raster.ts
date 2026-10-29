@@ -40,9 +40,7 @@ function sourceRaster(bytes: Buffer): { width: number; height: number } {
 const rasterWork = new WeakMap<object, Promise<void>>();
 
 /** A cancelled waiter never releases a decoder that is still executing. */
-export async function deriveVisualRaster(bytes: Buffer, view: { region?: unknown; displayLongEdge?: unknown },
-  owner: object, signal?: AbortSignal) {
-  const dimensions = sourceRaster(bytes);
+export function validateVisualDisplay(view: { region?: unknown; displayLongEdge?: unknown }, dimensions: { width: number; height: number }) {
   const region = validateRegion(view.region, dimensions);
   const longEdge = view.displayLongEdge;
   if (longEdge !== undefined && (!Number.isInteger(longEdge) || Number(longEdge) < 1 || Number(longEdge) > MAX_DIMENSION)) {
@@ -52,6 +50,14 @@ export async function deriveVisualRaster(bytes: Buffer, view: { region?: unknown
   const width = Math.max(1, Math.round(region.width * scale));
   const height = Math.max(1, Math.round(region.height * scale));
   if (Math.max(width, height) > MAX_DIMENSION) throw new Error('Visual output exceeds the display limit; request a smaller region or displayLongEdge.');
+  return { region, width, height };
+}
+
+interface DecodedRaster { width: number; height: number; data: Buffer }
+interface DerivedRaster { bytes: Buffer; region: VisualRegion; width: number; height: number; profile: string; resampling: 'nearest' }
+
+async function withRaster<T>(bytes: Buffer, dimensions: { width: number; height: number }, owner: object,
+  signal: AbortSignal | undefined, work: (raster: DecodedRaster) => Promise<T>): Promise<T> {
   const previous = rasterWork.get(owner);
   let release!: () => void;
   const current = new Promise<void>(resolve => { release = resolve; });
@@ -63,23 +69,44 @@ export async function deriveVisualRaster(bytes: Buffer, view: { region?: unknown
     const source = await Jimp.read(bytes);
     signal?.throwIfAborted();
     if (source.bitmap.width !== dimensions.width || source.bitmap.height !== dimensions.height) throw new Error('Visual raster dimensions mismatch.');
-    const output = new Jimp({ width, height });
-    for (let y = 0; y < height; y++) {
-      signal?.throwIfAborted();
-      const sy = region.y + Math.floor(y * region.height / height);
-      for (let x = 0; x < width; x++) {
-        const sx = region.x + Math.floor(x * region.width / width);
-        source.bitmap.data.copy(output.bitmap.data, (y * width + x) * 4, (sy * dimensions.width + sx) * 4, (sy * dimensions.width + sx) * 4 + 4);
-      }
-    }
-    const result = await output.getBuffer('image/png');
-    signal?.throwIfAborted();
-    if (result.length > TARGET_RAW_SIZE_BYTES) throw new Error('Visual output exceeds the byte limit; request a smaller displayLongEdge.');
-    return { bytes: result, region, width, height, profile: VISUAL_RASTER_PROFILE, resampling: 'nearest' };
+    return await work(source.bitmap);
   } finally {
     release();
     if (rasterWork.get(owner) === current) rasterWork.delete(owner);
   }
+}
+
+export async function deriveVisualRasters(bytes: Buffer, views: readonly { region?: unknown; displayLongEdge?: unknown }[],
+  owner: object, publish: (index: number, result: DerivedRaster | Error) => Promise<void>, signal?: AbortSignal): Promise<void> {
+  const dimensions = sourceRaster(bytes);
+  const plans = views.map(view => validateVisualDisplay(view, dimensions));
+  return withRaster(bytes, dimensions, owner, signal, async source => {
+    for (const [index, plan] of plans.entries()) {
+      let result: DerivedRaster | Error;
+      try { result = await encodeRaster(source, plan, signal); }
+      catch (error) { result = error instanceof Error ? error : new Error(String(error)); }
+      await publish(index, result);
+    }
+  });
+}
+
+async function encodeRaster(source: DecodedRaster, { region, width, height }: { region: VisualRegion; width: number; height: number },
+  signal?: AbortSignal): Promise<DerivedRaster> {
+  signal?.throwIfAborted();
+  const { Jimp } = await import('jimp');
+  const output = new Jimp({ width, height });
+  for (let y = 0; y < height; y++) {
+    signal?.throwIfAborted();
+    const sy = region.y + Math.floor(y * region.height / height);
+    for (let x = 0; x < width; x++) {
+      const sx = region.x + Math.floor(x * region.width / width);
+      source.data.copy(output.bitmap.data, (y * width + x) * 4, (sy * source.width + sx) * 4, (sy * source.width + sx) * 4 + 4);
+    }
+  }
+  const result = await output.getBuffer('image/png');
+  signal?.throwIfAborted();
+  if (result.length > TARGET_RAW_SIZE_BYTES) throw new Error('Visual output exceeds the byte limit; request a smaller displayLongEdge.');
+  return { bytes: result, region, width, height, profile: VISUAL_RASTER_PROFILE, resampling: 'nearest' };
 }
 
 function validateRegion(value: unknown, dimensions: { width: number; height: number }): VisualRegion {

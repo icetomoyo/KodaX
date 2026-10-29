@@ -11,7 +11,7 @@ import { VISUAL_CODING_TOOLS } from '../tools/visual.js';
 import { wrapCodingToolAsRunnable } from './_internal/managed-task/tool-wrappers.js';
 import { createVisualOutputReservations } from './visual-output-reservations.js';
 
-it('reserves sibling full images together even with repeated provider call IDs, then settles the batch', async () => {
+it.each([1, 2])('reserves sibling %i-view calls together even with repeated provider call IDs, then settles the batch', async count => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-visual-budget-'));
   const receipts: VisualObservation[] = [];
   const owner = createFileVisualObservationOwner({ ownerId: 'session', directory, list: async () => receipts });
@@ -22,10 +22,10 @@ it('reserves sibling full images together even with repeated provider call IDs, 
     const reservations = createVisualOutputReservations();
     const definition = VISUAL_CODING_TOOLS.find(tool => tool.name === 'visual_inspect')!;
     const tool = wrapCodingToolAsRunnable(definition, definition.handler as (input: Record<string, unknown>, ctx: import('../types.js').KodaXToolExecutionContext) => Promise<import('../tools/types.js').ToolResult>,
-      { backups: new Map(), visualObservationOwner: owner, visualOutputReservations: reservations, resolveToolResultCapacityTokens: () => 3000 });
+      { backups: new Map(), visualObservationOwner: owner, visualOutputReservations: reservations, resolveToolResultCapacityTokens: () => count === 1 ? 3000 : 5500 });
     const transcript: KodaXMessage[] = [{ role: 'user', content: 'Recall both.' }];
     const ctx = { agent: createAgent({ name: 'fixture', instructions: '' }), transcript, toolCallId: 'duplicate' };
-    const input = { question: 'Check.', views: [{ label: 'original', observationId: receipts[0]!.observationId }] };
+    const input = { question: 'Check.', views: Array.from({ length: count }, (_, index) => ({ label: `original ${index}`, observationId: receipts[0]!.observationId })) };
     const results = await Promise.all([tool.execute(input, ctx), tool.execute(input, ctx)]);
     expect(results.filter(result => result.isError)).toHaveLength(1);
     expect(JSON.stringify(results)).toContain('capacity unavailable');

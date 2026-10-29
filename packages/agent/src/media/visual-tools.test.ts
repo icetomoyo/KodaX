@@ -4,6 +4,7 @@ import path from 'node:path';
 import { Jimp } from 'jimp';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createAgent } from '../primitives/agent.js';
+import { withPreparedImageHistory, getPreparedImageDiagnostic } from '@kodax-ai/llm';
 import { createFileVisualObservationOwner, type VisualObservation } from './visual-observations.js';
 import { createVisualTools } from './visual-tools.js';
 
@@ -61,6 +62,152 @@ it('crops original raster coordinates and enlarges with nearest-neighbor RGBA wh
   expect([...raster.bitmap.data.subarray(0, 16)]).toEqual([0, 255, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 0, 0, 255, 255]);
   expect([...raster.bitmap.data.subarray(32, 36)]).toEqual([255, 0, 255, 0]);
   expect(f.records).toHaveLength(1);
+});
+
+it('returns ordered regions and repeated observations while decoding an original only once', async () => {
+  const f = await fixture(); const first = await f.admit(); const second = await f.admit('later');
+  const decode = vi.spyOn(Jimp, 'read');
+  let result: Awaited<ReturnType<typeof f.call>>;
+  try {
+    result = await f.call('visual_inspect', { question: 'Compare the old and later regions.', views: [
+      { label: 'right', observationId: first.observationId, region: { x: 2, y: 0, width: 1, height: 1 } },
+      { label: 'later', observationId: second.observationId, region: { x: 0, y: 1, width: 1, height: 1 } },
+      { label: 'right again', observationId: first.observationId, region: { x: 2, y: 0, width: 1, height: 1 } },
+    ] });
+    expect(result.isError).not.toBe(true);
+    expect(decode).toHaveBeenCalledOnce();
+  } finally { decode.mockRestore(); }
+  if (!Array.isArray(result.content)) throw new Error('Expected ordered image content.');
+  const images = result.content.filter(item => item.type === 'image');
+  expect(images).toHaveLength(3);
+  const pixels = await Promise.all(images.map(async item => [...(await Jimp.read(item.path)).bitmap.data]));
+  expect(pixels).toEqual([[0, 0, 255, 255], [0, 255, 255, 128], [0, 0, 255, 255]]);
+  const labels = result.content.filter(item => item.type === 'text').map(item => item.text);
+  expect(labels[0]).toContain('View right:'); expect(labels[0]).toContain(first.observationId);
+  expect(labels[1]).toContain('View later:'); expect(labels[1]).toContain(second.observationId);
+  expect(labels[2]).toContain('View right again:');
+  expect(f.records).toHaveLength(2);
+  expect(f.reserveOutput).toHaveBeenCalledOnce();
+  expect(f.reserveOutput.mock.results[0]!.value.cancel).not.toHaveBeenCalled();
+});
+
+it('retains successful view reservations when another derived output fails', async () => {
+  const f = await fixture(); const observation = await f.admit();
+  const write = f.owner.writeDerived.bind(f.owner);
+  vi.spyOn(f.owner, 'writeDerived').mockImplementationOnce(write).mockRejectedValueOnce(new Error('Derived write failed.'));
+  const result = await f.call('visual_inspect', { question: 'Compare.', views: ['first', 'failed', 'last'].map(label =>
+    ({ label, observationId: observation.observationId, region: { x: 0, y: 0, width: 1, height: 1 } })) });
+  expect(result.isError).toBe(true);
+  if (!Array.isArray(result.content)) throw new Error('Expected partial image content.');
+  expect(result.content.filter(item => item.type === 'image')).toHaveLength(2);
+  const summary = result.content.at(-1);
+  if (summary?.type !== 'text') throw new Error('Expected partial status.');
+  expect(JSON.parse(summary.text)).toEqual({ status: 'partial', failedViews: [1] });
+  expect(JSON.stringify(result.content)).toContain('Derived write failed.');
+  expect(f.reserveOutput.mock.results[0]!.value.cancel).not.toHaveBeenCalled();
+});
+
+it('keeps a small view when a later PNG encoding exceeds the display byte limit', async () => {
+  const f = await fixture(); const noise = new Jimp({ width: 1100, height: 1100 });
+  let seed = 123456789;
+  for (let offset = 0; offset < noise.bitmap.data.length; offset += 4) {
+    seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5;
+    noise.bitmap.data.writeUInt32BE(seed >>> 0, offset);
+  }
+  const observation = await f.owner.pin(await noise.getBuffer('image/png'),
+    { sourceKey: 'noise', originEntryId: 'entry', mediaType: 'image/png' });
+  f.records.push(observation);
+  const result = await f.call('visual_inspect', { question: 'Inspect only what fits.', views: [
+    { label: 'small', observationId: observation.observationId, region: { x: 0, y: 0, width: 1, height: 1 } },
+    { label: 'oversized', observationId: observation.observationId, region: { x: 0, y: 0, width: 1100, height: 1100 } },
+  ] });
+  expect(result.isError).toBe(true);
+  expect(Array.isArray(result.content)).toBe(true);
+  if (!Array.isArray(result.content)) throw new Error('Expected retained partial output.');
+  expect(result.content.filter(item => item.type === 'image')).toHaveLength(1);
+  expect(JSON.stringify(result.content)).toContain('byte limit');
+  expect(f.reserveOutput.mock.results[0]!.value.cancel).not.toHaveBeenCalled();
+});
+
+it('rejects a late invalid region before reading any source or reserving output', async () => {
+  const f = await fixture(); const observation = await f.admit(); const read = vi.spyOn(f.owner, 'read');
+  const decode = vi.spyOn(Jimp, 'read');
+  try {
+    const result = await f.call('visual_inspect', { question: 'Compare.', views: [
+      { label: 'valid', observationId: observation.observationId, displayLongEdge: 6 },
+      { label: 'outside', observationId: observation.observationId, region: { x: 2, y: 0, width: 2, height: 1 } },
+    ] });
+    expect(result.isError).toBe(true); expect(result.content).toContain('outside the original raster');
+    expect(read).not.toHaveBeenCalled(); expect(decode).not.toHaveBeenCalled(); expect(f.reserveOutput).not.toHaveBeenCalled();
+  } finally { decode.mockRestore(); }
+});
+
+it('keeps missing-source errors in their requested slot without refunding retained sibling images', async () => {
+  const f = await fixture(); const first = await f.admit();
+  const missing = await f.owner.pin(await new Jimp({ width: 2, height: 1 }).getBuffer('image/png'),
+    { sourceKey: 'missing', originEntryId: 'entry', mediaType: 'image/png' });
+  f.records.push(missing); await unlink(f.owner.imagePath(missing));
+  const result = await f.call('visual_inspect', { question: 'Compare.', views: [
+    { label: 'before', observationId: first.observationId }, { label: 'missing', observationId: missing.observationId },
+    { label: 'after', observationId: first.observationId },
+  ] });
+  expect(result.isError).toBe(true);
+  if (!Array.isArray(result.content)) throw new Error('Expected ordered partial results.');
+  expect(result.content.map(item => item.type)).toEqual(['text', 'image', 'text', 'text', 'image', 'text']);
+  const failed = result.content[2];
+  expect(failed?.type === 'text' && failed.text).toContain('View missing:');
+  expect(failed?.type === 'text' && failed.text).toContain('Visual observation missing.');
+  expect(f.reserveOutput.mock.results[0]!.value.cancel).not.toHaveBeenCalled();
+  expect(f.records).toHaveLength(2);
+});
+
+it('retains ordered error slots and their text capacity when every source fails', async () => {
+  const f = await fixture(); const first = await f.admit();
+  const second = await f.owner.pin(await new Jimp({ width: 1, height: 1 }).getBuffer('image/png'),
+    { sourceKey: 'other', originEntryId: 'entry', mediaType: 'image/png' });
+  f.records.push(second);
+  await unlink(f.owner.imagePath(first)); await unlink(f.owner.imagePath(second));
+  const result = await f.call('visual_inspect', { question: 'Compare.', views: [
+    { label: 'A0', observationId: first.observationId }, { label: 'B1', observationId: second.observationId },
+    { label: 'A2', observationId: first.observationId },
+  ] });
+  expect(result.isError).toBe(true);
+  if (!Array.isArray(result.content)) throw new Error('Expected ordered per-view errors.');
+  const texts = result.content.filter(item => item.type === 'text').map(item => item.text);
+  expect(texts[0]).toContain('View A0:'); expect(texts[1]).toContain('View B1:'); expect(texts[2]).toContain('View A2:');
+  expect(JSON.parse(texts[3]!)).toEqual({ status: 'error', failedViews: [0, 1, 2] });
+  expect(f.reserveOutput.mock.results[0]!.value.cancel).toHaveBeenCalledOnce();
+  expect(f.reserveOutput).toHaveBeenCalledTimes(2);
+  expect(f.reserveOutput.mock.results[1]!.value.cancel).not.toHaveBeenCalled();
+});
+
+it('keeps an encoded first view if the same-source second encoding is cancelled', async () => {
+  const f = await fixture(); const observation = await f.admit();
+  const controller = new AbortController();
+  let entered!: () => void; let release!: () => void; let encodes = 0;
+  const pending = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const original = Jimp.prototype.getBuffer;
+  const encode = vi.spyOn(Jimp.prototype, 'getBuffer').mockImplementation(async function (mime, options) {
+    if (++encodes === 2) { entered(); await gate; }
+    return Reflect.apply(original, this, [mime, options]);
+  });
+  try {
+    const call = withPreparedImageHistory(async () => {
+      const result = await f.call('visual_inspect', { question: 'Compare.', views: ['complete', 'cancelled'].map(label =>
+        ({ label, observationId: observation.observationId, region: { x: 0, y: 0, width: 1, height: 1 } })) }, controller.signal);
+      const image = Array.isArray(result.content) ? result.content.find(item => item.type === 'image') : undefined;
+      expect(image && getPreparedImageDiagnostic(image)).toMatchObject({ mediaType: 'image/png' });
+      return result;
+    }, controller.signal);
+    await pending; controller.abort(new Error('Cancelled second encoding.')); release();
+    const result = await call;
+    expect(result.isError).toBe(true);
+    if (!Array.isArray(result.content)) throw new Error('Expected retained completed view.');
+    expect(result.content.filter(item => item.type === 'image')).toHaveLength(1);
+    expect(JSON.stringify(result.content)).toContain('Cancelled second encoding');
+    expect(f.reserveOutput.mock.results[0]!.value.cancel).not.toHaveBeenCalled();
+  } finally { release(); encode.mockRestore(); }
 });
 
 it('keeps identical bytes as distinct events and inspection does not append or reorder them', async () => {
@@ -188,7 +335,7 @@ it.each([
   try {
     expect((await f.call('visual_inspect', { question: 'Check.', views: [{ label: 'bad', observationId: observation.observationId, ...view }] })).isError).toBe(true);
     expect(decode).not.toHaveBeenCalled();
-    expect(f.reserveOutput.mock.results[0]!.value.cancel).toHaveBeenCalledOnce();
+    expect(f.reserveOutput).not.toHaveBeenCalled();
   } finally { decode.mockRestore(); }
 });
 

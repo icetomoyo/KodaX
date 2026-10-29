@@ -49,7 +49,11 @@ it.each(cases)('pins read bytes before delivery and inspects a region: $workMode
         ids = [...new Set(JSON.stringify(messages).match(/obs_[a-f0-9-]{36}/g) ?? [])];
         await writeFile(firstPath, other);
         return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [call('visual_inspect', {
-          question: 'Check the original green image.', views: [{ label: 'detail', observationId: ids[0], region: { x: 1, y: 0, width: 1, height: 2 } }],
+          question: 'Compare the original images in order.', views: [
+            { label: 'detail', observationId: ids[0], region: { x: 1, y: 0, width: 1, height: 2 } },
+            { label: 'second image', observationId: ids[1] },
+            { label: 'detail again', observationId: ids[0], region: { x: 1, y: 0, width: 1, height: 2 } },
+          ],
         })] };
       }
       return { textBlocks: [{ type: 'text', text: 'Done.' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
@@ -68,6 +72,9 @@ it.each(cases)('pins read bytes before delivery and inspects a region: $workMode
     expect(JSON.stringify(wires.at(-1)).includes(expectedCrop.toString('base64')),
       JSON.stringify(toolMessages.messages?.filter(message => message.role === 'tool' || message.role === 'user')).slice(-4000)).toBe(true);
     expect(JSON.stringify(wires.at(-1))).toContain('nearest');
+    const lastResult = JSON.stringify(toolMessages.messages?.filter(message => message.role === 'tool' || message.role === 'user').at(-1));
+    const imagePayloads = [...lastResult.matchAll(protocol === 'openai' ? /"url":"data:image\/png;base64,([^\"]+)"/g : /"data":"([^\"]+)"/g)].map(match => match[1]);
+    expect(imagePayloads).toEqual([expectedCrop.toString('base64'), other.toString('base64'), expectedCrop.toString('base64')]);
     const storage = createSessionManager({ sessionsDir: path.join(homeDir, '.kodax', 'sessions'), configHome: path.join(homeDir, '.kodax') });
     const saved = await storage.loadSession(session.id);
     expect(saved!.extensionRecords?.filter(record => record.extensionId === 'kodax.visual' && record.type === 'observation')).toHaveLength(2);

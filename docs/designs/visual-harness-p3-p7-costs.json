@@ -1,0 +1,935 @@
+{
+  "baselineCommit": "30310e0018b3c0803653a278f451751a00ccc3bc",
+  "p0Commit": "1826cc228f299995fe5b22e608c7fbd90c3dc9ee",
+  "baselineRawDirectory": "C:/Users/ADMIN/AppData/Local/Temp/kodax-first-turn-wire-mwTGST",
+  "baselineMethod": "Reuse original P0-P2 complete fields after matching all captured model-contract sources at 30310e00, accounting explicitly for Windows LF/CRLF checkout bytes. IHDR-only fix changes no model contract. This is reused evidence, not a new baseline capture.",
+  "baselineContractHash": "174433533f64b157f9cf94244926ed8575283558e42a417efc82eca9cfe62c44",
+  "baselineSourceChecks": [
+    {
+      "file": "packages/coding/src/tools/tool-definitions.ts",
+      "capturedHash": "5593c80168e8ebbcc4149ba7b3154b383f025121ccb18165fe819b4ba8b4ba8e",
+      "git303LFHash": "3b951b198e80237391c9d7105521bb6c12b036c4369976b93f51c8d21e51103a",
+      "git303CRLFHash": "5593c80168e8ebbcc4149ba7b3154b383f025121ccb18165fe819b4ba8b4ba8e",
+      "capturedLineEndings": "CRLF"
+    },
+    {
+      "file": "packages/coding/src/tools/managed-tool-contract.ts",
+      "capturedHash": "7ee7f4d222591da185482f3f9f476896f41839434e4c6d6db4ff773ca6fb1ae2",
+      "git303LFHash": "7ee7f4d222591da185482f3f9f476896f41839434e4c6d6db4ff773ca6fb1ae2",
+      "git303CRLFHash": "664149bd5604032c14a4ce53a5faa089d651171be1b7603dc0b5df32bd1b5e47",
+      "capturedLineEndings": "LF"
+    },
+    {
+      "file": "packages/coding/src/tools/managed-tool-text.ts",
+      "capturedHash": "77fbade91086a4ecce1d2cb4dee38391b63f9f22abc8392e7e327e1aadf96a0c",
+      "git303LFHash": "5bb7c41ea9fc9209114a30bf99605021c5d77b7afb78bd8077d748a21f50b58f",
+      "git303CRLFHash": "77fbade91086a4ecce1d2cb4dee38391b63f9f22abc8392e7e327e1aadf96a0c",
+      "capturedLineEndings": "CRLF"
+    },
+    {
+      "file": "packages/coding/src/prompts/managed-system-contract.ts",
+      "capturedHash": "3f48fb46afec764b7bcd057c6be80f74e73b8274a62d28ec1541f3190b457029",
+      "git303LFHash": "25859366bb1e0fa818e3f0c0fbe7c813adfba3257350f80f7ad379ff73bedc2d",
+      "git303CRLFHash": "3f48fb46afec764b7bcd057c6be80f74e73b8274a62d28ec1541f3190b457029",
+      "capturedLineEndings": "CRLF"
+    },
+    {
+      "file": "packages/coding/src/prompts/compact-worker-contract.ts",
+      "capturedHash": "d4b665ef4ef05d75be22a5febea825b117362e77049e502cba548229daa399a6",
+      "git303LFHash": "e4384d2c28aea856ede1865d2e2cdaadde61fb8a48a5a7a8824b7dcceb62bdd9",
+      "git303CRLFHash": "d4b665ef4ef05d75be22a5febea825b117362e77049e502cba548229daa399a6",
+      "capturedLineEndings": "CRLF"
+    },
+    {
+      "file": "packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts",
+      "capturedHash": "bdb5860abbd6896b54899eb39797833dfaf1c9efd693a11ed7153baf039ca6af",
+      "git303LFHash": "69b51725ccb50ab15b6d1dacc6dadeb12e64b84841f1d46612f0b2074a8a86ae",
+      "git303CRLFHash": "bdb5860abbd6896b54899eb39797833dfaf1c9efd693a11ed7153baf039ca6af",
+      "capturedLineEndings": "CRLF"
+    },
+    {
+      "file": "packages/coding/src/agents/worker-role-prompt.ts",
+      "capturedHash": "722487499a12175ec214c8052e96d3c7be0f0ccd554ae79070c9ade15ed8157e",
+      "git303LFHash": "f42508c6cf9251b6689fb989d42184d9578be399f68fff8c2b9013200ffa2e00",
+      "git303CRLFHash": "722487499a12175ec214c8052e96d3c7be0f0ccd554ae79070c9ade15ed8157e",
+      "capturedLineEndings": "CRLF"
+    },
+    {
+      "file": "packages/coding/src/task-engine/runner-driven.ts",
+      "capturedHash": "dcc9328e4b2d83e18fa9f740fdcfe5237c3c479f51dfb7cd2731e51f4cbc8026",
+      "git303LFHash": "f924ccda465d598c3506a9250ac43602510b7bffa09071875dee7873a5c1d8c8",
+      "git303CRLFHash": "dcc9328e4b2d83e18fa9f740fdcfe5237c3c479f51dfb7cd2731e51f4cbc8026",
+      "capturedLineEndings": "CRLF"
+    },
+    {
+      "file": "packages/coding/src/prompts/builder.ts",
+      "capturedHash": "b77f10bde2ca104b0868103445fc9f8803254d0d9b53083aaabebe77e6e41929",
+      "git303LFHash": "672caa0cecfd04fef2df32bab07d35f3e8050a49c63424a403f24d8e08735889",
+      "git303CRLFHash": "b77f10bde2ca104b0868103445fc9f8803254d0d9b53083aaabebe77e6e41929",
+      "capturedLineEndings": "CRLF"
+    },
+    {
+      "file": "packages/coding/src/agent-runtime/script/model.ts",
+      "capturedHash": "324d084427700d692465f6bddc2f06ba43f18500be4d79e4a3e92b616196254e",
+      "git303LFHash": "324d084427700d692465f6bddc2f06ba43f18500be4d79e4a3e92b616196254e",
+      "git303CRLFHash": "5e04c9f5fd30fdceb0695c332a86329d238ea8f9abcb2da209f253d10a3d6661",
+      "capturedLineEndings": "LF"
+    },
+    {
+      "file": "packages/coding/src/agent-runtime/script/pilot.ts",
+      "capturedHash": "4fa4fc1915dee7cfc5d8adce364c833c7ce7885d429af1fa5c25057749375c15",
+      "git303LFHash": "4fa4fc1915dee7cfc5d8adce364c833c7ce7885d429af1fa5c25057749375c15",
+      "git303CRLFHash": "286c71bb3339787731390afe07a0d7bc79d7d3db63bebb0a54a9d37020eb93a1",
+      "capturedLineEndings": "LF"
+    },
+    {
+      "file": "packages/coding/src/work-mode.ts",
+      "capturedHash": "eb1c1671523de37422796232c569d9e85ace9ef7d03b61c1ead7d9c6582f50f8",
+      "git303LFHash": "eb1c1671523de37422796232c569d9e85ace9ef7d03b61c1ead7d9c6582f50f8",
+      "git303CRLFHash": "e9cdfaa0a034f6622ad8c50d4f42132bc482864d3be8efbd09e3ae22fdbd8ca2",
+      "capturedLineEndings": "LF"
+    },
+    {
+      "file": "packages/coding/src/task-engine/_internal/managed-task/llm-adapter.ts",
+      "capturedHash": "0e5e9825ca65d4d73aa6bae22578db13df22aec40da60b9fc89b572249201afc",
+      "git303LFHash": "e1e1ac450726dc553a2c9cfe6abf7dfedf8fe55677067b3f66678c00d663d92a",
+      "git303CRLFHash": "0e5e9825ca65d4d73aa6bae22578db13df22aec40da60b9fc89b572249201afc",
+      "capturedLineEndings": "CRLF"
+    },
+    {
+      "file": "packages/coding/src/agent-runtime/tool-exposure-planner.ts",
+      "capturedHash": "c6840f6d411479d2778aa6fef071fec8357c3eda6f194d05206cf0513ff7e70b",
+      "git303LFHash": "619ef57821e46187359d8d9790e4b76d2ad862a35d2b8de0b506bee990e16cb9",
+      "git303CRLFHash": "c6840f6d411479d2778aa6fef071fec8357c3eda6f194d05206cf0513ff7e70b",
+      "capturedLineEndings": "CRLF"
+    },
+    {
+      "file": "src/sdk-runtime.ts",
+      "capturedHash": "3faa1c045087c2201a61dc35c1f5f3b5f4c388c34814e8fa73d9db7faf312abd",
+      "git303LFHash": "75e92d6b2978d7c5ce82cae46d96e5547d70dddb3a32f16aedf8667d9f54fd21",
+      "git303CRLFHash": "3faa1c045087c2201a61dc35c1f5f3b5f4c388c34814e8fa73d9db7faf312abd",
+      "capturedLineEndings": "CRLF"
+    }
+  ],
+  "method": "Actual offline SDK serializer, same fixture and complete normalized model fields; KodaX text heuristic, not BPE/API usage, visual image billing, cache cost, speed or model behavior.",
+  "phases": [
+    {
+      "phase": "p3a-multiview",
+      "parentCommit": "30310e0018b3c0803653a278f451751a00ccc3bc",
+      "candidate": "Parent commit plus working changes identified by captured and implementation hashes.",
+      "rawDirectory": "C:/Users/ADMIN/AppData/Local/Temp/kodax-first-turn-wire-kwGE8M",
+      "externalCalls": 0,
+      "imageCount": 0,
+      "unassembledSdkRowsUnchanged": 24,
+      "captureSourceHashes": {
+        "packages/coding/src/tools/tool-definitions.ts": "5593c80168e8ebbcc4149ba7b3154b383f025121ccb18165fe819b4ba8b4ba8e",
+        "packages/coding/src/tools/managed-tool-contract.ts": "7ee7f4d222591da185482f3f9f476896f41839434e4c6d6db4ff773ca6fb1ae2",
+        "packages/coding/src/tools/managed-tool-text.ts": "77fbade91086a4ecce1d2cb4dee38391b63f9f22abc8392e7e327e1aadf96a0c",
+        "packages/coding/src/prompts/managed-system-contract.ts": "3f48fb46afec764b7bcd057c6be80f74e73b8274a62d28ec1541f3190b457029",
+        "packages/coding/src/prompts/compact-worker-contract.ts": "d4b665ef4ef05d75be22a5febea825b117362e77049e502cba548229daa399a6",
+        "packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts": "bdb5860abbd6896b54899eb39797833dfaf1c9efd693a11ed7153baf039ca6af",
+        "packages/coding/src/agents/worker-role-prompt.ts": "722487499a12175ec214c8052e96d3c7be0f0ccd554ae79070c9ade15ed8157e",
+        "packages/coding/src/task-engine/runner-driven.ts": "dcc9328e4b2d83e18fa9f740fdcfe5237c3c479f51dfb7cd2731e51f4cbc8026",
+        "packages/coding/src/prompts/builder.ts": "b77f10bde2ca104b0868103445fc9f8803254d0d9b53083aaabebe77e6e41929",
+        "packages/coding/src/agent-runtime/script/model.ts": "324d084427700d692465f6bddc2f06ba43f18500be4d79e4a3e92b616196254e",
+        "packages/coding/src/agent-runtime/script/pilot.ts": "4fa4fc1915dee7cfc5d8adce364c833c7ce7885d429af1fa5c25057749375c15",
+        "packages/coding/src/work-mode.ts": "eb1c1671523de37422796232c569d9e85ace9ef7d03b61c1ead7d9c6582f50f8",
+        "packages/coding/src/task-engine/_internal/managed-task/llm-adapter.ts": "0e5e9825ca65d4d73aa6bae22578db13df22aec40da60b9fc89b572249201afc",
+        "packages/coding/src/agent-runtime/tool-exposure-planner.ts": "c6840f6d411479d2778aa6fef071fec8357c3eda6f194d05206cf0513ff7e70b",
+        "src/sdk-runtime.ts": "3faa1c045087c2201a61dc35c1f5f3b5f4c388c34814e8fa73d9db7faf312abd"
+      },
+      "implementationHashes": {
+        "packages/agent/src/media/visual-tools.ts": "e418e2ffb2de5bfca57f0253636e59b8cd530d39cdb37cd8f8a6965802e332ac",
+        "packages/agent/src/media/visual-raster.ts": "3ee539342c95959a12a47a00c23830fc51316973ae6004a390ce567f5f18d1ce",
+        "packages/coding/src/tools/visual.ts": "c7e57a231f845aa3cf8cd5210dc85c3783d1b567e4bea5e4ba4dd440ac7b2c36"
+      },
+      "rows": [
+        {
+          "cell": "openai-sa-empty",
+          "baselineP2": 10388,
+          "candidate": 10388,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "bc0e4cb0324e0464d092f645c5091fa3ce9064905b3fcb6f92a960a6a8b1aa82",
+          "baselineSha256": "bc0e4cb0324e0464d092f645c5091fa3ce9064905b3fcb6f92a960a6a8b1aa82",
+          "visualTools": [],
+          "toolCount": 27
+        },
+        {
+          "cell": "openai-sa-agents",
+          "baselineP2": 10438,
+          "candidate": 10438,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "7daea6c226eb7c7aaabc8d0c7f11712659d852d14015bdb7da440b9547b15cc0",
+          "baselineSha256": "7daea6c226eb7c7aaabc8d0c7f11712659d852d14015bdb7da440b9547b15cc0",
+          "visualTools": [],
+          "toolCount": 27
+        },
+        {
+          "cell": "openai-sa-catalogs",
+          "baselineP2": 11704,
+          "candidate": 11704,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "1db2093e3d5eaf4f98ff2d925292b15912d2d37392fd8c55a7b196a1512fbbbb",
+          "baselineSha256": "1db2093e3d5eaf4f98ff2d925292b15912d2d37392fd8c55a7b196a1512fbbbb",
+          "visualTools": [],
+          "toolCount": 32
+        },
+        {
+          "cell": "openai-sa-runtime-host",
+          "baselineP2": 15541,
+          "candidate": 15561,
+          "deltaFrom30310e00": 20,
+          "cumulativeDeltaFromP0": 402,
+          "sha256": "fe808a0c18b8321cfba15a89322159eda5458cee114b1c067e0c21109c22a50f",
+          "baselineSha256": "b288997cfd38f4bb801ed15ee5d14561a3bab6d96a51d5813cdefdfb457e665e",
+          "visualTools": [
+            "visual_history",
+            "visual_inspect"
+          ],
+          "toolCount": 49
+        },
+        {
+          "cell": "openai-ama-empty",
+          "baselineP2": 12028,
+          "candidate": 12028,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "7793b2131a5c57c09f9dc308c0583a42eb5112d74cdc75a69c3685409604da10",
+          "baselineSha256": "7793b2131a5c57c09f9dc308c0583a42eb5112d74cdc75a69c3685409604da10",
+          "visualTools": [],
+          "toolCount": 44
+        },
+        {
+          "cell": "openai-ama-agents",
+          "baselineP2": 12078,
+          "candidate": 12078,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "4bebfccb270cd6905acfde8b131a09ded38c09039604bfc8a193223a453af431",
+          "baselineSha256": "4bebfccb270cd6905acfde8b131a09ded38c09039604bfc8a193223a453af431",
+          "visualTools": [],
+          "toolCount": 44
+        },
+        {
+          "cell": "openai-ama-catalogs",
+          "baselineP2": 13566,
+          "candidate": 13566,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "fe8603241b59a08c9ba2d172f06110fb0fabc2ed171955c771eb502e531a58bc",
+          "baselineSha256": "fe8603241b59a08c9ba2d172f06110fb0fabc2ed171955c771eb502e531a58bc",
+          "visualTools": [],
+          "toolCount": 50
+        },
+        {
+          "cell": "openai-ama-runtime-host",
+          "baselineP2": 15057,
+          "candidate": 15077,
+          "deltaFrom30310e00": 20,
+          "cumulativeDeltaFromP0": 402,
+          "sha256": "a050060b9fa42828febe4e1ae820e4bde488db5fc8146f8d5ca6c26233787e08",
+          "baselineSha256": "959baebaf0ed285eabd5b933c29e5782ed1e46849d8967b176676228fda4d648",
+          "visualTools": [
+            "visual_history",
+            "visual_inspect"
+          ],
+          "toolCount": 56
+        },
+        {
+          "cell": "openai-agent-empty",
+          "baselineP2": 9666,
+          "candidate": 9666,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "425d991f5e238b7ceb348fc21abecbdf678db944d25b839627add8c6ecd0d5d6",
+          "baselineSha256": "425d991f5e238b7ceb348fc21abecbdf678db944d25b839627add8c6ecd0d5d6",
+          "visualTools": [],
+          "toolCount": 34
+        },
+        {
+          "cell": "openai-agent-agents",
+          "baselineP2": 9716,
+          "candidate": 9716,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "080e1ef9b4d84f271ac8065b4b62d5c874885178677053d7ede19183298a2b03",
+          "baselineSha256": "080e1ef9b4d84f271ac8065b4b62d5c874885178677053d7ede19183298a2b03",
+          "visualTools": [],
+          "toolCount": 34
+        },
+        {
+          "cell": "openai-agent-catalogs",
+          "baselineP2": 11204,
+          "candidate": 11204,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "4c8a160f1f771bcc402929338d108d1fcacda5fb13683b3ad49ae77d48b30400",
+          "baselineSha256": "4c8a160f1f771bcc402929338d108d1fcacda5fb13683b3ad49ae77d48b30400",
+          "visualTools": [],
+          "toolCount": 40
+        },
+        {
+          "cell": "openai-agent-runtime-host",
+          "baselineP2": 11426,
+          "candidate": 11445,
+          "deltaFrom30310e00": 19,
+          "cumulativeDeltaFromP0": 402,
+          "sha256": "e4f2215def5f54cae72ade85c080559ed4ea3034701e21c37b41302252568328",
+          "baselineSha256": "f12d9623762560e593090cd3fdd1d7a0ae96c4be2f19d742b0b7f0c40e7e3e6b",
+          "visualTools": [
+            "visual_history",
+            "visual_inspect"
+          ],
+          "toolCount": 38
+        },
+        {
+          "cell": "openai-script-empty",
+          "baselineP2": 14133,
+          "candidate": 14133,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "9d555a8d7abf34f5e7971dd4326c1e074f03f87c565c93828b73e938296417c9",
+          "baselineSha256": "9d555a8d7abf34f5e7971dd4326c1e074f03f87c565c93828b73e938296417c9",
+          "visualTools": [],
+          "toolCount": 25
+        },
+        {
+          "cell": "openai-script-agents",
+          "baselineP2": 14184,
+          "candidate": 14184,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "668bd03f80adbc35984efd4827c7b6429bb5e7dbda238448adcbe1a5c9c469c3",
+          "baselineSha256": "668bd03f80adbc35984efd4827c7b6429bb5e7dbda238448adcbe1a5c9c469c3",
+          "visualTools": [],
+          "toolCount": 25
+        },
+        {
+          "cell": "openai-script-catalogs",
+          "baselineP2": 15673,
+          "candidate": 15673,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "cac9659764b7b40f725f707474bafc72ff45778fe71f51e9dac754ea16b8a394",
+          "baselineSha256": "cac9659764b7b40f725f707474bafc72ff45778fe71f51e9dac754ea16b8a394",
+          "visualTools": [],
+          "toolCount": 31
+        },
+        {
+          "cell": "openai-script-runtime-host",
+          "baselineP2": 16927,
+          "candidate": 16946,
+          "deltaFrom30310e00": 19,
+          "cumulativeDeltaFromP0": 401,
+          "sha256": "3518e67cc4ef35c2761dbd4cf3c717dee2d49585709139e8e17da9160727dee7",
+          "baselineSha256": "fa0217b304e2668fb6665ddee3361c1c536ed0f2906834ab9cb3e9486208a67e",
+          "visualTools": [
+            "visual_history",
+            "visual_inspect"
+          ],
+          "toolCount": 27
+        },
+        {
+          "cell": "anthropic-sa-empty",
+          "baselineP2": 10674,
+          "candidate": 10674,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "7811f99f5c4f35eccce3ccea92946965deb750a83309cf0d6cf1dcc7e6e38af3",
+          "baselineSha256": "7811f99f5c4f35eccce3ccea92946965deb750a83309cf0d6cf1dcc7e6e38af3",
+          "visualTools": [],
+          "toolCount": 27
+        },
+        {
+          "cell": "anthropic-sa-agents",
+          "baselineP2": 10724,
+          "candidate": 10724,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "c6568cfb896f7d9676e3a349c0ebf7d46b4c4b39d1a157e3f4e4a3e1bfd9cf60",
+          "baselineSha256": "c6568cfb896f7d9676e3a349c0ebf7d46b4c4b39d1a157e3f4e4a3e1bfd9cf60",
+          "visualTools": [],
+          "toolCount": 27
+        },
+        {
+          "cell": "anthropic-sa-catalogs",
+          "baselineP2": 12012,
+          "candidate": 12012,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "03136ca11c1ff9b33609b00fe2586d05ef371be968d6e50afdb732da3dae09ec",
+          "baselineSha256": "03136ca11c1ff9b33609b00fe2586d05ef371be968d6e50afdb732da3dae09ec",
+          "visualTools": [],
+          "toolCount": 32
+        },
+        {
+          "cell": "anthropic-sa-runtime-host",
+          "baselineP2": 15801,
+          "candidate": 15820,
+          "deltaFrom30310e00": 19,
+          "cumulativeDeltaFromP0": 399,
+          "sha256": "d9965bd6a8d23d78a43cd3c34e922c8c293b798fc34f188bd637a222e30749cf",
+          "baselineSha256": "39eb4aafa2d161b1ca26a962c77ec5ada0eb4702fdffdb3b992e85fe2f292492",
+          "visualTools": [
+            "visual_history",
+            "visual_inspect"
+          ],
+          "toolCount": 49
+        },
+        {
+          "cell": "anthropic-ama-empty",
+          "baselineP2": 11746,
+          "candidate": 11746,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "1c1a1fb7a14f6d76d27c145d7e08ad3bd157becc50ffe43eed498dd8ef7b3b27",
+          "baselineSha256": "1c1a1fb7a14f6d76d27c145d7e08ad3bd157becc50ffe43eed498dd8ef7b3b27",
+          "visualTools": [],
+          "toolCount": 44
+        },
+        {
+          "cell": "anthropic-ama-agents",
+          "baselineP2": 11797,
+          "candidate": 11797,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "59f8adad9b9d2b212e0c179a0e3210df0d1e6598ab9745ac114fd7ea4902aea0",
+          "baselineSha256": "59f8adad9b9d2b212e0c179a0e3210df0d1e6598ab9745ac114fd7ea4902aea0",
+          "visualTools": [],
+          "toolCount": 44
+        },
+        {
+          "cell": "anthropic-ama-catalogs",
+          "baselineP2": 13241,
+          "candidate": 13241,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "7a7c1db1c4e91b1f6f72a005c892e752adf4b3fb263bd0b0f610c2f3ce104685",
+          "baselineSha256": "7a7c1db1c4e91b1f6f72a005c892e752adf4b3fb263bd0b0f610c2f3ce104685",
+          "visualTools": [],
+          "toolCount": 50
+        },
+        {
+          "cell": "anthropic-ama-runtime-host",
+          "baselineP2": 14690,
+          "candidate": 14709,
+          "deltaFrom30310e00": 19,
+          "cumulativeDeltaFromP0": 387,
+          "sha256": "5a6ea7ef65af3a61a9bfc5db911b3e2eb60fd72a1358975a77e9f70efd35d64f",
+          "baselineSha256": "5f29e375f066d14a8ec1e5a4d8eb589cb99e943ee8943218d1cc04fc45f21a5c",
+          "visualTools": [
+            "visual_history",
+            "visual_inspect"
+          ],
+          "toolCount": 56
+        },
+        {
+          "cell": "anthropic-agent-empty",
+          "baselineP2": 9456,
+          "candidate": 9456,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "6cb274f5292bd9542545f0e49a48e65b58b070dbed010c4ff2da799a21a2cbed",
+          "baselineSha256": "6cb274f5292bd9542545f0e49a48e65b58b070dbed010c4ff2da799a21a2cbed",
+          "visualTools": [],
+          "toolCount": 34
+        },
+        {
+          "cell": "anthropic-agent-agents",
+          "baselineP2": 9507,
+          "candidate": 9507,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "4028996fb59125ace56e249ef512166f6d238c11d3e984ac9b3f03ad9cc2fc94",
+          "baselineSha256": "4028996fb59125ace56e249ef512166f6d238c11d3e984ac9b3f03ad9cc2fc94",
+          "visualTools": [],
+          "toolCount": 34
+        },
+        {
+          "cell": "anthropic-agent-catalogs",
+          "baselineP2": 10952,
+          "candidate": 10952,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "e8ae3da38167f1cc0496bb318d63ee0d0066b1d04e334a801e66c38fb92f854d",
+          "baselineSha256": "e8ae3da38167f1cc0496bb318d63ee0d0066b1d04e334a801e66c38fb92f854d",
+          "visualTools": [],
+          "toolCount": 40
+        },
+        {
+          "cell": "anthropic-agent-runtime-host",
+          "baselineP2": 11188,
+          "candidate": 11207,
+          "deltaFrom30310e00": 19,
+          "cumulativeDeltaFromP0": 387,
+          "sha256": "2ef94bd044dceea3de8a07ea4a1c7f5db7e39ad075672f2ae90a8055346fff53",
+          "baselineSha256": "bf9fce01bcc617d03e838fae811e2803b2a0bcae19bc331d4fdd59c06d41639c",
+          "visualTools": [
+            "visual_history",
+            "visual_inspect"
+          ],
+          "toolCount": 38
+        },
+        {
+          "cell": "anthropic-script-empty",
+          "baselineP2": 13990,
+          "candidate": 13990,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "f8a6714974688fdbd8cc8c303a1afcbfbdc7f8fdc3e69e0b70b537e16948fbc8",
+          "baselineSha256": "f8a6714974688fdbd8cc8c303a1afcbfbdc7f8fdc3e69e0b70b537e16948fbc8",
+          "visualTools": [],
+          "toolCount": 25
+        },
+        {
+          "cell": "anthropic-script-agents",
+          "baselineP2": 14041,
+          "candidate": 14041,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "5101c633aab2509088e17be19d7013267356204ac11c26b7b5e980cbd26063a9",
+          "baselineSha256": "5101c633aab2509088e17be19d7013267356204ac11c26b7b5e980cbd26063a9",
+          "visualTools": [],
+          "toolCount": 25
+        },
+        {
+          "cell": "anthropic-script-catalogs",
+          "baselineP2": 15486,
+          "candidate": 15486,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "f29a6272d9fa272dee20f799e2424205a0c689a83b51a2751e18981129a18a87",
+          "baselineSha256": "f29a6272d9fa272dee20f799e2424205a0c689a83b51a2751e18981129a18a87",
+          "visualTools": [],
+          "toolCount": 31
+        },
+        {
+          "cell": "anthropic-script-runtime-host",
+          "baselineP2": 16770,
+          "candidate": 16789,
+          "deltaFrom30310e00": 19,
+          "cumulativeDeltaFromP0": 387,
+          "sha256": "ab7523cbcaf3e80947f95ff3bdf3cd79b047ff8cf342f7a5eb5bb2b142c46a94",
+          "baselineSha256": "5b9954fc3929bd5a46477168e17c2aee0b92cdc7e2853f48688ce54220e03127",
+          "visualTools": [
+            "visual_history",
+            "visual_inspect"
+          ],
+          "toolCount": 27
+        }
+      ]
+    },
+    {
+      "phase": "p3a-final",
+      "parentCommit": "30310e0018b3c0803653a278f451751a00ccc3bc",
+      "candidate": "Parent commit plus working changes identified by captured and implementation hashes.",
+      "rawDirectory": "C:/Users/ADMIN/AppData/Local/Temp/kodax-first-turn-wire-LSuhJd",
+      "externalCalls": 0,
+      "imageCount": 0,
+      "unassembledSdkRowsUnchanged": 24,
+      "captureSourceHashes": {
+        "packages/coding/src/tools/tool-definitions.ts": "5593c80168e8ebbcc4149ba7b3154b383f025121ccb18165fe819b4ba8b4ba8e",
+        "packages/coding/src/tools/managed-tool-contract.ts": "7ee7f4d222591da185482f3f9f476896f41839434e4c6d6db4ff773ca6fb1ae2",
+        "packages/coding/src/tools/managed-tool-text.ts": "77fbade91086a4ecce1d2cb4dee38391b63f9f22abc8392e7e327e1aadf96a0c",
+        "packages/coding/src/prompts/managed-system-contract.ts": "3f48fb46afec764b7bcd057c6be80f74e73b8274a62d28ec1541f3190b457029",
+        "packages/coding/src/prompts/compact-worker-contract.ts": "d4b665ef4ef05d75be22a5febea825b117362e77049e502cba548229daa399a6",
+        "packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts": "bdb5860abbd6896b54899eb39797833dfaf1c9efd693a11ed7153baf039ca6af",
+        "packages/coding/src/agents/worker-role-prompt.ts": "722487499a12175ec214c8052e96d3c7be0f0ccd554ae79070c9ade15ed8157e",
+        "packages/coding/src/task-engine/runner-driven.ts": "dcc9328e4b2d83e18fa9f740fdcfe5237c3c479f51dfb7cd2731e51f4cbc8026",
+        "packages/coding/src/prompts/builder.ts": "b77f10bde2ca104b0868103445fc9f8803254d0d9b53083aaabebe77e6e41929",
+        "packages/coding/src/agent-runtime/script/model.ts": "324d084427700d692465f6bddc2f06ba43f18500be4d79e4a3e92b616196254e",
+        "packages/coding/src/agent-runtime/script/pilot.ts": "4fa4fc1915dee7cfc5d8adce364c833c7ce7885d429af1fa5c25057749375c15",
+        "packages/coding/src/work-mode.ts": "eb1c1671523de37422796232c569d9e85ace9ef7d03b61c1ead7d9c6582f50f8",
+        "packages/coding/src/task-engine/_internal/managed-task/llm-adapter.ts": "0e5e9825ca65d4d73aa6bae22578db13df22aec40da60b9fc89b572249201afc",
+        "packages/coding/src/agent-runtime/tool-exposure-planner.ts": "c6840f6d411479d2778aa6fef071fec8357c3eda6f194d05206cf0513ff7e70b",
+        "src/sdk-runtime.ts": "3faa1c045087c2201a61dc35c1f5f3b5f4c388c34814e8fa73d9db7faf312abd"
+      },
+      "implementationHashes": {
+        "packages/agent/src/media/visual-tools.ts": "3081188ebf27fc7da624d74829a61d0cda5e7e2ac73600328d68ad9efed19f39",
+        "packages/agent/src/media/visual-raster.ts": "a99fb675d8b92da9bd1d3f6b32df9cc65369b64ca2cd2a2468e907069521857f",
+        "packages/coding/src/tools/visual.ts": "c7e57a231f845aa3cf8cd5210dc85c3783d1b567e4bea5e4ba4dd440ac7b2c36"
+      },
+      "rows": [
+        {
+          "cell": "openai-sa-empty",
+          "baselineP2": 10388,
+          "candidate": 10388,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "bc0e4cb0324e0464d092f645c5091fa3ce9064905b3fcb6f92a960a6a8b1aa82",
+          "baselineSha256": "bc0e4cb0324e0464d092f645c5091fa3ce9064905b3fcb6f92a960a6a8b1aa82",
+          "visualTools": [],
+          "toolCount": 27
+        },
+        {
+          "cell": "openai-sa-agents",
+          "baselineP2": 10438,
+          "candidate": 10438,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "7daea6c226eb7c7aaabc8d0c7f11712659d852d14015bdb7da440b9547b15cc0",
+          "baselineSha256": "7daea6c226eb7c7aaabc8d0c7f11712659d852d14015bdb7da440b9547b15cc0",
+          "visualTools": [],
+          "toolCount": 27
+        },
+        {
+          "cell": "openai-sa-catalogs",
+          "baselineP2": 11704,
+          "candidate": 11704,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "1db2093e3d5eaf4f98ff2d925292b15912d2d37392fd8c55a7b196a1512fbbbb",
+          "baselineSha256": "1db2093e3d5eaf4f98ff2d925292b15912d2d37392fd8c55a7b196a1512fbbbb",
+          "visualTools": [],
+          "toolCount": 32
+        },
+        {
+          "cell": "openai-sa-runtime-host",
+          "baselineP2": 15541,
+          "candidate": 15561,
+          "deltaFrom30310e00": 20,
+          "cumulativeDeltaFromP0": 402,
+          "sha256": "fe808a0c18b8321cfba15a89322159eda5458cee114b1c067e0c21109c22a50f",
+          "baselineSha256": "b288997cfd38f4bb801ed15ee5d14561a3bab6d96a51d5813cdefdfb457e665e",
+          "visualTools": [
+            "visual_history",
+            "visual_inspect"
+          ],
+          "toolCount": 49
+        },
+        {
+          "cell": "openai-ama-empty",
+          "baselineP2": 12028,
+          "candidate": 12028,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "7793b2131a5c57c09f9dc308c0583a42eb5112d74cdc75a69c3685409604da10",
+          "baselineSha256": "7793b2131a5c57c09f9dc308c0583a42eb5112d74cdc75a69c3685409604da10",
+          "visualTools": [],
+          "toolCount": 44
+        },
+        {
+          "cell": "openai-ama-agents",
+          "baselineP2": 12078,
+          "candidate": 12078,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "4bebfccb270cd6905acfde8b131a09ded38c09039604bfc8a193223a453af431",
+          "baselineSha256": "4bebfccb270cd6905acfde8b131a09ded38c09039604bfc8a193223a453af431",
+          "visualTools": [],
+          "toolCount": 44
+        },
+        {
+          "cell": "openai-ama-catalogs",
+          "baselineP2": 13566,
+          "candidate": 13566,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "fe8603241b59a08c9ba2d172f06110fb0fabc2ed171955c771eb502e531a58bc",
+          "baselineSha256": "fe8603241b59a08c9ba2d172f06110fb0fabc2ed171955c771eb502e531a58bc",
+          "visualTools": [],
+          "toolCount": 50
+        },
+        {
+          "cell": "openai-ama-runtime-host",
+          "baselineP2": 15057,
+          "candidate": 15077,
+          "deltaFrom30310e00": 20,
+          "cumulativeDeltaFromP0": 402,
+          "sha256": "a050060b9fa42828febe4e1ae820e4bde488db5fc8146f8d5ca6c26233787e08",
+          "baselineSha256": "959baebaf0ed285eabd5b933c29e5782ed1e46849d8967b176676228fda4d648",
+          "visualTools": [
+            "visual_history",
+            "visual_inspect"
+          ],
+          "toolCount": 56
+        },
+        {
+          "cell": "openai-agent-empty",
+          "baselineP2": 9666,
+          "candidate": 9666,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "425d991f5e238b7ceb348fc21abecbdf678db944d25b839627add8c6ecd0d5d6",
+          "baselineSha256": "425d991f5e238b7ceb348fc21abecbdf678db944d25b839627add8c6ecd0d5d6",
+          "visualTools": [],
+          "toolCount": 34
+        },
+        {
+          "cell": "openai-agent-agents",
+          "baselineP2": 9716,
+          "candidate": 9716,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "080e1ef9b4d84f271ac8065b4b62d5c874885178677053d7ede19183298a2b03",
+          "baselineSha256": "080e1ef9b4d84f271ac8065b4b62d5c874885178677053d7ede19183298a2b03",
+          "visualTools": [],
+          "toolCount": 34
+        },
+        {
+          "cell": "openai-agent-catalogs",
+          "baselineP2": 11204,
+          "candidate": 11204,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "4c8a160f1f771bcc402929338d108d1fcacda5fb13683b3ad49ae77d48b30400",
+          "baselineSha256": "4c8a160f1f771bcc402929338d108d1fcacda5fb13683b3ad49ae77d48b30400",
+          "visualTools": [],
+          "toolCount": 40
+        },
+        {
+          "cell": "openai-agent-runtime-host",
+          "baselineP2": 11426,
+          "candidate": 11445,
+          "deltaFrom30310e00": 19,
+          "cumulativeDeltaFromP0": 402,
+          "sha256": "e4f2215def5f54cae72ade85c080559ed4ea3034701e21c37b41302252568328",
+          "baselineSha256": "f12d9623762560e593090cd3fdd1d7a0ae96c4be2f19d742b0b7f0c40e7e3e6b",
+          "visualTools": [
+            "visual_history",
+            "visual_inspect"
+          ],
+          "toolCount": 38
+        },
+        {
+          "cell": "openai-script-empty",
+          "baselineP2": 14133,
+          "candidate": 14133,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "9d555a8d7abf34f5e7971dd4326c1e074f03f87c565c93828b73e938296417c9",
+          "baselineSha256": "9d555a8d7abf34f5e7971dd4326c1e074f03f87c565c93828b73e938296417c9",
+          "visualTools": [],
+          "toolCount": 25
+        },
+        {
+          "cell": "openai-script-agents",
+          "baselineP2": 14184,
+          "candidate": 14184,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "668bd03f80adbc35984efd4827c7b6429bb5e7dbda238448adcbe1a5c9c469c3",
+          "baselineSha256": "668bd03f80adbc35984efd4827c7b6429bb5e7dbda238448adcbe1a5c9c469c3",
+          "visualTools": [],
+          "toolCount": 25
+        },
+        {
+          "cell": "openai-script-catalogs",
+          "baselineP2": 15673,
+          "candidate": 15673,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "cac9659764b7b40f725f707474bafc72ff45778fe71f51e9dac754ea16b8a394",
+          "baselineSha256": "cac9659764b7b40f725f707474bafc72ff45778fe71f51e9dac754ea16b8a394",
+          "visualTools": [],
+          "toolCount": 31
+        },
+        {
+          "cell": "openai-script-runtime-host",
+          "baselineP2": 16927,
+          "candidate": 16946,
+          "deltaFrom30310e00": 19,
+          "cumulativeDeltaFromP0": 401,
+          "sha256": "3518e67cc4ef35c2761dbd4cf3c717dee2d49585709139e8e17da9160727dee7",
+          "baselineSha256": "fa0217b304e2668fb6665ddee3361c1c536ed0f2906834ab9cb3e9486208a67e",
+          "visualTools": [
+            "visual_history",
+            "visual_inspect"
+          ],
+          "toolCount": 27
+        },
+        {
+          "cell": "anthropic-sa-empty",
+          "baselineP2": 10674,
+          "candidate": 10674,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "7811f99f5c4f35eccce3ccea92946965deb750a83309cf0d6cf1dcc7e6e38af3",
+          "baselineSha256": "7811f99f5c4f35eccce3ccea92946965deb750a83309cf0d6cf1dcc7e6e38af3",
+          "visualTools": [],
+          "toolCount": 27
+        },
+        {
+          "cell": "anthropic-sa-agents",
+          "baselineP2": 10724,
+          "candidate": 10724,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "c6568cfb896f7d9676e3a349c0ebf7d46b4c4b39d1a157e3f4e4a3e1bfd9cf60",
+          "baselineSha256": "c6568cfb896f7d9676e3a349c0ebf7d46b4c4b39d1a157e3f4e4a3e1bfd9cf60",
+          "visualTools": [],
+          "toolCount": 27
+        },
+        {
+          "cell": "anthropic-sa-catalogs",
+          "baselineP2": 12012,
+          "candidate": 12012,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "03136ca11c1ff9b33609b00fe2586d05ef371be968d6e50afdb732da3dae09ec",
+          "baselineSha256": "03136ca11c1ff9b33609b00fe2586d05ef371be968d6e50afdb732da3dae09ec",
+          "visualTools": [],
+          "toolCount": 32
+        },
+        {
+          "cell": "anthropic-sa-runtime-host",
+          "baselineP2": 15801,
+          "candidate": 15820,
+          "deltaFrom30310e00": 19,
+          "cumulativeDeltaFromP0": 399,
+          "sha256": "d9965bd6a8d23d78a43cd3c34e922c8c293b798fc34f188bd637a222e30749cf",
+          "baselineSha256": "39eb4aafa2d161b1ca26a962c77ec5ada0eb4702fdffdb3b992e85fe2f292492",
+          "visualTools": [
+            "visual_history",
+            "visual_inspect"
+          ],
+          "toolCount": 49
+        },
+        {
+          "cell": "anthropic-ama-empty",
+          "baselineP2": 11746,
+          "candidate": 11746,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "1c1a1fb7a14f6d76d27c145d7e08ad3bd157becc50ffe43eed498dd8ef7b3b27",
+          "baselineSha256": "1c1a1fb7a14f6d76d27c145d7e08ad3bd157becc50ffe43eed498dd8ef7b3b27",
+          "visualTools": [],
+          "toolCount": 44
+        },
+        {
+          "cell": "anthropic-ama-agents",
+          "baselineP2": 11797,
+          "candidate": 11797,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "59f8adad9b9d2b212e0c179a0e3210df0d1e6598ab9745ac114fd7ea4902aea0",
+          "baselineSha256": "59f8adad9b9d2b212e0c179a0e3210df0d1e6598ab9745ac114fd7ea4902aea0",
+          "visualTools": [],
+          "toolCount": 44
+        },
+        {
+          "cell": "anthropic-ama-catalogs",
+          "baselineP2": 13241,
+          "candidate": 13241,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "7a7c1db1c4e91b1f6f72a005c892e752adf4b3fb263bd0b0f610c2f3ce104685",
+          "baselineSha256": "7a7c1db1c4e91b1f6f72a005c892e752adf4b3fb263bd0b0f610c2f3ce104685",
+          "visualTools": [],
+          "toolCount": 50
+        },
+        {
+          "cell": "anthropic-ama-runtime-host",
+          "baselineP2": 14690,
+          "candidate": 14709,
+          "deltaFrom30310e00": 19,
+          "cumulativeDeltaFromP0": 387,
+          "sha256": "5a6ea7ef65af3a61a9bfc5db911b3e2eb60fd72a1358975a77e9f70efd35d64f",
+          "baselineSha256": "5f29e375f066d14a8ec1e5a4d8eb589cb99e943ee8943218d1cc04fc45f21a5c",
+          "visualTools": [
+            "visual_history",
+            "visual_inspect"
+          ],
+          "toolCount": 56
+        },
+        {
+          "cell": "anthropic-agent-empty",
+          "baselineP2": 9456,
+          "candidate": 9456,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "6cb274f5292bd9542545f0e49a48e65b58b070dbed010c4ff2da799a21a2cbed",
+          "baselineSha256": "6cb274f5292bd9542545f0e49a48e65b58b070dbed010c4ff2da799a21a2cbed",
+          "visualTools": [],
+          "toolCount": 34
+        },
+        {
+          "cell": "anthropic-agent-agents",
+          "baselineP2": 9507,
+          "candidate": 9507,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "4028996fb59125ace56e249ef512166f6d238c11d3e984ac9b3f03ad9cc2fc94",
+          "baselineSha256": "4028996fb59125ace56e249ef512166f6d238c11d3e984ac9b3f03ad9cc2fc94",
+          "visualTools": [],
+          "toolCount": 34
+        },
+        {
+          "cell": "anthropic-agent-catalogs",
+          "baselineP2": 10952,
+          "candidate": 10952,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "e8ae3da38167f1cc0496bb318d63ee0d0066b1d04e334a801e66c38fb92f854d",
+          "baselineSha256": "e8ae3da38167f1cc0496bb318d63ee0d0066b1d04e334a801e66c38fb92f854d",
+          "visualTools": [],
+          "toolCount": 40
+        },
+        {
+          "cell": "anthropic-agent-runtime-host",
+          "baselineP2": 11188,
+          "candidate": 11207,
+          "deltaFrom30310e00": 19,
+          "cumulativeDeltaFromP0": 387,
+          "sha256": "2ef94bd044dceea3de8a07ea4a1c7f5db7e39ad075672f2ae90a8055346fff53",
+          "baselineSha256": "bf9fce01bcc617d03e838fae811e2803b2a0bcae19bc331d4fdd59c06d41639c",
+          "visualTools": [
+            "visual_history",
+            "visual_inspect"
+          ],
+          "toolCount": 38
+        },
+        {
+          "cell": "anthropic-script-empty",
+          "baselineP2": 13990,
+          "candidate": 13990,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "f8a6714974688fdbd8cc8c303a1afcbfbdc7f8fdc3e69e0b70b537e16948fbc8",
+          "baselineSha256": "f8a6714974688fdbd8cc8c303a1afcbfbdc7f8fdc3e69e0b70b537e16948fbc8",
+          "visualTools": [],
+          "toolCount": 25
+        },
+        {
+          "cell": "anthropic-script-agents",
+          "baselineP2": 14041,
+          "candidate": 14041,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "5101c633aab2509088e17be19d7013267356204ac11c26b7b5e980cbd26063a9",
+          "baselineSha256": "5101c633aab2509088e17be19d7013267356204ac11c26b7b5e980cbd26063a9",
+          "visualTools": [],
+          "toolCount": 25
+        },
+        {
+          "cell": "anthropic-script-catalogs",
+          "baselineP2": 15486,
+          "candidate": 15486,
+          "deltaFrom30310e00": 0,
+          "cumulativeDeltaFromP0": 0,
+          "sha256": "f29a6272d9fa272dee20f799e2424205a0c689a83b51a2751e18981129a18a87",
+          "baselineSha256": "f29a6272d9fa272dee20f799e2424205a0c689a83b51a2751e18981129a18a87",
+          "visualTools": [],
+          "toolCount": 31
+        },
+        {
+          "cell": "anthropic-script-runtime-host",
+          "baselineP2": 16770,
+          "candidate": 16789,
+          "deltaFrom30310e00": 19,
+          "cumulativeDeltaFromP0": 387,
+          "sha256": "ab7523cbcaf3e80947f95ff3bdf3cd79b047ff8cf342f7a5eb5bb2b142c46a94",
+          "baselineSha256": "5b9954fc3929bd5a46477168e17c2aee0b92cdc7e2853f48688ce54220e03127",
+          "visualTools": [
+            "visual_history",
+            "visual_inspect"
+          ],
+          "toolCount": 27
+        }
+      ]
+    }
+  ]
+}
