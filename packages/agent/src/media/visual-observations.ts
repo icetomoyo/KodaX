@@ -50,6 +50,29 @@ export function visualObservationRecord(observation: VisualObservation): KodaXEx
     ts: Date.parse(observation.observedAt), data: { ...observation } };
 }
 
+/** Accepted visual receipts are append-only; stale Run snapshots cannot erase later admission. */
+export function mergeVisualSessionRecords(persisted: readonly KodaXExtensionSessionRecord[] | undefined,
+  incoming: readonly KodaXExtensionSessionRecord[] | undefined): KodaXExtensionSessionRecord[] {
+  const current = incoming ?? persisted ?? [];
+  const visuals = new Map((persisted ?? []).filter(record => record.extensionId === 'kodax.visual').map(record => [record.id, record]));
+  for (const record of current) if (record.extensionId === 'kodax.visual') {
+    const previous = visuals.get(record.id);
+    if (visualInputRevision(record) >= visualInputRevision(previous)) visuals.set(record.id, record);
+  }
+  const ordered = [...visuals.values()]; const positions = new Map(ordered.map((record, index) => [record.id, index]));
+  const result: KodaXExtensionSessionRecord[] = []; let cursor = 0;
+  for (const record of current) {
+    if (record.extensionId !== 'kodax.visual') result.push(record);
+    else while (cursor <= positions.get(record.id)!) result.push(ordered[cursor++]!);
+  }
+  return [...result, ...ordered.slice(cursor)];
+}
+
+function visualInputRevision(record: KodaXExtensionSessionRecord | undefined): number {
+  return record?.type === 'input' && record.data && typeof record.data === 'object' && !Array.isArray(record.data)
+    && typeof record.data.revision === 'number' ? record.data.revision : 0;
+}
+
 export function readVisualObservationRecord(record: KodaXExtensionSessionRecord): VisualObservation | undefined {
   if (record.extensionId !== 'kodax.visual' || record.type !== 'observation' || !record.data
     || typeof record.data !== 'object' || Array.isArray(record.data)) return undefined;

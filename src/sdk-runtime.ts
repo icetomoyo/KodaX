@@ -56,7 +56,7 @@ import { createExecutionFactsStore, type ExecutionFactsStore } from './execution
 export type { RuntimeExecutionAuthorization } from './client-host-authorization.js';
 export type { RuntimeBuildIdentity } from './runtime-build-identity.js';
 import { createHash, randomUUID } from "node:crypto";
-import { prepareRuntimeVisualInput } from './runtime-visual-input.js';
+import { prepareRuntimeVisualInput, materializeRuntimeVisualArtifacts, readRuntimeVisualInputReceipt, runtimeVisualDeliveryRecords, runtimeVisualWithdrawalRecords, runtimeVisualRebindingRecords } from './runtime-visual-input.js';
 import { createSessionVisualObservationOwner } from '@kodax-ai/coding';
 import { sessionVisualMediaDirectory } from '@kodax-ai/agent/media';
 import { captureGenerationResume, parseGenerationCheckpoint, rebindGenerationOptions, type RuntimeGenerationResume } from './runtime-generation-recovery.js';
@@ -11342,10 +11342,19 @@ async function createRuntimeRunService(deps: {
       consumePendingInputs: persist => deps.sessionOperations.run(record.sessionId, async () => {
         if (deps.isClosed() || activeRunBySession.get(record.sessionId) !== record.runId
           || !isActiveRunPhase(record.phase) || record.stop !== undefined || record.abortController?.signal.aborted) return [];
-        const consumed = await productQueue.consumePlainBatch(record.sessionId, record.runId, persist, record.productExecutionKey, record.origin?.principalId);
+        let materialized: readonly import('@kodax-ai/agent').QueuedMessage[] | undefined;
+        const consumed = await productQueue.consumePlainBatch(record.sessionId, record.runId, async inputs => {
+          materialized = await materializeQueuedVisualInputs(record.sessionId, inputs);
+          const saved = await deps.sessionAdmission.loadExecutable(record.sessionId);
+          const receipts = runtimeVisualDeliveryRecords(saved, record.sessionId, inputs.flatMap(input => input.inputId ? [input.inputId] : []), record.runId);
+          if (receipts.length && !await deps.sessionManager.storage.appendSessionRecords?.(record.sessionId, receipts)) {
+            throw new Error('Visual input delivery receipt could not be committed.');
+          }
+          await persist(materialized);
+        }, record.productExecutionKey, record.origin?.principalId);
         outputInputId = consumed.at(-1)?.inputId ?? outputInputId;
         if (consumed.length > 0) deps.sessionViews.changed(record.sessionId, true);
-        return consumed;
+        return materialized ?? consumed;
       }),
     });
     const runOptions = createRunOptions();
@@ -12334,9 +12343,9 @@ async function createRuntimeRunService(deps: {
       const originalContent = buildPromptMessageContent(normalizedInput.prompt, effectiveOptions.context?.inputArtifacts);
       const visualInput = await prepareRuntimeVisualInput({ sessionId: input.sessionId, inputId: canonicalInputId,
         sessionsDir: deps.sessionManager.storage.getSessionsDir(), content: originalContent, session, runId,
-        productIntentDigest: record.productInput?.digest });
+        productIntentDigest: record.productInput?.digest, inputIds: trustedInput.productBatch });
       const content = visualInput.content;
-      const savedInput = session.messages.find(message => message.role === 'user' && message.inputId === canonicalInputId);
+      const savedInput = session.messages.find(message => message.role === 'user' && (message.inputId === canonicalInputId || message.inputIds?.includes(canonicalInputId)));
       if (savedInput && JSON.stringify(savedInput.content) !== JSON.stringify(content)) {
         throw createRuntimeConflictError('Input ID already belongs to a different intent.', 0);
       }
@@ -12511,11 +12520,64 @@ async function createRuntimeRunService(deps: {
     };
   };
 
+  const stagePendingVisualInput = async (input: ClientSubmitInput, runId?: string): Promise<void> => {
+    if (!input.inputArtifacts?.some(artifact => artifact.kind === 'image')) return;
+    const session = await deps.sessionAdmission.loadExecutable(input.sessionId);
+    const prepared = await prepareRuntimeVisualInput({ sessionId: input.sessionId, inputId: input.inputId,
+      sessionsDir: deps.sessionManager.storage.getSessionsDir(), content: buildPromptMessageContent(input.text, input.inputArtifacts),
+      session, pending: true, runId, productIntentDigest: inputIntentDigest(input, currentProductExecution()?.key) });
+    if (prepared.records.length && !await deps.sessionManager.storage.appendSessionRecords?.(input.sessionId, prepared.records)) {
+      throw new Error('Visual pending input canonical receipt could not be committed.');
+    }
+  };
+
+  const materializeQueuedVisualInputs = async (sessionId: string, inputs: readonly import('@kodax-ai/agent').QueuedMessage[]) => {
+    if (!inputs.some(input => input.inputArtifacts?.some(artifact => artifact.kind === 'image'))) return inputs;
+    const session = await deps.sessionAdmission.loadExecutable(sessionId);
+    const materialized: import('@kodax-ai/agent').QueuedMessage[] = [];
+    for (const input of inputs) {
+      if (!input.inputArtifacts?.some(artifact => artifact.kind === 'image')) { materialized.push(input); continue; }
+      if (!input.inputId) throw new Error('Visual pending input identity is unavailable.');
+      let stable: Awaited<ReturnType<typeof materializeRuntimeVisualArtifacts>>;
+      try {
+        stable = await materializeRuntimeVisualArtifacts({ session, sessionId, inputId: input.inputId,
+          sessionsDir: deps.sessionManager.storage.getSessionsDir(), artifacts: input.inputArtifacts });
+      } catch (error) {
+        emitKodaXDiagnostic({ source: 'runtime.input-queue', level: 'error',
+          message: `Visual input ${input.inputId} could not be materialized: ${error instanceof Error ? error.message : String(error)}`, detail: normalizeError(error) });
+        throw error;
+      }
+      materialized.push({ ...input, content: `${input.content}\n${stable.labels.join('\n')}`, inputArtifacts: stable.artifacts });
+    }
+    return materialized;
+  };
+
+  const withdrawPendingVisualInput = async (sessionId: string, inputId: string): Promise<void> => {
+    const pending = productQueue.snapshot(sessionId).find(value => value.input.inputId === inputId);
+    if (!pending?.input.inputArtifacts?.some(artifact => artifact.kind === 'image')) return;
+    const saved = await deps.sessionAdmission.loadExecutable(sessionId);
+    if (saved.messages.some(message => message.role === 'user' && (message.inputId === inputId || message.inputIds?.includes(inputId)))) {
+      throw createRuntimeConflictError('Visual input already entered canonical history; retry its acknowledgement.', 0);
+    }
+    const records = runtimeVisualWithdrawalRecords(saved, sessionId, inputId);
+    if (records.length && !await deps.sessionManager.storage.appendSessionRecords?.(sessionId, records)) {
+      throw new Error('Visual input withdrawal could not be committed.');
+    }
+  };
+
   const drainProductInputs = (sessionId: string): Promise<void> => deps.sessionOperations.run(sessionId, async () => {
     if (deps.isClosed() || activeRunBySession.has(sessionId)) return;
-    const batch = productQueue.batch(sessionId);
+    let batch = productQueue.batch(sessionId);
     const first = batch[0];
     if (!first) return;
+    const saved = await deps.sessionAdmission.loadExecutable(sessionId);
+    const committed = saved.messages.find(message => message.role === 'user'
+      && (message.inputId === first.input.inputId || message.inputIds?.includes(first.input.inputId)));
+    if (committed) {
+      const committedIds = new Set([committed.inputId, ...(committed.inputIds ?? [])]);
+      const next = batch.findIndex(value => !committedIds.has(value.input.inputId));
+      if (next >= 0) batch = batch.slice(0, next);
+    }
     const preparedSkill = first.skill
       ? await prepareSkillInput(sessionId, first.input.text)
       : undefined;
@@ -12702,13 +12764,16 @@ async function createRuntimeRunService(deps: {
         0,
       );
     }
+    await stagePendingVisualInput(input, target.runId);
+    const stable = (await materializeQueuedVisualInputs(input.sessionId, [{ id: input.inputId, agentId: input.sessionId,
+      inputId: input.inputId, content: input.text, inputArtifacts: input.inputArtifacts, mode: 'prompt', priority: 'user', enqueuedAt: Date.now() }]))[0]!;
     const result = await submitInterruptInput({
       sessionId: input.sessionId,
       afterRunId: input.targetRunId!,
       delivery: "interrupt",
       input: [
-        { type: "text", text: input.text },
-        ...(input.inputArtifacts ?? []).map((artifact): RuntimeInput => {
+        { type: "text", text: stable.content },
+        ...(stable.inputArtifacts ?? []).map((artifact): RuntimeInput => {
           switch (artifact.kind) {
             case 'image': return { ...artifact, type: 'image' };
             case 'file': return { ...artifact, type: 'file' };
@@ -12732,6 +12797,7 @@ async function createRuntimeRunService(deps: {
   ): Promise<ClientInputAcceptance> => {
     const target = requireActiveTargetRun(input);
     await deps.sessionAdmission.loadExecutable(input.sessionId);
+    await stagePendingVisualInput(input);
     // Receive the follow-up first, then cancel the old execution; the
     // redirect Stop reason lets the settled Run continue this queue.
     const queuedInput = productQueue.enqueue(input, (await resolveSkillInput(input.sessionId, input.text)) !== undefined);
@@ -13043,8 +13109,20 @@ async function createRuntimeRunService(deps: {
       };
       return deps.sessionOperations.run(input.sessionId, async () => {
         deps.ensureOpen();
+        const savedVisual = productInput.inputArtifacts?.some(artifact => artifact.kind === 'image')
+          ? await deps.sessionAdmission.loadExecutable(input.sessionId) : undefined;
+        const visualReceipt = savedVisual ? readRuntimeVisualInputReceipt(savedVisual, input.sessionId, input.inputId) : undefined;
+        if (visualReceipt?.data.withdrawn === true) {
+          throw createRuntimeConflictError('Visual input was withdrawn.', 0);
+        }
         const duplicate = productQueue.rebind(productInput);
         if (duplicate) {
+          if (savedVisual && duplicate.state === 'queued' && productQueue.snapshot(input.sessionId).some(value => value.input.inputId === input.inputId)) {
+            const rebound = runtimeVisualRebindingRecords(savedVisual, input.sessionId, input.inputId, inputIntentDigest(productInput, currentProductExecution()?.key));
+            if (rebound.length && !await deps.sessionManager.storage.appendSessionRecords?.(input.sessionId, rebound)) {
+              throw new Error('Visual pending input authorization could not be rebound.');
+            }
+          }
           // Start outside the current Session operation; the queue preserves ordering and principal boundaries.
           void drainProductInputs(input.sessionId).catch(error => emitKodaXDiagnostic({ source: 'runtime.input-rebind', level: 'warn', message: String(error) }));
           return duplicate;
@@ -13057,11 +13135,8 @@ async function createRuntimeRunService(deps: {
           return { sessionId: accepted.sessionId, inputId: productInput.inputId, runId: accepted.runId, state: "submitted" as const };
         }
         if (productInput.inputArtifacts?.some(artifact => artifact.kind === 'image')) {
-          const saved = await deps.sessionAdmission.loadExecutable(input.sessionId);
-          const receipt = saved.extensionRecords?.find(record => record.extensionId === 'kodax.visual' && record.type === 'input'
-            && record.data && typeof record.data === 'object' && !Array.isArray(record.data) && record.data.inputId === productInput.inputId);
-          const data = receipt?.data;
-          if (data && typeof data === 'object' && !Array.isArray(data) && data.ownerId === input.sessionId && typeof data.runId === 'string') {
+          const data = visualReceipt?.data;
+          if (data && typeof data.runId === 'string') {
             if (data.productIntentDigest !== inputIntentDigest(productInput, currentProductExecution()?.key)) {
               throw createRuntimeConflictError('Input ID already belongs to a different intent.', 0);
             }
@@ -13084,6 +13159,7 @@ async function createRuntimeRunService(deps: {
         }
         if ((productInput.delivery === "after_turn" && activeRunBySession.has(input.sessionId)) || productQueue.list(input.sessionId).length > 0) {
           await deps.sessionAdmission.loadExecutable(input.sessionId);
+          await stagePendingVisualInput(productInput);
           return productQueue.enqueue(productInput, (await resolveSkillInput(input.sessionId, input.text)) !== undefined);
         }
         const preparedSkill = await prepareSkillInput(input.sessionId, productInput.text);
@@ -13115,6 +13191,7 @@ async function createRuntimeRunService(deps: {
       deps.ensureOpen();
       return deps.sessionOperations.run(sessionId, async () => {
         await deps.sessionAdmission.assertRunAccess(sessionId);
+        await withdrawPendingVisualInput(sessionId, inputId);
         return productQueue.withdraw(sessionId, inputId);
       });
     },
@@ -13517,7 +13594,12 @@ async function createRuntimeRunService(deps: {
     async cleanupClientWork(principalId) {
       const withdrawnInputs: Array<{ sessionId: string; inputId: string }> = [];
       for (const sessionId of productQueue.clientSessions(principalId)) {
-        withdrawnInputs.push(...await deps.sessionOperations.run(sessionId, async () => productQueue.withdrawClient(principalId, sessionId)));
+        withdrawnInputs.push(...await deps.sessionOperations.run(sessionId, async () => {
+          for (const pending of productQueue.snapshot(sessionId).filter(value => value.principalId === principalId)) {
+            await withdrawPendingVisualInput(sessionId, pending.input.inputId);
+          }
+          return productQueue.withdrawClient(principalId, sessionId);
+        }));
       }
       const own = [...deps.runs.values()].filter(run => run.origin?.principalId === principalId);
       const active = own.filter(run => !isTerminalRunPhase(run.phase));

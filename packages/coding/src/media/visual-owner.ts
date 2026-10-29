@@ -36,6 +36,7 @@ export function createSessionVisualObservationOwner(storage: KodaXSessionStorage
     const recoveredIds = new Set<string>();
     for (const entry of entries) {
       if (entry.type === 'message' && entry.message.inputId !== undefined) visible.add(`input:${entry.message.inputId}`);
+      if (entry.type === 'message') for (const inputId of entry.message.inputIds ?? []) visible.add(`input:${inputId}`);
       if (entry.type === 'branch_summary' && entry.details && typeof entry.details === 'object' && !Array.isArray(entry.details)
         && Array.isArray(entry.details.visualRecoveryObservationIds)) {
         for (const id of entry.details.visualRecoveryObservationIds) if (typeof id === 'string') recoveredIds.add(id);

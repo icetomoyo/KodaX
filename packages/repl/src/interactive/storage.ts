@@ -8,7 +8,7 @@ import path from 'path';
 import { createHash, randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { isDeepStrictEqual } from 'node:util';
-import { readVisualObservationRecord, sessionVisualMediaDirectory } from '@kodax-ai/agent/media';
+import { readVisualObservationRecord, sessionVisualMediaDirectory, mergeVisualSessionRecords } from '@kodax-ai/agent/media';
 import chalk from 'chalk';
 import { compareSessionRecency, latestSessionMessageAt, validSessionTimestamp } from '../session/session-recency.js';
 import type {
@@ -4188,7 +4188,8 @@ export class FileSessionStorage implements KodaXSessionStorage {
       // Actor state has one writer: saveActorSnapshot's revision CAS. A stale
       // full Session snapshot must never replace a newer owner/revision.
       actorSnapshot: existing?.data.actorSnapshot ?? data.actorSnapshot,
-      extensionRecords: mergeConfirmedIdentityRepairRecords(id, existing?.data.extensionRecords, data.extensionRecords),
+      extensionRecords: mergeVisualSessionRecords(existing?.data.extensionRecords,
+        mergeConfirmedIdentityRepairRecords(id, existing?.data.extensionRecords, data.extensionRecords)),
       runtimeInfo: data.runtimeInfo === undefined
         ? existing?.data.runtimeInfo
         : {

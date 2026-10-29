@@ -19,7 +19,7 @@
 | Artifact distribution revision | `2026-10-18` — one `@kodax-ai/kodax` npm package; four `/artifacts` subpaths and resources staged in the main tarball; local implementation, not yet published |
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
 | Current development | `v0.7.97` / `FEATURE_298` — cross-platform/manual release verification for the alpha continues |
-| Visual harness implementation | [P0–P2 实施与验证](designs/visual-harness-implementation-2026-10-28.md); [P3–P7 续接](designs/visual-harness-p3-p7-implementation-2026-10-29.md) — P3 ordered multi-view and exact pixel sampling implemented; P4–P7 pending; historical full-suite evidence-file failure unresolved; no new feature ID/version assigned |
+| Visual harness implementation | [P0–P2 实施与验证](designs/visual-harness-implementation-2026-10-28.md); [P3–P7 续接](designs/visual-harness-p3-p7-implementation-2026-10-29.md) — P3 multi-view/pixels and P4a product input admission implemented; P4b/P5–P7 pending; historical full-suite evidence-file failure unresolved; no new feature ID/version assigned |
 | Roadmap updated | `2026-09-23` — FEATURE_300 planned for `v0.7.99`; implementation not started |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
 | Total tracked features | `85` |

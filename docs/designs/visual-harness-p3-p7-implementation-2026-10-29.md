@@ -6,7 +6,8 @@
 | --- | --- | --- |
 | P3a | 已实现并定向验证 | 1–4 个有序 view；同原件复用解码；整次生成前预留；有序 partial |
 | P3b | 已实现并定向验证 | 格心 RGBA、精确调色板、全调用 4096 样本；文本路由 |
-| P4 | 待实施 | 排队/steer/redirect 接纳、fork 复制/隔离、重复压缩及生命周期 |
+| P4a | 已实现并定向验证 | queued/after_turn/redirect 接纳与活跃 steer；撤回、重绑、交付重试 |
+| P4b | 待实施 | fork 复制/隔离、重复压缩及生命周期；不据 P4a 宣称完整 P4 |
 | P6 | 待实施 | 一个经生产装配的受控动态消费者；动作事实与 current 时效 |
 | P5 | 待实施 | 先评估 MCP typed-image；Artifact/额外 Host/standalone 未声明支持 |
 | P7 | 持续收集机械证据 | 最终成本、支持边界与受控行为实验方案；未发起付费调用 |
@@ -66,6 +67,40 @@ compiled public media 暖 codec 单样本复用上述 3×2、83-byte 原件：�
 ### Spec
 
 独立只读审查 **0 项发现**。数值路由、整次资源上界、原坐标/alpha/调色板、顺序与失败结算均符合本片要求；行为与在线验证仍未执行。
+
+## P4a：产品排队图片的固定接纳与交付
+
+沿既有 pending input owner 保存原意图和授权，不新建队列或日志。图片在 after_turn/积压 queued 的 enqueue ACK 前、redirect 取消旧 Run 前、steer 的活跃目标/权限/窗口检查后及 interrupt ACK 前，写入本 Session 的不可变媒体与 canonical 收据。原路径之后覆盖或删除不改变交付图；相同 inputId/原意图复用同一 observationId，异意图拒绝。只有输入实际进入 canonical 活跃 lineage 后，目录才可见；staging 先检查既有纯文本 inputId 冲突，防止未交付图借旧身份提前公开。
+
+交付时使用固定原件路径，并校验 missing/hash mismatch；失败保留明确诊断及未交付状态，不读同名当前文件。完整性校验沿既有上传合同读取原字节，未把派生处理的 10 MiB 上限转为上传拒绝；大于 10 MiB 的 unverified 原件仍通过生产 serializer 保留 bytes。此处不扩展派生 PNG profile，也不承诺远端接受超限输入。
+
+多输入按原顺序及 inputIds 保留独立观察；首项纯文本也可与后续图片合并。交付 Run 引用在 canonical 消息前写入同一扩展收据，目录可见性仍由 canonical 输入证明。一次 canonical 写成而 ACK 失败后，重试仅结算该已提交输入前缀，后来图片留到下一批，不能静默吞掉。已进入 canonical 的输入不能被仍保留的 queue fact 撤回。尚未交付的撤回先写同一收据的 tombstone，再由既有队列移除；写失败不移除 pending body，重启后不会复活已撤回 ID。
+
+同 principal 用新 execution key 恢复 pending 输入时，先通过原 queue owner 的意图/身份重绑，再更新视觉收据 digest；不借此放宽 foreign principal 授权。Session 保存保留视觉命名空间已有收据与顺序，以单调 revision 防止旧 Run 快照抹除后来接纳、回滚 Run 引用或撤回事实；其他扩展记录仍沿原保存/清空语义。
+
+| 产品路径 | 实际验证范围 | 边界 |
+| --- | --- | --- |
+| immediate | P1–P2 保持；本片继续回归 | 未重做或扩宣平台 |
+| after_turn / 已有队列的 queued | 活跃 Run 安全点或后续 Run；覆盖/删除、重启、同意图重试、多输入、授权换绑、容量与失败 | ACK 与模型可见性分别断言 |
+| redirect | 实际取消信号回调中覆盖原图，后续生产请求仍发送接纳时 bytes | 不把取消完成等同已交付 |
+| steer | 活跃目标 Run 安全点交付；clean close 后未交付图不可复活 | 未证明 crash checkpoint 中未交付 steer 的跨进程重放 |
+| fork / 多次 compact / archive-delete | 下一片 P4b | P4a 不替这些路径背书 |
+
+新增 17 项 Runtime/storage 回归走配置 provider 的真实 OpenAI serializer，以离线 fetch 拦截实际 wire，禁止其他 URL。RED→GREEN 包括入队前无收据、并发 read 的旧快照覆盖、Run 引用回滚、撤回后复活、失败 ACK 后丢新图、换 lease 拒绝同意图、旧纯文本 ID 提前公开、首纯文本合并批次重试，以及交付前 missing/hash mismatch。redirect 与 steer 分别去掉 staging 时实际出现 RED，再恢复接纳边界。撤回写失败、5 项队列容量拒绝、foreign principal、损坏原件及 clean-close steer 反例保留；未使用真实模型行为作断言。
+
+最终定向验证：8 文件 **88 项通过**；`npm run typecheck`、`npm run build` 通过。仅统计 runtime-visual-input/visual-observations 两模块：语句 **85.86%**、分支 **81.11%**、函数 **90%**、行 **92.36%**，不是全仓覆盖；raw 为 OS Temp `kodax-visual-p4a-final2-coverage-20261029`。早期大原件测试的逐元素 Buffer 断言超过 30 秒，改为原生 Buffer.equals，未增加超时；独立重跑及最终集合通过。CLI 5,144 KiB（5,267,402 bytes）、bootstrap 4,042 bytes；既有门槛与依赖守卫不变，14 SDK 声明检查通过。全仓验证仍留集成里程碑。
+
+完整字段成本见 `p4a-inputs`：32 格实际离线捕获 raw 为 OS Temp `kodax-first-turn-wire-SJPfaW`；本片未改工具/提示合同，相对 P3b **+0**，24 个无 owner SDK 格 hash 仍不变。相对 30310e00 仍为 OpenAI **+365～366**、Anthropic **+358**；相对 P0 累计 **+748 / +726**。这些是本地估算，不是 API usage、费用或总体任务收益。
+
+同一 3×2、83-byte 已知 RGBA 原件（SHA-256 `b958f4d9d3ec0bdd5d17cfc029eb4e4d72b9b2d38ab140683d58740d5e7a5109`）的本机单样本：首次接纳含既有验证约 38.33 ms，删除源文件后 materialize 约 0.82 ms，保留收据重试约 0.47 ms；后两步仅读/hash，不解码或编码，不生成额外图。raw/复现为 OS Temp `kodax-visual-input-profile-e3nBrg`。这是 helper 工作量记录，不是端到端或配对速度收益；无图输入不增加截图、目录扫描、解码、轮询或模型请求。
+
+### Standards
+
+独立只读审查：0 项硬违反；1 项收据识别重复判断已集中到共同读取函数，复核 **0 项剩余发现**。
+
+### Spec
+
+独立审查发现的 ACK 批次重试、授权换绑、旧文本身份冲突、纯文本首项重试及误用派生字节上限均已按上述反例修复；最终复核 **0 项剩余发现**。steer crash 恢复、P4b 与模型行为未计为通过。
 
 ## 持续保留的失败与未验证范围
 
