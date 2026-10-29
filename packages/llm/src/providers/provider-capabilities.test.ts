@@ -247,10 +247,11 @@ describe('FEATURE_198 — provider-capabilities loader', () => {
       });
     });
 
-    it('deepseek: defaults to deepseek-flash at the 384K official output ceiling', () => {
+    it('deepseek: separates its 128K request budget from the 384K service ceiling', () => {
       const d = getProviderSnapshots().deepseek;
       expect(d.model).toBe('deepseek-flash');
-      expect(d.maxOutputTokens).toBe(384_000);
+      expect(d.maxOutputTokens).toBe(128_000);
+      expect(d.outputTokenLimit).toBe(384_000);
       expect(d.contextWindow).toBe(1_000_000);
       // Only the officially-listed ids stay selectable. The retired
       // deepseek-v4-flash / vision-exp ids are NOT re-declared —

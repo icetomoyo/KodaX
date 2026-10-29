@@ -194,7 +194,13 @@ function projectOpenAIMessages(
   const supportsImages = multimodal === 'image-input' || multimodal === 'full';
   for (const message of messages) {
     if (typeof message.content === 'string') {
-      projected.push({ role: message.role, content: message.content });
+      projected.push({
+        role: message.role,
+        content: message.content,
+        ...(message.role === 'assistant' && provider.getEffectiveReplayReasoningContent(model)
+          ? { reasoning_content: '' }
+          : {}),
+      });
       continue;
     }
     const blocks = message.content.filter((block) => block.type !== 'cache-boundary');

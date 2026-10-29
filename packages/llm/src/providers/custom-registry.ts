@@ -350,6 +350,7 @@ export function getCustomModelCapabilities(
     reasoningProfile: effectiveReasoningProfile,
     contextWindow: descriptor.contextWindow ?? config.contextWindow,
     maxOutputTokens: descriptor.maxOutputTokens ?? config.maxOutputTokens,
+    outputTokenLimit: descriptor.outputTokenLimit ?? config.outputTokenLimit,
     thinkingBudgetCap:
       descriptor.thinkingBudgetCap ?? config.thinkingBudgetCap,
     isDefault,

@@ -579,6 +579,8 @@ export interface KodaXModelDescriptor {
   displayName?: string;
   contextWindow?: number;
   maxOutputTokens?: number;
+  /** Documented service output ceiling; independent of the default request budget. */
+  outputTokenLimit?: number;
   /**
    * Per-model OpenAI Chat Completions field for the output-token limit.
    * Defaults to the provider-level value, then `max_completion_tokens`.
@@ -744,6 +746,8 @@ export interface KodaXCustomProviderConfig {
   capabilityProfile?: KodaXProviderCapabilityProfile;
   contextWindow?: number;
   maxOutputTokens?: number;
+  /** Documented service output ceiling; independent of the default request budget. */
+  outputTokenLimit?: number;
   /**
    * OpenAI Chat Completions field used for the output-token limit. Set to
    * `max_tokens` for DeepSeek-compatible endpoints. Defaults to
@@ -808,6 +812,8 @@ export interface KodaXProviderConfig {
   contextWindow?: number;
   /** Provider 允许的最大输出 token */
   maxOutputTokens?: number;
+  /** Documented service output ceiling; independent of the default request budget. */
+  outputTokenLimit?: number;
   /** OpenAI Chat Completions output-token field; model descriptors override it. */
   maxOutputTokensField?: KodaXOpenAICompatMaxOutputTokensField;
   /** Provider thinking budget 上限 */

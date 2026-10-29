@@ -174,7 +174,8 @@ describe('custom OpenAI reasoning negotiation', () => {
       if (body.reasoning_effort === 'max') {
         return Response.json({ error: { message: 'Invalid reasoning_effort value' } }, { status: 400 });
       }
-      if (rateLimits++ < 3) {
+      // KodaX owns the three-attempt backoff budget; SDK retries no longer multiply it.
+      if (rateLimits++ < 2) {
         return Response.json({ error: { message: 'Rate limit exceeded' } }, {
           status: 429, headers: { 'retry-after': '0.001' },
         });

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-28",
+  "updatedAt": "2026-10-30",
   "providers": {
     "anthropic": {
       "apiKeyEnv": "ANTHROPIC_API_KEY",
@@ -190,7 +190,8 @@
       "capabilityProfile": "image-input-native",
       "supportsThinking": true,
       "contextWindow": 1000000,
-      "maxOutputTokens": 384000,
+      "maxOutputTokens": 128000,
+      "outputTokenLimit": 384000,
       "verifyStrategy": "count-tokens"
     },
     "kimi": {
@@ -1347,7 +1348,8 @@
       "capabilityProfile": "image-input-native",
       "supportsThinking": true,
       "contextWindow": 1000000,
-      "maxOutputTokens": 524288,
+      "maxOutputTokens": 131072,
+      "outputTokenLimit": 524288,
       "verifyStrategy": "count-tokens"
     },
     "mimo-coding": {
@@ -1364,15 +1366,12 @@
         "reasoningPreset": "generic-thinking-toggle",
         "effortStrategy": "provider-toggle",
         "thinkingStrategy": "provider-toggle",
+        "defaultEffort": "high",
         "supportedEfforts": [
           { "value": "none", "description": "Disable thinking" },
-          { "value": "minimal", "description": "Disable thinking", "isUserVisible": false },
-          { "value": "low", "description": "Enable thinking" },
-          { "value": "medium", "description": "Enable thinking", "isDefault": true },
-          { "value": "high", "description": "Enable thinking" },
-          { "value": "xhigh", "description": "Enable thinking" },
-          { "value": "max", "description": "Enable thinking" }
+          { "value": "high", "description": "Enable thinking", "isDefault": true }
         ],
+        "effortAliases": { "minimal": "none", "low": "high", "medium": "high", "xhigh": "high", "max": "high" },
         "disabledEfforts": ["none", "minimal"],
         "supportsDisabledThinking": true
       },
@@ -1380,6 +1379,8 @@
       "supportsThinking": true,
       "contextWindow": 1048576,
       "maxOutputTokens": 131072,
+      "outputTokenLimit": 131072,
+      "maxOutputTokensField": "max_tokens",
       "verifyStrategy": "minimal-message"
     },
     "mimo": {
@@ -1599,7 +1600,8 @@
           "id": "kimi-k2.8-preview",
           "displayName": "Kimi K2.8 Preview",
           "contextWindow": 1024000,
-          "maxOutputTokens": 1024000,
+          "maxOutputTokens": 128000,
+          "outputTokenLimit": 1024000,
           "reasoningCapability": "native-effort",
           "reasoningProfile": {
             "effortStrategy": "anthropic-output-effort",
@@ -1751,7 +1753,8 @@
           "id": "deepseek-v4.1-flash",
           "displayName": "DeepSeek V4.1 Flash",
           "contextWindow": 1024000,
-          "maxOutputTokens": 384000,
+          "maxOutputTokens": 128000,
+          "outputTokenLimit": 384000,
           "reasoningCapability": "native-effort",
           "reasoningProfile": {
             "reasoningPreset": "deepseek-v4-anthropic",
@@ -1794,7 +1797,8 @@
           "id": "deepseek-v4.1-flash-economy",
           "displayName": "DeepSeek V4.1 Flash Economy",
           "contextWindow": 1049000,
-          "maxOutputTokens": 384000,
+          "maxOutputTokens": 128000,
+          "outputTokenLimit": 384000,
           "reasoningCapability": "native-effort",
           "reasoningProfile": {
             "reasoningPreset": "deepseek-v4-anthropic",
@@ -1837,7 +1841,8 @@
           "id": "deepseek-v4-pro",
           "displayName": "DeepSeek V4 Pro",
           "contextWindow": 1000000,
-          "maxOutputTokens": 384000,
+          "maxOutputTokens": 128000,
+          "outputTokenLimit": 384000,
           "reasoningProfile": {
             "reasoningPreset": "deepseek-v4-anthropic",
             "effortStrategy": "anthropic-output-effort",
@@ -1866,7 +1871,8 @@
           "id": "deepseek-v4-flash",
           "displayName": "DeepSeek V4 Flash",
           "contextWindow": 1000000,
-          "maxOutputTokens": 384000,
+          "maxOutputTokens": 128000,
+          "outputTokenLimit": 384000,
           "reasoningProfile": {
             "reasoningPreset": "deepseek-v4-anthropic",
             "effortStrategy": "anthropic-output-effort",

@@ -25,6 +25,8 @@ export interface KodaXProviderErrorMetadata {
   readonly upstreamCode?: string;
   readonly requestId?: string;
   readonly retryAfterMs?: number;
+  /** False for account/plan exhaustion; outer recovery must not retry it. */
+  readonly retryable?: boolean;
 }
 
 export class KodaXProviderError extends KodaXError {
@@ -62,6 +64,7 @@ export class KodaXContextOverflowError extends KodaXProviderError {
 export class KodaXRateLimitError extends KodaXError {
   constructor(
     message: string,
+    /** Suggested retry delay in milliseconds. */
     public readonly retryAfter?: number,
     public readonly metadata?: KodaXProviderErrorMetadata,
   ) {

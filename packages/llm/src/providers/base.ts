@@ -24,6 +24,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { observeProviderAttempt } from '../provider-request-observation.js';
 import { KodaXError, KodaXRateLimitError, KodaXProviderError, KodaXNetworkError, KodaXContextOverflowError, KodaXReasoningEffortRejectedError } from '../errors.js';
 import { parseContextOverflowFacts } from './context-overflow.js';
+import { isProviderQuotaError } from '../retry/provider-quota.js';
 import type { KodaXProviderErrorMetadata } from '../errors.js';
 import { classifyReasoningEffortRejection } from './reasoning-effort-rejection.js';
 import {
@@ -50,7 +51,7 @@ export interface ProviderRequestRetryState {
   maxOutputTokensLimit?: number;
   suppressReasoningEffort: boolean;
 }
-import { parseRetryAfter, extractHeadersFromError } from '../retry/retry-after.js';
+import { parseRetryAfter, extractHeadersFromError, readHeader } from '../retry/retry-after.js';
 import type { RetryAfterSource } from '../retry/retry-after.js';
 import { KODAX_MAX_TOKENS } from '../constants.js';
 import { getRunScopedConfig } from '../run-scoped-config.js';
@@ -99,16 +100,16 @@ function abortError(): DOMException {
   return new DOMException('Request aborted', 'AbortError');
 }
 
-async function isProviderSdkAbortError(error: Error): Promise<boolean> {
+async function isProviderSdkError(error: Error, kind: 'APIUserAbortError' | 'APIConnectionError'): Promise<boolean> {
   const [anthropic, openai] = await Promise.allSettled([
     import('@anthropic-ai/sdk'),
     import('openai'),
   ]);
   return (
     (anthropic.status === 'fulfilled'
-      && error instanceof anthropic.value.APIUserAbortError)
+      && error instanceof anthropic.value[kind])
     || (openai.status === 'fulfilled'
-      && error instanceof openai.value.APIUserAbortError)
+      && error instanceof openai.value[kind])
   );
 }
 
@@ -258,43 +259,25 @@ export abstract class KodaXBaseProvider {
   /**
    * Returns the max_tokens value the provider will currently use on its
    * next request. Precedence (highest to lowest):
-   *   1. Deprecated one-shot override (compatibility only)
+   *   1. Request override, then deprecated one-shot override (compatibility only)
    *   2. Run-scoped config / `KODAX_MAX_OUTPUT_TOKENS` (explicit user intent)
    *   3. Active model descriptor's `maxOutputTokens` (FEATURE_098)
    *   4. Provider config default
    *   5. Global `KODAX_MAX_TOKENS` fallback
+   * The result is capped by the model/provider outputTokenLimit when known.
    * Used by provider stream() paths and by the agent loop to decide
    * whether escalation is applicable (see `coding/src/agent.ts`).
    */
-  public getEffectiveMaxOutputTokens(model?: string): number {
-    // Run-scoped (concurrency-safe) first, then the global env fallback. Apply
-    // the same positive-integer guard `parseEnvInt` uses to the ALS value: an
-    // SDK caller passing 0/-1/NaN must NOT reach `max_tokens` verbatim (the
-    // provider API rejects it with a 400) — treat a bad value as "unset" so the
-    // env / descriptor / default chain still resolves.
-    const legacyMax = this.activeLegacyRequestOverride.getStore()
-      ?.maxOutputTokensOverride
+  public getEffectiveMaxOutputTokens(model?: string, requestOverride?: number): number {
+    const descriptor = this.getModelDescriptor(model);
+    const legacy = this.activeLegacyRequestOverride.getStore()?.maxOutputTokensOverride
       ?? this.pendingLegacyMaxOutputTokensOverride;
-    if (
-      typeof legacyMax === 'number'
-      && Number.isFinite(legacyMax)
-      && legacyMax > 0
-    ) {
-      return legacyMax;
-    }
-    const scopedMax = getRunScopedConfig()?.maxOutputTokens;
-    const envOverride = (typeof scopedMax === 'number' && Number.isFinite(scopedMax) && scopedMax > 0
-      ? scopedMax
-      : undefined)
-      ?? parseEnvInt(process.env.KODAX_MAX_OUTPUT_TOKENS);
-    if (envOverride !== undefined) {
-      return envOverride;
-    }
-    const descriptorMax = this.getModelDescriptor(model)?.maxOutputTokens;
-    if (descriptorMax !== undefined) {
-      return descriptorMax;
-    }
-    return this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
+    const budget = [requestOverride, legacy, getRunScopedConfig()?.maxOutputTokens,
+      parseEnvInt(process.env.KODAX_MAX_OUTPUT_TOKENS)].find(value =>
+      typeof value === 'number' && Number.isFinite(value) && value > 0)
+      ?? descriptor?.maxOutputTokens ?? this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
+    const limit = descriptor?.outputTokenLimit ?? this.config.outputTokenLimit;
+    return limit !== undefined && Number.isSafeInteger(limit) && limit > 0 ? Math.min(budget, limit) : budget;
   }
 
   /**
@@ -812,6 +795,7 @@ export abstract class KodaXBaseProvider {
 
   protected isRateLimitError(error: unknown): boolean {
     if (!(error instanceof Error)) return false;
+    if (extractHttpStatus(error) === 429) return true;
     const s = error.message.toLowerCase();
     // FEATURE_130 (v0.7.36): include 'overload' / '503' / '529' keywords so
     // server-overloaded responses also enter the retry path. Overload is
@@ -934,6 +918,36 @@ export abstract class KodaXBaseProvider {
           () => observeProviderAttempt(this.name, reasoningGuard?.model ?? this.getModel(), () => fn(retryState), this.requestObservationBoundary === 'physical_attempt'),
         );
       } catch (e) {
+        const headers = extractHeadersFromError(e);
+        const shouldRetry = readHeader(headers, 'x-should-retry');
+        if (isProviderQuotaError(e) || shouldRetry === 'false'
+          || (e instanceof KodaXProviderError && e.metadata?.retryable === false)) {
+          throw new KodaXProviderError(`${this.name} API error: ${e instanceof Error ? e.message : getErrorMessage(e)}`, this.name, {
+            ...this.providerErrorMetadata(e), retryable: false,
+          });
+        }
+        const status = extractHttpStatus(e);
+        if (status === 408 || status === 409 || (status !== undefined && status >= 500) || (status !== 429 && shouldRetry === 'true')) {
+          if (i === retries - 1) {
+            throw new KodaXProviderError(e instanceof Error ? e.message : String(e), this.name, this.providerErrorMetadata(e));
+          }
+          const decision = parseRetryAfter(headers, { attempt: i, baseBackoffMs: 500 });
+          if (status !== undefined && status >= 500) onRetryAfter?.({
+            provider: this.name, ...decision, reason: 'overloaded', attempt: i + 1, maxAttempts: retries,
+          });
+          onRateLimit?.(i + 1, retries, decision.waitMs);
+          await waitForRetryDelay(decision.waitMs, signal);
+          continue;
+        }
+        // SDK retries are disabled for chat requests: retain connection recovery
+        // here so singleAttempt and the physical-attempt budget apply uniformly.
+        // Host deadlines bypass SDK loading and retain their existing recovery path.
+        if (!signal?.aborted && i < retries - 1 && e instanceof Error && !hasTypedTimeout(e)
+          && await isProviderSdkError(e, 'APIConnectionError')) {
+          this.onStaleConnection();
+          await waitForRetryDelay(parseRetryAfter({}, { attempt: i, baseBackoffMs: 500 }).waitMs, signal);
+          continue;
+        }
         // Context window overflow: compute reduced max_tokens and retry once
         if (retries > 1 && this.isContextOverflowError(e) && retryState.maxOutputTokensOverride === undefined) {
           const reduced = this.parseContextOverflow(e);
@@ -1052,7 +1066,7 @@ export abstract class KodaXBaseProvider {
           if (e.name === 'TimeoutError') throw e;
           if (
             signal?.aborted &&
-            (e.name === 'AbortError' || (await isProviderSdkAbortError(e)))
+            (e.name === 'AbortError' || (await isProviderSdkError(e, 'APIUserAbortError')))
           ) {
             if (e.name === 'AbortError') {
               throw e;

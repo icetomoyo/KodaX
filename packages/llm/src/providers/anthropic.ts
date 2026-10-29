@@ -690,11 +690,9 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       const model = streamOptions?.modelOverride ?? this.config.model;
       const wireModel = this.getWireModelId(model);
       this.validateExplicitReasoningEffort(normalizedReasoning, model);
-      const requestMaxOutputTokens = streamOptions?.maxOutputTokensOverride
-        ?? this.getEffectiveMaxOutputTokens(model);
+      const requestMaxOutputTokens = this.getEffectiveMaxOutputTokens(model, streamOptions?.maxOutputTokensOverride);
       retryState.maxOutputTokensLimit ??= requestMaxOutputTokens;
-      const maxOutputTokens = retryState.maxOutputTokensOverride
-        ?? requestMaxOutputTokens;
+      const maxOutputTokens = Math.min(retryState.maxOutputTokensOverride ?? requestMaxOutputTokens, requestMaxOutputTokens);
       const convertedMessages = appendAnthropicEphemeralSuffix(this.applyCacheControlToMessages(
         await this.convertMessages(messages, model),
       ), streamOptions?.ephemeralSuffix?.content);
@@ -830,7 +828,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             const request = buildRequest(capability);
             response = await client.messages.create(
               request,
-              { ...this.buildMessageCreateOptions(request, model, signal), ...(streamOptions?.singleAttempt ? { maxRetries: 0 } : {}) },
+              { ...this.buildMessageCreateOptions(request, model, signal), maxRetries: 0 },
             ).catch(error => { recordRejectedImage(error, request); throw error; });
           } catch (error) {
             if (streamOptions?.singleAttempt) throw error;
@@ -927,7 +925,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
 
           if (block.type === 'thinking') {
             currentThinking = '';
-            currentThinkingSignature = (block as any).signature ?? '';
+            currentThinkingSignature = block.signature ?? '';
           } else if (block.type === 'redacted_thinking') {
             // The redacted-thinking payload (`data`) is a single opaque
             // string carried on `content_block_start` itself — it does not
@@ -946,10 +944,12 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           }
         } else if (event.type === 'content_block_delta') {
           lastEventTime = Date.now();
-          const delta = event.delta as any;
+          const delta = event.delta;
           if (delta.type === 'thinking_delta') {
             currentThinking += delta.thinking ?? '';
             streamOptions?.onThinkingDelta?.(delta.thinking ?? '');
+          } else if (delta.type === 'signature_delta') {
+            currentThinkingSignature += delta.signature;
           } else if (delta.type === 'text_delta') {
             currentText += delta.text ?? '';
             streamOptions?.onTextDelta?.(delta.text ?? '');
@@ -964,8 +964,10 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         } else if (event.type === 'content_block_stop') {
           lastEventTime = Date.now();  // Issue 084: Track last event time
           if (currentBlockType === 'thinking') {
-            if (currentThinking) {
+            if (currentThinking || currentThinkingSignature) {
               thinkingBlocks.push({ type: 'thinking', thinking: currentThinking, signature: currentThinkingSignature });
+            }
+            if (currentThinking) {
               // thinking block 结束时通知 CLI 层
               streamOptions?.onThinkingEnd?.(currentThinking);
             }
@@ -1149,11 +1151,9 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       const model = streamOptions?.modelOverride ?? this.config.model;
       const wireModel = this.getWireModelId(model);
       this.validateExplicitReasoningEffort(normalizedReasoning, model);
-      const requestMaxOutputTokens = streamOptions?.maxOutputTokensOverride
-        ?? this.getEffectiveMaxOutputTokens(model);
+      const requestMaxOutputTokens = this.getEffectiveMaxOutputTokens(model, streamOptions?.maxOutputTokensOverride);
       retryState.maxOutputTokensLimit ??= requestMaxOutputTokens;
-      const maxOutputTokens = retryState.maxOutputTokensOverride
-        ?? requestMaxOutputTokens;
+      const maxOutputTokens = Math.min(retryState.maxOutputTokensOverride ?? requestMaxOutputTokens, requestMaxOutputTokens);
       const convertedMessages = appendAnthropicEphemeralSuffix(this.applyCacheControlToMessages(
         await this.convertMessages(messages, model),
       ), streamOptions?.ephemeralSuffix?.content);
@@ -1261,7 +1261,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             const request = buildRequest(capability);
             response = await client.messages.create(
               request,
-              { ...this.buildMessageCreateOptions(request, model, signal), ...(streamOptions?.singleAttempt ? { maxRetries: 0 } : {}) },
+              { ...this.buildMessageCreateOptions(request, model, signal), maxRetries: 0 },
             ).catch(error => { recordRejectedImage(error, request); throw error; });
           } catch (error) {
             if (streamOptions?.singleAttempt) throw error;

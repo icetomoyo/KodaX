@@ -23,6 +23,7 @@ import { KodaXAnthropicCompatProvider } from './anthropic.js';
 import { KodaXOpenAICompatProvider } from './openai.js';
 import { NATIVE_PROVIDER_CAPABILITY_PROFILE } from './capability-profile.js';
 import { createReasoningProfileFromPreset } from '../reasoning.js';
+import { optionalOutputTokenLimit } from './output-token-limit.js';
 
 const VALID_CUSTOM_PROVIDER_USER_AGENT_MODES = new Set(['compat', 'sdk']);
 const VALID_OPENAI_MAX_OUTPUT_TOKEN_FIELDS = new Set<KodaXOpenAICompatMaxOutputTokensField>([
@@ -371,6 +372,8 @@ export function validateCustomProviderConfig(
     );
   }
 
+  optionalOutputTokenLimit(custom.outputTokenLimit, custom.name);
+
   validateMaxOutputTokensField(
     custom,
     custom.maxOutputTokensField,
@@ -378,6 +381,7 @@ export function validateCustomProviderConfig(
   );
   custom.models?.forEach((model, index) => {
     if (typeof model !== 'string') {
+      optionalOutputTokenLimit(model.outputTokenLimit, `${custom.name}.models[${index}]`);
       validateMaxOutputTokensField(
         custom,
         model.maxOutputTokensField,
@@ -462,6 +466,7 @@ function buildProviderConfig(custom: KodaXCustomProviderConfig): KodaXProviderCo
     ),
     contextWindow: custom.contextWindow,
     maxOutputTokens: custom.maxOutputTokens,
+    outputTokenLimit: custom.outputTokenLimit,
     maxOutputTokensField: custom.maxOutputTokensField,
     thinkingBudgetCap: custom.thinkingBudgetCap,
     promptCacheAffinity: custom.promptCacheAffinity ?? false,

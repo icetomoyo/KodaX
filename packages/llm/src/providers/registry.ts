@@ -91,6 +91,8 @@ type ProviderSnapshot = {
   readonly contextWindow?: number;
   /** Per-turn output token cap KodaX requests. Provider-level default. */
   readonly maxOutputTokens?: number;
+  /** Documented service output ceiling; independent of the default request budget. */
+  readonly outputTokenLimit?: number;
   /** OpenAI Chat Completions field used for the output-token cap. */
   readonly maxOutputTokensField?: KodaXOpenAICompatMaxOutputTokensField;
   /** Upper bound on `thinking_budget` for native-budget reasoning providers. */
@@ -141,6 +143,7 @@ type ProviderRuntimeExtras = Omit<
   | 'models'
   | 'contextWindow'
   | 'maxOutputTokens'
+  | 'outputTokenLimit'
   | 'maxOutputTokensField'
   | 'thinkingBudgetCap'
   | 'supportsThinking'
@@ -160,6 +163,7 @@ function buildProviderConfig<K extends ProviderName>(
     models: snapshot.models,
     contextWindow: snapshot.contextWindow,
     maxOutputTokens: snapshot.maxOutputTokens,
+    outputTokenLimit: snapshot.outputTokenLimit,
     maxOutputTokensField: snapshot.maxOutputTokensField,
     thinkingBudgetCap: snapshot.thinkingBudgetCap,
     supportsThinking: snapshot.supportsThinking ?? false,
@@ -238,13 +242,11 @@ class MiniMaxCodingProvider extends KodaXAnthropicCompatProvider {
   });
 }
 
-class MimoCodingProvider extends KodaXAnthropicCompatProvider {
+class MimoCodingProvider extends KodaXOpenAICompatProvider {
   readonly name = 'mimo-coding';
   protected readonly config: KodaXProviderConfig = buildProviderConfig('mimo-coding', {
-    // CN cluster (Token Plan also has SGP / AMS clusters at
-    // token-plan-{sgp,ams}.xiaomimimo.com/anthropic — same protocol,
-    // pin to CN until users surface a region-switch need).
-    baseUrl: 'https://token-plan-cn.xiaomimimo.com/anthropic',
+    baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1',
+    replayReasoningContent: true,
   });
 }
 
@@ -253,11 +255,7 @@ class MimoProvider extends KodaXAnthropicCompatProvider {
   protected readonly config: KodaXProviderConfig = buildProviderConfig('mimo', {
     // Xiaomi MiMo public pay-per-token Anthropic-compat endpoint
     // (https://platform.xiaomimimo.com/docs/zh-CN/api/chat/anthropic-api).
-    // Same upstream model family as `mimo-coding` (mimo-v2.6-pro /
-    // mimo-v2.6-flash) — the two providers differ only in baseUrl and the
-    // billing model (pay-per-token here vs Token-Plan subscription on
-    // mimo-coding). All capability fields (context window, thinking
-    // budget, max_tokens, etc.) come from `provider-capabilities.json`.
+    // The public route retains Messages; Token Plan uses Chat Completions.
     baseUrl: 'https://api.xiaomimimo.com/anthropic',
   });
 }
@@ -565,6 +563,8 @@ export interface KodaXModelCapabilities {
    * meta path, not by raising this number per-turn.
    */
   maxOutputTokens?: number;
+  /** Documented service output ceiling; independent of the default request budget. */
+  outputTokenLimit?: number;
   /** Upper bound on `thinking_budget` (native-budget providers only). */
   thinkingBudgetCap?: number;
   /** True when the model is the provider's default (the `model` field on the snapshot). */
@@ -605,6 +605,7 @@ function effectiveCapabilities(
       descriptor.reasoningProfile ?? snapshot.reasoningProfile,
     contextWindow: descriptor.contextWindow ?? snapshot.contextWindow,
     maxOutputTokens: descriptor.maxOutputTokens ?? snapshot.maxOutputTokens,
+    outputTokenLimit: descriptor.outputTokenLimit ?? snapshot.outputTokenLimit,
     thinkingBudgetCap:
       descriptor.thinkingBudgetCap ?? snapshot.thinkingBudgetCap,
     isDefault,

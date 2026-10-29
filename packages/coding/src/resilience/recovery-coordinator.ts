@@ -427,9 +427,8 @@ function calculateRetryDelay(
  * Returns undefined if not available.
  */
 function extractServerRetryAfter(error: Error): number | undefined {
-  // KodaXRateLimitError has retryAfter field
-  if ('retryAfter' in error && typeof (error as { retryAfter?: unknown }).retryAfter === 'number') {
-    return (error as { retryAfter: number }).retryAfter * 1000; // Convert seconds to ms
-  }
-  return undefined;
+  const candidate = error as Error & { metadata?: { retryAfterMs?: number }; retryAfter?: number };
+  // Provider metadata and KodaXRateLimitError.retryAfter are already milliseconds.
+  const delay = candidate.metadata?.retryAfterMs ?? candidate.retryAfter;
+  return typeof delay === 'number' && Number.isFinite(delay) && delay >= 0 ? delay : undefined;
 }

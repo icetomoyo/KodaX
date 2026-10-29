@@ -109,6 +109,7 @@ export {
   KodaXToolCallIdError,
 } from './errors.js';
 export type { KodaXProviderErrorMetadata, KodaXContextOverflowFacts } from './errors.js';
+export { isProviderQuotaError } from './retry/provider-quota.js';
 
 // ============== Constants ==============
 export {

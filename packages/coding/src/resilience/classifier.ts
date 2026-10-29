@@ -12,6 +12,7 @@ import {
   KodaXRateLimitError,
   KodaXProviderError,
   KodaXNetworkError,
+  isProviderQuotaError,
 } from '@kodax-ai/llm';
 import type {
   ResilienceErrorClass,
@@ -200,6 +201,19 @@ export function classifyResilienceError(
   }
 
   // 2. Rate limit — retry with server hint
+  if (isProviderQuotaError(error) || (error instanceof KodaXProviderError && error.metadata?.retryable === false)) {
+    return {
+      errorClass: 'non_retryable_provider_error',
+      failureStage: currentStage ?? 'before_first_delta',
+      retryable: false,
+      maxRetries: 0,
+      baseRetryDelay: 0,
+    };
+  }
+  if (error instanceof KodaXProviderError && error.metadata?.httpStatus === 408) {
+    return { errorClass: 'request_timeout', failureStage: currentStage ?? 'before_first_delta',
+      retryable: true, maxRetries: 2, baseRetryDelay: 5000 };
+  }
   if (
     error instanceof KodaXRateLimitError ||
     matchesAny(message, RATE_LIMIT_PATTERNS)

@@ -585,7 +585,7 @@ describe('KodaXBaseProvider', () => {
     }
   });
 
-  it('appends the original rate-limit detail when retries are exhausted', async () => {
+  it('preserves the original plan-limit detail without retries', async () => {
     const provider = new TestProvider();
     // GLM-style quota body: the detail users need (reset time, quota code) lives
     // in the provider's own error message and must not be discarded.
@@ -604,11 +604,9 @@ describe('KodaXBaseProvider', () => {
       const error: unknown = await provider
         .exposeWithRateLimit(task, undefined, 2)
         .then(() => undefined, (e: unknown) => e);
-      expect(task).toHaveBeenCalledTimes(2);
-      expect(error).toBeInstanceOf(KodaXRateLimitError);
-      expect((error as Error).message).toContain(
-        'API rate limit exceeded after 2 retries. Please wait and try again later.',
-      );
+      expect(task).toHaveBeenCalledTimes(1);
+      expect(error).toBeInstanceOf(KodaXProviderError);
+      expect(error).toMatchObject({ metadata: { retryable: false } });
       expect((error as Error).message).toContain('已达到 5 小时使用上限');
     } finally {
       timeoutSpy.mockRestore();

@@ -21,6 +21,7 @@ import type {
   KodaXThinkingWireStrategy,
   KodaXVerifyStrategy,
 } from '../types.js';
+import { optionalOutputTokenLimit } from './output-token-limit.js';
 
 /**
  * Capability profile names that the loader resolves to the concrete
@@ -56,6 +57,8 @@ export interface ProviderCapabilityJsonEntry {
   readonly capabilityProfile: CapabilityProfileName;
   readonly contextWindow?: number;
   readonly maxOutputTokens?: number;
+  /** Documented service output ceiling; independent of the default request budget. */
+  readonly outputTokenLimit?: number;
   readonly maxOutputTokensField?: KodaXOpenAICompatMaxOutputTokensField;
   readonly thinkingBudgetCap?: number;
   readonly supportsThinking?: boolean;
@@ -93,6 +96,8 @@ export interface ProviderSnapshot {
   readonly capabilityProfile: KodaXProviderCapabilityProfile;
   readonly contextWindow?: number;
   readonly maxOutputTokens?: number;
+  /** Documented service output ceiling; independent of the default request budget. */
+  readonly outputTokenLimit?: number;
   readonly maxOutputTokensField?: KodaXOpenAICompatMaxOutputTokensField;
   readonly thinkingBudgetCap?: number;
   readonly supportsThinking?: boolean;
@@ -524,6 +529,7 @@ function validateModelDescriptor(
     raw.maxOutputTokensField,
     `${path}.maxOutputTokensField`,
   );
+  const outputTokenLimit = optionalOutputTokenLimit(raw.outputTokenLimit, path);
   const thinkingBudgetCap = optionalNumber(
     raw.thinkingBudgetCap,
     `${path}.thinkingBudgetCap`,
@@ -549,30 +555,10 @@ function validateModelDescriptor(
         );
   const reasoningProfile = validateReasoningProfileField(raw, path);
   const descriptor: KodaXModelDescriptor = { id };
-  if (wireModel !== undefined) descriptor.wireModel = wireModel;
-  if (displayName !== undefined) descriptor.displayName = displayName;
-  if (contextWindow !== undefined) descriptor.contextWindow = contextWindow;
-  if (maxOutputTokens !== undefined) descriptor.maxOutputTokens = maxOutputTokens;
-  if (maxOutputTokensField !== undefined) {
-    descriptor.maxOutputTokensField = maxOutputTokensField;
-  }
-  if (thinkingBudgetCap !== undefined) {
-    descriptor.thinkingBudgetCap = thinkingBudgetCap;
-  }
-  if (reasoningCapability !== undefined) {
-    descriptor.reasoningCapability = reasoningCapability;
-  }
-  if (reasoningProfile !== undefined) {
-    descriptor.reasoningProfile = reasoningProfile;
-  }
-  if (replayReasoningContent !== undefined) {
-    descriptor.replayReasoningContent = replayReasoningContent;
-  }
-  if (strictThinkingSignature !== undefined) {
-    descriptor.strictThinkingSignature = strictThinkingSignature;
-  }
-  if (streamMaxDurationMs !== undefined) {
-    descriptor.streamMaxDurationMs = streamMaxDurationMs;
+  for (const [field, value] of Object.entries({ wireModel, displayName, contextWindow, maxOutputTokens,
+    outputTokenLimit, maxOutputTokensField, thinkingBudgetCap, reasoningCapability, reasoningProfile,
+    replayReasoningContent, strictThinkingSignature, streamMaxDurationMs })) {
+    if (value !== undefined) Object.assign(descriptor, { [field]: value });
   }
   return descriptor;
 }
@@ -635,6 +621,7 @@ function validateProviderEntry(
     raw.maxOutputTokensField,
     `providers.${name}.maxOutputTokensField`,
   );
+  const outputTokenLimit = optionalOutputTokenLimit(raw.outputTokenLimit, `providers.${name}`);
   const thinkingBudgetCap = optionalNumber(
     raw.thinkingBudgetCap,
     `providers.${name}.thinkingBudgetCap`,
@@ -693,33 +680,10 @@ function validateProviderEntry(
     capabilityProfile,
     verifyStrategy,
   };
-  if (reasoningProfile !== undefined) {
-    (entry as { reasoningProfile: KodaXReasoningProfile }).reasoningProfile =
-      reasoningProfile;
-  }
-  if (model !== undefined) (entry as { model: string }).model = model;
-  if (models !== undefined) (entry as { models: typeof models }).models = models;
-  if (contextWindow !== undefined) {
-    (entry as { contextWindow: number }).contextWindow = contextWindow;
-  }
-  if (maxOutputTokens !== undefined) {
-    (entry as { maxOutputTokens: number }).maxOutputTokens = maxOutputTokens;
-  }
-  if (maxOutputTokensField !== undefined) {
-    (
-      entry as { maxOutputTokensField: KodaXOpenAICompatMaxOutputTokensField }
-    ).maxOutputTokensField = maxOutputTokensField;
-  }
-  if (thinkingBudgetCap !== undefined) {
-    (entry as { thinkingBudgetCap: number }).thinkingBudgetCap = thinkingBudgetCap;
-  }
-  if (supportsThinking !== undefined) {
-    (entry as { supportsThinking: boolean }).supportsThinking = supportsThinking;
-  }
-  if (modelReasoningCapabilities !== undefined) {
-    (
-      entry as { modelReasoningCapabilities: typeof modelReasoningCapabilities }
-    ).modelReasoningCapabilities = modelReasoningCapabilities;
+  for (const [field, value] of Object.entries({ reasoningProfile, model, models, contextWindow,
+    maxOutputTokens, outputTokenLimit, maxOutputTokensField, thinkingBudgetCap, supportsThinking,
+    modelReasoningCapabilities })) {
+    if (value !== undefined) Object.assign(entry, { [field]: value });
   }
   if (cliBridge) {
     (entry as { cliBridge: boolean }).cliBridge = true;

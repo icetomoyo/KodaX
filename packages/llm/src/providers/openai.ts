@@ -944,11 +944,9 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
 
       // 传递 signal 给 SDK，确保底层 HTTP 请求能被取消
       const attempts = this.reasoningAttempts(normalizedReasoning, model);
-      const requestMaxOutputTokens = streamOptions?.maxOutputTokensOverride
-        ?? this.getEffectiveMaxOutputTokens(model);
+      const requestMaxOutputTokens = this.getEffectiveMaxOutputTokens(model, streamOptions?.maxOutputTokensOverride);
       retryState.maxOutputTokensLimit ??= requestMaxOutputTokens;
-      const maxOutputTokens = retryState.maxOutputTokensOverride
-        ?? requestMaxOutputTokens;
+      const maxOutputTokens = Math.min(retryState.maxOutputTokensOverride ?? requestMaxOutputTokens, requestMaxOutputTokens);
       const createParams: OpenAI.Chat.ChatCompletionCreateParamsStreaming = {
         model: wireModel,
         messages: fullMessages,
@@ -1002,7 +1000,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
           try {
             stream = await client.chat.completions.create(
               attemptParams,
-              { ...(signal ? { signal } : {}), ...(streamOptions?.singleAttempt ? { maxRetries: 0 } : {}) },
+              { ...(signal ? { signal } : {}), maxRetries: 0 },
             ).catch(error => { recordRejectedImage(error, attemptParams); throw error; });
           } catch (error) {
             const rejected = this.recordReasoningRejection(error, attemptParams, model, streamOptions, reasoningResolution);
@@ -1231,11 +1229,9 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       let shouldForceToolChoice = openaiTools.length > 0 && Boolean(forcedToolName);
 
       const attempts = this.reasoningAttempts(normalizedReasoning, model);
-      const requestMaxOutputTokens = streamOptions?.maxOutputTokensOverride
-        ?? this.getEffectiveMaxOutputTokens(model);
+      const requestMaxOutputTokens = this.getEffectiveMaxOutputTokens(model, streamOptions?.maxOutputTokensOverride);
       retryState.maxOutputTokensLimit ??= requestMaxOutputTokens;
-      const maxOutputTokens = retryState.maxOutputTokensOverride
-        ?? requestMaxOutputTokens;
+      const maxOutputTokens = Math.min(retryState.maxOutputTokensOverride ?? requestMaxOutputTokens, requestMaxOutputTokens);
       const createParams: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming = {
         model: wireModel,
         messages: fullMessages,
@@ -1289,7 +1285,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
           try {
             response = await client.chat.completions.create(
               attemptParams,
-              { ...(signal ? { signal } : {}), ...(streamOptions?.singleAttempt ? { maxRetries: 0 } : {}) },
+              { ...(signal ? { signal } : {}), maxRetries: 0 },
             ).catch(error => { recordRejectedImage(error, attemptParams); throw error; }) as OpenAI.Chat.Completions.ChatCompletion;
           } catch (error) {
             const rejected = this.recordReasoningRejection(error, attemptParams, model, streamOptions, reasoningResolution);
@@ -1616,6 +1612,9 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         converted.push({
           role: message.role,
           content: message.content,
+          ...(message.role === 'assistant' && this.getEffectiveReplayReasoningContent(model)
+            ? { reasoning_content: '' }
+            : {}),
         } as unknown as OpenAI.Chat.ChatCompletionMessageParam);
         continue;
       }
