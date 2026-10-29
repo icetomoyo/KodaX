@@ -10,7 +10,7 @@
 | P4b | 已实现并定向验证 | fork 复制/隔离、重复压缩、Script 恢复见证及 owner 清理重试 |
 | P4c | 已实现并定向验证 | owned 历史图片自动重装配的 hash 校验；P4 按下述通道及未验边界声明 |
 | P6a | 已实现并定向验证 | native/checked bridge、managed/兼容入口透传 serial 谓词；不提供环境时效锁 |
-| P6b | 待实施 | 一个经生产装配的受控动态消费者；动作事实与 current 时效 |
+| P6b | 已实现限定消费者并定向验证 | 本地可暂停 PNG 卡片；current/version、动作事实、unknown 与补观察；子 Actor 无 owner 时拒绝 |
 | P5 | 待实施 | 先评估 MCP typed-image；Artifact/额外 Host/standalone 未声明支持 |
 | P7 | 持续收集机械证据 | 最终成本、支持边界与受控行为实验方案；未发起付费调用 |
 
@@ -165,6 +165,34 @@ compiled public prepared-image scope 本机单样本（先暖原件验证缓存�
 P4a/b/c 至此完成上表限定的工程接线与定向验证；未交付 steer 的 crash checkpoint 重放、historyBoundary UI 及未列宿主仍保留未验状态。动态来源版本/current/reset 的续接认识继续由 P6 验证；P7 行为部分尚未执行，不以这些机械证据替代。
 
 ## 持续保留的失败与未验证范围
+
+## P6b：受控本地动态消费者
+
+通过 `@kodax-ai/coding/visual-environment` 显式安装两个普通 LocalToolDefinition：`visual_observe` 与 `visual_act`。默认 Runtime/CLI 不安装；卡片演示为 `node node_modules/vitest/vitest.mjs run src/sdk-runtime.visual-environment.test.ts`，使用真实 Runtime 装配、权限、媒体 owner、canonical 保存和生产 OpenAI serializer，provider 下一响应由确定性脚本驱动，外部调用为 0。它不是模型行为评测或 computer-use 平台。
+
+消费者选择本地可暂停 2×1 PNG 卡片：source `cards`，版本 `episode:step`，动作 `reveal`/`select:1`，副作用计数由 adapter 实际状态核对。灰卡留下歧义，reveal 后显露红/绿，再用新观察选绿。adapter 对 reset/每次相关变化递增版本，在实际 effect 边界原子核对版本与 pending unknown；生产 owner 锁只能排序其自身调用，外部桌面焦点/持续变化不在承诺内。
+
+每 source 一个 owner 队列、generation 与 sample 序号；没有全局 current。采样起始时间及 sourceVersion 写入观察原收据，仍标 historical；current 只是环境 owner 内待 canonical receipt 证明的候选。动作须同时匹配当前候选、来源版本、媒体 owner 与已提交可见收据，拿到锁仍重新核对。动作开始先失效 current；旧采样即使晚于新帧返回，只能保留为历史。historical inspect 不会刷新。typed admission 复用原 provisional extensionRecords/canonical 提交，未提前另存来源收据或建第二日志。
+
+adapter 返回带 invocationId 的 not_dispatched/completed/unknown 事实。已执行后采图、归档或取消失败仍返回 completed + 补观察要求；unknown 不自动重放。observe/act 任一入口看到 live unknown 都清除旧 current/采样 generation；同版本调和之后仍须重新观察。恢复消费者时 current 为空，并从 adapter 的实际 pending/lastAction 确认状态；Runtime close/reopen 测试保留本地 adapter 事实对象，未声称模拟物理进程崩溃或远端 Host 断连。错误文本保留，超 1024 UTF-16 单元附显式 truncated 标记；最终 action fact 与 lastAction 一起计入图片结果动态预留。
+
+capture 前预留图片和完整 metadata，接纳前按固定事实补差；失败取消未保留额度。沿 P2 同一严格 PNG/IHDR 预检，字节与尺寸沿 3.75 MiB/2000 展示护栏，不默默缩放。原件验证后才走 owner 准备；未知/未装配 owner 或容量拒绝。不增加自动截图、轮询、第二模型、Script 叶白名单或默认模式。初版直接从 media 聚合出口导出导致 CLI **5,156 KiB 超过 5,152**，构建明确失败；改为 opt-in 独立子路径后恢复 **5,150 KiB**，未提高上限，bootstrap 4,042 bytes、14 SDK 声明检查通过。
+
+支持矩阵：Coding/AMA + OpenAI native 的真实 root Runtime 验证卡片闭环、plan-mode 0 effect、reset/stale、历史回取、close/reopen 后补观察与不重放。真实 spawn 子 Actor 试图使用父引用时缺少自己的媒体 owner，**明确拒绝**；不授予父媒体、不声明子 Actor 的观察/动作支持。public consumer seam 的两个独立 caller context 验证排队同 A 只有一次 effect、其他来源不被阻塞、晚采样历史化、未提交收据、unknown 调和、取消前/派发后/完成后、归档失败。这里的 caller context 不是实际 Actor 运行证明。跨物理进程、其他协议/模式/宿主尚未验收。
+
+TDD：公共 Runtime 缺少消费者先 RED→GREEN；初版恢复 unknown 可动作、live unknown 同版本旧 A 重用（act 与 observe 两入口）、500 中文 detail 预留不足、3000 中文 completed 异常漏算依次以反例 RED→GREEN。最终 4 文件 **19 项通过**，raw `kodax-visual-p6b-final4-tests.log`；两实现模块语句 **91.36%**、分支 **82.52%**、函数 **88%**、行 **98.11%**，不是全仓覆盖；visual-owner 单模块分支 68.57% 仍明确保留。typecheck/build 已执行，最终集成另复跑。
+
+默认首轮 `p6b-environment/p6b-final` 32 格捕获 `kodax-first-turn-wire-O5p8mu`，最终 15 个合同源 hash 逐个匹配后复用，未声称重抓。相对 P3b **+0**、24 SDK 无 owner 格不变；对 30310e00 OpenAI +365～366、Anthropic +358，对 P0 累计 +748/+726。显式安装消费者另从同一次 OpenAI Coding 完整 request 只移除两工具 schema 配对：**16,407→16,213，+194 估算 token、+778 ASCII bytes**；raw 为 OS Temp `kodax-visual-environment-cost-2ifPlg`，完整请求 SHA-256 `28672aaad99f43166da5810919cc67033c74b8b4a81cc632111f9283aafb1d75`。不把它混入默认增量，也不是 API usage/费用。
+
+同一次 fixture 的初始 2×1 图 72 bytes，SHA `d5160c116c2218ec16d797ee1ddedbbfd6f9e8cec894bbf8b491f1750e42cd7d`；揭示后 74 bytes，SHA `18b895c28aecb37b71054e54561c937f6920b719cec778d21268446fee434356`。fixture 编码分别约 2.16/0.33/0.28 ms；这些不是生产 decoder、模型时延或基线性能收益。全任务 usage/cache/费用/智能提升未测量。
+
+### Standards
+
+独立只读评审的 1 项异常原因丢失已 RED→GREEN 修复；最终 **0 项硬违反、0 项 smell 判断**。
+
+### Spec
+
+独立审查发现 unknown 失效与资源计量边界，均按上述反例修复；最终限定范围 **0 项剩余发现**。子 Actor 无 owner、跨进程恢复与模型自主探索保持未支持/未验状态。
 
 ## P6a：执行顺序声明
 

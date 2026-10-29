@@ -2726,6 +2726,10 @@ export interface KodaXToolExecutionContext {
   visualObservationOwner?: import('@kodax-ai/agent/media').VisualObservationOwner;
   reserveVisualOutput?: (tokens: number) => import('@kodax-ai/agent/media').VisualOutputReservation;
   visualOutputReservations?: ReturnType<typeof import('./task-engine/visual-output-reservations.js').createVisualOutputReservations>;
+  admitVisualObservation?: (bytes: Buffer, input: {
+    validation: import('@kodax-ai/llm').ImageValidation; sourceKey: string; mediaType: string;
+    source?: import('@kodax-ai/agent/media').VisualObservationSource; sourceVersion?: string; sampledAt?: string; signal?: AbortSignal;
+  }) => Promise<{ observation: import('@kodax-ai/agent/media').VisualObservation; content: readonly import('@kodax-ai/llm').KodaXToolResultContentItem[] }>;
   admitVisualImage?: (bytes: Buffer, image: import('@kodax-ai/llm').KodaXToolResultImageItem,
     validation: import('@kodax-ai/llm').ImageValidation, sourceKey: string, signal?: AbortSignal,
     source?: import('@kodax-ai/agent/media').VisualObservationSource) => Promise<readonly import('@kodax-ai/llm').KodaXToolResultContentItem[]>;

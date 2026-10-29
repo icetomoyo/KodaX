@@ -22,6 +22,9 @@
       "@kodax-ai/coding/media": [
         "./packages/coding/src/media/index.ts"
       ],
+      "@kodax-ai/coding/visual-environment": [
+        "./packages/coding/src/media/visual-environment.ts"
+      ],
       "@kodax-ai/coding/internal/file-system-effects": [
         "./packages/coding/src/internal/file-system-effects.ts"
       ],

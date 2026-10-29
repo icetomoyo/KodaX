@@ -29,6 +29,8 @@ export interface VisualObservation {
   width?: number;
   height?: number;
   source?: VisualObservationSource;
+  sourceVersion?: string;
+  sampledAt?: string;
 }
 
 export interface VisualObservationOwner {
@@ -37,7 +39,7 @@ export interface VisualObservationOwner {
   readonly expectedImageHash?: (filePath: string) => string | undefined;
   list(): Promise<readonly VisualObservation[]>;
   historyScope(): Promise<string>;
-  pin(bytes: Buffer, input: Pick<VisualObservation, 'sourceKey' | 'originEntryId' | 'mediaType' | 'source'>): Promise<VisualObservation>;
+  pin(bytes: Buffer, input: Pick<VisualObservation, 'sourceKey' | 'originEntryId' | 'mediaType' | 'source' | 'sourceVersion' | 'sampledAt'>): Promise<VisualObservation>;
   read(observation: VisualObservation, maxBytes?: number): Promise<Buffer>;
   imagePath(observation: VisualObservation): string;
   writeDerived(bytes: Buffer): Promise<string>;
@@ -88,6 +90,8 @@ export function readVisualObservationRecord(record: KodaXExtensionSessionRecord)
     observedAt: value.observedAt, originEntryId: value.originEntryId, sha256: value.sha256, mediaType: value.mediaType,
     ...(typeof value.width === 'number' ? { width: value.width } : {}),
     ...(typeof value.height === 'number' ? { height: value.height } : {}),
+    ...(typeof value.sourceVersion === 'string' ? { sourceVersion: value.sourceVersion } : {}),
+    ...(typeof value.sampledAt === 'string' ? { sampledAt: value.sampledAt } : {}),
     ...(value.source && typeof value.source === 'object' && !Array.isArray(value.source)
       && typeof value.source.imageOrdinal === 'number' ? { source: value.source as VisualObservationSource } : {}) };
 }

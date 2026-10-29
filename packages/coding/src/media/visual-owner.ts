@@ -32,17 +32,19 @@ export function bindVisualObservationAdmission(ctx: KodaXToolExecutionContext, o
   const owner = ctx.visualObservationOwner;
   const storage = options.session?.storage;
   if (!owner || !storage) return;
-  ctx.admitVisualImage = async (bytes, image, validation, sourceKey, signal = ctx.abortSignal, source) => {
+  ctx.admitVisualObservation = async (bytes, { validation, sourceKey, mediaType, signal = ctx.abortSignal, source, sourceVersion, sampledAt }) => {
     signal?.throwIfAborted();
     if (validation.status === 'invalid') throw new Error('Visual observation cannot be decoded.');
     const saved = await storage.load(owner.ownerId);
     const originEntryId = saved?.lineage?.activeEntryId;
     if (!originEntryId) throw new Error('Visual image admission requires its canonical source entry.');
-    const observation = await owner.pin(bytes, { sourceKey, originEntryId, source,
-      mediaType: validation.mediaType ?? image.mediaType ?? 'image/png' });
+    const observation = await owner.pin(bytes, { sourceKey, originEntryId, source, sourceVersion, sampledAt,
+      mediaType: validation.mediaType ?? mediaType });
     signal?.throwIfAborted();
     state.extensionRecords.push(visualObservationRecord(observation));
     state.extensionRecordsDirty = true;
-    return visualObservationImage(owner, observation, bytes, validation);
+    return { observation, content: visualObservationImage(owner, observation, bytes, validation) };
   };
+  ctx.admitVisualImage = async (bytes, image, validation, sourceKey, signal, source) =>
+    (await ctx.admitVisualObservation!(bytes, { validation, sourceKey, mediaType: image.mediaType ?? 'image/png', signal, source })).content;
 }

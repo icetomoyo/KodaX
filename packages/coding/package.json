@@ -26,6 +26,10 @@
     "./media": {
       "types": "./dist/media/index.d.ts",
       "import": "./dist/media/index.js"
+    },
+    "./visual-environment": {
+      "types": "./dist/media/visual-environment.d.ts",
+      "import": "./dist/media/visual-environment.js"
     }
   },
   "scripts": {

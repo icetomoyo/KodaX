@@ -66,5 +66,6 @@ export {
   type VisualObservation, type VisualObservationOwner, type VisualObservationSource,
 } from './visual-observations.js';
 export { visibleVisualObservations } from './visual-lineage.js';
+export { sourceRaster as preflightVisualPng } from './visual-raster.js';
 export { createVisualTools, executeVisualTool, VISUAL_TOOL_DEFINITIONS, VISUAL_TOOL_NAMES,
   type VisualToolBinding, type VisualOutputReservation } from './visual-tools.js';

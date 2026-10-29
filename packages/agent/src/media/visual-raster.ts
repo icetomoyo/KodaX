@@ -6,7 +6,7 @@ const MAX_SOURCE_BYTES = 10 * 1024 * 1024;
 const MAX_SOURCE_PIXELS = 40_000_000;
 
 /** Strict profile: no animation, orientation, color conversion or precision loss. */
-function sourceRaster(bytes: Buffer): { width: number; height: number } {
+export function sourceRaster(bytes: Buffer): { width: number; height: number } {
   if (bytes.length > MAX_SOURCE_BYTES) throw new Error('Visual source exceeds the 10 MiB processing limit.');
   if (bytes.length < 33 || !bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) {
     throw new Error('Visual derivation unsupported: requires a static 8-bit RGB/RGBA PNG. Full-image recall remains available.');
