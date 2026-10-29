@@ -5379,6 +5379,394 @@
         "scope": "Fresh offline SDK capture from this full suite, using the same normalized complete-model-field method as p7-final; not raw wire byte equality or API usage",
         "comparisonArtifact": "OS Temp/kodax-visual-p6-receipt-race-default-compare-20261029.json"
       }
+    },
+    {
+      "id": "p7-pilot-r2",
+      "engineeringBaseline": "30310e0018b3c0803653a278f451751a00ccc3bc",
+      "engineeringCandidate": "3b2d48e8ffeebdd0f14cd81c5c04b65736884938",
+      "protocol": "openai-compatible",
+      "provider": "kimi",
+      "model": "kimi-k2.6",
+      "endpoint": "https://api.moonshot.cn/v1/chat/completions",
+      "thinking": "disabled",
+      "transport": "non-streaming",
+      "rawDirectory": "C:/Users/ADMIN/AppData/Local/Temp/kodax-eval-dumps/visual-harness/pilot-r2-iKIsvM",
+      "authorizedBudget": {
+        "maxProviderCalls": 4,
+        "maxCallsPerCell": 1,
+        "maxRoundsPerCell": 1,
+        "maxOutputTokensPerCall": 512,
+        "maxTotalTokens": 100000,
+        "maxExternalSpendUsd": 1,
+        "timeoutMs": 60000,
+        "maxInFlightPerProvider": 1,
+        "retries": 0,
+        "externalJudgeCalls": 0
+      },
+      "providerCalls": 1,
+      "completedBehaviorSamples": 0,
+      "unlaunchedCells": 3,
+      "stopReason": "HTTP 429 / exceeded_current_quota_error / insufficient balance",
+      "actualUsage": null,
+      "actualCacheUsage": null,
+      "actualCostCny": null,
+      "actualInvoiceUsd": null,
+      "latencyMs": 176,
+      "imagesSubmitted": 1,
+      "imagesAcceptedByModel": null,
+      "pricePerMillionCny": {
+        "input": 6.5,
+        "cacheHit": 1.1,
+        "output": 27
+      },
+      "budgetUsdAccounting": "CNY1 counted as USD1 conservatively; not a market FX conversion or invoice",
+      "taskTotalUsageMeasured": false,
+      "semanticComparison": "not-evaluable: no paired assistant outputs",
+      "recommendation": "recommend-iterate",
+      "sourceRequestProvenance": {
+        "baseline": {
+          "rawFile": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\kodax-first-turn-wire-mwTGST\\openai-ama-runtime-host\\request.json",
+          "rawSha256": "0f55ee62cdf6ca30b112879d64538c5ae05f2b77a60a40bc7f228896207711a5",
+          "normalizedFile": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\kodax-first-turn-wire-mwTGST\\openai-ama-runtime-host\\normalized-model-input.json",
+          "normalizedSha256": "0049d4fdc8da06533abb77615490b25fff71c2b2e01fc220afde91fcf5969241",
+          "preparedFile": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\kodax-visual-p7-r2-sources-yMT5nA\\baseline.json",
+          "preparedSha256": "6084877a214446e30a89c07ff09ccd7b0b0c7f62e3d313db8404c3898277d794",
+          "toolsSha256": "b7a810620089e57dad4a0383f562adc882708e915d24686179e20f1914fbdfdc",
+          "toolsCount": 56,
+          "contextNormalization": "Reused captured normalized messages only (fixture root, session ID, filesystem snapshot time); retained raw tools including their JSON key order."
+        },
+        "candidate": {
+          "rawFile": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\kodax-first-turn-wire-B4xY9i\\openai-ama-runtime-host\\request.json",
+          "rawSha256": "a4f4a2713ea69090cc0719b8f93d2782879bdb95a49f05809fad131820688dd9",
+          "normalizedFile": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\kodax-first-turn-wire-B4xY9i\\openai-ama-runtime-host\\normalized-model-input.json",
+          "normalizedSha256": "4efa61cc392116a4fb79a3bc8a3f5659a7ff407238491a4291224229135ee742",
+          "preparedFile": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\kodax-visual-p7-r2-sources-yMT5nA\\candidate.json",
+          "preparedSha256": "abd3d7af077ecde0a283bb91f0c498f51bb0a8c12a44979fe21dfc9bdd6b4681",
+          "toolsSha256": "5d7ff3c800f949a020524c24e84264b0cbd8d1e18be9f3986c6a4f7156b822ee",
+          "toolsCount": 57,
+          "contextNormalization": "Reused captured normalized messages only (fixture root, session ID, filesystem snapshot time); retained raw tools including their JSON key order."
+        }
+      },
+      "candidateModelContractSourceHashesVerified": 15,
+      "requestModelFields": [
+        {
+          "caseId": "exact-rgba",
+          "arm": "baseline",
+          "representation": "compact-model-fields-json",
+          "utf16Chars": 59272,
+          "utf8Bytes": 60352,
+          "estimatedTokens": 15223,
+          "sha256": "c86bc20ab63587f0c292941e007bbe52bb218e4f2b302c91f0581d2ce3cc5b9f",
+          "includedFields": [
+            "messages",
+            "tools"
+          ],
+          "excludedFields": [
+            "model",
+            "stream",
+            "max_tokens",
+            "thinking"
+          ],
+          "requestSha256": "3754598d637aa462354f365aa28e18ff8dda14c8b895fa78300bf2fec7b51fb6",
+          "historySha256": "59bae3d7c94fb1d4c9a93875b2c83e4e7243c2a046f0177f57c7840b73f2ab59",
+          "toolsSha256": "b7a810620089e57dad4a0383f562adc882708e915d24686179e20f1914fbdfdc",
+          "initialFrameCount": 1
+        },
+        {
+          "caseId": "exact-rgba",
+          "arm": "candidate",
+          "representation": "compact-model-fields-json",
+          "utf16Chars": 60728,
+          "utf8Bytes": 61812,
+          "estimatedTokens": 15589,
+          "sha256": "13af212761011df7932b6f2e5723b1fbd7f3e14e6358b02c9fd01d57d735c4ec",
+          "includedFields": [
+            "messages",
+            "tools"
+          ],
+          "excludedFields": [
+            "model",
+            "stream",
+            "max_tokens",
+            "thinking"
+          ],
+          "requestSha256": "773a6f73de3d2cc9de31309f015940d80369bb6fa0f40009afed29161b1cc6e8",
+          "historySha256": "59bae3d7c94fb1d4c9a93875b2c83e4e7243c2a046f0177f57c7840b73f2ab59",
+          "toolsSha256": "5d7ff3c800f949a020524c24e84264b0cbd8d1e18be9f3986c6a4f7156b822ee",
+          "initialFrameCount": 1
+        },
+        {
+          "caseId": "irrelevant-image",
+          "arm": "baseline",
+          "representation": "compact-model-fields-json",
+          "utf16Chars": 59185,
+          "utf8Bytes": 60223,
+          "estimatedTokens": 15186,
+          "sha256": "9e4ce57b38134dbdd1eaa8325fe6ec8cdfc156cc8854b64332f9160400c7415a",
+          "includedFields": [
+            "messages",
+            "tools"
+          ],
+          "excludedFields": [
+            "model",
+            "stream",
+            "max_tokens",
+            "thinking"
+          ],
+          "requestSha256": "5176311b0a3a766c873b6a37ddec7d1acf912c072b996e6c90caf44cce0ef98b",
+          "historySha256": "59bae3d7c94fb1d4c9a93875b2c83e4e7243c2a046f0177f57c7840b73f2ab59",
+          "toolsSha256": "b7a810620089e57dad4a0383f562adc882708e915d24686179e20f1914fbdfdc",
+          "initialFrameCount": 1
+        },
+        {
+          "caseId": "irrelevant-image",
+          "arm": "candidate",
+          "representation": "compact-model-fields-json",
+          "utf16Chars": 60641,
+          "utf8Bytes": 61683,
+          "estimatedTokens": 15551,
+          "sha256": "76d2ee0705ef4200c07fde8ee607fe240d851cf4fdcc1e14626e397e57fc2554",
+          "includedFields": [
+            "messages",
+            "tools"
+          ],
+          "excludedFields": [
+            "model",
+            "stream",
+            "max_tokens",
+            "thinking"
+          ],
+          "requestSha256": "340210bce7833bf6cd4fecfdc29ae66a584c79ba92fa5e3c2d7d8fb85af900b8",
+          "historySha256": "59bae3d7c94fb1d4c9a93875b2c83e4e7243c2a046f0177f57c7840b73f2ab59",
+          "toolsSha256": "5d7ff3c800f949a020524c24e84264b0cbd8d1e18be9f3986c6a4f7156b822ee",
+          "initialFrameCount": 1
+        }
+      ],
+      "artifacts": {
+        "preregistrationSha256": "12b8ef0b5ea35ae58a3bde896e06ce9227b709921ab39fbe01563d9b07fa3863",
+        "responseSha256": "98b98affbfb4d237633295e29459a64c929c6b7e355c387588b9d4fecdb43323",
+        "mainSessionReviewSha256": "c6f9116e79caaaa37148cad0ab8eb749a60f6e52f38657860f1d0261405bd485",
+        "analysisSha256": "3a5a0621ff17ad127a87fea766f244db6fa34177925440445f5cfea976150964"
+      },
+      "notes": [
+        "Baseline 30310e00 includes P0-P2; this would measure later increments only.",
+        "Initial results.json zero running subtotals with usageComplete=false are not actual zero usage/cost; immutable analysis.json clarifies null actual totals.",
+        "No retries, fallback or judge calls. No claimed model lift or complete-task cost improvement.",
+        "Default first-turn +726 to +748 heuristic tokens remains a separate offline comparison."
+      ],
+      "defaultSuite": {
+        "log": "OS Temp/kodax-visual-p7-r2-full-20261029.log",
+        "passed": 18084,
+        "failed": 1,
+        "skipped": 97,
+        "todo": 19,
+        "durationSeconds": 1089.88,
+        "exitCode": 1,
+        "failure": "src/one-shot-task.test.ts concurrent settings: cleanup ENOTEMPTY .kodax/sessions",
+        "isolatedFilePassed": 10,
+        "cause": "unlocated; no production fix; isolated pass is not resolution"
+      },
+      "freshDefaultCapture": {
+        "directory": "OS Temp/kodax-first-turn-wire-1P2yft",
+        "comparedTo": "OS Temp/kodax-first-turn-wire-B4xY9i",
+        "matchingNormalizedCompleteInputRows": 32,
+        "comparisonArtifact": "OS Temp/kodax-visual-p7-r2-default-compare-20261029.json",
+        "comparisonSha256": "02976e2ac6cfd4a46b6d8fd3c32641c2840bb9599a6c088dcc9c67e168aac9c2",
+        "externalCalls": 0
+      }
+    },
+    {
+      "id": "p7-pilot-r3",
+      "engineeringBaseline": "30310e0018b3c0803653a278f451751a00ccc3bc",
+      "engineeringCandidate": "3b2d48e8ffeebdd0f14cd81c5c04b65736884938",
+      "provider": "kimi-code",
+      "modelRequested": "kimi-for-coding",
+      "modelReported": "kimi-for-coding",
+      "modelDiscoveryDisplayName": "K2.8 Preview",
+      "protocol": "Official OpenAI Chat compatibility endpoint; not Runtime Anthropic Messages acceptance",
+      "endpoint": "https://api.kimi.com/coding/v1/chat/completions",
+      "rawDirectory": "C:/Users/ADMIN/AppData/Local/Temp/kodax-eval-dumps/visual-harness/pilot-r3-9w0qA1",
+      "authorizedBudget": {
+        "maxProviderCalls": 4,
+        "maxCallsPerCell": 1,
+        "maxRoundsPerCell": 1,
+        "maxOutputTokensPerCall": 512,
+        "maxTotalTokens": 100000,
+        "maxExternalSpendUsd": 1,
+        "timeoutMs": 60000,
+        "maxInFlightPerProvider": 1,
+        "retries": 0,
+        "externalJudgeCalls": 0
+      },
+      "providerGenerationCalls": 4,
+      "metadataHttpRequests": 7,
+      "totalNewProviderHttpRequests": 11,
+      "completedBehaviorSamples": 4,
+      "actualUsageComplete": true,
+      "actualTotalTokens": 50053,
+      "armTotals": {
+        "baseline": {
+          "inputTokens": 24305,
+          "outputTokens": 412,
+          "totalTokens": 24717
+        },
+        "candidate": {
+          "inputTokens": 24959,
+          "outputTokens": 377,
+          "totalTokens": 25336
+        }
+      },
+      "deltas": {
+        "inputTokensPerPair": 327,
+        "combinedInputTokens": 654,
+        "combinedOutputTokens": -35,
+        "combinedNextResponseTokens": 619,
+        "combinedNextResponsePercent": 2.5043492333211956
+      },
+      "observedExtraUsageCny": 0,
+      "actualAttributedSubscriptionCost": null,
+      "actualInvoiceUsd": null,
+      "taskTotalUsageMeasured": false,
+      "rows": [
+        {
+          "caseId": "exact-rgba",
+          "arm": "baseline",
+          "requestSha256": "8b8953d281db67ee0c6184cb82210ee4552adbb8ee51017578d223e42da2643c",
+          "responseSha256": "2728da673949b5426cd82e33a7e81dd27bc18f6d6046c44a4be130ba2c9fd36a",
+          "model": "kimi-for-coding",
+          "usage": {
+            "prompt_tokens": 12174,
+            "completion_tokens": 401,
+            "total_tokens": 12575
+          },
+          "durationMsIncludingPersistenceAndQuota": 10287,
+          "finishReason": "tool_calls",
+          "initialImages": 1,
+          "additionalToolResultImages": 0,
+          "proposedTools": [
+            {
+              "name": "visual_inspect",
+              "schemaValid": true,
+              "correctFixtureRegion": true,
+              "executed": false
+            }
+          ]
+        },
+        {
+          "caseId": "exact-rgba",
+          "arm": "candidate",
+          "requestSha256": "21e6ca685788708ebfe1782322f2f060386892d54ff2a363d58240fbbf4e5ff7",
+          "responseSha256": "5d033194c54d1fdd600243419c8988f847361c59a438d41f92082bdd3a3d0f69",
+          "model": "kimi-for-coding",
+          "usage": {
+            "prompt_tokens": 12501,
+            "completion_tokens": 366,
+            "total_tokens": 12867,
+            "cached_tokens": 7168,
+            "prompt_tokens_details": {
+              "cached_tokens": 7168
+            }
+          },
+          "durationMsIncludingPersistenceAndQuota": 10024,
+          "finishReason": "tool_calls",
+          "initialImages": 1,
+          "additionalToolResultImages": 0,
+          "proposedTools": [
+            {
+              "name": "visual_read_pixels",
+              "schemaValid": true,
+              "correctFixtureRegion": true,
+              "executed": false
+            }
+          ]
+        },
+        {
+          "caseId": "irrelevant-image",
+          "arm": "baseline",
+          "requestSha256": "8be6fbce3973b62a6bbd546f21a3c56c3ee46ec3d7ee85e81a6753ee1546747a",
+          "responseSha256": "d972a3641079c7c662bfd5d01e9b42c429eac27dbf736e24d5faf79c443ba69c",
+          "model": "kimi-for-coding",
+          "usage": {
+            "prompt_tokens": 12131,
+            "completion_tokens": 11,
+            "total_tokens": 12142,
+            "cached_tokens": 11776,
+            "prompt_tokens_details": {
+              "cached_tokens": 11776
+            }
+          },
+          "durationMsIncludingPersistenceAndQuota": 1771,
+          "finishReason": "stop",
+          "initialImages": 1,
+          "additionalToolResultImages": 0,
+          "proposedTools": []
+        },
+        {
+          "caseId": "irrelevant-image",
+          "arm": "candidate",
+          "requestSha256": "d8b0cdcce9f8a857842823e8aef9c8d0bed2aebf9b194af3889333a727327237",
+          "responseSha256": "674e02351c8cf58ede77bd166bacb2b5fb0437b3f4f49eb33f6445b3f3ec7f05",
+          "model": "kimi-for-coding",
+          "usage": {
+            "prompt_tokens": 12458,
+            "completion_tokens": 11,
+            "total_tokens": 12469,
+            "cached_tokens": 12288,
+            "prompt_tokens_details": {
+              "cached_tokens": 12288
+            }
+          },
+          "durationMsIncludingPersistenceAndQuota": 1738,
+          "finishReason": "stop",
+          "initialImages": 1,
+          "additionalToolResultImages": 0,
+          "proposedTools": []
+        }
+      ],
+      "review": {
+        "recommendation": "recommend-iterate",
+        "evidenceSelection": "Candidate requested exact numeric RGBA; baseline requested a relevant crop; no tool execution or post-evidence answer comparison",
+        "restraint": "Each arm 1/1 answered 42 without a tool call",
+        "overallIntelligenceLift": "not-established",
+        "blinding": "Main-session judgment saved before reveal/cost read; output tool names can reveal capability set"
+      },
+      "artifacts": {
+        "preregistrationSha256": "d16da10544258b94c5994cf8ea3601f4ce99c3ea68cc27b2a6c38a8e4845161c",
+        "blindReviewSha256": "bade214642304a0444f5eab6c1ea6328f2ec7a61f34b3bcdaabad878891f4c9c",
+        "analysisSha256": "86b6b084a4aa864c962e0adee0bd8d00e972086f395d21b21bf098585818c315"
+      },
+      "limits": [
+        "Both prompts explicitly cue evidence/irrelevance. No autonomous-need detection claim.",
+        "Actual next-response input +327 per sampled pair and combined total +619 (2.50%) do not measure complete tasks or the pre-P0 overhaul.",
+        "Warm-prefix cache counts and fixed call order confound fee/latency comparisons. First-cell cached usage was not separately reported.",
+        "Observed wallet delta is account-level and can lag; it is not zero actual cost or allocated subscription fees.",
+        "Earlier r2 failed generation is separate and has unknown usage."
+      ],
+      "defaultSuiteFinal": {
+        "command": "npm test -- --reporter=dot",
+        "log": "OS Temp/kodax-visual-p7-r3-full-20261029.log",
+        "logSha256": "85542bc976406b729f4339c8a202a8c21643faa9dd30a75134bfd7932bcc8b8e",
+        "passed": 18094,
+        "failed": 0,
+        "skipped": 97,
+        "todo": 19,
+        "total": 18210,
+        "filesPassed": 1296,
+        "filesSkipped": 6,
+        "filesTotal": 1302,
+        "durationSeconds": 1128.24,
+        "exitCode": 0,
+        "sourceFrozenDuringRun": true,
+        "limits": "Does not close earlier ENOTEMPTY/Feature270/T30 causes or run excluded provider integrations/future behavior batches."
+      },
+      "freshDefaultCapture": {
+        "directory": "OS Temp/kodax-first-turn-wire-bsOZr7",
+        "comparedTo": "OS Temp/kodax-first-turn-wire-B4xY9i",
+        "matchingNormalizedCompleteInputRows": 32,
+        "comparisonArtifact": "OS Temp/kodax-visual-p7-r3-default-compare-20261029.json",
+        "comparisonSha256": "de2fd739c49b66435a0dbce382e5b7164fad384e6b1d363784960658cc7589b4",
+        "externalCalls": 0
+      }
     }
   ]
 }

@@ -16,7 +16,7 @@
 | P6a | 已实现并定向验证 | native/checked bridge、managed/兼容入口透传 serial 谓词；不提供环境时效锁 |
 | P6b | 已实现限定消费者；收据等待竞态已补修并定向验证 | 本地可暂停 PNG 卡片；current/version、动作事实、unknown 与补观察；派发前重检异步等待后的依据；子 Actor 无 owner 时拒绝 |
 | P5 | 已实现选定 MCP 来源并定向验证 | typed tool/resource、SA fallback；Artifact/额外 Host/standalone 未声明支持 |
-| P7 | 机械集成与冻结方案已交付；行为未执行 | 默认全仓、最终成本、支持边界与四份受控请求草案；未发起付费调用 |
+| P7 | 机械集成及 r3 四格 pilot 完成；整体行为价值未验收 | 3b2d48e8 / kimi-code K2.8 Preview：candidate 选择原始数值像素、双方算术题无多余工具；实际 usage 已记，不外推完整任务收益；r2 按量失败独立保留 |
 
 ## P3a：有序多观察检查
 
@@ -309,4 +309,22 @@ freezer 公共写入 seam 的 TDD：缺少模块/写入 API 先 RED→GREEN；�
 
 此前全仓原始结果为 17,952 通过、1 失败，Feature 270 临时 evidence.json 缺失原因未查明；独立单文件或本次全仓通过不表示历史原因已解决。首轮 P7 的 T30 原因也未定位。上述不同时间/候选的原始记录均保留。
 
-没有在线模型/付费实验、ARC、完整桌面或实时游戏接入。P7 行为部分未执行，不把机械测试或工具数量当作主动取证/智能提升的证据。
+截至原 P7 离线冻结没有在线模型/付费实验；后续 r2 的首请求/账户失败如下单列。没有 ARC、完整桌面或实时游戏接入。P7 没有完成行为验证，不把机械测试或工具数量当作主动取证/智能提升的证据。
+
+## P7 r2：新候选冻结与账户阻塞
+
+用户授权 Kimi 原生视觉路由及四次 pilot，工程候选固定 3b2d48e8，基线固定 30310e00。实际模型 kimi-k2.6，关闭思考，统一非流式/max_tokens=512；4 calls、100,000 总 token、USD 1、60 秒/请求、串行，无重试/fallback/judge。生产 tools 原字节保留，两 arm normalized 文本前缀相同、同一 PNG、每题初始 1 帧。来源转换、官方能力/人民币价格与请求 hash 见 [r2 正式记录](visual-harness-p7-pilot-r2-2026-10-29.md)。旧草案不覆盖，不重做 P0–P2。
+
+**实际首请求 HTTP 429（账户余额不足），1/4 次 provider 请求已发出，其余三次停止；0 行为输出，实际 usage/费用未知。** 原 raw、pre-registration、主会话无配对样本的有效性分析留在 OS Temp，不把未知写成零；不能比较模型行为，也不能声称整体任务 token 改善。后续四类能力及原支持矩阵未验边界均未扩展。
+
+新增有界 runner 的公共 freeze/run seam 按 TDD 验证；原 freezer 加新 runner 共 2 文件 17 项本地测试通过，真实 HTTP 对照保留预算、超时 partial、未知 usage、429、篡改、零授权、工作树落盘拒绝及重复执行负例。双轴独立评审剩余 Standards 0 / Spec 0。P7 建议仍为 recommend-iterate，后续需可用账户/明确路由与新的冻结预算，不自动消耗其它 provider。
+
+## P7 r3：订阅端点四格与实际 token
+
+后续用户明确 `kimi-code` 凭据为 `KIMI_CODE_API_KEY` 并授权新四次预算。实际选择官方 Chat 兼容端点、`kimi-for-coding`（只读模型列表显示 K2.8 Preview），固定相同输入、图像/初始帧和生产工具字节；四格全部完成，无工具执行/额外 generation/judge。冻结、盲评、usage、费用快照与支持矩阵见 [r3 正式记录](visual-harness-p7-pilot-r3-2026-10-29.md)。r2 失败只属于按量端点，不能说明 kimi-code 不可用。
+
+盲评优先 candidate 的精确原始数值采样，baseline 的同区域裁剪也是相关取证；两边算术题都只答 42、没有工具。两题都明确提示证据或图片无关，未测自主识别/取证后答案改善。每题候选实际输入 +327 token；合并两题的下一响应 baseline 24,717 / candidate 25,336，**+619（+2.50%）**，不是完整任务或 P0 前基线的实测。r3 四次合计 50,053 token；另 7 次只读元数据 HTTP（readiness 2 + runner 5），不隐藏额外请求。订阅加油包可见增量 ¥0，订阅摊销/实际美元费用未知；不套用名义 token 单价。
+
+同一 runner 订阅扩展按 TDD 保留金额空值、回退/未知及整数分阈值反例；两文件 26 项通过，类型检查与构建通过，双轴剩余 Standards 0 / Spec 0。r2 阶段本轮全仓实际为 **18,084 通过、1 失败**（one-shot-task 清理 sessions 的 ENOTEMPTY）；该文件单独 10 项通过，原因未定位、不宣称修复。32 格新离线完整字段与补修输入相同，默认首轮估算不增加。后续四类无提示/固定反馈任务仍需新的分批冻结预算，采用建议 recommend-iterate。
+
+最终 r3 代码冻结后的默认全仓：**18,094 通过、0 失败、97 skipped、19 todo**（18,210 项），**1,296 文件通过、6 skipped**（1,302 文件），1,128.24 秒，退出码 0；原日志 `kodax-visual-p7-r3-full-20261029.log`。新抓包 `kodax-first-turn-wire-bsOZr7` 的 32 格 normalized 完整输入仍逐格相同；日志/比对 hash 在成本记录。没有以这次全绿关闭上轮 ENOTEMPTY 或更早 Feature270/T30 的未定位原因。

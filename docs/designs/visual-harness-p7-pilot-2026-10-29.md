@@ -4,6 +4,10 @@
 
 后续 P6b 收据等待竞态补修后，本稿的旧候选输入仍作为历史草案保留。若获授权执行行为验证，应针对补修提交重新冻结实际候选；本次没有执行旧草案或新增行为请求。
 
+后续新 revision 已取得 Kimi/四请求正预算授权，并以 3b2d48e8 冻结；首请求因账户余额不足停止，没有行为样本。实际执行与未知成本见 [r2 记录](visual-harness-p7-pilot-r2-2026-10-29.md)，下文零授权/未执行状态保留为本旧草案历史。
+
+随后使用用户指定的 `kimi-code / KIMI_CODE_API_KEY` 完成 [r3 四格 pilot](visual-harness-p7-pilot-r3-2026-10-29.md)，已有下一响应行为和实际 usage；未验证完整任务收益，下文仍保留原离线方案。
+
 ## 已做与未做
 
 已执行 Layer 1、生产 serializer 离线抓包和四份 Layer 2 request 草案生成；**provider 请求 0、费用 0、行为输出 0**。模型、可用路由、在线图片协议接受、实际 usage/cache 与定价未验证；authorized budget 为 0。没有行为 lift/回退结论，没有新增 judge panel。
