@@ -27,12 +27,15 @@ async function until(read) {
 
 // Invoked on the matching native CI runner after creating the exact release archive.
 // Every provider request terminates at this loopback fixture; no external model is used.
-test('release archive preserves work modes, partial effects, cancellation and restart on its shipped runtime', { timeout: 600_000 }, async t => {
+test('release archive preserves work modes, partial effects, cancellation and restart on its shipped runtime', { timeout: 180_000 }, async t => {
   const archive = process.env.KODAX_MODE_RELEASE_ARCHIVE;
   assert.ok(archive, 'Set KODAX_MODE_RELEASE_ARCHIVE to the archive for this host platform');
   const temporary = await realpath(os.tmpdir());
   const root = await mkdtemp(path.join(temporary, 'kodax-release-modes-'));
-  const evidence = await mkdtemp(path.join(temporary, 'kodax-release-evidence-'));
+  const evidence = process.env.KODAX_MODE_RELEASE_EVIDENCE
+    ? path.resolve(process.env.KODAX_MODE_RELEASE_EVIDENCE)
+    : await mkdtemp(path.join(temporary, 'kodax-release-evidence-'));
+  await mkdir(evidence, { recursive: true });
   const packageDir = path.join(root, 'package');
   const homeDir = path.join(root, 'home');
   const configHome = path.join(homeDir, '.kodax');
@@ -48,6 +51,17 @@ test('release archive preserves work modes, partial effects, cancellation and re
   let release = () => {};
   let hostStarted = false;
   let completedAssertions = false;
+  const phase = name => process.stderr.write(`[release-mode] ${name}\n`);
+  const wait = async (promise, signal = t.signal) => {
+    signal.throwIfAborted();
+    let abort;
+    const aborted = new Promise((_, reject) => {
+      abort = () => reject(signal.reason);
+      signal.addEventListener('abort', abort, { once: true });
+    });
+    try { return await Promise.race([promise, aborted]); }
+    finally { signal.removeEventListener('abort', abort); }
+  };
   // Do not forward provider credentials, proxy configuration or ambient KodaX overrides.
   const systemEnvironment = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
     /^(PATH|PATHEXT|SystemRoot|WINDIR|COMSPEC|TEMP|TMP|TMPDIR|HOME|USERPROFILE|APPDATA|LOCALAPPDATA|PROGRAMDATA|PROGRAMFILES|PROGRAMFILES\(X86\)|PROCESSOR_ARCHITECTURE|LANG|LC_ALL)$/i.test(key)));
@@ -56,8 +70,8 @@ test('release archive preserves work modes, partial effects, cancellation and re
     // Windows keeps OS utilities but removes Node/Bun/Git installations from child PATH.
     ...(process.platform === 'win32' ? { PATH: [process.env.SystemRoot, path.join(process.env.SystemRoot, 'System32'),
       path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0')].join(';') } : {}) };
-  const cli = args => exec(binary, args, { cwd: workspace, env: environment, windowsHide: true,
-    timeout: 120_000, maxBuffer: 4 * 1024 * 1024 });
+  const cli = (args, signal = t.signal) => exec(binary, args, { cwd: workspace, env: environment, windowsHide: true,
+    signal, timeout: 90_000, maxBuffer: 4 * 1024 * 1024 });
   const server = createServer(async (request, response) => {
     try {
       let body = ''; for await (const chunk of request) body += chunk;
@@ -110,22 +124,30 @@ test('release archive preserves work modes, partial effects, cancellation and re
     }
   });
   const connect = async () => {
+    phase('starting packaged daemon');
     // The packaged daemon's cold start on a runner can exceed the CLI's 5s
     // default readiness budget; ask for the same 60s ceiling used elsewhere.
     await cli(['daemon', 'start', '--home', homeDir, '--timeout-ms', '60000', '--json']); hostStarted = true;
     const descriptor = JSON.parse(await readFile(path.join(configHome, 'runtime/daemon/default/daemon.json'), 'utf8'));
-    client = await connectKodaXRuntime({ homeDir, endpoint: descriptor.endpoint });
+    client = await connectKodaXRuntime({ homeDir, endpoint: descriptor.endpoint, daemonStartupSignal: t.signal });
     assert.ok(client.capabilities.sharedSessionSettings.keys.includes('workMode'));
     return descriptor.runtimeId;
   };
   const stop = async () => {
-    await client?.close(); client = undefined;
-    if (!hostStarted) return;
-    const result = JSON.parse((await cli(['daemon', 'stop', '--home', homeDir, '--json'])).stdout);
-    assert.ok(result.stopped || result.reason === 'missing', JSON.stringify(result));
-    hostStarted = false;
+    phase('stopping packaged daemon');
+    try {
+      await wait(client?.close(), AbortSignal.timeout(10_000));
+    } finally {
+      client = undefined;
+      if (hostStarted) {
+        const result = JSON.parse((await cli(['daemon', 'stop', '--home', homeDir, '--json'], AbortSignal.timeout(20_000))).stdout);
+        assert.ok(result.stopped || result.reason === 'missing', JSON.stringify(result));
+        hostStarted = false;
+      }
+    }
   };
   const run = async (name, mode, code, gated = false) => {
+    phase(`running ${name} (${mode})`);
     let enter = () => {};
     const entered = new Promise(resolve => { enter = resolve; });
     active = { name, mode, code, requests: [], enter,
@@ -133,7 +155,7 @@ test('release archive preserves work modes, partial effects, cancellation and re
     const handle = await client.runs.start({ sessionId, mode: 'managed_task', prompt: `Release check: ${name}.`,
       options: { lsp: false, reasoningMode: 'off', context: { repoIntelligenceMode: 'off' } } });
     if (gated) {
-      await Promise.race([entered, handle.result.then(result => { throw new Error(`Run ended before gate: ${JSON.stringify(result)}`); })]);
+      await wait(Promise.race([entered, handle.result.then(result => { throw new Error(`Run ended before gate: ${JSON.stringify(result)}`); })]));
       const snapshot = await client.sessions.getSettingsVersioned(sessionId);
       await assert.rejects(client.sessions.updateSettings(sessionId, { workMode: 'coding' }), { code: 'conflict' });
       await assert.rejects(client.sessions.updateSettingsVersioned(sessionId, { workMode: 'coding' }, { expectedRevision: snapshot.revision }), { code: 'conflict' });
@@ -142,100 +164,120 @@ test('release archive preserves work modes, partial effects, cancellation and re
     return handle;
   };
   const complete = async handle => {
-    const result = await handle.result;
+    const result = await wait(handle.result);
     assert.equal(result.phase, 'completed', JSON.stringify(result));
     assert.equal(active.requests.length, active.code ? 2 : 1);
     cases.push({ name: active.name, mode: active.mode, primaryRequests: active.requests.length, phase: result.phase });
+    phase(`completed ${active.name}`);
   };
   try {
-    await Promise.all([mkdir(packageDir), mkdir(workspace), mkdir(configHome, { recursive: true })]);
-    await exec('tar', ['-xf', path.resolve(archive), '-C', packageDir], { windowsHide: true, timeout: 60_000 });
-    if (process.platform === 'win32') for (const runtime of ['node', 'bun']) {
-      await assert.rejects(exec(path.join(process.env.SystemRoot, 'System32/where.exe'), [runtime], { env: environment, windowsHide: true }), { code: 1 });
-    }
-    await writeFile(path.join(workspace, 'fixture.txt'), 'RELEASE_VALUE=1\n');
-    server.listen(0, '127.0.0.1'); await once(server, 'listening');
-    await writeFile(path.join(configHome, 'config.json'), JSON.stringify({ provider: 'release-local', model: 'fixture',
-      permissionMode: 'full-access', lsp: false, repoIntelligenceMode: 'off', customProviders: [{
-        name: 'release-local', protocol: 'openai', baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
-        apiKeyEnv: 'KODAX_RELEASE_MODE_KEY', model: 'fixture', contextWindow: 128000, reasoning: 'none' }] }));
-    assert.match((await cli(['--help'])).stdout, /--work-mode/);
-    const firstHost = await connect();
-    const session = await client.sessions.create({ projectPath: workspace, title: 'Release modes' }); sessionId = session.id;
-    await client.sessions.updateSettings(sessionId, { permissionMode: 'full-access', agentMode: 'ama' });
-    assert.equal((await client.sessions.getSettings(sessionId)).workMode ?? 'coding', 'coding');
-    await complete(await run('default', 'coding'));
-    await client.sessions.updateSettings(sessionId, { workMode: 'agent' });
-    await complete(await run('agent', 'agent', undefined, true));
-    await client.sessions.updateSettings(sessionId, { workMode: 'script' });
-    await complete(await run('partial', 'script', "await tools.read({path:'fixture.txt'}); await tools.edit({path:'fixture.txt',edits:[{old_string:'RELEASE_VALUE=1',new_string:'RELEASE_VALUE=2'}]}); throw Error('intentional partial stop');"));
-    assert.equal(await readFile(path.join(workspace, 'fixture.txt'), 'utf8'), 'RELEASE_VALUE=2\n');
-    const storage = new FileSessionStorage({ sessionsDir: path.join(configHome, 'sessions'), configHome });
-    const before = (await storage.load(sessionId)).extensionRecords.filter(record => record.extensionId === 'kodax.script');
-    assert.ok(before.some(record => record.type === 'call.settled'));
-    await client.sessions.updateSettings(sessionId, { model: 'fixture-next' });
-    assert.equal((await client.sessions.getSettings(sessionId)).workMode, 'script');
-    await stop();
-    assert.notEqual(await connect(), firstHost);
-    assert.equal((await client.sessions.getSettings(sessionId)).workMode, 'script');
-    const after = (await storage.load(sessionId)).extensionRecords;
-    for (const record of before) assert.ok(after.some(saved => JSON.stringify(saved) === JSON.stringify(record)));
-    await complete(await run('restored', 'script', "await tools.read({path:'fixture.txt'});"));
-    assert.equal(active.requests[0].model, 'fixture-next');
-    assert.equal(await readFile(path.join(workspace, 'fixture.txt'), 'utf8'), 'RELEASE_VALUE=2\n');
-
-    const cancellationCode = "await tools.read({path:'fixture.txt'}); const end=Date.now()+5000; while(Date.now()<end) {} await tools.write({path:'cancel-probe.txt',content:'reachable'});";
-    const cancelled = await run('cancelled', 'script', cancellationCode);
-    await until(async () => (await storage.load(sessionId)).extensionRecords.some(record => record.type === 'call.settled' && record.data?.runId === cancelled.runId));
-    assert.equal((await client.runs.abort(cancelled.runId)).accepted, true);
-    assert.equal((await cancelled.result).phase, 'interrupted');
-    assert.equal(active.requests.length, 1);
-    await assert.rejects(readFile(path.join(workspace, 'cancel-probe.txt')), { code: 'ENOENT' });
-    cases.push({ name: 'cancelled', mode: 'script', primaryRequests: 1, phase: 'interrupted' });
-    // Identical code without cancellation reaches the write; absence above is not an unreachable-code tautology.
-    await complete(await run('cancel-control', 'script', cancellationCode));
-    assert.equal(await readFile(path.join(workspace, 'cancel-probe.txt'), 'utf8'), 'reachable');
-
-    active = { name: 'cli-override', mode: 'agent', requests: [] };
-    await cli(['-p', 'Check temporary Agent mode.', '--session', sessionId, '--work-mode', 'agent', '--effort', 'off']);
-    assert.equal(active.requests.length, 1);
-    assert.equal((await client.sessions.getSettings(sessionId)).workMode, 'script');
-    cases.push({ name: active.name, mode: active.mode, primaryRequests: 1 });
-    await client.sessions.updateSettings(sessionId, { workMode: null });
-    await complete(await run('cleared-default', 'coding'));
-    const worker = path.join(packageDir, 'script-worker.cjs');
-    await rename(worker, `${worker}.missing`);
-    try {
-      const requestCount = requests.length;
-      await assert.rejects(client.sessions.updateSettings(sessionId, { workMode: 'script' }), /Script executor unavailable/);
+    await wait((async () => {
+      phase('extracting archive');
+      await Promise.all([mkdir(packageDir), mkdir(workspace), mkdir(configHome, { recursive: true })]);
+      // MSYS GNU tar treats drive-letter arguments (C:/...) as remote tape
+      // specs; keep both tar paths relative to the extraction directory.
+      await exec('tar', ['-xf', path.relative(packageDir, path.resolve(archive)), '-C', '.'], { cwd: packageDir, signal: t.signal, windowsHide: true, timeout: 60_000 });
+      if (process.platform === 'win32') for (const runtime of ['node', 'bun']) {
+        await assert.rejects(exec(path.join(process.env.SystemRoot, 'System32/where.exe'), [runtime], { env: environment, windowsHide: true }), { code: 1 });
+      }
+      await writeFile(path.join(workspace, 'fixture.txt'), 'RELEASE_VALUE=1\n');
+      server.listen(0, '127.0.0.1'); await once(server, 'listening');
+      await writeFile(path.join(configHome, 'config.json'), JSON.stringify({ provider: 'release-local', model: 'fixture',
+        permissionMode: 'full-access', lsp: false, repoIntelligenceMode: 'off', customProviders: [{
+          name: 'release-local', protocol: 'openai', baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
+          apiKeyEnv: 'KODAX_RELEASE_MODE_KEY', model: 'fixture', contextWindow: 128000, reasoning: 'none' }] }));
+      assert.match((await cli(['--help'])).stdout, /--work-mode/);
+      const firstHost = await connect();
+      const session = await client.sessions.create({ projectPath: workspace, title: 'Release modes' }); sessionId = session.id;
+      await client.sessions.updateSettings(sessionId, { permissionMode: 'full-access', agentMode: 'ama' });
       assert.equal((await client.sessions.getSettings(sessionId)).workMode ?? 'coding', 'coding');
-      assert.equal(requests.length, requestCount);
-    } finally { await rename(`${worker}.missing`, worker); }
-    assert.deepEqual(failures, []);
-    completedAssertions = true;
+      await complete(await run('default', 'coding'));
+      await client.sessions.updateSettings(sessionId, { workMode: 'agent' });
+      await complete(await run('agent', 'agent', undefined, true));
+      await client.sessions.updateSettings(sessionId, { workMode: 'script' });
+      await complete(await run('partial', 'script', "await tools.read({path:'fixture.txt'}); await tools.edit({path:'fixture.txt',edits:[{old_string:'RELEASE_VALUE=1',new_string:'RELEASE_VALUE=2'}]}); throw Error('intentional partial stop');"));
+      assert.equal(await readFile(path.join(workspace, 'fixture.txt'), 'utf8'), 'RELEASE_VALUE=2\n');
+      const storage = new FileSessionStorage({ sessionsDir: path.join(configHome, 'sessions'), configHome });
+      const before = (await storage.load(sessionId)).extensionRecords.filter(record => record.extensionId === 'kodax.script');
+      assert.ok(before.some(record => record.type === 'call.settled'));
+      await client.sessions.updateSettings(sessionId, { model: 'fixture-next' });
+      assert.equal((await client.sessions.getSettings(sessionId)).workMode, 'script');
+      await stop();
+      assert.notEqual(await connect(), firstHost);
+      assert.equal((await client.sessions.getSettings(sessionId)).workMode, 'script');
+      const after = (await storage.load(sessionId)).extensionRecords;
+      for (const record of before) assert.ok(after.some(saved => JSON.stringify(saved) === JSON.stringify(record)));
+      await complete(await run('restored', 'script', "await tools.read({path:'fixture.txt'});"));
+      assert.equal(active.requests[0].model, 'fixture-next');
+      assert.equal(await readFile(path.join(workspace, 'fixture.txt'), 'utf8'), 'RELEASE_VALUE=2\n');
+
+      const cancellationCode = "await tools.read({path:'fixture.txt'}); const end=Date.now()+5000; while(Date.now()<end) {} await tools.write({path:'cancel-probe.txt',content:'reachable'});";
+      const cancelled = await run('cancelled', 'script', cancellationCode);
+      await until(async () => (await storage.load(sessionId)).extensionRecords.some(record => record.type === 'call.settled' && record.data?.runId === cancelled.runId));
+      assert.equal((await client.runs.abort(cancelled.runId)).accepted, true);
+      assert.equal((await wait(cancelled.result)).phase, 'interrupted');
+      assert.equal(active.requests.length, 1);
+      await assert.rejects(readFile(path.join(workspace, 'cancel-probe.txt')), { code: 'ENOENT' });
+      cases.push({ name: 'cancelled', mode: 'script', primaryRequests: 1, phase: 'interrupted' });
+      // Identical code without cancellation reaches the write; absence above is not an unreachable-code tautology.
+      await complete(await run('cancel-control', 'script', cancellationCode));
+      assert.equal(await readFile(path.join(workspace, 'cancel-probe.txt'), 'utf8'), 'reachable');
+
+      active = { name: 'cli-override', mode: 'agent', requests: [] };
+      await cli(['-p', 'Check temporary Agent mode.', '--session', sessionId, '--work-mode', 'agent', '--effort', 'off']);
+      assert.equal(active.requests.length, 1);
+      assert.equal((await client.sessions.getSettings(sessionId)).workMode, 'script');
+      cases.push({ name: active.name, mode: active.mode, primaryRequests: 1 });
+      await client.sessions.updateSettings(sessionId, { workMode: null });
+      await complete(await run('cleared-default', 'coding'));
+      const worker = path.join(packageDir, 'script-worker.cjs');
+      await rename(worker, `${worker}.missing`);
+      try {
+        const requestCount = requests.length;
+        await assert.rejects(client.sessions.updateSettings(sessionId, { workMode: 'script' }), /Script executor unavailable/);
+        assert.equal((await client.sessions.getSettings(sessionId)).workMode ?? 'coding', 'coding');
+        assert.equal(requests.length, requestCount);
+      } finally { await rename(`${worker}.missing`, worker); }
+      assert.deepEqual(failures, []);
+      completedAssertions = true;
+    })());
   } catch (error) {
     failures.push(`Harness: ${String(error)}`);
     throw error;
   } finally {
+    phase('cleaning up fixture');
     release();
     try {
-      if (client) for (const item of await client.runs.list({})) {
-        if (!['completed', 'failed', 'interrupted'].includes(item.phase)) await client.runs.abort(item.runId);
+      const cleanupSignal = AbortSignal.timeout(20_000);
+      try {
+        if (client) for (const item of await wait(client.runs.list({}), cleanupSignal)) {
+          if (!['completed', 'failed', 'interrupted'].includes(item.phase)) {
+            await wait(client.runs.abort(item.runId), cleanupSignal);
+          }
+        }
+      } finally {
+        await stop();
       }
-      await stop();
+    } catch (error) {
+      failures.push(`Cleanup: ${String(error)}`);
+      throw error;
     } finally {
       server.closeAllConnections(); if (server.listening) await new Promise(resolve => server.close(resolve));
-      if (!completedAssertions && existsSync(path.join(configHome, 'runtime'))) {
-        await cp(path.join(configHome, 'runtime'), path.join(evidence, 'runtime'), { recursive: true });
-      }
       await writeFile(path.join(evidence, 'requests.json'), JSON.stringify(requests, null, 2));
       await writeFile(path.join(evidence, 'report.json'), JSON.stringify({ platform: process.platform, arch: process.arch,
         archiveSha256: createHash('sha256').update(await readFile(archive)).digest('hex'), cases, failures,
         primaryRequests: cases.reduce((sum, item) => sum + item.primaryRequests, 0), capturedRequests: requests.length,
         externalModelCalls: 0, completedAssertions }, null, 2));
-      t.diagnostic(`Offline release evidence: ${evidence}`);
+      process.stderr.write(`Offline release evidence: ${evidence}\n`);
+      if ((!completedAssertions || failures.length > 0) && existsSync(path.join(configHome, 'runtime'))) {
+        await cp(path.join(configHome, 'runtime'), path.join(evidence, 'runtime'), { recursive: true });
+      }
       if (path.dirname(root) !== temporary || !path.basename(root).startsWith('kodax-release-modes-')) throw new Error('Unsafe cleanup');
-      await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+      if (completedAssertions && failures.length === 0) {
+        await rm(root, { recursive: true, force: true, maxRetries: 2, retryDelay: 100 });
+      } else {
+        process.stderr.write(`Retained failed release fixture: ${root}\n`);
+      }
     }
   }
 });
