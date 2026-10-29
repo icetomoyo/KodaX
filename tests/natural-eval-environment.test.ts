@@ -105,9 +105,10 @@ it('allows reading an npm CLI installed outside the node binary directory', asyn
     const stagedRoot = path.join(directory, 'staged-install', 'npm').split(path.sep).join('/');
     expect(options).toContain(`--allow-fs-read=${JSON.stringify(stagedRoot)}`);
     // An npm next to the node binary must not widen the allowlist at all.
+    vi.stubEnv('npm_execpath', process.execPath);
     const localExecution = await prepareNaturalExecutionEnvironment(path.join(directory, 'workspace2'));
     const localOptions = localExecution.environment().NODE_OPTIONS ?? '';
-    expect(localOptions).not.toContain(path.join(directory, 'staged-install'));
+    expect(localOptions).not.toContain(stagedRoot);
   } finally {
     vi.unstubAllEnvs();
     if (path.dirname(directory) !== path.resolve(os.tmpdir()) || !path.basename(directory).startsWith('kodax-eval-environment-')) throw new Error('Unsafe cleanup');
