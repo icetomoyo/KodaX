@@ -3,17 +3,23 @@
 KodaX is distributed as **standalone binaries** built with `bun build --compile`.
 Target machines do **not** need Node.js or any runtime installed.
 
-## Unreleased source after alpha.10
+## v0.7.97-alpha.11 release preparation
 
-The source alignment through `b70d2d30` (2026-10-29) adds Session work modes,
-SDK original-output/task-report/interaction/streaming consistency and Windows
-startup/readiness fixes. The package version remains `0.7.97-alpha.10`; this
-section is not a publication record. Before a later release, verify the actual
-archive's Script runtime and SDK resources on each target platform and check
-the [SDK migration checklist](SDK_MIGRATION.md#2026-10-29-未发布改动对齐).
-Issue 371's remaining historical first-read latency and Script efficiency/model
-adoption limits remain explicit. Existing dated release records below describe
-their own artifacts, not this unreleased tree.
+Release state: `v0.7.97-alpha.11` is the GitHub pre-release for the exact
+tagged commit — the eleventh alpha of the v0.7.97 line, shipping the explicit
+Agent/Coding/Script work modes, the Ark/MiMo/MiniMax catalog refresh,
+question-outcome preservation with Host-owned deadlines, single-command Skill
+`Bash(pattern)` rules, MCP tool originals through `part: 'original'`,
+structured task reports in Product views, consistent streaming token
+estimates, and the Windows stale-process recovery / history cursor / sandbox
+startup capability fixes. The tag-triggered Release workflow runs the
+reusable CI workflow before the build matrix; branch pushes do not trigger
+it, while CI can also be dispatched manually. The eventual `-alpha` tag
+suffix marks the release as a GitHub pre-release automatically. npm registry
+publication remains a separate maintainer step. Issue 371's remaining
+historical first-read latency and Script efficiency/model adoption limits
+remain explicit. Existing dated release records below describe their own
+artifacts.
 
 ## Distribution layout
 

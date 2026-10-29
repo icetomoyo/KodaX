@@ -1,7 +1,7 @@
 # KodaX SDK — Product Client and Host Integration
 
 This page describes the current FEATURE_298/299/301 development tree, checked against
-package version `0.7.97-alpha.10`. The version alone does not claim that all current
+package version `0.7.97-alpha.11`. The version alone does not claim that all current
 working-tree changes are already published to npm. Check the installed
 package exports and the connected Host's capabilities when migrating.
 
@@ -30,9 +30,10 @@ objects, not alternate names for this contract.
 ### Post-alpha.10 SDK alignment
 
 The source audit through `b70d2d30` (2026-10-29) covers the changes after the
-`v0.7.97-alpha.10` tag. These additions are unreleased; the unchanged package
-version does not establish that an installed SDK or a running Host supports them.
-See the [migration checklist](../../docs/SDK_MIGRATION.md#2026-10-29-未发布改动对齐).
+`v0.7.97-alpha.10` tag; they shipped in the `v0.7.97-alpha.11` tag. The
+package version alone does not establish that an installed SDK or a running
+Host supports them. See the
+[migration checklist](../../docs/SDK_MIGRATION.md#2026-10-29-未发布改动对齐).
 
 Set `client.sessions.updateSettings(sessionId, { workMode: 'coding' })` to choose
 a Session work surface; accepted values are `agent`, `coding` and `script`.

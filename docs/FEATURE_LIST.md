@@ -11,8 +11,8 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-alpha.10` (Git tag); `v0.7.96` remains the last stable release; subsequent changes are unreleased |
-| Current package version | `@kodax-ai/kodax@0.7.97-alpha.10` (npm publication remains manual) |
+| Current released version | `v0.7.97-alpha.11` (Git tag); `v0.7.96` remains the last stable release; subsequent changes are unreleased |
+| Current package version | `@kodax-ai/kodax@0.7.97-alpha.11` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 core packages + private optional `artifacts` source workspace; one public npm package |
 | Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3` and extended with startup streamlining, Session recency ordering, draft admission, concurrent-launch recovery and shared-Session Host ownership resolution through `v0.7.97-alpha.7`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement released in alpha.4; missing visual capabilities remain unverified; [design](ADR.md#verification-responsibility-and-tradeoffs) |
@@ -524,6 +524,22 @@
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
 ---
+
+## v0.7.97-alpha.11 Release Record
+
+`v0.7.97-alpha.11` is the eleventh alpha of the v0.7.97 line: explicit
+Agent, Coding and experimental Script work modes land through the CLI,
+`/work-mode` and managed SDK/Session paths with Coding as the default;
+Ark, MiMo and MiniMax catalogs refresh their reasoning/capacity metadata;
+non-interactive question outcomes are preserved with Host-owned deadlines;
+Skill `Bash(pattern)` rules admit a single parsed command; MCP tool
+originals stay readable through `part: 'original'`; structured task reports
+project into Product views and recovered history; streaming progress shows
+consistent estimated tokens; Windows stale-process recovery and
+history-browsing cursor resync are corrected and sandbox filesystem
+capabilities are validated at startup. Every v0.7.96 stable and
+v0.7.97-alpha.1 through alpha.10 contract is retained. Cross-platform
+manual acceptance and npm publication remain manual maintainer steps.
 
 ## v0.7.97-alpha.10 Release Record
 

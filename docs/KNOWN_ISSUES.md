@@ -33,7 +33,7 @@ resolution evidence is retained. Issues 345–347 are unchanged.
 - Status: Resolved
 - Introduced: observed on aeb16fef; first affected version unknown
 - Created / Resolved: 2026-10-29
-- Fixed: post-v0.7.97-alpha.10 working tree (unreleased)
+- Fixed: `v0.7.97-alpha.11`
 
 `Bash(git diff *)` matched an entire compound command, so a second command
 could escape the Skill's narrower restriction. Host authorization and sandbox
@@ -51,7 +51,7 @@ omitted restrictions retain Host authorization. See the
 - Status: Resolved
 - Introduced: observed on aeb16fef; first affected version unknown
 - Created / Resolved: 2026-10-29
-- Fixed: post-v0.7.97-alpha.10 working tree (unreleased)
+- Fixed: `v0.7.97-alpha.11`
 
 The REPL flattened `non_interactive` into an ordinary skip; the daemon SDK
 facade could submit a timeout object as a question answer. Question, multi-question
@@ -67,7 +67,7 @@ Permission decisions and cancel/stop behavior are unchanged. See the
 - Status: Resolved
 - Introduced: observed in v0.7.97-alpha.10; first affected version unknown
 - Created / Resolved: 2026-10-29
-- Fixed: post-v0.7.97-alpha.10 working tree (unreleased)
+- Fixed: `v0.7.97-alpha.11`
 
 ### Original Problem
 
@@ -103,7 +103,7 @@ Issue 371's un-attributed historical first-read latency.
 - Status: Resolved
 - Introduced: observed in v0.7.97-alpha.10; first affected version unknown
 - Created / Resolved: 2026-10-29 (original incident 2026-10-28)
-- Fixed: post-v0.7.97-alpha.10 working tree (unreleased)
+- Fixed: `v0.7.97-alpha.11`
 
 ### Original Problem
 
@@ -165,7 +165,7 @@ acceptance. Issue 371 now has a confirmed startup-recovery fix; its historical
 - Status: Open (startup recovery fixed; historical first-read delay not attributed)
 - Introduced: observed in v0.7.97-alpha.10 at `ec442c75`; first affected version unknown
 - Created: 2026-10-28
-- Fixed: startup recovery only, post-v0.7.97-alpha.10 working tree (unreleased)
+- Fixed: startup recovery only, `v0.7.97-alpha.11`
 
 ### Original Problem
 
@@ -235,7 +235,7 @@ in ADR's v0.7.97-alpha.4 addendum.
 - Status: Resolved
 - Introduced: observed in v0.7.97-alpha.10 at `ec442c75`; first affected version unknown
 - Created / Resolved: 2026-10-28
-- Fixed: post-v0.7.97-alpha.10 working tree (unreleased)
+- Fixed: `v0.7.97-alpha.11`
 
 ### Original Problem
 
@@ -2106,12 +2106,12 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 375 | High | Resolved | Constrained Skill shell patterns admit extra effects | observed on aeb16fef; first affected version unknown | post-alpha.10 working tree (unreleased) | 2026-10-29 | 2026-10-29 |
-| 374 | Medium | Resolved | Client question adapters lose unanswered semantics | observed on aeb16fef; first affected version unknown | post-alpha.10 working tree (unreleased) | 2026-10-29 | 2026-10-29 |
-| 373 | Low | Resolved | Streaming progress mixes character and token units | observed in v0.7.97-alpha.10; first affected version unknown | post-alpha.10 working tree (unreleased) | 2026-10-29 | 2026-10-29 |
-| 372 | Medium | Resolved | Windows setup readiness misses filesystem capability failures seen by a console Host | observed in v0.7.97-alpha.10; first affected version unknown | post-alpha.10 working tree (unreleased) | 2026-10-29 | 2026-10-29 |
-| 371 | Medium | Open | Intermittent slow shared Host startup and first Session read | observed in v0.7.97-alpha.10; first affected version unknown | startup recovery only: post-alpha.10 working tree (unreleased) | 2026-10-28 | — |
-| 370 | Medium | Resolved | Long history wheel navigation cannot return after a saved revision changes | observed in v0.7.97-alpha.10; first affected version unknown | post-alpha.10 working tree (unreleased) | 2026-10-28 | 2026-10-28 |
+| 375 | High | Resolved | Constrained Skill shell patterns admit extra effects | observed on aeb16fef; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
+| 374 | Medium | Resolved | Client question adapters lose unanswered semantics | observed on aeb16fef; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
+| 373 | Low | Resolved | Streaming progress mixes character and token units | observed in v0.7.97-alpha.10; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
+| 372 | Medium | Resolved | Windows setup readiness misses filesystem capability failures seen by a console Host | observed in v0.7.97-alpha.10; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
+| 371 | Medium | Open | Intermittent slow shared Host startup and first Session read | observed in v0.7.97-alpha.10; first affected version unknown | startup recovery only: `v0.7.97-alpha.11` | 2026-10-28 | — |
+| 370 | Medium | Resolved | Long history wheel navigation cannot return after a saved revision changes | observed in v0.7.97-alpha.10; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-28 | 2026-10-28 |
 | 369 | High | Resolved | Concurrent resume launchers fail while refreshing an older Host | observed in v0.7.97-alpha.5; first affected version unknown | `v0.7.97-alpha.6` | 2026-10-15 | 2026-10-15 |
 | 368 | Medium | Resolved | Unsubmitted REPL Sessions leave empty persisted history | v0.7.97-alpha.1; Host migration commits 3301a452 / 0914f589 | `v0.7.97-alpha.6` | 2026-10-14 | 2026-10-14 |
 | 367 | Medium | Resolved | Daemon preflight repeatedly scans during an in-flight mutation | observed in v0.7.97-alpha.4; first affected version unknown | `v0.7.97-alpha.5` | 2026-10-13 | 2026-10-13 |

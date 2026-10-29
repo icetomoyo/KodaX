@@ -45,9 +45,8 @@ choice. SDK/Host paths now share the corresponding settings, question outcomes,
 saved original tool reads, structured task reports and estimated-token progress.
 See the [SDK alignment and migration checklist](docs/SDK_MIGRATION.md#2026-10-29-未发布改动对齐)
 and [English integration guide](public_docs/sdk/embedder-guide.md#post-alpha10-sdk-alignment).
-The package remains `0.7.97-alpha.10`; these source additions do not imply a new
-publication or an external client's upgrade. Issue 371's historical first-read
-latency and Script model-efficiency acceptance remain open.
+These source additions shipped in the `v0.7.97-alpha.11` tag. Issue 371's
+historical first-read latency and Script model-efficiency acceptance remain open.
 
 ## Install in 30 seconds
 
@@ -806,6 +805,23 @@ starts, upgrades, or waits. See
 [docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) and the
 [v0.7.97-alpha.4 release notes](docs/release.md#v0797-alpha4-release-preparation).
 Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2/alpha.3 contract is
+retained.
+
+**v0.7.97-alpha.11 release:** Explicit Agent, Coding and experimental Script
+work modes land through the CLI, `/work-mode` and managed SDK/Session paths —
+Coding stays the default and Script runs supported leaf tools through the
+existing permission and receipt boundaries. Ark, MiMo and MiniMax catalogs
+refresh their reasoning and capacity metadata; non-interactive question
+outcomes are preserved with Host-owned deadlines; Skill `Bash(pattern)` rules
+admit a single parsed command; MCP tool originals stay readable through
+`part: 'original'` across daemon IPC and Host restart; structured task reports
+project into Product live views and recovered history; streaming progress
+shows consistent estimated tokens; Windows stale-process recovery and
+history-browsing cursor resync are corrected and sandbox filesystem
+capabilities are validated at startup. Tagging and publication remain
+separate. See the
+[v0.7.97-alpha.11 release notes](docs/release.md#v0797-alpha11-release-preparation).
+Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.10 contract is
 retained.
 
 **v0.7.97-alpha.10 release:** Checkpointed Runs and task trees resume after
@@ -2140,7 +2156,7 @@ This development tree exposes 17 SDK subpaths plus the root. Shared product
 applications use `@kodax-ai/kodax/client`; independent libraries and trusted Host
 APIs remain available through the other subpaths. See the [Client contract](docs/CLIENT_CONTRACT.md)
 and [SDK migration guide](docs/SDK_MIGRATION.md). This documentation was checked
-against package version `0.7.97-alpha.10`; npm publication is separate from
+against package version `0.7.97-alpha.11`; npm publication is separate from
 the current development-tree contract.
 
 ```bash

@@ -2,7 +2,19 @@
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
 
-> Last updated: 2026-10-18
+> Last updated: 2026-10-29
+>
+> **v0.7.97-alpha.11 release addendum:** explicit Agent, Coding and
+> experimental Script work modes land through the CLI, `/work-mode` and
+> managed SDK/Session paths — Coding stays the default and Script runs
+> supported leaf tools through the existing permission and receipt
+> boundaries; Ark/MiMo/MiniMax catalogs refresh; non-interactive question
+> outcomes are preserved with Host-owned deadlines; Skill `Bash(pattern)`
+> rules admit a single parsed command; MCP tool originals stay readable
+> through `part: 'original'`; structured task reports project into Product
+> views and recovered history; streaming token estimates are consistent.
+> Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.10 contract is
+> retained.
 >
 > **v0.7.97-alpha.10 release addendum:** checkpointed Runs and task trees
 > resume after Host restart with fresh scoped authority on top of the

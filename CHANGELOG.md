@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-alpha.11] - 2026-10-29
+
 ### Added
 
 - Add explicit Agent, Coding and experimental Script work modes through the

@@ -43,7 +43,7 @@ CLI 使用 `--work-mode`，REPL 使用 `/work-mode`，Product Client 使用 Sess
 `workMode`；它与权限、模型选择独立。SDK/Host 的相关设置、问题结算、工具原文读取、
 结构化任务报告和 token 估算进度已接入对应契约，见
 [SDK 一致性与迁移清单](docs/SDK_MIGRATION.md#2026-10-29-未发布改动对齐)。
-包版本仍为 `0.7.97-alpha.10`，不表示这些源码变更已发布或外部客户端已升级。
+这些源码变更已随 `v0.7.97-alpha.11` 标签发布。
 Issue 371 的历史首次读取延迟及 Script 模型效率验收仍未关闭。
 
 ## 30 秒上手
@@ -323,6 +323,17 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 详见 [docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) 与
 [v0.7.97-alpha.4 发布清单](docs/release.md#v0797-alpha4-release-preparation)。
 所有 v0.7.96 稳定与 v0.7.97-alpha.1/alpha.2/alpha.3 契约全部保留。
+
+**v0.7.97-alpha.11 发布**：显式 Agent、Coding 与实验性 Script 工作模式通过
+CLI、`/work-mode` 与托管 SDK/Session 路径落地——Coding 保持默认，Script 在既有
+权限与回执边界内执行受支持的叶子工具。Ark、MiMo、MiniMax 目录刷新推理与容量
+元数据；非交互问题结算保留结果且截止期限由 Host 掌握;Skill `Bash(pattern)`
+规则仅放行单条解析命令;MCP 工具原文经 `part: 'original'` 跨 daemon IPC 与
+Host 重启可读;结构化任务报告投影到 Product 视图与恢复历史;流式进度统一以
+token 估算展示;修正 Windows 陈旧进程恢复与历史浏览游标重同步，启动时校验
+沙箱文件系统能力。代码提交、版本标签与实际发布分别判断。
+详见 [v0.7.97-alpha.11 发布清单](docs/release.md#v0797-alpha11-release-preparation)。
+所有 v0.7.96 稳定与 v0.7.97-alpha.1 至 alpha.10 契约全部保留。
 
 **v0.7.97-alpha.10 发布**：Host 重启后可恢复检查点 Run 与任务树(全新作用域
 授权);上下文容量恢复到达持久代边界;Kimi K3.1 供应商路由覆盖全部七档
