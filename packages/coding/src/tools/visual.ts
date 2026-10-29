@@ -1,6 +1,7 @@
 import { executeVisualTool, getModelInputCapabilities, VISUAL_TOOL_DEFINITIONS } from '@kodax-ai/agent/media';
 import { resolveProvider } from '@kodax-ai/llm';
 import type { LocalToolDefinition } from './types.js';
+import { getToolResultAdmissionLimits } from './tool-result-policy.js';
 
 export const VISUAL_CODING_TOOLS: LocalToolDefinition[] = VISUAL_TOOL_DEFINITIONS.map(definition => ({
   ...definition, sideEffect: 'readonly', toClassifierInput: () => '',
@@ -15,6 +16,12 @@ export const VISUAL_CODING_TOOLS: LocalToolDefinition[] = VISUAL_TOOL_DEFINITION
       }
     }
     return (await executeVisualTool(definition.name, input, { owner: ctx.visualObservationOwner,
-      reserveOutput: ctx.reserveVisualOutput, signal: ctx.abortSignal })).content;
+      reserveOutput: (tokens, textBytes) => {
+        const limits = getToolResultAdmissionLimits(definition.name);
+        if (textBytes !== undefined && (textBytes > limits.maxBytes || tokens > limits.perEntryTokens)) {
+          throw new Error('Pixel output exceeds final result admission; request fewer samples or views.');
+        }
+        return ctx.reserveVisualOutput!(tokens);
+      }, signal: ctx.abortSignal })).content;
   },
 }));

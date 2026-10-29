@@ -55,6 +55,24 @@ export function validateVisualDisplay(view: { region?: unknown; displayLongEdge?
 
 interface DecodedRaster { width: number; height: number; data: Buffer }
 interface DerivedRaster { bytes: Buffer; region: VisualRegion; width: number; height: number; profile: string; resampling: 'nearest' }
+export interface SampledRaster {
+  region: VisualRegion; rows: number; columns: number; sampleX: number[]; sampleY: number[]; rgba: number[][];
+}
+
+export function validateVisualPixels(view: { region?: unknown; rows?: unknown; columns?: unknown }, dimensions: { width: number; height: number }) {
+  if (view.region === undefined) throw new Error('Pixel sampling requires a region in original raster pixels.');
+  const region = validateRegion(view.region, dimensions);
+  const { rows, columns } = view;
+  if (!Number.isSafeInteger(rows) || !Number.isSafeInteger(columns) || Number(rows) < 1 || Number(columns) < 1
+    || Number(rows) > region.height || Number(columns) > region.width) throw new Error('rows/columns must be positive integers no greater than the region height/width.');
+  return { region, rows: Number(rows), columns: Number(columns) };
+}
+
+export function validateVisualSampleCount(plans: readonly { rows: number; columns: number }[]): number {
+  const total = plans.reduce((sum, plan) => sum + plan.rows * plan.columns, 0);
+  if (total > 4096) throw new Error('Pixel sampling exceeds the 4096 total-sample limit.');
+  return total;
+}
 
 async function withRaster<T>(bytes: Buffer, dimensions: { width: number; height: number }, owner: object,
   signal: AbortSignal | undefined, work: (raster: DecodedRaster) => Promise<T>): Promise<T> {
@@ -90,6 +108,23 @@ export async function deriveVisualRasters(bytes: Buffer, views: readonly { regio
   });
 }
 
+export async function sampleVisualRasters(bytes: Buffer, views: readonly { region?: unknown; rows?: unknown; columns?: unknown }[], owner: object,
+  publish: (index: number, result: SampledRaster) => Promise<void>, signal?: AbortSignal): Promise<void> {
+  const dimensions = sourceRaster(bytes);
+  const plans = views.map(view => validateVisualPixels(view, dimensions));
+  validateVisualSampleCount(plans);
+  return withRaster(bytes, dimensions, owner, signal, async source => {
+    for (const [index, plan] of plans.entries()) {
+      signal?.throwIfAborted();
+      const { region, rows, columns } = plan;
+      const sampleX = Array.from({ length: columns }, (_, column) => region.x + Math.floor((column + 0.5) * region.width / columns));
+      const sampleY = Array.from({ length: rows }, (_, row) => region.y + Math.floor((row + 0.5) * region.height / rows));
+      const rgba = sampleY.flatMap(y => sampleX.map(x => [...source.data.subarray((y * source.width + x) * 4, (y * source.width + x) * 4 + 4)]));
+      await publish(index, { ...plan, sampleX, sampleY, rgba });
+    }
+  });
+}
+
 async function encodeRaster(source: DecodedRaster, { region, width, height }: { region: VisualRegion; width: number; height: number },
   signal?: AbortSignal): Promise<DerivedRaster> {
   signal?.throwIfAborted();
@@ -113,6 +148,7 @@ function validateRegion(value: unknown, dimensions: { width: number; height: num
   if (value === undefined) return { x: 0, y: 0, ...dimensions };
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('region must contain integer x/y/width/height in original raster pixels.');
   const region = value as Record<string, unknown>;
+  if (Object.keys(region).some(key => !['x', 'y', 'width', 'height'].includes(key))) throw new Error('region only supports x/y/width/height.');
   for (const key of ['x', 'y', 'width', 'height']) if (!Number.isInteger(region[key])) throw new Error('region coordinates must be integers.');
   const { x, y, width, height } = region as unknown as VisualRegion;
   if (x < 0 || y < 0 || width <= 0 || height <= 0 || x + width > dimensions.width || y + height > dimensions.height) {

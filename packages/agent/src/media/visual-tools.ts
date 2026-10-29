@@ -6,14 +6,20 @@ import { visualObservationImage, type VisualObservation, type VisualObservationO
 import { visualObservationLabel } from './visual-observations.js';
 import { countTokens } from '../tokenizer.js';
 
+const regionSchema = { type: 'object', properties: { x: { type: 'integer', minimum: 0 }, y: { type: 'integer', minimum: 0 }, width: { type: 'integer', minimum: 1 }, height: { type: 'integer', minimum: 1 } }, required: ['x', 'y', 'width', 'height'], additionalProperties: false };
+const viewProperties = { label: { type: 'string', minLength: 1 }, observationId: { type: 'string' }, region: regionSchema };
+
 export const VISUAL_TOOL_DEFINITIONS: readonly KodaXToolDefinition[] = [
   { name: 'visual_history', description: 'List a bounded recent page of accepted historical images. Reuse the returned cursor with the same source filter; new observations appear in a new query.',
     input_schema: { type: 'object', properties: { sourceKey: { type: 'string' }, cursor: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 50 } } } },
   { name: 'visual_inspect', description: 'Inspect 1–4 accepted images or regions in request order, using original raster pixels (integer x/y/width/height, half-open). Optionally enlarge with displayLongEdge, preserving aspect ratio using nearest neighbor. Derived views support static 8-bit RGB/RGBA PNG without orientation/color transforms. State the question and label each view. Per-view failures mark the result partial. Historical evidence leaves source history unchanged and does not verify the current source.',
     input_schema: { type: 'object', properties: { question: { type: 'string', minLength: 1 }, views: { type: 'array', minItems: 1, maxItems: 4,
-      items: { type: 'object', properties: { label: { type: 'string', minLength: 1 }, observationId: { type: 'string' },
-        region: { type: 'object', properties: { x: { type: 'integer', minimum: 0 }, y: { type: 'integer', minimum: 0 }, width: { type: 'integer', minimum: 1 }, height: { type: 'integer', minimum: 1 } }, required: ['x', 'y', 'width', 'height'], additionalProperties: false },
+      items: { type: 'object', properties: { ...viewProperties,
         displayLongEdge: { type: 'integer', minimum: 1, maximum: MAX_DIMENSION } }, required: ['label', 'observationId'], additionalProperties: false } } }, required: ['question', 'views'] } },
+  { name: 'visual_read_pixels', description: 'Sample original raster pixels from 1–4 ordered historical regions, at equal-grid cell centers. Specify question, label, region, rows and columns; grid counts cannot exceed region dimensions or 4096 samples across the entire call. Returns original sampleX/sampleY axes, row-major indices into one exact 8-bit RGBA palette, preserving alpha without quantization. Uses the same strict PNG profile as visual_inspect. Per-view failures are explicit; samples do not prove unsampled details or verify the current source. Returns text only, no image or second model.',
+    input_schema: { type: 'object', properties: { question: { type: 'string', minLength: 1 }, views: { type: 'array', minItems: 1, maxItems: 4,
+      items: { type: 'object', properties: { ...viewProperties, rows: { type: 'integer', minimum: 1, maximum: 4096 }, columns: { type: 'integer', minimum: 1, maximum: 4096 } },
+        required: ['label', 'observationId', 'region', 'rows', 'columns'], additionalProperties: false } } }, required: ['question', 'views'] } },
 ];
 export const VISUAL_TOOL_NAMES: ReadonlySet<string> = new Set(VISUAL_TOOL_DEFINITIONS.map(tool => tool.name));
 
@@ -21,12 +27,12 @@ export interface VisualOutputReservation { cancel(): void }
 export interface VisualToolBinding {
   readonly owner: VisualObservationOwner;
   /** Successful output stays reserved until the capacity owner settles the complete batch. */
-  readonly reserveOutput: (tokens: number) => VisualOutputReservation;
+  readonly reserveOutput: (tokens: number, textBytes?: number) => VisualOutputReservation;
   readonly signal?: AbortSignal;
 }
 
 interface HistoryCursor { ownerId: string; scope: string; sourceKey?: string; upper: string; before: string }
-interface VisualSelection { index: number; view: { label: string; region?: unknown; displayLongEdge?: unknown }; observation: VisualObservation }
+interface VisualSelection { index: number; view: { label: string; region?: unknown; displayLongEdge?: unknown; rows?: unknown; columns?: unknown }; observation: VisualObservation }
 interface VisualInspection {
   question: string; binding: VisualToolBinding;
   results: (readonly KodaXToolResultContentItem[])[]; failures: Map<number, string>;
@@ -36,7 +42,7 @@ export async function executeVisualTool(name: string, input: Record<string, unkn
   try {
     binding.signal?.throwIfAborted();
     if (name === 'visual_history') return { content: JSON.stringify(await history(input, binding.owner)) };
-    if (name !== 'visual_inspect') throw new Error('Unknown visual tool.');
+    if (name !== 'visual_inspect' && name !== 'visual_read_pixels') throw new Error('Unknown visual tool.');
     if (typeof input.question !== 'string' || !input.question.trim() || input.question.length > 1000
       || !Array.isArray(input.views) || input.views.length < 1 || input.views.length > 4) throw new Error('Provide a question and 1–4 views.');
     const observations = await binding.owner.list();
@@ -44,11 +50,12 @@ export async function executeVisualTool(name: string, input: Record<string, unkn
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Each view must be an object.');
       const view = value as Record<string, unknown>;
       if (typeof view.label !== 'string' || !view.label.trim() || view.label.length > 200 || typeof view.observationId !== 'string'
-        || Object.keys(view).some(key => !['label', 'observationId', 'region', 'displayLongEdge'].includes(key))) throw new Error('Each view requires label and observationId with optional region/displayLongEdge.');
+        || Object.keys(view).some(key => !(name === 'visual_inspect' ? ['label', 'observationId', 'region', 'displayLongEdge'] : ['label', 'observationId', 'region', 'rows', 'columns']).includes(key))) throw new Error('Each view requires label and observationId with valid inspection or pixel parameters.');
       const observation = observations.find(item => item.observationId === view.observationId);
       if (!observation) throw new Error('Visual observation unavailable or access denied.');
       return { index, view: view as VisualSelection['view'], observation };
     });
+    if (name === 'visual_read_pixels') return await sampleViews(input.question, selections, binding);
     const { validateVisualDisplay } = await import('./visual-raster.js');
     for (const { view, observation } of selections) if (view.region !== undefined || view.displayLongEdge !== undefined) {
       validateVisualDisplay(view, { width: observation.width ?? Number.MAX_SAFE_INTEGER, height: observation.height ?? Number.MAX_SAFE_INTEGER });
@@ -57,6 +64,51 @@ export async function executeVisualTool(name: string, input: Record<string, unkn
   } catch (error) {
     return { content: `[Tool Error] ${name}: ${error instanceof Error ? error.message : String(error)}`, isError: true };
   }
+}
+
+async function sampleViews(question: string, selections: readonly VisualSelection[], binding: VisualToolBinding): Promise<RunnerToolResult> {
+  const { validateVisualPixels, validateVisualSampleCount, sampleVisualRasters, VISUAL_RASTER_PROFILE } = await import('./visual-raster.js');
+  const plans = selections.map(({ view, observation }) => validateVisualPixels(view,
+    { width: observation.width ?? Number.MAX_SAFE_INTEGER, height: observation.height ?? Number.MAX_SAFE_INTEGER }));
+  const total = validateVisualSampleCount(plans);
+  const metadata = selections.map((item, index) => ({ label: item.view.label, observationId: item.observation.observationId,
+    source: visualObservationLabel(item.observation), ...plans[index]! }));
+  const bound = JSON.stringify({ status: 'partial', profile: VISUAL_RASTER_PROFILE, question,
+    palette: Array.from({ length: total }, () => [255, 255, 255, 255]), views: metadata.map(item => ({ ...item,
+      sampleX: Array(item.columns).fill(item.region.x + item.region.width - 1), sampleY: Array(item.rows).fill(item.region.y + item.region.height - 1),
+      indices: Array.from({ length: item.rows }, () => Array(item.columns).fill(total - 1)), error: '\0'.repeat(500) })) });
+  const capacity = countTokens(bound) + 64;
+  const reservation = binding.reserveOutput(capacity, Buffer.byteLength(bound, 'utf8') + 64);
+  const sampled = new Map<number, import('./visual-raster.js').SampledRaster>();
+  const errors = new Map<number, string>();
+  const groups = new Map<string, VisualSelection[]>();
+  for (const item of selections) groups.set(item.observation.sha256, [...groups.get(item.observation.sha256) ?? [], item]);
+  for (const group of groups.values()) {
+    try {
+      binding.signal?.throwIfAborted();
+      const bytes = await binding.owner.read(group[0]!.observation);
+      await sampleVisualRasters(bytes, group.map(item => item.view), binding.owner,
+        async (index, result) => { sampled.set(group[index]!.index, result); }, binding.signal);
+    } catch (error) {
+      for (const item of group) if (!sampled.has(item.index)) errors.set(item.index, (error instanceof Error ? error.message : String(error)).slice(0, 500));
+    }
+  }
+  const palette: number[][] = []; const colorIndices = new Map<string, number>();
+  const views = metadata.map((item, index) => {
+    const raster = sampled.get(index);
+    if (!raster) return { ...item, status: 'error', error: errors.get(index) };
+    const indices = raster.rgba.map(rgba => {
+      const color = rgba.join(','); let paletteIndex = colorIndices.get(color);
+      if (paletteIndex === undefined) { paletteIndex = palette.length; colorIndices.set(color, paletteIndex); palette.push(rgba); }
+      return paletteIndex;
+    });
+    return { ...item, status: 'complete', sampleX: raster.sampleX, sampleY: raster.sampleY,
+      indices: Array.from({ length: item.rows }, (_, row) => indices.slice(row * item.columns, (row + 1) * item.columns)) };
+  });
+  const content = JSON.stringify({ status: errors.size === selections.length ? 'error' : errors.size ? 'partial' : 'complete', profile: VISUAL_RASTER_PROFILE, question, palette, views });
+  if (errors.size === selections.length) { reservation.cancel(); binding.reserveOutput(countTokens(content) + 16); }
+  if (countTokens(content) > capacity) throw new Error('Pixel output exceeds its preflight estimate.');
+  return { content, ...(errors.size ? { isError: true } : {}) };
 }
 
 async function inspectViews(question: string, selections: readonly VisualSelection[], binding: VisualToolBinding): Promise<RunnerToolResult> {

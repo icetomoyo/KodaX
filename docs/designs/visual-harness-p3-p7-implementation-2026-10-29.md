@@ -5,7 +5,7 @@
 | 切片 | 状态 | 本片交付范围 |
 | --- | --- | --- |
 | P3a | 已实现并定向验证 | 1–4 个有序 view；同原件复用解码；整次生成前预留；有序 partial |
-| P3b | 待实施 | 格心 RGBA、精确调色板、全调用 4096 样本；文本路由 |
+| P3b | 已实现并定向验证 | 格心 RGBA、精确调色板、全调用 4096 样本；文本路由 |
 | P4 | 待实施 | 排队/steer/redirect 接纳、fork 复制/隔离、重复压缩及生命周期 |
 | P6 | 待实施 | 一个经生产装配的受控动态消费者；动作事实与 current 时效 |
 | P5 | 待实施 | 先评估 MCP typed-image；Artifact/额外 Host/standalone 未声明支持 |
@@ -38,6 +38,34 @@ TDD：三 view/重复观察测试先因“只支持一个 view”RED；最小实
 ### Spec
 
 独立只读审查初次发现 2 项（晚取消、全失败顺序），均经上述 RED→GREEN 修复；复核 **0 项剩余发现**。生产 prepared-image scope、同源单次解码、逐源内存及已修 IHDR 预检均保留。像素工具仍属下一片 P3b，不将 P3a 标成完整 P3。
+
+## P3b：格心数值采样
+
+`visual_read_pixels` 接受 question 与 1–4 个有序 view，每项指定 label/observationId/region/rows/columns。region 为原 raster 整数半开区间；rows/columns 为正整数、不超过选区尺寸；所有 view 合计不超过 4096 样本。工具与底层共用 `validateVisualSampleCount`，不是每个 view 分别享有 4096。
+
+返回纯文本 JSON，含 complete/partial/error、统一 profile、每项来源标签、原 region 和 sampleX/sampleY 坐标轴。采样点分别为 `x+floor((c+0.5)*width/columns)`、`y+floor((r+0.5)*height/rows)`；indices 为行优先二维整数矩阵，引用一次调用内按请求顺序建立的精确 RGBA palette。alpha 原样保留，不量化、不合成背景、不设 64 色上限；这些值只代表声明的解码 raster，不证明未采样细节或物理色彩。
+
+沿 P3a 的严格 PNG/IHDR/CRC/位深/方向/40 MP 预检与同一 decoder 槽。一次调用按原件 hash 分组，逐源单次解码，完成项及时记录；坏源或取消只使对应未完成项失败。全失败释放大结果预留后，按实际错误文本重新预留；partial 的完整预留保留到既有批次结算。不返回图片、不编码展示图、不调用第二模型，也不将检查结果新接纳为来源观察。
+
+预留依据是所有坐标、最坏精确调色板/索引、实际标签、question 和有界错误包装的 JSON 上界，同时提供 token/文本字节估计，不用 1500/图估算数值表。coding adapter 在解码前读取原 `tool-result-policy` 的字节及 per-entry attention 上限；视觉兄弟调用共享其 batch attention 与物理剩余容量。未扩大现有策略上限、不绕开最终 pairing/spill/capacityDebt。4096 是工作量上限，不承诺每个达到上限的请求都能容纳；例如生产 40 KiB 策略下预估大表先明确拒绝，要求减采样。standalone owner 仍负责注入自己的额度，既有只接受 token 参数的 callback 保持兼容，可同时消费新增可选的 textBytes 提示。
+
+TDD：真实公共工具缺失先 RED，随后用手写 3×2 RGBA 真值验证格心坐标、透明/半透明和跨 view 精确调色板。2048 色表在最终策略会 spill 的生产工具反例先 RED，再改为解码前拒绝；未识别的 region 字段也先 RED，再按既有 schema 拒绝。16 项像素回归覆盖超过 64 种颜色、全调用超 4096/恰好 4096、网格越界、预留不足、坏 IHDR/CRC/16-bit、hash mismatch 有序 partial、后续来源取消与已完成值保留。纯文本 provider 的公共 coding 工具仍能返回数值结果，图片 gate 仅用于 inspect。
+
+支持矩阵：Agent/Coding/Script × OpenAI/Anthropic × native/checked bridge 的 12 格真实 Runtime 进一步验证数值 JSON 完整、palette/indices 正确且未被截断；Script 叶白名单未增加。纯文本 provider 验证限于公共 coding 工具 wrapper，不据此宣称所有 CLI/provider 或图片上传路径已支持。JPEG 等既有上传/全图保留，派生/数值仍限声明 PNG profile。
+
+最终定向验证：7 文件 **70 项通过**；另跑既有 policy/budget/Runner batch/wiring 与像素回归共 5 文件 **83 项通过**（两组有重叠，不相加）。`npm run typecheck`、`npm run build` 通过。覆盖实际报告范围为 visual-raster/visual-tools/coding visual 三模块：语句 **94.70%**、分支 **89.47%**、函数 **97.05%**、行 **99.20%**；不是全仓覆盖。raw 为 OS Temp `kodax-visual-p3b-final-coverage-20261029`。CLI 5,138 KiB、bootstrap 4,042 bytes，体积门槛/依赖守卫未改，14 SDK 声明检查通过。
+
+完整字段成本见同一[逐片证据](visual-harness-p3-p7-costs.json)的 `p3b-pixels`：32 格实际离线捕获 raw 为 OS Temp `kodax-first-turn-wire-RuZNsN`；24 个未装配 owner 的 SDK 格 hash 不变。三工作面 OpenAI 当前为 Agent **11,791**、Coding **15,423**、Script **17,293**；相对 `30310e00` 增加 **365/366/366**，相对 P0 均累计增加 **748**。Anthropic 为 **11,546/15,048/17,128**，相对 `30310e00` 均增加 **358**，相对 P0 均累计增加 **726**。这是新合同实测的本地估算，不是 API usage、计费、全任务收益或模型智能提升。
+
+compiled public media 暖 codec 单样本复用上述 3×2、83-byte 原件：三次格心选择产生两色 palette、无 image block，数值 JSON 1,375 bytes；解码一次约 20.96 ms，无图片编码，工具总计约 25.38 ms。raw/复现位于 OS Temp `kodax-visual-profile-MLS88C`，样本 JSON hash 为 `0c343d11b924ac1eefdd9f62ae62b8dacdf550ea2a4dee5385b0d0ca3dda28fe`。含运行时观察 ID/时刻，不拿它作跨次字节相等或速度收益结论。
+
+### Standards
+
+独立审查无硬违反；1 项重复样本上限规则判断已集中到共用校验，复核 **0 项剩余发现**。
+
+### Spec
+
+独立只读审查 **0 项发现**。数值路由、整次资源上界、原坐标/alpha/调色板、顺序与失败结算均符合本片要求；行为与在线验证仍未执行。
 
 ## 持续保留的失败与未验证范围
 

@@ -157,6 +157,13 @@ export function getToolResultPolicy(toolName: string): ToolResultPolicy {
   return TOOL_RESULT_POLICIES[toolName] ?? DEFAULT_POLICY;
 }
 
+/** Preflight uses the same final admission owner; no separate visual budget. */
+export function getToolResultAdmissionLimits(toolName: string): { maxBytes: number; perEntryTokens: number; batchTokens: number } {
+  return { maxBytes: getToolResultPolicy(toolName).maxBytes,
+    perEntryTokens: TOOL_RESULT_PER_ENTRY_ATTENTION_TOKENS - TOOL_RESULT_ENTRY_STRUCTURAL_TOKENS,
+    batchTokens: TOOL_RESULT_BATCH_ATTENTION_TOKENS - TOOL_RESULT_BATCH_STRUCTURAL_TOKENS };
+}
+
 function exceedsLineLimit(content: string, maxLines: number): boolean {
   if (maxLines < 1) return content.length > 0;
   let lines = 1;

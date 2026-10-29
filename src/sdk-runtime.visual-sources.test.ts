@@ -56,6 +56,12 @@ it.each(cases)('pins read bytes before delivery and inspects a region: $workMode
           ],
         })] };
       }
+      if (turn === 3) return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [call('visual_read_pixels', {
+        question: 'Verify the old green and red pixels.', views: [
+          { label: 'green grid', observationId: ids[0], region: { x: 0, y: 0, width: 2, height: 2 }, rows: 2, columns: 2 },
+          { label: 'red pixel', observationId: ids[1], region: { x: 0, y: 0, width: 1, height: 1 }, rows: 1, columns: 1 },
+        ],
+      })] };
       return { textBlocks: [{ type: 'text', text: 'Done.' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
     };
     return provider;
@@ -72,9 +78,21 @@ it.each(cases)('pins read bytes before delivery and inspects a region: $workMode
     expect(JSON.stringify(wires.at(-1)).includes(expectedCrop.toString('base64')),
       JSON.stringify(toolMessages.messages?.filter(message => message.role === 'tool' || message.role === 'user')).slice(-4000)).toBe(true);
     expect(JSON.stringify(wires.at(-1))).toContain('nearest');
-    const lastResult = JSON.stringify(toolMessages.messages?.filter(message => message.role === 'tool' || message.role === 'user').at(-1));
+    const inspected = wires.at(-2) as { messages?: Array<{ role: string; content: unknown }> };
+    const lastResult = JSON.stringify(inspected.messages?.filter(message => message.role === 'tool' || message.role === 'user').at(-1));
     const imagePayloads = [...lastResult.matchAll(protocol === 'openai' ? /"url":"data:image\/png;base64,([^\"]+)"/g : /"data":"([^\"]+)"/g)].map(match => match[1]);
     expect(imagePayloads).toEqual([expectedCrop.toString('base64'), other.toString('base64'), expectedCrop.toString('base64')]);
+    const numericMessage = toolMessages.messages?.filter(message => message.role === 'tool' || message.role === 'user').at(-1);
+    let numericText = numericMessage?.content;
+    if (protocol === 'anthropic') {
+      const resultBlock = (numericText as { type: string; content: unknown }[]).find(block => block.type === 'tool_result');
+      numericText = typeof resultBlock?.content === 'string' ? resultBlock.content
+        : (resultBlock?.content as { type: string; text?: string }[]).find(block => block.type === 'text')?.text;
+    }
+    if (typeof numericText !== 'string') throw new Error('Expected complete numeric text in the real serializer.');
+    expect(JSON.parse(numericText)).toMatchObject({ status: 'complete', palette: [[0, 255, 0, 255], [255, 0, 0, 255]],
+      views: [{ label: 'green grid', indices: [[0, 0], [0, 0]] }, { label: 'red pixel', indices: [[1]] }] });
+    expect(numericText).not.toContain('truncated');
     const storage = createSessionManager({ sessionsDir: path.join(homeDir, '.kodax', 'sessions'), configHome: path.join(homeDir, '.kodax') });
     const saved = await storage.loadSession(session.id);
     expect(saved!.extensionRecords?.filter(record => record.extensionId === 'kodax.visual' && record.type === 'observation')).toHaveLength(2);
