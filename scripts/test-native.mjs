@@ -10,12 +10,13 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // inherited ACL may grant Modify without allowing integrity-label changes.
 // Honor the same explicit fixture override as the Rust tests. Canonicalize to
 // the long path: hosted-runner temp roots carry 8.3 components (RUNNER~1)
-// that the native path policy rejects as ambiguous.
+// that the native path policy rejects as ambiguous, and only the native
+// realpath (GetFinalPathNameByHandle) expands them.
 const nativeTestBaseRequested = path.resolve(
   process.env.KODAX_NATIVE_TEST_TEMP || path.join(os.tmpdir(), 'kodax-native-tests'),
 );
 mkdirSync(nativeTestBaseRequested, { recursive: true });
-const nativeTestBase = realpathSync(nativeTestBaseRequested);
+const nativeTestBase = realpathSync.native(nativeTestBaseRequested);
 const nativeTestEnvironment = {
   ...process.env,
   KODAX_NATIVE_TEST_TEMP: nativeTestBase,
