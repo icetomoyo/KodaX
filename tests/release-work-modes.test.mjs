@@ -110,7 +110,9 @@ test('release archive preserves work modes, partial effects, cancellation and re
     }
   });
   const connect = async () => {
-    await cli(['daemon', 'start', '--home', homeDir, '--json']); hostStarted = true;
+    // The packaged daemon's cold start on a runner can exceed the CLI's 5s
+    // default readiness budget; ask for the same 60s ceiling used elsewhere.
+    await cli(['daemon', 'start', '--home', homeDir, '--timeout-ms', '60000', '--json']); hostStarted = true;
     const descriptor = JSON.parse(await readFile(path.join(configHome, 'runtime/daemon/default/daemon.json'), 'utf8'));
     client = await connectKodaXRuntime({ homeDir, endpoint: descriptor.endpoint });
     assert.ok(client.capabilities.sharedSessionSettings.keys.includes('workMode'));
