@@ -29,7 +29,9 @@ test('actual npm tarball runs Script in a clean directory and fails explicitly o
       { cwd: root, windowsHide: true, timeout: 120_000, maxBuffer: 8 * 1024 * 1024 });
     const [manifest] = JSON.parse(packed.stdout);
     for (const name of ['dist/script-cell.js', 'dist/script-worker.cjs']) assert.ok(manifest.files.some(file => file.path === name));
-    await exec('tar', ['-xf', join(directory, manifest.filename), '-C', directory], { windowsHide: true, timeout: 60_000 });
+    // MSYS GNU tar treats drive-letter arguments (C:/...) as remote tape specs;
+    // keep both tar paths relative to the temp directory.
+    await exec('tar', ['-xf', manifest.filename, '-C', '.'], { cwd: directory, windowsHide: true, timeout: 60_000 });
     const cwd = join(directory, 'package');
     await writeFile(join(cwd, 'probe.mjs'), `import {runScriptCell} from './dist/script-cell.js';
       const result=await runScriptCell({code:'const r=await tools.read({});return [Number(r.content)+1,typeof process,typeof fetch];',
