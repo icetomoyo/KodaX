@@ -92,3 +92,25 @@ test('controlled execution environment', () => {
     await fs.rm(directory, { recursive: true, force: true, maxRetries: 3 });
   }
 }, 90000);
+
+it('allows reading an npm CLI installed outside the node binary directory', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-eval-environment-'));
+  try {
+    const staged = path.join(directory, 'staged-install', 'npm', 'bin', 'npm-cli.js');
+    await fs.mkdir(path.dirname(staged), { recursive: true });
+    await fs.writeFile(staged, '');
+    vi.stubEnv('npm_execpath', staged);
+    const execution = await prepareNaturalExecutionEnvironment(path.join(directory, 'workspace'));
+    const options = execution.environment().NODE_OPTIONS ?? '';
+    const stagedRoot = path.join(directory, 'staged-install', 'npm').split(path.sep).join('/');
+    expect(options).toContain(`--allow-fs-read=${JSON.stringify(stagedRoot)}`);
+    // An npm next to the node binary must not widen the allowlist at all.
+    const localExecution = await prepareNaturalExecutionEnvironment(path.join(directory, 'workspace2'));
+    const localOptions = localExecution.environment().NODE_OPTIONS ?? '';
+    expect(localOptions).not.toContain(path.join(directory, 'staged-install'));
+  } finally {
+    vi.unstubAllEnvs();
+    if (path.dirname(directory) !== path.resolve(os.tmpdir()) || !path.basename(directory).startsWith('kodax-eval-environment-')) throw new Error('Unsafe cleanup');
+    await fs.rm(directory, { recursive: true, force: true, maxRetries: 3 });
+  }
+});

@@ -111,6 +111,10 @@ remains a manual maintainer action.
   back a failed save acknowledgement before retrying, preserving newer metadata
   and avoiding duplicate history transactions; permission failures still surface.
 
+- Keep the natural-eval fixture's `npm test` working on staged Node installs by
+  allowing reads of an npm CLI installed outside the binary directory, and
+  canonicalize the native test fixture root so hosted-runner 8.3 temp paths
+  (`RUNNER~1`) are not rejected by the native path policy.
 - Keep eval dump directories and unrelated `kodax-eval-*` directories out of orphan
   worktree cleanup. Require a worktree gitfile and successful Git-owned removal;
   isolate the cleanup regression from the shared system temporary directory.

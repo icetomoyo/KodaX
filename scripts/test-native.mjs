@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,11 +8,14 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // Security-label fixtures need a user-owned directory, not a checkout whose
 // inherited ACL may grant Modify without allowing integrity-label changes.
-// Honor the same explicit fixture override as the Rust tests.
-const nativeTestBase = path.resolve(
+// Honor the same explicit fixture override as the Rust tests. Canonicalize to
+// the long path: hosted-runner temp roots carry 8.3 components (RUNNER~1)
+// that the native path policy rejects as ambiguous.
+const nativeTestBaseRequested = path.resolve(
   process.env.KODAX_NATIVE_TEST_TEMP || path.join(os.tmpdir(), 'kodax-native-tests'),
 );
-mkdirSync(nativeTestBase, { recursive: true });
+mkdirSync(nativeTestBaseRequested, { recursive: true });
+const nativeTestBase = realpathSync(nativeTestBaseRequested);
 const nativeTestEnvironment = {
   ...process.env,
   KODAX_NATIVE_TEST_TEMP: nativeTestBase,
