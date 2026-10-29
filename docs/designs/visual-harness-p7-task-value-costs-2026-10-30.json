@@ -1,0 +1,521 @@
+{
+  "experiment": "visual-harness-task-value-r5",
+  "date": "2026-10-30",
+  "status": "inconclusive; no clean equal-quality completed-task pairs",
+  "sources": {
+    "baseline": "1826cc228f299995fe5b22e608c7fbd90c3dc9ee",
+    "candidate": "3b2d48e8ffeebdd0f14cd81c5c04b65736884938"
+  },
+  "route": {
+    "provider": "Kimi Code",
+    "credentialEnv": "KIMI_CODE_API_KEY",
+    "model": "kimi-for-coding",
+    "resolvedModel": "K2.8 Preview without thinking",
+    "protocol": "OpenAI Chat Completions",
+    "transport": "Common custom-provider adapter on both historical checkouts; not built-in Anthropic kimi-code."
+  },
+  "authorizedCaps": {
+    "generationCalls": 26,
+    "totalTokens": 550000,
+    "outputPerCall": 2048,
+    "requestMs": 60000,
+    "metadataHttp": 64,
+    "externalSpendUsdStop": 2,
+    "retry": 0,
+    "fallback": 0,
+    "repair": 0,
+    "child": 0,
+    "externalJudge": 0
+  },
+  "observed": {
+    "generationCalls": 14,
+    "mainCalls": 9,
+    "compactionCalls": 2,
+    "memoryReviewCalls": 3,
+    "metadataHttp": 16,
+    "totalProviderHttp": 30,
+    "usageComplete": true,
+    "inputTokens": 159537,
+    "outputTokens": 4791,
+    "totalTokens": 164328,
+    "cachedInputTokensIncluded": 86784,
+    "observedExtraWalletCny": 0,
+    "allocatedSubscriptionCost": null,
+    "actualInvoiceUsd": null
+  },
+  "comparisonLimits": [
+    "All totals are API-reported usage, not an attributed invoice.",
+    "Baseline B/D rejected their first three-read batches before dispatch; candidate D hit the fourth-main-request boundary after its patch/test proposal sequence.",
+    "A both answers are wrong; B original latest frame incorrectly shows a Running row under Queued; B/D do not provide clean equal-quality completed pairs.",
+    "Gross attempt differences must not be interpreted as framework cost overhead or cost per successful task.",
+    "First-main B difference includes independently generated summaries/history; it is not a fixed schema overhead estimate.",
+    "Default tests ran concurrently; latency is recorded without performance attribution."
+  ],
+  "cases": [
+    {
+      "caseId": "A",
+      "arm": "candidate",
+      "cell": "A-X",
+      "runPhase": "completed",
+      "requests": {
+        "total": 2,
+        "main": 1,
+        "compaction": 0,
+        "memoryReview": 1
+      },
+      "usage": {
+        "input": 17078,
+        "output": 606,
+        "total": 17684,
+        "cachedInputIncluded": 0
+      },
+      "firstMain": {
+        "input": 15301,
+        "output": 194,
+        "total": 15495
+      },
+      "media": {
+        "providerImageInstances": 1,
+        "uniqueImageHashes": [
+          "04abb937577fe0d51d228ac54462794f3290a4707684cb3c815b808bfe6b766a"
+        ]
+      },
+      "toolProposals": {
+        "main": 0,
+        "auxiliary": 0
+      },
+      "observedRuntimeToolNames": [],
+      "timingMs": {
+        "visibleCompletion": 9520,
+        "allSettled": 20827,
+        "httpGenerationSum": 17111
+      },
+      "hostPristineTests": null,
+      "actualRequests": [
+        {
+          "ordinal": 1,
+          "kind": "main",
+          "input": 15301,
+          "output": 194,
+          "total": 15495,
+          "toolSchemaSha256": "5d7ff3c800f949a020524c24e84264b0cbd8d1e18be9f3986c6a4f7156b822ee",
+          "requestSha256": "e2d97d75cd36c3e98d0d8b2ac1c2b2555fd7a30db441c15798a3987785f1f95e",
+          "responseSha256": "0b3b915774c725e2645878989fd36a6fdd3d8b305dc10f873aa38fc07feb6052"
+        },
+        {
+          "ordinal": 2,
+          "kind": "memory_review",
+          "input": 1777,
+          "output": 412,
+          "total": 2189,
+          "toolSchemaSha256": "508a00ed27e33f364b6675b314516986fcafc6c19b1052c0c007747fb8f4a944",
+          "requestSha256": "7d809065a3ffcd3b053c84160fc74a1be5891694bed5c3fd52be9ab7aa6b98f0",
+          "responseSha256": "348a125f9f9bed4b0275d9cb9000a38908bcaa200e2d9897b6e8ed36dc2d9f80"
+        }
+      ]
+    },
+    {
+      "caseId": "A",
+      "arm": "baseline",
+      "cell": "A-Y",
+      "runPhase": "completed",
+      "requests": {
+        "total": 2,
+        "main": 1,
+        "compaction": 0,
+        "memoryReview": 1
+      },
+      "usage": {
+        "input": 16260,
+        "output": 530,
+        "total": 16790,
+        "cachedInputIncluded": 7936
+      },
+      "firstMain": {
+        "input": 14553,
+        "output": 152,
+        "total": 14705
+      },
+      "media": {
+        "providerImageInstances": 1,
+        "uniqueImageHashes": [
+          "04abb937577fe0d51d228ac54462794f3290a4707684cb3c815b808bfe6b766a"
+        ]
+      },
+      "toolProposals": {
+        "main": 0,
+        "auxiliary": 0
+      },
+      "observedRuntimeToolNames": [],
+      "timingMs": {
+        "visibleCompletion": 7180,
+        "allSettled": 17491,
+        "httpGenerationSum": 14186
+      },
+      "hostPristineTests": null,
+      "actualRequests": [
+        {
+          "ordinal": 1,
+          "kind": "main",
+          "input": 14553,
+          "output": 152,
+          "total": 14705,
+          "toolSchemaSha256": "d0b3e6257f59eb9fbe645b926e9c1425a24e1fb856ddc4dd31a102a9ba9b44de",
+          "requestSha256": "e9f2e850067e37a629d6ed080bbd2413289fa30c474e4136b775a35fe5b3ec46",
+          "responseSha256": "61f0e00bde426b97de5231d17961bf4e16f175102d4dcef12a4ae9e669ce44f1"
+        },
+        {
+          "ordinal": 2,
+          "kind": "memory_review",
+          "input": 1707,
+          "output": 378,
+          "total": 2085,
+          "toolSchemaSha256": "508a00ed27e33f364b6675b314516986fcafc6c19b1052c0c007747fb8f4a944",
+          "requestSha256": "9a261f8e6d01bcdacf82f66db30b41443bfa9be5e099ef4b2f376159fd6c660f",
+          "responseSha256": "2f0eafbc65657123877d07070d0b7b46ddbeb0b6233a029ac10501d918182e6b"
+        }
+      ]
+    },
+    {
+      "caseId": "B",
+      "arm": "baseline",
+      "cell": "B-X",
+      "runPhase": "failed",
+      "requests": {
+        "total": 2,
+        "main": 1,
+        "compaction": 1,
+        "memoryReview": 0
+      },
+      "usage": {
+        "input": 22145,
+        "output": 975,
+        "total": 23120,
+        "cachedInputIncluded": 7680
+      },
+      "firstMain": {
+        "input": 17747,
+        "output": 192,
+        "total": 17939
+      },
+      "media": {
+        "providerImageInstances": 0,
+        "uniqueImageHashes": []
+      },
+      "toolProposals": {
+        "main": 3,
+        "auxiliary": 0
+      },
+      "observedRuntimeToolNames": null,
+      "timingMs": {
+        "visibleCompletion": null,
+        "allSettled": null,
+        "httpGenerationSum": 21426
+      },
+      "hostPristineTests": null,
+      "actualRequests": [
+        {
+          "ordinal": 1,
+          "kind": "compaction",
+          "input": 4398,
+          "output": 783,
+          "total": 5181,
+          "toolSchemaSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "requestSha256": "748b71fcd3236cbcd3bcd8be606d10782f79248f53a3167d85df6aa5275956d7",
+          "responseSha256": "54c3252dfa1fd5b8b3027c48e6d81d4a6992b75d967622754236dcd7c13f9f14"
+        },
+        {
+          "ordinal": 2,
+          "kind": "main",
+          "input": 17747,
+          "output": 192,
+          "total": 17939,
+          "toolSchemaSha256": "d0b3e6257f59eb9fbe645b926e9c1425a24e1fb856ddc4dd31a102a9ba9b44de",
+          "requestSha256": "9e45c4f152614d66d4e72fb6bb30b17beddaff68b15458b4c74c0d4700e839ba",
+          "responseSha256": "932cc457df558cffeec9ab4f4d05100109d95d7966b92a331b9fa932aba05ff4"
+        }
+      ]
+    },
+    {
+      "caseId": "B",
+      "arm": "candidate",
+      "cell": "B-Y",
+      "runPhase": "completed",
+      "requests": {
+        "total": 4,
+        "main": 2,
+        "compaction": 1,
+        "memoryReview": 1
+      },
+      "usage": {
+        "input": 49910,
+        "output": 2134,
+        "total": 52044,
+        "cachedInputIncluded": 27904
+      },
+      "firstMain": {
+        "input": 18786,
+        "output": 212,
+        "total": 18998
+      },
+      "media": {
+        "providerImageInstances": 3,
+        "uniqueImageHashes": [
+          "2dbcc141f2711b4b561183be948c1175e3872a58808e83eef25daee287004092",
+          "4789ed39779a7265a78753978939571faa5ef8a560b90a751a090e6c12a7a732",
+          "fc6df65d1e380e12df70063ae2a2c432b549f06a6bb1c8834da555f9a3bb814b"
+        ]
+      },
+      "toolProposals": {
+        "main": 1,
+        "auxiliary": 1
+      },
+      "observedRuntimeToolNames": [
+        "visual_inspect"
+      ],
+      "timingMs": {
+        "visibleCompletion": 49617,
+        "allSettled": 60346,
+        "httpGenerationSum": 53771
+      },
+      "hostPristineTests": null,
+      "actualRequests": [
+        {
+          "ordinal": 1,
+          "kind": "compaction",
+          "input": 4681,
+          "output": 957,
+          "total": 5638,
+          "toolSchemaSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "requestSha256": "e288c6ca73a38a56cab868be9ea699c026cf79aeedfa518df931b45a39cb0fcf",
+          "responseSha256": "b2d83c49e0edf591a6c5fef534cd86208871578bcf41f80fd8befd38b1346ccd"
+        },
+        {
+          "ordinal": 2,
+          "kind": "main",
+          "input": 18786,
+          "output": 212,
+          "total": 18998,
+          "toolSchemaSha256": "5d7ff3c800f949a020524c24e84264b0cbd8d1e18be9f3986c6a4f7156b822ee",
+          "requestSha256": "d56e845ba1927ca758cdcb81cf65a98214eb0549207076d9739d7e5b239ce8d4",
+          "responseSha256": "cf6e3e99e66efbd403304d08ae25ea3b7553fb258904031468d0c182fb0b9d18"
+        },
+        {
+          "ordinal": 3,
+          "kind": "main",
+          "input": 24602,
+          "output": 597,
+          "total": 25199,
+          "toolSchemaSha256": "5d7ff3c800f949a020524c24e84264b0cbd8d1e18be9f3986c6a4f7156b822ee",
+          "requestSha256": "b5e6dfd24518e25e813870a6c2ba6ccc36e9df015fc77e2d4f163c1f0b5d157c",
+          "responseSha256": "36736be6f96d2e6ab19a0000e383eb6fe86b56532635e4a6ee225b4746aeb083"
+        },
+        {
+          "ordinal": 4,
+          "kind": "memory_review",
+          "input": 1841,
+          "output": 368,
+          "total": 2209,
+          "toolSchemaSha256": "508a00ed27e33f364b6675b314516986fcafc6c19b1052c0c007747fb8f4a944",
+          "requestSha256": "53812250c81a2e03099def054625e1ba25fb921d5ac7fa2a063ff011a53fc323",
+          "responseSha256": "2c519d30220696266538a4e8713cf2bf47c203820cbc1b3f8f95c35a7ae35fa0"
+        }
+      ]
+    },
+    {
+      "caseId": "D",
+      "arm": "candidate",
+      "cell": "D-X",
+      "runPhase": "failed",
+      "requests": {
+        "total": 3,
+        "main": 3,
+        "compaction": 0,
+        "memoryReview": 0
+      },
+      "usage": {
+        "input": 41406,
+        "output": 358,
+        "total": 41764,
+        "cachedInputIncluded": 35584
+      },
+      "firstMain": {
+        "input": 13399,
+        "output": 127,
+        "total": 13526
+      },
+      "media": {
+        "providerImageInstances": 0,
+        "uniqueImageHashes": []
+      },
+      "toolProposals": {
+        "main": 4,
+        "auxiliary": 0
+      },
+      "observedRuntimeToolNames": null,
+      "timingMs": {
+        "visibleCompletion": null,
+        "allSettled": null,
+        "httpGenerationSum": 10026
+      },
+      "hostPristineTests": {
+        "passed": true,
+        "total": 5
+      },
+      "actualRequests": [
+        {
+          "ordinal": 1,
+          "kind": "main",
+          "input": 13399,
+          "output": 127,
+          "total": 13526,
+          "toolSchemaSha256": "5d7ff3c800f949a020524c24e84264b0cbd8d1e18be9f3986c6a4f7156b822ee",
+          "requestSha256": "ff33c4d94ed262ff377bf3017316cd33677f545b2033c30335c515e1c3ff062e",
+          "responseSha256": "88a1d2e54adef9fd5f6913e1815753721e8b80a95b493029ef07bae78525e002"
+        },
+        {
+          "ordinal": 2,
+          "kind": "main",
+          "input": 13828,
+          "output": 163,
+          "total": 13991,
+          "toolSchemaSha256": "5d7ff3c800f949a020524c24e84264b0cbd8d1e18be9f3986c6a4f7156b822ee",
+          "requestSha256": "4540423b3fa8c09de734dd4a4dbb4abb09d390a6db4df937151873aa2915912f",
+          "responseSha256": "dcecce1a5a324545595267777258c893dfc1791e1c4b30b2c6e008b2b5b04e79"
+        },
+        {
+          "ordinal": 3,
+          "kind": "main",
+          "input": 14179,
+          "output": 68,
+          "total": 14247,
+          "toolSchemaSha256": "5d7ff3c800f949a020524c24e84264b0cbd8d1e18be9f3986c6a4f7156b822ee",
+          "requestSha256": "e17f70dbfa2356bd8e8bf1cc401f9c174ce5bdd468812a06d989ee59901cace6",
+          "responseSha256": "92461390b86dacf1be4716cd820364aefdfeb50ba5e64aa380f938d04a57266d"
+        }
+      ]
+    },
+    {
+      "caseId": "D",
+      "arm": "baseline",
+      "cell": "D-Y",
+      "runPhase": "failed",
+      "requests": {
+        "total": 1,
+        "main": 1,
+        "compaction": 0,
+        "memoryReview": 0
+      },
+      "usage": {
+        "input": 12738,
+        "output": 188,
+        "total": 12926,
+        "cachedInputIncluded": 7680
+      },
+      "firstMain": {
+        "input": 12738,
+        "output": 188,
+        "total": 12926
+      },
+      "media": {
+        "providerImageInstances": 0,
+        "uniqueImageHashes": []
+      },
+      "toolProposals": {
+        "main": 3,
+        "auxiliary": 0
+      },
+      "observedRuntimeToolNames": null,
+      "timingMs": {
+        "visibleCompletion": null,
+        "allSettled": null,
+        "httpGenerationSum": 4610
+      },
+      "hostPristineTests": {
+        "passed": false,
+        "total": 5
+      },
+      "actualRequests": [
+        {
+          "ordinal": 1,
+          "kind": "main",
+          "input": 12738,
+          "output": 188,
+          "total": 12926,
+          "toolSchemaSha256": "d0b3e6257f59eb9fbe645b926e9c1425a24e1fb856ddc4dd31a102a9ba9b44de",
+          "requestSha256": "3fe43d1ca55bee421ccc380da15f7304c8e89359231a7115f9a6cd08625cf717",
+          "responseSha256": "c6e75f339758c46b5a0af011a5fecfdf28b5f8e183d6504b850cc6cf82750256"
+        }
+      ]
+    }
+  ],
+  "firstMainInputDeltas": [
+    {
+      "caseId": "A",
+      "tokens": 748,
+      "percent": 5.139833711262276
+    },
+    {
+      "caseId": "B",
+      "tokens": 1039,
+      "percent": 5.854510621513498
+    },
+    {
+      "caseId": "D",
+      "tokens": 661,
+      "percent": 5.189197676244306
+    }
+  ],
+  "allAttemptsByArm": [
+    {
+      "arm": "baseline",
+      "calls": 5,
+      "tokens": 52836
+    },
+    {
+      "arm": "candidate",
+      "calls": 9,
+      "tokens": 111492
+    }
+  ],
+  "quality": {
+    "sameQualityCompletedPairs": 0,
+    "A": "Both wrong endpoint, both correct junction classifications; neither reinspected.",
+    "B": "Candidate retrieved three original frames and core facts; baseline blocked before pixel feedback; fixture inconsistent, no efficacy claim.",
+    "D": "Candidate patch passes five pristine tests; neither produces final answer inside window, no complete-task efficacy claim.",
+    "recommendation": "recommend-iterate-eval; do not expand capabilities or rerun automatically"
+  },
+  "provenance": {
+    "rawDirectory": "C:/Users/ADMIN/AppData/Local/Temp/kodax-visual-task-r5-070Hn3",
+    "oracleSha256": "862677cd900ead8e29314bfa019bb5422024e8ff83bc756ef207e7f09bb13de7",
+    "oracleCanonicalDigestMatches": true,
+    "executionFreezeSha256": "a5e03d2663646d032fed42733553bf890ab075deaef4e151b351e90c539a303b",
+    "blindQualityReviewSha256": "40338c3b80707f403888c0751e7c306a8189231f183917ae9e08995b39c2b4d9",
+    "blindQualityReviewFileMtime": "2026-10-29T16:57:25.723Z",
+    "budgetLedgerSha256": "c0696632ae00fbc9dbefc28f4ecc3e9e3fd8b6d638225b798d0e276c86c498ea",
+    "labelCorrection": "Normalized authoritative plan roots; original path-comparison mapping and correction both retained; no regeneration."
+  },
+  "firstMainTotalDeltas": [
+    {
+      "caseId": "A",
+      "baseline": 14705,
+      "candidate": 15495,
+      "tokens": 790,
+      "percent": 5.372322339340352
+    },
+    {
+      "caseId": "B",
+      "baseline": 17939,
+      "candidate": 18998,
+      "tokens": 1059,
+      "percent": 5.90333909359495
+    },
+    {
+      "caseId": "D",
+      "baseline": 12926,
+      "candidate": 13526,
+      "tokens": 600,
+      "percent": 4.641807210273874
+    }
+  ]
+}
