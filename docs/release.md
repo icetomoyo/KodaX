@@ -62,6 +62,13 @@ supervised Host whose OS containment cannot be verified is rejected before
 publication. Process identities and the same-version upgrade fence are unchanged.
 Final acceptance still requires all five platform gates on the tagged commit.
 
+The bundled Host-recovery fixture waits for `status: 'ready'` before connecting
+to either the initial or replacement Host. A `starting` descriptor is published
+before its socket exists; run `40891653126` exposed that race on Linux ARM64.
+A local 750 ms delay between descriptor publication and socket creation reproduced
+the original `ENOENT`; both print and scoped recovery passed with the corrected
+wait under the same injected delay. The replacement must still have a new runtime ID.
+
 ## Distribution layout
 
 Each archive (`tar.gz` for Linux/macOS, `zip` for Windows) contains the
