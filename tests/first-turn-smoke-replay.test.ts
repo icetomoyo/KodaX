@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { SkillRegistry } from '@kodax-ai/agent';
 import { setAgentConfigHome } from '../packages/agent/src/runtime/agent-home.js';
 import { runKodaX } from '@kodax-ai/coding';
-import { createKodaXRuntime } from '../src/sdk-runtime.js';
+import { createKodaXRuntime } from "./runtime-fixture.js";
 import {
   KodaXBaseProvider, registerModelProvider, clearRuntimeModelProviders,
   type KodaXProviderConfig, type KodaXMessage, type KodaXToolDefinition,

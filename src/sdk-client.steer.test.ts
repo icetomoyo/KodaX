@@ -10,7 +10,7 @@ import {
 } from '@kodax-ai/llm';
 import { LEARNING_REVIEW_TOOL, awaitLatestCodingMemoryReviewDrain } from '@kodax-ai/coding';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
-import { createKodaXRuntime, RUNTIME_REDIRECT_STOP_REASON } from './sdk-runtime.js';
+import { createKodaXRuntime, RUNTIME_REDIRECT_STOP_REASON } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';

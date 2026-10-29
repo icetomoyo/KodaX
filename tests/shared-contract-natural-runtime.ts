@@ -8,7 +8,7 @@ import { KodaXBaseProvider, registerModelProvider, runWithProviderRequestAttribu
   type KodaXReasoningRequest, type KodaXProviderStreamOptions } from '@kodax-ai/llm';
 import { currentProviderRequestAttribution } from '../packages/llm/src/provider-request-observation.js';
 import { SkillRegistry, type ToolGuardrail } from '@kodax-ai/agent';
-import { createKodaXRuntime, type KodaXRuntime } from '../src/sdk-runtime.js';
+import { createKodaXRuntime, type KodaXRuntime } from "./runtime-fixture.js";
 import { resolveToolBridgeTarget } from '../packages/coding/src/tools/tool-bridge.js';
 import type { KodaXOptions } from '../packages/coding/src/types.js';
 import { parseBashCommand } from '../packages/coding/src/permissions/bash-ast.js';

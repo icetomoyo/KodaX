@@ -7,7 +7,7 @@ import {
   KodaXBaseProvider, clearRuntimeModelProviders, registerModelProvider,
   type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult,
 } from '@kodax-ai/llm';
-import { createKodaXRuntime } from '../sdk-runtime.js';
+import { createKodaXRuntime } from "../../tests/runtime-fixture.js";
 import { prepareKodaXA2AServer } from './server.js';
 import type { A2AServerOptions, A2ATask } from './types.js';
 

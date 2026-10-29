@@ -346,6 +346,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # Pinned historical owner-policy regressions require exact commits.
 
       - uses: actions/setup-node@v6
         with:
@@ -390,6 +392,18 @@ jobs:
 
       - name: Installed Artifact SDK gate
         run: node --test tests/packed-artifacts.test.mjs
+
+      - name: Unified Host SDK historical migration and installed package gate
+        timeout-minutes: 5
+        run: npm run test:host-cutover
+
+      - name: Published alpha.11 Host in-place upgrade gate
+        timeout-minutes: 5
+        env:
+          KODAX_ALPHA11_TARBALL: ${{ runner.temp }}/kodax-ai-kodax-0.7.97-alpha.11.tgz
+        run: |
+          npm pack @kodax-ai/kodax@0.7.97-alpha.11 --ignore-scripts --pack-destination "$RUNNER_TEMP"
+          npm run test:host-upgrade
 
       - name: Hash npm package
         shell: bash

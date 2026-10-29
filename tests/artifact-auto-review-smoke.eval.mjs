@@ -1,3 +1,6 @@
+// Historical pre-cutover harness: this uses the retired in-process Runtime API.
+// Reproduce with its historical SDK. A shared Host experiment needs a new revision
+// with Host-side provider budgets and raw capture; do not merely change mode to daemon.
 // Opt-in Layer 3.5 smoke: ordinary request, actual Host/tools/provider images, no slash or review hints.
 import fs from 'node:fs/promises';
 import os from 'node:os';

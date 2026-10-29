@@ -9,6 +9,7 @@ const upgradeMocks = vi.hoisted(() => ({
   acquireProcessLease: vi.fn(),
   createSocketTransport: vi.fn(),
   enableDaemonOwner: vi.fn(),
+  prepareDaemonOwner: vi.fn(),
   readDaemonState: vi.fn(),
   readDaemonToken: vi.fn(),
   readLockOwner: vi.fn(),
@@ -41,6 +42,7 @@ vi.mock('./runtime-daemon/state.js', async (importOriginal) => {
   return {
     ...actual,
     enableRuntimeDaemonOwner: upgradeMocks.enableDaemonOwner,
+    prepareRuntimeDaemonOwner: upgradeMocks.prepareDaemonOwner,
     readRuntimeDaemonState: upgradeMocks.readDaemonState,
     readRuntimeDaemonToken: upgradeMocks.readDaemonToken,
     readRuntimeDaemonLockOwner: upgradeMocks.readLockOwner,
@@ -63,7 +65,7 @@ import {
   createKodaXRuntime,
   type RuntimeDaemonManagementState,
   type RuntimeDaemonPreflight,
-} from './sdk-runtime.js';
+} from "../tests/runtime-fixture.js";
 import type { RuntimeDaemonClientTransport } from './runtime-daemon/client.js';
 import { RuntimeDaemonDisconnectError } from './runtime-daemon/transport.js';
 import type { RuntimeDaemonProcessLease } from './runtime-daemon/process.js';
@@ -101,6 +103,7 @@ describe('product Host startup and passive connection', () => {
     upgradeMocks.acquireProcessLease.mockReset();
     upgradeMocks.createSocketTransport.mockReset();
     upgradeMocks.enableDaemonOwner.mockReset();
+    upgradeMocks.prepareDaemonOwner.mockReset();
     upgradeMocks.readDaemonState.mockReset();
     upgradeMocks.readDaemonToken.mockReset();
     upgradeMocks.readLockOwner.mockReset();
@@ -282,7 +285,9 @@ describe('product Host startup and passive connection', () => {
     const calls: string[] = [];
     const diagnostics: KodaXDiagnostic[] = [];
     const restore = setKodaXDiagnosticSink(diagnostic => { diagnostics.push(diagnostic); });
-    upgradeMocks.findSharedHost.mockReturnValue({ profile: 'default', ownerFile: '/fixture/sessions/.product-host/owner.lock', owner: { runtimeId: 'runtime_current' } });
+    const sharedHost = { profile: 'default', ownerFile: '/fixture/sessions/.product-host/owner.lock', owner: { runtimeId: 'runtime_current' } };
+    const sessionsDir = path.resolve('/fixture/sessions');
+    upgradeMocks.findSharedHost.mockReturnValue(sharedHost);
     const base = createCurrentTransport(calls, async () => undefined);
     upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease({
       ...base,
@@ -291,9 +296,12 @@ describe('product Host startup and passive connection', () => {
         return { ...result, identity: { ...result.identity, profile: 'default' } };
       },
     }));
-    const runtime = await ensureKodaXRuntime({ profile: PROFILE });
+    const runtime = await ensureKodaXRuntime({ profile: PROFILE, sessionsDir });
     try {
       expect(runtime.identity.profile).toBe('default');
+      expect(upgradeMocks.prepareDaemonOwner).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ profile: PROFILE }), sessionsDir, sharedHost,
+      );
       expect(upgradeMocks.acquireProcessLease.mock.calls[0]?.[0]).toMatchObject({ profile: 'default' });
       expect(calls).toEqual(['new:initialize']);
       expect(diagnostics).toContainEqual(expect.objectContaining({

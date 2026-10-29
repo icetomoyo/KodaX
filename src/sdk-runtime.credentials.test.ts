@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 
 it('embedded credential methods reject scoped broker operations explicitly', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-embedded-credentials-'));

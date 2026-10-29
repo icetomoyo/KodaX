@@ -6,7 +6,7 @@ import { expect, it, vi } from 'vitest';
 import { KodaXBaseProvider, registerModelProvider, clearRuntimeModelProviders,
   type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult } from '@kodax-ai/llm';
 import { connectKodaXClient } from './sdk-client.js';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 import { runOneShotClientTask } from './one-shot-task.js';

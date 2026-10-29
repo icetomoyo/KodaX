@@ -5,7 +5,7 @@ import { expect, it, vi } from 'vitest';
 import * as coding from '@kodax-ai/coding';
 import { KodaXBaseProvider, registerModelProvider, clearRuntimeModelProviders,
   type KodaXProviderConfig, type KodaXStreamResult } from '@kodax-ai/llm';
-import { createKodaXRuntime, type RuntimeStartRunInput } from './sdk-runtime.js';
+import { createKodaXRuntime, type RuntimeStartRunInput } from "../tests/runtime-fixture.js";
 
 it('rechecks admission after asynchronous goal initialization before launching any work', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-goal-admission-'));

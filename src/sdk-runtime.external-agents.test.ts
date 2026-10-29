@@ -10,10 +10,10 @@ import type {
   ExternalAgentRegistration,
 } from '@kodax-ai/agent';
 import {
-  connectKodaXRuntime,
   createKodaXRuntime,
   type KodaXRuntime,
-} from './sdk-runtime.js';
+} from "../tests/runtime-fixture.js";
+import { createKodaXRuntime as launchRuntime, type CreateKodaXRuntimeOptions } from './sdk-runtime-public.js';
 import { toKodaXProductClient } from './client-runtime-adapter.js';
 import { createRuntimeDaemonClient } from './runtime-daemon/client.js';
 import {
@@ -159,7 +159,7 @@ async function assertRuntimeAgentServiceConformance(
   };
 }
 
-describe('FEATURE_258 Embedded Runtime agent services', () => {
+describe('FEATURE_258 Host core and connected agent services', () => {
   it('blocks stop preflight while an external Actor turn is active', async () => {
     homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-runtime-agent-preflight-'));
     const fixture = deferredExternalAgentFixture();
@@ -226,7 +226,7 @@ describe('FEATURE_258 Embedded Runtime agent services', () => {
     await reopened.close();
   });
 
-  it('publishes externalAgentAdmin capability metadata on the embedded runtime facade', async () => {
+  it('publishes externalAgentAdmin capability metadata on the Host core', async () => {
     homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-runtime-agent-caps-'));
     const runtime = await createKodaXRuntime({
       homeDir,
@@ -243,43 +243,38 @@ describe('FEATURE_258 Embedded Runtime agent services', () => {
     expect(plain.capabilities?.externalAgentAdmin).toBeUndefined();
     await plain.close();
   });
-  it('installs executor factories inside a public in-process daemon host', async () => {
-    homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-runtime-hosted-agents-'));
-    const profile = `external-agent-${process.pid}-${Date.now()}`;
-    const runtime = await createKodaXRuntime({
-      mode: 'daemon',
-      homeDir,
-      profile,
-      capabilities: { configAdmin: true },
-      requirements: { externalAgents: true },
+  it('rejects public executor injection without creating a new Host or its data', async () => {
+    homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-runtime-retired-agents-'));
+    const missingHome = path.join(homeDir, 'not-created');
+    const options = {
+      mode: 'daemon', homeDir: missingHome, profile: 'retired-agent-host',
       externalAgents: externalAgentOptions(),
-    });
-    expect(runtime.identity).toMatchObject({ mode: 'daemon', isolation: 'inline' });
-    expect(runtime.agents.enabled).toBe(true);
-    expect(runtime.capabilities?.a2aConfigReconciler).toBeUndefined();
-    const configOwnerRequirement = await connectKodaXRuntime({
-      homeDir,
-      profile,
-      autoStart: false,
-      requirements: { externalAgentAdmin: 1, a2aConfigReconciler: 1 },
-    }).then(
-      async (connected) => {
-        await connected.close();
-        return undefined;
-      },
-      (error: unknown) => error,
-    );
-    expect(configOwnerRequirement).toBeInstanceOf(Error);
-    expect((configOwnerRequirement as Error).message).toMatch(/a2aConfigReconciler/i);
-    await assertRuntimeAgentServiceConformance(runtime, 'daemon-sdk-host', 'daemon-sdk-parent');
-    await expect(createKodaXRuntime({
-      mode: 'daemon',
-      homeDir,
-      profile,
-      capabilities: { configAdmin: true },
-      externalAgents: externalAgentOptions(),
-    })).rejects.toThrow(/already-running daemon profile/i);
-    await runtime.close();
+    };
+    await expect(launchRuntime(options as unknown as CreateKodaXRuntimeOptions))
+      .rejects.toMatchObject({ code: 'runtime_host_migration_required' });
+    expect(fs.existsSync(missingHome)).toBe(false);
+    expect(fs.readdirSync(homeDir)).toEqual([]);
+  });
+
+  it('rejects public executor injection without changing an existing Host owner or plane', async () => {
+    homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-runtime-existing-agents-'));
+    const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true,
+      externalAgents: externalAgentOptions() });
+    try {
+      await runtime.admin.agentRegistrations.upsert(registration());
+      const before = await runtime.admin.agentRegistrations.list();
+      const ownerFile = path.join(homeDir, '.kodax', 'sessions', '.product-host', 'owner.lock');
+      const owner = fs.readFileSync(ownerFile, 'utf8');
+      const options = { mode: 'daemon', homeDir, externalAgents: externalAgentOptions() };
+      await expect(launchRuntime(options as unknown as CreateKodaXRuntimeOptions))
+        .rejects.toMatchObject({ code: 'runtime_host_migration_required' });
+      expect(fs.readFileSync(ownerFile, 'utf8')).toBe(owner);
+      expect(await runtime.admin.agentRegistrations.list()).toEqual(before);
+      await expect(runtime.sessions.create({ title: 'Still owned by the original Host' }))
+        .resolves.toMatchObject({ title: 'Still owned by the original Host' });
+    } finally {
+      await runtime.close();
+    }
   });
 
   it('fails closed when the executor plane is not enabled', async () => {

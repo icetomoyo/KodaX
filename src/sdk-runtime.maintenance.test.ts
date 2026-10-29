@@ -6,7 +6,7 @@ import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { KodaXBaseProvider, registerModelProvider,
   type KodaXProviderConfig, type KodaXStreamResult } from '@kodax-ai/llm';
-import { createKodaXRuntime, type KodaXEvents } from './sdk-runtime.js';
+import { createKodaXRuntime, type KodaXEvents } from "../tests/runtime-fixture.js";
 
 afterEach(() => { vi.restoreAllMocks(); syncBuiltinESMExports(); vi.unstubAllEnvs(); });
 

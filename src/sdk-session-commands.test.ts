@@ -12,7 +12,7 @@ import {
   type KodaXStreamResult,
 } from '@kodax-ai/llm';
 import { FileSessionStorage, createInteractiveContext, executeCommand, type CommandCallbacks } from '@kodax-ai/repl';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { createCliSessionCommands } from './cli-client-plane.js';
 
 it('shows Host missing and operation failures through the production tree command binding', async () => {

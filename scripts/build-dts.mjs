@@ -92,7 +92,7 @@ const sdkEntries = {
   'sdk-skills': 'src/sdk-skills.ts',
   'sdk-mcp': 'src/sdk-mcp.ts',
   'sdk-session': 'src/sdk-session.ts',
-  'sdk-runtime': 'src/sdk-runtime.ts',
+  'sdk-runtime': 'src/sdk-runtime-public.ts',
   'sdk-client': 'src/sdk-client.ts',
   'sdk-sandbox': 'src/sdk-sandbox.ts',
   'sdk-a2a': 'src/sdk-a2a.ts',

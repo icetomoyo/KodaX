@@ -110,7 +110,7 @@ try {
 
 两个产品入口均支持可选 `onStartupProgress` 和共享 `ClientStartupProgress` 类型；新 Host 通过 `initializing/phase` 报告内部初始化步骤，不增加额外探测或等待。启动 `ready` 表示 Client 接口可用；Session 加载与 UI 渲染仍有独立完成边界。详见[启动进度示例](public_docs/sdk/embedder-guide.md#show-local-startup-progress)。
 
-底层 `/runtime` 仍支持显式 inline embedded 与 daemon，供受信任宿主处理凭据桥、Host Tools、启动和诊断；Worker-hosted embedded、通用 operation receipt/journal 已移除。不能在产品连接失败时退回私有 Runtime。下方结构化 Runtime 错误说明仅属于底层接口，不能假定 Product Client 暴露相同字段。
+底层 `/runtime` 连接唯一共享 Host，供受信任客户端处理凭据桥、Host Tools、启动和诊断；Worker-hosted embedded、通用 operation receipt/journal 已移除。不能在产品连接失败时退回私有 Runtime。下方结构化 Runtime 错误说明仅属于底层接口，不能假定 Product Client 暴露相同字段。
 
 ### 结构化且凭据安全的 Runtime 错误
 
@@ -1027,7 +1027,7 @@ import { SkillRegistry } from '@kodax-ai/kodax/skills';         // 零依赖 ski
 import { loadConfig } from '@kodax-ai/kodax/repl';              // REPL 配置 / session 工具
 import { createMcpManager } from '@kodax-ai/kodax/mcp';         // MCP popout manager（v0.7.42 起）
 import { listSessions } from '@kodax-ai/kodax/session';         // session 历史工具
-import { createKodaXRuntime } from '@kodax-ai/kodax/runtime';   // inline/daemon 宿主 API
+import { createKodaXRuntime } from '@kodax-ai/kodax/runtime';   // 共享 Host 连接 API
 import { runKodaXSandboxed } from '@kodax-ai/kodax/sandbox';    // 独立 ASRT 受控执行
 import { createKodaXA2AServer } from '@kodax-ai/kodax/a2a';    // A2A 1.0 双向接入
 import { createMemoryAgent } from '@kodax-ai/kodax/experimental-memory'; // opt-in 实验性记忆 SDK
@@ -1176,7 +1176,7 @@ kodax daemon stop --profile default
 
 daemon 可承载多个 Session；不同 Session 可以并发，同一 Session 的交付由 Host 串行协调。`after_turn` 可在当前 Run 的安全点交付，不必等整个长任务结束。客户端关闭观察或断开连接不会停止 Run。停止任务使用 `runs.stop` 或 `sessions.cancel`；关闭空闲 Host 才使用 `host.shutdown`/daemon stop。
 
-显式独立库嵌入仍可使用 `/runtime` 的 `createKodaXRuntime({mode:'embedded'})`，其 owner 和退出责任属于调用者。这不是 CLI 的可选运行模式，也不是产品客户端的连接失败回退。当前包版本与发布状态见[SDK 迁移指南](docs/SDK_MIGRATION.md)。
+未发布的统一 Host 收口已退役公开 embedded 构造与 inline 所有权切换；完整产品能力统一使用 `/client`。独立 llm/agent/coding 库仍可单独使用。旧状态自动迁移与降级限制见 SDK 迁移指南。当前包版本与发布状态见[SDK 迁移指南](docs/SDK_MIGRATION.md)。
 
 普通 CLI 自动拉起的 Host 在最后一个客户端断开、后台工作持续空闲 30 秒后退出；重新连接会取消空闲退出。显式 `kodax daemon start` 会保留当前 Host，即使它原先是临时 Host；承载已配置 A2A 服务的 Host 也会在没有 CLI 客户端时继续常驻。
 
@@ -1360,7 +1360,7 @@ KodaX 有两层结构，SDK 用户需要分开理解：
 | `packages/repl`   | `@kodax-ai/kodax/repl`    | 完整包 | Ink TUI + 权限模式 + 命令系统 (217 exports) | 终端 UI 消费者 |
 | `packages/repl`   | `@kodax-ai/kodax/session` | **窄子集** | 仅会话管理 —— `listSessions` / `loadFullTranscript` / `appendClientNotice` / `forkSession` / `compactSession` / `watchSessions` 等 (17 exports) | 读取 session 历史的 IDE 插件和桌面宿主 |
 | `src`             | `@kodax-ai/kodax/client` | 产品 API | 共享 Host 连接与 `KodaXProductClient` 统一契约 | TUI、桌面/IDE 和自动化应用 |
-| `src`             | `@kodax-ai/kodax/runtime` | 宿主 API | Explicit inline/daemon facade，含 sessions/runs/events/permissions/catalog/MCP/artifacts/diagnostics/外部 Agent 和 daemon schema (10 exports) | 受信任宿主集成 |
+| `src`             | `@kodax-ai/kodax/runtime` | 宿主 API | Shared-Host facade，含 sessions/runs/events/permissions/catalog/MCP/artifacts/diagnostics/外部 Agent 和 daemon schema (10 exports) | 受信任宿主集成 |
 | `src`             | `@kodax-ai/kodax/sandbox` | 宿主 API | 显式 ASRT capability/doctor/setup 与宿主自有受控命令执行；不可用时绝不静默普通执行 | 需要独立进程 containment 的 SDK 宿主 |
 | `src`             | `@kodax-ai/kodax/a2a` | 集成边界 | A2A 1.0 Agent Card 发现、JSON-RPC/SSE F258 executor、安全 fetch 与鉴权 Runtime Agent server | Agent 编排器和 KodaX 宿主 |
 
@@ -1455,9 +1455,9 @@ MCP、A2A、Extension 分别使用 `~/.kodax/integrations/` 下的一个用户�
 停用条目可随时重新启用。私网地址访问与非 loopback 明文 HTTP 是两项独立、
 持久化且默认拒绝的权限（`--allow-private` 与 `--allow-insecure-http`）；精确
 loopback HTTP 无需这两项授权。OAuth token endpoint 仍保持更严格的
-HTTPS 或精确 loopback 规则。SDK 宿主通过 `createConfiguredA2ARuntimeIntegration({ configHome })` 装载同一
-配置执行平面，并把其 `runtimeOptions` 作为 `externalAgents` 传入——CLI 为其嵌入式
-会话和它启动的 daemon Host 完成同样的接线；`worker.configuredA2A` 选项已随
+HTTPS 或精确 loopback 规则。共享 Host 在内部通过 `createConfiguredA2ARuntimeIntegration({ configHome })`
+装载配置执行平面；SDK 客户端连接这个 Host，公开 `externalAgents` 函数注入已退役。
+`worker.configuredA2A` 选项已随
 Worker facade 在 v0.7.97 移除。
 `a2a serve` 会在监听前装载已配置的 MCP/Extension 能力并固定执行权威，同时热加载
 公开信息、鉴权和限额。Agent、Skill、Extension 工具权威、工作区、tool policy
@@ -1483,7 +1483,7 @@ REPL 显示、唤醒或消费。
 
 当前源码中，`kodax -r` 按最近真实对话消息排序并显示对应时间，旧记录缺少可靠消息时间时回退创建时间。SDK 的 `lastMessageAt`、Host 列表与选择器共用规则；标题、设置、Actor 保存和压缩不刷新对话时间。共享 Host 在取得所有权后统一恢复历史进程，连接客户端不重复清扫；加载提示继续使用统一启动进度契约。
 
-**外部 Agent SDK plane（FEATURE_258，v0.7.67）**：`/agent` 导出协议中立的 executor、registration、policy、credential broker、artifact policy、catalog 和 durable task 契约；`/runtime` 通过 `admin.agentRegistrations`、`agents`、`agentTasks` 向 embedded 与 daemon client 提供同一组 DTO API。Executor factory 是宿主函数，只能装入 inline owner，或在创建新的 in-process daemon owner 时装入；不能通过既有 daemon 连接或 Runtime Worker 边界注入。Plane 关闭后是终态：未完成的 wait 和后续所有服务调用都会拒绝；受限 Workflow 脚本会完整校验并传递 `phase` 与外部 `target`。完整所有权、注册、preflight、启动/等待/继续/取消/对账和安全边界见 [SDK Embedder Guide §18](public_docs/sdk/embedder-guide.md#18-external-agent-executor-plane-feature_258-v0767)。
+**外部 Agent SDK plane（FEATURE_258，v0.7.67）**：`/agent` 导出协议中立的 executor、registration、policy、credential broker、artifact policy、catalog 和 durable task 契约；`/runtime` 通过 `admin.agentRegistrations`、`agents`、`agentTasks` 向共享 Host 客户端提供 DTO API。统一 Host 收口退役公开 executor factory 注入和进程内 owner 构造；支持的 A2A Agent 通过 Host 配置接入。任意 executor 函数仍可用于独立库，但没有透明等价的产品 Host API。Plane 关闭后是终态：未完成的 wait 和后续所有服务调用都会拒绝；受限 Workflow 脚本会完整校验并传递 `phase` 与外部 `target`。完整所有权、注册、preflight、启动/等待/继续/取消/对账和安全边界见 [SDK Embedder Guide §18](public_docs/sdk/embedder-guide.md#18-external-agent-executor-plane-feature_258-v0767)。
 
 **成本受控 Workflow SDK（FEATURE_259，v0.7.67）**：SDK 调用方用 run-scoped `modelTiers` 与 `workflow.maxConcurrency` 配置路由和并发，workflow 作者只表达 `fast` / `balanced` / `deep` 语义意图。terminal workflow event 回显 tier/source/fallback/usage/duration，持久化 `run.json.efficiencyReport` 给出 token coverage、role/tier 启动数、packet-read 拓扑、review wave 和 quality gate 结果。完整配置与遥测读取方式见 [SDK Embedder Guide §20](public_docs/sdk/embedder-guide.md#20-cost-disciplined-workflow-routing-and-telemetry-feature_259-v0767)。
 

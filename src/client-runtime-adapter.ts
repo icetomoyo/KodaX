@@ -40,11 +40,10 @@ export function toKodaXProductClient(
     },
     review: { start: async (input) => runtime.invocations.startReview(await authorize({ kind: 'review', input })) },
     host: {
-      shutdown: () => runtime.daemon !== undefined
-        ? runtime.daemon.shutdown()
-        // An embedded facade is the Host in this process: closing it is the
-        // shutdown.
-        : runtime.close().then(() => ({ accepted: true as const })),
+      shutdown: async () => {
+        if (runtime.daemon === undefined) throw new Error('Host shutdown requires a shared Host connection.');
+        return runtime.daemon.shutdown();
+      },
     },
     sessions: {
       cancel: input => runtime.sessions.cancel(input),

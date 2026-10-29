@@ -15,7 +15,7 @@ import {
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { createCliSessionCommands } from './cli-client-plane.js';
 import { FileSessionStorage } from '@kodax-ai/repl';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 

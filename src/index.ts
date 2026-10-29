@@ -29,18 +29,15 @@ export {
 } from './acp_events.js';
 export {
   createKodaXRuntime,
-  acquireKodaXInlineOwner,
   connectKodaXRuntime,
-  enableKodaXDaemonOwner,
   getKodaXRuntimeOwnerState,
   handleRuntimePermissionRequest,
   KODAX_RUNTIME_SDK_CAPABILITIES,
   parseRuntimeEvent,
   RuntimePermissionScopeUpgradeRequiredError,
   RuntimeTransportBoundaryError,
-  setKodaXRuntimeOwnerMode,
   waitForRuntimeDaemonShutdown,
-} from './sdk-runtime.js';
+} from './sdk-runtime-public.js';
 export type {
   RuntimeExactCallPermissionMatcher,
   RuntimeExactCommandPermissionMatcher,
@@ -53,7 +50,6 @@ export type {
   KodaXDaemonRuntime,
   KodaXRuntime,
   KodaXRuntimeMode,
-  RuntimeInlineOwnerHandle,
   RuntimeOwnerPolicyState,
   RuntimeOwnerIdentity,
   RuntimeOwnerState,
@@ -165,7 +161,7 @@ export type {
   RuntimeWorkflowService,
   RuntimeWorkflowSnapshot,
   RuntimeWorkflowSummary,
-} from './sdk-runtime.js';
+} from './sdk-runtime-public.js';
 export {
   KODAX_ASRT_VERSION,
   doctorKodaXSandbox,

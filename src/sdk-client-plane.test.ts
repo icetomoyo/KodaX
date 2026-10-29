@@ -15,7 +15,7 @@ import {
 } from '@kodax-ai/llm';
 import { runClientPlaneRound } from '@kodax-ai/repl';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { createCliClientPlane as wireClientPlane } from './cli-client-plane.js';
 import { changedClientSessionSettings, clientSessionSettings } from '../packages/repl/src/ui/client-session-settings.js';
 

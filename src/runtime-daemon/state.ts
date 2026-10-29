@@ -84,6 +84,8 @@ export interface RuntimeOwnerPolicy {
   readonly mode: 'daemon' | 'inline';
   readonly revision: number;
   readonly updatedAt: string;
+  /** Persisted as mode: host so legacy owner writers reject the cutover. */
+  readonly unified?: true;
 }
 
 export interface RuntimeDaemonLockHandle {
@@ -226,16 +228,17 @@ export function readRuntimeOwnerPolicy(paths: RuntimeDaemonPaths): RuntimeOwnerP
     const parsed: unknown = JSON.parse(fs.readFileSync(paths.ownerPolicyFile, 'utf8'));
     if (
       isRecord(parsed)
-      && (parsed.mode === 'daemon' || parsed.mode === 'inline')
+      && (parsed.mode === 'daemon' || parsed.mode === 'inline' || parsed.mode === 'host')
       && typeof parsed.revision === 'number'
       && Number.isSafeInteger(parsed.revision)
       && parsed.revision >= 0
       && typeof parsed.updatedAt === 'string'
     ) {
       return {
-        mode: parsed.mode,
+        mode: parsed.mode === 'host' ? 'daemon' : parsed.mode,
         revision: parsed.revision,
         updatedAt: parsed.updatedAt,
+        ...(parsed.mode === 'host' ? { unified: true as const } : {}),
       };
     }
   } catch {
@@ -304,6 +307,79 @@ export function enableRuntimeDaemonOwner(paths: RuntimeDaemonPaths): RuntimeOwne
   }
 }
 
+/** One-way product cutover. This cannot discover old private writers without an owner fence. */
+export function prepareRuntimeDaemonOwner(
+  paths: RuntimeDaemonPaths,
+  sessionsDir: string,
+  sharedHost?: NonNullable<ReturnType<typeof findRuntimeSessionStorageHost>>,
+): RuntimeOwnerPolicy {
+  ensureRuntimeDaemonDirectories(paths);
+  const policy = readRuntimeOwnerPolicy(paths);
+  if (policy.unified && !sharedHost) return policy;
+  fs.mkdirSync(sessionsDir, { recursive: true });
+  const storageRoot = path.join(fs.realpathSync(sessionsDir), '.product-host');
+  fs.mkdirSync(storageRoot, { recursive: true });
+  const storagePaths = { ownerPolicyLockFile: path.join(storageRoot, 'owner-policy.lock') };
+  // Always take the storage coordination before the profile coordination. The
+  // launcher may already hold startup.lock; this function never reacquires it.
+  const storageCoordination = tryAcquireRuntimeOwnerCoordination(storagePaths);
+  if (!storageCoordination) throw new Error('Session storage owner transition is already in progress.');
+  try {
+    const coordination = tryAcquireRuntimeOwnerCoordination(paths);
+    if (!coordination) throw new Error('Runtime owner transition is already in progress.');
+    try {
+      const current = readRuntimeOwnerPolicy(paths);
+      if (current.unified && !sharedHost) return current;
+      const owner = readRuntimeDaemonLockOwner(paths.lockFile);
+      if (!owner && fs.existsSync(paths.lockFile)) throw new Error('Cannot migrate an unreadable Runtime owner lock.');
+      const descriptor = readRuntimeDaemonState(paths);
+      if (!descriptor && fs.existsSync(paths.stateFile)) throw new Error('Cannot migrate an unreadable Host descriptor.');
+      if (descriptor && (!owner || descriptor.runtimeId !== owner.runtimeId || descriptor.pid !== owner.pid)
+        && runtimeOwnerProcessState({ pid: descriptor.pid }) !== 'gone') {
+        throw new Error('Cannot migrate a live or unverified Host descriptor without its matching owner lock.');
+      }
+      const storageFile = path.join(storageRoot, 'owner.lock');
+      const storageOwner = readRuntimeDaemonLockOwner(storageFile);
+      if (!storageOwner && fs.existsSync(storageFile)) throw new Error('Cannot migrate an unreadable Session storage owner lock.');
+      // Discovery may precede this transaction. Re-read the target descriptor
+      // under the storage fence; an equal PID alone never authorizes redirect.
+      const target = sharedHost ? findRuntimeSessionStorageHost(paths.configHome, sessionsDir) : undefined;
+      const targetOwner = target ? readRuntimeDaemonLockOwner(
+        resolveRuntimeDaemonPathsFromConfigHome(paths.configHome, target.profile).lockFile,
+      ) : undefined;
+      if (sharedHost && (!target || target.profile !== sharedHost.profile || target.profile === paths.profile
+        || target.ownerFile !== sharedHost.ownerFile || !sameRuntimeLockOwner(target.owner, sharedHost.owner)
+        || !target.owner.processStartIdentity || runtimeOwnerProcessState(target.owner) !== 'alive'
+        || !targetOwner || targetOwner.runtimeId !== target.owner.runtimeId || targetOwner.pid !== target.owner.pid
+        || targetOwner.processStartIdentity !== target.owner.processStartIdentity || targetOwner.kind === 'inline')) {
+        throw new Error('The verified shared Host changed before requested-profile migration.');
+      }
+      if (storageOwner && runtimeOwnerProcessState(storageOwner) !== 'gone') {
+        if (!sharedHost && current.mode === 'daemon' && owner && owner.kind !== 'inline'
+          && storageOwner.kind === 'daemon' && storageOwner.runtimeId === owner.runtimeId
+          && storageOwner.pid === owner.pid && storageOwner.processStartIdentity === owner.processStartIdentity
+          && runtimeOwnerProcessState(owner) === 'alive') return current;
+        if (!target || !sameRuntimeLockOwner(storageOwner, target.owner)) {
+          throw new Error('Cannot migrate while Session storage has an active or unverified owner.');
+        }
+      }
+      if (owner) {
+        const state = runtimeOwnerProcessState(owner);
+        if (!sharedHost && state === 'alive' && current.mode === 'daemon' && owner.kind !== 'inline') return current;
+        if (state !== 'gone') throw new Error('Cannot migrate while the Runtime owner is active or its liveness is unverified.');
+        if (current.mode === 'inline' && owner.kind !== 'inline') {
+          throw new Error('Cannot migrate ambiguous legacy Runtime ownership.');
+        }
+      }
+      return current.unified ? current : writeRuntimeOwnerPolicy(paths, 'daemon', current.revision, coordination.nonce, true);
+    } finally {
+      releaseRuntimeOwnerCoordination(paths, coordination);
+    }
+  } finally {
+    releaseRuntimeOwnerCoordination(storagePaths, storageCoordination);
+  }
+}
+
 export function acquireRuntimeInlineOwner(
   paths: RuntimeDaemonPaths,
   owner: RuntimeDaemonLockOwner,
@@ -314,6 +390,7 @@ export function acquireRuntimeInlineOwner(
   if (!coordination) throw new Error('Runtime owner transition is already in progress.');
   try {
     const current = readRuntimeOwnerPolicy(paths);
+    if (current.unified) throw new Error('Inline Runtime ownership is retired for this profile.');
     if (current.mode !== 'inline') {
       if (!enableRollback) {
         throw new Error('Coder inline ownership requires explicit enableRollback: true.');
@@ -339,8 +416,10 @@ function writeRuntimeOwnerPolicy(
   mode: RuntimeOwnerPolicy['mode'],
   expectedRevision: number,
   nonce: string,
+  unified = false,
 ): RuntimeOwnerPolicy {
   const current = readRuntimeOwnerPolicy(paths);
+  if (current.unified && !unified) throw new Error('Legacy Runtime ownership changes are retired for this profile.');
   if (current.revision !== expectedRevision) {
     throw runtimeOwnerPolicyConflict(
       `Runtime owner policy conflict: expected ${expectedRevision}, current ${current.revision}.`,
@@ -350,12 +429,14 @@ function writeRuntimeOwnerPolicy(
     mode,
     revision: current.revision + 1,
     updatedAt: new Date().toISOString(),
+    ...(unified ? { unified: true as const } : {}),
   };
   const temporary = `${paths.ownerPolicyFile}.${process.pid}.${nonce}.tmp`;
   try {
     const policyFd = fs.openSync(temporary, 'wx', 0o600);
     try {
-      fs.writeFileSync(policyFd, `${JSON.stringify(updated, null, 2)}\n`, 'utf8');
+      const persisted = unified ? { mode: 'host', revision: updated.revision, updatedAt: updated.updatedAt } : updated;
+      fs.writeFileSync(policyFd, `${JSON.stringify(persisted, null, 2)}\n`, 'utf8');
       fs.fsyncSync(policyFd);
     } finally {
       fs.closeSync(policyFd);

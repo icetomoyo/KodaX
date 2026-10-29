@@ -10,7 +10,7 @@ import {
 } from '@kodax-ai/llm';
 import { LEARNING_REVIEW_TOOL } from '@kodax-ai/coding';
 import { connectKodaXClient, type KodaXClientWorkflowHostPolicy } from '@kodax-ai/kodax/client';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 

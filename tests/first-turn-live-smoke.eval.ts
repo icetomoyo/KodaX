@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { SkillRegistry } from '@kodax-ai/agent';
 import { setAgentConfigHome } from '../packages/agent/src/runtime/agent-home.js';
-import { createKodaXRuntime, type KodaXRuntime } from '../src/sdk-runtime.js';
+import { createKodaXRuntime, type KodaXRuntime } from "./runtime-fixture.js";
 import {
   KodaXBaseProvider, getProvider, getCostRate, calculateCost, registerModelProvider,
   clearRuntimeModelProviders, type KodaXProviderConfig, type KodaXMessage,

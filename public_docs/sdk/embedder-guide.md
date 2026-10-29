@@ -25,6 +25,34 @@ objects, not alternate names for this contract.
   release context. They are not instructions for a product UI to create its own
   execution owner or write the shared Host's files.
 
+## Unreleased unified Host SDK cutover
+
+Public Runtime construction now connects to one independent shared Host. Default
+construction, `mode:'embedded'`, internal owner switches and function-based
+`externalAgents` injection fail with `runtime_host_migration_required` before
+startup side effects. Neither the root entry nor `/runtime` exports the internal
+Host constructor or inline owner acquisition/mode switching.
+
+Use `ensureKodaXClient` / `connectKodaXClient` for products. Trusted integrations
+may use `ensureKodaXRuntime` / `connectKodaXRuntime`. Explicit
+`createKodaXRuntime({mode:'daemon'})` remains a thin launcher, preserving the
+new-owner-only `execPolicy/autoReview` bootstrap. Its connection closes by
+detaching. Independent llm/agent/coding libraries and configured Host A2A remain;
+arbitrary executor callbacks have no automatic cross-process equivalent.
+
+The launcher migrates eligible abandoned owner policies after checking the actual
+Session storage owner. Its atomic terminal policy prevents verified old readers
+from switching that profile back to inline after idle exit. Old management tools
+may report a corrupt policy; deleting it is not a supported downgrade. Live,
+unknown and malformed owners are not reclaimed. Old private embedders without
+ownership records must be stopped and upgraded first: an absent lock cannot prove
+that they stopped writing. Long-lived apps must reload their SDK. Migration never
+replays tools or bypasses Stop, checkpoint authority or cleanup checks.
+
+This section supersedes historical embedded recipes below. See the
+[migration contract](../../docs/SDK_MIGRATION.md#统一-host-sdk-收口未发布) and
+[validation evidence](../../docs/test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md).
+
 ## Product Client integration
 
 ### Post-alpha.10 SDK alignment
@@ -1537,7 +1565,7 @@ await runKodaX({ session: { id, storage }, ... }, prompt);
 ```
 
 `mutateRuntimeInfo()` is an optional low-level seam used by the Runtime-owned
-`FileSessionStorage`; `createKodaXRuntime()` currently owns that storage. A
+`FileSessionStorage`; the shared Host owns that storage. A
 custom storage passed directly to `runKodaX()` remains transcript storage.
 Adding this method alone does not install the Runtime workspace-root registry
 or its shell/text sandbox policy. Use the Runtime service when depending on the
@@ -2992,27 +3020,10 @@ runKodaX({
 
 ## 17. Runtime SDK and local daemon (FEATURE_253-FEATURE_257)
 
-`@kodax-ai/kodax/runtime` is the stable host-facing runtime facade for
-applications that want KodaX as a substrate instead of only as a terminal CLI.
-It wraps the same coding/session engine used by the REPL and exposes it through
-one interface in two deployment shapes:
-
-- **embedded / inline**: in-process runtime owned by the caller;
-- **daemon**: local-only runtime owner reached through a named pipe on Windows or
-  a Unix domain socket on Linux/macOS.
-
-The v0.7.96 Worker-hosted embedded runtime (`isolation: 'worker'`, the
-`dist/runtime-worker.js` sidecar, and the `requirements.hardDispose` gate) was
-removed in v0.7.97. Loading the configured A2A plane is owner wiring, not
-Runtime magic: call `createConfiguredA2ARuntimeIntegration({ configHome })`
-(exported from `@kodax-ai/kodax/a2a`) and pass its `runtimeOptions` as
-`externalAgents` — exactly what the CLI does for both its embedded sessions
-and the daemon Host it launches.
-
-The daemon is not a separate product engine. It hosts the embedded runtime behind
-a process boundary, so REPL, Space, IDE adapters, ACP, and custom SDK clients can
-share the same profile runtime without reimplementing sessions, permissions,
-events, config, MCP, catalogs, artifacts, or diagnostics.
+`@kodax-ai/kodax/runtime` is the trusted connection facade for the shared Host.
+The same Host owns sessions, Runs, permissions, configuration and persistence
+for CLI, Space, IDE and SDK clients. Public in-process construction is retired;
+see the unreleased cutover above for compatibility limits.
 
 ### Which shape to use
 
@@ -3021,8 +3032,7 @@ the top of this guide. This table also identifies explicit low-level ownership.
 
 | Host scenario | Recommended shape | Why |
 |---|---|---|
-| Unit tests, one-off scripts, short-lived SDK tools | `createKodaXRuntime()` | No daemon lifecycle; easiest cleanup. |
-| A single app owns all KodaX state in one process | `createKodaXRuntime({ mode: 'embedded' })` | Direct in-process calls and no IPC. |
+| One-off product scripts | `ensureKodaXClient()` | Uses the same Host contract; disconnect when finished. |
 | REPL + Space + IDE product clients | `ensureKodaXClient({ profile, homeDir })` | Starts or reuses the Host and returns the Product contract. |
 | Product attach-only client | `connectKodaXClient({ profile, homeDir })` | Passive; fails if no compatible Host is ready. |
 | Trusted low-level daemon integration | `ensureKodaXRuntime` / `connectKodaXRuntime` | Runtime services rather than Product business methods. |
@@ -3045,16 +3055,16 @@ The important creation options are:
 
 | Option | Default | Contract |
 |---|---|---|
-| `mode` | `'embedded'` | Chooses private ownership or a shared daemon process. |
+| `mode` | required | Only `'daemon'` is accepted by the compatibility launcher. |
 | `homeDir` | unset | When omitted, use the exact resolved `KODAX_HOME`. When set, this is the base directory that owns `.kodax`, with the same meaning as CLI `daemon --home`; daemon state/config live under `<homeDir>/.kodax`. |
 | `profile` | `'default'` | Daemon uniqueness and runtime configuration namespace. |
 | `sessionsDir` | `<homeDir>/.kodax/sessions` | Explicit session storage override. |
 | `daemonStartupTimeoutMs` | `60000` | Total cold-start/concurrent-owner wait budget. |
 | `daemonConnectTimeoutMs` | `2000` | Per-socket connection timeout. |
 | `autoStartDaemon` | conditional | For `createKodaXRuntime({mode:'daemon'})`, true only when no explicit endpoint/transport is supplied. |
-| `execPolicy` | unset | Trusted host-owned administrator rules and canonical trusted-project roots. The inline owner receives it directly; daemon mode accepts it only while auto-starting a new owner. |
+| `execPolicy` | unset | Trusted host-owned administrator rules and canonical trusted-project roots. Accepted only while auto-starting a new independent owner. |
 | `autoReview` | unset | Trusted host-owned administrator/model guidance for Auto review. It follows the same owner-only transport contract as `execPolicy`. |
-| `externalAgents` | unset | Host-installed executor factories, dispatch policy, optional credential/artifact policies, and default dispatch context. Inline owner only; see §18. |
+| `externalAgents` | removed | Function-based owner injection is rejected, including the former in-process daemon path. |
 | `requirements.externalAgents` | `false` | Reject a Runtime/daemon connection that does not advertise an installed external-agent plane. |
 
 The former `isolation`, `worker.*`, and `requirements.hardDispose` options were
@@ -3062,33 +3072,12 @@ removed with the Worker facade in v0.7.97; supplying them is now a plain unknown
 option error. Options are never silently ignored to select a weaker ownership
 form.
 
-### Basic embedded usage
+### Migrating embedded callers
 
-```ts
-import { createKodaXRuntime } from '@kodax-ai/kodax/runtime';
-
-const runtime = await createKodaXRuntime({
-  mode: 'embedded',
-  homeDir: '/tmp/my-host-kodax',
-  defaultProvider: 'zai-coding',
-});
-
-try {
-  const session = await runtime.sessions.create({
-    title: 'SDK embedded session',
-    projectPath: process.cwd(),
-    surface: 'my-host',
-  });
-  const handle = await runtime.runs.start({
-    sessionId: session.id,
-    prompt: 'Read package.json and summarize this project.',
-  });
-  const result = await handle.result;
-  console.log(result.phase);
-} finally {
-  await runtime.close();
-}
-```
+Use the Product Client integration above. Changing only `mode` is not sufficient:
+move owner configuration to the Host, replace private close with disconnect, and
+remove function injection. Keep standalone library workloads on independent
+library APIs with their own storage.
 
 ### Basic daemon usage
 
@@ -3336,11 +3325,10 @@ the provider wire contract aligned across daemon and embedded hosts.
 
 ### Close, abort, and ownership semantics
 
-The same method name deliberately has deployment-specific ownership effects:
+Public Runtime connections share one ownership contract:
 
 | Form | `runtime.close()` | Run abort | After owner crash/termination |
 |---|---|---|---|
-| embedded / inline | Cancels owned runs and permissions and closes private runtime state. It cannot recover a host event loop blocked by arbitrary inline code. | `runs.abort(runId)` settles the Runtime handle and forwards cancellation to coding. | The embedding process owns recovery. |
 | daemon client | Detaches only this client transport. Other REPL/Space/SDK clients and runs remain owned by the daemon. | Aborts only the addressed run. | The client connection rejects; reconnect explicitly after the daemon is healthy. |
 
 `close()` is idempotent. It is not a shared-daemon stop command. Use
@@ -3354,9 +3342,8 @@ rechecks preflight, and stops the daemon only when no active or queued run,
 Workflow, Agent turn, pending permission/user input, other logical client, or
 in-flight mutation exists; otherwise it fails with a structured `conflict`
 error and the daemon keeps running. Shutdown never changes the owner mode
-implicitly — a daemon-to-inline ownership change goes only through an explicit
-`setKodaXRuntimeOwnerMode()` call, or owner-lock release followed by
-`acquireKodaXInlineOwner()`; the former `stopForInline()` rollback and the
+implicitly. Public inline ownership and its switching helpers are retired by
+the unified Host cutover. The former `stopForInline()` rollback and the
 crash-resumable exit-settlement transaction were removed in v0.7.97. Host-close
 logging and owner-lock release are still intermediate
 progress boundaries. A successful `kodax daemon stop` / `restart` additionally
@@ -3434,8 +3421,8 @@ types are unchanged: a retried inspection reports `checking`.
 The shared Host performs historical managed-child recovery once after acquiring
 its Owner and Session-storage fences, before readiness, in its resolved config
 home. Clients do not repeat that sweep; process exit still verifies its own
-exact registrations. Passive connect and private embedded Runtime construction
-do not run shared-Host global recovery. Stop preflight projects canonical Actor
+exact registrations. Passive connections do not run shared-Host global recovery.
+Stop preflight projects canonical Actor
 metadata without materializing transcripts, while retaining all admitted active
 Session coverage, writer/file identity fences, and Owner liveness checks. Resume
 indexes never authorize stopping a Host. Claimed Actor controllers are checked
@@ -3485,7 +3472,7 @@ kodax daemon stop --profile default --json
 kodax daemon restart --profile default
 ```
 
-Inside the REPL, `/status runtime` reports embedded/daemon mode, profile,
+Inside the REPL, `/status runtime` reports Host identity, profile,
 runtime id, endpoint/health when applicable, and active/queued counters.
 
 ### Runtime services
@@ -3494,13 +3481,13 @@ Every `KodaXRuntime` exposes the same service set in inline and daemon mode:
 
 | Service | Purpose |
 |---|---|
-| `identity` | Runtime id, mode, isolation (`inline` for embedded, `process` for daemon), profile, started time, package version. |
+| `identity` | Runtime id, mode, process isolation, profile, started time, package version. |
 | `sessions` | Create/load/list/fork/transcript/settings/notice/rewind/compact/archive/delete. |
 | `runs` | Start/await/get/list/abort runs; update provider/model/reasoning for supported phases. |
 | `events` | Subscribe to the live in-process event stream (one `seq` ordering hint per Session). |
 | `permissions` | Request/list/respond to tool permissions across clients. |
 | `workflows` | Observe workflow process snapshots/events and lifecycle controls. |
-| `config` | Read/patch/reload daemon or embedded profile config. |
+| `config` | Read/patch/reload shared Host profile config. |
 | `catalog` | Providers, models, commands, skills, custom providers, extensions. |
 | `mcp` | MCP server CRUD, validation, reload, and tool catalog listing. |
 | `artifacts` | Create/get/delete runtime artifact references for file/image/video inputs. |
@@ -3813,7 +3800,7 @@ LSP services, class instances, or cyclic structures. KodaX rejects them before
 transport instead of silently dropping fields.
 
 `events.beforeToolExecute` is an executable policy hook, not an observation
-callback. It is preserved in embedded mode and rejected in daemon mode; install
+callback. It cannot cross the public connection boundary; install
 the equivalent policy in the daemon owner instead. The KodaX REPL explicitly
 marks and removes only its own legacy approval hook because Runtime-owned
 permission brokering replaces that hook.
@@ -3826,17 +3813,15 @@ Use the runtime APIs for cross-boundary behavior:
 - session defaults: `runtime.sessions.updateSettings(...)`;
 - config/MCP/extensions: configure or reload them in the Runtime owner.
 
-Host-bound extensions or callbacks that cannot be represented as owner-loaded
-module/config descriptors require inline embedded mode. There is no fallback to
-executing those objects in the client process.
+Host-bound extensions must use supported owner-loaded module/config descriptors.
+Arbitrary client callbacks have no transparent migration to the shared Host.
 
 For daemon mode, extension and MCP ownership follows daemon configuration.
 Configure extensions in the daemon profile and call
 `runtime.catalog.reloadExtensions()` or the matching config service. A CLI
 `--extension <path>` is intentionally rejected in daemon mode because that
 process-local object cannot become part of a durable shared owner. Use
-owner-readable config/module descriptors or inline mode for host-created
-extension objects.
+owner-readable config/module descriptors for extensions.
 
 ### Permissions across clients
 
@@ -3884,13 +3869,12 @@ await handleRuntimePermissionRequest(runtime, request, async (pending, context) 
 
 `handleRuntimePermissionRequest()` subscribes before showing the prompt,
 rechecks pending state, and makes Runtime resolution authoritative. A late UI
-answer is ignored. Embedded AskUser callbacks receive the same optional third
-argument, `{ signal }`; abort the visible prompt when it fires.
+answer is ignored; abort the visible prompt when the supplied signal fires.
 
 Ordinary AskUser requests wait indefinitely by default and allow explicit skip.
 There is no required-answer flag. An ordinary-question deadline is controlled
-by `createKodaXRuntime({ userInputTimeoutMs })` or, for a newly started shared
-Host, `ensureKodaXClient({ userInputTimeoutMs })` / `ensureKodaXRuntime`.
+for a newly started shared Host by `ensureKodaXClient({ userInputTimeoutMs })`
+or `ensureKodaXRuntime`, including the retained `createKodaXRuntime` daemon launcher.
 Connecting to an existing Host does not change its policy. The CLI equivalent
 is `kodax daemon serve --user-input-timeout-ms <milliseconds>`; this is not a
 `config.json` setting.
@@ -4085,15 +4069,22 @@ maintainer-owned manual step.
 
 ## 18. External-agent executor plane (FEATURE_258, v0.7.67)
 
+> Historical owner-injection recipes below are retired by the unified Host cutover.
+> Executor-plane library contracts and configured A2A remain; do not construct a
+> private or in-process daemon Runtime from these examples.
+
 FEATURE_258 lets an SDK host register remote agents without teaching the coding
 runtime a specific A2A, MCP, or HTTP client. The public contracts live in
 `@kodax-ai/kodax/agent`; the host-facing catalog and task services live on
 `@kodax-ai/kodax/runtime`.
 
-### Ownership rule
+### Historical ownership rule (retired)
 
 An `AgentExecutorFactory` contains functions, so it cannot cross a daemon DTO
-boundary. Install factories where the Runtime owner executes:
+boundary. The table and owner example below document the pre-cutover API only;
+they are not supported recipes for the current SDK. Configure A2A in the Host
+for supported remote agents, or use the independent executor-plane library.
+Arbitrary factory injection has no equivalent product Host API.
 
 | Desired owner | Supported construction |
 |---|---|
@@ -4107,7 +4098,7 @@ new in-process daemon lease. KodaX rejects an already-running profile instead of
 silently replacing its executor configuration. Closing that owner facade shuts
 down the host it created; closing an ordinary attached client only detaches.
 
-### Minimal owner and task flow
+### Historical owner and task flow (retired)
 
 The reference executor below is a contract/conformance adapter. Replace it with
 your own `AgentExecutorFactory` for a real remote protocol.
@@ -4611,6 +4602,9 @@ separate safe-fetch trust boundaries, so a remote Agent cannot redirect a task
 payload to the token origin. API key, Basic, interactive OAuth, OIDC, mTLS, and
 multi-scheme AND requirements fail explicitly in the built-in client.
 
+> Historical factory-injection recipe: public `externalAgents` injection is
+> retired. Current product clients use configured A2A on the shared Host.
+
 ```ts
 import {
   createA2AAgentExecutorFactory,
@@ -4889,7 +4883,10 @@ Every concrete file reached by `read`, `grep`, or `glob` is checked against the
 bound workspace. Child runs inherit ceilings for native reads, tools, Skills,
 and Skill scripts; they cannot expand the parent's admitted authority.
 
-### Publish one KodaX Agent
+### Historical private Runtime publication (retired)
+
+The private Runtime construction below predates the unified Host cutover. Use
+configured `a2a serve` with the shared Host for current product publication.
 
 Publication is host-owned and opt-in. The public card describes only the
 configured Agent, media types, and skills. Authentication runs before task
@@ -5972,7 +5969,8 @@ Daemon clients use `RuntimeDaemonStartRunInput`. Function callbacks,
 `AbortSignal`, Extension Runtime objects, and guardrail instances are excluded
 from that type and rejected at runtime with `RuntimeTransportBoundaryError`
 and an exact value path if an untyped caller supplies them. Host-only values
-remain valid only for embedded Runtime calls.
+belong to internal Host assembly or independent library integrations, not public
+Runtime construction.
 
 ### Recovery queries and stop preflight
 
@@ -6017,69 +6015,23 @@ persists its own UI acknowledgement cursor against Runtime/run terminal facts.
 This avoids a false claim that one client's acknowledgement is global daemon
 truth.
 
-### Owner policy, rollback, and Electron boundary
+### Owner policy, migration, and Electron boundary
 
-Daemon and inline Coder use one profile fence. Do not compose
-`status.preflight()` with a low-level unconditional stop: another client or run
-can appear between those calls. v0.7.97 removed the combined rollback
-transaction (`runtime.daemon.stopForInline()`); stopping the daemon and
-changing the owner mode are now two explicit steps, and the owner mode never
-changes implicitly. First stop the daemon through the fenced idle shutdown —
-management rechecks preflight under the draining fence and returns a
-structured `conflict` instead of stopping a busy daemon — then flip the owner
-policy while no owner lock exists:
+The unified Host launcher migrates legacy ownership under both the profile and
+actual Session-root fences. The transition is one-way: old supported readers
+reject the persisted Host policy, including after idle exit. When a request reuses
+a Host under another profile, the requested profile is also checked and migrated.
+There is no public inline acquisition or mode-switching API. Do not delete policy
+files to bypass the migration or an ownership conflict.
 
-```ts
-import {
-  acquireKodaXInlineOwner,
-  enableKodaXDaemonOwner,
-  getKodaXRuntimeOwnerState,
-  setKodaXRuntimeOwnerMode,
-} from '@kodax-ai/kodax/runtime';
-
-const management = await runtime.daemon.inspect();
-if (!management.preflight.canStop) {
-  showStopBlockers(management.preflight.blockers);
-  return;
-}
-
-// Fenced idle stop; active work returns structured `conflict`.
-const stop = await runtime.daemon.shutdown();
-
-// `accepted` means the stop was taken. Wait through the public owner-state
-// query; never infer release from a PID.
-const shutdownDeadline = Date.now() + 30_000;
-while (getKodaXRuntimeOwnerState({ homeDir: kodaxHome, profile: 'coder' }).owner) {
-  if (Date.now() >= shutdownDeadline) throw new Error('Timed out waiting for daemon owner release.');
-  await delay(25);
-}
-await runtime.close(); // Detach only; it does not perform a second stop.
-
-// Explicit daemon→inline owner-mode change; rejected while an owner lock exists.
-setKodaXRuntimeOwnerMode({
-  mode: 'inline',
-  expectedRevision: management.ownerPolicy.revision,
-  homeDir: kodaxHome,
-  profile: 'coder',
-});
-const inlineOwner = acquireKodaXInlineOwner({ homeDir: kodaxHome, profile: 'coder' });
-
-// Later, after the inline owner has released its fence:
-inlineOwner.close();
-const daemonPolicy = enableKodaXDaemonOwner({ homeDir: kodaxHome, profile: 'coder' });
-// daemonPolicy.revision is authoritative; no expectedRevision guess is needed.
-```
-
-Any management revision change, another logical client, active or queued run,
-running/paused Workflow, non-terminal/unknown AgentTask, pending
-AskUser/permission, or in-flight mutation returns structured `conflict`; the
-daemon remains running and the owner mode remains unchanged. Draining also rejects
-credential and Host Tool state changes without persisting their secrets or
-results. The inline policy is sticky: later CLI auto-start is rejected until
-`setKodaXRuntimeOwnerMode({ mode: 'daemon', ... })` or
-`enableKodaXDaemonOwner()` changes it back to `daemon`. `runtime.close()` still
-only detaches. Stale-owner handling validates the owned lock/state and never
-kills a process merely because a PID was reused.
+For administrative shutdown, use `runtime.daemon.inspect()` and the authenticated
+`runtime.daemon.shutdown()` operation. Preflight is informational; shutdown checks
+again under its draining fence. Active or queued work, other clients, pending
+interactions or mutations can return a structured `conflict`. A stop request does
+not establish exact process exit: use `waitForRuntimeDaemonShutdown` with the
+captured owner identity before claiming successful cleanup. `runtime.close()` only
+detaches this connection. Unknown owner identity or cleanup remains unverified;
+PID reuse never authorizes killing an unrelated process.
 
 Keep all trusted objects in Electron Main: daemon token/endpoint, stable client
 identity, owner policy, keychain broker, Host Tool handlers, and
@@ -6203,6 +6155,7 @@ Git checkout. A trusted host must opt canonical roots in explicitly:
 
 ```ts
 const runtime = await createKodaXRuntime({
+  mode: 'daemon',
   execPolicy: {
     trustedProjectRoots: [projectDirectory],
     // adminRules may supply host-managed rules that model/run input cannot edit.
@@ -7119,6 +7072,7 @@ import {
 } from '@kodax-ai/kodax/runtime';
 
 const runtime = await createKodaXRuntime({
+  mode: 'daemon',
   requirements: {
     learningCenter: 1,
     skillLearningLoop: 1,
@@ -7181,12 +7135,12 @@ replacement:
 | Removed in v0.7.97 | Replacement |
 |---|---|
 | Operation envelope (`operation: { operationId }` on public control mutations), auto-generated operation IDs, `runtime.operations.get` receipts, and the `operationDeduplication` capability/requirement | Mutation identity comes from each mutation's own domain fields (explicit `sessionId` on create, returned `runId`, `expectedRevision` CAS on settings). After a lost response, re-read authoritative state (`runs.get`, `sessions.status`) and reconcile explicitly; there is no transparent retry or receipt query. |
-| `settleKodaXRuntimeExit()` SDK export, `daemon.rollbackToInline`, client `stopForInline`, and the `runtimeExitSettlement:2` capability | `runtime.shutdown` / `runtime.daemon.shutdown()` is a real idle shutdown (busy → structured `conflict`). Daemon→inline ownership changes are explicit: `setKodaXRuntimeOwnerMode({ mode, expectedRevision })`, or owner-lock release plus `acquireKodaXInlineOwner()`. The owner mode never changes implicitly. |
+| `settleKodaXRuntimeExit()` SDK export, `daemon.rollbackToInline`, client `stopForInline`, and the `runtimeExitSettlement:2` capability | `runtime.shutdown` / `runtime.daemon.shutdown()` is a real idle shutdown (busy → structured `conflict`). Public inline ownership and its mode-switching helpers are also retired by the unified Host cutover. Legacy policy migration is automatic and one-way; shutdown never restores inline ownership. |
 | `event.subscribe`/`event.replay` RPCs, the `{ sessionId, journalEpoch, seq }` cursor, `journalEpoch` fields, and the `sessionEventJournal:1` capability | Events are a live in-process stream (`{ id, seq, time, sessionId, runId, turnId?, type, payload }`). Remote consumption reuses `session.observe` notifications; observation snapshots carry a `seq` high-water, live listener events are strictly greater, and `seq` never persists across restarts. Deleting/recreating a Session invalidates observations with `runtime_changed`. |
 | Diagnostics RPCs `context.budget.get`, `tool.exposure.preview`, `provider.cache.diagnostics.get` (and the `runtime.diagnostics.latest*` facade) | Removed. `capabilities.contextDiagnostics: true` only gates diagnostic event notifications (`context.budget.snapshot`, `tool.exposure.planned`, `provider.cache.diagnostics`, `context.compaction.skipped`) on the live stream. |
-| `isolation: 'worker'`, `worker: { configuredA2A: true }` (and `worker.*` options), `requirements.hardDispose`, and the `dist/runtime-worker.js` sidecar | Deleted. Use inline embedded or daemon mode. For the configured A2A plane, wire `createConfiguredA2ARuntimeIntegration({ configHome })` in the owner and pass its `runtimeOptions` as `externalAgents` — the Runtime itself never reads `integrations/a2a.json`. |
+| `isolation: 'worker'`, `worker: { configuredA2A: true }` (and `worker.*` options), `requirements.hardDispose`, and the `dist/runtime-worker.js` sidecar | Deleted. Connect to the shared Host, which loads configured A2A through internal owner assembly. Public executor-function injection is retired. |
 | Late-result redelivery after an abandoned read | Removed. `request.cancel`/`request.ack` remain daemon transport-control frames only; an abandoned read gets no late delivery. |
-| The product mode surfaces: the CLI `--runtime-mode` flag, the `KODAX_RUNTIME_MODE` environment variable, and the `runtimeMode` key in `~/.kodax/config.json` | Removed in the fixed-Host release. The `kodax` CLI always starts-or-attaches the daemon owner; SDK callers keep the `mode: 'embedded' | 'daemon'` option on `createKodaXRuntime` (embedded stays a low-level path, never a product fallback). |
+| The product mode surfaces: the CLI `--runtime-mode` flag, the `KODAX_RUNTIME_MODE` environment variable, and the `runtimeMode` key in `~/.kodax/config.json` | Removed in the fixed-Host release. The `kodax` CLI always starts-or-attaches the daemon owner; the unified Host SDK also retires public embedded construction. `createKodaXRuntime({mode:'daemon'})` remains a connection launcher only. |
 | `setThinking` REPL callback | Removed. Use `setReasoningMode` (the shared settings key is `reasoningMode`). |
 | `getKodaXRuntimeOwnerPolicy` export | Removed. `getKodaXRuntimeOwnerState()` remains and reports policy, owner status, and the current owner in one call. |
 

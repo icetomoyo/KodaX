@@ -6,7 +6,7 @@ import { createServer } from 'node:http';
 import { SkillRegistry } from '@kodax-ai/agent';
 import { KodaXBaseProvider, registerModelProvider, type KodaXProviderConfig,
   type KodaXMessage, type KodaXToolDefinition } from '@kodax-ai/llm';
-import { createKodaXRuntime, type KodaXRuntime } from '../src/sdk-runtime.js';
+import { createKodaXRuntime, type KodaXRuntime } from "./runtime-fixture.js";
 import type { FrozenInput } from './first-turn-eval-support.js';
 import { EDIT_LIMITS, type CallEvidence, type EditRoute } from './first-turn-edit-eval-support.js';
 import { writeEditEvidence } from './first-turn-edit-artifacts.js';

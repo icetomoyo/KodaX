@@ -5,7 +5,7 @@ import path from 'node:path';
 import { expect, it } from 'vitest';
 
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import {
   resolveRuntimeDaemonPaths,

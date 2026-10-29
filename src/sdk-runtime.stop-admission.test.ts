@@ -7,7 +7,7 @@ import { FileSessionStorage } from '@kodax-ai/repl';
 import { awaitLatestCodingMemoryReviewDrain } from '@kodax-ai/coding';
 import { KodaXBaseProvider, registerModelProvider,
   type KodaXProviderConfig, type KodaXStreamResult } from '@kodax-ai/llm';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { createRuntimeDaemonDispatcher } from './runtime-daemon/server.js';
 import { createRuntimeDaemonRequest } from './runtime-daemon/protocol.js';
 import { createRuntimeDaemonClient } from './runtime-daemon/client.js';

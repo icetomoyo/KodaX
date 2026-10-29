@@ -6,7 +6,7 @@ import { expect, it, vi } from 'vitest';
 import type { KodaXEvents, KodaXOptions, KodaXResult, RunningSession } from '@kodax-ai/coding';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 

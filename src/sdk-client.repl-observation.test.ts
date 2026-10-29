@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
 import type { KodaXOptions, RunningSession } from '@kodax-ai/coding';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { connectKodaXClient } from './sdk-client.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';

@@ -7,7 +7,7 @@ import { KodaXBaseProvider, registerModelProvider, clearRuntimeModelProviders,
   type KodaXProviderConfig, type KodaXStreamResult, type KodaXProviderStreamOptions, type KodaXMessage,
   type KodaXToolDefinition, type KodaXReasoningRequest } from '@kodax-ai/llm';
 import { connectKodaXClient, readKodaXClientExits, type KodaXClientHostAuthorization } from '@kodax-ai/kodax/client';
-import { connectKodaXRuntime, createKodaXRuntime, type RuntimeSubmitInput } from './sdk-runtime.js';
+import { connectKodaXRuntime, createKodaXRuntime, type RuntimeSubmitInput } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 import { writeRuntimeDaemonShutdownOutcome } from './runtime-daemon/state.js';

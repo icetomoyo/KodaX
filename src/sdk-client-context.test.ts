@@ -5,7 +5,7 @@ import { expect, it } from 'vitest';
 import { createSessionManager } from '@kodax-ai/repl';
 import { estimateTokens, type KodaXMessage } from '@kodax-ai/agent';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 
 it('observes canonical parent context before any Run and after reopening an AMA session', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-context-view-'));

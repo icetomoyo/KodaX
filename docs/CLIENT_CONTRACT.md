@@ -26,7 +26,13 @@ Shell 清理重试耗尽时保留 deferred 进程身份，允许后续对话和 
 | Node 产品启动器 | `/client` 的 `ensureKodaXClient(options)` | 委托统一 `ensureKodaXRuntime` 并返回同一产品投影；启动和更新不复制到 UI |
 | Node 启动器 | `@kodax-ai/kodax/runtime` 的 `ensureKodaXRuntime(options)` | 负责本机启动、兼容性校验和必要更新；返回底层 Runtime |
 | 底层被动连接 | `/runtime` 的 `connectKodaXRuntime(options)` | `autoStart: true` 明确拒绝；启动必须使用 ensure |
-| 显式嵌入 | `/runtime` 的 `createKodaXRuntime({ mode: 'embedded' })` | 独立库/受信任宿主的执行接缝；不能作为产品连接失败后的私有 owner 回退 |
+| 底层兼容启动器 | `/runtime` 的 `createKodaXRuntime({ mode: 'daemon' })` | 仅委托统一 Host 启动/连接；默认与 embedded 构造、内部 owner 开关和函数型 executor 注入已退役 |
+
+2026-10-29 未发布收口：公开 SDK 不再创建进程内产品 owner，根入口与 `/runtime`
+均不导出内部构造器或 inline 所有权切换。旧 JavaScript 构造请求在启动副作用前返回
+`runtime_host_migration_required`。独立 llm/agent/coding 库保留，不能作为共享产品
+Session 的第二个写入者。旧所有权状态由统一启动器迁移，条件、降级限制和无法自动
+识别的无 fence 旧宿主见 [Host 收口迁移](SDK_MIGRATION.md#统一-host-sdk-收口未发布)。
 
 两个产品入口都返回 `Promise<KodaXProductClient>`；选项可以全部省略。连接时要求 Host 宣告整体 `productClient` v1 契约，覆盖统一业务入口和输出事实；不按单个方法维护客户端能力矩阵。旧 Host 缺少该契约时被动 connect 明确拒绝，ensure 仅沿用现有空闲升级机制，不能强停忙碌 Host 或回退私有执行。
 

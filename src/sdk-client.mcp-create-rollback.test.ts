@@ -5,7 +5,7 @@ import { expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import { FileSessionStorage } from '@kodax-ai/repl';
 import { createMcpTestServerFixture } from '@kodax-ai/agent';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { toKodaXProductClient } from './client-runtime-adapter.js';
 
 vi.mock('node:fs', async importOriginal => ({ ...await importOriginal<typeof import('node:fs')>() }));

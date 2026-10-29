@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { registerCustomProviders } from '@kodax-ai/llm';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 
 it.each([
   ['coding', 'cancel'], ['managed_task', 'cancel'], ['coding', 'exhaust'],

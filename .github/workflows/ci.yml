@@ -295,6 +295,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # Pinned historical owner-policy regressions require exact commits.
 
       - uses: actions/setup-node@v6
         with:
@@ -330,6 +332,19 @@ jobs:
       - name: Bundled Provider credentials and daemon compaction
         timeout-minutes: 5
         run: npm run test:bundle
+
+      - name: Unified Host SDK historical migration and installed package gate
+        timeout-minutes: 5
+        run: npm run test:host-cutover
+
+      - name: Published alpha.11 Host in-place upgrade gate
+        timeout-minutes: 5
+        env:
+          KODAX_ALPHA11_TARBALL: ${{ runner.temp }}/kodax-ai-kodax-0.7.97-alpha.11.tgz
+        run: |
+          npm pack @kodax-ai/kodax@0.7.97-alpha.11 --ignore-scripts --pack-destination "$env:RUNNER_TEMP"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run test:host-upgrade
 
       - name: Windows SDK attachment under CPU contention
         run: node tests/windows-sdk-attach-pressure.mjs

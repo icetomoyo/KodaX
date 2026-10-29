@@ -4,12 +4,11 @@ import {
   connectKodaXRuntime,
   createKodaXRuntime,
   handleRuntimePermissionRequest,
-  type CreateKodaXRuntimeOptions,
   type KodaXRuntime,
   type RuntimeEvent,
   type RuntimeEventListener,
   type RuntimePermissionRequest,
-} from "./sdk-runtime.js";
+} from "../tests/runtime-fixture.js";
 
 function permissionRequest(
   overrides: Partial<RuntimePermissionRequest> = {},
@@ -352,7 +351,7 @@ describe("handleRuntimePermissionRequest", () => {
 
 describe("Runtime user-input timeout validation", () => {
   it("rejects invalid values before embedded or daemon startup", async () => {
-    const modes: readonly CreateKodaXRuntimeOptions[] = [
+    const modes: readonly NonNullable<Parameters<typeof createKodaXRuntime>[0]>[] = [
       {},
       { mode: "daemon", autoStartDaemon: false },
     ];

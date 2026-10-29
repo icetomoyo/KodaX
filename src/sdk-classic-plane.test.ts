@@ -17,7 +17,7 @@ import {
 } from '@kodax-ai/repl';
 import { attachClassicPlaneDisplay } from '@kodax-ai/repl';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { createCliClientPlane } from './cli-client-plane.js';
 
 class ProbeProvider extends KodaXBaseProvider {

@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, it } from 'vitest';
 import { cleanupRegisteredManagedChildren, setAgentConfigHome } from '@kodax-ai/agent';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 
 it('registers tool children in the SDK Runtime home rather than the process default home', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-shell-private-home-'));

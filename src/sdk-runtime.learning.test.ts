@@ -14,7 +14,7 @@ import type { RuntimeLearningService } from '@kodax-ai/kodax/runtime';
 import { KODAX_VERSION } from '@kodax-ai/repl';
 import type { RuntimeDaemonClientTransport } from './runtime-daemon/client.js';
 import { bindRuntimeLearningClient, createRuntimeLearningOwner } from './runtime-learning.js';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 
 const tempDirs: string[] = [];
 

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { expect, it } from 'vitest';
-import { connectKodaXRuntime, createKodaXRuntime } from './sdk-runtime.js';
+import { connectKodaXRuntime, createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 

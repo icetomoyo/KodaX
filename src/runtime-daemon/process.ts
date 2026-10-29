@@ -38,7 +38,7 @@ import {
   type RuntimeDaemonHealthCheckOptions,
 } from "./lifecycle.js";
 import {
-  assertRuntimeDaemonOwnerAllowed,
+  prepareRuntimeDaemonOwner,
   classifyRuntimeDaemonHealth,
   ensureRuntimeDaemonDirectories,
   readRuntimeDaemonLockOwner,
@@ -373,7 +373,6 @@ export async function acquireRuntimeDaemonProcessLease(
     options.configHome ?? path.join(homeDir, ".kodax"),
   );
   const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, profile);
-  assertRuntimeDaemonOwnerAllowed(paths);
   const expectedEndpoint = defaultRuntimeDaemonEndpoint(
     paths.profile,
     resolveRuntimeDaemonEndpointScope(homeDir, configHome),
@@ -385,6 +384,7 @@ export async function acquireRuntimeDaemonProcessLease(
   }
 
   if (options.startupSignal?.aborted) throw runtimeDaemonStartupCancelled();
+  prepareRuntimeDaemonOwner(paths, options.sessionsDir ?? path.join(configHome, 'sessions'));
   const reportProgress = createClientStartupProgressReporter(options.onStartupProgress);
   reportProgress({ stage: 'checking' });
   let initial = await raceRuntimeDaemonStartupStep(
@@ -463,6 +463,7 @@ export async function acquireRuntimeDaemonProcessLease(
     : createRuntimeDaemonOwnerBootstrapFile(paths, options.ownerBootstrap);
   try {
     reportProgress({ stage: 'starting' });
+    if (options.startupSignal?.aborted) throw runtimeDaemonStartupCancelled();
     const child = await spawnRuntimeDaemonServeProcess({
       profile: paths.profile,
       homeDir,

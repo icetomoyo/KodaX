@@ -11,7 +11,7 @@ import { parseMcpIntegrationDocument, writeIntegrationDocument } from '@kodax-ai
 import { awaitLatestCodingMemoryReviewDrain, getActiveExtensionRuntime } from '@kodax-ai/coding';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 

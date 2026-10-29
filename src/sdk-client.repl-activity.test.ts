@@ -8,7 +8,7 @@ import { stripVTControlCharacters } from 'node:util';
 import { expect, it, vi } from 'vitest';
 import type { KodaXEvents, KodaXOptions, KodaXResult, RunningSession } from '@kodax-ai/coding';
 import { createWorkflowProcessTracker } from '@kodax-ai/agent';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { connectKodaXClient } from './sdk-client.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';

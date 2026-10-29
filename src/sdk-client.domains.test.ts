@@ -18,7 +18,7 @@ import { getActiveExtensionRuntime } from '@kodax-ai/coding';
 import { createInteractiveContext, executeCommand, type CommandCallbacks } from '@kodax-ai/repl';
 import { applyClientSessionMetadata } from '../packages/repl/src/session/client-session.js';
 import { createCliSessionCommands } from './cli-client-plane.js';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { createReplRuntimeAutoModeControl } from './kodax_cli.js';
 import { createRuntimeDaemonDispatcher } from './runtime-daemon/server.js';
 import { createRuntimeDaemonRequest } from './runtime-daemon/protocol.js';

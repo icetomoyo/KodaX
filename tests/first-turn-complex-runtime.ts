@@ -8,7 +8,7 @@ import {spawnSync,execFileSync} from 'node:child_process';
 import {KodaXBaseProvider,registerModelProvider,runWithProviderRequestAttribution,type KodaXProviderConfig,type KodaXMessage,type KodaXToolDefinition,type KodaXReasoningRequest,type KodaXProviderStreamOptions} from '@kodax-ai/llm';
 import {currentProviderRequestAttribution} from '../packages/llm/src/provider-request-observation.js';
 import {SkillRegistry,type Guardrail,type ToolGuardrail} from '@kodax-ai/agent';
-import {createKodaXRuntime,type KodaXRuntime} from '../src/sdk-runtime.js';
+import {createKodaXRuntime,type KodaXRuntime} from "./runtime-fixture.js";
 import {CACHE_FILES,CACHE_TASK,CACHE_ORACLE,writeCacheFixture} from '../benchmark/datasets/search-entry-complex/fixture.js';
 import type {FrozenInput} from './first-turn-eval-support.js';
 import type {CallEvidence,EditRoute} from './first-turn-edit-eval-support.js';

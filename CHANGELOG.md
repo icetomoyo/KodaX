@@ -6,6 +6,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Converge public Runtime ownership on the independent shared Host. Retire
+  embedded/default construction, inline owner switching and function-based
+  in-process external-agent Hosts. Keep the explicit daemon launcher and its
+  new-owner policy bootstrap; independent libraries remain usable.
+- Migrate eligible abandoned owner policies under profile and real Session-root
+  ownership checks. Persist a one-way policy that verified old readers reject,
+  preventing inline rollback after Host idle exit. Live/unknown owners and
+  unsafe Run recovery remain protected; old private unfenced writers must stop
+  and upgrade before sharing data. See the SDK migration guide for breaking
+  API and downgrade limits.
+
 ### Fixed
 
 - Refresh `kodax_manual` topic guidance for retired verification/journal paths,

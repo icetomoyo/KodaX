@@ -15,7 +15,7 @@ vi.mock('@kodax-ai/agent', async (importOriginal) => {
     return cleanup.blocked ? { status: 'unknown' as const } : actual.killChildProcessTree(...args);
   } };
 });
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 
 const providerName = 'child-shell-cleanup-test';
 let command = '';

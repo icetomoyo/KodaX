@@ -34,9 +34,27 @@ import {
 } from "./process.js";
 import {
   resolveRuntimeDaemonPathsFromConfigHome,
+  readRuntimeOwnerPolicy,
+  updateRuntimeOwnerPolicy,
   tryAcquireRuntimeDaemonLock,
   writeRuntimeDaemonState,
 } from "./state.js";
+
+it('migrates an unowned inline profile before starting and retains cutover after cancellation', async () => {
+  const homeDir = mkdtempSync(path.join(os.tmpdir(), 'kodax-process-cutover-'));
+  const paths = resolveRuntimeDaemonPathsFromConfigHome(path.join(homeDir, '.kodax'), 'default');
+  updateRuntimeOwnerPolicy(paths, 'inline', 0);
+  const controller = new AbortController();
+  try {
+    await expect(acquireRuntimeDaemonProcessLease({
+      homeDir, startupSignal: controller.signal,
+      onStartupProgress: progress => { if (progress.stage === 'starting') controller.abort(); },
+    })).rejects.toThrow(/cancelled/i);
+    expect(readRuntimeOwnerPolicy(paths)).toMatchObject({ mode: 'daemon', unified: true });
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true });
+  }
+});
 
 describe("runtime daemon child process environment", () => {
   it('passes only the requested startup observation ID, never an inherited one', () => {

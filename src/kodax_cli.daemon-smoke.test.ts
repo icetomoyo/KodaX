@@ -23,7 +23,7 @@ import {
   enableKodaXDaemonOwner,
   getKodaXRuntimeOwnerState,
   type KodaXDaemonRuntime,
-} from './sdk-runtime.js';
+} from "../tests/runtime-fixture.js";
 
 import {
   RUNTIME_DAEMON_BOOTSTRAP_LOG_MAX_BYTES,
@@ -750,7 +750,7 @@ describe('daemon CLI smoke', () => {
     });
   }, 120_000);
 
-  it('counts process-distinct logical clients and atomically switches daemon ownership twice', async () => {
+  it('counts process-distinct clients and retains one-way Host ownership across restarts', async () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-daemon-management-smoke-'));
     tempRoots.push(homeDir);
     const profile = `management-${process.pid}-${Date.now()}`;
@@ -811,15 +811,13 @@ describe('daemon CLI smoke', () => {
       await waitForDaemonPidExit(firstSupervisorPid, 10_000);
     }
     expect(getKodaXRuntimeOwnerState({ homeDir, profile })).toMatchObject({
-      policy: { mode: 'daemon', revision: 0 },
+      policy: { mode: 'daemon', revision: 1 },
       ownerStatus: 'unowned',
       owner: null,
     });
 
-    const firstInline = acquireKodaXInlineOwner({ homeDir, profile, enableRollback: true });
-    expect(firstInline.ownerPolicy).toMatchObject({ mode: 'inline', revision: 1 });
-    firstInline.close();
-    expect(enableKodaXDaemonOwner({ homeDir, profile })).toMatchObject({ mode: 'daemon', revision: 2 });
+    expect(() => acquireKodaXInlineOwner({ homeDir, profile, enableRollback: true })).toThrow(/retired/);
+    expect(enableKodaXDaemonOwner({ homeDir, profile })).toMatchObject({ mode: 'daemon', revision: 1 });
 
     const second = await ensureKodaXRuntime({
       homeDir,
@@ -844,10 +842,8 @@ describe('daemon CLI smoke', () => {
       await waitForDaemonPidExit(secondSupervisorPid, 10_000);
     }
 
-    const secondInline = acquireKodaXInlineOwner({ homeDir, profile, enableRollback: true });
-    expect(secondInline.ownerPolicy).toMatchObject({ mode: 'inline', revision: 3 });
-    secondInline.close();
-    expect(enableKodaXDaemonOwner({ homeDir, profile })).toMatchObject({ mode: 'daemon', revision: 4 });
+    expect(() => acquireKodaXInlineOwner({ homeDir, profile, enableRollback: true })).toThrow(/retired/);
+    expect(enableKodaXDaemonOwner({ homeDir, profile })).toMatchObject({ mode: 'daemon', revision: 1 });
 
     const third = await ensureKodaXRuntime({
       homeDir,
@@ -856,7 +852,7 @@ describe('daemon CLI smoke', () => {
       requirements: { daemonManagement: 1 },
     });
     expect(getKodaXRuntimeOwnerState({ homeDir, profile })).toMatchObject({
-      policy: { mode: 'daemon', revision: 4 },
+      policy: { mode: 'daemon', revision: 1 },
       ownerStatus: 'owned',
       owner: { runtimeId: third.identity.runtimeId, kind: 'daemon' },
     });
@@ -1253,7 +1249,7 @@ describe('daemon CLI smoke', () => {
     expect(Array.isArray(logs.lines) ? logs.lines.join('\n') : '').toContain('Runtime daemon ready.');
     expect(String(logs.logFile)).toContain(path.join('.kodax', 'runtime', 'daemon', profile, 'daemon.log'));
 
-    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const { defaultRuntimeDaemonEndpoint } = await import('./runtime-daemon/transport.js');
     const runtime = await createKodaXRuntime({
       mode: 'daemon',

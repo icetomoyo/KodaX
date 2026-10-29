@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
-import { createKodaXRuntime } from '../src/sdk-runtime.js';
+import { createKodaXRuntime } from "./runtime-fixture.js";
 import { KodaXBaseProvider, registerModelProvider, clearRuntimeModelProviders,
   type KodaXMessage, type KodaXToolDefinition, type KodaXStreamResult } from '@kodax-ai/llm';
 import { awaitLatestCodingMemoryReviewDrain } from '@kodax-ai/coding';

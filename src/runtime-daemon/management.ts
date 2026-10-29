@@ -171,10 +171,11 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
       ) {
         throw managementError('conflict', 'Runtime daemon owner fence changed during inspection.');
       }
+      const policy = readRuntimeOwnerPolicy(this.input.paths);
       return {
         runtimeId: this.input.runtime.identity.runtimeId,
         revision,
-        ownerPolicy: readRuntimeOwnerPolicy(this.input.paths),
+        ownerPolicy: { mode: policy.mode, revision: policy.revision, updatedAt: policy.updatedAt },
         owner,
         preflight: current,
         ...(this.input.integrationStatuses

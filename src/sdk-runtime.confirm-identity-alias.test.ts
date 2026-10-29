@@ -7,7 +7,7 @@ import { awaitLatestCodingMemoryReviewDrain } from '@kodax-ai/coding';
 import { FileSessionStorage } from '@kodax-ai/repl';
 import { KodaXBaseProvider, registerModelProvider,
   type KodaXProviderConfig, type KodaXStreamResult } from '@kodax-ai/llm';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { createLegacyIdentityLineage, LEGACY_IDENTITY_TARGET_ID } from './fixtures/session-identity-repair.js';
 
 it('rejects an identity confirmation without its persisted delivery receipt', async () => {

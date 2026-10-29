@@ -33,7 +33,7 @@ describe('runtime config patch validation', () => {
   });
 
   it('allows explicit public keys and rejects admin-plane keys that have dedicated APIs', async () => {
-    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, 'sessions'),
@@ -83,7 +83,7 @@ describe('runtime config patch validation', () => {
     const envHome = path.join(tempRoot, 'env-home');
     process.env.KODAX_HOME = envHome;
     vi.resetModules();
-    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: runtimeHome,
       sessionsDir: path.join(runtimeHome, '.kodax', 'sessions'),
@@ -138,7 +138,7 @@ describe('runtime config patch validation', () => {
     const envHome = path.join(tempRoot, 'daemon-env-home');
     process.env.KODAX_HOME = envHome;
     vi.resetModules();
-    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const profile = `config-${process.pid}-${Date.now()}`;
     daemonOwners.push({ homeDir: runtimeHome, profile });
     const runtime = await createKodaXRuntime({

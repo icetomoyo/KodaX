@@ -9,7 +9,7 @@ import { KodaXBaseProvider, registerModelProvider, clearRuntimeModelProviders,
 import { FileSessionStorage } from '@kodax-ai/repl';
 import type { ClientItemContent, ClientSessionView, ClientViewItem } from '@kodax-ai/coding/client-contract';
 import { connectKodaXClient } from './sdk-client.js';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 

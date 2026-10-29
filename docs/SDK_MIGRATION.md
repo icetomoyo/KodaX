@@ -4,6 +4,38 @@
 
 Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附件/统计与退出恢复范围见 [SDK/Host 接缝](SPACE_SDK_SEAMS.md)。
 
+## 统一 Host SDK 收口（未发布）
+
+本节描述 alpha.11 之后的未发布收口，优先于下文历史版本的嵌入示例。
+完整产品执行只由独立共享 Host 拥有。产品使用 `ensureKodaXClient` / `connectKodaXClient`；
+可信底层接入使用 `ensureKodaXRuntime` / `connectKodaXRuntime`。连接关闭只释放本连接。
+
+| 原入口 | 迁移结果 |
+| --- | --- |
+| `createKodaXRuntime()` 或 `mode:'embedded'` | 改用 Client；旧 JS 调用返回 `runtime_host_migration_required`，不静默改写生命周期 |
+| `createKodaXRuntime({mode:'daemon'})` | 保留为统一启动器的薄委托；`execPolicy/autoReview` 仍只用于新 Host 的一次性 bootstrap |
+| `sharedDaemonHost` / `daemonHostRuntimeId` | 内部装配字段，不再在公开类型或构造中接受 |
+| `acquireKodaXInlineOwner` / `setKodaXRuntimeOwnerMode` / `enableKodaXDaemonOwner` | 不再从根入口或 `/runtime` 导出；迁移交给启动器 |
+| `externalAgents` 函数型工厂/策略注入，包括 `mode:'daemon'` 的旧进程内 Host | 明确退役，无透明等价替代；configured A2A 留在唯一 Host 内，独立 `/agent` executor-plane 库继续可用 |
+
+启动器检查 profile 与实际 Session 存储根，在旧 owner 已退出且没有竞争写入者时，
+原子地把旧 owner-policy 改成统一 Host 终态。旧 reader 会拒绝该格式，因此旧 SDK
+不能在 Host 闲退后通过该 profile 回切 inline；旧管理工具可能报告策略格式错误。
+不要删除这个文件来降级。迁移可以重复，提交后启动失败也不回退旧模式。
+Session、Run 和历史数据格式不因该策略切换而改写。
+
+同一 Session 目录已有其他 profile 的共享 Host 时，启动器复用它，同时在锁内重新核验
+其进程身份并迁移本次请求的旧 profile，避免关停后从这个别名回切 inline；不会为迁移别名
+重启现有 Host。请求 profile 自己仍有存活、未知或损坏 owner 时继续拒绝。
+
+存活 owner、未知身份、损坏锁不自动回收；忙碌旧 Host 沿用正常升级阻塞。
+旧私有 embedded 可能没有共享 owner 记录，缺锁不能证明其已退出：这类宿主须先停止、
+升级并重载，或使用独立数据根。已迁移 profile 的门禁不能约束任意旧程序或新建 profile。
+Host ready 与 Run 可恢复分开；Stop、历史变化、授权失败或效果未知继续阻止不安全续跑，
+工具不因迁移或断连自动重放。长寿命旧 SDK 的构建身份保护保持。
+
+历史产物、支持范围与执行证据见 [FEATURE_298 测试指南](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md)。
+
 ## 2026-10-29 未发布改动对齐
 
 核对范围为 `v0.7.97-alpha.10`（`6efeafa5`）之后至 `b70d2d30` 的源码。
@@ -20,7 +52,7 @@ Space 或其他外部客户端已升级，也不要求独立库与 Product Clien
 | Skill 策略 | 模型发现、激活与 SDK 调用复用可信 registry；`Bash(pattern)` 仅允许匹配的单命令，仍须 Host 授权 |
 
 CLI 的 `--agent-mode sa/amaw` 是迁移错误；底层 SDK 的显式兼容 profile/角色/执行路由
-仍按各自契约保留，不能机械替换为产品模式。包版本仍为 alpha.10，以上是 tag 后未发布改动。
+仍按各自契约保留，不能机械替换为产品模式。该组能力已纳入 alpha.11；上节 Host 收口仍未发布。
 Issue 371 的历史首次读取延迟、Script 的模型效率及跨平台人工验收不因 SDK 对齐而关闭。
 
 本次 Windows 源码核对验证（2026-10-29）：`npm run build`、`npm run typecheck`
@@ -42,7 +74,7 @@ TUI、桌面 UI、IDE、自动化应用接入共享 KodaX 时，以 `KodaXProduc
 | --- | --- | --- |
 | 产品 UI / 共享 Session / 自动化应用 | `/client` 的 `ensureKodaXClient`、`connectKodaXClient` | 默认采用统一契约；执行、配置与存储归 Host |
 | 浏览器侧类型、自己的 UI 适配器 | `@kodax-ai/coding/client-contract` 的 `import type`，或 `/client` 的类型导出 | 纯类型可用；Node 连接器不能直接在浏览器运行 |
-| 受信任 Host 的启动、凭据桥、Host Tools、诊断或嵌入 | `/runtime` | 仍是独立的底层接缝；不属于产品 Client 的全部承诺 |
+| 受信任 Host 的启动、凭据桥、Host Tools、诊断 | `/runtime` | 连接唯一共享 Host 的底层接缝；不属于产品 Client 的全部承诺 |
 | 独立 Agent/LLM/coding 库 | `/agent`、`/llm`、`/coding` 等 | 保留独立使用；旧 `KodaXClient`/`Client` 是另一种执行对象，不等于 `KodaXProductClient` |
 | 文件渲染与视觉证据 | 主包 `/artifacts` 子路径；共享 Host 使用 `/artifacts/client` port | 先由可信 Host 注册 `/artifacts/kodax` adapter；只安装一个主包，不新增 Product Client 业务域，不在 UI 本地回退渲染 |
 
