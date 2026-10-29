@@ -16,7 +16,7 @@
 | P6a | 已实现并定向验证 | native/checked bridge、managed/兼容入口透传 serial 谓词；不提供环境时效锁 |
 | P6b | 已实现限定消费者；收据等待竞态已补修并定向验证 | 本地可暂停 PNG 卡片；current/version、动作事实、unknown 与补观察；派发前重检异步等待后的依据；子 Actor 无 owner 时拒绝 |
 | P5 | 已实现选定 MCP 来源并定向验证 | typed tool/resource、SA fallback；Artifact/额外 Host/standalone 未声明支持 |
-| P7 | 机械集成及 r3 四格 pilot 完成；整体行为价值未验收 | 3b2d48e8 / kimi-code K2.8 Preview：candidate 选择原始数值像素、双方算术题无多余工具；实际 usage 已记，不外推完整任务收益；r2 按量失败独立保留 |
+| P7 | 机械集成完成；旧 r3 为前置证据，任务价值验证未执行 | r3 工具选择/单轮 usage 保留；新方案以 1826cc22→3b2d48e8 比较取证后的最终任务结果与全程 token，按效果→成本→方向评审；r2 失败独立保留 |
 
 ## P3a：有序多观察检查
 
@@ -328,3 +328,5 @@ freezer 公共写入 seam 的 TDD：缺少模块/写入 API 先 RED→GREEN；�
 同一 runner 订阅扩展按 TDD 保留金额空值、回退/未知及整数分阈值反例；两文件 26 项通过，类型检查与构建通过，双轴剩余 Standards 0 / Spec 0。r2 阶段本轮全仓实际为 **18,084 通过、1 失败**（one-shot-task 清理 sessions 的 ENOTEMPTY）；该文件单独 10 项通过，原因未定位、不宣称修复。32 格新离线完整字段与补修输入相同，默认首轮估算不增加。后续四类无提示/固定反馈任务仍需新的分批冻结预算，采用建议 recommend-iterate。
 
 最终 r3 代码冻结后的默认全仓：**18,094 通过、0 失败、97 skipped、19 todo**（18,210 项），**1,296 文件通过、6 skipped**（1,302 文件），1,128.24 秒，退出码 0；原日志 `kodax-visual-p7-r3-full-20261029.log`。新抓包 `kodax-first-turn-wire-bsOZr7` 的 32 格 normalized 完整输入仍逐格相同；日志/比对 hash 在成本记录。没有以这次全绿关闭上轮 ENOTEMPTY 或更早 Feature270/T30 的未定位原因。
+
+后续采用边界更正：用户认为 alpha/算术单响应没有回答 VISTA 式实际任务收益，r3 因此只保留为前置工具选择/单轮成本证据。新的 [P7 任务价值方案](visual-harness-p7-task-value-plan-2026-10-29.md) 以视觉改造前已优化的 1826cc22 为主基线，覆盖连线推理、历史截图诊断、反馈面板及普通代码任务；实际工具结果参与后续判断，按效果→全程 token→处理方向评审。方案未执行、当前新增授权为 0；没有重新生成旧数据或预先锁死 token 采用门槛。
