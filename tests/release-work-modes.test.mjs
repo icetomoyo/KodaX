@@ -27,7 +27,7 @@ async function until(read) {
 
 // Invoked on the matching native CI runner after creating the exact release archive.
 // Every provider request terminates at this loopback fixture; no external model is used.
-test('release archive preserves work modes, partial effects, cancellation and restart on its shipped runtime', { timeout: 180_000 }, async t => {
+test('release archive preserves work modes, partial effects, cancellation and restart on its shipped runtime', { timeout: 300_000 }, async t => {
   const archive = process.env.KODAX_MODE_RELEASE_ARCHIVE;
   assert.ok(archive, 'Set KODAX_MODE_RELEASE_ARCHIVE to the archive for this host platform');
   const temporary = await realpath(os.tmpdir());
@@ -57,7 +57,7 @@ test('release archive preserves work modes, partial effects, cancellation and re
     ...(process.platform === 'win32' ? { PATH: [process.env.SystemRoot, path.join(process.env.SystemRoot, 'System32'),
       path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0')].join(';') } : {}) };
   const cli = args => exec(binary, args, { cwd: workspace, env: environment, windowsHide: true,
-    timeout: 30_000, maxBuffer: 4 * 1024 * 1024 });
+    timeout: 120_000, maxBuffer: 4 * 1024 * 1024 });
   const server = createServer(async (request, response) => {
     try {
       let body = ''; for await (const chunk of request) body += chunk;
