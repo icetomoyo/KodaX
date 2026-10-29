@@ -64,7 +64,7 @@ TDD 的可观察 RED 包括：原目录删除后仍有媒体；read 结果没有
 
 首次全仓运行：1,277 文件通过、9 文件失败、6 文件跳过；17,938 项通过、14 项失败、97 项跳过、19 todo。运行时部分新回归仍在 RED 阶段；后续修复只读工具 classifier、optional owner 工具表与媒体 facade，并把旧“原路径仍在”的 fixture 改为检查保留的图片 bytes。没有降低原图片完整性或工具执行断言。
 
-最终全仓复验：1,285 文件通过、1 文件失败、6 文件跳过；17,952 项通过、1 项失败、97 项跳过、19 todo。唯一失败为既有 `benchmark/datasets/feature-270/runner.test.ts` 的零成本 fake-provider 测试，读取临时 `layer3/main-session-review/evidence.json` 时 ENOENT。该文件随后独立复验 3 项全部通过；未改 benchmark 实现，也未将这次全仓结果表述为全绿。缺失文件的具体并发原因未证实。
+最终全仓复验：1,285 文件通过、1 文件失败、6 文件跳过；17,952 项通过、1 项失败、97 项跳过、19 todo。唯一失败为既有 `benchmark/datasets/feature-270/runner.test.ts` 的零成本 fake-provider 测试，读取临时 `layer3/main-session-review/evidence.json` 时 ENOENT。该文件随后独立复验 3 项全部通过；未改 benchmark 实现，也未将这次全仓结果表述为全绿。缺失文件的具体原因未证实，不能据独立复验认定临时文件问题已解决。
 
 最终源码的 `npm run build`、`npm run typecheck:src` 与 `npm run typecheck:tests` 均通过，14 个 SDK 的声明自包含检查通过。仓库没有独立 lint script；使用类型检查、diff 检查及 Standards/Spec 双轴审查。
 
@@ -102,6 +102,8 @@ npm test -- --reporter=dot
 
 ## 6. Standards
 
+以下是原始切片审查记录；用户后续复核发现的 IHDR 缺陷及追补审查见 §8–§10。
+
 固定点为 `1826cc22`；依据 AGENTS.md 与 code-review 的 12 条 Fowler 基线独立审查本片 diff。无硬规范违反。唯一剩余的 P3 判断项是两分支重复构造 `visualSource`，已在分支前构造一次并复用；45 项 dispatch/bridge/Script 模型回归通过。新增依赖归属 agent，包独立与只读 classifier 约束保留；本片 CLI 预算调整对应已测代码增量，原启动依赖守卫保留。
 
 Standards：**0 项未解决发现**。
@@ -111,3 +113,27 @@ Standards：**0 项未解决发现**。
 依据主设计 P0–P2 和 §5/§6/§9/§11/§13.1 独立审查。动态 provider 选择、分支 cursor、失败晋升后的 Run 引用修复均已核对。Script 观察绑定精确来源；恢复见证只纳入匹配已提交 leaf 的观察，并受 active lineage 约束，回退到执行前输入后不可见。未将 P3–P7、全部 provider 或模型行为证据冒充本片交付。
 
 Spec：**0 项未解决阻断发现**。
+
+## 8. 2026-10-29 P2 追补：PNG IHDR 预检与解码一致性
+
+用户独立复核 `58bca775` 后指出一项中优先级缺陷：预检读取第一个 IHDR，实际解码器接受后续 IHDR。首头声明 8-bit、后头声明 16-bit 时仍成功回显为 8-bit profile；尺寸不一致则直到解码后才报错。此前 P2 完成判断遗漏了该反例，本片先补修，不推进 P3。
+
+沿现有 `visual_inspect` 公共工具入口执行 TDD：重复相同头、8-bit→16-bit、尺寸变化三个 case 均先 RED；修复唯一性后 GREEN。另将错误 CRC 的解码前拒绝测试先跑 RED，再补校验。预检现在要求第一个 chunk 为精确的 13-byte IHDR，验证其 CRC 后读取尺寸和 profile，并在扫描时拒绝任何后续 IHDR；不把另一个头的尺寸或位深交给解码器使用。原来的 40 MP、8-bit RGB/RGBA 与无方向/色彩变换边界保留，未改变既有原件接纳能力。
+
+新增 **11 项**回归覆盖重复头、16-bit、尺寸变化、首 chunk 类型、头长度、CRC、零尺寸和超过 40 MP。它们验证错误在 `Jimp.read` 前返回，且失败预留释放、原件仍可读取。原有正常 RGBA/alpha 裁剪与取消回归继续通过。
+
+本次验证：原来 6 个视觉测试文件现为 **44 项全部通过**；`npm run typecheck`、`npm run build` 与 `git diff --check` 通过。相同 7 个视觉模块的定向覆盖为语句 **88.11%**、分支 **83.17%**、函数 **92.59%**、行 **96.59%**，不是全仓覆盖率。raw 位于 OS Temp `kodax-visual-p2-ihdr-coverage-20261029`。本次未重跑全仓，§4 的原始 17,952 通过、1 失败继续保留，失败原因仍未查明。
+
+本次未改模型工具合同或 system 提示。首轮已有证据仍为约 **+368～383 个估算 token**，不是 API 实际计费，也未验证模型智能提升；P3–P7 的合同投影不算本轮实测。[原始成本文件](visual-harness-p0-p2-costs.json) 保留原冻结源码 hash，没有把修复后的源码 hash 回填为旧抓包证据。
+
+## 9. Standards（IHDR 追补）
+
+固定点 `58bca775`，独立只读审查：新增校验范围集中，未引入依赖、配置或抽象，错误明确抛出；未发现成文规范违反或值得提报的 Fowler smell。
+
+Standards：**0 项发现**。
+
+## 10. Spec（IHDR 追补）
+
+依据用户复核要求与主设计 §6.1–6.3，独立只读审查：解码前验证首个 IHDR 位置、长度、CRC、位深及尺寸，并拒绝后续重复头；回归确认失败时不调用解码器、保留原件并释放预留。未发现范围扩张；原始全仓失败保留为原因未证实。
+
+Spec：**0 项发现**。

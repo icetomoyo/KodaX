@@ -114,6 +114,68 @@ it('retains an EXIF-oriented PNG and rejects derived work before silently rotati
   } finally { decode.mockRestore(); }
 });
 
+it.each(['identical', '16-bit', 'different dimensions'] as const)('rejects a second IHDR before decoding: %s', async variant => {
+  const f = await fixture();
+  // A CRC-valid 3x2 RGBA16 PNG; its samples include low bits that an 8-bit decode loses.
+  const png16 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAMAAAACEAYAAADN5LpZAAAAF0lEQVR4AWNsYGxgbGBsYGRAA0wMOAAAXUoCCCyzKzsAAAAASUVORK5CYII=', 'base64');
+  const second = variant === 'identical' ? f.bytes : variant === '16-bit' ? png16
+    : await new Jimp({ width: 6, height: 1 }).getBuffer('image/png');
+  const bytes = Buffer.concat([f.bytes.subarray(0, 33), second.subarray(8)]);
+  const observation = await f.owner.pin(bytes, { sourceKey: 'duplicate-header', originEntryId: 'entry', mediaType: 'image/png' });
+  f.records.push(observation);
+  const decode = vi.spyOn(Jimp, 'read');
+  try {
+    const result = await f.call('visual_inspect', { question: 'Check the original raster.',
+      views: [{ label: 'invalid headers', observationId: observation.observationId, displayLongEdge: 6 }] });
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain('IHDR');
+    expect(decode).not.toHaveBeenCalled();
+    expect(f.reserveOutput.mock.results[0]!.value.cancel).toHaveBeenCalledOnce();
+    expect(await f.owner.read(observation)).toEqual(bytes);
+  } finally { decode.mockRestore(); }
+});
+
+it.each(['checksum', 'wrong first chunk', 'short header', 'long header'] as const)('rejects an invalid IHDR before decoding: %s', async variant => {
+  const f = await fixture(); const bytes = Buffer.from(f.bytes);
+  if (variant === 'checksum') bytes[32] = bytes[32]! ^ 1;
+  else if (variant === 'wrong first chunk') bytes.write('IDAT', 12, 'ascii');
+  else bytes.writeUInt32BE(variant === 'short header' ? 12 : 14, 8);
+  const observation = await f.owner.pin(bytes, { sourceKey: 'invalid-header', originEntryId: 'entry', mediaType: 'image/png' });
+  f.records.push(observation);
+  const decode = vi.spyOn(Jimp, 'read');
+  try {
+    const result = await f.call('visual_inspect', { question: 'Check the original raster.',
+      views: [{ label: 'invalid checksum', observationId: observation.observationId, displayLongEdge: 6 }] });
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain(variant === 'checksum' ? 'IHDR checksum' : 'IHDR');
+    expect(decode).not.toHaveBeenCalled();
+    expect(f.reserveOutput.mock.results[0]!.value.cancel).toHaveBeenCalledOnce();
+  } finally { decode.mockRestore(); }
+});
+
+it.each([
+  { name: '16-bit', header: 'iVBORw0KGgoAAAANSUhEUgAAAAMAAAACEAYAAADN5LpZ', error: 'requires 8-bit' },
+  { name: 'zero width', header: 'iVBORw0KGgoAAAANSUhEUgAAAAAAAAACCAYAAAB2Q90Z', error: '40 MP' },
+  { name: 'zero height', header: 'iVBORw0KGgoAAAANSUhEUgAAAAMAAAAACAYAAADQvMcR', error: '40 MP' },
+  { name: 'over 40 MP', header: 'iVBORw0KGgoAAAANSUhEUgAAJxAAAA+hCAYAAACXitUM', error: '40 MP' },
+])('rejects unsupported or over-limit IHDR values before decoding: $name', async ({ header, error }) => {
+  const f = await fixture();
+  // CRC-valid headers exercise profile/size validation rather than checksum rejection.
+  const bytes = Buffer.concat([Buffer.from(header, 'base64'), f.bytes.subarray(33)]);
+  const observation = await f.owner.pin(bytes, { sourceKey: 'unsupported-header', originEntryId: 'entry', mediaType: 'image/png' });
+  f.records.push(observation);
+  const decode = vi.spyOn(Jimp, 'read');
+  try {
+    const result = await f.call('visual_inspect', { question: 'Check the original raster.',
+      views: [{ label: 'unsupported raster', observationId: observation.observationId, displayLongEdge: 6 }] });
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain(error);
+    expect(decode).not.toHaveBeenCalled();
+    expect(f.reserveOutput.mock.results[0]!.value.cancel).toHaveBeenCalledOnce();
+    expect(await f.owner.read(observation)).toEqual(bytes);
+  } finally { decode.mockRestore(); }
+});
+
 it.each([
   { region: { x: -1, y: 0, width: 1, height: 1 } },
   { region: { x: 0, y: 0, width: 0, height: 1 } },

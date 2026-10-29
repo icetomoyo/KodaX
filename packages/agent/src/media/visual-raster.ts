@@ -11,6 +11,13 @@ function sourceRaster(bytes: Buffer): { width: number; height: number } {
   if (bytes.length < 33 || !bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) {
     throw new Error('Visual derivation unsupported: requires a static 8-bit RGB/RGBA PNG. Full-image recall remains available.');
   }
+  if (!bytes.subarray(12, 16).equals(Buffer.from('IHDR')) || bytes.readUInt32BE(8) !== 13) throw new Error('Invalid PNG: the first chunk must be a 13-byte IHDR.');
+  let headerCrc = 0xffffffff;
+  for (const byte of bytes.subarray(12, 29)) {
+    headerCrc ^= byte;
+    for (let bit = 0; bit < 8; bit++) headerCrc = (headerCrc >>> 1) ^ ((headerCrc & 1) ? 0xedb88320 : 0);
+  }
+  if (((headerCrc ^ 0xffffffff) >>> 0) !== bytes.readUInt32BE(29)) throw new Error('Invalid PNG IHDR checksum.');
   const width = bytes.readUInt32BE(16); const height = bytes.readUInt32BE(20);
   if (!width || !height || width * height > MAX_SOURCE_PIXELS) throw new Error('Visual source exceeds the 40 MP processing limit.');
   if (bytes[24] !== 8 || ![2, 6].includes(bytes[25]!) || bytes[26] !== 0 || bytes[27] !== 0 || bytes[28] !== 0) {
@@ -21,6 +28,7 @@ function sourceRaster(bytes: Buffer): { width: number; height: number } {
     const length = bytes.readUInt32BE(offset);
     if (offset + 12 + length > bytes.length) throw new Error('Invalid PNG chunk length.');
     const type = bytes.toString('ascii', offset + 4, offset + 8);
+    if (type === 'IHDR' && offset !== 8) throw new Error('Invalid PNG: duplicate IHDR.');
     if (['acTL', 'eXIf', 'iCCP', 'gAMA', 'cHRM', 'cICP', 'mDCv', 'cLLi', 'tRNS'].includes(type)) {
       throw new Error(`Visual derivation unsupported: PNG ${type} is outside ${VISUAL_RASTER_PROFILE}.`);
     }
