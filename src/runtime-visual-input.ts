@@ -39,6 +39,9 @@ export async function prepareRuntimeVisualInput(input: {
     throw new Error('Input ID already belongs to a different intent.');
   }
   const retained = retainedVisualInputs(input.session, input.sessionId, inputIds);
+  if (!receipt && retained.some(observation => observation.source?.inputId === input.inputId)) {
+    throw new Error('Input ID belongs to inherited visual history; submit a new input ID.');
+  }
   if (retained.length > 0) {
     const saved = input.session.messages.find(message => message.role === 'user' && (message.inputId === input.inputId || message.inputIds?.includes(input.inputId)));
     if (!saved && receipt
@@ -104,7 +107,8 @@ export function runtimeVisualRebindingRecords(session: KodaXSessionData, session
 function retainedVisualInputs(session: KodaXSessionData, sessionId: string, inputIds: readonly string[]) {
   return inputIds.flatMap(inputId => (session.extensionRecords ?? []).flatMap(record => {
     const observation = readVisualObservationRecord(record);
-    return observation?.ownerId === sessionId && observation.source?.inputId === inputId ? [observation] : [];
+    return observation?.ownerId === sessionId && observation.source?.inputId === inputId
+      && observation.originEntryId === `input:${inputId}` ? [observation] : [];
   }).sort((a, b) => (a.source?.imageOrdinal ?? 0) - (b.source?.imageOrdinal ?? 0)));
 }
 

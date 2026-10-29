@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Jimp } from 'jimp';
 import { expect, it, vi } from 'vitest';
-import { KodaXBaseProvider, clearRuntimeModelProviders, registerModelProvider, type KodaXProviderConfig, type KodaXStreamResult } from '@kodax-ai/llm';
+import { KodaXBaseProvider, clearRuntimeModelProviders, createCustomProvider, registerModelProvider, type KodaXProviderConfig, type KodaXStreamResult } from '@kodax-ai/llm';
 import { FileSessionStorage } from '@kodax-ai/repl';
 import { createKodaXRuntime } from './sdk-runtime.js';
 import { NATIVE_PROVIDER_CAPABILITY_PROFILE } from '../packages/llm/src/providers/capability-profile.js';
@@ -11,6 +11,7 @@ import { readVisualObservationRecord } from '@kodax-ai/agent/media';
 import { readFile } from 'node:fs/promises';
 import { createSessionVisualObservationOwner } from '@kodax-ai/coding';
 import { sessionVisualMediaDirectory } from '@kodax-ai/agent/media';
+import { evictOldIslandMessageContent, persistCompactedSessionHistory } from '@kodax-ai/agent';
 
 it('never publishes a provisional read receipt when its tool-result commit fails', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-visual-result-failure-'));
@@ -45,18 +46,25 @@ it('never publishes a provisional read receipt when its tool-result commit fails
   } finally { failure.mockRestore(); await runtime.close(); clearRuntimeModelProviders(); vi.unstubAllEnvs(); await rm(homeDir, { recursive: true, force: true }); }
 }, 30_000);
 
-it('recovers a committed Script leaf image after outer cell settlement fails before returning it', async () => {
+it.each([false, true])('recovers a committed Script leaf image after outer settlement failure; compact/fork=%s', async compactFork => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-visual-leaf-recovery-'));
   const source = path.join(homeDir, 'source.png');
   const bytes = await new Jimp({ width: 2, height: 2, color: 0x00ff00ff }).getBuffer('image/png');
   await writeFile(source, bytes); vi.stubEnv('KODAX_VISUAL_RESULT_FAILURE', 'offline');
   let recovering = false; let turn = 0; let observationId = ''; let scriptCalls = 0;
   let recalledPath: string | undefined; let lastToolContent = '';
+  const wires: unknown[] = [];
+  const serializer = createCustomProvider({ name: 'visual-leaf-wire', protocol: 'openai', model: 'fixture',
+    apiKeyEnv: 'KODAX_VISUAL_RESULT_FAILURE', imageInput: true, baseUrl: 'https://visual-leaf-wire.invalid' });
+  Reflect.set(serializer, '_client', { chat: { completions: { create: async (wire: unknown) => {
+    wires.push(wire); return { choices: [{ message: { content: 'Serialized.' }, finish_reason: 'stop' }] };
+  } } } });
   class Provider extends KodaXBaseProvider {
     readonly name = 'visual-leaf-failure'; readonly supportsThinking = false;
     protected readonly config: KodaXProviderConfig = { apiKeyEnv: 'KODAX_VISUAL_RESULT_FAILURE', model: 'fixture', supportsThinking: false,
       capabilityProfile: { ...NATIVE_PROVIDER_CAPABILITY_PROFILE, multimodalSupport: 'image-input' } };
-    async stream(messages: import('@kodax-ai/llm').KodaXMessage[], tools: import('@kodax-ai/llm').KodaXToolDefinition[]): Promise<KodaXStreamResult> {
+    async stream(messages: import('@kodax-ai/llm').KodaXMessage[], tools: import('@kodax-ai/llm').KodaXToolDefinition[], system: string): Promise<KodaXStreamResult> {
+      if (recovering && tools.some(tool => tool.name === 'todo_update')) await serializer.complete(messages, tools, system);
       if (tools.some(tool => tool.name === 'todo_update') && turn++ === 0) {
         if (!recovering) scriptCalls++;
         return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: recovering
@@ -97,13 +105,33 @@ it('recovers a committed Script leaf image after outer cell settlement fails bef
     await storage.setActiveEntry(session.id, userEntry.id);
     expect(await owner.list()).toEqual([]);
     await storage.setActiveEntry(session.id, priorLeaf);
+    if (compactFork) {
+      for (let round = 0; round < 2; round++) {
+        const before = (await storage.load(session.id))!;
+        const summary = `Preserve the settled leaf ${observationId}; round ${round}.`;
+        await persistCompactedSessionHistory({ storage, sessionId: session.id,
+          compactedMessages: [{ role: 'system', content: `[对话历史摘要]\n\n${summary}` }, { role: 'user', content: 'Continue the interrupted visual task.' }],
+          update: { preCompactionMessages: before.messages, anchor: { summary, tokensBefore: 100, tokensAfter: 20, entriesRemoved: before.messages.length, reason: 'manual' } } });
+        const compacted = (await storage.load(session.id))!;
+        await storage.save(session.id, { ...compacted, lineage: evictOldIslandMessageContent(compacted.lineage!) });
+      }
+    }
     await writeFile(source, 'The mutable source no longer contains an image.');
     recovering = true; turn = 0;
     runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'visual-leaf-failure', defaultModel: 'fixture' });
-    const next = await runtime.runs.acceptInput({ sessionId: session.id, inputId: 'recall-leaf', text: 'Recall the committed leaf without replay.' });
+    let targetId = session.id;
+    if (compactFork) {
+      const child = await runtime.sessions.fork({ sessionId: session.id, title: 'Inherited Script evidence' });
+      expect(child).not.toBeNull(); targetId = child!.id;
+      await runtime.sessions.archive(session.id); await runtime.sessions.delete(session.id);
+      const inherited = createSessionVisualObservationOwner(storage, targetId, sessionVisualMediaDirectory(path.join(homeDir, '.kodax', 'sessions'), targetId));
+      expect((await inherited.list()).map(item => item.observationId)).toEqual([observationId]);
+    }
+    const next = await runtime.runs.acceptInput({ sessionId: targetId, inputId: 'recall-leaf', text: 'Recall the committed leaf without replay.' });
     expect((await runtime.runs.await(next.runId!)).phase).toBe('completed');
     expect(recalledPath, lastToolContent).toBeDefined();
     expect(await readFile(recalledPath!)).toEqual(bytes);
     expect(scriptCalls).toBe(1);
+    expect(JSON.stringify(wires.at(-1))).toContain(bytes.toString('base64'));
   } finally { failure.mockRestore(); await runtime.close(); clearRuntimeModelProviders(); vi.unstubAllEnvs(); await rm(homeDir, { recursive: true, force: true }); }
 }, 30_000);

@@ -7,7 +7,8 @@
 | P3a | 已实现并定向验证 | 1–4 个有序 view；同原件复用解码；整次生成前预留；有序 partial |
 | P3b | 已实现并定向验证 | 格心 RGBA、精确调色板、全调用 4096 样本；文本路由 |
 | P4a | 已实现并定向验证 | queued/after_turn/redirect 接纳与活跃 steer；撤回、重绑、交付重试 |
-| P4b | 待实施 | fork 复制/隔离、重复压缩及生命周期；不据 P4a 宣称完整 P4 |
+| P4b | 已实现并定向验证 | fork 复制/隔离、重复压缩、Script 恢复见证及 owner 清理重试 |
+| P4c | 待补 | 旧 owned 历史图片自动重装配的 hash 校验；完整 P4 尚不认定完成 |
 | P6 | 待实施 | 一个经生产装配的受控动态消费者；动作事实与 current 时效 |
 | P5 | 待实施 | 先评估 MCP typed-image；Artifact/额外 Host/standalone 未声明支持 |
 | P7 | 持续收集机械证据 | 最终成本、支持边界与受控行为实验方案；未发起付费调用 |
@@ -101,6 +102,44 @@ compiled public media 暖 codec 单样本复用上述 3×2、83-byte 原件：�
 ### Spec
 
 独立审查发现的 ACK 批次重试、授权换绑、旧文本身份冲突、纯文本首项重试及误用派生字节上限均已按上述反例修复；最终复核 **0 项剩余发现**。steer crash 恢复、P4b 与模型行为未计为通过。
+
+## P4b：分支媒体与长历史
+
+FileSessionStorage 的视觉 fork 先读取精确 main/sidecar 快照，再按所选 source lineage 的可见观察继承。agent/media 的共同可见性函数同时识别物理/稳定 logical identity、精确 input aliases、compact 前驱与既有 Script 恢复见证；没有以“收据在文件里”代替可见性。只复制获授权的观察，保留 observationId/observedAt/hash，绑定子 owner；后续两支互相隔离，执行前 entry 仍看不到未来图。
+
+子分支复制所需原件及模型历史中的派生媒体，按 hash 去重，校验 bytes 后写入独立 Session 命名空间；普通和嵌套 tool_result image、compact 附件都重映射。Windows 路径按平台等价比较，重启只改变 sessionsDir 大小写也可映射。父 Session archive 保留原件；删除父或中间子分支不影响已继承子/孙分支的真实 bytes。不新建观察事件或全局引用计数。
+
+普通 fork 与 revision-fenced historyBoundary fork 都保留精确 compact 前驱证据岛：复用现有 lineage 克隆，映射新物理 ID 并保留 logical ID，旧岛保持与当前模型上下文断开。未为没有视觉记录的普通 Session 增加全历史加载。两次 compact/evict、sidecar 完整加载、存储实例重启、再次 fork 均有回归。Script 已提交 leaf 的外层失败恢复见证也经两次压缩与公共 Runtime.sessions.fork 验证，父 Session 删除后实际 visual_inspect → OpenAI serializer 仍得到旧图，原 Script 执行次数保持 1。
+
+不继承父 Run 的产品 ACK 收据。继承的用户图片 inputId 只作历史身份；在子 Session 中复用该 ID，无论同意图还是异意图都明确要求新 ID，不能用旧 content 静默替换新请求。普通父会话的文本 inputId 与 Script read 的 source.inputId 分开，只有精确 `originEntryId=input:<id>` 的用户快照参与产品输入重试，不误伤文本输入。
+
+fork 在源锁内先拒绝已存在目标，再持目标锁复查/写入，交叉 A→B/B→A 不互等。媒体复制完成后才 canonical ACK；复制/原件/派生上下文路径或 hash 失败清理未提交命名空间。canonical rename 后的失败保留已提交子媒体；写入与恢复/清理都失败时 AggregateError 保留两项原因。已失败未提交 fork 的遗留媒体可通过原 FileSessionStorage.delete owner 路径清理后重试，不覆盖已有目标。
+
+真正删除沿既有原子 tombstone 机制。物理清理失败记录诊断，不宣称磁盘 bytes 已全部清除；FileSessionStorage.delete 再次调用只清理同一 owner 的精确数字 tombstone 名称，不碰仍可访问的分支。已存在 Session 先验证 Actor owner，再做清理；未确认 owner 的 deleteOwned 不因 canonical 缺失而取得清理权。此处验证的是 storage owner 重试，未新增已删除 Session 的 UI 清理入口或后台扫描。
+
+| 路径 | 本片证据 | 未扩宣范围 |
+| --- | --- | --- |
+| 普通 fork / 早期 entry / rewind | 真实 FileSessionStorage，父子隔离与新物理 ID、稳定观察 ID | 不放宽 owner 检查 |
+| 两次 compact + historyBoundary fork | main/sidecar、evict、重启、子孙保留 bytes | Runtime historyBoundary UI 未单独操作 |
+| Runtime.sessions.fork | 用户图片身份负例；Script 恢复、父删除、原件回取及实际 serializer | 不等同在线 provider 接受或行为验证 |
+| archive / delete / 清理失败重试 | 真实 storage/Runtime；分支原件保留、tombstone 诊断、foreign owner 拒绝 | 首次物理清理失败不报全清理完成 |
+| 自动重装配旧 owned 历史图 | P4c 待补 | 本片不将缺失的 serializer hash 校验记为通过 |
+
+TDD：普通 fork 目录为空、两次压缩后两个 fork 路径丢观察、清理失败后不能重试均先 RED 后 GREEN。双轴审查另触发交叉锁等待、继承 inputId 吞异意图、Windows 大小写漏映射、普通 Script 文本重试误判以及写入/清理双失败丢原因的真实负例，均已修复。自查还以 foreign Actor owner 的清理副作用反例 RED→GREEN，将授权检查前移。派生媒体复制、错误 filename/hash/missing、canonical 前后失败、再次删除/分支保留均保留为可执行反例。
+
+最终定向验证：6 文件 **54 项通过**；较早的完整 storage.test.ts 与视觉 storage 集合 2 文件 **150 项通过**，两组有重叠且候选修订不同，不相加。`npm run typecheck`、`npm run build` 通过；完整仓库回归仍留集成里程碑。覆盖实际范围为 visual-lineage/visual-fork/visual-owner/runtime-visual-input 四模块：语句 **88.44%**、分支 **80.60%**、函数 **86%**、行 **96.73%**；不是全仓覆盖。raw 为 OS Temp `kodax-visual-p4b-final3-coverage-20261029`。CLI 5,149 KiB、bootstrap 4,042 bytes；体积门槛及启动依赖守卫未改，14 SDK 声明检查通过。
+
+成本见 `p4b-fork`/`p4b-final`：32 格实际离线捕获 raw 为 OS Temp `kodax-first-turn-wire-ScgoeA`，完整模型字段 hash 与 P3b/P4a 一样，新增 **+0**；24 个未装配 owner SDK 格不变。最终存储/身份修补后，逐个核对 15 个被捕获的模型合同源码 hash 仍相等，final 阶段复用这次 raw 并另存最终实现 hash，未声称重新捕获。相对 30310e00 仍为 OpenAI **+365～366**、Anthropic **+358**；相对 P0 **+748/+726**；不是 API usage 或任务总体收益。
+
+compiled public FileSessionStorage.fork 本机单样本：同一 3×2、83-byte 原件（hash 同前）复制 1 文件/83 bytes，含 full snapshot、校验、子 canonical fsync/cache 约 **68.54 ms**；不解码或编码。raw/复现为 OS Temp `kodax-visual-fork-profile-7thlXK`。只记录一个小 fixture 的本地工作量，不作配对性能或模型价值结论。
+
+### Standards
+
+独立审查 1 项写入错误被恢复错误覆盖的问题，已以双失败回归修复；最终 **0 项剩余硬违反、0 项 smell 判断**。
+
+### Spec
+
+独立审查 3 项初始发现及 1 项补充发现均按上述反例修复；最终限定范围复核 **0 项剩余发现**。P4c serializer 旧媒体完整性明确留待补修，P4 未整体完成；动态 current/reset 的适用认识留给 P6，模型行为未执行。
 
 ## 持续保留的失败与未验证范围
 

@@ -8,6 +8,7 @@ import path from 'path';
 import { createHash, randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { isDeepStrictEqual } from 'node:util';
+import { prepareVisualSessionFork, discardVisualSessionFork } from './visual-fork.js';
 import { readVisualObservationRecord, sessionVisualMediaDirectory, mergeVisualSessionRecords } from '@kodax-ai/agent/media';
 import chalk from 'chalk';
 import { compareSessionRecency, latestSessionMessageAt, validSessionTimestamp } from '../session/session-recency.js';
@@ -5616,7 +5617,11 @@ export class FileSessionStorage implements KodaXSessionStorage {
         );
       }
       if (historyBoundary !== undefined && captured === null) return;
-      const sourceLineage = captured?.lineage ?? resolved.data.lineage;
+      const hasVisualRecords = resolved.data.extensionRecords?.some(record => record.extensionId === 'kodax.visual') === true;
+      const visualSnapshot = hasVisualRecords && captured === undefined
+        ? await this.readFullSnapshotAtPath(id, resolved.filePath, undefined, true) : undefined;
+      if (hasVisualRecords && !(captured ?? visualSnapshot)?.lineage) throw new Error('Visual fork requires complete source lineage.');
+      const sourceLineage = captured?.lineage ?? visualSnapshot?.lineage ?? resolved.data.lineage;
       if (sourceLineage === null) return;
       const boundaryPath = captured !== undefined && selector !== undefined
         ? completeLineageBoundaryPath(sourceLineage, selector) : undefined;
@@ -5647,42 +5652,55 @@ export class FileSessionStorage implements KodaXSessionStorage {
       if (!lineage) return;
 
       const sessionId = options?.sessionId ?? await generateSessionId();
-      const forked: SessionData = {
-        lastMessageAt: latestSessionMessageAt(lineage.entries, undefined, sourceLineage.entries),
-        messages: getSessionMessagesFromLineage(lineage),
-        title: options?.title ?? resolved.data.title,
-        gitRoot: resolved.data.gitRoot,
-        tag: resolved.data.tag,
-        // FEATURE_247 (R5) — inherit runtime identity (workspace + profile /
-        // provider / model / permission mode) so a forked Partner session stays
-        // a Partner. Previously runtimeInfo was dropped entirely on fork.
-        runtimeInfo: resolved.data.runtimeInfo
-          ? { ...resolved.data.runtimeInfo }
-          : undefined,
-        uiHistory: resolved.data.uiHistory
-          ? resolved.data.uiHistory.map((item) => ({ ...item }))
-          : undefined,
-        extensionState: resolved.data.extensionState
-          ? structuredClone(resolved.data.extensionState)
-          : undefined,
-        artifactLedger: resolved.data.artifactLedger
-          ? structuredClone(resolved.data.artifactLedger)
-          : undefined,
-        extensionRecords: resolved.data.extensionRecords
-          ? structuredClone(resolved.data.extensionRecords)
-          : undefined,
-        lineage,
+      if (hasVisualRecords && sessionId === id) throw new Error('Visual fork target Session already exists.');
+      if (hasVisualRecords && await this.readSession(sessionId)) throw new Error('Visual fork target Session already exists.');
+      const persistFork = async (): Promise<void> => {
+        if (hasVisualRecords && await this.readSession(sessionId)) throw new Error('Visual fork target Session already exists.');
+        const visual = hasVisualRecords ? await prepareVisualSessionFork({ sessionsDir: this.sessionsDir, parentId: id, childId: sessionId,
+          records: resolved.data.extensionRecords ?? [], sourceLineage, lineage }) : undefined;
+        const forkedLineage = visual?.lineage ?? lineage;
+        const forked: SessionData = {
+          lastMessageAt: latestSessionMessageAt(forkedLineage.entries, undefined, sourceLineage.entries),
+          messages: getSessionMessagesFromLineage(forkedLineage),
+          title: options?.title ?? resolved.data.title,
+          gitRoot: resolved.data.gitRoot,
+          tag: resolved.data.tag,
+          // FEATURE_247 (R5) — inherit runtime identity (workspace + profile /
+          // provider / model / permission mode) so a forked Partner session stays
+          // a Partner. Previously runtimeInfo was dropped entirely on fork.
+          runtimeInfo: resolved.data.runtimeInfo
+            ? { ...resolved.data.runtimeInfo }
+            : undefined,
+          uiHistory: resolved.data.uiHistory
+            ? resolved.data.uiHistory.map((item) => ({ ...item }))
+            : undefined,
+          extensionState: resolved.data.extensionState
+            ? structuredClone(resolved.data.extensionState)
+            : undefined,
+          artifactLedger: resolved.data.artifactLedger
+            ? structuredClone(resolved.data.artifactLedger)
+            : undefined,
+          extensionRecords: visual?.records ?? (resolved.data.extensionRecords
+            ? structuredClone(resolved.data.extensionRecords)
+            : undefined),
+          lineage: forkedLineage,
       };
       // Fork writes to a NEW session id — serialize on that id too
-      await this.writeSessionInternal(
-        sessionId,
-        forked,
-        undefined,
-        undefined,
-        undefined,
-        lineage,
-      );
+      try {
+        await this.writeSessionInternal(sessionId, forked, undefined, undefined, undefined, forkedLineage);
+      } catch (error) {
+        // A late index failure can follow the canonical write. Keep media if commit is uncertain.
+          try {
+            if (visual && !await this.readSession(sessionId)) await discardVisualSessionFork(this.sessionsDir, sessionId);
+          } catch (recoveryError) {
+            throw new AggregateError([error, recoveryError], `Visual fork ${sessionId} write and recovery failed.`);
+          }
+        throw error;
+      }
       result = { sessionId, data: forked };
+      };
+      if (hasVisualRecords) await this.serializedWrite(sessionId, persistFork);
+      else await persistFork();
     });
     return result;
   }
@@ -6327,6 +6345,21 @@ export class FileSessionStorage implements KodaXSessionStorage {
     return this.deleteWithActorOwner(id, ownerId);
   }
 
+  private async removeVisualMediaTombstones(id: string): Promise<void> {
+    const directory = sessionVisualMediaDirectory(this.sessionsDir, id);
+    const parent = path.dirname(directory);
+    let names: string[];
+    try { names = await fs.readdir(parent); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+    const prefix = `${path.basename(directory)}.`;
+    for (const name of names) {
+      if (!name.startsWith(prefix) || !/^\d+\.\d+\.\d+\.deleting\.tmp$/.test(name.slice(prefix.length))) continue;
+      const target = path.resolve(parent, name);
+      if (path.dirname(target) !== path.resolve(parent)) throw new Error('Invalid visual tombstone cleanup path.');
+      await fs.rm(target, { recursive: true, force: true });
+    }
+  }
+
   private async deleteWithActorOwner(
     id: string,
     expectedOwnerId?: string,
@@ -6337,8 +6370,15 @@ export class FileSessionStorage implements KodaXSessionStorage {
     // sidecar, ADR-038 §4). Also sweep a legacy flat copy if one lingers.
     await this.serializedWrite(id, async () => {
       const resolved = await this.readSession(id);
-      if (!resolved) return;
+      if (!resolved) {
+        if (expectedOwnerId !== undefined) return;
+        await this.removeVisualMediaTombstones(id);
+        const mediaDirectory = sessionVisualMediaDirectory(this.sessionsDir, id);
+        await this.removeFileSetAtomically(id, [mediaDirectory], new Set([mediaDirectory]));
+        return;
+      }
       this.assertActorFileOwner(resolved.data.actorSnapshot, expectedOwnerId);
+      await this.removeVisualMediaTombstones(id);
 
       if (this.drafts.has(id)) {
         const mediaDirectory = sessionVisualMediaDirectory(this.sessionsDir, id);

@@ -95,6 +95,10 @@ it('recalls the accepted user image through Runtime, native inspect and the real
     expect(saved!.extensionRecords?.filter(record => record.extensionId === 'kodax.visual' && record.type === 'observation')).toHaveLength(1);
     const receipt = saved!.extensionRecords!.find(record => record.extensionId === 'kodax.visual' && record.type === 'input');
     expect(receipt?.data).toMatchObject({ runId: accepted.runId });
+    const child = await runtime.sessions.fork({ sessionId: session.id, title: 'Inherited input identity' });
+    expect(child).not.toBeNull();
+    await expect(runtime.runs.acceptInput({ ...input, sessionId: child!.id, text: 'Changed intent under inherited image input ID.' })).rejects.toThrow(/inherited|different intent/i);
+    await expect(runtime.runs.acceptInput({ ...input, sessionId: child!.id })).rejects.toThrow(/inherited/i);
     await runtime.sessions.archive(session.id);
     expect(await readFile(images[0]!.path)).toEqual(PNG);
     await runtime.sessions.delete(session.id);

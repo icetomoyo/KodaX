@@ -6,7 +6,7 @@ import { Jimp } from 'jimp';
 import { afterEach, expect, it, vi } from 'vitest';
 import { clearRuntimeModelProviders, registerCustomProviders } from '@kodax-ai/llm';
 import { createSessionVisualObservationOwner } from '@kodax-ai/coding';
-import { readVisualObservationRecord, sessionVisualMediaDirectory } from '@kodax-ai/agent/media';
+import { createFileVisualObservationOwner, readVisualObservationRecord, sessionVisualMediaDirectory, visualObservationRecord } from '@kodax-ai/agent/media';
 import { FileSessionStorage } from '@kodax-ai/repl';
 import { setKodaXDiagnosticSink } from '@kodax-ai/agent';
 import { prepareRuntimeVisualInput } from './runtime-visual-input.js';
@@ -252,4 +252,22 @@ it('reuses a committed merged visual batch whose first input was plain text afte
     expect(retry.content).toEqual(session.messages[0]!.content);
     expect(retry.records).toEqual([expect.objectContaining({ type: 'input', data: expect.objectContaining({ inputId: 'image-next', runId: 'repaired-run' }) })]);
   } finally { await rm(homeDir, { recursive: true, force: true }); }
+});
+
+it('keeps an ordinary text input retry separate from Script read observations carrying the same input ID', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-visual-script-input-identity-'));
+  const sessionsDir = path.join(root, 'sessions');
+  let storage = new FileSessionStorage({ sessionsDir, configHome: root });
+  try {
+    const content = 'Read an image in a Script cell.';
+    await storage.save('original', { title: 'Script source', gitRoot: root, messages: [{ role: 'user', inputId: 'text-input', content }, { role: 'assistant', content: 'Read.' }] });
+    const saved = (await storage.load('original'))!;
+    const writer = createFileVisualObservationOwner({ ownerId: 'original', directory: sessionVisualMediaDirectory(sessionsDir, 'original'), list: async () => [] });
+    const observation = await writer.pin(await new Jimp({ width: 1, height: 1, color: 0x00ff00ff }).getBuffer('image/png'),
+      { sourceKey: 'read', originEntryId: saved.lineage!.activeEntryId!, mediaType: 'image/png', source: { imageOrdinal: 0, inputId: 'text-input', cellId: 'cell', leafReceiptId: 1 } });
+    await storage.appendSessionRecords('original', [visualObservationRecord(observation)]);
+    storage = new FileSessionStorage({ sessionsDir, configHome: root });
+    const retry = await prepareRuntimeVisualInput({ sessionId: 'original', inputId: 'text-input', sessionsDir, session: (await storage.load('original'))!, content, runId: 'retry' });
+    expect(retry).toEqual({ content, records: [] });
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
