@@ -13,13 +13,42 @@ question-outcome preservation with Host-owned deadlines, single-command Skill
 structured task reports in Product views, consistent streaming token
 estimates, and the Windows stale-process recovery / history cursor / sandbox
 startup capability fixes. The tag-triggered Release workflow runs the
-reusable CI workflow before the build matrix; branch pushes do not trigger
+reusable CI workflow alongside the build matrix; branch pushes do not trigger
 it, while CI can also be dispatched manually. The eventual `-alpha` tag
 suffix marks the release as a GitHub pre-release automatically. npm registry
 publication remains a separate maintainer step. Issue 371's remaining
 historical first-read latency and Script efficiency/model adoption limits
 remain explicit. Existing dated release records below describe their own
 artifacts.
+
+### Release execution contract
+
+- Push the version tag only after the release candidate, documentation and
+  feature-design submodule commits are prepared. Ordinary branch pushes do not
+  run CI. A `v*` tag starts Release, including the reusable full CI workflow.
+- Full CI and all five native build jobs run concurrently. The GitHub Release
+  requires successful CI, all platform archive checks, and the universal npm
+  package checks. Manual dispatch builds candidates but never publishes a Release.
+- Node 20 system tests run on a separate runner, retaining serial execution
+  within the complete system suite. Node 20/22 fast tests, Node 20 unit/contract
+  tests, Windows Electron and shell contracts, and native platform checks remain.
+- Each build validates its actual archive before the longer Electron checks.
+  Bundle and archive steps have five-minute process limits; the archive test
+  has a three-minute test budget, aborts pending waits and retains failure
+  evidence. Failed archive evidence is uploaded for seven days. No failed test
+  is converted into success or automatically retried.
+- Re-run failed jobs when diagnosing infrastructure failures on an unchanged
+  candidate. A source or workflow fix requires a new commit/run. Verify the
+  final tag SHA and every required job; an earlier green branch run is not
+  evidence for a different tagged commit.
+- Release assets comprise five platform archives and their checksums, one
+  universal npm tarball and its checksum, plus aggregated `SHA256SUMS`.
+  The maintainer publishes the audited tarball with `node scripts/release.mjs`;
+  this workflow never performs `npm publish`.
+
+The workflow contracts are covered by `tests/release-workflow.test.ts`. Local
+Windows archive verification passed on 2026-10-29; this does not substitute for
+the final tag's five-platform Actions results or manual acceptance.
 
 ## Distribution layout
 

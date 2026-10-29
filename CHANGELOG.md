@@ -24,6 +24,11 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Run release builds alongside full CI while retaining all publication gates;
+  move the complete serial Node 20 system suite to its own runner, validate
+  archives before lengthy Electron checks, and bound bundle/archive execution
+  with retained failure evidence. Ordinary branch pushes still do not trigger CI.
+
 - Align current SDK, Client, design and user documentation with post-alpha.10
   work modes, question deadlines, saved tool originals, structured task reports
   and streaming token estimates; retain historical release/validation limits.
