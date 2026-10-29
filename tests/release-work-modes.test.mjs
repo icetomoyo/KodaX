@@ -62,9 +62,11 @@ test('release archive preserves work modes, partial effects, cancellation and re
     try { return await Promise.race([promise, aborted]); }
     finally { signal.removeEventListener('abort', abort); }
   };
-  // Do not forward provider credentials, proxy configuration or ambient KodaX overrides.
+  // Preserve the OS PowerShell module search path: rebuilding it can stall
+  // Add-Type on Windows runners. Do not forward provider credentials, proxy
+  // configuration or ambient KodaX overrides.
   const systemEnvironment = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
-    /^(PATH|PATHEXT|SystemRoot|WINDIR|COMSPEC|TEMP|TMP|TMPDIR|HOME|USERPROFILE|APPDATA|LOCALAPPDATA|PROGRAMDATA|PROGRAMFILES|PROGRAMFILES\(X86\)|PROCESSOR_ARCHITECTURE|LANG|LC_ALL)$/i.test(key)));
+    /^(PATH|PATHEXT|SystemRoot|WINDIR|COMSPEC|TEMP|TMP|TMPDIR|HOME|USERPROFILE|APPDATA|LOCALAPPDATA|PROGRAMDATA|PROGRAMFILES|PROGRAMFILES\(X86\)|PROCESSOR_ARCHITECTURE|PSModulePath|LANG|LC_ALL)$/i.test(key)));
   const environment = { ...systemEnvironment, KODAX_HOME: configHome, KODAX_TRACING: '0',
     KODAX_RELEASE_MODE_KEY: 'offline-only', NODE_PATH: '', NODE_OPTIONS: '',
     // Windows keeps OS utilities but removes Node/Bun/Git installations from child PATH.

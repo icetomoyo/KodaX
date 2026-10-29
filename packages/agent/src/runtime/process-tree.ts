@@ -6,13 +6,13 @@ import {
 import { readFileSync } from 'node:fs';
 import { emitKodaXDiagnostic } from '../diagnostics.js';
 
-function reportWindowsProbe(stage: string, result: SpawnSyncReturns<string>, startedAt: number, available: boolean, timeoutMs = DEFAULT_TASKKILL_MS): void {
+function reportWindowsProbe(stage: string, result: SpawnSyncReturns<string>, startedAt: number, available: boolean): void {
   const code = (result.error as NodeJS.ErrnoException | undefined)?.code;
   emitKodaXDiagnostic({
     source: 'runtime:windows', level: available ? 'debug' : 'warn',
     message: 'Windows process probe completed.',
     detail: {
-      stage, cached: false, available, durationMs: Date.now() - startedAt, timeoutMs,
+      stage, cached: false, available, durationMs: Date.now() - startedAt, timeoutMs: 5_000,
       exitCode: result.status,
       errorCode: code === undefined ? undefined
         : ['ENOENT', 'EACCES', 'EPERM', 'ETIMEDOUT', 'ENOEXEC', 'ENOMEM', 'EIO'].includes(code) ? code : 'OTHER',
@@ -27,9 +27,6 @@ function reportWindowsProbe(stage: string, result: SpawnSyncReturns<string>, sta
 const DEFAULT_GRACE_MS = 300;
 const DEFAULT_FORCE_MS = 2_000;
 const DEFAULT_TASKKILL_MS = 5_000;
-// Unlike scalar PID reads, this startup-only probe cold-compiles its Win32
-// declarations. The release runner exceeded 5s before producing OS evidence.
-const WINDOWS_JOB_QUERY_TIMEOUT_MS = 15_000;
 const WINDOWS_JOB_MEMBERSHIP_SOURCE = String.raw`
 using System;
 using System.Runtime.InteropServices;
@@ -637,7 +634,7 @@ export function readCurrentProcessWindowsJobIdentity(): {
       + '\n' + windowsProcessStartIdentitiesScript([process.pid, supervisorPid])],
     {
       encoding: 'utf8',
-      timeout: WINDOWS_JOB_QUERY_TIMEOUT_MS,
+      timeout: 5_000,
       windowsHide: true,
       env: {
         ...process.env,
@@ -650,7 +647,7 @@ export function readCurrentProcessWindowsJobIdentity(): {
   );
   const lines = result.stdout?.trim().split(/\r?\n/) ?? [];
   currentProcessWindowsJobContained = result.status === 0 && lines[0] === '1';
-  reportWindowsProbe('job-membership', result, startedAt, currentProcessWindowsJobContained, WINDOWS_JOB_QUERY_TIMEOUT_MS);
+  reportWindowsProbe('job-membership', result, startedAt, currentProcessWindowsJobContained);
   if (!currentProcessWindowsJobContained) return undefined;
   const identities = parseWindowsProcessStartIdentities(lines.slice(1).join('\n'), [process.pid, supervisorPid]);
   const processStartIdentity = identities?.get(process.pid);

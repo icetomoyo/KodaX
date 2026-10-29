@@ -51,12 +51,16 @@ Windows archive verification passed on 2026-10-29; this does not substitute for
 the final tag's five-platform Actions results or manual acceptance.
 
 The first parallel alpha.11 run (`40883484202`, candidate `2321291c`) exposed
-the Windows archive failure in about three minutes: the startup Job membership
-probe hit its five-second limit and the resulting Host lacked shutdown
-verification capability. The follow-up gives this cold-compiling probe a
-15-second limit and refuses to publish a supervised Host when OS containment
-cannot be verified. Process identities and the same-version upgrade fence are
-unchanged; runner validation of that follow-up remains required.
+Windows startup failures within about three minutes. Increasing the Job probe
+budget from five to 15 seconds did not fix them (run `40886493253`). An isolated
+runner comparison (`40890628978`) traced the stall to the archive fixture dropping
+`PSModulePath`: PowerShell's `Add-Type` exceeded 15 seconds without it and
+completed in 262 ms when only that OS variable was restored. The fixture now
+preserves it while still excluding provider credentials, proxies and ambient
+KodaX overrides. The probe retains its original five-second budget, and a
+supervised Host whose OS containment cannot be verified is rejected before
+publication. Process identities and the same-version upgrade fence are unchanged.
+Final acceptance still requires all five platform gates on the tagged commit.
 
 ## Distribution layout
 

@@ -28,9 +28,9 @@ All notable changes to this project will be documented in this file.
   move the complete serial Node 20 system suite to its own runner, validate
   archives before lengthy Electron checks, and bound bundle/archive execution
   with retained failure evidence. Ordinary branch pushes still do not trigger CI.
-- Give the Windows startup Job probe a bounded cold-compilation budget and
-  reject unverified supervised Hosts before publishing incomplete capabilities,
-  avoiding a misleading same-version upgrade error after probe timeout.
+- Preserve the Windows PowerShell module search path in isolated archive tests,
+  avoiding stalled OS containment probes. Reject unverified supervised Hosts
+  before publishing incomplete capabilities and a misleading upgrade error.
 
 - Align current SDK, Client, design and user documentation with post-alpha.10
   work modes, question deadlines, saved tool originals, structured task reports
