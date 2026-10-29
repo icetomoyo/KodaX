@@ -103,6 +103,8 @@ export type ToolInterruptBehavior = 'cancel' | 'wait';
 
 export interface LocalToolDefinition extends KodaXToolDefinition {
   handler: ToolHandler;
+  /** Pure per-input execution predicate, shared with RunnableTool; not a model schema field. */
+  requiresSerialExecution?: (input: Record<string, unknown>) => boolean;
 
   /** Builtin specialist entry omitted from the opt-in general Agent work surface. Not an authorization rule. */
   workSurface?: 'coding';

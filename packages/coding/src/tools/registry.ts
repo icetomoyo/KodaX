@@ -225,6 +225,10 @@ export function getRegisteredToolDefinition(name: string): RegisteredToolDefinit
   return getActiveToolRegistration(name);
 }
 
+export function toolRequiresSerialExecution(name: string, input: Record<string, unknown>): boolean {
+  return name === 'bash' || getActiveToolRegistration(name)?.requiresSerialExecution?.(input) === true;
+}
+
 export function getToolRegistrations(name: string): RegisteredToolDefinition[] {
   return [...(TOOL_REGISTRY.get(name) ?? [])];
 }

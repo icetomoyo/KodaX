@@ -17,6 +17,7 @@ import { toolTodoCreate } from '../../../tools/todo-create.js';
 import {
   getToolDefinition,
   getRegisteredToolDefinition,
+  toolRequiresSerialExecution,
   isMcpToolName,
   listToolDefinitions,
 } from '../../../tools/registry.js';
@@ -223,7 +224,11 @@ function buildManagedToolCallBridge(
     ...definition,
     requiresSerialExecution: input => {
       const target = parseManagedBridgeCallInput(input);
-      return target.ok && target.name === 'bash';
+      if (!target.ok || !active.has(target.name)) return false;
+      const override = overrides.get(target.name);
+      return target.name === 'bash' || (override
+        ? override.requiresSerialExecution?.(target.input) === true
+        : toolRequiresSerialExecution(target.name, target.input));
     },
     execute: async (
       input: Record<string, unknown>,

@@ -132,6 +132,7 @@ import {
   executeTool,
   getToolDefinition,
   getRegisteredToolDefinition,
+  toolRequiresSerialExecution,
   resolveToolBridgeTarget,
   TOOL_CALL_NAME,
   TOOL_DESCRIBE_NAME,
@@ -719,9 +720,9 @@ export async function runToolDispatch(
 }
 
 function requiresSerialToolExecution(call: { readonly id: string; readonly name: string; readonly input?: Record<string, unknown> }): boolean {
-  if (call.name === 'bash') return true;
   const target = resolveToolBridgeTarget(call);
-  return target?.ok === true && target.call.name === 'bash';
+  if (target?.ok === true) return toolRequiresSerialExecution(target.call.name, target.call.input);
+  return toolRequiresSerialExecution(call.name, call.input ?? {});
 }
 
 async function prepareToolBlock(

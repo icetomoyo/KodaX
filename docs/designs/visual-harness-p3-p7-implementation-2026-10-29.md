@@ -9,7 +9,8 @@
 | P4a | 已实现并定向验证 | queued/after_turn/redirect 接纳与活跃 steer；撤回、重绑、交付重试 |
 | P4b | 已实现并定向验证 | fork 复制/隔离、重复压缩、Script 恢复见证及 owner 清理重试 |
 | P4c | 已实现并定向验证 | owned 历史图片自动重装配的 hash 校验；P4 按下述通道及未验边界声明 |
-| P6 | 待实施 | 一个经生产装配的受控动态消费者；动作事实与 current 时效 |
+| P6a | 已实现并定向验证 | native/checked bridge、managed/兼容入口透传 serial 谓词；不提供环境时效锁 |
+| P6b | 待实施 | 一个经生产装配的受控动态消费者；动作事实与 current 时效 |
 | P5 | 待实施 | 先评估 MCP typed-image；Artifact/额外 Host/standalone 未声明支持 |
 | P7 | 持续收集机械证据 | 最终成本、支持边界与受控行为实验方案；未发起付费调用 |
 
@@ -164,6 +165,24 @@ compiled public prepared-image scope 本机单样本（先暖原件验证缓存�
 P4a/b/c 至此完成上表限定的工程接线与定向验证；未交付 steer 的 crash checkpoint 重放、historyBoundary UI 及未列宿主仍保留未验状态。动态来源版本/current/reset 的续接认识继续由 P6 验证；P7 行为部分尚未执行，不以这些机械证据替代。
 
 ## 持续保留的失败与未验证范围
+
+## P6a：执行顺序声明
+
+LocalToolDefinition 明确已有 RunnableTool 的纯输入 serial 谓词，registry 提供同一查询；managed checked bridge 优先使用实际 Runnable override，兼容 native/bridge 使用解析后的目标注册。Bash 保持串行，谓词为 false 的独立调用仍并行。没有新模型字段、全局锁或 Script 白名单扩展。
+
+真实 Runtime 的 AMA/SA × native/checked bridge 四格使用重复 provider ID。RED 时 managed native 已透传，其余三格发生错误并行；修复后四格按 first:start/end、second:start/end，false 则用双启动 barrier 证明并行。这只证明批次分类，跨 Actor/Run 的来源时效仍待 P6b。
+
+定向与相邻合同 12 文件 **253 项通过**；typecheck/build 通过，CLI 5,150 KiB、bootstrap 4,042 bytes。三修改模块合计语句 **84.21%**、行 **85.94%**、函数 **85.61%**、分支 **71.54%**；registry 单模块语句 74.73%，不能称各模块或各指标均达 80%。raw 为 OS Temp `kodax-visual-p6a-final-test-20261029.log` 和 `kodax-visual-p6a-final-coverage-20261029`。最终集成另统计全仓。
+
+成本 `p6a-serial`：32 格实际离线捕获 `kodax-first-turn-wire-ekBOkO`，相对 P3b/P4 增加 **0**；24 个无 owner SDK 格完整字段不变。对 30310e00 仍为 OpenAI +365～366、Anthropic +358，对 P0 累计 +748/+726，均为启发式估算，非 API usage。
+
+### Standards
+
+独立只读评审：0 项硬违反、0 项 smell 判断。声明复用执行元数据，不引入模型配置或反向依赖。
+
+### Spec
+
+独立只读评审：0 项发现。四格仅声明 serial 传播与 false 并行；环境 current、跨 Actor/Run 和动态行为尚未验收。
 
 此前全仓原始结果为 17,952 通过、1 失败，Feature 270 临时 evidence.json 缺失原因未查明；独立单文件通过不表示问题已解决。后续全仓结果单独记录，不覆盖历史。
 

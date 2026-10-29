@@ -32,6 +32,7 @@ export {
   getTool,
   getToolDefinition,
   getRegisteredToolDefinition,
+  toolRequiresSerialExecution,
   getToolRegistrations,
   getBuiltinToolDefinition,
   getBuiltinRegisteredToolDefinition,
