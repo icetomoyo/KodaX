@@ -19,6 +19,8 @@ export const UNSUPPORTED_TOOL_RESULT_IMAGE_PLACEHOLDER =
   "[Image content omitted: this provider does not support inline images in tool results.]";
 export const INVALID_IMAGE_PLACEHOLDER =
   '[Image unavailable: this attachment cannot be decoded. Re-extract or replace this image; other content remains available.]';
+export const IMAGE_INTEGRITY_PLACEHOLDER =
+  '[Historical image unavailable: retained image SHA-256 integrity check failed.]';
 
 export type PreparedImage = { data: string; mediaType: string; notice?: string } | { placeholder: string };
 
@@ -34,12 +36,13 @@ interface PreparedEntry {
 }
 const preparedHistory = new AsyncLocalStorage<{
   images: WeakMap<ImageBlock, PreparedEntry>; signal?: AbortSignal; shouldPrepare?: () => boolean;
+  expectedImageHash?: (filePath: string) => string | undefined;
 }>();
 
-/** Each run owns its prepared payloads; nested/parallel runs cannot contaminate one another. */
+/** Each run owns its prepared payloads. Expected hashes are immutable per path in this scope. */
 export function withPreparedImageHistory<T>(run: () => Promise<T>, signal?: AbortSignal,
-  shouldPrepare?: () => boolean): Promise<T> {
-  return preparedHistory.run({ images: new WeakMap(), signal, shouldPrepare }, run);
+  shouldPrepare?: () => boolean, expectedImageHash?: (filePath: string) => string | undefined): Promise<T> {
+  return preparedHistory.run({ images: new WeakMap(), signal, shouldPrepare, expectedImageHash }, run);
 }
 
 /** Entry adapters must also be cancellable while their first validation is in progress. */
@@ -54,7 +57,7 @@ export function prepareValidatedImageBlock(block: ImageBlock, bytes: Buffer, val
   const history = preparedHistory.getStore()?.images;
   if (!history) return;
   preparedHistory.getStore()?.signal?.throwIfAborted();
-  const result = { image: serializeValidatedImage(bytes, block.path, block.mediaType, validation) };
+  const result = { image: imageIntegrityFailure(bytes, block.path) ?? serializeValidatedImage(bytes, block.path, block.mediaType, validation) };
   history.set(block, { path: block.path, mediaType: block.mediaType, result, value: Promise.resolve(result) });
 }
 
@@ -166,8 +169,16 @@ export async function prepareImageFile(filePath: string, mediaType?: string): Pr
 }
 
 async function prepareImageBytes(bytes: Buffer, filePath: string, mediaType?: string): Promise<PreparedImage> {
+  const integrity = imageIntegrityFailure(bytes, filePath);
+  if (integrity) return integrity;
   const validation = await validateImageBytes(bytes);
   return serializeValidatedImage(bytes, filePath, mediaType, validation);
+}
+
+function imageIntegrityFailure(bytes: Buffer, filePath: string): PreparedImage | undefined {
+  const expected = preparedHistory.getStore()?.expectedImageHash?.(filePath);
+  return expected !== undefined && createHash('sha256').update(bytes).digest('hex') !== expected
+    ? { placeholder: IMAGE_INTEGRITY_PLACEHOLDER } : undefined;
 }
 
 function serializeValidatedImage(bytes: Buffer, filePath: string, mediaType: string | undefined,

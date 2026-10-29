@@ -8,7 +8,7 @@
 | P3b | 已实现并定向验证 | 格心 RGBA、精确调色板、全调用 4096 样本；文本路由 |
 | P4a | 已实现并定向验证 | queued/after_turn/redirect 接纳与活跃 steer；撤回、重绑、交付重试 |
 | P4b | 已实现并定向验证 | fork 复制/隔离、重复压缩、Script 恢复见证及 owner 清理重试 |
-| P4c | 待补 | 旧 owned 历史图片自动重装配的 hash 校验；完整 P4 尚不认定完成 |
+| P4c | 已实现并定向验证 | owned 历史图片自动重装配的 hash 校验；P4 按下述通道及未验边界声明 |
 | P6 | 待实施 | 一个经生产装配的受控动态消费者；动作事实与 current 时效 |
 | P5 | 待实施 | 先评估 MCP typed-image；Artifact/额外 Host/standalone 未声明支持 |
 | P7 | 持续收集机械证据 | 最终成本、支持边界与受控行为实验方案；未发起付费调用 |
@@ -140,6 +140,28 @@ compiled public FileSessionStorage.fork 本机单样本：同一 3×2、83-byte 
 ### Spec
 
 独立审查 3 项初始发现及 1 项补充发现均按上述反例修复；最终限定范围复核 **0 项剩余发现**。P4c serializer 旧媒体完整性明确留待补修，P4 未整体完成；动态 current/reset 的适用认识留给 P6，模型行为未执行。
+
+## P4c：自动历史图片的完整性
+
+补齐 P4b 明确保留的恢复缺口：新 Run 自动装配历史时，文件即使仍能解码，也不能把 hash 路径下被替换的 bytes 当作旧图上传。File visual owner 提供可选 `expectedImageHash(path)`，仅识别自己的内容寻址媒体目录；LLM 的同一个 prepared-image scope 接受该不可变期望，不依赖 agent/REPL。scope 内每个路径的预期固定；不新增图片 block 字段或模型指导。
+
+从文件恢复时先校验 SHA，再进入既有解码验证；已经持有并验证的 tool bytes 在准备 payload 时也走同一校验。失败形成明确的 historical integrity placeholder，缺失仍沿原 missing placeholder；不换当前同名文件、不采新帧、不创建新观察。原 Run 已固定的 payload 仍发送原 bytes，不因稍后的文件变化改写已接纳证据。图片来源权限仍由原 owner/lineage 控制，hash 回调不授予路径访问权。
+
+Coding/Agent/Script 的两条 native 执行封装注入同一 owner 期望，checked bridge 共用实际准备链。没有 owner 或自定义 owner 未安装该可选期望时，SDK 保持原 fresh-file 语义，不承诺该宿主的跨重启完整性。超 10 MiB 的 unverified 原件只要 hash 匹配仍保留原 bytes，未引入上传硬上限。没有图片的请求不调用校验、扫描目录或增加模型请求。
+
+Windows 大小写按同一物理 owned 路径识别，hash 名正规化；同时修正 fork 的同一 SHA 文件名大小写边界。真实 prepared-image diagnostic 与 storage 回归分别先 RED 后 GREEN。目录外即使使用同一个 hash 文件名，也不被该 owner 强加其完整性期望。
+
+支持矩阵新增：三模式 × OpenAI/Anthropic × native/checked bridge，12 格真实 Runtime 在接纳 read/Script、多图检查与像素结果后，篡改历史媒体为另一张有效 PNG，关闭并重启，再经生产 serializer 明确输出完整性占位，绝不发送被替换的新 bytes。另有 Coding/OpenAI native 历史文件删除反例。源观察数量仍为 2，不能以本次错误提示刷新来源或 current。
+
+TDD：底层已固定 payload/新 Run 恢复反例先收到替换 JPEG 而 RED；增加期望后 GREEN。生产 Coding/OpenAI 接线反例也先 RED，再接两条封装；其余 11 格随后通过。直接已验证 tool payload、不解码坏 hash、无 owner SDK、目录外同名文件和大原件传输反例均保留。独立审查 Standards/Spec 各 **0 项发现**，最后 Windows 补修也复核各 **0 项**。
+
+最终定向集合：7 文件 **104 项通过**；Windows 全路径 fork 的独立回归 **1 项通过**。此前图像验证集合另有 7 文件 **106 项通过**，候选和集合不同、有重叠，不相加。`npm run typecheck`、`npm run build` 通过。仅统计 image-serialization/visual-observations 两模块：语句 **87.89%**、分支 **83.22%**、函数 **93.75%**、行 **91.32%**；raw 为 OS Temp `kodax-visual-p4c-final-coverage-20261029`，不是全仓覆盖。CLI 5,150 KiB、bootstrap 4,042 bytes；既有体积上限、依赖守卫及 14 SDK 声明检查保持。
+
+首轮字段见 `p4c-integrity`：32 格实际离线 SDK 捕获 raw 为 OS Temp `kodax-first-turn-wire-TnvBaC`；最后大小写修补后 15 个被捕获模型合同源 hash 逐个仍匹配。与 P3b/P4a/P4b 相比 **+0**，24 个无 owner SDK 格不变；对 30310e00 增量仍为 OpenAI **+365～366**、Anthropic **+358**，对 P0 累计 **+748/+726**。不是 BPE/API usage、视觉计费或总体任务收益。
+
+compiled public prepared-image scope 本机单样本（先暖原件验证缓存）：同一 83-byte 3×2 PNG 读/hash/准备约 **0.63 ms**；替换为 826-byte JPEG（SHA-256 `4e6f28b4d9d64e71e315166a296fde41c04cf4afcac195ddc076d3cdd16a7dd0`）后拒绝约 **4.16 ms**，产生明确占位，无 PNG 编码。raw/复现为 OS Temp `kodax-visual-integrity-profile-gvn5dW`。这是小 fixture 的本地工作量，不是冷解码、网络、基线速度收益或模型行为结果。
+
+P4a/b/c 至此完成上表限定的工程接线与定向验证；未交付 steer 的 crash checkpoint 重放、historyBoundary UI 及未列宿主仍保留未验状态。动态来源版本/current/reset 的续接认识继续由 P6 验证；P7 行为部分尚未执行，不以这些机械证据替代。
 
 ## 持续保留的失败与未验证范围
 

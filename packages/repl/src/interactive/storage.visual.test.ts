@@ -17,23 +17,24 @@ it.each(process.platform === 'win32' ? [false, true] : [false])('forks the selec
   let storage = new FileSessionStorage({ sessionsDir, configHome: root });
   const directory = (id: string) => sessionVisualMediaDirectory(sessionsDir, id);
   const owner = (id: string) => createSessionVisualObservationOwner(storage, id, directory(id));
+  const fixturePath = (file: string) => changedRootCase ? file.toUpperCase() : file;
   try {
     const writer = createFileVisualObservationOwner({ ownerId: 'parent', directory: directory('parent'), list: async () => [] });
     const green = await new Jimp({ width: 2, height: 2, color: 0x00ff00ff }).getBuffer('image/png');
     const red = await new Jimp({ width: 2, height: 2, color: 0xff0000ff }).getBuffer('image/png');
     const first = await writer.pin(green, { sourceKey: 'user', originEntryId: 'input:first', mediaType: 'image/png' });
     const messages: KodaXMessage[] = [
-      { role: 'user', inputId: 'first', content: [{ type: 'text', text: 'First image.' }, { type: 'image', path: writer.imagePath(first) }] },
+      { role: 'user', inputId: 'first', content: [{ type: 'text', text: 'First image.' }, { type: 'image', path: fixturePath(writer.imagePath(first)) }] },
       { role: 'assistant', content: [{ type: 'tool_use', id: 'read', name: 'read', input: { path: 'mutable.png' } }] },
     ];
     let lineage = createSessionLineage(messages);
     const readEntry = lineage.activeEntryId!;
     const second = await writer.pin(red, { sourceKey: 'read', originEntryId: readEntry, mediaType: 'image/png' });
-    messages.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'read', content: [{ type: 'image', path: writer.imagePath(second) }] }] });
+    messages.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'read', content: [{ type: 'image', path: fixturePath(writer.imagePath(second)) }] }] });
     const derivedBytes = await new Jimp({ width: 1, height: 1, color: 0x0000ffff }).getBuffer('image/png');
     const derived = await writer.writeDerived(derivedBytes);
     messages.push({ role: 'assistant', content: [{ type: 'tool_use', id: 'inspect', name: 'visual_inspect', input: {} }] },
-      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'inspect', content: [{ type: 'image', path: derived }] }] });
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'inspect', content: [{ type: 'image', path: fixturePath(derived) }] }] });
     lineage = createSessionLineage(messages, lineage);
     const forkAt = lineage.activeEntryId!;
     messages.push({ role: 'user', inputId: 'future', content: 'Future parent input.' });

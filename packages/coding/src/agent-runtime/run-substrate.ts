@@ -779,7 +779,8 @@ export async function runSubstrate(
     () => runSubstrateInContext(boundOptions, prompt, declaredAgent, (enabled) => { prepareImages = enabled; }),
     options.extensionRuntime ?? getActiveExtensionRuntime(),
     boundOptions.context.runtimeRunId,
-  ), options.abortSignal, () => prepareImages);
+  ), options.abortSignal, () => prepareImages,
+  options.context?.visualObservationOwner?.expectedImageHash?.bind(options.context.visualObservationOwner));
 }
 
 async function runSubstrateInContext(

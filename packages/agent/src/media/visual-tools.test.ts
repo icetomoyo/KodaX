@@ -2,9 +2,10 @@ import { mkdtemp, rm, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Jimp } from 'jimp';
+import { createHash } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createAgent } from '../primitives/agent.js';
-import { withPreparedImageHistory, getPreparedImageDiagnostic } from '@kodax-ai/llm';
+import { withPreparedImageHistory, getPreparedImageDiagnostic, prepareHistoryImages } from '@kodax-ai/llm';
 import { createFileVisualObservationOwner, type VisualObservation } from './visual-observations.js';
 import { createVisualTools } from './visual-tools.js';
 
@@ -28,6 +29,29 @@ async function fixture() {
     .execute(input, { agent: createAgent({ name: 'visual fixture', instructions: '' }), abortSignal: signal });
   return { owner, records, bytes, admit, call, reserveOutput };
 }
+
+it('scopes restored-image integrity to owned paths, including Windows path casing', async () => {
+  const f = await fixture(); const observation = await f.admit();
+  const outside = await mkdtemp(path.join(os.tmpdir(), 'kodax-unowned-hash-image-')); roots.push(outside);
+  const replacement = await new Jimp({ width: 2, height: 2, color: 0x0000ffff }).getBuffer('image/png');
+  const unowned = { type: 'image' as const, path: path.join(outside, observation.sha256) };
+  await writeFile(unowned.path, replacement);
+  const ownedPath = f.owner.imagePath(observation);
+  const owned = { type: 'image' as const, path: process.platform === 'win32' ? ownedPath.toUpperCase() : ownedPath };
+  const messages = [{ role: 'user' as const, content: [owned, unowned] }];
+  const integrity = f.owner.expectedImageHash?.bind(f.owner);
+  await withPreparedImageHistory(async () => {
+    await prepareHistoryImages(messages);
+    expect(getPreparedImageDiagnostic(owned)).toMatchObject({ dataHash: observation.sha256 });
+    expect(getPreparedImageDiagnostic(unowned)).toMatchObject({ dataHash: createHash('sha256').update(replacement).digest('hex') });
+  }, undefined, undefined, integrity);
+  await writeFile(ownedPath, replacement);
+  await withPreparedImageHistory(async () => {
+    await prepareHistoryImages(messages);
+    expect(getPreparedImageDiagnostic(owned)).toMatchObject({ placeholder: expect.stringMatching(/integrity/i) });
+    expect(getPreparedImageDiagnostic(unowned)).toMatchObject({ dataHash: createHash('sha256').update(replacement).digest('hex') });
+  }, undefined, undefined, integrity);
+});
 
 it('pages a fixed recent frontier without reading images; a new query sees subsequent events', async () => {
   const f = await fixture();

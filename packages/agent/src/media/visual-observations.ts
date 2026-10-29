@@ -33,6 +33,8 @@ export interface VisualObservation {
 
 export interface VisualObservationOwner {
   readonly ownerId: string;
+  /** Immutable-byte expectation for owned paths, independent of observation authorization. */
+  readonly expectedImageHash?: (filePath: string) => string | undefined;
   list(): Promise<readonly VisualObservation[]>;
   historyScope(): Promise<string>;
   pin(bytes: Buffer, input: Pick<VisualObservation, 'sourceKey' | 'originEntryId' | 'mediaType' | 'source'>): Promise<VisualObservation>;
@@ -121,6 +123,11 @@ export function createFileVisualObservationOwner(options: {
   };
   return {
     ownerId: options.ownerId,
+    expectedImageHash(filePath) {
+      if (path.relative(path.resolve(options.directory), path.resolve(path.dirname(filePath))) !== '') return undefined;
+      const hash = path.basename(filePath).toLowerCase();
+      return /^[a-f0-9]{64}$/.test(hash) ? hash : undefined;
+    },
     historyScope: options.historyScope ?? (async () => options.ownerId),
     list: async () => (await options.list()).filter(value => value.ownerId === options.ownerId),
     imagePath,

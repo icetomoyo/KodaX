@@ -66,7 +66,7 @@ it.each(cases)('pins read bytes before delivery and inspects a region: $workMode
     };
     return provider;
   });
-  const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'visual-source-fixture', defaultModel: 'fixture' });
+  let runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'visual-source-fixture', defaultModel: 'fixture' });
   try {
     const session = await runtime.sessions.create({ projectPath: homeDir });
     await runtime.sessions.updateSettings(session.id, { provider: 'visual-source-fixture', model: 'fixture', workMode, permissionMode: 'full-access' });
@@ -101,5 +101,22 @@ it.each(cases)('pins read bytes before delivery and inspects a region: $workMode
       block.type === 'tool_result' && Array.isArray(block.content) ? block.content.filter(item => item.type === 'image') : []) : []);
     expect(originals.length).toBeGreaterThan(0);
     expect(await readFile(firstPath)).toEqual(other);
+    const corrupted = await new Jimp({ width: 2, height: 2, color: 0x0000ffff }).getBuffer('image/png');
+    for (const retained of new Set(originals.map(image => image.path))) await writeFile(retained, corrupted);
+    await runtime.close();
+    runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'visual-source-fixture', defaultModel: 'fixture' });
+    const restored = await runtime.runs.acceptInput({ sessionId: session.id, inputId: 'check-history-integrity', text: 'Continue; do not replace missing historical evidence with a new frame.' });
+    expect((await runtime.runs.await(restored.runId!)).phase).toBe('completed');
+    const restoredWire = JSON.stringify(wires.at(-1));
+    expect(restoredWire.includes('SHA-256 integrity check failed'), 'Restored owned history must explain its integrity failure.').toBe(true);
+    expect(restoredWire.includes(corrupted.toString('base64')), 'Changed bytes must not be uploaded as the old observation.').toBe(false);
+    expect((await storage.loadSession(session.id))!.extensionRecords?.filter(record => record.extensionId === 'kodax.visual' && record.type === 'observation')).toHaveLength(2);
+    if (workMode === 'coding' && protocol === 'openai' && !bridge) {
+      await rm(originals[0]!.path);
+      const missing = await runtime.runs.acceptInput({ sessionId: session.id, inputId: 'check-missing-history', text: 'Continue with explicit evidence availability.' });
+      expect((await runtime.runs.await(missing.runId!)).phase).toBe('completed');
+      expect(JSON.stringify(wires.at(-1)).includes('local attachment file is missing')).toBe(true);
+      expect(JSON.stringify(wires.at(-1)).includes(corrupted.toString('base64'))).toBe(false);
+    }
   } finally { saveSpy.mockRestore(); await runtime.close(); clearRuntimeModelProviders(); vi.unstubAllEnvs(); await rm(homeDir, { recursive: true, force: true }); }
 }, 30_000);

@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -14,6 +15,64 @@ afterEach(async () => {
     expect(path.dirname(directory)).toBe(tmpdir());
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+it('retains an admitted snapshot but rejects changed bytes when the owner restores the image in a new Run', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'kodax-prepared-integrity-'));
+  directories.push(directory);
+  const original = await readFile('tests/fixtures/images/valid-png.png');
+  const replacement = await readFile('tests/fixtures/images/valid.jpg');
+  const expectedHash = createHash('sha256').update(original).digest('hex');
+  const filePath = path.join(directory, expectedHash);
+  const block = { type: 'image' as const, path: filePath, mediaType: 'image/png' };
+  const messages: KodaXMessage[] = [{ role: 'user', content: [block] }];
+  const integrity = (file: string) => file === filePath ? expectedHash : undefined;
+  const inspect = vi.spyOn(validation, 'validateImageBytes');
+  await writeFile(filePath, original);
+  await withPreparedImageHistory(async () => {
+    await prepareHistoryImages(messages);
+    await writeFile(filePath, replacement);
+    expect(await prepareImageBlock(block)).toMatchObject({ data: original.toString('base64') });
+  }, undefined, undefined, integrity);
+  inspect.mockClear();
+  await withPreparedImageHistory(async () => {
+    await prepareHistoryImages(messages);
+    expect(await prepareImageBlock(block)).toMatchObject({ placeholder: expect.stringMatching(/integrity/i) });
+    expect(inspect).not.toHaveBeenCalled();
+  }, undefined, undefined, integrity);
+  // Explicitly unmanaged callers retain their existing fresh-file behavior.
+  expect(await prepareImageBlock(block)).toMatchObject({ data: replacement.toString('base64') });
+});
+
+it('checks the owner hash on already validated tool images without reading a replacement file', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'kodax-prepared-tool-integrity-'));
+  directories.push(directory);
+  const original = await readFile('tests/fixtures/images/valid-png.png');
+  const replacement = await readFile('tests/fixtures/images/valid.jpg');
+  const hash = createHash('sha256').update(original).digest('hex');
+  const block = { type: 'image' as const, path: path.join(directory, hash) };
+  const inspect = vi.spyOn(validation, 'validateImageBytes');
+  await withPreparedImageHistory(async () => {
+    prepareValidatedImageBlock(block, replacement, { status: 'valid', mediaType: 'image/jpeg' });
+    expect(await prepareImageBlock(block)).toMatchObject({ placeholder: expect.stringMatching(/integrity/i) });
+    expect(inspect).not.toHaveBeenCalled();
+  }, undefined, undefined, () => hash);
+});
+
+it('keeps an oversized unverified original uploadable when its owner hash matches', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'kodax-prepared-large-integrity-'));
+  directories.push(directory);
+  const bytes = Buffer.concat([await readFile('tests/fixtures/images/valid-png.png'), Buffer.alloc(10 * 1024 * 1024)]);
+  const hash = createHash('sha256').update(bytes).digest('hex');
+  const block = { type: 'image' as const, path: path.join(directory, hash), mediaType: 'image/png' };
+  await writeFile(block.path, bytes);
+  await withPreparedImageHistory(async () => {
+    const prepared = await prepareImageBlock(block);
+    expect('data' in prepared).toBe(true);
+    if (!('data' in prepared)) throw new Error('Expected retained unverified bytes.');
+    expect(Buffer.from(prepared.data, 'base64').equals(bytes)).toBe(true);
+    expect(prepared.notice).toContain('processing_limit');
+  }, undefined, undefined, () => hash);
 });
 
 it('defers snapshots until the active consumer needs native image bytes', async () => {

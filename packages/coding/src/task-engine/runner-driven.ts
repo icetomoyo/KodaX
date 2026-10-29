@@ -2803,7 +2803,7 @@ async function runManagedTaskViaRunnerInner(
             && resolveProvider(providerName).getCapabilityProfile().transport === 'native-api';
         }
         return prepareImages;
-      });
+      }, baseCtx.visualObservationOwner?.expectedImageHash?.bind(baseCtx.visualObservationOwner));
     } catch (error) {
       options.context?.interruptInput?.closeInputWindow();
       if (isRunnerIterationLimitError(error)) {

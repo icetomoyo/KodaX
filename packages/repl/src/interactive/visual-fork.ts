@@ -28,7 +28,7 @@ export async function prepareVisualSessionFork(input: {
     }
     const remapImage = async (image: { path: string }): Promise<void> => {
       if (path.relative(path.resolve(parentDirectory), path.resolve(path.dirname(image.path))) !== '') return;
-      const hash = path.basename(image.path);
+      const hash = path.basename(image.path).toLowerCase();
       if (!/^[a-f0-9]{64}$/.test(hash)) throw new Error('Fork image has an invalid retained media path.');
       let target = copied.get(hash);
       if (!target) {
