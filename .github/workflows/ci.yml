@@ -10,7 +10,7 @@ name: CI
 # codebase relies on Node 20+ features (e.g. the RegExp `v` flag), so 18 is no
 # longer supported.
 
-# Run before release builds, or manually when an earlier check is needed.
+# Run alongside release builds, or manually when an earlier check is needed.
 on:
   workflow_call:
   workflow_dispatch:
@@ -24,6 +24,7 @@ jobs:
   test:
     name: test (node ${{ matrix.node }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -73,6 +74,7 @@ jobs:
         run: npm run build:bundle
 
       - name: Bundled Provider credentials and daemon compaction
+        timeout-minutes: 5
         run: npm run test:bundle
 
       - name: Native trusted text transaction tests
@@ -107,10 +109,6 @@ jobs:
       - name: Contract tests
         if: matrix.node == '20'
         run: npm run test:contract
-
-      - name: System tests
-        if: matrix.node == '20'
-        run: npm run test:system -- --no-file-parallelism --maxWorkers=1
 
       - name: Runtime daemon Unix socket gate
         if: matrix.node == '22'
@@ -260,9 +258,41 @@ jobs:
           }
           NODE
 
+  system:
+    name: system (node 20)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Linux sandbox dependencies
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
+
+      - name: Verify Linux sandbox namespaces
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo sysctl -w kernel.unprivileged_userns_clone=1
+          bwrap --ro-bind / / --unshare-net --unshare-pid --proc /proc true
+
+      - name: Build system test inputs
+        run: npm run build
+
+      - name: System tests
+        timeout-minutes: 20
+        run: npm run test:system -- --no-file-parallelism --maxWorkers=1
+
   packaged-electron-daemon:
     name: packaged Electron daemon (Windows)
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
 
@@ -298,6 +328,7 @@ jobs:
           -t "does not become ready before initial A2A reconciliation completes|concurrent launchers refresh a real idle older Host|explicitly makes it persistent|A2A serving inside|self-stops"
 
       - name: Bundled Provider credentials and daemon compaction
+        timeout-minutes: 5
         run: npm run test:bundle
 
       - name: Windows SDK attachment under CPU contention
@@ -354,6 +385,7 @@ jobs:
   trusted-text-native-platforms:
     name: trusted text and POSIX sandbox (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -417,6 +449,7 @@ jobs:
   shell-contract-windows:
     name: shell execution contract (Windows)
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
 

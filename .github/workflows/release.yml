@@ -1,6 +1,6 @@
 name: Release
 
-# Two trigger paths run full CI before the same build matrix:
+# Both trigger paths run full CI alongside the build matrix; publishing waits for both:
 #   1. Push a `v*` tag         → CI + build + auto-create GitHub Release with binaries
 #   2. workflow_dispatch (UI)  → CI + build, artifacts available for manual download
 #
@@ -36,8 +36,8 @@ jobs:
 
   build:
     name: build (${{ matrix.target }})
-    needs: ci
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -163,51 +163,6 @@ jobs:
           KODAX_NATIVE_PREBUILT: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: npm run build
 
-      - name: Bundled Provider credentials and daemon compaction
-        if: steps.filter.outputs.skip == 'false'
-        run: npm run test:bundle
-
-      - name: Enforce Linux glibc 2.28 ABI
-        if: steps.filter.outputs.skip == 'false' && runner.os == 'Linux'
-        run: node scripts/check-native-glibc.mjs --max 2.28 dist/native/${{ matrix.native_dir }}/kodax-text-transaction.node
-
-      - name: Native trusted text transaction tests
-        if: steps.filter.outputs.skip == 'false' && matrix.smoke
-        run: npm run test:native
-
-      - name: Real POSIX per-command sandbox concurrency gate
-        if: steps.filter.outputs.skip == 'false' && matrix.target != 'win-x64'
-        env:
-          KODAX_REAL_POSIX_SANDBOX: '1'
-          SRT_DEBUG: '1'
-        run: node node_modules/vitest/vitest.mjs run tests/feature-295-posix-shell-policy.test.ts
-
-      - name: Windows trusted text integration and dependency boundary
-        if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64'
-        run: node node_modules/vitest/vitest.mjs run src/windows-text-transaction.test.ts tests/feature-295-text-tool-boundary.test.ts
-
-      - name: Activate Windows v2 sandbox for packaged Electron release gate
-        if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64'
-        env:
-          KODAX_HOME: ${{ runner.temp }}\kodax-electron-smoke-home\.kodax
-        run: node scripts/prepare-windows-electron-sandbox.mjs
-
-      - name: Windows v2 native policy concurrency gate
-        if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64'
-        env:
-          KODAX_HOME: ${{ runner.temp }}\kodax-electron-smoke-home\.kodax
-          KODAX_REAL_WINDOWS_SANDBOX_V2: '1'
-        run: node node_modules/vitest/vitest.mjs run tests/feature-295-windows-v2-policy.test.ts
-
-      - name: Packaged Electron daemon release gate
-        if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64'
-        env:
-          KODAX_HOME: ${{ runner.temp }}\kodax-electron-smoke-home\.kodax
-          KODAX_ELECTRON_SMOKE_HOME: ${{ runner.temp }}\kodax-electron-smoke-home
-          KODAX_ELECTRON_DIST: ${{ github.workspace }}\.electron-smoke\node_modules\electron\dist
-          KODAX_ELECTRON_BUILDER_CLI: ${{ github.workspace }}\.electron-smoke\node_modules\electron-builder\out\cli\cli.js
-        run: npm run test:electron-daemon:built
-
       - name: Build binary (${{ matrix.target }})
         if: steps.filter.outputs.skip == 'false'
         run: node scripts/build-binary.mjs --target=${{ matrix.target }} --skip-tsc
@@ -296,10 +251,58 @@ jobs:
           echo "archive_file=$archive_file" >> "$GITHUB_OUTPUT"
 
       - name: Offline work-mode archive gate
+        timeout-minutes: 5
         if: steps.filter.outputs.skip == 'false' && matrix.smoke
         env:
           KODAX_MODE_RELEASE_ARCHIVE: dist/release/${{ steps.package.outputs.archive_file }}
+          KODAX_MODE_RELEASE_EVIDENCE: ${{ runner.temp }}/release-mode-evidence
         run: node --test tests/release-work-modes.test.mjs
+
+      - name: Bundled Provider credentials and daemon compaction
+        timeout-minutes: 5
+        if: steps.filter.outputs.skip == 'false'
+        run: npm run test:bundle
+
+      - name: Enforce Linux glibc 2.28 ABI
+        if: steps.filter.outputs.skip == 'false' && runner.os == 'Linux'
+        run: node scripts/check-native-glibc.mjs --max 2.28 dist/native/${{ matrix.native_dir }}/kodax-text-transaction.node
+
+      - name: Native trusted text transaction tests
+        if: steps.filter.outputs.skip == 'false' && matrix.smoke
+        run: npm run test:native
+
+      - name: Real POSIX per-command sandbox concurrency gate
+        if: steps.filter.outputs.skip == 'false' && matrix.target != 'win-x64'
+        env:
+          KODAX_REAL_POSIX_SANDBOX: '1'
+          SRT_DEBUG: '1'
+        run: node node_modules/vitest/vitest.mjs run tests/feature-295-posix-shell-policy.test.ts
+
+      - name: Windows trusted text integration and dependency boundary
+        if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64'
+        run: node node_modules/vitest/vitest.mjs run src/windows-text-transaction.test.ts tests/feature-295-text-tool-boundary.test.ts
+
+      - name: Activate Windows v2 sandbox for packaged Electron release gate
+        if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64'
+        env:
+          KODAX_HOME: ${{ runner.temp }}\kodax-electron-smoke-home\.kodax
+        run: node scripts/prepare-windows-electron-sandbox.mjs
+
+      - name: Windows v2 native policy concurrency gate
+        if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64'
+        env:
+          KODAX_HOME: ${{ runner.temp }}\kodax-electron-smoke-home\.kodax
+          KODAX_REAL_WINDOWS_SANDBOX_V2: '1'
+        run: node node_modules/vitest/vitest.mjs run tests/feature-295-windows-v2-policy.test.ts
+
+      - name: Packaged Electron daemon release gate
+        if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64'
+        env:
+          KODAX_HOME: ${{ runner.temp }}\kodax-electron-smoke-home\.kodax
+          KODAX_ELECTRON_SMOKE_HOME: ${{ runner.temp }}\kodax-electron-smoke-home
+          KODAX_ELECTRON_DIST: ${{ github.workspace }}\.electron-smoke\node_modules\electron\dist
+          KODAX_ELECTRON_BUILDER_CLI: ${{ github.workspace }}\.electron-smoke\node_modules\electron-builder\out\cli\cli.js
+        run: npm run test:electron-daemon:built
 
       - name: Upload artifact
         if: steps.filter.outputs.skip == 'false'
@@ -312,6 +315,16 @@ jobs:
           path: dist/release/*
           if-no-files-found: error
           retention-days: 14
+
+      - name: Preserve failed release-mode evidence
+        if: failure() && steps.filter.outputs.skip == 'false'
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-mode-evidence-${{ matrix.target }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-mode-evidence
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload native authority for universal npm package
         if: steps.filter.outputs.skip == 'false'
@@ -330,6 +343,7 @@ jobs:
       || github.event.inputs.target == 'all'
       || github.event.inputs.target == ''
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
 
@@ -393,9 +407,10 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    needs: [build, npm-package]
+    needs: [ci, build, npm-package]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:

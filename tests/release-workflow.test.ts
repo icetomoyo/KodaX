@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 
 interface WorkflowStep {
+  readonly 'timeout-minutes'?: number;
   readonly name?: string;
   readonly run?: string;
   readonly uses?: string;
@@ -15,6 +16,9 @@ interface WorkflowStep {
 }
 
 interface WorkflowJob {
+  readonly needs?: string | readonly string[];
+  readonly if?: string;
+  readonly 'timeout-minutes'?: number;
   readonly name?: string;
   readonly 'runs-on'?: string;
   readonly strategy?: {
@@ -26,10 +30,53 @@ interface WorkflowJob {
 }
 
 interface ReleaseWorkflow {
+  readonly on?: Readonly<Record<string, unknown>>;
   readonly jobs?: Readonly<Record<string, WorkflowJob | undefined>>;
 }
 
 describe('GitHub release workflow', () => {
+  it('builds candidates alongside CI but requires every gate before publishing', () => {
+    const workflow = parse(readFileSync(resolve('.github/workflows/release.yml'), 'utf8')) as ReleaseWorkflow;
+    expect(workflow.jobs?.build?.needs).toBeUndefined();
+    expect(workflow.jobs?.['npm-package']?.needs).toBe('build');
+    expect(workflow.jobs?.release?.needs).toEqual(['ci', 'build', 'npm-package']);
+    expect(workflow.jobs?.release?.if).toBe("github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')");
+    expect(workflow.on?.push).toEqual({ tags: ['v*'] });
+    const ci = parse(readFileSync(resolve('.github/workflows/ci.yml'), 'utf8')) as ReleaseWorkflow;
+    expect(Object.keys(ci.on ?? {}).sort()).toEqual(['workflow_call', 'workflow_dispatch']);
+  });
+
+  it('fails archive checks before expensive Electron checks and bounds test processes', () => {
+    const workflow = parse(readFileSync(resolve('.github/workflows/release.yml'), 'utf8')) as ReleaseWorkflow;
+    const steps = workflow.jobs?.build?.steps ?? [];
+    const gate = steps.findIndex(step => step.name === 'Offline work-mode archive gate');
+    expect(gate).toBeGreaterThan(-1);
+    expect(gate).toBeLessThan(steps.findIndex(step => step.name === 'Packaged Electron daemon release gate'));
+    expect(steps[gate]?.['timeout-minutes']).toBeLessThanOrEqual(5);
+    for (const file of ['ci.yml', 'release.yml']) {
+      const candidate = parse(readFileSync(resolve('.github/workflows', file), 'utf8')) as ReleaseWorkflow;
+      for (const job of Object.values(candidate.jobs ?? {})) {
+        if (!job?.steps) continue;
+        expect(job['timeout-minutes'], `${file}: ${job.name}`).toBeGreaterThan(0);
+        for (const step of job.steps.filter(step => step.run?.includes('npm run test:bundle'))) {
+          expect(step['timeout-minutes']).toBeLessThanOrEqual(5);
+        }
+      }
+    }
+  });
+
+  it('runs the complete serial system suite on its own Node 20 runner', () => {
+    const workflow = parse(readFileSync(resolve('.github/workflows/ci.yml'), 'utf8')) as ReleaseWorkflow;
+    const system = workflow.jobs?.system;
+    expect(system?.needs).toBeUndefined();
+    expect(system?.steps?.find(step => step.uses === 'actions/setup-node@v6')?.with?.['node-version']).toBe('20');
+    expect(system?.steps?.find(step => step.name === 'System tests')?.run)
+      .toBe('npm run test:system -- --no-file-parallelism --maxWorkers=1');
+    expect(workflow.jobs?.test?.steps?.some(step => step.name === 'System tests')).toBe(false);
+    expect(Object.values(workflow.jobs ?? {}).flatMap(job => job?.steps ?? [])
+      .filter(step => step.run?.includes('npm run test:system'))).toHaveLength(1);
+  });
+
   it('checks modes and recovery from the actual archive on all five native release runners before upload', () => {
     const workflow = parse(readFileSync(resolve('.github/workflows/release.yml'), 'utf8')) as ReleaseWorkflow;
     const build = workflow.jobs?.build;
