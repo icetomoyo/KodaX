@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { Jimp } from 'jimp';
 import { expect, it, vi } from 'vitest';
 import {
   KodaXBaseProvider, clearRuntimeModelProviders, registerModelProvider, registerCustomProviders,
@@ -85,7 +86,8 @@ it.each((['sa', 'ama'] as const).flatMap(agentMode =>
     apiKeyEnv: 'KODAX_NEXT_REQUEST_TEST_KEY', model: providerName, imageInput: true }]);
   try {
     const imagePath = path.join(homeDir, 'queued.png');
-    await writeFile(imagePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aYz8AAAAASUVORK5CYII=', 'base64'));
+    const imageBytes = await new Jimp({ width: 1, height: 1, color: 0x00ff00ff }).getBuffer('image/png');
+    await writeFile(imagePath, imageBytes);
     const session = await client.sessions.create({ projectPath: homeDir });
     const observation = await client.sessions.observe(session.id, view => views.push(view));
     closeObservation = () => observation.close();
@@ -98,6 +100,7 @@ it.each((['sa', 'ama'] as const).flatMap(agentMode =>
     expect(await client.inputs.withdraw(session.id, followup.inputId)).toMatchObject(followup);
     expect(await client.inputs.read(session.id, followup.inputId)).toMatchObject({ state: 'withdrawn' });
     await client.inputs.submit({ ...followup, inputId: 'followup' });
+    await writeFile(imagePath, await new Jimp({ width: 1, height: 1, color: 0xff0000ff }).getBuffer('image/png'));
     if (agentMode === 'sa' && behavior === 'deliver') {
       const gate = new Promise<void>(resolve => { releaseQueuedSave = resolve; });
       const save = FileSessionStorage.prototype.save;
@@ -162,7 +165,10 @@ it.each((['sa', 'ama'] as const).flatMap(agentMode =>
     const injected = requests[1]!.find(message => message.inputId === 'followup');
     expect(injected).toBeDefined();
     expect(JSON.stringify(injected?.content)).toContain(followup.text);
-    expect(Array.isArray(injected?.content) && injected.content.some(block => block.type === 'image' && block.path === imagePath)).toBe(true);
+    const retained = Array.isArray(injected?.content) ? injected.content.find(block => block.type === 'image') : undefined;
+    expect(retained?.type).toBe('image');
+    if (retained?.type !== 'image') throw new Error('Expected the admitted queued image.');
+    expect(retained.path).not.toBe(imagePath); expect(await readFile(retained.path)).toEqual(imageBytes);
     expect(await client.inputs.read(session.id, 'followup')).toMatchObject({ state: 'submitted', runId: active.runId });
     await expect.poll(() => views.at(-1)?.items.find(item => item.text === 'Partial after boundary')?.afterInputId).toBe('followup');
     // Live deltas may arrive while a canonical history reload is in flight.

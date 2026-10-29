@@ -2,6 +2,8 @@
 
 起点：`30310e0018b3c0803653a278f451751a00ccc3bc`，`KodaX-next-dev`，2026-10-29（Asia/Shanghai）。按用户提供的 [续接要求](visual-harness-p3-p7-requirements-2026-10-29.md) 与主设计 §12–13 推进；P0–P2 与 IHDR 追补不重做。原设计、原 handoff 与续接要求文件的用户修改保留。本记录独立保留下列实际合同、验收和限制，未跟踪输入文档不作为唯一验收依据。
 
+逐片成本短述中的三工作面指 Coding AMA、Agent、Script 六格；另有 Coding SA 兼容入口。完整八格及 Anthropic SA 的差异见最终 P7 表，不能将六格短述套到 SA。
+
 | 切片 | 状态 | 本片交付范围 |
 | --- | --- | --- |
 | P3a | 已实现并定向验证 | 1–4 个有序 view；同原件复用解码；整次生成前预留；有序 partial |
@@ -12,7 +14,7 @@
 | P6a | 已实现并定向验证 | native/checked bridge、managed/兼容入口透传 serial 谓词；不提供环境时效锁 |
 | P6b | 已实现限定消费者并定向验证 | 本地可暂停 PNG 卡片；current/version、动作事实、unknown 与补观察；子 Actor 无 owner 时拒绝 |
 | P5 | 已实现选定 MCP 来源并定向验证 | typed tool/resource、SA fallback；Artifact/额外 Host/standalone 未声明支持 |
-| P7 | 持续收集机械证据 | 最终成本、支持边界与受控行为实验方案；未发起付费调用 |
+| P7 | 机械集成与冻结方案已交付；行为未执行 | 默认全仓、最终成本、支持边界与四份受控请求草案；未发起付费调用 |
 
 ## P3a：有序多观察检查
 
@@ -164,8 +166,6 @@ compiled public prepared-image scope 本机单样本（先暖原件验证缓存�
 
 P4a/b/c 至此完成上表限定的工程接线与定向验证；未交付 steer 的 crash checkpoint 重放、historyBoundary UI 及未列宿主仍保留未验状态。动态来源版本/current/reset 的续接认识继续由 P6 验证；P7 行为部分尚未执行，不以这些机械证据替代。
 
-## 持续保留的失败与未验证范围
-
 ## P5：选定 MCP typed image
 
 本片只选择已有 MCP typed tool/resource（及兼容 SA 的同名 fallback）。MCP normalization 仍持 base64 解出的实际 Buffer 时，经 agent 层窄 AsyncLocalStorage callback 接纳到同一 Runtime owner；没有把字符串/structuredContent 中的路径猜成媒体。callback 在普通扩展执行 scope 绑定，sourceKey 为 server + tool/resource，source 保留精确 executionId、toolCallId、callOrdinal 与 typed imageOrdinal。checked bridge 继续使用既有目标 call ID 后缀，例如 `:mcp_call`，不伪装成外层 provider ID。
@@ -238,6 +238,47 @@ LocalToolDefinition 明确已有 RunnableTool 的纯输入 serial 谓词，regis
 
 独立只读评审：0 项发现。四格仅声明 serial 传播与 false 并行；环境 current、跨 Actor/Run 和动态行为尚未验收。
 
-此前全仓原始结果为 17,952 通过、1 失败，Feature 270 临时 evidence.json 缺失原因未查明；独立单文件通过不表示问题已解决。后续全仓结果单独记录，不覆盖历史。
+## P7：最终集成、完整成本与行为方案
+
+工程候选为 `a591967522287b8b880ee507347668e46f98ea15`（P3、限定 P4/P6、选定 MCP 来源）；P7 另增加离线 freezer、相同初始图/生产 tools 字节的反例，以及集成 fixture 校正。行为部分没有执行。可执行输入生成方案、四个 request/hash、预算和主会话盲审流程见 [P7 方案](visual-harness-p7-pilot-2026-10-29.md)。freezer 不含 provider 执行路径；provider/model 为 UNRESOLVED、已授权调用/token/费用均为 0。拟议的 4-call Layer 2 /512 输出 token /100,000 总 token /$1 停止上限 /60 秒 /同 provider 1 并发，须另行核对路由、费用并取得授权。该 $1 是上限，不是价格估计。
+
+freezer 公共写入 seam 的 TDD：缺少模块/写入 API 先 RED→GREEN；额外历史图片会使两 arm 实际帧数不同却报告相同的反例先 RED，修为只接受无历史图片的生产文本前缀，否则另建 revision。实际两 arm 各 1 帧，相同 PNG/task，完整前缀/tools/request 分别 hash。四份请求草案实际写入 OS Temp `kodax-eval-dumps-visual-freeze-IUrBpR`，独立断言 (1,1) 原 RGBA [0,255,255,128]。最终 **4 项机械测试通过**；只对 freezer 统计语句 **84%**、分支 **78.37%**、函数 **83.33%**、行 **87.17%**，raw `kodax-visual-p7-plan-final2-coverage-20261029`。这不是模型输出、远端协议接受或全仓覆盖率。
+
+第一次默认全仓 `npm test -- --reporter=dot`：**18,055 通过、12 失败**（3 文件），97 skipped、19 todo；1,292 文件通过、3 失败、6 skipped，用时 1,106.65 秒，原始日志保留 `kodax-visual-p7-full-suite-20261029.log`。11 项来自 queue-boundary/steer 旧正向 fixture 的同一张 decoder 判 invalid 的 PNG；换为真实有效 PNG 后，又以旧“仍用原路径”断言 RED。现核对 owned 路径和 ACK 后覆盖 producer 路径仍保留的原 bytes；旧坏 PNG 保留为拒绝 steer、无 input ACK、无额外请求的负例。队列撤回竞争、skill barrier、提交前不可见、幂等、目标冲突与原请求顺序断言均保留。修补后 3 文件 **33 项通过**，日志 `kodax-visual-p7-queue-steer-final.log`。没有放松解码、owner 或权限检查。
+
+另外 1 项为 `src/sdk-runtime.external-agents.test.ts` T30 的 `Session not found: product-face`。三文件复跑中该文件通过，5 次孤立 T30 也通过；未修改该生产路径，**原因仍未定位**。不能由这些复验认定已修复、与本次无关或归因 flaky/环境。第二轮全仓结果独立保留如下。
+
+冻结代码后第二次同一默认命令：**18,067 通过、0 失败**，97 skipped、19 todo；**1,295 文件通过、6 skipped**（总 1,301），总 18,183 项，用时 **1,044.13 秒**，命令退出码 0。日志 `kodax-visual-p7-full-suite-final-20261029.log`。按仓库默认 exclude 未运行需凭证的 provider integration；未据此宣称在线或行为验证通过。两次全仓记录均保留，不用第二次覆盖第一次。原 Feature 270 在本次全仓中未再失败，也不证明历史原因已解决。
+
+最终 `npm run typecheck`（含新增 benchmark 文件）、`npm run build`、`git diff --check` 通过；仓库未提供 lint 脚本，未虚构 lint 通过。CLI **5,151 KiB**，bootstrap **4,042 bytes**，14 SDK 声明检查通过，未提高构建门槛。没有做全仓 coverage 运行，上述逐片数据仅代表明确列出的模块/测试集合。
+
+### 最终成本八格
+
+`p7-final` 使用第一轮完整默认回归里实际离线捕获的 **32 格** `kodax-first-turn-wire-qH7SlF`，保留完整 system/messages/tools 与 Script 内嵌合同；未装配 owner 的 **24 SDK 格**完整字段不变。与 P3b 起后续默认合同相同，P4/P6/P5 未再增加默认首轮字段。基线 30310e00 仍沿原 raw 的 15 个合同源匹配、Windows LF/CRLF 及历史 hash 核对；不是重新捕获的基线。
+
+| 协议/入口 | 完整字段估算 token | 对 30310e00 增量 | 对 token 优化版本 1826cc22 累计增量 |
+| --- | ---: | ---: | ---: |
+| OpenAI / Coding SA | 15,907 | +366 | +748 |
+| OpenAI / Coding AMA | 15,423 | +366 | +748 |
+| OpenAI / Agent | 11,791 | +365 | +748 |
+| OpenAI / Script | 17,293 | +366 | +748 |
+| Anthropic / Coding SA | 16,165 | +364 | +744 |
+| Anthropic / Coding AMA | 15,048 | +358 | +726 |
+| Anthropic / Agent | 11,546 | +358 | +726 |
+| Anthropic / Script | 17,128 | +358 | +726 |
+
+累计 **+726～748 个估算 token**，按各格原 token 优化基线约 **+4.43%～6.77%**。三工作面之外 Anthropic SA 的 +364/+744 必须单列，不能套用 +358/+726。显式安装卡片消费者的 +194（OpenAI Coding 配对）另计，不混作默认所有入口成本。工具结果中的标签、数值/图片及历史增长、实际 usage、缓存、费用、请求数与整体任务耗时均不是这些首轮数字；完整任务净增量仍未实测，不能以 1500/图的容量护栏或 base64 字符数代替视觉计费。
+
+### Standards
+
+逐片与最终跨片独立只读评审：**0 项剩余成文规范违反、0 项 smell 判断**。最终 fixture 修改保留原队列、权限及提交可见性断言。
+
+### Spec
+
+最终发现的 1 项 Anthropic SA 成本漏列已在八格与 P7 方案中更正；实现/输入公平性及 fixture 修补复核 **0 项剩余发现**。没有将 T30、历史 Feature 270 的未定位原因、子 Actor owner、未选来源或未执行模型行为包装成已解决/通过。行为采用建议保持 **recommend-iterate（价值待验证）**。
+
+## 持续保留的失败与未验证范围
+
+此前全仓原始结果为 17,952 通过、1 失败，Feature 270 临时 evidence.json 缺失原因未查明；独立单文件或本次全仓通过不表示历史原因已解决。首轮 P7 的 T30 原因也未定位。上述不同时间/候选的原始记录均保留。
 
 没有在线模型/付费实验、ARC、完整桌面或实时游戏接入。P7 行为部分未执行，不把机械测试或工具数量当作主动取证/智能提升的证据。

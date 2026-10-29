@@ -83,6 +83,7 @@
     "tests/deferred-repo-lsp.eval.ts",
     "tests/deferred-repo-lsp-runtime.test.ts",
     "benchmark/datasets/first-turn-tokens/*.ts",
+    "benchmark/visual-harness/*.ts",
     "packages/coding/src/task-engine/_internal/managed-task/llm-adapter-tool-contract.test.ts",
     "packages/coding/src/agent-runtime/work-mode.test.ts",
     "packages/coding/src/tools/managed-tool-contract.test.ts",

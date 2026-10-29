@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { Jimp } from 'jimp';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   KodaXBaseProvider, clearRuntimeModelProviders, registerModelProvider, registerCustomProviders,
@@ -95,8 +96,8 @@ afterEach(async () => {
 
 it.each([false, true])('steers into the named active Run with image=%s at a safety point and rejects invalid or late targets', async (withImage) => {
   const imagePath = path.join(homeDir, 'steer.png');
-  const imageData = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aYz8AAAAASUVORK5CYII=';
-  if (withImage) await writeFile(imagePath, Buffer.from(imageData, 'base64'));
+  const imageBytes = withImage ? await new Jimp({ width: 1, height: 1, color: 0x00ff00ff }).getBuffer('image/png') : undefined;
+  if (imageBytes) await writeFile(imagePath, imageBytes);
   const session = await first.sessions.create({ projectPath: homeDir });
   await runtime.sessions.updateSettings(session.id, { agentMode: 'ama', permissionMode: 'full-access' });
   const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
@@ -106,8 +107,17 @@ it.each([false, true])('steers into the named active Run with image=%s at a safe
     delivery: 'steer' as const, targetRunId: active.runId!,
     ...(withImage ? { inputArtifacts: [{ kind: 'image' as const, path: imagePath, mediaType: 'image/png' as const }] } : {}),
   };
+  if (withImage) {
+    const invalid = path.join(homeDir, 'invalid.png');
+    await writeFile(invalid, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aYz8AAAAASUVORK5CYII=', 'base64'));
+    await expect(first.inputs.submit({ ...steer, inputId: 'invalid-steer', inputArtifacts: [{ kind: 'image', path: invalid, mediaType: 'image/png' }] }))
+      .rejects.toThrow('Visual input cannot be decoded');
+    expect(await first.inputs.read(session.id, 'invalid-steer')).toBeNull();
+    expect(requests).toHaveLength(1);
+  }
   const accepted = await first.inputs.submit(steer);
   expect(accepted).toMatchObject({ state: 'queued', runId: active.runId });
+  if (withImage) await writeFile(imagePath, await new Jimp({ width: 1, height: 1, color: 0xff0000ff }).getBuffer('image/png'));
   expect(await second.inputs.submit(steer)).toEqual(accepted);
   await expect(first.inputs.submit({ ...steer, text: 'A different steer.' })).rejects.toMatchObject({ code: 'conflict' });
   await expect(second.inputs.submit({ ...steer, targetRunId: 'run_nonexistent' })).rejects.toMatchObject({ code: 'conflict' });
@@ -120,12 +130,13 @@ it.each([false, true])('steers into the named active Run with image=%s at a safe
     .toBeGreaterThan(0);
   if (withImage) {
     const userMessages = requests.flat().filter(message => message.role === 'user');
-    expect(userMessages.some(message => Array.isArray(message.content)
-      && message.content.some(block => block.type === 'image' && block.path === imagePath))).toBe(true);
+    const retained = userMessages.flatMap(message => Array.isArray(message.content) ? message.content.filter(block => block.type === 'image') : [])[0];
+    expect(retained?.path).not.toBe(imagePath);
+    expect(retained).toBeDefined(); expect(await readFile(retained!.path)).toEqual(imageBytes);
     const transcript = await runtime.sessions.transcript(session.id);
     expect(transcript?.messages.some(message => message.inputId === 'steer-1'
       && Array.isArray(message.content)
-      && message.content.some(block => block.type === 'image' && block.path === imagePath))).toBe(true);
+      && message.content.some(block => block.type === 'image' && block.path === retained!.path))).toBe(true);
     await expect(second.inputs.submit({ ...steer, inputArtifacts: [{ kind: 'image', path: 'changed.png' }] }))
       .rejects.toMatchObject({ code: 'conflict' });
   }
