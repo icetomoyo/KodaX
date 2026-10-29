@@ -19,10 +19,14 @@ registry reset, forced Host replacement, skipped recovery, extra permission or
 startup-timeout increase is an acceptable performance fix.
 
 The isolated Windows fixture uses 220 verifiably absent child PIDs and an absent
-owner PID, with complete retained creation identities. It seeds 400 messages,
+owner PID, with complete retained creation identities, plus one incomplete
+Run-owned record whose unresolved evidence must be preserved. It seeds 400 messages,
 starts two public SDK clients, requires readiness below 10 seconds and first
-concurrent Session/history reads below 2 seconds, verifies all fixture records
-are reclaimed and checks saved messages remain unchanged. It invokes no model,
+concurrent Session/history reads below 2 seconds, verifies all 220 complete
+exited-tree records are reclaimed and checks saved messages remain unchanged.
+It then verifies the exact Host/Windows Job shutdown, starts a new Host generation and resumes the
+same history with the unresolved record byte-for-byte unchanged. The fixture
+HOME is deleted only after the final verified shutdown. It invokes no model,
 shell command or user Session. The Host and HOME belong only to this fixture.
 
 ## Reproduction and diagnosis
@@ -96,6 +100,51 @@ deleted, altered to authorize cleanup, or declared successfully terminated.
 Graceful lifecycle exit was used only when the real Host accepted an exit;
 there was no force kill. These probes ran in the coding tool's filesystem
 context, not a claim to reproduce the console-specific view in Issue 372.
+
+## Regression review after `a8f992ff` (2026-10-29)
+
+Independent Standards and Spec reviews found no actionable regression in the
+runtime patch. The audit followed every changed cleanup result into its callers:
+Run recovery, Bash, worktree, MCP, LSP, sandbox and daemon teardown distinguish
+`unknown` from proven success and already accept `already-exited`. The public
+capture signature and POSIX implementation are unchanged. Ordinary startup reads
+the retained registry identities before its shared snapshot; PID reuse cannot
+revive an identity already proven absent. Concurrent unrelated cleanup scopes
+supplying newer captures were not stress-tested; do not claim exhaustive race
+or non-Windows live-process validation from these checks.
+
+The review strengthened the bundled regression rather than changing runtime
+logic. One incomplete Run record is now mixed with the 220 complete exited
+records and must remain byte-for-byte unchanged through two Host generations.
+The test verifies exact process/Windows Job shutdown with
+`waitForRuntimeDaemonShutdown`, not merely shutdown request acceptance, before
+starting a replacement or deleting the isolated HOME. After restart it rechecks
+all 400 persisted messages and the newest history page. Latest acceptance:
+2,547 ms cold readiness, 53 ms concurrent first reads, 1,535 ms resume after
+verified shutdown. Both Host shutdowns were verified.
+
+The expanded regression checks completed with 485 distinct Vitest cases passed
+and 2 platform skips, plus 7 bundled cases passed:
+
+| Scope | Passed | Skipped |
+| --- | ---: | ---: |
+| Process-tree/registry, interrupted/generation and SDK shell recovery | 156 | 2 |
+| SDK startup/interrupted/exit recovery, daemon startup and cleanup callers | 112 | 0 |
+| Real Windows process cleanup, MCP transport, LSP and Bash | 109 | 0 |
+| Saved-history wheel/navigation and sandbox startup/boot diagnostics | 108 | 0 |
+| Bundled concurrent startup, shared Host refresh/idle exit, CLI generation recovery and Product quit | 7 | 0 |
+
+The bundled CLI recovery cases exercise print and scoped SDK paths with local
+scripted model responses; they do not repeat all Ink/classic PTY variants.
+Real Windows cleanup verifies that live descendants are still terminated and
+incomplete historical Run evidence survives repeated sweeps.
+
+The first broad invocation encountered a missing `packages/coding/dist` during
+module resolution: one suite could not collect and one subprocess could not
+start. After the package build, both affected suites passed serially (10 cases),
+with no runtime source change. Those initial failures are not counted as passes;
+the table deduplicates cases whose reruns passed. The strengthened bundled case
+also passed separately after its final cleanup changes.
 
 ## Evidence still missing
 
