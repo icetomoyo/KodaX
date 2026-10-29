@@ -270,7 +270,9 @@ test('release archive preserves work modes, partial effects, cancellation and re
         externalModelCalls: 0, completedAssertions }, null, 2));
       process.stderr.write(`Offline release evidence: ${evidence}\n`);
       if ((!completedAssertions || failures.length > 0) && existsSync(path.join(configHome, 'runtime'))) {
-        await cp(path.join(configHome, 'runtime'), path.join(evidence, 'runtime'), { recursive: true });
+        await cp(path.join(configHome, 'runtime'), path.join(evidence, 'runtime'), {
+          recursive: true, filter: source => path.basename(source) !== 'daemon.token',
+        });
       }
       if (path.dirname(root) !== temporary || !path.basename(root).startsWith('kodax-release-modes-')) throw new Error('Unsafe cleanup');
       if (completedAssertions && failures.length === 0) {

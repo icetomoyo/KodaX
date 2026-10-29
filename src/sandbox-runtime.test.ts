@@ -4860,9 +4860,11 @@ describe('Windows WFP probe allocation', () => {
     },
   );
 
-  it.runIf(process.platform === 'win32').each(['EADDRINUSE', 'EACCES'])(
-    'retries a different probe port after %s without entering the proxy range',
-    async (code) => {
+  it.runIf(process.platform === 'win32').each([
+    ['EADDRINUSE', 1], ['EACCES', 1], ['EACCES', 2],
+  ] as const)(
+    'retries distinct probe ports after %s (%s collisions) without entering the proxy range',
+    async (code, collisions) => {
       const originalListen = Server.prototype.listen;
       const ports: number[] = [];
       const listeners: Server[] = [];
@@ -4871,7 +4873,7 @@ describe('Windows WFP probe allocation', () => {
       ) {
         ports.push(Number((args as unknown[])[0]));
         listeners.push(this);
-        if (ports.length === 1) {
+        if (ports.length <= collisions) {
           queueMicrotask(() => this.emit('error', Object.assign(new Error(code), { code })));
           return this;
         }
@@ -4879,8 +4881,11 @@ describe('Windows WFP probe allocation', () => {
       });
       try {
         await expect(doctorSandboxRuntime({ refresh: true })).resolves.toMatchObject({ ready: true });
-        expect(ports).toHaveLength(2);
-        expect(new Set(ports).size).toBe(2);
+        // A real runner may reject another randomly chosen port after the
+        // injected collisions. Keep the production bound and uniqueness check.
+        expect(ports.length).toBeGreaterThanOrEqual(collisions + 1);
+        expect(ports.length).toBeLessThanOrEqual(5);
+        expect(new Set(ports).size).toBe(ports.length);
         expect(ports.every((port) => port >= 1024 && port < 60080)).toBe(true);
         expect(listeners.every((server) => !server.listening)).toBe(true);
       } finally {
