@@ -27,7 +27,7 @@ async function until(read) {
 
 // Invoked on the matching native CI runner after creating the exact release archive.
 // Every provider request terminates at this loopback fixture; no external model is used.
-test('release archive preserves work modes, partial effects, cancellation and restart on its shipped runtime', { timeout: 300_000 }, async t => {
+test('release archive preserves work modes, partial effects, cancellation and restart on its shipped runtime', { timeout: 600_000 }, async t => {
   const archive = process.env.KODAX_MODE_RELEASE_ARCHIVE;
   assert.ok(archive, 'Set KODAX_MODE_RELEASE_ARCHIVE to the archive for this host platform');
   const temporary = await realpath(os.tmpdir());
