@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Jimp } from 'jimp';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { createFileVisualObservationOwner, visualObservationImage, type VisualObservation } from '@kodax-ai/agent/media';
 import type { KodaXToolExecutionContext } from '../types.js';
 import type { ToolHandlerSync } from '../tools/types.js';
@@ -88,6 +88,49 @@ it('an observation that sees unknown invalidates A even if reconciliation keeps 
     f.reconcile(); expect(await f.call('visual_act', action(basis))).toMatchObject({ status: 'not_dispatched' });
     expect(f.effects).toBe(0);
   } finally { await f.close(); }
+});
+
+it('rejects A invalidated by an unknown observation while its committed receipt lookup is pending', async () => {
+  const f = await fixture(); const entered = gate(); const held = gate();
+  const list = f.owner.list;
+  let attempted: ReturnType<typeof f.call> | undefined;
+  try {
+    const basis = await f.call('visual_observe', { source: 'cards' });
+    f.owner.list = async () => { entered.release(); await held.promise; return list(); };
+    attempted = f.call('visual_act', action(basis));
+    await entered.promise;
+    f.externalUnknown();
+    expect(await f.call('visual_observe', { source: 'cards' })).toMatchObject({ applicability: 'historical' });
+    f.reconcile(); // The adapter version remains episode-1:0; A is still invalid.
+    held.release();
+    expect(await attempted).toMatchObject({ status: 'not_dispatched' });
+    expect(f.effects).toBe(0);
+    f.owner.list = list;
+    const fresh = await f.call('visual_observe', { source: 'cards' });
+    expect(await f.call('visual_act', action(fresh))).toMatchObject({ status: 'completed' });
+    expect(f.effects).toBe(1);
+  } finally { held.release(); if (attempted) await attempted; f.owner.list = list; await f.close(); }
+});
+
+it.each(['new observation', 'reset', 'unknown', 'cancel'] as const)('rechecks %s after awaiting the receipt, before entering the adapter', async change => {
+  const f = await fixture(); const entered = gate(); const held = gate(); const abort = new AbortController();
+  const list = f.owner.list; const dispatch = vi.spyOn(f.adapter, 'act');
+  let outcome: Promise<{ status: unknown; error?: unknown }> | undefined;
+  try {
+    const basis = await f.call('visual_observe', { source: 'cards' });
+    f.owner.list = async () => { entered.release(); await held.promise; return list(); };
+    outcome = f.call('visual_act', action(basis), { ...f.ctx, abortSignal: abort.signal }).then(
+      result => ({ status: result.status }), (error: unknown) => ({ status: undefined, error }));
+    await entered.promise;
+    if (change === 'new observation') await f.call('visual_observe', { source: 'cards' });
+    else if (change === 'reset') f.reset();
+    else if (change === 'unknown') f.externalUnknown();
+    else abort.abort(new Error('cancel during receipt'));
+    held.release();
+    if (change === 'cancel') expect(await outcome).toMatchObject({ error: { message: 'cancel during receipt' } });
+    else expect(await outcome).toEqual({ status: 'not_dispatched' });
+    expect(dispatch).not.toHaveBeenCalled(); expect(f.effects).toBe(0);
+  } finally { held.release(); if (outcome) await outcome; f.owner.list = list; await f.close(); }
 });
 
 it('bounds an exception after confirmed completion and counts it in the image result metadata', async () => {

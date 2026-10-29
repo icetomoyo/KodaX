@@ -5314,5 +5314,71 @@
     "height": 1,
     "externalCalls": 0,
     "scope": "OpenAI Coding Runtime; same request with only installed consumer schemas removed; fixture encode timings are not production decoder or model latency"
-  }
+  },
+  "followups": [
+    {
+      "id": "p6-receipt-race",
+      "baselineCommit": "6778640e",
+      "defaultRawEvidenceReusedFrom": "p7-final",
+      "defaultContractSourceCount": 15,
+      "defaultContractSourcesUnchanged": true,
+      "defaultRecapture": true,
+      "consumerContract": {
+        "baseline": "6778640e compiled package before repair build",
+        "modelContractBytes": 721,
+        "beforeSha256": "6183d7eb589619ad9e2dc296242d97f56dd4c77f30bd22476098960ea7601c99",
+        "afterSha256": "6183d7eb589619ad9e2dc296242d97f56dd4c77f30bd22476098960ea7601c99",
+        "sourceSha256": "5a9ac8f6b0da5eef206d4943e6852e1e6419ba06f0d1bf204664c4028371dacb",
+        "externalCalls": 0,
+        "fixtureCaptureOrActions": 0,
+        "scope": "Installed consumer model name/description/input_schema; not a new complete request capture or API usage"
+      },
+      "consumerSameRequestPair": {
+        "rawDirectory": "OS Temp/kodax-visual-environment-cost-FSU1Fh",
+        "withConsumer": {
+          "representation": "compact-model-fields-json",
+          "utf16Chars": 63330,
+          "utf8Bytes": 64862,
+          "estimatedTokens": 16407,
+          "sha256": "a7b67043f6ff5a55b02b8edaec7f6b60d86e0e48c6ac2f1e64ccb7da9f1ac375",
+          "includedFields": [
+            "messages",
+            "tools"
+          ],
+          "excludedFields": [
+            "model",
+            "max_completion_tokens",
+            "reasoning_effort"
+          ]
+        },
+        "withoutConsumer": {
+          "representation": "compact-model-fields-json",
+          "utf16Chars": 62552,
+          "utf8Bytes": 64084,
+          "estimatedTokens": 16213,
+          "sha256": "550baa0fe75fe603a63c0bacbe0bac44e3ba010c66133a4e0d543db758e1ba13",
+          "includedFields": [
+            "messages",
+            "tools"
+          ],
+          "excludedFields": [
+            "model",
+            "max_completion_tokens",
+            "reasoning_effort"
+          ]
+        },
+        "deltaEstimatedTokens": 194,
+        "rawSha256": "8ecef1be0ea3899b07d697f7806b55f928392e0f8902559a041dd0be1524b360"
+      },
+      "externalCalls": 0,
+      "taskTotalUsageMeasured": false,
+      "freshDefaultCapture": {
+        "rawDirectory": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\kodax-first-turn-wire-B4xY9i",
+        "comparedTo": "p7-final",
+        "matchingNormalizedCompleteModelFieldRows": 32,
+        "scope": "Fresh offline SDK capture from this full suite, using the same normalized complete-model-field method as p7-final; not raw wire byte equality or API usage",
+        "comparisonArtifact": "OS Temp/kodax-visual-p6-receipt-race-default-compare-20261029.json"
+      }
+    }
+  ]
 }

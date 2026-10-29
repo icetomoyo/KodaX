@@ -103,14 +103,22 @@ export function createVisualEnvironmentTools(sources: Readonly<Record<string, Vi
         await previous;
         try {
           ctx.abortSignal?.throwIfAborted();
-          const current = owner.current;
           invalidateUnknown(owner);
-          if (owner.uncertain || owner.adapter.state().lastAction?.status === 'unknown' || !current || current.ownerId !== ctx.visualObservationOwner!.ownerId
-            || current.observationId !== input.expectedObservationId || current.version !== input.expectedSourceVersion
-            || current.version !== owner.adapter.state().version
-            || !(await ctx.visualObservationOwner!.list()).some(observation => observation.observationId === current.observationId)) {
-            return JSON.stringify({ status: 'not_dispatched', reason: 'Action basis is stale, uncommitted or unknown; observe again after reconciliation.' });
-          }
+          const current = owner.current; const generation = owner.generation;
+          const rejected = JSON.stringify({ status: 'not_dispatched', reason: 'Action basis is stale, uncommitted or unknown; observe again after reconciliation.' });
+          if (!current) return rejected;
+          const basisIsCurrent = () => {
+            const live = owner.adapter.state();
+            return owner.current === current && owner.generation === generation && !owner.uncertain
+              && live.lastAction?.status !== 'unknown' && live.version === current.version
+              && current.ownerId === ctx.visualObservationOwner!.ownerId && current.observationId === input.expectedObservationId
+              && current.version === input.expectedSourceVersion;
+          };
+          if (!basisIsCurrent()) return rejected;
+          const receipts = await ctx.visualObservationOwner!.list();
+          ctx.abortSignal?.throwIfAborted();
+          invalidateUnknown(owner);
+          if (!basisIsCurrent() || !receipts.some(observation => observation.observationId === current.observationId)) return rejected;
           if (typeof input.action !== 'string' || !input.action.trim()) throw new Error('Visual action must be a nonempty string.');
           const invocationId = ctx.visualSource?.executionId ?? randomUUID();
           owner.current = undefined; owner.generation++; owner.uncertain = invocationId;

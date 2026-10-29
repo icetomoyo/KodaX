@@ -2,6 +2,8 @@
 
 2026-10-29。工程候选 `a591967522287b8b880ee507347668e46f98ea15`，比较基线 `30310e0018b3c0803653a278f451751a00ccc3bc`。本文件没有发起付费实验。工程与成本见 [实施记录](visual-harness-p3-p7-implementation-2026-10-29.md)、[完整字段证据](visual-harness-p3-p7-costs.json)。
 
+后续 P6b 收据等待竞态补修后，本稿的旧候选输入仍作为历史草案保留。若获授权执行行为验证，应针对补修提交重新冻结实际候选；本次没有执行旧草案或新增行为请求。
+
 ## 已做与未做
 
 已执行 Layer 1、生产 serializer 离线抓包和四份 Layer 2 request 草案生成；**provider 请求 0、费用 0、行为输出 0**。模型、可用路由、在线图片协议接受、实际 usage/cache 与定价未验证；authorized budget 为 0。没有行为 lift/回退结论，没有新增 judge panel。

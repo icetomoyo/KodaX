@@ -4,6 +4,8 @@
 
 逐片成本短述中的三工作面指 Coding AMA、Agent、Script 六格；另有 Coding SA 兼容入口。完整八格及 Anthropic SA 的差异见最终 P7 表，不能将六格短述套到 SA。
 
+后续验收更正：用户在 `30310e00 → 6778640e` 复核中复现了 P6b 收据等待竞态。此前“无剩余发现”仅是当时评审结果，不能继续当作无此缺陷的验收结论；实际补修与新证据见下方追补，旧测试计数和原始失败记录均保留。
+
 | 切片 | 状态 | 本片交付范围 |
 | --- | --- | --- |
 | P3a | 已实现并定向验证 | 1–4 个有序 view；同原件复用解码；整次生成前预留；有序 partial |
@@ -12,7 +14,7 @@
 | P4b | 已实现并定向验证 | fork 复制/隔离、重复压缩、Script 恢复见证及 owner 清理重试 |
 | P4c | 已实现并定向验证 | owned 历史图片自动重装配的 hash 校验；P4 按下述通道及未验边界声明 |
 | P6a | 已实现并定向验证 | native/checked bridge、managed/兼容入口透传 serial 谓词；不提供环境时效锁 |
-| P6b | 已实现限定消费者并定向验证 | 本地可暂停 PNG 卡片；current/version、动作事实、unknown 与补观察；子 Actor 无 owner 时拒绝 |
+| P6b | 已实现限定消费者；收据等待竞态已补修并定向验证 | 本地可暂停 PNG 卡片；current/version、动作事实、unknown 与补观察；派发前重检异步等待后的依据；子 Actor 无 owner 时拒绝 |
 | P5 | 已实现选定 MCP 来源并定向验证 | typed tool/resource、SA fallback；Artifact/额外 Host/standalone 未声明支持 |
 | P7 | 机械集成与冻结方案已交付；行为未执行 | 默认全仓、最终成本、支持边界与四份受控请求草案；未发起付费调用 |
 
@@ -237,6 +239,32 @@ LocalToolDefinition 明确已有 RunnableTool 的纯输入 serial 谓词，regis
 ### Spec
 
 独立只读评审：0 项发现。四格仅声明 serial 传播与 false 并行；环境 current、跨 Actor/Run 和动态行为尚未验收。
+
+## P6b 追补：收据等待期间的动作依据竞态（6778640e 后）
+
+用户独立复核发现 Spec P2：A 的 `visual_act` 暂停于 `owner.list()`，另一观察看到 unknown 并使 A 失效，随后 adapter 同版本完成调和。旧实现只在 await 前检查 current/unknown/version，恢复后仍派发了旧 A。该问题属于已承诺的共享环境合同，不是新增宿主需求。
+
+在既有公共 consumer seam 新增受控收据 gate：实际观察 A 已提交→动作等收据→另一观察见 unknown 返回 historical→同版本 reconcile→释放收据。执行 `node node_modules/vitest/vitest.mjs run packages/coding/src/media/visual-environment.test.ts -t 'committed receipt lookup'`，修复前实际得到 **completed**，与预期 not_dispatched 相反（RED）；修复后 **not_dispatched、effects=0**，重新观察后仍能完成一次动作（GREEN）。没有放宽收据、owner 或 adapter 的版本要求。
+
+最小修复：动作取得 source 队列后捕获 current 对象与 generation；收据读取完成后再次检查取消、unknown，并复核 current 身份、generation、uncertain、owner、预期观察 ID 与实时版本。最终复核到 `adapter.act()` 之间没有 await；adapter 仍负责实际 effect 边界的原子版本/unknown 核对，锁不承诺外部连续变化环境的状态。
+
+另覆盖等待期间同版本新观察替换 current、reset、live unknown、取消四种交错，全部断言 **未进入 adapter、effects=0**。本片没有新增 Actor/Run/宿主支持：精确竞态是在公共工具与注入 owner 收据边界控制交错；既有真实 Runtime 卡片闭环、serial 四入口、其他来源并行及失败恢复回归继续执行。
+
+定向集合 4 文件 **25 项通过**（含新增 5 项）；仅 visual-environment 模块覆盖语句 **94.54%**、分支 **90.54%**、函数 **87.5%**、行 **97.56%**。raw 为 OS Temp `kodax-visual-p6-receipt-race-tests.log`、`kodax-visual-p6-receipt-race-coverage-20261029`。类型检查与构建通过，CLI 仍为 5,151 KiB，14 SDK 声明检查通过。
+
+代码冻结后执行本次默认全仓 `npm test -- --reporter=dot`，退出码 0：**18,072 通过、0 失败、97 skipped、19 todo**（共 18,188 项）；**1,295 文件通过、6 skipped**（共 1,301），用时 **1,077.52 秒**。日志为 OS Temp `kodax-visual-p6-receipt-race-full-20261029.log`。这是本补修的新结果，`6778640e` 的 18,067 以及更早失败记录仍按历史保留；不据此抹除 T30/Feature 270 的未定位原因，也不宣称需要凭证的在线集成或模型行为验证通过。
+
+成本补充见 costs.json `followups/p6-receipt-race`：定向阶段先核对 15 个既有默认合同源 hash 与 `p7-final` 一致，复用其默认估算；随后本次全仓实际产生 **32 格新离线抓包** `kodax-first-turn-wire-B4xY9i`。按同一 `normalized-model-input.json` 完整模型字段口径逐格对比，32 个 SHA 均与 `p7-final` 相同（含 24 个未装配 owner SDK 格）；这不表示包含临时路径/运行 ID 的原始 wire 字节相同。比对证据为 OS Temp `kodax-visual-p6-receipt-race-default-compare-20261029.json`，未改写历史 raw/hash。
+
+显式卡片工具的 name/description/input_schema 共 721 UTF-8 bytes，补修前本地 compiled 包与补修后源码的 JSON SHA 均为 `6183d7eb589619ad9e2dc296242d97f56dd4c77f30bd22476098960ea7601c99`。真实 Runtime 新 fixture 的同请求移除两 schema 配对仍为 16,407→16,213（+194 估算 token），raw `kodax-visual-environment-cost-FSU1Fh`；不是新增 API usage 或整体任务成本。本次未发起付费请求，P7 行为价值仍未验证。
+
+### Standards
+
+独立只读复核：0 项成文规范违反、0 项 smell 判断。前后共用 `basisIsCurrent`，不引入新配置或跨层依赖。
+
+### Spec
+
+针对用户指出的 P2，独立复核：0 项剩余发现；确认 await 后重检到 dispatch 无新增等待窗口。该结论只覆盖本次补修及所执行回归，不等同于证明不存在其它竞态。
 
 ## P7：最终集成、完整成本与行为方案
 
