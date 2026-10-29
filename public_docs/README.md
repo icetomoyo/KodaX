@@ -21,6 +21,13 @@ SDK and CLI startup share `onStartupProgress`, including actual Host
 `initializing/phase` observations; these do not establish readiness or add probes.
 ## Getting Started
 
+Post-alpha.10 source additions include Session work modes (Agent, default
+Coding and experimental Script), consistent question outcomes, saved original
+tool reads, structured task reports and estimated-token streaming progress.
+Read the [current SDK alignment](sdk/embedder-guide.md#post-alpha10-sdk-alignment)
+for compatibility and standalone-library boundaries. These changes are
+unreleased; historical first-read latency remains tracked in Issue 371.
+
 - [Overview](./getting-started/overview.md) — What KodaX is and how it compares
 - [Installation](./getting-started/installation.md) — npm, single binary, build from source
 - [Quickstart](./getting-started/quickstart.md) — Your first session

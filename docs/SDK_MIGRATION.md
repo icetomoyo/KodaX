@@ -4,6 +4,34 @@
 
 Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附件/统计与退出恢复范围见 [SDK/Host 接缝](SPACE_SDK_SEAMS.md)。
 
+## 2026-10-29 未发布改动对齐
+
+核对范围为 `v0.7.97-alpha.10`（`6efeafa5`）之后至 `b70d2d30` 的源码。
+以下能力已贯通相应的公开类型、Host 实现和 daemon 适配；不据此声称旧安装包、
+Space 或其他外部客户端已升级，也不要求独立库与 Product Client 使用同一个执行入口。
+
+| 当前能力 | SDK 消费要求 |
+| --- | --- |
+| Agent / Coding / 实验性 Script | 用 Session `workMode` 选择；安全空闲时切换，旧 Host 按能力键拒绝；独立 SDK 边界见下文 |
+| MCP/工具完整结果 | 工具项的 `outputPath` 标明 Host 保存的原文；使用 `readItem` 或 `readHistoryEntry` 的 `part:'original'`，不要在客户端直接打开路径 |
+| 任务报告 | Product 项用 `taskResult`；`/session` transcript 的 `taskResults` 用 `KodaXTaskResultReport[]`，允许未知状态与缺失 taskId |
+| 流式进度 | thinking 和有调用 ID 的 tool-input 均可带 `estimatedTokenCount`；显示 `~… tokens`，不能当成 Provider usage 或把 UTF-16 分页偏移改成 token |
+| 普通问题 | 保留 skipped/non_interactive；本地等待超时不提交答案，Host 独占 deadline；Runtime `userInputs.respond` 拒绝客户端 timeout 对象 |
+| Skill 策略 | 模型发现、激活与 SDK 调用复用可信 registry；`Bash(pattern)` 仅允许匹配的单命令，仍须 Host 授权 |
+
+CLI 的 `--agent-mode sa/amaw` 是迁移错误；底层 SDK 的显式兼容 profile/角色/执行路由
+仍按各自契约保留，不能机械替换为产品模式。包版本仍为 alpha.10，以上是 tag 后未发布改动。
+Issue 371 的历史首次读取延迟、Script 的模型效率及跨平台人工验收不因 SDK 对齐而关闭。
+
+本次 Windows 源码核对验证（2026-10-29）：`npm run build`、`npm run typecheck`
+通过；14 个 SDK 定向测试文件的 197 项测试全部通过，覆盖工作模式设置、daemon
+协议、历史/原文、任务报告、流式估算、交互、Skill 生命周期与独立层级。
+固定构建产物的 `bundled-mcp-output-recovery`、`bundled-skills`、
+`bundled-task-results`、`script-release` 共 8 项全部通过，包含独立 daemon 重启
+和实际 npm tarball 的 Script 执行/缺失 worker 拒绝。英文工作模式示例及新增契约
+类型已针对生成的公开声明编译通过。这是离线夹具与当前 Windows 环境的定向证据，
+不是全仓测试、真实模型或各平台发布归档的完整验收；本轮仅同步文档，未修改运行代码。
+
 ## 1. 替换范围与文档权威
 
 TUI、桌面 UI、IDE、自动化应用接入共享 KodaX 时，以 `KodaXProductClient` 为业务契约。入口是 `@kodax-ai/kodax/client`；[完整行为契约](CLIENT_CONTRACT.md)与[类型定义](../packages/coding/src/client-contract.ts)共同说明方法、数据和错误语义。[英文接入指南](../public_docs/sdk/embedder-guide.md#product-client-integration)提供最小生命周期示例。
@@ -57,6 +85,9 @@ Client 用 `{ kind: 'skip' }` 显式跳过问题。普通问题的旧 `cancel` /
 以及旧输入回调返回 undefined 都视为跳过，正常继续；明确 Run/Session Stop 才中断 Run。
 非交互客户端用 `{ kind: 'skip', reason: 'non_interactive' }`，保留无法回答的原因；
 `timeout` 仍由 Host 期限产生，客户端不能伪造。MCP 无回答仍转换为协议 `cancel`。
+底层 Runtime `userInputs.respond(id, {unanswered:true, reason:'timeout'})` 对仍有效的
+请求拒绝为 `invalid_input`，不会把对象塞进答案；不存在或 Run/revision 已不匹配的
+请求仍返回 `already_resolved`。REPL 的本地 timeout 不发送 RPC，non_interactive 原样保留。
 Space 刷新、断连或关闭订阅只清理本地展示，重连后重读同一请求并按原 ID 回答；
 权限审批的拒绝和超时策略不变。完整结算规则见 [Client 契约](CLIENT_CONTRACT.md)。
 

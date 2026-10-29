@@ -20,6 +20,10 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Align current SDK, Client, design and user documentation with post-alpha.10
+  work modes, question deadlines, saved tool originals, structured task reports
+  and streaming token estimates; retain historical release/validation limits.
+
 - Preserve non-interactive question outcomes through the REPL client and reject
   client-supplied timeout answers before daemon submission; the Host owns deadlines.
 - Constrain Skill `Bash(pattern)` rules to a single parsed command, preventing

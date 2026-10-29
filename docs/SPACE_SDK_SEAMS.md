@@ -2,6 +2,27 @@
 
 2026-10-18 的 Space 核查样本安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，当时官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前开发树 `0.7.97-alpha.10` 核对，不据此推断 Space 已升级；源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
 
+## 2026-10-29 未发布 SDK 接入补充
+
+当前源码核对至 `b70d2d30`。Space Main/Renderer 需按实际安装版本与 Host 能力接入，
+不能从 alpha.10 包版本推导已具备 tag 之后的全部能力：
+
+- 用 Session `workMode` 选择 Agent/Coding/实验性 Script；Coding 默认，普通与 CAS
+  更新都须安全空闲。旧 Host 未在 `sharedSessionSettings.keys` 数组声明 `workMode`
+  时明确拒绝，不能改写本地 config 代替。模型与权限选择独立。
+- `activity.streaming.estimatedTokenCount` 覆盖 thinking 和有调用 ID 的工具参数，
+  显示 `~… tokens`；缺少估算时只显示标签。字符偏移和 Provider usage 保持原义。
+- MCP 等工具项有 `tool.outputPath` 时，Main 使用 `readItem`/`readHistoryEntry`
+  的 `part:'original'` 补读 Host 原文；历史使用 readHistory 返回的工具项 ID，不能
+  把整条 transcript 的搜索命中 ID 当作某个工具的原文身份。Renderer 不直接打开该路径。没有保存路径时
+  返回普通正文，已保存文件丢失则报告错误，不能把预览冒充原文。
+- 问题 UI 的本地 timeout 不结算 Host 请求；non_interactive 原因必须保留。
+  Runtime facade 对有效请求的客户端 timeout 答案拒绝为 `invalid_input`。
+
+任务报告继续消费下文的结构化元数据；独立 `/session` transcript 的 `taskResults`
+现为 `KodaXTaskResultReport[]`，不要求每条都有 taskId，也不把 unknown 当成功。
+完整能力与边界见 [迁移清单](SDK_MIGRATION.md#2026-10-29-未发布改动对齐)。
+
 ## 启动进度与 Renderer 交接
 
 Main 调用 `ensureKodaXClient/connectKodaXClient` 时可传 `onStartupProgress`；如需展示，由 Space 经自己的 IPC 转发纯数据 `ClientStartupProgress`，Renderer 不导入 Node 启动器。ensure 报告 Host 检查、启动、更新、等待与连接；connect 只报告连接与就绪。该通知来自本机调用，不是 Session view、Run 事件或新 Host RPC。

@@ -18,6 +18,12 @@ every supported core setting.
 
 ## Core config example
 
+`workMode` is a Session selection, not a global `config.json` field. Current
+unreleased sources expose `agent | coding | script` through `--work-mode`,
+`/work-mode` or `client.sessions.updateSettings`. Coding is the default, Script
+is experimental, and switching requires an idle Session. Clearing the override
+returns to Coding; provider/model and permission settings remain independent.
+
 ```json
 {
   "provider": "zhipu-coding",

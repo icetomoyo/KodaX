@@ -340,6 +340,14 @@ and does not join trusted-text CAS.
 
 ## SDK sandbox
 
+The post-alpha.10 Windows readiness fix also verifies setup-owned filesystem
+capability ACEs in the calling process's filesystem view. A current marker,
+healthy account or NUL access alone is not readiness. The check does not repair
+ACLs, elevate or mutate accounts; explicit setup can repair the existing account
+in place. A pre-start failure retains its diagnostic before ordinary Host
+authorization. It does not imply sandboxed completion or authorize replay after
+target start. See [Issue 372's acceptance contract](../../docs/test-guides/ISSUE_372_v0.7.97_REGRESSION_GUIDE.md).
+
 SDK command targets inherit the environment of their execution host. SDK
 embedders can also use the standalone shell sandbox capability
 independently through `@kodax-ai/kodax/sandbox`. Its readiness and setup state

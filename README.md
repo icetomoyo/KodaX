@@ -36,6 +36,19 @@
 
 ---
 
+## Current development after alpha.10
+
+The unreleased source adds Agent / Coding / experimental Script work modes,
+with Coding as the default. Select them with `--work-mode`, `/work-mode`, or
+Product Client Session `workMode`; this is independent of permissions and model
+choice. SDK/Host paths now share the corresponding settings, question outcomes,
+saved original tool reads, structured task reports and estimated-token progress.
+See the [SDK alignment and migration checklist](docs/SDK_MIGRATION.md#2026-10-29-未发布改动对齐)
+and [English integration guide](public_docs/sdk/embedder-guide.md#post-alpha10-sdk-alignment).
+The package remains `0.7.97-alpha.10`; these source additions do not imply a new
+publication or an external client's upgrade. Issue 371's historical first-read
+latency and Script model-efficiency acceptance remain open.
+
 ## Install in 30 seconds
 
 ```bash

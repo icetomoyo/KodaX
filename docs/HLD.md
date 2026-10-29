@@ -1,6 +1,6 @@
 # KodaX High-Level Design
 
-Last updated: 2026-10-27. Current development tree: FEATURE_298/299/301 on package
+Last updated: 2026-10-29. Current development tree: FEATURE_298/299/301 on package
 `0.7.97-alpha.10`, with `v0.7.96` as the last stable release; publication is separate.
 
 Product integrations use `KodaXProductClient` through `/client`. Read the
@@ -9,7 +9,37 @@ for current guarantees. Version-labelled release paragraphs below are historical
 context, not promises that retired Runtime surfaces still exist. Historical
 ADRs remain records of their original decisions.
 
+## Current SDK alignment after alpha.10 (2026-10-29)
+
+Product `workMode` is a persisted Session choice (`agent`, default `coding`,
+experimental `script`), separate from permission and legacy execution mode.
+The same settings owner gates ordinary/versioned updates on idle execution;
+daemon capability keys prevent unsupported old Hosts from silently ignoring it.
+Product presets do not replace explicit standalone SDK profiles or specialist
+children. Script runs through the managed runtime and durable cell receipts;
+low-level `runKodaX/startKodaX` cannot select it. The local VM availability probe
+does not execute tools or contact a model. See [migration boundaries](SDK_MIGRATION.md).
+
+Host projections expose original saved tool output, structured task reports and
+stream token estimates through the existing Product contract. MCP invocation
+keeps the owning Run's Session context and output metadata; clients recover
+saved output through `part:'original'`, not direct filesystem access. Task
+reports share live/history projection and preserve unknown state independently
+of the main Run. Both thinking and identified tool input are estimated at the
+coalesced Host view boundary; Provider usage and text offsets remain separate.
+Skill loading, dynamic context and hooks use trusted registry policy;
+constrained shell patterns also check cmd/PowerShell syntax before the ordinary
+Host permission path. The latest [Client contract](CLIENT_CONTRACT.md) defines
+these unreleased additions; source, publication and external-client adoption
+are separate states.
+
 ## Startup recovery and conversation recency (2026-10-15 source)
+
+The post-alpha.10 Windows recovery path verifies already-exited recorded PIDs
+without starting a helper per tree. It keeps process/Job ownership evidence and
+does not infer successful old task effects from process exit. Issue 371's
+historical first-read latency remains open; startup readiness is not Session
+read/render completion.
 
 Shared-Host historical process recovery runs once under its exclusive Owner
 and Session-storage fences, before readiness. Client connection and private
@@ -513,13 +543,14 @@ still block. Auto reviewer state is per turn;
 infrastructure failure retries once (90s then 180s) and then blocks with a safer
 route rather than widening authority.
 
-The Runtime owner also owns interaction deadlines. Permission and AskUser have
-independent five-minute defaults: permission expires fail-closed, while AskUser
-uses only a validated model-supplied recommended default and otherwise
-dismisses. Runtime resolution aborts host prompts through SDK AbortSignals, so
-a late UI answer cannot retain the event stream or restart resolved work.
-Agent-layer MCP elicitation shares the bounded AbortSignal UI contract and
-cancels at the same default deadline.
+The Runtime owner also owns interaction deadlines. Permission defaults to five
+minutes and expires fail-closed. Ordinary AskUser defaults to no deadline
+(`userInputTimeoutMs:0`); an explicit Host deadline returns `unanswered/timeout`,
+never a recommended/default answer. User skip and non-interactive inability
+remain distinct normal outcomes. Runtime resolution aborts host prompts through
+SDK AbortSignals so a late answer cannot revive settled work. A local client
+timeout does not settle the Host request. MCP elicitation shares cancellation
+ownership and converts unanswered results to protocol `cancel`.
 
 REPL-to-Runtime permission settings are serialized per Session. The UI projects
 the selected canonical profile immediately, then reconciles owner acknowledgement.

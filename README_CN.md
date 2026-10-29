@@ -36,6 +36,16 @@
 
 ---
 
+## alpha.10 之后的当前开发
+
+未发布源码新增 Agent / Coding / 实验性 Script 工作模式，默认 Coding。
+CLI 使用 `--work-mode`，REPL 使用 `/work-mode`，Product Client 使用 Session
+`workMode`；它与权限、模型选择独立。SDK/Host 的相关设置、问题结算、工具原文读取、
+结构化任务报告和 token 估算进度已接入对应契约，见
+[SDK 一致性与迁移清单](docs/SDK_MIGRATION.md#2026-10-29-未发布改动对齐)。
+包版本仍为 `0.7.97-alpha.10`，不表示这些源码变更已发布或外部客户端已升级。
+Issue 371 的历史首次读取延迟及 Script 模型效率验收仍未关闭。
+
 ## 30 秒上手
 
 ```bash

@@ -1,12 +1,48 @@
 # KodaX Detailed Design
 
-Last updated: 2026-10-27. Current development tree: FEATURE_298/299/301 on package
+Last updated: 2026-10-29. Current development tree: FEATURE_298/299/301 on package
 `0.7.97-alpha.10`; `v0.7.96` is the last stable release.
 
 The [Client contract](CLIENT_CONTRACT.md) and [SDK migration guide](SDK_MIGRATION.md)
 define current product integration. Version-labelled release context below does
 not restore removed APIs. Low-level Runtime mechanisms remain distinct from
 the `KodaXProductClient` business surface.
+
+## Post-alpha.10 SDK implementation alignment (2026-10-29)
+
+`KodaXOptions.workMode`, Runtime settings/patch/options serialization,
+`ClientSessionSettings` and daemon `sharedSessionSettings.keys` carry the same
+`agent | coding | script` choice. The Host validates values and rejects active-Run
+changes for both ordinary and CAS mutations. `null` removes the Session override;
+stale profile config does not set a global work mode. `assertWorkModeAvailable`
+checks an empty Script VM at selection/admission. Explicit profiles, children,
+prompt overrides and tool-visibility policies retain their declared contracts.
+Standalone Script uses `runManagedTask` and writable Session storage;
+Host-persisted storage requires `appendSessionRecords` for atomic append, with
+failure stopping the cell flow and no automatic side-effect replay.
+
+`ClientItemReadOptions.part` includes `original`. Live items and canonical
+history retain a saved tool `outputPath`; daemon history-original reads route
+through `session.view.item`, then the owning Session reader. Host
+`readSavedToolOutput` paginates 65,536 UTF-16 units while preserving the separate
+display `text` offsets. Missing saved files reject, rather than succeeding with
+a preview. Without a saved original reference, the normal body is returned.
+
+`ClientViewItem.taskResult` omits the report's `summary` because the body is
+already in `text`/full reads. `/session` transcript entries use
+`KodaXTaskResultReport[]`, including optional identities and `unknown` status.
+Live and restored paths share projection; independent notices are preserved.
+`SessionViewOwner` estimates complete thinking and identified tool-argument
+text once per coalesced view. Partial arguments are transient memory, omitted
+from public/persisted views and released at their lifecycle boundary.
+
+Skill policy checks only constrained `Bash(pattern)` as a single parsed command.
+Compound statements, pipes, redirections and unsupported substitutions fail
+closed; cmd and PowerShell have explicit quote/expansion checks. Unrestricted
+rules still call Host authorization. The same restriction applies to hooks and
+dynamic context. [Issue 375](test-guides/ISSUE_375_v0.7.97_REGRESSION_GUIDE.md)
+records syntax limits; this does not claim that an allowed executable or profile
+cannot itself cause effects.
 
 ## Startup and resume projections (2026-10-15 source)
 
@@ -640,20 +676,23 @@ rather than silently converting it to `after_turn`. External aborts and
 terminal errors also close the window. Non-terminal observer diagnostics do not
 close a still-consumable window. AskUser and permission
 registries expose pending lists and first-winner responses over transport.
-They have independent owner deadlines (five minutes by default). Permission
+They have independent owner deadlines. Permission defaults to five minutes;
 expiry resolves as a typed `reject` with `cause: approval_timeout`; an SDK host
 uses `handleRuntimePermissionRequest()` so owner resolution aborts its UI
-prompt and a late answer cannot hold or revive the event chain. AskUser expiry
-accepts only a Runtime-validated `default` option value (or input default); a
-missing or invalid default dismisses the request. The same AbortSignal linkage
-is used for embedded host callbacks, so timeout behavior is not daemon-UI-only.
+prompt and a late answer cannot hold or revive the event chain. AskUser defaults
+to no deadline (`userInputTimeoutMs:0`); explicit Host expiry produces
+`{unanswered:true, reason:'timeout'}`, never a default answer. User skip and
+non-interactive inability preserve their separate reasons. The same AbortSignal
+linkage is used for embedded callbacks. A local UI timeout sends no answer;
+Runtime `userInputs.respond` rejects a client timeout object as `invalid_input`
+after validating request/Run/revision bindings. Stale bindings remain
+`already_resolved`; rejecting an answer does not settle a valid question.
 Permission request timeout overrides are non-negative safe integers bounded by
 the Node timer maximum; explicit absolute deadlines must also fit that horizon.
 MCP reverse elicitation carries the agent-layer AbortSignal through the same UI
-surface and cancels after the five-minute interaction bound instead of leaving
-an untracked host Promise alive. SDK user-input timeout overrides must be
-positive integers no greater than 2,147,483,647; permission timeout overrides
-use the same upper bound and retain `0` as the existing timer-disable value.
+surface and converts unanswered results to protocol `cancel`. Both user-input
+and permission timeout overrides are non-negative safe integers no greater
+than 2,147,483,647; `0` disables the respective timer.
 Invalid values are rejected before embedded or daemon startup.
 Persistent permission grants have one daemon-owned revisioned store. A concrete
 permission request may expose opaque

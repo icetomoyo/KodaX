@@ -3,6 +3,18 @@
 KodaX is distributed as **standalone binaries** built with `bun build --compile`.
 Target machines do **not** need Node.js or any runtime installed.
 
+## Unreleased source after alpha.10
+
+The source alignment through `b70d2d30` (2026-10-29) adds Session work modes,
+SDK original-output/task-report/interaction/streaming consistency and Windows
+startup/readiness fixes. The package version remains `0.7.97-alpha.10`; this
+section is not a publication record. Before a later release, verify the actual
+archive's Script runtime and SDK resources on each target platform and check
+the [SDK migration checklist](SDK_MIGRATION.md#2026-10-29-未发布改动对齐).
+Issue 371's remaining historical first-read latency and Script efficiency/model
+adoption limits remain explicit. Existing dated release records below describe
+their own artifacts, not this unreleased tree.
+
 ## Distribution layout
 
 Each archive (`tar.gz` for Linux/macOS, `zip` for Windows) contains the

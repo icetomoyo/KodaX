@@ -27,6 +27,89 @@ objects, not alternate names for this contract.
 
 ## Product Client integration
 
+### Post-alpha.10 SDK alignment
+
+The source audit through `b70d2d30` (2026-10-29) covers the changes after the
+`v0.7.97-alpha.10` tag. These additions are unreleased; the unchanged package
+version does not establish that an installed SDK or a running Host supports them.
+See the [migration checklist](../../docs/SDK_MIGRATION.md#2026-10-29-未发布改动对齐).
+
+Set `client.sessions.updateSettings(sessionId, { workMode: 'coding' })` to choose
+a Session work surface; accepted values are `agent`, `coding` and `script`.
+Coding is the default; Script is
+experimental. Work mode is independent of permission mode and legacy `agentMode`.
+The Host rejects ordinary and versioned work-mode changes while a Run is active;
+`null` clears the override, and model changes leave it intact. Selection persists
+across restart. It is not a global config setting. A daemon Host must advertise
+`workMode` in `sharedSessionSettings.keys`; otherwise the mutation rejects with
+`daemon_upgrade_required`. Script selection/admission probes the local executor
+without tools or model calls; failure preserves the previous selection.
+
+```ts
+import type { KodaXProductClient } from '@kodax-ai/kodax/client';
+
+export async function selectWorkMode(
+  client: KodaXProductClient,
+  sessionId: string,
+  workMode: 'agent' | 'coding' | 'script',
+) {
+  const current = await client.sessions.getSettingsVersioned(sessionId);
+  return client.sessions.updateSettingsVersioned(
+    sessionId, { workMode }, { expectedRevision: current.revision },
+  );
+}
+```
+
+Independent `/coding` uses `runManagedTask` for Script and requires writable
+Session storage. A `persistedByHost:true` owner supplies atomic
+`appendSessionRecords(id, records)`; a missing Session or failed append stops
+Script execution without replaying effects. `runKodaX`/`startKodaX` reject Script.
+Explicit SDK profiles, specialist children and tool-visibility policies retain
+their declared scope instead of being replaced by product presets. CLI
+`--agent-mode sa/amaw` is a migration error; this does not remove all low-level
+SDK compatibility routes. Script availability does not prove model adoption or
+task-efficiency parity.
+
+Model-visible tool consolidation does not delete the underlying independently
+usable SDK executors. Native exposure, discoverable capabilities and permission
+to execute remain different boundaries; preserve explicit profile/child scope
+when adapting a UI or a standalone host.
+
+Tool items may expose `tool.outputPath` for a Host-saved original result. Use
+`sessions.readItem(sessionId, itemId, { part: 'original', offset })`, or
+`readHistoryEntry` for a tool item returned by `readHistory`. A search hit names
+the whole transcript entry, not an individual tool; its ID does not select a
+saved tool original and still reads the normal body. Do not open the path in the client.
+`part:'text'` keeps its display-body offsets; original reads use their own UTF-16
+offsets and `nextOffset`, with at most 65,536 units per chunk. Without a saved
+path, original reads return the normal body. A missing saved file rejects with
+`not_found`; other read failures use `internal_error`. A truncated preview is not
+a successful recovery of a missing original. These reads require a compatible
+Host and cover live, restored history and daemon paths.
+
+Both thinking and identified tool-input activity can carry
+`estimatedTokenCount`. Render it as `~… tokens`; it is a Host estimate of the
+current stream/call, not Provider usage, context usage or billing. Retained
+`charCount` and text pagination offsets are character facts. Clients do not
+recompute token estimates; an older Host without an estimate supplies a label
+without a quantity. Anonymous tool deltas cannot be aggregated by name. Ink
+updates the count; Classic prints one snapshot per request/phase/call.
+
+Question replies preserve `non_interactive` separately from user `skipped`.
+Only the Host originates timeout outcomes. A local REPL timeout sends no reply;
+low-level Runtime `userInputs.respond` rejects a timeout object for a valid
+request with `invalid_input`, while stale Run/revision bindings still return
+`already_resolved`. Permission decisions retain their separate policy.
+
+Task reports use `ClientViewItem.taskResult` in Product views/history, and
+`KodaXTaskResultReport[]` in `/session` transcript entries. Preserve `unknown`
+and missing task IDs; the report is not the main Run's completion or failure.
+Import the named `KodaXTaskResultReport` type from `@kodax-ai/kodax/agent`;
+`/session` exposes it through transcript return types rather than a named export.
+The [item contract](../../docs/CLIENT_CONTRACT.md#显示项流式文本与工具) describes presentation.
+Startup progress is unchanged; Issue 371's historical first-read latency remains
+open despite the verified-exited Windows process recovery optimization.
+
 ### Choose the connection entry
 
 | Need | Entry | Ownership |
@@ -1155,7 +1238,7 @@ interface SessionTranscriptEntry {
   active: boolean;
   message: KodaXMessage;
   payload?: unknown;
-  taskResults?: readonly KodaXTaskResultMetadata[];
+  taskResults?: readonly KodaXTaskResultReport[];
 }
 ```
 
@@ -1348,7 +1431,8 @@ for (const entry of full?.transcriptEntries ?? []) {
   if (entry.type === 'task_result') {
     for (const result of entry.taskResults ?? []) {
       // result.source is 'workflow' or 'child_task'
-      // result.taskId / runId / status / title / summary are structured.
+      // taskId/runId/title may be absent; status can be 'unknown'.
+      // summary is the report body; preserve source and reportFormat.
     }
   }
 }
@@ -2361,8 +2445,14 @@ every child step and can overwhelm users.
 
 The five core Skills (`git-workflow`, `tdd`, `code-review`, `skill-creator`,
 `visual-review`) are visible to model discovery. Their `allowed-tools` shell
-patterns match full commands, for example `Bash(git *, npm *)`; these restrictions
-do not grant Host permission or bypass the sandbox. Code Review permits read-only
+patterns match one parsed command, for example `Bash(git *, npm *)`; compound
+statements, pipelines, redirects and unsupported substitutions are rejected.
+cmd and PowerShell quoting rules are checked separately; ambiguous expansions
+and escapes are conservatively rejected. Issue 375's
+[dialect limits](../../docs/test-guides/ISSUE_375_v0.7.97_REGRESSION_GUIDE.md) apply.
+Bare `Bash`, wildcard authority and omitted restrictions still use normal Host
+authorization. These restrictions do not grant Host permission or bypass the
+sandbox. Code Review permits read-only
 Git inspection; TDD's tests-only branch allows a first-pass success without
 changing correct production code. Skill Creator packages into an archive and
 uses an explicit isolated destination when testing installation.
@@ -5551,7 +5641,7 @@ an existing session. Same-session starts and after-turn inputs receive a durable
 Settings use compare-and-swap; a stale revision returns a
 structured conflict and must be reloaded, never silently overwritten. The
 shared settings keys are `provider`, `model`, `effort`, `thinking`,
-`reasoningMode`, `permissionMode`, `executionCwd`, `agentMode`, and
+`reasoningMode`, `permissionMode`, `executionCwd`, `agentMode`, `workMode`, and
 `autoModeClassifierModel`. Older Auto engine/timeout/window fields are accepted
 only as inert migration input and are omitted from new writes.
 

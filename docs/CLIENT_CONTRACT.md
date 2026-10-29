@@ -2,6 +2,9 @@
 
 本文面向 CLI、SDK 和未来 Web 客户端。产品客户端通过 `KodaXProductClient` 读取 Host 事实、提交意图；Host 执行并保存工作。显示层不读取或写入 Session 文件，不另建运行状态权威。
 
+当前契约核对至 2026-10-29 源码 `b70d2d30`；tag 后新增能力与层级差异见
+[SDK 一致性清单](SDK_MIGRATION.md#2026-10-29-未发布改动对齐)。这不是 npm 发布声明。
+
 可信 Main 的 `authorizeExecution`、canonical `historyBoundary` / Retry `before`、历史完整性与图片引用，以及宿主配置/统计/生命周期边界见 [Space SDK/Host 接缝](SPACE_SDK_SEAMS.md)。这些接缝补齐需要当前 SDK 与 Host，不能仅根据旧包版本假定支持。
 
 2026-10-02 主线 rc.14 修复融合仍属于 FEATURE_298 / v0.7.97。中断后的下一次运行只从当前分支的 canonical Session/lineage、Run status 和已成功保存的显示 checkpoint 读取有限恢复说明；不恢复持久事件日志，也不根据事件推导成功。Host 先等待现有 checkpoint 写入，再按 inputId/turnId、sourceRunId 和 outputId 确认来源，排除已提交的同一输出、Thinking、child 输出及普通通知。工具提出、执行开始、结果已保存分别记录；重复 callId 按所属 assistantOutputId 匹配；执行开始但没有已保存结果时，效果仍为 unknown。说明仅进入临时模型上下文，不能成为用户指令或正式会话正文。未落盘 token 不承诺硬崩溃恢复。
@@ -258,7 +261,7 @@ Interaction 的 kind 决定 options 和 response：单选问题、多问题、�
 | `session.gitRoot?`, `session.workspaceRoot?` | Host 保存的仓库/工作区定位 | 不从标题或浏览器目录推断路径 |
 | `session.surface?`, `session.profileId?` | Session 的界面/配置归属元数据 | 不是 Host 权限凭据 |
 | `session.createdAt?` | Session 保存的创建时间字符串 | 缺失时显示未知，不用连接时间代替 |
-| `settings` | Host 当前 profile 配置与 Session 覆盖合并后的有效选择，复用执行侧解析 | 与 getSettings/updateSettings 的原始覆盖区分；清除覆盖后恢复 profile 值，两层均无值时保持缺失。UI 显示 Host default，不把旧模式或本地默认值冒充 Host 事实 |
+| `settings` | Host 当前 profile 配置与 Session 覆盖合并后的有效选择，复用执行侧解析 | 与 getSettings/updateSettings 的原始覆盖区分；按各字段默认解析。workMode 不读取全局 profile，清除后采用 Coding；其他字段不能由 UI 补造默认事实 |
 | `items` | canonical 历史与当前运行显示项合并后的有序、有界列表 | 每帧替换，保持 Host 顺序；窗口外的项不等于被删除的历史 |
 | `queue` | Host 当前等待交付的输入 | 不是本地草稿；顺序和撤回目标以 Host 为准 |
 | `queue[].inputId`, `queue[].text`, `queue[].enqueuedAt` | 输入身份、有界预览、入队 Unix 毫秒时间 | 同文本可有不同身份；编辑全文通过 withdraw 返回值获取 |
@@ -287,6 +290,7 @@ Interaction 的 kind 决定 options 和 response：单选问题、多问题、�
 | `tool.callId`, `tool.name` | 工具调用身份与工具名 | callId 用于关联状态更新；name 不是调用身份 |
 | `tool.status` | running/success/error/cancelled/awaiting_approval | success 仅表示此工具结果，不代表 Run 成功。类型允许等待审批，不承诺每个路径逐一发出所有中间状态 |
 | `tool.inputText?`, `tool.totalInputLength?` | Host 序列化的工具参数文本及可选完整 UTF-16 长度 | 输入与输出分开；补读使用 part=input，不能把预览重解析后当作原始参数 |
+| `tool.outputPath?` | Host 保存的完整工具结果引用 | 具体工具项用 part=original 补读；客户端不直接打开路径，缺失原文不能以预览冒充 |
 | `tool.progress?` | 最近的工具进度消息 | 当前提示而非追加日志；完成时可被清除 |
 | `tool.startedAt?`, `tool.endedAt?` | 工具开始/结束的 Unix 毫秒时间 | 两者具备时才可计算执行耗时；不存在 endedAt 不等于当前一定还运行 |
 
@@ -326,6 +330,7 @@ Run 的 Provider 失败，主任务结果继续读取 `runs` 及其 `failureDeta
 | `ClientSessionActivity` 字段 | 来源与含义 | 消费规则 |
 | --- | --- | --- |
 | `runId` | 产生这组活动的 Run | 不把其它 Session/Run 的活动混入当前状态栏 |
+| `streaming?.estimatedTokenCount` | Host 对当前 thinking 或有调用身份的工具参数的 token 估算 | 显示 ~tokens；缺失时不换算 charCount，不混入 usage；详见活动面约定 |
 | `contextBudget?` | 执行器在真实压缩准入/请求点发出的预算；含 provider/model/contextId、scope、窗口、响应与 Memory 预留、压缩阈值和物理输入容量 | 与顶层当前选择的配置预算分开；只与同一执行上下文的 token 数量计算比例 |
 | `costReport?` | 当前 Run 的既有 getCostReport 回调在视图刷新时返回的报告文本 | 可直接展示；不是结构化计费 API，不解析成精确金额 |
 | `iteration?.current`, `iteration?.maximum` | Runner 的迭代开始/结束事件 | 当前迭代与本次执行上限；maximum=0 是底层无界调用约定，不除以零 |
@@ -386,6 +391,16 @@ Run 的 Provider 失败，主任务结果继续读取 `runs` 及其 `failureDeta
 4. 新输出继续更新后台当前 view，不移动冻结页阅读位置；退出冻结浏览再回当前 view。用户真正要继续工作时才用新 inputId 提交新意图。
 
 ### 全文读取规则
+
+工具项可携带 `tool.outputPath`，表示 Host 已保存完整工具输出（包括经过模型侧裁剪的
+MCP 结果）。以该项 ID 调用 `readItem(..., {part:'original', offset})`；`readHistory`
+返回的工具项用 `readHistoryEntry` 的同一选项。搜索命中是整条 transcript 身份，
+不能凭该 ID 选择其中某个工具的保存原文；这时读取的是普通正文。SDK 保持 live、恢复
+和 daemon 路径一致，路径不是客户端
+任意文件读取授权。`part:'text'` 仍读取显示正文，不能把其偏移与 original 正文混用。
+original 每块最多 65,536 个 UTF-16 单元，沿 nextOffset 继续；没有 outputPath 时返回
+普通正文，已保存文件丢失则报告 `not_found`，其他读取错误报告 `internal_error`。
+不要把丢失的原文静默替换成裁剪预览，也不要声称所有工具都存在独立原文文件。
 
 图片附件通过 `readItem(sessionId, itemId, {part:'attachment', attachmentIndex, attachmentOffset, expectedImageSha256})` 读取，返回 `ClientItemContent.image`。`attachmentIndex` 是该项附件索引；`attachmentOffset` 默认 0，按图片字节计数，独立于正文的 UTF-16 `offset`。可选 `expectedImageSha256` 要求完整图片身份不变。Host 只读该 Session 项已持有的附件引用，验证实际 PNG，不接受任意客户端路径。当前每块最多 512 KiB、整张最多 10 MiB；返回 `dataBase64/sha256/width/height/offset/totalLength/nextOffset`。调用方分别解码各块，验证同一哈希、尺寸、总长及连续偏移，拼接后校验完整 SHA256；缺项、无进展、图片变化或缺 Host 能力均不能回退到 UI 文件读取。Artifact Client port 已封装这些检查，见 [SDK](ARTIFACT_SDK.md)。图片字节不作为正文、历史文本或日志返回。
 
@@ -546,6 +561,6 @@ CLI 的 Ink、classic、单次输入使用 Host Client 投影；SDK `/client` �
 
 effort 拒绝与发送参数变化通过现有保留通知提供，按实际 Provider 请求归属过滤旧请求和 child。`sentEffort` 只说明发送参数，`verified: false` 不证明模型实际采用该推理强度；没有 Provider 回调时不推断成功。通知不改写 Session 或保存默认。AMA 的角色默认仍受用户上限约束，反馈记录实际角色请求，不把用户上限误写成每次请求值。
 
-`activity.streaming` 是当前请求的瞬时进度：thinking 提供既有 item 引用、完整字符数和可选 `estimatedTokenCount`，tool-input 提供工具名称、调用 ID 和该调用的累计字符数。Thinking token 数由 Host 在现有 80ms 视图合并时复用 `countTokens`，按当前请求收到的完整 Thinking 文本估算，在显示截断之前计算；不是累计 Run usage、独立计费数或 Provider 报告值。纯 Client 不重新估算，也不从字符数直接换算。Ink/classic 以 `~… tokens` 明示估算；旧 Host 没有该字段时只显示 Thinking，不伪装精确数值。缺少工具调用 ID 时不按名称拼接计数。替换请求、流结束、工具开始和 Run 终态会清除对应活动；它不保存半截参数 JSON。Ink 用现有 spinner 显示实时计数，classic 在连续流式活动期间按请求/阶段/调用去重输出进入时的计数快照，避免交错工具持续滚屏；活动消失后清空去重状态，重新进入可以再次提示。渲染差异由各端管理；这里不承诺逐字 JSON 预览。
+`activity.streaming` 是当前请求的瞬时进度：thinking 提供既有 item 引用、完整字符数和可选 `estimatedTokenCount`；tool-input 提供工具名称、调用 ID，以及该调用的累计 `charCount` 和可选 `estimatedTokenCount`。两种估算都由 Host 在现有 80ms 视图合并时复用 `countTokens`，针对当前请求/调用收到的完整文本计算，先于显示裁剪；不是累计 Run usage、独立计费数或 Provider 报告值。纯 Client 不重新估算，也不从字符数直接换算。Ink/classic 以 `~… tokens` 明示估算；旧 Host 没有该字段时仅显示 Thinking/Receiving 工具标签，不伪装精确数值。缺少工具调用 ID 时不按名称拼接计数。Host 暂存完整累计参数用于估算，在请求替换、流结束、对应工具开始、Run 终态、Session reset/close 时释放；参数草稿不暴露或持久化到 view/checkpoint。Ink 用现有 spinner 显示实时计数，classic 按请求/阶段/调用去重输出进入时的快照，活动消失后清空去重状态。UTF-16 正文偏移与原始字符计数不因显示改用 token 而改变；这里不承诺逐字 JSON 预览。
 
 计划批准使用已有 permission Interaction，`options.plan` 提供完整计划正文，不从截断的 inputPreview 恢复。首个有效回答生效；Host 确认当前 Run 仍在运行且仍为 Plan 模式后才应用批准结果。拒绝、取消及 Stop 不切换权限模式，客户端不能自行先显示已批准。

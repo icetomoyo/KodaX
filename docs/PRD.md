@@ -2,7 +2,7 @@
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
 
-> Last updated: 2026-09-03
+> Last updated: 2026-10-29
 >
 > Current implementation baseline: `@kodax-ai/kodax@0.7.97-alpha.10`.
 > The GitHub release is automated from the release tag; npm publication
@@ -16,6 +16,28 @@ Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT
 > history and `docs/features/*.md` for historical rationale.
 
 ## 1. Product Positioning
+
+### Current post-alpha.10 requirements
+
+The changes audited through `b70d2d30` are source changes after the alpha.10
+tag, not a new publication. Product Sessions choose `workMode: agent | coding |
+script`; Coding is the default and Script is experimental. Selection is
+independent of permission and model choice, persists per Session, and changes
+only while safely idle. A client must report an unsupported old Host rather
+than silently dropping the setting. Explicit standalone SDK profiles and child
+roles retain their declared capabilities; Script requires managed execution and
+durable Session storage. Model adoption and task-efficiency parity are separate
+acceptance questions, not consequences of having the API.
+
+The shared SDK contracts preserve non-interactive versus skipped questions,
+Host-owned question deadlines, Host-readable original tool results, structured
+task reports with unknown outcomes, and estimated-token streaming displays.
+Clients consume Host estimates instead of treating raw character counts as
+tokens. These changes do not modify Provider billing or UTF-16 text offsets.
+Skill shell patterns constrain a single parsed command and retain Host
+authorization. [Current integration boundaries](SDK_MIGRATION.md#2026-10-29-未发布改动对齐)
+are normative for consumers; historical release paragraphs below retain their dates.
+Issue 371's intermittent historical first-read latency remains open.
 
 KodaX is a lightweight, local-first coding agent that can be used as:
 
