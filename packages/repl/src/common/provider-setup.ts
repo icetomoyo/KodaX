@@ -31,6 +31,12 @@ export interface ProviderSetupCatalogEntry {
 
 export type ProviderSetupReadiness =
   | {
+      readonly status: 'needs-host-broker';
+      readonly configPath: string;
+      readonly configRevision: string;
+      readonly provider: string;
+    }
+  | {
       readonly status: 'ready';
       readonly configPath: string;
       readonly configRevision: string;
@@ -71,6 +77,7 @@ export interface ProviderSetupCustomProviderMetadata {
   readonly name: string;
   readonly protocol: KodaXCustomProviderConfig['protocol'];
   readonly api?: KodaXCustomProviderConfig['api'];
+  readonly oauth?: KodaXCustomProviderConfig['oauth'];
   readonly baseUrl: string;
   readonly apiKeyEnv: string;
   readonly model: string;
@@ -193,6 +200,7 @@ export function inspectProviderSetupReadiness(
   const explicitProvider = normalizedString(input.explicitProvider);
   if (explicitProvider) {
     const selected = resolveConfiguredProvider(parsed.config, explicitProvider, catalog);
+    if (selected?.hostBroker) return { status: 'needs-host-broker', configPath, configRevision: parsed.revision, provider: explicitProvider };
     return selected && (!selected.requiresCredential
       || hasEnvironmentValue(environment, selected.apiKeyEnv))
       ? ready(configPath, parsed.revision, explicitProvider)
@@ -218,6 +226,7 @@ export function inspectProviderSetupReadiness(
         reason: `provider "${configuredProvider}" is not a valid built-in or custom provider.`,
       };
     }
+    if (selected.hostBroker) return { status: 'needs-host-broker', configPath, configRevision: parsed.revision, provider: configuredProvider };
     return !selected.requiresCredential || hasEnvironmentValue(environment, selected.apiKeyEnv)
       ? ready(configPath, parsed.revision, configuredProvider)
       : needsCredential(configPath, parsed.revision, configuredProvider, selected.apiKeyEnv);
@@ -334,6 +343,7 @@ function resolveConfiguredProvider(
 ): {
   readonly apiKeyEnv?: string;
   readonly requiresCredential: boolean;
+  readonly hostBroker?: boolean;
 } | undefined {
   const builtin = catalog.find((entry) => entry.name === name);
   if (builtin) return { apiKeyEnv: builtin.apiKeyEnv, requiresCredential: true };
@@ -348,7 +358,7 @@ function resolveConfiguredProvider(
 
   const custom = findValidCustomProvider(config, name);
   return custom
-    ? { apiKeyEnv: custom.apiKeyEnv, requiresCredential: true }
+    ? { apiKeyEnv: custom.apiKeyEnv, requiresCredential: true, ...(custom.oauth ? { hostBroker: true } : {}) }
     : undefined;
 }
 
@@ -486,6 +496,7 @@ export function validateProviderSetupCustomMetadata(
     name: provider.name.trim(),
     protocol: provider.protocol,
     ...(provider.api !== undefined ? { api: provider.api } : {}),
+    ...(provider.oauth !== undefined ? { oauth: provider.oauth } : {}),
     baseUrl: provider.baseUrl.trim(),
     apiKeyEnv: provider.apiKeyEnv.trim(),
     model: provider.model.trim(),

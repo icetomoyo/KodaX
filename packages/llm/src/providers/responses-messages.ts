@@ -47,7 +47,8 @@ export function projectResponsesMessages(
         case 'thinking': {
           const replay = block.responsesReasoning;
           if (replay && replay.source.api === source.api && replay.source.provider === source.provider
-            && replay.source.model === source.model && replay.source.baseUrl === source.baseUrl) {
+            && replay.source.model === source.model && replay.source.baseUrl === source.baseUrl
+            && replay.source.credentialScope === source.credentialScope) {
             input.push({ type: 'reasoning', id: replay.id, summary: replay.summary,
               ...(replay.encrypted_content ? { encrypted_content: replay.encrypted_content } : {}) });
           } else if (block.thinking) {

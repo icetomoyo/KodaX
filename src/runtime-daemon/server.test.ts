@@ -55,6 +55,7 @@ import {
 } from './client.js';
 import { createRuntimeDaemonReverseBridgeHub } from './reverse-bridge.js';
 import type { RuntimeDaemonManagementController } from './management.js';
+import type { OAuthSessionRecord, OAuthSessionStore } from '@kodax-ai/llm';
 
 function restoreEnvironment(name: string, value: string | undefined): void {
   if (value === undefined) delete process.env[name];
@@ -1067,6 +1068,91 @@ describe('runtime daemon dispatcher', () => {
     await activeExtensionRuntime.dispose();
     await emptyExtensionRuntime.dispose();
     await legacyExtensionRuntime.dispose();
+  });
+
+  it('refreshes OAuth through the scoped broker, switches accounts and reacquires authority after Host restart (T07)', async () => {
+    const { openOAuthSession, createOAuthProviderConfig, createCustomProvider, runWithProviderCredential } = await import('@kodax-ai/llm');
+    const { bindOAuthCredentials } = await import('../oauth-credential-binding.js');
+    const provider = createOAuthProviderConfig({ service: 'openai-chatgpt', name: 'oauth-host-test', model: 'fixture' });
+    const records = new Map<string, OAuthSessionRecord>(['a', 'b'].map(id => [id, {
+      id, service: 'openai-chatgpt', clientId: `client-${id}`, accountId: `account-${id}`,
+      credentials: { accessToken: `expired-${id}`, refreshToken: `refresh-${id}`, expiresAt: 1 },
+    }]));
+    let tail: Promise<unknown> = Promise.resolve();
+    const store: OAuthSessionStore = { transact(id, operation) {
+      const next = tail.then(async () => {
+        const update = await operation(structuredClone(records.get(id)));
+        if (update.record) records.set(id, structuredClone(update.record)); else records.delete(id);
+        return update.result;
+      });
+      tail = next.then(() => undefined, () => undefined);
+      return next;
+    } };
+    const refresh = vi.fn(async (record: OAuthSessionRecord) => ({ accessToken: `inference-${record.id}`,
+      refreshToken: `rotated-${record.id}`, expiresAt: Date.now() + 3600_000 }));
+    const requestFrames: unknown[] = [];
+    const wireTokens: string[] = [];
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      wireTokens.push(new Headers(init?.headers).get('authorization')!);
+      return new Response(`data: ${JSON.stringify({ type: 'response.completed', response: { status: 'completed', output: [
+        { type: 'message', id: 'm', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'summary', annotations: [] }] },
+      ] } })}\n\n`, { headers: { 'content-type': 'text/event-stream' } });
+    });
+    const hosts: Array<{ close(): Promise<void> }> = [];
+    const startHost = async () => {
+      const runtime = makeRuntime();
+      const hub = createRuntimeDaemonReverseBridgeHub();
+      let notify: ((notification: RuntimeDaemonNotification) => void) | undefined;
+      const dispatcher = createRuntimeDaemonDispatcher({ runtime, reverseBridgeHub: hub, notify: event => notify?.(event) });
+      await initializeDispatcher(dispatcher, {});
+      vi.spyOn(runtime.sessions, 'compact').mockImplementation(async input => {
+        const trusted = input as RuntimeCompactSessionInput & { providerCredentialAccess?: {
+          acquire(provider: string, purpose: 'compaction', signal: AbortSignal): Promise<string>;
+        } };
+        const token = await trusted.providerCredentialAccess!.acquire(provider.name, 'compaction', new AbortController().signal);
+        const result = await runWithProviderCredential(provider.name, token, () => createCustomProvider(provider).complete([], [], ''));
+        expect(result.textBlocks[0]?.text).toBe('summary');
+        return { compacted: true, tokensBefore: 1000, tokensAfter: 10 } as RuntimeCompactSessionResult;
+      });
+      const transport: RuntimeDaemonClientTransport = {
+        async request(method, params) {
+          requestFrames.push({ method, params });
+          const response = await dispatcher.handle(createRuntimeDaemonRequest(`oauth-${randomRequestSuffix()}`, method, params));
+          if (isRuntimeDaemonSuccessResponse(response)) return response.result;
+          throw Object.assign(new Error(response.error.message), { code: response.error.code });
+        },
+        subscribe(listener) { notify = listener; return { close() { notify = undefined; } }; },
+      };
+      const client = createRuntimeDaemonClient({ identity: runtime.identity, transport, capabilities: { providerCredentialBroker: { version: 2 } } });
+      const host = { client, async close() { await client.close(); dispatcher.close(); hub.close(); } };
+      hosts.push(host);
+      return host;
+    };
+    try {
+      const host = await startHost();
+      const accountA = await openOAuthSession({ id: 'a', store, driver: { refresh } });
+      const first = await bindOAuthCredentials({ credentials: host.client.credentials, provider, session: accountA });
+      const compact = (credential: typeof first.credential, client = host.client) => client.sessions.compact({ sessionId: 'session-1', provider: provider.name, credential });
+      await compact(first.credential);
+      const accountB = await openOAuthSession({ id: 'b', store, driver: { refresh } });
+      const second = await first.switchAccount(accountB);
+      await expect(compact(first.credential)).rejects.toMatchObject({ code: 'credential_unavailable' });
+      await compact(second.credential);
+      const restarted = await startHost();
+      await expect(restarted.client.credentials.resumeScoped(second.credential.leaseId, async () => 'forbidden'))
+        .rejects.toMatchObject({ code: 'credential_unavailable' });
+      const restored = await openOAuthSession({ id: 'b', store, driver: { refresh } });
+      const fresh = await bindOAuthCredentials({ credentials: restarted.client.credentials, provider, session: restored });
+      await compact(fresh.credential, restarted.client);
+      expect(refresh).toHaveBeenCalledTimes(2);
+      expect(wireTokens).toEqual(['Bearer inference-a', 'Bearer inference-b', 'Bearer inference-b']);
+      expect(await restored.revoke()).toEqual({ remote: 'unsupported', leaseRevocationFailures: 0 });
+      await expect(compact(fresh.credential, restarted.client)).rejects.toMatchObject({ code: 'credential_unavailable' });
+      const reopened = await openOAuthSession({ id: 'b', store, driver: { refresh } });
+      await expect(reopened.acquire()).rejects.toMatchObject({ code: 'reauthentication_required' });
+      expect(JSON.stringify(requestFrames)).not.toMatch(/refresh-[ab]|rotated-[ab]|expired-[ab]/);
+      await second.close();
+    } finally { for (const host of hosts) await host.close(); fetch.mockRestore(); }
   });
 
   it('binds manual compaction to a Host-minted credential target without exposing the secret (T31/T25)', async () => {

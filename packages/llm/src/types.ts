@@ -254,6 +254,8 @@ export interface KodaXGenerationSource {
   api: 'openai-responses' | 'anthropic-messages';
   model: string;
   baseUrl?: string;
+  /** Opaque request-credential scope for subscription reasoning; never a token or account ID. */
+  credentialScope?: string;
 }
 
 export interface KodaXReasoningResolution {
@@ -728,6 +730,8 @@ export interface KodaXCustomProviderConfig {
   protocol: KodaXProtocolFamily;
   /** OpenAI wire API. Omitted preserves Chat Completions; Responses is explicit opt-in. */
   api?: 'chat-completions' | 'responses';
+  /** Subscription wire dialect; credentials must come from an explicit request broker. */
+  oauth?: 'openai-chatgpt' | 'openai-codex' | 'github-copilot';
   baseUrl: string;
   apiKeyEnv: string;
   model: string;

@@ -22,6 +22,8 @@ import { KodaXBaseProvider } from './base.js';
 import { KodaXAnthropicCompatProvider } from './anthropic.js';
 import { KodaXOpenAICompatProvider } from './openai.js';
 import { KodaXOpenAIResponsesProvider } from './openai-responses.js';
+import { KodaXOAuthResponsesProvider } from './oauth-responses.js';
+import { OAUTH_PROVIDER_BASE_URLS } from '../oauth/provider-config.js';
 import { NATIVE_PROVIDER_CAPABILITY_PROFILE } from './capability-profile.js';
 import { createReasoningProfileFromPreset } from '../reasoning.js';
 import { optionalOutputTokenLimit } from './output-token-limit.js';
@@ -358,6 +360,12 @@ export function validateCustomProviderConfig(
     throw new Error(`Custom provider "${custom.name}": api requires openai and must be chat-completions or responses.`);
   }
 
+  if (custom.oauth !== undefined && (custom.protocol !== 'openai' || custom.api !== 'responses'
+    || !Object.hasOwn(OAUTH_PROVIDER_BASE_URLS, custom.oauth)
+    || custom.baseUrl !== OAUTH_PROVIDER_BASE_URLS[custom.oauth])) {
+    throw new Error('OAuth custom provider requires its matching subscription Responses endpoint.');
+  }
+
   if (
     custom.userAgentMode !== undefined
     && !VALID_CUSTOM_PROVIDER_USER_AGENT_MODES.has(custom.userAgentMode)
@@ -506,6 +514,8 @@ export function createCustomProvider(custom: KodaXCustomProviderConfig): KodaXBa
 
 
   const config = buildProviderConfig(custom);
+
+  if (custom.oauth) return new KodaXOAuthResponsesProvider(custom.name, config, custom.oauth);
 
   if (custom.protocol === 'anthropic') {
     return new DynamicAnthropicProvider(custom.name, config);

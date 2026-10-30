@@ -64,6 +64,13 @@ it('persists the explicit Responses API through setup without changing omitted A
   });
 });
 
+it('preserves subscription metadata and requires a host broker even when its placeholder environment variable is set', () => {
+  writeConfig({ provider: 'subscription', customProviders: [{ name: 'subscription', protocol: 'openai', api: 'responses', oauth: 'openai-chatgpt',
+    baseUrl: 'https://api.openai.com/v1', model: 'chosen', apiKeyEnv: 'KODAX_OAUTH_BROKER_ONLY' }] });
+  expect(inspectProviderSetupReadiness({ configPath, catalog, environment: { KODAX_OAUTH_BROKER_ONLY: 'ignored' } }))
+    .toMatchObject({ status: 'needs-host-broker', provider: 'subscription' });
+});
+
 describe('inspectProviderSetupReadiness', () => {
   it('offers first-run setup whenever config.json is missing, even if a credential already exists', () => {
     expect(inspectProviderSetupReadiness({

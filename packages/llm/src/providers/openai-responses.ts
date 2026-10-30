@@ -27,6 +27,10 @@ function usageFrom(response: OpenAIResponse): KodaXTokenUsage | undefined {
 /** Native stateless Responses; shares credentials, transport observation and bounded retries with OpenAI. */
 export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProvider {
   private readonly rejectedResponseEfforts = new Map<string, Set<string>>();
+  protected requiresResponseStream(): boolean { return false; }
+  protected prepareResponseRequest(params: ResponseCreateParamsBase): ResponseCreateParamsBase { return params; }
+  protected responseRequestHeaders(_messages: readonly KodaXMessage[]): Record<string, string> | undefined { return undefined; }
+  protected acceptsResponseToolNamespace(_namespace?: string): boolean { return true; }
   getGenerationSource(model?: string): KodaXGenerationSource {
     return { provider: this.name, api: 'openai-responses', model: this.getWireModelId(model), baseUrl: this.getBaseUrl() };
   }
@@ -119,7 +123,7 @@ export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProv
           continue;
         }
         const sentEffort = retry.suppressReasoningEffort ? undefined : candidate;
-        const params: ResponseCreateParamsBase = {
+        const params = this.prepareResponseRequest({
           model: source.model, input, instructions: envelope.system, store: false,
           include: ['reasoning.encrypted_content'],
           max_output_tokens: Math.min(retry.maxOutputTokensOverride ?? budget, budget),
@@ -129,12 +133,13 @@ export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProv
           ...(sentEffort ? { reasoning: { effort: sentEffort as NonNullable<ResponseCreateParamsBase['reasoning']>['effort'] } } : {}),
           ...(this.config.promptCacheAffinity && options?.promptCacheKey && !resolvePromptCacheDisabled()
             ? { prompt_cache_key: options.promptCacheKey } : {}),
-        };
+        });
         const client = await this.getClient();
+        const requestOptions = { signal, maxRetries: 0, headers: this.responseRequestHeaders(messages) };
         let response: OpenAIResponse | undefined;
         try {
-          if (streaming) {
-            const events = await client.responses.create({ ...params, stream: true }, { signal, maxRetries: 0 });
+          if (streaming || this.requiresResponseStream()) {
+            const events = await client.responses.create({ ...params, stream: true }, requestOptions);
             const toolInputs = new Map<string, { name: string; callId: string }>();
             for await (const event of events) {
               if (signal?.aborted) throw new DOMException('Request aborted', 'AbortError');
@@ -144,13 +149,13 @@ export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProv
                 response = event.response;
                 break;
               }
-              this.emitDelta(event, options, toolInputs);
+              this.emitDelta(event, streaming ? options : undefined, toolInputs);
             }
             if (signal?.aborted) throw new DOMException('Request aborted', 'AbortError');
             if (!response) throw new KodaXProviderError('Stream incomplete: Responses ended without a terminal response.', this.name,
               { failureCode: 'response_stream_error', stage: 'response_stream' });
           } else {
-            response = await client.responses.create({ ...params, stream: false }, { signal, maxRetries: 0 });
+            response = await client.responses.create({ ...params, stream: false }, requestOptions);
             observeProviderStreamUsage(usageFrom(response));
           }
         } catch (error) {
@@ -226,7 +231,8 @@ export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProv
         blocks.push({ type: 'thinking', thinking: item.summary.map(part => part.text).join('\n'),
           responsesReasoning: { source, id: item.id, summary: item.summary, encrypted_content: item.encrypted_content } });
       } else if (item.type === 'function_call') {
-        if ((item.status && item.status !== 'completed') || !item.call_id || !item.name || calls.has(item.call_id)) {
+        if ((item.status && item.status !== 'completed') || !item.call_id || !item.name || calls.has(item.call_id)
+          || !this.acceptsResponseToolNamespace(item.namespace)) {
           throw this.protocolError('Responses returned an unfinished or duplicate function call.');
         }
         let parsed: unknown;

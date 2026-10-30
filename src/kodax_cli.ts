@@ -4512,6 +4512,11 @@ complete -c kodax -l version -d 'Show version'`);
       await executeProviderSetup();
       return;
     }
+    if (readiness.status === 'needs-host-broker') {
+      process.stderr.write(`Provider "${readiness.provider}" requires OAuth authorization from a trusted Host credential broker. Configure the host SDK OAuth binding before starting a run.\n`);
+      process.exitCode = 1;
+      return;
+    }
     if (readiness.status === 'needs-credential') {
       process.stdout.write(
         `\n${renderMissingProviderCredentialGuide(

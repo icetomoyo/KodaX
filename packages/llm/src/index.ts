@@ -351,3 +351,7 @@ export { prepareHistoryImages, prepareValidatedImageBlock, withPreparedImageHist
 export { inspectPreparedImage } from './providers/image-serialization.js';
 export { getRejectedImageHash } from './providers/rejected-image.js';
 export { getPreparedImageDiagnostic, validateImageBytesInRun } from './providers/image-serialization.js';
+export { openOAuthSession, OAuthCredentialError } from './oauth/session.js';
+export type { OAuthService, OAuthTokens, OAuthSessionRecord, OAuthSessionStore, OAuthRefreshDriver, OAuthCredentialSession } from './oauth/session.js';
+export { createOAuthRefreshDriver } from './oauth/drivers.js';
+export { createOAuthProviderConfig } from './oauth/provider-config.js';

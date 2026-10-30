@@ -448,3 +448,149 @@ were corrected. Final review: **0 remaining findings**, highest severity none.
 - T06 is **contract-tested offline**, full offline regression and both reviews
   passed. T07–T12, live service verification and integration with the concurrent
   thread's uncommitted work remain open; FEATURE_302 remains InProgress.
+
+## T07 — Host-owned OAuth credentials (2026-10-30)
+
+Reference snapshot: local pi `e7a0df27c09d11bf4161d3605246cbf57a129cb2`.
+Implementation is independent. Protocol references are OpenAI's
+[SIWC sign-in](https://developers.openai.com/siwc/token-sharing-open-source/sign-in),
+[sessions and refresh](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions),
+[token reference](https://developers.openai.com/siwc/token-sharing-open-source/token-reference),
+[inference restrictions](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference),
+[function namespaces](https://developers.openai.com/api/docs/guides/function-calling),
+GitHub's [OAuth protocol](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps),
+[Copilot OAuth ownership](https://docs.github.com/en/copilot/how-tos/copilot-sdk/setup/github-oauth),
+and the first-party [VS Code token entitlement endpoint](https://github.com/microsoft/vscode/blob/main/product.json).
+The legacy Codex backend and direct Copilot route are source-declared compatibility
+paths, not a claim that every third-party OAuth client has access to them.
+
+Public seams: `@kodax-ai/kodax/llm` (also standalone `@kodax-ai/llm`) exports
+`OAuthSessionStore`, `openOAuthSession`, `createOAuthRefreshDriver`,
+`createOAuthProviderConfig`; `@kodax-ai/kodax/runtime` exports
+`bindOAuthCredentials`. Existing `customProviders` registration/config is reused.
+
+```ts
+// secureStore is provided by trusted Main, backed by its keychain/secret store.
+// Login must already have verified identity and saved the unique registration.
+const connection = createOAuthProviderConfig({
+  service: 'openai-chatgpt', name: 'my-chatgpt', model: selectedModel,
+});
+const session = await openOAuthSession({
+  id: selectedRegistrationId, store: secureStore,
+  driver: createOAuthRefreshDriver('openai-chatgpt'),
+});
+let binding = await bindOAuthCredentials({
+  credentials: runtime.credentials, provider: connection, session,
+});
+// Pass binding.credential through the existing trusted execution authorization.
+// Switch only after nextSession has completed validated login/selection:
+binding = await binding.switchAccount(nextSession);
+// On Host restart, reacquire the user's selected session and call bind again
+// using the new runtime.credentials; never treat a saved lease ID as authority.
+const logout = await nextSession.revoke();
+// Surface remote='failed'/'unsupported' and leaseRevocationFailures to the host UI.
+```
+
+The host implements `store.transact` with an account registration lock held over
+refresh and atomic durable commit. Shared stores require cross-process locking;
+an in-memory lock or a read-then-write JSON adapter is insufficient. Store updates
+must not return a result before durable commit. Registration IDs cannot be reused
+for a different service/client/verified identity. Non-expiring GitHub grants omit
+`expiresAt`; all inference tokens and OpenAI grants require expiry in Unix
+milliseconds. The host supplies its own issued/registered OAuth client, not pi's
+or another application's ID. Tokens and raw upstream errors must stay outside
+ordinary configuration, logs and history. `apiKeyEnv` remains as legacy metadata;
+OAuth providers never read it. CLI readiness explicitly requires a host broker.
+
+Login UI, browser/device flows, PKCE/state/nonce and ID-token signature validation
+remain the trusted host's responsibility in this port-based ticket. No default
+plaintext token store or ambient CLI-credential import is supplied. The same store
+object shares local revocation across handles; multiple host processes must
+coordinate logout notifications through their own session ownership. A storage
+lock alone does not revoke another process's already admitted request. Await
+logout before replacing the same registration's credentials after re-login.
+
+| Path | Implemented contract | Verification scope |
+|---|---|---|
+| `openai-chatgpt` | Issued client/resource refresh, replacement refresh token, scopes/earliest refresh, discovered revocation; public Responses, stateless forced SSE, namespace tools | Offline wire/session/Host tests; live unverified |
+| `openai-codex` | Separate legacy refresh endpoint, account routing header, Codex backend Responses, forced SSE, omit unsupported output limit | Offline wire/refresh; live unverified; registration/access supplied by host |
+| `github-copilot` | GitHub grant refresh plus separate short-lived inference token; retain completed rotation if exchange fails; Responses initiator headers | Offline wire/session tests; live unverified; entitlement depends on authorized OAuth app |
+
+Local logout fences all attached leases and removes credentials while retaining
+registration metadata. OpenAI remote revocation is attempted separately and its
+failure is returned. GitHub's public client has no app secret: its default remote
+revocation is explicitly unsupported; a privileged host driver or GitHub account
+settings must revoke the upstream grant. No secret is borrowed to conceal this.
+Copilot enterprise routing, automatic model discovery and additional API dialects
+remain T09/T11. SIWC/Codex `complete()` buffers SSE; it is not native stream:false.
+Opaque reasoning is scoped by credential fingerprint, so refresh/account changes
+conservatively retain readable context without replaying foreign ciphertext.
+
+Executable acceptance: OAuth session/driver/provider tests, scoped binding tests,
+setup metadata/readiness and `runtime-daemon/server.test.ts` T07 scenario. They
+cover serialized rotation, durable commit failure, cancellation, invalid_grant,
+late refresh after logout, shared local revocation, account switch, old lease
+rejection and fresh Host authority. Final regression/review evidence is recorded
+below after completion.
+
+## T07 Standards
+
+Final independent review: **0 findings**, highest severity none. The additional
+race/failure and published SDK tests were reviewed separately, with the same
+result. Public driver revocation now sanitizes transport/URL exceptions too.
+
+## T07 Spec
+
+Review found that a Copilot exchange 401 cleared an already rotated GitHub grant.
+The regression first failed; the exchange stage now preserves the completed grant
+rotation while dropping the inference token and reporting the exchange error.
+Both generic exchange failure and reauthentication failure are covered. An
+independent memory probe confirmed one refresh followed by a successful retry of
+the exchange. Final independent review: **0 remaining findings**, highest severity
+none; no additional scope findings.
+
+## T07 verification
+
+- TDD red/green evidence is executable in the new session/driver/provider/binding
+  tests and setup readiness regression; temporary raw logs remain in OS temp.
+- Scoped coverage: **36 tests / 4 files passed**. OAuth session/driver,
+  subscription transport and Runtime binding: **91.69% statements, 89.83%
+  branches, 92.98% functions, 97.36% lines**. This is not whole-repository coverage.
+- Workspace packages, JS bundles and self-contained SDK declarations built;
+  source/test typechecks passed. The declaration build also checked the Product
+  Client without Node ambient types.
+- CLI: **5,141,561 bytes**, **101,319 bytes** below the unchanged 5 MiB budget;
+  the existing 64 KiB minimum headroom remains enforced.
+- Published OAuth smoke test passed outside Vitest aliases: host refresh → scoped
+  broker → bearer-only inference, using the actual public SDK exports/chunks.
+- The final refresh-window regression first failed: an expired access token with
+  a future `earliestRefreshAt` caused local grant deletion. It now reports a
+  temporary refresh failure, preserves the grant, and succeeds once refresh is
+  allowed. Both reviewers accepted the small correction with zero findings.
+- A recovery-capability check reproduced inherited native non-streaming support
+  on the two stream-only subscriptions. Those providers now veto non-streaming
+  recovery while retaining their buffered `complete()` API. Copilot and ordinary
+  Responses retain actual stream:false. The in-progress full run was interrupted
+  before applying this production correction; final acceptance uses a fresh run.
+- Complete published bundle regression: **59/59 passed**, zero skipped/failures,
+  including CLI budget/headroom, native Responses, public OAuth exports, existing
+  credential scopes, Host recovery and clean-package Script checks. Duration:
+  **89.44 seconds** on the final build.
+- Final frozen-source full run: **1,301 files / 18,149 tests passed, zero failures**;
+  existing **6 skipped files, 97 skipped tests and 19 todo tests** remain
+  (1,307 files / 18,265 tests total). Duration: **1,250.94 seconds**. The T07
+  broker/refresh/account-switch/new-Host scenario passed within this run. The
+  Host baseline failures closed in T06 did not recur.
+- The full suite touched a golden snapshot's line-ending metadata without a
+  content diff; that generated change was restored and no snapshot expectation
+  was updated. No production/test source changed during the accepted full run.
+- No live tokens were used. Browser login, OAuth client entitlement, remote
+  revocation against a real account and secure-store durability of a specific
+  host adapter remain unverified online. T07 is contract-tested offline; the
+  full FEATURE_302 remains InProgress with T08–T12 open.
+- Integration baseline remains the isolated `codex/llm-provider-parity` branch
+  above committed shared-Host baseline `f6a010462`; the other chat's working tree
+  is not imported or edited. New authorization composes `registerScoped` rather
+  than changing daemon credential schema, client transport or production Host
+  execution. Small public SDK/config/readiness additions still need ordinary
+  merge review when that chat's uncommitted changes are integrated.
