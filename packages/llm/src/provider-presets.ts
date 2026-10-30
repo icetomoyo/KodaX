@@ -36,7 +36,7 @@ const PRESETS: readonly ProviderPreset[] = [
   { id: 'openai-codex', apiKeyEnv: 'KODAX_OAUTH_BROKER_ONLY', chatApis: ['openai-codex-responses'] },
   { id: 'opencode', apiKeyEnv: 'OPENCODE_API_KEY', chatApis: [A, C, R, G], classifierApi: 'typesafe-system-one' },
   { id: 'opencode-go', apiKeyEnv: 'OPENCODE_API_KEY', chatApis: [A, C, R, G] },
-  { id: 'openrouter', apiKeyEnv: 'OPENROUTER_API_KEY', chatApis: [A, C], imageApi: 'openrouter-images', baseUrl: 'https://openrouter.ai/api/v1' },
+  { id: 'openrouter', apiKeyEnv: 'OPENROUTER_API_KEY', chatApis: [A, C], imageApi: 'openrouter-images', classifierApi: 'typesafe-system-one', baseUrl: 'https://openrouter.ai/api/v1' },
   { id: 'qwen-token-plan', apiKeyEnv: 'QWEN_TOKEN_PLAN_API_KEY', chatApis: [C], baseUrl: 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1' },
   { id: 'qwen-token-plan-cn', apiKeyEnv: 'QWEN_TOKEN_PLAN_CN_API_KEY', chatApis: [C], baseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1' },
   { id: 'qwen-token-plan-individual', apiKeyEnv: 'QWEN_TOKEN_PLAN_API_KEY', chatApis: [C], baseUrl: 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1' },

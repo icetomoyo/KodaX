@@ -1,3 +1,4 @@
+import { parseResponsesOutput } from './responses-output.js';
 import { createHash } from 'node:crypto';
 import type { Response as OpenAIResponse, ResponseCreateParamsBase, ResponseInputContent, ResponseStreamEvent } from 'openai/resources/responses/responses';
 import type {
@@ -222,33 +223,6 @@ export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProv
   }
 
   private parseOutput(response: OpenAIResponse, source: KodaXGenerationSource): KodaXAssistantBlock[] {
-    const blocks: KodaXAssistantBlock[] = [];
-    const calls = new Set<string>();
-    for (const item of response.output) {
-      if (item.type === 'message') {
-        if (item.status !== 'completed') throw this.protocolError('Responses returned an unfinished message.');
-        for (const part of item.content) blocks.push({ type: 'text', text: part.type === 'output_text' ? part.text : part.refusal });
-      } else if (item.type === 'reasoning') {
-        if (item.status && item.status !== 'completed') throw this.protocolError('Responses returned unfinished reasoning.');
-        blocks.push({ type: 'thinking', thinking: item.summary.map(part => part.text).join('\n'),
-          responsesReasoning: { source, id: item.id, summary: item.summary, encrypted_content: item.encrypted_content } });
-      } else if (item.type === 'function_call') {
-        if ((item.status && item.status !== 'completed') || !item.call_id || !item.name || calls.has(item.call_id)
-          || !this.acceptsResponseToolNamespace(item.namespace)) {
-          throw this.protocolError('Responses returned an unfinished or duplicate function call.');
-        }
-        let parsed: unknown;
-        try { parsed = JSON.parse(item.arguments); }
-        catch { throw this.protocolError('Responses returned invalid final function arguments.'); }
-        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-          throw this.protocolError('Responses function arguments must be a JSON object.');
-        }
-        calls.add(item.call_id);
-        blocks.push({ type: 'tool_use', id: item.call_id, name: item.name, input: parsed as Record<string, unknown> });
-      } else {
-        throw this.protocolError(`Unsupported Responses output item: ${item.type}`);
-      }
-    }
-    return blocks;
+    return parseResponsesOutput(response, source, namespace => this.acceptsResponseToolNamespace(namespace));
   }
 }

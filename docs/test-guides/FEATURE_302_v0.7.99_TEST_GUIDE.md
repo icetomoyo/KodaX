@@ -1,7 +1,7 @@
 # FEATURE_302 — Independent LLM Provider Parity
 
-Date: 2026-10-30. Status: T01–T09 implemented, contract-tested and reviewed offline;
-T08 final full regression passed; T09 scoped and published regression passed; T10–T12 remain pending. Historical T05 failures
+Date: 2026-10-30. Status: T01–T10 implemented, contract-tested and reviewed offline;
+T08 final full regression passed; T09/T10 scoped and published regression passed; T11–T12 remain pending. Historical T05 failures
 and their T06 disposition remain recorded below. This is not a claim of complete
 pi-ai parity or a released feature.
 [Accepted scope and tickets](../features/v0.7.99.md#feature_302-independent-llm-provider-parity).
@@ -94,7 +94,7 @@ not close a row. All new work here is **not live-tested**.
 | qwen-token-plan-individual | International individual plan identity pending | T09 |
 | radius | Dynamic gateway and OAuth pending | T09 |
 | together | Built-in route and dialect pending | T09 |
-| typesafe | Classifier route pending | T10 |
+| typesafe | T10 native classifier and separate operation factory contract-tested offline | T11,T12 |
 | vercel-ai-gateway | Gateway protocol/model selection pending | T09 |
 | xai | Native route and OAuth pending | T09 |
 | xiaomi | Public `mimo` Messages retained; full protocol coverage pending | T09 |
@@ -128,12 +128,12 @@ used to replace these routes or rename saved selections.
 | google-vertex | T08 regional/global/Express GenerateContent/SSE and explicit credentials contract-tested offline; host owns ADC/workload provider. |
 | mistral-conversations | T09 native /chat/completions JSON/SSE, typed thinking, tool-ID mapping and strict terminals contract-tested offline. |
 | pi-messages | T09 independently implemented SSE protocol, authoritative end snapshots and safe same-source/legacy history contract-tested offline; no pi dependency. |
-| openrouter-images | Pending T10; separate operation and Host media delivery |
-| typesafe-system-one | Pending T10 |
-| cloudflare-workers-ai-system-one | Pending T10 |
-| llama-cpp-classify | Pending T10; not represented by a separate built-in provider factory |
-| openai-decisions | Pending T10; native classification, not prompt-based probability inference |
-| deferred submit/query/cancel | Pending T10; operation support, durable reference and fresh authority required |
+| openrouter-images | T10 explicit dedicated/Chat dialects, admitted final bytes and Host artifact publication contract-tested offline. |
+| typesafe-system-one | T10 native bool/choice/score, image assets/OpenRouter state-image variants and factory routes contract-tested offline. |
+| cloudflare-workers-ai-system-one | T10 explicit Jev/Clef envelopes, media limits and completed hosted results contract-tested offline. |
+| llama-cpp-classify | T10 distinct contextual label tokens and bounded native probability readout contract-tested offline; independent explicit connection. |
+| openai-decisions | T10 native predicate/choice/score, criteria/distributions/refusals contract-tested offline. |
+| deferred submit/query/cancel | T10 real background Responses and durable scoped restore, cumulative usage and fresh authority contract-tested offline. |
 
 Of nine source-declared OAuth flows, T07 contract-tests the host-owned session,
 refresh and broker path for OpenAI Codex, OpenAI ChatGPT and GitHub Copilot;
@@ -871,3 +871,95 @@ T09 frozen-patch acceptance:
 
 T10–T12 remain open, including Host/CLI wiring, media/deferred lifecycle,
 cache/strict/WS, catalog/pricing/identity and final published-package/full regression.
+
+
+## T10 native operations — scoped acceptance
+
+Baseline: T09 `e6247c3a`; pi reference `e7a0df27c`. Public SDK contracts and examples
+are in [LLM operations](../LLM_OPERATIONS.md). The standalone LLM package exports
+separate typed image, classification and deferred functions; chat result types
+and Auto permission classification remain unchanged.
+
+- OpenRouter images support explicit legacy Chat Completions and dedicated Image
+  API dialects. Current reference images use `input_references`; no cross-dialect
+  retry or output URL download. Dedicated SSE previews are temporary; a completed
+  image and terminal marker are required before returning final output. Unknown
+  SVG decoding remains explicitly unverified and the image publisher refuses it.
+  Source: [OpenRouter Image API](https://openrouter.ai/docs/guides/overview/multimodal/image-generation).
+- Four classifiers use native probabilities: TypeSafe System One, Cloudflare
+  Jev/Clef (explicit distinct envelopes), OpenAI Decisions and llama.cpp native
+  token readout. Labels/answer names/distributions must be complete and finite;
+  score distributions and per-question Decisions refusals survive normalization.
+  llama.cpp verifies distinct single tokens at the actual newline boundary and
+  bounds deeper readouts; it never asks chat generation to invent confidence.
+  Sources: [TypeSafe OpenAPI](https://api.typesafe.ai/openapi.json),
+  [Cloudflare Jev](https://developers.cloudflare.com/ai/models/typesafe/jev/),
+  [Clef](https://developers.cloudflare.com/workers-ai/models/clef/),
+  [Decisions reference](https://developers.openai.com/api/reference/resources/decisions/methods/create),
+  [llama-server API](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#api-endpoints).
+- OpenAI background Responses implements real submit/retrieve/cancel. Default
+  `store:false` follows the current documented temporary polling retention;
+  longer storage is explicit. Pending/failed/cancelled/incomplete snapshots have
+  no executable result. Foreground and background share strict final parsing.
+  References contain only version/id/connection-account scope hash; each action
+  reacquires current authority. Host/account/model changes require an exact
+  match and fresh binding, never replay of a serialized lease.
+  Sources: [background retention](https://developers.openai.com/api/docs/guides/background),
+  [retrieve](https://developers.openai.com/api/reference/resources/responses/methods/retrieve),
+  [cancel](https://developers.openai.com/api/reference/resources/responses/methods/cancel).
+- Retrieval/cancellation reports cumulative job usage with a stable usage ID;
+  its HTTP observation is not another inference charge. Submit can report usage
+  when immediately completed. Classification retries only bounded temporary
+  HTTP errors with Retry-After; quota errors remain non-retryable. Mutating image
+  generation and background submission have no automatic replay after ambiguous
+  delivery. Caller abort does not imply remote cancellation.
+  Failed/cancelled/incomplete terminal snapshots preserve reported cumulative
+  `partialUsage` under that same ID, without executable output or another poll charge.
+- New operation factories expose TypeSafe (the classifier-only 42nd provider),
+  OpenRouter image/classifier and declared OpenAI/Cloudflare/OpenCode operations.
+  Local llama.cpp remains a separate explicit operation connection. Sparse
+  factory metadata is not a generated or entitlement-verified model catalog.
+- Host publication revalidates saved bytes, uses an existing explicitly selected
+  absolute output directory and Host-generated exclusive filenames, then calls
+  the existing artifact service. Failure rolls back newly created files and
+  registrations; cleanup failures are visible. No secret/media/deferred daemon
+  protocol or provider-wide grant is added. Real Host artifact registration and
+  rollback have executable tests.
+
+Intermediate wide run: **101 files / 1,455 tests passed**. Scoped coverage:
+**86.72% statements / 83.27% branches / 95.41% functions / 96.06% lines**.
+Subsequent environment-key error redaction has its own RED/GREEN fixture;
+final review/build/published evidence will supersede this snapshot. No service
+credentials or local llama-server were used; model access, calibration, retention
+timing and actual billing remain not live-tested. Concrete product entry wiring
+and final all-entry acceptance continue in T12.
+
+
+T10 final scoped acceptance supersedes the intermediate snapshot:
+
+- Frozen LLM/binding/Host-media/attachment/managed-Responses selection:
+  **104 files / 1,465 tests passed**, zero failures.
+- Scoped new/changed modules: **87.05% statements / 83.05% branches /
+  95.49% functions / 96.16% lines**; not repository-wide coverage.
+- Workspace build, source/test typechecks, JS bundle and self-contained SDK
+  declarations passed. Published regression **68/68**, zero failures/skips,
+  **83.13 seconds**, including separate operations and standalone package exports.
+- CLI headroom regression first failed at **5,189,996 bytes**. Whole-LLM dynamic
+  imports retained unrelated public operation exports. Error-only lazy imports
+  now use the existing module through the new `/errors` export; attachment
+  validation uses a named import of the same already-used helper. CLI is
+  **5,135,723 bytes**, **107,157 bytes** below the unchanged 5 MiB limit; the
+  original 64 KiB headroom guard passes without changing its threshold.
+- Standards: **0 findings** on initial and corrected staged patches. Spec:
+  two P2 findings reproduced and corrected (unsuccessful/malformed background
+  cumulative usage preservation; Decisions bool criteria preservation);
+  independent re-review **0 remaining findings**.
+- `KodaXDeferredOutputError` keeps the durable reference and cumulative partial
+  usage when a completed response fails strict parsing, without tools. Submit
+  records received usage before parsing; query/cancel remains a status read,
+  not another inference charge. Restored/reference data never grants authority.
+- No release version bump, push, merge or live call. Full monorepo acceptance
+  remains scheduled after T11/T12. The concurrent original checkout is untouched;
+  its three `llm-adapter.ts` hunks are baseline lines 100/595/616, while this
+  ticket only narrows the lazy error import at baseline line 1088. Final
+  integration still requires review of all concurrent work.

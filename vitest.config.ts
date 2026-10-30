@@ -52,6 +52,7 @@ export function createVitestConfig(options: TestSuiteOptions = {}) {
         '@kodax-ai/agent/capabilities/skills': resolveFromRoot('packages', 'agent', 'src', 'capabilities', 'skills', 'index.ts'),
         '@kodax-ai/agent/tracing': resolveFromRoot('packages', 'agent', 'src', 'tracing', 'index.ts'),
         '@kodax-ai/agent': resolveFromRoot('packages', 'agent', 'src', 'index.ts'),
+        '@kodax-ai/llm/errors': resolveFromRoot('packages', 'llm', 'src', 'errors.ts'),
         '@kodax-ai/llm': resolveFromRoot('packages', 'llm', 'src', 'index.ts'),
         '@kodax-ai/coding': resolveFromRoot('packages', 'coding', 'src', 'index.ts'),
         '@kodax-ai/repl/cli-resume': resolveFromRoot('packages', 'repl', 'src', 'cli-resume.ts'),

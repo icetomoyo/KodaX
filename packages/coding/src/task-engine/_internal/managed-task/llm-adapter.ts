@@ -1085,7 +1085,7 @@ export function buildRunnerLlmAdapter(
           ) {
             const reason = (retryTimeoutController.signal as { reason?: { message?: string } })
               .reason?.message ?? 'Stream stalled';
-            const { KodaXNetworkError } = await import('@kodax-ai/llm');
+            const { KodaXNetworkError } = await import('@kodax-ai/llm/errors');
             error = new KodaXNetworkError(reason, true);
           }
           rethrowObservedManagedProviderAbort(

@@ -366,3 +366,11 @@ export { beginOAuthAuthorization } from './oauth/authorization.js';
 export { beginDeviceAuthorization } from './oauth/device.js';
 export type { OAuthAuthorization, OAuthLoginInput, OAuthLoginResult } from './oauth/authorization.js';
 export type { OAuthDeviceAuthorization } from './oauth/device.js';
+export { classify } from './operations/classify.js';
+export { generateImages } from './operations/images.js';
+export { submitDeferred, fetchDeferred, cancelDeferred, KodaXDeferredOutputError } from './operations/deferred.js';
+export { createProviderOperationConnection } from './operations/connections.js';
+export type { KodaXOperationConnection, KodaXClassifierApi, KodaXClassifierConnection, KodaXClassificationQuestion,
+  KodaXClassificationRequest, KodaXClassificationAnswer, KodaXClassificationResult, KodaXOperationImage, KodaXGeneratedImage,
+  KodaXImageConnection, KodaXImageRequest, KodaXImageResult, KodaXDeferredConnection, KodaXDeferredReference,
+  KodaXDeferredRequest, KodaXDeferredResult } from './operations/types.js';
