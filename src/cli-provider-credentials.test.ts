@@ -16,7 +16,7 @@ it('uses saved keys before env, rereads updates and never falls back from corrup
   const credentials = { registerScoped: async (_input: unknown, callback: RuntimeScopedCredentialBroker) => { broker = callback; return { id: 'lease', providers: ['saved-cli'], brokerVersion: 2 as const }; }, revoke: async () => true };
   const authorizer = await createCliProviderCredentials({ customProviders: [config] }, { configPath: path.join(folder, 'config.json') });
   try {
-    await authorizer.authorizeExecution({ kind: 'provider_probe', input: { provider: config.name, efforts: [] } }, { credentials, identity: { runtimeId: 'host' } } as unknown as Parameters<KodaXClientHostAuthorization>[1]);
+    await authorizer.authorizeExecution({ kind: 'provider_probe', input: { provider: config.name, efforts: [] } }, { credentials, identity: { runtimeId: 'host', profile: 'default' } } as unknown as Parameters<KodaXClientHostAuthorization>[1]);
     const proof = createCustomProvider(config).getCredentialConnectionFingerprint(), binding = { profile: 'default', provider: config.name, connectionFingerprint: proof };
     const request = { requestId: 'r', leaseId: 'lease', provider: config.name, sessionId: 's', target: { kind: 'run' as const, runId: 'run' }, purpose: 'primary' as const, connectionFingerprint: proof };
     expect(await broker(request)).toBe('env-fixture');
@@ -39,7 +39,7 @@ it('connects configured native/env routes and preserves bridge-owned auth withou
   const credentials = { registerScoped: async (input: Parameters<RuntimeCredentialService['registerScoped']>[0], callback: RuntimeScopedCredentialBroker) => {
     allowed = input.providers; broker = callback; return { id: 'lease', providers: allowed, brokerVersion: 2 as const };
   }, revoke: async () => true };
-  const services = { credentials, identity: { runtimeId: 'host' } } as unknown as Parameters<KodaXClientHostAuthorization>[1];
+  const services = { credentials, identity: { runtimeId: 'host', profile: 'default' } } as unknown as Parameters<KodaXClientHostAuthorization>[1];
   try {
     await authorizer.authorizeExecution({ kind: 'provider_probe', input: { provider: native.name, efforts: [] } }, services);
     expect(allowed).toEqual(expect.arrayContaining(['codex-cli', 'gemini-cli', 'custom-cli', native.name])); expect(allowed).not.toContain('unlinked-oauth');

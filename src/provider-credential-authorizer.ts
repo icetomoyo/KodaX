@@ -3,12 +3,13 @@ import { serializeCloudCredential, validateCustomProviderConfig, type KodaXCloud
   type FileProviderCredentialStore, type ProviderCredentialFileBinding } from '@kodax-ai/llm';
 import type { KodaXClientHostAuthorization, RuntimeScopedCredentialRequest } from './client-host-authorization.js';
 import { bindRequestCredentials, type RuntimeRequestCredentialBinding } from './request-credential-binding.js';
+import { assertProviderOAuthSessionScope } from './provider-oauth-store.js';
 
-export type ProviderCredentialSource = { readonly provider: string; readonly connectionFingerprint?: string } & (
+export type ProviderCredentialSource = { readonly provider: string; readonly connectionFingerprint?: string; readonly profile?: string } & (
   | { readonly kind: 'external' }
   | { readonly kind: 'environment'; readonly apiKeyEnv: string }
   | { readonly kind: 'api-key'; readonly apiKeyEnv: string; readonly store: FileProviderCredentialStore; readonly binding: ProviderCredentialFileBinding; readonly connectionFingerprint: string }
-  | { readonly kind: 'oauth'; readonly session: OAuthCredentialSession; readonly service: NonNullable<KodaXCustomProviderConfig['oauth']> }
+  | { readonly kind: 'oauth'; readonly session: OAuthCredentialSession; readonly service: NonNullable<KodaXCustomProviderConfig['oauth']>; readonly profile?: string; readonly issuer?: string }
   | { readonly kind: 'cloud'; readonly connection: KodaXCustomProviderConfig; readonly resolve: (request: RuntimeScopedCredentialRequest, signal: AbortSignal) => Promise<KodaXCloudCredential> }
 );
 export interface ProviderCredentialAuthorizer { readonly authorizeExecution: KodaXClientHostAuthorization; close(): Promise<void>; }
@@ -29,6 +30,10 @@ export function createProviderCredentialAuthorizer(input: {
       if (!sources.size) return undefined;
       const runtimeId = services.identity?.runtimeId;
       if (!runtimeId) throw new Error('Provider credential authorization requires Host identity.');
+      for (const source of sources.values()) {
+        const profile = source.profile ?? (source.kind === 'api-key' ? source.binding.profile : source.kind === 'oauth' ? source.session.profile ?? 'default' : undefined);
+        if (profile !== undefined && services.identity?.profile !== profile) throw new Error('Provider credential authorization requires the approved Host profile.');
+      }
       if (!active || epoch !== runtimeId) {
         const previous = active; active = undefined;
         if (previous) try { await previous.close(); }
@@ -56,8 +61,10 @@ function validateSource(source: ProviderCredentialSource): void {
   if (source.connectionFingerprint !== undefined && !/^[a-f0-9]{64}$/.test(source.connectionFingerprint)) throw new Error('Invalid approved connection fingerprint.');
   if (!source.provider.trim()) throw new Error('Credential source requires a provider.');
   if ((source.kind === 'environment' || source.kind === 'api-key') && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(source.apiKeyEnv)) throw new Error('Invalid approved environment variable.');
-  if (source.kind === 'api-key' && (source.binding.provider !== source.provider || source.binding.connectionFingerprint !== source.connectionFingerprint || !source.binding.profile.trim())) throw new Error('Invalid approved stored credential binding.');
-  if (source.kind === 'oauth' && source.service !== source.session.service) throw new Error('OAuth source and session must match.');
+  if (source.profile !== undefined && !source.profile.trim()) throw new Error('Invalid approved credential profile.');
+  if (source.kind === 'api-key' && (source.binding.provider !== source.provider || source.binding.connectionFingerprint !== source.connectionFingerprint
+    || !source.binding.profile.trim() || (source.profile !== undefined && source.profile !== source.binding.profile))) throw new Error('Invalid approved stored credential binding.');
+  if (source.kind === 'oauth') assertProviderOAuthSessionScope(source, source.session);
   if (source.kind === 'cloud') {
     validateCustomProviderConfig(source.connection);
     if (!source.connection.cloud || source.connection.name !== source.provider) throw new Error('Cloud credential source requires matching connection metadata.');

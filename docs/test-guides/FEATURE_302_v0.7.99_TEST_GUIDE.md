@@ -1020,3 +1020,15 @@ T12-A final slice evidence supersedes review-pending wording: final wide **126 f
 - 初轮12文件88测试通过；补充原生云/订阅向导后专项覆盖语句83.73%、分支80.52%。源码与拥有 fixture 的类型检查、dts/无Node ambient consumer通过。冻结后仍须双轴评审及合并全量 G；真实账号/跨平台实测范围不扩张。
 
 - 2026-10-31 C复审后：131文件1825通过/1个条件跳过；Spec发现漏revision会落到底层无条件写，已用JS形状缺字段/空/数字revision做set/remove RED→GREEN，最后4文件34通过。Main facade现在在任何读写前拒绝非法expected revision。Standards0/0，Spec剩余0；发布4文件30/30、源码/owned fixture类型/dts/consumer通过。npm pack dry-run确认新模板JSON入包，预算守门未调整。KodaX完整全仓回归仍保留G，未以专项替代。
+
+
+### T12-D OAuth 默认文件与 Host 回归（2026-10-31）
+
+- session-file：同 canonical 文件多 handle 共用撤销 fence；正在 refresh 的 A 被撤销后结果不向 B 发布；三个真实 Node Main 只做一次 rotating refresh。
+- provider-oauth-store：只迁移 linked ID，先提交后清旧 token，其他 Key/账号保留；当前/已注销共享记录优先，旧清理失败有错误且新副本保留，竞争创建 target 不覆盖；实际 current-user DPAPI 路径迁移已运行。
+- Main profile/Radius issuer 不匹配在授权前失败；缺失/不同 Host profile 不注册 lease；CLI 不注销另一 profile。实际 OAuth status/login/logout 命令改走共享文件，旧 public encrypted 后端回归保留。
+- 文件初始化准备 auth.json 与整个 staging mask；实际 Windows ACL 检查 staging 去继承、OI/CI 只给 current-user/SYSTEM，未额外保护的新 probe 文件也只继承这两个账号。工作区包含配置根的沙箱 regression 从 mkdir 文件失败 RED 修至 GREEN。
+- Host 失败根因：B 开始校验已有 providerProbeAuthorization 要求，独立 daemon 未转发 owner 声明。四格 owner/override handshake 测试复现（2红），修复只从真实 owner 转发后4过，不能用 override 伪造。原始真实进程4/4通过，覆盖 print/scoped Host crash recovery、SDK重附着和30秒idle-exit；初轮3个失败保留在执行机 kodax-t12d-host-published.log，修复后证据 kodax-t12d-host-cap-published.log。临时诊断无源码插桩。
+- 此处为离线/本机存储及 Host 证据，不代表真实订阅权益或 POSIX 实机测试；E/F Space 和 G 全量仍未验收。
+
+- D冻结验收：121文件1672通过；Sandbox/文件4文件117通过40条件跳过；补齐省略source.profile时从session推导及Radius缺issuer拒绝，4文件19通过。专项语句87.65%、分支85.93%；源码/owned fixture类型和dts通过；真实发布JS+Host+预算23/23。CLI5,177,265 bytes，预算5,177,344未调整。Standards0/0，Spec复核剩余0。G全仓回归正在单独执行。

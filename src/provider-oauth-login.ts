@@ -4,6 +4,7 @@ import { beginOAuthAuthorization, beginDeviceAuthorization, createOAuthRefreshDr
 
 export interface ProviderOAuthLoginInput extends Omit<OAuthLoginInput, 'redirectUri'> {
   readonly redirectUri?: string; readonly store: OAuthSessionStore;
+  readonly profile?: string;
   readonly browser?: (authorization: { authorizationUrl: string; signal?: AbortSignal }) => Promise<string>;
   readonly device?: (authorization: { verificationUri: string; userCode: string; expiresAt: number }) => Promise<void>;
   /** Optional trusted issuer-specific validation; otherwise isolate the authenticated grant, without claiming a user identity. */
@@ -12,6 +13,7 @@ export interface ProviderOAuthLoginInput extends Omit<OAuthLoginInput, 'redirect
 /** Real PKCE/device login using the caller's issued registration, secure commit before publication. */
 export async function loginProviderOAuth(input: ProviderOAuthLoginInput) {
   if (!input.clientId?.trim() || Boolean(input.browser) === Boolean(input.device)) throw new OAuthCredentialError('invalid_session');
+  if (input.profile !== undefined && (typeof input.profile !== 'string' || !input.profile.trim())) throw new OAuthCredentialError('invalid_session');
   let result: OAuthLoginResult, nonce: string | undefined;
   const common = { service: input.service, clientId: input.clientId, scopes: [...input.scopes], issuer: input.issuer, fetch: input.fetch, signal: input.signal };
   if (input.browser) {
@@ -29,7 +31,7 @@ export async function loginProviderOAuth(input: ProviderOAuthLoginInput) {
   const accountId = input.verifyIdentity ? await input.verifyIdentity(result, { service: input.service, clientId, nonce, signal: input.signal }) : `grant:${randomUUID()}`;
   if (typeof accountId !== 'string' || !accountId.trim() || accountId.length > 1024) throw new OAuthCredentialError('invalid_session');
   const record: OAuthSessionRecord = { id: randomUUID(), service: input.service, clientId, accountId,
-    identityKind: input.verifyIdentity ? 'account' : 'grant', credentials: result.tokens, ...(input.issuer ? { issuer: input.issuer } : {}) };
+    identityKind: input.verifyIdentity ? 'account' : 'grant', credentials: result.tokens, ...(input.issuer ? { issuer: input.issuer } : {}), ...(input.profile ? { profile: input.profile } : {}) };
   input.signal?.throwIfAborted();
   await input.store.transact(record.id, async previous => {
     if (previous) throw new OAuthCredentialError('invalid_session');

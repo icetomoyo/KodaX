@@ -4679,7 +4679,8 @@ function workspaceShellSandboxConfig(
   const home = path.resolve(
     process.platform === 'win32' ? process.env.USERPROFILE ?? os.homedir() : os.homedir(),
   );
-  const credentialRoots = [path.join(agentHome, 'auth.json'), path.join(agentHome, 'auth.json.staging')];
+  const credentialFile = path.join(agentHome, 'auth.json');
+  const credentialRoots = [credentialFile, `${credentialFile}.staging`];
   // Windows plaintext files remove inherited sandbox grants before their first byte is written.
   // POSIX sandboxes run as the same user, so explicit namespace masks are also required.
   const denyRead: string[] = process.platform === 'win32' ? [] : credentialRoots;
@@ -4704,7 +4705,7 @@ function workspaceShellSandboxConfig(
   ];
   if (process.platform === 'win32') {
     for (const protectedRoot of protectedAgentHomeWriteRoots) {
-      if (writeRoots.some((granted) => isInside(granted, protectedRoot))) {
+      if (protectedRoot !== credentialFile && writeRoots.some((granted) => isInside(granted, protectedRoot))) {
         mkdirSync(protectedRoot, { recursive: true });
       }
     }

@@ -9,6 +9,19 @@ import { configureProviderAuthCommand, readOAuthConnection, receiveOAuthCallback
 import { createOAuthProviderConfig } from '@kodax-ai/llm';
 
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+it('does not log out another profile through the default CLI connection', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'kodax-auth-profile-')); vi.stubEnv('KODAX_HOME', directory);
+  const configPath = path.join(directory, 'config.json'), provider = { ...createOAuthProviderConfig({ name: 'foreign', service: 'openrouter', model: 'fixture' }), oauthRegistration: 'work-grant' };
+  try {
+    await writeFile(configPath, JSON.stringify({ customProviders: [provider] }));
+    const store = providerOAuthStore(configPath);
+    await store.transact('work-grant', async () => ({ record: { id: 'work-grant', service: 'openrouter', clientId: 'own', accountId: 'account', profile: 'work', credentials: { accessToken: 'work-fixture' } }, result: undefined }));
+    const command = new Command().exitOverride(); configureProviderAuthCommand(command);
+    await expect(command.parseAsync(['node', 'kodax', 'auth', 'logout', 'foreign'])).rejects.toThrow(/profile/);
+    expect(await store.transact('work-grant', async record => ({ record, result: record?.credentials?.accessToken }))).toBe('work-fixture');
+    expect(JSON.parse(await readFile(configPath, 'utf8')).customProviders[0].oauthRegistration).toBe('work-grant');
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 it('accepts only the exact loopback callback and closes observation on abort', async () => {
   const reservation = createServer(); reservation.listen(0, '127.0.0.1'); await once(reservation, 'listening');
   const address = reservation.address(); if (!address || typeof address === 'string') throw new Error('Expected local port');
@@ -24,7 +37,7 @@ it('accepts only the exact loopback callback and closes observation on abort', a
   await expect(receiveOAuthCallback(redirect, 'https://issuer.example', controller.signal)).rejects.toThrow(/cancelled/);
   expect(() => receiveOAuthCallback('http://0.0.0.0:1455/callback', 'https://issuer.example', controller.signal)).toThrow(/loopback/);
 });
-it.skipIf(process.platform !== 'win32')('configures auth status/logout through the real CLI command and secure store', async () => {
+it('configures auth status/logout through the real CLI command and shared file store', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'kodax-auth-cli-')); vi.stubEnv('KODAX_HOME', directory);
   const output = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
   try {

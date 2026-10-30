@@ -7,7 +7,8 @@ import { createOAuthRefreshDriver, openOAuthSession, validateCustomProviderConfi
 import { getAgentConfigPath } from '@kodax-ai/agent';
 import { linkProviderOAuthRegistration, createTerminalProviderSetupInteraction } from '@kodax-ai/repl';
 import { createProviderCredentialManager } from './provider-credential-manager.js';
-import { createWindowsOAuthSessionStore } from './oauth-session-store.js';
+import { assertProviderOAuthSessionScope, migrateProviderOAuthRegistration, providerOAuthStore } from './provider-oauth-store.js';
+export { providerOAuthStore } from './provider-oauth-store.js';
 import { loginProviderOAuth } from './provider-oauth-login.js';
 
 export async function readOAuthConnection(configPath: string, name: string): Promise<KodaXCustomProviderConfig> {
@@ -17,9 +18,10 @@ export async function readOAuthConnection(configPath: string, name: string): Pro
   if (!provider?.oauth) throw new Error('Choose a configured OAuth provider alias.');
   validateCustomProviderConfig(provider); return provider;
 }
-export function providerOAuthStore(configPath: string) { return createWindowsOAuthSessionStore(path.join(path.dirname(configPath), 'provider-oauth')); }
 function openBrowser(url: string): Promise<void> {
-  const [command, args] = process.platform === 'win32' ? ['rundll32.exe', ['url.dll,FileProtocolHandler', url]]
+  const systemRoot = process.env.SystemRoot;
+  if (process.platform === 'win32' && (!systemRoot || !path.isAbsolute(systemRoot))) return Promise.reject(new Error('Windows system browser launcher is unavailable.'));
+  const [command, args] = process.platform === 'win32' ? [path.join(systemRoot!, 'System32', 'rundll32.exe'), [path.join(systemRoot!, 'System32', 'url.dll') + ',FileProtocolHandler', url]]
     : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
   return new Promise((resolve, reject) => {
     const child = spawn(command!, args, { windowsHide: true, stdio: 'ignore' });
@@ -76,13 +78,20 @@ export function configureProviderAuthCommand(program: Command): void {
       const configPath = getAgentConfigPath('config.json'), provider = await readOAuthConnection(configPath, name), store = providerOAuthStore(configPath);
       const lifetime = AbortSignal.timeout(5 * 60 * 1000);
       if (!options.device && !options.redirectUri) throw new Error('Pass your registered --redirect-uri, or select an available --device flow.');
-      const login = await loginProviderOAuth({ service: provider.oauth!, clientId: options.clientId, scopes: options.scope, store,
+      const login = await loginProviderOAuth({ profile: 'default', service: provider.oauth!, clientId: options.clientId, scopes: options.scope, store,
         ...(provider.oauth === 'radius' ? { issuer: provider.baseUrl } : {}), redirectUri: options.redirectUri, signal: lifetime,
         ...(options.device ? { device: async (step: { verificationUri: string; userCode: string }) => { process.stdout.write(`Open ${step.verificationUri} and enter ${step.userCode}\n`); } }
           : { browser: async (step: { authorizationUrl: string }) => { process.stdout.write(`Open ${step.authorizationUrl}\n`); return receiveOAuthCallback(options.redirectUri!, step.authorizationUrl, lifetime); } }) });
       try { lifetime.throwIfAborted(); linkProviderOAuthRegistration({ configPath, name, service: provider.oauth!, expectedRegistration: provider.oauthRegistration, registration: login.registrationId }); }
       catch (error) { await login.session.revoke(); throw error; }
-      if (provider.oauthRegistration) await (await openOAuthSession({ id: provider.oauthRegistration, store, driver: createOAuthRefreshDriver(provider.oauth!) })).revoke();
+      if (provider.oauthRegistration) await migrateProviderOAuthRegistration({ configPath, registrationId: provider.oauthRegistration });
+      if (provider.oauthRegistration) {
+        const previous = await openOAuthSession({ id: provider.oauthRegistration, store, driver: createOAuthRefreshDriver(provider.oauth!) });
+        if ((previous.profile ?? 'default') === 'default') {
+          assertProviderOAuthSessionScope({ service: provider.oauth!, profile: 'default', ...(provider.oauth === 'radius' ? { issuer: provider.baseUrl } : {}) }, previous);
+          await previous.revoke();
+        }
+      }
       process.stdout.write(`Authorized ${name} with a new isolated grant. No verified user subject is claimed.\n`);
     });
   auth.command('status <provider>').action(async (name: string) => {
@@ -90,13 +99,17 @@ export function configureProviderAuthCommand(program: Command): void {
     if (status.source !== 'oauth') { process.stdout.write(`Credential source: ${status.source}; saved key: ${status.stored ? 'yes' : 'no'}; online validity unverified.\n`); return; }
     const configPath = getAgentConfigPath('config.json'), provider = await readOAuthConnection(configPath, name);
     if (!provider.oauthRegistration) { process.stdout.write('Login required.\n'); return; }
+    await migrateProviderOAuthRegistration({ configPath, registrationId: provider.oauthRegistration });
     const record = await providerOAuthStore(configPath).transact(provider.oauthRegistration, async record => ({ record, result: record }));
+    if (record && (record.profile ?? 'default') !== 'default') { process.stdout.write('Registration belongs to another profile. Login required for the default profile.\n'); return; }
     process.stdout.write(record?.credentials ? `Stored ${record.identityKind ?? 'account'} registration; live entitlement unverified.\n` : 'Login required.\n');
   });
   auth.command('logout <provider>').action(async (name: string) => {
     const configPath = getAgentConfigPath('config.json'), provider = await readOAuthConnection(configPath, name);
     if (!provider.oauthRegistration) { process.stdout.write('Already logged out.\n'); return; }
+    await migrateProviderOAuthRegistration({ configPath, registrationId: provider.oauthRegistration });
     const session = await openOAuthSession({ id: provider.oauthRegistration, store: providerOAuthStore(configPath), driver: createOAuthRefreshDriver(provider.oauth!) });
+    assertProviderOAuthSessionScope({ service: provider.oauth!, profile: 'default', ...(provider.oauth === 'radius' ? { issuer: provider.baseUrl } : {}) }, session);
     const result = await session.revoke();
     linkProviderOAuthRegistration({ configPath, name, service: provider.oauth!, expectedRegistration: provider.oauthRegistration });
     process.stdout.write(`Local grant revoked; remote revocation ${result.remote}.\n`);

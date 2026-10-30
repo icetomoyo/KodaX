@@ -1,3 +1,4 @@
+export { providerOAuthStore, migrateProviderOAuthRegistration } from './provider-oauth-store.js';
 export { loginProviderOAuth } from './provider-oauth-login.js';
 export type { ProviderOAuthLoginInput } from './provider-oauth-login.js';
 export { createEncryptedOAuthSessionStore, createWindowsOAuthSessionStore } from './oauth-session-store.js';

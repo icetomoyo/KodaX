@@ -2050,6 +2050,19 @@ describe('runtime daemon dispatcher', () => {
       expect(queried).toMatchObject({ result: initialized.capabilities });
     } finally { dispatcher.close(); }
   });
+  it.each([[true, false], [true, true], [false, true], [false, false]])('forwards provider probe authorization only when its owner supports it (%s, override=%s)', async (supported, override) => {
+    const dispatcher = createRuntimeDaemonDispatcher({
+      runtime: { ...makeRuntime(), capabilities: supported ? { providerProbeAuthorization: { version: 1 } } : {} },
+      capabilities: override ? { providerProbeAuthorization: { version: 1 } } : undefined,
+    });
+    try {
+      const initialized = await initializeDispatcher(dispatcher);
+      if (supported) expect(initialized.capabilities).toHaveProperty('providerProbeAuthorization', { version: 1 });
+      else expect(initialized.capabilities).not.toHaveProperty('providerProbeAuthorization');
+      const queried = await dispatcher.handle(createRuntimeDaemonRequest('probe-capability', 'runtime.capabilities'));
+      expect(queried).toMatchObject({ result: initialized.capabilities });
+    } finally { dispatcher.close(); }
+  });
 
   it.each([
     {},

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import lockfile from 'proper-lockfile';
-import { OAuthCredentialError, type OAuthSessionRecord, type OAuthSessionStore } from './oauth/session.js';
+import { OAuthCredentialError, shareOAuthSessionStoreIdentity, type OAuthSessionRecord, type OAuthSessionStore } from './oauth/session.js';
 
 export interface ProviderCredentialFileBinding { readonly profile: string; readonly provider: string; readonly connectionFingerprint: string; }
 export interface StoredProviderApiKey { readonly key: string; readonly revision: string; }
@@ -13,6 +13,8 @@ interface ApiKeyEntry { readonly binding: ProviderCredentialFileBinding; readonl
 interface AuthDocument { version: 2; apiKeys: Record<string, ApiKeyEntry>; oauth: Record<string, OAuthSessionRecord>; }
 export interface FileProviderCredentialStore {
   readonly filePath: string;
+  /** Prepare private mask targets before a privileged application starts untrusted shell work. */
+  initialize?(): Promise<void>;
   describeApiKey(binding: ProviderCredentialFileBinding): Promise<ProviderApiKeyStatus>;
   /** Trusted Main only; never expose this secret-returning port to Renderer/Product RPC. */
   readApiKey(binding: ProviderCredentialFileBinding): Promise<StoredProviderApiKey | undefined>;
@@ -33,9 +35,10 @@ function bindingId(binding: ProviderCredentialFileBinding): string {
   return createHash('sha256').update(JSON.stringify([binding.profile, binding.provider, binding.connectionFingerprint])).digest('hex');
 }
 function validRegistration(value: unknown, id: string): value is OAuthSessionRecord {
-  if (!object(value) || Object.keys(value).some(key => !['id', 'service', 'clientId', 'issuer', 'accountId', 'identityKind', 'credentials', 'resource'].includes(key)) || value.id !== id || !secret(value.clientId) || !secret(value.accountId)
+  if (!object(value) || Object.keys(value).some(key => !['id', 'service', 'clientId', 'issuer', 'accountId', 'identityKind', 'profile', 'credentials', 'resource'].includes(key)) || value.id !== id || !secret(value.clientId) || !secret(value.accountId)
     || !['openai-chatgpt', 'openai-codex', 'github-copilot', 'anthropic', 'openrouter', 'kimi-coding', 'meta', 'xai', 'radius'].includes(String(value.service))
     || (value.issuer !== undefined && !secret(value.issuer))
+    || (value.profile !== undefined && (typeof value.profile !== 'string' || !value.profile.trim()))
     || (value.identityKind !== undefined && !['account', 'grant'].includes(String(value.identityKind)))) return false;
   return [value.credentials, value.resource].every(tokens => tokens === undefined || (object(tokens) && Object.keys(tokens).every(key => ['accessToken', 'refreshToken', 'expiresAt', 'scopes', 'earliestRefreshAt'].includes(key)) && secret(tokens.accessToken)
     && (tokens.refreshToken === undefined || secret(tokens.refreshToken)) && (tokens.expiresAt === undefined || (typeof tokens.expiresAt === 'number' && Number.isFinite(tokens.expiresAt)))
@@ -61,7 +64,7 @@ async function readDocument(file: string): Promise<AuthDocument> {
   } catch (error) { if (missing(error)) return { version: 2, apiKeys: {}, oauth: {} }; throw failure(); }
 }
 let windowsSid: string | undefined;
-async function protectFile(file: string): Promise<void> {
+async function protectFile(file: string, directory = false): Promise<void> {
   if (process.platform !== 'win32') return;
   const systemRoot = process.env.SystemRoot;
   if (!systemRoot || !path.isAbsolute(systemRoot)) throw failure();
@@ -70,14 +73,19 @@ async function protectFile(file: string): Promise<void> {
     const result = await promisify(execFile)(path.join(systemDirectory, 'whoami.exe'), ['/user', '/fo', 'csv', '/nh'], { windowsHide: true, timeout: 10000 });
     windowsSid = result.stdout.match(/"(S-[0-9-]+)"/)?.[1]; if (!windowsSid) throw failure();
   }
-  await promisify(execFile)(path.join(systemDirectory, 'icacls.exe'), [file, '/inheritance:r', '/grant:r', `*${windowsSid}:(F)`, '*S-1-5-18:(F)', '/Q'], { windowsHide: true, timeout: 10000 });
+  const flags = directory ? '(OI)(CI)(F)' : '(F)';
+  await promisify(execFile)(path.join(systemDirectory, 'icacls.exe'), [file, '/inheritance:r', '/grant:r', `*${windowsSid}:${flags}`, `*S-1-5-18:${flags}`, '/Q'], { windowsHide: true, timeout: 10000 });
 }
-async function writeDocument(file: string, next: AuthDocument, valid: () => boolean): Promise<void> {
-  const bytes = Buffer.from(JSON.stringify(next, null, 2) + '\n'); if (bytes.length > 4 * 1024 * 1024) throw failure();
+async function prepareStaging(file: string): Promise<string> {
   const staging = `${file}.staging`;
   await mkdir(staging, { recursive: true, mode: 0o700 });
   const directory = await lstat(staging); if (!directory.isDirectory() || directory.isSymbolicLink()) throw failure();
-  if (process.platform !== 'win32') await chmod(staging, 0o700);
+  if (process.platform === 'win32') await protectFile(staging, true); else await chmod(staging, 0o700);
+  return staging;
+}
+async function writeDocument(file: string, next: AuthDocument, valid: () => boolean): Promise<void> {
+  const bytes = Buffer.from(JSON.stringify(next, null, 2) + '\n'); if (bytes.length > 4 * 1024 * 1024) throw failure();
+  const staging = await prepareStaging(file);
   const temporary = path.join(staging, `${randomUUID()}.tmp`);
   try {
     const handle = await open(temporary, 'wx', 0o600);
@@ -88,7 +96,7 @@ async function writeDocument(file: string, next: AuthDocument, valid: () => bool
   } catch { throw failure(); }
   finally { bytes.fill(0); try { await unlink(temporary); } catch (error) { if (!missing(error)) throw failure(); } }
 }
-async function transaction<T>(file: string, operation: (current: AuthDocument) => Promise<T>): Promise<T> {
+async function transaction<T>(file: string, operation: (current: AuthDocument) => Promise<T>, initialize = false): Promise<T> {
   let compromised = false;
   let release: () => Promise<void>;
   try { release = await lockfile.lock(file, { realpath: false, stale: 30000, update: 5000,
@@ -98,7 +106,7 @@ async function transaction<T>(file: string, operation: (current: AuthDocument) =
     const current = await readDocument(file), before = JSON.stringify(current);
     const result = await operation(current); document(current);
     if (compromised) throw failure();
-    if (JSON.stringify(current) !== before) await writeDocument(file, current, () => !compromised);
+    if (JSON.stringify(current) !== before || (initialize && !Object.keys(current.apiKeys).length && !Object.keys(current.oauth).length)) await writeDocument(file, current, () => !compromised);
     if (compromised) throw failure(); return result;
   } finally { try { await release(); } catch { throw failure(); } }
 }
@@ -107,7 +115,7 @@ function expectRevision(current: ApiKeyEntry | undefined, expected: string | nul
   if (expected !== undefined && (current?.revision ?? null) !== expected) throw new CredentialUpdateConflictError();
 }
 /** Explicit protected plaintext backend, not a fallback from an OS vault failure. */
-export function createFileProviderCredentialStore(filePath: string): FileProviderCredentialStore {
+export function createFileProviderCredentialStore(filePath: string): FileProviderCredentialStore & { initialize(): Promise<void> } {
   if (!path.isAbsolute(filePath)) throw new Error('Credential store requires an absolute trusted path.');
   const canonical = async () => {
     await mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
@@ -118,7 +126,20 @@ export function createFileProviderCredentialStore(filePath: string): FileProvide
     return entry?.key ? { key: entry.key, revision: entry.revision } : undefined;
   };
   const status = (entry: StoredProviderApiKey | undefined): ProviderApiKeyStatus => entry ? { configured: true, revision: entry.revision } : { configured: false };
-  return { filePath, readApiKey, describeApiKey: async binding => {
+  const oauth: OAuthSessionStore = { async transact(id, operation) {
+      if (typeof id !== 'string' || !id.trim() || id.length > 512) throw failure();
+      const file = await canonical(); shareOAuthSessionStoreIdentity(oauth, 'file:' + (process.platform === 'win32' ? file.toLowerCase() : file));
+      return transaction(file, async data => {
+        const previous = own(data.oauth, id), update = await operation(previous ? structuredClone(previous) : undefined);
+        if (update.record) {
+          if (!validRegistration(update.record, id) || (previous && (previous.service !== update.record.service || previous.clientId !== update.record.clientId
+            || previous.accountId !== update.record.accountId || previous.issuer !== update.record.issuer || previous.identityKind !== update.record.identityKind || previous.profile !== update.record.profile))) throw failure();
+          Object.defineProperty(data.oauth, id, { value: structuredClone(update.record), enumerable: true, configurable: true, writable: true });
+        } else delete data.oauth[id];
+        return update.result;
+      });
+  } };
+  return { filePath, async initialize() { const file = await canonical(); await prepareStaging(file); await transaction(file, async () => undefined, true); if (process.platform === 'win32') await protectFile(file); else await chmod(file, 0o600); }, readApiKey, describeApiKey: async binding => {
     const entry = own((await readDocument(await canonical())).apiKeys, bindingId(binding));
     return entry?.key ? status({ key: entry.key, revision: entry.revision }) : { configured: false, ...(entry ? { revision: entry.revision } : {}) };
   },
@@ -136,17 +157,6 @@ export function createFileProviderCredentialStore(filePath: string): FileProvide
         data.apiKeys[id] = { binding: structuredClone(binding), revision }; return { configured: false, revision };
       });
     },
-    oauth: { async transact(id, operation) {
-      if (typeof id !== 'string' || !id.trim() || id.length > 512) throw failure();
-      return transaction(await canonical(), async data => {
-        const previous = own(data.oauth, id), update = await operation(previous ? structuredClone(previous) : undefined);
-        if (update.record) {
-          if (!validRegistration(update.record, id) || (previous && (previous.service !== update.record.service || previous.clientId !== update.record.clientId
-            || previous.accountId !== update.record.accountId || previous.issuer !== update.record.issuer || previous.identityKind !== update.record.identityKind))) throw failure();
-          Object.defineProperty(data.oauth, id, { value: structuredClone(update.record), enumerable: true, configurable: true, writable: true });
-        } else delete data.oauth[id];
-        return update.result;
-      });
-    } },
+    oauth,
   };
 }

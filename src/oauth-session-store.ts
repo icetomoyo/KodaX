@@ -62,17 +62,19 @@ export function createEncryptedOAuthSessionStore(directory: string, sealer: OAut
       if (update.record) {
         registration(update.record, id);
         if (previous && (previous.service !== update.record.service || previous.clientId !== update.record.clientId
-          || previous.accountId !== update.record.accountId || previous.issuer !== update.record.issuer || previous.identityKind !== update.record.identityKind)) throw storageError();
+          || previous.accountId !== update.record.accountId || previous.issuer !== update.record.issuer || previous.identityKind !== update.record.identityKind || previous.profile !== update.record.profile)) throw storageError();
       }
       await commit(file, update.record, sealer); return update.result;
     } finally { await release(); }
   } };
 }
 function dpapi(input: Uint8Array, protect: boolean): Promise<Uint8Array> {
+  const systemRoot = process.env.SystemRoot;
+  if (!systemRoot || !path.isAbsolute(systemRoot)) return Promise.reject(storageError());
   const method = protect ? 'Protect' : 'Unprotect';
   const script = `Add-Type -AssemblyName System.Security; $data = [Convert]::FromBase64String([Console]::In.ReadToEnd()); $result = [Security.Cryptography.ProtectedData]::${method}($data, $null, [Security.Cryptography.DataProtectionScope]::CurrentUser); [Console]::Out.Write([Convert]::ToBase64String($result))`;
   return new Promise((resolve, reject) => {
-    const child = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+    const child = spawn(path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
       { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], timeout: 15000 });
     const chunks: Buffer[] = []; let size = 0;
     child.stdout.on('data', (chunk: Buffer) => { size += chunk.length; if (size > 2 * 1024 * 1024) child.kill(); else chunks.push(chunk); });

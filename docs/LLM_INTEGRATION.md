@@ -74,3 +74,16 @@ CLI `kodax setup` 和 REPL `/setup` 现在可选隐藏输入并保存 Key、使�
 终端 secret 输入使用该 readline 实例专属输出视图，禁用本次 history；取消/EOF 后恢复正常输出。Classic REPL 和 Ink 都接入 secret port；Ink 输入不带默认 Key，画面与布局只见固定掩码，不把原值附加到对话。可见状态不声称隔离任意同 OS 用户进程。
 
 为保留 CLI 5MiB-64KiB 预算，配置模板移入 generated-config-templates.json；同一生成脚本检查源模板逐字一致，独立 REPL、npm dist 与编译二进制均带资源。没有放宽预算。默认 OAuth 共用文件/旧加密注册迁移仍为 T12-D；Space 实迁移 E/F 和全量 G 尚未完成。
+
+
+## T12-D 默认 OAuth 文件与恢复（离线切片）
+
+providerOAuthStore(configPath) 现在使用同目录 auth.json 的 OAuth 区域，与 Key 共用整文档锁；新登录不要求 Windows DPAPI 或 keychain。显式 encrypted/Windows store 仍可用作兼容后端。migrateProviderOAuthRegistration 只处理配置引用的 registration ID：新文件已有该 ID（包括 revoked tombstone）即保持其权威，不回读旧 OS 后端；否则持有旧 registration 锁跨过新文件 durable commit，再清除该旧记录的 credentials/resource，保留原 metadata 与其他账号。新文件提交失败不清旧值；旧清理失败明确拒绝成功状态，已提交的新副本保留。迁移不是远端 revoke。
+
+同一进程内，同一 canonical auth 文件的独立 store handle 现在共享 OAuth lifetime/fence；不是按每次 new 出来的 store 对象孤立。一个 handle 撤销会同步封住同文件其他 handle 的旧授权；迟到 refresh 不得向后继账号返回或覆盖结果。三独立 Main 进程的真实 openOAuthSession 测试确认同一 rotating grant 只刷新一次；跨进程每请求重读和文件锁不等于取消另一进程已经发出的生成。
+
+OAuth registration/session 可带可信 profile（旧记录缺省 default），属于不可变 metadata。Main source 校验 grant profile 和 Radius issuer；CLI 默认 profile 不撤销其他 profile，其他 profile 的 grant 不进入本 Main allowlist。Profile-bound source（含 API-key binding）在注册任何 lease 前，必须匹配实际 services.identity.profile；旧不带 profile 的 environment SDK 来源保留。Host epoch 变化继续重绑；不复用序列化 lease。
+
+文件后端 initialize() 用于在启用不可信工具前准备空 auth.json 和 staging。CLI Main 在 env-only 路线也先初始化，否则 Linux ASRT 会忽略不存在的 denyRead 目标。Windows staging 本身去继承并设置 current-user/SYSTEM 可继承 ACL，新建的空文件从一开始就私有；再对实际明文文件去继承。POSIX staging0700/file0600 与 namespace masks 保留。工作区包含配置根时，沙箱不把 auth.json 当目录创建。
+
+DPAPI 与浏览器兼容工具改用明确 SystemRoot 下的系统可执行文件/DLL。独立 Host 现在只转发 owner 实际声明的 providerProbeAuthorization:1，不能由 override 伪造；缺转发曾导致真实 CLI 连接/恢复失败，已有四格 handshake 和真实 Host crash/reattach/idle-exit 回归。文件、Main、Host 的变化不改客户端身份协议；Space 实际迁移仍为 E/F，最终合并全量仍为 G。

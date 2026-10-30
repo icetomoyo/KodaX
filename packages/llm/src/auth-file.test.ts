@@ -11,6 +11,13 @@ const folders: string[] = [];
 afterEach(async () => { for (const folder of folders.splice(0)) await rm(folder, { recursive: true, force: true }); });
 async function fixture() { const folder = await mkdtemp(path.join(tmpdir(), 'kodax-auth-file-')); folders.push(folder); return path.join(folder, 'auth.json'); }
 const binding = { profile: 'default', provider: 'custom', connectionFingerprint: 'a'.repeat(64) };
+it('initializes both credential mask targets before an env-only Host can start shell work', async () => {
+  const file = await fixture(), store = createFileProviderCredentialStore(file);
+  await store.initialize(); expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({ version: 2, apiKeys: {}, oauth: {} });
+  expect(await readdir(`${file}.staging`)).toEqual([]);
+  await store.setApiKey(binding, 'keep-current'); const before = await readFile(file, 'utf8');
+  await store.initialize(); expect(await readFile(file, 'utf8')).toBe(before);
+});
 it('reads version 1 files without rewriting them and upgrades on the first mutation', async () => {
   const file = await fixture(), store = createFileProviderCredentialStore(file);
   const saved = await store.setApiKey(binding, 'legacy-key'), value = JSON.parse(await readFile(file, 'utf8')); value.version = 1;
@@ -120,4 +127,15 @@ it.skipIf(process.platform !== 'win32')('protects the actual plaintext file with
   const [protectedRules, accounts] = result.stdout.split('|'); expect(protectedRules).toBe('True');
   const identities = accounts!.split(','); expect(identities).toHaveLength(2); expect(identities).toContain('S-1-5-18');
   expect(identities.filter(identity => identity !== 'S-1-5-18').every(identity => /^S-1-5-21-/.test(identity))).toBe(true);
+  const probe = path.join(`${file}.staging`, 'empty-permission-probe'); await writeFile(probe, '');
+  const directoryScript = "$dir=[System.IO.Directory]::GetAccessControl($env:KODAX_TEST_AUTH_STAGE);$file=[System.IO.File]::GetAccessControl($env:KODAX_TEST_AUTH_PROBE);[Console]::Write(($dir.AreAccessRulesProtected.ToString()+'|'+(($file.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier]) | ForEach-Object {$_.IdentityReference.Value}) -join ',')))";
+  const inherited = await promisify(execFile)(path.join(process.env.SystemRoot!, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    ['-NoProfile', '-NonInteractive', '-Command', directoryScript], { windowsHide: true, timeout: 10000, env: { ...process.env, KODAX_TEST_AUTH_STAGE: `${file}.staging`, KODAX_TEST_AUTH_PROBE: probe } });
+  const [privateDirectory, inheritedAccounts] = inherited.stdout.split('|'); expect(privateDirectory).toBe('True');
+  expect(inheritedAccounts!.split(',').sort()).toEqual(identities.sort());
+  await promisify(execFile)(path.join(process.env.SystemRoot!, 'System32', 'icacls.exe'), [file, '/inheritance:e', '/Q'], { windowsHide: true, timeout: 10000 });
+  await createFileProviderCredentialStore(file).initialize();
+  const restored = await promisify(execFile)(path.join(process.env.SystemRoot!, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 10000, env: { ...process.env, KODAX_TEST_AUTH_ACL: file } });
+  expect(restored.stdout.split('|')[0]).toBe('True');
 });

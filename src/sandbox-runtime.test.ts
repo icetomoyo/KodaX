@@ -2881,6 +2881,16 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     await invocation.cleanup();
   });
 
+  it('keeps an initialized auth.json file intact when the workspace contains its config root', async () => {
+    await resetSandboxRuntimeForTest();
+    const agentHome = path.resolve(process.env.KODAX_HOME!), root = path.dirname(agentHome), file = path.join(agentHome, 'auth.json');
+    const bytes = '{"version":2,"apiKeys":{},"oauth":{}}'; await writeFile(file, bytes);
+    const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
+    const invocation = await sandbox.prepare({ toolCallId: 'credential-file-root', toolInput: { command: 'node --version' },
+      command: 'node --version', executable: process.execPath, args: ['--version'], cwd: root, env: process.env, fallbackToNormalExecution: false });
+    expect(invocation).toBeDefined(); expect(await readFile(file, 'utf8')).toBe(bytes);
+    await invocation?.cleanup();
+  });
   it('protects an explicitly snapshotted workspace Exec Policy from sandbox writes', async () => {
     await resetSandboxRuntimeForTest();
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-exec-policy-deny-'));

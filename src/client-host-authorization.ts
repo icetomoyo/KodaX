@@ -196,6 +196,6 @@ export type KodaXClientExecutionRequest =
 
 export type KodaXClientHostAuthorization = (
   request: KodaXClientExecutionRequest,
-  services: { readonly credentials: RuntimeCredentialService; readonly hostTools: RuntimeHostToolService; readonly identity?: { readonly runtimeId: string } },
+  services: { readonly credentials: RuntimeCredentialService; readonly hostTools: RuntimeHostToolService; readonly identity?: { readonly runtimeId: string; readonly profile?: string } },
 ) => Promise<RuntimeExecutionAuthorization | undefined>;
 

@@ -23,6 +23,8 @@ export interface OAuthSessionRecord {
   readonly accountId: string;
   /** Defaults to account for legacy verified-subject registrations; grant never claims a verified user subject. */
   readonly identityKind?: 'account' | 'grant';
+  /** Trusted Main profile; absent legacy registrations belong to the default profile. */
+  readonly profile?: string;
   readonly credentials?: OAuthTokens;
   /** Copilot/Meta inference credentials are distinct from their identity grants. */
   readonly resource?: OAuthTokens;
@@ -57,6 +59,8 @@ export interface OAuthCredentialSession {
   readonly id: string;
   readonly service: OAuthService;
   readonly accountId: string;
+  readonly issuer?: string;
+  readonly profile?: string;
   acquire(signal?: AbortSignal): Promise<string>;
   /** Called before local/remote revocation; host bridges must fence old authority immediately. */
   onInvalidate(listener: () => Promise<void>): () => void;
@@ -73,7 +77,7 @@ function due(tokens: OAuthTokens): boolean {
   return tokens.expiresAt !== undefined && tokens.expiresAt <= Date.now() + 30_000 && (tokens.earliestRefreshAt ?? 0) <= Date.now();
 }
 function sameRegistration(a: OAuthSessionRecord, b: OAuthSessionRecord): boolean {
-  return a.id === b.id && a.service === b.service && a.clientId === b.clientId && a.accountId === b.accountId && a.issuer === b.issuer && a.identityKind === b.identityKind;
+  return a.id === b.id && a.service === b.service && a.clientId === b.clientId && a.accountId === b.accountId && a.issuer === b.issuer && a.identityKind === b.identityKind && a.profile === b.profile;
 }
 
 interface SessionLifetime {
@@ -83,7 +87,17 @@ interface SessionLifetime {
   revoking?: ReturnType<OAuthCredentialSession['revoke']>;
 }
 // One host/store shares revocation fences across all handles for a registration.
-const lifetimes = new WeakMap<OAuthSessionStore, Map<string, SessionLifetime>>();
+const lifetimes = new WeakMap<object, Map<string, SessionLifetime>>();
+const storeIdentities = new WeakMap<OAuthSessionStore, object>();
+const persistentIdentities = new Map<string, object>();
+/** Internal backend seam: canonical stores share fences without retaining any credential material. */
+export function shareOAuthSessionStoreIdentity(store: OAuthSessionStore, identity: string): void {
+  let owner = persistentIdentities.get(identity);
+  if (!owner) { owner = {}; persistentIdentities.set(identity, owner); }
+  const previous = storeIdentities.get(store);
+  if (previous && previous !== owner) throw new OAuthCredentialError('invalid_session');
+  storeIdentities.set(store, owner);
+}
 
 /** A cancelled consumer does not cancel a shared, rotating refresh transaction. */
 async function cancellable<T>(pending: Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -105,13 +119,15 @@ export async function openOAuthSession(input: {
   const initial = await store.transact(id, async record => ({ record, result: record }))
     .catch(() => { throw new OAuthCredentialError('storage_failed'); });
   if (!initial || initial.id !== id || !initial.clientId || !initial.accountId
+    || (initial.profile !== undefined && (typeof initial.profile !== 'string' || !initial.profile.trim()))
     || (initial.identityKind !== undefined && !['account', 'grant'].includes(initial.identityKind))
     || !['openai-chatgpt', 'openai-codex', 'github-copilot', 'anthropic', 'openrouter', 'kimi-coding', 'meta', 'xai', 'radius'].includes(initial.service)) {
     throw new OAuthCredentialError('invalid_session');
   }
   const registration = { ...initial, credentials: undefined, resource: undefined };
-  let registrations = lifetimes.get(store);
-  if (!registrations) { registrations = new Map(); lifetimes.set(store, registrations); }
+  const identity = storeIdentities.get(store) ?? store;
+  let registrations = lifetimes.get(identity);
+  if (!registrations) { registrations = new Map(); lifetimes.set(identity, registrations); }
   let state = registrations.get(id);
   if (state && !sameRegistration(state.registration, registration)) throw new OAuthCredentialError('invalid_session');
   if (!state) {
@@ -123,7 +139,7 @@ export async function openOAuthSession(input: {
   const listeners = shared.listeners;
   const ensureActive = () => { if (lifetime.signal.aborted) throw new OAuthCredentialError('session_revoked'); };
   return {
-    id, service: initial.service, accountId: initial.accountId,
+    id, service: initial.service, accountId: initial.accountId, issuer: initial.issuer, profile: initial.profile,
     async acquire(signal) {
       signal?.throwIfAborted();
       ensureActive();

@@ -2644,6 +2644,7 @@ function runtimeDaemonCapabilities(
   delete safeOverrides.productExitControl;
   delete safeOverrides.productExecutionFacts;
   delete safeOverrides.productActorAuthorization;
+  delete safeOverrides.providerProbeAuthorization;
   delete safeOverrides.workflowSettingsDefaults;
   delete safeOverrides.subscriptionLifecycle;
   delete safeOverrides.sessionCancellation;
@@ -2682,6 +2683,8 @@ function runtimeDaemonCapabilities(
       ? { sessionDrafts: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.productExecutionFacts) && ownerCapabilities.productExecutionFacts.version === 1
       ? { productExecutionFacts: { version: 1 } } : {}),
+    ...(isRecord(ownerCapabilities.providerProbeAuthorization) && ownerCapabilities.providerProbeAuthorization.version === 1
+      ? { providerProbeAuthorization: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.productActorAuthorization) && ownerCapabilities.productActorAuthorization.version === 1
       ? { productActorAuthorization: { version: 1 } } : {}),
     ...(isRecord(toolInvocation) && toolInvocation.version === 1
