@@ -1,0 +1,123 @@
+{
+  "revision": "evidence-sequence-r1 plus numeric-r2b",
+  "date": "2026-10-30",
+  "model": "kimi-for-coding",
+  "protocol": "OpenAI Chat Completions at Kimi Code, thinking disabled",
+  "rawDirectory": "C:/Users/ADMIN/AppData/Local/Temp/kodax-eval-dumps/visual-harness/evidence-sequence-r1-z5NNlu",
+  "predecessorRawDirectory": "C:/Users/ADMIN/AppData/Local/Temp/kodax-visual-task-r5-070Hn3",
+  "qualityReview": {
+    "beforeRevealAndUsage": true,
+    "artifact": "evidence.quality-review.blind.json",
+    "reviewer": "main-session",
+    "preferredArm": "tie",
+    "materialBenefit": "none observed in this pair",
+    "outcome": "Both paired responses retained the wrong Motor-E/P1 endpoint. A separately frozen numeric diagnostic then recognized the sampled white gap but still retained the contradictory endpoint. The numeric diagnostic was reviewed before usage, without claiming a blinded paired comparison."
+  },
+  "calls": [
+    {
+      "id": "E-A-X",
+      "condition": "repeat-full",
+      "requestSha256": "6338a3adf7621ea960d1205c4d8deba5d3e3c74fdee606f7db301fd30af2df1e",
+      "imageDimensions": [
+        [
+          1600,
+          1000
+        ],
+        [
+          1600,
+          1000
+        ]
+      ],
+      "supplementSha256": "04abb937577fe0d51d228ac54462794f3290a4707684cb3c815b808bfe6b766a",
+      "inputTokens": 17704,
+      "outputTokens": 212,
+      "totalTokens": 17916,
+      "cachedInputTokens": null,
+      "httpDurationMs": 5886,
+      "endpointCorrect": false
+    },
+    {
+      "id": "E-A-Y",
+      "condition": "related-crop",
+      "requestSha256": "2230e93a5a632a9271e15a943d7f3359578d5d17dbe4de9c45b2e0053ec5c233",
+      "imageDimensions": [
+        [
+          1600,
+          1000
+        ],
+        [
+          720,
+          600
+        ]
+      ],
+      "supplementSha256": "73751bbf57a5c6a345331ade89d8e9f736d999ad721de739d050312be4655ae8",
+      "inputTokens": 16186,
+      "outputTokens": 263,
+      "totalTokens": 16449,
+      "cachedInputTokens": 15360,
+      "httpDurationMs": 4611,
+      "endpointCorrect": false
+    },
+    {
+      "id": "numeric-r2b/E-A-X",
+      "condition": "related-crop-plus-exact-pixel-text",
+      "requestSha256": "ab57c405233b7119b0552bae64a97706a563cf9966871788e59ed29cafcbdffc",
+      "responseSha256": "74ba7aae39392ff93dacbb4448a3234e2c547c53ec5b38a61a75a4d134b16467",
+      "imageDimensions": [
+        [
+          1600,
+          1000
+        ],
+        [
+          720,
+          600
+        ]
+      ],
+      "inputTokens": 16352,
+      "outputTokens": 293,
+      "totalTokens": 16645,
+      "cachedInputTokens": 16136,
+      "httpDurationMs": 6246,
+      "endpointCorrect": false,
+      "sampledGapRecognized": true,
+      "coherentEvidenceIntegration": false,
+      "pairedBlindComparison": false
+    }
+  ],
+  "totals": {
+    "generationRequests": 3,
+    "inputTokens": 50242,
+    "outputTokens": 768,
+    "totalTokens": 51010,
+    "metadataRequests": 5,
+    "allProviderHttpRequests": 8,
+    "reviewRequests": 0,
+    "retry": 0,
+    "fallback": 0,
+    "repair": 0,
+    "child": 0,
+    "externalJudge": 0,
+    "observedExtraWalletCny": 0,
+    "actualInvoiceUsd": null,
+    "allocatedSubscriptionCost": null
+  },
+  "accountingLimits": {
+    "allUsageIsApiReported": true,
+    "cachedInputAlreadyIncludedInInput": true,
+    "r5PrefixGenerationCostChargedAgain": false,
+    "isWholeProductionTaskCost": false,
+    "isAutonomousEvidenceSelection": false,
+    "sampleSizePerArm": 1,
+    "numericDiagnosticAdditionalRequests": 1,
+    "numericPreflightFailureAdditionalHttpRequests": 0,
+    "numericPreflightFailure": "numeric-r2 preserved a duplicate inherited cell identity guard failure before any HTTP; numeric-r2b qualifies inherited identities while preserving aggregate budget counters.",
+    "newGuidanceBehaviorExecuted": false,
+    "newBDOnlineTasksExecuted": false
+  },
+  "stop": {
+    "kind": "preregistered-semantic-gate",
+    "ledgerStopped": true,
+    "reason": "Related crop did not correct the recorded error; a new-revision numeric diagnostic recognized the gap but still contradicted it. All active revision ledgers are now stopped before guidance/task generations.",
+    "budgetExhausted": false
+  }
+}

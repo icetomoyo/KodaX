@@ -24,10 +24,12 @@ export async function assertTaskDumpDirectory(value: string): Promise<string> {
 }
 
 export async function createTaskTransport(input: { directory: string; cell: string; caseId: 'A' | 'B' | 'D';
-  authorization: string; apiKey: string; fetcher?: typeof fetch }) {
+  authorization: string; apiKey: string; fetcher?: typeof fetch; maxCellCalls?: number }) {
   const directory = await assertTaskDumpDirectory(input.directory);
-  if (!input.authorization.trim() || !input.apiKey || !/^[ABD]-[XY]$/.test(input.cell)
-    || !input.cell.startsWith(`${input.caseId}-`)) throw new Error('Authorized frozen cell and credential required.');
+  const identity = /^(?:[EGT]-)?([ABD])-[XY]$/.exec(input.cell);
+  const maxCellCalls = input.maxCellCalls ?? (input.caseId === 'B' ? 5 : 4);
+  if (!input.authorization.trim() || !input.apiKey || identity?.[1] !== input.caseId
+    || !Number.isInteger(maxCellCalls) || maxCellCalls < 1 || maxCellCalls > 5) throw new Error('Authorized frozen cell and credential required.');
   await writeFile(path.join(directory, `${input.cell}.started.json`), JSON.stringify({ at: new Date().toISOString() }), { flag: 'wx' });
   const fetcher = input.fetcher ?? globalThis.fetch;
   const ledgerPath = path.join(directory, 'ledger.json');
@@ -58,7 +60,7 @@ export async function createTaskTransport(input: { directory: string; cell: stri
   return { get stopped() { return ledger.stopped; }, respond: async (request: Record<string, unknown>, signal?: AbortSignal): Promise<ProposedMessage & { usage: ActualUsage; finishReason: string }> => {
     if (ledger.stopped) throw new Error(ledger.stopReason ?? 'Batch already stopped.');
     try {
-      if (ledger.calls >= 26 || cell.calls >= (input.caseId === 'B' ? 5 : 4)
+      if (ledger.calls >= 26 || cell.calls >= maxCellCalls
         || ledger.tokens >= 550_000 || cell.tokens >= (input.caseId === 'B' ? 100_000 : 80_000)) throw new Error('Call/token budget exhausted.');
       if (request.model !== 'kimi-for-coding' || !Array.isArray(request.messages)) throw new Error('Frozen model/messages mismatch.');
       if (ledger.firstWalletCents === undefined) await wallet('initial');

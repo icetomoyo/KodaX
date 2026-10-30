@@ -18,6 +18,7 @@ export interface ProposedMessage {
 export interface TaskCellInput {
   workspace: string; home: string; prompt: string; images?: string[];
   history?: { text: string; image: string }[];
+  limits?: { mainResponses: 3 | 4; toolsPerResponse: 2 | 4 };
   respond: (request: Record<string, unknown>, signal?: AbortSignal) => Promise<ProposedMessage>;
 }
 
@@ -30,6 +31,8 @@ function requestsChildGeneration(name: string, input: unknown): boolean {
 }
 
 export async function runTaskCell(input: TaskCellInput) {
+  const limits = input.limits ?? { mainResponses: 3, toolsPerResponse: 2 };
+  if (![3, 4].includes(limits.mainResponses) || ![2, 4].includes(limits.toolsPerResponse)) throw new Error('Unregistered task limits.');
   const previousFetch = globalThis.fetch;
   const previousKey = process.env.KODAX_TASK_CELL_KEY;
   process.env.KODAX_TASK_CELL_KEY = 'transport-is-owned-by-eval';
@@ -49,10 +52,10 @@ export async function runTaskCell(input: TaskCellInput) {
       const request = JSON.parse(raw) as Record<string, unknown>;
       const primary = (JSON.stringify(request.tools) ?? '').includes('todo_update');
       requestKinds.push(primary ? 'main' : preparingHistory ? 'compaction' : 'auxiliary');
-      if (primary && mainResponses >= 3) throw new Error('Three main response slots exhausted.');
+      if (primary && mainResponses >= limits.mainResponses) throw new Error(`${limits.mainResponses === 3 ? 'Three' : 'Four'} main response slots exhausted.`);
       if (primary) mainResponses++;
       const message = await input.respond(request, init?.signal ?? undefined);
-      if ((message.tool_calls?.length ?? 0) > 2) throw new Error('Two tool calls per response exceeded.');
+      if ((message.tool_calls?.length ?? 0) > limits.toolsPerResponse) throw new Error(`${limits.toolsPerResponse === 2 ? 'Two' : 'Four'} tool calls per response exceeded.`);
       if (message.tool_calls?.some(tool => requestsChildGeneration(tool.function.name,
         tool.function.name === 'tool_call' ? parseToolInputWithSalvage(tool.function.arguments) : undefined))) {
         throw new Error('Child/workflow generation is outside the frozen call graph (including capability bridges).');
@@ -93,7 +96,7 @@ export async function runTaskCell(input: TaskCellInput) {
       contextWindow: 128_000, imageInput: true, reasoning: 'none', maxOutputTokens: 2048, maxOutputTokensField: 'max_tokens' });
     const session = await runtime.sessions.create({ title: 'Visual task value', surface: 'repl', projectPath: input.workspace });
     await runtime.sessions.updateSettings(session.id, { provider: 'visual-task', model: 'kimi-for-coding', agentMode: 'ama',
-      workMode: 'coding', executionCwd: input.workspace, permissionMode: 'full-access', reasoningMode: 'off', maxIter: 3 });
+      workMode: 'coding', executionCwd: input.workspace, permissionMode: 'full-access', reasoningMode: 'off', maxIter: limits.mainResponses });
     let compaction: Awaited<ReturnType<typeof runtime.sessions.compact>> | undefined;
     if (input.history) {
       // Controlled history import uses each revision's real admission/storage, not

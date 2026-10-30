@@ -8,6 +8,34 @@ import { setKodaXDiagnosticSink } from '@kodax-ai/agent';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
+it('allows the frozen three-read → edit → test → informed final-answer path without hiding tool feedback', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-task-four-round-test-'));
+  let main = 0;
+  try {
+    const { D } = await createTaskFixtures(Buffer.from([2, 0, 1, 3]));
+    for (const [file, bytes] of Object.entries(D.files)) await writeFile(path.join(directory, file), bytes);
+    const call = (name: string, input: Record<string, unknown>) => ({ id: `four-${main}-${name}-${JSON.stringify(input).length}`,
+      type: 'function' as const, function: { name, arguments: JSON.stringify(input) } });
+    const result = await runTaskCell({ workspace: directory, home: path.join(directory, 'home'), prompt: D.prompt,
+      limits: { mainResponses: 4, toolsPerResponse: 4 },
+      respond: async request => {
+        if (!(JSON.stringify(request.tools) ?? '').includes('todo_update')) return { content: '{"candidates":[]}' };
+        main++;
+        if (main === 1) return { content: '', tool_calls: ['config.mjs', 'config.test.mjs', 'package.json'].map(file => call('read', { path: file })) };
+        if (main === 2) return { content: '', tool_calls: [call('edit', { path: 'config.mjs', edits: [{ old_string: 'const value = JSON.parse(text);', new_string: "const value = JSON.parse(text.trim() || '{}');" }] })] };
+        if (main === 3) return { content: '', tool_calls: [call('bash', { command: 'node --test config.test.mjs', timeout: 10 })] };
+        expect(JSON.stringify(request.messages)).toMatch(/pass\\?\s+5/);
+        return { content: 'Five existing tests passed; empty and blank configurations now use defaults.' };
+      } });
+    expect(result.result.phase).toBe('completed');
+    expect(result.mainResponses).toBe(4);
+    expect(result.tools.map(tool => tool.name)).toEqual(['read', 'read', 'read', 'edit', 'bash']);
+    expect(result.tools.every(tool => !tool.content.startsWith('[Tool Error]'))).toBe(true);
+    expect(result.answer).toContain('Five existing tests passed');
+    expect(result.backgroundSettled).toBe(true);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+}, 60_000);
+
 it('uses the production Runtime, executes a proposed read and returns the real file before the final answer', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-task-cell-test-'));
   try {

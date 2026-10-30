@@ -4,6 +4,25 @@ import os from 'node:os';
 import path from 'node:path';
 import { createTaskTransport } from './task-transport.js';
 
+it('keeps new sequential-stage cells in one ledger and stops each single-response probe before another HTTP', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-stage-transport-test-'));
+  let generations = 0;
+  const fetcher: typeof fetch = async source => String(source).endsWith('/usages')
+    ? Response.json({ booster_wallet: { monthlyUsed: { currency: 'CNY', priceInCents: '0' } } })
+    : (generations++, Response.json({ model: 'kimi-for-coding', choices: [{ message: { content: 'done' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } }));
+  try {
+    const transport = await createTaskTransport({ directory, cell: 'E-A-X', caseId: 'A', maxCellCalls: 1,
+      authorization: 'Continue evidence → guidance → task verification.', apiKey: 'fixture', fetcher });
+    await transport.respond({ model: 'kimi-for-coding', messages: [] });
+    await expect(transport.respond({ model: 'kimi-for-coding', messages: [] })).rejects.toThrow('budget');
+    expect(generations).toBe(1);
+    expect(JSON.parse(await readFile(path.join(directory, 'ledger.json'), 'utf8'))).toMatchObject({
+      calls: 1, accountedCalls: 1, tokens: 110, cells: { 'E-A-X': { calls: 1, tokens: 110 } },
+    });
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 it('accounts actual usage and retains a failed request without retrying or dispatching another generation', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-task-transport-test-'));
   let generations = 0;
