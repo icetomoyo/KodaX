@@ -593,11 +593,25 @@ async function streamSummary(
 }
 
 /**
- * Strip <analysis>...</analysis> scratchpad from LLM output.
+ * Strip scratchpad blocks, including one cut off before its closing tag.
+ * Match complete summaries first so their literal markup remains content.
  * Also strips <summary> wrapper tags, keeping only the content.
  */
 function stripAnalysisBlock(text: string): string {
-  let cleaned = text.replace(/<analysis>[\s\S]*?<\/analysis>/gi, '').trim();
+  let completedSummary = false;
+  let cleaned = text.replace(
+    /<summary>([\s\S]*?)<\/summary>|<analysis>[\s\S]*?(?:<\/analysis>|$)/gi,
+    (block: string, summary: string | undefined, offset: number) => {
+      if (summary !== undefined) {
+        completedSummary = true;
+        return summary;
+      }
+      // An unmatched tag inside plain summary prose may be quoted data.
+      return /<\/analysis>$/i.test(block) || completedSummary || !text.slice(0, offset).trim()
+        ? '' : block;
+    },
+  ).trim();
+  if (/^<analysis>/i.test(cleaned)) return '';
   cleaned = cleaned.replace(/<\/?summary>/gi, '').trim();
   return cleaned;
 }
