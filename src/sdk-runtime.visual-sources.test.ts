@@ -11,7 +11,19 @@ import { createKodaXRuntime } from './sdk-runtime.js';
 const cases = (['coding', 'agent', 'script'] as const).flatMap(workMode =>
   (['openai', 'anthropic'] as const).flatMap(protocol => [false, true].map(bridge => ({ workMode, protocol, bridge }))));
 
-it.each(cases)('pins read bytes before delivery and inspects a region: $workMode/$protocol bridge=$bridge', async ({ workMode, protocol, bridge }) => {
+function lastToolText(wire: unknown, protocol: 'openai' | 'anthropic'): string {
+  const messages = (wire as { messages: Array<{ role: string; content: unknown }> }).messages;
+  let content = messages.filter(message => message.role === 'tool' || message.role === 'user').at(-1)?.content;
+  if (protocol === 'anthropic' && Array.isArray(content)) {
+    content = (content as { type: string; content?: unknown }[]).find(block => block.type === 'tool_result')?.content;
+  }
+  if (Array.isArray(content)) content = (content as { type: string; text?: string }[])
+    .filter(block => block.type === 'text').map(block => block.text ?? '').join('\n');
+  if (typeof content !== 'string') throw new Error('Expected a serialized tool result.');
+  return content;
+}
+
+it.each(cases)('reads, discovers exact history IDs and inspects immutable bytes: $workMode/$protocol bridge=$bridge', async ({ workMode, protocol, bridge }) => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-visual-source-'));
   const firstPath = path.join(homeDir, 'first.png'); const secondPath = path.join(homeDir, 'second.png');
   const original = await new Jimp({ width: 2, height: 2, color: 0x00ff00ff }).getBuffer('image/png');
@@ -21,6 +33,7 @@ it.each(cases)('pins read bytes before delivery and inspects a region: $workMode
   vi.stubEnv('KODAX_VISUAL_SOURCE_TEST', 'offline-only');
   const wires: unknown[] = [];
   let ids: string[] = []; let turn = 0; let leafReceiptPinned = false;
+  let history: { observationId: string; sourceKey: string }[] = [];
   const save = FileSessionStorage.prototype.save;
   const saveSpy = vi.spyOn(FileSessionStorage.prototype, 'save').mockImplementation(async function (this: FileSessionStorage, id, data) {
     await save.call(this, id, data);
@@ -41,12 +54,22 @@ it.each(cases)('pins read bytes before delivery and inspects a region: $workMode
       await provider.complete(messages, tools, system);
       const call = (name: string, input: Record<string, unknown>) => ({ type: 'tool_use' as const, id: 'duplicate-provider-id',
         name: bridge ? 'tool_call' : name, input: bridge ? { name, input } : input });
-      if (turn++ === 0) return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: workMode === 'script'
+      if (turn++ === 0) return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [call('visual_inspect', {
+        question: 'Inspect a file using an invented label.', views: [{ label: firstPath, observationId: 'sheet03' }],
+      })] };
+      if (turn === 2) return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: workMode === 'script'
         ? [{ type: 'tool_use', id: 'duplicate-provider-id', name: 'script_exec', input: {
           code: `await tools.read({path:${JSON.stringify(firstPath)}}); return await tools.read({path:${JSON.stringify(secondPath)}});` } }]
         : [call('read', { path: firstPath }), call('read', { path: secondPath })] };
-      if (turn === 2) {
+      if (turn === 3) {
         ids = [...new Set(JSON.stringify(messages).match(/obs_[a-f0-9-]{36}/g) ?? [])];
+        return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [call('visual_history', {
+          sourceKey: `read:${firstPath}`, limit: 1,
+        })] };
+      }
+      if (turn === 4) {
+        history = (JSON.parse(lastToolText(wires.at(-1), protocol)) as { observations: typeof history }).observations;
+        ids[0] = history[0]!.observationId;
         await writeFile(firstPath, other);
         return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [call('visual_inspect', {
           question: 'Compare the original images in order.', views: [
@@ -56,7 +79,7 @@ it.each(cases)('pins read bytes before delivery and inspects a region: $workMode
           ],
         })] };
       }
-      if (turn === 3) return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [call('visual_read_pixels', {
+      if (turn === 5) return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [call('visual_read_pixels', {
         question: 'Verify the old green and red pixels.', views: [
           { label: 'green grid', observationId: ids[0], region: { x: 0, y: 0, width: 2, height: 2 }, rows: 2, columns: 2 },
           { label: 'red pixel', observationId: ids[1], region: { x: 0, y: 0, width: 1, height: 1 }, rows: 1, columns: 1 },
@@ -69,12 +92,26 @@ it.each(cases)('pins read bytes before delivery and inspects a region: $workMode
   let runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'visual-source-fixture', defaultModel: 'fixture' });
   try {
     const session = await runtime.sessions.create({ projectPath: homeDir });
-    await runtime.sessions.updateSettings(session.id, { provider: 'visual-source-fixture', model: 'fixture', workMode, permissionMode: 'full-access' });
+    await runtime.sessions.updateSettings(session.id, { provider: 'visual-source-fixture', model: 'fixture', workMode, permissionMode: 'full-access', maxIter: 12 });
     const accepted = await runtime.runs.acceptInput({ sessionId: session.id, inputId: 'read-images', text: 'Read and inspect the images.' });
     const result = await runtime.runs.await(accepted.runId!);
     const toolMessages = wires.at(-1) as { messages?: Array<{ role: string; content: unknown }> };
     expect(ids, JSON.stringify(toolMessages.messages?.filter(message => message.role === 'tool' || message.role === 'user')).slice(-4000)).toHaveLength(2);
-    expect(result.error).toBeUndefined(); expect(result.phase).toBe('completed');
+    expect(result.error, JSON.stringify(result)).toBeUndefined(); expect(result.phase).toBe('completed');
+    expect(history).toEqual([expect.objectContaining({ observationId: ids[0], sourceKey: `read:${firstPath}` })]);
+    const published = JSON.stringify(wires);
+    expect(published).toContain('Visual observation unavailable or access denied');
+    if (workMode === 'coding' && protocol === 'openai' && !bridge) {
+      const declarations = (wires[0] as { tools: Array<{ function: { name: string; description: string;
+        parameters: { properties: { views: { items: { properties: { observationId: { description?: string } } } } } } } }> }).tools;
+      for (const name of ['visual_inspect', 'visual_read_pixels']) {
+        const contract = declarations.find(tool => tool.function.name === name)!.function;
+        const referenceHelp = contract.parameters.properties.views.items.properties.observationId.description;
+        expect(referenceHelp, `${name} must explain the source of its accepted ID`).toEqual(expect.stringContaining('visual_history'));
+        expect(referenceHelp).toMatch(/filename|path|label/);
+        expect(contract.description).toMatch(/read.*first.*Runtime/);
+      }
+    }
     expect(JSON.stringify(wires.at(-1)).includes(expectedCrop.toString('base64')),
       JSON.stringify(toolMessages.messages?.filter(message => message.role === 'tool' || message.role === 'user')).slice(-4000)).toBe(true);
     expect(JSON.stringify(wires.at(-1))).toContain('nearest');
@@ -82,14 +119,7 @@ it.each(cases)('pins read bytes before delivery and inspects a region: $workMode
     const lastResult = JSON.stringify(inspected.messages?.filter(message => message.role === 'tool' || message.role === 'user').at(-1));
     const imagePayloads = [...lastResult.matchAll(protocol === 'openai' ? /"url":"data:image\/png;base64,([^\"]+)"/g : /"data":"([^\"]+)"/g)].map(match => match[1]);
     expect(imagePayloads).toEqual([expectedCrop.toString('base64'), other.toString('base64'), expectedCrop.toString('base64')]);
-    const numericMessage = toolMessages.messages?.filter(message => message.role === 'tool' || message.role === 'user').at(-1);
-    let numericText = numericMessage?.content;
-    if (protocol === 'anthropic') {
-      const resultBlock = (numericText as { type: string; content: unknown }[]).find(block => block.type === 'tool_result');
-      numericText = typeof resultBlock?.content === 'string' ? resultBlock.content
-        : (resultBlock?.content as { type: string; text?: string }[]).find(block => block.type === 'text')?.text;
-    }
-    if (typeof numericText !== 'string') throw new Error('Expected complete numeric text in the real serializer.');
+    const numericText = lastToolText(wires.at(-1), protocol);
     expect(JSON.parse(numericText)).toMatchObject({ status: 'complete', palette: [[0, 255, 0, 255], [255, 0, 0, 255]],
       views: [{ label: 'green grid', indices: [[0, 0], [0, 0]] }, { label: 'red pixel', indices: [[1]] }] });
     expect(numericText).not.toContain('truncated');

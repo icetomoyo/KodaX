@@ -1,0 +1,878 @@
+{
+  "date": "2026-10-30",
+  "change": "exact observation ID operation contract",
+  "sourceHead": "4c0cf681a13e2b686f8b2b6bb012dde7c54ec023",
+  "baseline": "same current working tree including Claude pending source edits, before this contract; not a new B0 comparison",
+  "method": "Existing actual SDK first-request capture; row before/after metrics are compact normalized serialized JSON including unchanged HTTP control fields, using the KodaX local heuristic. Delta+120 is unaffected by excluding controls. Not BPE/provider actual usage/full task cost. Fake provider/fetch interception.",
+  "externalGenerationCalls": 0,
+  "actualEvaluationTokenIncrement": 0,
+  "beforeInventory": "C:/Users/ADMIN/AppData/Local/Temp/kodax-first-turn-wire-34uBoL/inventory.json",
+  "afterInventory": "C:/Users/ADMIN/AppData/Local/Temp/kodax-first-turn-wire-iw8Vbx/inventory.json",
+  "capturedSourceHashesUnchanged": true,
+  "claudeTrackedHashAudit": {
+    "docs/designs/agent-under-10k-next-plan.md": false,
+    "docs/designs/visual-harness-after-first-turn.md": true,
+    "docs/test-guides/FEATURE_WORK_MODES_ORIGINAL_BASELINE_TEST_GUIDE.md": false,
+    "packages/coding/src/agents/worker-role-prompt.test.ts": true,
+    "packages/coding/src/agents/worker-role-prompt.ts": true,
+    "packages/coding/src/prompts/compact-worker-contract.ts": true,
+    "packages/coding/src/prompts/managed-system-contract.test.ts": true,
+    "packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts": true,
+    "packages/coding/src/task-engine/_internal/managed-task/role-prompts.ts": true,
+    "packages/coding/src/task-engine/runner-driven.compaction-context.test.ts": true,
+    "packages/coding/src/task-engine/runner-driven.test.ts": true,
+    "packages/coding/src/task-engine/runner-driven.ts": true,
+    "packages/coding/src/types.ts": true,
+    "src/sdk-runtime.ts": true,
+    "tests/restructured-contract.test.ts": true,
+    "tests/restructured-worker-contract.test.ts": true,
+    "tests/restructured-worker-contract.ts": true,
+    "tests/shared-contract-natural-runtime.test.ts": true,
+    "vitest.eval.config.ts": true
+  },
+  "concurrentDocumentationChanges": [
+    "docs/designs/agent-under-10k-next-plan.md",
+    "docs/test-guides/FEATURE_WORK_MODES_ORIGINAL_BASELINE_TEST_GUIDE.md"
+  ],
+  "concurrencyNote": "This slice wrote only its four source/test files and new evidence documents. Two other pending docs changed concurrently; no claim that all Claude-owned file bytes remained frozen. All audited production/test sources outside slice and source hashes in both captures stayed unchanged.",
+  "cells": 32,
+  "unchangedCells": 24,
+  "changedRuntimeHostCells": 8,
+  "runtimeHostPerRequestDelta": {
+    "utf8Bytes": 480,
+    "estimatedTokens": 120
+  },
+  "onlyChanges": "two visual tool operation descriptions and two observationId field descriptions; normalized system/messages/controls and tool names/count unchanged",
+  "existingPaidEvidence": "Unchanged: videoB0 actual263832, oldV525756, V+method325979. These precede this contract. No new behavioral/full-task token effect measured; prior failures/unknown usage retained.",
+  "rows": [
+    {
+      "cell": "openai-sa-empty",
+      "protocol": "openai",
+      "mode": "sa",
+      "scenario": "empty",
+      "before": {
+        "chars": 41537,
+        "utf8Bytes": 41619,
+        "estimatedTokens": 10415,
+        "sha256": "fcec40ce5f05404e6e23c369f85d38b3d114c124643aee31a5ef91a382147214"
+      },
+      "after": {
+        "chars": 41537,
+        "utf8Bytes": 41619,
+        "estimatedTokens": 10415,
+        "sha256": "fcec40ce5f05404e6e23c369f85d38b3d114c124643aee31a5ef91a382147214"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "openai-sa-agents",
+      "protocol": "openai",
+      "mode": "sa",
+      "scenario": "agents",
+      "before": {
+        "chars": 41734,
+        "utf8Bytes": 41816,
+        "estimatedTokens": 10465,
+        "sha256": "5aeeeb2632cadcbabeb8427f9afacabb91b6c1aff9fc1ff88156fc8cfeaef741"
+      },
+      "after": {
+        "chars": 41734,
+        "utf8Bytes": 41816,
+        "estimatedTokens": 10465,
+        "sha256": "5aeeeb2632cadcbabeb8427f9afacabb91b6c1aff9fc1ff88156fc8cfeaef741"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "openai-sa-catalogs",
+      "protocol": "openai",
+      "mode": "sa",
+      "scenario": "catalogs",
+      "before": {
+        "chars": 46792,
+        "utf8Bytes": 46880,
+        "estimatedTokens": 11731,
+        "sha256": "e0a95b804edb6c1ba76d7a2dd9d46bd4153fdd28bc762266420dbb9ed98a09f5"
+      },
+      "after": {
+        "chars": 46792,
+        "utf8Bytes": 46880,
+        "estimatedTokens": 11731,
+        "sha256": "e0a95b804edb6c1ba76d7a2dd9d46bd4153fdd28bc762266420dbb9ed98a09f5"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "openai-sa-runtime-host",
+      "protocol": "openai",
+      "mode": "sa",
+      "scenario": "runtime-host",
+      "before": {
+        "chars": 62568,
+        "utf8Bytes": 63562,
+        "estimatedTokens": 16015,
+        "sha256": "8689918f32c6180799865ebe60bbad6f6b7c189ef45e7a1603c6ec80d82f72fa"
+      },
+      "after": {
+        "chars": 63048,
+        "utf8Bytes": 64042,
+        "estimatedTokens": 16135,
+        "sha256": "acf7fc03d8b85bf70c76157a9debb7ce5277307a12e6bc8cda24f255b30d2ba2"
+      },
+      "delta": {
+        "chars": 480,
+        "utf8Bytes": 480,
+        "estimatedTokens": 120
+      },
+      "changedPaths": [
+        "$.tools[43].function.description",
+        "$.tools[43].function.parameters.properties.views.items.properties.observationId.description",
+        "$.tools[44].function.description",
+        "$.tools[44].function.parameters.properties.views.items.properties.observationId.description"
+      ]
+    },
+    {
+      "cell": "openai-ama-empty",
+      "protocol": "openai",
+      "mode": "ama",
+      "scenario": "empty",
+      "before": {
+        "chars": 48240,
+        "utf8Bytes": 48340,
+        "estimatedTokens": 12098,
+        "sha256": "be46962f96401a253d9663cb28e0037180ee37382925d9d9c5db55fba75ebb43"
+      },
+      "after": {
+        "chars": 48240,
+        "utf8Bytes": 48340,
+        "estimatedTokens": 12098,
+        "sha256": "be46962f96401a253d9663cb28e0037180ee37382925d9d9c5db55fba75ebb43"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "openai-ama-agents",
+      "protocol": "openai",
+      "mode": "ama",
+      "scenario": "agents",
+      "before": {
+        "chars": 48438,
+        "utf8Bytes": 48538,
+        "estimatedTokens": 12147,
+        "sha256": "6f1f439ac7703fcc74c57ac9a831fbbc0fe1cf1e56fc86af8d8403ad87f33980"
+      },
+      "after": {
+        "chars": 48438,
+        "utf8Bytes": 48538,
+        "estimatedTokens": 12147,
+        "sha256": "6f1f439ac7703fcc74c57ac9a831fbbc0fe1cf1e56fc86af8d8403ad87f33980"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "openai-ama-catalogs",
+      "protocol": "openai",
+      "mode": "ama",
+      "scenario": "catalogs",
+      "before": {
+        "chars": 54382,
+        "utf8Bytes": 54488,
+        "estimatedTokens": 13636,
+        "sha256": "c963577b4f66970aa27fedfe5039aec0faf53e07f0851a38c6c25e59dd6ada9f"
+      },
+      "after": {
+        "chars": 54382,
+        "utf8Bytes": 54488,
+        "estimatedTokens": 13636,
+        "sha256": "c963577b4f66970aa27fedfe5039aec0faf53e07f0851a38c6c25e59dd6ada9f"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "openai-ama-runtime-host",
+      "protocol": "openai",
+      "mode": "ama",
+      "scenario": "runtime-host",
+      "before": {
+        "chars": 60781,
+        "utf8Bytes": 61789,
+        "estimatedTokens": 15574,
+        "sha256": "915c0205c2f5457c58f5dc9522ab0e1367fccb9d290be1f3c4f97f342bbf63a6"
+      },
+      "after": {
+        "chars": 61261,
+        "utf8Bytes": 62269,
+        "estimatedTokens": 15694,
+        "sha256": "b419282f3bcf003f153d0cdafc4a7e4cd998059232a07f1fe30c22d3b4d6bca2"
+      },
+      "delta": {
+        "chars": 480,
+        "utf8Bytes": 480,
+        "estimatedTokens": 120
+      },
+      "changedPaths": [
+        "$.tools[49].function.description",
+        "$.tools[49].function.parameters.properties.views.items.properties.observationId.description",
+        "$.tools[50].function.description",
+        "$.tools[50].function.parameters.properties.views.items.properties.observationId.description"
+      ]
+    },
+    {
+      "cell": "openai-agent-empty",
+      "protocol": "openai",
+      "mode": "agent",
+      "scenario": "empty",
+      "before": {
+        "chars": 38820,
+        "utf8Bytes": 38900,
+        "estimatedTokens": 9735,
+        "sha256": "2f005f852b9bd6cece81cfe67ae1764b25f9e0aa0ba99e73b6bb3ed5ace6a301"
+      },
+      "after": {
+        "chars": 38820,
+        "utf8Bytes": 38900,
+        "estimatedTokens": 9735,
+        "sha256": "2f005f852b9bd6cece81cfe67ae1764b25f9e0aa0ba99e73b6bb3ed5ace6a301"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "openai-agent-agents",
+      "protocol": "openai",
+      "mode": "agent",
+      "scenario": "agents",
+      "before": {
+        "chars": 39020,
+        "utf8Bytes": 39100,
+        "estimatedTokens": 9785,
+        "sha256": "ad91774d009168201d53e9072c00ebf1beb0c1b1e32ca0d18216237cb974ace1"
+      },
+      "after": {
+        "chars": 39020,
+        "utf8Bytes": 39100,
+        "estimatedTokens": 9785,
+        "sha256": "ad91774d009168201d53e9072c00ebf1beb0c1b1e32ca0d18216237cb974ace1"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "openai-agent-catalogs",
+      "protocol": "openai",
+      "mode": "agent",
+      "scenario": "catalogs",
+      "before": {
+        "chars": 44964,
+        "utf8Bytes": 45050,
+        "estimatedTokens": 11274,
+        "sha256": "e5e5a68d414aa8d32b20eeeb8d455ec1e947492bc2e922d489412daa8285bab5"
+      },
+      "after": {
+        "chars": 44964,
+        "utf8Bytes": 45050,
+        "estimatedTokens": 11274,
+        "sha256": "e5e5a68d414aa8d32b20eeeb8d455ec1e947492bc2e922d489412daa8285bab5"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "openai-agent-runtime-host",
+      "protocol": "openai",
+      "mode": "agent",
+      "scenario": "runtime-host",
+      "before": {
+        "chars": 46285,
+        "utf8Bytes": 47273,
+        "estimatedTokens": 11942,
+        "sha256": "eb8bea95bd2402b9e3f9f8de8a69f625b764d1b998c6930ec2bdf2b6b5d84f77"
+      },
+      "after": {
+        "chars": 46765,
+        "utf8Bytes": 47753,
+        "estimatedTokens": 12062,
+        "sha256": "517878e8767b36ed711575a2e552696a575bafa7e24b96ef96f7fd546dccbeb9"
+      },
+      "delta": {
+        "chars": 480,
+        "utf8Bytes": 480,
+        "estimatedTokens": 120
+      },
+      "changedPaths": [
+        "$.tools[31].function.description",
+        "$.tools[31].function.parameters.properties.views.items.properties.observationId.description",
+        "$.tools[32].function.description",
+        "$.tools[32].function.parameters.properties.views.items.properties.observationId.description"
+      ]
+    },
+    {
+      "cell": "openai-script-empty",
+      "protocol": "openai",
+      "mode": "script",
+      "scenario": "empty",
+      "before": {
+        "chars": 56657,
+        "utf8Bytes": 56759,
+        "estimatedTokens": 14203,
+        "sha256": "498007955f48fa87c291760a29ced752ddf4516f0f97639279478f5091e7b3f0"
+      },
+      "after": {
+        "chars": 56657,
+        "utf8Bytes": 56759,
+        "estimatedTokens": 14203,
+        "sha256": "498007955f48fa87c291760a29ced752ddf4516f0f97639279478f5091e7b3f0"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "openai-script-agents",
+      "protocol": "openai",
+      "mode": "script",
+      "scenario": "agents",
+      "before": {
+        "chars": 56859,
+        "utf8Bytes": 56961,
+        "estimatedTokens": 14253,
+        "sha256": "0354e827515514d680bcd1a9c7978540eb11b563d9bf1a58811b5be3043d6c29"
+      },
+      "after": {
+        "chars": 56859,
+        "utf8Bytes": 56961,
+        "estimatedTokens": 14253,
+        "sha256": "0354e827515514d680bcd1a9c7978540eb11b563d9bf1a58811b5be3043d6c29"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "openai-script-catalogs",
+      "protocol": "openai",
+      "mode": "script",
+      "scenario": "catalogs",
+      "before": {
+        "chars": 62805,
+        "utf8Bytes": 62913,
+        "estimatedTokens": 15742,
+        "sha256": "f0275c9e6dfcbf30e01516b8398943fcaf59edd4f9a5742b0b6a74433649c982"
+      },
+      "after": {
+        "chars": 62805,
+        "utf8Bytes": 62913,
+        "estimatedTokens": 15742,
+        "sha256": "f0275c9e6dfcbf30e01516b8398943fcaf59edd4f9a5742b0b6a74433649c982"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "openai-script-runtime-host",
+      "protocol": "openai",
+      "mode": "script",
+      "scenario": "runtime-host",
+      "before": {
+        "chars": 68260,
+        "utf8Bytes": 69268,
+        "estimatedTokens": 17443,
+        "sha256": "8788c8fc8a5a234477a636db942fc069b54f6ab6b78667ccfbc2dd9e96329c97"
+      },
+      "after": {
+        "chars": 68740,
+        "utf8Bytes": 69748,
+        "estimatedTokens": 17563,
+        "sha256": "f8622a26a0d98736f266290f9ced3d2306c410115271f3e135aa8103fae15bbc"
+      },
+      "delta": {
+        "chars": 480,
+        "utf8Bytes": 480,
+        "estimatedTokens": 120
+      },
+      "changedPaths": [
+        "$.tools[22].function.description",
+        "$.tools[22].function.parameters.properties.views.items.properties.observationId.description",
+        "$.tools[23].function.description",
+        "$.tools[23].function.parameters.properties.views.items.properties.observationId.description"
+      ]
+    },
+    {
+      "cell": "anthropic-sa-empty",
+      "protocol": "anthropic",
+      "mode": "sa",
+      "scenario": "empty",
+      "before": {
+        "chars": 42628,
+        "utf8Bytes": 42710,
+        "estimatedTokens": 10688,
+        "sha256": "718eb85f28b1bc9ca45342d34fe8d67202f47c3f9c3042b4de7ab80106bcb9e1"
+      },
+      "after": {
+        "chars": 42628,
+        "utf8Bytes": 42710,
+        "estimatedTokens": 10688,
+        "sha256": "718eb85f28b1bc9ca45342d34fe8d67202f47c3f9c3042b4de7ab80106bcb9e1"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "anthropic-sa-agents",
+      "protocol": "anthropic",
+      "mode": "sa",
+      "scenario": "agents",
+      "before": {
+        "chars": 42828,
+        "utf8Bytes": 42910,
+        "estimatedTokens": 10738,
+        "sha256": "e2267ad70a34e00885816ac2df491647d6d74ea2c0bf2f033e6d66b233ca2caa"
+      },
+      "after": {
+        "chars": 42828,
+        "utf8Bytes": 42910,
+        "estimatedTokens": 10738,
+        "sha256": "e2267ad70a34e00885816ac2df491647d6d74ea2c0bf2f033e6d66b233ca2caa"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "anthropic-sa-catalogs",
+      "protocol": "anthropic",
+      "mode": "sa",
+      "scenario": "catalogs",
+      "before": {
+        "chars": 47970,
+        "utf8Bytes": 48058,
+        "estimatedTokens": 12026,
+        "sha256": "8ee5cd95ea98a8b58136de89bcf53c0fbdded5e10765859f1db5b2ce1fb8d1d6"
+      },
+      "after": {
+        "chars": 47970,
+        "utf8Bytes": 48058,
+        "estimatedTokens": 12026,
+        "sha256": "8ee5cd95ea98a8b58136de89bcf53c0fbdded5e10765859f1db5b2ce1fb8d1d6"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "anthropic-sa-runtime-host",
+      "protocol": "anthropic",
+      "mode": "sa",
+      "scenario": "runtime-host",
+      "before": {
+        "chars": 63550,
+        "utf8Bytes": 64544,
+        "estimatedTokens": 16261,
+        "sha256": "f85657ec7ad1de9ae57cda139c12f2d92ca76d1d2c34e710312c7eb6f4e28c80"
+      },
+      "after": {
+        "chars": 64030,
+        "utf8Bytes": 65024,
+        "estimatedTokens": 16381,
+        "sha256": "447ff72b81fe39d0cda689c1f256531375fba6597fcafcc86b3e0d91763a7b7c"
+      },
+      "delta": {
+        "chars": 480,
+        "utf8Bytes": 480,
+        "estimatedTokens": 120
+      },
+      "changedPaths": [
+        "$.tools[43].description",
+        "$.tools[43].input_schema.properties.views.items.properties.observationId.description",
+        "$.tools[44].description",
+        "$.tools[44].input_schema.properties.views.items.properties.observationId.description"
+      ]
+    },
+    {
+      "cell": "anthropic-ama-empty",
+      "protocol": "anthropic",
+      "mode": "ama",
+      "scenario": "empty",
+      "before": {
+        "chars": 47061,
+        "utf8Bytes": 47161,
+        "estimatedTokens": 11803,
+        "sha256": "b4b82ea36f0b50c1de87c000e0034500a293a4a9c3034e4f77c3163289838f5f"
+      },
+      "after": {
+        "chars": 47061,
+        "utf8Bytes": 47161,
+        "estimatedTokens": 11803,
+        "sha256": "b4b82ea36f0b50c1de87c000e0034500a293a4a9c3034e4f77c3163289838f5f"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "anthropic-ama-agents",
+      "protocol": "anthropic",
+      "mode": "ama",
+      "scenario": "agents",
+      "before": {
+        "chars": 47262,
+        "utf8Bytes": 47362,
+        "estimatedTokens": 11853,
+        "sha256": "6957cbf1633c6df7a41ab66a9970113a02e96149b9a92667f537b6706b7581a5"
+      },
+      "after": {
+        "chars": 47262,
+        "utf8Bytes": 47362,
+        "estimatedTokens": 11853,
+        "sha256": "6957cbf1633c6df7a41ab66a9970113a02e96149b9a92667f537b6706b7581a5"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "anthropic-ama-catalogs",
+      "protocol": "anthropic",
+      "mode": "ama",
+      "scenario": "catalogs",
+      "before": {
+        "chars": 53032,
+        "utf8Bytes": 53138,
+        "estimatedTokens": 13298,
+        "sha256": "67aecb1c940c6cfa292720cd2c3df8ef85bf8fc586078cad852c3ef6b0e4063c"
+      },
+      "after": {
+        "chars": 53032,
+        "utf8Bytes": 53138,
+        "estimatedTokens": 13298,
+        "sha256": "67aecb1c940c6cfa292720cd2c3df8ef85bf8fc586078cad852c3ef6b0e4063c"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "anthropic-ama-runtime-host",
+      "protocol": "anthropic",
+      "mode": "ama",
+      "scenario": "runtime-host",
+      "before": {
+        "chars": 59231,
+        "utf8Bytes": 60239,
+        "estimatedTokens": 15186,
+        "sha256": "74f59d8af41dd6c43f4a289ca7cc5ae75a1576377ecdb8fb03839915df54d19a"
+      },
+      "after": {
+        "chars": 59711,
+        "utf8Bytes": 60719,
+        "estimatedTokens": 15306,
+        "sha256": "c568237f517ea672a11fba9c1bee8c15f6ca8a0edb15e4bc49bf6e2af6e905d4"
+      },
+      "delta": {
+        "chars": 480,
+        "utf8Bytes": 480,
+        "estimatedTokens": 120
+      },
+      "changedPaths": [
+        "$.tools[49].description",
+        "$.tools[49].input_schema.properties.views.items.properties.observationId.description",
+        "$.tools[50].description",
+        "$.tools[50].input_schema.properties.views.items.properties.observationId.description"
+      ]
+    },
+    {
+      "cell": "anthropic-agent-empty",
+      "protocol": "anthropic",
+      "mode": "agent",
+      "scenario": "empty",
+      "before": {
+        "chars": 37931,
+        "utf8Bytes": 38011,
+        "estimatedTokens": 9513,
+        "sha256": "86f81021eca3cb053d85fbc0b0d85d83a386a9bbd40a0cafde3f7b7ec12bcf81"
+      },
+      "after": {
+        "chars": 37931,
+        "utf8Bytes": 38011,
+        "estimatedTokens": 9513,
+        "sha256": "86f81021eca3cb053d85fbc0b0d85d83a386a9bbd40a0cafde3f7b7ec12bcf81"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "anthropic-agent-agents",
+      "protocol": "anthropic",
+      "mode": "agent",
+      "scenario": "agents",
+      "before": {
+        "chars": 38134,
+        "utf8Bytes": 38214,
+        "estimatedTokens": 9564,
+        "sha256": "7f2c8df3875aac3f9ba17c82d6e2373aacb576fb88a0e6f68bc3711c2658633e"
+      },
+      "after": {
+        "chars": 38134,
+        "utf8Bytes": 38214,
+        "estimatedTokens": 9564,
+        "sha256": "7f2c8df3875aac3f9ba17c82d6e2373aacb576fb88a0e6f68bc3711c2658633e"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "anthropic-agent-catalogs",
+      "protocol": "anthropic",
+      "mode": "agent",
+      "scenario": "catalogs",
+      "before": {
+        "chars": 43904,
+        "utf8Bytes": 43990,
+        "estimatedTokens": 11009,
+        "sha256": "aeb1a318f97c9209779758973adfebe5e2aa9ec8a36f42c4fca9e789f0cca757"
+      },
+      "after": {
+        "chars": 43904,
+        "utf8Bytes": 43990,
+        "estimatedTokens": 11009,
+        "sha256": "aeb1a318f97c9209779758973adfebe5e2aa9ec8a36f42c4fca9e789f0cca757"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "anthropic-agent-runtime-host",
+      "protocol": "anthropic",
+      "mode": "agent",
+      "scenario": "runtime-host",
+      "before": {
+        "chars": 45254,
+        "utf8Bytes": 46242,
+        "estimatedTokens": 11684,
+        "sha256": "19a4fd59f441739b627e7c7a2259a603de1f432dfac9092b951f62add9a750a9"
+      },
+      "after": {
+        "chars": 45734,
+        "utf8Bytes": 46722,
+        "estimatedTokens": 11804,
+        "sha256": "2271d2ca3fd4f971460015793a01b0a9729eb92a5460781a60ec7ea192c7867b"
+      },
+      "delta": {
+        "chars": 480,
+        "utf8Bytes": 480,
+        "estimatedTokens": 120
+      },
+      "changedPaths": [
+        "$.tools[31].description",
+        "$.tools[31].input_schema.properties.views.items.properties.observationId.description",
+        "$.tools[32].description",
+        "$.tools[32].input_schema.properties.views.items.properties.observationId.description"
+      ]
+    },
+    {
+      "cell": "anthropic-script-empty",
+      "protocol": "anthropic",
+      "mode": "script",
+      "scenario": "empty",
+      "before": {
+        "chars": 56032,
+        "utf8Bytes": 56134,
+        "estimatedTokens": 14047,
+        "sha256": "6e10254f9f85bf9ec2cfd2a7ca83e1ad66846039a1333850e1c6f2c91046c254"
+      },
+      "after": {
+        "chars": 56032,
+        "utf8Bytes": 56134,
+        "estimatedTokens": 14047,
+        "sha256": "6e10254f9f85bf9ec2cfd2a7ca83e1ad66846039a1333850e1c6f2c91046c254"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "anthropic-script-agents",
+      "protocol": "anthropic",
+      "mode": "script",
+      "scenario": "agents",
+      "before": {
+        "chars": 56237,
+        "utf8Bytes": 56339,
+        "estimatedTokens": 14098,
+        "sha256": "1974b49e72b07ecadaa6f938107d9ad6eaeb496ab4ec1da51c2470de9124e805"
+      },
+      "after": {
+        "chars": 56237,
+        "utf8Bytes": 56339,
+        "estimatedTokens": 14098,
+        "sha256": "1974b49e72b07ecadaa6f938107d9ad6eaeb496ab4ec1da51c2470de9124e805"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "anthropic-script-catalogs",
+      "protocol": "anthropic",
+      "mode": "script",
+      "scenario": "catalogs",
+      "before": {
+        "chars": 62009,
+        "utf8Bytes": 62117,
+        "estimatedTokens": 15543,
+        "sha256": "994fc31f99197fb309f5fd574342b155f96fd497b40093734dbbc37c4af69449"
+      },
+      "after": {
+        "chars": 62009,
+        "utf8Bytes": 62117,
+        "estimatedTokens": 15543,
+        "sha256": "994fc31f99197fb309f5fd574342b155f96fd497b40093734dbbc37c4af69449"
+      },
+      "delta": {
+        "chars": 0,
+        "utf8Bytes": 0,
+        "estimatedTokens": 0
+      },
+      "changedPaths": []
+    },
+    {
+      "cell": "anthropic-script-runtime-host",
+      "protocol": "anthropic",
+      "mode": "script",
+      "scenario": "runtime-host",
+      "before": {
+        "chars": 67551,
+        "utf8Bytes": 68559,
+        "estimatedTokens": 17266,
+        "sha256": "6ce740de9245c397e05a8bbd78fa0fdec348a97850e7af762573308277c69b9a"
+      },
+      "after": {
+        "chars": 68031,
+        "utf8Bytes": 69039,
+        "estimatedTokens": 17386,
+        "sha256": "fc9a74ca2b33d9a754c0b8eeea72bf8c96c7f08bba01dae86adec7d5122a1401"
+      },
+      "delta": {
+        "chars": 480,
+        "utf8Bytes": 480,
+        "estimatedTokens": 120
+      },
+      "changedPaths": [
+        "$.tools[22].description",
+        "$.tools[22].input_schema.properties.views.items.properties.observationId.description",
+        "$.tools[23].description",
+        "$.tools[23].input_schema.properties.views.items.properties.observationId.description"
+      ]
+    }
+  ],
+  "ownedSourceHashes": {
+    "packages/agent/src/media/visual-tools.ts": {
+      "afterSha256": "a5ee4066ae4f9262cfa956e3b11ab2519b910d456fd7072f9acc22e1062b3f34",
+      "beforeSha256": "afb0eb1659a2d1a0fa93f88e2772b61e5b4fd6c817c104289bceeeb5b088ac38"
+    },
+    "packages/coding/src/tools/visual.ts": {
+      "afterSha256": "c63334c423662ab47872621816a7b772746ef43c3d6e06311d76276fcd4a2a6b",
+      "beforeSha256": "d9fbbf6cafc72a9018a4bb103fc1f32210d2d8dc24fb2f0a18ed3e98fea162ac"
+    },
+    "src/sdk-runtime.visual-sources.test.ts": {
+      "afterSha256": "2b5cc4e5d4fa3ad5e450e0eeb18a8db9dea316dab9ec4ba3408e11e8c7dd1148",
+      "beforeSha256": "779b3e6b9bee1fab87867314a02f40a92bcfb55494609ff0f09e57af81e235e6"
+    },
+    "packages/agent/src/media/visual-tools.test.ts": {
+      "afterSha256": "39749cfa899dbc5c2913c4f3a93fbe289dc3ce64396555adb223699df79d29ae",
+      "beforeHeadBlobSha256": "cc3b6dc0b37f71864bd6dea5e1b6d131d6830da977e95676bb36a91c261e3731",
+      "beforeNote": "Initially clean file; pre-edit working bytes not separately archived, so this is the HEAD blob hash."
+    }
+  },
+  "absoluteModelFieldsRecount": "visual-harness-first-turn-current-costs-2026-10-30.json",
+  "scopeClarification": "Absolute first-turn model-field estimates must use the linked recount, excluding HTTP controls; old row metrics are preserved as captured. This is accounting correction, not new token savings."
+}

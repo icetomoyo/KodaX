@@ -5,6 +5,8 @@ import { getToolResultAdmissionLimits } from './tool-result-policy.js';
 
 export const VISUAL_CODING_TOOLS: LocalToolDefinition[] = VISUAL_TOOL_DEFINITIONS.map(definition => ({
   ...definition, sideEffect: 'readonly', toClassifierInput: () => '',
+  description: definition.name === 'visual_history' ? definition.description
+    : `${definition.description} For a local image not yet accepted, use read first in this Runtime to obtain its observationId.`,
   handler: async (input, ctx) => {
     if (!ctx.visualObservationOwner || !ctx.reserveVisualOutput) return '[Tool Error] Visual observation capability unavailable in this owner.';
     const model = ctx.visualModelSelection?.() ?? ctx.parentAgentConfig;

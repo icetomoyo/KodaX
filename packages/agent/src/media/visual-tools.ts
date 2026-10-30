@@ -7,7 +7,8 @@ import { visualObservationLabel } from './visual-observations.js';
 import { countTokens } from '../tokenizer.js';
 
 const regionSchema = { type: 'object', properties: { x: { type: 'integer', minimum: 0 }, y: { type: 'integer', minimum: 0 }, width: { type: 'integer', minimum: 1 }, height: { type: 'integer', minimum: 1 } }, required: ['x', 'y', 'width', 'height'], additionalProperties: false };
-const viewProperties = { label: { type: 'string', minLength: 1 }, observationId: { type: 'string' }, region: regionSchema };
+const viewProperties = { label: { type: 'string', minLength: 1 }, observationId: { type: 'string',
+  description: 'Use the exact observationId returned with an accepted image or by visual_history; filenames, paths and view labels are not IDs.' }, region: regionSchema };
 
 export const VISUAL_TOOL_DEFINITIONS: readonly KodaXToolDefinition[] = [
   { name: 'visual_history', description: 'List a bounded recent page of accepted historical images. Reuse the returned cursor with the same source filter; new observations appear in a new query.',

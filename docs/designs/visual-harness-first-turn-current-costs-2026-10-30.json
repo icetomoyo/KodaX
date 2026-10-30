@@ -1,0 +1,383 @@
+{
+  "date": "2026-10-30",
+  "sourceHead": "4c0cf681a13e2b686f8b2b6bb012dde7c54ec023",
+  "source": "Latest C1 after-capture, current relevant source hashes verified; pending working-tree changes are included. Not only committed HEAD.",
+  "scenario": "Empty fixture project, official builtin tools, Runtime Host, short text readiness question, no user images/history/extra project rules/MCP. Existing normal model/tool assembly retained.",
+  "method": "Existing measureModelFields: compact JSON of system/instructions/messages/input/tools only; fixture path normalization retained; includes all nested tool contracts. KodaX heuristic, not provider tokenizer/API billing or actual image-token usage.",
+  "externalCalls": 0,
+  "tokenizerSha256": "74e21dd6a4fc8102bf8549d0bdd4a1adbeb40b3a7cfc9f6d77ad39c7274e3190",
+  "normalization": "Only existing fixture-created paths/session IDs normalized; no tool or system contract removed.",
+  "runtimeModeMapping": {
+    "agent": "Agent",
+    "ama": "Coding (current default managed path)",
+    "script": "Script",
+    "sa": "Separate compatible SA path; not the default managed Coding row"
+  },
+  "sourceChecks": {
+    "packages/coding/src/tools/tool-definitions.ts": true,
+    "packages/coding/src/tools/managed-tool-contract.ts": true,
+    "packages/coding/src/tools/managed-tool-text.ts": true,
+    "packages/coding/src/prompts/managed-system-contract.ts": true,
+    "packages/coding/src/prompts/compact-worker-contract.ts": true,
+    "packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts": true,
+    "packages/coding/src/agents/worker-role-prompt.ts": true,
+    "packages/coding/src/task-engine/runner-driven.ts": true,
+    "packages/coding/src/prompts/builder.ts": true,
+    "packages/coding/src/agent-runtime/script/model.ts": true,
+    "packages/coding/src/agent-runtime/script/pilot.ts": true,
+    "packages/coding/src/work-mode.ts": true,
+    "packages/coding/src/task-engine/_internal/managed-task/llm-adapter.ts": true,
+    "packages/coding/src/agent-runtime/tool-exposure-planner.ts": true,
+    "src/sdk-runtime.ts": true,
+    "packages/agent/src/media/visual-tools.ts": true,
+    "packages/coding/src/tools/visual.ts": true,
+    "src/sdk-runtime.visual-sources.test.ts": true,
+    "packages/agent/src/media/visual-tools.test.ts": true
+  },
+  "rows": [
+    {
+      "cell": "openai-sa-runtime-host",
+      "protocol": "openai",
+      "mode": "sa",
+      "toolCount": 50,
+      "input": "C:/Users/ADMIN/AppData/Local/Temp/kodax-first-turn-wire-iw8Vbx/openai-sa-runtime-host/normalized-model-input.json",
+      "measurement": {
+        "representation": "compact-model-fields-json",
+        "utf16Chars": 62940,
+        "utf8Bytes": 63934,
+        "estimatedTokens": 16108,
+        "sha256": "b27217c26210c5e5e4fcd78415fc44cfa2b8143f35b3fc889458e33755a432cb",
+        "includedFields": [
+          "messages",
+          "tools"
+        ],
+        "excludedFields": [
+          "max_completion_tokens",
+          "model",
+          "stream",
+          "stream_options"
+        ]
+      },
+      "before": {
+        "representation": "compact-model-fields-json",
+        "utf16Chars": 62460,
+        "utf8Bytes": 63454,
+        "estimatedTokens": 15988,
+        "sha256": "8c485697d01e325ea6429b038fac7009b6af794c196e2c3e90ad81227b7e1d6e",
+        "includedFields": [
+          "messages",
+          "tools"
+        ],
+        "excludedFields": [
+          "max_completion_tokens",
+          "model",
+          "stream",
+          "stream_options"
+        ]
+      },
+      "deltaEstimatedTokens": 120,
+      "oldInventoryIncludingControls": 16135
+    },
+    {
+      "cell": "openai-ama-runtime-host",
+      "protocol": "openai",
+      "mode": "ama",
+      "toolCount": 57,
+      "input": "C:/Users/ADMIN/AppData/Local/Temp/kodax-first-turn-wire-iw8Vbx/openai-ama-runtime-host/normalized-model-input.json",
+      "measurement": {
+        "representation": "compact-model-fields-json",
+        "utf16Chars": 61153,
+        "utf8Bytes": 62161,
+        "estimatedTokens": 15667,
+        "sha256": "47cb0b0182eb6c0d6ae8167485aa15410f8aa56071b6dbc2df86927dc98f03b3",
+        "includedFields": [
+          "messages",
+          "tools"
+        ],
+        "excludedFields": [
+          "max_completion_tokens",
+          "model",
+          "stream",
+          "stream_options"
+        ]
+      },
+      "before": {
+        "representation": "compact-model-fields-json",
+        "utf16Chars": 60673,
+        "utf8Bytes": 61681,
+        "estimatedTokens": 15547,
+        "sha256": "a93dd046e9eba8443c77f6d567c0d96d4a2aad82fd9d687c03408064c9a3be5a",
+        "includedFields": [
+          "messages",
+          "tools"
+        ],
+        "excludedFields": [
+          "max_completion_tokens",
+          "model",
+          "stream",
+          "stream_options"
+        ]
+      },
+      "deltaEstimatedTokens": 120,
+      "oldInventoryIncludingControls": 15694
+    },
+    {
+      "cell": "openai-agent-runtime-host",
+      "protocol": "openai",
+      "mode": "agent",
+      "toolCount": 39,
+      "input": "C:/Users/ADMIN/AppData/Local/Temp/kodax-first-turn-wire-iw8Vbx/openai-agent-runtime-host/normalized-model-input.json",
+      "measurement": {
+        "representation": "compact-model-fields-json",
+        "utf16Chars": 46657,
+        "utf8Bytes": 47645,
+        "estimatedTokens": 12035,
+        "sha256": "dcb50621bfdef7fdc8a644c5f397ba470edf689a0409f3a13508b5de421fedfd",
+        "includedFields": [
+          "messages",
+          "tools"
+        ],
+        "excludedFields": [
+          "max_completion_tokens",
+          "model",
+          "stream",
+          "stream_options"
+        ]
+      },
+      "before": {
+        "representation": "compact-model-fields-json",
+        "utf16Chars": 46177,
+        "utf8Bytes": 47165,
+        "estimatedTokens": 11915,
+        "sha256": "4ae43161c8efb4282585b23258430b6bb25042c3c8d98473080f26697fb3cc66",
+        "includedFields": [
+          "messages",
+          "tools"
+        ],
+        "excludedFields": [
+          "max_completion_tokens",
+          "model",
+          "stream",
+          "stream_options"
+        ]
+      },
+      "deltaEstimatedTokens": 120,
+      "oldInventoryIncludingControls": 12062
+    },
+    {
+      "cell": "openai-script-runtime-host",
+      "protocol": "openai",
+      "mode": "script",
+      "toolCount": 28,
+      "input": "C:/Users/ADMIN/AppData/Local/Temp/kodax-first-turn-wire-iw8Vbx/openai-script-runtime-host/normalized-model-input.json",
+      "measurement": {
+        "representation": "compact-model-fields-json",
+        "utf16Chars": 68632,
+        "utf8Bytes": 69640,
+        "estimatedTokens": 17536,
+        "sha256": "72fdd39ee6f5d0d8223b0c7bac13a259ca706e564e07608de7dbba36b738d8f6",
+        "includedFields": [
+          "messages",
+          "tools"
+        ],
+        "excludedFields": [
+          "max_completion_tokens",
+          "model",
+          "stream",
+          "stream_options"
+        ]
+      },
+      "before": {
+        "representation": "compact-model-fields-json",
+        "utf16Chars": 68152,
+        "utf8Bytes": 69160,
+        "estimatedTokens": 17416,
+        "sha256": "9588130dc91d36d1b233e13789d5bd84a7d6e87d3c2562e10d4f334304b43804",
+        "includedFields": [
+          "messages",
+          "tools"
+        ],
+        "excludedFields": [
+          "max_completion_tokens",
+          "model",
+          "stream",
+          "stream_options"
+        ]
+      },
+      "deltaEstimatedTokens": 120,
+      "oldInventoryIncludingControls": 17563
+    },
+    {
+      "cell": "anthropic-sa-runtime-host",
+      "protocol": "anthropic",
+      "mode": "sa",
+      "toolCount": 50,
+      "input": "C:/Users/ADMIN/AppData/Local/Temp/kodax-first-turn-wire-iw8Vbx/anthropic-sa-runtime-host/normalized-model-input.json",
+      "measurement": {
+        "representation": "compact-model-fields-json",
+        "utf16Chars": 63973,
+        "utf8Bytes": 64967,
+        "estimatedTokens": 16366,
+        "sha256": "52910a558c03ecde1d243a42d7d71fd0c377b8f789a704fcf52394548814360d",
+        "includedFields": [
+          "system",
+          "messages",
+          "tools"
+        ],
+        "excludedFields": [
+          "max_tokens",
+          "model",
+          "stream"
+        ]
+      },
+      "before": {
+        "representation": "compact-model-fields-json",
+        "utf16Chars": 63493,
+        "utf8Bytes": 64487,
+        "estimatedTokens": 16246,
+        "sha256": "f77378b3557c3ef1893619073fc380f4e272ac9daa8f51f36a7258d42a687295",
+        "includedFields": [
+          "system",
+          "messages",
+          "tools"
+        ],
+        "excludedFields": [
+          "max_tokens",
+          "model",
+          "stream"
+        ]
+      },
+      "deltaEstimatedTokens": 120,
+      "oldInventoryIncludingControls": 16381
+    },
+    {
+      "cell": "anthropic-ama-runtime-host",
+      "protocol": "anthropic",
+      "mode": "ama",
+      "toolCount": 57,
+      "input": "C:/Users/ADMIN/AppData/Local/Temp/kodax-first-turn-wire-iw8Vbx/anthropic-ama-runtime-host/normalized-model-input.json",
+      "measurement": {
+        "representation": "compact-model-fields-json",
+        "utf16Chars": 59654,
+        "utf8Bytes": 60662,
+        "estimatedTokens": 15292,
+        "sha256": "d82ba41376f1d26c5a0e11b25c7ba139f207348f5a5968d481d5d260145746c8",
+        "includedFields": [
+          "system",
+          "messages",
+          "tools"
+        ],
+        "excludedFields": [
+          "max_tokens",
+          "model",
+          "stream"
+        ]
+      },
+      "before": {
+        "representation": "compact-model-fields-json",
+        "utf16Chars": 59174,
+        "utf8Bytes": 60182,
+        "estimatedTokens": 15172,
+        "sha256": "a1ab651127e81affd29696fd17a71081ab2ae050dca732ff010bd432977c4edf",
+        "includedFields": [
+          "system",
+          "messages",
+          "tools"
+        ],
+        "excludedFields": [
+          "max_tokens",
+          "model",
+          "stream"
+        ]
+      },
+      "deltaEstimatedTokens": 120,
+      "oldInventoryIncludingControls": 15306
+    },
+    {
+      "cell": "anthropic-agent-runtime-host",
+      "protocol": "anthropic",
+      "mode": "agent",
+      "toolCount": 39,
+      "input": "C:/Users/ADMIN/AppData/Local/Temp/kodax-first-turn-wire-iw8Vbx/anthropic-agent-runtime-host/normalized-model-input.json",
+      "measurement": {
+        "representation": "compact-model-fields-json",
+        "utf16Chars": 45677,
+        "utf8Bytes": 46665,
+        "estimatedTokens": 11790,
+        "sha256": "22c4e296af5e50483f9de4caed02ec30ed37e61f33fe2b98c3866e519d286aa7",
+        "includedFields": [
+          "system",
+          "messages",
+          "tools"
+        ],
+        "excludedFields": [
+          "max_tokens",
+          "model",
+          "stream"
+        ]
+      },
+      "before": {
+        "representation": "compact-model-fields-json",
+        "utf16Chars": 45197,
+        "utf8Bytes": 46185,
+        "estimatedTokens": 11670,
+        "sha256": "3de78b2b3edfeb349bc8d572065773e984dad374f0358e784287b5a9623cbb57",
+        "includedFields": [
+          "system",
+          "messages",
+          "tools"
+        ],
+        "excludedFields": [
+          "max_tokens",
+          "model",
+          "stream"
+        ]
+      },
+      "deltaEstimatedTokens": 120,
+      "oldInventoryIncludingControls": 11804
+    },
+    {
+      "cell": "anthropic-script-runtime-host",
+      "protocol": "anthropic",
+      "mode": "script",
+      "toolCount": 28,
+      "input": "C:/Users/ADMIN/AppData/Local/Temp/kodax-first-turn-wire-iw8Vbx/anthropic-script-runtime-host/normalized-model-input.json",
+      "measurement": {
+        "representation": "compact-model-fields-json",
+        "utf16Chars": 67974,
+        "utf8Bytes": 68982,
+        "estimatedTokens": 17372,
+        "sha256": "e69fcf9d1b3858ade2faae758f44c093c1be184f3a79d5f6a1b53860a8338962",
+        "includedFields": [
+          "system",
+          "messages",
+          "tools"
+        ],
+        "excludedFields": [
+          "max_tokens",
+          "model",
+          "stream"
+        ]
+      },
+      "before": {
+        "representation": "compact-model-fields-json",
+        "utf16Chars": 67494,
+        "utf8Bytes": 68502,
+        "estimatedTokens": 17252,
+        "sha256": "251509a364e1e6fb7112cd437d54731c411c1ddf0c4abdc01eb22dc32c3a8834",
+        "includedFields": [
+          "system",
+          "messages",
+          "tools"
+        ],
+        "excludedFields": [
+          "max_tokens",
+          "model",
+          "stream"
+        ]
+      },
+      "deltaEstimatedTokens": 120,
+      "oldInventoryIncludingControls": 17386
+    }
+  ]
+}

@@ -257,8 +257,28 @@ it('reports missing or corrupt immutable originals, releases failed output and h
   expect(() => f.owner.imagePath({ ...observation, sha256: '../outside' })).toThrow('access denied');
 });
 
+it('does not interpret filenames or invented labels as accepted observation IDs', async () => {
+  const f = await fixture(); const observation = await f.admit();
+  const read = vi.spyOn(f.owner, 'read');
+  for (const observationId of ['sheet03', f.owner.imagePath(observation)]) {
+    const result = await f.call('visual_inspect', { question: 'Check the reference.', views: [{ label: 'alias', observationId }] });
+    expect(result.content).toContain('unavailable or access denied');
+  }
+  expect(read).not.toHaveBeenCalled();
+  expect(f.records).toEqual([observation]);
+  expect(f.reserveOutput).not.toHaveBeenCalled();
+});
+
 it('retains JPEG originals while refusing unsupported derivation and oversized full-image output', async () => {
   const f = await fixture();
+  const smallJpeg = await new Jimp({ width: 2, height: 2, color: 0xff0000ff }).getBuffer('image/jpeg');
+  const small = await f.owner.pin(smallJpeg, { sourceKey: 'small-jpeg', originEntryId: 'entry', mediaType: 'image/jpeg' });
+  f.records.push(small);
+  const full = await f.call('visual_inspect', { question: 'Read the accepted JPEG.', views: [{ label: 'original', observationId: small.observationId }] });
+  expect(full.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'image', mediaType: 'image/jpeg' })]));
+  expect(await f.owner.read(small)).toEqual(smallJpeg);
+  expect((await f.call('visual_read_pixels', { question: 'Do not silently derive JPEG pixels.', views: [{ label: 'unsupported',
+    observationId: small.observationId, region: { x: 0, y: 0, width: 1, height: 1 }, rows: 1, columns: 1 }] })).content).toContain('unsupported');
   const jpeg = await new Jimp({ width: 2001, height: 1, color: 0xff0000ff }).getBuffer('image/jpeg');
   const observation = await f.owner.pin(jpeg, { sourceKey: 'jpeg', originEntryId: 'entry', mediaType: 'image/jpeg' });
   f.records.push(observation);
