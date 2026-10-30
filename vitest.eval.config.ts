@@ -28,8 +28,19 @@ function stripShebang(): Plugin {
 export default defineConfig({
   plugins: [stripShebang()],
   resolve: {
+    // Subpath aliases must precede their package-root aliases (prefix match).
     alias: {
+      '@kodax-ai/kodax/media': resolveFromRoot('src', 'sdk-media.ts'),
+      '@kodax-ai/kodax/session': resolveFromRoot('src', 'sdk-session.ts'),
+      '@kodax-ai/kodax/runtime': resolveFromRoot('src', 'sdk-runtime.ts'),
+      '@kodax-ai/kodax/client': resolveFromRoot('src', 'sdk-client.ts'),
+      '@kodax-ai/coding/media': resolveFromRoot('packages', 'coding', 'src', 'media', 'index.ts'),
+      '@kodax-ai/coding/visual-environment': resolveFromRoot('packages', 'coding', 'src', 'media', 'visual-environment.ts'),
       '@kodax-ai/agent/capabilities/skills/shared/yaml': resolveFromRoot('packages', 'agent', 'src', 'capabilities', 'skills', 'shared', 'yaml.ts'),
+      '@kodax-ai/agent/messaging/queue': resolveFromRoot('packages', 'agent', 'src', 'messaging', 'queue.ts'),
+      '@kodax-ai/agent/runtime/macos-git': resolveFromRoot('packages', 'agent', 'src', 'runtime', 'macos-git.ts'),
+      '@kodax-ai/agent/workflow': resolveFromRoot('packages', 'agent', 'src', 'workflow', 'index.ts'),
+      '@kodax-ai/repl/cli-resume': resolveFromRoot('packages', 'repl', 'src', 'cli-resume.ts'),
       '@kodax-ai/llm': resolveFromRoot('packages', 'llm', 'src', 'index.ts'),
       '@kodax-ai/agent/session-lineage': resolveFromRoot('packages', 'agent', 'src', 'session-lineage', 'index.ts'),
       '@kodax-ai/agent/capabilities/skills': resolveFromRoot('packages', 'agent', 'src', 'capabilities', 'skills', 'index.ts'),
