@@ -592,6 +592,7 @@ const capJsonSrc = path.join(repoRoot, 'packages/llm/src/providers/provider-capa
 const capJsonDst = path.join(distDir, 'provider-capabilities.json');
 log(`Copying provider-capabilities.json → ${path.relative(repoRoot, capJsonDst)}`);
 cpSync(capJsonSrc, capJsonDst);
+cpSync(path.join(repoRoot, 'packages/coding/src/self-knowledge/manual-topics.json'), path.join(distDir, 'manual-topics.json'));
 log(`  ✓ dist/provider-capabilities.json copied`);
 
 // ---- sanity check: helper script depth contract -------------------------

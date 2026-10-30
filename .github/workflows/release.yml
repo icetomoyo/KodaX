@@ -208,6 +208,7 @@ jobs:
           sidecars=(
             builtin
             provider-capabilities.json
+            manual-topics.json
             semantic-worker.js
             constructed-handler-worker.js
             script-cell.js
@@ -230,7 +231,7 @@ jobs:
             archive_file="${archive_base}.zip"
             # Windows 10+ ships with bsdtar; powershell Compress-Archive also works.
             # Zip archives are Windows-only targets, so vendor/ is always present.
-            powershell -Command "Compress-Archive -Path kodax.exe,builtin,provider-capabilities.json,semantic-worker.js,constructed-handler-worker.js,script-cell.js,script-worker.cjs,image-codec,vendor -DestinationPath '$archive_file' -Force"
+            powershell -Command "Compress-Archive -Path kodax.exe,builtin,provider-capabilities.json,manual-topics.json,semantic-worker.js,constructed-handler-worker.js,script-cell.js,script-worker.cjs,image-codec,vendor -DestinationPath '$archive_file' -Force"
           else
             archive_file="${archive_base}.tar.gz"
             tar -czf "$archive_file" kodax "${sidecars[@]}"

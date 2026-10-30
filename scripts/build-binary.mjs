@@ -384,6 +384,7 @@ function buildOne(target, version) {
     throw new Error(`Missing ${capJsonSrc}.`);
   }
   cpSync(capJsonSrc, join(outDir, 'provider-capabilities.json'));
+  cpSync(join(ROOT, 'packages/coding/src/self-knowledge/manual-topics.json'), join(outDir, 'manual-topics.json'));
 
   // Image validation runs the unchanged JS/WASM codec outside the compiled executable.
   const imageCodecSrc = join(ROOT, 'node_modules', '@silvia-odwyer', 'photon-node');

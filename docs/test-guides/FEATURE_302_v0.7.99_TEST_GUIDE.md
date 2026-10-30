@@ -218,3 +218,20 @@ changes, bring across the design submodule commit, then rerun affected SDK/Host
 tests against the combined branch. Do not mark FEATURE_302 complete until the
 remaining protocol/authentication/operation/consumer matrix is implemented and
 its verification status is explicit.
+
+### 2026-10-30 — T05 prerequisite: CLI budget
+
+After integrating committed shared-Host baseline `f6a010462` (isolated merge `ba5d18cb`),
+the CLI was 5,241,925 bytes, only 955 bytes below the unchanged 5 MiB limit.
+Package-owned manual text now ships as `manual-topics.json`; dynamic provider names,
+auth hints and defaults are still resolved at runtime. This reduces JavaScript size,
+not total installed content. The before/after full manual registry is identical.
+
+- Extracted CLI: 5,116,791 bytes; 126,089 bytes below 5 MiB (before Responses).
+- Self-knowledge: 5 files / 90 tests passed. Bundle/manual budget: 3 tests passed,
+  including actual npm pack file-list inclusion and standalone/package SDK equality.
+- npm whitelist, Bun sidecar copy, Unix/Windows release archive lists, and standalone
+  runtime fingerprint include the data. Missing/corrupt data fails visibly.
+- Standards review found two distribution omissions; both fixed and re-reviewed.
+  Spec review passed. No real binary packaging run is claimed here.
+- A 64 KiB minimum CLI headroom regression is wired into `test:bundle`.

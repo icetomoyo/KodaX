@@ -28,7 +28,8 @@
     }
   ],
   "include": [
-    "src/**/*.ts"
+    "src/**/*.ts",
+    "src/self-knowledge/manual-topics.json"
   ],
   "exclude": [
     "node_modules",
