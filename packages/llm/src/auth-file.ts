@@ -8,16 +8,16 @@ import { OAuthCredentialError, type OAuthSessionRecord, type OAuthSessionStore }
 
 export interface ProviderCredentialFileBinding { readonly profile: string; readonly provider: string; readonly connectionFingerprint: string; }
 export interface StoredProviderApiKey { readonly key: string; readonly revision: string; }
-export type ProviderApiKeyStatus = { readonly configured: false } | { readonly configured: true; readonly revision: string };
-interface ApiKeyEntry extends StoredProviderApiKey { readonly binding: ProviderCredentialFileBinding; }
-interface AuthDocument { version: 1; apiKeys: Record<string, ApiKeyEntry>; oauth: Record<string, OAuthSessionRecord>; }
+export type ProviderApiKeyStatus = { readonly configured: false; readonly revision?: string } | { readonly configured: true; readonly revision: string };
+interface ApiKeyEntry { readonly binding: ProviderCredentialFileBinding; readonly key?: string; readonly revision: string; }
+interface AuthDocument { version: 2; apiKeys: Record<string, ApiKeyEntry>; oauth: Record<string, OAuthSessionRecord>; }
 export interface FileProviderCredentialStore {
   readonly filePath: string;
   describeApiKey(binding: ProviderCredentialFileBinding): Promise<ProviderApiKeyStatus>;
   /** Trusted Main only; never expose this secret-returning port to Renderer/Product RPC. */
   readApiKey(binding: ProviderCredentialFileBinding): Promise<StoredProviderApiKey | undefined>;
   setApiKey(binding: ProviderCredentialFileBinding, key: string, expectedRevision?: string | null): Promise<Extract<ProviderApiKeyStatus, { configured: true }>>;
-  removeApiKey(binding: ProviderCredentialFileBinding, expectedRevision?: string | null): Promise<ProviderApiKeyStatus>;
+  removeApiKey(binding: ProviderCredentialFileBinding, expectedRevision?: string | null): Promise<{ readonly configured: false; readonly revision: string }>;
   readonly oauth: OAuthSessionStore;
 }
 export class CredentialUpdateConflictError extends Error {
@@ -43,21 +43,22 @@ function validRegistration(value: unknown, id: string): value is OAuthSessionRec
     && (tokens.scopes === undefined || (Array.isArray(tokens.scopes) && tokens.scopes.every(scope => typeof scope === 'string')))));
 }
 function document(value: unknown): AuthDocument {
-  if (!object(value) || value.version !== 1 || !object(value.apiKeys) || !object(value.oauth)
+  if (!object(value) || (value.version !== 1 && value.version !== 2) || !object(value.apiKeys) || !object(value.oauth)
     || Object.keys(value).some(key => !['version', 'apiKeys', 'oauth'].includes(key))) throw failure();
   for (const [id, entry] of Object.entries(value.apiKeys)) {
-    if (!object(entry) || Object.keys(entry).some(key => !['binding', 'key', 'revision'].includes(key)) || !object(entry.binding) || !secret(entry.key) || !secret(entry.revision)
+    if (!object(entry) || Object.keys(entry).some(key => !['binding', 'key', 'revision'].includes(key)) || !object(entry.binding)
+      || ((value.version === 1 || entry.key !== undefined) && !secret(entry.key)) || !secret(entry.revision)
       || bindingId(entry.binding as unknown as ProviderCredentialFileBinding) !== id) throw failure();
   }
   for (const [id, record] of Object.entries(value.oauth)) if (!validRegistration(record, id)) throw failure();
-  return value as unknown as AuthDocument;
+  return { ...value, version: 2 } as unknown as AuthDocument;
 }
 async function readDocument(file: string): Promise<AuthDocument> {
   try {
     const stat = await lstat(file);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4 * 1024 * 1024) throw failure();
     return document(JSON.parse(await readFile(file, 'utf8')));
-  } catch (error) { if (missing(error)) return { version: 1, apiKeys: {}, oauth: {} }; throw failure(); }
+  } catch (error) { if (missing(error)) return { version: 2, apiKeys: {}, oauth: {} }; throw failure(); }
 }
 let windowsSid: string | undefined;
 async function protectFile(file: string): Promise<void> {
@@ -114,10 +115,13 @@ export function createFileProviderCredentialStore(filePath: string): FileProvide
   };
   const readApiKey = async (binding: ProviderCredentialFileBinding): Promise<StoredProviderApiKey | undefined> => {
     const id = bindingId(binding), data = await readDocument(await canonical()), entry = own(data.apiKeys, id);
-    return entry ? { key: entry.key, revision: entry.revision } : undefined;
+    return entry?.key ? { key: entry.key, revision: entry.revision } : undefined;
   };
   const status = (entry: StoredProviderApiKey | undefined): ProviderApiKeyStatus => entry ? { configured: true, revision: entry.revision } : { configured: false };
-  return { filePath, readApiKey, describeApiKey: async binding => status(await readApiKey(binding)),
+  return { filePath, readApiKey, describeApiKey: async binding => {
+    const entry = own((await readDocument(await canonical())).apiKeys, bindingId(binding));
+    return entry?.key ? status({ key: entry.key, revision: entry.revision }) : { configured: false, ...(entry ? { revision: entry.revision } : {}) };
+  },
     async setApiKey(binding, key, expectedRevision) {
       binding = structuredClone(binding); const id = bindingId(binding); if (!secret(key)) throw failure();
       return transaction(await canonical(), async data => {
@@ -127,7 +131,10 @@ export function createFileProviderCredentialStore(filePath: string): FileProvide
     },
     async removeApiKey(binding, expectedRevision) {
       const id = bindingId(binding);
-      return transaction(await canonical(), async data => { expectRevision(own(data.apiKeys, id), expectedRevision); delete data.apiKeys[id]; return { configured: false }; });
+      return transaction(await canonical(), async data => {
+        expectRevision(own(data.apiKeys, id), expectedRevision); const revision = randomUUID();
+        data.apiKeys[id] = { binding: structuredClone(binding), revision }; return { configured: false, revision };
+      });
     },
     oauth: { async transact(id, operation) {
       if (typeof id !== 'string' || !id.trim() || id.length > 512) throw failure();

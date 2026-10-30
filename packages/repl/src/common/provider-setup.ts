@@ -296,7 +296,13 @@ export function persistProviderSetupChoice(
 export function providerSetupRestartInstructions(input: {
   readonly apiKeyEnv: string;
   readonly platform?: NodeJS.Platform;
+  readonly credentialSource?: 'file';
 }): readonly string[] {
+  if (input.credentialSource === 'file') return [
+    'The API key was saved in permission-protected plaintext auth.json, separately from config.json.',
+    'Run `kodax` again. No environment-variable setup is required for this saved connection.',
+    'Saving a key does not verify its online validity or model entitlement.',
+  ];
   const platform = input.platform ?? process.platform;
   const environmentStep = platform === 'win32'
     ? `Required next step: use this provider's API key as the value of the user environment variable "${input.apiKeyEnv}" in Windows Environment Variables.`

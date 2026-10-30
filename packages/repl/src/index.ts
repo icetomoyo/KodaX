@@ -184,7 +184,7 @@ export type {
   ProviderSetupReadiness,
   PersistedProviderSetupChoice,
 } from "./common/provider-setup.js";
-export { runProviderSetupWizard } from "./interactive/provider-setup.js";
+export { runProviderSetupWizard, createTerminalProviderSetupInteraction } from "./interactive/provider-setup.js";
 export type {
   ProviderSetupInteraction,
   ProviderSetupWizardResult,

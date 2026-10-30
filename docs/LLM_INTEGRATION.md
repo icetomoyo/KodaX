@@ -59,3 +59,18 @@ Host v2 broker 附带实际 adapter 的非秘密 connectionFingerprint，Main �
 整份 JSON 的读改写与 OAuth rotating refresh 共用 proper-lockfile 锁（30 秒 stale、5 秒 heartbeat），新进程不覆盖无关记录。提交为 fsync 后原子 rename；POSIX 文件 0600、staging 目录 0700；Windows 在写明文前去掉继承，仅授予当前用户与 SYSTEM。明文临时文件位于 auth.json.staging，清理失败可见。损坏/未知版本、CAS 冲突和失败事务不覆盖既有数据。应用文件工具保护 auth.json 及临时/备份变体；POSIX shell 对文件和整个 staging 目录显式遮蔽，Windows 文件不继承 sandbox grant。此边界不承诺隔离任意同 OS 用户恶意进程。
 
 2026-10-30 此基础层已有保存后重建 provider、三个独立 Main 进程、API/路由/同名连接和实际 Windows ACL 测试；隐藏输入、CLI 默认文件切换及 Space 实迁移仍为 T12-C–F，最终全量验收仍为 T12-G。
+
+
+## T12-C Key 管理与产品入口（离线切片）
+
+CLI `kodax setup` 和 REPL `/setup` 现在可选隐藏输入并保存 Key、使用环境变量、或在原生云路线使用现有 env/Main 身份。向导显式切换到 env/cloud 时删除该精确连接的保存值；没有 secret 输入端口的旧 metadata-only SDK interaction 仍兼容。保存成功后重启无需配置 API_KEY 环境变量，原有变量名和值继续有效，优先级为保存值→批准 env→已声明的云/外部流程。普通 config.json 始终不写 Key。OAuth 路线继续走 login，不能误用 set-key。
+
+`kodax auth set-key <provider>` 从 stdin 隐藏读取，Key 不放在 argv；`status` 显示 source/stored 与未在线验证状态；`remove-key` 删除并明确展示剩余来源。Main 每次读取文件，不批量写 process.env。真正 CLI 进程的 setup/重启 status/remove/set 测试已通过；这里不把配置成功等同于真实 API 权益验证。
+
+`@kodax-ai/kodax/runtime` 导出 createProviderCredentialManager({configPath?,profile?,environment?})。configPath 默认实际 KodaX 配置根的 config.json；Space 等宿主应显式使用其实际根/profile。describe 返回非秘密 binding、configRevision、credential revision、source、stored/configured；setApiKey/removeApiKey 要带此前的状态，校验配置与精确连接、再做 Key revision CAS。UI 不接 readApiKey。配置提交失败或并发变化只按本次修订回滚；新的并发值不会被覆盖。
+
+文件文档现在写 version:2，API-key 删除保留仅含 binding/revision 的 tombstone，避免 set→delete 的并发变化被误认为从未写入，并防止旧向导恢复已被其他操作删除的 Key。v1 正确文档可读且只读时不改写，下次修改原子升级 v2；旧程序遇到不支持版本明确失败。describe/remove 后即使 configured:false，也必须保留返回 revision 用于下一次条件写。未条件化的底层 SDK 操作仍属于可信 Main 的显式写入能力。
+
+终端 secret 输入使用该 readline 实例专属输出视图，禁用本次 history；取消/EOF 后恢复正常输出。Classic REPL 和 Ink 都接入 secret port；Ink 输入不带默认 Key，画面与布局只见固定掩码，不把原值附加到对话。可见状态不声称隔离任意同 OS 用户进程。
+
+为保留 CLI 5MiB-64KiB 预算，配置模板移入 generated-config-templates.json；同一生成脚本检查源模板逐字一致，独立 REPL、npm dist 与编译二进制均带资源。没有放宽预算。默认 OAuth 共用文件/旧加密注册迁移仍为 T12-D；Space 实迁移 E/F 和全量 G 尚未完成。

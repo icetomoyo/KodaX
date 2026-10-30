@@ -281,3 +281,12 @@ The automatic Sidecar Verifier is retired. Remove `verifierLog`, `/verifier-log`
 KodaXClientExecutionRequest 新增无持久 Session 的 provider_probe；旧 authorizer 不应在收窄 kind 前访问 input.sessionId。该请求对应 providerProbeAuthorization:1，Root Client/CLI 使用授权时要求兼容 Host。RuntimeScopedCredentialTarget.operation 增加 provider.reasoning.probe；旧的 session.compact/run/actor/workflow 保持。
 
 OAuthSessionRecord.identityKind 可为 account 或 grant，旧记录缺省按原 account 语义处理。grant 的 accountId 是隔离的授权主体，不假称已验证用户；注册信息不可被轮换或另一个账号替换。普通 custom connection 可保存非秘密 oauthRegistration 引用，实际令牌留在 Main 的 store。用户新要求的 auth.json 普通 Key 存取、隐藏输入与 Space 迁移仍见 FEATURE_302 T12-B–G；不要把本切片的端口/加密测试当作那些体验已完成。
+
+
+### FEATURE_302 T12-C：保存 Key 与条件更新
+
+现有配置入口和 API_KEY 环境变量继续有效。setup / /setup 可隐藏输入并保存到 config.json 同目录的权限保护明文 auth.json；`kodax auth set-key|status|remove-key <provider>` 管理保存值。普通配置不含 Key。
+
+可信 Main 可从 `/runtime` 使用 createProviderCredentialManager；先 describe，再把完整非秘密状态传给 setApiKey/removeApiKey。profile 与 configPath 必须和实际 Host 一致。不要丢掉 configured:false 状态里的删除 revision，不能用 null 代替已经发生过的删除；UI 不读回 Key。写入文档 v2 接受 v1 读取并在修改时升级，保留删除修订以保护并发回滚。
+
+CLI Host 要求 providerCredentialConnectionBinding:1，保存值按实际 adapter API/地址/认证模式匹配，旧 Host 应升级后重启。SDK 中原始 API-key/云/OAuth lease 入口保留。保存不是在线验证；OAuth 默认后端与 Space 迁移仍在后续实施。

@@ -10,6 +10,7 @@ import {
 import { toKodaXProductClient } from './client-runtime-adapter.js';
 import { configureProviderAuthCommand } from './provider-auth-cli.js';
 import { createCliProviderCredentials } from './cli-provider-credentials.js';
+import { createProviderCredentialManager } from './provider-credential-manager.js';
 import type { KodaXClientHostAuthorization } from './client-host-authorization.js';
 import { ensureRecoveringKodaXRuntime } from './recovering-runtime-client.js';
 
@@ -241,7 +242,6 @@ import {
 import { prepareKodaXA2AServer } from './a2a/server.js';
 import { createReplLearningBinding } from './repl-learning-binding.js';
 import {
-  hasProviderCredentialEnvironment,
   renderMissingProviderCredentialGuide,
   shouldAutoLaunchProviderSetup,
 } from './provider-setup-cli.js';
@@ -2837,13 +2837,13 @@ function printProviderSetupCompletion(selection: {
   readonly model: string;
   readonly apiKeyEnv: string;
   readonly configPath: string;
-}): void {
+}, credentialSource?: 'file'): void {
   process.stdout.write(
     `${chalk.green(`\nProvider setup saved: ${selection.provider}/${selection.model}`)}\n`,
   );
   process.stdout.write(`${chalk.dim(`Config: ${selection.configPath}`)}\n`);
   for (const line of providerSetupRestartInstructions({
-    apiKeyEnv: selection.apiKeyEnv,
+    apiKeyEnv: selection.apiKeyEnv, credentialSource,
   })) {
     process.stdout.write(`  ${line}\n`);
   }
@@ -3107,14 +3107,14 @@ async function executeProviderSetup(
     );
     return;
   }
-  printProviderSetupCompletion(result.selection);
+  printProviderSetupCompletion(result.selection, result.credentialSource);
 }
 
 export function configureKodaXSetupCommand(program: Command): Command {
   const setupCommand = program
     .command('setup')
     .description(
-      'Initialize configuration and configure a provider without storing an API key',
+      'Initialize configuration and configure provider credentials',
     )
     .helpOption(
       '-h, --help',
@@ -4506,15 +4506,6 @@ complete -c kodax -l version -d 'Show version'`);
       ...(config.customProviders ?? []).map((provider) => provider.apiKeyEnv),
     ];
     if (readiness.status === 'needs-provider') {
-      if (!hasProviderCredentialEnvironment(
-        credentialEnvironmentNames,
-        process.env,
-      )) {
-        process.stdout.write(
-          `\n${renderMissingProviderCredentialGuide(credentialEnvironmentNames)}\n\n`,
-        );
-        return;
-      }
       startupProgress?.stop();
       await executeProviderSetup();
       return;
@@ -4526,7 +4517,7 @@ complete -c kodax -l version -d 'Show version'`);
         process.exitCode = 1; return;
       }
     }
-    if (readiness.status === 'needs-credential') {
+    if (readiness.status === 'needs-credential' && !(await createProviderCredentialManager({ configPath: KODAX_CONFIG_FILE }).describe(readiness.provider)).stored) {
       process.stdout.write(
         `\n${renderMissingProviderCredentialGuide(
           readiness.apiKeyEnv
@@ -4663,7 +4654,7 @@ complete -c kodax -l version -d 'Show version'`);
     cliRuntime = await ensureRecoveringKodaXRuntime({
       profile: 'default',
       daemonLifecycle: 'interactive',
-      requirements: { productClient: 1, sessionDrafts: 1, productExecutionAuthorization: 2, productActorAuthorization: 1, providerProbeAuthorization: 1 },
+      requirements: { productClient: 1, sessionDrafts: 1, productExecutionAuthorization: 2, productActorAuthorization: 1, providerProbeAuthorization: 1, providerCredentialConnectionBinding: 1 },
       onStartupProgress: startupProgress === undefined ? undefined
         : (progress) => { startupProgress.update(cliStartupProgressMessage(progress)); },
       clientInfo: {

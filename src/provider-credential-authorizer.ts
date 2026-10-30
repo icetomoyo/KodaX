@@ -1,11 +1,13 @@
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
-import { serializeCloudCredential, validateCustomProviderConfig, type KodaXCloudCredential, type KodaXCustomProviderConfig, type OAuthCredentialSession } from '@kodax-ai/llm';
+import { serializeCloudCredential, validateCustomProviderConfig, type KodaXCloudCredential, type KodaXCustomProviderConfig, type OAuthCredentialSession,
+  type FileProviderCredentialStore, type ProviderCredentialFileBinding } from '@kodax-ai/llm';
 import type { KodaXClientHostAuthorization, RuntimeScopedCredentialRequest } from './client-host-authorization.js';
 import { bindRequestCredentials, type RuntimeRequestCredentialBinding } from './request-credential-binding.js';
 
 export type ProviderCredentialSource = { readonly provider: string; readonly connectionFingerprint?: string } & (
   | { readonly kind: 'external' }
   | { readonly kind: 'environment'; readonly apiKeyEnv: string }
+  | { readonly kind: 'api-key'; readonly apiKeyEnv: string; readonly store: FileProviderCredentialStore; readonly binding: ProviderCredentialFileBinding; readonly connectionFingerprint: string }
   | { readonly kind: 'oauth'; readonly session: OAuthCredentialSession; readonly service: NonNullable<KodaXCustomProviderConfig['oauth']> }
   | { readonly kind: 'cloud'; readonly connection: KodaXCustomProviderConfig; readonly resolve: (request: RuntimeScopedCredentialRequest, signal: AbortSignal) => Promise<KodaXCloudCredential> }
 );
@@ -15,7 +17,7 @@ export function createProviderCredentialAuthorizer(input: {
   readonly sources: readonly ProviderCredentialSource[];
   readonly environment?: () => Readonly<Record<string, string | undefined>>;
 }): ProviderCredentialAuthorizer {
-  const sources = new Map(input.sources.map(source => [source.provider, source.kind === 'cloud' ? { ...source, connection: structuredClone(source.connection) } : { ...source }]));
+  const sources = new Map(input.sources.map(source => [source.provider, source.kind === 'cloud' ? { ...source, connection: structuredClone(source.connection) } : source.kind === 'api-key' ? { ...source, binding: { ...source.binding } } : { ...source }]));
   if (sources.size !== input.sources.length) throw new Error('Duplicate provider credential source.');
   for (const source of sources.values()) validateSource(source);
   let active: RuntimeRequestCredentialBinding | undefined, epoch: string | undefined, closed = false, invalidated = false;
@@ -50,10 +52,11 @@ export function createProviderCredentialAuthorizer(input: {
   } };
 }
 function validateSource(source: ProviderCredentialSource): void {
-  if (!['environment', 'oauth', 'cloud', 'external'].includes(source.kind)) throw new Error('Unknown provider credential source.');
+  if (!['environment', 'api-key', 'oauth', 'cloud', 'external'].includes(source.kind)) throw new Error('Unknown provider credential source.');
   if (source.connectionFingerprint !== undefined && !/^[a-f0-9]{64}$/.test(source.connectionFingerprint)) throw new Error('Invalid approved connection fingerprint.');
   if (!source.provider.trim()) throw new Error('Credential source requires a provider.');
-  if (source.kind === 'environment' && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(source.apiKeyEnv)) throw new Error('Invalid approved environment variable.');
+  if ((source.kind === 'environment' || source.kind === 'api-key') && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(source.apiKeyEnv)) throw new Error('Invalid approved environment variable.');
+  if (source.kind === 'api-key' && (source.binding.provider !== source.provider || source.binding.connectionFingerprint !== source.connectionFingerprint || !source.binding.profile.trim())) throw new Error('Invalid approved stored credential binding.');
   if (source.kind === 'oauth' && source.service !== source.session.service) throw new Error('OAuth source and session must match.');
   if (source.kind === 'cloud') {
     validateCustomProviderConfig(source.connection);
@@ -66,7 +69,8 @@ async function acquire(source: ProviderCredentialSource, request: RuntimeScopedC
   if (source.connectionFingerprint && request.connectionFingerprint !== source.connectionFingerprint) throw new Error('Provider credential connection is not approved.');
   if (source.kind === 'external') throw new Error('This provider owns authentication outside the API-key broker.');
   if (source.kind === 'oauth') return source.session.acquire(signal);
-  if (source.kind === 'environment') {
+  if (source.kind === 'api-key') { const saved = await source.store.readApiKey(source.binding); signal.throwIfAborted(); if (saved) return saved.key; }
+  if (source.kind === 'environment' || source.kind === 'api-key') {
     const key = (environment?.() ?? process.env)[source.apiKeyEnv];
     if (!key?.trim()) throw new Error('Approved provider credential is unavailable.');
     return key;

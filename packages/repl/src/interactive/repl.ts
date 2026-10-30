@@ -1,3 +1,4 @@
+import { createSecretReadlineSurface } from './secret-input.js';
 /**
  * KodaX Interactive REPL Mode - 交互式 REPL 模式
  */
@@ -813,9 +814,10 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   const completer = createCompleter(() => context.gitRoot ?? process.cwd(), options.listHostCommands,
     options.catalog ? { catalog: options.catalog, selection: () => currentConfig } : undefined);
 
+  const secretSurface = createSecretReadlineSurface(process.stdout);
   const rl = readline.createInterface({
     input: process.stdin,
-    output: process.stdout,
+    output: secretSurface.output,
     terminal: process.stdout.isTTY ?? true,
     historySize: 100,
     completer: (line: string, callback: (err: null | Error, result: [string[], string]) => void) => {
@@ -2067,7 +2069,7 @@ Keyboard Shortcuts:
       return agentsFiles;
     },
     readline: rl,
-    ui: new ReadlineUIContext(rl),
+    ui: new ReadlineUIContext(rl, prompt => secretSurface.read(rl, prompt)),
   };
 
   const executeOwnedTool: NonNullable<CommandCallbacks['executeToolInvocation']> = async (invocation, prompt) => {

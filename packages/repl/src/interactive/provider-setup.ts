@@ -1,8 +1,11 @@
 import * as readline from 'node:readline';
-import type { Readable, Writable } from 'node:stream';
+import type { Writable, Readable } from 'node:stream';
+import path from 'node:path';
+import { existsSync } from 'node:fs';
+import { createSecretReadlineSurface } from './secret-input.js';
 
 import chalk from 'chalk';
-import { createCloudProviderConfig, createOAuthProviderConfig } from '@kodax-ai/llm';
+import { createCloudProviderConfig, createOAuthProviderConfig, createCustomProvider, createFileProviderCredentialStore, getProvider } from '@kodax-ai/llm';
 
 import {
   ProviderSetupInvalidConfigError,
@@ -21,12 +24,14 @@ export interface ProviderSetupInteraction {
     items: readonly { readonly value: string; readonly label: string }[],
   ) => Promise<string | undefined>;
   readonly text: (message: string, defaultValue?: string) => Promise<string | undefined>;
+  /** Secret-only input port. Legacy metadata-only integrations may omit it. */
+  readonly secret?: (message: string) => Promise<string | undefined>;
   readonly confirm: (message: string) => Promise<boolean>;
   readonly close?: () => void;
 }
 
 export type ProviderSetupWizardResult =
-  | { readonly status: 'configured'; readonly selection: PersistedProviderSetupChoice }
+  | { readonly status: 'configured'; readonly selection: PersistedProviderSetupChoice; readonly credentialSource?: 'file' }
   | { readonly status: 'cancelled' };
 
 export interface RunProviderSetupWizardInput {
@@ -36,11 +41,11 @@ export interface RunProviderSetupWizardInput {
   readonly input?: Readable;
   readonly output?: Writable;
   readonly customOnly?: boolean;
+  readonly profile?: string;
 }
 
 /**
- * Run the standalone first-use setup flow. It intentionally has no API-key
- * field: only public provider metadata crosses this boundary.
+ * Run trusted terminal setup. Public metadata and explicitly saved secrets use separate files.
  */
 export async function runProviderSetupWizard(
   input: RunProviderSetupWizardInput = {},
@@ -64,7 +69,7 @@ export async function runProviderSetupWizard(
   });
   try {
     const route = input.customOnly ? 'custom' : await interaction.choose(
-      'Choose a provider. KodaX will save metadata only and will never ask for an API key.',
+      'Choose a provider. Credentials can be saved locally or supplied through an environment variable.',
       [
         ...catalog.map((entry) => ({
           value: `builtin:${entry.name}`,
@@ -81,20 +86,46 @@ export async function runProviderSetupWizard(
       : await collectBuiltinChoice(interaction, catalog, route.slice('builtin:'.length));
     if (!choice) return { status: 'cancelled' };
 
+    let key: string | undefined, mode: string | undefined;
+    if (interaction.secret && !(choice.kind === 'custom' && choice.provider.oauth)) {
+      mode = await interaction.choose('Credential source', [
+        { value: 'save-key', label: 'Enter and save an API key (hidden input)' },
+        { value: 'environment', label: 'Use the named environment variable' },
+        ...(choice.kind === 'custom' && choice.provider.cloud ? [{ value: 'cloud', label: 'Use existing environment or trusted Main cloud identity' }] : []),
+        { value: 'cancel', label: 'Cancel' },
+      ]);
+      if (!mode || !['save-key', 'environment', 'cloud'].includes(mode)) return { status: 'cancelled' };
+      if (mode === 'save-key') { key = await interaction.secret('API key (hidden; stored in permission-protected plaintext auth.json)'); if (key === undefined) return { status: 'cancelled' }; }
+    }
+
     const summary = summarizeChoice(choice, catalog);
     if (!await interaction.confirm(
-      `Save ${summary}? config.json stores public connection metadata only. API-key routes use the named environment variable; OAuth requires kodax auth login and cloud routes use the trusted Main resolver.`,
+      `Save ${summary}? config.json stores public metadata. ${key === undefined ? 'Environment, OAuth login or trusted Main cloud identity supplies credentials.' : 'The API key is saved separately in permission-protected plaintext auth.json.'}`,
     )) {
       return { status: 'cancelled' };
     }
 
-    const selection = persistProviderSetupChoice({
+    const persist = () => persistProviderSetupChoice({
       configPath: readiness.configPath,
       expectedRevision: readiness.configRevision,
       catalog,
       choice,
     });
-    return { status: 'configured', selection };
+    const authPath = path.join(path.dirname(readiness.configPath), 'auth.json');
+    if (key === undefined && (!mode || !existsSync(authPath))) return { status: 'configured', selection: persist() };
+    const provider = choice.kind === 'custom' ? createCustomProvider({ ...choice.provider }) : getProvider(choice.provider);
+    const store = createFileProviderCredentialStore(authPath);
+    const binding = { profile: input.profile ?? 'default', provider: provider.name, connectionFingerprint: provider.getCredentialConnectionFingerprint() };
+    const state = await store.describeApiKey(binding), previous = await store.readApiKey(binding);
+    if ((previous?.revision ?? state.revision) !== state.revision || state.configured !== (previous !== undefined)) throw new Error('Provider credentials changed while setup was open. Retry setup.');
+    if (key === undefined && !previous) return { status: 'configured', selection: persist() };
+    const saved = key === undefined ? await store.removeApiKey(binding, state.revision ?? null) : await store.setApiKey(binding, key, state.revision ?? null);
+    try { return { status: 'configured', selection: persist(), ...(key === undefined ? {} : { credentialSource: 'file' as const }) }; }
+    catch (error) {
+      try { if (previous) await store.setApiKey(binding, previous.key, saved.revision); else await store.removeApiKey(binding, saved.revision); }
+      catch (rollback) { throw new AggregateError([error, rollback], 'Provider setup failed and credential rollback conflicted. Refresh both files before retrying.'); }
+      throw error;
+    }
   } finally {
     if (ownsInteraction) interaction.close?.();
   }
@@ -232,11 +263,13 @@ function summarizeChoice(
   return `provider=${choice.provider}, model=${choice.model}, apiKeyEnv=${provider?.apiKeyEnv ?? '<unknown>'}`;
 }
 
-function createTerminalProviderSetupInteraction(input: {
+export function createTerminalProviderSetupInteraction(input: {
   readonly input: Readable;
   readonly output: Writable;
 }): ProviderSetupInteraction {
-  const rl = readline.createInterface({ input: input.input, output: input.output });
+  const secretSurface = createSecretReadlineSurface(input.output);
+  const rl = readline.createInterface({ input: input.input, output: secretSurface.output,
+    terminal: Boolean(Reflect.get(input.input, 'isTTY') && Reflect.get(input.output, 'isTTY')), historySize: 0 });
   let readlineClosed = false;
   rl.on('close', () => {
     readlineClosed = true;
@@ -287,6 +320,10 @@ function createTerminalProviderSetupInteraction(input: {
       const answer = await question(`${message}${suffix} (q to cancel): `);
       if (answer === undefined || answer.trim().toLowerCase() === 'q') return undefined;
       return answer.trim() || defaultValue;
+    },
+    async secret(message) {
+      if (readlineClosed) return undefined;
+      return secretSurface.read(rl, message);
     },
     async confirm(message) {
       const answer = await question(`${message} [y/N]: `);

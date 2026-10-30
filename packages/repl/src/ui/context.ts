@@ -48,4 +48,6 @@ export interface UIContext {
    * @returns Input value, or undefined if cancelled
    */
   input(prompt: string, defaultValue?: string): Promise<string | undefined>;
+  /** Local credentials only: never render or append the original input to history. */
+  secret?(prompt: string): Promise<string | undefined>;
 }

@@ -5,7 +5,8 @@ import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { createOAuthRefreshDriver, openOAuthSession, validateCustomProviderConfig, type KodaXCustomProviderConfig } from '@kodax-ai/llm';
 import { getAgentConfigPath } from '@kodax-ai/agent';
-import { linkProviderOAuthRegistration } from '@kodax-ai/repl';
+import { linkProviderOAuthRegistration, createTerminalProviderSetupInteraction } from '@kodax-ai/repl';
+import { createProviderCredentialManager } from './provider-credential-manager.js';
 import { createWindowsOAuthSessionStore } from './oauth-session-store.js';
 import { loginProviderOAuth } from './provider-oauth-login.js';
 
@@ -53,7 +54,20 @@ export function receiveOAuthCallback(redirectUri: string, authorizationUrl: stri
   });
 }
 export function configureProviderAuthCommand(program: Command): void {
-  const auth = program.command('auth').description('Login, inspect or revoke provider credentials in the trusted Main secure store');
+  const auth = program.command('auth').description('Save API keys, login, inspect or revoke provider credentials');
+  auth.command('set-key <provider>').description('Enter a hidden API key and save it in permission-protected plaintext auth.json').action(async (name: string) => {
+    const manager = createProviderCredentialManager(), before = await manager.describe(name);
+    const interaction = createTerminalProviderSetupInteraction({ input: process.stdin, output: process.stdout });
+    try {
+      const key = await interaction.secret?.('API key (hidden; saved locally in plaintext auth.json)');
+      if (key === undefined) { process.stdout.write('Key update cancelled.\n'); return; }
+      await manager.setApiKey(name, key, before); process.stdout.write(`Saved API key for ${name}; online validity unverified.\n`);
+    } finally { interaction.close?.(); }
+  });
+  auth.command('remove-key <provider>').description('Remove the saved API key; show the remaining credential source').action(async (name: string) => {
+    const manager = createProviderCredentialManager(), before = await manager.describe(name), next = await manager.removeApiKey(name, before);
+    process.stdout.write(`Saved API key removed. Credential source: ${next.source}.\n`);
+  });
   auth.command('login <provider>').requiredOption('--client-id <id>', 'Your own client registration ID (OpenRouter: your Main application identity)')
     .option('--scope <scopes...>', 'Scopes permitted for your client registration', [])
     .option('--device', 'Use the provider device authorization flow')
@@ -72,6 +86,8 @@ export function configureProviderAuthCommand(program: Command): void {
       process.stdout.write(`Authorized ${name} with a new isolated grant. No verified user subject is claimed.\n`);
     });
   auth.command('status <provider>').action(async (name: string) => {
+    const status = await createProviderCredentialManager().describe(name);
+    if (status.source !== 'oauth') { process.stdout.write(`Credential source: ${status.source}; saved key: ${status.stored ? 'yes' : 'no'}; online validity unverified.\n`); return; }
     const configPath = getAgentConfigPath('config.json'), provider = await readOAuthConnection(configPath, name);
     if (!provider.oauthRegistration) { process.stdout.write('Login required.\n'); return; }
     const record = await providerOAuthStore(configPath).transact(provider.oauthRegistration, async record => ({ record, result: record }));

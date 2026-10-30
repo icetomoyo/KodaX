@@ -5,6 +5,8 @@ export type { OAuthSessionSealer } from './oauth-session-store.js';
 export { createNativeCloudCredentialResolver } from './native-cloud-credentials.js';
 export { createProviderCredentialAuthorizer } from './provider-credential-authorizer.js';
 export type { ProviderCredentialSource, ProviderCredentialAuthorizer } from './provider-credential-authorizer.js';
+export { createProviderCredentialManager } from './provider-credential-manager.js';
+export type { ProviderCredentialManager, ProviderCredentialStatus } from './provider-credential-manager.js';
 /** Public connections to the single product Host. Owner assembly stays internal. */
 export { bindOAuthCredentials } from './oauth-credential-binding.js';
 export type { RuntimeOAuthCredentialBinding } from './oauth-credential-binding.js';

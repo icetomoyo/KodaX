@@ -11,7 +11,7 @@ import type { UIContext } from './context.js';
  * ReadlineUIContext - 使用 readline 实现的 UI 上下文
  */
 export class ReadlineUIContext implements UIContext {
-  constructor(private rl: readline.Interface) {}
+  constructor(private rl: readline.Interface, readonly secret?: UIContext['secret']) {}
 
   /**
    * Show a selector and return the user's choice

@@ -11,9 +11,25 @@ const folders: string[] = [];
 afterEach(async () => { for (const folder of folders.splice(0)) await rm(folder, { recursive: true, force: true }); });
 async function fixture() { const folder = await mkdtemp(path.join(tmpdir(), 'kodax-auth-file-')); folders.push(folder); return path.join(folder, 'auth.json'); }
 const binding = { profile: 'default', provider: 'custom', connectionFingerprint: 'a'.repeat(64) };
+it('reads version 1 files without rewriting them and upgrades on the first mutation', async () => {
+  const file = await fixture(), store = createFileProviderCredentialStore(file);
+  const saved = await store.setApiKey(binding, 'legacy-key'), value = JSON.parse(await readFile(file, 'utf8')); value.version = 1;
+  const legacy = JSON.stringify(value); await writeFile(file, legacy);
+  expect((await store.readApiKey(binding))?.key).toBe('legacy-key'); expect(await readFile(file, 'utf8')).toBe(legacy);
+  await store.setApiKey(binding, 'updated-key', saved.revision); expect(JSON.parse(await readFile(file, 'utf8')).version).toBe(2);
+  await writeFile(file, JSON.stringify({ ...value, version: '1' })); await expect(store.readApiKey(binding)).rejects.toThrow(/storage/);
+});
+it('retains deletion revisions so a failed setup cannot restore a key over a later set/delete', async () => {
+  const store = createFileProviderCredentialStore(await fixture()), first = await store.setApiKey(binding, 'first');
+  const deleted = await store.removeApiKey(binding, first.revision);
+  expect(deleted.revision).toBeTypeOf('string');
+  const later = await store.setApiKey(binding, 'later', deleted.revision); await store.removeApiKey(binding, later.revision);
+  await expect(store.setApiKey(binding, 'must-not-restore', deleted.revision)).rejects.toThrow(/conflict/);
+  expect(await store.readApiKey(binding)).toBeUndefined();
+});
 it('stores explicit API keys separately from configuration and exposes only redacted status', async () => {
   const file = await fixture(), store = createFileProviderCredentialStore(file);
-  expect(await store.describeApiKey(binding)).toEqual({ configured: false });
+  expect(await store.describeApiKey(binding)).toMatchObject({ configured: false });
   const state = await store.setApiKey(binding, 'saved-fixture-key');
   expect(state.configured).toBe(true); expect(state.revision).toMatch(/^[a-z0-9-]+$/);
   expect(JSON.stringify(state)).not.toContain('saved-fixture-key');
@@ -21,9 +37,9 @@ it('stores explicit API keys separately from configuration and exposes only reda
   expect(await store.readApiKey({ ...binding, provider: 'other' })).toBeUndefined();
   expect(await store.readApiKey({ ...binding, profile: 'other' })).toBeUndefined();
   expect(await store.readApiKey({ ...binding, connectionFingerprint: 'b'.repeat(64) })).toBeUndefined();
-  const saved = JSON.parse(await readFile(file, 'utf8')); expect(saved.version).toBe(1); expect(JSON.stringify(saved)).toContain('saved-fixture-key');
+  const saved = JSON.parse(await readFile(file, 'utf8')); expect(saved.version).toBe(2); expect(JSON.stringify(saved)).toContain('saved-fixture-key');
   expect(await readdir(`${file}.staging`)).toEqual([]);
-  await store.removeApiKey(binding, state.revision); expect(await store.describeApiKey(binding)).toEqual({ configured: false });
+  await store.removeApiKey(binding, state.revision); expect(await store.describeApiKey(binding)).toMatchObject({ configured: false });
 });
 it('serializes the entire document across independent stores without dropping unrelated keys or OAuth rotations', async () => {
   const file = await fixture(), a = createFileProviderCredentialStore(file), b = createFileProviderCredentialStore(file);
@@ -63,8 +79,9 @@ it('rejects invalid input, create-only conflicts and deletion with a stale revis
   await expect(store.setApiKey(binding, 'second', null)).rejects.toThrow(/conflict/);
   await expect(store.removeApiKey(binding, 'stale')).rejects.toThrow(/conflict/);
   expect((await store.readApiKey(binding))?.key).toBe('first');
-  await store.removeApiKey(binding, first.revision);
-  expect(await store.removeApiKey(binding, null)).toEqual({ configured: false });
+  const removed = await store.removeApiKey(binding, first.revision);
+  await expect(store.removeApiKey(binding, null)).rejects.toThrow(/conflict/);
+  expect(await store.removeApiKey(binding, removed.revision)).toMatchObject({ configured: false });
   await expect(store.oauth.transact('', async () => ({ record: undefined, result: undefined }))).rejects.toThrow(/storage/);
 });
 it('rejects malformed records and token fields without repairing or replacing the file', async () => {

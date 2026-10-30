@@ -1009,3 +1009,14 @@ T12-A final slice evidence supersedes review-pending wording: final wide **126 f
 - 测试日志位于执行机 OS 临时目录 kodax-t12b-*.log；隐藏输入和默认产品存储仍由 C/D 验收，Space 由 E/F，最终全量由 G。
 
 - T12-B 冻结结果：120 文件 / 1813 测试通过，40 个既有条件测试跳过；源码与本阶段拥有的 fixture 类型、workspace 构建、自包含 dts/无 Node ambient 的 product Client consumer 通过；实际发布 JS 26/26。CLI 5,167,565 bytes，低于 5MiB-64KiB 预算 5,177,344。专项覆盖语句84.79%、分支82.15%；Standards 硬违反0/判断题0，Spec剩余0。全仓合并回归仍留 T12-G，并不以此替代。
+
+
+### T12-C Key 产品入口验收（2026-10-30）
+
+- setup / Classic+Ink / SDK manager 共享保存/删除语义；Key 不进入 config、argv、UI默认值、普通历史或原始画面。secret-input 的 TTY 模拟检查回显、readline history、两种 write 回调、取消、重试与关闭后读取；DialogSurface 检查掩码。
+- manager 覆盖 config/key revisions、显式配置根与两 profile 隔离、保存/env 优先与删除、坏文件不回退、OAuth/external 不误走 Key。Key resolver 在后续请求读取最新记录；活动 broker 不回退 daemon ambient。
+- store v1 只读原样、下一写升级 v2；删除 tombstone 覆盖 set→delete→旧回滚冲突。向导配置 CAS 冲突只回滚本次版本；取消/存储失败不改变有效选择，显式 env 选择删除旧保存值。
+- 实际构建 CLI 进程：7/7，含 setup 隐藏保存、第二进程 status、remove-key 与 set-key，输出无原值；发布文件/预算测试19/19。配置模板资源与源文件逐字相同，独立 REPL 构建、根 dist 与 binary copy 清单都覆盖；CLI 最终5,173,069 bytes，低于预算5,177,344。
+- 初轮12文件88测试通过；补充原生云/订阅向导后专项覆盖语句83.73%、分支80.52%。源码与拥有 fixture 的类型检查、dts/无Node ambient consumer通过。冻结后仍须双轴评审及合并全量 G；真实账号/跨平台实测范围不扩张。
+
+- 2026-10-31 C复审后：131文件1825通过/1个条件跳过；Spec发现漏revision会落到底层无条件写，已用JS形状缺字段/空/数字revision做set/remove RED→GREEN，最后4文件34通过。Main facade现在在任何读写前拒绝非法expected revision。Standards0/0，Spec剩余0；发布4文件30/30、源码/owned fixture类型/dts/consumer通过。npm pack dry-run确认新模板JSON入包，预算守门未调整。KodaX完整全仓回归仍保留G，未以专项替代。

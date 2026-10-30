@@ -254,6 +254,7 @@
     "dist/provider-capabilities.json",
     "dist/manual-topics.json",
     "dist/static-text.json",
+    "dist/generated-config-templates.json",
     "dist/semantic-worker.js",
     "dist/constructed-handler-worker.js",
     "dist/script-worker.cjs",

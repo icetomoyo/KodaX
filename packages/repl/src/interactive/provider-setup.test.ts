@@ -6,6 +6,7 @@ import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { ProviderSetupCatalogEntry } from '../common/provider-setup.js';
+import { createCustomProvider, createFileProviderCredentialStore } from '@kodax-ai/llm';
 import {
   runProviderSetupWizard,
   type ProviderSetupInteraction,
@@ -69,6 +70,60 @@ async function sendTerminalAnswers(
 }
 
 describe('runProviderSetupWizard', () => {
+  it.each([
+    { service: 'vertex', texts: ['native', 'project', 'global', 'NATIVE_KEY', 'fixture'] },
+    { service: 'bedrock', texts: ['native', 'us-east-1', 'NATIVE_KEY', 'fixture'] },
+    { service: 'azure', texts: ['native', 'https://native.openai.azure.com', 'NATIVE_KEY', 'fixture'] },
+  ])('preserves native $service routing through setup', async ({ service, texts }) => {
+    const scripted = scriptedInteraction({ choices: ['custom', service], texts, confirm: true });
+    expect((await runProviderSetupWizard({ configPath, catalog, interaction: scripted.interaction })).status).toBe('configured');
+    expect(JSON.parse(readFileSync(configPath, 'utf8')).customProviders[0].cloud.service).toBe(service);
+  });
+  it.each(['openai-chatgpt', 'github-copilot'])('keeps %s on its OAuth route without asking for an API key', async service => {
+    const scripted = scriptedInteraction({ choices: ['custom', 'oauth', service, 'responses'], texts: ['subscription', 'fixture'], confirm: true });
+    expect((await runProviderSetupWizard({ configPath, catalog, interaction: { ...scripted.interaction, secret: async () => { throw new Error('must not ask for key'); } } })).status).toBe('configured');
+    expect(JSON.parse(readFileSync(configPath, 'utf8')).customProviders[0].oauth).toBe(service);
+  });
+  it('hides and saves a custom Key outside config, without requiring environment setup', async () => {
+    const scripted = scriptedInteraction({ choices: ['custom', 'responses', 'save-key'], texts: ['saved', 'https://saved.example/v1', 'UNSET_SAVED_KEY', 'fixture'], confirm: true });
+    const interaction = { ...scripted.interaction, secret: async () => 'wizard-saved-fixture' };
+    const result = await runProviderSetupWizard({ configPath, catalog, interaction });
+    expect(result).toMatchObject({ status: 'configured', credentialSource: 'file', selection: { provider: 'saved' } });
+    const config = JSON.parse(readFileSync(configPath, 'utf8')), provider = createCustomProvider(config.customProviders[0]);
+    const store = createFileProviderCredentialStore(join(tempDirectory, 'auth.json'));
+    expect((await store.readApiKey({ profile: 'default', provider: 'saved', connectionFingerprint: provider.getCredentialConnectionFingerprint() }))?.key).toBe('wizard-saved-fixture');
+    expect(JSON.stringify(config)).not.toContain('wizard-saved-fixture'); expect(scripted.prompts.join('')).not.toContain('wizard-saved-fixture');
+  });
+  it('keeps the previous key and effective config when setup loses its config CAS', async () => {
+    const metadata = { name: 'saved', protocol: 'openai' as const, api: 'responses' as const, baseUrl: 'https://saved.example/v1', apiKeyEnv: 'KEY', model: 'fixture' };
+    const { writeFileSync } = await import('node:fs');
+    const original = { provider: 'saved', customProviders: [metadata] }; writeFileSync(configPath, JSON.stringify(original));
+    const store = createFileProviderCredentialStore(join(tempDirectory, 'auth.json')), binding = { profile: 'default', provider: 'saved', connectionFingerprint: createCustomProvider(metadata).getCredentialConnectionFingerprint() };
+    await store.setApiKey(binding, 'previous-key');
+    const scripted = scriptedInteraction({ choices: ['custom', 'responses', 'save-key'], texts: ['saved', metadata.baseUrl, 'KEY', 'fixture'], confirm: true });
+    const changed = { ...original, model: 'concurrent' };
+    const interaction = { ...scripted.interaction, secret: async () => 'must-roll-back', confirm: async () => { writeFileSync(configPath, JSON.stringify(changed)); return true; } };
+    await expect(runProviderSetupWizard({ configPath, catalog, interaction })).rejects.toThrow(/configuration changed/);
+    expect((await store.readApiKey(binding))?.key).toBe('previous-key'); expect(JSON.parse(readFileSync(configPath, 'utf8'))).toEqual(changed);
+  });
+  it('honors an explicit environment choice by removing the previous saved key for that exact connection', async () => {
+    const metadata = { name: 'saved', protocol: 'openai' as const, api: 'responses' as const, baseUrl: 'https://saved.example/v1', apiKeyEnv: 'KEY', model: 'fixture' };
+    const store = createFileProviderCredentialStore(join(tempDirectory, 'auth.json')), binding = { profile: 'default', provider: 'saved', connectionFingerprint: createCustomProvider(metadata).getCredentialConnectionFingerprint() };
+    await store.setApiKey(binding, 'old-saved');
+    const scripted = scriptedInteraction({ choices: ['custom', 'responses', 'environment'], texts: ['saved', metadata.baseUrl, 'KEY', 'fixture'], confirm: true });
+    expect((await runProviderSetupWizard({ configPath, catalog, interaction: { ...scripted.interaction, secret: async () => { throw new Error('must not ask for key'); } } })).status).toBe('configured');
+    expect(await store.readApiKey(binding)).toBeUndefined();
+  });
+  it('does not change config when hidden Key input is cancelled or credential storage fails', async () => {
+    const { mkdirSync } = await import('node:fs');
+    for (const cancel of [true, false]) {
+      const scripted = scriptedInteraction({ choices: ['custom', 'responses', 'save-key'], texts: ['saved', 'https://saved.example/v1', 'KEY', 'fixture'], confirm: true });
+      if (!cancel) mkdirSync(join(tempDirectory, 'auth.json'));
+      const operation = runProviderSetupWizard({ configPath, catalog, interaction: { ...scripted.interaction, secret: async () => cancel ? undefined : 'must-not-commit' } });
+      if (cancel) expect(await operation).toEqual({ status: 'cancelled' }); else await expect(operation).rejects.toThrow(/storage/);
+      expect(() => readFileSync(configPath, 'utf8')).toThrow();
+    }
+  });
   it('persists a built-in provider/model without ever collecting a secret', async () => {
     const scripted = scriptedInteraction({
       choices: ['builtin:alpha', 'alpha-fast'],
@@ -138,7 +193,7 @@ describe('runProviderSetupWizard', () => {
 
     const [result] = await Promise.all([
       runProviderSetupWizard({ configPath, catalog, input, output }),
-      sendTerminalAnswers(input, ['0', '1', '2', 'y']),
+      sendTerminalAnswers(input, ['0', '1', '2', '2', 'y']),
     ]);
 
     expect(result).toMatchObject({

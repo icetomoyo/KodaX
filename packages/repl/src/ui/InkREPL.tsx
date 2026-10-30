@@ -3571,6 +3571,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       kind: "input";
       prompt: string;
       defaultValue?: string;
+      secret?: boolean;
       buffer: string;
       error?: string;
     }
@@ -4982,8 +4983,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           : {
               kind: "input" as const,
               prompt: uiRequest.prompt,
-              defaultValue: uiRequest.defaultValue,
-              buffer: uiRequest.buffer,
+              defaultValue: uiRequest.secret ? undefined : uiRequest.defaultValue,
+              buffer: uiRequest.secret && uiRequest.buffer ? '••••' : uiRequest.buffer,
               error: uiRequest.error,
             }
         : null,
@@ -5761,6 +5762,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       kind: "input" as const,
       prompt: uiRequest.prompt,
       defaultValue: uiRequest.defaultValue,
+      secret: uiRequest.secret,
       buffer: uiRequest.buffer,
       error: uiRequest.error,
     };
@@ -6950,6 +6952,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     prompt: string,
     defaultValue?: string,
     signal?: AbortSignal,
+    secret = false,
   ): Promise<string | undefined> => {
     if (signal?.aborted) return Promise.resolve(undefined);
     return new Promise<string | undefined>((resolve) => {
@@ -6971,7 +6974,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       setUiRequest({
         kind: "input",
         prompt,
-        defaultValue,
+        defaultValue: secret ? undefined : defaultValue,
+        secret,
         buffer: "",
       });
     });
@@ -10979,6 +10983,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           onWorkflowRunUpdate: handleWorkflowRunUpdate,
           // UI context for interactive dialogs.
           ui: {
+            secret: (prompt: string) => showInputDialog(prompt, undefined, undefined, true),
             select: async (title: string, options: string[]): Promise<string | undefined> => {
               // Route through Ink-managed dialog state instead of reading stdin directly.
               return showSelectDialog(title, options);
