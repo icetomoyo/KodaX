@@ -440,6 +440,13 @@ export interface KodaXTodoDriftWarningEvent {
 }
 
 export interface KodaXPromptCacheDiagnosticEvent {
+  readonly projection?: 'estimated' | 'native';
+  readonly nativeProjectionStage?: 'protocol-input';
+  readonly nativeRequestHash?: string;
+  readonly nativeSystemHash?: string;
+  readonly nativeToolsHash?: string;
+  readonly nativeMessagesHash?: string;
+  readonly nativeCachePolicyHash?: string;
   readonly phase: 'request' | 'response';
   /** Provider API path used for this physical request. */
   readonly transport?: 'stream' | 'complete';

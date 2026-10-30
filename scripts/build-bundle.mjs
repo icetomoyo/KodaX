@@ -202,10 +202,9 @@ function assertSingleProviderCredentialModule(label, result) {
 
 // Everything in root deps stays external (npm installs them on the user
 // machine). Only @kodax-ai/* internal sub-packages get inlined.
-// Exception: react-devtools-core + ws are intercepted by stubVendoredInkDevDepsPlugin
-// before reaching the external check (see plugin docstring above).
+// Ink's dev-only shims are intercepted before the external check.
 const rootPkg = readPkg(path.join(repoRoot, 'package.json'));
-const STUBBED_PACKAGES = new Set(['react-devtools-core', 'ws']);
+const STUBBED_PACKAGES = new Set(['react-devtools-core']);
 const thirdPartyExternals = Object.keys(rootPkg.dependencies || {})
   .filter((name) => !STUBBED_PACKAGES.has(name));
 
@@ -304,17 +303,14 @@ const stubVendoredInkDevDepsPlugin = {
     // Stub it so we don't drag the full ws ^8 surface into the bundle's
     // top-level static imports just for a dev-mode shim that production
     // CLI never enters. The stub is identity-shaped: WebSocket constructor.
-    // ws still appears in root package.json#dependencies because openai's
-    // peerOptional 'ws@^8.18.0' must be satisfiable for `npm install -g`
-    // to succeed under npm 11 strict-peer-deps; npm 11 satisfies the peer
-    // by finding ws in node_modules even when the bundle doesn't import it.
-    build.onResolve({ filter: /^ws$/ }, () => ({
-      path: 'ws-stub',
-      namespace: 'stub',
-    }));
+    // Production Responses transports load real ws lazily. Keep that runtime
+    // dependency external; only this Ink development polyfill receives a stub.
+    build.onResolve({ filter: /^ws$/ }, args => /[/\\]ink[/\\].*devtools-window-polyfill\.js$/.test(args.importer)
+      ? { path: 'ws-stub', namespace: 'stub' }
+      : { path: 'ws', external: true });
     build.onLoad({ filter: /^ws-stub$/, namespace: 'stub' }, () => ({
       contents: `
-        // Stub: real ws never loaded in production CLI (vendored ink dev path only).
+        // Only Ink's development polyfill uses this stub. Provider transports load real ws.
         class WebSocketStub {}
         export default WebSocketStub;
         export { WebSocketStub as WebSocket };

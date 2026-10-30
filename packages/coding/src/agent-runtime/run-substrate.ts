@@ -263,6 +263,7 @@ import { createRuntimeContextBudgetSnapshot } from './context-budget.js';
 import {
   emitPromptCacheDiagnosticRequest,
   emitPromptCacheDiagnosticResponse,
+  emitNativePromptCacheDiagnosticRequest,
 } from './prompt-cache-diagnostics.js';
 import { derivePromptCacheAffinityKey } from './prompt-cache-affinity.js';
 import {
@@ -2154,7 +2155,7 @@ async function runSubstrateInContext(
             streamCallbacks.onRetryAfter?.(event);
           };
           emitContextBudgetSnapshot(wireMessages, requestMaxOutputTokens);
-          const cacheDiagnostic = emitPromptCacheDiagnosticRequest({
+          let cacheDiagnostic = emitPromptCacheDiagnosticRequest({
             events,
             enabled: options.context?.contextDiagnostics === true,
             provider: streamProvider,
@@ -2182,6 +2183,7 @@ async function runSubstrateInContext(
               {
                 ...streamCallbacks,
                 ...reasoningCache,
+                onRequestPrepared: projection => { cacheDiagnostic = emitNativePromptCacheDiagnosticRequest(events, cacheDiagnostic, projection); },
                 ...(textRecoveryRetry ? { singleAttempt: true } : {}),
                 promptCacheKey,
                 onRetryAfter: wrappedRetryAfter,
@@ -2263,7 +2265,7 @@ async function runSubstrateInContext(
             // the new error.
             emitContextBudgetSnapshot(wireMessages, requestMaxOutputTokens);
             effectiveSystemPrompt = withEffectivePermissionContext(policySystemPrompt, options.context);
-            const fallbackCacheDiagnostic = emitPromptCacheDiagnosticRequest({
+            let fallbackCacheDiagnostic = emitPromptCacheDiagnosticRequest({
               events,
               enabled: options.context?.contextDiagnostics === true,
               provider: streamProvider,
@@ -2301,6 +2303,7 @@ async function runSubstrateInContext(
               outputId,
               clearStreamTimers: streamTimers.clearAll,
               configHome: options.context?.configHome,
+              onRequestPrepared: projection => { fallbackCacheDiagnostic = emitNativePromptCacheDiagnosticRequest(events, fallbackCacheDiagnostic, projection); },
             });
             if (fallbackOutcome.ok) {
               result = fallbackOutcome.result;
@@ -2415,6 +2418,7 @@ async function runSubstrateInContext(
           outputTokens: result.usage.outputTokens,
           cacheReadTokens: result.usage.cachedReadTokens,
           cacheWriteTokens: result.usage.cachedWriteTokens,
+          ...(result.usage.cachedWriteTokensByTtl ? { cacheWriteTokensByTtl: result.usage.cachedWriteTokensByTtl } : {}),
         });
       } else {
         turnState.usageComplete = false;

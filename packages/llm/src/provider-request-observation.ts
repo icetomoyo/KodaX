@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import type { KodaXTokenUsage } from './types.js';
 import type { ProviderCredentialAttribution, ProviderCredentialPurpose } from './provider-credential-context.js';
+import { cacheWritePartition } from './providers/cache-usage.js';
 
 export interface ProviderRequestObservation {
   /** pending is a native fetch adapter's provisional boundary; unavailable is operation-only. */
@@ -35,6 +36,8 @@ interface RequestContext {
 interface WireContext { readonly provider: string; readonly model?: string; current?: ProviderRequestObservation; partialUsage?: KodaXTokenUsage; }
 const observers = new AsyncLocalStorage<Observer>();
 const requests = new AsyncLocalStorage<RequestContext>();
+/** Observational ownership only; this is never evidence of credential authority. */
+export function hasProviderOperationOwner(provider: string): boolean { return requests.getStore()?.provider === provider; }
 const wires = new AsyncLocalStorage<WireContext>();
 const abortSignals = new AsyncLocalStorage<AbortSignal>();
 const attributions = new AsyncLocalStorage<ProviderCredentialAttribution>();
@@ -90,6 +93,8 @@ function usageFrom(result: unknown): KodaXTokenUsage | undefined {
     const value = fields[field];
     if (typeof value === 'number' && Number.isFinite(value) && value >= 0) normalized[field] = value;
   }
+  if (fields.cachedWriteTokensByTtl && typeof fields.cachedWriteTokensByTtl === 'object') normalized.cachedWriteTokensByTtl =
+    cacheWritePartition(normalized.cachedWriteTokens, fields.cachedWriteTokensByTtl as Record<string, unknown>);
   return normalized;
 }
 /** Retain stream progress for failed/cancelled physical attempts without inventing final usage. */
@@ -108,24 +113,31 @@ function finishWire(wire: WireContext, result: unknown, error?: unknown): void {
     endedAt: new Date().toISOString(), usage, ...(!usage && wire.partialUsage ? { partialUsage: wire.partialUsage } : {}) };
   observers.getStore()?.(wire.current);
 }
+function beginPhysicalWire(): WireContext | undefined {
+  const observer = observers.getStore();
+  const context = requests.getStore();
+  if (!observer || !context) return undefined;
+  const wire = wires.getStore() ?? (context.wire ??= { provider: context.provider });
+  if (wire.current?.state === 'started') finishWire(wire, undefined, new Error('Provider request replaced.'));
+  wire.partialUsage = undefined;
+  context.attempts += 1;
+  wire.current = { requestId: context.attempts === 1 && context.operationFact ? context.operationFact.requestId : `physical_${randomUUID()}`, logicalRequestId: context.logicalRequestId,
+    provider: wire.provider, model: wire.model, purpose: context.purpose, attribution: context.attribution,
+    route: routes.getStore(),
+    attempt: context.attempts, boundary: 'physical_attempt', wireObservation: 'observed', dispatch: 'dispatched', state: 'started', startedAt: new Date().toISOString() };
+  observer(wire.current);
+  return wire;
+}
+/** WebSocket generation-frame dispatch; a handshake alone is not an inference attempt. */
+export function observeProviderSocketDispatch(): void { beginPhysicalWire(); }
 /** Actual SDK fetch boundary, including SDK-internal HTTP retries. Records no payload or secret. */
-export function observeProviderFetch(fetcher: typeof globalThis.fetch): typeof globalThis.fetch {
+export function observeProviderFetch(fetcher: typeof globalThis.fetch, acceptNotModified = false): typeof globalThis.fetch {
   return async (input, init) => {
-    const observer = observers.getStore();
-    const context = requests.getStore();
-    if (!observer || !context) return fetcher(input, init);
-    const wire = wires.getStore() ?? (context.wire ??= { provider: context.provider });
-    if (wire.current?.state === 'started') finishWire(wire, undefined, new Error('Provider request replaced.'));
-    wire.partialUsage = undefined;
-    context.attempts += 1;
-    wire.current = { requestId: context.attempts === 1 && context.operationFact ? context.operationFact.requestId : `physical_${randomUUID()}`, logicalRequestId: context.logicalRequestId,
-      provider: wire.provider, model: wire.model, purpose: context.purpose, attribution: context.attribution,
-      route: routes.getStore(),
-      attempt: context.attempts, boundary: 'physical_attempt', wireObservation: 'observed', dispatch: 'dispatched', state: 'started', startedAt: new Date().toISOString() };
-    observer(wire.current);
+    const wire = beginPhysicalWire();
+    if (!wire) return fetcher(input, init);
     try {
       const response = await fetcher(input, init);
-      if (!response.ok) finishWire(wire, undefined, new Error('Provider HTTP request failed.'));
+      if (!response.ok && !(acceptNotModified && response.status === 304)) finishWire(wire, undefined, new Error('Provider HTTP request failed.'));
       return response;
     } catch (error: unknown) { finishWire(wire, undefined, error); throw error; }
   };

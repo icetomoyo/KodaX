@@ -82,6 +82,13 @@ export function createProviderConnection(id: string, input: Pick<KodaXCustomProv
       ...(id === 'cloudflare-ai-gateway' ? { authentication: 'cloudflare-gateway' } : {}), verifyStrategy: input.verifyStrategy ?? 'minimal-message' };
     if (['openrouter', 'opencode', 'opencode-go'].includes(id) && apiId === A) connection.authentication = 'bearer';
   }
+  if (id === 'fireworks') {
+    connection.promptCacheAffinity = input.promptCacheAffinity ?? true;
+    connection.cacheCapabilities = input.cacheCapabilities ?? (apiId === A
+      ? { dialect: 'anthropic', locations: ['system', 'messages'], affinityHeader: 'x-session-affinity' }
+      : { dialect: 'affinity', affinityHeader: 'x-session-affinity' });
+    if (apiId === C) connection.toolCapabilities = input.toolCapabilities ?? { strict: true };
+  }
   connection = { ...overrides, ...connection };
   validateCustomProviderConfig(connection);
   return connection;

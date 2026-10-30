@@ -1,4 +1,9 @@
 import { parseResponsesOutput } from './responses-output.js';
+import { normalizeResponsesUsage } from './cache-usage.js';
+import { withCacheWritePartition } from './request-extensions.js';
+import { requestHeaders } from './request-extensions.js';
+import { prepareProviderPayload, providerStreamEvent } from './request-extensions.js';
+import { responseTools, withoutPreferredToolConstraints } from './tool-constraints.js';
 import { createHash } from 'node:crypto';
 import type { Response as OpenAIResponse, ResponseCreateParamsBase, ResponseInputContent, ResponseStreamEvent } from 'openai/resources/responses/responses';
 import type {
@@ -19,23 +24,43 @@ import { isProviderQuotaError } from '../retry/provider-quota.js';
 import { buildReasoningEffortLadder, usesReasoningEffortLadder } from '../reasoning-ladder.js';
 
 function usageFrom(response: OpenAIResponse): KodaXTokenUsage | undefined {
-  const usage = response.usage;
-  return usage ? { inputTokens: usage.input_tokens, outputTokens: usage.output_tokens,
-    totalTokens: usage.total_tokens, cachedReadTokens: usage.input_tokens_details?.cached_tokens,
-    thoughtTokens: usage.output_tokens_details?.reasoning_tokens } : undefined;
+  return withCacheWritePartition(normalizeResponsesUsage(response.usage));
 }
 
 /** Native stateless Responses; shares credentials, transport observation and bounded retries with OpenAI. */
 export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProvider {
+  protected override getReasoningApi(): string { return 'openai-responses'; }
   private readonly rejectedResponseEfforts = new Map<string, Set<string>>();
   protected requiresResponseStream(): boolean { return false; }
   protected prepareResponseRequest(params: ResponseCreateParamsBase): ResponseCreateParamsBase { return params; }
   protected responseRequestHeaders(_messages: readonly KodaXMessage[]): Record<string, string> | undefined { return undefined; }
+  protected responseSocketHeaders(messages: readonly KodaXMessage[], _options?: KodaXProviderStreamOptions): Record<string, string> {
+    const key = this.getApiKey();
+    return Object.fromEntries(requestHeaders({ ...(this.config.authentication === 'cloudflare-gateway' ? { 'cf-aig-authorization': `Bearer ${key}` }
+      : { authorization: `Bearer ${key}` }), ...this.responseRequestHeaders(messages) }));
+  }
+  private async responseEvents(params: ResponseCreateParamsBase, messages: readonly KodaXMessage[], options: KodaXProviderStreamOptions | undefined,
+    requestOptions: { signal?: AbortSignal; maxRetries: number; headers?: Record<string, string> }, customProperties: ReadonlyMap<string, string>): Promise<AsyncIterable<ResponseStreamEvent>> {
+    const http = async () => (await this.getClient()).responses.create(await prepareProviderPayload({ ...params, stream: true as const }), requestOptions);
+    if (options?.transport === undefined || options.transport === 'sse') return http();
+    const url = new URL(`${this.getBaseUrl()?.replace(/\/$/, '') ?? 'https://api.openai.com/v1'}/responses`);
+    if (url.username || url.password || url.search || url.hash || (url.protocol !== 'https:'
+      && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))) throw this.protocolError('Invalid WebSocket endpoint.');
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    const { background: _background, ...body } = params;
+    const frame = await prepareProviderPayload({ type: 'response.create', ...body }, 'root', false);
+    const { responsesWebSocketEvents } = await import('./responses-websocket.js');
+    return responsesWebSocketEvents({ provider: this.name, url: url.href, headers: this.responseSocketHeaders(messages, options), frame,
+      options, signal: requestOptions.signal, scope: this.getReasoningLearningScope(options?.modelOverride)!,
+      validateCompleted: response => projectResponsesMessages([{ role: 'assistant', content: this.parseOutput(response,
+        this.getGenerationSource(options?.modelOverride), customProperties) }], this.getGenerationSource(options?.modelOverride), () => [], { settleTrailing: false }),
+      ...(options.transport === 'auto' ? { fallback: http } : {}) });
+  }
   protected acceptsResponseToolNamespace(_namespace?: string): boolean { return true; }
   getGenerationSource(model?: string): KodaXGenerationSource {
-    const token = getScopedProviderCredential(this.name);
+    const fingerprint = this.getRequestCredentialFingerprint();
     return { provider: this.name, api: 'openai-responses', model: this.getWireModelId(model), baseUrl: this.getBaseUrl(),
-      ...(this.config.credentialSource === 'broker' ? { credentialScope: token ? createHash('sha256').update(token).digest('hex') : 'unavailable' } : {}) };
+      ...(fingerprint ? { credentialScope: fingerprint } : this.config.credentialSource === 'broker' ? { credentialScope: 'unavailable' } : {}) };
   }
 
   override async verifyCredential(opts?: { timeoutMs?: number; signal?: AbortSignal }): Promise<KodaXVerifyCredentialResult> {
@@ -52,12 +77,12 @@ export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProv
 
   override stream(messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string,
     reasoning?: boolean | KodaXReasoningRequest, options?: KodaXProviderStreamOptions, signal?: AbortSignal): Promise<KodaXStreamResult> {
-    return withProviderRequestCredential(this.name, 'primary', signal, requestSignal => this.generate(true, messages, tools, system, reasoning, options, requestSignal));
+    return this.withRequestContext(options, signal, requestSignal => this.generate(true, messages, tools, system, reasoning, options, requestSignal));
   }
 
   override complete(messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string,
     reasoning?: boolean | KodaXReasoningRequest, options?: KodaXProviderStreamOptions, signal?: AbortSignal): Promise<KodaXStreamResult> {
-    return withProviderRequestCredential(this.name, 'primary', signal, requestSignal => this.generate(false, messages, tools, system, reasoning, options, requestSignal));
+    return this.withRequestContext(options, signal, requestSignal => this.generate(false, messages, tools, system, reasoning, options, requestSignal));
   }
 
   private protocolError(message: string): KodaXProviderError {
@@ -109,12 +134,13 @@ export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProv
           }
         }
       }
-      const input = projectResponsesMessages(envelope.rest, source, image => images.get(image)!);
+      const input = projectResponsesMessages(envelope.rest, source, image => images.get(image)!,
+        { cacheBreakpoints: this.getCacheCapabilities(model)?.dialect === 'openai-options' && !resolvePromptCacheDisabled() && options?.cacheRetention !== 'none' });
       if (options?.ephemeralSuffix?.content) input.push({ role: 'user', content: options.ephemeralSuffix.content });
       const budget = this.getEffectiveMaxOutputTokens(model, options?.maxOutputTokensOverride);
       retry.maxOutputTokensLimit ??= budget;
       // Only one-way hard evidence is retained. Identity and declaration changes cannot inherit it.
-      const learningKey = createHash('sha256').update(JSON.stringify([source, profile, this.getApiKey()])).digest('hex');
+      const learningKey = this.getReasoningLearningScope(model) ?? createHash('sha256').update(this.getApiKey()).digest('hex');
       const rejected = [...(this.rejectedResponseEfforts.get(learningKey) ?? []),
         ...(options?.resolveRejectedReasoningEfforts?.(learningKey) ?? options?.rejectedReasoningEfforts ?? [])];
       const fallbacks: NonNullable<KodaXStreamResult['reasoningResolution']>['fallbacks'] = [];
@@ -126,25 +152,25 @@ export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProv
           continue;
         }
         const sentEffort = retry.suppressReasoningEffort ? undefined : candidate;
+        const toolPlan = responseTools(withoutPreferredToolConstraints(tools, retry.disablePreferredToolConstraints), this.getToolCapabilities(model), this.name);
         const params = this.prepareResponseRequest({
           model: source.model, input, instructions: envelope.system, store: false,
           include: ['reasoning.encrypted_content'],
           max_output_tokens: Math.min(retry.maxOutputTokensOverride ?? budget, budget),
-          ...(tools.length ? { tools: tools.map(t => ({ type: 'function' as const, name: t.name,
-            description: t.description, parameters: t.input_schema, strict: false })) } : {}),
-          ...(options?.forcedToolName && tools.length ? { tool_choice: { type: 'function', name: options.forcedToolName } as const } : {}),
+          ...(tools.length ? { tools: toolPlan.tools } : {}),
+          ...(options?.forcedToolName && tools.length ? { tool_choice: { type: toolPlan.customProperties.has(options.forcedToolName) ? 'custom' as const : 'function' as const, name: options.forcedToolName } } : {}),
           ...(sentEffort ? { reasoning: { effort: sentEffort as NonNullable<ResponseCreateParamsBase['reasoning']>['effort'] } } : {}),
           ...(this.config.promptCacheAffinity && options?.promptCacheKey && !resolvePromptCacheDisabled()
             ? { prompt_cache_key: options.promptCacheKey } : {}),
         });
-        const client = await this.getClient();
         const requestOptions = { signal, maxRetries: 0, headers: this.responseRequestHeaders(messages) };
         let response: OpenAIResponse | undefined;
         try {
-          if (streaming || this.requiresResponseStream()) {
-            const events = await client.responses.create({ ...params, stream: true }, requestOptions);
-            const toolInputs = new Map<string, { name: string; callId: string }>();
+          if (streaming || this.requiresResponseStream() || (options?.transport !== undefined && options.transport !== 'sse')) {
+            const events = await this.responseEvents(params, messages, options, requestOptions, toolPlan.customProperties);
+            const toolInputs = new Map<string, { name: string; callId: string; property?: string }>();
             for await (const event of events) {
+              providerStreamEvent(event);
               if (signal?.aborted) throw new DOMException('Request aborted', 'AbortError');
               options?.onHeartbeat?.();
               if ('response' in event) observeProviderStreamUsage(usageFrom(event.response));
@@ -152,13 +178,14 @@ export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProv
                 response = event.response;
                 break;
               }
-              this.emitDelta(event, streaming ? options : undefined, toolInputs);
+              this.emitDelta(event, streaming ? options : undefined, toolInputs, toolPlan.customProperties);
             }
             if (signal?.aborted) throw new DOMException('Request aborted', 'AbortError');
             if (!response) throw new KodaXProviderError('Stream incomplete: Responses ended without a terminal response.', this.name,
               { failureCode: 'response_stream_error', stage: 'response_stream' });
           } else {
-            response = await client.responses.create({ ...params, stream: false }, requestOptions);
+            const client = await this.getClient();
+            response = await client.responses.create(await prepareProviderPayload({ ...params, stream: false as const }), requestOptions);
             observeProviderStreamUsage(usageFrom(response));
           }
         } catch (error) {
@@ -181,7 +208,7 @@ export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProv
         if (response.status !== 'completed') {
           throw this.protocolError(`Responses ${response.status}: ${response.incomplete_details?.reason ?? 'no completed output'}`);
         }
-        const contentBlocks = this.parseOutput(response, source);
+        const contentBlocks = this.parseOutput(response, source, toolPlan.customProperties);
         const textBlocks = contentBlocks.filter(b => b.type === 'text');
         const thinkingBlocks = contentBlocks.filter(b => b.type === 'thinking');
         const toolBlocks = contentBlocks.filter(b => b.type === 'tool_use');
@@ -202,18 +229,29 @@ export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProv
       }
       throw this.protocolError('Responses exhausted reasoning negotiation without a completed response.');
     }, signal, options?.singleAttempt ? 1 : 3, options?.onRateLimit, options?.onRetryAfter,
-    { model, effort });
+    { model, effort, tools });
   }
 
   private emitDelta(event: ResponseStreamEvent, options: KodaXProviderStreamOptions | undefined,
-    tools: Map<string, { name: string; callId: string }>): void {
+    tools: Map<string, { name: string; callId: string; property?: string }>, customProperties: ReadonlyMap<string, string>): void {
     switch (event.type) {
       case 'error': throw this.upstreamError(event.message, event.code);
       case 'response.output_text.delta': case 'response.refusal.delta': options?.onTextDelta?.(event.delta); break;
       case 'response.reasoning_summary_text.delta': options?.onThinkingDelta?.(event.delta); break;
       case 'response.output_item.added':
         if (event.item.type === 'function_call') tools.set(event.item.id!, { name: event.item.name, callId: event.item.call_id });
+        if (event.item.type === 'custom_tool_call') {
+          const property = customProperties.get(event.item.name);
+          if (!property) throw this.protocolError('Responses started an undeclared custom tool.');
+          if (event.item.id) tools.set(event.item.id, { name: event.item.name, callId: event.item.call_id, property });
+        }
         break;
+      case 'response.custom_tool_call_input.delta': {
+        const tool = tools.get(event.item_id);
+        if (!tool?.property) throw this.protocolError('Custom tool delta has no declared input property.');
+        options?.onToolInputDelta?.(tool.name, event.delta, { toolId: tool.callId, format: 'text', inputProperty: tool.property });
+        break;
+      }
       case 'response.function_call_arguments.delta': {
         const tool = tools.get(event.item_id);
         if (tool) options?.onToolInputDelta?.(tool.name, event.delta, { toolId: tool.callId });
@@ -222,7 +260,7 @@ export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProv
     }
   }
 
-  private parseOutput(response: OpenAIResponse, source: KodaXGenerationSource): KodaXAssistantBlock[] {
-    return parseResponsesOutput(response, source, namespace => this.acceptsResponseToolNamespace(namespace));
+  private parseOutput(response: OpenAIResponse, source: KodaXGenerationSource, customProperties: ReadonlyMap<string, string>): KodaXAssistantBlock[] {
+    return parseResponsesOutput(response, source, namespace => this.acceptsResponseToolNamespace(namespace), customProperties);
   }
 }

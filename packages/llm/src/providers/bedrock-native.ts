@@ -1,3 +1,4 @@
+import { prepareProviderPayload, providerStreamEvent } from './request-extensions.js';
 import type { BedrockRuntimeClient as BedrockClient, ContentBlock, ConverseCommandInput, ConverseStreamOutput, TokenUsage } from '@aws-sdk/client-bedrock-runtime';
 import type { KodaXAssistantBlock, KodaXStreamResult, KodaXTokenUsage } from '../types.js';
 import { observeProviderStreamUsage } from '../provider-request-observation.js';
@@ -5,10 +6,17 @@ import { KodaXNativeCloudProvider, type NativeCloudRequest } from './native-clou
 import { requireCloudCredential } from './cloud-auth.js';
 import { bedrockDocument, projectBedrockMessages } from './bedrock-messages.js';
 import { bedrockHttpHandler } from './bedrock-http.js';
+import { toolParameters } from './tool-constraints.js';
+import { cacheWritePartition } from './cache-usage.js';
+import { withCacheWritePartition } from './request-extensions.js';
+import { applyAnthropicThinkingOptions } from './anthropic-thinking-options.js';
 
 function usageFrom(usage?: TokenUsage): KodaXTokenUsage | undefined {
-  return usage ? { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0, totalTokens: usage.totalTokens ?? 0,
-    cachedReadTokens: usage.cacheReadInputTokens, cachedWriteTokens: usage.cacheWriteInputTokens } : undefined;
+  const partition = usage?.cacheDetails ? cacheWritePartition(usage.cacheWriteInputTokens,
+    Object.fromEntries(usage.cacheDetails.map(detail => [detail.ttl ?? 'unknown', detail.inputTokens]))) : undefined;
+  return withCacheWritePartition(usage ? { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0, totalTokens: usage.totalTokens ?? 0,
+    cachedReadTokens: usage.cacheReadInputTokens, cachedWriteTokens: usage.cacheWriteInputTokens,
+    ...(partition ? { cachedWriteTokensByTtl: partition } : {}) } : undefined);
 }
 type StreamBlock = { stopped: boolean } & (
   | { kind: 'text'; text: string }
@@ -46,13 +54,20 @@ export class KodaXBedrockProvider extends KodaXNativeCloudProvider {
       requestHandler: bedrockHttpHandler(request.signal),
     });
     try {
-      const params: ConverseCommandInput = { modelId: request.model,
+      const thinking = this.thinkingConfig(request);
+      if (thinking.additionalModelRequestFields && typeof thinking.additionalModelRequestFields === 'object') {
+        applyAnthropicThinkingOptions(thinking.additionalModelRequestFields, request.profile, request.options, this.name, true);
+      } else if (request.options?.thinkingDisplay !== undefined) applyAnthropicThinkingOptions({}, request.profile, request.options, this.name, true);
+      const params: ConverseCommandInput = await prepareProviderPayload({ modelId: request.model,
         messages: await projectBedrockMessages(request.messages, request.source, this.config.promptCacheAffinity === true, this.getCapabilityProfile().multimodalSupport !== 'none'),
         ...(request.system ? { system: [{ text: request.system }] } : {}), inferenceConfig: { maxTokens: request.maxOutputTokens },
-        ...(request.tools.length ? { toolConfig: { tools: request.tools.map(t => ({ toolSpec: { name: t.name, description: t.description,
-          inputSchema: { json: bedrockDocument(t.input_schema) } } })), ...(request.options?.forcedToolName ? { toolChoice: { tool: { name: request.options.forcedToolName } } } : {}) } } : {}),
-        ...this.thinkingConfig(request),
-      };
+        ...(request.tools.length ? { toolConfig: { tools: request.tools.map(t => {
+          const constraints = toolParameters(t, request.toolCapabilities, this.name);
+          return { toolSpec: { name: t.name, description: t.description, inputSchema: { json: bedrockDocument(constraints.input_schema) },
+            ...(constraints.strict ? { strict: true } : {}) } };
+        }), ...(request.options?.forcedToolName ? { toolChoice: { tool: { name: request.options.forcedToolName } } } : {}) } } : {}),
+        ...thinking,
+      }, 'bedrock');
       if (request.streaming) {
         const response = await client.send(new ConverseStreamCommand(params), { abortSignal: request.signal });
         return await this.consume(response.stream, request);
@@ -83,6 +98,7 @@ export class KodaXBedrockProvider extends KodaXNativeCloudProvider {
       return index!;
     };
     for await (const event of stream) {
+      providerStreamEvent(event);
       request.signal?.throwIfAborted();
       request.options?.onHeartbeat?.();
       if (event.messageStart) {
@@ -152,18 +168,26 @@ export class KodaXBedrockProvider extends KodaXNativeCloudProvider {
     return this.finish(request, this.parseContent(content, request), usage, stopReason);
   }
   private thinkingConfig(request: NativeCloudRequest): Partial<ConverseCommandInput> {
+    if (request.profile?.effortStrategy === 'bedrock-openai-effort' || request.profile?.effortStrategy === 'bedrock-openai-nested-effort') {
+      const effort = request.disabled ? 'none' : request.effort;
+      if (!effort) return {};
+      request.sentReasoningEffort = effort;
+      return { additionalModelRequestFields: request.profile.effortStrategy === 'bedrock-openai-effort'
+        ? { reasoning_effort: effort } : { reasoning: { effort } } };
+    }
     if (request.profile?.effortStrategy === 'provider-budget') {
       const requested = request.effort ? request.profile.budgetByEffort?.[request.effort] : undefined;
       const budget = requested === undefined ? undefined : this.boundThinkingBudget(request, requested);
-      if (request.disabled) return { additionalModelRequestFields: { thinking: { type: 'disabled' } } };
+      if (request.disabled) { request.sentReasoningEffort = 'none'; return { additionalModelRequestFields: { thinking: { type: 'disabled' } } }; }
       if (budget !== undefined) {
         if (!Number.isSafeInteger(budget) || budget <= 0 || budget >= request.maxOutputTokens) throw this.protocolError('Bedrock thinking budget must be positive and smaller than max output tokens.');
+        request.sentReasoningEffort = request.effort;
         return { additionalModelRequestFields: { thinking: { type: 'enabled', budget_tokens: budget } } };
       }
     }
     if (request.profile?.effortStrategy === 'bedrock-anthropic-effort') {
-      if (request.disabled) return { additionalModelRequestFields: { thinking: { type: 'disabled' } } };
-      if (request.effort) return { additionalModelRequestFields: { thinking: { type: 'adaptive' }, output_config: { effort: request.effort } } };
+      if (request.disabled) { request.sentReasoningEffort = 'none'; return { additionalModelRequestFields: { thinking: { type: 'disabled' } } }; }
+      if (request.effort) { request.sentReasoningEffort = request.effort; return { additionalModelRequestFields: { thinking: { type: 'adaptive' }, output_config: { effort: request.effort } } }; }
     }
     return {};
   }

@@ -1,3 +1,4 @@
+import { prepareProviderPayload } from './request-extensions.js';
 import type { KodaXAssistantBlock, KodaXProviderConfig, KodaXStreamResult, KodaXTokenUsage } from '../types.js';
 import { observeProviderStreamUsage } from '../provider-request-observation.js';
 import { KodaXNativeProvider, type NativeRequest } from './native-provider.js';
@@ -5,6 +6,7 @@ import { nativeResponse } from './native-http.js';
 import { readCloudSSE } from './cloud-sse.js';
 import { piBlockHash, projectPiMessages } from './pi-messages-history.js';
 import { resolvePromptCacheDisabled } from '../run-scoped-config.js';
+import { toolParameters, toolGrammar } from './tool-constraints.js';
 
 interface PiEvent {
   type: string; contentIndex?: number; delta?: string; content?: string; contentSignature?: string; redacted?: boolean;
@@ -16,17 +18,24 @@ interface PendingPart { block: KodaXAssistantBlock; ended: boolean }
 export class KodaXPiMessagesProvider extends KodaXNativeProvider {
   constructor(name: string, config: KodaXProviderConfig) { super(name, config, 'pi-messages'); }
   override supportsNonStreamingFallback(): boolean { return false; }
+  override getCacheCapabilities(model?: string) { return super.getCacheCapabilities(model) ?? { dialect: 'pi' as const }; }
   protected async invoke(request: NativeRequest): Promise<KodaXStreamResult> {
     const cacheOff = resolvePromptCacheDisabled();
     const messages = await projectPiMessages(request.messages, request.source, this.getCapabilityProfile().multimodalSupport !== 'none');
+    if (request.effort) request.sentReasoningEffort = request.effort;
     const response = await nativeResponse(`${this.config.baseUrl!.replace(/\/$/, '')}/messages`, {
       method: 'POST', signal: request.signal, headers: { authorization: `Bearer ${this.getApiKey()}`, 'content-type': 'application/json', accept: 'text/event-stream' },
-      body: JSON.stringify({ model: request.model, context: { messages: [{ role: 'system', content: request.system,
-        toolsAdded: request.tools.map(t => ({ name: t.name, description: t.description, parameters: t.input_schema })), timestamp: 0 }, ...messages] },
+      body: JSON.stringify(await prepareProviderPayload({ model: request.model, context: { messages: [{ role: 'system', content: request.system,
+        toolsAdded: request.tools.map(t => {
+          const grammar = toolGrammar(t, request.toolCapabilities, this.name);
+          const constraints = grammar ? undefined : toolParameters(t, request.toolCapabilities, this.name);
+          return { name: t.name, description: t.description, parameters: constraints?.input_schema ?? t.input_schema,
+            ...(grammar ? { constrainedSampling: { type: 'grammar', variants: { [grammar.format.syntax === 'lark' ? 'openai_lark' : 'openai_regex']: grammar.format.definition } } }
+              : constraints?.strict ? { constrainedSampling: { type: 'json_schema', strict: t.strict } } : {}) }; }), timestamp: 0 }, ...messages] },
       options: { maxTokens: request.maxOutputTokens, ...(request.effort ? { reasoning: request.effort } : {}),
         ...(cacheOff ? { cacheRetention: 'none' } : {}),
         ...(this.config.promptCacheAffinity && !cacheOff && request.options?.promptCacheKey ? { sessionId: request.options.promptCacheKey } : {}),
-        ...(request.options?.forcedToolName ? { toolChoice: { type: 'function', function: { name: request.options.forcedToolName } } } : {}) } }) });
+        ...(request.options?.forcedToolName ? { toolChoice: { type: 'function', function: { name: request.options.forcedToolName } } } : {}) } }, 'pi')) });
     return this.consume(request, response);
   }
   private async consume(request: NativeRequest, response: Response): Promise<KodaXStreamResult> {

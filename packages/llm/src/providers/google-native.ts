@@ -1,3 +1,4 @@
+import { prepareProviderPayload } from './request-extensions.js';
 import { randomUUID } from 'node:crypto';
 import type { KodaXAssistantBlock, KodaXStreamResult, KodaXTokenUsage } from '../types.js';
 import { observeProviderStreamUsage } from '../provider-request-observation.js';
@@ -6,6 +7,9 @@ import { requireCloudCredential } from './cloud-auth.js';
 import { googleBlockHash, projectGoogleMessages, type GooglePart } from './google-messages.js';
 import { readCloudSSE } from './cloud-sse.js';
 import { nativeResponse } from './native-http.js';
+import { projectGoogleTools } from './google-tools.js';
+import { validateGoogleCacheUse } from '../cloud/google-cache.js';
+import { resolvePromptCacheDisabled } from '../run-scoped-config.js';
 
 interface GoogleResponse {
   candidates?: { index?: number; content?: { parts?: GooglePart[] }; finishReason?: string }[];
@@ -21,20 +25,26 @@ function usageFrom(response: GoogleResponse): KodaXTokenUsage | undefined {
 
 export class KodaXGoogleProvider extends KodaXNativeCloudProvider {
   protected async invoke(request: NativeCloudRequest): Promise<KodaXStreamResult> {
+    const tools = projectGoogleTools(this.name, request.tools, request.toolCapabilities, request.options?.forcedToolName);
     const credential = requireCloudCredential(this.name);
     if (credential.type === 'aws' || (this.cloud.service === 'gemini' && credential.type !== 'api-key')) throw this.protocolError('Google route requires the matching API key or cloud bearer.');
     if (this.cloud.service === 'vertex' && credential.type === 'bearer' && !this.cloud.project) throw this.protocolError('Vertex bearer requires project and location.');
+    const cached = request.options?.cachedContent;
+    if (cached && (resolvePromptCacheDisabled() || request.options?.cacheRetention === 'none')) throw this.protocolError('Explicit CachedContent use is disabled.');
+    if (this.cloud.service !== 'gemini' && this.cloud.service !== 'vertex') throw this.protocolError('CachedContent requires Google.');
+    const cacheName = cached ? validateGoogleCacheUse({ name: this.name, model: request.model, baseUrl: this.config.baseUrl!, cloud: this.cloud,
+      accountScope: cached.accountScope, toolCapabilities: request.toolCapabilities }, cached.reference, request.system, request.tools, request.options?.forcedToolName) : undefined;
     const url = `${this.config.baseUrl!.replace(/\/$/, '')}/models/${encodeURIComponent(request.model)}:${request.streaming ? 'streamGenerateContent?alt=sse' : 'generateContent'}`;
     const response = await nativeResponse(url, { method: 'POST', redirect: 'error', signal: request.signal,
       headers: { 'content-type': 'application/json', ...(credential.type === 'api-key'
         ? this.config.authentication === 'bearer' ? { authorization: `Bearer ${credential.key}` } : { 'x-goog-api-key': credential.key }
         : { authorization: `Bearer ${credential.token}` }) },
-      body: JSON.stringify({ contents: await projectGoogleMessages(request.messages, request.source, this.getCapabilityProfile().multimodalSupport !== 'none'),
-        ...(request.system ? { systemInstruction: { parts: [{ text: request.system }] } } : {}),
-        ...(request.tools.length ? { tools: [{ functionDeclarations: request.tools.map(t => ({ name: t.name, description: t.description, parametersJsonSchema: t.input_schema })) }] } : {}),
-        ...(request.options?.forcedToolName ? { toolConfig: { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: [request.options.forcedToolName] } } } : {}),
+      body: JSON.stringify(await prepareProviderPayload({ contents: await projectGoogleMessages(request.messages, request.source, this.getCapabilityProfile().multimodalSupport !== 'none'),
+        ...(cacheName ? { cachedContent: cacheName } : {}),
+        ...(!cacheName && request.system ? { systemInstruction: { parts: [{ text: request.system }] } } : {}),
+        ...(!cacheName && tools.tools.length ? tools : {}),
         generationConfig: { maxOutputTokens: request.maxOutputTokens, ...this.thinkingConfig(request) },
-      }) });
+      }, 'google')) });
     const blocks: KodaXAssistantBlock[] = [];
     let usage: KodaXTokenUsage | undefined;
     let finishReason: string | undefined;
@@ -73,11 +83,13 @@ export class KodaXGoogleProvider extends KodaXNativeCloudProvider {
     if (request.profile?.effortStrategy === 'provider-budget') {
       const requested = request.disabled ? 0 : request.effort ? request.profile.budgetByEffort?.[request.effort] : undefined;
       const budget = requested === undefined ? undefined : this.boundThinkingBudget(request, requested);
+      if (budget !== undefined) request.sentReasoningEffort = request.disabled ? 'none' : request.effort;
       return budget === undefined ? {} : { thinkingConfig: { thinkingBudget: budget, includeThoughts: true } };
     }
     if (request.profile?.effortStrategy !== 'google-thinking-level') return {};
     if (request.disabled) throw this.protocolError('Google thinking levels do not imply a portable off switch. Declare a budget profile if the model supports zero budget.');
     if (!request.effort) return {};
+    request.sentReasoningEffort = request.effort;
     return { thinkingConfig: { thinkingLevel: request.effort.toUpperCase(), includeThoughts: true } };
   }
   private partsToBlocks(parts: GooglePart[], request: NativeCloudRequest): KodaXAssistantBlock[] {

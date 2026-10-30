@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { ResponseCreateParamsBase } from 'openai/resources/responses/responses';
-import type { KodaXMessage, KodaXProviderConfig, KodaXVerifyCredentialResult } from '../types.js';
+import type { KodaXMessage, KodaXProviderConfig, KodaXVerifyCredentialResult, KodaXProviderStreamOptions } from '../types.js';
 import type { OAuthService } from '../oauth/session.js';
 import { getScopedProviderCredential, hasScopedProviderCredentialAuthority, withProviderRequestCredential } from '../provider-credential-context.js';
 import { KodaXOpenAIResponsesProvider } from './openai-responses.js';
@@ -11,9 +11,9 @@ export class KodaXOAuthResponsesProvider extends KodaXOpenAIResponsesProvider {
   constructor(readonly name: string, protected readonly config: KodaXProviderConfig, private readonly service: OAuthService) { super(); }
   override isConfigured(): boolean { return hasScopedProviderCredentialAuthority(this.name) === true; }
   override getGenerationSource(model?: string) {
-    const token = getScopedProviderCredential(this.name);
-    return { ...super.getGenerationSource(model), credentialScope: token ? createHash('sha256')
-      .update(JSON.stringify([this.service, token])).digest('hex') : 'unavailable' };
+    const source = super.getGenerationSource(model);
+    return { ...source, credentialScope: source.credentialScope && source.credentialScope !== 'unavailable' ? createHash('sha256')
+      .update(JSON.stringify([this.service, source.credentialScope])).digest('hex') : 'unavailable' };
   }
   protected override getApiKey(): string {
     const token = getScopedProviderCredential(this.name);
@@ -30,11 +30,20 @@ export class KodaXOAuthResponsesProvider extends KodaXOpenAIResponsesProvider {
     if (this.service !== 'openai-chatgpt') return params;
     return { ...params,
       tools: params.tools?.length ? [{ type: 'namespace', name: 'kodax', description: 'Tools available for this request',
-        tools: params.tools.filter(tool => tool.type === 'function') }] : undefined,
-      input: Array.isArray(params.input) ? params.input.map(item => item.type === 'function_call' ? { ...item, namespace: 'kodax' } : item) : params.input };
+        tools: params.tools.filter(tool => tool.type === 'function' || tool.type === 'custom') }] : undefined,
+      input: Array.isArray(params.input) ? params.input.map(item => item.type === 'function_call' || item.type === 'custom_tool_call' ? { ...item, namespace: 'kodax' } : item) : params.input };
   }
   protected override acceptsResponseToolNamespace(namespace?: string): boolean {
     return this.service === 'openai-chatgpt' ? namespace === 'kodax' : namespace === undefined;
+  }
+  protected override responseSocketHeaders(messages: readonly KodaXMessage[], options?: KodaXProviderStreamOptions): Record<string, string> {
+    const headers = new Headers(super.responseSocketHeaders(messages, options));
+    if (this.service === 'openai-codex') {
+      const id = randomUUID();
+      headers.set('openai-beta', 'responses_websockets=2026-02-06');
+      headers.set('x-client-request-id', id); headers.set('session-id', options?.sessionId ?? options?.promptCacheKey ?? id);
+    }
+    return Object.fromEntries(headers);
   }
   protected override responseRequestHeaders(messages: readonly KodaXMessage[]): Record<string, string> | undefined {
     if (this.service === 'openai-codex') {

@@ -4,7 +4,7 @@ import { KodaXProviderError } from '../errors.js';
 
 /** Shared strict terminal output parser for foreground and durable background Responses. */
 export function parseResponsesOutput(response: OpenAIResponse, source: KodaXGenerationSource,
-  acceptsNamespace: (namespace?: string) => boolean = () => true): KodaXAssistantBlock[] {
+  acceptsNamespace: (namespace?: string) => boolean = () => true, customProperties: ReadonlyMap<string, string> = new Map()): KodaXAssistantBlock[] {
   const protocolError = (message: string) => new KodaXProviderError(message, source.provider,
     { failureCode: 'response_stream_error', stage: 'response_stream', retryable: false });
   if (!Array.isArray(response.output)) throw protocolError('Responses returned no output array.');
@@ -40,6 +40,13 @@ export function parseResponsesOutput(response: OpenAIResponse, source: KodaXGene
       }
       calls.add(item.call_id);
       blocks.push({ type: 'tool_use', id: item.call_id, name: item.name, input: parsed as Record<string, unknown> });
+    } else if (item.type === 'custom_tool_call') {
+      const property = customProperties.get(item.name);
+      const status = (item as { status?: unknown }).status;
+      if ((status !== undefined && status !== 'completed') || typeof item.call_id !== 'string' || !item.call_id.trim() || calls.has(item.call_id)
+        || typeof item.input !== 'string' || !property || !acceptsNamespace(item.namespace)) throw protocolError('Responses returned an invalid or undeclared custom tool call.');
+      calls.add(item.call_id);
+      blocks.push({ type: 'tool_use', id: item.call_id, name: item.name, input: { [property]: item.input }, customTool: { source, property } });
     } else {
       throw protocolError(`Unsupported Responses output item: ${item.type}`);
     }

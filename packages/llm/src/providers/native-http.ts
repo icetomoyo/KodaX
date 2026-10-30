@@ -1,8 +1,9 @@
 import { observeProviderFetch } from '../provider-request-observation.js';
 import { markProviderConnectionFailure } from '../retry/provider-network.js';
+import { requestExtensionFetch } from './request-extensions.js';
 
-export async function nativeFetch(url: string, init: RequestInit): Promise<Response> {
-  try { return await observeProviderFetch(globalThis.fetch)(url, { ...init, redirect: 'error' }); }
+export async function nativeFetch(url: string, init: RequestInit, acceptNotModified = false): Promise<Response> {
+  try { return await observeProviderFetch(requestExtensionFetch(globalThis.fetch), acceptNotModified)(url, { ...init, redirect: 'error' }); }
   catch (error) { markProviderConnectionFailure(error); throw error; }
 }
 

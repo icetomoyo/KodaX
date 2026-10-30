@@ -4,6 +4,8 @@
   "providers": {
     "anthropic": {
       "apiKeyEnv": "ANTHROPIC_API_KEY",
+      "toolCapabilities": { "strict": true },
+      "cacheCapabilities": { "dialect": "anthropic", "longTtl": "1h", "locations": ["system", "tools", "messages"], "maxCheckpoints": 4 },
       "model": "claude-sonnet-4-6",
       "models": [
         {
@@ -12,6 +14,7 @@
           "reasoningCapability": "native-adaptive",
           "reasoningProfile": {
             "reasoningPreset": "claude-adaptive-xhigh",
+            "supportsThinkingDisplay": true,
             "effortStrategy": "anthropic-output-effort",
             "thinkingStrategy": "anthropic-adaptive",
             "defaultEffort": "high",
@@ -34,6 +37,7 @@
           "reasoningCapability": "native-adaptive",
           "reasoningProfile": {
             "reasoningPreset": "claude-adaptive-xhigh",
+            "supportsThinkingDisplay": true,
             "effortStrategy": "anthropic-output-effort",
             "thinkingStrategy": "anthropic-adaptive",
             "defaultEffort": "high",
@@ -56,6 +60,7 @@
           "reasoningCapability": "native-adaptive",
           "reasoningProfile": {
             "reasoningPreset": "claude-adaptive-max",
+            "supportsThinkingDisplay": true,
             "effortStrategy": "anthropic-output-effort",
             "thinkingStrategy": "anthropic-adaptive",
             "defaultEffort": "high",
@@ -76,6 +81,7 @@
           "reasoningCapability": "native-budget",
           "reasoningProfile": {
             "reasoningPreset": "anthropic-budget",
+            "supportsThinkingDisplay": true,
             "effortStrategy": "provider-budget",
             "thinkingStrategy": "anthropic-budget",
             "defaultEffort": "medium",
@@ -100,7 +106,8 @@
       "reasoningCapability": "native-adaptive",
       "reasoningProfile": {
         "reasoningPreset": "claude-adaptive-max",
-        "effortStrategy": "anthropic-output-effort",
+        "supportsThinkingDisplay": true,
+            "effortStrategy": "anthropic-output-effort",
         "thinkingStrategy": "anthropic-adaptive",
         "defaultEffort": "high",
         "supportedEfforts": [
@@ -121,6 +128,7 @@
     },
     "openai": {
       "apiKeyEnv": "OPENAI_API_KEY",
+      "toolCapabilities": { "strict": true },
       "model": "gpt-5.3-codex",
       "models": [
         { "id": "gpt-5.4", "displayName": "GPT-5.4" },

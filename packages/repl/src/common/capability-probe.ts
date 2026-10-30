@@ -55,7 +55,10 @@ export async function probeProviderReasoningEfforts(input: {
         {
           modelOverride: model,
           maxOutputTokensOverride: 1,
-          onReasoningEffortRejected: () => {
+          singleAttempt: true,
+          onReasoningEffortRejected: event => {
+            if (event.cacheScope) recordRejectedEffort(input.provider, model, event.effort, 'probed', input.now(), input.configHome, event.cacheScope);
+            else recordRejectedEffort(input.provider, model, event.effort, 'probed', input.now(), input.configHome);
             rejected = true;
           },
           onTextDelta: () => {},
@@ -65,13 +68,12 @@ export async function probeProviderReasoningEfforts(input: {
     } catch (e) {
       results.push({
         effort,
-        status: 'error',
+        status: rejected ? 'rejected' : 'error',
         error: e instanceof Error ? e.message : String(e),
       });
       continue;
     }
     if (rejected) {
-      recordRejectedEffort(input.provider, model, effort, 'probed', input.now(), input.configHome);
       results.push({ effort, status: 'rejected' });
     } else {
       results.push({ effort, status: 'accepted' });

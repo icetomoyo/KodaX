@@ -5,7 +5,10 @@
  * 支持 11 个内置 Provider 的成本追踪，用户可以覆盖默认费率
  */
 
+import type { KodaXCacheWriteUsage } from './types.js';
 export interface CostRate {
+  readonly cacheWritePer1MByTtl?: Readonly<Partial<Record<Exclude<keyof KodaXCacheWriteUsage, 'unknown'>, number>>>;
+  readonly basis?: 'estimate' | 'nominal';
   readonly inputPer1M: number; // USD per 1M input tokens
   readonly outputPer1M: number; // USD per 1M output tokens
   /** @deprecated Use cacheReadPer1M/cacheWritePer1M when the provider prices them separately. */
@@ -223,6 +226,16 @@ export function getCostRate(
   if (overrideRate) return overrideRate;
   return DEFAULT_COST_RATES[provider]?.[model];
 }
+// These existing tables explicitly declare subscription/placeholder accounting.
+// Keep their numeric values for compatibility while exposing their meaning.
+const NOMINAL_PROVIDERS = new Set(['kimi-code', 'qwen-token-plan', 'zhipu-coding', 'zai-coding', 'minimax-coding', 'mimo-coding', 'mimo', 'ark-coding']);
+export function getCostRateBasis(provider: string, model: string,
+  userOverrides?: Readonly<Record<string, Readonly<Record<string, CostRate>>>>): 'estimate' | 'nominal' | 'unknown' {
+  const rate = getCostRate(provider, model, userOverrides);
+  if (!rate) return 'unknown';
+  if (userOverrides?.[provider]?.[model]) return rate.basis ?? 'estimate';
+  return rate.basis ?? (NOMINAL_PROVIDERS.has(provider) || (provider === 'zhipu' && model === 'glm-5.3') ? 'nominal' : 'estimate');
+}
 
 export function calculateCost(
   rate: CostRate,
@@ -242,4 +255,22 @@ export function calculateCost(
   const cacheReadCost = (cacheReadTokens / 1_000_000) * cacheReadRate;
   const cacheWriteCost = (cacheWriteTokens / 1_000_000) * cacheWriteRate;
   return inputCost + outputCost + cacheReadCost + cacheWriteCost;
+}
+
+/** Keep the legacy numeric calculator intact; unknown lifetime pricing is explicitly nullable here. */
+export function calculateCostWithCacheLifetimes(rate: CostRate, input: number, output: number, reads: number, writes: number,
+  lifetimes: KodaXCacheWriteUsage | undefined): number | null {
+  if (!lifetimes) return calculateCost(rate, input, output, reads, writes);
+  let categorized = 0, writeCost = 0;
+  for (const [ttl, count] of Object.entries(lifetimes)) {
+    if (!Number.isFinite(count) || count < 0) return null;
+    if (count === 0) continue;
+    if (ttl === 'unknown') return null;
+    const price = rate.cacheWritePer1MByTtl?.[ttl as Exclude<keyof KodaXCacheWriteUsage, 'unknown'>]
+      ?? (ttl === '5m' ? rate.cacheWritePer1M : undefined);
+    if (price === undefined || !Number.isFinite(price) || price < 0) return null;
+    categorized += count; writeCost += count * price / 1_000_000;
+  }
+  if (categorized !== writes || !Number.isFinite(categorized)) return null;
+  return calculateCost(rate, input - categorized, output, reads, writes - categorized) + writeCost;
 }

@@ -19,6 +19,8 @@ import {
   KodaXProviderConfig,
   KodaXReasoningCapability,
   KodaXReasoningProfile,
+  KodaXToolCapabilities,
+  KodaXCacheCapabilities,
   KodaXVerifyStrategy,
 } from '../types.js';
 import { KodaXProviderError } from '../errors.js';
@@ -70,6 +72,8 @@ export type ProviderName =
  * `buildProviderConfig`.
  */
 type ProviderSnapshot = {
+  readonly cacheCapabilities?: KodaXCacheCapabilities;
+  readonly toolCapabilities?: KodaXToolCapabilities;
   readonly model: string;
   /**
    * Alternative model descriptors beyond the default `model`. Carries
@@ -157,6 +161,8 @@ function buildProviderConfig<K extends ProviderName>(
   const snapshot = KODAX_PROVIDER_SNAPSHOTS[name];
   return {
     apiKeyEnv: snapshot.apiKeyEnv,
+    toolCapabilities: snapshot.toolCapabilities,
+    cacheCapabilities: snapshot.cacheCapabilities,
     model: snapshot.model,
     reasoningCapability: snapshot.reasoningCapability,
     reasoningProfile: snapshot.reasoningProfile,
@@ -539,6 +545,9 @@ export function isProviderName(name: string): name is ProviderName {
  * values in a popout UI can trust them.
  */
 export interface KodaXModelCapabilities {
+  cacheCapabilities?: KodaXCacheCapabilities;
+  /** Explicit tool constraints; omission does not advertise support. */
+  toolCapabilities?: KodaXToolCapabilities;
   /** Provider name (`anthropic`, `kimi`, `ark-coding`, or any custom name). */
   provider: string;
   /** Model id (the value `runKodaX(... { model } ...)` accepts). */
@@ -594,7 +603,11 @@ function effectiveCapabilities(
   descriptor: KodaXModelDescriptor,
 ): KodaXModelCapabilities {
   const isDefault = descriptor.id === snapshot.model;
+  const toolCapabilities = descriptor.toolCapabilities ?? snapshot.toolCapabilities;
+  const cacheCapabilities = descriptor.cacheCapabilities ?? snapshot.cacheCapabilities;
   return {
+    ...(toolCapabilities ? { toolCapabilities: structuredClone(toolCapabilities) } : {}),
+    ...(cacheCapabilities ? { cacheCapabilities: structuredClone(cacheCapabilities) } : {}),
     provider: providerName,
     model: descriptor.id,
     displayName: descriptor.displayName ?? descriptor.id,

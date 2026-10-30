@@ -8,6 +8,7 @@ export class KodaXLazyNativeProvider extends KodaXNativeProvider {
     super(name, config, protocol === 'mistral' ? 'mistral-chat' : 'pi-messages');
   }
   override supportsNonStreamingFallback(): boolean { return this.protocol === 'mistral'; }
+  override getCacheCapabilities(model?: string) { return super.getCacheCapabilities(model) ?? (this.protocol === 'pi-messages' ? { dialect: 'pi' as const } : undefined); }
   override usesPromptCacheAffinity(): boolean { return this.protocol === 'mistral' && this.config.promptCacheAffinity === true; }
   protected async invoke(request: NativeRequest): Promise<KodaXStreamResult> {
     const provider = this.protocol === 'mistral'

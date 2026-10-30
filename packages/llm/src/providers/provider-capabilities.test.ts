@@ -30,6 +30,17 @@ import {
 import { validateProviderCapabilitiesJson } from './provider-capabilities.types.js';
 
 describe('FEATURE_198 — provider-capabilities loader', () => {
+  it('retains explicit cache/tool declarations and native reasoning dialects in catalog validation', () => {
+    const raw = { version: 1, updatedAt: '2026-10-30', providers: { declared: {
+      apiKeyEnv: 'UNUSED', model: 'm', reasoningCapability: 'native-effort', capabilityProfile: 'native', verifyStrategy: 'minimal-message',
+      toolCapabilities: { strict: true }, cacheCapabilities: { dialect: 'bedrock', longTtl: '1h' },
+      models: [{ id: 'm', toolCapabilities: { grammar: ['lark'] }, cacheCapabilities: { dialect: 'openai-options', longTtl: '12h' },
+        reasoningProfile: { effortStrategy: 'bedrock-openai-effort' } }],
+    } } };
+    const entry = validateProviderCapabilitiesJson(raw).providers.declared;
+    expect(entry?.toolCapabilities).toEqual({ strict: true }); expect(entry?.cacheCapabilities?.longTtl).toBe('1h');
+    expect(entry?.models?.[0]?.cacheCapabilities?.longTtl).toBe('12h'); expect(entry?.models?.[0]?.toolCapabilities?.grammar).toEqual(['lark']);
+  });
   beforeEach(() => {
     _resetProviderSnapshotsCache();
   });

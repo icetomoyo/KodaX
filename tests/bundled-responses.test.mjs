@@ -137,3 +137,36 @@ for (const service of ['mistral', 'radius']) {
     } finally { scope.close(); }
   });
 }
+
+
+test('published SDK and standalone LLM use the real Node WebSocket transport', async () => {
+  const { createServer } = await import('node:http');
+  const { WebSocketServer } = await import('ws');
+  const standalone = await import('../packages/llm/dist/index.js');
+  const http = createServer(), sockets = new WebSocketServer({ server: http });
+  const frames = [];
+  sockets.on('connection', (client, request) => {
+    assert.equal(request.headers.authorization, 'Bearer bundled-ws-key');
+    client.on('message', data => {
+      const frame = JSON.parse(data.toString()); frames.push(frame);
+      assert.equal(frame.type, 'response.create'); assert.equal(frame.store, false); assert.equal(frame.stream, undefined);
+      client.send(JSON.stringify({ type: 'response.completed', response: { id: 'local-ws', status: 'completed', output: [
+        { type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'local-only' }] },
+      ] } }));
+    });
+  });
+  await new Promise(resolve => http.listen(0, '127.0.0.1', resolve));
+  try {
+    const baseUrl = `http://127.0.0.1:${http.address().port}/v1`;
+    for (const api of [{ createCustomProvider, runWithProviderCredential }, standalone]) {
+      const provider = api.createCustomProvider({ name: 'bundle-ws', protocol: 'openai', api: 'responses', model: 'fixture', apiKeyEnv: 'UNUSED_WS', baseUrl });
+      const result = await api.runWithProviderCredential(provider.name, 'bundled-ws-key', () => provider.complete([], [], '', undefined, { transport: 'websocket' }));
+      assert.equal(result.textBlocks[0].text, 'local-only');
+    }
+    assert.equal(frames.length, 2);
+  } finally {
+    for (const client of sockets.clients) client.terminate();
+    await new Promise(resolve => sockets.close(resolve));
+    await new Promise((resolve, reject) => http.close(error => error ? reject(error) : resolve()));
+  }
+});

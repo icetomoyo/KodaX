@@ -963,3 +963,19 @@ T10 final scoped acceptance supersedes the intermediate snapshot:
   its three `llm-adapter.ts` hunks are baseline lines 100/595/616, while this
   ticket only narrows the lazy error import at baseline line 1088. Final
   integration still requires review of all concurrent work.
+
+
+## T11 frozen offline acceptance (2026-10-30)
+
+T11 adds explicit strict/grammar, trusted request extensions/native hashes, identity-scoped reasoning and opaque replay, declared cache TTL/usage, explicit Google cache CRUD, authenticated catalog overlays/conditional quotes, and Responses/Codex/Azure WebSocket. Contracts and migration are in [LLM_INTEGRATION](../LLM_INTEGRATION.md) and [SDK_MIGRATION](../SDK_MIGRATION.md). The default HTTP path and existing aliases/config/env keys remain valid.
+
+- Wide deterministic selection: **124 files / 1,700 tests passed**. Includes LLM, capability cache, native prompt diagnostics, REPL probe/effort compatibility, extracted prompt regressions.
+- Scoped T11 modules: **86.25% statements / 83.99% branches / 94.47% functions / 96.19% lines**. This is not repository-wide coverage.
+- Workspace build, source/test typecheck, explicit new public fixture typecheck and self-contained SDK declarations passed. Root test tsconfig excludes most package unit fixtures; the explicit fixture check supplements it.
+- Real localhost Node WebSocket upgrade exercises auth, response.create and strict terminal parsing. Offline tests cover handshake-only auto fallback, no replay after generation, missing previous_response recovery, custom grammar receipts, cache/history edits, cancel/revoke/account/lifetime isolation, partial usage, Azure key/Entra and subscription headers. No external WebSocket/account was used.
+- CLI first exceeded the unchanged 64 KiB headroom guard (5,181,611 bytes). Another **37** plain static literals (**36,700 UTF-8 bytes**) moved into the existing versioned static-text asset. AST-decoded text, all 78 built-in tool definitions, prompt/unit regressions and published resource layout remain equal. CLI becomes **5,146,215 bytes**, below 5 MiB with more than 64 KiB reserved; no budget threshold changed.
+- Fresh utility broker/cancel/account source tests cover catalog refresh races, conditional GET, unavailable snapshots and Google cache lifecycle. Directory advertisements/quotes are not entitlement or invoice proof. TTL/cache hits, OAuth registrations and service behavior remain not live-tested.
+- Final full monorepo, all-entry and concurrent work integration acceptance remains T12. T11 dual review and final published results are recorded below after review.
+
+
+T11 review closure: Standards initially one P3 duplicate Google tool projection, now shared pure projector; re-review **0 findings**. Spec found and reproduced SDK-wrapped hook replay, Mistral cache-off header, incomplete TTL partition pricing, deferred/foreground fingerprint mismatch, and stale SDK env-key identity. Each has a RED/GREEN regression; independent final re-review **0 remaining findings** (39 focused tests). Post-fix LLM selection **110 files / 1,536 tests passed**. Earlier wide 124/1,700 and coverage numbers remain dated pre-review snapshots. Published selection **29/29 passed**, including real localhost WS in root SDK and standalone package. Full all-entry acceptance follows in T12; no release/push/merge/live entitlement claim.

@@ -1,5 +1,6 @@
 import type OpenAI from 'openai';
-import type { KodaXProviderConfig } from '../types.js';
+import type { KodaXProviderConfig, KodaXMessage, KodaXProviderStreamOptions } from '../types.js';
+import { requestHeaders, requestExtensionFetch } from './request-extensions.js';
 import { observeProviderFetch } from '../provider-request-observation.js';
 import { KodaXOpenAICompatProvider } from './openai.js';
 import { KodaXOpenAIResponsesProvider } from './openai-responses.js';
@@ -16,6 +17,11 @@ export class KodaXAzureResponsesProvider extends KodaXOpenAIResponsesProvider {
     return credential.type === 'api-key' ? credential.key : credential.token;
   }
   protected override buildClient(): Promise<OpenAI> { return buildAzureClient(this.name, this.config); }
+  protected override responseSocketHeaders(_messages: readonly KodaXMessage[], _options?: KodaXProviderStreamOptions): Record<string, string> {
+    const credential = requireCloudCredential(this.name);
+    if (credential.type === 'aws') throw new Error('Azure requires a native API key or Entra bearer.');
+    return Object.fromEntries(requestHeaders(credential.type === 'api-key' ? { 'api-key': credential.key } : { authorization: `Bearer ${credential.token}` }));
+  }
 }
 
 export async function buildAzureClient(name: string, config: KodaXProviderConfig): Promise<OpenAI> {
@@ -28,7 +34,7 @@ export async function buildAzureClient(name: string, config: KodaXProviderConfig
         // SDK environment headers are not Host authority; rebuild this native route's headers.
         const headers = new Headers({ 'content-type': 'application/json', accept: 'application/json', 'user-agent': 'KodaX' });
         if (credential.type === 'api-key') headers.set('api-key', credential.key); else headers.set('authorization', `Bearer ${credential.token}`);
-        return globalThis.fetch(url, { ...init, headers });
+        return requestExtensionFetch(globalThis.fetch)(url, { ...init, headers });
       }) });
   }
 

@@ -104,14 +104,21 @@ function resolveJsonPath(): string {
   return candidates[0];
 }
 
+function freezeConstraints(value: Pick<ProviderSnapshot, 'toolCapabilities' | 'cacheCapabilities'>): void {
+  if (value.toolCapabilities?.grammar) Object.freeze(value.toolCapabilities.grammar);
+  if (value.toolCapabilities) Object.freeze(value.toolCapabilities);
+  if (value.cacheCapabilities?.locations) Object.freeze(value.cacheCapabilities.locations);
+  if (value.cacheCapabilities) Object.freeze(value.cacheCapabilities);
+}
 function deepFreezeSnapshot(snapshot: ProviderSnapshot): ProviderSnapshot {
+  freezeConstraints(snapshot);
   if (snapshot.models) {
     for (const m of snapshot.models) {
       if (m.reasoningProfile) {
         freezeReasoningProfile(m.reasoningProfile);
       }
     }
-    for (const m of snapshot.models) Object.freeze(m);
+    for (const m of snapshot.models) { freezeConstraints(m); Object.freeze(m); }
     Object.freeze(snapshot.models);
   }
   if (snapshot.reasoningProfile) {
@@ -191,7 +198,7 @@ function buildSnapshot(
     capabilityProfile,
     verifyStrategy: entry.verifyStrategy,
   };
-  for (const field of ['reasoningProfile', 'supportsThinking'] as const) {
+  for (const field of ['reasoningProfile', 'supportsThinking', 'toolCapabilities', 'cacheCapabilities'] as const) {
     if (entry[field] !== undefined) Object.assign(snapshot, { [field]: entry[field] });
   }
   if (!entry.cliBridge) {

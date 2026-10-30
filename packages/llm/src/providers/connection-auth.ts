@@ -1,4 +1,5 @@
 import type { KodaXProviderConfig } from '../types.js';
+import { requestExtensionFetch } from './request-extensions.js';
 
 /** Only explicitly selected connection modes replace SDK auth; legacy defaults stay intact. */
 export function connectionAuthFetch(config: KodaXProviderConfig, key: string, protocol: 'anthropic' | 'openai'): typeof fetch | undefined {
@@ -11,7 +12,7 @@ export function connectionAuthFetch(config: KodaXProviderConfig, key: string, pr
     else headers.set('authorization', `Bearer ${key}`);
     if (config.oauth === 'anthropic') headers.set('anthropic-beta', [...new Set([...(headers.get('anthropic-beta')?.split(',') ?? []), 'oauth-2025-04-20'])].join(','));
     if (config.oauth === 'github-copilot') copilotHeaders(headers, init?.body);
-    return globalThis.fetch(url, { ...init, headers, redirect: 'error' });
+    return requestExtensionFetch(globalThis.fetch)(url, { ...init, headers, redirect: 'error' });
   };
 }
 

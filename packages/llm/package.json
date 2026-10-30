@@ -32,7 +32,8 @@
     "@silvia-odwyer/photon-node": "0.3.4",
     "image-size": "2.0.2",
     "openai": "^6.32.0",
-    "partial-json": "^0.1.7"
+    "partial-json": "^0.1.7",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",

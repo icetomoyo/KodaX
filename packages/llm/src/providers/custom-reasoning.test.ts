@@ -210,7 +210,7 @@ describe('custom OpenAI reasoning negotiation', () => {
     const onReasoningEffortRejected = vi.fn();
     for (let i = 0; i < 2; i++) await provider.complete([], [], '', undefined, { onReasoningEffortRejected });
     expect(requests.map(body => body.reasoning_effort)).toEqual(['max', undefined, undefined]);
-    expect(onReasoningEffortRejected).toHaveBeenCalledExactlyOnceWith({ provider: config.name, model: config.model, effort: '*' });
+    expect(onReasoningEffortRejected).toHaveBeenCalledExactlyOnceWith({ provider: config.name, model: config.model, effort: '*', cacheScope: expect.stringMatching(/^[a-f0-9]{64}$/) });
   });
 
   it.each([

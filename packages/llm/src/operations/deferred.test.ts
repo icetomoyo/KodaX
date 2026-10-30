@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { submitDeferred, fetchDeferred, cancelDeferred, createProviderCredentialLeaseScope, runWithProviderCredentialLeaseScope,
-  runWithProviderRequestObserver } from '../index.js';
+  runWithProviderRequestObserver, createCustomProvider } from '../index.js';
 import type { ProviderRequestObservation } from '../provider-request-observation.js';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
@@ -20,7 +20,7 @@ it('submits a real background response and restores it with fresh per-operation 
   const facts: ProviderRequestObservation[] = [];
   await runWithProviderCredentialLeaseScope(scope, async () => runWithProviderRequestObserver(fact => facts.push(fact), async () => {
     const submitted = await submitDeferred(connection, { messages: [{ role: 'user', content: 'task' }], system: 'system',
-      tools: [{ name: 'read', description: 'Read', input_schema: { type: 'object' } }], maxOutputTokens: 100 });
+      tools: [{ name: 'read', description: 'Read', input_schema: { type: 'object', properties: {} } }], maxOutputTokens: 100 });
     expect(submitted.status).toBe('queued');
     expect(submitted).not.toHaveProperty('result');
     expect(JSON.stringify(submitted)).not.toContain('grant-');
@@ -110,4 +110,38 @@ it('preserves cumulative usage on a malformed completed output error without per
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...completed, output: [{ type: 'function_call', call_id: 'c', name: 'read', arguments: '{' }] })));
   await expect(submitDeferred({ ...connection, credentialSource: undefined, apiKeyEnv: 'JOB_KEY' }, { messages: [], tools: [], system: '', maxOutputTokens: 10 }))
     .rejects.toMatchObject({ partialUsage: { inputTokens: 10, outputTokens: 3 }, usageKind: 'cumulative', reference: { id: 'resp_fixture' }, metadata: { retryable: false } });
+});
+it('restores grammar conversion data without storing a credential or a provider instance', async () => {
+  vi.stubEnv('JOB_KEY', 'key');
+  const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => Response.json({ ...completed,
+    status: init?.method === 'GET' ? 'completed' : 'queued', output: [{ type: 'custom_tool_call', call_id: 'custom', name: 'query', input: 'SELECT 1;' }] })); vi.stubGlobal('fetch', fetcher);
+  const config = { ...connection, credentialSource: undefined, apiKeyEnv: 'JOB_KEY', toolCapabilities: { grammar: ['regex' as const] } };
+  const job = await submitDeferred(config, { messages: [], system: '', maxOutputTokens: 10, tools: [{ name: 'query', description: 'Query',
+    grammar: { syntax: 'regex', definition: 'SELECT [0-9]+;' }, input_schema: { type: 'object', properties: { sql: { type: 'string' } }, required: ['sql'] } }] });
+  const restored = await fetchDeferred(config, JSON.parse(JSON.stringify(job.reference)));
+  if (restored.status !== 'completed') throw new Error('Expected completion');
+  expect(restored.result.toolBlocks[0]?.input).toEqual({ sql: 'SELECT 1;' });
+  expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body)).tools[0].type).toBe('custom');
+});
+
+it('replays deferred opaque/custom history and receipt in foreground only for the same credential', async () => {
+  vi.stubEnv('JOB_KEY', 'same-key');
+  const output = [completed.output[0], { type: 'custom_tool_call', status: 'completed', call_id: 'custom', name: 'query', input: 'SELECT 1;' }];
+  const wire = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => Response.json(JSON.parse(String(init?.body)).background
+    ? { ...completed, output } : { status: 'completed', output: [] })); vi.stubGlobal('fetch', wire);
+  const config = { ...connection, credentialSource: undefined, apiKeyEnv: 'JOB_KEY', toolCapabilities: { grammar: ['regex' as const] } };
+  const job = await submitDeferred(config, { messages: [], system: '', maxOutputTokens: 100, tools: [{ name: 'query', description: 'Query',
+    grammar: { syntax: 'regex', definition: 'SELECT [0-9]+;' }, input_schema: { type: 'object', properties: { sql: { type: 'string' } }, required: ['sql'] } }] });
+  if (job.status !== 'completed') throw new Error('Expected completion');
+  const provider = createCustomProvider({ name: config.name, model: config.model, baseUrl: config.baseUrl, apiKeyEnv: 'JOB_KEY', protocol: 'openai', api: 'responses' });
+  const history = [{ role: 'assistant' as const, content: job.result.contentBlocks! },
+    { role: 'user' as const, content: [{ type: 'tool_result' as const, tool_use_id: 'custom', content: 'result' }] }];
+  await provider.complete(history, [], '');
+  const sent = JSON.parse(String(wire.mock.calls[1]?.[1]?.body)).input;
+  expect(sent).toContainEqual(expect.objectContaining({ type: 'reasoning', encrypted_content: 'opaque' }));
+  expect(sent).toContainEqual(expect.objectContaining({ type: 'custom_tool_call', input: 'SELECT 1;' }));
+  expect(sent).toContainEqual(expect.objectContaining({ type: 'custom_tool_call_output', call_id: 'custom', output: 'result' }));
+  vi.stubEnv('JOB_KEY', 'other-key'); await provider.complete(history, [], '');
+  const foreign = JSON.parse(String(wire.mock.calls[2]?.[1]?.body)).input;
+  expect(JSON.stringify(foreign)).not.toContain('encrypted_content'); expect(foreign.some((value: { type?: string }) => value.type === 'custom_tool_call')).toBe(false);
 });

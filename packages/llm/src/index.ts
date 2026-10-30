@@ -32,6 +32,7 @@ export type {
   KodaXTokenUsage,
   KodaXStreamResult,
   KodaXToolDefinition,
+  KodaXToolCapabilities,
   KodaXModelDescriptor,
   KodaXProtocolFamily,
   KodaXOpenAICompatMaxOutputTokensField,
@@ -48,6 +49,12 @@ export type {
   KodaXProviderEvidenceSupport,
   KodaXProviderCapabilityProfile,
   KodaXProviderStreamOptions,
+  KodaXProviderRequestMetadata,
+  KodaXProviderRequestProjection,
+  KodaXResponsesSocket,
+  KodaXResponsesSocketFactory,
+  KodaXCacheWriteUsage,
+  KodaXCacheCapabilities,
   KodaXReasoningCapability,
   KodaXStableEffortIntent,
   KodaXWireReasoningEffort,
@@ -267,7 +274,7 @@ export type { KodaXRunScopedConfig } from './run-scoped-config.js';
 export type { KodaXStopClass } from './stop-reason.js';
 
 // ============== Cost Tracking ==============
-export { DEFAULT_COST_RATES, getCostRate, calculateCost } from './cost-rates.js';
+export { DEFAULT_COST_RATES, getCostRate, getCostRateBasis, calculateCost, calculateCostWithCacheLifetimes } from './cost-rates.js';
 export type { CostRate } from './cost-rates.js';
 
 export {
@@ -284,6 +291,7 @@ export type {
   ProviderCostSummary,
   SessionCostSummary,
   CostTracker,
+  CostBasis,
 } from './cost-tracker.js';
 
 // ============== Side Query (independent one-shot LLM invocation) ==============
@@ -359,8 +367,13 @@ export type { KodaXCloudConnection } from './types.js';
 export { serializeCloudCredential } from './cloud/credentials.js';
 export type { KodaXCloudCredential } from './cloud/credentials.js';
 export { createCloudProviderConfig } from './cloud/provider-config.js';
+export { createGoogleCacheConnection, createGoogleCache, getGoogleCache, listGoogleCaches, updateGoogleCache, deleteGoogleCache } from './cloud/google-cache.js';
+export type { KodaXGoogleCacheConnection, KodaXGoogleCacheReference, KodaXGoogleCacheExpiration, KodaXGoogleCacheRequest } from './types.js';
 export type { KodaXCloudProviderInput } from './cloud/provider-config.js';
 export { createProviderConnection, listProviderPresets } from './provider-presets.js';
+export { refreshProviderModelCatalog, createMemoryModelCatalogStore } from './model-catalog.js';
+export type { KodaXModelCatalogApi, KodaXModelCatalogConnection, KodaXCatalogQuote, KodaXCatalogModel, KodaXModelCatalogSnapshot,
+  KodaXModelCatalogStore, KodaXRefreshModelCatalogOptions, KodaXRefreshModelCatalogResult } from './model-catalog-types.js';
 export type { ProviderChatApi, ProviderPreset } from './provider-presets.js';
 export { beginOAuthAuthorization } from './oauth/authorization.js';
 export { beginDeviceAuthorization } from './oauth/device.js';

@@ -1,3 +1,4 @@
+import { providerStreamEvent } from './request-extensions.js';
 /** Minimal SSE framing; JSON schema and terminal validation remain with the native protocol. */
 export async function* readCloudSSE(response: Response, signal?: AbortSignal,
   options?: { onDone?(): void; maxFrameBytes?: number }): AsyncGenerator<unknown> {
@@ -21,9 +22,9 @@ export async function* readCloudSSE(response: Response, signal?: AbortSignal,
       while ((match = /\r?\n\r?\n/.exec(buffer))) {
         const event = parse(buffer.slice(0, match.index));
         buffer = buffer.slice(match.index + match[0].length);
-        if (event !== undefined) yield event;
+        if (event !== undefined) { providerStreamEvent(event); yield event; }
       }
-      if (next.done) { ended = true; if (buffer.trim()) { const event = parse(buffer); if (event !== undefined) yield event; } break; }
+      if (next.done) { ended = true; if (buffer.trim()) { const event = parse(buffer); if (event !== undefined) { providerStreamEvent(event); yield event; } } break; }
     }
   } finally { try { if (!ended) await reader.cancel(); } finally { reader.releaseLock(); } }
 }

@@ -1,4 +1,10 @@
+import { classifyReasoningEffortRejection } from './reasoning-effort-rejection.js';
+import { cacheWritePartition } from './cache-usage.js';
+import { applyAnthropicThinkingOptions, hasThinkingBinding, THINKING_BINDING_BETA } from './anthropic-thinking-options.js';
+import { withCacheWritePartition } from './request-extensions.js';
 import { recordRejectedImage } from './rejected-image.js';
+import { hasRequestEnvironment, prepareProviderPayload, requestExtensionFetch, providerStreamEvent } from './request-extensions.js';
+import { anthropicTools, withoutPreferredToolConstraints } from './tool-constraints.js';
 import { createHash } from 'node:crypto';
 import { connectionAuthFetch } from './connection-auth.js';
 import { observeProviderFetch, observeProviderStreamUsage } from '../provider-request-observation.js';
@@ -23,6 +29,7 @@ import {
   KodaXToolDefinition,
   KodaXProviderStreamOptions,
   KodaXReasoningRequest,
+  KodaXReasoningResolution,
   KodaXStreamResult,
   KodaXTextBlock,
   KodaXTokenUsage,
@@ -60,7 +67,7 @@ export async function createAnthropicSdkClient(
   options: ConstructorParameters<typeof Anthropic>[0],
 ): Promise<Anthropic> {
   const { default: AnthropicSdk } = await import('@anthropic-ai/sdk');
-  return new AnthropicSdk({ ...options, fetch: observeProviderFetch(options?.fetch ?? globalThis.fetch) });
+  return new AnthropicSdk({ ...options, fetch: observeProviderFetch(options?.fetch ?? requestExtensionFetch(globalThis.fetch)) });
 }
 
 interface AnthropicRequestOptions {
@@ -93,6 +100,7 @@ function getAnthropicCompatDefaultHeaders(
 }
 
 type AnthropicUsageLike = {
+  cache_creation?: { ephemeral_5m_input_tokens?: number | null; ephemeral_1h_input_tokens?: number | null } | null;
   input_tokens?: number | null;
   output_tokens?: number | null;
   cache_creation_input_tokens?: number | null;
@@ -133,13 +141,16 @@ function normalizeAnthropicUsage(
     return undefined;
   }
 
-  return {
+  const byTtl = usage.cache_creation ? cacheWritePartition(cachedWriteTokens, { '5m': usage.cache_creation.ephemeral_5m_input_tokens, '1h': usage.cache_creation.ephemeral_1h_input_tokens })
+    : hasInputUsage ? undefined : previous?.cachedWriteTokensByTtl;
+  return withCacheWritePartition({
     inputTokens: totalInputTokens,
     outputTokens,
     totalTokens: totalInputTokens + outputTokens,
     ...(cachedReadTokens !== undefined ? { cachedReadTokens } : {}),
     ...(cachedWriteTokens !== undefined ? { cachedWriteTokens } : {}),
-  };
+    ...(byTtl ? { cachedWriteTokensByTtl: byTtl } : {}),
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -195,10 +206,32 @@ function hasAnthropicOutputEffort(
 }
 
 export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
+  override usesScopedReasoningLearning(): boolean { return true; }
+  protected override getReasoningApi(): string { return 'anthropic-messages'; }
+  private controlEffort(params: Anthropic.Messages.MessageCreateParams): string | undefined {
+    const raw = params as unknown as Record<string, unknown>;
+    const thinking = raw.thinking as { type?: string; effort?: string } | undefined;
+    const output = raw.output_config as { effort?: string } | undefined;
+    return typeof raw.reasoning_effort === 'string' ? raw.reasoning_effort : output?.effort ?? thinking?.effort
+      ?? (thinking?.type === 'disabled' ? 'none' : undefined);
+  }
+  private skipRejectedControl(params: Anthropic.Messages.MessageCreateParams, model: string, options?: KodaXProviderStreamOptions): boolean {
+    if (!params.thinking && !hasAnthropicOutputEffort(params) && !('reasoning_effort' in params)) return false;
+    const rejected = this.knownReasoningRejections(model, options);
+    const effort = this.controlEffort(params);
+    return rejected.includes('*') || (effort !== undefined && rejected.includes(effort));
+  }
+  private learnRejectedControl(error: unknown, params: Anthropic.Messages.MessageCreateParams | undefined, model: string, options?: KodaXProviderStreamOptions): ReturnType<typeof classifyReasoningEffortRejection> {
+    if (!params || (!params.thinking && !hasAnthropicOutputEffort(params) && !('reasoning_effort' in params))) return null;
+    const rejection = classifyReasoningEffortRejection(error, this.controlEffort(params));
+    if (!rejection) return null;
+    this.rememberReasoningRejection(model, rejection.parameterRejected ? '*' : rejection.rejectedEffort, options);
+    return rejection;
+  }
   getGenerationSource(model?: string): KodaXGenerationSource {
-    const token = getScopedProviderCredential(this.name);
+    const fingerprint = this.getRequestCredentialFingerprint();
     return { provider: this.name, api: 'anthropic-messages', model: this.getWireModelId(model), baseUrl: this.getBaseUrl(),
-      ...(this.config.credentialSource === 'broker' ? { credentialScope: token ? createHash('sha256').update(token).digest('hex') : 'unavailable' } : {}) };
+      ...(fingerprint ? { credentialScope: fingerprint } : this.config.credentialSource === 'broker' ? { credentialScope: 'unavailable' } : {}) };
   }
   /** Unknown legacy provenance keeps its existing signature policy; known foreign opaque content never replays. */
   canReplayReasoning(block: KodaXThinkingBlock | KodaXRedactedThinkingBlock, model?: string): boolean {
@@ -224,9 +257,15 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
    * window, model descriptors) without a key. This also keeps key-less unit
    * tests (which mock the actual LLM calls) from failing at construction time.
    */
+  private clientCredentialFingerprint?: string;
   protected async getClient(): Promise<Anthropic> {
-    if (hasProviderCredentialContext()) return this.buildClient();
+    if (hasProviderCredentialContext() || hasRequestEnvironment()) return this.buildClient();
+    const fingerprint = this.getRequestCredentialFingerprint();
+    if (this.clientCredentialFingerprint !== undefined && this.clientCredentialFingerprint !== fingerprint) {
+      this._client = undefined; this._clientPromise = undefined;
+    }
     if (this._client) return this._client;
+    this.clientCredentialFingerprint = fingerprint;
     const clientPromise = this._clientPromise ??= Promise.resolve(this.buildClient());
     try {
       const client = await clientPromise;
@@ -234,7 +273,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         this._client = client;
         this._clientPromise = undefined;
       }
-      return this._client ?? client;
+      return client;
     } catch (error) {
       if (this._clientPromise === clientPromise) {
         this._clientPromise = undefined;
@@ -248,6 +287,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
   protected set client(client: Anthropic) {
     this._client = client;
     this._clientPromise = undefined;
+    this.clientCredentialFingerprint = undefined;
   }
 
   protected buildClient(): Anthropic | Promise<Anthropic> {
@@ -280,9 +320,9 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     signal?: AbortSignal,
   ): AnthropicRequestOptions {
     const capability = this.getReasoningProfile(model);
-    const headers = capability?.requiresEffortBetaHeader && hasAnthropicOutputEffort(params)
-      ? { 'anthropic-beta': KODAX_ANTHROPIC_EFFORT_BETA_HEADER }
-      : undefined;
+    const betas = [...(capability?.requiresEffortBetaHeader && hasAnthropicOutputEffort(params) ? [KODAX_ANTHROPIC_EFFORT_BETA_HEADER] : []),
+      ...(hasThinkingBinding(params) ? [THINKING_BINDING_BETA] : [])];
+    const headers = betas.length ? { 'anthropic-beta': betas.join(',') } : undefined;
     return {
       ...(signal ? { signal } : {}),
       ...(headers ? { headers } : {}),
@@ -615,12 +655,14 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
    */
   protected applyCacheControlToTools(
     tools: KodaXToolDefinition[],
+    model?: string,
   ): Anthropic.Messages.Tool[] {
-    if (tools.length === 0) return tools as Anthropic.Messages.Tool[];
+    const lowered = anthropicTools(tools, this.getToolCapabilities(model), this.name);
+    if (tools.length === 0) return lowered;
     if (resolvePromptCacheDisabled()) {
-      return tools as Anthropic.Messages.Tool[];
+      return lowered;
     }
-    const out = tools.slice() as Anthropic.Messages.Tool[];
+    const out: Anthropic.Messages.Tool[] = lowered;
     const last = out[out.length - 1]!;
     out[out.length - 1] = {
       ...last,
@@ -699,7 +741,15 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     return true;
   }
 
-  async stream(
+  stream(messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string,
+    reasoning?: boolean | KodaXReasoningRequest, options?: KodaXProviderStreamOptions, signal?: AbortSignal): Promise<KodaXStreamResult> {
+    return this.withRequestContext(options, signal, requestSignal => this.streamInternal(messages, tools, system, reasoning, options, requestSignal));
+  }
+  override complete(messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string,
+    reasoning?: boolean | KodaXReasoningRequest, options?: KodaXProviderStreamOptions, signal?: AbortSignal): Promise<KodaXStreamResult> {
+    return this.withRequestContext(options, signal, requestSignal => this.completeInternal(messages, tools, system, reasoning, options, requestSignal));
+  }
+  private async streamInternal(
     messages: KodaXMessage[],
     tools: KodaXToolDefinition[],
     system: string,
@@ -710,6 +760,9 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     return this.withRateLimit(async (retryState) => {
       const normalizedReasoning = this.normalizeReasoning(reasoning);
       const model = streamOptions?.modelOverride ?? this.config.model;
+      const resolution: KodaXReasoningResolution = { provider: this.name, model,
+        requestedEffort: normalizedReasoning.effortSource === 'omitted' ? 'auto' : normalizedReasoning.effort,
+        verified: false, fallbacks: [] };
       const wireModel = this.getWireModelId(model);
       this.validateExplicitReasoningEffort(normalizedReasoning, model);
       const requestMaxOutputTokens = this.getEffectiveMaxOutputTokens(model, streamOptions?.maxOutputTokensOverride);
@@ -757,7 +810,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           system: this.applyCacheControlToSystem(this.buildSystemPrompt(system, messages)),
           messages: convertedMessages,
           ...(tools.length > 0
-            ? { tools: this.applyCacheControlToTools(tools) }
+            ? { tools: this.applyCacheControlToTools(withoutPreferredToolConstraints(tools, retryState.disablePreferredToolConstraints), model) }
             : {}),
           stream: true,
           ...(this.config.promptCacheAffinity === true
@@ -810,6 +863,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           applyAnthropicOutputEffort(kwargs, normalizedReasoning);
         }
 
+        applyAnthropicThinkingOptions(kwargs, reasoningProfile, streamOptions, this.name);
         return kwargs;
       };
 
@@ -846,15 +900,25 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
 
       for (const capability of attempts) {
         while (!response) {
+          let request: Anthropic.Messages.MessageCreateParams | undefined;
           try {
-            const request = buildRequest(capability);
+            request = buildRequest(capability);
+            if (this.skipRejectedControl(request, model, streamOptions)) {
+              resolution.fallbacks.push({ effort: this.controlEffort(request), reason: 'cached-rejection' }); break;
+            }
+            request = await prepareProviderPayload(request);
+            resolution.sentEffort = this.controlEffort(request);
             response = await client.messages.create(
               request,
               { ...this.buildMessageCreateOptions(request, model, signal), maxRetries: 0 },
-            ).catch(error => { recordRejectedImage(error, request); throw error; });
+            ).catch(error => { recordRejectedImage(error, request!); throw error; });
           } catch (error) {
+            const learned = this.learnRejectedControl(error, request, model, streamOptions);
             if (streamOptions?.singleAttempt) throw error;
             lastError = error;
+            if (learned) {
+              resolution.fallbacks.push({ effort: resolution.sentEffort, reason: learned.parameterRejected ? 'unsupported-parameter' : 'unsupported-effort' }); break;
+            }
             if (shouldForceToolChoice && this.shouldFallbackForForcedToolChoiceError(error)) {
               shouldForceToolChoice = false;
               this.logStreamDiagnostic(
@@ -897,6 +961,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       const STALL_THRESHOLD_MS = 30_000;
 
       for await (const event of response as AsyncIterable<Anthropic.Messages.RawMessageStreamEvent>) {
+        providerStreamEvent(event);
         // 检查是否被中断 (双重保险)
         if (signal?.aborted) {
           throw new DOMException('Request aborted', 'AbortError');
@@ -1150,10 +1215,12 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         : toolBlocks;
 
       for (const block of thinkingBlocks) block.source = this.getGenerationSource(model);
-      return { textBlocks, toolBlocks: finalToolBlocks, thinkingBlocks, usage, stopReason };
+      streamOptions?.onReasoningResolved?.(resolution);
+      return { textBlocks, toolBlocks: finalToolBlocks, thinkingBlocks, usage, stopReason, reasoningResolution: resolution };
     }, signal, streamOptions?.singleAttempt ? 1 : 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter, {
       model: streamOptions?.modelOverride ?? this.config.model,
       onRejected: streamOptions?.onReasoningEffortRejected,
+      tools,
     });
   }
 
@@ -1161,7 +1228,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     return true;
   }
 
-  override async complete(
+  private async completeInternal(
     messages: KodaXMessage[],
     tools: KodaXToolDefinition[],
     system: string,
@@ -1172,6 +1239,9 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     return this.withRateLimit(async (retryState) => {
       const normalizedReasoning = this.normalizeReasoning(reasoning);
       const model = streamOptions?.modelOverride ?? this.config.model;
+      const resolution: KodaXReasoningResolution = { provider: this.name, model,
+        requestedEffort: normalizedReasoning.effortSource === 'omitted' ? 'auto' : normalizedReasoning.effort,
+        verified: false, fallbacks: [] };
       const wireModel = this.getWireModelId(model);
       this.validateExplicitReasoningEffort(normalizedReasoning, model);
       const requestMaxOutputTokens = this.getEffectiveMaxOutputTokens(model, streamOptions?.maxOutputTokensOverride);
@@ -1219,7 +1289,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           system: this.applyCacheControlToSystem(this.buildSystemPrompt(system, messages)),
           messages: convertedMessages,
           ...(tools.length > 0
-            ? { tools: this.applyCacheControlToTools(tools) }
+            ? { tools: this.applyCacheControlToTools(withoutPreferredToolConstraints(tools, retryState.disablePreferredToolConstraints), model) }
             : {}),
           ...(this.config.promptCacheAffinity === true
             && streamOptions?.promptCacheKey
@@ -1271,6 +1341,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           applyAnthropicOutputEffort(kwargs, normalizedReasoning);
         }
 
+        applyAnthropicThinkingOptions(kwargs, reasoningProfile, streamOptions, this.name);
         return kwargs;
       };
 
@@ -1280,15 +1351,25 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
 
       for (const capability of attempts) {
         while (!response) {
+          let request: Anthropic.Messages.MessageCreateParams | undefined;
           try {
-            const request = buildRequest(capability);
+            request = buildRequest(capability);
+            if (this.skipRejectedControl(request, model, streamOptions)) {
+              resolution.fallbacks.push({ effort: this.controlEffort(request), reason: 'cached-rejection' }); break;
+            }
+            request = await prepareProviderPayload(request);
+            resolution.sentEffort = this.controlEffort(request);
             response = await client.messages.create(
               request,
               { ...this.buildMessageCreateOptions(request, model, signal), maxRetries: 0 },
-            ).catch(error => { recordRejectedImage(error, request); throw error; });
+            ).catch(error => { recordRejectedImage(error, request!); throw error; });
           } catch (error) {
+            const learned = this.learnRejectedControl(error, request, model, streamOptions);
             if (streamOptions?.singleAttempt) throw error;
             lastError = error;
+            if (learned) {
+              resolution.fallbacks.push({ effort: resolution.sentEffort, reason: learned.parameterRejected ? 'unsupported-parameter' : 'unsupported-effort' }); break;
+            }
             if (shouldForceToolChoice && this.shouldFallbackForForcedToolChoiceError(error)) {
               shouldForceToolChoice = false;
               this.logStreamDiagnostic(
@@ -1361,7 +1442,9 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       }
 
       for (const block of thinkingBlocks) block.source = this.getGenerationSource(model);
+      streamOptions?.onReasoningResolved?.(resolution);
       return {
+        reasoningResolution: resolution,
         textBlocks,
         toolBlocks,
         thinkingBlocks,
@@ -1371,6 +1454,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     }, signal, streamOptions?.singleAttempt ? 1 : 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter, {
       model: streamOptions?.modelOverride ?? this.config.model,
       onRejected: streamOptions?.onReasoningEffortRejected,
+      tools,
     });
   }
 

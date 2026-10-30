@@ -1844,7 +1844,7 @@ export const BUILTIN_COMMANDS: Command[] = [
         console.log(chalk.dim(`  - ${line}`));
       }
       console.log(chalk.dim(`  - Session effort: ${currentConfig.hostSettings ? currentConfig.hostSettings.effort ?? 'Host default' : formatReasoningEffortDisplay(currentConfig.effort)}`));
-      const learnedRejections = getCachedRejectedEfforts(targetProvider, targetModel);
+      const learnedRejections = resolveProvider(targetProvider).usesScopedReasoningLearning?.() ? [] : getCachedRejectedEfforts(targetProvider, targetModel);
       if (learnedRejections.length > 0) {
         console.log(chalk.dim(`  - Learned unsupported: ${learnedRejections.join(', ')} (clear with /provider forget-capability)`));
       }

@@ -1,3 +1,4 @@
+import { prepareProviderPayload } from './request-extensions.js';
 import type { KodaXAssistantBlock, KodaXProviderConfig, KodaXStreamResult, KodaXTokenUsage, KodaXToolUseBlock } from '../types.js';
 import { observeProviderStreamUsage } from '../provider-request-observation.js';
 import { KodaXNativeProvider, type NativeRequest } from './native-provider.js';
@@ -5,6 +6,7 @@ import { projectMistralMessages } from './mistral-messages.js';
 import { nativeResponse } from './native-http.js';
 import { readCloudSSE } from './cloud-sse.js';
 import { resolvePromptCacheDisabled } from '../run-scoped-config.js';
+import { openAIChatTools } from './tool-constraints.js';
 
 interface ContentPart { type: string; text?: string; thinking?: { type?: string; text?: string }[] }
 interface Delta { content?: string | ContentPart[] | null; tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string | Record<string, unknown> } }[] }
@@ -21,13 +23,14 @@ export class KodaXMistralProvider extends KodaXNativeProvider {
     if (request.disabled && profile?.effortStrategy === 'provider-toggle') throw this.protocolError('Mistral prompt_mode has no documented off control.');
     const reasoning = !effort ? {} : profile?.effortStrategy === 'openai-chat-effort'
       ? { reasoning_effort: effort } : profile?.effortStrategy === 'provider-toggle' ? { prompt_mode: 'reasoning' } : {};
+    if (Object.keys(reasoning).length) request.sentReasoningEffort = effort;
     const response = await nativeResponse(`${this.config.baseUrl!.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST', signal: request.signal, headers: { authorization: `Bearer ${this.getApiKey()}`, 'content-type': 'application/json', ...(key ? { 'x-affinity': key } : {}) },
-      body: JSON.stringify({ model: request.model, messages: [...(request.system ? [{ role: 'system', content: request.system }] : []),
+      body: JSON.stringify(await prepareProviderPayload({ model: request.model, messages: [...(request.system ? [{ role: 'system', content: request.system }] : []),
         ...await projectMistralMessages(request.messages, request.source, this.getCapabilityProfile().multimodalSupport !== 'none')],
       stream: request.streaming, max_tokens: request.maxOutputTokens, ...reasoning, ...(key ? { prompt_cache_key: key } : {}),
-      ...(request.tools.length ? { tools: request.tools.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } })) } : {}),
-      ...(request.options?.forcedToolName ? { tool_choice: { type: 'function', function: { name: request.options.forcedToolName } } } : {}) }) });
+      ...(request.tools.length ? { tools: openAIChatTools(request.tools, request.toolCapabilities, this.name) } : {}),
+      ...(request.options?.forcedToolName ? { tool_choice: { type: 'function', function: { name: request.options.forcedToolName } } } : {}) })) });
     return this.consume(request, response);
   }
   private async consume(request: NativeRequest, response: Response): Promise<KodaXStreamResult> {

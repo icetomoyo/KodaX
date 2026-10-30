@@ -54,6 +54,7 @@ import type {
   KodaXToolDefinition,
   KodaXReasoningRequest,
   KodaXEphemeralSuffix,
+  KodaXProviderStreamOptions,
 } from '@kodax-ai/llm';
 import { withProviderRequestCredential } from '@kodax-ai/llm';
 import { getProviderReasoningCacheOptions, recordRejectedEffort } from '@kodax-ai/agent';
@@ -61,6 +62,7 @@ import type { BoundaryTrackerSession } from './boundary-tracker-session.js';
 import type { ExtensionEventEmitter } from './stream-handler-wiring.js';
 
 export interface NonStreamingFallbackInput {
+  readonly onRequestPrepared?: KodaXProviderStreamOptions['onRequestPrepared'];
   readonly events: KodaXEvents;
   readonly streamProvider: KodaXBaseProvider;
   readonly providerMessages: KodaXMessage[];
@@ -144,6 +146,7 @@ export async function executeNonStreamingFallback(
         input.effectiveProviderReasoning,
         {
           promptCacheKey: input.promptCacheKey,
+          onRequestPrepared: input.onRequestPrepared,
           ...getProviderReasoningCacheOptions(input.streamProvider, input.modelOverride ?? input.streamProvider.getModel(), input.configHome),
           onReasoningEffortRejected: (event) => {
             recordRejectedEffort(event.provider, event.model, event.effort, 'observed', new Date().toISOString(), input.configHome, event.cacheScope);

@@ -1,7 +1,7 @@
 import { inheritRejectedImage } from './providers/rejected-image.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { cloudCredentialSecrets, deserializeCloudCredential, isCloudCredentialCarrier, type KodaXCloudCredential } from './cloud/credentials.js';
-import { observeProviderOperation, currentProviderRequestAbortSignal, currentProviderRequestAttribution } from './provider-request-observation.js';
+import { observeProviderOperation, currentProviderRequestAbortSignal, currentProviderRequestAttribution, hasProviderOperationOwner } from './provider-request-observation.js';
 
 export type ProviderCredentialPurpose =
   | 'primary'
@@ -41,6 +41,7 @@ export interface ProviderCredentialLeaseScope {
 }
 
 interface ExactProviderCredentialScope {
+  readonly signal?: AbortSignal;
   readonly kind: 'exact';
   readonly provider: string;
   readonly credential: string;
@@ -209,6 +210,15 @@ export async function withProviderRequestCredential<T>(
   return observeProviderOperation(provider, purpose, currentProviderRequestAttribution() ?? lease?.attribution,
     () => withProviderRequestCredentialInternal(provider, purpose, signal, operation), logicalRequestId, signal);
 }
+/** Adapter entry: retain an already authorized caller's operation purpose and observation owner. */
+export async function withProviderInvocationCredential<T>(provider: string, signal: AbortSignal | undefined,
+  operation: (signal: AbortSignal | undefined) => Promise<T> | T): Promise<T> {
+  const scope = providerCredentialStorage.getStore();
+  if (hasProviderOperationOwner(provider) && (!scope || (scope.kind === 'exact' && scope.provider === provider))) {
+    return withProviderRequestCredentialInternal(provider, 'primary', signal, operation);
+  }
+  return withProviderRequestCredential(provider, 'primary', signal, operation);
+}
 async function withProviderRequestCredentialInternal<T>(
   provider: string,
   purpose: ProviderCredentialPurpose,
@@ -222,6 +232,8 @@ async function withProviderRequestCredentialInternal<T>(
   }
   if (current.kind === 'exact' && current.provider === provider) {
     if (!current.isActive()) throw inactiveCredentialScopeError();
+    signal = combineAbortSignals([signal, current.signal]);
+    signal?.throwIfAborted();
     try { return await operation(signal); }
     catch (error: unknown) {
       throw isCloudCredentialCarrier(current.credential) ? redactCredentialValue(error, redactionPattern(current.credential), new WeakMap()) : error;
@@ -255,6 +267,7 @@ async function withProviderRequestCredentialInternal<T>(
     provider,
     credential,
     parentLease: lease,
+    signal: requestSignal,
     isActive: () => !requestController.signal.aborted && isLeaseActive(lease),
   };
   try {
@@ -276,6 +289,16 @@ export function getScopedProviderCredential(provider: string): string | undefine
   return scope?.kind === 'exact' && scope.provider === provider && scope.isActive()
     ? isCloudCredentialCarrier(scope.credential) ? undefined : scope.credential
     : undefined;
+}
+/** Idle transport ownership only. Every generation must still acquire fresh request authority. */
+export function getProviderTransportLifetime(provider: string): { owner: AbortSignal; signal: AbortSignal; isActive(): boolean } | undefined {
+  const scope = providerCredentialStorage.getStore();
+  if (scope?.kind !== 'exact' || scope.provider !== provider || !scope.isActive() || !scope.parentLease) return undefined;
+  const lease = scope.parentLease, signals: AbortSignal[] = [];
+  for (let parent: LeaseProviderCredentialScope | undefined = lease; parent; parent = parent.parent) {
+    signals.push(parent.controller.signal); if (parent.access.signal) signals.push(parent.access.signal);
+  }
+  return { owner: lease.controller.signal, signal: AbortSignal.any(signals), isActive: () => isLeaseActive(lease) };
 }
 
 /** Cloud providers are the only consumers allowed to unwrap a structured carrier. */

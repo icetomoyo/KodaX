@@ -5,7 +5,6 @@ import {
   getRejectedEfforts,
   removeCacheEntry,
   sanitizeCapabilityCache,
-  KodaXOpenAIResponsesProvider,
   type KodaXBaseProvider,
   type KodaXProviderStreamOptions,
   type CapabilityCache,
@@ -57,10 +56,10 @@ export function getCachedRejectedEfforts(
   return getRejectedEfforts(loadCapabilityCache(configHome), provider, model, scope);
 }
 
-/** Responses identity becomes available only after the physical request acquires its lease. */
+/** Native protocol identity becomes available only after the request acquires its lease. */
 export function getProviderReasoningCacheOptions(provider: KodaXBaseProvider, model: string | undefined,
   configHome?: string): Pick<KodaXProviderStreamOptions, 'rejectedReasoningEfforts' | 'resolveRejectedReasoningEfforts'> {
-  return provider instanceof KodaXOpenAIResponsesProvider
+  return provider.usesScopedReasoningLearning()
     ? { rejectedReasoningEfforts: [], resolveRejectedReasoningEfforts: scope => getCachedRejectedEfforts(provider.name, model, configHome, scope) }
     : { rejectedReasoningEfforts: getCachedRejectedEfforts(provider.name, model, configHome) };
 }

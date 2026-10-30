@@ -344,7 +344,11 @@ export function getCustomModelCapabilities(
          legacyCapabilityFromReasoningProfile(effectiveReasoningProfile) ??
          config.reasoningCapability ??
          'none');
+  const toolCapabilities = descriptor.toolCapabilities ?? config.toolCapabilities;
+  const cacheCapabilities = descriptor.cacheCapabilities ?? config.cacheCapabilities;
   return {
+    ...(toolCapabilities ? { toolCapabilities: structuredClone(toolCapabilities) } : {}),
+    ...(cacheCapabilities ? { cacheCapabilities: structuredClone(cacheCapabilities) } : {}),
     provider: providerName,
     model: descriptor.id,
     displayName: descriptor.displayName ?? descriptor.id,

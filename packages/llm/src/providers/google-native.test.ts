@@ -223,12 +223,12 @@ describe('native Gemini and Vertex', () => {
     const body = String(fetch.mock.calls[1]?.[1]?.body);
     expect(body).toContain('"error":"failed"'); expect(body).toContain('Historical image unavailable'); expect(fetch).toHaveBeenCalledTimes(2);
   });
-  it('surfaces native thinking rejection without silently applying legacy parameter fallback', async () => {
+  it('singleAttempt surfaces native thinking rejection without multiplying the caller recovery budget', async () => {
     let count = 0;
     const fetch = vi.fn(async () => ++count === 1 ? Response.json({ error: { message: "Unsupported parameter: 'thinking'." } }, { status: 400 })
       : Response.json({ candidates: [{ finishReason: 'STOP' }] })); vi.stubGlobal('fetch', fetch);
     const config = { ...createCloudProviderConfig({ service: 'gemini', name: 'google-test', model: 'chosen' }), reasoning: { efforts: ['high'], default: 'high' } };
-    await expect(runWithProviderCredential(config.name, serializeCloudCredential(config.name, { type: 'api-key', key: 'key' }), () => createCustomProvider(config).complete([], [], '')))
+    await expect(runWithProviderCredential(config.name, serializeCloudCredential(config.name, { type: 'api-key', key: 'key' }), () => createCustomProvider(config).complete([], [], '', undefined, { singleAttempt: true })))
       .rejects.toThrow(/Unsupported parameter/);
     expect(fetch).toHaveBeenCalledOnce();
   });

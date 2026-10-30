@@ -174,7 +174,7 @@ describe('cost-tracker', () => {
       expect(record.cost).toBeCloseTo(expected);
     });
 
-    it('should set cost to 0 for unknown provider/model', () => {
+    it('keeps cost unknown for an unpriced provider/model', () => {
       let tracker = createCostTracker();
       tracker = recordUsage(tracker, {
         provider: 'unknown',
@@ -184,7 +184,7 @@ describe('cost-tracker', () => {
       });
 
       const record = tracker.records[0];
-      expect(record.cost).toBe(0);
+      expect(record.cost).toBeNull();
     });
 
     it('should record role if provided', () => {

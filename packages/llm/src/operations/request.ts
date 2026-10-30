@@ -7,6 +7,7 @@ import type { KodaXOperationConnection } from './types.js';
 import { setTimeout as wait } from 'node:timers/promises';
 import { isProviderQuotaError } from '../retry/provider-quota.js';
 import { parseRetryAfter, extractHeadersFromError } from '../retry/retry-after.js';
+import { normalizeResponsesUsage } from '../providers/cache-usage.js';
 
 export function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid native operation response object.');
@@ -65,6 +66,9 @@ async function readJson(connection: KodaXOperationConnection, path: string, head
   signal: AbortSignal | undefined, body: unknown, method: string): Promise<Record<string, unknown>> {
   const response = await nativeResponse(operationUrl(connection, path), { method, headers, signal,
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+  return readOperationJson(response, signal);
+}
+export async function readOperationJson(response: Response, signal?: AbortSignal): Promise<Record<string, unknown>> {
   if (!response.body) throw new Error('Native operation returned an empty body.');
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = []; let length = 0;
@@ -82,6 +86,7 @@ async function readJson(connection: KodaXOperationConnection, path: string, head
 export function operationUsage(value: unknown): KodaXTokenUsage | undefined {
   if (value === undefined || value === null) return undefined;
   const u = object(value);
+  if (u.input_tokens_details !== undefined) return normalizeResponsesUsage(u);
   const input = u.input_tokens ?? u.prompt_tokens, output = u.output_tokens ?? u.completion_tokens;
   if (input === undefined || output === undefined) return undefined;
   if (![input, output].every(v => typeof v === 'number' && Number.isFinite(v) && v >= 0)) throw new Error('Invalid native operation usage.');

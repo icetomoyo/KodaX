@@ -30,6 +30,8 @@ import { KodaXLazyNativeProvider, KodaXLazyCloudProvider } from './lazy-native.j
 import { NATIVE_PROVIDER_CAPABILITY_PROFILE } from './capability-profile.js';
 import { createReasoningProfileFromPreset } from '../reasoning.js';
 import { optionalOutputTokenLimit } from './output-token-limit.js';
+import { validateToolCapabilities } from './tool-constraints.js';
+import { validateCacheCapabilities } from './cache-policy.js';
 
 const VALID_CUSTOM_PROVIDER_USER_AGENT_MODES = new Set(['compat', 'sdk']);
 const VALID_OPENAI_MAX_OUTPUT_TOKEN_FIELDS = new Set<KodaXOpenAICompatMaxOutputTokensField>([
@@ -348,6 +350,16 @@ function customModelDescriptorToFull(
 export function validateCustomProviderConfig(
   custom: KodaXCustomProviderConfig,
 ): void {
+  validateToolCapabilities(custom.toolCapabilities);
+  validateCacheCapabilities(custom.cacheCapabilities);
+  const cacheDialects = custom.protocol === 'anthropic' ? ['anthropic'] : custom.protocol === 'bedrock' ? ['bedrock']
+    : custom.protocol === 'pi-messages' ? ['pi'] : custom.protocol === 'openai' ? custom.api === 'responses' ? ['openai-options', 'openai-retention', 'affinity'] : ['openai-retention', 'affinity'] : [];
+  const cacheProfiles = [custom.cacheCapabilities, ...(custom.models ?? []).flatMap(model => typeof model === 'string' ? [] : [model.cacheCapabilities])];
+  if (cacheProfiles.some(profile => profile && !cacheDialects.includes(profile.dialect))) throw new Error('Declared cache dialect does not match the native API.');
+  for (const model of custom.models ?? []) if (typeof model !== 'string') validateCacheCapabilities(model.cacheCapabilities);
+  for (const model of custom.models ?? []) if (typeof model !== 'string') validateToolCapabilities(model.toolCapabilities);
+  const grammarRoute = custom.protocol === 'pi-messages' || (custom.protocol === 'openai' && custom.api === 'responses');
+  if (!grammarRoute && (custom.toolCapabilities?.grammar?.length || custom.models?.some(model => typeof model !== 'string' && model.toolCapabilities?.grammar?.length))) throw new Error('Grammar tools require Responses or Pi Messages.');
   if (!custom.name || !custom.baseUrl || !custom.apiKeyEnv || !custom.model) {
     throw new Error(
       `Custom provider requires name, baseUrl, apiKeyEnv, and model. Got: ${JSON.stringify({ name: custom.name, baseUrl: custom.baseUrl, apiKeyEnv: custom.apiKeyEnv, model: custom.model })}`,
@@ -484,6 +496,8 @@ function buildProviderConfig(custom: KodaXCustomProviderConfig): KodaXProviderCo
 
   return {
     apiKeyEnv: custom.apiKeyEnv,
+    cacheCapabilities: custom.cacheCapabilities ? structuredClone(custom.cacheCapabilities) : undefined,
+    toolCapabilities: custom.toolCapabilities ? structuredClone(custom.toolCapabilities) : undefined,
     authentication: custom.authentication,
     oauth: custom.oauth,
     ...(custom.oauth ? { credentialSource: 'broker' as const } : {}),

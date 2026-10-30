@@ -1,3 +1,5 @@
+import { validateToolCapabilities } from './tool-constraints.js';
+import { validateCacheCapabilities } from './cache-policy.js';
 /**
  * FEATURE_198 v0.7.44 — Provider capability JSON schema + validator.
  *
@@ -12,6 +14,8 @@
 
 import type {
   KodaXModelDescriptor,
+  KodaXToolCapabilities,
+  KodaXCacheCapabilities,
   KodaXOpenAICompatMaxOutputTokensField,
   KodaXProviderCapabilityProfile,
   KodaXReasoningCapability,
@@ -46,6 +50,8 @@ export type CapabilityProfileName =
  *    those are owned by the local CLI binary, not KodaX metadata
  */
 export interface ProviderCapabilityJsonEntry {
+  readonly toolCapabilities?: KodaXToolCapabilities;
+  readonly cacheCapabilities?: KodaXCacheCapabilities;
   readonly apiKeyEnv: string;
   readonly model?: string;
   readonly models?: ReadonlyArray<KodaXModelDescriptor>;
@@ -85,6 +91,8 @@ export interface ProviderCapabilitiesJson {
  * unchanged.
  */
 export interface ProviderSnapshot {
+  readonly toolCapabilities?: KodaXToolCapabilities;
+  readonly cacheCapabilities?: KodaXCacheCapabilities;
   readonly model: string;
   readonly models?: ReadonlyArray<KodaXModelDescriptor>;
   readonly apiKeyEnv: string;
@@ -119,6 +127,10 @@ const VALID_REASONING_CAPABILITIES: readonly KodaXReasoningCapability[] = [
 // `anthropic-reasoning-effort` is shared by custom providers and built-ins whose
 // non-Claude Anthropic-compatible wire shape has been verified directly.
 const VALID_EFFORT_STRATEGIES: readonly KodaXReasoningEffortWireStrategy[] = [
+  'google-thinking-level',
+  'bedrock-anthropic-effort',
+  'bedrock-openai-effort',
+  'bedrock-openai-nested-effort',
   'openai-responses-effort',
   'openai-chat-effort',
   'codex-cli-config',
@@ -466,6 +478,10 @@ function validateReasoningProfile(
   if (requiresEffortBetaHeader !== undefined) {
     (capability as { requiresEffortBetaHeader: boolean }).requiresEffortBetaHeader = requiresEffortBetaHeader;
   }
+  for (const field of ['supportsThinkingDisplay', 'supportsThinkingBlockBinding'] as const) {
+    const value = optionalBoolean(raw[field], `${path}.${field}`);
+    if (value !== undefined) Object.assign(capability, { [field]: value });
+  }
   return capability;
 }
 
@@ -508,6 +524,15 @@ function requireVerifyStrategy(value: unknown, path: string): KodaXVerifyStrateg
     );
   }
   return value as KodaXVerifyStrategy;
+}
+
+function constraintMetadata(raw: Record<string, unknown>, path: string): Pick<KodaXModelDescriptor, 'toolCapabilities' | 'cacheCapabilities'> {
+  try { validateToolCapabilities(raw.toolCapabilities); validateCacheCapabilities(raw.cacheCapabilities); }
+  catch (error) { throw new Error(`${path}: ${error instanceof Error ? error.message : 'Invalid constraint metadata.'}`); }
+  return {
+    ...(raw.toolCapabilities ? { toolCapabilities: structuredClone(raw.toolCapabilities) as KodaXToolCapabilities } : {}),
+    ...(raw.cacheCapabilities ? { cacheCapabilities: structuredClone(raw.cacheCapabilities) as KodaXCacheCapabilities } : {}),
+  };
 }
 
 function validateModelDescriptor(
@@ -554,7 +579,7 @@ function validateModelDescriptor(
           `${path}.reasoningCapability`,
         );
   const reasoningProfile = validateReasoningProfileField(raw, path);
-  const descriptor: KodaXModelDescriptor = { id };
+  const descriptor: KodaXModelDescriptor = { id, ...constraintMetadata(raw, path) };
   for (const [field, value] of Object.entries({ wireModel, displayName, contextWindow, maxOutputTokens,
     outputTokenLimit, maxOutputTokensField, thinkingBudgetCap, reasoningCapability, reasoningProfile,
     replayReasoningContent, strictThinkingSignature, streamMaxDurationMs })) {
@@ -675,6 +700,7 @@ function validateProviderEntry(
   }
 
   const entry: ProviderCapabilityJsonEntry = {
+    ...constraintMetadata(raw, `providers.${name}`),
     apiKeyEnv,
     reasoningCapability,
     capabilityProfile,

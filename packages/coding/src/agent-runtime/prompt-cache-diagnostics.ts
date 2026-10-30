@@ -10,6 +10,7 @@ import type {
   KodaXReasoningRequest,
   KodaXTokenUsage,
   KodaXToolDefinition,
+  KodaXProviderRequestProjection,
 } from '@kodax-ai/llm';
 import {
   KodaXAnthropicCompatProvider,
@@ -663,6 +664,7 @@ export function emitPromptCacheDiagnosticRequest(
       ? hashPromptCacheValue(input.promptCacheKey)
       : undefined;
     event = {
+      projection: 'estimated',
       phase: 'request',
       transport: input.transport ?? 'stream',
       requestId: randomUUID(),
@@ -750,4 +752,16 @@ export function emitPromptCacheDiagnosticResponse(
       error: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+/** Native input facts supplement the earlier estimate; neither proves dispatch or cache reuse. */
+export function emitNativePromptCacheDiagnosticRequest(events: KodaXEvents | undefined, request: KodaXPromptCacheDiagnosticEvent | undefined,
+  projection: KodaXProviderRequestProjection): KodaXPromptCacheDiagnosticEvent | undefined {
+  if (!request || !events?.onPromptCacheDiagnostics) return request;
+  const event: KodaXPromptCacheDiagnosticEvent = { ...request, projection: 'native', nativeProjectionStage: projection.stage,
+    nativeRequestHash: projection.payloadHash, nativeSystemHash: projection.systemHash, nativeToolsHash: projection.toolsHash,
+    nativeMessagesHash: projection.messagesHash, nativeCachePolicyHash: projection.cachePolicyHash };
+  try { events.onPromptCacheDiagnostics(event); }
+  catch (error) { emitResilienceDebug('[context-diagnostics:cache-callback-error]', { phase: 'request', error: error instanceof Error ? error.message : String(error) }); }
+  return event;
 }

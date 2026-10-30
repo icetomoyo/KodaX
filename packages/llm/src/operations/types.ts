@@ -1,4 +1,4 @@
-import type { KodaXMessage, KodaXStreamResult, KodaXTokenUsage, KodaXToolDefinition } from '../types.js';
+import type { KodaXMessage, KodaXStreamResult, KodaXTokenUsage, KodaXToolDefinition, KodaXToolCapabilities } from '../types.js';
 import type { ImageValidation } from '../image-validation.js';
 
 /** Connection metadata only. Privileged Hosts supply credentials through the existing scoped broker. */
@@ -39,6 +39,7 @@ export interface KodaXImageResult {
 }
 export interface KodaXDeferredConnection extends KodaXOperationConnection {
   api: 'openai-background-responses';
+  toolCapabilities?: KodaXToolCapabilities;
   /** Trusted Host's stable registration/account identifier, never inferred from an unverified token. */
   accountScope: string;
 }
@@ -47,7 +48,11 @@ export interface KodaXDeferredRequest {
   effort?: string; store?: boolean;
 }
 /** Serializable locator only. Each operation still requires fresh authority for this exact connection/account. */
-export interface KodaXDeferredReference { version: 1; id: string; scope: string }
+export interface KodaXDeferredReference {
+  version: 1; id: string; scope: string;
+  /** Conversion data only; never authorizes execution of these tools. */
+  customToolProperties?: Readonly<Record<string, string>>;
+}
 export type KodaXDeferredResult = { reference: KodaXDeferredReference } & (
   | { status: 'queued' | 'in_progress' }
   | { status: 'failed' | 'cancelled' | 'incomplete'; reason?: string; partialUsage?: KodaXTokenUsage; usageKind: 'cumulative'; usageId: string }

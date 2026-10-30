@@ -1,21 +1,31 @@
+import { withoutPreferredToolConstraints } from './tool-constraints.js';
 import type { KodaXAssistantBlock, KodaXGenerationSource, KodaXMessage, KodaXProviderConfig,
-  KodaXProviderStreamOptions, KodaXReasoningProfile, KodaXReasoningRequest, KodaXStreamResult, KodaXTokenUsage, KodaXToolDefinition } from '../types.js';
+  KodaXProviderStreamOptions, KodaXReasoningProfile, KodaXReasoningRequest, KodaXStreamResult, KodaXTokenUsage, KodaXToolDefinition, KodaXToolCapabilities } from '../types.js';
 import { KodaXBaseProvider } from './base.js';
 import { KodaXProviderError } from '../errors.js';
 import { createHash } from 'node:crypto';
 import { withProviderRequestCredential } from '../provider-credential-context.js';
 import { runVerifyCredential } from './verify-credential.js';
+import { classifyReasoningEffortRejection } from './reasoning-effort-rejection.js';
 
 export interface NativeRequest {
   streaming: boolean; messages: KodaXMessage[]; tools: KodaXToolDefinition[]; system: string;
   model: string; source: KodaXGenerationSource; maxOutputTokens: number;
   profile?: KodaXReasoningProfile; effort?: string; disabled: boolean;
   thinkingBudgetCap?: number;
+  requestedEffort: string;
+  logicalModel: string;
+  reasoningFallbacks?: NonNullable<KodaXStreamResult['reasoningResolution']>['fallbacks'];
+  /** Set only by the adapter that actually lowers a reasoning control. */
+  sentReasoningEffort?: string;
+  toolCapabilities: KodaXToolCapabilities;
   options?: KodaXProviderStreamOptions; signal?: AbortSignal;
 }
 
 /** Shared request/authority/terminal contract; each subclass owns its native wire format. */
 export abstract class KodaXNativeProvider extends KodaXBaseProvider {
+  override usesScopedReasoningLearning(): boolean { return true; }
+  protected override getReasoningApi(): string { return this.nativeApi; }
   readonly supportsThinking = true;
   protected override readonly requestObservationBoundary = 'physical_attempt' as const;
   protected override readonly useLegacyReasoningFallback = false;
@@ -25,7 +35,7 @@ export abstract class KodaXNativeProvider extends KodaXBaseProvider {
   override supportsNonStreamingFallback(): boolean { return true; }
   getGenerationSource(model?: string): KodaXGenerationSource {
     return { provider: this.name, api: this.nativeApi,
-      model: this.getWireModelId(model), baseUrl: this.config.baseUrl, credentialScope: createHash('sha256').update(this.getApiKey()).digest('hex') };
+      model: this.getWireModelId(model), baseUrl: this.config.baseUrl, credentialScope: this.getRequestCredentialFingerprint() ?? 'unavailable' };
   }
   stream(messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string, reasoning?: boolean | KodaXReasoningRequest,
     options?: KodaXProviderStreamOptions, signal?: AbortSignal): Promise<KodaXStreamResult> {
@@ -67,8 +77,13 @@ export abstract class KodaXNativeProvider extends KodaXBaseProvider {
     const thinking = thinkingBlocks.filter(b => b.type === 'thinking').map(b => b.thinking).join('');
     if (thinking) request.options?.onThinkingEnd?.(thinking);
     request.signal?.throwIfAborted();
+    const reasoningResolution = { provider: this.name, model: request.logicalModel, requestedEffort: request.requestedEffort,
+      sentEffort: request.sentReasoningEffort, verified: false as const,
+      fallbacks: request.reasoningFallbacks?.length ? request.reasoningFallbacks : request.requestedEffort !== 'auto' && request.requestedEffort !== request.sentReasoningEffort
+        ? [{ effort: request.requestedEffort, reason: 'profile' as const }] : [] };
+    request.options?.onReasoningResolved?.(reasoningResolution);
     return { contentBlocks, textBlocks, thinkingBlocks, toolBlocks, usage,
-      stopReason: stopReason === 'end_turn' && toolBlocks.length ? 'tool_use' : stopReason };
+      stopReason: stopReason === 'end_turn' && toolBlocks.length ? 'tool_use' : stopReason, reasoningResolution };
   }
   private async run(streaming: boolean, messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string,
     reasoning?: boolean | KodaXReasoningRequest, options?: KodaXProviderStreamOptions, signal?: AbortSignal): Promise<KodaXStreamResult> {
@@ -87,15 +102,31 @@ export abstract class KodaXNativeProvider extends KodaXBaseProvider {
       : m.content.filter(b => b.type === 'text').map(b => b.text).join('\n'))].filter(s => s.trim());
     const rest = messages.filter(m => m.role !== 'system');
     if (options?.ephemeralSuffix?.content) rest.push({ role: 'user', content: options.ephemeralSuffix.content });
-    return withProviderRequestCredential(this.name, 'primary', signal, signal => this.withRateLimit(async retry => {
+    return this.withRequestContext(options, signal, signal => this.withRateLimit(async retry => {
       signal?.throwIfAborted();
       this.assertCredential();
       const budget = this.getEffectiveMaxOutputTokens(model, options?.maxOutputTokensOverride);
       retry.maxOutputTokensLimit ??= budget;
-      return this.invoke({ streaming, messages: rest, tools, system: systemParts.join('\n\n'), model: this.getWireModelId(model),
+      const rejected = this.knownReasoningRejections(model, options);
+      const suppress = retry.suppressReasoningEffort || rejected.includes('*') || (desired !== undefined && rejected.includes(desired));
+      const request: NativeRequest = { streaming, messages: rest, tools: withoutPreferredToolConstraints(tools, retry.disablePreferredToolConstraints), system: systemParts.join('\n\n'), model: this.getWireModelId(model),
         source: this.getGenerationSource(model), maxOutputTokens: Math.min(retry.maxOutputTokensOverride ?? budget, budget), profile,
-        effort: retry.suppressReasoningEffort ? undefined : effort, disabled,
-        thinkingBudgetCap: this.getEffectiveThinkingBudgetCap(model), options, signal });
-    }, signal, options?.singleAttempt ? 1 : 3, options?.onRateLimit, options?.onRetryAfter, { model }));
+        toolCapabilities: this.getToolCapabilities(model),
+        requestedEffort: normalized.effortSource === 'omitted' ? 'auto' : normalized.effort,
+        logicalModel: model,
+        ...(suppress && !retry.suppressReasoningEffort ? { reasoningFallbacks: [{ effort: desired, reason: 'cached-rejection' as const }] } : {}),
+        effort: suppress ? undefined : effort, disabled: suppress ? false : disabled,
+        thinkingBudgetCap: this.getEffectiveThinkingBudgetCap(model), options, signal };
+      if (suppress) request.profile = undefined;
+      try { return await this.invoke(request); }
+      catch (error) {
+        const rejection = request.sentReasoningEffort === undefined ? null : classifyReasoningEffortRejection(error, request.sentReasoningEffort);
+        if (!rejection) throw error;
+        this.rememberReasoningRejection(model, rejection.parameterRejected ? '*' : rejection.rejectedEffort, options);
+        if (options?.singleAttempt || signal?.aborted || suppress) throw error;
+        return this.invoke({ ...request, profile: undefined, effort: undefined, disabled: false, sentReasoningEffort: undefined,
+          reasoningFallbacks: [{ effort: request.sentReasoningEffort, reason: rejection.parameterRejected ? 'unsupported-parameter' : 'unsupported-effort' }] });
+      }
+    }, signal, options?.singleAttempt ? 1 : 3, options?.onRateLimit, options?.onRetryAfter, { model, tools }));
   }
 }

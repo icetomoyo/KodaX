@@ -261,3 +261,14 @@ The automatic Sidecar Verifier is retired. Remove `verifierLog`, `/verifier-log`
 调用 `readEvidence` 获取经新鲜度、来源和 PNG 校验的实际图片；共享 Host UI 不自行读返回路径。附件 `image.offset/totalLength/nextOffset` 和 `attachmentOffset` 按字节计数，与正文 UTF-16 偏移分开。客户端校验每块身份、哈希、尺寸和连续偏移，拼接后再次校验完整图片；旧 Host 缺能力时明确失败。
 
 自动视觉审查由共享 Agent 指引及可用工具触发，不要求 slash；SDK 本身不另发起模型判官请求。文件渲染可无界面运行，仍需可用 renderer 和支持图片输入的 Provider。`ready`/覆盖检查不表示质量通过。完整支持矩阵、DOCX 保真限制、示例和取消语义见 [Artifact SDK](ARTIFACT_SDK.md)；自然任务 E2E 的未完成闭环及工具 schema 缺口见[实测记录](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#natural-task-observations-2026-10-13)。
+
+
+## LLM provider parity：能力与费用契约（FEATURE_302 T11）
+
+原有 provider 名称、config.json 和 API_KEY 环境变量继续有效，默认仍为现有 HTTP/SSE；不需要将 API key 搬进配置文件。原生/订阅连接通过既有 broker 按请求授权。新增能力及边界见 [LLM 接入契约](LLM_INTEGRATION.md)。
+
+`CostRecord.cost`、provider/session 的总费用现在为 `number | null`。未知价格或未覆盖的 cache-write TTL 返回 `null`，不能再当作零价；`knownCostSubtotal`、`unknownCostCalls`、`nominalCostCalls`、`costBasis` 区分已知小计与订阅名义估算。已有数值费率和显式零价保持原义，静态费率不是实时账单。`cachedWriteTokensByTtl` 保留缓存写入分区，`cacheWritePer1MByTtl` 可为已声明 TTL 提供估算费率。
+
+工具 strict/grammar 只按显式能力启用；`require` 不可静默降级，`prefer` 仅在明确的 400/422 约束拒绝后有一次受限回退。`strict` 会关闭对象额外属性，将可选属性变为可空的必填属性，属于显式 opt-in。Responses grammar 的原始输入由声明的单个字符串属性承接，部分流片段不构成可执行工具。
+
+原生 provider 的 reasoning 学习记录增加身份 scope；旧的无 scope 记录不用于限制新原生请求或 REPL 可选 effort。账号/密钥/连接变化会隔离学习及 opaque history，仍保留可读历史。CLI bridge 的旧行为保持。请求投影诊断区分 estimated 和 native protocol-input；后者为签名前实际请求对象的哈希，不代表服务端 cache hit 或实际计费。
