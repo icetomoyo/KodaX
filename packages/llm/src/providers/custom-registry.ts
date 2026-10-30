@@ -247,6 +247,7 @@ function customDescriptorToFull(
   protocol: KodaXCustomProviderConfig['protocol'],
   supportsThinking?: boolean,
   inheritedReasoningPreset?: KodaXModelDescriptor['reasoningPreset'],
+  api?: KodaXCustomProviderConfig['api'],
 ): KodaXModelDescriptor {
   const descriptor = typeof entry === 'string' ? { id: entry } : entry;
   const reasoningProfile = resolveCustomModelReasoningProfile(
@@ -254,6 +255,7 @@ function customDescriptorToFull(
     protocol,
     supportsThinking,
     inheritedReasoningPreset,
+    api,
   );
   // Single-track invariant: supportsThinking:false forces every surface to 'none'
   // (mirrors customModelDescriptorToFull + getCustomModelCapabilities). Without
@@ -291,6 +293,7 @@ export function getCustomProviderModelDescriptors(
       config.protocol,
       config.supportsThinking,
       config.reasoningPreset,
+      config.api,
     ),
   );
   const defaultEntry: KodaXModelDescriptor = full.find((m) => m.id === config.model) ?? { id: config.model };
@@ -322,6 +325,7 @@ export function getCustomModelCapabilities(
       config.protocol,
       config.supportsThinking,
       config.reasoningPreset,
+      config.api,
     ))
     .find((m) => m.id === modelId);
   const descriptor = fromList ?? (isDefault ? ({ id: config.model } as KodaXModelDescriptor) : undefined);

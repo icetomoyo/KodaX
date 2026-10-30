@@ -100,6 +100,13 @@ export interface KodaXThinkingBlock {
   type: 'thinking';
   thinking: string;
   signature?: string;
+  /** Stateless Responses replay is valid only at the originating connection/API/model. */
+  responsesReasoning?: {
+    source: KodaXGenerationSource;
+    id: string;
+    summary: { type: 'summary_text'; text: string }[];
+    encrypted_content?: string | null;
+  };
   /** Opaque OpenAI-compatible reasoning replay, scoped to its original endpoint/model. */
   openaiReasoning?: {
     provider: string;
@@ -225,6 +232,8 @@ export interface KodaXTokenUsage {
 }
 
 export interface KodaXStreamResult {
+  /** Authoritative generation order when supplied. Legacy providers retain their existing projections. */
+  contentBlocks?: KodaXAssistantBlock[];
   textBlocks: KodaXTextBlock[];
   toolBlocks: KodaXToolUseBlock[];
   thinkingBlocks: (KodaXThinkingBlock | KodaXRedactedThinkingBlock)[];
@@ -233,6 +242,15 @@ export interface KodaXStreamResult {
   stopReason?: string;
   /** Wire observation only; acceptance does not prove reasoning strength took effect. */
   reasoningResolution?: KodaXReasoningResolution;
+}
+
+export type KodaXAssistantBlock = KodaXTextBlock | KodaXToolUseBlock | KodaXThinkingBlock | KodaXRedactedThinkingBlock;
+
+export interface KodaXGenerationSource {
+  provider: string;
+  api: 'openai-responses';
+  model: string;
+  baseUrl?: string;
 }
 
 export interface KodaXReasoningResolution {
@@ -705,6 +723,8 @@ export interface KodaXListModelsResult {
 export interface KodaXCustomProviderConfig {
   name: string;
   protocol: KodaXProtocolFamily;
+  /** OpenAI wire API. Omitted preserves Chat Completions; Responses is explicit opt-in. */
+  api?: 'chat-completions' | 'responses';
   baseUrl: string;
   apiKeyEnv: string;
   model: string;

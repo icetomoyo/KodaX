@@ -21,6 +21,7 @@ import {
 import { KodaXBaseProvider } from './base.js';
 import { KodaXAnthropicCompatProvider } from './anthropic.js';
 import { KodaXOpenAICompatProvider } from './openai.js';
+import { KodaXOpenAIResponsesProvider } from './openai-responses.js';
 import { NATIVE_PROVIDER_CAPABILITY_PROFILE } from './capability-profile.js';
 import { createReasoningProfileFromPreset } from '../reasoning.js';
 import { optionalOutputTokenLimit } from './output-token-limit.js';
@@ -249,11 +250,16 @@ function migrateLegacyDeepSeekPreset(
   return preset;
 }
 
+function selectReasoningApi(profile: KodaXReasoningProfile | undefined, api: KodaXCustomProviderConfig['api']): KodaXReasoningProfile | undefined {
+  return api === 'responses' && profile?.effortStrategy === 'openai-chat-effort'
+    ? { ...profile, effortStrategy: 'openai-responses-effort' } : profile;
+}
+
 export function resolveCustomProviderReasoningProfile(
   config: KodaXCustomProviderConfig,
 ): KodaXReasoningProfile | undefined {
   // The fallback describes a wire dialect; no supportedEfforts are asserted.
-  return resolveCustomReasoningProfile(
+  const profile = resolveCustomReasoningProfile(
     getConfiguredReasoningProfile(config),
     migrateLegacyDeepSeekPreset(config.reasoningPreset, config.model),
     config.reasoning,
@@ -265,6 +271,7 @@ export function resolveCustomProviderReasoningProfile(
   ) ?? (config.protocol === 'openai'
     ? { effortStrategy: 'openai-chat-effort', allowCustomEffort: true }
     : undefined);
+  return selectReasoningApi(profile, config.api);
 }
 
 export function resolveCustomModelReasoningProfile(
@@ -276,6 +283,7 @@ export function resolveCustomModelReasoningProfile(
   // (getReasoningProfile(modelId)) consistent with the capability query surfaces.
   supportsThinking?: boolean,
   inheritedReasoningPreset?: KodaXModelDescriptor['reasoningPreset'],
+  api?: KodaXCustomProviderConfig['api'],
 ): KodaXReasoningProfile | undefined {
   const inheritsLegacyPreset =
     inheritedReasoningPreset === 'deepseek-v4-openai'
@@ -283,7 +291,7 @@ export function resolveCustomModelReasoningProfile(
     && descriptor.reasoningPreset === undefined
     && descriptor.reasoning === undefined
     && descriptor.reasoningCapability === undefined;
-  return resolveCustomReasoningProfile(
+  const profile = resolveCustomReasoningProfile(
     getConfiguredReasoningProfile(descriptor),
     migrateLegacyDeepSeekPreset(
       descriptor.reasoningPreset ?? (inheritsLegacyPreset ? inheritedReasoningPreset : undefined),
@@ -297,6 +305,7 @@ export function resolveCustomModelReasoningProfile(
       supportsThinking,
     },
   );
+  return selectReasoningApi(profile, api);
 }
 
 function customModelDescriptorToFull(
@@ -304,6 +313,7 @@ function customModelDescriptorToFull(
   protocol: KodaXProtocolFamily,
   supportsThinking?: boolean,
   inheritedReasoningPreset?: KodaXModelDescriptor['reasoningPreset'],
+  api?: KodaXCustomProviderConfig['api'],
 ): KodaXModelDescriptor {
   const descriptor = typeof entry === 'string' ? { id: entry } : entry;
   const reasoningProfile = resolveCustomModelReasoningProfile(
@@ -311,6 +321,7 @@ function customModelDescriptorToFull(
     protocol,
     supportsThinking,
     inheritedReasoningPreset,
+    api,
   );
   // Single-track invariant: a provider-level supportsThinking:false must make
   // EVERY surface agree on 'none' — same override buildProviderConfig and
@@ -340,6 +351,11 @@ export function validateCustomProviderConfig(
     throw new Error(
       `Unknown protocol "${custom.protocol}" for custom provider "${custom.name}". Must be "anthropic" or "openai".`,
     );
+  }
+
+  if (custom.api !== undefined && (custom.protocol !== 'openai'
+    || !['chat-completions', 'responses'].includes(custom.api))) {
+    throw new Error(`Custom provider "${custom.name}": api requires openai and must be chat-completions or responses.`);
   }
 
   if (
@@ -434,6 +450,7 @@ function buildProviderConfig(custom: KodaXCustomProviderConfig): KodaXProviderCo
         custom.protocol,
         custom.supportsThinking,
         custom.reasoningPreset,
+        custom.api,
       ))
     : undefined;
   const reasoningProfile = resolveCustomProviderReasoningProfile(custom);
@@ -487,13 +504,20 @@ function buildProviderConfig(custom: KodaXCustomProviderConfig): KodaXProviderCo
 export function createCustomProvider(custom: KodaXCustomProviderConfig): KodaXBaseProvider {
   validateCustomProviderConfig(custom);
 
+
   const config = buildProviderConfig(custom);
 
   if (custom.protocol === 'anthropic') {
     return new DynamicAnthropicProvider(custom.name, config);
   }
 
-  return new DynamicOpenAIProvider(custom.name, config);
+  return custom.api === 'responses'
+    ? new DynamicResponsesProvider(custom.name, config)
+    : new DynamicOpenAIProvider(custom.name, config);
+}
+
+class DynamicResponsesProvider extends KodaXOpenAIResponsesProvider {
+  constructor(readonly name: string, protected readonly config: KodaXProviderConfig) { super(); }
 }
 
 class DynamicAnthropicProvider extends KodaXAnthropicCompatProvider {

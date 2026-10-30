@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { KodaXBaseProvider, KodaXMessage } from '@kodax-ai/llm';
-import { getProvider, runWithScopedConfig } from '@kodax-ai/llm';
+import { getProvider, runWithScopedConfig, createCustomProvider } from '@kodax-ai/llm';
 
 import type { KodaXPromptCacheDiagnosticEvent } from '../types.js';
 import {
@@ -24,6 +24,14 @@ const messages: readonly KodaXMessage[] = [
 ];
 
 describe('prompt-cache diagnostics', () => {
+  it('hashes only same-source Responses reasoning that the wire actually replays', () => {
+    const provider = createCustomProvider({ name: 'responses', protocol: 'openai', api: 'responses', model: 'm', baseUrl: 'https://example.test/v1', apiKeyEnv: 'UNUSED' });
+    const history = (cipher: string): KodaXMessage[] => [{ role: 'assistant', content: [{ type: 'thinking', thinking: '', responsesReasoning: {
+      source: { provider: 'responses', api: 'openai-responses', model: 'm', baseUrl: 'https://example.test/v1' }, id: 'rs', summary: [], encrypted_content: cipher,
+    } }] }];
+    expect(hashProviderVisibleMessages(history('a'), provider, 'm')).not.toBe(hashProviderVisibleMessages(history('b'), provider, 'm'));
+    expect(hashProviderVisibleMessages(history('a'), provider, 'other')).toBe(hashProviderVisibleMessages(history('b'), provider, 'other'));
+  });
   it('matches Anthropic-compatible inline System trimming without changing OpenAI-compatible whitespace', () => {
     const inlineSystem: readonly KodaXMessage[] = [
       {

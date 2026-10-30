@@ -865,6 +865,7 @@ export abstract class KodaXBaseProvider {
         : {}),
       ...(requestId !== undefined ? { requestId } : {}),
       ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+      ...(error instanceof KodaXProviderError ? error.metadata : {}),
     };
   }
 

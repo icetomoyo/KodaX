@@ -1,7 +1,7 @@
 # FEATURE_302 — Independent LLM Provider Parity
 
-Date: 2026-10-30. Status: T01–T04 implemented, contract-tested and reviewed;
-T05–T12 pending. This is not a claim of complete pi-ai parity or a released feature.
+Date: 2026-10-30. Status: T01–T05 implemented, contract-tested and reviewed offline;
+T06–T12 pending. T05 full-regression evidence is recorded separately below. This is not a claim of complete pi-ai parity or a released feature.
 [Accepted scope and tickets](../features/v0.7.99.md#feature_302-independent-llm-provider-parity).
 
 ## Baseline and isolation
@@ -76,7 +76,7 @@ not close a row. All new work here is **not live-tested**.
 | moonshotai | International route pending | T09 |
 | moonshotai-cn | `kimi` CN Completions exists; preserve its route-specific reasoning behavior | T06,T09 |
 | nvidia | Built-in route and dialect pending | T09 |
-| openai | API-key Completions exists; Responses, ChatGPT OAuth and Decisions pending | T05,T07,T10 |
+| openai | Built-in API-key Completions retained; native Responses explicit custom API contract-tested in T05; OAuth/Decisions and remaining model/history coverage pending | T06,T07,T10 |
 | openai-codex | Native subscription route pending; `codex-cli` remains a separate bridge | T07 |
 | opencode | Gateway route/model API selection pending | T09 |
 | opencode-go | Gateway subscription route pending | T09 |
@@ -104,7 +104,7 @@ used to replace these routes or rename saved selections.
 |---|---|
 | openai-completions | Existing adapter; T03 retry and T04 replay changes contract-tested. Dynamic history/strict/grammar/cache coverage remains T06/T11. |
 | anthropic-messages | Existing adapter; T01 signatures and T02/T03 budgets/recovery contract-tested. Full cross-source ordered history remains T06. |
-| openai-responses | Pending T05 |
+| openai-responses | T05 explicit native API implemented and offline contract-tested; ordinary function tools/text/images/reasoning/usage/Host recovery. T06/T11 broader history and transport capabilities remain open. |
 | azure-openai-responses | Pending T08 |
 | openai-codex-responses | Pending T07 |
 | bedrock-converse-stream | Pending T08 |
@@ -126,7 +126,7 @@ T07 establishes the authorized storage/refresh/broker path; T09 adds the remaini
 flows with their protocols. API keys, cloud identities and subscription tokens
 must not be treated as interchangeable.
 
-## Verification log
+## Phase-zero verification log (T01–T04)
 
 - Signature-focused suite: 70 tests passed after the failing capture/replay tests.
 - LLM + resilience + media selection: 77 files / 1240 tests passed before the
@@ -178,19 +178,19 @@ passing-after evidence. Both reviews also
 rechecked the later cache-wire and cold-deadline fixes; the coverage ledger was
 independently checked against the pinned pi factories/APIs/OAuth loaders.
 
-## Standards
+## Phase-zero Standards
 
 Final review and incremental re-reviews found no remaining findings in T01–T04.
 The cache projection follows the existing serializer condition, and typed Host
 deadlines retain their existing recovery path. Changes remain scoped to the
 required behavior without introducing a new framework or bypassing build guards.
 
-## Spec
+## Phase-zero Spec
 
 T01–T04 pass the scoped review after correction of retry classification, retry
 hints/callbacks, Host delay units, cache-wire parity and cold-deadline handling.
 The ledger correctly distinguishes current routes, non-equivalent identities,
-pending native/OAuth operations and live-unverified behavior. T05–T12 are not
+pending native/OAuth operations and live-unverified behavior. At this phase-zero review T05–T12 were not
 implemented; this review does not mark the overall parity feature complete.
 
 Final findings: Standards 0 (no remaining severity); scoped T01–T04 Spec 0
@@ -235,3 +235,113 @@ not total installed content. The before/after full manual registry is identical.
 - Standards review found two distribution omissions; both fixed and re-reviewed.
   Spec review passed. No real binary packaging run is claimed here.
 - A 64 KiB minimum CLI headroom regression is wired into `test:bundle`.
+
+
+## 2026-10-30 — T05 native Responses
+
+The isolated branch incorporates only the other thread's committed shared-Host
+baseline `f6a010462` via merge `ba5d18cb`. Its dirty sandbox/external-agent work
+remains in the original workspace and is neither overwritten nor claimed tested.
+CLI budget preparation is committed separately as `3b7a8f8f`.
+
+Public configuration uses `protocol: "openai", api: "responses"`; omitted API
+retains Chat Completions. The built-in OpenAI alias does not migrate. Configuration,
+setup persistence, keyless capabilities, standalone LLM and published SDK agree.
+See [user configuration](../../public_docs/configuration/custom-providers.md#native-responses-api).
+
+| Boundary | Evidence |
+|---|---|
+| Actual SDK transport | `openai-responses.test.ts`: /responses, stream true/false, stateless ordered replay, model provenance, final JSON object validation, usage, callbacks, current tools/schema changes, default/ceiling, explicit cache affinity, reasoning defaults and rejected-effort learning. |
+| Credential/cancellation | Different scoped credentials on the same provider; instance learning uses connection/API/model/declaration/credential fingerprint. `responses-http-cancel.test.ts` uses a loopback HTTP SSE server for abort, lease revocation and disconnect, with one physical call. |
+| Images | `responses-images.test.ts`: decoded user and tool-result image payloads, unsupported/missing-image placeholders, precise rejected-image hash through error wrapping; no local path on wire. |
+| History consumers | `runner-responses-content.test.ts`, `llm-adapter.responses.test.ts`, `run-substrate.responses.test.ts`: both execution paths keep ordered text/reasoning/tools, sanitized output cannot re-enter via ordered blocks, tool executes once, encrypted reasoning survives continuation. |
+| Recovery | Actual managed adapter repeatedly receives EOF, recovers, and calls Responses with stream:false. Cancelled streams remain AbortError; malformed/completed-invalid tools stay non-executable. Server error, quota and temporary limit preserve code/stage/failure metadata; failed usage is partial observation only. |
+| Diagnostics and release | Responses-specific wire projection scopes opaque cache hashing; setup round-trip preserves API; `bundled-responses.test.mjs` imports the built SDK outside source aliases and proves scoped credentials plus replay. |
+
+An explicit incomplete response is an error and returns no executable tool calls;
+max-output continuation for incomplete Responses is not claimed. Missing stream
+terminal and declared transient upstream failures use the existing Host recovery.
+Historical ordering/source absent from old sessions is not invented. New default
+reasoning uses declared defaults only; broader effort negotiation/history migration
+and persisted Host capability-cache identity changes remain T06/T11.
+
+Review-driven corrections: incremental tool-input callbacks must emit deltas;
+EOF must remain recoverable; text suffix sanitation must preserve interleaving;
+all error wrapping paths must retain typed upstream metadata. Each reproduced
+case has a regression. Standards: 0 remaining findings. Spec: 0 remaining findings
+within T05. These are separate offline reviews, not live service certification.
+
+Validation so far: final source/test typechecks and workspace/bundle builds passed.
+Core new modules (`openai-responses`, `responses-messages`, `assistant-content`)
+coverage: statements 94.31%, branches 86.25%, functions 96.66%, lines 97% in the
+28-test selection before the additional temporary-rate-limit metadata regression.
+This is scoped coverage, not repository-wide coverage. That final metadata fix
+then passed its 69-test Responses/base selection. Built SDK/manual/credential
+selection passed 18 tests before the final metadata-only correction; final
+release/full-suite results follow below. No live provider keys were used.
+
+Protocol reference checked against installed OpenAI SDK 6.x types and official
+[Responses migration](https://developers.openai.com/api/docs/guides/migrate-to-responses),
+[reasoning replay](https://developers.openai.com/api/docs/guides/reasoning) and
+[streaming events](https://developers.openai.com/api/reference/resources/responses/streaming-events).
+No pi runtime dependency or implementation copy is introduced.
+
+### Final T05 build and release checks
+
+- `npm run build:packages`, both source/test typechecks, and the bundle build passed
+  after the final inline-system normalization correction. No lint script is defined;
+  `git diff --check` passed.
+- Final CLI: **5,127,818 bytes**, leaving **115,062 bytes** under the unchanged
+  5 MiB cap; 114,107 bytes less than the integrated pre-extraction baseline.
+- Complete `npm run test:bundle`: **58/58 passed**, including the real npm tarball,
+  credentials, Host recovery, images, script worker, manual data and Responses.
+- Final scoped coverage: **30 tests / 4 files passed**; statements **94.81%**,
+  branches **87.2%**, functions **96.66%**, lines **97.61%** for the three new core
+  modules. This does not imply >=80% coverage for the entire monorepo.
+- Two preliminary full-suite launches were intentionally stopped before acceptance
+  to apply review/self-check corrections. The final full suite runs against fixed
+  production source and build outputs; only documentation is edited while it runs.
+
+### Full offline regression and baseline comparison
+
+- Final `npm test -- --reporter=verbose`: **18,094 passed, 4 failed**, with
+  97 skipped and 19 todo tests; 1,292 files passed, 4 failed, 6 skipped.
+  This is not a green full-suite result.
+- Serial rerun of the four failing files: **6 passed, 3 failed**. The
+  `sdk-client.exit.test.ts` ordinary-work cancellation case passed on rerun;
+  its full-suite polling failure remains a load-sensitive observation, not a
+  proven root cause or a claimed fix.
+- With all T05 source changes temporarily removed, exact pre-Responses baseline
+  `3b7a8f8f2` reproduced the other three failures using the same source-alias
+  Vitest configuration and `--maxWorkers=1`: **2 passed, 3 failed**.
+  `sdk-classic-plane.test.ts` never reached its provider-release signal within
+  30 seconds; `sdk-goal-binding.test.ts` and `sdk-session-commands.test.ts`
+  timed out at 90 seconds. Their seed runs had completed; the precise Host
+  lifecycle cause remains unconfirmed. They are baseline failures in this
+  environment, not evidence of a Responses regression.
+- The comparison changed no Host source, test deadlines or skipped-test lists.
+  All T05 changes were restored afterward. The main workspace remained at
+  `f6a010462` with its concurrent uncommitted work untouched. Fixing these Host
+  failures and rerunning combined-branch integration remain outstanding before
+  claiming full regression acceptance. T05 is **contract-tested offline**;
+  FEATURE_302 is not complete.
+
+Reproduction: `npx vitest run src/sdk-goal-binding.test.ts
+src/sdk-classic-plane.test.ts src/sdk-session-commands.test.ts --maxWorkers=1
+--reporter=verbose` (one command line). Add `src/sdk-client.exit.test.ts` for the
+four-file rerun. Raw logs stay in OS temporary storage.
+
+### T05 Standards review result
+
+No remaining findings after re-review. The tool-input delta contract, recoverable
+EOF, quota/temporary-limit metadata retention and shared inline-system normalization
+were corrected with failing-before/passing-after tests. Budget changes preserve
+existing release guards and package boundaries. Findings: **0**, highest severity: none.
+
+### T05 Spec
+
+No remaining scoped T05 findings. Text suffix sanitation preserves interleaved tools;
+wholly synthesized guard text has no original native position to recover. Both
+consumers, explicit API/config persistence, scoped reasoning, image transport,
+usage and actual nonstreaming recovery match the accepted contracts. T06–T12 and
+live verification remain open. Findings: **0**, highest severity: none.

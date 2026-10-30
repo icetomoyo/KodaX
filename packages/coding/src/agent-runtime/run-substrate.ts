@@ -109,7 +109,7 @@ import {
   resolveReasoningMode,
   type ReasoningPlan,
 } from '../reasoning.js';
-import { effortToLegacyReasoningMode } from '@kodax-ai/llm';
+import { effortToLegacyReasoningMode, reconcileAssistantContent } from '@kodax-ai/llm';
 import { resolveExecutionCwd, resolveExecutionPath } from '../runtime-paths.js';
 import type { KodaXWrittenFile } from '../types.js';
 import {
@@ -519,11 +519,9 @@ function replaceLatestAssistantToolBlocks(
   const visibleToolBlocks = result.toolBlocks.filter((block) => isVisibleToolName(block.name));
   messages[index] = {
     ...message,
-    content: guardEmptyAssistantContent([
-      ...result.thinkingBlocks,
-      ...result.textBlocks,
-      ...visibleToolBlocks,
-    ]),
+    content: guardEmptyAssistantContent(reconcileAssistantContent(result.contentBlocks, {
+      ...result, toolBlocks: visibleToolBlocks,
+    })),
   };
 }
 
@@ -2523,11 +2521,9 @@ async function runSubstrateInContext(
       // turn stays well-formed without persisting a fake '...' reply. The
       // provider serializer synthesizes a wire-only '...' if the gateway
       // (e.g. Kimi 400 "must not be empty") rejects empty content.
-      const assistantContent = guardEmptyAssistantContent([
-        ...result.thinkingBlocks,
-        ...result.textBlocks,
-        ...(signal === 'COMPLETE' ? [] : visibleToolBlocks),
-      ]);
+      const assistantContent = guardEmptyAssistantContent(reconcileAssistantContent(result.contentBlocks, {
+        ...result, toolBlocks: signal === 'COMPLETE' ? [] : visibleToolBlocks,
+      }));
       // GOAL 2: stamp when the LLM stream completed so the session entry carries
       // a real per-message time (SA path; parallel to runner.ts). Additive.
       messages.push({

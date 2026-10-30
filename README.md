@@ -306,10 +306,12 @@ name, not an API key value. Put the custom provider's actual API key in the
 `MY_LLM_API_KEY` environment variable, then close the current terminal and open
 a new one before running `kodax`.
 
+For native OpenAI Responses, add `"api": "responses"` to the custom provider. Omitted `api` keeps Chat Completions. Responses uses client-managed history and preserves ordered output; see [configuration and scope](public_docs/configuration/custom-providers.md#native-responses-api).
+
 `userAgentMode` defaults to `"compat"`, which sends `KodaX` instead of the official SDK User-Agent. Switch it to `"sdk"` only when your gateway expects the upstream SDK header.
 For custom reasoning models, `reasoning: { efforts, default }` is the preferred v0.7.57 shape; use `"reasoning": "none"` for models without thinking capability. SDK hosts should render effort pickers from `reasoningProfile.supportedEfforts` / `defaultEffort` rather than assuming a fixed five-option ladder.
 
-An undeclared OpenAI-compatible reasoning profile means capability is unknown. Omitted effort uses `auto`: the declared default wins, otherwise KodaX tries `max` and lowers only after explicit parameter/value rejection. `none` attempts to disable reasoning, then tries the lowest available thinking effort if disabling is rejected. SDK hosts receive `onReasoningResolved` with the requested effort, sent effort, fallback reasons, and `verified: false`; request acceptance does not prove that the model honored the strength. See [reasoning negotiation](docs/DD.md#23-custom-openai-compatible-reasoning) for cache and replay contracts.
+For the default Chat Completions API, an undeclared OpenAI-compatible reasoning profile means capability is unknown. Omitted effort uses `auto`: the declared default wins, otherwise KodaX tries `max` and lowers only after explicit parameter/value rejection. `none` attempts to disable reasoning, then tries the lowest available thinking effort if disabling is rejected. SDK hosts receive `onReasoningResolved` with the requested effort, sent effort, fallback reasons, and `verified: false`; request acceptance does not prove that the model honored the strength. See [reasoning negotiation](docs/DD.md#23-custom-openai-compatible-reasoning) for cache and replay contracts.
 
 #### OpenAI-compatible reasoning providers
 

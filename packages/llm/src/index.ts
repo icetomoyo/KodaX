@@ -6,9 +6,14 @@
  */
 
 // ============== Types ==============
+export { reconcileAssistantContent } from './assistant-content.js';
+export { projectResponsesMessages } from './providers/responses-messages.js';
+export { KodaXOpenAIResponsesProvider } from './providers/openai-responses.js';
 export { runWithProviderRequestObserver, runWithAdditionalProviderRequestObserver, runWithProviderRequestAbortSignal, runWithProviderRequestRoute, runWithProviderRequestAttribution } from './provider-request-observation.js';
 export type { ProviderRequestObservation } from './provider-request-observation.js';
 export type {
+  KodaXAssistantBlock,
+  KodaXGenerationSource,
   KodaXImageBlock,
   KodaXTextBlock,
   KodaXToolUseBlock,

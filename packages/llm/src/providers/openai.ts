@@ -561,7 +561,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
    * mid-transcript; merging here is the provider-layer bottleneck that keeps
    * callers from having to coordinate.
    */
-  private normalizeSystemForWire(
+  protected normalizeSystemForWire(
     system: string,
     messages: KodaXMessage[],
   ): { system: string; rest: KodaXMessage[] } {

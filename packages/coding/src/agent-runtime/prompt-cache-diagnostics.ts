@@ -15,6 +15,8 @@ import {
   KodaXAnthropicCompatProvider,
   KodaXAcpProvider,
   KodaXOpenAICompatProvider,
+  KodaXOpenAIResponsesProvider,
+  projectResponsesMessages,
   KODAX_INTERRUPTED_TOOL_RESULT_MARKER,
   resolvePromptCacheDisabled,
   getPreparedImageDiagnostic,
@@ -465,7 +467,18 @@ export function hashProviderVisibleMessages(
   provider?: KodaXBaseProvider,
   model?: string,
 ): string {
-  const projected = provider instanceof KodaXOpenAICompatProvider
+  const projected = provider instanceof KodaXOpenAIResponsesProvider
+    ? projectResponsesMessages(messages, provider.getGenerationSource(model), block => {
+      if (provider.getCapabilityProfile().multimodalSupport === 'none') {
+        return [{ type: 'input_text', text: '[Image content omitted: this provider does not support inline images in tool results.]' }];
+      }
+      const image = getPreparedImageDiagnostic(block);
+      if (image && 'placeholder' in image) return [{ type: 'input_text', text: image.placeholder }];
+      return [...(image?.notice ? [{ type: 'input_text' as const, text: image.notice }] : []), {
+        type: 'input_image', detail: 'auto', image_url: `data:${image?.mediaType ?? resolveDiagnosticImageMediaType(block.path, block.mediaType)};sha256,${image?.dataHash ?? hashImageFile(block.path)}`,
+      }];
+    })
+    : provider instanceof KodaXOpenAICompatProvider
     ? projectOpenAIMessages(messages, provider, model)
     : provider instanceof KodaXAnthropicCompatProvider
       ? projectAnthropicMessages(messages, provider, model)

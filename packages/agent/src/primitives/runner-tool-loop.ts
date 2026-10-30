@@ -16,6 +16,7 @@
  */
 
 import type {
+  KodaXAssistantBlock,
   KodaXContentBlock,
   KodaXRedactedThinkingBlock,
   KodaXTextBlock,
@@ -24,6 +25,7 @@ import type {
   KodaXToolResultContentItem,
   KodaXToolUseBlock,
 } from '@kodax-ai/llm';
+import { reconcileAssistantContent } from '@kodax-ai/llm';
 import type { Span } from '../tracing/index.js';
 
 import type { Agent, AgentMessage, AgentTool } from './agent.js';
@@ -59,6 +61,7 @@ export interface RunnerToolCall {
  * terminates and `text` becomes the final output.
  */
 export interface RunnerLlmResult {
+  readonly contentBlocks?: readonly KodaXAssistantBlock[];
   /** Trusted adapter: bounded request preparation earns a turn credit only after verified progress. */
   readonly contextPreparationProgress?: () => boolean;
   readonly text: string;
@@ -317,7 +320,11 @@ export function buildAssistantMessageFromLlmResult(
   if (blocks.length === 0) {
     blocks.push({ type: 'text', text: '' } satisfies KodaXTextBlock);
   }
-  return { role: 'assistant', content: blocks,
+  const content = result.contentBlocks ? reconcileAssistantContent(result.contentBlocks, {
+    textBlocks: result.text ? [{ text: result.text }] : [], thinkingBlocks: result.thinkingBlocks,
+    toolBlocks: result.toolCalls?.map(call => ({ type: 'tool_use', id: call.id, name: call.name, input: call.input })),
+  }) : blocks;
+  return { role: 'assistant', content: content.length ? content : [{ type: 'text', text: '' }],
     ...(result.outputId !== undefined ? { outputId: result.outputId } : {}) };
 }
 

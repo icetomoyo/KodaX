@@ -1067,11 +1067,13 @@ import { createMemoryAgent } from '@kodax-ai/kodax/experimental-memory'; // opt-
 请把自定义 provider 的真实 API Key 设置到 `MY_LLM_API_KEY` 环境变量中，然后关闭
 当前终端、打开新终端，再运行 `kodax`。
 
+原生 OpenAI Responses 可在自定义 provider 中设置 `"api": "responses"`；省略时保持 Chat Completions。Responses 使用客户端历史并保留输出块顺序；配置方式、离线验证及当前范围见 [Custom Providers](public_docs/configuration/custom-providers.md#native-responses-api)。
+
 `userAgentMode` 默认 `"compat"`（发送 `KodaX` 而非上游 SDK 的 User-Agent）；如果你的网关要求原生 SDK header，再切到 `"sdk"`。
 
 自定义 reasoning 模型优先使用 v0.7.57 的 `reasoning: { efforts, default }`；无 thinking 能力的模型使用 `"reasoning": "none"`。SDK 宿主的 effort 选择器应从 `reasoningProfile.supportedEfforts` / `defaultEffort` 动态生成，不要假定固定五档。
 
-OpenAI-compatible provider 未声明 reasoning profile 表示能力未知。未设置 effort 时使用 `auto`：优先采用已声明默认档，否则从 `max` 开始，仅在明确的参数／档位拒绝后逐档降低。`none` 会尝试关闭；关闭被拒绝后尝试最低可用思考档。SDK 宿主通过 `onReasoningResolved` 收到用户意图、实际发送档位、回退原因和 `verified: false`；请求成功不代表模型已按该强度执行。缓存和推理数据回传规则见[详细设计](docs/DD.md#23-custom-openai-compatible-reasoning)。
+默认 Chat Completions 路径下，OpenAI-compatible provider 未声明 reasoning profile 表示能力未知。未设置 effort 时使用 `auto`：优先采用已声明默认档，否则从 `max` 开始，仅在明确的参数／档位拒绝后逐档降低。`none` 会尝试关闭；关闭被拒绝后尝试最低可用思考档。SDK 宿主通过 `onReasoningResolved` 收到用户意图、实际发送档位、回退原因和 `verified: false`；请求成功不代表模型已按该强度执行。缓存和推理数据回传规则见[详细设计](docs/DD.md#23-custom-openai-compatible-reasoning)。
 
 #### OpenAI 兼容推理模型
 

@@ -70,6 +70,7 @@ export type ProviderSetupChoice =
 export interface ProviderSetupCustomProviderMetadata {
   readonly name: string;
   readonly protocol: KodaXCustomProviderConfig['protocol'];
+  readonly api?: KodaXCustomProviderConfig['api'];
   readonly baseUrl: string;
   readonly apiKeyEnv: string;
   readonly model: string;
@@ -484,6 +485,7 @@ export function validateProviderSetupCustomMetadata(
   const normalized: KodaXCustomProviderConfig = {
     name: provider.name.trim(),
     protocol: provider.protocol,
+    ...(provider.api !== undefined ? { api: provider.api } : {}),
     baseUrl: provider.baseUrl.trim(),
     apiKeyEnv: provider.apiKeyEnv.trim(),
     model: provider.model.trim(),

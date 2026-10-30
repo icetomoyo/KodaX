@@ -53,6 +53,17 @@ function writeConfig(value: unknown): void {
   writeFileSync(configPath, JSON.stringify(value, null, 2), 'utf8');
 }
 
+it('persists the explicit Responses API through setup without changing omitted API defaults', () => {
+  const readiness = inspectProviderSetupReadiness({ configPath, catalog, environment: {} });
+  persistProviderSetupChoice({ configPath, expectedRevision: readiness.configRevision, catalog, choice: {
+    kind: 'custom', provider: { name: 'responses', protocol: 'openai', api: 'responses',
+      model: 'model', baseUrl: 'https://example.test/v1', apiKeyEnv: 'RESPONSES_KEY' },
+  } });
+  expect(JSON.parse(readFileSync(configPath, 'utf8'))).toMatchObject({
+    customProviders: [{ name: 'responses', protocol: 'openai', api: 'responses' }],
+  });
+});
+
 describe('inspectProviderSetupReadiness', () => {
   it('offers first-run setup whenever config.json is missing, even if a credential already exists', () => {
     expect(inspectProviderSetupReadiness({
