@@ -19,12 +19,12 @@
 | Artifact distribution revision | `2026-10-18` — one `@kodax-ai/kodax` npm package; four `/artifacts` subpaths and resources staged in the main tarball; local implementation, not yet published |
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
 | Current development | `v0.7.97` / `FEATURE_298` — post-alpha.10 Agent/Coding/experimental Script work modes, SDK question/original-output/task-report/streaming alignment, and Windows startup/readiness repairs; [current SDK checklist](SDK_MIGRATION.md#2026-10-29-未发布改动对齐). Cross-platform/manual release verification and Issue 371's historical first-read investigation remain open. |
-| Roadmap updated | `2026-10-30` — FEATURE_302 LLM parity InProgress in `v0.7.99`; FEATURE_300 remains Planned |
+| Roadmap updated | `2026-10-31` — FEATURE_302 implementation/offline acceptance completed in `v0.7.99`, unreleased and isolated; FEATURE_300 remains Planned |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
 | Total tracked features | `86` |
-| InProgress | `3` |
+| InProgress | `2` |
 | Planned | `17` |
-| Completed | `60` |
+| Completed | `61` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
 | Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302` |
 | Archive cutoff | Shipped / canceled / absorbed / shelved items through `v0.7.49` are archived. |
@@ -33,8 +33,8 @@
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 60 | `301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
-| InProgress | 3 | `302, 298, 225` | `302`: independent LLM provider parity; T01–T10 offline contracts cover foundation fixes, CLI budget, native Responses, dynamic-tool/history/reasoning-cache compatibility, host-owned OAuth/scoped broker lifecycle and native Gemini/Vertex/Bedrock/Azure cloud protocols, native Mistral/Pi Messages and explicit provider/OAuth matrices, image/classifier/background operations and Host media publication; [design and tickets](features/v0.7.99.md#feature_302-independent-llm-provider-parity). `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
+| Completed | 61 | `302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| InProgress | 2 | `298, 225` | `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
@@ -520,11 +520,25 @@
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
-| `302` | Independent LLM Provider Parity | LLM / SDK / Auth | High | `v0.7.99` | [v0.7.99](features/v0.7.99.md#feature_302-independent-llm-provider-parity) — full pi-ai capability scope; staged independent implementation, not yet complete |
 | `298` | Product Host and Client Contract Simplification | Core / Runtime + UI SDK + Execution | Critical | `v0.7.97` | [v0.7.97](features/v0.7.97.md#feature-298) — core, [consumer completion T38–T42](features/v0.7.97.md#consumer-completion-tickets) and parity follow-ups T43–T56 implemented; cross-platform/manual release verification pending |
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
 ---
+
+## Unreleased implementation — FEATURE_302
+
+`v0.7.99` FEATURE_302 is **Completed for implementation and offline acceptance** on
+`codex/llm-provider-parity`; Released: **unreleased**. No version bump, push or merge.
+T01–T12 include the full declared provider/API/OAuth and operation inventory, native cloud
+protocols, identity/history/cache/tool compatibility, hidden Key setup, unified file credentials
+and actual Space provider/stable-client-secret migration (`065cc39c`). Existing aliases/config/env
+and KodaX route-specific optimizations remain. Root full **18,656**, published **70**;
+Space complete **4,498**, final focused regressions and real Electron IPC passed.
+Both review axes have zero remaining findings. This does not certify live account entitlements,
+all service models, macOS/Linux legacy-vault migration, or a production Space installer.
+See [design](features/v0.7.99.md#feature_302-independent-llm-provider-parity) and
+[final evidence](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-efg-final-offline-acceptance-2026-10-31).
+The original workspace's concurrent changes must be reconciled and retested before integration.
 
 ## v0.7.97-alpha.11 Release Record
 

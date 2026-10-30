@@ -1,3 +1,4 @@
+import { SYSTEM_PROMPT } from '../packages/coding/src/prompts/system.js';
 /**
  * KodaX 提示词内容验证测试
  *
@@ -11,7 +12,7 @@ import path from 'path';
 // ============== SYSTEM_PROMPT 测试 ==============
 
 describe('SYSTEM_PROMPT Content Verification', () => {
-  const systemPromptPath = path.join(process.cwd(), 'packages', 'coding', 'src', 'prompts', 'system.ts');
+
 
   // Note: The standalone "Large File Handling" section was folded into
   // the broader "Tool Usage" guidance (read offset/limit + edit-over-rewrite
@@ -19,7 +20,7 @@ describe('SYSTEM_PROMPT Content Verification', () => {
   // equivalent constraints — verified by the Tool Usage section test below.
 
   it('should contain Error Handling section with Common errors', async () => {
-    const content = await fs.readFile(systemPromptPath, 'utf-8');
+    const content = SYSTEM_PROMPT;
     expect(content).toContain('## Error Handling');
     expect(content).toContain('5. Common errors:');
     expect(content).toContain('"Missing required parameter \'X\'"');
@@ -30,7 +31,7 @@ describe('SYSTEM_PROMPT Content Verification', () => {
   });
 
   it('should contain Editing Files section', async () => {
-    const content = await fs.readFile(systemPromptPath, 'utf-8');
+    const content = SYSTEM_PROMPT;
     expect(content).toContain('## Editing Files');
     expect(content).toContain('Always read the file first');
     expect(content).toContain('Make precise, targeted edits');
@@ -38,7 +39,7 @@ describe('SYSTEM_PROMPT Content Verification', () => {
   });
 
   it('should contain Shell Commands section with Cross-Platform Notes', async () => {
-    const content = await fs.readFile(systemPromptPath, 'utf-8');
+    const content = SYSTEM_PROMPT;
     expect(content).toContain('## Tool Usage');
     expect(content).toContain('Prefer specialized tools over shell for file operations:');
     expect(content).toContain('When multiple read-only tool calls are independent, emit them in the same response so parallel mode can run them together');
@@ -57,7 +58,7 @@ describe('SYSTEM_PROMPT Content Verification', () => {
   });
 
   it('should contain mkdir instructions with Chinese error hint', async () => {
-    const content = await fs.readFile(systemPromptPath, 'utf-8');
+    const content = SYSTEM_PROMPT;
     expect(content).toContain('Directories are created automatically');
     expect(content).toContain('NEVER use');  // Without exact backticks
     expect(content).toContain('mkdir');
@@ -66,14 +67,14 @@ describe('SYSTEM_PROMPT Content Verification', () => {
   });
 
   it('should contain Multi-step Tasks section', async () => {
-    const content = await fs.readFile(systemPromptPath, 'utf-8');
+    const content = SYSTEM_PROMPT;
     expect(content).toContain('## Multi-step Tasks');
     expect(content).toContain('Track your progress');
     expect(content).toContain('Break complex tasks into smaller steps');
   });
 
   it('should contain Plan Before Action section', async () => {
-    const content = await fs.readFile(systemPromptPath, 'utf-8');
+    const content = SYSTEM_PROMPT;
     expect(content).toContain('## Plan Before Action');
     expect(content).toContain('First explain your understanding of the task');
     expect(content).toContain('Outline your approach');
@@ -83,7 +84,7 @@ describe('SYSTEM_PROMPT Content Verification', () => {
   });
 
   it('should contain {context} placeholder', async () => {
-    const content = await fs.readFile(systemPromptPath, 'utf-8');
+    const content = SYSTEM_PROMPT;
     expect(content).toContain('{context}');
   });
 });
@@ -142,10 +143,10 @@ describe('Retry Prompts Content Verification', () => {
 // ============== 源文件一致性测试 ==============
 
 describe('Source File Consistency', () => {
-  const systemPromptPath = path.join(process.cwd(), 'packages', 'coding', 'src', 'prompts', 'system.ts');
+
 
   it('should have SYSTEM_PROMPT in coding/prompts/system.ts', async () => {
-    const systemPromptContent = await fs.readFile(systemPromptPath, 'utf-8');
+    const systemPromptContent = SYSTEM_PROMPT;
 
     // Verify key sections exist. "Large File Handling" was folded into
     // Tool Usage; the read-bounding / parallel-tool guidance now lives there.

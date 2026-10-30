@@ -289,7 +289,7 @@ OAuthSessionRecord.identityKind 可为 account 或 grant，旧记录缺省按原
 
 可信 Main 可从 `/runtime` 使用 createProviderCredentialManager；先 describe，再把完整非秘密状态传给 setApiKey/removeApiKey。profile 与 configPath 必须和实际 Host 一致。不要丢掉 configured:false 状态里的删除 revision，不能用 null 代替已经发生过的删除；UI 不读回 Key。写入文档 v2 接受 v1 读取并在修改时升级，保留删除修订以保护并发回滚。
 
-CLI Host 要求 providerCredentialConnectionBinding:1，保存值按实际 adapter API/地址/认证模式匹配，旧 Host 应升级后重启。SDK 中原始 API-key/云/OAuth lease 入口保留。保存不是在线验证；OAuth 默认后端与 Space 迁移仍在后续实施。
+CLI Host 要求 providerCredentialConnectionBinding:1，保存值按实际 adapter API/地址/认证模式匹配，旧 Host 应升级后重启。SDK 中原始 API-key/云/OAuth lease 入口保留。保存不是在线验证；OAuth 默认文件与 Space 实迁移已在 T12-D/E/F 完成，见本指南末节。
 
 
 ### FEATURE_302 T12-D：OAuth 共用文件
@@ -299,3 +299,26 @@ CLI Host 要求 providerCredentialConnectionBinding:1，保存值按实际 adapt
 可信 Main 可为 loginProviderOAuth 提供实际 profile；缺省旧 registration 视为 default。profile-bound authorizer 要求 services.identity 同时带实际 runtimeId/profile，不能只转发 runtimeId。实际 Product Client 已传完整 runtime identity；自己包装 services 的客户端需同步转发。Radius source 的 issuer 必须与已登录 registration 相符。File store initialize() 在授权 shell 前建立 mask targets，默认 CLI 已调用；自建宿主使用该后端时也应在启用工具前调用。
 
 此阶段修复了独立 Host 漏转发 providerProbeAuthorization 的问题，现按真实 owner 能力声明，避免 SDK 要求与 daemon 握手不一致。该修复不放宽旧 Host 的能力门槛。
+
+
+### FEATURE_302 T12-E/F/G：最终迁移状态（未发布，2026-10-31）
+
+T01–T12 本地实现、离线完整回归和双轴评审完成，原 config.json、provider/model 别名及
+API_KEY 环境变量继续有效。默认保存值优先于批准 env，再走该连接声明的认证；
+删除保存值后显示 env 来源。活动 broker 拒绝/撤销和损坏文件不回退到 ambient 凭证。
+文件采用权限保护明文 auth.json，不要求 keychain，普通配置不保存 Key。
+
+Space 已在独立提交 `065cc39c` 接入真实 provider IPC/持久化/broker 与稳定客户端秘密迁移。
+UI 更新必须携带显示时的状态，改名/删除不能重新读取新 revision 来绕过并发检查；
+同根与 CLI 共享，不同根隔离。旧值冲突保留并提示，原 active/exitRecovery 身份值不变。
+OAuth 注销与 API-key 删除保持不同入口；高级原生连接沿 SDK/CLI/config 配置。
+
+可信测试/底层宿主若显式创建隔离 daemon，close 只断连接；删除临时 home 前须核验
+实际 owner runtimeId，经 daemon.shutdown 并用 waitForRuntimeDaemonShutdown 验证退出。
+生产 Space 断开后维持共享 Host 的既有生命周期；不把测试回收策略搬入正常产品退出。
+
+这不是 npm 发布声明。Root/Space 包版本及 Registry 锁未改；Space 发布前须发布并锁定
+包含本次契约的 SDK 字节，再运行原 exact-byte/安装包门禁。当前 dev-link 仅用于联调，
+不得绕过门禁或作为正式安装包。独立分支的完整测试不覆盖原工作区另一线程未合并改动；
+合并后重跑受影响的 Host/凭证/恢复/发布验证。精确测试与未验证范围见
+[FEATURE_302 最终验收](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-efg-final-offline-acceptance-2026-10-31)。

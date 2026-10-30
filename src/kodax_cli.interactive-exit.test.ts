@@ -68,6 +68,8 @@ afterEach(async () => {
   vi.doUnmock('./sandbox-runtime.js');
   vi.doUnmock('./a2a/runtime-config.js');
   vi.doUnmock('./runtime-daemon/manager.js');
+  vi.doUnmock('./provider-credential-manager.js');
+  vi.doUnmock('./cli-provider-credentials.js');
   process.argv = originalArgv;
   if (originalVitest === undefined) {
     delete process.env.VITEST;
@@ -130,6 +132,8 @@ async function importMainWithMocks(options: {
   readonly harness: InteractiveMainHarness;
 }> {
   const calls: string[] = [];
+  vi.doMock('./provider-credential-manager.js', () => ({ createProviderCredentialManager: () => ({ describe: async () => ({ stored: false }) }) }));
+  vi.doMock('./cli-provider-credentials.js', () => ({ createCliProviderCredentials: async () => ({ authorizeExecution: async () => undefined, close: async () => undefined }) }));
   const runtimeOptions: unknown[] = [];
   const runtimeStarts: unknown[] = [];
   const runtimeDeletes: string[] = [];
@@ -714,7 +718,7 @@ describe('CLI interactive exit lifecycle', () => {
     }
   });
 
-  it('prints read-only credential guidance when first launch has no provider environment variable', async () => {
+  it('opens hidden-key setup when first launch has no provider environment variable', async () => {
     const stdinDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
     const stdoutDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
     Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: true });
@@ -732,15 +736,9 @@ describe('CLI interactive exit lifecycle', () => {
 
       await main();
 
-      expect(writeSpy).toHaveBeenCalledWith(expect.stringContaining(
-        'KodaX did not detect a supported provider API key environment variable.',
-      ));
-      expect(writeSpy).toHaveBeenCalledWith(expect.stringContaining(
-        'MOCK_PROVIDER_API_KEY',
-      ));
-      expect(harness.renderSetupGuide).not.toHaveBeenCalled();
-      expect(harness.initializeSetupConfiguration).not.toHaveBeenCalled();
-      expect(harness.runProviderSetupWizard).not.toHaveBeenCalled();
+      expect(harness.initializeSetupConfiguration).toHaveBeenCalledOnce();
+      expect(harness.runProviderSetupWizard).toHaveBeenCalledOnce();
+      expect(harness.renderSetupGuide).toHaveBeenCalledOnce();
       expect(harness.runInkInteractiveMode).not.toHaveBeenCalled();
       expect(harness.runInteractiveMode).not.toHaveBeenCalled();
       expect(harness.createKodaXHostRuntime).not.toHaveBeenCalled();
@@ -844,10 +842,10 @@ describe('CLI interactive exit lifecycle', () => {
         expect.objectContaining({ explicitProvider: undefined }),
       );
       expect(writeSpy).toHaveBeenCalledWith(expect.stringContaining(
-        'KodaX did not detect a supported provider API key environment variable.',
+        'KodaX setup guide',
       ));
-      expect(harness.initializeSetupConfiguration).not.toHaveBeenCalled();
-      expect(harness.runProviderSetupWizard).not.toHaveBeenCalled();
+      expect(harness.initializeSetupConfiguration).toHaveBeenCalledOnce();
+      expect(harness.runProviderSetupWizard).toHaveBeenCalledOnce();
       expect(harness.runInkInteractiveMode).not.toHaveBeenCalled();
     } finally {
       if (stdinDescriptor) Object.defineProperty(process.stdin, 'isTTY', stdinDescriptor);

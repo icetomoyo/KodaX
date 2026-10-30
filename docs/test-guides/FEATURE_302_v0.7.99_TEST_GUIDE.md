@@ -1,9 +1,9 @@
 # FEATURE_302 — Independent LLM Provider Parity
 
-Date: 2026-10-30. Status: T01–T10 implemented, contract-tested and reviewed offline;
-T08 final full regression passed; T09/T10 scoped and published regression passed; T11–T12 remain pending. Historical T05 failures
-and their T06 disposition remain recorded below. This is not a claim of complete
-pi-ai parity or a released feature.
+Date: 2026-10-31. Status: T01–T12 implemented, contract-tested and reviewed offline,
+including actual Space migration. Complete Root, published SDK/CLI and Space regression
+passed. Historical intermediate failures and their corrections remain below. This is
+implementation acceptance in isolated branches, not live account certification or a release.
 [Accepted scope and tickets](../features/v0.7.99.md#feature_302-independent-llm-provider-parity).
 
 ## Baseline and isolation
@@ -29,6 +29,9 @@ pi-ai parity or a released feature.
 | T07 | Host-owned OAuth storage/refresh, account switching, revocation and fresh Host binding for Codex/OpenAI/Copilot. | Session/driver/provider/binding tests and real broker lifecycle; final full offline suite 18,149 passed, 0 failed. |
 | T08 | Native Gemini/Vertex, Bedrock and Azure protocols with provider-bound cloud credentials over the existing broker. | Captured native wire, real SDK/EventStream decoding, per-request refresh/revoke/new-Host regressions; final acceptance below. |
 | T09 | Native Mistral/Pi Messages, explicit 42-identity presets and all nine host-owned OAuth service dialects. | 55 request/auth inventory fixtures, strict stream/history and OAuth lifecycle fixtures; 1,390 LLM/binding tests and 66 published tests passed. |
+| T10 | Dedicated image/classifier/background operations and scoped Host media publication. | Native wire, strict terminal/partial usage, bytes/artifact rollback and published operation regressions; final complete regression below. |
+| T11 | Explicit strict/grammar/WS/cache/catalog/pricing, identity and native diagnostics. | Actual localhost WS, conditional catalog/cache/quote, dynamic history and all-entry regressions; final evidence below. |
+| T12 | Native Main/CLI/Host and Space credentials, immutable client recovery identity, whole-file transactions and final compatibility. | Real multi-process refresh/storage/Host, hidden CLI input and Electron IPC; complete suites and dual review below. |
 
 All fixture keys are fake. Transport tests stub fetch; no live MiMo, MiniMax or
 other model calls were made. Their authentication acceptance, subscription
@@ -49,9 +52,9 @@ fields; readable thinking maps to reasoning_content. MiniMax M Plan endpoint
 remains `.minimax.cn/anthropic`; pi's `.minimaxi.com` factory is not evidence of
 subscription-key equivalence.
 
-## Coverage ledger
+## Coverage ledger — historical initial plan
 
-This ledger's initial inventory is pinned to the source revisions above; later
+The pending columns below are the historical starting inventory, superseded by the final T12 ledger at the end of this guide. This initial inventory is pinned to the source revisions above; later
 ticket sections record updated source revisions and acceptance. Provider rows correspond
 one-for-one to pi's `packages/ai/src/providers/all.ts` factories; API identifiers
 come from `packages/ai/src/types.ts`, and OAuth flows from
@@ -1032,3 +1035,180 @@ T12-A final slice evidence supersedes review-pending wording: final wide **126 f
 - 此处为离线/本机存储及 Host 证据，不代表真实订阅权益或 POSIX 实机测试；E/F Space 和 G 全量仍未验收。
 
 - D冻结验收：121文件1672通过；Sandbox/文件4文件117通过40条件跳过；补齐省略source.profile时从session推导及Radius缺issuer拒绝，4文件19通过。专项语句87.65%、分支85.93%；源码/owned fixture类型和dts通过；真实发布JS+Host+预算23/23。CLI5,177,265 bytes，预算5,177,344未调整。Standards0/0，Spec复核剩余0。G全仓回归正在单独执行。
+
+
+## T12 E/F/G final offline acceptance (2026-10-31)
+
+This section supersedes all earlier pending/in-review statements for FEATURE_302 implementation.
+Root product source is frozen at T12-D `4b915c94c`; G changes four regression fixtures and accepted
+documentation, without further product-source or CLI-budget changes. Space is separately committed
+as `065cc39c` on `codex/provider-credentials-space`, based on `7801a8ca`. No push, merge, release
+version change, real account inference or borrowed OAuth client identity was performed.
+
+### Complete and supplemental verification
+
+| Scope | Final evidence |
+|---|---|
+| Root complete Vitest | **1,348 files / 18,656 passed**, 6 files/97 tests conditionally skipped, 19 todo, **zero failures**; 1083.26 seconds. |
+| Root published JS/CLI | Full `npm run test:bundle`: **70/70**, zero failures; native operations, credentials, real Host crash/reattach/idle-exit, resources and budget. |
+| Root types/build | Source, all Root test types, owned package fixture types and self-contained SDK declarations passed; product-source builds from D remain unchanged by G. |
+| Root dry package/budget | **1,103** manifest entries; static-text, generated config templates, capabilities and SDK runtime/LLM resources present. CLI **5,177,265 bytes**, unchanged guard **5,177,344** (5 MiB minus 64 KiB); 79 bytes below the guard. |
+| Space complete `npm test` | Release **130 passed / 7 skipped**; Desktop **3,998 passed / 13 skipped**; IPC schema **370 passed**. Combined **4,498 passed / 20 conditional skips / zero failures**. |
+| Space final review changes | Additional **12** SDK/Host/config and **9** credential tests passed after final review fixes; actual native warmup write passed. Full run is supplemented by these final focused regressions, rather than claiming an identical pre-review snapshot. |
+| Space scoped new modules | **91.11% lines / 82.97% branches / 90.16% functions**; not whole-project coverage. |
+| Space types/build/lint | `npm run typecheck`, `npm run lint`, `npm run build:smoke` passed; existing Vite chunk-size warnings retained. |
+| Actual Electron IPC | Windows isolated desktop **1/1 passed**, 5.6 seconds: file save, cross-process update, stale delete rejection, sanitized list/config, delete exposing approved env and Renderer reload. Process restart is separately covered by an actual second Node Main; Renderer reload alone does not prove app restart. |
+
+The first Root full run had 17 failures in four fixture files: CLI bootstrap ports/no-env setup,
+current scoped capability/probe budget expectations, and static prompt sidecars in source-only
+assertions/standalone build fixtures. These were corrected without changing product behavior;
+the second full run above has zero failures. The original Host baseline failures were fixed in D,
+not skipped or reclassified as success.
+
+The first Space complete run exposed old private-owner construction and in-parent registry/fs
+mocks that do not reach a separate Host. Public-daemon fixtures now use real loopback HTTP + Main
+broker, trusted Host-loaded gated tools and real I/O failure markers. Existing question deadlines,
+queue-frontier cancellation/replay, stale Stop, recovery/history and permission assertions remain.
+Every isolated daemon fixture checks runtimeId, shuts down and waits before deleting its home;
+the synthetic historical-active fixture alone verifies and kills its own non-executing fake owner.
+No production admission or shutdown guard was relaxed to make the fixtures pass.
+
+### Space product acceptance
+
+Space Main uses actual shared config/auth roots, exact API/route/profile proofs, conditional
+revisions and explicit legacy aliases. A different current CLI value is retained with a migration
+warning; unreadable old storage is visible; tombstones block resurrection. Keys are not bulk
+injected into process.env or returned to Renderer. An alias-only rename uses trusted route proof,
+Core config CAS and an atomic staged write; a partial-ENOSPC RED/GREEN regression proves prior
+config bytes survive write failure. Deletion captures its binding before removing config and
+restores only its own Key revision if the config operation fails.
+
+Native OAuth/cloud metadata and Main broker acquisition remain intact. Local OAuth revocation
+fences pending replies and closes scopes before Host cleanup. New Host epochs reacquire authority.
+Default client secrets use reserved auth.json records, while original active/retired/exitRecovery
+identity values are unchanged during migration. A complete moved profile can reopen without the
+old OS backend; failed import never invents a replacement identity. Partner accounts are untouched.
+Details and executable fixture paths are in Space `docs/SDK_PROVIDER_CREDENTIALS.md`.
+
+### Final verification ledger
+
+Source reference is pi **`e7a0df27c09d11bf4161d3605246cbf57a129cb2`**, clean at final audit.
+In the tables, “yes” means the declared connection/protocol contract is implemented and tested,
+not that every possible remote model, parameter or entitlement was exercised. All live columns
+remain explicitly **no**. KodaX's additional aliases and specific route optimizations are retained.
+
+| Provider identity | Source-declared | Implemented | Contract-tested | Live-tested |
+|---|---|---|---|---|
+| amazon-bedrock | yes | yes | yes (offline) | no |
+| ant-ling | yes | yes | yes (offline) | no |
+| anthropic | yes | yes | yes (offline) | no |
+| azure | yes | yes | yes (offline) | no |
+| baseten | yes | yes | yes (offline) | no |
+| cerebras | yes | yes | yes (offline) | no |
+| cloudflare-ai-gateway | yes | yes | yes (offline) | no |
+| cloudflare-workers-ai | yes | yes | yes (offline) | no |
+| deepseek | yes | yes | yes (offline) | no |
+| fireworks | yes | yes | yes (offline) | no |
+| github-copilot | yes | yes | yes (offline) | no |
+| google | yes | yes | yes (offline) | no |
+| google-vertex | yes | yes | yes (offline) | no |
+| groq | yes | yes | yes (offline) | no |
+| huggingface | yes | yes | yes (offline) | no |
+| kimi-coding | yes | yes | yes (offline) | no |
+| meta | yes | yes | yes (offline) | no |
+| minimax | yes | yes | yes (offline) | no |
+| minimax-cn | yes | yes | yes (offline) | no |
+| mistral | yes | yes | yes (offline) | no |
+| moonshotai | yes | yes | yes (offline) | no |
+| moonshotai-cn | yes | yes | yes (offline) | no |
+| nvidia | yes | yes | yes (offline) | no |
+| openai | yes | yes | yes (offline) | no |
+| openai-codex | yes | yes | yes (offline) | no |
+| opencode | yes | yes | yes (offline) | no |
+| opencode-go | yes | yes | yes (offline) | no |
+| openrouter | yes | yes | yes (offline) | no |
+| qwen-token-plan | yes | yes | yes (offline) | no |
+| qwen-token-plan-cn | yes | yes | yes (offline) | no |
+| qwen-token-plan-individual | yes | yes | yes (offline) | no |
+| radius | yes | yes | yes (offline) | no |
+| together | yes | yes | yes (offline) | no |
+| typesafe | yes | yes | yes (offline) | no |
+| vercel-ai-gateway | yes | yes | yes (offline) | no |
+| xai | yes | yes | yes (offline) | no |
+| xiaomi | yes | yes | yes (offline) | no |
+| xiaomi-token-plan-ams | yes | yes | yes (offline) | no |
+| xiaomi-token-plan-cn | yes | yes | yes (offline) | no |
+| xiaomi-token-plan-sgp | yes | yes | yes (offline) | no |
+| zai | yes | yes | yes (offline) | no |
+| zai-coding-cn | yes | yes | yes (offline) | no |
+
+| API / operation / auth | Source-declared | Implemented | Contract-tested | Live-tested |
+|---|---|---|---|---|
+| openai-completions | yes | yes | yes (offline) | no |
+| anthropic-messages | yes | yes | yes (offline) | no |
+| openai-responses | yes | yes | yes (offline) | no |
+| azure-openai-responses | yes | yes | yes (offline) | no |
+| openai-codex-responses | yes | yes | yes (offline) | no |
+| bedrock-converse-stream | yes | yes | yes (offline) | no |
+| google-generative-ai | yes | yes | yes (offline) | no |
+| google-vertex | yes | yes | yes (offline) | no |
+| mistral-conversations | yes | yes | yes (offline) | no |
+| pi-messages | yes | yes | yes (offline) | no |
+| openrouter-images | yes | yes | yes (offline) | no |
+| typesafe-system-one | yes | yes | yes (offline) | no |
+| cloudflare-workers-ai-system-one | yes | yes | yes (offline) | no |
+| llama-cpp-classify | yes | yes | yes (offline) | no |
+| openai-decisions | yes | yes | yes (offline) | no |
+| deferred submit / query / cancel | yes | yes | yes (offline) | no |
+| OAuth: openai-codex | yes | yes (own registered client / grant) | yes (offline) | no |
+| OAuth: openai-chatgpt | yes | yes (own registered client / grant) | yes (offline) | no |
+| OAuth: github-copilot | yes | yes (own registered client / grant) | yes (offline) | no |
+| OAuth: anthropic | yes | yes (own registered client / grant) | yes (offline) | no |
+| OAuth: openrouter | yes | yes (own registered client / grant) | yes (offline) | no |
+| OAuth: kimi-coding | yes | yes (own registered client / grant) | yes (offline) | no |
+| OAuth: meta | yes | yes (own registered client / grant) | yes (offline) | no |
+| OAuth: xai | yes | yes (own registered client / grant) | yes (offline) | no |
+| OAuth: radius | yes | yes (own registered client / grant) | yes (offline) | no |
+
+OAuth login/refresh and cloud credential SDKs need the caller's own permitted registration and
+actual identity. SIWC/Codex complete buffers native SSE; this is not native stream:false support.
+Generated model data was absent in the Pi checkout; the inventory is not an exhaustive model list.
+MiMo Coding aligns the Pi CN plan contract without changing the public MiMo route. MiniMax M Plan
+keeps its official existing endpoint because Pi's public factory does not establish subscription
+key/billing equivalence. No claim of real cache hits, retention, quotes-as-bills or calibration.
+Windows ACL/DPAPI and actual local Host/Electron were exercised; macOS/Linux legacy-vault import
+and customer-data migration require corresponding machine evidence. Space's locked Registry SDK
+was not changed: production installer verification follows publishing/pinning accepted SDK bytes
+and the existing exact-byte gate. Local source builds and dev links are not release artifacts.
+
+### Standards
+
+Final independent review: **0 hard violations / 0 smell findings**. Oversized adapter factory and
+unsafe config writing were corrected; final helper, public Host fixtures and Electron regression
+were re-reviewed. No new product-source changes followed the closing review.
+
+### Spec
+
+Final independent review: **0 remaining findings**. Alias fingerprint/name handling, missing
+expected revision, deletion after config removal, partial-write preservation and four daemon
+fixture lifecycle leaks each have corrected behavior and supplemental regressions. The reviewer
+independently ran 10 focused tests; later Electron test review also reports zero findings.
+
+### Concurrent workspace audit and integration boundary
+
+Original Root HEAD **`f6a010462a477bd1b36dd849a6c9c0dbb0f76808`** is already an ancestor of this
+branch. Its additional dirty changes were read only; they were not stashed, reset, imported or
+overwritten. At final audit, overlap is concentrated in credentials/Host/broker, SDK Client,
+sandbox, coding scope, package/build metadata and migration docs. The precise current dirty set
+is volatile; the OS-temp `kodax-t12g-overlap-audit.json` records that snapshot. Reconcile those
+hunks, preserve both contracts, then repeat Host/auth/recovery/type/published checks on the merged
+code before integration. Passing this isolated branch does not certify the other thread's work.
+Original Space HEAD **`7801a8ca099c4ecf47af5b1e361ff6812f8c12b9`** and its existing dirty fixture
+were untouched; Pi was read only and clean. Independent branches remain available for integration.
+
+Raw test/failure/coverage evidence remains in OS temporary storage: Root
+`kodax-t12-final-monorepo*.log`, `kodax-t12g-*.log`, `kodax-t12g-pack-manifest.json`; Space
+`space-parity-complete-final.log`, `space-parity-review-fixes-final.log`,
+`space-parity-config-atomic-red2.log` / `space-parity-config-atomic-green.log`,
+`space-parity-credential-coverage-final3.log` and `space-parity-electron-provider-ipc-final.log`.
+No research draft or raw test output is committed as accepted design.

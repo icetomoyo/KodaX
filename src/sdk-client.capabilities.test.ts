@@ -23,13 +23,13 @@ it('probes and forgets capabilities in the actual Host used by subsequent SA and
     for await (const chunk of request) body += String(chunk);
     const input = JSON.parse(body) as { reasoning_effort?: string; max_completion_tokens?: number };
     requests.push(input);
-    if (input.max_completion_tokens === 1 && input.reasoning_effort === 'high'
+    if (input.max_completion_tokens === 16 && input.reasoning_effort === 'high'
       || rejectActualEffort !== undefined && input.reasoning_effort === rejectActualEffort) {
       response.writeHead(400, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ error: { message: `Unsupported value: reasoning_effort '${input.reasoning_effort}'.`, type: 'invalid_request_error', param: 'reasoning_effort', code: 'unsupported_value' } }));
       return;
     }
-    if (input.max_completion_tokens !== 1) requestedEfforts.push(input.reasoning_effort);
+    if (input.max_completion_tokens !== 16) requestedEfforts.push(input.reasoning_effort);
     response.writeHead(200, { 'content-type': 'text/event-stream' });
     response.end(`data: ${JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: 'Done.' }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`);
   });
@@ -67,8 +67,9 @@ it('probes and forgets capabilities in the actual Host used by subsequent SA and
         ]);
         expect(await client.catalog.reasoningEfforts(selection)).toContain('high');
         expect(await client.catalog.probeReasoningEfforts({ ...selection, efforts: ['high'] }), JSON.stringify(requests))
-          .toEqual([{ effort: 'high', status: 'rejected' }]);
-        expect(await client.catalog.reasoningEfforts(selection)).not.toContain('high');
+          .toEqual([{ effort: 'high', status: 'rejected', error: expect.stringContaining("Unsupported value: reasoning_effort 'high'") }]);
+        // Catalog reads have no acquired identity; only physical requests narrow scoped efforts.
+        expect(await client.catalog.reasoningEfforts(selection)).toContain('high');
         const providerCommand = BUILTIN_COMMANDS.find(command => command.name === 'provider')!;
         const context = await createInteractiveContext({ gitRoot: homeDir });
         const callbacks: CommandCallbacks = {
@@ -86,7 +87,7 @@ it('probes and forgets capabilities in the actual Host used by subsequent SA and
         };
         const beforeProbe = requests.length;
         await providerCommand.handler(['probe'], context, callbacks, config);
-        expect(requests.slice(beforeProbe)).not.toEqual(expect.arrayContaining([
+        expect(requests.slice(beforeProbe)).toEqual(expect.arrayContaining([
           expect.objectContaining({ reasoning_effort: 'high' }),
         ]));
         expect(requests.length).toBeGreaterThan(beforeProbe);

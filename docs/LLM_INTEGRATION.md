@@ -1,6 +1,6 @@
 # LLM 接入补齐契约（FEATURE_302）
 
-实现对照 pi `e7a0df27c09d11bf4161d3605246cbf57a129cb2`，2026-10-30。这里描述代码和离线契约；不将服务目录、client 注册、订阅权益或 fixture 视为真实账号验证。T12 的产品入口和最终全量验收仍在实施。
+实现对照 pi `e7a0df27c09d11bf4161d3605246cbf57a129cb2`，2026-10-30。这里描述代码和离线契约；不将服务目录、client 注册、订阅权益或 fixture 视为真实账号验证。T01–T12 的实现与离线验收已于2026-10-31完成，尚未合并或发布；真实账号及跨平台范围见最终验收记录。
 
 ## 能力、历史和请求扩展
 
@@ -87,3 +87,28 @@ OAuth registration/session 可带可信 profile（旧记录缺省 default），�
 文件后端 initialize() 用于在启用不可信工具前准备空 auth.json 和 staging。CLI Main 在 env-only 路线也先初始化，否则 Linux ASRT 会忽略不存在的 denyRead 目标。Windows staging 本身去继承并设置 current-user/SYSTEM 可继承 ACL，新建的空文件从一开始就私有；再对实际明文文件去继承。POSIX staging0700/file0600 与 namespace masks 保留。工作区包含配置根时，沙箱不把 auth.json 当目录创建。
 
 DPAPI 与浏览器兼容工具改用明确 SystemRoot 下的系统可执行文件/DLL。独立 Host 现在只转发 owner 实际声明的 providerProbeAuthorization:1，不能由 override 伪造；缺转发曾导致真实 CLI 连接/恢复失败，已有四格 handshake 和真实 Host crash/reattach/idle-exit 回归。文件、Main、Host 的变化不改客户端身份协议；Space 实际迁移仍为 E/F，最终合并全量仍为 G。
+
+
+## T12-E/F/G 完成：Space 与最终兼容
+
+Root 及 Space 的计划内代码缺口已关闭，最终证据优先于前文各切片实施时的 pending 描述。
+Space 提交 `065cc39c` 在独立 `codex/provider-credentials-space` 分支：Provider IPC/隐藏输入、
+保存状态、迁移和实际 broker 共用真实配置根的 auth.json；API_KEY 仍可用，文件值优先，
+删除后外部 env 来源可见，不批量注入保存值。设置/删除必须携带显示时的 binding/revision，
+另一端的新写入不能被旧页面覆盖。原生 OAuth/cloud 仍由可信 Main 获取，Host epoch 重新授权。
+
+别名只在可信同路由证明下移动；配置 CAS 在既有 Core 锁中使用原子 staged 写入，写失败
+保留旧 config，凭证迁移失败只回滚自己拥有的版本。旧 vault 不可读或 CLI 已有不同值时
+显示迁移状态，不能静默改用别处凭证。旧 alias、SDK 入口与 KodaX 原兼容优化保留。
+
+RuntimeClientSecretStore 默认改为同一文件中的保留 namespace；已有稳定身份和 exitRecovery
+原值迁移，完整配置根可搬迁恢复，失败不生成新身份；无关 Partner keychain 不变。
+Space 的高级原生连接可通过现有 CLI/SDK/config 设置，原表单继续编辑其支持的
+OpenAI/Anthropic 字段，认证配置与真实在线验证状态保持区分。
+
+Root 完整18,656、发布包70和Space完整4,498项通过；复审专项、真实第二Node进程与
+Windows隔离桌面的Electron Provider IPC均通过，两轴最终无剩余发现。详见
+[最终验收与逐项状态](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-efg-final-offline-acceptance-2026-10-31)。
+源代码和构建验收不代替服务端权益、macOS/Linux旧vault迁移或生产安装包认证。
+两仓版本/锁定Registry依赖未变，正式Space安装包须先锁定包含本契约的发布SDK；
+另一线程的在途改动不属于本独立分支测试范围，整合后需重新做相关回归。

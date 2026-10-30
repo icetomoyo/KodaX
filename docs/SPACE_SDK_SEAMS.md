@@ -362,3 +362,22 @@ Electron 使用 ASAR 时，worker 和其运行资源需解包为实际文件。�
 等待结算，断连/busy/unknown 不透明重放。取证 `ready` 与 Run 终态均不认证视觉质量，
 视觉判断、修复与最终交付继续由现有 Agent 完成。原有模型观察与缺口见
 [E2E 范围](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#natural-task-observations-2026-10-13)。
+
+
+## FEATURE_302：共享凭证与 Space 迁移验收（2026-10-31，未发布）
+
+Space 独立实现提交 `065cc39c` 复用实际 Runtime 配置根的 auth.json；同根 CLI 共享，
+不同根隔离。Provider Key 与 OAuth/client-secret 在不同 namespace/精确绑定内，
+Renderer 仅收到状态和revision，不读回秘密。Provider 更新用显示时的 revision，
+条件冲突不现场补新版本；别名/配置提交有同路由证明、Core锁与原子写保护。
+
+可信 Main 保留现有 lease/session/provider/purpose 与物理 connectionFingerprint 校验，
+按请求读取保存值，再使用批准的外部 env 或声明的 OAuth/cloud 身份。撤销先本地 fence，
+Host 重启后重新绑定 authority；不把新 provider 接入变为更宽的工具或凭证授权。
+OAuth/client identity 的存储变更不修改身份协议；active、retired、exitRecovery 原值迁移，
+失败不轮换身份，Partner 其他 keychain 账户保留。原生高级连接经 SDK/CLI/config 设置，
+原 Provider 表单维持支持的 OpenAI/Anthropic 编辑范围。
+
+完整Space测试、实际第二Node进程及Windows隔离桌面Electron IPC通过；源码构建和
+开发链接不代表正式安装包。先发布/锁定匹配SDK字节，再走现有生产包门禁。
+[两仓最终证据与范围](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-efg-final-offline-acceptance-2026-10-31)。

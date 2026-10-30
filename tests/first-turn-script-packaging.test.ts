@@ -17,6 +17,7 @@ it('runs minified Script bundles outside the checkout without node_modules and f
   const outputs = ['script-cell.mjs', 'chunks/script-cell.mjs'];
   try {
     await mkdir(path.join(directory, 'chunks'));
+    await writeFile(path.join(directory, 'static-text.json'), await readFile(new URL('../packages/coding/src/prompts/static-text.json', import.meta.url)));
     await writeFile(path.join(directory, 'package.json'), '{"type":"module","private":true}');
     for (const output of outputs) await build({ entryPoints: [path.join(source, 'cell.ts')], outfile: path.join(directory, output),
       bundle: true, platform: 'node', format: 'esm', target: 'node20', minify: true, keepNames: true });
