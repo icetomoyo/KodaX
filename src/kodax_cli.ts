@@ -4513,7 +4513,7 @@ complete -c kodax -l version -d 'Show version'`);
       return;
     }
     if (readiness.status === 'needs-host-broker') {
-      process.stderr.write(`Provider "${readiness.provider}" requires OAuth authorization from a trusted Host credential broker. Configure the host SDK OAuth binding before starting a run.\n`);
+      process.stderr.write(`Provider "${readiness.provider}" requires authorization from a trusted Host credential broker. Configure the host SDK credential binding before starting a run.\n`);
       process.exitCode = 1;
       return;
     }

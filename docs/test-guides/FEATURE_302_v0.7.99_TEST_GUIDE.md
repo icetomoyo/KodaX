@@ -1,8 +1,9 @@
 # FEATURE_302 — Independent LLM Provider Parity
 
-Date: 2026-10-30. Status: T01–T06 implemented, contract-tested and reviewed offline;
-T07–T12 pending. Final T06 full regression passed; historical T05 failures and their
-T06 disposition remain recorded below. This is not a claim of complete pi-ai parity or a released feature.
+Date: 2026-10-30. Status: T01–T08 implemented, contract-tested and reviewed offline;
+T08 final full regression passed; T09–T12 remain pending. Historical T05 failures
+and their T06 disposition remain recorded below. This is not a claim of complete
+pi-ai parity or a released feature.
 [Accepted scope and tickets](../features/v0.7.99.md#feature_302-independent-llm-provider-parity).
 
 ## Baseline and isolation
@@ -25,6 +26,8 @@ T06 disposition remain recorded below. This is not a claim of complete pi-ai par
 | T04 | MiMo Coding uses `/v1/chat/completions`; old alias/key remain. Both V2.6 models support reasoning/tool replay, images and toggle compatibility. MiniMax and public MiMo keep their respective Messages routes. | `coding-plan-catalog.test.ts`, `mimo-coding-replay.test.ts`: captured wire, fragmented generated reasoning/tools followed by nonstreaming continuation. |
 | T05 | Explicit native Responses, ordered stateless history, images/tools/usage and actual stream/nonstream recovery. | Native SDK, loopback HTTP, both history consumers and bundled SDK regressions; see T05 evidence below. |
 | T06 | Current dynamic schemas, safe imported history, model-scoped signed reasoning and identity-scoped effort/cache compatibility. | `responses-compat.test.ts`, managed/fallback/REPL regressions; final full offline suite 18,111 passed, 0 failed. |
+| T07 | Host-owned OAuth storage/refresh, account switching, revocation and fresh Host binding for Codex/OpenAI/Copilot. | Session/driver/provider/binding tests and real broker lifecycle; final full offline suite 18,149 passed, 0 failed. |
+| T08 | Native Gemini/Vertex, Bedrock and Azure protocols with provider-bound cloud credentials over the existing broker. | Captured native wire, real SDK/EventStream decoding, per-request refresh/revoke/new-Host regressions; final acceptance below. |
 
 All fixture keys are fake. Transport tests stub fetch; no live MiMo, MiniMax or
 other model calls were made. Their authentication acceptance, subscription
@@ -47,7 +50,8 @@ subscription-key equivalence.
 
 ## Coverage ledger
 
-This ledger is pinned to the source revisions above. Provider rows correspond
+This ledger's initial inventory is pinned to the source revisions above; later
+ticket sections record updated source revisions and acceptance. Provider rows correspond
 one-for-one to pi's `packages/ai/src/providers/all.ts` factories; API identifiers
 come from `packages/ai/src/types.ts`, and OAuth flows from
 `packages/ai/src/auth/oauth/load.ts`. Source declarations do not establish live
@@ -56,19 +60,19 @@ not close a row. All new work here is **not live-tested**.
 
 | pi provider ID | Existing KodaX route / current status | Remaining ticket |
 |---|---|---|
-| amazon-bedrock | Native cloud protocol/auth pending | T08 |
+| amazon-bedrock | Native Converse/ConverseStream, explicit AWS identity/bearer and broker lifecycle contract-tested in T08; other model dialects/cache matrix and live policies remain open | T09,T11,T12 |
 | ant-ling | Built-in route and dialect pending | T09 |
 | anthropic | API-key Messages exists; signature replay contract-tested in T01; subscription OAuth pending | T07,T09 |
-| azure | Native Responses/deployment/auth pending | T08 |
+| azure | Native v1 Responses/deployment, API-key/Entra bearer and broker lifecycle contract-tested in T08; live deployment/identity entitlement unverified | T11,T12 |
 | baseten | Built-in route and dialect pending | T09 |
 | cerebras | Built-in route and dialect pending | T09 |
 | cloudflare-ai-gateway | Account/gateway/auth route pending | T09 |
 | cloudflare-workers-ai | Account/auth chat and classifier route pending | T09,T10 |
 | deepseek | Existing `deepseek` uses Messages; default/ceiling separated in T02; full API matrix pending | T06,T09 |
 | fireworks | Built-in route and dialect pending | T09 |
-| github-copilot | Native route and OAuth pending | T07 |
-| google | Native route pending; `gemini-cli` is a separate restricted bridge | T08 |
-| google-vertex | Native cloud protocol/auth pending | T08 |
+| github-copilot | T07 host-owned OAuth refresh/broker and native route contract-tested; login UI, enterprise/model discovery and live entitlement remain open | T09,T11,T12 |
+| google | Native GenerateContent/SSE, API key and broker lifecycle contract-tested in T08; `gemini-cli` remains a separate restricted bridge | T11,T12 |
+| google-vertex | Native regional/global/Express routes, explicit bearer/API key and broker lifecycle contract-tested in T08; host resolves ADC/workload identity | T11,T12 |
 | groq | Built-in route and dialect pending | T09 |
 | huggingface | Built-in route and dialect pending | T09 |
 | kimi-coding | `kimi-code` keeps its existing Messages dialect; OAuth/full route coverage pending | T07,T09 |
@@ -79,8 +83,8 @@ not close a row. All new work here is **not live-tested**.
 | moonshotai | International route pending | T09 |
 | moonshotai-cn | `kimi` CN Completions exists; preserve its route-specific reasoning behavior | T06,T09 |
 | nvidia | Built-in route and dialect pending | T09 |
-| openai | Built-in API-key Completions retained; native Responses explicit custom API contract-tested in T05; OAuth/Decisions and remaining model/history coverage pending | T06,T07,T10 |
-| openai-codex | Native subscription route pending; `codex-cli` remains a separate bridge | T07 |
+| openai | Built-in API-key Completions retained; native Responses T05/T06 and host-owned ChatGPT session/broker T07 contract-tested; Decisions and remaining capability matrix open | T10,T11,T12 |
+| openai-codex | Native subscription route and host-owned OAuth refresh/broker contract-tested in T07; `codex-cli` remains a separate bridge; live login/entitlement unverified | T11,T12 |
 | opencode | Gateway route/model API selection pending | T09 |
 | opencode-go | Gateway subscription route pending | T09 |
 | openrouter | Native gateway/auth/image operation pending | T09,T10 |
@@ -108,11 +112,11 @@ used to replace these routes or rename saved selections.
 | openai-completions | Existing adapter; T03 retry and T04 replay changes contract-tested. Dynamic history/strict/grammar/cache coverage remains T06/T11. |
 | anthropic-messages | Existing adapter; T01 signatures and T02/T03 budgets/recovery contract-tested. Full cross-source ordered history remains T06. |
 | openai-responses | T05 explicit native API implemented and offline contract-tested; ordinary function tools/text/images/reasoning/usage/Host recovery. T06/T11 broader history and transport capabilities remain open. |
-| azure-openai-responses | Pending T08 |
-| openai-codex-responses | Pending T07 |
-| bedrock-converse-stream | Pending T08 |
-| google-generative-ai | Pending T08 |
-| google-vertex | Pending T08 |
+| azure-openai-responses | T08 native v1 streaming/nonstreaming, deployment and explicit key/Entra bearer contract-tested offline. |
+| openai-codex-responses | T07 native SSE subscription and host-owned session/broker contract-tested; complete() buffers SSE, not native stream:false. |
+| bedrock-converse-stream | T08 Converse/ConverseStream, official binary EventStream/CRC, SigV4 or bearer contract-tested offline; other model dialects remain T09/T11. |
+| google-generative-ai | T08 GenerateContent/SSE, ordered signed Parts, tools/images/usage and explicit API key contract-tested offline. |
+| google-vertex | T08 regional/global/Express GenerateContent/SSE and explicit credentials contract-tested offline; host owns ADC/workload provider. |
 | mistral-conversations | Pending T09 |
 | pi-messages | Pending T09; implement protocol independently, no pi dependency |
 | openrouter-images | Pending T10; separate operation and Host media delivery |
@@ -122,12 +126,13 @@ used to replace these routes or rename saved selections.
 | openai-decisions | Pending T10; native classification, not prompt-based probability inference |
 | deferred submit/query/cancel | Pending T10; operation support, durable reference and fresh authority required |
 
-All nine source-declared OAuth flows are pending: Anthropic, OpenAI Codex,
-OpenAI ChatGPT, GitHub Copilot, OpenRouter, Kimi Coding, Meta, xAI and Radius.
-Existing CLI-managed logins do not count as native KodaX OAuth implementations.
-T07 establishes the authorized storage/refresh/broker path; T09 adds the remaining
-flows with their protocols. API keys, cloud identities and subscription tokens
-must not be treated as interchangeable.
+Of nine source-declared OAuth flows, T07 contract-tests the host-owned session,
+refresh and broker path for OpenAI Codex, OpenAI ChatGPT and GitHub Copilot;
+browser/device login and secure storage are supplied by trusted Host adapters.
+Anthropic, OpenRouter, Kimi Coding, Meta, xAI and Radius remain T09. Existing
+CLI-managed logins do not count as native KodaX OAuth implementations. No flow is
+live-tested here. API keys, cloud identities and subscription tokens must not be
+treated as interchangeable.
 
 ## Phase-zero verification log (T01–T04)
 
@@ -594,3 +599,183 @@ none; no additional scope findings.
   than changing daemon credential schema, client transport or production Host
   execution. Small public SDK/config/readiness additions still need ordinary
   merge review when that chat's uncommitted changes are integrated.
+
+## T08 — Native cloud protocols and scoped authentication (2026-10-30)
+
+Reference pi revision remains `e7a0df27c09d11bf4161d3605246cbf57a129cb2`.
+No pi runtime/code is imported. Primary protocol references:
+[Google GenerateContent](https://ai.google.dev/api/generate-content),
+[Google signatures](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures),
+[Vertex locations](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations),
+[Vertex Express](https://cloud.google.com/vertex-ai/generative-ai/docs/start/express-mode/overview),
+[AWS Converse](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html),
+[AWS ConverseStream](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ConverseStream.html),
+[AWS credential providers](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/setting-credentials-node.html),
+[Azure Responses](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/responses),
+and [Azure v1 lifecycle](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/api-version-lifecycle).
+These references describe service contracts; they do not establish live account,
+regional, model or OAuth-client entitlement for this implementation.
+
+The LLM SDK exports `createCloudProviderConfig`, `KodaXCloudCredential` and
+`serializeCloudCredential`; Runtime exports `bindCloudCredentials`. Public
+configuration still uses `customProviders`, with optional non-secret `cloud`
+metadata and native `protocol: 'google' | 'bedrock'`; Azure uses explicit
+`protocol:'openai', api:'responses', cloud:{service:'azure'}`. Existing aliases,
+CLI bridges and compatibility gateways keep their original paths.
+
+| Service | Native path | Explicit credential kinds |
+|---|---|---|
+| Gemini | `/v1beta/models/{model}:generateContent` and `:streamGenerateContent?alt=sse` | API key header |
+| Vertex | regional/global project/location publisher route, or Express publisher route | Bearer for project routes; Express API key; no ADC in daemon |
+| Bedrock | `/model/{modelId}/converse` and `/converse-stream` | AWS access/secret/session identity, or Bedrock bearer |
+| Azure | resource `/openai/v1/responses`, deployment name as wire model | Azure API key header or Entra bearer |
+
+Example trusted host integration (the application owns the credential providers):
+
+```ts
+const connection = createCloudProviderConfig({
+  service: 'vertex', name: 'my-vertex', model: selectedModel,
+  project: selectedProject, location: 'global',
+});
+const binding = await bindCloudCredentials({
+  credentials: runtime.credentials, provider: connection,
+  async resolve(request, signal) {
+    // hostGoogleAuth is an explicitly selected ADC/workload/service-account
+    // provider owned by trusted Main, not created from daemon ambient state.
+    const token = await resolveHostGoogleToken(signal);
+    signal.throwIfAborted();
+    return { type: 'bearer', token: token.token, expiresAt: token.expiresAt };
+  },
+});
+// Supply binding.credential to existing trusted execution authorization.
+// Account switch: await binding.close(), then explicitly bind the new source.
+// Host restart: bind again against the new runtime.credentials authority.
+```
+
+For AWS, `resolve` may await a host-owned official AWS credential provider
+(profile, SSO/STS, web identity, ECS/EC2 or supplied IAM identity) and return
+`{type:'aws', accessKeyId, secretAccessKey, sessionToken, expiresAt}`; convert its
+optional `expiration:Date` to Unix milliseconds. For Azure, the host may call its
+own `TokenCredential.getToken(explicitScopes)` and return its token and expiry.
+The current Azure v1 how-to uses `https://ai.azure.com/.default`, whereas the REST
+reference still lists `https://cognitiveservices.azure.com/.default`; the host
+must choose its resource's scope explicitly. No 401 retry swaps scope/account or
+starts DefaultAzureCredential. API-key grants use `{type:'api-key',key}`, Bedrock
+API keys use `{type:'bearer',token}`. Expiry is checked locally when present.
+
+The structured credential carrier is private request material over the existing
+v2 string broker, not a new configuration format or a persisted session record.
+It is bound to one provider name; only the cloud request accessor unwraps it.
+Legacy API-key accessors cannot forward it as a key. Redaction covers both the
+whole carrier and every contained secret, including nested errors and overlapping
+secret values. `apiKeyEnv` remains legacy metadata and is never an ambient fallback
+for native cloud connections. CLI readiness reports a required Host broker.
+
+The native transports reuse KodaX's bounded retries, per-request budget/ceiling,
+physical fetch observations, cancellation and failed-stream usage. AWS SDK
+`3.1127.0` and an explicitly injected `@smithy/signature-v4@5.6.12` signer load only
+on Bedrock requests. The injected signer and cache-clear function come from the
+same module instance, even when the SDK transitively uses another Smithy version.
+Signing cache is cleared after signing and again on request/stream settlement;
+the client is destroyed. Only the declared auth scheme is offered. No SDK default
+credential chain is used, and `maxAttempts:1` leaves retry ownership with KodaX.
+The HTTP handler keeps the official binary EventStream/CRC and SigV4 implementation
+while exposing the same physical request boundary as the other providers.
+
+Google preserves each returned Part, including signatures on empty/non-thought
+text and function calls. Replay requires matching connection/API/wire model/
+credential fingerprint and an unchanged signed payload. Foreign or edited tool
+turns become readable historical calls/receipts; no placeholder signature is
+invented. Bedrock preserves ordered thinking/signature/redacted bytes and tool
+receipts, with same-source replay. Orphan receipts are dropped and interrupted
+calls receive an explicit non-execution receipt. Tool declarations and forced
+choices are rebuilt from the current request. Incomplete/blocked/unknown terminal
+states, malformed tool arguments, missing stops or CRC failures cannot return
+executable partial tools. Google partialArgs/continuation responses are rejected
+rather than treated as completed calls; the adapter does not opt into incremental
+function-argument mode or deferred continuation.
+
+Images use the existing admitted/validated bytes and require explicit
+`imageInput:true` or an equivalent declared capability; no route assumes every
+deployment/model supports vision. Unknown models send no speculative thinking
+configuration. Google level/budget profiles and Bedrock's explicitly declared
+Anthropic effort/budget dialect are separate; other Bedrock model dialects and
+provider/model catalog refresh remain T09/T11. Bedrock cache boundaries require
+the existing explicit `promptCacheAffinity` opt-in and honor cache-off; this is
+not a request affinity key. Google explicit cache creation/resource reuse and
+the complete native diagnostic/cache-identity matrix remain T11. Native sources
+without a protocol-specific diagnostic projector retain the existing generic
+context estimate; it must not be read as proof of service cache reuse.
+Existing OpenAI/Anthropic hard-rejection learning is unchanged. Native Google/
+Bedrock use declared profiles and surface rejected controls rather than silently
+consuming legacy unscoped effort caches or claiming newly learned native rungs.
+Their protocol-specific persisted learning/identity matrix remains T11.
+
+Acceptance evidence, final regression statistics and independent review results
+are recorded after the implementation freeze below. No real cloud account has
+been used for this ticket; live region/model/identity policies remain unverified.
+
+## T08 Standards
+
+Final independent review: **0 remaining findings**, highest severity none. The
+review found that an open Bedrock response stream could outlive SDK client
+destruction; the fetch-backed handler now tracks and destroys that stream. A
+RED/GREEN cancellation probe covers the actual fetch body. Deeply nested message
+conversion was flattened to the repository's four-level limit. The final small
+legacy-thinking guard was reviewed separately with the same result.
+
+## T08 Spec
+
+Final independent review: **0 remaining findings**, highest severity none. Failing
+regressions drove fixes for SDK environment headers overriding Azure auth, secret
+redaction in exact request scopes, Bedrock nonstreaming results after cancellation,
+the REPL protocol whitelist, declared thinking budget caps and default-off effort
+selection. Native Google/Bedrock no longer inherit legacy unsupported-thinking
+fallbacks that could silently delete rejected controls. The reviewer independently
+confirmed a native 400 now surfaces after one request instead of changing semantics.
+
+## T08 verification
+
+- TDD regressions cover cloud credential validation/expiry/provider binding,
+  overlapping-secret redaction, per-request rotation/cancellation/revocation,
+  native stream/nonstream wire, strict terminal/tool boundaries, signed history,
+  image admission, retry metadata, reasoning defaults/caps and the review fixes.
+  Raw logs and research drafts remain untracked in OS temp / ignored research.
+- Scoped coverage: **82 tests / 7 files passed**, including the existing OAuth
+  binding contract after extracting the shared lease helper. **89.33% statements
+  (628/703), 81.74% branches (636/778), 94.54% functions (104/110), 96.95% lines
+  (477/492)**. This is scoped coverage, not whole-repository coverage.
+- Host protocol selection: **5 tests passed**, comprising the existing OAuth
+  lifecycle and four native cloud services over the real dispatcher/reverse
+  broker. Refreshed credentials reach only the selected route; revocation and
+  old Host lease rejection require explicit fresh-authority binding.
+- Workspace packages, JS bundles, self-contained SDK declarations and source/test
+  typechecks passed. Product Client declaration checks require no Node ambient
+  types. Configuration template consistency passed.
+- CLI: **5,172,615 bytes**, **70,265 bytes** below the unchanged 5 MiB budget;
+  the existing **64 KiB** minimum headroom remains enforced.
+- Complete published bundle regression: **63/63 passed**, zero failures/skips,
+  including all four native cloud public SDK paths, existing Responses/OAuth,
+  credential scopes, Host recovery, CLI budget/headroom and clean-package Script
+  checks. Duration: **80.09 seconds** on the frozen build.
+- Final frozen-source full run: **1,307 files / 18,234 tests passed, zero failures**;
+  existing **6 skipped files, 97 skipped tests and 19 todo tests** remain
+  (1,313 files / 18,350 tests total). Duration: **967.16 seconds**. All four T08
+  per-request refresh/revocation/fresh-Host cases passed inside the full run.
+  The Host baseline failures closed in T06 did not recur.
+- Two generated golden snapshots acquired line-ending metadata changes with no
+  content diff; those changes were restored without changing expectations.
+  No production/test source changed during the accepted full run.
+- No real cloud keys/tokens were used. Host-selected ADC/workload identity,
+  AWS profile/SSO/STS and Azure credential-provider integration are explicit
+  callback seams, not automatic daemon discovery or live-tested identity flows.
+  Regional/model entitlement, actual refresh policies and the complete native
+  cache/diagnostic/learning matrix remain unverified or scheduled in T09/T11/T12.
+- Source is isolated above T07 `16e6e19bb`; the concurrent working tree remains
+  untouched at `f6a010462`. No production daemon credential schema/client/server
+  changes are included. Merge review must still reconcile the public SDK and
+  setup/readiness additions with the other chat's uncommitted work. A read-only
+  tracked-path comparison during final regression found only
+  `src/runtime-daemon/server.test.ts` in common: our new cloud lifecycle tests are
+  inserted after baseline line 1157; the concurrent additions are after baseline
+  lines 3371 and 3819. These hunks are distinct; no concurrent edits were imported.

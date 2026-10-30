@@ -238,6 +238,8 @@ export type KodaXOnRetryAfterCallback = (event: KodaXRetryAfterEvent) => void;
 
 export abstract class KodaXBaseProvider {
   protected readonly requestObservationBoundary: 'physical_attempt' | 'provider_operation' = 'provider_operation';
+  /** New wire protocols must not silently inherit legacy thinking-parameter negotiation. */
+  protected readonly useLegacyReasoningFallback: boolean = true;
   abstract readonly name: string;
   abstract readonly supportsThinking: boolean;
   protected abstract readonly config: KodaXProviderConfig;
@@ -1035,7 +1037,7 @@ export abstract class KodaXBaseProvider {
         // effort) AND self-heal THIS turn: flip the suppress flag and retry
         // once with the effort param dropped, so the request still completes
         // and the user never has to re-send their query.
-        if (retries > 1 && reasoningGuard && !effortRetried) {
+        if (retries > 1 && this.useLegacyReasoningFallback && reasoningGuard && !effortRetried) {
           const rejection = classifyReasoningEffortRejection(e, reasoningGuard.effort);
           if (rejection) {
             reasoningGuard.onRejected?.({

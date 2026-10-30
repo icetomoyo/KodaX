@@ -9,6 +9,7 @@
 export interface KodaXTextBlock {
   type: 'text';
   text: string;
+  googlePart?: KodaXGoogleReplay;
 }
 
 export interface KodaXToolUseBlock {
@@ -16,6 +17,7 @@ export interface KodaXToolUseBlock {
   id: string;
   name: string;
   input: Record<string, unknown>;
+  googlePart?: KodaXGoogleReplay;
   /**
    * Set true when `input` was salvaged from malformed JSON (strict `JSON.parse`
    * threw). RAW signal — set regardless of stop reason. On its own it means the
@@ -102,6 +104,7 @@ export interface KodaXThinkingBlock {
   source?: KodaXGenerationSource;
   thinking: string;
   signature?: string;
+  googlePart?: KodaXGoogleReplay;
   /** Stateless Responses replay is valid only at the originating connection/API/model. */
   responsesReasoning?: {
     source: KodaXGenerationSource;
@@ -251,11 +254,19 @@ export type KodaXAssistantBlock = KodaXTextBlock | KodaXToolUseBlock | KodaXThin
 
 export interface KodaXGenerationSource {
   provider: string;
-  api: 'openai-responses' | 'anthropic-messages';
+  api: 'openai-responses' | 'anthropic-messages' | 'google-generate-content' | 'bedrock-converse';
   model: string;
   baseUrl?: string;
   /** Opaque request-credential scope for subscription reasoning; never a token or account ID. */
   credentialScope?: string;
+}
+
+export interface KodaXGoogleReplay {
+  source: KodaXGenerationSource;
+  thoughtSignature?: string;
+  /** Only upstream IDs are sent back; local IDs remain available to pair receipts. */
+  callId?: string;
+  contentHash: string;
 }
 
 export interface KodaXReasoningResolution {
@@ -341,6 +352,8 @@ export interface KodaXReasoningEffortPreset {
 }
 
 export type KodaXReasoningEffortWireStrategy =
+  | 'google-thinking-level'
+  | 'bedrock-anthropic-effort'
   | 'openai-responses-effort'
   | 'openai-chat-effort'
   | 'codex-cli-config'
@@ -641,7 +654,13 @@ export interface KodaXModelDescriptor {
   streamMaxDurationMs?: number;
 }
 
-export type KodaXProtocolFamily = 'anthropic' | 'openai';
+export type KodaXProtocolFamily = 'anthropic' | 'openai' | 'google' | 'bedrock';
+
+export type KodaXCloudConnection =
+  | { readonly service: 'gemini' }
+  | { readonly service: 'vertex'; readonly project?: string; readonly location?: string }
+  | { readonly service: 'bedrock'; readonly region: string }
+  | { readonly service: 'azure' };
 export type KodaXProviderUserAgentMode = 'compat' | 'sdk';
 export type KodaXOpenAICompatMaxOutputTokensField =
   | 'max_tokens'
@@ -732,6 +751,8 @@ export interface KodaXCustomProviderConfig {
   api?: 'chat-completions' | 'responses';
   /** Subscription wire dialect; credentials must come from an explicit request broker. */
   oauth?: 'openai-chatgpt' | 'openai-codex' | 'github-copilot';
+  /** Non-secret native cloud route; credentials are acquired from a request broker. */
+  cloud?: KodaXCloudConnection;
   baseUrl: string;
   apiKeyEnv: string;
   model: string;

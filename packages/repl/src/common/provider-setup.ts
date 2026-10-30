@@ -78,6 +78,7 @@ export interface ProviderSetupCustomProviderMetadata {
   readonly protocol: KodaXCustomProviderConfig['protocol'];
   readonly api?: KodaXCustomProviderConfig['api'];
   readonly oauth?: KodaXCustomProviderConfig['oauth'];
+  readonly cloud?: KodaXCustomProviderConfig['cloud'];
   readonly baseUrl: string;
   readonly apiKeyEnv: string;
   readonly model: string;
@@ -358,7 +359,7 @@ function resolveConfiguredProvider(
 
   const custom = findValidCustomProvider(config, name);
   return custom
-    ? { apiKeyEnv: custom.apiKeyEnv, requiresCredential: true, ...(custom.oauth ? { hostBroker: true } : {}) }
+    ? { apiKeyEnv: custom.apiKeyEnv, requiresCredential: true, ...(custom.oauth || custom.cloud ? { hostBroker: true } : {}) }
     : undefined;
 }
 
@@ -417,7 +418,7 @@ function toValidCustomProvider(value: unknown): KodaXCustomProviderConfig | unde
   const { name, protocol, baseUrl, apiKeyEnv, model } = value;
   if (
     typeof name !== 'string'
-    || (protocol !== 'openai' && protocol !== 'anthropic')
+    || (protocol !== 'openai' && protocol !== 'anthropic' && protocol !== 'google' && protocol !== 'bedrock')
     || typeof baseUrl !== 'string'
     || typeof apiKeyEnv !== 'string'
     || typeof model !== 'string'
@@ -497,6 +498,7 @@ export function validateProviderSetupCustomMetadata(
     protocol: provider.protocol,
     ...(provider.api !== undefined ? { api: provider.api } : {}),
     ...(provider.oauth !== undefined ? { oauth: provider.oauth } : {}),
+    ...(provider.cloud !== undefined ? { cloud: provider.cloud } : {}),
     baseUrl: provider.baseUrl.trim(),
     apiKeyEnv: provider.apiKeyEnv.trim(),
     model: provider.model.trim(),

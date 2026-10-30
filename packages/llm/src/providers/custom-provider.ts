@@ -24,6 +24,10 @@ import { KodaXOpenAICompatProvider } from './openai.js';
 import { KodaXOpenAIResponsesProvider } from './openai-responses.js';
 import { KodaXOAuthResponsesProvider } from './oauth-responses.js';
 import { OAUTH_PROVIDER_BASE_URLS } from '../oauth/provider-config.js';
+import { validateCloudProviderConfig } from '../cloud/provider-config.js';
+import { KodaXAzureResponsesProvider } from './azure-responses.js';
+import { KodaXGoogleProvider } from './google-native.js';
+import { KodaXBedrockProvider } from './bedrock-native.js';
 import { NATIVE_PROVIDER_CAPABILITY_PROFILE } from './capability-profile.js';
 import { createReasoningProfileFromPreset } from '../reasoning.js';
 import { optionalOutputTokenLimit } from './output-token-limit.js';
@@ -59,9 +63,9 @@ function getConfiguredReasoningProfile(
  * set `verifyStrategy: 'minimal-message'` explicitly in their config.
  */
 function defaultVerifyStrategyForProtocol(
-  protocol: 'anthropic' | 'openai',
+  protocol: KodaXProtocolFamily,
 ): KodaXVerifyStrategy {
-  return protocol === 'anthropic' ? 'count-tokens' : 'models-list';
+  return protocol === 'anthropic' ? 'count-tokens' : protocol === 'openai' ? 'models-list' : 'minimal-message';
 }
 
 function validateMaxOutputTokensField(
@@ -119,6 +123,7 @@ function legacyReasoningPresetForProtocol(
   if (supportsThinking === false) {
     return 'none';
   }
+  if (protocol === 'google' || protocol === 'bedrock') return undefined;
   switch (reasoningCapability) {
     case 'none':
     case 'prompt-only':
@@ -180,7 +185,8 @@ function buildReasoningProfileFromSimple(
     // form there so those models get thinking-on + a tunable effort (B1). A real-Claude
     // anthropic-compat endpoint instead wants adaptive: configure an explicit
     // reasoningProfile (effortStrategy:'anthropic-output-effort') for that case.
-    effortStrategy: protocol === 'anthropic' ? 'anthropic-reasoning-effort' : 'openai-chat-effort',
+    effortStrategy: protocol === 'google' ? 'google-thinking-level' : protocol === 'bedrock' ? 'bedrock-anthropic-effort'
+      : protocol === 'anthropic' ? 'anthropic-reasoning-effort' : 'openai-chat-effort',
     ...(protocol === 'anthropic' ? { thinkingStrategy: 'provider-toggle' as const } : {}),
     ...(defaultWire !== undefined ? { defaultEffort: defaultWire } : {}),
     supportedEfforts,
@@ -349,11 +355,12 @@ export function validateCustomProviderConfig(
     );
   }
 
-  if (custom.protocol !== 'anthropic' && custom.protocol !== 'openai') {
+  if (!['anthropic', 'openai', 'google', 'bedrock'].includes(custom.protocol)) {
     throw new Error(
       `Unknown protocol "${custom.protocol}" for custom provider "${custom.name}". Must be "anthropic" or "openai".`,
     );
   }
+  validateCloudProviderConfig(custom);
 
   if (custom.api !== undefined && (custom.protocol !== 'openai'
     || !['chat-completions', 'responses'].includes(custom.api))) {
@@ -505,7 +512,7 @@ function buildProviderConfig(custom: KodaXCustomProviderConfig): KodaXProviderCo
     // FEATURE_216 v0.7.45 — explicit verifyStrategy wins; otherwise
     // derive from protocol per the table in the type's JSDoc.
     verifyStrategy:
-      custom.verifyStrategy ?? defaultVerifyStrategyForProtocol(custom.protocol),
+      custom.verifyStrategy ?? (custom.cloud ? 'minimal-message' : defaultVerifyStrategyForProtocol(custom.protocol)),
   };
 }
 
@@ -514,6 +521,10 @@ export function createCustomProvider(custom: KodaXCustomProviderConfig): KodaXBa
 
 
   const config = buildProviderConfig(custom);
+
+  if (custom.cloud?.service === 'azure') return new KodaXAzureResponsesProvider(custom.name, config);
+  if (custom.cloud?.service === 'gemini' || custom.cloud?.service === 'vertex') return new KodaXGoogleProvider(custom.name, config, custom.cloud);
+  if (custom.cloud?.service === 'bedrock') return new KodaXBedrockProvider(custom.name, config, custom.cloud);
 
   if (custom.oauth) return new KodaXOAuthResponsesProvider(custom.name, config, custom.oauth);
 

@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import { createCustomProvider, runWithProviderCredential, reconcileAssistantContent,
   openOAuthSession, createOAuthRefreshDriver, createOAuthProviderConfig, createProviderCredentialLeaseScope,
   runWithProviderCredentialLeaseScope, withProviderRequestCredential } from '../dist/sdk-llm.js';
-import { bindOAuthCredentials } from '../dist/sdk-runtime.js';
+import { createCloudProviderConfig } from '../dist/sdk-llm.js';
+import { bindOAuthCredentials, bindCloudCredentials } from '../dist/sdk-runtime.js';
 
 test('published SDK sends native Responses and replays ordered stateless output', async t => {
   const previous = globalThis.fetch;
@@ -72,3 +73,44 @@ test('published OAuth SDK refreshes in the host and supplies only request bearer
   await binding.close();
   assert.equal(revoked, true);
 });
+
+for (const service of ['gemini', 'vertex', 'bedrock', 'azure']) {
+  test(`published native ${service} keeps cloud credentials in the scoped broker`, async t => {
+    const previous = globalThis.fetch;
+    let requests = 0;
+    globalThis.fetch = async (url, init) => {
+      requests += 1;
+      const headers = new Headers(init.headers);
+      if (service === 'gemini') assert.equal(headers.get('x-goog-api-key'), 'resource-key');
+      if (service === 'azure') assert.equal(headers.get('api-key'), 'resource-key');
+      if (service === 'vertex') assert.equal(headers.get('authorization'), 'Bearer cloud-bearer');
+      if (service === 'bedrock') assert.match(headers.get('authorization'), /^AWS4-HMAC-SHA256 Credential=access\//);
+      return Response.json(service === 'gemini' || service === 'vertex' ? { candidates: [{ finishReason: 'STOP', content: { parts: [{ text: 'ok' }] } }] }
+        : service === 'bedrock' ? { output: { message: { role: 'assistant', content: [{ text: 'ok' }] } }, stopReason: 'end_turn' }
+        : { status: 'completed', output: [{ type: 'message', id: 'm', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'ok', annotations: [] }] }] });
+    };
+    t.after(() => { globalThis.fetch = previous; });
+    const route = service === 'vertex' ? { service, project: 'project', location: 'global' } : service === 'bedrock' ? { service, region: 'us-east-1' }
+      : service === 'azure' ? { service, endpoint: 'https://resource.openai.azure.com' } : { service };
+    const connection = createCloudProviderConfig({ ...route, name: 'cloud-bundle', model: 'fixture' });
+    let broker;
+    let revoked = false;
+    const binding = await bindCloudCredentials({ provider: connection, resolve: async () => service === 'bedrock'
+      ? { type: 'aws', accessKeyId: 'access', secretAccessKey: 'secret', sessionToken: 'session' }
+      : service === 'vertex' ? { type: 'bearer', token: 'cloud-bearer' } : { type: 'api-key', key: 'resource-key' }, credentials: {
+      async registerScoped(_input, callback) { broker = callback; return { id: 'cloud-lease', providers: [connection.name], brokerVersion: 2 }; },
+      async revoke() { revoked = true; return true; },
+    } });
+    const scope = createProviderCredentialLeaseScope({ allowedProviders: [connection.name], acquire: provider => broker({ requestId: 'request', leaseId: 'cloud-lease',
+      provider, sessionId: 'session', target: { kind: 'run', runId: 'run' }, purpose: 'primary' }) });
+    try {
+      const output = await runWithProviderCredentialLeaseScope(scope, () => withProviderRequestCredential(connection.name, 'primary', undefined,
+        () => createCustomProvider(connection).complete([], [], '')));
+      assert.deepEqual(output.textBlocks.map(block => block.text), ['ok']);
+      assert.ok(!JSON.stringify(output).includes('resource-key'));
+      assert.ok(!JSON.stringify(output).includes('cloud-bearer'));
+      assert.equal(requests, 1);
+    } finally { scope.close(); await binding.close(); }
+    assert.equal(revoked, true);
+  });
+}

@@ -186,7 +186,7 @@ export function getCustomProviderList(): Array<{
     custom: true;
   }> = [];
   for (const [name, config] of customProviders) {
-    const configured = !config.oauth && !!process.env[config.apiKeyEnv];
+    const configured = !config.oauth && !config.cloud && !!process.env[config.apiKeyEnv];
     const reasoningProfile = resolveCustomProviderReasoningProfile(config);
     const modelIds = (config.models ?? []).map(entry =>
       typeof entry === 'string' ? entry : entry.id,
@@ -381,7 +381,7 @@ export function getCustomProviderVerifyMetadata(
   const config = customProviders.get(name);
   if (!config) return undefined;
   const verifyStrategy: KodaXVerifyStrategy =
-    (config.oauth ? 'minimal-message' : config.verifyStrategy) ??
+    (config.oauth ? 'minimal-message' : config.verifyStrategy) ?? (config.cloud ? 'minimal-message' : undefined) ??
     (config.protocol === 'anthropic' ? 'count-tokens' : 'models-list');
   return { apiKeyEnv: config.apiKeyEnv, verifyStrategy };
 }

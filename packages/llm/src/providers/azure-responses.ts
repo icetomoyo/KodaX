@@ -1,0 +1,30 @@
+import type OpenAI from 'openai';
+import type { KodaXProviderConfig } from '../types.js';
+import { observeProviderFetch } from '../provider-request-observation.js';
+import { KodaXOpenAIResponsesProvider } from './openai-responses.js';
+import { cloudCredentialScope, isCloudConfigured, requireCloudCredential } from './cloud-auth.js';
+
+/** Azure's v1 Responses route uses deployment IDs; legacy custom gateways remain untouched. */
+export class KodaXAzureResponsesProvider extends KodaXOpenAIResponsesProvider {
+  constructor(readonly name: string, protected readonly config: KodaXProviderConfig) { super(); }
+  override isConfigured(): boolean { return isCloudConfigured(this.name); }
+  override getGenerationSource(model?: string) { return { ...super.getGenerationSource(model), credentialScope: cloudCredentialScope(this.name) }; }
+  protected override getApiKey(): string {
+    const credential = requireCloudCredential(this.name);
+    if (credential.type === 'aws') throw new Error('Azure requires an API key or Entra bearer credential.');
+    return credential.type === 'api-key' ? credential.key : credential.token;
+  }
+  protected override async buildClient(): Promise<OpenAI> {
+    const credential = requireCloudCredential(this.name);
+    if (credential.type === 'aws') throw new Error('Azure requires an API key or Entra bearer credential.');
+    const { default: Client } = await import('openai');
+    return new Client({ apiKey: this.getApiKey(), baseURL: this.config.baseUrl, organization: null, project: null, logLevel: 'off',
+      defaultHeaders: credential.type === 'api-key' ? { Authorization: null, 'api-key': credential.key } : { Authorization: `Bearer ${credential.token}`, 'api-key': null },
+      fetch: observeProviderFetch((url, init) => {
+        // SDK environment headers are not Host authority; rebuild this native route's headers.
+        const headers = new Headers({ 'content-type': 'application/json', accept: 'application/json', 'user-agent': 'KodaX' });
+        if (credential.type === 'api-key') headers.set('api-key', credential.key); else headers.set('authorization', `Bearer ${credential.token}`);
+        return globalThis.fetch(url, { ...init, headers });
+      }) });
+  }
+}

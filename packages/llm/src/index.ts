@@ -355,3 +355,8 @@ export { openOAuthSession, OAuthCredentialError } from './oauth/session.js';
 export type { OAuthService, OAuthTokens, OAuthSessionRecord, OAuthSessionStore, OAuthRefreshDriver, OAuthCredentialSession } from './oauth/session.js';
 export { createOAuthRefreshDriver } from './oauth/drivers.js';
 export { createOAuthProviderConfig } from './oauth/provider-config.js';
+export type { KodaXCloudConnection } from './types.js';
+export { serializeCloudCredential } from './cloud/credentials.js';
+export type { KodaXCloudCredential } from './cloud/credentials.js';
+export { createCloudProviderConfig } from './cloud/provider-config.js';
+export type { KodaXCloudProviderInput } from './cloud/provider-config.js';

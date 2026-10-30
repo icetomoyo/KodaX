@@ -1,5 +1,6 @@
 import { inheritRejectedImage } from './providers/rejected-image.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { cloudCredentialSecrets, deserializeCloudCredential, isCloudCredentialCarrier, type KodaXCloudCredential } from './cloud/credentials.js';
 import { observeProviderOperation, currentProviderRequestAbortSignal, currentProviderRequestAttribution } from './provider-request-observation.js';
 
 export type ProviderCredentialPurpose =
@@ -85,7 +86,9 @@ export function runWithProviderCredential<T>(
   try {
     const result = providerCredentialStorage.run(scope, operation);
     if (isPromiseLike(result)) {
-      return Promise.resolve(result).finally(() => {
+      return Promise.resolve(result).catch((error: unknown) => {
+        throw isCloudCredentialCarrier(credential) ? redactCredentialValue(error, redactionPattern(credential), new WeakMap()) : error;
+      }).finally(() => {
         active = false;
       }) as T;
     }
@@ -93,7 +96,7 @@ export function runWithProviderCredential<T>(
     return result;
   } catch (error: unknown) {
     active = false;
-    throw error;
+    throw isCloudCredentialCarrier(credential) ? redactCredentialValue(error, redactionPattern(credential), new WeakMap()) : error;
   }
 }
 
@@ -219,7 +222,10 @@ async function withProviderRequestCredentialInternal<T>(
   }
   if (current.kind === 'exact' && current.provider === provider) {
     if (!current.isActive()) throw inactiveCredentialScopeError();
-    return operation(signal);
+    try { return await operation(signal); }
+    catch (error: unknown) {
+      throw isCloudCredentialCarrier(current.credential) ? redactCredentialValue(error, redactionPattern(current.credential), new WeakMap()) : error;
+    }
   }
   const lease = current.kind === 'lease' ? current : current.parentLease;
   if (!lease) {
@@ -256,7 +262,7 @@ async function withProviderRequestCredentialInternal<T>(
       try {
         return await operation(requestSignal);
       } catch (error: unknown) {
-        throw redactCredentialValue(error, credential, new WeakMap());
+        throw redactCredentialValue(error, redactionPattern(credential), new WeakMap());
       }
     });
   } finally {
@@ -268,8 +274,15 @@ async function withProviderRequestCredentialInternal<T>(
 export function getScopedProviderCredential(provider: string): string | undefined {
   const scope = providerCredentialStorage.getStore();
   return scope?.kind === 'exact' && scope.provider === provider && scope.isActive()
-    ? scope.credential
+    ? isCloudCredentialCarrier(scope.credential) ? undefined : scope.credential
     : undefined;
+}
+
+/** Cloud providers are the only consumers allowed to unwrap a structured carrier. */
+export function getScopedCloudCredential(provider: string): KodaXCloudCredential | undefined {
+  const scope = providerCredentialStorage.getStore();
+  return scope?.kind === 'exact' && scope.provider === provider && scope.isActive()
+    ? deserializeCloudCredential(provider, scope.credential) : undefined;
 }
 
 /** Whether an active scope authorizes a Provider without triggering broker I/O. */
@@ -302,7 +315,7 @@ export function resolveProviderCredential(
   const scope = providerCredentialStorage.getStore();
   if (!scope) return fallback;
   if (scope.kind !== 'exact' || !scope.isActive()) return undefined;
-  return scope.provider === provider ? scope.credential : undefined;
+  return scope.provider === provider ? getScopedProviderCredential(provider) : undefined;
 }
 
 /** Remove the active exact credential from DTOs before diagnostics or persistence. */
@@ -312,8 +325,14 @@ export function redactScopedProviderCredential<T>(value: T): T {
     ? scope.credential
     : undefined;
   if (!credential) return value;
-  return redactCredentialValue(value, credential, new WeakMap()) as T;
+  return redactCredentialValue(value, redactionPattern(credential), new WeakMap()) as T;
 }
+
+function redactionPattern(credential: string): RegExp {
+  const secrets = [credential, ...cloudCredentialSecrets(credential)].sort((a, b) => b.length - a.length);
+  return new RegExp(secrets.map(value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + '|\\[REDACTED_CREDENTIAL\\]', 'g');
+}
+function redactText(value: string, credentials: RegExp): string { return value.replace(credentials, '[REDACTED_CREDENTIAL]'); }
 
 function normalizeAllowedProviders(
   providers: readonly string[],
@@ -361,14 +380,14 @@ function isPromiseLike<T>(value: T): value is T & PromiseLike<unknown> {
 
 function redactCredentialError(
   value: Error,
-  credential: string,
+  credential: RegExp,
   seen: WeakMap<object, unknown>,
 ): Error {
   // DOMException accessors require constructor-created internal state.
   const redacted = value instanceof DOMException
     ? new DOMException(
-      value.message.split(credential).join('[REDACTED_CREDENTIAL]'),
-      value.name.split(credential).join('[REDACTED_CREDENTIAL]'),
+      redactText(value.message, credential),
+      redactText(value.name, credential),
     )
     : new Error();
   Object.setPrototypeOf(redacted, Object.getPrototypeOf(value));
@@ -388,7 +407,7 @@ function redactCredentialError(
     }
     if (descriptor === undefined || !('value' in descriptor)) continue;
     const safeKey = typeof key === 'string'
-      ? key.split(credential).join('[REDACTED_CREDENTIAL]')
+      ? redactText(key, credential)
       : key;
     if (Object.prototype.hasOwnProperty.call(redacted, safeKey)) continue;
     Object.defineProperty(redacted, safeKey, {
@@ -401,10 +420,10 @@ function redactCredentialError(
 
 function redactCredentialValue(
   value: unknown,
-  credential: string,
+  credential: RegExp,
   seen: WeakMap<object, unknown>,
 ): unknown {
-  if (typeof value === 'string') return value.split(credential).join('[REDACTED_CREDENTIAL]');
+  if (typeof value === 'string') return redactText(value, credential);
   if (value === null || typeof value !== 'object') return value;
   const previous = seen.get(value);
   if (previous !== undefined) return previous;
@@ -419,7 +438,7 @@ function redactCredentialValue(
   seen.set(value, redacted);
   for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(value))) {
     if (!descriptor.enumerable || !('value' in descriptor)) continue;
-    const safeKey = key.split(credential).join('[REDACTED_CREDENTIAL]');
+    const safeKey = redactText(key, credential);
     redacted[safeKey] = redactCredentialValue(descriptor.value, credential, seen);
   }
   return redacted;

@@ -1,6 +1,8 @@
 /** Public connections to the single product Host. Owner assembly stays internal. */
 export { bindOAuthCredentials } from './oauth-credential-binding.js';
 export type { RuntimeOAuthCredentialBinding } from './oauth-credential-binding.js';
+export { bindCloudCredentials } from './cloud-credential-binding.js';
+export type { RuntimeCloudCredentialBinding } from './cloud-credential-binding.js';
 export {
   KODAX_DAEMON_PROTOCOL,
   KODAX_DAEMON_PROTOCOL_VERSION,

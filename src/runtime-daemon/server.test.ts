@@ -1155,6 +1155,75 @@ describe('runtime daemon dispatcher', () => {
     } finally { for (const host of hosts) await host.close(); fetch.mockRestore(); }
   });
 
+  it.each(['gemini', 'vertex', 'bedrock', 'azure'] as const)('passes refreshed %s cloud credentials through the v2 Host broker and reacquires fresh authority (T08)', async service => {
+    const { createCloudProviderConfig, createCustomProvider, runWithProviderCredential } = await import('@kodax-ai/llm');
+    const { bindCloudCredentials } = await import('../cloud-credential-binding.js');
+    const route = service === 'bedrock' ? { service, region: 'us-east-1' } : service === 'vertex' ? { service, project: 'project', location: 'global' }
+      : service === 'azure' ? { service, endpoint: 'https://resource.openai.azure.com' } : { service };
+    const provider = createCloudProviderConfig({ ...route, name: 'cloud-host-test', model: 'fixture' });
+    const frames: Array<{ method: string; params: unknown }> = [];
+    const headers: Headers[] = [];
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      headers.push(new Headers(init?.headers));
+      return Response.json(service === 'gemini' || service === 'vertex' ? { candidates: [{ finishReason: 'STOP', content: { parts: [{ text: 'summary' }] } }] }
+        : service === 'bedrock' ? { output: { message: { role: 'assistant', content: [{ text: 'summary' }] } }, stopReason: 'end_turn' }
+        : { status: 'completed', output: [{ type: 'message', id: 'm', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'summary', annotations: [] }] }] });
+    });
+    const hosts: Array<{ close(): Promise<void> }> = [];
+    const startHost = async () => {
+      const runtime = makeRuntime();
+      const hub = createRuntimeDaemonReverseBridgeHub();
+      let notify: ((event: RuntimeDaemonNotification) => void) | undefined;
+      const dispatcher = createRuntimeDaemonDispatcher({ runtime, reverseBridgeHub: hub, notify: event => notify?.(event) });
+      await initializeDispatcher(dispatcher, {});
+      vi.spyOn(runtime.sessions, 'compact').mockImplementation(async input => {
+        expect(JSON.stringify(input)).not.toContain('kodax-cloud-v1:');
+        const trusted = input as RuntimeCompactSessionInput & { providerCredentialAccess?: {
+          acquire(provider: string, purpose: 'compaction', signal: AbortSignal): Promise<string>;
+        } };
+        const carrier = await trusted.providerCredentialAccess!.acquire(provider.name, 'compaction', new AbortController().signal);
+        const output = await runWithProviderCredential(provider.name, carrier, () => createCustomProvider(provider).complete([], [], ''));
+        expect(output.textBlocks[0]?.text).toBe('summary');
+        return { compacted: true, tokensBefore: 1000, tokensAfter: 10 } as RuntimeCompactSessionResult;
+      });
+      const transport: RuntimeDaemonClientTransport = {
+        async request(method, params) {
+          frames.push({ method, params });
+          const response = await dispatcher.handle(createRuntimeDaemonRequest(`cloud-${randomRequestSuffix()}`, method, params));
+          if (isRuntimeDaemonSuccessResponse(response)) return response.result;
+          throw Object.assign(new Error(response.error.message), { code: response.error.code });
+        },
+        subscribe(listener) { notify = listener; return { close() { notify = undefined; } }; },
+      };
+      const client = createRuntimeDaemonClient({ identity: runtime.identity, transport, capabilities: { providerCredentialBroker: { version: 2 } } });
+      const host = { client, async close() { await client.close(); dispatcher.close(); hub.close(); } }; hosts.push(host); return host;
+    };
+    let sequence = 0;
+    const resolve = vi.fn(async () => {
+      const token = `cloud-secret-${++sequence}`;
+      return service === 'bedrock' ? { type: 'aws' as const, accessKeyId: token, secretAccessKey: 'temporary-private', sessionToken: 'temporary-session' }
+        : service === 'vertex' ? { type: 'bearer' as const, token, expiresAt: Date.now() + 3600_000 } : { type: 'api-key' as const, key: token };
+    });
+    try {
+      const host = await startHost();
+      const binding = await bindCloudCredentials({ credentials: host.client.credentials, provider, resolve });
+      const compact = (client = host.client, credential = binding.credential) => client.sessions.compact({ sessionId: 'session-1', provider: provider.name, credential });
+      await compact(); await compact();
+      await binding.close();
+      await expect(compact()).rejects.toMatchObject({ code: 'credential_unavailable' });
+      const restarted = await startHost();
+      await expect(restarted.client.credentials.resumeScoped(binding.credential.leaseId, async () => 'forbidden')).rejects.toMatchObject({ code: 'credential_unavailable' });
+      const fresh = await bindCloudCredentials({ credentials: restarted.client.credentials, provider, resolve });
+      await compact(restarted.client, fresh.credential);
+      expect(resolve).toHaveBeenCalledTimes(3);
+      expect(headers).toHaveLength(3);
+      const last = headers[2]!;
+      expect(service === 'gemini' ? last.get('x-goog-api-key') : service === 'azure' ? last.get('api-key') : last.get('authorization')).toContain('cloud-secret-3');
+      expect(JSON.stringify(frames.filter(frame => frame.method !== 'credential.supply'))).not.toMatch(/cloud-secret|temporary-private|temporary-session|kodax-cloud-v1/);
+      await fresh.close();
+    } finally { for (const host of hosts) await host.close(); fetch.mockRestore(); }
+  });
+
   it('binds manual compaction to a Host-minted credential target without exposing the secret (T31/T25)', async () => {
     const runtime = makeRuntime();
     const reverseBridgeHub = createRuntimeDaemonReverseBridgeHub();

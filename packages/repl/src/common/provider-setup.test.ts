@@ -9,6 +9,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createCloudProviderConfig } from '@kodax-ai/llm';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -69,6 +70,14 @@ it('preserves subscription metadata and requires a host broker even when its pla
     baseUrl: 'https://api.openai.com/v1', model: 'chosen', apiKeyEnv: 'KODAX_OAUTH_BROKER_ONLY' }] });
   expect(inspectProviderSetupReadiness({ configPath, catalog, environment: { KODAX_OAUTH_BROKER_ONLY: 'ignored' } }))
     .toMatchObject({ status: 'needs-host-broker', provider: 'subscription' });
+});
+
+it.each(['gemini', 'bedrock'] as const)('preserves native %s metadata and requires the Host broker', service => {
+  const provider = createCloudProviderConfig(service === 'bedrock' ? { service, name: 'cloud', model: 'chosen', region: 'us-east-1' } : { service, name: 'cloud', model: 'chosen' });
+  const readiness = inspectProviderSetupReadiness({ configPath, catalog, environment: {} });
+  persistProviderSetupChoice({ configPath, catalog, expectedRevision: readiness.configRevision, choice: { kind: 'custom', provider } });
+  expect(inspectProviderSetupReadiness({ configPath, catalog, environment: { KODAX_CLOUD_BROKER_ONLY: 'ignored' } })).toMatchObject({ status: 'needs-host-broker', provider: 'cloud' });
+  expect(JSON.parse(readFileSync(configPath, 'utf8')).customProviders[0].cloud.service).toBe(service);
 });
 
 describe('inspectProviderSetupReadiness', () => {
