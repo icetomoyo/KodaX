@@ -1,0 +1,490 @@
+{
+  "date": "2026-10-31",
+  "sourceHead": "b4bbcac00dfe74a17149f298a6da9f4fd70283ca",
+  "route": "kimi-code/kimi-for-coding; metadata display K2.8 Preview",
+  "method": "Independent Python replay of native terminal SSE usage; uncached input + cache read + cache creation + output, each once. All response hashes and ledger totals verified. Actual API token usage, not local estimates or invoice.",
+  "commonPrefix": {
+    "stages": [
+      "initial",
+      "resume-pause"
+    ],
+    "tokens": 44484,
+    "note": "Initial judgment once, failed optional review counted, neutral pause and optional settlement once. Shared logical path cost allocated to each arm; count only once in physical experiment."
+  },
+  "arms": {
+    "reference": {
+      "fullTaskTokens": 104232,
+      "postForkTokens": 59748,
+      "primaryTaskTokensIncludingCommon": 83320,
+      "auxiliaryTokensIncludingCommon": 20912,
+      "compactionTokens": 0
+    },
+    "compacted": {
+      "fullTaskTokens": 93662,
+      "postForkTokens": 49178,
+      "primaryTaskTokensIncludingCommon": 75243,
+      "auxiliaryTokensIncludingCommon": 14951,
+      "compactionTokens": 3468
+    }
+  },
+  "deltaTokens": -10570,
+  "deltaPercent": -10.1408,
+  "physicalExperiment": {
+    "calls": 18,
+    "accountedCalls": 18,
+    "actualTokens": 153410,
+    "missingUsageCalls": 0,
+    "metadata": 36,
+    "standalonePreflightMetadata": 2,
+    "observedWalletCny": 0,
+    "allocatedSubscriptionFeeUsd": null
+  },
+  "stages": {
+    "compacted-contrary": {
+      "all": 27294,
+      "primary": 21622,
+      "auxiliary": 5672,
+      "compaction": 0,
+      "calls": 3
+    },
+    "reference-contrary": {
+      "all": 31878,
+      "primary": 25539,
+      "auxiliary": 6339,
+      "compaction": 0,
+      "calls": 3
+    },
+    "compacted-continue": {
+      "all": 18416,
+      "primary": 15672,
+      "auxiliary": 2744,
+      "compaction": 0,
+      "calls": 2
+    },
+    "reference-continue": {
+      "all": 27870,
+      "primary": 19832,
+      "auxiliary": 8038,
+      "compaction": 0,
+      "calls": 4
+    },
+    "resume-pause": {
+      "all": 22617,
+      "primary": 19175,
+      "auxiliary": 3442,
+      "compaction": 0,
+      "calls": 3
+    },
+    "compact": {
+      "all": 3468,
+      "primary": 0,
+      "auxiliary": 0,
+      "compaction": 3468,
+      "calls": 1
+    },
+    "initial": {
+      "all": 21867,
+      "primary": 18774,
+      "auxiliary": 3093,
+      "compaction": 0,
+      "calls": 2
+    }
+  },
+  "duplicateActualRequestBodies": [
+    [
+      {
+        "request": "compacted-continue-2",
+        "kind": "auxiliary",
+        "tokens": 2744,
+        "stopReason": "tool_use"
+      },
+      {
+        "request": "reference-contrary-1",
+        "kind": "auxiliary",
+        "tokens": 3057,
+        "stopReason": "max_tokens"
+      }
+    ],
+    [
+      {
+        "request": "compacted-contrary-2",
+        "kind": "auxiliary",
+        "tokens": 2690,
+        "stopReason": "tool_use"
+      },
+      {
+        "request": "reference-continue-4",
+        "kind": "auxiliary",
+        "tokens": 3124,
+        "stopReason": "max_tokens"
+      }
+    ],
+    [
+      {
+        "request": "initial-2",
+        "kind": "auxiliary",
+        "tokens": 3093,
+        "stopReason": "max_tokens"
+      },
+      {
+        "request": "reference-continue-3",
+        "kind": "auxiliary",
+        "tokens": 3093,
+        "stopReason": "max_tokens"
+      }
+    ],
+    [
+      {
+        "request": "reference-continue-1",
+        "kind": "auxiliary",
+        "tokens": 1821,
+        "stopReason": "tool_use"
+      },
+      {
+        "request": "resume-pause-3",
+        "kind": "auxiliary",
+        "tokens": 1712,
+        "stopReason": "tool_use"
+      }
+    ]
+  ],
+  "truncatedAuxiliaryRequests": [
+    "initial-2",
+    "reference-continue-3",
+    "reference-continue-4",
+    "reference-contrary-1",
+    "reference-contrary-3"
+  ],
+  "limitations": [
+    "One pair, short conversation and manually forced real compaction, not long-context performance or population estimate.",
+    "Reference retains two old image blocks on later requests; compressed arm does not.",
+    "Both arms use same isolated project/home and production episode learning, forked from common settled seed. Shared project learning and resumed auxiliary reviews can affect task/cost observations; no causal attribution to compaction alone.",
+    "No harness provider retry was issued. Production restoration re-dispatched identical auxiliary review bodies across runs/branches, including a prior truncated review; this deviates from the broad no-retry expectation and is included in actual total, not hidden.",
+    "Original pause was blocked before provider dispatch by recorder filename collision. Source session was recovered without regenerating initial judgment. Raw setup, recorder and auxiliary failures preserved."
+  ],
+  "requests": [
+    {
+      "request": "compact-1",
+      "stage": "compact",
+      "kind": "compaction",
+      "tokens": 3468,
+      "inputUncached": 1966,
+      "inputCachedRead": 0,
+      "inputCachedWrite": 0,
+      "output": 1502,
+      "stopReason": "end_turn",
+      "durationMs": 33508,
+      "requestSha256": "01e13eae26381de3cf8205f9239ff7b9501498c1b88d43a34c27084f079375d2",
+      "responseSha256": "afe3a02cd5279d6364ec7d422d7b8c2495f7cb35f099f17eb972b8c81063a325",
+      "toolNames": [],
+      "model": "kimi-for-coding"
+    },
+    {
+      "request": "compacted-continue-1",
+      "stage": "compacted-continue",
+      "kind": "primary",
+      "tokens": 15672,
+      "inputUncached": 3571,
+      "inputCachedRead": 11520,
+      "inputCachedWrite": 0,
+      "output": 581,
+      "stopReason": "end_turn",
+      "durationMs": 15279,
+      "requestSha256": "ebc8742bdb22fc40cbf83c67e683a97dde490e6240fa8005f9188ffb01643627",
+      "responseSha256": "c35bc30c68b7716d83097f6e930e5005c8582668ccc4107a3bb7a76211bb625b",
+      "toolNames": [
+        "57 production tools"
+      ],
+      "model": "kimi-for-coding"
+    },
+    {
+      "request": "compacted-continue-2",
+      "stage": "compacted-continue",
+      "kind": "auxiliary",
+      "tokens": 2744,
+      "inputUncached": 833,
+      "inputCachedRead": 1024,
+      "inputCachedWrite": 0,
+      "output": 887,
+      "stopReason": "tool_use",
+      "durationMs": 28003,
+      "requestSha256": "ef7b2380f6f1e81c7063d3876f0a0e0a1003f1b701c74ef14902c863750d9fe4",
+      "responseSha256": "8c5312731b3de1800ea14a1807c70699d2808df8e2262b48cc90f89e43fe71c2",
+      "toolNames": [
+        "commit_episode_learning_review"
+      ],
+      "model": "kimi-for-coding"
+    },
+    {
+      "request": "compacted-contrary-1",
+      "stage": "compacted-contrary",
+      "kind": "primary",
+      "tokens": 21622,
+      "inputUncached": 7347,
+      "inputCachedRead": 12800,
+      "inputCachedWrite": 0,
+      "output": 1475,
+      "stopReason": "end_turn",
+      "durationMs": 38742,
+      "requestSha256": "d0bc145e4ff133608c20bb910007e6ea9203072eae48b17da538d4a4dcefce1e",
+      "responseSha256": "4d003d845dbfe7c6265c48160aa6b2596559c98f4937e60da27dc5f30bd494a6",
+      "toolNames": [
+        "57 production tools"
+      ],
+      "model": "kimi-for-coding"
+    },
+    {
+      "request": "compacted-contrary-2",
+      "stage": "compacted-contrary",
+      "kind": "auxiliary",
+      "tokens": 2690,
+      "inputUncached": 0,
+      "inputCachedRead": 1924,
+      "inputCachedWrite": 0,
+      "output": 766,
+      "stopReason": "tool_use",
+      "durationMs": 18395,
+      "requestSha256": "ec3f9d4c9a3078246cb306f56caa9f84c0bd37da5948fd1056835b5d4ea396f1",
+      "responseSha256": "1f0c29901d7303c0ea7add79d44973a0682ec25412a9d76dacebcd8aa315225f",
+      "toolNames": [
+        "commit_episode_learning_review"
+      ],
+      "model": "kimi-for-coding"
+    },
+    {
+      "request": "compacted-contrary-3",
+      "stage": "compacted-contrary",
+      "kind": "auxiliary",
+      "tokens": 2982,
+      "inputUncached": 1043,
+      "inputCachedRead": 1024,
+      "inputCachedWrite": 0,
+      "output": 915,
+      "stopReason": "end_turn",
+      "durationMs": 21216,
+      "requestSha256": "288cccae6f72ed0bcb8ca13500f2ba7f9e8cf08ed8cd5c4c05b13f6bf3a09c2f",
+      "responseSha256": "bf78ca88795519470c76e646bb45b95140e869780c74472334ec06ec486f4355",
+      "toolNames": [
+        "commit_episode_learning_review"
+      ],
+      "model": "kimi-for-coding"
+    },
+    {
+      "request": "initial-1",
+      "stage": "initial",
+      "kind": "primary",
+      "tokens": 18774,
+      "inputUncached": 17801,
+      "inputCachedRead": 0,
+      "inputCachedWrite": 0,
+      "output": 973,
+      "stopReason": "end_turn",
+      "durationMs": 19841,
+      "requestSha256": "bc5721a8a302f31229ce87a3f23802621710feaf82e09072b43015ccfb053e9e",
+      "responseSha256": "82ace7f6599ca9e67fe537ccdb2838baa45dd9dadb097c7679de261037c692e8",
+      "toolNames": [
+        "57 production tools"
+      ],
+      "model": "kimi-for-coding"
+    },
+    {
+      "request": "initial-2",
+      "stage": "initial",
+      "kind": "auxiliary",
+      "tokens": 3093,
+      "inputUncached": 1893,
+      "inputCachedRead": 0,
+      "inputCachedWrite": 0,
+      "output": 1200,
+      "stopReason": "max_tokens",
+      "durationMs": 31035,
+      "requestSha256": "0c312c080769abddf11bb22a34d8209ebec592451e79dff2fb5d60a8af694a78",
+      "responseSha256": "30201843ab4ce60186948087325a25b524adc14c72f71e7405ada753f8430250",
+      "toolNames": [
+        "commit_episode_learning_review"
+      ],
+      "model": "kimi-for-coding"
+    },
+    {
+      "request": "reference-continue-1",
+      "stage": "reference-continue",
+      "kind": "auxiliary",
+      "tokens": 1821,
+      "inputUncached": 0,
+      "inputCachedRead": 1439,
+      "inputCachedWrite": 0,
+      "output": 382,
+      "stopReason": "tool_use",
+      "durationMs": 14578,
+      "requestSha256": "460cb62531c29c72e1f3d470fb53a7856866d6d90a2827c28ca489efe92829fe",
+      "responseSha256": "83f10d201f6294335445fab4d5e581e09605228824a7ac400c8f47b72717ea75",
+      "toolNames": [
+        "commit_episode_learning_review"
+      ],
+      "model": "kimi-for-coding"
+    },
+    {
+      "request": "reference-continue-2",
+      "stage": "reference-continue",
+      "kind": "primary",
+      "tokens": 19832,
+      "inputUncached": 2331,
+      "inputCachedRead": 16896,
+      "inputCachedWrite": 0,
+      "output": 605,
+      "stopReason": "end_turn",
+      "durationMs": 18083,
+      "requestSha256": "d3e9964c2673afd46237955a88c3c9160d4b50c9194b6aeb78a1d00fd6590b7b",
+      "responseSha256": "7623f44a7e79b201c5cf5d9e91216a0c31a11183267bfeaed6c9cd3ad4d81953",
+      "toolNames": [
+        "57 production tools"
+      ],
+      "model": "kimi-for-coding"
+    },
+    {
+      "request": "reference-continue-3",
+      "stage": "reference-continue",
+      "kind": "auxiliary",
+      "tokens": 3093,
+      "inputUncached": 0,
+      "inputCachedRead": 1893,
+      "inputCachedWrite": 0,
+      "output": 1200,
+      "stopReason": "max_tokens",
+      "durationMs": 30989,
+      "requestSha256": "0c312c080769abddf11bb22a34d8209ebec592451e79dff2fb5d60a8af694a78",
+      "responseSha256": "ddeecbb08192bb6d108429351d9d61d3e930969e9de6c55fcec9d01521c03143",
+      "toolNames": [
+        "commit_episode_learning_review"
+      ],
+      "model": "kimi-for-coding"
+    },
+    {
+      "request": "reference-continue-4",
+      "stage": "reference-continue",
+      "kind": "auxiliary",
+      "tokens": 3124,
+      "inputUncached": 900,
+      "inputCachedRead": 1024,
+      "inputCachedWrite": 0,
+      "output": 1200,
+      "stopReason": "max_tokens",
+      "durationMs": 31040,
+      "requestSha256": "ec3f9d4c9a3078246cb306f56caa9f84c0bd37da5948fd1056835b5d4ea396f1",
+      "responseSha256": "17e602cf95d2d56afac2711087df07e2d8060dd6cea8f96d9235514537430eae",
+      "toolNames": [
+        "commit_episode_learning_review"
+      ],
+      "model": "kimi-for-coding"
+    },
+    {
+      "request": "reference-contrary-1",
+      "stage": "reference-contrary",
+      "kind": "auxiliary",
+      "tokens": 3057,
+      "inputUncached": 0,
+      "inputCachedRead": 1857,
+      "inputCachedWrite": 0,
+      "output": 1200,
+      "stopReason": "max_tokens",
+      "durationMs": 32494,
+      "requestSha256": "ef7b2380f6f1e81c7063d3876f0a0e0a1003f1b701c74ef14902c863750d9fe4",
+      "responseSha256": "c31868d65b119d01d2530d3bb55194edc9275b704ecbc095a1d53eaa5b98e3d2",
+      "toolNames": [
+        "commit_episode_learning_review"
+      ],
+      "model": "kimi-for-coding"
+    },
+    {
+      "request": "reference-contrary-2",
+      "stage": "reference-contrary",
+      "kind": "primary",
+      "tokens": 25539,
+      "inputUncached": 7413,
+      "inputCachedRead": 16896,
+      "inputCachedWrite": 0,
+      "output": 1230,
+      "stopReason": "end_turn",
+      "durationMs": 33781,
+      "requestSha256": "1dd14b6db8b1afabed8a2988eb2d262358de8877ad8c46b77d522b47d6e39418",
+      "responseSha256": "cc669b1064dd53b0cda9ac6065d9d20ef0eca2ac3d582213e75eacceccf88d27",
+      "toolNames": [
+        "57 production tools"
+      ],
+      "model": "kimi-for-coding"
+    },
+    {
+      "request": "reference-contrary-3",
+      "stage": "reference-contrary",
+      "kind": "auxiliary",
+      "tokens": 3282,
+      "inputUncached": 1058,
+      "inputCachedRead": 1024,
+      "inputCachedWrite": 0,
+      "output": 1200,
+      "stopReason": "max_tokens",
+      "durationMs": 30262,
+      "requestSha256": "b14a13af8cf4d48e168d1bda230de891fc8efa1a8eb76b69588a7e9a02668cbe",
+      "responseSha256": "850fb56ce14104609db5aca9dc71186dfdd9c85a6c3065f5ac6e2b427b6b151a",
+      "toolNames": [
+        "commit_episode_learning_review"
+      ],
+      "model": "kimi-for-coding"
+    },
+    {
+      "request": "resume-pause-1",
+      "stage": "resume-pause",
+      "kind": "primary",
+      "tokens": 19175,
+      "inputUncached": 7602,
+      "inputCachedRead": 11520,
+      "inputCachedWrite": 0,
+      "output": 53,
+      "stopReason": "end_turn",
+      "durationMs": 3199,
+      "requestSha256": "16095bad7ea46a5e71c98f4213b4c08fdaf0f16406da77912774e83cea0d1416",
+      "responseSha256": "0d4f5174c056c671b04be6dd358f9e0dca770126a00c314d06569e9f98d8027b",
+      "toolNames": [
+        "57 production tools"
+      ],
+      "model": "kimi-for-coding"
+    },
+    {
+      "request": "resume-pause-2",
+      "stage": "resume-pause",
+      "kind": "auxiliary",
+      "tokens": 1730,
+      "inputUncached": 398,
+      "inputCachedRead": 1024,
+      "inputCachedWrite": 0,
+      "output": 308,
+      "stopReason": "tool_use",
+      "durationMs": 7868,
+      "requestSha256": "3e6b4018d25523f528a24f2fbcc7e6bc0874c9ba218039fc05a88acf32748d3a",
+      "responseSha256": "65c4564536d8c7010547fc8f7ef60b5b6a58028db1adbfc34a6cc65574423d0c",
+      "toolNames": [
+        "commit_episode_learning_review"
+      ],
+      "model": "kimi-for-coding"
+    },
+    {
+      "request": "resume-pause-3",
+      "stage": "resume-pause",
+      "kind": "auxiliary",
+      "tokens": 1712,
+      "inputUncached": 415,
+      "inputCachedRead": 1024,
+      "inputCachedWrite": 0,
+      "output": 273,
+      "stopReason": "tool_use",
+      "durationMs": 6737,
+      "requestSha256": "460cb62531c29c72e1f3d470fb53a7856866d6d90a2827c28ca489efe92829fe",
+      "responseSha256": "3853e058e66dd501a2c222b15a8f0645012153486f32f140f085aa63d61af331",
+      "toolNames": [
+        "commit_episode_learning_review"
+      ],
+      "model": "kimi-for-coding"
+    }
+  ],
+  "reviewScope": "One current-mechanism paired pilot; curated aggregate and native usage/hash receipts only. Raw bodies and account data stay in OS Temp."
+}
