@@ -1024,6 +1024,7 @@ export interface RuntimeCapabilityRequirements {
   readonly productExecutionFacts?: 1;
   readonly productActorAuthorization?: 1;
   readonly providerProbeAuthorization?: 1;
+  readonly providerCredentialConnectionBinding?: 1;
   readonly productHistoryBoundaries?: 1;
   readonly productExecutionAuthorization?: 1 | 2;
   /** Unified product business operations and current-view lifecycle. */
@@ -4308,6 +4309,7 @@ async function createKodaXRuntimeInternal(
     productExecutionFacts: { version: 1 },
     productActorAuthorization: { version: 1 },
     providerProbeAuthorization: { version: 1 },
+    providerCredentialConnectionBinding: { version: 1 },
     workflowSettingsDefaults: { version: 1 },
     externalAgents: options.externalAgents !== undefined,
     afterTurnInput: { version: 1 },
@@ -5759,6 +5761,7 @@ function assertRuntimeCapabilities(
     requirements?.askUserTransport === undefined &&
     requirements?.permissionCas === undefined &&
     requirements?.providerCredentialBroker === undefined &&
+    requirements?.providerCredentialConnectionBinding === undefined && requirements?.providerProbeAuthorization === undefined &&
     requirements?.runBoundHostTools === undefined &&
     requirements?.coderOwnerFencing === undefined &&
     requirements?.crashOutcomeModel === undefined &&
@@ -5817,6 +5820,8 @@ function assertRuntimeCapabilities(
     ["askUserTransport", requirements.askUserTransport],
     ["permissionCas", requirements.permissionCas],
     ["providerCredentialBroker", requirements.providerCredentialBroker],
+    ["providerCredentialConnectionBinding", requirements.providerCredentialConnectionBinding],
+    ["providerProbeAuthorization", requirements.providerProbeAuthorization],
     ["runBoundHostTools", requirements.runBoundHostTools],
     ["coderOwnerFencing", requirements.coderOwnerFencing],
     ["crashOutcomeModel", requirements.crashOutcomeModel],

@@ -67,7 +67,7 @@ export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProv
     if (this.config.verifyStrategy !== 'minimal-message') return super.verifyCredential(opts);
     return runVerifyCredential({ strategy: 'minimal-message', providerName: this.name, ...opts, runners: [{
       strategy: 'minimal-message', approxTokensSpent: 22,
-      run: signal => withProviderRequestCredential(this.name, 'utility', signal, async requestSignal => {
+      run: signal => withProviderRequestCredential(this, 'utility', signal, async requestSignal => {
         const client = await this.getClient();
         await client.responses.create({ model: this.getWireModelId(), input: 'hi', store: false,
           max_output_tokens: 16, stream: false }, { signal: requestSignal, maxRetries: 0 });

@@ -46,3 +46,16 @@ loginProviderOAuth 执行实际 PKCE/state 或 device 流程，使用调用者�
 Product catalog.probeReasoningEfforts 现在先调用 Main authorizer 的 provider_probe 请求；Host 发出 provider.reasoning.probe 维护操作身份，broker 请求的 sessionId 为该操作自有 scope，不建立伪 Session。当前 Host 通过 providerProbeAuthorization:1 声明支持，旧 Main 若假设每次执行都有 Session，应先按 kind 收窄。探测使用 utility 目的、单次 generation，普通输出上限 16，手动 Anthropic thinking 为满足最小预算使用 1025；是否实质采用 effort 不由 HTTP 200 推断。
 
 Managed Runner 保留 strict/grammar，并在未改动的 tool call 上保留 customTool 来源；工具名或输入经修复后不继承旧来源。主流式/真正非流式 fallback/continuation 与 compaction 都可报告 native protocol-input 哈希及 cache-write TTL 分区，只有 estimate 时保持明确标记。
+
+
+## T12-B 共用文件与连接证明（离线基础层）
+
+`createFileProviderCredentialStore(absolutePath)` 是明确选择的本机权限保护明文后端，版本化文档将 Key 与 OAuth registration 分开保存；不是 OS vault 失败后的回退。独立 llm 不选择产品配置根，不依赖 CLI/REPL/Electron。Key 按 profile、provider alias 与 `provider.getCredentialConnectionFingerprint()` 绑定；指纹覆盖实际 API、地址、认证模式、OAuth 服务与云路由，不含模型、预算、密钥或变量名。SDK/Main 可读原值；UI 仅使用 describe/set/remove 的脱敏状态与 revision CAS。
+
+可信独立 SDK 用 `createFileProviderCredentialAccess({store, bindings})` 创建明确 allowlist，再经既有 `createProviderCredentialLeaseScope` / `runWithProviderCredentialLeaseScope` 调用 provider；每次实际请求重读，缺失/错误连接证明或删除 Key 都明确拒绝，不回退 env。原生云绑定额外显式声明 cloud 服务，以将保存 Key 转成已有 typed cloud carrier；Gemini/Vertex/Azure 用 api-key，Bedrock 用原生 bearer，不将单值误当 AWS 签名密钥对。scope 关闭仍撤销后续权限。保存文件本身不宣称取消所有其他进程已发送的生成；产品更新/撤销的 lease 管理属于 T12-C/D。
+
+Host v2 broker 附带实际 adapter 的非秘密 connectionFingerprint，Main 可要求其等于批准值；旧 environment 来源未开启此约束时兼容。Host 通过 `providerCredentialConnectionBinding:1` 声明该能力，调用方可要求版本。OpenAI/Anthropic SDK 使用与证明相同的实际地址，并在 key/路由变化后刷新 memoized client。OpenAI org/project 从请求环境快照读取并隔离 credential/reasoning identity；broker 控制的连接仍去掉 ambient org/project。背景 Responses 使用与前台 Responses 相同的 API 身份。
+
+整份 JSON 的读改写与 OAuth rotating refresh 共用 proper-lockfile 锁（30 秒 stale、5 秒 heartbeat），新进程不覆盖无关记录。提交为 fsync 后原子 rename；POSIX 文件 0600、staging 目录 0700；Windows 在写明文前去掉继承，仅授予当前用户与 SYSTEM。明文临时文件位于 auth.json.staging，清理失败可见。损坏/未知版本、CAS 冲突和失败事务不覆盖既有数据。应用文件工具保护 auth.json 及临时/备份变体；POSIX shell 对文件和整个 staging 目录显式遮蔽，Windows 文件不继承 sandbox grant。此边界不承诺隔离任意同 OS 用户恶意进程。
+
+2026-10-30 此基础层已有保存后重建 provider、三个独立 Main 进程、API/路由/同名连接和实际 Windows ACL 测试；隐藏输入、CLI 默认文件切换及 Space 实迁移仍为 T12-C–F，最终全量验收仍为 T12-G。

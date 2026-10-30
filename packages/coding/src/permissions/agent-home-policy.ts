@@ -76,7 +76,7 @@ function isProtectedRelativePath(relative: string): boolean {
   const parts = relative.split('/');
   const basename = parts.at(-1) ?? '';
   if (parts.some((part) => PROTECTED_DIRECTORIES.has(part))) return true;
-  if (parts.some((part) => PROTECTED_FILES.has(part))) return true;
+  if (parts.some((part) => PROTECTED_FILES.has(part) || /^\.?auth\.json(?:[.-].*)?$/.test(part))) return true;
   if (!ENV_TEMPLATES.has(basename) && (basename === '.env' || basename.startsWith('.env.'))) {
     return true;
   }

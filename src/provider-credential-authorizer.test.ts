@@ -2,6 +2,22 @@ import { expect, it, vi } from 'vitest';
 import { createProviderCredentialAuthorizer } from './provider-credential-authorizer.js';
 import type { RuntimeScopedCredentialBroker, KodaXClientHostAuthorization, RuntimeCredentialService } from './client-host-authorization.js';
 
+it('requires the approved actual connection proof before reading a destination-bound secret', async () => {
+  let broker!: RuntimeScopedCredentialBroker;
+  const resolve = vi.fn(() => ({ APPROVED_KEY: 'bound-secret' }));
+  const credentials = { registerScoped: async (_input: unknown, callback: RuntimeScopedCredentialBroker) => {
+    broker = callback; return { id: 'lease', providers: ['approved'], brokerVersion: 2 as const };
+  }, revoke: async () => true };
+  const authorizer = createProviderCredentialAuthorizer({ sources: [{ provider: 'approved', kind: 'environment', apiKeyEnv: 'APPROVED_KEY', connectionFingerprint: 'a'.repeat(64) }], environment: resolve });
+  try {
+    await authorizer.authorizeExecution({ kind: 'provider_probe', input: { provider: 'approved', efforts: [] } }, { credentials, identity: { runtimeId: 'host' } } as unknown as Parameters<KodaXClientHostAuthorization>[1]);
+    const request = { requestId: 'r', leaseId: 'lease', provider: 'approved', sessionId: 's', target: { kind: 'run' as const, runId: 'run' }, purpose: 'primary' as const };
+    for (const proof of [undefined, 'b'.repeat(64)]) await expect(broker({ ...request, ...(proof ? { connectionFingerprint: proof } : {}) })).rejects.toThrow(/connection/);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(await broker({ ...request, connectionFingerprint: 'a'.repeat(64) })).toBe('bound-secret');
+  } finally { await authorizer.close(); }
+});
+
 it('resolves approved environment names per request and rebinds stable facades after Host replacement', async () => {
   const environment: Record<string, string | undefined> = { APPROVED_KEY: 'first' };
   let broker: RuntimeScopedCredentialBroker | undefined; let epoch = 'host-a', counter = 0;

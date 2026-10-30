@@ -998,3 +998,14 @@ Direct Azure Identity 4.14.1 / Google Auth 11.3.2 and Azure transitives initiall
 
 
 T12-A final slice evidence supersedes review-pending wording: final wide **126 files / 1,649 tests passed**; source/root and owned package fixture types plus self-contained declarations passed. Independent Standards re-review **0 findings** (55 new/changed runtime dependency entries checked for Node 20.16); Spec re-review **0 findings**, **65** independently executed targeted tests. Actual Node v20.20.2 published selection **29/29 passed**. Frozen CLI **5,164,033 bytes**, below the unchanged 5 MiB minus 64 KiB guard. This local slice is committed before T12-B–G; full feature and Space acceptance remain open.
+
+
+### T12-B 共享文件基础层验收（2026-10-30）
+
+- 新测试 auth-file / file-credential-access / credential-connection：无 env 保存后重新创建 store/provider 并经真正 adapter 发请求；状态无 Key，profile/alias/API/实际地址隔离，删除不回退，CAS、坏文件与失败 OAuth 事务保留旧数据。
+- 三个独立 Node Main 同时改不同 Key 与同一 OAuth counter，最终保留全部记录、counter 为 3；实际 Windows ACL 检查继承关闭，仅 current-user 与 SYSTEM。POSIX 模式与 namespace 分支有实现，不把 Windows 运行当成其他平台实测。
+- Host reverse bridge/client 传递连接指纹，Main 在读取 secret 前拒绝缺失或错误证明；同名嵌套 adapter 不得继承另一地址的 exact scope。
+- SDK OpenAI 地址 env 变化且 Key 不变时更新实际路由/指纹，org/project 改变更新 headers 与 reasoning identity；明确配置地址优先。
+- 测试日志位于执行机 OS 临时目录 kodax-t12b-*.log；隐藏输入和默认产品存储仍由 C/D 验收，Space 由 E/F，最终全量由 G。
+
+- T12-B 冻结结果：120 文件 / 1813 测试通过，40 个既有条件测试跳过；源码与本阶段拥有的 fixture 类型、workspace 构建、自包含 dts/无 Node ambient 的 product Client consumer 通过；实际发布 JS 26/26。CLI 5,167,565 bytes，低于 5MiB-64KiB 预算 5,177,344。专项覆盖语句84.79%、分支82.15%；Standards 硬违反0/判断题0，Spec剩余0。全仓合并回归仍留 T12-G，并不以此替代。

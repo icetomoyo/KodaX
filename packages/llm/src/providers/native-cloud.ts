@@ -8,6 +8,7 @@ export abstract class KodaXNativeCloudProvider extends KodaXNativeProvider {
   constructor(name: string, config: KodaXProviderConfig, protected readonly cloud: KodaXCloudConnection) {
     super(name, config, cloud.service === 'bedrock' ? 'bedrock-converse' : 'google-generate-content');
   }
+  protected override getCredentialCloudConnection(): KodaXCloudConnection { return this.cloud; }
   override isConfigured(): boolean { return isCloudConfigured(this.name); }
   override getGenerationSource(model?: string): KodaXGenerationSource {
     return { provider: this.name, api: this.cloud.service === 'bedrock' ? 'bedrock-converse' : 'google-generate-content',

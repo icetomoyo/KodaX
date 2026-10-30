@@ -71,7 +71,7 @@ export class KodaXOAuthResponsesProvider extends KodaXOpenAIResponsesProvider {
     if (this.config.verifyStrategy === 'unsupported') return super.verifyCredential(opts);
     return runVerifyCredential({ strategy: 'minimal-message', providerName: this.name, ...opts, runners: [{
       strategy: 'minimal-message', approxTokensSpent: 22,
-      run: signal => withProviderRequestCredential(this.name, 'utility', signal, async requestSignal => {
+      run: signal => withProviderRequestCredential(this, 'utility', signal, async requestSignal => {
         await this.complete([{ role: 'user', content: 'hi' }], [], '', false, { singleAttempt: true, maxOutputTokensOverride: 16 }, requestSignal);
       }),
     }] });

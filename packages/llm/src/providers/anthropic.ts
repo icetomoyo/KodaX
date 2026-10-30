@@ -3,7 +3,7 @@ import { cacheWritePartition } from './cache-usage.js';
 import { applyAnthropicThinkingOptions, hasThinkingBinding, THINKING_BINDING_BETA } from './anthropic-thinking-options.js';
 import { withCacheWritePartition } from './request-extensions.js';
 import { recordRejectedImage } from './rejected-image.js';
-import { hasRequestEnvironment, prepareProviderPayload, requestExtensionFetch, providerStreamEvent } from './request-extensions.js';
+import { requestEnvironment, hasRequestEnvironment, prepareProviderPayload, requestExtensionFetch, providerStreamEvent } from './request-extensions.js';
 import { anthropicTools, withoutPreferredToolConstraints } from './tool-constraints.js';
 import { createHash } from 'node:crypto';
 import { connectionAuthFetch } from './connection-auth.js';
@@ -260,7 +260,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
   private clientCredentialFingerprint?: string;
   protected async getClient(): Promise<Anthropic> {
     if (hasProviderCredentialContext() || hasRequestEnvironment()) return this.buildClient();
-    const fingerprint = this.getRequestCredentialFingerprint();
+    const fingerprint = JSON.stringify([this.getRequestCredentialFingerprint(), this.getCredentialConnectionFingerprint()]);
     if (this.clientCredentialFingerprint !== undefined && this.clientCredentialFingerprint !== fingerprint) {
       this._client = undefined; this._clientPromise = undefined;
     }
@@ -290,6 +290,8 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     this.clientCredentialFingerprint = undefined;
   }
 
+  override getBaseUrl(): string { return this.config.baseUrl ?? requestEnvironment('ANTHROPIC_BASE_URL') ?? 'https://api.anthropic.com'; }
+
   protected buildClient(): Anthropic | Promise<Anthropic> {
     const defaultHeaders = getAnthropicCompatDefaultHeaders(this.config);
     const key = this.getApiKey();
@@ -300,7 +302,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       // it as a Bearer header next to the provider key. Gateways then reject
       // the request with 401, and an inherited Anthropic token leaks to them.
       authToken: this.config.authentication === 'bearer' ? key : null,
-      baseURL: this.config.baseUrl,
+      baseURL: this.getBaseUrl(),
       // Some Anthropic-compatible gateways block the SDK's default
       // "Anthropic/JS ..." user agent even when the request is otherwise valid.
       ...(defaultHeaders ? { defaultHeaders } : {}),
@@ -556,7 +558,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         strategy: 'count-tokens',
         approxTokensSpent: 0,
         run: (signal) => withProviderRequestCredential(
-          this.name,
+          this,
           'utility',
           signal,
           async (requestSignal) => {
@@ -572,7 +574,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         strategy: 'models-list',
         approxTokensSpent: 0,
         run: (signal) => withProviderRequestCredential(
-          this.name,
+          this,
           'utility',
           signal,
           async (requestSignal) => {
@@ -585,7 +587,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         strategy: 'minimal-message',
         approxTokensSpent: 7,
         run: (signal) => withProviderRequestCredential(
-          this.name,
+          this,
           'utility',
           signal,
           async (requestSignal) => {

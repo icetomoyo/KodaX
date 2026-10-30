@@ -1557,6 +1557,7 @@ async function answerCredentialRequest(
           leaseId,
           provider: requireStringField(payload, 'provider'),
           sessionId: requireStringField(payload, 'sessionId'),
+          ...(payload.connectionFingerprint !== undefined ? { connectionFingerprint: parseCredentialConnectionFingerprint(payload.connectionFingerprint) } : {}),
           target: parseScopedCredentialTarget(payload.target),
           purpose: parseScopedCredentialPurpose(payload.purpose),
         });
@@ -2637,4 +2638,9 @@ function assertRuntimeTransportSafe(
     }
   }
   ancestors.delete(value);
+}
+
+function parseCredentialConnectionFingerprint(value: unknown): string {
+  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) throw new Error('Invalid credential connection fingerprint.');
+  return value;
 }

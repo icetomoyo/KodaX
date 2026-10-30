@@ -1,3 +1,4 @@
+import { credentialConnectionFingerprint } from '../credential-connection.js';
 import { inheritRejectedImage } from './rejected-image.js';
 import { isToolConstraintRejection } from './tool-constraints.js';
 import { withRequestExtensions, requestEnvironment } from './request-extensions.js';
@@ -259,6 +260,11 @@ export abstract class KodaXBaseProvider {
   private readonly scopedReasoningRejections = new Map<string, Set<string>>();
   usesScopedReasoningLearning(): boolean { return false; }
   protected getReasoningApi(): string { return 'provider-operation'; }
+  protected getCredentialCloudConnection(): import('../types.js').KodaXCloudConnection | undefined { return undefined; }
+  getCredentialConnectionFingerprint(): string {
+    return credentialConnectionFingerprint({ provider: this.name, api: this.getReasoningApi(), baseUrl: this.getBaseUrl(),
+      authentication: this.config.authentication, oauth: this.config.oauth, cloud: this.getCredentialCloudConnection() });
+  }
   /** Obtain only inside request authority; the returned digest never grants authority. */
   getReasoningLearningScope(model?: string): string | undefined {
     const credential = this.getRequestCredentialFingerprint();
@@ -293,7 +299,7 @@ export abstract class KodaXBaseProvider {
       .filter((value): value is AbortSignal => value !== undefined);
     const combined = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
     return withRequestExtensions(this.name, this.getWireModelId(options?.modelOverride), options,
-      () => withProviderInvocationCredential(this.name, combined, operation), this.getCacheCapabilities(options?.modelOverride), resolvePromptCacheDisabled());
+      () => withProviderInvocationCredential(this, combined, operation), this.getCacheCapabilities(options?.modelOverride), resolvePromptCacheDisabled());
   }
   protected readonly requestObservationBoundary: 'physical_attempt' | 'provider_operation' = 'provider_operation';
   /** New wire protocols must not silently inherit legacy thinking-parameter negotiation. */

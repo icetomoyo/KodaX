@@ -1,10 +1,29 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 // Run with Node, outside Vitest's source aliases: the published SDK graph is
 // the boundary under test, including shared chunks and its credential ALS.
 const llm = await import('../dist/sdk-llm.js');
 const { generateSummary } = await import('../dist/sdk-agent.js');
+test('published file credentials survive store reconstruction and share the SDK credential scope', async t => {
+  const folder = await mkdtemp(path.join(tmpdir(), 'kodax-bundled-file-auth-'));
+  const file = path.join(folder, 'auth.json');
+  const provider = llm.createCustomProvider({ name: 'published-file', protocol: 'openai', api: 'responses', model: 'fixture', baseUrl: 'https://published-file.invalid/v1', apiKeyEnv: 'KODAX_FILE_UNSET' });
+  const binding = { profile: 'default', provider: provider.name, connectionFingerprint: provider.getCredentialConnectionFingerprint() };
+  await llm.createFileProviderCredentialStore(file).setApiKey(binding, 'published-file-fixture');
+  const store = llm.createFileProviderCredentialStore(file), scope = llm.createProviderCredentialLeaseScope(llm.createFileProviderCredentialAccess({ store, bindings: [binding] }));
+  const original = globalThis.fetch; let wires = 0;
+  t.after(async () => { globalThis.fetch = original; scope.close(); await rm(folder, { recursive: true, force: true }); });
+  globalThis.fetch = async (_url, init) => { wires++; assert.equal(new Headers(init.headers).get('authorization'), 'Bearer published-file-fixture'); return Response.json({ status: 'completed', output: [] }); };
+  await llm.runWithProviderCredentialLeaseScope(scope, () => provider.complete([], [], ''));
+  assert.equal(wires, 1); assert.equal(JSON.stringify(await store.describeApiKey(binding)).includes('published-file-fixture'), false);
+  await store.removeApiKey(binding);
+  await assert.rejects(llm.runWithProviderCredentialLeaseScope(scope, () => provider.complete([], [], '')), /unavailable/);
+  assert.equal(wires, 1);
+});
 const customProviders = ['openai', 'anthropic'].map((protocol) => ({
   name: `credential-test-${protocol}`,
   protocol,

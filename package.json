@@ -203,6 +203,7 @@
     "playwright-core": "1.62.1",
     "pngjs": "7.0.0",
     "pptxgenjs": "4.0.1",
+    "proper-lockfile": "4.1.2",
     "react": ">=19.0.0",
     "react-devtools-core": "^7.0.1",
     "react-reconciler": "^0.33.0",

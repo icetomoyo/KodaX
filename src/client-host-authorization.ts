@@ -61,6 +61,8 @@ export type RuntimeScopedCredentialPurpose =
   | "utility";
 
 export interface RuntimeScopedCredentialRequest {
+  /** Actual adapter destination proof; required by destination-bound credential sources. */
+  readonly connectionFingerprint?: string;
   readonly requestId: string;
   readonly leaseId: string;
   readonly provider: string;

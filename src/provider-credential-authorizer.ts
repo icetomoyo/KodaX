@@ -3,7 +3,7 @@ import { serializeCloudCredential, validateCustomProviderConfig, type KodaXCloud
 import type { KodaXClientHostAuthorization, RuntimeScopedCredentialRequest } from './client-host-authorization.js';
 import { bindRequestCredentials, type RuntimeRequestCredentialBinding } from './request-credential-binding.js';
 
-export type ProviderCredentialSource = { readonly provider: string } & (
+export type ProviderCredentialSource = { readonly provider: string; readonly connectionFingerprint?: string } & (
   | { readonly kind: 'external' }
   | { readonly kind: 'environment'; readonly apiKeyEnv: string }
   | { readonly kind: 'oauth'; readonly session: OAuthCredentialSession; readonly service: NonNullable<KodaXCustomProviderConfig['oauth']> }
@@ -51,6 +51,7 @@ export function createProviderCredentialAuthorizer(input: {
 }
 function validateSource(source: ProviderCredentialSource): void {
   if (!['environment', 'oauth', 'cloud', 'external'].includes(source.kind)) throw new Error('Unknown provider credential source.');
+  if (source.connectionFingerprint !== undefined && !/^[a-f0-9]{64}$/.test(source.connectionFingerprint)) throw new Error('Invalid approved connection fingerprint.');
   if (!source.provider.trim()) throw new Error('Credential source requires a provider.');
   if (source.kind === 'environment' && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(source.apiKeyEnv)) throw new Error('Invalid approved environment variable.');
   if (source.kind === 'oauth' && source.service !== source.session.service) throw new Error('OAuth source and session must match.');
@@ -62,6 +63,7 @@ function validateSource(source: ProviderCredentialSource): void {
 async function acquire(source: ProviderCredentialSource, request: RuntimeScopedCredentialRequest, signal: AbortSignal,
   environment?: () => Readonly<Record<string, string | undefined>>): Promise<string> {
   signal.throwIfAborted();
+  if (source.connectionFingerprint && request.connectionFingerprint !== source.connectionFingerprint) throw new Error('Provider credential connection is not approved.');
   if (source.kind === 'external') throw new Error('This provider owns authentication outside the API-key broker.');
   if (source.kind === 'oauth') return source.session.acquire(signal);
   if (source.kind === 'environment') {

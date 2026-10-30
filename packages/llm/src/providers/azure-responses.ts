@@ -8,6 +8,7 @@ import { cloudCredentialScope, isCloudConfigured, requireCloudCredential } from 
 
 /** Azure's v1 Responses route uses deployment IDs; legacy custom gateways remain untouched. */
 export class KodaXAzureResponsesProvider extends KodaXOpenAIResponsesProvider {
+  protected override getCredentialCloudConnection(): import('../types.js').KodaXCloudConnection { return { service: 'azure' }; }
   constructor(readonly name: string, protected readonly config: KodaXProviderConfig) { super(); }
   override isConfigured(): boolean { return isCloudConfigured(this.name); }
   override getGenerationSource(model?: string) { return { ...super.getGenerationSource(model), credentialScope: cloudCredentialScope(this.name) }; }
@@ -39,6 +40,7 @@ export async function buildAzureClient(name: string, config: KodaXProviderConfig
   }
 
 export class KodaXAzureCompletionsProvider extends KodaXOpenAICompatProvider {
+  protected override getCredentialCloudConnection(): import('../types.js').KodaXCloudConnection { return { service: 'azure' }; }
   constructor(readonly name: string, protected readonly config: KodaXProviderConfig) { super(); }
   override isConfigured(): boolean { return isCloudConfigured(this.name); }
   protected override getApiKey(): string {

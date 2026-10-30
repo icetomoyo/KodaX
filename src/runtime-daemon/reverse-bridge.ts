@@ -105,6 +105,7 @@ export interface RuntimeDaemonReverseBridge {
     readonly runId: string;
   }): Promise<string>;
   acquireScopedCredential(input: {
+    readonly connectionFingerprint?: string;
     readonly leaseId: string;
     readonly provider: string;
     readonly sessionId: string;
@@ -172,6 +173,7 @@ type CredentialRequestTarget =
   | { readonly version: 1; readonly runId: string }
   | {
       readonly version: 2;
+      readonly connectionFingerprint?: string;
       readonly target: RuntimeScopedCredentialTarget;
       readonly purpose: RuntimeScopedCredentialPurpose;
       readonly signal?: AbortSignal;
@@ -473,6 +475,7 @@ export function createRuntimeDaemonReverseBridge(
           ? { runId: input.request.runId }
           : {
               brokerVersion: 2,
+              ...(input.request.connectionFingerprint ? { connectionFingerprint: input.request.connectionFingerprint } : {}),
               target: input.request.target,
               purpose: input.request.purpose,
             }),
@@ -606,6 +609,7 @@ export function createRuntimeDaemonReverseBridge(
         sessionId: input.sessionId,
         request: {
           version: 2,
+          ...(input.connectionFingerprint ? { connectionFingerprint: input.connectionFingerprint } : {}),
           target: input.target,
           purpose: input.purpose,
           ...(input.signal !== undefined ? { signal: input.signal } : {}),

@@ -2879,6 +2879,7 @@ function runtimeDaemonCapabilities(
     },
     askUserTransport: { version: 1 },
     permissionCas: { version: 1 },
+    providerCredentialConnectionBinding: { version: 1 },
     providerCredentialBroker: {
       version: 2,
       registrationConnectionBound: !reverseBridgeResume,
@@ -3332,7 +3333,8 @@ function bindTrustedScopedCredentialAccess(input: {
     allowedProviders: providers,
     signal: input.reverseBridge.credentialSignal(leaseId),
     isActive: () => input.reverseBridge.isCredentialActive(leaseId),
-    acquire: (provider, purpose, signal, attribution) => input.reverseBridge.acquireScopedCredential({
+    acquire: (provider, purpose, signal, attribution, connectionFingerprint) => input.reverseBridge.acquireScopedCredential({
+      ...(connectionFingerprint ? { connectionFingerprint } : {}),
       leaseId,
       provider,
       sessionId: input.sessionId,

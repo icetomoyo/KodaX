@@ -25,18 +25,20 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@aws-sdk/client-bedrock-runtime": "3.1127.0",
-    "@smithy/signature-v4": "5.6.12",
     "@agentclientprotocol/sdk": "^0.15.0",
     "@anthropic-ai/sdk": "^0.104.2",
+    "@aws-sdk/client-bedrock-runtime": "3.1127.0",
     "@silvia-odwyer/photon-node": "0.3.4",
+    "@smithy/signature-v4": "5.6.12",
     "image-size": "2.0.2",
     "openai": "^6.32.0",
     "partial-json": "^0.1.7",
+    "proper-lockfile": "4.1.2",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",
+    "@types/proper-lockfile": "4.1.4",
     "typescript": "^5.7.3",
     "vitest": "4.1.11"
   },

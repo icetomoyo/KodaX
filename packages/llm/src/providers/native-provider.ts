@@ -49,7 +49,7 @@ export abstract class KodaXNativeProvider extends KodaXBaseProvider {
     if (this.config.verifyStrategy === 'unsupported') return super.verifyCredential(opts);
     return runVerifyCredential({ strategy: 'minimal-message', providerName: this.name, ...opts, runners: [{
       strategy: 'minimal-message', approxTokensSpent: 22,
-      run: signal => withProviderRequestCredential(this.name, 'utility', signal, requestSignal =>
+      run: signal => withProviderRequestCredential(this, 'utility', signal, requestSignal =>
         this.complete([{ role: 'user', content: 'hi' }], [], '', undefined, { singleAttempt: true, maxOutputTokensOverride: 16 }, requestSignal).then(() => undefined)),
     }] });
   }

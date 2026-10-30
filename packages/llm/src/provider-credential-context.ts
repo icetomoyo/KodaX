@@ -22,6 +22,7 @@ export interface ProviderCredentialLeaseAccess {
     purpose: ProviderCredentialPurpose,
     signal: AbortSignal,
     attribution?: ProviderCredentialAttribution,
+    connectionFingerprint?: string,
   ): Promise<string>;
 }
 
@@ -42,6 +43,7 @@ export interface ProviderCredentialLeaseScope {
 }
 
 interface ExactProviderCredentialScope {
+  readonly connectionFingerprint?: string;
   readonly signal?: AbortSignal;
   readonly kind: 'exact';
   readonly provider: string;
@@ -196,8 +198,9 @@ export function currentProviderCredentialLeaseProviders(): readonly string[] | u
  * Resolve one Provider immediately before its wire call. The secret exists only
  * in the nested exact scope and is discarded when the call settles.
  */
+export type ProviderCredentialRequestTarget = string | { readonly name: string; getCapabilityProfile?(): KodaXProviderCapabilityProfile; getCredentialConnectionFingerprint?(): string };
 export async function withProviderRequestCredential<T>(
-  target: string | { readonly name: string; getCapabilityProfile?(): KodaXProviderCapabilityProfile },
+  target: ProviderCredentialRequestTarget,
   purpose: ProviderCredentialPurpose,
   signal: AbortSignal | undefined,
   operation: (signal: AbortSignal | undefined) => Promise<T> | T,
@@ -216,23 +219,25 @@ export async function withProviderRequestCredential<T>(
         const active = leaseAbortSignal(lease, signal); active.throwIfAborted();
         const result = await operation(active); assertLeaseActive(lease); active.throwIfAborted(); return result;
       }
-      return withProviderRequestCredentialInternal(provider, purpose, signal, operation);
+      return withProviderRequestCredentialInternal(provider, purpose, signal, operation, typeof target === 'string' ? undefined : target.getCredentialConnectionFingerprint?.());
     }, logicalRequestId, signal);
 }
 /** Adapter entry: retain an already authorized caller's operation purpose and observation owner. */
-export async function withProviderInvocationCredential<T>(provider: string, signal: AbortSignal | undefined,
+export async function withProviderInvocationCredential<T>(target: ProviderCredentialRequestTarget, signal: AbortSignal | undefined,
   operation: (signal: AbortSignal | undefined) => Promise<T> | T): Promise<T> {
+  const provider = typeof target === 'string' ? target : target.name;
   const scope = providerCredentialStorage.getStore();
   if (hasProviderOperationOwner(provider) && (!scope || (scope.kind === 'exact' && scope.provider === provider))) {
-    return withProviderRequestCredentialInternal(provider, 'primary', signal, operation);
+    return withProviderRequestCredentialInternal(provider, 'primary', signal, operation, typeof target === 'string' ? undefined : target.getCredentialConnectionFingerprint?.());
   }
-  return withProviderRequestCredential(provider, 'primary', signal, operation);
+  return withProviderRequestCredential(target, 'primary', signal, operation);
 }
 async function withProviderRequestCredentialInternal<T>(
   provider: string,
   purpose: ProviderCredentialPurpose,
   signal: AbortSignal | undefined,
   operation: (signal: AbortSignal | undefined) => Promise<T> | T,
+  connectionFingerprint?: string,
 ): Promise<T> {
   const current = providerCredentialStorage.getStore();
   if (!current) return operation(signal);
@@ -240,6 +245,7 @@ async function withProviderRequestCredentialInternal<T>(
     throw new Error(`Provider credential scope does not allow provider ${provider}.`);
   }
   if (current.kind === 'exact' && current.provider === provider) {
+    if (connectionFingerprint && current.connectionFingerprint && connectionFingerprint !== current.connectionFingerprint) throw new Error('Provider credential connection does not match the acquired destination.');
     if (!current.isActive()) throw inactiveCredentialScopeError();
     signal = combineAbortSignals([signal, current.signal]);
     signal?.throwIfAborted();
@@ -268,6 +274,7 @@ async function withProviderRequestCredentialInternal<T>(
     purpose,
     requestSignal,
     lease.attribution,
+    connectionFingerprint,
   );
   assertLeaseActive(lease);
   if (!credential) throw new Error('Provider credential broker returned no credential.');
@@ -275,6 +282,7 @@ async function withProviderRequestCredentialInternal<T>(
     kind: 'exact',
     provider,
     credential,
+    connectionFingerprint,
     parentLease: lease,
     signal: requestSignal,
     isActive: () => !requestController.signal.aborted && isLeaseActive(lease),

@@ -1704,6 +1704,7 @@ describe('runtime daemon client proxy', () => {
         operation: 'session.compact',
         operationId: 'compact-op-1',
       },
+      connectionFingerprint: 'a'.repeat(64),
       purpose: 'compaction',
     }));
     await flushAsyncNotifications();
@@ -1718,6 +1719,7 @@ describe('runtime daemon client proxy', () => {
         operation: 'session.compact',
         operationId: 'compact-op-1',
       },
+      connectionFingerprint: 'a'.repeat(64),
       purpose: 'compaction',
     }]);
     expect(calls).toContainEqual({

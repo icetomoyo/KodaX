@@ -1,5 +1,6 @@
 import { recordRejectedImage } from './rejected-image.js';
-import { hasRequestEnvironment, prepareProviderPayload, requestExtensionFetch, providerStreamEvent } from './request-extensions.js';
+import { createHash } from 'node:crypto';
+import { requestEnvironment, hasRequestEnvironment, prepareProviderPayload, requestExtensionFetch, providerStreamEvent } from './request-extensions.js';
 import { openAIChatTools, withoutPreferredToolConstraints } from './tool-constraints.js';
 import { connectionAuthFetch } from './connection-auth.js';
 import { observeProviderFetch } from '../provider-request-observation.js';
@@ -300,6 +301,12 @@ function rewriteAssistantWireToolCalls(
 }
 
 export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
+  protected override getRequestCredentialFingerprint(): string | undefined {
+    const fingerprint = super.getRequestCredentialFingerprint();
+    if (!fingerprint || hasProviderCredentialContext() || this.config.authentication || this.config.credentialSource === 'broker') return fingerprint;
+    const organization = requestEnvironment('OPENAI_ORG_ID'), project = requestEnvironment('OPENAI_PROJECT_ID');
+    return organization || project ? createHash('sha256').update(JSON.stringify([fingerprint, organization, project])).digest('hex') : fingerprint;
+  }
   private readonly requestRejections = new WeakMap<KodaXReasoningResolution, Set<string>>();
   override usesScopedReasoningLearning(): boolean { return true; }
   protected override getReasoningApi(): string { return 'openai-chat-completions'; }
@@ -404,7 +411,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
   private clientCredentialFingerprint?: string;
   protected async getClient(): Promise<OpenAI> {
     if (hasProviderCredentialContext() || hasRequestEnvironment()) return this.buildClient();
-    const fingerprint = this.getRequestCredentialFingerprint();
+    const fingerprint = JSON.stringify([this.getRequestCredentialFingerprint(), this.getCredentialConnectionFingerprint()]);
     if (this.clientCredentialFingerprint !== undefined && this.clientCredentialFingerprint !== fingerprint) {
       this._client = undefined; this._clientPromise = undefined;
     }
@@ -434,13 +441,17 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     this.clientCredentialFingerprint = undefined;
   }
 
+  override getBaseUrl(): string { return this.config.baseUrl ?? requestEnvironment('OPENAI_BASE_URL') ?? 'https://api.openai.com/v1'; }
+
   protected buildClient(): OpenAI | Promise<OpenAI> {
     const defaultHeaders = getOpenAICompatDefaultHeaders(this.config);
     const key = this.getApiKey();
-    const fetch = connectionAuthFetch(this.config, key, 'openai');
+    const broker = hasProviderCredentialContext();
+    const fetch = connectionAuthFetch(broker ? { ...this.config, credentialSource: 'broker' } : this.config, key, 'openai');
     return createOpenAISdkClient({
       apiKey: key,
-      baseURL: this.config.baseUrl,
+      organization: broker ? null : requestEnvironment('OPENAI_ORG_ID') ?? null, project: broker ? null : requestEnvironment('OPENAI_PROJECT_ID') ?? null,
+      baseURL: this.getBaseUrl(),
       // Some OpenAI-compatible gateways block the SDK's default
       // "OpenAI/JS ..." user agent even when the payload itself is valid.
       ...(defaultHeaders ? { defaultHeaders } : {}),
@@ -489,7 +500,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         strategy: 'models-list',
         approxTokensSpent: 0,
         run: (signal) => withProviderRequestCredential(
-          this.name,
+          this,
           'utility',
           signal,
           async (requestSignal) => {
@@ -502,7 +513,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         strategy: 'minimal-message',
         approxTokensSpent: 6,
         run: (signal) => withProviderRequestCredential(
-          this.name,
+          this,
           'utility',
           signal,
           async (requestSignal) => {

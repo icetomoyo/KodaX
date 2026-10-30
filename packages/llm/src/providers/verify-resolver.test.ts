@@ -191,6 +191,7 @@ describe('FEATURE_216 verifyProviderCredential — scoped credential authority',
         'utility',
         expect.any(AbortSignal),
         undefined,
+        expect.stringMatching(/^[a-f0-9]{64}$/),
       );
       expect(openAISdkMock.modelsList).toHaveBeenCalledOnce();
     } finally {

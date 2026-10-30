@@ -1,3 +1,4 @@
+import { credentialConnectionFingerprint } from '../credential-connection.js';
 import { withProviderRequestCredential, resolveProviderCredential, redactScopedProviderCredential,
   hasProviderCredentialContext, runWithProviderCredential } from '../provider-credential-context.js';
 import { observeProviderAttempt } from '../provider-request-observation.js';
@@ -24,7 +25,10 @@ export function operationUrl(connection: KodaXOperationConnection, path: string)
 export function runOperation<T>(connection: KodaXOperationConnection, purpose: 'utility' | 'classifier', signal: AbortSignal | undefined,
   operation: (headers: Headers, signal?: AbortSignal) => Promise<T>, options: { anonymous?: boolean; retry?: boolean } = {}): Promise<T> {
   operationUrl(connection, '');
-  return withProviderRequestCredential(connection.name, purpose, signal, async requestSignal => {
+  const api = 'api' in connection && typeof connection.api === 'string' ? connection.api : 'provider-operation';
+  const target = { name: connection.name, getCredentialConnectionFingerprint: () => credentialConnectionFingerprint({ provider: connection.name,
+    api: api === 'openai-background-responses' ? 'openai-responses' : api, baseUrl: connection.baseUrl }) };
+  return withProviderRequestCredential(target, purpose, signal, async requestSignal => {
       requestSignal?.throwIfAborted();
       const key = resolveProviderCredential(connection.name, connection.credentialSource === 'broker' ? undefined
         : connection.apiKeyEnv ? process.env[connection.apiKeyEnv] : undefined);

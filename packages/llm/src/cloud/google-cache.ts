@@ -1,3 +1,4 @@
+import { credentialConnectionFingerprint } from '../credential-connection.js';
 import { createHash } from 'node:crypto';
 import type { KodaXCustomProviderConfig, KodaXGoogleCacheConnection, KodaXGoogleCacheReference,
   KodaXGoogleCacheExpiration, KodaXGoogleCacheRequest, KodaXToolDefinition } from '../types.js';
@@ -69,7 +70,9 @@ function expiration(request: KodaXGoogleCacheExpiration): Record<string, string>
 }
 function run<T>(connection: KodaXGoogleCacheConnection, signal: AbortSignal | undefined,
   operation: (headers: Headers, signal?: AbortSignal) => Promise<T>): Promise<T> {
-  return withProviderRequestCredential(connection.name, 'utility', signal, async activeSignal => {
+  const target = { name: connection.name, getCredentialConnectionFingerprint: () => credentialConnectionFingerprint({ provider: connection.name,
+    api: 'google-generate-content', baseUrl: connection.baseUrl, cloud: connection.cloud }) };
+  return withProviderRequestCredential(target, 'utility', signal, async activeSignal => {
     const credential = requireCloudCredential(connection.name);
     if (credential.type === 'aws' || (connection.cloud.service === 'gemini' && credential.type !== 'api-key')) throw new Error('Cache credential does not match Google route.');
     const headers = new Headers({ 'content-type': 'application/json', ...(credential.type === 'api-key' ? { 'x-goog-api-key': credential.key } : { authorization: `Bearer ${credential.token}` }) });

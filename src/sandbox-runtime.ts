@@ -4360,6 +4360,7 @@ function windowsAgentHomeAccessRoot(
         ) return undefined;
         const topLevel = path.relative(canonicalHome, canonicalCandidate)
           .split(path.sep)[0]?.toLowerCase();
+        if (/^\.?auth\.json(?:[.-].*)?$/.test(topLevel ?? '')) return undefined;
         if (topLevel === 'sandbox-runtime') return undefined;
         if (
           write
@@ -4678,7 +4679,10 @@ function workspaceShellSandboxConfig(
   const home = path.resolve(
     process.platform === 'win32' ? process.env.USERPROFILE ?? os.homedir() : os.homedir(),
   );
-  const denyRead: string[] = [];
+  const credentialRoots = [path.join(agentHome, 'auth.json'), path.join(agentHome, 'auth.json.staging')];
+  // Windows plaintext files remove inherited sandbox grants before their first byte is written.
+  // POSIX sandboxes run as the same user, so explicit namespace masks are also required.
+  const denyRead: string[] = process.platform === 'win32' ? [] : credentialRoots;
   const scopedAgentHomeAccess = process.platform === 'win32'
     ? windowsAgentHomeAccessRoots(agentHome, agentHomeAccess)
     : { read: [], write: [] };
@@ -4693,6 +4697,7 @@ function workspaceShellSandboxConfig(
   );
   const protectedAgentHomeWriteRoots = [
     controlDirectory,
+    ...credentialRoots,
     ...WORKSPACE_SHELL_INTERNAL_AGENT_HOME_DIRECTORIES.map(
       (directory) => path.join(agentHome, directory),
     ),
