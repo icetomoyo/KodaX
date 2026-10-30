@@ -593,6 +593,7 @@ const capJsonDst = path.join(distDir, 'provider-capabilities.json');
 log(`Copying provider-capabilities.json → ${path.relative(repoRoot, capJsonDst)}`);
 cpSync(capJsonSrc, capJsonDst);
 cpSync(path.join(repoRoot, 'packages/coding/src/self-knowledge/manual-topics.json'), path.join(distDir, 'manual-topics.json'));
+cpSync(path.join(repoRoot, 'packages/coding/src/prompts/static-text.json'), path.join(distDir, 'static-text.json'));
 log(`  ✓ dist/provider-capabilities.json copied`);
 
 // ---- sanity check: helper script depth contract -------------------------

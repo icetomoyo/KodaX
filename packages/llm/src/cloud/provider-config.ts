@@ -54,7 +54,7 @@ export function validateCloudProviderConfig(config: KodaXCustomProviderConfig): 
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || config.oauth) throw new Error('Cloud connections require a non-secret HTTPS endpoint and cannot mix OAuth dialects.');
   const expected = cloud.service === 'azure' ? 'openai' : cloud.service === 'bedrock' ? 'bedrock' : 'google';
   if (!['azure', 'gemini', 'vertex', 'bedrock'].includes(cloud.service) || config.protocol !== expected
-    || (cloud.service === 'azure' ? config.api !== 'responses' : config.api !== undefined)) throw new Error('Cloud connection and native protocol do not match.');
+    || (cloud.service === 'azure' ? !['responses', 'chat-completions'].includes(config.api ?? '') : config.api !== undefined)) throw new Error('Cloud connection and native protocol do not match.');
   if (cloud.service === 'bedrock') segment(cloud.region);
   if (cloud.service === 'vertex' && (!!cloud.project !== !!cloud.location)) throw new Error('Vertex requires project and location together.');
   if (cloud.service === 'vertex') { if (cloud.project !== undefined) segment(cloud.project); if (cloud.location !== undefined) segment(cloud.location); }

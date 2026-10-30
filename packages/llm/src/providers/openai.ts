@@ -1,4 +1,5 @@
 import { recordRejectedImage } from './rejected-image.js';
+import { connectionAuthFetch } from './connection-auth.js';
 import { observeProviderFetch } from '../provider-request-observation.js';
 /**
  * KodaX OpenAI Compatible Provider
@@ -426,12 +427,15 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
 
   protected buildClient(): OpenAI | Promise<OpenAI> {
     const defaultHeaders = getOpenAICompatDefaultHeaders(this.config);
+    const key = this.getApiKey();
+    const fetch = connectionAuthFetch(this.config, key, 'openai');
     return createOpenAISdkClient({
-      apiKey: this.getApiKey(),
+      apiKey: key,
       baseURL: this.config.baseUrl,
       // Some OpenAI-compatible gateways block the SDK's default
       // "OpenAI/JS ..." user agent even when the payload itself is valid.
       ...(defaultHeaders ? { defaultHeaders } : {}),
+      ...(fetch ? { fetch, organization: null, project: null, logLevel: 'off' } : {}),
     });
   }
 

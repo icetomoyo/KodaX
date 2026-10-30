@@ -13,6 +13,16 @@ const parts = [{ text: 'plan', thought: true, thoughtSignature: 'thinking-signat
   { text: '', thoughtSignature: 'empty-signature' }];
 const result = { candidates: [{ index: 0, content: { role: 'model', parts }, finishReason: 'STOP' }],
   usageMetadata: { promptTokenCount: 20, candidatesTokenCount: 8, thoughtsTokenCount: 5, totalTokenCount: 33, cachedContentTokenCount: 10 } };
+it('uses an explicitly selected gateway bearer key without Gemini header fallback', async () => {
+  const fetch = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => Response.json({ candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }] }));
+  vi.stubGlobal('fetch', fetch);
+  const config = { ...createCloudProviderConfig({ service: 'gemini', name: 'gateway-google', model: 'chosen' }), authentication: 'bearer' as const,
+    baseUrl: 'https://opencode.ai/inference/google/v1beta' };
+  await runWithProviderCredential(config.name, serializeCloudCredential(config.name, { type: 'api-key', key: 'gateway-key' }), () => createCustomProvider(config).complete([], [], ''));
+  const headers = new Headers(fetch.mock.calls[0]?.[1]?.headers);
+  expect(headers.get('authorization')).toBe('Bearer gateway-key');
+  expect(headers.has('x-goog-api-key')).toBe(false);
+});
 describe('native Gemini and Vertex', () => {
   it('uses GenerateContent and replays ordered signed Parts and tool receipts without changing current tools', async () => {
     const fetch = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => Response.json(result));

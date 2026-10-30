@@ -1,6 +1,7 @@
 import type OpenAI from 'openai';
 import type { KodaXProviderConfig } from '../types.js';
 import { observeProviderFetch } from '../provider-request-observation.js';
+import { KodaXOpenAICompatProvider } from './openai.js';
 import { KodaXOpenAIResponsesProvider } from './openai-responses.js';
 import { cloudCredentialScope, isCloudConfigured, requireCloudCredential } from './cloud-auth.js';
 
@@ -14,11 +15,14 @@ export class KodaXAzureResponsesProvider extends KodaXOpenAIResponsesProvider {
     if (credential.type === 'aws') throw new Error('Azure requires an API key or Entra bearer credential.');
     return credential.type === 'api-key' ? credential.key : credential.token;
   }
-  protected override async buildClient(): Promise<OpenAI> {
-    const credential = requireCloudCredential(this.name);
+  protected override buildClient(): Promise<OpenAI> { return buildAzureClient(this.name, this.config); }
+}
+
+export async function buildAzureClient(name: string, config: KodaXProviderConfig): Promise<OpenAI> {
+    const credential = requireCloudCredential(name);
     if (credential.type === 'aws') throw new Error('Azure requires an API key or Entra bearer credential.');
     const { default: Client } = await import('openai');
-    return new Client({ apiKey: this.getApiKey(), baseURL: this.config.baseUrl, organization: null, project: null, logLevel: 'off',
+    return new Client({ apiKey: credential.type === 'api-key' ? credential.key : credential.token, baseURL: config.baseUrl, organization: null, project: null, logLevel: 'off',
       defaultHeaders: credential.type === 'api-key' ? { Authorization: null, 'api-key': credential.key } : { Authorization: `Bearer ${credential.token}`, 'api-key': null },
       fetch: observeProviderFetch((url, init) => {
         // SDK environment headers are not Host authority; rebuild this native route's headers.
@@ -27,4 +31,14 @@ export class KodaXAzureResponsesProvider extends KodaXOpenAIResponsesProvider {
         return globalThis.fetch(url, { ...init, headers });
       }) });
   }
+
+export class KodaXAzureCompletionsProvider extends KodaXOpenAICompatProvider {
+  constructor(readonly name: string, protected readonly config: KodaXProviderConfig) { super(); }
+  override isConfigured(): boolean { return isCloudConfigured(this.name); }
+  protected override getApiKey(): string {
+    const credential = requireCloudCredential(this.name);
+    if (credential.type === 'aws') throw new Error('Azure requires an API key or Entra bearer credential.');
+    return credential.type === 'api-key' ? credential.key : credential.token;
+  }
+  protected override buildClient(): Promise<OpenAI> { return buildAzureClient(this.name, this.config); }
 }

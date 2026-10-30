@@ -1,6 +1,6 @@
 import { Readable } from 'node:stream';
 import type { ReadableStream } from 'node:stream/web';
-import { observeProviderFetch } from '../provider-request-observation.js';
+import { nativeFetch } from './native-http.js';
 
 interface BedrockRequest {
   protocol: string; hostname: string; port?: number; path: string; method: string;
@@ -19,7 +19,7 @@ export function bedrockHttpHandler(signal?: AbortSignal) {
         for (const entry of Array.isArray(value) ? value : [value]) if (entry !== undefined && entry !== null) url.searchParams.append(key, entry);
       }
       if (request.body !== undefined && typeof request.body !== 'string' && !(request.body instanceof Uint8Array)) throw new Error('Unexpected Bedrock request body.');
-      const response = await observeProviderFetch(globalThis.fetch)(url.href, { method: request.method, headers: request.headers,
+      const response = await nativeFetch(url.href, { method: request.method, headers: request.headers,
         body: request.body as string | Uint8Array | undefined, signal, redirect: 'error' });
       body = response.body ? Readable.fromWeb(response.body as unknown as ReadableStream<Uint8Array>) : Readable.from([]);
       return { response: { statusCode: response.status, headers: Object.fromEntries(response.headers.entries()),

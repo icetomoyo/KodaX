@@ -10,6 +10,7 @@ export interface KodaXTextBlock {
   type: 'text';
   text: string;
   googlePart?: KodaXGoogleReplay;
+  piPart?: KodaXPiReplay;
 }
 
 export interface KodaXToolUseBlock {
@@ -18,6 +19,7 @@ export interface KodaXToolUseBlock {
   name: string;
   input: Record<string, unknown>;
   googlePart?: KodaXGoogleReplay;
+  piPart?: KodaXPiReplay;
   /**
    * Set true when `input` was salvaged from malformed JSON (strict `JSON.parse`
    * threw). RAW signal — set regardless of stop reason. On its own it means the
@@ -105,6 +107,7 @@ export interface KodaXThinkingBlock {
   thinking: string;
   signature?: string;
   googlePart?: KodaXGoogleReplay;
+  piPart?: KodaXPiReplay;
   /** Stateless Responses replay is valid only at the originating connection/API/model. */
   responsesReasoning?: {
     source: KodaXGenerationSource;
@@ -126,6 +129,7 @@ export interface KodaXRedactedThinkingBlock {
   type: 'redacted_thinking';
   source?: KodaXGenerationSource;
   data: string;
+  piPart?: KodaXPiReplay;
 }
 
 /**
@@ -254,7 +258,7 @@ export type KodaXAssistantBlock = KodaXTextBlock | KodaXToolUseBlock | KodaXThin
 
 export interface KodaXGenerationSource {
   provider: string;
-  api: 'openai-responses' | 'anthropic-messages' | 'google-generate-content' | 'bedrock-converse';
+  api: 'openai-responses' | 'anthropic-messages' | 'google-generate-content' | 'bedrock-converse' | 'mistral-chat' | 'pi-messages';
   model: string;
   baseUrl?: string;
   /** Opaque request-credential scope for subscription reasoning; never a token or account ID. */
@@ -267,6 +271,13 @@ export interface KodaXGoogleReplay {
   /** Only upstream IDs are sent back; local IDs remain available to pair receipts. */
   callId?: string;
   contentHash: string;
+}
+
+export interface KodaXPiReplay {
+  source: KodaXGenerationSource;
+  contentHash: string;
+  contentSignature?: string;
+  message?: { usage: Record<string, unknown>; stopReason: string; timestamp: number; responseId?: string; responseModel?: string };
 }
 
 export interface KodaXReasoningResolution {
@@ -654,7 +665,7 @@ export interface KodaXModelDescriptor {
   streamMaxDurationMs?: number;
 }
 
-export type KodaXProtocolFamily = 'anthropic' | 'openai' | 'google' | 'bedrock';
+export type KodaXProtocolFamily = 'anthropic' | 'openai' | 'google' | 'bedrock' | 'mistral' | 'pi-messages';
 
 export type KodaXCloudConnection =
   | { readonly service: 'gemini' }
@@ -750,11 +761,13 @@ export interface KodaXCustomProviderConfig {
   /** OpenAI wire API. Omitted preserves Chat Completions; Responses is explicit opt-in. */
   api?: 'chat-completions' | 'responses';
   /** Subscription wire dialect; credentials must come from an explicit request broker. */
-  oauth?: 'openai-chatgpt' | 'openai-codex' | 'github-copilot';
+  oauth?: 'openai-chatgpt' | 'openai-codex' | 'github-copilot' | 'anthropic' | 'openrouter' | 'kimi-coding' | 'meta' | 'xai' | 'radius';
   /** Non-secret native cloud route; credentials are acquired from a request broker. */
   cloud?: KodaXCloudConnection;
   baseUrl: string;
   apiKeyEnv: string;
+  /** Explicit non-default native authentication. Secrets remain outside config. */
+  authentication?: 'bearer' | 'cloudflare-gateway';
   model: string;
   /** @deprecated Internal preset name; auto-migrated on load. Prefer `reasoning`. */
   reasoningPreset?: KodaXReasoningPresetName;
@@ -846,6 +859,10 @@ export interface KodaXCustomProviderConfig {
 
 export interface KodaXProviderConfig {
   apiKeyEnv: string;
+  authentication?: KodaXCustomProviderConfig['authentication'];
+  /** Internal lowering of OAuth connections; never read ambient credentials. */
+  credentialSource?: 'broker';
+  oauth?: KodaXCustomProviderConfig['oauth'];
   baseUrl?: string;
   model: string;
   /** Additional available models beyond the default */

@@ -1,12 +1,13 @@
+import { getOAuthEndpoints } from './endpoints.js';
 import { OAuthCredentialError, type OAuthRefreshDriver, type OAuthService, type OAuthSessionRecord, type OAuthTokens } from './session.js';
 
 type Json = Record<string, unknown>;
-async function requestJson(fetcher: typeof fetch, url: string, init: RequestInit): Promise<Json> {
+async function requestJson(fetcher: typeof fetch, url: string, init: RequestInit, reauthStatuses: readonly number[] = [401]): Promise<Json> {
   try {
     const response = await fetcher(url, { ...init, redirect: 'error' });
     const value: unknown = await response.json();
     const body = value && typeof value === 'object' && !Array.isArray(value) ? value as Json : {};
-    if (body.error === 'invalid_grant' || response.status === 401) throw new OAuthCredentialError('reauthentication_required');
+    if (body.error === 'invalid_grant' || reauthStatuses.includes(response.status)) throw new OAuthCredentialError('reauthentication_required');
     if (!response.ok || body.error) throw new OAuthCredentialError('refresh_failed');
     return body;
   } catch (error) {
@@ -38,39 +39,54 @@ export function createOAuthRefreshDriver(service: OAuthService, options: { fetch
   return {
     async refresh(record, signal) {
       const previous = requireRecord(record);
+      if (service === 'openrouter' || service === 'meta') throw new OAuthCredentialError('reauthentication_required');
       if (!previous.refreshToken) throw new OAuthCredentialError('reauthentication_required');
       const body = new URLSearchParams({ grant_type: 'refresh_token', client_id: record.clientId, refresh_token: previous.refreshToken });
-      if (service === 'openai-chatgpt') body.set('resource', 'https://api.openai.com/v1');
-      const url = service === 'github-copilot' ? 'https://github.com/login/oauth/access_token'
-        : service === 'openai-chatgpt' ? 'https://auth.openai.com/api/accounts/oauth/token' : 'https://auth.openai.com/oauth/token';
-      return parseTokens(await requestJson(fetcher, url, { method: 'POST', headers: { accept: 'application/json' }, body, signal }), previous, service);
+      const endpoints = getOAuthEndpoints(service, record.issuer);
+      if (endpoints.audience) body.set('resource', endpoints.audience);
+      const url = endpoints.token;
+      const json = endpoints.jsonToken === true;
+      return parseTokens(await requestJson(fetcher, url, { method: 'POST', headers: { accept: 'application/json', ...(json ? { 'content-type': 'application/json' } : {}) },
+        body: json ? JSON.stringify(Object.fromEntries(body)) : body, signal }), previous, service);
     },
     ...(service === 'github-copilot' ? {
       async exchangeResource(record: OAuthSessionRecord, signal: AbortSignal): Promise<OAuthTokens> {
         const tokens = requireRecord(record);
-        const body = await requestJson(fetcher, 'https://api.github.com/copilot_internal/v2/token', {
+        const body = await requestJson(fetcher, getOAuthEndpoints(service).resourceExchange!, {
           headers: { authorization: `token ${tokens.accessToken}`, accept: 'application/json', 'user-agent': 'KodaX' }, signal,
         });
         if (typeof body.token !== 'string' || !body.token || typeof body.expires_at !== 'number'
           || !Number.isFinite(body.expires_at) || body.expires_at * 1000 <= Date.now()) throw new OAuthCredentialError('refresh_failed');
         return { accessToken: body.token, expiresAt: body.expires_at * 1000 };
       },
-    } : {
+    } : service === 'meta' ? {
+      async exchangeResource(record: OAuthSessionRecord, signal: AbortSignal): Promise<OAuthTokens> {
+        const identity = requireRecord(record);
+        const body = await requestJson(fetcher, getOAuthEndpoints(service).resourceExchange!, { method: 'POST', signal,
+          headers: { authorization: `Bearer ${identity.accessToken}`, 'x-api-version': '1.0.0', 'content-type': 'application/json' }, body: '{}' }, [401, 403]);
+        if (typeof body.api_key !== 'string' || !body.api_key.trim() || /[\r\n]/.test(body.api_key)) throw new OAuthCredentialError('refresh_failed');
+        // The endpoint does not document an expiry: use once and re-mint next request.
+        return { accessToken: body.api_key };
+      },
+    } : service === 'openai-chatgpt' || service === 'openai-codex' || service === 'xai' ? {
       async revoke(record: OAuthSessionRecord, signal: AbortSignal): Promise<void> {
         try {
           const tokens = requireRecord(record);
-          if (!tokens.refreshToken) throw new OAuthCredentialError('reauthentication_required');
-          const discovery = await requestJson(fetcher, 'https://auth.openai.com/.well-known/openid-configuration', { signal });
+          const token = tokens.refreshToken ?? (service === 'xai' ? tokens.accessToken : undefined);
+          if (!token) throw new OAuthCredentialError('reauthentication_required');
+          const profile = getOAuthEndpoints(service);
+          const discovery = profile.revocation ? { revocation_endpoint: profile.revocation }
+            : await requestJson(fetcher, profile.discovery!, { signal });
           if (typeof discovery.revocation_endpoint !== 'string') throw new OAuthCredentialError('refresh_failed');
           const endpoint = new URL(discovery.revocation_endpoint);
-          if (endpoint.origin !== 'https://auth.openai.com' || endpoint.username || endpoint.password || endpoint.hash) throw new OAuthCredentialError('refresh_failed');
+          if (endpoint.origin !== new URL(profile.token).origin || endpoint.username || endpoint.password || endpoint.hash) throw new OAuthCredentialError('refresh_failed');
           const response = await fetcher(endpoint.href, { method: 'POST', redirect: 'error', signal,
-            body: new URLSearchParams({ token: tokens.refreshToken, token_type_hint: 'refresh_token', client_id: record.clientId }) });
+            body: new URLSearchParams({ token, token_type_hint: tokens.refreshToken ? 'refresh_token' : 'access_token', client_id: record.clientId }) });
           if (!response.ok) throw new OAuthCredentialError('refresh_failed');
         } catch (error) {
           throw error instanceof OAuthCredentialError ? error : new OAuthCredentialError('refresh_failed');
         }
       },
-    }),
+    } : {}),
   };
 }

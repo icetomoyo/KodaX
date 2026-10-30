@@ -59,6 +59,7 @@ export class KodaXOAuthResponsesProvider extends KodaXOpenAIResponsesProvider {
     return { 'X-Initiator': initiator, 'Openai-Intent': 'conversation-edits', ...(images ? { 'Copilot-Vision-Request': 'true' } : {}) };
   }
   override verifyCredential(opts?: { timeoutMs?: number; signal?: AbortSignal }): Promise<KodaXVerifyCredentialResult> {
+    if (this.config.verifyStrategy === 'unsupported') return super.verifyCredential(opts);
     return runVerifyCredential({ strategy: 'minimal-message', providerName: this.name, ...opts, runners: [{
       strategy: 'minimal-message', approxTokensSpent: 22,
       run: signal => withProviderRequestCredential(this.name, 'utility', signal, async requestSignal => {

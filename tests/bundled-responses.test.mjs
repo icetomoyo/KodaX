@@ -4,6 +4,7 @@ import { createCustomProvider, runWithProviderCredential, reconcileAssistantCont
   openOAuthSession, createOAuthRefreshDriver, createOAuthProviderConfig, createProviderCredentialLeaseScope,
   runWithProviderCredentialLeaseScope, withProviderRequestCredential } from '../dist/sdk-llm.js';
 import { createCloudProviderConfig } from '../dist/sdk-llm.js';
+import { createProviderConnection, listProviderPresets } from '../dist/sdk-llm.js';
 import { bindOAuthCredentials, bindCloudCredentials } from '../dist/sdk-runtime.js';
 
 test('published SDK sends native Responses and replays ordered stateless output', async t => {
@@ -112,5 +113,27 @@ for (const service of ['gemini', 'vertex', 'bedrock', 'azure']) {
       assert.equal(requests, 1);
     } finally { scope.close(); await binding.close(); }
     assert.equal(revoked, true);
+  });
+}
+
+for (const service of ['mistral', 'radius']) {
+  test(`published ${service} resolves one lazy scoped credential through the native transport`, async t => {
+    const previous = globalThis.fetch;
+    let acquisitions = 0, requests = 0;
+    globalThis.fetch = async (_url, init) => {
+      requests++;
+      assert.equal(new Headers(init.headers).get('authorization'), 'Bearer published-native-key');
+      return service === 'mistral' ? Response.json({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] })
+        : new Response('data: {"type":"start"}\n\ndata: {"type":"text_start","contentIndex":0}\n\ndata: {"type":"text_delta","contentIndex":0,"delta":"ok"}\n\ndata: {"type":"text_end","contentIndex":0,"content":"ok"}\n\ndata: {"type":"done","reason":"stop"}\n\n');
+    };
+    t.after(() => { globalThis.fetch = previous; });
+    assert.equal(listProviderPresets().length, 42);
+    const connection = createProviderConnection(service, { name: `published-${service}`, model: 'fixture' });
+    const scope = createProviderCredentialLeaseScope({ allowedProviders: [connection.name], async acquire() { acquisitions++; return 'published-native-key'; } });
+    try {
+      const result = await runWithProviderCredentialLeaseScope(scope, () => createCustomProvider(connection).complete([], [], ''));
+      assert.deepEqual(result.textBlocks.map(block => block.text), ['ok']);
+      assert.equal(acquisitions, 1); assert.equal(requests, 1);
+    } finally { scope.close(); }
   });
 }

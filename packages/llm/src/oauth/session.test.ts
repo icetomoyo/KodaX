@@ -17,6 +17,26 @@ function memoryStore(initial: OAuthSessionRecord): OAuthSessionStore {
     },
   };
 }
+
+it('keeps an OpenRouter issued key without inventing an expiry or refresh grant', async () => {
+  const store = memoryStore({ id: 'router', service: 'openrouter', clientId: 'this-host-registration', accountId: 'verified-account', credentials: { accessToken: 'issued-key' } });
+  const refresh = vi.fn(async () => { throw new Error('No refresh grant exists.'); });
+  const session = await openOAuthSession({ id: 'router', store, driver: { refresh } });
+  expect(await session.acquire()).toBe('issued-key');
+  expect(await session.acquire()).toBe('issued-key');
+  expect(refresh).not.toHaveBeenCalled();
+  expect((await session.revoke()).remote).toBe('unsupported');
+  await expect(session.acquire()).rejects.toThrow(/revoked/);
+});
+it('exchanges Meta identity for a request resource key without inventing its lifetime', async () => {
+  const store = memoryStore({ id: 'meta', service: 'meta', clientId: 'host-client', accountId: 'verified-sub',
+    credentials: { accessToken: 'identity-only' } });
+  const exchangeResource = vi.fn(async () => ({ accessToken: `resource-${exchangeResource.mock.calls.length}` }));
+  const session = await openOAuthSession({ id: 'meta', store, driver: { refresh: async () => { throw new Error('login needed'); }, exchangeResource } });
+  expect(await session.acquire()).toBe('resource-1');
+  expect(await session.acquire()).toBe('resource-2');
+  expect(exchangeResource).toHaveBeenCalledTimes(2);
+});
 const record: OAuthSessionRecord = {
   id: 'registration-a', service: 'openai-chatgpt', clientId: 'issued-client', accountId: 'verified-sub',
   credentials: { accessToken: 'old-access', refreshToken: 'rotating-refresh', expiresAt: 1000 },

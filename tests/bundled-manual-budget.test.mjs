@@ -8,6 +8,7 @@ test('npm package includes the required manual data', () => {
     cwd: new URL('..', import.meta.url), encoding: 'utf8',
   }));
   assert.ok(packed[0].files.some(file => file.path === 'dist/manual-topics.json'));
+  assert.ok(packed[0].files.some(file => file.path === 'dist/static-text.json'));
 });
 
 test('CLI retains room for native Responses within the existing 5 MiB limit', () => {
@@ -20,4 +21,11 @@ test('published SDK and standalone coding package expose identical complete manu
   assert.deepEqual(bundled.MANUAL_TOPIC_IDS, standalone.MANUAL_TOPIC_IDS);
   assert.deepEqual(bundled.MANUAL_REGISTRY, standalone.MANUAL_REGISTRY);
   assert.equal(bundled.MANUAL_TOPIC_IDS.length, 23);
+});
+
+test('published SDK preserves standalone built-in tool definitions after prompt asset extraction', async () => {
+  const standalone = await import('../packages/coding/dist/index.js');
+  const bundled = await import('../dist/sdk-coding.js');
+  assert.deepEqual(JSON.parse(JSON.stringify(bundled.KODAX_TOOLS)), JSON.parse(JSON.stringify(standalone.KODAX_TOOLS)));
+  assert.equal(bundled.KODAX_TOOLS.length, 78);
 });

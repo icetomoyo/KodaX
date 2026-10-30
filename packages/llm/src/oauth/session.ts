@@ -1,11 +1,12 @@
 /** OAuth login/ID-token validation and secure persistence belong to the trusted host. */
-export type OAuthService = 'openai-chatgpt' | 'openai-codex' | 'github-copilot';
+import type { KodaXCustomProviderConfig } from '../types.js';
+export type OAuthService = NonNullable<KodaXCustomProviderConfig['oauth']>;
 
 export interface OAuthTokens {
   readonly accessToken: string;
   readonly refreshToken?: string;
   /** Unix milliseconds, not the OAuth wire expires_in seconds. */
-  /** Omitted only for a non-expiring GitHub OAuth grant (never an inference token). */
+  /** May be omitted for GitHub grants, OpenRouter keys or Meta identity with unknown lifetime. */
   readonly expiresAt?: number;
   readonly scopes?: readonly string[];
   readonly earliestRefreshAt?: number;
@@ -16,10 +17,12 @@ export interface OAuthSessionRecord {
   readonly id: string;
   readonly service: OAuthService;
   readonly clientId: string;
+  /** Explicit registered issuer for a selected gateway; never discovered from model output. */
+  readonly issuer?: string;
   /** Identity validated during login by the host; never inferred from an email hint. */
   readonly accountId: string;
   readonly credentials?: OAuthTokens;
-  /** Copilot's short-lived inference token is distinct from its GitHub OAuth token. */
+  /** Copilot/Meta inference credentials are distinct from their identity grants. */
   readonly resource?: OAuthTokens;
 }
 
@@ -68,7 +71,7 @@ function due(tokens: OAuthTokens): boolean {
   return tokens.expiresAt !== undefined && tokens.expiresAt <= Date.now() + 30_000 && (tokens.earliestRefreshAt ?? 0) <= Date.now();
 }
 function sameRegistration(a: OAuthSessionRecord, b: OAuthSessionRecord): boolean {
-  return a.id === b.id && a.service === b.service && a.clientId === b.clientId && a.accountId === b.accountId;
+  return a.id === b.id && a.service === b.service && a.clientId === b.clientId && a.accountId === b.accountId && a.issuer === b.issuer;
 }
 
 interface SessionLifetime {
@@ -100,7 +103,7 @@ export async function openOAuthSession(input: {
   const initial = await store.transact(id, async record => ({ record, result: record }))
     .catch(() => { throw new OAuthCredentialError('storage_failed'); });
   if (!initial || initial.id !== id || !initial.clientId || !initial.accountId
-    || !['openai-chatgpt', 'openai-codex', 'github-copilot'].includes(initial.service)) {
+    || !['openai-chatgpt', 'openai-codex', 'github-copilot', 'anthropic', 'openrouter', 'kimi-coding', 'meta', 'xai', 'radius'].includes(initial.service)) {
     throw new OAuthCredentialError('invalid_session');
   }
   const registration = { ...initial, credentials: undefined, resource: undefined };
@@ -124,7 +127,8 @@ export async function openOAuthSession(input: {
       const pending = store.transact<{ token?: string; error?: OAuthCredentialError }>(id, async record => {
         ensureActive();
         if (!record || !sameRegistration(registration, record)) throw new OAuthCredentialError('invalid_session');
-        if (!validTokens(record.credentials, record.service !== 'github-copilot')) throw new OAuthCredentialError('reauthentication_required');
+        const requiresGrantExpiry = record.service !== 'github-copilot' && record.service !== 'openrouter' && record.service !== 'meta';
+        if (!validTokens(record.credentials, requiresGrantExpiry)) throw new OAuthCredentialError('reauthentication_required');
         let next = record;
         let exchangingResource = false;
         const refreshSignal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(30_000)]);
@@ -132,22 +136,24 @@ export async function openOAuthSession(input: {
           if (record.credentials.expiresAt !== undefined && record.credentials.expiresAt <= Date.now()
             && (record.credentials.earliestRefreshAt ?? 0) > Date.now()) throw new OAuthCredentialError('refresh_failed');
           if (due(record.credentials)) next = { ...next, credentials: await driver.refresh(next, refreshSignal), resource: undefined };
-          if (!validTokens(next.credentials, record.service !== 'github-copilot')
+          if (!validTokens(next.credentials, requiresGrantExpiry)
             || (next.credentials.expiresAt !== undefined && next.credentials.expiresAt <= Date.now())) throw new OAuthCredentialError('reauthentication_required');
-          if (next.service === 'github-copilot' && (!validTokens(next.resource) || due(next.resource))) {
+          const resourceService = next.service === 'github-copilot' || next.service === 'meta';
+          if (resourceService && (!validTokens(next.resource) || due(next.resource))) {
             if (!driver.exchangeResource) throw new OAuthCredentialError('invalid_session');
             exchangingResource = true;
             next = { ...next, resource: await driver.exchangeResource(next, refreshSignal) };
           }
           ensureActive();
-          const tokens = next.service === 'github-copilot' ? next.resource : next.credentials;
-          if (!validTokens(tokens) || tokens.expiresAt! <= Date.now()) throw new OAuthCredentialError('refresh_failed');
-          return { record: next, result: { token: tokens.accessToken, error: undefined } };
+          const tokens = resourceService ? next.resource : next.credentials;
+          const unknownMetaLifetime = next.service === 'meta' && exchangingResource && tokens?.expiresAt === undefined;
+          if (!validTokens(tokens, next.service !== 'openrouter' && !unknownMetaLifetime) || (tokens.expiresAt !== undefined && tokens.expiresAt <= Date.now())) throw new OAuthCredentialError('refresh_failed');
+          return { record: unknownMetaLifetime ? { ...next, resource: undefined } : next, result: { token: tokens.accessToken, error: undefined } };
         } catch (error) {
           ensureActive();
           const failure = error instanceof OAuthCredentialError ? error : new OAuthCredentialError('refresh_failed');
           // A Copilot 401 does not undo a successful GitHub grant rotation.
-          if (exchangingResource) return { record: { ...next, resource: undefined }, result: { error: failure } };
+          if (exchangingResource && !(next.service === 'meta' && failure.code === 'reauthentication_required')) return { record: { ...next, resource: undefined }, result: { error: failure } };
           // Commit the tombstone before reporting invalid_grant. A later Host must not retry stale refresh tokens.
           if (failure.code === 'reauthentication_required') return {
             record: { ...record, credentials: undefined, resource: undefined }, result: { token: undefined, error: failure },

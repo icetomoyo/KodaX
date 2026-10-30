@@ -1,7 +1,7 @@
 # FEATURE_302 — Independent LLM Provider Parity
 
-Date: 2026-10-30. Status: T01–T08 implemented, contract-tested and reviewed offline;
-T08 final full regression passed; T09–T12 remain pending. Historical T05 failures
+Date: 2026-10-30. Status: T01–T09 implemented, contract-tested and reviewed offline;
+T08 final full regression passed; T09 scoped and published regression passed; T10–T12 remain pending. Historical T05 failures
 and their T06 disposition remain recorded below. This is not a claim of complete
 pi-ai parity or a released feature.
 [Accepted scope and tickets](../features/v0.7.99.md#feature_302-independent-llm-provider-parity).
@@ -28,6 +28,7 @@ pi-ai parity or a released feature.
 | T06 | Current dynamic schemas, safe imported history, model-scoped signed reasoning and identity-scoped effort/cache compatibility. | `responses-compat.test.ts`, managed/fallback/REPL regressions; final full offline suite 18,111 passed, 0 failed. |
 | T07 | Host-owned OAuth storage/refresh, account switching, revocation and fresh Host binding for Codex/OpenAI/Copilot. | Session/driver/provider/binding tests and real broker lifecycle; final full offline suite 18,149 passed, 0 failed. |
 | T08 | Native Gemini/Vertex, Bedrock and Azure protocols with provider-bound cloud credentials over the existing broker. | Captured native wire, real SDK/EventStream decoding, per-request refresh/revoke/new-Host regressions; final acceptance below. |
+| T09 | Native Mistral/Pi Messages, explicit 42-identity presets and all nine host-owned OAuth service dialects. | 55 request/auth inventory fixtures, strict stream/history and OAuth lifecycle fixtures; 1,390 LLM/binding tests and 66 published tests passed. |
 
 All fixture keys are fake. Transport tests stub fetch; no live MiMo, MiniMax or
 other model calls were made. Their authentication acceptance, subscription
@@ -103,6 +104,14 @@ not close a row. All new work here is **not live-tested**.
 | zai | Existing `zai-coding` Messages retained; full route equivalence pending | T09 |
 | zai-coding-cn | Existing `zhipu-coding` Messages retained; full route equivalence pending | T09 |
 
+T09 supersedes the initial provider rows marked pending above: all **41 chat identities**
+now have an explicit connection factory and each declared API has an independent
+URL/auth request fixture (54 chat cases). TypeSafe is the 42nd, classifier-only
+identity and remains T10. This is implemented/contract-tested route coverage;
+model-specific strict/cache/grammar/discovery/pricing remains T11, complete entry
+integration remains T12, and every row remains not live-tested. Legacy aliases
+and route-specific optimizations are retained.
+
 KodaX's `ark-coding`, public `qwen` and `zhipu`, M Plan-specific
 `minimax-coding`, and CLI bridges remain available. Counts alone must not be
 used to replace these routes or rename saved selections.
@@ -117,8 +126,8 @@ used to replace these routes or rename saved selections.
 | bedrock-converse-stream | T08 Converse/ConverseStream, official binary EventStream/CRC, SigV4 or bearer contract-tested offline; other model dialects remain T09/T11. |
 | google-generative-ai | T08 GenerateContent/SSE, ordered signed Parts, tools/images/usage and explicit API key contract-tested offline. |
 | google-vertex | T08 regional/global/Express GenerateContent/SSE and explicit credentials contract-tested offline; host owns ADC/workload provider. |
-| mistral-conversations | Pending T09 |
-| pi-messages | Pending T09; implement protocol independently, no pi dependency |
+| mistral-conversations | T09 native /chat/completions JSON/SSE, typed thinking, tool-ID mapping and strict terminals contract-tested offline. |
+| pi-messages | T09 independently implemented SSE protocol, authoritative end snapshots and safe same-source/legacy history contract-tested offline; no pi dependency. |
 | openrouter-images | Pending T10; separate operation and Host media delivery |
 | typesafe-system-one | Pending T10 |
 | cloudflare-workers-ai-system-one | Pending T10 |
@@ -129,7 +138,7 @@ used to replace these routes or rename saved selections.
 Of nine source-declared OAuth flows, T07 contract-tests the host-owned session,
 refresh and broker path for OpenAI Codex, OpenAI ChatGPT and GitHub Copilot;
 browser/device login and secure storage are supplied by trusted Host adapters.
-Anthropic, OpenRouter, Kimi Coding, Meta, xAI and Radius remain T09. Existing
+T09 adds Anthropic, OpenRouter, Kimi Coding, Meta, xAI and Radius, with PKCE or device primitives as appropriate and shared broker-only inference. Concrete login UI/storage integration remains T12. Existing
 CLI-managed logins do not count as native KodaX OAuth implementations. No flow is
 live-tested here. API keys, cloud identities and subscription tokens must not be
 treated as interchangeable.
@@ -779,3 +788,86 @@ confirmed a native 400 now surfaces after one request instead of changing semant
   `src/runtime-daemon/server.test.ts` in common: our new cloud lifecycle tests are
   inserted after baseline line 1157; the concurrent additions are after baseline
   lines 3371 and 3819. These hunks are distinct; no concurrent edits were imported.
+
+## T09 implementation and scoped acceptance
+
+Implementation baseline: `c91152b18`; pi reference remains `e7a0df27c`.
+The 42-row connection inventory is source-declared metadata, not model/account
+entitlement. New presets use an explicit custom name and never replace the
+existing 16 aliases. Multi-protocol routes require an explicit API selection;
+per-model/deployment endpoints remain explicit where no generated catalog exists.
+
+- pi's `mistral-conversations` actually uses native Mistral Chat Completions,
+  not the beta Conversations endpoint. KodaX implements typed thinking chunks,
+  9-character tool IDs with paired historical mappings, strict completed tool
+  arguments and native JSON nonstreaming. Sources:
+  [Chat API](https://docs.mistral.ai/api/endpoint/chat#post-v1chatcompletions),
+  [reasoning](https://docs.mistral.ai/studio/conversations/reasoning),
+  [prompt caching](https://docs.mistral.ai/studio/conversations/advanced/prompt-caching).
+- Pi Messages is an independent wire projection (`/messages`, transcript system
+  tools, SSE start/block/done). `complete()` buffers SSE and does not advertise a
+  native nonstreaming recovery channel. The pinned source is
+  `packages/ai/src/api/pi-messages.ts:56–101,374–443` and
+  `packages/ai/src/types.ts:561–659,786–804`. No backend validator for missing
+  historical usage was available. Legacy/foreign assistants and receipts become
+  readable user context; complete same-source native metadata enables structured
+  replay. Usage/cost, signatures and historical timestamps are not invented.
+- OAuth additions distinguish OpenRouter's issued API key without a refresh grant
+  from ordinary expiring grants and Meta identity-to-resource exchange. An unknown
+  Meta resource lifetime is not replaced by a guessed 24-hour expiry: re-mint on
+  the next request and do not persist that unbounded resource key. Sources:
+  [OpenRouter PKCE](https://openrouter.ai/docs/guides/overview/auth/oauth),
+  [xAI discovery](https://auth.x.ai/.well-known/openid-configuration), pinned pi
+  `packages/ai/src/auth/oauth/meta.ts`. Non-public client entitlement is unverified;
+  callers supply their own authorized registration and validate login identity.
+- Cloudflare unified billing uses `cf-aig-authorization` and removes ordinary
+  Authorization/x-api-key. Other connection authentication remains explicit;
+  existing API-key routes keep their environment path. Azure Completions adds the
+  same explicit key/Entra binding and deployment endpoint normalization as Responses.
+- The CLI budget first failed at **5,197,769 bytes** after the initial native
+  additions; lazy SDK transport loading alone cannot shrink the single-file CLI.
+  Static text was therefore moved to the package-owned `static-text.json` asset,
+  alongside the existing manual asset distribution. A before/after serialization
+  of 78 public tool definitions, worker exports and default stable instructions
+  was byte-identical, SHA256
+  `050bcc8681de1e98ba710fc846e48d2c51b8324ae540196acd24c60d52aa3277`.
+  The subsequent build measured **5,153,757 bytes** and passed the unchanged
+  5 MiB / 64 KiB-headroom guard. These are intermediate measurements, not final
+  T09–T12 release acceptance.
+
+T09 now includes host-owned PKCE callback and device-polling primitives; callers
+still own browser/consent UI, registered client entitlement, verified identity and
+secure atomic session storage. Device codes are held in a cancellable closure;
+pending/slow_down/denial/expiry and one-use code/state checks have offline fixtures.
+The source-declared client identity is never borrowed from pi or another app.
+
+The provider/API request matrix passes **55 cases**: 41 chat-provider identities
+with every declared chat API, plus the classifier-only TypeSafe inventory row.
+These tests capture actual request URLs and authentication using offline transport
+rejection fixtures; successful stream/history semantics are covered separately by
+the protocol regressions. They do not establish live entitlement or service-wide
+model compatibility. The final combined LLM/binding run passed **94 files / 1,390 tests**;
+scoped new-code coverage was **89.37% statements / 82.55% branches**,
+94.39% functions and 96.40% lines. This is not repository-wide coverage.
+
+A combined run caught an over-broad raw-fetch connection retry replaying a
+Responses HTTP disconnect. Retry marking is now limited to failures before fetch
+returns response headers; streamed-body failures retain Host recovery ownership.
+The existing disconnect/cancellation contract and native socket-reset/HTTP retry
+regressions pass together. Pi end snapshots are authoritative completed text and
+tool objects; partial deltas are display-only and missing/invalid ends cannot
+return executable tools.
+
+T09 frozen-patch acceptance:
+
+- Workspace builds, source/test typechecks, JS bundles and self-contained declarations passed.
+- Published-package regression: **66/66 passed**, zero failures/skips, **80.06 seconds**.
+- CLI **5,165,603 bytes**, **77,277 bytes** below 5 MiB; the unchanged 64 KiB minimum headroom passes.
+- Standards review: two findings corrected (five-level Pi metadata nesting and duplicated OAuth endpoint profiles); re-review **0 findings**, no remaining severity.
+- Spec review: OpenCode/Go Messages must send Bearer and device slow_down must honor the server interval; both reproduced by RED fixtures, corrected and independently re-tested; re-review **0 findings**, no remaining severity.
+- OAuth endpoint profiles are shared by authorization, device, refresh, resource exchange and revocation. OpenRouter keys and Meta unknown expiry remain explicit rather than assigned synthetic lifetimes.
+- Full monorepo acceptance will run after T10–T12 source freezes; T09 does not replace the T08 full-run evidence.
+- Concurrent checkout remains untouched at `f6a010462`. Build asset-copy hunks are distinct from its CLI-budget edits; integration still requires a final review of both branches.
+
+T10–T12 remain open, including Host/CLI wiring, media/deferred lifecycle,
+cache/strict/WS, catalog/pricing/identity and final published-package/full regression.

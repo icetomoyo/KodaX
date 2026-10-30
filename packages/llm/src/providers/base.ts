@@ -25,6 +25,7 @@ import { observeProviderAttempt } from '../provider-request-observation.js';
 import { KodaXError, KodaXRateLimitError, KodaXProviderError, KodaXNetworkError, KodaXContextOverflowError, KodaXReasoningEffortRejectedError } from '../errors.js';
 import { parseContextOverflowFacts } from './context-overflow.js';
 import { isProviderQuotaError } from '../retry/provider-quota.js';
+import { isProviderConnectionFailure } from '../retry/provider-network.js';
 import type { KodaXProviderErrorMetadata } from '../errors.js';
 import { classifyReasoningEffortRejection } from './reasoning-effort-rejection.js';
 import {
@@ -382,6 +383,7 @@ export abstract class KodaXBaseProvider {
   isConfigured(): boolean {
     const scopedAuthority = hasScopedProviderCredentialAuthority(this.name);
     if (scopedAuthority !== undefined) return scopedAuthority;
+    if (this.config.credentialSource === 'broker') return false;
     return resolveProviderCredential(
       this.name,
       process.env[this.config.apiKeyEnv],
@@ -626,7 +628,7 @@ export abstract class KodaXBaseProvider {
   }
 
   protected getApiKey(): string {
-    const key = resolveProviderCredential(this.name, process.env[this.config.apiKeyEnv]);
+    const key = resolveProviderCredential(this.name, this.config.credentialSource === 'broker' ? undefined : process.env[this.config.apiKeyEnv]);
     if (!key) throw new Error(`${this.config.apiKeyEnv} not set`);
     return key;
   }
@@ -946,7 +948,7 @@ export abstract class KodaXBaseProvider {
         // here so singleAttempt and the physical-attempt budget apply uniformly.
         // Host deadlines bypass SDK loading and retain their existing recovery path.
         if (!signal?.aborted && i < retries - 1 && e instanceof Error && !hasTypedTimeout(e)
-          && await isProviderSdkError(e, 'APIConnectionError')) {
+          && (isProviderConnectionFailure(e) || await isProviderSdkError(e, 'APIConnectionError'))) {
           this.onStaleConnection();
           await waitForRetryDelay(parseRetryAfter({}, { attempt: i, baseBackoffMs: 500 }).waitMs, signal);
           continue;

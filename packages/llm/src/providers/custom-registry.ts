@@ -381,8 +381,8 @@ export function getCustomProviderVerifyMetadata(
   const config = customProviders.get(name);
   if (!config) return undefined;
   const verifyStrategy: KodaXVerifyStrategy =
-    (config.oauth ? 'minimal-message' : config.verifyStrategy) ?? (config.cloud ? 'minimal-message' : undefined) ??
-    (config.protocol === 'anthropic' ? 'count-tokens' : 'models-list');
+    config.verifyStrategy ?? (config.oauth || config.cloud ? 'minimal-message' : undefined) ??
+    (config.protocol === 'anthropic' ? 'count-tokens' : config.protocol === 'openai' ? 'models-list' : 'minimal-message');
   return { apiKeyEnv: config.apiKeyEnv, verifyStrategy };
 }
 

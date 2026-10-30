@@ -1,4 +1,6 @@
 import { recordRejectedImage } from './rejected-image.js';
+import { createHash } from 'node:crypto';
+import { connectionAuthFetch } from './connection-auth.js';
 import { observeProviderFetch, observeProviderStreamUsage } from '../provider-request-observation.js';
 /**
  * KodaX Anthropic Compatible Provider
@@ -47,6 +49,7 @@ import {
 import { resolvePromptCacheDisabled } from '../run-scoped-config.js';
 import {
   hasProviderCredentialContext,
+  getScopedProviderCredential,
   withProviderRequestCredential,
 } from '../provider-credential-context.js';
 
@@ -193,14 +196,16 @@ function hasAnthropicOutputEffort(
 
 export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
   getGenerationSource(model?: string): KodaXGenerationSource {
-    return { provider: this.name, api: 'anthropic-messages', model: this.getWireModelId(model), baseUrl: this.getBaseUrl() };
+    const token = getScopedProviderCredential(this.name);
+    return { provider: this.name, api: 'anthropic-messages', model: this.getWireModelId(model), baseUrl: this.getBaseUrl(),
+      ...(this.config.credentialSource === 'broker' ? { credentialScope: token ? createHash('sha256').update(token).digest('hex') : 'unavailable' } : {}) };
   }
   /** Unknown legacy provenance keeps its existing signature policy; known foreign opaque content never replays. */
   canReplayReasoning(block: KodaXThinkingBlock | KodaXRedactedThinkingBlock, model?: string): boolean {
     const origin = block.source ?? (block.type === 'thinking' ? block.responsesReasoning?.source : undefined);
     const target = this.getGenerationSource(model);
     if ((origin && (origin.provider !== target.provider || origin.api !== target.api
-      || origin.model !== target.model || origin.baseUrl !== target.baseUrl))
+      || origin.model !== target.model || origin.baseUrl !== target.baseUrl || origin.credentialScope !== target.credentialScope))
       || (block.type === 'thinking' && block.openaiReasoning !== undefined)) return false;
     return !this.getEffectiveStrictThinkingSignature(model)
       || (block.type === 'thinking' ? Boolean(block.signature) : origin !== undefined);
@@ -247,16 +252,19 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
 
   protected buildClient(): Anthropic | Promise<Anthropic> {
     const defaultHeaders = getAnthropicCompatDefaultHeaders(this.config);
+    const key = this.getApiKey();
+    const fetch = connectionAuthFetch(this.config, key, 'anthropic');
     return createAnthropicSdkClient({
-      apiKey: this.getApiKey(),
+      apiKey: this.config.authentication === 'bearer' ? null : key,
       // An undefined authToken makes the SDK read ANTHROPIC_AUTH_TOKEN and send
       // it as a Bearer header next to the provider key. Gateways then reject
       // the request with 401, and an inherited Anthropic token leaks to them.
-      authToken: null,
+      authToken: this.config.authentication === 'bearer' ? key : null,
       baseURL: this.config.baseUrl,
       // Some Anthropic-compatible gateways block the SDK's default
       // "Anthropic/JS ..." user agent even when the request is otherwise valid.
       ...(defaultHeaders ? { defaultHeaders } : {}),
+      ...(fetch ? { fetch, logLevel: 'off' } : {}),
     });
   }
 

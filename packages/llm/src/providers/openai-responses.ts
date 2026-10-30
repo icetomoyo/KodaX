@@ -6,7 +6,7 @@ import type {
 } from '../types.js';
 import { KodaXProviderError } from '../errors.js';
 import { observeProviderStreamUsage } from '../provider-request-observation.js';
-import { withProviderRequestCredential } from '../provider-credential-context.js';
+import { withProviderRequestCredential, getScopedProviderCredential } from '../provider-credential-context.js';
 import { resolvePromptCacheDisabled } from '../run-scoped-config.js';
 import { KodaXOpenAICompatProvider } from './openai.js';
 import { prepareImageBlock, UNSUPPORTED_TOOL_RESULT_IMAGE_PLACEHOLDER } from './image-serialization.js';
@@ -32,7 +32,9 @@ export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProv
   protected responseRequestHeaders(_messages: readonly KodaXMessage[]): Record<string, string> | undefined { return undefined; }
   protected acceptsResponseToolNamespace(_namespace?: string): boolean { return true; }
   getGenerationSource(model?: string): KodaXGenerationSource {
-    return { provider: this.name, api: 'openai-responses', model: this.getWireModelId(model), baseUrl: this.getBaseUrl() };
+    const token = getScopedProviderCredential(this.name);
+    return { provider: this.name, api: 'openai-responses', model: this.getWireModelId(model), baseUrl: this.getBaseUrl(),
+      ...(this.config.credentialSource === 'broker' ? { credentialScope: token ? createHash('sha256').update(token).digest('hex') : 'unavailable' } : {}) };
   }
 
   override async verifyCredential(opts?: { timeoutMs?: number; signal?: AbortSignal }): Promise<KodaXVerifyCredentialResult> {
@@ -49,12 +51,12 @@ export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProv
 
   override stream(messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string,
     reasoning?: boolean | KodaXReasoningRequest, options?: KodaXProviderStreamOptions, signal?: AbortSignal): Promise<KodaXStreamResult> {
-    return this.generate(true, messages, tools, system, reasoning, options, signal);
+    return withProviderRequestCredential(this.name, 'primary', signal, requestSignal => this.generate(true, messages, tools, system, reasoning, options, requestSignal));
   }
 
   override complete(messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string,
     reasoning?: boolean | KodaXReasoningRequest, options?: KodaXProviderStreamOptions, signal?: AbortSignal): Promise<KodaXStreamResult> {
-    return this.generate(false, messages, tools, system, reasoning, options, signal);
+    return withProviderRequestCredential(this.name, 'primary', signal, requestSignal => this.generate(false, messages, tools, system, reasoning, options, requestSignal));
   }
 
   private protocolError(message: string): KodaXProviderError {

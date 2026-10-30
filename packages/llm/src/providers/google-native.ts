@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { KodaXAssistantBlock, KodaXStreamResult, KodaXTokenUsage } from '../types.js';
-import { observeProviderFetch, observeProviderStreamUsage } from '../provider-request-observation.js';
+import { observeProviderStreamUsage } from '../provider-request-observation.js';
 import { KodaXNativeCloudProvider, type NativeCloudRequest } from './native-cloud.js';
 import { requireCloudCredential } from './cloud-auth.js';
 import { googleBlockHash, projectGoogleMessages, type GooglePart } from './google-messages.js';
 import { readCloudSSE } from './cloud-sse.js';
+import { nativeResponse } from './native-http.js';
 
 interface GoogleResponse {
   candidates?: { index?: number; content?: { parts?: GooglePart[] }; finishReason?: string }[];
@@ -24,22 +25,16 @@ export class KodaXGoogleProvider extends KodaXNativeCloudProvider {
     if (credential.type === 'aws' || (this.cloud.service === 'gemini' && credential.type !== 'api-key')) throw this.protocolError('Google route requires the matching API key or cloud bearer.');
     if (this.cloud.service === 'vertex' && credential.type === 'bearer' && !this.cloud.project) throw this.protocolError('Vertex bearer requires project and location.');
     const url = `${this.config.baseUrl!.replace(/\/$/, '')}/models/${encodeURIComponent(request.model)}:${request.streaming ? 'streamGenerateContent?alt=sse' : 'generateContent'}`;
-    const response = await observeProviderFetch(globalThis.fetch)(url, { method: 'POST', redirect: 'error', signal: request.signal,
-      headers: { 'content-type': 'application/json', ...(credential.type === 'api-key' ? { 'x-goog-api-key': credential.key } : { authorization: `Bearer ${credential.token}` }) },
+    const response = await nativeResponse(url, { method: 'POST', redirect: 'error', signal: request.signal,
+      headers: { 'content-type': 'application/json', ...(credential.type === 'api-key'
+        ? this.config.authentication === 'bearer' ? { authorization: `Bearer ${credential.key}` } : { 'x-goog-api-key': credential.key }
+        : { authorization: `Bearer ${credential.token}` }) },
       body: JSON.stringify({ contents: await projectGoogleMessages(request.messages, request.source, this.getCapabilityProfile().multimodalSupport !== 'none'),
         ...(request.system ? { systemInstruction: { parts: [{ text: request.system }] } } : {}),
         ...(request.tools.length ? { tools: [{ functionDeclarations: request.tools.map(t => ({ name: t.name, description: t.description, parametersJsonSchema: t.input_schema })) }] } : {}),
         ...(request.options?.forcedToolName ? { toolConfig: { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: [request.options.forcedToolName] } } } : {}),
         generationConfig: { maxOutputTokens: request.maxOutputTokens, ...this.thinkingConfig(request) },
       }) });
-    if (!response.ok) {
-      const text = await response.text();
-      let error: unknown;
-      try { error = JSON.parse(text); } catch { error = undefined; } // Gateways may return text/HTML; status and retry headers remain authoritative.
-      const body = error && typeof error === 'object' && 'error' in error ? error.error : undefined;
-      const message = body && typeof body === 'object' && 'message' in body && typeof body.message === 'string' ? body.message : `Google HTTP ${response.status}`;
-      throw Object.assign(new Error(message), { status: response.status, headers: response.headers, error: body });
-    }
     const blocks: KodaXAssistantBlock[] = [];
     let usage: KodaXTokenUsage | undefined;
     let finishReason: string | undefined;

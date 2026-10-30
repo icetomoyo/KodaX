@@ -23,11 +23,10 @@ import { KodaXAnthropicCompatProvider } from './anthropic.js';
 import { KodaXOpenAICompatProvider } from './openai.js';
 import { KodaXOpenAIResponsesProvider } from './openai-responses.js';
 import { KodaXOAuthResponsesProvider } from './oauth-responses.js';
-import { OAUTH_PROVIDER_BASE_URLS } from '../oauth/provider-config.js';
+import { validateOAuthProviderConfig } from '../oauth/provider-config.js';
 import { validateCloudProviderConfig } from '../cloud/provider-config.js';
-import { KodaXAzureResponsesProvider } from './azure-responses.js';
-import { KodaXGoogleProvider } from './google-native.js';
-import { KodaXBedrockProvider } from './bedrock-native.js';
+import { KodaXAzureResponsesProvider, KodaXAzureCompletionsProvider } from './azure-responses.js';
+import { KodaXLazyNativeProvider, KodaXLazyCloudProvider } from './lazy-native.js';
 import { NATIVE_PROVIDER_CAPABILITY_PROFILE } from './capability-profile.js';
 import { createReasoningProfileFromPreset } from '../reasoning.js';
 import { optionalOutputTokenLimit } from './output-token-limit.js';
@@ -355,23 +354,23 @@ export function validateCustomProviderConfig(
     );
   }
 
-  if (!['anthropic', 'openai', 'google', 'bedrock'].includes(custom.protocol)) {
+  if (!['anthropic', 'openai', 'google', 'bedrock', 'mistral', 'pi-messages'].includes(custom.protocol)) {
     throw new Error(
       `Unknown protocol "${custom.protocol}" for custom provider "${custom.name}". Must be "anthropic" or "openai".`,
     );
   }
   validateCloudProviderConfig(custom);
+  if (custom.authentication !== undefined && !['bearer', 'cloudflare-gateway'].includes(custom.authentication)) throw new Error('Unknown connection authentication mode.');
+  if (custom.authentication !== undefined && (!['anthropic', 'openai', 'google'].includes(custom.protocol)
+    || (custom.protocol === 'google' && custom.authentication !== 'bearer')
+    || (custom.cloud && custom.cloud.service !== 'gemini'))) throw new Error('Authentication mode is not supported by this native route.');
 
   if (custom.api !== undefined && (custom.protocol !== 'openai'
     || !['chat-completions', 'responses'].includes(custom.api))) {
     throw new Error(`Custom provider "${custom.name}": api requires openai and must be chat-completions or responses.`);
   }
 
-  if (custom.oauth !== undefined && (custom.protocol !== 'openai' || custom.api !== 'responses'
-    || !Object.hasOwn(OAUTH_PROVIDER_BASE_URLS, custom.oauth)
-    || custom.baseUrl !== OAUTH_PROVIDER_BASE_URLS[custom.oauth])) {
-    throw new Error('OAuth custom provider requires its matching subscription Responses endpoint.');
-  }
+  validateOAuthProviderConfig(custom);
 
   if (
     custom.userAgentMode !== undefined
@@ -485,6 +484,9 @@ function buildProviderConfig(custom: KodaXCustomProviderConfig): KodaXProviderCo
 
   return {
     apiKeyEnv: custom.apiKeyEnv,
+    authentication: custom.authentication,
+    oauth: custom.oauth,
+    ...(custom.oauth ? { credentialSource: 'broker' as const } : {}),
     model: custom.model,
     baseUrl: custom.baseUrl,
     models,
@@ -522,11 +524,12 @@ export function createCustomProvider(custom: KodaXCustomProviderConfig): KodaXBa
 
   const config = buildProviderConfig(custom);
 
-  if (custom.cloud?.service === 'azure') return new KodaXAzureResponsesProvider(custom.name, config);
-  if (custom.cloud?.service === 'gemini' || custom.cloud?.service === 'vertex') return new KodaXGoogleProvider(custom.name, config, custom.cloud);
-  if (custom.cloud?.service === 'bedrock') return new KodaXBedrockProvider(custom.name, config, custom.cloud);
+  if (custom.protocol === 'mistral' || custom.protocol === 'pi-messages') return new KodaXLazyNativeProvider(custom.name, config, custom.protocol);
+  if (custom.cloud?.service === 'azure') return custom.api === 'chat-completions' ? new KodaXAzureCompletionsProvider(custom.name, config) : new KodaXAzureResponsesProvider(custom.name, config);
+  if (custom.cloud) return new KodaXLazyCloudProvider(custom.name, config, custom.cloud);
 
-  if (custom.oauth) return new KodaXOAuthResponsesProvider(custom.name, config, custom.oauth);
+  if ((custom.oauth === 'openai-chatgpt' || custom.oauth === 'openai-codex' || custom.oauth === 'github-copilot')
+    && custom.protocol === 'openai' && custom.api === 'responses') return new KodaXOAuthResponsesProvider(custom.name, config, custom.oauth);
 
   if (custom.protocol === 'anthropic') {
     return new DynamicAnthropicProvider(custom.name, config);

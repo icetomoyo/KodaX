@@ -64,6 +64,13 @@ it('persists the explicit Responses API through setup without changing omitted A
     customProviders: [{ name: 'responses', protocol: 'openai', api: 'responses' }],
   });
 });
+it('preserves explicit gateway authentication through setup persistence', () => {
+  const readiness = inspectProviderSetupReadiness({ configPath, catalog, environment: {} });
+  persistProviderSetupChoice({ configPath, catalog, expectedRevision: readiness.configRevision, choice: { kind: 'custom', provider: {
+    name: 'gateway', protocol: 'openai', api: 'responses', authentication: 'cloudflare-gateway', apiKeyEnv: 'GATEWAY_KEY',
+    baseUrl: 'https://gateway.ai.cloudflare.com/v1/account/gateway/openai', model: 'chosen' } } });
+  expect(JSON.parse(readFileSync(configPath, 'utf8')).customProviders[0].authentication).toBe('cloudflare-gateway');
+});
 
 it('preserves subscription metadata and requires a host broker even when its placeholder environment variable is set', () => {
   writeConfig({ provider: 'subscription', customProviders: [{ name: 'subscription', protocol: 'openai', api: 'responses', oauth: 'openai-chatgpt',

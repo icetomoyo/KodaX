@@ -4,6 +4,33 @@ import type { OAuthSessionRecord } from './session.js';
 
 const registration: OAuthSessionRecord = { id: 'id', service: 'openai-chatgpt', clientId: 'issued-to-this-host', accountId: 'verified-sub',
   credentials: { accessToken: 'old', refreshToken: 'rotate', expiresAt: 1 } };
+it.each([
+  ['anthropic', 'https://platform.claude.com/v1/oauth/token'], ['kimi-coding', 'https://auth.kimi.com/api/oauth/token'],
+  ['xai', 'https://auth.x.ai/oauth2/token'], ['radius', 'https://radius.pi.dev/v1/oauth/token'],
+] as const)('refreshes %s through its own issuer using the host registration', async (service, endpoint) => {
+  const fetch = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => Response.json({ access_token: 'new', expires_in: 3600, token_type: 'bearer' }));
+  const result = await createOAuthRefreshDriver(service, { fetch }).refresh({ ...registration, service }, new AbortController().signal);
+  expect(fetch.mock.calls[0]?.[0]).toBe(endpoint);
+  const wire = String(fetch.mock.calls[0]?.[1]?.body);
+  const body = service === 'anthropic' ? JSON.parse(wire) : Object.fromEntries(new URLSearchParams(wire));
+  expect(body).toEqual({ grant_type: 'refresh_token', client_id: 'issued-to-this-host', refresh_token: 'rotate' });
+  expect(result).toMatchObject({ accessToken: 'new', refreshToken: 'rotate' });
+});
+it('mints a Meta resource API key using the identity bearer and no guessed expiry', async () => {
+  const fetch = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => Response.json({ api_key: 'minted-resource' }));
+  const driver = createOAuthRefreshDriver('meta', { fetch });
+  const result = await driver.exchangeResource!({ ...registration, service: 'meta' }, new AbortController().signal);
+  expect(fetch.mock.calls[0]?.[0]).toBe('https://api.meta.ai/muse-code/key');
+  expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get('authorization')).toBe('Bearer old');
+  expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({});
+  expect(result).toEqual({ accessToken: 'minted-resource' });
+});
+it('revokes xAI through its discovered standard endpoint with the host client', async () => {
+  const fetch = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => new Response(null, { status: 200 }));
+  await createOAuthRefreshDriver('xai', { fetch }).revoke!({ ...registration, service: 'xai' }, new AbortController().signal);
+  expect(fetch.mock.calls[0]?.[0]).toBe('https://auth.x.ai/oauth2/revoke');
+  expect(Object.fromEntries(new URLSearchParams(String(fetch.mock.calls[0]?.[1]?.body)))).toEqual({ token: 'rotate', token_type_hint: 'refresh_token', client_id: 'issued-to-this-host' });
+});
 describe('OAuth refresh wire protocols', () => {
   it('refreshes SIWC using its issued client, resource and rotating tokens without a scope parameter', async () => {
     const fetch = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => Response.json({ access_token: 'new', refresh_token: 'next', expires_in: 3600,

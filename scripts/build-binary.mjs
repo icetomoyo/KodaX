@@ -385,6 +385,7 @@ function buildOne(target, version) {
   }
   cpSync(capJsonSrc, join(outDir, 'provider-capabilities.json'));
   cpSync(join(ROOT, 'packages/coding/src/self-knowledge/manual-topics.json'), join(outDir, 'manual-topics.json'));
+  cpSync(join(ROOT, 'packages/coding/src/prompts/static-text.json'), join(outDir, 'static-text.json'));
 
   // Image validation runs the unchanged JS/WASM codec outside the compiled executable.
   const imageCodecSrc = join(ROOT, 'node_modules', '@silvia-odwyer', 'photon-node');
