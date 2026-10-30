@@ -710,6 +710,7 @@ export interface KodaXEvents {
     provider: string;
     model: string;
     effort: string;
+    cacheScope?: string;
   } & KodaXActivityEventMeta) => void;
   onReasoningResolved?: (event: KodaXReasoningResolution & KodaXActivityEventMeta) => void;
   onRepoIntelligenceTrace?: (event: KodaXRepoIntelligenceTraceEvent & Partial<KodaXLiveEventMeta>) => void;

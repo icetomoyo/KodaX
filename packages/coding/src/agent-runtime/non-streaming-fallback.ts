@@ -56,7 +56,7 @@ import type {
   KodaXEphemeralSuffix,
 } from '@kodax-ai/llm';
 import { withProviderRequestCredential } from '@kodax-ai/llm';
-import { getCachedRejectedEfforts, recordRejectedEffort } from '@kodax-ai/agent';
+import { getProviderReasoningCacheOptions, recordRejectedEffort } from '@kodax-ai/agent';
 import type { BoundaryTrackerSession } from './boundary-tracker-session.js';
 import type { ExtensionEventEmitter } from './stream-handler-wiring.js';
 
@@ -144,9 +144,9 @@ export async function executeNonStreamingFallback(
         input.effectiveProviderReasoning,
         {
           promptCacheKey: input.promptCacheKey,
-          rejectedReasoningEfforts: getCachedRejectedEfforts(input.providerName, input.modelOverride ?? input.streamProvider.getModel(), input.configHome),
+          ...getProviderReasoningCacheOptions(input.streamProvider, input.modelOverride ?? input.streamProvider.getModel(), input.configHome),
           onReasoningEffortRejected: (event) => {
-            recordRejectedEffort(event.provider, event.model, event.effort, 'observed', new Date().toISOString(), input.configHome);
+            recordRejectedEffort(event.provider, event.model, event.effort, 'observed', new Date().toISOString(), input.configHome, event.cacheScope);
             input.events.onReasoningEffortRejected?.({ ...event, ...requestMeta });
           },
           onReasoningResolved: (event) => input.events.onReasoningResolved?.({ ...event, ...requestMeta }),

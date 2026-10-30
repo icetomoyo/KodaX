@@ -934,7 +934,7 @@ describe('anthropic reasoning capability', () => {
     });
     const result = await provider.stream(MESSAGES, TOOLS, 'system', reasoning);
 
-    expect(result.thinkingBlocks).toEqual([
+    expect(result.thinkingBlocks).toMatchObject([
       { type: 'redacted_thinking', data: REDACTED_PAYLOAD },
     ]);
   });
@@ -1001,7 +1001,7 @@ describe('anthropic reasoning capability', () => {
       messages: { create },
     });
     const result = await provider.stream(MESSAGES, TOOLS, 'system', reasoning);
-    expect(result.thinkingBlocks).toEqual([
+    expect(result.thinkingBlocks).toMatchObject([
       { type: 'redacted_thinking', data: 'first' },
       { type: 'redacted_thinking', data: 'second' },
     ]);

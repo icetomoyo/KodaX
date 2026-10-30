@@ -15,6 +15,7 @@ import { recordRejectedImage } from './rejected-image.js';
 import { runVerifyCredential } from './verify-credential.js';
 import { classifyReasoningEffortRejection } from './reasoning-effort-rejection.js';
 import { isProviderQuotaError } from '../retry/provider-quota.js';
+import { buildReasoningEffortLadder, usesReasoningEffortLadder } from '../reasoning-ladder.js';
 
 function usageFrom(response: OpenAIResponse): KodaXTokenUsage | undefined {
   const usage = response.usage;
@@ -67,6 +68,9 @@ export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProv
 
   private async generate(streaming: boolean, messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string,
     reasoning?: boolean | KodaXReasoningRequest, options?: KodaXProviderStreamOptions, signal?: AbortSignal): Promise<KodaXStreamResult> {
+    if (options?.forcedToolName && !tools.some(t => t.name === options.forcedToolName)) {
+      throw this.protocolError('Responses forced tool is absent from the current tool definitions.');
+    }
     const model = options?.modelOverride ?? this.getModel();
     const normalized = this.normalizeReasoning(reasoning);
     this.validateExplicitReasoningEffort(normalized, model);
@@ -77,6 +81,8 @@ export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProv
       : requested === 'auto' ? profile?.defaultEffort ?? profile?.supportedEfforts?.find(entry => entry.isDefault)?.value
       : intent?.disabled ? (profile?.supportsDisabledThinking === true ? 'none' : undefined) : intent?.effort;
     const source = this.getGenerationSource(model);
+    const candidates = effort !== undefined && usesReasoningEffortLadder(profile)
+      ? buildReasoningEffortLadder(profile, effort) : effort === undefined ? [undefined] : [effort, undefined];
     return this.withRateLimit(async retry => {
       if (signal?.aborted) throw new DOMException('Request aborted', 'AbortError');
       const envelope = this.normalizeSystemForWire(system, messages);
@@ -102,80 +108,91 @@ export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProv
       retry.maxOutputTokensLimit ??= budget;
       // Only one-way hard evidence is retained. Identity and declaration changes cannot inherit it.
       const learningKey = createHash('sha256').update(JSON.stringify([source, profile, this.getApiKey()])).digest('hex');
-      const rejected = [...(this.rejectedResponseEfforts.get(learningKey) ?? []), ...(options?.rejectedReasoningEfforts ?? [])];
-      const cachedRejection = rejected.includes('*') || rejected.includes('parameter:reasoning')
-        || rejected.includes('parameter:effort') || (effort !== undefined && rejected.includes(effort));
-      const sentEffort = retry.suppressReasoningEffort || cachedRejection ? undefined : effort;
-      const params: ResponseCreateParamsBase = {
-        model: source.model, input, instructions: envelope.system, store: false,
-        include: ['reasoning.encrypted_content'],
-        max_output_tokens: Math.min(retry.maxOutputTokensOverride ?? budget, budget),
-        ...(tools.length ? { tools: tools.map(t => ({ type: 'function' as const, name: t.name,
-          description: t.description, parameters: t.input_schema, strict: false })) } : {}),
-        ...(options?.forcedToolName && tools.length ? { tool_choice: { type: 'function', name: options.forcedToolName } as const } : {}),
-        ...(sentEffort ? { reasoning: { effort: sentEffort as NonNullable<ResponseCreateParamsBase['reasoning']>['effort'] } } : {}),
-        ...(this.config.promptCacheAffinity && options?.promptCacheKey && !resolvePromptCacheDisabled()
-          ? { prompt_cache_key: options.promptCacheKey } : {}),
-      };
-      const client = await this.getClient();
-      let response: OpenAIResponse | undefined;
-      try {
-        if (streaming) {
-          const events = await client.responses.create({ ...params, stream: true }, { signal, maxRetries: 0 });
-          const toolInputs = new Map<string, { name: string; callId: string }>();
-          for await (const event of events) {
-            if (signal?.aborted) throw new DOMException('Request aborted', 'AbortError');
-            options?.onHeartbeat?.();
-            if ('response' in event) observeProviderStreamUsage(usageFrom(event.response));
-            if (event.type === 'response.completed' || event.type === 'response.incomplete' || event.type === 'response.failed') {
-              response = event.response;
-              break;
+      const rejected = [...(this.rejectedResponseEfforts.get(learningKey) ?? []),
+        ...(options?.resolveRejectedReasoningEfforts?.(learningKey) ?? options?.rejectedReasoningEfforts ?? [])];
+      const fallbacks: NonNullable<KodaXStreamResult['reasoningResolution']>['fallbacks'] = [];
+      for (const candidate of candidates) {
+        const cachedRejection = rejected.includes('*') || rejected.includes('parameter:reasoning')
+          || rejected.includes('parameter:effort') || (candidate !== undefined && rejected.includes(candidate));
+        if (candidate !== undefined && cachedRejection) {
+          fallbacks.push({ effort: candidate, reason: 'cached-rejection' });
+          continue;
+        }
+        const sentEffort = retry.suppressReasoningEffort ? undefined : candidate;
+        const params: ResponseCreateParamsBase = {
+          model: source.model, input, instructions: envelope.system, store: false,
+          include: ['reasoning.encrypted_content'],
+          max_output_tokens: Math.min(retry.maxOutputTokensOverride ?? budget, budget),
+          ...(tools.length ? { tools: tools.map(t => ({ type: 'function' as const, name: t.name,
+            description: t.description, parameters: t.input_schema, strict: false })) } : {}),
+          ...(options?.forcedToolName && tools.length ? { tool_choice: { type: 'function', name: options.forcedToolName } as const } : {}),
+          ...(sentEffort ? { reasoning: { effort: sentEffort as NonNullable<ResponseCreateParamsBase['reasoning']>['effort'] } } : {}),
+          ...(this.config.promptCacheAffinity && options?.promptCacheKey && !resolvePromptCacheDisabled()
+            ? { prompt_cache_key: options.promptCacheKey } : {}),
+        };
+        const client = await this.getClient();
+        let response: OpenAIResponse | undefined;
+        try {
+          if (streaming) {
+            const events = await client.responses.create({ ...params, stream: true }, { signal, maxRetries: 0 });
+            const toolInputs = new Map<string, { name: string; callId: string }>();
+            for await (const event of events) {
+              if (signal?.aborted) throw new DOMException('Request aborted', 'AbortError');
+              options?.onHeartbeat?.();
+              if ('response' in event) observeProviderStreamUsage(usageFrom(event.response));
+              if (event.type === 'response.completed' || event.type === 'response.incomplete' || event.type === 'response.failed') {
+                response = event.response;
+                break;
+              }
+              this.emitDelta(event, options, toolInputs);
             }
-            this.emitDelta(event, options, toolInputs);
+            if (signal?.aborted) throw new DOMException('Request aborted', 'AbortError');
+            if (!response) throw new KodaXProviderError('Stream incomplete: Responses ended without a terminal response.', this.name,
+              { failureCode: 'response_stream_error', stage: 'response_stream' });
+          } else {
+            response = await client.responses.create({ ...params, stream: false }, { signal, maxRetries: 0 });
+            observeProviderStreamUsage(usageFrom(response));
           }
-          if (signal?.aborted) throw new DOMException('Request aborted', 'AbortError');
-          if (!response) throw new KodaXProviderError('Stream incomplete: Responses ended without a terminal response.', this.name,
-            { failureCode: 'response_stream_error', stage: 'response_stream' });
-        } else {
-          response = await client.responses.create({ ...params, stream: false }, { signal, maxRetries: 0 });
-          observeProviderStreamUsage(usageFrom(response));
+        } catch (error) {
+          recordRejectedImage(error, params);
+          const rejection = sentEffort === undefined ? null : classifyReasoningEffortRejection(error, sentEffort);
+          if (rejection) {
+            const value = rejection.parameterRejected ? '*' : rejection.rejectedEffort;
+            const learned = this.rejectedResponseEfforts.get(learningKey) ?? new Set<string>();
+            learned.add(value);
+            this.rejectedResponseEfforts.set(learningKey, learned);
+            rejected.push(value);
+            fallbacks.push({ effort: sentEffort, reason: rejection.parameterRejected ? 'unsupported-parameter' : 'unsupported-effort' });
+            options?.onReasoningEffortRejected?.({ provider: this.name, model, effort: value, cacheScope: learningKey });
+            if (!options?.singleAttempt && !signal?.aborted) continue;
+          }
+          throw error;
         }
-      } catch (error) {
-        recordRejectedImage(error, params);
-        const rejection = sentEffort === undefined ? null : classifyReasoningEffortRejection(error, sentEffort);
-        if (rejection) {
-          const value = rejection.parameterRejected ? '*' : rejection.rejectedEffort;
-          const learned = this.rejectedResponseEfforts.get(learningKey) ?? new Set<string>();
-          learned.add(value);
-          this.rejectedResponseEfforts.set(learningKey, learned);
-          options?.onReasoningEffortRejected?.({ provider: this.name, model, effort: value });
+        if (signal?.aborted) throw new DOMException('Request aborted', 'AbortError');
+        if (response.error) throw this.upstreamError(response.error.message, response.error.code);
+        if (response.status !== 'completed') {
+          throw this.protocolError(`Responses ${response.status}: ${response.incomplete_details?.reason ?? 'no completed output'}`);
         }
-        throw error;
+        const contentBlocks = this.parseOutput(response, source);
+        const textBlocks = contentBlocks.filter(b => b.type === 'text');
+        const thinkingBlocks = contentBlocks.filter(b => b.type === 'thinking');
+        const toolBlocks = contentBlocks.filter(b => b.type === 'tool_use');
+        if (!streaming) {
+          for (const block of textBlocks) options?.onTextDelta?.(block.text);
+          for (const block of thinkingBlocks) if (block.thinking) options?.onThinkingDelta?.(block.thinking);
+        }
+        const thinking = thinkingBlocks.map(b => b.thinking).join('');
+        if (thinking) options?.onThinkingEnd?.(thinking);
+        const reasoningResolution = { provider: this.name, model,
+          requestedEffort: requested,
+          sentEffort, verified: false as const,
+          fallbacks: fallbacks.length ? fallbacks
+            : requested !== 'auto' && requested !== sentEffort ? [{ effort: requested, reason: 'profile' as const }] : [] };
+        options?.onReasoningResolved?.(reasoningResolution);
+        return { contentBlocks, textBlocks, thinkingBlocks, toolBlocks, usage: usageFrom(response),
+          stopReason: toolBlocks.length ? 'tool_use' : 'end_turn', reasoningResolution };
       }
-      if (signal?.aborted) throw new DOMException('Request aborted', 'AbortError');
-      if (response.error) throw this.upstreamError(response.error.message, response.error.code);
-      if (response.status !== 'completed') {
-        throw this.protocolError(`Responses ${response.status}: ${response.incomplete_details?.reason ?? 'no completed output'}`);
-      }
-      const contentBlocks = this.parseOutput(response, source);
-      const textBlocks = contentBlocks.filter(b => b.type === 'text');
-      const thinkingBlocks = contentBlocks.filter(b => b.type === 'thinking');
-      const toolBlocks = contentBlocks.filter(b => b.type === 'tool_use');
-      if (!streaming) {
-        for (const block of textBlocks) options?.onTextDelta?.(block.text);
-        for (const block of thinkingBlocks) if (block.thinking) options?.onThinkingDelta?.(block.thinking);
-      }
-      const thinking = thinkingBlocks.map(b => b.thinking).join('');
-      if (thinking) options?.onThinkingEnd?.(thinking);
-      const reasoningResolution = { provider: this.name, model,
-        requestedEffort: requested,
-        sentEffort, verified: false as const,
-        fallbacks: retry.suppressReasoningEffort ? [{ effort, reason: 'unsupported-effort' as const }]
-          : cachedRejection ? [{ effort, reason: 'cached-rejection' as const }]
-          : requested !== 'auto' && requested !== sentEffort ? [{ effort: requested, reason: 'profile' as const }] : [] };
-      options?.onReasoningResolved?.(reasoningResolution);
-      return { contentBlocks, textBlocks, thinkingBlocks, toolBlocks, usage: usageFrom(response),
-        stopReason: toolBlocks.length ? 'tool_use' : 'end_turn', reasoningResolution };
+      throw this.protocolError('Responses exhausted reasoning negotiation without a completed response.');
     }, signal, options?.singleAttempt ? 1 : 3, options?.onRateLimit, options?.onRetryAfter,
     { model, effort });
   }
@@ -205,6 +222,7 @@ export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProv
         if (item.status !== 'completed') throw this.protocolError('Responses returned an unfinished message.');
         for (const part of item.content) blocks.push({ type: 'text', text: part.type === 'output_text' ? part.text : part.refusal });
       } else if (item.type === 'reasoning') {
+        if (item.status && item.status !== 'completed') throw this.protocolError('Responses returned unfinished reasoning.');
         blocks.push({ type: 'thinking', thinking: item.summary.map(part => part.text).join('\n'),
           responsesReasoning: { source, id: item.id, summary: item.summary, encrypted_content: item.encrypted_content } });
       } else if (item.type === 'function_call') {

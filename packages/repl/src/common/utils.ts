@@ -54,7 +54,7 @@ import {
   type KodaXCustomProviderConfig,
   type KodaXReasoningProfile,
 } from '@kodax-ai/coding';
-import { narrowReasoningProfile } from '@kodax-ai/llm';
+import { narrowReasoningProfile, KodaXOpenAIResponsesProvider } from '@kodax-ai/llm';
 
 const execAsync = promisify(exec);
 const AGENT_MODE_CONFIG_SCHEMA_VERSION = 2;
@@ -716,6 +716,8 @@ function resolveReasoningProfileForDisplay(
   if (!profile) {
     return undefined;
   }
+  // Display has no acquired credential identity. Only the request may narrow Responses evidence.
+  if (getCustomProvider(provider) instanceof KodaXOpenAIResponsesProvider) return profile;
   // Apply the runtime capability cache: efforts observed/probed to be rejected
   // by this provider/model are removed so the cycle, /effort options, and the
   // status label all stop offering them (single funnel for every display

@@ -54,7 +54,7 @@ import {
   attachRunnerRecoveryTranscript,
   GenerationSuspensionError,
   reclaimReservedResponseTokens,
-  getCachedRejectedEfforts,
+  getProviderReasoningCacheOptions,
   recordRejectedEffort,
   buildAssistantMessageFromLlmResult,
   type Agent,
@@ -615,14 +615,15 @@ export function buildRunnerLlmAdapter(
       // using the actual disclosed contracts. No iterative fitting or tool loss.
       system = buildWireSystem(baseSystem, wireTools);
       const providerName = options.provider ?? provider.name ?? 'anthropic';
-      const rejectedEfforts = getCachedRejectedEfforts(providerName, activeModel ?? provider.getModel(), options.context?.configHome);
+      const reasoningCache = getProviderReasoningCacheOptions(provider, activeModel ?? provider.getModel(), options.context?.configHome);
+      const rejectedEfforts = reasoningCache.rejectedReasoningEfforts ?? [];
       if (providerReasoning?.effort !== undefined && rejectedEfforts.length > 0) {
         const resolved = resolveWireEffort({ provider: providerName, model: activeModel ?? provider.getModel(), desiredEffort: providerReasoning.effort, rejectedEfforts });
         providerReasoning = { ...providerReasoning, effort: resolved.effort ?? 'none' };
       }
       const onReasoningEffortRejected = (event: Parameters<NonNullable<KodaXProviderStreamOptions['onReasoningEffortRejected']>>[0],
         providerRequestId: string) => {
-        recordRejectedEffort(event.provider, event.model, event.effort, 'observed', new Date().toISOString(), options.context?.configHome);
+        recordRejectedEffort(event.provider, event.model, event.effort, 'observed', new Date().toISOString(), options.context?.configHome, event.cacheScope);
         options.events?.onReasoningEffortRejected?.({ ...event, providerRequestId });
       };
       const supportsNativeEphemeralSuffix =
@@ -976,7 +977,7 @@ export function buildRunnerLlmAdapter(
               [...wireTools],
               system,
               providerReasoning,
-              { ...streamOptions,
+              { ...streamOptions, ...reasoningCache,
                 onReasoningEffortRejected: event => onReasoningEffortRejected(event, requestMeta.providerRequestId),
                 onReasoningResolved: event => options.events?.onReasoningResolved?.({ ...event, ...requestMeta }),
                 ...(textRecoveryRetry ? { singleAttempt: true } : {}), signal: credentialSignal },
@@ -1177,6 +1178,7 @@ export function buildRunnerLlmAdapter(
                   system,
                   providerReasoning,
                   {
+                    ...reasoningCache,
                     promptCacheKey,
                     onReasoningEffortRejected: event => onReasoningEffortRejected(event, fallbackMeta.providerRequestId),
                     onReasoningResolved: event => options.events?.onReasoningResolved?.({ ...event, ...fallbackMeta }),
@@ -1394,6 +1396,7 @@ export function buildRunnerLlmAdapter(
               system,
               providerReasoning,
               {
+                ...reasoningCache,
                 promptCacheKey,
                 onReasoningEffortRejected: event => onReasoningEffortRejected(event, continuationMeta.providerRequestId),
                 onReasoningResolved: event => options.events?.onReasoningResolved?.({ ...event, ...continuationMeta }),

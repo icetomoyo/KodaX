@@ -70,6 +70,24 @@ arguments never become executable calls. Interrupted streams retain the existing
 Host recovery and non-streaming fallback; declared incomplete responses surface
 their failure without executing tools.
 
+Each request uses its current tool definitions, including additions, removals and
+schema changes. Completed historical calls/results keep their original names and
+arguments. A `forcedToolName` absent from the current definitions is rejected
+locally. Interrupted imported calls receive an explicit interrupted-result marker;
+orphan results are omitted. History projection never re-executes a tool.
+
+When changing models or endpoints, retain the original history. Known foreign
+signed/encrypted reasoning is omitted from the native reasoning channel; readable
+reasoning is preserved as prior-context text. New Anthropic reasoning records its
+source too, so switching back can reuse the original signed history. Legacy
+history without provenance retains its prior signature policy.
+
+Responses negotiates declared effort levels after explicit parameter rejection.
+Hard-rejection learning is scoped to the endpoint, API, model, declaration and
+credential identity. It does not rewrite your configured effort or mark an
+accepted level as verified. Old unscoped rejection records do not narrow Responses
+choices. Cache affinity and `disablePromptCache` are evaluated on each request.
+
 This slice supports client-defined function tools, text, image input, reasoning
 replay and usage. Server-side tools, background tasks, WebSocket, OAuth and broader
 cross-protocol history transformations remain later parity work. Validation is

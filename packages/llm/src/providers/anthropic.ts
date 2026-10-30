@@ -13,6 +13,7 @@ import { isCleanStop } from '../stop-reason.js';
 import { KodaXProviderError } from '../errors.js';
 import {
   KodaXContentBlock,
+  KodaXGenerationSource,
   KodaXNormalizedReasoningRequest,
   KodaXProviderConfig,
   KodaXReasoningProfile,
@@ -191,6 +192,19 @@ function hasAnthropicOutputEffort(
 }
 
 export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
+  getGenerationSource(model?: string): KodaXGenerationSource {
+    return { provider: this.name, api: 'anthropic-messages', model: this.getWireModelId(model), baseUrl: this.getBaseUrl() };
+  }
+  /** Unknown legacy provenance keeps its existing signature policy; known foreign opaque content never replays. */
+  canReplayReasoning(block: KodaXThinkingBlock | KodaXRedactedThinkingBlock, model?: string): boolean {
+    const origin = block.source ?? (block.type === 'thinking' ? block.responsesReasoning?.source : undefined);
+    const target = this.getGenerationSource(model);
+    if ((origin && (origin.provider !== target.provider || origin.api !== target.api
+      || origin.model !== target.model || origin.baseUrl !== target.baseUrl))
+      || (block.type === 'thinking' && block.openaiReasoning !== undefined)) return false;
+    return !this.getEffectiveStrictThinkingSignature(model)
+      || (block.type === 'thinking' ? Boolean(block.signature) : origin !== undefined);
+  }
   protected readonly requestObservationBoundary = 'physical_attempt' as const;
   abstract override readonly name: string;
   readonly supportsThinking = true;
@@ -1127,6 +1141,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         ? toolBlocks.map(({ _truncated: _drop, ...rest }) => rest)
         : toolBlocks;
 
+      for (const block of thinkingBlocks) block.source = this.getGenerationSource(model);
       return { textBlocks, toolBlocks: finalToolBlocks, thinkingBlocks, usage, stopReason };
     }, signal, streamOptions?.singleAttempt ? 1 : 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter, {
       model: streamOptions?.modelOverride ?? this.config.model,
@@ -1337,6 +1352,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         }
       }
 
+      for (const block of thinkingBlocks) block.source = this.getGenerationSource(model);
       return {
         textBlocks,
         toolBlocks,
@@ -1427,8 +1443,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       if (role === 'assistant') {
         for (const b of m.content) {
           if (b.type === 'thinking') {
-            const trustedSignature = !strictSignature
-              || (typeof b.signature === 'string' && b.signature.length > 0);
+            const trustedSignature = this.canReplayReasoning(b, model);
             if (trustedSignature) {
               content.push({ type: 'thinking', thinking: b.thinking, signature: b.signature ?? '' } as any);
             } else if (b.thinking) {
@@ -1441,7 +1456,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
               } as Anthropic.Messages.TextBlockParam);
             }
           } else if (b.type === 'redacted_thinking') {
-            if (!strictSignature) {
+            if (this.canReplayReasoning(b, model)) {
               // Lenient: third-party server doesn't decrypt the data
               // field, so passing it through is harmless.
               content.push({ type: 'redacted_thinking', data: b.data } as any);

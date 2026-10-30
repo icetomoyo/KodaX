@@ -7843,7 +7843,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }, 'ratelimit');
     },
     onReasoningEffortRejected: (event) => {
-      if (options.clientPlane) {
+      if (!options.clientPlane && event.cacheScope !== undefined) {
+        recordRejectedEffort(event.provider, event.model, event.effort, 'observed', new Date().toISOString(), undefined, event.cacheScope);
+      }
+      if (options.clientPlane || event.cacheScope !== undefined) {
         emitInfoItemToCorrectLayer({
           type: 'info', icon: '\u26A0',
           text: `[${event.provider}/${event.model} rejected effort "${event.effort}"; Host capability learning governs subsequent requests.]`,

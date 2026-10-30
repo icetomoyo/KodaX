@@ -1,7 +1,8 @@
 # FEATURE_302 — Independent LLM Provider Parity
 
-Date: 2026-10-30. Status: T01–T05 implemented, contract-tested and reviewed offline;
-T06–T12 pending. T05 full-regression evidence is recorded separately below. This is not a claim of complete pi-ai parity or a released feature.
+Date: 2026-10-30. Status: T01–T06 implemented, contract-tested and reviewed offline;
+T07–T12 pending. Final T06 full regression passed; historical T05 failures and their
+T06 disposition remain recorded below. This is not a claim of complete pi-ai parity or a released feature.
 [Accepted scope and tickets](../features/v0.7.99.md#feature_302-independent-llm-provider-parity).
 
 ## Baseline and isolation
@@ -22,6 +23,8 @@ T06–T12 pending. T05 full-regression evidence is recorded separately below. Th
 | T02 | `maxOutputTokens` stays the default request budget; new `outputTokenLimit` caps known service capacity. Per-model limits override provider limits. Explicit/env/scoped/legacy budgets remain supported. | `output-token-budget.test.ts`: both native protocols and request forms, invalid limits, existing base/custom/registry tests. |
 | T03 | Plan exhaustion is not short-retried by adapter, SDK or Host recovery. Temporary errors retain bounded retries; error type, Retry-After, cancellation and old callbacks remain meaningful. | `resilience/provider-quota.test.ts`: real SDK transport fixtures, 1308/insufficient_quota/admin limits, no-retry hints, HTTP500/429/503/529, network failures and singleAttempt. |
 | T04 | MiMo Coding uses `/v1/chat/completions`; old alias/key remain. Both V2.6 models support reasoning/tool replay, images and toggle compatibility. MiniMax and public MiMo keep their respective Messages routes. | `coding-plan-catalog.test.ts`, `mimo-coding-replay.test.ts`: captured wire, fragmented generated reasoning/tools followed by nonstreaming continuation. |
+| T05 | Explicit native Responses, ordered stateless history, images/tools/usage and actual stream/nonstream recovery. | Native SDK, loopback HTTP, both history consumers and bundled SDK regressions; see T05 evidence below. |
+| T06 | Current dynamic schemas, safe imported history, model-scoped signed reasoning and identity-scoped effort/cache compatibility. | `responses-compat.test.ts`, managed/fallback/REPL regressions; final full offline suite 18,111 passed, 0 failed. |
 
 All fixture keys are fake. Transport tests stub fetch; no live MiMo, MiniMax or
 other model calls were made. Their authentication acceptance, subscription
@@ -345,3 +348,103 @@ wholly synthesized guard text has no original native position to recover. Both
 consumers, explicit API/config persistence, scoped reasoning, image transport,
 usage and actual nonstreaming recovery match the accepted contracts. T06–T12 and
 live verification remain open. Findings: **0**, highest severity: none.
+
+## 2026-10-30 — T06 compatibility and Host baseline follow-up
+
+Implementation base: isolated `5b58266fc`; the original workspace remains at
+`f6a010462` with the other thread's uncommitted work untouched. No Host production
+implementation is changed in this slice.
+
+| Boundary | Regression evidence |
+|---|---|
+| Dynamic tools | `responses-compat.test.ts`: remove/add/redefine schemas, stale forced-tool rejection before dispatch, preserved historical names/results, no request-state carryover. |
+| Cross-model history | Responses wire projection settles interrupted calls before new turns, discards orphan receipts, preserves readable foreign reasoning, and retains valid call arguments without execution. New Anthropic signed/redacted blocks carry their generation source; known foreign signatures/ciphertext never replay. Missing legacy provenance is not invented. |
+| Reasoning and cache | Declared effort ladder, off/default handling, single-attempt constraints, acceptance remains unverified; response status and reasoning-item terminal validation. Identity-scoped persisted evidence is resolved only after credential acquisition, separated by connection/API/wire model/declaration/credential fingerprint. |
+| Actual consumers | `llm-adapter.responses.test.ts`: new adapter per turn, persisted learning and identity switch through real SDK SSE. `reasoning-fallback.test.ts`: both Responses and Completions use genuine nonstreaming recovery and preserve intent. REPL public parsing does not inherit legacy alias/model rejections into Responses. |
+| Cache controls/diagnostics | Per-call schema/model/cache changes, scoped cache-disable/re-enable, foreign opaque signature changes omitted from the provider-visible hash. |
+
+The scoped-cache contract currently applies to Responses. Other protocols' complete
+persisted identity migration remains T11; existing Completions behavior is retained.
+REPL does not narrow Responses choices before obtaining an identity, nor persist a
+single identity's downgrade into the user's effort configuration. Scoped records
+contain fingerprints and rejected values, not credentials. No live service test
+or capability-strength verification is claimed.
+
+### Host baseline disposition
+
+The three stable T05 failures were reproduced again. Targeted probes showed the
+goal test completed its commands and then waited for repository-intelligence
+maintenance during Runtime close; the classic test did not reach provider entry.
+Their fixtures omitted `projectPath`, letting Host initialization/settings and
+maintenance depend on the live worktree. Setting each Session's project to its
+existing temporary fixture directory made **all four previously failing files /
+9 tests pass** in the same isolated checkout. No production Host logic, cancellation
+deadline, close deadline, assertions or skipped-test list was weakened.
+
+The exit test's `inputs.submit` acknowledges admission before the provider starts.
+Its default one-second polling window was a separate full-suite load assumption;
+the fixture now allows a bounded ten-second provider-start window, while retaining
+the original stop/exit settlement deadlines. The concurrent thread edits this
+same test file; reconcile this small hunk during integration.
+
+Temporary diagnostic probes and shortened diagnostic deadlines were removed. The
+unchanged production source and final build outputs are frozen for final regression.
+This section supersedes the unresolved T05 baseline disposition above only to the
+extent supported by the final verification results below.
+
+### T06 Standards
+
+Initial review requested indentation cleanup; fixed. Final review: **0 remaining
+findings**, highest severity none. Package boundaries and credential acquisition
+remain consistent with ADR-068.
+
+### T06 Spec
+
+Review found a REPL path that still narrowed Responses via the legacy unscoped
+cache and persisted a downgrade into user configuration. Public parsing reproduced
+the failure before the fix; parsing, scoped-event storage and config preservation
+were corrected. Final review: **0 remaining findings**, highest severity none.
+
+### T06 verification
+
+- Source/test typechecks, workspace package build and standalone bundle build passed.
+- Focused related run: **81 files / 1,137 tests passed** before the additional
+  REPL/managed recovery regressions; the latter passed their focused selections.
+- Scoped coverage: **48 tests / 6 files passed**; statements **95.48%**, branches
+  **87.59%**, functions **97.77%**, lines **97.77%** for Responses transport/projection
+  and LLM/agent capability-cache modules. This is not whole-monorepo coverage.
+- Final CLI: **5,130,280 bytes**, **112,600 bytes** below 5 MiB; the 64 KiB minimum
+  headroom guard remains enabled.
+- Complete `npm run test:bundle`: **58/58 passed**.
+- First frozen-source full run: **18,106 passed, 4 failed**, 97 skipped, 19 todo;
+  1,295 files passed, 2 failed, 6 skipped. All four previously failing Host files
+  passed in this run. The new failures were three MCP OAuth discovery assertions
+  and one Windows temporary-directory cleanup failure, not the old Host failures.
+- OAuth diagnostic repetition reproduced a real Fetch `bad port` refusal: the OS
+  assigned a port disallowed by Fetch, so discovery never received metadata. The
+  test server now checks URL reachability and reallocates only on that exact
+  refusal, with ten attempts; other errors propagate. Real HTTP, discovery order
+  and metadata assertions remain. A deterministic regression exercises this
+  refusal without binding/contacting the blocked port. A temporary 50-repeat
+  probe passed **800/800** after the fixture fix and was removed.
+- The closure failure was `ENOTEMPTY` while deleting a lock-queue directory after
+  the helper had awaited Runtime close. Its original file passed **2/2** alone;
+  fixture removal now has bounded Windows retries after the existing absolute
+  temporary-path check. Functional assertions, call budgets and Runtime shutdown
+  logic are unchanged; this does not establish a production shutdown defect.
+- Combined post-fix regression: **6 files / 27 tests passed**. The subsequent
+  deterministic bad-port case passed in the **17/17** OAuth file; final test
+  typecheck passed. Both reviewers accepted the additional fixture fixes with
+  **0 findings**. Production/build outputs remained unchanged; the full suite is
+  rerun with these test-only corrections before final acceptance.
+
+- **Final frozen-source full run:** `npm test -- --reporter=verbose` completed
+  successfully: **1,297 files / 18,111 tests passed, 0 failed**, with the existing
+  6 skipped files, 97 skipped tests and 19 todo tests unchanged (1,303 files /
+  18,227 tests total). Duration: **1,231.78 seconds**. No production or build
+  changes occurred between the two full runs; only the diagnosed test fixtures
+  were corrected. The original Host baseline failures are closed for this
+  isolated baseline, and the new fixture failures no longer reproduce.
+- T06 is **contract-tested offline**, full offline regression and both reviews
+  passed. T07–T12, live service verification and integration with the concurrent
+  thread's uncommitted work remain open; FEATURE_302 remains InProgress.

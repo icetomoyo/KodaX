@@ -98,6 +98,8 @@ export interface KodaXImageBlock {
 
 export interface KodaXThinkingBlock {
   type: 'thinking';
+  /** Present on newly generated signed reasoning; absent on legacy history. */
+  source?: KodaXGenerationSource;
   thinking: string;
   signature?: string;
   /** Stateless Responses replay is valid only at the originating connection/API/model. */
@@ -119,6 +121,7 @@ export interface KodaXThinkingBlock {
 
 export interface KodaXRedactedThinkingBlock {
   type: 'redacted_thinking';
+  source?: KodaXGenerationSource;
   data: string;
 }
 
@@ -248,7 +251,7 @@ export type KodaXAssistantBlock = KodaXTextBlock | KodaXToolUseBlock | KodaXThin
 
 export interface KodaXGenerationSource {
   provider: string;
-  api: 'openai-responses';
+  api: 'openai-responses' | 'anthropic-messages';
   model: string;
   baseUrl?: string;
 }
@@ -961,7 +964,11 @@ export interface KodaXProviderStreamOptions {
     provider: string;
     model: string;
     effort: string;
+    /** Opaque connection/API/model/declaration/credential fingerprint, never a credential. */
+    cacheScope?: string;
   }) => void;
+  /** Invoked inside the acquired credential scope; unscoped history is not consulted. */
+  resolveRejectedReasoningEfforts?: (cacheScope: string) => readonly string[];
   /** Persisted hard rejections from the host; '*' means the control parameter was rejected. */
   rejectedReasoningEfforts?: readonly string[];
   onReasoningResolved?: (resolution: KodaXReasoningResolution) => void;

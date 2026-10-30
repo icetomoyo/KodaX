@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { registerCustomProviders } from '@kodax-ai/llm';
 import {
   clearCapabilityCache,
   recordRejectedEffort,
@@ -31,12 +32,22 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  registerCustomProviders([]);
   resetCapabilityCacheMemoForTesting();
   setAgentConfigHome(undefined);
   if (tempHome) {
     rmSync(tempHome, { recursive: true, force: true });
     tempHome = '';
   }
+});
+
+it('keeps Responses user intent when a same-name Completions endpoint previously rejected the effort', () => {
+  registerCustomProviders([{ name: 'switched', protocol: 'openai', api: 'responses', model: 'm',
+    baseUrl: 'https://reasoning.test/v1', apiKeyEnv: 'UNUSED', reasoning: { efforts: ['low', 'high'], default: 'high' } }]);
+  recordRejectedEffort('switched', 'm', 'high', 'observed', 'old');
+  expect(getProviderReasoningEffortOptions('switched', 'm')).toContain('high');
+  expect(resolveProviderReasoningRuntimeEffort({ provider: 'switched', model: 'm', effort: 'high', effortOverride: true }))
+    .toMatchObject({ runtimeEffort: 'high' });
 });
 
 describe('resolveInitialEffortOverride', () => {

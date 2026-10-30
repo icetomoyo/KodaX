@@ -279,7 +279,7 @@ import { getUnlockedDeferredTools } from '../tools/deferred-tools.js';
 // CAP-028 / CAP-062 (`gracefulCompactDegradation`) is wired inside
 // `agent-runtime/middleware/compaction-orchestration.ts` since
 // FEATURE_100 P3.4c.
-import { shouldCompact, getCachedRejectedEfforts } from '@kodax-ai/agent';
+import { shouldCompact, getProviderReasoningCacheOptions } from '@kodax-ai/agent';
 import { resolveWireEffort } from '@kodax-ai/llm';
 import { runCompactionLifecycle } from './middleware/compaction-orchestration.js';
 import { createCompactionAntiThrashState } from './middleware/compaction-pressure.js';
@@ -1706,7 +1706,8 @@ async function runSubstrateInContext(
       // preserve user intent while negotiating the wire value. Other adapters keep
       // their legacy host-side resolution. Re-created providers share the host cache.
       const rejectionModel = turnState.currentModelOverride ?? streamProvider.getModel();
-      const rejectedEfforts = getCachedRejectedEfforts(turnState.currentProviderName, rejectionModel, options.context?.configHome);
+      const reasoningCache = getProviderReasoningCacheOptions(streamProvider, rejectionModel, options.context?.configHome);
+      const rejectedEfforts = reasoningCache.rejectedReasoningEfforts ?? [];
       const effortStrategy = streamProvider.getReasoningProfile(rejectionModel)?.effortStrategy;
       const providerNegotiatesEffort = effortStrategy === 'openai-chat-effort' || effortStrategy === 'openai-responses-effort';
       if (!providerNegotiatesEffort && effectiveProviderEffort !== undefined && rejectedEfforts.length > 0) {
@@ -2180,7 +2181,7 @@ async function runSubstrateInContext(
               effectiveProviderReasoning,
               {
                 ...streamCallbacks,
-                rejectedReasoningEfforts: getCachedRejectedEfforts(turnState.currentProviderName, rejectionModel, options.context?.configHome),
+                ...reasoningCache,
                 ...(textRecoveryRetry ? { singleAttempt: true } : {}),
                 promptCacheKey,
                 onRetryAfter: wrappedRetryAfter,

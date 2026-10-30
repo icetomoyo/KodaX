@@ -355,8 +355,7 @@ function projectAnthropicMessages(
     // then append calls. User messages emit results before ordinary content.
     for (const block of role === 'assistant' ? blocks : []) {
       if (block.type === 'thinking') {
-        const trusted = !strictSignature
-          || (typeof block.signature === 'string' && block.signature.length > 0);
+        const trusted = provider.canReplayReasoning(block, model);
         if (trusted) {
           content.push({
             type: 'thinking',
@@ -366,7 +365,7 @@ function projectAnthropicMessages(
         } else if (block.thinking) {
           content.push({ type: 'text', text: `<prior_reasoning>\n${block.thinking}\n</prior_reasoning>` });
         }
-      } else if (block.type === 'redacted_thinking' && !strictSignature) {
+      } else if (block.type === 'redacted_thinking' && provider.canReplayReasoning(block, model)) {
         content.push({ type: 'redacted_thinking', data: block.data });
       } else if (block.type === 'text') {
         content.push({ type: 'text', text: block.text });

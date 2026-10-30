@@ -396,6 +396,7 @@ export {
   loadCapabilityCache,
   recordRejectedEffort,
   resetCapabilityCacheMemoForTesting,
+  getProviderReasoningCacheOptions,
 } from './runtime/capability-cache.js';
 
 // FEATURE_208 (v0.7.45): process hardening (debug-preserving subset).

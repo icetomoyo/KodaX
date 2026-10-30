@@ -24,6 +24,14 @@ const messages: readonly KodaXMessage[] = [
 ];
 
 describe('prompt-cache diagnostics', () => {
+  it('ignores foreign Anthropic signatures in hashes while retaining the readable projection', () => {
+    const p = createCustomProvider({ name: 'signed', protocol: 'anthropic', model: 'new', baseUrl: 'https://cache.test', apiKeyEnv: 'UNUSED' });
+    const history = (signature: string): KodaXMessage[] => [{ role: 'assistant', content: [
+      { type: 'thinking', thinking: 'plan', signature, source: { provider: 'signed', api: 'anthropic-messages', model: 'old', baseUrl: 'https://cache.test' } },
+    ] }];
+    expect(hashProviderVisibleMessages(history('a'), p, 'new')).toBe(hashProviderVisibleMessages(history('b'), p, 'new'));
+    expect(hashProviderVisibleMessages(history('a'), p, 'old')).not.toBe(hashProviderVisibleMessages(history('b'), p, 'old'));
+  });
   it('hashes only same-source Responses reasoning that the wire actually replays', () => {
     const provider = createCustomProvider({ name: 'responses', protocol: 'openai', api: 'responses', model: 'm', baseUrl: 'https://example.test/v1', apiKeyEnv: 'UNUSED' });
     const history = (cipher: string): KodaXMessage[] => [{ role: 'assistant', content: [{ type: 'thinking', thinking: '', responsesReasoning: {

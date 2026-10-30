@@ -1,10 +1,40 @@
 import { tmpdir } from 'node:os';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import { registerCustomProviders } from '@kodax-ai/llm';
-import { buildAssistantMessageFromLlmResult } from '@kodax-ai/agent';
+import { registerCustomProviders, runWithProviderCredential } from '@kodax-ai/llm';
+import { buildAssistantMessageFromLlmResult, resetCapabilityCacheMemoForTesting } from '@kodax-ai/agent';
 import { buildRunnerLlmAdapter } from './llm-adapter.js';
 
 afterEach(() => { registerCustomProviders([]); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+it('keeps scoped rejection learning across managed turns without changing intent for another identity', async () => {
+  const configHome = await mkdtemp(join(tmpdir(), 'kodax-managed-responses-cache-'));
+  try {
+    vi.stubEnv('MANAGED_RESPONSES_KEY', 'test-only');
+    const sent: unknown[] = [];
+    vi.stubGlobal('fetch', async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { reasoning?: { effort?: string } };
+      sent.push(body.reasoning?.effort);
+      if (body.reasoning?.effort === 'high') return Response.json({ error: { message: 'Invalid reasoning.effort value' } }, { status: 400 });
+      return new Response(`data: ${JSON.stringify({ type: 'response.completed', response: { id: 'r', status: 'completed', output: [
+        { type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'done' }] },
+      ] } })}\n\n`, { headers: { 'content-type': 'text/event-stream' } });
+    });
+    registerCustomProviders([{ name: 'managed-responses', protocol: 'openai', api: 'responses', model: 'fixture',
+      baseUrl: 'https://managed.test/v1', apiKeyEnv: 'MANAGED_RESPONSES_KEY', maxOutputTokens: 2048,
+      reasoning: { efforts: ['low', 'high'], default: 'high' } }]);
+    const invoke = () => buildRunnerLlmAdapter({ provider: 'managed-responses', effort: 'high', context: { configHome, gitRoot: configHome, preflightMode: 'off' } })(
+      [{ role: 'user', content: 'task' }], { name: 'worker', instructions: '' });
+    await invoke();
+    resetCapabilityCacheMemoForTesting();
+    await invoke();
+    await runWithProviderCredential('managed-responses', 'other-account', invoke);
+    expect(sent).toEqual(['high', 'low', 'low', 'high', 'low']);
+  } finally {
+    resetCapabilityCacheMemoForTesting();
+    await rm(configHome, { recursive: true, force: true });
+  }
+});
 it('managed adapter commits ordered Responses content, sanitizes text and replays encrypted reasoning', async () => {
   vi.stubEnv('MANAGED_RESPONSES_KEY', 'test-only');
   const requests: Record<string, unknown>[] = [];

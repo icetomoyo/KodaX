@@ -49,7 +49,8 @@ it.each(['stream', 'complete'] as const)('captures streamed signatures and repla
   const result = await provider.stream([{ role: 'user', content: 'Read a.txt' }], tools, '', { effort: 'high' }, {
     maxOutputTokensOverride: 4096, onThinkingDelta, onThinkingEnd,
   });
-  expect(result.thinkingBlocks).toEqual(thinking);
+  expect(result.thinkingBlocks).toMatchObject(thinking);
+  expect(result.thinkingBlocks[0]?.source).toMatchObject({ provider: 'anthropic', api: 'anthropic-messages', model: provider.getModel() });
   expect(onThinkingDelta.mock.calls).toEqual([['Read the file.']]);
   expect(onThinkingEnd.mock.calls).toEqual([['Read the file.']]);
   await provider[method]([
