@@ -14740,6 +14740,28 @@ function createWorkspaceSandboxRootRegistry(input: {
   };
 }
 
+type ManagedContextRetentionSlot = NonNullable<NonNullable<KodaXOptions['session']>['managedContextRetention']>;
+// One SessionManager per Runtime, so the slots live and die with that Runtime.
+const managedContextRetentionByRuntime = new WeakMap<SessionManager, Map<string, ManagedContextRetentionSlot>>();
+const MAX_RETAINED_MANAGED_CONTEXT_SESSIONS = 64;
+
+/** Most-recently-used slot for one Session; old Sessions fall back to a full envelope. */
+function managedContextRetentionFor(sessionManager: SessionManager, sessionId: string): ManagedContextRetentionSlot {
+  let slots = managedContextRetentionByRuntime.get(sessionManager);
+  if (slots === undefined) {
+    slots = new Map();
+    managedContextRetentionByRuntime.set(sessionManager, slots);
+  }
+  const slot = slots.get(sessionId) ?? {};
+  slots.delete(sessionId);
+  slots.set(sessionId, slot);
+  for (const oldest of slots.keys()) {
+    if (slots.size <= MAX_RETAINED_MANAGED_CONTEXT_SESSIONS) break;
+    slots.delete(oldest);
+  }
+  return slot;
+}
+
 function buildRunOptions(input: {
   readonly hasPendingInputs: () => boolean;
   readonly consumePendingInputs: NonNullable<NonNullable<KodaXOptions['context']>['interruptInput']>['consumePendingInputs'];
@@ -14928,6 +14950,7 @@ function buildRunOptions(input: {
         };
   const isForkInvocation = options.context?.skillInvocation?.context === 'fork'
     || options.context?.commandInvocation?.context === 'fork';
+  const { managedContextRetention: _callerManagedContextRetention, ...callerSession } = options.session ?? {};
   return {
     ...options,
     provider,
@@ -14938,7 +14961,10 @@ function buildRunOptions(input: {
     skillDynamicContext,
     ...(model !== undefined ? { modelOverride: model } : {}),
     session: {
-      ...(options.session ?? {}),
+      ...callerSession,
+      ...(isForkInvocation ? {} : {
+        managedContextRetention: managedContextRetentionFor(sessionManager, record.sessionId),
+      }),
       id: record.sessionId,
       ...((record.canonicalInputId ?? record.productInput?.inputId) !== undefined
         ? { inputId: record.canonicalInputId ?? record.productInput?.inputId } : {}),

@@ -1,15 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { buildWorkerStableInstructions as currentWorkerInstructions } from '../packages/coding/src/agents/worker-role-prompt.js';
-import { PLAN_BATCH_GUIDANCE, TOOL_RECOVERY_GUIDANCE } from '../packages/coding/src/prompts/execution-guidance.js';
-import { buildRestructuredWorkerContract } from './restructured-worker-contract.js';
+import { TOOL_RECOVERY_GUIDANCE } from '../packages/coding/src/prompts/execution-guidance.js';
+import { buildRestructuredWorkerContract, replayAuditedWorkerCheckpoint } from './restructured-worker-contract.js';
 
 const baseTools = ['read', 'write', 'edit', 'bash', 'grep', 'glob',
   'todo_create', 'todo_update', 'todo_list', 'spawn_agent', 'wait_agent',
   'send_message', 'followup_task', 'list_agents', 'agent_output', 'interrupt_agent'];
 
-// Replay the audited checkpoint before 8a1afc77 added plan batching.
 const buildWorkerStableInstructions = (tools?: readonly string[]) =>
-  currentWorkerInstructions(tools).replace(`- ${PLAN_BATCH_GUIDANCE}\n`, '');
+  replayAuditedWorkerCheckpoint(currentWorkerInstructions(tools));
 
 describe('restructured Worker experiment', () => {
   it('does not infer executable tool variants from verbatim repository policy text', () => {

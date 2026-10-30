@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { afterEach, expect, it, vi } from 'vitest';
-import type { KodaXStreamResult, KodaXToolUseBlock } from '@kodax-ai/llm';
+import type { KodaXMessage, KodaXStreamResult, KodaXToolUseBlock } from '@kodax-ai/llm';
 import { RECOVERY_FILES, RECOVERY_GOLDEN } from '../benchmark/datasets/shared-contract-natural/fixture.js';
 import { checkNaturalTool, runNaturalRuntime } from './shared-contract-natural-runtime.js';
 import { PRODUCT_CASES } from '../benchmark/datasets/product-multiturn/fixture.js';
@@ -82,6 +82,42 @@ it.each(['tenant-cache', 'config-precedence', 'output-retention', 'history-repla
   }, { followUps: [{ prompt: definition.followUp, permissionMode: 'full-access' }] });
   expect(record.error).toBeNull(); expect(record.runs.map(run => run.requests)).toEqual([3, 2]);
   expect(record.protectedUnchanged).toBe(true); expect(record.verification.oracle.status, record.verification.oracle.stdout + record.verification.oracle.stderr).toBe(0);
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it('continues the next Run from the previous model view inside one Runtime and reinstalls the envelope after reopen', async () => {
+  vi.stubEnv('NODE_ENV', 'production');
+  const fetcher = vi.fn(() => { throw new Error('No network'); }); vi.stubGlobal('fetch', fetcher);
+  const record = await runNaturalRuntime(await root(), 'symptom-repair', async (_input, _signal, index) =>
+    result([], `第 ${index + 1} 次答复：未修改文件，也未运行测试。`), {
+    limits: { calls: 3, tools: 1, timeoutMs: 60_000 },
+    followUps: [
+      { prompt: '请再确认一次刚才的结论。', permissionMode: 'full-access' },
+      { prompt: '重新打开后请再确认一次。', permissionMode: 'full-access', reopen: true },
+    ],
+  });
+  expect(record.error).toBeNull();
+  expect(record.runs.map(run => run.requests)).toEqual([1, 1, 1]);
+  const [first, second, reopened] = record.calls.map(call => call.input);
+  if (!first || !second || !reopened) throw new Error('Expected one request per Run');
+  const wire = (messages: readonly KodaXMessage[]) => messages.map(({ role, content }) => ({ role, content }));
+  const contexts = (messages: readonly KodaXMessage[]) => messages
+    .filter(message => message._source === 'managed-run-context').map(message => String(message.content));
+  expect(wire(second.messages.slice(0, first.messages.length))).toEqual(wire(first.messages));
+  expect(second.messages[first.messages.length]).toMatchObject({ role: 'assistant' });
+  expect(contexts(first.messages)).toHaveLength(1);
+  expect(contexts(second.messages)).toEqual([
+    contexts(first.messages)[0],
+    expect.stringContaining('Context update for this task.'),
+  ]);
+  const snapshot = (text: string | undefined) => text?.match(/^Project: [^\n]*(?:\n {2}[^\n]*)*/m)?.[0];
+  const update = contexts(second.messages)[1]!;
+  expect(snapshot(contexts(first.messages)[0])).toMatch(/README\.md/);
+  expect(snapshot(update)).toBe(snapshot(contexts(first.messages)[0]));
+  expect(update.indexOf('Project: ')).toBeLessThan(update.indexOf('Task-relevant memory hints'));
+  expect(second.system).toBe(first.system);
+  expect(contexts(reopened.messages)).toEqual([expect.not.stringContaining('Context update for this task.')]);
+  expect(reopened.messages.at(-1)).toMatchObject({ role: 'user', content: '重新打开后请再确认一次。' });
   expect(fetcher).not.toHaveBeenCalled();
 });
 

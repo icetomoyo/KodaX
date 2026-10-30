@@ -4815,10 +4815,11 @@ describe('Shard 6d-d — session continuity', () => {
       return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
     };
 
+    const managedContextRetention = {};
     const first = await runManagedTaskViaRunner(
       {
         ...makeOptions(),
-        session: { id: sessionId },
+        session: { id: sessionId, managedContextRetention },
       },
       firstPrompt,
       capture,
@@ -4829,6 +4830,7 @@ describe('Shard 6d-d — session continuity', () => {
         ...makeOptions(),
         session: {
           id: sessionId,
+          managedContextRetention,
           initialMessages: [
             ...first.messages,
             {
@@ -4874,19 +4876,118 @@ describe('Shard 6d-d — session continuity', () => {
     expect(first.messages.some((message) =>
       message._source === 'managed-run-context'
       || message._source === 'managed-runtime-context')).toBe(false);
-    const visibleFirstTranscript = firstCall.transcript.filter((message) =>
-      message._source !== 'managed-run-context'
-      && message._source !== 'managed-runtime-context');
-    expect(secondCall.transcript.slice(0, visibleFirstTranscript.length))
-      .toEqual(visibleFirstTranscript);
-    expect(secondCall.transcript.filter((message) =>
-      message._source === 'managed-run-context')).toHaveLength(1);
+    const wire = (messages: readonly KodaXMessage[]) => messages.map(({ role, content }) => ({ role, content }));
+    const firstWireTranscript = wire([...firstCall.transcript, first.messages.at(-1)!]);
+    expect(wire(secondCall.transcript.slice(0, firstWireTranscript.length)))
+      .toEqual(firstWireTranscript);
+    const secondContexts = secondCall.transcript.filter((message) =>
+      message._source === 'managed-run-context');
+    expect(secondContexts).toHaveLength(2);
+    expect(secondContexts[0]!.content).toBe(firstCall.transcript[firstContextIndex]!.content);
+    const update = secondCall.transcript.at(-2)!;
+    expect(update).toBe(secondContexts[1]);
+    expect(update.content).toContain('Context update for this task.');
+    expect(update.content).not.toContain('Session Scratch Directory:');
+    // Host-supplied history makes Run 2 skip the snapshot; the update must not invent one.
+    expect(secondContexts[0]!.content).toContain('Project: ');
+    expect(update.content).not.toContain('Project: ');
+    expect(secondCall.transcript.some((message) =>
+      message._source === 'managed-runtime-context')).toBe(false);
     expect(JSON.stringify(secondCall.transcript)).not.toContain('STALE MANAGED CONTEXT');
     expect(JSON.stringify(secondCall.transcript)).not.toContain('STALE RUNTIME DELTA');
     expect(secondCall.transcript.at(-1)).toEqual(expect.objectContaining({
       role: 'user',
       content: secondPrompt,
     }));
+  });
+
+  const makeContinuityPlan = (prompt: string): ReasoningPlan => ({
+    effort: 'medium',
+    decision: buildFallbackRoutingDecision(prompt),
+    promptOverlay: '',
+  });
+  const runSessionPair = async (input: {
+    readonly sessionId: string;
+    readonly retained: boolean;
+    readonly firstContext?: KodaXOptions['context'];
+    readonly secondContext?: KodaXOptions['context'];
+    readonly rewriteHistory?: (messages: KodaXMessage[]) => KodaXMessage[];
+  }) => {
+    const transcripts: KodaXMessage[][] = [];
+    const capture = async (transcript: readonly KodaXMessage[]) => {
+      transcripts.push([...transcript]);
+      return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
+    };
+    const retention = input.retained ? { managedContextRetention: {} } : {};
+    const options = (context: KodaXOptions['context']) => ({
+      ...makeOptions(),
+      context: { ...makeOptions().context, ...context },
+    });
+    const first = await runManagedTaskViaRunner(
+      { ...options(input.firstContext), session: { id: input.sessionId, ...retention } },
+      'Inspect the cache behavior.',
+      capture,
+      makeContinuityPlan('Inspect the cache behavior.'),
+    );
+    await runManagedTaskViaRunner(
+      {
+        ...options(input.secondContext ?? input.firstContext),
+        session: {
+          id: input.sessionId,
+          ...retention,
+          initialMessages: (input.rewriteHistory ?? ((messages) => messages))([...first.messages]),
+        },
+      },
+      'Now check the diagnostics.',
+      capture,
+      makeContinuityPlan('Now check the diagnostics.'),
+    );
+    return transcripts.at(-1)!;
+  };
+  const managedContexts = (transcript: readonly KodaXMessage[]) => transcript
+    .filter((message) => message._source === 'managed-run-context')
+    .map((message) => String(message.content));
+
+  it.each([
+    ['the host keeps no Runtime retention slot', false, undefined],
+    ['the host history diverged from the retained Run', true,
+      (messages: KodaXMessage[]) => messages.map((message, index) => (
+        index === 0 ? { ...message, content: 'Inspect the cache behavior (edited).' } : message
+      ))],
+  ])('installs one full envelope when %s', async (_label, retained, rewriteHistory) => {
+    const transcript = await runSessionPair({
+      sessionId: `runner-full-envelope-${retained ? 'diverged' : 'unretained'}`,
+      retained,
+      ...(rewriteHistory ? { rewriteHistory } : {}),
+    });
+
+    const contexts = managedContexts(transcript);
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0]).toContain('Session Scratch Directory:');
+    expect(contexts[0]).not.toContain('Context update for this task.');
+    expect(transcript.at(-2)?._source).toBe('managed-run-context');
+  });
+
+  it.each([
+    ['unchanged', '## Available Skills\n- alpha-skill', 0, false],
+    ['changed', '## Available Skills\n- beta-skill', 1, false],
+    ['removed', undefined, 0, true],
+  ] as const)('repeats the Skills catalog only when it is %s', async (
+    label, secondSkills, updatedCatalogs, retired,
+  ) => {
+    const transcript = await runSessionPair({
+      sessionId: `runner-skills-catalog-${label}`,
+      retained: true,
+      firstContext: { skillsPrompt: '## Available Skills\n- alpha-skill' },
+      secondContext: { skillsPrompt: secondSkills },
+    });
+
+    const contexts = managedContexts(transcript);
+    expect(contexts).toHaveLength(2);
+    expect(contexts[0]).toContain('alpha-skill');
+    const update = contexts[1]!;
+    expect(update.split('## Available Skills').length - 1).toBe(updatedCatalogs);
+    expect(update.includes('No longer available: Skills catalog.')).toBe(retired);
   });
 
   it('keeps the cacheable AMA wire prefix stable across two fresh Sessions', async () => {

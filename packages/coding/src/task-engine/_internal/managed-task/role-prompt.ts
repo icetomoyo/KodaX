@@ -85,9 +85,13 @@ export const WORKER_WORKSPACE_DISCIPLINE = [
  * Adapted from v0.7.22 `createRolePrompt`. The `workerId` parameter is kept
  * on the signature for upstream call-site stability even though the body
  * does not read it.
+ *
+ * `task-context` renders the per-task part of the run context only. It follows
+ * retained envelopes, so Session scratch, Actor capacity and Team state stay
+ * with the changed-only runtime refresh instead of repeating every Run.
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-export type ManagedRolePromptRenderMode = 'combined' | 'stable' | 'context';
+export type ManagedRolePromptRenderMode = 'combined' | 'stable' | 'context' | 'task-context';
 
 export function createRolePrompt(
   role: KodaXTaskRole,
@@ -297,13 +301,14 @@ export function createRolePrompt(
           sharedClosingRule,
         ].filter((section): section is string => Boolean(section)).join('\n\n');
       }
-      if (renderMode === 'context') {
+      if (renderMode === 'context' || renderMode === 'task-context') {
+        const runtimeState = renderMode === 'context';
         // Keep contract-critical fragments first. The aggregate hard cap may
         // shed bulky repository/capability evidence, but never before the
         // current task, verification, tool policy, and selected Skill.
         return [
-          workspaceRunContextSection,
-          actorCapacityContract,
+          runtimeState ? workspaceRunContextSection : undefined,
+          runtimeState ? actorCapacityContract : undefined,
           reviewFanoutContract,
           decisionSummary,
           verificationSection,
@@ -312,7 +317,7 @@ export function createRolePrompt(
           roundInstructionSection,
           metadataSection,
           previousRoleSummarySection,
-          teamModeSection,
+          runtimeState ? teamModeSection : undefined,
           capabilityContextSection,
         ].filter((section): section is string => Boolean(section)).join('\n\n');
       }

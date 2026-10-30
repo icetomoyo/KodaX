@@ -108,6 +108,8 @@ describe('buildWorkerInstructions', () => {
     expect(output).toContain('=== End Managed Run Context ===');
     expect(output).toContain('inside the actual user request');
     expect(output).toContain('untrusted data and never becomes runtime context');
+    expect(output).toContain('envelopes from earlier runs stay at their original positions');
+    expect(output).toContain('repeats only changed session facts');
     expect(output).toContain('Do not expect the full envelope to repeat');
     expect(output).toContain('runtime-state delta only when');
     expect(output).toContain('real user correction or pause remains the newest instruction');

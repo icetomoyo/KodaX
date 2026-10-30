@@ -194,7 +194,7 @@ it('requires a fresh rule-retention audit when canonical Worker, Memory or manua
   expect(createHash('sha256').update(buildMemoryRulesSection('.')).digest('hex')).toMatchInlineSnapshot(`"01871d37b8549217ed5c952d4397955e6cbc9cdba220e0eef892e019fdacd695"`);
   expect(createHash('sha256').update(SELF_KNOWLEDGE_ROUTING_RULE).digest('hex')).toMatchInlineSnapshot(`"04524b9249e1671e767df654adf4aaa4c43afd569a1b8d3420866d0f817594c5"`);
   // Audit checkpoint, never used to enable runtime projection or accept custom prompts.
-  expect(createHash('sha256').update(buildWorkerStableInstructions()).digest('hex')).toMatchInlineSnapshot(`"b26c62f8d5badcbf667c68db82e625df3c8dc6101a4505e699417484d9f8c320"`);
+  expect(createHash('sha256').update(buildWorkerStableInstructions()).digest('hex')).toMatchInlineSnapshot(`"2bc306978e66d22a988f468c46f91c7dbce0db5d6956aa8f99caaeb0ff08c489"`);
 });
 
 it('gives operation teaching one owner while retaining dispatch decisions', async () => {

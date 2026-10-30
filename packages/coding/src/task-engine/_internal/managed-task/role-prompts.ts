@@ -71,7 +71,7 @@ function createResolvedRolePrompt(role: KodaXTaskRole,
   agentName: string,
   promptContext: RunnerChainPromptContext,
   verification: KodaXTaskVerificationContract | undefined,
-  renderMode: 'stable' | 'context',
+  renderMode: 'stable' | 'context' | 'task-context',
   resolvedContext?: ManagedRolePromptContext
 ): string {
   const ctx = resolvedContext ?? (promptContext.contextFactory
@@ -173,6 +173,42 @@ export function resolveRoleRunContext(role: KodaXTaskRole,
   return composed.trim().length > 0
     ? `=== Managed Run Context ===\n${composed}\n=== End Managed Run Context ===`
     : undefined;
+}
+
+/**
+ * Resolve the per-task envelope appended after retained envelopes. The
+ * caller's `capabilityContextBlock` and `repoIntelligenceContext` carry only
+ * task-specific or changed sections; unchanged session facts stay in the
+ * earlier envelopes that are already in the cached prefix.
+ */
+export function resolveRoleRunContextUpdate(
+  role: KodaXTaskRole,
+  agentName: string,
+  promptContext: RunnerChainPromptContext,
+  verification: KodaXTaskVerificationContract | undefined,
+  resolvedContext: ManagedRolePromptContext,
+  retiredLabels: readonly string[],
+): string {
+  const taskContext = createResolvedRolePrompt(
+    role,
+    agentName,
+    promptContext,
+    verification,
+    'task-context',
+    resolvedContext,
+  );
+  return [
+    '=== Managed Run Context ===',
+    [
+      'Context update for this task.',
+      'Session facts from earlier Managed Run Context envelopes, such as available Skills, MCP capabilities and repository snapshots, still apply unless this update replaces them.',
+      'Task guidance in earlier envelopes, such as routing, verification and tool policy, applied only to its own task.',
+    ].join('\n'),
+    taskContext,
+    promptContext.repoIntelligenceContext?.trim(),
+    retiredLabels.map((label) => `No longer available: ${label}.`).join('\n'),
+    '=== End Managed Run Context ===',
+  ].filter((part): part is string => Boolean(part)).join('\n\n');
 }
 
 /** Render the small runtime-state surface used for changed-only deltas. */

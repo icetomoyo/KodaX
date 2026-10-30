@@ -14,6 +14,7 @@ import type { KodaXTimeoutConfig } from './timeouts.js';
 import type { ExtensionExecutionScope, ExtensionToolResult } from './extensions/execution-contract.js';
 import type { RuntimeContextBudgetSnapshot } from './agent-runtime/context-budget.js';
 import type { RuntimeToolExposurePlan } from './agent-runtime/tool-exposure-planner.js';
+import type { ManagedRunContextRetentionRecord } from './task-engine/_internal/managed-task/managed-run-context-retention.js';
 import type { KodaXOutputSegmentStarted } from './output-segments.js';
 import type {
   CompactionSkipReason,
@@ -933,6 +934,19 @@ export interface KodaXSessionOptions {
    * the sole writer — unchanged behaviour, fail-safe default.
    */
   persistedByHost?: boolean;
+  /**
+   * Long-lived host slot (one per Session) in which managed Runs leave their
+   * hidden Managed Run Context. The next Run keeps those envelopes in place
+   * and appends only changed context, so the provider prompt cache survives
+   * the Run boundary. Contents are runner-owned and kept in memory only; a
+   * missing slot or a history that no longer matches installs a full
+   * envelope instead.
+   */
+  managedContextRetention?: KodaXManagedContextRetention;
+}
+
+export interface KodaXManagedContextRetention {
+  current?: ManagedRunContextRetentionRecord;
 }
 
 /** A verified durable transcript at the boundary before another generation. */

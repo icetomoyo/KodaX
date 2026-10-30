@@ -12,15 +12,15 @@ import { createAgentActorController } from '../packages/agent/src/actors/index.j
 import { buildMemoryRulesSection } from '../packages/coding/src/prompts/memory-rules.js';
 import { SELF_KNOWLEDGE_ROUTING_RULE } from '../packages/coding/src/self-knowledge/routing-rule.js';
 import { getBuiltinToolDefinition } from '../packages/coding/src/tools/registry.js';
-import { PLAN_BATCH_GUIDANCE } from '../packages/coding/src/prompts/execution-guidance.js';
+import { replayAuditedWorkerCheckpoint } from './restructured-worker-contract.js';
 import type { Agent } from '@kodax-ai/agent';
 import type { KodaXToolDefinition } from '../packages/llm/src/types.js';
 
 const instructions = (agent: Agent) => typeof agent.instructions === 'function' ? agent.instructions(undefined) : agent.instructions;
 
 // This experiment is frozen at the pre-rule-ownership checkpoint. Reconstruct
-// its three changed contracts explicitly, rather than admitting new hashes to
-// the historical projector or rewriting its recorded model outputs.
+// its changed contracts and Worker rules explicitly, rather than admitting new
+// hashes to the historical projector or rewriting its recorded model outputs.
 function historicalTools(tools: readonly KodaXToolDefinition[]): KodaXToolDefinition[] {
   return tools.map(tool => {
     if (tool.name === 'ask_user_question') {
@@ -66,7 +66,7 @@ async function fixture(script = false, historical = true): Promise<FrozenInput &
     // Current production requests are checked in managed-system-contract.test.ts.
     expect(system).toContain('TRUST AND SCOPE');
     captured = { messages, tools: historical ? historicalTools(tools) : tools,
-      system: historical ? instructions(worker).replace(`- ${PLAN_BATCH_GUIDANCE}\n`, '') : instructions(worker) };
+      system: historical ? replayAuditedWorkerCheckpoint(instructions(worker)) : instructions(worker) };
     return { textBlocks: [{ text: 'fixture' }], toolBlocks: [] };
   });
   const originalInstructions = instructions(worker);

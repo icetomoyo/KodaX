@@ -316,6 +316,7 @@ import {
 } from './_internal/managed-task/agent-chain.js';
 import {
   resolveRoleRunContext,
+  resolveRoleRunContextUpdate,
   resolveRoleRuntimeStateFingerprint,
   resolveRoleRuntimeStateContext,
 } from './_internal/managed-task/role-prompts.js';
@@ -324,6 +325,13 @@ import {
   createManagedRuntimeContextMessage,
   stripManagedRunContextMessages,
 } from './_internal/managed-task/managed-run-context.js';
+import {
+  diffRetainedSessionSections,
+  isRetainedSessionSection,
+  recordManagedRunContext,
+  restoreManagedRunContext,
+  type RetainedContextSection,
+} from './_internal/managed-task/managed-run-context-retention.js';
 import { renderInterruptedRunRecovery } from './_internal/interrupted-run-recovery.js';
 import {
   buildRunnerLlmAdapter,
@@ -1695,6 +1703,7 @@ async function runManagedTaskViaRunnerInner(
     || options.session.initialMessages.length === 0;
   let prebuiltCapabilityContextBlock: string | undefined;
   let prebuiltStableCapabilityContextBlock: string | undefined;
+  let prebuiltDynamicCapabilitySections: readonly RetainedContextSection[] = [];
   let amaSkillCatalogText: string | undefined;
   let amaMcpCatalogText: string | undefined;
   try {
@@ -1754,6 +1763,8 @@ async function runManagedTaskViaRunnerInner(
         .map((section) => section.content)
         .join('\n\n');
     }
+    prebuiltDynamicCapabilitySections = dynamicCapabilitySections
+      .map(({ id, content }) => ({ id, content }));
   } catch (error) {
     // Capability context is best-effort. A failure here must not block
     // the AMA run — workers will fall back to legacy workspaceSection
@@ -1926,6 +1937,39 @@ async function runManagedTaskViaRunnerInner(
   const initialManagedContext = captureManagedRunContext();
   let managedRuntimeContextBaseline = initialManagedContext.runtimeFingerprint;
   let pendingCompactedRuntimeContext: string | undefined;
+  const currentSessionSections: readonly RetainedContextSection[] = [
+    ...prebuiltDynamicCapabilitySections.filter((section) => isRetainedSessionSection(section.id)),
+    ...(prebuiltRepoIntelligenceContext?.trim()
+      ? [{ id: 'repo-intelligence-context', content: prebuiltRepoIntelligenceContext }]
+      : []),
+  ];
+  // Session sections the model has seen in full in this Run's transcript.
+  let effectiveSessionSections: readonly RetainedContextSection[] = currentSessionSections;
+  let pendingCompactedSessionSections: readonly RetainedContextSection[] | undefined;
+  const fullySeenSections = (
+    message: KodaXMessage,
+    content: string,
+    sections: readonly RetainedContextSection[],
+  ): readonly RetainedContextSection[] => (message.content === content ? sections : []);
+  const buildManagedRuntimeContextDelta = (): KodaXMessage | undefined => {
+    const currentContext = rolePromptContextFactory('worker');
+    const currentRuntimeContext = resolveRoleRuntimeStateContext(currentContext);
+    const currentRuntimeFingerprint = resolveRoleRuntimeStateFingerprint(currentContext);
+    const runtimeContextChanged = currentRuntimeFingerprint !== managedRuntimeContextBaseline;
+    const runtimeContextMessage = runtimeContextChanged
+      ? createManagedRuntimeContextMessage(currentRuntimeContext ?? [
+          '=== Managed Run Context ===',
+          'Runtime state refresh:',
+          'No dynamic runtime-state sections remain active.',
+          '=== End Managed Run Context ===',
+        ].join('\n'), {
+          turnId: liveTurnController.currentTurnId(),
+          timestamp: new Date().toISOString(),
+        })
+      : undefined;
+    managedRuntimeContextBaseline = currentRuntimeFingerprint;
+    return runtimeContextMessage;
+  };
   const userInputDegradationCache = createUserInputDegradationCache();
   const llm = buildRunnerLlmAdapter(
     options,
@@ -2075,18 +2119,42 @@ async function runManagedTaskViaRunnerInner(
   const interruptedRunRecovery = renderInterruptedRunRecovery(options.context?.interruptedRunEvidence, resolvedInitial.messages);
   const withInterruptedRunRecovery = (full: string | undefined): string | undefined =>
     [interruptedRunRecovery, full].filter(Boolean).join('\n\n') || undefined;
-  const initialManagedContextContent = withInterruptedRunRecovery(initialManagedContext.full);
-  const canonicalManagedContext = initialManagedContextContent
-    ? createManagedRunContextMessage(initialManagedContextContent, {
-        turnId: liveTurnController.currentTurnId(),
-        timestamp: currentMessageTimestamp,
-      })
+  const contextMetadata = { turnId: liveTurnController.currentTurnId(), timestamp: currentMessageTimestamp };
+  const managedContextRetention = options.session?.managedContextRetention;
+  // Host-supplied managed messages were stripped above; only the Runtime's own
+  // retained envelopes return, and only onto the exact history they were seen in.
+  const retainedContext = managedContextRetention && chainPromptContext && !options.session?.generationCheckpoint
+    ? restoreManagedRunContext(managedContextRetention.current, initialMessages.slice(0, currentUserIndex))
     : undefined;
-  const runnerInput = [
-    ...initialMessages.slice(0, currentUserIndex),
-    ...(canonicalManagedContext ? [canonicalManagedContext] : []),
-    ...initialMessages.slice(currentUserIndex),
-  ];
+  let managedContextPrefix: readonly KodaXMessage[];
+  if (retainedContext && chainPromptContext) {
+    managedRuntimeContextBaseline = retainedContext.effective.runtimeFingerprint;
+    const runtimeRefresh = buildManagedRuntimeContextDelta();
+    const sessionDiff = diffRetainedSessionSections(retainedContext.effective.sessionSections, currentSessionSections);
+    const restatedIds = new Set(sessionDiff.restated.map((section) => section.id));
+    const updateBody = resolveRoleRunContextUpdate('worker', WORKER_AGENT_NAME, {
+      ...chainPromptContext,
+      repoIntelligenceContext: restatedIds.has('repo-intelligence-context') ? prebuiltRepoIntelligenceContext : undefined,
+    }, resolveEffectiveVerification(options), {
+      ...(rolePromptContextFactory('worker') ?? { originalTask: prompt }),
+      capabilityContextBlock: prebuiltDynamicCapabilitySections
+        .filter((section) => !isRetainedSessionSection(section.id) || restatedIds.has(section.id))
+        .map((section) => section.content)
+        .join('\n\n') || undefined,
+    }, sessionDiff.retiredLabels);
+    const updateContent = withInterruptedRunRecovery(updateBody) ?? updateBody;
+    const update = createManagedRunContextMessage(updateContent, contextMetadata);
+    effectiveSessionSections = fullySeenSections(update, updateContent, sessionDiff.effective);
+    managedContextPrefix = [...retainedContext.messages, ...(runtimeRefresh ? [runtimeRefresh] : []), update];
+  } else {
+    const content = withInterruptedRunRecovery(initialManagedContext.full);
+    const canonical = content === undefined ? undefined : createManagedRunContextMessage(content, contextMetadata);
+    effectiveSessionSections = canonical && content && chainPromptContext
+      ? fullySeenSections(canonical, content, currentSessionSections)
+      : [];
+    managedContextPrefix = [...initialMessages.slice(0, currentUserIndex), ...(canonical ? [canonical] : [])];
+  }
+  const runnerInput = [...managedContextPrefix, ...initialMessages.slice(currentUserIndex)];
   if (memoryRuntime !== undefined) memoryRuntime.presentationMessages = runnerInput;
 
   // Load the compaction hook once per run. `intelligentCompact` runs
@@ -2146,12 +2214,16 @@ async function runManagedTaskViaRunnerInner(
       const snapshot = captureManagedRunContext();
       pendingCompactedRuntimeContext = snapshot.runtimeFingerprint;
       const content = withInterruptedRunRecovery(snapshot.full);
-      return content
+      const canonical = content
         ? createManagedRunContextMessage(content, {
             turnId: liveTurnController.currentTurnId(),
             timestamp: new Date().toISOString(),
           })
         : undefined;
+      pendingCompactedSessionSections = canonical && content && chainPromptContext
+        ? fullySeenSections(canonical, content, currentSessionSections)
+        : [];
+      return canonical;
     },
     // FEATURE_177 v0.7.42 — clear the read-file-state cache after a
     // real compaction. The cache returns stubs that point the LLM at
@@ -2169,6 +2241,8 @@ async function runManagedTaskViaRunnerInner(
     onPostCompact: () => {
       managedRuntimeContextBaseline = pendingCompactedRuntimeContext;
       pendingCompactedRuntimeContext = undefined;
+      effectiveSessionSections = pendingCompactedSessionSections ?? effectiveSessionSections;
+      pendingCompactedSessionSections = undefined;
       readFileStateCache.clear();
       stallDetector.reset();
       stallSidecar.reset();
@@ -2463,26 +2537,6 @@ async function runManagedTaskViaRunnerInner(
       ...(taskResults.length > 1 ? { _taskResults: taskResults } : {}),
       timestamp,
     };
-  };
-
-  const buildManagedRuntimeContextDelta = (): KodaXMessage | undefined => {
-    const currentContext = rolePromptContextFactory('worker');
-    const currentRuntimeContext = resolveRoleRuntimeStateContext(currentContext);
-    const currentRuntimeFingerprint = resolveRoleRuntimeStateFingerprint(currentContext);
-    const runtimeContextChanged = currentRuntimeFingerprint !== managedRuntimeContextBaseline;
-    const runtimeContextMessage = runtimeContextChanged
-      ? createManagedRuntimeContextMessage(currentRuntimeContext ?? [
-          '=== Managed Run Context ===',
-          'Runtime state refresh:',
-          'No dynamic runtime-state sections remain active.',
-          '=== End Managed Run Context ===',
-        ].join('\n'), {
-          turnId: liveTurnController.currentTurnId(),
-          timestamp: new Date().toISOString(),
-        })
-      : undefined;
-    managedRuntimeContextBaseline = currentRuntimeFingerprint;
-    return runtimeContextMessage;
   };
 
   const baseBeforeNextTurn: (ctx: {
@@ -2878,12 +2932,16 @@ async function runManagedTaskViaRunnerInner(
   // equal to currentTokens when the provider returned usage — the REPL
   // uses the delta only to adjust subsequent local estimates.
   const tokenState = tokenStateRef.current;
-  const persistedTranscriptMessages = stripManagedRunContextMessages(
-    dropRunnerInjectedSystemMessage(
-      effectiveRunResult.messages,
-      entryAgent,
-    ),
-  );
+  const modelViewMessages = dropRunnerInjectedSystemMessage(effectiveRunResult.messages, entryAgent);
+  if (managedContextRetention) {
+    managedContextRetention.current = chainPromptContext
+      ? recordManagedRunContext(modelViewMessages, {
+          runtimeFingerprint: managedRuntimeContextBaseline,
+          sessionSections: effectiveSessionSections,
+        })
+      : undefined;
+  }
+  const persistedTranscriptMessages = stripManagedRunContextMessages(modelViewMessages);
   const resultMessages = attachTurnIdsFromUserBoundaries(persistedTranscriptMessages);
   const contextTokenSnapshot = contextTokenSnapshotRef.current
     ? rebaseContextTokenSnapshot(resultMessages, contextTokenSnapshotRef.current)

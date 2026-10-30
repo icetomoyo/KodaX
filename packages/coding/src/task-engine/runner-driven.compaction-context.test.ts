@@ -326,6 +326,45 @@ describe.each([
   }, 30_000);
 });
 
+it('continues the next Run from the compacted envelope instead of reinstalling it', async () => {
+  const requests: PhysicalRequest[] = [];
+  const timeline: string[] = [];
+  registerScriptedProvider(false, requests, timeline);
+  compactMock.mockImplementation(async (messages: KodaXMessage[]) => {
+    timeline.push('compact');
+    return compactedResult(messages);
+  });
+  const session = { id: 'compaction-context-retained', managedContextRetention: {} };
+  const firstPrompt = 'Inspect the README, then report completion.';
+  const secondPrompt = 'Summarize what changed.';
+
+  const first = await runManagedTaskViaRunner(
+    { ...makeOptions([], false), session },
+    firstPrompt,
+    undefined,
+    makePlan(firstPrompt),
+  );
+  const firstRunRequests = requests.length;
+  await runManagedTaskViaRunner(
+    { ...makeOptions([], false), session: { ...session, initialMessages: first.messages } },
+    secondPrompt,
+    undefined,
+    makePlan(secondPrompt),
+  );
+
+  expect(compactMock).toHaveBeenCalledTimes(1);
+  const wire = (messages: readonly KodaXMessage[]) => messages.map(({ role, content }) => ({ role, content }));
+  const isWorkerRequest = (request: PhysicalRequest) => JSON.stringify(request.messages).includes(SKILLS_ADDENDUM_SENTINEL);
+  const compactedRequest = requests.slice(0, firstRunRequests).filter(isWorkerRequest).at(-1)!;
+  const nextRunRequest = requests.slice(firstRunRequests).find(isWorkerRequest)!;
+  const continued = [...compactedRequest.messages, first.messages.at(-1)!];
+  expect(wire(nextRunRequest.messages.slice(0, continued.length))).toEqual(wire(continued));
+  const physicalRequest = JSON.stringify(nextRunRequest.messages);
+  expect(countOccurrences(physicalRequest, SKILLS_ADDENDUM_SENTINEL)).toBe(1);
+  expect(countOccurrences(physicalRequest, TASK_CONSTRAINT_SENTINEL)).toBe(2);
+  expect(nextRunRequest.messages.at(-1)).toEqual(expect.objectContaining({ role: 'user', content: secondPrompt }));
+}, 30_000);
+
 it('creates one stable run-local affinity identity when the SDK host omits session config', async () => {
   const requests: PhysicalRequest[] = [];
   const timeline: string[] = [];
