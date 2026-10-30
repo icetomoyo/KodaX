@@ -1568,3 +1568,28 @@ Run 2 报告标题称修复了隐藏竞态、正文又承认原实现逻辑安�
 追踪中看不到它与保留布局的联系。这是 L3.5 冒烟（每用例每臂 N=1），不能宣称候选质量优于或等于基线。
 总花费 r3 $0.0119 + r4 $0.0305 = $0.0423。预注册、封存映射、盲评与揭盲指标在 Temp
 `kodax-eval-dumps/run-boundary-retention-r4-20261030`。
+
+### 2026-10-30 R17：新会话首请求的冷启动缓存
+
+问题：r4 每格首请求 cacheRead 都是 0，占全部未缓存输入的 48.4%。这是评测每格换目录、换 provider 名造成的，
+还是同一项目里新开会话也会冷启动？
+
+驱动 `tests/cold-start-cache.eval.ts`（register → prepare → probe → analyze）。离线在 tenant-cache 工作区的两份
+相同副本上各启动一个全新嵌入式 Runtime，只采第一次请求；把会话 B 的工作区路径和评测 provider id 改写成 A 的
+（残留即失败），会话 id、临时目录和时间戳保留各自真实值。付费阶段按冻结字节发 A，等 10 秒再发 B，单次尝试、
+不重试、不回退；上限 2 次调用、每次 256 输出 token、$0.01。DeepSeek 不发送按会话区分的缓存键，冻结重放与生产一致。
+
+结果：离线对比 system 与 48 个工具完全相同，第一处差异在第一条消息第 253 字符，即会话临时目录名
+（时间戳加随机 id），共享前缀占 96.9% 字符。DeepSeek 上 A 输入 12,649 token、cacheRead 0；B 输入 12,650 token、
+cacheRead 12,160（96.1%），按预注册阈值判为"已复用"。花费 $0.0022，密钥泄露扫描 0 处。
+
+结论：同一项目里新开会话，首请求已基本命中缓存；r4 的 48.4% 冷启动是评测布局造成的，不代表日常使用。
+system 开头的工作目录只在切换项目或 worktree 时造成冷启动。
+
+provider 缓存顺序（复用 R16 r1 缓存阶段数据，未新增调用）：换工作区、工具定义不变时，DeepSeek 的首请求
+cacheRead 为 0，说明它把 system 排在工具之前缓存，cwd 一变整个前缀失效；zhipu-coding 和 kimi-code 同条件下
+cacheRead 约 8,896 和 7,424，与工具块大小相当，说明它们和 Anthropic 一样先缓存工具。ark-coding 没有数据。
+kimi-code 和 ark-coding 生产请求带按会话区分的缓存键（`metadata.user_id`），冻结重放没有带，跨会话结论不覆盖它们。
+
+局限：B 在副本中运行，看不到会话 A 留在自己工作区里的文件；单用例、单 provider，N=1。原始数据在 Temp
+`kodax-eval-dumps/cold-start-cache-r1-20261030`。
