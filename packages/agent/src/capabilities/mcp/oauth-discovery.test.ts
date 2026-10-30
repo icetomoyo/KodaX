@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildAsDiscoveryUrls,
   discoverAuthorizationServerMetadata,
@@ -35,13 +35,26 @@ async function startServer(
     res.end(JSON.stringify(body));
   });
   servers.push(server);
-  const origin = await new Promise<string>((resolve) => {
-    server.listen(0, '127.0.0.1', () => {
-      const addr = server.address() as { port: number };
-      resolve(`http://127.0.0.1:${addr.port}`);
+  // The OS can allocate a port blocked by Fetch (for example 6000).
+  // Check the actual URL before using it as a discovery endpoint; retain real HTTP coverage.
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const origin = await new Promise<string>((resolve) => {
+      server.listen(0, '127.0.0.1', () => {
+        const addr = server.address() as { port: number };
+        resolve(`http://127.0.0.1:${addr.port}`);
+      });
     });
-  });
-  return { origin, hits };
+    try {
+      const response = await fetch(origin);
+      await response.body?.cancel();
+      hits.length = 0;
+      return { origin, hits };
+    } catch (error: unknown) {
+      if (!(error instanceof Error && error.cause instanceof Error && error.cause.message === 'bad port')) throw error;
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  }
+  throw new Error('Could not allocate a Fetch-compatible loopback test port.');
 }
 
 describe('parseWwwAuthenticate', () => {
@@ -102,6 +115,21 @@ describe('buildAsDiscoveryUrls', () => {
 });
 
 describe('discoverProtectedResourceMetadata', () => {
+  it('reallocates a Fetch-blocked port before serving discovery metadata', async () => {
+    const address = vi.spyOn(http.Server.prototype, 'address');
+    // Exercise Fetch's real bad-port refusal without binding or contacting port 6000.
+    address.mockImplementationOnce(() => ({ address: '127.0.0.1', family: 'IPv4', port: 6000 }));
+    try {
+      const { origin } = await startServer({
+        '/.well-known/oauth-protected-resource': { authorization_servers: ['https://as.example/'] },
+      });
+      expect(new URL(origin).port).not.toBe('6000');
+      expect(await discoverProtectedResourceMetadata({ serverUrl: origin }))
+        .toMatchObject({ authorizationServers: ['https://as.example/'] });
+    } finally {
+      address.mockRestore();
+    }
+  });
   it('reads authorization_servers + resource + scopes from the well-known doc', async () => {
     const { origin, hits } = await startServer({
       '/.well-known/oauth-protected-resource': {

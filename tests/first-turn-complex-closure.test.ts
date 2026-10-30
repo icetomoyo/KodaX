@@ -94,6 +94,7 @@ it.each([6, 20])('distinguishes child QA messages from completed repair and AMA 
     expect(fetcher).not.toHaveBeenCalled();
   } finally {
     if (path.dirname(path.resolve(directory)) !== path.resolve(os.tmpdir())) throw new Error('Unexpected cleanup target');
-    await fs.rm(directory, { recursive: true, force: true });
+    // Runtime has closed; tolerate transient Windows directory contention during fixture removal.
+    await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 40000);
