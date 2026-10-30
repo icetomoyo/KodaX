@@ -10,7 +10,7 @@ import {
   type KodaXProviderConfig,
   type KodaXStreamResult,
 } from '@kodax-ai/llm';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { FileSessionStorage } from '@kodax-ai/repl';
 import * as coding from '@kodax-ai/coding';
 

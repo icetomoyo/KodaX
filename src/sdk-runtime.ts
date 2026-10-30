@@ -445,7 +445,6 @@ import {
   type RuntimeDaemonClientTransport,
   type RuntimeDaemonTransportLifecycleState,
 } from "./runtime-daemon/client.js";
-import { acquireRuntimeDaemonLease } from "./runtime-daemon/manager.js";
 import {
   acquireRuntimeDaemonProcessLease,
   RuntimeDaemonStartupError,
@@ -470,6 +469,7 @@ import {
   acquireRuntimeSessionStorageOwner,
   enableRuntimeDaemonOwner,
   findRuntimeSessionStorageHost,
+  prepareRuntimeDaemonOwner,
   readRuntimeDaemonLockOwner,
   readRuntimeOwnerProcessStartIdentity,
   readRuntimeOwnerPolicy,
@@ -503,6 +503,16 @@ export class RuntimeDaemonCapabilityUpgradeError extends Error {
     this.name = "RuntimeDaemonCapabilityUpgradeError";
     this.capability = capability;
     this.retryable = preflight?.canStop === false;
+  }
+}
+
+/** Retired owner construction cannot fall back to a private product Runtime. */
+export class RuntimeHostMigrationRequiredError extends Error {
+  readonly code = "runtime_host_migration_required" as const;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "RuntimeHostMigrationRequiredError";
   }
 }
 
@@ -693,9 +703,10 @@ export function getKodaXRuntimeOwnerState(
     input.profile,
   );
   const owner = readRuntimeDaemonLockOwner(paths.lockFile);
+  const policy = readRuntimeOwnerPolicy(paths);
   return {
     profile: paths.profile,
-    policy: readRuntimeOwnerPolicy(paths),
+    policy: { mode: policy.mode, revision: policy.revision, updatedAt: policy.updatedAt },
     ownerStatus:
       owner !== undefined
         ? "owned"
@@ -877,8 +888,8 @@ export interface RuntimeExternalAgentsOptions {
 export interface CreateKodaXRuntimeOptions {
   /** Local startup observations; callback work is not awaited and cannot change readiness. */
   readonly onStartupProgress?: (progress: ClientStartupProgress) => void | Promise<void>;
-  /** Runtime ownership form. Defaults to a caller-owned embedded Runtime. */
-  readonly mode?: KodaXRuntimeMode;
+  /** Compatibility launcher for the shared Host. Prefer ensureKodaXClient for product use. */
+  readonly mode: "daemon";
   /** Base directory that owns `.kodax`, matching CLI `--home`; not the `.kodax` directory used by `KODAX_HOME`. */
   readonly homeDir?: string;
   readonly profile?: string;
@@ -889,10 +900,6 @@ export interface CreateKodaXRuntimeOptions {
   readonly permissionTimeoutMs?: number;
   /** Ordinary-question deadline in milliseconds; 0 (default) waits indefinitely. Expiry returns unanswered. */
   readonly userInputTimeoutMs?: number;
-  /** Internal daemon-host switch; keeps ordinary embedded runs non-interactive by default. */
-  readonly sharedDaemonHost?: boolean;
-  /** @internal Owner-fence identity assigned before a shared daemon Runtime is constructed. */
-  readonly daemonHostRuntimeId?: string;
   readonly daemonStartupTimeoutMs?: number;
   readonly daemonConnectTimeoutMs?: number;
   /**
@@ -911,12 +918,19 @@ export interface CreateKodaXRuntimeOptions {
   readonly clientInfo?: RuntimeClientInfo;
   readonly capabilities?: RuntimeClientCapabilities;
   readonly requirements?: RuntimeCapabilityRequirements;
-  /** Inline host injection. Functions never cross the daemon transport. */
-  readonly externalAgents?: RuntimeExternalAgentsOptions;
   /** Trusted host-owned Exec Policy inputs. Detached daemon mode accepts them only for a new auto-started owner. */
   readonly execPolicy?: RuntimeExecPolicyOptions;
   /** Trusted host-owned Auto reviewer layers; detached daemon attach never mutates them. */
   readonly autoReview?: RuntimeAutoReviewOptions;
+}
+
+/** @internal Host assembly and isolated core fixtures; never exported by the SDK entry. */
+export interface CreateKodaXHostRuntimeOptions extends Omit<CreateKodaXRuntimeOptions, "mode"> {
+  /** Retained only for existing internal core fixtures. */
+  readonly mode?: "embedded";
+  readonly sharedDaemonHost?: boolean;
+  readonly daemonHostRuntimeId?: string;
+  readonly externalAgents?: RuntimeExternalAgentsOptions;
 }
 
 export interface RuntimeExecPolicyOptions {
@@ -4123,16 +4137,88 @@ function rebaseAgentConfigPath(filePath: string, configHome: string): string {
     : path.join(configHome, relative);
 }
 
-export function createKodaXRuntime(
-  options: CreateKodaXRuntimeOptions & { readonly mode: "daemon" },
-): Promise<KodaXDaemonRuntime>;
-export function createKodaXRuntime(
-  options?: CreateKodaXRuntimeOptions,
-): Promise<KodaXRuntime>;
 export async function createKodaXRuntime(
-  options: CreateKodaXRuntimeOptions = {},
+  options: CreateKodaXRuntimeOptions,
+): Promise<KodaXDaemonRuntime> {
+  if (!isRecord(options) || options.mode !== "daemon") {
+    throw new RuntimeHostMigrationRequiredError(
+      "Private Runtime construction has been removed. Use ensureKodaXClient() for product execution or createKodaXRuntime({ mode: 'daemon' }) to connect to the shared Host.",
+    );
+  }
+  for (const field of ["sharedDaemonHost", "daemonHostRuntimeId", "externalAgents"] as const) {
+    if (field in options) {
+      throw new RuntimeHostMigrationRequiredError(
+        `Public Runtime construction no longer accepts ${field}. Owner construction and executor factories belong to the Host; clients must connect to the shared Host.`,
+      );
+    }
+  }
+  assertRuntimeTimeout("permissionTimeoutMs", options.permissionTimeoutMs, 0);
+  assertRuntimeTimeout("userInputTimeoutMs", options.userInputTimeoutMs, 0);
+  const autoStart =
+    options.autoStartDaemon ??
+    (options.daemonTransport === undefined &&
+      options.daemonEndpoint === undefined);
+  const ownerBootstrap = runtimeDaemonOwnerBootstrap(options);
+  if (
+    ownerBootstrap !== undefined
+    && (!autoStart || options.daemonTransport !== undefined)
+  ) {
+    throw new Error(
+      "Trusted daemon execPolicy/autoReview options require owner auto-start; attach clients cannot change daemon administrator policy.",
+    );
+  }
+  return connectKodaXRuntimeWithStartupCoordination({
+    onStartupProgress: options.onStartupProgress,
+    profile: options.profile,
+    transport: options.daemonTransport,
+    endpoint: options.daemonEndpoint,
+    autoStart,
+    homeDir: options.homeDir,
+    sessionsDir: options.sessionsDir,
+    defaultProvider: options.defaultProvider,
+    defaultModel: options.defaultModel,
+    permissionTimeoutMs: options.permissionTimeoutMs,
+    userInputTimeoutMs: options.userInputTimeoutMs,
+    daemonStartupTimeoutMs: options.daemonStartupTimeoutMs,
+    daemonConnectTimeoutMs: options.daemonConnectTimeoutMs,
+    ...(options.daemonOrphanExitMs !== undefined
+      ? { daemonOrphanExitMs: options.daemonOrphanExitMs }
+      : {}),
+    daemonLifecycle: options.daemonLifecycle,
+    daemonToken: options.daemonToken,
+    clientInfo: options.clientInfo,
+    capabilities: options.capabilities,
+    requirements: {
+      ...options.requirements,
+      liveOutputSegments: 1 as const,
+      runtimeAutoModeGuardrail: 6 as const,
+      sharedSessionSettings: 2 as const,
+      ...(autoStart
+        ? {
+          actorSettlementConvergence: 2 as const,
+          crashOutcomeModel: 2 as const,
+          managedRunDurability: 1 as const,
+          ...(process.platform === "win32"
+            ? {
+                daemonShutdownVerification: 1 as const,
+                sandboxRuntime: 11 as const,
+              }
+            : {}),
+          runtimeEventCoalescing: 1 as const,
+          ...(options.daemonOrphanExitMs !== undefined
+            ? { daemonOrphanExit: 1 as const }
+            : {}),
+        }
+        : {}),
+    },
+  }, true, ownerBootstrap);
+}
+
+/** @internal The CLI Host and isolated core tests construct the execution owner here. */
+export async function createKodaXHostRuntime(
+  options: CreateKodaXHostRuntimeOptions = {},
 ): Promise<KodaXRuntime> {
-  if (options.sharedDaemonHost !== true || options.mode === "daemon") {
+  if (options.sharedDaemonHost !== true) {
     return createKodaXRuntimeInternal(options);
   }
   const runtimeId = options.daemonHostRuntimeId ?? `rt_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
@@ -4178,7 +4264,7 @@ function isTransientConversationBoundaryError(error: unknown): boolean {
 }
 
 async function createKodaXRuntimeInternal(
-  options: CreateKodaXRuntimeOptions,
+  options: CreateKodaXHostRuntimeOptions,
 ): Promise<KodaXRuntime> {
   assertRuntimeTimeout(
     "permissionTimeoutMs",
@@ -4203,69 +4289,6 @@ async function createKodaXRuntimeInternal(
     !/^rt_[a-f0-9]{12}$/.test(options.daemonHostRuntimeId)
   ) {
     throw new Error("Invalid shared daemon Runtime owner identity.");
-  }
-  if (options.mode === "daemon") {
-    if (options.externalAgents !== undefined) {
-      return createInProcessExternalAgentDaemon(options);
-    }
-    const autoStart =
-      options.autoStartDaemon ??
-      (options.daemonTransport === undefined &&
-        options.daemonEndpoint === undefined);
-    const ownerBootstrap = runtimeDaemonOwnerBootstrap(options);
-    if (
-      ownerBootstrap !== undefined
-      && (!autoStart || options.daemonTransport !== undefined)
-    ) {
-      throw new Error(
-        "Trusted daemon execPolicy/autoReview options require owner auto-start; attach clients cannot change daemon administrator policy.",
-      );
-    }
-    return connectKodaXRuntimeWithStartupCoordination({
-      onStartupProgress: options.onStartupProgress,
-      profile: options.profile,
-      transport: options.daemonTransport,
-      endpoint: options.daemonEndpoint,
-      autoStart,
-      homeDir: options.homeDir,
-      sessionsDir: options.sessionsDir,
-      defaultProvider: options.defaultProvider,
-      defaultModel: options.defaultModel,
-      permissionTimeoutMs: options.permissionTimeoutMs,
-      userInputTimeoutMs: options.userInputTimeoutMs,
-      daemonStartupTimeoutMs: options.daemonStartupTimeoutMs,
-      daemonConnectTimeoutMs: options.daemonConnectTimeoutMs,
-      ...(options.daemonOrphanExitMs !== undefined
-        ? { daemonOrphanExitMs: options.daemonOrphanExitMs }
-        : {}),
-      daemonLifecycle: options.daemonLifecycle,
-      daemonToken: options.daemonToken,
-      clientInfo: options.clientInfo,
-      capabilities: options.capabilities,
-      requirements: {
-        ...options.requirements,
-        liveOutputSegments: 1 as const,
-        runtimeAutoModeGuardrail: 6 as const,
-        sharedSessionSettings: 2 as const,
-        ...(autoStart
-          ? {
-            actorSettlementConvergence: 2 as const,
-            crashOutcomeModel: 2 as const,
-            managedRunDurability: 1 as const,
-            ...(process.platform === "win32"
-              ? {
-                  daemonShutdownVerification: 1 as const,
-                  sandboxRuntime: 11 as const,
-                }
-              : {}),
-            runtimeEventCoalescing: 1 as const,
-            ...(options.daemonOrphanExitMs !== undefined
-              ? { daemonOrphanExit: 1 as const }
-              : {}),
-          }
-          : {}),
-      },
-    }, true, ownerBootstrap);
   }
   if (options.mode !== undefined && options.mode !== "embedded") {
     throw new Error(`Unsupported KodaX runtime mode: ${String(options.mode)}`);
@@ -5718,124 +5741,6 @@ async function createKodaXRuntimeInternal(
   return runtime;
 }
 
-async function createInProcessExternalAgentDaemon(
-  options: CreateKodaXRuntimeOptions,
-): Promise<KodaXRuntime> {
-  const externalAgents = options.externalAgents;
-  if (!externalAgents)
-    throw new Error(
-      "External agent options are required for the hosted daemon.",
-    );
-  if (options.daemonTransport !== undefined) {
-    throw new Error(
-      "External agent factories cannot be installed through an existing daemon transport.",
-    );
-  }
-  if (options.autoStartDaemon === false) {
-    throw new Error(
-      "External agent factories require an in-process daemon host with autoStartDaemon enabled.",
-    );
-  }
-  const endpoint =
-    options.daemonEndpoint !== undefined
-      ? normalizeRuntimeDaemonEndpoint(options.daemonEndpoint)
-      : undefined;
-  const daemonLocation = resolveRuntimeDaemonClientLocation(options.homeDir);
-  const lease = await acquireRuntimeDaemonLease({
-    homeDir: daemonLocation.homeDir,
-    configHome: daemonLocation.configHome,
-    profile: options.profile,
-    endpoint,
-    connectTimeoutMs: options.daemonConnectTimeoutMs,
-    startupTimeoutMs: options.daemonStartupTimeoutMs,
-    createRuntime: (runtimeId) =>
-      createKodaXRuntime({
-        mode: "embedded",
-        homeDir: options.homeDir,
-        profile: options.profile,
-        sessionsDir: options.sessionsDir,
-        defaultProvider: options.defaultProvider,
-        defaultModel: options.defaultModel,
-        permissionTimeoutMs: options.permissionTimeoutMs,
-        userInputTimeoutMs: options.userInputTimeoutMs,
-        sharedDaemonHost: true,
-        daemonHostRuntimeId: runtimeId,
-        clientInfo: options.clientInfo,
-        capabilities: options.capabilities,
-        requirements: options.requirements,
-        externalAgents,
-        execPolicy: options.execPolicy,
-        autoReview: options.autoReview,
-      }),
-  });
-  if (!lease.ownsHost) {
-    await lease.close();
-    throw new Error(
-      "External agent factories cannot be installed into an already-running daemon profile; configure its owner or use a unique profile.",
-    );
-  }
-  try {
-    const runtime = await connectKodaXRuntime({
-      profile: options.profile,
-      transport: lease.transport,
-      daemonToken: options.daemonToken ?? readRuntimeDaemonToken(lease.paths),
-      clientInfo: options.clientInfo,
-      capabilities: options.capabilities,
-      requirements: {
-        ...options.requirements,
-        externalAgents: true,
-        externalAgentAdmin: 1,
-      },
-    });
-    let runtimeClosed = false;
-    let leaseClosed = false;
-    let closeAttempt: Promise<void> | undefined;
-    const closeHostedRuntime = (): Promise<void> => {
-      if (closeAttempt) return closeAttempt;
-      const attempt = (async (): Promise<void> => {
-        if (!leaseClosed) {
-          if (lease.ownsHost) await lease.shutdown();
-          else await lease.close();
-          leaseClosed = true;
-        }
-        if (!runtimeClosed) {
-          await runtime.close();
-          runtimeClosed = true;
-        }
-      })();
-      closeAttempt = attempt;
-      void attempt.then(
-        () => {
-          if (closeAttempt === attempt) closeAttempt = undefined;
-        },
-        () => {
-          if (closeAttempt === attempt) closeAttempt = undefined;
-        },
-      );
-      return attempt;
-    };
-    return {
-      ...runtime,
-      identity: { ...runtime.identity, isolation: "inline" },
-      close: closeHostedRuntime,
-    };
-  } catch (error: unknown) {
-    const cleanup = await Promise.allSettled([
-      lease.ownsHost ? lease.shutdown() : lease.close(),
-    ]);
-    const cleanupErrors = cleanup
-      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
-      .map((result) => result.reason);
-    if (cleanupErrors.length > 0) {
-      throw new AggregateError(
-        [error, ...cleanupErrors],
-        "Hosted daemon initialization failed and cleanup was incomplete.",
-      );
-    }
-    throw error;
-  }
-}
-
 function assertRuntimeCapabilities(
   value: unknown,
   requirements: RuntimeCapabilityRequirements | undefined,
@@ -6531,6 +6436,13 @@ async function connectKodaXRuntimeInternal(
       startupDeadline, options.daemonStartupSignal, reportProgress)
     : undefined;
   const connectionProfile = sharedHost?.profile ?? options.profile ?? 'default';
+  if (sharedHost) {
+    const requestedPaths = resolveRuntimeDaemonPathsFromConfigHome(daemonLocation.configHome, options.profile ?? 'default');
+    if (connectionProfile !== requestedPaths.profile) {
+      prepareRuntimeDaemonOwner(requestedPaths,
+        options.sessionsDir ?? path.join(daemonLocation.configHome, 'sessions'), sharedHost);
+    }
+  }
   if (sharedHost && contentionAttempt === 0) emitKodaXDiagnostic({
     source: 'runtime.daemon.storage-owner', level: 'info',
     message: `Session storage is owned by Host profile ${sharedHost.profile}.`,
@@ -16540,7 +16452,7 @@ function isTerminalRuntimeEvent(type: RuntimeEventType): boolean {
 }
 
 function createRuntimePersistence(
-  options: CreateKodaXRuntimeOptions,
+  options: CreateKodaXHostRuntimeOptions,
   runOwner: AgentActorOwner,
 ): RuntimePersistence {
   const baseDir = options.homeDir
@@ -22665,7 +22577,7 @@ function sanitizeRuntimeConfigPatch(
 }
 
 function resolveRuntimeConfigFile(
-  options: CreateKodaXRuntimeOptions,
+  options: CreateKodaXHostRuntimeOptions,
 ): string | undefined {
   if (options.homeDir === undefined) return undefined;
   return path.join(path.resolve(options.homeDir), ".kodax", "config.json");

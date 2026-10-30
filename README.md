@@ -455,7 +455,7 @@ try {
 
 `connectKodaXClient` attaches without starting or replacing a Host. The Node
 connector does not provide browser HTTP/WebSocket transport. The retained
-`/runtime` inline/daemon APIs are for explicit low-level Host integration;
+`/runtime` APIs connect trusted integrations to the same shared Host;
 Worker-hosted embedded Runtime is removed. The following structured-failure
 reference is scoped to that low-level API, not fields promised by Product Client.
 
@@ -497,8 +497,10 @@ See [Structured Runtime failures](public_docs/sdk/embedder-guide.md#structured-c
 for the field contract, taxonomy, migration guidance, and security boundary.
 
 The product CLI uses the shared Host; `--runtime-mode`, `KODAX_RUNTIME_MODE`
-and the `runtimeMode` config key are removed. Explicit low-level inline
-embedding retains private ownership, while daemon clients detach independently.
+and the `runtimeMode` config key are removed. The unreleased Host-only SDK
+cutover also retires public embedded construction and inline owner switching.
+Use `/client` for product execution; daemon clients detach independently.
+See [migration and downgrade limits](docs/SDK_MIGRATION.md#统一-host-sdk-收口未发布).
 Worker-hosted embedded Runtime is no longer an option.
 
 ```bash
@@ -1559,7 +1561,7 @@ KodaX has two layers that consumers should understand separately:
 | `packages/repl`   | `@kodax-ai/kodax/repl`    | Full package | Ink TUI + permission modes + commands (217 exports) | Terminal-UI consumers |
 | `packages/repl`   | `@kodax-ai/kodax/session` | **Narrow subset** | Session management only — `listSessions` / `loadFullTranscript` / `appendClientNotice` / `forkSession` / `compactSession` / `watchSessions` / ... (17 exports) | IDE plugins and desktop hosts reading session history |
 | `src`             | `@kodax-ai/kodax/client` | Product API | Shared Host connection and `KodaXProductClient` contract | TUI, desktop/IDE and automation applications |
-| `src`             | `@kodax-ai/kodax/runtime` | Host API | Explicit inline/daemon runtime facade, sessions/runs/events/permissions/catalog/MCP/artifacts/diagnostics/external agents, daemon protocol schema (10 exports) | Trusted Host integration |
+| `src`             | `@kodax-ai/kodax/runtime` | Host API | Shared-Host runtime facade, sessions/runs/events/permissions/catalog/MCP/artifacts/diagnostics/external agents, daemon protocol schema (10 exports) | Trusted Host integration |
 | `src`             | `@kodax-ai/kodax/sandbox` | Host API | Explicit ASRT capability/doctor/setup and host-owned contained command execution; unavailability never means silent ordinary execution | SDK hosts that need standalone process containment |
 | `src`             | `@kodax-ai/kodax/a2a` | Integration edge | A2A 1.0 Agent Card discovery, JSON-RPC/SSE F258 executor, safe fetch policy, and authenticated Runtime-backed Agent server | Agent orchestrators and KodaX hosts |
 
@@ -1585,7 +1587,7 @@ KodaX has two layers that consumers should understand separately:
 
 **Active-Run Interrupt Input (v0.7.74)**: embedded Runtime and the shared daemon advertise `interruptInput:1`. `runtime.runs.submitInput()` queues an immutable, ordered input for the current active Actor Run; all inputs admitted before one safe Runner boundary are delivered FIFO as separate user messages in the next LLM request, without creating continuation Runs. Queued/delivered state is visible in typed Run snapshots/events, delivery is acknowledged against the exact consumed IDs, and terminal cleanup prevents undelivered input from leaking into later Runs.
 
-**External Agent SDK Plane (FEATURE_258, v0.7.67)**: `/agent` exports the protocol-neutral executor, registration, policy, credential-broker, artifact-policy, catalog, and durable task contracts. `/runtime` exposes the installed plane through `admin.agentRegistrations`, `agents`, and `agentTasks`, with the same DTO service methods over embedded and daemon clients. Executor factories are host functions: install them in an inline owner or while creating a new in-process daemon owner; they cannot be injected through an existing daemon connection or across a Runtime Worker boundary. Plane shutdown is terminal: pending waits and all later service calls reject. Restricted Workflow scripts preserve validated `phase` and external `target` routing. See the [complete owner/consumer recipes and safety contract](public_docs/sdk/embedder-guide.md#18-external-agent-executor-plane-feature_258-v0767).
+**External Agent SDK Plane (FEATURE_258, v0.7.67)**: `/agent` exports the protocol-neutral executor, registration, policy, credential-broker, artifact-policy, catalog, and durable task contracts. `/runtime` exposes the installed plane through `admin.agentRegistrations`, `agents`, and `agentTasks`, through the shared Host DTO services. The unified Host cutover retires public executor-factory injection and in-process owner construction. Configure supported A2A agents in the Host; arbitrary executor functions remain a standalone library integration and have no transparent product Host equivalent. Plane shutdown is terminal: pending waits and all later service calls reject. Restricted Workflow scripts preserve validated `phase` and external `target` routing. See the [complete owner/consumer recipes and safety contract](public_docs/sdk/embedder-guide.md#18-external-agent-executor-plane-feature_258-v0767).
 
 **Cost-Disciplined Workflow SDK (FEATURE_259, v0.7.67)**: SDK callers configure run-scoped `modelTiers` and `workflow.maxConcurrency`, while workflow authors express semantic `fast` / `balanced` / `deep` intent. Terminal workflow events expose resolved tier/source/fallback/usage/duration facts, and each durable `run.json` contains an `efficiencyReport` with token coverage, role/tier starts, packet-read topology, review waves, and quality-gate outcomes. See the [routing and telemetry contract](public_docs/sdk/embedder-guide.md#20-cost-disciplined-workflow-routing-and-telemetry-feature_259-v0767).
 
@@ -1593,7 +1595,7 @@ KodaX has two layers that consumers should understand separately:
 
 **Experimental Memory Agent SDK (FEATURE_260 + FEATURE_292)**: `/experimental-memory` exposes the source-compatible `MemoryAgent`/`MemorySession` lifecycle plus the additive `MemoryManagementAgent` facade when `createMemoryAgent()` receives a `MemoryManagementController`. That facade provides governed `list()`, `remember()`, and `forget()` through the same plane used by the conversation-first product surface. Passive recall is zero-wait; `query()` is read-only and deliberate; recalled content stays low-authority, and safety/scope gates remain deterministic. See the [direct session and boundary guide](public_docs/sdk/embedder-guide.md#21-experimental-governed-memory--experimental-memory-feature_260--feature_275--feature_292-v0768v0785).
 
-**Bidirectional A2A 1.0 (FEATURE_267, v0.7.69)**: `/a2a` discovers allowed Agent Cards and installs a JSON-RPC/SSE executor through the existing F258 plane. Configured outbound Agents are also registered automatically as `external:<name>` in embedded CLI and user-daemon Runtimes, so the main Agent can orchestrate them without host code. One `a2a.json` may hold many outbound registrations and at most one inbound server, which publishes either the Runtime default or one validated `~/.kodax/agents/*.md` Agent behind an authenticated Runtime facade. The built-in listener is loopback-only and will not return a port blocked by Fetch-compatible clients; public deployment uses `handle()` behind host-owned TLS and authorization. A2A 0.3, gRPC, HTTP+JSON, push notifications, and automatic public exposure are not advertised. See the [client/server recipes and security boundaries](public_docs/sdk/embedder-guide.md#22-bidirectional-a2a-10--a2a-feature_267-v0769).
+**Bidirectional A2A 1.0 (FEATURE_267, v0.7.69)**: `/a2a` discovers allowed Agent Cards and installs a JSON-RPC/SSE executor through the existing F258 plane. Configured outbound Agents are also registered automatically as `external:<name>` in the shared Host, so the main Agent can orchestrate them without host code. One `a2a.json` may hold many outbound registrations and at most one inbound server, which publishes either the Runtime default or one validated `~/.kodax/agents/*.md` Agent behind an authenticated Runtime facade. The built-in listener is loopback-only and will not return a port blocked by Fetch-compatible clients; public deployment uses `handle()` behind host-owned TLS and authorization. A2A 0.3, gRPC, HTTP+JSON, push notifications, and automatic public exposure are not advertised. See the [client/server recipes and security boundaries](public_docs/sdk/embedder-guide.md#22-bidirectional-a2a-10--a2a-feature_267-v0769).
 
 **A2A interoperability and authentication hardening** keeps a discovered
 interface on the trusted Agent Card origin and sends credentials only when one
@@ -1682,11 +1684,11 @@ later re-enable. Private-address access and non-loopback plaintext HTTP are
 independent, persisted, default-deny permissions (`--allow-private` and
 `--allow-insecure-http`); exact loopback HTTP remains available without either.
 OAuth token endpoints retain their stricter HTTPS-or-exact-loopback rule.
-SDK hosts load this same configured plane by wiring
-`createConfiguredA2ARuntimeIntegration({ configHome })` and passing its
-`runtimeOptions` as `externalAgents` — the CLI does this for its embedded
-sessions and the daemon Host it launches, and the `worker.configuredA2A` opt-in
-was removed with the Worker facade in v0.7.97. `a2a serve` loads
+The shared Host loads this configured plane through its internal
+`createConfiguredA2ARuntimeIntegration({ configHome })` wiring. SDK clients
+connect to that Host; public `externalAgents` function injection is retired.
+The `worker.configuredA2A` opt-in was removed with the Worker facade in v0.7.97.
+`a2a serve` loads
 its configured MCP/Extension capability surface before listening and pins that
 execution authority; it hot-reloads publication, authentication, and limits.
 
@@ -1824,7 +1826,7 @@ import { SkillRegistry } from '@kodax-ai/kodax/skills';         // zero-dep skil
 import { loadConfig } from '@kodax-ai/kodax/repl';              // REPL config / session helpers
 import { createMcpManager } from '@kodax-ai/kodax/mcp';         // MCP popout manager (v0.7.42)
 import { listSessions } from '@kodax-ai/kodax/session';         // session history helpers
-import { createKodaXRuntime } from '@kodax-ai/kodax/runtime';   // embedded/daemon runtime API
+import { ensureKodaXRuntime } from '@kodax-ai/kodax/runtime';   // shared Host runtime API
 import { runKodaXSandboxed } from '@kodax-ai/kodax/sandbox';    // standalone ASRT containment
 import { createKodaXA2AServer } from '@kodax-ai/kodax/a2a';    // A2A 1.0 client/server edge
 import { createMemoryAgent } from '@kodax-ai/kodax/experimental-memory'; // opt-in memory SDK
@@ -1832,7 +1834,7 @@ import { createMemoryAgent } from '@kodax-ai/kodax/experimental-memory'; // opt-
 
 All 14 SDK entries (root + 13 subpaths, including `/client`) share internal code via ESM chunk splitting — importing from `/agent` does not pull in `/repl`'s Ink + React surface.
 
-For the product contract and separate low-level inline/daemon ownership,
+For the product contract and low-level shared Host connections,
 external-agent registration and task control, session cursor pagination, workflow
 model-tier routing, and efficiency telemetry — see the
 [SDK Embedder Integration Guide](public_docs/sdk/embedder-guide.md).
@@ -2174,7 +2176,7 @@ import { runInkInteractiveMode } from '@kodax-ai/kodax/repl';     // Ink TUI ent
 import { SkillRegistry } from '@kodax-ai/kodax/skills';           // zero-dep skill loader
 import { createMcpManager } from '@kodax-ai/kodax/mcp';           // MCP popout manager (v0.7.42)
 import { listSessions } from '@kodax-ai/kodax/session';           // session history helpers
-import { createKodaXRuntime } from '@kodax-ai/kodax/runtime';     // embedded/daemon runtime API
+import { ensureKodaXRuntime } from '@kodax-ai/kodax/runtime';     // shared Host runtime API
 import { runKodaXSandboxed } from '@kodax-ai/kodax/sandbox';      // explicit standalone containment
 import { createKodaXA2AServer } from '@kodax-ai/kodax/a2a';      // A2A 1.0 client/server edge
 import { createMemoryAgent } from '@kodax-ai/kodax/experimental-memory'; // opt-in experimental memory SDK

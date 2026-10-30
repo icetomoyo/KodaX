@@ -54,7 +54,7 @@ import os from 'node:os';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import {
-  createKodaXRuntime,
+  createKodaXHostRuntime,
   ensureKodaXRuntime,
   type KodaXRuntime,
 } from './sdk-runtime.js';
@@ -850,6 +850,7 @@ async function serveDaemonCommand(input: {
       profile: input.profile,
       homeDir: input.homeDir,
       configHome: daemonConfigHome,
+      sessionsDir: input.sessionsDir,
       // The host is created only after createRuntime returns, so this trusted
       // fact is never observable until reconcile and watcher startup succeed.
       ownsA2AConfigReconciler: true,
@@ -865,8 +866,7 @@ async function serveDaemonCommand(input: {
           daemonConfigHome,
           path.join(input.homeDir, '.kodax'),
         );
-        const runtime = await createKodaXRuntime({
-          mode: 'embedded',
+        const runtime = await createKodaXHostRuntime({
           profile: input.profile,
           ...(usesCanonicalHome ? { homeDir: input.homeDir } : {}),
           sessionsDir:

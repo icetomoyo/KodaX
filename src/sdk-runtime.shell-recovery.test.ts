@@ -52,7 +52,7 @@ it('keeps owner liveness when Shell launch has not registered its child yet', as
     vi.unstubAllEnvs(); await rm(f.root, { recursive: true, force: true });
   }
 });
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 
 it('self-heals after a real owner is killed and stays usable across another restart', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-shell-crash-'));
@@ -63,7 +63,7 @@ it('self-heals after a real owner is killed and stays usable across another rest
   const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval', `
     import fs from 'node:fs';
     import path from 'node:path';
-    import { createKodaXRuntime } from ${JSON.stringify(pathToFileURL(path.resolve('src/sdk-runtime.ts')).href)};
+    import { createKodaXHostRuntime as createKodaXRuntime } from ${JSON.stringify(pathToFileURL(path.resolve('src/sdk-runtime.ts')).href)};
     import { awaitLatestCodingMemoryReviewDrain } from '@kodax-ai/coding';
     const root = process.argv[1];
     const runtime = await createKodaXRuntime({ homeDir: root, sharedDaemonHost: true,

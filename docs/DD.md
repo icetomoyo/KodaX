@@ -1,5 +1,10 @@
 # KodaX Detailed Design
 
+> Unreleased Host SDK cutover: public product execution connects to one independent Host.
+> Embedded/default owner construction, inline switching and caller-owned external-agent
+> daemons are retired. Internal Runtime and independent libraries remain. See
+> [migration and ownership limits](SDK_MIGRATION.md#统一-host-sdk-收口未发布).
+
 Last updated: 2026-10-29. Current development tree: FEATURE_298/299/301 on package
 `0.7.97-alpha.11`; `v0.7.96` is the last stable release.
 

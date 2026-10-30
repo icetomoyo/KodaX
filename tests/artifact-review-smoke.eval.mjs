@@ -1,4 +1,7 @@
-// Opt in after build: KODAX_ARTIFACT_E2E=1 node tests/artifact-review-smoke.eval.mjs
+// Historical pre-cutover harness: reproduce with its historical SDK, not the unified build.
+// A shared Host experiment requires a new revision with Host-side provider budgets
+// and raw capture; changing only the constructor would lose these safeguards.
+// Historical opt-in: KODAX_ARTIFACT_E2E=1 node tests/artifact-review-smoke.eval.mjs
 // Layer 3.5, two cases, actual KodaX Host/Run and transport pixels; not a prompt comparison.
 import fs from 'node:fs/promises';
 import os from 'node:os';

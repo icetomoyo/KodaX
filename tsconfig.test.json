@@ -14,7 +14,7 @@
         "./src/sdk-session.ts"
       ],
       "@kodax-ai/kodax/runtime": [
-        "./src/sdk-runtime.ts"
+        "./src/sdk-runtime-public.ts"
       ],
       "@kodax-ai/agent/media": [
         "./packages/agent/src/media/index.ts"

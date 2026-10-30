@@ -14,7 +14,7 @@ vi.mock('@kodax-ai/agent', async (importOriginal) => {
   } };
 });
 
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 
 it.each(['automatic', 'same-request'] as const)(
   'keeps unknown Shell cleanup fenced and recovers through %s retry', async (recovery) => {

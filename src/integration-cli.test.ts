@@ -392,7 +392,7 @@ describe("integration CLI", () => {
   it("fails closed for legacy or mismatched daemon ownership beside a non-.kodax config home", async () => {
     const [runtimeModule, hostModule, stateModule, transportModule] =
       await Promise.all([
-        import("./sdk-runtime.js"),
+        import("../tests/runtime-fixture.js"),
         import("./runtime-daemon/host.js"),
         import("./runtime-daemon/state.js"),
         import("./runtime-daemon/transport.js"),

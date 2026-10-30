@@ -122,6 +122,8 @@
     "build:binary:all": "node scripts/build-binary.mjs --all",
     "test": "vitest run",
     "test:bundle": "node --test tests/bundled-provider-credentials.test.mjs tests/bundled-daemon-compaction.test.mjs tests/bundled-memory-review-shutdown.test.mjs tests/bundled-product-exit.test.mjs tests/bundled-shared-host-recovery.test.mjs tests/bundled-startup-recovery.test.mjs tests/bundled-cli-host-recovery.test.mjs tests/bundled-text-permissions.test.mjs tests/bundled-image-validation.test.mjs tests/bundled-text-recovery.test.mjs tests/bundled-mcp-output-recovery.test.mjs tests/bundled-skills.test.mjs tests/image-codec-release.test.mjs tests/asrt-wfp-probe.test.mjs tests/asrt-wfp-build.test.mjs tests/script-release.test.mjs tests/bundled-task-results.test.mjs",
+    "test:host-cutover": "node --test tests/runtime-owner-historical.test.mjs tests/unified-runtime-release.test.mjs",
+    "test:host-upgrade": "node --test tests/bundled-historical-host-upgrade.test.mjs",
     "test:native": "node scripts/test-native.mjs",
     "test:packed-native": "node scripts/test-packed-native.mjs",
     "test:fast": "vitest run -c vitest.fast.config.ts",

@@ -58,22 +58,25 @@ it('runs default ACP prompts in the existing shared Host and only detaches on di
     }
   }
   llm.registerModelProvider('acp-local', () => new Provider());
-  const { createKodaXRuntime } = await import('./sdk-runtime.js');
+  const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
   const { startRuntimeDaemonHost } = await import('./runtime-daemon/host.js');
-  const { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } = await import('./runtime-daemon/state.js');
+  const { prepareRuntimeDaemonOwner, readRuntimeOwnerProcessStartIdentity,
+    resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } = await import('./runtime-daemon/state.js');
   const { defaultRuntimeDaemonEndpoint } = await import('./runtime-daemon/transport.js');
   const { KodaXAcpServer } = await import('./acp_server.js');
   const probePath = path.join(homeDir, 'probe.txt');
   await (await import('node:fs/promises')).writeFile(probePath, 'ACP tool output');
+  const paths = resolveRuntimeDaemonPaths(homeDir);
+  prepareRuntimeDaemonOwner(paths, path.join(homeDir, '.kodax', 'sessions'));
   const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'acp-local' });
   let releaseWriter = () => {};
   let restoreWriterProbe = () => {};
   let restoreReadProbe = () => {};
   let writer: Promise<void> | undefined;
   let writerTimer: ReturnType<typeof setTimeout> | undefined;
-  const paths = resolveRuntimeDaemonPaths(homeDir);
   const lock = tryAcquireRuntimeDaemonLock(paths, {
     runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
+    processStartIdentity: readRuntimeOwnerProcessStartIdentity(process.pid),
   });
   if (!lock) throw new Error('Isolated ACP Host lock unavailable.');
   const host = await startRuntimeDaemonHost({ runtime, paths, lock, ownsA2AConfigReconciler: true, endpoint: defaultRuntimeDaemonEndpoint('default', homeDir) });

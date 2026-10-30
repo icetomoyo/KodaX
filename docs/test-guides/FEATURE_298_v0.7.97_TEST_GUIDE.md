@@ -838,3 +838,211 @@ The second case supplied no screenshots or rendering command. A project-discover
 **Capability boundary:** PowerPoint is optional. Autonomous PPT review requires an available final-PPTX renderer/format skill and image-capable model; KodaX currently does not bundle a full PPTX renderer. An environment can provide a headless renderer such as [LibreOffice](https://help.libreoffice.org/latest/en-US/text/shared/guide/start_parameters.html), or a format-tool/MCP integration. Neither source inspection nor an approximate HTML reconstruction certifies the final PPTX. With no usable renderer/image delivery, the correct result remains unverified. The non-Office route was tested with Office excluded on this Windows host, not on a physically Office-uninstalled machine.
 
 Two bounded cases, 22 physical requests including auxiliaries, max one provider stream in flight; 80 production source/build hashes unchanged from the prior gate. Raw, immutable native/non-Office renders, preflight failure, npm diagnostic and structured main-session assessment: `%TEMP%/kodax-eval-dumps/result-review-office/89632d90a0c1498791c4a345466c980c`. No runtime source or dependency change, so prior regression gates were not repeated. This closes the inspected static Office/PPT workflow; animations, other Office versions and the earlier video residue are not covered by this extension. Native model output also contains an unsupported incidental claim about invisible bottom images; the nonce badges are visibly present, and that claim remains in raw evidence.
+
+## 2026-10-29 Unified Host SDK cutover (unreleased)
+
+Baseline: `466b874d`, after `v0.7.97-alpha.11`. The accepted H01–H05 slices are in
+[the feature design](../features/v0.7.97.md#2026-10-29-统一-host-sdk-收口未发布).
+Public root and `/runtime` exports now provide shared Host connections; isolated
+core tests use the non-published `tests/runtime-fixture.ts`. Tests of public
+construction, launch/bootstrap, declaration compatibility and installed artifacts
+continue to use the public entry. No version bump or publication is included.
+
+The policy transition writes `mode: host` atomically under profile and canonical
+Session-root coordination. Its current wire projection remains `daemon`, without
+internal migration fields. Repeated startup is idempotent. Alive, unknown or corrupt
+inline owners, ambiguous descriptors and storage fences block migration; a failed
+publication preserves the old policy, while a failure after publication never
+rolls back. Original requested profiles must also be fenced when startup reuses a
+Host under another profile. New-owner `execPolicy`/`autoReview` bootstrap remains
+supported, and attach cannot overwrite those policies.
+
+Historical owner evidence pins exact Git objects and hashes all executed sources:
+`v0.7.96` (`c2c8fdc41f4e0b50fa1c2d0b24142586f155777c`) and alpha.11
+(`0f3930e95e0286fd360826cf14f6f5c0d63d0fa5`). These are actual historical readers and
+rollback writers, not simulated versions. Their scope is the ownership protocol;
+a separate real published-package test covers a running historical Host. The
+installed candidate test uses an actual `npm pack` artifact and its declarations,
+with declared external dependencies supplied from the local install. It checks
+retired imports/calls, a distinct owner PID, bootstrap cleanup, detach semantics,
+concurrent first launch, cross-profile reuse and refusal by old rollback writers
+after exact Host exit. It does not prove compatibility with arbitrary old private
+writers that never recorded a shared owner fence.
+
+During implementation, RED tests exposed the old public embedded/default entry,
+public inline helpers, and the in-process external-agent daemon. A later strict
+management-schema test caught an internal `unified` field leaking into the wire;
+the projection now contains only the existing policy DTO. Independent Spec review
+then reproduced a missed requested-profile migration when profile B reused Host A;
+the actual tarball test failed with `inline !== host` before the repair. The first
+complete bundle run returned EXIT 1 (51/54): three Memory-review fixtures still
+constructed embedded owners. Their recovery now starts a replacement shared Host,
+retaining cancellation, pending state, request-count and unique-receipt assertions;
+the targeted three tests then passed. These intermediate failures remain part of
+the evidence and do not count as the final gate.
+
+Validation on 2026-10-30 (Windows; final source build):
+
+- `npm run build` and both source/test `npm run typecheck` checks: EXIT 0.
+- `npm run test:host-cutover`: 3/3, EXIT 0, including both historical readers,
+  two independent first-launch processes and requested-profile B → live Host A →
+  exact shutdown → old B rollback rejection. Actual candidate npm tarball SHA256:
+  `5a04d1461af3f560550321f847f6497473f2ba4d08defdb82d92332d2ab0a2c4`.
+- `npm run test:bundle`: 54/54, EXIT 0. `bundled-artifacts`: 3/3, EXIT 0, using the
+  installed Chrome. These include current-build crash/cleanup, review shutdown,
+  restart/history/tool-original, task-report and work-mode regressions.
+- All 28 `runtime-daemon` test files: 470 passed, one platform-specific skip.
+  `state.ts` coverage: statements 86.01%, branches 80.77%, functions 97.33%,
+  lines 89.59%. This is module coverage, not an unmeasured repository-wide claim.
+- `npm run test:host-upgrade`: 1/1, EXIT 0 with `KODAX_ALPHA11_TARBALL` set to the
+  actual published alpha.11 archive. The test checks the fixed SHA512 before
+  extraction. Provision it explicitly with `npm pack @kodax-ai/kodax@0.7.97-alpha.11
+  --ignore-scripts --pack-destination <temp>`; no implicit download or skip occurs.
+  Linux npm-release and Windows CI jobs provision that exact package and run the
+  gate. Non-bundled dependencies reuse the installed test environment.
+
+The historical Host test launches unmodified alpha.11 code, completes a real local
+shell append and holds the next fixture-provider response, then replaces code at
+that same installation path. A fresh SDK refuses busy upgrade and preserves the
+old PID/runtimeId. After the old Run completes, idle upgrade changes the Host and
+build fingerprint while retaining origin, activeMessages, Session title, workMode
+and completed Run status. Primary requests remain 2 → 2 and the marker contains
+one append. A separate background Memory review is identified by its actual tool
+contract, not counted as a replayed user Run. This is not a byte-for-byte comparison
+of every persisted file, and it does not cover an old stopped Run or active
+checkpoint/unknown-effect recovery across versions; current-build tests for those
+contracts remain separate evidence.
+
+Standards review also found a missing cancellation boundary in the new historical
+test. Its request wait now has a 30-second deadline and test cancellation signal;
+`finally` and `t.after` share idempotent cleanup that waits for Run termination.
+Temporary fault variants exercised both request-deadline failure and actual
+node:test cancellation: each closed the exact Host successfully and exited. The
+tracked successful test retains its original 180-second total timeout. Both review
+axes report zero remaining findings after the fixes and actual-package evidence.
+
+Source/build logs are `%TEMP%/kodax-host-cutover-final-{build,typecheck}.log`;
+package evidence is `kodax-host-cutover-final-package.log`. Full bundle and browser
+logs are `kodax-cutover-bundle-final-20261030-000242.log` and
+`kodax-cutover-artifacts-final-20261030-000438.log`. Historical process evidence is
+`%TEMP%/kodax-historical-host-upgrade-r34Bip/evidence.json`; state coverage is in
+`%TEMP%/kodax-state-coverage-5d05fabb8d1a4a7b9d1703dc3f77827d/`.
+
+The initial full default run was interrupted after the reviewed production repair
+and a Memory-review test failure; it is not a passing final gate. Its log is
+`%TEMP%/kodax-host-cutover-full.log`. Final default-suite results follow separately.
+Cross-platform jobs are wired but not executed locally, and no npm/GitHub release,
+live-provider quality eval, or external consumer upgrade is claimed.
+
+The Memory-review failure was reproduced at its original one-second polling
+assertion, then traced with a temporary test-only probe: after releasing the
+reviewer, durable background work remained pending until 635ms and requestStop
+arrived at 715ms even in the passing low-load case. Reviewer return is not durable
+settlement. The test now uses its existing bounded `awaitEvent` helper to await
+actual requestStop, while retaining the no-stop-during-review, un-aborted signal
+and exactly-once assertions. All probes were removed; the complete file passed
+13/13. Production code and build were unchanged.
+
+The next shared-checkout full run completed with 19 failures, 17,993 passes,
+97 skips and 19 todo cases. Ten failures exposed old test seams: ACP fixture
+ownership setup, the CLI's renamed internal constructor mock, the child-process
+core constructor, the live legacy-owner refusal message and a missing mocked
+owner-preparation dependency in pure upgrade orchestration. These fixtures were
+repaired with their behavior assertions retained, and the affected files passed
+individually. The other nine failures belonged to sandbox tests another task
+added while this run was in progress. This was not a frozen passing candidate.
+The original log/JSON are `%TEMP%/kodax-host-cutover-final-full.{log,json}`.
+
+Final validation therefore uses an isolated checkout of `466b874d` with only this
+Host-cutover patch. The other task's sandbox/A2A files and its two overlapping SDK
+guide hunks are excluded and preserved in the original checkout. Fresh isolated
+build/typecheck passed. A first isolated bundle run returned 52/54: npm packed
+paths outside the package through test-environment dependency junctions, and an
+existing Product-exit test observed `readExit: ready` followed by a fresh
+`listPendingExits: daemon_active` assessment. Copying the bundled dependencies
+locally fixed the package layout without product changes (Script release 2/2).
+
+The Product-exit assertion also failed in an independent repeat. Both queries
+use the same existing fresh process-identity verification; unknown identity
+continues to block recovery. The exact OS cause was not established, and no PID
+reuse claim is made. The test now retries for at most 20 seconds only when the
+same old request/runtime/client/owner and unchanged cleanup facts report
+`blocked / daemon_active / retry_verification`. Other evidence fails immediately.
+The empty-list, replacement-Host usability, old-request idempotence and unchanged
+durable-receipt assertions remain. Temporary probes were removed. Independent
+review found no remaining issue in this change or the late fixture repairs.
+
+The two failing Product-exit runs also exposed a test-cleanup defect: `finally`
+disconnected and removed storage immediately after requesting shutdown, without
+waiting for actual process exit. Their two exact test Host/supervisor trees were
+identified by PID, creation time, command and temporary home, then cleaned up.
+The fixture now waits for verified exit before removing its directory; if exit
+cannot be verified, the failure stays visible and the directory is retained.
+This changes test cleanup only, not production shutdown or recovery semantics.
+A temporary fault-injection copy then threw immediately after replacement Host
+creation. It exited 1 with the intentional error still visible, verified cleanup
+first, and an independent process check confirmed both exact Host/supervisor PIDs
+were gone and the temporary home was removed. The probe was deleted; its log is
+`%TEMP%/kodax-exit-cleanup-injection-20261030-010103.log`.
+
+The isolated full suite also exposed an existing snapshot-test wall-clock
+assumption. An independent exact-case run returned the required `read_cancelled`
+but took 113ms against the test's 100ms threshold. The production read-budget and
+snapshot implementation was unchanged from the baseline. The test now blocks
+actual `.entries` I/O with an explicit gate: the 20ms caller timeout and a signal
+abort must reject with their exact codes before the gate is released. After
+release, both Sessions must return their original content. A five-second test
+observation guard fails and releases the gates in `finally` if cancellation
+regresses. The exact case passed; independent review found no remaining finding.
+The full-file confirmation is recorded with the final validation below.
+
+The two historical live-provider eval scripts remain explicitly historical:
+their in-process provider/budget instrumentation cannot control a separate Host.
+They were not mechanically converted to daemon mode or run as paid live evals.
+
+Isolated final-candidate evidence (2026-10-30, Windows):
+
+- Full default suite, retries disabled and four workers: 1,283 files passed,
+  six skipped, one failed; 17,996 cases passed, 97 skipped, 19 todo, one failed.
+  Duration: 1,490.91 seconds. The sole failure was the snapshot test's 100ms
+  wall-clock threshold (124ms in the full run; the separate cancellation repro
+  was 113ms). No production failure was observed. This is the actual full-run
+  result, not a claim that the original full invocation exited zero.
+- The production source and built-runtime identities were verified unchanged
+  across that run: source fingerprint
+  `286206bea6fcdcb0b4d85782596ac6f5ca75d41f273c187ca88866a22f8d2d0e`,
+  built fingerprint
+  `23ddfeb0c44eab6e7a9a2568c3f469e1e2a5013477fe65319131e36ee8723943`.
+- Isolated actual-package cutover: 3/3, EXIT 0; tarball SHA256
+  `1e0d45e7b4d91a0d6e7567493d949cdf33f19d3d7eb7498652a4203206b61826`.
+- Isolated published-alpha.11 in-place Host upgrade: 1/1, EXIT 0; evidence at
+  `%TEMP%/kodax-historical-host-upgrade-scpdbH/evidence.json`.
+
+The isolated full log/JSON are `%TEMP%/kodax-host-isolated-full.{log,json}`;
+package and historical process logs are `kodax-host-isolated-package.log` and
+`kodax-host-isolated-historical.log`. Test-only repairs do not change the runtime
+fingerprints above. Their final file/bundle confirmation follows below.
+
+Final confirmation after the test-only repairs:
+
+- `src/sdk-runtime.test.ts`: the complete file passed 337/337 with retries
+  disabled (216.98 seconds, EXIT 0), including the deterministic budget/cancel
+  case. Log/JSON: `%TEMP%/kodax-host-isolated-runtime-final.{log,json}`. The other
+  full-suite files were not rerun after this test-only correction; their
+  production code and tests remained unchanged.
+- Source and test `npm run typecheck`: EXIT 0 after all fixture edits; log
+  `%TEMP%/kodax-host-isolated-typecheck-final.log`. The isolated full build had
+  already passed before production was frozen (`kodax-host-isolated-build.log`).
+  No repository lint script is defined.
+- Complete `npm run test:bundle`: 54/54, EXIT 0, 83.26 seconds; log
+  `%TEMP%/kodax-isolated-bundle-final-20261030-011458.log`.
+- Chrome artifact acceptance: 3/3, EXIT 0, 21.74 seconds; log
+  `%TEMP%/kodax-isolated-artifacts-final-20261030-011632.log`. A subsequent process
+  inventory found no remaining test Hosts from these runs.
+- Standards and Spec reviews have no remaining findings; the final fixture
+  changes also received independent read-only review. The original checkout's
+  unrelated changes were verified unchanged and excluded from this commit.
+
+H01–H05 implementation and local verification are complete. This does not mark
+the package published, cross-platform CI executed, external clients migrated,
+or the explicitly unverified cross-version recovery scenarios accepted.

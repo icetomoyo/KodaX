@@ -14,7 +14,7 @@ import type {
 import { createSessionManager, FileSessionStorage } from '@kodax-ai/repl';
 
 import * as sdkAgent from './sdk-agent.js';
-import { createKodaXRuntime, type RuntimeConversationHistorySlice } from './sdk-runtime.js';
+import { createKodaXRuntime, type RuntimeConversationHistorySlice } from "../tests/runtime-fixture.js";
 
 const timestamp = '2026-08-01T00:00:00.000Z';
 

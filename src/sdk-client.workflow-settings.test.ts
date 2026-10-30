@@ -7,7 +7,7 @@ import { createMcpTestServerFixture } from '@kodax-ai/agent';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { KodaXBaseProvider, registerModelProvider, clearRuntimeModelProviders } from '@kodax-ai/llm';
 import type { KodaXProviderConfig, KodaXProviderStreamOptions, KodaXReasoningRequest, KodaXStreamResult, KodaXMessage, KodaXToolDefinition } from '@kodax-ai/llm';
-import { createKodaXRuntime, connectKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime, connectKodaXRuntime } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ExternalAgentRegistration } from '@kodax-ai/agent';
-import { createKodaXRuntime } from '../sdk-runtime.js';
+import { createKodaXRuntime } from "../../tests/runtime-fixture.js";
 import { writeIntegrationDocument } from '@kodax-ai/repl';
 import {
   A2A_EXECUTOR_ID,

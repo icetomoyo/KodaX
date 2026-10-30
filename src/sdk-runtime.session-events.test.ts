@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createKodaXRuntime, type RuntimeEvent } from "./sdk-runtime.js";
+import { createKodaXRuntime, type RuntimeEvent } from "../tests/runtime-fixture.js";
 
 /**
  * FEATURE_298 T26 — Runtime events are a live, in-process stream. They carry a

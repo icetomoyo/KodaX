@@ -13,7 +13,7 @@ import {
 import { readLatestGoalState } from '@kodax-ai/agent';
 import { executeCommand, FileSessionStorage } from '@kodax-ai/repl';
 import type { InteractiveContext } from '@kodax-ai/repl';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 
 const CONFIG = {
   provider: 't34-probe',

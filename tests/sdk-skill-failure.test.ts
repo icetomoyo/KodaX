@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { getSkillRegistry, resetSkillRegistry } from '@kodax-ai/agent';
-import { createKodaXRuntime, connectKodaXRuntime, ensureKodaXRuntime, type RuntimeEvent } from '../src/sdk-runtime.js';
+import { createKodaXRuntime, connectKodaXRuntime, ensureKodaXRuntime, type RuntimeEvent } from "./runtime-fixture.js";
 import { readRuntimeDaemonLockOwner, resolveRuntimeDaemonPaths } from '../src/runtime-daemon/state.js';
 import { waitForRuntimeDaemonOwnerExit } from '../src/runtime-daemon/process.js';
 import { connectKodaXClient } from '../src/sdk-client.js';

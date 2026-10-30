@@ -6,7 +6,7 @@ import {
   KodaXBaseProvider, clearRuntimeModelProviders, registerModelProvider,
   type KodaXProviderConfig, type KodaXStreamResult,
 } from '@kodax-ai/llm';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { createSessionManager } from '@kodax-ai/repl';
 
 class DraftTestProvider extends KodaXBaseProvider {

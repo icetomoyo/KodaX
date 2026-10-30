@@ -133,7 +133,7 @@ vi.mock('@kodax-ai/repl', async (importOriginal) => {
 });
 
 import { KodaXAcpServer } from '../src/acp_server.js';
-import { createKodaXRuntime, type KodaXRuntime } from '../src/sdk-runtime.js';
+import { createKodaXRuntime, type KodaXRuntime } from "./runtime-fixture.js";
 
 declare global {
   // eslint-disable-next-line no-var

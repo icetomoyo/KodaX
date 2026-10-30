@@ -25,7 +25,7 @@ describe('runtime.memory Host service (FEATURE_298 T36)', () => {
   });
 
   it('does not let a cached Memory plane write after the Host closes', async () => {
-    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({ homeDir });
     const plane = await runtime.memory.forProject(projectRoot);
     await runtime.close();
@@ -34,7 +34,7 @@ describe('runtime.memory Host service (FEATURE_298 T36)', () => {
   }, 60_000);
 
   it.each(['embedded', 'daemon'] as const)('serves remember, view, exact forget, honest rebuild, and trusted open targets via %s', async (mode) => {
-    const { createKodaXRuntime, connectKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const { createKodaXRuntime, connectKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const owner = await createKodaXRuntime({ homeDir, defaultProvider: 'anthropic', sharedDaemonHost: true });
     const paths = resolveRuntimeDaemonPaths(homeDir);
     const lock = tryAcquireRuntimeDaemonLock(paths, { runtimeId: owner.identity.runtimeId, pid: process.pid, createdAt: owner.identity.startedAt });
@@ -123,7 +123,7 @@ describe('runtime.memory Host service (FEATURE_298 T36)', () => {
   }, 60_000);
 
   it('rejects stale approvals after the inspected content changed over the daemon face', async () => {
-    const { createKodaXRuntime, connectKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const { createKodaXRuntime, connectKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const owner = await createKodaXRuntime({ homeDir, defaultProvider: 'anthropic', sharedDaemonHost: true });
     const paths = resolveRuntimeDaemonPaths(homeDir);
     const lock = tryAcquireRuntimeDaemonLock(paths, { runtimeId: owner.identity.runtimeId, pid: process.pid, createdAt: owner.identity.startedAt });

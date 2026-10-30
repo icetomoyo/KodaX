@@ -9,7 +9,7 @@ import { registerCustomProviders, clearRuntimeModelProviders } from '@kodax-ai/l
 import { createMcpTestServerFixture } from '@kodax-ai/agent';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import type { RuntimeCredentialLease, RuntimeCredentialService, RuntimeHostToolLease, RuntimeScopedCredentialRequest } from './sdk-runtime.js';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 

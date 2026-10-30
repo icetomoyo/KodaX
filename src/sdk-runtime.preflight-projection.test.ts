@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { FileSessionStorage } from '../packages/repl/src/interactive/storage.js';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 
 it('passes preflight cancellation into canonical Actor metadata reads', async () => {
   const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-preflight-cancel-'));

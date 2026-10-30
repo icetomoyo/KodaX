@@ -8,7 +8,7 @@ import {
   KodaXBaseProvider, registerModelProvider,
   type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult,
 } from '@kodax-ai/llm';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 
 it.each(['load', 'read', 'peek'] as const)('keeps explicit source identity through storage.%s and a rewritten save', async (method) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-identity-read-'));

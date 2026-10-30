@@ -134,14 +134,15 @@ async function createFixture(t) {
     storage: new FileSessionStorage({ sessionsDir, configHome }) };
 }
 
-async function openRuntime(fixture, mode) {
+async function openRuntime(fixture, launcher = 'ensure') {
   const common = { homeDir: fixture.homeDir, sessionsDir: fixture.sessionsDir, defaultProvider: provider };
   fixture.signal.throwIfAborted();
-  const opening = mode === 'embedded'
-    ? createKodaXRuntime(common)
-    : ensureKodaXRuntime({ ...common, daemonOrphanExitMs: 1000,
-      clientInfo: { name: 'bundle-memory-close', instanceId: randomUUID(), instanceSecret: randomUUID() },
-      requirements: { daemonManagement: 1 } });
+  const options = { ...common, daemonOrphanExitMs: 1000,
+    clientInfo: { name: 'bundle-memory-close', instanceId: randomUUID(), instanceSecret: randomUUID() },
+    requirements: { daemonManagement: 1 } };
+  const opening = launcher === 'create'
+    ? createKodaXRuntime({ ...options, mode: 'daemon' })
+    : ensureKodaXRuntime(options);
   let owner;
   let stopped = false;
   const handle = { runtime: undefined,
@@ -150,14 +151,12 @@ async function openRuntime(fixture, mode) {
       const runtime = await opening;
       let stopError;
       try {
-        if (mode === 'daemon') {
-          const state = await runtime.daemon.inspect();
-          owner ??= state.owner;
-          await runtime.daemon.shutdown();
-        }
+        const state = await runtime.daemon.inspect();
+        owner ??= state.owner;
+        await runtime.daemon.shutdown();
       } catch (error) { stopError = error; }
       await runtime.close();
-      if (mode === 'daemon') await assertDaemonStopped(fixture, owner);
+      await assertDaemonStopped(fixture, owner);
       stopped = true;
       if (stopError !== undefined) throw stopError;
     },
@@ -167,9 +166,8 @@ async function openRuntime(fixture, mode) {
   const runtime = await opening;
   handle.runtime = runtime;
   fixture.signal.throwIfAborted();
-  if (mode === 'daemon') {
-    owner = (await runtime.daemon.inspect()).owner;
-  }
+  owner = (await runtime.daemon.inspect()).owner;
+  assert.notEqual(owner.pid, process.pid, 'Memory review must run in the independent Host');
   return handle;
 }
 
@@ -223,10 +221,10 @@ async function assertDeferredReview(fixture, identity, session, jobId, expectedP
   return snapshot;
 }
 
-async function resumeReviewInEmbeddedRuntime(fixture, session, jobId) {
+async function resumeReviewInReplacementHost(fixture, session, jobId) {
   fixture.endpoint.state.holdReview = false;
   fixture.endpoint.state.holdPrimary = false;
-  const replacement = await openRuntime(fixture, 'embedded');
+  const replacement = await openRuntime(fixture);
   await completeTurn(fixture, replacement);
   const receipts = await eventually(() => reviewReceipts(fixture.storage, session.id),
     (entries) => entries.some((entry) => entry.jobId === jobId), 'recovered review receipt', fixture.signal);
@@ -234,27 +232,27 @@ async function resumeReviewInEmbeddedRuntime(fixture, session, jobId) {
   await replacement.stop();
 }
 
-for (const mode of ['embedded', 'daemon']) {
+for (const launcher of ['create', 'ensure']) {
   // Use the SDK's ambient credential mode with a loopback-only key. Run-scoped
   // broker authority may already be closed when terminal review begins.
-  test(`bundled ${mode} cancels ambient-credential production review HTTP and the next Runtime resumes its durable job`,
+  test(`bundled ${launcher} launcher cancels ambient-credential production review HTTP and the replacement Host resumes its durable job`,
     { timeout: 60_000 }, async (t) => {
       const fixture = await createFixture(t);
       try {
-        const original = await openRuntime(fixture, mode);
+        const original = await openRuntime(fixture, launcher);
         const { identity, session } = await completeTurn(fixture, original);
         await eventually(() => fixture.endpoint.state.reviews.length, (count) => count === 1, 'review HTTP request', t.signal);
         const [job] = await listPendingEpisodeReviews(identity);
         assert.equal(job?.version, 2);
         const started = performance.now();
         await original.stop();
-        t.diagnostic(`${mode} close and shutdown verification: ${Math.round(performance.now() - started)}ms`);
+        t.diagnostic(`${launcher} close and shutdown verification: ${Math.round(performance.now() - started)}ms`);
         // Shutdown must disconnect the production reviewer before recovery begins.
         await eventually(() => fixture.endpoint.state.disconnected, (count) => count === 1, 'HTTP peer disconnect', t.signal);
         const deferred = await assertDeferredReview(fixture, identity, session, job.jobId);
         await delay(100);
         assert.deepEqual(await assertDeferredReview(fixture, identity, session, job.jobId), deferred);
-        await resumeReviewInEmbeddedRuntime(fixture, session, job.jobId);
+        await resumeReviewInReplacementHost(fixture, session, job.jobId);
         assert.ok(fixture.endpoint.state.reviews.length >= 2);
         assert.deepEqual(fixture.endpoint.state.errors, []);
       } catch (error) {
@@ -269,7 +267,7 @@ test('bundled scoped daemon aborts a Run with an active startup review before qu
   { timeout: 100_000 }, async (t) => {
     const fixture = await createFixture(t);
     try {
-      const original = await openRuntime(fixture, 'daemon');
+      const original = await openRuntime(fixture);
       original.lease = await original.runtime.credentials.registerScoped(
         { providers: [provider] }, async () => 'loopback-only-test-key',
       );
@@ -300,7 +298,7 @@ test('bundled scoped daemon aborts a Run with an active startup review before qu
       const waitMs = Math.max(0, Date.parse(deferred.state.nextAttemptAt) - Date.now()) + 25;
       t.diagnostic(`Waiting ${waitMs}ms for the existing scoped-provider retry deadline`);
       await delay(waitMs, undefined, { signal: t.signal });
-      await resumeReviewInEmbeddedRuntime(fixture, first.session, job.jobId);
+      await resumeReviewInReplacementHost(fixture, first.session, job.jobId);
       assert.deepEqual(fixture.endpoint.state.errors, []);
     } catch (error) {
       fixture.evidence.keep = true;

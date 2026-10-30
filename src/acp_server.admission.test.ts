@@ -6,7 +6,7 @@ import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
 import { KodaXBaseProvider, clearRuntimeModelProviders, registerModelProvider,
   type KodaXMessage, type KodaXProviderStreamOptions, type KodaXReasoningRequest,
   type KodaXStreamResult, type KodaXToolDefinition } from '@kodax-ai/llm';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { toKodaXProductClient } from './client-runtime-adapter.js';
 
 const launcher = vi.hoisted(() => ({ ensure: vi.fn<() => Promise<KodaXProductClient>>() }));

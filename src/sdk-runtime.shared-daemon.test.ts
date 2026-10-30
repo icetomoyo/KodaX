@@ -13,7 +13,7 @@ import {
   enableKodaXDaemonOwner,
   getKodaXRuntimeOwnerState,
   setKodaXRuntimeOwnerMode,
-} from './sdk-runtime.js';
+} from "../tests/runtime-fixture.js";
 import { acquireRuntimeDaemonProcessLease } from './runtime-daemon/process.js';
 
 const homes: string[] = [];
@@ -300,7 +300,7 @@ describe('F269 shared Runtime contracts', () => {
     }
   });
 
-  it('fences daemon auto-start while explicit inline rollback owns the profile', async () => {
+  it('fences daemon auto-start while a live legacy inline owner owns the profile', async () => {
     const homeDir = makeHome();
     const policy = setKodaXRuntimeOwnerMode({
       homeDir,
@@ -310,12 +310,16 @@ describe('F269 shared Runtime contracts', () => {
     });
     const inline = acquireKodaXInlineOwner({ homeDir, profile: 'coder' });
 
-    expect(policy.revision).toBe(1);
-    expect(() => acquireKodaXInlineOwner({ homeDir, profile: 'coder' })).toThrow(/already has an owner/i);
-    await expect(acquireRuntimeDaemonProcessLease({ homeDir, profile: 'coder' }))
-      .rejects.toThrow(/inline rollback policy/i);
-
-    inline.close();
+    try {
+      const before = getKodaXRuntimeOwnerState({ homeDir, profile: 'coder' });
+      expect(policy.revision).toBe(1);
+      expect(() => acquireKodaXInlineOwner({ homeDir, profile: 'coder' })).toThrow(/already has an owner/i);
+      await expect(acquireRuntimeDaemonProcessLease({ homeDir, profile: 'coder' }))
+        .rejects.toThrow(/Runtime owner is active or its liveness is unverified/i);
+      expect(getKodaXRuntimeOwnerState({ homeDir, profile: 'coder' })).toEqual(before);
+    } finally {
+      inline.close();
+    }
     expect(setKodaXRuntimeOwnerMode({
       homeDir,
       profile: 'coder',

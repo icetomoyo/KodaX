@@ -6,7 +6,7 @@ import { KodaXBaseProvider, registerModelProvider, type KodaXProviderConfig, typ
 import { restoreSessionViewItems } from './session-view.js';
 import { FileSessionStorage } from '@kodax-ai/repl';
 import type { KodaXMessage } from '@kodax-ai/agent';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { randomUUID } from 'node:crypto';
 import { connectKodaXClient } from './sdk-client.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';

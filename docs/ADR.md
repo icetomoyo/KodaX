@@ -1,5 +1,43 @@
 # KodaX Architecture Decision Records
 
+## Unified Host SDK ownership cutover — 2026-10-29 (unreleased)
+
+FEATURE_298 now retires public in-process product ownership. Default/embedded
+Runtime construction, caller-owned external-agent daemons and public inline-owner
+switching are removed. The shared Host uses the same internal Runtime core;
+independent llm/agent/coding libraries remain available. A daemon-only compatibility
+launcher preserves trusted new-owner execPolicy/autoReview bootstrap. The public
+Runtime facade retains connections, bridges and diagnostics, but cannot construct
+an owner in the calling process. Its packaged exports and declarations enforce
+this boundary; isolated core tests use an internal fixture.
+
+The launcher checks profile ownership and the canonical Session root before a
+one-way atomic owner-policy cutover. The persisted `host` value deliberately fails
+the verified old readers; the current reader projects `daemon` to the existing
+wire schema. An ignored version field would not prevent old inline rollback after
+idle exit. Existing live Hosts use normal authenticated idle upgrade; busy or
+unverifiable owners are not forced out. A completed cutover is idempotent and never
+rolls back to inline when later startup fails. It does not migrate Session/Run data.
+When shared-storage discovery redirects a requested profile to an existing Host,
+the requested profile is also fenced under the same coordination after rechecking
+the exact shared owner. This does not restart that Host or bypass a live, unknown
+or corrupt owner belonging to the requested profile.
+
+This trades old SDK owner-management/downgrade compatibility for a durable single
+product ownership contract. Unknown private old embedders can bypass the old
+ownership files, so no missing lock proves that every old writer has stopped.
+Those hosts must exit and upgrade before sharing data. Arbitrary executor function
+injection has no equivalent cross-process interface and is explicitly retired;
+configured Host A2A and standalone executor-plane libraries remain. A general
+module-loader framework is outside scope.
+
+Host readiness, exact process exit and Run recovery eligibility remain distinct.
+Existing Stop, history, principal, fresh authority and tool-cleanup checks govern
+checkpoint continuation. Migration never replays tools with unknown effects.
+See the [accepted slices](features/v0.7.97.md#2026-10-29-统一-host-sdk-收口未发布),
+[migration contract](SDK_MIGRATION.md#统一-host-sdk-收口未发布) and
+[validation record](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md).
+
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
 
 > Last updated: 2026-10-29
