@@ -1,0 +1,938 @@
+{
+  "revision": "guided-tasks-r3",
+  "date": "2026-10-30",
+  "baseline": "1826cc228f299995fe5b22e608c7fbd90c3dc9ee",
+  "engineeringCandidate": "3b2d48e8ffeebdd0f14cd81c5c04b65736884938",
+  "candidatePatchSha256": "10a0384922fafe6e4b51b3c9763a8761dfc035700181a778e2e2d6e1a1d1c134",
+  "route": {
+    "provider": "Kimi Code",
+    "model": "kimi-for-coding",
+    "reportedDisplayName": "K2.8 Preview",
+    "endpoint": "https://api.kimi.com/coding/v1/chat/completions",
+    "protocol": "OpenAI Chat Completions",
+    "requestedThinking": "disabled",
+    "internalReasoningVerified": false,
+    "maxOutputTokens": 2048,
+    "timeoutMs": 60000,
+    "retry": 0,
+    "fallback": 0,
+    "repair": 0,
+    "child": 0,
+    "externalJudge": 0
+  },
+  "budget": {
+    "maxCallsIncludingPrior": 26,
+    "maxTotalTokens": 550000,
+    "maxExternalSpendUsd": 2,
+    "maxMetadata": 64
+  },
+  "quality": {
+    "reviewer": "current main session",
+    "reviewBeforeArmMapping": true,
+    "reviewBeforeFullTaskUsage": true,
+    "fullyBlind": false,
+    "limitations": [
+      "B tool names allow source-arm inference.",
+      "Compaction details accidentally exposed one subtotal usage before quality lock; full task costs and mapping were still sealed.",
+      "Blind v2 projection omitted patch/validation; selected raw fields supplied them. Both D patches/traces are equivalent; post-reveal association correction preserved separately."
+    ],
+    "artifacts": [
+      {
+        "file": "guidance.quality-review.json",
+        "sha256": "f753d86ad24e2920d0d3c5c75e8f5960378494134b458e42d0f9c92138ad2411"
+      },
+      {
+        "file": "guidance-challenge.quality-review.json",
+        "sha256": "85ed023f6778ee76d2d791d9ea632d4f2bb61469314946f80d92c0e2a451be89"
+      },
+      {
+        "file": "tasks.quality-review.json",
+        "sha256": "82c9e68802830b2eebf3530a3f1c67818e322de9f4dc47f20e289a30e8c7a845"
+      },
+      {
+        "file": "tasks.quality-review.mapping-note.json",
+        "sha256": "d9beeeebfbe1990a129503e7d65be13dfc7cbecc2a491b40ae8b2a4195448d02"
+      }
+    ]
+  },
+  "guidance": {
+    "descriptionOnlyChangeVerified": true,
+    "extraDescriptionUtf8Bytes": 325,
+    "fresh": {
+      "endpointCorrect": true,
+      "toolCalls": 0,
+      "feedbackRevisionObserved": false
+    },
+    "recheckOldWrongAnswer": {
+      "endpointCorrect": false,
+      "toolCalls": 0,
+      "feedbackRevisionObserved": false
+    },
+    "causalImprovementEstablished": false
+  },
+  "costScope": "Per-case measured execution from fixed imported history through real compaction, main responses and default background review. Historical conversation creation is excluded. Cached input is part of input, not added twice; absent cache fields remain null. Tokens are API usage, not invoice dollars. Layer3.5 smoke does not isolate prompt causality.",
+  "currentTotals": {
+    "calls": 20,
+    "input": 244889,
+    "output": 7194,
+    "total": 252083
+  },
+  "cumulativeIncludingPrior": {
+    "calls": 23,
+    "input": 295131,
+    "output": 7962,
+    "total": 303093,
+    "metadata": 26,
+    "http": 49
+  },
+  "prior": {
+    "calls": 3,
+    "input": 50242,
+    "output": 768,
+    "total": 51010,
+    "metadata": 5,
+    "http": 8
+  },
+  "currentHttp": {
+    "generation": 20,
+    "metadata": 21,
+    "total": 41
+  },
+  "wallet": {
+    "observedIncrementCny": 0,
+    "actualInvoiceUsd": null,
+    "subscriptionAllocation": null,
+    "warning": "Wallet observation is not zero cost. Budget proxy conservatively counts 1 CNY as USD1 and may lag."
+  },
+  "cells": [
+    {
+      "cell": "G-A-X",
+      "arm": "guided-candidate",
+      "totals": {
+        "calls": 1,
+        "input": 15353,
+        "output": 188,
+        "total": 15541,
+        "knownCachedInput": 0,
+        "missingCacheFields": 1
+      },
+      "byKind": {
+        "guidance": {
+          "calls": 1,
+          "input": 15353,
+          "output": 188,
+          "total": 15541,
+          "knownCachedInput": 0,
+          "missingCacheFields": 1
+        }
+      },
+      "firstMain": null,
+      "visibleCompletionMs": null,
+      "settledMs": null,
+      "imageAppearances": 1,
+      "uniqueImages": 1,
+      "toolNames": [],
+      "requests": [
+        {
+          "stem": "G-A-X-1",
+          "kind": "guidance",
+          "input": 15353,
+          "output": 188,
+          "total": 15541,
+          "cachedInput": null,
+          "httpMs": 5951,
+          "images": [
+            {
+              "sha256": "04abb937577fe0d51d228ac54462794f3290a4707684cb3c815b808bfe6b766a",
+              "bytes": 29952,
+              "width": 1600,
+              "height": 1000
+            }
+          ],
+          "requestSha256": "d8105fefe9493a65c0f9b0ad31eb28eac9d7dd89e8d4054054f4653a45a83f5b",
+          "responseSha256": "aec07c2d13ed195855bbc1c6cc1dcf097dc027dcfc8bc609febaa93f8b4f6191",
+          "inspectionContract": "post-guidance"
+        }
+      ]
+    },
+    {
+      "cell": "G-A-Y",
+      "arm": "guided-candidate",
+      "totals": {
+        "calls": 1,
+        "input": 15579,
+        "output": 216,
+        "total": 15795,
+        "knownCachedInput": 15341,
+        "missingCacheFields": 0
+      },
+      "byKind": {
+        "guidance": {
+          "calls": 1,
+          "input": 15579,
+          "output": 216,
+          "total": 15795,
+          "knownCachedInput": 15341,
+          "missingCacheFields": 0
+        }
+      },
+      "firstMain": null,
+      "visibleCompletionMs": null,
+      "settledMs": null,
+      "imageAppearances": 1,
+      "uniqueImages": 1,
+      "toolNames": [],
+      "requests": [
+        {
+          "stem": "G-A-Y-1",
+          "kind": "guidance",
+          "input": 15579,
+          "output": 216,
+          "total": 15795,
+          "cachedInput": 15341,
+          "httpMs": 4572,
+          "images": [
+            {
+              "sha256": "04abb937577fe0d51d228ac54462794f3290a4707684cb3c815b808bfe6b766a",
+              "bytes": 29952,
+              "width": 1600,
+              "height": 1000
+            }
+          ],
+          "requestSha256": "bb7343e9ea6e4a131362a7cdbe3669618216daa9ba271267a8dc69ced8189497",
+          "responseSha256": "5ebb45b6d76eefd377d411280be8083621d5e09f9a74e86563855ee7e68e7d29",
+          "inspectionContract": "post-guidance"
+        }
+      ]
+    },
+    {
+      "cell": "T-B-X",
+      "arm": "candidate",
+      "totals": {
+        "calls": 4,
+        "input": 50441,
+        "output": 2220,
+        "total": 52661,
+        "knownCachedInput": 27136,
+        "missingCacheFields": 2
+      },
+      "byKind": {
+        "compaction": {
+          "calls": 1,
+          "input": 4676,
+          "output": 840,
+          "total": 5516,
+          "knownCachedInput": 0,
+          "missingCacheFields": 1
+        },
+        "main": {
+          "calls": 2,
+          "input": 43885,
+          "output": 685,
+          "total": 44570,
+          "knownCachedInput": 27136,
+          "missingCacheFields": 0
+        },
+        "auxiliary": {
+          "calls": 1,
+          "input": 1880,
+          "output": 695,
+          "total": 2575,
+          "knownCachedInput": 0,
+          "missingCacheFields": 1
+        }
+      },
+      "firstMain": {
+        "input": 18923,
+        "output": 319,
+        "total": 19242
+      },
+      "visibleCompletionMs": 44215,
+      "settledMs": 61262,
+      "imageAppearances": 3,
+      "uniqueImages": 3,
+      "toolNames": [
+        "visual_inspect",
+        "visual_inspect",
+        "visual_inspect"
+      ],
+      "requests": [
+        {
+          "stem": "T-B-X-1",
+          "kind": "compaction",
+          "input": 4676,
+          "output": 840,
+          "total": 5516,
+          "cachedInput": null,
+          "httpMs": 20083,
+          "images": [],
+          "requestSha256": "f609ec3d0f6a72f08602a6b3189693f8a8349af0e1959bb5cb65832d4bf82283",
+          "responseSha256": "a91a58bd2b8d5a3d1d32d1d6946fee3a965ea44c0b1e5a7a51087be6465bc209",
+          "inspectionContract": "absent"
+        },
+        {
+          "stem": "T-B-X-2",
+          "kind": "main",
+          "input": 18923,
+          "output": 319,
+          "total": 19242,
+          "cachedInput": 8448,
+          "httpMs": 8889,
+          "images": [],
+          "requestSha256": "c527613e4243aec92bee8a135c55a4681cf113e782280ef38149de9cb417cb51",
+          "responseSha256": "e1a888b29789b9f94d9475fdd1ef9ed5af0616b9f578ed512b9df7efdcf04562",
+          "inspectionContract": "post-guidance"
+        },
+        {
+          "stem": "T-B-X-3",
+          "kind": "main",
+          "input": 24962,
+          "output": 366,
+          "total": 25328,
+          "cachedInput": 18688,
+          "httpMs": 12326,
+          "images": [
+            {
+              "sha256": "2dbcc141f2711b4b561183be948c1175e3872a58808e83eef25daee287004092",
+              "bytes": 33962,
+              "width": 1440,
+              "height": 900
+            },
+            {
+              "sha256": "4789ed39779a7265a78753978939571faa5ef8a560b90a751a090e6c12a7a732",
+              "bytes": 31212,
+              "width": 1440,
+              "height": 900
+            },
+            {
+              "sha256": "24cfc3a674abe7034fcb7f2ef42c9a7b87fa051ffd08b468c3bf069dd35bbf15",
+              "bytes": 31467,
+              "width": 1440,
+              "height": 900
+            }
+          ],
+          "requestSha256": "33418bf521248d1e91724eca169de7a6d6aa997cebd8ff8feaccc7043460b14e",
+          "responseSha256": "483e9db8d05af2dbc43fd3d98d7af7002ed41613190db64774e4a18cfc52c813",
+          "inspectionContract": "post-guidance"
+        },
+        {
+          "stem": "T-B-X-4",
+          "kind": "auxiliary",
+          "input": 1880,
+          "output": 695,
+          "total": 2575,
+          "cachedInput": null,
+          "httpMs": 16154,
+          "images": [],
+          "requestSha256": "aa7f48bd52c4bb0dd69c0d69937deda33c7e700a5e1bb9fb82f5ee252fb7422a",
+          "responseSha256": "98b94e1b0fee200c6ee27b5d8af886bc8a4c7bf4bc50bf0fb6e6f8bc724d6e78",
+          "inspectionContract": "absent"
+        }
+      ]
+    },
+    {
+      "cell": "T-B-Y",
+      "arm": "baseline",
+      "totals": {
+        "calls": 4,
+        "input": 47552,
+        "output": 1789,
+        "total": 49341,
+        "knownCachedInput": 25600,
+        "missingCacheFields": 1
+      },
+      "byKind": {
+        "compaction": {
+          "calls": 1,
+          "input": 4398,
+          "output": 723,
+          "total": 5121,
+          "knownCachedInput": 0,
+          "missingCacheFields": 1
+        },
+        "main": {
+          "calls": 2,
+          "input": 41269,
+          "output": 569,
+          "total": 41838,
+          "knownCachedInput": 24832,
+          "missingCacheFields": 0
+        },
+        "auxiliary": {
+          "calls": 1,
+          "input": 1885,
+          "output": 497,
+          "total": 2382,
+          "knownCachedInput": 768,
+          "missingCacheFields": 0
+        }
+      },
+      "firstMain": {
+        "input": 17727,
+        "output": 223,
+        "total": 17950
+      },
+      "visibleCompletionMs": 40240,
+      "settledMs": 53533,
+      "imageAppearances": 3,
+      "uniqueImages": 3,
+      "toolNames": [
+        "read",
+        "read",
+        "read"
+      ],
+      "requests": [
+        {
+          "stem": "T-B-Y-1",
+          "kind": "compaction",
+          "input": 4398,
+          "output": 723,
+          "total": 5121,
+          "cachedInput": null,
+          "httpMs": 18016,
+          "images": [],
+          "requestSha256": "748b71fcd3236cbcd3bcd8be606d10782f79248f53a3167d85df6aa5275956d7",
+          "responseSha256": "598e0e25f36a334dae7eed775d43be031663c09c658db98e369d6401d45a1534",
+          "inspectionContract": "absent"
+        },
+        {
+          "stem": "T-B-Y-2",
+          "kind": "main",
+          "input": 17727,
+          "output": 223,
+          "total": 17950,
+          "cachedInput": 7168,
+          "httpMs": 7362,
+          "images": [],
+          "requestSha256": "a6a2c663e833b12cde7d31946fbb30e87aa9cb8d9ddf99d7f9e1aad9fb2ce417",
+          "responseSha256": "f14947e2ca0e2560c420f50dff836cc64d77029e382a22a4873f3741ec36bfb9",
+          "inspectionContract": "absent"
+        },
+        {
+          "stem": "T-B-Y-3",
+          "kind": "main",
+          "input": 23542,
+          "output": 346,
+          "total": 23888,
+          "cachedInput": 17664,
+          "httpMs": 11281,
+          "images": [
+            {
+              "sha256": "2dbcc141f2711b4b561183be948c1175e3872a58808e83eef25daee287004092",
+              "bytes": 33962,
+              "width": 1440,
+              "height": 900
+            },
+            {
+              "sha256": "4789ed39779a7265a78753978939571faa5ef8a560b90a751a090e6c12a7a732",
+              "bytes": 31212,
+              "width": 1440,
+              "height": 900
+            },
+            {
+              "sha256": "24cfc3a674abe7034fcb7f2ef42c9a7b87fa051ffd08b468c3bf069dd35bbf15",
+              "bytes": 31467,
+              "width": 1440,
+              "height": 900
+            }
+          ],
+          "requestSha256": "f90d33944a0032d1495f1b3a4d4875e74fd5503be5bbac0e416ec49cb65ed58c",
+          "responseSha256": "c16eae60d41ca9bab9c7a882cced36e87f10e15274aef155b28259841d669207",
+          "inspectionContract": "absent"
+        },
+        {
+          "stem": "T-B-Y-4",
+          "kind": "auxiliary",
+          "input": 1885,
+          "output": 497,
+          "total": 2382,
+          "cachedInput": 768,
+          "httpMs": 12550,
+          "images": [],
+          "requestSha256": "b8f5c34f3e7aa21c9e2a28a8eb91223b7280f7b4bb334e7aad84929e99273fb4",
+          "responseSha256": "48d7c5167226329b339ba06c69215e90fba1530c2108988308e336b0ef6dc4e3",
+          "inspectionContract": "absent"
+        }
+      ]
+    },
+    {
+      "cell": "T-D-X",
+      "arm": "candidate",
+      "totals": {
+        "calls": 5,
+        "input": 59316,
+        "output": 1209,
+        "total": 60525,
+        "knownCachedInput": 50944,
+        "missingCacheFields": 0
+      },
+      "byKind": {
+        "main": {
+          "calls": 4,
+          "input": 57153,
+          "output": 749,
+          "total": 57902,
+          "knownCachedInput": 50176,
+          "missingCacheFields": 0
+        },
+        "auxiliary": {
+          "calls": 1,
+          "input": 2163,
+          "output": 460,
+          "total": 2623,
+          "knownCachedInput": 768,
+          "missingCacheFields": 0
+        }
+      },
+      "firstMain": {
+        "input": 13496,
+        "output": 223,
+        "total": 13719
+      },
+      "visibleCompletionMs": 28104,
+      "settledMs": 41026,
+      "imageAppearances": 0,
+      "uniqueImages": 0,
+      "toolNames": [
+        "read",
+        "read",
+        "read",
+        "edit",
+        "bash"
+      ],
+      "requests": [
+        {
+          "stem": "T-D-X-1",
+          "kind": "main",
+          "input": 13496,
+          "output": 223,
+          "total": 13719,
+          "cachedInput": 8448,
+          "httpMs": 6467,
+          "images": [],
+          "requestSha256": "953400e65a091bc44414b537a5bb4907adc2a17ea495afd3bee2f22b13f8ec56",
+          "responseSha256": "1787cd8dff109665cb930a81fb2ed724851f65d181f6dcad057f95d3cf0eccf1",
+          "inspectionContract": "post-guidance"
+        },
+        {
+          "stem": "T-D-X-2",
+          "kind": "main",
+          "input": 14110,
+          "output": 216,
+          "total": 14326,
+          "cachedInput": 13312,
+          "httpMs": 6113,
+          "images": [],
+          "requestSha256": "475b52166a9e7b0b42cd172dd9d940671a74732d7e1325f899618bd9c7c79c87",
+          "responseSha256": "6a23be5c644549cab6c6d123a205721565af78b5f7ac38f372e30f8741a9aa1e",
+          "inspectionContract": "post-guidance"
+        },
+        {
+          "stem": "T-D-X-3",
+          "kind": "main",
+          "input": 14563,
+          "output": 108,
+          "total": 14671,
+          "cachedInput": 14080,
+          "httpMs": 3363,
+          "images": [],
+          "requestSha256": "d2953e1650dd0040b08cbc3df114355ad034c0aa41ddc32b1c7553bb6753402c",
+          "responseSha256": "d88f88e99106a3c83405a4cc1ac594b0d204fab40318839988f4fcf163d7572c",
+          "inspectionContract": "post-guidance"
+        },
+        {
+          "stem": "T-D-X-4",
+          "kind": "main",
+          "input": 14984,
+          "output": 202,
+          "total": 15186,
+          "cachedInput": 14336,
+          "httpMs": 6423,
+          "images": [],
+          "requestSha256": "13fe00a092dcc98e35e03cb9fa9c0016bf2a3ae3af09b3b6598cc6335a030a73",
+          "responseSha256": "1714bdea754145ab3582d505c3a27fce0cac7b4ad1a8ff8e91efb9b5d7967047",
+          "inspectionContract": "post-guidance"
+        },
+        {
+          "stem": "T-D-X-5",
+          "kind": "auxiliary",
+          "input": 2163,
+          "output": 460,
+          "total": 2623,
+          "cachedInput": 768,
+          "httpMs": 11241,
+          "images": [],
+          "requestSha256": "bec9e3a9e0339efd012746fb6d3d6d943baa4086401b1938e0e42dd5420b6c69",
+          "responseSha256": "997ad4f9fe3b2e9578bf60b96cb668c6eb55a5a499b908476e29b67d30eb2d29",
+          "inspectionContract": "absent"
+        }
+      ]
+    },
+    {
+      "cell": "T-D-Y",
+      "arm": "baseline",
+      "totals": {
+        "calls": 5,
+        "input": 56648,
+        "output": 1572,
+        "total": 58220,
+        "knownCachedInput": 48384,
+        "missingCacheFields": 0
+      },
+      "byKind": {
+        "main": {
+          "calls": 4,
+          "input": 54418,
+          "output": 859,
+          "total": 55277,
+          "knownCachedInput": 47360,
+          "missingCacheFields": 0
+        },
+        "auxiliary": {
+          "calls": 1,
+          "input": 2230,
+          "output": 713,
+          "total": 2943,
+          "knownCachedInput": 1024,
+          "missingCacheFields": 0
+        }
+      },
+      "firstMain": {
+        "input": 12781,
+        "output": 237,
+        "total": 13018
+      },
+      "visibleCompletionMs": 30131,
+      "settledMs": 50250,
+      "imageAppearances": 0,
+      "uniqueImages": 0,
+      "toolNames": [
+        "read",
+        "read",
+        "read",
+        "edit",
+        "bash"
+      ],
+      "requests": [
+        {
+          "stem": "T-D-Y-1",
+          "kind": "main",
+          "input": 12781,
+          "output": 237,
+          "total": 13018,
+          "cachedInput": 7680,
+          "httpMs": 5704,
+          "images": [],
+          "requestSha256": "ddd93d2fe3f2ea903d98d5a371e93cb762c86e6c5f17c91a3a3f86dacee931ec",
+          "responseSha256": "80fc955943722a2730a14bedebe7bef6858dcecff5605ba1817da767e1397cec",
+          "inspectionContract": "absent"
+        },
+        {
+          "stem": "T-D-Y-2",
+          "kind": "main",
+          "input": 13409,
+          "output": 259,
+          "total": 13668,
+          "cachedInput": 12544,
+          "httpMs": 7273,
+          "images": [],
+          "requestSha256": "29064915ec36b6b1e11c8636843ce7bb18acfc2f627d5e5798443ab62670db6b",
+          "responseSha256": "e5f54b69128531ebc7301d313febbceb264e83b4566fc99358d2dfc1f1a773e1",
+          "inspectionContract": "absent"
+        },
+        {
+          "stem": "T-D-Y-3",
+          "kind": "main",
+          "input": 13905,
+          "output": 107,
+          "total": 14012,
+          "cachedInput": 13312,
+          "httpMs": 4095,
+          "images": [],
+          "requestSha256": "298e61a60583ad71529c91a369fce453f1089220dfc86eecc836dea48c77c3fb",
+          "responseSha256": "e2b331ff92591b22bdff0712b9fded8eeac192681a28acb603c1c12a51450d5f",
+          "inspectionContract": "absent"
+        },
+        {
+          "stem": "T-D-Y-4",
+          "kind": "main",
+          "input": 14323,
+          "output": 256,
+          "total": 14579,
+          "cachedInput": 13824,
+          "httpMs": 7039,
+          "images": [],
+          "requestSha256": "d7546fa6cd1a51f6b7a1a122ab555d4c598aabe44b7fe681da05f1beedd15a2a",
+          "responseSha256": "3e13c93bbf56c115c4e4113d9f7914339dc74f5d517b2c7982e77aaf44c4c5d2",
+          "inspectionContract": "absent"
+        },
+        {
+          "stem": "T-D-Y-5",
+          "kind": "auxiliary",
+          "input": 2230,
+          "output": 713,
+          "total": 2943,
+          "cachedInput": 1024,
+          "httpMs": 18874,
+          "images": [],
+          "requestSha256": "7d5fe00aea6c376c6d72ede6134fb9524e504848c338987d31699048057566e6",
+          "responseSha256": "8a8a0d932e4a6a11638b1c5fccacfa2da587cac6ec3c992a909adf6425d31e7b",
+          "inspectionContract": "absent"
+        }
+      ]
+    }
+  ],
+  "pairs": [
+    {
+      "caseId": "B",
+      "baseline": {
+        "calls": 4,
+        "input": 47552,
+        "output": 1789,
+        "total": 49341,
+        "knownCachedInput": 25600,
+        "missingCacheFields": 1
+      },
+      "candidate": {
+        "calls": 4,
+        "input": 50441,
+        "output": 2220,
+        "total": 52661,
+        "knownCachedInput": 27136,
+        "missingCacheFields": 2
+      },
+      "delta": {
+        "input": 2889,
+        "output": 431,
+        "total": 3320,
+        "totalPercent": 6.728684055856182,
+        "firstMainInput": 1196,
+        "firstMainTotal": 1292,
+        "visibleCompletionMs": 3975,
+        "settledMs": 7729
+      }
+    },
+    {
+      "caseId": "D",
+      "baseline": {
+        "calls": 5,
+        "input": 56648,
+        "output": 1572,
+        "total": 58220,
+        "knownCachedInput": 48384,
+        "missingCacheFields": 0
+      },
+      "candidate": {
+        "calls": 5,
+        "input": 59316,
+        "output": 1209,
+        "total": 60525,
+        "knownCachedInput": 50944,
+        "missingCacheFields": 0
+      },
+      "delta": {
+        "input": 2668,
+        "output": -363,
+        "total": 2305,
+        "totalPercent": 3.9591205771212667,
+        "firstMainInput": 715,
+        "firstMainTotal": 701,
+        "visibleCompletionMs": -2027,
+        "settledMs": -9224
+      }
+    }
+  ],
+  "rawDirectory": "C:/Users/ADMIN/AppData/Local/Temp/kodax-eval-dumps/visual-harness/guided-tasks-r3-q3uvOT",
+  "evidenceIndex": [
+    {
+      "file": "plan.json",
+      "sha256": "6b5256381cfb48957b5f2dc2dac04ea03084e46cf3fcaf76465ce75f52e13709"
+    },
+    {
+      "file": "freeze.json",
+      "sha256": "3863a2a0e4203c44643e060baea7826bf1efcb456754bc3882ef1f1c8ab6be97"
+    },
+    {
+      "file": "challenge.plan.json",
+      "sha256": "27686a4a1202d4fc038690728c4965bae6f9f364382c9b6f9e5f93995acc03ad"
+    },
+    {
+      "file": "candidate.diff",
+      "sha256": "10a0384922fafe6e4b51b3c9763a8761dfc035700181a778e2e2d6e1a1d1c134"
+    },
+    {
+      "file": "tasks.reveal.json",
+      "sha256": "853f3487076c95b0239f8a492c553652b11b4cfb01d4689102a906cdcd3cc4fa"
+    },
+    {
+      "file": "ledger.execution-complete.json",
+      "sha256": "75b27f419325b8be368e75c705715278914be0188b4b0be0325f12e645d4a5d5"
+    },
+    {
+      "file": "analysis.actual-costs.json",
+      "sha256": "c926a4ee4bfd70b197aae1a62f8ebe649b80e025febd348e790ae77df908806a"
+    },
+    {
+      "file": "first-turn-guidance-recount.json",
+      "sha256": "d71d55bcff4524c69db60a40b7b00668c631433ac1ee8a4799d4a4a9f97bcc02"
+    },
+    {
+      "file": "verification-full.log",
+      "sha256": "7113ee652cf26992db012f5ecf8572494cf657cf3099bd2b64b096f195ce16e7"
+    },
+    {
+      "file": "verification-full.status.json",
+      "sha256": "c0c3196e478e02f9f8e3d30e6045385e1aedfed091233771ae11ffa186e003f5"
+    },
+    {
+      "file": "verification-isolated-queue.log",
+      "sha256": "8ac1e21dc819895c67c61747523e39bc14c525b75f0058cf88632585de987ca7"
+    },
+    {
+      "file": "verification-isolated-queue.status.json",
+      "sha256": "2c2be73b23b9115c84f834eac711cc0e517089e6be0449cb6a29dca0d34875a2"
+    },
+    {
+      "file": "verification-typecheck.log",
+      "sha256": "26f941683702499d1dacf79a932e58be494f1a41a4e5b07450a6db0bde78ba12"
+    },
+    {
+      "file": "verification-build.log",
+      "sha256": "570914419f310f8d25a35d07286fca74e5d1415f9e9a07686a28bcfd0d798fa2"
+    },
+    {
+      "file": "verification-build.status.json",
+      "sha256": "e881538964882f80865ea8a927b493d775645484ca9aa7074c84a171e5e3dd0e"
+    },
+    {
+      "file": "verification-targeted-r3.log",
+      "sha256": "3883178464b29503b0d170e9488f6f6ee14419359325b79f4b46739520770b3d"
+    },
+    {
+      "file": "coverage-final-r3/coverage-summary.json",
+      "sha256": "594c7b0b0c482447333c257f3a93d87a47d6477d40e80db1fcfe58ab64395899"
+    },
+    {
+      "file": "post-run-freeze-check.json",
+      "sha256": "fb66533cf9ac720a98039c742f3349b97665a5814824b4e3f68e98b404d2c7ec"
+    }
+  ],
+  "recommendation": "recommend-iterate: completed B/D quality is comparable; measured cost rose in both. Guidance did not establish autonomous evidence correction. Preserve all failures; no automatic expansion or token-only rejection.",
+  "offlineFirstTurn": {
+    "scope": "Offline complete-model-fields heuristic, no API usage or billing; source HEAD03ea1eda3 plus frozen guide patch",
+    "captureDirectory": "C:/Users/ADMIN/AppData/Local/Temp/kodax-first-turn-wire-wNpOuE",
+    "captureSha256": "2c0d6371dfc9e9707624b3a67eb41dae70f3cc92d354a148735a6c8bcb5d67d4",
+    "previousCapture": "C:/Users/ADMIN/AppData/Local/Temp/kodax-first-turn-wire-qH7SlF",
+    "externalCalls": 0,
+    "rows": [
+      {
+        "cell": "openai-sa-runtime-host",
+        "estimatedTokens": 15988,
+        "sha256": "8c485697d01e325ea6429b038fac7009b6af794c196e2c3e90ad81227b7e1d6e",
+        "deltaFromEngineeringCandidate": 81,
+        "cumulativeDeltaFromOptimizedBaseline": 829,
+        "guideOnlyComparedToSavedNormalizedC": true
+      },
+      {
+        "cell": "openai-ama-runtime-host",
+        "estimatedTokens": 15504,
+        "sha256": "69f8e56c7ca525f067121ecf624ce315ce4de070686f66db283ed883ad5a86be",
+        "deltaFromEngineeringCandidate": 81,
+        "cumulativeDeltaFromOptimizedBaseline": 829,
+        "guideOnlyComparedToSavedNormalizedC": true
+      },
+      {
+        "cell": "openai-agent-runtime-host",
+        "estimatedTokens": 11873,
+        "sha256": "22223c816b3c9077bbb973aa611aec719d0543c59db115d5e8490379ceefc15e",
+        "deltaFromEngineeringCandidate": 82,
+        "cumulativeDeltaFromOptimizedBaseline": 830,
+        "guideOnlyComparedToSavedNormalizedC": true
+      },
+      {
+        "cell": "openai-script-runtime-host",
+        "estimatedTokens": 17374,
+        "sha256": "b625841246faf30b336ca090e6fced2fa1f9e0a790c7c4d5cff7d6eee71c87bd",
+        "deltaFromEngineeringCandidate": 81,
+        "cumulativeDeltaFromOptimizedBaseline": 829,
+        "guideOnlyComparedToSavedNormalizedC": true
+      },
+      {
+        "cell": "anthropic-sa-runtime-host",
+        "estimatedTokens": 16246,
+        "sha256": "f77378b3557c3ef1893619073fc380f4e272ac9daa8f51f36a7258d42a687295",
+        "deltaFromEngineeringCandidate": 81,
+        "cumulativeDeltaFromOptimizedBaseline": 825,
+        "guideOnlyComparedToSavedNormalizedC": true
+      },
+      {
+        "cell": "anthropic-ama-runtime-host",
+        "estimatedTokens": 15129,
+        "sha256": "f63cd0da763ca466f43b68512955c1bbf88588189c61f4b8ccb6d7ca80bf4098",
+        "deltaFromEngineeringCandidate": 81,
+        "cumulativeDeltaFromOptimizedBaseline": 807,
+        "guideOnlyComparedToSavedNormalizedC": true
+      },
+      {
+        "cell": "anthropic-agent-runtime-host",
+        "estimatedTokens": 11628,
+        "sha256": "68e9f16a62f9e2377cfd0996facb48755e9bd30f9a696938f46286be26423073",
+        "deltaFromEngineeringCandidate": 82,
+        "cumulativeDeltaFromOptimizedBaseline": 808,
+        "guideOnlyComparedToSavedNormalizedC": true
+      },
+      {
+        "cell": "anthropic-script-runtime-host",
+        "estimatedTokens": 17209,
+        "sha256": "434db13d7ccc9d3b8c2c8d40581e5855b7125d34a86ee02081175e7fcfdaeb9f",
+        "deltaFromEngineeringCandidate": 81,
+        "cumulativeDeltaFromOptimizedBaseline": 807,
+        "guideOnlyComparedToSavedNormalizedC": true
+      }
+    ],
+    "unchangedUnassembledSdkRows": 24,
+    "all32GuideOnlyComparedToSavedNormalizedC": true
+  },
+  "verification": {
+    "targeted": {
+      "files": 9,
+      "passed": 98
+    },
+    "coverage": {
+      "scope": "Six benchmark modules only; not repository-wide",
+      "statements": 91.52,
+      "branches": 80.29,
+      "functions": 93.87,
+      "lines": 98,
+      "guidanceFeedback": {
+        "lines": 100,
+        "branches": 77.14
+      }
+    },
+    "full": {
+      "command": "npm test",
+      "exitCode": 1,
+      "passed": 18133,
+      "failed": 1,
+      "skipped": 98,
+      "todo": 19,
+      "total": 18251,
+      "filesPassed": 1301,
+      "filesFailed": 1,
+      "filesSkipped": 7,
+      "filesTotal": 1309,
+      "durationSeconds": 1477.66,
+      "failure": "src/sdk-client.queue.test.ts:195 keeps unknown slash tokens, paths and URLs in the ordinary text batch; queued input runId poll timed out"
+    },
+    "isolated": {
+      "passed": 1,
+      "skipped": 7,
+      "durationSeconds": 19.58,
+      "causeResolved": false
+    },
+    "typecheckExitCode": 0,
+    "buildExitCode": 0,
+    "lint": "No configured script",
+    "oldFailuresClosed": false
+  }
+}
