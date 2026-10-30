@@ -1,0 +1,86 @@
+import { emitKodaXDiagnostic } from '@kodax-ai/agent';
+import { serializeCloudCredential, validateCustomProviderConfig, type KodaXCloudCredential, type KodaXCustomProviderConfig, type OAuthCredentialSession } from '@kodax-ai/llm';
+import type { KodaXClientHostAuthorization, RuntimeScopedCredentialRequest } from './client-host-authorization.js';
+import { bindRequestCredentials, type RuntimeRequestCredentialBinding } from './request-credential-binding.js';
+
+export type ProviderCredentialSource = { readonly provider: string } & (
+  | { readonly kind: 'external' }
+  | { readonly kind: 'environment'; readonly apiKeyEnv: string }
+  | { readonly kind: 'oauth'; readonly session: OAuthCredentialSession; readonly service: NonNullable<KodaXCustomProviderConfig['oauth']> }
+  | { readonly kind: 'cloud'; readonly connection: KodaXCustomProviderConfig; readonly resolve: (request: RuntimeScopedCredentialRequest, signal: AbortSignal) => Promise<KodaXCloudCredential> }
+);
+export interface ProviderCredentialAuthorizer { readonly authorizeExecution: KodaXClientHostAuthorization; close(): Promise<void>; }
+/** Trusted Main only. Sources are an explicit allowlist, never supplied by Product/model input. */
+export function createProviderCredentialAuthorizer(input: {
+  readonly sources: readonly ProviderCredentialSource[];
+  readonly environment?: () => Readonly<Record<string, string | undefined>>;
+}): ProviderCredentialAuthorizer {
+  const sources = new Map(input.sources.map(source => [source.provider, source.kind === 'cloud' ? { ...source, connection: structuredClone(source.connection) } : { ...source }]));
+  if (sources.size !== input.sources.length) throw new Error('Duplicate provider credential source.');
+  for (const source of sources.values()) validateSource(source);
+  let active: RuntimeRequestCredentialBinding | undefined, epoch: string | undefined, closed = false, invalidated = false;
+  let retired: RuntimeRequestCredentialBinding[] = [];
+  let serial: Promise<unknown> = Promise.resolve();
+  const authorizeExecution: KodaXClientHostAuthorization = (_request, services) => {
+    const operation = serial.then(async () => {
+      if (closed || invalidated) throw new Error('Provider credential authorizer is closed or revoked.');
+      if (!sources.size) return undefined;
+      const runtimeId = services.identity?.runtimeId;
+      if (!runtimeId) throw new Error('Provider credential authorization requires Host identity.');
+      if (!active || epoch !== runtimeId) {
+        const previous = active; active = undefined;
+        if (previous) try { await previous.close(); }
+        catch { retired.push(previous); emitKodaXDiagnostic({ source: 'credential-authorizer', level: 'warn', message: 'Previous Host lease cleanup failed; local authority is fenced and cleanup will be retried.' }); }
+        active = await bindRequestCredentials({ credentials: services.credentials, providers: [...sources.keys()],
+          acquire: (request, signal) => acquire(sources.get(request.provider)!, request, signal, input.environment),
+          onInvalidate: listener => subscribeSources(sources.values(), async () => { invalidated = true; await listener(); }) });
+        epoch = runtimeId;
+      }
+      return { credential: active.credential };
+    });
+    serial = operation.catch(() => undefined); // The caller receives the original rejection; serialization stays usable.
+    return operation;
+  };
+  return { authorizeExecution, async close() {
+    closed = true; await serial;
+    const bindings = [...retired, ...(active ? [active] : [])]; active = undefined; retired = [];
+    const results = await Promise.allSettled(bindings.map(binding => binding.close()));
+    const failures = results.flatMap((result, index) => { if (result.status === 'fulfilled') return []; retired.push(bindings[index]!); return [result.reason as unknown]; });
+    if (failures.length) throw new AggregateError(failures, 'Provider credential cleanup failed. Local authority is fenced.');
+  } };
+}
+function validateSource(source: ProviderCredentialSource): void {
+  if (!['environment', 'oauth', 'cloud', 'external'].includes(source.kind)) throw new Error('Unknown provider credential source.');
+  if (!source.provider.trim()) throw new Error('Credential source requires a provider.');
+  if (source.kind === 'environment' && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(source.apiKeyEnv)) throw new Error('Invalid approved environment variable.');
+  if (source.kind === 'oauth' && source.service !== source.session.service) throw new Error('OAuth source and session must match.');
+  if (source.kind === 'cloud') {
+    validateCustomProviderConfig(source.connection);
+    if (!source.connection.cloud || source.connection.name !== source.provider) throw new Error('Cloud credential source requires matching connection metadata.');
+  }
+}
+async function acquire(source: ProviderCredentialSource, request: RuntimeScopedCredentialRequest, signal: AbortSignal,
+  environment?: () => Readonly<Record<string, string | undefined>>): Promise<string> {
+  signal.throwIfAborted();
+  if (source.kind === 'external') throw new Error('This provider owns authentication outside the API-key broker.');
+  if (source.kind === 'oauth') return source.session.acquire(signal);
+  if (source.kind === 'environment') {
+    const key = (environment?.() ?? process.env)[source.apiKeyEnv];
+    if (!key?.trim()) throw new Error('Approved provider credential is unavailable.');
+    return key;
+  }
+  try {
+    const credential = await source.resolve(request, signal); signal.throwIfAborted();
+    const cloud = source.connection.cloud!;
+    if ((cloud.service === 'gemini' && credential.type !== 'api-key') || (cloud.service === 'bedrock' && credential.type === 'api-key')
+      || (cloud.service !== 'bedrock' && credential.type === 'aws') || (cloud.service === 'vertex' && credential.type === 'bearer' && !cloud.project)) throw new Error('Mismatched cloud credential.');
+    return serializeCloudCredential(source.provider, credential);
+  } catch { throw new Error('Cloud credential broker acquisition failed.'); }
+}
+
+function subscribeSources(sources: Iterable<ProviderCredentialSource>, listener: () => Promise<void>): () => void {
+  const subscriptions: (() => void)[] = [];
+  try { for (const source of sources) if (source.kind === 'oauth') subscriptions.push(source.session.onInvalidate(listener)); }
+  catch (error) { for (const unsubscribe of subscriptions) unsubscribe(); throw error; }
+  return () => { for (const unsubscribe of subscriptions) unsubscribe(); };
+}

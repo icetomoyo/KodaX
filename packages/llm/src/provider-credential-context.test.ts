@@ -396,3 +396,17 @@ describe('provider credential context', () => {
     }
   });
 });
+
+it('keeps bridge-owned authentication within an explicit revocable lease without inventing an API key', async () => {
+  let acquired = 0;
+  const scope = createProviderCredentialLeaseScope({ allowedProviders: ['external-cli'], acquire: async () => { acquired++; throw new Error('No API key belongs to this bridge.'); } });
+  const bridge = { name: 'external-cli', getCapabilityProfile: () => ({ transport: 'cli-bridge' as const, conversationSemantics: 'full-history' as const, mcpSupport: 'none' as const }) };
+  await runWithProviderCredentialLeaseScope(scope, async () => {
+    expect(await withProviderRequestCredential(bridge, 'primary', undefined, async () => 'bridge-output')).toBe('bridge-output');
+    expect(resolveProviderCredential(bridge.name, 'ambient')).toBeUndefined();
+    await expect(withProviderRequestCredential({ ...bridge, name: 'not-approved' }, 'primary', undefined, async () => 'forbidden')).rejects.toThrow(/does not allow/);
+    const pending = withProviderRequestCredential(bridge, 'utility', undefined, async signal => { scope.close(); expect(signal?.aborted).toBe(true); return 'late-output'; });
+    await expect(pending).rejects.toThrow();
+  });
+  expect(acquired).toBe(0);
+});

@@ -8,6 +8,9 @@ import {
   runOneShotClientTask,
 } from './one-shot-task.js';
 import { toKodaXProductClient } from './client-runtime-adapter.js';
+import { configureProviderAuthCommand } from './provider-auth-cli.js';
+import { createCliProviderCredentials } from './cli-provider-credentials.js';
+import type { KodaXClientHostAuthorization } from './client-host-authorization.js';
 import { ensureRecoveringKodaXRuntime } from './recovering-runtime-client.js';
 
 // ── Runtime environment defaults ──
@@ -661,9 +664,10 @@ async function runCliTaskViaClient(
   runtime: KodaXRuntime,
   options: KodaXOptions,
   prompt: string,
+  authorizeExecution?: KodaXClientHostAuthorization,
 ): Promise<KodaXResult> {
   return runOneShotOwnedProcess((abortSignal) => runOneShotClientTask({
-    client: toKodaXProductClient(runtime),
+    client: toKodaXProductClient(runtime, authorizeExecution),
     runtime,
     options,
     prompt,
@@ -2362,6 +2366,7 @@ export const KODAX_CLI_SUBCOMMAND_NAMES = [
   'a2a',
   'sandbox',
   'setup',
+  'auth',
   'memory',
   'execpolicy',
 ] as const;
@@ -2369,6 +2374,7 @@ const CLI_SUBCOMMAND_NAMES = new Set<string>(KODAX_CLI_SUBCOMMAND_NAMES);
 
 export const KODAX_COMPLETION_ROOT_SUBCOMMANDS = [
   'setup',
+  'auth',
   'acp',
   'skill',
   'tools',
@@ -3405,6 +3411,7 @@ async function runCliMain(startupProgress?: CliStartupProgress) {
   });
 
   configureKodaXSetupCommand(program);
+  configureProviderAuthCommand(program);
   configureKodaXMemoryCommand(program);
 
   // ============== completion subcommand ==============
@@ -4513,9 +4520,11 @@ complete -c kodax -l version -d 'Show version'`);
       return;
     }
     if (readiness.status === 'needs-host-broker') {
-      process.stderr.write(`Provider "${readiness.provider}" requires authorization from a trusted Host credential broker. Configure the host SDK credential binding before starting a run.\n`);
-      process.exitCode = 1;
-      return;
+      const connection = config.customProviders?.find(provider => provider.name === readiness.provider);
+      if (!connection?.cloud && !connection?.oauthRegistration) {
+        process.stderr.write(`Provider "${readiness.provider}" requires login. Run kodax auth login ${readiness.provider} with your registered client, or install the trusted SDK credential authorizer.\n`);
+        process.exitCode = 1; return;
+      }
     }
     if (readiness.status === 'needs-credential') {
       process.stdout.write(
@@ -4634,6 +4643,11 @@ complete -c kodax -l version -d 'Show version'`);
   // FEATURE_298 T27 — fixed Host: the CLI client owns no extension
   // runtime, integration hot reload, or A2A handle; the Host does.
   let cliRuntime: KodaXRuntime | undefined;
+  let cliCredentials: ReturnType<typeof createCliProviderCredentials> | undefined;
+  const authorizeCli: KodaXClientHostAuthorization = async (request, services) => {
+    const authorizer = await (cliCredentials ??= createCliProviderCredentials(config));
+    return authorizer.authorizeExecution(request, services);
+  };
   let shouldHardExitAfterInteractiveCleanup = false;
   const integrationEvents = createIntegrationEventBridge((message) =>
     console.error(chalk.dim(message)),
@@ -4649,7 +4663,7 @@ complete -c kodax -l version -d 'Show version'`);
     cliRuntime = await ensureRecoveringKodaXRuntime({
       profile: 'default',
       daemonLifecycle: 'interactive',
-      requirements: { productClient: 1, sessionDrafts: 1 },
+      requirements: { productClient: 1, sessionDrafts: 1, productExecutionAuthorization: 2, productActorAuthorization: 1, providerProbeAuthorization: 1 },
       onStartupProgress: startupProgress === undefined ? undefined
         : (progress) => { startupProgress.update(cliStartupProgressMessage(progress)); },
       clientInfo: {
@@ -4660,7 +4674,7 @@ complete -c kodax -l version -d 'Show version'`);
       },
       defaultProvider: options.provider,
       ...(options.model !== undefined ? { defaultModel: options.model } : {}),
-    });
+    }, authorizeCli);
     return cliRuntime;
   };
 
@@ -4877,6 +4891,7 @@ complete -c kodax -l version -d 'Show version'`);
                   },
                 },
                 prompt,
+                authorizeCli,
               ),
           );
           if (commandPrompt) {
@@ -4890,6 +4905,7 @@ complete -c kodax -l version -d 'Show version'`);
                 },
               },
               commandPrompt,
+              authorizeCli,
             );
             emitJsonRunResultIfNeeded(options.outputMode, result);
             return;
@@ -4931,7 +4947,7 @@ complete -c kodax -l version -d 'Show version'`);
 
         const runtimeProfile = 'default';
         const interactiveRuntime = await getCliRuntime();
-        const interactiveClient = toKodaXProductClient(interactiveRuntime);
+        const interactiveClient = toKodaXProductClient(interactiveRuntime, authorizeCli);
         // FEATURE_298 T18 — resume selection reads the Host sessions face
         // (newest-first); the resolved id keeps the same-file local load.
         let interactiveKodaXOptions = kodaXOptions;
@@ -5099,18 +5115,25 @@ complete -c kodax -l version -d 'Show version'`);
       },
     };
     const cliRuntime = await getCliRuntime();
-    const result = await runCliTaskViaClient(cliRuntime, cliOptions, userPrompt);
+    const result = await runCliTaskViaClient(cliRuntime, cliOptions, userPrompt, authorizeCli);
     emitJsonRunResultIfNeeded(options.outputMode, result);
   } finally {
+    let credentialCloseError: unknown;
+    const closeCredentials = async () => {
+      try { if (cliCredentials) await (await cliCredentials).close(); }
+      catch (error) { credentialCloseError = error; }
+    };
     if (shouldHardExitAfterInteractiveCleanup) {
       const runtime = cliRuntime;
       cliRuntime = undefined;
+      await closeCredentials();
       await cleanupInteractiveProcessResources({
         closeRuntime: async () => runtime?.close(),
       });
     } else {
       // Non-interactive callers own their process and receive cleanup errors.
       await awaitLatestCodingMemoryReviewDrain(15_000);
+      await closeCredentials();
       let runtimeCloseError: unknown;
       try {
         await cliRuntime?.close();
@@ -5123,6 +5146,7 @@ complete -c kodax -l version -d 'Show version'`);
       await shutdownTracing();
       if (runtimeCloseError !== undefined) throw runtimeCloseError;
     }
+    if (credentialCloseError !== undefined) throw credentialCloseError;
     if (
       shouldHardExitAfterInteractiveCleanup &&
       process.env.VITEST !== 'true'

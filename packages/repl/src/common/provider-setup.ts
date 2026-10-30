@@ -73,7 +73,10 @@ export type ProviderSetupChoice =
     };
 
 /** The setup flow accepts public connection metadata, never provider secrets. */
-export interface ProviderSetupCustomProviderMetadata {
+export interface ProviderSetupCustomProviderMetadata extends Pick<KodaXCustomProviderConfig,
+  'oauthRegistration' | 'models' | 'toolCapabilities' | 'cacheCapabilities' | 'reasoningProfile' | 'reasoningCapability' | 'reasoningPreset' | 'reasoning'
+  | 'contextWindow' | 'maxOutputTokens' | 'supportsThinking' | 'imageInput' | 'promptCacheAffinity'
+  | 'replayReasoningContent' | 'strictThinkingSignature' | 'verifyStrategy'> {
   readonly name: string;
   readonly protocol: KodaXCustomProviderConfig['protocol'];
   readonly api?: KodaXCustomProviderConfig['api'];
@@ -505,6 +508,11 @@ export function validateProviderSetupCustomMetadata(
     apiKeyEnv: provider.apiKeyEnv.trim(),
     model: provider.model.trim(),
   };
+  for (const key of ['oauthRegistration', 'models', 'toolCapabilities', 'cacheCapabilities', 'reasoningProfile', 'reasoningCapability', 'reasoningPreset', 'reasoning',
+    'contextWindow', 'maxOutputTokens', 'supportsThinking', 'imageInput', 'promptCacheAffinity',
+    'replayReasoningContent', 'strictThinkingSignature', 'verifyStrategy'] as const) {
+    if (provider[key] !== undefined) Object.assign(normalized, { [key]: structuredClone(provider[key]) });
+  }
   const endpointError = customProviderEndpointError(normalized.baseUrl);
   if (endpointError) throw new Error(endpointError);
   validateCustomProviderConfig(normalized);
@@ -603,4 +611,27 @@ function writeConfigAtomically(configPath: string, config: Record<string, unknow
     fs.rmSync(temporary, { force: true });
     throw error;
   }
+}
+
+
+/** Update only a non-secret OAuth registration reference under the existing config writer lock. */
+export function linkProviderOAuthRegistration(input: { configPath?: string; name: string; service: NonNullable<KodaXCustomProviderConfig['oauth']>;
+  expectedRegistration?: string; registration?: string }): void {
+  const configPath = input.configPath ?? getAgentConfigPath('config.json');
+  withCoreConfigWriteLock(configPath, () => {
+    const snapshot = readConfig(configPath);
+    if (snapshot.error || !snapshot.config) throw new ProviderSetupInvalidConfigError(configPath, snapshot.error ?? 'Missing configuration.');
+    const providers = snapshot.config.customProviders;
+    if (!Array.isArray(providers)) throw new Error('OAuth login requires a configured custom connection.');
+    let matched = false;
+    const next = providers.map(value => {
+      const provider = toValidCustomProvider(value);
+      if (!provider || provider.name !== input.name) return value;
+      if (provider.oauth !== input.service || provider.oauthRegistration !== input.expectedRegistration) throw new ProviderSetupConfigConflictError(configPath);
+      matched = true;
+      const updated = { ...provider, oauthRegistration: input.registration }; validateCustomProviderConfig(updated); return updated;
+    });
+    if (!matched) throw new ProviderSetupConfigConflictError(configPath);
+    writeConfigAtomically(configPath, { ...snapshot.config, customProviders: next });
+  });
 }

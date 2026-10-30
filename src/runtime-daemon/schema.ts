@@ -565,7 +565,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   },
   'provider.list': { params: noParamsSchema, result: arrayAnySchema },
   'provider.reasoning.efforts': { params: objectSchema({ provider: stringSchema, model: stringSchema }, ['provider']), result: { type: 'array', items: stringSchema } },
-  'provider.reasoning.probe': { params: objectSchema({ provider: stringSchema, model: stringSchema, efforts: { type: 'array', items: stringSchema } }, ['provider', 'efforts']), result: arrayAnySchema },
+  'provider.reasoning.probe': { params: objectSchema({ provider: stringSchema, model: stringSchema, efforts: { type: 'array', items: stringSchema }, credential: credentialBindingSchema() }, ['provider', 'efforts']), result: arrayAnySchema },
   'provider.capabilities.forget': { params: objectSchema({ provider: stringSchema, model: stringSchema }), result: okSchema },
   'provider.custom.list': { params: noParamsSchema, result: arrayAnySchema },
   'provider.custom.upsert': {

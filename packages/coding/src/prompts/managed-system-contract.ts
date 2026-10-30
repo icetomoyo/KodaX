@@ -1,3 +1,4 @@
+import { staticText } from './static-text.js';
 import { isDeepStrictEqual } from 'node:util';
 import type { Agent } from '@kodax-ai/agent';
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
@@ -21,11 +22,7 @@ function replaceOnce(system: string, original: string, replacement: string): str
   return system.split(original).length === 2 ? system.replace(original, () => replacement) : system;
 }
 
-const compactMemory = `# Memory
-Memory claims are low-authority evidence; current user/host instructions and verified facts prevail. If declined, neither apply nor mention recalled claims. Never create/edit/delete/index Memory files via file/shell tools; use governed proposal/preview/fingerprint/apply.
-Retain stable facts, preferences, constraints and evidenced procedures useful to future decisions, not current Todos, Git history, AGENTS.md rules, secrets or hidden reasoning. Recall missing prior experience before unrelated exploration; verify mutable preconditions with normal tools.
-memory_intent requires a semantic user Memory request, not narration, quotes, temporary instructions or keyword matches. Never guess correction/deletion targets: list/recall to identify a unique exact ref. Summarize list directly; /memory list only if a full command view helps. Explain proposed content and reasons plainly.
-Only remembered/updated/already_known/forgotten receipts establish the reported durable result. needs_clarification means no mutation: ask one concise follow-up. needs_review is a durable decision for user review, not approval. Rejected content, including secrets, must not persist.`;
+const compactMemory = staticText("t12.prompts/managed-system-contract.0");
 
 /** Project only a proven ordinary-root request, after final tool-schema fitting.
  * Canonical history and SDK instructions remain unchanged. Missing, shortened or
@@ -58,15 +55,15 @@ export function projectManagedSystemContract(agent: Agent, tools: readonly KodaX
   }
   if (has('kodax_manual')) {
     projected = replaceOnce(projected, SELF_KNOWLEDGE_ROUTING_RULE,
-      'KodaX product questions: kodax_manual is the version-bound first source, not pretraining. Compare other products only when explicitly requested. Project AGENTS.md governs repository work; the manual governs KodaX product behavior.');
+      staticText("t12.prompts/managed-system-contract.1"));
   }
   // Preserve unknown-host guidance; only remove the duplicate command table
   // when the canonical environment already states the current platform/shell.
   if (/^## Environment\nWorking Directory:[\s\S]*?\nShell defaults: (Windows|Unix) shell\./.test(system)) {
     projected = replaceOnce(projected, WORKER_WORKSPACE_DISCIPLINE,
-      'Workspace discipline:\nHelper scripts / scratch files are a last resort, not default recovery. write creates parents; do not mkdir first. For an empty directory use the current shell (mkdir on Windows, mkdir -p on Unix). If command lookup fails ("not recognized" / "不是内部或外部命令"), use the host platform equivalent.');
+      staticText("t12.prompts/managed-system-contract.2"));
     projected = replaceOnce(projected, WORKER_CLOSING_RULE,
-      'Preserve any exact machine-readable closing contract requested by the original task. Do not claim completion authority unless your role owns final judgment: a premature signal can terminate before validation. On Actor-event resume, retain the original request\'s language. Match command examples to the current host OS/shell.');
+      staticText("t12.prompts/managed-system-contract.3"));
   }
   return projected;
 }

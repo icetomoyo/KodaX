@@ -10,7 +10,7 @@ export function createProviderOperationConnection(id: string, input: Input<KodaX
   const preset = listProviderPresets().find(p => p.id === id);
   if (!preset || !(input.api === 'openrouter-images' ? preset.imageApi === input.api
     : input.api === 'openai-background-responses' ? id === 'openai' : preset.classifierApi === input.api)) throw new Error('Provider does not declare this operation.');
-  const baseUrl = input.baseUrl ?? (id === 'typesafe' ? 'https://api.typesafe.ai/v1' : preset.baseUrl);
+  const baseUrl = input.baseUrl ?? (id === 'typesafe' ? 'https://api.typesafe.ai/v1' : id === 'vercel-ai-gateway' && input.api === 'typesafe-system-one' ? `${preset.baseUrl}/typesafe/v1` : preset.baseUrl);
   if (!baseUrl) throw new Error('Operation requires an explicit account/model endpoint.');
   const connection = { ...input, baseUrl, apiKeyEnv: input.apiKeyEnv ?? preset.apiKeyEnv };
   if (!/^[A-Za-z_]\w*$/.test(connection.apiKeyEnv)) throw new Error('Invalid operation credential environment name.');

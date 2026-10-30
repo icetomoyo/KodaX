@@ -4341,3 +4341,38 @@ function createTestObservation(sessionId: string): RuntimeSessionObservation {
 function isTestRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
+
+
+it('authorizes Product catalog probes through fresh Main v2 credentials and a Host-owned operation target (T12)', async () => {
+  const { createProviderCredentialAuthorizer } = await import('../provider-credential-authorizer.js');
+  const { toKodaXProductClient } = await import('../client-runtime-adapter.js');
+  const { createCloudProviderConfig, serializeCloudCredential } = await import('@kodax-ai/llm');
+  const runtime = makeRuntime(), hub = createRuntimeDaemonReverseBridgeHub();
+  let notify: ((notification: RuntimeDaemonNotification) => void) | undefined;
+  const dispatcher = createRuntimeDaemonDispatcher({ runtime, reverseBridgeHub: hub, notify: event => notify?.(event) });
+  await initializeDispatcher(dispatcher, {});
+  const config = createCloudProviderConfig({ name: 'probe-native', service: 'gemini', model: 'fixture' });
+  const resolve = vi.fn(async (_request: import('../client-host-authorization.js').RuntimeScopedCredentialRequest) => ({ type: 'api-key' as const, key: 'probe-request-key' }));
+  const authorizer = createProviderCredentialAuthorizer({ sources: [{ provider: config.name, kind: 'cloud', connection: config, resolve }] });
+  vi.spyOn(runtime.catalog, 'probeReasoningEfforts').mockImplementation(async input => {
+    const access = (input as typeof input & { providerCredentialAccess?: import('@kodax-ai/llm').ProviderCredentialLeaseAccess }).providerCredentialAccess;
+    expect(access).toBeDefined();
+    expect(await access!.acquire(config.name, 'utility', new AbortController().signal)).toBe(serializeCloudCredential(config.name, { type: 'api-key', key: 'probe-request-key' }));
+    return [{ effort: 'high', status: 'accepted' }];
+  });
+  const transport: RuntimeDaemonClientTransport = {
+    async request(method, params) { const response = await dispatcher.handle(createRuntimeDaemonRequest(`probe-${randomRequestSuffix()}`, method, params)); if (isRuntimeDaemonSuccessResponse(response)) return response.result; throw Object.assign(new Error(response.error.message), { code: response.error.code }); },
+    subscribe(listener) { notify = listener; return { close() { notify = undefined; } }; },
+  };
+  const client = createRuntimeDaemonClient({ identity: runtime.identity, transport, capabilities: { providerCredentialBroker: { version: 2 }, providerProbeAuthorization: { version: 1 } } });
+  try {
+    const product = toKodaXProductClient(client, authorizer.authorizeExecution);
+    const result = await product.catalog.probeReasoningEfforts({ provider: config.name, efforts: ['high'] });
+    expect(result).toEqual([{ effort: 'high', status: 'accepted' }]);
+    expect(resolve).toHaveBeenCalledOnce();
+    const request = resolve.mock.calls[0]?.[0];
+    expect(request).toMatchObject({ provider: config.name, purpose: 'utility', target: { kind: 'operation', operation: 'provider.reasoning.probe' } });
+    expect(request!.sessionId).toBe(request!.target.kind === 'operation' ? request!.target.operationId : 'must-be-operation');
+    await expect(client.catalog.probeReasoningEfforts({ provider: 'forbidden', efforts: ['high'], credential: (await authorizer.authorizeExecution({ kind: 'provider_probe', input: { provider: config.name, efforts: [] } }, client))!.credential })).rejects.toMatchObject({ code: 'credential_unavailable' });
+  } finally { await authorizer.close(); await client.close(); dispatcher.close(); hub.close(); }
+});

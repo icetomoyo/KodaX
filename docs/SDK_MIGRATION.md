@@ -272,3 +272,12 @@ The automatic Sidecar Verifier is retired. Remove `verifierLog`, `/verifier-log`
 工具 strict/grammar 只按显式能力启用；`require` 不可静默降级，`prefer` 仅在明确的 400/422 约束拒绝后有一次受限回退。`strict` 会关闭对象额外属性，将可选属性变为可空的必填属性，属于显式 opt-in。Responses grammar 的原始输入由声明的单个字符串属性承接，部分流片段不构成可执行工具。
 
 原生 provider 的 reasoning 学习记录增加身份 scope；旧的无 scope 记录不用于限制新原生请求或 REPL 可选 effort。账号/密钥/连接变化会隔离学习及 opaque history，仍保留可读历史。CLI bridge 的旧行为保持。请求投影诊断区分 estimated 和 native protocol-input；后者为签名前实际请求对象的哈希，不代表服务端 cache hit 或实际计费。
+
+
+## T12-A Main 授权与 OAuth registration
+
+根 `/runtime` 新增 createProviderCredentialAuthorizer、createNativeCloudCredentialResolver、loginProviderOAuth 和显式 encrypted/Windows OAuth store。原有 bindOAuthCredentials/bindCloudCredentials、API_KEY/env 及 CLI bridge 入口仍有效。Main 工厂使用 services.identity.runtimeId 识别 Host 换代；产品输入不携带 callback/store/秘密。工厂由宿主拥有，断开时调用 close，清理失败可观察。
+
+KodaXClientExecutionRequest 新增无持久 Session 的 provider_probe；旧 authorizer 不应在收窄 kind 前访问 input.sessionId。该请求对应 providerProbeAuthorization:1，Root Client/CLI 使用授权时要求兼容 Host。RuntimeScopedCredentialTarget.operation 增加 provider.reasoning.probe；旧的 session.compact/run/actor/workflow 保持。
+
+OAuthSessionRecord.identityKind 可为 account 或 grant，旧记录缺省按原 account 语义处理。grant 的 accountId 是隔离的授权主体，不假称已验证用户；注册信息不可被轮换或另一个账号替换。普通 custom connection 可保存非秘密 oauthRegistration 引用，实际令牌留在 Main 的 store。用户新要求的 auth.json 普通 Key 存取、隐藏输入与 Space 迁移仍见 FEATURE_302 T12-B–G；不要把本切片的端口/加密测试当作那些体验已完成。

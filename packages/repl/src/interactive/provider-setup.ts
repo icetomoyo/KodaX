@@ -2,6 +2,7 @@ import * as readline from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 
 import chalk from 'chalk';
+import { createCloudProviderConfig, createOAuthProviderConfig } from '@kodax-ai/llm';
 
 import {
   ProviderSetupInvalidConfigError,
@@ -69,7 +70,7 @@ export async function runProviderSetupWizard(
           value: `builtin:${entry.name}`,
           label: `${entry.name} — ${entry.defaultModel} (set ${entry.apiKeyEnv})`,
         })),
-        { value: 'custom', label: 'Custom OpenAI/Anthropic-compatible provider' },
+        { value: 'custom', label: 'Custom compatible or native provider' },
         { value: 'cancel', label: 'Cancel' },
       ],
     );
@@ -82,7 +83,7 @@ export async function runProviderSetupWizard(
 
     const summary = summarizeChoice(choice, catalog);
     if (!await interaction.confirm(
-      `Save ${summary}? config.json will store the environment-variable name only. You must set that variable to the provider's API key after setup. No credential value will be written.`,
+      `Save ${summary}? config.json stores public connection metadata only. API-key routes use the named environment variable; OAuth requires kodax auth login and cloud routes use the trusted Main resolver.`,
     )) {
       return { status: 'cancelled' };
     }
@@ -126,13 +127,24 @@ async function collectCustomChoice(
   );
   if (!name) return undefined;
   const protocol = await interaction.choose(
-    'Protocol family (check the provider API documentation for OpenAI or Anthropic compatibility)',
+    'Protocol (select the actual provider API)',
     [
       { value: 'openai', label: 'OpenAI-compatible' },
       { value: 'anthropic', label: 'Anthropic-compatible' },
+      { value: 'responses', label: 'OpenAI Responses' },
+      { value: 'gemini', label: 'Gemini native' },
+      { value: 'vertex', label: 'Vertex native' },
+      { value: 'bedrock', label: 'Amazon Bedrock Converse' },
+      { value: 'azure', label: 'Azure OpenAI Responses' },
+      { value: 'mistral', label: 'Mistral native' },
+      { value: 'pi-messages', label: 'Pi Messages' },
+      { value: 'oauth', label: 'OAuth subscription (your own registered client)' },
     ],
   );
-  if (protocol !== 'openai' && protocol !== 'anthropic') return undefined;
+  if (!protocol) return undefined;
+  if (protocol === 'oauth') return collectOAuthChoice(interaction, name);
+  if (['gemini', 'vertex', 'bedrock', 'azure'].includes(protocol)) return collectCloudChoice(interaction, name, protocol);
+  if (!['openai', 'responses', 'anthropic', 'mistral', 'pi-messages'].includes(protocol)) return undefined;
   const baseUrl = await requiredText(
     interaction,
     'API Base URL from the provider documentation, for example https://example.com/v1',
@@ -157,12 +169,46 @@ async function collectCustomChoice(
     kind: 'custom',
     provider: validateProviderSetupCustomMetadata({
       name,
-      protocol,
+      protocol: protocol === 'responses' ? 'openai' : protocol as 'openai' | 'anthropic' | 'mistral' | 'pi-messages',
+      ...(protocol === 'responses' ? { api: 'responses' as const } : {}),
       baseUrl,
       apiKeyEnv,
       model,
     }),
   };
+}
+
+async function collectOAuthChoice(interaction: ProviderSetupInteraction, name: string): Promise<ProviderSetupChoice | undefined> {
+  const services = ['openai-chatgpt', 'openai-codex', 'github-copilot', 'anthropic', 'openrouter', 'kimi-coding', 'meta', 'xai', 'radius'] as const;
+  const selected = await interaction.choose('OAuth service (requires your issued client registration)', services.map(value => ({ value, label: value })));
+  const service = services.find(value => value === selected); if (!service) return undefined;
+  const model = await requiredText(interaction, 'Model identifier from the provider documentation'); if (!model) return undefined;
+  let api: 'responses' | 'chat-completions' | 'anthropic-messages' | undefined;
+  if (service === 'github-copilot') {
+    const selectedApi = await interaction.choose('Copilot model API', [{ value: 'responses', label: 'Responses' }, { value: 'chat-completions', label: 'Chat Completions' }, { value: 'anthropic-messages', label: 'Anthropic Messages' }]);
+    if (!selectedApi) return undefined; api = selectedApi as typeof api;
+  }
+  return { kind: 'custom', provider: createOAuthProviderConfig({ name, model, service, ...(api ? { api } : {}) }) };
+}
+
+async function collectCloudChoice(interaction: ProviderSetupInteraction, name: string, service: string): Promise<ProviderSetupChoice | undefined> {
+  let connection;
+  if (service === 'vertex') {
+    const project = await requiredText(interaction, 'Google Cloud project ID');
+    const location = project && await requiredText(interaction, 'Vertex location (for example global or us-central1)');
+    if (!project || !location) return undefined;
+    connection = createCloudProviderConfig({ name, model: 'pending', service, project, location });
+  } else if (service === 'bedrock') {
+    const region = await requiredText(interaction, 'AWS region'); if (!region) return undefined;
+    connection = createCloudProviderConfig({ name, model: 'pending', service, region });
+  } else if (service === 'azure') {
+    const endpoint = await requiredText(interaction, 'Azure HTTPS resource endpoint'); if (!endpoint) return undefined;
+    connection = createCloudProviderConfig({ name, model: 'pending', service, endpoint });
+  } else connection = createCloudProviderConfig({ name, model: 'pending', service: 'gemini' });
+  const apiKeyEnv = await requiredText(interaction, 'Environment-variable name only; native cloud identities may use the trusted Host credential resolver instead.');
+  const model = apiKeyEnv && await requiredText(interaction, 'Model identifier from the provider documentation');
+  if (!apiKeyEnv || !model) return undefined;
+  return { kind: 'custom', provider: validateProviderSetupCustomMetadata({ ...connection, apiKeyEnv, model }) };
 }
 
 async function requiredText(

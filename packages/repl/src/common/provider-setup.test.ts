@@ -9,15 +9,17 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createCloudProviderConfig } from '@kodax-ai/llm';
+import fs from 'node:fs';
+import { createCloudProviderConfig, createOAuthProviderConfig } from '@kodax-ai/llm';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ProviderSetupConfigConflictError,
   ProviderSetupInvalidConfigError,
   inspectProviderSetupReadiness,
   persistProviderSetupChoice,
+  linkProviderOAuthRegistration,
   providerSetupRestartInstructions,
   type ProviderSetupCatalogEntry,
   type ProviderSetupChoice,
@@ -420,4 +422,24 @@ describe('providerSetupRestartInstructions', () => {
     expect(text).not.toContain('=');
     expect(text).not.toMatch(/<your-key>|paste/i);
   });
+});
+
+it('preserves declared per-model tool/cache/reasoning metadata when setup saves a native connection', () => {
+  const readiness = inspectProviderSetupReadiness({ configPath, catalog });
+  const provider = { ...createCloudProviderConfig({ name: 'native', service: 'gemini', model: 'alias' }), apiKeyEnv: 'NATIVE_GEMINI_KEY',
+    toolCapabilities: { strict: true }, models: [{ id: 'alias', wireModel: 'gemini-fixture', toolCapabilities: { strict: true } }], maxOutputTokens: 8192 };
+  persistProviderSetupChoice({ configPath, expectedRevision: readiness.configRevision, catalog, choice: { kind: 'custom', provider } });
+  const saved = JSON.parse(readFileSync(configPath, 'utf8')).customProviders[0];
+  expect(saved.toolCapabilities).toEqual(provider.toolCapabilities); expect(saved.models).toEqual(provider.models); expect(saved.maxOutputTokens).toBe(8192);
+});
+
+it('preserves the previous configuration when writing an OAuth registration link fails partway', () => {
+  const provider = createOAuthProviderConfig({ name: 'oauth', service: 'openrouter', model: 'fixture' });
+  const previous = JSON.stringify({ provider: 'kept', unrelated: 'retained', customProviders: [provider] }); writeFileSync(configPath, previous);
+  const originalWrite = fs.writeFileSync;
+  const write = vi.spyOn(fs, 'writeFileSync').mockImplementation((file) => { originalWrite(file, '{"partial":'); throw new Error('fixture disk failure'); });
+  try {
+    expect(() => linkProviderOAuthRegistration({ configPath, name: provider.name, service: provider.oauth!, registration: 'new-registration' })).toThrow(/disk failure/);
+    expect(readFileSync(configPath, 'utf8')).toBe(previous);
+  } finally { write.mockRestore(); }
 });

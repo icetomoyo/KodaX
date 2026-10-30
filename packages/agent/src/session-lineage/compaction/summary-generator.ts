@@ -13,6 +13,7 @@ import type {
   KodaXStreamResult,
   KodaXTokenUsage,
   KodaXToolDefinition,
+  KodaXProviderRequestProjection,
 } from '@kodax-ai/llm';
 import { withProviderRequestCredential, resolveDefaultSideQueryReasoning } from '@kodax-ai/llm';
 import { emitKodaXDiagnostic } from '../../diagnostics.js';
@@ -252,6 +253,7 @@ export interface CompactionProviderRequest {
 }
 
 export interface CompactionProviderObserver {
+  readonly onPrepared?: (request: CompactionProviderRequest, projection: KodaXProviderRequestProjection) => void;
   readonly onMetrics?: (metrics: CompactionRequestMetrics) => void;
   readonly onRequest?: (request: CompactionProviderRequest) => void;
   readonly onResponse?: (
@@ -558,7 +560,7 @@ async function streamSummary(
     if (text && providerStart !== undefined) firstDeltaMs ??= performance.now() - providerStart;
   };
   try {
-    result = await withProviderRequestCredential(provider.name, 'compaction', undefined,
+    result = await withProviderRequestCredential(provider, 'compaction', undefined,
       (signal) => {
         providerStart = performance.now();
         return provider.stream([...request.messages], [...request.tools], request.system,
@@ -566,6 +568,10 @@ async function streamSummary(
             ...(request.modelOverride ? { modelOverride: request.modelOverride } : {}),
             ...(request.ephemeralSuffix ? { ephemeralSuffix: request.ephemeralSuffix } : {}),
             ...(request.promptCacheKey ? { promptCacheKey: request.promptCacheKey } : {}),
+            onRequestPrepared: projection => {
+              try { observer?.onPrepared?.(request, projection); }
+              catch { emitKodaXDiagnostic({ source: 'compaction', level: 'warn', message: 'Compaction native projection observer failed' }); }
+            },
             onTextDelta: onDelta, onThinkingDelta: onDelta,
             onRateLimit: (_attempt, _max, delay) => { retryCount++; retryWaitMs += delay; },
           }, signal);

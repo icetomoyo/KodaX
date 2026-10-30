@@ -454,3 +454,23 @@ describe('prompt-cache diagnostics', () => {
     )).not.toThrow();
   });
 });
+
+it('emits actual native projection and TTL partition through the real compaction request', async () => {
+  const { generateSummary } = await import('@kodax-ai/agent');
+  const { runWithProviderCredential } = await import('@kodax-ai/llm');
+  const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(`data: ${JSON.stringify({ type: 'response.completed', response: {
+    status: 'completed', output: [{ type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'summary' }] }],
+    usage: { input_tokens: 100, output_tokens: 1, total_tokens: 101, input_tokens_details: { cache_write_tokens: 50, cache_write_tokens_details: { ttl_30m_tokens: 50 } } },
+  } })}\n\n`, { headers: { 'content-type': 'text/event-stream' } }));
+  try {
+    const native = createCustomProvider({ name: 'compaction-native', protocol: 'openai', api: 'responses', model: 'fixture', baseUrl: 'https://compaction.example/v1', apiKeyEnv: 'UNUSED' });
+    const events: KodaXPromptCacheDiagnosticEvent[] = [];
+    const observer = createCompactionPromptCacheObserver({ provider: native, providerName: native.name, model: 'fixture', enabled: true,
+      disablePromptCache: false, events: { onPromptCacheDiagnostics: event => events.push(event) } });
+    const text = await runWithProviderCredential(native.name, 'fixture', () => generateSummary([{ role: 'user', content: 'task' }], native, { readFiles: [], modifiedFiles: [] },
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, observer));
+    expect(text).toBe('summary');
+    expect(events.at(-1)).toMatchObject({ phase: 'response', projection: 'native', nativeProjectionStage: 'protocol-input', cachedWriteTokensByTtl: { '30m': 50 } });
+    expect(events.at(-1)?.nativeRequestHash).toMatch(/^[a-f0-9]{64}$/);
+  } finally { fetcher.mockRestore(); }
+});

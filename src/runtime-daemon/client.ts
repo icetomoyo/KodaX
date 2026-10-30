@@ -2163,7 +2163,7 @@ function parseScopedCredentialTarget(value: unknown): RuntimeScopedCredentialTar
   }
   if (kind === 'operation') {
     const operation = requireStringField(target, 'operation');
-    if (operation !== 'session.compact') throw new Error('Invalid credential operation target.');
+    if (operation !== 'session.compact' && operation !== 'provider.reasoning.probe') throw new Error('Invalid credential operation target.');
     return {
       kind,
       operation,

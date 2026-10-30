@@ -31,3 +31,18 @@ cached transport 要求显式 session 标识和有效 owner lifetime：独立调
 ## 验证与外部前提
 
 验收证据见 [测试指南](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md)。公开能力、目录内容、cache TTL、条件报价及 OAuth 端点来自固定 pi 源码与官方资料；实际账号模型权限、云身份、刷新服务、缓存命中/保留时长、真实计费仍需相应账号验证。OAuth client ID 必须由宿主合法注册，不借用其他应用身份。
+
+
+## T12-A Main 与产品入口（离线切片，最终凭证体验仍推进）
+
+createProviderCredentialAuthorizer 为可信 Main 组合批准的 environment/OAuth/cloud/external 来源；环境值在每次请求读取，来源列表为明确 allowlist。它按实际 Host runtimeId 重绑，稳定 facade 不当作 Host 身份；前一 Host 清理失败会先封住本地权限、记录诊断并在 close 重试，失败仍可观察。撤销 session 后不返回旧授权。CLI 的 print/JSON/raw skill/interactive/recovery 使用同一 authorizer；CLI bridge 用自身登录，没有伪造 API key，仍受 lease allowlist 与 lifetime 限制。
+
+createNativeCloudCredentialResolver 仅在可信 Main 启动官方 GoogleAuth ADC、AWS defaultProvider 或 Entra DefaultAzureCredential；每次解析先检查连接批准的 API key 名称，daemon 不回读云环境/磁盘/metadata。当前 Key 向导仍保留变量名入口；用户于 2026-10-30 进一步要求隐藏输入并保存 Key、默认共用 auth.json 与 Space 迁移，详见 FEATURE_302 T12-B–G，这些后续尚未验收。
+
+loginProviderOAuth 执行实际 PKCE/state 或 device 流程，使用调用者自己的注册 clientId，持久提交后才发布 session。OpenRouter 的 clientId 仅标识 Main 应用，不作为不存在的服务注册证据。默认身份为服务发行的隔离 grant；只有宿主 verifyIdentity 成功才标记 account，既有验证账号记录保持。identityKind:grant 的 accountId 是不透明主体标识，不是已验证用户 subject/email。CLI auth login/status/logout 使用该流程，browser 要求已注册的 HTTP loopback URI 与明确端口；不支持的服务流程明确失败。
+
+当前可选 encrypted OAuth store 在事务内覆盖 read/refresh/atomic commit，Windows DPAPI 通过 stdin 传入，临时文件也只有密文；真实 current-user DPAPI 与三个独立 Main 进程已测试。mkdir 锁在突然终止的 Main 后可能保留，30 秒后明确失败且不擅自删除未知归属锁；该后端不是最终共用文件后端的跨平台证明。SDK sealer 端口可由宿主提供 OS 后端，不存在静默 plaintext fallback。默认文件产品选择将在 T12-B–D 独立实现。
+
+Product catalog.probeReasoningEfforts 现在先调用 Main authorizer 的 provider_probe 请求；Host 发出 provider.reasoning.probe 维护操作身份，broker 请求的 sessionId 为该操作自有 scope，不建立伪 Session。当前 Host 通过 providerProbeAuthorization:1 声明支持，旧 Main 若假设每次执行都有 Session，应先按 kind 收窄。探测使用 utility 目的、单次 generation，普通输出上限 16，手动 Anthropic thinking 为满足最小预算使用 1025；是否实质采用 effort 不由 HTTP 200 推断。
+
+Managed Runner 保留 strict/grammar，并在未改动的 tool call 上保留 customTool 来源；工具名或输入经修复后不继承旧来源。主流式/真正非流式 fallback/continuation 与 compaction 都可报告 native protocol-input 哈希及 cache-write TTL 分区，只有 estimate 时保持明确标记。

@@ -1,3 +1,4 @@
+import { staticText } from '../prompts/static-text.js';
 import type { WorkflowPatternId } from '@kodax-ai/agent';
 
 export type CollaborationPatternId = WorkflowPatternId;
@@ -56,7 +57,7 @@ export const COLLABORATION_PATTERN_CATALOG: readonly CollaborationPatternDefinit
 ] as const;
 
 export const WORKFLOW_REVIEW_COMPOSITION_GUIDANCE =
-  'For an explicitly requested review or audit Workflow, combine fan-out-and-synthesize with adversarial-verification: declare [\'fan-out-and-synthesize\', \'adversarial-verification\'], give each verifier a distinct failure-mode angle, and assess every finding against shared evidence and a common rubric. Keep confirmed findings, exclude refuted findings, and disclose unresolved findings; verifier count is not proof. This refutes a reviewer blind spot before synthesis.';
+  staticText("t12.orchestration/pattern-catalog.0");
 
 export function getCollaborationPatternDefinition(
   id: CollaborationPatternId,
@@ -72,8 +73,8 @@ export function renderAmaPatternPlaybook(): string {
     ...COLLABORATION_PATTERN_CATALOG.map((definition) =>
       `- \`${definition.id}\`: ${definition.purpose} Evidence: ${definition.expectedEvidence[0]}. Stop: ${definition.stopRules[0]}.`),
     '- Compose stages only when they add decision value. Root remains accountable for synthesis.',
-    '- Optional `quality_strategy` metadata may describe a named stage on `spawn_agent` or a stage-changing `followup_task`: use `{schemaVersion:1, stageId, pattern, role, laneRelation?, targetEvidenceRefs?}`. Keep one stable `stageId` across participants in the same stage. Example coverage lane: `{schemaVersion:1,stageId:"interface-coverage",pattern:"fan-out-and-synthesize",role:"investigator",laneRelation:"coverage"}`. Missing or invalid metadata never makes an otherwise legal Agent operation invalid.',
-    '- Use `laneRelation:"coverage"` for distinct scopes, `"replication"` only for genuinely independent checks, and `"opposition"` for challengers. A challenger must name a terminal exact `agent-turn:` or immutable evidence target.',
+    staticText("t12.orchestration/pattern-catalog.1"),
+    staticText("t12.orchestration/pattern-catalog.2"),
     '- Metadata records optional intent and provenance; it never proves correctness, controls dispatch admission, or requires starting an Agent for telemetry.',
   ].join('\n');
 }

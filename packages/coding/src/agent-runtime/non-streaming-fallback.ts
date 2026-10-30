@@ -136,7 +136,7 @@ export async function executeNonStreamingFallback(
     });
     const requestMeta = { providerRequestId } as const;
     const result = await withProviderRequestCredential(
-      input.streamProvider.name,
+      input.streamProvider,
       'fallback',
       fallbackSignal,
       (credentialSignal) => input.streamProvider.complete(

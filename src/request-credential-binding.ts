@@ -6,11 +6,13 @@ export interface RuntimeRequestCredentialBinding {
 }
 /** One immutable identity binding; shared by OAuth sessions and typed cloud credential providers. */
 export async function bindRequestCredentials(input: {
-  credentials: RuntimeCredentialService; provider: string;
+  credentials: RuntimeCredentialService; provider?: string; providers?: readonly string[];
   acquire(request: RuntimeScopedCredentialRequest, signal: AbortSignal): Promise<string>;
   onInvalidate?(listener: () => Promise<void>): () => void;
 }): Promise<RuntimeRequestCredentialBinding> {
-  const { credentials, provider, acquire } = input;
+  const { credentials, acquire } = input;
+  const providers = [...new Set(input.providers ?? (input.provider ? [input.provider] : []))];
+  if (!providers.length || providers.some(provider => !provider.trim())) throw new Error('Credential binding requires approved providers.');
   let active = true;
   let lease: RuntimeCredentialLease | undefined;
   const lifetime = new AbortController();
@@ -26,14 +28,14 @@ export async function bindRequestCredentials(input: {
   };
   unsubscribe = input.onInvalidate?.(close) ?? unsubscribe;
   try {
-    registering = credentials.registerScoped({ providers: [provider] }, async request => {
-      if (!active || !lease || request.leaseId !== lease.id || request.provider !== provider) throw new Error('Credential binding is inactive.');
+    registering = credentials.registerScoped({ providers }, async request => {
+      if (!active || !lease || request.leaseId !== lease.id || !providers.includes(request.provider)) throw new Error('Credential binding is inactive.');
       const token = await acquire(request, lifetime.signal);
       if (!active) throw new Error('Credential binding is inactive.');
       return token;
     });
     lease = await registering;
     if (!active) { await close(); throw new Error('Credential binding is inactive.'); }
-    return { credential: { leaseId: lease.id, mode: 'scoped', providers: [provider] }, close };
+    return { credential: { leaseId: lease.id, mode: 'scoped', providers }, close };
   } catch (error) { active = false; lifetime.abort(); unsubscribe(); throw error; }
 }

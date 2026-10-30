@@ -131,6 +131,7 @@ import {
 } from '../../../agent-runtime/event-emitter.js';
 import {
   emitPromptCacheDiagnosticRequest,
+  emitNativePromptCacheDiagnosticRequest,
   emitPromptCacheDiagnosticResponse,
   hashProviderVisibleMessages,
   normalizeDiagnosticEnvelope,
@@ -504,7 +505,7 @@ export function buildRunnerLlmAdapter(
     const managedContext = getRegistryManagedAgentContext(agent);
     const registryManaged = managedContext !== undefined;
     let wireTools = (registryManaged ? filterModelToolAliases(agent.tools ?? []) : agent.tools ?? [])
-      .map(t => ({ name: t.name, description: t.description, input_schema: t.input_schema }));
+      .map(t => ({ name: t.name, description: t.description, input_schema: t.input_schema, ...(t.strict ? { strict: t.strict } : {}), ...(t.grammar ? { grammar: structuredClone(t.grammar) } : {}) }));
 
     // Presentation only: keep the execution inventory and AMA capability teaching intact.
     // Unknown extension inventories and explicit SDK/child contracts retain native search.
@@ -797,7 +798,7 @@ export function buildRunnerLlmAdapter(
               onUsage: usage => { costTracker = recordCostUsage(costTracker, {
                 provider: providerName, model: activeModel ?? provider.getModel(), inputTokens: usage.inputTokens,
                 outputTokens: usage.outputTokens, cacheReadTokens: usage.cachedReadTokens,
-                cacheWriteTokens: usage.cachedWriteTokens }); },
+                cacheWriteTokens: usage.cachedWriteTokens, ...(usage.cachedWriteTokensByTtl ? { cacheWriteTokensByTtl: usage.cachedWriteTokensByTtl } : {}) }); },
             }) },
         );
         requestMaxOutputTokens = applyContextCapacityReserveOverride(provider, {
@@ -967,9 +968,9 @@ export function buildRunnerLlmAdapter(
 
         try {
           emitContextBudgetSnapshot(providerMessages, requestMaxOutputTokens);
-          const cacheDiagnostic = beginPromptCacheDiagnostic(providerMessages, attempt);
+          let cacheDiagnostic = beginPromptCacheDiagnostic(providerMessages, attempt);
           raw = await withProviderRequestCredential(
-            provider.name,
+            provider,
             'primary',
             retrySignal,
             (credentialSignal) => provider.stream(
@@ -978,6 +979,7 @@ export function buildRunnerLlmAdapter(
               system,
               providerReasoning,
               { ...streamOptions, ...reasoningCache,
+                onRequestPrepared: projection => { cacheDiagnostic = emitNativePromptCacheDiagnosticRequest(options.events, cacheDiagnostic, projection); },
                 onReasoningEffortRejected: event => onReasoningEffortRejected(event, requestMeta.providerRequestId),
                 onReasoningResolved: event => options.events?.onReasoningResolved?.({ ...event, ...requestMeta }),
                 ...(textRecoveryRetry ? { singleAttempt: true } : {}), signal: credentialSignal },
@@ -1163,13 +1165,13 @@ export function buildRunnerLlmAdapter(
                 fallbackMeta,
               );
               emitContextBudgetSnapshot(providerMessages, requestMaxOutputTokens);
-              const fallbackCacheDiagnostic = beginPromptCacheDiagnostic(
+              let fallbackCacheDiagnostic = beginPromptCacheDiagnostic(
                 providerMessages,
                 attempt,
                 'complete',
               );
               raw = await withProviderRequestCredential(
-                provider.name,
+                provider,
                 'fallback',
                 fallbackSignal,
                 (credentialSignal) => provider.complete(
@@ -1179,6 +1181,7 @@ export function buildRunnerLlmAdapter(
                   providerReasoning,
                   {
                     ...reasoningCache,
+                    onRequestPrepared: projection => { fallbackCacheDiagnostic = emitNativePromptCacheDiagnosticRequest(options.events, fallbackCacheDiagnostic, projection); },
                     promptCacheKey,
                     onReasoningEffortRejected: event => onReasoningEffortRejected(event, fallbackMeta.providerRequestId),
                     onReasoningResolved: event => options.events?.onReasoningResolved?.({ ...event, ...fallbackMeta }),
@@ -1255,7 +1258,7 @@ export function buildRunnerLlmAdapter(
                 attempt, maxAttempts: resilienceCfg.maxRetries, delayMs: 0, recoveryAction: 'text_diagnosis', ladderStep: 4, fallbackUsed: false }),
               onUsage: usage => { costTracker = recordCostUsage(costTracker, { provider: providerName,
                 model: activeModel ?? provider.getModel(), inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
-                cacheReadTokens: usage.cachedReadTokens, cacheWriteTokens: usage.cachedWriteTokens }); },
+                cacheReadTokens: usage.cachedReadTokens, cacheWriteTokens: usage.cachedWriteTokens, ...(usage.cachedWriteTokensByTtl ? { cacheWriteTokensByTtl: usage.cachedWriteTokensByTtl } : {}) }); },
             });
             if (recovered) { attempt += 1; textRecoveryRetry = true; nextRequestMode = 'replace'; continue; }
             // Preserve the Runner transcript on the thrown error so the
@@ -1382,12 +1385,12 @@ export function buildRunnerLlmAdapter(
             continuationMeta,
           );
           emitContextBudgetSnapshot(providerMessages, requestMaxOutputTokens);
-          const cacheDiagnostic = beginPromptCacheDiagnostic(
+          let cacheDiagnostic = beginPromptCacheDiagnostic(
             providerMessages,
             attempt + l5Retries,
           );
           raw = await withProviderRequestCredential(
-            provider.name,
+            provider,
             'primary',
             l5Signal,
             (credentialSignal) => provider.stream(
@@ -1397,6 +1400,7 @@ export function buildRunnerLlmAdapter(
               providerReasoning,
               {
                 ...reasoningCache,
+                onRequestPrepared: projection => { cacheDiagnostic = emitNativePromptCacheDiagnosticRequest(options.events, cacheDiagnostic, projection); },
                 promptCacheKey,
                 onReasoningEffortRejected: event => onReasoningEffortRejected(event, continuationMeta.providerRequestId),
                 onReasoningResolved: event => options.events?.onReasoningResolved?.({ ...event, ...continuationMeta }),
@@ -1488,6 +1492,7 @@ export function buildRunnerLlmAdapter(
         outputTokens: streamResult.usage.outputTokens,
         cacheReadTokens: streamResult.usage.cachedReadTokens,
         cacheWriteTokens: streamResult.usage.cachedWriteTokens,
+        ...(streamResult.usage.cachedWriteTokensByTtl ? { cacheWriteTokensByTtl: streamResult.usage.cachedWriteTokensByTtl } : {}),
       });
     }
 

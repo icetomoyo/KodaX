@@ -1,18 +1,19 @@
 /**
  * `/provider probe` — proactive reasoning-effort probing.
  *
- * Sends a minimal (≈1-token) request per candidate effort and records the ones
+ * Sends a bounded request per candidate effort and records the ones
  * the provider HARD-rejects into the capability cache, so a fast-changing model
  * (GLM / Kimi / MiniMax) can be validated up front instead of waiting for the
  * passive path to learn it from real traffic. Reuses the exact same
  * `onReasoningEffortRejected` signal as passive learning — a rejection here is
  * recorded identically, just with `source: 'probed'`.
  *
- * Note: this issues real requests (cost ≈ a few tokens per effort) — it is an
+ * Note: this issues real requests (output capped at 16 tokens, or 1025 for manual Anthropic thinking) — it is an
  * explicit, user-invoked command, never automatic.
  */
 
 import type { KodaXBaseProvider } from '@kodax-ai/coding';
+import { withProviderRequestCredential } from '@kodax-ai/llm';
 import { recordRejectedEffort } from '@kodax-ai/agent';
 
 export type ProbeStatus = 'accepted' | 'rejected' | 'error';
@@ -47,14 +48,14 @@ export async function probeProviderReasoningEfforts(input: {
     }
     let rejected = false;
     try {
-      await provider.stream(
+      await withProviderRequestCredential(provider, 'utility', input.signal, activeSignal => provider.stream(
         [{ role: 'user', content: 'ping' }],
         [],
         '',
         { effort },
         {
           modelOverride: model,
-          maxOutputTokensOverride: 1,
+          maxOutputTokensOverride: provider.getReasoningProfile?.(model)?.supportsManualThinkingBudget && effort !== 'none' ? 1025 : 16,
           singleAttempt: true,
           onReasoningEffortRejected: event => {
             if (event.cacheScope) recordRejectedEffort(input.provider, model, event.effort, 'probed', input.now(), input.configHome, event.cacheScope);
@@ -63,8 +64,8 @@ export async function probeProviderReasoningEfforts(input: {
           },
           onTextDelta: () => {},
         },
-        input.signal,
-      );
+        activeSignal,
+      ));
     } catch (e) {
       results.push({
         effort,

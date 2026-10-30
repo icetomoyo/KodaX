@@ -1023,6 +1023,7 @@ export interface RuntimeCapabilityRequirements {
   readonly productExitControl?: 1;
   readonly productExecutionFacts?: 1;
   readonly productActorAuthorization?: 1;
+  readonly providerProbeAuthorization?: 1;
   readonly productHistoryBoundaries?: 1;
   readonly productExecutionAuthorization?: 1 | 2;
   /** Unified product business operations and current-view lifecycle. */
@@ -1326,7 +1327,7 @@ export interface RuntimeExtensionListResult {
 
 export interface RuntimeCatalogService {
   reasoningEfforts(input: ClientModelSelection): Promise<readonly string[]>;
-  probeReasoningEfforts(input: ClientModelSelection & { readonly efforts: readonly string[] }): Promise<readonly ClientCapabilityProbeResult[]>;
+  probeReasoningEfforts(input: ClientModelSelection & { readonly efforts: readonly string[]; readonly credential?: RuntimeCredentialBinding }): Promise<readonly ClientCapabilityProbeResult[]>;
   forgetCapabilities(input?: { readonly provider?: string; readonly model?: string }): Promise<void>;
   providers(): Promise<readonly ClientProviderInfo[]>;
   models(filter?: RuntimeModelListFilter): Promise<unknown>;
@@ -4306,6 +4307,7 @@ async function createKodaXRuntimeInternal(
     productExitControl: { version: 1 },
     productExecutionFacts: { version: 1 },
     productActorAuthorization: { version: 1 },
+    providerProbeAuthorization: { version: 1 },
     workflowSettingsDefaults: { version: 1 },
     externalAgents: options.externalAgents !== undefined,
     afterTurnInput: { version: 1 },
@@ -13754,10 +13756,15 @@ function createRuntimeCatalogService(
 
     async probeReasoningEfforts(input) {
       ensureOpen();
-      return replApi.probeProviderReasoningEfforts({
+      const access = (input as typeof input & { readonly providerCredentialAccess?: ProviderCredentialLeaseAccess }).providerCredentialAccess;
+      if (input.credential && !access) throw createRuntimeCredentialUnavailableError('Provider probing requires a current Host broker binding.');
+      const scope = access ? createProviderCredentialLeaseScope(access) : undefined;
+      const probe = () => replApi.probeProviderReasoningEfforts({
         ...input, configHome: configFile === undefined ? undefined : path.dirname(configFile),
-        resolve: resolveProvider, now: () => new Date().toISOString(),
+        resolve: resolveProvider, now: () => new Date().toISOString(), signal: access?.signal,
       });
+      try { return await (scope ? runWithProviderCredentialLeaseScope(scope, probe) : probe()); }
+      finally { scope?.close(); }
     },
 
     async forgetCapabilities(input) {

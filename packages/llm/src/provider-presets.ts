@@ -43,7 +43,7 @@ const PRESETS: readonly ProviderPreset[] = [
   { id: 'radius', apiKeyEnv: 'RADIUS_API_KEY', chatApis: ['pi-messages'], baseUrl: 'https://radius.pi.dev' },
   { id: 'together', apiKeyEnv: 'TOGETHER_API_KEY', chatApis: [C], baseUrl: 'https://api.together.ai/v1' },
   { id: 'typesafe', apiKeyEnv: 'TYPESAFE_API_KEY', chatApis: [], classifierApi: 'typesafe-system-one' },
-  { id: 'vercel-ai-gateway', apiKeyEnv: 'AI_GATEWAY_API_KEY', chatApis: [A], baseUrl: 'https://ai-gateway.vercel.sh' },
+  { id: 'vercel-ai-gateway', apiKeyEnv: 'AI_GATEWAY_API_KEY', chatApis: [A], classifierApi: 'typesafe-system-one', baseUrl: 'https://ai-gateway.vercel.sh' },
   { id: 'xai', apiKeyEnv: 'XAI_API_KEY', chatApis: [R], baseUrl: 'https://api.x.ai/v1' },
   { id: 'xiaomi', apiKeyEnv: 'XIAOMI_API_KEY', chatApis: [C], baseUrl: 'https://api.xiaomimimo.com/v1' },
   { id: 'xiaomi-token-plan-ams', apiKeyEnv: 'XIAOMI_TOKEN_PLAN_AMS_API_KEY', chatApis: [C], baseUrl: 'https://token-plan-ams.xiaomimimo.com/v1' },

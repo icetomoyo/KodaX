@@ -1,3 +1,4 @@
+import type { KodaXProviderCapabilityProfile } from './types.js';
 import { inheritRejectedImage } from './providers/rejected-image.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { cloudCredentialSecrets, deserializeCloudCredential, isCloudCredentialCarrier, type KodaXCloudCredential } from './cloud/credentials.js';
@@ -196,19 +197,27 @@ export function currentProviderCredentialLeaseProviders(): readonly string[] | u
  * in the nested exact scope and is discarded when the call settles.
  */
 export async function withProviderRequestCredential<T>(
-  provider: string,
+  target: string | { readonly name: string; getCapabilityProfile?(): KodaXProviderCapabilityProfile },
   purpose: ProviderCredentialPurpose,
   signal: AbortSignal | undefined,
   operation: (signal: AbortSignal | undefined) => Promise<T> | T,
   logicalRequestId?: string,
 ): Promise<T> {
+  const provider = typeof target === 'string' ? target : target.name;
   const ownerSignal = currentProviderRequestAbortSignal();
   if (ownerSignal) signal = signal === undefined ? ownerSignal : AbortSignal.any([signal, ownerSignal]);
   signal?.throwIfAborted();
   const scope = providerCredentialStorage.getStore();
   const lease = scope?.kind === 'lease' ? scope : scope?.kind === 'exact' ? scope.parentLease : undefined;
   return observeProviderOperation(provider, purpose, currentProviderRequestAttribution() ?? lease?.attribution,
-    () => withProviderRequestCredentialInternal(provider, purpose, signal, operation), logicalRequestId, signal);
+    async () => {
+      if (lease && typeof target !== 'string' && target.getCapabilityProfile?.().transport === 'cli-bridge') {
+        assertLeaseActive(lease); if (!lease.allowedProviders.has(provider)) throw new Error(`Provider credential scope does not allow provider ${provider}.`);
+        const active = leaseAbortSignal(lease, signal); active.throwIfAborted();
+        const result = await operation(active); assertLeaseActive(lease); active.throwIfAborted(); return result;
+      }
+      return withProviderRequestCredentialInternal(provider, purpose, signal, operation);
+    }, logicalRequestId, signal);
 }
 /** Adapter entry: retain an already authorized caller's operation purpose and observation owner. */
 export async function withProviderInvocationCredential<T>(provider: string, signal: AbortSignal | undefined,
@@ -387,6 +396,12 @@ function inactiveCredentialScopeError(): Error {
   return new Error('Provider credential lease scope is no longer active.');
 }
 
+function leaseAbortSignal(lease: LeaseProviderCredentialScope, signal?: AbortSignal): AbortSignal {
+  const signals = [signal];
+  let cursor: LeaseProviderCredentialScope | undefined = lease;
+  while (cursor) { signals.push(cursor.controller.signal, cursor.access.signal); cursor = cursor.parent; }
+  return combineAbortSignals(signals);
+}
 function combineAbortSignals(
   signals: readonly (AbortSignal | undefined)[],
 ): AbortSignal {

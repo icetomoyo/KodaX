@@ -175,6 +175,13 @@ describe('runProviderSetupWizard', () => {
     expect(() => readFileSync(configPath, 'utf8')).toThrow();
   });
 
+  it('offers native Gemini setup and persists cloud metadata with an environment name only', async () => {
+    const scripted = scriptedInteraction({ choices: ['custom', 'gemini'], texts: ['native-gemini', 'GEMINI_API_KEY', 'gemini-fixture'], confirm: true });
+    const result = await runProviderSetupWizard({ configPath, catalog, interaction: scripted.interaction });
+    expect(result.status).toBe('configured');
+    expect(JSON.parse(readFileSync(configPath, 'utf8')).customProviders[0]).toMatchObject({ name: 'native-gemini', protocol: 'google', cloud: { service: 'gemini' }, apiKeyEnv: 'GEMINI_API_KEY', model: 'gemini-fixture' });
+  });
+
   it('persists only public custom-provider metadata', async () => {
     const scripted = scriptedInteraction({
       choices: ['custom', 'openai'],

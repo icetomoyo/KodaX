@@ -25,7 +25,7 @@ export const EXECUTION_GUIDANCE = [
   staticText("t11.prompts/execution-guidance.6"),
   `- ${TOOL_RECOVERY_GUIDANCE}`,
   staticText("t11.prompts/execution-guidance.7"),
-  '- When you are doing a broad audit: cover correctness, security, performance, and maintainability together, and keep issues you have confirmed separate from lower-confidence risks so the reader can tell which is which.',
+  staticText("t12.prompts/execution-guidance.0"),
   staticText("t11.prompts/execution-guidance.8"),
   '- When the task is design or planning work: reason through architecture, constraints, sequencing, and risks before writing code.',
   '- When the request is genuinely ambiguous: frame the options briefly and make the path you chose explicit before any irreversible edit, so the user can redirect before the cost is sunk.',

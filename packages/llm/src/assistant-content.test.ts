@@ -25,3 +25,12 @@ it('keeps interleaved tool positions when sanitation removes an internal text su
   expect(reconcileAssistantContent(ordered, { textBlocks: [{ text: 'beforeafter\n' }], toolBlocks: [tool] }))
     .toEqual([{ type: 'text', text: 'before' }, tool, { type: 'text', text: 'after\n' }]);
 });
+
+it('preserves native custom provenance only for unchanged authoritative tool calls', () => {
+  const original: KodaXToolUseBlock = { type: 'tool_use', id: 'call', name: 'query', input: { sql: 'SELECT 1' },
+    customTool: { property: 'sql', source: { provider: 'p', api: 'openai-responses', model: 'm', baseUrl: 'https://p.example' } } };
+  const plain: KodaXToolUseBlock = { type: 'tool_use', id: 'call', name: 'query', input: { sql: 'SELECT 1' } };
+  expect(reconcileAssistantContent([original], { toolBlocks: [plain] })[0]).toEqual(original);
+  expect(reconcileAssistantContent([original], { toolBlocks: [{ ...plain, input: { sql: 'SELECT 2' } }] })[0]).not.toHaveProperty('customTool');
+  expect(reconcileAssistantContent([original], { toolBlocks: [{ ...plain, name: 'other' }] })[0]).not.toHaveProperty('customTool');
+});

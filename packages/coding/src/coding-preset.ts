@@ -1,3 +1,4 @@
+import { staticText } from './prompts/static-text.js';
 /**
  * Default coding agent preset (FEATURE_080 → FEATURE_100).
  *
@@ -40,13 +41,7 @@ import type { KodaXOptions, KodaXResult } from './types.js';
 /** Stable name used as the dispatch key for the built-in coding preset. */
 export const DEFAULT_CODING_AGENT_NAME = 'kodax/coding/default';
 
-const DEFAULT_CODING_INSTRUCTIONS = `KodaX default coding agent.
-
-This agent is a thin declaration that routes through the built-in \`runKodaX\`
-pipeline. Tools, extensions, reasoning, provider selection, session
-persistence, compaction and harness routing are all driven by the
-\`KodaXOptions\` forwarded via \`Runner.run\` \`opts.presetOptions\`.
-`;
+const DEFAULT_CODING_INSTRUCTIONS = staticText("t12.coding-preset.0");
 
 function extractPrompt(input: string | readonly AgentMessage[]): string {
   if (typeof input === 'string') return input;

@@ -1,3 +1,4 @@
+import { staticText } from '../../prompts/static-text.js';
 import type { WorkflowApi, WorkflowModule, WorkflowTaskResult } from '@kodax-ai/agent';
 
 import {
@@ -85,7 +86,7 @@ export function buildScopedReviewPrimaryPrompt(
     'Begin with the required JSON result. No preamble or process narration.',
     'The findings array contains only actionable defects, never approval evidence or positive observations.',
     'When the scope is compliant and approved with no actionable defect, findings must be empty.',
-    'If a named requirement cannot be proven compliant or violated from surfaced evidence, use specVerdict not-verifiable, list it in unverifiedRequirements, and emit no finding for that uncertainty; absence of evidence is not proof of a defect.',
+    staticText("t12.workflows/builtin/scoped-review.0"),
     'If requirements are absent, specVerdict must be not-verifiable.',
   ].filter(Boolean).join('\n');
 }

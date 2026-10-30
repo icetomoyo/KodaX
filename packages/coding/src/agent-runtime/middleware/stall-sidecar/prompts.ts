@@ -1,3 +1,4 @@
+import { staticText } from '../../../prompts/static-text.js';
 /**
  * FEATURE_178 (v0.7.42) — sidecar prompt assets pinned by the eval contract.
  *
@@ -38,11 +39,11 @@ import type { KodaXMessage, KodaXToolDefinition } from '@kodax-ai/llm';
  * format (single forced tool call, no narration).
  */
 export const SIDECAR_SYSTEM_PROMPT: string = [
-  'You are a stall-detector for an autonomous coding agent. A DIFFERENT agent (the "main agent") has been running and has issued the same tool call multiple times in a row. A rule-based detector flagged this as a potential stall. Your job is to do a second-pass judgment by reading the main agent\'s recent transcript.',
+  staticText("t12.agent-runtime/middleware/stall-sidecar/prompts.0"),
   '',
   '# IMPORTANT — role separation',
   '',
-  'The transcript shown to you contains the MAIN AGENT\'s past messages and tool calls. You are NOT the author of those messages. You are a third-party observer judging whether that agent is stuck. Do not say "I read the file" or "my behavior" — the actions in the transcript belong to the main agent, not you. Your only action is to call `report_stall_judgment` once.',
+  staticText("t12.agent-runtime/middleware/stall-sidecar/prompts.1"),
   '',
   '# Decision criteria',
   '',
@@ -63,7 +64,7 @@ export const SIDECAR_SYSTEM_PROMPT: string = [
   '',
   'Call the `report_stall_judgment` tool exactly once. Do not narrate. Do not call any other tool.',
   '',
-  'If isStuck=true, populate `nudge` with a concrete, actionable next step the main agent could take — reference one specific tool name from the registry (read, edit, write, grep, bash, interrupt_agent). Keep the nudge short and focused on one action.',
+  staticText("t12.agent-runtime/middleware/stall-sidecar/prompts.2"),
   '',
   'If isStuck=false, leave nudge empty.',
 ].join('\n');
@@ -93,7 +94,7 @@ export const REPORT_TOOL: KodaXToolDefinition = {
       suggestedTool: {
         type: 'string',
         description:
-          'The specific tool name the main agent should call next. Must be one of: read, edit, write, multi_edit, grep, glob, bash, interrupt_agent. Required when isStuck=true; pass empty string when isStuck=false.',
+          staticText("t12.agent-runtime/middleware/stall-sidecar/prompts.3"),
       },
       nudge: {
         type: 'string',

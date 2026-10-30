@@ -622,6 +622,10 @@ export function createCompactionPromptCacheObserver(
       });
       if (event) pending.set(request, event);
     },
+    onPrepared(request, projection) {
+      const event = emitNativePromptCacheDiagnosticRequest(input.events, pending.get(request), projection);
+      if (event) pending.set(request, event);
+    },
     onResponse(request: CompactionProviderRequest, usage: KodaXTokenUsage | undefined) {
       emitPromptCacheDiagnosticResponse(input.events, pending.get(request), usage);
       pending.delete(request);
@@ -735,6 +739,7 @@ export function emitPromptCacheDiagnosticResponse(
     const event: KodaXPromptCacheDiagnosticEvent = {
       ...request,
       phase: 'response',
+      ...(usage?.cachedWriteTokensByTtl ? { cachedWriteTokensByTtl: { ...usage.cachedWriteTokensByTtl } } : {}),
       completedAt: new Date().toISOString(),
       ...(usage?.inputTokens !== undefined ? { inputTokens: usage.inputTokens } : {}),
       ...(usage?.outputTokens !== undefined ? { outputTokens: usage.outputTokens } : {}),

@@ -494,6 +494,7 @@ export interface KodaXPromptCacheDiagnosticEvent {
   readonly outputTokens?: number;
   readonly cachedReadTokens?: number;
   readonly cachedWriteTokens?: number;
+  readonly cachedWriteTokensByTtl?: import('@kodax-ai/llm').KodaXTokenUsage['cachedWriteTokensByTtl'];
 }
 
 export interface KodaXUserInputPromptContext {

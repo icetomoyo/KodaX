@@ -1,3 +1,4 @@
+import { staticText } from '../prompts/static-text.js';
 /**
  * Deferred tool registry — FEATURE_189 Batch 3 B.2 progressive disclosure.
  *
@@ -43,7 +44,7 @@ export const DEFERRED_TOOL_HINTS: Readonly<Record<string, string>> = Object.free
 
   // Repo intelligence
   repo_overview:   'Workspace structure snapshot. Reuse a supplied overview while applicable; query when missing or outdated. tool_search returns the full contract.',
-  changed_scope:   'List files / areas changed in current git diff — for worktree, range, and other change-set reviews. After scope, fan out independent review lanes before reading every diff. `tool_search("changed_scope")` for full schema.',
+  changed_scope:   staticText("t12.tools/deferred-tools.0"),
   module_context:  'Module deps, entries, symbols, tests/docs and evidence. Query module or target_path directly; tool_search has details.',
   symbol_context:  'Definition, signature, imports and probable callers/callees. Query symbol directly; module disambiguates. tool_search has details.',
   process_context: 'Approximate static process summary/steps. Query entry, module or target_path directly; tool_search has details.',

@@ -2172,7 +2172,7 @@ async function runSubstrateInContext(
             attempt,
           });
           result = await withProviderRequestCredential(
-            streamProvider.name,
+            streamProvider,
             'primary',
             retrySignal,
             (credentialSignal) => streamProvider.stream(

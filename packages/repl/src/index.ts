@@ -391,3 +391,5 @@ export {
 } from "./session/public-api.js";
 export { getProviderReasoningEffortOptions } from './common/utils.js';
 export { probeProviderReasoningEfforts, type ProbeResult } from './common/capability-probe.js';
+
+export { linkProviderOAuthRegistration } from './common/provider-setup.js';

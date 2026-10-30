@@ -1,3 +1,4 @@
+import { staticText } from './static-text.js';
 import type { KodaXContextOptions, KodaXShellPermissionMode } from '../types.js';
 
 const MODE_GUIDANCE: Record<KodaXShellPermissionMode, string> = {
@@ -13,7 +14,7 @@ export function withEffectivePermissionContext(system: string, context: KodaXCon
   const readOnly = context?.permissionIntent?.readOnly === true;
   if (mode === undefined && !readOnly) return system;
   const scope = readOnly
-    ? 'Current task scope: read-only. The host mode does not authorize mutation or writable delegation from this task. Continue permitted inspection and report checks requiring broader authority to the caller.'
+    ? staticText("t12.prompts/effective-permissions.0")
     : MODE_GUIDANCE[mode!];
   return `${system}\n\n## Effective permissions (host authority)\n${mode === undefined ? '' : `Current permission mode: ${mode}\n`}${scope}\n`
     + 'This live host context is authoritative for this request. config.json contains defaults, not the current Session mode. '

@@ -37,7 +37,7 @@ export type RuntimeScopedCredentialTarget =
   | {
       readonly kind: "operation";
       readonly operationId: string;
-      readonly operation: "session.compact";
+      readonly operation: "session.compact" | "provider.reasoning.probe";
     }
   | {
       readonly kind: "actor_turn";
@@ -181,6 +181,7 @@ export interface RuntimeExecutionAuthorization {
 }
 
 export type KodaXClientExecutionRequest =
+  | { readonly kind: 'provider_probe'; readonly input: { readonly provider: string; readonly model?: string; readonly efforts: readonly string[] } }
   | { readonly kind: 'recovery'; readonly input: { readonly sessionId: string; readonly runId: string } }
   | { readonly kind: 'input'; readonly input: ClientSubmitInput }
   | { readonly kind: 'command'; readonly input: ClientCommandInput }
@@ -193,6 +194,6 @@ export type KodaXClientExecutionRequest =
 
 export type KodaXClientHostAuthorization = (
   request: KodaXClientExecutionRequest,
-  services: { readonly credentials: RuntimeCredentialService; readonly hostTools: RuntimeHostToolService },
+  services: { readonly credentials: RuntimeCredentialService; readonly hostTools: RuntimeHostToolService; readonly identity?: { readonly runtimeId: string } },
 ) => Promise<RuntimeExecutionAuthorization | undefined>;
 

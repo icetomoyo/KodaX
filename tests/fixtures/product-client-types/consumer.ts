@@ -31,7 +31,7 @@ const clientInfo: RuntimeClientInfo = { name: 'consumer', clientType: 'app' };
 const connectOptions: ConnectKodaXClientOptions = { clientInfo };
 const authorizedOptions: ConnectKodaXClientOptions = { clientInfo,
   async authorizeExecution(request, services) {
-    if (!request.input.sessionId) throw new Error('An authorized execution requires a Session.');
+    if (request.kind !== 'provider_probe' && !request.input.sessionId) throw new Error('This execution requires a Session.');
     const lease = await services.credentials.registerScoped({ providers: ['fixture'] }, async request => {
       const purpose: string = request.purpose;
       const sessionId: string = request.sessionId;

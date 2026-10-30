@@ -1128,12 +1128,16 @@ async function dispatchRuntimeDaemonRequest(
         model: optionalStringField(requireRecord(request.params), "model"),
       });
     case "provider.reasoning.probe": {
-      const params = requireRecord(request.params);
-      return runtime.catalog.probeReasoningEfforts({
-        provider: requireStringField(params, "provider"),
-        model: optionalStringField(params, "model"),
-        efforts: requireStringArrayField(params, "efforts"),
-      });
+      const params = requireRecord(request.params), binding = optionalRecord(params.credential);
+      const provider = requireStringField(params, 'provider');
+      const operationId = `probe_${randomUUID().replace(/-/g, '')}`;
+      if (binding && binding.mode !== 'scoped') throw daemonError('client_upgrade_required', 'Provider probing requires a scoped v2 credential binding.');
+      const access = binding ? bindTrustedScopedCredentialAccess({ binding,
+        // A catalog maintenance request has an operation-owned scope, not a persisted Session.
+        sessionId: operationId, target: { kind: 'operation', operation: 'provider.reasoning.probe', operationId }, reverseBridge }) : undefined;
+      if (access && !access.allowedProviders.includes(provider)) throw daemonError('credential_unavailable', 'Probe provider is outside the credential binding.');
+      return runtime.catalog.probeReasoningEfforts({ provider, model: optionalStringField(params, 'model'), efforts: requireStringArrayField(params, 'efforts'),
+        ...(binding ? { credential: binding } : {}), ...(access ? { providerCredentialAccess: access } : {}) } as Parameters<KodaXRuntime['catalog']['probeReasoningEfforts']>[0]);
     }
     case "provider.capabilities.forget":
       await runtime.catalog.forgetCapabilities({
@@ -2883,7 +2887,7 @@ function runtimeDaemonCapabilities(
       credentialLifetime: "provider_request",
       lazyProviderResolution: true,
       providerAllowlist: true,
-      operationTargets: ["run", "session.compact", "actor_turn", "workflow"],
+      operationTargets: ["run", "session.compact", "provider.reasoning.probe", "actor_turn", "workflow"],
       revocationAbortsPendingRequests: true,
       detachedWorkflowScope: "derived_revocable_lease",
       requestTimeoutMs: reverseBridgeLimits.callTimeoutMs,

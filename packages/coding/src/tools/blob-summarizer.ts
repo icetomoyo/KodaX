@@ -178,7 +178,7 @@ export function createBlobSummarizer(
 
     try {
       const result = await withProviderRequestCredential(
-        opts.provider.name,
+        opts.provider,
         'utility',
         combinedSignal,
         (credentialSignal) => opts.provider.stream(

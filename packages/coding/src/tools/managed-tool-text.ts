@@ -8,7 +8,7 @@ export interface ManagedToolText {
 
 /** Shared shell semantics, with the invocation boundary stated before serialization. */
 export function managedShellDescription(execution: 'native' | 'foreground'): string {
-  return 'Shell: tests/build/lint, packages, Git/processes, queries without dedicated tools, computed/template multi-file generation. Searches: grep/glob; known file content: write/edit, not shell redirection/wrappers. '
+  return staticText("t12.tools/managed-tool-text.0")
     + (execution === 'native' ? 'Long commands: run_in_background. ' : 'Foreground commands only; use native bash for background commands. ')
     + 'Full output captured; only next-request capacity overflow yields recoverable artifact preview.';
 }
@@ -74,7 +74,7 @@ export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
   read: { description: staticText("t11.tools/managed-tool-text.5"),
     annotations: { 'properties.path': 'Absolute path or supplied kodax-transient://text/ reference.', 'properties.offset': 'Starting text line number.',
       'properties.limit': 'Text lines.', 'properties.line_offset': '0-based Unicode character offset within first line; use exact continuation cursor.' } },
-  send_message: { description: 'Message, no new turn: running receives at next safe boundary; idle retains until next turn. Direct parent/child, admitted peer or broadcast capped at 20; Runtime validates forwarding lineage against cycles.',
+  send_message: { description: staticText("t12.tools/managed-tool-text.1"),
     annotations: { 'properties.to': 'Visible canonical path, child/peer name, parent, or * broadcast. Self rejected.', 'properties.content': 'Body; Runtime authenticates agent-message frame.',
       'properties.forwarded_message_id': 'Received agent-message ID only when forwarding; Runtime derives chain. Fresh message: omit.',
       'properties.classification': 'Default internal; cannot downgrade source classification.' } },
@@ -86,11 +86,11 @@ export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
   skill: { description: staticText("t11.tools/managed-tool-text.6"),
     annotations: { 'properties.skill': 'Skill name; leading slash accepted.', 'properties.args': null } },
   spawn_agent: {
-    description: 'Start a named direct child; returns canonical path. Runtime atomically enforces shared session concurrency/work budgets. quality_strategy is optional telemetry, never admission control; invalid/conflicting data is ignored.',
+    description: staticText("t12.tools/managed-tool-text.2"),
     annotations: { 'properties.task_name': 'Stable direct-child name.', 'properties.objective': 'Bounded goal, constraints, evidence and output shape.', 'properties.scope': 'Bounded scope hint.',
       'properties.read_only': 'Default true; false retains parent permission ceiling.', 'properties.isolation': 'Default shared: edits are visible in the root workspace; do not reapply them. Worktree needs an explicit merge-back strategy.', 'properties.constraints': null,
       'properties.agent_id': 'Matching specialist canonical ID.', 'properties.evidence_refs': 'file:/diff:/finding:/agent-turn:<canonical-path>#turn=<id>; legacy agent:<path> means latest. Actor output must be terminal/visible.',
-      'properties.fork_turns': 'History: all (default), none, or positive recent-turn count.', 'properties.model_hint': 'balanced: ordinary work (default); fast: evaluated read-only mechanical lookup; deep: architecture/adversarial checks/severity/final synthesis. Unconfigured tiers inherit; write-capable fast stays on parent tier. Omit if unsure.',
+      'properties.fork_turns': 'History: all (default), none, or positive recent-turn count.', 'properties.model_hint': staticText("t12.tools/managed-tool-text.3"),
       'properties.provider': 'Deliberate cross-family override; unconfigured/omitted inherits.', 'properties.model': 'Paired provider model ID; omitted inherits.',
       'properties.effort': 'off/low/medium/high/xhigh/max; omitted/auto inherits. agent_id locks specialist effort; conflicts/unsupported values rejected.',
       'properties.quality_strategy': '{schemaVersion:1,stageId,pattern,role,laneRelation?,targetEvidenceRefs?}; Actor refs require exact agent-turn.' } },

@@ -336,7 +336,11 @@ export function toKodaXProductClient(
         .filter((provider) => filter?.provider === undefined || provider.name === filter.provider)
         .map((provider) => ({ provider: provider.name, models: provider.models })),
       reasoningEfforts: (input) => runtime.catalog.reasoningEfforts(input),
-      probeReasoningEfforts: (input) => runtime.catalog.probeReasoningEfforts(input),
+      probeReasoningEfforts: async input => {
+        const request = await authorize({ kind: 'provider_probe', input });
+        return runtime.catalog.probeReasoningEfforts({ provider: request.provider, model: request.model, efforts: request.efforts,
+          ...(request.authorization?.credential ? { credential: request.authorization.credential } : {}) });
+      },
       forgetCapabilities: (input) => runtime.catalog.forgetCapabilities(input),
       commands: async (workspaceRoot) => (await runtime.catalog.commands(workspaceRoot)).map((command) => ({
         name: command.name,

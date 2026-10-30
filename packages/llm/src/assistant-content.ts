@@ -22,7 +22,10 @@ export function reconcileAssistantContent(
   for (const block of ordered) {
     if (block.type === 'tool_use') {
       const call = calls.get(block.id);
-      if (call) { blocks.push(call); calls.delete(block.id); }
+      if (call) {
+        const customTool = call.customTool ?? (block.customTool && block.name === call.name && JSON.stringify(block.input) === JSON.stringify(call.input) ? block.customTool : undefined);
+        blocks.push(customTool ? { ...call, customTool } : call); calls.delete(block.id);
+      }
     } else if (block.type === 'text') {
       if (unchangedText) blocks.push(block);
       else if (trimmedSuffix) {

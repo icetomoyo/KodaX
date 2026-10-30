@@ -21,6 +21,8 @@ export interface OAuthSessionRecord {
   readonly issuer?: string;
   /** Identity validated during login by the host; never inferred from an email hint. */
   readonly accountId: string;
+  /** Defaults to account for legacy verified-subject registrations; grant never claims a verified user subject. */
+  readonly identityKind?: 'account' | 'grant';
   readonly credentials?: OAuthTokens;
   /** Copilot/Meta inference credentials are distinct from their identity grants. */
   readonly resource?: OAuthTokens;
@@ -71,7 +73,7 @@ function due(tokens: OAuthTokens): boolean {
   return tokens.expiresAt !== undefined && tokens.expiresAt <= Date.now() + 30_000 && (tokens.earliestRefreshAt ?? 0) <= Date.now();
 }
 function sameRegistration(a: OAuthSessionRecord, b: OAuthSessionRecord): boolean {
-  return a.id === b.id && a.service === b.service && a.clientId === b.clientId && a.accountId === b.accountId && a.issuer === b.issuer;
+  return a.id === b.id && a.service === b.service && a.clientId === b.clientId && a.accountId === b.accountId && a.issuer === b.issuer && a.identityKind === b.identityKind;
 }
 
 interface SessionLifetime {
@@ -103,6 +105,7 @@ export async function openOAuthSession(input: {
   const initial = await store.transact(id, async record => ({ record, result: record }))
     .catch(() => { throw new OAuthCredentialError('storage_failed'); });
   if (!initial || initial.id !== id || !initial.clientId || !initial.accountId
+    || (initial.identityKind !== undefined && !['account', 'grant'].includes(initial.identityKind))
     || !['openai-chatgpt', 'openai-codex', 'github-copilot', 'anthropic', 'openrouter', 'kimi-coding', 'meta', 'xai', 'radius'].includes(initial.service)) {
     throw new OAuthCredentialError('invalid_session');
   }

@@ -782,6 +782,8 @@ export interface KodaXCustomProviderConfig {
   api?: 'chat-completions' | 'responses';
   /** Subscription wire dialect; credentials must come from an explicit request broker. */
   oauth?: 'openai-chatgpt' | 'openai-codex' | 'github-copilot' | 'anthropic' | 'openrouter' | 'kimi-coding' | 'meta' | 'xai' | 'radius';
+  /** Non-secret trusted-Main secure-store registration reference; never a lease or token. */
+  oauthRegistration?: string;
   /** Non-secret native cloud route; credentials are acquired from a request broker. */
   cloud?: KodaXCloudConnection;
   baseUrl: string;

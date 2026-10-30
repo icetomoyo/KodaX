@@ -350,6 +350,7 @@ function customModelDescriptorToFull(
 export function validateCustomProviderConfig(
   custom: KodaXCustomProviderConfig,
 ): void {
+  if (custom.oauthRegistration !== undefined && (!custom.oauth || typeof custom.oauthRegistration !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(custom.oauthRegistration))) throw new Error('Invalid OAuth secure-store registration reference.');
   validateToolCapabilities(custom.toolCapabilities);
   validateCacheCapabilities(custom.cacheCapabilities);
   const cacheDialects = custom.protocol === 'anthropic' ? ['anthropic'] : custom.protocol === 'bedrock' ? ['bedrock']

@@ -59,7 +59,7 @@ export function getCachedRejectedEfforts(
 /** Native protocol identity becomes available only after the request acquires its lease. */
 export function getProviderReasoningCacheOptions(provider: KodaXBaseProvider, model: string | undefined,
   configHome?: string): Pick<KodaXProviderStreamOptions, 'rejectedReasoningEfforts' | 'resolveRejectedReasoningEfforts'> {
-  return provider.usesScopedReasoningLearning()
+  return provider.usesScopedReasoningLearning?.()
     ? { rejectedReasoningEfforts: [], resolveRejectedReasoningEfforts: scope => getCachedRejectedEfforts(provider.name, model, configHome, scope) }
     : { rejectedReasoningEfforts: getCachedRejectedEfforts(provider.name, model, configHome) };
 }

@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
-import { classify, createProviderCredentialLeaseScope, runWithProviderCredentialLeaseScope } from '../index.js';
+import { createProviderOperationConnection, classify, createProviderCredentialLeaseScope, runWithProviderCredentialLeaseScope } from '../index.js';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 it('returns native System One probabilities without a chat generation', async () => {
@@ -102,4 +102,13 @@ it.each(['cloudflare-jev', 'cloudflare-clef'] as const)('uses the explicit %s en
     expect(body).toMatchObject({ model: 'clef', state: 'hello', questions: { yes: { type: 'noul' } } });
     expect(body.input).toBeUndefined();
   }
+});
+
+it('routes the declared Vercel classifier through its TypeSafe API root', async () => {
+  vi.stubEnv('AI_GATEWAY_API_KEY', 'fixture');
+  const wire = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => Response.json({ answers: { check: { type: 'noul', noul: 0.8 } } })); vi.stubGlobal('fetch', wire);
+  const connection = createProviderOperationConnection('vercel-ai-gateway', { name: 'vercel-classifier', api: 'typesafe-system-one', model: 'typesafe/jev' });
+  await classify(connection, { state: 'evidence', questions: { check: { type: 'bool', instructions: 'Check?' } } });
+  expect(wire.mock.calls[0]?.[0]).toBe('https://ai-gateway.vercel.sh/typesafe/v1/systemone');
+  expect(new Headers(wire.mock.calls[0]?.[1]?.headers).get('authorization')).toBe('Bearer fixture');
 });

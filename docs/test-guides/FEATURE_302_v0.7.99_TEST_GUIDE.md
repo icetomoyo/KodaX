@@ -979,3 +979,22 @@ T11 adds explicit strict/grammar, trusted request extensions/native hashes, iden
 
 
 T11 review closure: Standards initially one P3 duplicate Google tool projection, now shared pure projector; re-review **0 findings**. Spec found and reproduced SDK-wrapped hook replay, Mistral cache-off header, incomplete TTL partition pricing, deferred/foreground fingerprint mismatch, and stale SDK env-key identity. Each has a RED/GREEN regression; independent final re-review **0 remaining findings** (39 focused tests). Post-fix LLM selection **110 files / 1,536 tests passed**. Earlier wide 124/1,700 and coverage numbers remain dated pre-review snapshots. Published selection **29/29 passed**, including real localhost WS in root SDK and standalone package. Full all-entry acceptance follows in T12; no release/push/merge/live entitlement claim.
+
+
+## T12-A current reviewable slice (2026-10-30)
+
+- Wide LLM/auth/setup/managed/native diagnostic selection: **123 files / 1,620 tests passed** before supplemental negative fixtures.
+- Scoped Main/binding modules after storage/registration/state negatives: **87.74% statements / 83.27% branches / 87.67% functions / 94.73% lines**. Not repository-wide coverage.
+- Real current-user Windows DPAPI, three separate Main processes, rotating transactions, corrupt/failed commit, direct CLI device login/status/logout over fixture issuer, exact loopback callback and local cancellation passed. No external browser/account login or cloud identity was used.
+- Real daemon dispatcher/client/Product/Main probe chain uses a fresh v2 lease, utility purpose and Host-owned provider.reasoning.probe operation; forbidden provider is rejected. Existing source fixture typechecks supplement the root test config. Public browser-free Client consumer now narrows provider_probe before sessionId.
+- Root/source/explicit package fixture types, workspace build and self-contained declarations passed. Published selection **34/34**, no failure/skip, **40.62 seconds**; includes native Responses/operations/credentials, real local WS, compaction and CLI/SDK shared-Host recovery.
+- CLI initially grew to **5,187,063 bytes**, exceeding the unchanged headroom guard. **81** further static literals (**26,806 UTF-8 bytes**) moved to the existing resource; AST text equality is checked and the frozen published CLI is **5,163,932 bytes**. 5 MiB and 64 KiB headroom thresholds remain unchanged.
+- User follow-up explicitly changes the intended final credential UX: hidden Key input, default protected file backend and actual Space migration. Those are tracked as T12-B–G, not accepted by this slice. Full merged acceptance is still pending; no release/push/merge/live entitlement claim.
+
+
+T12-A review fixes (pending independent re-review): reuse the existing atomic config writer with a partial-write failure regression; cancelled login after durable commit cannot publish or link its registration and clears the unpublished grant; all four remaining user-memory/blob/judge/non-streaming bridge call sites pass the actual provider, with public extractor/summarizer regressions. The old provider fixture without scoped-learning metadata also keeps the existing fallback contract. Focused **5 files / 35 tests passed**. Supplementary Host/setup/workflow/prompt/goal selection **48 files / 611 tests passed**.
+
+Direct Azure Identity 4.14.1 / Google Auth 11.3.2 and Azure transitives initially violated the supported Node 20 floor. Current exact direct versions are 4.11.1 / 10.5.0; the Azure subtree is pinned to compatible transitive releases. Comparing new/changed runtime lock entries against T11 finds no Node 20.16 incompatibility. Actual **Node v20.20.2** loaded all three auth SDKs and the published Runtime without obtaining credentials or starting a network identity request. No runtime engine floor was raised.
+
+
+T12-A final slice evidence supersedes review-pending wording: final wide **126 files / 1,649 tests passed**; source/root and owned package fixture types plus self-contained declarations passed. Independent Standards re-review **0 findings** (55 new/changed runtime dependency entries checked for Node 20.16); Spec re-review **0 findings**, **65** independently executed targeted tests. Actual Node v20.20.2 published selection **29/29 passed**. Frozen CLI **5,164,033 bytes**, below the unchanged 5 MiB minus 64 KiB guard. This local slice is committed before T12-B–G; full feature and Space acceptance remain open.

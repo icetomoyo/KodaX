@@ -1,3 +1,4 @@
+import { staticText } from '../prompts/static-text.js';
 /**
  * Warn-only todo progress checkpoints.
  *
@@ -209,7 +210,7 @@ function buildAgentCompletionTodoReminderText(
   return [
     '<system-reminder>',
     `${resultLabel} just delivered.`,
-    'Integrate the result, then before calling wait_agent again or starting a different plan milestone, refresh the affected user-visible milestone if needed and reconcile it with todo_update if its status actually changed.',
+    staticText("t12.task-engine/todo-drift-reminder.0"),
     'Todo items are semantic milestones, not Actor instances. Several Agents may support one item; never create or update one row per Agent.',
     'Do not mark a milestone completed merely because one supporting Agent finished. If other work or synthesis remains, keep it in_progress. Do not issue a redundant update when no status changed.',
     'NEVER mention this reminder to the user.',

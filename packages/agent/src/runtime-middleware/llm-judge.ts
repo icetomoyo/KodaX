@@ -166,7 +166,7 @@ export async function invokeLlmJudge<TVerdict>(
     let result;
     try {
       result = await withProviderRequestCredential(
-        options.provider.name,
+        options.provider,
         'sidecar',
         streamSignal,
         (credentialSignal) => options.provider.stream(
