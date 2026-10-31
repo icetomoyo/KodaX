@@ -6722,9 +6722,21 @@ Platform behavior:
 - macOS uses Seatbelt through `sandbox-exec` and requires ripgrep. Guide users
   to `brew install ripgrep` when doctor reports it missing.
 - Linux uses bubblewrap and requires `bubblewrap`, `socat`, and `ripgrep`.
-  Present the emitted `apt`/`dnf`/`pacman` guidance; do not run `sudo` or a
+  Present the emitted `apt`/`dnf`/`pacman` guidance for diagnosed missing
+  dependencies; do not run `sudo` or a
   package manager silently. The host must also permit unprivileged user
   namespaces. Do not change sysctls or AppArmor policy silently.
+
+Interpreter errors such as `JavaScript Skill interpreter is unavailable` or
+Node `ENOENT` have separate optional repair guidance. KodaX reuses a supplied
+`KODAX_A2A_NODE` or Electron's own interpreter; a separate Node installation is
+not required for Electron. Seccomp-helper warnings describe reduced Unix socket
+restrictions and remain visible even when doctor is ready. They are distinct
+from missing interpreter or backend dependencies. Do not turn doctor readiness
+into an installation gate for ordinary tools: authorized work continues through
+the normal permission policy. Only proven pre-start failures may fall back;
+denied, stopped, started, or uncertain execution must not be replayed, and host
+fallback must not be reported as isolated.
 
 Do not call `activateKodaXSandbox()` during ordinary Runtime/daemon startup,
 tool execution, or a background permission check. An SDK application that

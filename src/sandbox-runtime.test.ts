@@ -2159,7 +2159,7 @@ describe('ASRT setup guidance', () => {
       ready: false,
       platform,
       version: KODAX_ASRT_VERSION,
-      diagnostics: ['missing dependency'],
+      diagnostics: ['bubblewrap (bwrap) not installed', 'socat not installed', 'ripgrep (rg) not found'],
       setupRequired: true,
     });
     expect(lines.join('\n')).toContain(expected);
