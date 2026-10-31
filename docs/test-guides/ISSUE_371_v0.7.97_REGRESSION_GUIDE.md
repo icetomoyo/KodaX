@@ -176,14 +176,28 @@ before and 3 ms / zero queries after for eight missing-identity records. A
 node --test tests/bundled-startup-recovery.test.mjs
 ```
 
-This additionally starts the real bundled Host with 512 records whose PID is
-the unrelated live test process (half missing identity, half known mismatch).
+This additionally starts the real bundled Host with 512 records covering missing
+identities, known PID reuse, and incomplete trees with extinct/reused roots.
+The live reused PID is the unrelated test process; absent PIDs are checked before
+fixture construction. The two identity shortcuts alone still timed out against
+the real default home: incomplete non-Run trees were also paying for a termination
+helper per record without gaining cleanup proof. The strengthened bundled case
+reproduced that same daemon-startup error in 12,485 ms before the third fix.
+Non-Run recovery now reuses the existing incomplete-tree check; known live
+retained descendants still require exact cleanup, guarded by a separate test.
 It requires readiness below 10 seconds, reads saved history, verifies exact
 Host/Job shutdown and repeats recovery in a new generation. All evidence bytes
 and saved messages must survive both generations. Observed cold/restart times
-were 2,369 / 1,493 ms. The original 220-tree case remained green at 2,471 ms,
-with 46-ms first concurrent history reads and 1,576-ms restart. Timings are local
+were 2,205 / 1,570 ms. The original 220-tree case remained green at 2,597 ms,
+with 48-ms first concurrent history reads and 1,509-ms restart. Timings are local
 isolated observations, not an SLA or real-home before/after comparison.
+
+The final isolated build also resumed the actual default home in 3,197 ms and
+read the reported Session/history in 58 ms. Every one of the 2,908 registry files
+present before that attempt survived with unchanged bytes in the registry or
+quarantine; auth/config bytes were unchanged. Earlier failed normal recovery
+had already quarantined part of the original 3,264 records. This is real-home
+acceptance, not an identical-input performance comparison or a registry reset.
 
 The representative standalone LSP suite left six registry files in an isolated
 substitute user profile before test-home isolation and zero there afterwards.
@@ -194,7 +208,8 @@ are retained as evidence, not recursively deleted while cleanup is uncertain.
 The legacy MCP OAuth test also binds token reads and cleanup to its own temporary
 fixture. A sentinel under a substitute profile's token directory must survive
 that suite; before the correction it was deleted. The interrupted first broad
-run is not counted as regression acceptance.
+run is not counted as regression acceptance. The second broad run was also
+interrupted when the third runtime branch was identified; it is not counted.
 
 ## Remaining un-attributed observation
 

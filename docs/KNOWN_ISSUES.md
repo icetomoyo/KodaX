@@ -230,13 +230,30 @@ original bytes. Matching identities and unavailable snapshot identities still
 use the original command-line/creation-time confirmation. No termination or
 Run-drain authority is inferred from these shortcuts. No timeout was increased.
 
-The bundled regression adds 512 mixed missing/reused identity records with an
-unrelated live test-process PID. Readiness took 2,369 ms and restart 1,493 ms,
-with saved history and every registry record preserved. The earlier 220-tree
-case also passed (2,471 ms ready, 46 ms first history reads, 1,576 ms restart).
+Those two shortcuts alone still timed out against the real default home.
+Further isolation found a third branch: non-Run records with retained incomplete
+trees still launched a terminator per tree, even when no retained original
+process was alive. The existing incomplete-tree check was only used for Runs.
+It now also precedes non-Run historical termination: unverified trees retain
+their evidence in quarantine; a known live retained process still goes through
+exact cleanup. Explicit Run cleanup and drain authority remain unchanged.
+
+The strengthened bundled regression adds 512 records covering missing identities,
+reused PIDs and incomplete extinct/reused trees. Before the third fix it reproduced
+the actual daemon-startup timeout in 12,485 ms. With all three fixes, readiness
+took 2,205 ms and restart 1,570 ms, with saved history and every record preserved.
+The earlier 220-tree case also passed (2,597 ms ready, 48 ms first history reads,
+1,509 ms restart).
 Two real-process command-mismatch fixtures now capture the root identity so
 they continue to exercise command verification; missing-identity evidence is
-covered separately. These measurements precede main-branch integration.
+covered separately. Real default-home acceptance then took 3,197 ms to ready
+and 58 ms to read the reported Session/history. All 2,908 registry records
+present before that attempt survived byte-for-byte at their original or
+quarantine paths; auth/config bytes were unchanged. Earlier unsuccessful
+recovery had already quarantined some of the original 3,264 records normally,
+so this is acceptance, not a same-input before/after comparison. No registry
+reset or forced owner replacement was used. These measurements precede
+main-branch integration.
 
 Standalone LSP tests also reproduced a separate contributing source of registry
 growth: six records were left under a deliberately isolated substitute user

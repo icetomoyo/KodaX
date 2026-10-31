@@ -89,7 +89,7 @@ async function cleanupManagedRunChildProcessWithOwnerIdentity(
     const owned = record.ownerPid === process.pid && sameRunChildRecord(active?.record, record);
     if (!owned && !runChildOwnerIsGone(record, readOwnerStartIdentity)) return { status: 'unknown' };
     if (!owned && record.processStartIdentity === undefined) return { status: 'unknown' };
-    if (!owned && incompleteRunTreeNeedsNoTermination(record, expectedRecord !== undefined)) return { status: 'unknown' };
+    if (!owned && incompleteTreeNeedsNoTermination(record, expectedRecord !== undefined)) return { status: 'unknown' };
     if (!owned) record = persistRunChildTree(record);
     const result = owned ? await killChildProcessTree(active!.child) : await killPidTree(record.pid, {
       expectedProcessStartIdentity: record.processStartIdentity,
@@ -123,7 +123,7 @@ function sameRunChildRecord(current: ManagedChildProcessRecord | undefined, expe
     && current.processStartIdentity === expected.processStartIdentity && current.registeredAtMs === expected.registeredAtMs;
 }
 
-function incompleteRunTreeNeedsNoTermination(
+function incompleteTreeNeedsNoTermination(
   record: ManagedChildProcessRecord,
   skipUnverifiableTargets: boolean,
 ): boolean {
@@ -1181,6 +1181,12 @@ async function cleanupRegisteredManagedChildrenInSharedSnapshotScope(
         skip(record.ownerPid);
         continue;
       }
+    }
+
+    if (incompleteTreeNeedsNoTermination(record, true)) {
+      if (quarantineRecord(filePath)) quarantined += 1;
+      skip(record.ownerPid);
+      continue;
     }
 
     const result = await killPidTree(record.pid, {
