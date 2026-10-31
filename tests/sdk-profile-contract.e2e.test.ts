@@ -8,7 +8,7 @@ import { expect, it } from 'vitest';
 import { connectKodaXClient } from '../src/sdk-client.js';
 import type { RuntimeCredentialLease, RuntimeHostToolLease, RuntimeExecutionProfile } from '../src/client-host-authorization.js';
 import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
-import { LEARNING_REVIEW_TOOL, getRegisteredToolDefinition } from '@kodax-ai/coding';
+import { CODING_SUMMARY_PROMPT, CODING_UPDATE_SUMMARY_PROMPT, LEARNING_REVIEW_TOOL, getRegisteredToolDefinition } from '@kodax-ai/coding';
 import { connectKodaXRuntime } from '../src/sdk-runtime.js';
 
 async function bounded<T>(promise: Promise<T>, milliseconds: number, message: string): Promise<T> {
@@ -29,6 +29,20 @@ function finish(response: ServerResponse, delta: Record<string, unknown>, reason
   response.writeHead(200, { 'content-type': 'text/event-stream' });
   response.end(`data: ${JSON.stringify({ id: 'sdk-contract', object: 'chat.completion.chunk',
     choices: [{ index: 0, delta, finish_reason: reason }] })}\n\ndata: [DONE]\n\n`);
+}
+function isRootRecoverySummary(wire: WireRequest): boolean {
+  return wire.messages.some(message => message.role === 'user' && typeof message.content === 'string'
+    && (message.content.includes(CODING_SUMMARY_PROMPT) || message.content.includes(CODING_UPDATE_SUMMARY_PROMPT)));
+}
+function respondRootRecoveryFixture(wire: WireRequest & { stream?: boolean }, response: ServerResponse): void {
+  if (!isRootRecoverySummary(wire)) {
+    response.writeHead(400, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: { code: 'context_length_exceeded', message: 'context_length_exceeded: maximum context length exceeded' } }));
+    return;
+  }
+  if (wire.stream) { finish(response, { content: 'Preserve the original root tool ceiling.' }); return; }
+  response.writeHead(200, { 'content-type': 'application/json' });
+  response.end(JSON.stringify({ id: 'summary', choices: [{ message: { role: 'assistant', content: 'Preserve the original root tool ceiling.' }, finish_reason: 'stop' }] }));
 }
 async function startHost(homeDir: string): Promise<{ child: ChildProcess; endpoint: string; close(): Promise<void> }> {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/(API_KEY|TOKEN|SECRET|PASSWORD)$/.test(key)));
@@ -229,6 +243,29 @@ it('uses the Host catalog and enforces root and Actor ceilings across native and
 }, 120_000);
 
 it.each([
+  { label: 'ordinary non-streaming turn', stream: false, content: 'Continue the same root task after recovery.', status: 400 },
+  { label: 'streaming compaction summary', stream: true, content: CODING_SUMMARY_PROMPT, status: 200 },
+  { label: 'non-streaming compaction update', stream: false, content: CODING_UPDATE_SUMMARY_PROMPT, status: 200 },
+])('routes root recovery fixture requests by their intent: $label', async ({ stream, content, status }) => {
+  const server = createServer(async (request, response) => {
+    let body = ''; for await (const chunk of request) body += String(chunk);
+    respondRootRecoveryFixture(JSON.parse(body) as WireRequest & { stream?: boolean }, response);
+  });
+  await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
+  const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing fixture address');
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/chat/completions`, { method: 'POST',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ stream, messages: [{ role: 'user', content }] }),
+    });
+    const body = await response.text();
+    expect(response.status).toBe(status);
+    expect(response.headers.get('content-type')).toContain(status === 200 && stream ? 'text/event-stream' : 'application/json');
+    if (status === 200 && stream) expect(body).toContain('data: [DONE]');
+    expect(body).toContain(status === 400 ? 'context_length_exceeded' : 'Preserve the original root tool ceiling.');
+  } finally { await new Promise<void>(done => server.close(() => done())); }
+});
+
+it.each([
   { original: 'profile', freshProfile: 'wider' },
   { original: 'profile', freshProfile: 'persona-only' },
   { original: 'tools', freshProfile: 'wider' },
@@ -243,17 +280,18 @@ it.each([
   const allowedCalls: string[] = [];
   const requests: WireRequest[] = [];
   let recoveryRound = 0;
+  const recoveryRequests = [
+    { stream: 0, nonstream: 0, summary: 0 }, { stream: 0, nonstream: 0, summary: 0 }, { stream: 0, nonstream: 0, summary: 0 },
+  ];
   const server = createServer(async (request, response) => {
     let body = ''; for await (const chunk of request) body += String(chunk);
     const wire = JSON.parse(body) as WireRequest & { stream?: boolean };
-    if (recoveryRound < 2 && wire.stream) {
-      response.writeHead(400, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ error: { code: 'context_length_exceeded', message: 'context_length_exceeded: maximum context length exceeded' } }));
-      return;
-    }
+    const traffic = recoveryRequests[recoveryRound]!;
+    if (wire.stream) traffic.stream += 1;
+    else traffic.nonstream += 1;
+    if (isRootRecoverySummary(wire)) traffic.summary += 1;
     if (recoveryRound < 2) {
-      response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ id: 'summary', choices: [{ message: { role: 'assistant', content: 'Preserve the original root tool ceiling.' }, finish_reason: 'stop' }] }));
+      respondRootRecoveryFixture(wire, response);
       return;
     }
     if (wire.tools?.some(tool => tool.function.name === LEARNING_REVIEW_TOOL.name)) { finish(response, { content: '{}' }); return; }
@@ -322,14 +360,22 @@ it.each([
     let previousWaitingSince: string | undefined;
     for (let next = 1; next <= 2; next += 1) {
       const observer = await connectKodaXRuntime({ homeDir, endpoint: host.endpoint });
+      let lastRun: Awaited<ReturnType<typeof observer.runs.get>> | undefined;
       try {
         const boundary = await waitUntil(async () => {
           const run = await observer.runs.get(accepted.runId!);
+          lastRun = run;
           const value = run.contextRecovery;
           return run.phase === 'recovering' && value?.checkpoint !== undefined
             && value.waitingSince !== previousWaitingSince ? value : undefined;
         });
         previousWaitingSince = boundary.waitingSince;
+      } catch (error: unknown) {
+        throw new Error(`[SDK_RECOVERY_BOUNDARY] ${JSON.stringify({ next, recoveryRound, previousWaitingSince,
+          phase: lastRun?.phase, error: lastRun?.error, lifecycleError: lastRun?.lifecycleError,
+          waitingSince: lastRun?.contextRecovery?.waitingSince,
+          hasCheckpoint: lastRun?.contextRecovery?.checkpoint !== undefined, recoveryRequests,
+        })}`, { cause: error });
       } finally { await observer.close(); }
       const exited = once(host.child, 'exit'); host.child.kill('SIGKILL'); await exited;
       await client.disconnect(); client = undefined;
