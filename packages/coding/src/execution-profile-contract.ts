@@ -70,10 +70,9 @@ export interface KodaXAgentProfile {
   /** Human-facing display name. Opaque to the core. */
   readonly name?: string;
   /**
-   * Partner behavior instructions injected into the AMA/AMAW Worker role prompt
-   * (prepended). The SA path uses `context.systemPromptOverride` instead — this
-   * field is the AMA-path equivalent so a Partner profile behaves consistently
-   * across both execution modes.
+   * Behavior instructions prepended to the AMA Worker prompt or used as the SA
+   * base prompt, retaining the admitted Skill catalog in either mode. An explicit
+   * `context.systemPromptOverride` still replaces the complete SA prompt.
    */
   readonly instructions?: string;
   /**

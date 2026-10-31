@@ -3,7 +3,6 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
-import { getSkillRegistry, resetSkillRegistry } from '@kodax-ai/agent';
 import { createKodaXRuntime, connectKodaXRuntime, ensureKodaXRuntime, type RuntimeEvent } from "./runtime-fixture.js";
 import { readRuntimeDaemonLockOwner, resolveRuntimeDaemonPaths } from '../src/runtime-daemon/state.js';
 import { waitForRuntimeDaemonOwnerExit } from '../src/runtime-daemon/process.js';
@@ -12,7 +11,7 @@ import { connectKodaXClient } from '../src/sdk-client.js';
 it('keeps local Skill failures across an independent daemon and IPC, then executes after trusted registration', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-skill-daemon-failure-'));
   const project = path.join(root, 'project');
-  const privateSkills = path.join(root, 'private-main-registration');
+  const privateSkills = path.join(root, 'main', '.kodax', 'skills');
   const name = 'draft-response';
   const skill = '---\nname: draft-response\ndescription: Draft a response\nallowed-tools: Read\n---\nDraft a short response.\n';
   const requests: string[] = [];
@@ -52,9 +51,6 @@ it('keeps local Skill failures across an independent daemon and IPC, then execut
       customProviders: [{ name: 'skill-fixture', protocol: 'openai',
         baseUrl: `http://127.0.0.1:${address.port}/v1`, apiKeyEnv: 'KODAX_SKILL_FAILURE_TEST_KEY', model: 'skill-model' }],
     }));
-    resetSkillRegistry();
-    await getSkillRegistry(project, { projectPaths: [privateSkills], userPaths: [], pluginPaths: [],
-      builtinPath: path.join(root, 'no-builtins') }).discover();
     main = await createKodaXRuntime({ homeDir: path.join(root, 'main'), sharedDaemonHost: true });
     const prepared = await main.invocations.prepareSkill({ projectRoot: project, name });
     expect(prepared.kind).toBe('prepared');
@@ -130,7 +126,6 @@ it('keeps local Skill failures across an independent daemon and IPC, then execut
       if (owner) await waitForRuntimeDaemonOwnerExit(owner, 30_000);
     }
     await main?.close();
-    resetSkillRegistry();
     vi.unstubAllEnvs();
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

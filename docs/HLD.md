@@ -624,9 +624,19 @@ user input
   -> KodaXResult + session updates + UI/events
 ```
 
-The Worker single-loop is the only current main-agent execution shape. The
-Worker plans, reads, edits, tests, dispatches children, and writes the final
-answer after checking actual results. Optional reviewers are ordinary child Actors, using existing evidence and artifact channels.
+Current main-agent modes use a single Provider/tool loop. Solo (`sa`) remains
+an active mode: `runKodaX` enters the shared Runner frame and coding substrate,
+with collaboration tools excluded by managed Solo dispatch. Adaptive (`ama`)
+uses the Runner-driven Worker and can dispatch child Actors. The retired V1
+Scout/Planner/Generator/Evaluator pipeline is not a current execution mode;
+`amaw` is only an input alias for `ama`. Optional reviewers are ordinary child
+Actors, using existing evidence and artifact channels. The main agent checks
+actual results and owns the final answer.
+
+ADR-020 retired the separate SA execution body and Option Y dispatcher facade;
+it retained the Solo product mode and the thin `runKodaX` SDK entry. A remaining
+`sa` dispatch branch therefore does not imply that the old independent engine
+was restored.
 
 Artifact evidence uses one `ArtifactExecutionPort`: independent Node hosts use
 the optional runtime; shared CLI/Space consumers use the existing Host's tool

@@ -790,6 +790,19 @@ Skill loading defers other actions to a later batch so the model can read the
 instructions or resolve a refusal first. `context: fork` requires explicit Host
 invocation and is refused before model-side dynamic expansion.
 
+Skill discovery also accepts project `.agents/skills` after `.kodax/skills`
+and scans nested Skill collections. It stops at a Skill's own directory,
+skips hidden/dependency directories and prevents directory-link cycles.
+The model catalog has a fixed 8,000-character UTF-16 budget; shortened or
+omitted metadata is reported in the catalog and diagnostics. Omitted Skills
+remain available to explicit invocation. Same-name source overrides emit a
+diagnostic identifying the selected and shadowed paths.
+
+When active Skill restrictions exclude `read` or a matching `PreToolUse` hook
+could block it, tool results stay complete inline instead of relying on an
+unusable recovery file. Hooks still run only for actual calls. Large intact
+results remain subject to the normal model-capacity handling.
+
 The `SkillContext` hook above covers Skills your host explicitly expands via
 `resolveSkillContent` or `SkillRegistry.invoke()`. A model-visible Skill can
 also be **auto-triggered by the model** through the built-in `skill` tool — and
@@ -3063,9 +3076,9 @@ runKodaX({
 ### What each field / companion gates
 
 - **R1 — identity + instructions.** `agentProfile.instructions` is prepended to the
-  AMA/AMAW Worker role prompt; the SA path uses `context.systemPromptOverride`
-  (mapped from `instructions` by `startKodaX`), so a profile behaves consistently
-  across both execution modes.
+  Adaptive Worker prompt and serves as the Solo base prompt while retaining the
+  admitted Skill catalog. Profile instructions remain distinct from an explicit
+  `context.systemPromptOverride`, which keeps complete-replacement priority.
 - **R2 — `context.toolVisibilityPolicy`.** A predicate applied when the
   model-visible tool list is built (in addition to `excludeTools`); tools it returns
   `false` for are hidden from the model.

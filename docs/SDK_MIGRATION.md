@@ -4,6 +4,12 @@
 
 Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附件/统计与退出恢复范围见 [SDK/Host 接缝](SPACE_SDK_SEAMS.md)。
 
+Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` 保留，
+Solo 和 Adaptive 都会向模型提供可用且已授权的 Skill 目录。运行时绑定生成的
+目录共用 8,000 UTF-16 单元上限；省略目录项不会删除已绑定的授权。
+调用方显式设置的 `systemPromptOverride` 仍是 Solo 的完整提示覆盖，不自动追加
+可选 Skill 目录。`sa` 当前仍是可执行的 Solo 模式；`amaw` 才是归一为 `ama` 的旧别名。
+
 ## 统一 Host SDK 收口（未发布）
 
 ### 2026-10-30 SDK 组合契约修复（未发布）

@@ -226,6 +226,7 @@ export async function executeToolCall(
       toolCall.id,
       ctx.executionCwd,
       ctx.gitRoot,
+      ctx.toolResultRecovery,
     );
     if (override !== undefined) {
       return override;
@@ -482,6 +483,7 @@ async function executeBridgeToolCall(input: {
     targetCall.id,
     input.ctx.executionCwd,
     input.ctx.gitRoot,
+    input.ctx.toolResultRecovery,
   );
   if (override !== undefined) {
     return override;
@@ -956,6 +958,9 @@ async function admitAndEmitVisibleToolResults(
   editRecoveryMessages: readonly string[],
 ): Promise<KodaXToolResultBlock[]> {
   const visibleBlocks = input.toolBlocks.filter(block => isVisibleToolName(block.name));
+  toolResults.forEach((result, index) => {
+    input.ctx.toolResultRecovery?.observeResult(visibleBlocks[index]!, result.is_error === true);
+  });
   const recoveryMessageTokens = editRecoveryMessages.length > 0
     ? estimateTokens([{
         role: 'user',

@@ -77,6 +77,28 @@ it('prepares a Skill Host-side with expansion, metadata, and runtime policy', as
   }
 });
 
+it('prepares user Skills from each Host config home without sharing another home registry', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-skill-host-homes-'));
+  const projectRoot = path.join(root, 'project');
+  try {
+    await mkdir(projectRoot);
+    for (const home of ['first', 'second']) {
+      const homeDir = path.join(root, home);
+      const skillDir = path.join(homeDir, '.kodax', 'skills', 'home-helper');
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(path.join(skillDir, 'SKILL.md'), `---\nname: home-helper\ndescription: Read Host evidence\n---\nHOST_${home}\n`);
+      const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
+      try {
+        const prepared = await runtime.invocations.prepareSkill({ projectRoot, name: 'home-helper' });
+        expect(prepared.kind).toBe('prepared');
+        if (prepared.kind === 'prepared') expect(prepared.invocation.prompt).toContain(`HOST_${home}`);
+      } finally { await runtime.close(); }
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
 it('reports unknown skills without touching any executor', async () => {
   const projectRoot = await seedSkillProject();
   const runtime = await createKodaXRuntime({ homeDir: projectRoot, sharedDaemonHost: true });

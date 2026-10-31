@@ -112,6 +112,39 @@ function host(): RuntimeAgentBindingHost {
 }
 
 describe('FEATURE_267 Runtime local Agent binding', () => {
+  it.each(['default', 'local'] as const)('bounds the %s catalog while retaining the authorized registry', async kind => {
+    const names = Array.from({ length: 40 }, (_, index) => `catalog-${String(index).padStart(2, '0')}`);
+    for (const name of names) {
+      const directory = path.join(home, '.kodax', 'skills', name);
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(path.join(directory, 'SKILL.md'),
+        `---\nname: ${name}\ndescription: ${'Inspect detailed catalog evidence. '.repeat(25)}\n---\nBODY_${name}\n`);
+    }
+    writeAgent({ tools: '[read, skill]', skills: `[${names.join(', ')}]` });
+    const service = createRuntimeAgentBindingService(host());
+    const owner = await service.openOwnerSession();
+    try {
+      const base = { ownerSessionId: owner.ownerSessionId,
+        workspace: { mode: 'fixed' as const, root: workspace }, toolPolicy: policy() };
+      const binding = kind === 'default' ? await service.bindDefault(base)
+        : await service.bindLocal({ ...base, ref: { source: 'markdown:user', name: 'office-agent' } });
+      const request = { ownerSessionId: owner.ownerSessionId, bindingId: binding.bindingId,
+        expectedExecutionPolicyRevision: binding.executionPolicyRevision,
+        sessionId: 'bounded-catalog', input: { type: 'text' as const, text: 'Inspect evidence.' } };
+      if ('configurationRevision' in binding && typeof binding.configurationRevision === 'string') {
+        await service.startLocal({ ...request, expectedConfigurationRevision: binding.configurationRevision });
+      } else await service.startDefault(request);
+      const context = starts[0]!.options!.context!;
+      expect(context.skillsPrompt!.length).toBeLessThanOrEqual(8_000);
+      expect(context.skillsPrompt).toContain('Skills omitted');
+      expect(context.skillsPrompt).not.toContain('- catalog-39:');
+      expect(context.skillRegistry!.has('catalog-39')).toBe(true);
+      expect((await context.skillRegistry!.loadFull('catalog-39')).content).toContain('BODY_catalog-39');
+      expect(binding.effectiveSkills.filter(skill => names.includes(skill.name))).toHaveLength(40);
+      await expect(context.skillRegistry!.reload()).rejects.toThrow('immutable');
+    } finally { await service.closeOwnerSession(owner.ownerSessionId); }
+  });
+
   it.each([true, false])('preserves discovery uncertainty through bound registries (wildcard=%s)', async wildcard => {
     writeAgent({ tools: '[read, skill]', skills: wildcard ? '["*"]' : '[office-reports]' });
     writeSkill();
@@ -167,7 +200,8 @@ describe('FEATURE_267 Runtime local Agent binding', () => {
     expect(options?.provider).toBe('bound-provider');
     expect(options?.modelOverride).toBe('bound-model');
     expect(options?.effort).toBe('high');
-    expect(options?.context?.systemPromptOverride).toBe('You are a general office agent.');
+    expect(options?.context?.agentProfile?.instructions).toBe('You are a general office agent.');
+    expect(options?.context?.systemPromptOverride).toBeUndefined();
     expect(options?.context?.skillsPrompt).toContain('office-reports');
     expect(options?.context?.toolVisibilityPolicy?.({
       name: 'bash', sideEffect: 'mutates-shell', planModeAllowed: false,

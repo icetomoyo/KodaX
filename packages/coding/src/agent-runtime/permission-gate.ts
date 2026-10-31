@@ -26,6 +26,7 @@
 import { CANCELLED_TOOL_RESULT_MESSAGE } from '../constants.js';
 import { runActiveExtensionHook } from '../extensions/runtime.js';
 import type { KodaXEvents } from '../types.js';
+import type { ToolResultRecovery } from '../tool-result-recovery.js';
 
 export async function getToolExecutionOverride(
   events: KodaXEvents,
@@ -34,14 +35,17 @@ export async function getToolExecutionOverride(
   toolId?: string,
   executionCwd?: string,
   gitRoot?: string,
+  recovery?: ToolResultRecovery,
 ): Promise<string | undefined> {
   if (events.beforeToolExecute) {
     const allowed = await events.beforeToolExecute(name, input, { toolId });
     if (allowed === false) {
+      recovery?.denyRead(name, input);
       return CANCELLED_TOOL_RESULT_MESSAGE;
     }
 
     if (typeof allowed === 'string') {
+      recovery?.denyRead(name, input);
       return allowed;
     }
   }
@@ -54,8 +58,10 @@ export async function getToolExecutionOverride(
     gitRoot,
   });
   if (extensionOverride === false) {
+    recovery?.denyRead(name, input);
     return CANCELLED_TOOL_RESULT_MESSAGE;
   }
 
+  if (typeof extensionOverride === 'string') recovery?.denyRead(name, input);
   return typeof extensionOverride === 'string' ? extensionOverride : undefined;
 }

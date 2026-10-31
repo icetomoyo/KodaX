@@ -5,8 +5,8 @@
  * `options.context.agentProfile` being present so the default Coding Agent
  * path stays byte-identical:
  *
- *  - SA path: a profile's `instructions` map to the already-honored
- *    `systemPromptOverride` (an explicit caller override still wins).
+ *  - SA path: a profile's `instructions` remain distinct from a complete
+ *    `systemPromptOverride` so prompt composition retains the Skill catalog.
  *  - AMA path: the Worker role prompt PREPENDS the profile instructions
  *    (`resolveRoleInstructions`), and only for the primary `worker` role.
  */
@@ -42,8 +42,8 @@ function saDeps() {
   return { runSA, runAMA, buildPlan };
 }
 
-describe('FEATURE_247 R1: SA-path profile instructions → systemPromptOverride', () => {
-  it('maps agentProfile.instructions to systemPromptOverride when the caller did not set one', async () => {
+describe('FEATURE_247 R1: SA-path profile instructions', () => {
+  it('preserves profile instructions separately from a caller prompt override', async () => {
     const deps = saDeps();
     await dispatchManagedTask(
       {
@@ -55,7 +55,8 @@ describe('FEATURE_247 R1: SA-path profile instructions → systemPromptOverride'
       deps,
     );
     const [opts] = deps.runSA.mock.calls[0]!;
-    expect(opts.context.systemPromptOverride).toBe('PARTNER_SYS');
+    expect(opts.context.agentProfile.instructions).toBe('PARTNER_SYS');
+    expect(opts.context.systemPromptOverride).toBeUndefined();
   });
 
   it('lets an explicit systemPromptOverride win over profile instructions', async () => {
