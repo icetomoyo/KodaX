@@ -367,6 +367,16 @@ The automatic Sidecar Verifier is retired. Remove `verifierLog`, `/verifier-log`
 
 原生 provider 的 reasoning 学习记录增加身份 scope；旧的无 scope 记录不用于限制新原生请求或 REPL 可选 effort。账号/密钥/连接变化会隔离学习及 opaque history，仍保留可读历史。CLI bridge 的旧行为保持。请求投影诊断区分 estimated 和 native protocol-input；后者为签名前实际请求对象的哈希，不代表服务端 cache hit 或实际计费。
 
+Reasoning 展示兼容补充（2026-10-31）：Host `settings.effort` 是用户的会话选择，
+AMA Worker 会在其约束下按角色选择单次 effort；例如会话 `high`、Worker `medium`、
+DeepSeek profile 映射后实际发送 `high` 可以同时成立。`onReasoningResolved` 继续保留
+完整请求诊断，`verified:false` 不表示请求失败。CLI 只为本次新发生的
+`unsupported-effort` / `unsupported-parameter` 回退追加结果提示；profile 映射和
+`cached-rejection` 不逐轮追加提示。Space 接手时应保持同样的区分，不应将单次
+Worker/子任务结果写回共享会话选择或全局配置；后续请求通过身份隔离的能力学习自愈。
+状态栏的会话选择也不能被解读为服务端已验证的单次执行档位。本次展示修复通过
+9 个完整文件的 117 项定向回归及源代码/测试类型检查；不新增请求、配置迁移或凭证操作。
+
 
 ## T12-A Main 授权与 OAuth registration
 
