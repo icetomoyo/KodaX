@@ -245,6 +245,12 @@ assigns each test file a private temporary fallback `KODAX_HOME`, while explicit
 overrides remain supported. Nonempty fallback homes retain diagnostic evidence;
 they are never recursively cleared as a substitute for verified process cleanup.
 Tests that exercise the homedir fallback explicitly unset the environment override.
+Review also identified a legacy MCP OAuth test that read and recursively removed
+the homedir token directory despite creating an unused temporary fixture. Its
+read/write/cleanup paths now all use that fixture. An isolated substitute-profile
+sentinel was deleted before this test fix and preserved afterwards; no real
+credentials were used in this comparison. The first broad run was interrupted
+for this correction and is not acceptance evidence.
 
 ### Remaining first-read evidence
 

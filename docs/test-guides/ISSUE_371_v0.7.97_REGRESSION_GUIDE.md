@@ -146,9 +146,7 @@ with no runtime source change. Those initial failures are not counted as passes;
 the table deduplicates cases whose reruns passed. The strengthened bundled case
 also passed separately after its final cleanup changes.
 
-## Evidence still missing
-
-### 2026-10-31 recurrence coverage
+## 2026-10-31 recurrence coverage
 
 The original alpha.10 investigation above remains historical. The locally
 rebuilt alpha.11 recurrence is a second initial-recovery branch, not removal
@@ -193,6 +191,10 @@ substitute user profile before test-home isolation and zero there afterwards.
 after environment stubs. Explicit default-path tests must unset `KODAX_HOME`;
 ordinary tests must not use a developer's actual home. Nonempty temporary homes
 are retained as evidence, not recursively deleted while cleanup is uncertain.
+The legacy MCP OAuth test also binds token reads and cleanup to its own temporary
+fixture. A sentinel under a substitute profile's token directory must survive
+that suite; before the correction it was deleted. The interrupted first broad
+run is not counted as regression acceptance.
 
 ## Remaining un-attributed observation
 
