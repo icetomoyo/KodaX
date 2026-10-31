@@ -481,3 +481,15 @@ Space 仍在 `codex/provider-credentials-space` 独立分支接手，配套设�
 `8574086208d6b5cc6ff6599c825fe88d986c4dd0`；本轮没有修改 Space 产品代码。
 发布前需锁定包含本轮修复的已发布 SDK，重跑生产安装包升级、账号保持、撤销、
 Host 重启和退出恢复门禁。Root 的离线组合回归不能代替真实服务登录或 Space 成品验收。
+
+最新交接：Root 本地 `KodaX` 主分支已安全包含功能提交
+`27bb8536edf8ba149860e6d4c4562ecb0f8526fb`，设计子仓仍为
+`8574086208d6b5cc6ff6599c825fe88d986c4dd0`；Space 保留
+`codex/provider-credentials-space@7b37e1c8ddf0d72d8674d521f1e8e0298d3341a2`，
+本轮没有改动 Space 产品代码。Root 全源码按整文件复验汇总为 18,813 通过、
+73 条件跳过、0 TODO；实际主仓重建后 300 项定向源码、86 项发布包和 4 项真实旧版本
+安装/Host 升级验收均通过，双轴评审无剩余发现。接手时先发布并锁定包含该功能提交的
+SDK 字节，再做 Space 生产安装包升级、旧配置/API_KEY 与凭证迁移、账号保持、撤销不回退、
+真实 Codex/OpenAI/Copilot 刷新换号及 Host/退出恢复；persona/Partner/profile 在途改动
+整合后仍需复验。旧 sealed 只作保留的恢复材料，不覆盖当前授权或撤销记录；旧新版本
+不得并行刷新同一 rotating grant，未知所有者旧锁不按时间强行清理。尚未推送或发布。

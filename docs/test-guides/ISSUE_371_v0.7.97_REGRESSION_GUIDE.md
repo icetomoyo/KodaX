@@ -748,3 +748,35 @@ extension state, error counters and read-failure non-overwrite are covered;
 retaining account A does not authorize fallback from revoked account B.
 Unexecuted platform/service/installer and old-binary boundaries are explicit.
 Findings remaining: 0. The acceptance numbers above were finalized after review.
+
+## Main integration verification (2026-10-31)
+
+Root's clean local `KodaX` branch fast-forwarded from `a65249d8` to functional
+commit `27bb8536edf8ba149860e6d4c4562ecb0f8526fb`. No merge resolution or source
+replacement was needed. The design repository remains clean at
+`8574086208d6b5cc6ff6599c825fe88d986c4dd0`; Space remains separate at
+`codex/provider-credentials-space`, `7b37e1c8ddf0d72d8674d521f1e8e0298d3341a2`.
+No Space product source, remote push or release is part of this fix.
+
+The actual Main checkout passed source/test typechecks and its complete build,
+including native artifacts, startup input/size guards and SDK declarations.
+Its CLI is also 5,176,750 bytes. Main's whole-file focused source verification
+passed 300 cases with 27 POSIX skips; all 86 rebuilt bundle cases passed without
+reruns, including the strengthened original-account rotation assertion. Four
+historical-owner/real installed-tarball/real alpha.11 Host upgrade cases passed.
+The alpha.11 fixture retained busy work and both Sessions during concurrent
+startup; rollback/other-profile ownership fences remained effective.
+
+On the actual Main SDK, 512 mixed historical records reached ready in 2,101 ms
+and 1,358 ms across two generations. The 220-tree fixture reached ready in
+2,275 ms, concurrent history reads took 50 ms, and restart took 1,375 ms.
+All tests used their owned fixture homes; this acceptance did not restart a
+user's default Host or clear user registry/configuration/credential files.
+
+All 3,272 tracked non-Markdown source files match the independently tested
+checkout after line-ending normalization. Twenty-eight initially unnormalized
+Rust/TOML/JSONC/fixture text differences were line endings only. The two builds
+are not byte-identical (45 of 262 files differ), so Main was validated through
+its own generated artifacts rather than assigned the other checkout's binary
+acceptance. The functional code stayed frozen during Main validation; the
+following integration/handoff update is documentation only.
