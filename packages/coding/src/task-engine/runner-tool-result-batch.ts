@@ -39,6 +39,9 @@ async function transformRunnerToolResultBatch(
   batch: RunnerToolResultBatch,
   options: RunnerToolResultBatchTransformOptions,
 ): Promise<readonly RunnerToolResult[]> {
+  batch.results.forEach((result, index) => {
+    options.ctx.toolResultRecovery?.observeResult(batch.calls[index]!, result.isError === true);
+  });
   const budget = resolveRunnerToolResultBudget(batch.transcript, options);
   const entries = collectToolResultEntries(batch);
   const guarded = await applyToolResultBatchGuardrail(entries, options.ctx, budget);

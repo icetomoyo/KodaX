@@ -42,31 +42,14 @@ export async function runKodaX(
   // bump the L1 ceiling one rank. Off remains off (kill switch). Pure
   // option transform — no escalation = same reference returned.
   const { options: baseOptions } = applyFollowupEscalationToOptions(normalizedOptions, prompt);
-  // FEATURE_247 (R1, SA): a profile's instructions map to `systemPromptOverride`
-  // on the SA path (consumed in reasoning-plan-entry). `dispatchManagedTask`
-  // applies this for its SA route, but `runKodaX` is ALSO a direct SA entry
-  // (`startKodaX` wraps it), so a consumer that sets only
-  // `context.agentProfile.instructions` via `runKodaX`/`startKodaX` would have
-  // them silently dropped. Apply the same mapping here — an explicit caller-set
-  // override still wins, and it is byte-identical when neither is set (or when
-  // reached via dispatch, which already set the field: `??` no-op). Top-level
-  // AMA dispatch routes to `runAMA`; Runtime Actor children may call this direct
-  // substrate with AMA capability semantics, but do not use the AMA role-prompt
-  // path, so this cannot double-inject that prompt.
-  const profileInstructions = baseOptions.context?.agentProfile?.instructions;
-  const effectiveOptions: KodaXOptions =
-    profileInstructions !== undefined && baseOptions.context?.systemPromptOverride === undefined
-      ? {
-          ...baseOptions,
-          context: { ...baseOptions.context, systemPromptOverride: profileInstructions },
-        }
-      : baseOptions;
-  const runtimeOptions: KodaXOptions = effectiveOptions.context?.permissionIntent !== undefined
-    ? effectiveOptions
+  // Keep profile instructions distinct from a caller's complete prompt override.
+  // The substrate composes profile instructions with the admitted Skill catalog.
+  const runtimeOptions: KodaXOptions = baseOptions.context?.permissionIntent !== undefined
+    ? baseOptions
     : {
-        ...effectiveOptions,
+        ...baseOptions,
         context: {
-          ...effectiveOptions.context,
+          ...baseOptions.context,
           permissionIntent: { rootUserIntent: prompt },
         },
       };

@@ -7,13 +7,15 @@
  * enforce-at-runtime policy is minted Host-side so prepared permission
  * strings are re-derived by the executor regardless of transport.
  */
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import {
   expandSkillForLLM,
   getAgentConfigPath,
   getSkillRegistry,
+  getDefaultSkillPaths,
   initializeSkillRegistry,
+  SkillRegistry,
   type SkillContext,
   type SkillHooks,
   type Skill,
@@ -94,6 +96,8 @@ export interface RuntimeInvocationService {
 }
 
 export function createRuntimeInvocationService(deps: {
+  /** Host-owned config root; independent of the process user's home. */
+  readonly configHome?: string;
   /** Registry listing used to classify non-prompt commands as client-local. */
   readonly listCommands?: (projectRoot?: string) => readonly { readonly name: string }[];
   /** FEATURE_298 T37 slice 3 — /review and /agents lean preparation. */
@@ -154,7 +158,7 @@ export function createRuntimeInvocationService(deps: {
     prepareAgentsLean: deps.reviewPreparation.prepareAgentsLean,
     async prepareSkill(input, options) {
       options?.signal?.throwIfAborted();
-      const skill = await loadRuntimeSkill(input.projectRoot, input.name);
+      const skill = await loadRuntimeSkill(input.projectRoot, input.name, deps.configHome);
       if (!skill) return { kind: 'unknown' };
       const result = await expandRuntimeSkill(skill, input, await skillContext(input, options));
       options?.signal?.throwIfAborted();
@@ -164,7 +168,13 @@ export function createRuntimeInvocationService(deps: {
 }
 
 /** Pure registry read. Dynamic commands are deferred until the Run owns execution. */
-export async function loadRuntimeSkill(projectRoot: string, name: string): Promise<Skill | undefined> {
+export async function loadRuntimeSkill(projectRoot: string, name: string, configHome?: string): Promise<Skill | undefined> {
+  if (configHome !== undefined) {
+    const sharedUserPaths = getDefaultSkillPaths(projectRoot).userPaths.filter(skillPath => basename(dirname(skillPath)) === '.agents');
+    const registry = new SkillRegistry(projectRoot, { userPaths: [join(configHome, 'skills'), ...sharedUserPaths] });
+    await registry.discover();
+    return registry.has(name) ? registry.loadFull(name) : undefined;
+  }
   let registry = getSkillRegistry(projectRoot);
   if (registry.size === 0) registry = await initializeSkillRegistry(projectRoot);
   return registry.has(name) ? registry.loadFull(name) : undefined;

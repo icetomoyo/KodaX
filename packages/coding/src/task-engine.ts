@@ -239,12 +239,6 @@ export async function dispatchManagedTask(
           intentGate.taskFamily,
           [options.context?.promptOverlay],
         ),
-        // FEATURE_247 (R1): on the SA path a profile's instructions map to the
-        // already-honored `systemPromptOverride` (consumed in
-        // reasoning-plan-entry.ts). An explicit caller-set override still wins;
-        // when neither is set this stays undefined ⇒ byte-identical default.
-        systemPromptOverride: options.context?.systemPromptOverride
-          ?? options.context?.agentProfile?.instructions,
         excludeTools,
       },
     };

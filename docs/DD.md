@@ -1250,6 +1250,73 @@ and Learned Area identity. SA/AMA omit the model catalog when the Skill loader
 is unavailable; an already expanded explicit invocation remains usable.
 Rediscovery invalidates full-body caches, including loads still in flight.
 
+Markdown Agent bindings pass their behavior instructions through `agentProfile`
+instead of converting them into a complete prompt override. Solo composes that
+profile base with the admitted model catalog and any explicit active Skill;
+Adaptive retains the profile instructions in its Worker prompt. Direct SDK,
+managed Solo and public Runner entries share the same final Solo composition.
+A caller's explicit `systemPromptOverride` keeps its complete-replacement
+semantics and priority; it does not acquire an automatic catalog. Both prompt
+paths use the same loader-visibility check before disclosing a catalog.
+Profile verification defaults, per-task verification overrides and execution
+guidance still reach Solo requests through their request-only Run context;
+retaining the Skill catalog does not drop those existing obligations.
+
+Runtime default and Markdown bindings use the common bounded formatter over
+their admitted Registry entries. Catalog omission never changes the binding's
+authorized names or revisions; the pinned Registry still rejects rediscovery
+and requires a new binding to adopt changes. Caller-supplied opaque Skill prompt
+contracts retain their existing semantics, including the formal/learned
+composition path; this fix does not silently rewrite those Host instructions.
+
+Explicit Skill preparation and queued Skill references use the executing Host's
+config home for user Skills, matching the model-loading root. Host-scoped reads
+build a fresh Registry rather than sharing the process-global project singleton;
+two Hosts using one project cannot reuse each other's user Skill bodies. Project,
+shared `.agents`, plugin and built-in precedence remain in effect.
+
+Project discovery checks `.kodax/skills` before `.agents/skills`, then the
+existing user/plugin/built-in roots. Formal roots are scanned recursively in
+stable name order, stopping at each `SKILL.md` directory so support files do
+not become separate Skills. Hidden directories and `node_modules` are skipped;
+physical-directory tracking prevents symlink/junction cycles. Same-name
+precedence emits a `skill_shadowed` diagnostic with both source paths without
+marking discovery incomplete.
+
+The model catalog, including its instructions and notices, is bounded to
+8,000 UTF-16 code units. Single-line descriptions use at most 500 units and
+argument hints 80; complete entries are included in discovery priority order.
+Shortening or omission is reported both in the prompt and through the
+`skill_catalog_shortened` diagnostic. Omitted entries remain registered and
+explicitly invocable. This bounds disclosure; it does not rank Skills for a
+particular natural-language request or add automatic filesystem watching.
+Unknown-Skill errors refer callers to that disclosed catalog, without repeating
+registered names (including disabled and budget-omitted entries). The requested
+name is JSON-escaped and bounded before it is echoed.
+
+Recoverable result truncation also observes the active invocation's read
+policy. If `allowed-tools` excludes `read`, or any matching `PreToolUse` hook
+could refuse it, results remain complete inline. This check is conservative,
+including hooks that might ultimately allow the read; it never runs a hook
+speculatively or bypasses Host/Skill authorization. Explicit and model-loaded
+Skills share this rule, and multiple active policies intersect. Existing
+capacity-debt handling remains responsible when an intact result cannot fit.
+AMA input paging uses the same live policy and restores canonical input before
+reusing a cached page when recovery authority changes.
+
+Arbitrary Host callbacks are evaluated only for real calls. A Run retains
+snapshots of its already-authorized spilled results. If an actual `read` of an
+owned locator is refused or fails, the next Provider request restores the
+matching prior result from memory, including native images, while retaining the
+read failure unchanged. Both direct and bridged calls use this rule; unrelated
+paths and modified receipts cannot restore content. This grants no filesystem
+authority and works even after the saved file disappears. Further spills in
+that Run remain inline, and cached user-input pages return to canonical input.
+Canonical history stays unchanged; snapshots are cleared when the Run settles
+and are not durable across Runs or Host restart. Normal capacity handling still
+applies to the restored request; restoration does not promise that arbitrarily
+large originals fit a model context or survive transcript compaction verbatim.
+
 `user-invocable` remains parse-compatible with existing `SKILL.md` files, but
 enabled Skills always report as user-invocable and the field is not used as an
 execution gate.

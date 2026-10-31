@@ -5269,6 +5269,7 @@ async function createKodaXRuntimeInternal(
   const preparationController = new AbortController();
   const preparations = new Set<Promise<unknown>>();
   const invocationService = createRuntimeInvocationService({
+    configHome,
     listCommands: listRuntimeCommands,
     resolveSkillContext: async (input, preparationOptions) => {
       ensureOpen();
@@ -12404,7 +12405,7 @@ async function createRuntimeRunService(deps: {
     // boundary, and queued input cannot execute hooks or dynamic commands.
     const known = [];
     for (const reference of references) {
-      const skill = await loadRuntimeSkill(projectRoot, reference.name);
+      const skill = await loadRuntimeSkill(projectRoot, reference.name, deps.defaultConfigHome);
       if (skill) known.push({ skill, argumentsText: text.slice(reference.end).trim() });
     }
     if (known.length > 1) throw createRuntimeConflictError('Only one Skill may be invoked by one input.', 0);

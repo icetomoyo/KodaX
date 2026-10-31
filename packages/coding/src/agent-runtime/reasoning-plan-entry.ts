@@ -63,6 +63,7 @@ import { formatFullSkillSection } from '../skill-invocation-format.js';
 import { resolveEffectiveVerification } from './effective-config.js';
 import { formatVerificationContract } from '../task-engine/_internal/managed-task/formatting.js';
 import { buildAutoRepoIntelligenceContext } from './middleware/repo-intelligence.js';
+import { getModelSkillCatalog } from './tool-resolution.js';
 
 export interface ReasoningExecutionState {
   effectiveOptions: KodaXOptions;
@@ -107,11 +108,13 @@ export async function buildReasoningExecutionState(
     },
   };
 
+  const instructions = options.context?.systemPromptOverride ?? options.context?.agentProfile?.instructions;
   return {
     effectiveOptions,
-    systemPrompt: options.context?.systemPromptOverride
+    systemPrompt: instructions
       ? [
-          options.context.systemPromptOverride,
+          instructions,
+          options.context?.systemPromptOverride === undefined ? getModelSkillCatalog(effectiveOptions) : undefined,
           effectiveOptions.context?.skillInvocation
             ? formatFullSkillSection(effectiveOptions.context.skillInvocation)
             : undefined,

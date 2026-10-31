@@ -379,7 +379,9 @@ export function buildRunnerLlmAdapter(
   // FEATURE_296 T5/T6 (ADR-067): per-run request-recovery state — the cache
   // of degraded copies for irreducibly oversized fresh user inputs, and the
   // tool-execution context backing the spill artifact.
-  const userInputSpillCtx: KodaXToolExecutionContext = { backups: new Map() };
+  const userInputSpillCtx: KodaXToolExecutionContext = { backups: new Map(),
+    toolResultRecovery: options.context?.toolResultRecovery,
+    isPagedContentRecoveryAllowed: options.context?.isPagedContentRecoveryAllowed };
 
   const requireUserInputDegradationCache = (): UserInputDegradationCache => {
     if (userInputDegradationCache === undefined) {
@@ -775,6 +777,7 @@ export function buildRunnerLlmAdapter(
       // SA-mode substrate (see catch-terminals.ts:runCatchCleanup).
       providerMessages = cleanupIncompleteToolCalls(providerMessages);
       providerMessages = validateAndFixToolHistory(providerMessages);
+      providerMessages = options.context?.toolResultRecovery?.project(providerMessages) ?? providerMessages;
       // FEATURE_296 T5/T6 (ADR-067): degrade irreducibly oversized fresh user
       // inputs on the request copy, then shrink the wire-level output reserve
       // while the assembled request is still over capacity so the request
@@ -831,7 +834,8 @@ export function buildRunnerLlmAdapter(
             contextWindow: window, reservedResponseTokens: reserve, systemTokens: countTokens(candidateFullSystem),
           }) : availableToolDefinitions;
           const candidateSystem = buildWireSystem(candidateBaseSystem, candidateTools);
-          const clean = validateAndFixToolHistory(cleanupIncompleteToolCalls([...candidate.slice(leading)]));
+          const canonical = validateAndFixToolHistory(cleanupIncompleteToolCalls([...candidate.slice(leading)]));
+          const clean = options.context?.toolResultRecovery?.project(canonical) ?? canonical;
           const projected = await degradeIrreducibleUserInputs(clean, userInputSpillCtx, window,
             requireUserInputDegradationCache(), {
               currentTokens: resolveContextTokenCount(clean, contextTokenSnapshotRef.current), reservedResponseTokens: reserve,

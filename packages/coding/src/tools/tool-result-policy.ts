@@ -308,7 +308,9 @@ export async function applyToolResultGuardrail(
     return guardMultimodalToolResult(toolName, content, ctx, options);
   }
   const policy = getToolResultPolicy(toolName);
-  if (ctx.canReadPagedContent === false) return { content, truncated: false, policy };
+  if (ctx.canReadPagedContent === false || ctx.isPagedContentRecoveryAllowed?.() === false) {
+    return { content, truncated: false, policy };
+  }
   const maxInlineTokens = options?.maxInlineTokens
     ?? options?.toolResultBudget?.aggregateInlineTokens;
   const existingOutputPath = options?.existingOutputPath;
@@ -325,10 +327,12 @@ export async function applyToolResultGuardrail(
         detail: error });
       return { content, truncated: true, outputPath, policy };
     }
-    return {
-      content: maxInlineTokens !== undefined && countTokens(content) > maxInlineTokens
+    const preview = maxInlineTokens !== undefined && countTokens(content) > maxInlineTokens
         ? fitExistingGuardedContentToTokenBudget(existingGuard, policy, maxInlineTokens)
-        : content,
+        : content;
+    ctx.toolResultRecovery?.capture(outputPath, content, preview);
+    return {
+      content: preview,
       truncated: true,
       ...(outputPath ? { outputPath } : {}),
       policy,
@@ -451,6 +455,7 @@ export async function applyToolResultGuardrail(
     });
   }
 
+  if (outputPath) ctx.toolResultRecovery?.capture(outputPath, content, guardedContent);
   return {
     content: guardedContent,
     truncated: true,
@@ -483,6 +488,7 @@ async function guardMultimodalToolResult(
     textEmitted = true;
     return [{ type: 'text', text: guarded.content }];
   });
+  if (guarded.outputPath) ctx.toolResultRecovery?.capture(guarded.outputPath, content, replacement);
   return { ...guarded, content: replacement };
 }
 
