@@ -1894,36 +1894,48 @@ function printHelpLine(label: string, description = ''): void {
   console.log(chalk.dim(label) + description);
 }
 
+const HELP_WORKSPACE_ROOT = "Workspace root to inspect (defaults to current directory)";
+const HELP_DAEMON_HOME = "Base directory that owns the .kodax runtime daemon state";
+const HELP_EFFORT = "Reasoning effort: off, auto, low, medium, high, xhigh, max, or model-supported value";
+const HELP_REPO_INTELLIGENCE = "Repo intelligence mode: auto, full, light, off";
+const HELP_SESSION = "Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID";
+const HELP_THINKING = "Compatibility alias for --reasoning auto";
+const HELP_NEW_SESSION = "Legacy no-op; current CLI already starts a fresh session by default";
+
+function printHelpHeading(text: string): void {
+  console.log(chalk.bold(text));
+}
+
 const CLI_HELP_TOPICS: Record<string, () => void> = {
   acp: () => {
     console.log(chalk.cyan('\nACP Server\n'));
-    console.log(chalk.bold('Overview:'));
+    printHelpHeading('Overview:');
     printHelpLine('  Run KodaX as a stdio ACP server so editors and IDEs can connect directly.');
     printHelpLine('  Session creation, prompt streaming, cancellation, and permission prompts reuse KodaX runtime semantics.\n');
-    console.log(chalk.bold('Command:'));
+    printHelpHeading('Command:');
     printHelpLine('  kodax acp serve [options]\n');
-    console.log(chalk.bold('Options:'));
+    printHelpHeading('Options:');
     printHelpLine('  --cwd <dir>                  ', 'Working directory exposed to ACP sessions');
     printHelpLine('  -m, --provider <name>        ', 'Provider to use');
     printHelpLine('  --model <name>               ', 'Model override');
-    printHelpLine('  --effort <level>             ', 'Reasoning effort: off, auto, low, medium, high, xhigh, max, or model-supported value');
+    printHelpLine('  --effort <level>             ', HELP_EFFORT);
     printHelpLine('  --reasoning <mode>           ', 'Compatibility mode: off, auto, quick, balanced, deep');
-    printHelpLine('  --repo-intelligence <mode>   ', 'Repo intelligence mode: auto, full, light, off');
+    printHelpLine('  --repo-intelligence <mode>   ', HELP_REPO_INTELLIGENCE);
     printHelpLine('  --repo-intelligence-trace    ', 'Emit repo intelligence trace metadata/logging');
-    printHelpLine('  -t, --thinking               ', 'Compatibility alias for --reasoning auto');
+    printHelpLine('  -t, --thinking               ', HELP_THINKING);
     printHelpLine('  --permission-mode <mode>     ', 'Initial mode: plan, accept-edits, auto, full-access');
     printHelpLine('  KODAX_ACP_LOG=<level>        ', 'stderr log level: off, error, info, debug\n');
-    console.log(chalk.bold('Examples:'));
+    printHelpHeading('Examples:');
     printHelpLine('  kodax acp serve');
     printHelpLine('  kodax acp serve --cwd C:\\repo --permission-mode accept-edits');
     printHelpLine('  kodax acp serve -m openai --model gpt-5.4 --effort medium\n');
   },
   skill: () => {
     console.log(chalk.cyan('\nSkill Utilities\n'));
-    console.log(chalk.bold('Overview:'));
+    printHelpHeading('Overview:');
     printHelpLine('  Use built-in skill packaging commands without starting an agent session.');
     printHelpLine('  These commands are thin wrappers around the builtin skill-creator tools.\n');
-    console.log(chalk.bold('Commands:'));
+    printHelpHeading('Commands:');
     printHelpLine('  kodax skill init <name> [options]   ', 'Create a new skill scaffold');
     printHelpLine('  kodax skill validate <dir>          ', 'Validate a skill directory');
     printHelpLine('  kodax skill eval --skill-path ...   ', 'Run end-to-end eval workspace generation');
@@ -1932,7 +1944,7 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     printHelpLine('  kodax skill compare <workspace>     ', 'Blind-compare two configs across runs');
     printHelpLine('  kodax skill package <dir> [options] ', 'Package a skill as .skill');
     printHelpLine('  kodax skill install <input> [opts]  ', 'Install a skill from dir or .skill');
-    console.log(chalk.bold('Examples:'));
+    printHelpHeading('Examples:');
     printHelpLine('  kodax skill init release-notes --dest ./.kodax/skills');
     printHelpLine('  kodax skill validate ./.kodax/skills/my-skill');
     printHelpLine('  kodax skill eval --skill-path ./.kodax/skills/my-skill --evals ./.kodax/skills/my-skill/evals/evals.json --workspace ./iteration-1');
@@ -1944,16 +1956,16 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
   },
   sessions: () => {
     console.log(chalk.cyan('\nSession Management\n'));
-    console.log(chalk.bold('Overview:'));
+    printHelpHeading('Overview:');
     printHelpLine('  KodaX automatically saves conversation sessions, allowing you to');
     printHelpLine('  resume work later or switch between different conversations.\n');
-    console.log(chalk.bold('Options:'));
+    printHelpHeading('Options:');
     printHelpLine('  -c, --continue       ', 'Continue most recent non-empty conversation');
     printHelpLine('  -r, --resume [value] ', 'Resume by ID or exact title (no value = searchable picker)');
-    printHelpLine('  -n, --new            ', 'Legacy no-op; current CLI already starts a fresh session by default');
-    printHelpLine('  -s, --session <op>   ', 'Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID');
+    printHelpLine('  -n, --new            ', HELP_NEW_SESSION);
+    printHelpLine('  -s, --session <op>   ', HELP_SESSION);
     printHelpLine('  --no-session         ', 'Disable session persistence (print mode only)\n');
-    console.log(chalk.bold('Examples:'));
+    printHelpHeading('Examples:');
     printHelpLine('  kodax                      ', '# Start new session (interactive)');
     printHelpLine('  kodax -c                   ', '# Continue recent conversation');
     printHelpLine('  kodax -r                   ', '# Search and select a saved session');
@@ -1965,10 +1977,10 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
   },
   project: () => {
     console.log(chalk.cyan('\nProject Mode\n'));
-    console.log(chalk.bold('Overview:'));
+    printHelpHeading('Overview:');
     printHelpLine('  Project mode spans two surfaces: non-REPL bootstrap commands and REPL /project commands.');
     printHelpLine('  Current workflow includes planning, quality review, brainstorm sessions, harness-verified execution, and runtime artifacts under .agent/project/.\n');
-    console.log(chalk.bold('REPL /project Commands:'));
+    printHelpHeading('REPL /project Commands:');
     printHelpLine('  /project status [prompt] [--features|--progress]', '  Status + guided analysis');
     printHelpLine('  /project plan [#index|topic]                 ', '  Generate project or feature planning truth');
     printHelpLine('  /project quality                             ', '  Deterministic workflow health + release review');
@@ -1980,33 +1992,33 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     printHelpLine('  /project edit <prompt>                       ', '  Edit current-stage truth');
     printHelpLine('  /project analyze [prompt]                    ', '  AI project analysis');
     printHelpLine('  /project reset [--all]                       ', '  Clear progress or remove project truth files\n');
-    console.log(chalk.bold('Current Semantics:'));
+    printHelpHeading('Current Semantics:');
     printHelpLine('  - /project next and /project auto are verifier-gated, not self-declared completion');
     printHelpLine('  - /project plan writes the latest plan to .agent/project/session_plan.md');
     printHelpLine('  - /project quality combines deterministic checks with optional model-generated guidance');
     printHelpLine('  - /project brainstorm aligns requirements into .agent/project/alignment.md\n');
-    console.log(chalk.bold('Examples:'));
+    printHelpHeading('Examples:');
     printHelpLine('  kodax -h project');
     printHelpLine('  kodax  # then: /project brainstorm -> /project plan -> /project next');
     printHelpLine('  kodax  # then: /project quality | /project verify --last | /project auto --max=3\n');
   },
   auto: () => {
     console.log(chalk.cyan('\nAuto Mode\n'));
-    console.log(chalk.bold('Auto Mode (-y, --auto):'));
+    printHelpHeading('Auto Mode (-y, --auto):');
     printHelpLine('  Backward-compatibility alias kept for scripts.');
     printHelpLine('  Non-REPL CLI already runs in auto mode by default, so this flag currently has no additional effect.\n');
-    console.log(chalk.bold('Options:'));
+    printHelpHeading('Options:');
     printHelpLine('  -y, --auto             ', 'Backward-compat alias (no-op in non-REPL CLI)\n');
-    console.log(chalk.bold('Examples:'));
+    printHelpHeading('Examples:');
     printHelpLine('  kodax -y "refactor code"          ', '# Legacy alias; same as plain non-REPL run\n');
   },
   provider: () => {
     const providerNames = getAvailableProviderNames();
     console.log(chalk.cyan('\nLLM Providers\n'));
-    console.log(chalk.bold('Overview:'));
+    printHelpHeading('Overview:');
     printHelpLine('  KodaX supports multiple LLM providers. Configure via -m option');
     printHelpLine('  or set default in ~/.kodax/config.json. Use --model to override the default model.\n');
-    console.log(chalk.bold('Available Providers:'));
+    printHelpHeading('Available Providers:');
     providerNames.forEach((name) => {
       const detail =
         name === 'gemini-cli' || name === 'codex-cli'
@@ -2015,10 +2027,10 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
       console.log(chalk.dim(`  ${name.padEnd(15)} `) + detail);
     });
     console.log();
-    console.log(chalk.bold('Key Options:'));
+    printHelpHeading('Key Options:');
     printHelpLine('  -m, --provider <name> ', 'Provider to use');
     printHelpLine('  --model <name>        ', 'Model override for the selected provider\n');
-    console.log(chalk.bold('Examples:'));
+    printHelpHeading('Examples:');
     printHelpLine('  kodax -m anthropic "task"     ', '# Use Claude');
     printHelpLine('  kodax -m openai --model gpt-5.4 "task"', '# Override model');
     printHelpLine('  /model                        ', '# Switch in REPL (saves to config)\n');
@@ -2034,15 +2046,15 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
   },
   print: () => {
     console.log(chalk.cyan('\nPrint Mode\n'));
-    console.log(chalk.bold('Overview:'));
+    printHelpHeading('Overview:');
     printHelpLine('  Run a single task and exit. Useful for scripting and CI/CD.\n');
     printHelpLine('  `--mode json` is a scripting surface, not the ACP server protocol.\n');
-    console.log(chalk.bold('Options:'));
+    printHelpHeading('Options:');
     printHelpLine('  -p, --print <text>  ', 'Run task and exit');
     printHelpLine('  --mode json         ', 'Emit newline-delimited JSON events to stdout for scripts/CI');
     printHelpLine('  --model <name>      ', 'Override the selected provider model');
     printHelpLine('  --no-session        ', 'Disable session saving\n');
-    console.log(chalk.bold('Examples:'));
+    printHelpHeading('Examples:');
     printHelpLine('  kodax -p "fix the bug in auth.ts"   ', '# Quick fix');
     printHelpLine('  kodax -p "generate tests" --effort medium', ' # With reasoning');
     printHelpLine('  kodax -p "task" -m openai --model gpt-5.4', ' # Provider + model override');
@@ -2117,7 +2129,7 @@ export function configureKodaXRootCommand(program: Command): Command {
       )
       .option(
         '-n, --new',
-        'Legacy no-op; current CLI already starts a fresh session by default',
+        HELP_NEW_SESSION,
       )
       .option(
         '-r, --resume [id-or-title]',
@@ -2125,10 +2137,10 @@ export function configureKodaXRootCommand(program: Command): Command {
       )
       .option('-m, --provider <name>', 'LLM provider')
       .option('--model <name>', 'Model override')
-      .option('-t, --thinking', 'Compatibility alias for --reasoning auto')
+      .option('-t, --thinking', HELP_THINKING)
       .option(
         '--effort <level>',
-        'Reasoning effort: off, auto, low, medium, high, xhigh, max, or model-supported value',
+        HELP_EFFORT,
         parseEffortOption,
       )
       .option(
@@ -2140,7 +2152,7 @@ export function configureKodaXRootCommand(program: Command): Command {
       .option('--work-mode <mode>', 'Session work mode: agent, coding (default), script', parseWorkModeOption)
       .option(
         '--repo-intelligence <mode>',
-        'Repo intelligence mode: auto, full, light, off',
+        HELP_REPO_INTELLIGENCE,
         parseRepoIntelligenceModeOption,
       )
       .option(
@@ -2150,7 +2162,7 @@ export function configureKodaXRootCommand(program: Command): Command {
       .option('-y, --auto', 'Backward-compat alias; no effect in non-REPL CLI')
       .option(
         '-s, --session <op>',
-        'Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID',
+        HELP_SESSION,
       )
       .option(
         '--apply-session-cleanup',
@@ -3379,7 +3391,7 @@ complete -c kodax -l version -d 'Show version'`);
     .option('--profile <name>', 'Daemon profile', 'default')
     .option(
       '--home <dir>',
-      'Base directory that owns the .kodax runtime daemon state',
+      HELP_DAEMON_HOME,
     )
     .option('-m, --provider <name>', 'Default provider for hosted runs')
     .option('--model <name>', 'Default model for hosted runs')
@@ -3420,7 +3432,7 @@ complete -c kodax -l version -d 'Show version'`);
     .option('--profile <name>', 'Daemon profile', 'default')
     .option(
       '--home <dir>',
-      'Base directory that owns the .kodax runtime daemon state',
+      HELP_DAEMON_HOME,
     )
     .option(
       '--timeout-ms <n>',
@@ -3457,7 +3469,7 @@ complete -c kodax -l version -d 'Show version'`);
     .option('--profile <name>', 'Daemon profile', 'default')
     .option(
       '--home <dir>',
-      'Base directory that owns the .kodax runtime daemon state',
+      HELP_DAEMON_HOME,
     )
     .option('-m, --provider <name>', 'Default provider for hosted runs')
     .option('--model <name>', 'Default model for hosted runs')
@@ -3498,7 +3510,7 @@ complete -c kodax -l version -d 'Show version'`);
     .option('--profile <name>', 'Daemon profile', 'default')
     .option(
       '--home <dir>',
-      'Base directory that owns the .kodax runtime daemon state',
+      HELP_DAEMON_HOME,
     )
     .option(
       '--lines <n>',
@@ -3529,7 +3541,7 @@ complete -c kodax -l version -d 'Show version'`);
     .option('--profile <name>', 'Daemon profile', 'default')
     .option(
       '--home <dir>',
-      'Base directory that owns the .kodax runtime daemon state',
+      HELP_DAEMON_HOME,
     )
     .addOption(new Option('--config-home <dir>').hideHelp())
     .option('-m, --provider <name>', 'Default provider for hosted runs')
@@ -3585,7 +3597,7 @@ complete -c kodax -l version -d 'Show version'`);
     .option('--profile <name>', 'Daemon profile', 'default')
     .option(
       '--home <dir>',
-      'Base directory that owns the .kodax runtime daemon state',
+      HELP_DAEMON_HOME,
     )
     .option('--json', 'Output machine-readable JSON')
     .action(
@@ -3615,8 +3627,8 @@ complete -c kodax -l version -d 'Show version'`);
     .option('-m, --provider <name>', 'Provider to use')
     .option('--model <name>', 'Model override')
     // prettier-ignore
-    .option('--effort <level>', 'Reasoning effort: off, auto, low, medium, high, xhigh, max, or model-supported value', parseEffortOption)
-    .option('-t, --thinking', 'Compatibility alias for --reasoning auto')
+    .option('--effort <level>', HELP_EFFORT, parseEffortOption)
+    .option('-t, --thinking', HELP_THINKING)
     .option(
       '--reasoning <mode>',
       'Reasoning mode: off, auto, quick, balanced, deep',
@@ -3624,7 +3636,7 @@ complete -c kodax -l version -d 'Show version'`);
     )
     .option(
       '--repo-intelligence <mode>',
-      'Repo intelligence mode: auto, full, light, off',
+      HELP_REPO_INTELLIGENCE,
       parseRepoIntelligenceModeOption,
     )
     .option(
@@ -4029,7 +4041,7 @@ complete -c kodax -l version -d 'Show version'`);
     .option('--all', 'Also list builtin / extension tools')
     .option(
       '--cwd <dir>',
-      'Workspace root to inspect (defaults to current directory)',
+      HELP_WORKSPACE_ROOT,
     )
     .action(async (subOpts: { all?: boolean; cwd?: string }) => {
       const { runToolsList } = await import('./constructed_cli.js');
@@ -4046,7 +4058,7 @@ complete -c kodax -l version -d 'Show version'`);
     )
     .option(
       '--cwd <dir>',
-      'Workspace root to inspect (defaults to current directory)',
+      HELP_WORKSPACE_ROOT,
     )
     .action(async (spec: string, subOpts: { cwd?: string }) => {
       const { runToolsInspect } = await import('./constructed_cli.js');
@@ -4060,7 +4072,7 @@ complete -c kodax -l version -d 'Show version'`);
     )
     .option(
       '--cwd <dir>',
-      'Workspace root to inspect (defaults to current directory)',
+      HELP_WORKSPACE_ROOT,
     )
     .action(async (spec: string, subOpts: { cwd?: string }) => {
       const { runToolsRevoke } = await import('./constructed_cli.js');
@@ -4089,7 +4101,7 @@ complete -c kodax -l version -d 'Show version'`);
     )
     .option(
       '--cwd <dir>',
-      'Workspace root to inspect (defaults to current directory)',
+      HELP_WORKSPACE_ROOT,
     )
     .action(async (name: string, subOpts: { cwd?: string }) => {
       const { runResetSelfModifyBudget } = await import('./self_modify_cli.js');
@@ -4105,7 +4117,7 @@ complete -c kodax -l version -d 'Show version'`);
     )
     .option(
       '--cwd <dir>',
-      'Workspace root to inspect (defaults to current directory)',
+      HELP_WORKSPACE_ROOT,
     )
     .action(async (name: string, subOpts: { cwd?: string }) => {
       const { runConstructedAudit } = await import('./self_modify_cli.js');
@@ -4119,7 +4131,7 @@ complete -c kodax -l version -d 'Show version'`);
     )
     .option(
       '--cwd <dir>',
-      'Workspace root to inspect (defaults to current directory)',
+      HELP_WORKSPACE_ROOT,
     )
     .action(async (name: string, subOpts: { cwd?: string }) => {
       const { runDisableSelfModify } = await import('./self_modify_cli.js');
@@ -4133,7 +4145,7 @@ complete -c kodax -l version -d 'Show version'`);
     )
     .option(
       '--cwd <dir>',
-      'Workspace root to inspect (defaults to current directory)',
+      HELP_WORKSPACE_ROOT,
     )
     .action(async (name: string, subOpts: { cwd?: string }) => {
       const { runConstructedRollback } = await import('./self_modify_cli.js');

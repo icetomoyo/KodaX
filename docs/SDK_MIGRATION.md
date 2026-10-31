@@ -535,5 +535,13 @@ activity.reasoning（主请求的 requested/sent、归属与 verified:false）�
 [effort 回归指南](test-guides/FEATURE_233_v0.7.97_TEST_GUIDE.md)。接手时先发布并锁定
 包含功能提交的 SDK 字节，再做 Space 生产安装包升级、真实服务 OAuth/换号/撤销和
 Host/退出恢复门禁，并整合另一线程的 persona/Partner/profile 改动后复验。
-Root 离线结果不代替 Space 成品验收；既有 Host 要在空闲时正常重启才能载入新代码。
+Root 离线结果不代替 Space 成品验收。新版 CLI/SDK 启动连接时，可对同一安装中可验证、
+安全空闲的旧 Host 按构建指纹自动换代；普通交互 Host 在最后一个客户端离开、全部工作
+空闲 30 秒后自动退出。活动工作、其他连接、显式常驻/A2A、跨安装或缺失构建身份等情况
+按既有边界保留或拒绝替换，不要求用户一律手动 daemon stop。
 尚未推送或发布。
+
+2026-11-01 终端反馈补充：Root 的 Ctrl+T effort 快捷键改为保存期间 spinner、确认成功后
+约两秒的短暂浮层；成功不再写入会话通知，失败/部分成功及显式 `/effort` 回执保持。
+连续按键按序应用，退出开始即取消排队动作和迟到反馈；保存协议、Session 选择、凭证和
+SDK view 契约未变。这不代表 Space 已实现同样的产品交互，仍由负责线程独立接手。

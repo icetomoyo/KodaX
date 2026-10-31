@@ -69,6 +69,7 @@
     "src/**/*.test.tsx",
     "packages/agent/src/primitives/agent.test.ts",
     "packages/agent/src/capabilities/skills/skill-creator-effort.test.ts",
+    "packages/repl/src/ui/hooks/useEffortShortcut.test.tsx",
     "packages/coding/src/agent.managed-effort.test.ts",
     "packages/coding/src/child-executor.test.ts",
     "packages/coding/src/agent-runtime/actor-runtime.test.ts",

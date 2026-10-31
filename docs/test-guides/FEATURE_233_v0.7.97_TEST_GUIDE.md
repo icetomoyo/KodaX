@@ -153,12 +153,65 @@ no tracked Main changes were overwritten. The design subrepository remains
 No user credential files, user Host processes, package versions or release pins
 were changed; nothing was pushed or published.
 
+### Effort shortcut feedback — 2026-11-01
+
+Ctrl+T no longer appends a successful Host-default/Session receipt to the
+conversation. Its existing Host save/apply operations remain authoritative:
+the existing toast surface shows a shared-clock spinner while waiting, then
+a compact confirmed effort for approximately two seconds. The status bar
+continues showing the selected effort. The timer begins after success, not
+at keypress; a newer operation replaces the toast and gets its own full grace.
+Errors and partial success keep the detailed durable feedback. Explicit
+`/effort` commands retain their previous receipts and query behavior.
+
+Rapid keypresses execute serially and calculate each next selection from the
+preceding confirmed state. Only the latest result becomes a success toast.
+Session changes, unmount and the start of graceful exit cancel queued work
+and suppress late UI/receipt updates, including while exit is still waiting
+for persistence. A canceled shortcut does not poison the shared settings
+write queue. These changes add no Host polling, protocol fields, preferences,
+credential operations or Space product changes.
+
+The real React hook/toast regression was RED when success still called the
+durable reporter, then GREEN. Ten hook cases cover the two-second timer,
+pending animation beyond two seconds, burst ordering, returned/thrown errors,
+empty model ladders, replacement TTL and Session/unmount/closing cleanup.
+The closing-window case was added after Spec review found cancellation had
+initially happened only at unmount. The complete hook/toast test files pass
+12 cases, with scoped coverage of 100% lines/statements/functions and 94.11%
+branches across those two modules; this is not repository-wide coverage.
+
+CLI budget was kept at 5,177,344 bytes. The initial implementation exceeded
+it at 5,178,294 bytes. Reusing seven identical option descriptions and the
+existing bold-heading output shape reduces the final CLI to 5,176,989 bytes.
+Twenty root/topic/ACP help renders (color off/on) are byte-identical before
+and after extraction. Full build, SDK declarations and source/test type checks
+pass; the unchanged four published size/manual gates and two real cold-Host
+session/effort/credential-fencing recovery cases also pass.
+
+The final complete REPL suite plus SDK catalog/CLI option/daemon-smoke files
+passes in one invocation: 261 files, 3,108 passed, one POSIX-only conditional
+skip, zero failures and zero TODO. This is the final shortcut/exit/budget tree;
+the earlier 3,030-case REPL result is not substituted for this acceptance.
+
+Known follow-up outside this UI change: an attempted broader help probe found
+that daemon management `--help` can dispatch an operation instead of only
+printing help. In the isolated temporary home, start/stop dispatched and
+restart returned an operational failure. The fixture Host has a successful
+shutdown receipt and no active ownership; no user's Host was targeted.
+The first affected version is unknown (observed in 0.7.97-alpha.11 with the
+unchanged pre-extraction CLI code). Management subcommand help must be checked
+in isolation and fixed separately; the twenty passing output comparisons
+above deliberately do not claim that those entry points are read-only.
+
 ## Standards
 
 Independent review against AGENTS.md and the Fowler smell baseline: zero
 remaining rule violations and zero actionable smells. Follow-up review covered
 the test cleanup, helper-script migration and synchronized declarations/examples.
 The subsequent ASRT test-only increment also has zero remaining findings.
+The 2026-11-01 shortcut feedback and budget-preserving extraction also have
+zero remaining rule violations or actionable smells.
 
 ## Spec
 
@@ -167,3 +220,5 @@ requirements: zero remaining findings. Earlier findings on specialist propagatio
 legacy parent inputs, AMA extension controls, shared Actor budget and asynchronous
 hook writeback were fixed and covered by public execution regressions.
 The subsequent ASRT test-only increment also has zero remaining findings.
+The 2026-11-01 shortcut feedback increment has zero remaining findings after
+closing-window cancellation was added.
