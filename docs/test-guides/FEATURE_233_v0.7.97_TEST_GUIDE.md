@@ -116,11 +116,49 @@ enabled. Remote keys, real OAuth refresh and service reasoning execution are
 not established by these offline tests. Main artifact checks are recorded
 separately below after the guarded local integration.
 
+### Local Main artifact acceptance
+
+Functional commit `9e3147da47536b1ed3fb8817c0e351b8923776c3` was safely
+fast-forwarded into local KodaX. The actual Main workspace passed the full
+build, all 14 self-contained SDK declarations, source/test type checks and
+six complete public execution/SDK/projection files (192 cases).
+CLI size is 5,177,060 bytes against the unchanged strict 5,177,344-byte limit;
+the existing published manual/input budget tests pass.
+
+The full Main bundle invocation ran 86 cases: 85 passed, one failed because
+an ASRT test required exactly two binds despite a legitimate additional OS
+port collision. The production five-attempt bound and sandbox policy were
+already correct. Test-only commit `19aa6a3c3cfb0ff82974d7a931d33ee71403373d`
+adds a deterministic EACCES-plus-EADDRINUSE case and checks successful attempts
+within that same bound; exhausted/fatal attempts, distinct candidates and
+ports outside the permit range remain strict. The added case was RED before
+the assertion fix. After guarded integration, the complete eight-case ASRT
+file passed against Main's real SDK. Replacing that entire file in the bundle
+result yields 87 passes, zero failures/skips/TODO. This is a file-level
+composite, not a second all-green full invocation.
+
+The real bundle covered three-Host effort/authorization recovery, credential
+migration/account selection, offline OAuth refresh/revocation, startup/process
+recovery, memory-review shutdown, Responses/WebSocket, MCP/Skills and actual
+npm tarball Script execution. On Main, 512 mixed historical records became
+ready in 2,066 ms and 1,468 ms on restart; 220 exited trees were ready in
+2,584 ms, first concurrent history reads took 51 ms, restart 1,399 ms.
+These are bounded offline fixtures, not a promise about all user sessions.
+Issue 371's separately tracked historical Session-read latency remains open.
+
+The peer thread's untracked tmp_diffstat.txt was retained byte-for-byte;
+no tracked Main changes were overwritten. The design subrepository remains
+`8574086208d6b5cc6ff6599c825fe88d986c4dd0`. Space remains independent at
+`codex/provider-credentials-space@7b37e1c8ddf0d72d8674d521f1e8e0298d3341a2`.
+No user credential files, user Host processes, package versions or release pins
+were changed; nothing was pushed or published.
+
 ## Standards
 
 Independent review against AGENTS.md and the Fowler smell baseline: zero
 remaining rule violations and zero actionable smells. Follow-up review covered
 the test cleanup, helper-script migration and synchronized declarations/examples.
+The subsequent ASRT test-only increment also has zero remaining findings.
 
 ## Spec
 
@@ -128,3 +166,4 @@ Independent review against this contract and the user's effort/SDK/compatibility
 requirements: zero remaining findings. Earlier findings on specialist propagation,
 legacy parent inputs, AMA extension controls, shared Actor budget and asynchronous
 hook writeback were fixed and covered by public execution regressions.
+The subsequent ASRT test-only increment also has zero remaining findings.

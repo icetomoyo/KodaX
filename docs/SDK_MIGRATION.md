@@ -503,7 +503,7 @@ Space 仍在 `codex/provider-credentials-space` 独立分支接手，配套设�
 发布前需锁定包含本轮修复的已发布 SDK，重跑生产安装包升级、账号保持、撤销、
 Host 重启和退出恢复门禁。Root 的离线组合回归不能代替真实服务登录或 Space 成品验收。
 
-最新交接：Root 本地 `KodaX` 主分支已安全包含功能提交
+恢复阶段交接（后续 effort 修正见下）：Root 本地 `KodaX` 主分支已安全包含功能提交
 `27bb8536edf8ba149860e6d4c4562ecb0f8526fb`，设计子仓仍为
 `8574086208d6b5cc6ff6599c825fe88d986c4dd0`；Space 保留
 `codex/provider-credentials-space@7b37e1c8ddf0d72d8674d521f1e8e0298d3341a2`，
@@ -514,3 +514,26 @@ SDK 字节，再做 Space 生产安装包升级、旧配置/API_KEY 与凭证迁
 真实 Codex/OpenAI/Copilot 刷新换号及 Host/退出恢复；persona/Partner/profile 在途改动
 整合后仍需复验。旧 sealed 只作保留的恢复材料，不覆盖当前授权或撤销记录；旧新版本
 不得并行刷新同一 rotating grant，未知所有者旧锁不按时间强行清理。尚未推送或发布。
+
+### 2026-10-31 effort 链路修正：最新 Space 交接（未发布）
+
+Root 本地 `KodaX` 主分支已安全包含功能提交
+`9e3147da47536b1ed3fb8817c0e351b8923776c3`，以及测试夹具修正
+`19aa6a3c3cfb0ff82974d7a931d33ee71403373d`；设计子仓仍为
+`8574086208d6b5cc6ff6599c825fe88d986c4dd0`，Space 仍保留
+`codex/provider-credentials-space@7b37e1c8ddf0d72d8674d521f1e8e0298d3341a2`。
+本轮没有改动 Space 产品代码、凭证、账号选择或原配置/API_KEY 入口。
+内置 AMA/SA/Script 根请求现在继承 Session effort，工具、Actor、workflow 和子代理
+继承当前运行选择；旧 balanced/deep profile 仅在兼容边界转为 medium/high，
+新脚手架和辅助评测脚本使用原生 effort，modelHint 的同名路由档位继续保留。
+Space 应继续把 settings.effort 当作用户选择，按需消费新增可选只读
+activity.reasoning（主请求的 requested/sent、归属与 verified:false）；缺字段保持未知，
+不得用子任务、旧请求或兼容回退改写共享选择及全局默认。正常映射和已学回退不重复提示，
+新拒绝仍可见；账号隔离的能力学习和撤销/恢复边界保持。源码按完整文件复验汇总
+18,884 通过、73 条件跳过、0 TODO；实际主仓构建/类型、192 项定向源码通过，
+发布包按完整文件复验为 87 通过，双轴复审无剩余发现，详细范围和初次失败见
+[effort 回归指南](test-guides/FEATURE_233_v0.7.97_TEST_GUIDE.md)。接手时先发布并锁定
+包含功能提交的 SDK 字节，再做 Space 生产安装包升级、真实服务 OAuth/换号/撤销和
+Host/退出恢复门禁，并整合另一线程的 persona/Partner/profile 改动后复验。
+Root 离线结果不代替 Space 成品验收；既有 Host 要在空闲时正常重启才能载入新代码。
+尚未推送或发布。
