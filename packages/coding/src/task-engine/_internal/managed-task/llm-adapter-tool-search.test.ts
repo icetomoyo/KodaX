@@ -31,7 +31,7 @@ it('projects only the provider request and retains full canonical tool-search ev
     { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'lookup', content: result }] },
   ];
   let sent: readonly KodaXMessage[] = [];
-  await buildRunnerLlmAdapter({}, async (wire, tools) => {
+  await buildRunnerLlmAdapter({ provider: 'anthropic' }, async (wire, tools) => {
     sent = wire;
     expect(tools.find(tool => tool.name === 'web_fetch')?.input_schema.properties.url).toBeDefined();
     return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
@@ -49,7 +49,7 @@ it.each<Partial<KodaXContextOptions>>([
   markOrdinaryRootToolContract(agent);
   let sent: readonly KodaXMessage[] = [];
   const messages = await history();
-  await buildRunnerLlmAdapter({ context }, async wire => {
+  await buildRunnerLlmAdapter({ provider: 'anthropic', context }, async wire => {
     sent = wire;
     return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
   })(messages, agent);
@@ -64,7 +64,7 @@ it('preserves a same-name independently registered search tool', async () => {
     const agent = buildRunnerAgentChain({ backups: new Map() }).worker;
     markOrdinaryRootToolContract(agent);
     let sent: readonly KodaXMessage[] = [];
-    await buildRunnerLlmAdapter({}, async wire => { sent = wire; return { textBlocks: [{ text: 'done' }], toolBlocks: [] }; })(messages, agent);
+    await buildRunnerLlmAdapter({ provider: 'anthropic' }, async wire => { sent = wire; return { textBlocks: [{ text: 'done' }], toolBlocks: [] }; })(messages, agent);
     expect(sent).toEqual(messages);
   } finally { unregister(); }
 });
@@ -79,7 +79,7 @@ it('uses a proven Script leaf contract and leaves canonical history intact', asy
   inheritOrdinaryRootToolContract(root, script);
   const messages = await history();
   const requests: KodaXMessage[][] = [];
-  const adapter = buildRunnerLlmAdapter({}, async (wire, tools) => {
+  const adapter = buildRunnerLlmAdapter({ provider: 'anthropic' }, async (wire, tools) => {
     requests.push([...wire]);
     expect(tools.some(tool => tool.name === 'web_fetch')).toBe(false);
     expect(tools.find(tool => tool.name === 'script_exec')?.description).toContain('"url"');
@@ -97,7 +97,7 @@ it('retains the same projected parameters across real stream retries and non-str
   class Fallback extends KodaXBaseProvider {
     readonly name = 'search-help-fallback';
     readonly supportsThinking = false;
-    protected readonly config = { apiKeyEnv: 'NO_NETWORK_SEARCH_HELP', model: 'fixture', contextWindow: 128_000, maxOutputTokens: 512 };
+    protected readonly config = { apiKeyEnv: 'NO_NETWORK_SEARCH_HELP', model: 'fixture', supportsThinking: false, contextWindow: 128_000, maxOutputTokens: 512 };
     override isConfigured() { return true; }
     override supportsNonStreamingFallback() { return true; }
     async stream(wire: KodaXMessage[]): Promise<KodaXStreamResult> {
@@ -126,15 +126,15 @@ it('retains the same projected parameters across real stream retries and non-str
 it('restores the full search schema when actual context fitting removes its native contract', async () => {
   const unregisterTarget = registerTool({ name: 'host_detail', description: 'Inspect one detailed external capability. '.repeat(1000),
     input_schema: { type: 'object', properties: { key: { type: 'string', description: 'Exact external item key selected from current evidence.' } }, required: ['key'] },
-    sideEffect: 'readonly', handler: async () => 'not executed' }, { source: { kind: 'extension', id: 'host' } });
+    sideEffect: 'readonly', toClassifierInput: () => '', handler: async () => 'not executed' }, { source: { kind: 'extension', id: 'host' } });
   const unregisterOther = registerTool({ name: 'host_other', description: 'Inspect one detailed external capability. '.repeat(900),
-    input_schema: { type: 'object', properties: {} }, sideEffect: 'readonly', handler: async () => 'not executed' },
+    input_schema: { type: 'object', properties: {} }, sideEffect: 'readonly', toClassifierInput: () => '', handler: async () => 'not executed' },
   { source: { kind: 'extension', id: 'host' } });
   const sent: { text: string; tools: string[]; system: string }[] = [];
   class Capture extends KodaXBaseProvider {
     readonly name = 'search-help-fit';
     readonly supportsThinking = false;
-    protected readonly config = { apiKeyEnv: 'NO_NETWORK_SEARCH_HELP', model: 'fixture', contextWindow: 128_000, maxOutputTokens: 512 };
+    protected readonly config = { apiKeyEnv: 'NO_NETWORK_SEARCH_HELP', model: 'fixture', supportsThinking: false, contextWindow: 128_000, maxOutputTokens: 512 };
     override isConfigured() { return true; }
     async stream(wire: KodaXMessage[], tools: KodaXToolDefinition[], system: string): Promise<KodaXStreamResult> {
       sent.push({ text: JSON.stringify(wire), tools: tools.map(tool => tool.name), system });

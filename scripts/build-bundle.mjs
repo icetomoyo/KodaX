@@ -411,10 +411,10 @@ assertStartupImportBoundary('CLI', cliResult, { eagerOnly: true });
 assertSingleProviderCredentialModule('CLI', cliResult);
 
 const cliBytes = statSync(path.join(distDir, 'kodax_cli.js')).size;
-// Goal settlement and provenance-guarded child contracts bring the audited CLI
-// from 5,279,845 to 5,285,612 bytes. Keep eager dependency/input guards unchanged;
-// the 44 KiB allowance covers these concrete additions to the 5 MiB baseline.
-assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024 + 44 * 1024);
+// Shared managed contracts and provenance-guarded activation add 5,952 bytes
+// over the 5,287,232-byte baseline (5,293,184 audited). No dependency was added;
+// keep eager dependency/input guards unchanged, with only 6 KiB more allowance.
+assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024 + 50 * 1024);
 log(`  ✓ dist/kodax_cli.js (${(cliBytes / 1024).toFixed(0)} kB)`);
 
 // Bare `-r` must show the picker without evaluating the full CLI graph.

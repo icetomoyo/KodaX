@@ -39,7 +39,7 @@ export function isSkillToolCall(call: { readonly name: string; readonly input?: 
 
 export const SKILL_ACTION_DEFERRED = '[Blocked] Task actions were deferred until after Skill loading. Read the Skill result, resolve any activation error, then retry these actions in a separate tool batch.';
 
-function normalizeSkillToolName(rawSkill: string): string {
+export function normalizeSkillToolName(rawSkill: string): string {
   const trimmed = rawSkill.trim();
   if (trimmed.startsWith('/skill:')) return trimmed.slice('/skill:'.length);
   if (trimmed.startsWith('skill:')) return trimmed.slice('skill:'.length);

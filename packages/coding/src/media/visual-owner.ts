@@ -4,9 +4,16 @@ import { createFileVisualObservationOwner, visibleVisualObservations, visualObse
 import type { KodaXOptions, KodaXSessionStorage, KodaXToolExecutionContext } from '../types.js';
 import type { RuntimeSessionState } from '../agent-runtime/runtime-session-state.js';
 
+const sessionVisualOwners = new WeakSet<VisualObservationOwner>();
+
+/** Internal provenance only; matching owner IDs do not prove a product Session binding. */
+export function isSessionVisualObservationOwner(owner: VisualObservationOwner | undefined): boolean {
+  return owner !== undefined && sessionVisualOwners.has(owner);
+}
+
 /** Product owner binding. Reading the directory never depends on the compacted model transcript. */
 export function createSessionVisualObservationOwner(storage: KodaXSessionStorage, sessionId: string, directory: string): VisualObservationOwner {
-  return createFileVisualObservationOwner({ ownerId: sessionId, directory, async historyScope() {
+  const owner = createFileVisualObservationOwner({ ownerId: sessionId, directory, async historyScope() {
     const lineage = await storage.loadFullLineage?.(sessionId) ?? (await storage.load(sessionId))?.lineage;
     if (!lineage) throw new Error('Visual observation owner lineage is missing.');
     const children = new Map<string, number>();
@@ -25,6 +32,8 @@ export function createSessionVisualObservationOwner(storage: KodaXSessionStorage
     if (!lineage) return [];
     return visibleVisualObservations(sessionId, saved.extensionRecords ?? [], lineage);
   } });
+  sessionVisualOwners.add(owner);
+  return owner;
 }
 
 /** read still owns the bytes here, before native publication or Script's call.settled save. */

@@ -23,7 +23,9 @@ import { withEffectivePermissionContext } from '../../../prompts/effective-permi
 import { getRegistryManagedAgentContext } from '../../../tools/model-tool-definition.js';
 import { canProjectManagedToolContracts, projectManagedToolContracts } from '../../../tools/managed-tool-contract.js';
 import { projectToolSearchResultParameters } from '../../../tools/tool-search-model-result.js';
+import { projectManagedToolActivation, type ManagedToolActivationFacts } from '../../../tools/managed-tool-activation.js';
 import { projectManagedSystemContract } from '../../../prompts/managed-system-contract.js';
+import { projectManagedContextContract } from '../../../prompts/managed-context-contract.js';
 import { getRegisteredToolDefinition } from '../../../tools/registry.js';
 import { filterModelToolAliases } from '../../../agent-runtime/tool-resolution.js';
 
@@ -363,6 +365,7 @@ export function buildRunnerLlmAdapter(
   getEphemeralSuffix?: () => KodaXEphemeralSuffix | undefined,
   userInputDegradationCache?: UserInputDegradationCache,
   hasPendingRecoveryInput?: () => boolean,
+  getToolActivationFacts?: () => ManagedToolActivationFacts,
 ): (messages: readonly KodaXMessage[], agent: Agent) => Promise<RunnerLlmResult> {
   // FEATURE_072 parity: the REPL's token-count indicator reads
   // `onIterationEnd` to refresh after each worker LLM turn. The iteration
@@ -521,12 +524,17 @@ export function buildRunnerLlmAdapter(
     }
 
     wireTools = [...projectScriptModelTools(agent, projectManagedToolContracts(agent, wireTools, options.context))];
+    const assembledTools = wireTools;
+    const activateTools = (source: readonly KodaXMessage[]) =>
+      [...projectManagedToolActivation(agent, assembledTools, options.context, source, getToolActivationFacts?.())];
+    wireTools = activateTools(transcript);
     const projectSearchResults = (source: readonly KodaXMessage[], tools: readonly KodaXToolDefinition[] = wireTools): KodaXMessage[] => {
+      const projected = projectManagedContextContract(agent, source, options.context);
       if (!canProjectManagedToolContracts(agent, options.context)
-        || getRegisteredToolDefinition('tool_search')?.source.kind !== 'builtin') return [...source];
+        || getRegisteredToolDefinition('tool_search')?.source.kind !== 'builtin') return projected;
       const native = new Set(tools.map(tool => tool.name));
       const leaves = getScriptModelContracts(agent, tools)?.leaves.filter(tool => !native.has(tool.name)) ?? [];
-      return projectToolSearchResultParameters(source, [...tools, ...leaves]);
+      return projectToolSearchResultParameters(projected, [...tools, ...leaves]);
     };
     const buildWireSystem = (source: string, tools: readonly KodaXToolDefinition[]) =>
       withEffectivePermissionContext(projectManagedSystemContract(agent, tools, source, options.context), options.context);
@@ -610,17 +618,22 @@ export function buildRunnerLlmAdapter(
       );
     } else {
       const provider = resolveProvider(options.provider ?? 'anthropic');
-      const availableToolDefinitions = wireTools;
+      const availableToolDefinitions = assembledTools;
       const schemaContextWindow = contextTokenSnapshotRef?.contextWindow
         ?? contextTokenSnapshotRef?.current?.capacityWindow ?? contextBudgetCatalogs?.contextWindow;
-      if (registryManaged && schemaContextWindow !== undefined) wireTools = fitToolSchemasToContext(wireTools, {
-        contextWindow: schemaContextWindow,
-        reservedResponseTokens: provider.getEffectiveMaxOutputTokens(activeModel),
-        systemTokens: countTokens(system),
-      });
+      const fullSystemTokens = countTokens(system);
+      const refreshWireTools = (source: readonly KodaXMessage[]): void => {
+        const active = activateTools(source);
+        wireTools = registryManaged && schemaContextWindow !== undefined ? fitToolSchemasToContext(active, {
+          contextWindow: schemaContextWindow,
+          reservedResponseTokens: provider.getEffectiveMaxOutputTokens(activeModel),
+          systemTokens: fullSystemTokens,
+        }) : active;
+        system = buildWireSystem(baseSystem, wireTools);
+      };
+      refreshWireTools(transcript);
       // Fit conservatively against the existing full instructions, then project
       // using the actual disclosed contracts. No iterative fitting or tool loss.
-      system = buildWireSystem(baseSystem, wireTools);
       const providerName = options.provider ?? provider.name ?? 'anthropic';
       const rejectedEfforts = getCachedRejectedEfforts(providerName, activeModel ?? provider.getModel(), options.context?.configHome);
       if (providerReasoning?.effort !== undefined && rejectedEfforts.length > 0) {
@@ -824,15 +837,16 @@ export function buildRunnerLlmAdapter(
           const candidateBaseSystem = candidate.slice(0, leading)
             .map(message => typeof message.content === 'string' ? message.content : '').join('\n\n');
           const candidateFullSystem = withEffectivePermissionContext(candidateBaseSystem, options.context);
+          const candidateAvailableTools = activateTools(candidate.slice(leading));
           const window = contextTokenSnapshotRef.contextWindow ?? recoveryContextWindow
             ?? schemaContextWindow;
-          if (window === undefined) return estimateTokens(projectSearchResults(candidate.slice(leading), availableToolDefinitions))
-            + countTokens(buildWireSystem(candidateBaseSystem, availableToolDefinitions))
-            + availableToolDefinitions.reduce((total, tool) => total + estimateToolSchemaTokens(tool), 0);
+          if (window === undefined) return estimateTokens(projectSearchResults(candidate.slice(leading), candidateAvailableTools))
+            + countTokens(buildWireSystem(candidateBaseSystem, candidateAvailableTools))
+            + candidateAvailableTools.reduce((total, tool) => total + estimateToolSchemaTokens(tool), 0);
           const reserve = provider.getEffectiveMaxOutputTokens(activeModel);
-          const candidateTools = registryManaged ? fitToolSchemasToContext(availableToolDefinitions, {
+          const candidateTools = registryManaged ? fitToolSchemasToContext(candidateAvailableTools, {
             contextWindow: window, reservedResponseTokens: reserve, systemTokens: countTokens(candidateFullSystem),
-          }) : availableToolDefinitions;
+          }) : candidateAvailableTools;
           const candidateSystem = buildWireSystem(candidateBaseSystem, candidateTools);
           const clean = validateAndFixToolHistory(cleanupIncompleteToolCalls([...candidate.slice(leading)]));
           const projected = await degradeIrreducibleUserInputs(clean, userInputSpillCtx, window,
@@ -870,7 +884,7 @@ export function buildRunnerLlmAdapter(
       let nextRequestMode: KodaXOutputSegmentMode = 'append';
       while (true) {
         outputTextFilter = createManagedOutputTextFilter();
-        system = buildWireSystem(baseSystem, wireTools);
+        refreshWireTools(providerMessages);
         throwIfManagedProviderAborted(options.abortSignal, recoveryTranscript);
         attempt += 1;
         const wireProviderMessages = lowerProviderMessages(providerMessages);
@@ -1149,6 +1163,7 @@ export function buildRunnerLlmAdapter(
               if (hardTimer) clearTimeout(hardTimer);
               hardTimer = undefined;
               idleTimer = undefined;
+              refreshWireTools(providerMessages);
               const wireFallbackMessages = lowerProviderMessages(providerMessages);
               boundaryTracker.beginRequest(
                 providerName,
@@ -1367,6 +1382,7 @@ export function buildRunnerLlmAdapter(
         const l5Signal = options.abortSignal ?? undefined;
         let continuationText = '';
         try {
+          refreshWireTools(providerMessages);
           const wireContinuationMessages = lowerProviderMessages(providerMessages);
           boundaryTracker.beginRequest(
             providerName,

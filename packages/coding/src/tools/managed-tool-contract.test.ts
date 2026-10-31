@@ -6,7 +6,7 @@ import type { KodaXContextOptions, KodaXToolExecutionContext } from '../types.js
 import { buildRunnerAgentChain } from '../task-engine/_internal/managed-task/agent-chain.js';
 import { buildRunnerLlmAdapter } from '../task-engine/_internal/managed-task/llm-adapter.js';
 import { buildFallbackRoutingDecision } from '../reasoning.js';
-import { getToolDefinition, getBuiltinToolDefinition, registerTool } from './registry.js';
+import { getToolDefinition, getBuiltinToolDefinition, getRegisteredToolDefinition, registerTool } from './registry.js';
 import { markRegistryManagedAgent, projectModelToolDefinition } from './model-tool-definition.js';
 import { inheritOrdinaryRootToolContract, markOrdinaryRootToolContract, projectManagedToolContracts } from './managed-tool-contract.js';
 import { managedToolText } from './managed-tool-text.js';
@@ -30,7 +30,7 @@ function structural(value: unknown, properties = false): unknown {
 }
 async function capture(agent: Agent, context?: KodaXContextOptions) {
   let tools: readonly KodaXToolDefinition[] = []; let system = ''; let requests = 0;
-  const adapter = buildRunnerLlmAdapter({ context }, async (_messages, current, text) => {
+  const adapter = buildRunnerLlmAdapter({ provider: 'anthropic', context }, async (_messages, current, text) => {
     requests++; tools = current; system = text;
     return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
   });
@@ -171,7 +171,7 @@ describe('ordinary managed root tool presentation', () => {
     expect(projectManagedToolContracts(worker, [branded])[0]).toBe(branded);
     const changedSchema = { ...original, input_schema: { ...original.input_schema, required: ['path', 'pattern'] } };
     expect(projectManagedToolContracts(worker, [changedSchema])[0]).toBe(changedSchema);
-    const unregister = registerTool({ ...getBuiltinToolDefinition('glob')!, handler: async () => 'host' }, { source: { kind: 'extension' } });
+    const unregister = registerTool({ ...getRegisteredToolDefinition('glob')!, handler: async () => 'host' }, { source: { kind: 'extension' } });
     try { expect(projectManagedToolContracts(worker, [original])[0]).toBe(original); }
     finally { unregister(); }
   });

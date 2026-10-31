@@ -12,7 +12,7 @@ import type {
 } from '@kodax-ai/llm';
 import { mapLegacyReasoningModeToEffortIntent, withPreparedImageHistory } from '@kodax-ai/llm';
 import { createVisualOutputReservations } from './visual-output-reservations.js';
-import { bindVisualObservationAdmission } from '../media/visual-owner.js';
+import { bindVisualObservationAdmission, isSessionVisualObservationOwner } from '../media/visual-owner.js';
 import type {
   Agent,
   QueuedMessage,
@@ -1997,6 +1997,12 @@ async function runManagedTaskViaRunnerInner(
     userInputDegradationCache,
     () => options.context?.interruptInput?.hasPendingInputs?.() === true
       || hasQueuedFollowUp(options.events ?? {}, messageQueueAgentId),
+    () => ({
+      visualSnapshotEmpty: isSessionVisualObservationOwner(baseCtx.visualObservationOwner)
+        && resolvedInitial.loadedExtensionRecords !== undefined
+        ? !runtimeSessionState.extensionRecords.some(record => record.extensionId === 'kodax.visual')
+        : undefined,
+    }),
   );
 
   // FEATURE_143 (v0.7.36) — `plan.promptOverlay` (routing-notes block:

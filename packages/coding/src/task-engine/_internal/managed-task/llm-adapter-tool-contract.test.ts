@@ -11,6 +11,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createExtensionRuntime } from '../../../extensions/runtime.js';
 import type { KodaXToolExecutionContext } from '../../../types.js';
+import { isRunnableTool, type RunnableTool } from '@kodax-ai/agent';
 
 afterEach(() => { clearRuntimeModelProviders(); vi.unstubAllEnvs(); });
 
@@ -24,8 +25,8 @@ it.each([false, true])('omits only local search from the default root wire menu,
   };
   const message = [{ role: 'user' as const, content: 'Locate the implementation.' }];
   // An explicit profile opts out of the default menu projection, not AMA instructions.
-  await buildRunnerLlmAdapter({ context: { agentProfile: { id: 'explicit' } } }, capture)(message, agent);
-  const adapter = buildRunnerLlmAdapter({}, capture);
+  await buildRunnerLlmAdapter({ provider: 'anthropic', context: { agentProfile: { id: 'explicit' } } }, capture)(message, agent);
+  const adapter = buildRunnerLlmAdapter({ provider: 'anthropic' }, capture);
   await adapter(message, agent);
   await adapter([{ role: 'user', content: 'Resume after compaction.' }], agent);
   const [baseline, first, resumed] = requests;
@@ -38,7 +39,7 @@ it.each([false, true])('omits only local search from the default root wire menu,
 
 it('preserves factory-supplied SDK and child contexts, and missing or overridden builtin substitutes', async () => {
   let sent: readonly KodaXToolDefinition[] = [];
-  const adapter = buildRunnerLlmAdapter({}, async (_messages, tools) => {
+  const adapter = buildRunnerLlmAdapter({ provider: 'anthropic' }, async (_messages, tools) => {
     sent = tools;
     return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
   });
@@ -67,7 +68,7 @@ it('retains direct provider search when a live runtime registers it after Agent 
   const runtime = createExtensionRuntime();
   const agent = buildRunnerAgentChain({ backups: new Map(), extensionRuntime: runtime }).worker;
   let sent: readonly KodaXToolDefinition[] = [];
-  const adapter = buildRunnerLlmAdapter({}, async (_messages, tools) => {
+  const adapter = buildRunnerLlmAdapter({ provider: 'anthropic' }, async (_messages, tools) => {
     sent = tools;
     return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
   });
@@ -80,7 +81,7 @@ it('retains direct provider search when a live runtime registers it after Agent 
     await adapter([], agent);
     expect(sent.some(tool => tool.name === 'code_search')).toBe(true);
     const search = agent.tools?.find(tool => tool.name === 'code_search');
-    if (!search) throw new Error('Missing native search');
+    if (!search || !isRunnableTool(search)) throw new Error('Missing runnable native search');
     expect(String((await search.execute({ query: 'remote', provider_id: 'fixture-search' }, { agent })).content)).toContain('/virtual/source.ts');
   } finally { unregister(); }
 });
@@ -93,7 +94,7 @@ it.each([false, true])('keeps literal search executable through discovery and pr
       extensionRuntime: withProvider ? { searchCapabilities: async () => [{ title: 'Virtual result', path: '/virtual/provider.ts' }] } as never : undefined,
     }).worker;
     let sent: readonly KodaXToolDefinition[] = [];
-    const adapter = buildRunnerLlmAdapter({}, async (_messages, tools) => {
+    const adapter = buildRunnerLlmAdapter({ provider: 'anthropic' }, async (_messages, tools) => {
       sent = tools;
       return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
     });
@@ -102,7 +103,7 @@ it.each([false, true])('keeps literal search executable through discovery and pr
     expect(sent.map(tool => tool.name)).toEqual(expect.arrayContaining(['grep', 'glob', 'read', 'repo_overview']));
     const discover = agent.tools?.find(tool => tool.name === 'tool_search');
     const bridge = agent.tools?.find(tool => tool.name === 'tool_call');
-    if (!discover || !bridge) throw new Error('Missing builtin bridge');
+    if (!discover || !bridge || !isRunnableTool(discover) || !isRunnableTool(bridge)) throw new Error('Missing runnable builtin bridge');
     const contract = await discover.execute({ query: 'select:code_search' }, { agent });
     expect(String(contract.content)).toContain('provider_id');
     const literal = await bridge.execute({ name: 'code_search', input: { query: 'a.b[x]' } }, { agent });
@@ -131,7 +132,7 @@ it('preserves explicit profiles, child menus, missing replacements and extension
     { context: { agentProfile: { id: 'explicit-sdk-profile' } } },
     { context: { toolVisibilityPolicy: () => true } },
   ]) {
-    await buildRunnerLlmAdapter(options, capture)([{ role: 'user', content: 'Inspect.' }], worker);
+    await buildRunnerLlmAdapter({ provider: 'anthropic', ...options }, capture)([{ role: 'user', content: 'Inspect.' }], worker);
     expect(sent.map(tool => tool.name)).toContain('code_search');
   }
   for (const agent of [
@@ -139,7 +140,7 @@ it('preserves explicit profiles, child menus, missing replacements and extension
     { ...worker, tools: worker.tools?.filter(tool => tool.name !== 'tool_call') },
     { ...worker, tools: worker.tools?.filter(tool => tool.name !== 'grep') },
   ]) {
-    await buildRunnerLlmAdapter({}, capture)([{ role: 'user', content: 'Inspect.' }], agent);
+    await buildRunnerLlmAdapter({ provider: 'anthropic' }, capture)([{ role: 'user', content: 'Inspect.' }], agent);
     expect(sent.map(tool => tool.name)).toContain('code_search');
   }
   const builtin = getRegisteredToolDefinition('code_search');
@@ -147,7 +148,7 @@ it('preserves explicit profiles, child menus, missing replacements and extension
   const unregister = registerTool({ ...builtin, description: 'Independent extension search.' },
     { source: { kind: 'extension', id: 'independent-search' } });
   try {
-    await buildRunnerLlmAdapter({}, capture)([{ role: 'user', content: 'Inspect.' }], buildRunnerAgentChain(context).worker);
+    await buildRunnerLlmAdapter({ provider: 'anthropic' }, capture)([{ role: 'user', content: 'Inspect.' }], buildRunnerAgentChain(context).worker);
     expect(sent.find(tool => tool.name === 'code_search')?.description).toBe('Independent extension search.');
   } finally { unregister(); }
 });
@@ -176,7 +177,7 @@ it('retains direct schemas without a builtin discovery bridge and for an indepen
   const builtin = getRegisteredToolDefinition('web_fetch');
   if (!builtin) throw new Error('Missing web_fetch');
   let sent: readonly KodaXToolDefinition[] = [];
-  const adapter = buildRunnerLlmAdapter({}, async (_messages, tools) => {
+  const adapter = buildRunnerLlmAdapter({ provider: 'anthropic' }, async (_messages, tools) => {
     sent = tools;
     return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
   });
@@ -200,7 +201,7 @@ it('retains custom Agent schemas even when their names match builtin discovery t
   });
   let sent: readonly KodaXToolDefinition[] = [];
   let system = '';
-  const adapter = buildRunnerLlmAdapter({}, async (_messages, definitions, instructions) => {
+  const adapter = buildRunnerLlmAdapter({ provider: 'anthropic' }, async (_messages, definitions, instructions) => {
     sent = definitions;
     system = instructions;
     return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
@@ -239,9 +240,10 @@ it.each([false, true])('preserves explicitly supplied Agent todo schemas without
   registerModelProvider('todo-contract', () => new CaptureProvider());
   const adapter = buildRunnerLlmAdapter({ provider: 'todo-contract',
     context: { gitRoot: tmpdir(), executionCwd: tmpdir(), repoIntelligenceMode: 'off' } });
+  const supplied: RunnableTool = { ...original, execute: async () => ({ content: 'unused' }) };
   await adapter([{ role: 'user', content: 'Continue the current plan.' }], {
     name: 'kodax/role/worker', instructions: '',
-    tools: [{ ...original, execute: async () => ({ content: 'unused' }) }],
+    tools: [supplied],
   });
   const todo = sent.find((tool) => tool.name === 'todo_update');
   expect(todo?.input_schema).toEqual(original.input_schema);
@@ -259,7 +261,7 @@ it.each(['custom', 'kodax/role/worker', 'clone'])('preserves independent %s Agen
     execute: async () => ({ content: 'independent' }),
   }));
   let sent: readonly KodaXToolDefinition[] = [];
-  const adapter = buildRunnerLlmAdapter({}, async (_messages, definitions) => {
+  const adapter = buildRunnerLlmAdapter({ provider: 'anthropic' }, async (_messages, definitions) => {
     sent = definitions;
     return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
   });

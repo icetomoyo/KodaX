@@ -20,14 +20,8 @@ import { discoverSkills } from './discovery.js';
 import { loadFullSkill } from './skill-loader.js';
 import { resolveSkillContent } from './skill-resolver.js';
 
-/** Format the model-visible Skill catalog from an arbitrary trusted registry. */
-export function formatSkillsSystemPrompt(
-  skills: readonly SkillMetadata[],
-): string {
-  const visibleSkills = skills.filter((skill) => !skill.disableModelInvocation);
-  if (visibleSkills.length === 0) return '';
-
-  const lines = [
+/** Canonical catalog teaching; reusable by request views without changing SDK formatting. */
+export const SKILL_CATALOG_INSTRUCTIONS = [
     '## Available Skills',
     '',
     'When users ask you to perform tasks, check if any of the available skills below match the request. Skills provide specialized capabilities and step-by-step instructions for specific workflows.',
@@ -40,7 +34,15 @@ export function formatSkillsSystemPrompt(
     '',
     'NEVER mention a model-discovered Skill without actually calling the `skill` tool. This rule does not apply to a host-expanded active user invocation, which must not be called again. Do not guess at Skill names — only use Skills listed below. Do NOT call `read` on a `SKILL.md` path to load a Skill — that is the legacy path and bypasses the resolver.',
     '',
-  ];
+  ].join('\n');
+
+/** Format the model-visible Skill catalog from an arbitrary trusted registry. */
+export function formatSkillsSystemPrompt(
+  skills: readonly SkillMetadata[],
+): string {
+  const visibleSkills = skills.filter((skill) => !skill.disableModelInvocation);
+  if (visibleSkills.length === 0) return '';
+  const lines = [SKILL_CATALOG_INSTRUCTIONS];
   for (const skill of visibleSkills) {
     const hint = skill.argumentHint ? ` ${skill.argumentHint}` : '';
     lines.push(`- ${skill.name}:${hint} ${skill.description}`);

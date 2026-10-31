@@ -10,6 +10,7 @@ import { executeTool, getRegisteredToolDefinition, listToolDefinitions, register
 import { getBuiltinToolDefinition, KODAX_TOOLS } from '../tools/registry.js';
 import { buildWorkerStableInstructions } from '../agents/worker-role-prompt.js';
 import type { KodaXManagedWorkBudget, KodaXOptions } from '../types.js';
+import { CodingActorSession } from './actor-runtime.js';
 
 afterAll(() => shutdownDefaultLspService());
 
@@ -112,9 +113,11 @@ it('preserves extension-owned replacements even when they reuse a builtin name a
 });
 
 it('retains AMA planning, collaboration and completion instructions across the two work surfaces', async () => {
-  const coding = assembly({ agentMode: 'ama' });
-  const agent = assembly({ agentMode: 'ama', workMode: 'agent' });
+  const codingSession = new CodingActorSession();
+  const agentSession = new CodingActorSession();
   try {
+    const coding = assembly({ agentMode: 'ama', context: { actorSession: codingSession } });
+    const agent = assembly({ agentMode: 'ama', workMode: 'agent', context: { actorSession: agentSession } });
     const baseline = buildWorkerStableInstructions(coding.worker.tools?.map(tool => tool.name));
     const candidate = buildWorkerStableInstructions(agent.worker.tools?.map(tool => tool.name));
     const common = baseline.split('\n\n').filter(section => !specialized.some(name => section.includes(name)));
@@ -125,8 +128,8 @@ it('retains AMA planning, collaboration and completion instructions across the t
       'spawn_agent', 'send_message', 'followup_task', 'wait_agent', 'list_agents', 'interrupt_agent', 'agent_output',
     ]));
   } finally {
-    await coding.ctx.actorHost?.close();
-    await agent.ctx.actorHost?.close();
+    await codingSession.close();
+    await agentSession.close();
   }
 });
 

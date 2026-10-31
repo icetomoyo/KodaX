@@ -51,7 +51,25 @@ it.each(cases)('reads, discovers exact history IDs and inspects immutable bytes:
     Reflect.set(provider, '_client', protocol === 'openai' ? { chat: { completions: { create } } } : { messages: { create } });
     provider.stream = async (messages, tools, system) => {
       if (!tools.some(tool => tool.name === 'todo_update')) return { textBlocks: [{ type: 'text', text: 'Done.' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
+      if (turn === 0) {
+        for (const name of ['visual_inspect', 'visual_read_pixels']) {
+          expect(tools.some(tool => tool.name === name), `${name} detail schema waits for visual evidence or an acknowledged call`).toBe(false);
+        }
+      } else if (turn === 1) {
+        for (const name of ['visual_inspect', 'visual_read_pixels']) {
+          const contract = tools.find(tool => tool.name === name);
+          expect(contract, `${name} detail schema returns after the original rejected call is acknowledged`).toBeDefined();
+          const views = contract!.input_schema.properties.views as {
+            items: { properties: { observationId: { description?: string } } };
+          };
+          const referenceHelp = views.items.properties.observationId.description;
+          expect(referenceHelp, `${name} must explain the source of its accepted ID`).toEqual(expect.stringContaining('visual_history'));
+          expect(referenceHelp).toMatch(/filename|path|label/);
+          expect(contract!.description).toMatch(/read.*first.*Runtime/);
+        }
+      }
       await provider.complete(messages, tools, system);
+      if (turn === 1) expect(lastToolText(wires.at(-1), protocol)).toContain('Visual observation unavailable or access denied');
       const call = (name: string, input: Record<string, unknown>) => ({ type: 'tool_use' as const, id: 'duplicate-provider-id',
         name: bridge ? 'tool_call' : name, input: bridge ? { name, input } : input });
       if (turn++ === 0) return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [call('visual_inspect', {
@@ -102,7 +120,7 @@ it.each(cases)('reads, discovers exact history IDs and inspects immutable bytes:
     const published = JSON.stringify(wires);
     expect(published).toContain('Visual observation unavailable or access denied');
     if (workMode === 'coding' && protocol === 'openai' && !bridge) {
-      const declarations = (wires[0] as { tools: Array<{ function: { name: string; description: string;
+      const declarations = (wires[1] as { tools: Array<{ function: { name: string; description: string;
         parameters: { properties: { views: { items: { properties: { observationId: { description?: string } } } } } } } }> }).tools;
       for (const name of ['visual_inspect', 'visual_read_pixels']) {
         const contract = declarations.find(tool => tool.function.name === name)!.function;

@@ -83,6 +83,7 @@ export interface ResolvedInitialMessages {
   title: string;
   errorMetadata?: SessionErrorMetadata;
   loadedExtensionState?: KodaXExtensionSessionState;
+  /** Complete loaded/host record snapshot; undefined means unresolved, not empty. */
   loadedExtensionRecords?: KodaXExtensionSessionRecord[];
 }
 
@@ -107,7 +108,7 @@ export async function resolveInitialMessages(
     }
     const loaded = await loadGenerationCheckpoint(options.session.storage, checkpoint);
     return { messages: [...loaded.messages], title: loaded.title, errorMetadata: loaded.errorMetadata,
-      loadedExtensionState: loaded.extensionState, loadedExtensionRecords: loaded.extensionRecords };
+      loadedExtensionState: loaded.extensionState, loadedExtensionRecords: loaded.extensionRecords ?? [] };
   }
   if (options.session?.initialMessages && options.session.initialMessages.length > 0) {
     const messages = [...options.session.initialMessages];
@@ -122,7 +123,7 @@ export async function resolveInitialMessages(
       title: extractTitleFromMessages(messages),
       errorMetadata: loaded?.errorMetadata,
       loadedExtensionState: options.session.initialExtensionState ?? loaded?.extensionState,
-      loadedExtensionRecords: options.session.initialExtensionRecords ?? loaded?.extensionRecords,
+      loadedExtensionRecords: options.session.initialExtensionRecords ?? (loaded ? loaded.extensionRecords ?? [] : undefined),
     };
   }
 
@@ -134,7 +135,7 @@ export async function resolveInitialMessages(
         title: loaded.title,
         errorMetadata: loaded.errorMetadata,
         loadedExtensionState: loaded.extensionState,
-        loadedExtensionRecords: loaded.extensionRecords,
+        loadedExtensionRecords: loaded.extensionRecords ?? [],
       };
     }
   }

@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdir, unlink, writeFile } from "fs/promises";
 import { join } from "path";
-import { SkillRegistry } from "./skill-registry.js";
+import { createHash } from 'node:crypto';
+import { formatSkillsSystemPrompt, SKILL_CATALOG_INSTRUCTIONS, SkillRegistry } from "./skill-registry.js";
+import { SKILL_CATALOG_INSTRUCTIONS as publicCatalogInstructions } from './index.js';
 import { createTempDir, removeTempDir } from "./test-utils/temp-dir.js";
 
 const tempDirs: string[] = [];
@@ -46,6 +48,20 @@ ${description}
 }
 
 describe("SkillRegistry", () => {
+  it('exposes the canonical catalog instructions without changing default SDK bytes or visibility', () => {
+    const skill = { name: 'fixture', description: 'Match fixture tasks.', userInvocable: true,
+      argumentHint: '[target]', path: '/fixture/SKILL.md', source: 'builtin' as const, disableModelInvocation: false };
+    const formatted = formatSkillsSystemPrompt([skill, { ...skill, name: 'explicit-only', disableModelInvocation: true }]);
+    expect(typeof SKILL_CATALOG_INSTRUCTIONS).toBe('string');
+    expect(publicCatalogInstructions).toBe(SKILL_CATALOG_INSTRUCTIONS);
+    expect(formatted.startsWith(SKILL_CATALOG_INSTRUCTIONS)).toBe(true);
+    expect(createHash('sha256').update(formatted).digest('hex')).toBe('428b950a19f66c07f820b6cc0f1e739f65b15ab7e2a237c676d630f20582e598');
+    expect(formatted).toContain('- fixture: [target] Match fixture tasks.');
+    expect(formatted).not.toContain('explicit-only');
+    expect(formatSkillsSystemPrompt([])).toBe('');
+    expect(formatSkillsSystemPrompt([{ ...skill, disableModelInvocation: true }])).toBe('');
+  });
+
   it('does not republish an in-flight body from an older discovery', async () => {
     const root = await createTempDir('kodax-skill-concurrent-');
     tempDirs.push(root);

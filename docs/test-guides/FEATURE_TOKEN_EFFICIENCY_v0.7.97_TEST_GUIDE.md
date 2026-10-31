@@ -311,3 +311,149 @@ pilot 结算留下 `reservedTokens=0/reservedUsd=-1.0842e-19` 的浮点残差。
 独立复核自足说明、严格 schema 证明、完整持久化与 SDK/角色回退，无新增固定发现或 AMA 策略变化。
 实际 fit/fallback 回归补齐；DeepSeek 菜单外叶调用按原执行链核实，未扩大范围修复。0 项阻断发现。
 本批不再追加模型矩阵；缓存、Script 参数表示及大型外部 namespace 延迟仍为未实施专题。
+
+## 7. 共享规则与契约激活候选（2026-10-31）
+
+控制版本 `1dd6d64d358e12ff7c6e6fab9be4501942a26f29`；候选为本节实际源码 hash 清单，
+不是 §6 的小规模 deferred 收尾。原始 `bd4479d` 保留
+[既有单次证据](FEATURE_WORK_MODES_ORIGINAL_BASELINE_TEST_GUIDE.md)，原始 Coding Host 为 28,734 估算 token；
+Agent/Script、新视觉及本批三个检查点无匹配原版，标 N/A，不改名、不补跑原矩阵。
+历史 Host/能力已演进，不能把 28,734 与本次当成同夹具提示词因果对照。
+
+### 范围与保留规则
+
+共享根规则、Skill 前言与 Actor 容量只在来源可信的普通根请求中重组。
+AMA 规划/派发、独占写入、语言/信任、子证据整合、拒绝恢复及真实核验/收尾义务保留；
+SDK formatter、Actor canonical builder、完整历史和专用角色不变。
+Worktree 两项和原生历史 read 的全部当前浅对象参数，在现有桥接中自足表达，无固定发现；
+历史 search 或对应回执后恢复原生。Script 的历史叶保持完整，未伪造其披露证明。
+
+视觉详情只在可信产品 owner 与完整已知空记录的组合下延迟；未知、仅 Host state、自定义 owner 保守原生。
+接受图片、视觉调用/发现回执或有效视觉 Skill 后，下一原有请求提供详情参数。
+合法 bridge/Skill 别名复用原解析；已知非 Plan 不注入 exit，Plan/未知保留，stream retry/complete/续写实时重建。
+Goal、Memory、交互、核心文件/编辑/undo、协作、Todo、RepoIntel/LSP/MCP 和全部底层能力保留。
+请求视图不改执行、授权、预算、取消、原图、SDK/公开事件或耐久回执；Coding 仍为默认工作模式。
+
+### 实际首轮与整体分账
+
+最终 32 格抓包 `kodax-first-turn-wire-YhkWuN`，12 个根 empty/Host 输入在 `uniform-report.json` 统一重计。
+SDK fetch 前真实序列化，外部调用 0；紧凑 model-fields JSON 使用同一 KodaX 启发式，不是 BPE/API 用量。
+
+| 夹具/协议 | Agent 控制→候选 | Coding 控制→候选 | Script 控制→候选 |
+|---|---:|---:|---:|
+| 完整 Host / OpenAI | 12,023→10,547 | 15,592→14,116 | 17,536→16,100 |
+| 完整 Host / Anthropic | 11,778→10,345 | 15,218→13,785 | 17,372→15,972 |
+| empty / OpenAI | 9,696→9,379 | 11,997→11,679 | 14,176→13,859 |
+| empty / Anthropic | 9,487→9,184 | 11,715→11,412 | 14,032→13,730 |
+
+同一完整 Agent 信封顺序只替换 tools、system、非 system 消息：12,023→11,055→10,836→10,547。
+相应净收益 968/219/289，是完整输入反事实差值，不是把分别四舍五入的字符/token 分项机械相加。
+Worktree/历史的桥接教学和视觉目录开销均已计入；完整 Host Agent 距 10K 仍差 547。
+外部项目仍只引用设计 §11 固定源码及历史 wire，不宣称本批刷新了 Codex/DSH 的最新实包。
+
+### 三模式真实执行、首用和恢复
+
+最终候选 Runtime raw：`contract-activation-runtime-r2-20261031` 下
+`candidate-final/{iLnsAC,bVPpvf,CXOns7}`（目录均带 `kodax-contract-activation-` 前缀）和
+`candidate/{weWxdY,MvsaHD,rqakuA}`。每组 Agent/Coding/Script 顺序相同；源 hash 前后零漂移。
+首组 stage 标签未触发旧的 `stage==='candidate'` 专属菜单断言，主线另从原始捕获核验三格 cold 详情缺席、
+实际 PNG admission 后下一原有请求两项详情齐全；原始数据不改。
+
+原 R1 在历史阶段把 snippet 命中误当原文读取完成；严格检查发现 stale，失败原样保留。
+只复用其真正成功的 edit/follow-up/visual 三阶段。独立 R3 以实际 inactive 元数据选唯一历史条目，
+保留原 stale 后发出新的合法省略可选 revision 请求，并断言同一 entry 的实际 read.status=ok 及 content；
+没有改写先前参数、执行失败命令或放宽隔离。选错 active 命中及缺 native 的旧失败也保留。
+
+| 轨迹 | 模式 | 请求数控制/候选 | 累计 SDK 输入估算控制→候选 |
+|---|---|---:|---:|
+| 编辑、真实 Node 测试、跟进、PNG/区域/像素/历史 | Agent | 11/11 | 131,462→120,770 |
+| 同上 | Coding | 11/11 | 156,773→146,077 |
+| 同上 | Script | 11/11 | 184,577→174,319 |
+| 独立 seed→压缩/重开→历史原文恢复 | Agent | 5/5 | 57,509→51,360 |
+| 同上 | Coding | 5/5 | 69,010→62,865 |
+| 同上 | Script | 5/5 | 79,581→73,514 |
+
+这两组轨迹不得相加冒充同一完整任务；Skill 目录在执行夹具中明确关闭，不能用其首轮替代完整 Host。
+SDK 序列化和 typed FrozenInput 分列；不借脚本轨迹宣称模型自主质量、API 成本或稳定提速。
+控制版从精确 Git archive 自行构建必需四包与原 native，仅借用外部 node_modules；
+原完整 artifacts/pdfjs 构建失败仍是限制，不宣称控制版全发布构建通过。
+
+### 有限 GLM/Kimi/DeepSeek 及语义判断
+
+Temp `contract-activation-l2-r2-20261031-b681f2`，manifest hash
+`a267aa1b3dc905024e2993c82aa2a84ab2b9fa9eda0217503602e0eec2c03bd6`。
+先 GLM/Kimi 两点两臂 8 次 pilot，主线盲评后只补 DeepSeek 同两点 4 次及三家容量检查 6 次。
+18 次物理调用、182,015 已知 API token、未知用量 0，参考记账 USD 0.012684685；不是套餐现金账单。
+硬顶 18 次/120 万 token/USD1，单次 2,048 输出/120 秒；无自动 retry/fallback、无重复 cell、无 proposed-tool 执行。
+
+检查点：真实干净 Git 前置后的首次 Worktree；真实 search/stale 后的历史读取；
+真实三只读 Actor 占槽、原 spawn 拒绝后使用现有 inspect-child 并合法继续。
+均为 capture-derived 固定输入，不冒充原 Runtime wire；新 Temp cwd/Git/Actor 状态真实生成并对齐两臂，
+容量候选通过真实 adapter 投影。完整 production system/tools 走实际 API tools 通道，不用简化 stub。
+主线先读含共同业务事实的盲包、逐对落盘判断，再揭盲；两份 raw 备份在 OS Temp `kodax-eval-backups`。
+
+| 三个独立 L2 检查点之和 | API 输入控制→候选 | API 总 token 控制→候选 | 墙时之和控制→候选 |
+|---|---:|---:|---:|
+| zhipu-coding/glm-5.3 | 32,041→28,596 | 32,312→28,887 | 21.808→18.681s |
+| kimi-code/kimi-for-coding | 29,302→26,452 | 29,837→26,740 | 16.293→10.026s |
+| deepseek/deepseek-flash | 33,490→30,006 | 33,964→30,275 | 5.063→3.627s |
+
+不是完整自主任务总账或统计非劣证明。三家都无 Worktree 发现前置、无盲目再 spawn/递归绕限/虚报完成。
+九对中六对语义持平；DeepSeek 候选一次合法历史恢复优于控制、容量简洁性略好，控制的 Worktree 中文说明更忠实。
+后者是保留的小幅描述偏差，未为更好数字重跑。各臂仍欠真实根调查与最终报告，不能将下一工具调用当完整 AMA 收尾。
+
+重要限制：GLM/Kimi 两臂都将 stale 返回的新全局 revision 继续传入。源码核实正常 Runtime 在工具前后追加消息，
+会再次使全局 revision 过期；这是 `1dd6` 原有版本契约缺陷，不是精简引入，也不算恢复通过。
+R3 仅证明省略可选 revision 的合法路径；DeepSeek 候选一次选择该路径不证明泛化提升。
+后续应独立设计 entry 证据版本，保留全局严格校验及可见性/归档/fork 边界，不靠提示特例自动忽略 revision。
+
+GLM 未缓存输入 16,489→19,124，Kimi 16,246→18,516；两者总输入虽下降，缓存收益尚未证明。
+随机映射恰好令候选始终先运行，且各检查点菜单会变化，顺序、旧缓存与菜单失效混杂。
+不据此宣称稳定费用/缓存或耗时改善；原始 usage 不改。`usage-comparison-v2.json` 使用真实 endedAt 重计物理耗时，
+旧 derived 版本误读时间字段为 0 被保留，不是原始 API 记录或新增 generation。
+
+### 离线、发布与最终冻结
+
+激活 adapter 11 项、共享上下文 8 项与 Skills/owner/恢复及原生桥接边界回归通过。
+最终激活模块覆盖语句 90.36%、分支 89.51%、行 96.55%，共享上下文 96.77%/93.1%/100%；
+这是变更范围覆盖，不冒充全仓覆盖率。tsconfig.test 原继承 exclude 遮住已显式 include 的 package 测试，
+现真实纳入，修复 provider/metadata/readonly/真实 Actor cleanup 等旧 fixture 类型，不弱化生产类型。
+
+类型检查、配置模板、packages/native/bundle/14 SDK 声明构建通过。
+CLI 5,293,184 bytes，比 1dd6 的 5,287,232 增加 5,952；无新增依赖，按实测只将预算 +44→+50 KiB，
+保留原启动依赖/输入/credential 守卫。实际 npm 包 Script 清单/干净目录/缺 worker 明确失败、MCP 三种输出恢复、
+独立 IPC/重启任务回执共六项通过；仅 Windows 实测。
+
+评测 guard 在付费前修好两项：异常用量先同步取消全部 lane 再写盘；盲包补共同业务事实而不暴露契约/映射/费用。
+都有 RED→GREEN 与两轴复核。旧 prepare 与刚启动后中断的全量快照保留，均无付费调用。
+
+完整冻结 `kodax-shared-activation-full-20261031-3f1cec9a`：3,500 项 Git 路径清单的受监测文件零漂移，18,371 项通过、1 失败、100 跳过、19 todo。
+唯一失败为 SDK 视觉旧测试期待首轮原生详情；业务图像流程已成功，不是原图/隔离失败。
+单文件先复现 11 过/1 失败，再保留全部原有图像/像素/持久化/恢复断言，校正到原始拒绝 ACK 后核对完整 schema，
+并在 12 格真实工具流补首轮缺席/下一请求恢复断言；最终单文件 12/12、tests 类型检查通过，生产未改。
+付费后仅修改这项测试与正式证据，模型输入及生产代码未变，不重跑生成。
+
+最终再次冻结 `kodax-shared-activation-full-20261031-c03497f8`：同样 3,500 项清单零变化、无新增路径；
+**18,371 项通过、1 失败、100 跳过、19 todo，1,167.88s**。本批视觉断言及其他候选回归全部通过。
+唯一失败是已有 `src/runtime-daemon/state.windows.test.ts:109`：跨进程 reader 的 readErrors=1,010，invalidJson=0；
+200 次 writer、父进程逐次读回、子进程退出/stderr 均已通过。不能据此宣称全量全绿。
+该完整文件隔离一次 1/1 通过，证据 `kodax-activation-final-state-windows-isolated-20261031.json`；不覆盖原全量失败。
+当前、1dd6 和旧 0b8 的 writer/test Git blob 完全相同，旧留存已有 readErrors=1,643；未发现候选改变实际状态文件读写路径。
+reader 丢弃错误 code，故根因仍未确认，不能简单称为评测无效或已修复。后续只增加有限错误诊断，保留零错误断言，
+不加入 reader 重试、不猜测修改原子写、不再反复跑全量求全绿，也不阻断已被独立验证的契约收益。
+
+按当前清单重核，付费期间完整普通文件快照零变化；事后只有 SDK 视觉测试和这两份正式文档改变。
+Runtime 抓包自己的 glob 清单只覆盖部分路径，未涵盖所有顶层 src 文件；本次由并行完整快照补齐该证据，
+不声称 subset guard 自身覆盖全仓。Gitlink 目录是非普通文件哨兵，不代表递归核验子模块内部源码。
+后续 capture 清单应修正目录 pathspec；本批模型输入不变，不因此重跑 generation。
+
+### Standards
+
+独立复核来源/兼容/权限/预算及固定坏味道基线。重复 projection、合法别名激活、评测 stop 顺序与盲包事实缺口已修复，
+已封口生产及 L2 范围无剩余阻断发现。SDK 旧断言修正已由主线与独立 Spec 轴复核，未弱化原检查。
+
+### Spec
+
+独立核对三模式共享、全部能力/SDK/专用角色、无固定发现及真实证据分层；已封口生产及 L2 范围无剩余阻断。
+有限证据支持采用这项普通根候选；全产品验收仍有上述已存在的 Windows 失败，不能把候选采用等同全量无问题。
+Agent <10K、Script 参数表示、真实多轮缓存/套餐成本和全局智能等价均未被本次小样本证明。

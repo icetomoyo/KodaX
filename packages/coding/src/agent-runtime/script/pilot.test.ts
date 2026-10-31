@@ -3,7 +3,7 @@ import { createScriptPilot } from './pilot.js';
 import { buildRuntimeSessionState } from '../runtime-session-state.js';
 import { markRegistryManagedAgent } from '../../tools/model-tool-definition.js';
 import { markOrdinaryRootToolContract } from '../../tools/managed-tool-contract.js';
-import { getToolDefinition, registerTool } from '../../tools/registry.js';
+import { getRegisteredToolDefinition, getToolDefinition, registerTool } from '../../tools/registry.js';
 import type { KodaXToolExecutionContext } from '../../types.js';
 
 it('shares canonical leaf text before serialization only for an explicitly supplied ordinary root', () => {
@@ -36,7 +36,7 @@ it('shares canonical leaf text before serialization only for an explicitly suppl
   markOrdinaryRootToolContract(override);
   expect(createScriptPilot(dispatch, budget, override).tools.find(tool => tool.name === 'glob'))
     .toEqual(baseline.find(tool => tool.name === 'glob'));
-  const unregister = registerTool({ ...getToolDefinition('glob')!, description: 'Host-defined glob', handler: async () => 'host' }, { source: { kind: 'extension' } });
+  const unregister = registerTool({ ...getRegisteredToolDefinition('glob')!, description: 'Host-defined glob', handler: async () => 'host' }, { source: { kind: 'extension' } });
   try { expect(createScriptPilot(dispatch, budget, root).tools.map(tool => tool.name)).toEqual(['bash']); }
   finally { unregister(); }
 });

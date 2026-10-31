@@ -2,11 +2,24 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Jimp } from 'jimp';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { createSessionLineage, evictOldIslandMessageContent, persistCompactedSessionHistory, setSessionLineageActiveEntry } from '@kodax-ai/agent';
 import { createFileVisualObservationOwner, executeVisualTool, visualObservationRecord } from '@kodax-ai/agent/media';
 import type { KodaXSessionData, KodaXSessionStorage } from '../types.js';
-import { createSessionVisualObservationOwner } from './visual-owner.js';
+import { createSessionVisualObservationOwner, isSessionVisualObservationOwner } from './visual-owner.js';
+
+it('recognizes only the exact product owner without loading history or probing image files', () => {
+  const load = vi.fn<KodaXSessionStorage['load']>().mockResolvedValue(null);
+  const storage: KodaXSessionStorage = { load, save: async () => {} };
+  const directory = path.join(os.tmpdir(), 'kodax-owner-provenance-no-files');
+  const owner = createSessionVisualObservationOwner(storage, 'session', directory);
+  const custom = createFileVisualObservationOwner({ ownerId: 'session', directory, list: async () => [] });
+  expect(isSessionVisualObservationOwner(owner)).toBe(true);
+  expect(isSessionVisualObservationOwner(custom)).toBe(false);
+  expect(isSessionVisualObservationOwner({ ...owner })).toBe(false);
+  expect(isSessionVisualObservationOwner(undefined)).toBe(false);
+  expect(load).not.toHaveBeenCalled();
+});
 
 it('recalls only authorized originals after exact compaction, eviction and owner recreation', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-visual-compaction-'));
