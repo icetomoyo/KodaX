@@ -1471,8 +1471,26 @@ stayed exactly `9674047c` / `7b7506f8`. All 3,267 non-Markdown tracked files and
 retained identical raw bytes; no normalization exception was needed. Their aggregate SHA-256 values
 are respectively `020a5373eef36b8c73e4caadfcf4acdeaabc0236b0402eb8af6702191a7dc13b` and
 `1485834e9ca538cb8b0878e86251a2fe7e32bee6d4fde4aa9dff98bc01a28066`.
-Frozen package/Host gates and final evidence are still in progress. I's counts remain historical
-and do not certify this newer MCP/Skill combination. Space's product
+The four-document status update was fast-forwarded to main `702c1af6` and rebuilt there before
+the frozen package gates. Source and all build bytes remained identical to the complete source
+run, with the same fingerprints above. The full 21-file built-test manifest was run with
+`node --test --test-concurrency=1`: **80 passed**, zero skipped/failed, 261.38 seconds. The complete
+manifest includes all four strict budget/resource checks.
+Historical owner and actual tarball cutover: **three passed**, 31.24 seconds, retaining both
+concurrent first-start Sessions and rejecting old-owner rollback. The tested tarball SHA-256 is
+`d8c8d74ea74e6a51279a430b81103e6e997291965e486e6c7b993ea937f5655a`.
+The integrity-pinned real alpha.11 busy Host upgrade: **one passed**, 17.47 seconds; its owned
+evidence directory is OS-temp `kodax-historical-host-upgrade-wsAOnE`.
+All source/build bytes and main `702c1af6` stayed unchanged through those package gates, with
+zero normalization exceptions. Main and design worktrees were clean. Both review axes have no
+remaining findings; final acceptance-document and design-gitlink updates change no product code.
+
+J integration and offline acceptance are complete. I's counts remain historical and are not
+substituted for this newer MCP/Skill combination. Space's product
 code remains at independent commit `da531f0a`; this Root-only phase does not rerun or certify a
 new Space build. Keep production byte/version gates and real-account/platform limits intact.
 Raw evidence is OS-temp `kodax-t12j-*`; do not commit manifests or raw runs.
+
+Final design checkpoint is `8574086208d6b5cc6ff6599c825fe88d986c4dd0`, retaining the accepted
+`22bf9bf`/`0f831024`/old-local-main history. The final Root acceptance commit updates only this
+guide, FEATURE_LIST and that gitlink; the verified product/source/build bytes remain unchanged.

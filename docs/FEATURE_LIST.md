@@ -19,7 +19,7 @@
 | Artifact distribution revision | `2026-10-18` — one `@kodax-ai/kodax` npm package; four `/artifacts` subpaths and resources staged in the main tarball; local implementation, not yet published |
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
 | Current development | `v0.7.97` / `FEATURE_298` — post-alpha.10 Agent/Coding/experimental Script work modes, SDK question/original-output/task-report/streaming alignment, and Windows startup/readiness repairs; [current SDK checklist](SDK_MIGRATION.md#2026-10-29-未发布改动对齐). Cross-platform/manual release verification and Issue 371's historical first-read investigation remain open. |
-| Roadmap updated | `2026-10-31` — FEATURE_302 H/I accepted offline; J safely integrated local Root/design main and passed complete source regression, final package gates pending; unreleased; FEATURE_300 remains Planned |
+| Roadmap updated | `2026-10-31` — FEATURE_302 H/I/J accepted offline; Root/design local main integrated with complete source, package and historical Host gates passed; unreleased; FEATURE_300 remains Planned |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
 | Total tracked features | `86` |
 | InProgress | `2` |
@@ -540,7 +540,7 @@ and two actual Electron IPC/restart tests passed. The H coverage evidence remain
 Both review axes have zero remaining findings. This does not certify live account entitlements,
 all service models, macOS/Linux legacy-vault migration, or a production Space installer.
 See [design](features/v0.7.99.md#feature_302-independent-llm-provider-parity) and
-[final evidence](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-i-combined-host-integration-acceptance--2026-10-31).
+[final evidence](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-j-local-main-integration--2026-10-31).
 I left the original workspaces untouched; J's authorized local main update is recorded below.
 Keep the separate design gitlink with Root and retain Space's commits on its independent branch.
 Publish/pin the paired SDK before production packaging.
@@ -548,8 +548,10 @@ Publish/pin the paired SDK before production packaging.
 J main checkpoint `9674047c` also retains the other chat's `a9587af7e` MCP/Skill merge. Actual main
 install/build/typechecks and complete source regression passed **18,777** tests; 3,267 source and
 262 build files retained identical bytes. Main/design were advanced only with clean/ancestry checks.
-Final frozen package/Host gates remain pending in the J guide. Space stays independently at
-`da531f0a`; its historical I counts do not certify a newly paired Space build. No push/publication.
+Final frozen package **80** and historical/real-alpha.11 Host gates **4** passed; the same source
+and build fingerprints remained unchanged throughout. See the J guide for exact checkpoints.
+Space stays independently at `da531f0a`; its historical I counts do not certify a newly paired
+Space build. No push/publication.
 
 ## v0.7.97-alpha.11 Release Record
 
@@ -2180,7 +2182,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
-| `302` | Independent LLM Provider Parity | `v0.7.99` (unreleased) | [v0.7.99](features/v0.7.99.md#feature_302-independent-llm-provider-parity) | T01–T12 including H account-preserving sources and I latest Host integration accepted offline with paired Space; live accounts/platform installers remain unverified. |
+| `302` | Independent LLM Provider Parity | `v0.7.99` (unreleased) | [v0.7.99](features/v0.7.99.md#feature_302-independent-llm-provider-parity) | T01–T12/H/I accepted offline with paired Space; J Root/design local main integration and post-merge gates passed. Space remains independent; live accounts/platform installers unverified. |
 | `301` | Managed Artifact SDK and PPT Review Loop | Initial implementation in `v0.7.97-alpha.4`; unified Artifact SDK additions released in `v0.7.97-alpha.5` | [v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) | Optional SDK in the single main npm package, with a private source workspace, nine operations and shared Host execution; PPTX authoring/limited edits, PDF/image/SVG evidence, candidate DOCX and local HTML/SMIL capture. Native Office fidelity and full natural-task model repair/re-review/delivery remain unverified; [current support](ARTIFACT_SDK.md). |
 | `299` | Unified Stop, Full Access and Extension Execution Contracts | `v0.7.96` (release pending) | [v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) | Implements legacy large metadata paging, Full Access policy provenance, lock-independent Session Stop, CLI/ACP convergence and managed extension execution with reload isolation. |
 | `297` | Codex-Aligned Permission Profiles, Sandbox Escalation, and Exec Policy | `v0.7.96-alpha.5` | [v0.7.96](features/v0.7.96.md#feature_297-codex-aligned-permission-profiles-sandbox-escalation-and-exec-policy) | Makes sandbox completion authoritative, moves Edits/Auto decisions to an exact host boundary, adds Full Access and JSONC Exec Policy, removes Auto[RULES]/envPass/global-Git blocking, and preserves a single no-replay host retry. |
