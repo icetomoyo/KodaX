@@ -2,6 +2,8 @@ import type { MemoryRefFilter, MemoryRememberInput } from '@kodax-ai/agent';
 import { randomUUID } from "node:crypto";
 import { runtimeClientPrincipal, type RuntimeClientLifecycleController } from './client-lifecycle.js';
 import { withProductExecution } from '../product-execution-authorization.js';
+import type { RuntimeExecutionProfile } from '../client-host-authorization.js';
+import { createExecutionToolPolicy, executionProfileAllowsTool, hostToolMetadata, intersectExecutionToolCeilings } from '../execution-profile.js';
 import {
   DEFAULT_CLASSIFIER_TIMEOUT_MS,
   getActiveExtensionRuntime,
@@ -147,7 +149,7 @@ export interface RuntimeDaemonDispatcher {
 }
 
 const MAX_DAEMON_RUN_RESULT_RECORDS = 1_000;
-const CODER_DAEMON_SESSION_SURFACES = [
+const DAEMON_SESSION_SURFACES = [
   "code",
   "cli",
   "repl",
@@ -156,6 +158,7 @@ const CODER_DAEMON_SESSION_SURFACES = [
   "sdk",
   "ide",
   "space-desktop",
+  "partner",
 ] as const;
 const RUNTIME_PROBE_METHODS = new Set<RuntimeDaemonMethod>([
   "ping",
@@ -189,6 +192,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
   RuntimeGrantedScope
 > = new Map([
   ...scopeEntries("session:observe", [
+    'tool.catalog',
     'session.facts.read', 'session.facts.requests', 'session.facts.tools',
     "ping",
     "runtime.identity",
@@ -1193,6 +1197,9 @@ async function dispatchRuntimeDaemonRequest(
       return runtime.mcp.reloadServers();
     case "mcp.tool.list":
       return runtime.mcp.listTools(parseMcpToolListFilter(request.params));
+    case 'tool.catalog':
+      if (!runtime.catalog.executionTools) throw daemonError('method_not_found', 'Host tool catalog is unavailable.');
+      return runtime.catalog.executionTools(requireStringParam(request.params, 'sessionId'));
     case "extension.list":
       return runtime.catalog.extensions();
     case "extension.reload":
@@ -1497,7 +1504,7 @@ async function dispatchRuntimeDaemonRequest(
       return runtime.agents.followup(
         sessionId,
         actorPath,
-        requireStringField(params, "objective"),
+        params.resumeCheckpoint === true && params.objective === '' ? '' : requireStringField(params, "objective"),
         {
           ...(params.resumeCheckpoint === true ? { resumeCheckpoint: true } : {}),
           ...(expectedRevision === undefined ? {} : { expectedRevision }),
@@ -1923,7 +1930,8 @@ async function dispatchRuntimeDaemonRequest(
       const status = await runtime.runs.get(runId);
       if (status.origin?.principalId !== principalId) throw daemonError('permission_denied', 'Generation recovery requires the original principal.');
       const authorization = optionalRecord(params.authorization);
-      const bound = await bindTrustedRunInput({ params: { ...params, ...authorization }, sessionId: status.sessionId, trustedRunId: runId,
+      const bound = await bindTrustedRunInput({ params: { ...params, ...authorization }, profile,
+        sessionId: status.sessionId, trustedRunId: runId,
         principalId, clientName, clientVersion, reverseBridge });
       const handle = await runtime.runs.recover({ ...bound, runId } as Parameters<typeof runtime.runs.recover>[0]);
       runResults.remember(handle.runId, handle.result);
@@ -2393,13 +2401,13 @@ async function dispatchRuntimeDaemonRequest(
   };
   const authorization = isRecord(request.params) ? optionalRecord(request.params.authorization) : undefined;
   if (request.method === 'agents.spawn' || request.method === 'agents.followup') {
+    if (authorization?.profile !== undefined) throw daemonError('invalid_params', 'Root profiles do not replace independent Actor declarations.');
     if (authorization?.workflowHostPolicy !== undefined) throw daemonError('invalid_params', 'Workflow ceilings bind to Product Runs, not independent Actor admissions.');
     options.clientLifecycle?.assertAdmission(principalId);
     const params = requireRecord(request.params);
     if (authorization !== undefined && params.credential !== undefined) throw daemonError('invalid_params', 'Use one Actor authorization binding.');
     return dispatch();
   }
-  if (authorization?.tools !== undefined) throw daemonError('invalid_params', 'A tools ceiling is supported only for independent Actor turns.');
   const productExecution = ['input.submit', 'invocations.executeCommand', 'invocations.startReview',
     'invocations.startAgentsLean', 'workflow.start', 'run.recover'].includes(request.method);
   if (authorization === undefined && !productExecution) return dispatch();
@@ -2411,10 +2419,14 @@ async function dispatchRuntimeDaemonRequest(
   const credential = optionalRecord(authorization?.credential ?? (request.method === 'run.recover' ? params.credential : undefined));
   const hostTools = optionalRecord(authorization?.hostTools ?? (request.method === 'run.recover' ? params.hostTools : undefined));
   const workflowHostPolicy = optionalRecord(authorization?.workflowHostPolicy);
+  const requestedProfile = authorization?.profile as RuntimeExecutionProfile | undefined;
+  const explicitTools = authorization?.tools === undefined ? undefined : requireStringArrayField(authorization, 'tools');
+  const profile = explicitTools === undefined ? requestedProfile : { ...requestedProfile,
+    tools: explicitTools.filter(name => requestedProfile?.tools === undefined || requestedProfile.tools.includes(name)) };
   const sessionId = request.method === 'run.recover' ? (await runtime.runs.get(requireStringField(params, 'runId'))).sessionId
     : credential === undefined && hostTools === undefined
     ? optionalStringField(params, 'sessionId') : requireStringField(params, 'sessionId');
-  if (authorization !== undefined && credential === undefined && hostTools === undefined && workflowHostPolicy === undefined) {
+  if (authorization !== undefined && credential === undefined && hostTools === undefined && workflowHostPolicy === undefined && profile === undefined) {
     throw daemonError('invalid_params', 'Execution authorization requires a lease or Workflow policy.');
   }
   // Stable scope equality lets a same-authority follow-up enter the active Run;
@@ -2423,7 +2435,8 @@ async function dispatchRuntimeDaemonRequest(
     credential === undefined ? null : [credential.leaseId, credential.mode === 'scoped'
       ? [...requireStringArrayField(credential, 'providers')].sort() : credential.provider],
     hostTools?.leaseId ?? null,
-    ...(workflowHostPolicy === undefined ? [] : [[workflowHostPolicy.maxAgents ?? null, workflowHostPolicy.tokenBudget ?? null]])]);
+    ...(workflowHostPolicy === undefined ? [] : [[workflowHostPolicy.maxAgents ?? null, workflowHostPolicy.tokenBudget ?? null]]),
+    ...(profile === undefined ? [] : [profile])]);
   return withProductExecution({ key, principalId, sessionId, assertAdmission: () => options.clientLifecycle?.assertAdmission(principalId),
     bindRun: async (runInput, runId, baseExtensionRuntime) => {
     options.clientLifecycle?.assertAdmission(principalId);
@@ -2431,7 +2444,7 @@ async function dispatchRuntimeDaemonRequest(
       ...(credential !== undefined ? { credential } : {}),
       ...(hostTools !== undefined ? { hostTools } : {}),
       ...(workflowHostPolicy !== undefined ? { options: { ...runInput.options, workflowHostPolicy } } : {}),
-    }, sessionId: runInput.sessionId, trustedRunId: runId, principalId, clientName, clientVersion, reverseBridge, baseExtensionRuntime,
+    }, profile, sessionId: runInput.sessionId, trustedRunId: runId, principalId, clientName, clientVersion, reverseBridge, baseExtensionRuntime,
       trustedProductPreparation: true }) as unknown as RuntimeStartRunInput;
   },
   }, dispatch);
@@ -2447,11 +2460,12 @@ function actorToolRuntimeFactory(authorization: Record<string, unknown> | undefi
   return (runId: string, base: ReturnType<typeof getActiveExtensionRuntime>) => {
     const scoped = bridge.createHostToolRuntime({ leaseId, sessionId, runId,
       allowedTools: authorization?.tools === undefined ? undefined : requireStringArrayField(authorization, 'tools') });
-    return base == null ? scoped : mergeExtensionRuntimeContracts(base, scoped);
+    return base == null ? scoped : mergeExtensionRuntimeContracts(scoped, base);
   };
 }
 
 async function bindTrustedRunInput(input: {
+  readonly profile?: RuntimeExecutionProfile;
   readonly params: Record<string, unknown>;
   readonly sessionId: string;
   readonly trustedRunId: string;
@@ -2497,6 +2511,8 @@ async function bindTrustedRunInput(input: {
           leaseId: hostToolLeaseId,
           sessionId: input.sessionId,
           runId: input.trustedRunId,
+          ...(input.profile === undefined ? {} : { allowedTools: input.reverseBridge.getHostTools(hostToolLeaseId)?.tools
+            .filter(tool => executionProfileAllowsTool(input.profile, hostToolMetadata(tool))).map(tool => tool.name) ?? [] }),
         });
   const activeRuntime = input.baseExtensionRuntime ?? getActiveExtensionRuntime();
   const extensionRuntime =
@@ -2519,6 +2535,12 @@ async function bindTrustedRunInput(input: {
             ),
           ),
         };
+  const executionToolCeiling = intersectExecutionToolCeilings(
+    safeTransportOptions.executionToolCeiling as Pick<RuntimeExecutionProfile, 'tools' | 'toolMetadata'> | undefined,
+    input.profile === undefined ? undefined
+      : { tools: input.profile.tools, toolMetadata: input.profile.toolMetadata },
+  );
+  const previousPolicy = optionalRecord(safeTransportOptions.context)?.toolVisibilityPolicy;
   return {
     ...input.params,
     sessionId: input.sessionId,
@@ -2544,10 +2566,21 @@ async function bindTrustedRunInput(input: {
           ),
         }
       : {}),
-    ...(input.params.options !== undefined || extensionRuntime !== undefined
+    ...(input.params.options !== undefined || extensionRuntime !== undefined || input.profile !== undefined
       ? {
           options: {
             ...safeTransportOptions,
+            ...(executionToolCeiling === undefined ? {} : { executionToolCeiling: structuredClone(executionToolCeiling) }),
+            ...(input.profile === undefined ? {} : {
+              context: {
+              ...optionalRecord(safeTransportOptions.context),
+              ...(input.profile.agentProfile === undefined ? {} : { agentProfile: structuredClone(input.profile.agentProfile) }),
+              ...(input.profile.taskVerification === undefined ? {} : { taskVerification: structuredClone(input.profile.taskVerification) }),
+              workModePolicy: 'intersect',
+              toolVisibilityPolicy: createExecutionToolPolicy(executionToolCeiling!,
+                typeof previousPolicy === 'function'
+                  ? previousPolicy as import('@kodax-ai/coding/client-contract').KodaXToolVisibilityPolicy : undefined),
+            } }),
             ...(extensionRuntime === undefined ? {} : { extensionRuntime }),
           },
         }
@@ -2634,6 +2667,8 @@ function runtimeDaemonCapabilities(
   delete safeOverrides.sandboxRuntime;
   delete safeOverrides.runLifecycleControl;
   delete safeOverrides.productClient;
+  delete safeOverrides.productExecutionProfile;
+  delete safeOverrides.actorCheckpointRecovery;
   delete safeOverrides.sessionDrafts;
   delete safeOverrides.productHistoryBoundaries;
   delete safeOverrides.productExecutionAuthorization;
@@ -2647,6 +2682,8 @@ function runtimeDaemonCapabilities(
   const reverseBridgeLimits = runtimeDaemonReverseBridgeLimits();
   return {
     events: true,
+    productExecutionProfile: { version: 2 },
+    actorCheckpointRecovery: { version: 1 },
     permissions: true,
     workflows: true,
     configAdmin: true,
@@ -2766,9 +2803,9 @@ function runtimeDaemonCapabilities(
     },
     sessionAdmission: {
       version: 1,
-      surfaces: CODER_DAEMON_SESSION_SURFACES,
+      surfaces: DAEMON_SESSION_SURFACES,
       legacySurface: true,
-      partnerDenied: true,
+      partnerDenied: false,
     },
     completeObservationSnapshot: {
       version: 1,
@@ -3556,6 +3593,8 @@ function mergeExtensionRuntimeContracts(
   base: ExtensionRuntimeContract,
 ): ExtensionRuntimeContract {
   return {
+    ...(base.getToolRegistrationOwners === undefined ? {} : { getToolRegistrationOwners: () => base.getToolRegistrationOwners!() }),
+    ...(base.pinExecutionContributions === undefined ? {} : { pinExecutionContributions: () => base.pinExecutionContributions!() }),
     hasCapabilityProvider(providerId) {
       return (
         host.hasCapabilityProvider?.(providerId) === true ||

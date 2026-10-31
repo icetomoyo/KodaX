@@ -1330,7 +1330,7 @@ async function runReadChildBody(
       options.parentOptions.extensionRuntime,
     );
   const excludeTools = restrictToolsForChildRuntime(
-    specialistExcludeTools,
+    [...(scope.ctx.excludeTools ?? []), ...specialistExcludeTools],
     options.actorCapabilities,
     options.actorControl,
     options.parentOptions.extensionRuntime,
@@ -1641,7 +1641,7 @@ async function runWriteChildBody(
     specialistSystemPrompt,
   );
   const excludeTools = restrictToolsForChildRuntime(
-    specialistExcludeTools,
+    [...(childCtx.excludeTools ?? []), ...specialistExcludeTools],
     options.actorCapabilities,
     options.actorControl,
     options.parentOptions.extensionRuntime,

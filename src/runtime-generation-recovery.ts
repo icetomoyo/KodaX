@@ -1,5 +1,6 @@
 export { parseGenerationCheckpoint } from '@kodax-ai/coding';
 import type { RuntimeKodaXOptions } from './sdk-runtime.js';
+import { createExecutionToolPolicy, executionToolPolicyCeiling, intersectExecutionToolCeilings } from './execution-profile.js';
 
 export interface RuntimeGenerationResume {
   readonly prompt: string;
@@ -9,27 +10,30 @@ export interface RuntimeGenerationResume {
 
 const OPTION_KEYS = new Set(['provider', 'model', 'modelOverride', 'effort', 'thinking', 'reasoningMode',
   'agentMode', 'workMode', 'maxIter', 'workflowHostPolicy', 'workflowRunsBaseDir', 'modelTiers', 'maxOutputTokens',
-  'disablePromptCache', 'lsp', 'workflow', 'selfManual', 'compaction', 'timeouts', 'sandbox', 'maxConcurrentThreadsPerSession']);
+  'disablePromptCache', 'lsp', 'workflow', 'selfManual', 'compaction', 'timeouts', 'sandbox', 'maxConcurrentThreadsPerSession',
+  'executionToolCeiling']);
 const CONTEXT_KEYS = new Set(['gitRoot', 'executionCwd', 'shellExecution', 'contextTokenSnapshot',
   'projectSnapshot', 'longRunning', 'providerPolicyHints', 'repoRoutingSignals', 'repoIntelligenceMode',
   'repoIntelligenceTrace', 'contextDiagnostics', 'disableAutoTaskReroute', 'toolConstructionMode',
   'skillsPrompt', 'rawUserInput', 'skillInvocation', 'commandInvocation', 'repoIntelligenceContext',
   'inputArtifacts', 'promptOverlay', 'taskSurface', 'liveTurn', 'managedTaskWorkspaceDir',
   'managedProtocolEmission', 'excludeTools', 'systemPromptOverride', 'taskMetadata', 'taskVerification',
-  'agentProfile', 'currentAgentId', 'parentAgentId', 'workflowIntent']);
+  'agentProfile', 'workModePolicy', 'currentAgentId', 'parentAgentId', 'workflowIntent']);
 
 /** Persist resolved input/configuration; process-local authority must be rebound. */
 export function captureGenerationResume(input: { readonly prompt: string; readonly options: RuntimeKodaXOptions }): RuntimeGenerationResume {
   const values: Record<string, unknown> = {};
   const required: Array<{ path: string; type: string }> = [];
   const visiting = new WeakSet<object>();
+  const policyCeiling = executionToolPolicyCeiling(input.options.context?.toolVisibilityPolicy);
   const requireBinding = (path: string, value: unknown): void => {
     if (path !== 'extensionRuntime' && value !== null && typeof value === 'object' && Object.keys(value).length > 0) {
       if (visiting.has(value)) throw new Error('Generation recovery contains a cyclic authority binding.');
       visiting.add(value);
       for (const [key, item] of Object.entries(value)) if (item !== undefined) requireBinding(`${path}.${key}`, item);
       visiting.delete(value);
-    } else required.push({ path, type: typeof value });
+    } else required.push({ path, type: path === 'context.toolVisibilityPolicy' && policyCeiling !== undefined
+      ? 'execution-profile' : typeof value });
   };
   for (const [key, value] of Object.entries(input.options)) {
     if (value === undefined || key === 'toolInvocation' || key === 'session' || key === 'sessionControl' || key === 'abortSignal') continue;
@@ -44,6 +48,7 @@ export function captureGenerationResume(input: { readonly prompt: string; readon
     } else if (OPTION_KEYS.has(key)) values[key] = value;
     else requireBinding(key, value);
   }
+  if (policyCeiling !== undefined) values.executionToolCeiling = intersectExecutionToolCeilings(input.options.executionToolCeiling, policyCeiling);
   // A supposedly declarative option containing callbacks cannot silently lose them.
   const serialized = JSON.stringify(values, (_key, value: unknown) => {
     if (typeof value === 'function' || typeof value === 'symbol' || typeof value === 'bigint') {
@@ -55,17 +60,22 @@ export function captureGenerationResume(input: { readonly prompt: string; readon
 }
 
 export function rebindGenerationOptions(resume: RuntimeGenerationResume, supplied: RuntimeKodaXOptions | undefined): RuntimeKodaXOptions {
+  const profilePolicy = resume.requiredBindings.some(binding => binding.path === 'context.toolVisibilityPolicy' && binding.type === 'execution-profile');
+  if (profilePolicy && resume.options.executionToolCeiling === undefined) throw new Error('Generation recovery is missing its execution profile ceiling.');
+  const source = profilePolicy && supplied?.context?.toolVisibilityPolicy === undefined
+    ? { ...supplied, context: { ...supplied?.context, toolVisibilityPolicy: createExecutionToolPolicy(resume.options.executionToolCeiling!) } }
+    : supplied;
   const rebound: Record<string, unknown> = {};
   for (const binding of resume.requiredBindings) {
-    let value: unknown = supplied;
+    let value: unknown = source;
     const parts = binding.path.split('.');
     for (const key of parts) {
       if (!value || typeof value !== 'object' || !Object.hasOwn(value, key)) { value = undefined; break; }
       value = (value as Record<string, unknown>)[key];
     }
-    if (typeof value !== binding.type || value === undefined) throw new Error(`Generation recovery requires a new ${binding.path} binding.`);
+    if (typeof value !== (binding.type === 'execution-profile' ? 'function' : binding.type) || value === undefined) throw new Error(`Generation recovery requires a new ${binding.path} binding.`);
     const root = parts[0]! as keyof RuntimeKodaXOptions;
-    rebound[root] = supplied?.[root];
+    rebound[root] = source?.[root];
   }
   return rebound;
 }

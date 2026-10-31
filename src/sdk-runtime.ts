@@ -50,13 +50,15 @@ export type {
 import { LOCAL_RUNTIME_BUILD, readRuntimeBuildIdentity, type RuntimeBuildIdentity } from './runtime-build-identity.js';
 import { createRuntimeProductCommandService, type RuntimeProductCommandService, type RuntimeCommandInvocation } from './runtime-product-commands.js';
 import { currentProductExecution, withProductExecution } from './product-execution-authorization.js';
-import type { RuntimeExecutionAuthorization } from './client-host-authorization.js';
+import type { RuntimeExecutionAuthorization, RuntimeExecutionProfile } from './client-host-authorization.js';
+import { createExecutionToolPolicy, intersectExecutionToolCeilings } from './execution-profile.js';
 import { registerClientWorkCleanup, settleClientWork, type ClientWorkCleanup } from './runtime-client-work.js';
 import { createExecutionFactsStore, type ExecutionFactsStore } from './execution-facts.js';
 export type { RuntimeExecutionAuthorization } from './client-host-authorization.js';
 export type { RuntimeBuildIdentity } from './runtime-build-identity.js';
 import { createHash, randomUUID } from "node:crypto";
 import { captureGenerationResume, parseGenerationCheckpoint, rebindGenerationOptions, type RuntimeGenerationResume } from './runtime-generation-recovery.js';
+import { clearRemovedExecutionConfig, resolveExecutionConfig, RUN_CONFIG_KEYS } from './execution-config.js';
 import type {
   ClientSession,
   ClientSessionSummary,
@@ -99,7 +101,7 @@ import {
   readFollowingMessage,
   readHistoryPageWithBoundaryRetry,
 } from "./client-history.js";
-import { toClientConfig, toClientSessionSettings } from "./client-settings.js";
+import { CLIENT_CONFIG_APPLICATION, toClientConfig, toClientSessionSettings } from "./client-settings.js";
 import { createHostIntegrations } from "./host-integrations.js";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -121,6 +123,7 @@ import {
   analyzeAutoModeCall,
   assertTrustedTextMutationPolicy,
   assertWorkModeAvailable,
+  resolveWorkMode,
   bashSignalCollector,
   CANCELLED_TOOL_RESULT_MESSAGE,
   checkAbsoluteDeny,
@@ -1230,6 +1233,7 @@ export interface RuntimeEffectiveCredentialEntry {
 }
 
 export interface RuntimeEffectiveConfigSnapshot {
+  readonly application?: import('@kodax-ai/coding/client-contract').ClientEffectiveExecutionConfig['application'];
   readonly schemaVersion: 1;
   readonly capturedAt: string;
   readonly persistedConfig: {
@@ -1325,6 +1329,7 @@ export interface RuntimeExtensionListResult {
 }
 
 export interface RuntimeCatalogService {
+  executionTools?(sessionId: string): Promise<readonly import('@kodax-ai/coding/client-contract').KodaXToolVisibilityMeta[]>;
   reasoningEfforts(input: ClientModelSelection): Promise<readonly string[]>;
   probeReasoningEfforts(input: ClientModelSelection & { readonly efforts: readonly string[] }): Promise<readonly ClientCapabilityProbeResult[]>;
   forgetCapabilities(input?: { readonly provider?: string; readonly model?: string }): Promise<void>;
@@ -2157,6 +2162,8 @@ export type RuntimeKodaXOptions = Omit<
   KodaXOptions,
   "provider" | "session" | "events"
 > & {
+  /** Internal non-secret admission evidence; not a public option or authority grant. */
+  readonly executionToolCeiling?: Pick<RuntimeExecutionProfile, 'tools' | 'toolMetadata'>;
   readonly provider?: string;
   readonly session?: KodaXOptions["session"];
   readonly events?: KodaXEvents;
@@ -2192,6 +2199,7 @@ export type RuntimeDaemonContextOptions = Pick<
   | "taskMetadata"
   | "taskVerification"
   | "agentProfile"
+  | "workModePolicy"
   | "currentAgentId"
   | "parentAgentId"
 >;
@@ -2252,6 +2260,8 @@ export interface RuntimeContextRecoveryWait {
 }
 
 export interface RuntimeRunStatus {
+  readonly effectiveConfig?: import('@kodax-ai/coding').KodaXEffectiveTaskConfig;
+  readonly workMode?: KodaXOptions['workMode'];
   /** Durable evidence that execution stopped before the next generation. */
   readonly contextRecovery?: {
     readonly checkpoint?: import('@kodax-ai/coding').KodaXGenerationCheckpoint;
@@ -3675,6 +3685,8 @@ interface RuntimeAdmittedSessionContext {
 }
 
 interface RuntimeRunRecord {
+  effectiveConfig?: import('@kodax-ai/coding').KodaXEffectiveTaskConfig;
+  workMode?: KodaXOptions['workMode'];
   recoveryRequiresExtensionRuntime?: boolean;
   recoveryToolCeiling?: readonly string[];
   generationSuspended?: boolean;
@@ -4303,6 +4315,8 @@ async function createKodaXRuntimeInternal(
     sessionDrafts: { version: 1 },
     productHistoryBoundaries: { version: 1 },
     productExecutionAuthorization: { version: 2 },
+    productExecutionProfile: { version: 2 },
+    actorCheckpointRecovery: { version: 1 },
     productExitControl: { version: 1 },
     productExecutionFacts: { version: 1 },
     productActorAuthorization: { version: 1 },
@@ -5566,7 +5580,18 @@ async function createKodaXRuntimeInternal(
       defaultModel: options.defaultModel,
       onChanged: () => sessionViews.configurationChanged(),
     }),
-    catalog: createRuntimeCatalogService(ensureOpen, configFile, integrations.global),
+    catalog: {
+      ...createRuntimeCatalogService(ensureOpen, configFile, integrations.global),
+      async executionTools(sessionId) {
+        ensureOpen();
+        await sessionAdmission.loadRequired(sessionId);
+        return withExtensionRuntimeContext(async () => {
+          const { getAllRegisteredTools } = await import('@kodax-ai/coding');
+          return getAllRegisteredTools().map(tool => ({ name: tool.name, sideEffect: tool.sideEffect,
+            planModeAllowed: tool.planModeAllowed === true }));
+        }, integrations.forSession(sessionId));
+      },
+    },
     mcp: createRuntimeMcpService(ensureOpen, configFile, integrations.global),
     artifacts: artifacts.service,
     status: createRuntimeStatusService({
@@ -5595,7 +5620,7 @@ async function createKodaXRuntimeInternal(
         const runId = actorGenerationRunId(sessionId, execution.turn.turnId);
         const recovery = execution.turn.checkpoint ? persistence.loadGenerationRecovery(runId) : undefined;
         const previous = recovery ? persistence.loadRunStatus(runId) : undefined;
-        const effective = buildEffectiveRuntimeOptions({ ...recovery?.start.options,
+        const effective = buildEffectiveRuntimeOptions({ ...resolveExecutionConfig(toClientConfig(readRuntimeConfig(configFile))), ...recovery?.start.options,
           extensionRuntime: trusted.actorExtensionRuntime?.(runId, integrations.forSession(sessionId))
           ?? integrations.forSession(sessionId) }, settings, [], session);
         const provider = effective.provider ?? options.defaultProvider ?? KODAX_DEFAULT_PROVIDER;
@@ -5634,6 +5659,7 @@ async function createKodaXRuntimeInternal(
           onExecutorTerminal: () => {}, onPhase: phase => { if (!record.generationSuspended) record.phase = phase; },
           onContextRecoveryPrepared: () => persistGenerationRecovery(record, persistence),
           onContextRecoveryChanged: () => { saveRunStatusSafely(bus, persistence, record, statusFromRecord(record)); },
+          onEffectiveConfigChanged: () => { saveRunStatusSafely(bus, persistence, record, statusFromRecord(record)); },
           onStage: () => {}, onMidTurnUserMessages: () => {} });
         events.runMemoryWork = work => runMemoryWork(work, record.origin?.principalId);
         events.registerShellCleanup = (reference, retry) => {
@@ -11116,6 +11142,7 @@ async function createRuntimeRunService(deps: {
         settleFromExecutorSignal(record, signal, error),
       onContextRecoveryPrepared: () => persistGenerationRecovery(record, deps.persistence, productQueue.snapshot(record.sessionId)),
       onContextRecoveryChanged: () => { publishRunUpdate(record); },
+      onEffectiveConfigChanged: () => { publishRunUpdate(record); },
       onPhase: (phase) => {
         if (
           record.generationSuspended
@@ -11348,7 +11375,7 @@ async function createRuntimeRunService(deps: {
             runtimePolicy: { enforceAtRuntime: true } } };
         const continuation = { ...createRunOptions(), toolInvocation: undefined, abortSignal: abortController.signal, sessionControl };
         abortController.signal.throwIfAborted();
-        if (continuation.agentMode === 'sa') {
+        if (continuation.agentMode === 'sa' && continuation.workMode !== 'script') {
           record.running = startKodaX(continuation, start.prompt);
           return record.running.result;
         }
@@ -11805,7 +11832,8 @@ async function createRuntimeRunService(deps: {
             record.start.options.modelOverride = record.model;
           }
         }
-        if (record.phase !== "queued" && ("reasoningMode" in patch || "effort" in patch || "thinking" in patch)) {
+        if (record.phase !== "queued" && ("reasoningMode" in patch || "effort" in patch || "thinking" in patch
+          || "permissionMode" in patch || "planModeEffort" in patch)) {
           record.reasoning = settings.reasoningMode;
           const reasoning = { effort: settings.effort, thinking: settings.thinking };
           record.sessionControl?.setReasoning(record.reasoning, reasoning);
@@ -11929,6 +11957,13 @@ async function createRuntimeRunService(deps: {
       input = await execution.bindRun(input, runId, deps.extensionRuntime(input.sessionId));
       trustedInput = input as RuntimeTrustedStartRunInput;
     }
+    if (recovery) {
+      const originalContext = recovery.data.start.options.context;
+      input = { ...input, options: { ...input.options, context: { ...input.options?.context,
+        agentProfile: originalContext?.agentProfile, taskVerification: originalContext?.taskVerification,
+      } } };
+      trustedInput = input as RuntimeTrustedStartRunInput;
+    }
     const requiredAfterRunId = trustedInput.requiredAfterRunId;
     const requiredAfterRun =
       requiredAfterRunId === undefined
@@ -11970,7 +12005,7 @@ async function createRuntimeRunService(deps: {
       trustedInput.productSession === true || productInput !== undefined);
     assertSessionSettingsAllowed(admittedSessionContext, settings);
     let options = buildEffectiveRuntimeOptions(
-      { extensionRuntime: deps.extensionRuntime(input.sessionId), ...input.options },
+      { ...resolveExecutionConfig(toClientConfig(config)), extensionRuntime: deps.extensionRuntime(input.sessionId), ...input.options },
       settings,
       normalizedInput.inputArtifacts,
       admittedSessionContext,
@@ -12183,10 +12218,11 @@ async function createRuntimeRunService(deps: {
       ...(options.reasoningMode !== undefined
         ? { reasoning: options.reasoningMode }
         : {}),
-      mode: options.toolInvocation !== undefined ? "managed_task" : input.mode
+      mode: options.toolInvocation !== undefined || options.workMode === 'script' ? "managed_task" : input.mode
         ?? (queuesBehindDurabilityRepair ? requiredAfterRun?.mode : undefined)
         ?? (productInput !== undefined ? (options.agentMode === "sa" ? "coding" : "managed_task") : undefined)
         ?? "coding",
+      workMode: resolveWorkMode(options),
       ...(requiredAfterRun !== undefined && input.mode === undefined
         ? { inheritModeAfterDurabilityRepair: true }
         : {}),
@@ -12886,12 +12922,19 @@ async function createRuntimeRunService(deps: {
         }
         const bindings = rebindGenerationOptions(recovery.start, input.options);
         const selected = input.options;
+        const executionToolCeiling = intersectExecutionToolCeilings(
+          recovery.start.options.executionToolCeiling, selected?.executionToolCeiling,
+        );
+        const freshPolicy = bindings.context?.toolVisibilityPolicy;
         const options: RuntimeKodaXOptions = { ...bindings, ...recovery.start.options,
+          ...(executionToolCeiling === undefined ? {} : { executionToolCeiling }),
           provider: selected?.provider ?? persisted.status.provider,
           model: selected?.model ?? persisted.status.model,
           modelOverride: selected?.modelOverride ?? selected?.model ?? persisted.status.model,
           reasoningMode: selected?.reasoningMode ?? persisted.status.reasoning,
-          context: { ...bindings.context, ...recovery.start.options.context },
+          context: { ...bindings.context, ...recovery.start.options.context,
+            ...(executionToolCeiling === undefined ? {} : { toolVisibilityPolicy: createExecutionToolPolicy(executionToolCeiling, freshPolicy) }),
+          },
         };
         return startRun({ ...trusted, sessionId: record.sessionId, prompt: recovery.start.prompt,
           mode: persisted.status.mode, options, permissionBroker: 'runtime' }, 'runtime.runs.start', { persisted, data: recovery });
@@ -13680,8 +13723,7 @@ function resolveClientContextBudget(
     return {
       scope: 'parent', provider: providerName, model,
       contextWindow: resolveContextWindow(compaction, provider, model),
-      reservedResponseTokens: typeof config.maxOutputTokens === 'number' && config.maxOutputTokens > 0
-        ? config.maxOutputTokens : provider.getEffectiveMaxOutputTokens(model),
+      reservedResponseTokens: resolveExecutionConfig(toClientConfig(config)).maxOutputTokens ?? provider.getEffectiveMaxOutputTokens(model),
       compaction: { enabled: true, triggerPercent: compaction.triggerPercent,
         ...(compaction.triggerTokens !== undefined ? { absoluteTriggerTokens: compaction.triggerTokens } : {}) },
     };
@@ -13718,6 +13760,7 @@ function createRuntimeConfigService(
       assertPlainObject(patch, "runtime.config.patch");
       const normalized = sanitizeRuntimeConfigPatch(patch);
       patchRuntimeConfig(configFile, normalized);
+      clearRemovedExecutionConfig(toClientConfig(readRuntimeConfig(configFile)));
       replApi.applyExecutionConfigEnvironment(normalized, true);
       options.onChanged?.();
       return redactRuntimeConfig(readRuntimeConfig(configFile));
@@ -13727,6 +13770,7 @@ function createRuntimeConfigService(
       ensureOpen();
       if (configFile !== undefined) {
         registerRuntimeConfiguredCustomProviders(configFile);
+        clearRemovedExecutionConfig(toClientConfig(readRuntimeConfig(configFile)));
         replApi.applyExecutionConfigEnvironment(toClientConfig(readRuntimeConfig(configFile)));
         options.onChanged?.();
         return {
@@ -18184,6 +18228,19 @@ function encodeRuntimePathComponent(value: string): string {
   return Buffer.from(value, "utf-8").toString("base64url") || "_";
 }
 
+function parseEffectiveTaskConfig(value: unknown): import('@kodax-ai/coding').KodaXEffectiveTaskConfig | undefined {
+  if (!isRecord(value) || !['sa', 'ama', 'amaw'].includes(String(value.agentMode))
+    || !['agent', 'coding', 'script'].includes(String(value.workMode))
+    || !Array.isArray(value.toolScope) || !value.toolScope.every(item => typeof item === 'string')
+    || (value.modelToolScope !== undefined && (!Array.isArray(value.modelToolScope)
+      || !value.modelToolScope.every(item => typeof item === 'string')))) return undefined;
+  const config = { agentMode: value.agentMode, workMode: value.workMode, toolScope: value.toolScope,
+    ...(value.modelToolScope === undefined ? {} : { modelToolScope: value.modelToolScope }),
+    ...(isRecord(value.agentProfile) ? { agentProfile: value.agentProfile } : {}),
+    ...(isRecord(value.verification) ? { verification: value.verification } : {}) };
+  return structuredClone(config) as import('@kodax-ai/coding').KodaXEffectiveTaskConfig;
+}
+
 function parseRuntimeRunStatus(value: unknown): RuntimeRunStatus | undefined {
   if (!isRecord(value)) return undefined;
   if (
@@ -18220,6 +18277,8 @@ function parseRuntimeRunStatus(value: unknown): RuntimeRunStatus | undefined {
       && typeof value.productInput.digest === "string"
       ? { productInput: { inputId: value.productInput.inputId, digest: value.productInput.digest } }
       : {}),
+    ...(value.workMode === 'agent' || value.workMode === 'coding' || value.workMode === 'script' ? { workMode: value.workMode } : {}),
+    ...(parseEffectiveTaskConfig(value.effectiveConfig) ? { effectiveConfig: parseEffectiveTaskConfig(value.effectiveConfig) } : {}),
     runId: value.runId,
     sessionId: value.sessionId,
     ...(typeof value.turnId === "string" ? { turnId: value.turnId } : {}),
@@ -18702,6 +18761,8 @@ function recordFromPersistedStatus(
   observedOwner?: AgentActorOwner,
 ): RuntimeRunRecord {
   return {
+    ...(status.workMode !== undefined ? { workMode: status.workMode } : {}),
+    ...(status.effectiveConfig !== undefined ? { effectiveConfig: structuredClone(status.effectiveConfig) } : {}),
     ...(status.contextRecovery !== undefined ? { contextRecovery: status.contextRecovery } : {}),
     runId: status.runId,
     sessionId: status.sessionId,
@@ -19959,6 +20020,7 @@ function wrapKodaXEvents(input: {
   ) => void;
   readonly onPhase: (phase: RuntimeRunPhase) => void;
   readonly onContextRecoveryChanged: () => void;
+  readonly onEffectiveConfigChanged: () => void;
   readonly onContextRecoveryPrepared?: () => void;
   readonly onStage: (
     stage: RuntimeRunStage,
@@ -20612,6 +20674,12 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onProviderRecovery?.(event, meta);
     },
     onEffectiveConfig(config) {
+      if (actorDurabilityFenced() || isTerminalRunPhase(record.phase)) return;
+      const snapshot = parseEffectiveTaskConfig(config);
+      const changed = JSON.stringify(record.effectiveConfig) !== JSON.stringify(snapshot);
+      record.effectiveConfig = snapshot;
+      record.workMode = config.workMode;
+      if (changed) input.onEffectiveConfigChanged();
       emit("config.effective", config, config);
       externalCallbacks()?.onEffectiveConfig?.(config);
     },
@@ -21399,9 +21467,9 @@ function createRuntimeSessionAdmission(
     profileId: string | undefined,
   ): boolean => {
     if (!enforced) return true;
-    if (isPartnerSessionIdentity(surface, profileId)) return false;
     return (
       surface === undefined ||
+      surface.toLowerCase() === 'partner' ||
       CODER_DAEMON_SESSION_SURFACES.has(surface.toLowerCase())
     );
   };
@@ -21514,18 +21582,6 @@ async function filterAdmittedRunStatuses(
     if (admitted) result.push(status);
   }
   return result;
-}
-
-function isPartnerSessionIdentity(
-  surface: string | undefined,
-  profileId: string | undefined,
-): boolean {
-  const hasPartnerToken = (value: string | undefined): boolean =>
-    value
-      ?.toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .includes("partner") === true;
-  return hasPartnerToken(surface) || hasPartnerToken(profileId);
 }
 
 function createRuntimeTranscriptRevision(
@@ -22783,6 +22839,13 @@ function buildRuntimeEffectiveConfigSnapshot(options: {
       priority: 0,
     };
   }
+  for (const key of RUN_CONFIG_KEYS) {
+    const value = runtimeConfigPathValue(persisted.config, key);
+    const env = bindings.get(key);
+    if (value !== undefined && (!env || replApi.inspectConfigEnvironmentSource(env) !== 'environment')) {
+      entries[key] = effectiveConfigEntry(value, 'persisted', true, 200, key);
+    }
+  }
   const credentials = Object.fromEntries(
     getProviderCredentialEnvironmentNames().map((envName) => [
       envName,
@@ -22794,6 +22857,7 @@ function buildRuntimeEffectiveConfigSnapshot(options: {
   return {
     schemaVersion: 1,
     capturedAt: new Date().toISOString(),
+    application: CLIENT_CONFIG_APPLICATION,
     persistedConfig: { state: persisted.state },
     entries,
     credentials,
@@ -23100,6 +23164,7 @@ function redactRuntimeConfig(value: unknown): unknown {
 
 function isSensitiveConfigKey(key: string): boolean {
   const lower = key.toLowerCase();
+  if (['maxoutputtokens', 'compactiontriggertokens', 'triggertokens', 'tokenbudget'].includes(lower)) return false;
   return (
     lower.includes("apikey") ||
     lower.includes("api_key") ||
@@ -23303,6 +23368,8 @@ function runtimeInterruptInputStatus(
 
 function statusFromRecord(run: RuntimeRunRecord): RuntimeRunStatus {
   return {
+    ...(run.workMode !== undefined ? { workMode: run.workMode } : {}),
+    ...(run.effectiveConfig !== undefined ? { effectiveConfig: structuredClone(run.effectiveConfig) } : {}),
     ...(run.contextRecovery !== undefined ? { contextRecovery: run.contextRecovery } : {}),
     ...(run.productInput !== undefined ? { productInput: run.productInput } : {}),
     runId: run.runId,

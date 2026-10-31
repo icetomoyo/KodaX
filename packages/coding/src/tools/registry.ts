@@ -1,7 +1,7 @@
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { withManagedChildProcessConfigHome } from '@kodax-ai/agent';
-import type { KodaXToolExecutionContext } from '../types.js';
+import type { KodaXToolExecutionContext, KodaXWorkMode } from '../types.js';
 import type {
   LocalToolDefinition,
   RegisteredToolDefinition,
@@ -223,6 +223,12 @@ export function getToolDefinition(name: string): KodaXToolDefinition | undefined
 
 export function getRegisteredToolDefinition(name: string): RegisteredToolDefinition | undefined {
   return getActiveToolRegistration(name);
+}
+
+/** Work surfaces restrict builtins only; host-owned tools retain their declared contract. */
+export function isToolInWorkMode(name: string, mode: KodaXWorkMode | undefined): boolean {
+  const definition = getActiveToolRegistration(name);
+  return mode !== 'agent' || definition?.source.kind !== 'builtin' || definition.workSurface !== 'coding';
 }
 
 export function getToolRegistrations(name: string): RegisteredToolDefinition[] {

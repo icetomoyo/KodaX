@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { countTokens, type CapabilitySearchSnapshot } from '@kodax-ai/agent';
 import type { KodaXToolExecutionContext } from '../types.js';
 import { readOptionalString } from './internal.js';
+import { isMcpCapabilityVisible } from './mcp-visibility.js';
 
 const DEFAULT_SEARCH_LIMIT = 8;
 const DEFAULT_INVENTORY_LIMIT = Number.MAX_SAFE_INTEGER;
@@ -333,16 +334,25 @@ async function searchCapabilitySnapshot(
   const runtime = ctx.extensionRuntime;
   if (!runtime) throw new Error('mcp_search requires an active extension runtime.');
   if (runtime.searchCapabilitySnapshot) {
-    return runtime.searchCapabilitySnapshot('mcp', request.query, {
+    const snapshot = await runtime.searchCapabilitySnapshot('mcp', request.query, {
       kind: request.kind,
       server: request.server,
     });
+    const items = snapshot.items.filter(item => {
+      const id = readString(asRecord(item)?.id);
+      return id === undefined || isMcpCapabilityVisible(id, ctx);
+    });
+    return items.length === snapshot.items.length ? snapshot : { ...snapshot, items,
+      revision: createHash('sha256').update(JSON.stringify([snapshot.revision, items])).digest('hex') };
   }
   const items = await runtime.searchCapabilities('mcp', request.query, {
     kind: request.kind,
     server: request.server,
   });
-  return { items, complete: false, freshness: 'unknown' };
+  return { items: items.filter(item => {
+    const id = readString(asRecord(item)?.id);
+    return id === undefined || isMcpCapabilityVisible(id, ctx);
+  }), complete: false, freshness: 'unknown' };
 }
 
 export async function toolMcpSearch(

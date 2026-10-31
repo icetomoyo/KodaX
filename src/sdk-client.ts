@@ -13,6 +13,8 @@ import { runtimeClientPrincipal, readExitReceipts, verifyExitReceipt } from './r
 export type { KodaXClientHostAuthorization, KodaXClientExecutionRequest, RuntimeExecutionAuthorization, KodaXClientWorkflowHostPolicy } from './client-host-authorization.js';
 
 export type * from '@kodax-ai/coding/client-contract';
+export { createExecutionProfile } from './execution-profile.js';
+export type { RuntimeExecutionProfile, RuntimeExecutionProfileSource } from './client-host-authorization.js';
 export type { RuntimeClientInfo } from './runtime-client-info.js';
 
 export interface ConnectKodaXClientOptions {

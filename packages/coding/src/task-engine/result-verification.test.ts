@@ -59,15 +59,16 @@ afterEach(async () => {
 });
 
 describe('managed result verification', () => {
-  it('keeps an explicit SA System prompt exact and sends profile requirements as request-only context', async () => {
+  it.each([undefined, 'intersect'] as const)('keeps an explicit SA System prompt exact and sends profile requirements as request-only context (%s)', async workModePolicy => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-profile-review-'));
     directories.push(directory);
     const provider = new ResultProvider();
     const stream = vi.spyOn(provider, 'stream');
     registerModelProvider('result-verification-test', () => provider);
     vi.stubEnv('KODAX_RESULT_VERIFICATION_TEST_KEY', 'test-only');
-    const result = await runKodaX({ provider: 'result-verification-test', reasoningMode: 'off',
+    const result = await runKodaX({ provider: 'result-verification-test', reasoningMode: 'off', workMode: 'agent',
       context: { executionCwd: directory, gitRoot: directory, repoIntelligenceMode: 'off',
+        workModePolicy, toolVisibilityPolicy: ({ name }) => !['bash', 'write', 'edit', 'spawn_agent'].includes(name),
         systemPromptOverride: 'EXACT_PROFILE_SYSTEM', agentProfile: { verification: {
           requiredChecks: ['Inspect the current rendered chart.'],
         } }, taskVerification: { summary: 'Compare current results with the brief.' },

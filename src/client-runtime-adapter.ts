@@ -3,6 +3,7 @@ import { memoryProposalRevision } from '@kodax-ai/agent';
 import type { KodaXRuntime } from './sdk-runtime.js';
 import { toClientConfig, toClientSessionSettings } from './client-settings.js';
 import type { KodaXClientExecutionRequest, KodaXClientHostAuthorization, RuntimeExecutionAuthorization } from './client-host-authorization.js';
+import { createExecutionProfile, hostToolMetadata } from './execution-profile.js';
 
 /**
  * FEATURE_298 T35 — project a connected runtime as the product client. The
@@ -19,8 +20,33 @@ export function toKodaXProductClient(
     const input = structuredClone(request.input);
     // Untyped Product/IPC inputs cannot supply Host authority.
     for (const key of ['authorization', 'credential', 'hostTools', 'providerCredential',
-      'providerCredentialAccess', 'origin', 'trustedRunId', 'workflowHostPolicy']) delete (input as unknown as Record<string, unknown>)[key];
-    const authorization = await authorizeExecution?.({ ...request, input } as Request, runtime);
+      'providerCredentialAccess', 'origin', 'trustedRunId', 'workflowHostPolicy', 'profile', 'agentProfile',
+      'workModePolicy', 'toolVisibilityPolicy', 'tools']) delete (input as unknown as Record<string, unknown>)[key];
+    const requireProfileContract = () => {
+      if ((runtime.capabilities?.productExecutionProfile as { version?: number } | undefined)?.version !== 2) {
+        throw Object.assign(new Error('Execution profiles require an upgraded Host.'), { code: 'daemon_upgrade_required' });
+      }
+    };
+    const authorization = await authorizeExecution?.({ ...request, input } as Request, {
+      get identity() { return runtime.identity; },
+      credentials: runtime.credentials, hostTools: runtime.hostTools,
+      async createExecutionProfile(context, hostTools = []) {
+        requireProfileContract();
+        if (!runtime.catalog.executionTools) throw new Error('Host tool catalog is unavailable.');
+        if (input.sessionId === undefined) throw new Error('An execution profile requires a Session identity.');
+        const catalog = await runtime.catalog.executionTools(input.sessionId);
+        const names = new Set(catalog.map(tool => tool.name));
+        for (const tool of hostTools) {
+          if (names.has(tool.name)) throw new Error(`Host tool collides with a registered tool: ${tool.name}`);
+          names.add(tool.name);
+        }
+        return createExecutionProfile(context, [...catalog, ...hostTools.map(hostToolMetadata)]);
+      },
+    });
+    if ((authorization?.profile !== undefined || authorization?.tools !== undefined)
+      && (runtime.capabilities?.productExecutionProfile as { version?: number } | undefined)?.version !== 2) {
+      throw Object.assign(new Error('Execution profiles require an upgraded Host.'), { code: 'daemon_upgrade_required' });
+    }
     return { ...input, ...(authorization === undefined ? {} : { authorization: structuredClone(authorization) }) };
   };
   return {
@@ -246,13 +272,18 @@ export function toKodaXProductClient(
     config: {
       read: async () => toClientConfig(await runtime.config.read()),
       readEffective: async () => {
-        const { entries } = await runtime.config.readEffective();
+        const { entries, application } = await runtime.config.readEffective();
         const project = <T>(key: string, value: T) => ({
           value, source: entries[key]?.source ?? 'unset',
           applied: entries[key]?.applied === true || entries[key]?.present !== true,
         });
         const chain = entries.fallbackProviders?.value;
         return {
+          ...(application === undefined ? {} : { application,
+          maxOutputTokens: project('maxOutputTokens', entries.maxOutputTokens?.value === undefined ? undefined : Number(entries.maxOutputTokens.value)),
+          disablePromptCache: project('disablePromptCache', entries.disablePromptCache?.value === undefined ? undefined
+            : entries.disablePromptCache.value === true || entries.disablePromptCache.value === '1'),
+          lsp: project('lsp', entries.lsp?.value === undefined ? undefined : entries.lsp.value === true || entries.lsp.value === '1'), }),
           stallLog: project('stallLog', entries.stallLog?.value === '1' || entries.stallLog?.value === true),
           fallbackProviders: project('fallbackProviders', typeof chain === 'string'
             ? chain.split(',').map(item => item.trim()).filter(Boolean)

@@ -1,5 +1,6 @@
 import {
   connectKodaXClient,
+  createExecutionProfile,
   ensureKodaXClient,
   type ConnectKodaXClientOptions,
   type EnsureKodaXClientOptions,
@@ -38,10 +39,22 @@ const authorizedOptions: ConnectKodaXClientOptions = { clientInfo,
       void purpose; void sessionId;
       return undefined;
     });
-    return { credential: { leaseId: lease.id, mode: 'scoped', providers: ['fixture'] } };
+    return { credential: { leaseId: lease.id, mode: 'scoped', providers: ['fixture'] },
+      profile: await services.createExecutionProfile({ toolVisibilityPolicy: tool => tool.sideEffect === 'readonly' }) };
   },
 };
 void authorizedOptions;
+const partnerProfile = createExecutionProfile({
+  agentProfile: { id: 'partner', verification: { requiredChecks: ['expert review'] } },
+});
+void partnerProfile;
+async function readAppliedMode(runId: string) {
+  const mode: 'agent' | 'coding' | 'script' | undefined = (await client.runs.read(runId)).workMode;
+  const boundary: 'immediate' | 'next_run' | 'extension_reload' | 'restart' | undefined = (await client.config.readEffective()).application?.maxOutputTokens;
+  const scope: readonly string[] | undefined = (await client.runs.read(runId)).effectiveConfig?.toolScope;
+  return { mode, boundary, scope };
+}
+void readAppliedMode;
 const workflowPolicy: KodaXClientWorkflowHostPolicy = { maxAgents: 16, tokenBudget: 0 };
 const workflowOptions: ConnectKodaXClientOptions = {
   authorizeExecution: async () => ({ workflowHostPolicy: workflowPolicy }),

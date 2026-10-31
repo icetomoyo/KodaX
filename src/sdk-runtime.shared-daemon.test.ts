@@ -128,130 +128,25 @@ describe('F269 shared Runtime contracts', () => {
     await runtime.close();
   });
 
-  it('rejects Partner sessions at the shared daemon service boundary without mutating them', async () => {
+  it('admits Partner sessions without rewriting identity and keeps unknown surfaces denied', async () => {
     const homeDir = makeHome();
     const sessionsDir = path.join(homeDir, 'sessions');
-    const partner = await createKodaXRuntime({ homeDir, sessionsDir });
-    const session = await partner.sessions.create({
-      sessionId: 'partner-session',
-      title: 'Partner',
-      surface: 'partner',
-      profileId: 'kodax-space.partner',
-    });
-    const unknownSurface = await partner.sessions.create({
-      sessionId: 'unknown-surface-existing',
-      title: 'Unknown surface',
-      surface: 'custom-product',
-    });
-    await partner.close();
-    const sessionFile = fs.readdirSync(sessionsDir, { recursive: true })
-      .map((entry) => path.join(sessionsDir, entry.toString()))
-      .find((entry) => path.basename(entry) === `${session.id}.jsonl`);
-    if (!sessionFile) throw new Error(`Missing persisted Partner session: ${session.id}`);
-    const before = fs.readFileSync(sessionFile, 'utf8');
-
-    const daemon = await createKodaXRuntime({
-      homeDir,
-      sessionsDir,
-      profile: 'coder',
-      sharedDaemonHost: true,
-    });
-
-    await expect(daemon.sessions.create({
-      sessionId: 'cli-coder-session',
-      title: 'Coder session',
-      surface: 'cli',
-    })).resolves.toMatchObject({ id: 'cli-coder-session', surface: 'cli' });
-    await expect(daemon.sessions.create({
-      sessionId: 'cli-coder-session',
-      title: 'Must not overwrite',
-      surface: 'cli',
-    })).rejects.toMatchObject({ code: 'conflict' });
-    await expect(daemon.sessions.load('cli-coder-session')).resolves.toMatchObject({
-      title: 'Coder session',
-    });
-    await expect(daemon.sessions.create({
-      sessionId: 'unknown-surface-session',
-      surface: 'custom-product',
-    })).rejects.toMatchObject({ code: 'session_not_admitted' });
-
-    await expect(daemon.sessions.load(session.id)).rejects.toMatchObject({
-      code: 'session_not_admitted',
-    });
-    await expect(daemon.sessions.getSettingsVersioned(session.id)).rejects.toMatchObject({
-      code: 'session_not_admitted',
-    });
-    await expect(daemon.sessions.transcript(session.id)).rejects.toMatchObject({
-      code: 'session_not_admitted',
-    });
-    const peek = vi.spyOn(FileSessionStorage.prototype, 'peek');
-    const fullCapture = vi.spyOn(FileSessionStorage.prototype, 'readFullSnapshot');
-    const stalePageCursor = Buffer.from(JSON.stringify({
-      kind: 'conversation_cache_page',
-      view: 'conversation',
-      revision: 'sha256:stale',
-      end: 0,
-    }), 'utf8').toString('base64url');
-    for (const deniedSessionId of [session.id, unknownSurface.id]) {
-      peek.mockClear();
-      fullCapture.mockClear();
-      await expect(daemon.sessions.conversationPage({
-        sessionId: deniedSessionId,
-        limit: 1,
-      })).rejects.toMatchObject({ code: 'session_not_admitted' });
-      await expect(daemon.sessions.conversationPage({
-        sessionId: deniedSessionId,
-        cursor: stalePageCursor,
-        limit: 1,
-      })).rejects.toMatchObject({ code: 'session_not_admitted' });
-      await expect(daemon.sessions.conversationEntryChunk({
-        sessionId: deniedSessionId,
-        revision: 'sha256:stale',
-        entryIndex: 0,
-      })).rejects.toMatchObject({ code: 'session_not_admitted' });
-      expect(peek).not.toHaveBeenCalled();
-      expect(fullCapture).not.toHaveBeenCalled();
-    }
-    peek.mockRestore();
-    fullCapture.mockRestore();
-    await expect(daemon.sessions.fork({ sessionId: session.id })).rejects.toMatchObject({
-      code: 'session_not_admitted',
-    });
-    await expect(daemon.sessions.rewind({ sessionId: session.id })).rejects.toMatchObject({
-      code: 'session_not_admitted',
-    });
-    await expect(daemon.sessions.compact({ sessionId: session.id })).rejects.toMatchObject({
-      code: 'session_not_admitted',
-    });
-    await expect(daemon.sessions.delete(session.id)).rejects.toMatchObject({
-      code: 'session_not_admitted',
-    });
-    await expect(daemon.runs.start({ sessionId: session.id, prompt: 'must not run' }))
-      .rejects.toMatchObject({ code: 'session_not_admitted' });
-    await expect(daemon.runs.list({ sessionId: session.id }))
-      .rejects.toMatchObject({ code: 'session_not_admitted' });
-    await expect(daemon.sessions.create({
-      sessionId: 'partner-via-daemon',
-      surface: 'partner',
-    })).rejects.toMatchObject({ code: 'session_not_admitted' });
-    await expect(daemon.sessions.create({
-      sessionId: 'partner-profile-via-daemon',
-      surface: 'code',
-      profileId: 'kodax-space.partner',
-    })).rejects.toMatchObject({ code: 'session_not_admitted' });
-    await expect(daemon.sessions.create({
-      sessionId: 'partner-hyphen-profile-via-daemon',
-      surface: 'code',
-      profileId: 'kodax-space-partner',
-    })).rejects.toMatchObject({ code: 'session_not_admitted' });
-    await expect(daemon.sessions.list()).resolves.not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: session.id })]),
-    );
-    await expect(daemon.status.snapshot()).resolves.toMatchObject({
-      sessions: expect.not.arrayContaining([expect.objectContaining({ id: session.id })]),
-    });
-    expect(fs.readFileSync(sessionFile, 'utf8')).toBe(before);
-    await daemon.close();
+    const original = await createKodaXRuntime({ homeDir, sessionsDir });
+    const session = await original.sessions.create({ sessionId: 'partner-session', title: 'Partner',
+      surface: 'partner', profileId: 'kodax-space.partner' });
+    const unknown = await original.sessions.create({ surface: 'custom-product' });
+    await original.close();
+    const daemon = await createKodaXRuntime({ homeDir, sessionsDir, profile: 'coder', sharedDaemonHost: true });
+    try {
+      await expect(daemon.sessions.load(session.id)).resolves.toMatchObject({ surface: 'partner', profileId: 'kodax-space.partner' });
+      await expect(daemon.sessions.getSettingsVersioned(session.id)).resolves.toBeDefined();
+      await expect(daemon.sessions.transcript(session.id)).resolves.toBeDefined();
+      await expect(daemon.sessions.list()).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ id: session.id })]));
+      await expect(daemon.sessions.create({ surface: 'partner', profileId: 'kodax-space.partner' })).resolves.toMatchObject({ surface: 'partner' });
+      await expect(daemon.sessions.create({ surface: 'custom-product' })).rejects.toMatchObject({ code: 'session_not_admitted' });
+      await expect(daemon.sessions.load(unknown.id)).rejects.toMatchObject({ code: 'session_not_admitted' });
+      expect(await daemon.catalog.executionTools!(session.id)).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'write' })]));
+    } finally { await daemon.close(); }
   });
 
   it('joins with an atomic snapshot and emits each later event once', async () => {

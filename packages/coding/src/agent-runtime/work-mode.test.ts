@@ -1,5 +1,9 @@
 import { afterAll, expect, it, vi } from 'vitest';
 import { fileURLToPath } from 'node:url';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { SkillRegistry } from '@kodax-ai/agent';
 import type { RunnableTool } from '@kodax-ai/agent';
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
 import { buildToolExecutionContext } from './tool-execution-context.js';
@@ -10,6 +14,9 @@ import { executeTool, getRegisteredToolDefinition, listToolDefinitions, register
 import { getBuiltinToolDefinition, KODAX_TOOLS } from '../tools/registry.js';
 import { buildWorkerStableInstructions } from '../agents/worker-role-prompt.js';
 import type { KodaXManagedWorkBudget, KodaXOptions } from '../types.js';
+import { executeToolCall } from './tool-dispatch.js';
+import { buildRuntimeSessionState } from './runtime-session-state.js';
+import type { ExtensionRuntimeContract, RunScopedToolDefinition } from '../extensions/runtime-contract.js';
 
 afterAll(() => shutdownDefaultLspService());
 
@@ -62,12 +69,148 @@ it('preserves SDK profiles, custom declarations and specialist children instead 
   const contexts: NonNullable<KodaXOptions['context']>[] = [
     { agentProfile: { id: 'partner', instructions: 'Caller-owned contract.' } },
     { currentAgentId: '/root/explorer', excludeTools: ['write', 'edit'] },
+    { currentAgentId: '/root/expert', workModePolicy: 'intersect', agentProfile: { id: 'expert' }, excludeTools: ['write', 'edit'] },
     { systemPromptOverride: 'Caller-owned standalone agent.' },
     { toolVisibilityPolicy: ({ name }) => ['read', 'lsp_definition'].includes(name) },
   ];
   for (const context of contexts) {
     expect(await menu({ workMode: 'agent', context })).toEqual(await menu({ context }));
   }
+});
+
+it('opts a Partner profile into Agent by intersecting its existing tool ceiling', async () => {
+  const context = {
+    agentProfile: { id: 'partner', instructions: 'Caller-owned contract.' },
+    systemPromptOverride: 'Partner system instructions.',
+    workModePolicy: 'intersect' as const,
+    toolVisibilityPolicy: ({ name }: { name: string }) => !['bash', 'write', 'edit', 'spawn_agent'].includes(name),
+  };
+  const tools = await menu({ workMode: 'agent', context });
+  expect(tools.map(tool => tool.name)).not.toContain('repo_overview');
+  expect(tools.map(tool => tool.name)).not.toContain('bash');
+  expect(tools.map(tool => tool.name)).toContain('read');
+  const { ctx } = assembly({ workMode: 'agent', context });
+  expect(ctx.workMode).toBe('agent');
+  expect(ctx.agentProfile).toBe(context.agentProfile);
+  expect(ctx.toolVisibilityPolicy).toBe(context.toolVisibilityPolicy);
+});
+
+it('keeps allowed Partner Skills, research, connectors, Artifacts and expert tools behind existing authorization', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'kodax-partner-mode-'));
+  try {
+    const skillDirectory = join(directory, 'skills', 'partner-research');
+    await mkdir(skillDirectory, { recursive: true });
+    await writeFile(join(skillDirectory, 'SKILL.md'), '---\nname: partner-research\ndescription: Research guidance\n---\nCite the primary evidence.');
+    const skillRegistry = new SkillRegistry(directory, { projectPaths: [join(directory, 'skills')],
+      userPaths: [], pluginPaths: [], builtinPath: join(directory, 'builtin') });
+    await skillRegistry.discover();
+    const hostNames = ['space_connector_search', 'space_artifact_create', 'space_expert_verify'];
+    const runTools: RunScopedToolDefinition[] = [...hostNames, 'space_forbidden'].map(name => ({
+      name, description: `Partner ${name}`, inputSchema: { type: 'object', properties: {} },
+      capabilityId: `host:partner:${name}`, sideEffect: 'mutates-state', planModeAllowed: false,
+    }));
+    const executeCapability = vi.fn<ExtensionRuntimeContract['executeCapability']>(async (_provider, id) => ({
+      kind: 'tool', content: `completed:${id}`,
+    }));
+    const runtime = { listRunTools: () => runTools, executeCapability } as Partial<ExtensionRuntimeContract> as ExtensionRuntimeContract;
+    const childTools = ['spawn_agent', 'send_message', 'followup_task', 'wait_agent', 'list_agents', 'interrupt_agent', 'agent_output'];
+    const forbidden = [...specialized, 'changed_diff_bundle', 'lsp_prepare_call_hierarchy',
+      'bash', 'write', 'edit', 'multi_edit', 'insert_after_anchor', 'undo', ...childTools, 'grep', 'space_forbidden'];
+    const options: KodaXOptions = { provider: 'offline-fixture', workMode: 'agent', extensionRuntime: runtime,
+      skillDynamicContext: { disable: true }, context: { executionCwd: directory, skillRegistry,
+        agentProfile: { id: 'partner', instructions: 'Keep the Partner contract.' }, workModePolicy: 'intersect',
+        excludeTools: ['grep'], toolVisibilityPolicy: tool => !childTools.includes(tool.name)
+          && tool.name !== 'space_forbidden' && !['mutates-fs', 'mutates-shell'].includes(tool.sideEffect),
+      } };
+    const { ctx } = assembly(options);
+    const allowed = ['skill', 'web_search', ...hostNames];
+    const wireNames = (await menu(options)).map(tool => tool.name);
+    expect(wireNames).toEqual(expect.arrayContaining(allowed));
+    for (const name of forbidden) expect(wireNames).not.toContain(name);
+    expect(await executeTool('tool_search', { query: `select:${forbidden.join(',')}` }, ctx)).not.toContain('<function>');
+    for (const name of allowed) {
+      expect(await executeTool('tool_search', { query: `select:${name}` }, ctx)).toContain(`"name":"${name}"`);
+    }
+    const beforeToolExecute = vi.fn(async (_name: string): Promise<string | undefined> => undefined);
+    const worker = buildRunnerAgentChain(ctx, undefined, undefined, undefined, undefined, { beforeToolExecute }).worker;
+    const bridge = worker.tools!.find(tool => tool.name === 'tool_call') as RunnableTool;
+    const active = [...wireNames, ...forbidden]; // A caller's stale inventory cannot grant authority.
+    const state = buildRuntimeSessionState({ activeTools: active, modelSelection: {} });
+    for (const name of forbidden) {
+      expect((await bridge.execute({ name, input: {} }, { agent: worker })).isError).toBe(true);
+      expect(await executeToolCall({ beforeToolExecute }, { id: name, name, input: {} }, ctx, state, active)).toContain('not active');
+      expect(await executeToolCall({ beforeToolExecute }, { id: name, name: 'tool_call', input: { name, input: {} } }, ctx, state, active)).toContain('not active');
+    }
+    expect(beforeToolExecute).not.toHaveBeenCalled();
+    expect(executeCapability).not.toHaveBeenCalled();
+    expect((await bridge.execute({ name: 'skill', input: { skill: 'partner-research' } }, { agent: worker })).content)
+      .toContain('Cite the primary evidence.');
+    vi.stubEnv('KODAX_WEB_SEARCH_ENDPOINT', 'https://search.invalid/?q={query}');
+    const fetch = vi.fn(async () => new Response('<a class="result__a" href="https://evidence.invalid/">Primary evidence</a>'));
+    vi.stubGlobal('fetch', fetch);
+    expect((await bridge.execute({ name: 'web_search', input: { query: 'evidence' } }, { agent: worker })).content)
+      .toContain('Primary evidence');
+    expect(fetch).toHaveBeenCalledOnce();
+    for (const name of hostNames) {
+      expect((await bridge.execute({ name, input: {} }, { agent: worker })).content).toContain(`completed:host:partner:${name}`);
+      expect(await executeToolCall({ beforeToolExecute }, { id: name, name, input: {} }, ctx, state, active))
+        .toContain(`completed:host:partner:${name}`);
+    }
+    expect(executeCapability).toHaveBeenCalledTimes(6);
+    beforeToolExecute.mockResolvedValue('[Tool Error] Partner authorization denied');
+    expect((await bridge.execute({ name: 'space_artifact_create', input: {} }, { agent: worker })).content).toContain('authorization denied');
+    expect(await executeToolCall({ beforeToolExecute }, { id: 'denied', name: 'space_artifact_create', input: {} }, ctx, state, active))
+      .toContain('authorization denied');
+    expect(executeCapability).toHaveBeenCalledTimes(6);
+    expect(ctx.skillDynamicContext).toBe(options.skillDynamicContext);
+    expect(ctx.skillRegistry).toBe(skillRegistry);
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it('rejects excluded tools before dispatch or permission callbacks even with a stale active inventory', async () => {
+  const service = new LspService({ servers: [] });
+  const definition = vi.spyOn(service, 'getDefinition').mockResolvedValue('must not execute');
+  const beforeToolExecute = vi.fn(async () => undefined);
+  const { ctx } = assembly({ workMode: 'agent', context: {
+    workModePolicy: 'intersect', agentProfile: { id: 'partner' }, lspService: service,
+    toolVisibilityPolicy: ({ name }) => name !== 'read',
+  } });
+  const active = ['tool_call', 'tool_describe', 'lsp_definition', 'read'];
+  const state = buildRuntimeSessionState({ activeTools: active, modelSelection: {} });
+  for (const name of ['lsp_definition', 'read']) {
+    const input = { path: fileURLToPath(import.meta.url), line: 1, limit: 1 };
+    for (const call of [{ id: name, name, input },
+      { id: `bridge:${name}`, name: 'tool_call', input: { name, input } }]) {
+      expect(await executeToolCall({ beforeToolExecute }, call, ctx, state, active)).toContain('not active');
+    }
+  }
+  expect(beforeToolExecute).not.toHaveBeenCalled();
+  expect(definition).not.toHaveBeenCalled();
+});
+
+it('keeps Partner child-agent controls denied even when an AMA actor host is available', async () => {
+  const names = ['spawn_agent', 'send_message', 'followup_task', 'wait_agent', 'list_agents', 'interrupt_agent', 'agent_output'];
+  const options: KodaXOptions = { provider: 'offline-fixture', agentMode: 'ama', workMode: 'agent', context: {
+    workModePolicy: 'intersect', agentProfile: { id: 'partner' },
+    toolVisibilityPolicy: ({ name }) => !names.includes(name),
+  } };
+  const { ctx, worker } = assembly(options);
+  try {
+    expect(ctx.actorControl).toBeDefined();
+    await buildRunnerLlmAdapter(options, async (_messages, tools) => {
+      for (const name of names) expect(tools.map(tool => tool.name)).not.toContain(name);
+      return { textBlocks: [{ text: 'Partner answer' }], toolBlocks: [] };
+    })([{ role: 'user', content: 'Research' }], worker);
+    expect(await executeTool('tool_search', { query: `select:${names.join(',')}` }, ctx)).not.toContain('<function>');
+    const bridge = worker.tools!.find(tool => tool.name === 'tool_call') as RunnableTool;
+    for (const name of names) {
+      expect((await bridge.execute({ name, input: {} }, { agent: worker })).isError).toBe(true);
+    }
+  } finally { await ctx.actorHost?.close(); }
 });
 
 it('keeps discovery and bridge consistent without deleting underlying SDK or provider capabilities', async () => {

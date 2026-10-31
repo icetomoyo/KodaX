@@ -1,12 +1,5 @@
-/**
- * FEATURE_247 (R4) — effective managed-task configuration snapshot.
- *
- * Both managed-task entry paths (SA via `dispatchManagedTask`, AMA via
- * `runManagedTaskViaRunner`) call `emitEffectiveTaskConfig` once at run start so
- * an SDK embedder subscribed to `KodaXEvents.onEffectiveConfig` can confirm the
- * intended profile entered the pipeline and inspect its tool scope + verification
- * requirements. Children (raw `runKodaX`) never reach these entry points, so the
- * event fires once per top-level managed task.
+/** Effective configuration emitted at actual tool assembly/model request boundaries.
+ * Each snapshot replaces the previous one; live tool projection may change between requests.
  */
 
 import type {
@@ -15,6 +8,7 @@ import type {
   KodaXOptions,
   KodaXTaskVerificationContract,
 } from '../types.js';
+import { resolveWorkMode } from '../work-mode.js';
 
 export function resolveEffectiveVerification(
   options: KodaXOptions,
@@ -49,15 +43,19 @@ export function emitEffectiveTaskConfig(
   args: {
     readonly agentMode: KodaXAgentMode;
     readonly toolScope: readonly string[];
+    readonly modelToolScope?: readonly string[];
   },
 ): void {
   const cb = options.events?.onEffectiveConfig;
   if (!cb) return;
+  const verification = resolveEffectiveVerification(options);
   const config: KodaXEffectiveTaskConfig = {
     agentMode: args.agentMode,
-    agentProfile: options.context?.agentProfile,
+    workMode: resolveWorkMode(options),
+    ...(options.context?.agentProfile === undefined ? {} : { agentProfile: options.context.agentProfile }),
     toolScope: args.toolScope,
-    verification: resolveEffectiveVerification(options),
+    ...(args.modelToolScope === undefined ? {} : { modelToolScope: args.modelToolScope }),
+    ...(verification === undefined ? {} : { verification }),
   };
   try {
     cb(config);

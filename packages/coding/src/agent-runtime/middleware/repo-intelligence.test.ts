@@ -18,10 +18,11 @@ import { buildAutoRepoIntelligenceContext } from './repo-intelligence.js';
 const plan = { decision: { primaryTask: 'review', complexity: 'simple' } } as ReasoningPlan;
 afterEach(() => vi.resetAllMocks());
 
-it('skips automatic repository scans in Agent while preserving caller-owned repository material', async () => {
+it.each([{}, { workModePolicy: 'intersect' as const, agentProfile: { id: 'partner' }, toolVisibilityPolicy: () => true }])('skips automatic repository scans in Agent while preserving caller-owned repository material (%j)', async context => {
   const caller = 'Caller supplied repository facts and instructions.';
   sources.buildRepoIntelligenceContext.mockResolvedValue('unrequested automatic repository overview');
   const result = await buildAutoRepoIntelligenceContext({ provider: 'offline-fixture', workMode: 'agent', context: {
+    ...context,
     executionCwd: 'C:/agent-work-surface', repoIntelligenceContext: caller,
   } }, plan, true);
   expect(result).toBe(caller);

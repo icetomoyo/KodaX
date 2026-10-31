@@ -1985,7 +1985,7 @@ describe('runtime daemon dispatcher', () => {
           runBoundHostTools: { version: 2, materializedAgentTools: true },
           coderOwnerFencing: { version: 1 },
           crashOutcomeModel: { version: 2 },
-          sessionAdmission: { version: 1, partnerDenied: true },
+          sessionAdmission: { version: 1, surfaces: expect.arrayContaining(['partner']), partnerDenied: false },
           completeObservationSnapshot: { version: 1, queuedInputs: true },
           connectionLifecycle: { version: 1 },
           runLifecycleControl: {
@@ -3369,6 +3369,7 @@ const METHOD_SMOKE_PARAMS = {
   'agents.events': { sessionId: 'session-1', afterSequence: 0 },
   'agents.wait': { sessionId: 'session-1', afterSequence: 0, timeoutMs: 1 },
 
+  'tool.catalog': { sessionId: 'session-1' },
 } satisfies Record<RuntimeDaemonMethod, unknown>;
 
 function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
@@ -3817,6 +3818,7 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
       },
     },
     catalog: {
+      executionTools: async () => [],
       async reasoningEfforts() { return ['auto', 'high']; },
       async probeReasoningEfforts(input) { return input.efforts.map((effort) => ({ effort, status: 'accepted' as const })); },
       async forgetCapabilities() {},

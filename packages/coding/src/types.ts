@@ -147,7 +147,8 @@ import type {
 // `sideEffect` contract. Imported from the leaf `./tools/side-effect.js` (not
 // `./tools/types.js`) so there is no import cycle — `tools/types.ts` imports
 // `KodaXToolExecutionContext` back from here.
-import type { ToolSideEffect } from './tools/side-effect.js';
+import type { KodaXEffectiveTaskConfig, KodaXAgentProfile, KodaXTaskVerificationContract, KodaXToolVisibilityPolicy } from './execution-profile-contract.js';
+export type { KodaXEffectiveTaskConfig, KodaXAgentProfile, KodaXTaskCapabilityHint, KodaXTaskVerificationCriterion, KodaXRuntimeVerificationContract, KodaXTaskVerificationContract, KodaXToolVisibilityMeta, KodaXToolVisibilityPolicy } from './execution-profile-contract.js';
 import type { KodaXAgentScope } from './construction/agent-resolver.js';
 
 // Re-export all types from @kodax-ai/agent
@@ -759,7 +760,7 @@ export interface KodaXEvents {
   onError?: (error: Error, meta?: KodaXActivityEventMeta) => void;
   onManagedTaskStatus?: (status: KodaXManagedTaskStatusEvent & Partial<KodaXLiveEventMeta>) => void;
   /**
-   * FEATURE_247 (R4) — fired once at managed-task start with the effective
+   * FEATURE_247 (R4) — emitted at actual tool assembly/model request boundaries with the effective
    * profile / tool scope / verification snapshot. Lets an SDK embedder confirm
    * the intended profile (e.g. Partner) actually entered the SDK managed task
    * and diagnose the tools + verification constraints it was given.
@@ -1003,77 +1004,6 @@ export interface KodaXRepoRoutingSignals {
   lowConfidence: boolean;
   capability?: KodaXRepoIntelligenceCapability;
   trace?: KodaXRepoIntelligenceTrace;
-}
-
-export interface KodaXTaskCapabilityHint {
-  kind: 'skill' | 'tool' | 'command' | 'workflow';
-  name: string;
-  details?: string;
-}
-
-export interface KodaXTaskVerificationCriterion {
-  id: string;
-  label: string;
-  description: string;
-  threshold: number;
-  weight: number;
-  requiredEvidence?: string[];
-}
-
-export interface KodaXRuntimeVerificationContract {
-  startupCommand?: string;
-  cwd?: string;
-  env?: Record<string, string>;
-  readySignal?: string;
-  baseUrl?: string;
-  uiFlows?: string[];
-  apiChecks?: string[];
-  dbChecks?: string[];
-  fixtures?: string[];
-}
-
-export interface KodaXTaskVerificationContract {
-  summary?: string;
-  instructions?: string[];
-  requiredEvidence?: string[];
-  requiredChecks?: string[];
-  capabilityHints?: KodaXTaskCapabilityHint[];
-  rubricFamily?:
-    | 'code-review'
-    | 'frontend'
-    | 'product-completeness'
-    | 'functionality'
-    | 'code-quality'
-    // FEATURE_247: profile-scoped families for non-coding SDK surfaces (e.g.
-    // KodaX-Space Partner research). Additive — never selected unless a caller
-    // sets it, so default coding verification is unchanged.
-    | 'partner-research';
-  criteria?: KodaXTaskVerificationCriterion[];
-  runtime?: KodaXRuntimeVerificationContract;
-}
-
-export interface KodaXAgentProfile {
-  /** Surface/profile label, e.g. `'code'` | `'partner'`. Opaque to the core. */
-  readonly surface?: string;
-  /** Stable profile id (UUID or stable name). Opaque to the core. */
-  readonly id?: string;
-  /** Profile version. Opaque to the core. */
-  readonly version?: string;
-  /** Human-facing display name. Opaque to the core. */
-  readonly name?: string;
-  /**
-   * Partner behavior instructions injected into the AMA/AMAW Worker role prompt
-   * (prepended). The SA path uses `context.systemPromptOverride` instead — this
-   * field is the AMA-path equivalent so a Partner profile behaves consistently
-   * across both execution modes.
-   */
-  readonly instructions?: string;
-  /**
-   * Profile-default verification standard. Merged with per-task
-   * `context.taskVerification` (per-task fields win) before reaching the Sidecar
-   * Verifier.
-   */
-  readonly verification?: KodaXTaskVerificationContract;
 }
 
 export type KodaXSkillProjectionConfidence = 'high' | 'medium' | 'low';
@@ -1458,22 +1388,6 @@ export interface KodaXManagedTaskStatusEvent {
   idleWaitingPendingCount?: number;
 }
 
-/**
- * FEATURE_247 (R4) — effective managed-task configuration snapshot, emitted once
- * at run start via {@link KodaXEvents.onEffectiveConfig} so an SDK embedder can
- * (a) assert the intended profile actually entered the SDK managed task and
- * (b) diagnose which tools + verification standard are in force.
- */
-export interface KodaXEffectiveTaskConfig {
-  readonly agentMode: KodaXAgentMode;
-  /** SDK-consumer profile driving the run; undefined ⇒ default Coding Agent. */
-  readonly agentProfile?: KodaXAgentProfile;
-  /** Tool names visible to the model for this run. */
-  readonly toolScope: readonly string[];
-
-  readonly verification?: KodaXTaskVerificationContract;
-}
-
 export interface KodaXVerificationScorecardCriterion {
   id: string;
   label: string;
@@ -1567,31 +1481,6 @@ export interface ManagedMutationTracker {
   /** Set to true after scope reflection has been injected once. Prevents repeated injection. */
   reflectionInjected?: boolean;
 }
-
-/**
- * FEATURE_247 (R2) — a minimal, stable per-tool view handed to a
- * {@link KodaXToolVisibilityPolicy}. Only the load-bearing declarative metadata
- * is exposed (never the handler / full schema) so the contract stays stable as
- * tools evolve. `sideEffect` distinguishes readonly / reads-network /
- * mutates-* classes; `planModeAllowed` marks query-shaped tools.
- */
-export interface KodaXToolVisibilityMeta {
-  readonly name: string;
-  readonly sideEffect: ToolSideEffect;
-  readonly planModeAllowed: boolean;
-}
-
-/**
- * FEATURE_247 (R2) — an SDK-consumer predicate evaluated for every candidate
- * tool BEFORE the model-visible tool list is built. Return `false` to hide a
- * tool from the model. Space uses this to express profile-scoped rules such as
- * "only readonly + reads-network visible" and to default-deny anything it does
- * not explicitly recognize, without enumerating a name list that drifts as the
- * SDK adds tools. Covers SDK builtin + host-registered + extension + MCP tools
- * uniformly (each carries a required `sideEffect`). A tool with no resolvable
- * metadata is hidden (fail-closed).
- */
-export type KodaXToolVisibilityPolicy = (tool: KodaXToolVisibilityMeta) => boolean;
 
 export interface KodaXSkillScriptInputFile {
   /** Workspace-relative source path copied into the isolated staging directory. */
@@ -2134,6 +2023,13 @@ export interface KodaXContextOptions {
    */
   toolVisibilityPolicy?: KodaXToolVisibilityPolicy;
   /**
+   * Opt an explicit SDK profile/prompt/tool policy into the selected workMode.
+   * Intersects the mode's tool surface with existing host restrictions; never
+   * grants tools or permissions. Omitted preserves the legacy Coding path.
+   * Specialist children (currentAgentId set) retain their declared scope.
+   */
+  workModePolicy?: 'intersect';
+  /**
    * FEATURE_067 v3: Override the entire system prompt for this run.
    * When set, buildSystemPromptSnapshot is skipped — only this string is used.
    * Used for child agents that need a focused, lightweight prompt instead of the full system.
@@ -2271,7 +2167,7 @@ export interface KodaXSkillDynamicContextPolicy {
 export type KodaXWorkMode = 'agent' | 'coding' | 'script';
 
 export interface KodaXOptions {
-  /** Opt-in default-root work surface; omitted means Coding. Does not replace SDK profiles or child roles. */
+  /** Root work surface; omitted means Coding. SDK profiles opt in via context.workModePolicy. */
   workMode?: KodaXWorkMode;
   /** Explicit host request; Runtime runs it through ordinary tool permissions without an LLM. */
   toolInvocation?: { readonly name: string; readonly input: Record<string, unknown> };
@@ -2719,7 +2615,7 @@ export type {
 };
 
 export interface KodaXToolExecutionContext {
-  /** Resolved default-root work surface; absent preserves the existing Coding/SDK inventory. */
+  /** Effective work surface; runtime-built contexts always set this. Absent means Coding for standalone tool callers. */
   workMode?: KodaXWorkMode;
   /** Internal run/role execution inventory, before model-only schema projection. */
   discoveryToolNames?: readonly string[];

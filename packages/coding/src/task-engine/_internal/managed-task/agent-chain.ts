@@ -235,7 +235,7 @@ function buildManagedToolCallBridge(
         return rejectCall(`[Tool Error] ${TOOL_CALL_NAME}: ${parsed.error}`);
       }
       const targetDefinition = active.get(parsed.name);
-      if (!targetDefinition) {
+      if (!targetDefinition || !isToolDiscoverable(parsed.name, ctx)) {
         return rejectCall(`[Tool Error] ${parsed.name}: Tool is not active in the current runtime.`);
       }
       if (!runnerCtx?.agent) {
