@@ -204,17 +204,16 @@ const codingSubstrate: PresetDispatcher = async (
 
 /**
  * Default middleware declarations the coding substrate ships with.
- * The substrate body in `agent-runtime/run-substrate.ts` runs each of
- * these as branches today; the declaration list serves as the
- * machine-readable contract that the substrate honours, and lets
+ * The declaration list describes active substrate middleware and lets
  * SDK consumers override (`createDefaultCodingAgent({ middleware: […] })`)
  * without forking the substrate body.
  */
 export const DEFAULT_CODING_MIDDLEWARE: readonly AgentMiddlewareDeclaration[] = Object.freeze([
   Object.freeze({ name: 'autoReroute', enabled: true }),
   Object.freeze({ name: 'mutationReflection', enabled: true }),
-  Object.freeze({ name: 'preAnswerJudge', enabled: true }),
-  Object.freeze({ name: 'postToolJudge', enabled: true }),
+  // Keep the declaration names for compatibility; the V1 judges are retired.
+  Object.freeze({ name: 'preAnswerJudge', enabled: false }),
+  Object.freeze({ name: 'postToolJudge', enabled: false }),
 ]);
 
 /**

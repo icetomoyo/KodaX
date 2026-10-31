@@ -6,8 +6,8 @@
  * Test obligations:
  * - CAP-SESSION-LOAD-001: clean session load produces expected
  *   messages + metadata fields (INTEGRATION-LEVEL — depends on
- *   `storage.load()` fixture-driven flow inside runKodaX; deferred to
- *   substrate-executor migration).
+ *   `storage.load()` inside runKodaX; exercised by the published cold-process
+ *   crash/recovery suite).
  * - CAP-SESSION-LOAD-002: FEATURE_076 normalization drops worker-trace
  *   tails from pre-v0.7.25 sessions (FUNCTION-LEVEL — active here
  *   against `normalizeLoadedSessionMessages`).
@@ -34,9 +34,9 @@ import type { KodaXMessage } from '@kodax-ai/llm';
 import { normalizeLoadedSessionMessages } from '../../task-engine/_internal/round-boundary.js';
 
 describe('CAP-045: session loading + post-load message normalization contract', () => {
-  it.todo(
-    'CAP-SESSION-LOAD-001: clean session storage.load() yields expected messages, title, errorMetadata, and extension state — INTEGRATION-LEVEL, deferred until substrate-executor extracts the session-load step.',
-  );
+  // CAP-SESSION-LOAD-001: tests/bundled-session-crash-recovery.test.mjs loads
+  // real snapshots in three independent processes, retaining title, intent,
+  // error metadata and extension state/records without replaying orphan tools.
 
   it('CAP-SESSION-LOAD-002a: trailing role-prompt-shaped {user, assistant} pair is dropped (Scout/Planner/Generator/Evaluator pattern)', () => {
     const messages: KodaXMessage[] = [

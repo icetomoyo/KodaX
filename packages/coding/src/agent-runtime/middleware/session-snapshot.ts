@@ -255,6 +255,7 @@ async function saveSessionSnapshotWithPolicy(
   //      the SDK consumer's executionCwd rather than process.cwd().
   //   4. `''` — empty string when git resolution fails (legacy behavior).
   let messagesToPersist = data.messages;
+  let titleToPersist = data.title;
   let lineageToPreserve: KodaXSessionLineage | undefined;
   let extensionStateToPersist: KodaXSessionData['extensionState'];
   let extensionRecordsToPersist: KodaXSessionData['extensionRecords'];
@@ -265,6 +266,7 @@ async function saveSessionSnapshotWithPolicy(
       const existing = await options.session.storage.load(sessionId);
       if (existing) {
         messagesToPersist = existing.messages;
+        titleToPersist = existing.title || data.title;
         lineageToPreserve = existing.lineage;
         extensionStateToPersist = existing.extensionState
           ? structuredClone(existing.extensionState)
@@ -278,11 +280,13 @@ async function saveSessionSnapshotWithPolicy(
         extensionStateToPersist = undefined;
         extensionRecordsToPersist = undefined;
       }
-    } catch {
-      messagesToPersist = [];
-      lineageToPreserve = undefined;
-      extensionStateToPersist = undefined;
-      extensionRecordsToPersist = undefined;
+    } catch (storageError) {
+      emitKodaXDiagnostic({ source: 'coding:session-snapshot', level: 'error',
+        message: 'Authoritative history could not be read; error snapshot was not written.',
+        detail: { sessionId, errorName: storageError instanceof Error ? storageError.name : typeof storageError },
+      });
+      if (required) throw storageError;
+      return;
     }
   }
 
@@ -309,14 +313,14 @@ async function saveSessionSnapshotWithPolicy(
     extensionStateToPersist = runtimeSessionSnapshot?.extensionState;
     extensionRecordsToPersist = runtimeSessionSnapshot?.extensionRecords;
   }
-  // The Host owns Session identity; execution cwd must not implicitly move
-  // an existing (including legacy pathless) Session into another project.
+  // The Host owns Session identity, including an existing title; execution
+  // cwd or this turn's prompt must not relabel or move a saved Session.
   try {
     const existing = hostOwnsIdentity ? await options.session.storage.load(sessionId) : undefined;
     if (hostOwnsIdentity && !existing) throw new Error(`Session ${sessionId} was removed before its snapshot could be saved.`);
     await options.session.storage.save(sessionId, {
       messages: messagesToPersist,
-      title: data.title,
+      title: existing?.title || titleToPersist,
       gitRoot: existing ? existing.gitRoot : gitRoot,
       runtimeInfo: existing ? existing.runtimeInfo : runtimeInfo,
       tag: options.session.tag,

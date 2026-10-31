@@ -6,7 +6,7 @@
  * Test obligations:
  * - CAP-EXT-QUEUE-001: queued message reaches next turn (via settleExtensionTurn → appendQueuedRuntimeMessages)
  * - CAP-EXT-QUEUE-002: extension state persists across turns (per-extension RuntimeSessionState bucket)
- * - CAP-EXT-QUEUE-003: snapshot/restore round-trips (handled in CAP-050; cross-referenced here)
+ * - CAP-EXT-QUEUE-003: extension state/records round-trip; pending prompts are ephemeral
  *
  * Risk: MEDIUM
  *
@@ -24,8 +24,7 @@
  * agent.ts:330-414 + 458-468 + 594-620 — pre-FEATURE_100 baseline — during FEATURE_100 P2)
  *
  * Time-ordering constraint: AFTER current turn's tool results;
- * `settleExtensionTurn` runs BEFORE microcompact (CAP-014); queue drain runs AFTER settle.
- * The four call sites in agent.ts (success / COMPLETE / BLOCKED / error) all preserve this order.
+ * queue drain runs AFTER settle. Automatic microcompact ordering is retired.
  *
  * STATUS: ACTIVE since FEATURE_100 P2.
  */
@@ -45,6 +44,7 @@ import {
 } from '../middleware/extension-queue.js';
 import {
   buildRuntimeSessionState,
+  snapshotRuntimeSessionState,
   type RuntimeSessionState,
 } from '../runtime-session-state.js';
 
@@ -282,6 +282,19 @@ describe('CAP-020: createExtensionRuntimeSessionController — controller mutato
     expect(controller.getModelSelection()).toEqual({ provider: 'vertex' });
   });
 
-  it.todo('CAP-EXT-QUEUE-003: session snapshot includes extension state; restore reproduces the same per-extension buckets and pending queue (covered by CAP-050 round-trip via createRuntimeExtensionState/snapshotRuntimeExtensionState)');
-  it.todo('CAP-EXT-QUEUE-004: settleExtensionTurn runs BEFORE microcompact (CAP-014) — call-site ordering invariant lives in agent.ts P2 / runner-frame in P3');
+  it('CAP-EXT-QUEUE-003: durable extension state survives reconstruction without replaying the ephemeral prompt queue', () => {
+    const state = freshState();
+    state.extensionState.set('fixture', new Map([['visits', 7]]));
+    state.extensionRecords.push({ id: 'r1', extensionId: 'fixture', type: 'retained', ts: 1, data: { value: 42 } });
+    state.queuedMessages.push({ role: 'user', content: 'Do not replay after restart' });
+    const snapshot = snapshotRuntimeSessionState(state)!;
+    expect(snapshot).not.toHaveProperty('queuedMessages');
+    const restored = buildRuntimeSessionState({ loadedExtensionState: snapshot.extensionState,
+      loadedExtensionRecords: snapshot.extensionRecords, activeTools: ['read'], modelSelection: {} });
+    expect(restored.extensionState.get('fixture')?.get('visits')).toBe(7);
+    expect(restored.extensionRecords[0]?.data).toEqual({ value: 42 });
+    expect(restored.queuedMessages).toEqual([]);
+  });
+  // CAP-EXT-QUEUE-004: current settle -> drain ordering is exercised above by
+  // CAP-EXT-QUEUE-ORDERING. The retired automatic microcompact epilogue is not a gate.
 });

@@ -23,17 +23,15 @@
  *   assistant tool-call message. The reformulated obligations above
  *   match the real contract.
  *
- * CAP-MICROCOMPACT-002 (per-turn epilogue ordering) and 003 (5+ turn
- * pruning across multiple tool_results) stay `it.todo` — the first is
- * a call-site invariant inside runKodaX, the second is integration-
- * level coverage that the function-level 001a already implies.
+ * CAP-MICROCOMPACT-002 is retired: automatic per-turn invocation was removed.
+ * CAP-MICROCOMPACT-003 below checks explicit compatibility opt-in over many turns.
  *
  * Risk: MEDIUM
  *
  * Class: 1
  *
  * Verified location: packages/agent/src/compaction/microcompaction.ts:67
- * (`microcompact`). Called from agent.ts per-turn epilogue.
+ * (`microcompact`). Retained as an explicit compatibility helper.
  *
  * STATUS: ACTIVE-PARTIAL since FEATURE_100 P3.6o.
  */
@@ -160,13 +158,20 @@ describe('CAP-014: microcompact per-turn cleanup contract', () => {
     expect(compacted).toBe(recent);
   });
 
-  it.todo(
-    'CAP-MICROCOMPACT-002: microcompact runs in per-turn epilogue, not pre-stream — INTEGRATION-LEVEL ordering invariant inside runKodaX, deferred to substrate-executor migration.',
-  );
-
-  it.todo(
-    'CAP-MICROCOMPACT-003: redundant tool-result echoes pruned across 5+ turn sessions — single-tool-result aging is covered by 001a; multi-tool-result pruning across multiple turns is integration-level.',
-  );
+  // CAP-MICROCOMPACT-002 retired: the current substrate does not call the
+  // compatibility helper automatically. Its default preserves evidence (001a).
+  it('CAP-MICROCOMPACT-003: explicit legacy opt-in ages multiple old results while preserving recent output', () => {
+    const messages = agedToolResultMessages('first old output');
+    messages.splice(2, 0, { role: 'assistant', content: [{ type: 'tool_use', id: 'second', name: 'read', input: {} }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'second', content: 'second old output' }] });
+    messages.push({ role: 'assistant', content: [{ type: 'tool_use', id: 'recent', name: 'read', input: {} }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'recent', content: 'recent output' }] });
+    const compacted = microcompact(messages, ACTIVE_MICROCOMPACTION_CONFIG);
+    expect(JSON.stringify(compacted)).not.toContain('first old output');
+    expect(JSON.stringify(compacted)).not.toContain('second old output');
+    expect(JSON.stringify(compacted)).toContain('recent output');
+    expect(JSON.stringify(messages)).toContain('first old output');
+  });
 });
 
 function agedToolResultMessages(content: string): KodaXMessage[] {

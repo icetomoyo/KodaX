@@ -466,3 +466,18 @@ Skill 与 reasoning/cache/history 路径共同保留。未推送或发布。
 合并后的主仓库验收及实际检查点见 FEATURE_302 测试指南 J 节。Space 保留独立
 `codex/provider-credentials-space` 分支；本次 Root 合入不代表重新认证 Space 构建或
 完成其 persona/Partner/profile 产品迁移。Space 发布仍须先锁定匹配的已发布 SDK 字节。
+
+### 2026-10-31 恢复与凭证覆盖补齐（未发布）
+
+Root 在 `a65249d8` 审计后补上真实文件、独立 Main/Host 进程的凭证迁移中断、
+刷新期间换号、撤销后冷恢复，以及公开执行入口的崩溃快照/历史修复组合回归；
+默认 Judge 的兼容声明改为禁用，与已退役的运行时一致，不新增模型调用。
+组合测试还发现并修复了 Host 快照用本轮输入覆盖旧会话标题的问题，沿用已有读取结果保留标题。
+managed Run 连续失败计数改为继承并递增，错误快照完成保存后再返回；历史加载失败时不写空快照。
+旧配置与 API_KEY 入口继续有效；原 sealed 凭证保留，当前选择和撤销墓碑优先，
+恢复不重放旧工具或未提交的用户消息。具体验收及仍待实机证据见
+[Issue 371 回归指南](test-guides/ISSUE_371_v0.7.97_REGRESSION_GUIDE.md)。
+Space 仍在 `codex/provider-credentials-space` 独立分支接手，配套设计子仓仍为
+`8574086208d6b5cc6ff6599c825fe88d986c4dd0`；本轮没有修改 Space 产品代码。
+发布前需锁定包含本轮修复的已发布 SDK，重跑生产安装包升级、账号保持、撤销、
+Host 重启和退出恢复门禁。Root 的离线组合回归不能代替真实服务登录或 Space 成品验收。

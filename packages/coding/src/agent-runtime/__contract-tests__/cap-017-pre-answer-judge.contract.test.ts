@@ -19,7 +19,7 @@
  * detection; regression here would silently stall or over-trigger the
  * pre-answer judge).
  *
- * Deferred (call-site / latch territory — P3):
+ * Retired V1 invocation obligations (disabled metadata is pinned by coding-preset.test.ts):
  * - CAP-PRE-ANSWER-JUDGE-002 `preAnswerJudgeConsumed` latch — lives at
  *   agent.ts call site, not in the predicate.
  * - CAP-PRE-ANSWER-JUDGE-003 non-auto mode skip — same call-site gate.
@@ -126,6 +126,6 @@ describe('CAP-017: pre-answer judge contract', () => {
     expect(looksLikeReviewProgressUpdate('   ')).toBe(false);
   });
 
-  it.todo('CAP-PRE-ANSWER-JUDGE-002: preAnswerJudgeConsumed latch prevents second invocation in same turn (call-site / P3 substrate)');
-  it.todo('CAP-PRE-ANSWER-JUDGE-003: non-auto reasoning mode → judge skipped (call-site / P3 substrate)');
+  // CAP-PRE-ANSWER-JUDGE-002/003 retired with V1 judge invocation. The retained
+  // predicates remain compatible; coding-preset.test.ts pins disabled metadata.
 });

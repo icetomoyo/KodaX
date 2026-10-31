@@ -117,6 +117,8 @@ describe('CAP-016: mutation scope reflection contract', () => {
     expect(text.startsWith('\n')).toBe(true);
   });
 
-  it.todo('CAP-MUTATION-REFLECT-003: agent declaration with middleware.mutationScopeReflection: false → no reflection appended even on significant mutation (gate lives at call site / P3 substrate executor)');
-  it.todo('CAP-MUTATION-REFLECT-004: AMA Generator agent (no mutationScopeReflection middleware) does not append reflection — Evaluator owns mutation feedback (Agent declaration territory, P3)');
+  // CAP-MUTATION-REFLECT-003: the explicit false gate and once-only latch run
+  // through applyPostToolProcessing in cap-078-post-tool-processing.contract.test.ts.
+  // CAP-MUTATION-REFLECT-004 retired with the V1 Generator/Evaluator envelope;
+  // current parent-owned reflection uses the same explicit false gate.
 });

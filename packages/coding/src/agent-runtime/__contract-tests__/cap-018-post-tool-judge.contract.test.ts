@@ -7,21 +7,14 @@
  * - CAP-POST-TOOL-JUDGE-001: strong failure evidence triggers reroute
  * - CAP-POST-TOOL-JUDGE-002: weak / no evidence does not trigger
  *
- * Class: 3 — declarable opt-in middleware. Default for `defaultCodingAgent`
- * AND `generatorAgent` (per FEATURE_100 §设计 — give Generator
- * mid-iteration adaptive recovery).
- *
- * The post-tool judge in P2 lives as a CALL-SITE gating block in agent.ts
- * (around line 2080) — `if (mode === 'auto' && !postToolJudgeConsumed &&
- * hasStrongToolFailureEvidence(toolEvidence)) { ... }`. The substrate
- * executor's judge hook chain in P3 will own the gate; for P2 the contract
- * is the **predicate** that gates it.
+ * V1 judge invocation and Generator/Evaluator roles are retired. The default
+ * metadata is disabled; this suite retains the exported predicate contract.
  *
  * Active here: `hasStrongToolFailureEvidence` regex matchers — every false
  * positive stalls a happy-path turn, every false negative misses adaptive
  * recovery.
  *
- * Deferred (call-site / latch territory — P3):
+ * Retired invocation obligations:
  * - CAP-POST-TOOL-JUDGE-003 `postToolJudgeConsumed` latch.
  * - CAP-POST-TOOL-JUDGE-004 generatorAgent declaration enablement.
  *
@@ -94,6 +87,6 @@ describe('CAP-018: post-tool judge contract', () => {
     expect(hasStrongToolFailureEvidence('Exception')).toBe(true);
   });
 
-  it.todo('CAP-POST-TOOL-JUDGE-003: postToolJudgeConsumed latch prevents second invocation in same turn (call-site / P3 substrate)');
-  it.todo('CAP-POST-TOOL-JUDGE-004: generatorAgent has middleware.postToolJudge enabled (Agent declaration territory, P3)');
+  // CAP-POST-TOOL-JUDGE-003/004 retired with V1 Generator/Evaluator invocation.
+  // coding-preset.test.ts checks that compatibility metadata advertises false.
 });

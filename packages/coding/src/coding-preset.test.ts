@@ -44,6 +44,13 @@ function makeResult(partial: Partial<KodaXResult>): KodaXResult {
 }
 
 describe('coding-preset', () => {
+  it('does not advertise retired judge model calls as active default middleware', () => {
+    const agent = createDefaultCodingAgent();
+    expect(agent.middleware?.find(entry => entry.name === 'preAnswerJudge')?.enabled).toBe(false);
+    expect(agent.middleware?.find(entry => entry.name === 'postToolJudge')?.enabled).toBe(false);
+    expect(agent.middleware?.find(entry => entry.name === 'mutationReflection')?.enabled).toBe(true);
+  });
+
   it('createDefaultCodingAgent returns an agent with the stable dispatch name', () => {
     const agent = createDefaultCodingAgent();
     expect(agent.name).toBe(DEFAULT_CODING_AGENT_NAME);

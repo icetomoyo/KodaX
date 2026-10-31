@@ -65,6 +65,18 @@ function tool(id: string, name: string, input: Record<string, unknown> = {}): Ko
 }
 
 describe('CAP-078: applyPostToolProcessing — mutation reflection (CAP-016)', () => {
+  it('CAP-MUTATION-REFLECT-003: an explicit false gate preserves the result and does not consume the reflection latch', async () => {
+    const ctx: KodaXToolExecutionContext = { backups: new Map(), mutationTracker: {
+      files: new Map([['a.ts', 50], ['b.ts', 50], ['c.ts', 50]]), totalOps: 0,
+    } };
+    const out = await applyPostToolProcessing({ toolBlocks: [tool('t1', 'write')],
+      resultMap: new Map([['t1', 'wrote files']]), ctx, runtimeSessionState: freshState(),
+      events: {}, emitActiveExtensionEvent: fakeEmitter(), mutationScopeReflection: false,
+    });
+    expect(out.toolResults[0]!.content).toBe('wrote files');
+    expect(ctx.mutationTracker?.reflectionInjected).toBeFalsy();
+  });
+
   it('CAP-POST-TOOL-001a: significant mutation scope on a write tool result → reflection appended once, marker set', async () => {
     const ctx: KodaXToolExecutionContext = {
       backups: new Map(),

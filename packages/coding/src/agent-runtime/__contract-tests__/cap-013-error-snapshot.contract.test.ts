@@ -11,25 +11,18 @@
  *     activated separately in this file so each capability gets a green
  *     check rather than relying on cross-file coverage attribution.
  *
- * Deferred / call-site obligations (cannot be unit-tested at the
- * function level — they live at the call site in `agent.ts` catch block):
+ * Call-site obligations (covered by CAP-082 and the published cold-process
+ * runKodaX recovery tests):
  *
  * - CAP-013-002: persisted messages MUST be the post-cleanup variant
  *   (`cleanupIncompleteToolCalls` + `validateAndFixToolHistory` applied)
  *   so that `/resume` sees a valid history. The contract is at the
  *   call site (agent.ts catch branch around the second saveSessionSnapshot
  *   invocation, currently passing `cleanedMessages` not raw `messages`).
- *   A breadcrumb comment was added at that call site to flag the
- *   regression risk. Activating this contract requires either an
- *   integration test of runKodaX with a forced error or a refactor of
- *   the catch block — both out of P2 scope.
  *
  * - CAP-013-003: storage failure during error persistence MUST NOT mask
- *   the original error. Today storage rejection clobbers the caught
- *   error (function does NOT try/catch around `storage.save`). Will be
- *   addressed in P3 when the substrate executor's terminal hook wraps
- *   `saveSessionSnapshot` in best-effort isolation. See `session-snapshot.ts`
- *   docstring "Open contract gap" for full rationale.
+ *   the original error. `saveSessionSnapshot` absorbs storage failures and emits a
+ *   diagnostic; the active CAP-013-003 test below pins that isolation.
  *
  * - CAP-013-004: consecutiveErrors counter increments across runs.
  *   Tested at integration level (auto-resume tests) — function-level
@@ -42,9 +35,8 @@
  * Verified location: agent-runtime/middleware/session-snapshot.ts (extracted from
  * agent.ts:844-872 — pre-FEATURE_100 baseline — during FEATURE_100 P2)
  *
- * STATUS: ACTIVE since FEATURE_100 P2 for CAP-013-001; remaining
- * obligations stay `it.todo` with explicit deferral notes (NOT
- * placeholders — see prose above).
+ * STATUS: ACTIVE. CAP-082 and the published cold-process crash/recovery suite
+ * cover cleanup and counter accumulation through real file storage.
  */
 
 import {
@@ -84,7 +76,9 @@ describe('CAP-013: error snapshot persistence contract', () => {
     expect(persisted.errorMetadata).toBe(errorMetadata);
   });
 
-  it.todo('CAP-013-002: persisted messages on error path are cleaned (CAP-002) — contract is at agent.ts catch-branch call site, not at this function. Breadcrumb added there. Integration test deferred.');
+  // CAP-013-002: CAP-082 validates catch cleanup. The published runKodaX ->
+  // FileSessionStorage -> independent-process resume boundary is exercised by
+  // tests/bundled-session-crash-recovery.test.mjs (legacy orphan, real crashes).
 
   it('CAP-013-003: storage failure does NOT mask original error — saveSessionSnapshot absorbs storage.save rejections internally (closed in FEATURE_100 P3.6a)', async () => {
     const save = vi.fn().mockRejectedValue(new Error('disk full'));
@@ -125,5 +119,7 @@ describe('CAP-013: error snapshot persistence contract', () => {
     ]);
   });
 
-  it.todo('CAP-013-004: consecutiveErrors counter increments across runs (loaded from prior errorMetadata, +1 each crash) — integration test territory.');
+  // CAP-013-004: bundled-session-crash-recovery.test.mjs checks two independent
+  // crash processes. Legacy history repair resets the old counter once; clean
+  // crash snapshots subsequently increment it. CAP-082 covers helper accounting.
 });

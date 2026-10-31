@@ -15,7 +15,7 @@
  *   (`options.context.repoIntelligenceTrace` OR
  *    `KODAX_REPO_INTELLIGENCE_TRACE === '1'`).
  *
- * Deferred (require fs / git mocking — out of P2 scope):
+ * Source-adapter integration coverage in middleware/repo-intelligence.test.ts:
  * - CAP-REPO-INTEL-002: full-engine bundle path (full integration of
  *   `getRepoPreturnBundle` requires repo-intel runtime mocks).
  * - CAP-REPO-INTEL-003: low-confidence fallback guidance (requires
@@ -31,8 +31,8 @@
  * from agent.ts:2934-3064 — pre-FEATURE_100 baseline — during FEATURE_100 P2)
  *
  * STATUS: ACTIVE since FEATURE_100 P2 for the short-circuit and trace-gating
- * obligations. Deeper API-integration tests stay `it.todo` with explicit
- * deferral notes.
+ * obligations. Full bundle, confidence boundary and source-failure cases run
+ * in middleware/repo-intelligence.test.ts; hot-path budgets have a separate suite.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -184,7 +184,6 @@ describe('CAP-001: repoIntelligenceContext injection contract', () => {
     emitRepoIntelligenceTrace({}, optionsTraceOn, 'routing', carrier);
   });
 
-  it.todo('CAP-REPO-INTEL-002: full autoRepoMode + active-module conditions invoke getRepoPreturnBundle and prepend repoContext (integration — repo-intel runtime mocks deferred to P3 substrate test layer)');
-  it.todo('CAP-REPO-INTEL-003: module/impact confidence < 0.72 triggers fallbackGuidance with the four canonical lines (integration — getModuleContext / getImpactEstimate mocks deferred)');
-  it.todo('CAP-REPO-INTEL-004: best-effort — when underlying repo-intel APIs throw, returns options.context.repoIntelligenceContext passthrough (integration — fault-injection test deferred)');
+  // CAP-REPO-INTEL-002/003/004: executable source-adapter integration cases in
+  // ../middleware/repo-intelligence.test.ts, including the 0.71/0.72 boundary.
 });

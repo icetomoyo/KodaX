@@ -6,7 +6,8 @@
  * Test obligations:
  * - CAP-EDIT-RECOVERY-001: synthesized recovery user-message after anchor failure
  * - CAP-EDIT-RECOVERY-002: write-block on the affected path is enforced
- * - CAP-EDIT-RECOVERY-003: write-block state cleared once a successful re-read lands
+ * - CAP-EDIT-RECOVERY-003: re-reading preserves the write block; only a
+ *   successful anchor edit clears recovery state (CAP-026).
  *
  * The function-level tests here pin every behaviour the substrate executor's
  * tool-error hook chain depends on:
@@ -35,8 +36,7 @@
  * Time-ordering constraint: AFTER tool failure, BEFORE next prompt build.
  * Permission gate (CAP-010) consults write-block state during gate evaluation.
  *
- * STATUS: ACTIVE since FEATURE_100 P2 for state mutation + branch selection;
- * candidate-anchor integration test stays `it.todo`.
+ * STATUS: ACTIVE; the candidate-anchor case uses a real temporary file below.
  */
 
 import os from 'os';
@@ -268,6 +268,7 @@ describe('CAP-015: edit anchor recovery + write-block contract', () => {
     expect(state.editRecoveryAttempts.get(expectedKey)).toBe(3);
   });
 
-  it.todo('CAP-EDIT-RECOVERY-001-CANDIDATES: ≤ 2-attempts branch reads file from disk via inspectEditFailure and includes candidate anchor windows (integration — fs-mock deferred)');
-  it.todo('CAP-EDIT-RECOVERY-003: write-block cleared on successful re-read tool against same path (integration with updateToolOutcomeTracking — agent.ts call site)');
+  // CAP-EDIT-RECOVERY-001-CANDIDATES: real-file case at the start of this suite.
+  // CAP-EDIT-RECOVERY-003: cap-026-tool-outcome-tracking.contract.test.ts checks
+  // successful edits clear state and read/write leave attempts unchanged.
 });

@@ -564,3 +564,187 @@ delay returns, retain those records with the affected read's start/end times
 and concurrent Run IDs. Do not diagnose it by clearing the registry. Temporary
 `DEBUG-371` boundaries were removed. No Sidecar Verifier, memory-finalization,
 UI scroll or sandbox policy behavior changes are part of this fix.
+
+## Skip/TODO remediation after a65249d8 (2026-10-31)
+
+The preceding 98/19 inventory is historical evidence, not a current test count.
+This follow-up addresses the offline cases listed below and removes misleading retired
+contracts. It does not revive V1 Judge/Generator/Evaluator execution, automatic
+microcompact, or persisted queued user prompts. A successful read still does
+not authorize overwriting a file after an anchor-edit failure.
+
+| Original obligation | Executable evidence / disposition |
+| --- | --- |
+| CAP-001 full preturn, confidence, best effort (3) | `middleware/repo-intelligence.test.ts`: full bundle, 0.71/0.72 threshold and all-source failure. Existing Agent short-circuit and 2-second hot-path budget tests remain active. |
+| CAP-013 crash cleanup/counter (2), CAP-045 load (1) | `tests/bundled-session-crash-recovery.test.mjs`: published `runKodaX` and real `FileSessionStorage`, three independent Node processes, legacy orphan repair, two crashes, subsequent resume, title/history/extension state and records retained, no orphan tool execution. File storage deliberately resets the old error counter when it repairs orphan history; later clean crash snapshots increment normally. Persisted provider errors remain redacted. CAP-082 still pins catch cleanup and metadata. |
+| CAP-014 (2) | Multi-result aging under explicit legacy opt-in now runs; the automatic per-turn ordering obligation is retired. Default evidence preservation remains tested. |
+| CAP-015 (2) | Existing real-file candidate-anchor test plus CAP-026 edit-success/read-write outcome tests replace duplicate/stale TODOs. Re-read does not clear write protection. |
+| CAP-016 (2) | CAP-078 now checks the explicit false reflection gate without consuming the latch; existing tests retain once-only behavior. The Generator/Evaluator-specific obligation is retired. |
+| CAP-017/018 (4) | V1 Judge invocation obligations are retired. `coding-preset.test.ts` first failed on active metadata; the minimal production fix marks both compatibility declaration names disabled. Exported predicates and persisted compatibility fields remain. No model request is added. |
+| CAP-020 (2) | A real runtime-state snapshot/reconstruction test retains extension state and records but excludes the ephemeral queue. Existing settle -> drain test is the current ordering contract; automatic microcompact ordering is retired. |
+| CAP-047 (1) | `agent.managed-protocol-terminals.test.ts`: public `runKodaX`, actual extension tool emissions, completion/error/abort/iteration-limit result matrix, merged payload retained. A limit remains `success:true, limitReached:true`, preserving the existing SDK contract. |
+
+`tests/bundled-oauth-recovery.test.mjs` adds three offline composed fixtures for
+OpenAI/ChatGPT, Codex and Copilot. Each uses an actual Windows DPAPI legacy
+registration, the real shared auth file, a separate migration process terminated
+after the target commit, atomic config account selection, the published Product
+Client authorization callback and a separate Host with loopback HTTP. A delayed
+refresh from account A is fenced before switching to B; B survives Host restart,
+old lease IDs cannot become fresh authority, and revocation survives a third
+Host plus an independent Main process. The legacy encrypted bytes and an
+unrelated file key remain intact. Neither the file key nor a deliberately set
+ambient key can replace the revoked selected account. These fixtures exercise
+Main/store/broker/Host recovery; native subscription wire formats remain covered
+by the existing OAuth route/Responses tests. They do not certify remote login,
+service-side refresh/revocation, or browser consent.
+
+Both new bundled files are mandatory entries in `npm run test:bundle`.
+
+The added Product Client crash/restart fixture also exposed a real title
+regression: canonical managed snapshots replaced an existing Session title with
+the current prompt. A public snapshot regression first failed with
+`Existing user title` becoming `test`; the fix preserves the title from the
+already-loaded Host-owned Session, falling back to the prompt only for an empty
+title. It adds no storage read or startup work. The Host fixture retains a
+completed tool-call/result pair, rejects orphan replay and stale lease reuse,
+and requires the Product authorization callback again after Host recreation.
+
+The managed Runner error boundary also failed the new consecutive-crash case
+(`1` instead of `3`): it hard-coded the error counter and fired its save without
+awaiting it. It now retains metadata from the existing load, increments the
+counter, cleans incomplete tool calls, and awaits best-effort error persistence
+before exposing the original failure. Missing current recovery carriers use
+the latest canonical snapshot, which can contain completed answers or queued
+inputs absent from the original resume seed; a failed history load never
+authorizes saving an empty replacement. Ordinary load order and read count stay
+unchanged. `runner-driven-finalization.test.ts` exercises delayed writes, two
+crashes, preserved title/completed tools, and load-failure non-overwrite.
+Its replace-only custom storage also checks extension state/records; error
+snapshots carry the current runtime state, falling back to the known loaded
+extension data when failure precedes runtime-state construction.
+
+The full-file regression caught and rejected an intermediate implementation
+that reused the initial history when a queued turn's prompt/delivery save
+failed. Both pre-existing queue tests failed again without coverage enabled.
+The corrected path retains the existing authoritative-history fallback instead;
+two additional snapshot tests require no write when that fallback read fails
+(best-effort and required callers). Required callers receive the original read
+failure; best-effort error cleanup emits a diagnostic without masking the
+original Run failure. A saved empty fragment never replaces unreadable history.
+
+The three Git relationship cases now execute against the current Windows V2
+native request file: legitimate linked worktree access plus gitfile deny-write,
+oversized metadata refusal without full reads, nested submodule backlink and
+forged relationship refusal. Their fixture profile is isolated so an ambient
+profile-wide AppData read grant cannot conceal whether a relationship was
+authorized. These are policy-construction tests, not an OS enforcement claim.
+
+The ten contradictory Windows V1 tests were removed from the POSIX-only group.
+Eight concern the retired staged WFP runner/account path; active V2 setup,
+verify-only doctor, cutover/repair and controller tests remain. The other two
+assert old encoded-argv/environment plumbing; current exact argv and ambiguous
+environment checks run in `windows-sandbox-v2.test.ts`. The 24 POSIX cases in
+that group are retained. None of this enables an obsolete backend.
+
+Targeted verification: typecheck and complete build (including native artifacts,
+CLI size/input boundary and SDK declarations) passed. Windows sandbox source
+files passed 113 tests with 27 platform skips. The six initial published cold
+recovery tests passed; 512 mixed historical records were ready in 2,456 ms and
+1,521 ms across two generations; the 220-tree/concurrent-history fixture took
+2,543 ms to ready and 45 ms for first history reads. Those timings are isolated
+fixture observations, not universal startup guarantees. Final full regression
+and independent review results are recorded below when complete.
+
+Remaining release evidence is explicit: Linux/macOS/POSIX runs, 25 real Windows
+V2 policy cases on an isolated provisioned runner, artifact rendering, gated
+experiments, real registered OAuth/cloud accounts, and Space's paired production
+installer/SDK upgrade. WSL is unavailable on this machine. Unsupported
+old/new concurrent rotating-grant writers and arbitrary downgrade
+remain outside this acceptance; a new-only tombstone test does not verify an
+old binary's rejection or recovery guidance. A crash before the new auth record
+commits may also leave an ownership-unknown legacy lock directory. It must not
+be stolen on a time heuristic: preserve the sealed registration and fail closed
+until its owner/liveness can be established. This differs from the tested
+post-commit interruption, which resumes from the authoritative current record.
+If ownership cannot be established, an explicit same-account login can create
+a new registration through the normal CLI auth flow; do not replace the chosen
+account with a different saved or ambient credential. This is a documented
+recovery boundary, not a tested old-binary coexistence guarantee.
+The separately un-attributed historical 16-second Session read remains open; this change does
+not claim its cause is fixed. Never clear user registry evidence or credential
+backups to make these gates pass.
+
+### Supplemental remediation verification
+
+The rebuilt published graph passed all 86 bundled cases with file concurrency
+limited to one. The mixed 512-record fixture reached ready in 3,060 ms and
+1,991 ms across two generations; 220 historical trees took 3,424 ms, concurrent
+history reads 61 ms, and restart 2,378 ms. No registry evidence was removed to
+obtain these timings. The strengthened three-service OAuth file was also rerun
+in full: an independent Main proves that account A's rotated credential remains
+usable after switching to B and revoking B, while the configured selection still
+resolves to revoked B and never falls back to A. Three cases passed.
+
+The focused source regression passed 180 cases across seven whole files,
+including both existing queued-turn durability regressions. V8 coverage over
+the three touched production modules measured 80.38% lines; coverage of added
+statement starts was 13/13 and added branch paths 22/27 (81.48%). This is focused
+coverage, not a whole-repository coverage claim.
+
+Chrome was available on this Windows machine. Running the three artifact
+browser files with an explicit `KODAX_ARTIFACT_TEST_BROWSER` passed all 12
+previously skipped cases, without using a user's browser profile. This covers
+actual local browser pixels for the existing PDF/DOCX/PPTX/render fixtures; the
+LibreOffice conversion fixture still uses its declared conversion stub.
+Default-environment full runs retain these 12 skips, so supplementary browser
+evidence must be accounted for separately or by whole-file replacement.
+
+One additional stale contract, CAP-094, still asserted that every middleware
+declaration was enabled. Its expectation now retains the four declaration names
+and pins active routing/reflection to true and retired Judges to false. The
+whole seven-case file passed after correction; production bytes did not change.
+The final source inventory uses this explicit file-level rerun rather than
+describing the earlier failed assertion as a clean first invocation.
+
+## Final remediation acceptance (2026-10-31)
+
+The frozen production implementation completed the full default source run:
+1,370 files, 18,800 passed, one failed CAP-094 retired-metadata assertion,
+85 skipped and zero TODOs (2,561.98 seconds, two workers, no retries). That
+assertion was subsequently corrected and its whole seven-case file passed.
+Replacing that file and the three explicitly enabled browser files gives the
+final case-level inventory: **18,813 passed, zero failed, 73 skipped, zero
+TODOs**, with no failed files. The replacement case sets were checked; only
+CAP-094's descriptive title changed under its existing capability ID. This is
+an explicit whole-file acceptance composite, not one clean initial invocation.
+
+The 73 remaining default skips comprise 41 POSIX/Linux, 25 provisioned real
+Windows V2 and seven manual experiment/capture cases. Six real-provider
+integration files are separately excluded by the default tier and are not
+included in these counts. Real OAuth/cloud identities, old-binary coexistence,
+the ownership-unknown legacy lock boundary, Space's production installer and
+the historical unattributed 16-second Session read retain the limitations above.
+
+Source/test typechecks, the full native/bundle/declaration build and the strict
+startup input/size guards passed. The isolated CLI is 5,176,750 bytes against
+the unchanged 5,177,344-byte budget. The rebuilt SDK passed all 86 bundled
+cases; its strengthened OAuth file passed all three independent-Main checks.
+An earlier in-progress full run and intentional RED probes remain separate
+evidence and are not substituted for this frozen implementation's acceptance.
+
+## Standards
+
+Independent v5 review of the fixed patch found no remaining hard requirement
+violations or actionable smells. Drain budgets, fixture failure diagnostics,
+owned-process cleanup and exact Host exit verification were corrected. The
+two-field private recovery carrier preserves the original load order and adds
+no public configuration or dependency between packages. Findings remaining: 0.
+
+## Spec
+
+Independent v5 review found no remaining actionable deviation from the accepted
+offline recovery/credential requirements. Canonical queued history, title,
+extension state, error counters and read-failure non-overwrite are covered;
+retaining account A does not authorize fallback from revoked account B.
+Unexecuted platform/service/installer and old-binary boundaries are explicit.
+Findings remaining: 0. The acceptance numbers above were finalized after review.
