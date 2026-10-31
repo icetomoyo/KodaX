@@ -24,6 +24,25 @@ const result = (calls: KodaXToolUseBlock[] = [], text = ''): KodaXStreamResult =
 });
 const tool = (id: string, name: string, input: Record<string, unknown>): KodaXToolUseBlock => ({ type: 'tool_use', id, name, input });
 
+it('identifies an outside mutation path without rejecting a corrected in-scope edit or rewriting arguments', () => {
+  for (const workspace of ['/tmp/fixture', 'C:\\fixture']) {
+    const paths = workspace.startsWith('C:') ? path.win32 : path.posix;
+    for (const name of ['write', 'edit', 'multi_edit', 'insert_after_anchor']) {
+      const input = { path: paths.resolve(workspace, '../other/src/store.js') };
+      const original = structuredClone(input);
+      const denial = checkNaturalTool(workspace, name, input, false);
+      expect(denial).toContain('Path leaves the fixture workspace.');
+      expect(denial).toContain('Correct the path');
+      expect(denial).toContain('does not authorize outside access');
+      expect(input).toEqual(original);
+      expect(checkNaturalTool(workspace, name, { path: 'src/store.js' }, false)).toBeNull();
+      expect(checkNaturalTool(workspace, name, { path: 'src/store.js' }, true)).not.toBeNull();
+      expect(checkNaturalTool(workspace, name, { path: 'tests/basic.test.js' }, false, 'specific', PRODUCT_CASES['output-retention'].files)).toContain('protected');
+      expect(checkNaturalTool(workspace, name, input, false, 'legacy')).toBe('Only root source files and new tests may be changed.');
+    }
+  }
+});
+
 it('recovers oversized test output using the existing isolated output binding without permitting outside reads', async () => {
   vi.stubEnv('NODE_ENV', 'production');
   const directory = await root();
@@ -121,22 +140,27 @@ it('continues the next Run from the previous model view inside one Runtime and r
   expect(fetcher).not.toHaveBeenCalled();
 });
 
-it('distinguishes a missing edit path from denied effects and permits a corrected root edit', async () => {
+it.each([
+  { label: 'missing', invalid: { edits: [{}, 'old_string'] }, reason: 'non-empty path' },
+  { label: 'outside', invalid: { path: '../other/src/client.js', old_string: 'old', new_string: 'new' }, reason: 'Path leaves the fixture workspace.' },
+])('distinguishes a $label edit path from denied effects and permits a corrected root edit', async ({ invalid, reason }) => {
   for (const workspace of ['/tmp/fixture', 'C:\\fixture']) {
     for (const name of ['edit', 'multi_edit', 'insert_after_anchor', 'write']) {
       for (const invalid of [undefined, '', '   ', 42]) {
         expect(checkNaturalTool(workspace, name, { path: invalid }, false)).toContain('non-empty path');
         expect(checkNaturalTool(workspace, name, { path: invalid }, true)).toContain('Only root source files');
       }
-      expect(checkNaturalTool(workspace, name, { path: '../outside.js' }, false)).toContain('Only root source files');
+      expect(checkNaturalTool(workspace, name, { path: '../outside.js' }, false)).toContain('Path leaves the fixture workspace.');
       expect(checkNaturalTool(workspace, name, { path: 'tests/basic.test.js' }, false, 'specific', PRODUCT_CASES['tenant-cache'].files)).toContain('protected');
     }
   }
   vi.stubEnv('NODE_ENV', 'production');
   const record = await runNaturalRuntime(await root(), 'tenant-cache', async (input, _signal, index) => {
-    if (index === 0) return result([tool('missing-path', 'edit', { edits: [{}, 'old_string'] })]);
+    if (index === 0) return result([tool('invalid-path', 'edit', invalid)]);
     if (index === 1) {
-      expect(JSON.stringify(input.messages)).toContain('non-empty path');
+      const receipt = input.messages.flatMap(message => Array.isArray(message.content) ? message.content : [])
+        .find(block => block.type === 'tool_result' && block.tool_use_id === 'invalid-path');
+      expect(receipt).toMatchObject({ is_error: true, content: expect.stringContaining(reason) });
       return result([tool('valid-repair', 'edit', { path: 'src/client.js', old_string: 'const identity = key;', new_string: 'const identity = JSON.stringify([tenant, key]);' })]);
     }
     expect(index).toBe(2);
@@ -709,6 +733,55 @@ it('stops at the shared request cap and records the incomplete task without manu
   expect(record.verification.oracle.status).toBe(1);
   expect(record.protectedUnchanged).toBe(true);
 }, 45_000);
+
+it('separates an outer cutoff during temporary verification from a restored second Run without inventing success', async () => {
+  vi.stubEnv('NODE_ENV', 'production');
+  const fetcher = vi.fn(() => { throw new Error('Offline budget replay forbids network'); });
+  vi.stubGlobal('fetch', fetcher);
+  const definition = PRODUCT_CASES['output-retention'];
+  const entry = definition.entry, fixed = definition.golden[entry]!;
+  const temporary = definition.files[entry]!.replace('text: preview', 'text');
+  for (const cap of [5, 8]) {
+    const directory = await root();
+    const record = await runNaturalRuntime(directory, 'output-retention', async (input, _signal, index) => {
+      if (index === 0) return result([
+        tool('repair', 'write', { path: entry, content: fixed }),
+        tool('regression', 'write', { path: 'tests/owners.test.js', content:
+          "import test from 'node:test';import assert from 'node:assert/strict';import {createOutputStore} from '../src/index.js';test('owners stay isolated',()=>{const s=createOutputStore();const a=s.publish('a','alpha');const b=s.publish('b','beta');assert.equal(s.read('b',a.id),undefined);s.release('a');assert.equal(s.read('b',b.id),'beta');});\n" }),
+      ]);
+      if (index === 1 || index === 4 || index === 6) return result([tool(`tests-${index}`, 'bash', { command: 'node --test' })]);
+      if (index === 2) return result([], '修复后本地测试已通过。');
+      if (index === 3) return result([tool('temporary-baseline', 'write', { path: entry, content: temporary })]);
+      if (index === 5) {
+        expect(JSON.stringify(input.messages.at(-1))).toContain('Exit: 1');
+        return result([tool('restore', 'write', { path: entry, content: fixed })]);
+      }
+      expect(index).toBe(7);
+      expect(JSON.stringify(input.messages.at(-1))).toContain('Exit: 0');
+      return result([], '临时反证后已恢复修复，并重新运行测试通过。');
+    }, { limits: { calls: cap, tools: 12, timeoutMs: 30_000 },
+      followUps: [{ prompt: '再确认会话隔离的修复与验证结论。', permissionMode: 'full-access' }] });
+    expect(record.counts.requests).toBe(cap);
+    expect(record.protectedUnchanged).toBe(true);
+    expect(record.runs[1]).toMatchObject({ requestBudget: { limit: cap, remainingBefore: cap - 3, remainingAfter: 0 } });
+    if (cap === 5) {
+      expect(record.error).toContain('budget-censored: shared request cap');
+      expect(record.runs.map(run => run.phase)).toEqual(['completed', 'failed']);
+      const rejection = record.events.find(event => event.kind === 'provider-budget-rejected');
+      expect(rejection).toMatchObject({ contextKind: 'root', runIndex: 1, requestIndex: 5, callsLimit: 5, remainingCalls: 0 });
+      expect(JSON.stringify(rejection?.lastMessage)).toContain('Exit: 1');
+      expect(await fs.readFile(path.join(directory, 'workspace', entry), 'utf8')).toBe(temporary);
+      expect(record.verification.oracle.status).toBe(1);
+    } else {
+      expect(record.error).toBeNull();
+      expect(record.runs.map(run => run.phase)).toEqual(['completed', 'completed']);
+      expect(record.events.some(event => event.kind === 'provider-budget-rejected')).toBe(false);
+      expect(await fs.readFile(path.join(directory, 'workspace', entry), 'utf8')).toBe(fixed);
+      expect(record.verification.oracle.status).toBe(0);
+    }
+  }
+  expect(fetcher).not.toHaveBeenCalled();
+}, 90_000);
 
 it('returns a bridged refusal unchanged and allows the next legal read', async () => {
   vi.stubEnv('NODE_ENV', 'production');

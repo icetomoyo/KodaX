@@ -43,6 +43,9 @@ function checkNaturalToolPolicy(workspace: string, name: string, input: Record<s
     }
     const paths = /^[A-Za-z]:[/\\]/.test(workspace) ? path.win32 : path;
     const target = typeof input.path === 'string' ? paths.relative(workspace, paths.resolve(workspace, input.path)).replaceAll('\\', '/') : '';
+    if (!readOnly && feedback === 'specific' && checkComplexTool(workspace, name, input, false) === 'Path leaves the fixture workspace.') {
+      return 'Path leaves the fixture workspace. No operation ran. Correct the path if the intended file is inside the workspace and already permitted; this does not authorize outside access or changes to protected files.';
+    }
     if (readOnly || !/^(?:src|tests?)\/.+\.(?:js|mjs)$/.test(target)) return 'Only root source files and new tests may be changed.';
     if (!target.startsWith('src/') && Object.keys(fixtureFiles).some(file => file.toLowerCase() === target.toLowerCase())) return 'Original public fixture files are protected; add a new regression test.';
     return null;
@@ -129,7 +132,8 @@ export async function runNaturalRuntime(directory: string, id: NaturalCaseId | P
   const protectedFiles = Object.keys(fixtureFiles).filter(file => !file.startsWith('src/'));
   const original = new Map(await Promise.all(protectedFiles.map(async file => [file, await fs.readFile(path.join(workspace, file), 'utf8')] as const)));
   const events: Record<string, unknown>[] = [];
-  const runs: { sessionId: string; phase: string; requests: number; finalText: string }[] = [];
+  const runs: { sessionId: string; phase: string; requests: number; finalText: string;
+    requestBudget: { limit: number; remainingBefore: number; remainingAfter: number } }[] = [];
   const calls: { index: number; kind: 'root' | 'child' | 'auxiliary'; input: FrozenInput; result?: KodaXStreamResult; error?: string; wallMs?: number }[] = [];
   const counts = { requests: 0, rootRequests: 0, childRequests: 0, auxiliaryRequests: 0, tools: 0, proposedTools: 0, scriptLeaves: 0, spawns: 0, maxConcurrentRequests: 0 };
   let concurrent = 0;
@@ -176,10 +180,14 @@ export async function runNaturalRuntime(directory: string, id: NaturalCaseId | P
       try {
         const combined = requestSignal ? AbortSignal.any([signal, requestSignal]) : signal;
         combined.throwIfAborted();
-        if (counts.requests >= limits.calls) return stop('budget-censored: shared request cap');
         const attribution = currentProviderRequestAttribution();
         const kind = tools.some(tool => ['report_stall_judgment', 'commit_episode_learning_review'].includes(tool.name)) ? 'auxiliary'
           : attribution?.kind === 'actor_turn' && attribution.actorPath !== '/root' ? 'child' : 'root';
+        if (counts.requests >= limits.calls) {
+          events.push({ kind: 'provider-budget-rejected', contextKind: kind, runIndex: runs.length,
+            requestIndex: counts.requests, callsLimit: limits.calls, remainingCalls: 0, lastMessage: structuredClone(messages.at(-1)) });
+          return stop('budget-censored: shared request cap');
+        }
         // Child tools can carry executable SDK metadata. Providers consume only
         // these three definition fields; do not clone the handler into the wire snapshot.
         const input = structuredClone({ messages, tools: tools.map(({ name, description, input_schema }) => ({ name, description, input_schema })), system });
@@ -227,7 +235,8 @@ export async function runNaturalRuntime(directory: string, id: NaturalCaseId | P
       const settled = await handle.result;
       phase = settled.phase; success = settled.result?.success === true; finalText = settled.result?.lastText ?? '';
       if (settled.error) error ??= `${settled.error.name}: ${settled.error.message}`;
-      runs.push({ sessionId: session.id, phase: settled.phase, requests: counts.requests - startRequests, finalText });
+      runs.push({ sessionId: session.id, phase: settled.phase, requests: counts.requests - startRequests, finalText,
+        requestBudget: { limit: limits.calls, remainingBefore: Math.max(0, limits.calls - startRequests), remainingAfter: Math.max(0, limits.calls - counts.requests) } });
       if (settled.phase !== 'completed' || error) break;
     }
   } catch (cause) { error ??= cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause); abort.abort(cause); }
