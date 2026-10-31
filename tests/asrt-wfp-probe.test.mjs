@@ -54,16 +54,18 @@ test('SDK ASRT avoids repeated in-range ephemeral allocations and retains its pr
   assert.ok([...listeners].every((server) => !server.listening));
 });
 
-for (const [code, failures, succeeds] of [
+for (const [code, failures, succeeds, collisions = 0] of [
   ['EADDRINUSE', 1, true], ['EACCES', 1, true], ['EADDRINUSE', 5, false], ['EMFILE', 1, false],
+  ['EACCES', 1, true, 1],
 ]) {
-  test(`ASRT handles ${failures} ${code} bindings with bounded distinct candidates`, async (t) => {
+  test(`ASRT handles ${failures} ${code} bindings with ${collisions} extra collisions and bounded distinct candidates`, async (t) => {
     const originalListen = Server.prototype.listen;
     const ports = [];
     t.mock.method(Server.prototype, 'listen', function (...args) {
       ports.push(args[0]);
-      if (ports.length <= failures) {
-        queueMicrotask(() => this.emit('error', Object.assign(new Error(code), { code })));
+      if (ports.length <= failures + collisions) {
+        const failureCode = ports.length <= failures ? code : 'EADDRINUSE';
+        queueMicrotask(() => this.emit('error', Object.assign(new Error(failureCode), { code: failureCode })));
         return this;
       }
       return Reflect.apply(originalListen, this, args);
@@ -78,7 +80,10 @@ for (const [code, failures, succeeds] of [
     });
     if (succeeds) await verification;
     else await assert.rejects(verification, code === 'EMFILE' ? /EMFILE/ : /in 5 attempts/);
-    assert.equal(ports.length, failures + Number(succeeds));
+    // A real bind after the injected errors can also collide with another
+    // process. Success must remain within the existing five-attempt limit.
+    if (succeeds) assert.ok(ports.length >= failures + collisions + 1 && ports.length <= 5);
+    else assert.equal(ports.length, failures);
     assert.equal(new Set(ports).size, ports.length);
     assert.ok(ports.every((port) => port >= 1024 && (port < 60080 || port > 60143)));
   });
