@@ -404,3 +404,8 @@ T12-I 在独立 Root 分支整合另一线程已提交的 `0fa38e5b2`，保留�
 Session Host 目录求值。现有 Space 私有授权函数只消费 credentials，其类型准确声明
 这一窄依赖，未伪造新方法，也未完成另一线程负责的 persona/Partner/profile 产品迁移。
 Space 接手时同时携带 H/I 提交、保留来源选择测试；不要用旧的“共享文件优先”策略覆盖它们。
+
+T12-J 已将这些 Root 接缝与另一线程 `a9587af7e` 的 MCP/Skill 修复整合到本地 `KodaX`
+主分支，并同步设计子仓。Root 的合并后验收另记 FEATURE_302 测试指南 J 节；I 中的
+Space 计数仍是该独立检查点的历史证据。本轮 Space 产品代码继续保留在 `da531f0a`，
+由负责线程接手后续合入、persona/Partner/profile 和生产打包，未推送或发布。

@@ -1430,3 +1430,49 @@ is performed here. Carry the separate `docs/features` repository commit with Roo
 
 Local paired checkpoints: Space I `da531f0aa30ef636c16e109b183944439d7cc278` (includes H history),
 design repository `22bf9bf3332317a147fcb96595b8f42019bb12e4` (retains upstream `0f831024`).
+
+## T12-J local main integration — 2026-10-31
+
+User authorized safe local Root/main and design-submodule integration, post-merge regression and
+review, while retaining Space on its independent handoff branch and prohibiting push/publication.
+At the new preflight, main had advanced to `a9587af7eb930b5eb5708fd197a31f439a520025`: the other
+chat's completed MCP/Skill merge, after I's `0fa38e5b2`. The original Root and design checkouts
+were clean. These new commits were first merged into the isolated parity branch, preserving both
+parents and their behavior; no file was resolved by choosing one side wholesale.
+
+The automatically combined intersections retain authorized MCP-result restoration before
+capacity accounting, physical provider/history/reasoning-cache binding, actual Host configHome
+Skill lookup, persona/SA behavior, and the existing tool/profile/permission/owner fences.
+The integration adds no product behavior, provider option or dependency beyond the two reviewed
+parents, and does not relax their contracts.
+The isolated candidate passed packages/build, source/test typechecks, 27 files / 629 focused tests
+and four strict CLI resource/budget checks. CLI size is 5,176,120 bytes against the unchanged
+5,177,344-byte strict guard. Independent Spec and Standards reviews found no issues in either
+parent's delta or the merged tree `7b7506f85694d73e1fb30ab1b1769e6273386c02`.
+
+The local main branch `KodaX` was fast-forwarded only after checking its exact expected HEAD,
+clean worktree and ancestry, to `9674047c4a95f3d175c3206ea4113ec7ef42311a`, whose parents are
+`8ec41f03f` and `a9587af7e`. The design repository imported the accepted local objects from the
+isolated design clone, then fast-forwarded from `0f831024` to `22bf9bf`; no remote fetch, reset,
+force, stash, or overwrite was needed. Both actual main checkouts were clean afterwards.
+The design repository's old local `main` (`6afb99a`) was also ancestry-checked and atomically
+fast-forwarded with its expected old value, then attached at the same `22bf9bf` checkout; its
+remote-tracking refs were not changed. Subsequent design updates use ordinary fast-forward merges.
+
+Main's new cloud dependencies were absent before integration. `npm ci --no-audit --no-fund`
+installed the committed lockfile without editing it. Build and subsequent verification run in
+the actual main checkout, not just the isolated source clone. Source/build manifests are captured
+before and after the main suite to detect concurrent changes. The source suite uses two workers,
+matching the latest main acceptance baseline, with `--retry=0`. No assertion, deadline or gate is relaxed.
+
+Post-merge complete source passed in the actual main checkout: 1,362 files passed / six skipped;
+18,777 tests passed / 98 skipped / 19 todo, zero failures, 2,737.45 seconds. The main HEAD and tree
+stayed exactly `9674047c` / `7b7506f8`. All 3,267 non-Markdown tracked files and all 262 build files
+retained identical raw bytes; no normalization exception was needed. Their aggregate SHA-256 values
+are respectively `020a5373eef36b8c73e4caadfcf4acdeaabc0236b0402eb8af6702191a7dc13b` and
+`1485834e9ca538cb8b0878e86251a2fe7e32bee6d4fde4aa9dff98bc01a28066`.
+Frozen package/Host gates and final evidence are still in progress. I's counts remain historical
+and do not certify this newer MCP/Skill combination. Space's product
+code remains at independent commit `da531f0a`; this Root-only phase does not rerun or certify a
+new Space build. Keep production byte/version gates and real-account/platform limits intact.
+Raw evidence is OS-temp `kodax-t12j-*`; do not commit manifests or raw runs.

@@ -19,7 +19,7 @@
 | Artifact distribution revision | `2026-10-18` — one `@kodax-ai/kodax` npm package; four `/artifacts` subpaths and resources staged in the main tarball; local implementation, not yet published |
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
 | Current development | `v0.7.97` / `FEATURE_298` — post-alpha.10 Agent/Coding/experimental Script work modes, SDK question/original-output/task-report/streaming alignment, and Windows startup/readiness repairs; [current SDK checklist](SDK_MIGRATION.md#2026-10-29-未发布改动对齐). Cross-platform/manual release verification and Issue 371's historical first-read investigation remain open. |
-| Roadmap updated | `2026-10-31` — FEATURE_302 including T12-H/I account-preserving upgrades and latest Host integration completed offline in the isolated `v0.7.99` branch, unreleased; FEATURE_300 remains Planned |
+| Roadmap updated | `2026-10-31` — FEATURE_302 H/I accepted offline; J safely integrated local Root/design main and passed complete source regression, final package gates pending; unreleased; FEATURE_300 remains Planned |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
 | Total tracked features | `86` |
 | InProgress | `2` |
@@ -528,20 +528,28 @@
 ## Unreleased implementation — FEATURE_302
 
 `v0.7.99` FEATURE_302 including T12-H/I is **Completed for implementation and offline acceptance** on
-`codex/llm-provider-parity`; Released: **unreleased**. No version bump, push or main-branch update.
+the accepted parity history; J has now integrated that history into local `KodaX` main and the
+design submodule. Released: **unreleased**. No version bump, push or publication.
 T01–T12 include the full declared provider/API/OAuth and operation inventory, native cloud
 protocols, identity/history/cache/tool compatibility, hidden Key setup, unified file credentials
 and actual Space provider/stable-client-secret migration including H (`437cac7d`) and I (`da531f0a`). Existing aliases/config/env
 and KodaX route-specific optimizations remain. I integrates committed local main `0fa38e5b2`, preserving
-both histories and the latest Host/profile/recovery contracts. Root full **18,747**, published **71**,
+both histories and the latest Host/profile/recovery contracts. Historical I: Root full **18,747**, published **71**,
 historical cutover/real alpha.11 Host upgrade **4**; Space complete **4,531**, credential/Host slices
 and two actual Electron IPC/restart tests passed. The H coverage evidence remains historical.
 Both review axes have zero remaining findings. This does not certify live account entitlements,
 all service models, macOS/Linux legacy-vault migration, or a production Space installer.
 See [design](features/v0.7.99.md#feature_302-independent-llm-provider-parity) and
 [final evidence](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-i-combined-host-integration-acceptance--2026-10-31).
-Original workspaces remain untouched. Recheck newer commits before main integration; carry the
-separate design gitlink and paired Space commits, then publish/pin the SDK before production packaging.
+I left the original workspaces untouched; J's authorized local main update is recorded below.
+Keep the separate design gitlink with Root and retain Space's commits on its independent branch.
+Publish/pin the paired SDK before production packaging.
+
+J main checkpoint `9674047c` also retains the other chat's `a9587af7e` MCP/Skill merge. Actual main
+install/build/typechecks and complete source regression passed **18,777** tests; 3,267 source and
+262 build files retained identical bytes. Main/design were advanced only with clean/ancestry checks.
+Final frozen package/Host gates remain pending in the J guide. Space stays independently at
+`da531f0a`; its historical I counts do not certify a newly paired Space build. No push/publication.
 
 ## v0.7.97-alpha.11 Release Record
 

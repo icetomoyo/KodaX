@@ -452,5 +452,17 @@ Session view close drain 和 Windows 进程回收。合并后的验收另记测�
 属于后一种类型修正，JavaScript 不变；它不替代另一线程的 persona/Partner/profile 迁移。
 执行 profile 应由可信 Main 根据该 Session 的实际 Host 目录生成，不能用本地工具名单冒充。
 
-当前仍未合入/推送主分支。正式合入前复核主分支新提交，携带 `docs/features` 独立仓库
+I 阶段时尚未合入/推送主分支。正式合入前复核主分支新提交，携带 `docs/features` 独立仓库
 提交；Space 发包前发布并锁定配套 SDK 字节，再执行原生产门禁。
+
+### FEATURE_302 T12-J：Root 本地主分支合入（未发布）
+
+用户授权后，Root 的本地 `KodaX` 主分支已包含接入层改动及另一线程最新的
+`a9587af7e` MCP/Skill 修复，配套设计子仓也已同步。保留原配置/API_KEY、账号来源、
+凭证 proof/epoch、OAuth 撤销和 Host 恢复边界；MCP 原文恢复和按实际 Host 配置根查找
+Skill 与 reasoning/cache/history 路径共同保留。未推送或发布。
+
+源码工作区需按更新后的锁文件安装依赖，不能沿用缺少原生云 SDK 的旧 node_modules。
+合并后的主仓库验收及实际检查点见 FEATURE_302 测试指南 J 节。Space 保留独立
+`codex/provider-credentials-space` 分支；本次 Root 合入不代表重新认证 Space 构建或
+完成其 persona/Partner/profile 产品迁移。Space 发布仍须先锁定匹配的已发布 SDK 字节。
