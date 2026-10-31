@@ -20,6 +20,7 @@ import { assertFinalSource, persistFinalEvidence } from './final-contract-eval-i
 export const FINAL_LIMITS = {
   'output-retention': { calls: 24, tools: 80, tokens: 1_200_000, usd: 0.60 },
   'history-child-recovery': { calls: 16, tools: 80, tokens: 600_000, usd: 0.30 },
+  'config-precedence': { calls: 32, tools: 80, tokens: 1_200_000, usd: 0.60 },
 } as const;
 type CaseId = keyof typeof FINAL_LIMITS;
 type Cell = { id: string; route: NextStageRoute; caseId: CaseId };
@@ -29,6 +30,11 @@ type Manifest = { revision: string; sources: Record<string, string>; critical: R
   rates: Record<NextStageRoute, NonNullable<ReturnType<typeof getCostRate>>>; originalRetention: OriginalRetention[]; originalAuditHash: string };
 const phase = process.env.KODAX_FINAL_MULTITURN_PHASE;
 const output = process.env.KODAX_FINAL_MULTITURN_ROOT;
+export function finalAcceptanceCells(configOnly: boolean): Cell[] {
+  const cases: readonly CaseId[] = configOnly ? ['config-precedence'] : ['output-retention', 'history-child-recovery'];
+  return cases.flatMap((caseId, caseIndex) => (Object.keys(NEXT_STAGE_ROUTES) as NextStageRoute[])
+    .map((route, routeIndex) => ({ id: `cell-0${1 + caseIndex * 3 + routeIndex}`, route, caseId })));
+}
 const critical = ['tests/final-contract-multiturn.eval.ts', 'tests/final-contract-history-runtime.ts', 'tests/shared-contract-natural-runtime.ts',
   'tests/final-contract-eval-integrity.ts', 'tests/first-turn-compact-recovery.ts',
   'tests/first-turn-complex-guard.ts', 'tests/first-turn-complex-budget.ts', 'tests/first-turn-eval-support.ts',
@@ -63,22 +69,21 @@ async function stopped(root: string) {
   try { await fs.stat(path.join(root, 'STOP')); return true; }
   catch (error: unknown) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
 }
-async function prepare() {
+async function prepare(configOnly = false) {
   const root = rootPath();
   await fs.mkdir(root, { recursive: false });
   const files = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '--',
     'packages', 'src', 'tests', 'benchmark', 'package.json', 'package-lock.json', 'vitest.config.ts', 'vitest.eval.config.ts', 'tsconfig.json'],
     { encoding: 'utf8', windowsHide: true }).trim().split(/\r?\n/).filter(file => /\.(?:[cm]?[jt]sx?|json|toml|rs|lock|md)$/.test(file));
-  const cells: Cell[] = (Object.keys(FINAL_LIMITS) as CaseId[]).flatMap((caseId, caseIndex) =>
-    (Object.keys(NEXT_STAGE_ROUTES) as NextStageRoute[]).map((route, routeIndex) => ({ id: `cell-0${1 + caseIndex * 3 + routeIndex}`, route, caseId })));
+  const cells = finalAcceptanceCells(configOnly);
   const rates = Object.fromEntries((Object.keys(NEXT_STAGE_ROUTES) as NextStageRoute[]).map(route => {
     const rate = route === 'deepseek' ? { inputPer1M: 0.3, outputPer1M: 1.2, cacheReadPer1M: 0.006 } : getCostRate(route, NEXT_STAGE_ROUTES[route].model);
     if (!rate) throw new Error(`Missing reference rate: ${route}`);
     return [route, rate];
   })) as Manifest['rates'];
-  const auditFile = path.join(os.tmpdir(), 'kodax-final-original-reuse-20261031/audit.json');
+  const auditFile = path.join(os.tmpdir(), configOnly ? 'kodax-final-config-original-reuse-20261031/audit.json' : 'kodax-final-original-reuse-20261031/audit.json');
   const originalRetention = (JSON.parse(await fs.readFile(auditFile, 'utf8')) as { rows: OriginalRetention[] }).rows
-    .filter(row => row.caseId === 'output-retention');
+    .filter(row => row.caseId === (configOnly ? 'config-precedence' : 'output-retention'));
   if (originalRetention.length !== 3) throw new Error('Missing immutable original observations');
   for (const row of originalRetention) {
     for (const item of row.evidence) if (await fileHash(item.file) !== item.expected) throw new Error('Original evidence changed');
@@ -88,14 +93,20 @@ async function prepare() {
   await write(path.join(root, 'manifest.json'), manifest);
   await write(path.join(root, 'preregistration.json'), { manifestHash: inputHash(manifest),
     purpose: 'Owner-authorized final-version bounded multi-turn acceptance, not prompt A/B or statistical non-inferiority.',
-    whyNotLayer1: 'Offline seams already prove execution. Actual model selection of entryRevision, response to read-route failure, editing, tests and honest AMA delivery require real model decisions.',
-    exception: 'Six current-only acceptance cells explicitly implement the owner request across three families; exceeds the usual three-smoke guideline. No original regeneration, no mode/version matrix.',
-    limits: FINAL_LIMITS, sharedCaps: { calls: 120, tokens: 5_400_000, referenceUsd: 2.70 }, output: 8192, requestMs: 180_000, cellMs: 600_000,
+    whyNotLayer1: configOnly ? 'Offline seams prove execution, not autonomous configuration-contract acquisition, priority/absence/falsy repair, meaningful tests, recovery and honest two-Run AMA delivery.'
+      : 'Offline seams already prove execution. Actual model selection of entryRevision, response to read-route failure, editing, tests and honest AMA delivery require real model decisions.',
+    exception: configOnly ? 'Three current-only smoke cells: one new task, three families, each once. No matrix or retry. Historical version comparison is observational, not prompt causality.'
+      : 'Six current-only acceptance cells explicitly implement the owner request across three families; exceeds the usual three-smoke guideline. No original regeneration, no mode/version matrix.',
+    limits: Object.fromEntries([...new Set(cells.map(cell => cell.caseId))].map(caseId => [caseId, FINAL_LIMITS[caseId]])),
+    sharedCaps: configOnly ? { calls: 96, tokens: 3_600_000, referenceUsd: 1.80 } : { calls: 120, tokens: 5_400_000, referenceUsd: 2.70 }, output: 8192, requestMs: 180_000, cellMs: 600_000,
     concurrency: 'One physical request per family via actual Relay queue; independent families may run concurrently. No retry/fallback.',
-    tasks: { 'output-retention': { prompt: PRODUCT_CASES['output-retention'].prompt, followUp: PRODUCT_CASES['output-retention'].followUp },
+    tasks: configOnly ? { 'config-precedence': { prompt: PRODUCT_CASES['config-precedence'].prompt, followUp: PRODUCT_CASES['config-precedence'].followUp } }
+      : { 'output-retention': { prompt: PRODUCT_CASES['output-retention'].prompt, followUp: PRODUCT_CASES['output-retention'].followUp },
       'history-child-recovery': { seed: HISTORY_SEED_PROMPT, followUp: HISTORY_RECOVERY_PROMPT, evidence: HISTORY_MEMO, files: HISTORY_FILES } },
-    review: 'A: opaque paired original/current final reports, final files, tests and common README before reveal; evaluate requirements/accuracy, not mere completion. B: standalone evidence quality, entry version/paging, child guard→legal evidence→terminal summary→root integration. Missing exercised paths remain coverage gaps, never rerun for coverage.',
-    original: 'A reuses bd4479 GLM R13 cell-05, Kimi R14 cell-06, DeepSeek R14 cell-08; GLM older environment is a historical reference. B original N/A. Whole-version observations, not prompt causal inference.',
+    review: configOnly ? 'Opaque original/current code, both final reports, actual tests and common README before reveal. Check priority, zero/false, absent/empty fallback, input immutability and ignored unrelated keys. Preserve original failures. Examine refusal recovery, unnecessary temporary regression, report accuracy and AMA closure; no child requirement. Do not infer prompt causality or rerun for coverage.'
+      : 'A: opaque paired original/current final reports, final files, tests and common README before reveal; evaluate requirements/accuracy, not mere completion. B: standalone evidence quality, entry version/paging, child guard→legal evidence→terminal summary→root integration. Missing exercised paths remain coverage gaps, never rerun for coverage.',
+    original: configOnly ? 'Reuse bd4479 R7 config GLM cell-01, Kimi cell-05, DeepSeek cell-06 once. Original GLM/Kimi fail the absent-value oracle; DeepSeek completes and passes. Task/files/oracle equal, older environment and dates remain confounded. No original rerun.'
+      : 'A reuses bd4479 GLM R13 cell-05, Kimi R14 cell-06, DeepSeek R14 cell-08; GLM older environment is a historical reference. B original N/A. Whole-version observations, not prompt causal inference.',
     freeze: 'Full source snapshot before/after cell; critical model/execution chain checked before each dispatch. Input bytes and physical observations are saved before/after every request; any detected source drift stops globally.',
     stop: 'Unknown/invalid usage, transport/auth failure, reservation overrun, source drift or evidence write failure aborts the lane and publishes global STOP before further dispatch. Preserve the existing narrowly bounded AMA sidecar cancellation exception, conservatively reserve unknown usage and never count it as known billing. Valid quality failures do not trigger reruns or quota increases.',
     fees: 'Frozen reference rates only, not current prices, cash invoices or subscription quota accounting. Original reference fees retain their original rate; compare unified recalculation separately.',
@@ -175,11 +186,11 @@ async function runCell() {
     return result;
   };
   try {
-    const record = cell.caseId === 'output-retention'
-      ? await runNaturalRuntime(directory, 'output-retention', invoke, { signal: abort.signal, model: config.model,
+    const record = cell.caseId !== 'history-child-recovery'
+      ? await runNaturalRuntime(directory, cell.caseId, invoke, { signal: abort.signal, model: config.model,
         workMode: 'coding', limits: { calls: limit.calls, tools: limit.tools, timeoutMs: 600_000 }, maxOutputTokens: 8192,
         reasoning: cell.route === 'kimi-code' ? 'on' : 'off', effort: cell.route === 'kimi-code' ? 'low' : 'none',
-        followUps: [{ prompt: PRODUCT_CASES['output-retention'].followUp, permissionMode: 'full-access' }] })
+        followUps: [{ prompt: PRODUCT_CASES[cell.caseId].followUp, permissionMode: 'full-access' }] })
       : await runFinalHistoryRuntime(directory, invoke, { model: config.model, reasoning: cell.route === 'kimi-code' ? 'on' : 'off',
         signal: abort.signal, calls: limit.calls, tools: limit.tools });
     await save('observations.json', observations);
@@ -206,6 +217,7 @@ async function runCell() {
 
 it.skipIf(!phase)('executes only an explicitly selected final acceptance phase', async () => {
   if (phase === 'prepare') await prepare();
+  else if (phase === 'prepare-config') await prepare(true);
   else if (phase === 'cell') await runCell();
   else throw new Error('Unsupported final eval phase');
 }, 660_000);
