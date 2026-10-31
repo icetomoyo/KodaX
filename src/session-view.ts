@@ -78,6 +78,9 @@ export function committedSessionOutputIds(data: KodaXSessionData, conversation: 
 /** The current display, coalesced at the REPL's existing 80 ms cadence. */
 export class SessionViewOwner {
   private readonly sessions = new Map<string, ObservedSession>();
+  private readonly pendingReads = new Set<Promise<unknown>>();
+  private closing = false;
+  private closeAttempt?: Promise<void>;
 
   constructor(
     private readonly read: (sessionId: string, includeHistory: boolean, previous: ClientSessionView | undefined,
@@ -86,7 +89,12 @@ export class SessionViewOwner {
     private readonly readCommittedItem?: (sessionId: string, itemId: string) => Promise<ClientViewItem | null>,
   ) {}
 
+  private assertOpen(): void {
+    if (this.closing) throw new Error('Session view owner is closed.');
+  }
+
   private state(sessionId: string): ObservedSession {
+    this.assertOpen();
     let state = this.sessions.get(sessionId);
     if (!state) {
       state = { committedOutputIds: new Set(), dirty: true, historyDirty: true, generation: 0, listeners: new Map(), items: [], history: [], segments: new Map(), runIds: new Set(), persistRequested: false, hasPersistFailure: false };
@@ -321,6 +329,7 @@ export class SessionViewOwner {
   }
 
   checkpoint(sessionId: string): void {
+    if (this.closing) return;
     const state = this.sessions.get(sessionId);
     if (!state || state.runIds.size === 0) return;
     state.persistRequested = true;
@@ -343,6 +352,7 @@ export class SessionViewOwner {
   }
 
   changed(sessionId: string, historyChanged = false): void {
+    if (this.closing) return;
     const state = this.sessions.get(sessionId);
     if (!state) return;
     state.dirty = true;
@@ -381,9 +391,11 @@ export class SessionViewOwner {
   async observe(sessionId: string, listener: (view: ClientSessionView) => void, options: ClientObserveOptions = {}): Promise<ClientObservation> {
     const state = this.state(sessionId);
     await this.refresh(sessionId, state);
+    this.assertOpen();
     if (!state.view) throw new Error('Session view was not available.');
     // No await separates registering from capturing the latest state.
     listener(structuredClone(state.view));
+    this.assertOpen();
     let lastState: ClientObservationStatus['state'] | undefined;
     const report = (status: ClientObservationStatus): void => {
       if (lastState === status.state) return;
@@ -402,40 +414,61 @@ export class SessionViewOwner {
   }
 
   async readItem(sessionId: string, itemId: string, options: ClientItemReadOptions = {}): Promise<ClientItemContent | null> {
-    const offset = options.offset ?? 0;
-    if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('Item offset must be a non-negative integer.');
-    const state = this.state(sessionId);
-    if (!state.view || state.historyDirty) await this.refresh(sessionId, state);
-    const item = state.history.find((item) => item.id === itemId && item.outputState === 'committed')
-      ?? state.items.find((item) => item.id === itemId) ?? state.history.find((item) => item.id === itemId)
-      ?? await this.readCommittedItem?.(sessionId, itemId);
-    if (!item) return null;
-    if (options.part === 'attachment') return { id: item.id, text: '', offset: 0, totalLength: 0,
-      image: await readItemImage(item, options) };
-    if (options.part === 'original' && item.tool?.outputPath) {
-      return readSavedToolOutput(item.tool.outputPath, item.id, offset);
-    }
-    const content = options.part === 'input' ? item.tool?.inputText ?? '' : item.text;
-    const text = content.slice(offset, offset + 64 * 1024);
-    const nextOffset = offset + text.length;
-    return { id: item.id, text, offset, totalLength: content.length,
-      ...(item.outputState !== undefined ? { outputState: item.outputState } : {}),
-      ...(item.textRevision !== undefined ? { textRevision: item.textRevision } : {}),
-      ...(nextOffset < content.length ? { nextOffset } : {}) };
+    this.assertOpen();
+    const reading = (async (): Promise<ClientItemContent | null> => {
+      const offset = options.offset ?? 0;
+      if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('Item offset must be a non-negative integer.');
+      const state = this.state(sessionId);
+      if (!state.view || state.historyDirty) await this.refresh(sessionId, state);
+      this.assertOpen();
+      const item = state.history.find((item) => item.id === itemId && item.outputState === 'committed')
+        ?? state.items.find((item) => item.id === itemId) ?? state.history.find((item) => item.id === itemId)
+        ?? await this.readCommittedItem?.(sessionId, itemId);
+      if (!item) return null;
+      if (options.part === 'attachment') return { id: item.id, text: '', offset: 0, totalLength: 0,
+        image: await readItemImage(item, options) };
+      if (options.part === 'original' && item.tool?.outputPath) {
+        return readSavedToolOutput(item.tool.outputPath, item.id, offset);
+      }
+      const content = options.part === 'input' ? item.tool?.inputText ?? '' : item.text;
+      const text = content.slice(offset, offset + 64 * 1024);
+      const nextOffset = offset + text.length;
+      return { id: item.id, text, offset, totalLength: content.length,
+        ...(item.outputState !== undefined ? { outputState: item.outputState } : {}),
+        ...(item.textRevision !== undefined ? { textRevision: item.textRevision } : {}),
+        ...(nextOffset < content.length ? { nextOffset } : {}) };
+    })();
+    this.pendingReads.add(reading);
+    const retire = () => { this.pendingReads.delete(reading); };
+    void reading.then(retire, retire);
+    return reading;
   }
 
-  async close(): Promise<void> {
-    const checkpoints = await Promise.allSettled([...this.sessions.keys()].map(sessionId => this.flush(sessionId)));
+  close(): Promise<void> {
+    if (this.closeAttempt) return this.closeAttempt;
+    this.closing = true;
     for (const state of this.sessions.values()) {
       if (state.timer) clearTimeout(state.timer);
-      state.toolInputTexts?.clear();
-      for (const report of state.listeners.values()) report({ state: 'closed', reason: 'unavailable' });
-      state.listeners.clear();
+      state.timer = undefined;
     }
-    this.sessions.clear();
-    const failures = checkpoints.filter(result => result.status === 'rejected').map(result => result.reason as unknown);
-    if (failures.length === 1) throw failures[0];
-    if (failures.length > 1) throw new AggregateError(failures, 'Session display checkpoints failed during close.');
+    const attempt = (async () => {
+      // Read callers retain their errors; their storage effects must finish before close returns.
+      await Promise.allSettled([...this.pendingReads]);
+      const checkpoints = await Promise.allSettled([...this.sessions.keys()].map(sessionId => this.flush(sessionId)));
+      for (const state of this.sessions.values()) {
+        state.toolInputTexts?.clear();
+        for (const report of state.listeners.values()) report({ state: 'closed', reason: 'unavailable' });
+        state.listeners.clear();
+      }
+      this.sessions.clear();
+      const failures = checkpoints.filter(result => result.status === 'rejected').map(result => result.reason as unknown);
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1) throw new AggregateError(failures, 'Session display checkpoints failed during close.');
+    })();
+    this.closeAttempt = attempt;
+    const retire = () => { this.closeAttempt = undefined; };
+    void attempt.then(retire, retire);
+    return attempt;
   }
 
   async flush(sessionId: string): Promise<void> {
@@ -454,6 +487,7 @@ export class SessionViewOwner {
   }
 
   private refresh(sessionId: string, state: ObservedSession): Promise<void> {
+    if (this.closing) return Promise.resolve();
     if (state.loading) return state.loading;
     state.dirty = false;
     const includeHistory = state.view === undefined || state.historyDirty;
@@ -464,7 +498,7 @@ export class SessionViewOwner {
     // read must wait for that write, just as an invalidated read does below.
     const pendingRead = includeHistory ? this.flush(sessionId).then(read) : read();
     const loading = pendingRead.then((view) => {
-      if (generation !== state.generation) return;
+      if (this.closing || generation !== state.generation) return;
       if (includeHistory) {
         state.committedOutputIds = new Set(view.committedOutputIds ?? view.items.flatMap(item =>
           item.outputState === 'committed' && item.outputId ? [item.outputId] : []));
@@ -512,12 +546,15 @@ export class SessionViewOwner {
       state.loading = undefined;
       if (state.dirty && generation === state.generation) this.changed(sessionId);
     }).then(async () => {
-      if (generation !== state.generation) {
+      if (!this.closing && generation !== state.generation) {
         await this.flush(sessionId);
         return this.refresh(sessionId, state);
       }
     });
     state.loading = loading;
+    this.pendingReads.add(loading);
+    const retire = () => { this.pendingReads.delete(loading); };
+    void loading.then(retire, retire);
     return loading;
   }
 }
