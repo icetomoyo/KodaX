@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -112,6 +112,36 @@ describe('Checkpoint: writeCheckpoint + deleteCheckpoint', () => {
 });
 
 describe('Checkpoint: findValidCheckpoint', () => {
+  it.each([
+    { name: 'retains a checkpoint written within the current millisecond', clockOffset: 0, expectedTaskId: 'task-test-001' },
+    { name: 'rejects a checkpoint written in a future millisecond', clockOffset: -1, expectedTaskId: undefined },
+  ])('$name', async ({ clockOffset, expectedTaskId }) => {
+    const root = await createTempDir('ckpt-submillisecond-');
+    const taskDir = path.join(root, 'task-001');
+    const checkpointPath = path.join(taskDir, CHECKPOINT_FILE);
+    await mkdir(taskDir);
+    await writeFile(checkpointPath, JSON.stringify(buildValidCheckpoint({
+      gitCommit: '', sessionId: 'session-current',
+    })));
+    await writeFile(path.join(taskDir, 'managed-task.json'), JSON.stringify(buildMinimalManagedTask('task-001')));
+    const timestamp = (Date.now() - 1000 + 0.5) / 1000;
+    await utimes(checkpointPath, timestamp, timestamp);
+    const fileTime = (await stat(checkpointPath)).mtimeMs;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Math.floor(fileTime) + clockOffset);
+    try {
+      const result = await findValidCheckpoint({ provider: 'test', session: { id: 'session-current' },
+        context: { managedTaskWorkspaceDir: root, gitRoot: root } });
+      expect(result?.checkpoint.taskId).toBe(expectedTaskId);
+      if (expectedTaskId !== undefined) {
+        await expect(readFile(checkpointPath, 'utf8')).resolves.toBeDefined();
+      } else {
+        await expect(readFile(checkpointPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      }
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it.each(['skipped', 'timeout', 'non_interactive'] as const)('preserves prior work without choosing resume or restart when unanswered (%s)', async reason => {
     const root = await createTempDir('ckpt-unanswered-');
     const taskDir = path.join(root, 'task-001');

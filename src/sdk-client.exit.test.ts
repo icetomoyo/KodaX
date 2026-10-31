@@ -282,7 +282,7 @@ it('cancels ordinary owned work while an uncooperative compaction stays unknown 
     await client.sessions.updateSettings(session.id, { compactionTriggerTokens: 5000 });
     const before = await client.sessions.readHistory(session.id);
     const active = await client.inputs.submit({ sessionId: busy.id, inputId: 'busy', text: 'CANCEL-ORDINARY-RUN' });
-    await expect.poll(() => runEntered).toBe(true);
+    await expect.poll(async () => ({ entered: runEntered, run: await client.runs.read(active.runId!) }), { timeout: 10_000 }).toMatchObject({ entered: true });
     compact = client.sessions.compact(session.id, { customInstructions: 'HOLD-COMPACTION' }).then(result => result, error => error as Error);
     await expect.poll(() => compactEntered).toBe(true);
     await client.lifecycle.requestExit({ requestId: 'quit' });

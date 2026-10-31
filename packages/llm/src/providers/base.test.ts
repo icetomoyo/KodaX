@@ -662,6 +662,17 @@ describe('KodaXBaseProvider', () => {
     expect(error).not.toHaveProperty('metadata.httpStatus');
   });
 
+  it('classifies an uncoded transport failure without inventing upstream metadata', async () => {
+    const provider = new TestProvider();
+    const task = vi.fn(() => Promise.reject(new TypeError('terminated')));
+    const error: unknown = await provider.exposeWithRateLimit(task, undefined, 1)
+      .then(() => undefined, (caught: unknown) => caught);
+    expect(error).toBeInstanceOf(KodaXProviderError);
+    expect(error).toMatchObject({ metadata: { stage: 'transport' } });
+    expect(error).not.toHaveProperty('metadata.upstreamCode');
+    expect(task).toHaveBeenCalledOnce();
+  });
+
   it.each(['1210', 1210])('preserves nested coding-provider error code %s without copying its body', async (code) => {
     const provider = new TestProvider();
     const upstream = Object.assign(new Error('400 image input parse error'), {
