@@ -1,3 +1,4 @@
+import { staticText } from '../prompts/static-text.js';
 /**
  * FEATURE_125 (v0.7.41) — Team Mode Layer 3: tool-time soft warning.
  *
@@ -83,7 +84,7 @@ export function buildActiveFileWarningBanner(overlap: ActiveFileOverlap): string
     lines.push(line);
   }
   lines.push(
-    'Your edit may overwrite or conflict with theirs. If your change touches the same code path, consider re-reading the file first or working on a different file. Do NOT mention this warning to the user verbatim — incorporate the awareness into your next action.',
+    staticText("t12.multi-instance/active-file-warning.0"),
   );
   return lines.join('\n');
 }

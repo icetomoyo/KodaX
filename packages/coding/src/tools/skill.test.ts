@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { resetSkillRegistry } from '@kodax-ai/agent';
+import { resetSkillRegistry, SkillRegistry } from '@kodax-ai/agent';
 import { toolSkill } from './skill.js';
 
 // The skill tool reads the global singleton via `getSkillRegistry()`. To
@@ -373,7 +373,7 @@ describe('toolSkill (claudecode-parity skill invocation)', () => {
     expect(result).not.toContain('[Tool Error]');
   });
 
-  it('returns a helpful error listing available skills on unknown skill', async () => {
+  it('directs an unknown Skill to the authorized catalog without repeating the registry', async () => {
     await writeSkillMd(
       tempDir,
       'project',
@@ -396,6 +396,25 @@ describe('toolSkill (claudecode-parity skill invocation)', () => {
     });
     expect(result).toContain('[Tool Error]');
     expect(result).toContain('unknown skill "does-not-exist"');
-    expect(result).toContain('kodax-test-known');
+    expect(result).toContain('available Skill catalog');
+  });
+
+  it('keeps unknown-Skill errors bounded and never discloses disabled names', async () => {
+    for (let index = 0; index < 180; index++) {
+      await writeSkillMd(tempDir, 'project', `inspect-${String(index).padStart(3, '0')}-${'a'.repeat(42)}`,
+        'Inspect evidence', 'Inspect.');
+    }
+    await writeSkillMd(tempDir, 'project', 'disabled-in-model-catalog', 'Disabled Skill', 'Disabled.',
+      'disabled-in-model-catalog', 'disable-model-invocation: true\n');
+    const registry = new SkillRegistry(tempDir, { projectPaths: [path.join(tempDir, 'project')],
+      userPaths: [], pluginPaths: [], builtinPath: path.join(tempDir, 'none') });
+    await registry.discover();
+    for (const skill of ['missing', 'missing-😀'.repeat(2_000)]) {
+      const result = await toolSkill({ skill }, { backups: new Map(), executionCwd: tempDir, skillRegistry: registry });
+      expect(result.length).toBeLessThanOrEqual(8_000);
+      expect(result.includes('disabled-in-model-catalog')).toBe(false);
+      expect(result).toContain('available Skill catalog');
+      expect(result).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/u);
+    }
   });
 });

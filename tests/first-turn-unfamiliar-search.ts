@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { SkillRegistry } from '@kodax-ai/agent';
 import { KodaXBaseProvider, registerModelProvider, type KodaXProviderConfig,
   type KodaXMessage, type KodaXToolDefinition, type KodaXStreamResult } from '@kodax-ai/llm';
-import { createKodaXRuntime, type KodaXRuntime } from '../src/sdk-runtime.js';
+import { createKodaXRuntime, type KodaXRuntime } from "./runtime-fixture.js";
 import { inputHash, type FrozenInput } from './first-turn-eval-support.js';
 import { resolveDeferredEvidenceRoot } from './deferred-repo-lsp-support.js';
 

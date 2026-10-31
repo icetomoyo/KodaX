@@ -1,3 +1,4 @@
+import { staticText } from '../prompts/static-text.js';
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
 import type { ToolDefinitionSource } from './types.js';
 import type { Agent } from '@kodax-ai/agent';
@@ -31,7 +32,7 @@ export function projectModelToolDefinition<T extends KodaXToolDefinition>(tool: 
     const { path, edits } = tool.input_schema.properties;
     return {
       ...tool,
-      description: 'Edit one existing file with one or more replacements in edits. Read first. Each old_string must be unique in the whole current file unless replace_all is true. Matching tries exact text then normalized anchors. Edits apply sequentially; later anchors must refer to the result of earlier edits. Any failed edit leaves the file unchanged; successful batches commit once. On failure, inspect the reported edit index and re-read or use a smaller unique anchor; do not rewrite the whole file to bypass an edit failure. Split oversized replacements into smaller edits.',
+      description: staticText("t12.tools/model-tool-definition.0"),
       input_schema: { ...tool.input_schema, properties: { path, edits }, required: ['path', 'edits'] },
     };
   }
@@ -39,7 +40,7 @@ export function projectModelToolDefinition<T extends KodaXToolDefinition>(tool: 
     const { path: _path, limit: _limit, ...properties } = tool.input_schema.properties;
     return {
       ...tool,
-      description: 'Read paged diffs for one or more explicit changed paths. Prefer this over broad git diff output during reviews. Includes untracked files; use base_ref and optional target_ref for a comparison range. offset and limit_per_path apply independently to every path. Follow per-path continuation hints when truncated; at most 64 unique paths per call.',
+      description: staticText("t12.tools/model-tool-definition.1"),
       input_schema: { ...tool.input_schema, properties, required: ['paths'] },
     };
   }

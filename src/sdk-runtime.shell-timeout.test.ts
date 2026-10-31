@@ -33,7 +33,7 @@ vi.mock('@kodax-ai/agent', async (importOriginal) => ({
     return () => undefined;
   },
 }));
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { connectKodaXClient } from './sdk-client.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';

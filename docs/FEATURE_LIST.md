@@ -11,31 +11,31 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-alpha.9` (Git tag); `v0.7.96` remains the last stable release; alpha.10 is development/release preparation |
-| Current package version | `@kodax-ai/kodax@0.7.97-alpha.10` (npm publication remains manual) |
+| Current released version | `v0.7.97-alpha.11` (Git tag); `v0.7.96` remains the last stable release; subsequent changes are unreleased |
+| Current package version | `@kodax-ai/kodax@0.7.97-alpha.11` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 core packages + private optional `artifacts` source workspace; one public npm package |
 | Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3` and extended with startup streamlining, Session recency ordering, draft admission, concurrent-launch recovery and shared-Session Host ownership resolution through `v0.7.97-alpha.7`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement released in alpha.4; missing visual capabilities remain unverified; [design](ADR.md#verification-responsibility-and-tradeoffs) |
 | Artifact distribution revision | `2026-10-18` — one `@kodax-ai/kodax` npm package; four `/artifacts` subpaths and resources staged in the main tarball; local implementation, not yet published |
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
-| Current development | `v0.7.97` / `FEATURE_298` — cross-platform/manual release verification for the alpha continues |
+| Current development | `v0.7.97` / `FEATURE_298` — post-alpha.10 Agent/Coding/experimental Script work modes, SDK question/original-output/task-report/streaming alignment, and Windows startup/readiness repairs; [current SDK checklist](SDK_MIGRATION.md#2026-10-29-未发布改动对齐). Cross-platform/manual release verification and Issue 371's historical first-read investigation remain open. |
 | Visual harness implementation | [P0–P2 实施与验证](designs/visual-harness-implementation-2026-10-28.md); [P3–P7 续接](designs/visual-harness-p3-p7-implementation-2026-10-29.md) — P3/P4/P5/P6 implemented within declared scope. [New P7 task-value plan](designs/visual-harness-p7-task-value-plan-2026-10-29.md) compares final task results and full-task tokens against optimized pre-visual 1826cc22; not executed. Old r3 remains tool-choice/single-response cost evidence, not task benefit acceptance. Historical default suite 18,094 passed / 0 failed; earlier r2/ENOTEMPTY/Feature270/T30 failures and unlocated causes retained. No new feature ID/version assigned |
-| Roadmap updated | `2026-09-23` — FEATURE_300 planned for `v0.7.99`; implementation not started |
+| Roadmap updated | `2026-10-31` — FEATURE_302 H/I/J accepted offline; Root/design local main integrated with complete source, package and historical Host gates passed; unreleased; FEATURE_300 remains Planned |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
-| Total tracked features | `85` |
+| Total tracked features | `86` |
 | InProgress | `2` |
 | Planned | `17` |
-| Completed | `60` |
+| Completed | `61` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
-| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301` |
+| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302` |
 | Archive cutoff | Shipped / canceled / absorbed / shelved items through `v0.7.49` are archived. |
 
 ### 一览表
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 60 | `301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
-| InProgress | 2 | `298, 225` | `298`: prior core implementation and automated evidence retained; 2026-09-18 consumer-completion T38–T42 implemented and reviewed; cross-platform/manual release verification pending. `225` remains the bounded v0.8.25 cleanup. |
+| Completed | 61 | `302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| InProgress | 2 | `298, 225` | `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
@@ -525,6 +525,50 @@
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
 ---
+
+## Unreleased implementation — FEATURE_302
+
+`v0.7.99` FEATURE_302 including T12-H/I is **Completed for implementation and offline acceptance** on
+the accepted parity history; J has now integrated that history into local `KodaX` main and the
+design submodule. Released: **unreleased**. No version bump, push or publication.
+T01–T12 include the full declared provider/API/OAuth and operation inventory, native cloud
+protocols, identity/history/cache/tool compatibility, hidden Key setup, unified file credentials
+and actual Space provider/stable-client-secret migration including H (`437cac7d`) and I (`da531f0a`). Existing aliases/config/env
+and KodaX route-specific optimizations remain. I integrates committed local main `0fa38e5b2`, preserving
+both histories and the latest Host/profile/recovery contracts. Historical I: Root full **18,747**, published **71**,
+historical cutover/real alpha.11 Host upgrade **4**; Space complete **4,531**, credential/Host slices
+and two actual Electron IPC/restart tests passed. The H coverage evidence remains historical.
+Both review axes have zero remaining findings. This does not certify live account entitlements,
+all service models, macOS/Linux legacy-vault migration, or a production Space installer.
+See [design](features/v0.7.99.md#feature_302-independent-llm-provider-parity) and
+[final evidence](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-j-local-main-integration--2026-10-31).
+I left the original workspaces untouched; J's authorized local main update is recorded below.
+Keep the separate design gitlink with Root and retain Space's commits on its independent branch.
+Publish/pin the paired SDK before production packaging.
+
+J main checkpoint `9674047c` also retains the other chat's `a9587af7e` MCP/Skill merge. Actual main
+install/build/typechecks and complete source regression passed **18,777** tests; 3,267 source and
+262 build files retained identical bytes. Main/design were advanced only with clean/ancestry checks.
+Final frozen package **80** and historical/real-alpha.11 Host gates **4** passed; the same source
+and build fingerprints remained unchanged throughout. See the J guide for exact checkpoints.
+Space stays independently at `da531f0a`; its historical I counts do not certify a newly paired
+Space build. No push/publication.
+
+## v0.7.97-alpha.11 Release Record
+
+`v0.7.97-alpha.11` is the eleventh alpha of the v0.7.97 line: explicit
+Agent, Coding and experimental Script work modes land through the CLI,
+`/work-mode` and managed SDK/Session paths with Coding as the default;
+Ark, MiMo and MiniMax catalogs refresh their reasoning/capacity metadata;
+non-interactive question outcomes are preserved with Host-owned deadlines;
+Skill `Bash(pattern)` rules admit a single parsed command; MCP tool
+originals stay readable through `part: 'original'`; structured task reports
+project into Product views and recovered history; streaming progress shows
+consistent estimated tokens; Windows stale-process recovery and
+history-browsing cursor resync are corrected and sandbox filesystem
+capabilities are validated at startup. Every v0.7.96 stable and
+v0.7.97-alpha.1 through alpha.10 contract is retained. Cross-platform
+manual acceptance and npm publication remain manual maintainer steps.
 
 ## v0.7.97-alpha.10 Release Record
 
@@ -2139,6 +2183,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
+| `302` | Independent LLM Provider Parity | `v0.7.99` (unreleased) | [v0.7.99](features/v0.7.99.md#feature_302-independent-llm-provider-parity) | T01–T12/H/I accepted offline with paired Space; J Root/design local main integration and post-merge gates passed. Space remains independent; live accounts/platform installers unverified. |
 | `301` | Managed Artifact SDK and PPT Review Loop | Initial implementation in `v0.7.97-alpha.4`; unified Artifact SDK additions released in `v0.7.97-alpha.5` | [v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) | Optional SDK in the single main npm package, with a private source workspace, nine operations and shared Host execution; PPTX authoring/limited edits, PDF/image/SVG evidence, candidate DOCX and local HTML/SMIL capture. Native Office fidelity and full natural-task model repair/re-review/delivery remain unverified; [current support](ARTIFACT_SDK.md). |
 | `299` | Unified Stop, Full Access and Extension Execution Contracts | `v0.7.96` (release pending) | [v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) | Implements legacy large metadata paging, Full Access policy provenance, lock-independent Session Stop, CLI/ACP convergence and managed extension execution with reload isolation. |
 | `297` | Codex-Aligned Permission Profiles, Sandbox Escalation, and Exec Policy | `v0.7.96-alpha.5` | [v0.7.96](features/v0.7.96.md#feature_297-codex-aligned-permission-profiles-sandbox-escalation-and-exec-policy) | Makes sandbox completion authoritative, moves Edits/Auto decisions to an exact host boundary, adds Full Access and JSONC Exec Policy, removes Auto[RULES]/envPass/global-Git blocking, and preserves a single no-replay host retry. |

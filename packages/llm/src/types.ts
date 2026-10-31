@@ -9,6 +9,8 @@
 export interface KodaXTextBlock {
   type: 'text';
   text: string;
+  googlePart?: KodaXGoogleReplay;
+  piPart?: KodaXPiReplay;
 }
 
 export interface KodaXToolUseBlock {
@@ -16,6 +18,9 @@ export interface KodaXToolUseBlock {
   id: string;
   name: string;
   input: Record<string, unknown>;
+  customTool?: { source: KodaXGenerationSource; property: string };
+  googlePart?: KodaXGoogleReplay;
+  piPart?: KodaXPiReplay;
   /**
    * Set true when `input` was salvaged from malformed JSON (strict `JSON.parse`
    * threw). RAW signal — set regardless of stop reason. On its own it means the
@@ -98,10 +103,22 @@ export interface KodaXImageBlock {
 
 export interface KodaXThinkingBlock {
   type: 'thinking';
+  /** Present on newly generated signed reasoning; absent on legacy history. */
+  source?: KodaXGenerationSource;
   thinking: string;
   signature?: string;
+  googlePart?: KodaXGoogleReplay;
+  piPart?: KodaXPiReplay;
+  /** Stateless Responses replay is valid only at the originating connection/API/model. */
+  responsesReasoning?: {
+    source: KodaXGenerationSource;
+    id: string;
+    summary: { type: 'summary_text'; text: string }[];
+    encrypted_content?: string | null;
+  };
   /** Opaque OpenAI-compatible reasoning replay, scoped to its original endpoint/model. */
   openaiReasoning?: {
+    credentialScope?: string;
     provider: string;
     model: string;
     baseUrl?: string;
@@ -112,7 +129,9 @@ export interface KodaXThinkingBlock {
 
 export interface KodaXRedactedThinkingBlock {
   type: 'redacted_thinking';
+  source?: KodaXGenerationSource;
   data: string;
+  piPart?: KodaXPiReplay;
 }
 
 /**
@@ -216,6 +235,7 @@ export interface KodaXEphemeralSuffix {
 // ============== 流式结果类型 ==============
 
 export interface KodaXTokenUsage {
+  cachedWriteTokensByTtl?: KodaXCacheWriteUsage;
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
@@ -223,8 +243,11 @@ export interface KodaXTokenUsage {
   cachedWriteTokens?: number;
   thoughtTokens?: number;
 }
+export type KodaXCacheWriteUsage = Partial<Record<'5m' | '1h' | '30m' | '12h' | 'unknown', number>>;
 
 export interface KodaXStreamResult {
+  /** Authoritative generation order when supplied. Legacy providers retain their existing projections. */
+  contentBlocks?: KodaXAssistantBlock[];
   textBlocks: KodaXTextBlock[];
   toolBlocks: KodaXToolUseBlock[];
   thinkingBlocks: (KodaXThinkingBlock | KodaXRedactedThinkingBlock)[];
@@ -233,6 +256,32 @@ export interface KodaXStreamResult {
   stopReason?: string;
   /** Wire observation only; acceptance does not prove reasoning strength took effect. */
   reasoningResolution?: KodaXReasoningResolution;
+}
+
+export type KodaXAssistantBlock = KodaXTextBlock | KodaXToolUseBlock | KodaXThinkingBlock | KodaXRedactedThinkingBlock;
+
+export interface KodaXGenerationSource {
+  provider: string;
+  api: 'openai-responses' | 'anthropic-messages' | 'google-generate-content' | 'bedrock-converse' | 'mistral-chat' | 'pi-messages';
+  model: string;
+  baseUrl?: string;
+  /** Opaque request-credential scope for subscription reasoning; never a token or account ID. */
+  credentialScope?: string;
+}
+
+export interface KodaXGoogleReplay {
+  source: KodaXGenerationSource;
+  thoughtSignature?: string;
+  /** Only upstream IDs are sent back; local IDs remain available to pair receipts. */
+  callId?: string;
+  contentHash: string;
+}
+
+export interface KodaXPiReplay {
+  source: KodaXGenerationSource;
+  contentHash: string;
+  contentSignature?: string;
+  message?: { usage: Record<string, unknown>; stopReason: string; timestamp: number; responseId?: string; responseModel?: string };
 }
 
 export interface KodaXReasoningResolution {
@@ -249,11 +298,18 @@ export interface KodaXReasoningResolution {
 export interface KodaXToolDefinition {
   name: string;
   description: string;
+  strict?: 'require' | 'prefer';
+  grammar?: { syntax: 'lark' | 'regex'; definition: string; mode?: 'require' | 'prefer' };
   input_schema: {
     type: 'object';
     properties: Record<string, unknown>;
     required?: string[];
+    [keyword: string]: unknown;
   };
+}
+export interface KodaXToolCapabilities {
+  strict?: boolean;
+  grammar?: readonly ('lark' | 'regex')[];
 }
 
 // ============== 推理策略类型 ==============
@@ -318,6 +374,10 @@ export interface KodaXReasoningEffortPreset {
 }
 
 export type KodaXReasoningEffortWireStrategy =
+  | 'google-thinking-level'
+  | 'bedrock-anthropic-effort'
+  | 'bedrock-openai-effort'
+  | 'bedrock-openai-nested-effort'
   | 'openai-responses-effort'
   | 'openai-chat-effort'
   | 'codex-cli-config'
@@ -357,6 +417,9 @@ export interface KodaXReasoningProfile {
   readonly supportsAdaptiveThinking?: boolean;
   readonly supportsManualThinkingBudget?: boolean;
   readonly supportsDisabledThinking?: boolean;
+  readonly supportsThinkingDisplay?: boolean;
+  /** Adaptive Anthropic thinking only; enables the documented drop_block beta. */
+  readonly supportsThinkingBlockBinding?: boolean;
   readonly requiresEffortBetaHeader?: boolean;
 }
 
@@ -573,12 +636,16 @@ export interface KodaXNormalizedReasoningRequest {
 // ============== Provider 配置 ==============
 
 export interface KodaXModelDescriptor {
+  cacheCapabilities?: KodaXCacheCapabilities;
+  toolCapabilities?: KodaXToolCapabilities;
   id: string;
   /** Optional local alias target sent as the upstream API model id. */
   wireModel?: string;
   displayName?: string;
   contextWindow?: number;
   maxOutputTokens?: number;
+  /** Documented service output ceiling; independent of the default request budget. */
+  outputTokenLimit?: number;
   /**
    * Per-model OpenAI Chat Completions field for the output-token limit.
    * Defaults to the provider-level value, then `max_completion_tokens`.
@@ -616,7 +683,13 @@ export interface KodaXModelDescriptor {
   streamMaxDurationMs?: number;
 }
 
-export type KodaXProtocolFamily = 'anthropic' | 'openai';
+export type KodaXProtocolFamily = 'anthropic' | 'openai' | 'google' | 'bedrock' | 'mistral' | 'pi-messages';
+
+export type KodaXCloudConnection =
+  | { readonly service: 'gemini' }
+  | { readonly service: 'vertex'; readonly project?: string; readonly location?: string }
+  | { readonly service: 'bedrock'; readonly region: string }
+  | { readonly service: 'azure' };
 export type KodaXProviderUserAgentMode = 'compat' | 'sdk';
 export type KodaXOpenAICompatMaxOutputTokensField =
   | 'max_tokens'
@@ -701,10 +774,22 @@ export interface KodaXListModelsResult {
 }
 
 export interface KodaXCustomProviderConfig {
+  cacheCapabilities?: KodaXCacheCapabilities;
+  toolCapabilities?: KodaXToolCapabilities;
   name: string;
   protocol: KodaXProtocolFamily;
+  /** OpenAI wire API. Omitted preserves Chat Completions; Responses is explicit opt-in. */
+  api?: 'chat-completions' | 'responses';
+  /** Subscription wire dialect; credentials must come from an explicit request broker. */
+  oauth?: 'openai-chatgpt' | 'openai-codex' | 'github-copilot' | 'anthropic' | 'openrouter' | 'kimi-coding' | 'meta' | 'xai' | 'radius';
+  /** Non-secret trusted-Main secure-store registration reference; never a lease or token. */
+  oauthRegistration?: string;
+  /** Non-secret native cloud route; credentials are acquired from a request broker. */
+  cloud?: KodaXCloudConnection;
   baseUrl: string;
   apiKeyEnv: string;
+  /** Explicit non-default native authentication. Secrets remain outside config. */
+  authentication?: 'bearer' | 'cloudflare-gateway';
   model: string;
   /** @deprecated Internal preset name; auto-migrated on load. Prefer `reasoning`. */
   reasoningPreset?: KodaXReasoningPresetName;
@@ -744,6 +829,8 @@ export interface KodaXCustomProviderConfig {
   capabilityProfile?: KodaXProviderCapabilityProfile;
   contextWindow?: number;
   maxOutputTokens?: number;
+  /** Documented service output ceiling; independent of the default request budget. */
+  outputTokenLimit?: number;
   /**
    * OpenAI Chat Completions field used for the output-token limit. Set to
    * `max_tokens` for DeepSeek-compatible endpoints. Defaults to
@@ -793,7 +880,13 @@ export interface KodaXCustomProviderConfig {
 }
 
 export interface KodaXProviderConfig {
+  cacheCapabilities?: KodaXCacheCapabilities;
+  toolCapabilities?: KodaXToolCapabilities;
   apiKeyEnv: string;
+  authentication?: KodaXCustomProviderConfig['authentication'];
+  /** Internal lowering of OAuth connections; never read ambient credentials. */
+  credentialSource?: 'broker';
+  oauth?: KodaXCustomProviderConfig['oauth'];
   baseUrl?: string;
   model: string;
   /** Additional available models beyond the default */
@@ -808,6 +901,8 @@ export interface KodaXProviderConfig {
   contextWindow?: number;
   /** Provider 允许的最大输出 token */
   maxOutputTokens?: number;
+  /** Documented service output ceiling; independent of the default request budget. */
+  outputTokenLimit?: number;
   /** OpenAI Chat Completions output-token field; model descriptors override it. */
   maxOutputTokensField?: KodaXOpenAICompatMaxOutputTokensField;
   /** Provider thinking budget 上限 */
@@ -870,6 +965,31 @@ export interface KodaXProviderConfig {
 }
 
 export interface KodaXProviderStreamOptions {
+  thinkingDisplay?: 'summarized' | 'omitted';
+  /** Responses only. Omitted preserves SSE; auto may fall back before generation dispatch. */
+  transport?: 'sse' | 'auto' | 'websocket' | 'websocket-cached';
+  webSocketFactory?: KodaXResponsesSocketFactory;
+  webSocketConnectTimeoutMs?: number;
+  /** Standalone SDK socket ownership. Broker calls use their authorized lease lifetime. */
+  webSocketLifetime?: AbortSignal;
+  /** Trusted Host supplies its current verified registration/account partition. */
+  cachedContent?: { reference: KodaXGoogleCacheReference; accountScope: string };
+  cacheRetention?: 'none' | 'short' | 'long';
+  /** Trusted Host/SDK extensions. They are not accepted from model tool input. */
+  temperature?: number;
+  samplingParams?: Readonly<Record<string, unknown>>;
+  headers?: Readonly<Record<string, string>>;
+  /** Exact request-local environment fallback; active broker scopes always take precedence. */
+  env?: Readonly<Record<string, string | undefined>>;
+  fetch?: typeof globalThis.fetch;
+  /** Additional non-secret learning partition; never authentication or impersonation. */
+  identity?: string;
+  /** Returns extension fields, not a replacement for history/tools/auth/budget/reasoning/cache. */
+  onPayload?: (payload: Readonly<Record<string, unknown>>, metadata: KodaXProviderRequestMetadata) =>
+    void | Record<string, unknown> | Promise<void | Record<string, unknown>>;
+  onResponse?: (response: Response, metadata: KodaXProviderRequestMetadata) => void | Promise<void>;
+  onProviderStreamEvent?: (event: unknown, metadata: KodaXProviderRequestMetadata) => void;
+  onRequestPrepared?: (projection: KodaXProviderRequestProjection) => void;
   /** Recovery requests must not multiply their caller-owned attempt budget. */
   singleAttempt?: boolean;
   /** Request-only tail context. Providers must not mutate persisted messages. */
@@ -885,7 +1005,7 @@ export interface KodaXProviderStreamOptions {
   onToolInputDelta?: (
     toolName: string,
     partialJson: string,
-    meta?: { toolId?: string },
+    meta?: { toolId?: string; format?: 'text'; inputProperty?: string },
   ) => void;
   /**
    * Fired on provider-side SSE events to manage idle timers.
@@ -935,7 +1055,11 @@ export interface KodaXProviderStreamOptions {
     provider: string;
     model: string;
     effort: string;
+    /** Opaque connection/API/model/declaration/credential fingerprint, never a credential. */
+    cacheScope?: string;
   }) => void;
+  /** Invoked inside the acquired credential scope; unscoped history is not consulted. */
+  resolveRejectedReasoningEfforts?: (cacheScope: string) => readonly string[];
   /** Persisted hard rejections from the host; '*' means the control parameter was rejected. */
   rejectedReasoningEfforts?: readonly string[];
   onReasoningResolved?: (resolution: KodaXReasoningResolution) => void;
@@ -948,4 +1072,50 @@ export interface KodaXProviderStreamOptions {
   maxOutputTokensOverride?: number;
   /** AbortSignal for cancelling the stream request */
   signal?: AbortSignal;
+}
+
+export interface KodaXProviderRequestMetadata { readonly provider: string; readonly model: string; }
+export interface KodaXResponsesSocket {
+  readonly closed: boolean;
+  send(frame: string): void | Promise<void>;
+  receive(signal?: AbortSignal): Promise<string>;
+  close(): void;
+}
+/** Resolves after the authenticated handshake. Trusted SDK/Host transport port, never configuration JSON. */
+export type KodaXResponsesSocketFactory = (input: { url: string; headers: Readonly<Record<string, string>>;
+  signal?: AbortSignal; timeoutMs: number }) => Promise<KodaXResponsesSocket>;
+export interface KodaXProviderRequestProjection extends KodaXProviderRequestMetadata {
+  /** Native API input, before SDK serialization/signing. Never a cache-hit or dispatch claim. */
+  readonly stage: 'protocol-input';
+  readonly payloadHash: string;
+  readonly systemHash: string;
+  readonly toolsHash: string;
+  readonly messagesHash: string;
+  readonly cachePolicyHash: string;
+}
+
+/** Connection/model declarations; these do not establish account entitlement or a cache hit. */
+export interface KodaXCacheCapabilities {
+  dialect: 'openai-retention' | 'openai-options' | 'anthropic' | 'bedrock' | 'pi' | 'affinity';
+  affinityHeader?: 'x-session-affinity' | 'x-affinity';
+  longTtl?: '1h' | '24h' | '12h' | '30m';
+  locations?: readonly ('system' | 'tools' | 'messages')[];
+  maxCheckpoints?: number;
+}
+
+export interface KodaXGoogleCacheConnection {
+  name: string; model: string; baseUrl: string; accountScope: string;
+  cloud: Extract<KodaXCloudConnection, { service: 'gemini' | 'vertex' }>;
+  imageInput?: boolean; toolCapabilities?: KodaXToolCapabilities;
+}
+/** Resource locator and conversion facts only; never a credential, tool grant or cache-hit proof. */
+export interface KodaXGoogleCacheReference {
+  version: 1; name: string; scope: string; model: string; expiresAt: number;
+  systemHash?: string; toolsHash?: string;
+  forcedToolName?: string;
+}
+export interface KodaXGoogleCacheExpiration { ttlSeconds?: number; expireTime?: string; }
+export interface KodaXGoogleCacheRequest extends KodaXGoogleCacheExpiration {
+  messages: KodaXMessage[]; system?: string; tools?: KodaXToolDefinition[]; displayName?: string;
+  forcedToolName?: string;
 }

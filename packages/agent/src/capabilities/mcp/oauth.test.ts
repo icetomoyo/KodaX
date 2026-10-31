@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, vi, afterEach } from 'vitest';
-import { mkdir, readFile, rm } from 'fs/promises';
+import { mkdtemp, readFile, rm } from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import type { OAuthConfig, OAuthToken } from './oauth.js';
@@ -17,17 +17,15 @@ describe('OAuth', () => {
   let tempDir: string;
 
   beforeEach(async () => {
-    tempDir = path.join(os.tmpdir(), `kodax-oauth-test-${Date.now()}`);
-    await mkdir(tempDir, { recursive: true });
-    await mkdir(path.join(tempDir, '.kodax', 'mcp-tokens'), { recursive: true });
+    tempDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-oauth-test-'));
+    vi.stubEnv('KODAX_HOME', path.join(tempDir, '.kodax'));
   });
 
   afterEach(async () => {
-    try {
-      await rm(tempDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
-    }
+    vi.unstubAllEnvs();
+    if (path.dirname(path.resolve(tempDir)) !== path.resolve(os.tmpdir())
+      || !path.basename(tempDir).startsWith('kodax-oauth-test-')) throw new Error('Unsafe OAuth fixture cleanup');
+    await rm(tempDir, { recursive: true, force: true });
   });
 
   describe('generatePKCE', () => {
@@ -152,7 +150,7 @@ describe('OAuth', () => {
 
       await saveToken('test-server', token);
 
-      const tokenPath = path.join(os.homedir(), '.kodax', 'mcp-tokens', 'test-server.json');
+      const tokenPath = path.join(tempDir, '.kodax', 'mcp-tokens', 'test-server.json');
       const content = await readFile(tokenPath, 'utf-8');
       const loaded = JSON.parse(content) as OAuthToken;
 
@@ -174,15 +172,6 @@ describe('OAuth', () => {
       const loaded = await loadToken('test-server-load-test');
 
       expect(loaded).toEqual(token);
-    });
-
-    afterEach(async () => {
-      try {
-        const tokenPath = path.join(os.homedir(), '.kodax', 'mcp-tokens');
-        await rm(tokenPath, { recursive: true, force: true });
-      } catch {
-        // Ignore cleanup errors
-      }
     });
 
     it('returns null when token file does not exist', async () => {

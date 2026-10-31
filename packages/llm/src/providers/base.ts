@@ -1,4 +1,11 @@
+import { credentialConnectionFingerprint } from '../credential-connection.js';
 import { inheritRejectedImage } from './rejected-image.js';
+import { isToolConstraintRejection } from './tool-constraints.js';
+import { withRequestExtensions, requestEnvironment } from './request-extensions.js';
+import { credentialFingerprint } from '../credential-fingerprint.js';
+import { requestIdentity } from './request-extensions.js';
+import { createHash } from 'node:crypto';
+import { resolvePromptCacheDisabled } from '../run-scoped-config.js';
 /**
  * KodaX Base Provider
  *
@@ -24,11 +31,15 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { observeProviderAttempt } from '../provider-request-observation.js';
 import { KodaXError, KodaXRateLimitError, KodaXProviderError, KodaXNetworkError, KodaXContextOverflowError, KodaXReasoningEffortRejectedError } from '../errors.js';
 import { parseContextOverflowFacts } from './context-overflow.js';
+import { isProviderQuotaError } from '../retry/provider-quota.js';
+import { isProviderConnectionFailure } from '../retry/provider-network.js';
 import type { KodaXProviderErrorMetadata } from '../errors.js';
 import { classifyReasoningEffortRejection } from './reasoning-effort-rejection.js';
 import {
   hasScopedProviderCredentialAuthority,
   resolveProviderCredential,
+  withProviderInvocationCredential,
+  getScopedCloudCredential,
 } from '../provider-credential-context.js';
 
 /**
@@ -41,6 +52,7 @@ export interface ReasoningRejectionGuard {
   readonly model: string;
   readonly effort?: string;
   readonly onRejected?: (event: { provider: string; model: string; effort: string }) => void;
+  readonly tools?: readonly KodaXToolDefinition[];
 }
 
 /** Retry-only state owned by one provider request, never by the provider singleton. */
@@ -49,8 +61,9 @@ export interface ProviderRequestRetryState {
   /** Effective cap of the original request; overflow recovery may only lower it. */
   maxOutputTokensLimit?: number;
   suppressReasoningEffort: boolean;
+  disablePreferredToolConstraints?: boolean;
 }
-import { parseRetryAfter, extractHeadersFromError } from '../retry/retry-after.js';
+import { parseRetryAfter, extractHeadersFromError, readHeader } from '../retry/retry-after.js';
 import type { RetryAfterSource } from '../retry/retry-after.js';
 import { KODAX_MAX_TOKENS } from '../constants.js';
 import { getRunScopedConfig } from '../run-scoped-config.js';
@@ -95,20 +108,28 @@ function shouldLowerAutoReasoningEffort(
   return capability.effortStrategy === 'provider-budget';
 }
 
+function nonRetryableCause(error: unknown): KodaXProviderError | undefined {
+  const seen = new Set<object>();
+  while (error && typeof error === 'object' && !seen.has(error) && seen.size < 16) {
+    if (error instanceof KodaXProviderError && error.metadata?.retryable === false) return error;
+    seen.add(error); error = 'cause' in error ? error.cause : undefined;
+  }
+  return undefined;
+}
 function abortError(): DOMException {
   return new DOMException('Request aborted', 'AbortError');
 }
 
-async function isProviderSdkAbortError(error: Error): Promise<boolean> {
+async function isProviderSdkError(error: Error, kind: 'APIUserAbortError' | 'APIConnectionError'): Promise<boolean> {
   const [anthropic, openai] = await Promise.allSettled([
     import('@anthropic-ai/sdk'),
     import('openai'),
   ]);
   return (
     (anthropic.status === 'fulfilled'
-      && error instanceof anthropic.value.APIUserAbortError)
+      && error instanceof anthropic.value[kind])
     || (openai.status === 'fulfilled'
-      && error instanceof openai.value.APIUserAbortError)
+      && error instanceof openai.value[kind])
   );
 }
 
@@ -236,7 +257,53 @@ export interface KodaXRetryAfterEvent {
 export type KodaXOnRetryAfterCallback = (event: KodaXRetryAfterEvent) => void;
 
 export abstract class KodaXBaseProvider {
+  private readonly scopedReasoningRejections = new Map<string, Set<string>>();
+  usesScopedReasoningLearning(): boolean { return false; }
+  protected getReasoningApi(): string { return 'provider-operation'; }
+  protected getCredentialCloudConnection(): import('../types.js').KodaXCloudConnection | undefined { return undefined; }
+  getCredentialConnectionFingerprint(): string {
+    return credentialConnectionFingerprint({ provider: this.name, api: this.getReasoningApi(), baseUrl: this.getBaseUrl(),
+      authentication: this.config.authentication, oauth: this.config.oauth, cloud: this.getCredentialCloudConnection() });
+  }
+  /** Obtain only inside request authority; the returned digest never grants authority. */
+  getReasoningLearningScope(model?: string): string | undefined {
+    const credential = this.getRequestCredentialFingerprint();
+    if (!credential) return undefined;
+    return createHash('sha256').update(JSON.stringify([this.name, this.getReasoningApi(), this.getBaseUrl(), this.getWireModelId(model),
+      this.getReasoningProfile(model), this.config.authentication, this.config.oauth, credential])).digest('hex');
+  }
+  protected getRequestCredentialFingerprint(): string | undefined {
+    const plain = resolveProviderCredential(this.name, this.config.credentialSource === 'broker' ? undefined : requestEnvironment(this.config.apiKeyEnv));
+    const credential = plain ?? getScopedCloudCredential(this.name);
+    if (!credential) return undefined;
+    return credentialFingerprint(credential, requestIdentity());
+  }
+  protected knownReasoningRejections(model: string, options?: KodaXProviderStreamOptions): readonly string[] {
+    const scope = this.getReasoningLearningScope(model);
+    if (!scope) return options?.rejectedReasoningEfforts ?? [];
+    return [...(this.scopedReasoningRejections.get(scope) ?? []), ...(options?.resolveRejectedReasoningEfforts?.(scope) ?? options?.rejectedReasoningEfforts ?? [])];
+  }
+  protected rememberReasoningRejection(model: string, effort: string, options?: KodaXProviderStreamOptions): void {
+    const cacheScope = this.getReasoningLearningScope(model);
+    if (cacheScope) {
+      const rejected = this.scopedReasoningRejections.get(cacheScope) ?? new Set<string>();
+      rejected.add(effort); this.scopedReasoningRejections.set(cacheScope, rejected);
+    }
+    options?.onReasoningEffortRejected?.({ provider: this.name, model, effort, ...(cacheScope ? { cacheScope } : {}) });
+  }
+  protected async withRequestContext<T>(options: KodaXProviderStreamOptions | undefined, signal: AbortSignal | undefined,
+    operation: (signal: AbortSignal | undefined) => Promise<T>): Promise<T> {
+    if (options?.transport !== undefined && (!['sse', 'auto', 'websocket', 'websocket-cached'].includes(options.transport)
+      || (options.transport !== 'sse' && this.getReasoningApi() !== 'openai-responses'))) throw new KodaXProviderError('Selected transport requires Responses.', this.name, { retryable: false });
+    const signals = [signal, options?.signal, options?.transport && options.transport !== 'sse' ? options.webSocketLifetime : undefined]
+      .filter((value): value is AbortSignal => value !== undefined);
+    const combined = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
+    return withRequestExtensions(this.name, this.getWireModelId(options?.modelOverride), options,
+      () => withProviderInvocationCredential(this, combined, operation), this.getCacheCapabilities(options?.modelOverride), resolvePromptCacheDisabled());
+  }
   protected readonly requestObservationBoundary: 'physical_attempt' | 'provider_operation' = 'provider_operation';
+  /** New wire protocols must not silently inherit legacy thinking-parameter negotiation. */
+  protected readonly useLegacyReasoningFallback: boolean = true;
   abstract readonly name: string;
   abstract readonly supportsThinking: boolean;
   protected abstract readonly config: KodaXProviderConfig;
@@ -258,43 +325,25 @@ export abstract class KodaXBaseProvider {
   /**
    * Returns the max_tokens value the provider will currently use on its
    * next request. Precedence (highest to lowest):
-   *   1. Deprecated one-shot override (compatibility only)
+   *   1. Request override, then deprecated one-shot override (compatibility only)
    *   2. Run-scoped config / `KODAX_MAX_OUTPUT_TOKENS` (explicit user intent)
    *   3. Active model descriptor's `maxOutputTokens` (FEATURE_098)
    *   4. Provider config default
    *   5. Global `KODAX_MAX_TOKENS` fallback
+   * The result is capped by the model/provider outputTokenLimit when known.
    * Used by provider stream() paths and by the agent loop to decide
    * whether escalation is applicable (see `coding/src/agent.ts`).
    */
-  public getEffectiveMaxOutputTokens(model?: string): number {
-    // Run-scoped (concurrency-safe) first, then the global env fallback. Apply
-    // the same positive-integer guard `parseEnvInt` uses to the ALS value: an
-    // SDK caller passing 0/-1/NaN must NOT reach `max_tokens` verbatim (the
-    // provider API rejects it with a 400) — treat a bad value as "unset" so the
-    // env / descriptor / default chain still resolves.
-    const legacyMax = this.activeLegacyRequestOverride.getStore()
-      ?.maxOutputTokensOverride
+  public getEffectiveMaxOutputTokens(model?: string, requestOverride?: number): number {
+    const descriptor = this.getModelDescriptor(model);
+    const legacy = this.activeLegacyRequestOverride.getStore()?.maxOutputTokensOverride
       ?? this.pendingLegacyMaxOutputTokensOverride;
-    if (
-      typeof legacyMax === 'number'
-      && Number.isFinite(legacyMax)
-      && legacyMax > 0
-    ) {
-      return legacyMax;
-    }
-    const scopedMax = getRunScopedConfig()?.maxOutputTokens;
-    const envOverride = (typeof scopedMax === 'number' && Number.isFinite(scopedMax) && scopedMax > 0
-      ? scopedMax
-      : undefined)
-      ?? parseEnvInt(process.env.KODAX_MAX_OUTPUT_TOKENS);
-    if (envOverride !== undefined) {
-      return envOverride;
-    }
-    const descriptorMax = this.getModelDescriptor(model)?.maxOutputTokens;
-    if (descriptorMax !== undefined) {
-      return descriptorMax;
-    }
-    return this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
+    const budget = [requestOverride, legacy, getRunScopedConfig()?.maxOutputTokens,
+      parseEnvInt(process.env.KODAX_MAX_OUTPUT_TOKENS)].find(value =>
+      typeof value === 'number' && Number.isFinite(value) && value > 0)
+      ?? descriptor?.maxOutputTokens ?? this.config.maxOutputTokens ?? KODAX_MAX_TOKENS;
+    const limit = descriptor?.outputTokenLimit ?? this.config.outputTokenLimit;
+    return limit !== undefined && Number.isSafeInteger(limit) && limit > 0 ? Math.min(budget, limit) : budget;
   }
 
   /**
@@ -397,6 +446,7 @@ export abstract class KodaXBaseProvider {
   isConfigured(): boolean {
     const scopedAuthority = hasScopedProviderCredentialAuthority(this.name);
     if (scopedAuthority !== undefined) return scopedAuthority;
+    if (this.config.credentialSource === 'broker') return false;
     return resolveProviderCredential(
       this.name,
       process.env[this.config.apiKeyEnv],
@@ -481,6 +531,13 @@ export abstract class KodaXBaseProvider {
 
   getBaseUrl(): string | undefined {
     return this.config.baseUrl;
+  }
+  getToolCapabilities(model?: string): import('../types.js').KodaXToolCapabilities {
+    return structuredClone(this.getModelDescriptor(model)?.toolCapabilities ?? this.config.toolCapabilities ?? {});
+  }
+  getCacheCapabilities(model?: string): import('../types.js').KodaXCacheCapabilities | undefined {
+    const capabilities = this.getModelDescriptor(model)?.cacheCapabilities ?? this.config.cacheCapabilities;
+    return capabilities ? structuredClone(capabilities) : undefined;
   }
 
   getApiKeyEnv(): string {
@@ -641,7 +698,7 @@ export abstract class KodaXBaseProvider {
   }
 
   protected getApiKey(): string {
-    const key = resolveProviderCredential(this.name, process.env[this.config.apiKeyEnv]);
+    const key = resolveProviderCredential(this.name, this.config.credentialSource === 'broker' ? undefined : requestEnvironment(this.config.apiKeyEnv));
     if (!key) throw new Error(`${this.config.apiKeyEnv} not set`);
     return key;
   }
@@ -812,6 +869,7 @@ export abstract class KodaXBaseProvider {
 
   protected isRateLimitError(error: unknown): boolean {
     if (!(error instanceof Error)) return false;
+    if (extractHttpStatus(error) === 429) return true;
     const s = error.message.toLowerCase();
     // FEATURE_130 (v0.7.36): include 'overload' / '503' / '529' keywords so
     // server-overloaded responses also enter the retry path. Overload is
@@ -881,6 +939,7 @@ export abstract class KodaXBaseProvider {
         : {}),
       ...(requestId !== undefined ? { requestId } : {}),
       ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+      ...(error instanceof KodaXProviderError ? error.metadata : {}),
     };
   }
 
@@ -934,6 +993,43 @@ export abstract class KodaXBaseProvider {
           () => observeProviderAttempt(this.name, reasoningGuard?.model ?? this.getModel(), () => fn(retryState), this.requestObservationBoundary === 'physical_attempt'),
         );
       } catch (e) {
+        const terminal = nonRetryableCause(e);
+        if (terminal) throw terminal;
+        const headers = extractHeadersFromError(e);
+        const shouldRetry = readHeader(headers, 'x-should-retry');
+        if (isProviderQuotaError(e) || shouldRetry === 'false'
+          || (e instanceof KodaXProviderError && e.metadata?.retryable === false)) {
+          throw new KodaXProviderError(`${this.name} API error: ${e instanceof Error ? e.message : getErrorMessage(e)}`, this.name, {
+            ...this.providerErrorMetadata(e), retryable: false,
+          });
+        }
+        const status = extractHttpStatus(e);
+        if (i < retries - 1 && !retryState.disablePreferredToolConstraints && reasoningGuard?.tools?.some(tool => tool.strict === 'prefer' || tool.grammar?.mode === 'prefer')
+          && isToolConstraintRejection(status, getErrorMessage(e))) {
+          retryState.disablePreferredToolConstraints = true;
+          continue;
+        }
+        if (status === 408 || status === 409 || (status !== undefined && status >= 500) || (status !== 429 && shouldRetry === 'true')) {
+          if (i === retries - 1) {
+            throw new KodaXProviderError(e instanceof Error ? e.message : String(e), this.name, this.providerErrorMetadata(e));
+          }
+          const decision = parseRetryAfter(headers, { attempt: i, baseBackoffMs: 500 });
+          if (status !== undefined && status >= 500) onRetryAfter?.({
+            provider: this.name, ...decision, reason: 'overloaded', attempt: i + 1, maxAttempts: retries,
+          });
+          onRateLimit?.(i + 1, retries, decision.waitMs);
+          await waitForRetryDelay(decision.waitMs, signal);
+          continue;
+        }
+        // SDK retries are disabled for chat requests: retain connection recovery
+        // here so singleAttempt and the physical-attempt budget apply uniformly.
+        // Host deadlines bypass SDK loading and retain their existing recovery path.
+        if (!signal?.aborted && i < retries - 1 && e instanceof Error && !hasTypedTimeout(e)
+          && (isProviderConnectionFailure(e) || await isProviderSdkError(e, 'APIConnectionError'))) {
+          this.onStaleConnection();
+          await waitForRetryDelay(parseRetryAfter({}, { attempt: i, baseBackoffMs: 500 }).waitMs, signal);
+          continue;
+        }
         // Context window overflow: compute reduced max_tokens and retry once
         if (retries > 1 && this.isContextOverflowError(e) && retryState.maxOutputTokensOverride === undefined) {
           const reduced = this.parseContextOverflow(e);
@@ -1020,7 +1116,7 @@ export abstract class KodaXBaseProvider {
         // effort) AND self-heal THIS turn: flip the suppress flag and retry
         // once with the effort param dropped, so the request still completes
         // and the user never has to re-send their query.
-        if (retries > 1 && reasoningGuard && !effortRetried) {
+        if (retries > 1 && this.useLegacyReasoningFallback && reasoningGuard && !effortRetried) {
           const rejection = classifyReasoningEffortRejection(e, reasoningGuard.effort);
           if (rejection) {
             reasoningGuard.onRejected?.({
@@ -1052,7 +1148,7 @@ export abstract class KodaXBaseProvider {
           if (e.name === 'TimeoutError') throw e;
           if (
             signal?.aborted &&
-            (e.name === 'AbortError' || (await isProviderSdkAbortError(e)))
+            (e.name === 'AbortError' || (await isProviderSdkError(e, 'APIUserAbortError')))
           ) {
             if (e.name === 'AbortError') {
               throw e;

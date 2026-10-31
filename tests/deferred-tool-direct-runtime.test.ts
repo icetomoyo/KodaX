@@ -4,7 +4,7 @@ import path from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { KodaXBaseProvider, registerModelProvider, type KodaXMessage, type KodaXToolDefinition, type KodaXStreamResult } from '@kodax-ai/llm';
 import { awaitLatestCodingMemoryReviewDrain } from '@kodax-ai/coding';
-import { createKodaXRuntime } from '../src/sdk-runtime.js';
+import { createKodaXRuntime } from './runtime-fixture.js';
 import { measureModelFields } from './first-turn-uniform-costs.js';
 import { inputHash, type FrozenInput } from './first-turn-eval-support.js';
 import { projectToolSearchResultParameters } from '../packages/coding/src/tools/tool-search-model-result.js';

@@ -54,13 +54,15 @@ import type {
   KodaXToolDefinition,
   KodaXReasoningRequest,
   KodaXEphemeralSuffix,
+  KodaXProviderStreamOptions,
 } from '@kodax-ai/llm';
 import { withProviderRequestCredential } from '@kodax-ai/llm';
-import { getCachedRejectedEfforts, recordRejectedEffort } from '@kodax-ai/agent';
+import { getProviderReasoningCacheOptions, recordRejectedEffort } from '@kodax-ai/agent';
 import type { BoundaryTrackerSession } from './boundary-tracker-session.js';
 import type { ExtensionEventEmitter } from './stream-handler-wiring.js';
 
 export interface NonStreamingFallbackInput {
+  readonly onRequestPrepared?: KodaXProviderStreamOptions['onRequestPrepared'];
   readonly events: KodaXEvents;
   readonly streamProvider: KodaXBaseProvider;
   readonly providerMessages: KodaXMessage[];
@@ -134,7 +136,7 @@ export async function executeNonStreamingFallback(
     });
     const requestMeta = { providerRequestId } as const;
     const result = await withProviderRequestCredential(
-      input.streamProvider.name,
+      input.streamProvider,
       'fallback',
       fallbackSignal,
       (credentialSignal) => input.streamProvider.complete(
@@ -144,9 +146,10 @@ export async function executeNonStreamingFallback(
         input.effectiveProviderReasoning,
         {
           promptCacheKey: input.promptCacheKey,
-          rejectedReasoningEfforts: getCachedRejectedEfforts(input.providerName, input.modelOverride ?? input.streamProvider.getModel(), input.configHome),
+          onRequestPrepared: input.onRequestPrepared,
+          ...getProviderReasoningCacheOptions(input.streamProvider, input.modelOverride ?? input.streamProvider.getModel(), input.configHome),
           onReasoningEffortRejected: (event) => {
-            recordRejectedEffort(event.provider, event.model, event.effort, 'observed', new Date().toISOString(), input.configHome);
+            recordRejectedEffort(event.provider, event.model, event.effort, 'observed', new Date().toISOString(), input.configHome, event.cacheScope);
             input.events.onReasoningEffortRejected?.({ ...event, ...requestMeta });
           },
           onReasoningResolved: (event) => input.events.onReasoningResolved?.({ ...event, ...requestMeta }),

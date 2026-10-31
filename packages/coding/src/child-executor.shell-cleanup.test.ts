@@ -81,9 +81,11 @@ it('retains the child cleanup fence when the owner retries before the child Abor
   const abort = new AbortController();
   let retryCleanup: (() => Promise<void>) | undefined;
   let settled = false;
+  let started = false;
   const release = vi.fn();
   const prepare = vi.fn(async () => ({
-    executable: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'], env: process.env,
+    executable: process.execPath,
+    args: ['-e', "process.stdout.write('child-started'); setInterval(() => {}, 1000)"], env: process.env,
     cleanup: async () => undefined,
   }));
   const events = buildChildEvents('child', undefined, undefined, undefined, {
@@ -94,9 +96,13 @@ it('retains the child cleanup fence when the owner retries before the child Abor
     backups: new Map(), runtimeRunId: 'run-owner-stop', toolCallId: 'owner-stop-before-child-abort',
     abortSignal: abort.signal, shellSandbox: { prepare },
     registerShellCleanup: events?.registerShellCleanup,
+    reportToolProgress: progress => { if (progress.includes('child-started')) started = true; },
   }).then((result) => { settled = true; return result; });
   try {
     await vi.waitFor(() => expect(retryCleanup).toBeTypeOf('function'));
+    // This regression stops an executing child. Gate-before-start cleanup has
+    // its own admission test and must not make this timing depend on IPC speed.
+    await vi.waitFor(() => expect(started).toBe(true), { timeout: 10_000 });
     expect(abort.signal.aborted).toBe(false);
     await retryCleanup!();
     expect(release).not.toHaveBeenCalled();

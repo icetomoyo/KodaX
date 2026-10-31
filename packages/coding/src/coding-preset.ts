@@ -1,3 +1,4 @@
+import { staticText } from './prompts/static-text.js';
 /**
  * Default coding agent preset (FEATURE_080 → FEATURE_100).
  *
@@ -40,13 +41,7 @@ import type { KodaXOptions, KodaXResult } from './types.js';
 /** Stable name used as the dispatch key for the built-in coding preset. */
 export const DEFAULT_CODING_AGENT_NAME = 'kodax/coding/default';
 
-const DEFAULT_CODING_INSTRUCTIONS = `KodaX default coding agent.
-
-This agent is a thin declaration that routes through the built-in \`runKodaX\`
-pipeline. Tools, extensions, reasoning, provider selection, session
-persistence, compaction and harness routing are all driven by the
-\`KodaXOptions\` forwarded via \`Runner.run\` \`opts.presetOptions\`.
-`;
+const DEFAULT_CODING_INSTRUCTIONS = staticText("t12.coding-preset.0");
 
 function extractPrompt(input: string | readonly AgentMessage[]): string {
   if (typeof input === 'string') return input;
@@ -209,17 +204,16 @@ const codingSubstrate: PresetDispatcher = async (
 
 /**
  * Default middleware declarations the coding substrate ships with.
- * The substrate body in `agent-runtime/run-substrate.ts` runs each of
- * these as branches today; the declaration list serves as the
- * machine-readable contract that the substrate honours, and lets
+ * The declaration list describes active substrate middleware and lets
  * SDK consumers override (`createDefaultCodingAgent({ middleware: […] })`)
  * without forking the substrate body.
  */
 export const DEFAULT_CODING_MIDDLEWARE: readonly AgentMiddlewareDeclaration[] = Object.freeze([
   Object.freeze({ name: 'autoReroute', enabled: true }),
   Object.freeze({ name: 'mutationReflection', enabled: true }),
-  Object.freeze({ name: 'preAnswerJudge', enabled: true }),
-  Object.freeze({ name: 'postToolJudge', enabled: true }),
+  // Keep the declaration names for compatibility; the V1 judges are retired.
+  Object.freeze({ name: 'preAnswerJudge', enabled: false }),
+  Object.freeze({ name: 'postToolJudge', enabled: false }),
 ]);
 
 /**

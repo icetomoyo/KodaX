@@ -202,10 +202,9 @@ function assertSingleProviderCredentialModule(label, result) {
 
 // Everything in root deps stays external (npm installs them on the user
 // machine). Only @kodax-ai/* internal sub-packages get inlined.
-// Exception: react-devtools-core + ws are intercepted by stubVendoredInkDevDepsPlugin
-// before reaching the external check (see plugin docstring above).
+// Ink's dev-only shims are intercepted before the external check.
 const rootPkg = readPkg(path.join(repoRoot, 'package.json'));
-const STUBBED_PACKAGES = new Set(['react-devtools-core', 'ws']);
+const STUBBED_PACKAGES = new Set(['react-devtools-core']);
 const thirdPartyExternals = Object.keys(rootPkg.dependencies || {})
   .filter((name) => !STUBBED_PACKAGES.has(name));
 
@@ -304,17 +303,14 @@ const stubVendoredInkDevDepsPlugin = {
     // Stub it so we don't drag the full ws ^8 surface into the bundle's
     // top-level static imports just for a dev-mode shim that production
     // CLI never enters. The stub is identity-shaped: WebSocket constructor.
-    // ws still appears in root package.json#dependencies because openai's
-    // peerOptional 'ws@^8.18.0' must be satisfiable for `npm install -g`
-    // to succeed under npm 11 strict-peer-deps; npm 11 satisfies the peer
-    // by finding ws in node_modules even when the bundle doesn't import it.
-    build.onResolve({ filter: /^ws$/ }, () => ({
-      path: 'ws-stub',
-      namespace: 'stub',
-    }));
+    // Production Responses transports load real ws lazily. Keep that runtime
+    // dependency external; only this Ink development polyfill receives a stub.
+    build.onResolve({ filter: /^ws$/ }, args => /[/\\]ink[/\\].*devtools-window-polyfill\.js$/.test(args.importer)
+      ? { path: 'ws-stub', namespace: 'stub' }
+      : { path: 'ws', external: true });
     build.onLoad({ filter: /^ws-stub$/, namespace: 'stub' }, () => ({
       contents: `
-        // Stub: real ws never loaded in production CLI (vendored ink dev path only).
+        // Only Ink's development polyfill uses this stub. Provider transports load real ws.
         class WebSocketStub {}
         export default WebSocketStub;
         export { WebSocketStub as WebSocket };
@@ -411,10 +407,10 @@ assertStartupImportBoundary('CLI', cliResult, { eagerOnly: true });
 assertSingleProviderCredentialModule('CLI', cliResult);
 
 const cliBytes = statSync(path.join(distDir, 'kodax_cli.js')).size;
-// Shared managed contracts and provenance-guarded activation add 5,952 bytes
-// over the 5,287,232-byte baseline (5,293,184 audited). No dependency was added;
-// keep eager dependency/input guards unchanged, with only 6 KiB more allowance.
-assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024 + 50 * 1024);
+// SDK contracts, the Windows Job gate, the Host view-read close fence and
+// authorized tool-result recovery and Host-scoped Skill lookup add <21 KiB
+// without new dependencies. Dependency and cold-entry fences remain enforced.
+assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024 + 21 * 1024);
 log(`  ✓ dist/kodax_cli.js (${(cliBytes / 1024).toFixed(0)} kB)`);
 
 // Bare `-r` must show the picker without evaluating the full CLI graph.
@@ -472,11 +468,9 @@ log(`  ✓ dist/kodax_bootstrap.js (${(bootstrapBytes / 1024).toFixed(0)} kB)`);
 // does not affect the helper-depth contract verified below.
 
 const sdkEntryNames = ['index', 'sdk-agent', 'sdk-llm', 'sdk-coding', 'sdk-media', 'sdk-repl', 'sdk-skills', 'sdk-mcp', 'sdk-session', 'sdk-runtime', 'sdk-client', 'sdk-sandbox', 'sdk-a2a', 'sdk-experimental-memory'];
-const sdkEntryPoints = sdkEntryNames.map((name) => {
-  // index.ts lives directly under src/, the others as src/sdk-<name>.ts.
-  const filename = name === 'index' ? 'index.ts' : `${name}.ts`;
-  return path.join(repoRoot, 'src', filename);
-});
+const sdkEntryPoints = Object.fromEntries(sdkEntryNames.map((name) => [
+  name, path.join(repoRoot, 'src', name === 'sdk-runtime' ? 'sdk-runtime-public.ts' : name + '.ts'),
+]));
 
 log(`Building ${sdkEntryNames.length} SDK entries (splitting on)…`);
 const sdkResult = await build({
@@ -597,6 +591,9 @@ const capJsonSrc = path.join(repoRoot, 'packages/llm/src/providers/provider-capa
 const capJsonDst = path.join(distDir, 'provider-capabilities.json');
 log(`Copying provider-capabilities.json → ${path.relative(repoRoot, capJsonDst)}`);
 cpSync(capJsonSrc, capJsonDst);
+cpSync(path.join(repoRoot, 'packages/coding/src/self-knowledge/manual-topics.json'), path.join(distDir, 'manual-topics.json'));
+cpSync(path.join(repoRoot, 'packages/coding/src/prompts/static-text.json'), path.join(distDir, 'static-text.json'));
+cpSync(path.join(repoRoot, 'packages/repl/src/common/generated-config-templates.json'), path.join(distDir, 'generated-config-templates.json'));
 log(`  ✓ dist/provider-capabilities.json copied`);
 
 // ---- sanity check: helper script depth contract -------------------------

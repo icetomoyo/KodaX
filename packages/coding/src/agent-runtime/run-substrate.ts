@@ -111,7 +111,7 @@ import {
   resolveReasoningMode,
   type ReasoningPlan,
 } from '../reasoning.js';
-import { effortToLegacyReasoningMode } from '@kodax-ai/llm';
+import { effortToLegacyReasoningMode, reconcileAssistantContent } from '@kodax-ai/llm';
 import { resolveExecutionCwd, resolveExecutionPath } from '../runtime-paths.js';
 import type { KodaXWrittenFile } from '../types.js';
 import {
@@ -229,6 +229,7 @@ import { assertProviderConfigured } from './provider-config-check.js';
 import { buildToolExecutionContext } from './tool-execution-context.js';
 import { bindVisualObservationAdmission } from '../media/visual-owner.js';
 import { createVisualOutputReservations } from '../task-engine/visual-output-reservations.js';
+import { emitEffectiveTaskConfig } from './effective-config.js';
 import { applyAccountingDelta } from '../goal/state.js';
 import { turnWallTimeDelta } from '../goal/accounting.js';
 import { resolvePerTurnReasoning } from './per-turn-reasoning.js';
@@ -267,6 +268,7 @@ import { createRuntimeContextBudgetSnapshot } from './context-budget.js';
 import {
   emitPromptCacheDiagnosticRequest,
   emitPromptCacheDiagnosticResponse,
+  emitNativePromptCacheDiagnosticRequest,
 } from './prompt-cache-diagnostics.js';
 import { derivePromptCacheAffinityKey } from './prompt-cache-affinity.js';
 import {
@@ -283,7 +285,7 @@ import { getUnlockedDeferredTools } from '../tools/deferred-tools.js';
 // CAP-028 / CAP-062 (`gracefulCompactDegradation`) is wired inside
 // `agent-runtime/middleware/compaction-orchestration.ts` since
 // FEATURE_100 P3.4c.
-import { shouldCompact, getCachedRejectedEfforts } from '@kodax-ai/agent';
+import { shouldCompact, getProviderReasoningCacheOptions } from '@kodax-ai/agent';
 import { resolveWireEffort } from '@kodax-ai/llm';
 import { runCompactionLifecycle } from './middleware/compaction-orchestration.js';
 import { createCompactionAntiThrashState } from './middleware/compaction-pressure.js';
@@ -523,11 +525,9 @@ function replaceLatestAssistantToolBlocks(
   const visibleToolBlocks = result.toolBlocks.filter((block) => isVisibleToolName(block.name));
   messages[index] = {
     ...message,
-    content: guardEmptyAssistantContent([
-      ...result.thinkingBlocks,
-      ...result.textBlocks,
-      ...visibleToolBlocks,
-    ]),
+    content: guardEmptyAssistantContent(reconcileAssistantContent(result.contentBlocks, {
+      ...result, toolBlocks: visibleToolBlocks,
+    })),
   };
 }
 
@@ -1032,7 +1032,7 @@ async function runSubstrateInContext(
     options.context?.interruptedRunEvidence,
     messages,
   );
-  const verificationRunContext = options.context?.systemPromptOverride
+  const verificationRunContext = (options.context?.systemPromptOverride || options.context?.agentProfile?.instructions)
     ? [options.context.agentProfile ? EXECUTION_GUIDANCE : undefined,
         formatVerificationContract(resolveEffectiveVerification(options))]
         .filter((section): section is string => Boolean(section)).join('\n\n')
@@ -1724,7 +1724,8 @@ async function runSubstrateInContext(
       // preserve user intent while negotiating the wire value. Other adapters keep
       // their legacy host-side resolution. Re-created providers share the host cache.
       const rejectionModel = turnState.currentModelOverride ?? streamProvider.getModel();
-      const rejectedEfforts = getCachedRejectedEfforts(turnState.currentProviderName, rejectionModel, options.context?.configHome);
+      const reasoningCache = getProviderReasoningCacheOptions(streamProvider, rejectionModel, options.context?.configHome);
+      const rejectedEfforts = reasoningCache.rejectedReasoningEfforts ?? [];
       const effortStrategy = streamProvider.getReasoningProfile(rejectionModel)?.effortStrategy;
       const providerNegotiatesEffort = effortStrategy === 'openai-chat-effort' || effortStrategy === 'openai-responses-effort';
       if (!providerNegotiatesEffort && effectiveProviderEffort !== undefined && rejectedEfforts.length > 0) {
@@ -1875,6 +1876,8 @@ async function runSubstrateInContext(
       const reservedResponseTokens = streamProvider.getEffectiveMaxOutputTokens(
         turnState.currentModelOverride,
       );
+      emitEffectiveTaskConfig(options, { agentMode: options.agentMode ?? 'sa',
+        toolScope: fullActiveToolDefinitions.map(tool => tool.name), modelToolScope: activeToolDefinitions.map(tool => tool.name) });
       const physicalReserveTokens = reservedResponseTokens
         + (memorySession === undefined ? 0 : MEMORY_EVIDENCE_TOKEN_RESERVE);
       const requestBudgetSnapshot = createRuntimeContextBudgetSnapshot({
@@ -2066,22 +2069,26 @@ async function runSubstrateInContext(
       // wire-level output reserve shrinks floor-bounded while the assembled
       // request is over capacity, so the provider request is legal; a
       // rejection routes to classification, never a resend.
-      const buildCapacityRequestMessages = () => degradeIrreducibleUserInputs(
-        providerMessages, ctx, contextWindow, userInputDegradationCache,
-        { currentTokens: resolveContextTokenCount(providerMessages, estimatedRequestTokenSnapshot), reservedResponseTokens,
-          canReadPagedContent: activeToolDefinitions.some(tool => tool.name === 'read'),
-          retainInput: original => {
-            const reportUsage = captureDescendantUsage();
-            return prepareUserInputMemory({ original, contextWindow, provider: streamProvider,
-            model: turnState.currentModelOverride, signal: options.abortSignal, timeoutMs: API_HARD_TIMEOUT_MS,
-            goalRuntime,
-            onUsage: usage => { turnState.costTracker = recordUsage(turnState.costTracker, {
-              provider: turnState.currentProviderName, model: turnState.currentModelOverride ?? streamProvider.getModel(),
-              inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
-              cacheReadTokens: usage.cachedReadTokens, cacheWriteTokens: usage.cachedWriteTokens });
-            reportUsage?.(usage); },
-          }); } },
-      );
+      const buildCapacityRequestMessages = () => {
+        const requestMessages = ctx.toolResultRecovery?.project(providerMessages) ?? providerMessages;
+        return degradeIrreducibleUserInputs(
+          requestMessages, ctx, contextWindow, userInputDegradationCache,
+          { currentTokens: resolveContextTokenCount(requestMessages, estimatedRequestTokenSnapshot), reservedResponseTokens,
+            canReadPagedContent: activeToolDefinitions.some(tool => tool.name === 'read'),
+            retainInput: original => {
+              const reportUsage = captureDescendantUsage();
+              return prepareUserInputMemory({ original, contextWindow, provider: streamProvider,
+                model: turnState.currentModelOverride, signal: options.abortSignal, timeoutMs: API_HARD_TIMEOUT_MS,
+                goalRuntime,
+                onUsage: usage => { turnState.costTracker = recordUsage(turnState.costTracker, {
+                  provider: turnState.currentProviderName, model: turnState.currentModelOverride ?? streamProvider.getModel(),
+                  inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
+                  cacheReadTokens: usage.cachedReadTokens, cacheWriteTokens: usage.cachedWriteTokens });
+                  reportUsage?.(usage); },
+              });
+            } },
+        );
+      };
       let wireMessages = await buildCapacityRequestMessages();
       let requestMaxOutputTokens = applyContextCapacityReserveOverride(streamProvider, {
         ...(turnState.currentModelOverride !== undefined
@@ -2181,7 +2188,7 @@ async function runSubstrateInContext(
             streamCallbacks.onRetryAfter?.(event);
           };
           emitContextBudgetSnapshot(wireMessages, requestMaxOutputTokens);
-          const cacheDiagnostic = emitPromptCacheDiagnosticRequest({
+          let cacheDiagnostic = emitPromptCacheDiagnosticRequest({
             events,
             enabled: options.context?.contextDiagnostics === true,
             provider: streamProvider,
@@ -2199,7 +2206,7 @@ async function runSubstrateInContext(
           });
           reportDescendantCallUsage = captureDescendantUsage();
           result = await withProviderRequestCredential(
-            streamProvider.name,
+            streamProvider,
             'primary',
             retrySignal,
             (credentialSignal) => streamProvider.stream(
@@ -2209,7 +2216,8 @@ async function runSubstrateInContext(
               effectiveProviderReasoning,
               {
                 ...streamCallbacks,
-                rejectedReasoningEfforts: getCachedRejectedEfforts(turnState.currentProviderName, rejectionModel, options.context?.configHome),
+                ...reasoningCache,
+                onRequestPrepared: projection => { cacheDiagnostic = emitNativePromptCacheDiagnosticRequest(events, cacheDiagnostic, projection); },
                 ...(textRecoveryRetry ? { singleAttempt: true } : {}),
                 promptCacheKey,
                 onRetryAfter: wrappedRetryAfter,
@@ -2291,7 +2299,7 @@ async function runSubstrateInContext(
             // the new error.
             emitContextBudgetSnapshot(wireMessages, requestMaxOutputTokens);
             effectiveSystemPrompt = withEffectivePermissionContext(requestPolicySystemPrompt, options.context);
-            const fallbackCacheDiagnostic = emitPromptCacheDiagnosticRequest({
+            let fallbackCacheDiagnostic = emitPromptCacheDiagnosticRequest({
               events,
               enabled: options.context?.contextDiagnostics === true,
               provider: streamProvider,
@@ -2330,6 +2338,7 @@ async function runSubstrateInContext(
               outputId,
               clearStreamTimers: streamTimers.clearAll,
               configHome: options.context?.configHome,
+              onRequestPrepared: projection => { fallbackCacheDiagnostic = emitNativePromptCacheDiagnosticRequest(events, fallbackCacheDiagnostic, projection); },
             });
             if (fallbackOutcome.ok) {
               result = fallbackOutcome.result;
@@ -2446,6 +2455,7 @@ async function runSubstrateInContext(
           outputTokens: result.usage.outputTokens,
           cacheReadTokens: result.usage.cachedReadTokens,
           cacheWriteTokens: result.usage.cachedWriteTokens,
+          ...(result.usage.cachedWriteTokensByTtl ? { cacheWriteTokensByTtl: result.usage.cachedWriteTokensByTtl } : {}),
         });
         reportDescendantCallUsage?.(result.usage);
       } else {
@@ -2559,11 +2569,9 @@ async function runSubstrateInContext(
       // turn stays well-formed without persisting a fake '...' reply. The
       // provider serializer synthesizes a wire-only '...' if the gateway
       // (e.g. Kimi 400 "must not be empty") rejects empty content.
-      const assistantContent = guardEmptyAssistantContent([
-        ...result.thinkingBlocks,
-        ...result.textBlocks,
-        ...(signal === 'COMPLETE' ? [] : visibleToolBlocks),
-      ]);
+      const assistantContent = guardEmptyAssistantContent(reconcileAssistantContent(result.contentBlocks, {
+        ...result, toolBlocks: signal === 'COMPLETE' ? [] : visibleToolBlocks,
+      }));
       // GOAL 2: stamp when the LLM stream completed so the session entry carries
       // a real per-message time (SA path; parallel to runner.ts). Additive.
       messages.push({

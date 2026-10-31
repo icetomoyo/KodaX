@@ -7,7 +7,7 @@ import { withKodaXFileLock } from '@kodax-ai/agent';
 import { createExtensionRuntime } from '@kodax-ai/coding';
 import { executeCommand } from '@kodax-ai/repl';
 import { KodaXBaseProvider, registerModelProvider, type KodaXProviderConfig, type KodaXStreamResult } from '@kodax-ai/llm';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { createRuntimeDaemonClient } from './runtime-daemon/client.js';
 import { createRuntimeDaemonDispatcher } from './runtime-daemon/server.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';

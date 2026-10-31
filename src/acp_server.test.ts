@@ -143,7 +143,7 @@ import {
   toClientPermissionDecision,
   type KodaXAcpServerOptions,
 } from './acp_server.js';
-import { createKodaXRuntime, type RuntimePermissionRequest } from './sdk-runtime.js';
+import { createKodaXRuntime, type RuntimePermissionRequest } from "../tests/runtime-fixture.js";
 
 type PromptRequestWithEffort = PromptRequest & {
   effort?: string;

@@ -49,7 +49,8 @@ describe('Ark Coding documented model catalog (2026-10-28)', () => {
     expect(getProviderModels('ark-coding')).toContain(model);
     expect(getModelCapabilities('ark-coding', model)).toMatchObject({
       contextWindow,
-      maxOutputTokens: 384_000,
+      maxOutputTokens: 128_000,
+      outputTokenLimit: 384_000,
       reasoningCapability: 'native-effort',
       reasoningProfile: {
         reasoningPreset: 'deepseek-v4-anthropic',
@@ -88,15 +89,16 @@ describe('Ark Coding documented model catalog (2026-10-28)', () => {
     ['kimi-k3.1-pro', 128_000],
     ['kimi-k3', 128_000],
     ['kimi-k2.8-preview', 1_024_000],
-  ] as const)('exposes %s with gateway-specific limits', (model, maxOutputTokens) => {
+  ] as const)('exposes %s with gateway-specific limits', (model, outputCeiling) => {
     expect(getProviderModels('ark-coding')).toContain(model);
     expect(getModelCapabilities('ark-coding', model)).toMatchObject({
-      contextWindow: 1_024_000, maxOutputTokens,
+      contextWindow: 1_024_000, maxOutputTokens: 128_000,
+      ...(model === 'kimi-k2.8-preview' ? { outputTokenLimit: outputCeiling } : {}),
     });
   });
 
   it.each(['deepseek-v4-pro', 'deepseek-v4-flash'])('updates the documented output ceiling for %s', (model) => {
-    expect(getModelCapabilities('ark-coding', model)?.maxOutputTokens).toBe(384_000);
+    expect(getModelCapabilities('ark-coding', model)).toMatchObject({ maxOutputTokens: 128_000, outputTokenLimit: 384_000 });
   });
 
   it.each(['deepseek-v4.1-flash', 'deepseek-v4.1-flash-economy'])('maps every user effort on %s in stream and complete', async (model) => {

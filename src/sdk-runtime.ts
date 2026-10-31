@@ -50,7 +50,8 @@ export type {
 import { LOCAL_RUNTIME_BUILD, readRuntimeBuildIdentity, type RuntimeBuildIdentity } from './runtime-build-identity.js';
 import { createRuntimeProductCommandService, type RuntimeProductCommandService, type RuntimeCommandInvocation } from './runtime-product-commands.js';
 import { currentProductExecution, withProductExecution } from './product-execution-authorization.js';
-import type { RuntimeExecutionAuthorization } from './client-host-authorization.js';
+import type { RuntimeExecutionAuthorization, RuntimeExecutionProfile } from './client-host-authorization.js';
+import { createExecutionToolPolicy, intersectExecutionToolCeilings } from './execution-profile.js';
 import { registerClientWorkCleanup, settleClientWork, type ClientWorkCleanup } from './runtime-client-work.js';
 import { createExecutionFactsStore, type ExecutionFactsStore } from './execution-facts.js';
 export type { RuntimeExecutionAuthorization } from './client-host-authorization.js';
@@ -60,6 +61,7 @@ import { prepareRuntimeVisualInput, materializeRuntimeVisualArtifacts, readRunti
 import { createSessionVisualObservationOwner } from '@kodax-ai/coding';
 import { sessionVisualMediaDirectory } from '@kodax-ai/agent/media';
 import { captureGenerationResume, parseGenerationCheckpoint, rebindGenerationOptions, type RuntimeGenerationResume } from './runtime-generation-recovery.js';
+import { clearRemovedExecutionConfig, resolveExecutionConfig, RUN_CONFIG_KEYS } from './execution-config.js';
 import type {
   ClientSession,
   ClientSessionSummary,
@@ -102,7 +104,7 @@ import {
   readFollowingMessage,
   readHistoryPageWithBoundaryRetry,
 } from "./client-history.js";
-import { toClientConfig, toClientSessionSettings } from "./client-settings.js";
+import { CLIENT_CONFIG_APPLICATION, toClientConfig, toClientSessionSettings } from "./client-settings.js";
 import { createHostIntegrations } from "./host-integrations.js";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -124,6 +126,7 @@ import {
   analyzeAutoModeCall,
   assertTrustedTextMutationPolicy,
   assertWorkModeAvailable,
+  resolveWorkMode,
   bashSignalCollector,
   CANCELLED_TOOL_RESULT_MESSAGE,
   checkAbsoluteDeny,
@@ -448,7 +451,6 @@ import {
   type RuntimeDaemonClientTransport,
   type RuntimeDaemonTransportLifecycleState,
 } from "./runtime-daemon/client.js";
-import { acquireRuntimeDaemonLease } from "./runtime-daemon/manager.js";
 import {
   acquireRuntimeDaemonProcessLease,
   RuntimeDaemonStartupError,
@@ -473,6 +475,7 @@ import {
   acquireRuntimeSessionStorageOwner,
   enableRuntimeDaemonOwner,
   findRuntimeSessionStorageHost,
+  prepareRuntimeDaemonOwner,
   readRuntimeDaemonLockOwner,
   readRuntimeOwnerProcessStartIdentity,
   readRuntimeOwnerPolicy,
@@ -506,6 +509,16 @@ export class RuntimeDaemonCapabilityUpgradeError extends Error {
     this.name = "RuntimeDaemonCapabilityUpgradeError";
     this.capability = capability;
     this.retryable = preflight?.canStop === false;
+  }
+}
+
+/** Retired owner construction cannot fall back to a private product Runtime. */
+export class RuntimeHostMigrationRequiredError extends Error {
+  readonly code = "runtime_host_migration_required" as const;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "RuntimeHostMigrationRequiredError";
   }
 }
 
@@ -696,9 +709,10 @@ export function getKodaXRuntimeOwnerState(
     input.profile,
   );
   const owner = readRuntimeDaemonLockOwner(paths.lockFile);
+  const policy = readRuntimeOwnerPolicy(paths);
   return {
     profile: paths.profile,
-    policy: readRuntimeOwnerPolicy(paths),
+    policy: { mode: policy.mode, revision: policy.revision, updatedAt: policy.updatedAt },
     ownerStatus:
       owner !== undefined
         ? "owned"
@@ -880,8 +894,8 @@ export interface RuntimeExternalAgentsOptions {
 export interface CreateKodaXRuntimeOptions {
   /** Local startup observations; callback work is not awaited and cannot change readiness. */
   readonly onStartupProgress?: (progress: ClientStartupProgress) => void | Promise<void>;
-  /** Runtime ownership form. Defaults to a caller-owned embedded Runtime. */
-  readonly mode?: KodaXRuntimeMode;
+  /** Compatibility launcher for the shared Host. Prefer ensureKodaXClient for product use. */
+  readonly mode: "daemon";
   /** Base directory that owns `.kodax`, matching CLI `--home`; not the `.kodax` directory used by `KODAX_HOME`. */
   readonly homeDir?: string;
   readonly profile?: string;
@@ -892,10 +906,6 @@ export interface CreateKodaXRuntimeOptions {
   readonly permissionTimeoutMs?: number;
   /** Ordinary-question deadline in milliseconds; 0 (default) waits indefinitely. Expiry returns unanswered. */
   readonly userInputTimeoutMs?: number;
-  /** Internal daemon-host switch; keeps ordinary embedded runs non-interactive by default. */
-  readonly sharedDaemonHost?: boolean;
-  /** @internal Owner-fence identity assigned before a shared daemon Runtime is constructed. */
-  readonly daemonHostRuntimeId?: string;
   readonly daemonStartupTimeoutMs?: number;
   readonly daemonConnectTimeoutMs?: number;
   /**
@@ -914,12 +924,19 @@ export interface CreateKodaXRuntimeOptions {
   readonly clientInfo?: RuntimeClientInfo;
   readonly capabilities?: RuntimeClientCapabilities;
   readonly requirements?: RuntimeCapabilityRequirements;
-  /** Inline host injection. Functions never cross the daemon transport. */
-  readonly externalAgents?: RuntimeExternalAgentsOptions;
   /** Trusted host-owned Exec Policy inputs. Detached daemon mode accepts them only for a new auto-started owner. */
   readonly execPolicy?: RuntimeExecPolicyOptions;
   /** Trusted host-owned Auto reviewer layers; detached daemon attach never mutates them. */
   readonly autoReview?: RuntimeAutoReviewOptions;
+}
+
+/** @internal Host assembly and isolated core fixtures; never exported by the SDK entry. */
+export interface CreateKodaXHostRuntimeOptions extends Omit<CreateKodaXRuntimeOptions, "mode"> {
+  /** Retained only for existing internal core fixtures. */
+  readonly mode?: "embedded";
+  readonly sharedDaemonHost?: boolean;
+  readonly daemonHostRuntimeId?: string;
+  readonly externalAgents?: RuntimeExternalAgentsOptions;
 }
 
 export interface RuntimeExecPolicyOptions {
@@ -1012,6 +1029,8 @@ export interface RuntimeCapabilityRequirements {
   readonly productExitControl?: 1;
   readonly productExecutionFacts?: 1;
   readonly productActorAuthorization?: 1;
+  readonly providerProbeAuthorization?: 1;
+  readonly providerCredentialConnectionBinding?: 1;
   readonly productHistoryBoundaries?: 1;
   readonly productExecutionAuthorization?: 1 | 2;
   /** Unified product business operations and current-view lifecycle. */
@@ -1219,6 +1238,7 @@ export interface RuntimeEffectiveCredentialEntry {
 }
 
 export interface RuntimeEffectiveConfigSnapshot {
+  readonly application?: import('@kodax-ai/coding/client-contract').ClientEffectiveExecutionConfig['application'];
   readonly schemaVersion: 1;
   readonly capturedAt: string;
   readonly persistedConfig: {
@@ -1314,8 +1334,9 @@ export interface RuntimeExtensionListResult {
 }
 
 export interface RuntimeCatalogService {
+  executionTools?(sessionId: string): Promise<readonly import('@kodax-ai/coding/client-contract').KodaXToolVisibilityMeta[]>;
   reasoningEfforts(input: ClientModelSelection): Promise<readonly string[]>;
-  probeReasoningEfforts(input: ClientModelSelection & { readonly efforts: readonly string[] }): Promise<readonly ClientCapabilityProbeResult[]>;
+  probeReasoningEfforts(input: ClientModelSelection & { readonly efforts: readonly string[]; readonly credential?: RuntimeCredentialBinding }): Promise<readonly ClientCapabilityProbeResult[]>;
   forgetCapabilities(input?: { readonly provider?: string; readonly model?: string }): Promise<void>;
   providers(): Promise<readonly ClientProviderInfo[]>;
   models(filter?: RuntimeModelListFilter): Promise<unknown>;
@@ -2146,6 +2167,8 @@ export type RuntimeKodaXOptions = Omit<
   KodaXOptions,
   "provider" | "session" | "events"
 > & {
+  /** Internal non-secret admission evidence; not a public option or authority grant. */
+  readonly executionToolCeiling?: Pick<RuntimeExecutionProfile, 'tools' | 'toolMetadata'>;
   readonly provider?: string;
   readonly session?: KodaXOptions["session"];
   readonly events?: KodaXEvents;
@@ -2181,6 +2204,7 @@ export type RuntimeDaemonContextOptions = Pick<
   | "taskMetadata"
   | "taskVerification"
   | "agentProfile"
+  | "workModePolicy"
   | "currentAgentId"
   | "parentAgentId"
 >;
@@ -2241,6 +2265,8 @@ export interface RuntimeContextRecoveryWait {
 }
 
 export interface RuntimeRunStatus {
+  readonly effectiveConfig?: import('@kodax-ai/coding').KodaXEffectiveTaskConfig;
+  readonly workMode?: KodaXOptions['workMode'];
   /** Durable evidence that execution stopped before the next generation. */
   readonly contextRecovery?: {
     readonly checkpoint?: import('@kodax-ai/coding').KodaXGenerationCheckpoint;
@@ -3664,6 +3690,8 @@ interface RuntimeAdmittedSessionContext {
 }
 
 interface RuntimeRunRecord {
+  effectiveConfig?: import('@kodax-ai/coding').KodaXEffectiveTaskConfig;
+  workMode?: KodaXOptions['workMode'];
   recoveryRequiresExtensionRuntime?: boolean;
   recoveryToolCeiling?: readonly string[];
   generationSuspended?: boolean;
@@ -4126,16 +4154,88 @@ function rebaseAgentConfigPath(filePath: string, configHome: string): string {
     : path.join(configHome, relative);
 }
 
-export function createKodaXRuntime(
-  options: CreateKodaXRuntimeOptions & { readonly mode: "daemon" },
-): Promise<KodaXDaemonRuntime>;
-export function createKodaXRuntime(
-  options?: CreateKodaXRuntimeOptions,
-): Promise<KodaXRuntime>;
 export async function createKodaXRuntime(
-  options: CreateKodaXRuntimeOptions = {},
+  options: CreateKodaXRuntimeOptions,
+): Promise<KodaXDaemonRuntime> {
+  if (!isRecord(options) || options.mode !== "daemon") {
+    throw new RuntimeHostMigrationRequiredError(
+      "Private Runtime construction has been removed. Use ensureKodaXClient() for product execution or createKodaXRuntime({ mode: 'daemon' }) to connect to the shared Host.",
+    );
+  }
+  for (const field of ["sharedDaemonHost", "daemonHostRuntimeId", "externalAgents"] as const) {
+    if (field in options) {
+      throw new RuntimeHostMigrationRequiredError(
+        `Public Runtime construction no longer accepts ${field}. Owner construction and executor factories belong to the Host; clients must connect to the shared Host.`,
+      );
+    }
+  }
+  assertRuntimeTimeout("permissionTimeoutMs", options.permissionTimeoutMs, 0);
+  assertRuntimeTimeout("userInputTimeoutMs", options.userInputTimeoutMs, 0);
+  const autoStart =
+    options.autoStartDaemon ??
+    (options.daemonTransport === undefined &&
+      options.daemonEndpoint === undefined);
+  const ownerBootstrap = runtimeDaemonOwnerBootstrap(options);
+  if (
+    ownerBootstrap !== undefined
+    && (!autoStart || options.daemonTransport !== undefined)
+  ) {
+    throw new Error(
+      "Trusted daemon execPolicy/autoReview options require owner auto-start; attach clients cannot change daemon administrator policy.",
+    );
+  }
+  return connectKodaXRuntimeWithStartupCoordination({
+    onStartupProgress: options.onStartupProgress,
+    profile: options.profile,
+    transport: options.daemonTransport,
+    endpoint: options.daemonEndpoint,
+    autoStart,
+    homeDir: options.homeDir,
+    sessionsDir: options.sessionsDir,
+    defaultProvider: options.defaultProvider,
+    defaultModel: options.defaultModel,
+    permissionTimeoutMs: options.permissionTimeoutMs,
+    userInputTimeoutMs: options.userInputTimeoutMs,
+    daemonStartupTimeoutMs: options.daemonStartupTimeoutMs,
+    daemonConnectTimeoutMs: options.daemonConnectTimeoutMs,
+    ...(options.daemonOrphanExitMs !== undefined
+      ? { daemonOrphanExitMs: options.daemonOrphanExitMs }
+      : {}),
+    daemonLifecycle: options.daemonLifecycle,
+    daemonToken: options.daemonToken,
+    clientInfo: options.clientInfo,
+    capabilities: options.capabilities,
+    requirements: {
+      ...options.requirements,
+      liveOutputSegments: 1 as const,
+      runtimeAutoModeGuardrail: 6 as const,
+      sharedSessionSettings: 2 as const,
+      ...(autoStart
+        ? {
+          actorSettlementConvergence: 2 as const,
+          crashOutcomeModel: 2 as const,
+          managedRunDurability: 1 as const,
+          ...(process.platform === "win32"
+            ? {
+                daemonShutdownVerification: 1 as const,
+                sandboxRuntime: 11 as const,
+              }
+            : {}),
+          runtimeEventCoalescing: 1 as const,
+          ...(options.daemonOrphanExitMs !== undefined
+            ? { daemonOrphanExit: 1 as const }
+            : {}),
+        }
+        : {}),
+    },
+  }, true, ownerBootstrap);
+}
+
+/** @internal The CLI Host and isolated core tests construct the execution owner here. */
+export async function createKodaXHostRuntime(
+  options: CreateKodaXHostRuntimeOptions = {},
 ): Promise<KodaXRuntime> {
-  if (options.sharedDaemonHost !== true || options.mode === "daemon") {
+  if (options.sharedDaemonHost !== true) {
     return createKodaXRuntimeInternal(options);
   }
   const runtimeId = options.daemonHostRuntimeId ?? `rt_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
@@ -4181,7 +4281,7 @@ function isTransientConversationBoundaryError(error: unknown): boolean {
 }
 
 async function createKodaXRuntimeInternal(
-  options: CreateKodaXRuntimeOptions,
+  options: CreateKodaXHostRuntimeOptions,
 ): Promise<KodaXRuntime> {
   assertRuntimeTimeout(
     "permissionTimeoutMs",
@@ -4207,69 +4307,6 @@ async function createKodaXRuntimeInternal(
   ) {
     throw new Error("Invalid shared daemon Runtime owner identity.");
   }
-  if (options.mode === "daemon") {
-    if (options.externalAgents !== undefined) {
-      return createInProcessExternalAgentDaemon(options);
-    }
-    const autoStart =
-      options.autoStartDaemon ??
-      (options.daemonTransport === undefined &&
-        options.daemonEndpoint === undefined);
-    const ownerBootstrap = runtimeDaemonOwnerBootstrap(options);
-    if (
-      ownerBootstrap !== undefined
-      && (!autoStart || options.daemonTransport !== undefined)
-    ) {
-      throw new Error(
-        "Trusted daemon execPolicy/autoReview options require owner auto-start; attach clients cannot change daemon administrator policy.",
-      );
-    }
-    return connectKodaXRuntimeWithStartupCoordination({
-      onStartupProgress: options.onStartupProgress,
-      profile: options.profile,
-      transport: options.daemonTransport,
-      endpoint: options.daemonEndpoint,
-      autoStart,
-      homeDir: options.homeDir,
-      sessionsDir: options.sessionsDir,
-      defaultProvider: options.defaultProvider,
-      defaultModel: options.defaultModel,
-      permissionTimeoutMs: options.permissionTimeoutMs,
-      userInputTimeoutMs: options.userInputTimeoutMs,
-      daemonStartupTimeoutMs: options.daemonStartupTimeoutMs,
-      daemonConnectTimeoutMs: options.daemonConnectTimeoutMs,
-      ...(options.daemonOrphanExitMs !== undefined
-        ? { daemonOrphanExitMs: options.daemonOrphanExitMs }
-        : {}),
-      daemonLifecycle: options.daemonLifecycle,
-      daemonToken: options.daemonToken,
-      clientInfo: options.clientInfo,
-      capabilities: options.capabilities,
-      requirements: {
-        ...options.requirements,
-        liveOutputSegments: 1 as const,
-        runtimeAutoModeGuardrail: 6 as const,
-        sharedSessionSettings: 2 as const,
-        ...(autoStart
-          ? {
-            actorSettlementConvergence: 2 as const,
-            crashOutcomeModel: 2 as const,
-            managedRunDurability: 1 as const,
-            ...(process.platform === "win32"
-              ? {
-                  daemonShutdownVerification: 1 as const,
-                  sandboxRuntime: 11 as const,
-                }
-              : {}),
-            runtimeEventCoalescing: 1 as const,
-            ...(options.daemonOrphanExitMs !== undefined
-              ? { daemonOrphanExit: 1 as const }
-              : {}),
-          }
-          : {}),
-      },
-    }, true, ownerBootstrap);
-  }
   if (options.mode !== undefined && options.mode !== "embedded") {
     throw new Error(`Unsupported KodaX runtime mode: ${String(options.mode)}`);
   }
@@ -4283,9 +4320,13 @@ async function createKodaXRuntimeInternal(
     sessionDrafts: { version: 1 },
     productHistoryBoundaries: { version: 1 },
     productExecutionAuthorization: { version: 2 },
+    productExecutionProfile: { version: 2 },
+    actorCheckpointRecovery: { version: 1 },
     productExitControl: { version: 1 },
     productExecutionFacts: { version: 1 },
     productActorAuthorization: { version: 1 },
+    providerProbeAuthorization: { version: 1 },
+    providerCredentialConnectionBinding: { version: 1 },
     workflowSettingsDefaults: { version: 1 },
     externalAgents: options.externalAgents !== undefined,
     afterTurnInput: { version: 1 },
@@ -5235,6 +5276,7 @@ async function createKodaXRuntimeInternal(
   const preparationController = new AbortController();
   const preparations = new Set<Promise<unknown>>();
   const invocationService = createRuntimeInvocationService({
+    configHome,
     listCommands: listRuntimeCommands,
     resolveSkillContext: async (input, preparationOptions) => {
       ensureOpen();
@@ -5546,7 +5588,18 @@ async function createKodaXRuntimeInternal(
       defaultModel: options.defaultModel,
       onChanged: () => sessionViews.configurationChanged(),
     }),
-    catalog: createRuntimeCatalogService(ensureOpen, configFile, integrations.global),
+    catalog: {
+      ...createRuntimeCatalogService(ensureOpen, configFile, integrations.global),
+      async executionTools(sessionId) {
+        ensureOpen();
+        await sessionAdmission.loadRequired(sessionId);
+        return withExtensionRuntimeContext(async () => {
+          const { getAllRegisteredTools } = await import('@kodax-ai/coding');
+          return getAllRegisteredTools().map(tool => ({ name: tool.name, sideEffect: tool.sideEffect,
+            planModeAllowed: tool.planModeAllowed === true }));
+        }, integrations.forSession(sessionId));
+      },
+    },
     mcp: createRuntimeMcpService(ensureOpen, configFile, integrations.global),
     artifacts: artifacts.service,
     status: createRuntimeStatusService({
@@ -5575,7 +5628,7 @@ async function createKodaXRuntimeInternal(
         const runId = actorGenerationRunId(sessionId, execution.turn.turnId);
         const recovery = execution.turn.checkpoint ? persistence.loadGenerationRecovery(runId) : undefined;
         const previous = recovery ? persistence.loadRunStatus(runId) : undefined;
-        const effective = buildEffectiveRuntimeOptions({ ...recovery?.start.options,
+        const effective = buildEffectiveRuntimeOptions({ ...resolveExecutionConfig(toClientConfig(readRuntimeConfig(configFile))), ...recovery?.start.options,
           extensionRuntime: trusted.actorExtensionRuntime?.(runId, integrations.forSession(sessionId))
           ?? integrations.forSession(sessionId) }, settings, [], session);
         const provider = effective.provider ?? options.defaultProvider ?? KODAX_DEFAULT_PROVIDER;
@@ -5614,6 +5667,7 @@ async function createKodaXRuntimeInternal(
           onExecutorTerminal: () => {}, onPhase: phase => { if (!record.generationSuspended) record.phase = phase; },
           onContextRecoveryPrepared: () => persistGenerationRecovery(record, persistence),
           onContextRecoveryChanged: () => { saveRunStatusSafely(bus, persistence, record, statusFromRecord(record)); },
+          onEffectiveConfigChanged: () => { saveRunStatusSafely(bus, persistence, record, statusFromRecord(record)); },
           onStage: () => {}, onMidTurnUserMessages: () => {} });
         events.runMemoryWork = work => runMemoryWork(work, record.origin?.principalId);
         events.registerShellCleanup = (reference, retry) => {
@@ -5721,124 +5775,6 @@ async function createKodaXRuntimeInternal(
   return runtime;
 }
 
-async function createInProcessExternalAgentDaemon(
-  options: CreateKodaXRuntimeOptions,
-): Promise<KodaXRuntime> {
-  const externalAgents = options.externalAgents;
-  if (!externalAgents)
-    throw new Error(
-      "External agent options are required for the hosted daemon.",
-    );
-  if (options.daemonTransport !== undefined) {
-    throw new Error(
-      "External agent factories cannot be installed through an existing daemon transport.",
-    );
-  }
-  if (options.autoStartDaemon === false) {
-    throw new Error(
-      "External agent factories require an in-process daemon host with autoStartDaemon enabled.",
-    );
-  }
-  const endpoint =
-    options.daemonEndpoint !== undefined
-      ? normalizeRuntimeDaemonEndpoint(options.daemonEndpoint)
-      : undefined;
-  const daemonLocation = resolveRuntimeDaemonClientLocation(options.homeDir);
-  const lease = await acquireRuntimeDaemonLease({
-    homeDir: daemonLocation.homeDir,
-    configHome: daemonLocation.configHome,
-    profile: options.profile,
-    endpoint,
-    connectTimeoutMs: options.daemonConnectTimeoutMs,
-    startupTimeoutMs: options.daemonStartupTimeoutMs,
-    createRuntime: (runtimeId) =>
-      createKodaXRuntime({
-        mode: "embedded",
-        homeDir: options.homeDir,
-        profile: options.profile,
-        sessionsDir: options.sessionsDir,
-        defaultProvider: options.defaultProvider,
-        defaultModel: options.defaultModel,
-        permissionTimeoutMs: options.permissionTimeoutMs,
-        userInputTimeoutMs: options.userInputTimeoutMs,
-        sharedDaemonHost: true,
-        daemonHostRuntimeId: runtimeId,
-        clientInfo: options.clientInfo,
-        capabilities: options.capabilities,
-        requirements: options.requirements,
-        externalAgents,
-        execPolicy: options.execPolicy,
-        autoReview: options.autoReview,
-      }),
-  });
-  if (!lease.ownsHost) {
-    await lease.close();
-    throw new Error(
-      "External agent factories cannot be installed into an already-running daemon profile; configure its owner or use a unique profile.",
-    );
-  }
-  try {
-    const runtime = await connectKodaXRuntime({
-      profile: options.profile,
-      transport: lease.transport,
-      daemonToken: options.daemonToken ?? readRuntimeDaemonToken(lease.paths),
-      clientInfo: options.clientInfo,
-      capabilities: options.capabilities,
-      requirements: {
-        ...options.requirements,
-        externalAgents: true,
-        externalAgentAdmin: 1,
-      },
-    });
-    let runtimeClosed = false;
-    let leaseClosed = false;
-    let closeAttempt: Promise<void> | undefined;
-    const closeHostedRuntime = (): Promise<void> => {
-      if (closeAttempt) return closeAttempt;
-      const attempt = (async (): Promise<void> => {
-        if (!leaseClosed) {
-          if (lease.ownsHost) await lease.shutdown();
-          else await lease.close();
-          leaseClosed = true;
-        }
-        if (!runtimeClosed) {
-          await runtime.close();
-          runtimeClosed = true;
-        }
-      })();
-      closeAttempt = attempt;
-      void attempt.then(
-        () => {
-          if (closeAttempt === attempt) closeAttempt = undefined;
-        },
-        () => {
-          if (closeAttempt === attempt) closeAttempt = undefined;
-        },
-      );
-      return attempt;
-    };
-    return {
-      ...runtime,
-      identity: { ...runtime.identity, isolation: "inline" },
-      close: closeHostedRuntime,
-    };
-  } catch (error: unknown) {
-    const cleanup = await Promise.allSettled([
-      lease.ownsHost ? lease.shutdown() : lease.close(),
-    ]);
-    const cleanupErrors = cleanup
-      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
-      .map((result) => result.reason);
-    if (cleanupErrors.length > 0) {
-      throw new AggregateError(
-        [error, ...cleanupErrors],
-        "Hosted daemon initialization failed and cleanup was incomplete.",
-      );
-    }
-    throw error;
-  }
-}
-
 function assertRuntimeCapabilities(
   value: unknown,
   requirements: RuntimeCapabilityRequirements | undefined,
@@ -5855,6 +5791,7 @@ function assertRuntimeCapabilities(
     requirements?.askUserTransport === undefined &&
     requirements?.permissionCas === undefined &&
     requirements?.providerCredentialBroker === undefined &&
+    requirements?.providerCredentialConnectionBinding === undefined && requirements?.providerProbeAuthorization === undefined &&
     requirements?.runBoundHostTools === undefined &&
     requirements?.coderOwnerFencing === undefined &&
     requirements?.crashOutcomeModel === undefined &&
@@ -5913,6 +5850,8 @@ function assertRuntimeCapabilities(
     ["askUserTransport", requirements.askUserTransport],
     ["permissionCas", requirements.permissionCas],
     ["providerCredentialBroker", requirements.providerCredentialBroker],
+    ["providerCredentialConnectionBinding", requirements.providerCredentialConnectionBinding],
+    ["providerProbeAuthorization", requirements.providerProbeAuthorization],
     ["runBoundHostTools", requirements.runBoundHostTools],
     ["coderOwnerFencing", requirements.coderOwnerFencing],
     ["crashOutcomeModel", requirements.crashOutcomeModel],
@@ -6534,6 +6473,13 @@ async function connectKodaXRuntimeInternal(
       startupDeadline, options.daemonStartupSignal, reportProgress)
     : undefined;
   const connectionProfile = sharedHost?.profile ?? options.profile ?? 'default';
+  if (sharedHost) {
+    const requestedPaths = resolveRuntimeDaemonPathsFromConfigHome(daemonLocation.configHome, options.profile ?? 'default');
+    if (connectionProfile !== requestedPaths.profile) {
+      prepareRuntimeDaemonOwner(requestedPaths,
+        options.sessionsDir ?? path.join(daemonLocation.configHome, 'sessions'), sharedHost);
+    }
+  }
   if (sharedHost && contentionAttempt === 0) emitKodaXDiagnostic({
     source: 'runtime.daemon.storage-owner', level: 'info',
     message: `Session storage is owned by Host profile ${sharedHost.profile}.`,
@@ -11215,6 +11161,7 @@ async function createRuntimeRunService(deps: {
         settleFromExecutorSignal(record, signal, error),
       onContextRecoveryPrepared: () => persistGenerationRecovery(record, deps.persistence, productQueue.snapshot(record.sessionId)),
       onContextRecoveryChanged: () => { publishRunUpdate(record); },
+      onEffectiveConfigChanged: () => { publishRunUpdate(record); },
       onPhase: (phase) => {
         if (
           record.generationSuspended
@@ -11456,7 +11403,7 @@ async function createRuntimeRunService(deps: {
             runtimePolicy: { enforceAtRuntime: true } } };
         const continuation = { ...createRunOptions(), toolInvocation: undefined, abortSignal: abortController.signal, sessionControl };
         abortController.signal.throwIfAborted();
-        if (continuation.agentMode === 'sa') {
+        if (continuation.agentMode === 'sa' && continuation.workMode !== 'script') {
           record.running = startKodaX(continuation, start.prompt);
           return record.running.result;
         }
@@ -11913,7 +11860,8 @@ async function createRuntimeRunService(deps: {
             record.start.options.modelOverride = record.model;
           }
         }
-        if (record.phase !== "queued" && ("reasoningMode" in patch || "effort" in patch || "thinking" in patch)) {
+        if (record.phase !== "queued" && ("reasoningMode" in patch || "effort" in patch || "thinking" in patch
+          || "permissionMode" in patch || "planModeEffort" in patch)) {
           record.reasoning = settings.reasoningMode;
           const reasoning = { effort: settings.effort, thinking: settings.thinking };
           record.sessionControl?.setReasoning(record.reasoning, reasoning);
@@ -12037,6 +11985,13 @@ async function createRuntimeRunService(deps: {
       input = await execution.bindRun(input, runId, deps.extensionRuntime(input.sessionId));
       trustedInput = input as RuntimeTrustedStartRunInput;
     }
+    if (recovery) {
+      const originalContext = recovery.data.start.options.context;
+      input = { ...input, options: { ...input.options, context: { ...input.options?.context,
+        agentProfile: originalContext?.agentProfile, taskVerification: originalContext?.taskVerification,
+      } } };
+      trustedInput = input as RuntimeTrustedStartRunInput;
+    }
     const requiredAfterRunId = trustedInput.requiredAfterRunId;
     const requiredAfterRun =
       requiredAfterRunId === undefined
@@ -12078,7 +12033,7 @@ async function createRuntimeRunService(deps: {
       trustedInput.productSession === true || productInput !== undefined);
     assertSessionSettingsAllowed(admittedSessionContext, settings);
     let options = buildEffectiveRuntimeOptions(
-      { extensionRuntime: deps.extensionRuntime(input.sessionId), ...input.options },
+      { ...resolveExecutionConfig(toClientConfig(config)), extensionRuntime: deps.extensionRuntime(input.sessionId), ...input.options },
       settings,
       normalizedInput.inputArtifacts,
       admittedSessionContext,
@@ -12291,10 +12246,11 @@ async function createRuntimeRunService(deps: {
       ...(options.reasoningMode !== undefined
         ? { reasoning: options.reasoningMode }
         : {}),
-      mode: options.toolInvocation !== undefined ? "managed_task" : input.mode
+      mode: options.toolInvocation !== undefined || options.workMode === 'script' ? "managed_task" : input.mode
         ?? (queuesBehindDurabilityRepair ? requiredAfterRun?.mode : undefined)
         ?? (productInput !== undefined ? (options.agentMode === "sa" ? "coding" : "managed_task") : undefined)
         ?? "coding",
+      workMode: resolveWorkMode(options),
       ...(requiredAfterRun !== undefined && input.mode === undefined
         ? { inheritModeAfterDurabilityRepair: true }
         : {}),
@@ -12486,7 +12442,7 @@ async function createRuntimeRunService(deps: {
     // boundary, and queued input cannot execute hooks or dynamic commands.
     const known = [];
     for (const reference of references) {
-      const skill = await loadRuntimeSkill(projectRoot, reference.name);
+      const skill = await loadRuntimeSkill(projectRoot, reference.name, deps.defaultConfigHome);
       if (skill) known.push({ skill, argumentsText: text.slice(reference.end).trim() });
     }
     if (known.length > 1) throw createRuntimeConflictError('Only one Skill may be invoked by one input.', 0);
@@ -13061,12 +13017,19 @@ async function createRuntimeRunService(deps: {
         }
         const bindings = rebindGenerationOptions(recovery.start, input.options);
         const selected = input.options;
+        const executionToolCeiling = intersectExecutionToolCeilings(
+          recovery.start.options.executionToolCeiling, selected?.executionToolCeiling,
+        );
+        const freshPolicy = bindings.context?.toolVisibilityPolicy;
         const options: RuntimeKodaXOptions = { ...bindings, ...recovery.start.options,
+          ...(executionToolCeiling === undefined ? {} : { executionToolCeiling }),
           provider: selected?.provider ?? persisted.status.provider,
           model: selected?.model ?? persisted.status.model,
           modelOverride: selected?.modelOverride ?? selected?.model ?? persisted.status.model,
           reasoningMode: selected?.reasoningMode ?? persisted.status.reasoning,
-          context: { ...bindings.context, ...recovery.start.options.context },
+          context: { ...bindings.context, ...recovery.start.options.context,
+            ...(executionToolCeiling === undefined ? {} : { toolVisibilityPolicy: createExecutionToolPolicy(executionToolCeiling, freshPolicy) }),
+          },
         };
         return startRun({ ...trusted, sessionId: record.sessionId, prompt: recovery.start.prompt,
           mode: persisted.status.mode, options, permissionBroker: 'runtime' }, 'runtime.runs.start', { persisted, data: recovery });
@@ -13890,8 +13853,7 @@ function resolveClientContextBudget(
     return {
       scope: 'parent', provider: providerName, model,
       contextWindow: resolveContextWindow(compaction, provider, model),
-      reservedResponseTokens: typeof config.maxOutputTokens === 'number' && config.maxOutputTokens > 0
-        ? config.maxOutputTokens : provider.getEffectiveMaxOutputTokens(model),
+      reservedResponseTokens: resolveExecutionConfig(toClientConfig(config)).maxOutputTokens ?? provider.getEffectiveMaxOutputTokens(model),
       compaction: { enabled: true, triggerPercent: compaction.triggerPercent,
         ...(compaction.triggerTokens !== undefined ? { absoluteTriggerTokens: compaction.triggerTokens } : {}) },
     };
@@ -13928,6 +13890,7 @@ function createRuntimeConfigService(
       assertPlainObject(patch, "runtime.config.patch");
       const normalized = sanitizeRuntimeConfigPatch(patch);
       patchRuntimeConfig(configFile, normalized);
+      clearRemovedExecutionConfig(toClientConfig(readRuntimeConfig(configFile)));
       replApi.applyExecutionConfigEnvironment(normalized, true);
       options.onChanged?.();
       return redactRuntimeConfig(readRuntimeConfig(configFile));
@@ -13937,6 +13900,7 @@ function createRuntimeConfigService(
       ensureOpen();
       if (configFile !== undefined) {
         registerRuntimeConfiguredCustomProviders(configFile);
+        clearRemovedExecutionConfig(toClientConfig(readRuntimeConfig(configFile)));
         replApi.applyExecutionConfigEnvironment(toClientConfig(readRuntimeConfig(configFile)));
         options.onChanged?.();
         return {
@@ -13964,10 +13928,15 @@ function createRuntimeCatalogService(
 
     async probeReasoningEfforts(input) {
       ensureOpen();
-      return replApi.probeProviderReasoningEfforts({
+      const access = (input as typeof input & { readonly providerCredentialAccess?: ProviderCredentialLeaseAccess }).providerCredentialAccess;
+      if (input.credential && !access) throw createRuntimeCredentialUnavailableError('Provider probing requires a current Host broker binding.');
+      const scope = access ? createProviderCredentialLeaseScope(access) : undefined;
+      const probe = () => replApi.probeProviderReasoningEfforts({
         ...input, configHome: configFile === undefined ? undefined : path.dirname(configFile),
-        resolve: resolveProvider, now: () => new Date().toISOString(),
+        resolve: resolveProvider, now: () => new Date().toISOString(), signal: access?.signal,
       });
+      try { return await (scope ? runWithProviderCredentialLeaseScope(scope, probe) : probe()); }
+      finally { scope?.close(); }
     },
 
     async forgetCapabilities(input) {
@@ -16690,7 +16659,7 @@ function isTerminalRuntimeEvent(type: RuntimeEventType): boolean {
 }
 
 function createRuntimePersistence(
-  options: CreateKodaXRuntimeOptions,
+  options: CreateKodaXHostRuntimeOptions,
   runOwner: AgentActorOwner,
 ): RuntimePersistence {
   const baseDir = options.homeDir
@@ -18422,6 +18391,19 @@ function encodeRuntimePathComponent(value: string): string {
   return Buffer.from(value, "utf-8").toString("base64url") || "_";
 }
 
+function parseEffectiveTaskConfig(value: unknown): import('@kodax-ai/coding').KodaXEffectiveTaskConfig | undefined {
+  if (!isRecord(value) || !['sa', 'ama', 'amaw'].includes(String(value.agentMode))
+    || !['agent', 'coding', 'script'].includes(String(value.workMode))
+    || !Array.isArray(value.toolScope) || !value.toolScope.every(item => typeof item === 'string')
+    || (value.modelToolScope !== undefined && (!Array.isArray(value.modelToolScope)
+      || !value.modelToolScope.every(item => typeof item === 'string')))) return undefined;
+  const config = { agentMode: value.agentMode, workMode: value.workMode, toolScope: value.toolScope,
+    ...(value.modelToolScope === undefined ? {} : { modelToolScope: value.modelToolScope }),
+    ...(isRecord(value.agentProfile) ? { agentProfile: value.agentProfile } : {}),
+    ...(isRecord(value.verification) ? { verification: value.verification } : {}) };
+  return structuredClone(config) as import('@kodax-ai/coding').KodaXEffectiveTaskConfig;
+}
+
 function parseRuntimeRunStatus(value: unknown): RuntimeRunStatus | undefined {
   if (!isRecord(value)) return undefined;
   if (
@@ -18458,6 +18440,8 @@ function parseRuntimeRunStatus(value: unknown): RuntimeRunStatus | undefined {
       && typeof value.productInput.digest === "string"
       ? { productInput: { inputId: value.productInput.inputId, digest: value.productInput.digest } }
       : {}),
+    ...(value.workMode === 'agent' || value.workMode === 'coding' || value.workMode === 'script' ? { workMode: value.workMode } : {}),
+    ...(parseEffectiveTaskConfig(value.effectiveConfig) ? { effectiveConfig: parseEffectiveTaskConfig(value.effectiveConfig) } : {}),
     runId: value.runId,
     sessionId: value.sessionId,
     ...(typeof value.turnId === "string" ? { turnId: value.turnId } : {}),
@@ -18940,6 +18924,8 @@ function recordFromPersistedStatus(
   observedOwner?: AgentActorOwner,
 ): RuntimeRunRecord {
   return {
+    ...(status.workMode !== undefined ? { workMode: status.workMode } : {}),
+    ...(status.effectiveConfig !== undefined ? { effectiveConfig: structuredClone(status.effectiveConfig) } : {}),
     ...(status.contextRecovery !== undefined ? { contextRecovery: status.contextRecovery } : {}),
     runId: status.runId,
     sessionId: status.sessionId,
@@ -20197,6 +20183,7 @@ function wrapKodaXEvents(input: {
   ) => void;
   readonly onPhase: (phase: RuntimeRunPhase) => void;
   readonly onContextRecoveryChanged: () => void;
+  readonly onEffectiveConfigChanged: () => void;
   readonly onContextRecoveryPrepared?: () => void;
   readonly onStage: (
     stage: RuntimeRunStage,
@@ -20850,6 +20837,12 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onProviderRecovery?.(event, meta);
     },
     onEffectiveConfig(config) {
+      if (actorDurabilityFenced() || isTerminalRunPhase(record.phase)) return;
+      const snapshot = parseEffectiveTaskConfig(config);
+      const changed = JSON.stringify(record.effectiveConfig) !== JSON.stringify(snapshot);
+      record.effectiveConfig = snapshot;
+      record.workMode = config.workMode;
+      if (changed) input.onEffectiveConfigChanged();
       emit("config.effective", config, config);
       externalCallbacks()?.onEffectiveConfig?.(config);
     },
@@ -21637,9 +21630,9 @@ function createRuntimeSessionAdmission(
     profileId: string | undefined,
   ): boolean => {
     if (!enforced) return true;
-    if (isPartnerSessionIdentity(surface, profileId)) return false;
     return (
       surface === undefined ||
+      surface.toLowerCase() === 'partner' ||
       CODER_DAEMON_SESSION_SURFACES.has(surface.toLowerCase())
     );
   };
@@ -21752,18 +21745,6 @@ async function filterAdmittedRunStatuses(
     if (admitted) result.push(status);
   }
   return result;
-}
-
-function isPartnerSessionIdentity(
-  surface: string | undefined,
-  profileId: string | undefined,
-): boolean {
-  const hasPartnerToken = (value: string | undefined): boolean =>
-    value
-      ?.toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .includes("partner") === true;
-  return hasPartnerToken(surface) || hasPartnerToken(profileId);
 }
 
 function createRuntimeTranscriptRevision(
@@ -22815,7 +22796,7 @@ function sanitizeRuntimeConfigPatch(
 }
 
 function resolveRuntimeConfigFile(
-  options: CreateKodaXRuntimeOptions,
+  options: CreateKodaXHostRuntimeOptions,
 ): string | undefined {
   if (options.homeDir === undefined) return undefined;
   return path.join(path.resolve(options.homeDir), ".kodax", "config.json");
@@ -23021,6 +23002,13 @@ function buildRuntimeEffectiveConfigSnapshot(options: {
       priority: 0,
     };
   }
+  for (const key of RUN_CONFIG_KEYS) {
+    const value = runtimeConfigPathValue(persisted.config, key);
+    const env = bindings.get(key);
+    if (value !== undefined && (!env || replApi.inspectConfigEnvironmentSource(env) !== 'environment')) {
+      entries[key] = effectiveConfigEntry(value, 'persisted', true, 200, key);
+    }
+  }
   const credentials = Object.fromEntries(
     getProviderCredentialEnvironmentNames().map((envName) => [
       envName,
@@ -23032,6 +23020,7 @@ function buildRuntimeEffectiveConfigSnapshot(options: {
   return {
     schemaVersion: 1,
     capturedAt: new Date().toISOString(),
+    application: CLIENT_CONFIG_APPLICATION,
     persistedConfig: { state: persisted.state },
     entries,
     credentials,
@@ -23338,6 +23327,7 @@ function redactRuntimeConfig(value: unknown): unknown {
 
 function isSensitiveConfigKey(key: string): boolean {
   const lower = key.toLowerCase();
+  if (['maxoutputtokens', 'compactiontriggertokens', 'triggertokens', 'tokenbudget'].includes(lower)) return false;
   return (
     lower.includes("apikey") ||
     lower.includes("api_key") ||
@@ -23541,6 +23531,8 @@ function runtimeInterruptInputStatus(
 
 function statusFromRecord(run: RuntimeRunRecord): RuntimeRunStatus {
   return {
+    ...(run.workMode !== undefined ? { workMode: run.workMode } : {}),
+    ...(run.effectiveConfig !== undefined ? { effectiveConfig: structuredClone(run.effectiveConfig) } : {}),
     ...(run.contextRecovery !== undefined ? { contextRecovery: run.contextRecovery } : {}),
     ...(run.productInput !== undefined ? { productInput: run.productInput } : {}),
     runId: run.runId,

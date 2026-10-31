@@ -5,7 +5,7 @@ import { expect, it, vi } from 'vitest';
 import * as coding from '@kodax-ai/coding';
 import { KodaXBaseProvider, registerModelProvider, clearRuntimeModelProviders,
   type KodaXProviderConfig, type KodaXStreamResult } from '@kodax-ai/llm';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 
 it('keeps standalone Skill dynamic preparation disabled under the same Plan policy as a Run', async () => {
   const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'kodax-skill-plan-'));

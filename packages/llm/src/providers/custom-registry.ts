@@ -186,7 +186,7 @@ export function getCustomProviderList(): Array<{
     custom: true;
   }> = [];
   for (const [name, config] of customProviders) {
-    const configured = !!process.env[config.apiKeyEnv];
+    const configured = !config.oauth && !config.cloud && !!process.env[config.apiKeyEnv];
     const reasoningProfile = resolveCustomProviderReasoningProfile(config);
     const modelIds = (config.models ?? []).map(entry =>
       typeof entry === 'string' ? entry : entry.id,
@@ -247,6 +247,7 @@ function customDescriptorToFull(
   protocol: KodaXCustomProviderConfig['protocol'],
   supportsThinking?: boolean,
   inheritedReasoningPreset?: KodaXModelDescriptor['reasoningPreset'],
+  api?: KodaXCustomProviderConfig['api'],
 ): KodaXModelDescriptor {
   const descriptor = typeof entry === 'string' ? { id: entry } : entry;
   const reasoningProfile = resolveCustomModelReasoningProfile(
@@ -254,6 +255,7 @@ function customDescriptorToFull(
     protocol,
     supportsThinking,
     inheritedReasoningPreset,
+    api,
   );
   // Single-track invariant: supportsThinking:false forces every surface to 'none'
   // (mirrors customModelDescriptorToFull + getCustomModelCapabilities). Without
@@ -291,6 +293,7 @@ export function getCustomProviderModelDescriptors(
       config.protocol,
       config.supportsThinking,
       config.reasoningPreset,
+      config.api,
     ),
   );
   const defaultEntry: KodaXModelDescriptor = full.find((m) => m.id === config.model) ?? { id: config.model };
@@ -322,6 +325,7 @@ export function getCustomModelCapabilities(
       config.protocol,
       config.supportsThinking,
       config.reasoningPreset,
+      config.api,
     ))
     .find((m) => m.id === modelId);
   const descriptor = fromList ?? (isDefault ? ({ id: config.model } as KodaXModelDescriptor) : undefined);
@@ -340,7 +344,11 @@ export function getCustomModelCapabilities(
          legacyCapabilityFromReasoningProfile(effectiveReasoningProfile) ??
          config.reasoningCapability ??
          'none');
+  const toolCapabilities = descriptor.toolCapabilities ?? config.toolCapabilities;
+  const cacheCapabilities = descriptor.cacheCapabilities ?? config.cacheCapabilities;
   return {
+    ...(toolCapabilities ? { toolCapabilities: structuredClone(toolCapabilities) } : {}),
+    ...(cacheCapabilities ? { cacheCapabilities: structuredClone(cacheCapabilities) } : {}),
     provider: providerName,
     model: descriptor.id,
     displayName: descriptor.displayName ?? descriptor.id,
@@ -350,6 +358,7 @@ export function getCustomModelCapabilities(
     reasoningProfile: effectiveReasoningProfile,
     contextWindow: descriptor.contextWindow ?? config.contextWindow,
     maxOutputTokens: descriptor.maxOutputTokens ?? config.maxOutputTokens,
+    outputTokenLimit: descriptor.outputTokenLimit ?? config.outputTokenLimit,
     thinkingBudgetCap:
       descriptor.thinkingBudgetCap ?? config.thinkingBudgetCap,
     isDefault,
@@ -376,8 +385,8 @@ export function getCustomProviderVerifyMetadata(
   const config = customProviders.get(name);
   if (!config) return undefined;
   const verifyStrategy: KodaXVerifyStrategy =
-    config.verifyStrategy ??
-    (config.protocol === 'anthropic' ? 'count-tokens' : 'models-list');
+    config.verifyStrategy ?? (config.oauth || config.cloud ? 'minimal-message' : undefined) ??
+    (config.protocol === 'anthropic' ? 'count-tokens' : config.protocol === 'openai' ? 'models-list' : 'minimal-message');
   return { apiKeyEnv: config.apiKeyEnv, verifyStrategy };
 }
 

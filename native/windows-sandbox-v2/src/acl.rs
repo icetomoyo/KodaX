@@ -743,6 +743,34 @@ pub fn ensure_setup_acl_roots(
     )
 }
 
+pub fn verify_setup_read_capabilities(
+    roots: &[String],
+    sandbox_user_sid: &str,
+    sandbox_group_sid: &str,
+    filesystem_capability_nonce: &str,
+) -> Result<()> {
+    let _ = LocalSid::from_string(sandbox_user_sid)?;
+    let _ = LocalSid::from_string(sandbox_group_sid)?;
+    let generation = format!(
+        "v{}:{}",
+        FILESYSTEM_CAPABILITY_SCHEMA_VERSION,
+        filesystem_capability_nonce.to_ascii_lowercase()
+    );
+    let operations = normalized_paths(roots.iter().map(PathBuf::from))
+        .into_iter()
+        .flat_map(|path| stable_root_operations(path, sandbox_group_sid, false, false, false))
+        .collect();
+    for (target, operations) in open_grouped_operations(operations, &generation, sandbox_user_sid)?
+    {
+        ensure!(
+            target_satisfies_operations(&target, &operations, sandbox_user_sid)?,
+            "[windows_v2_setup_required] Setup filesystem capabilities are missing or unsafe at {}; run \"kodax sandbox setup\"",
+            target.canonical_path
+        );
+    }
+    Ok(())
+}
+
 fn ensure_setup_acl_roots_until(
     read_roots: &[String],
     write_roots: &[String],
@@ -2694,6 +2722,19 @@ mod tests {
         request.deny_write.clear();
 
         let before = open_acl_target(&root).unwrap().read_aces().unwrap().aces;
+        assert!(
+            verify_setup_read_capabilities(
+                &request.allow_read,
+                &request.sandbox_user_sid,
+                &request.sandbox_group_sid,
+                &request.filesystem_capability_nonce
+            )
+            .is_err()
+        );
+        assert_eq!(
+            open_acl_target(&root).unwrap().read_aces().unwrap().aces,
+            before
+        );
         let missing = ensure_policy_aces(&request, &root);
         let after_missing = open_acl_target(&root).unwrap().read_aces().unwrap().aces;
         if missing.is_err() && before == after_missing {
@@ -2705,6 +2746,17 @@ mod tests {
             )
             .unwrap();
             let installed = open_acl_target(&root).unwrap().read_aces().unwrap().aces;
+            verify_setup_read_capabilities(
+                &request.allow_read,
+                &request.sandbox_user_sid,
+                &request.sandbox_group_sid,
+                &request.filesystem_capability_nonce,
+            )
+            .unwrap();
+            assert_eq!(
+                open_acl_target(&root).unwrap().read_aces().unwrap().aces,
+                installed
+            );
             for _ in 0..100 {
                 let capabilities = ensure_policy_aces(&request, &root).unwrap();
                 assert_eq!(capabilities.len(), 2);

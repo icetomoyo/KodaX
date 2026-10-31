@@ -6,9 +6,14 @@
  */
 
 // ============== Types ==============
+export { reconcileAssistantContent } from './assistant-content.js';
+export { projectResponsesMessages } from './providers/responses-messages.js';
+export { KodaXOpenAIResponsesProvider } from './providers/openai-responses.js';
 export { runWithProviderRequestObserver, runWithAdditionalProviderRequestObserver, runWithProviderRequestAbortSignal, runWithProviderRequestRoute, runWithProviderRequestAttribution } from './provider-request-observation.js';
 export type { ProviderRequestObservation } from './provider-request-observation.js';
 export type {
+  KodaXAssistantBlock,
+  KodaXGenerationSource,
   KodaXImageBlock,
   KodaXTextBlock,
   KodaXToolUseBlock,
@@ -27,6 +32,7 @@ export type {
   KodaXTokenUsage,
   KodaXStreamResult,
   KodaXToolDefinition,
+  KodaXToolCapabilities,
   KodaXModelDescriptor,
   KodaXProtocolFamily,
   KodaXOpenAICompatMaxOutputTokensField,
@@ -43,6 +49,12 @@ export type {
   KodaXProviderEvidenceSupport,
   KodaXProviderCapabilityProfile,
   KodaXProviderStreamOptions,
+  KodaXProviderRequestMetadata,
+  KodaXProviderRequestProjection,
+  KodaXResponsesSocket,
+  KodaXResponsesSocketFactory,
+  KodaXCacheWriteUsage,
+  KodaXCacheCapabilities,
   KodaXReasoningCapability,
   KodaXStableEffortIntent,
   KodaXWireReasoningEffort,
@@ -109,6 +121,7 @@ export {
   KodaXToolCallIdError,
 } from './errors.js';
 export type { KodaXProviderErrorMetadata, KodaXContextOverflowFacts } from './errors.js';
+export { isProviderQuotaError } from './retry/provider-quota.js';
 
 // ============== Constants ==============
 export {
@@ -261,7 +274,7 @@ export type { KodaXRunScopedConfig } from './run-scoped-config.js';
 export type { KodaXStopClass } from './stop-reason.js';
 
 // ============== Cost Tracking ==============
-export { DEFAULT_COST_RATES, getCostRate, calculateCost } from './cost-rates.js';
+export { DEFAULT_COST_RATES, getCostRate, getCostRateBasis, calculateCost, calculateCostWithCacheLifetimes } from './cost-rates.js';
 export type { CostRate } from './cost-rates.js';
 
 export {
@@ -278,6 +291,7 @@ export type {
   ProviderCostSummary,
   SessionCostSummary,
   CostTracker,
+  CostBasis,
 } from './cost-tracker.js';
 
 // ============== Side Query (independent one-shot LLM invocation) ==============
@@ -345,3 +359,40 @@ export { prepareHistoryImages, prepareValidatedImageBlock, withPreparedImageHist
 export { inspectPreparedImage } from './providers/image-serialization.js';
 export { getRejectedImageHash } from './providers/rejected-image.js';
 export { getPreparedImageDiagnostic, validateImageBytesInRun } from './providers/image-serialization.js';
+export { openOAuthSession, OAuthCredentialError } from './oauth/session.js';
+export type { OAuthService, OAuthTokens, OAuthSessionRecord, OAuthSessionStore, OAuthRefreshDriver, OAuthCredentialSession } from './oauth/session.js';
+export { createOAuthRefreshDriver } from './oauth/drivers.js';
+export { createOAuthProviderConfig } from './oauth/provider-config.js';
+export type { KodaXCloudConnection } from './types.js';
+export { serializeCloudCredential } from './cloud/credentials.js';
+export type { KodaXCloudCredential } from './cloud/credentials.js';
+export { createCloudProviderConfig } from './cloud/provider-config.js';
+export { createGoogleCacheConnection, createGoogleCache, getGoogleCache, listGoogleCaches, updateGoogleCache, deleteGoogleCache } from './cloud/google-cache.js';
+export type { KodaXGoogleCacheConnection, KodaXGoogleCacheReference, KodaXGoogleCacheExpiration, KodaXGoogleCacheRequest } from './types.js';
+export type { KodaXCloudProviderInput } from './cloud/provider-config.js';
+export { createProviderConnection, listProviderPresets } from './provider-presets.js';
+export { refreshProviderModelCatalog, createMemoryModelCatalogStore } from './model-catalog.js';
+export type { KodaXModelCatalogApi, KodaXModelCatalogConnection, KodaXCatalogQuote, KodaXCatalogModel, KodaXModelCatalogSnapshot,
+  KodaXModelCatalogStore, KodaXRefreshModelCatalogOptions, KodaXRefreshModelCatalogResult } from './model-catalog-types.js';
+export type { ProviderChatApi, ProviderPreset } from './provider-presets.js';
+export { beginOAuthAuthorization } from './oauth/authorization.js';
+export { beginDeviceAuthorization } from './oauth/device.js';
+export type { OAuthAuthorization, OAuthLoginInput, OAuthLoginResult } from './oauth/authorization.js';
+export type { OAuthDeviceAuthorization } from './oauth/device.js';
+export { classify } from './operations/classify.js';
+export { generateImages } from './operations/images.js';
+export { submitDeferred, fetchDeferred, cancelDeferred, KodaXDeferredOutputError } from './operations/deferred.js';
+export { createProviderOperationConnection } from './operations/connections.js';
+export type { KodaXOperationConnection, KodaXClassifierApi, KodaXClassifierConnection, KodaXClassificationQuestion,
+  KodaXClassificationRequest, KodaXClassificationAnswer, KodaXClassificationResult, KodaXOperationImage, KodaXGeneratedImage,
+  KodaXImageConnection, KodaXImageRequest, KodaXImageResult, KodaXDeferredConnection, KodaXDeferredReference,
+  KodaXDeferredRequest, KodaXDeferredResult } from './operations/types.js';
+
+export { createFileProviderCredentialStore, CredentialUpdateConflictError } from './auth-file.js';
+export type { ProviderCredentialFileBinding, StoredProviderApiKey, ProviderApiKeyStatus, FileProviderCredentialStore,
+  AtomicFileProviderCredentialStore, ProviderApiKeySnapshot, ProviderApiKeyMutation } from './auth-file.js';
+
+export { credentialConnectionFingerprint } from './credential-connection.js';
+export type { ProviderCredentialConnection } from './credential-connection.js';
+export { createFileProviderCredentialAccess } from './file-credential-access.js';
+export type { FileProviderCredentialAccessBinding } from './file-credential-access.js';

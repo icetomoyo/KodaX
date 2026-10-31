@@ -13,6 +13,8 @@ import {
 import { truncateUserMessageForDisplay } from "./user-message-display.js";
 import { stripOuterBlankLines } from "./strip-outer-blank-lines.js";
 import { stripAnsi } from "./strip-ansi.js";
+import { estimateOutputTokens } from "../../common/streaming-token-estimate.js";
+import { formatTokenCount } from "../../common/token-format.js";
 
 /**
  * FEATURE_141 (v0.7.37) wired a colored `<DiffHunk>` component, but the live
@@ -861,7 +863,8 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
 
       if (record.thinkingSummary) {
         const suffix =
-          record.thinkingLength > 60 ? ` (${record.thinkingLength} chars total)` : "";
+          record.thinkingLength > 60
+            ? ` (~${formatTokenCount(estimateOutputTokens(record.thinkingLength))} tokens total)` : "";
         pushWrappedRows(
           rows,
           `iteration-${record.iteration}-thinking`,
@@ -884,7 +887,7 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
           pushWrappedRows(
             rows,
             `iteration-${record.iteration}-response-more`,
-            `... (${record.response.length} chars total)`,
+            `... (~${formatTokenCount(estimateOutputTokens(record.response.length))} tokens total)`,
             getBodyWidth(viewportWidth, 1),
             { color: "dim", indent: 1 }
           );
@@ -1021,7 +1024,7 @@ export function buildTranscriptRows(options: TranscriptBuildOptions): Transcript
         ? ` round ${managedRound}/${managedMaxRounds}`
         : "";
       loadingText = thinkingCharCount > 0
-        ? `${thinkingCharCount} chars${roundSuffix}`
+        ? `~${formatTokenCount(estimateOutputTokens(thinkingCharCount))} tokens${roundSuffix}`
         : normalizedLiveActivityLabel
           ? `${normalizedLiveActivityLabel}${roundSuffix}`
           : `processing${roundSuffix}`;

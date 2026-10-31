@@ -84,7 +84,7 @@ export function readRuntimeBuildIdentity(
       }
     }
   } else {
-    for (const relative of ['builtin', 'vendor', 'native', 'provider-capabilities.json',
+    for (const relative of ['builtin', 'vendor', 'native', 'provider-capabilities.json', 'manual-topics.json',
       'semantic-worker.js', 'constructed-handler-worker.js', 'sandbox-network-broker.js']) {
       addOptionalFileOrDirectory(path.join(installation, relative), files);
     }

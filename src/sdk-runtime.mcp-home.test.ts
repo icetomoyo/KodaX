@@ -4,7 +4,7 @@ import path from 'node:path';
 import { expect, it } from 'vitest';
 import { createMcpTestServerFixture, setAgentConfigHome } from '@kodax-ai/agent';
 import { parseMcpIntegrationDocument, writeIntegrationDocument } from '@kodax-ai/repl';
-import { createKodaXRuntime, type KodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime, type KodaXRuntime } from "../tests/runtime-fixture.js";
 
 it.each(['lazy', 'prewarm'] as const)('keeps SDK MCP %s process registration in the Host home', async connect => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-sdk-mcp-home-'));

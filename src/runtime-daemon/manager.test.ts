@@ -17,8 +17,10 @@ import {
   readRuntimeDaemonLockOwner,
   readRuntimeDaemonState,
   readRuntimeDaemonToken,
+  readRuntimeOwnerPolicy,
   resolveRuntimeDaemonPaths,
   tryAcquireRuntimeDaemonLock,
+  updateRuntimeOwnerPolicy,
 } from './state.js';
 import type { RuntimeDaemonEndpoint } from './transport.js';
 
@@ -34,6 +36,28 @@ afterEach(async () => {
 });
 
 describe('runtime daemon lease manager', () => {
+  it('starts one shared Host after an abandoned inline owner and keeps the cutover after shutdown', async () => {
+    const homeDir = tempHome();
+    const paths = resolveRuntimeDaemonPaths(homeDir, 'default');
+    updateRuntimeOwnerPolicy(paths, 'inline', 0);
+    tryAcquireRuntimeDaemonLock(paths, {
+      runtimeId: 'old-inline', pid: 999_999_999, kind: 'inline', createdAt: '2026-01-01T00:00:00.000Z',
+    });
+    const lease = await acquireRuntimeDaemonLease({
+      homeDir, endpoint: await makeTestEndpoint(), createRuntime: async runtimeId => makeRuntime(runtimeId),
+    });
+    cleanupTasks.push(() => lease.shutdown());
+    expect(lease.ownsHost).toBe(true);
+    expect(readRuntimeOwnerPolicy(paths)).toMatchObject({ mode: 'daemon', unified: true });
+    await lease.transport.request('initialize', { profile: 'default', token: readRuntimeDaemonToken(paths) });
+    await expect(lease.transport.request('daemon.management.get')).resolves.toMatchObject({
+      ownerPolicy: { mode: 'daemon', revision: 2 },
+    });
+    await lease.shutdown();
+    expect(readRuntimeDaemonLockOwner(paths.lockFile)).toBeUndefined();
+    expect(JSON.parse(fs.readFileSync(paths.ownerPolicyFile, 'utf8')).mode).toBe('host');
+  });
+
   it('attaches without constructing a second Runtime owner', async () => {
     const homeDir = tempHome();
     const endpoint = await makeTestEndpoint();

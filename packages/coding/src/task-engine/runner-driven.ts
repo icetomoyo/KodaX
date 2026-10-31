@@ -36,6 +36,8 @@ import {
   persistPendingEpisodeReview,
   isRunnerIterationLimitError,
   readRunnerRecoveryTranscript,
+  cleanupIncompleteToolCalls,
+  validateAndFixToolHistory,
   registerActiveRootQueueRoute,
   type MemoryContextIdentity,
   type MemoryManagementController,
@@ -240,7 +242,7 @@ import { withDurableCompactionPersistence } from '../agent-runtime/durable-compa
 // CAP-008: shared initial-messages resolver. Three-tier fallback
 // (inline → storage.load → empty) for AMA frame entry; SA already
 // uses this from `run-substrate.ts`.
-import { appendPromptIfNotDuplicate, resolveInitialMessages } from '../agent-runtime/middleware/auto-resume.js';
+import { appendPromptIfNotDuplicate, resolveInitialMessages, type ResolvedInitialMessages } from '../agent-runtime/middleware/auto-resume.js';
 import { createExtensionRuntimeSessionController } from '../agent-runtime/middleware/extension-queue.js';
 import {
   buildRuntimeSessionState,
@@ -628,6 +630,11 @@ function scheduleManagedTaskMaintenance(
     return;
   }
   queueMicrotask(() => { void maintenance(); });
+}
+
+interface ManagedRunRecoveryState {
+  initial?: ResolvedInitialMessages;
+  runtimeSessionState?: RuntimeSessionState;
 }
 
 interface RunnerMemoryRuntime {
@@ -1067,6 +1074,7 @@ export async function runManagedTaskViaRunner(
       };
     },
   };
+  const recovery: ManagedRunRecoveryState = {};
   try {
     const result = await runManagedTaskViaRunnerInner(
       optionsWithSessionId,
@@ -1075,6 +1083,7 @@ export async function runManagedTaskViaRunner(
       plan,
       initialSessionId,
       liveTurnController,
+      recovery,
       runnerMemoryRuntime,
     );
     if (!optionsWithSessionId.abortSignal?.aborted) {
@@ -1125,28 +1134,34 @@ export async function runManagedTaskViaRunner(
     // next prompt start as a fresh session.
     if (optionsWithSessionId.session?.storage) {
       try {
+        const resolvedInitial = recovery.initial;
         const recoveredMessages = readRunnerRecoveryTranscript(err);
         // Same persistence projection as the Turn boundary: internal managed
         // context is rebuilt per call and never belongs in session history.
-        const messagesToPersist = recoveredMessages
-          ? buildPersistableManagedTranscript(recoveredMessages as readonly KodaXMessage[])
-          : [];
-        void saveSessionSnapshot(optionsWithSessionId, initialSessionId, {
-          messages: messagesToPersist,
-          title: prompt.slice(0, 80),
-          gitRoot: optionsWithSessionId.context?.gitRoot ?? undefined,
-          errorMetadata: {
-            lastError: error.message,
-            lastErrorTime: Date.now(),
-            consecutiveErrors: 1,
-          },
-        }).catch((snapshotError: unknown) => {
-          emitResilienceDebug('[session:error-snapshot:error]', {
-            error: snapshotError instanceof Error
-              ? snapshotError.message
-              : String(snapshotError),
+        // If loading itself failed, do not replace an unknown saved history.
+        if (recoveredMessages !== undefined || resolvedInitial !== undefined) {
+          // Without a current recovery carrier, the latest canonical snapshot
+          // may contain completed answers or queued inputs absent from the seed.
+          // An empty fragment asks the existing snapshot policy to retain it.
+          const messagesToPersist = recoveredMessages === undefined ? []
+            : validateAndFixToolHistory(cleanupIncompleteToolCalls(
+              buildPersistableManagedTranscript(recoveredMessages as readonly KodaXMessage[])));
+          await saveSessionSnapshot(optionsWithSessionId, initialSessionId, {
+            messages: messagesToPersist,
+            title: resolvedInitial?.title || prompt.slice(0, 80),
+            gitRoot: optionsWithSessionId.context?.gitRoot ?? undefined,
+            runtimeSessionState: recovery.runtimeSessionState ?? (resolvedInitial && buildRuntimeSessionState({
+              loadedExtensionState: resolvedInitial.loadedExtensionState,
+              loadedExtensionRecords: resolvedInitial.loadedExtensionRecords,
+              activeTools: [], modelSelection: {},
+            })),
+            errorMetadata: {
+              lastError: error.message,
+              lastErrorTime: Date.now(),
+              consecutiveErrors: (resolvedInitial?.errorMetadata?.consecutiveErrors ?? 0) + 1,
+            },
           });
-        });
+        }
       } catch (snapshotError) {
         emitResilienceDebug('[session:error-snapshot:prepare-error]', {
           error: snapshotError instanceof Error ? snapshotError.message : String(snapshotError),
@@ -1188,6 +1203,7 @@ async function runManagedTaskViaRunnerInner(
   plan: ReasoningPlan | undefined,
   resolvedSessionId: string,
   liveTurnController: ManagedLiveTurnController,
+  recovery: ManagedRunRecoveryState,
   memoryRuntime?: RunnerMemoryRuntime,
 ): Promise<KodaXResult> {
   // F3 parity (v0.7.26) — apply the diff-driven review routing floor so
@@ -2041,6 +2057,8 @@ async function runManagedTaskViaRunnerInner(
   //      tier and started fresh; substrate parity restores it.
   //   3. empty messages — first turn / unknown session
   const resolvedInitial = await resolveInitialMessages(options, options.session?.id ?? resolvedSessionId);
+  // Retain recovery metadata without another storage read or changing load order.
+  recovery.initial = resolvedInitial;
   if (options.session?.generationCheckpoint && options.context?.runtimeRunId) {
     await options.context.actorSession?.resumeGenerationChildren(options.context.runtimeRunId);
   }
@@ -2073,6 +2091,7 @@ async function runManagedTaskViaRunnerInner(
     thinkingLevel: resolveInitialRuntimeThinkingLevel(options),
   });
   bindVisualObservationAdmission(baseCtx, options, runtimeSessionState);
+  recovery.runtimeSessionState = runtimeSessionState;
   bindModelSkillSelection(baseCtx, model => {
     options.modelOverride = model;
     runtimeSessionState.modelSelection.model = model;
@@ -2213,7 +2232,7 @@ async function runManagedTaskViaRunnerInner(
   ): Promise<void> => {
     await saveManagedRunBoundary(options, resolvedSessionId, {
       messages: buildPersistableManagedTranscript(messages, entryAgent),
-      title: prompt.slice(0, 80),
+      title: resolvedInitial.title || prompt.slice(0, 80),
       gitRoot: options.context?.gitRoot ?? undefined,
       runtimeSessionState,
     });
@@ -2335,6 +2354,7 @@ async function runManagedTaskViaRunnerInner(
           call.id,
           options.context?.executionCwd,
           options.context?.gitRoot ?? undefined,
+          baseCtx.toolResultRecovery,
         );
         if (override === undefined) return true;
         return override;
@@ -3021,7 +3041,7 @@ async function runManagedTaskViaRunnerInner(
   // `storage.save`), so reference-passing is safe.
   await saveManagedRunBoundary(options, result.sessionId, {
     messages: result.messages,
-    title: prompt.slice(0, 80),
+    title: resolvedInitial.title || prompt.slice(0, 80),
     gitRoot: options.context?.gitRoot ?? undefined,
     runtimeSessionState,
   });

@@ -66,7 +66,8 @@ it.each(['disconnect', 'cancel', 'complete'] as const)(
         await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
       } else {
         await expect(pending).rejects.toMatchObject({
-          name: 'KodaXProviderError', metadata: { stage: 'transport', upstreamCode: expect.any(String) },
+          // A real socket disconnect need not expose an upstream errno.
+          name: 'KodaXProviderError', metadata: { stage: 'transport' },
         });
         expect(controller.signal.aborted).toBe(false);
       }

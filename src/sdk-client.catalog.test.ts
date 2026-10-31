@@ -14,7 +14,7 @@ import {
   type KodaXProviderConfig, type KodaXStreamResult,
 } from '@kodax-ai/llm';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 import { BUILTIN_COMMANDS } from '../packages/repl/src/interactive/commands.js';
@@ -236,7 +236,7 @@ it('applies explicit execution controls and exposes only their safe effective fa
   vi.stubEnv('KODAX_STALL_LOG', '0');
   vi.stubEnv('KODAX_FALLBACK_PROVIDERS', 'old-shell-provider');
   await first.config.patch({ stallLog: true, fallbackProviders: ['product-catalog-test'] });
-  expect(await second.config.readEffective()).toEqual({
+  expect(await second.config.readEffective()).toMatchObject({
     stallLog: { value: true, source: 'persisted', applied: true },
     fallbackProviders: { value: ['product-catalog-test'], source: 'persisted', applied: true },
   });

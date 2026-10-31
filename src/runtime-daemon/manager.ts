@@ -16,7 +16,7 @@ import {
 } from './lifecycle.js';
 import { appendRuntimeDiagnostic, startRuntimeDaemonHost, type RuntimeDaemonHost } from './host.js';
 import {
-  assertRuntimeDaemonOwnerAllowed,
+  prepareRuntimeDaemonOwner,
   readRuntimeOwnerProcessStartIdentities,
   readRuntimeDaemonWindowsJobIdentity,
   releaseRuntimeDaemonLock,
@@ -34,6 +34,7 @@ export interface RuntimeDaemonLeaseOptions {
   readonly homeDir?: string;
   readonly configHome?: string;
   readonly profile?: string;
+  readonly sessionsDir?: string;
   readonly endpoint?: RuntimeDaemonEndpoint;
   readonly connectTimeoutMs?: number;
   readonly startupTimeoutMs?: number;
@@ -72,7 +73,7 @@ export async function acquireRuntimeDaemonLease(
   const homeDir = resolveRuntimeDaemonHomeDir(options.homeDir);
   const configHome = path.resolve(options.configHome ?? path.join(homeDir, '.kodax'));
   const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, profile);
-  assertRuntimeDaemonOwnerAllowed(paths);
+  prepareRuntimeDaemonOwner(paths, options.sessionsDir ?? path.join(configHome, 'sessions'));
   const endpoint = options.endpoint ?? defaultRuntimeDaemonEndpoint(
     profile,
     resolveRuntimeDaemonEndpointScope(homeDir, configHome),
@@ -83,6 +84,9 @@ export async function acquireRuntimeDaemonLease(
   );
   const { jobContained, processStartIdentity, supervisorProcessStartIdentity } =
     readOwnerIdentityWithDiagnostics(paths, supervisorPid);
+  if (process.platform === 'win32' && process.env.KODAX_DAEMON_JOB_CONTAINED === '1' && !jobContained) {
+    throw new Error('Could not verify the Windows Job containment; refusing to publish an unverified Host.');
+  }
   if (jobContained && supervisorProcessStartIdentity === undefined) {
     throw new Error(
       'Could not read the Windows Job supervisor process identity; refusing PID-only ownership.',

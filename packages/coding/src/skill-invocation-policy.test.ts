@@ -65,7 +65,7 @@ async function optionsWithSkill(input: {
     '---',
     'name: transport-skill',
     'description: Transport policy test',
-    ...(input.allowedTools ? [`allowed-tools: ${input.allowedTools}`] : []),
+    ...(input.allowedTools ? [`allowed-tools: ${JSON.stringify(input.allowedTools)}`] : []),
     ...(input.model ? [`model: ${input.model}`] : []),
     ...(input.fork ? ['context: fork'] : []),
     ...hookLines,
@@ -93,6 +93,61 @@ async function optionsWithSkill(input: {
 }
 
 describe('applyRuntimeSkillInvocationPolicy', () => {
+  it.each([undefined, 'Bash', '*'] as const)('retains Host authorization for unrestricted shell rules (%s)', async allowedTools => {
+    const fixture = await optionsWithSkill({ allowedTools });
+    fixture.options.events = { beforeToolExecute: async () => '[Blocked] Host decision' };
+    const options = await applyRuntimeSkillInvocationPolicy(fixture.options);
+    expect(await options.events?.beforeToolExecute?.('bash', { command: 'echo one && echo two' }))
+      .toBe('[Blocked] Host decision');
+  });
+
+  it.each(['cmd', undefined] as const)('rejects cmd expansion and single-quote command chains (%s)', async kind => {
+    if (kind === undefined && process.platform !== 'win32') return;
+    const fixture = await optionsWithSkill({ allowedTools: 'Bash(echo SAFE *)' });
+    if (kind) fixture.options.context!.shellExecution = { version: 1, shell: { kind } };
+    const options = await applyRuntimeSkillInvocationPolicy(fixture.options);
+    for (const command of ["echo SAFE 'x&echo SECOND&rem '", 'echo SAFE %KODAX_SKILL_PROBE%',
+      'echo SAFE !KODAX_SKILL_PROBE!', 'echo SAFE ^&echo SECOND']) {
+      expect(await options.events?.beforeToolExecute?.('bash', { command }), command).toContain('not allowed');
+    }
+    expect(await options.events?.beforeToolExecute?.('bash', { command: 'echo SAFE "x&y"' })).toBe(true);
+  });
+
+  it.each(['powershell', 'pwsh'] as const)('uses %s quoting for constrained commands', async kind => {
+    const fixture = await optionsWithSkill({ allowedTools: 'Bash(echo SAFE *)' });
+    fixture.options.context!.shellExecution = { version: 1, shell: { kind } };
+    const options = await applyRuntimeSkillInvocationPolicy(fixture.options);
+    for (const command of ['echo SAFE \\;echo SECOND', 'echo SAFE \\|echo SECOND',
+      'echo SAFE "x\\"; echo SECOND; #"']) {
+      expect(await options.events?.beforeToolExecute?.('bash', { command }), command).toContain('not allowed');
+    }
+    for (const command of ['echo SAFE "x;y"', "echo SAFE 'x&y'", 'echo SAFE C:\\Work\\file.txt']) {
+      expect(await options.events?.beforeToolExecute?.('bash', { command }), command).toBe(true);
+    }
+  });
+
+  it('keeps constrained shell patterns from authorizing compound shell effects', async () => {
+    const fixture = await optionsWithSkill({ allowedTools: 'Bash(git diff *)' });
+    const hostAdmission = vi.fn(async () => true);
+    fixture.options.events = { beforeToolExecute: hostAdmission };
+    const options = await applyRuntimeSkillInvocationPolicy(fixture.options);
+    for (const command of [
+      'git diff --stat && git commit -am x', 'git diff --stat & whoami',
+      'git diff --stat || whoami', 'git diff --stat; whoami',
+      'git diff --stat\nwhoami', 'git diff --stat\r\nwhoami',
+      'git diff --stat | sh', 'git diff --stat > changed.txt',
+      'git diff $(whoami)', 'git diff `whoami`',
+    ]) {
+      expect(await options.events?.beforeToolExecute?.('bash', { command }), command)
+        .toContain('not allowed');
+    }
+    expect(hostAdmission).not.toHaveBeenCalled();
+    for (const command of ['git diff --stat', 'git diff -- "file with spaces.ts"', 'git diff -- "a&&b.ts"']) {
+      expect(await options.events?.beforeToolExecute?.('bash', { command })).toBe(true);
+    }
+    expect(hostAdmission).toHaveBeenCalledTimes(3);
+  });
+
   it('reports an unregistered Skill as a local loading failure', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-skill-unregistered-'));
     tempDirs.push(root);

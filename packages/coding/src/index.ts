@@ -27,7 +27,7 @@
 // New code should import directly from @kodax-ai/llm
 
 export { readClientItemRange } from './client-item-reader.js';
-export { assertWorkModeAvailable } from './work-mode.js';
+export { assertWorkModeAvailable, resolveWorkMode } from './work-mode.js';
 
 export type {
   KodaXImageBlock,

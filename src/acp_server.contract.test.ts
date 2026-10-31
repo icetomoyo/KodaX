@@ -8,7 +8,7 @@ import { ClientSideConnection, PROTOCOL_VERSION, ndJsonStream, type RequestPermi
 import { KodaXBaseProvider, registerModelProvider, clearRuntimeModelProviders, type KodaXMessage, type KodaXStreamResult,
   type KodaXToolDefinition, type KodaXReasoningRequest } from '@kodax-ai/llm';
 import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 

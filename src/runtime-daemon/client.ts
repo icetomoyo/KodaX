@@ -264,6 +264,7 @@ function normalizeRuntimeDaemonPreflight(
 export function createRuntimeDaemonClient(
   options: RuntimeDaemonClientOptions,
 ): KodaXDaemonRuntime {
+  const runtimeCapabilities = options.capabilities ?? {};
   const request = (
     method: RuntimeDaemonMethod,
     params?: unknown,
@@ -452,7 +453,10 @@ export function createRuntimeDaemonClient(
     pending: ClientInteraction,
     answer: unknown,
   ): ClientInteractionResponse | undefined => {
-    if (pending.kind !== 'permission' && isAskUserUnanswered(answer) && answer.reason !== 'timeout') {
+    if (pending.kind !== 'permission' && isAskUserUnanswered(answer)) {
+      if (answer.reason === 'timeout') {
+        throw Object.assign(new Error('A client cannot submit a timeout as an answer; the Host owns the question deadline.'), { code: 'invalid_input' as const });
+      }
       return answer.reason === 'non_interactive' ? { kind: 'skip', reason: 'non_interactive' } : { kind: 'skip' };
     }
     if (pending.kind === 'question_input') {
@@ -861,8 +865,11 @@ export function createRuntimeDaemonClient(
         options?: { readonly expectedRevision?: number; readonly runId?: string },
       ) {
         const pending = await findInteraction(requestId);
-        const response = pending === undefined ? undefined : questionResponseFor(pending, answer);
-        if (response === undefined || !matchesUserInputBindings(pending!, options)) {
+        if (pending === undefined || !matchesUserInputBindings(pending, options)) {
+          return { requestId, accepted: false, status: 'already_resolved' as const };
+        }
+        const response = questionResponseFor(pending, answer);
+        if (response === undefined) {
           return { requestId, accepted: false, status: 'already_resolved' as const };
         }
         return request('interaction.respond', { requestId, response }) as Promise<RuntimeUserInputResolution>;
@@ -1176,6 +1183,9 @@ export function createRuntimeDaemonClient(
       },
     },
     catalog: {
+      executionTools(sessionId) {
+        return request('tool.catalog', { sessionId }) as Promise<readonly import('@kodax-ai/coding/client-contract').KodaXToolVisibilityMeta[]>;
+      },
       reasoningEfforts(input) {
         return request('provider.reasoning.efforts', input) as ReturnType<KodaXRuntime['catalog']['reasoningEfforts']>;
       },
@@ -1350,11 +1360,16 @@ export function createRuntimeDaemonClient(
       followup(sessionId, actorPath, objective, options) {
         const unavailable = actorControlPlaneError();
         if (unavailable) return Promise.reject(unavailable);
+        if (options?.resumeCheckpoint === true
+          && (runtimeCapabilities.actorCheckpointRecovery as { version?: number } | undefined)?.version !== 1) {
+          return Promise.reject(Object.assign(new Error('Actor checkpoint recovery requires an upgraded Host.'), { code: 'daemon_upgrade_required' }));
+        }
         assertRuntimeTransportSafe(options?.credential, 'agents.followup.credential');
         return request('agents.followup', {
           sessionId,
           actorPath,
           objective,
+          ...(options?.resumeCheckpoint === undefined ? {} : { resumeCheckpoint: options.resumeCheckpoint }),
           ...(options?.authorization === undefined ? {} : { authorization: options.authorization }),
           ...(options?.expectedRevision !== undefined
             ? { expectedRevision: options.expectedRevision }
@@ -1551,6 +1566,7 @@ async function answerCredentialRequest(
           leaseId,
           provider: requireStringField(payload, 'provider'),
           sessionId: requireStringField(payload, 'sessionId'),
+          ...(payload.connectionFingerprint !== undefined ? { connectionFingerprint: parseCredentialConnectionFingerprint(payload.connectionFingerprint) } : {}),
           target: parseScopedCredentialTarget(payload.target),
           purpose: parseScopedCredentialPurpose(payload.purpose),
         });
@@ -2157,7 +2173,7 @@ function parseScopedCredentialTarget(value: unknown): RuntimeScopedCredentialTar
   }
   if (kind === 'operation') {
     const operation = requireStringField(target, 'operation');
-    if (operation !== 'session.compact') throw new Error('Invalid credential operation target.');
+    if (operation !== 'session.compact' && operation !== 'provider.reasoning.probe') throw new Error('Invalid credential operation target.');
     return {
       kind,
       operation,
@@ -2631,4 +2647,9 @@ function assertRuntimeTransportSafe(
     }
   }
   ancestors.delete(value);
+}
+
+function parseCredentialConnectionFingerprint(value: unknown): string {
+  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) throw new Error('Invalid credential connection fingerprint.');
+  return value;
 }

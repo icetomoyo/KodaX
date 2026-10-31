@@ -6,7 +6,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { lstat, readFile, readdir, stat } from 'fs/promises';
+import { lstat, readFile, readdir, realpath, stat } from 'fs/promises';
 import { join, dirname, relative, resolve, sep } from 'path';
 import {
   LearnedAreaStore,
@@ -22,6 +22,7 @@ import type {
 } from './types.js';
 import { getDefaultSkillPaths, getSkillPathsFlat } from './types.js';
 import { loadSkillMetadata } from './skill-loader.js';
+import { emitKodaXDiagnostic } from '../../diagnostics.js';
 
 // === Skill Discovery ===
 
@@ -42,6 +43,16 @@ export async function discoverSkills(
 ): Promise<DiscoveryResult> {
   const skills = new Map<string, SkillMetadata>();
   const errors: Array<{ path: string; error: string }> = [];
+  const register = (skill: SkillMetadata) => {
+    const selected = skills.get(skill.name);
+    if (!selected) skills.set(skill.name, skill);
+    else if (comparablePath(selected.path) !== comparablePath(skill.path)) {
+      emitKodaXDiagnostic({ source: 'agent:skills', level: 'warn',
+        message: `Skill "${skill.name}" is shadowed by a higher-priority source.`,
+        detail: { code: 'skill_shadowed', name: skill.name,
+          selectedPath: join(selected.path, 'SKILL.md'), shadowedPath: join(skill.path, 'SKILL.md') } });
+    }
+  };
 
   // Get skill paths
   const defaultPaths = getDefaultSkillPaths(projectRoot);
@@ -58,10 +69,7 @@ export async function discoverSkills(
       const discovered = await scanSkillDirectory(path, source, errors);
 
       for (const skill of discovered) {
-        // Don't override if already found (higher priority)
-        if (!skills.has(skill.name)) {
-          skills.set(skill.name, skill);
-        }
+        register(skill);
       }
     } catch (error) {
       errors.push({
@@ -74,7 +82,7 @@ export async function discoverSkills(
     const learned = await scanRecordGatedLearnedArea(config.learnedArea);
     errors.push(...learned.errors);
     for (const skill of learned.skills) {
-      if (!skills.has(skill.name)) skills.set(skill.name, skill);
+      register(skill);
     }
   }
 
@@ -280,44 +288,37 @@ async function scanSkillDirectory(
   errors: DiscoveryResult['errors'],
 ): Promise<SkillMetadata[]> {
   const skills: SkillMetadata[] = [];
-
-  try {
-    const dirStat = await stat(dirPath);
-    if (!dirStat.isDirectory()) throw new Error('Configured Skill source is not a directory.');
-
-    const entries = await readdir(dirPath);
-
-    for (const entry of entries) {
-      const entryPath = join(dirPath, entry);
-
-      try {
-        const entryStat = await stat(entryPath);
-
-        if (entryStat.isDirectory()) {
-          // Check if it's a skill directory (contains SKILL.md)
-          const skillFile = join(entryPath, 'SKILL.md');
-          try {
-            const skillStat = await stat(skillFile);
-            if (skillStat.isFile()) {
-              const metadata = await loadSkillMetadata(entryPath, source);
-              if (metadata) {
-                skills.push(metadata);
-              } else {
-                errors.push({ path: skillFile, error: 'Skill metadata could not be loaded.' });
-              }
-            }
-          } catch (error) {
-            recordDiscoveryError(errors, skillFile, error);
-          }
-        }
-      } catch (error) {
-        recordDiscoveryError(errors, entryPath, error);
+  const visited = new Set<string>();
+  async function visit(directory: string): Promise<void> {
+    try {
+      const physicalPath = comparablePath(await realpath(directory));
+      if (visited.has(physicalPath)) return;
+      visited.add(physicalPath);
+      const entries = await readdir(directory, { withFileTypes: true });
+      if (entries.some(entry => entry.name === 'SKILL.md')) {
+        const metadata = await loadSkillMetadata(directory, source);
+        if (metadata) skills.push(metadata);
+        else errors.push({ path: join(directory, 'SKILL.md'), error: 'Skill metadata could not be loaded.' });
+        // A Skill's support files are not independent catalog entries.
+        return;
       }
+      entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+      for (const entry of entries) {
+        if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+        const entryPath = join(directory, entry.name);
+        try {
+          if (entry.isDirectory() || (entry.isSymbolicLink() && (await stat(entryPath)).isDirectory())) {
+            await visit(entryPath);
+          }
+        } catch (error) {
+          recordDiscoveryError(errors, entryPath, error);
+        }
+      }
+    } catch (error) {
+      recordDiscoveryError(errors, directory, error);
     }
-  } catch (error) {
-    recordDiscoveryError(errors, dirPath, error);
   }
-
+  await visit(dirPath);
   return skills;
 }
 
@@ -336,8 +337,7 @@ export function getNestedSkillPaths(
   projectRoot: string
 ): string[] {
   const paths: string[] = [];
-  // KodaX uses .kodax/skills/ directory
-  const skillDirNames = ['.kodax/skills'];
+  const skillDirNames = ['.kodax/skills', '.agents/skills'];
 
   // Start from current directory and walk up to project root
   let dir = currentDir;

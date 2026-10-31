@@ -112,7 +112,8 @@ for (const mode of modes) test(`bundled ${mode} automatically continues its orig
       terminal.onData(data => child.write(data));
     }
     const descriptor = await until('initial Host', async () => {
-      try { return JSON.parse(await readFile(daemonFile, 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      try { const value = JSON.parse(await readFile(daemonFile, 'utf8')); return value.status === 'ready' && value; }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
     });
     observer = await connectKodaXRuntime({ homeDir, endpoint: descriptor.endpoint });
     if (mode === 'ink' || mode === 'classic') {
@@ -151,7 +152,7 @@ for (const mode of modes) test(`bundled ${mode} automatically continues its orig
     providerReady = true;
     process.kill(descriptor.pid, 'SIGKILL');
     const replacement = await until('automatic Host replacement', async () => {
-      try { const value = JSON.parse(await readFile(daemonFile, 'utf8')); return value.runtimeId !== descriptor.runtimeId && value; }
+      try { const value = JSON.parse(await readFile(daemonFile, 'utf8')); return value.status === 'ready' && value.runtimeId !== descriptor.runtimeId && value; }
       catch (error) { if (error.code !== 'ENOENT') throw error; }
     });
     observer = await connectKodaXRuntime({ homeDir, endpoint: replacement.endpoint });

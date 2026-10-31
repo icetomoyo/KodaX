@@ -1,3 +1,4 @@
+import { staticText } from '../prompts/static-text.js';
 /**
  * Deferred tool registry — FEATURE_189 Batch 3 B.2 progressive disclosure.
  *

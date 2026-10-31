@@ -10,7 +10,7 @@ import { createVisualEnvironmentTools, type VisualEnvironmentAdapter } from '@ko
 import { createSessionManager } from '@kodax-ai/repl';
 import { clearRuntimeModelProviders, createCustomProvider, registerModelProvider } from '@kodax-ai/llm';
 import { NATIVE_PROVIDER_CAPABILITY_PROFILE } from '../packages/llm/src/providers/capability-profile.js';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from '../tests/runtime-fixture.js';
 import { measureModelFields } from '../tests/first-turn-uniform-costs.js';
 
 afterEach(() => { clearRuntimeModelProviders(); vi.unstubAllEnvs(); });

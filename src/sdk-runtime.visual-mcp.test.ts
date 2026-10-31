@@ -6,7 +6,7 @@ import { expect, it, vi } from 'vitest';
 import { clearRuntimeModelProviders, createCustomProvider, registerModelProvider } from '@kodax-ai/llm';
 import { createSessionManager, FileSessionStorage, parseMcpIntegrationDocument, writeIntegrationDocument } from '@kodax-ai/repl';
 import { NATIVE_PROVIDER_CAPABILITY_PROFILE } from '../packages/llm/src/providers/capability-profile.js';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from '../tests/runtime-fixture.js';
 
 const cells = (['ama', 'sa'] as const).flatMap(agentMode => (['openai', 'anthropic'] as const)
   .flatMap(protocol => [false, true].map(bridge => ({ agentMode, protocol, bridge }))));

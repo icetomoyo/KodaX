@@ -17,7 +17,7 @@ import {
 } from '@kodax-ai/repl';
 import { attachClassicPlaneDisplay } from '@kodax-ai/repl';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { createCliClientPlane } from './cli-client-plane.js';
 
 class ProbeProvider extends KodaXBaseProvider {
@@ -63,7 +63,8 @@ it('prints a plane-bound classic round from the live session view', async () => 
   });
   const plane = createCliClientPlane(toKodaXProductClient(runtime));
   try {
-    const session = await runtime.sessions.create({ title: 'T18 classic', surface: 'repl' });
+    // The Host reads project settings and performs repo maintenance; keep the fixture off the checkout.
+    const session = await runtime.sessions.create({ title: 'T18 classic', surface: 'repl', projectPath: homeDir });
     await runtime.sessions.updateSettings(session.id, {
       agentMode: 'sa', permissionMode: 'full-access',
     });
@@ -115,7 +116,7 @@ it('keeps the classic display view-only when no dialogs are provided', async () 
   });
   const plane = createCliClientPlane(toKodaXProductClient(runtime));
   try {
-    const session = await runtime.sessions.create({ title: 'T18 plain', surface: 'repl' });
+    const session = await runtime.sessions.create({ title: 'T18 plain', surface: 'repl', projectPath: homeDir });
     const views: ClientSessionView[] = [];
     const detach = await attachClassicPlaneDisplay(plane, session.id, {
       write: () => undefined,

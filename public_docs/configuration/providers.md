@@ -157,8 +157,11 @@ integers and image input follow the
 output ceilings follow the
 [Coding Plan model table](https://ark.volcengine.com/region:cn-beijing/docs/coding-plan-personal-plan-overview.md#51b87c17).
 The example's 65,536-token output setting is a client budget, not the model
-maximum. Existing `deepseek-v4-pro` and `deepseek-v4-flash` output metadata
-also rises from the inherited 32,000-token budget to the documented 384,000.
+maximum. KodaX requests 128,000 tokens by default for these routes, including
+existing `deepseek-v4-pro` and `deepseek-v4-flash`. The larger service ceilings
+are exposed separately as `outputTokenLimit`; they do not reserve that much
+context on every turn. Explicit request budgets may increase up to the known
+ceiling. These budget changes are unreleased FEATURE_302 work (2026-10-30).
 All six new routes accept image input in KodaX; video/file input is not exposed.
 
 DeepSeek V4.1 uses `thinking.type: adaptive` plus `output_config.effort`:
@@ -213,7 +216,7 @@ requests; live availability and account entitlement remain unverified.
 
 MiMo Token Plan explicitly lists both V2.6 models. Its OpenCode configuration
 documents their exact context/output limits and image input. Both use the
-Anthropic thinking toggle, `thinking.type: enabled | disabled`, without a
+thinking toggle, `thinking.type: enabled | disabled`, without a
 documented native effort parameter. KodaX low/medium/high/xhigh/max/auto
 enable thinking, while off/none/minimal disable it. No `budget_tokens`,
 `reasoning_effort`, or `output_config.effort` is sent. See the
@@ -221,8 +224,11 @@ enable thinking, while off/none/minimal disable it. No `budget_tokens`,
 [integration limits](https://mimo.mi.com/docs/zh-CN/tokenplan/integration/opencode),
 and [Anthropic request schema](https://mimo.mi.com/docs/zh-CN/api/chat/anthropic-api).
 
-The MiMo Coding endpoint remains
-`https://token-plan-cn.xiaomimimo.com/anthropic`, using `MIMO_CODING_API_KEY`.
+Unreleased FEATURE_302 migrates MiMo Coding to Chat Completions at
+`https://token-plan-cn.xiaomimimo.com/v1`, preserving `mimo-coding` and
+`MIMO_CODING_API_KEY`. The selectable reasoning choices are off/high; legacy
+low/medium/xhigh/max still map to on, and minimal maps to off. Assistant
+thinking is replayed as `reasoning_content` alongside tool calls/results.
 The existing public `mimo` mirror retains
 `https://api.xiaomimimo.com/anthropic` and `MIMO_API_KEY`; it receives the same
 V2.6 replacement because the old V2.5 names expired globally on 2026-10-21
@@ -247,16 +253,18 @@ effort so the documented server default max applies; omitted SDK reasoning
 uses max, minimal aliases to low, and explicit off/none is rejected locally
 before dispatch. Thinking cannot be disabled. The documented output hard
 limit is 524,288, with 131,072 recommended; thinking tokens share this output
-budget. Model metadata records the hard limit, and callers may lower their
-per-request budget. See the [Anthropic compatibility contract](https://platform.minimax.cn/docs/api-reference/text-anthropic-api)
+budget. Unreleased FEATURE_302 sets the default request budget
+(`maxOutputTokens`) to 131,072 and records 524,288 as `outputTokenLimit`.
+Callers can override the budget within that ceiling. Historical model budgets
+remain independent. See the [Anthropic compatibility contract](https://platform.minimax.cn/docs/api-reference/text-anthropic-api)
 and [message-generation schema](https://platform.minimax.cn/docs/api-reference/text-chat-anthropic).
 
 Images are enabled on the three new Coding model routes. MiniMax and public
 MiMo document native video, but SDK video remains unwired. MiMo Token Plan
 video entitlement is unverified, so its route is not advertised as video
-capable. All historical thinking blocks and signatures remain alongside
-tool calls and results in later requests, as required by both Anthropic
-compatibility contracts. Historical MiniMax M3/M2.7 selections retain their
+capable. MiniMax and public MiMo retain Messages thinking/signature replay;
+MiMo Coding projects readable historical thinking into Chat Completions
+`reasoning_content`, without forwarding Messages signatures. Historical MiniMax M3/M2.7 selections retain their
 previous profiles and budgets; this does not guarantee current M Plan
 entitlement. Existing nominal accounting rates remain placeholders, not
 published subscription Credit prices or cash rates.
@@ -265,6 +273,23 @@ Offline acceptance covers every UI effort (including auto/off), stream and
 complete request bodies, both MiMo endpoints, explicit-off rejection before
 dispatch, exact capacities, historical MiniMax budgets, image/video gates,
 and thinking/signature/tool-result replay. No online success is claimed.
+
+## Output budgets and quota recovery (unreleased FEATURE_302)
+
+`maxOutputTokens` remains the default request budget for built-in and custom
+providers. The optional `outputTokenLimit` is a positive integer service ceiling,
+available on providers and model descriptors; an unknown ceiling stays absent.
+`getEffectiveMaxOutputTokens(model, requestOverride)` applies request/scoped/env
+precedence and caps the result at the known ceiling. Stream and nonstreaming
+requests use the same rule, as do the existing Host response-reserve paths.
+Direct DeepSeek defaults to 128,000 tokens with a separate 384,000 ceiling.
+
+Chat backoff is owned by KodaX, with SDK automatic retries disabled. Temporary
+throttling, service errors and connection errors retain bounded recovery;
+`singleAttempt` disables backoff retries. Parameter negotiation remains its own
+existing bounded recovery. Account/plan exhaustion (including 1308 and
+`insufficient_quota`) returns the upstream detail with `metadata.retryable: false`;
+Host recovery honors that classification. Credential verification is unchanged.
 
 ## Set an API key
 

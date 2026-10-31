@@ -51,16 +51,31 @@ const minimalData = {
 };
 
 describe('saveRequiredSessionSnapshot', () => {
+  it.each([false, true])('never replaces unreadable canonical history with an empty error snapshot (required=%s)', async required => {
+    const original = new Error('canonical history read failed');
+    const save = vi.fn();
+    const options = { provider: 'anthropic', session: { id: 'unreadable-canonical',
+      storage: { load: vi.fn().mockRejectedValue(original), save } as unknown as KodaXSessionStorage },
+    } as KodaXOptions;
+    const data = { messages: [], title: 'replacement', errorMetadata: { consecutiveErrors: 1, lastError: 'provider failed', lastErrorTime: 1 } };
+    const saving = required ? saveRequiredSessionSnapshot(options, 'unreadable-canonical', data)
+      : saveSessionSnapshot(options, 'unreadable-canonical', data);
+    if (required) await expect(saving).rejects.toBe(original);
+    else await expect(saving).resolves.toBeUndefined();
+    expect(save).not.toHaveBeenCalled();
+    expect(diagnostics).toContainEqual(expect.objectContaining({ level: 'error', message: expect.stringContaining('not written') }));
+  });
+
   it('preserves Host project metadata and refuses to recreate a removed Session', async () => {
     const runtimeInfo = { workspaceRoot: '/host-workspace', canonicalRepoRoot: '/host-repo',
       executionCwd: '/host-workspace', surface: 'custom', profileId: 'partner', temporary: true };
-    const load = vi.fn().mockResolvedValue({ ...minimalData, gitRoot: '/host-repo', runtimeInfo });
+    const load = vi.fn().mockResolvedValue({ ...minimalData, title: 'Existing user title', gitRoot: '/host-repo', runtimeInfo });
     const save = vi.fn().mockResolvedValue(undefined);
     const options = { provider: 'anthropic', session: {
       id: 'host-identity', persistedByHost: false, storage: { load, save } as unknown as KodaXSessionStorage,
     }, context: { executionCwd: '/execution-only' } } as KodaXOptions;
     await saveRequiredSessionSnapshot(options, 'host-identity', minimalData);
-    expect(save).toHaveBeenLastCalledWith('host-identity', expect.objectContaining({ gitRoot: '/host-repo', runtimeInfo }));
+    expect(save).toHaveBeenLastCalledWith('host-identity', expect.objectContaining({ title: 'Existing user title', gitRoot: '/host-repo', runtimeInfo }));
     load.mockResolvedValueOnce(null);
     await expect(saveRequiredSessionSnapshot(options, 'host-identity', minimalData)).rejects.toThrow('was removed');
     expect(save).toHaveBeenCalledTimes(1);

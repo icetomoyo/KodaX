@@ -26,7 +26,7 @@
 import os from 'os';
 import path from 'path';
 import { mkdtemp, rm } from 'fs/promises';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { KodaXMessage, KodaXSessionLineage } from '@kodax-ai/agent';
 import { createSessionLineage } from '@kodax-ai/agent';
 
@@ -66,9 +66,11 @@ describe('FEATURE_173 dual-writer resume probe', () => {
     prevUserProfile = process.env.USERPROFILE;
     process.env.HOME = tempHome;
     process.env.USERPROFILE = tempHome;
+    vi.stubEnv('KODAX_HOME', path.join(tempHome, '.kodax'));
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
     if (prevUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = prevUserProfile;
     await rm(tempHome, { recursive: true, force: true });

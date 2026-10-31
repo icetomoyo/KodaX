@@ -4,6 +4,30 @@ import { resolveKodaXManual } from './resolver.js';
 import { MANUAL_PROVIDER_NAMES, MANUAL_REGISTRY, MANUAL_TOPIC_IDS } from './registry.js';
 
 describe('FEATURE_218 manual registry', () => {
+  it('keeps current topic guidance consistent with retired verifier and journal contracts', () => {
+    const agents = resolveKodaXManual({ topic: 'agents' }).content;
+    const sessions = resolveKodaXManual({ topic: 'sessions' }).content;
+    const tools = resolveKodaXManual({ topic: 'tools' }).content;
+    expect(agents).not.toContain('The existing Sidecar remains the sole');
+    expect(agents).toContain('automatic Sidecar Verifier is retired');
+    expect(sessions).not.toContain('a verifier checks completion');
+    expect(sessions).toContain('main agent verifies');
+    expect(tools).not.toContain('Raw Runtime journals retain every attempt');
+    expect(tools).toContain('no durable event journal or replay');
+  });
+
+  it.each([
+    ['token', 'tools', ['estimatedTokenCount', 'Provider usage', 'UTF-16']],
+    ['工具原文', 'tools', ["part:'original'", 'not_found', 'tool item ID']],
+    ['任务报告', 'sessions', ['taskResult', 'unknown', 'KodaXTaskResultReport']],
+    ['sidecar', 'agents', ['automatic Sidecar Verifier is retired']],
+    ['Bash(pattern)', 'skills', ['single parsed command', 'Host authorization']],
+  ] as const)('answers %s from its relevant current topic', (query, topic, facts) => {
+    const result = resolveKodaXManual({ query });
+    expect(result.matchedTopic).toBe(topic);
+    for (const fact of facts) expect(result.content).toContain(fact);
+  });
+
   it('has a topic for every id and the topic.id matches its key', () => {
     for (const id of MANUAL_TOPIC_IDS) {
       const topic = MANUAL_REGISTRY[id];
@@ -145,7 +169,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('may canonicalize DACL protection/inheritance control at commit');
     expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
-    expect(sandbox).toContain('v0.7.97-alpha.10 release uses Windows native shell protocol 10');
+    expect(sandbox).toContain('v0.7.97-alpha.11 release uses Windows native shell protocol 10');
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
@@ -173,12 +197,14 @@ describe('FEATURE_218 manual registry', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('The v0.7.97-alpha.10 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.97-alpha.11 release advertises Windows `sandboxRuntime:11`');
     expect(sdk).toContain('The v0.7.97-alpha.10 release resumes checkpointed Runs and task trees after Host');
+    expect(sdk).toContain('The v0.7.97-alpha.11 release adds explicit Agent, Coding and experimental Script work modes');
+    expect(sdk).toContain('Script runs supported leaf tools through existing permission and receipt boundaries.');
+    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.10 contract is retained.');
     expect(sdk).toContain('wait in `recovering`');
     expect(sdk).toContain('Kimi K3.1 provider routes join the registry with all seven effort levels mapped');
     expect(sdk).toContain('skip or Host timeout returns `unanswered` with its reason.');
-    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.9 contract is retained.');
     expect(sdk).toContain('The v0.7.97-alpha.9 release checks Session admission through canonical identity');
     expect(sdk).toContain('The v0.7.97-alpha.9 release checks Session admission through canonical identity');
     expect(sdk).toContain('a Windows ERROR_CRC surfacing as EIO');
@@ -454,7 +480,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(agents).toContain('not a Worker dispatch gate');
     expect(agents).toContain('quality_strategy');
     expect(agents).toContain('PatternTrace');
-    expect(agents).toMatch(/sole\s+terminal-answer quality adjudicator/);
+    expect(agents).toContain('automatic Sidecar Verifier is retired');
     expect(agents).toContain('500 tool-loop');
     expect(agents).toContain('RunnerIterationLimitError');
     expect(agents).toContain('readRunnerRecoveryTranscript');

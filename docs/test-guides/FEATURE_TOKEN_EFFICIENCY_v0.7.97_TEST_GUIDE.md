@@ -181,7 +181,8 @@ without-read/storage-failure、任务回执经独立IPC及重启、Script打包�
 最终源码对全部22个失败点完成定向复核并通过；不能把分组复核称为重新冻结后的单次全量全绿。
 其余观察包括目录清理竞争、存储读边界、生命周期等待、报告载荷断言和Issue摘要计数。
 
-Issue摘要原13f已有249条index却记248，现与已登记Issue370一起校正249/213 resolved，未新增Issue编号。
+Issue摘要原13f已有249条index却记248，现与当时登记的Goal Issue370一起校正249/213 resolved，未新增Issue编号。
+2026-10-31合并主线后，该worktree-only Goal条目映射为Issue376；主线历史滚动Issue370保留原编号，旧证据不改写。
 one-shot默认1s轮询超时后关闭仍在途Runtime可产生二次拒绝；测试现用mock入口/stop握手、finally先释放并
 等待原pending，再严格关闭和删除。没有增大超时、增加rm重试或放宽隔离。此前ENOTEMPTY不能仅凭10项通过
 宣称已全面修复。没有再次运行完整套件来替换失败数字；采用结论保留这一验证范围限制。

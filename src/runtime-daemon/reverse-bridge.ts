@@ -105,6 +105,7 @@ export interface RuntimeDaemonReverseBridge {
     readonly runId: string;
   }): Promise<string>;
   acquireScopedCredential(input: {
+    readonly connectionFingerprint?: string;
     readonly leaseId: string;
     readonly provider: string;
     readonly sessionId: string;
@@ -172,6 +173,7 @@ type CredentialRequestTarget =
   | { readonly version: 1; readonly runId: string }
   | {
       readonly version: 2;
+      readonly connectionFingerprint?: string;
       readonly target: RuntimeScopedCredentialTarget;
       readonly purpose: RuntimeScopedCredentialPurpose;
       readonly signal?: AbortSignal;
@@ -473,6 +475,7 @@ export function createRuntimeDaemonReverseBridge(
           ? { runId: input.request.runId }
           : {
               brokerVersion: 2,
+              ...(input.request.connectionFingerprint ? { connectionFingerprint: input.request.connectionFingerprint } : {}),
               target: input.request.target,
               purpose: input.request.purpose,
             }),
@@ -606,6 +609,7 @@ export function createRuntimeDaemonReverseBridge(
         sessionId: input.sessionId,
         request: {
           version: 2,
+          ...(input.connectionFingerprint ? { connectionFingerprint: input.connectionFingerprint } : {}),
           target: input.target,
           purpose: input.purpose,
           ...(input.signal !== undefined ? { signal: input.signal } : {}),
@@ -689,8 +693,10 @@ export function createRuntimeDaemonReverseBridge(
       requireOpen();
       const registered = hostTools.get(input.leaseId);
       if (!registered) throw bridgeError('host_tool_unavailable', 'Host tool lease is missing.');
-      const lease = input.allowedTools === undefined ? registered : { ...registered,
-        tools: registered.tools.filter(tool => input.allowedTools!.includes(tool.name)) };
+      const tools = input.allowedTools === undefined ? registered.tools
+        : registered.tools.filter(tool => input.allowedTools!.includes(tool.name));
+      // A scoped catalog is a view of the lease, not a replacement lease identity.
+      const lease = { ...registered, tools, byName: new Map(tools.map(tool => [tool.name, tool])) };
       hostToolRuns.set(input.runId, input.leaseId);
       const searchCapabilities: ExtensionRuntimeContract['searchCapabilities'] = async (
         providerId,
@@ -698,7 +704,7 @@ export function createRuntimeDaemonReverseBridge(
         options,
       ) => {
         if (providerId !== 'mcp' || (options?.kind !== undefined && options.kind !== 'tool')) return [];
-        if (!hostTools.has(lease.id)) return [];
+        if (hostTools.get(lease.id) !== registered) return [];
         if (options?.server !== undefined && options.server !== 'host') return [];
         const normalized = query.toLowerCase();
         return lease.tools
@@ -728,7 +734,7 @@ export function createRuntimeDaemonReverseBridge(
           };
         },
         async describeCapability(providerId, capabilityId) {
-          if (providerId !== 'mcp' || !hostTools.has(lease.id)) return undefined;
+          if (providerId !== 'mcp' || hostTools.get(lease.id) !== registered) return undefined;
           const descriptor = descriptorFromCapabilityId(lease, capabilityId);
           return descriptor ? { ...descriptor, id: capabilityId, kind: 'tool', server: 'host' } : undefined;
         },
@@ -737,7 +743,7 @@ export function createRuntimeDaemonReverseBridge(
           const descriptor = descriptorFromCapabilityId(lease, capabilityId);
           if (!descriptor) throw bridgeError('host_tool_unavailable', 'Host tool is not bound to this run.');
           const result = await invokeHostTool({
-            lease,
+            lease: registered,
             descriptor,
             sessionId: input.sessionId,
             runId: input.runId,
@@ -752,11 +758,11 @@ export function createRuntimeDaemonReverseBridge(
         async getCapabilityPromptContext() {
           // Fail-closed: a revoked lease stops advertising its catalog line
           // even to the run that captured the binding.
-          if (!hostTools.has(lease.id)) return undefined;
+          if (hostTools.get(lease.id) !== registered) return undefined;
           return formatHostToolPromptContext(lease);
         },
         listRunTools(providerId: string) {
-          if (providerId !== 'mcp' || !hostTools.has(lease.id)) return [];
+          if (providerId !== 'mcp' || hostTools.get(lease.id) !== registered) return [];
           return lease.tools.map((tool) => hostToolToRunScopedDefinition(lease.id, tool));
         },
       };

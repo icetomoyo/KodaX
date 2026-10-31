@@ -7,7 +7,7 @@ import {
 } from '@kodax-ai/llm';
 import { runKodaX, runManagedTask, KodaXClient } from './trusted-coding-entry.js';
 import { createAgent, type ToolGuardrail } from '@kodax-ai/agent';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { buildRunnerLlmAdapter } from '../packages/coding/src/task-engine/_internal/managed-task/llm-adapter.js';
 import type { KodaXEvents } from '@kodax-ai/coding';
 

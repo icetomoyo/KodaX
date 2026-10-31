@@ -184,7 +184,7 @@ export type {
   ProviderSetupReadiness,
   PersistedProviderSetupChoice,
 } from "./common/provider-setup.js";
-export { runProviderSetupWizard } from "./interactive/provider-setup.js";
+export { runProviderSetupWizard, createTerminalProviderSetupInteraction } from "./interactive/provider-setup.js";
 export type {
   ProviderSetupInteraction,
   ProviderSetupWizardResult,
@@ -391,3 +391,5 @@ export {
 } from "./session/public-api.js";
 export { getProviderReasoningEffortOptions } from './common/utils.js';
 export { probeProviderReasoningEfforts, type ProbeResult } from './common/capability-probe.js';
+
+export { linkProviderOAuthRegistration } from './common/provider-setup.js';

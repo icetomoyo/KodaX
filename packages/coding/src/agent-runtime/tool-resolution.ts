@@ -46,7 +46,7 @@
  * fields (function body + trailing blank).
  */
 
-import type { KodaXRepoIntelligenceMode, KodaXToolVisibilityPolicy } from '../types.js';
+import type { KodaXOptions, KodaXRepoIntelligenceMode, KodaXToolVisibilityPolicy } from '../types.js';
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
 import { VISUAL_TOOL_NAMES } from '@kodax-ai/agent/media';
 import type { RunScopedToolDefinition } from '../extensions/runtime-contract.js';
@@ -80,6 +80,15 @@ export function filterModelToolAliases<T extends KodaXToolDefinition>(tools: rea
       || !replacements.every(name => names.has(name)
         && getRegisteredToolDefinition(name)?.source.kind === 'builtin');
   });
+}
+
+/** Disclose the Skill catalog only when the same request admits its loader. */
+export function getModelSkillCatalog(options: KodaXOptions): string | undefined {
+  const loaders = applyToolVisibilityPolicy(
+    filterExcludedTools(options.extensionRuntime?.getDefaults?.().activeTools ?? ['skill'], options.context?.excludeTools),
+    options.context?.toolVisibilityPolicy,
+  );
+  return loaders.includes('skill') ? options.context?.skillsPrompt?.trim() : undefined;
 }
 
 /** FEATURE_067 v3: Filter tools excluded for child agents at API level. */

@@ -35,10 +35,17 @@ it.each([
     await getProvider(provider)[method](messages, [{ name: 'read', description: 'Read a file.',
       input_schema: { type: 'object', properties: { path: { type: 'string' } } } }], '', { effort: 'high' },
       { modelOverride: model, maxOutputTokensOverride: 1_024 });
-    const wire = requests.at(-1)?.body.messages as Array<{ role: string; content: unknown }>;
-    for (const index of [1, 3]) expect(wire[index]).toEqual(messages[index]);
-    expect(wire[2]).toEqual(messages[2]);
-    expect(wire[4]).toEqual(messages[4]);
+    const wire = (requests.at(-1)?.body.messages as Array<{ role: string; content: unknown }>).filter(message => message.role !== 'system');
+    if (provider === 'mimo-coding') {
+      for (const [index, id] of [[1, 'first'], [3, 'second']] as const) {
+        expect(wire[index]).toMatchObject({ role: 'assistant', reasoning_content: `Read ${id}.`,
+          tool_calls: [{ id, type: 'function', function: { name: 'read', arguments: JSON.stringify({ path: `${id}.txt` }) } }] });
+        expect(wire[index + 1]).toMatchObject({ role: 'tool', tool_call_id: id, content: `${id} contents` });
+      }
+      expect(wire[5]).toMatchObject({ role: 'assistant', content: 'Both files read.', reasoning_content: '' });
+    } else {
+      for (const index of [1, 2, 3, 4]) expect(wire[index]).toEqual(messages[index]);
+    }
   }
 });
 
@@ -61,9 +68,12 @@ it('serializes images for the new Coding routes and the existing public MiMo mir
         await getProvider(provider)[method]([{ role: 'user', content: [
           { type: 'text', text: 'Describe the image.' }, { type: 'image', path: imagePath, mediaType: 'image/png' },
         ] }], [], '', { effort: 'high' }, { modelOverride: model, maxOutputTokensOverride: 1_024 });
-        expect(requests.at(-1)?.body.messages).toMatchObject([{ role: 'user', content: [
+        const wire = (requests.at(-1)?.body.messages as Array<{ role: string }>).filter(message => message.role !== 'system');
+        expect(wire).toMatchObject([{ role: 'user', content: [
           { type: 'text', text: 'Describe the image.' },
-          { type: 'image', source: { type: 'base64', media_type: 'image/png', data } },
+          provider === 'mimo-coding'
+            ? { type: 'image_url', image_url: { url: `data:image/png;base64,${data}` } }
+            : { type: 'image', source: { type: 'base64', media_type: 'image/png', data } },
         ] }]);
       }
     }
@@ -78,6 +88,14 @@ function captureRequests() {
   vi.stubGlobal('fetch', async (url: unknown, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
     requests.push({ url: String(url), body });
+    if (String(url).endsWith('/chat/completions')) {
+      if (body.stream) return new Response('data: {"choices":[{"delta":{"content":"OK"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', {
+        headers: { 'content-type': 'text/event-stream' },
+      });
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'OK' }, finish_reason: 'stop' }] }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
     if (body.stream) {
       const events = [
         { type: 'message_start', message: { usage: { input_tokens: 1, output_tokens: 0 } } },
@@ -111,8 +129,8 @@ describe('MiMo V2.6 documented coding and public routes (2026-10-28)', () => {
   });
 
   it.each([
-    ['mimo-coding', 'mimo-v2.6-pro', 'https://token-plan-cn.xiaomimimo.com/anthropic/v1/messages'],
-    ['mimo-coding', 'mimo-v2.6-flash', 'https://token-plan-cn.xiaomimimo.com/anthropic/v1/messages'],
+    ['mimo-coding', 'mimo-v2.6-pro', 'https://token-plan-cn.xiaomimimo.com/v1/chat/completions'],
+    ['mimo-coding', 'mimo-v2.6-flash', 'https://token-plan-cn.xiaomimimo.com/v1/chat/completions'],
     ['mimo', 'mimo-v2.6-pro', 'https://api.xiaomimimo.com/anthropic/v1/messages'],
     ['mimo', 'mimo-v2.6-flash', 'https://api.xiaomimimo.com/anthropic/v1/messages'],
   ])('%s/%s maps all seven UI efforts without inventing native effort levels', async (provider, model, url) => {
@@ -138,7 +156,7 @@ describe('MiniMax M3.1 Flash documented M Plan route (2026-10-28)', () => {
   it('selects the canonical model with native effort and the documented hard limits', () => {
     expect(getProvider('minimax-coding').getModel()).toBe('MiniMax-M3.1-Flash');
     expect(getModelCapabilities('minimax-coding', 'MiniMax-M3.1-Flash')).toMatchObject({
-      contextWindow: 1_000_000, maxOutputTokens: 524_288, reasoningCapability: 'native-effort',
+      contextWindow: 1_000_000, maxOutputTokens: 131_072, outputTokenLimit: 524_288, reasoningCapability: 'native-effort',
       reasoningProfile: { effortStrategy: 'anthropic-output-effort', defaultEffort: 'max',
         supportsReasoningEffort: true, supportsDisabledThinking: false, localRejectEfforts: ['none'] },
     });

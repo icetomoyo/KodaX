@@ -1270,8 +1270,9 @@ function readWindowsSandboxV2CutoverMarker(): WindowsSandboxV2CutoverMarker | un
 
 /**
  * Read-only interactive-startup check. The durable setup marker survives a
- * reboot, but the NUL device's account ACE does not. Verify both before skipping
- * setup; command admission still performs the complete sandbox verification.
+ * reboot, but device/profile ACLs can differ from the recorded setup. Verify
+ * NUL and setup filesystem capabilities in this process's view before skipping
+ * setup; command admission still performs its own complete verification.
  */
 export function isWindowsSandboxV2SetupCurrent(): boolean {
   if (process.platform !== 'win32') return true;
@@ -1279,7 +1280,7 @@ export function isWindowsSandboxV2SetupCurrent(): boolean {
     const marker = readWindowsSandboxV2CutoverMarker();
     if (marker === undefined) return false;
     const artifact = resolveWindowsSandboxV2Executable({ provision: false });
-    verifyWindowsV2AccountCompatibility(marker.sandboxUserSid, artifact.path);
+    verifyWindowsV2AccountCompatibility(marker, artifact.path);
     return true;
   } catch {
     return false;
@@ -2340,7 +2341,7 @@ async function inspectSandboxRuntime(): Promise<SandboxRuntimeDoctorResult> {
         verifyWindowsSandboxControlDirectory();
         try {
           cachedWindowsSandboxV2Cutover = assertWindowsSandboxV2Cutover(user);
-          verifyWindowsV2AccountCompatibility(user.sid, controller.path);
+          verifyWindowsV2AccountCompatibility(cachedWindowsSandboxV2Cutover, controller.path);
           await verifyPreparedWindowsWfp(runner);
         } catch (error: unknown) {
           setupRequired = true;
@@ -2512,12 +2513,12 @@ function pendingWindowsSshAclCleanup(
 }
 
 function verifyWindowsV2AccountCompatibility(
-  sandboxSid: string,
+  marker: WindowsSandboxV2CutoverMarker,
   executable: string,
 ): void {
   const result = spawnSync(
     executable,
-    ['__verify-null-device', sandboxSid],
+    ['__verify-null-device', marker.sandboxUserSid],
     {
       env: sanitizedEnvironment(),
       encoding: 'utf8',
@@ -2531,6 +2532,20 @@ function verifyWindowsV2AccountCompatibility(
     throw windowsSandboxV2CutoverError(
       `The sandbox account NUL-device compatibility ACE is missing or unsafe: ${reason}`,
     );
+  }
+  const home = path.resolve(process.env.USERPROFILE ?? os.homedir());
+  const readRoots = existingMinimalWindowsAclGuardRoots(windowsSandboxAclRoots(
+    marker.setupReadRoots, home, windowsSandboxAclExclusions(home),
+  ));
+  if (readRoots.length === 0) return;
+  const readProof = spawnSync(executable, ['__verify-account-capabilities'], {
+    env: sanitizedEnvironment(), encoding: 'utf8', shell: false, windowsHide: true, timeout: 5_000,
+    input: JSON.stringify({ sandboxSid: marker.sandboxUserSid, sandboxGroupSid: marker.sandboxGroupSid,
+      filesystemCapabilityNonce: marker.filesystemCapabilityNonce, readRoots }),
+  });
+  if (readProof.error !== undefined || readProof.status !== 0) {
+    const reason = readProof.error?.message ?? (readProof.stderr.trim() || `exit ${String(readProof.status)}`);
+    throw new Error(`Windows sandbox setup filesystem capabilities are missing or unsafe: ${reason}`);
   }
 }
 
@@ -2751,6 +2766,9 @@ export async function setupSandboxRuntime(): Promise<SandboxRuntimeDoctorResult>
 export function sandboxSetupGuidance(
   doctor: SandboxRuntimeDoctorResult,
 ): readonly string[] {
+  if (doctor.platform === 'linux' || doctor.platform === 'darwin') {
+    return posixSandboxSetupGuidance(doctor);
+  }
   if (doctor.ready) {
     return [
       `KodaX sandbox is active (${doctor.platform}, ASRT ${doctor.version}).`,
@@ -2768,23 +2786,59 @@ export function sandboxSetupGuidance(
       'The terminal itself does not need to be started as Administrator; approve the UAC prompt when it appears.',
     ];
   }
-  if (doctor.platform === 'darwin') {
-    return [
-      'KodaX uses macOS Seatbelt through sandbox-exec. Install the missing dependency, then rerun "kodax sandbox doctor".',
-      'Homebrew: brew install ripgrep',
-    ];
-  }
-  if (doctor.platform === 'linux') {
-    return [
-      'KodaX uses bubblewrap on Linux. Install bubblewrap, socat, and ripgrep, then rerun "kodax sandbox doctor".',
-      'Debian/Ubuntu: sudo apt install bubblewrap socat ripgrep',
-      'Fedora/RHEL: sudo dnf install bubblewrap socat ripgrep',
-      'Arch Linux: sudo pacman -S bubblewrap socat ripgrep',
-    ];
-  }
   return [
     `KodaX sandbox is not supported on ${doctor.platform}.`,
   ];
+}
+
+function posixSandboxSetupGuidance(doctor: SandboxRuntimeDoctorResult): readonly string[] {
+  const lines = [doctor.ready
+    ? `KodaX sandbox is active (${doctor.platform}, ASRT ${doctor.version}).`
+    : `KodaX sandbox is unavailable (${doctor.platform}, ASRT ${doctor.version}).`];
+  // ASRT reports warning and error text together in the public doctor result.
+  // Preserve the evidence; do not infer missing packages from readiness alone.
+  lines.push(...doctor.diagnostics);
+  if (doctor.diagnostics.some((line) => (
+    /^(?:seccomp(?:[- ]helper)?|apply-seccomp)\b.*(?:not available|unavailable|not found|missing)/i.test(line)
+  ))) {
+    lines.push('Warning: the ASRT seccomp helper (apply-seccomp) is unavailable or degraded; Unix socket restrictions may be unavailable. This warning alone does not make doctor unready. Optional repair: restore the ASRT helper for this platform and architecture in the application distribution.');
+  }
+  if (doctor.ready) return lines;
+  if (doctor.diagnostics.some((line) => (
+    /JavaScript Skill interpreter is unavailable|\bnode(?:\.exe)?\b.*\bENOENT\b|\bENOENT\b.*\bnode(?:\.exe)?\b/i.test(line)
+  ))) {
+    lines.push(
+      'Optional interpreter repair: KodaX reuses KODAX_A2A_NODE when provided, or Electron\'s own executable in Node mode (ELECTRON_RUN_AS_NODE). Check that this executable can run; Electron does not require Node.js on PATH.',
+      'For a standalone bundled CLI without an available interpreter, optionally install Node.js (>=20.16.0) on PATH or set KODAX_A2A_NODE to an existing Node.js executable.',
+    );
+  }
+  const missing = doctor.diagnostics.filter((line) => /not installed|not found|missing|ENOENT/i.test(line));
+  const packages = [
+    ...(doctor.platform === 'linux' ? [
+      ['bubblewrap', /\b(?:bubblewrap|bwrap)\b/i],
+      ['socat', /\bsocat\b/i],
+    ] as const : []),
+    ['ripgrep', /\b(?:ripgrep|rg)\b/i],
+  ] as const;
+  const dependencies = packages.filter(([, pattern]) => missing.some((line) => pattern.test(line)))
+    .map(([name]) => name).join(' ');
+  if (dependencies) {
+    lines.push('Optional sandbox backend repair: install only the dependencies reported missing.');
+    if (doctor.platform === 'linux') {
+      lines.push(
+        `Debian/Ubuntu: sudo apt install ${dependencies}`,
+        `Fedora/RHEL: sudo dnf install ${dependencies}`,
+        `Arch Linux: sudo pacman -S ${dependencies}`,
+      );
+    } else {
+      lines.push(`Homebrew: brew install ${dependencies}`);
+    }
+  }
+  lines.push(
+    'Ordinary tools continue under the normal permission policy when the sandbox is unavailable; installing dependencies is not a prerequisite. Explicit sandbox-only calls do not execute without isolation.',
+    'After optional repair, rerun "kodax sandbox doctor".',
+  );
+  return lines;
 }
 
 /**
@@ -4345,6 +4399,7 @@ function windowsAgentHomeAccessRoot(
         ) return undefined;
         const topLevel = path.relative(canonicalHome, canonicalCandidate)
           .split(path.sep)[0]?.toLowerCase();
+        if (/^\.?auth\.json(?:[.-].*)?$/.test(topLevel ?? '')) return undefined;
         if (topLevel === 'sandbox-runtime') return undefined;
         if (
           write
@@ -4663,7 +4718,11 @@ function workspaceShellSandboxConfig(
   const home = path.resolve(
     process.platform === 'win32' ? process.env.USERPROFILE ?? os.homedir() : os.homedir(),
   );
-  const denyRead: string[] = [];
+  const credentialFile = path.join(agentHome, 'auth.json');
+  const credentialRoots = [credentialFile, `${credentialFile}.staging`];
+  // Windows plaintext files remove inherited sandbox grants before their first byte is written.
+  // POSIX sandboxes run as the same user, so explicit namespace masks are also required.
+  const denyRead: string[] = process.platform === 'win32' ? [] : credentialRoots;
   const scopedAgentHomeAccess = process.platform === 'win32'
     ? windowsAgentHomeAccessRoots(agentHome, agentHomeAccess)
     : { read: [], write: [] };
@@ -4678,13 +4737,14 @@ function workspaceShellSandboxConfig(
   );
   const protectedAgentHomeWriteRoots = [
     controlDirectory,
+    ...credentialRoots,
     ...WORKSPACE_SHELL_INTERNAL_AGENT_HOME_DIRECTORIES.map(
       (directory) => path.join(agentHome, directory),
     ),
   ];
   if (process.platform === 'win32') {
     for (const protectedRoot of protectedAgentHomeWriteRoots) {
-      if (writeRoots.some((granted) => isInside(granted, protectedRoot))) {
+      if (protectedRoot !== credentialFile && writeRoots.some((granted) => isInside(granted, protectedRoot))) {
         mkdirSync(protectedRoot, { recursive: true });
       }
     }

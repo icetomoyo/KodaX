@@ -1,6 +1,6 @@
 {
   "name": "@kodax-ai/llm",
-  "version": "0.7.97-alpha.10",
+  "version": "0.7.97-alpha.11",
   "description": "KodaX AI - 独立的 LLM 抽象层，可被其他项目复用",
   "private": true,
   "type": "module",
@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./errors": {
+      "types": "./dist/errors.d.ts",
+      "import": "./dist/errors.js"
     }
   },
   "scripts": {
@@ -23,13 +27,18 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.15.0",
     "@anthropic-ai/sdk": "^0.104.2",
+    "@aws-sdk/client-bedrock-runtime": "3.1127.0",
     "@silvia-odwyer/photon-node": "0.3.4",
+    "@smithy/signature-v4": "5.6.12",
     "image-size": "2.0.2",
     "openai": "^6.32.0",
-    "partial-json": "^0.1.7"
+    "partial-json": "^0.1.7",
+    "proper-lockfile": "4.1.2",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",
+    "@types/proper-lockfile": "4.1.4",
     "typescript": "^5.7.3",
     "vitest": "4.1.11"
   },

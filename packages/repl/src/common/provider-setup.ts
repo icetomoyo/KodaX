@@ -31,6 +31,12 @@ export interface ProviderSetupCatalogEntry {
 
 export type ProviderSetupReadiness =
   | {
+      readonly status: 'needs-host-broker';
+      readonly configPath: string;
+      readonly configRevision: string;
+      readonly provider: string;
+    }
+  | {
       readonly status: 'ready';
       readonly configPath: string;
       readonly configRevision: string;
@@ -67,9 +73,16 @@ export type ProviderSetupChoice =
     };
 
 /** The setup flow accepts public connection metadata, never provider secrets. */
-export interface ProviderSetupCustomProviderMetadata {
+export interface ProviderSetupCustomProviderMetadata extends Pick<KodaXCustomProviderConfig,
+  'oauthRegistration' | 'models' | 'toolCapabilities' | 'cacheCapabilities' | 'reasoningProfile' | 'reasoningCapability' | 'reasoningPreset' | 'reasoning'
+  | 'contextWindow' | 'maxOutputTokens' | 'supportsThinking' | 'imageInput' | 'promptCacheAffinity'
+  | 'replayReasoningContent' | 'strictThinkingSignature' | 'verifyStrategy'> {
   readonly name: string;
   readonly protocol: KodaXCustomProviderConfig['protocol'];
+  readonly api?: KodaXCustomProviderConfig['api'];
+  readonly oauth?: KodaXCustomProviderConfig['oauth'];
+  readonly cloud?: KodaXCustomProviderConfig['cloud'];
+  readonly authentication?: KodaXCustomProviderConfig['authentication'];
   readonly baseUrl: string;
   readonly apiKeyEnv: string;
   readonly model: string;
@@ -192,6 +205,7 @@ export function inspectProviderSetupReadiness(
   const explicitProvider = normalizedString(input.explicitProvider);
   if (explicitProvider) {
     const selected = resolveConfiguredProvider(parsed.config, explicitProvider, catalog);
+    if (selected?.hostBroker) return { status: 'needs-host-broker', configPath, configRevision: parsed.revision, provider: explicitProvider };
     return selected && (!selected.requiresCredential
       || hasEnvironmentValue(environment, selected.apiKeyEnv))
       ? ready(configPath, parsed.revision, explicitProvider)
@@ -217,6 +231,7 @@ export function inspectProviderSetupReadiness(
         reason: `provider "${configuredProvider}" is not a valid built-in or custom provider.`,
       };
     }
+    if (selected.hostBroker) return { status: 'needs-host-broker', configPath, configRevision: parsed.revision, provider: configuredProvider };
     return !selected.requiresCredential || hasEnvironmentValue(environment, selected.apiKeyEnv)
       ? ready(configPath, parsed.revision, configuredProvider)
       : needsCredential(configPath, parsed.revision, configuredProvider, selected.apiKeyEnv);
@@ -281,7 +296,13 @@ export function persistProviderSetupChoice(
 export function providerSetupRestartInstructions(input: {
   readonly apiKeyEnv: string;
   readonly platform?: NodeJS.Platform;
+  readonly credentialSource?: 'file';
 }): readonly string[] {
+  if (input.credentialSource === 'file') return [
+    'The API key was saved in permission-protected plaintext auth.json, separately from config.json.',
+    'Run `kodax` again. No environment-variable setup is required for this saved connection.',
+    'Saving a key does not verify its online validity or model entitlement.',
+  ];
   const platform = input.platform ?? process.platform;
   const environmentStep = platform === 'win32'
     ? `Required next step: use this provider's API key as the value of the user environment variable "${input.apiKeyEnv}" in Windows Environment Variables.`
@@ -333,6 +354,7 @@ function resolveConfiguredProvider(
 ): {
   readonly apiKeyEnv?: string;
   readonly requiresCredential: boolean;
+  readonly hostBroker?: boolean;
 } | undefined {
   const builtin = catalog.find((entry) => entry.name === name);
   if (builtin) return { apiKeyEnv: builtin.apiKeyEnv, requiresCredential: true };
@@ -347,7 +369,7 @@ function resolveConfiguredProvider(
 
   const custom = findValidCustomProvider(config, name);
   return custom
-    ? { apiKeyEnv: custom.apiKeyEnv, requiresCredential: true }
+    ? { apiKeyEnv: custom.apiKeyEnv, requiresCredential: true, ...(custom.oauth || custom.cloud ? { hostBroker: true } : {}) }
     : undefined;
 }
 
@@ -406,7 +428,7 @@ function toValidCustomProvider(value: unknown): KodaXCustomProviderConfig | unde
   const { name, protocol, baseUrl, apiKeyEnv, model } = value;
   if (
     typeof name !== 'string'
-    || (protocol !== 'openai' && protocol !== 'anthropic')
+    || !['openai', 'anthropic', 'google', 'bedrock', 'mistral', 'pi-messages'].includes(String(protocol))
     || typeof baseUrl !== 'string'
     || typeof apiKeyEnv !== 'string'
     || typeof model !== 'string'
@@ -416,7 +438,7 @@ function toValidCustomProvider(value: unknown): KodaXCustomProviderConfig | unde
   const provider: KodaXCustomProviderConfig = {
     ...value,
     name,
-    protocol,
+    protocol: protocol as KodaXCustomProviderConfig['protocol'],
     baseUrl,
     apiKeyEnv,
     model,
@@ -484,10 +506,19 @@ export function validateProviderSetupCustomMetadata(
   const normalized: KodaXCustomProviderConfig = {
     name: provider.name.trim(),
     protocol: provider.protocol,
+    ...(provider.api !== undefined ? { api: provider.api } : {}),
+    ...(provider.oauth !== undefined ? { oauth: provider.oauth } : {}),
+    ...(provider.cloud !== undefined ? { cloud: provider.cloud } : {}),
+    ...(provider.authentication !== undefined ? { authentication: provider.authentication } : {}),
     baseUrl: provider.baseUrl.trim(),
     apiKeyEnv: provider.apiKeyEnv.trim(),
     model: provider.model.trim(),
   };
+  for (const key of ['oauthRegistration', 'models', 'toolCapabilities', 'cacheCapabilities', 'reasoningProfile', 'reasoningCapability', 'reasoningPreset', 'reasoning',
+    'contextWindow', 'maxOutputTokens', 'supportsThinking', 'imageInput', 'promptCacheAffinity',
+    'replayReasoningContent', 'strictThinkingSignature', 'verifyStrategy'] as const) {
+    if (provider[key] !== undefined) Object.assign(normalized, { [key]: structuredClone(provider[key]) });
+  }
   const endpointError = customProviderEndpointError(normalized.baseUrl);
   if (endpointError) throw new Error(endpointError);
   validateCustomProviderConfig(normalized);
@@ -586,4 +617,27 @@ function writeConfigAtomically(configPath: string, config: Record<string, unknow
     fs.rmSync(temporary, { force: true });
     throw error;
   }
+}
+
+
+/** Update only a non-secret OAuth registration reference under the existing config writer lock. */
+export function linkProviderOAuthRegistration(input: { configPath?: string; name: string; service: NonNullable<KodaXCustomProviderConfig['oauth']>;
+  expectedRegistration?: string; registration?: string }): void {
+  const configPath = input.configPath ?? getAgentConfigPath('config.json');
+  withCoreConfigWriteLock(configPath, () => {
+    const snapshot = readConfig(configPath);
+    if (snapshot.error || !snapshot.config) throw new ProviderSetupInvalidConfigError(configPath, snapshot.error ?? 'Missing configuration.');
+    const providers = snapshot.config.customProviders;
+    if (!Array.isArray(providers)) throw new Error('OAuth login requires a configured custom connection.');
+    let matched = false;
+    const next = providers.map(value => {
+      const provider = toValidCustomProvider(value);
+      if (!provider || provider.name !== input.name) return value;
+      if (provider.oauth !== input.service || provider.oauthRegistration !== input.expectedRegistration) throw new ProviderSetupConfigConflictError(configPath);
+      matched = true;
+      const updated = { ...provider, oauthRegistration: input.registration }; validateCustomProviderConfig(updated); return updated;
+    });
+    if (!matched) throw new ProviderSetupConfigConflictError(configPath);
+    writeConfigAtomically(configPath, { ...snapshot.config, customProviders: next });
+  });
 }

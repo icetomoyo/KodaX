@@ -207,14 +207,14 @@ describe('createClassicPlaneDisplayDiffer (T18)', () => {
     await differ([], { ...thinking, streaming: { ...thinking.streaming, charCount: 1000 } });
     // Reconnected initial snapshots reuse this same session differ.
     await differ([], thinking);
-    const tool = { runId: 'run', streaming: { kind: 'tool-input' as const, providerRequestId: 'request', toolName: 'read', callId: 'one', charCount: 8 } };
+    const tool = { runId: 'run', streaming: { kind: 'tool-input' as const, providerRequestId: 'request', toolName: 'read', callId: 'one', charCount: 8, estimatedTokenCount: 3 } };
     await differ([], tool);
     await differ([], { ...tool, streaming: { ...tool.streaming, charCount: 1000 } });
-    await differ([], { ...tool, streaming: { ...tool.streaming, callId: 'two', charCount: 2 } });
+    await differ([], { ...tool, streaming: { ...tool.streaming, callId: 'two', charCount: 2, estimatedTokenCount: 1 } });
     await differ([], { runId: 'run' });
     await differ([], tool);
-    expect(lines).toEqual(['info:Thinking (~37 tokens received so far)', 'info:Receiving read (8 chars received so far)',
-      'info:Receiving read (2 chars received so far)', 'info:Receiving read (8 chars received so far)']);
+    expect(lines).toEqual(['info:Thinking (~37 tokens)', 'info:Receiving read (~3 tokens)',
+      'info:Receiving read (~1 tokens)', 'info:Receiving read (~3 tokens)']);
   });
 
   it('does not invent a cumulative count for anonymous tool input', async () => {
@@ -230,14 +230,13 @@ describe('createClassicPlaneDisplayDiffer (T18)', () => {
     const lines: string[] = [];
     const differ = createClassicPlaneDisplayDiffer(line => lines.push(line));
     const first = { runId: 'run', streaming: { kind: 'tool-input' as const,
-      providerRequestId: 'request', toolName: 'read', callId: 'one', charCount: 2 } };
-    const second = { ...first, streaming: { ...first.streaming, callId: 'two', charCount: 3 } };
+      providerRequestId: 'request', toolName: 'read', callId: 'one', charCount: 2, estimatedTokenCount: 7 } };
+    const second = { ...first, streaming: { ...first.streaming, callId: 'two', charCount: 3, estimatedTokenCount: 11 } };
     await differ([], first);
     await differ([], second);
     await differ([], { ...first, streaming: { ...first.streaming, charCount: 1000 } });
     await differ([], second);
-    expect(lines).toEqual(['info:Receiving read (2 chars received so far)',
-      'info:Receiving read (3 chars received so far)']);
+    expect(lines).toEqual(['info:Receiving read (~7 tokens)', 'info:Receiving read (~11 tokens)']);
     await differ([], { ...first, streaming: { ...first.streaming, providerRequestId: 'next' } });
     await differ([]);
     await differ([], first);

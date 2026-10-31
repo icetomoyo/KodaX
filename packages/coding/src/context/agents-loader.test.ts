@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, writeFileSync, rmSync, mkdtempSync, utimesSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   loadAgentsFiles,
@@ -20,14 +20,16 @@ describe("agents-loader", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     // Cleanup test directory
     rmSync(testDir, { recursive: true, force: true });
   });
 
   describe("getKodaxGlobalDir", () => {
-    it("should return ~/.kodax directory", () => {
+    it("should return ~/.kodax directory when no config home is set", () => {
+      vi.stubEnv("KODAX_HOME", undefined);
       const globalDir = getKodaxGlobalDir();
-      expect(globalDir).toContain(".kodax");
+      expect(globalDir).toBe(join(homedir(), ".kodax"));
     });
   });
 

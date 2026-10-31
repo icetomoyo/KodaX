@@ -17,6 +17,8 @@ import { getAgentConfigHome } from './agent-home.js';
 import {
   captureWindowsProcessTree,
   isCurrentProcessWindowsJobContained,
+  isChildProcessTreeCleanupVerified,
+  hasChildProcessTreeContainment,
   killChildProcessTree,
   killPidTree,
   mergeWindowsProcessTreeCaptures,
@@ -87,7 +89,7 @@ async function cleanupManagedRunChildProcessWithOwnerIdentity(
     const owned = record.ownerPid === process.pid && sameRunChildRecord(active?.record, record);
     if (!owned && !runChildOwnerIsGone(record, readOwnerStartIdentity)) return { status: 'unknown' };
     if (!owned && record.processStartIdentity === undefined) return { status: 'unknown' };
-    if (!owned && incompleteRunTreeNeedsNoTermination(record, expectedRecord !== undefined)) return { status: 'unknown' };
+    if (!owned && incompleteTreeNeedsNoTermination(record, expectedRecord !== undefined)) return { status: 'unknown' };
     if (!owned) record = persistRunChildTree(record);
     const result = owned ? await killChildProcessTree(active!.child) : await killPidTree(record.pid, {
       expectedProcessStartIdentity: record.processStartIdentity,
@@ -121,7 +123,7 @@ function sameRunChildRecord(current: ManagedChildProcessRecord | undefined, expe
     && current.processStartIdentity === expected.processStartIdentity && current.registeredAtMs === expected.registeredAtMs;
 }
 
-function incompleteRunTreeNeedsNoTermination(
+function incompleteTreeNeedsNoTermination(
   record: ManagedChildProcessRecord,
   skipUnverifiableTargets: boolean,
 ): boolean {
@@ -620,6 +622,10 @@ function getPosixCommandLine(pid: number): PosixCommandLineLookup {
 
 function isConfirmedRecord(record: ManagedChildProcessRecord): boolean | undefined {
   if (process.platform === 'win32') {
+    // A command line cannot identify the original process without its recorded start identity.
+    if (record.processStartIdentity === undefined) return undefined;
+    const currentIdentity = readProcessStartIdentity(record.pid);
+    if (currentIdentity !== undefined && currentIdentity !== record.processStartIdentity) return false;
     const lookup = getWindowsProcessInfo(record.pid);
     if (lookup.status === 'unknown') {
       return undefined;
@@ -632,7 +638,7 @@ function isConfirmedRecord(record: ManagedChildProcessRecord): boolean | undefin
       return false;
     }
     const creationMs = parseWindowsDate(info.CreationDate);
-    if (creationMs === undefined || record.processStartIdentity === undefined) {
+    if (creationMs === undefined) {
       return undefined;
     }
     const identity = (BigInt(creationMs) + 11_644_473_600_000n).toString();
@@ -829,6 +835,7 @@ export function registerManagedChildProcess(
       && active?.record.registrationId === registrationId
       && (child.exitCode !== null || child.signalCode !== null)
       && active.record.processTreeComplete !== true
+      && !isChildProcessTreeCleanupVerified(child)
       && !isCurrentProcessWindowsJobContained()
     ) {
       activeChildren.delete(pid);
@@ -1176,6 +1183,12 @@ async function cleanupRegisteredManagedChildrenInSharedSnapshotScope(
       }
     }
 
+    if (incompleteTreeNeedsNoTermination(record, false)) {
+      if (quarantineRecord(filePath)) quarantined += 1;
+      skip(record.ownerPid);
+      continue;
+    }
+
     const result = await killPidTree(record.pid, {
       ...(record.processStartIdentity === undefined
         ? {}
@@ -1249,7 +1262,7 @@ async function cleanupActiveCurrentOwnerChildren(
   const processedFiles = new Set<string>();
   const records = [...activeChildren.values()]
     .filter(({ record, configHome }) => record.ownerPid === process.pid && configHome === registryHome());
-  for (const { record } of records) {
+  for (const { record, child } of records) {
     processedFiles.add(path.basename(registryPath(record.pid, record.registrationId)));
     try {
       if (record.runtimeRunId !== undefined && record.runCleanupRequired !== false) {
@@ -1264,7 +1277,7 @@ async function cleanupActiveCurrentOwnerChildren(
         else { skipped += 1; unresolved += 1; }
         continue;
       }
-      const result = await killPidTree(record.pid, {
+      const result = hasChildProcessTreeContainment(child) ? await killChildProcessTree(child) : await killPidTree(record.pid, {
         ...(record.processStartIdentity === undefined
           ? {}
           : { expectedProcessStartIdentity: record.processStartIdentity }),

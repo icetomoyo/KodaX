@@ -276,7 +276,7 @@ export async function sideQuery(req: SideQueryRequest): Promise<SideQueryResult>
       req.reasoning === undefined,
     );
     const providerResult = withProviderRequestCredential(
-      req.provider.name,
+      req.provider,
       req.credentialPurpose ?? 'utility',
       controller.signal,
       (credentialSignal) => req.provider.stream(

@@ -55,23 +55,14 @@ describe('CAP-094: default coding agent declaration constructor contract', () =>
     expect(typeof agent.substrateExecutor).toBe('function');
   });
 
-  it('CAP-DEFAULT-AGENT-001c: middleware defaults — autoReroute, mutationReflection, preAnswerJudge, postToolJudge — are declared on the Agent (FEATURE_100 P3.6t introduced `Agent.middleware[]`)', () => {
+  it('CAP-DEFAULT-AGENT-001c: active middleware stays enabled and retired Judge names remain readable but disabled', () => {
     const agent = createDefaultCodingAgent();
-    expect(agent.middleware).toBeDefined();
-    const names = agent.middleware!.map((m) => m.name);
-    expect(names).toEqual(
-      expect.arrayContaining([
-        'autoReroute',
-        'mutationReflection',
-        'preAnswerJudge',
-        'postToolJudge',
-      ]),
-    );
-    // All four ship enabled by default — substrate honors `enabled`
-    // when consulting the declaration.
-    for (const m of agent.middleware!) {
-      expect(m.enabled).toBe(true);
-    }
+    expect(agent.middleware).toEqual([
+      { name: 'autoReroute', enabled: true },
+      { name: 'mutationReflection', enabled: true },
+      { name: 'preAnswerJudge', enabled: false },
+      { name: 'postToolJudge', enabled: false },
+    ]);
   });
 
   it('CAP-DEFAULT-AGENT-002: overrides passed to createDefaultCodingAgent are preserved in the returned Agent', () => {

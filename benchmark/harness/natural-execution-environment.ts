@@ -37,10 +37,21 @@ export async function prepareNaturalExecutionEnvironment(workspace: string) {
   await fs.writeFile(userConfig, '');
   await fs.writeFile(globalConfig, '');
   const flag = (name: string, value: string) => `${name}=${JSON.stringify(value.replaceAll('\\', '/'))}`;
-  const runtimeDirectory = path.dirname(await fs.realpath(process.execPath));
-  const nodeOptions = ['--experimental-permission', '--allow-child-process',
+  const nodeBinary = await fs.realpath(process.execPath);
+  const runtimeDirectory = path.dirname(nodeBinary);
+  // npm's CLI lives outside the binary directory on staged installs (for
+  // example setup-node's hostedtoolcache layout puts it under ../lib), so
+  // allow-read its package root too; an npm beside the binary adds nothing.
+  const npmCli = process.env.npm_execpath ? await fs.realpath(process.env.npm_execpath).catch(() => undefined) : undefined;
+  const npmPackageRoot = npmCli && !npmCli.startsWith(runtimeDirectory + path.sep)
+    ? path.dirname(path.dirname(npmCli))
+    : undefined;
+  const nodeOptions = [
+    '--experimental-permission', '--allow-child-process',
     flag('--allow-fs-read', workspace), flag('--allow-fs-read', runtimeDirectory),
-    flag('--allow-fs-write', workspace)].join(' ');
+    ...(npmPackageRoot ? [flag('--allow-fs-read', npmPackageRoot)] : []),
+    flag('--allow-fs-write', workspace),
+  ].join(' ');
   if (process.platform === 'win32' && /[%&|<>^\r\n]/u.test(nodeOptions)) throw new Error('Unsupported evaluation path for cmd environment setup');
   const setup = process.platform === 'win32' ? `set "NODE_OPTIONS=${nodeOptions}"`
     : `export NODE_OPTIONS='${nodeOptions.replaceAll("'", "'\"'\"'")}'`;

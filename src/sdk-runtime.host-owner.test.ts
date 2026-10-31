@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { connectKodaXRuntime, createKodaXRuntime, type KodaXRuntime } from './sdk-runtime.js';
+import { connectKodaXRuntime, createKodaXRuntime, type KodaXRuntime } from "../tests/runtime-fixture.js";
 
 const roots: string[] = [];
 const runtimes: KodaXRuntime[] = [];
@@ -40,7 +40,7 @@ describe('product Host Session storage ownership', () => {
     roots.push(homeDir);
     const sessionsDir = path.join(homeDir, 'sessions');
     const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval', `
-      import { createKodaXRuntime } from './src/sdk-runtime.ts';
+      import { createKodaXHostRuntime as createKodaXRuntime } from './src/sdk-runtime.ts';
       await createKodaXRuntime({ homeDir: process.argv[1], sessionsDir: process.argv[2], profile: 'child', sharedDaemonHost: true });
       process.stdout.write('ready');
       process.stdin.resume();

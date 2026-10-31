@@ -4,7 +4,7 @@ import path from 'node:path';
 import { expect, it, vi } from 'vitest';
 import type { ClientSessionView, ClientObservationStatus, ClientPermissionDecision } from '@kodax-ai/coding/client-contract';
 import type { SessionNotification } from '@agentclientprotocol/sdk';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { toKodaXProductClient } from './client-runtime-adapter.js';
 import { observeAcpClientPrompt } from './acp-client-view.js';
 

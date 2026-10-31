@@ -5,7 +5,7 @@ import { Jimp } from 'jimp';
 import { expect, it, vi } from 'vitest';
 import { KodaXBaseProvider, clearRuntimeModelProviders, createCustomProvider, registerModelProvider, type KodaXProviderConfig, type KodaXStreamResult } from '@kodax-ai/llm';
 import { FileSessionStorage } from '@kodax-ai/repl';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from '../tests/runtime-fixture.js';
 import { NATIVE_PROVIDER_CAPABILITY_PROFILE } from '../packages/llm/src/providers/capability-profile.js';
 import { readVisualObservationRecord } from '@kodax-ai/agent/media';
 import { readFile } from 'node:fs/promises';

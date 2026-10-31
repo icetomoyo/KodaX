@@ -13,6 +13,8 @@ import { runtimeClientPrincipal, readExitReceipts, verifyExitReceipt } from './r
 export type { KodaXClientHostAuthorization, KodaXClientExecutionRequest, RuntimeExecutionAuthorization, KodaXClientWorkflowHostPolicy } from './client-host-authorization.js';
 
 export type * from '@kodax-ai/coding/client-contract';
+export { createExecutionProfile } from './execution-profile.js';
+export type { RuntimeExecutionProfile, RuntimeExecutionProfileSource } from './client-host-authorization.js';
 export type { RuntimeClientInfo } from './runtime-client-info.js';
 
 export interface ConnectKodaXClientOptions {
@@ -51,7 +53,7 @@ export async function readKodaXClientExits(options: {
 export async function ensureKodaXClient(options: EnsureKodaXClientOptions = {}): Promise<KodaXProductClient> {
   return toKodaXProductClient(await ensureRecoveringKodaXRuntime({ ...options, requirements: {
     productClient: 1, productHistoryBoundaries: 1, productExitControl: 1, productExecutionFacts: 1,
-    ...(options.authorizeExecution ? { productExecutionAuthorization: 2, productActorAuthorization: 1 } : {}),
+    ...(options.authorizeExecution ? { productExecutionAuthorization: 2, productActorAuthorization: 1, providerProbeAuthorization: 1 } : {}),
   } }, options.authorizeExecution), options.authorizeExecution);
 }
 
@@ -68,7 +70,7 @@ export async function connectKodaXClient(
     onStartupProgress: options.onStartupProgress,
     clientInfo: options.clientInfo,
     requirements: { productClient: 1, productHistoryBoundaries: 1, productExitControl: 1, productExecutionFacts: 1,
-      ...(options.authorizeExecution ? { productExecutionAuthorization: 2, productActorAuthorization: 1 } : {}) },
+      ...(options.authorizeExecution ? { productExecutionAuthorization: 2, productActorAuthorization: 1, providerProbeAuthorization: 1 } : {}) },
   });
   return toKodaXProductClient(runtime, options.authorizeExecution);
 }

@@ -7,7 +7,7 @@ import { KodaXBaseProvider, registerModelProvider, clearRuntimeModelProviders,
   type KodaXProviderConfig, type KodaXStreamResult, type KodaXProviderStreamOptions, type KodaXMessage,
   type KodaXToolDefinition, type KodaXReasoningRequest } from '@kodax-ai/llm';
 import { connectKodaXClient, readKodaXClientExits, type KodaXClientHostAuthorization } from '@kodax-ai/kodax/client';
-import { connectKodaXRuntime, createKodaXRuntime, type RuntimeSubmitInput } from './sdk-runtime.js';
+import { connectKodaXRuntime, createKodaXRuntime, type RuntimeSubmitInput } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 import { writeRuntimeDaemonShutdownOutcome } from './runtime-daemon/state.js';
@@ -282,7 +282,8 @@ it('cancels ordinary owned work while an uncooperative compaction stays unknown 
     await client.sessions.updateSettings(session.id, { compactionTriggerTokens: 5000 });
     const before = await client.sessions.readHistory(session.id);
     const active = await client.inputs.submit({ sessionId: busy.id, inputId: 'busy', text: 'CANCEL-ORDINARY-RUN' });
-    await expect.poll(() => runEntered).toBe(true);
+    // Submission acknowledges admission, not provider entry; allow the Host startup budget under suite load.
+    await expect.poll(async () => ({ entered: runEntered, run: await client.runs.read(active.runId!) }), { timeout: 10_000 }).toMatchObject({ entered: true });
     compact = client.sessions.compact(session.id, { customInstructions: 'HOLD-COMPACTION' }).then(result => result, error => error as Error);
     await expect.poll(() => compactEntered).toBe(true);
     await client.lifecycle.requestExit({ requestId: 'quit' });

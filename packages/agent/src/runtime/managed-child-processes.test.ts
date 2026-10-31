@@ -10,7 +10,7 @@ import {
   cleanupRegisteredManagedChildren,
   registerManagedChildProcess,
 } from './managed-child-processes.js';
-import { killChildProcessTree } from './process-tree.js';
+import { killChildProcessTree, readProcessStartIdentity } from './process-tree.js';
 
 const PARENT_WATCHED_CHILD_SCRIPT = 'const parent=process.ppid; setInterval(() => { try { process.kill(parent, 0); } catch { process.exit(0); } }, 1000)';
 
@@ -394,11 +394,14 @@ describe('managed child process registry', () => {
     const deadOwnerPid = findDeadPid();
     const registrationId = 'fixture-confirmed';
     const source = childRegistryPath(tempHome, child.pid, registrationId);
+    const processStartIdentity = readProcessStartIdentity(child.pid);
+    if (process.platform === 'win32') expect(processStartIdentity).toBeDefined();
     await writeRegistryRecord(tempHome, {
       version: 4,
       registrationId,
       pid: child.pid,
       ownerPid: deadOwnerPid,
+      processStartIdentity,
       registeredAtMs: Date.now(),
       kind: 'test-child',
       command: 'definitely-not-this-process',
@@ -429,12 +432,15 @@ describe('managed child process registry', () => {
     }
     const registrationId = 'fixture-unconfirmed';
     const source = childRegistryPath(tempHome, child.pid, registrationId);
+    const processStartIdentity = readProcessStartIdentity(child.pid);
+    if (process.platform === 'win32') expect(processStartIdentity).toBeDefined();
     await writeRegistryRecord(tempHome, {
       version: 4,
       registrationId,
       pid: child.pid,
       ownerPid: process.pid,
       ownerProcessStartIdentity: 'reused-owner-pid',
+      processStartIdentity,
       registeredAtMs: Date.now(),
       kind: 'test-child',
       command: 'definitely-not-this-process',

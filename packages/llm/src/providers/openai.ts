@@ -1,4 +1,8 @@
 import { recordRejectedImage } from './rejected-image.js';
+import { createHash } from 'node:crypto';
+import { requestEnvironment, hasRequestEnvironment, prepareProviderPayload, requestExtensionFetch, providerStreamEvent } from './request-extensions.js';
+import { openAIChatTools, withoutPreferredToolConstraints } from './tool-constraints.js';
+import { connectionAuthFetch } from './connection-auth.js';
 import { observeProviderFetch } from '../provider-request-observation.js';
 /**
  * KodaX OpenAI Compatible Provider
@@ -54,7 +58,6 @@ import {
 } from './image-serialization.js';
 import { resolvePromptCacheDisabled } from '../run-scoped-config.js';
 import { buildReasoningEffortLadder, usesReasoningEffortLadder } from '../reasoning-ladder.js';
-import { addRejectedEffort, getRejectedEfforts, type CapabilityCache } from '../capability-learning.js';
 import { classifyReasoningEffortRejection } from './reasoning-effort-rejection.js';
 import { OpenAIReasoningAccumulator } from './openai-reasoning.js';
 
@@ -69,7 +72,7 @@ async function createOpenAISdkClient(
   options: ConstructorParameters<typeof OpenAI>[0],
 ): Promise<OpenAI> {
   const { default: OpenAISdk } = await import('openai');
-  return new OpenAISdk({ ...options, fetch: observeProviderFetch(options?.fetch ?? globalThis.fetch) });
+  return new OpenAISdk({ ...options, fetch: observeProviderFetch(options?.fetch ?? requestExtensionFetch(globalThis.fetch)) });
 }
 
 type OpenAIReasoningAttempt =
@@ -298,9 +301,17 @@ function rewriteAssistantWireToolCalls(
 }
 
 export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
+  protected override getRequestCredentialFingerprint(): string | undefined {
+    const fingerprint = super.getRequestCredentialFingerprint();
+    if (!fingerprint || hasProviderCredentialContext() || this.config.authentication || this.config.credentialSource === 'broker') return fingerprint;
+    const organization = requestEnvironment('OPENAI_ORG_ID'), project = requestEnvironment('OPENAI_PROJECT_ID');
+    return organization || project ? createHash('sha256').update(JSON.stringify([fingerprint, organization, project])).digest('hex') : fingerprint;
+  }
+  private readonly requestRejections = new WeakMap<KodaXReasoningResolution, Set<string>>();
+  override usesScopedReasoningLearning(): boolean { return true; }
+  protected override getReasoningApi(): string { return 'openai-chat-completions'; }
   protected readonly requestObservationBoundary = 'physical_attempt' as const;
   // Only hard rejections survive requests. Attempt state remains request-local.
-  private reasoningRejections: CapabilityCache = {};
 
   protected override normalizeReasoning(reasoning?: boolean | KodaXReasoningRequest): KodaXNormalizedReasoningRequest {
     return super.normalizeReasoning(typeof reasoning !== 'boolean'
@@ -333,8 +344,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     const hasControl = ['reasoning_effort', 'reasoning', 'thinking', 'extra_body'].some(key => key in wire);
     if (!hasControl) return false;
     const effort = this.sentReasoningEffort(params);
-    const rejected = [...getRejectedEfforts(this.reasoningRejections, this.name, this.getWireModelId(model)),
-      ...(options?.rejectedReasoningEfforts ?? [])];
+    const rejected = [...this.knownReasoningRejections(model, options), ...(this.requestRejections.get(resolution) ?? [])];
     const rejectedParameter = rejected.some(value => value.startsWith('parameter:')
       && this.hasReasoningParameter(params, value.slice('parameter:'.length)));
     if (!rejectedParameter && !rejected.includes('*') && (effort === undefined || !rejected.includes(effort))) return false;
@@ -373,11 +383,11 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       ? ['budget_tokens', 'thinking_budget', 'enable_thinking'].includes(rejection.parameter ?? '')
         ? `parameter:${rejection.parameter}` : '*'
       : rejection.rejectedEffort;
-    this.reasoningRejections = addRejectedEffort(this.reasoningRejections,
-      this.name, this.getWireModelId(model), effort, 'observed', new Date().toISOString());
+    this.rememberReasoningRejection(model, effort, options);
+    const current = this.requestRejections.get(resolution) ?? new Set<string>();
+    current.add(effort); this.requestRejections.set(resolution, current);
     resolution.fallbacks.push({ effort: sent,
       reason: rejection.parameterRejected ? 'unsupported-parameter' : 'unsupported-effort' });
-    options?.onReasoningEffortRejected?.({ provider: this.name, model, effort });
     return true;
   }
 
@@ -398,9 +408,15 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
    * window, model descriptors) without a key. This also keeps key-less unit
    * tests (which mock the actual LLM calls) from failing at construction time.
    */
+  private clientCredentialFingerprint?: string;
   protected async getClient(): Promise<OpenAI> {
-    if (hasProviderCredentialContext()) return this.buildClient();
+    if (hasProviderCredentialContext() || hasRequestEnvironment()) return this.buildClient();
+    const fingerprint = JSON.stringify([this.getRequestCredentialFingerprint(), this.getCredentialConnectionFingerprint()]);
+    if (this.clientCredentialFingerprint !== undefined && this.clientCredentialFingerprint !== fingerprint) {
+      this._client = undefined; this._clientPromise = undefined;
+    }
     if (this._client) return this._client;
+    this.clientCredentialFingerprint = fingerprint;
     const clientPromise = this._clientPromise ??= Promise.resolve(this.buildClient());
     try {
       const client = await clientPromise;
@@ -408,7 +424,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         this._client = client;
         this._clientPromise = undefined;
       }
-      return this._client ?? client;
+      return client;
     } catch (error) {
       if (this._clientPromise === clientPromise) {
         this._clientPromise = undefined;
@@ -422,16 +438,24 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
   protected set client(client: OpenAI) {
     this._client = client;
     this._clientPromise = undefined;
+    this.clientCredentialFingerprint = undefined;
   }
+
+  override getBaseUrl(): string { return this.config.baseUrl ?? requestEnvironment('OPENAI_BASE_URL') ?? 'https://api.openai.com/v1'; }
 
   protected buildClient(): OpenAI | Promise<OpenAI> {
     const defaultHeaders = getOpenAICompatDefaultHeaders(this.config);
+    const key = this.getApiKey();
+    const broker = hasProviderCredentialContext();
+    const fetch = connectionAuthFetch(broker ? { ...this.config, credentialSource: 'broker' } : this.config, key, 'openai');
     return createOpenAISdkClient({
-      apiKey: this.getApiKey(),
-      baseURL: this.config.baseUrl,
+      apiKey: key,
+      organization: broker ? null : requestEnvironment('OPENAI_ORG_ID') ?? null, project: broker ? null : requestEnvironment('OPENAI_PROJECT_ID') ?? null,
+      baseURL: this.getBaseUrl(),
       // Some OpenAI-compatible gateways block the SDK's default
       // "OpenAI/JS ..." user agent even when the payload itself is valid.
       ...(defaultHeaders ? { defaultHeaders } : {}),
+      ...(fetch ? { fetch, organization: null, project: null, logLevel: 'off' } : {}),
     });
   }
 
@@ -476,7 +500,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         strategy: 'models-list',
         approxTokensSpent: 0,
         run: (signal) => withProviderRequestCredential(
-          this.name,
+          this,
           'utility',
           signal,
           async (requestSignal) => {
@@ -489,7 +513,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         strategy: 'minimal-message',
         approxTokensSpent: 6,
         run: (signal) => withProviderRequestCredential(
-          this.name,
+          this,
           'utility',
           signal,
           async (requestSignal) => {
@@ -561,7 +585,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
    * mid-transcript; merging here is the provider-layer bottleneck that keeps
    * callers from having to coordinate.
    */
-  private normalizeSystemForWire(
+  protected normalizeSystemForWire(
     system: string,
     messages: KodaXMessage[],
   ): { system: string; rest: KodaXMessage[] } {
@@ -894,7 +918,15 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     return budget;
   }
 
-  async stream(
+  stream(messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string,
+    reasoning?: boolean | KodaXReasoningRequest, options?: KodaXProviderStreamOptions, signal?: AbortSignal): Promise<KodaXStreamResult> {
+    return this.withRequestContext(options, signal, requestSignal => this.streamInternal(messages, tools, system, reasoning, options, requestSignal));
+  }
+  override complete(messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string,
+    reasoning?: boolean | KodaXReasoningRequest, options?: KodaXProviderStreamOptions, signal?: AbortSignal): Promise<KodaXStreamResult> {
+    return this.withRequestContext(options, signal, requestSignal => this.completeInternal(messages, tools, system, reasoning, options, requestSignal));
+  }
+  private async streamInternal(
     messages: KodaXMessage[],
     tools: KodaXToolDefinition[],
     system: string,
@@ -923,7 +955,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         { role: 'system', content: mergedSystem },
         ...await this.convertMessages(nonSystemMessages, model),
       ], streamOptions?.ephemeralSuffix?.content);
-      const openaiTools = tools.map(t => ({ type: 'function' as const, function: { name: t.name, description: t.description, parameters: t.input_schema } }));
+      const openaiTools = openAIChatTools(withoutPreferredToolConstraints(tools, retryState.disablePreferredToolConstraints), this.getToolCapabilities(model), this.name);
       const forcedToolName = streamOptions?.forcedToolName;
       let shouldForceToolChoice = openaiTools.length > 0 && Boolean(forcedToolName);
 
@@ -944,11 +976,9 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
 
       // 传递 signal 给 SDK，确保底层 HTTP 请求能被取消
       const attempts = this.reasoningAttempts(normalizedReasoning, model);
-      const requestMaxOutputTokens = streamOptions?.maxOutputTokensOverride
-        ?? this.getEffectiveMaxOutputTokens(model);
+      const requestMaxOutputTokens = this.getEffectiveMaxOutputTokens(model, streamOptions?.maxOutputTokensOverride);
       retryState.maxOutputTokensLimit ??= requestMaxOutputTokens;
-      const maxOutputTokens = retryState.maxOutputTokensOverride
-        ?? requestMaxOutputTokens;
+      const maxOutputTokens = Math.min(retryState.maxOutputTokensOverride ?? requestMaxOutputTokens, requestMaxOutputTokens);
       const createParams: OpenAI.Chat.ChatCompletionCreateParamsStreaming = {
         model: wireModel,
         messages: fullMessages,
@@ -1001,8 +1031,8 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
           reasoningResolution.sentEffort = this.sentReasoningEffort(attemptParams);
           try {
             stream = await client.chat.completions.create(
-              attemptParams,
-              { ...(signal ? { signal } : {}), ...(streamOptions?.singleAttempt ? { maxRetries: 0 } : {}) },
+              await prepareProviderPayload(attemptParams),
+              { ...(signal ? { signal } : {}), maxRetries: 0 },
             ).catch(error => { recordRejectedImage(error, attemptParams); throw error; });
           } catch (error) {
             const rejected = this.recordReasoningRejection(error, attemptParams, model, streamOptions, reasoningResolution);
@@ -1046,6 +1076,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       const STALL_THRESHOLD_MS = 30_000;
 
       for await (const chunk of stream) {
+        providerStreamEvent(chunk);
         // 检查是否被中断 (双重保险)
         if (signal?.aborted) {
           throw new DOMException('Request aborted', 'AbortError');
@@ -1142,7 +1173,8 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
 
       const textBlocks: KodaXTextBlock[] = textContent ? [{ type: 'text', text: textContent }] : [];
       const toolBlocks: KodaXToolUseBlock[] = [];
-      const thinkingBlocks = reasoningOutput.blocks({ provider: this.name, model: wireModel, baseUrl: this.getBaseUrl() });
+      const thinkingBlocks = reasoningOutput.blocks({ provider: this.name, model: wireModel, baseUrl: this.getBaseUrl(),
+        ...(this.getRequestCredentialFingerprint() ? { credentialScope: this.getRequestCredentialFingerprint() } : {}) });
       if (reasoningOutput.text) streamOptions?.onThinkingEnd?.(reasoningOutput.text);
       // `_salvaged` = strict parse failed (kept on a clean stop so a mutating
       // tool's malformed payload is still gated downstream). `_truncated` adds
@@ -1187,14 +1219,14 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       }
       streamOptions?.onReasoningResolved?.(reasoningResolution);
       return { textBlocks, toolBlocks, thinkingBlocks, usage, stopReason: finishReason ?? undefined, reasoningResolution };
-    }, signal, streamOptions?.singleAttempt ? 1 : 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter);
+    }, signal, streamOptions?.singleAttempt ? 1 : 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter, { model, tools });
   }
 
   override supportsNonStreamingFallback(): boolean {
     return true;
   }
 
-  override async complete(
+  private async completeInternal(
     messages: KodaXMessage[],
     tools: KodaXToolDefinition[],
     system: string,
@@ -1219,23 +1251,14 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         { role: 'system', content: mergedSystem },
         ...await this.convertMessages(nonSystemMessages, model),
       ], streamOptions?.ephemeralSuffix?.content);
-      const openaiTools = tools.map((tool) => ({
-        type: 'function' as const,
-        function: {
-          name: tool.name,
-          description: tool.description,
-          parameters: tool.input_schema,
-        },
-      }));
+      const openaiTools = openAIChatTools(withoutPreferredToolConstraints(tools, retryState.disablePreferredToolConstraints), this.getToolCapabilities(model), this.name);
       const forcedToolName = streamOptions?.forcedToolName;
       let shouldForceToolChoice = openaiTools.length > 0 && Boolean(forcedToolName);
 
       const attempts = this.reasoningAttempts(normalizedReasoning, model);
-      const requestMaxOutputTokens = streamOptions?.maxOutputTokensOverride
-        ?? this.getEffectiveMaxOutputTokens(model);
+      const requestMaxOutputTokens = this.getEffectiveMaxOutputTokens(model, streamOptions?.maxOutputTokensOverride);
       retryState.maxOutputTokensLimit ??= requestMaxOutputTokens;
-      const maxOutputTokens = retryState.maxOutputTokensOverride
-        ?? requestMaxOutputTokens;
+      const maxOutputTokens = Math.min(retryState.maxOutputTokensOverride ?? requestMaxOutputTokens, requestMaxOutputTokens);
       const createParams: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming = {
         model: wireModel,
         messages: fullMessages,
@@ -1288,8 +1311,8 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
           reasoningResolution.sentEffort = this.sentReasoningEffort(attemptParams);
           try {
             response = await client.chat.completions.create(
-              attemptParams,
-              { ...(signal ? { signal } : {}), ...(streamOptions?.singleAttempt ? { maxRetries: 0 } : {}) },
+              await prepareProviderPayload(attemptParams),
+              { ...(signal ? { signal } : {}), maxRetries: 0 },
             ).catch(error => { recordRejectedImage(error, attemptParams); throw error; }) as OpenAI.Chat.Completions.ChatCompletion;
           } catch (error) {
             const rejected = this.recordReasoningRejection(error, attemptParams, model, streamOptions, reasoningResolution);
@@ -1347,7 +1370,8 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       }
 
       const textBlocks: KodaXTextBlock[] = textContent ? [{ type: 'text', text: textContent }] : [];
-      const thinkingBlocks = reasoningOutput.blocks({ provider: this.name, model: wireModel, baseUrl: this.getBaseUrl() });
+      const thinkingBlocks = reasoningOutput.blocks({ provider: this.name, model: wireModel, baseUrl: this.getBaseUrl(),
+        ...(this.getRequestCredentialFingerprint() ? { credentialScope: this.getRequestCredentialFingerprint() } : {}) });
       if (reasoningContent) {
         streamOptions?.onThinkingDelta?.(reasoningContent);
         streamOptions?.onThinkingEnd?.(reasoningContent);
@@ -1367,7 +1391,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         usage: normalizeOpenAIUsage(response.usage as OpenAIUsageLike),
         stopReason: choice?.finish_reason ?? undefined,
       };
-    }, signal, streamOptions?.singleAttempt ? 1 : 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter);
+    }, signal, streamOptions?.singleAttempt ? 1 : 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter, { model, tools });
   }
 
   private serializeAssistantMessage(
@@ -1467,7 +1491,8 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
 
     const replay = contentBlocks.flatMap(block => block.type === 'thinking' && block.openaiReasoning
       ? [block.openaiReasoning] : []).filter(data => data.provider === this.name
-        && data.model === this.getWireModelId(model) && data.baseUrl === this.getBaseUrl());
+        && data.model === this.getWireModelId(model) && data.baseUrl === this.getBaseUrl()
+        && data.credentialScope === this.getRequestCredentialFingerprint());
     const details = replay.flatMap(data => data.details ?? []);
     if (details.length > 0) message.reasoning_details = details;
     if (replay.some(data => data.reasoning !== undefined)) {
@@ -1616,6 +1641,9 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         converted.push({
           role: message.role,
           content: message.content,
+          ...(message.role === 'assistant' && this.getEffectiveReplayReasoningContent(model)
+            ? { reasoning_content: '' }
+            : {}),
         } as unknown as OpenAI.Chat.ChatCompletionMessageParam);
         continue;
       }

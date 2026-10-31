@@ -30,6 +30,17 @@ import {
 import { validateProviderCapabilitiesJson } from './provider-capabilities.types.js';
 
 describe('FEATURE_198 — provider-capabilities loader', () => {
+  it('retains explicit cache/tool declarations and native reasoning dialects in catalog validation', () => {
+    const raw = { version: 1, updatedAt: '2026-10-30', providers: { declared: {
+      apiKeyEnv: 'UNUSED', model: 'm', reasoningCapability: 'native-effort', capabilityProfile: 'native', verifyStrategy: 'minimal-message',
+      toolCapabilities: { strict: true }, cacheCapabilities: { dialect: 'bedrock', longTtl: '1h' },
+      models: [{ id: 'm', toolCapabilities: { grammar: ['lark'] }, cacheCapabilities: { dialect: 'openai-options', longTtl: '12h' },
+        reasoningProfile: { effortStrategy: 'bedrock-openai-effort' } }],
+    } } };
+    const entry = validateProviderCapabilitiesJson(raw).providers.declared;
+    expect(entry?.toolCapabilities).toEqual({ strict: true }); expect(entry?.cacheCapabilities?.longTtl).toBe('1h');
+    expect(entry?.models?.[0]?.cacheCapabilities?.longTtl).toBe('12h'); expect(entry?.models?.[0]?.toolCapabilities?.grammar).toEqual(['lark']);
+  });
   beforeEach(() => {
     _resetProviderSnapshotsCache();
   });
@@ -247,10 +258,11 @@ describe('FEATURE_198 — provider-capabilities loader', () => {
       });
     });
 
-    it('deepseek: defaults to deepseek-flash at the 384K official output ceiling', () => {
+    it('deepseek: separates its 128K request budget from the 384K service ceiling', () => {
       const d = getProviderSnapshots().deepseek;
       expect(d.model).toBe('deepseek-flash');
-      expect(d.maxOutputTokens).toBe(384_000);
+      expect(d.maxOutputTokens).toBe(128_000);
+      expect(d.outputTokenLimit).toBe(384_000);
       expect(d.contextWindow).toBe(1_000_000);
       // Only the officially-listed ids stay selectable. The retired
       // deepseek-v4-flash / vision-exp ids are NOT re-declared —

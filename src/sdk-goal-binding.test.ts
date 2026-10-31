@@ -13,7 +13,7 @@ import {
 import { readLatestGoalState } from '@kodax-ai/agent';
 import { executeCommand, FileSessionStorage } from '@kodax-ai/repl';
 import type { InteractiveContext } from '@kodax-ai/repl';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 
 const CONFIG = {
   provider: 't34-probe',
@@ -53,7 +53,7 @@ it('routes /goal mutations through the Host goal plane without a local canonical
     homeDir, sharedDaemonHost: true, defaultProvider: 't34-probe',
   });
   const sessionId = 't34-goal-session';
-  await runtime.sessions.create({ sessionId, title: 'T34 goal', surface: 'repl' });
+  await runtime.sessions.create({ sessionId, title: 'T34 goal', surface: 'repl', projectPath: homeDir });
   // One committed run gives the session a conversation entry, which the
   // Host requires before a goal can anchor to the active branch.
   const active = await runtime.runs.acceptInput({

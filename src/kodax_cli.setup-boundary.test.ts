@@ -102,6 +102,26 @@ function relativeFiles(root: string): readonly string[] {
 }
 
 describe('setup CLI process boundary', () => {
+  it('saves a hidden key through setup, reports it after restart and removes it through auth', async () => {
+    const key = 'offline-cli-saved-key';
+    const result = await runSetupInteractively(['setup', '--custom'], [
+      { prompt: 'Custom provider name', answer: 'saved-route' },
+      { prompt: 'Select 1-', answer: '3' },
+      { prompt: 'API Base URL', answer: 'https://saved-route.example/v1' },
+      { prompt: 'Environment-variable name only', answer: 'KODAX_UNSET_SAVED_FIXTURE' },
+      { prompt: 'Model identifier', answer: 'fixture' },
+      { prompt: 'Credential source', answer: '1' },
+      { prompt: 'API key (hidden;', answer: key },
+      { prompt: 'config.json stores public metadata.', answer: 'y' },
+    ]);
+    expect(result.status, result.stderr).toBe(0); expect(result.stdout).not.toContain(key); expect(result.stderr).not.toContain(key);
+    expect(result.stdout).toContain('No environment-variable setup is required');
+    expect(readFileSync(path.join(configHome, 'config.json'), 'utf8')).not.toContain(key);
+    const status = runSetup(['auth', 'status', 'saved-route']); expect(status.status, status.stderr).toBe(0); expect(status.stdout).toContain('source: file'); expect(status.stdout).not.toContain(key);
+    const removed = runSetup(['auth', 'remove-key', 'saved-route']); expect(removed.status, removed.stderr).toBe(0); expect(removed.stdout).toContain('source: missing');
+    const saved = await runSetupInteractively(['auth', 'set-key', 'saved-route'], [{ prompt: 'API key (hidden;', answer: key }]);
+    expect(saved.status, saved.stderr).toBe(0); expect(saved.stdout).not.toContain(key); expect(runSetup(['auth', 'status', 'saved-route']).stdout).toContain('source: file');
+  }, 30_000);
   it('keeps setup --help read-only even when normal startup would migrate config', () => {
     const configPath = path.join(configHome, 'config.json');
     const original = '{"agentMode":"amaw","sessionRetentionDays":1}\n';
@@ -190,11 +210,12 @@ describe('setup CLI process boundary', () => {
   it('passes --custom through the real Commander action and stores metadata only', async () => {
     const result = await runSetupInteractively(['setup', '--custom'], [
       { prompt: 'Custom provider name', answer: 'private-relay' },
-      { prompt: 'Select 1-2', answer: '1' },
+      { prompt: 'Select 1-', answer: '1' },
       { prompt: 'API Base URL', answer: 'https://relay.example.test/v1' },
       { prompt: 'Environment-variable name only', answer: 'RELAY_API_KEY' },
       { prompt: 'Model identifier', answer: 'relay-model' },
-      { prompt: 'No credential value will be written. [y/N]', answer: 'y' },
+      { prompt: 'Credential source', answer: '2' },
+      { prompt: 'config.json stores public metadata.', answer: 'y' },
     ]);
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);

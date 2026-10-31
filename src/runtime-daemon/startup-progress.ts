@@ -12,7 +12,7 @@ export function reportDaemonStartupPhase(phase: ClientHostStartupPhase): void {
   const startupId = process.env[DAEMON_STARTUP_PROGRESS_ENV];
   if (!startupId || process.env.KODAX_DAEMON_SERVE !== '1') return;
   try {
-    process.stderr.write(`\n${PREFIX}${JSON.stringify({ startupId, pid: process.pid, phase })}\n`);
+    process.stderr.write(`\n${PREFIX}${JSON.stringify({ startupId, pid: process.pid, phase, time: new Date().toISOString() })}\n`);
   } catch (error: unknown) {
     process.emitWarning(error instanceof Error ? error : String(error), { code: 'KODAX_STARTUP_PROGRESS' });
   }

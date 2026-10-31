@@ -135,7 +135,7 @@ export function buildToolExecutionContext(
     : undefined;
 
   const context: KodaXToolExecutionContext = {
-    ...(workMode === 'agent' ? { workMode } : {}),
+    workMode,
     configHome: options.context?.configHome,
     runtimeRunId: options.context?.runtimeRunId,
     visualObservationOwner: options.context?.visualObservationOwner?.ownerId === sessionId ? options.context?.visualObservationOwner : undefined,
@@ -168,6 +168,8 @@ export function buildToolExecutionContext(
     activateModelSkill: options.context?.activateModelSkill,
     admitLearnedSkillInvocation: options.context?.admitLearnedSkillInvocation,
     skillScriptRunner: options.context?.skillScriptRunner,
+    isPagedContentRecoveryAllowed: options.context?.isPagedContentRecoveryAllowed,
+    toolResultRecovery: options.context?.toolResultRecovery,
     assertReadablePath: options.context?.assertReadablePath,
     toolVisibilityPolicy: options.context?.toolVisibilityPolicy,
     excludeTools: options.context?.excludeTools,

@@ -104,14 +104,21 @@ function resolveJsonPath(): string {
   return candidates[0];
 }
 
+function freezeConstraints(value: Pick<ProviderSnapshot, 'toolCapabilities' | 'cacheCapabilities'>): void {
+  if (value.toolCapabilities?.grammar) Object.freeze(value.toolCapabilities.grammar);
+  if (value.toolCapabilities) Object.freeze(value.toolCapabilities);
+  if (value.cacheCapabilities?.locations) Object.freeze(value.cacheCapabilities.locations);
+  if (value.cacheCapabilities) Object.freeze(value.cacheCapabilities);
+}
 function deepFreezeSnapshot(snapshot: ProviderSnapshot): ProviderSnapshot {
+  freezeConstraints(snapshot);
   if (snapshot.models) {
     for (const m of snapshot.models) {
       if (m.reasoningProfile) {
         freezeReasoningProfile(m.reasoningProfile);
       }
     }
-    for (const m of snapshot.models) Object.freeze(m);
+    for (const m of snapshot.models) { freezeConstraints(m); Object.freeze(m); }
     Object.freeze(snapshot.models);
   }
   if (snapshot.reasoningProfile) {
@@ -183,69 +190,22 @@ function buildSnapshot(
     );
   }
 
-  if (entry.cliBridge) {
-    const filled = resolveCliBridgeModels(name);
-    const snapshot: ProviderSnapshot = {
-      model: filled.model,
-      models: filled.models,
-      apiKeyEnv: entry.apiKeyEnv,
-      reasoningCapability: entry.reasoningCapability,
-      capabilityProfile,
-      verifyStrategy: entry.verifyStrategy,
-    };
-    if (entry.reasoningProfile !== undefined) {
-      (snapshot as { reasoningProfile: typeof entry.reasoningProfile }).reasoningProfile =
-        entry.reasoningProfile;
-    }
-    if (entry.supportsThinking !== undefined) {
-      (snapshot as { supportsThinking: boolean }).supportsThinking =
-        entry.supportsThinking;
-    }
-    return snapshot;
-  }
-
-  // Non-cliBridge: validator already enforced `model` is set.
-  // (cast safe — validator throws when model is missing on static entries.)
+  // Static model presence was checked by the validator; bridges discover theirs locally.
   const snapshot: ProviderSnapshot = {
-    model: entry.model as string,
+    ...(entry.cliBridge ? resolveCliBridgeModels(name) : { model: entry.model as string }),
     apiKeyEnv: entry.apiKeyEnv,
     reasoningCapability: entry.reasoningCapability,
     capabilityProfile,
     verifyStrategy: entry.verifyStrategy,
   };
-  if (entry.reasoningProfile !== undefined) {
-    (snapshot as { reasoningProfile: typeof entry.reasoningProfile }).reasoningProfile =
-      entry.reasoningProfile;
+  for (const field of ['reasoningProfile', 'supportsThinking', 'toolCapabilities', 'cacheCapabilities'] as const) {
+    if (entry[field] !== undefined) Object.assign(snapshot, { [field]: entry[field] });
   }
-  if (entry.models !== undefined) {
-    (snapshot as { models: typeof entry.models }).models = entry.models;
-  }
-  if (entry.modelReasoningCapabilities !== undefined) {
-    (
-      snapshot as {
-        modelReasoningCapabilities: typeof entry.modelReasoningCapabilities;
-      }
-    ).modelReasoningCapabilities = entry.modelReasoningCapabilities;
-  }
-  if (entry.contextWindow !== undefined) {
-    (snapshot as { contextWindow: number }).contextWindow = entry.contextWindow;
-  }
-  if (entry.maxOutputTokens !== undefined) {
-    (snapshot as { maxOutputTokens: number }).maxOutputTokens =
-      entry.maxOutputTokens;
-  }
-  if (entry.maxOutputTokensField !== undefined) {
-    (
-      snapshot as { maxOutputTokensField: typeof entry.maxOutputTokensField }
-    ).maxOutputTokensField = entry.maxOutputTokensField;
-  }
-  if (entry.thinkingBudgetCap !== undefined) {
-    (snapshot as { thinkingBudgetCap: number }).thinkingBudgetCap =
-      entry.thinkingBudgetCap;
-  }
-  if (entry.supportsThinking !== undefined) {
-    (snapshot as { supportsThinking: boolean }).supportsThinking =
-      entry.supportsThinking;
+  if (!entry.cliBridge) {
+    for (const field of ['models', 'modelReasoningCapabilities', 'contextWindow', 'maxOutputTokens',
+      'outputTokenLimit', 'maxOutputTokensField', 'thinkingBudgetCap'] as const) {
+      if (entry[field] !== undefined) Object.assign(snapshot, { [field]: entry[field] });
+    }
   }
   return snapshot;
 }

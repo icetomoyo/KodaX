@@ -359,6 +359,7 @@ describe('runtime daemon reverse bridge', () => {
         operation: 'session.compact',
         operationId: 'compact-op-1',
       },
+      connectionFingerprint: 'a'.repeat(64),
       purpose: 'compaction',
     });
     const request = notifications[0];
@@ -372,6 +373,7 @@ describe('runtime daemon reverse bridge', () => {
         operation: 'session.compact',
         operationId: 'compact-op-1',
       },
+      connectionFingerprint: 'a'.repeat(64),
       purpose: 'compaction',
     });
     expect(request?.params).not.toHaveProperty('runId');

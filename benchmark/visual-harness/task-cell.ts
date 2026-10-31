@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseToolInputWithSalvage, registerCustomProviders, type KodaXMessage } from '@kodax-ai/llm';
 import { FileSessionStorage } from '@kodax-ai/repl';
 import { createSessionLineage } from '@kodax-ai/agent';
-import { createKodaXRuntime, parseRuntimeEvent } from '../../src/sdk-runtime.js';
+import { createKodaXRuntime, parseRuntimeEvent } from '../../tests/runtime-fixture.js';
 
 export interface ProposedMessage {
   content: string | null;

@@ -75,7 +75,11 @@ export function renderSetupGuide(input: RenderSetupGuideInput = {}): string {
       ? [`  CLI bridges: ${cliBridges.join(', ')} (authenticate with the provider CLI; no KodaX API-key variable)`]
       : []),
     '',
-    'Set the variable named for your provider; keep the credential out of config.json:',
+    'Credentials stay outside config.json:',
+    '  Recommended: enter a hidden API key in setup; it is saved in local permission-protected plaintext auth.json.',
+    '  Manage saved keys: kodax auth set-key <provider>, status <provider>, remove-key <provider>.',
+    '  Saved values take priority over the approved environment variable. Removing one reveals the remaining source.',
+    '  Environment variables remain available as an alternative:',
     '  Custom providers: `apiKeyEnv` is the environment-variable name stored in config.json,',
     '                    never the API key value.',
     '  Put the provider\'s actual API key in the value of that exact environment variable.',

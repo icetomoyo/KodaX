@@ -519,6 +519,46 @@ it('publishes multilingual thinking token estimates for the active request witho
   } finally { await owner.close(); }
 });
 
+it('publishes cumulative tool input token estimates independently of API usage and other calls', async () => {
+  const owner = new SessionViewOwner(async () => ({
+    session: { id: 'session', title: 'Tool tokens' }, settings: {}, queue: [], interactions: [], runs: [], items: [],
+  }), async () => {});
+  const observed: ClientSessionView[] = [];
+  const events = owner.events('session', 'run');
+  const meta = { providerRequestId: 'request', toolId: 'one' };
+  events.onIterationEnd?.({ iter: 1, maxIter: 20, tokenCount: 6000, tokenSource: 'api', contextKind: 'root',
+    usage: { inputTokens: 5800, outputTokens: 200, totalTokens: 6000 } });
+  events.onOutputSegmentStart?.({ responseId: 'response', providerRequestId: 'request', mode: 'append' });
+  events.onToolInputDelta?.('spawn_agent', 'Hello 世', meta);
+  events.onToolInputDelta?.('spawn_agent', '界', meta);
+  const observation = await owner.observe('session', view => observed.push(view));
+  try {
+    expect(observed.at(-1)?.activity?.streaming).toMatchObject({ kind: 'tool-input',
+      toolName: 'spawn_agent', callId: 'one', charCount: 8, estimatedTokenCount: 4 });
+    events.onToolInputDelta?.('spawn_agent', 'child', { ...meta, contextKind: 'child', childAgentId: 'child' });
+    events.onToolInputDelta?.('read', '12345', { ...meta, toolId: 'two' });
+    await expect.poll(() => observed.at(-1)?.activity?.streaming).toMatchObject({
+      callId: 'two', charCount: 5, estimatedTokenCount: 2 });
+    events.onToolInputDelta?.('spawn_agent', '\uD83D', meta);
+    events.onToolInputDelta?.('spawn_agent', '\uDE00', meta);
+    await expect.poll(() => observed.at(-1)?.activity?.streaming).toMatchObject({
+      callId: 'one', charCount: 10, estimatedTokenCount: 5 });
+    expect(observed.at(-1)?.activity).toMatchObject({ parentContextTokens: 6000,
+      usage: { inputTokens: 5800, outputTokens: 200, totalTokens: 6000 } });
+    events.onStreamEnd?.({ providerRequestId: 'request' });
+    await expect.poll(() => observed.at(-1)?.activity?.streaming).toBeUndefined();
+    events.onOutputSegmentStart?.({ responseId: 'response', providerRequestId: 'next', mode: 'replace' });
+    events.onToolInputDelta?.('read', '12345', { providerRequestId: 'next', toolId: 'one' });
+    await expect.poll(() => observed.at(-1)?.activity?.streaming).toMatchObject({
+      providerRequestId: 'next', callId: 'one', charCount: 5, estimatedTokenCount: 2 });
+    events.onToolUseStart?.({ id: 'one', name: 'read', input: {} }, { providerRequestId: 'next' });
+    await expect.poll(() => observed.at(-1)?.activity?.streaming).toBeUndefined();
+    events.onToolInputDelta?.('read', 'late', { providerRequestId: 'next', toolId: 'one' });
+    await owner.flush('session');
+    expect(observed.at(-1)?.activity?.streaming).toBeUndefined();
+  } finally { observation.close(); await owner.close(); }
+});
+
 it('publishes API usage and rebases parent tokens after root compaction without child contamination', async () => {
   const owner = new SessionViewOwner(async () => ({
     session: { id: 'session', title: 'Test' }, settings: {}, queue: [], interactions: [], runs: [], items: [],

@@ -9,8 +9,7 @@
  *   `mergeManagedProtocolPayload`).
  * - CAP-MANAGED-PROTO-002: terminal path includes merged payload in
  *   result (INTEGRATION-LEVEL — depends on running runKodaX with a
- *   managed-protocol-emitting tool; deferred to substrate-executor
- *   migration when steps can be tested in isolation).
+ *   managed-protocol-emitting tool; active in agent.managed-protocol-terminals.test.ts).
  *
  * Risk: MEDIUM
  *
@@ -19,7 +18,7 @@
  * Verified location: managed-protocol.ts:29 (mergeManagedProtocolPayload).
  * The agent.ts call sites (init, callback, finalize) thread this merge
  * through `turnState.managedProtocolPayload` — that integration is
- * pinned by CAP-MANAGED-PROTO-002 once it's activable.
+ * pinned by the public terminal matrix in CAP-MANAGED-PROTO-002.
  *
  * Time-ordering constraint: emit per tool call; merge cumulatively;
  * finalize at every terminal return path.
@@ -77,7 +76,7 @@ describe('CAP-047: managed protocol payload merge lifecycle contract', () => {
     expect(mergeManagedProtocolPayload(undefined, undefined)).toBeUndefined();
   });
 
-  it.todo(
-    'CAP-MANAGED-PROTO-002: every terminal return path of runKodaX includes the merged managedProtocolPayload in the result — INTEGRATION-LEVEL, deferred until substrate-executor migration extracts the per-step pipeline so terminals can be exercised in isolation.',
-  );
+  // CAP-MANAGED-PROTO-002: agent.managed-protocol-terminals.test.ts exercises
+  // public runKodaX completion/error/abort/iteration-limit results after real
+  // extension-tool emissions. It preserves compatibility without V1 role calls.
 });

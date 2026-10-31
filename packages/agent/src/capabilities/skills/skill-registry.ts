@@ -20,6 +20,15 @@ import { discoverSkills } from './discovery.js';
 import { loadFullSkill } from './skill-loader.js';
 import { resolveSkillContent } from './skill-resolver.js';
 
+const SKILL_CATALOG_MAX_CHARS = 8_000;
+const SKILL_CATALOG_NOTICE_RESERVE = 160;
+
+function catalogText(value: string, limit: number): string {
+  const normalized = value.replace(/\s+/gu, ' ').trim();
+  return normalized.length <= limit ? normalized
+    : `${normalized.slice(0, limit - 1).replace(/[\uD800-\uDBFF]$/, '')}…`;
+}
+
 /** Canonical catalog teaching; reusable by request views without changing SDK formatting. */
 export const SKILL_CATALOG_INSTRUCTIONS = [
     '## Available Skills',
@@ -43,9 +52,25 @@ export function formatSkillsSystemPrompt(
   const visibleSkills = skills.filter((skill) => !skill.disableModelInvocation);
   if (visibleSkills.length === 0) return '';
   const lines = [SKILL_CATALOG_INSTRUCTIONS];
+  let used = lines.join('\n').length + 1;
+  let included = 0;
+  let shortened = 0;
   for (const skill of visibleSkills) {
-    const hint = skill.argumentHint ? ` ${skill.argumentHint}` : '';
-    lines.push(`- ${skill.name}:${hint} ${skill.description}`);
+    const description = catalogText(skill.description, 500);
+    const hint = skill.argumentHint ? catalogText(skill.argumentHint, 80) : '';
+    const line = `- ${skill.name}:${hint ? ` ${hint}` : ''} ${description}`;
+    if (used + line.length + 1 > SKILL_CATALOG_MAX_CHARS - SKILL_CATALOG_NOTICE_RESERVE) continue;
+    lines.push(line);
+    used += line.length + 1;
+    included++;
+    if (description !== skill.description || hint !== (skill.argumentHint ?? '')) shortened++;
+  }
+  const omitted = visibleSkills.length - included;
+  if (shortened > 0 || omitted > 0) {
+    const notice = `[Skill catalog shortened: ${shortened} entries shortened; ${omitted} Skills omitted. Explicit invocation of registered Skills remains available.]`;
+    lines.push('', notice);
+    emitKodaXDiagnostic({ source: 'agent:skills', level: 'warn', message: notice,
+      detail: { code: 'skill_catalog_shortened', total: visibleSkills.length, included, omitted, shortened } });
   }
   lines.push('');
   return lines.join('\n');

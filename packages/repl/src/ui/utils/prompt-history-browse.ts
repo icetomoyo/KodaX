@@ -19,6 +19,8 @@ export interface PromptBrowseWindow {
   readonly nextCursor?: string;
 }
 
+class BrowseRevisionChangedError extends Error {}
+
 function sourceKeys(item: HistoryItem): string[] {
   if (item.type === 'tool_group') return item.tools.map(tool => `tool:${tool.id}`);
   if (item.inputId) return [`input:${item.inputId}`];
@@ -104,7 +106,15 @@ export async function readPromptBrowseWindow(
     return await new Promise<PromptBrowseWindow>((resolve, reject) => {
       onAbort = () => reject(readSignal.reason);
       readSignal.addEventListener('abort', onAbort, { once: true });
-      void readPromptBrowsePages(plane, sessionId, anchor, previous, readSignal, direction).then(resolve, reject);
+      void readPromptBrowsePages(plane, sessionId, anchor, previous, readSignal, direction)
+        .catch((error: unknown) => {
+          if (!previous || !(error instanceof BrowseRevisionChangedError
+            || (typeof error === 'object' && error !== null && 'code' in error && error.code === 'resync_required'))) throw error;
+          // A completed turn can rotate the saved revision while the user reads.
+          // Replace the whole window at the same source; never append a fresh
+          // page to the captured revision or force the reader to press End.
+          return readPromptBrowsePages(plane, sessionId, anchor, undefined, readSignal, 'older', 128);
+        }).then(resolve, reject);
     });
   } finally {
     clearTimeout(timeout);
@@ -114,7 +124,7 @@ export async function readPromptBrowseWindow(
 
 async function readPromptBrowsePages(
   plane: Pick<InkClientPlane, 'readHistory' | 'readHistoryEntry'>, sessionId: string, anchor: PromptBrowseAnchor,
-  previous: PromptBrowseWindow | undefined, signal: AbortSignal, direction: 'older' | 'newer',
+  previous: PromptBrowseWindow | undefined, signal: AbortSignal, direction: 'older' | 'newer', maxPages = 4,
 ): Promise<PromptBrowseWindow> {
   if (!plane.readHistory) throw new Error('Saved history is unavailable.');
   if (direction === 'newer' && previous) return readNewerWindow(plane, sessionId, anchor, previous, signal);
@@ -124,12 +134,12 @@ async function readPromptBrowsePages(
   let cursor = previous?.nextCursor;
   let revision = previous?.revision;
   const cursors = new Set<string>();
-  for (let count = 0; count < 4; count++) {
+  for (let count = 0; count < maxPages; count++) {
     signal?.throwIfAborted();
     const page = await plane.readHistory(sessionId, { cursor, limit: 40 });
     signal?.throwIfAborted();
     revision ??= page.revision;
-    if (page.revision !== revision) throw new Error('Saved history changed. Press End, then scroll up to refresh.');
+    if (page.revision !== revision) throw new BrowseRevisionChangedError('Saved history changed. Press End, then scroll up to refresh.');
     if (cursor !== undefined && page.nextCursor === cursor) throw new Error('Saved history paging did not advance.');
     pages.unshift(page);
     pageCursors.unshift(cursor);
@@ -166,7 +176,7 @@ async function readNewerWindow(
   signal?.throwIfAborted();
   const page = await plane.readHistory(sessionId, { cursor, limit: 40 });
   signal?.throwIfAborted();
-  if (page.revision !== previous.revision) throw new Error('Saved history changed. Press End, then scroll up to refresh.');
+  if (page.revision !== previous.revision) throw new BrowseRevisionChangedError('Saved history changed. Press End, then scroll up to refresh.');
   let pages = [...previous.pages, page];
   const pageCursors = [...previous.pageCursors, cursor];
   while (!withinBudget(pages) && pages.length > 1) {

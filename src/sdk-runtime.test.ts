@@ -292,7 +292,7 @@ describe("createKodaXRuntime", () => {
 
   it.each([undefined, '0.7.97-test-build'])('reports the package version unless explicitly injected (%s)', async (injectedVersion) => {
     vi.stubEnv('KODAX_VERSION', injectedVersion);
-    const { createKodaXRuntime } = await import('./sdk-runtime.js');
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot });
     try {
       expect(KODAX_VERSION).not.toBe('0.0.0');
@@ -328,7 +328,7 @@ describe("createKodaXRuntime", () => {
 
   it("advertises the SDK capability floor constants on the embedded facade", async () => {
     const { createKodaXRuntime, KODAX_RUNTIME_SDK_CAPABILITIES } = await import(
-      "./sdk-runtime.js"
+      "../tests/runtime-fixture.js"
     );
     expect(KODAX_RUNTIME_SDK_CAPABILITIES.conversationHistory).toBe(2);
     expect(KODAX_RUNTIME_SDK_CAPABILITIES.runtimeAutoModeGuardrail).toBe(6);
@@ -355,7 +355,7 @@ describe("createKodaXRuntime", () => {
 
 
   it("fails closed when a connected Runtime lacks a required capability", async () => {
-    const { createKodaXRuntime } = await import("./sdk-runtime.js");
+    const { createKodaXRuntime } = await import("./sdk-runtime-public.js");
     const transport: RuntimeDaemonClientTransport = {
       async request(method) {
         if (method !== "initialize") return null;
@@ -387,7 +387,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("rejects a daemon with the legacy conversation history contract when v2 is required", async () => {
-    const { createKodaXRuntime } = await import("./sdk-runtime.js");
+    const { createKodaXRuntime } = await import("./sdk-runtime-public.js");
     const transport: RuntimeDaemonClientTransport = {
       async request(method) {
         if (method !== "initialize") return null;
@@ -425,7 +425,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("fails closed when a daemon lacks the required safe management contract", async () => {
-    const { connectKodaXRuntime } = await import("./sdk-runtime.js");
+    const { connectKodaXRuntime } = await import("./sdk-runtime-public.js");
     const transport: RuntimeDaemonClientTransport = {
       async request(method) {
         if (method !== "initialize") return null;
@@ -454,7 +454,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("requires daemon client inventory only when an embedder explicitly opts in", async () => {
-    const { connectKodaXRuntime } = await import("./sdk-runtime.js");
+    const { connectKodaXRuntime } = await import("./sdk-runtime-public.js");
     const transport: RuntimeDaemonClientTransport = {
       async request(method) {
         if (method !== "initialize") return null;
@@ -488,7 +488,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("fails closed when a daemon lacks resilient integration configuration", async () => {
-    const { connectKodaXRuntime } = await import("./sdk-runtime.js");
+    const { connectKodaXRuntime } = await import("./sdk-runtime-public.js");
     const transport: RuntimeDaemonClientTransport = {
       async request(method) {
         if (method !== "initialize") return null;
@@ -517,7 +517,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("fails closed when a daemon lacks managed Run durability", async () => {
-    const { connectKodaXRuntime } = await import("./sdk-runtime.js");
+    const { connectKodaXRuntime } = await import("./sdk-runtime-public.js");
     const transport: RuntimeDaemonClientTransport = {
       async request(method) {
         if (method !== "initialize") return null;
@@ -546,7 +546,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("fails closed when a daemon lacks authoritative shutdown verification", async () => {
-    const { connectKodaXRuntime } = await import("./sdk-runtime.js");
+    const { connectKodaXRuntime } = await import("./sdk-runtime-public.js");
     const transport: RuntimeDaemonClientTransport = {
       async request(method) {
         if (method !== "initialize") return null;
@@ -575,7 +575,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("fails closed when an older daemon lacks fenced external Agent administration", async () => {
-    const { connectKodaXRuntime } = await import("./sdk-runtime.js");
+    const { connectKodaXRuntime } = await import("./sdk-runtime-public.js");
     const transport: RuntimeDaemonClientTransport = {
       async request(method) {
         if (method !== "initialize") return null;
@@ -607,7 +607,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("fails closed when an older daemon lacks the versioned Actor control plane", async () => {
-    const { connectKodaXRuntime } = await import("./sdk-runtime.js");
+    const { connectKodaXRuntime } = await import("./sdk-runtime-public.js");
     const transport: RuntimeDaemonClientTransport = {
       async request(method) {
         if (method !== "initialize") return null;
@@ -636,7 +636,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it.each([4, 5])("fails closed when an attach-only daemon has outdated text authority (v%s)", async (version) => {
-    const { createKodaXRuntime } = await import("./sdk-runtime.js");
+    const { createKodaXRuntime } = await import("./sdk-runtime-public.js");
     const transport: RuntimeDaemonClientTransport = {
       async request(method) {
         if (method !== "initialize") return null;
@@ -670,7 +670,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("fails closed when an attach-only daemon lacks Runtime event coalescing", async () => {
-    const { connectKodaXRuntime } = await import("./sdk-runtime.js");
+    const { connectKodaXRuntime } = await import("./sdk-runtime-public.js");
     const transport: RuntimeDaemonClientTransport = {
       async request(method) {
         if (method !== "initialize") return null;
@@ -705,7 +705,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("accepts a newer Runtime Auto guardrail capability", async () => {
-    const { connectKodaXRuntime } = await import("./sdk-runtime.js");
+    const { connectKodaXRuntime } = await import("./sdk-runtime-public.js");
     const transport: RuntimeDaemonClientTransport = {
       async request(method) {
         if (method !== "initialize") return null;
@@ -737,7 +737,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("rejects Runtime Auto guardrail v1 when the caller requires v2 semantics", async () => {
-    const { connectKodaXRuntime } = await import("./sdk-runtime.js");
+    const { connectKodaXRuntime } = await import("./sdk-runtime-public.js");
     const transport: RuntimeDaemonClientTransport = {
       async request(method) {
         if (method !== "initialize") return null;
@@ -769,7 +769,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("exports daemon protocol schema artifacts from the runtime SDK entrypoint", async () => {
-    const runtimeSdk = await import("@kodax-ai/kodax/runtime");
+    const runtimeSdk = await import("./sdk-runtime-public.js");
 
     expect(runtimeSdk.RUNTIME_DAEMON_METHODS).toContain("provider.custom.list");
     expect(runtimeSdk.RUNTIME_DAEMON_PROTOCOL_SCHEMA.methods).toMatchObject({
@@ -786,7 +786,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("creates a daemon-mode runtime client through the daemon transport", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("./sdk-runtime-public.js");
     const calls: Array<{ readonly method: string; readonly params: unknown }> =
       [];
     const transport: RuntimeDaemonClientTransport = {
@@ -853,7 +853,7 @@ describe("createKodaXRuntime", () => {
       await import("./runtime-daemon/protocol.js");
     const { createRuntimeDaemonSocketServer } =
       await import("./runtime-daemon/transport.js");
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("./sdk-runtime-public.js");
     const endpoint = makeDaemonEndpoint(tempRoot);
     const server = await createRuntimeDaemonSocketServer({
       endpoint,
@@ -911,7 +911,7 @@ describe("createKodaXRuntime", () => {
       await import("./runtime-daemon/protocol.js");
     const { createRuntimeDaemonSocketServer, defaultRuntimeDaemonEndpoint } =
       await import("./runtime-daemon/transport.js");
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("./sdk-runtime-public.js");
     const profile = `sdk-default-${randomUUID()}`;
     const endpoint = defaultRuntimeDaemonEndpoint(profile, tempRoot);
     const requests: Array<{
@@ -978,7 +978,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("rejects daemon endpoints that report a different profile", async () => {
-    const { connectKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { connectKodaXRuntime } = await import("./sdk-runtime-public.js");
     const transport: RuntimeDaemonClientTransport = {
       async request(method) {
         expect(method).toBe("initialize");
@@ -1010,7 +1010,7 @@ describe("createKodaXRuntime", () => {
 
   it("auto-starts a local daemon host by default for daemon-mode SDK clients", async () => {
     const { connectKodaXRuntime, createKodaXRuntime } =
-      await import("@kodax-ai/kodax/runtime");
+      await import("./sdk-runtime-public.js");
     const {
       readRuntimeDaemonLockOwner,
       readRuntimeDaemonState,
@@ -1074,7 +1074,7 @@ describe("createKodaXRuntime", () => {
   it.runIf(process.platform === "win32")(
     "fences an attach-only Windows execution client from a protocol-8 sandbox daemon",
     async () => {
-      const { connectKodaXRuntime } = await import("./sdk-runtime.js");
+      const { connectKodaXRuntime } = await import("./sdk-runtime-public.js");
       const transport: RuntimeDaemonClientTransport = {
         async request(method) {
           if (method !== "initialize") return null;
@@ -1104,7 +1104,7 @@ describe("createKodaXRuntime", () => {
 
   it("bootstraps trusted daemon policy only for a new owner and rejects policy on attach", async () => {
     const { connectKodaXRuntime, createKodaXRuntime } =
-      await import("@kodax-ai/kodax/runtime");
+      await import("./sdk-runtime-public.js");
     const { resolveRuntimeDaemonPaths } =
       await import("./runtime-daemon/state.js");
     const profile = `sdk-owner-policy-${randomUUID()}`;
@@ -1170,7 +1170,7 @@ describe("createKodaXRuntime", () => {
   }, 60_000);
 
   it("uses homeDir as the default session storage root when sessionsDir is omitted", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const embeddedHome = path.join(tempRoot, "embedded-home");
     const daemonHome = path.join(tempRoot, "daemon-home");
 
@@ -1217,7 +1217,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps embedded run memory ownership on the Runtime config home", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const ownerHome = path.join(tempRoot, "embedded-owner");
     const runtime = await createKodaXRuntime({
       homeDir: ownerHome,
@@ -1272,7 +1272,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("filters Runtime sessions by surface and continues with an opaque cursor", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot });
     try {
       await runtime.sessions.create({ title: "ACP One", surface: "acp" });
@@ -1302,7 +1302,7 @@ describe("createKodaXRuntime", () => {
 
   it("shares Space-style SDK control-plane access across daemon clients", async () => {
     const { connectKodaXRuntime, createKodaXRuntime } =
-      await import("@kodax-ai/kodax/runtime");
+      await import("./sdk-runtime-public.js");
     const profile = `space-${randomUUID()}`;
     const capabilities = {
       richEvents: true,
@@ -1401,7 +1401,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("retires client-minted permission requests on the daemon wire (T14)", async () => {
-    const { createKodaXRuntime, waitForRuntimeDaemonShutdown } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime, waitForRuntimeDaemonShutdown } = await import("./sdk-runtime-public.js");
     const profile = `space-permission-${randomUUID()}`;
     const worker = await createKodaXRuntime({
       mode: "daemon",
@@ -1457,7 +1457,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("rejects trusted owner policy on an ordinary daemon client transport", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("./sdk-runtime-public.js");
     const request = vi.fn(async () => {
       throw new Error("attach transport must not receive owner policy");
     });
@@ -1477,7 +1477,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("creates an auto-ID Session without an all-project negative lookup", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "generated-session-store");
     await Promise.all(Array.from({ length: 300 }, (_, index) =>
       fs.mkdir(path.join(sessionsDir, `unrelated-project-${index}`), { recursive: true })));
@@ -1496,7 +1496,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("creates, lists, loads, transcripts, and forks sessions through one runtime service", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -1532,7 +1532,7 @@ describe("createKodaXRuntime", () => {
   }, 60_000);
 
   it("loads a Session after reclaiming a stale Session writer lock", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -1565,7 +1565,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("retries a Session load while a live Session writer finishes", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -1611,7 +1611,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("isolates event listener failures from runtime operations and other subscribers", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot });
     const received: string[] = [];
     const sessionId = "listener-isolation";
@@ -1633,7 +1633,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("persists session settings and applies them as run defaults", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "sessions");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -1804,7 +1804,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("normalizes the legacy persisted default permission mode to Edits", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot });
     const session = await runtime.sessions.create({
       sessionId: "legacy-default-permission",
@@ -1833,7 +1833,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("canonicalizes SDK permission aliases and rejects unknown profile ids", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot });
     const session = await runtime.sessions.create({
       title: "SDK permission profile input",
@@ -1856,7 +1856,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps 0.7.x compatibility aliases without restoring retired AMAW behavior", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -1895,7 +1895,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("hides exit_plan_mode when a Runtime run has no approval callback", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -1947,7 +1947,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps session executionCwd settings inside the session workspace root", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const projectRoot = path.join(tempRoot, "project");
     const outsideRoot = path.join(tempRoot, "outside");
     const dotPrefixedDirectory = path.join(projectRoot, "..cache");
@@ -2025,7 +2025,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("skips corrupted runtime persistence records", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const badRunDir = path.join(
       tempRoot,
       ".kodax",
@@ -2064,7 +2064,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("migrates run statuses once and bounds later startup reads to the durable index", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtimeDir = path.join(tempRoot, ".kodax", "runtime");
     const runsDir = path.join(runtimeDir, "runs");
     const statusCount = 230;
@@ -2129,7 +2129,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("rebuilds a run-status index when a legacy writer publishes an unindexed active Run", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runsDir = path.join(tempRoot, ".kodax", "runtime", "runs");
     const preexistingRunId = "legacy-active-in-preexisting-dir";
     const newRunId = "legacy-active-in-new-dir";
@@ -2164,7 +2164,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("recovers a committed Run when its later index update is interrupted", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionId = "status-before-index-session";
     const seeded = await createKodaXRuntime({ homeDir: tempRoot });
     await seeded.sessions.create({ sessionId });
@@ -2215,7 +2215,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("marks a clean run-status index dirty before a recovered Run becomes terminal", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtimeDir = path.join(tempRoot, ".kodax", "runtime");
     const runId = "clean-index-recovered-terminal";
     const seeded = await createKodaXRuntime({ homeDir: tempRoot });
@@ -2261,7 +2261,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("re-marks the run-status index dirty after another Runtime cleans it", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runStatusIndexFile = path.join(
       tempRoot,
       ".kodax",
@@ -2353,7 +2353,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("performs one fail-closed scan for a stable overflow of pending legacy Runs", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runsDir = path.join(tempRoot, ".kodax", "runtime", "runs");
     await Promise.all(Array.from({ length: 1_001 }, (_, index) =>
       fs.mkdir(path.join(runsDir, `pending-${index}`), { recursive: true })));
@@ -2383,7 +2383,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("marks non-terminal runs from a definitely dead Runtime interrupted on startup", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runDir = path.join(
       tempRoot,
       ".kodax",
@@ -2502,7 +2502,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps ownerless legacy non-terminal runs unknown and read-only", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runId = "run-legacy-ownerless";
     const runDir = path.join(
       tempRoot,
@@ -2541,7 +2541,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("publishes one restart terminal when two Runtimes recover the same dead Run", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runId = "run-concurrent-dead-owner";
     const sessionId = "session-concurrent-dead-owner";
     const runDir = path.join(tempRoot, ".kodax", "runtime", "runs", runId);
@@ -2583,7 +2583,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("reports unknown without mutating a Run whose external owner cannot be confirmed", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runId = "run-owner-unconfirmed";
     const sessionId = "session-owner-unconfirmed";
     const runDir = path.join(
@@ -2631,7 +2631,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("does not restore a terminal for an ownerless legacy Run and reads it conservatively", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runId = "run-terminal-event-won";
     const sessionId = "session-terminal-event-won";
     const runDir = path.join(tempRoot, ".kodax", "runtime", "runs", runId);
@@ -2664,7 +2664,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("does not fabricate legacy input deliveries for an ownerless Run", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runId = "run-durable-interrupt-event";
     const sessionId = "session-durable-interrupt-event";
     const runDir = path.join(tempRoot, ".kodax", "runtime", "runs", runId);
@@ -2722,7 +2722,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("persists non-terminal run status while a run is active", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       defaultProvider: "mock-provider",
@@ -2756,7 +2756,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps a live Run authoritative when a second Runtime opens the same store", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "sessions");
     const first = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -2841,7 +2841,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("normalizes runtime multimodal input into prompt plus coding inputArtifacts", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -2957,7 +2957,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("carries product-queue input artifacts into the drained run and digests them (T27 review)", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -3016,7 +3016,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("rejects unsupported runtime artifacts before queueing a run", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -3077,7 +3077,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps explicit-only Skills in the user-invocable runtime catalog", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const skillDir = path.join(tempRoot, ".kodax", "skills", "explicit-runtime-skill");
     await fs.mkdir(skillDir, { recursive: true });
     await fs.writeFile(
@@ -3129,7 +3129,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("exposes project prompt commands through the runtime catalog", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const commandDir = path.join(tempRoot, ".kodax", "commands");
     const commandFile = path.join(commandDir, "ship-runtime.md");
     await fs.mkdir(commandDir, { recursive: true });
@@ -3192,7 +3192,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("does not mutate the REPL global command registry when listing project commands", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const { getCommandRegistry } = await import("@kodax-ai/repl");
     const registry = getCommandRegistry();
     registry.unregister("runtime-local-only");
@@ -3239,7 +3239,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("exposes read-only extension inventory and MCP validation through runtime services", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       mode: "embedded",
       homeDir: tempRoot,
@@ -3280,7 +3280,7 @@ describe("createKodaXRuntime", () => {
 
   it("exposes custom provider CRUD through runtime catalog services", async () => {
     const { setAgentConfigHome } = await import("@kodax-ai/agent");
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const configHome = path.join(tempRoot, ".kodax");
     setAgentConfigHome(configHome);
 
@@ -3322,7 +3322,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("exposes transcript notice session operation through runtime events", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -3361,7 +3361,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("exposes rewind and setActiveEntry session operations through runtime events", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const {
       createSessionLineage,
       listPendingEpisodeReviews,
@@ -3472,7 +3472,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("rejects canonical session mutations while the session has an active run", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -3508,7 +3508,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("normalizes run callbacks into scoped runtime events and terminal status", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -3675,7 +3675,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("fails closed when a daemon lacks Actor settlement convergence", async () => {
-    const { connectKodaXRuntime } = await import("./sdk-runtime.js");
+    const { connectKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const transport: RuntimeDaemonClientTransport = {
       async request(method) {
         if (method !== "initialize") return null;
@@ -3704,7 +3704,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("emits one canonical post-commit compaction event with stable context ownership", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -3828,7 +3828,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("persists structured compaction skip and failed-end outcomes", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -3915,7 +3915,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps completed and delivered managed turns canonical when the active Run crashes", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "managed-durable-boundary-sessions");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -4123,7 +4123,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("emits one ordered canonical lifecycle for manual session compaction", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -4178,7 +4178,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("rejects the effective manual-compaction Provider outside its lease before a no-op", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -4211,7 +4211,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps the active live projection complete during a large active run", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -4269,7 +4269,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("invalidates embedded Session observations when the Runtime closes", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -4297,7 +4297,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("invalidates an embedded observation when a terminal listener throws", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -4350,7 +4350,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps child activity out of the primary live observation projection", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -4456,7 +4456,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("bounds observation transcripts and pages oversized entries explicitly", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -4534,7 +4534,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("finishes a fixed transcript page boundary while the Session keeps appending", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -4600,7 +4600,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("single-flights the first transcript capture and materialization across readers", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "snapshot-single-flight-sessions");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
     const session = await runtime.sessions.create({
@@ -4678,7 +4678,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("delivers handoff events the snapshot raced past to event observers", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "snapshot-handoff-race-sessions");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
     const session = await runtime.sessions.create({
@@ -4733,7 +4733,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("batches transcript snapshot writes for long sessions", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "snapshot-batched-write-sessions");
     const sessionId = "snapshot-batched-writes";
     const messages: KodaXMessage[] = Array.from({ length: 600 }, (_, index) => ({
@@ -4774,7 +4774,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("does not join a post-mutation fresh read to an older materialization flight", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "snapshot-mutation-flight-sessions"),
@@ -4833,7 +4833,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("does not join a post-delete fresh read to an older materialization flight", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "snapshot-delete-flight-sessions"),
@@ -4895,7 +4895,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps a shared first capture alive when only one reader cancels", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "snapshot-shared-cancel-sessions");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
     const session = await runtime.sessions.create({
@@ -4954,7 +4954,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps read-only Session APIs from emitting Runtime events", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "readonly-session-api-sessions");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
     const session = await runtime.sessions.create({
@@ -4999,7 +4999,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("continues a fixed transcript snapshot after its source file disappears", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "snapshot-source-sessions");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -5052,7 +5052,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("reuses the same immutable file for concurrent equal transcript revisions", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "snapshot-concurrent-sessions"),
@@ -5116,7 +5116,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps an in-flight transcript reader alive across cache eviction", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "snapshot-reader-lease-sessions"),
@@ -5201,7 +5201,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("requires resync when an immutable transcript snapshot is corrupted", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const snapshotDirsBefore = new Set(
       (await fs.readdir(os.tmpdir())).filter((name) =>
         name.startsWith("kodax-transcript-snapshots-")
@@ -5267,14 +5267,36 @@ describe("createKodaXRuntime", () => {
   });
 
   it("does not return snapshot success after its read budget expires or is cancelled", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
+    const createOpenGate = () => {
+      let enter!: () => void;
+      let release!: () => void;
+      let released = false;
+      const entered = new Promise<void>(resolve => { enter = resolve; });
+      const pending = new Promise<void>(resolve => { release = resolve; });
+      return { entered, pending, enter, get released() { return released; },
+        release() { released = true; release(); } };
+    };
+    // This guard fails the test and releases I/O in finally if cancellation regresses.
+    // It is not the read budget: success still requires rejection before I/O release.
+    const observe = async <T,>(pending: Promise<T>): Promise<T> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([pending, new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error("Snapshot gate observation timed out")), 5_000);
+        })]);
+      } finally { clearTimeout(timer); }
+    };
+    const timeoutGate = createOpenGate();
+    const cancelGate = createOpenGate();
+    let gate: ReturnType<typeof createOpenGate> | undefined = timeoutGate;
     const originalOpen = fs.open.bind(fs);
     const open = vi.spyOn(fs, "open").mockImplementation(
       async (file, flags, mode) => {
-        if (String(file).endsWith(".entries")) {
-          await new Promise<void>((resolve) => {
-            setTimeout(resolve, 150);
-          });
+        if (String(file).endsWith(".entries") && gate !== undefined) {
+          const blocked = gate;
+          blocked.enter();
+          await blocked.pending;
         }
         return originalOpen(file, flags, mode);
       },
@@ -5284,40 +5306,54 @@ describe("createKodaXRuntime", () => {
       sessionsDir: path.join(tempRoot, "snapshot-budget-read-sessions"),
     });
     try {
-      const session = await runtime.sessions.create({
-        sessionId: "snapshot-budget-read",
-      });
-      await runtime.sessions.appendNotice({
-        sessionId: session.id,
-        source: "snapshot-budget-read",
-        content: "history",
-      });
-      const timeoutStartedAt = Date.now();
-      await expect(runtime.sessions.transcriptPage(
-        { sessionId: session.id },
-        { timeoutMs: 20 },
-      )).rejects.toMatchObject({ code: "read_timeout" });
-      expect(Date.now() - timeoutStartedAt).toBeLessThan(100);
+      const session = await runtime.sessions.create({ sessionId: "snapshot-budget-read" });
+      await runtime.sessions.appendNotice({ sessionId: session.id,
+        source: "snapshot-budget-read", content: "history" });
+      // Hold a shared materialization first, so disk scheduling before fs.open
+      // cannot consume the short caller budget before the intended boundary.
+      const baseline = runtime.sessions.transcriptPage({ sessionId: session.id });
+      await observe(Promise.race([timeoutGate.entered, baseline.then(() => {
+        throw new Error("Snapshot completed before entering its I/O gate");
+      })]));
+      await observe(expect(runtime.sessions.transcriptPage(
+        { sessionId: session.id }, { timeoutMs: 20 },
+      )).rejects.toMatchObject({ code: "read_timeout" }));
+      expect(timeoutGate.released).toBe(false);
+      gate = undefined;
+      timeoutGate.release();
+      expect((await observe(baseline))?.entries[0]?.entry?.message.content).toBe("history");
 
+      // A new Session guarantees a fresh materialization for signal cancellation.
+      const cancelSession = await runtime.sessions.create({ sessionId: "snapshot-budget-cancel" });
+      await runtime.sessions.appendNotice({ sessionId: cancelSession.id,
+        source: "snapshot-budget-read", content: "cancel history" });
+      gate = cancelGate;
       const controller = new AbortController();
-      const cancelStartedAt = Date.now();
       const cancelled = runtime.sessions.transcriptPage(
-        { sessionId: session.id },
-        { signal: controller.signal },
+        { sessionId: cancelSession.id }, { signal: controller.signal },
       );
-      setTimeout(() => controller.abort(), 20);
-      await expect(cancelled).rejects.toMatchObject({
-        code: "read_cancelled",
-      });
-      expect(Date.now() - cancelStartedAt).toBeLessThan(100);
+      await observe(Promise.race([cancelGate.entered, cancelled.then(() => {
+        throw new Error("Snapshot completed before entering its I/O gate");
+      })]));
+      const cancellation = expect(cancelled).rejects.toMatchObject({ code: "read_cancelled" });
+      controller.abort();
+      await observe(cancellation);
+      expect(cancelGate.released).toBe(false);
+      gate = undefined;
+      cancelGate.release();
+      const fresh = await observe(runtime.sessions.transcriptPage({ sessionId: cancelSession.id }));
+      expect(fresh?.entries[0]?.entry?.message.content).toBe("cancel history");
     } finally {
+      gate = undefined;
+      timeoutGate.release();
+      cancelGate.release();
       open.mockRestore();
       await runtime.close();
     }
   });
 
   it.each(['timeout', 'cancel'] as const)('honors %s while the first snapshot waits on slow global Temp cleanup', async kind => {
-    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const { createKodaXRuntime } = await import('../tests/runtime-fixture.js');
     const runtime = await createKodaXRuntime({ homeDir: tempRoot });
     const session = await runtime.sessions.create({ sessionId: `slow-snapshot-cleanup-${kind}` });
     await runtime.sessions.appendNotice({ sessionId: session.id, source: 'test', content: 'retained evidence' });
@@ -5370,7 +5406,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it('retains fresh Temp snapshots and one Runtime directory during concurrent first reads', async () => {
-    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const { createKodaXRuntime } = await import('../tests/runtime-fixture.js');
     const runtime = await createKodaXRuntime({ homeDir: tempRoot });
     const sessions = await Promise.all(['first', 'second'].map(async name => {
       const session = await runtime.sessions.create({ sessionId: `snapshot-init-${name}` });
@@ -5404,7 +5440,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("rejects one transcript snapshot larger than the hard disk budget", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const snapshotDirsBefore = new Set(
       (await fs.readdir(os.tmpdir())).filter((name) =>
         name.startsWith("kodax-transcript-snapshots-")
@@ -5472,7 +5508,7 @@ describe("createKodaXRuntime", () => {
   }, 30_000);
 
   it("does not evict retained cursors when a multi-entry snapshot is oversized", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "snapshot-atomic-budget-sessions"),
@@ -5521,7 +5557,7 @@ describe("createKodaXRuntime", () => {
   }, 30_000);
 
   it("keeps deleted in-flight snapshot generations inside the hard disk budget", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "snapshot-concurrent-budget-sessions"),
@@ -5598,7 +5634,7 @@ describe("createKodaXRuntime", () => {
   }, 30_000);
 
   it("bounds concurrent snapshot files before opening more handles", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "snapshot-file-budget-sessions"),
@@ -5652,7 +5688,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("bounds close while snapshot materialization remains blocked", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "snapshot-close-materialization"),
@@ -5745,7 +5781,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("retries snapshot directory cleanup after close fails once", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const snapshotDirsBefore = new Set(
       (await fs.readdir(os.tmpdir())).filter((name) =>
         name.startsWith("kodax-transcript-snapshots-")
@@ -5805,7 +5841,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("does not recreate snapshot storage when a pre-close read resumes", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "snapshot-close-race-sessions"),
@@ -5877,7 +5913,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("normalizes transcript snapshot storage failures", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "snapshot-storage-error-sessions"),
@@ -5910,7 +5946,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("requires resync when transcript snapshot storage disappears", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "snapshot-storage-missing-sessions"),
@@ -5943,7 +5979,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("times out promptly while reading a retained transcript chunk", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "snapshot-chunk-timeout-sessions"),
@@ -6055,7 +6091,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("bounds concurrent snapshot readers for one retained file", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "snapshot-reader-budget-sessions"),
@@ -6139,7 +6175,7 @@ describe("createKodaXRuntime", () => {
     await fs.writeFile(path.join(staleDir, "orphan.entries"), "old history");
     const staleAt = new Date(Date.now() - 10 * 60_000);
     await fs.utimes(staleDir, staleAt, staleAt);
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "snapshot-stale-dir-sessions"),
@@ -6166,7 +6202,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("rebuilds its snapshot directory after external deletion", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const snapshotDirsBefore = new Set(
       (await fs.readdir(os.tmpdir())).filter((name) =>
         name.startsWith("kodax-transcript-snapshots-")
@@ -6221,7 +6257,7 @@ describe("createKodaXRuntime", () => {
 
   it("removes expired snapshot files without requiring another history read", async () => {
     vi.useFakeTimers();
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const snapshotDirsBefore = new Set(
       (await fs.readdir(os.tmpdir())).filter((name) =>
         name.startsWith("kodax-transcript-snapshots-")
@@ -6273,7 +6309,7 @@ describe("createKodaXRuntime", () => {
 
   it("contains snapshot cleanup failures inside the lease heartbeat", async () => {
     vi.useFakeTimers();
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const snapshotDirsBefore = new Set(
       (await fs.readdir(os.tmpdir())).filter((name) =>
         name.startsWith("kodax-transcript-snapshots-")
@@ -6358,7 +6394,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("expires fixed transcript snapshots with an explicit resync requirement", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "snapshot-ttl-sessions"),
@@ -6392,7 +6428,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("evicts transcript snapshots by total bytes before the count limit", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "snapshot-budget-sessions"),
@@ -6438,7 +6474,7 @@ describe("createKodaXRuntime", () => {
   }, 30_000);
 
   it("rejects invalid transcript search queries before Session I/O", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "search-validation-sessions"),
@@ -6467,7 +6503,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("rechecks cancellation after transcript snapshot search work", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "search-budget-sessions"),
@@ -6500,7 +6536,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("does not return transcript search success after its budget expires", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "search-timeout-sessions"),
@@ -6535,7 +6571,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps direct and paged transcripts in the same append order across island recovery", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const { createSessionManager } = await import("@kodax-ai/repl");
     const sessionsDir = path.join(tempRoot, "ordered-transcript-sessions");
     const runtime = await createKodaXRuntime({
@@ -6620,7 +6656,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps a reconciled v0.7.78 replay branch identical in direct and paged transcripts", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const { createSessionManager } = await import("@kodax-ai/repl");
     const sessionsDir = path.join(tempRoot, "legacy-replay-transcript-sessions");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
@@ -6733,7 +6769,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("searches exact compacted history through the Runtime session service", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const { createSessionManager } = await import("@kodax-ai/repl");
     const sessionsDir = path.join(tempRoot, "search-sessions");
     const runtime = await createKodaXRuntime({
@@ -6813,7 +6849,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps parallel active tools when another tool finishes", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -6860,7 +6896,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("flushes coalesced streaming events without dropping deltas", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -6903,7 +6939,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps another Session's pending deltas when another Session flushes", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -6955,7 +6991,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("flushes pending deltas when a client subscription disconnects", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -7007,7 +7043,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("removes all synchronously closed subscribers before the coalesced flush", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -7072,7 +7108,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("coalesces 25k thinking deltas and long text", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "sessions");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -7151,7 +7187,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps legacy flat-message search revision and citations stable across Runtime restarts", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "legacy-search-sessions");
     const sessionId = "legacy-search";
     const legacyDir = path.join(sessionsDir, "_unknown");
@@ -7211,7 +7247,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("retries transient data_changed captures and maps persistent churn to resync_required", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "capture-retry-sessions");
     const sessionId = "capture-retry";
     await new FileSessionStorage({ sessionsDir }).save(sessionId, {
@@ -7256,7 +7292,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("flushes before two compatible fragments would exceed the 8 KiB merge limit", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -7316,7 +7352,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("merges tool input only for one explicit toolId and keeps missing IDs separate", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -7387,7 +7423,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps the first and latest consecutive tool progress snapshots", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -7439,7 +7475,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("snapshots caller-owned progress before deferred delivery", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "payload-snapshot-sessions"),
@@ -7481,7 +7517,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("preserves leading progress then publishes sustained updates at 20Hz", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -7551,7 +7587,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps one latest progress event per identity when progress streams interleave", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -7612,7 +7648,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps latest workflow progress separate for each workflow process", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -7658,7 +7694,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("settles a failed Run as unknown when its terminal status cannot be persisted", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "run-settlement-fence-sessions"),
@@ -7733,7 +7769,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("publishes unknown when terminal status persistence fails before its event commit", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "run-settlement-update-sessions"),
@@ -7790,7 +7826,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("emits one terminal event when status-lock cleanup fails after commit", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "terminal-status-cleanup-sessions"),
@@ -7872,7 +7908,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("flushes pending deltas before error and cancellation boundaries", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -7961,7 +7997,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("hands off coalesced snapshot and incremental deltas without gaps or duplicates", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -8018,7 +8054,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("projects replacement output segments without losing raw deltas", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -8101,7 +8137,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("forwards context diagnostics hooks into runtime event subscriptions", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -8390,7 +8426,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("serializes runs within one session while allowing queued status to be observed", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -8500,7 +8536,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("preserves same-session start arrival order when session loading completes out of order", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -8544,7 +8580,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it.each(['start', 'after_turn'] as const)('advances %s admission when its predecessor finishes before the queue entry is published', async (delivery) => {
-    const { createKodaXRuntime } = await import('./sdk-runtime.js');
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot, defaultProvider: 'mock-provider' });
     const session = await runtime.sessions.create({ title: 'Queue handoff during admission' });
     const starts: string[] = [];
@@ -8587,7 +8623,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("creates ordered after-turn continuation runs and rejects stale delivery", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -8685,7 +8721,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps a healthy managed-task after-turn continuation in coding mode by default", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "healthy-managed-continuation-sessions"),
@@ -8790,7 +8826,7 @@ describe("createKodaXRuntime", () => {
   }
 
   it("hands saved Host execution evidence of an unfinished managed Run to the next managed Run", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "interrupted-journal-sessions"),
@@ -8824,7 +8860,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("hands the streamed reply of an unfinished coding Run to the next coding Run", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "interrupted-coding-sessions"),
@@ -8871,7 +8907,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("ignores legacy event logs and starts without evidence when no Host checkpoint was saved", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     let runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "unreadable-journal-sessions"),
@@ -8908,7 +8944,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("admits active-run input from cached Run identity without reading canonical Session", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "cached-run-admission-sessions"),
@@ -9019,7 +9055,7 @@ describe("createKodaXRuntime", () => {
   ] as const)(
     "keeps %s Session surfaces outside shared Runtime Run admission",
     async (_label, surface) => {
-      const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+      const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
       const sessionsDir = path.join(tempRoot, "surface-admission-sessions");
       const owner = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
       const session = await owner.sessions.create({
@@ -9047,7 +9083,7 @@ describe("createKodaXRuntime", () => {
   );
 
   it("rejects interrupt input after a managed task closes its final safe-boundary window", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -9129,7 +9165,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps managed onComplete non-authoritative until its result Promise settles", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -9169,7 +9205,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("reports waiting-agent and recovery phases through Run and Session status", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -9264,7 +9300,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("restores the latest executor phase after Actor settlement persistence recovers", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const originalBeginSave = FileSessionStorage.prototype.beginActorSnapshotSave;
     let releaseSettlement: (() => void) | undefined;
     const settlementGate = new Promise<void>((resolve) => {
@@ -9363,7 +9399,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("does not restore a stopped Run to active after Actor settlement recovers", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const originalBeginSave = FileSessionStorage.prototype.beginActorSnapshotSave;
     let releaseSettlement: (() => void) | undefined;
     const settlementGate = new Promise<void>((resolve) => {
@@ -9448,7 +9484,7 @@ describe("createKodaXRuntime", () => {
 
   it("keeps an automatic Actor durability fence authoritative over a later external abort", async () => {
     vi.useFakeTimers();
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const originalBeginSave = FileSessionStorage.prototype.beginActorSnapshotSave;
     const unavailableSettlement = new Promise<void>(() => undefined);
     const save = vi.spyOn(
@@ -9523,7 +9559,7 @@ describe("createKodaXRuntime", () => {
 
   it("retries a transient repair load error and restores Session reuse", async () => {
     vi.useFakeTimers();
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const originalBeginSave = FileSessionStorage.prototype.beginActorSnapshotSave;
     const originalPeek = FileSessionStorage.prototype.peek;
     let failRepairLoad = false;
@@ -9653,7 +9689,7 @@ describe("createKodaXRuntime", () => {
 
   it("keeps automatic same-owner repair alive after its first bounded attempt times out", async () => {
     vi.useFakeTimers();
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const originalBeginSave = FileSessionStorage.prototype.beginActorSnapshotSave;
     let releaseLateSettlement: (() => void) | undefined;
     const lateSettlement = new Promise<void>((resolve) => {
@@ -9743,7 +9779,7 @@ describe("createKodaXRuntime", () => {
 
   it("stops automatic Actor repair when durable ownership changes", async () => {
     vi.useFakeTimers();
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const originalBeginSave = FileSessionStorage.prototype.beginActorSnapshotSave;
     const originalPeek = FileSessionStorage.prototype.peek;
     let releaseLateSettlement: (() => void) | undefined;
@@ -9863,7 +9899,7 @@ describe("createKodaXRuntime", () => {
   it("fails and drains after repair when the fenced root provider never settles", async () => {
     let cleanupSessionId = "missing-session";
     vi.useFakeTimers();
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const originalBeginSave = FileSessionStorage.prototype.beginActorSnapshotSave;
     let releaseLateSettlement: (() => void) | undefined;
     const lateSettlement = new Promise<void>((resolve) => {
@@ -10137,7 +10173,7 @@ describe("createKodaXRuntime", () => {
   it("repairs a Stop-before-self-fence race without waiting for its root provider", async () => {
     let cleanupSessionId = "missing-session";
     vi.useFakeTimers();
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const originalBeginSave = FileSessionStorage.prototype.beginActorSnapshotSave;
     let releaseLateSettlement: (() => void) | undefined;
     const lateSettlement = new Promise<void>((resolve) => {
@@ -10282,7 +10318,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("does not regress a local terminal Run from a stale durable unknown Stop", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "terminal-versus-stale-stop-sessions"),
@@ -10370,7 +10406,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("contains persistent terminal write failure during automatic Stop recovery", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "persistent-stop-terminal-failure-sessions"),
@@ -10455,7 +10491,7 @@ describe("createKodaXRuntime", () => {
 
   it("terminalizes an unknown Run from its pre-fence executor result after automatic Actor repair", async () => {
     vi.useFakeTimers();
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const originalBeginSave = FileSessionStorage.prototype.beginActorSnapshotSave;
     let releaseLateSettlement: (() => void) | undefined;
     const lateSettlement = new Promise<void>((resolve) => {
@@ -10558,7 +10594,7 @@ describe("createKodaXRuntime", () => {
     callbackSignal,
   ) => {
     vi.useFakeTimers();
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const originalBeginSave = FileSessionStorage.prototype.beginActorSnapshotSave;
     let releaseLateSettlement: (() => void) | undefined;
     const lateSettlement = new Promise<void>((resolve) => {
@@ -10664,7 +10700,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("rejects owned-unknown Stop when the durable Run owner is missing", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "tampered-unknown-owner-sessions"),
@@ -10727,7 +10763,7 @@ describe("createKodaXRuntime", () => {
     executorError,
   ) => {
     vi.useFakeTimers();
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const originalBeginSave = FileSessionStorage.prototype.beginActorSnapshotSave;
     let releaseLateSettlement: (() => void) | undefined;
     const lateSettlement = new Promise<void>((resolve) => {
@@ -10808,7 +10844,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("does not terminalize a Run before its Actor settlements are durable", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const originalBeginSave = FileSessionStorage.prototype.beginActorSnapshotSave;
     let releaseSettlement: (() => void) | undefined;
     const settlementGate = new Promise<void>((resolve) => {
@@ -10898,7 +10934,7 @@ describe("createKodaXRuntime", () => {
 
   it("rejects a later Run when Session Actor settlement state is unknown", async () => {
     vi.useFakeTimers();
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const originalBeginSave = FileSessionStorage.prototype.beginActorSnapshotSave;
     const unavailableSettlement = new Promise<void>(() => undefined);
     const save = vi.spyOn(
@@ -10956,7 +10992,7 @@ describe("createKodaXRuntime", () => {
     const {
       captureRuntimeSessionDiagnostics,
       createKodaXRuntime,
-    } = await import("@kodax-ai/kodax/runtime");
+    } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -11100,7 +11136,7 @@ describe("createKodaXRuntime", () => {
 
   it("cancels a diagnostic capture through the read-only Session diagnostic path", async () => {
     const { captureRuntimeSessionDiagnostics } = await import(
-      "@kodax-ai/kodax/runtime"
+      "../tests/runtime-fixture.js"
     );
     const abortController = new AbortController();
     const runtime = {
@@ -11140,7 +11176,7 @@ describe("createKodaXRuntime", () => {
     const {
       captureRuntimeSessionDiagnostics,
       createKodaXRuntime,
-    } = await import("@kodax-ai/kodax/runtime");
+    } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -11202,7 +11238,7 @@ describe("createKodaXRuntime", () => {
     const {
       captureRuntimeSessionDiagnostics,
       createKodaXRuntime,
-    } = await import("@kodax-ai/kodax/runtime");
+    } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -11276,7 +11312,7 @@ describe("createKodaXRuntime", () => {
     const {
       captureRuntimeSessionDiagnostics,
       createKodaXRuntime,
-    } = await import("@kodax-ai/kodax/runtime");
+    } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -11324,7 +11360,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("rejects interrupt input after an ordinary coding run reports completion", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -11382,7 +11418,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("settles a coding Run from the executor completion signal even if its result promise is lost", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -11423,7 +11459,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("preserves an asynchronously finalized coding payload at the completion boundary", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -11464,7 +11500,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps a latched executor completion authoritative when Stop races before fallback settlement", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -11506,7 +11542,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("returns an unknown Stop receipt while a latched completion waits for an active child", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const external = deferredExternalAgentFixture("stop-latched-child");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -11576,7 +11612,7 @@ describe("createKodaXRuntime", () => {
   ] as const)(
     "does not let %s bypass Actor finalization for a latched completion",
     async (_label, trigger) => {
-      const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+      const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
       const key = `terminal-gate-${trigger}`;
       const external = deferredExternalAgentFixture(key);
       const runtime = await createKodaXRuntime({
@@ -11663,7 +11699,7 @@ describe("createKodaXRuntime", () => {
   it.each(["abort-signal", "runs.abort"] as const)(
     "preserves a pre-existing Actor when a completed managed Run is stopped via %s",
     async (cancelVia) => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const external = deferredExternalAgentFixture("bounded-cancel-finalization");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -11742,7 +11778,7 @@ describe("createKodaXRuntime", () => {
   );
 
   it("cooperatively interrupts Actor descendants admitted by the managed Run", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const external = deferredExternalAgentFixture("managed-run-owned-abort");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -11821,7 +11857,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("bounds Actor finalization after normal root completion with a stuck child", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const external = deferredExternalAgentFixture("bounded-normal-finalization");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -11877,7 +11913,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("preserves executor payload and queue serialization when external abort races completion", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -11952,7 +11988,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps Session mutations fenced until a latched executor settlement finishes", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -12006,7 +12042,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it.each([false, true])("persists a latched completion before Runtime close releases owner liveness with another checkpoint wait=%s", async (withCheckpointWait) => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const external = deferredExternalAgentFixture('mixed-close-child');
     const options = {
       homeDir: tempRoot,
@@ -12084,7 +12120,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("does not revive an unknown stopped Run from late progress callbacks", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -12137,7 +12173,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("settles a coding Run from the executor error signal even if its result promise is lost", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -12179,7 +12215,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps the first executor terminal signal when callbacks race", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -12221,7 +12257,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("rejects interrupt input after a coding run reports its terminal error", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -12274,7 +12310,7 @@ describe("createKodaXRuntime", () => {
   ] as const)(
     "rejects interrupt input immediately after an external abort closes a %s run",
     async (_label, mode) => {
-      const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+      const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
       const runtime = await createKodaXRuntime({
         homeDir: tempRoot,
         sessionsDir: path.join(tempRoot, "sessions"),
@@ -12334,7 +12370,7 @@ describe("createKodaXRuntime", () => {
   ] as const)(
     "releases the external abort listener when Runtime aborts a %s run",
     async (_label, mode) => {
-      const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+      const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
       const runtime = await createKodaXRuntime({
         homeDir: tempRoot,
         sessionsDir: path.join(tempRoot, "sessions"),
@@ -12380,7 +12416,7 @@ describe("createKodaXRuntime", () => {
   );
 
   it("queues active-run interrupts and reports their FIFO delivery as one batch", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -12583,7 +12619,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("labels rejected submitted input without mutating its run or queue", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -12652,7 +12688,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("marks only the exact interrupt batch consumed at a safe boundary", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -12733,7 +12769,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("rejects interrupt delivery when the active run has no safe Actor boundary", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -12773,7 +12809,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("does not leave queued input behind when interrupt cloning fails", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -12813,7 +12849,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("terminalizes and removes an interrupt that the active run never consumes", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -12868,7 +12904,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("fails closed when a run-scoped credential is bound to another provider", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -12895,7 +12931,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps a v1 exact credential active until a nonblocking coding Run settles", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -12937,7 +12973,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("never persists a provider error that may echo a run-scoped credential", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const secret = "F269_PROVIDER_ERROR_SECRET";
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -13000,7 +13036,7 @@ describe("createKodaXRuntime", () => {
     const {
       captureRuntimeSessionDiagnostics,
       createKodaXRuntime,
-    } = await import("@kodax-ai/kodax/runtime");
+    } = await import("../tests/runtime-fixture.js");
     const secret = "F295_FAILURE_DETAIL_SECRET";
     const prompt = "private prompt that must not escape";
     const runtime = await createKodaXRuntime({
@@ -13095,7 +13131,7 @@ describe("createKodaXRuntime", () => {
 
   it.each(['skill_not_found', 'skill_not_registered', 'skill_registry_unavailable', 'skill_policy_restore_failed'] as const)(
     'preserves serialized local Skill failure facts (%s) through status, diagnostics and restart', async code => {
-      const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+      const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
       const options = { homeDir: tempRoot, sessionsDir: path.join(tempRoot, 'skill-failure-sessions'), defaultProvider: 'mock-provider' };
       const runtime = await createKodaXRuntime(options);
       const session = await runtime.sessions.create({ title: 'Local Skill failure' });
@@ -13127,7 +13163,7 @@ describe("createKodaXRuntime", () => {
 
   it.each(["KODAX_LOCAL_EXECUTION_ERROR", "ERR_INVALID_ARG_TYPE"])(
     "retains local execution failures (%s) across result, events, status and restart", async (code) => {
-    const { createKodaXRuntime, captureRuntimeSessionDiagnostics } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime, captureRuntimeSessionDiagnostics } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "local-failure-audit"), defaultProvider: "mock-provider" });
     try {
@@ -13166,7 +13202,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("distinguishes the supported provider and Runtime failure taxonomy", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "failure-taxonomy-sessions"),
@@ -13372,7 +13408,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it('keeps a capacity-blocked generation alive and wakes it on an authorized model change', async () => {
-    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, 'capacity-wait-sessions'), defaultProvider: 'mock-provider' });
     const session = await runtime.sessions.create({ title: 'Capacity recovery' });
@@ -13399,7 +13435,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it('wakes both child capacity waits without replacing the root waiter or its phase', async () => {
-    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, 'child-capacity-sessions'), defaultProvider: 'mock-provider' });
     const session = await runtime.sessions.create({ title: 'Independent child recovery' });
@@ -13430,7 +13466,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it('does not lose a model reset that happens before the capacity waiter is installed', async () => {
-    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, 'capacity-reset-sessions'), defaultProvider: 'mock-provider' });
     const session = await runtime.sessions.create({ title: 'Reset model during recovery' });
@@ -13451,7 +13487,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it('wakes capacity recovery when a corrective interrupt input is accepted', async () => {
-    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, 'capacity-input-sessions'), defaultProvider: 'mock-provider' });
     const session = await runtime.sessions.create({ title: 'Correct recovery' });
@@ -13469,7 +13505,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it('retains the capacity recovery evidence across a dead-owner restart', async () => {
-    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runDir = path.join(tempRoot, '.kodax', 'runtime', 'runs', 'capacity-crashed');
     await fs.mkdir(runDir, { recursive: true });
     const contextRecovery = { waitingSince: '2026-10-21T00:00:00.000Z', requiredTokens: 40_000, availableTokens: 32_768 };
@@ -13486,7 +13522,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it.each(['resume', 'stop', 'session-stop', 'earlier-session-stop', 'session-stop-repair', 'session-stop-unverified-owner', 'leases', 'concurrent', 'changed-history', 'queue-save-failure', 'claim-save-failure'] as const)('handles %s at a dead owner generation checkpoint without replaying admission', async action => {
-    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, 'generation-resume-sessions');
     const { FileSessionStorage } = await import('@kodax-ai/repl');
     const messages: KodaXMessage[] = [{ role: 'user', content: 'Keep exports unchanged.', turnId: 'original-turn' },
@@ -13659,7 +13695,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it('retains pending foreign inputs across repeated Host restarts until the original principal rebinds', async () => {
-    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const { withProductExecution } = await import('./product-execution-authorization.js');
     const homeDir = path.join(tempRoot, 'pending-restarts');
     const first = await createKodaXRuntime({ homeDir, defaultProvider: 'mock-provider' });
@@ -13690,7 +13726,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it('rejects stale Host queue writes instead of losing inputs accepted by another Host', async () => {
-    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const homeDir = path.join(tempRoot, 'pending-cas');
     const seed = await createKodaXRuntime({ homeDir, defaultProvider: 'mock-provider' });
     const session = await seed.sessions.create({ title: 'Queue CAS' });
@@ -13712,7 +13748,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it('preserves a verified generation checkpoint when the Host closes normally', async () => {
-    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir: path.join(tempRoot, 'generation-close'), defaultProvider: 'mock-provider' });
     const session = await runtime.sessions.create({ title: 'Close checkpoint' });
     codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => fakeRunningSession(options, (async () => {
@@ -13743,7 +13779,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it('cancels a capacity wait without resuming generation or leaving a live waiter', async () => {
-    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, 'capacity-stop-sessions'), defaultProvider: 'mock-provider' });
     const session = await runtime.sessions.create({ title: 'Stop capacity recovery' });
@@ -13764,7 +13800,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("surfaces local capacity errors as context_capacity without credential masking (FEATURE_296)", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "capacity-credential-sessions"),
@@ -13847,7 +13883,7 @@ describe("createKodaXRuntime", () => {
     { inputTokensKind: 'lower_bound' as const, inputTokens: 140_000 },
     { inputTokensKind: 'unknown' as const },
   ])("preserves $inputTokensKind capacity rejection facts across daemon await, status, and events", async (facts) => {
-    const { createKodaXRuntime, connectKodaXRuntime } = await import('./sdk-runtime.js');
+    const { createKodaXRuntime, connectKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const { KodaXContextOverflowError } = await import('@kodax-ai/llm');
     const { startRuntimeDaemonHost } = await import('./runtime-daemon/host.js');
     const { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } = await import('./runtime-daemon/state.js');
@@ -13887,7 +13923,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("reports effective config provenance without exposing credential values", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const priorEffort = process.env.KODAX_EFFORT;
     const priorOpenAiKey = process.env.OPENAI_API_KEY;
     const credentialSecret = "EFFECTIVE_CONFIG_CREDENTIAL_SECRET";
@@ -13951,7 +13987,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("resolves each authorized Run Provider lazily and closes inherited scope at settlement", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const acquisitions: Array<{ provider: string; purpose: string }> = [];
     let releaseLateRequest: (() => void) | undefined;
     let lateRequest: Promise<unknown> | undefined;
@@ -14030,7 +14066,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("omits invalid context token diagnostics from Runtime failure details", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "invalid-capacity-diagnostics-sessions"),
@@ -14070,7 +14106,7 @@ describe("createKodaXRuntime", () => {
     const {
       captureRuntimeSessionDiagnostics,
       createKodaXRuntime,
-    } = await import("@kodax-ai/kodax/runtime");
+    } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "coding-cancellation-sessions"),
@@ -14142,7 +14178,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it.each(["upstream signal", "runtime Stop"])("preserves cancellation through Runtime and Runner via %s", async (via) => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const controller = new AbortController();
     const observedError = vi.fn();
     const enteredGeneration = vi.fn();
@@ -14187,7 +14223,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("preserves trusted managed Stop causality before run-scoped credential redaction", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const secret = "F280_ABORT_CREDENTIAL_SECRET";
     const originalToolHook = vi.fn(async () => true);
     let managedOptions: KodaXOptions | undefined;
@@ -14280,7 +14316,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps an independent managed failure after Stop on the credential-safe failed path", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const secret = "F280_INDEPENDENT_FAILURE_SECRET";
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -14334,7 +14370,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps an unrequested managed AbortError on the failed path", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "unrequested-abort-error-sessions"),
@@ -14365,7 +14401,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps queued runs on the session settings snapshot captured at queue time", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -14472,7 +14508,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("allows different sessions to run concurrently without cross-queueing", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -14556,7 +14592,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("persists terminal run status across runtime recreation", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "sessions");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -14632,7 +14668,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("caps in-memory terminal run records while keeping persisted run lookup available", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -14694,7 +14730,7 @@ describe("createKodaXRuntime", () => {
   }, 150_000);
 
   it("rejects runs for missing sessions before calling the coding layer", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -14713,7 +14749,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("reports the executor's late success instead of fabricating Stop success", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -14784,7 +14820,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("does not fabricate a terminal result when an active executor ignores Stop", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -14823,7 +14859,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("returns an idempotent no-op Stop receipt for a completed run", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -14862,7 +14898,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("atomically cancels a queued run and returns an idempotent Stop receipt", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -14926,7 +14962,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("returns a committed queued Stop when its derived index update fails", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       defaultProvider: "mock-provider",
@@ -14990,7 +15026,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("reports an unconfirmed Stop as unknown until the executor settles", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -15036,7 +15072,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("rejects Session archive and deletion while the same Runtime has an active root Run", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -15070,7 +15106,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("serializes Run admission with destructive Session operations", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -15119,7 +15155,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("drains in-flight Run admission before closing the Actor registry", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -15177,7 +15213,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("uses the Actor owner fence for SA root Runs across Runtimes", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "sa-owner-sessions");
     const owner = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -15219,7 +15255,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("resolves running and queued run results when the runtime closes", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -15259,7 +15295,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("routes legacy media follow-up helpers to the active SDK Actor session", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -15305,7 +15341,7 @@ describe("createKodaXRuntime", () => {
   ] as const)(
     "terminalizes a %s run when SDK launch throws synchronously",
     async (_label, mode) => {
-      const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+      const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
       const runtime = await createKodaXRuntime({
         homeDir: tempRoot,
         sessionsDir: tempRoot,
@@ -15352,7 +15388,7 @@ describe("createKodaXRuntime", () => {
 
   it("does not terminalize a synchronous launch failure over a queued Actor settlement", async () => {
     vi.useFakeTimers();
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const external = deferredExternalAgentFixture("launch-race");
     const originalBeginSave = FileSessionStorage.prototype.beginActorSnapshotSave;
     const unavailableSettlement = new Promise<void>(() => undefined);
@@ -15428,7 +15464,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("rejects pending permissions when aborting a run", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -15487,7 +15523,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("expires runtime permission requests using expiresAt", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -15519,7 +15555,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps zero as the explicit disabled permission deadline", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -15541,7 +15577,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("rejects unsafe per-request permission deadlines before scheduling", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -15574,7 +15610,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("atomically rejects a late permission response before its timer runs", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -15623,7 +15659,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it.each(['client', 'hook', 'hook_error'] as const)("returns unanswered when a late %s answer beats timer dispatch", async source => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -15701,7 +15737,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it('ignores a superseded prompt failure while a new question remains pending', async () => {
-    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot, defaultProvider: 'mock-provider' });
     const session = await runtime.sessions.create({ title: 'Late prompt failure' });
     const prompt = { question: 'Continue?', options: [{ label: 'Yes', value: 'yes' }] };
@@ -15741,7 +15777,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("runs managed_task mode through runManagedTask and settles on abort", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -15805,7 +15841,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("advertises and negotiates the complete Skill Learning Loop contract inline", async () => {
-    const { createKodaXRuntime } = await import("./sdk-runtime.js");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       mode: "embedded",
       homeDir: tempRoot,
@@ -15824,7 +15860,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("fails closed when a connected Runtime lacks the complete Skill Learning Loop", async () => {
-    const { connectKodaXRuntime } = await import("./sdk-runtime.js");
+    const { connectKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const transport: RuntimeDaemonClientTransport = {
       async request(method) {
         if (method !== "initialize") return null;
@@ -15856,7 +15892,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps managed prompt-cache affinity stable after Runtime reconnect without crossing Sessions", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "affinity-sessions");
     const capturedOptions: KodaXOptions[] = [];
     codingMock.runManagedTask.mockImplementation(
@@ -15932,7 +15968,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("emits managed_task context budget and cache diagnostics", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -16055,7 +16091,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("reports failed run status when the coding layer rejects", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -16097,7 +16133,7 @@ describe("createKodaXRuntime", () => {
       const {
         captureRuntimeSessionDiagnostics,
         createKodaXRuntime,
-      } = await import("@kodax-ai/kodax/runtime");
+      } = await import("../tests/runtime-fixture.js");
       const secret = `RESOLVED_FAILURE_SECRET_${mode}`;
       const runtime = await createKodaXRuntime({
         homeDir: tempRoot,
@@ -16209,7 +16245,7 @@ describe("createKodaXRuntime", () => {
   );
 
   it("preserves a managed-task blocked reason as a structured terminal fact", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -16282,7 +16318,7 @@ describe("createKodaXRuntime", () => {
   }, 60_000);
 
   it("does not emit a blocked terminal for a successful managed task with a stale signal", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -16321,7 +16357,7 @@ describe("createKodaXRuntime", () => {
   }, 60_000);
 
   it("applies permissionMode policy and skips bridge meta-tool prompts", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -16482,7 +16518,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("provides the normal mediated shell for Runtime Skill dynamic reads", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot, defaultProvider: "mock-provider" });
     const session = await runtime.sessions.create({ projectPath: tempRoot });
     await runtime.sessions.updateSettings(session.id, { permissionMode: "full-access", agentMode: "sa" });
@@ -16502,7 +16538,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("loads a Skill in Plan mode without executing its inline dynamic command", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const projectRoot = path.join(tempRoot, "plan-skill-project");
     const skillRoot = path.join(projectRoot, ".kodax", "skills", "plan-safe-skill");
     await fs.mkdir(skillRoot, { recursive: true });
@@ -16620,7 +16656,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("rechecks live permission mode before a mediated Skill dynamic command", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const projectRoot = path.join(tempRoot, "live-mode-skill-project");
     const skillRoot = path.join(projectRoot, ".kodax", "skills", "live-mode-skill");
     await fs.mkdir(skillRoot, { recursive: true });
@@ -16767,7 +16803,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps shared Runtime preflight readable while Session persistence is active", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "sessions");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -16803,7 +16839,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps broad reads sandbox-first outside Auto mode and preserves caller fallback", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const projectRoot = path.join(tempRoot, "accept-edits-project");
     await fs.mkdir(projectRoot, { recursive: true });
     const runtime = await createKodaXRuntime({
@@ -16880,7 +16916,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("carries exact Auto approvals into external text transactions without granting sibling targets", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const externalRoot = await fs.mkdtemp(path.join(process.cwd(), ".runtime-text-test-"));
     const projectRoot = path.join(tempRoot, "text-workspace");
     await fs.mkdir(projectRoot);
@@ -16948,7 +16984,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("defers Auto LLM Bash review until a proven host boundary", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const projectRoot = path.join(tempRoot, "sandbox-first-auto");
     const projectExecPolicy = path.join(projectRoot, ".kodax", "exec-policy.jsonc");
     await fs.mkdir(path.dirname(projectExecPolicy), { recursive: true });
@@ -17108,7 +17144,7 @@ describe("createKodaXRuntime", () => {
   }, 60_000);
 
   it.each(['runtime', 'product-ipc'] as const)("resolves live Auto reviewer settings again at a Bash host boundary (%s)", async (surface) => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const projectRoot = path.join(tempRoot, "live-auto-reviewer-settings");
     await fs.mkdir(projectRoot, { recursive: true });
     await fs.mkdir(path.join(tempRoot, '.kodax'), { recursive: true });
@@ -17233,7 +17269,7 @@ describe("createKodaXRuntime", () => {
   }, 60_000);
 
   it("reuses and bounds Auto reviewer cache entries within one Session", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const projectRoot = path.join(tempRoot, "auto-review-cache");
     await fs.mkdir(projectRoot, { recursive: true });
     const breakerTimestamp = Date.now();
@@ -17319,7 +17355,7 @@ describe("createKodaXRuntime", () => {
   }, 60_000);
 
   it("creates Edits permission work only after the sandbox host boundary", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const projectRoot = path.join(tempRoot, "sandbox-first-edits");
     await fs.mkdir(projectRoot, { recursive: true });
     let runOptions: KodaXOptions | undefined;
@@ -17376,7 +17412,7 @@ describe("createKodaXRuntime", () => {
   }, 60_000);
 
   it("runs Full Access without a sandbox or Auto reviewer while enforcing Exec Policy", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const configHome = path.join(tempRoot, ".kodax");
     vi.stubEnv("KODAX_HOME", configHome);
     await fs.mkdir(configHome, { recursive: true });
@@ -17518,7 +17554,7 @@ describe("createKodaXRuntime", () => {
 
   it("re-routes Bash through live permission mode changes within an active Run", async () => {
     vi.stubEnv("KODAX_HOME", path.join(tempRoot, ".kodax"));
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const projectRoot = path.join(tempRoot, "live-permission-mode");
     await fs.mkdir(projectRoot, { recursive: true });
     const callerPrepare = vi.fn<KodaXShellSandbox["prepare"]>(async () => undefined);
@@ -17631,7 +17667,7 @@ describe("createKodaXRuntime", () => {
   }, 60_000);
 
   it("resets Auto denial history at the authoritative turn boundary", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const projectRoot = path.join(tempRoot, "turn-scoped-auto-denials");
     await fs.mkdir(projectRoot, { recursive: true });
     const breakerTimestamp = Date.now();
@@ -17736,7 +17772,7 @@ describe("createKodaXRuntime", () => {
   }, 60_000);
 
   it("starts a Run when the workspace identity is missing", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const missingWorkspace = path.join(tempRoot, `missing-workspace-${randomUUID()}`);
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -17780,7 +17816,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("registers a linked worktree created from a submodule Session root", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "submodule-worktree-sessions");
     const parentRoot = path.join(tempRoot, "submodule-worktree-parent");
     const childSource = path.join(tempRoot, "submodule-worktree-source");
@@ -17850,7 +17886,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("restores registered roots and migrates only Session-proven legacy worktrees", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "dynamic-worktree-sessions");
     const projectRoot = path.join(tempRoot, "dynamic-worktree-project");
     const linkedWorktree = path.join(tempRoot, ".kodax-worktree-dynamic-linked");
@@ -18189,7 +18225,7 @@ describe("createKodaXRuntime", () => {
   it.runIf(process.platform === "win32")(
     "routes external mutations to the caller boundary without widening the Runtime sandbox",
     async () => {
-      const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+      const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
       const projectRoot = path.join(tempRoot, "auto-filesystem-policy-project");
       const outsideRoot = path.join(
         path.parse(projectRoot).root,
@@ -18349,7 +18385,7 @@ describe("createKodaXRuntime", () => {
   );
 
   it("rejects a caller-supplied auto-mode guardrail when Runtime owns explicit auto mode", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -18383,7 +18419,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps an embedder approval hook as the single authority with no tracked request", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -18454,7 +18490,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("does not let registry answers resolve a pending embedder hook", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -18527,7 +18563,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("emits bounded valid permission previews with an effective cwd for large writes", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const projectRoot = path.join(tempRoot, "large-write-project");
     await fs.mkdir(projectRoot, { recursive: true });
     const runtime = await createKodaXRuntime({
@@ -18600,7 +18636,7 @@ describe("createKodaXRuntime", () => {
   }, 60_000);
 
   it("does not traverse or serialize write bodies even when they are small", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -18653,7 +18689,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("falls back to valid bounded JSON when a tool input descriptor trap throws", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -18706,7 +18742,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("normalizes caller-supplied permission previews into redacted JSON", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -18740,7 +18776,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("derives the observable preview from concrete tool input instead of trusting caller text", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -18771,7 +18807,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("lets clients select only Runtime-issued concrete grant suggestions", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, "sessions"),
@@ -18870,7 +18906,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("narrows legacy allow_always scope responses to a Runtime-issued concrete matcher", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -18945,7 +18981,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("never offers a persistent grant for dangerous or dynamically expanded shell commands", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -18987,7 +19023,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("does not honor a previously persisted dynamic command grant", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtimeDir = path.join(tempRoot, ".kodax", "runtime");
     const command =
       process.platform === "win32"
@@ -19044,7 +19080,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("offers persistent grants only for Runtime-normalized command or path scopes", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -19072,7 +19108,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("redacts secrets from Runtime-issued grant labels without weakening the exact matcher", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -19138,7 +19174,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("coalesces concurrent identical concrete calls without widening their grant candidate", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -19186,7 +19222,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("loads, lists, and revokes legacy coarse grants without letting them authorize calls", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtimeDir = path.join(tempRoot, ".kodax", "runtime");
     await fs.mkdir(runtimeDir, { recursive: true });
     await fs.writeFile(
@@ -19258,7 +19294,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps session grants in memory and exposes them through revisioned list/revoke", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -19305,7 +19341,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("drops session grants on Session deletion while keeping the grant CAS revision durable", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "sessions");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -19364,7 +19400,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("advances the durable grant revision when Runtime close expires session grants", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "sessions");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -19408,7 +19444,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it.each([undefined, 0])("keeps AskUser unbounded (timeout=%s) and accepts exactly one answer", async userInputTimeoutMs => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -19485,7 +19521,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps a Run waiting until every concurrent AskUser request settles", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -19543,7 +19579,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it.each(['timeout', 'skipped', 'non_interactive'] as const)("settles ordinary questions as unanswered on %s without selecting defaults", async reason => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -19656,7 +19692,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("keeps pending permission requests when a response is bound to another run", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -19708,7 +19744,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("brokers permission requests even when the host did not provide an approval hook", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -19764,7 +19800,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("aborts the targeted running session only", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -19838,7 +19874,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("persists and publishes run setting changes to other observers", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
       sessionsDir: tempRoot,
@@ -19880,7 +19916,7 @@ describe("createKodaXRuntime", () => {
   });
 
   it("wraps the existing workflow run manager without creating a second workflow store", async () => {
-    const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const { getDefaultWorkflowRunManager } = await import("@kodax-ai/agent");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,

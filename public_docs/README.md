@@ -3,8 +3,8 @@
 Documentation for KodaX users, product-client integrators and trusted Host developers.
 
 This development tree implements the unified Product Client contract under
-FEATURE_298/299/301. The working-tree package version is `0.7.97-alpha.10`;
-`v0.7.96` remains the last stable release. `v0.7.97-alpha.10` resumes checkpointed Runs after Host restart with fresh authority, extends live context-capacity recovery, adds Kimi K3.1 provider routes and answer-aware AskUser skip policies; `v0.7.97-alpha.9` isolated unreadable Session transcript bodies from Run listing/daemon inspection via canonical-metadata admission checks; `v0.7.97-alpha.8` shipped the
+FEATURE_298/299/301. The package version is `0.7.97-alpha.11`;
+`v0.7.96` remains the last stable release. `v0.7.97-alpha.11` adds explicit Agent/Coding/Script work modes and refreshes Ark, MiMo and MiniMax catalogs; `v0.7.97-alpha.10` resumes checkpointed Runs after Host restart with fresh authority, extends live context-capacity recovery, adds Kimi K3.1 provider routes and answer-aware AskUser skip policies; `v0.7.97-alpha.9` isolated unreadable Session transcript bodies from Run listing/daemon inspection via canonical-metadata admission checks; `v0.7.97-alpha.8` shipped the
 Artifact SDK inside the single main package (`/artifacts*` subpaths, Node
 floor 20.16, no separate artifacts npm package); `v0.7.97-alpha.7` resolved
 shared-Session Host ownership across daemon profiles with retryable
@@ -20,6 +20,13 @@ Independent library and trusted Host APIs remain separate integration layers.
 SDK and CLI startup share `onStartupProgress`, including actual Host
 `initializing/phase` observations; these do not establish readiness or add probes.
 ## Getting Started
+
+Post-alpha.10 source additions include Session work modes (Agent, default
+Coding and experimental Script), consistent question outcomes, saved original
+tool reads, structured task reports and estimated-token streaming progress.
+Read the [current SDK alignment](sdk/embedder-guide.md#post-alpha10-sdk-alignment)
+for compatibility and standalone-library boundaries. These changes are
+unreleased; historical first-read latency remains tracked in Issue 371.
 
 - [Overview](./getting-started/overview.md) — What KodaX is and how it compares
 - [Installation](./getting-started/installation.md) — npm, single binary, build from source

@@ -14,7 +14,8 @@ export function renderMissingProviderCredentialGuide(
   const exampleName = names[0] ?? 'OPENAI_API_KEY';
   return [
     'KodaX did not detect a supported provider API key environment variable.',
-    'KodaX does not collect or store API key values. Set one of these variables:',
+    'Run `kodax setup` or `kodax auth set-key <provider>` to enter a hidden API key and save it in permission-protected plaintext auth.json.',
+    'Environment variables remain available. Set one of these variables:',
     ...names.map((name) => `  - ${name}`),
     '',
     names.length > 1

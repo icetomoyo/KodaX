@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { KodaXBaseProvider, registerModelProvider, type KodaXProviderConfig, type KodaXStreamResult } from '@kodax-ai/llm';
-import { createKodaXRuntime } from '../src/sdk-runtime.js';
+import { createKodaXRuntime } from "./runtime-fixture.js";
 
 it('discovers a deferred builtin and executes its real handler through the managed bridge', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-deferred-e2e-'));

@@ -4,7 +4,7 @@ import os from 'node:os';
 import { expect, it, vi } from 'vitest';
 import { registerTool } from '@kodax-ai/coding';
 import { clearRuntimeModelProviders, KodaXBaseProvider, registerModelProvider, type KodaXProviderConfig, type KodaXStreamResult } from '@kodax-ai/llm';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from '../tests/runtime-fixture.js';
 
 it.each((['ama', 'sa'] as const).flatMap(agentMode => [false, true].map(bridge => ({ agentMode, bridge })) ))(
   'keeps a registered serial predicate through real dispatch: $agentMode bridge=$bridge', async ({ agentMode, bridge }) => {

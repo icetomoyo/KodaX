@@ -13,7 +13,7 @@ import type {
 import { FileSessionStorage } from '@kodax-ai/repl';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { toKodaXProductClient } from './client-runtime-adapter.js';
-import { createKodaXRuntime, type KodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime, type KodaXRuntime } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 import { runOneShotClientTask } from './one-shot-task.js';

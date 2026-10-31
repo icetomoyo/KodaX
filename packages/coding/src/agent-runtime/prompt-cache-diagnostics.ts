@@ -10,11 +10,14 @@ import type {
   KodaXReasoningRequest,
   KodaXTokenUsage,
   KodaXToolDefinition,
+  KodaXProviderRequestProjection,
 } from '@kodax-ai/llm';
 import {
   KodaXAnthropicCompatProvider,
   KodaXAcpProvider,
   KodaXOpenAICompatProvider,
+  KodaXOpenAIResponsesProvider,
+  projectResponsesMessages,
   KODAX_INTERRUPTED_TOOL_RESULT_MARKER,
   resolvePromptCacheDisabled,
   getPreparedImageDiagnostic,
@@ -194,7 +197,13 @@ function projectOpenAIMessages(
   const supportsImages = multimodal === 'image-input' || multimodal === 'full';
   for (const message of messages) {
     if (typeof message.content === 'string') {
-      projected.push({ role: message.role, content: message.content });
+      projected.push({
+        role: message.role,
+        content: message.content,
+        ...(message.role === 'assistant' && provider.getEffectiveReplayReasoningContent(model)
+          ? { reasoning_content: '' }
+          : {}),
+      });
       continue;
     }
     const blocks = message.content.filter((block) => block.type !== 'cache-boundary');
@@ -347,8 +356,7 @@ function projectAnthropicMessages(
     // then append calls. User messages emit results before ordinary content.
     for (const block of role === 'assistant' ? blocks : []) {
       if (block.type === 'thinking') {
-        const trusted = !strictSignature
-          || (typeof block.signature === 'string' && block.signature.length > 0);
+        const trusted = provider.canReplayReasoning(block, model);
         if (trusted) {
           content.push({
             type: 'thinking',
@@ -358,7 +366,7 @@ function projectAnthropicMessages(
         } else if (block.thinking) {
           content.push({ type: 'text', text: `<prior_reasoning>\n${block.thinking}\n</prior_reasoning>` });
         }
-      } else if (block.type === 'redacted_thinking' && !strictSignature) {
+      } else if (block.type === 'redacted_thinking' && provider.canReplayReasoning(block, model)) {
         content.push({ type: 'redacted_thinking', data: block.data });
       } else if (block.type === 'text') {
         content.push({ type: 'text', text: block.text });
@@ -459,7 +467,18 @@ export function hashProviderVisibleMessages(
   provider?: KodaXBaseProvider,
   model?: string,
 ): string {
-  const projected = provider instanceof KodaXOpenAICompatProvider
+  const projected = provider instanceof KodaXOpenAIResponsesProvider
+    ? projectResponsesMessages(messages, provider.getGenerationSource(model), block => {
+      if (provider.getCapabilityProfile().multimodalSupport === 'none') {
+        return [{ type: 'input_text', text: '[Image content omitted: this provider does not support inline images in tool results.]' }];
+      }
+      const image = getPreparedImageDiagnostic(block);
+      if (image && 'placeholder' in image) return [{ type: 'input_text', text: image.placeholder }];
+      return [...(image?.notice ? [{ type: 'input_text' as const, text: image.notice }] : []), {
+        type: 'input_image', detail: 'auto', image_url: `data:${image?.mediaType ?? resolveDiagnosticImageMediaType(block.path, block.mediaType)};sha256,${image?.dataHash ?? hashImageFile(block.path)}`,
+      }];
+    })
+    : provider instanceof KodaXOpenAICompatProvider
     ? projectOpenAIMessages(messages, provider, model)
     : provider instanceof KodaXAnthropicCompatProvider
       ? projectAnthropicMessages(messages, provider, model)
@@ -603,6 +622,10 @@ export function createCompactionPromptCacheObserver(
       });
       if (event) pending.set(request, event);
     },
+    onPrepared(request, projection) {
+      const event = emitNativePromptCacheDiagnosticRequest(input.events, pending.get(request), projection);
+      if (event) pending.set(request, event);
+    },
     onResponse(request: CompactionProviderRequest, usage: KodaXTokenUsage | undefined) {
       emitPromptCacheDiagnosticResponse(input.events, pending.get(request), usage);
       pending.delete(request);
@@ -645,6 +668,7 @@ export function emitPromptCacheDiagnosticRequest(
       ? hashPromptCacheValue(input.promptCacheKey)
       : undefined;
     event = {
+      projection: 'estimated',
       phase: 'request',
       transport: input.transport ?? 'stream',
       requestId: randomUUID(),
@@ -715,6 +739,7 @@ export function emitPromptCacheDiagnosticResponse(
     const event: KodaXPromptCacheDiagnosticEvent = {
       ...request,
       phase: 'response',
+      ...(usage?.cachedWriteTokensByTtl ? { cachedWriteTokensByTtl: { ...usage.cachedWriteTokensByTtl } } : {}),
       completedAt: new Date().toISOString(),
       ...(usage?.inputTokens !== undefined ? { inputTokens: usage.inputTokens } : {}),
       ...(usage?.outputTokens !== undefined ? { outputTokens: usage.outputTokens } : {}),
@@ -732,4 +757,16 @@ export function emitPromptCacheDiagnosticResponse(
       error: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+/** Native input facts supplement the earlier estimate; neither proves dispatch or cache reuse. */
+export function emitNativePromptCacheDiagnosticRequest(events: KodaXEvents | undefined, request: KodaXPromptCacheDiagnosticEvent | undefined,
+  projection: KodaXProviderRequestProjection): KodaXPromptCacheDiagnosticEvent | undefined {
+  if (!request || !events?.onPromptCacheDiagnostics) return request;
+  const event: KodaXPromptCacheDiagnosticEvent = { ...request, projection: 'native', nativeProjectionStage: projection.stage,
+    nativeRequestHash: projection.payloadHash, nativeSystemHash: projection.systemHash, nativeToolsHash: projection.toolsHash,
+    nativeMessagesHash: projection.messagesHash, nativeCachePolicyHash: projection.cachePolicyHash };
+  try { events.onPromptCacheDiagnostics(event); }
+  catch (error) { emitResilienceDebug('[context-diagnostics:cache-callback-error]', { phase: 'request', error: error instanceof Error ? error.message : String(error) }); }
+  return event;
 }

@@ -700,6 +700,11 @@ export interface ClientPlaneDialogSurface {
   ) => Promise<ConfirmResult>;
 }
 
+function skippedQuestionResponse(answer: unknown): Extract<ClientInteractionResponse, { kind: 'skip' }> {
+  return isAskUserUnanswered(answer) && answer.reason === 'non_interactive'
+    ? { kind: 'skip', reason: 'non_interactive' } : { kind: 'skip' };
+}
+
 /**
  * Answer one pending Host interaction through the dialog surface and forward
  * the typed response; first valid answer wins Host-side, so a late dialog
@@ -718,7 +723,7 @@ export async function answerClientPlaneInteraction(
       const answer = await surface.question(interaction.options, signal);
       if (isAskUserUnanswered(answer) && answer.reason === 'timeout') return false;
       response = isAskUserUnanswered(answer) || answer === CANCELLED_TOOL_RESULT_MESSAGE
-        ? { kind: 'skip' }
+        ? skippedQuestionResponse(answer)
         : { kind: 'question', answer };
       break;
     }
@@ -726,14 +731,16 @@ export async function answerClientPlaneInteraction(
       const answers = await surface.questionMulti(interaction.options, signal);
       if (isAskUserUnanswered(answers) && answers.reason === 'timeout') return false;
       response = isAskUserUnanswered(answers) || answers === undefined
-        ? { kind: 'skip' }
+        ? skippedQuestionResponse(answers)
         : { kind: 'question_multi', answers };
       break;
     }
     case 'question_input': {
       const text = await surface.questionInput(interaction.options, signal);
       if (isAskUserUnanswered(text) && text.reason === 'timeout') return false;
-      response = isAskUserUnanswered(text) || text === undefined ? { kind: 'skip' } : { kind: 'question_input', text };
+      response = isAskUserUnanswered(text) || text === undefined
+        ? skippedQuestionResponse(text)
+        : { kind: 'question_input', text };
       break;
     }
     case 'permission': {

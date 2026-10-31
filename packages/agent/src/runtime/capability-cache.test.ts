@@ -4,10 +4,12 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { CapabilityCache } from '@kodax-ai/llm';
+import { createCustomProvider } from '@kodax-ai/llm';
 import { setAgentConfigHome } from './agent-home.js';
 import {
   clearCapabilityCache,
   getCachedRejectedEfforts,
+  getProviderReasoningCacheOptions,
   getCapabilityCacheFile,
   loadCapabilityCache,
   recordRejectedEffort,
@@ -36,6 +38,20 @@ describe('agent capability cache store', () => {
 
   it('resolves under the active agent config home', () => {
     expect(getCapabilityCacheFile()).toBe(cacheFile);
+  });
+
+  it('persists scoped Responses evidence without inheriting legacy or another identity and clears all model scopes', () => {
+    const provider = createCustomProvider({ name: 'p', protocol: 'openai', api: 'responses', model: 'm', baseUrl: 'https://cache.test/v1', apiKeyEnv: 'UNUSED' });
+    recordRejectedEffort('p', 'm', '*', 'observed', 'old', tempHome);
+    recordRejectedEffort('p', 'm', 'high', 'observed', 'new', tempHome, 'identity-a');
+    resetCapabilityCacheMemoForTesting();
+    const options = getProviderReasoningCacheOptions(provider, 'm', tempHome);
+    expect(options.rejectedReasoningEfforts).toEqual([]);
+    expect(options.resolveRejectedReasoningEfforts?.('identity-a')).toEqual(['high']);
+    expect(options.resolveRejectedReasoningEfforts?.('identity-b')).toEqual([]);
+    clearCapabilityCache('p', 'm', tempHome);
+    expect(options.resolveRejectedReasoningEfforts?.('identity-a')).toEqual([]);
+    expect(getCachedRejectedEfforts('p', 'm', tempHome)).toEqual([]);
   });
 
   it('resets to an empty cache when the on-disk JSON is corrupt', () => {

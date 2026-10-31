@@ -1,0 +1,176 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
+import { afterEach, expect, it } from 'vitest';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { createFileProviderCredentialStore } from './auth-file.js';
+
+const folders: string[] = [];
+afterEach(async () => { for (const folder of folders.splice(0)) await rm(folder, { recursive: true, force: true }); });
+async function fixture() { const folder = await mkdtemp(path.join(tmpdir(), 'kodax-auth-file-')); folders.push(folder); return path.join(folder, 'auth.json'); }
+const binding = { profile: 'default', provider: 'custom', connectionFingerprint: 'a'.repeat(64) };
+it('commits a migration copy and its selection atomically and preserves both on a stale batch', async () => {
+  const store = createFileProviderCredentialStore(await fixture());
+  const selection = { ...binding, profile: 'space-provider-selection:default' };
+  const copied = { ...binding, profile: 'space-legacy-provider:default' };
+  await store.updateApiKeys([{ binding: copied, key: 'space-original', expectedRevision: null },
+    { binding: selection, key: 'space', expectedRevision: null }]);
+  const before = await store.readApiKeys([copied, selection, binding]);
+  expect(before.map(value => value.key)).toEqual(['space-original', 'space', undefined]);
+  await store.setApiKey(binding, 'cli-original', null);
+  await expect(store.updateApiKeys([{ binding: copied, key: 'must-not-publish', expectedRevision: before[0]!.revision },
+    { binding, key: 'must-not-replace-cli', expectedRevision: null }])).rejects.toThrow(/conflict/);
+  expect((await store.readApiKeys([copied, selection, binding])).map(value => value.key))
+    .toEqual(['space-original', 'space', 'cli-original']);
+  expect(JSON.parse(await readFile(store.filePath, 'utf8')).version).toBe(2);
+});
+it('keeps the whole document on invalid batches and preserves deletion fences across store instances', async () => {
+  const file = await fixture(), first = createFileProviderCredentialStore(file), second = createFileProviderCredentialStore(file);
+  const other = { ...binding, provider: 'other' };
+  await first.updateApiKeys([{ binding, key: 'original', expectedRevision: null }, { binding: other, key: 'other-original', expectedRevision: null }]);
+  const original = await readFile(file, 'utf8'), [a, b] = await second.readApiKeys([binding, other]);
+  for (const changes of [
+    [{ binding, key: 'must-not-write', expectedRevision: a!.revision }, { binding: other, key: 'invalid\nkey', expectedRevision: b!.revision }],
+    [{ binding, key: 'duplicate-one', expectedRevision: a!.revision }, { binding, key: 'duplicate-two', expectedRevision: a!.revision }],
+    [{ binding, key: 'invalid-revision', expectedRevision: '' }],
+  ]) {
+    await expect(first.updateApiKeys(changes)).rejects.toThrow(/storage/);
+    expect(await readFile(file, 'utf8')).toBe(original);
+  }
+  const removed = await first.updateApiKeys([{ binding, expectedRevision: a!.revision }, { binding: other, key: 'retained', expectedRevision: b!.revision }]);
+  expect((await second.readApiKeys([binding, other])).map(value => value.key)).toEqual([undefined, 'retained']);
+  expect((await second.readApiKeys([binding]))[0]!.revision).toBe(removed[0]!.revision);
+  await expect(second.updateApiKeys([{ binding, key: 'must-not-revive', expectedRevision: null },
+    { binding: other, key: 'must-not-change', expectedRevision: removed[1]!.revision! }])).rejects.toThrow(/conflict/);
+  expect((await first.readApiKeys([binding, other])).map(value => value.key)).toEqual([undefined, 'retained']);
+});
+it('initializes both credential mask targets before an env-only Host can start shell work', async () => {
+  const file = await fixture(), store = createFileProviderCredentialStore(file);
+  await store.initialize(); expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({ version: 2, apiKeys: {}, oauth: {} });
+  expect(await readdir(`${file}.staging`)).toEqual([]);
+  await store.setApiKey(binding, 'keep-current'); const before = await readFile(file, 'utf8');
+  await store.initialize(); expect(await readFile(file, 'utf8')).toBe(before);
+});
+it('reads version 1 files without rewriting them and upgrades on the first mutation', async () => {
+  const file = await fixture(), store = createFileProviderCredentialStore(file);
+  const saved = await store.setApiKey(binding, 'legacy-key'), value = JSON.parse(await readFile(file, 'utf8')); value.version = 1;
+  const legacy = JSON.stringify(value); await writeFile(file, legacy);
+  expect((await store.readApiKey(binding))?.key).toBe('legacy-key'); expect(await readFile(file, 'utf8')).toBe(legacy);
+  await store.setApiKey(binding, 'updated-key', saved.revision); expect(JSON.parse(await readFile(file, 'utf8')).version).toBe(2);
+  await writeFile(file, JSON.stringify({ ...value, version: '1' })); await expect(store.readApiKey(binding)).rejects.toThrow(/storage/);
+});
+it('retains deletion revisions so a failed setup cannot restore a key over a later set/delete', async () => {
+  const store = createFileProviderCredentialStore(await fixture()), first = await store.setApiKey(binding, 'first');
+  const deleted = await store.removeApiKey(binding, first.revision);
+  expect(deleted.revision).toBeTypeOf('string');
+  const later = await store.setApiKey(binding, 'later', deleted.revision); await store.removeApiKey(binding, later.revision);
+  await expect(store.setApiKey(binding, 'must-not-restore', deleted.revision)).rejects.toThrow(/conflict/);
+  expect(await store.readApiKey(binding)).toBeUndefined();
+});
+it('stores explicit API keys separately from configuration and exposes only redacted status', async () => {
+  const file = await fixture(), store = createFileProviderCredentialStore(file);
+  expect(await store.describeApiKey(binding)).toMatchObject({ configured: false });
+  const state = await store.setApiKey(binding, 'saved-fixture-key');
+  expect(state.configured).toBe(true); expect(state.revision).toMatch(/^[a-z0-9-]+$/);
+  expect(JSON.stringify(state)).not.toContain('saved-fixture-key');
+  expect((await store.readApiKey(binding))?.key).toBe('saved-fixture-key');
+  expect(await store.readApiKey({ ...binding, provider: 'other' })).toBeUndefined();
+  expect(await store.readApiKey({ ...binding, profile: 'other' })).toBeUndefined();
+  expect(await store.readApiKey({ ...binding, connectionFingerprint: 'b'.repeat(64) })).toBeUndefined();
+  const saved = JSON.parse(await readFile(file, 'utf8')); expect(saved.version).toBe(2); expect(JSON.stringify(saved)).toContain('saved-fixture-key');
+  expect(await readdir(`${file}.staging`)).toEqual([]);
+  await store.removeApiKey(binding, state.revision); expect(await store.describeApiKey(binding)).toMatchObject({ configured: false });
+});
+it('serializes the entire document across independent stores without dropping unrelated keys or OAuth rotations', async () => {
+  const file = await fixture(), a = createFileProviderCredentialStore(file), b = createFileProviderCredentialStore(file);
+  await Promise.all(Array.from({ length: 8 }, (_, index) => (index % 2 ? a : b).setApiKey({ ...binding, provider: `provider-${index}` }, `fixture-${index}`)));
+  await a.oauth.transact('registration', async () => ({ record: { id: 'registration', service: 'openrouter', clientId: 'issued', accountId: 'grant', identityKind: 'grant', credentials: { accessToken: 'counter-0' } }, result: undefined }));
+  await Promise.all(Array.from({ length: 6 }, (_, index) => (index % 2 ? a : b).oauth.transact('registration', async record => {
+    const counter = Number(record!.credentials!.accessToken.split('-').at(-1)); await new Promise(resolve => setTimeout(resolve, 5));
+    return { record: { ...record!, credentials: { accessToken: `counter-${counter + 1}` } }, result: undefined };
+  })));
+  expect(await b.oauth.transact('registration', async record => ({ record, result: record!.credentials!.accessToken }))).toBe('counter-6');
+  for (let index = 0; index < 8; index++) expect((await a.readApiKey({ ...binding, provider: `provider-${index}` }))?.key).toBe(`fixture-${index}`);
+});
+it('rejects stale updates, corrupt documents and unsupported versions without overwriting committed credentials', async () => {
+  const file = await fixture(), store = createFileProviderCredentialStore(file);
+  const original = await store.setApiKey(binding, 'first'); await store.setApiKey(binding, 'second', original.revision);
+  await expect(store.setApiKey(binding, 'stale', original.revision)).rejects.toThrow(/conflict/);
+  expect((await store.readApiKey(binding))?.key).toBe('second');
+  await writeFile(file, '{broken'); await expect(store.setApiKey(binding, 'must-not-write')).rejects.toThrow(/credential.*storage/i); expect(await readFile(file, 'utf8')).toBe('{broken');
+  await writeFile(file, '{"version":999,"apiKeys":{},"oauth":{}}'); await expect(store.readApiKey(binding)).rejects.toThrow(/credential.*storage/i);
+});
+
+it('does not change OAuth identity metadata or committed data when an operation fails', async () => {
+  const file = await fixture(), store = createFileProviderCredentialStore(file);
+  const record = { id: 'registration', service: 'github-copilot' as const, clientId: 'issued', accountId: 'account', credentials: { accessToken: 'fixture' } };
+  await store.oauth.transact(record.id, async () => ({ record, result: undefined }));
+  const before = await readFile(file, 'utf8');
+  await expect(store.oauth.transact(record.id, async current => ({ record: { ...current!, accountId: 'other' }, result: 'must-not-publish' }))).rejects.toThrow(/storage/);
+  await expect(store.oauth.transact(record.id, async () => { throw new Error('operation rejected'); })).rejects.toThrow(/operation rejected/);
+  expect(await readFile(file, 'utf8')).toBe(before);
+});
+it('rejects invalid input, create-only conflicts and deletion with a stale revision', async () => {
+  expect(() => createFileProviderCredentialStore('relative.json')).toThrow(/absolute/);
+  const store = createFileProviderCredentialStore(await fixture());
+  await expect(store.readApiKey({ ...binding, connectionFingerprint: 'wrong' })).rejects.toThrow(/storage/);
+  await expect(store.setApiKey(binding, 'one\ntwo')).rejects.toThrow(/storage/);
+  const first = await store.setApiKey(binding, 'first', null);
+  await expect(store.setApiKey(binding, 'second', null)).rejects.toThrow(/conflict/);
+  await expect(store.removeApiKey(binding, 'stale')).rejects.toThrow(/conflict/);
+  expect((await store.readApiKey(binding))?.key).toBe('first');
+  const removed = await store.removeApiKey(binding, first.revision);
+  await expect(store.removeApiKey(binding, null)).rejects.toThrow(/conflict/);
+  expect(await store.removeApiKey(binding, removed.revision)).toMatchObject({ configured: false });
+  await expect(store.oauth.transact('', async () => ({ record: undefined, result: undefined }))).rejects.toThrow(/storage/);
+});
+it('rejects malformed records and token fields without repairing or replacing the file', async () => {
+  const file = await fixture(), store = createFileProviderCredentialStore(file);
+  const record = { id: 'r', service: 'openrouter', clientId: 'client', accountId: 'account', credentials: { accessToken: 'fixture' } };
+  const cases: unknown[] = [[], { version: 1, apiKeys: {}, oauth: {}, unexpected: true }, { version: 1, apiKeys: { invalid: {} }, oauth: {} }];
+  for (const change of [{ id: 'other' }, { service: 'unknown' }, { clientId: '' }, { issuer: '\n' }, { identityKind: 'unknown' },
+    { credentials: { accessToken: '' } }, { credentials: { accessToken: 'ok', scopes: 'wrong' } }, { credentials: { accessToken: 'ok', expiresAt: 'wrong' } },
+    { resource: { accessToken: 'ok', earliestRefreshAt: 'wrong' } }, { credentials: { accessToken: 'ok', unsupported: true } }]) {
+    cases.push({ version: 1, apiKeys: {}, oauth: { r: { ...record, ...change } } });
+  }
+  for (const value of cases) {
+    const bytes = JSON.stringify(value); await writeFile(file, bytes);
+    await expect(store.setApiKey(binding, 'must-not-write')).rejects.toThrow(/storage/);
+    expect(await readFile(file, 'utf8')).toBe(bytes);
+  }
+});
+
+it('keeps keys and OAuth updates intact across separate Main processes', async () => {
+  const file = await fixture(), store = createFileProviderCredentialStore(file);
+  await store.oauth.transact('registration', async () => ({ record: { id: 'registration', service: 'openrouter', clientId: 'issued', accountId: 'grant', credentials: { accessToken: 'counter-0' } }, result: undefined }));
+  const module = new URL('./auth-file.ts', import.meta.url).href;
+  const script = `import {createFileProviderCredentialStore} from ${JSON.stringify(module)};const store=createFileProviderCredentialStore(process.argv[1]);await store.setApiKey({profile:'default',provider:'child-'+process.argv[2],connectionFingerprint:'a'.repeat(64)},'fixture-'+process.argv[2]);await store.oauth.transact('registration',async record=>{const counter=Number(record.credentials.accessToken.split('-').at(-1));await new Promise(resolve=>setTimeout(resolve,10));return {record:{...record,credentials:{accessToken:'counter-'+(counter+1)}},result:null}});`;
+  const results = await Promise.allSettled(Array.from({ length: 3 }, (_, index) => promisify(execFile)(process.execPath,
+    ['--import', 'tsx', '--input-type=module', '-e', script, file, String(index)], { cwd: fileURLToPath(new URL('../../../', import.meta.url)), windowsHide: true, timeout: 20000 })));
+  expect(results.every(result => result.status === 'fulfilled')).toBe(true);
+  expect(await store.oauth.transact('registration', async record => ({ record, result: record!.credentials!.accessToken }))).toBe('counter-3');
+  for (let index = 0; index < 3; index++) expect((await store.readApiKey({ ...binding, provider: `child-${index}` }))?.key).toBe(`fixture-${index}`);
+}, 30000);
+
+it.skipIf(process.platform !== 'win32')('protects the actual plaintext file with non-inherited current-user and SYSTEM access only', async () => {
+  const file = await fixture(); await createFileProviderCredentialStore(file).setApiKey(binding, 'acl-fixture');
+  const script = "$acl=[System.IO.File]::GetAccessControl($env:KODAX_TEST_AUTH_ACL); [Console]::Write(($acl.AreAccessRulesProtected.ToString()+'|'+(($acl.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier]) | ForEach-Object {$_.IdentityReference.Value}) -join ',')))";
+  const result = await promisify(execFile)(path.join(process.env.SystemRoot!, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 10000, env: { ...process.env, KODAX_TEST_AUTH_ACL: file } });
+  const [protectedRules, accounts] = result.stdout.split('|'); expect(protectedRules).toBe('True');
+  const identities = accounts!.split(','); expect(identities).toHaveLength(2); expect(identities).toContain('S-1-5-18');
+  expect(identities.filter(identity => identity !== 'S-1-5-18').every(identity => /^S-1-5-21-/.test(identity))).toBe(true);
+  const probe = path.join(`${file}.staging`, 'empty-permission-probe'); await writeFile(probe, '');
+  const directoryScript = "$dir=[System.IO.Directory]::GetAccessControl($env:KODAX_TEST_AUTH_STAGE);$file=[System.IO.File]::GetAccessControl($env:KODAX_TEST_AUTH_PROBE);[Console]::Write(($dir.AreAccessRulesProtected.ToString()+'|'+(($file.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier]) | ForEach-Object {$_.IdentityReference.Value}) -join ',')))";
+  const inherited = await promisify(execFile)(path.join(process.env.SystemRoot!, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    ['-NoProfile', '-NonInteractive', '-Command', directoryScript], { windowsHide: true, timeout: 10000, env: { ...process.env, KODAX_TEST_AUTH_STAGE: `${file}.staging`, KODAX_TEST_AUTH_PROBE: probe } });
+  const [privateDirectory, inheritedAccounts] = inherited.stdout.split('|'); expect(privateDirectory).toBe('True');
+  expect(inheritedAccounts!.split(',').sort()).toEqual(identities.sort());
+  await promisify(execFile)(path.join(process.env.SystemRoot!, 'System32', 'icacls.exe'), [file, '/inheritance:e', '/Q'], { windowsHide: true, timeout: 10000 });
+  await createFileProviderCredentialStore(file).initialize();
+  const restored = await promisify(execFile)(path.join(process.env.SystemRoot!, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 10000, env: { ...process.env, KODAX_TEST_AUTH_ACL: file } });
+  expect(restored.stdout.split('|')[0]).toBe('True');
+});

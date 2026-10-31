@@ -181,7 +181,7 @@ exports[`transcript render data-layer golden — FEATURE_172 Layer 0 G1 > thinki
   [key=thinking-stream-body-0 color=thinking indent=2 italic] "Let me consider the existing structure first."
   [key=thinking-stream-body-1 color=thinking indent=2 italic] "The auth module has 3 layers."
   [key=thinking-stream-blank] " "
-  [key=loading-indicator-0 color=accent spinner] "[Thinking] 80 chars..."
+  [key=loading-indicator-0 color=accent spinner] "[Thinking] ~20 tokens..."
 
 === FLATTENED ROW COUNT ===
 active rows: 3

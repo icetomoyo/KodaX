@@ -23,6 +23,8 @@ const {
   readCurrentProcessWindowsJobIdentity,
   rememberChildProcessTree,
   rememberedChildProcessTreeIsComplete,
+  trackChildProcessTreeContainment,
+  isChildProcessTreeCleanupVerified,
   withSharedWindowsProcessSnapshot,
 } = await import('./process-tree.js');
 
@@ -62,6 +64,17 @@ function snapshot(stdout: string) {
 }
 
 describe('Windows process-tree identity fences', () => {
+  it('does not confirm a Job-backed child until the authoritative drain succeeds', async () => {
+    setWindows();
+    const child = fakeChild(4242);
+    child.exitCode = 0;
+    const drained = Promise.reject(new Error('Job drain unavailable'));
+    trackChildProcessTreeContainment(child as never, drained, async () => { await drained; });
+    await expect(killChildProcessTree(child as never)).resolves.toEqual({ status: 'unknown' });
+    expect(isChildProcessTreeCleanupVerified(child as never)).toBe(false);
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
   it('reports a failed Job probe and its cached result without retrying or exposing subprocess content', () => {
     setWindows();
     vi.stubEnv('KODAX_DAEMON_JOB_CONTAINED', '1');
@@ -548,6 +561,28 @@ describe('Windows process-tree identity fences', () => {
 });
 
 describe('shared cleanup snapshot scope', () => {
+  it.each(['absent', 'reused'])('reclaims complete exited trees with %s PIDs without per-tree helpers', async (pidState) => {
+    setWindows();
+    spawnSyncMock.mockReset();
+    const reused = pidState === 'reused'
+      ? Array.from({ length: 100 }, (_, index) => `${4242 + index},1,222\n`).join('')
+      : '';
+    spawnSyncMock.mockReturnValue(snapshot(`1,0,100\n${reused}`));
+    await withSharedWindowsProcessSnapshot(async () => {
+      for (let index = 0; index < 100; index++) {
+        const pid = 4242 + index;
+        await expect(killPidTree(pid, {
+          expectedProcessStartIdentity: '111',
+          expectedProcessTreeIdentities: [{ pid, creationTime: '111' }],
+          expectedProcessTreeComplete: true,
+          forceMs: 0,
+        })).resolves.toEqual({ status: 'already-exited' });
+      }
+    });
+    expect(spawnSyncMock).toHaveBeenCalledTimes(1);
+    expect(String(spawnSyncMock.mock.calls[0]?.[1]?.at(-1))).not.toContain('::TerminateExact(');
+  });
+
   it('serves every read in the scope from one snapshot and re-reads after a termination', async () => {
     setWindows();
     spawnSyncMock.mockReset();

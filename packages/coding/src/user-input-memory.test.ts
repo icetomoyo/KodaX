@@ -1,3 +1,4 @@
+import { createProviderCredentialLeaseScope, runWithProviderCredentialLeaseScope } from '@kodax-ai/llm';
 import { describe, expect, it, vi } from 'vitest';
 import { prepareUserInputMemory, retainUserInput } from './user-input-memory.js';
 import { buildCreatedGoal } from './goal/state.js';
@@ -51,4 +52,15 @@ describe('paged original user memory', () => {
     const original = 'Binding constraint '.repeat(2000);
     await expect(retainUserInput(original, 4096, async chunk => JSON.stringify([chunk]))).rejects.toThrow('capacity');
   });
+});
+
+it('preserves CLI-owned authentication for user-memory extraction under the explicit external lease', async () => {
+  const acquire = vi.fn(async () => { throw new Error('Bridge owns authentication'); });
+  const scope = createProviderCredentialLeaseScope({ allowedProviders: ['bridge-memory'], acquire });
+  const stream = vi.fn(async () => ({ textBlocks: [{ type: 'text' as const, text: '["Never deploy."]' }], toolBlocks: [], thinkingBlocks: [], stopReason: 'end_turn' as const }));
+  const provider = { name: 'bridge-memory', stream, getReasoningProfile: () => undefined,
+    getCapabilityProfile: () => ({ transport: 'cli-bridge' as const, conversationSemantics: 'full-history' as const, mcpSupport: 'none' as const }) };
+  try { expect(await runWithProviderCredentialLeaseScope(scope, () => prepareUserInputMemory({ original: 'Never deploy.', contextWindow: 8192, provider }))).toEqual(['Never deploy.']); }
+  finally { scope.close(); }
+  expect(acquire).not.toHaveBeenCalled(); expect(stream).toHaveBeenCalledOnce();
 });

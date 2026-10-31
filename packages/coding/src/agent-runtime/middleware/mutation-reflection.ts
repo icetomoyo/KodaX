@@ -1,3 +1,4 @@
+import { staticText } from '../../prompts/static-text.js';
 /**
  * Mutation scope reflection middleware — CAP-016 (SA-only).
  *
@@ -88,9 +89,6 @@ export function buildMutationScopeReflectionHeader(tracker: MutationTracker): st
 export function buildMutationScopeReflection(tracker: MutationTracker): string {
   return [
     buildMutationScopeReflectionHeader(tracker),
-    'A senior engineer would pause here. SA mode has no Evaluator — you own the review:',
-    '→ Re-read the diff: did each edit land on the intended file/region, and does the change as a whole match the user\'s intent?',
-    '→ Run the project\'s typecheck/tests if available — uncaught regressions are your responsibility in SA mode.',
-    '→ If this turned into a multi-stage task (plan → generate → verify), tell the user it would benefit from a re-run under AMA mode for an independent Evaluator pass.',
+    staticText("t12i.agent-runtime/middleware/mutation-reflection.block.0"),
   ].join('\n');
 }

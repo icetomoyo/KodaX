@@ -36,7 +36,7 @@ export function createVitestConfig(options: TestSuiteOptions = {}) {
       alias: {
         '@kodax-ai/kodax/media': resolveFromRoot('src', 'sdk-media.ts'),
         '@kodax-ai/kodax/session': resolveFromRoot('src', 'sdk-session.ts'),
-        '@kodax-ai/kodax/runtime': resolveFromRoot('src', 'sdk-runtime.ts'),
+        '@kodax-ai/kodax/runtime': resolveFromRoot('src', 'sdk-runtime-public.ts'),
         '@kodax-ai/kodax/client': resolveFromRoot('src', 'sdk-client.ts'),
         '@kodax-ai/agent/media': resolveFromRoot('packages', 'agent', 'src', 'media', 'index.ts'),
         '@kodax-ai/coding/media': resolveFromRoot('packages', 'coding', 'src', 'media', 'index.ts'),
@@ -53,6 +53,7 @@ export function createVitestConfig(options: TestSuiteOptions = {}) {
         '@kodax-ai/agent/capabilities/skills': resolveFromRoot('packages', 'agent', 'src', 'capabilities', 'skills', 'index.ts'),
         '@kodax-ai/agent/tracing': resolveFromRoot('packages', 'agent', 'src', 'tracing', 'index.ts'),
         '@kodax-ai/agent': resolveFromRoot('packages', 'agent', 'src', 'index.ts'),
+        '@kodax-ai/llm/errors': resolveFromRoot('packages', 'llm', 'src', 'errors.ts'),
         '@kodax-ai/llm': resolveFromRoot('packages', 'llm', 'src', 'index.ts'),
         '@kodax-ai/coding': resolveFromRoot('packages', 'coding', 'src', 'index.ts'),
         '@kodax-ai/repl/cli-resume': resolveFromRoot('packages', 'repl', 'src', 'cli-resume.ts'),

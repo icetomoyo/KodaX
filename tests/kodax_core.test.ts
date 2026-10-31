@@ -422,7 +422,7 @@ describe('Provider System', () => {
 describe('Constants Export', () => {
   it('should export KODAX_DIR', () => {
     expect(KODAX_DIR).toBeDefined();
-    expect(KODAX_DIR).toContain('.kodax');
+    expect(KODAX_DIR).toBe(process.env.KODAX_HOME);
   });
 
   it('should export KODAX_SESSIONS_DIR', () => {

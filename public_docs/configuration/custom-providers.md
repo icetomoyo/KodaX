@@ -31,6 +31,68 @@ not an API key value. Put the custom provider's actual API key in the
 `MY_LLM_API_KEY` environment variable, then close the current terminal and open
 a new one before running `kodax`.
 
+## Native Responses API
+
+For an endpoint that implements OpenAI Responses, add `"api": "responses"` to
+an OpenAI custom provider. Keep `baseUrl` at the API root, such as
+`https://api.openai.com/v1`, and select a model available to your account.
+Omitting `api` (or setting `"chat-completions"`) preserves Chat Completions.
+The built-in `openai` provider remains unchanged.
+
+```json
+{
+  "provider": "my-responses",
+  "customProviders": [{
+    "name": "my-responses",
+    "protocol": "openai",
+    "api": "responses",
+    "baseUrl": "https://api.openai.com/v1",
+    "apiKeyEnv": "OPENAI_API_KEY",
+    "model": "your-responses-model"
+  }]
+}
+```
+
+Use the same object with `registerCustomProviders()` or `createCustomProvider()`
+from `@kodax-ai/kodax/llm` (or the standalone LLM package). Set `imageInput: true`
+only for image-capable models. Declare supported reasoning efforts/defaults when
+known; Responses leaves the effort unspecified when neither the caller nor a
+declared default selects it. `maxOutputTokens` remains the default request budget;
+`outputTokenLimit` is an optional service ceiling. `promptCacheAffinity: true`
+enables the existing request `promptCacheKey` option.
+
+Both `stream()` and `complete()` use native Responses with `store:false`.
+Preserve `result.contentBlocks` in the next assistant message to retain the
+original text/reasoning/tool order. The existing text/thinking/tool arrays remain
+available as compatibility projections. Encrypted reasoning is replayed only to
+the originating provider/API/endpoint/wire model. Incomplete or malformed tool
+arguments never become executable calls. Interrupted streams retain the existing
+Host recovery and non-streaming fallback; declared incomplete responses surface
+their failure without executing tools.
+
+Each request uses its current tool definitions, including additions, removals and
+schema changes. Completed historical calls/results keep their original names and
+arguments. A `forcedToolName` absent from the current definitions is rejected
+locally. Interrupted imported calls receive an explicit interrupted-result marker;
+orphan results are omitted. History projection never re-executes a tool.
+
+When changing models or endpoints, retain the original history. Known foreign
+signed/encrypted reasoning is omitted from the native reasoning channel; readable
+reasoning is preserved as prior-context text. New Anthropic reasoning records its
+source too, so switching back can reuse the original signed history. Legacy
+history without provenance retains its prior signature policy.
+
+Responses negotiates declared effort levels after explicit parameter rejection.
+Hard-rejection learning is scoped to the endpoint, API, model, declaration and
+credential identity. It does not rewrite your configured effort or mark an
+accepted level as verified. Old unscoped rejection records do not narrow Responses
+choices. Cache affinity and `disablePromptCache` are evaluated on each request.
+
+This slice supports client-defined function tools, text, image input, reasoning
+replay and usage. Server-side tools, background tasks, WebSocket, OAuth and broader
+cross-protocol history transformations remain later parity work. Validation is
+offline contract testing; no live Responses account test is claimed.
+
 ## User-Agent mode
 
 `userAgentMode` defaults to `"compat"`, which sends `KodaX` instead of the

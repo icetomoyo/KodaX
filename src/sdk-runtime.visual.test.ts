@@ -8,7 +8,7 @@ import { createSessionManager, FileSessionStorage } from '@kodax-ai/repl';
 import { Jimp } from 'jimp';
 import { evictOldIslandMessageContent, persistCompactedSessionHistory } from '@kodax-ai/agent';
 import { sessionVisualMediaDirectory } from '@kodax-ai/agent/media';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from '../tests/runtime-fixture.js';
 
 afterEach(() => { clearRuntimeModelProviders(); vi.unstubAllEnvs(); });
 

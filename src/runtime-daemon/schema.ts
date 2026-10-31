@@ -565,7 +565,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   },
   'provider.list': { params: noParamsSchema, result: arrayAnySchema },
   'provider.reasoning.efforts': { params: objectSchema({ provider: stringSchema, model: stringSchema }, ['provider']), result: { type: 'array', items: stringSchema } },
-  'provider.reasoning.probe': { params: objectSchema({ provider: stringSchema, model: stringSchema, efforts: { type: 'array', items: stringSchema } }, ['provider', 'efforts']), result: arrayAnySchema },
+  'provider.reasoning.probe': { params: objectSchema({ provider: stringSchema, model: stringSchema, efforts: { type: 'array', items: stringSchema }, credential: credentialBindingSchema() }, ['provider', 'efforts']), result: arrayAnySchema },
   'provider.capabilities.forget': { params: objectSchema({ provider: stringSchema, model: stringSchema }), result: okSchema },
   'provider.custom.list': { params: noParamsSchema, result: arrayAnySchema },
   'provider.custom.upsert': {
@@ -601,6 +601,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   'mcp.server.reload': { params: noParamsSchema, result: objectSchema({ ok: booleanSchema, servers: arrayAnySchema }, ['ok', 'servers']) },
   'mcp.tool.list': { params: objectSchema({ server: stringSchema, forceRefresh: booleanSchema }, [], true), result: arrayAnySchema },
 
+  'tool.catalog': { params: objectSchema({ sessionId: stringSchema }, ['sessionId']), result: arraySchema(objectAnySchema) },
   'extension.list': {
     params: noParamsSchema,
     result: objectSchema({
@@ -1387,6 +1388,7 @@ function effectiveConfigSnapshotSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
     schemaVersion: { type: 'integer', enum: [1] },
     capturedAt: stringSchema,
+    application: objectAnySchema,
     persistedConfig: objectSchema({
       state: { enum: ['loaded', 'missing', 'invalid'] },
     }, ['state']),
@@ -1415,6 +1417,10 @@ function startRunParamsSchema(): RuntimeDaemonJsonSchema {
 
 function executionAuthorizationSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
+    profile: objectSchema({ agentProfile: objectAnySchema, taskVerification: objectAnySchema,
+      tools: arraySchema(stringSchema), toolMetadata: arraySchema(objectSchema({ name: stringSchema,
+        sideEffect: { enum: ['readonly', 'reads-network', 'mutates-fs', 'mutates-shell', 'mutates-network', 'mutates-state'] },
+        planModeAllowed: booleanSchema }, ['name', 'sideEffect', 'planModeAllowed'])) }, []),
     credential: objectSchema({ leaseId: stringSchema, mode: { enum: ['scoped'] },
       providers: arraySchema(stringSchema) }, ['leaseId', 'mode', 'providers']),
     hostTools: objectSchema({ leaseId: stringSchema }, ['leaseId']),
@@ -1480,6 +1486,11 @@ function runFilterSchema(): RuntimeDaemonJsonSchema {
 
 function runStatusSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
+    effectiveConfig: objectSchema({
+      agentMode: { enum: ['sa', 'ama', 'amaw'] }, workMode: { enum: ['agent', 'coding', 'script'] },
+      toolScope: arraySchema(stringSchema), modelToolScope: arraySchema(stringSchema),
+      agentProfile: objectAnySchema, verification: objectAnySchema,
+    }, ['agentMode', 'workMode', 'toolScope']),
     runId: stringSchema,
     sessionId: stringSchema,
     turnId: stringSchema,

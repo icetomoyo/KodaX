@@ -7,7 +7,7 @@ import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { KodaXBaseProvider, registerModelProvider } from '@kodax-ai/llm';
 import type { KodaXProviderConfig, KodaXStreamResult } from '@kodax-ai/llm';
 import { createRuntimeDaemonClient } from './runtime-daemon/client.js';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 

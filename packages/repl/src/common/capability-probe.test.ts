@@ -34,6 +34,17 @@ function fakeProvider(rejects: string[], errors: string[] = []): KodaXBaseProvid
 }
 
 describe('probeProviderReasoningEfforts', () => {
+  it('persists the actual scoped rejection even when single-attempt probing throws after the callback', async () => {
+    const provider = fakeProvider([]);
+    vi.mocked(provider.stream).mockImplementationOnce(async (_messages, _tools, _system, _reasoning, options) => {
+      options?.onReasoningEffortRejected?.({ provider: 'p', model: 'm', effort: '*', cacheScope: 'account-scope' });
+      throw new Error('hard parameter rejection');
+    });
+    const result = await probeProviderReasoningEfforts({ provider: 'p', model: 'm', efforts: ['high'], resolve: () => provider, now: () => 'T0' });
+    expect(result[0]).toMatchObject({ effort: 'high', status: 'rejected' });
+    expect(recordRejectedEffortMock).toHaveBeenCalledExactlyOnceWith('p', 'm', '*', 'probed', 'T0', undefined, 'account-scope');
+    expect(vi.mocked(provider.stream).mock.calls[0]?.[4]?.singleAttempt).toBe(true);
+  });
   beforeEach(() => {
     recordRejectedEffortMock.mockReset();
   });

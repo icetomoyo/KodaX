@@ -1,3 +1,4 @@
+import { staticText } from '../../../prompts/static-text.js';
 /**
  * Role-prompt resolution for the runner-driven AMA path.
  *
@@ -38,21 +39,14 @@ import type { RunnerChainPromptContext } from './types.js';
 // `worker-role-prompt.ts`. Mirrors the other *_FALLBACK constants
 // above; chains with known tools use the capability-aware minimal builder below.
 export const WORKER_INSTRUCTIONS_FALLBACK = [
-  'You are Worker (AMA Harness V2 single-loop primary agent). Plan semantic ',
-  'milestones via `todo_create` and `todo_update`; do not create one item per ',
-  'child Agent. Execute via tool calls and update finished milestones before ',
-  'waiting again or moving on, then end your turn with a brief ',
-  'text-only summary when done — no tool call is needed to terminate. Verify ',
-  'the actual result with available tools and report unverified requirements. ',
-  'You may call: read, grep, glob, bash, write, edit, multi_edit, ',
-  'todo_create, todo_update, todo_list, spawn_agent, send_message, followup_task, wait_agent, interrupt_agent, list_agents, agent_output, exit_plan_mode.',
+  staticText("t12i.task-engine/_internal/managed-task/role-prompts.block.0"),
 ].join('\n') + '\n' + EXECUTION_GUIDANCE;
 
 /** Minimal standalone chain contract; rich managed prompts are resolved separately. */
 function buildWorkerFallbackInstructions(toolNames: readonly string[]): string {
   const hasTool = (name: string): boolean => toolNames.includes(name);
   return [
-    'You are Worker (AMA Harness V2 single-loop primary agent). Execute with the available tools. Answer trivial tasks directly; for non-trivial work, keep concise semantic milestones and reuse existing progress on resume. Milestones represent deliverables, not child Agents.',
+    staticText("t12.task-engine/_internal/managed-task/role-prompts.0"),
     hasTool('todo_create') ? 'Use `todo_create` for new milestones; avoid duplicating existing progress.' : undefined,
     hasTool('todo_update') ? 'Use `todo_update` to reconcile finished milestones before waiting, moving on, or delivering. Keep one milestone per owner in progress; record concrete blockers.' : undefined,
     hasTool('spawn_agent') ? 'Use `spawn_agent` for useful independent lanes with bounded objectives and ownership. Continue non-overlapping work and own final synthesis.' : undefined,
@@ -60,7 +54,7 @@ function buildWorkerFallbackInstructions(toolNames: readonly string[]): string {
     hasTool('send_message') ? 'Use `send_message` for relevant evidence or constraints; it does not start idle actors.' : undefined,
     hasTool('followup_task') ? 'Use `followup_task` to start another idle actor turn or update an objective.' : undefined,
     hasTool('interrupt_agent') ? 'Use `interrupt_agent` when continued child work is no longer useful.' : undefined,
-    'Integrate delivered child evidence before completing the supported milestone; child completion alone is not success. Settle owned live descendants with available controls or report their canonical paths and unresolved ownership.',
+    staticText("t12.task-engine/_internal/managed-task/role-prompts.1"),
     'Verify the actual result with available tools and report unverified requirements or blockers. End with a brief text-only summary; no tool call is needed to terminate.',
     `Available tools: ${toolNames.length > 0 ? toolNames.join(', ') : 'none'}.`,
     EXECUTION_GUIDANCE,

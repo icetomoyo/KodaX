@@ -11,6 +11,7 @@ import {
   completeLearnedSkillSessionOutcomes,
   createLearnedCapabilityScope,
   emitKodaXDiagnostic,
+  formatSkillsSystemPrompt,
   getDefaultSkillPaths,
   migrateLegacyLearnedSkillsForProject,
   recordLearnedSkillOffered,
@@ -738,12 +739,8 @@ function resolveToolSurface(input: {
 
 function skillsPrompt(skills: readonly RuntimeEffectiveSkillRef[], registry: ISkillRegistry): string {
   if (skills.length === 0) return '## Available Skills\n\nNo Skills are admitted for this deployment.';
-  return [
-    '## Available Skills',
-    '',
-    'Invoke a matching Skill with the `skill` tool before completing that work.',
-    ...skills.map((skill) => `- ${skill.name}: ${registry.get(skill.name)?.description ?? ''}`),
-  ].join('\n');
+  const admitted = new Set(skills.map(skill => skill.name));
+  return formatSkillsSystemPrompt(registry.list().filter(skill => admitted.has(skill.name)));
 }
 
 function sensitivePath(candidate: string, root: string): boolean {
@@ -1344,7 +1341,7 @@ export function createRuntimeAgentBindingService(
           context: {
             executionCwd: root, gitRoot: root, managedTaskWorkspaceDir: root,
             ...learnedRun.context,
-            systemPromptOverride: instructions, agentScope: scope,
+            agentProfile: { name: agent.name, instructions }, agentScope: scope,
             toolVisibilityPolicy: (tool) => binding.effectiveTools.includes(tool.name),
             skillRegistry: learnedRun.registry,
             skillScriptRunner: binding.skillScriptRunner,

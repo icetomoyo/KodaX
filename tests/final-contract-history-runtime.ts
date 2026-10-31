@@ -8,7 +8,7 @@ import { KodaXBaseProvider, registerModelProvider, runWithProviderRequestAttribu
   type KodaXReasoningRequest, type KodaXProviderStreamOptions } from '@kodax-ai/llm';
 import { SkillRegistry, persistCompactedSessionHistory, evictOldIslandMessageContent, type ToolGuardrail } from '@kodax-ai/agent';
 import { FileSessionStorage } from '@kodax-ai/repl';
-import { createKodaXRuntime } from '../src/sdk-runtime.js';
+import { createKodaXRuntime } from './runtime-fixture.js';
 import { awaitLatestCodingMemoryReviewDrain } from '@kodax-ai/coding';
 import { resolveToolBridgeTarget } from '../packages/coding/src/tools/tool-bridge.js';
 import { prepareNaturalExecutionEnvironment } from '../benchmark/harness/natural-execution-environment.js';

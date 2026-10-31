@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { KodaXBaseProvider, KodaXMessage } from '@kodax-ai/llm';
-import { getProvider, runWithScopedConfig } from '@kodax-ai/llm';
+import { getProvider, runWithScopedConfig, createCustomProvider } from '@kodax-ai/llm';
 
 import type { KodaXPromptCacheDiagnosticEvent } from '../types.js';
 import {
@@ -24,6 +24,22 @@ const messages: readonly KodaXMessage[] = [
 ];
 
 describe('prompt-cache diagnostics', () => {
+  it('ignores foreign Anthropic signatures in hashes while retaining the readable projection', () => {
+    const p = createCustomProvider({ name: 'signed', protocol: 'anthropic', model: 'new', baseUrl: 'https://cache.test', apiKeyEnv: 'UNUSED' });
+    const history = (signature: string): KodaXMessage[] => [{ role: 'assistant', content: [
+      { type: 'thinking', thinking: 'plan', signature, source: { provider: 'signed', api: 'anthropic-messages', model: 'old', baseUrl: 'https://cache.test' } },
+    ] }];
+    expect(hashProviderVisibleMessages(history('a'), p, 'new')).toBe(hashProviderVisibleMessages(history('b'), p, 'new'));
+    expect(hashProviderVisibleMessages(history('a'), p, 'old')).not.toBe(hashProviderVisibleMessages(history('b'), p, 'old'));
+  });
+  it('hashes only same-source Responses reasoning that the wire actually replays', () => {
+    const provider = createCustomProvider({ name: 'responses', protocol: 'openai', api: 'responses', model: 'm', baseUrl: 'https://example.test/v1', apiKeyEnv: 'UNUSED' });
+    const history = (cipher: string): KodaXMessage[] => [{ role: 'assistant', content: [{ type: 'thinking', thinking: '', responsesReasoning: {
+      source: { provider: 'responses', api: 'openai-responses', model: 'm', baseUrl: 'https://example.test/v1' }, id: 'rs', summary: [], encrypted_content: cipher,
+    } }] }];
+    expect(hashProviderVisibleMessages(history('a'), provider, 'm')).not.toBe(hashProviderVisibleMessages(history('b'), provider, 'm'));
+    expect(hashProviderVisibleMessages(history('a'), provider, 'other')).toBe(hashProviderVisibleMessages(history('b'), provider, 'other'));
+  });
   it('matches Anthropic-compatible inline System trimming without changing OpenAI-compatible whitespace', () => {
     const inlineSystem: readonly KodaXMessage[] = [
       {
@@ -437,4 +453,24 @@ describe('prompt-cache diagnostics', () => {
       usage,
     )).not.toThrow();
   });
+});
+
+it('emits actual native projection and TTL partition through the real compaction request', async () => {
+  const { generateSummary } = await import('@kodax-ai/agent');
+  const { runWithProviderCredential } = await import('@kodax-ai/llm');
+  const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(`data: ${JSON.stringify({ type: 'response.completed', response: {
+    status: 'completed', output: [{ type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'summary' }] }],
+    usage: { input_tokens: 100, output_tokens: 1, total_tokens: 101, input_tokens_details: { cache_write_tokens: 50, cache_write_tokens_details: { ttl_30m_tokens: 50 } } },
+  } })}\n\n`, { headers: { 'content-type': 'text/event-stream' } }));
+  try {
+    const native = createCustomProvider({ name: 'compaction-native', protocol: 'openai', api: 'responses', model: 'fixture', baseUrl: 'https://compaction.example/v1', apiKeyEnv: 'UNUSED' });
+    const events: KodaXPromptCacheDiagnosticEvent[] = [];
+    const observer = createCompactionPromptCacheObserver({ provider: native, providerName: native.name, model: 'fixture', enabled: true,
+      disablePromptCache: false, events: { onPromptCacheDiagnostics: event => events.push(event) } });
+    const text = await runWithProviderCredential(native.name, 'fixture', () => generateSummary([{ role: 'user', content: 'task' }], native, { readFiles: [], modifiedFiles: [] },
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, observer));
+    expect(text).toBe('summary');
+    expect(events.at(-1)).toMatchObject({ phase: 'response', projection: 'native', nativeProjectionStage: 'protocol-input', cachedWriteTokensByTtl: { '30m': 50 } });
+    expect(events.at(-1)?.nativeRequestHash).toMatch(/^[a-f0-9]{64}$/);
+  } finally { fetcher.mockRestore(); }
 });

@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FileSessionStorage, SessionReadError } from '@kodax-ai/repl';
 
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 
 const tempDirs: string[] = [];
 

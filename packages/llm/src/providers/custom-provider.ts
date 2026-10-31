@@ -21,8 +21,17 @@ import {
 import { KodaXBaseProvider } from './base.js';
 import { KodaXAnthropicCompatProvider } from './anthropic.js';
 import { KodaXOpenAICompatProvider } from './openai.js';
+import { KodaXOpenAIResponsesProvider } from './openai-responses.js';
+import { KodaXOAuthResponsesProvider } from './oauth-responses.js';
+import { validateOAuthProviderConfig } from '../oauth/provider-config.js';
+import { validateCloudProviderConfig } from '../cloud/provider-config.js';
+import { KodaXAzureResponsesProvider, KodaXAzureCompletionsProvider } from './azure-responses.js';
+import { KodaXLazyNativeProvider, KodaXLazyCloudProvider } from './lazy-native.js';
 import { NATIVE_PROVIDER_CAPABILITY_PROFILE } from './capability-profile.js';
 import { createReasoningProfileFromPreset } from '../reasoning.js';
+import { optionalOutputTokenLimit } from './output-token-limit.js';
+import { validateToolCapabilities } from './tool-constraints.js';
+import { validateCacheCapabilities } from './cache-policy.js';
 
 const VALID_CUSTOM_PROVIDER_USER_AGENT_MODES = new Set(['compat', 'sdk']);
 const VALID_OPENAI_MAX_OUTPUT_TOKEN_FIELDS = new Set<KodaXOpenAICompatMaxOutputTokensField>([
@@ -55,9 +64,9 @@ function getConfiguredReasoningProfile(
  * set `verifyStrategy: 'minimal-message'` explicitly in their config.
  */
 function defaultVerifyStrategyForProtocol(
-  protocol: 'anthropic' | 'openai',
+  protocol: KodaXProtocolFamily,
 ): KodaXVerifyStrategy {
-  return protocol === 'anthropic' ? 'count-tokens' : 'models-list';
+  return protocol === 'anthropic' ? 'count-tokens' : protocol === 'openai' ? 'models-list' : 'minimal-message';
 }
 
 function validateMaxOutputTokensField(
@@ -115,6 +124,7 @@ function legacyReasoningPresetForProtocol(
   if (supportsThinking === false) {
     return 'none';
   }
+  if (protocol === 'google' || protocol === 'bedrock') return undefined;
   switch (reasoningCapability) {
     case 'none':
     case 'prompt-only':
@@ -176,7 +186,8 @@ function buildReasoningProfileFromSimple(
     // form there so those models get thinking-on + a tunable effort (B1). A real-Claude
     // anthropic-compat endpoint instead wants adaptive: configure an explicit
     // reasoningProfile (effortStrategy:'anthropic-output-effort') for that case.
-    effortStrategy: protocol === 'anthropic' ? 'anthropic-reasoning-effort' : 'openai-chat-effort',
+    effortStrategy: protocol === 'google' ? 'google-thinking-level' : protocol === 'bedrock' ? 'bedrock-anthropic-effort'
+      : protocol === 'anthropic' ? 'anthropic-reasoning-effort' : 'openai-chat-effort',
     ...(protocol === 'anthropic' ? { thinkingStrategy: 'provider-toggle' as const } : {}),
     ...(defaultWire !== undefined ? { defaultEffort: defaultWire } : {}),
     supportedEfforts,
@@ -248,11 +259,16 @@ function migrateLegacyDeepSeekPreset(
   return preset;
 }
 
+function selectReasoningApi(profile: KodaXReasoningProfile | undefined, api: KodaXCustomProviderConfig['api']): KodaXReasoningProfile | undefined {
+  return api === 'responses' && profile?.effortStrategy === 'openai-chat-effort'
+    ? { ...profile, effortStrategy: 'openai-responses-effort' } : profile;
+}
+
 export function resolveCustomProviderReasoningProfile(
   config: KodaXCustomProviderConfig,
 ): KodaXReasoningProfile | undefined {
   // The fallback describes a wire dialect; no supportedEfforts are asserted.
-  return resolveCustomReasoningProfile(
+  const profile = resolveCustomReasoningProfile(
     getConfiguredReasoningProfile(config),
     migrateLegacyDeepSeekPreset(config.reasoningPreset, config.model),
     config.reasoning,
@@ -264,6 +280,7 @@ export function resolveCustomProviderReasoningProfile(
   ) ?? (config.protocol === 'openai'
     ? { effortStrategy: 'openai-chat-effort', allowCustomEffort: true }
     : undefined);
+  return selectReasoningApi(profile, config.api);
 }
 
 export function resolveCustomModelReasoningProfile(
@@ -275,6 +292,7 @@ export function resolveCustomModelReasoningProfile(
   // (getReasoningProfile(modelId)) consistent with the capability query surfaces.
   supportsThinking?: boolean,
   inheritedReasoningPreset?: KodaXModelDescriptor['reasoningPreset'],
+  api?: KodaXCustomProviderConfig['api'],
 ): KodaXReasoningProfile | undefined {
   const inheritsLegacyPreset =
     inheritedReasoningPreset === 'deepseek-v4-openai'
@@ -282,7 +300,7 @@ export function resolveCustomModelReasoningProfile(
     && descriptor.reasoningPreset === undefined
     && descriptor.reasoning === undefined
     && descriptor.reasoningCapability === undefined;
-  return resolveCustomReasoningProfile(
+  const profile = resolveCustomReasoningProfile(
     getConfiguredReasoningProfile(descriptor),
     migrateLegacyDeepSeekPreset(
       descriptor.reasoningPreset ?? (inheritsLegacyPreset ? inheritedReasoningPreset : undefined),
@@ -296,6 +314,7 @@ export function resolveCustomModelReasoningProfile(
       supportsThinking,
     },
   );
+  return selectReasoningApi(profile, api);
 }
 
 function customModelDescriptorToFull(
@@ -303,6 +322,7 @@ function customModelDescriptorToFull(
   protocol: KodaXProtocolFamily,
   supportsThinking?: boolean,
   inheritedReasoningPreset?: KodaXModelDescriptor['reasoningPreset'],
+  api?: KodaXCustomProviderConfig['api'],
 ): KodaXModelDescriptor {
   const descriptor = typeof entry === 'string' ? { id: entry } : entry;
   const reasoningProfile = resolveCustomModelReasoningProfile(
@@ -310,6 +330,7 @@ function customModelDescriptorToFull(
     protocol,
     supportsThinking,
     inheritedReasoningPreset,
+    api,
   );
   // Single-track invariant: a provider-level supportsThinking:false must make
   // EVERY surface agree on 'none' — same override buildProviderConfig and
@@ -329,17 +350,40 @@ function customModelDescriptorToFull(
 export function validateCustomProviderConfig(
   custom: KodaXCustomProviderConfig,
 ): void {
+  if (custom.oauthRegistration !== undefined && (!custom.oauth || typeof custom.oauthRegistration !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(custom.oauthRegistration))) throw new Error('Invalid OAuth secure-store registration reference.');
+  validateToolCapabilities(custom.toolCapabilities);
+  validateCacheCapabilities(custom.cacheCapabilities);
+  const cacheDialects = custom.protocol === 'anthropic' ? ['anthropic'] : custom.protocol === 'bedrock' ? ['bedrock']
+    : custom.protocol === 'pi-messages' ? ['pi'] : custom.protocol === 'openai' ? custom.api === 'responses' ? ['openai-options', 'openai-retention', 'affinity'] : ['openai-retention', 'affinity'] : [];
+  const cacheProfiles = [custom.cacheCapabilities, ...(custom.models ?? []).flatMap(model => typeof model === 'string' ? [] : [model.cacheCapabilities])];
+  if (cacheProfiles.some(profile => profile && !cacheDialects.includes(profile.dialect))) throw new Error('Declared cache dialect does not match the native API.');
+  for (const model of custom.models ?? []) if (typeof model !== 'string') validateCacheCapabilities(model.cacheCapabilities);
+  for (const model of custom.models ?? []) if (typeof model !== 'string') validateToolCapabilities(model.toolCapabilities);
+  const grammarRoute = custom.protocol === 'pi-messages' || (custom.protocol === 'openai' && custom.api === 'responses');
+  if (!grammarRoute && (custom.toolCapabilities?.grammar?.length || custom.models?.some(model => typeof model !== 'string' && model.toolCapabilities?.grammar?.length))) throw new Error('Grammar tools require Responses or Pi Messages.');
   if (!custom.name || !custom.baseUrl || !custom.apiKeyEnv || !custom.model) {
     throw new Error(
       `Custom provider requires name, baseUrl, apiKeyEnv, and model. Got: ${JSON.stringify({ name: custom.name, baseUrl: custom.baseUrl, apiKeyEnv: custom.apiKeyEnv, model: custom.model })}`,
     );
   }
 
-  if (custom.protocol !== 'anthropic' && custom.protocol !== 'openai') {
+  if (!['anthropic', 'openai', 'google', 'bedrock', 'mistral', 'pi-messages'].includes(custom.protocol)) {
     throw new Error(
       `Unknown protocol "${custom.protocol}" for custom provider "${custom.name}". Must be "anthropic" or "openai".`,
     );
   }
+  validateCloudProviderConfig(custom);
+  if (custom.authentication !== undefined && !['bearer', 'cloudflare-gateway'].includes(custom.authentication)) throw new Error('Unknown connection authentication mode.');
+  if (custom.authentication !== undefined && (!['anthropic', 'openai', 'google'].includes(custom.protocol)
+    || (custom.protocol === 'google' && custom.authentication !== 'bearer')
+    || (custom.cloud && custom.cloud.service !== 'gemini'))) throw new Error('Authentication mode is not supported by this native route.');
+
+  if (custom.api !== undefined && (custom.protocol !== 'openai'
+    || !['chat-completions', 'responses'].includes(custom.api))) {
+    throw new Error(`Custom provider "${custom.name}": api requires openai and must be chat-completions or responses.`);
+  }
+
+  validateOAuthProviderConfig(custom);
 
   if (
     custom.userAgentMode !== undefined
@@ -371,6 +415,8 @@ export function validateCustomProviderConfig(
     );
   }
 
+  optionalOutputTokenLimit(custom.outputTokenLimit, custom.name);
+
   validateMaxOutputTokensField(
     custom,
     custom.maxOutputTokensField,
@@ -378,6 +424,7 @@ export function validateCustomProviderConfig(
   );
   custom.models?.forEach((model, index) => {
     if (typeof model !== 'string') {
+      optionalOutputTokenLimit(model.outputTokenLimit, `${custom.name}.models[${index}]`);
       validateMaxOutputTokensField(
         custom,
         model.maxOutputTokensField,
@@ -430,6 +477,7 @@ function buildProviderConfig(custom: KodaXCustomProviderConfig): KodaXProviderCo
         custom.protocol,
         custom.supportsThinking,
         custom.reasoningPreset,
+        custom.api,
       ))
     : undefined;
   const reasoningProfile = resolveCustomProviderReasoningProfile(custom);
@@ -449,6 +497,11 @@ function buildProviderConfig(custom: KodaXCustomProviderConfig): KodaXProviderCo
 
   return {
     apiKeyEnv: custom.apiKeyEnv,
+    cacheCapabilities: custom.cacheCapabilities ? structuredClone(custom.cacheCapabilities) : undefined,
+    toolCapabilities: custom.toolCapabilities ? structuredClone(custom.toolCapabilities) : undefined,
+    authentication: custom.authentication,
+    oauth: custom.oauth,
+    ...(custom.oauth ? { credentialSource: 'broker' as const } : {}),
     model: custom.model,
     baseUrl: custom.baseUrl,
     models,
@@ -462,6 +515,7 @@ function buildProviderConfig(custom: KodaXCustomProviderConfig): KodaXProviderCo
     ),
     contextWindow: custom.contextWindow,
     maxOutputTokens: custom.maxOutputTokens,
+    outputTokenLimit: custom.outputTokenLimit,
     maxOutputTokensField: custom.maxOutputTokensField,
     thinkingBudgetCap: custom.thinkingBudgetCap,
     promptCacheAffinity: custom.promptCacheAffinity ?? false,
@@ -475,20 +529,34 @@ function buildProviderConfig(custom: KodaXCustomProviderConfig): KodaXProviderCo
     // FEATURE_216 v0.7.45 — explicit verifyStrategy wins; otherwise
     // derive from protocol per the table in the type's JSDoc.
     verifyStrategy:
-      custom.verifyStrategy ?? defaultVerifyStrategyForProtocol(custom.protocol),
+      custom.verifyStrategy ?? (custom.cloud ? 'minimal-message' : defaultVerifyStrategyForProtocol(custom.protocol)),
   };
 }
 
 export function createCustomProvider(custom: KodaXCustomProviderConfig): KodaXBaseProvider {
   validateCustomProviderConfig(custom);
 
+
   const config = buildProviderConfig(custom);
+
+  if (custom.protocol === 'mistral' || custom.protocol === 'pi-messages') return new KodaXLazyNativeProvider(custom.name, config, custom.protocol);
+  if (custom.cloud?.service === 'azure') return custom.api === 'chat-completions' ? new KodaXAzureCompletionsProvider(custom.name, config) : new KodaXAzureResponsesProvider(custom.name, config);
+  if (custom.cloud) return new KodaXLazyCloudProvider(custom.name, config, custom.cloud);
+
+  if ((custom.oauth === 'openai-chatgpt' || custom.oauth === 'openai-codex' || custom.oauth === 'github-copilot')
+    && custom.protocol === 'openai' && custom.api === 'responses') return new KodaXOAuthResponsesProvider(custom.name, config, custom.oauth);
 
   if (custom.protocol === 'anthropic') {
     return new DynamicAnthropicProvider(custom.name, config);
   }
 
-  return new DynamicOpenAIProvider(custom.name, config);
+  return custom.api === 'responses'
+    ? new DynamicResponsesProvider(custom.name, config)
+    : new DynamicOpenAIProvider(custom.name, config);
+}
+
+class DynamicResponsesProvider extends KodaXOpenAIResponsesProvider {
+  constructor(readonly name: string, protected readonly config: KodaXProviderConfig) { super(); }
 }
 
 class DynamicAnthropicProvider extends KodaXAnthropicCompatProvider {

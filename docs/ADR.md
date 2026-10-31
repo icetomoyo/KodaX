@@ -1,8 +1,138 @@
 # KodaX Architecture Decision Records
 
+## Standalone Windows Shell cleanup evidence — 2026-10-30 (unreleased)
+
+Standalone Shell commands and environment probes outside a verified supervising
+Windows Job now start through a private stdin gate inside an existing effect Job.
+The caller registers durable recovery evidence before opening the gate. Target
+argv, environment, stdin, output and exit status retain their original meanings;
+native sandbox and already supervised Host paths retain their existing ownership.
+The gate reuses the existing effect Job and adds no external dependency. Its
+bootstrap/start receipt adds approximately 6 KiB to the bundled CLI. Together with
+the SDK contracts, the allowance first became 5 MiB + 16 KiB from the committed
+5 MiB baseline; 5 MiB + 8 KiB was an intermediate local allowance. The subsequent
+Host view-read close fence brought the measured CLI to 5,259,331 bytes, 67 bytes
+above that allowance. A further 1 KiB brings the final budget to 5 MiB + 17 KiB.
+These changes add no third-party dependency; the eager-dependency and cold-entry
+fences remain.
+The gate's bootstrap cannot load target runtime preloads or Bun project config;
+the target receives its original environment only after admission. Preparation
+consumes the original deadline, and an expired gate cannot start user effects.
+Target-start acknowledgements distinguish failed spawn from an executing command,
+preserving the existing host fallback and background-start contracts.
+
+Job admission is distinct from Job drain. Only the supervisor's zero-active-process
+result can confirm this command's cleanup, including detached descendants. The
+in-process child binding supplies that authority to normal/owner cleanup. Failed
+drain, incomplete legacy process trees and lost recovery evidence remain unknown;
+neither root exit nor a bare missing PID grants cleanup confirmation. On owner
+death, the effect Job closes and terminates its children; historical records without
+a retained authoritative drain still remain unresolved rather than inventing proof.
+
+The environment-isolation tests must fail when cleanup is skipped and retain the
+diagnostic directory. Actual PID and registry checks cover normal exit, cancellation
+and timeout. See the [cleanup acceptance gate](test-guides/ISSUE_159_v0.7.69_REGRESSION_GUIDE.md#2026-10-30-standalone-shell-cleanup-addendum).
+
+## Explicit profile/work-mode intersection — 2026-10-30 (unreleased)
+
+Keep alpha.11's Coding compatibility path for explicit SDK profiles, prompt
+overrides and tool policies unless the host opts the root Run into
+`context.workModePolicy: 'intersect'`. With the opt-in, `workMode` selects the
+surface while the existing profile, verification requirements, exclusions,
+visibility predicate, connector bindings and authorization remain authoritative.
+The preset only narrows builtin tool availability; it cannot grant permission.
+Specialized children with `currentAgentId` keep their declaration even if a root
+context is copied. Default Coder mode selection is unchanged.
+
+Schema/discovery and runtime dispatch share the work-surface restriction.
+Native and bridged calls recheck discoverability before authorization, preventing
+stale inventories from restoring an excluded tool. Standalone tool executors
+remain independently usable. The public `resolveWorkMode` helper and managed
+`onEffectiveConfig.workMode` expose the effective choice; Session settings expose
+only the requested choice. Recovery persists the composition setting and still
+requires fresh authority bindings. See the
+[integration contract](../public_docs/sdk/embedder-guide.md#partner--agent-intersection-unreleased-after-alpha11)
+and [offline acceptance](test-guides/FEATURE_247_v0.7.97_TEST_GUIDE.md).
+
+The unified Host accepts Partner identity without turning that metadata into
+authority. Persona and opaque profile identifiers do not impose extra tool restrictions.
+Trusted Main evaluates explicit policies through `services.createExecutionProfile`,
+using the Session's actual Host catalog and lease metadata. The pure-data snapshot
+retains names and all predicate inputs; target dispatch checks them again.
+The Host binds it with `workModePolicy: 'intersect'`; persona-only profiles impose
+no extra ceiling, and root `authorization.tools` intersects any profile ceiling. Actor authorization remains independent. Snapshot
+identity participates in input/continuation admission; recovery requires fresh
+bindings. Browser-consumable profile types stay in a dependency-free contract.
+Root recovery also retains the admitted profile names/metadata and independent
+authorization tool ceiling as non-secret evidence. Every recovery and subsequent
+binding intersects it with fresh authority, so repeated Host restarts cannot
+widen a Run. A persona-only replacement does not erase an existing ceiling.
+This internal evidence is not a public Runtime configuration or authority grant
+and never substitutes for a current lease or authorization callback. Missing historical evidence stays
+unknown rather than being reconstructed from the new profile.
+Only a policy proven to come entirely from the trusted profile can be rebuilt
+from that evidence. Arbitrary callbacks still require fresh bindings. Recovery
+keeps the original persona and verification contract while accepting fresh leases
+and narrower tool authority.
+`runs.read().effectiveConfig` persists the last assembled executable scope and model
+projection, alongside actual mode/profile/verification, without inventing old Run values.
+Capability version 2 rejects older Hosts that cannot preserve this contract. Global defaults have explicit application boundaries, distinct from
+live Session settings and from values already captured by an admitted Run.
+See [composition and configuration](SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布).
+
+## Unified Host SDK ownership cutover — 2026-10-29 (unreleased)
+
+FEATURE_298 now retires public in-process product ownership. Default/embedded
+Runtime construction, caller-owned external-agent daemons and public inline-owner
+switching are removed. The shared Host uses the same internal Runtime core;
+independent llm/agent/coding libraries remain available. A daemon-only compatibility
+launcher preserves trusted new-owner execPolicy/autoReview bootstrap. The public
+Runtime facade retains connections, bridges and diagnostics, but cannot construct
+an owner in the calling process. Its packaged exports and declarations enforce
+this boundary; isolated core tests use an internal fixture.
+
+The launcher checks profile ownership and the canonical Session root before a
+one-way atomic owner-policy cutover. The persisted `host` value deliberately fails
+the verified old readers; the current reader projects `daemon` to the existing
+wire schema. An ignored version field would not prevent old inline rollback after
+idle exit. Existing live Hosts use normal authenticated idle upgrade; busy or
+unverifiable owners are not forced out. A completed cutover is idempotent and never
+rolls back to inline when later startup fails. It does not migrate Session/Run data.
+When shared-storage discovery redirects a requested profile to an existing Host,
+the requested profile is also fenced under the same coordination after rechecking
+the exact shared owner. This does not restart that Host or bypass a live, unknown
+or corrupt owner belonging to the requested profile.
+
+This trades old SDK owner-management/downgrade compatibility for a durable single
+product ownership contract. Unknown private old embedders can bypass the old
+ownership files, so no missing lock proves that every old writer has stopped.
+Those hosts must exit and upgrade before sharing data. Arbitrary executor function
+injection has no equivalent cross-process interface and is explicitly retired;
+configured Host A2A and standalone executor-plane libraries remain. A general
+module-loader framework is outside scope.
+
+Host readiness, exact process exit and Run recovery eligibility remain distinct.
+Existing Stop, history, principal, fresh authority and tool-cleanup checks govern
+checkpoint continuation. Migration never replays tools with unknown effects.
+See the [accepted slices](features/v0.7.97.md#2026-10-29-统一-host-sdk-收口未发布),
+[migration contract](SDK_MIGRATION.md#统一-host-sdk-收口未发布) and
+[validation record](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md).
+
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
 
-> Last updated: 2026-10-18
+> Last updated: 2026-10-29
+>
+> **v0.7.97-alpha.11 release addendum:** explicit Agent, Coding and
+> experimental Script work modes land through the CLI, `/work-mode` and
+> managed SDK/Session paths — Coding stays the default and Script runs
+> supported leaf tools through the existing permission and receipt
+> boundaries; Ark/MiMo/MiniMax catalogs refresh; non-interactive question
+> outcomes are preserved with Host-owned deadlines; Skill `Bash(pattern)`
+> rules admit a single parsed command; MCP tool originals stay readable
+> through `part: 'original'`; structured task reports project into Product
+> views and recovered history; streaming token estimates are consistent.
+> Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.10 contract is
+> retained.
 >
 > **v0.7.97-alpha.10 release addendum:** checkpointed Runs and task trees
 > resume after Host restart with fresh scoped authority on top of the

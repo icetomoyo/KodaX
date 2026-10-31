@@ -24,7 +24,7 @@
  *     the caller's abortSignal), rewrite it into a transient
  *     `KodaXNetworkError` so the recovery pipeline treats it as a
  *     stalled-stream rather than a clean cancel. Async (dynamic import
- *     of `@kodax-ai/llm`).
+ *     of `@kodax-ai/llm/errors`).
  *
  *   - `runRecoveryPipeline` (CAP-069, P3.2e): single per-attempt
  *     decision pass — classifyResilienceError → telemetryClassify →
@@ -134,7 +134,7 @@ export function buildResilienceSession(
  * timer-driven aborts.
  *
  * Async because `KodaXNetworkError` is loaded via dynamic import to
- * avoid pulling the full `@kodax-ai/llm` error surface into the agent
+ * avoid pulling the full `@kodax-ai/llm` provider surface into the agent
  * substrate eagerly.
  */
 export async function translateAbortError(
@@ -148,7 +148,7 @@ export async function translateAbortError(
     && !callerAbortSignal?.aborted
   ) {
     const reason = (retryTimeoutController.signal.reason as Error | undefined)?.message ?? 'Stream stalled';
-    const { KodaXNetworkError } = await import('@kodax-ai/llm');
+    const { KodaXNetworkError } = await import('@kodax-ai/llm/errors');
     return new KodaXNetworkError(reason, true);
   }
   return error;

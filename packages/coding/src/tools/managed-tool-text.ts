@@ -1,3 +1,4 @@
+import { staticText } from '../prompts/static-text.js';
 /** Model-facing wording for eligible managed roots. Omitted descriptions preserve original contracts. */
 import { SESSION_HISTORY_ENTRY_REVISION_RULE, SESSION_HISTORY_READ_SCHEMA } from './session-history.js';
 
@@ -9,14 +10,14 @@ export interface ManagedToolText {
 
 /** Shared shell semantics, with the invocation boundary stated before serialization. */
 export function managedShellDescription(execution: 'native' | 'foreground'): string {
-  return 'Shell: tests/build/lint, packages, Git/processes, queries without dedicated tools, computed/template multi-file generation. Searches: grep/glob; known file content: write/edit, not shell redirection/wrappers. '
+  return staticText("t12.tools/managed-tool-text.0")
     + (execution === 'native' ? 'Long commands: run_in_background. ' : 'Foreground commands only; use native bash for background commands. ')
     + 'Full output captured; only next-request capacity overflow yields recoverable artifact preview.';
 }
 
 export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
   ask_user_question: {
-    description: 'Ask one flat question or 1–4 independent select questions via questions[] (overrides flat question/options; each item requires options). kind=input: flat free text only; select (default): options required. multi_select returns an array, bounded by min/max_selections. Option value defaults to label. Do not add Other: custom input defaults true; false only for closed safety/protocol choices. Batch custom settings inherit flat settings unless overridden. Defaults are suggestions, never submitted automatically. Wait indefinitely unless the Host sets a timeout. Skip/timeout returns unanswered; only Stop interrupts the Run. Continue or explain missing information.',
+    description: staticText("t11.tools/managed-tool-text.0"),
     annotations: { 'properties.questions.items.properties.header': 'Progress label, ≤12 chars.',
       'properties.questions.items.properties.options.items.properties.value': null,
       'properties.questions.items.properties.min_selections': null, 'properties.questions.items.properties.max_selections': null,
@@ -35,7 +36,7 @@ export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
     annotations: { 'properties.command': null, 'properties.description': 'Concise command purpose.', 'properties.run_in_background': 'Return immediately with output path; read it later.', 'properties.timeout': 'Seconds.' } },
   create_goal: { description: 'Create only on explicit user/system/developer request, never infer from ordinary tasks. token_budget only if explicitly requested. Fails if a goal exists; update_goal changes status only.',
     annotations: { 'properties.objective': 'Concrete target end-state across turns.', 'properties.token_budget': 'Positive integer total budget; otherwise omit.' } },
-  edit: { description: 'Read first. Apply edits sequentially to one existing file; each old_string must be unique in the whole current file unless replace_all. Exact matching, then normalized anchors. Later anchors refer to earlier edits’ results. Commit once; any failure leaves file unchanged. On failure inspect edit index, reread or use a smaller unique anchor, never full-file rewrite to bypass failure. Split oversized replacements.',
+  edit: { description: staticText("t11.tools/managed-tool-text.1"),
     annotations: { 'properties.path': null, 'properties.edits': null, 'properties.edits.items.properties.new_string': null,
       'properties.edits.items.properties.old_string': null, 'properties.edits.items.properties.replace_all': 'All occurrences; default false.' } },
   exit_plan_mode: { description: 'Parent-only interactive REPL approval of the finished plan. Approved → accept-edits; rejected → stay in plan and revise. Never combine with set_permission_mode.',
@@ -58,7 +59,7 @@ export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
   interrupt_agent: { description: 'Interrupt a controlled child turn, preserving identity/history. Native/constructed supported; incapable external backends explicitly reject.',
     annotations: { 'properties.target': 'Canonical controlled path or direct-child name.', 'properties.reason': 'Attributable reason.',
       'properties.scope': 'Default turn; subtree interrupts all controlled active turns. Actors remain reusable.' } },
-  kodax_manual: { description: 'First source for all KodaX product use/install/configuration/troubleshooting/extension questions, including SDK. Answer from results, not other-product pretraining. KodaX uses ~/.kodax/config.json/KODAX_*, not .claude/settings.json/config.toml. Use an exact topic or free-text query. Omit both for the topic index. Explains where to check values, never reads secrets.',
+  kodax_manual: { description: staticText("t11.tools/managed-tool-text.2"),
     annotations: { 'properties.query': 'Free-text question (English/Chinese).', 'properties.topic': 'Exact topic ID; unknown returns index.' } },
   list_agents: { description: 'Bounded caller-visible tree: capabilities, state, parent/active turn, result summary, recent activity and shared capacity.',
     annotations: { 'properties.after_path': 'Exclusive nextAfterPath cursor.', 'properties.limit': '1–50; default 20.',
@@ -66,16 +67,16 @@ export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
   list_dispatchable_agents: { description: 'List host-allowed Native/Constructed/External executors; use returned canonical agent_id in spawn_agent.',
     annotations: { 'properties.read_only': 'true excludes external write/unknown remote effects.', 'properties.required_capabilities': 'Required lifecycle capabilities.',
       'properties.required_skills': 'Every returned agent must declare all listed skills.' } },
-  memory_intent: { description: 'Governed Memory: list accepted claims/refs; remember; correct/forget exact claim ref; decisions/show only when asked. Every mutation needs an exact affirmative current-user userQuote. remember/correct statement must be an exact claim span, never inferred/paraphrased, with claimKind; new claims require stable claimKey. approve/reject need exact decision ref plus authorization. Safe requests apply; ambiguity asks; conflicts become decisions; restricted content rejected.',
+  memory_intent: { description: staticText("t11.tools/managed-tool-text.3"),
     annotations: { 'properties.operation': null, 'properties.claimKey': 'Stable identity, e.g. project.package_manager.', 'properties.claimKind': null,
       'properties.reason': 'User-supplied rejection reason.', 'properties.statement': null,
       'properties.targetRefId': 'Exact list/recall claim ref, or exact decision ref.', 'properties.userQuote': null } },
-  memory_recall: { description: 'Read-only, current MemorySession-scoped prior experience for a concrete decision gap absent from current context; may return none. If prior experience is the known missing source, use before unrelated repo exploration. Current repo/environment facts require normal tools.',
+  memory_recall: { description: staticText("t11.tools/managed-tool-text.4"),
     annotations: { 'properties.need': 'Concrete prior-experience gap.' } },
-  read: { description: 'Read line-numbered bounded text. Continue offset/limit; partial lines require exact line_offset cursor. Context recovery’s kodax-transient://text/ is a local run-scoped capability: read directly, not network or user re-paste. PNG/JPG/JPEG/GIF/WEBP return inline vision; inspect, do not reject as binary or reread already attached/inlined images. PDF: read_pdf extension; if absent request enabling/installing it.',
+  read: { description: staticText("t11.tools/managed-tool-text.5"),
     annotations: { 'properties.path': 'Absolute path or supplied kodax-transient://text/ reference.', 'properties.offset': 'Starting text line number.',
       'properties.limit': 'Text lines.', 'properties.line_offset': '0-based Unicode character offset within first line; use exact continuation cursor.' } },
-  send_message: { description: 'Message, no new turn: running receives at next safe boundary; idle retains until next turn. Direct parent/child, admitted peer or broadcast capped at 20; Runtime validates forwarding lineage against cycles.',
+  send_message: { description: staticText("t12.tools/managed-tool-text.1"),
     annotations: { 'properties.to': 'Visible canonical path, child/peer name, parent, or * broadcast. Self rejected.', 'properties.content': 'Body; Runtime authenticates agent-message frame.',
       'properties.forwarded_message_id': 'Received agent-message ID only when forwarding; Runtime derives chain. Fresh message: omit.',
       'properties.classification': 'Default internal; cannot downgrade source classification.' } },
@@ -85,27 +86,27 @@ export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
   session_history_search: { description: 'Find omitted persisted history only when missing detail is needed; do not guess from checkpoint. Bounded snippets/stable citations; read needed hit with hit.entryRevision as read.revision.',
     annotations: { 'properties.query': 'Specific phrase/ID/command/historical fact.', 'properties.limit': '1–20; default 8.',
       'properties.role': null, 'properties.scope': 'Default compacted; all only if active-tail search needed.' } },
-  skill: { description: 'Invoke a discovered matching Skill before responding, per Available Skills blocking requirement. Returns expanded/resolved instructions for next turn. Load via skill, never read SKILL.md. Optional free-form args forwarded for template substitution (most ignore it).',
+  skill: { description: staticText("t11.tools/managed-tool-text.6"),
     annotations: { 'properties.skill': 'Skill name; leading slash accepted.', 'properties.args': null } },
   spawn_agent: {
-    description: 'Start a named direct child; returns canonical path. Runtime atomically enforces shared session concurrency/work budgets. quality_strategy is optional telemetry, never admission control; invalid/conflicting data is ignored.',
+    description: staticText("t12.tools/managed-tool-text.2"),
     annotations: { 'properties.task_name': 'Stable direct-child name.', 'properties.objective': 'Bounded goal, constraints, evidence and output shape.', 'properties.scope': 'Bounded scope hint.',
       'properties.read_only': 'Default true; false retains parent permission ceiling.', 'properties.isolation': 'Default shared: edits are visible in the root workspace; do not reapply them. Worktree needs an explicit merge-back strategy.', 'properties.constraints': null,
       'properties.agent_id': 'Matching specialist canonical ID.', 'properties.evidence_refs': 'file:/diff:/finding:/agent-turn:<canonical-path>#turn=<id>; legacy agent:<path> means latest. Actor output must be terminal/visible.',
-      'properties.fork_turns': 'History: all (default), none, or positive recent-turn count.', 'properties.model_hint': 'balanced: ordinary work (default); fast: evaluated read-only mechanical lookup; deep: architecture/adversarial checks/severity/final synthesis. Unconfigured tiers inherit; write-capable fast stays on parent tier. Omit if unsure.',
+      'properties.fork_turns': 'History: all (default), none, or positive recent-turn count.', 'properties.model_hint': staticText("t12.tools/managed-tool-text.3"),
       'properties.provider': 'Deliberate cross-family override; unconfigured/omitted inherits.', 'properties.model': 'Paired provider model ID; omitted inherits.',
       'properties.effort': 'off/low/medium/high/xhigh/max; omitted/auto inherits. agent_id locks specialist effort; conflicts/unsupported values rejected.',
       'properties.quality_strategy': '{schemaVersion:1,stageId,pattern,role,laneRelation?,targetEvidenceRefs?}; Actor refs require exact agent-turn.' } },
   todo_create: {
-    description: 'Add one semantic milestone without replacing existing items. Returns {ok:true,id}; reuse this generated id, never supply one. This records planned work, not execution; skip trivial/informational tasks. Inactive store, invalid input or extension veto returns {ok:false,reason}.',
+    description: staticText("t11.tools/managed-tool-text.7"),
     annotations: { 'properties.subject': 'Nonempty imperative plan-row title.', 'properties.description': 'Full-detail multiline context, absent from compact row; omit if title suffices.',
       'properties.activeForm': 'Supply for each milestone: present-continuous in_progress spinner label.', 'properties.evaluator': 'When wired, completion runs build/test/lint = npm run build/npm test/npm run lint; failure returns stderr. Sparingly for real checks.',
       'properties.metadata': 'Opaque hook/eval data, not UI; omit if unused.' } },
   todo_list: {
-    description: 'Read plan and canonical ids: without id returns {ok:true,count,items}; with id returns {ok:true,item} including description/status/activeForm/note/evaluator/owner/metadata. Refresh only if state may have changed externally or is unknown; clear patches need no read. Inactive store returns {ok:false,reason}; continue without more todo calls.',
+    description: staticText("t11.tools/managed-tool-text.8"),
     annotations: { 'properties.id': 'Stable item ID; omitted lists plan.' } },
   todo_update: {
-    description: 'Patch one existing todo by stable id; omitted fields survive. Add work with todo_create. Mark in_progress with activeForm before work, completed only after finishing. Completion may run its evaluator and be vetoed by a hook: after rejection/blocked-by-hook re-read and revise before retrying. Avoid unchanged updates; read details when state is uncertain, list for unknown ids. Inactive store: continue without more todo calls.',
+    description: staticText("t11.tools/managed-tool-text.9"),
     annotations: { 'properties.id': 'Canonical current-plan ID.', 'properties.subject': 'Nonempty replacement imperative title.', 'properties.description': 'Replacement multiline context; empty clears.',
       'properties.activeForm': 'Required present-continuous label for in_progress; omit terminal transition to preserve.',
       'properties.evaluator': 'When wired: build/test/lint → npm run build/npm test/npm run lint on completion; failure returns stderr.',
@@ -113,17 +114,17 @@ export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
       'properties.note': 'Reason/detail; omitted preserves.', 'properties.status': 'failed: retry needed; skipped: unnecessary; cancelled: breadcrumb; deleted: remove + todo:deleted. Only Runtime restores pending after revise.' } },
   tool_call: { description: 'Call an active tool via portable bridge after discovery/description. Target policy, permissions and result guardrails reapply.',
     annotations: { 'properties.name': 'Active tool name.', 'properties.input': 'Target JSON arguments.' } },
-  tool_search: { description: 'Full active-tool contracts. Native tools callable directly; use tool_call for discovered non-native tools. Exact select:NAME[,NAME...] or keyword search over names/descriptions/parameters (+required and loose ranked terms). Keep using returned schema even if later menus compact.',
+  tool_search: { description: staticText("t11.tools/managed-tool-text.10"),
     annotations: { 'properties.query': 'select:NAME[,NAME...] or +required loose keywords.', 'properties.max_results': 'Default 5, max 15; ignored for select:.' } },
-  update_goal: { description: 'Complete only when objective and all requirements are evidenced; disclose unverified scope. Bookkeeping is not quality certification. blocked requires external unblock and same blocker_kind for 3 consecutive turns; Runtime rejects earlier. Pause/resume/budget-limited are user-controlled. Never call merely to stop work.',
+  update_goal: { description: staticText("t11.tools/managed-tool-text.11"),
     annotations: { 'properties.status': null, 'properties.blocker_kind': 'Required blocked: stable obstacle ID compared across turns, e.g. awaiting-user-permission.' } },
   wait_agent: {
-    description: 'Yield for Agent mailbox evidence, root user input, interruption or timeout. Progress is UI/SDK-only and never wakes the model. Returns a wake acknowledgement, not the evidence: read the following mailbox. After any mailbox evidence, integrate it and reconcile the affected semantic milestone before waiting again.',
+    description: staticText("t11.tools/managed-tool-text.12"),
     annotations: { 'properties.timeout_ms': 'Milliseconds; default 120000. Longer waits cost no model call; user input wakes promptly.' } },
   worktree_create: { description: 'Create isolated Git worktree/branch for Agent work.',
     annotations: { 'properties.branch_name': 'Explicit branch; optional.', 'properties.description': 'Input used to generate a branch name.' } },
   worktree_remove: { description: 'Keep/remove a Git worktree directory and optionally its branch.',
     annotations: { 'properties.action': null, 'properties.worktree_path': 'Absolute worktree path.', 'properties.discard_changes': 'true bypasses uncommitted/local-commit safety checks.' } },
-  write: { description: 'Direct UTF-8 write for explicitly requested new file/full rewrite; existing changes: edit. Large diffs may summarize. Oversized/stream-failed content: smaller skeleton/placeholders then edit sections. Shell wrappers bypass mutation/diff checks and shift streaming limits. Chinese/emoji need no encoding workaround.',
+  write: { description: staticText("t11.tools/managed-tool-text.13"),
     annotations: { 'properties.path': 'Absolute file path.', 'properties.content': null } },
 };

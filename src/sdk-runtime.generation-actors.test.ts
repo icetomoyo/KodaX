@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createSessionLineage } from '@kodax-ai/agent';
 import { executeChildAgents } from '../packages/coding/src/child-executor.js';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { KodaXBaseProvider, registerModelProvider, clearRuntimeModelProviders, type KodaXMessage } from '@kodax-ai/llm';
 
 vi.mock('../packages/coding/src/child-executor.js', async importOriginal => ({

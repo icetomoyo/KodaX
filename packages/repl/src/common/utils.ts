@@ -716,6 +716,8 @@ function resolveReasoningProfileForDisplay(
   if (!profile) {
     return undefined;
   }
+  // Display has no acquired credential identity. Native requests own scoped narrowing.
+  if (resolveProvider(provider).usesScopedReasoningLearning?.()) return profile;
   // Apply the runtime capability cache: efforts observed/probed to be rejected
   // by this provider/model are removed so the cycle, /effort options, and the
   // status label all stop offering them (single funnel for every display

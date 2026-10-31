@@ -30,6 +30,7 @@ const promptScrollOnly = process.argv.includes('--prompt-scroll-only');
 const streamingScrollOnly = process.argv.includes('--streaming-scroll-only');
 const checkpointResumeOnly = process.argv.includes('--checkpoint-resume-only');
 const modelNoticesOnly = process.argv.includes('--model-notices-only');
+const streamingTokensOnly = process.argv.includes('--streaming-tokens-only');
 process.stdout.write(`Artifacts: ${artifacts}\n`);
 
 async function waitFor(label, predicate, timeout = 25_000) {
@@ -122,6 +123,17 @@ async function respondToModelRequest(state, request, response) {
     return;
   }
   response.writeHead(200, { 'content-type': 'text/event-stream' });
+  if (token === 'ACCEPT_STREAM_TOKENS' && data.messages.at(-1).role !== 'tool') {
+    const frame = (delta, finish_reason = null) => `data: ${JSON.stringify({
+      id: token, object: 'chat.completion.chunk', choices: [{ index: 0, delta, finish_reason }],
+    })}\n\n`;
+    const argumentsDelta = text => ({ tool_calls: [{ index: 0, function: { arguments: text } }] });
+    response.write(frame({ tool_calls: [{ index: 0, id: 'token-input', type: 'function',
+      function: { name: 'read', arguments: '{"path":' } }] }));
+    state.pending.set('token-arguments', () => response.write(frame(argumentsDelta('"note.txt"}'))));
+    state.pending.set('token-finish', () => response.end(frame({}, 'tool_calls') + 'data: [DONE]\n\n'));
+    return;
+  }
   if ((token === 'ACCEPT_ARCHIVE_EARLY' || token.startsWith('ACCEPT_ARCHIVE_FILL_'))
     && data.messages.at(-1).role !== 'tool') {
     response.write(`data: ${JSON.stringify({ id: token, object: 'chat.completion.chunk',
@@ -1124,6 +1136,29 @@ async function checkStreamingPromptScroll(state) {
     await writeFile(path.join(artifacts, `${state.mode}-streaming-scroll-frames.json`), JSON.stringify(frames, null, 2));
   }
   await waitFor('streaming scroll round settlement', () => state.view.runs.every(run => run.phase === 'completed'));
+  for (let tick = 0; tick < 300; tick += 1) {
+    state.terminal.child.write('\x1b[<65;20;8M');
+    await delay(35);
+    if (state.terminal.screen().includes('LATE_AFTER_FREEZE_MARKER')) break;
+  }
+  await state.terminal.save('streaming-scroll-wheel-return');
+  await waitFor('long saved history wheel returns to live without End', () =>
+    state.terminal.screen().includes('LATE_AFTER_FREEZE_MARKER'), 1500);
+  assert.ok(!state.terminal.screen().includes('Queue a follow-up'), 'A settled Run must restore the idle prompt');
+  for (let tick = 0; tick < 240; tick += 1) {
+    state.terminal.child.write('\x1b[<64;20;8M');
+    await delay(35);
+    if (state.terminal.screen().includes('SAVED_QUERY_0')) break;
+  }
+  assert.ok(state.terminal.screen().includes('SAVED_QUERY_0'), 'Idle history must remain reachable');
+  for (let tick = 0; tick < 300; tick += 1) {
+    state.terminal.child.write('\x1b[<65;20;8M');
+    await delay(35);
+    if (state.terminal.screen().includes('LATE_AFTER_FREEZE_MARKER')) break;
+  }
+  await state.terminal.save('idle-scroll-wheel-return');
+  assert.ok(state.terminal.screen().includes('LATE_AFTER_FREEZE_MARKER'),
+    'Idle long history must return to live with only the mouse wheel');
   await state.terminal.type('\x1b[F');
   assert.equal(received(state, 'ACCEPT_HOLD_TRANSCRIPT').length, 1, 'Browsing must not resubmit the input');
 }
@@ -1372,6 +1407,21 @@ async function cleanup(state) {
   }
 }
 
+async function checkStreamingTokenUnits(state) {
+  await writeFile(path.join(state.homeDir, 'note.txt'), 'Token progress fixture');
+  await state.terminal.submit('ACCEPT_STREAM_TOKENS');
+  await waitFor('tool input spinner token estimate', () => state.terminal.screen().includes('Receiving read (~2 tokens)'));
+  assert.doesNotMatch(state.terminal.screen(), /Receiving read[^\n]*chars/);
+  await state.terminal.save('streaming-token-first-chunk');
+  state.pending.get('token-arguments')(); state.pending.delete('token-arguments');
+  if (state.mode === 'ink') {
+    await waitFor('cumulative tool input token estimate', () => state.terminal.screen().includes('Receiving read (~5 tokens)'));
+    await state.terminal.save('streaming-token-complete-arguments');
+  }
+  state.pending.get('token-finish')(); state.pending.delete('token-finish');
+  await waitFor('tool input round completes', () => state.terminal.screen().includes('END_ACCEPT_STREAM_TOKENS'));
+}
+
 async function run(mode) {
   const state = { mode, homeDir: path.join(artifacts, mode), requests: [], pending: new Map(),
     views: new Map(), runEvents: [], providerErrors: [] };
@@ -1384,8 +1434,13 @@ async function run(mode) {
     if (checkpointResumeOnly) await seedCheckpointResumeHistory(state);
     state.terminal = openTerminal(state.homeDir, mode, state.fixtureSessionId ? ['--resume', state.fixtureSessionId] : []);
     await check(state, 'startup', checkStartup);
-    if (mode === 'ink' && !checkpointResumeOnly && !streamingScrollOnly && !modelNoticesOnly && !longHistoryOnly && !queueBoundaryOnly && !consumerOnly && !exposureOnly) {
+    if (mode === 'ink' && !streamingTokensOnly && !checkpointResumeOnly && !streamingScrollOnly && !modelNoticesOnly && !longHistoryOnly && !queueBoundaryOnly && !consumerOnly && !exposureOnly) {
       await check(state, 'short-history-wheel-return-to-live', checkShortPromptScroll);
+    }
+    if (streamingTokensOnly) {
+      await check(state, 'streaming-token-units', checkStreamingTokenUnits);
+      await check(state, 'exit', checkExit);
+      return;
     }
     if (modelNoticesOnly) {
       await check(state, 'model-command-visible-feedback', checkModelNotices);
@@ -1469,7 +1524,7 @@ async function run(mode) {
 }
 
 try {
-  const requestedModes = process.argv.slice(2).filter(argument => !['--source', '--long-history-only', '--queue-boundary-only', '--consumer-only', '--exposure-only', '--prompt-scroll-only', '--streaming-scroll-only', '--checkpoint-resume-only', '--model-notices-only'].includes(argument));
+  const requestedModes = process.argv.slice(2).filter(argument => !['--source', '--long-history-only', '--queue-boundary-only', '--consumer-only', '--exposure-only', '--prompt-scroll-only', '--streaming-scroll-only', '--checkpoint-resume-only', '--model-notices-only', '--streaming-tokens-only'].includes(argument));
   const modes = requestedModes.length ? requestedModes : longHistoryOnly || queueBoundaryOnly || promptScrollOnly || streamingScrollOnly || checkpointResumeOnly || modelNoticesOnly ? ['ink'] : ['ink', 'classic'];
   assert.ok(modes.every(mode => ['ink', 'classic'].includes(mode)), 'Modes must be ink or classic');
   for (const mode of modes) await run(mode);

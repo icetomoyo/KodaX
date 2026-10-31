@@ -1,3 +1,4 @@
+import { staticText } from '../../prompts/static-text.js';
 import { isDeepStrictEqual } from 'node:util';
 import type { Agent, RunnableTool, RunnerToolContext } from '@kodax-ai/agent';
 import type { KodaXToolDefinition, KodaXToolUseBlock } from '@kodax-ai/llm';
@@ -17,7 +18,7 @@ const scriptContracts = new WeakMap<Agent, ScriptModelContracts>();
 
 /** Structured contracts are serialized once, never recovered by parsing generated teaching. */
 export function buildScriptModelDescription(leaves: readonly KodaXToolDefinition[]): string {
-  return 'Run an async JavaScript function body in an isolated, fresh VM. Use await tools.NAME(JSON arguments) with the complete contracts below; no discovery call is needed. Calls execute serially, even in Promise.all. No process, filesystem, network, imports or state between cells. Optionally return a JSON summary; original leaf outputs and warnings are already included in receipts, so avoid repeating them. Every leaf returns {content,isError,metadata}; check isError before dependent operations. Partial effects are retained on failure/cancellation; inspect receipts and never blindly replay a cell. Native control tools and undo remain outside Script. Existing permissions and shared work budget apply to every leaf. Foreground shell only. '
+  return staticText("t12.agent-runtime/script/model.0")
     + `Use native bash for background commands. Limits: ${SCRIPT_MODEL_LIMITS.timeoutMs / 1000}s cell deadline (admitted host calls drain before return), ${SCRIPT_MODEL_LIMITS.maxCalls} attempted calls, ${SCRIPT_MODEL_LIMITS.memoryBytes / 1024 / 1024}MiB VM memory, ${SCRIPT_MODEL_LIMITS.maxTransferBytes / 1024 / 1024}MiB per transfer.\nCallable contracts (JSON Schema):\n`
     + leaves.map(tool => JSON.stringify(tool)).join('\n');
 }
@@ -59,7 +60,7 @@ function serializeModelReceipt(cell: ScriptCellResult): string {
       value_fields_from_receipts: Object.fromEntries(references) };
   } else return full;
   const compact = JSON.stringify({ ...projected,
-    value_reference_note: 'References identify identical return data in this response: value_from_receipt replaces value; value_fields_from_receipts supplies omitted value fields. Use receipt id and field; no additional tool call is needed.' });
+    value_reference_note: staticText("t12.agent-runtime/script/model.1") });
   return compact.length < full.length ? compact : full;
 }
 

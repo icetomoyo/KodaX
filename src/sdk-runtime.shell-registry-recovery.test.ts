@@ -13,7 +13,7 @@ vi.mock('../packages/agent/src/runtime/process-tree.js', async (importOriginal) 
 
 import { cleanupRegisteredManagedChildren } from '@kodax-ai/agent';
 import { setAgentConfigHome } from '../packages/agent/src/runtime/agent-home.js';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 
 it('recovers a swept Shell witness through the SDK before admitting a successor Run', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-shell-registry-recovery-'));

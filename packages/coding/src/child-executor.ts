@@ -1,3 +1,4 @@
+import { staticText } from './prompts/static-text.js';
 /**
  * Child Agent Executor — FEATURE_067
  *
@@ -1334,7 +1335,7 @@ async function runReadChildBody(
       options.parentOptions.extensionRuntime,
     );
   const excludeTools = restrictToolsForChildRuntime(
-    specialistExcludeTools,
+    [...(scope.ctx.excludeTools ?? []), ...specialistExcludeTools],
     options.actorCapabilities,
     options.actorControl,
     options.parentOptions.extensionRuntime,
@@ -1648,7 +1649,7 @@ async function runWriteChildBody(
     specialistSystemPrompt,
   );
   const excludeTools = restrictToolsForChildRuntime(
-    specialistExcludeTools,
+    [...(childCtx.excludeTools ?? []), ...specialistExcludeTools],
     options.actorCapabilities,
     options.actorControl,
     options.parentOptions.extensionRuntime,
@@ -1937,7 +1938,7 @@ async function buildChildBriefing(
     ...(childGitRoot && childGitRoot !== childCwd ? [`Git Root: ${childGitRoot}`] : []),
     `Platform: ${platformLabel} (${os.release()})`,
     shellHint,
-    `All relative paths in your tool calls (read/write/edit/bash) resolve against the Working Directory above. Do NOT \`cd\` into invented paths — the working directory is fixed for the duration of this task, and each \`bash\` call runs in a fresh subprocess so a \`cd\` would not persist across calls anyway.`,
+    staticText("t12.child-executor.0"),
     ``,
     `## Objective`,
     bundle.objective,
@@ -1952,19 +1953,19 @@ async function buildChildBriefing(
       ? bundle.constraints.map((constraint) => `- Binding constraint: ${constraint}`)
       : []),
     bundle.readOnly
-      ? '- This is a READ-ONLY task. Do NOT modify any files — the parent dispatched this child specifically for investigation, and a sibling write-child (or the parent itself) will handle any mutations the findings imply.'
+      ? staticText("t12.child-executor.1")
       : '- You may modify files within the scope listed above.',
     ...(collaboration.canSpawn
       ? [
-          `- You may use the Runtime-bound collaboration tools to spawn direct children when parallel work materially improves speed or quality. Descendants share the same root concurrency, budget, and capability ceilings.`,
+          staticText("t12.child-executor.2"),
         ]
       : []),
     ...(collaboration.canMessage
       ? [
           ``,
           `## Runtime Collaboration`,
-          `You can send short messages to other in-flight agents with \`send_message\`: use a canonical peer path for a sibling, \`parent\` for your direct parent, or \`*\` to broadcast. Send only information that would change another agent's plan.`,
-          `Forwarding: each received \`<agent-message>\` carries a Runtime-generated \`id\`. Pass it as \`forwarded_message_id\` only when intentionally forwarding that message; Runtime rejects cycles and caps forwarding depth.`,
+          staticText("t12.child-executor.3"),
+          staticText("t12.child-executor.4"),
         ]
       : []),
     ...(bundle.readOnly
@@ -1974,8 +1975,8 @@ async function buildChildBriefing(
           // FEATURE_188 v0.7.42 (ADR-034) — write children share parent
           // cwd with siblings, so peer-coordination is prompt-enforced.
           `## Coordination with peers`,
-          `Only modify the exact files or generated outputs assigned in the Objective and Scope. In shared isolation, your edits are immediately visible to the parent and siblings; they must not touch or reapply your write set while you work.`,
-          `Other agents may be working in parallel in this same repository. Before making any file modification, briefly check whether your target path could be touched by a peer (e.g. the coordinator dispatched another sibling whose scope overlaps yours, or the user mentioned a parallel thread). If you cannot confidently rule out a conflict, STOP and report back to the coordinator with what you observed rather than proceeding with the edit. The coordinator will resolve the conflict or hand you an updated scope.`,
+          staticText("t12.child-executor.5"),
+          staticText("t12.child-executor.6"),
         ]),
     ``,
     `## Execution Strategy (use parallel tool calls)`,

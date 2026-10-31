@@ -57,7 +57,7 @@ import {
   attachRunnerRecoveryTranscript,
   GenerationSuspensionError,
   reclaimReservedResponseTokens,
-  getCachedRejectedEfforts,
+  getProviderReasoningCacheOptions,
   recordRejectedEffort,
   buildAssistantMessageFromLlmResult,
   type Agent,
@@ -101,6 +101,7 @@ import {
 } from '../../../agent-runtime/middleware/cost-tracker.js';
 import { countTokens, estimateTokens } from '../../../tokenizer.js';
 import { fitToolSchemasToContext } from '../../../agent-runtime/tool-exposure-planner.js';
+import { emitEffectiveTaskConfig } from '../../../agent-runtime/effective-config.js';
 import {
   createRuntimeContextBudgetSnapshot,
   estimateToolSchemaTokens,
@@ -110,7 +111,7 @@ import {
   resolveReasoningMode,
   resolveRoleEffort,
 } from '../../../reasoning.js';
-import { mapLegacyReasoningModeToEffortIntent } from '@kodax-ai/llm';
+import { mapLegacyReasoningModeToEffortIntent, reconcileAssistantContent, type KodaXAssistantBlock } from '@kodax-ai/llm';
 import type {
   KodaXEvents,
   KodaXOptions,
@@ -134,6 +135,7 @@ import {
 } from '../../../agent-runtime/event-emitter.js';
 import {
   emitPromptCacheDiagnosticRequest,
+  emitNativePromptCacheDiagnosticRequest,
   emitPromptCacheDiagnosticResponse,
   hashProviderVisibleMessages,
   normalizeDiagnosticEnvelope,
@@ -382,7 +384,9 @@ export function buildRunnerLlmAdapter(
   // FEATURE_296 T5/T6 (ADR-067): per-run request-recovery state — the cache
   // of degraded copies for irreducibly oversized fresh user inputs, and the
   // tool-execution context backing the spill artifact.
-  const userInputSpillCtx: KodaXToolExecutionContext = { backups: new Map() };
+  const userInputSpillCtx: KodaXToolExecutionContext = { backups: new Map(),
+    toolResultRecovery: options.context?.toolResultRecovery,
+    isPagedContentRecoveryAllowed: options.context?.isPagedContentRecoveryAllowed };
 
   const requireUserInputDegradationCache = (): UserInputDegradationCache => {
     if (userInputDegradationCache === undefined) {
@@ -508,7 +512,7 @@ export function buildRunnerLlmAdapter(
     const managedContext = getRegistryManagedAgentContext(agent);
     const registryManaged = managedContext !== undefined;
     let wireTools = (registryManaged ? filterModelToolAliases(agent.tools ?? []) : agent.tools ?? [])
-      .map(t => ({ name: t.name, description: t.description, input_schema: t.input_schema }));
+      .map(t => ({ name: t.name, description: t.description, input_schema: t.input_schema, ...(t.strict ? { strict: t.strict } : {}), ...(t.grammar ? { grammar: structuredClone(t.grammar) } : {}) }));
 
     // Presentation only: keep the execution inventory and AMA capability teaching intact.
     // Unknown extension inventories and explicit SDK/child contracts retain native search.
@@ -600,6 +604,7 @@ export function buildRunnerLlmAdapter(
     };
 
     let streamResult: {
+      contentBlocks?: readonly KodaXAssistantBlock[];
       textBlocks?: readonly { text: string }[];
       toolBlocks?: readonly KodaXToolUseBlock[];
       thinkingBlocks?: readonly (
@@ -609,6 +614,8 @@ export function buildRunnerLlmAdapter(
       usage?: KodaXTokenUsage;
     };
     if (overrideStream) {
+      emitEffectiveTaskConfig(options, { agentMode: options.agentMode ?? 'ama',
+        toolScope: (agent.tools ?? []).map(tool => tool.name), modelToolScope: wireTools.map(tool => tool.name) });
       system = buildWireSystem(baseSystem, wireTools);
       streamResult = await overrideStream(
         projectSearchResults(transcript),
@@ -635,14 +642,17 @@ export function buildRunnerLlmAdapter(
       // Fit conservatively against the existing full instructions, then project
       // using the actual disclosed contracts. No iterative fitting or tool loss.
       const providerName = options.provider ?? provider.name ?? 'anthropic';
-      const rejectedEfforts = getCachedRejectedEfforts(providerName, activeModel ?? provider.getModel(), options.context?.configHome);
+      emitEffectiveTaskConfig(options, { agentMode: options.agentMode ?? 'ama',
+        toolScope: (agent.tools ?? []).map(tool => tool.name), modelToolScope: wireTools.map(tool => tool.name) });
+      const reasoningCache = getProviderReasoningCacheOptions(provider, activeModel ?? provider.getModel(), options.context?.configHome);
+      const rejectedEfforts = reasoningCache.rejectedReasoningEfforts ?? [];
       if (providerReasoning?.effort !== undefined && rejectedEfforts.length > 0) {
         const resolved = resolveWireEffort({ provider: providerName, model: activeModel ?? provider.getModel(), desiredEffort: providerReasoning.effort, rejectedEfforts });
         providerReasoning = { ...providerReasoning, effort: resolved.effort ?? 'none' };
       }
       const onReasoningEffortRejected = (event: Parameters<NonNullable<KodaXProviderStreamOptions['onReasoningEffortRejected']>>[0],
         providerRequestId: string) => {
-        recordRejectedEffort(event.provider, event.model, event.effort, 'observed', new Date().toISOString(), options.context?.configHome);
+        recordRejectedEffort(event.provider, event.model, event.effort, 'observed', new Date().toISOString(), options.context?.configHome, event.cacheScope);
         options.events?.onReasoningEffortRejected?.({ ...event, providerRequestId });
       };
       const supportsNativeEphemeralSuffix =
@@ -791,6 +801,7 @@ export function buildRunnerLlmAdapter(
       // SA-mode substrate (see catch-terminals.ts:runCatchCleanup).
       providerMessages = cleanupIncompleteToolCalls(providerMessages);
       providerMessages = validateAndFixToolHistory(providerMessages);
+      providerMessages = options.context?.toolResultRecovery?.project(providerMessages) ?? providerMessages;
       // FEATURE_296 T5/T6 (ADR-067): degrade irreducibly oversized fresh user
       // inputs on the request copy, then shrink the wire-level output reserve
       // while the assembled request is still over capacity so the request
@@ -816,7 +827,7 @@ export function buildRunnerLlmAdapter(
               onUsage: usage => { costTracker = recordCostUsage(costTracker, {
                 provider: providerName, model: activeModel ?? provider.getModel(), inputTokens: usage.inputTokens,
                 outputTokens: usage.outputTokens, cacheReadTokens: usage.cachedReadTokens,
-                cacheWriteTokens: usage.cachedWriteTokens }); },
+                cacheWriteTokens: usage.cachedWriteTokens, ...(usage.cachedWriteTokensByTtl ? { cacheWriteTokensByTtl: usage.cachedWriteTokensByTtl } : {}) }); },
             }) },
         );
         requestMaxOutputTokens = applyContextCapacityReserveOverride(provider, {
@@ -848,7 +859,8 @@ export function buildRunnerLlmAdapter(
             contextWindow: window, reservedResponseTokens: reserve, systemTokens: countTokens(candidateFullSystem),
           }) : candidateAvailableTools;
           const candidateSystem = buildWireSystem(candidateBaseSystem, candidateTools);
-          const clean = validateAndFixToolHistory(cleanupIncompleteToolCalls([...candidate.slice(leading)]));
+          const canonical = validateAndFixToolHistory(cleanupIncompleteToolCalls([...candidate.slice(leading)]));
+          const clean = options.context?.toolResultRecovery?.project(canonical) ?? canonical;
           const projected = await degradeIrreducibleUserInputs(clean, userInputSpillCtx, window,
             requireUserInputDegradationCache(), {
               currentTokens: resolveContextTokenCount(clean, contextTokenSnapshotRef.current), reservedResponseTokens: reserve,
@@ -987,9 +999,9 @@ export function buildRunnerLlmAdapter(
 
         try {
           emitContextBudgetSnapshot(providerMessages, requestMaxOutputTokens);
-          const cacheDiagnostic = beginPromptCacheDiagnostic(providerMessages, attempt);
+          let cacheDiagnostic = beginPromptCacheDiagnostic(providerMessages, attempt);
           raw = await withProviderRequestCredential(
-            provider.name,
+            provider,
             'primary',
             retrySignal,
             (credentialSignal) => provider.stream(
@@ -997,7 +1009,8 @@ export function buildRunnerLlmAdapter(
               [...wireTools],
               system,
               providerReasoning,
-              { ...streamOptions,
+              { ...streamOptions, ...reasoningCache,
+                onRequestPrepared: projection => { cacheDiagnostic = emitNativePromptCacheDiagnosticRequest(options.events, cacheDiagnostic, projection); },
                 onReasoningEffortRejected: event => onReasoningEffortRejected(event, requestMeta.providerRequestId),
                 onReasoningResolved: event => options.events?.onReasoningResolved?.({ ...event, ...requestMeta }),
                 ...(textRecoveryRetry ? { singleAttempt: true } : {}), signal: credentialSignal },
@@ -1105,7 +1118,7 @@ export function buildRunnerLlmAdapter(
           ) {
             const reason = (retryTimeoutController.signal as { reason?: { message?: string } })
               .reason?.message ?? 'Stream stalled';
-            const { KodaXNetworkError } = await import('@kodax-ai/llm');
+            const { KodaXNetworkError } = await import('@kodax-ai/llm/errors');
             error = new KodaXNetworkError(reason, true);
           }
           rethrowObservedManagedProviderAbort(
@@ -1184,13 +1197,13 @@ export function buildRunnerLlmAdapter(
                 fallbackMeta,
               );
               emitContextBudgetSnapshot(providerMessages, requestMaxOutputTokens);
-              const fallbackCacheDiagnostic = beginPromptCacheDiagnostic(
+              let fallbackCacheDiagnostic = beginPromptCacheDiagnostic(
                 providerMessages,
                 attempt,
                 'complete',
               );
               raw = await withProviderRequestCredential(
-                provider.name,
+                provider,
                 'fallback',
                 fallbackSignal,
                 (credentialSignal) => provider.complete(
@@ -1199,6 +1212,8 @@ export function buildRunnerLlmAdapter(
                   system,
                   providerReasoning,
                   {
+                    ...reasoningCache,
+                    onRequestPrepared: projection => { fallbackCacheDiagnostic = emitNativePromptCacheDiagnosticRequest(options.events, fallbackCacheDiagnostic, projection); },
                     promptCacheKey,
                     onReasoningEffortRejected: event => onReasoningEffortRejected(event, fallbackMeta.providerRequestId),
                     onReasoningResolved: event => options.events?.onReasoningResolved?.({ ...event, ...fallbackMeta }),
@@ -1275,7 +1290,7 @@ export function buildRunnerLlmAdapter(
                 attempt, maxAttempts: resilienceCfg.maxRetries, delayMs: 0, recoveryAction: 'text_diagnosis', ladderStep: 4, fallbackUsed: false }),
               onUsage: usage => { costTracker = recordCostUsage(costTracker, { provider: providerName,
                 model: activeModel ?? provider.getModel(), inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
-                cacheReadTokens: usage.cachedReadTokens, cacheWriteTokens: usage.cachedWriteTokens }); },
+                cacheReadTokens: usage.cachedReadTokens, cacheWriteTokens: usage.cachedWriteTokens, ...(usage.cachedWriteTokensByTtl ? { cacheWriteTokensByTtl: usage.cachedWriteTokensByTtl } : {}) }); },
             });
             if (recovered) { attempt += 1; textRecoveryRetry = true; nextRequestMode = 'replace'; continue; }
             // Preserve the Runner transcript on the thrown error so the
@@ -1403,12 +1418,12 @@ export function buildRunnerLlmAdapter(
             continuationMeta,
           );
           emitContextBudgetSnapshot(providerMessages, requestMaxOutputTokens);
-          const cacheDiagnostic = beginPromptCacheDiagnostic(
+          let cacheDiagnostic = beginPromptCacheDiagnostic(
             providerMessages,
             attempt + l5Retries,
           );
           raw = await withProviderRequestCredential(
-            provider.name,
+            provider,
             'primary',
             l5Signal,
             (credentialSignal) => provider.stream(
@@ -1417,6 +1432,8 @@ export function buildRunnerLlmAdapter(
               system,
               providerReasoning,
               {
+                ...reasoningCache,
+                onRequestPrepared: projection => { cacheDiagnostic = emitNativePromptCacheDiagnosticRequest(options.events, cacheDiagnostic, projection); },
                 promptCacheKey,
                 onReasoningEffortRejected: event => onReasoningEffortRejected(event, continuationMeta.providerRequestId),
                 onReasoningResolved: event => options.events?.onReasoningResolved?.({ ...event, ...continuationMeta }),
@@ -1480,6 +1497,7 @@ export function buildRunnerLlmAdapter(
       }
 
       streamResult = {
+        contentBlocks: raw.contentBlocks,
         textBlocks: accumulatedText ? [{ text: accumulatedText }] : raw.textBlocks,
         toolBlocks: raw.toolBlocks,
         thinkingBlocks: accumulatedThinking ?? raw.thinkingBlocks,
@@ -1507,6 +1525,7 @@ export function buildRunnerLlmAdapter(
         outputTokens: streamResult.usage.outputTokens,
         cacheReadTokens: streamResult.usage.cachedReadTokens,
         cacheWriteTokens: streamResult.usage.cachedWriteTokens,
+        ...(streamResult.usage.cachedWriteTokensByTtl ? { cacheWriteTokensByTtl: streamResult.usage.cachedWriteTokensByTtl } : {}),
       });
     }
 
@@ -1552,6 +1571,9 @@ export function buildRunnerLlmAdapter(
     // missing the thinking block in history.
     const thinkingBlocks = streamResult.thinkingBlocks;
     const runnerResult: RunnerLlmResult = {
+      ...(streamResult.contentBlocks ? { contentBlocks: reconcileAssistantContent(streamResult.contentBlocks, {
+        ...streamResult, textBlocks: text ? [{ text }] : [],
+      }) } : {}),
       contextPreparationProgress: () => preparationBefore !== pagedInputProgress(userInputDegradationCache),
       text,
       outputId,

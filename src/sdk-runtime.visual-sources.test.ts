@@ -6,7 +6,7 @@ import { expect, it, vi } from 'vitest';
 import { clearRuntimeModelProviders, createCustomProvider, registerModelProvider } from '@kodax-ai/llm';
 import { NATIVE_PROVIDER_CAPABILITY_PROFILE } from '../packages/llm/src/providers/capability-profile.js';
 import { createSessionManager, FileSessionStorage } from '@kodax-ai/repl';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from '../tests/runtime-fixture.js';
 
 const cases = (['coding', 'agent', 'script'] as const).flatMap(workMode =>
   (['openai', 'anthropic'] as const).flatMap(protocol => [false, true].map(bridge => ({ workMode, protocol, bridge }))));

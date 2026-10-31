@@ -78,7 +78,7 @@ const DEFAULT_MAX_HEADER_WAIT_MS = 120_000;
 
 type HeadersLike = Headers | Record<string, string | string[] | undefined> | undefined;
 
-function readHeader(headers: HeadersLike, name: string): string | undefined {
+export function readHeader(headers: HeadersLike, name: string): string | undefined {
   if (!headers) return undefined;
   // Web `Headers` object — case-insensitive lookup.
   if (typeof (headers as Headers).get === 'function') {

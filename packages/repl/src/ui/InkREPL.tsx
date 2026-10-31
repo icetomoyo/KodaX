@@ -525,7 +525,7 @@ import {
   type SelectOption,
 } from "./utils/ask-user.js";
 import { buildHelpMenuSections } from "./constants/layout.js";
-import { buildStatusBarViewModel, formatTokenCount } from "./view-models/status-bar.js";
+import { buildStatusBarViewModel, formatStreamingActivity } from "./view-models/status-bar.js";
 import {
   dismissLearningRecoveryAfterQuerySubmit,
   formatLearningRecoverySummary,
@@ -3571,6 +3571,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       kind: "input";
       prompt: string;
       defaultValue?: string;
+      secret?: boolean;
       buffer: string;
       error?: string;
     }
@@ -4729,11 +4730,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       });
       if (activity?.kind !== 'busy' || !hostStreamingActivity || isLivePaused || workflowBuilderMessage
         || (sessionView?.activity?.compacting ?? promptControlStreamingState.isCompacting)) return activity;
-      const label = hostStreamingActivity.kind === 'thinking' ? 'Thinking' : `Receiving ${hostStreamingActivity.toolName}`;
-      const count = hostStreamingActivity.kind === 'thinking'
-        ? hostStreamingActivity.estimatedTokenCount === undefined ? '' : ` (~${formatTokenCount(hostStreamingActivity.estimatedTokenCount)} tokens)`
-        : hostStreamingActivity.charCount === undefined ? '' : ` (${hostStreamingActivity.charCount} chars)`;
-      return { ...activity, text: `${label}${count}` };
+      return { ...activity, text: formatStreamingActivity(hostStreamingActivity) };
     },
     [
       hostStreamingActivity,
@@ -4986,8 +4983,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           : {
               kind: "input" as const,
               prompt: uiRequest.prompt,
-              defaultValue: uiRequest.defaultValue,
-              buffer: uiRequest.buffer,
+              defaultValue: uiRequest.secret ? undefined : uiRequest.defaultValue,
+              buffer: uiRequest.secret && uiRequest.buffer ? '••••' : uiRequest.buffer,
               error: uiRequest.error,
             }
         : null,
@@ -5765,6 +5762,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       kind: "input" as const,
       prompt: uiRequest.prompt,
       defaultValue: uiRequest.defaultValue,
+      secret: uiRequest.secret,
       buffer: uiRequest.buffer,
       error: uiRequest.error,
     };
@@ -6954,6 +6952,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     prompt: string,
     defaultValue?: string,
     signal?: AbortSignal,
+    secret = false,
   ): Promise<string | undefined> => {
     if (signal?.aborted) return Promise.resolve(undefined);
     return new Promise<string | undefined>((resolve) => {
@@ -6975,7 +6974,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       setUiRequest({
         kind: "input",
         prompt,
-        defaultValue,
+        defaultValue: secret ? undefined : defaultValue,
+        secret,
         buffer: "",
       });
     });
@@ -7847,7 +7847,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }, 'ratelimit');
     },
     onReasoningEffortRejected: (event) => {
-      if (options.clientPlane) {
+      if (!options.clientPlane && event.cacheScope !== undefined) {
+        recordRejectedEffort(event.provider, event.model, event.effort, 'observed', new Date().toISOString(), undefined, event.cacheScope);
+      }
+      if (options.clientPlane || event.cacheScope !== undefined) {
         emitInfoItemToCorrectLayer({
           type: 'info', icon: '\u26A0',
           text: `[${event.provider}/${event.model} rejected effort "${event.effort}"; Host capability learning governs subsequent requests.]`,
@@ -10980,6 +10983,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           onWorkflowRunUpdate: handleWorkflowRunUpdate,
           // UI context for interactive dialogs.
           ui: {
+            secret: (prompt: string) => showInputDialog(prompt, undefined, undefined, true),
             select: async (title: string, options: string[]): Promise<string | undefined> => {
               // Route through Ink-managed dialog state instead of reading stdin directly.
               return showSelectDialog(title, options);

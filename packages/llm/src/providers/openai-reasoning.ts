@@ -52,7 +52,7 @@ export class OpenAIReasoningAccumulator {
     }
   }
 
-  blocks(source: { provider: string; model: string; baseUrl?: string }): KodaXThinkingBlock[] {
+  blocks(source: { provider: string; model: string; baseUrl?: string; credentialScope?: string }): KodaXThinkingBlock[] {
     const hasReplay = this.reasoning !== undefined || this.details.length > 0;
     if (!this.text && !hasReplay) return [];
     return [{ type: 'thinking', thinking: this.text,

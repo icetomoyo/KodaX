@@ -9,7 +9,7 @@ import {
 } from '@kodax-ai/llm';
 import { awaitLatestCodingMemoryReviewDrain, LEARNING_REVIEW_TOOL } from '@kodax-ai/coding';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
-import { createKodaXRuntime } from '../src/sdk-runtime.js';
+import { createKodaXRuntime } from "./runtime-fixture.js";
 import { startRuntimeDaemonHost } from '../src/runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from '../src/runtime-daemon/state.js';
 

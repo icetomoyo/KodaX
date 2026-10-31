@@ -7,7 +7,7 @@ import type { KodaXMessage } from '@kodax-ai/agent';
 import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { FileSessionStorage } from '@kodax-ai/repl';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 

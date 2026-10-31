@@ -27,6 +27,8 @@ Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
 
+Integration note (2026-10-31): worktree-only Goal Issue 370 is now Issue 376. Mainline Issue 370 (history wheel navigation) retains its identity.
+
 ## Nested provider observations can duplicate child usage summaries (2026-10-31)
 
 The bounded child-contract eval wraps a real provider in a Relay. Its outer
@@ -44,7 +46,7 @@ not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
 
-## Issue 370: Child Agents expose failing Goal tools and bypass the root goal budget
+## Issue 376: Child Agents expose failing Goal tools and bypass the root goal budget
 
 - Priority: Medium
 - Status: Resolved
@@ -96,6 +98,316 @@ the soft goal budget before the next settlement; this is not a prepaid hard cap.
 child call reaches the sink, and a root call settles 1,400 pending descendant
 tokens with its own 24. Binding, lifecycle, context and forwarding tests cover
 read/write children, Workflow digest and structured-output repair runs.
+## Issue 375: Constrained Skill shell patterns admit extra effects
+
+- Priority: High
+- Status: Resolved
+- Introduced: observed on aeb16fef; first affected version unknown
+- Created / Resolved: 2026-10-29
+- Fixed: `v0.7.97-alpha.11`
+
+`Bash(git diff *)` matched an entire compound command, so a second command
+could escape the Skill's narrower restriction. Host authorization and sandbox
+checks still applied; this was not a Host authorization bypass.
+
+Constrained rules now require one parsed command without pipelines, redirects
+or unsupported syntax. cmd and PowerShell receive additional dialect checks so
+POSIX quoting cannot conceal executable operators. Bare Bash, wildcard and
+omitted restrictions retain Host authorization. See the
+[regression contract and dialect limits](test-guides/ISSUE_375_v0.7.97_REGRESSION_GUIDE.md).
+
+## Issue 374: Client question adapters lose unanswered semantics
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: observed on aeb16fef; first affected version unknown
+- Created / Resolved: 2026-10-29
+- Fixed: `v0.7.97-alpha.11`
+
+The REPL flattened `non_interactive` into an ordinary skip; the daemon SDK
+facade could submit a timeout object as a question answer. Question, multi-question
+and input adapters now preserve non-interactive reasons. The facade rejects local
+timeout answers with `invalid_input`; only the Host settles question deadlines.
+Missing requests and stale Run/revision bindings retain `already_resolved`.
+Permission decisions and cancel/stop behavior are unchanged. See the
+[regression contract](test-guides/ISSUE_374_v0.7.97_REGRESSION_GUIDE.md).
+
+## Issue 373: Streaming progress mixes character and token units
+
+- Priority: Low
+- Status: Resolved
+- Introduced: observed in v0.7.97-alpha.10; first affected version unknown
+- Created / Resolved: 2026-10-29
+- Fixed: `v0.7.97-alpha.11`
+
+### Original Problem
+
+`Receiving spawn_agent (2169 chars)` still measured raw tool-argument length,
+while thinking progress displayed estimated tokens. The Host supplied a token
+estimate only for thinking; Ink, Classic and legacy spinner paths retained
+character labels for arguments. This did not establish an error in Provider
+usage, billing or context accounting.
+
+### Resolution
+
+The Host now estimates cumulative, identified tool arguments using its existing
+multilingual `countTokens`, once per coalesced view. Interleaved calls and
+requests remain separate, child output is excluded, and temporary text is
+released with its stream/Run/Session lifecycle. Ink and Classic share one token
+formatter; missing estimates from old Hosts omit the quantity. Legacy paths
+with only character totals retain the documented coarse characters/4 fallback.
+Every estimate shows `~`; Provider usage and context baselines are unchanged.
+Legacy counters also reset for retry/replacement requests and key by request
+and call identity when segment events are unavailable.
+The follow-up audit also corrects legacy transcript thinking and completed-round
+summary counters. Compact token formatting is dependency-free, avoiding the
+unrelated permission/runtime imports introduced into transcript helpers.
+
+See [regression guide](test-guides/ISSUE_373_v0.7.97_REGRESSION_GUIDE.md) for
+RED/GREEN coverage, multilingual/chunk/call isolation, unchanged API usage and
+source/packaged terminal acceptance. This display correction does not close
+Issue 371's un-attributed historical first-read latency.
+
+## Issue 372: Windows setup readiness misses filesystem capability failures seen by a console Host
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: observed in v0.7.97-alpha.10; first affected version unknown
+- Created / Resolved: 2026-10-29 (original incident 2026-10-28)
+- Fixed: `v0.7.97-alpha.11`
+
+### Original Problem
+
+The console Session's six Bash calls recorded `fallback / backend_failed`;
+another Session on the same Host recorded 137 such calls. Commands ran as the
+ordinary host account after permission approval. This was pre-start fallback,
+not evidence that an attested sandbox target later escaped. A doctor/identity
+probe launched from the coding tool environment passed, while the existing
+console Host's identity probe returned the host account.
+
+### Confirmed cause and evidence limits
+
+Replaying the same source Bash path under the existing Host's inherited
+environment, with host fallback denied, repeatedly captured
+`windows_v2_setup_required`: the setup-owned filesystem capability ACE set
+was incomplete at `C:\Users\ADMIN\AppData`. The deny-write capability ACE and
+write capability ACE were missing there. The account, NUL device and marker
+checks still passed, so the interactive startup shortcut incorrectly skipped
+setup. Existing doctor readiness also omitted this filesystem verification.
+
+Targeted native probes observed different NTFS file IDs for that same logical
+AppData path in the coding tool process and the console Host process, on the
+same volume. The request policies, filesystem capability nonce, native image
+and setup marker matched. Therefore tool-environment success did not verify
+the filesystem object used by the console Host. The mechanism producing the
+different path views, and the historical operation that first caused their
+ACL divergence, were not established; do not label it MSIX redirection or a
+merge regression without further evidence. A separate transient read also
+hit a test directory removed between policy preparation and native startup.
+
+### Resolution
+
+Interactive setup-current and doctor checks now perform a bounded read-only
+native verification of existing setup read roots, using the same capability
+schema and ACL checks as command admission. Missing or unsafe capabilities
+report the failing path and enter the existing explicit/interactive setup
+boundary. Verification does not install ACLs, elevate, rotate accounts or
+relax permission fallback. Pre-start Bash failures now retain their cause and
+Run/tool identity in the diagnostic sink before host authorization.
+
+The real console context was repaired through official setup. The first
+attempt, invoked through Bash, hit its 300-second hard limit and left the
+protected marker in `installing`; the failed attempt was not counted as repair.
+Official setup then completed in an independent Windows Terminal process at
+2026-10-29 00:07:30 (Asia/Shanghai). Doctor became ready; host-fallback-disabled
+source Bash returned `srt-sandbox`; and the original existing Host passed
+public SDK identity acceptance for both reported workspaces concurrently.
+Sandbox account SID, group SID and filesystem capability nonce were unchanged.
+The marker was confirmed no longer installing. No user Host was force-replaced.
+
+See [regression guide](test-guides/ISSUE_372_v0.7.97_REGRESSION_GUIDE.md) for the
+readiness/repair regression, native non-mutation proof and existing-Host
+acceptance. Issue 371 now has a confirmed startup-recovery fix; its historical
+16-second first-read observation remains separately un-attributed.
+
+## Issue 371: Intermittent slow shared Host startup and first Session read
+
+- Priority: Medium
+- Status: Open (startup recovery fixed; historical first-read delay not attributed)
+- Introduced: observed in v0.7.97-alpha.10 at `ec442c75`; first affected version unknown
+- Created: 2026-10-28
+- Fixed: first startup recovery in `v0.7.97-alpha.11`; 2026-10-31 recurrence fixed locally at `16973a93` (unreleased)
+
+### Original Problem
+
+Two concurrent `kodax -r` launchers in different directories exceeded 30 seconds.
+On Windows, the shared Host process began at 22:33:33.074 and logged ready at
+22:34:22.291 (Asia/Shanghai), approximately 49.2 seconds later. A subsequent
+read-only SDK attachment took 615 ms and its first selected Session read took
+16,011 ms. No exception or causal connection to the preceding merge was established.
+
+### Confirmed startup cause and resolution (2026-10-29)
+
+A fresh default-Host startup reproduced 23,360 ms, with approximately 21.7 seconds
+between recovery and MCP initialization. Its stale-child sweep retired 160 of
+1,352 registered records. The remaining 1,192 records all referenced Runs and
+retained incomplete trees. The previous copied-record probe used a live owner
+with unknown identity and skipped cleanup; its fast result missed this branch.
+
+Windows cleanup already shared a process snapshot, but still synchronously
+started a PowerShell termination helper for every stale tree even when that
+snapshot proved the entire retained complete tree had exited. The helper then
+invalidated the snapshot, causing another snapshot probe on the next record.
+An isolated public-SDK fixture with 220 complete exited trees exceeded the
+60-second Host startup deadline before the fix. With the same record shapes,
+the fix started in 1,952 ms and reclaimed all 220 records.
+
+Cleanup now uses its existing complete-tree/PID/start-identity proof before
+spawning a terminator, reusing the snapshot already read for capture. Live,
+incomplete, unreadable and unavailable-snapshot paths retain their termination
+or unknown outcomes. Owner checks, Run cleanup requirements and quarantine
+rules are unchanged. Bootstrap phase records now include UTC timestamps.
+
+The permanent bundled regression starts two concurrent resume clients with
+220 exited records and 400 saved messages. Cold readiness took 2,282 ms;
+the first concurrent Session/history reads took 47 ms. A combined run with
+existing shared-Host lifecycle regressions took 2,457 ms / 46 ms. Two packaged
+`kodax -r` PTYs in different directories restored history and emitted the prompt
+in 3,161 ms and 3,497 ms with the same 220-record scenario. Actual default
+Host readiness after the fix took 1,896 ms; the two reported Sessions read in
+23 ms and 8 ms. The real 160 retired records had already been reclaimed by the
+slow baseline, so this last real-home timing is acceptance, not a same-input
+before/after comparison. No registry was cleared or user Host force-replaced.
+
+### Startup recurrence: missing identities and reused PIDs (2026-10-31)
+
+The locally rebuilt alpha.11 again timed out before the default Host became
+ready. Both bootstrap attempts stopped at the initial managed-child recovery
+boundary. The registry contained 3,264 version-4 records, including 2,103 without
+the original root start identity. Thirty-two non-Run records with missing root
+identity referred to currently live/reused PIDs at the time of inspection.
+
+The previous complete-exited-tree fix remained present. A different branch
+still queried each live PID's command line through synchronous PowerShell,
+even when the original identity was missing or the shared snapshot could
+already reject a reused PID. A native public-SDK probe with eight missing-identity
+records took 7,286 ms and eight queries. With the shortcut, the same shape took
+3 ms and no queries; 3,264 records took 146 ms. These are isolated measurements,
+not a same-input measurement of the user's default Host.
+
+Missing original identities now stay unknown at their original registry paths.
+Known mismatched identities use the existing quarantine path and retain their
+original bytes. Matching identities and unavailable snapshot identities still
+use the original command-line/creation-time confirmation. No termination or
+Run-drain authority is inferred from these shortcuts. No timeout was increased.
+
+Those two shortcuts alone still timed out against the real default home.
+Further isolation found a third branch: non-Run records with retained incomplete
+trees still launched a terminator per tree, even when no retained original
+process was alive. The existing incomplete-tree check was only used for Runs.
+It now also precedes non-Run historical termination: unverified trees retain
+their evidence in quarantine; a known live retained process still goes through
+exact cleanup. Explicit Run cleanup and drain authority remain unchanged.
+For non-Run records this shortcut requires known absence or identity mismatch,
+not merely unavailable snapshot evidence. A regression specifically preserves
+exact-handle cleanup when CIM confirms the live root but the snapshot fails.
+
+The strengthened bundled regression adds 512 records covering missing identities,
+reused PIDs and incomplete extinct/reused trees. Before the third fix it reproduced
+the actual daemon-startup timeout in 12,485 ms. With all three fixes, readiness
+took 2,205 ms and restart 1,570 ms, with saved history and every record preserved.
+The earlier 220-tree case also passed (2,597 ms ready, 48 ms first history reads,
+1,509 ms restart).
+Two real-process command-mismatch fixtures now capture the root identity so
+they continue to exercise command verification; missing-identity evidence is
+covered separately. Real default-home acceptance then took 3,197 ms to ready
+and 58 ms to read the reported Session/history. All 2,908 registry records
+present before that attempt survived byte-for-byte at their original or
+quarantine paths; auth/config bytes were unchanged. Earlier unsuccessful
+recovery had already quarantined some of the original 3,264 records normally,
+so this is acceptance, not a same-input before/after comparison. No registry
+reset or forced owner replacement was used. These measurements precede
+main-branch integration.
+
+The runtime fix is now on local Root main. Its actual linked CLI restored the
+reported Session and reached the input prompt in 3,470 ms, then exited normally;
+auth/config bytes were unchanged. Final source acceptance combines the broad
+run with complete-file reruns after correcting test fixtures/environment:
+18,783 passed, 98 skipped and 19 todo. This is not a claim that the first broad
+invocation passed: it recorded 48 failures in seven files, all covered by the
+final Main rerun (1,547 passed, 41 skipped across eight files, including the
+real-history parser checks). Built Main acceptance covers 81 unique cases after
+an isolated Skill catalog failure passed its one-case and six-case reruns;
+that transient failure's cause was not attributed. See the regression guide
+for frozen inputs, initial failures, rerun configuration and limits.
+
+Standalone LSP tests also reproduced a separate contributing source of registry
+growth: six records were left under a deliberately isolated substitute user
+profile when no config-home override was supplied. Global Vitest setup now
+assigns each test file a private temporary fallback `KODAX_HOME`, while explicit
+overrides remain supported. Nonempty fallback homes retain diagnostic evidence;
+they are never recursively cleared as a substitute for verified process cleanup.
+Tests that exercise the homedir fallback explicitly unset the environment override.
+Review also identified a legacy MCP OAuth test that read and recursively removed
+the homedir token directory despite creating an unused temporary fixture. Its
+read/write/cleanup paths now all use that fixture. An isolated substitute-profile
+sentinel was deleted before this test fix and preserved afterwards; no real
+credentials were used in this comparison. The first broad run was interrupted
+for this correction and is not acceptance evidence.
+
+### Remaining first-read evidence
+
+The historical 16,011-ms read has not been independently reproduced or causally
+attributed. Subsequent direct storage reads were 19–27 ms and existing-Host views
+4–7 ms. A separate isolated Host running 16 harmless shell identity commands
+completed all Runs; 63 sampled Session reads peaked at 1,444 ms (first: 14 ms).
+This shows runtime contention without reproducing the historical 16 seconds.
+Do not claim that all first-read latency or post-answer finalization is fixed.
+Issue 371 remains Open for that un-attributed observation. See the
+[regression guide](test-guides/ISSUE_371_v0.7.97_REGRESSION_GUIDE.md) for the
+confirmed reproducer, safety boundaries and remaining scope.
+
+The separate post-answer example is not verifier execution: the persisted last
+answer timestamp is 22:38:58.698, `memory_outcome_digest` is 22:39:10.105, and Run
+terminal is 22:39:13.749. The substrate awaits memory completion/persistence and
+other finalization work; a generic Worker timer does not identify that stage.
+The timestamps establish the approximately 15-second finalization interval,
+not a breakdown attributing every second to memory or a guarantee that the UI
+never retains an older status. Sidecar Verifier retirement remains as specified
+in ADR's v0.7.97-alpha.4 addendum.
+
+## Issue 370: Long history wheel navigation cannot return after a saved revision changes
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: observed in v0.7.97-alpha.10 at `ec442c75`; first affected version unknown
+- Created / Resolved: 2026-10-28
+- Fixed: `v0.7.97-alpha.11`
+
+### Original Problem
+
+After scrolling upward across saved-history pages while a Run was active,
+scrolling downward stopped at an intermediate boundary. End returned to live
+output. The problem persisted after the Run completed and saved a new revision.
+
+### Resolution
+
+The bounded browse window retained cursors from its captured revision. Reading
+an evicted newer page after persistence either returned a different revision
+(including a cursor-less newest page) or rejected with `resync_required`;
+repeating wheel input retried the same stale window indefinitely.
+On either stale boundary, rebuild one consistent saved window around the same
+source anchor. Never combine revisions. Resync retains the existing 4-page,
+800-item, 2 MB window budget and 15-second gesture deadline, and searches at most
+128 pages. Missing/ambiguous sources and concurrent changes during resync still
+fail without replacing the captured content; End remains available.
+
+Files: `packages/repl/src/ui/utils/prompt-history-browse.ts` and its adjacent tests;
+`tests/repl-pty-acceptance.mjs`. Unit regressions cover changed revisions, stale
+cursors, missing sources, cancellation and paging. The Windows PTY regression
+first failed after 300 downward wheel events, then passed after the fix with
+continued output, Run settlement, and a second idle-history browse. See
+[regression evidence](test-guides/ISSUE_370_v0.7.97_REGRESSION_GUIDE.md).
 
 ## Issue 369: Concurrent resume launchers fail while refreshing an older Host
 
@@ -1941,7 +2253,13 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 370 | Medium | Resolved | Child Agents expose failing Goal tools and bypass the root goal budget | FEATURE_192 v0.7.44; first affected version unknown | post-v0.7.97-alpha.10 working tree (unreleased) | 2026-10-31 | 2026-10-31 |
+| 376 | Medium | Resolved | Child Agents expose failing Goal tools and bypass the root goal budget | FEATURE_192 v0.7.44; first affected version unknown | post-v0.7.97-alpha.10 working tree (unreleased) | 2026-10-31 | 2026-10-31 |
+| 375 | High | Resolved | Constrained Skill shell patterns admit extra effects | observed on aeb16fef; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
+| 374 | Medium | Resolved | Client question adapters lose unanswered semantics | observed on aeb16fef; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
+| 373 | Low | Resolved | Streaming progress mixes character and token units | observed in v0.7.97-alpha.10; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
+| 372 | Medium | Resolved | Windows setup readiness misses filesystem capability failures seen by a console Host | observed in v0.7.97-alpha.10; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
+| 371 | Medium | Open | Intermittent slow shared Host startup and first Session read | observed in v0.7.97-alpha.10; first affected version unknown | startup recovery only: `v0.7.97-alpha.11` | 2026-10-28 | — |
+| 370 | Medium | Resolved | Long history wheel navigation cannot return after a saved revision changes | observed in v0.7.97-alpha.10; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-28 | 2026-10-28 |
 | 369 | High | Resolved | Concurrent resume launchers fail while refreshing an older Host | observed in v0.7.97-alpha.5; first affected version unknown | `v0.7.97-alpha.6` | 2026-10-15 | 2026-10-15 |
 | 368 | Medium | Resolved | Unsubmitted REPL Sessions leave empty persisted history | v0.7.97-alpha.1; Host migration commits 3301a452 / 0914f589 | `v0.7.97-alpha.6` | 2026-10-14 | 2026-10-14 |
 | 367 | Medium | Resolved | Daemon preflight repeatedly scans during an in-flight mutation | observed in v0.7.97-alpha.4; first affected version unknown | `v0.7.97-alpha.5` | 2026-10-13 | 2026-10-13 |
@@ -16802,12 +17120,19 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 249 (36 Open, 213 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 255 (37 Open, 218 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-10-29: Issues 374 and 375
+
+- Preserved non-interactive outcomes and rejected client-authored question timeouts.
+- Closed constrained Skill shell-pattern command chaining, including cmd and
+  PowerShell quoting differences; unrestricted rules still obey Host authorization.
+- Added deterministic regressions and linked acceptance contracts above.
 
 ### 2026-10-21: Issue 322 summarizer breaker repaired
 

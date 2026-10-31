@@ -154,7 +154,7 @@ Error: ${safeText(error.message).slice(0, 4096)}\nHistory:\n`;
   if (budget < 512 || input.hasPendingInputs?.()) return false;
   const text = context.text.length > budget ? `${context.text.slice(0, budget / 4)}\n[Middle history omitted for diagnosis]\n${context.text.slice(-budget * 3 / 4)}` : context.text;
   const diagnostic = [{ role: 'user' as const, content: instructions + text }];
-  const response = await waitForSignal(withProviderRequestCredential(provider.name, 'fallback', signal, credentialSignal => provider.complete(
+  const response = await waitForSignal(withProviderRequestCredential(provider, 'fallback', signal, credentialSignal => provider.complete(
     diagnostic, [], system, input.reasoning,
     { modelOverride: input.model, maxOutputTokensOverride: input.maxOutputTokens, singleAttempt: true, signal: credentialSignal }, credentialSignal)), signal);
   if (response.usage) input.onUsage(response.usage);

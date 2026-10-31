@@ -13,7 +13,7 @@ import { countTokens } from '../packages/agent/src/tokenizer.js';
 import { McpCapabilityProvider } from '../packages/agent/src/capabilities/mcp/provider.js';
 import { createMcpCapabilityId, writeMcpServerCatalog, type McpCapabilityDescriptor } from '../packages/agent/src/capabilities/mcp/catalog.js';
 import { createExtensionRuntime } from '../packages/coding/src/extensions/runtime.js';
-import { createKodaXRuntime } from '../src/sdk-runtime.js';
+import { createKodaXRuntime } from "./runtime-fixture.js";
 import { toKodaXProductClient } from '../src/client-runtime-adapter.js';
 import { createCliClientPlane } from '../src/cli-client-plane.js';
 import { compactContractInput } from './first-turn-compact-contract.js';

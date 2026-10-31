@@ -12,7 +12,7 @@ import {
   type KodaXStreamResult,
 } from '@kodax-ai/llm';
 import { FileSessionStorage, createInteractiveContext, executeCommand, type CommandCallbacks } from '@kodax-ai/repl';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { createCliSessionCommands } from './cli-client-plane.js';
 
 it('shows Host missing and operation failures through the production tree command binding', async () => {
@@ -94,7 +94,7 @@ it('routes session label/rewind/fork/recover mutations through the Host', async 
   });
   const binding = createCliSessionCommands(toKodaXProductClient(runtime));
   const sessionId = 't34-cmds-session';
-  await binding.create({ sessionId, title: 'T34 cmds', surface: 'repl' });
+  await binding.create({ sessionId, title: 'T34 cmds', surface: 'repl', projectPath: homeDir });
 
   // Two committed turns give the lineage two switchable branches.
   for (const [inputId, text] of [['t1', 'First turn.'], ['t2', 'Second turn.']] as const) {

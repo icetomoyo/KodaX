@@ -12,6 +12,8 @@ import { appendPromptIfNotDuplicate, resolveInitialMessages } from './middleware
 import { createExtensionRuntimeSessionController } from './middleware/extension-queue.js';
 import { saveRequiredSessionSnapshot } from './middleware/session-snapshot.js';
 import { bindVisualObservationAdmission } from '../media/visual-owner.js';
+import { emitEffectiveTaskConfig } from './effective-config.js';
+import { isToolDiscoverable } from '../tools/tool-search.js';
 
 export interface HostInvocation {
   readonly options: KodaXOptions;
@@ -49,6 +51,7 @@ export function withHostInvocation<T>(original: KodaXOptions, prompt: string, ex
       await runtime?.hydrateSession?.(sessionId);
       const ctx = buildToolExecutionContext({ options, sessionId, runtime, managedProtocolPayloadRef: { current: undefined } });
       bindVisualObservationAdmission(ctx, options, state);
+      emitEffectiveTaskConfig(options, { agentMode: options.agentMode ?? 'ama', toolScope: state.activeTools.filter(name => isToolDiscoverable(name, ctx)) });
       const messages = appendPromptIfNotDuplicate(resumed.messages, prompt, options.context.inputArtifacts,
         undefined, options.session?.inputId);
       const save = async (): Promise<void> => {

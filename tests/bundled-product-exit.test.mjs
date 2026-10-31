@@ -51,6 +51,7 @@ test('Product quit verifies exact process cleanup offline and never quits a repl
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-bundle-product-exit-'));
   const clientInfo = { name: 'Space-exit-test', instanceId: randomUUID(), instanceSecret: randomUUID() };
   let client;
+  let ownerExitVerified = false;
   try {
     client = await ensureKodaXClient({ homeDir, clientInfo });
     const accepted = await client.lifecycle.requestExit({ requestId: 'quit-original', shutdownHost: true });
@@ -58,6 +59,7 @@ test('Product quit verifies exact process cleanup offline and never quits a repl
     assert.equal(accepted.host.state, 'pending');
     await client.disconnect();
     const completed = await verifiedExit(homeDir, clientInfo, 'quit-original');
+    ownerExitVerified = true;
     assert.equal(completed.cleanup.state, 'succeeded', JSON.stringify(completed));
     assert.equal(completed.host.cleanup, 'succeeded');
     assert.equal(completed.host.owner.runtimeId, accepted.runtimeId);
@@ -74,12 +76,32 @@ test('Product quit verifies exact process cleanup offline and never quits a repl
       const offline = await verifiedExit(homeDir, clientInfo, 'quit-original');
       assert.equal(offline.cleanup.state, 'unknown');
       assert.equal(offline.recovery.nextAction, 'start_or_connect');
+      ownerExitVerified = false;
       client = await ensureKodaXClient({ homeDir, clientInfo });
       const recovered = await client.lifecycle.readExit('quit-original');
       assert.equal(recovered.cleanup.state, 'unknown');
       assert.equal(recovered.recovery.state, 'ready');
       assert.equal(recovered.host.replacementRunning, true);
-      assert.deepEqual(await client.lifecycle.listPendingExits(), []);
+      // Each read freshly verifies OS identity. A previous ready assessment is
+      // not a cached proof for a later list call whose probe is unconfirmed.
+      const pendingDeadline = Date.now() + 20_000;
+      let pending = await client.lifecycle.listPendingExits();
+      while (pending.length && Date.now() < pendingDeadline) {
+        assert.equal(pending.length, 1);
+        const row = pending[0];
+        assert.equal(row.requestId, accepted.requestId);
+        assert.equal(row.runtimeId, accepted.runtimeId);
+        assert.equal(row.clientId, accepted.clientId);
+        assert.deepEqual(row.host.owner, accepted.host.owner);
+        assert.equal(row.host.cleanup, 'succeeded');
+        assert.deepEqual(row.cleanup, JSON.parse(unconfirmed).cleanup);
+        assert.equal(row.recovery.state, 'blocked');
+        assert.equal(row.recovery.reason, 'daemon_active');
+        assert.equal(row.recovery.nextAction, 'retry_verification');
+        await delay(50);
+        pending = await client.lifecycle.listPendingExits();
+      }
+      assert.deepEqual(pending, []);
       const replayed = await client.lifecycle.requestExit({ requestId: 'quit-original', shutdownHost: true });
       assert.equal(replayed.runtimeId, accepted.runtimeId);
       assert.equal(replayed.recovery.state, 'ready');
@@ -91,14 +113,24 @@ test('Product quit verifies exact process cleanup offline and never quits a repl
       assert.notEqual(replacement.runtimeId, accepted.runtimeId);
       await client.disconnect();
       await verifiedExit(homeDir, clientInfo, requestId);
+      ownerExitVerified = true;
     }
   } finally {
     if (client) {
-      try { await client.lifecycle.requestExit({ requestId: 'test-cleanup', shutdownHost: true }); }
-      catch (error) { if (!/closed|disconnected|socket|connection|EOF/i.test(String(error))) throw error; }
-      await client.disconnect();
+      let cleanupRequested = false;
+      try {
+        await client.lifecycle.requestExit({ requestId: 'test-cleanup', shutdownHost: true });
+        cleanupRequested = true;
+      } catch (error) {
+        if (!ownerExitVerified || !/closed|disconnected|socket|connection|EOF/i.test(String(error))) throw error;
+      } finally { await client.disconnect(); }
+      if (cleanupRequested) {
+        await verifiedExit(homeDir, clientInfo, 'test-cleanup');
+        ownerExitVerified = true;
+      }
     }
-    // Only this test's freshly created temp directory is removed.
+    assert.equal(ownerExitVerified, true, `Host exit remains unverified; preserving ${homeDir}`);
+    // Never delete storage while this test's Host may still own it.
     await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

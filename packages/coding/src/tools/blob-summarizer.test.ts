@@ -1,3 +1,4 @@
+import { createProviderCredentialLeaseScope, runWithProviderCredentialLeaseScope } from '@kodax-ai/llm';
 /**
  * FEATURE_121 v0.7.40 — blob-summarizer unit tests (zero-cost mocked).
  */
@@ -197,4 +198,15 @@ describe('constants', () => {
     expect(DEFAULT_SUMMARY_MAX_CHARS).toBeGreaterThanOrEqual(2000);
     expect(DEFAULT_SUMMARY_MAX_CHARS).toBeLessThanOrEqual(10_000);
   });
+});
+
+it('summarizes through a CLI bridge without acquiring an invented API key', async () => {
+  const acquire = vi.fn(async () => { throw new Error('Bridge owns authentication'); });
+  const scope = createProviderCredentialLeaseScope({ allowedProviders: ['bridge-blob'], acquire });
+  const stream = vi.fn(async () => makeStreamResult('summary'));
+  const provider = { name: 'bridge-blob', stream, getReasoningProfile: () => undefined,
+    getCapabilityProfile: () => ({ transport: 'cli-bridge', conversationSemantics: 'full-history', mcpSupport: 'none' }) } as unknown as KodaXBaseProvider;
+  try { expect(await runWithProviderCredentialLeaseScope(scope, () => createBlobSummarizer({ provider, model: undefined })('evidence'))).toBe('summary'); }
+  finally { scope.close(); }
+  expect(acquire).not.toHaveBeenCalled(); expect(stream).toHaveBeenCalledOnce();
 });

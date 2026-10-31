@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentActorController } from '@kodax-ai/agent';
-import { clearRuntimeModelProviders, KodaXBaseProvider, registerModelProvider,
+import { clearRuntimeModelProviders, KodaXBaseProvider, KodaXNetworkError, registerModelProvider,
   type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult, type KodaXToolDefinition } from '@kodax-ai/llm';
 import { executeChildAgents, CHILD_AGENT_SYSTEM_PROMPT, type ChildExecutorOptions } from './child-executor.js';
 import { runKodaX } from './agent.js';
@@ -28,6 +28,11 @@ class ContractProvider extends KodaXBaseProvider {
     captured.push({ system, tools, messages });
     if (response) return response();
     return { textBlocks: [{ type: 'text', text: 'Inspected; no changes.' }], toolBlocks: [], thinkingBlocks: [] };
+  }
+  supportsNonStreamingFallback(): boolean { return true; }
+  async complete(messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string): Promise<KodaXStreamResult> {
+    captured.push({ system, tools, messages });
+    return { textBlocks: [{ type: 'text', text: 'Recovered; no changes.' }], toolBlocks: [], thinkingBlocks: [] };
   }
 }
 
@@ -112,6 +117,28 @@ describe('builtin child request contract through real executor and substrate', (
     expect(captured[0]!.system).not.toContain('## Shared tool obligations');
     expect(captured[0]!.tools.find(tool => tool.name === 'glob')?.description)
       .toBe(getBuiltinToolDefinition('glob')!.description);
+  });
+
+  it('preserves the paired child contract and live permission on non-streaming recovery', async () => {
+    let mode: 'full-access' | 'plan' = 'full-access';
+    const complete = vi.spyOn(ContractProvider.prototype, 'complete');
+    response = () => {
+      mode = 'plan';
+      throw new KodaXNetworkError('Fixture stream connection terminated');
+    };
+    const result = await executeChildAgents([bundle(false)],
+      { ...ctx(), resolveShellPermissionMode: () => mode }, options());
+    expect(result.results[0]?.status).toBe('completed');
+    expect(complete).toHaveBeenCalledOnce();
+    expect(captured).toHaveLength(3);
+    expect(captured[0]!.system).toContain('Current permission mode: full-access');
+    expect(captured.at(-1)!.system).toContain('Current permission mode: plan');
+    for (const wire of captured) {
+      expect(wire.system).toContain('## Shared tool obligations');
+      expect(wire.system).toContain(CHILD_AGENT_SYSTEM_PROMPT);
+      expect(wire.tools.find(tool => tool.name === 'glob')?.description).toBe('Find file paths by glob.');
+      expect(wire.tools).toEqual(captured[0]!.tools);
+    }
   });
 
   it('retains the paired teaching across turns while refreshing live permission changes', async () => {

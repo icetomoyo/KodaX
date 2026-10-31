@@ -7,6 +7,7 @@
  * lifecycle lines per stage. The first (baseline) view only primes the
  * tracking so restored history does not reprint.
  */
+import { formatStreamingActivity } from '../ui/view-models/status-bar.js';
 import type {
   ClientSessionView,
   ClientViewItem,
@@ -87,11 +88,7 @@ export function createClassicPlaneDisplayDiffer(write: WriteLine, readItem?: Rea
         streaming.kind === 'thinking' ? streaming.itemId : streaming.callId ?? streaming.toolName]);
       if (!printedStreamingPhases.has(phase)) {
         printedStreamingPhases.add(phase);
-        const label = streaming.kind === 'thinking' ? 'Thinking' : `Receiving ${streaming.toolName}`;
-        const count = streaming.kind === 'thinking'
-          ? streaming.estimatedTokenCount === undefined ? '' : ` (~${streaming.estimatedTokenCount} tokens received so far)`
-          : streaming.charCount === undefined ? '' : ` (${streaming.charCount} chars received so far)`;
-        write(`info:${label}${count}`);
+        write(`info:${formatStreamingActivity(streaming)}`);
       }
     }
     if (!baselined) {

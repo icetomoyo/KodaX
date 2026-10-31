@@ -9,7 +9,7 @@ import { createCustomProvider, registerModelProvider, type KodaXMessage, type Ko
 import { persistCompactedSessionHistory, evictOldIslandMessageContent } from '@kodax-ai/agent';
 import { awaitLatestCodingMemoryReviewDrain } from '@kodax-ai/coding';
 import { FileSessionStorage } from '@kodax-ai/repl';
-import { createKodaXRuntime } from '../src/sdk-runtime.js';
+import { createKodaXRuntime } from './runtime-fixture.js';
 import { NATIVE_PROVIDER_CAPABILITY_PROFILE } from '../packages/llm/src/providers/capability-profile.js';
 import { countTokens } from '../packages/agent/src/tokenizer.js';
 import { measureModelFields } from './first-turn-uniform-costs.js';

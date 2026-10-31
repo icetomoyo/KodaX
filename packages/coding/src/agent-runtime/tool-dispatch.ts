@@ -218,6 +218,9 @@ export async function executeToolCall(
   // `tool_describe` is read-only. Gating the wrapper as well would produce two
   // indistinguishable permission prompts for one bridged operation.
   const isBridgeMetaTool = toolCall.name === TOOL_CALL_NAME || toolCall.name === TOOL_DESCRIBE_NAME;
+  if (!isToolDiscoverable(toolCall.name, ctx)) {
+    return `[Tool Error] ${toolCall.name}: Tool is not active in the current runtime.`;
+  }
   if (!isBridgeMetaTool) {
     const override = await getToolExecutionOverride(
       events,
@@ -226,6 +229,7 @@ export async function executeToolCall(
       toolCall.id,
       ctx.executionCwd,
       ctx.gitRoot,
+      ctx.toolResultRecovery,
     );
     if (override !== undefined) {
       return override;
@@ -483,6 +487,9 @@ async function executeBridgeToolCall(input: {
   if (input.abortSignal?.aborted) {
     return CANCELLED_TOOL_RESULT_MESSAGE;
   }
+  if (!isToolDiscoverable(targetName, input.ctx)) {
+    return `[Tool Error] ${targetName}: Tool is not active in the current runtime.`;
+  }
   const override = await getToolExecutionOverride(
     input.events,
     targetName,
@@ -490,6 +497,7 @@ async function executeBridgeToolCall(input: {
     targetCall.id,
     input.ctx.executionCwd,
     input.ctx.gitRoot,
+    input.ctx.toolResultRecovery,
   );
   if (override !== undefined) {
     return override;
@@ -965,6 +973,9 @@ async function admitAndEmitVisibleToolResults(
   editRecoveryMessages: readonly string[],
 ): Promise<KodaXToolResultBlock[]> {
   const visibleBlocks = input.toolBlocks.filter(block => isVisibleToolName(block.name));
+  toolResults.forEach((result, index) => {
+    input.ctx.toolResultRecovery?.observeResult(visibleBlocks[index]!, result.is_error === true);
+  });
   const recoveryMessageTokens = editRecoveryMessages.length > 0
     ? estimateTokens([{
         role: 'user',

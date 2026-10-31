@@ -398,6 +398,7 @@ export const BUILTIN_COMMANDS: Command[] = [
           return items.find((item) => item.label === selected)?.value;
         },
         text: (message, defaultValue) => callbacks.ui.input(message, defaultValue),
+        ...(callbacks.ui.secret ? { secret: (message: string) => callbacks.ui.secret!(message) } : {}),
         confirm: (message) => callbacks.ui.confirm(message),
       };
       const result = await runProviderSetupWizard({ interaction, customOnly });
@@ -412,6 +413,7 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.dim(`Config: ${result.selection.configPath}`));
       for (const line of providerSetupRestartInstructions({
         apiKeyEnv: result.selection.apiKeyEnv,
+        credentialSource: result.credentialSource,
       })) {
         console.log(`  ${line}`);
       }
@@ -1844,7 +1846,7 @@ export const BUILTIN_COMMANDS: Command[] = [
         console.log(chalk.dim(`  - ${line}`));
       }
       console.log(chalk.dim(`  - Session effort: ${currentConfig.hostSettings ? currentConfig.hostSettings.effort ?? 'Host default' : formatReasoningEffortDisplay(currentConfig.effort)}`));
-      const learnedRejections = getCachedRejectedEfforts(targetProvider, targetModel);
+      const learnedRejections = resolveProvider(targetProvider).usesScopedReasoningLearning?.() ? [] : getCachedRejectedEfforts(targetProvider, targetModel);
       if (learnedRejections.length > 0) {
         console.log(chalk.dim(`  - Learned unsupported: ${learnedRejections.join(', ')} (clear with /provider forget-capability)`));
       }

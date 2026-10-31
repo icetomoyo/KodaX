@@ -13,6 +13,7 @@ const copiedFiles = [
   'config-templates/integrations/extensions.example.jsonc',
   'config.example.jsonc',
   'packages/repl/src/common/generated-config-templates.ts',
+  'packages/repl/src/common/generated-config-templates.json',
 ] as const;
 
 afterEach(() => {
@@ -22,6 +23,12 @@ afterEach(() => {
 });
 
 describe('config template synchronization', () => {
+  it('publishes exactly the source template bytes as data', () => {
+    const asset = JSON.parse(fs.readFileSync('packages/repl/src/common/generated-config-templates.json', 'utf8')) as Record<string, string>;
+    for (const [name, file] of Object.entries({ core: 'config.example.jsonc', mcp: 'integrations/mcp.example.jsonc', a2a: 'integrations/a2a.example.jsonc', extensions: 'integrations/extensions.example.jsonc' })) {
+      expect(asset[name]).toBe(fs.readFileSync(path.join('config-templates', file), 'utf8').replace(/\r\n?/g, '\n'));
+    }
+  });
   it('accepts a Windows CRLF checkout without reporting generated drift', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-config-sync-'));
     tempRoots.push(root);

@@ -11,7 +11,7 @@ import { FileSessionStorage } from '@kodax-ai/repl';
 import { setKodaXDiagnosticSink } from '@kodax-ai/agent';
 import { prepareRuntimeVisualInput } from './runtime-visual-input.js';
 import { withProductExecution } from './product-execution-authorization.js';
-import { createKodaXRuntime } from './sdk-runtime.js';
+import { createKodaXRuntime } from '../tests/runtime-fixture.js';
 
 afterEach(() => { clearRuntimeModelProviders(); registerCustomProviders([]); vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 

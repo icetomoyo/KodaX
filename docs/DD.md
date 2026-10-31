@@ -1,12 +1,53 @@
 # KodaX Detailed Design
 
-Last updated: 2026-10-27. Current development tree: FEATURE_298/299/301 on package
-`0.7.97-alpha.10`; `v0.7.96` is the last stable release.
+> Unreleased Host SDK cutover: public product execution connects to one independent Host.
+> Embedded/default owner construction, inline switching and caller-owned external-agent
+> daemons are retired. Internal Runtime and independent libraries remain. See
+> [migration and ownership limits](SDK_MIGRATION.md#统一-host-sdk-收口未发布).
+
+Last updated: 2026-10-29. Current development tree: FEATURE_298/299/301 on package
+`0.7.97-alpha.11`; `v0.7.96` is the last stable release.
 
 The [Client contract](CLIENT_CONTRACT.md) and [SDK migration guide](SDK_MIGRATION.md)
 define current product integration. Version-labelled release context below does
 not restore removed APIs. Low-level Runtime mechanisms remain distinct from
 the `KodaXProductClient` business surface.
+
+## Post-alpha.10 SDK implementation alignment (2026-10-29)
+
+`KodaXOptions.workMode`, Runtime settings/patch/options serialization,
+`ClientSessionSettings` and daemon `sharedSessionSettings.keys` carry the same
+`agent | coding | script` choice. The Host validates values and rejects active-Run
+changes for both ordinary and CAS mutations. `null` removes the Session override;
+stale profile config does not set a global work mode. `assertWorkModeAvailable`
+checks an empty Script VM at selection/admission. Explicit profiles, children,
+prompt overrides and tool-visibility policies retain their declared contracts.
+Standalone Script uses `runManagedTask` and writable Session storage;
+Host-persisted storage requires `appendSessionRecords` for atomic append, with
+failure stopping the cell flow and no automatic side-effect replay.
+
+`ClientItemReadOptions.part` includes `original`. Live items and canonical
+history retain a saved tool `outputPath`; daemon history-original reads route
+through `session.view.item`, then the owning Session reader. Host
+`readSavedToolOutput` paginates 65,536 UTF-16 units while preserving the separate
+display `text` offsets. Missing saved files reject, rather than succeeding with
+a preview. Without a saved original reference, the normal body is returned.
+
+`ClientViewItem.taskResult` omits the report's `summary` because the body is
+already in `text`/full reads. `/session` transcript entries use
+`KodaXTaskResultReport[]`, including optional identities and `unknown` status.
+Live and restored paths share projection; independent notices are preserved.
+`SessionViewOwner` estimates complete thinking and identified tool-argument
+text once per coalesced view. Partial arguments are transient memory, omitted
+from public/persisted views and released at their lifecycle boundary.
+
+Skill policy checks only constrained `Bash(pattern)` as a single parsed command.
+Compound statements, pipes, redirections and unsupported substitutions fail
+closed; cmd and PowerShell have explicit quote/expansion checks. Unrestricted
+rules still call Host authorization. The same restriction applies to hooks and
+dynamic context. [Issue 375](test-guides/ISSUE_375_v0.7.97_REGRESSION_GUIDE.md)
+records syntax limits; this does not claim that an allowed executable or profile
+cannot itself cause effects.
 
 ## Startup and resume projections (2026-10-15 source)
 
@@ -62,7 +103,7 @@ reference and does not duplicate every type. It should answer three questions:
 
 ## 2. Published Package And Build Entries
 
-The development package version is `@kodax-ai/kodax@0.7.97-alpha.10`, which includes the v2
+The development package version is `@kodax-ai/kodax@0.7.97-alpha.11`, which includes the v2
 scoped Provider credential broker (ADR-068) and bounded daemon client
 inventory on top of the v0.7.96-alpha.1 feature set and the v0.7.96-alpha.2
 Windows boot-identity hotfix. The v0.7.96-alpha.1
@@ -640,20 +681,23 @@ rather than silently converting it to `after_turn`. External aborts and
 terminal errors also close the window. Non-terminal observer diagnostics do not
 close a still-consumable window. AskUser and permission
 registries expose pending lists and first-winner responses over transport.
-They have independent owner deadlines (five minutes by default). Permission
+They have independent owner deadlines. Permission defaults to five minutes;
 expiry resolves as a typed `reject` with `cause: approval_timeout`; an SDK host
 uses `handleRuntimePermissionRequest()` so owner resolution aborts its UI
-prompt and a late answer cannot hold or revive the event chain. AskUser expiry
-accepts only a Runtime-validated `default` option value (or input default); a
-missing or invalid default dismisses the request. The same AbortSignal linkage
-is used for embedded host callbacks, so timeout behavior is not daemon-UI-only.
+prompt and a late answer cannot hold or revive the event chain. AskUser defaults
+to no deadline (`userInputTimeoutMs:0`); explicit Host expiry produces
+`{unanswered:true, reason:'timeout'}`, never a default answer. User skip and
+non-interactive inability preserve their separate reasons. The same AbortSignal
+linkage is used for embedded callbacks. A local UI timeout sends no answer;
+Runtime `userInputs.respond` rejects a client timeout object as `invalid_input`
+after validating request/Run/revision bindings. Stale bindings remain
+`already_resolved`; rejecting an answer does not settle a valid question.
 Permission request timeout overrides are non-negative safe integers bounded by
 the Node timer maximum; explicit absolute deadlines must also fit that horizon.
 MCP reverse elicitation carries the agent-layer AbortSignal through the same UI
-surface and cancels after the five-minute interaction bound instead of leaving
-an untracked host Promise alive. SDK user-input timeout overrides must be
-positive integers no greater than 2,147,483,647; permission timeout overrides
-use the same upper bound and retain `0` as the existing timer-disable value.
+surface and converts unanswered results to protocol `cancel`. Both user-input
+and permission timeout overrides are non-negative safe integers no greater
+than 2,147,483,647; `0` disables the respective timer.
 Invalid values are rejected before embedded or daemon startup.
 Persistent permission grants have one daemon-owned revisioned store. A concrete
 permission request may expose opaque
@@ -1205,6 +1249,73 @@ Formal discovery uses `gitRoot` when supplied, independently of execution cwd
 and Learned Area identity. SA/AMA omit the model catalog when the Skill loader
 is unavailable; an already expanded explicit invocation remains usable.
 Rediscovery invalidates full-body caches, including loads still in flight.
+
+Markdown Agent bindings pass their behavior instructions through `agentProfile`
+instead of converting them into a complete prompt override. Solo composes that
+profile base with the admitted model catalog and any explicit active Skill;
+Adaptive retains the profile instructions in its Worker prompt. Direct SDK,
+managed Solo and public Runner entries share the same final Solo composition.
+A caller's explicit `systemPromptOverride` keeps its complete-replacement
+semantics and priority; it does not acquire an automatic catalog. Both prompt
+paths use the same loader-visibility check before disclosing a catalog.
+Profile verification defaults, per-task verification overrides and execution
+guidance still reach Solo requests through their request-only Run context;
+retaining the Skill catalog does not drop those existing obligations.
+
+Runtime default and Markdown bindings use the common bounded formatter over
+their admitted Registry entries. Catalog omission never changes the binding's
+authorized names or revisions; the pinned Registry still rejects rediscovery
+and requires a new binding to adopt changes. Caller-supplied opaque Skill prompt
+contracts retain their existing semantics, including the formal/learned
+composition path; this fix does not silently rewrite those Host instructions.
+
+Explicit Skill preparation and queued Skill references use the executing Host's
+config home for user Skills, matching the model-loading root. Host-scoped reads
+build a fresh Registry rather than sharing the process-global project singleton;
+two Hosts using one project cannot reuse each other's user Skill bodies. Project,
+shared `.agents`, plugin and built-in precedence remain in effect.
+
+Project discovery checks `.kodax/skills` before `.agents/skills`, then the
+existing user/plugin/built-in roots. Formal roots are scanned recursively in
+stable name order, stopping at each `SKILL.md` directory so support files do
+not become separate Skills. Hidden directories and `node_modules` are skipped;
+physical-directory tracking prevents symlink/junction cycles. Same-name
+precedence emits a `skill_shadowed` diagnostic with both source paths without
+marking discovery incomplete.
+
+The model catalog, including its instructions and notices, is bounded to
+8,000 UTF-16 code units. Single-line descriptions use at most 500 units and
+argument hints 80; complete entries are included in discovery priority order.
+Shortening or omission is reported both in the prompt and through the
+`skill_catalog_shortened` diagnostic. Omitted entries remain registered and
+explicitly invocable. This bounds disclosure; it does not rank Skills for a
+particular natural-language request or add automatic filesystem watching.
+Unknown-Skill errors refer callers to that disclosed catalog, without repeating
+registered names (including disabled and budget-omitted entries). The requested
+name is JSON-escaped and bounded before it is echoed.
+
+Recoverable result truncation also observes the active invocation's read
+policy. If `allowed-tools` excludes `read`, or any matching `PreToolUse` hook
+could refuse it, results remain complete inline. This check is conservative,
+including hooks that might ultimately allow the read; it never runs a hook
+speculatively or bypasses Host/Skill authorization. Explicit and model-loaded
+Skills share this rule, and multiple active policies intersect. Existing
+capacity-debt handling remains responsible when an intact result cannot fit.
+AMA input paging uses the same live policy and restores canonical input before
+reusing a cached page when recovery authority changes.
+
+Arbitrary Host callbacks are evaluated only for real calls. A Run retains
+snapshots of its already-authorized spilled results. If an actual `read` of an
+owned locator is refused or fails, the next Provider request restores the
+matching prior result from memory, including native images, while retaining the
+read failure unchanged. Both direct and bridged calls use this rule; unrelated
+paths and modified receipts cannot restore content. This grants no filesystem
+authority and works even after the saved file disappears. Further spills in
+that Run remain inline, and cached user-input pages return to canonical input.
+Canonical history stays unchanged; snapshots are cleared when the Run settles
+and are not durable across Runs or Host restart. Normal capacity handling still
+applies to the restored request; restoration does not promise that arbitrarily
+large originals fit a model context or survive transcript compaction verbatim.
 
 `user-invocable` remains parse-compatible with existing `SKILL.md` files, but
 enabled Skills always report as user-invocable and the field is not used as an

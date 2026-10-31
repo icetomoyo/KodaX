@@ -1,3 +1,4 @@
+import { staticText } from '../prompts/static-text.js';
 import { createHash } from 'node:crypto';
 
 import {
@@ -18,14 +19,7 @@ import type { KodaXToolExecutionContext } from '../types.js';
 export const MEMORY_INTENT_TOOL_NAME = 'memory_intent';
 
 export const MEMORY_INTENT_TOOL_DESCRIPTION = [
-  'Manage durable Memory in response to a natural-language user request.',
-  'Use list when the user asks what is remembered; return concise accepted Memory with stable ref ids.',
-  'Use remember for a new fact, preference, policy, or procedure, correct with one exact targetRefId, and forget with one exact targetRefId.',
-  'Use decisions/show only when the user asks what needs attention; approve/reject require one exact decision ref and an exact authorizing quote.',
-  'For mutations, userQuote must be the exact affirmative instruction clause from the current user message.',
-  'For remember/correct, statement must itself be an exact claim span from that message; never paraphrase or infer durable content.',
-  'Classify remember as fact, policy, preference, or procedure; every new claim needs a stable semantic claimKey so later updates address the same claim.',
-  'The host applies safe explicit requests immediately; broad or ambiguous requests ask for clarification, conflicts become readable decisions, and restricted content is rejected.',
+  staticText("t12i.tools/memory-intent.block.0"),
 ].join(' ');
 
 export const MEMORY_INTENT_TOOL_SCHEMA = {
@@ -963,7 +957,7 @@ function statementCoversAuthorizedClaim(
   const marker = operation === 'remember'
     ? '(?:remember|memorize|记住|记下)'
     : '(?:correct|update|replace|change|修正|更正|修改|改成)';
-  const englishLead = '(?:(?:from\\s+now\\s+on|going\\s+forward),?\\s*)?(?:one\\s+more\\s+thing:\\s*)?(?:please\\s+)?(?:(?:can|could|would|will)\\s+you\\s+(?:please\\s+)?|i\\s+(?:want|need)\\s+you\\s+to\\s+(?:please\\s+)?|i(?:\'d|\\s+would)\\s+like\\s+you\\s+to\\s+(?:please\\s+)?|go\\s+ahead\\s+and\\s+)?';
+  const englishLead = staticText("t12.tools/memory-intent.0");
   const cjkLead = '(?:请|请你|麻烦|麻烦你|劳烦|帮我|请帮我|我要你|我想让你|我希望你)?';
   const rememberPrefix = new RegExp(`^(?:${englishLead}${marker}(?:\\s+(?:that|to))?\\s*[,，:：]?|${cjkLead}${marker}\\s*[,，:：]?)$`, 'iu');
   const correctionPrefix = new RegExp(
@@ -1221,7 +1215,7 @@ function hasContradictoryMutationContext(
 function isAffirmativeCommand(text: string, marker: string): boolean {
   const escapedMarker = marker.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
   if (/^[\x00-\x7f]+$/u.test(marker)) {
-    const lead = '(?:(?:from\\s+now\\s+on|going\\s+forward),?\\s*)?(?:one\\s+more\\s+thing:\\s*)?(?:please\\s+)?(?:(?:can|could|would|will)\\s+you\\s+(?:please\\s+)?|i\\s+(?:want|need)\\s+you\\s+to\\s+(?:please\\s+)?|i(?:\'d|\\s+would)\\s+like\\s+you\\s+to\\s+(?:please\\s+)?|go\\s+ahead\\s+and\\s+)?';
+    const lead = staticText("t12.tools/memory-intent.1");
     return new RegExp(`^${lead}${escapedMarker}\\b`, 'iu').test(text);
   }
   const lead = '(?:请|请你|麻烦|麻烦你|劳烦|帮我|请帮我|我要你|我想让你|我希望你)?';

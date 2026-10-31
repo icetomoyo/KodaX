@@ -22,17 +22,19 @@ function imageHash(value: unknown): string | undefined {
   const source = block.source as { type?: string; data?: string } | undefined;
   const imageUrl = block.image_url as { url?: string } | undefined;
   const data = block.type === 'image' && source?.type === 'base64' ? source.data
-    : block.type === 'image_url' ? imageUrl?.url?.match(/^data:image\/[^;]+;base64,(.*)$/)?.[1] : undefined;
+    : block.type === 'image_url' ? imageUrl?.url?.match(/^data:image\/[^;]+;base64,(.*)$/)?.[1]
+    : block.type === 'input_image' && typeof block.image_url === 'string'
+      ? block.image_url.match(/^data:image\/[^;]+;base64,(.*)$/)?.[1] : undefined;
   if (typeof data === 'string') return createHash('sha256').update(Buffer.from(data, 'base64')).digest('hex');
 }
 
 /** Resolve only an explicit upstream path against the exact serialized request that failed. */
-export function recordRejectedImage(error: unknown, request: { messages: unknown }): void {
+export function recordRejectedImage(error: unknown, request: { messages?: unknown; input?: unknown }): void {
   if (!error || typeof error !== 'object') return;
   rejectedImages.delete(error);
   const text = details(error);
   if (!/image|图片/i.test(text) || !/decod|invalid|unsupported|format|解析|格式|尺寸/i.test(text)) return;
-  const locations = text.match(/messages(?:\[\d+\]|\.\d+)(?:\.(?:content|source|image_url|url|data)(?:\[\d+\]|\.\d+)*)+/g) ?? [];
+  const locations = text.match(/(?:messages|input)(?:\[\d+\]|\.\d+)(?:\.(?:content|output|source|image_url|url|data)(?:\[\d+\]|\.\d+)*)+/g) ?? [];
   const hashes = new Set<string>();
   for (const location of locations) {
     let value: unknown = request;

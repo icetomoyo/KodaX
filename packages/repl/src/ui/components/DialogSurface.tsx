@@ -28,6 +28,7 @@ export interface DialogSurfaceUIRequestState {
   prompt?: string;
   options?: DialogSelectOption[];
   defaultValue?: string;
+  secret?: boolean;
   buffer: string;
   error?: string;
   visibleSelectOptions?: number;
@@ -135,10 +136,10 @@ export const DialogSurface: React.FC<DialogSurfaceProps> = ({
             <Text color="cyan" bold>
               {t("dialog.input")} {request.prompt}
             </Text>
-            {request.defaultValue !== undefined ? (
+            {request.defaultValue !== undefined && !request.secret ? (
               <Text dimColor>{`${t("input.default")} ${request.defaultValue}`}</Text>
             ) : null}
-            <Text dimColor>{`${t("input.value")} ${request.buffer || t("input.type_response")}`}</Text>
+            <Text dimColor>{`${t("input.value")} ${request.buffer ? request.secret ? '••••' : request.buffer : t("input.type_response")}`}</Text>
             <Text dimColor>{t("select.confirm_hint")}</Text>
           </>
         )}

@@ -203,6 +203,10 @@ export function resolveKodaXManual(
 
   const query = input.query?.trim();
   if (query) {
+    const exact = findByExactId(ids, byId, query)
+      ?? findByExactId(ids, byId, query.toLowerCase())
+      ?? findByAlias(ids, byId, query);
+    if (exact) return buildTopicResult(exact, productName);
     const ranked = rankByQuery(ids, byId, query);
     if (ranked.length > 0 && ranked[0]) return buildTopicResult(ranked[0], productName);
     return buildIndexResult(ids, byId, productName);

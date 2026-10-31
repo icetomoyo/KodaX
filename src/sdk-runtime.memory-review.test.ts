@@ -10,7 +10,7 @@ import { inspectEpisodeReviewJob, listPendingEpisodeReviews, resolveMemoryRoot,
 import { deriveCodingMemoryIdentity } from '@kodax-ai/coding';
 import { KodaXBaseProvider, registerModelProvider,
   type KodaXProviderConfig, type KodaXStreamResult } from '@kodax-ai/llm';
-import { createKodaXRuntime, type KodaXEvents, type RuntimeRunMode } from './sdk-runtime.js';
+import { createKodaXRuntime, type KodaXEvents, type RuntimeRunMode } from "../tests/runtime-fixture.js";
 import { createRuntimeDaemonManagementController } from './runtime-daemon/management.js';
 import { resolveRuntimeDaemonPathsFromConfigHome } from './runtime-daemon/state.js';
 
@@ -119,7 +119,8 @@ async function fixture(existingRoot?: string) {
 it('keeps idle shutdown blocked while a completed Run still owns terminal review', async () => {
   const f = await fixture();
   const review = reviewerGate();
-  const requestStop = vi.fn();
+  const stopped = deferred<void>();
+  const requestStop = vi.fn(() => stopped.resolve());
   const controller = createRuntimeDaemonManagementController({ runtime: f.runtime,
     paths: resolveRuntimeDaemonPathsFromConfigHome(path.join(f.root, '.kodax'), 'default'),
     orphanExitMs: 20, requestStop });
@@ -134,7 +135,9 @@ it('keeps idle shutdown blocked while a completed Run still owns terminal review
     expect(requestStop).not.toHaveBeenCalled();
     expect(signal.aborted).toBe(false);
     review.release();
-    await vi.waitFor(async () => expect(requestStop).toHaveBeenCalledTimes(1));
+    // Reviewer return still leaves durable finalization before the Host becomes idle.
+    await awaitEvent(stopped.promise, 'idle shutdown after terminal review');
+    expect(requestStop).toHaveBeenCalledTimes(1);
     expect(signal.aborted).toBe(false);
   } finally { controller.close(); review.release(); review.finishCleanup(); await f.close(); }
 });

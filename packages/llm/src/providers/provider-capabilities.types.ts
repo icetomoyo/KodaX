@@ -1,3 +1,5 @@
+import { validateToolCapabilities } from './tool-constraints.js';
+import { validateCacheCapabilities } from './cache-policy.js';
 /**
  * FEATURE_198 v0.7.44 — Provider capability JSON schema + validator.
  *
@@ -12,6 +14,8 @@
 
 import type {
   KodaXModelDescriptor,
+  KodaXToolCapabilities,
+  KodaXCacheCapabilities,
   KodaXOpenAICompatMaxOutputTokensField,
   KodaXProviderCapabilityProfile,
   KodaXReasoningCapability,
@@ -21,6 +25,7 @@ import type {
   KodaXThinkingWireStrategy,
   KodaXVerifyStrategy,
 } from '../types.js';
+import { optionalOutputTokenLimit } from './output-token-limit.js';
 
 /**
  * Capability profile names that the loader resolves to the concrete
@@ -45,6 +50,8 @@ export type CapabilityProfileName =
  *    those are owned by the local CLI binary, not KodaX metadata
  */
 export interface ProviderCapabilityJsonEntry {
+  readonly toolCapabilities?: KodaXToolCapabilities;
+  readonly cacheCapabilities?: KodaXCacheCapabilities;
   readonly apiKeyEnv: string;
   readonly model?: string;
   readonly models?: ReadonlyArray<KodaXModelDescriptor>;
@@ -56,6 +63,8 @@ export interface ProviderCapabilityJsonEntry {
   readonly capabilityProfile: CapabilityProfileName;
   readonly contextWindow?: number;
   readonly maxOutputTokens?: number;
+  /** Documented service output ceiling; independent of the default request budget. */
+  readonly outputTokenLimit?: number;
   readonly maxOutputTokensField?: KodaXOpenAICompatMaxOutputTokensField;
   readonly thinkingBudgetCap?: number;
   readonly supportsThinking?: boolean;
@@ -82,6 +91,8 @@ export interface ProviderCapabilitiesJson {
  * unchanged.
  */
 export interface ProviderSnapshot {
+  readonly toolCapabilities?: KodaXToolCapabilities;
+  readonly cacheCapabilities?: KodaXCacheCapabilities;
   readonly model: string;
   readonly models?: ReadonlyArray<KodaXModelDescriptor>;
   readonly apiKeyEnv: string;
@@ -93,6 +104,8 @@ export interface ProviderSnapshot {
   readonly capabilityProfile: KodaXProviderCapabilityProfile;
   readonly contextWindow?: number;
   readonly maxOutputTokens?: number;
+  /** Documented service output ceiling; independent of the default request budget. */
+  readonly outputTokenLimit?: number;
   readonly maxOutputTokensField?: KodaXOpenAICompatMaxOutputTokensField;
   readonly thinkingBudgetCap?: number;
   readonly supportsThinking?: boolean;
@@ -114,6 +127,10 @@ const VALID_REASONING_CAPABILITIES: readonly KodaXReasoningCapability[] = [
 // `anthropic-reasoning-effort` is shared by custom providers and built-ins whose
 // non-Claude Anthropic-compatible wire shape has been verified directly.
 const VALID_EFFORT_STRATEGIES: readonly KodaXReasoningEffortWireStrategy[] = [
+  'google-thinking-level',
+  'bedrock-anthropic-effort',
+  'bedrock-openai-effort',
+  'bedrock-openai-nested-effort',
   'openai-responses-effort',
   'openai-chat-effort',
   'codex-cli-config',
@@ -461,6 +478,10 @@ function validateReasoningProfile(
   if (requiresEffortBetaHeader !== undefined) {
     (capability as { requiresEffortBetaHeader: boolean }).requiresEffortBetaHeader = requiresEffortBetaHeader;
   }
+  for (const field of ['supportsThinkingDisplay', 'supportsThinkingBlockBinding'] as const) {
+    const value = optionalBoolean(raw[field], `${path}.${field}`);
+    if (value !== undefined) Object.assign(capability, { [field]: value });
+  }
   return capability;
 }
 
@@ -505,6 +526,15 @@ function requireVerifyStrategy(value: unknown, path: string): KodaXVerifyStrateg
   return value as KodaXVerifyStrategy;
 }
 
+function constraintMetadata(raw: Record<string, unknown>, path: string): Pick<KodaXModelDescriptor, 'toolCapabilities' | 'cacheCapabilities'> {
+  try { validateToolCapabilities(raw.toolCapabilities); validateCacheCapabilities(raw.cacheCapabilities); }
+  catch (error) { throw new Error(`${path}: ${error instanceof Error ? error.message : 'Invalid constraint metadata.'}`); }
+  return {
+    ...(raw.toolCapabilities ? { toolCapabilities: structuredClone(raw.toolCapabilities) as KodaXToolCapabilities } : {}),
+    ...(raw.cacheCapabilities ? { cacheCapabilities: structuredClone(raw.cacheCapabilities) as KodaXCacheCapabilities } : {}),
+  };
+}
+
 function validateModelDescriptor(
   raw: unknown,
   path: string,
@@ -524,6 +554,7 @@ function validateModelDescriptor(
     raw.maxOutputTokensField,
     `${path}.maxOutputTokensField`,
   );
+  const outputTokenLimit = optionalOutputTokenLimit(raw.outputTokenLimit, path);
   const thinkingBudgetCap = optionalNumber(
     raw.thinkingBudgetCap,
     `${path}.thinkingBudgetCap`,
@@ -548,31 +579,11 @@ function validateModelDescriptor(
           `${path}.reasoningCapability`,
         );
   const reasoningProfile = validateReasoningProfileField(raw, path);
-  const descriptor: KodaXModelDescriptor = { id };
-  if (wireModel !== undefined) descriptor.wireModel = wireModel;
-  if (displayName !== undefined) descriptor.displayName = displayName;
-  if (contextWindow !== undefined) descriptor.contextWindow = contextWindow;
-  if (maxOutputTokens !== undefined) descriptor.maxOutputTokens = maxOutputTokens;
-  if (maxOutputTokensField !== undefined) {
-    descriptor.maxOutputTokensField = maxOutputTokensField;
-  }
-  if (thinkingBudgetCap !== undefined) {
-    descriptor.thinkingBudgetCap = thinkingBudgetCap;
-  }
-  if (reasoningCapability !== undefined) {
-    descriptor.reasoningCapability = reasoningCapability;
-  }
-  if (reasoningProfile !== undefined) {
-    descriptor.reasoningProfile = reasoningProfile;
-  }
-  if (replayReasoningContent !== undefined) {
-    descriptor.replayReasoningContent = replayReasoningContent;
-  }
-  if (strictThinkingSignature !== undefined) {
-    descriptor.strictThinkingSignature = strictThinkingSignature;
-  }
-  if (streamMaxDurationMs !== undefined) {
-    descriptor.streamMaxDurationMs = streamMaxDurationMs;
+  const descriptor: KodaXModelDescriptor = { id, ...constraintMetadata(raw, path) };
+  for (const [field, value] of Object.entries({ wireModel, displayName, contextWindow, maxOutputTokens,
+    outputTokenLimit, maxOutputTokensField, thinkingBudgetCap, reasoningCapability, reasoningProfile,
+    replayReasoningContent, strictThinkingSignature, streamMaxDurationMs })) {
+    if (value !== undefined) Object.assign(descriptor, { [field]: value });
   }
   return descriptor;
 }
@@ -635,6 +646,7 @@ function validateProviderEntry(
     raw.maxOutputTokensField,
     `providers.${name}.maxOutputTokensField`,
   );
+  const outputTokenLimit = optionalOutputTokenLimit(raw.outputTokenLimit, `providers.${name}`);
   const thinkingBudgetCap = optionalNumber(
     raw.thinkingBudgetCap,
     `providers.${name}.thinkingBudgetCap`,
@@ -688,38 +700,16 @@ function validateProviderEntry(
   }
 
   const entry: ProviderCapabilityJsonEntry = {
+    ...constraintMetadata(raw, `providers.${name}`),
     apiKeyEnv,
     reasoningCapability,
     capabilityProfile,
     verifyStrategy,
   };
-  if (reasoningProfile !== undefined) {
-    (entry as { reasoningProfile: KodaXReasoningProfile }).reasoningProfile =
-      reasoningProfile;
-  }
-  if (model !== undefined) (entry as { model: string }).model = model;
-  if (models !== undefined) (entry as { models: typeof models }).models = models;
-  if (contextWindow !== undefined) {
-    (entry as { contextWindow: number }).contextWindow = contextWindow;
-  }
-  if (maxOutputTokens !== undefined) {
-    (entry as { maxOutputTokens: number }).maxOutputTokens = maxOutputTokens;
-  }
-  if (maxOutputTokensField !== undefined) {
-    (
-      entry as { maxOutputTokensField: KodaXOpenAICompatMaxOutputTokensField }
-    ).maxOutputTokensField = maxOutputTokensField;
-  }
-  if (thinkingBudgetCap !== undefined) {
-    (entry as { thinkingBudgetCap: number }).thinkingBudgetCap = thinkingBudgetCap;
-  }
-  if (supportsThinking !== undefined) {
-    (entry as { supportsThinking: boolean }).supportsThinking = supportsThinking;
-  }
-  if (modelReasoningCapabilities !== undefined) {
-    (
-      entry as { modelReasoningCapabilities: typeof modelReasoningCapabilities }
-    ).modelReasoningCapabilities = modelReasoningCapabilities;
+  for (const [field, value] of Object.entries({ reasoningProfile, model, models, contextWindow,
+    maxOutputTokens, outputTokenLimit, maxOutputTokensField, thinkingBudgetCap, supportsThinking,
+    modelReasoningCapabilities })) {
+    if (value !== undefined) Object.assign(entry, { [field]: value });
   }
   if (cliBridge) {
     (entry as { cliBridge: boolean }).cliBridge = true;

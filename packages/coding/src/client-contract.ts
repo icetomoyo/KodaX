@@ -34,6 +34,7 @@ import type {
   ClientCommandResult,
 } from './client-domains.js';
 export type * from './client-domains.js';
+export type * from './execution-profile-contract.js';
 
 export type ClientHostStartupPhase =
   | 'modules' | 'extensions' | 'runtime' | 'recovery' | 'mcp' | 'sessions' | 'a2a' | 'listener';
@@ -679,6 +680,8 @@ export interface ClientSessionActivity {
     readonly toolName: string; readonly callId?: string;
     /** Cumulative characters for this call; absent when the Provider supplied no call identity. */
     readonly charCount?: number;
+    /** Host estimate for this call's received arguments, not Provider usage. */
+    readonly estimatedTokenCount?: number;
   };
   readonly workflow?: ClientWorkflowProcess;
   /** Latest execution budget, whose model and scope may differ from the current Session selection. */
@@ -828,6 +831,10 @@ export interface ClientRunTerminal {
 }
 
 export interface ClientRunStatus {
+  /** Last actual assembly; absent before execution and on older Hosts. */
+  readonly effectiveConfig?: import('./execution-profile-contract.js').KodaXEffectiveTaskConfig;
+  /** Actual Run work surface, distinct from the Session's selected value. */
+  readonly workMode?: 'agent' | 'coding' | 'script';
   readonly failureDetail?: ClientRunFailureDetail;
   readonly terminal?: ClientRunTerminal;
   readonly runId: string;
@@ -1048,6 +1055,11 @@ export interface ClientEffectiveConfigValue<T> {
 export interface ClientEffectiveExecutionConfig {
   readonly stallLog: ClientEffectiveConfigValue<boolean>;
   readonly fallbackProviders: ClientEffectiveConfigValue<readonly string[]>;
+  readonly maxOutputTokens?: ClientEffectiveConfigValue<number | undefined>;
+  readonly disablePromptCache?: ClientEffectiveConfigValue<boolean | undefined>;
+  readonly lsp?: ClientEffectiveConfigValue<boolean | undefined>;
+  /** Saved defaults take effect at this boundary; Session overrides retain their own lifecycle. */
+  readonly application?: Readonly<Partial<Record<keyof ClientConfig, 'immediate' | 'next_run' | 'restart' | 'extension_reload'>>>;
 }
 
 /** MCP configuration only; executable connections and callbacks stay in the Host. */

@@ -6,3 +6,4 @@
  */
 
 export * from '@kodax-ai/agent/media';
+export { publishGeneratedImages } from './generated-image-publication.js';

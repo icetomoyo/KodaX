@@ -53,6 +53,28 @@ verify the packaged trusted-text addon. This check does not require
 | **macOS** | Seatbelt (`sandbox-exec`) | ripgrep (`brew install ripgrep`) |
 | **Linux** | bubblewrap | `bubblewrap`, `socat`, `ripgrep` |
 
+`getKodaXSandboxSetupGuidance(doctor)` preserves the reported diagnostics and
+offers repairs for the dependencies actually reported missing. A JavaScript
+interpreter failure (for example, `spawnSync node ENOENT`) is separate from
+missing bubblewrap, socat, or ripgrep. KodaX uses `KODAX_A2A_NODE` when supplied,
+otherwise Electron reuses its own executable in Node mode; Electron does not
+need a separate `node` on PATH. For a standalone bundled CLI, an optional repair
+is to provide an existing Node.js executable through `KODAX_A2A_NODE`, or install
+Node.js >=20.16.0 on PATH. Check an explicitly configured executable before
+installing another interpreter.
+
+ASRT's missing seccomp-helper warning means Unix socket restrictions may be
+unavailable. It does not alone make doctor unready and is not repaired by
+installing Node.js or the three backend packages. The optional repair is to
+restore the distribution's `apply-seccomp` helper for the host platform and
+architecture. The warning remains visible even when doctor reports ready.
+
+These repairs are optional for ordinary tools: sandbox unavailability continues
+through the existing permission policy, without a new dependency-installation
+gate. Authorized fallback is recorded as host execution, never as isolated.
+The explicit `runKodaXSandboxed()` API still requires isolation and returns
+structured unavailability instead of silently executing on the host.
+
 KodaX never runs `sudo` or a package manager automatically. Edits and
 Auto[LLM] attempt the sandbox first. Completion is silently authorized; only a
 proven pre-start denial or unavailable backend reaches Exec Policy and the
@@ -339,6 +361,14 @@ lifetime. On every platform, an arbitrary shell writer is an ordinary OS race
 and does not join trusted-text CAS.
 
 ## SDK sandbox
+
+The post-alpha.10 Windows readiness fix also verifies setup-owned filesystem
+capability ACEs in the calling process's filesystem view. A current marker,
+healthy account or NUL access alone is not readiness. The check does not repair
+ACLs, elevate or mutate accounts; explicit setup can repair the existing account
+in place. A pre-start failure retains its diagnostic before ordinary Host
+authorization. It does not imply sandboxed completion or authorize replay after
+target start. See [Issue 372's acceptance contract](../../docs/test-guides/ISSUE_372_v0.7.97_REGRESSION_GUIDE.md).
 
 SDK command targets inherit the environment of their execution host. SDK
 embedders can also use the standalone shell sandbox capability

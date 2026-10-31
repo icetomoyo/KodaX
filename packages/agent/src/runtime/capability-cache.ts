@@ -5,6 +5,8 @@ import {
   getRejectedEfforts,
   removeCacheEntry,
   sanitizeCapabilityCache,
+  type KodaXBaseProvider,
+  type KodaXProviderStreamOptions,
   type CapabilityCache,
   type CapabilityCacheSource,
 } from '@kodax-ai/llm';
@@ -49,8 +51,17 @@ export function getCachedRejectedEfforts(
   provider: string,
   model: string | undefined,
   configHome?: string,
+  scope?: string,
 ): readonly string[] {
-  return getRejectedEfforts(loadCapabilityCache(configHome), provider, model);
+  return getRejectedEfforts(loadCapabilityCache(configHome), provider, model, scope);
+}
+
+/** Native protocol identity becomes available only after the request acquires its lease. */
+export function getProviderReasoningCacheOptions(provider: KodaXBaseProvider, model: string | undefined,
+  configHome?: string): Pick<KodaXProviderStreamOptions, 'rejectedReasoningEfforts' | 'resolveRejectedReasoningEfforts'> {
+  return provider.usesScopedReasoningLearning?.()
+    ? { rejectedReasoningEfforts: [], resolveRejectedReasoningEfforts: scope => getCachedRejectedEfforts(provider.name, model, configHome, scope) }
+    : { rejectedReasoningEfforts: getCachedRejectedEfforts(provider.name, model, configHome) };
 }
 
 export function recordRejectedEffort(
@@ -60,9 +71,10 @@ export function recordRejectedEffort(
   source: CapabilityCacheSource,
   updatedAt: string,
   configHome?: string,
+  scope?: string,
 ): void {
   persistCapabilityCache(
-    addRejectedEffort(loadCapabilityCache(configHome), provider, model, effort, source, updatedAt),
+    addRejectedEffort(loadCapabilityCache(configHome), provider, model, effort, source, updatedAt, scope),
     configHome,
   );
 }

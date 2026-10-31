@@ -23,7 +23,7 @@ interface InteractiveMainHarness {
   readonly cleanupRegisteredManagedChildren: ReturnType<typeof vi.fn>;
   readonly shutdownTracing: ReturnType<typeof vi.fn>;
   readonly runtimeDispose: ReturnType<typeof vi.fn>;
-  readonly createKodaXRuntime: ReturnType<typeof vi.fn>;
+  readonly createKodaXHostRuntime: ReturnType<typeof vi.fn>;
   readonly ensureKodaXRuntime: ReturnType<typeof vi.fn>;
   readonly runtimeOptions: unknown[];
   readonly runtimeStarts: unknown[];
@@ -68,6 +68,8 @@ afterEach(async () => {
   vi.doUnmock('./sandbox-runtime.js');
   vi.doUnmock('./a2a/runtime-config.js');
   vi.doUnmock('./runtime-daemon/manager.js');
+  vi.doUnmock('./provider-credential-manager.js');
+  vi.doUnmock('./cli-provider-credentials.js');
   process.argv = originalArgv;
   if (originalVitest === undefined) {
     delete process.env.VITEST;
@@ -130,6 +132,8 @@ async function importMainWithMocks(options: {
   readonly harness: InteractiveMainHarness;
 }> {
   const calls: string[] = [];
+  vi.doMock('./provider-credential-manager.js', () => ({ createProviderCredentialManager: () => ({ describe: async () => ({ stored: false }) }) }));
+  vi.doMock('./cli-provider-credentials.js', () => ({ createCliProviderCredentials: async () => ({ authorizeExecution: async () => undefined, close: async () => undefined }) }));
   const runtimeOptions: unknown[] = [];
   const runtimeStarts: unknown[] = [];
   const runtimeDeletes: string[] = [];
@@ -301,7 +305,7 @@ async function importMainWithMocks(options: {
       },
     };
   };
-  const createKodaXRuntime = vi.fn((input: { readonly mode?: string } = {}) =>
+  const createKodaXHostRuntime = vi.fn((input: { readonly mode?: string } = {}) =>
     createMockRuntime(input, input.mode === 'daemon' ? 'daemon' : 'embedded'));
   const ensureKodaXRuntime = vi.fn((input: unknown) => createMockRuntime(input, 'daemon'));
 
@@ -433,7 +437,7 @@ async function importMainWithMocks(options: {
 
   if (options.mockSdkRuntime !== false) {
     vi.doMock('./sdk-runtime.js', () => ({
-      createKodaXRuntime,
+      createKodaXHostRuntime,
       ensureKodaXRuntime,
     }));
   }
@@ -498,7 +502,7 @@ async function importMainWithMocks(options: {
       cleanupRegisteredManagedChildren,
       shutdownTracing,
       runtimeDispose,
-      createKodaXRuntime,
+      createKodaXHostRuntime,
       ensureKodaXRuntime,
       runtimeOptions,
       runtimeStarts,
@@ -714,7 +718,7 @@ describe('CLI interactive exit lifecycle', () => {
     }
   });
 
-  it('prints read-only credential guidance when first launch has no provider environment variable', async () => {
+  it('opens hidden-key setup when first launch has no provider environment variable', async () => {
     const stdinDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
     const stdoutDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
     Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: true });
@@ -732,18 +736,12 @@ describe('CLI interactive exit lifecycle', () => {
 
       await main();
 
-      expect(writeSpy).toHaveBeenCalledWith(expect.stringContaining(
-        'KodaX did not detect a supported provider API key environment variable.',
-      ));
-      expect(writeSpy).toHaveBeenCalledWith(expect.stringContaining(
-        'MOCK_PROVIDER_API_KEY',
-      ));
-      expect(harness.renderSetupGuide).not.toHaveBeenCalled();
-      expect(harness.initializeSetupConfiguration).not.toHaveBeenCalled();
-      expect(harness.runProviderSetupWizard).not.toHaveBeenCalled();
+      expect(harness.initializeSetupConfiguration).toHaveBeenCalledOnce();
+      expect(harness.runProviderSetupWizard).toHaveBeenCalledOnce();
+      expect(harness.renderSetupGuide).toHaveBeenCalledOnce();
       expect(harness.runInkInteractiveMode).not.toHaveBeenCalled();
       expect(harness.runInteractiveMode).not.toHaveBeenCalled();
-      expect(harness.createKodaXRuntime).not.toHaveBeenCalled();
+      expect(harness.createKodaXHostRuntime).not.toHaveBeenCalled();
       expect(harness.ensureKodaXRuntime).not.toHaveBeenCalled();
       expect(writeSpy).toHaveBeenCalled();
     } finally {
@@ -780,7 +778,7 @@ describe('CLI interactive exit lifecycle', () => {
       expect(harness.initializeSetupConfiguration).not.toHaveBeenCalled();
       expect(harness.runProviderSetupWizard).not.toHaveBeenCalled();
       expect(harness.runInkInteractiveMode).not.toHaveBeenCalled();
-      expect(harness.createKodaXRuntime).not.toHaveBeenCalled();
+      expect(harness.createKodaXHostRuntime).not.toHaveBeenCalled();
       expect(harness.ensureKodaXRuntime).not.toHaveBeenCalled();
     } finally {
       if (stdinDescriptor) Object.defineProperty(process.stdin, 'isTTY', stdinDescriptor);
@@ -844,10 +842,10 @@ describe('CLI interactive exit lifecycle', () => {
         expect.objectContaining({ explicitProvider: undefined }),
       );
       expect(writeSpy).toHaveBeenCalledWith(expect.stringContaining(
-        'KodaX did not detect a supported provider API key environment variable.',
+        'KodaX setup guide',
       ));
-      expect(harness.initializeSetupConfiguration).not.toHaveBeenCalled();
-      expect(harness.runProviderSetupWizard).not.toHaveBeenCalled();
+      expect(harness.initializeSetupConfiguration).toHaveBeenCalledOnce();
+      expect(harness.runProviderSetupWizard).toHaveBeenCalledOnce();
       expect(harness.runInkInteractiveMode).not.toHaveBeenCalled();
     } finally {
       if (stdinDescriptor) Object.defineProperty(process.stdin, 'isTTY', stdinDescriptor);
@@ -1054,7 +1052,7 @@ describe('CLI interactive exit lifecycle', () => {
 
       expect(harness.runInkInteractiveMode).toHaveBeenCalledTimes(1);
       expect(harness.ensureKodaXRuntime).toHaveBeenCalledTimes(1);
-      expect(harness.createKodaXRuntime).not.toHaveBeenCalled();
+      expect(harness.createKodaXHostRuntime).not.toHaveBeenCalled();
       expect(harness.runtimeOptions[0]).toMatchObject({
         profile: 'default',
         clientInfo: {
@@ -1097,7 +1095,7 @@ describe('CLI interactive exit lifecycle', () => {
     await main();
 
     expect(harness.ensureKodaXRuntime).toHaveBeenCalledOnce();
-    expect(harness.createKodaXRuntime).not.toHaveBeenCalled();
+    expect(harness.createKodaXHostRuntime).not.toHaveBeenCalled();
     expect(harness.runtimeOptions[0]).toMatchObject({
       profile: 'default',
     });
@@ -1160,7 +1158,7 @@ describe('CLI interactive exit lifecycle', () => {
     await main();
 
     expect(harness.ensureKodaXRuntime).toHaveBeenCalledOnce();
-    expect(harness.createKodaXRuntime).not.toHaveBeenCalled();
+    expect(harness.createKodaXHostRuntime).not.toHaveBeenCalled();
     expect(harness.runtimeOptions[0]).not.toHaveProperty('isolation');
     expect(harness.runtimeOptions[0]).not.toHaveProperty('worker');
     expect(harness.runtimeOptions[0]).not.toHaveProperty('externalAgents');
@@ -1188,7 +1186,7 @@ describe('CLI interactive exit lifecycle', () => {
 
       expect(harness.runInkInteractiveMode).not.toHaveBeenCalled();
       expect(harness.runInteractiveMode).not.toHaveBeenCalled();
-      expect(harness.createKodaXRuntime).not.toHaveBeenCalled();
+      expect(harness.createKodaXHostRuntime).not.toHaveBeenCalled();
       expect(harness.ensureKodaXRuntime).not.toHaveBeenCalled();
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"health": "missing"'));
     } finally {
@@ -1220,7 +1218,7 @@ describe('CLI interactive exit lifecycle', () => {
 
       expect(harness.runInkInteractiveMode).not.toHaveBeenCalled();
       expect(harness.runInteractiveMode).not.toHaveBeenCalled();
-      expect(harness.createKodaXRuntime).not.toHaveBeenCalled();
+      expect(harness.createKodaXHostRuntime).not.toHaveBeenCalled();
       expect(harness.ensureKodaXRuntime).not.toHaveBeenCalled();
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"health": "missing"'));
     } finally {

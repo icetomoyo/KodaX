@@ -8,6 +8,10 @@ import {
   runOneShotClientTask,
 } from './one-shot-task.js';
 import { toKodaXProductClient } from './client-runtime-adapter.js';
+import { configureProviderAuthCommand } from './provider-auth-cli.js';
+import { createCliProviderCredentials } from './cli-provider-credentials.js';
+import { createProviderCredentialManager } from './provider-credential-manager.js';
+import type { KodaXClientHostAuthorization } from './client-host-authorization.js';
 import { ensureRecoveringKodaXRuntime } from './recovering-runtime-client.js';
 
 // ── Runtime environment defaults ──
@@ -54,7 +58,7 @@ import os from 'node:os';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import {
-  createKodaXRuntime,
+  createKodaXHostRuntime,
   ensureKodaXRuntime,
   type KodaXRuntime,
 } from './sdk-runtime.js';
@@ -238,7 +242,6 @@ import {
 import { prepareKodaXA2AServer } from './a2a/server.js';
 import { createReplLearningBinding } from './repl-learning-binding.js';
 import {
-  hasProviderCredentialEnvironment,
   renderMissingProviderCredentialGuide,
   shouldAutoLaunchProviderSetup,
 } from './provider-setup-cli.js';
@@ -661,9 +664,10 @@ async function runCliTaskViaClient(
   runtime: KodaXRuntime,
   options: KodaXOptions,
   prompt: string,
+  authorizeExecution?: KodaXClientHostAuthorization,
 ): Promise<KodaXResult> {
   return runOneShotOwnedProcess((abortSignal) => runOneShotClientTask({
-    client: toKodaXProductClient(runtime),
+    client: toKodaXProductClient(runtime, authorizeExecution),
     runtime,
     options,
     prompt,
@@ -850,6 +854,7 @@ async function serveDaemonCommand(input: {
       profile: input.profile,
       homeDir: input.homeDir,
       configHome: daemonConfigHome,
+      sessionsDir: input.sessionsDir,
       // The host is created only after createRuntime returns, so this trusted
       // fact is never observable until reconcile and watcher startup succeed.
       ownsA2AConfigReconciler: true,
@@ -865,8 +870,7 @@ async function serveDaemonCommand(input: {
           daemonConfigHome,
           path.join(input.homeDir, '.kodax'),
         );
-        const runtime = await createKodaXRuntime({
-          mode: 'embedded',
+        const runtime = await createKodaXHostRuntime({
           profile: input.profile,
           ...(usesCanonicalHome ? { homeDir: input.homeDir } : {}),
           sessionsDir:
@@ -2362,6 +2366,7 @@ export const KODAX_CLI_SUBCOMMAND_NAMES = [
   'a2a',
   'sandbox',
   'setup',
+  'auth',
   'memory',
   'execpolicy',
 ] as const;
@@ -2369,6 +2374,7 @@ const CLI_SUBCOMMAND_NAMES = new Set<string>(KODAX_CLI_SUBCOMMAND_NAMES);
 
 export const KODAX_COMPLETION_ROOT_SUBCOMMANDS = [
   'setup',
+  'auth',
   'acp',
   'skill',
   'tools',
@@ -2831,13 +2837,13 @@ function printProviderSetupCompletion(selection: {
   readonly model: string;
   readonly apiKeyEnv: string;
   readonly configPath: string;
-}): void {
+}, credentialSource?: 'file'): void {
   process.stdout.write(
     `${chalk.green(`\nProvider setup saved: ${selection.provider}/${selection.model}`)}\n`,
   );
   process.stdout.write(`${chalk.dim(`Config: ${selection.configPath}`)}\n`);
   for (const line of providerSetupRestartInstructions({
-    apiKeyEnv: selection.apiKeyEnv,
+    apiKeyEnv: selection.apiKeyEnv, credentialSource,
   })) {
     process.stdout.write(`  ${line}\n`);
   }
@@ -3101,14 +3107,14 @@ async function executeProviderSetup(
     );
     return;
   }
-  printProviderSetupCompletion(result.selection);
+  printProviderSetupCompletion(result.selection, result.credentialSource);
 }
 
 export function configureKodaXSetupCommand(program: Command): Command {
   const setupCommand = program
     .command('setup')
     .description(
-      'Initialize configuration and configure a provider without storing an API key',
+      'Initialize configuration and configure provider credentials',
     )
     .helpOption(
       '-h, --help',
@@ -3405,6 +3411,7 @@ async function runCliMain(startupProgress?: CliStartupProgress) {
   });
 
   configureKodaXSetupCommand(program);
+  configureProviderAuthCommand(program);
   configureKodaXMemoryCommand(program);
 
   // ============== completion subcommand ==============
@@ -4499,20 +4506,18 @@ complete -c kodax -l version -d 'Show version'`);
       ...(config.customProviders ?? []).map((provider) => provider.apiKeyEnv),
     ];
     if (readiness.status === 'needs-provider') {
-      if (!hasProviderCredentialEnvironment(
-        credentialEnvironmentNames,
-        process.env,
-      )) {
-        process.stdout.write(
-          `\n${renderMissingProviderCredentialGuide(credentialEnvironmentNames)}\n\n`,
-        );
-        return;
-      }
       startupProgress?.stop();
       await executeProviderSetup();
       return;
     }
-    if (readiness.status === 'needs-credential') {
+    if (readiness.status === 'needs-host-broker') {
+      const connection = config.customProviders?.find(provider => provider.name === readiness.provider);
+      if (!connection?.cloud && !connection?.oauthRegistration) {
+        process.stderr.write(`Provider "${readiness.provider}" requires login. Run kodax auth login ${readiness.provider} with your registered client, or install the trusted SDK credential authorizer.\n`);
+        process.exitCode = 1; return;
+      }
+    }
+    if (readiness.status === 'needs-credential' && !(await createProviderCredentialManager({ configPath: KODAX_CONFIG_FILE }).describe(readiness.provider)).stored) {
       process.stdout.write(
         `\n${renderMissingProviderCredentialGuide(
           readiness.apiKeyEnv
@@ -4629,6 +4634,11 @@ complete -c kodax -l version -d 'Show version'`);
   // FEATURE_298 T27 — fixed Host: the CLI client owns no extension
   // runtime, integration hot reload, or A2A handle; the Host does.
   let cliRuntime: KodaXRuntime | undefined;
+  let cliCredentials: ReturnType<typeof createCliProviderCredentials> | undefined;
+  const authorizeCli: KodaXClientHostAuthorization = async (request, services) => {
+    const authorizer = await (cliCredentials ??= createCliProviderCredentials(config));
+    return authorizer.authorizeExecution(request, services);
+  };
   let shouldHardExitAfterInteractiveCleanup = false;
   const integrationEvents = createIntegrationEventBridge((message) =>
     console.error(chalk.dim(message)),
@@ -4644,7 +4654,7 @@ complete -c kodax -l version -d 'Show version'`);
     cliRuntime = await ensureRecoveringKodaXRuntime({
       profile: 'default',
       daemonLifecycle: 'interactive',
-      requirements: { productClient: 1, sessionDrafts: 1 },
+      requirements: { productClient: 1, sessionDrafts: 1, productExecutionAuthorization: 2, productActorAuthorization: 1, providerProbeAuthorization: 1, providerCredentialConnectionBinding: 1 },
       onStartupProgress: startupProgress === undefined ? undefined
         : (progress) => { startupProgress.update(cliStartupProgressMessage(progress)); },
       clientInfo: {
@@ -4655,7 +4665,7 @@ complete -c kodax -l version -d 'Show version'`);
       },
       defaultProvider: options.provider,
       ...(options.model !== undefined ? { defaultModel: options.model } : {}),
-    });
+    }, authorizeCli);
     return cliRuntime;
   };
 
@@ -4872,6 +4882,7 @@ complete -c kodax -l version -d 'Show version'`);
                   },
                 },
                 prompt,
+                authorizeCli,
               ),
           );
           if (commandPrompt) {
@@ -4885,6 +4896,7 @@ complete -c kodax -l version -d 'Show version'`);
                 },
               },
               commandPrompt,
+              authorizeCli,
             );
             emitJsonRunResultIfNeeded(options.outputMode, result);
             return;
@@ -4926,7 +4938,7 @@ complete -c kodax -l version -d 'Show version'`);
 
         const runtimeProfile = 'default';
         const interactiveRuntime = await getCliRuntime();
-        const interactiveClient = toKodaXProductClient(interactiveRuntime);
+        const interactiveClient = toKodaXProductClient(interactiveRuntime, authorizeCli);
         // FEATURE_298 T18 — resume selection reads the Host sessions face
         // (newest-first); the resolved id keeps the same-file local load.
         let interactiveKodaXOptions = kodaXOptions;
@@ -5094,18 +5106,25 @@ complete -c kodax -l version -d 'Show version'`);
       },
     };
     const cliRuntime = await getCliRuntime();
-    const result = await runCliTaskViaClient(cliRuntime, cliOptions, userPrompt);
+    const result = await runCliTaskViaClient(cliRuntime, cliOptions, userPrompt, authorizeCli);
     emitJsonRunResultIfNeeded(options.outputMode, result);
   } finally {
+    let credentialCloseError: unknown;
+    const closeCredentials = async () => {
+      try { if (cliCredentials) await (await cliCredentials).close(); }
+      catch (error) { credentialCloseError = error; }
+    };
     if (shouldHardExitAfterInteractiveCleanup) {
       const runtime = cliRuntime;
       cliRuntime = undefined;
+      await closeCredentials();
       await cleanupInteractiveProcessResources({
         closeRuntime: async () => runtime?.close(),
       });
     } else {
       // Non-interactive callers own their process and receive cleanup errors.
       await awaitLatestCodingMemoryReviewDrain(15_000);
+      await closeCredentials();
       let runtimeCloseError: unknown;
       try {
         await cliRuntime?.close();
@@ -5118,6 +5137,7 @@ complete -c kodax -l version -d 'Show version'`);
       await shutdownTracing();
       if (runtimeCloseError !== undefined) throw runtimeCloseError;
     }
+    if (credentialCloseError !== undefined) throw credentialCloseError;
     if (
       shouldHardExitAfterInteractiveCleanup &&
       process.env.VITEST !== 'true'

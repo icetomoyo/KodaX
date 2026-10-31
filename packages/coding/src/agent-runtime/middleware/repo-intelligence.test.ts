@@ -18,10 +18,40 @@ import { buildAutoRepoIntelligenceContext } from './repo-intelligence.js';
 const plan = { decision: { primaryTask: 'review', complexity: 'simple' } } as ReasoningPlan;
 afterEach(() => vi.resetAllMocks());
 
-it('skips automatic repository scans in Agent while preserving caller-owned repository material', async () => {
+it.each([0.71, 0.72])('CAP-REPO-INTEL-002/003: full preturn preserves current evidence and gates guidance at confidence %s', async confidence => {
+  sources.buildRepoIntelligenceContext.mockResolvedValue('current repository overview');
+  sources.getRepoPreturnBundle.mockResolvedValue({ repoContext: 'cached overview',
+    moduleContext: { module: { moduleId: 'module' }, confidence },
+    impactEstimate: { target: { label: 'impact' }, confidence },
+  });
+  const result = await buildAutoRepoIntelligenceContext({ provider: 'offline-fixture', context: {
+    executionCwd: `C:/repo-confidence-${confidence}`, repoIntelligenceContext: 'caller-owned context',
+  } }, plan, true);
+  expect(sources.getRepoPreturnBundle).toHaveBeenCalledOnce();
+  expect(result).toContain('caller-owned context\n\ncurrent repository overview');
+  expect(result).toContain('## Active Module Intelligence\ncurrent module evidence');
+  expect(result).toContain('## Active Impact Intelligence\ncurrent impact evidence');
+  if (confidence === 0.71) {
+    expect(result).toContain('## Repo Intelligence Guidance\n- Current repository intelligence is low-confidence for this area.\n- Validate critical edits with `module_context`, `symbol_context`, `grep`, and `read` before committing to a change.');
+  } else expect(result).not.toContain('## Repo Intelligence Guidance');
+});
+
+it('CAP-REPO-INTEL-004: repository source failures preserve caller context and return bounded best-effort guidance', async () => {
+  for (const source of Object.values(sources)) source.mockRejectedValue(new Error('offline repository failure'));
+  const result = await buildAutoRepoIntelligenceContext({ provider: 'offline-fixture', context: {
+    executionCwd: 'C:/repo-all-sources-unavailable', repoIntelligenceContext: 'caller-owned evidence',
+  } }, plan, true);
+  expect(result).toContain('caller-owned evidence');
+  expect(result).toContain('## Repo Intelligence Guidance');
+  expect(result).not.toContain('offline repository failure');
+  expect(result).not.toContain('## Active Module Intelligence');
+});
+
+it.each([{}, { workModePolicy: 'intersect' as const, agentProfile: { id: 'partner' }, toolVisibilityPolicy: () => true }])('skips automatic repository scans in Agent while preserving caller-owned repository material (%j)', async context => {
   const caller = 'Caller supplied repository facts and instructions.';
   sources.buildRepoIntelligenceContext.mockResolvedValue('unrequested automatic repository overview');
   const result = await buildAutoRepoIntelligenceContext({ provider: 'offline-fixture', workMode: 'agent', context: {
+    ...context,
     executionCwd: 'C:/agent-work-surface', repoIntelligenceContext: caller,
   } }, plan, true);
   expect(result).toBe(caller);
@@ -56,7 +86,7 @@ it('prefers the current baseline over a cached bundle without rewriting caller c
     moduleContext: { module: { moduleId: 'cache' }, confidence: 0.95 },
     impactEstimate: { target: { label: 'cache' }, confidence: 0.95 },
   });
-  const result = await buildAutoRepoIntelligenceContext({ context: {
+  const result = await buildAutoRepoIntelligenceContext({ provider: 'offline-fixture', context: {
     executionCwd: 'C:/repo-current-baseline-test', repoIntelligenceContext: caller,
   } }, plan, true);
   expect(result).toBe(caller + '\n\n## Repository Intelligence\ncurrent overview\n\n## Repository Change Scope\ncurrent changes'
@@ -70,7 +100,7 @@ it('retains bundle context when the current baseline cannot be built', async () 
     moduleContext: { module: { moduleId: 'cache' }, confidence: 0.4 },
     impactEstimate: { target: { label: 'cache' }, confidence: 0.4 },
   });
-  const result = await buildAutoRepoIntelligenceContext({ context: {
+  const result = await buildAutoRepoIntelligenceContext({ provider: 'offline-fixture', context: {
     executionCwd: 'C:/repo-baseline-fallback-test',
   } }, plan, true);
   expect(result).toContain('## Repository Intelligence\navailable cached evidence');
@@ -86,7 +116,7 @@ it('keeps the current change scope on resumed simple reviews without readding th
     moduleContext: { module: { moduleId: 'cache' }, confidence: 0.95 },
     impactEstimate: { target: { label: 'cache' }, confidence: 0.95 },
   });
-  const result = await buildAutoRepoIntelligenceContext({ context: {
+  const result = await buildAutoRepoIntelligenceContext({ provider: 'offline-fixture', context: {
     executionCwd: 'C:/repo-resumed-scope-test',
   } }, plan, false);
   expect(result).toContain('## Repository Change Scope\nnewly modified files');

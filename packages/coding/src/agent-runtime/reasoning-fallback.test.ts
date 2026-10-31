@@ -17,7 +17,7 @@ afterEach(() => {
   cacheHome = undefined;
 });
 
-it('preserves user intent and rejection learning across recreated providers during non-streaming recovery', async () => {
+it.each(['chat-completions', 'responses'] as const)('preserves user intent and rejection learning across recreated %s providers during non-streaming recovery', async (api) => {
   cacheHome = mkdtempSync(join(tmpdir(), 'kodax-reasoning-fallback-'));
   setAgentConfigHome(cacheHome);
   resetCapabilityCacheMemoForTesting();
@@ -25,16 +25,18 @@ it('preserves user intent and rejection learning across recreated providers duri
   const sent: unknown[] = [];
   vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init: RequestInit) => {
     const body = JSON.parse(String(init.body)) as Record<string, unknown>;
-    sent.push(body.reasoning_effort);
-    return body.reasoning_effort === 'max'
-      ? Response.json({ error: { message: 'Invalid reasoning_effort value' } }, { status: 400 })
-      : Response.json({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] });
+    const effort = api === 'responses' ? (body.reasoning as { effort?: string } | undefined)?.effort : body.reasoning_effort;
+    sent.push(effort);
+    return effort === 'max'
+      ? Response.json({ error: { message: `Invalid ${api === 'responses' ? 'reasoning.effort' : 'reasoning_effort'} value` } }, { status: 400 })
+      : Response.json(api === 'responses' ? { id: 'r', status: 'completed', output: [] }
+        : { choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] });
   }));
   const onReasoningResolved = vi.fn();
   const onReasoningEffortRejected = vi.fn();
   const onOutputSegmentStart = vi.fn();
   for (let turn = 0; turn < 2; turn++) {
-    const provider = createCustomProvider({ name: 'recovery-test', protocol: 'openai',
+    const provider = createCustomProvider({ name: 'recovery-test', protocol: 'openai', api,
       model: 'model', baseUrl: 'https://recovery.test/v1', apiKeyEnv: 'RECOVERY_TEST_KEY' });
     const outcome = await executeNonStreamingFallback({ streamProvider: provider,
       events: { onReasoningResolved, onReasoningEffortRejected, onOutputSegmentStart },
@@ -47,7 +49,9 @@ it('preserves user intent and rejection learning across recreated providers duri
     expect(outcome.ok).toBe(true);
   }
   expect(sent).toEqual(['max', 'xhigh', 'xhigh']);
-  expect(getCachedRejectedEfforts('recovery-test', 'model')).toEqual(['max']);
+  const scope = onReasoningEffortRejected.mock.calls[0]?.[0].cacheScope as string | undefined;
+  expect(getCachedRejectedEfforts('recovery-test', 'model', undefined, scope)).toEqual(['max']);
+  if (api === 'responses') expect(scope).toMatch(/^[a-f0-9]{64}$/);
   expect(onReasoningEffortRejected).toHaveBeenCalledOnce();
   expect(onReasoningResolved).toHaveBeenCalledTimes(2);
   expect(onReasoningEffortRejected.mock.calls[0]?.[0].providerRequestId)

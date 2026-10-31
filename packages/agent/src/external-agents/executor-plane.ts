@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { serialize } from 'node:v8';
 
 import { createMemoryAgentExecutorPlaneStore } from './memory-store.js';
 import type {
@@ -397,7 +396,9 @@ function normalizeComparableValue(value: unknown): unknown {
 }
 
 function executionRegistrationFingerprint(registration: ExternalAgentRegistration): string {
-  const serialized = serialize(normalizeComparableValue(taskRouteRegistration(registration)));
+  // V8 serialization can change with array representation/JIT optimization
+  // even for identical content. Revisions identify the normalized JSON route.
+  const serialized = JSON.stringify(normalizeComparableValue(taskRouteRegistration(registration)));
   return createHash('sha256').update(serialized).digest('hex');
 }
 

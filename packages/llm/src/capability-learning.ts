@@ -17,8 +17,9 @@ export type CapabilityCache = Record<string, CapabilityCacheEntry>;
 export function capabilityCacheKey(
   provider: string,
   model: string | undefined,
+  scope?: string,
 ): string {
-  return `${provider}/${model ?? ''}`;
+  return `${provider}/${model ?? ''}${scope === undefined ? '' : `#${scope}`}`;
 }
 
 /**
@@ -54,8 +55,9 @@ export function getRejectedEfforts(
   cache: CapabilityCache,
   provider: string,
   model: string | undefined,
+  scope?: string,
 ): readonly string[] {
-  return cache[capabilityCacheKey(provider, model)]?.rejected ?? [];
+  return cache[capabilityCacheKey(provider, model, scope)]?.rejected ?? [];
 }
 
 export function addRejectedEffort(
@@ -65,8 +67,9 @@ export function addRejectedEffort(
   effort: string,
   source: CapabilityCacheSource,
   updatedAt: string,
+  scope?: string,
 ): CapabilityCache {
-  const key = capabilityCacheKey(provider, model);
+  const key = capabilityCacheKey(provider, model, scope);
   const prior = cache[key];
   const rejected = prior?.rejected.includes(effort)
     ? prior.rejected
@@ -84,6 +87,9 @@ export function removeCacheEntry(
   }
   const next = { ...cache };
   delete next[capabilityCacheKey(provider, model)];
+  for (const key of Object.keys(next)) {
+    if (key.startsWith(`${capabilityCacheKey(provider, model)}#`)) delete next[key];
+  }
   return next;
 }
 

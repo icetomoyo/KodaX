@@ -1,6 +1,36 @@
 # Space 的 Product Client / Host 接缝
 
-2026-10-18 的 Space 核查样本安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，当时官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前开发树 `0.7.97-alpha.10` 核对，不据此推断 Space 已升级；源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
+2026-10-18 的 Space 核查样本安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，当时官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前开发树 `0.7.97-alpha.11` 核对，不据此推断 Space 已升级；源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
+
+## 2026-10-29 未发布 SDK 接入补充
+
+2026-10-30 的后续未发布修复补齐统一 Host 的 Partner 准入、可信 profile 快照、
+实际 Run workMode 查询、Actor checkpoint 跨进程恢复和配置应用边界。
+采用 [SDK 组合契约](SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布)，不再使用
+旧 Partner inline 例外。`services.createExecutionProfile` 在 Main 基于 Host 实际目录评估显式策略，并保留
+profile/验证要求及工具元数据快照。Partner persona 默认不增加工具限制；显式上限
+继续覆盖 native、桥接与派生子任务。实际模式与工具集合用 `runs.read().effectiveConfig` 查询。
+根 Run 连续恢复仍取原工具上限与新授权的交集；Space 必须为当前 Host 重新绑定
+有效 lease，不能用新 persona-only profile 清除旧上限。
+
+下列 2026-10-29 清单核对至 `b70d2d30`。Space Main/Renderer 需按实际安装版本与 Host 能力接入，
+不能从 alpha.10 包版本推导已具备 tag 之后的全部能力：
+
+- 用 Session `workMode` 选择 Agent/Coding/实验性 Script；Coding 默认，普通与 CAS
+  更新都须安全空闲。旧 Host 未在 `sharedSessionSettings.keys` 数组声明 `workMode`
+  时明确拒绝，不能改写本地 config 代替。模型与权限选择独立。
+- `activity.streaming.estimatedTokenCount` 覆盖 thinking 和有调用 ID 的工具参数，
+  显示 `~… tokens`；缺少估算时只显示标签。字符偏移和 Provider usage 保持原义。
+- MCP 等工具项有 `tool.outputPath` 时，Main 使用 `readItem`/`readHistoryEntry`
+  的 `part:'original'` 补读 Host 原文；历史使用 readHistory 返回的工具项 ID，不能
+  把整条 transcript 的搜索命中 ID 当作某个工具的原文身份。Renderer 不直接打开该路径。没有保存路径时
+  返回普通正文，已保存文件丢失则报告错误，不能把预览冒充原文。
+- 问题 UI 的本地 timeout 不结算 Host 请求；non_interactive 原因必须保留。
+  Runtime facade 对有效请求的客户端 timeout 答案拒绝为 `invalid_input`。
+
+任务报告继续消费下文的结构化元数据；独立 `/session` transcript 的 `taskResults`
+现为 `KodaXTaskResultReport[]`，不要求每条都有 taskId，也不把 unknown 当成功。
+完整能力与边界见 [迁移清单](SDK_MIGRATION.md#2026-10-29-未发布改动对齐)。
 
 ## 启动进度与 Renderer 交接
 
@@ -93,7 +123,7 @@ const client = await connectKodaXClient({
 
 实际 Provider 请求的 purpose 表示请求用途；Workflow 子 Agent 的普通模型请求仍可为 primary，目标为带 parentRunId 的 actor_turn。不能仅从 purpose 推断它不属于 Workflow。撤销、到期、断连和 Host 替换遵循现有 lease 生命周期。授权失效后的排队消费不会借用别的 Run 的授权；Host 诊断报告消费失败，尚未创建 Run 的输入仍可保持 queued，Space 可明确撤回/重新提交，不能无限等待一个不存在的 Run。未知 Host Tool 副作用不自动重放。
 
-独立 `agents.spawn/followup` 使用同一 Main 回调，连接要求 `productActorAuthorization:1`。新 native turn 必须使用 scoped credential；Host 为实际 Actor/turn 创建独立执行上下文及 Run，不借用父 Run 的授权。broker 的 target 为 `actor_turn`，Provider allowlist 与 purpose 逐请求检查。Main 可返回 `tools: ['read', 'space_read']` 作为额外工具上限：模型 schema、实际调用、Host Tool runtime 和后代均收窄，仍执行 Session 的权限、Shell 与管理员策略。其他入口不接受该 `tools` 字段。
+独立 `agents.spawn/followup` 使用同一 Main 回调，连接要求 `productActorAuthorization:1`。新 native turn 必须使用 scoped credential；Host 为实际 Actor/turn 创建独立执行上下文及 Run，不借用父 Run 的授权。broker 的 target 为 `actor_turn`，Provider allowlist 与 purpose 逐请求检查。Main 可返回 `tools: ['read', 'space_read']` 作为额外工具上限：模型 schema、实际调用、Host Tool runtime 和后代均收窄，仍执行 Session 的权限、Shell 与管理员策略。根 Run 同样支持独立 `authorization.tools`，并与 profile 上限取交集；缺省不增加限制，空数组拒绝全部工具。
 
 新 turn 的 followup 重新授权；正在执行的 turn 保留原授权，不能用 followup 替换其 credential。独立子树有自己的客户端归属，其他客户端停止根 Run 不取消该子树。External Actor 使用原有 executor/credentialRef，不能绑定 native Provider credential、Host Tool runtime 或 native tools ceiling。授权和 handler 闭包不持久化；Host 重启恢复既有中断/未知事实，新执行须重新授权，旧工具副作用不重放。
 
@@ -341,3 +371,41 @@ Electron 使用 ASAR 时，worker 和其运行资源需解包为实际文件。�
 等待结算，断连/busy/unknown 不透明重放。取证 `ready` 与 Run 终态均不认证视觉质量，
 视觉判断、修复与最终交付继续由现有 Agent 完成。原有模型观察与缺口见
 [E2E 范围](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#natural-task-observations-2026-10-13)。
+
+
+## FEATURE_302：共享凭证与 Space 迁移验收（2026-10-31，未发布）
+
+Space 独立实现提交 `065cc39c` 复用实际 Runtime 配置根的 auth.json；同根 CLI 共享，
+不同根隔离。Provider Key 与 OAuth/client-secret 在不同 namespace/精确绑定内，
+Renderer 仅收到状态和revision，不读回秘密。Provider 更新用显示时的 revision，
+条件冲突不现场补新版本；别名/配置提交有同路由证明、Core锁与原子写保护。
+
+以上是 E/F/G 历史基线；账号来源以 T12-H（Space `437cac7d`）为准：同文件不代表
+自动共享账号，旧 Space Key 自动迁到私有作用域且保留原副本。legacy/env/shared
+首次来源须持久固定；env 消失、旧库故障、墓碑或连接变更不能悄悄采用 CLI 另一账号。
+只有明确发布/采用操作改变共享选择。迁移、OAuth 切换和恢复保持连接 proof/epoch/owner
+检查，失败不生成替代身份。完整来源规则见
+[账号保持与升级验收](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-h-upgrade-compatibility-acceptance--2026-10-31)。
+
+可信 Main 保留现有 lease/session/provider/purpose 与物理 connectionFingerprint 校验，
+按请求读取保存值，再使用批准的外部 env 或声明的 OAuth/cloud 身份。撤销先本地 fence，
+Host 重启后重新绑定 authority；不把新 provider 接入变为更宽的工具或凭证授权。
+OAuth/client identity 的存储变更不修改身份协议；active、retired、exitRecovery 原值迁移，
+失败不轮换身份，Partner 其他 keychain 账户保留。原生高级连接经 SDK/CLI/config 设置，
+原 Provider 表单维持支持的 OpenAI/Anthropic 编辑范围。
+
+完整Space测试、实际第二Node进程及Windows隔离桌面Electron IPC通过；源码构建和
+开发链接不代表正式安装包。先发布/锁定匹配SDK字节，再走现有生产包门禁。
+[两仓最终证据与范围](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-efg-final-offline-acceptance-2026-10-31)。
+
+T12-I 在独立 Root 分支整合另一线程已提交的 `0fa38e5b2`，保留真实 Host 工具目录、
+执行 profile、恢复上限、view close drain 和 Windows 回收契约。授权服务新方法
+`createExecutionProfile` 由 Product Client 提供；需执行 profile 的 Main 必须使用实际
+Session Host 目录求值。现有 Space 私有授权函数只消费 credentials，其类型准确声明
+这一窄依赖，未伪造新方法，也未完成另一线程负责的 persona/Partner/profile 产品迁移。
+Space 接手时同时携带 H/I 提交、保留来源选择测试；不要用旧的“共享文件优先”策略覆盖它们。
+
+T12-J 已将这些 Root 接缝与另一线程 `a9587af7e` 的 MCP/Skill 修复整合到本地 `KodaX`
+主分支，并同步设计子仓。Root 的合并后验收另记 FEATURE_302 测试指南 J 节；I 中的
+Space 计数仍是该独立检查点的历史证据。本轮 Space 产品代码继续保留在 `da531f0a`，
+由负责线程接手后续合入、persona/Partner/profile 和生产打包，未推送或发布。

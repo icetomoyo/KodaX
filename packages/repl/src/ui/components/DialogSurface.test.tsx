@@ -5,6 +5,10 @@ import { DialogSurface } from "./DialogSurface.js";
 import { setLocale } from "../../common/i18n.js";
 
 describe("DialogSurface", () => {
+  it('masks secret input and suppresses its default value', () => {
+    const { lastFrame } = render(<DialogSurface request={{ kind: 'input', prompt: 'API key', secret: true, defaultValue: 'old-secret', buffer: 'new-secret' }} />);
+    expect(lastFrame()).not.toContain('new-secret'); expect(lastFrame()).not.toContain('old-secret'); expect(lastFrame()).toContain('••••');
+  });
   beforeEach(() => {
     setLocale("en");
   });

@@ -5,9 +5,13 @@
  * 使用 Immutable 模式，每次操作都返回新对象而不修改原有对象
  */
 
-import { type CostRate, calculateCost, getCostRate } from './cost-rates.js';
+import { type CostRate, calculateCostWithCacheLifetimes, getCostRate, getCostRateBasis } from './cost-rates.js';
+import type { KodaXCacheWriteUsage } from './types.js';
+
+export type CostBasis = 'estimate' | 'nominal' | 'mixed' | 'unknown';
 
 export interface TokenUsageRecord {
+  readonly cacheWriteTokensByTtl?: Readonly<KodaXCacheWriteUsage>;
   readonly timestamp: number;
   readonly provider: string;
   readonly model: string;
@@ -15,12 +19,17 @@ export interface TokenUsageRecord {
   readonly outputTokens: number;
   readonly cacheReadTokens: number;
   readonly cacheWriteTokens: number;
-  readonly cost: number;
+  readonly cost: number | null;
+  readonly costBasis?: Exclude<CostBasis, 'mixed'>;
   readonly role?: string;
 }
 
 export interface ProviderCostSummary {
-  readonly cost: number;
+  readonly cost: number | null;
+  readonly knownCostSubtotal?: number;
+  readonly unknownCostCalls?: number;
+  readonly nominalCostCalls?: number;
+  readonly costBasis?: CostBasis;
   readonly calls: number;
   readonly inputTokens: number;
   readonly outputTokens: number;
@@ -45,7 +54,11 @@ export interface RetryRecord {
 }
 
 export interface SessionCostSummary {
-  readonly totalCost: number;
+  readonly totalCost: number | null;
+  readonly knownCostSubtotal?: number;
+  readonly unknownCostCalls?: number;
+  readonly nominalCostCalls?: number;
+  readonly costBasis?: CostBasis;
   readonly totalInputTokens: number;
   readonly totalOutputTokens: number;
   readonly totalCacheTokens: number;
@@ -118,21 +131,24 @@ export function recordUsage(
     readonly outputTokens: number;
     readonly cacheReadTokens?: number;
     readonly cacheWriteTokens?: number;
+    readonly cacheWriteTokensByTtl?: Readonly<KodaXCacheWriteUsage>;
     readonly role?: string;
   },
   userCostOverrides?: Readonly<Record<string, Readonly<Record<string, CostRate>>>>,
 ): CostTracker {
   const rate = getCostRate(entry.provider, entry.model, userCostOverrides);
   const cost = rate
-    ? calculateCost(
+    ? calculateCostWithCacheLifetimes(
         rate,
         entry.inputTokens,
         entry.outputTokens,
-        entry.cacheReadTokens,
-        entry.cacheWriteTokens,
+        entry.cacheReadTokens ?? 0,
+        entry.cacheWriteTokens ?? 0,
+        entry.cacheWriteTokensByTtl,
       )
-    : 0;
+    : null;
 
+  const knownCost = cost !== null && Number.isFinite(cost) && cost >= 0 ? cost : null;
   const record: TokenUsageRecord = {
     timestamp: Date.now(),
     provider: entry.provider,
@@ -141,7 +157,9 @@ export function recordUsage(
     outputTokens: entry.outputTokens,
     cacheReadTokens: entry.cacheReadTokens ?? 0,
     cacheWriteTokens: entry.cacheWriteTokens ?? 0,
-    cost,
+    ...(entry.cacheWriteTokensByTtl ? { cacheWriteTokensByTtl: { ...entry.cacheWriteTokensByTtl } } : {}),
+    cost: knownCost,
+    costBasis: knownCost === null ? 'unknown' : getCostRateBasis(entry.provider, entry.model, userCostOverrides),
     role: entry.role,
   };
 
@@ -149,7 +167,9 @@ export function recordUsage(
 }
 
 export function getSummary(tracker: CostTracker): SessionCostSummary {
-  let totalCost = 0;
+  let knownCostSubtotal = 0;
+  let unknownCostCalls = 0;
+  let nominalCostCalls = 0;
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   let totalCacheTokens = 0;
@@ -159,31 +179,18 @@ export function getSummary(tracker: CostTracker): SessionCostSummary {
   const byRole: Record<string, ProviderCostSummary> = {};
 
   for (const r of tracker.records) {
-    totalCost += r.cost;
+    if (r.cost === null) unknownCostCalls++;
+    else knownCostSubtotal += r.cost;
+    if (r.costBasis === 'nominal') nominalCostCalls++;
     totalInputTokens += r.inputTokens;
     totalOutputTokens += r.outputTokens;
     totalCacheTokens += r.cacheReadTokens + r.cacheWriteTokens;
     totalCacheReadTokens += r.cacheReadTokens;
     totalCacheWriteTokens += r.cacheWriteTokens;
 
-    // Aggregate by provider
-    const prev = byProvider[r.provider];
-    byProvider[r.provider] = {
-      cost: (prev?.cost ?? 0) + r.cost,
-      calls: (prev?.calls ?? 0) + 1,
-      inputTokens: (prev?.inputTokens ?? 0) + r.inputTokens,
-      outputTokens: (prev?.outputTokens ?? 0) + r.outputTokens,
-    };
-
-    // Aggregate by role
+    byProvider[r.provider] = aggregateCost(byProvider[r.provider], r);
     const roleKey = r.role ?? 'default';
-    const prevRole = byRole[roleKey];
-    byRole[roleKey] = {
-      cost: (prevRole?.cost ?? 0) + r.cost,
-      calls: (prevRole?.calls ?? 0) + 1,
-      inputTokens: (prevRole?.inputTokens ?? 0) + r.inputTokens,
-      outputTokens: (prevRole?.outputTokens ?? 0) + r.outputTokens,
-    };
+    byRole[roleKey] = aggregateCost(byRole[roleKey], r);
   }
 
   let retryWaitMs = 0;
@@ -199,7 +206,11 @@ export function getSummary(tracker: CostTracker): SessionCostSummary {
     : 0;
 
   return {
-    totalCost,
+    totalCost: unknownCostCalls ? null : knownCostSubtotal,
+    knownCostSubtotal,
+    unknownCostCalls,
+    nominalCostCalls,
+    costBasis: summaryBasis(tracker.records.length, unknownCostCalls, nominalCostCalls),
     totalInputTokens,
     totalOutputTokens,
     totalCacheTokens,
@@ -214,7 +225,21 @@ export function getSummary(tracker: CostTracker): SessionCostSummary {
   };
 }
 
-export function formatCost(usd: number): string {
+function aggregateCost(previous: ProviderCostSummary | undefined, record: TokenUsageRecord): ProviderCostSummary {
+  const knownCostSubtotal = (previous?.knownCostSubtotal ?? previous?.cost ?? 0) + (record.cost ?? 0);
+  const unknownCostCalls = (previous?.unknownCostCalls ?? 0) + (record.cost === null ? 1 : 0);
+  const nominalCostCalls = (previous?.nominalCostCalls ?? 0) + (record.costBasis === 'nominal' ? 1 : 0);
+  return { cost: unknownCostCalls ? null : knownCostSubtotal, knownCostSubtotal, unknownCostCalls, nominalCostCalls,
+    costBasis: summaryBasis((previous?.calls ?? 0) + 1, unknownCostCalls, nominalCostCalls),
+    calls: (previous?.calls ?? 0) + 1, inputTokens: (previous?.inputTokens ?? 0) + record.inputTokens,
+    outputTokens: (previous?.outputTokens ?? 0) + record.outputTokens };
+}
+function summaryBasis(calls: number, unknown: number, nominal: number): CostBasis {
+  return unknown ? 'unknown' : nominal === 0 ? 'estimate' : nominal === calls ? 'nominal' : 'mixed';
+}
+
+export function formatCost(usd: number | null): string {
+  if (usd === null || !Number.isFinite(usd)) return 'unknown';
   if (usd < 0.01) return `$${usd.toFixed(4)}`;
   if (usd < 1) return `$${usd.toFixed(3)}`;
   return `$${usd.toFixed(2)}`;
@@ -222,7 +247,11 @@ export function formatCost(usd: number): string {
 
 export function formatCostReport(summary: SessionCostSummary): string {
   const lines: string[] = [];
-  lines.push(`Session Cost: ${formatCost(summary.totalCost)} (${summary.callCount} calls)`);
+  const label = summary.nominalCostCalls ? 'Session Cost (nominal estimate)' : 'Session Cost';
+  lines.push(`${label}: ${formatCost(summary.totalCost)} (${summary.callCount} calls)`);
+  if (summary.unknownCostCalls && summary.knownCostSubtotal !== undefined) {
+    lines.push(`Known estimate subtotal: ${formatCost(summary.knownCostSubtotal)}; ${summary.unknownCostCalls} unpriced calls`);
+  }
   lines.push(
     `Tokens: ${summary.totalInputTokens.toLocaleString()} in / ${summary.totalOutputTokens.toLocaleString()} out`,
   );
@@ -243,7 +272,7 @@ export function formatCostReport(summary: SessionCostSummary): string {
   }
   lines.push('');
 
-  const providerEntries = Object.entries(summary.byProvider).sort((a, b) => b[1].cost - a[1].cost);
+  const providerEntries = Object.entries(summary.byProvider).sort((a, b) => (b[1].knownCostSubtotal ?? b[1].cost ?? 0) - (a[1].knownCostSubtotal ?? a[1].cost ?? 0));
   if (providerEntries.length > 0) {
     lines.push('By Provider:');
     for (const [name, data] of providerEntries) {
@@ -254,7 +283,7 @@ export function formatCostReport(summary: SessionCostSummary): string {
     lines.push('');
   }
 
-  const roleEntries = Object.entries(summary.byRole).sort((a, b) => b[1].cost - a[1].cost);
+  const roleEntries = Object.entries(summary.byRole).sort((a, b) => (b[1].knownCostSubtotal ?? b[1].cost ?? 0) - (a[1].knownCostSubtotal ?? a[1].cost ?? 0));
   if (roleEntries.length > 1) {
     lines.push('By Role:');
     for (const [name, data] of roleEntries) {

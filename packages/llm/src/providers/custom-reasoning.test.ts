@@ -174,7 +174,8 @@ describe('custom OpenAI reasoning negotiation', () => {
       if (body.reasoning_effort === 'max') {
         return Response.json({ error: { message: 'Invalid reasoning_effort value' } }, { status: 400 });
       }
-      if (rateLimits++ < 3) {
+      // KodaX owns the three-attempt backoff budget; SDK retries no longer multiply it.
+      if (rateLimits++ < 2) {
         return Response.json({ error: { message: 'Rate limit exceeded' } }, {
           status: 429, headers: { 'retry-after': '0.001' },
         });
@@ -209,7 +210,7 @@ describe('custom OpenAI reasoning negotiation', () => {
     const onReasoningEffortRejected = vi.fn();
     for (let i = 0; i < 2; i++) await provider.complete([], [], '', undefined, { onReasoningEffortRejected });
     expect(requests.map(body => body.reasoning_effort)).toEqual(['max', undefined, undefined]);
-    expect(onReasoningEffortRejected).toHaveBeenCalledExactlyOnceWith({ provider: config.name, model: config.model, effort: '*' });
+    expect(onReasoningEffortRejected).toHaveBeenCalledExactlyOnceWith({ provider: config.name, model: config.model, effort: '*', cacheScope: expect.stringMatching(/^[a-f0-9]{64}$/) });
   });
 
   it.each([

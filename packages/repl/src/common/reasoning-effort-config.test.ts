@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { registerCustomProviders, createCloudProviderConfig } from '@kodax-ai/llm';
 import {
   clearCapabilityCache,
   recordRejectedEffort,
@@ -31,12 +32,32 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  registerCustomProviders([]);
   resetCapabilityCacheMemoForTesting();
   setAgentConfigHome(undefined);
   if (tempHome) {
     rmSync(tempHome, { recursive: true, force: true });
     tempHome = '';
   }
+});
+
+it('keeps Responses user intent when a same-name Completions endpoint previously rejected the effort', () => {
+  registerCustomProviders([{ name: 'switched', protocol: 'openai', api: 'responses', model: 'm',
+    baseUrl: 'https://reasoning.test/v1', apiKeyEnv: 'UNUSED', reasoning: { efforts: ['low', 'high'], default: 'high' } }]);
+  recordRejectedEffort('switched', 'm', 'high', 'observed', 'old');
+  expect(getProviderReasoningEffortOptions('switched', 'm')).toContain('high');
+  expect(resolveProviderReasoningRuntimeEffort({ provider: 'switched', model: 'm', effort: 'high', effortOverride: true }))
+    .toMatchObject({ runtimeEffort: 'high' });
+});
+
+it.each(['openai', 'anthropic', 'mistral', 'gemini', 'bedrock'] as const)('does not narrow %s UI choices from another account or legacy unscoped evidence', protocol => {
+  const config = protocol === 'gemini' ? createCloudProviderConfig({ service: 'gemini', name: 'scoped-display', model: 'm' })
+    : protocol === 'bedrock' ? createCloudProviderConfig({ service: 'bedrock', name: 'scoped-display', model: 'm', region: 'us-east-1' })
+    : { name: 'scoped-display', model: 'm', protocol, baseUrl: 'https://scope.example/v1', apiKeyEnv: 'UNUSED' };
+  registerCustomProviders([{ ...config, reasoning: { efforts: ['low', 'high'], default: 'high' } }]);
+  recordRejectedEffort(config.name, 'm', 'high', 'observed', 'old');
+  recordRejectedEffort(config.name, 'm', 'low', 'observed', 'new', undefined, 'another-account');
+  expect(getProviderReasoningEffortOptions(config.name, 'm')).toEqual(['auto', 'low', 'high']);
 });
 
 describe('resolveInitialEffortOverride', () => {
@@ -234,11 +255,11 @@ describe('formatReasoningEffortStatusLabel', () => {
     })).toBe('minimal');
   });
 
-  it('narrows options from the persisted agent capability cache and restores after clear', () => {
+  it('keeps native options and explicit intent independent of legacy unscoped cache entries', () => {
     recordRejectedEffort('zhipu-coding', 'glm-5.2', 'max', 'observed', 'T0');
 
     expect(getProviderReasoningEffortOptions('zhipu-coding', 'glm-5.2'))
-      .toEqual(['auto', 'off', 'low', 'medium', 'high', 'xhigh']);
+      .toEqual(['auto', 'off', 'low', 'medium', 'high', 'xhigh', 'max']);
     expect(formatReasoningEffortStatusLabel({
       provider: 'zhipu-coding',
       model: 'glm-5.2',
@@ -246,7 +267,7 @@ describe('formatReasoningEffortStatusLabel', () => {
       effortOverride: true,
       thinking: true,
       reasoningMode: 'auto',
-    })).toBe('max->high');
+    })).toBe('max');
 
     clearCapabilityCache('zhipu-coding', 'glm-5.2');
     expect(getProviderReasoningEffortOptions('zhipu-coding', 'glm-5.2'))

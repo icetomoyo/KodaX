@@ -6,7 +6,102 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Converge public Runtime ownership on the independent shared Host. Retire
+  embedded/default construction, inline owner switching and function-based
+  in-process external-agent Hosts. Keep the explicit daemon launcher and its
+  new-owner policy bootstrap; independent libraries remain usable.
+- Migrate eligible abandoned owner policies under profile and real Session-root
+  ownership checks. Persist a one-way policy that verified old readers reject,
+  preventing inline rollback after Host idle exit. Live/unknown owners and
+  unsafe Run recovery remain protected; old private unfenced writers must stop
+  and upgrade before sharing data. See the SDK migration guide for breaking
+  API and downgrade limits.
+
 ### Fixed
+
+- Resolve explicit and queued Skill references against the executing Host's
+  config home, keeping separate Hosts' user Skills and registries isolated.
+- Keep admitted Skill catalogs available under Markdown Agent and SDK profile instructions across Solo, Adaptive and public Runner entries; reuse the bounded catalog formatter for Runtime bindings while preserving complete caller prompt overrides and pinned authorization.
+- Restore already-authorized tool evidence to the next model request when an actual Host/guardrail refusal or failed read makes its saved preview unrecoverable; retain read denials and Run isolation. Unknown Skill errors no longer enumerate hidden or budget-omitted registry entries.
+- Preserve complete MCP/tool results inline when active Skill restrictions or read hooks could block recovery, without speculative hook execution or permission bypasses.
+- Discover project `.agents/skills` and nested Skill collections with native-source precedence, support-directory boundaries and cycle protection; report shadowed sources and bound model Skill catalogs with visible shortening/omission diagnostics.
+- Stabilize executor registration revision fingerprints using normalized JSON
+  content, including persisted and rediscovered registrations.
+- Distinguish POSIX sandbox dependency, interpreter and seccomp diagnostics while
+  preserving authorized once-only host fallback and its actual isolation state.
+- Put standalone Windows Shell commands and environment probes behind a registered
+  Job gate. Verify descendant drain before retiring recovery records; fail cleanup
+  acceptance instead of only warning when verification is unavailable.
+- Compare checkpoint write times at millisecond precision so a filesystem's
+  fractional timestamp cannot discard fresh recovery state as future-dated.
+- Drain admitted Session view and item reads before Host-owner disposal completes,
+  preventing released reads from recreating storage indexes after shutdown.
+
+- Give Partner the selected generic Agent surface without persona-based restrictions.
+  Evaluate explicit policies against the Host catalog, retain metadata ceilings across
+  native/MCP/child routes, and keep allowed Actor lease calls working. Persist and
+  expose actual executable/model tool scopes, including after Host restart.
+  Repeated root recovery preserves original tool ceilings, persona and verification
+  while intersecting fresh authority; arbitrary callbacks still require rebinding.
+
+- Support Partner on the unified Host through trusted Main execution-profile
+  snapshots, intersecting Agent mode with existing profile/tool/lease ceilings.
+  Expose actual Run workMode and honor extension activeTools in effective scope;
+  keep standalone profile compatibility and specialist child declarations.
+- Preserve Actor checkpoint followup across daemon IPC and restart, and route
+  SA Script through its managed executor. Apply live plan effort to actual
+  Provider requests as well as the view.
+- Keep numeric token configuration typed, capture saved output/cache/LSP/tier
+  defaults for new Runs, and expose per-field application boundaries. Clearing
+  defaults cannot revive old bootstrap projections or remove external env values;
+  older Hosts retain unknown application support.
+- Refresh `kodax_manual` topic guidance for retired verification/journal paths,
+  work modes, original tool results, token estimates, task reports, question
+  deadlines, Skill policy and sandbox readiness. Exact query IDs/aliases now
+  take precedence over keyword ranking, preserving custom SDK manual topics.
+
+---
+
+## [0.7.97-alpha.11] - 2026-10-29
+
+### Added
+
+- Add explicit Agent, Coding and experimental Script work modes through the
+  CLI, interactive `/work-mode` command and managed SDK/Session paths. Coding
+  remains the default. Script executes supported leaf tools through the existing
+  permission and receipt boundaries; SDK profiles and specialist agents retain
+  their declared capabilities.
+
+- Refresh Ark, MiMo and MiniMax model catalogs and their reasoning/capacity
+  metadata. Provider-specific mappings and validation limits are documented in
+  the provider configuration guide.
+
+### Fixed
+
+- Run release builds alongside full CI while retaining all publication gates;
+  move the complete serial Node 20 system suite to its own runner, validate
+  archives before lengthy Electron checks, and bound bundle/archive execution
+  with retained failure evidence. Ordinary branch pushes still do not trigger CI.
+- Preserve the Windows PowerShell module search path in isolated archive tests,
+  avoiding stalled OS containment probes. Reject unverified supervised Hosts
+  before publishing incomplete capabilities and a misleading upgrade error.
+
+- Align current SDK, Client, design and user documentation with post-alpha.10
+  work modes, question deadlines, saved tool originals, structured task reports
+  and streaming token estimates; retain historical release/validation limits.
+
+- Preserve non-interactive question outcomes through the REPL client and reject
+  client-supplied timeout answers before daemon submission; the Host owns deadlines.
+- Constrain Skill `Bash(pattern)` rules to a single parsed command, preventing
+  wildcard matches from admitting additional shell statements, pipelines,
+  redirects or command substitutions. Bare Bash and absent Skill restrictions
+  continue through normal Host authorization.
+- Correct Windows stale-process recovery startup overhead and history browsing
+  cursor resynchronization; validate sandbox filesystem capabilities at startup.
+  Historical intermittent first-read latency remains under investigation.
+- Display estimated tokens consistently across model streaming progress surfaces.
 
 - Project existing task-result metadata into Product live views and recovered
   history with explicit source, task identity, terminal/unknown status and
@@ -80,6 +175,10 @@ remains a manual maintainer action.
   back a failed save acknowledgement before retrying, preserving newer metadata
   and avoiding duplicate history transactions; permission failures still surface.
 
+- Keep the natural-eval fixture's `npm test` working on staged Node installs by
+  allowing reads of an npm CLI installed outside the binary directory, and
+  canonicalize the native test fixture root so hosted-runner 8.3 temp paths
+  (`RUNNER~1`) are not rejected by the native path policy.
 - Keep eval dump directories and unrelated `kodax-eval-*` directories out of orphan
   worktree cleanup. Require a worktree gitfile and successful Git-owned removal;
   isolate the cleanup regression from the shared system temporary directory.

@@ -8,7 +8,7 @@ import { expect, it, vi } from 'vitest';
 import type { AgentDispatchContext } from '@kodax-ai/agent';
 import { registerCustomProviders } from '@kodax-ai/llm';
 
-import { createKodaXRuntime, type KodaXRuntime } from '../sdk-runtime.js';
+import { createKodaXRuntime, type KodaXRuntime } from "../../tests/runtime-fixture.js";
 import type { RuntimeAgentBindingService } from '../runtime-agent-binding.js';
 import { realmA2APrincipalKey } from './principal-key.js';
 import { prepareKodaXA2AServer } from './server.js';
