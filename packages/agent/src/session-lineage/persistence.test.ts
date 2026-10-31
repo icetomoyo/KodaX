@@ -14,9 +14,11 @@ describe('FileExtensionStore (FEATURE_034 manual persistence)', () => {
     tempDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-persist-'));
     process.env.HOME = tempDir;
     process.env.USERPROFILE = tempDir;
+    vi.stubEnv('KODAX_HOME', path.join(tempDir, '.kodax'));
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     delete process.env.HOME;
     delete process.env.USERPROFILE;
     await rm(tempDir, { recursive: true, force: true });

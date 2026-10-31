@@ -98,6 +98,7 @@ describe('Session Management Public SDK', () => {
     previousUserProfile = process.env.USERPROFILE;
     process.env.HOME = tempHome;
     process.env.USERPROFILE = tempHome;
+    vi.stubEnv('KODAX_HOME', path.join(tempHome, '.kodax'));
 
     // Mock workspace-runtime to avoid git calls.
     vi.resetModules();
@@ -122,6 +123,7 @@ describe('Session Management Public SDK', () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     if (previousHome === undefined) {
       delete process.env.HOME;
     } else {
