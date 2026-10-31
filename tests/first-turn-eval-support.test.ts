@@ -15,6 +15,20 @@ describe('first-turn bounded eval safeguards', () => {
   it('does not reset a persisted null ledger to a fresh budget', () => {
     expect(() => new FirstTurnBudget(JSON.parse('null') as BudgetSnapshot)).toThrow('Invalid persisted budget');
   });
+  it('normalizes only fully settled floating-point dollar residue and preserves the saved ledger', () => {
+    const saved: BudgetSnapshot = { calls: 2, chargedTokens: 20, reservedTokens: 0,
+      chargedUsd: 0.58, reservedUsd: -Number.EPSILON / 4, unknownUsageCalls: 0 };
+    const resumed = new FirstTurnBudget(saved);
+    expect(resumed.state.reservedUsd).toBe(0);
+    expect(resumed.state.calls).toBe(2);
+    expect(saved.reservedUsd).toBe(-Number.EPSILON / 4);
+    expect(() => new FirstTurnBudget({ ...saved, reservedUsd: -0.001 })).toThrow('Invalid persisted budget');
+    expect(() => new FirstTurnBudget({ ...saved, reservedTokens: 1 })).toThrow('Invalid persisted budget');
+    const budget = new FirstTurnBudget();
+    budget.reserve(10, 0.17); budget.reserve(10, 0.41);
+    budget.settle(10, 0.17); budget.settle(10, 0.41);
+    expect(budget.state.reservedUsd).toBe(0);
+  });
   it('reserves concurrent calls before dispatch and charges unknown usage instead of zero', () => {
     const budget = new FirstTurnBudget();
     budget.reserve(700_000, 1);

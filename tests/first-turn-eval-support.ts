@@ -32,6 +32,10 @@ export class FirstTurnBudget {
   constructor(initial?: BudgetSnapshot, private readonly callLimit: number = FIRST_TURN_LIMITS.maxProviderCalls) {
     if (!Number.isInteger(callLimit) || callLimit < 1 || callLimit > 35) throw new Error('Invalid call limit');
     this.state = initial === undefined ? { calls: 0, chargedTokens: 0, reservedTokens: 0, chargedUsd: 0, reservedUsd: 0, unknownUsageCalls: 0 } : initial;
+    // Concurrent dollar sums can leave sub-epsilon residue after every token reservation settled.
+    // Copy on rehydration: historical raw ledgers remain evidence, not mutable repair targets.
+    if (this.state?.reservedTokens === 0 && this.state.reservedUsd !== 0
+      && Math.abs(this.state.reservedUsd) <= Number.EPSILON) this.state = { ...this.state, reservedUsd: 0 };
     const requiredKeys: readonly (keyof BudgetSnapshot)[] = ['calls', 'chargedTokens', 'reservedTokens', 'chargedUsd', 'reservedUsd', 'unknownUsageCalls'];
     if (!this.state || typeof this.state !== 'object'
       || requiredKeys.some(key => !Number.isFinite(this.state[key]) || this.state[key] < 0)
@@ -46,6 +50,7 @@ export class FirstTurnBudget {
   }
   settle(reservedTokens: number, reservedUsd: number, usage?: KodaXTokenUsage, actualUsd?: number): void {
     this.state.reservedTokens -= reservedTokens; this.state.reservedUsd -= reservedUsd;
+    if (this.state.reservedTokens === 0 && Math.abs(this.state.reservedUsd) <= Number.EPSILON) this.state.reservedUsd = 0;
     const known = usage !== undefined && Number.isFinite(usage.totalTokens) && usage.totalTokens > 0 && actualUsd !== undefined && Number.isFinite(actualUsd) && actualUsd >= 0;
     this.state.chargedTokens += known ? usage.totalTokens : reservedTokens;
     this.state.chargedUsd += known ? actualUsd : reservedUsd;

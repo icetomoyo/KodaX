@@ -21,12 +21,13 @@
 import { randomUUID } from 'node:crypto';
 import { withEffectivePermissionContext } from '../../../prompts/effective-permissions.js';
 import { getRegistryManagedAgentContext } from '../../../tools/model-tool-definition.js';
-import { projectManagedToolContracts } from '../../../tools/managed-tool-contract.js';
+import { canProjectManagedToolContracts, projectManagedToolContracts } from '../../../tools/managed-tool-contract.js';
+import { projectToolSearchResultParameters } from '../../../tools/tool-search-model-result.js';
 import { projectManagedSystemContract } from '../../../prompts/managed-system-contract.js';
 import { getRegisteredToolDefinition } from '../../../tools/registry.js';
 import { filterModelToolAliases } from '../../../agent-runtime/tool-resolution.js';
 
-import { canReadWithModelTools, projectScriptModelTools } from '../../../agent-runtime/script/model.js';
+import { canReadWithModelTools, getScriptModelContracts, projectScriptModelTools } from '../../../agent-runtime/script/model.js';
 import type {
   KodaXContentBlock,
   KodaXEphemeralSuffix,
@@ -520,6 +521,13 @@ export function buildRunnerLlmAdapter(
     }
 
     wireTools = [...projectScriptModelTools(agent, projectManagedToolContracts(agent, wireTools, options.context))];
+    const projectSearchResults = (source: readonly KodaXMessage[], tools: readonly KodaXToolDefinition[] = wireTools): KodaXMessage[] => {
+      if (!canProjectManagedToolContracts(agent, options.context)
+        || getRegisteredToolDefinition('tool_search')?.source.kind !== 'builtin') return [...source];
+      const native = new Set(tools.map(tool => tool.name));
+      const leaves = getScriptModelContracts(agent, tools)?.leaves.filter(tool => !native.has(tool.name)) ?? [];
+      return projectToolSearchResultParameters(source, [...tools, ...leaves]);
+    };
     const buildWireSystem = (source: string, tools: readonly KodaXToolDefinition[]) =>
       withEffectivePermissionContext(projectManagedSystemContract(agent, tools, source, options.context), options.context);
 
@@ -595,7 +603,7 @@ export function buildRunnerLlmAdapter(
     if (overrideStream) {
       system = buildWireSystem(baseSystem, wireTools);
       streamResult = await overrideStream(
-        transcript,
+        projectSearchResults(transcript),
         wireTools,
         system,
         ephemeralSuffix,
@@ -632,9 +640,9 @@ export function buildRunnerLlmAdapter(
         : undefined;
       const lowerProviderMessages = (
         providerMessages: readonly KodaXMessage[],
-      ): KodaXMessage[] => projectTextRecovery(supportsNativeEphemeralSuffix
+      ): KodaXMessage[] => projectSearchResults(projectTextRecovery(supportsNativeEphemeralSuffix
         ? [...providerMessages]
-        : appendEphemeralSuffixToMessages(providerMessages, ephemeralSuffix), textRecovery);
+        : appendEphemeralSuffixToMessages(providerMessages, ephemeralSuffix), textRecovery));
       const promptCacheKey = resolvePromptCacheDisabled(options.disablePromptCache)
         ? undefined
         : derivePromptCacheAffinityKey({
@@ -651,7 +659,7 @@ export function buildRunnerLlmAdapter(
           return;
         }
         try {
-          const diagnosticEnvelope = normalizeDiagnosticEnvelope(system, providerMessages, provider);
+          const diagnosticEnvelope = normalizeDiagnosticEnvelope(system, projectSearchResults(providerMessages), provider);
           const contextWindow = contextTokenSnapshotRef?.current?.capacityWindow ?? contextBudgetCatalogs?.contextWindow
             ?? provider.getEffectiveContextWindow(activeModel);
           const turnId = [...diagnosticEnvelope.messages]
@@ -717,7 +725,7 @@ export function buildRunnerLlmAdapter(
           disablePromptCache: options.disablePromptCache,
           system,
           tools: wireTools,
-          messages: projectTextRecovery([...providerMessages], textRecovery),
+          messages: projectSearchResults(projectTextRecovery([...providerMessages], textRecovery)),
           ...(ephemeralSuffix !== undefined ? { ephemeralSuffix } : {}),
           ...(promptCacheKey !== undefined ? { promptCacheKey } : {}),
           attempt,
@@ -818,7 +826,7 @@ export function buildRunnerLlmAdapter(
           const candidateFullSystem = withEffectivePermissionContext(candidateBaseSystem, options.context);
           const window = contextTokenSnapshotRef.contextWindow ?? recoveryContextWindow
             ?? schemaContextWindow;
-          if (window === undefined) return estimateTokens(candidate.slice(leading))
+          if (window === undefined) return estimateTokens(projectSearchResults(candidate.slice(leading), availableToolDefinitions))
             + countTokens(buildWireSystem(candidateBaseSystem, availableToolDefinitions))
             + availableToolDefinitions.reduce((total, tool) => total + estimateToolSchemaTokens(tool), 0);
           const reserve = provider.getEffectiveMaxOutputTokens(activeModel);
@@ -832,7 +840,7 @@ export function buildRunnerLlmAdapter(
               currentTokens: resolveContextTokenCount(clean, contextTokenSnapshotRef.current), reservedResponseTokens: reserve,
               canReadPagedContent: canReadWithModelTools(agent, candidateTools),
             });
-          return estimateTokens(projected) + countTokens(candidateSystem)
+          return estimateTokens(projectSearchResults(projected, candidateTools)) + countTokens(candidateSystem)
             + candidateTools.reduce((total, tool) => total + estimateToolSchemaTokens(tool), 0)
             + reclaimReservedResponseTokens({ contextWindow: window, reservedResponseTokens: reserve,
               currentTokens: resolveContextTokenCount(projected, contextTokenSnapshotRef.current) });
@@ -1560,7 +1568,7 @@ export function buildRunnerLlmAdapter(
         ] as KodaXMessage[];
         contextTokenSnapshotRef.current = {
           currentTokens: estimateFinalEnvelopeTokens(
-            completedProviderTranscript,
+            projectSearchResults(completedProviderTranscript),
             wireTools,
             system,
             ephemeralSuffix,

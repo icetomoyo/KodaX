@@ -1,11 +1,9 @@
 /**
  * Deferred tool registry — FEATURE_189 Batch 3 B.2 progressive disclosure.
  *
- * Tools listed here have rich descriptions (claudecode-grade, ~500-1000 bytes)
- * whose teaching content the model only needs to consume when it plans to
- * call the tool. To save turn-1 context, the LLM-visible tool schema swaps
- * the full description for a one-line `searchHint` until the tool name
- * appears in the per-session unlock Set on the dynamic assembly path.
+ * Full parameter schemas stay resident. Compact descriptions must support
+ * direct calls; tool_search is optional help, not a prerequisite. The dynamic
+ * assembly path restores rich descriptions after a per-context unlock.
  * `tool_search` returns the full contract and records that unlock. Managed
  * AMA tools are assembled once: their native descriptions stay short;
  * the search result supplies the full contract. Neither path removes an
@@ -25,29 +23,29 @@
  *     interrupt_agent, agent_output, exit_plan_mode, insert_after_anchor,
  *     changed_diff, changed_diff_bundle, undo, worktree_*, get_goal,
  *     create_goal, update_goal
- *   - `tool_search` itself (must always be available to unlock the rest)
+ *   - `tool_search` itself (must remain available for optional detailed help)
  */
 
 /**
  * Map of deferred tool name → one-line searchHint shown in place of the
  * full description until the tool is unlocked. Each hint must answer
- * "when would I want to look this up" in a compact form so the LLM can
- * decide whether to invoke `tool_search` for the full schema.
+ * "when and how can I use this tool" together with its resident schema.
+ * Detailed help remains available without imposing a fixed discovery step.
  */
 export const DEFERRED_TOOL_HINTS: Readonly<Record<string, string>> = Object.freeze({
   // Web / discovery
-  web_search:      'Discover web content when no specific URL is known — call `tool_search("web_search")` for full schema.',
-  web_fetch:       'Read a specific URL as bounded plain text, or read an extension resource. tool_search returns the full contract.',
-  code_search:     'Literal path/content search, or extension provider search via provider_id. Prefer grep/glob for ordinary local lookup; tool_search returns the full contract.',
-  semantic_lookup: 'Symbol-/module-/process-aware semantic queries against repo intelligence — call `tool_search("semantic_lookup")` for full schema and selection rules.',
+  web_search:      'Search the public web by query; cite sources. Use web_fetch when a URL is known.',
+  web_fetch:       'Read a URL as bounded plain text, or an extension resource via provider_id + capability_id.',
+  code_search:     'Literal path/content search, or extension provider search via provider_id. Prefer grep/glob for ordinary local lookup.',
+  semantic_lookup: 'Search indexed symbols, modules or processes, not raw text. refresh rebuilds the index; use it only when stale.',
 
   // Repo intelligence
-  repo_overview:   'Workspace structure snapshot. Reuse a supplied overview while applicable; query when missing or outdated. tool_search returns the full contract.',
-  changed_scope:   'List files / areas changed in current git diff — for worktree, range, and other change-set reviews. After scope, fan out independent review lanes before reading every diff. `tool_search("changed_scope")` for full schema.',
-  module_context:  'Module deps, entries, symbols, tests/docs and evidence. Query module or target_path directly; tool_search has details.',
-  symbol_context:  'Definition, signature, imports and probable callers/callees. Query symbol directly; module disambiguates. tool_search has details.',
-  process_context: 'Approximate static process summary/steps. Query entry, module or target_path directly; tool_search has details.',
-  impact_estimate: 'Indexed impact and changed-scope overlap. Query symbol, path or module directly before refactoring; tool_search has details.',
+  repo_overview:   'Workspace structure snapshot. Reuse a supplied overview while applicable; query when missing or outdated.',
+  changed_scope:   'For change-set reviews, list worktree/range changes first; keep explicit audit scope. After scope, fan out independent review lanes before reading every diff.',
+  module_context:  'Module deps, entries, symbols, tests/docs and evidence. Query module or target_path directly.',
+  symbol_context:  'Definition, signature, imports and probable callers/callees. Query symbol directly; module disambiguates.',
+  process_context: 'Approximate static process summary/steps. Query entry, module or target_path directly.',
+  impact_estimate: 'Indexed impact and changed-scope overlap. Query symbol, path or module directly before refactoring.',
 
   // FEATURE_259 — workflow authoring is a resident identity/activation hint;
   // the full orchestration guide remains available through tool_search.
@@ -74,9 +72,8 @@ export function getDeferredToolHint(name: string): string | undefined {
  * Snapshot of all currently deferred tool names.
  *
  * NOTE: there is deliberately NO resident "deferred tools" system-prompt
- * section — the mechanism is self-taught via (a) each tool's `searchHint`
- * (which is shown in place of its description in the LLM-visible tool list and
- * names `tool_search` explicitly) and (b) `tool_search`'s own description.
+ * section — native descriptions and schemas support direct calls;
+ * tool_search's own description explains optional detailed lookup.
  * The two-hop reachability eval (FEATURE_250) confirms this is sufficient
  * across the coding-plan panel, so this helper is a utility for callers that
  * want the list (e.g. tests / diagnostics), not a prompt-surface feed.

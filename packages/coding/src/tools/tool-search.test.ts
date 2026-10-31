@@ -74,6 +74,15 @@ describe('FEATURE_189 B.2 — deferred-tools registry', () => {
     }
   });
 
+  it('keeps ordinary query tools directly usable without compulsory schema discovery', () => {
+    for (const name of Object.keys(DEFERRED_TOOL_HINTS).filter(name => name !== 'run_workflow')) {
+      expect(DEFERRED_TOOL_HINTS[name], name).not.toContain('tool_search');
+    }
+    expect(DEFERRED_TOOL_HINTS.web_fetch).toContain('provider_id + capability_id');
+    expect(DEFERRED_TOOL_HINTS.changed_scope).toContain('explicit audit scope');
+    expect(DEFERRED_TOOL_HINTS.semantic_lookup).toContain('refresh rebuilds');
+  });
+
   it('teaches the changed-scope to review-fan-out transition', () => {
     expect(DEFERRED_TOOL_HINTS.changed_scope).toContain(
       'fan out independent review lanes before reading every diff',

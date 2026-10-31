@@ -2,6 +2,7 @@
 
 2026-10-31。计划：[整体方案](../designs/token-efficiency-next-stage-plan.md)。
 起点 `13f2fe93d`；本轮存在并发视觉文档/实验工作，必须使用相关源码hash而非仅HEAD识别输入。
+最新一次冻结回归及 deferred 后续批次见 §6；前面的失败、未采用项和历史数字继续保留。
 
 ## 1. 实际首轮基线
 
@@ -201,3 +202,112 @@ visual复核再次准确定位最后wire为后台`commit_episode_learning_review
 独立复核确认child系统/工具成对装配，不增加发现步骤或改变AMA；特殊JS替换效果差异由候选真实diff保留。
 P0及child阶段性采用、编辑回执未默认、GLM/DS未完成和报告错误均已如实记录。
 剩余阻断发现0；根首轮继续下降、全任务智能非劣和P3尚未完成，不能被阶段性采用声明替代。
+
+## 6. 推送后冻结回归与 deferred 后续批次（2026-10-31）
+
+先推送 `0b8d85c86d00aea67111f763b1a99bd28f4c16f4` 到 `origin/KodaX-next-dev`，并核对远端完整 hash。
+本节是随后独立批次，不覆盖前一批 raw，也不重跑已经付费的 cell。
+
+### 冻结回归与发布包
+
+旧提交在无源码变动期间完整运行一次：1,312 文件通过、1 失败、7 跳过；18,305 测试通过、1 失败、99 跳过、19 todo，
+1,636.92s。Temp：`kodax-frozen-regression-20261031-01723bd4`，3,346 个受监测文件零变化。
+唯一失败为 `state.windows.test.ts` 并发读取状态文件，`readErrors=1643`、`invalidJson=0`。
+一次隔离诊断及 bare/KodaX writer 探针均未复现；原因未确认，未放宽断言或猜测修改生产实现。
+
+后续候选完成后重新冻结，单次完整套件 **1,316 文件通过、7 跳过；18,333 测试通过、0 失败、99 跳过、19 todo**，
+1,466.98s。Temp：`kodax-final-deferred-regression-20261031-994c9b41`。
+全部 tracked 源码/配置/文档及 5 个新增候选文件共 3,211 个 hash 在运行期间零变化；
+其余并发工作留下的 untracked 文件另有启动后补充清单，补充后零变化，不能称为启动前完整冻结。
+旧 Windows 用例本次通过，不等于根因已修复。文档验收记录在测试完成后才追加。
+
+source/test 类型检查、packages/bundle、14 SDK 声明及配置模板检查通过；仓库无独立 lint 命令。
+CLI 5,287,232 bytes，在原 5,287,936 bytes 上限内，没有再提高上限。
+实际 npm tarball 的 Script 清单/干净目录运行/缺 worker 失败、MCP 三种输出恢复、独立 IPC 与重启回执共 6 项通过。
+仅实测 Windows，不升级为 macOS/Linux 或全部二进制验收。
+
+### 最小生产改动与兼容边界
+
+- 十项普通 deferred 短说明保留调用条件、用途与现有参数 schema，取消强制发现暗示；Workflow 激活教学保持原状。
+- `tool_search` handler、SDK/公开事件和持久化结果仍完整。仅普通 managed root 的模型请求视图可省略重复参数；
+  完整 description、warning、错误、图片和 metadata 保留。SDK override、专用角色、同名独立 search 扩展不投影。
+- 必须证明结果来自唯一且先出现的成功 `tool_search`，且 parameters 与本次实际可见契约严格相同。
+  Script 使用真实结构化绑定，不解析生成教学；工具被 fit 移除、参数改变、名称歧义或证据不完整均保留完整结果。
+  每次从完整历史重建，因此移除菜单后无需额外发现即可恢复参数。
+- 原生/Script 执行、权限、预算、取消、AMA、SDK 和专用角色不变；没有新增产品开关、路由器或发现步骤。
+  正常请求、重试、非流式回退、续写、诊断和 fit 计量复用同一请求视图。
+
+新增投影单测 13 项、真实 adapter 9 项、三模式 Runtime 闭环 3 项，均在上述冻结全量中通过。
+覆盖实际 fit 后参数恢复、真实 stream 重试/complete 回退、前缀稳定、来源/角色边界和完整历史不变。
+新增投影模块覆盖率：语句 85.71%、分支 87.27%、函数 100%、行 94.87%；不是整个仓库覆盖率。
+
+### 根首轮：真实 SDK 序列化后统一重计
+
+32 格抓包通过，Temp：`kodax-first-turn-wire-qaWpIi`；`uniform-report.json` 重计 12 个根场景，外部调用 0。
+相对旧冻结抓包 `kodax-first-turn-wire-HZtIeR`，12 格的完整工具集合、顺序、参数及工具外所有模型字段均相同，
+只改变普通 deferred 的 description，核对结果保存在 `assembly-equivalence.json`。
+以下仍为完整模型字段紧凑 JSON 的统一启发式，不是 BPE/API 账单。
+
+| 场景 / 协议 | 旧 Agent → 本次 | 旧 Coding → 本次 | 旧 Script → 本次 |
+|---|---:|---:|---:|
+| 完整 Host / OpenAI | 12,035 → 12,023 | 15,667 → 15,592 | 17,536 → 17,536 |
+| 完整 Host / Anthropic | 11,790 → 11,778 | 15,292 → 15,218 | 17,372 → 17,372 |
+| empty / OpenAI | 9,708 → 9,696 | 12,071 → 11,997 | 14,176 → 14,176 |
+| empty / Anthropic | 9,499 → 9,487 | 11,789 → 11,715 | 14,032 → 14,032 |
+
+Script 叶契约本来完整自足，本次没有缩短它；共享的后续回执投影仍生效。
+根首轮收益很小，不以普通 child 的 1,375/1,589 收益替代根指标，也未达到完整 Host Agent 10K。
+原始 `bd4479d` 只复用既有单次留存；它没有 Agent/Script 模式，且 Host 已演进，不能拼成同夹具三版本因果对照。
+
+### 完整固定轨迹与有限真实模型
+
+自然请求为阅读 Node.js URL、保存结论并核对，随后切换模式核对已有报告；未要求固定发现或派发。
+离线 provider 刻意选择一次可选 help 来覆盖本次回执，然后走真实 fetch（仅该 URL 的 HTTP stub）、write、read、AMA 收尾。
+三模式均为首任务 5 请求/4 叶调用、跟进 2 请求/1 叶调用；HTTP 读取仅一次，完整公开/持久化回执保持不变。
+
+| 模式 | 完整回执反事实输入估算 → 本次 | 首任务墙时 | 含切换跟进墙时 |
+|---|---:|---:|---:|
+| Agent | 56,977 → 56,665 | 1.535s | 3.334s |
+| Coding | 68,120 → 67,806 | 1.264s | 3.058s |
+| Script | 79,371 → 79,057 | 2.878s | 3.902s |
+
+本表是实际 Runtime 的脚本固定轨迹，反事实仅恢复 search 回执参数，使用相同当前 system/tools；
+不是旧提交完整任务实跑，不是 SDK wire/API 用量或模型智能非劣证明，也没有基线墙时可宣称提速。
+证据在 `deferred-tool-direct-runtime/kodax-deferred-direct-{lP0daN,UfNlWr,bW2jL8}`。
+
+L2 Temp：`deferred-tool-contract-r1-20261031`。实际 Runtime 捕获的两个独立检查点：
+Agent 首次响应只比较旧/新短说明；Script 可选 help 后只比较完整/投影回执，当前完整叶契约不变。
+GLM/Kimi 8 次 pilot 盲评后只补预登记 DeepSeek 4 次；**12 次物理调用、141,425 已知 API token、0 未知 usage**，
+参考记账 0.0065782458 USD，不是套餐现金账单；未重跑任何 cell。
+
+| 模型 | 两检查点 API 总 token，基线 → 候选 | 两次墙时之和，基线 → 候选 |
+|---|---:|---:|
+| zhipu-coding/glm-5.3 | 23,548 → 23,485 | 10.192s → 8.418s |
+| kimi-code/kimi-for-coding | 21,819 → 21,786 | 7.163s → 17.572s |
+| deepseek/deepseek-flash | 25,524 → 25,263 | 2.485s → 1.690s |
+
+这不是完整任务总账。每家 API 输入之和仅下降 56–61 token，其余差异包含输出波动；基线先运行也有利于候选命中缓存，
+不能归因为新的缓存能力。Kimi 一次延迟增大，归因不明，不为更好数字重跑。
+三家 Agent 均直接获取同一 URL，没有发现调用或捏造证据；DeepSeek 基线同时批量建 Todo，候选仅 fetch，均未增加请求轮次。
+GLM/Kimi Script 两臂均正确走 tool_call；DeepSeek 两臂均返回菜单外 web_fetch。
+源码确认 Script 保留原 agent.tools、只投影菜单，Runner 仍可经现有权限/预算执行该叶；
+记录为共同的调用表面偏差，未改写参数、未把 L2 声称为已执行或恢复失败。
+
+主会话先读盲包、保存 case 判断再揭盲；`main-review.json` 建议采用这项有界表示优化，未见检查点特有退化，
+不声称广泛智能等价或稳定全任务提速。原始版历史留存、本批旧契约控制和候选明确分开。
+
+pilot 结算留下 `reservedTokens=0/reservedUsd=-1.0842e-19` 的浮点残差。
+共享离线预算守卫仅对完全结清且绝对残值不超过 JS Number.EPSILON 的 USD 预留归零，恢复时复制账本，真实负账/在途预留仍拒绝；
+9 项回归通过，原 pilot 账本不改。该 helper 未列入原 5 文件 manifest，例外和 hash 在 `guard-continuation.json` 显式记录，
+没有改模型输入/预算上限或多跑调用；分析元数据曾误用 .NET Epsilon，已记录更正。
+
+### Standards
+
+沿用 AGENTS、CONTRIBUTING、ADR-033/050 与完整坏味道基线独立评审：无硬违反或可行动 smell。
+预算残差修复另独立复核，不放宽真实预算；0 项阻断发现。
+
+### Spec
+
+独立复核自足说明、严格 schema 证明、完整持久化与 SDK/角色回退，无新增固定发现或 AMA 策略变化。
+实际 fit/fallback 回归补齐；DeepSeek 菜单外叶调用按原执行链核实，未扩大范围修复。0 项阻断发现。
+本批不再追加模型矩阵；缓存、Script 参数表示及大型外部 namespace 延迟仍为未实施专题。

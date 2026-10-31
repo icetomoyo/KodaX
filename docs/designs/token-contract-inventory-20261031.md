@@ -286,3 +286,26 @@ provider policy/skill 后缀保留；每次真实请求与 fallback 仍重新追
 下一优先核实deferred工具的自足短教学和直接调用，之后才是有明确净收益的Script参数表示/缓存专题。
 Root继续做有证据的共享规则归属审计，不通过删除AMA、Memory授权或visual验收凑10K；
 visual强制发现、细碎参数多跳发现、未证明等价的Repo/LSP工具合并均不作为默认方案。
+
+## 6. 后续 deferred 批次更新（2026-10-31）
+
+§1 保留上一提交基线。本次根首轮真实 SDK 抓包 `kodax-first-turn-wire-qaWpIi` 经同一完整字段口径重计：
+
+| 场景 / 协议 | Agent | Coding | Script |
+|---|---:|---:|---:|
+| runtime-host，OpenAI | 12,023 | 15,592 | 17,536 |
+| runtime-host，Anthropic | 11,778 | 15,218 | 17,372 |
+| empty，OpenAI | 9,696 | 11,997 | 14,176 |
+| empty，Anthropic | 9,487 | 11,715 | 14,032 |
+
+12 格根场景均验证工具集合、顺序、参数及工具外模型字段不变，仅普通 deferred 短说明改变。
+十项短说明支持直接调用，保留用途/refresh/作用域等有效教学；Workflow 仍保留完整激活指引。
+code_search 的短说明兼容改动不重新引入其默认入口。全部 81 项工具的分配与底层能力不因本批改变。
+Script 首轮叶契约本来完整，不因这项 native 短说明变化而减少。
+
+成功 tool_search 的重复 parameters 仅在本次实际可见原生契约或真实 Script 绑定严格匹配时，从普通根模型请求省略；
+完整 description 与 SDK/持久化仍保留，fitting/缺失/变更/歧义时从规范历史自动回退。没有新发现步骤、产品选项或执行器。
+SDK override、专用角色和独立同名 search 扩展不自动投影。
+最终冻结全量 18,333 项通过，三模式 Runtime 完整固定轨迹和有限三家 L2 证据见
+[验收 §6](../test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#6-推送后冻结回归与-deferred-后续批次2026-10-31)。
+根收益仅十余/七十余估算 token，主要后续收益是少回传已有参数副本；不能称为达到 10K 或证明稳定全任务提速。
