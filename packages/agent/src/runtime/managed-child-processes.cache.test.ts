@@ -131,6 +131,39 @@ describe.runIf(process.platform === 'win32')('managed child cleanup query reuse'
     }
   });
 
+  it('still attempts exact non-Run cleanup when CIM confirms the root but the shared snapshot is unavailable', async () => {
+    tempHome = await mkdtemp(path.join(tmpdir(), 'kodax-managed-confirmed-root-'));
+    const pid = 97_001;
+    const creationDate = '2026-01-01T00:00:00Z';
+    const identity = (BigInt(Date.parse(creationDate)) + 11_644_473_600_000n).toString();
+    vi.spyOn(process, 'kill').mockImplementation((target, value) => {
+      if (value !== 0) throw new Error('Cleanup must use exact process identities');
+      if (target === pid) return true;
+      throw Object.assign(new Error('gone'), { code: 'ESRCH' });
+    });
+    spawnSyncMock.mockImplementation((_command: string, args: string[]) => args.join(' ')
+      .includes('Select-Object ProcessId,CreationDate,CommandLine')
+      ? { status: 0, stdout: JSON.stringify({ ProcessId: pid, CreationDate: creationDate, CommandLine: 'retired-node.exe' }) }
+      : { status: 1, stdout: '' });
+    const directory = path.join(tempHome, 'runtime', 'processes', 'children');
+    await mkdir(directory, { recursive: true });
+    const registrationId = '95bc0da4-8673-43c6-a8e7-a2c081da6dce';
+    const file = path.join(directory, `${pid}.${registrationId}.json`);
+    const bytes = JSON.stringify({ version: 4, registrationId, pid, ownerPid: 97_000,
+      registeredAtMs: 100, kind: 'historical-probe', command: 'retired-node.exe',
+      processStartIdentity: identity, processTreeComplete: false,
+      processTreeIdentities: [{ pid, creationTime: identity }],
+    });
+    await writeFile(file, bytes);
+
+    await expect(cleanupRegisteredManagedChildren({ configHome: tempHome })).resolves.toEqual({
+      killed: 0, pruned: 0, skipped: 1,
+    });
+    expect(spawnSyncMock.mock.calls.some(([, args]) => (args as string[]).join(' ')
+      .includes(`[KodaXNativeProcessSnapshot]::TerminateExact(${pid}, [UInt64]${identity})`))).toBe(true);
+    expect(await readFile(file, 'utf8')).toBe(bytes);
+  });
+
   it('queries one current owner identity once for all of its records', async () => {
     tempHome = await mkdtemp(path.join(tmpdir(), 'kodax-managed-owner-cache-'));
     setAgentConfigHome(tempHome);

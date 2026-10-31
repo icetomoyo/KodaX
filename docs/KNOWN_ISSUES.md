@@ -237,6 +237,9 @@ process was alive. The existing incomplete-tree check was only used for Runs.
 It now also precedes non-Run historical termination: unverified trees retain
 their evidence in quarantine; a known live retained process still goes through
 exact cleanup. Explicit Run cleanup and drain authority remain unchanged.
+For non-Run records this shortcut requires known absence or identity mismatch,
+not merely unavailable snapshot evidence. A regression specifically preserves
+exact-handle cleanup when CIM confirms the live root but the snapshot fails.
 
 The strengthened bundled regression adds 512 records covering missing identities,
 reused PIDs and incomplete extinct/reused trees. Before the third fix it reproduced

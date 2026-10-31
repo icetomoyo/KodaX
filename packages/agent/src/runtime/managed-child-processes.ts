@@ -1183,7 +1183,7 @@ async function cleanupRegisteredManagedChildrenInSharedSnapshotScope(
       }
     }
 
-    if (incompleteTreeNeedsNoTermination(record, true)) {
+    if (incompleteTreeNeedsNoTermination(record, false)) {
       if (quarantineRecord(filePath)) quarantined += 1;
       skip(record.ownerPid);
       continue;

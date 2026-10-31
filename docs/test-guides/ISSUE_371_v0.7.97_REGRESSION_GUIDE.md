@@ -185,6 +185,9 @@ helper per record without gaining cleanup proof. The strengthened bundled case
 reproduced that same daemon-startup error in 12,485 ms before the third fix.
 Non-Run recovery now reuses the existing incomplete-tree check; known live
 retained descendants still require exact cleanup, guarded by a separate test.
+Non-Run unknown snapshot evidence alone must not bypass cleanup: the additional
+unavailable-snapshot/CIM-confirmed-live-root case failed during review and passed
+after restricting the shortcut to known absence or identity mismatch.
 It requires readiness below 10 seconds, reads saved history, verifies exact
 Host/Job shutdown and repeats recovery in a new generation. All evidence bytes
 and saved messages must survive both generations. Observed cold/restart times
