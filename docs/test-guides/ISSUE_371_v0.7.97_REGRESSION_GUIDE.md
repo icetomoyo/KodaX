@@ -372,6 +372,11 @@ an accepted instruction to reintroduce removed behavior.
    not certify this OAuth migration combination.
    Only an explicit account choice may change identity; an ambiguous migration
    source must remain actionable rather than automatically selecting A or B.
+   The existing FEATURE_302 T12-H boundary also excludes arbitrary downgrade or
+   concurrent old/new refresh owners for the same grant: old binaries do not
+   understand new selections/tombstones. Verify rejection and recovery guidance
+   at that boundary; retained backups are recovery material, not a second active
+   credential authority. This is a known compatibility limit, not a newly proved bug.
 3. **P1 release evidence:** run the Linux/macOS platform slices and the 25 real
    Windows v2 cases on their proper runners; port the three disabled Git policy
    obligations. Preserve exact revision/OS/native build and failing evidence.
@@ -519,7 +524,7 @@ The source location and guard are listed so the original 98 can be reproduced.
 | S095 | POSIX/Linux 平台门禁 | process tree cleanup does not signal a reused POSIX pid | [process-tree.test.ts:155](../../packages/agent/src/runtime/process-tree.test.ts#L155); describe -> it.skipIf(process.platform === 'win32') |
 | S096 | POSIX/Linux 平台门禁 | process tree cleanup fails closed for a matching POSIX identity | [process-tree.test.ts:176](../../packages/agent/src/runtime/process-tree.test.ts#L176); describe -> it.skipIf(process.platform === 'win32') |
 | S097 | POSIX/Linux 平台门禁 | initializeSetupConfiguration creates private config directories and files on POSIX | [setup-config.test.ts:152](../../packages/repl/src/common/setup-config.test.ts#L152); describe -> it.skipIf(process.platform === 'win32') |
-| S098 | POSIX/Linux 平台门禁 | FEATURE_158 — Issue 131 Windows-flag false-positive regression POSIX behavior unchanged: '/R' still treated as path on Linux/macOS | [permission.test.ts:1412](../../packages/coding/src/permissions/permission.test.ts#L1412); describe -> it.runIf(process.platform !== 'win32') |
+| S098 | POSIX/Linux 平台门禁 | FEATURE_158 — Issue 131 Windows-flag false-positive regression POSIX behavior unchanged: `/R` still treated as path on Linux/macOS | [permission.test.ts:1412](../../packages/coding/src/permissions/permission.test.ts#L1412); describe -> it.runIf(process.platform !== 'win32') |
 
 ### Complete TODO inventory
 
