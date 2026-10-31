@@ -237,7 +237,7 @@ the existing ownership fence, not a reason to force-replace a user Host.
 | Final Main complete-file reruns, eight files, two workers, no retries | 1,547 passed, 0 failed, 41 skipped; 96.98 s |
 | Source acceptance after replacing each rerun file's whole result, without counting duplicates | 18,783 passed, 98 skipped, 19 todo; no unresolved failed case |
 | Main's 21 built acceptance files | 81 unique cases accepted after the Skill-file rerun described below |
-| Historical owner/tarball cutover and integrity-pinned alpha.11 Host upgrade | 3 + 1 passed |
+| Final Main `e4cad09c`: historical owner/tarball cutover and integrity-pinned alpha.11 Host upgrade | 4 passed; 48.288 s; actual tarball SHA-256 `2b211734e693cd36be320faa30b14bf598288c958e364f7a9366f22efeb02873` |
 | Registry/Run/scope/process-tree Windows regressions before the final boundary case | 139 passed, 2 skipped |
 | Final registry/caller coverage invocation, including all final boundary cases | 93 passed |
 | Legacy home fixtures and default-directory follow-ups | 165 + 23 passed |
