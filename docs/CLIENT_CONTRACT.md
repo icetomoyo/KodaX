@@ -81,6 +81,11 @@ CLI 用同一通知驱动加载动画，模块加载、旧子进程清理、Sess
 
 `disconnect()` 仅释放本连接；`ClientObservation.close()` 仅结束一个观察。它们不表示 Run 停止或 Host 退出。`host.shutdown()` 请求空闲 Host 正常关闭，返回 `{ accepted: true }` 只代表接收请求，不能替代启动器对退出和清理完成的确认。
 
+Host owner 实际销毁视图服务时，先停止新的读取、刷新和监听注册，再等待该服务已准入
+的视图与条目读取及检查点保存。已从 Session map 释放的在途读取仍须结算，不能在关闭
+完成后重建存储索引；并发关闭共享结算，保存失败继续传播。这是 Host 内部关闭边界，
+不把 Client 断连或结束单个观察改成 Host 退出。
+
 启动历史进程恢复由取得独占 Owner 和 Session 存储所有权的共享 Host 在就绪前执行；连接客户端不重复扫描。退出收尾仅处理本进程精确注册的子进程，保留 Job、supervisor、实际退出及持久化清理结果的验证。私有 embedded Runtime 和被动 connect 不执行共享 Host 的全局恢复。预检对已认领且验证过 admission 的 Actor 使用现场控制器，其余读取规范 Actor 元数据；仍覆盖全部 admitted、未归档 Session，保留并发写入、文件身份和 Owner 检查，忙时持久化不妨碍读取现场状态。恢复列表索引不构成空闲证明。
 
 `sessions.list()` 按 `lastMessageAt`（最近真实用户/助手对话消息时间）倒序，缺失时用 `createdAt`，再按创建时间及 ID 倒序稳定排序。`ClientSession` / `ClientSessionSummary` 提供可选 `lastMessageAt`；读取、标题/设置/Actor 保存、合成唤醒和历史压缩不产生新对话时间，历史复制沿用来源时间。时间只用于列表展示，不定义跨 Session 的事件顺序。旧记录只在有可靠消息时间时补充该事实，缺失时回退创建时间，不用文件 mtime 推测。
@@ -126,6 +131,47 @@ CLI 用同一通知驱动加载动画，模块加载、旧子进程清理、Sess
 | `catalog` | `extensions`, `providers`, `models`, `reasoningEfforts`, `probeReasoningEfforts`, `forgetCapabilities`, `commands`, `skills` | Host 已加载扩展的诊断及发现的 Provider/模型/推理档位/命令/技能；probe 明确发起 Provider 请求，连接与普通发现不隐式探测 |
 | `mcp` | `status`, `listServers`, `getServer`, `validateServer`, `upsertServer`, `deleteServer`, `reloadServers`, `listTools` | 管理纯 MCP 配置、读取 Host 当前连接状态和查询工具；可执行连接留在 Host |
 | 连接 | `disconnect` | 释放本连接及其资源，保留共享 Host 和工作 |
+
+### 配置生效边界
+
+`config.patch/reload` 成功表示保存或重读完成，不代表活跃 Run 已改变。
+`config.readEffective().application` 是 Host 对每个公开配置字段的应用契约：
+
+| 边界 | 字段 | 确认方式 |
+| --- | --- | --- |
+| `immediate` | fallbackProviders、stallLog | 后续请求/日志采用新值；不改变已发出的请求 |
+| `next_run` | provider/model、effort/planModeEffort/thinking/reasoningMode、permissionMode/agentMode、maxOutputTokens、disablePromptCache、lsp、fast/deep Provider/Model、repoIntelligenceMode/Trace、workflow | 在新 Run 准入时捕获；活跃 Run 不因全局 patch/reload 改写 |
+| `extension_reload` | extensions | 等待 Host 的 integration watcher 校验并 reconcile；检查 catalog.extensions 与配置状态 |
+| `restart` | locale、providerModels、lspAutoDownload、acpLogLevel、sessionRetentionDays、repoIntelligence | 重启 Host 后检查相应能力；旧进程不承诺应用 |
+
+按新 Run 捕获的输出、缓存、LSP 和模型分层默认低于真正的外部环境变量，低层 SDK
+显式 Run 参数优先。`fallbackProviders/stallLog` 保留既有即刻控制：显式
+`config.patch` 可更新其进程环境投影，不能将这条路径误认为只保存下次默认。
+Session 覆盖仍遵循已有解析顺序；清除上述 next_run 保存值时仅清除其旧启动投影，
+保留真正外部环境。`applied:true` 表示该值已接入对应应用边界，不能解释为当前每个 Run
+已采用它。旧 Host 缺少 application 时保留未知，不由客户端补造支持。
+
+extensions 还遵循已有配置来源优先级：integrations/extensions.json 存在时，config.json
+中的旧 extensions 字段不再是生效来源；不能用 core config patch 覆盖它。watcher
+异步应用配置，失败保留上一份有效快照。可信 Runtime 的
+`catalog.reloadExtensions()` 只重载已加载扩展的代码，不等于重读新增路径配置。
+Main 的可信 Runtime 连接可用 `(await runtime.daemon.inspect()).integrations?.domains`
+读取实际来源和诊断，再配合 Product 的 `catalog.extensions()` 确认已加载能力。
+`restart` 表示 SDK 承诺的重新装配边界；单个读取路径更早看到保存值，不证明整个
+执行进程已完成重配。locale 等消费端选项还需相应 UI/客户端重新读取或重启。
+
+`sessions.updateSettings` 是另一条契约：provider/model/reasoning/effort/thinking、
+permissionMode/planModeEffort 在下一次物理请求采用新选择，已发出的请求保持原样；
+运行中选 plan 权限也更新实际 effort。workMode 受安全空闲门禁约束；agentMode
+修改供后续独立 Run 使用，已接受的排队/续接输入保留原执行模式。
+`runs.read(runId).workMode` 报告实际模式；缺失时表示旧 Run 未记录，不能拿 Session
+当前选择补齐。`runs.read().effectiveConfig` 是最后一次实际装配的模式、profile、验证要求和
+工具集合：`toolScope` 包含可执行的 deferred/Script 叶工具，`modelToolScope` 是请求模型
+看到的 schema。显式工具调用省略 modelToolScope，旧 Run/尚未装配时省略整个快照。
+快照会随请求更新并持久化，重连与 Host 重启不依赖客户端重新推导；不表示操作已获审批。
+Partner persona 不额外禁止 write/bash/edit/子任务；SA Solo 和显式授权继续约束能力。
+显式 profile 与工具策略的 Agent 组合参见
+[迁移契约](SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布)。
 
 `workflows.start` 接收 `inline`（manifest + source）、`request` 或 `name` 声明式来源，返回 `declined` 原因或 `started` 的 runId。它不接收预执行模块或函数。MCP 配置允许 stdio、SSE、HTTP 等 MCP transport；这不意味着产品 Client transport 已支持这些协议。
 

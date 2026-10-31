@@ -104,6 +104,82 @@ usable SDK executors. Native exposure, discoverable capabilities and permission
 to execute remain different boundaries; preserve explicit profile/child scope
 when adapting a UI or a standalone host.
 
+#### Partner + Agent intersection (unreleased, after alpha.11)
+
+For the unified Product Client, select Session `workMode: 'agent'`. Partner persona
+and opaque profile identifiers impose no additional readonly ceiling. Explicit tool
+policies, SA Solo limits, permission modes, approvals and sandbox controls still apply.
+Trusted Main preserves persona/verification and explicit restrictions with
+`profile: await services.createExecutionProfile(existingContext, hostToolLease.tools)`
+inside `authorizeExecution`, alongside the existing lease/credential authorization.
+The helper queries the Session's actual Host catalog. Its snapshot retains all policy
+metadata; changed or newly loaded tools require fresh authorization. Root
+`authorization.tools` can also express a separate ceiling without a persona.
+This contract requires `productExecutionProfile.version === 2`; older Hosts fail
+explicitly. See the [Main example and boundaries](../../docs/SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布).
+
+Query `runs.read(runId).effectiveConfig` for the last assembled execution surface:
+`workMode`, `agentMode`, profile, verification, executable `toolScope` and projected
+`modelToolScope`. Explicit tool calls omit the model scope. Snapshots update at
+assembly/request boundaries, survive restart, and stay absent until observed or for
+older records. Tool availability does not grant effect permission. Native/MCP aliases
+and derived children respect explicit ceilings; independent Actors retain their own
+authorized declarations. `/artifacts/kodax` still needs its internal generic write
+permission. Fixture lease tests do not establish actual Space deployment behavior.
+
+For the independent `/coding` library:
+
+`alpha.11` resolves explicit `agentProfile`, `systemPromptOverride` or
+`toolVisibilityPolicy` declarations to the compatibility Coding path. Setting
+`workMode: 'agent'` alone therefore does not opt a Partner into Agent.
+The supported opt-in is `context.workModePolicy: 'intersect'` on the final
+root Run options. Keep the complete existing Partner options and add only:
+
+```ts
+import { resolveWorkMode, type KodaXOptions } from '@kodax-ai/kodax/coding';
+
+export function partnerInAgentMode(partnerOptions: KodaXOptions): KodaXOptions {
+  const options: KodaXOptions = {
+    ...partnerOptions,
+    workMode: 'agent',
+    context: { ...partnerOptions.context, workModePolicy: 'intersect' },
+  };
+  if (resolveWorkMode(options) !== 'agent') {
+    throw new Error('Partner root did not resolve to Agent mode');
+  }
+  return options;
+}
+```
+
+This retains the profile identity/instructions, profile and per-task verification,
+`toolVisibilityPolicy`, `excludeTools`, Skill policies, connector leases, Artifact
+tools and permission callbacks. Effective tool availability is the intersection
+of the Agent surface and all existing Partner/Host restrictions. Agent excludes
+the builtin repository/LSP specialist tools and their compatibility aliases;
+native calls, `tool_search`, `tool_describe` and `tool_call` cannot restore them.
+Partner-denied shell/file mutation/child-agent tools remain denied. Allowed Skill,
+research and Host tools still use their existing authorization and lease checks.
+Host-owned replacements keep their own contracts; the preset does not restrict
+tools by spelling alone or delete the standalone SDK executors.
+
+Use `resolveWorkMode(finalRunOptions)` for a side-effect-free effective-mode
+query after merging Session settings and host context. Managed-task consumers
+can also inspect `events.onEffectiveConfig`: `config.workMode` is the effective
+mode, alongside `agentProfile`, `toolScope`, `modelToolScope` and `verification`. Preserve the
+existing subscriber when adding an observer. `sessions.getSettings().workMode`
+is the selected mode, not proof of the effective run mode. Older SDKs/Hosts do
+not expose this new contract; upgrade the executing Host as well as the SDK.
+
+Omitting the intersection opt-in preserves alpha.11 compatibility. Coder keeps
+its default Coding and explicit Agent/Script choices. A specialized child with
+`currentAgentId` retains its declared Coding tool scope even if root context was
+copied with the opt-in; its policy and permissions still apply. Script retains
+its existing executor-readiness and writable-Session requirements. The opt-in
+is Run context, not a new Session/global setting or an authorization grant.
+Recovery preserves it as declarative configuration while requiring fresh
+authority callbacks. Function policies stay in the trusted host; do not serialize
+or remove them to send a daemon request.
+
 Tool items may expose `tool.outputPath` for a Host-saved original result. Use
 `sessions.readItem(sessionId, itemId, { part: 'original', offset })`, or
 `readHistoryEntry` for a tool item returned by `readHistory`. A search hit names
@@ -2979,7 +3055,7 @@ runKodaX({
       verification: { /* KodaXTaskVerificationContract — profile-default standard */ },
     },
     // R2 — narrow the model-visible tool list (applied on top of excludeTools):
-    toolVisibilityPolicy: (tool) => tool !== 'web_search',
+    toolVisibilityPolicy: (tool) => tool.name !== 'web_search',
   },
 });
 ```
@@ -2996,9 +3072,10 @@ runKodaX({
 - **R3 — `agentProfile.verification`.** A profile-default `KodaXTaskVerificationContract`
   merged with per-task `context.taskVerification` (per-task fields win) before it
   reaches the main agent on both SA and AMA paths.
-- **R4 — `KodaXEvents.onEffectiveConfig`.** Reports the effective agentMode / tool
-  scope / verification at run start, so a host can reflect what
-  the profile actually resolved to.
+- **R4 — `KodaXEvents.onEffectiveConfig`.** Reports the effective modes, executable
+  scope and verification after tool assembly; model scope updates at physical
+  request boundaries. Hosts observe the last actual snapshot rather than infer
+  it from a selected profile or Session setting.
 - **R5 — metadata across `fork()`.** Structured `profile` + `runtimeInfo` metadata
   ride on results and are inherited by forked sessions.
 - **R6 — `compactSession(id, options)`** from `@kodax-ai/kodax/session` — an
@@ -5003,10 +5080,11 @@ runs. The transport remains local to the current OS user; it is not a remote
 collaboration protocol. Closing a client detaches that client and does not stop
 the daemon or another client's run.
 
-Partner is deliberately outside this migration. Keep Partner on its existing
-inline callbacks and give it a distinct product data root and sessions root.
-Do not point a Partner inline Runtime at the Coder daemon profile or the Coder
-data root.
+Partner uses the unified Host with its original surface/profile identity.
+Trusted Main binds any existing persona or explicit profile policy through
+`authorizeExecution`; Partner identity alone does not require a profile. See
+the [current migration contract](../../docs/SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布).
+Private inline product ownership is retired.
 
 ### Connect and fail closed on required capabilities
 
@@ -5955,16 +6033,13 @@ incomplete/unknown rather than silently presenting a truncated catalog.
 
 ### Coder admission, typed events, and transport-safe inputs
 
-The daemon enforces Coder session admission on the server for list/create/load,
-run, settings, delete, rewind, fork, compact, transcript, event, interaction,
-and diagnostic paths. Coder
-surfaces are `code`, `cli`, `repl`, `acp`, `a2a`, `sdk`, `ide`, and
-`space-desktop`. A session marked with
-Partner surface/profile metadata, or any unknown product surface, fails with
-typed `session_not_admitted` before mutation. Space must continue marking
-Partner sessions as `surface: 'partner'` and keep their inline storage root
-separate. Legacy sessions without a surface remain admitted for existing Coder
-compatibility, so absence of metadata is not a Partner namespace mechanism.
+The daemon admits the existing Coder surfaces and Partner identity for shared
+Session operations; unknown product surfaces still fail with `session_not_admitted`.
+Keep Partner sessions marked as `surface: 'partner'` with their original profileId.
+Partner identity does not require a profile. Trusted Main binds any existing
+persona or explicit tool ceiling; mode, policy, lease and permission checks still
+govern execution. Legacy sessions without a surface retain Coder compatibility
+and must not be used to disguise Partner execution.
 
 `RuntimeEventPayloadMap` and `RuntimeTypedEvent` provide the public
 discriminated contract for known events. Existing raw listeners remain

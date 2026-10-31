@@ -6,6 +6,94 @@ Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附�
 
 ## 统一 Host SDK 收口（未发布）
 
+### 2026-10-30 SDK 组合契约修复（未发布）
+
+Partner 默认具备所选通用 Agent 工作面的能力：persona、surface/profileId 和专家验证
+不是隐式只读权限。使用 Session `workMode:'agent'`，不需要为了准入创建 profile。
+`agentMode:'sa'` 仍保留 Solo 子 Agent 排除；AMA 保留协作能力。实际操作仍受显式工具
+策略、permissionMode、审批、连接器绑定、管理员策略和沙箱限制，不自动升级为 Full Access。
+
+有现有 persona/策略时，可信 Main 通过 `authorizeExecution` 的
+`await services.createExecutionProfile(existingContext, hostToolLease.tools)` 绑定。
+helper 查询该 Session 的 Host 实际工具目录，再加入本次 lease 工具；谓词留在 Main。
+返回数据包含允许工具的名称、sideEffect 和 planModeAllowed。Host 在 schema、发现及
+目标调用时重检，并与工作面取交集。Host-only 扩展因此可以正常获得显式授权；同名工具
+元数据变化后不会沿用旧授权。无工具限制的 persona-only profile 不制造工具白名单。
+
+```ts
+import { ensureKodaXClient } from '@kodax-ai/kodax/client';
+
+const client = await ensureKodaXClient({
+  async authorizeExecution(request, services) {
+    const existing = await authorizeExistingCapabilities(request, services);
+    // 由可信 Main 注册表解析，不接受 Renderer 提交的 authority。
+    const partner = lookupRootPartnerContext(request);
+    return partner ? {
+      ...existing,
+      profile: await services.createExecutionProfile(partner.context, partner.hostToolLease.tools),
+    } : existing;
+  },
+});
+await client.sessions.updateSettings(sessionId, { workMode: 'agent' });
+const accepted = await client.inputs.submit({ sessionId, inputId, text: '研究并生成报告' });
+if (accepted.runId) {
+  const { workMode, effectiveConfig } = await client.runs.read(accepted.runId);
+  // effectiveConfig 在实际工具装配后出现；不要用 Session 选择值补造它。
+}
+```
+
+上述应用函数复用原授权并解析根 Partner 上下文；独立 Actor spawn/followup 返回各自
+声明的授权，不注入根 profile。派生子任务继承父级显式限制。`authorization.tools` 可
+独立用于根 Run 或独立 Actor，和 profile 上限取交集；缺省不制造额外限制，`[]` 拒绝所有工具。
+新契约需要 `productExecutionProfile.version === 2`；旧 Host 明确要求升级，不能静默丢策略。
+独立库的同步 `createExecutionProfile(context, catalog)` 是纯 builder，显式谓词/排除项
+必须提供可信 Host 目录；不能把 Main 本地 registry 当成跨进程目录。
+
+授权服务保留 `services.identity.runtimeId`，用于识别当前 Host；租约缓存不能跨 Host 实例复用，恢复时重新注册。
+
+授权快照对本次执行固定：新增或元数据变化的工具需下一次 Main 授权重新求值；保存配置、
+扩展 reload 不放宽已准入 Run。恢复需重新绑定授权，恢复流程仍校验原意图；租约撤销后
+native 与 MCP 别名都不可调用。MCP 普通连接器保持原 provider 授权，物化 Host 工具的
+MCP 别名还必须通过同一目标工具上限；桥接不授予被排除的工具。
+
+根 Run 的 profile 工具名称、元数据和独立 `authorization.tools` 上限作为非秘密准入
+证据随恢复状态保存。每次恢复及重新绑定都继续取原上限与新授权的交集，连续重启也
+不能放宽；新授权变为 persona-only 不会清除旧限制。同名工具的 sideEffect 或
+planModeAllowed 改变时不能沿用旧元数据授权。此证据不替代本次 Host 的有效 lease
+与授权回调，也不作为公开 Runtime 配置项或 Renderer 授权入口。旧记录缺失的证据保持缺失，
+不能宣称已验证其历史工具快照。
+仅完整来自可信 profile 的工具谓词可由该快照重建；任意自定义 Runtime 回调与旧
+记录仍要求新的函数绑定。恢复保留原 persona 指令与验证要求，新授权只继续收窄工具。
+
+`runs.read().effectiveConfig` 持久化最后一次实际装配快照，包括 `workMode`、`agentMode`、
+`agentProfile`、`verification`、`toolScope`（含 Script/deferred 叶工具）和
+`modelToolScope`（物理模型请求所见 schema）。显式工具入口没有模型请求，省略后者。
+快照随请求更新，重连/Host 重启可读取；尚未装配或旧记录缺失时保持未知。
+工具可见/可执行并不表示每次操作已获审批。低层 `onEffectiveConfig` 使用相同快照。
+
+Artifact 既可通过 Host lease，也可通过原生 adapter 使用；原生路径依赖通用 write，
+显式禁 write 时仍应拒绝。离线回归使用真实 Artifact runtime 生成 PPTX；不据此宣称
+实际 Space 部署已迁移，或真实连接器与专家模型的质量已经验收。
+
+Script＋SA 使用托管 Script 执行入口并保留 Solo 排除项。运行中切换计划权限或
+planModeEffort 会更新下一次物理请求的 effort。Actor 恢复保留
+`resumeCheckpoint:true` 和空 objective，经 `actorCheckpointRecovery.version === 1`
+门禁继续原 turn；旧 Host 明确要求升级。
+
+配置修改的确认仅表示已保存。`config.readEffective().application` 逐字段标明：
+`immediate`（fallbackProviders/stallLog）、`next_run`（模型默认、输出上限、缓存、LSP、
+模型 tiers、Workflow 等）、`extension_reload`（extensions，经既有 watcher 校验/reconcile）、`restart`（locale、
+providerModels、lspAutoDownload、日志/保留/索引进程配置）。Session 覆盖仍优先；
+上述输出、缓存、LSP 和模型分层的 next_run 默认低于真正外部环境变量，SDK 显式
+Run 配置优先。fallbackProviders/stallLog 保留既有显式 patch 即刻更新进程环境投影的规则。
+next_run 值在新 Run
+准入时捕获；reload 不改写活跃 Run。读取 maxOutputTokens 等数量字段保持数字，
+不会当作认证 token 脱敏。新增 maxOutputTokens/disablePromptCache/lsp 的有效值与
+来源、applied 可用于确认；旧 Host 缺少 application 时不能补造已生效事实。
+这里的 application 描述 Host 默认配置的生效边界；Session 设置的实时请求边界
+见 [Client 契约](CLIENT_CONTRACT.md#配置生效边界)。回归步骤见
+[FEATURE_298 验收指南](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#2026-10-30-sdk-组合与配置边界)。
+
 本节描述 alpha.11 之后的未发布收口，优先于下文历史版本的嵌入示例。
 完整产品执行只由独立共享 Host 拥有。产品使用 `ensureKodaXClient` / `connectKodaXClient`；
 可信底层接入使用 `ensureKodaXRuntime` / `connectKodaXRuntime`。连接关闭只释放本连接。

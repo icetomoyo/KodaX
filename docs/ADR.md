@@ -1,5 +1,85 @@
 # KodaX Architecture Decision Records
 
+## Standalone Windows Shell cleanup evidence — 2026-10-30 (unreleased)
+
+Standalone Shell commands and environment probes outside a verified supervising
+Windows Job now start through a private stdin gate inside an existing effect Job.
+The caller registers durable recovery evidence before opening the gate. Target
+argv, environment, stdin, output and exit status retain their original meanings;
+native sandbox and already supervised Host paths retain their existing ownership.
+The gate reuses the existing effect Job and adds no external dependency. Its
+bootstrap/start receipt adds approximately 6 KiB to the bundled CLI. Together with
+the SDK contracts, the allowance first became 5 MiB + 16 KiB from the committed
+5 MiB baseline; 5 MiB + 8 KiB was an intermediate local allowance. The subsequent
+Host view-read close fence brought the measured CLI to 5,259,331 bytes, 67 bytes
+above that allowance. A further 1 KiB brings the final budget to 5 MiB + 17 KiB.
+These changes add no third-party dependency; the eager-dependency and cold-entry
+fences remain.
+The gate's bootstrap cannot load target runtime preloads or Bun project config;
+the target receives its original environment only after admission. Preparation
+consumes the original deadline, and an expired gate cannot start user effects.
+Target-start acknowledgements distinguish failed spawn from an executing command,
+preserving the existing host fallback and background-start contracts.
+
+Job admission is distinct from Job drain. Only the supervisor's zero-active-process
+result can confirm this command's cleanup, including detached descendants. The
+in-process child binding supplies that authority to normal/owner cleanup. Failed
+drain, incomplete legacy process trees and lost recovery evidence remain unknown;
+neither root exit nor a bare missing PID grants cleanup confirmation. On owner
+death, the effect Job closes and terminates its children; historical records without
+a retained authoritative drain still remain unresolved rather than inventing proof.
+
+The environment-isolation tests must fail when cleanup is skipped and retain the
+diagnostic directory. Actual PID and registry checks cover normal exit, cancellation
+and timeout. See the [cleanup acceptance gate](test-guides/ISSUE_159_v0.7.69_REGRESSION_GUIDE.md#2026-10-30-standalone-shell-cleanup-addendum).
+
+## Explicit profile/work-mode intersection — 2026-10-30 (unreleased)
+
+Keep alpha.11's Coding compatibility path for explicit SDK profiles, prompt
+overrides and tool policies unless the host opts the root Run into
+`context.workModePolicy: 'intersect'`. With the opt-in, `workMode` selects the
+surface while the existing profile, verification requirements, exclusions,
+visibility predicate, connector bindings and authorization remain authoritative.
+The preset only narrows builtin tool availability; it cannot grant permission.
+Specialized children with `currentAgentId` keep their declaration even if a root
+context is copied. Default Coder mode selection is unchanged.
+
+Schema/discovery and runtime dispatch share the work-surface restriction.
+Native and bridged calls recheck discoverability before authorization, preventing
+stale inventories from restoring an excluded tool. Standalone tool executors
+remain independently usable. The public `resolveWorkMode` helper and managed
+`onEffectiveConfig.workMode` expose the effective choice; Session settings expose
+only the requested choice. Recovery persists the composition setting and still
+requires fresh authority bindings. See the
+[integration contract](../public_docs/sdk/embedder-guide.md#partner--agent-intersection-unreleased-after-alpha11)
+and [offline acceptance](test-guides/FEATURE_247_v0.7.97_TEST_GUIDE.md).
+
+The unified Host accepts Partner identity without turning that metadata into
+authority. Persona and opaque profile identifiers do not impose extra tool restrictions.
+Trusted Main evaluates explicit policies through `services.createExecutionProfile`,
+using the Session's actual Host catalog and lease metadata. The pure-data snapshot
+retains names and all predicate inputs; target dispatch checks them again.
+The Host binds it with `workModePolicy: 'intersect'`; persona-only profiles impose
+no extra ceiling, and root `authorization.tools` intersects any profile ceiling. Actor authorization remains independent. Snapshot
+identity participates in input/continuation admission; recovery requires fresh
+bindings. Browser-consumable profile types stay in a dependency-free contract.
+Root recovery also retains the admitted profile names/metadata and independent
+authorization tool ceiling as non-secret evidence. Every recovery and subsequent
+binding intersects it with fresh authority, so repeated Host restarts cannot
+widen a Run. A persona-only replacement does not erase an existing ceiling.
+This internal evidence is not a public Runtime configuration or authority grant
+and never substitutes for a current lease or authorization callback. Missing historical evidence stays
+unknown rather than being reconstructed from the new profile.
+Only a policy proven to come entirely from the trusted profile can be rebuilt
+from that evidence. Arbitrary callbacks still require fresh bindings. Recovery
+keeps the original persona and verification contract while accepting fresh leases
+and narrower tool authority.
+`runs.read().effectiveConfig` persists the last assembled executable scope and model
+projection, alongside actual mode/profile/verification, without inventing old Run values.
+Capability version 2 rejects older Hosts that cannot preserve this contract. Global defaults have explicit application boundaries, distinct from
+live Session settings and from values already captured by an admitted Run.
+See [composition and configuration](SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布).
+
 ## Unified Host SDK ownership cutover — 2026-10-29 (unreleased)
 
 FEATURE_298 now retires public in-process product ownership. Default/embedded

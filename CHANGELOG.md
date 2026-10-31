@@ -21,6 +21,36 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Stabilize executor registration revision fingerprints using normalized JSON
+  content, including persisted and rediscovered registrations.
+- Distinguish POSIX sandbox dependency, interpreter and seccomp diagnostics while
+  preserving authorized once-only host fallback and its actual isolation state.
+- Put standalone Windows Shell commands and environment probes behind a registered
+  Job gate. Verify descendant drain before retiring recovery records; fail cleanup
+  acceptance instead of only warning when verification is unavailable.
+- Compare checkpoint write times at millisecond precision so a filesystem's
+  fractional timestamp cannot discard fresh recovery state as future-dated.
+- Drain admitted Session view and item reads before Host-owner disposal completes,
+  preventing released reads from recreating storage indexes after shutdown.
+
+- Give Partner the selected generic Agent surface without persona-based restrictions.
+  Evaluate explicit policies against the Host catalog, retain metadata ceilings across
+  native/MCP/child routes, and keep allowed Actor lease calls working. Persist and
+  expose actual executable/model tool scopes, including after Host restart.
+  Repeated root recovery preserves original tool ceilings, persona and verification
+  while intersecting fresh authority; arbitrary callbacks still require rebinding.
+
+- Support Partner on the unified Host through trusted Main execution-profile
+  snapshots, intersecting Agent mode with existing profile/tool/lease ceilings.
+  Expose actual Run workMode and honor extension activeTools in effective scope;
+  keep standalone profile compatibility and specialist child declarations.
+- Preserve Actor checkpoint followup across daemon IPC and restart, and route
+  SA Script through its managed executor. Apply live plan effort to actual
+  Provider requests as well as the view.
+- Keep numeric token configuration typed, capture saved output/cache/LSP/tier
+  defaults for new Runs, and expose per-field application boundaries. Clearing
+  defaults cannot revive old bootstrap projections or remove external env values;
+  older Hosts retain unknown application support.
 - Refresh `kodax_manual` topic guidance for retired verification/journal paths,
   work modes, original tool results, token estimates, task reports, question
   deadlines, Skill policy and sandbox readiness. Exact query IDs/aliases now
