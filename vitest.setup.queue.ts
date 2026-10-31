@@ -16,7 +16,10 @@
  *
  * Registered via `setupFiles` in `vitest.config.ts`.
  */
-import { beforeEach } from 'vitest';
+import { mkdtempSync, rmdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { afterAll, beforeEach } from 'vitest';
 // IMPORTANT: import from the `@kodax-ai/agent/messaging/queue` subpath,
 // NOT the `@kodax-ai/agent` root barrel.
 //
@@ -31,6 +34,21 @@ import { beforeEach } from 'vitest';
 // `./types.js` (pure types), so it has zero module-load side effects
 // and a safe dependency surface for global test setup.
 import { _resetMessageQueueForTests } from '@kodax-ai/agent/messaging/queue';
+
+// Standalone shell/LSP tests also register managed children. Give each test
+// file a private fallback before application imports, rather than inheriting
+// the developer's config home. Explicit per-test overrides still take priority;
+// vi.unstubAllEnvs() restores this fallback. Do not preload the agent barrel.
+const defaultTestConfigHome = mkdtempSync(path.join(tmpdir(), 'kodax-vitest-home-'));
+process.env.KODAX_HOME = defaultTestConfigHome;
+afterAll(() => {
+  try {
+    rmdirSync(defaultTestConfigHome);
+  } catch (error: unknown) {
+    // Nonempty homes retain evidence for potentially unverified child cleanup.
+    if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+  }
+});
 
 // Daemon processes intentionally outlive ordinary clients. Bind daemons
 // launched by this Vitest worker to the worker PID so a forced worker exit can

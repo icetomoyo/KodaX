@@ -29,6 +29,77 @@ describe.runIf(process.platform === 'win32')('managed child cleanup query reuse'
     tempHome = '';
   });
 
+  it('preserves stale registrations with reused PIDs and missing root identity without per-record OS queries', async () => {
+    tempHome = await mkdtemp(path.join(tmpdir(), 'kodax-managed-missing-root-'));
+    const ownerPid = 97_000;
+    const pids = Array.from({ length: 8 }, (_, index) => 97_001 + index);
+    const signal = vi.spyOn(process, 'kill').mockImplementation((pid, value) => {
+      if (value !== 0) throw new Error('Unverified registrations must not signal a process');
+      if (pids.includes(pid)) return true;
+      throw Object.assign(new Error('gone'), { code: 'ESRCH' });
+    });
+    spawnSyncMock.mockReturnValue({ status: 0, stdout: JSON.stringify({
+      ProcessId: pids[0], CreationDate: '2026-01-01T00:00:00Z', CommandLine: 'unrelated.exe',
+    }) });
+    const directory = path.join(tempHome, 'runtime', 'processes', 'children');
+    await mkdir(directory, { recursive: true });
+    const records = pids.map(pid => {
+      const registrationId = '95bc0da4-8673-43c6-a8e7-a2c081da6dce';
+      return { file: `${pid}.${registrationId}.json`, bytes: JSON.stringify({
+        version: 4, registrationId, pid, ownerPid, registeredAtMs: 100,
+        ownerProcessStartIdentity: 'windows:retired-owner', kind: 'historical-probe',
+        command: 'retired-node.exe', processTreeComplete: false,
+      }) };
+    });
+    await Promise.all(records.map(record => writeFile(path.join(directory, record.file), record.bytes)));
+
+    await expect(cleanupRegisteredManagedChildren({ configHome: tempHome })).resolves.toEqual({
+      killed: 0, pruned: 0, skipped: pids.length,
+    });
+    expect(spawnSyncMock).not.toHaveBeenCalled();
+    expect(signal.mock.calls.every(([, value]) => value === 0)).toBe(true);
+    for (const record of records) {
+      await expect(readFile(path.join(directory, record.file), 'utf8')).resolves.toBe(record.bytes);
+    }
+  });
+
+  it('rejects reused root identities from one shared snapshot without per-record command queries', async () => {
+    tempHome = await mkdtemp(path.join(tmpdir(), 'kodax-managed-reused-root-'));
+    const ownerPid = 97_000;
+    const pids = Array.from({ length: 8 }, (_, index) => 97_001 + index);
+    vi.spyOn(process, 'kill').mockImplementation((pid, value) => {
+      if (value !== 0) throw new Error('Reused PIDs must not be signalled');
+      if (pids.includes(pid)) return true;
+      throw Object.assign(new Error('gone'), { code: 'ESRCH' });
+    });
+    spawnSyncMock.mockImplementation((_command: string, args: string[]) => ({
+      status: 0,
+      stdout: args.join(' ').includes('Select-Object ProcessId,CreationDate,CommandLine')
+        ? JSON.stringify({ ProcessId: pids[0], CreationDate: '2026-01-01T00:00:00Z', CommandLine: 'unrelated.exe' })
+        : pids.map(pid => `${pid},4,222`).join('\n'),
+    }));
+    const directory = path.join(tempHome, 'runtime', 'processes', 'children');
+    await mkdir(directory, { recursive: true });
+    const records = pids.map(pid => {
+      const registrationId = '95bc0da4-8673-43c6-a8e7-a2c081da6dce';
+      return { file: `${pid}.${registrationId}.json`, bytes: JSON.stringify({
+        version: 4, registrationId, pid, ownerPid, registeredAtMs: 100,
+        ownerProcessStartIdentity: 'windows:retired-owner', kind: 'historical-probe',
+        command: 'retired-node.exe', processStartIdentity: '111', processTreeComplete: false,
+      }) };
+    });
+    await Promise.all(records.map(record => writeFile(path.join(directory, record.file), record.bytes)));
+
+    await expect(cleanupRegisteredManagedChildren({ configHome: tempHome })).resolves.toEqual({
+      killed: 0, pruned: 0, skipped: pids.length,
+    });
+    expect(spawnSyncMock).toHaveBeenCalledTimes(1);
+    expect(spawnSyncMock.mock.calls[0]?.[1].join(' ')).not.toContain('Select-Object ProcessId,CreationDate,CommandLine');
+    for (const record of records) {
+      await expect(readFile(path.join(directory, '.unresolved', record.file), 'utf8')).resolves.toBe(record.bytes);
+    }
+  });
+
   it('queries one current owner identity once for all of its records', async () => {
     tempHome = await mkdtemp(path.join(tmpdir(), 'kodax-managed-owner-cache-'));
     setAgentConfigHome(tempHome);

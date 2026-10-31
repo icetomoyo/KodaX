@@ -25,6 +25,66 @@ async function closeFixtureHost(clients, configHome) {
   return owner.runtimeId;
 }
 
+test('resume remains bounded with historical registrations whose root PIDs have been reused', {
+  skip: process.platform !== 'win32', timeout: 30_000,
+}, async t => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-startup-reused-pids-'));
+  const configHome = path.join(homeDir, '.kodax');
+  const registry = path.join(configHome, 'runtime/processes/children');
+  const clients = [];
+  const records = [];
+  let passed = false;
+  try {
+    await mkdir(registry, { recursive: true });
+    const ownerPid = 2_146_999_999;
+    assert.throws(() => process.kill(ownerPid, 0), { code: 'ESRCH' });
+    // The live test process is an unrelated reused PID. A faulty cleanup must
+    // never gain termination authority from these deliberately incomplete records.
+    for (let index = 0; index < 512; index++) {
+      const registrationId = randomUUID();
+      const hasIdentity = index % 2 === 0;
+      const file = `${process.pid}.${registrationId}.json`;
+      const bytes = JSON.stringify({
+        version: 4, registrationId, pid: process.pid, ownerPid, registeredAtMs: 100,
+        ownerProcessStartIdentity: 'windows:retired-owner',
+        kind: 'startup-reused-pid-fixture', command: 'no-command-is-executed',
+        ...(hasIdentity ? { processStartIdentity: '1' } : {}), processTreeComplete: false,
+      });
+      records.push({ file, bytes, hasIdentity });
+      await writeFile(path.join(registry, file), bytes);
+    }
+    const sessionId = '20261031_000001_371000000002';
+    const messages = [{ role: 'user', content: 'Preserve this saved history while recovering.' }];
+    await new FileSessionStorage({ sessionsDir: path.join(configHome, 'sessions'), configHome })
+      .save(sessionId, { title: 'Resume with historical records', gitRoot: homeDir, messages });
+    for (let generation = 0; generation < 2; generation++) {
+      const started = performance.now();
+      const client = await ensureKodaXClient({ homeDir, daemonStartupTimeoutMs: 12_000 });
+      clients.push(client);
+      const readyMs = Math.round(performance.now() - started);
+      assert.ok(readyMs < 10_000, `Historical registry recovery took ${readyMs} ms`);
+      assert.equal((await client.sessions.read(sessionId)).msgCount, messages.length);
+      const history = await client.sessions.readHistory(sessionId, { limit: 10 });
+      assert.ok(history.items.some(item => item.text.includes(messages[0].content)));
+      for (const record of records) {
+        const file = path.join(registry, ...(record.hasIdentity ? ['.unresolved'] : []), record.file);
+        assert.equal(await readFile(file, 'utf8'), record.bytes, 'Recovery must retain the original evidence');
+      }
+      t.diagnostic(`512 historical reused-PID records: generation ${generation + 1} ready ${readyMs} ms`);
+      await closeFixtureHost(clients, configHome);
+    }
+    const saved = await new FileSessionStorage({ sessionsDir: path.join(configHome, 'sessions'), configHome }).load(sessionId);
+    assert.deepEqual(saved.messages, messages);
+    passed = true;
+  } finally {
+    await closeFixtureHost(clients, configHome);
+    if (passed) {
+      assert.equal(path.dirname(homeDir), path.resolve(os.tmpdir()));
+      await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } else t.diagnostic(`Retained isolated fixture: ${homeDir}`);
+  }
+});
+
 test('concurrent resume clients recover exited Windows trees without per-record helper startup', {
   skip: process.platform !== 'win32', timeout: 30_000,
 }, async t => {

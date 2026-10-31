@@ -148,6 +148,54 @@ also passed separately after its final cleanup changes.
 
 ## Evidence still missing
 
+### 2026-10-31 recurrence coverage
+
+The original alpha.10 investigation above remains historical. The locally
+rebuilt alpha.11 recurrence is a second initial-recovery branch, not removal
+of the complete-exited-tree optimization. Both failed real bootstrap attempts
+stopped before runtime readiness; the real registry held 3,264 records, 2,103
+without root start identity. Do not clear this registry to make startup fast.
+
+Run the new deterministic cases through the public cleanup API:
+
+```powershell
+npx vitest run packages/agent/src/runtime/managed-child-processes.cache.test.ts
+```
+
+They failed before their respective fixes with eight OS lookups per eight
+records. Missing root identities now require zero OS queries and preserve each
+original file byte-for-byte. Known reused identities require one shared snapshot
+and zero per-record command-line queries; their original bytes survive in the
+existing `.unresolved` quarantine. All process signals in these fixtures must be
+existence checks only. Matching identities and unknown snapshot results retain
+the original confirmation path and exact termination fences.
+
+The native isolated public-SDK comparison measured 7,286 ms / eight queries
+before and 3 ms / zero queries after for eight missing-identity records. A
+3,264-record patched sweep took 146 ms. No native probe touched the real home.
+
+```powershell
+node --test tests/bundled-startup-recovery.test.mjs
+```
+
+This additionally starts the real bundled Host with 512 records whose PID is
+the unrelated live test process (half missing identity, half known mismatch).
+It requires readiness below 10 seconds, reads saved history, verifies exact
+Host/Job shutdown and repeats recovery in a new generation. All evidence bytes
+and saved messages must survive both generations. Observed cold/restart times
+were 2,369 / 1,493 ms. The original 220-tree case remained green at 2,471 ms,
+with 46-ms first concurrent history reads and 1,576-ms restart. Timings are local
+isolated observations, not an SLA or real-home before/after comparison.
+
+The representative standalone LSP suite left six registry files in an isolated
+substitute user profile before test-home isolation and zero there afterwards.
+`tests/test-home-isolation.test.ts` guards the private fallback and restoration
+after environment stubs. Explicit default-path tests must unset `KODAX_HOME`;
+ordinary tests must not use a developer's actual home. Nonempty temporary homes
+are retained as evidence, not recursively deleted while cleanup is uncertain.
+
+## Remaining un-attributed observation
+
 The historical 16-second Session read remains un-attributed. A separate isolated
 public-SDK probe ran 16 `whoami` tool Runs in full-access temporary Sessions:
 all completed in 23,904 ms; 63 sampled Session reads peaked at 1,444 ms (first:

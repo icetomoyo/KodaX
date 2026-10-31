@@ -208,6 +208,44 @@ Host readiness after the fix took 1,896 ms; the two reported Sessions read in
 slow baseline, so this last real-home timing is acceptance, not a same-input
 before/after comparison. No registry was cleared or user Host force-replaced.
 
+### Startup recurrence: missing identities and reused PIDs (2026-10-31)
+
+The locally rebuilt alpha.11 again timed out before the default Host became
+ready. Both bootstrap attempts stopped at the initial managed-child recovery
+boundary. The registry contained 3,264 version-4 records, including 2,103 without
+the original root start identity. Thirty-two non-Run records with missing root
+identity referred to currently live/reused PIDs at the time of inspection.
+
+The previous complete-exited-tree fix remained present. A different branch
+still queried each live PID's command line through synchronous PowerShell,
+even when the original identity was missing or the shared snapshot could
+already reject a reused PID. A native public-SDK probe with eight missing-identity
+records took 7,286 ms and eight queries. With the shortcut, the same shape took
+3 ms and no queries; 3,264 records took 146 ms. These are isolated measurements,
+not a same-input measurement of the user's default Host.
+
+Missing original identities now stay unknown at their original registry paths.
+Known mismatched identities use the existing quarantine path and retain their
+original bytes. Matching identities and unavailable snapshot identities still
+use the original command-line/creation-time confirmation. No termination or
+Run-drain authority is inferred from these shortcuts. No timeout was increased.
+
+The bundled regression adds 512 mixed missing/reused identity records with an
+unrelated live test-process PID. Readiness took 2,369 ms and restart 1,493 ms,
+with saved history and every registry record preserved. The earlier 220-tree
+case also passed (2,471 ms ready, 46 ms first history reads, 1,576 ms restart).
+Two real-process command-mismatch fixtures now capture the root identity so
+they continue to exercise command verification; missing-identity evidence is
+covered separately. These measurements precede main-branch integration.
+
+Standalone LSP tests also reproduced a separate contributing source of registry
+growth: six records were left under a deliberately isolated substitute user
+profile when no config-home override was supplied. Global Vitest setup now
+assigns each test file a private temporary fallback `KODAX_HOME`, while explicit
+overrides remain supported. Nonempty fallback homes retain diagnostic evidence;
+they are never recursively cleared as a substitute for verified process cleanup.
+Tests that exercise the homedir fallback explicitly unset the environment override.
+
 ### Remaining first-read evidence
 
 The historical 16,011-ms read has not been independently reproduced or causally

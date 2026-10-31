@@ -49,9 +49,12 @@ describe("paste-cache disk I/O", () => {
   beforeEach(async () => {
     tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "kodax-paste-cache-"));
     mockHomedir.mockReturnValue(tempHome);
+    // This suite explicitly exercises the mocked homedir fallback.
+    vi.stubEnv("KODAX_HOME", undefined);
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await fs.rm(tempHome, { recursive: true, force: true });
   });
 

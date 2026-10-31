@@ -622,6 +622,10 @@ function getPosixCommandLine(pid: number): PosixCommandLineLookup {
 
 function isConfirmedRecord(record: ManagedChildProcessRecord): boolean | undefined {
   if (process.platform === 'win32') {
+    // A command line cannot identify the original process without its recorded start identity.
+    if (record.processStartIdentity === undefined) return undefined;
+    const currentIdentity = readProcessStartIdentity(record.pid);
+    if (currentIdentity !== undefined && currentIdentity !== record.processStartIdentity) return false;
     const lookup = getWindowsProcessInfo(record.pid);
     if (lookup.status === 'unknown') {
       return undefined;
@@ -634,7 +638,7 @@ function isConfirmedRecord(record: ManagedChildProcessRecord): boolean | undefin
       return false;
     }
     const creationMs = parseWindowsDate(info.CreationDate);
-    if (creationMs === undefined || record.processStartIdentity === undefined) {
+    if (creationMs === undefined) {
       return undefined;
     }
     const identity = (BigInt(creationMs) + 11_644_473_600_000n).toString();
