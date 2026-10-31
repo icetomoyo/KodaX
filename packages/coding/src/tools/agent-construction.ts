@@ -168,7 +168,7 @@ export async function toolScaffoldAgent(
       content: {
         instructions: `${description}\n\nTODO: replace with the agent's full operating instructions.`,
         tools: [],
-        reasoning: { default: 'balanced', max: 'deep', escalateOnRevise: false },
+        reasoning: { default: 'medium', max: 'high' },
       },
     };
 

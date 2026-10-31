@@ -177,7 +177,7 @@ export type {
   Handoff,
   ReasoningDepth,
 } from './primitives/agent.js';
-export { createAgent, createHandoff } from './primitives/agent.js';
+export { createAgent, createHandoff, normalizeAgentReasoningProfile } from './primitives/agent.js';
 
 // Base Session interface (the @experimental thick KodaXSessionLineage at root
 // stays as the coding-preset session implementation; this is the Layer A

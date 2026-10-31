@@ -75,7 +75,8 @@ describe('buildAdmissionManifest', () => {
       maxBudget: 5000,
     };
     const manifest = buildAdmissionManifest({ name: 'rich', content });
-    expect(manifest.reasoning?.default).toBe('balanced');
+    expect(manifest.reasoning?.default).toBe('medium');
+    expect(manifest.reasoning?.max).toBe('high');
     expect(manifest.model).toBe('claude-sonnet-4-6');
     expect(manifest.provider).toBe('anthropic');
     expect(manifest.effort).toBe('high');

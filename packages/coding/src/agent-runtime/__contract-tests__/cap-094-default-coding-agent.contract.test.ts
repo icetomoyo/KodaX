@@ -67,8 +67,7 @@ describe('CAP-094: default coding agent declaration constructor contract', () =>
 
   it('CAP-DEFAULT-AGENT-002: overrides passed to createDefaultCodingAgent are preserved in the returned Agent', () => {
     const customReasoning = {
-      default: 'deep' as const,
-      escalateOnRevise: true,
+      default: 'high' as const,
     };
     const customGuardrail = {
       kind: 'output' as const,
@@ -108,19 +107,11 @@ describe('CAP-094: default coding agent declaration constructor contract', () =>
     // FEATURE_100 P3.6t declaratively pins the default middleware
     // policy (CAP-094-001c) on the declaration.
     expect(Array.isArray(agent.middleware)).toBe(true);
-    // FEATURE_078 (v0.7.29): `reasoning` is intentionally always present
-    // on the SA declaration — the L2 default of the L1-L4 chain. The
-    // exact shape is defined by `DEFAULT_CODING_REASONING_PROFILE` and
-    // pinned by CAP-DEFAULT-AGENT-002c below.
-    expect(agent.reasoning).toBeDefined();
+    expect(agent.reasoning).toBeUndefined();
   });
 
-  it('CAP-DEFAULT-AGENT-002c: default reasoning profile is { default: balanced, max: deep, escalateOnRevise: true } — FEATURE_078 L2 contract', () => {
+  it('CAP-DEFAULT-AGENT-002c: built-in root inherits Session effort without a legacy role ceiling', () => {
     const agent = createDefaultCodingAgent();
-    expect(agent.reasoning).toEqual({
-      default: 'balanced',
-      max: 'deep',
-      escalateOnRevise: true,
-    });
+    expect(agent.reasoning).toBeUndefined();
   });
 });

@@ -3513,6 +3513,17 @@ V1-multi-harness vestige with no industry analogue.
    used, so every provider × effort emits the same `reasoning_effort` /
    `thinking.budget_tokens`. This is the behaviour-preservation contract for
    the provider-budget change.
+6. **2026-10-31 correction: root effort is a selection, not a role default's
+   ceiling.** Built-in AMA Worker, SA and Script roots inherit the current
+   selected effort. Retired `balanced/deep` profiles must not lower
+   `high/xhigh/max`. Explicit specialist profiles use native effort values;
+   legacy declarations normalize at SDK/admission/resolution boundaries.
+   Self-modification uses the same effort ordering. Explicit child `auto`
+   remains a selection; omission alone inherits. Profile aliases and scoped
+   rejection learning may still change physical wire parameters without
+   rewriting user intent. Client `activity.reasoning` exposes the primary
+   request's attributed wire result, separately from Session settings;
+   new requests clear it and stale/child results cannot replace it.
 
 **Consequences**:
 

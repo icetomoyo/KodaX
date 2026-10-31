@@ -104,7 +104,7 @@ if (process.argv[2] === '--run-fixture') {
     passed = true;
   });
 
-  test('Product Client resumes a failed durable session in a cold Host only with fresh authorization', { timeout: 60_000 }, async t => {
+  test('Product Client retains AMA effort across cold recovery and resumes only with fresh authorization', { timeout: 60_000 }, async t => {
     const folder = await mkdtemp(path.join(await realpath(os.tmpdir()), 'kodax-bundle-crash-host-'));
     const configHome = path.join(folder, '.kodax'), sessionsDir = path.join(configHome, 'sessions');
     const sessionId = 'host-crash-recovery', provider = 'cold-host-fixture';
@@ -166,7 +166,8 @@ if (process.argv[2] === '--run-fixture') {
     });
     server.listen(0, '127.0.0.1'); await once(server, 'listening');
     const connection = { name: provider, protocol: 'openai', model: 'fixture', contextWindow: 32768, maxOutputTokens: 1024,
-      baseUrl: `http://127.0.0.1:${server.address().port}/v1`, apiKeyEnv: 'KODAX_COLD_HOST_UNSET' };
+      baseUrl: `http://127.0.0.1:${server.address().port}/v1`, apiKeyEnv: 'KODAX_COLD_HOST_UNSET',
+      reasoning: { efforts: ['medium', 'high', 'max'], default: 'medium' } };
     await mkdir(configHome, { recursive: true });
     await writeFile(path.join(configHome, 'config.json'), JSON.stringify({ customProviders: [connection] }));
     await storage.save(sessionId, { title: 'Original durable title', gitRoot: folder, messages: [
@@ -191,13 +192,15 @@ if (process.argv[2] === '--run-fixture') {
           lastAuthorization = await authorizer.authorizeExecution(request, services);
           return lastAuthorization;
         } });
-      await runtime.sessions.updateSettings(sessionId, { provider, model: 'fixture', reasoningMode: 'off' });
     }
     await startHost();
+    await client.sessions.updateSettings(sessionId, { provider, model: 'fixture', effort: 'high', agentMode: 'ama',
+      permissionMode: 'full-access', repoIntelligenceMode: 'off' });
     const originalRuntimeId = runtime.identity.runtimeId;
     const first = await client.inputs.submit({ sessionId, inputId: randomUUID(), text: 'Continue the saved task.' });
     assert.ok(first.runId);
     assert.equal((await client.runs.await(first.runId)).phase, 'failed');
+    assert.equal(wireInputs[0].reasoning_effort, 'high');
     const oldCredential = lastAuthorization.credential;
     await stopHost();
     const failed = await storage.load(sessionId);
@@ -206,6 +209,7 @@ if (process.argv[2] === '--run-fixture') {
     assert.equal(failed.title, 'Original durable title');
     await startHost();
     assert.notEqual(runtime.identity.runtimeId, originalRuntimeId);
+    assert.equal((await client.sessions.getSettings(sessionId)).effort, 'high');
     const beforeRead = authorizations.length, beforeWire = wireInputs.length;
     await client.sessions.readHistory(sessionId, { limit: 100 });
     assert.equal(authorizations.length, beforeRead);
@@ -213,15 +217,23 @@ if (process.argv[2] === '--run-fixture') {
     await assert.rejects(runtime.credentials.resumeScoped(oldCredential.leaseId, async () => 'forbidden'));
     const secondFailure = await client.inputs.submit({ sessionId, inputId: randomUUID(), text: 'Retry the saved task.' });
     assert.equal((await client.runs.await(secondFailure.runId)).phase, 'failed');
+    assert.ok(wireInputs.every(input => input.reasoning_effort === 'high'));
     await stopHost();
     const failedAgain = await storage.load(sessionId);
     assert.equal(failedAgain.errorMetadata.consecutiveErrors, failed.errorMetadata.consecutiveErrors + 1);
     assert.equal(failedAgain.title, 'Original durable title');
     await startHost();
+    assert.equal((await client.sessions.getSettings(sessionId)).effort, 'high');
+    await client.sessions.updateSettings(sessionId, { effort: 'max' });
+    let displayedEffort;
+    const observation = await client.sessions.observe(sessionId, view => { displayedEffort = view.settings.effort; });
+    try { assert.equal(displayedEffort, 'max'); } finally { observation.close(); }
     rejectPrimary = false;
     const beforeResume = authorizations.length;
     const resumed = await client.inputs.submit({ sessionId, inputId: randomUUID(), text: 'Resume with fresh authorization.' });
     assert.equal((await client.runs.await(resumed.runId)).phase, 'completed');
+    assert.equal(wireInputs.at(-1).reasoning_effort, 'max');
+    assert.equal((await client.sessions.getSettings(sessionId)).effort, 'max');
     assert.equal(authorizations.length, beforeResume + 1);
     assert.equal(authorizations.at(-1).runtimeId, runtime.identity.runtimeId);
     await stopHost();

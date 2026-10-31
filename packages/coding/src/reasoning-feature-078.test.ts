@@ -29,6 +29,10 @@ import {
 // ---------------------------------------------------------------------------
 
 describe('compareEfforts', () => {
+  it('retains the medium policy rank for custom efforts without reading object prototype keys', () => {
+    expect(compareEfforts('custom-effort', 'medium')).toBe(0);
+    expect(compareEfforts('constructor', 'high')).toBe(-1);
+  });
   it('orders the canonical ladder: none < auto < low < medium < high < xhigh < max', () => {
     expect(compareEfforts('none', 'auto')).toBe(-1);
     expect(compareEfforts('auto', 'low')).toBe(-1);
@@ -95,6 +99,11 @@ describe('resolveRoleEffort — L1 hard kill switch', () => {
 });
 
 describe('resolveRoleEffort — backward compat (no profile)', () => {
+  it('accepts native specialist efforts without mapping them through retired mode names', () => {
+    expect(resolveRoleEffort('max', { default: 'xhigh', max: 'max' })).toBe('xhigh');
+    expect(resolveRoleEffort('high', { default: 'max', max: 'max' })).toBe('high');
+    expect(resolveRoleEffort('max', { default: 'auto' })).toBe('auto');
+  });
   it('collapses to userCeiling when no profile is supplied', () => {
     expect(resolveRoleEffort('medium')).toBe('medium');
     expect(resolveRoleEffort('high')).toBe('high');

@@ -59,6 +59,12 @@ export interface RuntimeSessionState {
     model?: string;
   };
   thinkingLevel?: KodaXWireReasoningEffort;
+  /** Per-Run control fence; never persisted or sent to a Provider. */
+  selectionRevision?: number;
+}
+
+export function markRuntimeSelectionChanged(state: Pick<RuntimeSessionState, 'selectionRevision'>): void {
+  state.selectionRevision = (state.selectionRevision ?? 0) + 1;
 }
 
 export function createRuntimeExtensionState(

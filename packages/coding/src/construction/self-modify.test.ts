@@ -214,6 +214,13 @@ describe('validateSelfModify', () => {
   });
 
   describe('reasoning ceiling', () => {
+    it('rejects native max above high instead of losing the comparison through legacy ranks', () => {
+      const result = validateSelfModify({ prev: buildContent(),
+        next: buildContent({ reasoning: { default: 'high', max: 'max' } }),
+        prevName: 'alpha', nextName: 'alpha', prevKind: 'agent', nextKind: 'agent',
+        userReasoningCeiling: 'high', budgetRemaining: 3 });
+      expect(result).toMatchObject({ ok: false, rule: 'reasoning-ceiling' });
+    });
     it('passes when no ceiling is configured', () => {
       const result = validateSelfModify({
         prev: buildContent(),

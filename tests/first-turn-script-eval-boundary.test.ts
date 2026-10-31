@@ -18,7 +18,7 @@ it('records a resolved Runtime failure instead of reporting an empty error', asy
     expect(record.error).toContain('Provider request failed');
   } finally {
     if (path.dirname(path.resolve(directory)) !== path.resolve(os.tmpdir())) throw new Error('Unsafe cleanup');
-    await fs.rm(directory, { recursive: true, force: true });
+    await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 45000);
 
@@ -44,7 +44,7 @@ it.each([
     expect(fetcher).not.toHaveBeenCalled();
   } finally {
     if (path.dirname(path.resolve(directory)) !== path.resolve(os.tmpdir())) throw new Error('Unsafe cleanup');
-    await fs.rm(directory, { recursive: true, force: true });
+    await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 45000);
 
@@ -83,7 +83,7 @@ it('returns original refusal and successful recovery in one Script cell without 
     expect(record.groundtruth.protectedUnchanged).toBe(true); expect(fetcher).not.toHaveBeenCalled();
   } finally {
     if (path.dirname(path.resolve(directory)) !== path.resolve(os.tmpdir())) throw new Error('Unsafe cleanup');
-    await fs.rm(directory, { recursive: true, force: true });
+    await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 45000);
 
@@ -109,6 +109,6 @@ it.each([2, 4])('counts %i nested calls against one shared cap and blocks a late
     expect(fetcher).not.toHaveBeenCalled();
   } finally {
     if (path.dirname(path.resolve(directory)) !== path.resolve(os.tmpdir())) throw new Error('Unsafe cleanup');
-    await fs.rm(directory, { recursive: true, force: true });
+    await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 45000);

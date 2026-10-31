@@ -1890,338 +1890,122 @@ function formatDaemonHealth(
 }
 // ============== CLI Help Topics ==============
 
+function printHelpLine(label: string, description = ''): void {
+  console.log(chalk.dim(label) + description);
+}
+
 const CLI_HELP_TOPICS: Record<string, () => void> = {
   acp: () => {
     console.log(chalk.cyan('\nACP Server\n'));
     console.log(chalk.bold('Overview:'));
-    console.log(
-      chalk.dim(
-        '  Run KodaX as a stdio ACP server so editors and IDEs can connect directly.',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  Session creation, prompt streaming, cancellation, and permission prompts reuse KodaX runtime semantics.\n',
-      ),
-    );
+    printHelpLine('  Run KodaX as a stdio ACP server so editors and IDEs can connect directly.');
+    printHelpLine('  Session creation, prompt streaming, cancellation, and permission prompts reuse KodaX runtime semantics.\n');
     console.log(chalk.bold('Command:'));
-    console.log(chalk.dim('  kodax acp serve [options]\n'));
+    printHelpLine('  kodax acp serve [options]\n');
     console.log(chalk.bold('Options:'));
-    console.log(
-      chalk.dim('  --cwd <dir>                  ') +
-        'Working directory exposed to ACP sessions',
-    );
-    console.log(
-      chalk.dim('  -m, --provider <name>        ') + 'Provider to use',
-    );
-    console.log(
-      chalk.dim('  --model <name>               ') + 'Model override',
-    );
-    console.log(
-      chalk.dim('  --effort <level>             ') +
-        'Reasoning effort: off, auto, low, medium, high, xhigh, max, or model-supported value',
-    );
-    console.log(
-      chalk.dim('  --reasoning <mode>           ') +
-        'Compatibility mode: off, auto, quick, balanced, deep',
-    );
-    console.log(
-      chalk.dim('  --repo-intelligence <mode>   ') +
-        'Repo intelligence mode: auto, full, light, off',
-    );
-    console.log(
-      chalk.dim('  --repo-intelligence-trace    ') +
-        'Emit repo intelligence trace metadata/logging',
-    );
-    console.log(
-      chalk.dim('  -t, --thinking               ') +
-        'Compatibility alias for --reasoning auto',
-    );
-    console.log(
-      chalk.dim('  --permission-mode <mode>     ') +
-        'Initial mode: plan, accept-edits, auto, full-access',
-    );
-    console.log(
-      chalk.dim('  KODAX_ACP_LOG=<level>        ') +
-        'stderr log level: off, error, info, debug\n',
-    );
+    printHelpLine('  --cwd <dir>                  ', 'Working directory exposed to ACP sessions');
+    printHelpLine('  -m, --provider <name>        ', 'Provider to use');
+    printHelpLine('  --model <name>               ', 'Model override');
+    printHelpLine('  --effort <level>             ', 'Reasoning effort: off, auto, low, medium, high, xhigh, max, or model-supported value');
+    printHelpLine('  --reasoning <mode>           ', 'Compatibility mode: off, auto, quick, balanced, deep');
+    printHelpLine('  --repo-intelligence <mode>   ', 'Repo intelligence mode: auto, full, light, off');
+    printHelpLine('  --repo-intelligence-trace    ', 'Emit repo intelligence trace metadata/logging');
+    printHelpLine('  -t, --thinking               ', 'Compatibility alias for --reasoning auto');
+    printHelpLine('  --permission-mode <mode>     ', 'Initial mode: plan, accept-edits, auto, full-access');
+    printHelpLine('  KODAX_ACP_LOG=<level>        ', 'stderr log level: off, error, info, debug\n');
     console.log(chalk.bold('Examples:'));
-    console.log(chalk.dim('  kodax acp serve'));
-    console.log(
-      chalk.dim(
-        '  kodax acp serve --cwd C:\\repo --permission-mode accept-edits',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  kodax acp serve -m openai --model gpt-5.4 --reasoning balanced\n',
-      ),
-    );
+    printHelpLine('  kodax acp serve');
+    printHelpLine('  kodax acp serve --cwd C:\\repo --permission-mode accept-edits');
+    printHelpLine('  kodax acp serve -m openai --model gpt-5.4 --effort medium\n');
   },
   skill: () => {
     console.log(chalk.cyan('\nSkill Utilities\n'));
     console.log(chalk.bold('Overview:'));
-    console.log(
-      chalk.dim(
-        '  Use built-in skill packaging commands without starting an agent session.',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  These commands are thin wrappers around the builtin skill-creator tools.\n',
-      ),
-    );
+    printHelpLine('  Use built-in skill packaging commands without starting an agent session.');
+    printHelpLine('  These commands are thin wrappers around the builtin skill-creator tools.\n');
     console.log(chalk.bold('Commands:'));
-    console.log(
-      chalk.dim('  kodax skill init <name> [options]   ') +
-        'Create a new skill scaffold',
-    );
-    console.log(
-      chalk.dim('  kodax skill validate <dir>          ') +
-        'Validate a skill directory',
-    );
-    console.log(
-      chalk.dim('  kodax skill eval --skill-path ...   ') +
-        'Run end-to-end eval workspace generation',
-    );
-    console.log(
-      chalk.dim('  kodax skill grade <workspace>       ') +
-        'Grade eval runs into grading.json files',
-    );
-    console.log(
-      chalk.dim('  kodax skill analyze <workspace>     ') +
-        'Analyze benchmark variance and failures',
-    );
-    console.log(
-      chalk.dim('  kodax skill compare <workspace>     ') +
-        'Blind-compare two configs across runs',
-    );
-    console.log(
-      chalk.dim('  kodax skill package <dir> [options] ') +
-        'Package a skill as .skill',
-    );
-    console.log(
-      chalk.dim('  kodax skill install <input> [opts]  ') +
-        'Install a skill from dir or .skill',
-    );
+    printHelpLine('  kodax skill init <name> [options]   ', 'Create a new skill scaffold');
+    printHelpLine('  kodax skill validate <dir>          ', 'Validate a skill directory');
+    printHelpLine('  kodax skill eval --skill-path ...   ', 'Run end-to-end eval workspace generation');
+    printHelpLine('  kodax skill grade <workspace>       ', 'Grade eval runs into grading.json files');
+    printHelpLine('  kodax skill analyze <workspace>     ', 'Analyze benchmark variance and failures');
+    printHelpLine('  kodax skill compare <workspace>     ', 'Blind-compare two configs across runs');
+    printHelpLine('  kodax skill package <dir> [options] ', 'Package a skill as .skill');
+    printHelpLine('  kodax skill install <input> [opts]  ', 'Install a skill from dir or .skill');
     console.log(chalk.bold('Examples:'));
-    console.log(
-      chalk.dim('  kodax skill init release-notes --dest ./.kodax/skills'),
-    );
-    console.log(chalk.dim('  kodax skill validate ./.kodax/skills/my-skill'));
-    console.log(
-      chalk.dim(
-        '  kodax skill eval --skill-path ./.kodax/skills/my-skill --evals ./.kodax/skills/my-skill/evals/evals.json --workspace ./iteration-1',
-      ),
-    );
-    console.log(chalk.dim('  kodax skill grade ./iteration-1'));
-    console.log(chalk.dim('  kodax skill analyze ./iteration-1'));
-    console.log(
-      chalk.dim(
-        '  kodax skill compare ./iteration-1 --config-a with_skill --config-b without_skill',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  kodax skill package ./.kodax/skills/my-skill --output ./my-skill.skill',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  kodax skill install ./my-skill.skill --dest ~/.kodax/skills --force\n',
-      ),
-    );
+    printHelpLine('  kodax skill init release-notes --dest ./.kodax/skills');
+    printHelpLine('  kodax skill validate ./.kodax/skills/my-skill');
+    printHelpLine('  kodax skill eval --skill-path ./.kodax/skills/my-skill --evals ./.kodax/skills/my-skill/evals/evals.json --workspace ./iteration-1');
+    printHelpLine('  kodax skill grade ./iteration-1');
+    printHelpLine('  kodax skill analyze ./iteration-1');
+    printHelpLine('  kodax skill compare ./iteration-1 --config-a with_skill --config-b without_skill');
+    printHelpLine('  kodax skill package ./.kodax/skills/my-skill --output ./my-skill.skill');
+    printHelpLine('  kodax skill install ./my-skill.skill --dest ~/.kodax/skills --force\n');
   },
   sessions: () => {
     console.log(chalk.cyan('\nSession Management\n'));
     console.log(chalk.bold('Overview:'));
-    console.log(
-      chalk.dim(
-        '  KodaX automatically saves conversation sessions, allowing you to',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  resume work later or switch between different conversations.\n',
-      ),
-    );
+    printHelpLine('  KodaX automatically saves conversation sessions, allowing you to');
+    printHelpLine('  resume work later or switch between different conversations.\n');
     console.log(chalk.bold('Options:'));
-    console.log(
-      chalk.dim('  -c, --continue       ') +
-        'Continue most recent non-empty conversation',
-    );
-    console.log(
-      chalk.dim('  -r, --resume [value] ') +
-        'Resume by ID or exact title (no value = searchable picker)',
-    );
-    console.log(
-      chalk.dim('  -n, --new            ') +
-        'Legacy no-op; current CLI already starts a fresh session by default',
-    );
-    console.log(
-      chalk.dim('  -s, --session <op>   ') +
-        'Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID',
-    );
-    console.log(
-      chalk.dim('  --no-session         ') +
-        'Disable session persistence (print mode only)\n',
-    );
+    printHelpLine('  -c, --continue       ', 'Continue most recent non-empty conversation');
+    printHelpLine('  -r, --resume [value] ', 'Resume by ID or exact title (no value = searchable picker)');
+    printHelpLine('  -n, --new            ', 'Legacy no-op; current CLI already starts a fresh session by default');
+    printHelpLine('  -s, --session <op>   ', 'Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID');
+    printHelpLine('  --no-session         ', 'Disable session persistence (print mode only)\n');
     console.log(chalk.bold('Examples:'));
-    console.log(
-      chalk.dim('  kodax                      ') +
-        '# Start new session (interactive)',
-    );
-    console.log(
-      chalk.dim('  kodax -c                   ') +
-        '# Continue recent conversation',
-    );
-    console.log(
-      chalk.dim('  kodax -r                   ') +
-        '# Search and select a saved session',
-    );
-    console.log(
-      chalk.dim('  kodax -r 20260219_143052   ') + '# Resume specific session',
-    );
-    console.log(
-      chalk.dim('  kodax -r "Review runtime"  ') +
-        '# Resume a unique exact title; duplicates open the picker',
-    );
-    console.log(
-      chalk.dim('  kodax -s list              ') + '# List all sessions',
-    );
-    console.log(
-      chalk.dim('  kodax -s delete 20260219   ') + '# Delete a session',
-    );
-    console.log(
-      chalk.dim('  kodax -p "task" --no-session') + ' # Run without saving\n',
-    );
+    printHelpLine('  kodax                      ', '# Start new session (interactive)');
+    printHelpLine('  kodax -c                   ', '# Continue recent conversation');
+    printHelpLine('  kodax -r                   ', '# Search and select a saved session');
+    printHelpLine('  kodax -r 20260219_143052   ', '# Resume specific session');
+    printHelpLine('  kodax -r "Review runtime"  ', '# Resume a unique exact title; duplicates open the picker');
+    printHelpLine('  kodax -s list              ', '# List all sessions');
+    printHelpLine('  kodax -s delete 20260219   ', '# Delete a session');
+    printHelpLine('  kodax -p "task" --no-session', ' # Run without saving\n');
   },
   project: () => {
     console.log(chalk.cyan('\nProject Mode\n'));
     console.log(chalk.bold('Overview:'));
-    console.log(
-      chalk.dim(
-        '  Project mode spans two surfaces: non-REPL bootstrap commands and REPL /project commands.',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  Current workflow includes planning, quality review, brainstorm sessions, harness-verified execution, and runtime artifacts under .agent/project/.\n',
-      ),
-    );
+    printHelpLine('  Project mode spans two surfaces: non-REPL bootstrap commands and REPL /project commands.');
+    printHelpLine('  Current workflow includes planning, quality review, brainstorm sessions, harness-verified execution, and runtime artifacts under .agent/project/.\n');
     console.log(chalk.bold('REPL /project Commands:'));
-    console.log(
-      chalk.dim('  /project status [prompt] [--features|--progress]') +
-        '  Status + guided analysis',
-    );
-    console.log(
-      chalk.dim('  /project plan [#index|topic]                 ') +
-        '  Generate project or feature planning truth',
-    );
-    console.log(
-      chalk.dim('  /project quality                             ') +
-        '  Deterministic workflow health + release review',
-    );
-    console.log(
-      chalk.dim('  /project brainstorm                          ') +
-        '  UI-driven discovery flow',
-    );
-    console.log(
-      chalk.dim('  /project next [prompt|#index] [--no-confirm] ') +
-        '  Harness-verified feature execution',
-    );
-    console.log(
-      chalk.dim('  /project auto [prompt] [--max=N|--confirm]   ') +
-        '  REPL-side auto-continue with pause support',
-    );
-    console.log(
-      chalk.dim('  /project pause                               ') +
-        '  Stop /project auto',
-    );
-    console.log(
-      chalk.dim('  /project verify [#index|--last]              ') +
-        '  Rerun deterministic harness verification',
-    );
-    console.log(
-      chalk.dim('  /project edit <prompt>                       ') +
-        '  Edit current-stage truth',
-    );
-    console.log(
-      chalk.dim('  /project analyze [prompt]                    ') +
-        '  AI project analysis',
-    );
-    console.log(
-      chalk.dim('  /project reset [--all]                       ') +
-        '  Clear progress or remove project truth files\n',
-    );
+    printHelpLine('  /project status [prompt] [--features|--progress]', '  Status + guided analysis');
+    printHelpLine('  /project plan [#index|topic]                 ', '  Generate project or feature planning truth');
+    printHelpLine('  /project quality                             ', '  Deterministic workflow health + release review');
+    printHelpLine('  /project brainstorm                          ', '  UI-driven discovery flow');
+    printHelpLine('  /project next [prompt|#index] [--no-confirm] ', '  Harness-verified feature execution');
+    printHelpLine('  /project auto [prompt] [--max=N|--confirm]   ', '  REPL-side auto-continue with pause support');
+    printHelpLine('  /project pause                               ', '  Stop /project auto');
+    printHelpLine('  /project verify [#index|--last]              ', '  Rerun deterministic harness verification');
+    printHelpLine('  /project edit <prompt>                       ', '  Edit current-stage truth');
+    printHelpLine('  /project analyze [prompt]                    ', '  AI project analysis');
+    printHelpLine('  /project reset [--all]                       ', '  Clear progress or remove project truth files\n');
     console.log(chalk.bold('Current Semantics:'));
-    console.log(
-      chalk.dim(
-        '  - /project next and /project auto are verifier-gated, not self-declared completion',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  - /project plan writes the latest plan to .agent/project/session_plan.md',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  - /project quality combines deterministic checks with optional model-generated guidance',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  - /project brainstorm aligns requirements into .agent/project/alignment.md\n',
-      ),
-    );
+    printHelpLine('  - /project next and /project auto are verifier-gated, not self-declared completion');
+    printHelpLine('  - /project plan writes the latest plan to .agent/project/session_plan.md');
+    printHelpLine('  - /project quality combines deterministic checks with optional model-generated guidance');
+    printHelpLine('  - /project brainstorm aligns requirements into .agent/project/alignment.md\n');
     console.log(chalk.bold('Examples:'));
-    console.log(chalk.dim('  kodax -h project'));
-    console.log(
-      chalk.dim(
-        '  kodax  # then: /project brainstorm -> /project plan -> /project next',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  kodax  # then: /project quality | /project verify --last | /project auto --max=3\n',
-      ),
-    );
+    printHelpLine('  kodax -h project');
+    printHelpLine('  kodax  # then: /project brainstorm -> /project plan -> /project next');
+    printHelpLine('  kodax  # then: /project quality | /project verify --last | /project auto --max=3\n');
   },
   auto: () => {
     console.log(chalk.cyan('\nAuto Mode\n'));
     console.log(chalk.bold('Auto Mode (-y, --auto):'));
-    console.log(chalk.dim('  Backward-compatibility alias kept for scripts.'));
-    console.log(
-      chalk.dim(
-        '  Non-REPL CLI already runs in auto mode by default, so this flag currently has no additional effect.\n',
-      ),
-    );
+    printHelpLine('  Backward-compatibility alias kept for scripts.');
+    printHelpLine('  Non-REPL CLI already runs in auto mode by default, so this flag currently has no additional effect.\n');
     console.log(chalk.bold('Options:'));
-    console.log(
-      chalk.dim('  -y, --auto             ') +
-        'Backward-compat alias (no-op in non-REPL CLI)\n',
-    );
+    printHelpLine('  -y, --auto             ', 'Backward-compat alias (no-op in non-REPL CLI)\n');
     console.log(chalk.bold('Examples:'));
-    console.log(
-      chalk.dim('  kodax -y "refactor code"          ') +
-        '# Legacy alias; same as plain non-REPL run\n',
-    );
+    printHelpLine('  kodax -y "refactor code"          ', '# Legacy alias; same as plain non-REPL run\n');
   },
   provider: () => {
     const providerNames = getAvailableProviderNames();
     console.log(chalk.cyan('\nLLM Providers\n'));
     console.log(chalk.bold('Overview:'));
-    console.log(
-      chalk.dim(
-        '  KodaX supports multiple LLM providers. Configure via -m option',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  or set default in ~/.kodax/config.json. Use --model to override the default model.\n',
-      ),
-    );
+    printHelpLine('  KodaX supports multiple LLM providers. Configure via -m option');
+    printHelpLine('  or set default in ~/.kodax/config.json. Use --model to override the default model.\n');
     console.log(chalk.bold('Available Providers:'));
     providerNames.forEach((name) => {
       const detail =
@@ -2232,121 +2016,39 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     });
     console.log();
     console.log(chalk.bold('Key Options:'));
-    console.log(chalk.dim('  -m, --provider <name> ') + 'Provider to use');
-    console.log(
-      chalk.dim('  --model <name>        ') +
-        'Model override for the selected provider\n',
-    );
+    printHelpLine('  -m, --provider <name> ', 'Provider to use');
+    printHelpLine('  --model <name>        ', 'Model override for the selected provider\n');
     console.log(chalk.bold('Examples:'));
-    console.log(chalk.dim('  kodax -m anthropic "task"     ') + '# Use Claude');
-    console.log(
-      chalk.dim('  kodax -m openai --model gpt-5.4 "task"') +
-        '# Override model',
-    );
-    console.log(
-      chalk.dim('  /model                        ') +
-        '# Switch in REPL (saves to config)\n',
-    );
+    printHelpLine('  kodax -m anthropic "task"     ', '# Use Claude');
+    printHelpLine('  kodax -m openai --model gpt-5.4 "task"', '# Override model');
+    printHelpLine('  /model                        ', '# Switch in REPL (saves to config)\n');
   },
   thinking: () => {
     console.log(chalk.cyan('\nReasoning Effort\n'));
-    console.log(chalk.bold('Overview:'));
     console.log(
-      chalk.dim(
-        '  Reasoning controls how much deliberate analysis KodaX should apply.',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  Use --effort for new configs; --reasoning remains as a compatibility alias.\n',
-      ),
-    );
-    console.log(chalk.bold('Options:'));
-    console.log(
-      chalk.dim('  --effort <level>     ') +
-        'Set reasoning effort: off, auto, low, medium, high, xhigh, max, or model-supported value',
-    );
-    console.log(
-      chalk.dim('  --reasoning <mode>   ') +
-        'Compatibility mode: off, auto, quick, balanced, deep',
-    );
-    console.log(
-    );
-    console.log(
-      chalk.dim('  -t, --thinking       ') +
-        'Compatibility alias for --reasoning auto\n',
-    );
-    console.log(chalk.bold('Examples:'));
-    console.log(
-      chalk.dim('  kodax --effort high "design the architecture"     ') +
-        '# High effort',
-    );
-    console.log(
-      chalk.dim('  kodax --reasoning deep "design the architecture"   ') +
-        '# Legacy alias for high effort',
-    );
-    console.log(
-      chalk.dim('  kodax --reasoning balanced -p "analyze this bug"   ') +
-        '# Medium-depth reasoning',
-    );
-    console.log(
-      chalk.dim('  kodax -t "review this PR"                           ') +
-        '# Alias for auto',
-    );
-    console.log(
-      chalk.dim('  /reasoning balanced                                 ') +
-        '# Set in REPL\n',
+      'Use --effort <level> or /effort <level>.\n'
+      + 'Levels: none, minimal, auto, low, medium, high, xhigh, max, or model-supported values.\n'
+      + 'Example: kodax --effort high "design the architecture"\n'
+      + 'Legacy --reasoning <mode> and -t/--thinking remain accepted.\n',
     );
   },
   print: () => {
     console.log(chalk.cyan('\nPrint Mode\n'));
     console.log(chalk.bold('Overview:'));
-    console.log(
-      chalk.dim(
-        '  Run a single task and exit. Useful for scripting and CI/CD.\n',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  `--mode json` is a scripting surface, not the ACP server protocol.\n',
-      ),
-    );
+    printHelpLine('  Run a single task and exit. Useful for scripting and CI/CD.\n');
+    printHelpLine('  `--mode json` is a scripting surface, not the ACP server protocol.\n');
     console.log(chalk.bold('Options:'));
-    console.log(chalk.dim('  -p, --print <text>  ') + 'Run task and exit');
-    console.log(
-      chalk.dim('  --mode json         ') +
-        'Emit newline-delimited JSON events to stdout for scripts/CI',
-    );
-    console.log(
-      chalk.dim('  --model <name>      ') +
-        'Override the selected provider model',
-    );
-    console.log(
-      chalk.dim('  --no-session        ') + 'Disable session saving\n',
-    );
+    printHelpLine('  -p, --print <text>  ', 'Run task and exit');
+    printHelpLine('  --mode json         ', 'Emit newline-delimited JSON events to stdout for scripts/CI');
+    printHelpLine('  --model <name>      ', 'Override the selected provider model');
+    printHelpLine('  --no-session        ', 'Disable session saving\n');
     console.log(chalk.bold('Examples:'));
-    console.log(
-      chalk.dim('  kodax -p "fix the bug in auth.ts"   ') + '# Quick fix',
-    );
-    console.log(
-      chalk.dim('  kodax -p "generate tests" --reasoning balanced') +
-        ' # With reasoning',
-    );
-    console.log(
-      chalk.dim('  kodax -p "task" -m openai --model gpt-5.4') +
-        ' # Provider + model override',
-    );
-    console.log(
-      chalk.dim('  kodax -p "task" --no-session        ') + '# Stateless run',
-    );
-    console.log(
-      chalk.dim('  kodax --mode json "inspect auth flow"') +
-        ' # Structured JSONL output',
-    );
-    console.log(
-      chalk.dim('  kodax -p "task" -m anthropic --reasoning deep') +
-        ' # Explicit provider selection\n',
-    );
+    printHelpLine('  kodax -p "fix the bug in auth.ts"   ', '# Quick fix');
+    printHelpLine('  kodax -p "generate tests" --effort medium', ' # With reasoning');
+    printHelpLine('  kodax -p "task" -m openai --model gpt-5.4', ' # Provider + model override');
+    printHelpLine('  kodax -p "task" --no-session        ', '# Stateless run');
+    printHelpLine('  kodax --mode json "inspect auth flow"', ' # Structured JSONL output');
+    printHelpLine('  kodax -p "task" -m anthropic --effort high', ' # Explicit provider selection\n');
   },
 };
 
@@ -2801,7 +2503,7 @@ function showBasicHelp(): void {
     '  kodax -h project                 # Project mode workflow across CLI and REPL',
   );
   console.log(
-    '  kodax -p "quick fix" --reasoning balanced  # Quick task with reasoning',
+    '  kodax -p "quick fix" --effort medium  # Quick task with reasoning',
   );
   console.log(
     '  kodax -c                          # Continue recent conversation',

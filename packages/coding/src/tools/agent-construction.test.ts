@@ -85,7 +85,9 @@ describe('scaffold_agent', () => {
     expect(out).toContain('"name": "echo"');
     expect(out).toContain('"version": "0.1.0"');
     expect(out).toContain('"status": "staged"');
-    expect(out).toContain('"default": "balanced"');
+    expect(out).toContain('"default": "medium"');
+    expect(out).toContain('"max": "high"');
+    expect(out).not.toContain('escalateOnRevise');
   });
 
   it('falls back to version "0.1.0" when omitted', async () => {

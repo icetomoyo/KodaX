@@ -180,7 +180,10 @@ export class SessionViewOwner {
         if (currentReasoningRequest(event)) notices.onReasoningEffortRejected?.(event);
       },
       onReasoningResolved: event => {
-        if (currentReasoningRequest(event)) notices.onReasoningResolved?.(event);
+        if (!currentReasoningRequest(event)) return;
+        const { providerRequestId, provider, model, requestedEffort, sentEffort, verified, fallbacks } = event;
+        activity({ reasoning: { providerRequestId, provider, model, requestedEffort, sentEffort, verified, fallbacks } });
+        notices.onReasoningResolved?.(event);
       },
       onOutputSegmentStart: (segment, meta) => {
         if (!isPrimary(meta) || state.activityRunId !== runId) return;
@@ -191,7 +194,7 @@ export class SessionViewOwner {
         if (current.active?.providerRequestId !== segment.providerRequestId) {
           toolInputTexts.clear(); startedTools.clear(); streamEnded = false;
           if (startsOutput || !outputId) segmentInputId = inputSource?.();
-          activity({ streaming: undefined });
+          activity({ streaming: undefined, reasoning: undefined });
         }
         if (!outputId && segment.mode === 'replace' && current.active?.responseId === segment.responseId
           && current.active.providerRequestId !== segment.providerRequestId) {

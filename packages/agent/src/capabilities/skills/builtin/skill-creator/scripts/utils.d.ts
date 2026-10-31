@@ -1,3 +1,3 @@
 export declare function setKodaXSDKForSkillCreator(
-  sdk: Readonly<Record<string, unknown>>,
+  sdk: Readonly<Record<string, unknown>> | null,
 ): void;

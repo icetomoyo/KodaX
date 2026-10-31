@@ -669,6 +669,17 @@ export interface ClientContextBudget {
 
 /** Display facts for the latest Run; worker context is distinct from parent context. */
 export interface ClientSessionActivity {
+  /** Latest primary request's wire result; distinct from the selected Session effort. */
+  readonly reasoning?: {
+    readonly providerRequestId?: string;
+    readonly provider: string;
+    readonly model: string;
+    readonly requestedEffort: string;
+    readonly sentEffort?: string;
+    readonly verified: false;
+    readonly fallbacks: readonly { readonly effort?: string;
+      readonly reason: 'profile' | 'unsupported-effort' | 'unsupported-parameter' | 'cached-rejection' }[];
+  };
   /** Transient request progress; never saved as conversation history or partial tool arguments. */
   readonly streaming?: {
     readonly kind: 'thinking'; readonly providerRequestId: string;
@@ -994,6 +1005,7 @@ export interface ClientSessionSettings {
   readonly compactionReasoning?: boolean | { readonly effort: string };
   readonly provider?: string;
   readonly model?: string;
+  /** Selected effort inherited by the built-in root; wire aliases/rejections do not rewrite it. */
   readonly effort?: string;
   readonly thinking?: boolean;
   readonly reasoningMode?: 'off' | 'auto' | 'quick' | 'balanced' | 'deep';

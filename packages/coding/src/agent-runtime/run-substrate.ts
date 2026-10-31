@@ -312,6 +312,7 @@ import {
   type RuntimeSessionState,
   buildRuntimeSessionState,
   snapshotRuntimeSessionState,
+  markRuntimeSelectionChanged,
 } from './runtime-session-state.js';
 import {
   saveRequiredSessionSnapshot,
@@ -1202,6 +1203,7 @@ async function runSubstrateInContext(
   bindModelSkillSelection(ctx, model => {
     options.modelOverride = model;
     runtimeSessionState.modelSelection.model = model;
+    markRuntimeSelectionChanged(runtimeSessionState);
   }, () => runtimeSessionState.modelSelection.provider ?? options.provider);
   const terminalLiveTurnIds = new Set<string>();
   const emitLiveTurnCompletedOnce = (
@@ -1333,9 +1335,11 @@ async function runSubstrateInContext(
   options.sessionControl?._attach({
     setProvider: (name) => {
       runtimeSessionState.modelSelection.provider = name;
+      markRuntimeSelectionChanged(runtimeSessionState);
     },
     setModel: (model) => {
       runtimeSessionState.modelSelection.model = model;
+      markRuntimeSelectionChanged(runtimeSessionState);
       options.model = model;
       options.modelOverride = model;
     },
@@ -1345,6 +1349,7 @@ async function runSubstrateInContext(
         : reasoning.effort ?? mapLegacyReasoningModeToEffortIntent(
             resolveReasoningMode({ ...options, ...reasoning, reasoningMode: mode }),
           );
+      markRuntimeSelectionChanged(runtimeSessionState);
     },
   });
   const releaseRuntimeBindingCandidate = runtime?.bindController?.(
@@ -1399,6 +1404,12 @@ async function runSubstrateInContext(
     sessionErrorMetadata: errorMetadata,
     repoSignals: repoRoutingSignals ?? undefined,
   });
+  ctx.parentAgentConfig = {
+    ...ctx.parentAgentConfig,
+    get provider() { return runtimeSessionState.modelSelection.provider ?? options.provider; },
+    get model() { return runtimeSessionState.modelSelection.model; },
+    get effort() { return runtimeSessionState.thinkingLevel ?? reasoningPlan.effort; },
+  };
   let currentExecution = await buildReasoningExecutionState(
     {
       ...options,
@@ -1634,6 +1645,7 @@ async function runSubstrateInContext(
     for (let iter = 0; iter < iterationLimit; iter++) {
     const goalTurnStartedAt = Date.now();
     let generationPending = true;
+    const selectionRevision = runtimeSessionState.selectionRevision ?? 0;
     const capacityRevision = events.getContextRecoveryRevision?.();
     try {
       if (events.isGenerationSuspensionRequested?.()) throw new GenerationSuspensionError();
@@ -1688,10 +1700,13 @@ async function runSubstrateInContext(
       }
       turnState.currentProviderName = preparedProviderState.provider;
       turnState.currentModelOverride = preparedProviderState.model;
-      runtimeSessionState.modelSelection.provider = turnState.currentProviderName;
-      runtimeSessionState.modelSelection.model = turnState.currentModelOverride;
       turnState.runtimeThinkingLevel = preparedProviderState.reasoningMode;
-      runtimeSessionState.thinkingLevel = turnState.runtimeThinkingLevel;
+      if ((runtimeSessionState.selectionRevision ?? 0) === selectionRevision) {
+        runtimeSessionState.modelSelection.provider = turnState.currentProviderName;
+        runtimeSessionState.modelSelection.model = turnState.currentModelOverride;
+        runtimeSessionState.thinkingLevel = turnState.runtimeThinkingLevel;
+        markRuntimeSelectionChanged(runtimeSessionState);
+      }
       const streamProvider = resolveProvider(turnState.currentProviderName);
       // Hooks/session settings may switch CLI to native; admit using the actual transport.
       setImagePreparation(streamProvider.getCapabilityProfile().transport === 'native-api');

@@ -26,7 +26,7 @@ import {
   KODAX_REASONING_MODE_SEQUENCE,
 } from '@kodax-ai/llm';
 import type { KodaXBaseProvider } from '@kodax-ai/llm';
-import type { AgentReasoningProfile } from '@kodax-ai/agent';
+export { clampEffort, compareEfforts, resolveRoleEffort } from './reasoning-effort.js';
 import { looksLikeActionableRuntimeEvidence } from './runtime-evidence.js';
 import {
   evaluateProviderPolicy,
@@ -228,20 +228,8 @@ const REVIEW_MASSIVE_LINE_THRESHOLD = 4000;
 const REVIEW_MASSIVE_MODULE_THRESHOLD = 5;
 
 /**
- * Resolve the **L1 user ceiling** for reasoning depth.
- *
- * In FEATURE_078 (v0.7.29) the semantics of `--reasoning <mode>` /
- * `options.reasoningMode` shifted from "all roles use this mode" to
- * "ceiling + bias for default": a hard upper bound on per-role depth
- * with the same value also serving as the suggested default when an
- * Agent declaration has no profile of its own.
- *
- * This function continues to return the user-supplied mode unchanged —
- * what changed is how downstream code consumes it. Direct callers that
- * still treat the return value as the final per-role depth will get
- * pre-FEATURE_078 behaviour (everything pinned to `userCeiling`); they
- * are migrated in this same patch to call `resolveRoleReasoning(...)`
- * instead, which honours the L1-L4 chain.
+ * Compatibility intake for old reasoningMode/thinking SDK options.
+ * Callers prefer explicit effort and convert this fallback to effort once.
  */
 export function resolveReasoningMode(options: KodaXOptions): KodaXReasoningMode {
   if (options.reasoningMode) {
@@ -263,88 +251,6 @@ export function reasoningModeToDepth(
   mode: KodaXReasoningMode,
 ): KodaXThinkingDepth {
   return getDefaultThinkingDepthForMode(mode);
-}
-
-// ---------------------------------------------------------------------------
-// Role-Aware Reasoning Profiles (FEATURE_078, effort-native)
-// ---------------------------------------------------------------------------
-
-const EFFORT_RANK: Record<string, number> = {
-  none: 0,
-  minimal: 0,
-  auto: 1,
-  low: 2,
-  medium: 3,
-  high: 4,
-  xhigh: 5,
-  max: 6,
-};
-
-function effortRank(effort: KodaXWireReasoningEffort): number {
-  return EFFORT_RANK[effort] ?? EFFORT_RANK.medium;
-}
-
-/**
- * Compare two efforts by depth on the canonical ladder. Returns -1, 0, or 1
- * mirroring `Array.prototype.sort`'s comparator contract: lower-rank efforts
- * (`none`) come first, higher-rank (`max`) last. `auto` ranks just above the
- * disabled floor — it means "let the provider pick", always >= no thinking.
- * Unknown custom efforts rank as `medium`.
- */
-export function compareEfforts(
-  a: KodaXWireReasoningEffort,
-  b: KodaXWireReasoningEffort,
-): -1 | 0 | 1 {
-  const rankA = effortRank(a);
-  const rankB = effortRank(b);
-  if (rankA < rankB) return -1;
-  if (rankA > rankB) return 1;
-  return 0;
-}
-
-/**
- * Clamp `effort` to be no deeper than `ceiling`. When `effort` is already at
- * or below the ceiling, it passes through unchanged.
- */
-export function clampEffort(
-  effort: KodaXWireReasoningEffort,
-  ceiling: KodaXWireReasoningEffort,
-): KodaXWireReasoningEffort {
-  return compareEfforts(effort, ceiling) > 0 ? ceiling : effort;
-}
-
-/**
- * Resolve the effective per-role reasoning **effort** through the FEATURE_078
- * decision chain (effort-native single-track form):
- *
- *   L1 (`userCeiling`)              — caller-supplied upper bound + bias
- *   L2 (`profile.default` / `.max`) — Agent declaration's role default
- *
- * The chain takes the agent declaration's default as the base, clamps it to
- * the declaration's `max`, then clamps to the user ceiling as the absolute
- * hard cap. The Agent profile is still expressed in legacy reasoning modes
- * (`AgentReasoningProfile`), so its `default`/`max` are mapped onto the effort
- * ladder. `none` is a hard kill switch. When `profile` is undefined, this
- * collapses to `userCeiling` — exactly the pre-FEATURE_078 behaviour.
- *
- * (FEATURE_193 retired the Scout hint (L3) and the per-role split — the Worker
- * is the sole agent, so the `role` parameter is gone.)
- */
-export function resolveRoleEffort(
-  userCeiling: KodaXWireReasoningEffort,
-  profile?: AgentReasoningProfile,
-): KodaXWireReasoningEffort {
-  // Kill switch: `effort none` can never be re-enabled by a role default.
-  if (userCeiling === 'none') return 'none';
-  if (!profile) return userCeiling;
-
-  const base: KodaXWireReasoningEffort = profile.default
-    ? mapLegacyReasoningModeToEffortIntent(profile.default)
-    : userCeiling;
-  const clampedToProfileMax = profile.max
-    ? clampEffort(base, mapLegacyReasoningModeToEffortIntent(profile.max))
-    : base;
-  return clampEffort(clampedToProfileMax, userCeiling);
 }
 
 // ---------------------------------------------------------------------------

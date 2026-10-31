@@ -340,6 +340,7 @@ describe('runWorkflowModule', () => {
       model: 'claude-sonnet-4-6',
       modelOverride: 'claude-opus-4-8',
       effort: 'high',
+      thinking: false,
       disablePromptCache: false,
       guardrails: [guardrail],
       context: {
@@ -364,6 +365,7 @@ describe('runWorkflowModule', () => {
     expect(childExecutorMock.calls[0]?.options.planModeBlockCheck).toBe(planModeBlockCheck);
     expect(childExecutorMock.calls[0]?.options.parentOptions?.model).toBe('claude-opus-4-8');
     expect(childExecutorMock.calls[0]?.options.parentOptions?.effort).toBe('high');
+    expect(childExecutorMock.calls[0]?.options.parentOptions).toMatchObject({ thinking: false });
     expect(childExecutorMock.calls[0]?.options.parentOptions?.repoIntelligenceMode).toBe('off');
     expect(childExecutorMock.calls[0]?.options.parentOptions?.repoIntelligenceTrace).toBe(true);
     expect(childExecutorMock.calls[0]?.options.parentOptions?.contextDiagnostics).toBe(true);

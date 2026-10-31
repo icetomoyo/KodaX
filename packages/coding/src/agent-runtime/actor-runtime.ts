@@ -713,6 +713,7 @@ async function executeCodingActorTurn(
         model: parentConfig?.model ?? options.modelOverride ?? options.model,
         effort: parentConfig?.effort ?? options.effort,
         reasoningMode: parentConfig?.reasoningMode ?? options.reasoningMode,
+        thinking: parentConfig?.thinking ?? options.thinking,
         repoIntelligenceMode: parentConfig?.repoIntelligenceMode,
         repoIntelligenceTrace: parentConfig?.repoIntelligenceTrace,
         compaction: parentConfig?.compaction ?? options.compaction,

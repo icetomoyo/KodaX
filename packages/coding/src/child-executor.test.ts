@@ -2912,6 +2912,14 @@ describe('executeChildAgents — FEATURE_191 specialist routing (A.2b)', () => {
     expect(childOptions.effort).toBe('high');
   });
 
+  it.each([true, false])('preserves explicit auto for a child instead of inheriting high (readOnly: %s)', async readOnly => {
+    mockRunKodaX.mockResolvedValue(okResult());
+    await executeChildAgents([createBundle({ id: 'cb-effort-auto', readOnly, effort: 'auto' })], createCtx(), createOptions({
+      parentOptions: { provider: 'anthropic', model: 'claude-opus-4-8', effort: 'high' },
+    }));
+    expect(mockRunKodaX.mock.calls[0]?.[0].effort).toBe('auto');
+  });
+
   it('lets a dispatch-level reasoning effort override the parent effort', async () => {
     mockRunKodaX.mockResolvedValue(okResult());
 
@@ -2930,14 +2938,14 @@ describe('executeChildAgents — FEATURE_191 specialist routing (A.2b)', () => {
     expect(childOptions.effort).toBe('max');
   });
 
-  it('uses a specialist-declared reasoning effort before the parent effort', async () => {
+  it.each(['xhigh', 'auto'])('uses specialist effort %s before the parent effort', async effort => {
     registerConstructedAgent(buildSpecialistArtifact({
       name: 'deep-reviewer',
       content: {
         instructions: 'DEEP REVIEWER',
         tools: [{ ref: 'builtin:read' }],
         description: 'deep review',
-        effort: 'xhigh',
+        effort,
       },
     }));
     mockRunKodaX.mockResolvedValue(okResult());
@@ -2948,7 +2956,54 @@ describe('executeChildAgents — FEATURE_191 specialist routing (A.2b)', () => {
     }));
 
     const childOptions = mockRunKodaX.mock.calls[0]![0] as { effort?: string };
-    expect(childOptions.effort).toBe('xhigh');
+    expect(childOptions.effort).toBe(effort);
+  });
+
+  it.each([true, false])('applies native specialist profile to child execution (readOnly: %s)', async readOnly => {
+    registerConstructedAgent(buildSpecialistArtifact({ name: 'profile-reviewer', content: {
+      instructions: 'Review', tools: [{ ref: 'builtin:read' }], reasoning: { default: 'low', max: 'low' },
+    } }));
+    mockRunKodaX.mockResolvedValue(okResult());
+    await executeChildAgents([createBundle({ id: 'cb-effort-profile', readOnly, specialistName: 'profile-reviewer' })],
+      createCtx(), createOptions({ parentOptions: { provider: 'anthropic', effort: 'max' } }));
+    expect(mockRunKodaX.mock.calls[0]?.[0].effort).toBe('low');
+  });
+
+  it.each([true, false].flatMap(readOnly => [
+    { readOnly, selection: { reasoningMode: 'off' as const }, expected: 'none' },
+    { readOnly, selection: { reasoningMode: 'quick' as const }, expected: 'low' },
+    { readOnly, selection: { thinking: false }, expected: 'none' },
+    { readOnly, selection: { effort: 'high', reasoningMode: 'off' as const }, expected: 'high' },
+  ]))('keeps parent compatibility selection $expected with a specialist (readOnly: $readOnly)', async ({ readOnly, selection, expected }) => {
+    registerConstructedAgent(buildSpecialistArtifact({ name: 'profile-compat', content: {
+      instructions: 'Review', tools: [{ ref: 'builtin:read' }], reasoning: { default: 'max', max: 'max' },
+    } }));
+    mockRunKodaX.mockResolvedValue(okResult());
+    await executeChildAgents([createBundle({ id: 'cb-effort-compat', readOnly, specialistName: 'profile-compat' })],
+      createCtx(), createOptions({ parentOptions: { provider: 'anthropic', ...selection } }));
+    expect(mockRunKodaX).toHaveBeenCalledOnce();
+    expect(mockRunKodaX.mock.calls[0]?.[0].effort).toBe(expected);
+  });
+
+  it.each([true, false])('rejects dispatch above a specialist maximum before execution (readOnly: %s)', async readOnly => {
+    registerConstructedAgent(buildSpecialistArtifact({ name: 'profile-cap', content: {
+      instructions: 'Review', tools: [{ ref: 'builtin:read' }], reasoning: { default: 'low', max: 'medium' },
+    } }));
+    const result = await executeChildAgents([createBundle({ id: 'cb-effort-cap', readOnly, specialistName: 'profile-cap', effort: 'max' })],
+      createCtx(), createOptions({ parentOptions: { provider: 'anthropic', effort: 'high' } }));
+    expect(result.results[0]).toMatchObject({ status: 'failed' });
+    expect(result.results[0]?.summary).toContain('exceeds its profile maximum');
+    expect(mockRunKodaX).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])('honors a dispatch override within a legacy specialist profile (readOnly: %s)', async readOnly => {
+    registerConstructedAgent(buildSpecialistArtifact({ name: 'legacy-profile', content: {
+      instructions: 'Review', tools: [{ ref: 'builtin:read' }], reasoning: { default: 'balanced', max: 'deep' },
+    } }));
+    mockRunKodaX.mockResolvedValue(okResult());
+    await executeChildAgents([createBundle({ id: 'cb-effort-profile-override', readOnly, specialistName: 'legacy-profile', effort: 'high' })],
+      createCtx(), createOptions({ parentOptions: { provider: 'anthropic', effort: 'max' } }));
+    expect(mockRunKodaX.mock.calls[0]?.[0].effort).toBe('high');
   });
 
   it('fails when a dispatch effort conflicts with a specialist-declared effort', async () => {

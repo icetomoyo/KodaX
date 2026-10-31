@@ -367,15 +367,26 @@ The automatic Sidecar Verifier is retired. Remove `verifierLog`, `/verifier-log`
 
 原生 provider 的 reasoning 学习记录增加身份 scope；旧的无 scope 记录不用于限制新原生请求或 REPL 可选 effort。账号/密钥/连接变化会隔离学习及 opaque history，仍保留可读历史。CLI bridge 的旧行为保持。请求投影诊断区分 estimated 和 native protocol-input；后者为签名前实际请求对象的哈希，不代表服务端 cache hit 或实际计费。
 
-Reasoning 展示兼容补充（2026-10-31）：Host `settings.effort` 是用户的会话选择，
-AMA Worker 会在其约束下按角色选择单次 effort；例如会话 `high`、Worker `medium`、
-DeepSeek profile 映射后实际发送 `high` 可以同时成立。`onReasoningResolved` 继续保留
-完整请求诊断，`verified:false` 不表示请求失败。CLI 只为本次新发生的
+Reasoning 链路修正（2026-10-31）：Host `settings.effort` 是用户的会话选择，
+内置 AMA Worker、SA 和 Script 根执行继承此选择，不再套用旧的
+`balanced/deep` 角色默认或上限。旧实现把 `high` 压成 `medium` 属于缺口，
+不能因某些 provider 最后又映射回 `high` 而视为正常。只有明确声明的 specialist
+保留其显式 effort 策略；子任务的显式 `auto` 也不再被丢弃为继承父级。
+Agent/构造产物的旧 profile 在接入边界转换为 `medium/high` 等原生 effort，
+不改写调用者对象或存量文件；旧 reasoningMode/thinking SDK 输入仍兼容。
+`onReasoningResolved` 继续保留完整诊断；Client `activity.reasoning` 新增只读的
+主请求结果（provider/model、请求 ID、requested/sent effort、fallbacks、verified）。
+新请求开始时清空，child/旧请求不能覆盖；旧 Host 缺失时不得推断实际档位。
+AMA 扩展的 session hydration、runtime.setThinkingLevel 与 provider:before 现在
+通过既有 Run 隔离机制和同一运行选择生效；工具/Actor/workflow 继承当前选择，
+保留旧 thinking 输入及共享 Actor 预算，不把临时扩展覆盖写成全局默认。
+`verified:false` 不表示失败，也不证明服务端实际采用该强度。CLI 只为本次新发生的
 `unsupported-effort` / `unsupported-parameter` 回退追加结果提示；profile 映射和
 `cached-rejection` 不逐轮追加提示。Space 接手时应保持同样的区分，不应将单次
 Worker/子任务结果写回共享会话选择或全局配置；后续请求通过身份隔离的能力学习自愈。
-状态栏的会话选择也不能被解读为服务端已验证的单次执行档位。本次展示修复通过
-9 个完整文件的 117 项定向回归及源代码/测试类型检查；不新增请求、配置迁移或凭证操作。
+状态栏仍表达会话选择；Space 可用 `activity.reasoning` 展示本次发送结果，
+不把自愈后的 wire 参数回写到会话选择或全局默认。身份隔离的能力学习负责后续请求。
+回归入口见 [effort 链路指南](test-guides/FEATURE_233_v0.7.97_TEST_GUIDE.md)。
 
 
 ## T12-A Main 授权与 OAuth registration

@@ -2,6 +2,8 @@ export interface GradeWorkspaceOptions {
   workspaceDir: string;
   provider?: string;
   model?: string;
+  effort?: string;
+  /** @deprecated Use effort. */
   reasoningMode?: string;
   maxIter?: number;
   cwd?: string;

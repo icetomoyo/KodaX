@@ -6,6 +6,8 @@ export interface CompareWorkspaceOptions {
   markdownPath?: string;
   provider?: string;
   model?: string;
+  effort?: string;
+  /** @deprecated Use effort. */
   reasoningMode?: string;
   maxIter?: number;
   maxPairs?: number;

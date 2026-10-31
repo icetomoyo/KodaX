@@ -245,6 +245,7 @@ import { createExtensionRuntimeSessionController } from '../agent-runtime/middle
 import {
   buildRuntimeSessionState,
   snapshotRuntimeSessionState,
+  markRuntimeSelectionChanged,
   type RuntimeSessionState,
 } from '../agent-runtime/runtime-session-state.js';
 // CAP-010: shared tri-state permission gate. AMA's
@@ -258,6 +259,7 @@ import { listToolDefinitions } from '../tools/index.js';
 import { activateSessionHistoryTools } from '../tools/session-history.js';
 import { runToolDispatch } from '../agent-runtime/tool-dispatch.js';
 import { randomUUID } from 'node:crypto';
+import { getActiveExtensionRuntime, withExtensionRuntimeContext } from '../extensions/runtime.js';
 import { bindModelSkillSelection } from '../skill-invocation-policy.js';
 import { isSkillToolCall, SKILL_ACTION_DEFERRED } from '../tools/skill.js';
 import {
@@ -879,11 +881,29 @@ export async function runManagedTaskViaRunner(
   options: KodaXOptions,
   prompt: string,
   adapterOverride?: Parameters<typeof buildRunnerLlmAdapter>[1],
+  plan?: ReasoningPlan,
+): Promise<KodaXResult> {
+  const extensionRuntime = options.extensionRuntime ?? getActiveExtensionRuntime() ?? undefined;
+  const boundOptions = { ...options, extensionRuntime, context: { ...options.context,
+    runtimeRunId: options.context?.runtimeRunId ?? randomUUID() } };
+  return withExtensionRuntimeContext(() => runManagedTaskViaRunnerInContext(boundOptions, prompt, adapterOverride, plan),
+    extensionRuntime, boundOptions.context.runtimeRunId);
+}
+
+async function runManagedTaskViaRunnerInContext(
+  options: KodaXOptions,
+  prompt: string,
+  adapterOverride?: Parameters<typeof buildRunnerLlmAdapter>[1],
   // Shard 6d-L: accept the reasoning plan produced by `createManagedReasoningPlan`
   // in `task-engine.ts`. Optional so direct Runner invocations from tests
   // (or future SDK consumers) still work without constructing a plan.
   plan?: ReasoningPlan,
 ): Promise<KodaXResult> {
+  const defaults = options.extensionRuntime?.getDefaults?.();
+  if (defaults) options = { ...options,
+    provider: defaults.modelSelection.provider ?? options.provider,
+    modelOverride: defaults.modelSelection.model ?? options.modelOverride,
+    effort: defaults.thinkingLevel ?? options.effort };
   // FEATURE_103 (v0.7.29): apply L5 user-followup escalation once at the
   // AMA entry. Mirrors the SA `runKodaX` wiring so the bumped ceiling
   // propagates uniformly through createReasoningPlan, buildRunnerLlmAdapter,
@@ -1319,18 +1339,13 @@ async function runManagedTaskViaRunnerInner(
     spentBudget: 0,
     currentHarness: initialHarness,
   };
-  const runtimeOptions: KodaXOptions = options.context?.managedWorkBudget
-    ? options
-    : {
-        ...options,
-        context: { ...options.context, managedWorkBudget: budget },
-      };
+  options.context = { ...options.context, managedWorkBudget: budget };
   const extensionRuntime = options.extensionRuntime;
   const managedProtocolPayloadRef: { current: KodaXManagedProtocolPayload | undefined } = {
     current: undefined,
   };
   const substrateBaseCtx = buildToolExecutionContext({
-    options: runtimeOptions,
+    options,
     // FEATURE_247 (R7) — same session id `sessionIdRef` uses below, so tool
     // handlers can attribute an AMA call to the right concurrent session.
     sessionId: options.session?.id ?? resolvedSessionId,
@@ -1961,6 +1976,7 @@ async function runManagedTaskViaRunnerInner(
     userInputDegradationCache,
     () => options.context?.interruptInput?.hasPendingInputs?.() === true
       || hasQueuedFollowUp(options.events ?? {}, messageQueueAgentId),
+    () => runtimeSessionState,
   );
 
   // FEATURE_143 (v0.7.36) — `plan.promptOverlay` (routing-notes block:
@@ -2033,19 +2049,28 @@ async function runManagedTaskViaRunnerInner(
     thinkingLevel: resolveInitialRuntimeThinkingLevel(options),
   });
   recovery.runtimeSessionState = runtimeSessionState;
+  baseCtx.parentAgentConfig = {
+    ...baseCtx.parentAgentConfig,
+    get provider() { return runtimeSessionState.modelSelection.provider ?? options.provider; },
+    get model() { return runtimeSessionState.modelSelection.model; },
+    get effort() { return runtimeSessionState.thinkingLevel ?? resolveInitialRuntimeThinkingLevel(options); },
+  };
   bindModelSkillSelection(baseCtx, model => {
     options.modelOverride = model;
     runtimeSessionState.modelSelection.model = model;
+    markRuntimeSelectionChanged(runtimeSessionState);
   }, () => runtimeSessionState.modelSelection.provider ?? options.provider);
   options.sessionControl?._attach({
     setProvider: (provider) => {
       options.provider = provider;
       runtimeSessionState.modelSelection.provider = provider;
+      markRuntimeSelectionChanged(runtimeSessionState);
     },
     setModel: (model) => {
       options.model = model;
       options.modelOverride = model;
       runtimeSessionState.modelSelection.model = model;
+      markRuntimeSelectionChanged(runtimeSessionState);
     },
     setReasoning: (mode, reasoning) => {
       options.reasoningMode = mode;
@@ -2053,6 +2078,7 @@ async function runManagedTaskViaRunnerInner(
       if (reasoning !== undefined) options.thinking = reasoning.thinking;
       runtimeSessionState.thinkingLevel = options.effort
         ?? mapLegacyReasoningModeToEffortIntent(resolveReasoningMode(options));
+      markRuntimeSelectionChanged(runtimeSessionState);
     },
   });
   const initialMessages = options.session?.generationCheckpoint ? resolvedInitial.messages : appendPromptIfNotDuplicate(
@@ -2155,7 +2181,8 @@ async function runManagedTaskViaRunnerInner(
     contextTokenSnapshotRef,
     activeToolDefinitions: projectScriptModelTools(entryAgent, entryAgent.tools ?? []),
     ...(scriptMode ? { canReadPagedContent: canReadWithModelTools(entryAgent, projectScriptModelTools(entryAgent, entryAgent.tools ?? [])) } : {}),
-    get reasoning() { return resolveManagedProviderReasoning(options, entryAgent); },
+    get reasoning() { return resolveManagedProviderReasoning({ ...options,
+      effort: runtimeSessionState.thinkingLevel ?? options.effort }, entryAgent); },
     canonicalManagedContext: () => {
       const snapshot = captureManagedRunContext();
       pendingCompactedRuntimeContext = snapshot.runtimeFingerprint;

@@ -495,6 +495,7 @@ export async function runWorkflowFromOptions(
       model: workflowOptions.modelOverride ?? workflowOptions.model,
       effort: workflowOptions.effort,
       reasoningMode: workflowOptions.reasoningMode,
+      thinking: workflowOptions.thinking,
       repoIntelligenceMode: workflowOptions.context?.repoIntelligenceMode,
       repoIntelligenceTrace: workflowOptions.context?.repoIntelligenceTrace,
       compaction: workflowOptions.compaction,

@@ -210,10 +210,11 @@ export function buildToolExecutionContext(
     // Forward parent guardrails so nested Agent turns share auto-mode state.
     guardrails: options.guardrails,
     parentAgentConfig: {
-      provider: options.provider,
-      model: options.modelOverride ?? options.model,
-      reasoningMode: options.reasoningMode,
-      effort: options.effort,
+      get provider() { return options.provider; },
+      get model() { return options.modelOverride ?? options.model; },
+      get reasoningMode() { return options.reasoningMode; },
+      get effort() { return options.effort; },
+      get thinking() { return options.thinking; },
       repoIntelligenceMode: options.context?.repoIntelligenceMode,
       repoIntelligenceTrace: options.context?.repoIntelligenceTrace,
       ...(options.compaction !== undefined ? { compaction: { ...options.compaction } } : {}),

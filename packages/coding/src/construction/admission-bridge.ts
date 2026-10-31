@@ -22,6 +22,7 @@
  */
 
 import type { Agent, AgentManifest, InvariantId } from '@kodax-ai/agent';
+import { normalizeAgentReasoningProfile } from '@kodax-ai/agent';
 
 import type {
   AgentContent,
@@ -124,7 +125,7 @@ export function buildAdmissionManifest(
     instructions: content.instructions,
     ...(tools !== undefined ? { tools: tools as unknown as AgentManifest['tools'] } : {}),
     ...(handoffs !== undefined ? { handoffs: handoffs as unknown as AgentManifest['handoffs'] } : {}),
-    ...(content.reasoning !== undefined ? { reasoning: content.reasoning } : {}),
+    ...(content.reasoning !== undefined ? { reasoning: normalizeAgentReasoningProfile(content.reasoning) } : {}),
     ...(content.guardrails !== undefined
       ? {
           guardrails: content.guardrails.map((g) => ({

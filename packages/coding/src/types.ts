@@ -2188,6 +2188,7 @@ export interface KodaXOptions {
   provider: string;
   model?: string;
   modelOverride?: string;
+  /** Selected root effort; legacy reasoningMode/thinking are fallback inputs only. */
   effort?: KodaXWireReasoningEffort;
   thinking?: boolean;
   reasoningMode?: KodaXReasoningMode;
@@ -2897,6 +2898,7 @@ export interface KodaXToolExecutionContext {
     readonly provider: string;
     readonly model?: string;
     readonly reasoningMode?: KodaXReasoningMode;
+    readonly thinking?: boolean;
     readonly effort?: KodaXWireReasoningEffort;
     readonly repoIntelligenceMode?: KodaXRepoIntelligenceMode;
     readonly repoIntelligenceTrace?: boolean;

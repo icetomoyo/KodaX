@@ -41,6 +41,7 @@
 import type { Agent, AgentManifest, AgentTool, Handoff, InvariantId } from '@kodax-ai/agent';
 import {
   _resetAdmittedAgentBindings,
+  normalizeAgentReasoningProfile,
   setAdmittedAgentBindings,
 } from '@kodax-ai/agent';
 import { workerAgent } from '../agents/task-engine-agents.js';
@@ -400,7 +401,7 @@ function buildAgentFromContent(name: string, content: AgentContent): Agent {
     instructions: content.instructions,
     ...(tools.length > 0 ? { tools } : {}),
     ...(handoffs && handoffs.length > 0 ? { handoffs } : {}),
-    ...(content.reasoning ? { reasoning: content.reasoning } : {}),
+    ...(content.reasoning ? { reasoning: normalizeAgentReasoningProfile(content.reasoning) } : {}),
     ...(content.guardrails
       ? {
           guardrails: content.guardrails.map((g) => {

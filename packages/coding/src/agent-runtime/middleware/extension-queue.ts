@@ -75,6 +75,7 @@ import {
   getExtensionStateBucket,
   normalizeQueuedRuntimeMessage,
   normalizeRuntimeModelSelection,
+  markRuntimeSelectionChanged,
 } from '../runtime-session-state.js';
 import { rebaseContextTokenSnapshot } from '../../token-accounting.js';
 import type { ExtensionEventEmitter } from '../stream-handler-wiring.js';
@@ -114,9 +115,11 @@ export async function settleExtensionTurn(
     },
     setModelSelection: (next) => {
       runtimeSessionState.modelSelection = normalizeRuntimeModelSelection(next);
+      markRuntimeSelectionChanged(runtimeSessionState);
     },
     setThinkingLevel: (level) => {
       runtimeSessionState.thinkingLevel = level;
+      markRuntimeSelectionChanged(runtimeSessionState);
     },
   });
 }
@@ -249,10 +252,12 @@ export function createExtensionRuntimeSessionController(state: RuntimeSessionSta
     getModelSelection: () => ({ ...state.modelSelection }),
     setModelSelection: (next: { provider?: string; model?: string }) => {
       state.modelSelection = normalizeRuntimeModelSelection(next);
+      markRuntimeSelectionChanged(state);
     },
     getThinkingLevel: () => state.thinkingLevel,
     setThinkingLevel: (level: KodaXWireReasoningEffort) => {
       state.thinkingLevel = level;
+      markRuntimeSelectionChanged(state);
     },
   };
 }

@@ -302,7 +302,7 @@ import { startKodaX } from '@kodax-ai/kodax/coding';
 const session = startKodaX(
   {
     provider: 'zhipu-coding',
-    reasoningMode: 'balanced',
+    effort: 'medium',
     events: {
       onTextDelta: (text) => process.stdout.write(text),
     },
