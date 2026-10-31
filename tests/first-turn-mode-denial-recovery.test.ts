@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { prepareWindowsManagedProcess } from '../packages/agent/src/runtime/windows-managed-process.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { KodaXStreamResult } from '@kodax-ai/llm';
 import { CACHE_FILES, CACHE_GOLDEN } from '../benchmark/datasets/search-entry-complex/fixture.js';
@@ -10,6 +11,7 @@ import { runComplexRuntime } from './first-turn-complex-runtime.js';
 import { TOOL_RECOVERY_GUIDANCE } from '../packages/coding/src/prompts/execution-guidance.js';
 
 vi.mock('node:child_process', { spy: true });
+vi.mock('../packages/agent/src/runtime/windows-managed-process.js', { spy: true });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 // Original r1 commands, not rewritten into an easier or permitted syntax.
@@ -32,13 +34,24 @@ it.each(['native', 'bridge', 'script'] as const)('delivers original mode-trial r
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-mode-recovery-'));
   const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
   const forbiddenExecutions: string[] = [];
-  let actualTestExecutions = 0;
-  vi.mocked(spawn).mockImplementation((...args) => {
-    const serialized = JSON.stringify(args.slice(0, 2));
+  let testProcessAdmissions = 0;
+  const inspectLaunch = (executable: string, args: readonly string[]): void => {
+    const serialized = JSON.stringify([executable, args]);
     if (refusals.some(([command]) => serialized.includes(JSON.stringify(command).slice(1, -1)))) {
       forbiddenExecutions.push(serialized); throw new Error('Forbidden shell reached OS boundary');
     }
-    if (serialized.includes('node --test')) actualTestExecutions++;
+    if (serialized.includes('node --test')) testProcessAdmissions++;
+  };
+  const actualManaged = await vi.importActual<typeof import('../packages/agent/src/runtime/windows-managed-process.js')>(
+    '../packages/agent/src/runtime/windows-managed-process.js');
+  // Inspect private Job-gate targets as well as direct spawns. Actual execution
+  // is still required by the unchanged '# pass 2' tool-result assertion below.
+  vi.mocked(prepareWindowsManagedProcess).mockImplementation(input => {
+    inspectLaunch(input.executable, input.args);
+    return actualManaged.prepareWindowsManagedProcess(input);
+  });
+  vi.mocked(spawn).mockImplementation((...args) => {
+    inspectLaunch(args[0], Array.isArray(args[1]) ? args[1] : []);
     return actual.spawn(...args);
   });
   const tool = (name: string, input: Record<string, unknown>, id: string) => ({ type: 'tool_use' as const, name, input, id });
@@ -112,7 +125,7 @@ it.each(['native', 'bridge', 'script'] as const)('delivers original mode-trial r
     expect(record.counts.responses).toBe(5); expect(record.counts.toolCount).toBe(totalTools);
     expect(record.counts.nestedToolCount).toBe(entry === 'script' ? leafTools : 0);
     expect(record.groundtruth).toMatchObject({ protectedUnchanged: true, oraclePass: true, publicTestsPass: true });
-    expect(forbiddenExecutions).toEqual([]); expect(actualTestExecutions).toBeGreaterThan(0);
+    expect(forbiddenExecutions).toEqual([]); expect(testProcessAdmissions).toBeGreaterThan(0);
     expect(fetcher).not.toHaveBeenCalled();
   } finally {
     if (path.dirname(path.resolve(directory)) !== path.resolve(os.tmpdir())) throw new Error('Unsafe cleanup');

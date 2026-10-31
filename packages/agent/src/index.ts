@@ -459,6 +459,9 @@ export {
   type WindowsSandboxSidProbeLauncher,
 } from './runtime/windows-effect-job.js';
 
+export { prepareWindowsManagedProcess, WindowsManagedProcessStartError,
+  type WindowsManagedProcessInput } from './runtime/windows-managed-process.js';
+
 // FEATURE_222 — user-interaction primitive (shared by coding ask_user_* tools
 // and the agent MCP elicitation reverse capability) + the live-surface registry.
 export type {

@@ -7,6 +7,8 @@ import {
   BUN_BE_BUN_ENV,
   ELECTRON_RUN_AS_NODE_ENV,
   killChildProcessTree,
+  isCurrentProcessWindowsJobContained,
+  prepareWindowsManagedProcess,
   prepareJavaScriptChildLaunch,
   registerManagedChildProcess,
 } from '@kodax-ai/agent';
@@ -690,15 +692,23 @@ interface CaptureProcessInput {
   readonly signal?: AbortSignal;
 }
 
-function captureProcess(
+async function captureProcess(
   input: CaptureProcessInput,
 ): Promise<{ readonly stdout: Buffer; readonly exitCode: number | null }> {
+  input.signal?.throwIfAborted();
+  const deadlineAt = Date.now() + input.timeoutMs;
+  const managed = process.platform === 'win32' && !isCurrentProcessWindowsJobContained()
+    ? await prepareWindowsManagedProcess({ ...input, deadlineAt }) : undefined;
+  if (managed !== undefined && input.signal?.aborted) {
+    await killChildProcessTree(managed.child);
+    throw shellResolutionAbortError();
+  }
   return new Promise((resolveOutput, reject) => {
     if (input.signal?.aborted) {
       reject(shellResolutionAbortError());
       return;
     }
-    const child = spawn(input.executable, input.args, {
+    const child = managed?.child ?? spawn(input.executable, input.args, {
       cwd: input.cwd,
       env: input.env,
       shell: false,
@@ -708,11 +718,20 @@ function captureProcess(
         ? { windowsVerbatimArguments: true }
         : {}),
     });
-    const unregister = registerManagedChildProcess(child, {
-      kind: input.kind,
-      command: input.executable,
-      cwd: input.cwd,
-    });
+    let unregister: () => void;
+    try {
+      unregister = registerManagedChildProcess(child, {
+        kind: input.kind,
+        command: input.executable,
+        cwd: input.cwd,
+      }, { manualUnregister: managed !== undefined, requireDurableRecord: managed !== undefined });
+    } catch (error: unknown) {
+      void killChildProcessTree(child).then((result) => {
+        reject(result.status === 'unknown'
+          ? new AggregateError([error], 'Shell probe registration and cleanup failed.') : error);
+      }, (cleanupError: unknown) => reject(new AggregateError([error, cleanupError], 'Shell probe registration and cleanup failed.')));
+      return;
+    }
     const chunks: Buffer[] = [];
     let bytes = 0;
     let settled = false;
@@ -739,7 +758,7 @@ function captureProcess(
     };
     const timer = setTimeout(() => {
       finishAfterTermination(new Error('shell environment probe timed out'));
-    }, input.timeoutMs);
+    }, Math.max(0, deadlineAt - Date.now()));
     const onAbort = (): void => {
       finishAfterTermination(shellResolutionAbortError());
     };
@@ -768,12 +787,20 @@ function captureProcess(
         finishAfterTermination(terminationError ?? shellResolutionAbortError());
         return;
       }
-      if (code !== 0 && input.acceptNonZeroExit !== true) {
-        finish(new Error('shell environment probe failed'), code);
-        return;
-      }
-      finish(undefined, code);
+      const complete = (): void => finish(
+        code !== 0 && input.acceptNonZeroExit !== true ? new Error('shell environment probe failed') : undefined,
+        code,
+      );
+      if (managed === undefined) complete();
+      else void managed.drained.then(complete, (error: unknown) => {
+        finish(error instanceof Error ? error : new Error(String(error)), code);
+      });
     });
+    if (managed !== undefined) {
+      void managed.start().then(() => child.stdin?.end(), (error: unknown) => {
+        finishAfterTermination(error instanceof Error ? error : new Error(String(error)));
+      });
+    }
   });
 }
 

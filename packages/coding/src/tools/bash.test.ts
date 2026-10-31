@@ -1509,6 +1509,7 @@ describe('toolBash', () => {
     const abortWatchdog = setTimeout(() => controller.abort(), 5_000);
     const originalEmit = ChildProcess.prototype.emit;
     const delayedPids = new Set<number>();
+    let commandPid: number | undefined;
     const recoveryPaths: string[] = [];
     const emitSpy = vi.spyOn(ChildProcess.prototype, 'emit').mockImplementation(function (
       this: ChildProcess,
@@ -1516,6 +1517,7 @@ describe('toolBash', () => {
       ...args: unknown[]
     ): boolean {
       const shouldDelay = event === 'close'
+        && this.pid === commandPid
         && this.pid !== undefined
         && !delayedPids.has(this.pid);
       if (!shouldDelay) {
@@ -1537,6 +1539,8 @@ describe('toolBash', () => {
         backups: new Map(),
         executionCwd: tempDir,
         shellSandbox: passthroughShellSandbox(),
+        runtimeRunId: 'run-delayed-capture',
+        registerShellCleanup: (reference) => { commandPid = reference.pid; return () => undefined; },
         abortSignal: controller.signal,
         reportToolProgress: (progress) => {
           if (progress.includes(marker)) controller.abort();

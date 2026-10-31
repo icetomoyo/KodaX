@@ -2,12 +2,14 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { prepareWindowsManagedProcess } from '../packages/agent/src/runtime/windows-managed-process.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { KodaXStreamResult } from '@kodax-ai/llm';
 import { inputHash } from './first-turn-eval-support.js';
 import { runComplexRuntime } from './first-turn-complex-runtime.js';
 
 vi.mock('node:child_process', { spy: true });
+vi.mock('../packages/agent/src/runtime/windows-managed-process.js', { spy: true });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 it.each(['bash', 'tool_call'].flatMap(entry => ['diagnostic', 'readonly-write'].map(scenario => ({ entry, scenario }))))(
@@ -18,13 +20,24 @@ it.each(['bash', 'tool_call'].flatMap(entry => ['diagnostic', 'readonly-write'].
   vi.stubGlobal('fetch', fetcher);
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-child-command-recovery-'));
   const actualProcesses = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+  const actualManaged = await vi.importActual<typeof import('../packages/agent/src/runtime/windows-managed-process.js')>(
+    '../packages/agent/src/runtime/windows-managed-process.js');
   let forbiddenExecutions = 0;
   // A regression must fail before a forbidden command can reach the OS.
-  vi.mocked(spawn).mockImplementation((...args) => {
-    if (JSON.stringify(args.slice(0, 2)).includes('MUST_NOT_EXECUTE')) {
+  const inspectLaunch = (executable: string, args: readonly string[]): void => {
+    if (JSON.stringify([executable, args]).includes('MUST_NOT_EXECUTE')) {
       forbiddenExecutions++;
       throw new Error('Forbidden diagnostic reached the process boundary');
     }
+  };
+  // A Job gate transports its target privately; inspect that admission as well
+  // as direct spawns so forbidden commands remain observable on both paths.
+  vi.mocked(prepareWindowsManagedProcess).mockImplementation(input => {
+    inspectLaunch(input.executable, input.args);
+    return actualManaged.prepareWindowsManagedProcess(input);
+  });
+  vi.mocked(spawn).mockImplementation((...args) => {
+    inspectLaunch(args[0], Array.isArray(args[1]) ? args[1] : []);
     return actualProcesses.spawn(...args);
   });
   const tool = (name: string, input: Record<string, unknown>, id: string) => ({ type: 'tool_use' as const, name, input, id });

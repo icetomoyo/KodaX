@@ -411,7 +411,9 @@ assertStartupImportBoundary('CLI', cliResult, { eagerOnly: true });
 assertSingleProviderCredentialModule('CLI', cliResult);
 
 const cliBytes = statSync(path.join(distDir, 'kodax_cli.js')).size;
-assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024);
+// SDK contracts plus the standalone Windows Job gate add <16 KiB. Keep the
+// dependency and cold-entry fences; the gate adds no third-party dependency.
+assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024 + 16 * 1024);
 log(`  ✓ dist/kodax_cli.js (${(cliBytes / 1024).toFixed(0)} kB)`);
 
 // Bare `-r` must show the picker without evaluating the full CLI graph.

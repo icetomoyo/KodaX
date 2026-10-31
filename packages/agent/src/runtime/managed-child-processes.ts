@@ -17,6 +17,8 @@ import { getAgentConfigHome } from './agent-home.js';
 import {
   captureWindowsProcessTree,
   isCurrentProcessWindowsJobContained,
+  isChildProcessTreeCleanupVerified,
+  hasChildProcessTreeContainment,
   killChildProcessTree,
   killPidTree,
   mergeWindowsProcessTreeCaptures,
@@ -829,6 +831,7 @@ export function registerManagedChildProcess(
       && active?.record.registrationId === registrationId
       && (child.exitCode !== null || child.signalCode !== null)
       && active.record.processTreeComplete !== true
+      && !isChildProcessTreeCleanupVerified(child)
       && !isCurrentProcessWindowsJobContained()
     ) {
       activeChildren.delete(pid);
@@ -1249,7 +1252,7 @@ async function cleanupActiveCurrentOwnerChildren(
   const processedFiles = new Set<string>();
   const records = [...activeChildren.values()]
     .filter(({ record, configHome }) => record.ownerPid === process.pid && configHome === registryHome());
-  for (const { record } of records) {
+  for (const { record, child } of records) {
     processedFiles.add(path.basename(registryPath(record.pid, record.registrationId)));
     try {
       if (record.runtimeRunId !== undefined && record.runCleanupRequired !== false) {
@@ -1264,7 +1267,7 @@ async function cleanupActiveCurrentOwnerChildren(
         else { skipped += 1; unresolved += 1; }
         continue;
       }
-      const result = await killPidTree(record.pid, {
+      const result = hasChildProcessTreeContainment(child) ? await killChildProcessTree(child) : await killPidTree(record.pid, {
         ...(record.processStartIdentity === undefined
           ? {}
           : { expectedProcessStartIdentity: record.processStartIdentity }),
