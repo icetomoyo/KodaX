@@ -22,7 +22,9 @@ export function createSessionNoticeEvents(
       type: 'info', text: `[Reasoning] ${event.provider}/${event.model} rejected effort '${event.effort}'.`,
     }),
     onReasoningResolved: event => {
-      if (event.fallbacks.length === 0 && (event.requestedEffort === 'auto' || event.requestedEffort === event.sentEffort)) return;
+      // Profile aliases and previously learned rejections are routine wire resolution.
+      // Retain the SDK diagnostic, but only interrupt the transcript for a new rejection.
+      if (!event.fallbacks.some(fallback => fallback.reason === 'unsupported-effort' || fallback.reason === 'unsupported-parameter')) return;
       const sent = event.sentEffort === undefined ? 'sent without an effort parameter' : `sent effort '${event.sentEffort}'`;
       append({ id: `reasoning:${event.providerRequestId ?? 'legacy'}:resolved:${event.provider}:${event.model}`,
         type: 'info', text: `[Reasoning] ${event.provider}/${event.model} ${sent} (requested '${event.requestedEffort}'; unverified).` });
