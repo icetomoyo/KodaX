@@ -457,3 +457,105 @@ Runtime 抓包自己的 glob 清单只覆盖部分路径，未涵盖所有顶层
 独立核对三模式共享、全部能力/SDK/专用角色、无固定发现及真实证据分层；已封口生产及 L2 范围无剩余阻断。
 有限证据支持采用这项普通根候选；全产品验收仍有上述已存在的 Windows 失败，不能把候选采用等同全量无问题。
 Agent <10K、Script 参数表示、真实多轮缓存/套餐成本和全局智能等价均未被本次小样本证明。
+
+## 8. 历史 revision 修复与缓存离线审计（2026-10-31）
+
+本轮相对 `2e826835438cf321d901434574889ac68c20f33b`。生产改动仅限历史证据版本、对应工具教学和 daemon 可选字段声明。
+AMA、派发、专用角色、SDK 执行器、工具能力及菜单激活策略不变。新增真实模型调用 0，不重跑旧 18 格，也不为 Agent <10K 删除规则。
+发布回归使用本地 HTTP mock 和 IPC，不把离线验证说成没有任何网络系统调用。
+
+### 8.1 先复现、再修复
+
+公共 search→正常工具消息追加→带 revision 的 read 先复现 stale；新增可选 entryRevision 后同一目标可成功读取。
+旧 search.revision/read.revision 仍是原算法的严格全局快照，正常追加后旧全局版本继续 stale；没有自动删除或改写调用参数。
+新 entry 版本约束目标证据及身份/来源；内容、物理来源、逻辑身份、时间、父节点、消息来源变化均拒绝且不附正文。
+额外覆盖分页后的目标修改、压缩、fork/rewind、隐藏/移除条目、子 Session 存储绑定及旧无版本输入。
+已有 hidden reasoning、cooperative search 同步结果一致、超限和取消回归保留。
+
+实际装配还先暴露了紧凑说明仍教全局 revision 的缺口，再统一原生、短桥接、Script 与子契约说明。
+分页说明原写 next_offset，但原工具实际回执是 nextOffset；公共 adapter 回归先红后绿，只改教学，不改回执。
+daemon 严格响应 schema 先拒绝真实新 hit，再仅声明可选 entryRevision；旧 hit 和未知字段拒绝均保留。
+Runtime transcript page/chunk 继续用原快照 revision，不能拿 entryRevision 替代。
+33 项合同的哈希守卫只在逐项核对本轮历史说明变化后校准，字段/必填/枚举及 canonical 不变断言继续保留。
+
+### 8.2 最终三模式实际 Runtime
+
+最终抓包 stage 为 `history-entry-r4-frozen`，原始 evidence 位于 OS Temp 的
+`kodax-eval-dumps/contract-activation-runtime-r2-20261031/`。
+真实经历自然 seed、保存、压缩归档、驱逐旧岛正文、关闭重开、搜索及带版本的精确读取。
+新路径直接读取一次成功，正文 marker 严格核验；旧全局兼容路径保留原 stale，再发新的合法无版本读取。
+所有参数、原始错误及结果都保留，没有在执行前修正模型输出。
+
+| 模式 | 当前代码的旧全局路径请求数 | entry 版本路径请求数 | 累计 SDK 输入估算：旧路径→新路径 |
+|---|---:|---:|---:|
+| Agent | 5 | 4 | 51,834→41,122 |
+| Coding | 5 | 4 | 63,335→50,322 |
+| Script | 5 | 4 | 74,004→58,500 |
+
+这是同一当前源码下的协议路径对照，**不是原始版/当前版/候选版的自主模型 A/B**。
+数字是归一化完整 SDK 模型字段的同一启发式，非字符数、BPE、API 用量或费用。
+fixture 的 skills 显式为空，首轮 9,950/12,250/14,140 不能冒充完整 Host 低于10K。
+完整测试另产出32格 SDK 抓包 `kodax-first-turn-wire-MMXX5p`，按既有统一计数器重计其中12格；
+完整 Host 的首轮如下，均为完整模型字段启发式，仍非API token。
+
+| 协议 | Agent：2e826版→本轮 | Coding：2e826版→本轮 | Script：2e826版→本轮 |
+|---|---:|---:|---:|
+| OpenAI | 10,547→10,596 | 14,116→14,165 | 16,100→16,149 |
+| Anthropic | 10,345→10,395 | 13,785→13,834 | 15,972→16,021 |
+
+本轮每请求多约49–50个估算token，用于正确的entry/global版本与分页教学；不冒称本轮进一步减少首轮。
+原始未优化Coding的28,734仍是此前历史留存，不能用它归因本轮版本修复；新历史检查点仍N/A。
+同一当前源码的两种协议路径首轮相同，主要收益来自消除已确认的一次 stale 往返；
+不能由脚本轨迹外推所有任务不增加轮次或智能等价。
+最初未优化版 `bd4479d59cab…` 没有本新检查点数据，标 N/A，继续保留旧一次性留存；不把中间控制版重命名为最初版本。
+
+### 8.3 缓存归因与反事实
+
+既有 18 格 API 账目分解见[方案 §13](../designs/token-efficiency-next-stage-plan.md#13-历史版本自失效修复与缓存归因2026-10-31)。
+准确指标是非缓存读输入=inputTokens−cachedReadTokens；GLM cachedWriteTokens 六格缺失，Kimi/DeepSeek 各六格明确0。
+缺失不冒充0，该指标也不等于后端原始 input_tokens 或实际费用。
+GLM/Kimi 的增加集中 history；全部候选先跑，且候选菜单33→34→33而控制固定39，无法拆开顺序与菜单的独立因果。
+不同检查点目录与捕获 provider 标签也是混杂，不能把三个独立下一响应当一次连续会话总账。
+旧 L2 没传生产 promptCacheKey；Kimi 的条件 affinity metadata 路径未使用，不能外推真实连续会话缓存。
+
+另用上述三份同 Session 的真实四请求进行零调用表示反事实，原 source/raw 哈希不变。
+新激活原生项放末尾不改累计输入，Agent/Coding 激活时相同工具前缀从18/27项增至24/34；
+但 tool_call 的 read 短合同同时移除，仍非完整菜单稳定，不承诺 KV 改善。
+read 始终保留完整 bridge 的反事实，Agent/Coding 各四请求仅少80个启发式输入 token，首轮不变，Script不变。
+原 native 调用、消息、参数及回执未改；这只证明表示成本，未验证模型会正确改用桥接，也未计潜在工具包装差异。
+因此不改默认、不为这点收益新增模型；后续若研究缓存，应整体处理 schema 和桥接说明变化，再核实实际 provider wire。
+
+### 8.4 验证与限制
+
+最终类型检查通过；完整 packages/native/bundle/14 SDK 声明构建通过。
+CLI 为5,293,912 bytes，原预算5,294,080，未提高预算或增加依赖。
+历史及相关工具定向443项通过；SDK定向18项通过（筛选未执行344项，不冒充362项全过）；
+最后三模式 Runtime 7项通过；最终实际 npm 包 Script、MCP三种输出恢复与独立IPC重启回执6项通过。
+本轮仅Windows实测，未证明macOS/Linux二进制运行或GLM/Kimi新版本契约的自主选择质量。
+
+完整冻结 `kodax-shared-activation-full-20261031-16fbb54b`：18,386通过、2失败、100跳过、19todo，
+3,500个Git路径受监测文件零漂移、无新增路径，测试时间窗约25分43秒。Gitlink是非普通文件哨兵，非子模块递归哈希。
+两项失败均保留原raw：
+
+1. 旧冻结评测期待32项投影，实际30。旧fingerprint正确拒绝把两项已演进历史合同覆回旧教学；
+   原完整schema、顺序、canonical不变断言均成功。单独先复现，再校准到30并明确断言两项历史原合同保留，
+   及entryRevision/nextOffset说明不退回。**不更新旧fingerprint或旧实验输入**；修正后相关5文件59项通过，tests类型检查通过。
+2. `src/sdk-runtime.test.ts:5300` 正确收到read_timeout，但耗时101ms超过100ms门槛；单次隔离为102ms，同样失败。
+   该计时case和transcriptPage生产路径未改，未进入本轮entry版本算法；尚未定位时序根因，不认定为无效评测。
+   未修改的2e826源码另导出至Temp，独立编译llm/agent/coding/repl四包后，同一检查106ms同错；
+   使用共享node_modules依赖及archive自身src别名，不借当前dist，非旧版完整发布构建验证。
+   首次baseline因尚无dist在准备期失败，保留为preparation-invalid，未计作同错证据。
+   source审计确认snapshotPage链与计时case均未变化；两次当前运行及有效控制都在取消段之前失败，
+   不据此宣称该case的取消延迟通过。保留失败，不放宽门槛、不重跑全套求绿。
+
+全量后只有上述旧评测测试与正式文档校准；生产及真实SDK抓包输入保持冻结，没有再次运行模型。
+本次旧Windows并发reader测试通过，不代表此前失败已定位或修复；旧失败继续保留。
+
+### Standards
+
+独立规范轴逐hunk审查生产、测试、SDK和设计文档：硬违反0、可行动坏味道0；未新增配置、路由或执行链。
+
+### Spec
+
+独立需求轴核对旧全局并发保护、entry证据版本、三模式、隔离和SDK兼容：需修复发现0。
+缓存结论仅为离线定位和有限表示反事实，不冒充因果或模型智能验证。

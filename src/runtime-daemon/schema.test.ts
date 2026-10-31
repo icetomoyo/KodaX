@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createSessionLineage, searchSessionHistory } from '@kodax-ai/agent';
 
 import {
   RUNTIME_DAEMON_METHODS,
@@ -12,6 +13,18 @@ import {
 } from './schema.js';
 
 describe('runtime daemon protocol schema', () => {
+  it('accepts entry-version search hits and legacy hits without relaxing unknown-field checks', () => {
+    const lineage = createSessionLineage([{ role: 'user', content: 'persisted historical evidence' }]);
+    const search = searchSessionHistory(lineage, { query: 'historical evidence', scope: 'all' });
+    const result = { ...search, hits: search.hits.map(hit => ({ ...hit, entryIndex: 0 })) };
+    const schema = RUNTIME_DAEMON_METHOD_SCHEMAS['session.transcript.search'].result;
+    expect(result.hits[0]?.entryRevision).toMatch(/^entry:sha256:/);
+    expect(validateRuntimeDaemonJsonSchema(schema, result)).toEqual([]);
+    const { entryRevision: _version, ...legacyHit } = result.hits[0]!;
+    expect(validateRuntimeDaemonJsonSchema(schema, { ...result, hits: [legacyHit] })).toEqual([]);
+    expect(validateRuntimeDaemonJsonSchema(schema, { ...result, hits: [{ ...legacyHit, unexpected: true }] })).not.toEqual([]);
+  });
+
   it('requires explicit identity confirmation and a persisted delivery receipt', () => {
     const schema = RUNTIME_DAEMON_METHOD_SCHEMAS['session.identityAlias.confirm'];
     expect(schema).toBeDefined();

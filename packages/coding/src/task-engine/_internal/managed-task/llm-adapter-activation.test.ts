@@ -78,12 +78,16 @@ it('keeps exact history reads directly expressible before search and preloads fu
   expect(initial.some(tool => tool.name === 'session_history_search')).toBe(true);
   expect(initial.some(tool => tool.name === 'session_history_read')).toBe(false);
   const text = initial.find(tool => tool.name === 'tool_call')?.description ?? '';
-  for (const part of ['session_history_read', 'entry_id', 'revision', 'offset', 'next_offset']) expect(text).toContain(part);
+  for (const part of ['session_history_read', 'entry_id', 'revision', 'offset', 'nextOffset']) expect(text).toContain(part);
+  expect(text).not.toContain('next_offset');
+  expect(text).toContain('entryRevision');
   const searched = await request(worker, [
     { role: 'assistant', content: [{ type: 'tool_use', id: 'search', name: 'session_history_search', input: { query: 'prior decision' } }] },
     { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'search', content: '{"hits":[]}' }] },
   ]);
   expect(searched.some(tool => tool.name === 'session_history_read')).toBe(true);
+  expect(searched.find(tool => tool.name === 'session_history_read')?.description).toContain('entryRevision');
+  expect(JSON.stringify(searched.find(tool => tool.name === 'session_history_read')?.input_schema)).toContain('entryRevision');
 });
 
 it('does not advertise Plan exit in a known execution mode and restores it when the live mode changes', async () => {

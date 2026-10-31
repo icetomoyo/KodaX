@@ -20,6 +20,8 @@ export interface KodaXSessionHistorySearchOptions {
 
 export interface KodaXSessionHistoryHit {
   entryId: string;
+  /** Version of this entry's visible evidence, independent of normal tail appends. */
+  entryRevision?: string;
   logicalId?: string;
   sourceEntryId?: string;
   timestamp: string;
@@ -45,6 +47,7 @@ export interface KodaXSessionHistorySearchControl {
 
 export interface KodaXSessionHistoryReadOptions {
   entryId: string;
+  /** A hit's entryRevision, or the legacy strict whole-history revision. */
   revision?: string;
   offset?: number;
   maxChars?: number;
@@ -52,10 +55,11 @@ export interface KodaXSessionHistoryReadOptions {
 
 export type KodaXSessionHistoryReadResult =
   | { status: 'not_found'; revision: string; entryId: string }
-  | { status: 'stale'; revision: string; entryId: string }
+  | { status: 'stale'; revision: string; entryId: string; entryRevision?: string }
   | {
     status: 'ok';
     revision: string;
+    entryRevision?: string;
     entryId: string;
     content: string;
     offset: number;
@@ -151,6 +155,14 @@ function historyRevision(lineage: KodaXSessionLineage): string {
     hash.update(JSON.stringify(entry));
   }
   return `sha256:${hash.digest('hex')}`;
+}
+
+/** Bind exactly the readable evidence and its identity/provenance, never hidden reasoning. */
+function entryEvidenceRevision(entry: KodaXSessionMessageEntry, visible: VisibleMessage): string {
+  const identity = { id: entry.id, parentId: entry.parentId, timestamp: entry.timestamp,
+    logicalId: entry.logicalId, sourceEntryId: entry.sourceEntryId,
+    role: entry.message.role, source: entry.message._source, synthetic: entry.message._synthetic ?? false };
+  return `entry:sha256:${createHash('sha256').update(JSON.stringify([identity, visible])).digest('hex')}`;
 }
 
 function normalized(value: string): string {
@@ -321,6 +333,7 @@ export function searchSessionHistory(
     if (options.role && entry.message.role !== options.role) return [];
     return [{
       entry,
+      entryRevision: entryEvidenceRevision(entry, visible),
       active,
       visible,
       metadata: [entry.id, entry.logicalId, entry.sourceEntryId].filter(Boolean).join(' '),
@@ -335,7 +348,7 @@ export function searchSessionHistory(
     documentFrequency.set(term, count);
   }
   const hits: KodaXSessionHistoryHit[] = [];
-  for (const { entry, active, visible, metadata } of candidates) {
+  for (const { entry, entryRevision, active, visible, metadata } of candidates) {
     const score = scoreText(
       visible.text,
       metadata,
@@ -347,6 +360,7 @@ export function searchSessionHistory(
     if (score <= 0) continue;
     hits.push({
       entryId: entry.id,
+      entryRevision,
       logicalId: entry.logicalId,
       sourceEntryId: entry.sourceEntryId,
       timestamp: entry.timestamp,
@@ -438,6 +452,7 @@ export async function searchSessionHistoryCooperatively(
   const entryOrder = new Map<string, number>();
   const candidates: Array<{
     readonly entry: KodaXSessionMessageEntry;
+    readonly entryRevision: string;
     readonly active: boolean;
     readonly visible: VisibleMessage;
     readonly normalizedText: string;
@@ -462,6 +477,7 @@ export async function searchSessionHistoryCooperatively(
       .join(' ');
     candidates.push({
       entry,
+      entryRevision: entryEvidenceRevision(entry, visible),
       active,
       visible,
       normalizedText: normalized(visible.text),
@@ -510,6 +526,7 @@ export async function searchSessionHistoryCooperatively(
     if (score <= 0) continue;
     hits.push({
       entryId: entry.id,
+      entryRevision: candidates[index]!.entryRevision,
       logicalId: entry.logicalId,
       sourceEntryId: entry.sourceEntryId,
       timestamp: entry.timestamp,
@@ -543,16 +560,18 @@ export function readSessionHistoryEntry(
   options: KodaXSessionHistoryReadOptions,
 ): KodaXSessionHistoryReadResult {
   const revision = historyRevision(lineage);
-  if (options.revision && options.revision !== revision) {
-    return { status: 'stale', revision, entryId: options.entryId };
-  }
   const entry = lineage.entries.find(
     (candidate): candidate is KodaXSessionMessageEntry =>
       candidate.type === 'message' && candidate.id === options.entryId,
   );
+  const visible = entry ? historyEvidence(entry.message) : null;
+  const entryRevision = entry && visible ? entryEvidenceRevision(entry, visible) : undefined;
+  const entryScoped = options.revision?.startsWith('entry:sha256:') === true;
+  if (entryScoped && !entryRevision) return { status: 'not_found', revision, entryId: options.entryId };
+  if (options.revision && options.revision !== (entryScoped ? entryRevision : revision)) {
+    return { status: 'stale', revision, entryId: options.entryId, ...(entryRevision ? { entryRevision } : {}) };
+  }
   if (!entry) return { status: 'not_found', revision, entryId: options.entryId };
-
-  const visible = historyEvidence(entry.message);
   if (!visible) return { status: 'not_found', revision, entryId: options.entryId };
   const offset = boundedInteger(options.offset, 0, 0, visible.text.length);
   const maxChars = boundedInteger(options.maxChars, DEFAULT_READ_CHARS, 1, MAX_READ_CHARS);
@@ -560,6 +579,7 @@ export function readSessionHistoryEntry(
   return {
     status: 'ok',
     revision,
+    entryRevision,
     entryId: entry.id,
     content: visible.text.slice(offset, end),
     offset,

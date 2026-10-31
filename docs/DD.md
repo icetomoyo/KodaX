@@ -1768,6 +1768,22 @@ lineage. Storage-less Runs and partial visibility of the pair expose neither
 tool. The embedded Runtime/daemon projects the same search hits; bulk and
 oversized exact reads continue through transcript page/chunk APIs.
 
+As of 2026-10-31, search hits and successful/stale primitive reads also expose an
+optional `entryRevision` (`entry:sha256:…`). Pass the selected hit's version into
+the existing `readSessionHistoryEntry({ entryId, revision })` input, or use
+`hit.entryId` as `entry_id` and `hit.entryRevision` as `revision` in the Coding
+tool. Continue bounded reads using the returned `entryRevision` and `nextOffset`.
+This version binds readable evidence and
+entry identity/provenance, so normal tail appends do not invalidate it. Target
+changes still return `stale` without content; a fresh version requires a new
+explicit read. Removed or hidden entries cannot be recovered by an old version.
+The existing top-level `revision` remains the strict whole-lineage SHA snapshot;
+its algorithm, optional-input behavior, and mismatch rejection are unchanged.
+Runtime/daemon search permits the additive hit field, but transcript page/chunk
+APIs continue to require their own snapshot `revision`, not `entryRevision`.
+Versions confer no authority: root/child Session binding and visibility checks
+still precede retrieval. No persistent token registry or new discovery step is used.
+
 ## 21. v0.7.75 Stabilization Boundaries
 
 Every Runtime Worker-reachable non-interactive `child_process` call must either

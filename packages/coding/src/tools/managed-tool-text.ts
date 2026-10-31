@@ -1,4 +1,6 @@
 /** Model-facing wording for eligible managed roots. Omitted descriptions preserve original contracts. */
+import { SESSION_HISTORY_ENTRY_REVISION_RULE, SESSION_HISTORY_READ_SCHEMA } from './session-history.js';
+
 export interface ManagedToolText {
   description?: string;
   /** Schema paths, not parameter aliases. null removes only a redundant annotation. */
@@ -77,9 +79,10 @@ export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
     annotations: { 'properties.to': 'Visible canonical path, child/peer name, parent, or * broadcast. Self rejected.', 'properties.content': 'Body; Runtime authenticates agent-message frame.',
       'properties.forwarded_message_id': 'Received agent-message ID only when forwarding; Runtime derives chain. Fresh message: omit.',
       'properties.classification': 'Default internal; cannot downgrade source classification.' } },
-  session_history_read: { description: 'Read exact persisted entry cited by session_history_search. Bounded character chunks: continue next_offset. Pass search revision to detect concurrent changes.',
-    annotations: { 'properties.entry_id': 'Exact search entry_id.', 'properties.offset': '0-based characters; default 0.', 'properties.revision': 'Search sha256 revision.' } },
-  session_history_search: { description: 'Find omitted persisted history only when the request needs missing historical detail; do not guess from checkpoint. Bounded snippets/stable citations; then read only needed entries.',
+  session_history_read: { description: 'Read cited persisted entry in bounded character chunks. ' + SESSION_HISTORY_ENTRY_REVISION_RULE,
+    annotations: { 'properties.entry_id': 'Exact hit.entryId.', 'properties.offset': '0-based characters; default 0.',
+      'properties.revision': SESSION_HISTORY_READ_SCHEMA.properties.revision.description } },
+  session_history_search: { description: 'Find omitted persisted history only when missing detail is needed; do not guess from checkpoint. Bounded snippets/stable citations; read needed hit with hit.entryRevision as read.revision.',
     annotations: { 'properties.query': 'Specific phrase/ID/command/historical fact.', 'properties.limit': '1–20; default 8.',
       'properties.role': null, 'properties.scope': 'Default compacted; all only if active-tail search needed.' } },
   skill: { description: 'Invoke a discovered matching Skill before responding, per Available Skills blocking requirement. Returns expanded/resolved instructions for next turn. Load via skill, never read SKILL.md. Optional free-form args forwarded for template substitution (most ignore it).',

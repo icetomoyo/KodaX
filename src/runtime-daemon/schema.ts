@@ -1023,6 +1023,7 @@ function transcriptSearchParamsSchema(): RuntimeDaemonJsonSchema {
 function transcriptSearchResultSchema(): RuntimeDaemonJsonSchema {
   const hit = objectSchema({
     entryId: stringSchema,
+    entryRevision: stringSchema,
     logicalId: stringSchema,
     sourceEntryId: stringSchema,
     timestamp: stringSchema,

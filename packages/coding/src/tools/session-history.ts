@@ -36,13 +36,16 @@ export function createSessionHistoryLoader(input: {
 export const SESSION_HISTORY_SEARCH_DESCRIPTION = [
   'Search exact persisted entries that are no longer present in the compacted model context.',
   'Use this only when a user request depends on an omitted historical detail; do not guess from the checkpoint.',
-  'Results are bounded snippets with stable entry citations. Search first, then read only the needed entry.',
+  'Results are bounded snippets with stable entry citations. Read the needed hit using its entryRevision as read.revision.',
 ].join(' ');
+
+export const SESSION_HISTORY_ENTRY_REVISION_RULE = 'Use selected hit.entryRevision as revision; reuse returned entryRevision for nextOffset or stale recovery. '
+  + 'It checks this entry across normal message appends. Top-level search revision remains a strict whole-history snapshot.';
 
 export const SESSION_HISTORY_READ_DESCRIPTION = [
   'Read one exact persisted session-history entry cited by session_history_search.',
-  'Content is returned in bounded character chunks; continue with next_offset when necessary.',
-  'Pass the search revision to detect concurrent history changes instead of reading stale evidence.',
+  'Content is returned in bounded character chunks.',
+  SESSION_HISTORY_ENTRY_REVISION_RULE,
 ].join(' ');
 
 export const SESSION_HISTORY_SEARCH_SCHEMA = {
@@ -67,8 +70,8 @@ export const SESSION_HISTORY_SEARCH_SCHEMA = {
 export const SESSION_HISTORY_READ_SCHEMA = {
   type: 'object' as const,
   properties: {
-    entry_id: { type: 'string' as const, description: 'Exact entry_id returned by session_history_search.' },
-    revision: { type: 'string' as const, description: 'Optional sha256 revision returned by search.' },
+    entry_id: { type: 'string' as const, description: 'Exact selected hit.entryId returned by session_history_search.' },
+    revision: { type: 'string' as const, description: 'Selected hit.entryRevision or read.entryRevision; legacy whole-history revision remains strict.' },
     offset: { type: 'number' as const, description: 'Zero-based character offset (default 0).' },
   },
   required: ['entry_id'],

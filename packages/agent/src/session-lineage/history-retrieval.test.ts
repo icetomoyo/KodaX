@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { KodaXMessage } from '@kodax-ai/llm';
 
-import { applySessionCompaction, createSessionLineage } from './kodax-session-lineage.js';
+import { applySessionCompaction, createSessionLineage, forkSessionLineage, getSessionMessagesFromLineage, rewindSessionLineage } from './kodax-session-lineage.js';
+import type { KodaXSessionMessageEntry } from '../types.js';
 import {
   readSessionHistoryEntry,
   searchSessionHistory,
@@ -50,6 +51,85 @@ function compactedFixture() {
 }
 
 describe('FEATURE_272 durable Session history retrieval', () => {
+  it('reads the same searched evidence after normal tool-message appends without weakening the global snapshot check', () => {
+    const { lineage } = compactedFixture();
+    const found = searchSessionHistory(lineage, { query: 'Tests 17 passed' });
+    const hit = found.hits[0]!;
+    const extended = createSessionLineage([
+      ...getSessionMessagesFromLineage(lineage),
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'history-search', name: 'session_history_search', input: { query: 'Tests 17 passed' } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'history-search', content: JSON.stringify(found) }] },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'history-read', name: 'session_history_read', input: { entry_id: hit.entryId } }] },
+    ], lineage);
+    const read = readSessionHistoryEntry(extended, { entryId: hit.entryId, revision: hit.entryRevision ?? found.revision });
+    expect(read).toMatchObject({ status: 'ok', content: expect.stringContaining('Tests 17 passed') });
+    expect(hit.entryRevision).toMatch(/^entry:sha256:/);
+    expect(readSessionHistoryEntry(extended, { entryId: hit.entryId, revision: found.revision })).toMatchObject({ status: 'stale' });
+  });
+
+  it.each<{ label: string; change: (entry: KodaXSessionMessageEntry) => KodaXSessionMessageEntry }>([
+    { label: 'content', change: entry => ({ ...entry, message: { ...entry.message, content: 'corrected public evidence' } }) },
+    { label: 'physical origin', change: entry => ({ ...entry, sourceEntryId: 'different-source-entry' }) },
+    { label: 'logical identity', change: entry => ({ ...entry, logicalId: 'different-logical-entry' }) },
+    { label: 'timestamp', change: entry => ({ ...entry, timestamp: '2026-10-31T00:00:00.000Z' }) },
+    { label: 'parent', change: entry => ({ ...entry, parentId: null }) },
+    { label: 'message source', change: entry => ({ ...entry, message: { ...entry.message, _source: 'tool-feedback' } }) },
+  ])('rejects changed entry $label and supplies a version only for a new explicit read', ({ change }) => {
+    const { lineage } = compactedFixture();
+    const hit = searchSessionHistory(lineage, { query: 'Tests 17 passed' }).hits[0]!;
+    const changed = { ...lineage, entries: lineage.entries.map(entry => entry.id === hit.entryId && entry.type === 'message' ? change(entry) : entry) };
+    const stale = readSessionHistoryEntry(changed, { entryId: hit.entryId, revision: hit.entryRevision });
+    expect(stale.status).toBe('stale');
+    expect(stale).not.toHaveProperty('content');
+    if (stale.status !== 'stale') throw new Error('Expected changed evidence rejection');
+    expect(stale.entryRevision).toMatch(/^entry:sha256:/);
+    expect(stale.entryRevision).not.toBe(hit.entryRevision);
+    expect(readSessionHistoryEntry(changed, { entryId: hit.entryId, revision: stale.entryRevision }).status).toBe('ok');
+  });
+
+  it('keeps an entry version across appends while paging and rejects amended later chunks', () => {
+    const { lineage } = compactedFixture();
+    const hit = searchSessionHistory(lineage, { query: 'Tests 17 passed' }).hits[0]!;
+    const first = readSessionHistoryEntry(lineage, { entryId: hit.entryId, revision: hit.entryRevision, maxChars: 18 });
+    if (first.status !== 'ok') throw new Error('Expected first chunk');
+    const extended = createSessionLineage([...getSessionMessagesFromLineage(lineage), { role: 'assistant', content: 'First chunk received.' }], lineage);
+    const second = readSessionHistoryEntry(extended, { entryId: hit.entryId, revision: first.entryRevision, offset: first.nextOffset! });
+    expect(second.status).toBe('ok');
+    if (second.status !== 'ok') throw new Error('Expected continuation');
+    expect(first.content + second.content).toBe('[tool_result tool-old] Test Files 2 passed; Tests 17 passed');
+    expect(second.entryRevision).toBe(first.entryRevision);
+    const amended = { ...extended, entries: extended.entries.map(entry => entry.id === hit.entryId && entry.type === 'message'
+      ? { ...entry, message: { ...entry.message, content: 'replaced evidence' } } : entry) };
+    expect(readSessionHistoryEntry(amended, { entryId: hit.entryId, revision: first.entryRevision, offset: first.nextOffset! })).toMatchObject({ status: 'stale' });
+  });
+
+  it('does not let entry versions recover removed, forked or newly hidden evidence', () => {
+    const lineage = createSessionLineage([{ role: 'user', content: 'first evidence' }, { role: 'assistant', content: 'target evidence' }]);
+    const hit = searchSessionHistory(lineage, { query: 'target evidence', scope: 'all', role: 'assistant' }).hits[0]!;
+    const forked = forkSessionLineage(lineage)!;
+    expect(readSessionHistoryEntry(forked, { entryId: hit.entryId, revision: hit.entryRevision }).status).toBe('not_found');
+    const clone = searchSessionHistory(forked, { query: 'target evidence', scope: 'all', role: 'assistant' }).hits[0]!;
+    expect(readSessionHistoryEntry(forked, { entryId: clone.entryId, revision: hit.entryRevision }).status).toBe('stale');
+    const rewound = rewindSessionLineage(lineage, lineage.entries[0]!.id)!;
+    expect(readSessionHistoryEntry(rewound, { entryId: hit.entryId, revision: hit.entryRevision }).status).toBe('not_found');
+    for (const message of [{ role: 'system' as const, content: 'target evidence' },
+      { role: 'assistant' as const, content: '[compacted]' },
+      { role: 'assistant' as const, _source: 'compaction-checkpoint' as const, content: 'target evidence' }]) {
+      const hidden = { ...lineage, entries: lineage.entries.map(entry => entry.id === hit.entryId ? { ...entry, message } : entry) };
+      expect(readSessionHistoryEntry(hidden, { entryId: hit.entryId, revision: hit.entryRevision })).toMatchObject({ status: 'not_found' });
+    }
+  });
+
+  it('retains entry evidence across compaction without changing legacy global revisions', () => {
+    const lineage = createSessionLineage([{ role: 'user', content: 'retained exact evidence' }]);
+    const found = searchSessionHistory(lineage, { query: 'retained exact evidence', scope: 'all' });
+    const hit = found.hits[0]!;
+    const compacted = applySessionCompaction(lineage, [{ role: 'user', content: 'active tail' }], { summary: 'Earlier evidence archived' });
+    expect(readSessionHistoryEntry(compacted, { entryId: hit.entryId, revision: hit.entryRevision })).toMatchObject({ status: 'ok', content: 'retained exact evidence' });
+    expect(readSessionHistoryEntry(compacted, { entryId: hit.entryId, revision: found.revision })).toMatchObject({ status: 'stale' });
+    expect(searchSessionHistory(compacted, { query: 'retained exact evidence' }).hits[0]?.entryRevision).toBe(hit.entryRevision);
+  });
+
   it('ranks compacted Unicode phrase, assistant explanation, and tool evidence with stable citations', () => {
     const { lineage } = compactedFixture();
 

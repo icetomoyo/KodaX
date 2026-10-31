@@ -6685,6 +6685,7 @@ describe("createKodaXRuntime", () => {
       expect(result?.revision).toMatch(/^sha256:/);
       expect(result?.hits[0]).toMatchObject({
         active: false,
+        entryRevision: expect.stringMatching(/^entry:sha256:/),
         entryIndex: expect.any(Number),
         citation: expect.stringMatching(/^session-history:entry_/),
       });

@@ -19,11 +19,11 @@ const label = 'ALPHA-MARKER-17';
 type Phase = 'seed' | 'edit' | 'follow-up' | 'visual' | 'history';
 type WorkMode = 'agent' | 'coding' | 'script';
 const firstUseOnly = process.env.KODAX_CONTRACT_ACTIVATION_FIRST_USE_ONLY === '1';
-const historyOnly = process.env.KODAX_CONTRACT_ACTIVATION_HISTORY_ONLY === '1';
+const historyOnlyCapture = process.env.KODAX_CONTRACT_ACTIVATION_HISTORY_ONLY === '1';
 const editVisualOnly = process.env.KODAX_CONTRACT_ACTIVATION_EDIT_VISUAL_ONLY === '1';
-const stepLimits: Record<Phase, number> = { seed: 1, edit: 4, 'follow-up': 2, visual: firstUseOnly ? 2 : 5, history: 4 };
+const baseStepLimits: Record<Phase, number> = { seed: 1, edit: 4, 'follow-up': 2, visual: firstUseOnly ? 2 : 5, history: 4 };
 const call = (id: string, name: string, input: Record<string, unknown>) => ({ type: 'tool_use' as const, id, name, input });
-type HistoryHit = { entryId: string; active: boolean };
+type HistoryHit = { entryId: string; active: boolean; entryRevision?: string };
 const compactedHistoryEntry = (hits: HistoryHit[]): string => {
   const historicalHits = hits.filter(hit => !hit.active);
   if (historicalHits.length !== 1) throw new Error('Expected exactly one compacted-history hit');
@@ -32,7 +32,7 @@ const compactedHistoryEntry = (hits: HistoryHit[]): string => {
 const sourcePaths = () => process.env.KODAX_CONTRACT_ACTIVATION_SOURCE_MANIFEST
   ? JSON.parse(readFileSync(process.env.KODAX_CONTRACT_ACTIVATION_SOURCE_MANIFEST, 'utf8')) as string[]
   : execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '--',
-  'packages/coding/src/**/*.ts', 'packages/agent/src/**/*.ts', 'packages/llm/src/**/*.ts', 'packages/repl/src/**/*.ts', 'packages/repl/src/**/*.tsx', 'src/**/*.ts',
+  'packages/coding/src', 'packages/agent/src', 'packages/llm/src', 'packages/repl/src', 'src',
   'vitest.config.ts', 'vitest.setup.queue.ts', 'vitest.test-tiers.ts', 'tsconfig.json', 'package.json', 'package-lock.json',
   'tests/contract-activation-runtime.test.ts'], { encoding: 'utf8', windowsHide: true }).trim().split(/\r?\n/).filter(Boolean);
 const sourceHashes = async () => Object.fromEntries(await Promise.all(sourcePaths().map(async file => [file, inputHash(await fs.readFile(file, 'utf8'))])));
@@ -43,7 +43,9 @@ it('selects compacted history using returned provenance and rejects ambiguous hi
   expect(() => compactedHistoryEntry([{ entryId: 'earlier-a', active: false }, { entryId: 'earlier-b', active: false }])).toThrow('exactly one');
 });
 
-it.each<WorkMode>(['agent', 'coding', 'script'])('captures %s editing, accepted-image and compacted-history work without a discovery prerequisite', async mode => {
+async function captureActivation(mode: WorkMode, entryScoped = false) {
+  const historyOnly = entryScoped || historyOnlyCapture;
+  const stepLimits = { ...baseStepLimits, history: entryScoped ? 3 : 4 };
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-contract-activation-'));
   const workspace = path.join(root, 'workspace');
   await fs.mkdir(workspace);
@@ -138,14 +140,18 @@ it.each<WorkMode>(['agent', 'coding', 'script'])('captures %s editing, accepted-
             // The search includes the current question: select the actual compacted-history hit,
             // using the returned provenance rather than assuming the newest hit is the answer.
             historicalEntryId = compactedHistoryEntry(history!.hits);
-            action = leaf('history-read', 'session_history_read', { entry_id: historicalEntryId, revision: history!.revision });
+            const selected = history!.hits.find(hit => hit.entryId === historicalEntryId)!;
+            if (entryScoped) expect(selected.entryRevision).toMatch(/^entry:sha256:/);
+            action = leaf('history-read', 'session_history_read', { entry_id: historicalEntryId,
+              revision: entryScoped ? selected.entryRevision : history!.revision });
           }
           if (current === 2) {
             expect(historyReads).toHaveLength(1);
-            expect(historyReads[0]).toMatchObject({ status: 'stale', entryId: historicalEntryId });
+            expect(historyReads[0]).toMatchObject({ status: entryScoped ? 'ok' : 'stale', entryId: historicalEntryId });
+            if (entryScoped) expect(historyReads[0]!.content).toContain(label);
             // A stable cited entry remains legal to read without the optional whole-history revision.
             // Preserve the actual stale feedback and issue a new request, never rewrite an earlier call.
-            action = leaf('history-recover', 'session_history_read', { entry_id: historicalEntryId });
+            if (!entryScoped) action = leaf('history-recover', 'session_history_read', { entry_id: historicalEntryId });
           }
           if (current === 3) {
             expect(historyReads).toHaveLength(2);
@@ -218,11 +224,12 @@ it.each<WorkMode>(['agent', 'coding', 'script'])('captures %s editing, accepted-
     const measures = normalized.map(row => ({ phase: row.phase, step: row.step, ...measureModelFields(row.input) }));
     const serializedMeasures = wires.map(row => ({ phase: row.phase, step: row.step,
       ...measureModelFields(JSON.parse(JSON.stringify(row.body).replaceAll(root.replaceAll('\\', '\\\\'), '<FIXTURE_ROOT>').replaceAll(sessionId, '<SESSION_ID>'))) }));
-    const summaryOutput = { stage, mode, firstUseOnly, historyOnly, editVisualOnly, externalModelCalls: 0, providerRequests: inputs.length, sdkSerializations: wires.length,
+    const summaryOutput = { stage, mode, entryScoped, firstUseOnly, historyOnly, editVisualOnly, externalModelCalls: 0, providerRequests: inputs.length, sdkSerializations: wires.length,
       firstEstimatedTokens: measures[0]?.estimatedTokens, taskEstimatedInput: measures.reduce((total, item) => total + item.estimatedTokens, 0), timings,
       serializedFirstEstimatedTokens: serializedMeasures[0]?.estimatedTokens, serializedTaskEstimatedInput: serializedMeasures.reduce((total, item) => total + item.estimatedTokens, 0),
       historyReads: historyReads.map(({ status, entryId }) => ({ status, entryId })),
-      scope: firstUseOnly ? 'Two-request product seam only: initial reliable empty owner then actual PNG admission; not a complete task or paired efficiency comparison.'
+      scope: entryScoped ? 'R4 entry-scoped history: actual seed, compaction/restart, search and revision-protected exact read succeed in four requests. No stale retry, omitted revision or parameter rewrite. Legacy global-revision scenario remains separate. Scripted Runtime, not autonomous model quality.'
+        : firstUseOnly ? 'Two-request product seam only: initial reliable empty owner then actual PNG admission; not a complete task or paired efficiency comparison.'
         : historyOnly ? 'R2 history-only: original text accepted by one natural Runtime Run, real compaction/restart, search, unchanged stale rejection, new legal optional-revision read with strict actual-content assertion. R1 edit/visual data reused separately; no replay/replacement of their successful baselines.'
         : editVisualOnly ? 'R1-compatible first three Runs only: actual edit/test, follow-up, accepted PNG inspect/pixels/history. Match R1 valid phases; do not combine with independent history-only input cost as one task.'
         : 'R2: scripted Runtime and real SDK serialization. Typed measures and serialized model-fields measures are separate. Actual edit/test, accepted PNG, compaction/restart, original stale rejection then a new legal optional-revision read. Original R1 remains evidence of an incomplete history read and overclaimed scripted report. Skills catalogue explicitly empty, not full builtin Host, autonomous intelligence or API usage.' };
@@ -237,4 +244,10 @@ it.each<WorkMode>(['agent', 'coding', 'script'])('captures %s editing, accepted-
     if (path.dirname(root) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('kodax-contract-activation-')) throw new Error('Unsafe Runtime fixture cleanup');
     await fs.rm(root, { recursive: true, force: true, maxRetries: 3 });
   }
-}, 120_000);
+}
+
+it.each<WorkMode>(['agent', 'coding', 'script'])('captures %s editing, accepted-image and compacted-history work without a discovery prerequisite',
+  mode => captureActivation(mode), 120_000);
+
+it.each<WorkMode>(['agent', 'coding', 'script'])('reads compacted history with entry versions in %s without a stale retry',
+  mode => captureActivation(mode, true), 120_000);
