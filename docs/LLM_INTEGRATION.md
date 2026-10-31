@@ -78,7 +78,7 @@ CLI `kodax setup` 和 REPL `/setup` 现在可选隐藏输入并保存 Key、使�
 
 ## T12-D 默认 OAuth 文件与恢复（离线切片）
 
-providerOAuthStore(configPath) 现在使用同目录 auth.json 的 OAuth 区域，与 Key 共用整文档锁；新登录不要求 Windows DPAPI 或 keychain。显式 encrypted/Windows store 仍可用作兼容后端。migrateProviderOAuthRegistration 只处理配置引用的 registration ID：新文件已有该 ID（包括 revoked tombstone）即保持其权威，不回读旧 OS 后端；否则持有旧 registration 锁跨过新文件 durable commit，再清除该旧记录的 credentials/resource，保留原 metadata 与其他账号。新文件提交失败不清旧值；旧清理失败明确拒绝成功状态，已提交的新副本保留。迁移不是远端 revoke。
+providerOAuthStore(configPath) 现在使用同目录 auth.json 的 OAuth 区域，与 Key 共用整文档锁；新登录不要求 Windows DPAPI 或 keychain。显式 encrypted/Windows store 仍可用作兼容后端。migrateProviderOAuthRegistration 只处理配置引用的 registration ID：新文件已有该 ID（包括 revoked tombstone）即保持其权威，不回读旧 OS 后端；否则持有旧 registration 锁跨过新文件 durable commit。T12-H 将旧 sealed 记录保留为恢复副本，复制或后续清理故障不删除原值。迁移不是远端 revoke；旧备份不是第二个活动 refresh authority，不能覆盖当前撤销或与新 store 同时轮换。
 
 同一进程内，同一 canonical auth 文件的独立 store handle 现在共享 OAuth lifetime/fence；不是按每次 new 出来的 store 对象孤立。一个 handle 撤销会同步封住同文件其他 handle 的旧授权；迟到 refresh 不得向后继账号返回或覆盖结果。三独立 Main 进程的真实 openOAuthSession 测试确认同一 rotating grant 只刷新一次；跨进程每请求重读和文件锁不等于取消另一进程已经发出的生成。
 
@@ -90,6 +90,8 @@ DPAPI 与浏览器兼容工具改用明确 SystemRoot 下的系统可执行文�
 
 
 ## T12-E/F/G 完成：Space 与最终兼容
+
+此节是 A–G 历史验收；新增 T12-H 的来源保持契约见下节，不以这些历史计数替代新验收。
 
 Root 及 Space 的计划内代码缺口已关闭，最终证据优先于前文各切片实施时的 pending 描述。
 Space 提交 `065cc39c` 在独立 `codex/provider-credentials-space` 分支：Provider IPC/隐藏输入、
@@ -112,3 +114,23 @@ Windows隔离桌面的Electron Provider IPC均通过，两轴最终无剩余发�
 源代码和构建验收不代替服务端权益、macOS/Linux旧vault迁移或生产安装包认证。
 两仓版本/锁定Registry依赖未变，正式Space安装包须先锁定包含本契约的发布SDK；
 另一线程的在途改动不属于本独立分支测试范围，整合后需重新做相关回归。
+
+## T12-H 来源固定与自动重试（未发布）
+
+Space 自动导入旧 Key 时写应用私有 namespace，保留旧加密项；不同 Space 目录的私有
+来源也隔离。首次 legacy/env/shared 来源须成功固定，env 值仍动态读取、不复制到文件。
+同根的 CLI 与 Space 可以各用原账号，保存沿当前作用域更新；只有显式发布/采用操作
+才选择共享。env 移除、墓碑、并发换号、旧后端锁定和 API/地址改变均不能采用另一账号。
+配置编辑前固定原连接；迟到的迁移只能使用自己最初提交的 revision，不能覆盖新选择。
+
+保护文件的格式继续为 v2，旧单记录接口保留。AtomicFileProviderCredentialStore 扩展的
+readApiKeys/updateApiKeys 提供一致快照和批量 CAS，任何一项过期都不提交部分变更。
+新 profile 的 discovery baseline 避免加载全局 OS 账户，旧 profile 后端不可用会明确失败
+并允许后续重试；只有已固定的旧来源可在复制失败时继续使用其原值。OAuth sealed 备份
+默认保留，当前 grant/revocation 权威不变。Host、稳定客户端身份及退出恢复边界保持，
+legacy 启动值走现有 SDK 升级路径。不可安全自动处理的损坏/缺失材料不会被猜测替换。
+
+H 专项和完整验收单独记入 FEATURE_302 测试指南；两仓交接须采用包含 H 的新提交，
+并以 Space docs/handoff/PROVIDER_UPGRADE.md 为接手索引。
+Space H独立提交为`437cac7d`。最终Root完整18,659/发布70、Space完整4,531/实际Electron2项
+均通过；跨平台实机、生产安装包及原线程后续代码的整合验收仍按测试指南边界执行。

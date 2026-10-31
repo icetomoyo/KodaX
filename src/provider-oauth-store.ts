@@ -17,7 +17,7 @@ export function assertProviderOAuthSessionScope(input: { readonly service: OAuth
     if (normalize(input.issuer) !== normalize(session.issuer)) throw new Error('OAuth registration issuer does not match the approved connection.');
   }
 }
-/** Import only an explicitly linked registration. The legacy lock spans the durable copy and its cleanup. */
+/** Import only a linked registration. Retain the encrypted source for interrupted upgrades and rollback. */
 export async function migrateProviderOAuthRegistration(input: {
   readonly configPath: string; readonly registrationId: string; readonly legacyStore?: OAuthSessionStore;
 }): Promise<'current' | 'absent' | 'migrated'> {
@@ -35,7 +35,6 @@ export async function migrateProviderOAuthRegistration(input: {
     if (!previous) return { record: previous, result: 'absent' as const };
     const copied = await target.transact(id, async current => current
       ? { record: current, result: false } : { record: previous, result: true });
-    return { record: copied ? { ...previous, credentials: undefined, resource: undefined } : previous,
-      result: copied ? 'migrated' as const : 'current' as const };
+    return { record: previous, result: copied ? 'migrated' as const : 'current' as const };
   });
 }

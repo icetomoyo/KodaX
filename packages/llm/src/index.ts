@@ -389,7 +389,8 @@ export type { KodaXOperationConnection, KodaXClassifierApi, KodaXClassifierConne
   KodaXDeferredRequest, KodaXDeferredResult } from './operations/types.js';
 
 export { createFileProviderCredentialStore, CredentialUpdateConflictError } from './auth-file.js';
-export type { ProviderCredentialFileBinding, StoredProviderApiKey, ProviderApiKeyStatus, FileProviderCredentialStore } from './auth-file.js';
+export type { ProviderCredentialFileBinding, StoredProviderApiKey, ProviderApiKeyStatus, FileProviderCredentialStore,
+  AtomicFileProviderCredentialStore, ProviderApiKeySnapshot, ProviderApiKeyMutation } from './auth-file.js';
 
 export { credentialConnectionFingerprint } from './credential-connection.js';
 export type { ProviderCredentialConnection } from './credential-connection.js';

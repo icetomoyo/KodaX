@@ -1212,3 +1212,120 @@ Raw test/failure/coverage evidence remains in OS temporary storage: Root
 `space-parity-config-atomic-red2.log` / `space-parity-config-atomic-green.log`,
 `space-parity-credential-coverage-final3.log` and `space-parity-electron-provider-ipc-final.log`.
 No research draft or raw test output is committed as accepted design.
+
+<a id="t12-h-upgrade-compatibility-acceptance-2026-10-31"></a>
+
+## T12-H upgrade compatibility acceptance — 2026-10-31
+
+H is an additional, unpublished upgrade slice after the A–G baseline above, accepted offline
+after complete reruns and actual Electron verification. The current contract is
+section 9 of the design and Space `docs/SDK_PROVIDER_CREDENTIALS.md`; the handoff index is Space
+`docs/handoff/PROVIDER_UPGRADE.md`.
+Space H is committed locally as `437cac7dfcee4d6f08a008eaee76531b4cdebdcd`, after baseline
+`065cc39c`; its branch is clean. Root remains the isolated `codex/llm-provider-parity` branch.
+
+### Account and recovery matrix
+
+- The old single-record SDK and v1-read/v2-write remain usable. Batch API-key operations read a
+  coherent snapshot and commit all CAS checks before any record; malformed, duplicate or stale
+  changes preserve the full document. Tombstone revisions survive a second store instance.
+- Old Space A and CLI B remain separate, including across environment removal and process restart.
+  Migration writes only the private Space namespace and keeps old encrypted copies. Explicit
+  publish/adopt compares private, shared and selection revisions; Save stays in the selected scope.
+- Fresh/eligible discovery is protected and persistent. Fresh profiles do not probe global OS
+  accounts; temporary old-store failure is unavailable, not absent. Different Space directories
+  sharing one SDK root do not adopt each other's private source. Invalid identity metadata fails
+  without including its content in the error.
+- A pinned legacy origin that disappears before copying refuses environment/shared fallback;
+  restoring that original allows retry. Configuration edits pin environment origins with a private
+  tombstone and selection together, so they are not mistaken for an unfinished legacy copy.
+- Initial source pin failure blocks use. A durably pinned original can continue after copy failure
+  and retry. Pin/copy lost acknowledgement, concurrent adopt/remove, stale UI and deleted alias
+  destination cannot revive a key or overwrite a newly chosen account. The deterministic late-pin
+  RED reproduced both adoption overwrite and deletion resurrection; GREEN preserves both choices.
+- API/route changes require an explicit credential choice, including returning to a historical
+  route after another route was selected. The return-route RED reproduced silent use of a private
+  backup after prior shared adoption; GREEN refuses, preserves both keys, then permits adoption.
+- OAuth keeps original sealed records; current/revoked grants remain authoritative. Exact active
+  and exit-recovery client identity bytes stay unchanged; temporary initialization failures retry.
+  Persisted Space `legacy` mode takes the existing SDK shared-Host upgrade path with owner/busy
+  checks. Retired third-party private embedded factories still require explicit migration.
+- Explicit API-key-to-OAuth configuration uses the approved registration without trying obsolete
+  API-key migration first. Proof is checked against the same captured OAuth connection; the old
+  API key remains and grant presence uses its canonical profile, not the private storage namespace.
+  Both the blocked acquire and false-negative status were reproduced RED and corrected GREEN;
+  wrong proof and revoked grant still fail.
+- OAuth A refresh held at the real file-store lock cannot delay a source-switch fence. Both
+  OAuth-to-OAuth and OAuth-to-API regressions block a dummy refresh, select B, verify invalidation
+  before releasing the lock, reject A's late broker result, and verify B after rebinding. Pending
+  session publication and acquire both check the selected entry, and failures clear only their
+  own pending entry. All requests use fake fetch and synthetic credentials.
+
+### Verification ledger
+
+- Root credential regressions: 19 passed. Scoped coverage with the existing authorizer regressions:
+  96.03% lines / 83.41% branches / 94.33% functions; auth-file itself 96.22% / 86.28% / 93.47%.
+- Root complete suite: 18,659 passed / 97 skipped / 19 todo across 1,348 passed and 6 skipped
+  files. Published suite: 70 passed on the frozen build.
+  CLI 5,176,458 bytes remains below the unchanged 5,177,344-byte budget; four budget/resource
+  checks passed. Ten prompt literals moved unchanged to the existing static-text resource;
+  independent AST/resource equality review passed. Source and test typechecks passed.
+- Space final complete suite: release 130 passed / 7 skipped; Desktop 4,031 passed / 13 skipped;
+  IPC 370 passed — 4,531 passed, 20 conditional skips, zero failures. Final 56-test credential/source
+  regressions passed; scoped coverage across five affected modules is 91.30% lines / 82.38% branches /
+  88.68% functions. This is not whole-repository coverage. Source/test types, lint and smoke build passed.
+- Actual Electron: 2 passed on an isolated Windows desktop. Real IPC covers private save, explicit
+  publish/adopt, cross-process shared update, stale delete, redacted state/config and approved env
+  fallback. A full close/relaunch restores the provider files at the same path: removing env A does
+  not dispatch CLI B; explicit adoption then dispatches B to an owned loopback fixture. This is an
+  application restart test, not just Renderer reload. The separate identity tests preserve exact
+  active/exit-recovery bytes; this E2E does not copy or certify client identity metadata migration.
+- Independent Spec/Standards reviews report no remaining findings after first-pin, tombstone,
+  late-copy race, return-route, metadata-error, OAuth-source and native-read fixes. Spec independently
+  ran focused fixes, including a cold OAuth opening blocked by a real file lock; Standards performed
+  static review. The main chat ran the complete suites. Final acceptance preserves all platform/release limits below.
+
+The first complete Root run had 8 failed tests in 7 files: one tracker count inconsistency (the
+completed feature count had no corresponding 302 row) was corrected; the remaining Host/Script
+files passed all 60 tests in a sequential focused replay. The initial published run had a cold
+startup timing failure and an auxiliary fixture AbortError; focused replay passed all 3 tests,
+then the unchanged complete published run passed all 70. Space's first release stage had one
+verified-shutdown hook failure; the same question fixture passed all 4 tests alone. Initial logs
+are retained rather than replaced by later successful logs. Seventeen ancient Hosts from owned
+isolated test fixtures were identified by exact executable entry, temporary home, creation time
+and wrapper, then stopped with PID identity rechecks. No unknown or original-workspace Host was
+terminated. Complete suites are rerun sequentially without weaker timeouts or assertions.
+
+Space complete run 2 exposed two further integration checks: the new share IPC was absent from
+the explicit owner manifest, and an old macOS strict-read test used a generic decoding error to
+represent cancellation. The manifest now explicitly lists this Main-owned action (RED 2 failures /
+GREEN 7 passed). Strict reads now distinguish ordinary failures (deduplicate, then retry) from
+explicit cancellation/authentication denial (suppress until relaunch or explicit save). The latter
+is tested with numeric status and nested cause, preserving the existing dialog protection. The
+22 native-port/migration tests pass, including backend recovery; these are simulated darwin cases.
+Status semantics were checked against
+[Apple's Security header](https://github.com/apple-oss-distributions/Security/blob/main/base/SecBase.h)
+on 2026-10-31. Source run 3 is the final complete rerun after these changes.
+
+Raw evidence: OS-temp `kodax-t12h-full.log`, `kodax-t12h-full2.log`, `kodax-t12h-repro.log`,
+`kodax-t12h-published*.log`, `kodax-t12h-auth-coverage*.log`,
+`kodax-t12h-owned-orphan-cleanup.json`, `space-t12h-full1.log`, `space-t12h-question-repro.log`,
+`space-t12h-late-pin-{red,green}.log`, `space-t12h-return-route-{red,green}.log`,
+`space-t12h-discovery-redact-{red,green}.log` and `space-t12h-*` final run logs.
+
+Windows local file/DPAPI, owned daemon and actual Electron evidence does not certify real
+macOS/Linux vault migration, service subscription/cloud identities or production installer
+upgrades. Backend recovery on simulated win32/darwin is an injected-port regression, not an
+OS-account test. Old binaries cannot understand new selections/tombstones: arbitrary downgrade
+or concurrent old/new refresh owners are not safe automatic recovery. Release the paired SDK
+and Space through existing version/byte gates; backups remain recovery material, not competing
+active authority. No versions, Registry locks or production packaging gates were changed.
+
+H read-only concurrent-work audit: original Root advanced to `422acd4a84eb788e4bfe9d08da19ec5a4e2cc821`
+with further execution-profile/recovery and Windows cleanup commits; the baseline common to this
+branch remains `f6a01046`. Its 9 dirty paths were not imported. There are 23 overlapping paths in
+the complete parity versus upstream changes, chiefly Host/broker, SDK/runtime, coding types,
+bundle metadata and migration docs. Original Space remains `7801a8ca` with its existing fixture
+and four new research drafts, also untouched. Pi remains clean at `e7a0df27`. The OS-temp
+`kodax-t12h-overlap-audit.json` is that dated snapshot, not a guarantee that concurrent work stops.
+These H test results certify the isolated branch, not the other chat's subsequent code.

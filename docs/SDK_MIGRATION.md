@@ -301,7 +301,7 @@ CLI Host 要求 providerCredentialConnectionBinding:1，保存值按实际 adapt
 此阶段修复了独立 Host 漏转发 providerProbeAuthorization 的问题，现按真实 owner 能力声明，避免 SDK 要求与 daemon 握手不一致。该修复不放宽旧 Host 的能力门槛。
 
 
-### FEATURE_302 T12-E/F/G：最终迁移状态（未发布，2026-10-31）
+### FEATURE_302 T12-E/F/G：历史离线验收（未发布，2026-10-31）
 
 T01–T12 本地实现、离线完整回归和双轴评审完成，原 config.json、provider/model 别名及
 API_KEY 环境变量继续有效。默认保存值优先于批准 env，再走该连接声明的认证；
@@ -310,7 +310,8 @@ API_KEY 环境变量继续有效。默认保存值优先于批准 env，再走�
 
 Space 已在独立提交 `065cc39c` 接入真实 provider IPC/持久化/broker 与稳定客户端秘密迁移。
 UI 更新必须携带显示时的状态，改名/删除不能重新读取新 revision 来绕过并发检查；
-同根与 CLI 共享，不同根隔离。旧值冲突保留并提示，原 active/exitRecovery 身份值不变。
+同根共用 auth.json，不同根隔离。原 active/exitRecovery 身份值不变。
+以下来源选择以 T12-H 补充为准，旧值与 CLI 不同不能自动选择其中一方。
 OAuth 注销与 API-key 删除保持不同入口；高级原生连接沿 SDK/CLI/config 配置。
 
 可信测试/底层宿主若显式创建隔离 daemon，close 只断连接；删除临时 home 前须核验
@@ -322,3 +323,24 @@ OAuth 注销与 API-key 删除保持不同入口；高级原生连接沿 SDK/CLI
 不得绕过门禁或作为正式安装包。独立分支的完整测试不覆盖原工作区另一线程未合并改动；
 合并后重跑受影响的 Host/凭证/恢复/发布验证。精确测试与未验证范围见
 [FEATURE_302 最终验收](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-efg-final-offline-acceptance-2026-10-31)。
+
+### FEATURE_302 T12-H：账号保持与可重试升级（未发布）
+
+CLI 的 config.json、API_KEY 和单记录凭证 SDK 入口继续有效，auth.json 仍为 v2。
+新增 AtomicFileProviderCredentialStore 扩展提供一致快照与多记录 CAS，不改变旧调用方契约。
+Space 的旧 Key 自动迁到应用私有作用域，旧加密副本保留；CLI 已有不同 Key 时双方继续各用
+原账号。首次选择 legacy/env/shared 来源须成功持久化，env 只固定来源、不复制变量值。
+之后 env 消失、删除、旧后端暂时不可用、API/地址变化，都不能静默采用另一账号。
+显式保存沿当前作用域更新，只有发布/采用共享凭证操作才改变共享关系。
+
+迁移失败可在修复底层存储后重试；只有已持久固定的旧来源可在复制失败时继续原账号。
+迟到迁移不使用用户新选择的 revision 重新授权，删除墓碑与显式换号保持权威。
+默认 OAuth 迁移保留旧 sealed 备份，新文件中的当前 grant/撤销记录始终优先；不要并行运行
+旧/新 rotating-grant refresher 或用备份覆盖撤销。客户端 active/exitRecovery 原值保持，
+初始化失败不缓存成永久失败，也不生成替代身份。持久 legacy 启动值接入现有 SDK Host
+升级/恢复，保留 busy/owner 边界；已退役的第三方私有 embedded factory 仍需迁移。
+
+Space 接手契约及交接索引位于其独立仓库的 docs/SDK_PROVIDER_CREDENTIALS.md 和
+docs/handoff/PROVIDER_UPGRADE.md。H 验收结果单独记录，不以 A–G 的历史计数代替。
+H 对应 Space 独立提交 `437cac7d`；Root完整18,659、发布包70、Space完整4,531和实际
+Electron两项通过，两轴复审无剩余发现。详细证据见测试指南H节；原线程后续提交整合后须重验。

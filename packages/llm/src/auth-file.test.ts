@@ -11,6 +11,41 @@ const folders: string[] = [];
 afterEach(async () => { for (const folder of folders.splice(0)) await rm(folder, { recursive: true, force: true }); });
 async function fixture() { const folder = await mkdtemp(path.join(tmpdir(), 'kodax-auth-file-')); folders.push(folder); return path.join(folder, 'auth.json'); }
 const binding = { profile: 'default', provider: 'custom', connectionFingerprint: 'a'.repeat(64) };
+it('commits a migration copy and its selection atomically and preserves both on a stale batch', async () => {
+  const store = createFileProviderCredentialStore(await fixture());
+  const selection = { ...binding, profile: 'space-provider-selection:default' };
+  const copied = { ...binding, profile: 'space-legacy-provider:default' };
+  await store.updateApiKeys([{ binding: copied, key: 'space-original', expectedRevision: null },
+    { binding: selection, key: 'space', expectedRevision: null }]);
+  const before = await store.readApiKeys([copied, selection, binding]);
+  expect(before.map(value => value.key)).toEqual(['space-original', 'space', undefined]);
+  await store.setApiKey(binding, 'cli-original', null);
+  await expect(store.updateApiKeys([{ binding: copied, key: 'must-not-publish', expectedRevision: before[0]!.revision },
+    { binding, key: 'must-not-replace-cli', expectedRevision: null }])).rejects.toThrow(/conflict/);
+  expect((await store.readApiKeys([copied, selection, binding])).map(value => value.key))
+    .toEqual(['space-original', 'space', 'cli-original']);
+  expect(JSON.parse(await readFile(store.filePath, 'utf8')).version).toBe(2);
+});
+it('keeps the whole document on invalid batches and preserves deletion fences across store instances', async () => {
+  const file = await fixture(), first = createFileProviderCredentialStore(file), second = createFileProviderCredentialStore(file);
+  const other = { ...binding, provider: 'other' };
+  await first.updateApiKeys([{ binding, key: 'original', expectedRevision: null }, { binding: other, key: 'other-original', expectedRevision: null }]);
+  const original = await readFile(file, 'utf8'), [a, b] = await second.readApiKeys([binding, other]);
+  for (const changes of [
+    [{ binding, key: 'must-not-write', expectedRevision: a!.revision }, { binding: other, key: 'invalid\nkey', expectedRevision: b!.revision }],
+    [{ binding, key: 'duplicate-one', expectedRevision: a!.revision }, { binding, key: 'duplicate-two', expectedRevision: a!.revision }],
+    [{ binding, key: 'invalid-revision', expectedRevision: '' }],
+  ]) {
+    await expect(first.updateApiKeys(changes)).rejects.toThrow(/storage/);
+    expect(await readFile(file, 'utf8')).toBe(original);
+  }
+  const removed = await first.updateApiKeys([{ binding, expectedRevision: a!.revision }, { binding: other, key: 'retained', expectedRevision: b!.revision }]);
+  expect((await second.readApiKeys([binding, other])).map(value => value.key)).toEqual([undefined, 'retained']);
+  expect((await second.readApiKeys([binding]))[0]!.revision).toBe(removed[0]!.revision);
+  await expect(second.updateApiKeys([{ binding, key: 'must-not-revive', expectedRevision: null },
+    { binding: other, key: 'must-not-change', expectedRevision: removed[1]!.revision! }])).rejects.toThrow(/conflict/);
+  expect((await first.readApiKeys([binding, other])).map(value => value.key)).toEqual([undefined, 'retained']);
+});
 it('initializes both credential mask targets before an env-only Host can start shell work', async () => {
   const file = await fixture(), store = createFileProviderCredentialStore(file);
   await store.initialize(); expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({ version: 2, apiKeys: {}, oauth: {} });

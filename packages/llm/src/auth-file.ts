@@ -8,6 +8,8 @@ import { OAuthCredentialError, shareOAuthSessionStoreIdentity, type OAuthSession
 
 export interface ProviderCredentialFileBinding { readonly profile: string; readonly provider: string; readonly connectionFingerprint: string; }
 export interface StoredProviderApiKey { readonly key: string; readonly revision: string; }
+export interface ProviderApiKeySnapshot { readonly binding: ProviderCredentialFileBinding; readonly key?: string; readonly revision: string | null; }
+export interface ProviderApiKeyMutation { readonly binding: ProviderCredentialFileBinding; readonly key?: string; readonly expectedRevision: string | null; }
 export type ProviderApiKeyStatus = { readonly configured: false; readonly revision?: string } | { readonly configured: true; readonly revision: string };
 interface ApiKeyEntry { readonly binding: ProviderCredentialFileBinding; readonly key?: string; readonly revision: string; }
 interface AuthDocument { version: 2; apiKeys: Record<string, ApiKeyEntry>; oauth: Record<string, OAuthSessionRecord>; }
@@ -21,6 +23,12 @@ export interface FileProviderCredentialStore {
   setApiKey(binding: ProviderCredentialFileBinding, key: string, expectedRevision?: string | null): Promise<Extract<ProviderApiKeyStatus, { configured: true }>>;
   removeApiKey(binding: ProviderCredentialFileBinding, expectedRevision?: string | null): Promise<{ readonly configured: false; readonly revision: string }>;
   readonly oauth: OAuthSessionStore;
+}
+/** Trusted Main only: coherent reads and all-or-nothing conditional changes, using the same v2 document. */
+export interface AtomicFileProviderCredentialStore extends FileProviderCredentialStore {
+  initialize(): Promise<void>;
+  readApiKeys(bindings: readonly ProviderCredentialFileBinding[]): Promise<readonly ProviderApiKeySnapshot[]>;
+  updateApiKeys(changes: readonly ProviderApiKeyMutation[]): Promise<readonly ProviderApiKeyStatus[]>;
 }
 export class CredentialUpdateConflictError extends Error {
   constructor() { super('Credential update conflict. Refresh its state before retrying.'); this.name = 'CredentialUpdateConflictError'; }
@@ -115,7 +123,7 @@ function expectRevision(current: ApiKeyEntry | undefined, expected: string | nul
   if (expected !== undefined && (current?.revision ?? null) !== expected) throw new CredentialUpdateConflictError();
 }
 /** Explicit protected plaintext backend, not a fallback from an OS vault failure. */
-export function createFileProviderCredentialStore(filePath: string): FileProviderCredentialStore & { initialize(): Promise<void> } {
+export function createFileProviderCredentialStore(filePath: string): AtomicFileProviderCredentialStore {
   if (!path.isAbsolute(filePath)) throw new Error('Credential store requires an absolute trusted path.');
   const canonical = async () => {
     await mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
@@ -139,7 +147,28 @@ export function createFileProviderCredentialStore(filePath: string): FileProvide
         return update.result;
       });
   } };
-  return { filePath, async initialize() { const file = await canonical(); await prepareStaging(file); await transaction(file, async () => undefined, true); if (process.platform === 'win32') await protectFile(file); else await chmod(file, 0o600); }, readApiKey, describeApiKey: async binding => {
+  return { filePath,
+    async readApiKeys(bindings) {
+      const selected = bindings.map(binding => ({ binding: structuredClone(binding), id: bindingId(binding) }));
+      const data = await readDocument(await canonical());
+      return selected.map(({ binding, id }) => {
+        const entry = own(data.apiKeys, id);
+        return { binding, revision: entry?.revision ?? null, ...(entry?.key === undefined ? {} : { key: entry.key }) };
+      });
+    },
+    async updateApiKeys(changes) {
+      const selected = structuredClone(changes).map(change => ({ ...change, id: bindingId(change.binding) }));
+      if (new Set(selected.map(change => change.id)).size !== selected.length || selected.some(change =>
+        (change.expectedRevision !== null && !secret(change.expectedRevision)) || (change.key !== undefined && !secret(change.key)))) throw failure();
+      return transaction(await canonical(), async data => {
+        for (const change of selected) expectRevision(own(data.apiKeys, change.id), change.expectedRevision);
+        return selected.map(change => {
+          const revision = randomUUID(); data.apiKeys[change.id] = { binding: change.binding, revision, ...(change.key === undefined ? {} : { key: change.key }) };
+          return change.key === undefined ? { configured: false as const, revision } : { configured: true as const, revision };
+        });
+      });
+    },
+    async initialize() { const file = await canonical(); await prepareStaging(file); await transaction(file, async () => undefined, true); if (process.platform === 'win32') await protectFile(file); else await chmod(file, 0o600); }, readApiKey, describeApiKey: async binding => {
     const entry = own((await readDocument(await canonical())).apiKeys, bindingId(binding));
     return entry?.key ? status({ key: entry.key, revision: entry.revision }) : { configured: false, ...(entry ? { revision: entry.revision } : {}) };
   },
