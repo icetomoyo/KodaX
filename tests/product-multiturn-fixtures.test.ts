@@ -28,6 +28,14 @@ it.each(['tenant-cache', 'config-precedence', 'output-retention', 'skill-discove
       expect(run().status, 'A delimiter-based key must not satisfy arbitrary-string pair isolation').toBe(1);
       await fs.writeFile(file, definition.golden['src/client.js']!);
     }
+    if (id === 'config-precedence') {
+      const file = path.join(prepared.workspace, 'src/config.js');
+      const golden = definition.golden['src/config.js']!;
+      await fs.writeFile(file, golden.replace('result[key] = source[key]',
+        "result[key] = typeof source[key] === 'number' ? Math.trunc(source[key]) : source[key]"));
+      expect(run().status, 'Valid finite settings must not be silently rounded').toBe(1);
+      await fs.writeFile(file, golden);
+    }
     if (id === 'history-replay') {
       const file = path.join(prepared.workspace, 'src/history.js');
       const golden = definition.golden['src/history.js']!;

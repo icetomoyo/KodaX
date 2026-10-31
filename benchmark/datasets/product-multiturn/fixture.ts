@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 
 export type ProductCaseId = 'tenant-cache' | 'config-precedence' | 'output-retention' | 'skill-discovery' | 'history-replay';
 /** Scorer-only revision; historical raw results retain their original verdicts. */
-export const PRODUCT_ORACLE_REVISION = '2026-10-28-boundary-v2';
+export const PRODUCT_ORACLE_REVISION = '2026-10-31-config-boundary-v3';
 interface ProductCase {
   requiresUnmarkedTemporaryRoot?: boolean;
   prompt: string;
@@ -518,7 +518,13 @@ test('preserves explicit zero and false at each layer', () => {
 });
 test('absent values fall through independently', () => {
   assert.deepEqual(api.resolveConfig({timeoutMs:100,retries:0,enabled:false}, {APP_TIMEOUT_MS:'',APP_RETRIES:undefined}, {timeoutMs:undefined,retries:undefined,enabled:undefined}), {timeoutMs:100,retries:0,enabled:false});
+  assert.deepEqual(api.resolveConfig({timeoutMs:900,retries:1,enabled:true}, {APP_TIMEOUT_MS:'2000',APP_RETRIES:'3',APP_ENABLED:'false'}, {timeoutMs:undefined,retries:undefined,enabled:undefined}), {timeoutMs:2000,retries:3,enabled:false});
   assert.deepEqual(api.resolveConfig(), {timeoutMs:5000,retries:2,enabled:true});
+});
+test('retains valid finite fractional settings at each layer', () => {
+  for (const args of [[{timeoutMs:0.25,retries:2.9}], [{}, {APP_TIMEOUT_MS:'0.25',APP_RETRIES:'2.9'}], [{}, {}, {timeoutMs:0.25,retries:2.9}]]) {
+    assert.deepEqual(api.resolveConfig(...args), {timeoutMs:0.25,retries:2.9,enabled:true});
+  }
 });
 test('does not mutate or leak input keys', () => {
   const file = Object.freeze({timeoutMs:10,extra:'ignore'});
