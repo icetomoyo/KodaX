@@ -1071,7 +1071,7 @@ Ink queued-input view all filter by that same key; a process-global
 
 The main agent verifies each requested requirement with actual tool and rendered evidence before delivery. The built-in `visual-review` skill covers static images/charts, paginated documents/slides/sheets, interactive web/app/terminal/canvas/3D surfaces, and temporal video/animation results. Missing capabilities and unchecked scope are reported as unverified. An ordinary read-only child reviewer may contribute findings within the same Run; the main agent owns repairs and the final answer.
 
-Generic Stop hooks remain in `packages/agent`. The coding runner composes extension `turn:complete`, goal accounting/continuation, and child/mailbox waiting without a completion judge. Host goal tools mutate the existing lineage atomically; clients never save a replacement journal. Run terminal status does not certify quality. Historical verifier messages remain display-only and never replay tools.
+Generic Stop hooks remain in `packages/agent`. The coding runner composes extension `turn:complete`, goal accounting/continuation, and child/mailbox waiting without a completion judge. Host goal tools mutate the existing lineage atomically; clients never save a replacement journal. Goal tools belong to the root Run and are hidden from every child. Each descendant provider call reports its net tokens to the root binding, which folds them into the next root settlement instead of writing the journal concurrently. Run terminal status does not certify quality. Historical verifier messages remain display-only and never replay tools.
 
 The optional Artifact API is delivered through the main package's four
 `/artifacts` subpaths; its private workspace is not published independently.

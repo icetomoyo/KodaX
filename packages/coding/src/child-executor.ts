@@ -951,6 +951,7 @@ async function createWorkflowChildDigest(
           excludeTools: childToolDefinitions(input.options.parentOptions.extensionRuntime).map((tool) => tool.name),
           contextIdentitySessionId:
             input.scopeCtx.contextIdentitySessionId ?? input.scopeCtx.sessionId,
+          goalUsageSink: input.scopeCtx.goalUsageSink,
           ownsContextRevision: false,
           currentAgentId: childContextAgentId(input.bundle, input.options),
           parentAgentId: childContextParentAgentId(input.scopeCtx, input.options),
@@ -1110,6 +1111,7 @@ async function resolveChildStructuredOutput(input: {
           agentScope: input.scopeCtx.agentScope,
           contextIdentitySessionId:
             input.scopeCtx.contextIdentitySessionId ?? input.scopeCtx.sessionId,
+          goalUsageSink: input.scopeCtx.goalUsageSink,
           ownsContextRevision: false,
           currentAgentId: childContextAgentId(input.bundle, input.options),
           parentAgentId: childContextParentAgentId(input.scopeCtx, input.options),
@@ -1462,6 +1464,7 @@ async function runReadChildBody(
             scope.ctx.contextIdentitySessionId ?? scope.ctx.sessionId,
           actorHost: options.actorHost,
           managedWorkBudget: scope.ctx.managedWorkBudget,
+          goalUsageSink: scope.ctx.goalUsageSink,
           // Propagate Actor identity/control so the child runtime can receive
           // messages and recursively collaborate within its inherited ceiling.
           currentAgentId: childContextAgentId(bundle, options),
@@ -1771,6 +1774,7 @@ async function runWriteChildBody(
             childCtx.contextIdentitySessionId ?? childCtx.sessionId,
           actorHost: options.actorHost,
           managedWorkBudget: childCtx.managedWorkBudget,
+          goalUsageSink: childCtx.goalUsageSink,
           // FEATURE_123 v0.7.44 — write children share the same peer-
           // routing surface as read children (same agentId + registry
           // propagation rules).
@@ -2282,6 +2286,9 @@ export const CHILD_EXCLUDE_TOOLS_BASE: readonly string[] = [
   'worktree_create',        // Worktree lifecycle managed by parent
   'worktree_remove',        // Worktree lifecycle managed by parent
   'exit_plan_mode',         // Plan-mode exit requires user UI; only the parent REPL wires the callback
+  'get_goal',               // Goal state belongs to the root Run; children never receive its binding
+  'create_goal',
+  'update_goal',
 ];
 
 /** Additional tools excluded for read-only children (no file mutations). */

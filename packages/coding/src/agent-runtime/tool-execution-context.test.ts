@@ -19,6 +19,7 @@ vi.mock('../workflows/run-manager.js', () => ({
 }));
 
 import { buildToolExecutionContext, resolveResumeFromRunDir } from './tool-execution-context.js';
+import { makeDisabledGoalToolsContext } from '../goal/tools-context.js';
 
 afterEach(() => {
   workflowHostMock.startManagedWorkflow.mockReset();
@@ -294,6 +295,33 @@ describe('F270 actor principal wiring', () => {
       disablePromptCache: false,
       contextDiagnostics: true,
     });
+  });
+
+  it('charges descendant goal usage to the root binding or the inherited sink', () => {
+    const chargeDescendantUsage = vi.fn();
+    const root = buildToolExecutionContext({
+      options: {
+        provider: 'mock',
+        context: {
+          goalRuntime: {
+            goalContext: makeDisabledGoalToolsContext(),
+            lifecycleCtx: { getGoal: () => null, persistEvent: async () => undefined,
+              buildContinuationPrompt: () => '', chargeDescendantUsage },
+          },
+        },
+      },
+      runtime: undefined,
+      managedProtocolPayloadRef: { current: undefined },
+    });
+    const goalUsageSink = vi.fn();
+    const child = buildToolExecutionContext({
+      options: { provider: 'mock', context: { goalUsageSink } },
+      runtime: undefined,
+      managedProtocolPayloadRef: { current: undefined },
+    });
+
+    expect(root.goalUsageSink).toBe(chargeDescendantUsage);
+    expect(child.goalUsageSink).toBe(goalUsageSink);
   });
 
   it('forwards the host-boundary shell authorizer to tool contexts', () => {

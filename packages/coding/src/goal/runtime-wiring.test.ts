@@ -50,6 +50,7 @@ interface HostState {
 function makeBinding(overrides: {
   state?: HostState;
   hasPendingUserInput?: () => boolean;
+  getPermissionMode?: () => string | undefined;
 } = {}) {
   const state: HostState = overrides.state ?? {
     lineage: makeMsgLineage(),
@@ -67,9 +68,36 @@ function makeBinding(overrides: {
     getLatestUsage: () => undefined,
     getTurnStartMs: () => undefined,
     hasPendingUserInput: overrides.hasPendingUserInput ?? (() => false),
+    getPermissionMode: overrides.getPermissionMode,
   });
   return { binding, state, saveSession, };
 }
+
+describe('buildGoalRuntimeBinding — descendant usage', () => {
+  it('holds net descendant tokens for the active goal until the root settles them', () => {
+    const state: HostState = { lineage: makeMsgLineage(), saved: 0 };
+    const goal = buildCreatedGoal('X', 5000);
+    state.lineage = appendGoalEntry(state.lineage, goal, 'created');
+    const { binding } = makeBinding({ state });
+    binding.lifecycleCtx.chargeDescendantUsage?.({ inputTokens: 900, outputTokens: 100, totalTokens: 1000, cachedReadTokens: 400 });
+    binding.lifecycleCtx.chargeDescendantUsage?.({ inputTokens: 50, outputTokens: 10, totalTokens: 60 });
+    expect(binding.lifecycleCtx.takeDescendantTokens?.('another-goal')).toBe(0);
+    expect(binding.lifecycleCtx.takeDescendantTokens?.(goal.id)).toBe(660);
+    expect(binding.lifecycleCtx.takeDescendantTokens?.(goal.id)).toBe(0);
+    expect(state.saved).toBe(0);
+  });
+
+  it('ignores descendant usage without an active goal or while the root is in plan mode', () => {
+    const idle = makeBinding();
+    idle.binding.lifecycleCtx.chargeDescendantUsage?.({ inputTokens: 100, outputTokens: 0, totalTokens: 100 });
+    const state: HostState = { lineage: makeMsgLineage(), saved: 0 };
+    const goal = buildCreatedGoal('X', null);
+    state.lineage = appendGoalEntry(state.lineage, goal, 'created');
+    const planning = makeBinding({ state, getPermissionMode: () => 'plan' });
+    planning.binding.lifecycleCtx.chargeDescendantUsage?.({ inputTokens: 100, outputTokens: 0, totalTokens: 100 });
+    expect(planning.binding.lifecycleCtx.takeDescendantTokens?.(goal.id)).toBe(0);
+  });
+});
 
 describe('buildGoalRuntimeBinding — readGoal', () => {
   it('returns null when no goal entry on branch', async () => {

@@ -83,6 +83,14 @@ export interface GoalLifecycleContext {
    * their input naturally. Optional — defaults to "no pending".
    */
   readonly hasPendingUserInput?: () => boolean;
+  /**
+   * Records one descendant Agent provider call against the active goal.
+   * Never persists: descendants run concurrently with the root, so the
+   * root folds the pending total in at its own settlement point.
+   */
+  readonly chargeDescendantUsage?: (usage: KodaXTokenUsage) => void;
+  /** Returns and clears the descendant tokens pending for `goalId`. */
+  readonly takeDescendantTokens?: (goalId: string) => number;
 }
 
 interface BeforeNextTurnFnCtx {
@@ -126,7 +134,8 @@ export function withGoalBeforeNextTurn(
             turnStartMs !== undefined
               ? turnWallTimeDelta(turnStartMs, Date.now())
               : 0;
-          const result = applyAccountingDelta(goal, usage, wallSeconds);
+          const result = applyAccountingDelta(goal, usage, wallSeconds, Date.now(),
+            ctx.takeDescendantTokens?.(goal.id));
           // Persist whenever the state moved — otherwise the per-turn
           // delta is lost and `/goal status` shows 0 tokens / 0 seconds
           // until the budget actually trips. The event kind reflects

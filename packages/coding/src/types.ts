@@ -1950,6 +1950,11 @@ export interface KodaXContextOptions {
   configHome?: string;
   /** Runtime-internal shared work ledger inherited by every descendant Agent run. */
   managedWorkBudget?: KodaXManagedWorkBudget;
+  /**
+   * Runtime-internal root `/goal` charge point inherited by every descendant
+   * Agent run. A run without its own `goalRuntime` reports each provider call here.
+   */
+  goalUsageSink?: (usage: KodaXTokenUsage) => void;
   /** FEATURE_260 runtime-owned identity used for scoped memory reads. */
   memoryIdentity?: MemoryContextIdentity;
   /** Runtime-built F228 pack reused by prompt rendering and MemorySession. */
@@ -2769,6 +2774,8 @@ export interface KodaXToolExecutionContext {
   actorTurnRef?: { readonly actorPath: string; readonly turnId: string };
   /** Shared root-run work ledger; descendant runtimes retain this exact object. */
   managedWorkBudget?: KodaXManagedWorkBudget;
+  /** Root `/goal` charge point handed to every descendant Agent run. */
+  goalUsageSink?: (usage: KodaXTokenUsage) => void;
   /** Trusted permission authority inherited independently of child transcripts. */
   permissionIntent?: import('@kodax-ai/agent').GuardrailPermissionIntent;
   /** Trusted host operations that are intentionally absent from model-facing clients. */

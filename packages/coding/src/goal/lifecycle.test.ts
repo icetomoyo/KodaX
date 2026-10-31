@@ -25,6 +25,7 @@ function makeCtx(
     getTurnStartMs: overrides.getTurnStartMs,
     getPermissionMode: overrides.getPermissionMode,
     hasPendingUserInput: overrides.hasPendingUserInput,
+    takeDescendantTokens: overrides.takeDescendantTokens,
   };
 }
 
@@ -119,6 +120,23 @@ describe('withGoalBeforeNextTurn', () => {
     const [state, event] = persist.mock.calls[0]!;
     expect(event).toBe('updated');
     expect((state as { tokensUsed: number }).tokensUsed).toBe(150);
+  });
+
+  it('folds settled descendant tokens into the root turn and can cross the budget', async () => {
+    const persist = vi.fn(async () => undefined);
+    const goal = buildCreatedGoal('x', 2000, 1_700_000_000_000);
+    const takeDescendantTokens = vi.fn((goalId: string) => (goalId === goal.id ? 1900 : 0));
+    const ctx = makeCtx({
+      goal,
+      getLatestUsage: () => ({ inputTokens: 100, outputTokens: 50, totalTokens: 150 }),
+      takeDescendantTokens,
+      persistEvent: persist,
+    });
+    await withGoalBeforeNextTurn(ctx, vi.fn(async () => []))(TURN_CTX);
+    expect(takeDescendantTokens).toHaveBeenCalledWith(goal.id);
+    const [state, event] = persist.mock.calls[0]!;
+    expect(event).toBe('budget_limited');
+    expect((state as KodaXGoalState).tokensUsed).toBe(2050);
   });
 
   it('skips persistEvent entirely on a zero-delta turn (no noop entry in the lineage)', async () => {

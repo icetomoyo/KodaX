@@ -102,11 +102,12 @@ export function applyAccountingDelta(
   usage: KodaXTokenUsage | undefined,
   wallTimeDeltaSeconds: number,
   now: number = Date.now(),
+  descendantTokens = 0,
 ): ApplyAccountingResult {
   if (current.status !== 'active') {
     return { nextState: current, budgetLimited: false };
   }
-  const tokenDelta = goalTokenDelta(usage);
+  const tokenDelta = goalTokenDelta(usage) + Math.max(0, descendantTokens);
   const wall = Math.max(0, Math.floor(wallTimeDeltaSeconds));
   if (tokenDelta === 0 && wall === 0) {
     return { nextState: current, budgetLimited: false };

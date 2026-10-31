@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-10-21_
+_Last Updated: 2026-10-31_
 
 ---
 
@@ -26,6 +26,52 @@ documentation update.
 Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
+
+## Issue 370: Child Agents expose failing Goal tools and bypass the root goal budget
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: FEATURE_192 v0.7.44 (`/goal`); first affected version unknown
+- Created / Resolved: 2026-10-31
+- Fixed: post-v0.7.97-alpha.10 working tree (unreleased)
+
+### Original Problem
+
+Child Agents received `get_goal`, `create_goal` and `update_goal` definitions,
+but no child context carries a goal binding. A child call returned no goal or
+failed with "/goal feature is not wired". Each child request still paid for
+those definitions (342 tokens on the OpenAI wire).
+
+Only the root Run's own provider calls were charged to the active goal.
+Child and grandchild token usage was recorded on child results and Workflow
+budgets, never on `/goal`, so a goal token budget could not limit delegated work.
+
+### Resolution
+
+- `CHILD_EXCLUDE_TOOLS_BASE` hides the three Goal tools from every child, and the
+  child tool gate rejects a call that still reaches one.
+- Every descendant context inherits one `goalUsageSink`. A Run without its own
+  `goalRuntime` reports each provider call there once, including user-input
+  memory calls; forwarded child events are not charged, so nested reports are
+  not counted twice.
+- The root binding keeps net tokens (input minus cached reads, plus output) for
+  the active goal id. The root folds them in at its existing settlement points
+  (`runSubstrate` after each root call, `withGoalBeforeNextTurn` for AMA), so
+  concurrent children never write the journal.
+
+### Remaining Limits
+
+Descendant usage is not charged while the root is in plan mode or has no active
+goal. Replacing the goal drops pending descendant tokens. Usage still pending
+when the Run ends (for example a background Actor finishing after the last root
+call) is lost, like other in-flight goal deltas. Children add no wall time.
+
+### Verification
+
+`agent.goal-descendant-usage.test.ts` runs the direct substrate end to end: a
+child call reaches the sink, and a root call settles 1,400 pending descendant
+tokens with its own 24. Binding, lifecycle, context and forwarding tests cover
+read/write children, Workflow digest and structured-output repair runs.
 
 ## Issue 369: Concurrent resume launchers fail while refreshing an older Host
 
@@ -1871,6 +1917,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 370 | Medium | Resolved | Child Agents expose failing Goal tools and bypass the root goal budget | FEATURE_192 v0.7.44; first affected version unknown | post-v0.7.97-alpha.10 working tree (unreleased) | 2026-10-31 | 2026-10-31 |
 | 369 | High | Resolved | Concurrent resume launchers fail while refreshing an older Host | observed in v0.7.97-alpha.5; first affected version unknown | `v0.7.97-alpha.6` | 2026-10-15 | 2026-10-15 |
 | 368 | Medium | Resolved | Unsubmitted REPL Sessions leave empty persisted history | v0.7.97-alpha.1; Host migration commits 3301a452 / 0914f589 | `v0.7.97-alpha.6` | 2026-10-14 | 2026-10-14 |
 | 367 | Medium | Resolved | Daemon preflight repeatedly scans during an in-flight mutation | observed in v0.7.97-alpha.4; first affected version unknown | `v0.7.97-alpha.5` | 2026-10-13 | 2026-10-13 |

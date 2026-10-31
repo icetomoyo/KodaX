@@ -27,6 +27,7 @@ import {
   BLOCKER_REQUIRED_CONSECUTIVE_TURNS,
   recordBlockerAttempt,
 } from './blocker-tracker.js';
+import { goalTokenDelta } from './accounting.js';
 
 /**
  * Dependencies the host (REPL) wires into the binding. Everything is
@@ -265,6 +266,8 @@ export function buildGoalRuntimeBinding(
     },
   };
 
+  // A replaced goal starts from zero, so pending tokens are keyed by goal id.
+  let pendingDescendant = { goalId: '', tokens: 0 };
   const lifecycleCtx: GoalLifecycleContext = {
     getGoal: () => readLatestGoalState(deps.getLineage()),
     getLatestUsage: deps.getLatestUsage,
@@ -273,6 +276,19 @@ export function buildGoalRuntimeBinding(
     persistEvent: async (state, event) => persistGoal(state, event),
     buildContinuationPrompt: defaultContinuationPrompt,
     hasPendingUserInput: deps.hasPendingUserInput,
+    chargeDescendantUsage: (usage) => {
+      if (deps.getPermissionMode?.() === 'plan') return;
+      const goal = readLatestGoalState(deps.getLineage());
+      if (goal?.status !== 'active') return;
+      const carried = pendingDescendant.goalId === goal.id ? pendingDescendant.tokens : 0;
+      pendingDescendant = { goalId: goal.id, tokens: carried + goalTokenDelta(usage) };
+    },
+    takeDescendantTokens: (goalId) => {
+      if (pendingDescendant.goalId !== goalId) return 0;
+      const { tokens } = pendingDescendant;
+      pendingDescendant = { goalId: '', tokens: 0 };
+      return tokens;
+    },
   };
 
   return { goalContext, lifecycleCtx };

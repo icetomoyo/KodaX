@@ -175,8 +175,9 @@ describe('executeChildAgents — guardrails propagation (FEATURE_092 phase 2b.7b
   it.each([true, false])('teaches default readOnly=%s children refusal and legal recovery without changing ceilings', async readOnly => {
     mockRunKodaX.mockResolvedValue(okResult('inspected'));
     const managedWorkBudget = { totalBudget: 200, spentBudget: 7, currentHarness: 'H0_DIRECT' as const };
+    const goalUsageSink = vi.fn();
     const guardrail = { kind: 'tool' as const, name: 'parent-boundary', beforeTool: async () => ({ action: 'block' as const, reason: 'Parent policy refusal' }) };
-    await executeChildAgents([createBundle({ readOnly })], { ...createCtx(), managedWorkBudget }, createOptions({
+    await executeChildAgents([createBundle({ readOnly })], { ...createCtx(), managedWorkBudget, goalUsageSink }, createOptions({
       maxIterationsPerChild: 7,
       guardrails: [guardrail],
       parentOptions: { provider: 'anthropic', permissionIntent: { rootUserIntent: 'Inspect the assigned task', bindingConstraints: ['Do not publish'] } },
@@ -187,6 +188,7 @@ describe('executeChildAgents — guardrails propagation (FEATURE_092 phase 2b.7b
     expect(options.guardrails).toEqual([guardrail]);
     expect(options.context?.permissionIntent).toMatchObject({ readOnly, rootUserIntent: 'Inspect the assigned task', bindingConstraints: ['Do not publish'] });
     expect(options.context?.managedWorkBudget).toBe(managedWorkBudget);
+    expect(options.context?.goalUsageSink).toBe(goalUsageSink);
     expect(options.maxIter).toBe(7);
     expect(managedWorkBudget.spentBudget).toBe(7);
   });
@@ -785,9 +787,10 @@ describe('executeChildAgents — workflow accounting and isolation cleanup', () 
       });
 
     const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    const goalUsageSink = vi.fn();
     const result = await executeChildAgents(
       [createBundle({ id: 'cb-digest', readOnly: true })],
-      { ...createCtx(), sessionId: 'test-session' },
+      { ...createCtx(), sessionId: 'test-session', goalUsageSink },
       // FEATURE_217: digest gates on `workflowChild`, NOT parentHarness — the
       // workflow runner keeps parentHarness:'tool-dispatch' for write children.
       createOptions({
@@ -829,8 +832,10 @@ describe('executeChildAgents — workflow accounting and isolation cleanup', () 
         contextDiagnostics?: boolean;
         parentAgentId?: string;
         contextIdentitySessionId?: string;
+        goalUsageSink?: unknown;
       };
     };
+    expect(digestOptions.context?.goalUsageSink).toBe(goalUsageSink);
     expect(digestOptions.maxIter).toBe(1);
     expect(digestOptions.disablePromptCache).toBe(true);
     expect(digestOptions.context?.contextDiagnostics).toBe(true);
@@ -976,6 +981,7 @@ describe('executeChildAgents — workflow accounting and isolation cleanup', () 
     const onPromptCacheDiagnostics = vi.fn();
     const onTextDelta = vi.fn();
     const registerShellCleanup = vi.fn(() => () => undefined);
+    const goalUsageSink = vi.fn();
     mockRunKodaX
       .mockResolvedValueOnce({
         success: true,
@@ -1000,7 +1006,7 @@ describe('executeChildAgents — workflow accounting and isolation cleanup', () 
           properties: { summary: { type: 'string' } },
         },
       })],
-      { ...createCtx(), sessionId: 'test-session' },
+      { ...createCtx(), sessionId: 'test-session', goalUsageSink },
       createOptions({
         actorControl: {} as NonNullable<ChildExecutorOptions['actorControl']>,
         actorParentAgentId: '/root/repair-parent',
@@ -1034,8 +1040,10 @@ describe('executeChildAgents — workflow accounting and isolation cleanup', () 
         contextDiagnostics?: boolean;
         parentAgentId?: string;
         contextIdentitySessionId?: string;
+        goalUsageSink?: unknown;
       };
     };
+    expect(repairOptions.context?.goalUsageSink).toBe(goalUsageSink);
     expect(repairOptions.disablePromptCache).toBe(true);
     expect(repairOptions.context?.contextDiagnostics).toBe(true);
     expect(repairOptions.events?.onContextBudgetSnapshot).toBe(onContextBudgetSnapshot);
@@ -2164,6 +2172,16 @@ describe('CHILD_EXCLUDE_TOOLS_BASE (FEATURE_074)', () => {
     expect(CHILD_EXCLUDE_TOOLS_BASE).toContain('ask_user_question');
     expect(CHILD_EXCLUDE_TOOLS_BASE).toContain('worktree_create');
     expect(CHILD_EXCLUDE_TOOLS_BASE).toContain('worktree_remove');
+  });
+
+  it('hides the root-owned goal tools from every child', () => {
+    expect(CHILD_EXCLUDE_TOOLS_BASE).toEqual(expect.arrayContaining(['get_goal', 'create_goal', 'update_goal']));
+  });
+
+  it('rejects a goal tool call that reaches a child runtime', async () => {
+    const events = buildChildEvents('cb-goal', undefined, undefined, undefined, { beforeToolExecute: async () => true });
+    await expect(events!.beforeToolExecute!('update_goal', { status: 'complete' }))
+      .resolves.toBe('[Tool Error] update_goal: Not available in child agent context.');
   });
 
   it('passes the exclude list into runKodaX so the LLM never sees exit_plan_mode', async () => {

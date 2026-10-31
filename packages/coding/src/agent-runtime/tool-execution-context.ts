@@ -146,6 +146,8 @@ export function buildToolExecutionContext(
     contextIdentitySessionId: options.context?.contextIdentitySessionId ?? sessionId,
     actorHost: options.context?.actorHost,
     managedWorkBudget: options.context?.managedWorkBudget,
+    goalUsageSink: options.context?.goalRuntime?.lifecycleCtx.chargeDescendantUsage
+      ?? options.context?.goalUsageSink,
     permissionIntent: options.context?.permissionIntent,
     gitRoot: options.context?.gitRoot ?? undefined,
     // FEATURE_247 (R7) — session/profile attribution for host-registered tools

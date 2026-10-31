@@ -1534,6 +1534,8 @@ async function runSubstrateInContext(
 
   let incompleteRetryCount = 0;
   const goalRuntime = options.context?.goalRuntime;
+  // A descendant reports raw per-call usage once; only the root binding persists goal state.
+  const descendantGoalUsageSink = goalRuntime ? undefined : options.context?.goalUsageSink;
   const appendGoalContinuation = async (iter: number): Promise<boolean> => {
     if (!goalRuntime || iter + 1 >= iterationLimit || options.abortSignal?.aborted) return false;
     await goalRuntime.refresh?.();
@@ -2061,7 +2063,8 @@ async function runSubstrateInContext(
             onUsage: usage => { turnState.costTracker = recordUsage(turnState.costTracker, {
               provider: turnState.currentProviderName, model: turnState.currentModelOverride ?? streamProvider.getModel(),
               inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
-              cacheReadTokens: usage.cachedReadTokens, cacheWriteTokens: usage.cachedWriteTokens }); },
+              cacheReadTokens: usage.cachedReadTokens, cacheWriteTokens: usage.cachedWriteTokens });
+            descendantGoalUsageSink?.(usage); },
           }) },
       );
       let wireMessages = await buildCapacityRequestMessages();
@@ -2424,6 +2427,7 @@ async function runSubstrateInContext(
           cacheReadTokens: result.usage.cachedReadTokens,
           cacheWriteTokens: result.usage.cachedWriteTokens,
         });
+        descendantGoalUsageSink?.(result.usage);
       } else {
         turnState.usageComplete = false;
       }
@@ -2433,7 +2437,8 @@ async function runSubstrateInContext(
         await goalRuntime.refresh?.();
         const goal = goalRuntime.lifecycleCtx.getGoal();
         if (goal?.status === 'active') {
-          const accounting = applyAccountingDelta(goal, result.usage, turnWallTimeDelta(goalTurnStartedAt, Date.now()));
+          const accounting = applyAccountingDelta(goal, result.usage, turnWallTimeDelta(goalTurnStartedAt, Date.now()),
+            Date.now(), goalRuntime.lifecycleCtx.takeDescendantTokens?.(goal.id));
           if (accounting.nextState !== goal) await goalRuntime.lifecycleCtx.persistEvent(
             accounting.nextState, accounting.budgetLimited ? 'budget_limited' : 'updated',
           );
