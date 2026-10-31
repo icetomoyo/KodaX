@@ -194,6 +194,16 @@ passes in one invocation: 261 files, 3,108 passed, one POSIX-only conditional
 skip, zero failures and zero TODO. This is the final shortcut/exit/budget tree;
 the earlier 3,030-case REPL result is not substituted for this acceptance.
 
+Functional commit `306eafdfa8ec3242abeead9e1fdf56ee3763b45e` is also in local
+KodaX. The actual Main checkout was rebuilt and passed source/test type checks,
+four complete feedback/shortcut/SDK catalog files (42 tests), all six published
+budget/cold-recovery tests and the same twenty byte-identical help comparisons.
+Its CLI is also 5,176,989 bytes. The peer's untracked audit document changed
+during work; integration rechecked the current files, confirmed disjoint paths
+and preserved both that document and tmp_diffstat.txt. No user Host was stopped
+for deployment. Space/design revisions, package versions and release pins are
+unchanged; nothing was pushed or published.
+
 Known follow-up outside this UI change: an attempted broader help probe found
 that daemon management `--help` can dispatch an operation instead of only
 printing help. In the isolated temporary home, start/stop dispatched and

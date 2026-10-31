@@ -541,7 +541,8 @@ Root 离线结果不代替 Space 成品验收。新版 CLI/SDK 启动连接时�
 按既有边界保留或拒绝替换，不要求用户一律手动 daemon stop。
 尚未推送或发布。
 
-2026-11-01 终端反馈补充：Root 的 Ctrl+T effort 快捷键改为保存期间 spinner、确认成功后
+2026-11-01 终端反馈补充：Root 本地 KodaX 已包含功能提交
+`306eafdfa8ec3242abeead9e1fdf56ee3763b45e`。Ctrl+T effort 快捷键改为保存期间 spinner、确认成功后
 约两秒的短暂浮层；成功不再写入会话通知，失败/部分成功及显式 `/effort` 回执保持。
 连续按键按序应用，退出开始即取消排队动作和迟到反馈；保存协议、Session 选择、凭证和
 SDK view 契约未变。这不代表 Space 已实现同样的产品交互，仍由负责线程独立接手。
