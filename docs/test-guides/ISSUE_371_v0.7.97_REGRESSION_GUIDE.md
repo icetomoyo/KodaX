@@ -305,6 +305,246 @@ owner fencing, Run references, complete-tree proof and exact cleanup authority
 remain covered. Passing review does not turn skipped/todo cases or the historical
 first-read observation into completed acceptance.
 
+
+## Skip/TODO coverage audit (2026-10-31)
+
+This inventory is pinned to Root `5e1c6e4d` and the preceding file-level
+acceptance merge: exactly 98 skipped and 19 todo cases. A skip is not a pass;
+a TODO is not proof that the underlying function is missing. This audit compares
+test registration guards, current call sites, replacement tests and declared
+platform/release gates. It does not certify an unexecuted CI job or remote account.
+
+### The 98 skipped cases
+
+| Category | Cases | Reason and required follow-up |
+| --- | ---: | --- |
+| POSIX/Linux platform gates | 41 | 24 non-Windows cases inside the legacy-named ASRT Skill group, 3 portable ASRT cases, and 14 other POSIX/Linux cases. Includes Linux zombie-owner recovery, POSIX PID identity fences, private config permissions and native-state/alias boundaries. Run on actual Linux/macOS; the Linux-only zombie test also requires python3. Four real-POSIX shell-policy cases additionally require KODAX_REAL_POSIX_SANDBOX=1. |
+| Real Windows v2 policy gate | 25 | Requires win32 and KODAX_REAL_WINDOWS_SANDBOX_V2=1, a provisioned native sandbox/account and system policy support. Includes Job drain after cancellation/host loss, controller repair and concurrent roots. Use an isolated Windows runner; this local broad run did not execute these cases. |
+| Unreachable legacy Windows ASRT cases | 10 | Outer describe.skipIf(win32) and inner it.runIf(win32) cannot both admit execution on any platform. Review retirement against the current Windows v2 contract; migrate still-required assertions instead of enabling an obsolete backend. |
+| Unconditionally skipped Git relationship cases | 3 | Linked worktree main .git read/deny-write, bounded relationship metadata and nested-submodule backlink validation. Current SDK worktree discovery/registration tests do not replace the exact sandbox-policy assertions. Port these obligations to the current Windows v2 path. |
+| Artifact browser/render gates | 12 | KODAX_ARTIFACT_TEST_BROWSER is absent. Browser, PDF, DOCX, HTML/SVG and PPTX pixel evidence; separate from the credential/recovery acceptance scope. |
+| Manual experiment/capture gates | 7 | One complex compaction live evaluation, four factorial live arms, one original-version Runtime smoke, and one explicitly gated offline paired capture. Follow EVAL_GUIDELINES; the offline probe is not a paid model test. |
+
+Linux/POSIX and real Windows v2 jobs are configured in
+[ci.yml](../../.github/workflows/ci.yml) and
+[release.yml](../../.github/workflows/release.yml). Configuration is evidence of
+a gate, not evidence that these unpublished local commits passed it. In particular,
+the 41 platform cases must not be reported as verified by this Windows run.
+
+### What the 19 TODOs actually mean
+
+| Capability | Count | Current evidence and decision |
+| --- | ---: | --- |
+| CAP-001 repository intelligence | 3 | Current entry still invokes reasoning-plan-entry/repo-intelligence; deeper full-engine, low-confidence and injected-error obligations remain worth testing. Add focused offline public/call-site checks; no substrate migration is required to start. |
+| CAP-013 error snapshot | 2 | CAP-082 already checks cleaned snapshot messages and consecutive error increments, and run-substrate calls runCatchCleanup. The TODO wording is stale; add/attribute a public crash -> persisted save -> cold resume combination rather than claiming these mechanisms are absent. |
+| CAP-014 microcompaction | 2 | No production call to the legacy microcompact helper was found; the exported helper remains for compatibility and defaults disabled. The old per-turn ordering TODO must be reconciled with current compaction policy; explicit legacy multi-tool aging can be tested without restoring an obsolete runtime hook. |
+| CAP-015 edit recovery | 2 | Candidate extraction is already exercised against a real temporary file in this same suite. The other TODO says a successful read clears a write block, but current source explicitly clears on successful edit/compatible anchor insertion, and CAP-026 asserts read leaves attempts alone. Rewrite the obsolete contract; do not weaken the overwrite protection to satisfy its text. |
+| CAP-016 mutation reflection | 2 | The old SA/AMA Generator declaration assertions are outdated. Current tool-dispatch and Script pilot use mutationScopeReflection; test the current false gate and once-only behavior at that entry. |
+| CAP-017 pre-answer judge | 2 | Old latch/call-site obligations have no current execution references beyond initialized compatibility fields. coding-preset still advertises a legacy declaration: reconcile the metadata/tests with the retired judging architecture, and guard against accidental extra model calls. |
+| CAP-018 post-tool judge | 2 | Same stale declaration/latch problem; the Generator/Evaluator requirement is obsolete. Do not restore the retired workflow to turn the counter green. |
+| CAP-020 extension queue | 2 | CAP-050 and agent.extension-runtime cover extension state/records and resume. Pending queuedMessages are not part of persisted extension snapshots and are initialized empty. Replace the blanket queue-roundtrip/old-microcompact ordering requirement with current settle/drain and non-replay contracts. |
+| CAP-045 session loading | 1 | CAP-008 checks storage.load messages/title/errorMetadata/extension fields; agent.extension-runtime exercises a real run/resume. A consolidated public old-session/cold-Host metadata ordering test is still useful. |
+| CAP-047 managed protocol | 1 | Merge helper tests exist; the full compatible return-payload matrix across completion, failure, interruption and limits is not pinned by this TODO. Add current public terminal-path coverage for supported legacy fields, without restoring V1 roles. |
+
+Replacement evidence inspected: [CAP-008](../../packages/coding/src/agent-runtime/__contract-tests__/cap-008-session-resume.contract.test.ts),
+[CAP-082](../../packages/coding/src/agent-runtime/__contract-tests__/cap-082-catch-cleanup.contract.test.ts),
+[CAP-050](../../packages/coding/src/agent-runtime/__contract-tests__/cap-050-runtime-session-state.contract.test.ts),
+[CAP-026](../../packages/coding/src/agent-runtime/__contract-tests__/cap-026-tool-outcome-tracking.contract.test.ts),
+[extension resume](../../packages/coding/src/agent.extension-runtime.test.ts), and
+[current error finalization](../../packages/coding/src/agent-runtime/run-substrate.ts#L1563).
+Source comments that still mention agent.ts/P3 or Generator are historical, not
+an accepted instruction to reintroduce removed behavior.
+
+### Recovery, credentials and upgrade priorities
+
+1. **P1, offline composed recovery:** pin public execution through crash,
+   cleaned snapshot persistence, cold Host recreation and old-session load.
+   Assert title/error counters/extension records, complete tool-call history,
+   no duplicate effects and fresh authorization before new work. Existing unit
+   and real-Host tests cover important parts; this is a request to combine the
+   failure boundaries, not evidence that all these behaviors are missing.
+2. **P1, composed credential migration/recovery:** extend a real process fixture
+   to combine an owned legacy credential-format fixture, migration interruption,
+   account A/B selection, delayed refresh/revocation and Host restart. Require
+   original-account retention, durable commit before token use, no legacy grant
+   resurrection and no ambient-key fallback after rejection. The pinned alpha.11
+   Host-upgrade fixture uses an API-key environment source, so its success does
+   not certify this OAuth migration combination.
+   Only an explicit account choice may change identity; an ambiguous migration
+   source must remain actionable rather than automatically selecting A or B.
+3. **P1 release evidence:** run the Linux/macOS platform slices and the 25 real
+   Windows v2 cases on their proper runners; port the three disabled Git policy
+   obligations. Preserve exact revision/OS/native build and failing evidence.
+   macOS/Linux legacy-vault import still needs corresponding machine evidence.
+4. **P1 before paired production release:** Space's production installer,
+   existing user data and locked published SDK must be accepted together by its
+   owner. Root source tests/dev SDK links do not certify that installer upgrade.
+5. **P2 inventory cleanup:** replace duplicate TODOs with explicit references or
+   active current-entry contracts, retire the ten impossible Windows ASRT tests,
+   and reconcile old judge metadata. A lower skipped/TODO count alone is not acceptance.
+6. **External-account acceptance:** real Codex/OpenAI/Copilot login/refresh,
+   subscription identity, remote revocation and native cloud credential chains
+   need permitted test registrations/accounts. They remain offline contract
+   evidence here. MiMo Coding/MiniMax Coding model entries retain the agreed
+   source-based alignment where keys are unavailable; that is not live inference.
+
+There is **no OAuth/credential-migration-named skip or TODO in these 117 rows**.
+That does not establish complete remote authentication coverage: six real-provider
+integration files are excluded by DEFAULT_TEST_FILES/INTEGRATION_TEST_FILES in
+[vitest.test-tiers.ts](../../vitest.test-tiers.ts), so they do not contribute to
+the 98 skipped count. They are kimi-wire, glm-history-400, image-compatibility-audit,
+empty-content-wire-compat, ark-coding-image-routes, and verify-credential-integration.
+The manual live probes in this inventory are also not a substitute for the
+OAuth/account and cloud acceptance matrix.
+
+Existing credential coverage includes real current-user Windows DPAPI migration,
+private current-user/SYSTEM auth-file ACLs, independent-process whole-document
+serialization, corruption/stale-revision rejection, tombstones, delayed refresh
+fencing, refresh rotation durable commit, profile/issuer/connection proof and
+Host epoch rebinding. Relevant tests are
+[provider OAuth migration](../../src/provider-oauth-store.test.ts),
+[auth file](../../packages/llm/src/auth-file.test.ts),
+[OAuth sessions](../../packages/llm/src/oauth/session.test.ts),
+[authorizer](../../src/provider-credential-authorizer.test.ts), and
+[OAuth broker binding](../../src/oauth-credential-binding.test.ts).
+The [FEATURE_302 ledger](FEATURE_302_v0.7.99_TEST_GUIDE.md#final-verification-ledger)
+already marks the live-service, non-Windows vault and installer limits explicitly.
+
+This audit reran 12 selected replacement/recovery/credential suites at the same
+runtime revision: **96 passed, 0 failed, 2 existing TODOs** (the two CAP-015 labels
+discussed above). Fixtures use temporary private homes; real service accounts,
+system sandbox activation and paid LLM probes were not part of this audit.
+
+### Complete skipped inventory
+
+Each row is one case from the accepted result set, including parameter expansions.
+The source location and guard are listed so the original 98 can be reproduced.
+
+| ID | Category | Exact case | Source / registration guard |
+| --- | --- | --- | --- |
+| S001 | POSIX/Linux 平台门禁 | POSIX interpreter readiness does not gate ordinary Linux shell preparation on doctor readiness | [sandbox-runtime.posix-readiness.test.ts:63](../../src/sandbox-runtime.posix-readiness.test.ts#L63); describe -> it.runIf(platform.value === 'linux') |
+| S002 | POSIX/Linux 平台门禁 | portable ASRT shell adapter prepares independent per-command brokers without a workspace-session owner | [sandbox-runtime.test.ts:1633](../../src/sandbox-runtime.test.ts#L1633); describe.skipIf(process.platform === 'win32') -> it |
+| S003 | POSIX/Linux 平台门禁 | portable ASRT shell adapter leaves a non-admitted call on the normal permission path | [sandbox-runtime.test.ts:1674](../../src/sandbox-runtime.test.ts#L1674); describe.skipIf(process.platform === 'win32') -> it |
+| S004 | POSIX/Linux 平台门禁 | portable ASRT shell adapter rejects model Bash read carve-backs into trusted text native state | [sandbox-runtime.test.ts:1690](../../src/sandbox-runtime.test.ts#L1690); describe.skipIf(process.platform === 'win32') -> it |
+| S005 | Git 关系验证长期禁用 | Windows git safe.directory argv takeover grants a linked worktree read access to the main .git and denies gitfile edits | [sandbox-runtime.test.ts:1936](../../src/sandbox-runtime.test.ts#L1936); describe -> it.skip |
+| S006 | Git 关系验证长期禁用 | Windows git safe.directory argv takeover bounds linked-worktree relationship metadata before granting main .git access | [sandbox-runtime.test.ts:2053](../../src/sandbox-runtime.test.ts#L2053); describe -> it.skip |
+| S007 | Git 关系验证长期禁用 | Windows git safe.directory argv takeover binds nested submodule metadata through its core.worktree backlink | [sandbox-runtime.test.ts:2081](../../src/sandbox-runtime.test.ts#L2081); describe -> it.skip |
+| S008 | 旧 Windows ASRT 双重门禁 | legacy ASRT Skill-script adapter stages a user-installed Windows runner in a protected KodaX directory | [sandbox-runtime.test.ts:4975](../../src/sandbox-runtime.test.ts#L4975); describe.skipIf(process.platform === 'win32') -> it.runIf(process.platform === 'win32') |
+| S009 | 旧 Windows ASRT 双重门禁 | legacy ASRT Skill-script adapter uses the staged runner instead of ASRT packaged-binary dependency probes | [sandbox-runtime.test.ts:5018](../../src/sandbox-runtime.test.ts#L5018); describe.skipIf(process.platform === 'win32') -> it.runIf(process.platform === 'win32') |
+| S010 | 旧 Windows ASRT 双重门禁 | legacy ASRT Skill-script adapter does not make obsolete persistent read guards a doctor prerequisite | [sandbox-runtime.test.ts:5043](../../src/sandbox-runtime.test.ts#L5043); describe.skipIf(process.platform === 'win32') -> it.runIf(process.platform === 'win32') |
+| S011 | 旧 Windows ASRT 双重门禁 | legacy ASRT Skill-script adapter does not probe obsolete persistent read guards during doctor | [sandbox-runtime.test.ts:5060](../../src/sandbox-runtime.test.ts#L5060); describe.skipIf(process.platform === 'win32') -> it.runIf(process.platform === 'win32') |
+| S012 | 旧 Windows ASRT 双重门禁 | legacy ASRT Skill-script adapter reports an incomplete Windows account before attempting the WFP runner | [sandbox-runtime.test.ts:5074](../../src/sandbox-runtime.test.ts#L5074); describe.skipIf(process.platform === 'win32') -> it.runIf(process.platform === 'win32') |
+| S013 | 旧 Windows ASRT 双重门禁 | legacy ASRT Skill-script adapter distinguishes a Windows runner access failure from account and WFP policy failures | [sandbox-runtime.test.ts:5093](../../src/sandbox-runtime.test.ts#L5093); describe.skipIf(process.platform === 'win32') -> it.runIf(process.platform === 'win32') |
+| S014 | 旧 Windows ASRT 双重门禁 | legacy ASRT Skill-script adapter reports a bounded Windows WFP verification timeout distinctly | [sandbox-runtime.test.ts:5113](../../src/sandbox-runtime.test.ts#L5113); describe.skipIf(process.platform === 'win32') -> it.runIf(process.platform === 'win32') |
+| S015 | 旧 Windows ASRT 双重门禁 | legacy ASRT Skill-script adapter revokes a partial Windows runner ACL grant before a bounded retry | [sandbox-runtime.test.ts:5128](../../src/sandbox-runtime.test.ts#L5128); describe.skipIf(process.platform === 'win32') -> it.runIf(process.platform === 'win32') |
+| S016 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter checks the exact installed version and required JavaScript interpreter | [sandbox-runtime.test.ts:5154](../../src/sandbox-runtime.test.ts#L5154); describe.skipIf(process.platform === 'win32') -> it |
+| S017 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter fails closed when configuration admits a script absent from the pinned Skill snapshot | [sandbox-runtime.test.ts:5162](../../src/sandbox-runtime.test.ts#L5162); describe.skipIf(process.platform === 'win32') -> it |
+| S018 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter rejects call-time scripts outside the exact prepared admission | [sandbox-runtime.test.ts:5176](../../src/sandbox-runtime.test.ts#L5176); describe.skipIf(process.platform === 'win32') -> it |
+| S019 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter runs one exact admission with a clean broker contract and promotes declared output | [sandbox-runtime.test.ts:5197](../../src/sandbox-runtime.test.ts#L5197); describe.skipIf(process.platform === 'win32') -> it |
+| S020 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter enforces argument, mapping, cancellation, and workspace-access bounds before execution | [sandbox-runtime.test.ts:5245](../../src/sandbox-runtime.test.ts#L5245); describe.skipIf(process.platform === 'win32') -> it |
+| S021 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter rejects sensitive, escaping, existing, and over-quota workspace outputs | [sandbox-runtime.test.ts:5276](../../src/sandbox-runtime.test.ts#L5276); describe.skipIf(process.platform === 'win32') -> it |
+| S022 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter rejects unsafe admission paths and unsupported script types | [sandbox-runtime.test.ts:5308](../../src/sandbox-runtime.test.ts#L5308); describe.skipIf(process.platform === 'win32') -> it |
+| S023 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter runs the standalone broker entry with the same pinned request shape | [sandbox-runtime.test.ts:5334](../../src/sandbox-runtime.test.ts#L5334); describe.skipIf(process.platform === 'win32') -> it |
+| S024 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter reports pre-start unavailability without directly replaying on the host | [sandbox-runtime.test.ts:5379](../../src/sandbox-runtime.test.ts#L5379); describe.skipIf(process.platform === 'win32') -> it |
+| S025 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter does not replay when a spawned wrapper exits without target attestation | [sandbox-runtime.test.ts:5413](../../src/sandbox-runtime.test.ts#L5413); describe.skipIf(process.platform === 'win32') -> it |
+| S026 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter reports wrapper pre-start failure without directly replaying on the host | [sandbox-runtime.test.ts:5446](../../src/sandbox-runtime.test.ts#L5446); describe.skipIf(process.platform === 'win32') -> it |
+| S027 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter drains target attestation before deciding whether fallback is safe | [sandbox-runtime.test.ts:5479](../../src/sandbox-runtime.test.ts#L5479); describe.skipIf(process.platform === 'win32') -> it |
+| S028 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter does not re-inject host secrets into a POSIX broker child environment | [sandbox-runtime.test.ts:5511](../../src/sandbox-runtime.test.ts#L5511); describe.skipIf(process.platform === 'win32') -> it |
+| S029 | 旧 Windows ASRT 双重门禁 | legacy ASRT Skill-script adapter keeps Windows command arguments exact behind an encoded argv bootstrap | [sandbox-runtime.test.ts:5546](../../src/sandbox-runtime.test.ts#L5546); describe.skipIf(process.platform === 'win32') -> it.runIf(process.platform === 'win32') |
+| S030 | 旧 Windows ASRT 双重门禁 | legacy ASRT Skill-script adapter rejects case-ambiguous Windows child environment names before spawn | [sandbox-runtime.test.ts:5601](../../src/sandbox-runtime.test.ts#L5601); describe.skipIf(process.platform === 'win32') -> it.runIf(process.platform === 'win32') |
+| S031 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter force-terminates a broker that ignores SIGTERM after 'timeout' | [sandbox-runtime.test.ts:5629](../../src/sandbox-runtime.test.ts#L5629); describe.skipIf(process.platform === 'win32') -> it.each([ { name: 'timeout', mode: 'silent' as const, options: { timeoutMs: 10 }, expected: /exceeded its 10 ms timeout/i, }, { name: 'output overflow', mode: 'overflow' as const... |
+| S032 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter force-terminates a broker that ignores SIGTERM after 'output overflow' | [sandbox-runtime.test.ts:5629](../../src/sandbox-runtime.test.ts#L5629); describe.skipIf(process.platform === 'win32') -> it.each([ { name: 'timeout', mode: 'silent' as const, options: { timeoutMs: 10 }, expected: /exceeded its 10 ms timeout/i, }, { name: 'output overflow', mode: 'overflow' as const... |
+| S033 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter rejects POSIX shell write roots that overlap trusted text native state before spawn | [sandbox-runtime.test.ts:5658](../../src/sandbox-runtime.test.ts#L5658); describe.skipIf(process.platform === 'win32') -> it.runIf(process.platform !== 'win32') |
+| S034 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter rejects POSIX shell read carve-back through the exact protected root | [sandbox-runtime.test.ts:5675](../../src/sandbox-runtime.test.ts#L5675); describe.skipIf(process.platform === 'win32') -> it.runIf(process.platform !== 'win32').each([ ['the exact protected root', (protectedRoot: string) => protectedRoot], ['a broad filesystem ancestor', (protectedRoot: string) => p... |
+| S035 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter rejects POSIX shell read carve-back through a broad filesystem ancestor | [sandbox-runtime.test.ts:5675](../../src/sandbox-runtime.test.ts#L5675); describe.skipIf(process.platform === 'win32') -> it.runIf(process.platform !== 'win32').each([ ['the exact protected root', (protectedRoot: string) => protectedRoot], ['a broad filesystem ancestor', (protectedRoot: string) => p... |
+| S036 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter canonicalizes a POSIX symlink ancestor before checking a missing write leaf | [sandbox-runtime.test.ts:5695](../../src/sandbox-runtime.test.ts#L5695); describe.skipIf(process.platform === 'win32') -> it.runIf(process.platform !== 'win32') |
+| S037 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter forces trusted text native state into POSIX shell read and write denies | [sandbox-runtime.test.ts:5717](../../src/sandbox-runtime.test.ts#L5717); describe.skipIf(process.platform === 'win32') -> it.runIf(process.platform !== 'win32') |
+| S038 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter reports a proven pre-target POSIX backend failure as unavailable | [sandbox-runtime.test.ts:5742](../../src/sandbox-runtime.test.ts#L5742); describe.skipIf(process.platform === 'win32') -> it.runIf(process.platform !== 'win32') |
+| S039 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter never accepts an ordinary-permission fallback as a sandboxed SDK completion | [sandbox-runtime.test.ts:5763](../../src/sandbox-runtime.test.ts#L5763); describe.skipIf(process.platform === 'win32') -> it.runIf(process.platform !== 'win32') |
+| S040 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter reports missing or mismatched broker control as execution-uncertain | [sandbox-runtime.test.ts:5782](../../src/sandbox-runtime.test.ts#L5782); describe.skipIf(process.platform === 'win32') -> it.runIf(process.platform !== 'win32') |
+| S041 | POSIX/Linux 平台门禁 | legacy ASRT Skill-script adapter force-terminates a broker that ignores cancellation | [sandbox-runtime.test.ts:5809](../../src/sandbox-runtime.test.ts#L5809); describe.skipIf(process.platform === 'win32') -> it |
+| S042 | POSIX/Linux 平台门禁 | Unix native text state boundary rejects a symlinked KODAX_HOME before provisioning protected state | [windows-native-artifacts.test.ts:893](../../src/windows-native-artifacts.test.ts#L893); describe.skipIf(process.platform === 'win32') -> it |
+| S043 | POSIX/Linux 平台门禁 | Unix native text state boundary uses one UID-scoped coordination root across different KODAX_HOME values | [windows-native-artifacts.test.ts:908](../../src/windows-native-artifacts.test.ts#L908); describe.skipIf(process.platform === 'win32') -> it |
+| S044 | POSIX/Linux 平台门禁 | Windows trusted text transaction integration reauthorizes a canonical receipt path below an aliased write root | [windows-text-transaction.test.ts:461](../../src/windows-text-transaction.test.ts#L461); describe -> posixIt |
+| S045 | POSIX/Linux 平台门禁 | FEATURE_295 real POSIX shell sandbox runs independent policies concurrently and enforces each write root | [feature-295-posix-shell-policy.test.ts:88](../../tests/feature-295-posix-shell-policy.test.ts#L88); describe.runIf(realPosixGate) -> it |
+| S046 | POSIX/Linux 平台门禁 | FEATURE_295 real POSIX shell sandbox keeps trusted text writes independent from a live shell sandbox | [feature-295-posix-shell-policy.test.ts:188](../../tests/feature-295-posix-shell-policy.test.ts#L188); describe.runIf(realPosixGate) -> it |
+| S047 | POSIX/Linux 平台门禁 | FEATURE_295 real POSIX shell sandbox does not let the sandbox target forge broker control authority | [feature-295-posix-shell-policy.test.ts:258](../../tests/feature-295-posix-shell-policy.test.ts#L258); describe.runIf(realPosixGate) -> it |
+| S048 | POSIX/Linux 平台门禁 | FEATURE_295 real POSIX shell sandbox rejects protected-state allow carve-backs before POSIX sandbox launch | [feature-295-posix-shell-policy.test.ts:280](../../tests/feature-295-posix-shell-policy.test.ts#L280); describe.runIf(realPosixGate) -> it |
+| S049 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation starts an inbox Windows command under the restricted target token | [feature-295-windows-v2-policy.test.ts:731](../../tests/feature-295-windows-v2-policy.test.ts#L731); describe.runIf(realWindowsV2) -> it |
+| S050 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation lets every trusted text tool replace a file created by the sandbox account | [feature-295-windows-v2-policy.test.ts:754](../../tests/feature-295-windows-v2-policy.test.ts#L754); describe.runIf(realWindowsV2) -> it |
+| S051 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation self-heals a sandbox-owned file with stale inherited ACLs without disabling inheritance | [feature-295-windows-v2-policy.test.ts:800](../../tests/feature-295-windows-v2-policy.test.ts#L800); describe.runIf(realWindowsV2) -> it |
+| S052 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation reaches private read/write roots without exposing their parent or siblings | [feature-295-windows-v2-policy.test.ts:842](../../tests/feature-295-windows-v2-policy.test.ts#L842); describe.runIf(realWindowsV2) -> it |
+| S053 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation fails closed on unsupported denyRead before target start or DACL mutation | [feature-295-windows-v2-policy.test.ts:897](../../tests/feature-295-windows-v2-policy.test.ts#L897); describe.runIf(realWindowsV2) -> it |
+| S054 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation keeps the shared controller pipe host-only under restricted connection pressure | [feature-295-windows-v2-policy.test.ts:938](../../tests/feature-295-windows-v2-policy.test.ts#L938); describe.runIf(realWindowsV2) -> it |
+| S055 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation keeps control state host-only and native host rejects a forged overlapping grant | [feature-295-windows-v2-policy.test.ts:998](../../tests/feature-295-windows-v2-policy.test.ts#L998); describe.runIf(realWindowsV2) -> it |
+| S056 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation keeps doctor verify-only and setup retires dead request/staging creators before control repair | [feature-295-windows-v2-policy.test.ts:1137](../../tests/feature-295-windows-v2-policy.test.ts#L1137); describe.runIf(realWindowsV2) -> it |
+| S057 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation returns the original timeout only after the native Job and descendants drain | [feature-295-windows-v2-policy.test.ts:1240](../../tests/feature-295-windows-v2-policy.test.ts#L1240); describe.runIf(realWindowsV2) -> it |
+| S058 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation returns the original cancellation only after the native Job and descendants drain | [feature-295-windows-v2-policy.test.ts:1300](../../tests/feature-295-windows-v2-policy.test.ts#L1300); describe.runIf(realWindowsV2) -> it |
+| S059 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation allows policy A in A but denies policy B from writing A | [feature-295-windows-v2-policy.test.ts:1350](../../tests/feature-295-windows-v2-policy.test.ts#L1350); describe.runIf(realWindowsV2) -> it |
+| S060 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation starts two cold Runtime processes with the exact same write root and keeps the first active | [feature-295-windows-v2-policy.test.ts:1416](../../tests/feature-295-windows-v2-policy.test.ts#L1416); describe.runIf(realWindowsV2) -> it.each([ ['the exact same write root', 'same-root'], ['an ancestor read plus a child write root', 'ancestor-read-child-write'], ] as const) |
+| S061 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation starts two cold Runtime processes with an ancestor read plus a child write root and keeps the first active | [feature-295-windows-v2-policy.test.ts:1416](../../tests/feature-295-windows-v2-policy.test.ts#L1416); describe.runIf(realWindowsV2) -> it.each([ ['the exact same write root', 'same-root'], ['an ancestor read plus a child write root', 'ancestor-read-child-write'], ] as const) |
+| S062 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation starts two truly cold Runtime processes against a 24k-entry tree with the exact same write root | [feature-295-windows-v2-policy.test.ts:1602](../../tests/feature-295-windows-v2-policy.test.ts#L1602); describe.runIf(realWindowsV2) -> it.each([ ['the exact same write root', 'same-root'], ['an ancestor read plus child write roots', 'ancestor-read-child-write'], ] as const) |
+| S063 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation starts two truly cold Runtime processes against a 24k-entry tree with an ancestor read plus child write roots | [feature-295-windows-v2-policy.test.ts:1602](../../tests/feature-295-windows-v2-policy.test.ts#L1602); describe.runIf(realWindowsV2) -> it.each([ ['the exact same write root', 'same-root'], ['an ancestor read plus child write roots', 'ancestor-read-child-write'], ] as const) |
+| S064 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation keeps real background Bash, a second Runtime Bash, and trusted text writes concurrent | [feature-295-windows-v2-policy.test.ts:1773](../../tests/feature-295-windows-v2-policy.test.ts#L1773); describe.runIf(realWindowsV2) -> it |
+| S065 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation shares one same-policy proxy when fixed Windows proxy ports are under pressure | [feature-295-windows-v2-policy.test.ts:1903](../../tests/feature-295-windows-v2-policy.test.ts#L1903); describe.runIf(realWindowsV2) -> it |
+| S066 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation fails concurrent denyRead policies closed without starting targets or writing receipts | [feature-295-windows-v2-policy.test.ts:1946](../../tests/feature-295-windows-v2-policy.test.ts#L1946); describe.runIf(realWindowsV2) -> it |
+| S067 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation keeps every trusted text tool available while a different-file shell stays alive | [feature-295-windows-v2-policy.test.ts:2000](../../tests/feature-295-windows-v2-policy.test.ts#L2000); describe.runIf(realWindowsV2) -> it |
+| S068 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation drains the real sandbox Job after terminating its target and keeps trusted Write available | [feature-295-windows-v2-policy.test.ts:2083](../../tests/feature-295-windows-v2-policy.test.ts#L2083); describe.runIf(realWindowsV2) -> it.each(['target', 'runner', 'host'] as const) |
+| S069 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation drains the real sandbox Job after terminating its runner and keeps trusted Write available | [feature-295-windows-v2-policy.test.ts:2083](../../tests/feature-295-windows-v2-policy.test.ts#L2083); describe.runIf(realWindowsV2) -> it.each(['target', 'runner', 'host'] as const) |
+| S070 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation drains the real sandbox Job after terminating its host and keeps trusted Write available | [feature-295-windows-v2-policy.test.ts:2083](../../tests/feature-295-windows-v2-policy.test.ts#L2083); describe.runIf(realWindowsV2) -> it.each(['target', 'runner', 'host'] as const) |
+| S071 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation fails closed on controller loss, drains the active Job, and recreates a broker | [feature-295-windows-v2-policy.test.ts:2192](../../tests/feature-295-windows-v2-policy.test.ts#L2192); describe.runIf(realWindowsV2) -> it |
+| S072 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation does not let a restricted shell open host text or ACL namespaces | [feature-295-windows-v2-policy.test.ts:2272](../../tests/feature-295-windows-v2-policy.test.ts#L2272); describe.runIf(realWindowsV2) -> it |
+| S073 | Windows 真机门禁 | FEATURE_295 real Windows policy isolation does not let one policy open another policy private desktop | [feature-295-windows-v2-policy.test.ts:2338](../../tests/feature-295-windows-v2-policy.test.ts#L2338); describe.runIf(realWindowsV2) -> it |
+| S074 | 手工实验/捕获门禁 | manual frozen compact-contract complex evaluation | [first-turn-compact-complex-live.test.ts:7](../../tests/first-turn-compact-complex-live.test.ts#L7); it.skipIf(process.env.KODAX_CONTRACT_COMPLEX_LIVE !== 'authorized') |
+| S075 | 手工实验/捕获门禁 | factorial 1 old-old | [late-reminder-factorial.test.ts:95](../../tests/late-reminder-factorial.test.ts#L95); it.skipIf(!provider) |
+| S076 | 手工实验/捕获门禁 | factorial 1 new-old | [late-reminder-factorial.test.ts:95](../../tests/late-reminder-factorial.test.ts#L95); it.skipIf(!provider) |
+| S077 | 手工实验/捕获门禁 | factorial 1 old-new | [late-reminder-factorial.test.ts:95](../../tests/late-reminder-factorial.test.ts#L95); it.skipIf(!provider) |
+| S078 | 手工实验/捕获门禁 | factorial 1 new-new | [late-reminder-factorial.test.ts:95](../../tests/late-reminder-factorial.test.ts#L95); it.skipIf(!provider) |
+| S079 | 手工实验/捕获门禁 | serializes the same frozen first/second-turn histories with the actual SDK without network | [original-version-probe.test.ts:29](../../tests/original-version-probe.test.ts#L29); it.skipIf(!process.env.KODAX_ORIGINAL_PAIRED_CAPTURE) |
+| S080 | 手工实验/捕获门禁 | records one bounded original/current complete Runtime observation | [original-version-smoke.test.ts:24](../../tests/original-version-smoke.test.ts#L24); it.skipIf(!process.env.KODAX_ORIGINAL_SMOKE_ARM) |
+| S081 | POSIX/Linux 平台门禁 | Host launcher waits for the original process recovers shared storage and confirms exit while the original PID is an unreaped zombie | [process.owner-exit.test.ts:22](../../src/runtime-daemon/process.owner-exit.test.ts#L22); describe -> it.skipIf(process.platform !== 'linux') |
+| S082 | 浏览器渲染门禁 | prepares an actual browser and rejects an existing non-browser executable | [browser-formats.test.ts:10](../../packages/artifacts/src/browser-formats.test.ts#L10); it.skipIf(!browserExecutable) |
+| S083 | 浏览器渲染门禁 | captures complete mixed PDF geometry, including the formerly cropped second page | [browser-formats.test.ts:20](../../packages/artifacts/src/browser-formats.test.ts#L20); it.skipIf(!browserExecutable) |
+| S084 | 浏览器渲染门禁 | lays out minimal DOCX without settings, preserving original bytes and genuine pagination | [browser-formats.test.ts:34](../../packages/artifacts/src/browser-formats.test.ts#L34); it.skipIf(!browserExecutable) |
+| S085 | 浏览器渲染门禁 | binds HTML loaded viewport and observed local dependencies, rejecting fake states | [browser-formats.test.ts:48](../../packages/artifacts/src/browser-formats.test.ts#L48); it.skipIf(!browserExecutable) |
+| S086 | 浏览器渲染门禁 | samples actual SVG SMIL time and does not call animated source static or continuous | [browser-formats.test.ts:60](../../packages/artifacts/src/browser-formats.test.ts#L60); it.skipIf(!browserExecutable) |
+| S087 | 浏览器渲染门禁 | retains observed HTML pixels with blocking diagnostics when image resources are missing | [browser-formats.test.ts:67](../../packages/artifacts/src/browser-formats.test.ts#L67); it.skipIf(!browserExecutable) |
+| S088 | 浏览器渲染门禁 | decodes JPEG/WebP sources into readable PNG evidence and rejects corrupt JPEG | [browser-formats.test.ts:73](../../packages/artifacts/src/browser-formats.test.ts#L73); it.skipIf(!browserExecutable) |
+| S089 | 浏览器渲染门禁 | renders converted PDF pixels with page binding (not a live LibreOffice test) | [pdf-render.test.ts:21](../../packages/artifacts/src/pdf-render.test.ts#L21); it.skipIf(!process.env.KODAX_ARTIFACT_TEST_BROWSER) |
+| S090 | 浏览器渲染门禁 | real lightweight renderer reopens the final PPTX and returns decoded pixels bound to every requested page | [render.test.ts:10](../../packages/artifacts/src/render.test.ts#L10); describe.skipIf(!process.env.KODAX_ARTIFACT_TEST_BROWSER) -> it |
+| S091 | 浏览器渲染门禁 | real lightweight renderer renders Chinese text, shapes, image, table and 2D chart from the actual PPTX | [render.test.ts:21](../../packages/artifacts/src/render.test.ts#L21); describe.skipIf(!process.env.KODAX_ARTIFACT_TEST_BROWSER) -> it |
+| S092 | 浏览器渲染门禁 | real lightweight renderer reports missing fonts and corrupt image media while still exposing diagnostic pixels | [render.test.ts:36](../../packages/artifacts/src/render.test.ts#L36); describe.skipIf(!process.env.KODAX_ARTIFACT_TEST_BROWSER) -> it |
+| S093 | 浏览器渲染门禁 | real lightweight renderer binds independent concurrent renders and rejects invalid/big page batches | [render.test.ts:50](../../packages/artifacts/src/render.test.ts#L50); describe.skipIf(!process.env.KODAX_ARTIFACT_TEST_BROWSER) -> it |
+| S094 | POSIX/Linux 平台门禁 | FEATURE_263 learned Skill action driver refuses an existing formal Skill target that is a symlink | [learned-skill-driver.test.ts:378](../../packages/agent/src/learning/learned-skill-driver.test.ts#L378); describe -> it.skipIf(process.platform === 'win32') |
+| S095 | POSIX/Linux 平台门禁 | process tree cleanup does not signal a reused POSIX pid | [process-tree.test.ts:155](../../packages/agent/src/runtime/process-tree.test.ts#L155); describe -> it.skipIf(process.platform === 'win32') |
+| S096 | POSIX/Linux 平台门禁 | process tree cleanup fails closed for a matching POSIX identity | [process-tree.test.ts:176](../../packages/agent/src/runtime/process-tree.test.ts#L176); describe -> it.skipIf(process.platform === 'win32') |
+| S097 | POSIX/Linux 平台门禁 | initializeSetupConfiguration creates private config directories and files on POSIX | [setup-config.test.ts:152](../../packages/repl/src/common/setup-config.test.ts#L152); describe -> it.skipIf(process.platform === 'win32') |
+| S098 | POSIX/Linux 平台门禁 | FEATURE_158 — Issue 131 Windows-flag false-positive regression POSIX behavior unchanged: '/R' still treated as path on Linux/macOS | [permission.test.ts:1412](../../packages/coding/src/permissions/permission.test.ts#L1412); describe -> it.runIf(process.platform !== 'win32') |
+
+### Complete TODO inventory
+
+| ID | Exact deferred obligation | Source |
+| --- | --- | --- |
+| T001 | CAP-001: repoIntelligenceContext injection contract CAP-REPO-INTEL-002: full autoRepoMode + active-module conditions invoke getRepoPreturnBundle and prepend repoContext (integration — repo-intel runtime mocks deferred to P3 substrate test layer) | [cap-001-repo-intelligence.contract.test.ts:187](../../packages/coding/src/agent-runtime/__contract-tests__/cap-001-repo-intelligence.contract.test.ts#L187) |
+| T002 | CAP-001: repoIntelligenceContext injection contract CAP-REPO-INTEL-003: module/impact confidence < 0.72 triggers fallbackGuidance with the four canonical lines (integration — getModuleContext / getImpactEstimate mocks deferred) | [cap-001-repo-intelligence.contract.test.ts:188](../../packages/coding/src/agent-runtime/__contract-tests__/cap-001-repo-intelligence.contract.test.ts#L188) |
+| T003 | CAP-001: repoIntelligenceContext injection contract CAP-REPO-INTEL-004: best-effort — when underlying repo-intel APIs throw, returns options.context.repoIntelligenceContext passthrough (integration — fault-injection test deferred) | [cap-001-repo-intelligence.contract.test.ts:189](../../packages/coding/src/agent-runtime/__contract-tests__/cap-001-repo-intelligence.contract.test.ts#L189) |
+| T004 | CAP-013: error snapshot persistence contract CAP-013-002: persisted messages on error path are cleaned (CAP-002) — contract is at agent.ts catch-branch call site, not at this function. Breadcrumb added there. Integration test deferred. | [cap-013-error-snapshot.contract.test.ts:87](../../packages/coding/src/agent-runtime/__contract-tests__/cap-013-error-snapshot.contract.test.ts#L87) |
+| T005 | CAP-013: error snapshot persistence contract CAP-013-004: consecutiveErrors counter increments across runs (loaded from prior errorMetadata, +1 each crash) — integration test territory. | [cap-013-error-snapshot.contract.test.ts:128](../../packages/coding/src/agent-runtime/__contract-tests__/cap-013-error-snapshot.contract.test.ts#L128) |
+| T006 | CAP-014: microcompact per-turn cleanup contract CAP-MICROCOMPACT-002: microcompact runs in per-turn epilogue, not pre-stream — INTEGRATION-LEVEL ordering invariant inside runKodaX, deferred to substrate-executor migration. | [cap-014-microcompact.contract.test.ts:163](../../packages/coding/src/agent-runtime/__contract-tests__/cap-014-microcompact.contract.test.ts#L163) |
+| T007 | CAP-014: microcompact per-turn cleanup contract CAP-MICROCOMPACT-003: redundant tool-result echoes pruned across 5+ turn sessions — single-tool-result aging is covered by 001a; multi-tool-result pruning across multiple turns is integration-level. | [cap-014-microcompact.contract.test.ts:167](../../packages/coding/src/agent-runtime/__contract-tests__/cap-014-microcompact.contract.test.ts#L167) |
+| T008 | CAP-015: edit anchor recovery + write-block contract CAP-EDIT-RECOVERY-001-CANDIDATES: ≤ 2-attempts branch reads file from disk via inspectEditFailure and includes candidate anchor windows (integration — fs-mock deferred) | [cap-015-edit-recovery.contract.test.ts:271](../../packages/coding/src/agent-runtime/__contract-tests__/cap-015-edit-recovery.contract.test.ts#L271) |
+| T009 | CAP-015: edit anchor recovery + write-block contract CAP-EDIT-RECOVERY-003: write-block cleared on successful re-read tool against same path (integration with updateToolOutcomeTracking — agent.ts call site) | [cap-015-edit-recovery.contract.test.ts:272](../../packages/coding/src/agent-runtime/__contract-tests__/cap-015-edit-recovery.contract.test.ts#L272) |
+| T010 | CAP-016: mutation scope reflection contract CAP-MUTATION-REFLECT-003: agent declaration with middleware.mutationScopeReflection: false → no reflection appended even on significant mutation (gate lives at call site / P3 substrate executor) | [cap-016-mutation-reflection.contract.test.ts:120](../../packages/coding/src/agent-runtime/__contract-tests__/cap-016-mutation-reflection.contract.test.ts#L120) |
+| T011 | CAP-016: mutation scope reflection contract CAP-MUTATION-REFLECT-004: AMA Generator agent (no mutationScopeReflection middleware) does not append reflection — Evaluator owns mutation feedback (Agent declaration territory, P3) | [cap-016-mutation-reflection.contract.test.ts:121](../../packages/coding/src/agent-runtime/__contract-tests__/cap-016-mutation-reflection.contract.test.ts#L121) |
+| T012 | CAP-017: pre-answer judge contract CAP-PRE-ANSWER-JUDGE-002: preAnswerJudgeConsumed latch prevents second invocation in same turn (call-site / P3 substrate) | [cap-017-pre-answer-judge.contract.test.ts:129](../../packages/coding/src/agent-runtime/__contract-tests__/cap-017-pre-answer-judge.contract.test.ts#L129) |
+| T013 | CAP-017: pre-answer judge contract CAP-PRE-ANSWER-JUDGE-003: non-auto reasoning mode → judge skipped (call-site / P3 substrate) | [cap-017-pre-answer-judge.contract.test.ts:130](../../packages/coding/src/agent-runtime/__contract-tests__/cap-017-pre-answer-judge.contract.test.ts#L130) |
+| T014 | CAP-018: post-tool judge contract CAP-POST-TOOL-JUDGE-003: postToolJudgeConsumed latch prevents second invocation in same turn (call-site / P3 substrate) | [cap-018-post-tool-judge.contract.test.ts:97](../../packages/coding/src/agent-runtime/__contract-tests__/cap-018-post-tool-judge.contract.test.ts#L97) |
+| T015 | CAP-018: post-tool judge contract CAP-POST-TOOL-JUDGE-004: generatorAgent has middleware.postToolJudge enabled (Agent declaration territory, P3) | [cap-018-post-tool-judge.contract.test.ts:98](../../packages/coding/src/agent-runtime/__contract-tests__/cap-018-post-tool-judge.contract.test.ts#L98) |
+| T016 | CAP-020: createExtensionRuntimeSessionController — controller mutators CAP-EXT-QUEUE-003: session snapshot includes extension state; restore reproduces the same per-extension buckets and pending queue (covered by CAP-050 round-trip via createRuntimeExtensionState/snapshotRuntimeExtensionState) | [cap-020-extension-queue.contract.test.ts:285](../../packages/coding/src/agent-runtime/__contract-tests__/cap-020-extension-queue.contract.test.ts#L285) |
+| T017 | CAP-020: createExtensionRuntimeSessionController — controller mutators CAP-EXT-QUEUE-004: settleExtensionTurn runs BEFORE microcompact (CAP-014) — call-site ordering invariant lives in agent.ts P2 / runner-frame in P3 | [cap-020-extension-queue.contract.test.ts:286](../../packages/coding/src/agent-runtime/__contract-tests__/cap-020-extension-queue.contract.test.ts#L286) |
+| T018 | CAP-045: session loading + post-load message normalization contract CAP-SESSION-LOAD-001: clean session storage.load() yields expected messages, title, errorMetadata, and extension state — INTEGRATION-LEVEL, deferred until substrate-executor extracts the session-load step. | [cap-045-session-load.contract.test.ts:37](../../packages/coding/src/agent-runtime/__contract-tests__/cap-045-session-load.contract.test.ts#L37) |
+| T019 | CAP-047: managed protocol payload merge lifecycle contract CAP-MANAGED-PROTO-002: every terminal return path of runKodaX includes the merged managedProtocolPayload in the result — INTEGRATION-LEVEL, deferred until substrate-executor migration extracts the per-step pipeline so terminals can be exercised in isolation. | [cap-047-managed-proto.contract.test.ts:80](../../packages/coding/src/agent-runtime/__contract-tests__/cap-047-managed-proto.contract.test.ts#L80) |
+
 ## Remaining un-attributed observation
 
 The historical 16-second Session read remains un-attributed. A separate isolated
