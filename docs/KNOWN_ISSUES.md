@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-10-29_
+_Last Updated: 2026-10-31_
 
 ---
 
@@ -165,7 +165,7 @@ acceptance. Issue 371 now has a confirmed startup-recovery fix; its historical
 - Status: Open (startup recovery fixed; historical first-read delay not attributed)
 - Introduced: observed in v0.7.97-alpha.10 at `ec442c75`; first affected version unknown
 - Created: 2026-10-28
-- Fixed: startup recovery only, `v0.7.97-alpha.11`
+- Fixed: first startup recovery in `v0.7.97-alpha.11`; 2026-10-31 recurrence fixed locally at `16973a93` (unreleased)
 
 ### Original Problem
 
@@ -257,6 +257,18 @@ recovery had already quarantined some of the original 3,264 records normally,
 so this is acceptance, not a same-input before/after comparison. No registry
 reset or forced owner replacement was used. These measurements precede
 main-branch integration.
+
+The runtime fix is now on local Root main. Its actual linked CLI restored the
+reported Session and reached the input prompt in 3,470 ms, then exited normally;
+auth/config bytes were unchanged. Final source acceptance combines the broad
+run with complete-file reruns after correcting test fixtures/environment:
+18,783 passed, 98 skipped and 19 todo. This is not a claim that the first broad
+invocation passed: it recorded 48 failures in seven files, all covered by the
+final Main rerun (1,547 passed, 41 skipped across eight files, including the
+real-history parser checks). Built Main acceptance covers 81 unique cases after
+an isolated Skill catalog failure passed its one-case and six-case reruns;
+that transient failure's cause was not attributed. See the regression guide
+for frozen inputs, initial failures, rerun configuration and limits.
 
 Standalone LSP tests also reproduced a separate contributing source of registry
 growth: six records were left under a deliberately isolated substitute user

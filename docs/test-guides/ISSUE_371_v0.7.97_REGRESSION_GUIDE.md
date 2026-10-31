@@ -1,7 +1,9 @@
 # Issue 371: Windows cold resume recovery delay
 
-Investigated and partially fixed on Windows, 2026-10-29, after `8910fcce`.
-Current package version: v0.7.97-alpha.10; this fix is unreleased.
+Originally investigated and partially fixed on Windows, 2026-10-29, after
+`8910fcce` (then v0.7.97-alpha.10). The 2026-10-31 recurrence fix is on local
+Root main at `16973a93`; the package version remains alpha.11 and this follow-up
+has not been pushed or published.
 
 ## Contract and scope
 
@@ -213,6 +215,95 @@ fixture. A sentinel under a substitute profile's token directory must survive
 that suite; before the correction it was deleted. The interrupted first broad
 run is not counted as regression acceptance. The second broad run was also
 interrupted when the third runtime branch was identified; it is not counted.
+
+## Final recurrence acceptance (2026-10-31)
+
+Runtime source was frozen at `16973a93`. Follow-ups `4d087b03` and `e4cad09c`
+only correct test fixtures. The actual Main checkout was fast-forwarded with a
+clean-tree/expected-HEAD guard and rebuilt; another workspace's changes were
+not overwritten. The linked Main CLI restored the reported Session and reached
+its input prompt in 3,470 ms, exited normally with code 0, and retained the
+exact auth/config bytes. No user prompt or model request was submitted.
+
+The worktree-origin acceptance Host was retired through its normal shutdown
+API only after matching its exact runtime ID/PID and confirming it was idle
+with no peer client. Its Host/Windows Job exit was verified before testing the
+Main installation. A different-installation rejection during this handoff was
+the existing ownership fence, not a reason to force-replace a user Host.
+
+| Verification | Result |
+| --- | --- |
+| Final broad source invocation, isolated worktree, two workers, no retries | 18,733 passed, 48 failed, 100 skipped, 19 todo; 1,369 files; 2,125.83 s |
+| Final Main complete-file reruns, eight files, two workers, no retries | 1,547 passed, 0 failed, 41 skipped; 96.98 s |
+| Source acceptance after replacing each rerun file's whole result, without counting duplicates | 18,783 passed, 98 skipped, 19 todo; no unresolved failed case |
+| Main's 21 built acceptance files | 81 unique cases accepted after the Skill-file rerun described below |
+| Historical owner/tarball cutover and integrity-pinned alpha.11 Host upgrade | 3 + 1 passed |
+| Registry/Run/scope/process-tree Windows regressions before the final boundary case | 139 passed, 2 skipped |
+| Final registry/caller coverage invocation, including all final boundary cases | 93 passed |
+| Legacy home fixtures and default-directory follow-ups | 165 + 23 passed |
+| Main package/native/bundle/declaration build; source/test type checks; CLI budget | Passed |
+
+The 48 broad-run failures were not silently retried or counted as passes:
+
+- Twenty-five were old fixture/expectation assumptions exposed by private
+  `KODAX_HOME`: Session public API (23), core export (1), and the default agents
+  directory (1). Bind HOME-only fixtures explicitly to their own config home;
+  test the homedir fallback with the override unset. The final Main rerun uses
+  the corrected cases. Dual-writer and extension-store fixtures were also bound
+  explicitly so their temporary cleanup covers their own writes.
+- Twenty-two were caused by the broad invocation substituting a USERPROFILE
+  inside system temp: NUL setup read-root expectations (1), Auto permission
+  classification (18), and protected-path classification (3). The corresponding
+  complete files passed with the ordinary user profile and private test config
+  homes. No production permission rule was changed to fit that artificial profile.
+- One isolated npm consumer install used a different registry from the project's
+  local `.npmrc` and reported ETARGET with `--prefer-offline`. Fresh metadata
+  checks resolved the reported versions; the final consumer test inherited the
+  project's `npm_config_registry=https://registry.npmmirror.com` and passed.
+  Dependency versions were not changed. Record the registry when reproducing it.
+
+The final Main rerun additionally executes the read-only real-session parser
+file. Its two corpus checks were skipped under the substitute profile and both
+passed against the actual existing corpus; this explains the 100-to-98 skipped
+count. No transcript, credential or account was changed for these checks.
+
+One initial built Skill catalog `ama/default` Run returned phase `failed`.
+Its isolated case then passed, and the complete six-case Skill file passed.
+The initial cause was not captured or attributed; these reruns are acceptance
+evidence, not a claim that this patch fixed a Skill/model failure. The initial
+historical-Host command also omitted its required pinned tarball environment;
+the correctly configured alpha.11 test passed afterwards. Neither initial
+failure is reported as a clean first invocation.
+
+The changed runtime statements have 13/13 coverage (100%); changed branch paths
+have 14/16 coverage (87.5%). The 93-case coverage subset reports 74.01% for the
+whole existing registry module; it is not a repository-wide coverage result.
+This work invokes no paid provider or live LLM evaluation.
+
+The Main build's 262-file manifest was unchanged through the built acceptance,
+PTY and test-only follow-ups (aggregate SHA-256
+`d0e49fac03b00ad0142e72df81d03cd58e20c53f91adc2406bea1c814810bf7c`).
+The full source suite ran in the isolated worktree; built acceptance and PTY
+ran in the actual Main checkout. Their tracked source differs only in checkout
+line endings before the identical test-only follow-ups; this is not a claim
+that the worktree and Main's separately built assets have identical bytes.
+Main's native artifacts match its earlier successful full-regression baseline.
+No push, release, design-subrepository or Space product change is part of this fix.
+
+## Standards
+
+Independent read-only review: zero unresolved findings. Test fixture scoping,
+cleanup containment, error propagation and the minimal runtime changes conform
+to AGENTS.md. The first and subsequent runtime/test deltas were reviewed separately.
+
+## Spec
+
+Independent read-only review: zero unresolved findings. Review findings about
+the legacy OAuth test's real-home cleanup and the unavailable-snapshot/CIM-matched
+live root were fixed with failing-then-passing regressions. Unknown evidence,
+owner fencing, Run references, complete-tree proof and exact cleanup authority
+remain covered. Passing review does not turn skipped/todo cases or the historical
+first-read observation into completed acceptance.
 
 ## Remaining un-attributed observation
 
