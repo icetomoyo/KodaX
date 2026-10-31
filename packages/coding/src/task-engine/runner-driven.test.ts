@@ -4990,6 +4990,38 @@ describe('Shard 6d-d — session continuity', () => {
     expect(update.includes('No longer available: Skills catalog.')).toBe(retired);
   });
 
+  it('drops retained capability facts when an oversized update cannot deliver their retirement', async () => {
+    const managedContextRetention = {};
+    const transcripts: KodaXMessage[][] = [];
+    const capture = async (transcript: readonly KodaXMessage[]) => {
+      transcripts.push([...transcript]);
+      return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
+    };
+    let messages: KodaXMessage[] = [];
+    const contexts: KodaXOptions['context'][] = [
+      { skillsPrompt: '## Available Skills\n- retired-skill' },
+      { taskMetadata: { detail: 'x'.repeat(33_000) } },
+      {},
+    ];
+    for (const context of contexts) {
+      const result = await runManagedTaskViaRunner({
+        ...makeOptions(),
+        context: { ...makeOptions().context, ...context },
+        session: { id: 'runner-truncated-retirement', managedContextRetention, initialMessages: messages },
+      }, 'Inspect the current task.', capture, makeContinuityPlan('Inspect the current task.'));
+      messages = result.messages;
+    }
+
+    expect(managedContexts(transcripts[0]!)[0]).toContain('retired-skill');
+    const secondContexts = managedContexts(transcripts[1]!);
+    expect(secondContexts).toHaveLength(1);
+    expect(secondContexts[0]).toContain('Session Scratch Directory:');
+    expect(secondContexts[0]).toContain('Managed run context truncated');
+    expect(JSON.stringify(transcripts[1])).not.toContain('retired-skill');
+    expect(JSON.stringify(transcripts[2])).not.toContain('retired-skill');
+    expect(messages.some(message => message._source === 'managed-run-context')).toBe(false);
+  });
+
   it('keeps the cacheable AMA wire prefix stable across two fresh Sessions', async () => {
     const prompt = 'Inspect the current cache behavior.';
     const plan: ReasoningPlan = {

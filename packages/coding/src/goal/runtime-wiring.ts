@@ -22,6 +22,7 @@ import {
   buildBlockedGoal,
   buildCompleteGoal,
   buildCreatedGoal,
+  applyAccountingDelta,
 } from './state.js';
 import {
   BLOCKER_REQUIRED_CONSECUTIVE_TURNS,
@@ -35,6 +36,8 @@ import { goalTokenDelta } from './accounting.js';
  * owns the lineage handle + flush pipe.
  */
 interface GoalRuntimeCommonDeps {
+  /** Session-owned pending usage survives the lifetime of an individual Run binding. */
+  readonly pendingDescendantUsage?: Map<string, number>;
   /** Returns the current session lineage. May throw if no lineage. */
   readonly getLineage: () => KodaXSessionLineage;
   /**
@@ -70,6 +73,8 @@ export type GoalRuntimeBindingDeps = GoalRuntimeCommonDeps & (
 
 export interface GoalRuntimeBinding {
   readonly refresh?: () => Promise<void>;
+  /** Flush only known descendant usage; never starts a provider call. */
+  readonly flushDescendantUsage?: () => Promise<void>;
   readonly goalContext: GoalToolsContext;
   readonly lifecycleCtx: GoalLifecycleContext;
 }
@@ -173,6 +178,29 @@ export function buildGoalRuntimeBinding(
     }
   }
 
+  const pendingDescendant = deps.pendingDescendantUsage ?? new Map<string, number>();
+  const initialGoalId = readLatestGoalState(deps.getLineage())?.id;
+  for (const goalId of pendingDescendant.keys()) {
+    if (goalId !== initialGoalId) pendingDescendant.delete(goalId);
+  }
+  const acknowledgeDescendantTokens = (goalId: string, tokens: number): void => {
+    const remaining = (pendingDescendant.get(goalId) ?? 0) - tokens;
+    if (remaining > 0) pendingDescendant.set(goalId, remaining);
+    else pendingDescendant.delete(goalId);
+  };
+  const flushDescendantUsage = async (): Promise<void> => {
+    const goal = readLatestGoalState(deps.getLineage());
+    if (!goal) return;
+    const tokens = pendingDescendant.get(goal.id) ?? 0;
+    if (tokens === 0) return;
+    // These requests began while active. A later pause/completion must not erase their cost.
+    const accounting = goal.status === 'active'
+      ? applyAccountingDelta(goal, undefined, 0, Date.now(), tokens)
+      : { nextState: { ...goal, tokensUsed: goal.tokensUsed + tokens, updatedAt: Date.now() }, budgetLimited: false };
+    await persistGoal(accounting.nextState, accounting.budgetLimited ? 'budget_limited' : 'updated');
+    // Usage arriving during persistence remains pending; failed writes consume nothing.
+    acknowledgeDescendantTokens(goal.id, tokens);
+  };
   const goalContext: GoalToolsContext = {
     readGoal: async () => readLatestGoalState(deps.getLineage()),
 
@@ -201,6 +229,7 @@ export function buildGoalRuntimeBinding(
     },
 
     requestComplete: async (): Promise<GoalCompleteResult> => {
+      await flushDescendantUsage();
       const goal = readLatestGoalState(deps.getLineage());
       if (!goal) {
         return { ok: false, reason: 'no active goal to complete' };
@@ -214,6 +243,7 @@ export function buildGoalRuntimeBinding(
     },
 
     requestBlocked: async (blockerKind: string): Promise<GoalBlockedResult> => {
+      await flushDescendantUsage();
       const goal = readLatestGoalState(deps.getLineage());
       if (!goal) {
         return {
@@ -267,7 +297,14 @@ export function buildGoalRuntimeBinding(
   };
 
   // A replaced goal starts from zero, so pending tokens are keyed by goal id.
-  let pendingDescendant = { goalId: '', tokens: 0 };
+  const captureDescendantUsage = (): ((usage: KodaXTokenUsage) => void) => {
+    const goal = readLatestGoalState(deps.getLineage());
+    const goalId = deps.getPermissionMode?.() !== 'plan' && goal?.status === 'active' ? goal.id : undefined;
+    return usage => {
+      if (goalId === undefined || readLatestGoalState(deps.getLineage())?.id !== goalId) return;
+      pendingDescendant.set(goalId, (pendingDescendant.get(goalId) ?? 0) + goalTokenDelta(usage));
+    };
+  };
   const lifecycleCtx: GoalLifecycleContext = {
     getGoal: () => readLatestGoalState(deps.getLineage()),
     getLatestUsage: deps.getLatestUsage,
@@ -276,20 +313,11 @@ export function buildGoalRuntimeBinding(
     persistEvent: async (state, event) => persistGoal(state, event),
     buildContinuationPrompt: defaultContinuationPrompt,
     hasPendingUserInput: deps.hasPendingUserInput,
-    chargeDescendantUsage: (usage) => {
-      if (deps.getPermissionMode?.() === 'plan') return;
-      const goal = readLatestGoalState(deps.getLineage());
-      if (goal?.status !== 'active') return;
-      const carried = pendingDescendant.goalId === goal.id ? pendingDescendant.tokens : 0;
-      pendingDescendant = { goalId: goal.id, tokens: carried + goalTokenDelta(usage) };
-    },
-    takeDescendantTokens: (goalId) => {
-      if (pendingDescendant.goalId !== goalId) return 0;
-      const { tokens } = pendingDescendant;
-      pendingDescendant = { goalId: '', tokens: 0 };
-      return tokens;
-    },
+    chargeDescendantUsage: Object.assign((usage: KodaXTokenUsage) => captureDescendantUsage()(usage),
+      { capture: captureDescendantUsage }),
+    getDescendantTokens: goalId => pendingDescendant.get(goalId) ?? 0,
+    acknowledgeDescendantTokens,
   };
 
-  return { goalContext, lifecycleCtx };
+  return { goalContext, lifecycleCtx, flushDescendantUsage };
 }

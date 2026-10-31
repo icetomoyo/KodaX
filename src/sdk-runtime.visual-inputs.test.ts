@@ -44,6 +44,7 @@ it.each<{ restart: boolean; toolRead: boolean; batch: boolean; delivery: 'after_
   const started = new Promise<void>(resolve => { entered = resolve; });
   const gate = new Promise<void>(resolve => { release = resolve; });
   const wires: unknown[] = [];
+  const rootWires: unknown[] = [];
   const queueErrors: string[] = [];
   const restoreDiagnostics = setKodaXDiagnosticSink(diagnostic => {
     if (diagnostic.source.startsWith('runtime.input')) queueErrors.push(`${diagnostic.message} ${JSON.stringify(diagnostic.detail)}`);
@@ -56,7 +57,9 @@ it.each<{ restart: boolean; toolRead: boolean; batch: boolean; delivery: 'after_
     if (!body) throw new Error('Missing SDK request body.');
     const wire = JSON.parse(body) as { stream?: boolean; tools?: { function?: { name: string } }[] };
     wires.push(wire);
-    const firstRoot = wire.tools?.some(tool => tool.function?.name === 'todo_update') && turns++ === 0;
+    const rootRequest = wire.tools?.some(tool => tool.function?.name === 'todo_update');
+    if (rootRequest) rootWires.push(wire);
+    const firstRoot = rootRequest && turns++ === 0;
     if (firstRoot) {
       if (delivery === 'redirect') init?.signal?.addEventListener('abort', () => { writeFileSync(source, replacement); release(); }, { once: true });
       entered(); await gate;
@@ -180,15 +183,15 @@ it.each<{ restart: boolean; toolRead: boolean; batch: boolean; delivery: 'after_
     await vi.waitFor(async () => expect((await runtime.runs.getInput(session.id, input.inputId))?.state, queueErrors.join('\n')).toBe('submitted'), { timeout: 5000 });
     const delivered = await runtime.runs.getInput(session.id, input.inputId);
     expect((await runtime.runs.await(delivered!.runId!)).phase).toBe('completed');
-    expect(JSON.stringify(wires.at(-1))).toContain(original.toString('base64'));
-    if (failedDelivery !== 'after') expect(JSON.stringify(wires.at(-1))).not.toContain(replacement.toString('base64'));
+    expect(JSON.stringify(rootWires.at(-1))).toContain(original.toString('base64'));
+    if (failedDelivery !== 'after') expect(JSON.stringify(rootWires.at(-1))).not.toContain(replacement.toString('base64'));
     const visible = await owner.list();
     expect(visible.some(item => item.observationId === records[0]!.observationId)).toBe(true);
     if (failedDelivery === 'after') {
       await vi.waitFor(async () => expect((await runtime.runs.getInput(session.id, second.inputId))?.state).toBe('submitted'), { timeout: 5000 });
       await runtime.runs.await((await runtime.runs.getInput(session.id, second.inputId))!.runId!);
       expect((await owner.list()).some(item => item.source?.inputId === second.inputId)).toBe(true);
-      expect(JSON.stringify(wires.at(-1))).toContain(replacement.toString('base64'));
+      expect(JSON.stringify(rootWires.at(-1))).toContain(replacement.toString('base64'));
     } else expect(visible).toHaveLength((toolRead ? 2 : 1) + (batch ? 1 : 0));
     if (batch) {
       expect((await runtime.runs.getInput(session.id, second.inputId))?.runId).toBe(delivered!.runId);

@@ -72,6 +72,20 @@ function mockManagedResult(result: KodaXResult): void {
   });
 }
 
+function holdManagedResult() {
+  let entered!: (options: KodaXOptions) => void;
+  let release!: (result: KodaXResult) => void;
+  const started = new Promise<KodaXOptions>(resolve => { entered = resolve; });
+  const result = new Promise<KodaXResult>(resolve => { release = resolve; });
+  executor.managed.mockImplementation((options: KodaXOptions) => {
+    executor.options.push(options);
+    executor.events.push(options.events);
+    entered(options);
+    return result;
+  });
+  return { started, release };
+}
+
 async function getGitRootForTest(): Promise<string | null> {
   const { getGitRoot } = await import('@kodax-ai/repl');
   return getGitRoot();
@@ -118,29 +132,33 @@ it('FEATURE_298 T35 — one-shot runs the product path: Host-owned temporary ses
 
     // Live progress crossed the runtime event bus into the CLI formatters
     // while the run was in flight (the adapter closes with the task).
-    let release: ((result: KodaXResult) => void) | undefined;
-    executor.managed.mockImplementation((runOptions: KodaXOptions) => {
-      executor.options.push(runOptions);
-      executor.events.push(runOptions.events);
-      return new Promise<KodaXResult>((resolve) => { release = resolve; });
-    });
+    const held = holdManagedResult();
     const eventsBaseline = executor.events.length;
     const pending = runOneShotClientTask({
       client, runtime: harness.runtime, options, prompt: 'Stream while running.',
     });
-    await expect.poll(() => executor.events.length).toBe(eventsBaseline + 1);
-    const liveEvents = executor.events.at(-1);
-    expect(liveEvents?.onIterationStart).toBeTypeOf('function');
-    liveEvents?.onIterationStart?.(1, 9, { providerRequestId: 'iteration-probe' });
-    liveEvents?.onRetry?.('rate_limit', 1, 3);
-    release!({
+    const streamed: KodaXResult = {
       success: true, lastText: 'streamed', messages: [], sessionId: 'host-assigned',
-    });
-    await expect(pending).resolves.toMatchObject({ success: true, lastText: 'streamed' });
-    expect(onIterationStart).toHaveBeenCalledWith(
-      1, 9, expect.objectContaining({ providerRequestId: 'iteration-probe' }),
-    );
-    expect(onRetry).toHaveBeenCalledWith('rate_limit', 1, 3);
+    };
+    try {
+      const entered = await Promise.race([held.started, pending.then(() => {
+        throw new Error('One-shot settled before entering the managed executor.');
+      })]);
+      expect(executor.events.length).toBe(eventsBaseline + 1);
+      const liveEvents = entered.events;
+      expect(liveEvents?.onIterationStart).toBeTypeOf('function');
+      liveEvents?.onIterationStart?.(1, 9, { providerRequestId: 'iteration-probe' });
+      liveEvents?.onRetry?.('rate_limit', 1, 3);
+      held.release(streamed);
+      await expect(pending).resolves.toMatchObject({ success: true, lastText: 'streamed' });
+      expect(onIterationStart).toHaveBeenCalledWith(
+        1, 9, expect.objectContaining({ providerRequestId: 'iteration-probe' }),
+      );
+      expect(onRetry).toHaveBeenCalledWith('rate_limit', 1, 3);
+    } finally {
+      held.release(streamed);
+      await pending;
+    }
   } finally {
     await harness.close();
   }
@@ -292,13 +310,15 @@ it('FEATURE_298 T35 — a cancelled run projects the interrupted legacy result',
 it('FEATURE_298 T35 — abort requests a Host stop and settles as interrupted', async () => {
   const harness = await startHarness('kodax-one-shot-abort-');
   const client = toKodaXProductClient(harness.runtime);
-  const stopSpy = vi.fn(client.runs.stop.bind(client.runs));
-  client.runs.stop = stopSpy;
-  let release: ((result: KodaXResult) => void) | undefined;
-  executor.managed.mockImplementation((runOptions: KodaXOptions) => {
-    executor.options.push(runOptions);
-    return new Promise<KodaXResult>((resolve) => { release = resolve; });
+  let markStopRequested!: () => void;
+  const stopRequested = new Promise<void>(resolve => { markStopRequested = resolve; });
+  const stop = client.runs.stop.bind(client.runs);
+  const stopSpy = vi.fn((...args: Parameters<typeof stop>) => {
+    markStopRequested();
+    return stop(...args);
   });
+  client.runs.stop = stopSpy;
+  const held = holdManagedResult();
   const controller = new AbortController();
   try {
     const baseline = executor.options.length;
@@ -308,14 +328,24 @@ it('FEATURE_298 T35 — abort requests a Host stop and settles as interrupted', 
       prompt: 'Stop on request.',
       abortSignal: controller.signal,
     });
-    await expect.poll(() => executor.options.length).toBe(baseline + 1);
-    controller.abort();
-    await expect.poll(() => stopSpy.mock.calls.length).toBe(1);
-    release!({
+    const interrupted: KodaXResult = {
       success: false, lastText: '', messages: [], sessionId: 'host-assigned',
       interrupted: true, signal: 'BLOCKED',
-    });
-    await expect(pending).resolves.toMatchObject({ interrupted: true });
+    };
+    try {
+      await Promise.race([held.started, pending.then(() => {
+        throw new Error('One-shot settled before entering the managed executor.');
+      })]);
+      expect(executor.options.length).toBe(baseline + 1);
+      controller.abort();
+      await stopRequested;
+      expect(stopSpy).toHaveBeenCalledTimes(1);
+      held.release(interrupted);
+      await expect(pending).resolves.toMatchObject({ interrupted: true });
+    } finally {
+      held.release(interrupted);
+      await pending;
+    }
   } finally {
     await harness.close();
   }

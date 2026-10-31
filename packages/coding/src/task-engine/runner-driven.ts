@@ -1077,6 +1077,10 @@ export async function runManagedTaskViaRunner(
       liveTurnController,
       runnerMemoryRuntime,
     );
+    if (!optionsWithSessionId.abortSignal?.aborted) {
+      await optionsWithSessionId.context?.goalRuntime?.refresh?.();
+      await optionsWithSessionId.context?.goalRuntime?.flushDescendantUsage?.();
+    }
     await finishRunnerMemoryRuntime(
       optionsWithSessionId,
       runnerMemoryRuntime,
@@ -2126,7 +2130,7 @@ async function runManagedTaskViaRunnerInner(
   const retainedContext = managedContextRetention && chainPromptContext && !options.session?.generationCheckpoint
     ? restoreManagedRunContext(managedContextRetention.current, initialMessages.slice(0, currentUserIndex))
     : undefined;
-  let managedContextPrefix: readonly KodaXMessage[];
+  let managedContextPrefix: readonly KodaXMessage[] | undefined;
   if (retainedContext && chainPromptContext) {
     managedRuntimeContextBaseline = retainedContext.effective.runtimeFingerprint;
     const runtimeRefresh = buildManagedRuntimeContextDelta();
@@ -2144,9 +2148,16 @@ async function runManagedTaskViaRunnerInner(
     }, sessionDiff.retiredLabels);
     const updateContent = withInterruptedRunRecovery(updateBody) ?? updateBody;
     const update = createManagedRunContextMessage(updateContent, contextMetadata);
-    effectiveSessionSections = fullySeenSections(update, updateContent, sessionDiff.effective);
-    managedContextPrefix = [...retainedContext.messages, ...(runtimeRefresh ? [runtimeRefresh] : []), update];
-  } else {
+    // A truncated update may omit a replacement or retirement while the old
+    // envelope still declares it available. Rebuild from current facts instead
+    // of retaining an authority the model never saw revoked.
+    if (update.content === updateContent) {
+      effectiveSessionSections = sessionDiff.effective;
+      managedContextPrefix = [...retainedContext.messages, ...(runtimeRefresh ? [runtimeRefresh] : []), update];
+    }
+  }
+  if (managedContextPrefix === undefined) {
+    managedRuntimeContextBaseline = initialManagedContext.runtimeFingerprint;
     const content = withInterruptedRunRecovery(initialManagedContext.full);
     const canonical = content === undefined ? undefined : createManagedRunContextMessage(content, contextMetadata);
     effectiveSessionSections = canonical && content && chainPromptContext

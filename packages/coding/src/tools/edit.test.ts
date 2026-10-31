@@ -4,7 +4,7 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { KodaXToolExecutionContext } from '../types.js';
 import { createContentHashCache } from '../multi-instance/content-hash-cache.js';
-import { inspectEditFailure, parseEditToolError, toolEdit } from './edit.js';
+import { inspectEditFailure, parseEditToolError, toolEdit, toolEditWithCompactReceipt } from './edit.js';
 import { toolInsertAfterAnchor } from './insert-after-anchor.js';
 
 describe('edit tool', () => {
@@ -38,6 +38,63 @@ describe('edit tool', () => {
 
     expect(result).toContain('File edited:');
     await expect(fs.readFile(filePath, 'utf8')).resolves.toContain('delta');
+  });
+
+  it('confirms an exact multiline replacement without echoing already supplied text', async () => {
+    const filePath = path.join(tempDir, 'receipt.ts');
+    await fs.writeFile(filePath, 'before\nconst a = 1;\nconst b = 2;\nafter\n');
+    const result = await toolEditWithCompactReceipt({ path: filePath,
+      old_string: 'const a = 1;\nconst b = 2;', new_string: 'const a = 3;\nconst b = 4;' }, ctx);
+    expect(result).toContain('File edited:');
+    expect(result).toContain('lines 2–3');
+    expect(result).toContain('+2 lines, -2 lines');
+    expect(result).not.toContain('const a');
+    await expect(fs.readFile(filePath, 'utf8')).resolves.toBe('before\nconst a = 3;\nconst b = 4;\nafter\n');
+  });
+
+  it('keeps the actual diff for normalized replacements in compact receipt mode', async () => {
+    const filePath = path.join(tempDir, 'receipt.ts');
+    await fs.writeFile(filePath, 'before\n  alpha   \n  beta\nafter\n');
+    const result = await toolEditWithCompactReceipt({ path: filePath,
+      old_string: 'alpha\nbeta', new_string: 'gamma\ndelta' }, ctx);
+    expect(result).toContain('@@');
+    expect(result).toMatch(/\+\s+gamma/);
+    expect(result).toMatch(/-\s+alpha/);
+  });
+
+  it('retains full multiple-match receipts and never turns a refused edit into success', async () => {
+    const filePath = path.join(tempDir, 'receipt.txt');
+    await fs.writeFile(filePath, 'alpha\nalpha\n');
+    const input = { path: filePath, old_string: 'alpha', new_string: 'beta' };
+    expect(await toolEditWithCompactReceipt(input, ctx)).toBe(await toolEdit(input, ctx));
+    await expect(fs.readFile(filePath, 'utf8')).resolves.toBe('alpha\nalpha\n');
+    const result = await toolEditWithCompactReceipt({ ...input, replace_all: true }, ctx);
+    expect(result).toContain('2 replacements');
+    expect(result).toContain('- alpha');
+    expect(result).toContain('+ beta');
+  });
+
+  it('appends existing LSP diagnostics to a short receipt', async () => {
+    const filePath = path.join(tempDir, 'receipt.ts');
+    await fs.writeFile(filePath, 'const value = 1;');
+    const result = await toolEditWithCompactReceipt({ path: filePath,
+      old_string: 'const value = 1;', new_string: 'const value = missing;' }, {
+      ...ctx, lspService: { getDiagnosticsBlock: async () => '\n\nLSP errors: Cannot find name missing.' } as KodaXToolExecutionContext['lspService'],
+    });
+    expect(result).toContain('Applied exact replacement');
+    expect(result).toContain('LSP errors: Cannot find name missing.');
+  });
+
+  it('retains actual diff evidence when replacement expansion differs from the supplied string', async () => {
+    const filePath = path.join(tempDir, 'receipt.txt');
+    await fs.writeFile(filePath, 'old');
+    const result = await toolEditWithCompactReceipt({ path: filePath,
+      old_string: 'old', new_string: 'cash=$&' }, ctx);
+    // The existing executor expands JS replacement patterns. Until separately
+    // changed, the candidate must show those actual effects rather than hide them.
+    await expect(fs.readFile(filePath, 'utf8')).resolves.toBe('cash=old');
+    expect(result).toContain('+ cash=old');
+    expect(result).not.toContain('Applied exact replacement');
   });
 
   it('returns complete single-line replacements without a hidden 100-character preview cap', async () => {

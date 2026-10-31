@@ -47,6 +47,9 @@ import { TOOL_OUTPUT_DIR_ENV } from './tools/truncate.js';
 import { hasGenerationWorktree } from './worktree-generation.js';
 import { createExtensionRuntime } from './extensions/runtime.js';
 import { TOOL_RECOVERY_GUIDANCE } from './prompts/execution-guidance.js';
+import { buildCompactChildContractCandidate } from './prompts/compact-child-contract.js';
+import { filterExcludedTools, getActiveToolDefinitions } from './agent-runtime/tool-resolution.js';
+import { listToolDefinitions } from './tools/index.js';
 
 const mockRunKodaX = runKodaX as ReturnType<typeof vi.fn>;
 const mockToolWorktreeCreate = vi.mocked(createWorkflowWorktree);
@@ -191,6 +194,16 @@ describe('executeChildAgents — guardrails propagation (FEATURE_092 phase 2b.7b
     expect(options.context?.goalUsageSink).toBe(goalUsageSink);
     expect(options.maxIter).toBe(7);
     expect(managedWorkBudget.spentBudget).toBe(7);
+    const canonical = { system: options.context!.systemPromptOverride!, tools: getActiveToolDefinitions(
+      filterExcludedTools(listToolDefinitions().map(tool => tool.name), options.context?.excludeTools), 'off') };
+    const candidate = buildCompactChildContractCandidate(canonical, { source: 'builtin-child' });
+    expect(candidate).not.toBe(canonical);
+    expect(candidate.system).toContain(canonical.system);
+    expect(candidate.tools.map(tool => tool.name)).toEqual(canonical.tools.map(tool => tool.name));
+    expect(candidate.tools.some(tool => tool.name === 'edit')).toBe(!readOnly);
+    // Building the experiment must not change production options or add a model/discovery request.
+    expect(options.context?.systemPromptOverride).toBe(canonical.system);
+    expect(mockRunKodaX).toHaveBeenCalledTimes(1);
   });
 
   it('forwards the shared managed-run budget into a child runtime', async () => {

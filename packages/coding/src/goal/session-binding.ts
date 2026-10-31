@@ -12,6 +12,7 @@ export async function buildSessionGoalRuntimeBinding(input: {
   readonly hasPendingUserInput: () => boolean;
   readonly getPermissionMode: () => string | undefined;
   readonly assertWritable: () => void;
+  readonly pendingDescendantUsage?: Map<string, number>;
 }): Promise<GoalRuntimeBinding | undefined> {
   const mutateLineage = input.storage.mutateLineage;
   if (!mutateLineage) return undefined;
@@ -31,6 +32,7 @@ export async function buildSessionGoalRuntimeBinding(input: {
     lineage = current.lineage ?? createSessionLineage(current.messages);
   };
   const binding = buildGoalRuntimeBinding({
+    pendingDescendantUsage: input.pendingDescendantUsage,
     getLineage: () => lineage,
     persistGoal: async (goal, event) => {
       input.assertWritable();
@@ -51,6 +53,7 @@ export async function buildSessionGoalRuntimeBinding(input: {
   });
   return {
     refresh,
+    flushDescendantUsage: () => exclusive(async () => { await refresh(); await binding.flushDescendantUsage?.(); }),
     lifecycleCtx: binding.lifecycleCtx,
     goalContext: {
       readGoal: () => exclusive(async () => { await refresh(); return binding.goalContext.readGoal(); }),

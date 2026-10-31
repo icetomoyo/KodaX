@@ -25,7 +25,8 @@ function makeCtx(
     getTurnStartMs: overrides.getTurnStartMs,
     getPermissionMode: overrides.getPermissionMode,
     hasPendingUserInput: overrides.hasPendingUserInput,
-    takeDescendantTokens: overrides.takeDescendantTokens,
+    getDescendantTokens: overrides.getDescendantTokens,
+    acknowledgeDescendantTokens: overrides.acknowledgeDescendantTokens,
   };
 }
 
@@ -125,15 +126,15 @@ describe('withGoalBeforeNextTurn', () => {
   it('folds settled descendant tokens into the root turn and can cross the budget', async () => {
     const persist = vi.fn(async () => undefined);
     const goal = buildCreatedGoal('x', 2000, 1_700_000_000_000);
-    const takeDescendantTokens = vi.fn((goalId: string) => (goalId === goal.id ? 1900 : 0));
+    const getDescendantTokens = vi.fn((goalId: string) => (goalId === goal.id ? 1900 : 0));
     const ctx = makeCtx({
       goal,
       getLatestUsage: () => ({ inputTokens: 100, outputTokens: 50, totalTokens: 150 }),
-      takeDescendantTokens,
+      getDescendantTokens,
       persistEvent: persist,
     });
     await withGoalBeforeNextTurn(ctx, vi.fn(async () => []))(TURN_CTX);
-    expect(takeDescendantTokens).toHaveBeenCalledWith(goal.id);
+    expect(getDescendantTokens).toHaveBeenCalledWith(goal.id);
     const [state, event] = persist.mock.calls[0]!;
     expect(event).toBe('budget_limited');
     expect((state as KodaXGoalState).tokensUsed).toBe(2050);
@@ -155,6 +156,19 @@ describe('withGoalBeforeNextTurn', () => {
     const wrapped = withGoalBeforeNextTurn(ctx, inner);
     await wrapped(TURN_CTX);
     expect(persist).not.toHaveBeenCalled();
+  });
+
+  it('settles known descendant tokens even when the root provider omits usage', async () => {
+    const persist = vi.fn(async () => undefined);
+    const goal = buildCreatedGoal('x', 1000);
+    const ctx = makeCtx({ goal, getLatestUsage: () => undefined,
+      getDescendantTokens: () => 1500, persistEvent: persist });
+
+    await withGoalBeforeNextTurn(ctx, async () => [])(TURN_CTX);
+
+    expect(persist).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'budget_limited', tokensUsed: 1500,
+    }), 'budget_limited');
   });
 
   it('feeds turnWallTimeDelta into applyAccountingDelta when getTurnStartMs is provided', async () => {

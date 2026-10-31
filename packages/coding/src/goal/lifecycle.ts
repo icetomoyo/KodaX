@@ -30,6 +30,12 @@ import type { KodaXTokenUsage } from '@kodax-ai/llm';
 import { applyAccountingDelta } from './state.js';
 import { turnWallTimeDelta } from './accounting.js';
 
+/** Capture before a provider call so an in-flight response cannot charge a replacement goal. */
+export interface GoalUsageSink {
+  (usage: KodaXTokenUsage): void;
+  readonly capture?: () => (usage: KodaXTokenUsage) => void;
+}
+
 /**
  * Caller-supplied accessors for the goal lifecycle context. The
  * composer does NOT own goal state — it reads via getters and writes
@@ -88,9 +94,11 @@ export interface GoalLifecycleContext {
    * Never persists: descendants run concurrently with the root, so the
    * root folds the pending total in at its own settlement point.
    */
-  readonly chargeDescendantUsage?: (usage: KodaXTokenUsage) => void;
-  /** Returns and clears the descendant tokens pending for `goalId`. */
-  readonly takeDescendantTokens?: (goalId: string) => number;
+  readonly chargeDescendantUsage?: GoalUsageSink;
+  /** Reads the descendant tokens pending for `goalId` without consuming them. */
+  readonly getDescendantTokens?: (goalId: string) => number;
+  /** Acknowledge only the amount included in a successful journal write. */
+  readonly acknowledgeDescendantTokens?: (goalId: string, tokens: number) => void;
 }
 
 interface BeforeNextTurnFnCtx {
@@ -128,14 +136,15 @@ export function withGoalBeforeNextTurn(
       const mode = ctx.getPermissionMode?.();
       if (mode !== 'plan') {
         const usage = ctx.getLatestUsage?.();
-        if (usage) {
+        const descendantTokens = ctx.getDescendantTokens?.(goal.id) ?? 0;
+        if (usage || descendantTokens > 0) {
           const turnStartMs = ctx.getTurnStartMs?.();
           const wallSeconds =
             turnStartMs !== undefined
               ? turnWallTimeDelta(turnStartMs, Date.now())
               : 0;
           const result = applyAccountingDelta(goal, usage, wallSeconds, Date.now(),
-            ctx.takeDescendantTokens?.(goal.id));
+            descendantTokens);
           // Persist whenever the state moved — otherwise the per-turn
           // delta is lost and `/goal status` shows 0 tokens / 0 seconds
           // until the budget actually trips. The event kind reflects
@@ -150,6 +159,7 @@ export function withGoalBeforeNextTurn(
               result.nextState,
               result.budgetLimited ? 'budget_limited' : 'updated',
             );
+            ctx.acknowledgeDescendantTokens?.(goal.id, descendantTokens);
           }
         }
       }

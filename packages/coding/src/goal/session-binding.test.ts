@@ -1,8 +1,61 @@
 import { describe, expect, it } from 'vitest';
 import { createSessionLineage, type KodaXSessionData } from '@kodax-ai/agent';
 import { buildSessionGoalRuntimeBinding } from './session-binding.js';
+import { withGoalBeforeNextTurn } from './lifecycle.js';
 
 describe('Host session goal binding', () => {
+  it('retains descendant usage after a failed turn settlement for the next active root', async () => {
+    const messages = [{ role: 'user' as const, content: 'Task.' }];
+    let data: KodaXSessionData = { messages, title: '', gitRoot: '', lineage: createSessionLineage(messages) };
+    let failWrite = false;
+    const pendingDescendantUsage = new Map<string, number>();
+    const bind = () => buildSessionGoalRuntimeBinding({ sessionId: 'session', pendingDescendantUsage,
+      storage: { load: async () => data, mutateLineage: async (_id, mutate) => {
+        if (failWrite) throw new Error('Journal unavailable');
+        data = { ...data, lineage: mutate(data.lineage!) }; return true;
+      } }, hasPendingUserInput: () => false, getPermissionMode: () => 'full-access', assertWritable() {} });
+    const first = (await bind())!;
+    await first.goalContext.createGoal({ objective: 'Finish.', tokenBudget: 1000 });
+    first.lifecycleCtx.chargeDescendantUsage!({ inputTokens: 1500, outputTokens: 0, totalTokens: 1500 });
+    failWrite = true;
+
+    await expect(withGoalBeforeNextTurn(first.lifecycleCtx, async () => [])({ transcript: [], iteration: 0 }))
+      .rejects.toThrow('Journal unavailable');
+    failWrite = false;
+    const second = (await bind())!;
+    await second.flushDescendantUsage!();
+    await second.flushDescendantUsage!();
+
+    expect(await second.goalContext.readGoal()).toMatchObject({ tokensUsed: 1500, status: 'budget_limited' });
+  });
+
+  it('lets the next active root settle a previous Run descendant without authorizing the old root to write', async () => {
+    const messages = [{ role: 'user' as const, content: 'Task.' }];
+    let data: KodaXSessionData = { messages, title: '', gitRoot: '', lineage: createSessionLineage(messages) };
+    let activeOwner = 1;
+    let writes = 0;
+    const pendingDescendantUsage = new Map<string, number>();
+    const bind = (owner: number) => buildSessionGoalRuntimeBinding({ sessionId: 'session', pendingDescendantUsage,
+      storage: { load: async () => data, mutateLineage: async (_id, mutate) => {
+        data = { ...data, lineage: mutate(data.lineage!) }; writes++; return true;
+      } }, hasPendingUserInput: () => false, getPermissionMode: () => 'full-access',
+      assertWritable() { if (activeOwner !== owner) throw new Error('Old owner'); } });
+    const first = (await bind(1))!;
+    await first.goalContext.createGoal({ objective: 'Finish.', tokenBudget: 1000 });
+    const reportLateUsage = first.lifecycleCtx.chargeDescendantUsage!.capture!();
+    activeOwner = 2;
+    const second = (await bind(2))!;
+
+    reportLateUsage({ inputTokens: 1200, outputTokens: 0, totalTokens: 1200 });
+    expect(writes).toBe(1);
+    await expect(first.flushDescendantUsage!()).rejects.toThrow('Old owner');
+    await second.flushDescendantUsage!();
+    await second.flushDescendantUsage!();
+
+    expect(await second.goalContext.readGoal()).toMatchObject({ tokensUsed: 1200, status: 'budget_limited' });
+    expect(writes).toBe(2);
+  });
+
   it('only exposes goal tools when atomic journal storage is available', async () => {
     const common = { sessionId: 'session', hasPendingUserInput: () => false,
       getPermissionMode: () => undefined, assertWritable() {} };

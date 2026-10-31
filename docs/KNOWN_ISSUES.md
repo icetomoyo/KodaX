@@ -27,6 +27,23 @@ Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
 
+## Nested provider observations can duplicate child usage summaries (2026-10-31)
+
+The bounded child-contract eval wraps a real provider in a Relay. Its outer
+`provider_operation` and inner `physical_attempt` both report the same usage;
+`child-fallback.ts` currently sums distinct request IDs without excluding an
+enclosing operation receipt. A zero-network replay yields 110 tokens for a
+single native operation and 220 for the nested Relay. The three eval routes
+therefore show 156,500 aggregate child tokens for 78,250 raw API tokens and
+11 actual requests. No extra paid requests were made.
+
+Ordinary built-in provider calls use a single operation and do not reproduce
+this case. Custom nested providers may encounter the same summary boundary.
+This predates the child contract projection; the eval uses raw per-call usage,
+not the duplicated child summary. It does not establish duplicate Goal charging.
+No production accounting change is claimed here. See the
+[recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
+
 ## Issue 370: Child Agents expose failing Goal tools and bypass the root goal budget
 
 - Priority: Medium
@@ -61,10 +78,17 @@ budgets, never on `/goal`, so a goal token budget could not limit delegated work
 
 ### Remaining Limits
 
-Descendant usage is not charged while the root is in plan mode or has no active
-goal. Replacing the goal drops pending descendant tokens. Usage still pending
-when the Run ends (for example a background Actor finishing after the last root
-call) is lost, like other in-flight goal deltas. Children add no wall time.
+Calls capture goal attribution when they start; calls begun without an active
+goal or in plan mode are not charged. Replacing the goal never charges its old
+calls to the new goal. Known descendant usage settles even when root usage is
+missing, and normal Run completion and goal completion/blocking flush known
+pending usage without an extra model call. Children add no wall time.
+
+The SDK Runtime retains pending usage per Session across Run bindings. A late
+background reply can be settled by the next active root; an ended Run never
+gains journal write permission. Pending in-memory usage not yet flushed is not
+durable across Runtime/process restart. A request already in flight can exceed
+the soft goal budget before the next settlement; this is not a prepaid hard cap.
 
 ### Verification
 
@@ -16778,7 +16802,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 248 (36 Open, 212 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 249 (36 Open, 213 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md

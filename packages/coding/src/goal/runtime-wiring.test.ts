@@ -74,6 +74,35 @@ function makeBinding(overrides: {
 }
 
 describe('buildGoalRuntimeBinding — descendant usage', () => {
+  it('keeps an in-flight descendant response on the goal captured before the call', async () => {
+    const state: HostState = { lineage: makeMsgLineage(), saved: 0 };
+    const first = buildCreatedGoal('First', 5000);
+    state.lineage = appendGoalEntry(state.lineage, first, 'created');
+    const { binding } = makeBinding({ state });
+    const reportFirst = binding.lifecycleCtx.chargeDescendantUsage!.capture!();
+    state.lineage = appendGoalEntry(state.lineage, null, 'cleared');
+    const second = await binding.goalContext.createGoal({ objective: 'Second', tokenBudget: 5000 });
+
+    reportFirst({ inputTokens: 777, outputTokens: 0, totalTokens: 777 });
+
+    expect(binding.lifecycleCtx.getDescendantTokens?.(second.id)).toBe(0);
+  });
+
+  it('settles known usage before completion and late usage without reopening the completed goal', async () => {
+    const state: HostState = { lineage: makeMsgLineage(), saved: 0 };
+    state.lineage = appendGoalEntry(state.lineage, buildCreatedGoal('Finish', 5000), 'created');
+    const { binding } = makeBinding({ state });
+    const reportLate = binding.lifecycleCtx.chargeDescendantUsage!.capture!();
+    binding.lifecycleCtx.chargeDescendantUsage!({ inputTokens: 100, outputTokens: 0, totalTokens: 100 });
+
+    await binding.goalContext.requestComplete();
+    expect(await binding.goalContext.readGoal()).toMatchObject({ status: 'complete', tokensUsed: 100 });
+    reportLate({ inputTokens: 200, outputTokens: 0, totalTokens: 200 });
+    await binding.flushDescendantUsage!();
+
+    expect(await binding.goalContext.readGoal()).toMatchObject({ status: 'complete', tokensUsed: 300 });
+  });
+
   it('holds net descendant tokens for the active goal until the root settles them', () => {
     const state: HostState = { lineage: makeMsgLineage(), saved: 0 };
     const goal = buildCreatedGoal('X', 5000);
@@ -81,9 +110,10 @@ describe('buildGoalRuntimeBinding — descendant usage', () => {
     const { binding } = makeBinding({ state });
     binding.lifecycleCtx.chargeDescendantUsage?.({ inputTokens: 900, outputTokens: 100, totalTokens: 1000, cachedReadTokens: 400 });
     binding.lifecycleCtx.chargeDescendantUsage?.({ inputTokens: 50, outputTokens: 10, totalTokens: 60 });
-    expect(binding.lifecycleCtx.takeDescendantTokens?.('another-goal')).toBe(0);
-    expect(binding.lifecycleCtx.takeDescendantTokens?.(goal.id)).toBe(660);
-    expect(binding.lifecycleCtx.takeDescendantTokens?.(goal.id)).toBe(0);
+    expect(binding.lifecycleCtx.getDescendantTokens?.('another-goal')).toBe(0);
+    expect(binding.lifecycleCtx.getDescendantTokens?.(goal.id)).toBe(660);
+    binding.lifecycleCtx.acknowledgeDescendantTokens?.(goal.id, 660);
+    expect(binding.lifecycleCtx.getDescendantTokens?.(goal.id)).toBe(0);
     expect(state.saved).toBe(0);
   });
 
@@ -95,7 +125,7 @@ describe('buildGoalRuntimeBinding — descendant usage', () => {
     state.lineage = appendGoalEntry(state.lineage, goal, 'created');
     const planning = makeBinding({ state, getPermissionMode: () => 'plan' });
     planning.binding.lifecycleCtx.chargeDescendantUsage?.({ inputTokens: 100, outputTokens: 0, totalTokens: 100 });
-    expect(planning.binding.lifecycleCtx.takeDescendantTokens?.(goal.id)).toBe(0);
+    expect(planning.binding.lifecycleCtx.getDescendantTokens?.(goal.id)).toBe(0);
   });
 });
 

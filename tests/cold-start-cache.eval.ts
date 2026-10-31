@@ -17,6 +17,7 @@ import { observeProviderOperation, runWithAdditionalProviderRequestObserver,
   type ProviderRequestObservation } from '../packages/llm/src/provider-request-observation.js';
 import { runNaturalRuntime } from './shared-contract-natural-runtime.js';
 import { firstTurnReasoningFor, type FrozenInput } from './first-turn-eval-support.js';
+import { captureColdStartResponse } from './cold-start-cache-response.js';
 
 const REVISION = 'cold-start-cache-r1-20261030';
 const ROUTE = 'deepseek';
@@ -108,7 +109,11 @@ async function prepare(): Promise<void> {
   process.stdout.write(JSON.stringify(divergence, null, 2) + '\n');
 }
 
-interface ProbeRecord { session: SessionName; usage: Usage | null; error: string | null; attempts: number; wallMs: number; text: string; usd: number }
+interface ProbeRecord {
+  session: SessionName; usage: Usage | null; error: string | null; attempts: number; wallMs: number; text: string; usd: number;
+  /** Absent in the frozen R17 records produced before full response capture. */
+  response?: KodaXStreamResult | null;
+}
 async function probe(): Promise<void> {
   if (!process.env[KEY]) throw new Error(`Missing credential for ${ROUTE}; no fallback`);
   const rate = getCostRate(ROUTE, MODEL);
@@ -135,8 +140,8 @@ async function probe(): Promise<void> {
       ? calculateCost(rate, usage.inputTokens, usage.outputTokens, usage.cachedReadTokens ?? 0, usage.cachedWriteTokens ?? 0)
       : calculateCost(rate, Buffer.byteLength(JSON.stringify(input)), LIMITS.output);
     const attempts = new Set(facts.filter(fact => fact.boundary === 'physical_attempt' && fact.state === 'started').map(fact => fact.requestId)).size;
-    const text = redact(result?.textBlocks.map(block => block.text).join('\n') ?? '');
-    const record: ProbeRecord = { session, usage, error, attempts, wallMs: Date.now() - started, text, usd };
+    const record: ProbeRecord = { session, usage, error, attempts, wallMs: Date.now() - started,
+      ...captureColdStartResponse(result, redact), usd };
     await save(path.join(root, `${session}.probe.json`), record);
     process.stdout.write(JSON.stringify({ session, usage, error, attempts, usd }) + '\n');
     if (error || !usage || attempts !== 1) throw new Error(`${session}: stopped (${error ?? (usage ? `${attempts} attempts` : 'missing usage')})`);

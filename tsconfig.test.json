@@ -89,6 +89,9 @@
     "packages/coding/src/tools/managed-tool-contract.test.ts",
     "packages/coding/src/prompts/managed-system-contract.test.ts",
     "tests/managed-tool-contract*.ts",
+    "tests/token-efficiency-next-stage*.ts",
+    "tests/token-efficiency-child-smoke.eval.ts",
+    "tests/cold-start-cache*.ts",
     "packages/coding/src/agent-runtime/script/*.test.ts",
     "packages/coding/src/task-engine/_internal/managed-task/role-prompt-capabilities.test.ts"
   ]

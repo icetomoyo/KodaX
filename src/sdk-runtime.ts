@@ -9866,6 +9866,8 @@ async function createRuntimeRunService(deps: {
       deriveInterruptedRunEvidence(data, candidate) ?? []);
   };
   const activeRunBySession = new Map<string, string>();
+  // Descendants may report after their parent Run ends. Only a later active root writes these totals.
+  const pendingGoalUsageBySession = new Map<string, Map<string, number>>();
   // FEATURE_298 T31 — runs and queued inputs reject while the Session's
   // manual compaction holds occupancy, so no writer interleaves with the
   // compaction's whole-lineage commit.
@@ -12380,8 +12382,11 @@ async function createRuntimeRunService(deps: {
           throw new Error('Goal mutation requires the active Run owner.');
         }
       };
+      const pendingDescendantUsage = pendingGoalUsageBySession.get(record.sessionId) ?? new Map<string, number>();
+      pendingGoalUsageBySession.set(record.sessionId, pendingDescendantUsage);
       record.goalRuntime = await buildSessionGoalRuntimeBinding({
         sessionId: record.sessionId,
+        pendingDescendantUsage,
         storage: {
           load: id => deps.sessionManager.storage.load(id),
           ...(deps.sessionManager.storage.mutateLineage ? {

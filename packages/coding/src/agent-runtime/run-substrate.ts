@@ -7,6 +7,8 @@
 import { randomUUID } from 'node:crypto';
 import { buildLocalExecutionFailure } from '../execution-failure.js';
 import { withEffectivePermissionContext } from '../prompts/effective-permissions.js';
+import { claimBuiltinChildContract } from '../prompts/child-contract-scope.js';
+import { projectBuiltinChildRequestContract } from '../prompts/compact-child-contract.js';
 ﻿import {
   KodaXExtensionSessionRecord,
   KodaXExtensionSessionState,
@@ -789,6 +791,7 @@ async function runSubstrateInContext(
   declaredAgent: Agent | undefined,
   setImagePreparation: (enabled: boolean) => void,
 ): Promise<KodaXResult> {
+  const childContractSource = claimBuiltinChildContract(options.context);
   const textRecovery = createTextRecoveryState();
   const previousActiveRuntime = getActiveExtensionRuntime();
   const runtime = options.extensionRuntime ?? previousActiveRuntime;
@@ -1320,6 +1323,10 @@ async function runSubstrateInContext(
   const finalizeCompletedProtocolResult = async (
     result: KodaXResult,
   ): Promise<KodaXResult> => {
+    if (!options.abortSignal?.aborted) {
+      await options.context?.goalRuntime?.refresh?.();
+      await options.context?.goalRuntime?.flushDescendantUsage?.();
+    }
     const finalized = await finalizeManagedProtocolResult(result);
     try {
       emitComplete(events);
@@ -1536,6 +1543,7 @@ async function runSubstrateInContext(
   const goalRuntime = options.context?.goalRuntime;
   // A descendant reports raw per-call usage once; only the root binding persists goal state.
   const descendantGoalUsageSink = goalRuntime ? undefined : options.context?.goalUsageSink;
+  const captureDescendantUsage = () => descendantGoalUsageSink?.capture?.() ?? descendantGoalUsageSink;
   const appendGoalContinuation = async (iter: number): Promise<boolean> => {
     if (!goalRuntime || iter + 1 >= iterationLimit || options.abortSignal?.aborted) return false;
     await goalRuntime.refresh?.();
@@ -1854,11 +1862,16 @@ async function runSubstrateInContext(
         nativeDeferredAvailable: false,
         unlockedDeferredTools,
       });
-      const activeToolDefinitions = fitToolSchemasToContext(applyToolExposurePlan(
+      let activeToolDefinitions = fitToolSchemasToContext(applyToolExposurePlan(
         fullActiveToolDefinitions,
         exposurePlan,
       ), { contextWindow, systemTokens: countTokens(effectiveSystemPrompt),
         reservedResponseTokens: streamProvider.getEffectiveMaxOutputTokens(turnState.currentModelOverride) });
+      const childRequestContract = projectBuiltinChildRequestContract(childContractSource,
+        { system: policySystemPrompt, tools: activeToolDefinitions }, fullActiveToolDefinitions);
+      const requestPolicySystemPrompt = childRequestContract.system;
+      effectiveSystemPrompt = withEffectivePermissionContext(requestPolicySystemPrompt, options.context);
+      activeToolDefinitions = [...childRequestContract.tools];
       const reservedResponseTokens = streamProvider.getEffectiveMaxOutputTokens(
         turnState.currentModelOverride,
       );
@@ -2057,15 +2070,17 @@ async function runSubstrateInContext(
         providerMessages, ctx, contextWindow, userInputDegradationCache,
         { currentTokens: resolveContextTokenCount(providerMessages, estimatedRequestTokenSnapshot), reservedResponseTokens,
           canReadPagedContent: activeToolDefinitions.some(tool => tool.name === 'read'),
-          retainInput: original => prepareUserInputMemory({ original, contextWindow, provider: streamProvider,
+          retainInput: original => {
+            const reportUsage = captureDescendantUsage();
+            return prepareUserInputMemory({ original, contextWindow, provider: streamProvider,
             model: turnState.currentModelOverride, signal: options.abortSignal, timeoutMs: API_HARD_TIMEOUT_MS,
             goalRuntime,
             onUsage: usage => { turnState.costTracker = recordUsage(turnState.costTracker, {
               provider: turnState.currentProviderName, model: turnState.currentModelOverride ?? streamProvider.getModel(),
               inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
               cacheReadTokens: usage.cachedReadTokens, cacheWriteTokens: usage.cachedWriteTokens });
-            descendantGoalUsageSink?.(usage); },
-          }) },
+            reportUsage?.(usage); },
+          }); } },
       );
       let wireMessages = await buildCapacityRequestMessages();
       let requestMaxOutputTokens = applyContextCapacityReserveOverride(streamProvider, {
@@ -2077,6 +2092,7 @@ async function runSubstrateInContext(
       });
       let capacityRecoveryAttempts = 0;
       let textRecoveryRetry = false;
+      let reportDescendantCallUsage: ReturnType<typeof captureDescendantUsage>;
       while (true) {
         wireMessages = projectTextRecovery(wireMessages, textRecovery);
         if (interruptedRunRecovery !== undefined || verificationRunContext) {
@@ -2088,7 +2104,7 @@ async function runSubstrateInContext(
             }),
           );
         }
-        effectiveSystemPrompt = withEffectivePermissionContext(policySystemPrompt, options.context);
+        effectiveSystemPrompt = withEffectivePermissionContext(requestPolicySystemPrompt, options.context);
         attempt += 1;
         // Recovery may replace providerMessages between attempts. Rebase the
         // same fixed request overhead onto the exact messages sent next.
@@ -2181,6 +2197,7 @@ async function runSubstrateInContext(
             ...(promptCacheKey !== undefined ? { promptCacheKey } : {}),
             attempt,
           });
+          reportDescendantCallUsage = captureDescendantUsage();
           result = await withProviderRequestCredential(
             streamProvider.name,
             'primary',
@@ -2273,7 +2290,7 @@ async function runSubstrateInContext(
             // failure, fall through to recovery-action branches with
             // the new error.
             emitContextBudgetSnapshot(wireMessages, requestMaxOutputTokens);
-            effectiveSystemPrompt = withEffectivePermissionContext(policySystemPrompt, options.context);
+            effectiveSystemPrompt = withEffectivePermissionContext(requestPolicySystemPrompt, options.context);
             const fallbackCacheDiagnostic = emitPromptCacheDiagnosticRequest({
               events,
               enabled: options.context?.contextDiagnostics === true,
@@ -2291,6 +2308,7 @@ async function runSubstrateInContext(
               attempt,
               transport: 'complete',
             });
+            reportDescendantCallUsage = captureDescendantUsage();
             const fallbackOutcome = await executeNonStreamingFallback({
               events,
               streamProvider,
@@ -2368,6 +2386,7 @@ async function runSubstrateInContext(
           if (decision.action === 'manual_continue' || attempt >= resilienceCfg.maxRetries) {
             streamTimers.clearAll();
             const usageBeforeRecovery = turnState.usageComplete;
+            const reportRecoveryUsage = captureDescendantUsage();
             const recovered = await tryTextRecovery({ state: textRecovery, error, messages: wireMessages,
               provider: streamProvider, system: effectiveSystemPrompt, model: turnState.currentModelOverride,
               reasoning: effectiveProviderReasoning, maxOutputTokens: requestMaxOutputTokens,
@@ -2381,7 +2400,8 @@ async function runSubstrateInContext(
                 turnState.costTracker = recordUsage(turnState.costTracker, {
                 provider: turnState.currentProviderName, model: turnState.currentModelOverride ?? streamProvider.getModel(),
                 inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
-                cacheReadTokens: usage.cachedReadTokens, cacheWriteTokens: usage.cachedWriteTokens }); },
+                cacheReadTokens: usage.cachedReadTokens, cacheWriteTokens: usage.cachedWriteTokens });
+                reportRecoveryUsage?.(usage); },
             });
             if (recovered) { attempt += 1; textRecoveryRetry = true; continue; }
             messages = providerMessages;
@@ -2427,21 +2447,25 @@ async function runSubstrateInContext(
           cacheReadTokens: result.usage.cachedReadTokens,
           cacheWriteTokens: result.usage.cachedWriteTokens,
         });
-        descendantGoalUsageSink?.(result.usage);
+        reportDescendantCallUsage?.(result.usage);
       } else {
         turnState.usageComplete = false;
       }
 
       turnState.lastText = result.textBlocks.map(b => b.text).join(' ');
-      if (goalRuntime && result.usage && goalRuntime.lifecycleCtx.getPermissionMode?.() !== 'plan') {
+      if (goalRuntime && goalRuntime.lifecycleCtx.getPermissionMode?.() !== 'plan') {
         await goalRuntime.refresh?.();
         const goal = goalRuntime.lifecycleCtx.getGoal();
         if (goal?.status === 'active') {
+          const descendantTokens = goalRuntime.lifecycleCtx.getDescendantTokens?.(goal.id) ?? 0;
           const accounting = applyAccountingDelta(goal, result.usage, turnWallTimeDelta(goalTurnStartedAt, Date.now()),
-            Date.now(), goalRuntime.lifecycleCtx.takeDescendantTokens?.(goal.id));
-          if (accounting.nextState !== goal) await goalRuntime.lifecycleCtx.persistEvent(
-            accounting.nextState, accounting.budgetLimited ? 'budget_limited' : 'updated',
-          );
+            Date.now(), descendantTokens);
+          if (accounting.nextState !== goal) {
+            await goalRuntime.lifecycleCtx.persistEvent(
+              accounting.nextState, accounting.budgetLimited ? 'budget_limited' : 'updated',
+            );
+            goalRuntime.lifecycleCtx.acknowledgeDescendantTokens?.(goal.id, descendantTokens);
+          }
         }
       }
       const reportedPreAssistantTokenSnapshot = createContextTokenSnapshot(messages, result.usage);

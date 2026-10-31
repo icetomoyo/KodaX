@@ -40,6 +40,15 @@ const MAX_SAFE_EDIT_CHARS = 64 * 1024;
 const MAX_SAFE_EDIT_LINES = 400;
 
 export async function toolEdit(input: Record<string, unknown>, ctx: KodaXToolExecutionContext): Promise<string> {
+  return executeEdit(input, ctx, false);
+}
+
+/** Internal evaluation candidate; canonical SDK and registered handlers retain full receipts. */
+export async function toolEditWithCompactReceipt(input: Record<string, unknown>, ctx: KodaXToolExecutionContext): Promise<string> {
+  return executeEdit(input, ctx, true);
+}
+
+async function executeEdit(input: Record<string, unknown>, ctx: KodaXToolExecutionContext, compactReceipt: boolean): Promise<string> {
   let operation = input;
   if (Object.hasOwn(input, 'edits')) {
     if (['old_string', 'new_string', 'replace_all'].some((key) => Object.hasOwn(input, key))) {
@@ -74,7 +83,7 @@ export async function toolEdit(input: Record<string, unknown>, ctx: KodaXToolExe
     if (snapshot.state === 'missing') {
       return `[Tool Error] edit: File not found: ${filePath}`;
     }
-    return await runEditOnce(filePath, oldStr, newStr, replaceAll, snapshot, ctx);
+    return await runEditOnce(filePath, oldStr, newStr, replaceAll, snapshot, ctx, compactReceipt);
   });
   // FEATURE_132 v0.7.47 — reflux LSP diagnostics OUTSIDE the mutation lock so
   // a concurrent same-file writer isn't blocked during the diagnostics wait.
@@ -89,6 +98,7 @@ async function runEditOnce(
   replaceAll: boolean,
   snapshot: TextFileMutationSnapshot,
   ctx: KodaXToolExecutionContext,
+  compactReceipt: boolean,
 ): Promise<string> {
   // FEATURE_125 v0.7.41 — Layer 4 hard gate. If the LLM read this file
   // earlier in the task and a peer (or the user in an external editor)
@@ -203,6 +213,21 @@ async function runEditOnce(
   }
   result += `\n  (+${changes.added} lines, -${changes.removed} lines)`;
 
+  const warningBanner = ctx.siblingSnapshot
+    ? formatActiveFileWarning(filePath, ctx.siblingSnapshot)
+    : null;
+  const exactStart = content.indexOf(oldStr);
+  const literalReplacement = exactMatches.length === 1
+    && replacementPlan.newContent === content.slice(0, exactStart) + newStr + content.slice(exactStart + oldStr.length);
+  if (compactReceipt && literalReplacement && !warningBanner) {
+    const start = content.slice(0, exactStart).split('\n').length;
+    const lines = Math.max(1, newStr.replace(/\n$/, '').split('\n').length);
+    return `${result}\n  Applied exact replacement at lines ${start}–${start + lines - 1}.`;
+  }
+  // Never suppress a real execution/input discrepancy, including legacy JS
+  // replacement-pattern expansion. Show the generated diff for actual bytes.
+  if (compactReceipt && exactMatches.length === 1 && !literalReplacement) replacementPlan.diffPreviewMode = 'diff';
+
   if (
     replacementPlan.diffPreviewMode === 'inline'
     && !oldStr.includes('\n')
@@ -218,9 +243,6 @@ async function runEditOnce(
   // successful edit result when another session is editing the same
   // path. Does not block — the edit already applied; the banner tells
   // the LLM to consider re-reading next round.
-  const warningBanner = ctx.siblingSnapshot
-    ? formatActiveFileWarning(filePath, ctx.siblingSnapshot)
-    : null;
   return warningBanner ? `${warningBanner}\n\n${result}` : result;
 }
 
