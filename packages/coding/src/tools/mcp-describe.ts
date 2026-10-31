@@ -2,6 +2,7 @@ import { normalizeMcpCapabilityId } from '@kodax-ai/agent';
 import type { KodaXToolExecutionContext } from '../types.js';
 import { readOptionalString } from './internal.js';
 import { finalizeRetrievalResult } from './retrieval.js';
+import { isMcpCapabilityVisible } from './mcp-visibility.js';
 
 function formatValue(label: string, value: unknown): string | undefined {
   if (value === undefined || value === null || value === '') {
@@ -31,6 +32,7 @@ export async function toolMcpDescribe(
       throw new Error('id is required.');
     }
     const capabilityId = normalizeMcpCapabilityId(id);
+    if (!isMcpCapabilityVisible(capabilityId, ctx)) throw new Error('Tool is not active in the current execution scope.');
 
     const descriptor = await ctx.extensionRuntime.describeCapability('mcp', capabilityId) as Record<string, unknown> | undefined;
     if (!descriptor) {

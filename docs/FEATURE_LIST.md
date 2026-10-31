@@ -19,7 +19,7 @@
 | Artifact distribution revision | `2026-10-18` — one `@kodax-ai/kodax` npm package; four `/artifacts` subpaths and resources staged in the main tarball; local implementation, not yet published |
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
 | Current development | `v0.7.97` / `FEATURE_298` — post-alpha.10 Agent/Coding/experimental Script work modes, SDK question/original-output/task-report/streaming alignment, and Windows startup/readiness repairs; [current SDK checklist](SDK_MIGRATION.md#2026-10-29-未发布改动对齐). Cross-platform/manual release verification and Issue 371's historical first-read investigation remain open. |
-| Roadmap updated | `2026-10-31` — FEATURE_302 including T12-H account-preserving upgrades completed offline in the isolated `v0.7.99` branch, unreleased; FEATURE_300 remains Planned |
+| Roadmap updated | `2026-10-31` — FEATURE_302 including T12-H/I account-preserving upgrades and latest Host integration completed offline in the isolated `v0.7.99` branch, unreleased; FEATURE_300 remains Planned |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
 | Total tracked features | `86` |
 | InProgress | `2` |
@@ -527,18 +527,21 @@
 
 ## Unreleased implementation — FEATURE_302
 
-`v0.7.99` FEATURE_302 including T12-H is **Completed for implementation and offline acceptance** on
-`codex/llm-provider-parity`; Released: **unreleased**. No version bump, push or merge.
+`v0.7.99` FEATURE_302 including T12-H/I is **Completed for implementation and offline acceptance** on
+`codex/llm-provider-parity`; Released: **unreleased**. No version bump, push or main-branch update.
 T01–T12 include the full declared provider/API/OAuth and operation inventory, native cloud
 protocols, identity/history/cache/tool compatibility, hidden Key setup, unified file credentials
-and actual Space provider/stable-client-secret migration including H (`437cac7d`). Existing aliases/config/env
-and KodaX route-specific optimizations remain. Root full **18,659**, published **70**;
-Space complete **4,531**, 56 credential/source regressions and two actual Electron IPC/restart tests passed.
+and actual Space provider/stable-client-secret migration including H (`437cac7d`) and I (`da531f0a`). Existing aliases/config/env
+and KodaX route-specific optimizations remain. I integrates committed local main `0fa38e5b2`, preserving
+both histories and the latest Host/profile/recovery contracts. Root full **18,747**, published **71**,
+historical cutover/real alpha.11 Host upgrade **4**; Space complete **4,531**, credential/Host slices
+and two actual Electron IPC/restart tests passed. The H coverage evidence remains historical.
 Both review axes have zero remaining findings. This does not certify live account entitlements,
 all service models, macOS/Linux legacy-vault migration, or a production Space installer.
 See [design](features/v0.7.99.md#feature_302-independent-llm-provider-parity) and
-[final evidence](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-h-upgrade-compatibility-acceptance-2026-10-31).
-The original workspace's concurrent changes must be reconciled and retested before integration.
+[final evidence](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-i-combined-host-integration-acceptance--2026-10-31).
+Original workspaces remain untouched. Recheck newer commits before main integration; carry the
+separate design gitlink and paired Space commits, then publish/pin the SDK before production packaging.
 
 ## v0.7.97-alpha.11 Release Record
 
@@ -2169,7 +2172,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
-| `302` | Independent LLM Provider Parity | `v0.7.99` (unreleased) | [v0.7.99](features/v0.7.99.md#feature_302-independent-llm-provider-parity) | T01–T12 including H account-preserving sources, retryable migration and paired Space integration accepted offline; live accounts/platform installers remain unverified. |
+| `302` | Independent LLM Provider Parity | `v0.7.99` (unreleased) | [v0.7.99](features/v0.7.99.md#feature_302-independent-llm-provider-parity) | T01–T12 including H account-preserving sources and I latest Host integration accepted offline with paired Space; live accounts/platform installers remain unverified. |
 | `301` | Managed Artifact SDK and PPT Review Loop | Initial implementation in `v0.7.97-alpha.4`; unified Artifact SDK additions released in `v0.7.97-alpha.5` | [v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) | Optional SDK in the single main npm package, with a private source workspace, nine operations and shared Host execution; PPTX authoring/limited edits, PDF/image/SVG evidence, candidate DOCX and local HTML/SMIL capture. Native Office fidelity and full natural-task model repair/re-review/delivery remain unverified; [current support](ARTIFACT_SDK.md). |
 | `299` | Unified Stop, Full Access and Extension Execution Contracts | `v0.7.96` (release pending) | [v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) | Implements legacy large metadata paging, Full Access policy provenance, lock-independent Session Stop, CLI/ACP convergence and managed extension execution with reload isolation. |
 | `297` | Codex-Aligned Permission Profiles, Sandbox Escalation, and Exec Policy | `v0.7.96-alpha.5` | [v0.7.96](features/v0.7.96.md#feature_297-codex-aligned-permission-profiles-sandbox-escalation-and-exec-policy) | Makes sandbox completion authoritative, moves Edits/Auto decisions to an exact host boundary, adds Full Access and JSONC Exec Policy, removes Auto[RULES]/envPass/global-Git blocking, and preserves a single no-replay host retry. |

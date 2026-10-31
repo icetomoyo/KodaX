@@ -215,6 +215,9 @@ export async function executeToolCall(
   // `tool_describe` is read-only. Gating the wrapper as well would produce two
   // indistinguishable permission prompts for one bridged operation.
   const isBridgeMetaTool = toolCall.name === TOOL_CALL_NAME || toolCall.name === TOOL_DESCRIBE_NAME;
+  if (!isToolDiscoverable(toolCall.name, ctx)) {
+    return `[Tool Error] ${toolCall.name}: Tool is not active in the current runtime.`;
+  }
   if (!isBridgeMetaTool) {
     const override = await getToolExecutionOverride(
       events,
@@ -468,6 +471,9 @@ async function executeBridgeToolCall(input: {
 
   if (input.abortSignal?.aborted) {
     return CANCELLED_TOOL_RESULT_MESSAGE;
+  }
+  if (!isToolDiscoverable(targetName, input.ctx)) {
+    return `[Tool Error] ${targetName}: Tool is not active in the current runtime.`;
   }
   const override = await getToolExecutionOverride(
     input.events,

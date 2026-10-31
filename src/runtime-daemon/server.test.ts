@@ -2153,7 +2153,7 @@ describe('runtime daemon dispatcher', () => {
           runBoundHostTools: { version: 2, materializedAgentTools: true },
           coderOwnerFencing: { version: 1 },
           crashOutcomeModel: { version: 2 },
-          sessionAdmission: { version: 1, partnerDenied: true },
+          sessionAdmission: { version: 1, surfaces: expect.arrayContaining(['partner']), partnerDenied: false },
           completeObservationSnapshot: { version: 1, queuedInputs: true },
           connectionLifecycle: { version: 1 },
           runLifecycleControl: {
@@ -3537,6 +3537,7 @@ const METHOD_SMOKE_PARAMS = {
   'agents.events': { sessionId: 'session-1', afterSequence: 0 },
   'agents.wait': { sessionId: 'session-1', afterSequence: 0, timeoutMs: 1 },
 
+  'tool.catalog': { sessionId: 'session-1' },
 } satisfies Record<RuntimeDaemonMethod, unknown>;
 
 function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
@@ -3985,6 +3986,7 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
       },
     },
     catalog: {
+      executionTools: async () => [],
       async reasoningEfforts() { return ['auto', 'high']; },
       async probeReasoningEfforts(input) { return input.efforts.map((effort) => ({ effort, status: 'accepted' as const })); },
       async forgetCapabilities() {},
@@ -4379,13 +4381,17 @@ it('authorizes Product catalog probes through fresh Main v2 credentials and a Ho
   };
   const client = createRuntimeDaemonClient({ identity: runtime.identity, transport, capabilities: { providerCredentialBroker: { version: 2 }, providerProbeAuthorization: { version: 1 } } });
   try {
-    const product = toKodaXProductClient(client, authorizer.authorizeExecution);
+    let approved: Awaited<ReturnType<typeof authorizer.authorizeExecution>>;
+    const product = toKodaXProductClient(client, async (request, services) => {
+      approved = await authorizer.authorizeExecution(request, services);
+      return approved;
+    });
     const result = await product.catalog.probeReasoningEfforts({ provider: config.name, efforts: ['high'] });
     expect(result).toEqual([{ effort: 'high', status: 'accepted' }]);
     expect(resolve).toHaveBeenCalledOnce();
     const request = resolve.mock.calls[0]?.[0];
     expect(request).toMatchObject({ provider: config.name, purpose: 'utility', target: { kind: 'operation', operation: 'provider.reasoning.probe' } });
     expect(request!.sessionId).toBe(request!.target.kind === 'operation' ? request!.target.operationId : 'must-be-operation');
-    await expect(client.catalog.probeReasoningEfforts({ provider: 'forbidden', efforts: ['high'], credential: (await authorizer.authorizeExecution({ kind: 'provider_probe', input: { provider: config.name, efforts: [] } }, client))!.credential })).rejects.toMatchObject({ code: 'credential_unavailable' });
+    await expect(client.catalog.probeReasoningEfforts({ provider: 'forbidden', efforts: ['high'], credential: approved!.credential })).rejects.toMatchObject({ code: 'credential_unavailable' });
   } finally { await authorizer.close(); await client.close(); dispatcher.close(); hub.close(); }
 });

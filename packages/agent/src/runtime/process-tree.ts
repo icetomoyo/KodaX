@@ -880,8 +880,27 @@ export function mergeWindowsProcessTreeCaptures(
 }
 
 const windowsCaptureByChild = new WeakMap<ChildProcess, WindowsProcessTreeCapture>();
+const childContainments = new WeakMap<ChildProcess, { verified: boolean; terminate: () => Promise<void> }>();
+
+/** In-process authority installed only after a native Job has admitted its gate. */
+export function trackChildProcessTreeContainment(
+  child: ChildProcess, drained: Promise<void>, terminate: () => Promise<void>,
+): void {
+  const containment = { verified: false, terminate };
+  childContainments.set(child, containment);
+  void drained.then(() => { containment.verified = true; }, () => undefined);
+}
+
+export function isChildProcessTreeCleanupVerified(child: ChildProcess): boolean {
+  return childContainments.get(child)?.verified === true;
+}
+
+export function hasChildProcessTreeContainment(child: ChildProcess): boolean {
+  return childContainments.has(child);
+}
 
 export function rememberChildProcessTree(child: ChildProcess): string | undefined {
+  if (childContainments.has(child)) return undefined;
   if (
     process.platform !== 'win32'
     || child.pid === undefined
@@ -1104,6 +1123,18 @@ export async function killChildProcessTree(
   child: ChildProcess,
   options: ProcessTreeKillOptions = {},
 ): Promise<ProcessTreeKillResult> {
+  const containment = childContainments.get(child);
+  if (containment !== undefined) {
+    if (containment.verified) return ALREADY_EXITED;
+    try {
+      await containment.terminate();
+      return containment.verified ? TERMINATED : UNKNOWN;
+    } catch (error: unknown) {
+      emitKodaXDiagnostic({ source: 'runtime:windows', level: 'warn',
+        message: 'Windows managed process Job cleanup is unconfirmed.', detail: error });
+      return UNKNOWN;
+    }
+  }
   const gracefulMs = options.gracefulMs ?? DEFAULT_GRACE_MS;
   const forceMs = options.forceMs ?? DEFAULT_FORCE_MS;
   const trackedWindowsCapture = process.platform === 'win32'

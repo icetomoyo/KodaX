@@ -1329,3 +1329,104 @@ bundle metadata and migration docs. Original Space remains `7801a8ca` with its e
 and four new research drafts, also untouched. Pi remains clean at `e7a0df27`. The OS-temp
 `kodax-t12h-overlap-audit.json` is that dated snapshot, not a guarantee that concurrent work stops.
 These H test results certify the isolated branch, not the other chat's subsequent code.
+
+## T12-I combined Host integration acceptance — 2026-10-31
+
+This acceptance is separate from the historical H results. H checkpoint `95e95a61` is combined
+with the other chat's committed local main `0fa38e5b213ee41eabb0f33e57f5353c5c507414`, preserving
+both histories after `f6a01046`. The original checkouts and their dirty work are untouched.
+Root's main development/default branch is named `KodaX`; this work remains on
+`codex/llm-provider-parity`. The verified remote default is `KodaX` at `0f3930e95`, an ancestor
+of local main (11 local commits ahead). The first remote check used the wrong token-header
+format; the same existing token with standard Git HTTPS formatting succeeded. No push occurred.
+Recheck both main and remote before an actual update.
+
+Conflict resolution preserves both intents:
+
+- Published tests include both parity operations/Responses/budget and upstream Windows cleanup.
+- Managed tasks retain effective-config/profile reporting and connection-bound reasoning caches.
+- Main authorization services retain full Host identity and the real `createExecutionProfile`.
+- Exit tests retain the settled-view deadline and the newer Run diagnostic assertion.
+- The profile helper checks that a request has a Session before using its Host catalog; a
+  `provider_probe` deliberately has no Session. A broker server test now obtains its authorization
+  through the real Product callback rather than treating bare Runtime as the expanded services.
+- Space's private authorization helper declares only the credential service it actually consumes;
+  its public request/return contracts and emitted JavaScript are unchanged. No profile method is
+  faked, no public Root contract is weakened, and no new persona/Partner migration is claimed.
+
+Initial compiler failures distinguished stale workspace declarations (rebuilt) from the actual
+Session-union and bare-Runtime test mismatches above. Space's first typecheck likewise found five
+bare-Runtime call-site errors; the narrow private-helper type correction passes typecheck.
+
+The first combined CLI budget check failed: 5,196,241 bytes exceeded the unchanged 5,177,344-byte
+guard. The correction reuses the existing coding static-text resource and loader: 18 adjacent
+literal join groups and four static template spans across 15 files are coalesced, and 58 unused
+private resource keys removed. Conditions/interpolation stay in code. Independent AST/hash review
+verified all 22 resource values and reconstructed all 15 original source files identically.
+The rebuilt CLI is 5,171,936 bytes; all four budget/resource checks pass. No dependency, loader,
+configuration, timeout or budget limit was added or relaxed.
+
+Combined candidate checks completed before the full suites:
+
+- Source and test typechecks, packages/native/bundle/declaration builds passed.
+- Root credential/OAuth/broker/Host-upgrade/profile/reasoning-cache/prompt slice: 16 files, 497 passed.
+- Space credential migration/source/OAuth/client-secret slice: 37 passed.
+- Space Host/broker/account-isolation/exit and recovery slice: 324 passed; types, lint and smoke build passed.
+- Independent Spec/Standards incremental reviews report no findings. Spec independently checked
+  four profile/recovery files (23 tests) and the server probe regression (one test); both reviewed
+  the prompt extraction. Space transpilation equality was independently verified.
+
+Root complete regression passed on the combined candidate: 1,358 files passed / six skipped;
+18,747 tests passed / 98 skipped / 19 todo, zero failures, 1,149.21 seconds.
+Frozen published suite: 71 passed. Historical owner/actual candidate npm tarball cutover: three
+passed, including concurrent first startup, Session retention and old-owner rollback rejection
+from v0.7.96 and alpha.11. The candidate tarball SHA-256 is
+`b6efae83ea77e628ec8e6833f700f33fff045ab948de9cf9a1c319b450493118`.
+Integrity-pinned real alpha.11 Host upgrade: one passed, preserving busy work and its Session.
+The CLI SHA-256 is `2ef2cb4bce758bd9542c0df57a7d66ef5fcd05fe3117334faff45b93a2127483`.
+Paired Space complete acceptance passed: release 130 / seven skipped and IPC 370 from the
+complete run; final Desktop replay 3 has 4,031 passed / 13 skipped, zero failures (549.84 seconds).
+Together the final tiers have 4,531 passed / 20 conditional skips. Release/IPC were already green
+and unchanged; the test-only fixes below were verified by the complete Desktop replay.
+Final source/test types, lint and smoke build passed. Actual Electron: two passed (35.1 seconds)
+on an isolated Windows desktop. Save/share/CAS/redaction and full close/relaunch keep the selected
+env account; removing env A cannot dispatch CLI B, and explicit adoption then dispatches B to
+the owned loopback fixture. This remains separate from exact-byte client identity migration
+tests. The Node sqlite ABI is restored after the Electron run.
+
+Space's first complete run passed release 130 / seven skipped and IPC 370, with Desktop
+4,030 passed / one failed / 13 skipped. The sole failure was a stale compatibility fixture
+requiring a Partner Session to stay inline. A focused six-second replay reproduced it.
+Upstream's accepted unified Host contract explicitly admits Partner Sessions; it retains
+explicit permissions, tool ceilings and owner checks. The corrected fixture uses the actual
+`productExecutionProfile` capability: v2 must create the exact Partner identity and read it
+from the other process, while an absent capability must preserve the legacy admission denial.
+An unsupported surface must still be rejected in both cases. Focused GREEN passes; independent
+Spec/Standards reviews find no weakened assertions. Product behavior was not changed. The
+complete Desktop tier was rerun; already passing release and IPC tiers are unchanged.
+
+Desktop replay 2 exposed an unrelated connector fixture cleanup race: receipt assertions passed,
+but its hook failed with `ENOTEMPTY`. Ten focused replays passed. The service records a final
+receipt before its tracked background verification finishes the change notification's locked
+store read; raw directory removal could overlap that read. The fixture now uses the existing
+`deactivate` operation to block new work and drain active verification before deleting its owned
+temporary directory. No product code, timeout, retry or business assertion changes. The complete
+connector file passes all 35 tests; the complete Desktop tier was rerun after this correction.
+
+Raw evidence is retained in OS-temp `kodax-t12i-*` and `space-t12i-*`, including the initial failures,
+prompt extraction/equality receipts and the integrity-pinned alpha.11 historical artifact.
+
+Final Spec/Standards code reviews report no remaining findings, including both fixture fixes;
+the main chat ran the complete suites. Read-only final upstream audit at 13:15 Asia/Shanghai
+confirms original Root remains clean at `0fa38e5b2`, remote remains `0f3930e95`, and original Space
+remains `7801a8ca` with its pre-existing fixture change and four research drafts. The incoming
+design gitlink `0f831024` is already an ancestor of the parity design history; it is retained.
+
+Keep H's account-source, tombstone, OAuth refresh fencing, original identity and platform/live
+limits. Original Space `7801a8ca` has its pre-existing fixture and research drafts; those changes
+are outside this acceptance. Production packaging still requires published/pinned paired SDK
+bytes and the existing exact-byte/installer gates. No main-branch update, version bump or release
+is performed here. Carry the separate `docs/features` repository commit with Root.
+
+Local paired checkpoints: Space I `da531f0aa30ef636c16e109b183944439d7cc278` (includes H history),
+design repository `22bf9bf3332317a147fcb96595b8f42019bb12e4` (retains upstream `0f831024`).

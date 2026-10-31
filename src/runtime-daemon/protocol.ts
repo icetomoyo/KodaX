@@ -136,6 +136,7 @@ export type RuntimeDaemonMethod =
   | 'mcp.server.reload'
   | 'mcp.tool.list'
   | 'extension.list'
+  | 'tool.catalog'
   | 'extension.reload'
   | 'command.list'
   | 'command.resolve'
@@ -495,6 +496,7 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'mcp.server.reload',
   'mcp.tool.list',
   'extension.list',
+  'tool.catalog',
   'extension.reload',
   'command.list',
   'command.resolve',

@@ -135,7 +135,7 @@ export function buildToolExecutionContext(
     : undefined;
 
   const context: KodaXToolExecutionContext = {
-    ...(workMode === 'agent' ? { workMode } : {}),
+    workMode,
     configHome: options.context?.configHome,
     runtimeRunId: options.context?.runtimeRunId,
     registerShellCleanup: options.events?.registerShellCleanup,

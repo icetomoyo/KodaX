@@ -2766,6 +2766,9 @@ export async function setupSandboxRuntime(): Promise<SandboxRuntimeDoctorResult>
 export function sandboxSetupGuidance(
   doctor: SandboxRuntimeDoctorResult,
 ): readonly string[] {
+  if (doctor.platform === 'linux' || doctor.platform === 'darwin') {
+    return posixSandboxSetupGuidance(doctor);
+  }
   if (doctor.ready) {
     return [
       `KodaX sandbox is active (${doctor.platform}, ASRT ${doctor.version}).`,
@@ -2783,23 +2786,59 @@ export function sandboxSetupGuidance(
       'The terminal itself does not need to be started as Administrator; approve the UAC prompt when it appears.',
     ];
   }
-  if (doctor.platform === 'darwin') {
-    return [
-      'KodaX uses macOS Seatbelt through sandbox-exec. Install the missing dependency, then rerun "kodax sandbox doctor".',
-      'Homebrew: brew install ripgrep',
-    ];
-  }
-  if (doctor.platform === 'linux') {
-    return [
-      'KodaX uses bubblewrap on Linux. Install bubblewrap, socat, and ripgrep, then rerun "kodax sandbox doctor".',
-      'Debian/Ubuntu: sudo apt install bubblewrap socat ripgrep',
-      'Fedora/RHEL: sudo dnf install bubblewrap socat ripgrep',
-      'Arch Linux: sudo pacman -S bubblewrap socat ripgrep',
-    ];
-  }
   return [
     `KodaX sandbox is not supported on ${doctor.platform}.`,
   ];
+}
+
+function posixSandboxSetupGuidance(doctor: SandboxRuntimeDoctorResult): readonly string[] {
+  const lines = [doctor.ready
+    ? `KodaX sandbox is active (${doctor.platform}, ASRT ${doctor.version}).`
+    : `KodaX sandbox is unavailable (${doctor.platform}, ASRT ${doctor.version}).`];
+  // ASRT reports warning and error text together in the public doctor result.
+  // Preserve the evidence; do not infer missing packages from readiness alone.
+  lines.push(...doctor.diagnostics);
+  if (doctor.diagnostics.some((line) => (
+    /^(?:seccomp(?:[- ]helper)?|apply-seccomp)\b.*(?:not available|unavailable|not found|missing)/i.test(line)
+  ))) {
+    lines.push('Warning: the ASRT seccomp helper (apply-seccomp) is unavailable or degraded; Unix socket restrictions may be unavailable. This warning alone does not make doctor unready. Optional repair: restore the ASRT helper for this platform and architecture in the application distribution.');
+  }
+  if (doctor.ready) return lines;
+  if (doctor.diagnostics.some((line) => (
+    /JavaScript Skill interpreter is unavailable|\bnode(?:\.exe)?\b.*\bENOENT\b|\bENOENT\b.*\bnode(?:\.exe)?\b/i.test(line)
+  ))) {
+    lines.push(
+      'Optional interpreter repair: KodaX reuses KODAX_A2A_NODE when provided, or Electron\'s own executable in Node mode (ELECTRON_RUN_AS_NODE). Check that this executable can run; Electron does not require Node.js on PATH.',
+      'For a standalone bundled CLI without an available interpreter, optionally install Node.js (>=20.16.0) on PATH or set KODAX_A2A_NODE to an existing Node.js executable.',
+    );
+  }
+  const missing = doctor.diagnostics.filter((line) => /not installed|not found|missing|ENOENT/i.test(line));
+  const packages = [
+    ...(doctor.platform === 'linux' ? [
+      ['bubblewrap', /\b(?:bubblewrap|bwrap)\b/i],
+      ['socat', /\bsocat\b/i],
+    ] as const : []),
+    ['ripgrep', /\b(?:ripgrep|rg)\b/i],
+  ] as const;
+  const dependencies = packages.filter(([, pattern]) => missing.some((line) => pattern.test(line)))
+    .map(([name]) => name).join(' ');
+  if (dependencies) {
+    lines.push('Optional sandbox backend repair: install only the dependencies reported missing.');
+    if (doctor.platform === 'linux') {
+      lines.push(
+        `Debian/Ubuntu: sudo apt install ${dependencies}`,
+        `Fedora/RHEL: sudo dnf install ${dependencies}`,
+        `Arch Linux: sudo pacman -S ${dependencies}`,
+      );
+    } else {
+      lines.push(`Homebrew: brew install ${dependencies}`);
+    }
+  }
+  lines.push(
+    'Ordinary tools continue under the normal permission policy when the sandbox is unavailable; installing dependencies is not a prerequisite. Explicit sandbox-only calls do not execute without isolation.',
+    'After optional repair, rerun "kodax sandbox doctor".',
+  );
+  return lines;
 }
 
 /**

@@ -2,6 +2,171 @@
 
 本指南验证构建后的产品入口。组件、协议和 SDK 单测继续保留，但不替代这里的真实进程与终端操作。
 
+## 2026-10-30 Partner 通用 Agent 契约修复（未发布）
+
+下节保留修复前失败证据。本轮统一契约为：Partner persona 不增加只读上限；Session 选择
+Agent 工作面，显式策略/工具列表/授权、SA Solo、审批与沙箱仍取交集。纯 profile 不制造
+白名单。可信 Main 的异步 `services.createExecutionProfile` 读取实际 Host 目录，传递完整
+策略元数据快照；Host version 2 在发现与目标调用复核。新增/变更工具需新授权，恢复须新绑定。
+
+| 原缺口 | 修复验收边界 |
+| --- | --- |
+| MCP 别名恢复根拒绝工具 | 根 lease 视图先取交集，mcp_search/describe/call 再校验目标；schema 隐藏、目录不出现、实际 handler 不进入 |
+| Actor runtime 参数反序 | scoped lease 优先，base registry ownership/pinning 保留；跨进程允许的 native lease 实际返回 |
+| 白名单副本误判撤销 | scope 是原始注册 lease 的视图，invoke 校验原身份；拒绝项的已知 capability ID 及撤销后的调用仍拒绝 |
+| 元数据谓词降为名字 | 快照保留 name/sideEffect/planModeAllowed；readonly→mutates-fs 同名替换不能复用旧授权 |
+| Main 看不到 Host 工具 | 查询 Session Host 实际注册目录；Main 未注册的 Host-only readonly 扩展可见且实际执行 |
+| profileId 名字隐式门禁 | research-persona/research-partner 差分均准入；无 profile 的 Partner 可实际 write |
+| effective 范围重复推导 | 从实际装配/物理请求记录 executable/model scopes；缺 runner 的 Skill script 不出现；hydrate 后 activeTools 生效；重启可读 |
+
+新增 `tests/sdk-profile-contract.e2e.test.ts` 验证独立进程、真实反向 lease 桥、Host-only 扩展、
+显式受限派生子任务、独立 Actor 允许/拒绝调用、元数据 reload 后旧授权拒绝/新授权放行和重连/重启快照。已有
+`tests/sdk-client-contract.e2e.test.ts` 保留 Skill、连接器、真实 Artifact 生成、专家验证要求和研究工具的实际 HTTP 调用、
+拒绝工具的 tool_call 绕过尝试、Coder SA/AMA × 三种模式和 Actor 原 Turn checkpoint 恢复。
+`src/sdk-profile-contract.test.ts` 锁定 lease 视图/撤销、元数据变化、opaque identity 和 hydrate 范围。
+`src/sdk-contract-regressions.test.ts` 保留此前六项回归并通过实际 Provider 请求检查 scope。
+
+2026-10-30 较早阶段的固定构建记录（先于独立 Windows gate 与 2026-10-31 恢复修复，
+不代表当前最终验收；此处未提供可与新候选匹配的完整内容指纹）：`npm run build`、
+`npm run typecheck` 通过；当时跨进程/协议/MCP
+5 个文件 98/98 通过，bundle 54/54 通过。收尾的动态 import 尝试曾改变打包初始化顺序，
+被产物回归检出并撤回；最终 MCP 过滤为无运行时依赖的纯叶模块，复用已装配工具范围、
+显式 exclusions/策略和 Host 注册名冲突门禁。无静态 registry 回边。
+
+该阶段 Standards/Spec 审查均无剩余阻断；hydrate 后范围遗漏已修复并锁定。
+
+该阶段其他定向验证：跨进程及此前六项回归 13 项通过（其中独立 Host 用例 3 项）；新增
+profile/协议定向组 78 项通过；模式/profile 组 34 项通过；最终构建与源码/测试类型检查
+通过；构建后的 bundle 54/54 通过。研究用例另复测 2 项通过，包含真实 web_search /
+web_fetch 请求到本地 HTTP 夹具、实际 PPTX 文件与 Skill 内容。
+
+全仓首跑覆盖 1298 个文件：18013 passed、38 failed、98 skipped、19 todo。该次运行与
+修复/构建重叠，包含旧构建门禁、旧 effectiveConfig 实现与授权服务夹具的失败，不能记作
+单次全绿。14 个失败文件之后均完成复测：CLI/Runtime 363 项先 362 通过，唯一旧构建门禁
+项另复测通过；沙箱/队列 105 通过、40 跳过；goal/Shell 6 通过；退出 4、任务报告 3、
+旧 Run 2、Runtime 恢复 24、授权适配 25 项通过（组间有重叠，不相加）。新契约相关失败
+由上面的 profile、跨进程和模式回归覆盖并通过。没有将这份混合构建的首跑包装为最终全量全绿。
+
+这些是 Windows 离线 loopback/协议/文件效果回归；没有检查真实 Space 部署，也不宣称真实
+搜索、连接器服务或专家模型的质量。原生 Artifact 的内部 write 继续服从调用方显式限制。
+
+## 2026-10-30 Partner/Agent 后续审计（修复前历史）
+
+审计基线为 `f6a010462` 加当前未提交的 SDK 六项修复；本节没有改变运行逻辑或授权。
+以下结果限制下节历史通过记录的外推范围。历史 18045 项通过不覆盖这些新场景。
+未检查实际 KodaX Space 源码、配置或部署，不能断言其默认策略和 Artifact 接入路线。
+
+结论：在同样的 workMode、agentMode、Host 能力与显式授权下，Partner persona
+不应隐式成为只读权限配置。当前普通 Agent 的 bash/write/edit/spawn_agent 不因
+Agent workMode 被排除；SA 另有 Solo 子 Agent 排除项。无禁写策略的 Partner 在独立
+Host 上已通过公开 `runs.startTool(write)` 写出文件并读回校验。这个正向事实不代表
+应该忽略任何调用方已经明确设置的 deny、审批或沙箱边界。
+
+| 发现 | 证据与影响 | 状态 |
+| --- | --- | --- |
+| 根 profile 上限未覆盖 MCP 目标 | 独立 Host 的模型 schema 隐藏 `audit_denied`，`mcp_search` 仍返回其 capability ID，`mcp_call` 实际进入 Main handler。根绑定未收窄 lease，MCP 调用没有复核目标工具的 profile 策略。 | 已跨进程复现；优先修复 |
+| 独立 Actor 的合并参数反序 | `server.ts` 的 Actor 调用 `mergeExtensionRuntimeContracts(base, scoped)`，而函数将首参视为 Host lease。模型看得到允许的 lease 工具，调用却被路由到 base provider，实际报 `Capability provider "mcp" does not implement execute()`。根 Run 使用相反且正确的顺序。 | 已跨进程复现；既有统一契约遗漏 |
+| Actor 白名单副本触发错误撤销判断 | `reverse-bridge.ts` 的 `allowedTools` 创建 lease 对象副本；调用时用对象引用与注册记录比较。白名单内工具被误报 `Host tool lease was revoked.`。这与上一项是独立缺陷，只修路由仍会失败。 | 已用真实 bridge 定向复现；既有遗漏 |
+| 策略快照丢失工具元数据身份 | `createExecutionProfile` 将 Main 进程的元数据谓词降为工具名称数组。探针中同名工具从 readonly 替换为 mutates-fs 后，Host 名称校验仍放行，而原始 readonly 谓词应拒绝。 | 已复现语义损失；未证明实际 Space 正在发生该替换 |
+| Host-only 工具缺少完整的授权候选目录 | helper 只读取 Main registry 与手动提供的 lease descriptors。Host 独有/后加载的 readonly 扩展满足原始谓词，仍因不在名称快照而隐藏。保守拒绝本身合理，但无法声称原策略与通用 Agent 能力等价。 | 已复现；契约支持范围缺口 |
+| opaque profileId 仍影响准入 | 同样 `surface: code`、Agent 模式和显式 tool 调用，`research-persona` 完成，改成 `research-partner` 即被要求可信 profile/ceiling。核心仍按名字分词识别 Partner；新门槛延续了原先的身份耦合。 | 已差分复现；应与 persona/授权契约分离 |
+| effective toolScope 仍不等于实际工具范围 | 无 Skill-script runner 的 managed Agent，实际 worker schema 排除 `run_skill_script`，启动观测却包含它。activeTools 修复只覆盖了其中一个过滤条件。 | 已定向复现；观测实现仍重复推导 |
+
+根因定位：`src/runtime-daemon/server.ts` 的 `bindTrustedRunInput`、
+`actorToolRuntimeFactory`、`mergeExtensionRuntimeContracts`；
+`src/runtime-daemon/reverse-bridge.ts` 的 `createHostToolRuntime`、`invokeHostTool`；
+`packages/coding/src/tools/mcp-call.ts`；`src/execution-profile.ts`；
+`src/sdk-runtime.ts` 的 Partner identity admission；`packages/coding/src/task-engine.ts`
+的 `computeVisibleToolScope`。本轮没有将局部探针或设计建议当成已修复结果。
+
+诊断运行：本地 7 个探针中 1 个基线通过，6 个预期契约断言失败；独立 Host 探针
+确认 schema、MCP discovery 和实际 handler 的矛盾，以及 Actor 的可见/调用矛盾。
+后者另验证 Partner 允许的 write 确实执行。循环用 loopback Provider 和无外部副作用
+的 lease handler，不访问实际连接器服务。最后两次诊断日志分别保留于
+`%TEMP%/kodax-sdk-profile-local-audit.log` 和
+`%TEMP%/kodax-sdk-profile-cross-process-audit.log`；临时探针保存在同机临时目录，
+未加入正常通过测试集合。先前构造探针时的语法/夹具错误不计为 SDK 缺陷。
+
+需要补齐的契约与验收：
+
+- persona/验证要求、workMode、SA/AMA、授权上限分别表达；不按产品名字隐式限权。
+- 策略针对 Host 实际加载的工具及其元数据求值或校验，并明确快照/reload/恢复边界。
+- native、tool_call、mcp_call、Script 与子任务执行检查同一个目标能力；目录过滤不能替代调用授权。
+- 独立 Actor 的声明、父任务派生 Actor 的权限继承分别验收；允许的 lease 工具要实际调用。
+- Partner 无额外 deny 的正向能力和显式受限策略的负向能力都测，继续保留 Coder SA/AMA × 三种 workMode、专用子 Agent、checkpoint 恢复回归。
+- effective 配置应消费实际装配结果；确认模式之外还需区分可发现工具、可执行工具与待授权操作。
+
+仍需进一步验收而未在本轮证明：实际 Space 迁移、native Artifact adapter 与 lease
+路线的等价性、Skill 动态上下文/脚本/显式 fork 的授权依赖、真实专家验证质量。
+workMode 的专用子 Agent 例外是已有设计，不能把子 Agent 正常保留 Coding 声明
+误判为根工具桥接绕过；但子任务仍须受各自适用的显式授权约束。
+
+## 2026-10-30 SDK 组合与配置边界
+
+本轮为 alpha.11 后未发布修复，契约见 [迁移指南](../SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布)
+及 [配置生效边界](../CLIENT_CONTRACT.md#配置生效边界)。六项审计回归分别覆盖：
+
+| 原缺陷 | 修复与验证 |
+| --- | --- |
+| 数量 token 字段被脱敏成字符串 | maxOutputTokens 的 read/effective/实际 Provider 请求均保持数字 |
+| Host 收口后 Partner 无受支持的执行入口 | 原 surface/profileId 准入；Main 快照保留 profile/验证/策略/lease；显式限制继续生效；后续七项修复取消 persona 的额外准入要求 |
+| effective toolScope 忽略 activeTools | 扩展 activeTools 只留 read 时，观测范围与实际执行范围一致 |
+| Actor 恢复意图在 daemon proxy 丢失 | resumeCheckpoint 与空 objective 透传；旧能力明确拒绝；杀进程后续跑原 Turn |
+| Script＋SA 错走 Coding 底层入口 | 使用 managed Script runner 并保留 SA 的子 Agent 排除项 |
+| 计划权限/effort 视图与真实请求不一致 | held 请求期间改 permissionMode 或 planModeEffort，下一物理请求实际采用 high |
+
+`tests/sdk-client-contract.e2e.test.ts` 的 Host 通过 `node --import tsx`
+在独立进程创建，从公开 Client 走实际 socket/反向 lease 桥和 loopback HTTP Provider。
+Partner 同时检查模型 schema、tool_search 的 function schema 和实际 tool_call：
+repo_overview/bash/write/edit/spawn_agent 被拒绝，未生成禁止文件或子 Actor。
+允许的 Skill 实际加载；连接器与专家工具经过夹具 lease handler；Artifact handler 调用
+真实 SDK runtime 生成 PPTX 并检查 ZIP 文件签名。profile 指令和验证要求保留。
+Coder 的 SA/AMA × Agent/Coding/Script 六组均实际请求完成；两个 Script 路由还实际
+调用 script_exec → tools.read 并检查 completed 回执和文件内容。独立专家 Actor 保留
+lsp_definition。另一用例等待 Actor 和 Run checkpoint 均持久化后杀 Host，重建
+Host、重获 scoped credential，并用 followup 继续同一个 Turn，未创建新 Turn。
+Provider/连接器/专家结果为离线夹具，不宣称真实搜索或模型验证质量。
+
+配置回归还覆盖：保存值先后1234/2345进入新 Run；活跃 Run 两次物理请求仍1234，
+下个 Run 才2345；清除值不复活启动投影；外部环境8888优先且不会被误删；旧 Host
+没有 application 时保持未知。测试资源退出、启动和轮询有界。
+
+```text
+npm run build
+npm run typecheck
+npx vitest run src/execution-config.test.ts src/execution-profile.test.ts src/sdk-contract-regressions.test.ts tests/sdk-client-contract.e2e.test.ts --maxWorkers=2
+npm run test:bundle
+npm run test:full
+```
+
+以下为独立 Windows gate 和 2026-10-31 恢复修复前的 SDK 六项修复历史记录，
+不作为当前源码验收；5128KiB 为当时本地中间预算，当前预算见 ADR。
+
+当时 Windows 定向15项通过；新增两个 helper 定向覆盖的行/函数均100%、分支91.11%，完整发布构建
+及无 Node 环境的 Product 类型消费者门禁通过。构建产物54项全部通过，包含真实
+tarball Script、Skill、MCP全文、任务报告、崩溃/退出/共享Host与恢复；构建固定后
+运行，未在测试中途重建。CLI5123KiB，尺寸上限从5120KiB调整至5128KiB，新增
+契约代码使用该余量；冷入口和依赖隔离门禁保留。全层回归结算：
+
+| 层 | 文件 | 通过 | 其他 |
+| --- | --- | --- | --- |
+| fast | 313通过、6跳过 | 3072 | 52跳过 |
+| unit | 772通过 | 12477 | 4跳过 |
+| contract | 117通过 | 977 | 19 todo |
+| system | 87通过 | 1519 | 42跳过 |
+
+`npm run test:full` EXIT 0：共1289个通过文件（6个跳过），18045项通过，98项跳过、
+19项既有todo，无失败。新增配置边界文件及进一步加严的跨进程 Script/拒绝断言另行
+定向复验通过；最后的测试类型检查同样EXIT 0。日志保留在本机
+`%TEMP%/kodax-sdk-contract-full.log`、`%TEMP%/kodax-sdk-contract-bundle.log`，
+helper覆盖摘要为 `%TEMP%/kodax-sdk-contract-coverage/coverage-summary.json`。
+
+未发布 npm、升级 Space 或完成其他 OS/真实模型验收。
+
+Standards 轴最终剩余0项；Spec 轴补正示例的稳定inputId与queued分支后，最终剩余0项。
+首轮全层执行与源码/构建编辑交错，曾暴露旧断言、配置schema缺项及构建身份变化；
+修正后以固定生产源码和构建产物重新执行，不将该首轮描述为全绿。
+
 ## 2026-10-28 任务报告去重复审补充
 
 针对下节首轮提交 `d244ddfa` 的后续复审，先用公开 restoreSessionViewItems 复现
@@ -1046,3 +1211,32 @@ Final confirmation after the test-only repairs:
 H01–H05 implementation and local verification are complete. This does not mark
 the package published, cross-platform CI executed, external clients migrated,
 or the explicitly unverified cross-version recovery scenarios accepted.
+
+## 2026-10-31 final layered source acceptance
+
+The final source baseline is `d36d8f0d`, following the unified Host cutover,
+A2A/POSIX fixes, Windows Job gate, SDK composition/configuration work and review
+repairs. Root recovery preserves original tool/metadata ceilings and persona/
+verification across successive Host restarts. The Host view owner also drains
+admitted view/item reads before disposal; a real-storage regression first proved
+that omitted reads could recreate a deleted index.
+
+The first frozen invocation failed two cases (18,076 passed). Its record remains
+explicit in the [frozen gate](ISSUE_159_v0.7.69_REGRESSION_GUIDE.md#2026-10-31-frozen-gate-and-follow-up),
+along with deterministic lifecycle and HTTP-fixture RED/GREEN evidence. No timeout
+or permission assertion was relaxed. The historical timeout's precise trigger was
+not retained; the independently proven summary/transport fixture mismatch was
+corrected and future waits retain their last Run state and round.
+
+After rebuilding and freezing again, complete source/test type checks and the
+full default suite passed: 1,294 files and 18,085 tests, zero failures, 98 skipped
+and 19 existing todo. Sources, tests and built artifacts retained the same
+6,914-file content identity before/after, and cleanup warnings were zero.
+The frozen gate records commands, fingerprint and retained artifact paths.
+Earlier 54/55 bundle and 18,045/18,064 full-suite records above describe their
+own historical candidates; they are not combined into this full-run result.
+
+The same final build also passed bundle 55/55, historical owner cutover 3/3 and
+real alpha.11 in-place Host upgrade 1/1. The 6,914-file fingerprint stayed unchanged
+through all gates. Native Linux/macOS and Node 20 execution, live-model quality,
+publication and deployed Space acceptance remain outside this Windows/Node 22 run.

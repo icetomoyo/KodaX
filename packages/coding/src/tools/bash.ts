@@ -9,6 +9,8 @@ import {
   killChildProcessTree,
   killChildProcessTreeSync,
   registerManagedChildProcess,
+  prepareWindowsManagedProcess,
+  WindowsManagedProcessStartError,
   withManagedChildProcessConfigHome,
 } from '@kodax-ai/agent';
 import { KODAX_DEFAULT_TIMEOUT, KODAX_HARD_TIMEOUT } from '../constants.js';
@@ -759,9 +761,21 @@ async function executePreparedShellCommand(
     resolvedInvocation.executable,
     resolvedInvocation.env,
   );
-  const spawnCommand = (): ManagedChildProcess => {
+  let startWindowsCommand: (() => Promise<void>) | undefined;
+  const spawnCommand = async (): Promise<ManagedChildProcess> => {
     const controlChannel = sandboxInvocation?.controlChannel;
-    const proc = spawn(resolvedInvocation.executable, [...resolvedInvocation.args], {
+    const managed = process.platform === 'win32'
+      && sandboxInvocation?.processTreeContainment !== 'native-job'
+      && !isCurrentProcessWindowsJobContained()
+      ? await prepareWindowsManagedProcess({
+        executable: resolvedInvocation.executable, args: resolvedInvocation.args, cwd,
+        env: directEnvironment, windowsVerbatimArguments: resolvedInvocation.windowsVerbatimArguments,
+        controlPipe: controlChannel !== undefined,
+        signal: ctx.abortSignal,
+        deadlineAt,
+      }) : undefined;
+    startWindowsCommand = managed?.start;
+    const proc = managed?.child ?? spawn(resolvedInvocation.executable, [...resolvedInvocation.args], {
       shell: false,
       windowsHide: true,
       cwd,
@@ -800,7 +814,7 @@ async function executePreparedShellCommand(
     let proc: ManagedChildProcess;
     let settlement: Promise<ChildProcessSettlement>;
     try {
-      proc = spawnCommand();
+      proc = await spawnCommand();
       settlement = observeChildSettlement(proc);
       observeOutput(proc);
     } catch (error: unknown) {
@@ -875,6 +889,8 @@ async function executePreparedShellCommand(
     try {
       let deliveryFailure: unknown;
       try {
+        if (foregroundStopRequested) throw new DOMException('Operation aborted', 'AbortError');
+        await startWindowsCommand?.();
         await closePreparedShellInput(
           proc,
           sandboxInvocation?.stdinPrefix,
@@ -914,7 +930,13 @@ async function executePreparedShellCommand(
       targetStartAttested = startAttestation?.state === 'started';
       if (deliveryFailure !== undefined) throw deliveryFailure;
     } catch (error: unknown) {
-      let inputFailure = error;
+      let inputFailure = foregroundStopRequested || ctx.abortSignal?.aborted
+        ? new DOMException('Operation aborted', 'AbortError') : error;
+      if (error instanceof WindowsManagedProcessStartError && sandboxInvocation !== undefined) {
+        sandboxPreStartUnavailable = true;
+        sandboxPreStartDiagnostic = error.message;
+        inputFailure = new ShellSandboxPreStartError(error.message);
+      }
       foregroundStopRequested = !runInBackground;
       if (sandboxInvocation?.processControl !== undefined) {
         try {
@@ -932,7 +954,7 @@ async function executePreparedShellCommand(
       }
       try {
         await cleanupSandbox(
-          error instanceof ShellSandboxPreStartError ? 'not_started' : 'started_or_unknown',
+          inputFailure instanceof ShellSandboxPreStartError ? 'not_started' : 'started_or_unknown',
         );
       } catch (cleanupError: unknown) {
         inputFailure = new AggregateError(
@@ -942,7 +964,7 @@ async function executePreparedShellCommand(
       }
       // Keep the durable witness if bootstrap cleanup could not be verified.
       // The owner can retry this exact child even though command startup failed.
-      if (ctx.registerShellCleanup !== undefined) {
+      if (ctx.registerShellCleanup !== undefined || startWindowsCommand !== undefined) {
         try { await cleanupStartedCommand(proc, unregister); }
         catch (cleanupError: unknown) {
           deferRunCleanup();
@@ -981,7 +1003,7 @@ async function executePreparedShellCommand(
       const result = await killChildProcessTree(proc, { forceMs: 500 });
       treeCleanupVerified = result.status !== 'unknown';
       if (result.status === 'unknown') {
-        if (foregroundStopRequested || ctx.abortSignal?.aborted) {
+        if (startWindowsCommand !== undefined || foregroundStopRequested || ctx.abortSignal?.aborted) {
           throw new Error('Shell process-tree cleanup is unconfirmed.');
         }
         // A naturally completed short-lived command may exit before Windows
@@ -1060,6 +1082,9 @@ async function executePreparedShellCommand(
     } catch (error) {
       logStream.destroy();
       await cleanupSandbox();
+      if (error instanceof Error && error.name === 'TimeoutError') {
+        return withSandboxCleanupFailure(commandPreparationTimeoutResult(command, timeout));
+      }
       if (error instanceof Error && error.name === 'AbortError') {
         return withSandboxCleanupFailure(cancelledCommandResult(command));
       }
@@ -1154,6 +1179,9 @@ async function executePreparedShellCommand(
     ));
   } catch (error) {
     disposeCollectors();
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      return withSandboxCleanupFailure(commandPreparationTimeoutResult(command, timeout));
+    }
     if (error instanceof Error && error.name === 'AbortError') {
       return withSandboxCleanupFailure(cancelledCommandResult(command));
     }

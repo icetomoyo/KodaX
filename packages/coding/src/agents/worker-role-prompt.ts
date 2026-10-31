@@ -227,31 +227,11 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
   ].filter((line): line is string => line !== undefined).join('\n');
 
   const parallelFirstCollaboration = [
-    'PARALLEL-FIRST COLLABORATION:',
-    staticText("worker.parallelFirstCollaboration.text"),
-    staticText("worker.parallelFirstCollaboration.text.1"),
-    staticText("worker.parallelFirstCollaboration.text.2"),
-    staticText("worker.parallelFirstCollaboration.text.3"),
-    staticText("worker.parallelFirstCollaboration.text.4"),
-    staticText("worker.parallelFirstCollaboration.text.5"),
-    staticText("worker.parallelFirstCollaboration.text.6"),
-    staticText("worker.parallelFirstCollaboration.text.7"),
-    staticText("worker.parallelFirstCollaboration.text.8"),
-    staticText("worker.parallelFirstCollaboration.text.9"),
+    staticText("t12i.agents/worker-role-prompt.block.0"),
   ].join('\n');
 
   const childSteeringRules = [
-    'AGENT STEERING:',
-    'WHEN TO `send_message`:',
-    staticText("worker.childSteeringRules.text"),
-    staticText("worker.childSteeringRules.text.1"),
-    staticText("worker.childSteeringRules.text.2"),
-    '',
-    'WHEN TO `interrupt_agent`:',
-    staticText("worker.childSteeringRules.text.3"),
-    '- The user cancelled the parent task that justified this child.',
-    '- The child is pathologically slow with no progress signal AND a faster path exists.',
-    '- Do not interrupt a child just because it is slow but progressing; wait for a relevant event.',
+    staticText("t12i.agents/worker-role-prompt.block.1"),
   ].join('\n');
 
   // Keep first-choice guidance visible even when rich tool descriptions are deferred.

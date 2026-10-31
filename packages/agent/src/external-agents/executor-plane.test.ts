@@ -1229,6 +1229,60 @@ describe('FEATURE_258 AgentExecutorPlane', () => {
     await plane.close();
   });
 
+  it('accepts rediscovered registration arrays with the same JSON content after store hydration', async () => {
+    const store = createMemoryAgentExecutorPlaneStore();
+    const original = registration({ credentialRef: undefined, executorConfig: { routes: [{ tags: ['risk', 'review'] }] } });
+    await store.saveRegistrations(JSON.parse(JSON.stringify([original])) as ExternalAgentRegistration[]);
+    const executor = new FakeExecutor();
+    const plane = await createAgentExecutorPlane({ factories: [factory(executor)], policy: allowAllPolicy(), store });
+    // Fully populated arrays can retain V8's holey representation after construction.
+    const tags = new Array<string>(2);
+    tags[0] = 'risk';
+    tags[1] = 'review';
+    const skills = new Array<string>(1);
+    skills[0] = 'risk-review';
+    const rediscovered = { ...original, skills, executorConfig: { routes: [{ tags }] } };
+    expect(JSON.stringify(rediscovered)).toBe(JSON.stringify(original));
+    try {
+      // Cross V8's optimization threshold: binary serialization must not make
+      // an unchanged route become a revision conflict after repeated discovery.
+      for (let discovery = 0; discovery < 2_000; discovery += 1) {
+        await expect(plane.registrations.upsert(rediscovered)).resolves.toMatchObject({ configurationRevision: 'rev-1' });
+      }
+      await expect(plane.tasks.start(taskInput())).resolves.toMatchObject({ state: 'working' });
+      expect(executor.starts).toHaveLength(1);
+    } finally {
+      await plane.close();
+    }
+  });
+
+  it.each([
+    { endpointIdentityHash: 'sha256:changed-endpoint' },
+    { credentialRef: 'credential:changed' },
+    { skills: ['review', 'risk'] },
+    { executorConfig: { routes: [{ tags: ['review', 'risk'] }] } },
+    { executorConfig: { routes: [{ tags: ['risk', 'changed'] }] } },
+  ] satisfies Partial<ExternalAgentRegistration>[])(
+    'rejects changed execution content under the same revision: %j', async (patch) => {
+      const plane = await createAgentExecutorPlane({
+        factories: [factory(new FakeExecutor())], policy: allowAllPolicy(),
+        store: createMemoryAgentExecutorPlaneStore(),
+      });
+      const original = registration({ skills: ['risk', 'review'],
+        executorConfig: { routes: [{ tags: ['risk', 'review'] }] } });
+      try {
+        await plane.registrations.upsert(original);
+        // Exercise remembered fingerprints even after removal of the current route.
+        await plane.registrations.remove(original.agentId);
+        await expect(plane.registrations.upsert({ ...original, ...patch })).rejects.toThrow(/revision.*reused/);
+        await expect(plane.registrations.upsert({ ...original, ...patch, configurationRevision: 'rev-2' }))
+          .resolves.toMatchObject({ configurationRevision: 'rev-2' });
+      } finally {
+        await plane.close();
+      }
+    },
+  );
+
   it('normalizes a legacy current-registration backfill before persisting its task route', async () => {
     const store = createMemoryAgentExecutorPlaneStore();
     const executor = new FakeExecutor();

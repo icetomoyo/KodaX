@@ -4,6 +4,7 @@ import { readOptionalString } from './internal.js';
 import { renderRetrievalResult } from './retrieval.js';
 import { renderCapabilityToolResult } from './capability-result.js';
 import type { ToolResult } from './types.js';
+import { isMcpCapabilityVisible } from './mcp-visibility.js';
 
 function omitRepeatedMetadata(
   metadata: Record<string, unknown> | undefined,
@@ -27,6 +28,7 @@ export async function toolMcpCall(
       throw new Error('id is required.');
     }
     const capabilityId = normalizeMcpCapabilityId(id);
+    if (!isMcpCapabilityVisible(capabilityId, ctx)) throw new Error('Tool is not active in the current execution scope.');
 
     const args = input.args && typeof input.args === 'object' && !Array.isArray(input.args)
       ? input.args as Record<string, unknown>

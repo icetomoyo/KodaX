@@ -312,7 +312,8 @@ it('automatically resumes the same CLI Run with fresh authorization after Host r
   try {
     expect(await result).toMatchObject({ runId: 'original', phase: 'completed' });
     expect(connect).toHaveBeenCalledTimes(1);
-    expect(authorize).toHaveBeenCalledWith({ kind: 'recovery', input: { sessionId: 'session', runId: 'original' } }, next);
+    expect(authorize).toHaveBeenCalledWith({ kind: 'recovery', input: { sessionId: 'session', runId: 'original' } },
+      expect.objectContaining({ identity: next.identity, createExecutionProfile: expect.any(Function) }));
     expect(recover).toHaveBeenCalledWith(expect.objectContaining({ runId: 'original', authorization: { credential: {
       leaseId: 'fresh', mode: 'scoped', providers: ['deepseek'],
     } } }));

@@ -16,8 +16,8 @@ it('exposes the same recent-message facts and pagination through the shared Host
   await storage.save('old', { title: 'old', gitRoot: homeDir, messages: oldMessages });
   await storage.save('new', { title: 'new', gitRoot: homeDir, messages: [{ role: 'user', content: 'yesterday', timestamp: '2026-10-14T00:00:00.000Z' }] });
   await storage.save('old', { title: 'old', gitRoot: homeDir, messages: [...oldMessages, { role: 'assistant', content: 'today', timestamp: '2026-10-15T00:00:00.000Z' }] });
-  await storage.save('partner', { title: 'excluded', gitRoot: homeDir,
-    runtimeInfo: { surface: 'partner', profileId: 'partner' },
+  await storage.save('custom', { title: 'excluded', gitRoot: homeDir,
+    runtimeInfo: { surface: 'custom-unadmitted', profileId: 'custom' },
     messages: [{ role: 'user', content: 'other profile', timestamp: '2026-10-16T00:00:00.000Z' }],
   });
   const profile = 'recency';

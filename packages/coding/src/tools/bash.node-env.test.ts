@@ -45,9 +45,8 @@ describe('user shell NODE_ENV isolation', () => {
         const cleanup = await cleanupRegisteredManagedChildren({ includeCurrentOwner: true });
         if (cleanup.skipped === 0) {
           await rm(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-        } else {
-          process.emitWarning(`Managed child cleanup is unverified; retained test records in ${cwd}`);
         }
+        expect(cleanup.skipped, `Managed child cleanup is unverified; retained test records in ${cwd}`).toBe(0);
       }
     } finally {
       vi.unstubAllEnvs();

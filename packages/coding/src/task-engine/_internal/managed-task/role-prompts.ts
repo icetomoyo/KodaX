@@ -39,14 +39,7 @@ import type { RunnerChainPromptContext } from './types.js';
 // `worker-role-prompt.ts`. Mirrors the other *_FALLBACK constants
 // above; chains with known tools use the capability-aware minimal builder below.
 export const WORKER_INSTRUCTIONS_FALLBACK = [
-  'You are Worker (AMA Harness V2 single-loop primary agent). Plan semantic ',
-  'milestones via `todo_create` and `todo_update`; do not create one item per ',
-  'child Agent. Execute via tool calls and update finished milestones before ',
-  'waiting again or moving on, then end your turn with a brief ',
-  'text-only summary when done — no tool call is needed to terminate. Verify ',
-  'the actual result with available tools and report unverified requirements. ',
-  'You may call: read, grep, glob, bash, write, edit, multi_edit, ',
-  'todo_create, todo_update, todo_list, spawn_agent, send_message, followup_task, wait_agent, interrupt_agent, list_agents, agent_output, exit_plan_mode.',
+  staticText("t12i.task-engine/_internal/managed-task/role-prompts.block.0"),
 ].join('\n') + '\n' + EXECUTION_GUIDANCE;
 
 /** Minimal standalone chain contract; rich managed prompts are resolved separately. */

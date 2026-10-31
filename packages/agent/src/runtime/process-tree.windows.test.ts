@@ -23,6 +23,8 @@ const {
   readCurrentProcessWindowsJobIdentity,
   rememberChildProcessTree,
   rememberedChildProcessTreeIsComplete,
+  trackChildProcessTreeContainment,
+  isChildProcessTreeCleanupVerified,
   withSharedWindowsProcessSnapshot,
 } = await import('./process-tree.js');
 
@@ -62,6 +64,17 @@ function snapshot(stdout: string) {
 }
 
 describe('Windows process-tree identity fences', () => {
+  it('does not confirm a Job-backed child until the authoritative drain succeeds', async () => {
+    setWindows();
+    const child = fakeChild(4242);
+    child.exitCode = 0;
+    const drained = Promise.reject(new Error('Job drain unavailable'));
+    trackChildProcessTreeContainment(child as never, drained, async () => { await drained; });
+    await expect(killChildProcessTree(child as never)).resolves.toEqual({ status: 'unknown' });
+    expect(isChildProcessTreeCleanupVerified(child as never)).toBe(false);
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
   it('reports a failed Job probe and its cached result without retrying or exposing subprocess content', () => {
     setWindows();
     vi.stubEnv('KODAX_DAEMON_JOB_CONTAINED', '1');

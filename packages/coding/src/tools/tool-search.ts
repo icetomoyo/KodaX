@@ -25,7 +25,7 @@ import type { KodaXToolDefinition } from '@kodax-ai/llm';
 import type { LocalToolDefinition, ToolHandlerSync } from './types.js';
 import type { KodaXToolExecutionContext } from '../types.js';
 import { getRegisteredToolDefinition, getToolDefinition, listToolDefinitions } from './index.js';
-import { isMcpToolName } from './registry.js';
+import { isMcpToolName, isToolInWorkMode } from './registry.js';
 import { isSessionHistoryTool } from './session-history.js';
 import { listRunScopedTools, lookupRunScopedTool, toModelToolDefinition } from '../agent-runtime/run-scoped-tools.js';
 
@@ -91,9 +91,9 @@ function parseQuery(rawQuery: string): { mode: 'select' | 'keyword'; names: stri
 export function isToolDiscoverable(name: string, context: ToolSearchContext): boolean {
   if (context.discoveryToolNames && !context.discoveryToolNames.includes(name)) return false;
   if (context.excludeTools?.includes(name)) return false;
+  if (!isToolInWorkMode(name, context.workMode)) return false;
   const registered = getRegisteredToolDefinition(name);
   if (registered?.source.kind === 'builtin') {
-    if (context.workMode === 'agent' && registered.workSurface === 'coding') return false;
     if (context.lspNavigationDisabled === true && !context.lspService
       && LSP_NAVIGATION_TOOL_NAMES.has(name)) return false;
     if (!context.actorControl && ACTOR_BOUND_TOOL_NAMES.has(name)) return false;

@@ -98,6 +98,7 @@ import {
 } from '../../../agent-runtime/middleware/cost-tracker.js';
 import { countTokens, estimateTokens } from '../../../tokenizer.js';
 import { fitToolSchemasToContext } from '../../../agent-runtime/tool-exposure-planner.js';
+import { emitEffectiveTaskConfig } from '../../../agent-runtime/effective-config.js';
 import {
   createRuntimeContextBudgetSnapshot,
   estimateToolSchemaTokens,
@@ -595,6 +596,8 @@ export function buildRunnerLlmAdapter(
       usage?: KodaXTokenUsage;
     };
     if (overrideStream) {
+      emitEffectiveTaskConfig(options, { agentMode: options.agentMode ?? 'ama',
+        toolScope: (agent.tools ?? []).map(tool => tool.name), modelToolScope: wireTools.map(tool => tool.name) });
       system = buildWireSystem(baseSystem, wireTools);
       streamResult = await overrideStream(
         transcript,
@@ -616,6 +619,8 @@ export function buildRunnerLlmAdapter(
       // using the actual disclosed contracts. No iterative fitting or tool loss.
       system = buildWireSystem(baseSystem, wireTools);
       const providerName = options.provider ?? provider.name ?? 'anthropic';
+      emitEffectiveTaskConfig(options, { agentMode: options.agentMode ?? 'ama',
+        toolScope: (agent.tools ?? []).map(tool => tool.name), modelToolScope: wireTools.map(tool => tool.name) });
       const reasoningCache = getProviderReasoningCacheOptions(provider, activeModel ?? provider.getModel(), options.context?.configHome);
       const rejectedEfforts = reasoningCache.rejectedReasoningEfforts ?? [];
       if (providerReasoning?.effort !== undefined && rejectedEfforts.length > 0) {

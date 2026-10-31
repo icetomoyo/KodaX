@@ -11,6 +11,8 @@ import { listRunScopedTools, runScopedToolMap } from './run-scoped-tools.js';
 import { appendPromptIfNotDuplicate, resolveInitialMessages } from './middleware/auto-resume.js';
 import { createExtensionRuntimeSessionController } from './middleware/extension-queue.js';
 import { saveRequiredSessionSnapshot } from './middleware/session-snapshot.js';
+import { emitEffectiveTaskConfig } from './effective-config.js';
+import { isToolDiscoverable } from '../tools/tool-search.js';
 
 export interface HostInvocation {
   readonly options: KodaXOptions;
@@ -47,6 +49,7 @@ export function withHostInvocation<T>(original: KodaXOptions, prompt: string, ex
       releaseController = runtime?.bindController?.(createExtensionRuntimeSessionController(state));
       await runtime?.hydrateSession?.(sessionId);
       const ctx = buildToolExecutionContext({ options, sessionId, runtime, managedProtocolPayloadRef: { current: undefined } });
+      emitEffectiveTaskConfig(options, { agentMode: options.agentMode ?? 'ama', toolScope: state.activeTools.filter(name => isToolDiscoverable(name, ctx)) });
       const messages = appendPromptIfNotDuplicate(resumed.messages, prompt, options.context.inputArtifacts,
         undefined, options.session?.inputId);
       const save = async (): Promise<void> => {

@@ -175,7 +175,8 @@ export async function findValidCheckpoint(
       if (Number.isNaN(createdTime)) {
         continue;
       }
-      const age = now - fileStat.mtimeMs;
+      // Filesystems retain sub-millisecond precision; Date.now() does not.
+      const age = now - Math.floor(fileStat.mtimeMs);
       if (age > CHECKPOINT_MAX_AGE_MS || age < 0) {
         // Auto-clean checkpoints not refreshed within the recovery window.
         await deleteCheckpoint(workspaceDir);

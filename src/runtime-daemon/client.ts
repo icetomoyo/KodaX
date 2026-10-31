@@ -264,6 +264,7 @@ function normalizeRuntimeDaemonPreflight(
 export function createRuntimeDaemonClient(
   options: RuntimeDaemonClientOptions,
 ): KodaXDaemonRuntime {
+  const runtimeCapabilities = options.capabilities ?? {};
   const request = (
     method: RuntimeDaemonMethod,
     params?: unknown,
@@ -1182,6 +1183,9 @@ export function createRuntimeDaemonClient(
       },
     },
     catalog: {
+      executionTools(sessionId) {
+        return request('tool.catalog', { sessionId }) as Promise<readonly import('@kodax-ai/coding/client-contract').KodaXToolVisibilityMeta[]>;
+      },
       reasoningEfforts(input) {
         return request('provider.reasoning.efforts', input) as ReturnType<KodaXRuntime['catalog']['reasoningEfforts']>;
       },
@@ -1356,11 +1360,16 @@ export function createRuntimeDaemonClient(
       followup(sessionId, actorPath, objective, options) {
         const unavailable = actorControlPlaneError();
         if (unavailable) return Promise.reject(unavailable);
+        if (options?.resumeCheckpoint === true
+          && (runtimeCapabilities.actorCheckpointRecovery as { version?: number } | undefined)?.version !== 1) {
+          return Promise.reject(Object.assign(new Error('Actor checkpoint recovery requires an upgraded Host.'), { code: 'daemon_upgrade_required' }));
+        }
         assertRuntimeTransportSafe(options?.credential, 'agents.followup.credential');
         return request('agents.followup', {
           sessionId,
           actorPath,
           objective,
+          ...(options?.resumeCheckpoint === undefined ? {} : { resumeCheckpoint: options.resumeCheckpoint }),
           ...(options?.authorization === undefined ? {} : { authorization: options.authorization }),
           ...(options?.expectedRevision !== undefined
             ? { expectedRevision: options.expectedRevision }

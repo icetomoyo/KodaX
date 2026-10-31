@@ -657,6 +657,34 @@ describe('toolBash', () => {
     expect(completedCommandBody(result)).toContain('authorized fallback completed');
   });
 
+  it.each(['not_ready', 'prepare_failed', 'backend_failed'] as const)(
+    'executes an allowed host fallback exactly once without claiming isolation after %s',
+    async (reason) => {
+      const prepare: KodaXShellSandbox['prepare'] = async () => {
+        if (reason === 'not_ready') return undefined;
+        if (reason === 'prepare_failed') {
+          throw new Error('JavaScript Skill interpreter is unavailable: spawnSync node ENOENT.');
+        }
+        return { executable: path.join(tempDir, 'missing-wrapper'), args: [], env: process.env,
+          cleanup: async () => ({ version: 1, state: 'pre_start_unavailable', diagnostic: 'Node ENOENT' }) };
+      };
+      const authorizeShellHostExecution = vi.fn(async () => true as const);
+      const reportToolSandboxObservation = vi.fn();
+      const result = await toolBash({
+        command: `"${process.execPath}" -e "require('fs').appendFileSync('effect.txt','once')"`,
+      }, {
+        backups: new Map(), executionCwd: tempDir, toolCallId: `fallback-${reason}`,
+        shellSandbox: { prepare }, authorizeShellHostExecution, reportToolSandboxObservation,
+      });
+      expect(result).toContain('Exit: 0');
+      expect(await fs.readFile(path.join(tempDir, 'effect.txt'), 'utf8')).toBe('once');
+      expect(authorizeShellHostExecution).toHaveBeenCalledOnce();
+      expect(reportToolSandboxObservation).toHaveBeenCalledExactlyOnceWith({
+        version: 1, state: 'fallback', reason, execution: 'normal_permission_policy',
+      });
+    },
+  );
+
   it('executes only the exact command and cwd that received host authorization', async () => {
     const approvedCwd = path.join(tempDir, 'approved');
     const laterCwd = path.join(tempDir, 'later');
@@ -1481,6 +1509,7 @@ describe('toolBash', () => {
     const abortWatchdog = setTimeout(() => controller.abort(), 5_000);
     const originalEmit = ChildProcess.prototype.emit;
     const delayedPids = new Set<number>();
+    let commandPid: number | undefined;
     const recoveryPaths: string[] = [];
     const emitSpy = vi.spyOn(ChildProcess.prototype, 'emit').mockImplementation(function (
       this: ChildProcess,
@@ -1488,6 +1517,7 @@ describe('toolBash', () => {
       ...args: unknown[]
     ): boolean {
       const shouldDelay = event === 'close'
+        && this.pid === commandPid
         && this.pid !== undefined
         && !delayedPids.has(this.pid);
       if (!shouldDelay) {
@@ -1509,6 +1539,8 @@ describe('toolBash', () => {
         backups: new Map(),
         executionCwd: tempDir,
         shellSandbox: passthroughShellSandbox(),
+        runtimeRunId: 'run-delayed-capture',
+        registerShellCleanup: (reference) => { commandPid = reference.pid; return () => undefined; },
         abortSignal: controller.signal,
         reportToolProgress: (progress) => {
           if (progress.includes(marker)) controller.abort();

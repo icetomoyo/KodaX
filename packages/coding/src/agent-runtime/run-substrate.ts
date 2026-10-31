@@ -225,6 +225,7 @@ import {
 } from '../tools/session-history.js';
 import { assertProviderConfigured } from './provider-config-check.js';
 import { buildToolExecutionContext } from './tool-execution-context.js';
+import { emitEffectiveTaskConfig } from './effective-config.js';
 import { applyAccountingDelta } from '../goal/state.js';
 import { turnWallTimeDelta } from '../goal/accounting.js';
 import { resolvePerTurnReasoning } from './per-turn-reasoning.js';
@@ -1853,6 +1854,8 @@ async function runSubstrateInContext(
       const reservedResponseTokens = streamProvider.getEffectiveMaxOutputTokens(
         turnState.currentModelOverride,
       );
+      emitEffectiveTaskConfig(options, { agentMode: options.agentMode ?? 'sa',
+        toolScope: fullActiveToolDefinitions.map(tool => tool.name), modelToolScope: activeToolDefinitions.map(tool => tool.name) });
       const physicalReserveTokens = reservedResponseTokens
         + (memorySession === undefined ? 0 : MEMORY_EVIDENCE_TOKEN_RESERVE);
       const requestBudgetSnapshot = createRuntimeContextBudgetSnapshot({

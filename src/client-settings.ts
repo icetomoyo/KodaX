@@ -27,6 +27,13 @@ export const CLIENT_CONFIG_KEYS = [
   'sessionRetentionDays', 'repoIntelligence', 'workflow',
 ] as const satisfies readonly (keyof ClientConfig)[];
 
+export const CLIENT_CONFIG_APPLICATION = Object.fromEntries(CLIENT_CONFIG_KEYS.map(key => [key,
+  ['fallbackProviders', 'stallLog'].includes(key) ? 'immediate'
+    : key === 'extensions' ? 'extension_reload'
+    : ['locale', 'providerModels', 'lspAutoDownload', 'acpLogLevel', 'sessionRetentionDays', 'repoIntelligence'].includes(key)
+      ? 'restart' : 'next_run',
+])) as NonNullable<import('@kodax-ai/coding/client-contract').ClientEffectiveExecutionConfig['application']>;
+
 export function toClientConfig(config: unknown): ClientConfig {
   if (!config || typeof config !== 'object') return {};
   const values = config as ClientConfig;

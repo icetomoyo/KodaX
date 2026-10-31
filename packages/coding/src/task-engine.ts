@@ -29,13 +29,8 @@ import {
   applyRuntimeSkillInvocationPolicy,
   awaitRuntimeSkillInvocationPolicy,
 } from './skill-invocation-policy.js';
-import { listToolDefinitions } from './tools/index.js';
+import { resolveWorkMode } from './work-mode.js';
 import { hasExplicitNaturalLanguageWorkflowIntent } from './workflows/invocation-policy.js';
-import { emitEffectiveTaskConfig } from './agent-runtime/effective-config.js';
-import {
-  applyToolVisibilityPolicy,
-  getRuntimeActiveToolNames,
-} from './agent-runtime/tool-resolution.js';
 import {
   buildFallbackRoutingDecision,
   createReasoningPlan,
@@ -253,12 +248,10 @@ export async function dispatchManagedTask(
         excludeTools,
       },
     };
-    // FEATURE_247 (R4): report the effective profile / tool scope / verification
-    // once at run start. Fires only when a subscriber is set ⇒ inert by default.
-    emitEffectiveTaskConfig(saOptions, {
-      agentMode: 'sa',
-      toolScope: computeVisibleToolScope(saOptions, excludeTools),
-    });
+    if (resolveWorkMode(saOptions) === 'script') {
+      const plan = await deps.buildPlan(saOptions, prompt);
+      return deps.runAMA(saOptions, prompt, undefined, plan);
+    }
     return deps.runSA(saOptions, prompt);
   }
 
@@ -275,7 +268,6 @@ export async function dispatchManagedTask(
   // directives, provider policy notes) legacy injected into every managed
   // worker's prompt. We thread it into the Runner chain so Scout/Planner/
   // Generator/Evaluator see the same contextual overlay as legacy workers.
-  // FEATURE_247 (R4): report the effective config for the AMA/AMAW path too.
   const naturalLanguageInput = options.context?.rawUserInput ?? prompt;
   const workflowIntent = options.context?.workflowIntent
     ?? (hasExplicitNaturalLanguageWorkflowIntent(naturalLanguageInput) ? 'explicit' : undefined);
@@ -285,48 +277,8 @@ export async function dispatchManagedTask(
         ...options,
         context: { ...options.context, workflowIntent },
       };
-  emitEffectiveTaskConfig(amaOptions, {
-    agentMode,
-    toolScope: computeVisibleToolScope(amaOptions, amaOptions.context?.excludeTools ?? []),
-  });
   const plan = await deps.buildPlan(amaOptions, prompt);
   return deps.runAMA(amaOptions, prompt, undefined, plan);
-}
-
-/**
- * FEATURE_247 (R4) — the model-visible tool scope reported at run start.
- *
- * Mirrors the runner's real pipeline so the report matches what the model
- * actually sees: registered tools, minus `excludeTools` (way IN), minus tools
- * hidden by the profile `toolVisibilityPolicy` (way IN), minus the per-turn
- * runtime OUT filters (`getRuntimeActiveToolNames`: MCP tools stripped without a
- * capability runtime, repo-intelligence tools stripped when auto-repo is off,
- * construction/self-modify tools stripped unless `toolConstructionMode`). This
- * is a start-of-run snapshot; later per-turn repo-intel mode changes aren't
- * tracked.
- */
-function computeVisibleToolScope(
-  options: KodaXOptions,
-  excludeTools: readonly string[],
-): string[] {
-  const excluded = new Set(excludeTools);
-  const afterExcludeAndPolicy = applyToolVisibilityPolicy(
-    listToolDefinitions()
-      .map((tool) => tool.name)
-      .filter((name) => !excluded.has(name))
-      // The managed agent-chain applies the same host-backed gate when it
-      // builds the real model surface. Keep the start-of-run effective-config
-      // snapshot honest instead of reporting a tool the model cannot call.
-      .filter((name) => name !== 'run_workflow' || options.context?.workflowIntent === 'explicit'),
-    options.context?.toolVisibilityPolicy,
-  );
-  return getRuntimeActiveToolNames(
-    afterExcludeAndPolicy,
-    options.context?.repoIntelligenceMode,
-    Boolean(options.extensionRuntime),
-    options.context?.toolConstructionMode,
-    options.context?.agentExecutorPlane !== undefined,
-  );
 }
 
 async function executeRunManagedTask(

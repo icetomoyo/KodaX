@@ -1,3 +1,4 @@
+import { staticText } from '../prompts/static-text.js';
 /**
  * Coding Agent internal tools for runtime AGENT construction
  * (FEATURE_089, v0.7.31). Mirrors the FEATURE_088 tool-construction
@@ -172,18 +173,7 @@ export async function toolScaffoldAgent(
     };
 
     return [
-      'Scaffolded agent manifest (fill TODO sections, then call validate_agent):',
-      '',
-      'Manifest schema notes:',
-      '  - instructions: string (required) — the agent\'s system-prompt body.',
-      '  - tools: ToolRef[] — refs like { ref: "builtin:read" } or { ref: "constructed:foo@1.0.0" }.',
-      '  - handoffs: AgentHandoffRef[] — { target: { ref }, kind: "continuation"|"as-tool" }.',
-      '  - reasoning: { default, max?, escalateOnRevise? } — same shape as Layer A AgentReasoningProfile.',
-      '  - guardrails: GuardrailRef[] — { kind: "input"|"output"|"tool", ref }.',
-      '  - maxBudget: number — clamped against systemCap.maxBudget at admission.',
-      '  - declaredInvariants: string[] — voluntary invariants (e.g. ["harnessSelectionTiming"]).',
-      '  - testCases: AgentTestCase[] — { id, input, expectMatch?|expectNotMatch?|expectFinalText? }.',
-      '',
+      staticText("t12i.tools/agent-construction.block.0"),
       JSON.stringify(skeleton, null, 2),
     ].join('\n');
   } catch (err) {

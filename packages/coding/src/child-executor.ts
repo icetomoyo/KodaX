@@ -1331,7 +1331,7 @@ async function runReadChildBody(
       options.parentOptions.extensionRuntime,
     );
   const excludeTools = restrictToolsForChildRuntime(
-    specialistExcludeTools,
+    [...(scope.ctx.excludeTools ?? []), ...specialistExcludeTools],
     options.actorCapabilities,
     options.actorControl,
     options.parentOptions.extensionRuntime,
@@ -1642,7 +1642,7 @@ async function runWriteChildBody(
     specialistSystemPrompt,
   );
   const excludeTools = restrictToolsForChildRuntime(
-    specialistExcludeTools,
+    [...(childCtx.excludeTools ?? []), ...specialistExcludeTools],
     options.actorCapabilities,
     options.actorControl,
     options.parentOptions.extensionRuntime,
@@ -2192,33 +2192,9 @@ export async function resolveEvidenceRef(
  * mutation-policy section appended via `buildWriteSystemPrompt` (FEATURE_117).
  */
 export const CHILD_AGENT_SYSTEM_PROMPT = [
-  'You are a focused sub-agent executing a specific task assigned by a parent agent.',
-  'Use the available tools to complete the task fully. Do not gold-plate, but do not leave it half-done.',
-  '',
-  '## Tool Use — Prefer Parallel Calls',
-  '',
-  staticText("t12.child-executor.7"),
-  '',
-  'Concrete rules:',
-  staticText("t12.child-executor.8"),
-  '- For single-file lookup or byte-exact verification, use `glob` + `grep` + targeted `read`.',
-  staticText("t12.child-executor.9"),
-  '- Open broad with a parallel fan-out covering the obvious scope axes, then narrow on follow-up turns. Prefer a few targeted calls over many tiny sequential probes.',
-  '',
-  '## Execution Guidelines',
+  staticText("t12i.child-executor.block.0"),
   `- ${TOOL_RECOVERY_GUIDANCE}`,
-  '- Focus on the objective described in the user message. Do not deviate.',
-  '- Write your final report in the same natural language as the objective you were given, so it reaches the user in their language. Keep code, file paths, and quoted evidence in their source language.',
-  '- When you have sufficient evidence, stop investigating and synthesize your findings.',
-  staticText("t12.child-executor.10"),
-  '',
-  '## Output Format',
-  'Respond with a concise report covering:',
-  '- Key findings with specific file:line references',
-  '- Severity or priority assessment (if applicable)',
-  '- Concrete recommendations',
-  '',
-  'Keep the report focused — the parent will relay it to the user.',
+  staticText("t12i.child-executor.block.1"),
 ].join('\n');
 
 /**
