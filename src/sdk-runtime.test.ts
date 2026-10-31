@@ -5316,6 +5316,93 @@ describe("createKodaXRuntime", () => {
     }
   });
 
+  it.each(['timeout', 'cancel'] as const)('honors %s while the first snapshot waits on slow global Temp cleanup', async kind => {
+    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot });
+    const session = await runtime.sessions.create({ sessionId: `slow-snapshot-cleanup-${kind}` });
+    await runtime.sessions.appendNotice({ sessionId: session.id, source: 'test', content: 'retained evidence' });
+    const globalTemp = await fs.mkdtemp(path.join(tempRoot, 'snapshot-global-temp-'));
+    const tmpdir = vi.spyOn(os, 'tmpdir').mockReturnValue(globalTemp);
+    let releaseScan!: () => void;
+    const scanGate = new Promise<void>(resolve => { releaseScan = resolve; });
+    let markScanStarted!: () => void;
+    const scanStarted = new Promise<void>(resolve => { markScanStarted = resolve; });
+    const originalSync = nodeFs.readdirSync.bind(nodeFs);
+    const syncScan = vi.spyOn(nodeFs, 'readdirSync').mockImplementation((...args: Parameters<typeof nodeFs.readdirSync>) => {
+      if (String(args[0]) === globalTemp) {
+        markScanStarted();
+        // A slow synchronous filesystem call cannot yield to the caller's guards.
+        const finish = performance.now() + 150;
+        while (performance.now() < finish) { /* Simulated filesystem latency. */ }
+      }
+      return originalSync(...args);
+    });
+    const originalAsync = fs.readdir.bind(fs);
+    const asyncScan = vi.spyOn(fs, 'readdir').mockImplementation(async (...args: Parameters<typeof fs.readdir>) => {
+      if (String(args[0]) === globalTemp) {
+        markScanStarted();
+        await scanGate;
+      }
+      return originalAsync(...args);
+    });
+    syncBuiltinESMExports();
+    const controller = new AbortController();
+    try {
+      const started = performance.now();
+      const page = runtime.sessions.transcriptPage({ sessionId: session.id },
+        kind === 'timeout' ? { timeoutMs: 40 } : { signal: controller.signal });
+      const rejected = expect(page).rejects.toMatchObject({ code: kind === 'timeout' ? 'read_timeout' : 'read_cancelled' });
+      await Promise.race([scanStarted, page.then(
+        () => { throw new Error('Snapshot completed before reaching the delayed scan'); },
+        (error: unknown) => { throw new Error('Snapshot failed before reaching the delayed scan', { cause: error }); },
+      )]);
+      if (kind === 'cancel') controller.abort();
+      await rejected;
+      expect(performance.now() - started).toBeLessThan(100);
+    } finally {
+      releaseScan();
+      syncScan.mockRestore();
+      asyncScan.mockRestore();
+      syncBuiltinESMExports();
+      tmpdir.mockRestore();
+      await runtime.close();
+    }
+  });
+
+  it('retains fresh Temp snapshots and one Runtime directory during concurrent first reads', async () => {
+    const { createKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot });
+    const sessions = await Promise.all(['first', 'second'].map(async name => {
+      const session = await runtime.sessions.create({ sessionId: `snapshot-init-${name}` });
+      await runtime.sessions.appendNotice({ sessionId: session.id, source: 'test', content: name });
+      return session;
+    }));
+    const globalTemp = await fs.mkdtemp(path.join(tempRoot, 'snapshot-global-temp-'));
+    const expired = path.join(globalTemp, 'kodax-transcript-snapshots-expired');
+    const fresh = path.join(globalTemp, 'kodax-transcript-snapshots-fresh');
+    const unrelated = path.join(globalTemp, 'unrelated');
+    for (const directory of [expired, fresh, unrelated]) {
+      await fs.mkdir(directory);
+      await fs.writeFile(path.join(directory, 'evidence'), 'keep');
+    }
+    await fs.utimes(expired, new Date(0), new Date(0));
+    const tmpdir = vi.spyOn(os, 'tmpdir').mockReturnValue(globalTemp);
+    try {
+      const pages = await Promise.all(sessions.map(session => runtime.sessions.transcriptPage({ sessionId: session.id })));
+      expect(pages.every(page => page?.entries.length === 1)).toBe(true);
+      await expect(fs.stat(expired)).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await fs.readFile(path.join(fresh, 'evidence'), 'utf8')).toBe('keep');
+      expect(await fs.readFile(path.join(unrelated, 'evidence'), 'utf8')).toBe('keep');
+      const directories = (await fs.readdir(globalTemp)).filter(name => name !== path.basename(fresh) && name !== 'unrelated');
+      expect(directories).toHaveLength(1);
+      const retained = await fs.readdir(path.join(globalTemp, directories[0]!));
+      expect(retained.filter(name => name.endsWith('.entries'))).toHaveLength(2);
+    } finally {
+      tmpdir.mockRestore();
+      await runtime.close();
+    }
+  });
+
   it("rejects one transcript snapshot larger than the hard disk budget", async () => {
     const { createKodaXRuntime } = await import("@kodax-ai/kodax/runtime");
     const snapshotDirsBefore = new Set(

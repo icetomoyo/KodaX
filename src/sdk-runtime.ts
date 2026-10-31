@@ -7276,11 +7276,12 @@ function createRuntimeSessionService(
       );
     }
   };
-  const pruneStaleTranscriptSnapshotDirs = (): void => {
+  const pruneStaleTranscriptSnapshotDirs = async (budget: RuntimeReadBudget): Promise<void> => {
     const tempDir = os.tmpdir();
     const staleBefore = Date.now() - RUNTIME_TRANSCRIPT_SNAPSHOT_TTL_MS;
     try {
-      for (const entry of fs.readdirSync(tempDir, { withFileTypes: true })) {
+      for (const entry of await fs.promises.readdir(tempDir, { withFileTypes: true })) {
+        sessionReadOptionsFromBudget(budget);
         if (
           !entry.isDirectory()
           || !entry.name.startsWith(RUNTIME_TRANSCRIPT_SNAPSHOT_DIR_PREFIX)
@@ -7288,10 +7289,13 @@ function createRuntimeSessionService(
           continue;
         }
         const candidate = path.join(tempDir, entry.name);
-        if (fs.statSync(candidate).mtimeMs > staleBefore) continue;
-        fs.rmSync(candidate, { recursive: true, force: true });
+        const metadata = await fs.promises.stat(candidate);
+        sessionReadOptionsFromBudget(budget);
+        if (metadata.mtimeMs > staleBefore) continue;
+        await fs.promises.rm(candidate, { recursive: true, force: true });
       }
     } catch (error: unknown) {
+      if (isExpectedRuntimeReadTermination(error)) throw error;
       process.emitWarning(
         `Unable to prune expired transcript snapshots: ${normalizeError(error).message}`,
         { code: "KODAX_TRANSCRIPT_SNAPSHOT_CLEANUP_FAILED" },
@@ -7334,7 +7338,7 @@ function createRuntimeSessionService(
       transcriptSnapshotIoCount -= 1;
     };
   };
-  const ensureTranscriptSnapshotDir = (): string => {
+  const ensureTranscriptSnapshotDir = async (budget: RuntimeReadBudget): Promise<string> => {
     if (transcriptSnapshotsClosing) {
       throw new replApi.SessionReadError(
         "read_cancelled",
@@ -7374,7 +7378,7 @@ function createRuntimeSessionService(
       transcriptSnapshotDir = undefined;
     }
     if (transcriptSnapshotDir === undefined) {
-      pruneStaleTranscriptSnapshotDirs();
+      // Publish one directory before yielding so concurrent readers reuse it.
       transcriptSnapshotDir = fs.mkdtempSync(
         path.join(os.tmpdir(), RUNTIME_TRANSCRIPT_SNAPSHOT_DIR_PREFIX),
       );
@@ -7384,7 +7388,9 @@ function createRuntimeSessionService(
         Math.floor(RUNTIME_TRANSCRIPT_SNAPSHOT_TTL_MS / 2),
       );
       transcriptSnapshotLeaseTimer.unref?.();
+      await pruneStaleTranscriptSnapshotDirs(budget);
     }
+    sessionReadOptionsFromBudget(budget);
     return transcriptSnapshotDir;
   };
   const transcriptSnapshotKey = (
@@ -7676,7 +7682,7 @@ function createRuntimeSessionService(
     const conversationMetadataBytes = conversation === undefined
       ? 0
       : Buffer.byteLength(JSON.stringify(conversation), "utf8");
-    const snapshotDir = ensureTranscriptSnapshotDir();
+    const snapshotDir = await ensureTranscriptSnapshotDir(budget);
     const snapshotGeneration = transcriptSnapshotGeneration;
     const filePath = path.join(
       snapshotDir,
