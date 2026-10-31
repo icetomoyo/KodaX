@@ -4255,6 +4255,13 @@ silently falling back to the native child backend.
   endpoint, protocol, executor/auth config, capabilities, effects, Skills,
   modalities, or resource limits must never reuse it. Built-in A2A
   configuration derives it from content.
+  Registration revision history hashes normalized JSON content (sorted object
+  keys, omitted undefined object fields, preserved array order), excluding
+  `enabled`, `managementOwner`, and `health`. JSON-loaded and freshly discovered
+  registrations with identical content therefore share an identity regardless
+  of V8 array representation or optimization state. Fingerprints are rebuilt
+  from registrations when the plane opens; no stored fingerprint migration is
+  required. Changed execution content still requires a new revision.
 - A remote start followed by uncertain local persistence is recorded as
   `unknown` with its executor reference preserved; reconcile it rather than
   blindly starting a duplicate. Stable idempotency keys protect retries.
