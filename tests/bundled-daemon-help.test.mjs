@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -103,8 +104,18 @@ test('daemon help leaves an existing independent Host and its ownership intact',
   let runtime;
   let owner;
   let passed = false;
+  const started = performance.now();
+  const stages = [];
   try {
-    runtime = await ensureKodaXRuntime({ homeDir, daemonStartupTimeoutMs: 15_000 });
+    // Host creation is fixture setup here. Startup performance retains its
+    // separate 10-second gate; this test's 60-second and CLI budgets stay fixed.
+    runtime = await ensureKodaXRuntime({ homeDir, daemonStartupTimeoutMs: 30_000,
+      onStartupProgress: progress => {
+        if (stages.length < 24) stages.push({ ms: Math.round(performance.now() - started), stage: progress.stage,
+          phase: progress.stage === 'initializing' ? progress.phase : undefined,
+          reason: progress.stage === 'waiting' ? progress.reason : undefined });
+      },
+    });
     owner = (await runtime.daemon.inspect()).owner;
     assert.notEqual(owner.pid, process.pid);
     const directory = path.join(configHome, 'runtime/daemon/default');
@@ -119,6 +130,7 @@ test('daemon help leaves an existing independent Host and its ownership intact',
     }
     passed = true;
   } finally {
+    if (!passed) t.diagnostic(`Help fixture Host startup stages: ${JSON.stringify(stages)}`);
     const failures = [];
     if (runtime) {
       try { await runtime.daemon.shutdown(); } catch (error) { failures.push(error); }

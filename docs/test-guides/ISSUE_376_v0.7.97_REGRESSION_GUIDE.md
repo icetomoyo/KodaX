@@ -893,3 +893,21 @@ history 47 ms, restart 1.50 seconds). Standards and Spec reviews have no open
 findings; the PowerShell profile compatibility boundary is recorded in
 `SDK_MIGRATION.md`. These local results do not replace the next exact-SHA
 manual Release run.
+
+The next manual run [41330695832](https://github.com/icetomoyo/KodaX/actions/runs/41330695832),
+on `aedc6c7d4`, exposed a separate help fixture limit: Electron's functional
+bundle group passed 95/96, but creating the existing Host hit its explicit
+15-second startup allowance before any help invocation. The same SHA's Windows
+release build had already passed that bundle step. The cause of the delayed
+remote startup is not isolated; the old run did not retain the bootstrap file.
+Only this functional fixture now allows 30 seconds for Host creation, with
+bounded stage timing on failure. Its whole-test 60-second and each CLI's
+10-second limits, ownership/credential hashes, exact shutdown checks, and the
+separate 10-second startup performance gate remain. The three help cases
+passed independently locally. This is a fixture allowance adjustment, not a
+production startup performance fix; the final SHA still requires full CI.
+After the fixture adjustment, local bundle acceptance passed 96 + 2 cases
+(84.87 + 9.00 seconds). The unchanged startup gate measured 1.94/1.56-second
+historical recovery, 2.19-second concurrent recovery, 51 ms history reads and
+1.36-second restart. Both review axes have no open findings. No production
+source or public contract changes are part of this follow-up.
