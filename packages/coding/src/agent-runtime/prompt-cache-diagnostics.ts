@@ -21,6 +21,7 @@ import {
   KODAX_INTERRUPTED_TOOL_RESULT_MARKER,
   resolvePromptCacheDisabled,
   getPreparedImageDiagnostic,
+  UNSUPPORTED_MODEL_IMAGE_PLACEHOLDER,
 } from '@kodax-ai/llm';
 import type {
   CompactionProviderObserver,
@@ -80,10 +81,11 @@ function projectPreparedImage(block: Extract<KodaXContentBlock, { type: 'image' 
 
 function projectToolResultContent(
   block: Extract<KodaXContentBlock, { type: 'tool_result' }>,
+  supportsImages = true,
 ): unknown {
   if (typeof block.content === 'string') return block.content;
   return block.content.flatMap((item) => item.type === 'image'
-    ? projectPreparedImage(item, 'image')
+    ? supportsImages ? projectPreparedImage(item, 'image') : [{ type: 'text', text: UNSUPPORTED_MODEL_IMAGE_PLACEHOLDER }]
     : [{ type: 'text', text: item.text }]);
 }
 
@@ -193,7 +195,7 @@ function projectOpenAIMessages(
 ): readonly DiagnosticOpenAIWireMessage[] {
   const projected: DiagnosticOpenAIWireMessage[] = [];
   const attachments = new Map<DiagnosticOpenAIWireMessage, DiagnosticOpenAIWireMessage>();
-  const multimodal = provider.getCapabilityProfile().multimodalSupport;
+  const multimodal = provider.getCapabilityProfile(model).multimodalSupport;
   const supportsImages = multimodal === 'image-input' || multimodal === 'full';
   for (const message of messages) {
     if (typeof message.content === 'string') {
@@ -274,7 +276,8 @@ function projectOpenAIMessages(
       role: 'user',
       content: [
         ...(text ? [{ type: 'text', text }] : []),
-        ...images.flatMap((block) => projectPreparedImage(block, 'image_url')),
+        ...images.flatMap((block) => provider.getModelDescriptor(model)?.multimodalSupport === 'none'
+          ? [{ type: 'text', text: UNSUPPORTED_MODEL_IMAGE_PLACEHOLDER }] : projectPreparedImage(block, 'image_url')),
       ],
     });
   }
@@ -341,6 +344,7 @@ function projectAnthropicMessages(
   model?: string,
 ): readonly DiagnosticAnthropicWireMessage[] {
   const strictSignature = provider.getEffectiveStrictThinkingSignature(model);
+  const supportsImages = provider.getModelDescriptor(model)?.multimodalSupport !== 'none';
   const supportsThinking = provider.getProviderSupportsThinking();
   const projected: DiagnosticAnthropicWireMessage[] = [];
   for (const message of messages) {
@@ -378,7 +382,7 @@ function projectAnthropicMessages(
         content.push({
           type: 'tool_result',
           tool_use_id: block.tool_use_id,
-          content: projectToolResultContent(block),
+          content: projectToolResultContent(block, supportsImages),
           ...(block.is_error === true ? { is_error: true } : {}),
         });
       }
@@ -397,7 +401,7 @@ function projectAnthropicMessages(
       if (block.type === 'text') {
         content.push({ type: 'text', text: block.text });
       } else if (block.type === 'image' && role === 'user') {
-        content.push(...projectPreparedImage(block, 'image'));
+        content.push(...(supportsImages ? projectPreparedImage(block, 'image') : [{ type: 'text', text: UNSUPPORTED_MODEL_IMAGE_PLACEHOLDER }]));
       }
     }
     if (
@@ -469,7 +473,7 @@ export function hashProviderVisibleMessages(
 ): string {
   const projected = provider instanceof KodaXOpenAIResponsesProvider
     ? projectResponsesMessages(messages, provider.getGenerationSource(model), block => {
-      if (provider.getCapabilityProfile().multimodalSupport === 'none') {
+      if (provider.getCapabilityProfile(model).multimodalSupport === 'none') {
         return [{ type: 'input_text', text: '[Image content omitted: this provider does not support inline images in tool results.]' }];
       }
       const image = getPreparedImageDiagnostic(block);

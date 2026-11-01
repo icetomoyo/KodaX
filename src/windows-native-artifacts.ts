@@ -14,6 +14,7 @@ declare const KODAX_NATIVE_MANIFESTS_JSON: string | undefined;
 const NATIVE_SCRIPT_HASHES = {
   provision: '1dc640daef701ff7648e4980ae640a28b2776b73a4793e5423304c729cc86016',
   control: 'a3d7af9f9308494634b3b19ce263cc7ec0901b034691c94883567ca44a5e567b',
+  asrtBroker: 'b0ef25b6284fc6a7fcc57a6fea215e48e2554b6ba8e07c058f7d544224fe4d18',
 } as const;
 const nativeScripts = new Map<keyof typeof NATIVE_SCRIPT_HASHES, string>();
 function nativeScript(key: keyof typeof NATIVE_SCRIPT_HASHES): string {
@@ -26,10 +27,13 @@ function nativeScript(key: keyof typeof NATIVE_SCRIPT_HASHES): string {
   const scripts = JSON.parse(fs.readFileSync(candidates.find(candidate => fs.existsSync(candidate)) ?? candidates[0]!, 'utf8')) as Record<string, unknown>;
   const text = scripts[key];
   if (typeof text !== 'string' || createHash('sha256').update(text, 'utf8').digest('hex') !== NATIVE_SCRIPT_HASHES[key]) {
-    throw new Error('Windows native provisioning script is missing or does not match the audited program.');
+    throw new Error('Packaged runtime program is missing or does not match the audited program.');
   }
   nativeScripts.set(key, text); return text;
 }
+
+/** Internal Root program data; the historical asset filename is retained. */
+export const loadAuditedRuntimeProgram = nativeScript;
 
 export interface WindowsNativeArtifactManifest {
   readonly version: 1;

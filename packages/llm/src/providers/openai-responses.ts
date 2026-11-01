@@ -119,7 +119,7 @@ export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProv
       if (signal?.aborted) throw new DOMException('Request aborted', 'AbortError');
       const envelope = this.normalizeSystemForWire(system, messages);
       const images = new Map<object, ResponseInputContent[]>();
-      const supportsImages = this.getCapabilityProfile().multimodalSupport !== 'none';
+      const supportsImages = this.getCapabilityProfile(model).multimodalSupport !== 'none';
       for (const message of envelope.rest) {
         if (typeof message.content === 'string') continue;
         for (const block of message.content) {

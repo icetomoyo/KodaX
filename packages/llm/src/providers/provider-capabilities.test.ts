@@ -222,6 +222,8 @@ describe('FEATURE_198 — provider-capabilities loader', () => {
             reasoningPreset: 'claude-adaptive-max',
           }),
           thinkingBudgetCap: 28000,
+          contextWindow: 1000000,
+          outputTokenLimit: 128000,
         }),
         expect.objectContaining({
           id: 'claude-haiku-4-5',
@@ -233,6 +235,7 @@ describe('FEATURE_198 — provider-capabilities loader', () => {
           }),
           thinkingBudgetCap: 10000,
         }),
+        expect.objectContaining({ id: 'claude-sonnet-4-6', displayName: 'Sonnet 4.6', contextWindow: 1000000, outputTokenLimit: 128000 }),
       ]);
     });
 

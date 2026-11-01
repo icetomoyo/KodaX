@@ -636,6 +636,8 @@ export interface KodaXNormalizedReasoningRequest {
 // ============== Provider 配置 ==============
 
 export interface KodaXModelDescriptor {
+  /** Model-specific modality override; omission inherits the connection's profile. */
+  multimodalSupport?: KodaXProviderMultimodalSupport;
   cacheCapabilities?: KodaXCacheCapabilities;
   toolCapabilities?: KodaXToolCapabilities;
   id: string;

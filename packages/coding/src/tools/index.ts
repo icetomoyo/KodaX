@@ -139,11 +139,12 @@ export {
 } from './truncate.js';
 export {
   cleanupExpiredToolOutputs,
+  inspectToolOutputStorage,
   cleanupUnreferencedToolOutputs,
   maybeRunReferenceAwareToolOutputGc,
   maybeRunToolOutputGc,
 } from './tool-output-gc.js';
-export type { ToolOutputGcResult } from './tool-output-gc.js';
+export type { ToolOutputGcResult, ToolOutputStorageUsage } from './tool-output-gc.js';
 export {
   applyToolResultGuardrail,
   getToolResultPolicy,

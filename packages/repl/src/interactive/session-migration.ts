@@ -9,7 +9,7 @@
  *     migration never makes a session unreadable
  *   - `.layout.json` marker (written last, temp+rename) makes it idempotent
  *   - `.migration-lock/` directory lock (atomic mkdir) + `owner.json` with
- *     pid/heartbeat stale-reclaim guards against a crashed holder
+ *     confirmed-dead pid reclamation; unknown owners remain retained for offline repair
  *   - `.migration-journal.jsonl` records every move → resume forward on the
  *     next start; never auto-rollback, never auto-delete session data
  *   - orphan island sidecars (no surviving main file) are RELOCATED to

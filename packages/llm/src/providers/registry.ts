@@ -463,10 +463,12 @@ export function getProviderConfiguredReasoningCapability(
 
 export function getProviderConfiguredCapabilityProfile(
   name: string,
+  model?: string,
 ): KodaXProviderCapabilityProfile | null {
-  return isProviderName(name)
-    ? cloneCapabilityProfile(KODAX_PROVIDER_SNAPSHOTS[name].capabilityProfile)
-    : null;
+  if (!isProviderName(name)) return null;
+  const profile = cloneCapabilityProfile(KODAX_PROVIDER_SNAPSHOTS[name].capabilityProfile);
+  return { ...profile, multimodalSupport: getModelCapabilities(name, model ?? KODAX_PROVIDER_SNAPSHOTS[name].model)?.multimodalSupport
+    ?? profile.multimodalSupport };
 }
 
 // 获取所有可用的 Provider 列表（带配置状态）
@@ -545,6 +547,8 @@ export function isProviderName(name: string): name is ProviderName {
  * values in a popout UI can trust them.
  */
 export interface KodaXModelCapabilities {
+  /** Effective model modality, without opening a credential or Provider client. */
+  multimodalSupport?: KodaXProviderCapabilityProfile['multimodalSupport'];
   cacheCapabilities?: KodaXCacheCapabilities;
   /** Explicit tool constraints; omission does not advertise support. */
   toolCapabilities?: KodaXToolCapabilities;
@@ -608,6 +612,7 @@ function effectiveCapabilities(
   return {
     ...(toolCapabilities ? { toolCapabilities: structuredClone(toolCapabilities) } : {}),
     ...(cacheCapabilities ? { cacheCapabilities: structuredClone(cacheCapabilities) } : {}),
+    multimodalSupport: descriptor.multimodalSupport ?? snapshot.capabilityProfile.multimodalSupport,
     provider: providerName,
     model: descriptor.id,
     displayName: descriptor.displayName ?? descriptor.id,

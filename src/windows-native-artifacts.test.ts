@@ -25,10 +25,12 @@ it('retains the exact audited native provisioning programs after externalizing t
   const expected = {
     provision: '1dc640daef701ff7648e4980ae640a28b2776b73a4793e5423304c729cc86016',
     control: 'a3d7af9f9308494634b3b19ce263cc7ec0901b034691c94883567ca44a5e567b',
+    asrtBroker: 'b0ef25b6284fc6a7fcc57a6fea215e48e2554b6ba8e07c058f7d544224fe4d18',
   };
   for (const [key, hash] of Object.entries(expected)) {
     expect(createHash('sha256').update(scripts[key]!, 'utf8').digest('hex')).toBe(hash);
-    expect(Buffer.byteLength(scripts[key]!, 'utf16le')).toBe(key === 'provision' ? 17574 : 16816);
+    const expectedBytes: Readonly<Record<string, number>> = { provision: 17574, control: 16816, asrtBroker: 22662 };
+    expect(Buffer.byteLength(scripts[key]!, 'utf16le')).toBe(expectedBytes[key]);
   }
 });
 

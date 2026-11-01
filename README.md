@@ -38,6 +38,12 @@
 
 ## Current development after alpha.10
 
+The subsequent unpublished unified Host cutover retires `runtimeExitSettlement`
+and `settleKodaXRuntimeExit()`. Version-labelled paragraphs below describe their
+historical releases; use the [current SDK migration guide](docs/SDK_MIGRATION.md)
+for supported interfaces and [provider contracts](docs/LLM_INTEGRATION.md) for
+credential/account-preserving upgrades. Existing SDK/config/API_KEY entries remain.
+
 The unreleased source adds Agent / Coding / experimental Script work modes,
 with Coding as the default. Select them with `--work-mode`, `/work-mode`, or
 Product Client Session `workMode`; this is independent of permissions and model

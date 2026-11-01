@@ -5,7 +5,7 @@
 > daemons are retired. Internal Runtime and independent libraries remain. See
 > [migration and ownership limits](SDK_MIGRATION.md#统一-host-sdk-收口未发布).
 
-Last updated: 2026-10-29. Current development tree: FEATURE_298/299/301 on package
+Last updated: 2026-11-01. Current development tree: FEATURE_298/299/301/302 on package
 `0.7.97-alpha.11`, with `v0.7.96` as the last stable release; publication is separate.
 
 Product integrations use `KodaXProductClient` through `/client`. Read the
@@ -13,6 +13,19 @@ Product integrations use `KodaXProductClient` through `/client`. Read the
 for current guarantees. Version-labelled release paragraphs below are historical
 context, not promises that retired Runtime surfaces still exist. Historical
 ADRs remain records of their original decisions.
+
+## Provider and credential architecture — FEATURE_302 (2026-11-01)
+
+The standalone LLM layer selects explicit Chat Completions, Responses,
+Anthropic, Gemini/Vertex, Bedrock or Azure transport and cloud authentication;
+coding and product layers retain their existing entry points. The trusted Main
+credential broker binds a provider connection, profile and selected account;
+clients receive status and authorization handles, not secrets. Default storage
+is shared `auth.json` v2, with explicit legacy encrypted backends and source-preserving
+migration. Missing/revoked/invalid state cannot silently select an environment key
+or another account. Canonical history remains intact across wire projections.
+See [accepted storage alignment](ADR.md#feature_302-implementation-alignment--2026-11-01-unreleased),
+[integration contracts](LLM_INTEGRATION.md), and [implementation acceptance](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md).
 
 ## Current SDK alignment after alpha.10 (2026-10-29)
 

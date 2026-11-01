@@ -1144,7 +1144,7 @@ export function loadConfig(): {
     }
   } catch (error) {
     if (error instanceof InvalidAgentModeConfigError) throw error;
-    throw new Error(`Core configuration is unreadable or invalid: ${KODAX_CONFIG_FILE}. Repair the retained original before continuing.`);
+    throw new Error(`Core configuration is unreadable or invalid: ${KODAX_CONFIG_FILE}. Repair the retained original before continuing. Use kodax doctor --json for a read-only syntax diagnostic.`);
   }
   // Split integration files are independently usable. A user does not need to
   // create an otherwise-empty core config.json before mcp.json or

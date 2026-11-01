@@ -134,3 +134,48 @@ H 专项和完整验收单独记入 FEATURE_302 测试指南；两仓交接须�
 并以 Space docs/handoff/PROVIDER_UPGRADE.md 为接手索引。
 Space H独立提交为`437cac7d`。最终Root完整18,659/发布70、Space完整4,531/实际Electron2项
 均通过；跨平台实机、生产安装包及原线程后续代码的整合验收仍按测试指南边界执行。
+
+## 审计后续：模型与费用估算边界（2026-11-01，未发布）
+
+公开 SDK 的 `multimodalSupport` 可按模型覆盖连接默认值；省略时保持原继承行为。
+原生 Sonnet/Opus 4.6 和 GPT-5.4 的上下文、`outputTokenLimit` 按官方上限更新，
+`maxOutputTokens` 仍是原有请求预算。未知模型保留原 provider fallback，用户固定模型 ID
+不自动替换。Skill 的通用 haiku/opus 别名分别解析到 Haiku 4.5/Opus 4.8，两入口共用解析器。
+依据：[Claude 模型](https://platform.claude.com/docs/en/models/overview)、
+[退役与替代](https://platform.claude.com/docs/en/about-claude/model-deprecations)、
+[GPT-5.4](https://developers.openai.com/api/docs/models/gpt-5.4)。
+
+费率是估算，不是账单。默认 OpenAI `gpt-5.3-codex` 补精确模型条目；GPT-5.4 的
+基础价覆盖输入不超过 272,000 tokens 的标准档。`maxPricedInputTokens` 之外，
+`calculateCostWithCacheLifetimes` 和聚合统计返回未知，不猜测长上下文整会话或地域附加费。
+旧数值 `calculateCost` 为兼容保留，调用方应采用可空计算器/CostTracker 表达这些限制。
+[Codex 定价](https://developers.openai.com/api/docs/models/gpt-5.3-codex)、
+[GPT-5.4 定价条件](https://developers.openai.com/api/docs/models/gpt-5.4#pricing)。
+
+Claude 已核实模型区分 5m/1h 写缓存。DeepSeek 采用官方 USD 非高峰估算，高峰为两倍；
+Flash 支持图片，Pro 为纯文本，两者服务输出上限仍为 384K，默认输出预算不提高。
+[Claude 定价](https://platform.claude.com/docs/en/about-claude/pricing)、
+[DeepSeek USD 模型与价格](https://api-docs.deepseek.com/quick_start/pricing/)。
+
+Kimi 国内公开 API K3.1 使用官方 CNY 价与既有固定 0.14 USD/CNY 估算惯例，标为
+`estimate`，不是官方美元价、实时汇率或含税账单。Kimi Code 的 K3.1 条目标为
+`nominal`，仅表示订阅使用价值估算；两条路由、精确 ID 和账号选择不合并。
+用户费率覆盖保持优先。公开 GLM-5.2 未核实价格继续未知，不借用订阅费率。
+[国内价格](https://www.kimi.com/resources/kimi-k3-1-pro-pricing)、
+[海外 USD](https://platform.kimi.ai/)、[Coding Plan](https://www.kimi.com/code/docs/en/)。
+
+Chat/Responses 缓存写入属于总输入的互斥子集；读取实际 usage 与响应头的 TTL 分区，
+不按本次请求的 TTL 猜测已有缓存寿命。缺失、非法或不完整的分区保留未知，不能当零费率。
+[Kimi 缓存计量](https://platform.kimi.com/docs/guide/context-caching#查看缓存读写用量)。
+
+以上为目录、wire 和统计契约，不是账号权益或真实服务实测声明；未增加推理请求。
+
+Claude 5.5 尚未作为完整目录接入公告：不能只补 1M/费率就认为完成。Opus/Sonnet/Haiku
+分别有 disabled thinking、forced tool、adaptive/profile 限制；还需有序内容回放、
+保留 prefix 的动态工具/effort/system 更新、恢复和账号切换验收。现有签名来源隔离、
+thinking display/binding helper 可复用，不能为兼容删除账号隔离。`drop_block` 只是
+prefix 不匹配时的恢复措施，可能增加 token/延迟或改变质量，不能声称每轮丢旧推理
+仍无智能损失。现有默认模型与用户固定 ID 不切换；未知 ID 的 provider fallback
+仍不等于服务已完整验证。依据：[5.5 模型迁移](https://platform.claude.com/docs/en/models/sonnet-5-5/migration-guide)、
+[保留 thinking 与 prefix](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking)、
+[动态系统/工具更新](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages)。

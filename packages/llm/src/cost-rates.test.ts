@@ -3,7 +3,27 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_COST_RATES, getCostRate, calculateCost, type CostRate } from './cost-rates.js';
+import { DEFAULT_COST_RATES, getCostRate, calculateCost, calculateCostWithCacheLifetimes, type CostRate } from './cost-rates.js';
+
+it('prices the default OpenAI route and keeps unrepresented long-context charges unknown', () => {
+  expect(getCostRate('openai', 'gpt-5.3-codex')).toMatchObject({ inputPer1M: 1.75, outputPer1M: 14, cacheReadPer1M: 0.175 });
+  const rate = getCostRate('openai', 'gpt-5.4')!;
+  expect(calculateCostWithCacheLifetimes(rate, 272_000, 1_000, 100_000, 0, undefined)).toBeCloseTo(0.47);
+  expect(calculateCostWithCacheLifetimes(rate, 272_001, 1_000, 100_000, 0, undefined)).toBeNull();
+});
+
+it('prices Claude cache writes using their actual lifetime', () => {
+  const haiku = getCostRate('anthropic', 'claude-haiku-4-5')!;
+  expect(calculateCostWithCacheLifetimes(haiku, 1_000_000, 0, 0, 1_000_000, { '5m': 1_000_000 })).toBe(1.25);
+  expect(calculateCostWithCacheLifetimes(haiku, 1_000_000, 0, 0, 1_000_000, { '1h': 1_000_000 })).toBe(2);
+  expect(getCostRate('anthropic', 'claude-sonnet-4-6')?.cacheReadPer1M).toBe(0.3);
+});
+
+it('keeps new Kimi API estimates separate from Coding subscription accounting', () => {
+  expect(getCostRate('kimi', 'kimi-k3.1-pro')).toMatchObject({ inputPer1M: 1.82, outputPer1M: 9.52, basis: 'estimate' });
+  expect(getCostRate('kimi-code', 'k3.1-pro')).toMatchObject({ inputPer1M: 2, outputPer1M: 10, basis: 'nominal' });
+  expect(getCostRate('kimi', 'k3.1-pro')).toBeUndefined();
+});
 
 describe('cost-rates', () => {
   describe('DEFAULT_COST_RATES', () => {
@@ -70,6 +90,8 @@ describe('cost-rates', () => {
     it('should price every routed Kimi model, including public K3', () => {
       const kimi = DEFAULT_COST_RATES.kimi;
       expect(Object.keys(kimi)).toEqual([
+        'kimi-k3.1-pro',
+        'kimi-k3.1-pro-highspeed',
         'kimi-k3',
         'kimi-k2.7-code',
         'kimi-k2.7-code-highspeed',
@@ -96,6 +118,8 @@ describe('cost-rates', () => {
     it('should track every Kimi Code subscription route without zero-cost fallthrough', () => {
       const kimiCode = DEFAULT_COST_RATES['kimi-code'];
       expect(Object.keys(kimiCode)).toEqual([
+        'k3.1-pro',
+        'k3.1-pro-highspeed',
         'kimi-for-coding',
         'k3',
         'k3-256k',
@@ -117,7 +141,7 @@ describe('cost-rates', () => {
       expect(anthropic['claude-opus-4-6']).toBeDefined();
       expect(anthropic['claude-opus-4-6'].cachePer1M).toBe(0.5);
       expect(anthropic['claude-haiku-4-5']).toBeDefined();
-      expect(anthropic['claude-haiku-4-5'].cachePer1M).toBe(0.08);
+      expect(anthropic['claude-haiku-4-5'].cachePer1M).toBe(0.1);
     });
 
     it('should have OpenAI models without cache pricing', () => {
@@ -128,17 +152,17 @@ describe('cost-rates', () => {
 
     it('should have DeepSeek flash/V4 models with cache pricing', () => {
       const deepseek = DEFAULT_COST_RATES.deepseek;
-      // Idle-hour CNY rates × ¥1 ≈ $0.14 (official pricing page, 2026-09-10).
+      // Official USD off-peak estimates, 2026-11-01; peak is twice these rates.
       expect(deepseek['deepseek-flash']).toEqual({
-        inputPer1M: 0.14,
-        outputPer1M: 0.56,
-        cachePer1M: 0.0028,
+        inputPer1M: 0.15,
+        outputPer1M: 0.60,
+        cachePer1M: 0.003,
       });
-      // Official pro price until the 2026-09-14 routing change (see cost-rates.ts).
+      // Native Pro has its own price; do not substitute the Flash route.
       expect(deepseek['deepseek-v4-pro']).toEqual({
-        inputPer1M: 0.63,
-        outputPer1M: 1.89,
-        cachePer1M: 0.021,
+        inputPer1M: 0.66,
+        outputPer1M: 1.98,
+        cachePer1M: 0.022,
       });
       // Retired ids (superseded by deepseek-flash) are no longer priced.
       expect(deepseek['deepseek-v4-flash']).toBeUndefined();
@@ -185,9 +209,9 @@ describe('cost-rates', () => {
     it('should return rate from default rates for known provider/model', () => {
       const rate = getCostRate('anthropic', 'claude-haiku-4-5');
       expect(rate).toBeDefined();
-      expect(rate?.inputPer1M).toBe(0.8);
-      expect(rate?.outputPer1M).toBe(4.0);
-      expect(rate?.cachePer1M).toBe(0.08);
+      expect(rate?.inputPer1M).toBe(1);
+      expect(rate?.outputPer1M).toBe(5);
+      expect(rate?.cachePer1M).toBe(0.1);
     });
 
     it('should return undefined for unknown provider', () => {
@@ -217,7 +241,7 @@ describe('cost-rates', () => {
         },
       };
       const rate = getCostRate('anthropic', 'claude-haiku-4-5', overrides);
-      expect(rate?.inputPer1M).toBe(0.8);
+      expect(rate?.inputPer1M).toBe(1);
     });
   });
 

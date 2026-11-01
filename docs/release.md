@@ -1,5 +1,10 @@
 # Release & Binary Distribution
 
+Current unpublished Host cutover: `runtimeExitSettlement` and
+`settleKodaXRuntimeExit()` are retired. Capability lists within older release
+preparations below record those tagged releases, not current SDK requirements.
+Use [SDK_MIGRATION.md](SDK_MIGRATION.md) for the supported current surface.
+
 KodaX is distributed as **standalone binaries** built with `bun build --compile`.
 Target machines do **not** need Node.js or any runtime installed.
 

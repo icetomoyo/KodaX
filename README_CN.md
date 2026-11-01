@@ -38,6 +38,11 @@
 
 ## alpha.10 之后的当前开发
 
+后续尚未发布的统一 Host 收口已退役 `runtimeExitSettlement` 与
+`settleKodaXRuntimeExit()`。下文带版本的发布记录保留历史事实；当前接口以
+[SDK 迁移指南](docs/SDK_MIGRATION.md)为准，凭证与账号保持见
+[接入契约](docs/LLM_INTEGRATION.md)。既有 SDK、配置与 API_KEY 环境入口继续有效。
+
 未发布源码新增 Agent / Coding / 实验性 Script 工作模式，默认 Coding。
 CLI 使用 `--work-mode`，REPL 使用 `/work-mode`，Product Client 使用 Session
 `workMode`；它与权限、模型选择独立。SDK/Host 的相关设置、问题结算、工具原文读取、

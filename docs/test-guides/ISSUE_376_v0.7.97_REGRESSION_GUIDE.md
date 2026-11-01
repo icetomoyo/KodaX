@@ -64,7 +64,7 @@ Final production/test review tree: `9a2370605fedab491f940c0b42f5f95dc9a1c96c`, a
 | Historical cutover / actual alpha.11 busy upgrade | 3/3 and 1/1 passed, respectively |
 | Rust native + binding/manifest checks | Passed as recorded above; native Memory prerequisite remains blocked |
 | Scoped lock/CLI-credential/statistics coverage | Statements **89.94%**, lines **94.71%**, functions **92.95%**, branches **76.66%**; not whole-repository coverage |
-| CLI strict budget | **5,173,836 bytes**, limit 5,177,344; 3,508 bytes headroom, no limit increase |
+| CLI build budget | **5,173,836 bytes**, limit 5,264,384; 90,548 bytes headroom, no limit increase |
 
 The accepted CLI SHA-256 is `62371f49e7c9b1460498f9f62f4b5aa4b90a06efc00b4cb0cdc31373f92aa935`.
 The full suite used the official npm registry only through its child-process environment after the configured mirror lacked an available transitive package; no user npm configuration or dependency version was changed. Layer-1/fake-fetch tests are not live provider or model-quality evaluations.
@@ -142,3 +142,221 @@ bundle,bundle-diagnostic,cutover,upgrade}.log`; isolated stress records use
 ran during the bundled replays. No push, publication, shared sandbox setup,
 credential replacement or user Host shutdown was performed. The native Memory
 prerequisite remains unchanged and unverified as described above.
+
+## Subsequent Main audit repairs — 2026-11-01
+
+Source baseline: `68a02521c`; direct `KodaX` work was authorized by the user.
+The original untracked audit reports remain author-owned and unchanged.
+
+### Repaired seams and intentional limits
+
+- F13–16/F20: verified model context/output ceilings and rates, exact default
+  Codex ID, current generic Skill aliases, DeepSeek Pro text-only vs Flash image
+  input. Default output budgets, account/route selection and fixed IDs remain.
+  Model-level modality affects actual requests and prompt-cache hashes together,
+  preserving canonical history. Nullable pricing bands and measured Kimi cache
+  write partitions are covered; unknown GLM price and unknown TTL stay unknown.
+- F21a/F41: SDK/Product explicit Skill activation uses existing policy/hooks;
+  history restore and extension hydration must precede executable hooks. AMA Root
+  learned Skills gain admission/catalog/outcome/release parity with SA. Failed or
+  cancelled work is inconclusive; release belongs to Host-awaited Memory work and
+  precedes completion. Both currentAgentId and parentAgentId exclude child work.
+  Empty stores avoid foreground initialization; full formal-name protection is
+  discovered when a review actually commits a learned Skill. No extra model calls.
+- F24–26/F29/F32–33: one producer capability-facts module with independent client
+  minimums; SDK entry inventory comes from package exports and validates built
+  JS/types, including the independent Artifacts subtree. Node-free Client and
+  public examples compile. Storage/transport design indices and Root/Space
+  handoff reflect actual contracts; historical ADRs are not rewritten as releases.
+- F44/F45: move retention and custom root help behind information-command handling;
+  bad JSON no longer blocks help/version/doctor. Actual CLI tests cover empty,
+  truncated and trailing-comma config, and ensure execution still rejects without
+  changing retained files. Doctor reports syntax offset without parser snippets,
+  inventory only at known default locations, stops at ancestor aliases, and
+  never opens credential payloads or reclaims unknown locks. Core/integration
+  conflicts name the exact retained lock. See offline recovery below.
+- F40: offline snapshots reproduced overwriting the pinned root birth identity
+  before Node receives exit. Fix pins the initial identity, merges same-generation
+  exact descendants/uncertain fences, and preserves incomplete-tree unknown.
+  Cases cover PID reuse, exited intermediates, unknown identities, snapshot
+  failure and existing final-snapshot performance. This does not introduce Agent
+  dependencies into the standalone LLM package or claim a new per-command Job.
+- F21: additive explicit `inspectToolOutputStorage` and per-root GC cooldown make
+  maintenance inspectable. It is not global automatic GC. Cleanup requires all
+  shared writers stopped and the complete reference closure, including SDK roots,
+  manifests and streams. Unknown scope must retain output; startup TTL deletion
+  and foreground global history scans remain removed.
+
+### Safe offline repair for retained historical locks
+
+Run `kodax doctor --json` even if core JSON is invalid. Repair invalid syntax in
+the original file, retaining every provider/account field; never substitute an
+empty default. The syntax probe is not full configuration-schema acceptance.
+Retained lock presence does not establish abandonment, and process age/PID alone
+does not authorize reclamation. For unknown/empty locks or interrupted reclaim
+claims: stop **all** CLI, Host, external SDK and older-version writers sharing the
+storage; back up that storage; quarantine only the exact diagnosed lock and its
+matching reclamation claims, retaining their original bytes for inspection.
+Do not remove config, auth, sessions, migration journals, task/event logs or
+provider registrations. Reopen after repair and verify the same selected account.
+Custom SDK `sessionsDir`/credential backends are outside doctor's default inventory
+and require the same separate offline inspection. A live task is not eligible.
+
+### Performance evidence and remaining acceptance
+
+The fake-provider managed-entry benchmark asserts exactly 14 provider callbacks
+for 2 warmups + 12 measured turns and makes no network/model requests. Initial
+eager learned-store setup added avoidable foreground work; the lazy empty-store
+path removed it. Paired runs vary substantially with Windows/Git process startup:
+the instrumented candidate median was 258.97 ms, prior built baseline 292.69 ms;
+other pairs ranged baseline 257.12–345.53 ms and candidate 303.48–394.69 ms before
+the final child guard. These are mechanism/variance observations, not statistical
+proof of no overhead. The confirmed extra child Git remote probe is now excluded
+by both child identity forms. Formal protection remains at actual commit.
+
+The historical source build gate at `68a02521c` was 5,264,384 bytes, but the
+published manual/budget suite retains the stricter `5 MiB - 64 KiB = 5,177,344`
+limit. The first follow-up guide listed only the build gate and missed this
+stricter reserve; the first bundled follow-up exposed the mismatch. Both gates
+now enforce the stricter 5,177,344-byte limit. No budget was raised or test loosened.
+The existing shared ASRT broker template moves into the already-packaged audited
+program resource, with eight literal substitutions and lazy one-time assembly.
+The static template hash is `b0ef25b6284fc6a7fcc57a6fea215e48e2554b6ba8e07c058f7d544224fe4d18`;
+an emitted-program fixture matches the original `68a02521c` bytes and verifies
+literal `$&` handling and one cached load. Existing archive names remain.
+
+The earlier intermittent Shell cleanup assertion remains unexplained. Sixty
+isolated current-distribution replays at concurrency four passed; they do not
+prove a root cause or authorize weakening cleanup assertions. Native Memory
+verify-only acceptance still fails its shared-environment filesystem-capability
+prerequisite (`windows_v2_setup_required`); no shared setup/ACL/account was changed.
+
+F08 full execution-fact JSON growth is a real scaling debt; existing paired
+measurements did not show a newly introduced severe regression. Append/checkpoint
+storage needs its own durable compatibility and crash/latency design, not a
+blind persistence rewrite. F09 retained corrupt logs remain fenced and must be
+repaired offline; a trailing malformed line is not permission to replay unknown
+effects. F18 actual cache benefit, live OAuth/cloud accounts and full Claude 5.5
+preserved-prefix protocol remain unverified/unfinished, not claims of this batch.
+Broad public SDK/dead-code deletion proposals are not treated as confirmed runtime
+bugs. The production-byte F46 next-action eval is separate from mechanical tests;
+no model-quality equivalence is implied by the offline suite.
+
+### F46 controlled wording pilot and semantic reading
+
+`tests/issue-376-plan-exit.eval.ts` captures the full production base system and
+tool definitions, projecting the actual managed tool wording where applicable.
+Pinned pre-change descriptions/denial text come from `2ee4a782d^`. This is a
+next-action probe, with no execution of model tool calls or free-running Agent;
+it is not an entire AMA prompt/lifecycle acceptance.
+
+The initial pilot completed 8 top-level cells: `zhipu/glm52` and `ark/v4flash`,
+ready/denied-write cases, baseline/candidate once each. All raw inputs/outputs
+remain in OS temp `kodax-plan-exit-eval-gWsnMU`. Observed usage totals were
+153,065 tokens (152,431 input, 634 output), with 41,984 cache-read tokens.
+The conservative no-cache nominal estimate is about USD 0.0042, not a subscription
+bill or a verified external spend. This historical runner did not record physical
+retry counts; eight completed cells do not prove an eight-physical-request limit.
+
+Primary and independent Spec review read all eight outputs. Ready cases submit
+`exit_plan_mode` in all four observations, with equivalent plans and no write
+calls. Denied-write cases all choose `read`; missing file facts make that sensible,
+so the recovery dimension is **inconclusive / no discrimination**, not a failure
+or a passed approval-recovery chain. One observation per cell and non-blind review
+do not establish intelligence equivalence. Candidate always ran second and had
+more cache hits; duration/token differences are not a performance comparison.
+Narrow recommendation: retain the canonical tool-name correction and actual Host
+approval fence, without claiming global quality improvement.
+
+Review then hardened the rerunnable driver: `singleAttempt`, per-cell one and
+total eight physical fetch gates, one round, 2,048 output tokens/call, 200,000
+total observed tokens and USD 1 estimated spend, 45-second last-resort timeout.
+Unknown usage/rate or reached limits stop further dispatch; all dispatched work
+settles and raw completion/failure evidence is retained. The strengthened runner
+was reviewed and loaded with opt-in off; it was not paid-rerun to chase parity.
+If revisiting recovery, make a separate revision with already-read file facts and
+test only that dimension rather than extending this pilot until it turns green.
+
+### Regression findings closed before final acceptance
+
+The first frozen full follow-up run was **not acceptance**: 19,034 passed,
+26 failed, 87 skipped. Twenty-one failures were a complete CLI mock missing newly
+consumed classifier constants; two were old catalog/manual default assertions.
+The other three exposed a real regression: adding AMA learned binding replaced
+a trusted SDK host's custom Skill catalog. The shared helper now retains the host
+catalog and appends only learned entries, while formal-name protection remains
+complete and independent. The expanded public SA/AMA fixture verifies ten
+success/failure/cancellation and custom/empty/whitespace cases against a real
+formal+learned store. Four empty/whitespace cases first failed and then passed;
+compaction's original context-count and durable-history assertions stay intact.
+
+Additional scanning found parser-excerpt digits misclassified as a JSON offset;
+an anchored official suffix and RED→GREEN regression now prevent this. Twenty
+changed test sources were typechecked separately, exposing incomplete fixtures;
+eighteen formerly uncovered paths now enter the permanent root type gate.
+Legacy AMAW request probes remain through structural payload variables, without
+adding retired fields back to public interfaces or weakening production types.
+
+The first bundled follow-up was 93/94; its only failure was the stricter CLI size
+reserve described above, not the earlier intermittent Shell assertion. The
+unchanged budget test remains, and audited ASRT program extraction closes that
+failure. Do not use either first-run count as a final passing result.
+
+### Subsequent Main acceptance record
+
+Frozen code/test/config patch against `68a02521c` (documentation excluded):
+SHA-256 `0245E133A86CD770211B1B8A8577C83FE66CC5BFD47813B566E70AB9E51968A6`.
+No source or build mutations run during the final source suite. Documentation
+records both failed attempts and the final rebuilt-artifact acceptance separately.
+
+| Check | Result |
+| --- | --- |
+| Complete build, 14 SDK declaration entries, Node-free Client and published examples | Passed |
+| Production + permanent test typecheck (18 additional package/eval paths) | Passed |
+| Windows selection / SDK manifest Node checks | 4 passed |
+| Corrected Skill/compaction/CLI/manual/catalog regressions | 223 passed; later empty-catalog and program cases also passed |
+| Native-artifact/sandbox/Skill/compaction slice | 135 passed, 29 intentional platform/backend skips |
+| Final complete-artifact packaged behavior replay | 94 passed, 0 failed/skipped/TODO |
+| Historical owner cutover and actual packed consumer | 3 passed after complete JS/types rebuild |
+| Integrity-pinned real alpha.11 busy Host upgrade | 1 passed; busy work and original Session retained |
+| Scoped V8 coverage (doctor storage, learned binding, cache usage, cost rates) | Statements 84.70%, lines 90.20%, functions 80.88%, branches 71.29%; not whole-repository coverage |
+| Final full source suite | 1,377 passed files, 7 conditionally skipped files; 19,066 passed cases, 87 skipped, 0 failed/TODO; 1,232.36 s |
+| Final CLI size / stricter budget | 5,171,458 / 5,177,344 bytes; 5,886 bytes remain below that reserve |
+
+The final bounded offline benchmark pair made exactly 14 fake Provider calls on
+each side: baseline median/p95 **307.27/578.07 ms**, candidate **307.59/564.26 ms**.
+The candidate's empty learned-store preparation was about 0.25–1.82 ms; child
+contexts remain excluded by direct query-count regressions. Retain the earlier
+variance observations above: these samples do not prove a universal speedup,
+zero overhead or model-quality equivalence. No network/model requests occur in
+this benchmark. Raw data and all acceptance logs remain in OS temp under
+`kodax-followup-*`, `kodax-entry-perf-final-{baseline,candidate}.log`.
+
+An intermediate JS-only rebundle removed old declaration files; its packed
+consumer check was rejected, not weakened. A complete build restored and validated
+every published JS/type target before the successful three-case cutover replay.
+This intermediate tarball is not acceptance evidence. Native Memory prerequisites
+and live-service boundaries remain as stated above; no shared setup, user Host
+shutdown, credential replacement, push or publication was performed.
+
+#### Standards
+
+Final independent incremental review: **0 findings**. The budget and explicit
+empty-catalog findings were fixed and rechecked, without loosening production
+types, output permissions or emitted broker behavior.
+
+#### Spec
+
+Final independent incremental review: **0 findings** in the repaired scope.
+Read-only diagnosis, preserved host Skill scope and source/account constraints
+remain intact. The F46 recovery dimension is inconclusive, and the separate
+unfinished/new-protocol and external acceptance scopes remain explicit.
+
+After the frozen full run, one **test-only** portability adjustment accepts either
+no parser offset or the true syntax position 8 for the excerpt fixture, rather
+than forbidding older Node's valid formal-position report. It still rejects
+excerpt-derived digits. All five doctor tests and the permanent typecheck passed
+again; both review axes remain at zero. No production or build change followed
+the frozen source run. Hashes of CLI JS, Runtime JS/types, root types and the
+audited program resource were unchanged across the full run and final package
+replay. Native/live exclusions are retained rather than relabelled as passes.

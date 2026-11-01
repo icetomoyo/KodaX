@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { applyRuntimeSkillInvocationPolicy } from './skill-invocation-policy.js';
+import { applyRuntimeSkillInvocationPolicy, resolveSkillModelOverride } from './skill-invocation-policy.js';
 import { awaitRuntimeSkillInvocationPolicy } from './skill-invocation-policy.js';
 import {
   setKodaXDiagnosticSink,
@@ -12,6 +12,18 @@ import {
 import type { KodaXOptions } from './types.js';
 
 const tempDirs: string[] = [];
+
+it.each(['constructor', 'toString', '__proto__'])('preserves the fixed model ID %s on every provider', model => {
+  for (const provider of ['anthropic', 'deepseek']) expect(resolveSkillModelOverride(provider, model)).toBe(model);
+});
+
+it.each([['haiku', 'claude-haiku-4-5'], ['sonnet', 'claude-sonnet-4-6'], ['opus', 'claude-opus-4-8']])(
+  'resolves the generic %s preference while preserving fixed IDs and other routes', (alias, model) => {
+    expect(resolveSkillModelOverride('anthropic', alias)).toBe(model);
+    expect(resolveSkillModelOverride('deepseek', alias)).toBeUndefined();
+    expect(resolveSkillModelOverride('anthropic', 'claude-opus-4-1')).toBe('claude-opus-4-1');
+  },
+);
 
 afterEach(async () => {
   vi.unstubAllEnvs();
@@ -156,7 +168,7 @@ describe('applyRuntimeSkillInvocationPolicy', () => {
       context: {
         gitRoot: root,
         skillRegistry: new SkillRegistry(root),
-        skillInvocation: { name: 'draft-response', runtimePolicy: { enforceAtRuntime: true } },
+        skillInvocation: { name: 'draft-response', path: '', expandedContent: '', runtimePolicy: { enforceAtRuntime: true } },
       },
     })).rejects.toMatchObject({
       code: 'skill_not_registered', source: 'local', stage: 'skill_load', skillName: 'draft-response',
@@ -165,7 +177,7 @@ describe('applyRuntimeSkillInvocationPolicy', () => {
 
   it('reports a Skill absent from trusted discovery without echoing its supplied path', async () => {
     const { options, root } = await optionsWithSkill({});
-    options.context!.skillInvocation = { name: 'kodax-missing-skill', path: path.join(root, 'private', 'SKILL.md'),
+    options.context!.skillInvocation = { name: 'kodax-missing-skill', expandedContent: '', path: path.join(root, 'private', 'SKILL.md'),
       runtimePolicy: { enforceAtRuntime: true } };
     await expect(applyRuntimeSkillInvocationPolicy(options)).rejects.toMatchObject({
       code: 'skill_not_found', source: 'local', stage: 'skill_load', skillName: 'kodax-missing-skill',

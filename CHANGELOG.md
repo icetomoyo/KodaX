@@ -21,6 +21,25 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Keep help, version and read-only doctor available with corrupt configuration;
+  retain execution/write fencing and diagnose exact lock locations without
+  exposing config contents or following directory aliases.
+- Pin Windows CLI-provider child birth identities through delayed exit events
+  and retain captured descendants across intermediate-parent exit.
+- Preserve explicit SDK Skill catalogs, including empty overrides, across SA/AMA
+  learned bindings and compaction. Keep the stricter CLI size reserve using an
+  audited, lazily assembled broker program resource with identical emitted bytes.
+
+- Restore AMA Root learned Skill admission and owned finalization; explicit SDK
+  Skill calls now settle the existing policy and hooks without a model request.
+  Keep empty learned stores off foreground initialization and discover protected
+  formal names when a review actually commits a Skill.
+- Correct verified model ceilings, generic Skill aliases, cache pricing and Kimi
+  cache-write usage; retain default output budgets, fixed IDs and account choices.
+  Project unsupported historical images explicitly without rewriting history.
+- Derive SDK build/type entries from package exports and compile published examples.
+  Share current Runtime guardrail facts while retaining independent minimums.
+  Add explicit storage-capacity inspection and isolate cleanup state by directory.
 - Discover Windows source regressions automatically and retain the native OS gate.
   Publish complete config/Host lock records, recover verified dead owners without
   TTL stealing, and retry completed migration/release cleanup. Config and extension

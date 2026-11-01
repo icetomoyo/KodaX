@@ -1,11 +1,11 @@
 import type { MemoryRefFilter, MemoryRememberInput } from '@kodax-ai/agent';
+import { RUNTIME_AUTO_MODE_GUARDRAIL_CAPABILITY } from '../runtime-capability-facts.js';
 import { randomUUID } from "node:crypto";
 import { runtimeClientPrincipal, type RuntimeClientLifecycleController } from './client-lifecycle.js';
 import { withProductExecution } from '../product-execution-authorization.js';
 import type { RuntimeExecutionProfile } from '../client-host-authorization.js';
 import { createExecutionToolPolicy, executionProfileAllowsTool, hostToolMetadata, intersectExecutionToolCeilings } from '../execution-profile.js';
 import {
-  DEFAULT_CLASSIFIER_TIMEOUT_MS,
   getActiveExtensionRuntime,
   listTools,
 } from "@kodax-ai/coding";
@@ -2752,25 +2752,7 @@ function runtimeDaemonCapabilities(
     ...(runtimeEventCoalescing
       ? { runtimeEventCoalescing: { version: 1 } }
       : {}),
-    runtimeAutoModeGuardrail: {
-      version: 6,
-      owner: "session-runtime",
-      sandboxFirst: true,
-      sandboxCompletionAuthority: true,
-      hostBoundaryReviewOnly: true,
-      escalationCreatesPermission: false,
-      automaticUserPromptOnDeny: false,
-      defaultClassifierTimeoutMs: DEFAULT_CLASSIFIER_TIMEOUT_MS,
-      retryClassifierTimeoutMs: 180_000,
-      maxClassifierAttempts: 2,
-      boundedClassifierInput: true,
-      diagnosticsVersion: 1,
-      permissionGrantSuggestions: true,
-      concretePermissionMatchers: true,
-      clientScopeExpansion: false,
-      exactTextMutationApproval: true,
-      livePermissionContext: true,
-    },
+    runtimeAutoModeGuardrail: { ...RUNTIME_AUTO_MODE_GUARDRAIL_CAPABILITY },
     ...(orphanExitEnabled
       ? {
           daemonOrphanExit: {

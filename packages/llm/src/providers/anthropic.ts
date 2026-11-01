@@ -52,6 +52,7 @@ import {
 } from '../cache-control.js';
 import {
   prepareImageBlock,
+  UNSUPPORTED_MODEL_IMAGE_PLACEHOLDER,
 } from './image-serialization.js';
 import { resolvePromptCacheDisabled } from '../run-scoped-config.js';
 import {
@@ -1509,6 +1510,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     // Resolve strict-signature once per call so all three downstream
     // branches share the same answer for the active model.
     const strictSignature = this.getEffectiveStrictThinkingSignature(model);
+    const supportsImages = this.getModelDescriptor(model)?.multimodalSupport !== 'none';
 
     for (const m of messages.filter((message) => message.role !== 'system')) {
       const role: 'user' | 'assistant' = m.role === 'user' ? 'user' : 'assistant';
@@ -1593,6 +1595,10 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
                 if (item.type === 'text') {
                   items.push({ type: 'text', text: item.text });
                 } else if (item.type === 'image') {
+                  if (!supportsImages) {
+                    items.push({ type: 'text', text: UNSUPPORTED_MODEL_IMAGE_PLACEHOLDER });
+                    continue;
+                  }
                   const image = await prepareImageBlock(item);
                   if ('placeholder' in image) {
                     items.push({ type: 'text', text: image.placeholder });
@@ -1625,6 +1631,10 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           if (b.type === 'text') {
             content.push({ type: 'text', text: b.text });
           } else if (b.type === 'image' && m.role === 'user') {
+            if (!supportsImages) {
+              content.push({ type: 'text', text: UNSUPPORTED_MODEL_IMAGE_PLACEHOLDER });
+              continue;
+            }
             const image = await prepareImageBlock(b);
             if ('placeholder' in image) {
               content.push({ type: 'text', text: image.placeholder });

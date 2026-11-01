@@ -5,13 +5,33 @@
 > daemons are retired. Internal Runtime and independent libraries remain. See
 > [migration and ownership limits](SDK_MIGRATION.md#统一-host-sdk-收口未发布).
 
-Last updated: 2026-10-29. Current development tree: FEATURE_298/299/301 on package
+Last updated: 2026-11-01. Current development tree: FEATURE_298/299/301/302 on package
 `0.7.97-alpha.11`; `v0.7.96` is the last stable release.
 
 The [Client contract](CLIENT_CONTRACT.md) and [SDK migration guide](SDK_MIGRATION.md)
 define current product integration. Version-labelled release context below does
 not restore removed APIs. Low-level Runtime mechanisms remain distinct from
 the `KodaXProductClient` business surface.
+
+## FEATURE_302 provider implementation index (2026-11-01)
+
+`packages/llm/src/providers/openai-responses.ts` owns Responses independently
+of the existing Chat path. `google-native.ts`, `bedrock-native.ts` and cloud
+credentials keep Gemini/Vertex, Bedrock and Azure service authentication explicit.
+`src/provider-credential-manager.ts` mediates trusted Main status/CAS updates;
+`src/provider-oauth-store.ts` selects the default shared auth file and imports
+only linked missing legacy registrations. `src/oauth-session-store.ts` retains
+`createEncryptedOAuthSessionStore(directory, sealer)` and the Windows DPAPI
+adapter for explicit compatibility use. It requires an absolute trusted directory
+and a supplied authenticated sealer, serializes refresh/commit, and has no
+plaintext fallback. The default store does not require DPAPI or a system vault.
+
+Model-level modality overrides affect provider wire serialization and cache
+diagnostics together; stored history stays canonical. Cost estimates retain
+unknown/nominal distinctions and measured cache-write lifetime partitions.
+The detailed [protocol/storage boundaries](LLM_INTEGRATION.md) and
+[Root/Space handoff](SDK_MIGRATION.md#feature_302-t12-h账号保持与可重试升级未发布)
+are authoritative for integration, with real-service limits kept explicit.
 
 ## Post-alpha.10 SDK implementation alignment (2026-10-29)
 

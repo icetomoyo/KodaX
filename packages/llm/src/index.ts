@@ -358,7 +358,7 @@ export type { ImageValidation } from './image-validation.js';
 export { prepareHistoryImages, prepareValidatedImageBlock, withPreparedImageHistory } from './providers/image-serialization.js';
 export { inspectPreparedImage } from './providers/image-serialization.js';
 export { getRejectedImageHash } from './providers/rejected-image.js';
-export { getPreparedImageDiagnostic, validateImageBytesInRun } from './providers/image-serialization.js';
+export { getPreparedImageDiagnostic, validateImageBytesInRun, UNSUPPORTED_MODEL_IMAGE_PLACEHOLDER } from './providers/image-serialization.js';
 export { openOAuthSession, OAuthCredentialError } from './oauth/session.js';
 export type { OAuthService, OAuthTokens, OAuthSessionRecord, OAuthSessionStore, OAuthRefreshDriver, OAuthCredentialSession } from './oauth/session.js';
 export { createOAuthRefreshDriver } from './oauth/drivers.js';

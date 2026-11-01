@@ -107,6 +107,24 @@
     "packages/coding/src/prompts/managed-system-contract.test.ts",
     "tests/managed-tool-contract*.ts",
     "packages/coding/src/agent-runtime/script/*.test.ts",
-    "packages/coding/src/task-engine/_internal/managed-task/role-prompt-capabilities.test.ts"
+    "packages/coding/src/task-engine/_internal/managed-task/role-prompt-capabilities.test.ts",
+    "packages/coding/src/agent-runtime/prompt-cache-diagnostics.test.ts",
+    "packages/coding/src/agent-runtime/tool-invocation.test.ts",
+    "packages/coding/src/agent.learned-skills.test.ts",
+    "packages/coding/src/learned-skill-runtime.test.ts",
+    "packages/coding/src/provider-policy.test.ts",
+    "packages/coding/src/self-knowledge/registry.test.ts",
+    "packages/coding/src/skill-invocation-policy.test.ts",
+    "packages/coding/src/task-engine/runner-driven.child-memory.test.ts",
+    "packages/coding/src/tools/tool-output-gc.test.ts",
+    "packages/llm/src/cli-events/process-tree.windows.test.ts",
+    "packages/llm/src/cost-rates.test.ts",
+    "packages/llm/src/cost-tracker.test.ts",
+    "packages/llm/src/providers/cache-usage.test.ts",
+    "packages/llm/src/providers/model-capabilities.test.ts",
+    "packages/llm/src/providers/model-modality-wire.test.ts",
+    "packages/llm/src/providers/provider-capabilities.test.ts",
+    "packages/repl/src/interactive/invocation-runtime.test.ts",
+    "tests/issue-376-plan-exit.eval.ts"
   ]
 }

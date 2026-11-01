@@ -23,7 +23,7 @@ import {
   DefaultSummaryCompaction,
   Runner,
   type AgentMessage,
-} from '@kodax-ai/coding';
+} from '@kodax-ai/kodax/coding';
 
 async function main(): Promise<void> {
   // ---------- Generic path: your own agent + your own LLM ----------

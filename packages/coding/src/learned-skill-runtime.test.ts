@@ -11,7 +11,7 @@ import {
 } from '@kodax-ai/agent';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { prepareCodingLearnedSkillBinding } from './learned-skill-runtime.js';
+import { prepareCodingLearnedSkillBinding, resolveProtectedFormalSkillNames } from './learned-skill-runtime.js';
 
 const roots: string[] = [];
 const learnedSpec = {
@@ -34,6 +34,35 @@ afterEach(async () => {
 });
 
 describe('FEATURE_263 coding root learned Skill binding', () => {
+  it('retains the pinned formal catalog without initializing an empty Learned Area', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kodax-learned-empty-'));
+    roots.push(root);
+    const identity = { configHome: join(root, 'home'), tenantId: 'tenant', agentId: 'coding-agent', projectId: 'project', sessionId: 'session' };
+    const registry = new SkillRegistry(root, { projectPaths: [], userPaths: [], pluginPaths: [], builtinPath: join(root, 'empty') });
+    const formalDirectory = join(root, '.kodax', 'skills', 'hidden-formal');
+    await mkdir(formalDirectory, { recursive: true });
+    await writeFile(join(formalDirectory, 'SKILL.md'), '---\nname: hidden-formal\ndescription: Formal policy\n---\nFormal instructions.');
+    const binding = await prepareCodingLearnedSkillBinding({ provider: 'test',
+      context: { configHome: identity.configHome, executionCwd: root, skillRegistry: registry } }, identity, 'session');
+    try {
+      expect(binding).toBeUndefined();
+      expect(await resolveProtectedFormalSkillNames({ provider: 'test', context: {
+        configHome: identity.configHome, executionCwd: root, skillRegistry: registry,
+      } })).toContain('hidden-formal');
+    }
+    finally { await binding?.release(); }
+  });
+  it.each([{ currentAgentId: '/root/child' }, { parentAgentId: '/root' }])(
+    'does not allocate a root binding for a child context %j', async (child) => {
+      const root = await mkdtemp(join(tmpdir(), 'kodax-learned-child-'));
+      roots.push(root);
+      const identity = { configHome: join(root, 'home'), tenantId: 'tenant', agentId: 'coding-agent', projectId: 'project', sessionId: 'child' };
+      const binding = await prepareCodingLearnedSkillBinding({ provider: 'test',
+        context: { ...child, configHome: identity.configHome, executionCwd: root } }, identity, 'child');
+      try { expect(binding).toBeUndefined(); }
+      finally { await binding?.release(); }
+    },
+  );
   it('discovers formal project Skills at gitRoot while executing from a subdirectory', async () => {
     const root = await mkdtemp(join(tmpdir(), 'kodax-skill-subdirectory-'));
     roots.push(root);
@@ -46,7 +75,7 @@ describe('FEATURE_263 coding root learned Skill binding', () => {
     await writeFile(join(skillDir, 'SKILL.md'), '---\nname: root-skill\ndescription: Inspect project code\n---\nRoot instructions\n');
     const binding = await prepareCodingLearnedSkillBinding({ provider: 'test',
       context: { configHome, gitRoot: projectRoot, executionCwd: cwd } }, {
-      configHome, tenantId: 'tenant', projectId: 'project', sessionId: 'session',
+      configHome, tenantId: 'tenant', agentId: 'coding-agent', projectId: 'project', sessionId: 'session',
     }, 'session');
     try {
       expect(binding?.context.skillsPrompt).toContain('root-skill');
@@ -103,8 +132,9 @@ describe('FEATURE_263 coding root learned Skill binding', () => {
     } finally {
       list.mockRestore();
     }
-    expect((await remoteStore.readCapability(record.capabilityId))?.canary)
-      .not.toHaveProperty('binding');
+    const restored = await remoteStore.readCapability(record.capabilityId);
+    if (restored?.schemaVersion !== 2) throw new Error('Expected a scoped capability');
+    expect(restored.canary).not.toHaveProperty('binding');
   });
 
   it.each([

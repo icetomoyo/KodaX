@@ -145,7 +145,7 @@ describe('cost-tracker', () => {
       });
 
       const record = tracker.records[0];
-      expect(record.cost).toBeCloseTo(4.8); // 0.8 + 4.0
+      expect(record.cost).toBeCloseTo(6); // 1 + 5
     });
 
     it('should not bill cache tokens again as uncached input', () => {
@@ -311,7 +311,7 @@ describe('cost-tracker', () => {
       });
 
       const summary = getSummary(tracker);
-      expect(summary.totalCost).toBeCloseTo(4.8); // 0.8 + 4.0
+      expect(summary.totalCost).toBeCloseTo(6); // 1 + 5
     });
 
     it('should aggregate cache tokens', () => {
@@ -507,14 +507,14 @@ describe('cost-tracker', () => {
 
     it('should sort providers by cost descending', () => {
       let tracker = createCostTracker();
-      // OpenAI is more expensive per token
+      // OpenAI costs $1.75 for this usage; Haiku below costs $6.
       tracker = recordUsage(tracker, {
         provider: 'openai',
         model: 'gpt-5.4',
         inputTokens: 100_000,
         outputTokens: 100_000,
       });
-      // Anthropic Haiku is cheaper
+      // Sort by actual total, rather than the model's per-token rate.
       tracker = recordUsage(tracker, {
         provider: 'anthropic',
         model: 'claude-haiku-4-5',
@@ -525,7 +525,7 @@ describe('cost-tracker', () => {
       const report = formatCostReport(getSummary(tracker));
       const openaiIndex = report.indexOf('openai:');
       const anthropicIndex = report.indexOf('anthropic:');
-      expect(openaiIndex).toBeLessThan(anthropicIndex);
+      expect(anthropicIndex).toBeLessThan(openaiIndex);
     });
 
     it('should format cost for each provider', () => {

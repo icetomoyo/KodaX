@@ -129,7 +129,7 @@
     "test:fast": "vitest run -c vitest.fast.config.ts",
     "test:changed": "vitest run --changed",
     "test:unit": "vitest run -c vitest.unit.config.ts",
-    "test:windows": "node --test scripts/windows-test-files.test.mjs && vitest run -c vitest.windows.config.ts",
+    "test:windows": "node --test scripts/windows-test-files.test.mjs scripts/sdk-entrypoints.test.mjs && vitest run -c vitest.windows.config.ts",
     "test:contract": "vitest run -c vitest.contract.config.ts",
     "test:system": "vitest run -c vitest.system.config.ts",
     "test:integration": "vitest run -c vitest.integration.config.ts",

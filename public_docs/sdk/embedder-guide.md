@@ -1639,11 +1639,11 @@ caches stay warm across mixed list / run operations).
 implementing the same interface can be passed in. Minimal contract:
 
 ```ts
-import type { KodaXSessionStorage, SessionData } from '@kodax-ai/kodax/coding';
+import type { KodaXSessionStorage, KodaXSessionData } from '@kodax-ai/kodax/agent';
 
 class MyDbSessionStorage implements KodaXSessionStorage {
-  async save(id: string, data: SessionData): Promise<void> { /* ... */ }
-  async load(id: string): Promise<SessionData | null> { /* ... */ }
+  async save(id: string, data: KodaXSessionData): Promise<void> { /* ... */ }
+  async load(id: string): Promise<KodaXSessionData | null> { /* ... */ }
   async list(opts?: ...): Promise<SessionSummary[]> { /* ... */ }
   async delete(id: string): Promise<void> { /* ... */ }
   // (other methods — see the @kodax-ai/kodax/coding type for the full surface)
@@ -1858,28 +1858,23 @@ failures at activate time rather than silently dropped registrations.
 
 ```ts
 import {
-  listConstructedAgents,
-  resolveConstructedAgent,
+  listCodingDispatchableAgents,
+  resolveCodingDispatchableAgent,
 } from '@kodax-ai/kodax';
 
-// All registered constructed agents (markdown + extension + LLM + CLI).
-const agents = listConstructedAgents();
+// Native and constructed dispatch descriptors visible in this context.
+const context = { actorId: 'embedder:main' };
+const agents = listCodingDispatchableAgents(context);
 
 // Resolve a specific agent by name.
-const agent = resolveConstructedAgent('db-reviewer');
+const agent = resolveCodingDispatchableAgent('db-reviewer', context);
 ```
 
-> **Source-aware variants** — `listConstructedAgentsWithSource()` /
-> `resolveConstructedAgentSource(name)` expose the in-memory source
-> tag (`'built-in' | 'extension' | 'markdown:user' | 'markdown:project'
-> | 'constructed:cli' | 'constructed:llm'`). These are marked
-> `@internal` in v0.7.43 and exposed only via the construction
-> sub-barrel — they will be promoted to the top-level SDK entry when
-> the v0.7.46+ REPL `/agents list` command lands as their third
-> production consumer (current consumers: source-tag round-trip tests
-> + planned REPL). Embedders that need provenance today can read the
-> source via the existing `listConstructedAgents()` Agent shape and
-> cross-reference their own registration calls.
+> This returns dispatch descriptors, not executable Agent instances. Supply the
+> Host-admitted project context and optional agent scope for project-local discovery.
+> Discovery does not grant execution authority. Internal construction registry
+> helpers are not public SDK entrypoints; use descriptor `origin` and the Host's
+> existing admission path rather than importing an internal sub-barrel.
 
 ### Wiring dispatch
 

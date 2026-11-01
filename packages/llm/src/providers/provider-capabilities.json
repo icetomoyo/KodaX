@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-30",
+  "updatedAt": "2026-11-01",
   "providers": {
     "anthropic": {
       "apiKeyEnv": "ANTHROPIC_API_KEY",
@@ -73,7 +73,9 @@
             "supportsReasoningEffort": true,
             "supportsAdaptiveThinking": true
           },
-          "thinkingBudgetCap": 28000
+          "thinkingBudgetCap": 28000,
+          "contextWindow": 1000000,
+          "outputTokenLimit": 128000
         },
         {
           "id": "claude-haiku-4-5",
@@ -101,6 +103,12 @@
             "disabledEfforts": ["none"]
           },
           "thinkingBudgetCap": 10000
+        },
+        {
+          "id": "claude-sonnet-4-6",
+          "displayName": "Sonnet 4.6",
+          "contextWindow": 1000000,
+          "outputTokenLimit": 128000
         }
       ],
       "reasoningCapability": "native-adaptive",
@@ -131,7 +139,8 @@
       "toolCapabilities": { "strict": true },
       "model": "gpt-5.3-codex",
       "models": [
-        { "id": "gpt-5.4", "displayName": "GPT-5.4" },
+        { "id": "gpt-5.3-codex", "displayName": "GPT-5.3 Codex", "outputTokenLimit": 128000 },
+        { "id": "gpt-5.4", "displayName": "GPT-5.4", "contextWindow": 1050000, "outputTokenLimit": 128000 },
         { "id": "gpt-5.3-codex-spark", "displayName": "GPT-5.3 Codex Spark" }
       ],
       "reasoningCapability": "native-effort",
@@ -168,7 +177,8 @@
         },
         {
           "id": "deepseek-v4-pro",
-          "displayName": "DeepSeek V4 Pro"
+          "displayName": "DeepSeek V4 Pro",
+          "multimodalSupport": "none"
         }
       ],
       "reasoningCapability": "native-effort",

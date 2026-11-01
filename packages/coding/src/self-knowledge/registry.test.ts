@@ -137,6 +137,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('v0.7.94 SDK keeps `sandboxRuntime:4`');
     expect(sdk).toContain('The v0.7.95 SDK advertises Windows `sandboxRuntime:5`');
     expect(sdk).toContain('`runtimeExitSettlement:2`');
+    expect(sdk).toContain('`runtimeExitSettlement:2` is retired');
     expect(sdk).toContain('compatible live Bash lease');
     expect(sdk).toContain('linked worktree roots persist in the owning Session');
     expect(sdk).toContain('gitSafeDirectory: authorized-repo-roots');
@@ -430,7 +431,7 @@ describe('FEATURE_218 manual registry', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(providers).toContain('deepseek-v4-flash');
+    expect(providers).toContain('deepseek-flash');
     expect(providers).toContain('deepseek-v4-pro');
     expect(providers).toContain('text-only');
     expect(customProviders).toContain('maxOutputTokensField');

@@ -13,6 +13,30 @@ const execute = promisify(execFile);
 const cli = fileURLToPath(new URL('../dist/kodax_cli.js', import.meta.url));
 const names = ['start', 'stop', 'restart', 'logs', 'serve', 'status'];
 
+test('informational commands remain available with corrupt core config and preserve all files', { timeout: 90_000 }, async () => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-bundle-invalid-config-'));
+  const configHome = path.join(homeDir, '.kodax');
+  await mkdir(configHome);
+  try {
+    for (const raw of ['', '{"provider":', '{"apiKey":"NEVER_PRINT_CREDENTIAL",}']) {
+      await writeFile(path.join(configHome, 'config.json'), raw);
+      const before = await files(configHome);
+      for (const args of [['--version'], ['--help'], ['doctor', '--help'], ['config', '--help'], ['doctor', '--json']]) {
+        const { stdout, stderr } = await run(homeDir, args);
+        assert.ok(stdout.trim(), `${args.join(' ')} must produce information`);
+        assert.doesNotMatch(stdout + stderr, /NEVER_PRINT_CREDENTIAL/);
+        if (args.includes('--json')) assert.equal(JSON.parse(stdout).coreConfig.state, 'invalid');
+        assert.deepEqual(await files(configHome), before, `${args.join(' ')} must not mutate retained files`);
+      }
+      await assert.rejects(run(homeDir, ['--print', 'do not execute']), /Core configuration is unreadable or invalid/);
+      assert.deepEqual(await files(configHome), before);
+    }
+  } finally {
+    assert.equal(path.dirname(path.resolve(homeDir)), path.resolve(os.tmpdir()));
+    await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
 function run(homeDir, args) {
   return execute(process.execPath, [cli, ...args], {
     cwd: homeDir, windowsHide: true, timeout: 10_000, maxBuffer: 1024 * 1024,

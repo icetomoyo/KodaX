@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { resolveProtectedFormalSkillNames } from './learned-skill-runtime.js';
 import path from 'node:path';
 
 import {
@@ -824,11 +825,7 @@ async function applyUnifiedSkillDecision(
       ...(capability.expectedFingerprint === undefined
         ? {}
         : { expectedFingerprint: capability.expectedFingerprint }),
-      protectedSkillNames: options.context?.protectedFormalSkillNames
-        ?? options.context?.skillRegistry?.list()
-          .filter((skill) => skill.source !== 'learned')
-          .map((skill) => skill.name)
-        ?? [],
+      protectedSkillNames: await resolveProtectedFormalSkillNames(options),
       authority: {
         commit: async (operation) => {
           let committed: import('@kodax-ai/agent').LearnedCapabilityRecordV2 | undefined;

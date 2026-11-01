@@ -317,11 +317,11 @@ export function resolveSkillModelOverride(provider: string, model: string | unde
   const value = model?.trim();
   if (!value) return undefined;
   const aliases: Readonly<Record<string, string>> = {
-    haiku: 'claude-3-5-haiku-latest',
+    haiku: 'claude-haiku-4-5',
     sonnet: 'claude-sonnet-4-6',
-    opus: 'claude-opus-4-1',
+    opus: 'claude-opus-4-8',
   };
-  return aliases[value] === undefined ? value : provider === 'anthropic' ? aliases[value] : undefined;
+  return !Object.hasOwn(aliases, value) ? value : provider === 'anthropic' ? aliases[value] : undefined;
 }
 
 const invocationWork = new WeakMap<KodaXOptions, {

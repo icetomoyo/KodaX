@@ -104,6 +104,7 @@ import {
 import { CLIENT_CONFIG_APPLICATION, toClientConfig, toClientSessionSettings } from "./client-settings.js";
 import { createHostIntegrations } from "./host-integrations.js";
 import { spawnSync } from "node:child_process";
+import { RUNTIME_AUTO_MODE_GUARDRAIL_CAPABILITY } from './runtime-capability-facts.js';
 import * as fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -115,7 +116,6 @@ import {
   replaceConfiguredMcpCapabilityProvider,
   buildMcpReverseCapabilities,
   CodingActorSession,
-  DEFAULT_CLASSIFIER_TIMEOUT_MS,
   createAutoModeDenialTracker,
   createCircuitBreaker,
   createSessionControl,
@@ -1015,7 +1015,7 @@ export const KODAX_RUNTIME_SDK_CAPABILITIES = Object.freeze({
   daemonShutdownVerification: 1,
   effectiveConfig: 1,
   managedRunDurability: 1,
-  runtimeAutoModeGuardrail: 6,
+  runtimeAutoModeGuardrail: RUNTIME_AUTO_MODE_GUARDRAIL_CAPABILITY.version,
   sandboxRuntime: 11,
   sharedSessionSettings: 2,
   runtimeEventCoalescing: 1,
@@ -4397,25 +4397,7 @@ async function createKodaXRuntimeInternal(
       replacement: "explicit",
     },
     runtimeEventCoalescing: { version: 1 },
-    runtimeAutoModeGuardrail: {
-      version: 6,
-      owner: "session-runtime",
-      sandboxFirst: true,
-      sandboxCompletionAuthority: true,
-      hostBoundaryReviewOnly: true,
-      escalationCreatesPermission: false,
-      automaticUserPromptOnDeny: false,
-      defaultClassifierTimeoutMs: DEFAULT_CLASSIFIER_TIMEOUT_MS,
-      retryClassifierTimeoutMs: 180_000,
-      maxClassifierAttempts: 2,
-      boundedClassifierInput: true,
-      diagnosticsVersion: 1,
-      permissionGrantSuggestions: true,
-      concretePermissionMatchers: true,
-      clientScopeExpansion: false,
-      exactTextMutationApproval: true,
-      livePermissionContext: true,
-    },
+    runtimeAutoModeGuardrail: { ...RUNTIME_AUTO_MODE_GUARDRAIL_CAPABILITY },
     sharedSessionSettings: {
       version: 2,
       permissionModes: ["plan", "accept-edits", "auto", "full-access"],

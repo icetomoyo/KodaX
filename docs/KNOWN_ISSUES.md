@@ -30,7 +30,7 @@ resolution evidence is retained. Issues 345–347 are unchanged.
 ## Issue 376: Windows gate and recovery/credential/permission audit follow-up
 
 - Priority: High
-- Status: Merged into local `KodaX`; offline acceptance passed; native Memory OS acceptance pending; not pushed or released
+- Status: First and subsequent Main fixes accepted locally; source 19,066 passed / 87 conditional skips / 0 TODO, packaged 94 passed; native Memory OS acceptance pending; not pushed or released
 - Created: 2026-11-01
 
 The accepted first batch and its failure boundaries are recorded in the
@@ -38,7 +38,13 @@ The accepted first batch and its failure boundaries are recorded in the
 Unknown historical locks and interrupted reclamation claims remain fail-closed;
 corrupt credential/config/pending-input bytes are retained for explicit repair.
 Full Access opaque Host programs remain trusted code, outside OS isolation.
-Model catalog/pricing, learned Skill integration and cache layout are later work.
+The subsequent Main batch repairs learned Skill/explicit invocation lifetimes,
+verified model/rate metadata, model-specific image/cache projection, SDK inventory,
+corrupt-config informational commands and CLI-provider PID generation retention.
+See its separate acceptance record in the same regression guide. Explicit output
+storage inspection does not close global automatic GC; native/live acceptance,
+Claude 5.5 preserved-prefix integration and execution-fact storage scaling remain
+separate, unverified or unfinished scopes, not implied passes.
 Main verification observed one intermittent packaged Shell cleanup failure;
 isolated, eight-way concurrent and complete bundled replays passed. Its cause
 remains unconfirmed; the retained evidence and improved failure diagnostic are

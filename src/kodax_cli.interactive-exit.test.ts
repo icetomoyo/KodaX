@@ -355,6 +355,8 @@ async function importMainWithMocks(options: {
     replaceConfiguredMcpCapabilityProvider: vi.fn(async () => undefined),
     buildMcpReverseCapabilities: vi.fn(() => ({})),
     KODAX_DEFAULT_PROVIDER: 'mock-provider',
+    DEFAULT_CLASSIFIER_TIMEOUT_MS: 90_000,
+    DEFAULT_CLASSIFIER_RETRY_TIMEOUT_MS: 180_000,
     checkPromiseSignal: vi.fn(),
     getProvider: vi.fn(),
     getAvailableProviderNames: vi.fn(() => ['mock-provider']),

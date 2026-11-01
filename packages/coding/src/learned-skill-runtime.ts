@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -26,6 +27,7 @@ import {
 
 import { resolveExecutionCwd } from './runtime-paths.js';
 import type { KodaXContextOptions, KodaXOptions } from './types.js';
+import { formatSkillsSystemPrompt } from '@kodax-ai/agent/capabilities/skills';
 
 export interface CodingLearnedSkillBinding {
   readonly context: Pick<
@@ -53,6 +55,7 @@ export async function prepareCodingLearnedSkillBinding(
 ): Promise<CodingLearnedSkillBinding | undefined> {
   const pinnedRegistry = options.context?.skillRegistry;
   if (options.context?.currentAgentId !== undefined
+    || options.context?.parentAgentId !== undefined
     || identity.configHome === undefined
     || identity.projectId === undefined) return undefined;
   if (pinnedRegistry?.list().some((skill) => skill.source === 'learned')) return undefined;
@@ -82,7 +85,7 @@ async function prepareCodingLearnedSkillBindingUnsafe(
   identity: MemoryContextIdentity & { readonly configHome: string; readonly projectId: string },
   rootSessionId: string,
   pinnedRegistry: ISkillRegistry | undefined,
-): Promise<CodingLearnedSkillBinding> {
+): Promise<CodingLearnedSkillBinding | undefined> {
   const projectRoot = resolveExecutionCwd(options.context);
   const skillProjectRoot = options.context?.gitRoot ?? projectRoot;
   const localProjectId = `local:${path.resolve(projectRoot).toLowerCase()}`;
@@ -95,6 +98,14 @@ async function prepareCodingLearnedSkillBindingUnsafe(
     tenantId: identity.tenantId,
     projectId,
   }));
+  // A pinned formal catalog remains authoritative. No learned records means no
+  // stores/leases to initialize; a later Skill commit discovers protected names then.
+  if (pinnedRegistry !== undefined && !(await Promise.all([
+    ...rootDirs.map(rootDir => path.join(rootDir, 'capabilities')),
+    path.join(identity.configHome, 'learned', 'capabilities'),
+  ].map(hasCapabilityRecords))).some(Boolean)) {
+    return undefined;
+  }
   const expectedScopes: readonly [LearnedCapabilityScope, ...LearnedCapabilityScope[]] = [
     scopes[0]!,
     ...scopes.slice(1),
@@ -188,12 +199,12 @@ async function prepareCodingLearnedSkillBindingUnsafe(
             .map((skill) => skill.name),
         ),
       ],
-      skillsPrompt: learnedRegistry === undefined
-        ? (registry as SkillRegistry).getSystemPromptSnippet()
-        : [
-            options.context?.skillsPrompt?.trim(),
-            learnedRegistry.getSystemPromptSnippet().trim(),
-          ].filter((section): section is string => Boolean(section)).join('\n\n'),
+      // A trusted host's formal catalog stays authoritative; append only learned
+      // entries instead of replacing it with filesystem discovery (SA and AMA).
+      skillsPrompt: [
+        options.context?.skillsPrompt?.trim(),
+        formatSkillsSystemPrompt(registry.list().filter(skill => options.context?.skillsPrompt === undefined || skill.source === 'learned')),
+      ].filter((section): section is string => Boolean(section)).join('\n\n'),
       admitLearnedSkillInvocation: async (input) => {
         const capabilityStore = storeByCapabilityId.get(input.capabilityId);
         if (capabilityStore === undefined) {
@@ -237,6 +248,25 @@ function sameScope(
   return left.configHomeHash === right.configHomeHash
     && left.tenantHash === right.tenantHash
     && left.projectHash === right.projectHash;
+}
+
+async function hasCapabilityRecords(directory: string): Promise<boolean> {
+  try { return (await readdir(directory)).some(file => file.endsWith('.json')); }
+  catch (error: unknown) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+/** Discover protection only when a review actually commits a Skill, outside foreground setup. */
+export async function resolveProtectedFormalSkillNames(options: KodaXOptions): Promise<readonly string[]> {
+  if (options.context?.protectedFormalSkillNames !== undefined) return options.context.protectedFormalSkillNames;
+  const names = options.context?.skillRegistry?.list().filter(skill => skill.source !== 'learned').map(skill => skill.name) ?? [];
+  const configHome = options.context?.memoryIdentity?.configHome ?? options.context?.configHome;
+  if (configHome === undefined) return names;
+  const registry = createFormalProjectRegistry(options.context?.gitRoot ?? resolveExecutionCwd(options.context), configHome);
+  await registry.discover();
+  return [...new Set([...names, ...registry.list().map(skill => skill.name)])];
 }
 
 function errorMessage(error: unknown): string {

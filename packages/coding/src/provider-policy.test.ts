@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { getProvider } from '@kodax-ai/llm';
 import {
   buildProviderCapabilitySnapshot,
   buildProviderPolicyPromptNotes,
@@ -35,6 +36,11 @@ const IMAGE_INPUT_NATIVE_PROFILE = {
 } as const;
 
 describe('provider policy', () => {
+  it('uses the selected native model modality instead of the default model profile', () => {
+    const provider = getProvider('deepseek');
+    expect(buildProviderCapabilitySnapshot({ providerName: 'deepseek', provider, model: 'deepseek-flash' }).multimodalSupport).toBe('image-input');
+    expect(buildProviderCapabilitySnapshot({ providerName: 'deepseek', provider, model: 'deepseek-v4-pro' }).multimodalSupport).toBe('none');
+  });
   it('builds a normalized capability snapshot for bridge providers', () => {
     const snapshot = buildProviderCapabilitySnapshot({
       providerName: 'gemini-cli',

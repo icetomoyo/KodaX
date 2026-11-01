@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import path from 'node:path';
 import type { KodaXBaseProvider, KodaXMessage } from '@kodax-ai/llm';
 import { getProvider, runWithScopedConfig, createCustomProvider } from '@kodax-ai/llm';
 
@@ -24,6 +25,19 @@ const messages: readonly KodaXMessage[] = [
 ];
 
 describe('prompt-cache diagnostics', () => {
+  it.each([{ protocol: 'anthropic' }, { protocol: 'openai' }, { protocol: 'openai', api: 'responses' }] as const)(
+    'hashes only images actually sent by the selected $protocol $api model', config => {
+      const provider = createCustomProvider({ ...config, name: 'modality-hash', model: 'vision', imageInput: true,
+        models: [{ id: 'text', multimodalSupport: 'none' }], baseUrl: 'https://cache.test/v1', apiKeyEnv: 'UNUSED' });
+      const history = (file: string): KodaXMessage[] => [{ role: 'user', content: [
+        { type: 'text', text: 'Evidence' }, { type: 'image', path: path.resolve('tests/fixtures/images', file), mediaType: 'image/png' },
+      ] }];
+      expect(hashProviderVisibleMessages(history('valid-png.png'), provider, 'text'))
+        .toBe(hashProviderVisibleMessages(history('wide.png'), provider, 'text'));
+      expect(hashProviderVisibleMessages(history('valid-png.png'), provider, 'vision'))
+        .not.toBe(hashProviderVisibleMessages(history('wide.png'), provider, 'vision'));
+    },
+  );
   it('ignores foreign Anthropic signatures in hashes while retaining the readable projection', () => {
     const p = createCustomProvider({ name: 'signed', protocol: 'anthropic', model: 'new', baseUrl: 'https://cache.test', apiKeyEnv: 'UNUSED' });
     const history = (signature: string): KodaXMessage[] => [{ role: 'assistant', content: [

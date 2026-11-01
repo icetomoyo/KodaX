@@ -84,9 +84,10 @@ function detectProviderSourceKind(providerName: string): KodaXProviderSourceKind
 function resolveCapabilityProfile(
   provider: KodaXBaseProvider | undefined,
   fallback: KodaXProviderCapabilityProfile | undefined,
+  model?: string,
 ): KodaXProviderCapabilityProfile {
   if (provider) {
-    return provider.getCapabilityProfile();
+    return provider.getCapabilityProfile(model);
   }
   return (
     fallback ?? {
@@ -118,7 +119,7 @@ export function buildProviderCapabilitySnapshot(
   },
 ): KodaXProviderCapabilitySnapshot {
   const profile = normalizeCapabilityProfile(
-    resolveCapabilityProfile(options.provider, options.capabilityProfile),
+    resolveCapabilityProfile(options.provider, options.capabilityProfile, options.model),
   );
 
   return {

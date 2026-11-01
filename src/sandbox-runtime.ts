@@ -98,6 +98,7 @@ import {
   ensureWindowsSandboxControlDirectory,
   repairWindowsSandboxControlDirectory,
   resolveWindowsAsrtRunnerArtifact,
+  loadAuditedRuntimeProgram,
   trustedTextNativeArtifactStateRoots,
   verifyProtectedWindowsNativeArtifactImage,
   verifyWindowsSandboxControlDirectory,
@@ -612,308 +613,20 @@ input.once('line', async (gate) => {
 });
 `;
 
-const BROKER_SOURCE = String.raw`
-import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { realpathSync, statSync, writeSync } from 'node:fs';
-import path from 'node:path';
-let SandboxManager;
-const request = await new Promise((resolve, reject) => {
-  const chunks = [];
-  let bytes = 0;
-  process.stdin.on('data', (chunk) => {
-    bytes += chunk.byteLength;
-    if (bytes > ${SANDBOX_BROKER_REQUEST_MAX_BYTES}) {
-      reject(new Error('Sandbox broker request exceeded its byte limit.'));
-      process.stdin.destroy();
-      return;
-    }
-    chunks.push(Buffer.from(chunk));
-  });
-  process.stdin.once('error', reject);
-  process.stdin.once('end', () => {
-    try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
-    catch (error) { reject(error); }
-  });
-});
-if (typeof request.controlInvocationId !== 'string' || request.controlInvocationId === '') {
-  throw new Error('Sandbox broker request omitted its control invocation identity.');
+let cachedBrokerSource: string | undefined;
+function asrtBrokerSource(): string {
+  if (cachedBrokerSource !== undefined) return cachedBrokerSource;
+  cachedBrokerSource = loadAuditedRuntimeProgram('asrtBroker')
+    .replaceAll('{{KODAX_ASRT_SLOT_0}}', () => String(SANDBOX_BROKER_REQUEST_MAX_BYTES))
+    .replaceAll('{{KODAX_ASRT_SLOT_1}}', () => String(WINDOWS_GIT_BROKER_SOURCE))
+    .replaceAll('{{KODAX_ASRT_SLOT_2}}', () => String(SANDBOX_BROKER_CONTROL_MAX_BYTES))
+    .replaceAll('{{KODAX_ASRT_SLOT_3}}', () => String(ELECTRON_NODE_ENV_SCRUB_IMPORT_LITERAL))
+    .replaceAll('{{KODAX_ASRT_SLOT_4}}', () => String(TARGET_ARGV_LOADER_LITERAL))
+    .replaceAll('{{KODAX_ASRT_SLOT_5}}', () => String(TARGET_ARGV_BOOTSTRAP_BASE64_LITERAL))
+    .replaceAll('{{KODAX_ASRT_SLOT_6}}', () => String(ELECTRON_RUN_AS_NODE_ENV_LITERAL))
+    .replaceAll('{{KODAX_ASRT_SLOT_7}}', () => String(ELECTRON_RUN_AS_NODE_ENV_LITERAL));
+  return cachedBrokerSource;
 }
-const targetStartedMarker = request.targetStartedMarker
-  ?? '\u0000KODAX_ASRT_TARGET_STARTED:' + randomUUID() + '\u0000\n';
-const endpoints = new Set(request.endpoints.map((item) => item.host.toLowerCase() + ':' + item.port));
-const callback = request.allowAllNetwork === true
-  ? async () => true
-  : request.endpoints.length === 0
-    ? undefined
-    : async ({ host, port }) => endpoints.has(host.toLowerCase() + ':' + port);
-${WINDOWS_GIT_BROKER_SOURCE}
-const withWindowsChildEnvironment = (argv, environment, gitTrustRoots) => {
-  const separator = argv.lastIndexOf('--');
-  if (separator < 0) throw new Error('ASRT Windows wrapper omitted its child separator.');
-  const requested = [];
-  const requestedNames = new Set();
-  for (const [name, value] of Object.entries(environment ?? {})) {
-    if (value === undefined) continue;
-    if (!name || name.includes('=') || name.includes('\0') || value.includes('\0')) {
-      throw new Error('Invalid environment entry for ASRT Windows child.');
-    }
-    const normalized = name.toLowerCase();
-    if (requestedNames.has(normalized)) {
-      throw new Error('Ambiguous Windows child environment variable: ' + name + '.');
-    }
-    requestedNames.add(normalized);
-    requested.push([name, value]);
-  }
-  const requestedOverrides = new Set(requested.flatMap(([name]) => (
-    ['path', 'pathext'].includes(name.toLowerCase()) ? [name.toLowerCase()] : []
-  )));
-  const controlled = new Set();
-  const prefix = [];
-  for (let index = 0; index < separator; index += 1) {
-    if (argv[index] !== '--env' || index + 1 >= separator) {
-      prefix.push(argv[index]);
-      continue;
-    }
-    const assignment = argv[index + 1];
-    const name = assignment.split('=', 1)[0]?.toLowerCase();
-    if (name) controlled.add(name);
-    if (!name || !requestedOverrides.has(name)) prefix.push(argv[index], assignment);
-    index += 1;
-  }
-  const injected = [];
-  for (const [name, value] of requested) {
-    const normalized = name.toLowerCase();
-    if (controlled.has(normalized) && normalized !== 'path' && normalized !== 'pathext') continue;
-    injected.push('--env', name + '=' + value);
-  }
-  const result = [...prefix, ...injected, ...argv.slice(separator)];
-  const withGitTrust = rewriteWindowsGitSafeDirectoryArgv(result, gitTrustRoots);
-  const estimate = withGitTrust.reduce((size, value) => size + value.length + 3, 0);
-  if (estimate > 30000) throw new Error('ASRT Windows child environment exceeds the CreateProcess command-line limit.');
-  return withGitTrust;
-};
-const writeObservation = (observation) => {
-  const payload = Buffer.from(JSON.stringify({
-    version: 1,
-    invocationId: request.controlInvocationId,
-    observation,
-  }) + '\n', 'utf8');
-  if (payload.byteLength > ${SANDBOX_BROKER_CONTROL_MAX_BYTES}) {
-    throw new Error('Sandbox broker control frame exceeded its byte limit.');
-  }
-  if (writeSync(3, payload) !== payload.byteLength) {
-    throw new Error('Sandbox broker control frame was only partially written.');
-  }
-};
-const waitForTarget = (target, observation, onTargetStarted) => {
-  const marker = Buffer.from(targetStartedMarker, 'utf8');
-  let pending = Buffer.alloc(0);
-  let diagnostic = Buffer.alloc(0);
-  let processError;
-  let wrapperSpawned = false;
-  let targetStarted = false;
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    target.once('spawn', () => {
-      wrapperSpawned = true;
-    });
-    const finish = (result) => {
-      if (settled) return;
-      settled = true;
-      resolve(result);
-    };
-    target.stderr.on('data', (chunk) => {
-      if (targetStarted) {
-        process.stderr.write(chunk);
-        return;
-      }
-      pending = Buffer.concat([pending, Buffer.from(chunk)]);
-      const markerOffset = pending.indexOf(marker);
-      if (markerOffset >= 0) {
-        targetStarted = true;
-        onTargetStarted();
-        const suffix = pending.subarray(markerOffset + marker.length);
-        pending = Buffer.alloc(0);
-        diagnostic = Buffer.alloc(0);
-        try {
-          writeObservation(observation);
-        } catch (error) {
-          processError = error instanceof Error ? error.message : String(error);
-          target.kill('SIGTERM');
-        }
-        if (suffix.length > 0) process.stderr.write(suffix);
-        return;
-      }
-      const retained = Math.max(0, marker.length - 1);
-      if (pending.length > retained) {
-        diagnostic = Buffer.concat([
-          diagnostic,
-          pending.subarray(0, pending.length - retained),
-        ]).subarray(-65536);
-        pending = pending.subarray(pending.length - retained);
-      }
-    });
-    target.once('error', (error) => {
-      processError = error instanceof Error ? error.message : String(error);
-    });
-    target.once('close', (exitCode, signal) => {
-      const preTarget = Buffer.concat([diagnostic, pending]).toString('utf8').trim();
-      finish({
-        exitCode: signal ? 1 : exitCode ?? 1,
-        targetStarted,
-        spawnFailedBeforeSpawn: processError !== undefined && !wrapperSpawned,
-        controlFailure: targetStarted ? processError : undefined,
-        diagnostic: preTarget || processError || undefined,
-      });
-    });
-  });
-};
-let child;
-let targetStarted = false;
-try {
-  if (request.wrappedInvocation) {
-    const wrapped = request.wrappedInvocation;
-    child = spawn(wrapped.executable, wrapped.args, {
-      cwd: request.cwd,
-      env: wrapped.env,
-      shell: wrapped.shell,
-      stdio: ['inherit', 'inherit', 'pipe'],
-      windowsHide: true,
-    });
-    const result = await waitForTarget(child, {
-      version: 1,
-      state: 'applied',
-      backend: request.observationBackend ?? 'unsupported',
-      policyId: 'kodax-workspace-shell-v1',
-    }, () => { targetStarted = true; });
-    targetStarted = result.targetStarted;
-    if (result.controlFailure) {
-      process.stderr.write(result.controlFailure + '\n');
-      process.exitCode = 125;
-    } else {
-      if (!targetStarted) {
-        if (result.spawnFailedBeforeSpawn) {
-          writeObservation({
-            version: 1,
-            state: 'not_started',
-            diagnostic: result.diagnostic,
-          });
-        }
-        process.stderr.write((result.diagnostic || 'Sandbox target launch could not be attested.') + '\n');
-      }
-      process.exitCode = targetStarted ? result.exitCode : result.spawnFailedBeforeSpawn ? 1 : 125;
-    }
-  } else {
-  ({ SandboxManager } = await import(process.argv[1]));
-  const bootstrap = request.bootstrapCommand ?? 'node';
-  const bootstrapIsAbsolute = /^(?:[A-Za-z]:[\\/]|\\\\)/.test(bootstrap);
-  const bootstrapIsElectronNode = bootstrap === process.execPath
-    && process.versions.electron !== undefined;
-  const config = process.platform === 'win32' && bootstrapIsAbsolute
-    ? {
-        ...request.config,
-        filesystem: {
-          ...request.config.filesystem,
-          allowRead: [...new Set([
-            ...request.config.filesystem.allowRead,
-            bootstrap,
-            path.dirname(bootstrap),
-          ])],
-        },
-      }
-    : request.config;
-  await SandboxManager.initialize(config, callback);
-  const quote = (value) => process.platform === 'win32'
-    ? '"' + value.replaceAll('"', '""') + '"'
-    : "'" + value.replaceAll("'", "'\"'\"'") + "'";
-  const internalElectronNode = request.command === process.execPath && process.versions.electron !== undefined;
-  const childArgs = internalElectronNode
-    ? ['--import', ${ELECTRON_NODE_ENV_SCRUB_IMPORT_LITERAL}, ...request.args]
-    : request.args;
-  const command = [
-    quote(bootstrap),
-    '-e',
-    quote(${TARGET_ARGV_LOADER_LITERAL}),
-    ${TARGET_ARGV_BOOTSTRAP_BASE64_LITERAL},
-    Buffer.from(JSON.stringify({
-      command: request.command,
-      args: childArgs,
-      windowsVerbatimArguments: request.windowsVerbatimArguments === true,
-      cwd: request.cwd,
-      targetStartedMarker,
-      electronRunAsNode: internalElectronNode,
-    }), 'utf8').toString('base64'),
-  ].join(' ');
-  if (process.platform === 'win32') {
-    const wrapped = await SandboxManager.wrapWithSandboxArgv(command, 'cmd', undefined, undefined, request.cwd);
-    const requestedEnv = internalElectronNode || bootstrapIsElectronNode
-      ? { ...request.env, [${ELECTRON_RUN_AS_NODE_ENV_LITERAL}]: '1' }
-      : request.env;
-    const childArgv = withWindowsChildEnvironment(wrapped.argv, requestedEnv, windowsGitTrustRoots(request));
-    child = spawn(childArgv[0], childArgv.slice(1), {
-      cwd: request.cwd,
-      env: wrapped.env,
-      shell: false,
-      stdio: ['inherit', 'inherit', 'pipe'],
-      windowsHide: true,
-    });
-  } else {
-    const wrapped = await SandboxManager.wrapWithSandbox(command);
-    const childEnv = internalElectronNode || bootstrapIsElectronNode
-      ? { ...request.env, [${ELECTRON_RUN_AS_NODE_ENV_LITERAL}]: '1' }
-      : request.env;
-    child = spawn(wrapped, {
-      cwd: request.cwd,
-      env: childEnv,
-      shell: true,
-      stdio: ['inherit', 'inherit', 'pipe'],
-    });
-  }
-  const stop = () => child?.kill('SIGTERM');
-  process.once('SIGINT', stop);
-  process.once('SIGTERM', stop);
-  const result = await waitForTarget(child, {
-    version: 1,
-    state: 'applied',
-    backend: request.observationBackend ?? 'unsupported',
-    policyId: 'kodax-workspace-shell-v1',
-  }, () => { targetStarted = true; });
-  targetStarted = result.targetStarted;
-  try { SandboxManager.cleanupAfterCommand(); } catch {}
-  await SandboxManager.reset().catch(() => undefined);
-  if (result.controlFailure) {
-    process.stderr.write(result.controlFailure + '\n');
-    process.exitCode = 125;
-  } else {
-    if (!targetStarted) {
-      if (result.spawnFailedBeforeSpawn) {
-        writeObservation({
-          version: 1,
-          state: 'not_started',
-          diagnostic: result.diagnostic,
-        });
-      }
-      process.stderr.write((result.diagnostic || 'Sandbox target launch could not be attested.') + '\n');
-    }
-    process.exitCode = targetStarted ? result.exitCode : result.spawnFailedBeforeSpawn ? 1 : 125;
-  }
-  }
-} catch (error) {
-  await SandboxManager?.reset().catch(() => undefined);
-  if (!targetStarted && child === undefined) {
-    try {
-      writeObservation({
-        version: 1,
-        state: 'not_started',
-        diagnostic: error instanceof Error ? error.message : String(error),
-      });
-    } catch {}
-  }
-  process.stderr.write((error instanceof Error ? error.message : String(error)) + '\n');
-  process.exitCode = targetStarted ? 125 : 1;
-}
-`;
 let doctorPromise: Promise<SandboxRuntimeDoctorResult> | undefined;
 let doctorExpiresAt = 0;
 const SANDBOX_NOT_READY_RECHECK_MS = 30_000;
@@ -3864,7 +3577,7 @@ async function runBrokerResult(
   });
   const args = process.env.KODAX_BUNDLED === 'true'
     ? ['__asrt-broker']
-    : ['--input-type=module', '-e', BROKER_SOURCE, ASRT_MODULE_URL!];
+    : ['--input-type=module', '-e', asrtBrokerSource(), ASRT_MODULE_URL!];
   const launch = prepareInternalNodeLaunch({
     args,
     env: sanitizedEnvironment(),
@@ -6164,7 +5877,7 @@ async function preparePortableAsrtShellInvocation(input: {
   const controlled = encodeControlledBrokerRequest(request);
   const brokerArgs = process.env.KODAX_BUNDLED === 'true'
     ? ['__asrt-broker']
-    : ['--input-type=module', '-e', BROKER_SOURCE, ASRT_MODULE_URL!];
+    : ['--input-type=module', '-e', asrtBrokerSource(), ASRT_MODULE_URL!];
   const launch = prepareInternalNodeLaunch({
     args: brokerArgs,
     env: sanitizedEnvironment(),

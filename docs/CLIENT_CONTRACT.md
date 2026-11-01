@@ -5,6 +5,12 @@
 当前契约核对至 2026-10-29 源码 `b70d2d30`；tag 后新增能力与层级差异见
 [SDK 一致性清单](SDK_MIGRATION.md#2026-10-29-未发布改动对齐)。这不是 npm 发布声明。
 
+2026-11-01 审计补充以 `68a02521c` 及后续本地主分支修复为基线：Root/Space 的
+凭证、Skill、模型能力和维护诊断衔接见
+[T12-H 交接](SDK_MIGRATION.md#feature_302-t12-h账号保持与可重试升级未发布)与
+[Issue 376 验收](test-guides/ISSUE_376_v0.7.97_REGRESSION_GUIDE.md)。前述日期区间为
+历史清单范围，不表示后续未经验证的云账户或旧客户端已获得新能力。
+
 可信 Main 的 `authorizeExecution`、canonical `historyBoundary` / Retry `before`、历史完整性与图片引用，以及宿主配置/统计/生命周期边界见 [Space SDK/Host 接缝](SPACE_SDK_SEAMS.md)。这些接缝补齐需要当前 SDK 与 Host，不能仅根据旧包版本假定支持。
 
 2026-10-02 主线 rc.14 修复融合仍属于 FEATURE_298 / v0.7.97。中断后的下一次运行只从当前分支的 canonical Session/lineage、Run status 和已成功保存的显示 checkpoint 读取有限恢复说明；不恢复持久事件日志，也不根据事件推导成功。Host 先等待现有 checkpoint 写入，再按 inputId/turnId、sourceRunId 和 outputId 确认来源，排除已提交的同一输出、Thinking、child 输出及普通通知。工具提出、执行开始、结果已保存分别记录；重复 callId 按所属 assistantOutputId 匹配；执行开始但没有已保存结果时，效果仍为 unknown。说明仅进入临时模型上下文，不能成为用户指令或正式会话正文。未落盘 token 不承诺硬崩溃恢复。

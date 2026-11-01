@@ -10,6 +10,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { inspectDoctorCoreConfig, inspectDoctorLocks } from './doctor-storage.js';
 
 import { getAgentConfigHome } from '@kodax-ai/agent';
 import { KODAX_PROVIDER_SNAPSHOTS } from '@kodax-ai/coding';
@@ -54,6 +55,8 @@ interface DoctorReport {
    */
   readonly providers: readonly ProviderStatus[];
   readonly configHome: string;
+  readonly coreConfig: ReturnType<typeof inspectDoctorCoreConfig>;
+  readonly locks: ReturnType<typeof inspectDoctorLocks>;
   readonly sessions: DirSummary | null;
   readonly traces: DirSummary | null;
   /** Present only when `--native-text` explicitly loads the verified addon. */
@@ -165,6 +168,8 @@ function buildReport(version: string): DoctorReport {
     },
     providers: buildProviderStatuses(),
     configHome: home,
+    coreConfig: inspectDoctorCoreConfig(home),
+    locks: inspectDoctorLocks(home),
     sessions: summarizeDir(path.join(home, 'sessions')),
     traces: summarizeDir(path.join(home, '.traces')),
   };
@@ -214,6 +219,13 @@ export async function runDoctor(
     `Storage (${report.configHome})`,
     summaryLine('sessions', report.sessions),
     summaryLine('traces  ', report.traces),
+    `  Core config: ${report.coreConfig.state} (${report.coreConfig.path})${'offset' in report.coreConfig ? `; JSON offset ${report.coreConfig.offset}` : ''}`,
+    '',
+    'Retained locks (presence alone does not prove abandonment)',
+    ...report.locks.items.map(item => `  ${item.state}: ${item.path}`),
+    ...report.locks.issues.map(issue => `  unavailable (${issue.code}): ${issue.path}`),
+    `  ${report.locks.recovery}`,
+    `  ${report.locks.scope}`,
   ];
   if (report.providersPing) {
     lines.push(

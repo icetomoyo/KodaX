@@ -79,7 +79,8 @@ import {
   buildToolMemoryObservations,
   codingMemorySourcePolicy,
 } from '../memory/coding-observations.js';
-import { collectVerifiedCheckFacts } from '../memory/verified-checks.js';
+import { collectVerifiedCheckFacts, resolveLearnedSkillCanaryOutcome } from '../memory/verified-checks.js';
+import { prepareCodingLearnedSkillBinding } from '../learned-skill-runtime.js';
 import type { KodaXWrittenFile } from '../types.js';
 import {
   createMemoryRecallBinding,
@@ -930,6 +931,34 @@ async function runManagedTaskViaRunnerInContext(
   const releaseActiveRootQueueRoute = registerActiveRootQueueRoute(
     actorQueueId(initialSessionId, '/root'),
   );
+  let learnedBinding: Awaited<ReturnType<typeof prepareCodingLearnedSkillBinding>>;
+  let learnedOutcomesCompleted = false;
+  let learnedBindingReleased = false;
+  const releaseLearnedSkills = async (): Promise<void> => {
+    const binding = learnedBinding;
+    if (!binding || learnedBindingReleased) return;
+    learnedBindingReleased = true;
+    try { await runOwnedMemoryWork(effectiveOptions, () => binding.release()); }
+    catch (error: unknown) {
+      emitResilienceDebug('[learning:skill-binding-release:error]', { error: error instanceof Error ? error.message : String(error) });
+    }
+  };
+  const completeLearnedSkills = async (result?: KodaXResult): Promise<void> => {
+    if (!learnedBinding || learnedOutcomesCompleted) return;
+    learnedOutcomesCompleted = true;
+    const checks = collectVerifiedCheckFacts(result?.artifactLedger ?? []);
+    try {
+      await runOwnedMemoryWork(effectiveOptions, async () => {
+        await learnedBinding?.context.completeLearnedSkillOutcomes?.({
+          sessionId: initialSessionId,
+          outcome: resolveLearnedSkillCanaryOutcome(result?.success === true && !result.interrupted, checks),
+          evidenceRefs: checks.length > 0 ? checks.map(check => check.ref) : [`host:run-terminal:${initialSessionId}`],
+        });
+      });
+    } catch (error: unknown) {
+      emitResilienceDebug('[learning:skill-outcome:error]', { error: error instanceof Error ? error.message : String(error) });
+    }
+  };
   try {
   await runOwnedMemoryWork(effectiveOptions, () => maybeRunMemoryMaintenanceWindow(effectiveOptions));
   effectiveOptions.abortSignal?.throwIfAborted();
@@ -1004,7 +1033,7 @@ async function runManagedTaskViaRunnerInContext(
         } : {}) } : update, meta);
     },
   }, liveTurnScopeRef);
-  const optionsWithLiveEvents: KodaXOptions = {
+  let optionsWithLiveEvents: KodaXOptions = {
     ...baseOptionsWithSessionId,
     context: {
       ...(baseOptionsWithSessionId.context ?? {}),
@@ -1012,6 +1041,21 @@ async function runManagedTaskViaRunnerInContext(
     },
     events: liveEvents,
   };
+  if (currentAgentId === undefined && parentAgentId === undefined) {
+    const memoryIdentity = optionsWithLiveEvents.context?.memoryIdentity
+      ?? deriveCodingMemoryIdentity(optionsWithLiveEvents, resolveExecutionCwd(optionsWithLiveEvents.context), initialSessionId);
+    await runOwnedMemoryWork(optionsWithLiveEvents, async () => {
+      learnedBinding = await prepareCodingLearnedSkillBinding(optionsWithLiveEvents, memoryIdentity, initialSessionId);
+      // Keep setup cancellation cleanup inside the same Host-owned work item.
+      if (optionsWithLiveEvents.abortSignal?.aborted) {
+        learnedBindingReleased = true;
+        await learnedBinding?.release();
+      }
+    });
+    optionsWithLiveEvents = { ...optionsWithLiveEvents, context: {
+      ...optionsWithLiveEvents.context, memoryIdentity, ...learnedBinding?.context,
+    } };
+  }
   const startedMemoryRuntime = await runOwnedMemoryWork(optionsWithLiveEvents, async () => {
     const started = await startRunnerMemoryRuntime(
       optionsWithLiveEvents,
@@ -1110,6 +1154,7 @@ async function runManagedTaskViaRunnerInContext(
         artifactLedger: result.artifactLedger,
       },
     );
+    await completeLearnedSkills(result);
     if (result.success) {
       emitLiveTurnCompleted(result.interrupted ? 'interrupted' : 'completed');
     } else {
@@ -1185,6 +1230,7 @@ async function runManagedTaskViaRunnerInContext(
         summary: error.message,
       },
     );
+    await completeLearnedSkills();
     throw err;
   } finally {
     // onComplete fires on every terminal — success, block, or error —
@@ -1195,10 +1241,12 @@ async function runManagedTaskViaRunnerInContext(
     // divergence preserved deliberately — REPL listeners on the AMA
     // path rely on the universal-cleanup semantics. Future work to
     // unify would touch REPL contract.
+    await releaseLearnedSkills();
     emitComplete(liveEvents);
   }
   } finally {
-    releaseActiveRootQueueRoute();
+    try { await releaseLearnedSkills(); }
+    finally { releaseActiveRootQueueRoute(); }
   }
 }
 

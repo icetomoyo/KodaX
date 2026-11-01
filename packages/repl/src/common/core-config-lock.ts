@@ -15,8 +15,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 export class CoreConfigWriteConflictError extends Error {
-  constructor(configPath: string) {
-    super(`Core configuration lock is busy or its ownership cannot be safely recovered: ${configPath}`);
+  constructor(configPath: string, lockPath = coreConfigWriteLockPath(configPath)) {
+    super(`Core configuration lock is busy or its ownership cannot be safely recovered: ${configPath}. Retained lock: ${lockPath}. Use kodax doctor for offline recovery guidance; never remove a lock while shared writers may be active.`);
     this.name = 'CoreConfigWriteConflictError';
   }
 }
@@ -118,7 +118,7 @@ export function withConfigWriteLock<T>(configPath: string, lockPath: string, act
   retryInactiveRelease(lockPath);
   const raw = JSON.stringify({ version: 1, pid: process.pid, nonce: randomUUID() });
   if (!publish(lockPath, raw) && (!reclaim(lockPath) || !publish(lockPath, raw))) {
-    throw new CoreConfigWriteConflictError(configPath);
+    throw new CoreConfigWriteConflictError(configPath, lockPath);
   }
   let actionError: unknown;
   try { return action(); }
@@ -126,7 +126,7 @@ export function withConfigWriteLock<T>(configPath: string, lockPath: string, act
   finally {
     try {
       inactiveReleases.set(lockPath, raw);
-      if (readFileSync(lockPath, 'utf8') !== raw) throw new CoreConfigWriteConflictError(configPath);
+      if (readFileSync(lockPath, 'utf8') !== raw) throw new CoreConfigWriteConflictError(configPath, lockPath);
       rmSync(lockPath);
       inactiveReleases.delete(lockPath);
     } catch (error) {

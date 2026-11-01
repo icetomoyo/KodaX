@@ -361,7 +361,7 @@ The automatic Sidecar Verifier is retired. Remove `verifierLog`, `/verifier-log`
 
 原有 provider 名称、config.json 和 API_KEY 环境变量继续有效，默认仍为现有 HTTP/SSE；不需要将 API key 搬进配置文件。原生/订阅连接通过既有 broker 按请求授权。新增能力及边界见 [LLM 接入契约](LLM_INTEGRATION.md)。
 
-`CostRecord.cost`、provider/session 的总费用现在为 `number | null`。未知价格或未覆盖的 cache-write TTL 返回 `null`，不能再当作零价；`knownCostSubtotal`、`unknownCostCalls`、`nominalCostCalls`、`costBasis` 区分已知小计与订阅名义估算。已有数值费率和显式零价保持原义，静态费率不是实时账单。`cachedWriteTokensByTtl` 保留缓存写入分区，`cacheWritePer1MByTtl` 可为已声明 TTL 提供估算费率。
+`TokenUsageRecord.cost`、provider/session 的总费用现在为 `number | null`。未知价格或未覆盖的 cache-write TTL 返回 `null`，不能再当作零价；`knownCostSubtotal`、`unknownCostCalls`、`nominalCostCalls`、`costBasis` 区分已知小计与订阅名义估算。已有数值费率和显式零价保持原义，静态费率不是实时账单。`cachedWriteTokensByTtl` 保留缓存写入分区，`cacheWritePer1MByTtl` 可为已声明 TTL 提供估算费率。
 
 工具 strict/grammar 只按显式能力启用；`require` 不可静默降级，`prefer` 仅在明确的 400/422 约束拒绝后有一次受限回退。`strict` 会关闭对象额外属性，将可选属性变为可空的必填属性，属于显式 opt-in。Responses grammar 的原始输入由声明的单个字符串属性承接，部分流片段不构成可执行工具。
 
@@ -455,6 +455,33 @@ Space 接手时应保留统计的 `coverage: partial`/issues；单个损坏 pend
 重连/重启 Host 恢复原队列与身份，不把未知执行当成重试许可。Windows 原生静态资源
 也必须随 SDK/二进制一起分发，缺失或篡改会显式失败。验收及真实 OS 前置条件见
 [Issue 376](test-guides/ISSUE_376_v0.7.97_REGRESSION_GUIDE.md)。本批没有修改 Space 仓库。
+
+后续审计修复补齐 AMA Root learned Skill 的 catalog/准入/outcome/release；失败和取消
+不能计作已验证成功，释放必须属于 Host 可等待的 Memory 工作，并先于完成通知。
+显式 `runs.startTool` 加载 Skill 时也装配现有策略和 hooks；这仍是当前 Run 的一次
+调用，不给后续 Run 持久授予工具权限。Space 无需恢复旧 SA CLI 或重复 effort 提示。
+模型描述新增可选 `multimodalSupport`；切换模型时按选中模型判断图片，保留原始历史。
+费用沿用可空/nominal 合同，新增 `maxPricedInputTokens` 限定已覆盖费率的输入范围；
+未知价格、TTL 或超范围不能显示为零。目录/费率来源和限制见
+[模型与费用边界](LLM_INTEGRATION.md#审计后续模型与费用估算边界2026-11-01未发布)。
+
+Space 若提供存储维护，可显式调用 `/coding.inspectToolOutputStorage(directory)`；
+`partial`、`failed` 或子目录存在时，不能把平面容量统计当完整全局清单。
+清理须先停止共享该目录的所有写入，并掌握所有 SDK/Host 会话与 manifest/stream 的
+完整引用闭包，再调用既有 `cleanupUnreferencedToolOutputs`。仅有当前 Space 会话目录
+不构成完整范围；未知引用域继续保留，不能恢复启动扫盘或按 TTL 自动删除。
+
+坏配置不再阻止 CLI `--help`、`--version` 和只读 `doctor`；执行与配置写入仍拒绝使用
+坏配置作默认账号。`doctor --json` 新增 `coreConfig` 语法状态/位置与 `locks` 清单，
+不返回原文或凭证。它只覆盖默认配置根下的已知位置，显式 SDK storage 覆盖需另查。
+Space 可展示这些诊断，但不能凭锁年龄或 PID 不可读自动删除历史锁。离线修复应先
+停止所有共享 CLI/Host/SDK 写入者、备份原目录，再隔离明确诊断出的锁及对应 reclaim
+claim；保留 config/auth/session/journal。活跃任务或未确认所有者不能做此处理。
+
+更新 SDK 时须同步完整 dist 和既有 JSON 资源，不能只替换 JS 并复用旧资源。
+`windows-native-scripts.json` 的历史文件名保留，现也包含带哈希校验的共享 ASRT
+broker 模板；按需装配并缓存，程序内容和参数语义保持。旧 Host 的既有 Windows
+provision/control 数据未改，运行中的任务不为本次资源整理而强制退出。
 
 CLI 的 config.json、API_KEY 和单记录凭证 SDK 入口继续有效，auth.json 仍为 v2。
 新增 AtomicFileProviderCredentialStore 扩展提供一致快照与多记录 CAS，不改变旧调用方契约。

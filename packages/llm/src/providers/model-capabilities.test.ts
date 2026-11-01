@@ -27,11 +27,12 @@ import {
 } from './index.js';
 
 describe('built-in provider model capabilities (no API key required)', () => {
-  it('exposes Anthropic Sonnet 4.6 default at 200K context / 64K max output', () => {
+  it('exposes the Sonnet 4.6 ceiling without raising its default output budget', () => {
     const caps = getModelCapabilities('anthropic', 'claude-sonnet-4-6');
     expect(caps).toBeDefined();
-    expect(caps?.contextWindow).toBe(200_000);
+    expect(caps?.contextWindow).toBe(1_000_000);
     expect(caps?.maxOutputTokens).toBe(64000);
+    expect(caps?.outputTokenLimit).toBe(128000);
     expect(caps?.thinkingBudgetCap).toBe(28000);
     expect(caps?.supportsThinking).toBe(true);
     expect(caps?.isDefault).toBe(true);
@@ -154,6 +155,18 @@ describe('built-in provider model capabilities (no API key required)', () => {
     expect(getModelCapabilities('deepseek', 'deepseek-v4-pro')?.contextWindow).toBe(1_000_000);
     // Default model first in the descriptor list, under its official id.
     expect(getProviderModelDescriptors('deepseek')[0]?.id).toBe('deepseek-flash');
+    expect(getModelCapabilities('deepseek', 'deepseek-flash')?.multimodalSupport).toBe('image-input');
+    expect(getModelCapabilities('deepseek', 'deepseek-v4-pro')?.multimodalSupport).toBe('none');
+    expect(getModelCapabilities('deepseek', 'deepseek-v4-pro')?.outputTokenLimit).toBe(384000);
+  });
+
+  it('keeps native service ceilings separate from the existing OpenAI output budget', () => {
+    expect(getModelCapabilities('openai', 'gpt-5.4')).toMatchObject({
+      contextWindow: 1_050_000, maxOutputTokens: 32768, outputTokenLimit: 128000,
+    });
+    expect(getModelCapabilities('openai', 'gpt-5.3-codex')).toMatchObject({
+      contextWindow: 400000, maxOutputTokens: 32768, outputTokenLimit: 128000, isDefault: true,
+    });
   });
 
   it('registers glm-5.3-flash (native multimodal, 1M) on all three Zhipu routes', () => {
@@ -222,7 +235,7 @@ describe('built-in provider model capabilities (no API key required)', () => {
     // Optimistic-wide default: a new/uncatalogued model id gets the family's
     // reasoning ladder + context window instead of collapsing to undefined.
     expect(caps?.reasoningProfile).toEqual(defaultCaps?.reasoningProfile);
-    expect(caps?.contextWindow).toBe(defaultCaps?.contextWindow);
+    expect(caps?.contextWindow).toBe(200_000);
   });
 
   it('descriptors list default first, then alternatives, per provider', () => {
@@ -286,7 +299,7 @@ describe('built-in provider model capabilities (no API key required)', () => {
       expect(() => getModelCapabilities('anthropic', 'claude-sonnet-4-6')).not.toThrow();
       expect(() => getProviderModelDescriptors('deepseek')).not.toThrow();
       expect(() => listBuiltinModelCapabilities()).not.toThrow();
-      expect(getModelCapabilities('anthropic', 'claude-sonnet-4-6')?.contextWindow).toBe(200_000);
+      expect(getModelCapabilities('anthropic', 'claude-sonnet-4-6')?.contextWindow).toBe(1_000_000);
     } finally {
       for (const [k, v] of originalKeys) {
         if (v === undefined) delete process.env[k];

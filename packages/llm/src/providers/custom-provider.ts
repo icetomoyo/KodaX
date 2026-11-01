@@ -359,6 +359,8 @@ export function validateCustomProviderConfig(
   if (cacheProfiles.some(profile => profile && !cacheDialects.includes(profile.dialect))) throw new Error('Declared cache dialect does not match the native API.');
   for (const model of custom.models ?? []) if (typeof model !== 'string') validateCacheCapabilities(model.cacheCapabilities);
   for (const model of custom.models ?? []) if (typeof model !== 'string') validateToolCapabilities(model.toolCapabilities);
+  for (const model of custom.models ?? []) if (typeof model !== 'string' && model.multimodalSupport !== undefined
+    && !['none', 'image-input', 'full'].includes(model.multimodalSupport)) throw new Error('Invalid model multimodalSupport.');
   const grammarRoute = custom.protocol === 'pi-messages' || (custom.protocol === 'openai' && custom.api === 'responses');
   if (!grammarRoute && (custom.toolCapabilities?.grammar?.length || custom.models?.some(model => typeof model !== 'string' && model.toolCapabilities?.grammar?.length))) throw new Error('Grammar tools require Responses or Pi Messages.');
   if (!custom.name || !custom.baseUrl || !custom.apiKeyEnv || !custom.model) {

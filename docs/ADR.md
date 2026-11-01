@@ -1,5 +1,34 @@
 # KodaX Architecture Decision Records
 
+## FEATURE_302 implementation alignment — 2026-11-01 (unreleased)
+
+The accepted provider parity design is indexed in
+[FEATURE_302](features/v0.7.99.md#feature_302-independent-llm-provider-parity),
+[transport and credential contracts](LLM_INTEGRATION.md), and the
+[SDK migration guide](SDK_MIGRATION.md). The design filename is a planning
+identifier; the implementation remains package `0.7.97-alpha.11`, unpublished.
+
+The default trusted Main credential store is the shared, permission-restricted
+`auth.json` v2 beside `config.json`, for API keys and OAuth registrations.
+This refines the OS-vault storage assumption in ADR-068; its scoped, revocable
+authorization and Host/Main ownership requirements remain. `createEncryptedOAuthSessionStore`
+and `createWindowsOAuthSessionStore` remain explicit compatibility backends,
+not automatic substitutes when the current store is unreadable or revoked.
+Migration imports only a referenced legacy registration when the current store
+has no authoritative record, preserves its source, and cannot overwrite a current
+account or revocation. Retained legacy ciphertext is recovery evidence, not a
+second active refresh authority. See the [credential migration boundary](LLM_INTEGRATION.md#t12-d-默认-oauth-文件与恢复离线切片).
+
+Responses is an explicit transport beside Chat Completions; Gemini/Vertex,
+Bedrock and Azure native cloud routes retain service-specific authentication.
+These paths project canonical history at the selected provider/model boundary;
+they do not replace existing aliases, SDK entries or API_KEY environment names.
+Offline protocol coverage is separate from real account, cloud and model acceptance.
+
+The subsequent unified Host cutover retires `runtimeExitSettlement` and
+`settleKodaXRuntimeExit()`. References in version-labelled ADR/release addenda below
+remain historical; they must not be copied as current SDK capability requirements.
+
 ## Standalone Windows Shell cleanup evidence — 2026-10-30 (unreleased)
 
 Standalone Shell commands and environment probes outside a verified supervising

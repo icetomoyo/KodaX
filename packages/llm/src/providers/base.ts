@@ -544,10 +544,12 @@ export abstract class KodaXBaseProvider {
     return this.config.apiKeyEnv;
   }
 
-  getCapabilityProfile(): KodaXProviderCapabilityProfile {
-    return cloneCapabilityProfile(
+  getCapabilityProfile(modelOverride?: string): KodaXProviderCapabilityProfile {
+    const profile = cloneCapabilityProfile(
       this.config.capabilityProfile ?? NATIVE_PROVIDER_CAPABILITY_PROFILE,
     );
+    const modality = this.getModelDescriptor(modelOverride)?.multimodalSupport;
+    return modality === undefined ? profile : { ...profile, multimodalSupport: modality };
   }
 
   getConfiguredReasoningCapability(modelOverride?: string): KodaXReasoningCapability {

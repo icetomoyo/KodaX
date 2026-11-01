@@ -52,6 +52,62 @@ function snapshot(stdout: string) {
 }
 
 describe('LLM Windows process-tree identity fences', () => {
+  it('pins the first root identity while the exit event is still pending', async () => {
+    setWindows();
+    spawnSyncMock.mockReset();
+    spawnSyncMock
+      .mockReturnValueOnce(snapshot('4242,1,111\n'))
+      .mockReturnValue(snapshot('4242,1,222\n'));
+    const child = fakeChild(4_242);
+    expect(rememberChildProcessTree(child as never)).toBe('111');
+    expect(rememberChildProcessTree(child as never)).toBe('111');
+    child.exitCode = 0;
+    await expect(killChildProcessTree(child as never)).resolves.toEqual({ status: 'unknown' });
+    expect(spawnSyncMock.mock.calls.some(([, args]) => /TerminateExact\(\d/.test(String(args?.at(-1))))).toBe(false);
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  it('retains captured descendants after their intermediate parent exits', async () => {
+    setWindows();
+    spawnSyncMock.mockReset();
+    spawnSyncMock
+      .mockReturnValueOnce(snapshot('4242,1,111\n'))
+      .mockReturnValueOnce(snapshot('4242,1,111\n4343,4242,112\n4444,4343,113\n'))
+      .mockReturnValueOnce(snapshot('4242,1,111\n4444,9,113\n'))
+      .mockReturnValueOnce(snapshot('4242,1,111\n4444,9,113\n'))
+      .mockReturnValue(snapshot('KODAX_TERMINATION_COMPLETED\n1,0,100\nKODAX_SNAPSHOT_COMPLETED\n'));
+    const child = fakeChild(4_242);
+    expect(rememberChildProcessTree(child as never)).toBe('111');
+    expect(rememberChildProcessTree(child as never)).toBe('111');
+    expect(rememberChildProcessTree(child as never)).toBe('111');
+    child.exitCode = 0;
+    await expect(killChildProcessTree(child as never)).resolves.toEqual({ status: 'terminated' });
+    const script = String(spawnSyncMock.mock.calls[4]?.[1]?.at(-1));
+    expect(script).toContain('::TerminateExact(4444, [UInt64]113)');
+    expect(spawnSyncMock).toHaveBeenCalledTimes(5);
+  });
+
+  it('retains unknown descendant fences when later snapshots lose their ancestry', async () => {
+    setWindows();
+    spawnSyncMock.mockReset();
+    spawnSyncMock
+      .mockReturnValueOnce(snapshot('4242,1,111\n'))
+      .mockReturnValueOnce(snapshot('4242,1,111\n4343,4242,0\n'))
+      .mockReturnValueOnce(snapshot('4242,1,111\n4343,9,222\n'))
+      .mockReturnValueOnce(snapshot('4242,1,111\n4343,9,222\n'))
+      .mockReturnValue(snapshot('KODAX_TERMINATION_COMPLETED\n1,0,100\n4343,9,222\nKODAX_SNAPSHOT_COMPLETED\n'));
+    vi.spyOn(process, 'kill').mockImplementation(() => { throw Object.assign(new Error('gone'), { code: 'ESRCH' }); });
+    const child = fakeChild(4_242);
+    rememberChildProcessTree(child as never);
+    rememberChildProcessTree(child as never);
+    rememberChildProcessTree(child as never);
+    child.exitCode = 0;
+    await expect(killChildProcessTree(child as never)).resolves.toEqual({ status: 'unknown' });
+    const scripts = spawnSyncMock.mock.calls.map(([, args]) => String(args?.at(-1))).join('\n');
+    expect(scripts).not.toContain('::TerminateExact(4343');
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
   it('verifies a drained tree using the fresh snapshot from the termination process', async () => {
     setWindows();
     spawnSyncMock.mockReset();

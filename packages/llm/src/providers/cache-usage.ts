@@ -16,10 +16,12 @@ export function normalizeResponsesUsage(value: unknown): KodaXTokenUsage | undef
   const valid = (count: unknown): count is number => typeof count === 'number' && Number.isFinite(count) && count >= 0;
   if (!valid(inputTokens) || !valid(outputTokens)) return undefined;
   const reads = details.cached_tokens, writes = details.cache_write_tokens;
-  if ((reads !== undefined && !valid(reads)) || (writes !== undefined && !valid(writes))) return undefined;
+  if ((reads !== undefined && !valid(reads)) || (writes !== undefined && !valid(writes))
+    || (reads as number ?? 0) + (writes as number ?? 0) > inputTokens) return undefined;
   const raw = fields(details.cache_write_tokens_details);
-  const byTtl = cacheWritePartition(writes as number | undefined, details.cache_write_tokens_details === undefined ? undefined
-    : { '30m': raw.ttl_30m_tokens, '12h': raw.ttl_12h_tokens });
+  const byTtl = cacheWritePartition(writes as number | undefined, details.cache_write_tokens_details === undefined
+    ? writes === undefined ? undefined : { unknown: writes }
+    : { '5m': raw.ttl_5m_tokens, '1h': raw.ttl_1h_tokens, '30m': raw.ttl_30m_tokens, '12h': raw.ttl_12h_tokens });
   return { inputTokens, outputTokens, totalTokens: valid(usage.total_tokens) ? usage.total_tokens : inputTokens + outputTokens,
     ...(reads !== undefined ? { cachedReadTokens: reads as number } : {}), ...(writes !== undefined ? { cachedWriteTokens: writes as number } : {}),
     ...(byTtl ? { cachedWriteTokensByTtl: byTtl } : {}), ...(valid(output.reasoning_tokens) ? { thoughtTokens: output.reasoning_tokens } : {}) };

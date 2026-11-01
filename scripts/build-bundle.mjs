@@ -52,6 +52,7 @@
 const HELPER_SCRIPT_DEPTH_TO_DIST = 3;
 
 import { build } from 'esbuild';
+import { sdkEntriesFromPackage } from './sdk-entrypoints.mjs';
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -407,10 +408,9 @@ assertStartupImportBoundary('CLI', cliResult, { eagerOnly: true });
 assertSingleProviderCredentialModule('CLI', cliResult);
 
 const cliBytes = statSync(path.join(distDir, 'kodax_cli.js')).size;
-// SDK contracts, the Windows Job gate, the Host view-read close fence and
-// authorized tool-result recovery and Host-scoped Skill lookup add <21 KiB
-// without new dependencies. Dependency and cold-entry fences remain enforced.
-assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024 + 21 * 1024);
+// Match the stricter published-artifact fence: preserve 64 KiB of CLI headroom.
+// Audited program data stays in packaged resources, without trimming behavior.
+assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024 - 64 * 1024);
 log(`  ✓ dist/kodax_cli.js (${(cliBytes / 1024).toFixed(0)} kB)`);
 
 // Bare `-r` must show the picker without evaluating the full CLI graph.
@@ -467,10 +467,9 @@ log(`  ✓ dist/kodax_bootstrap.js (${(bootstrapBytes / 1024).toFixed(0)} kB)`);
 // — Node's ESM resolver follows chunk imports transparently, so splitting
 // does not affect the helper-depth contract verified below.
 
-const sdkEntryNames = ['index', 'sdk-agent', 'sdk-llm', 'sdk-coding', 'sdk-media', 'sdk-repl', 'sdk-skills', 'sdk-mcp', 'sdk-session', 'sdk-runtime', 'sdk-client', 'sdk-sandbox', 'sdk-a2a', 'sdk-experimental-memory'];
-const sdkEntryPoints = Object.fromEntries(sdkEntryNames.map((name) => [
-  name, path.join(repoRoot, 'src', name === 'sdk-runtime' ? 'sdk-runtime-public.ts' : name + '.ts'),
-]));
+const sdkSources = sdkEntriesFromPackage(rootPkg);
+const sdkEntryNames = Object.keys(sdkSources);
+const sdkEntryPoints = Object.fromEntries(Object.entries(sdkSources).map(([name, source]) => [name, path.join(repoRoot, source)]));
 
 log(`Building ${sdkEntryNames.length} SDK entries (splitting on)…`);
 const sdkResult = await build({

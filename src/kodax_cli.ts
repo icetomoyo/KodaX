@@ -3326,33 +3326,6 @@ async function runCliMain(startupProgress?: CliStartupProgress) {
     });
   }
 
-  // Session retention: opt-in best-effort background prune of session files
-  // older than KODAX_SESSION_RETENTION_DAYS. DEFAULT OFF (0) — auto-deleting a
-  // user's accumulated history is destructive and surprising, so it must be
-  // explicitly enabled (e.g. KODAX_SESSION_RETENTION_DAYS=30). The `list()`
-  // head-read path already keeps `kodax -c` + the picker fast regardless of
-  // file count, so retention is a housekeeping convenience, not a perf
-  // requirement. Fire-and-forget never blocks startup, but cleanup failures
-  // are reported because cached message bodies must remain attached to a
-  // retryable Session lifecycle operation.
-  // Read from env (shell override) then config.json (persistent). This runs at
-  // startup before prepareRuntimeConfig's bridge, so it reads config directly.
-  if (!isDaemonManagementCommand) {
-    const sessionRetentionDays = Number(
-      process.env.KODAX_SESSION_RETENTION_DAYS ??
-        loadConfig().sessionRetentionDays ??
-        0,
-    );
-    void new FileSessionStorage().cleanupOldSessions(sessionRetentionDays).catch((error: unknown) => {
-      emitKodaXDiagnostic({
-        source: 'cli:session-retention',
-        level: 'warn',
-        message: 'Session retention cleanup was incomplete and will be retried later.',
-        detail: error instanceof Error ? error.message : String(error),
-      });
-    });
-  }
-
   const program = configureKodaXRootCommand(
     new Command()
       .name('kodax')
@@ -4207,11 +4180,53 @@ complete -c kodax -l version -d 'Show version'`);
   }
 
   const opts = program.opts();
+  // -h / --help [topic]: show basic help or a detailed help topic
+  if (opts.help !== undefined) {
+    if (typeof opts.help === 'string') {
+      const topic = opts.help.toLowerCase();
+      if (showCliHelpTopic(topic)) {
+        return;
+      }
+      console.log(chalk.yellow(`\n[Unknown help topic: ${topic}]`));
+      showCliHelpTopics();
+      return;
+    }
+    // No topic specified: show basic help overview.
+    showBasicHelp();
+    return;
+  }
+
   const outputMode = (opts.mode as CliOutputMode | undefined) ?? 'text';
   // Hydrate login-shell and config-backed environment before first-run
   // readiness inspects credentials. Reuse this same Runtime configuration for
   // startup so the gate and the session cannot observe different environments.
   const config = prepareRuntimeConfig();
+  // Session retention: opt-in best-effort background prune of session files
+  // older than KODAX_SESSION_RETENTION_DAYS. DEFAULT OFF (0) — auto-deleting a
+  // user's accumulated history is destructive and surprising, so it must be
+  // explicitly enabled (e.g. KODAX_SESSION_RETENTION_DAYS=30). The `list()`
+  // head-read path already keeps `kodax -c` + the picker fast regardless of
+  // file count, so retention is a housekeeping convenience, not a perf
+  // requirement. Fire-and-forget never blocks startup, but cleanup failures
+  // are reported because cached message bodies must remain attached to a
+  // retryable Session lifecycle operation.
+  // Execution-only: informational commands must not load or mutate user state.
+  {
+    const sessionRetentionDays = Number(
+      process.env.KODAX_SESSION_RETENTION_DAYS ??
+        config.sessionRetentionDays ??
+        0,
+    );
+    void new FileSessionStorage().cleanupOldSessions(sessionRetentionDays).catch((error: unknown) => {
+      emitKodaXDiagnostic({
+        source: 'cli:session-retention',
+        level: 'warn',
+        message: 'Session retention cleanup was incomplete and will be retried later.',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+
   if (
     shouldAutoLaunchProviderSetup({
       outputMode,
@@ -4491,22 +4506,6 @@ complete -c kodax -l version -d 'Show version'`);
     }
 
     let userPrompt = options.prompt.join(' ');
-
-    // -h / --help [topic]: show basic help or a detailed help topic
-    if (opts.help !== undefined) {
-      if (typeof opts.help === 'string') {
-        const topic = opts.help.toLowerCase();
-        if (showCliHelpTopic(topic)) {
-          return;
-        }
-        console.log(chalk.yellow(`\n[Unknown help topic: ${topic}]`));
-        showCliHelpTopics();
-        return;
-      }
-      // No topic specified: show basic help overview.
-      showBasicHelp();
-      return;
-    }
 
     validateCliModeSelection(options, {
       resumeWithoutId: opts.resume === true,

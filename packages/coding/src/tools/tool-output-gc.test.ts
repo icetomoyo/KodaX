@@ -15,6 +15,7 @@ import {
   cleanupExpiredToolOutputs,
   cleanupUnreferencedToolOutputs,
   maybeRunToolOutputGc,
+  inspectToolOutputStorage,
 } from './tool-output-gc.js';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -23,6 +24,19 @@ const DAY_MS = 24 * HOUR_MS;
 async function makeTempDir(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), 'kodax-gc-test-'));
 }
+
+it('reports storage capacity without deleting recovery evidence and distinguishes incomplete inspection', async () => {
+  const root = await makeTempDir();
+  try {
+    await fs.writeFile(path.join(root, 'retained.txt'), 'evidence');
+    await fs.mkdir(path.join(root, 'other-namespace'));
+    expect(await inspectToolOutputStorage(root)).toMatchObject({ files: 1, bytes: 8, directories: 1, failed: 0, status: 'complete' });
+    expect(await fs.readFile(path.join(root, 'retained.txt'), 'utf8')).toBe('evidence');
+    expect(await inspectToolOutputStorage(path.join(root, 'missing'))).toMatchObject({ status: 'missing', failed: 0 });
+    expect(await inspectToolOutputStorage(path.join(root, 'retained.txt'))).toMatchObject({ status: 'partial', failed: 1 });
+    expect((await cleanupUnreferencedToolOutputs(path.join(root, 'retained.txt'), new Set())).failed).toBe(1);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
 
 async function writeFileWithMtime(
   filePath: string,
@@ -171,6 +185,15 @@ describe('maybeRunToolOutputGc', () => {
 
   afterEach(async () => {
     await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('keeps cooldown and in-flight cleanup separate for different storage roots', async () => {
+    const other = path.join(dir, 'other');
+    await fs.mkdir(other);
+    await writeFileWithMtime(path.join(dir, 'stale.txt'), 'old', 30 * DAY_MS, NOW);
+    await writeFileWithMtime(path.join(other, 'stale.txt'), 'other', 30 * DAY_MS, NOW);
+    await Promise.all([maybeRunToolOutputGc(dir, DAY_MS, NOW), maybeRunToolOutputGc(other, DAY_MS, NOW)]);
+    await expect(fs.stat(path.join(other, 'stale.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('launches a sweep on first call and reports a non-null result', async () => {
