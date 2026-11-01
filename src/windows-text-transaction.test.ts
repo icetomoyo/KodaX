@@ -39,7 +39,9 @@ async function createIntegrationTestRoot(): Promise<string> {
     ?? process.env.RUNNER_TEMP
     ?? os.tmpdir();
   await fs.mkdir(base, { recursive: true });
-  return fs.mkdtemp(path.join(base, 'kodax-windows-text-host-'));
+  // Canonicalize for macOS runner roots under the /var symbolic link, which
+  // the hardened trusted-text agent-home fences reject.
+  return fs.mkdtemp(path.join(await fs.realpath(base), 'kodax-windows-text-host-'));
 }
 
 async function writeFromExternalProcess(target: string, content: string): Promise<void> {

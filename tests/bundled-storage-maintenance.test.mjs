@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -12,9 +12,12 @@ import { tryAcquireStorageFileLock } from '../dist/sdk-agent.js';
 
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL('../dist/kodax_cli.js', import.meta.url));
+// Storage repair refuses filesystem aliases; macOS temporary roots sit under
+// the /var symbolic link, so fixtures must use the canonical base.
+const canonicalTemporaryRoot = await realpath(os.tmpdir());
 
 test('published task repair rejects missing captured authority before publishing a replacement', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-bundled-repair-task-'));
+  const root = await mkdtemp(path.join(canonicalTemporaryRoot, 'kodax-bundled-repair-task-'));
   const directory = path.join(root, 'tasks', createHash('sha256').update('task').digest('hex'));
   await mkdir(directory, { recursive: true });
   const file = path.join(directory, 'snapshot.json'), candidate = path.join(root, 'candidate.json');
@@ -37,13 +40,13 @@ test('published task repair rejects missing captured authority before publishing
     assert.equal(inspectStorageRepair(plan.target).diagnosis.state, 'valid');
     assert.equal(await readFile(receipt.backup, 'utf8'), original);
   } finally {
-    assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir()));
+    assert.equal(path.dirname(path.resolve(root)), canonicalTemporaryRoot);
     assert.ok(path.basename(root).startsWith('kodax-bundled-repair-task-'));
     await rm(root, { recursive: true, force: true });
   }
 });
 test('published CLI maintenance keeps backups, excludes a real writer and requires explicit verification', { timeout: 30_000 }, async () => {
-  const home = await mkdtemp(path.join(os.tmpdir(), 'kodax-bundle-storage-repair-'));
+  const home = await mkdtemp(path.join(canonicalTemporaryRoot, 'kodax-bundle-storage-repair-'));
   let lease;
   try {
     const root = path.join(home, 'agents'), taskId = 'retained';
@@ -77,7 +80,7 @@ test('published CLI maintenance keeps backups, excludes a real writer and requir
     assert.equal(inspectStorageRepair(plan.target).diagnosis.state, 'valid');
   } finally {
     lease?.release();
-    assert.equal(path.dirname(path.resolve(home)), path.resolve(os.tmpdir()));
+    assert.equal(path.dirname(path.resolve(home)), canonicalTemporaryRoot);
     await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

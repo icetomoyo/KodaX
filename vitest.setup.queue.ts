@@ -16,7 +16,7 @@
  *
  * Registered via `setupFiles` in `vitest.config.ts`.
  */
-import { mkdtempSync, rmdirSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeEach } from 'vitest';
@@ -39,7 +39,11 @@ import { _resetMessageQueueForTests } from '@kodax-ai/agent/messaging/queue';
 // file a private fallback before application imports, rather than inheriting
 // the developer's config home. Explicit per-test overrides still take priority;
 // vi.unstubAllEnvs() restores this fallback. Do not preload the agent barrel.
-const defaultTestConfigHome = mkdtempSync(path.join(tmpdir(), 'kodax-vitest-home-'));
+// The base must be canonical: macOS temporary roots sit under the /var
+// symbolic link, which hardened agent-home alias fences reject.
+const defaultTestConfigHome = mkdtempSync(
+  path.join(realpathSync.native(tmpdir()), 'kodax-vitest-home-'),
+);
 process.env.KODAX_HOME = defaultTestConfigHome;
 afterAll(() => {
   try {
