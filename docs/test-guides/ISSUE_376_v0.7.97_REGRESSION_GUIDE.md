@@ -936,3 +936,26 @@ That run subsequently completed with 15 successful jobs, only the Memory job
 failed, and publishing skipped. Windows portable passed, including the corrected
 Temp Bash syntax and extension execution cases; no newer candidate was dispatched
 until these remaining results were available.
+
+Run [41334829705](https://github.com/icetomoyo/KodaX/actions/runs/41334829705)
+on `ada671e2d` then failed an earlier CLI smoke fixture before reaching Memory:
+the retention test created a Host with a 150 ms no-client exit interval and
+timed out attaching its first SDK client. Startup polls are nominally 100 ms;
+the interval leaves little room for scheduling or health probes. A local
+reproduction descheduled only the caller for 500 ms at its first connection;
+the 150 ms fixture lost its named pipe before attach. This reproduces a race,
+not proof that it was the only cause of the remote timeout.
+
+Both functional fixtures that first require an SDK client now use a five-second
+idle interval. The retention test keeps that 500 ms delay and waits 5.5 seconds
+after detaching before asserting the same Host is still healthy. The final-client
+exit test still requires state, PID and ownership release within ten seconds.
+Real no-client bootstrap exit at one second, A2A service keepalive at 150 ms,
+and production startup/idle policy remain unchanged. The exact six-case CI
+startup chain passed locally (71.01 seconds); all 15 management timer tests and
+test typechecking passed. Both review axes have no open findings. This costs
+about five extra seconds of functional fixture waiting, not a weaker exit
+assertion or a production performance fix. Actual Memory OS acceptance remains
+pending because the remote job stopped earlier.
+That run completed with the same 15 successful jobs, one early CLI fixture
+failure and publishing skipped; both Windows source tiers passed again.

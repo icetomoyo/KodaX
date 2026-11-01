@@ -46,6 +46,9 @@ import { runtimeClientPrincipal } from './runtime-daemon/client-lifecycle.js';
 
 const tempRoots: string[] = [];
 const DEFAULT_NODE_PROCESS_TIMEOUT_MS = 90_000;
+// Allow a real SDK client to attach under CI scheduling load. Tests below
+// still wait past this entire interval when checking retention or idle exit.
+const CONNECTED_HOST_IDLE_FIXTURE_MS = 5_000;
 
 afterEach(async () => {
   for (const dir of tempRoots.splice(0)) {
@@ -645,14 +648,24 @@ describe('daemon CLI smoke', () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-daemon-retain-'));
     tempRoots.push(homeDir);
     const profile = `retain-${process.pid}-${Date.now()}`;
-    const runtime = await ensureKodaXRuntime({ homeDir, profile, daemonOrphanExitMs: 150 });
+    let delayedAttach = false;
+    const runtime = await ensureKodaXRuntime({ homeDir, profile, daemonOrphanExitMs: CONNECTED_HOST_IDLE_FIXTURE_MS,
+      onStartupProgress: progress => {
+        if (progress.stage === 'connecting' && !delayedAttach) {
+          delayedAttach = true;
+          // Deschedule only this caller while the independent Host runs.
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+        }
+      },
+    });
+    expect(delayedAttach).toBe(true);
     try {
       const started = await runDaemonCommand(['start', '--home', homeDir, '--profile', profile, '--json']);
       expect(started).toMatchObject({ started: false, reason: 'already_running', state: { runtimeId: runtime.identity.runtimeId } });
     } finally { await runtime.close(); }
-    await expect(ensureKodaXRuntime({ homeDir, profile, daemonOrphanExitMs: 150 }))
+    await expect(ensureKodaXRuntime({ homeDir, profile, daemonOrphanExitMs: CONNECTED_HOST_IDLE_FIXTURE_MS }))
       .rejects.toThrow(/retained/);
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, CONNECTED_HOST_IDLE_FIXTURE_MS + 500));
     const status = await runDaemonCommand(['status', '--home', homeDir, '--profile', profile, '--json']);
     expect(status).toMatchObject({ health: 'healthy', state: { runtimeId: runtime.identity.runtimeId } });
   }, 90_000);
@@ -666,7 +679,7 @@ describe('daemon CLI smoke', () => {
       homeDir,
       profile,
       autoStartDaemon: true,
-      daemonOrphanExitMs: 150,
+      daemonOrphanExitMs: CONNECTED_HOST_IDLE_FIXTURE_MS,
       clientInfo: {
         name: 'kodax-space',
         instanceId: `space_${process.pid}`,
