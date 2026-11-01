@@ -665,6 +665,10 @@ a new product shutdown fix, or claim the underlying OS probe transient was trace
 
 ### Final local acceptance for the remaining seams
 
+Accepted local code commit: `eb7d1a3bcb1426c8971437077201dc97b0ee7c95`
+on `KodaX`. The following documentation-only handoff update does not change
+the accepted executable bytes. No push, release, design or Space code change.
+
 Code/test/config patch against `3cd3e5af`, excluding documentation:
 SHA-256 `28a182f1a648cdcc2fb15d1d0c735cddb0c670c27e70acc4f6b9423b068ba848`
 (404,431 bytes). No production changes followed the restored probe contract.

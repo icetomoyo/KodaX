@@ -412,7 +412,8 @@ Space 计数仍是该独立检查点的历史证据。本轮 Space 产品代码�
 
 ## Issue 376 最新接手说明（2026-11-01，未发布）
 
-Root 本轮继续在本地 `KodaX` 修复（起点 `3cd3e5af`），设计子仓仍为 `8574086`；
+Root 本轮修复已提交到本地 `KodaX`：`eb7d1a3bcb1426c8971437077201dc97b0ee7c95`
+（起点 `3cd3e5af`），设计子仓仍为 `8574086208d6b5cc6ff6599c825fe88d986c4dd0`；
 Space 仍保留独立 `da531f0a`，本轮未改 Space、未推送或发布。接手时先锁定包含本轮
 修复的 SDK 字节，再走真实产品包验收：旧 key/配置/env 来源固定与墓碑规则不变；
 OAuth 通过既有 broker 协商请求凭证 v1，刷新同一账号的被拒代次，不重放失败 POST，
@@ -432,3 +433,10 @@ Root 离线 E2E 不代替真实 OAuth/云账号、Claude 签名缓存或 Space �
 能力目录显示也须保留账号边界：不将某个 scope 的拒绝全局套给其他账号。主动 probe
 继续对候选发出有界真实请求；普通生成才沿用 scoped 拒绝缓存。UI 展示请求/实际 effort
 并保留用户默认值，不能为修复显示而扩大授权、发额外探测或偷偷换来源。
+
+Root 最终安装包 E2E 98/98、Ink/Classic/流式历史 PTY 53/53、历史所有者切换 3/3、
+真实 alpha.11 活跃 Host 升级 1/1 及 Windows 独立二进制通过。源码全量扫描的两处
+失败和完整文件复测均保留记录，当前去重汇总为 19,188 通过、87 条件跳过、0 TODO，
+不是一次全绿的冻结全套运行。交接时保留这个证据区别，并在 Space 锁定实际 SDK
+字节后重跑产品侧账号来源、刷新/撤销、恢复、动态工具与原生历史链路。详见
+[本轮最终验收](test-guides/ISSUE_376_v0.7.97_REGRESSION_GUIDE.md#final-local-acceptance-for-the-remaining-seams)。
