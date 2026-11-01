@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -42,7 +42,7 @@ let first: Awaited<ReturnType<typeof connectKodaXClient>>;
 let second: Awaited<ReturnType<typeof connectKodaXClient>>;
 
 beforeEach(async () => {
-  homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-permissions-'));
+  homeDir = await mkdtemp(path.join(await realpath(os.tmpdir()), 'kodax-product-permissions-'));
   requests = [];
   scriptedToolCall = () => [];
   registerModelProvider('product-permissions-test', () => new PermissionsProvider(() => scriptedToolCall()));

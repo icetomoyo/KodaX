@@ -10,7 +10,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { link, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp as makeTemporaryDirectory, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -1327,6 +1327,12 @@ import {
   withWindowsSandboxChildEnvironment,
 } from './sandbox-runtime.js';
 
+// Native policy records use physical paths. Alias-specific cases below explicitly
+// derive real short spellings after creating their ordinary fixture directories.
+async function createTestDirectory(prefix: string): Promise<string> {
+  return realpathSync.native(await makeTemporaryDirectory(prefix));
+}
+
 const tempRoots: string[] = [];
 let nativeArtifactLocalAppData = '';
 let cutoverDirectory = '';
@@ -1337,7 +1343,7 @@ beforeAll(async () => {
   // Mock SID artifacts and destructive cache-recovery tests must not touch
   // the native cache used by live sandbox sessions. Provisioning requires
   // an ordinary host token; this suite cannot provision inside a sandbox.
-  nativeArtifactLocalAppData = await mkdtemp(path.join(os.tmpdir(), 'kodax-test-native-artifacts-'));
+  nativeArtifactLocalAppData = await createTestDirectory(path.join(os.tmpdir(), 'kodax-test-native-artifacts-'));
   const shortRoot = spawnSync('cmd.exe', ['/d', '/c', `for %I in ("${nativeArtifactLocalAppData}") do @echo %~sI`],
     { encoding: 'utf8', windowsVerbatimArguments: true, windowsHide: true });
   if (shortRoot.status !== 0) throw new Error('Cannot prepare the short-name native cache fixture.');
@@ -1425,7 +1431,7 @@ beforeEach(async () => {
   recoveryLockMock.effectCalls = 0;
   recoveryLockMock.effectFailureStartCall = undefined;
   recoveryLockMock.beforeOperation = undefined;
-  const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-asrt-runner-'));
+  const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-asrt-runner-'));
   tempRoots.push(root);
   const source = path.resolve(
     'node_modules', '@anthropic-ai', 'sandbox-runtime',
@@ -1605,7 +1611,7 @@ afterEach(async () => {
 });
 
 async function createRegistry(script = 'hello.mjs'): Promise<SkillRegistry> {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-asrt-test-'));
+  const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-asrt-test-'));
   tempRoots.push(root);
   const skillRoot = path.join(root, 'skills', 'demo');
   await mkdir(path.join(skillRoot, 'scripts'), { recursive: true });
@@ -1637,7 +1643,7 @@ async function markSandboxRuntimeUnavailable(): Promise<void> {
 
 describe.skipIf(process.platform === 'win32')('portable ASRT shell adapter', () => {
   it('prepares independent per-command brokers without a workspace-session owner', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-portable-shell-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-portable-shell-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({
       workspaceRoot: root,
@@ -1678,7 +1684,7 @@ describe.skipIf(process.platform === 'win32')('portable ASRT shell adapter', () 
   });
 
   it('leaves a non-admitted call on the normal permission path', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-portable-shell-denied-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-portable-shell-denied-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({
       workspaceRoot: root,
@@ -1697,7 +1703,7 @@ describe.skipIf(process.platform === 'win32')('portable ASRT shell adapter', () 
     const protectedRoot = trustedTextNativeArtifactStateRoots().at(-1);
     if (protectedRoot === undefined) throw new Error('expected a protected native text root');
     await mkdir(protectedRoot, { recursive: true, mode: 0o700 });
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-portable-protected-read-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-portable-protected-read-'));
     tempRoots.push(root);
     const alias = path.join(root, 'alias');
     await symlink(protectedRoot, alias, 'dir');
@@ -1796,7 +1802,7 @@ describe('Windows git safe.directory argv takeover', () => {
   it.runIf(process.platform === 'win32')(
     'derives bounded trust roots from the cwd, write roots, and repo-bearing read roots',
     async () => {
-      const base = await mkdtemp(path.join(os.tmpdir(), 'kodax-git-trust-'));
+      const base = await createTestDirectory(path.join(os.tmpdir(), 'kodax-git-trust-'));
       tempRoots.push(base);
       const repo = path.join(base, 'repo');
       const plain = path.join(base, 'plain');
@@ -1942,7 +1948,7 @@ describe('Windows git safe.directory argv takeover', () => {
   it.runIf(process.platform === 'win32')(
     'grants a linked worktree read access to the main .git and denies gitfile edits',
     async () => {
-      const base = await mkdtemp(path.join(os.tmpdir(), 'kodax-git-worktree-'));
+      const base = await createTestDirectory(path.join(os.tmpdir(), 'kodax-git-worktree-'));
       tempRoots.push(base);
       await mkdir(path.join(base, 'profile'));
       vi.stubEnv('USERPROFILE', path.join(base, 'profile'));
@@ -2047,7 +2053,7 @@ describe('Windows git safe.directory argv takeover', () => {
   it.runIf(process.platform === 'win32')(
     'bounds linked-worktree relationship metadata before granting main .git access',
     async () => {
-      const base = await mkdtemp(path.join(os.tmpdir(), 'kodax-git-metadata-bound-'));
+      const base = await createTestDirectory(path.join(os.tmpdir(), 'kodax-git-metadata-bound-'));
       tempRoots.push(base);
       await mkdir(path.join(base, 'profile'));
       vi.stubEnv('USERPROFILE', path.join(base, 'profile'));
@@ -2077,7 +2083,7 @@ describe('Windows git safe.directory argv takeover', () => {
   it.runIf(process.platform === 'win32')(
     'binds nested submodule metadata through its core.worktree backlink',
     async () => {
-      const base = await mkdtemp(path.join(os.tmpdir(), 'kodax-nested-submodule-'));
+      const base = await createTestDirectory(path.join(os.tmpdir(), 'kodax-nested-submodule-'));
       tempRoots.push(base);
       await mkdir(path.join(base, 'profile'));
       vi.stubEnv('USERPROFILE', path.join(base, 'profile'));
@@ -2119,7 +2125,7 @@ describe('Windows git safe.directory argv takeover', () => {
   });
 
   it('executes the broker helpers after the production minify settings', async () => {
-    const base = await mkdtemp(path.join(os.tmpdir(), 'kodax-git-broker-minify-'));
+    const base = await createTestDirectory(path.join(os.tmpdir(), 'kodax-git-broker-minify-'));
     tempRoots.push(base);
     const cwd = path.join(base, 'cwd');
     const repo = path.join(base, 'review-repo');
@@ -2167,7 +2173,7 @@ describe('ASRT setup guidance', () => {
 describe.runIf(process.platform === 'win32')('Windows boot identity resolution', () => {
   it('uses PowerShell 7 for the boot identity probe when it is installed', async () => {
     await resetSandboxRuntimeForTest();
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-pwsh-boot-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-pwsh-boot-'));
     tempRoots.push(root);
     const pwsh = path.join(root, 'PowerShell', '7', 'pwsh.exe');
     await mkdir(path.dirname(pwsh), { recursive: true });
@@ -2244,7 +2250,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       ]),
     });
 
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-cutover-admission-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-cutover-admission-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({
       workspaceRoot: root,
@@ -2302,7 +2308,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     });
     expect(existsSync(controller.path)).toBe(false);
 
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-controller-self-heal-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-controller-self-heal-'));
     tempRoots.push(root);
     await expect(runKodaXSandboxed({
       command: process.execPath,
@@ -2353,7 +2359,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     await rm(runner.path, { force: true });
     await rm(controller.path, { force: true });
     await resetSandboxRuntimeForTest();
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-doctor-execution-race-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-doctor-execution-race-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
 
@@ -2383,7 +2389,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     });
     await rm(controller.path, { force: true });
     await resetSandboxRuntimeForTest();
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-controller-doctor-race-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-controller-doctor-race-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
 
@@ -2407,7 +2413,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
 
   it('prepares a cold shell adapter and shares one network broker across concurrent commands', async () => {
     await resetSandboxRuntimeForTest();
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-cold-adapter-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-cold-adapter-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({
       workspaceRoot: root,
@@ -2477,7 +2483,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   it('does not remove obsolete persistent read guards on cold shell admission', async () => {
     await resetSandboxRuntimeForTest();
     windowsSandboxMock.guardReady = false;
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-cold-guards-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-cold-guards-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({
       workspaceRoot: root,
@@ -2504,7 +2510,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   it('does not install obsolete read guards before the public SDK doctor gate', async () => {
     await resetSandboxRuntimeForTest();
     windowsSandboxMock.guardReady = false;
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-sdk-cold-guards-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-sdk-cold-guards-'));
     tempRoots.push(root);
     const legacyTicketDirectory = path.join(
       path.resolve(process.env.ProgramData!),
@@ -2528,7 +2534,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   });
 
   it('fails closed on unsupported Windows denyRead before doctor or target launch', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-deny-read-unsupported-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-deny-read-unsupported-'));
     tempRoots.push(root);
     const syncSpawnCount = capturedSyncSpawns.length;
     const targetSpawnCount = capturedSpawnArgv.length;
@@ -2554,7 +2560,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     await resetSandboxRuntimeForTest();
     windowsSandboxMock.guardReady = false;
     windowsSandboxMock.wfpOutcome = 'access_denied';
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-sdk-blocked-guards-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-sdk-blocked-guards-'));
     tempRoots.push(root);
 
     await expect(runKodaXSandboxed({
@@ -2575,7 +2581,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
 
   it('canonicalizes Windows runtime read scopes before native ACL validation', async () => {
     await resetSandboxRuntimeForTest();
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-runtime-scope-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-runtime-scope-'));
     tempRoots.push(root);
     const target = path.join(root, 'runtime-target');
     const linked = path.join(root, 'runtime-link');
@@ -2622,7 +2628,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
 
   it('allows reads but denies writes for workspace-local Runtime state', async () => {
     await resetSandboxRuntimeForTest();
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-runtime-state-deny-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-runtime-state-deny-'));
     tempRoots.push(root);
     const runtimeState = path.join(root, '.kodax', 'runtime');
     await mkdir(runtimeState, { recursive: true });
@@ -2657,21 +2663,28 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     await invocation.cleanup();
   });
 
-  it('keeps scoped and concrete legacy Memory readable while masking writes under a broad workspace grant', async () => {
+  it.each(['broad', 'scoped', 'legacy'])('keeps Memory readable while masking writes under a %s workspace grant', async (grant) => {
     await resetSandboxRuntimeForTest();
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-memory-write-mask-'));
-    tempRoots.push(root);
+    const longRoot = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-memory-write-mask-'));
+    tempRoots.push(longRoot);
+    const alias = spawnSync('cmd.exe', ['/d', '/c', `for %I in ("${longRoot}") do @echo %~sI`],
+      { encoding: 'utf8', windowsHide: true, windowsVerbatimArguments: true });
+    expect(alias.status).toBe(0);
+    const root = alias.stdout.trim();
+    expect(realpathSync.native(root)).toBe(realpathSync.native(longRoot));
     const home = path.join(root, '.kodax');
     const scoped = path.join(home, 'memory-scopes');
     const legacy = path.join(home, 'projects', 'fixture-project', 'memory');
     await mkdir(scoped, { recursive: true }); await mkdir(legacy, { recursive: true });
+    const workspace = grant === 'broad' ? root : path.join(grant === 'scoped' ? scoped : legacy, 'child');
+    await mkdir(workspace, { recursive: true });
     vi.stubEnv('KODAX_HOME', home);
-    const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
+    const sandbox = createAsrtShellSandbox({ workspaceRoot: workspace, shouldSandbox: () => true });
     const invocation = await sandbox.prepare({ toolCallId: 'memory-write-mask', toolInput: { command: 'node --version' },
-      command: 'node --version', executable: process.execPath, args: ['--version'], cwd: root, env: process.env, fallbackToNormalExecution: false });
+      command: 'node --version', executable: process.execPath, args: ['--version'], cwd: workspace, env: process.env, fallbackToNormalExecution: false });
     if (!invocation) throw new Error('expected Windows v2 invocation');
     const request = JSON.parse(readFileSync(invocation.args.at(-1)!, 'utf8')) as { denyRead: string[]; denyWrite: string[] };
-    for (const directory of [scoped, legacy]) {
+    for (const directory of grant === 'broad' ? [scoped, legacy] : [grant === 'scoped' ? scoped : legacy]) {
       const canonical = (await realpath(directory)).toLowerCase();
       expect(request.denyWrite.map(value => value.toLowerCase())).toContain(canonical);
       expect(request.denyRead.map(value => value.toLowerCase())).not.toContain(canonical);
@@ -2682,7 +2695,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
 
   it('allows broad home reads and isolates host temporary writes per command', async () => {
     await resetSandboxRuntimeForTest();
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-broad-host-access-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-broad-host-access-'));
     tempRoots.push(root);
     const home = path.join(root, 'host-home');
     const agentHome = path.resolve(process.env.KODAX_HOME!);
@@ -2724,7 +2737,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     expect(normalize(request.allowWrite)).not.toContain(path.resolve(os.tmpdir()).toLowerCase());
     expect(normalize(request.allowWrite)).toContain(path.resolve(root).toLowerCase());
     const privateTemp = request.allowWrite.find((entry) => (
-      isPathInside(path.join(os.tmpdir(), 'kodax-sandbox'), entry)
+      isPathInside(path.join(realpathSync.native(os.tmpdir()), 'kodax-sandbox'), entry)
     ));
     expect(privateTemp).toBeDefined();
     expect(statSync(privateTemp!).isDirectory()).toBe(true);
@@ -2739,7 +2752,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
 
   it('keeps setup-owned profile roots fixed to the published setup generation', async () => {
     await resetSandboxRuntimeForTest();
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-setup-root-snapshot-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-setup-root-snapshot-'));
     tempRoots.push(root);
     const home = path.join(root, 'host-home');
     const installedAtSetup = path.join(home, 'installed-at-setup');
@@ -2793,7 +2806,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
 
   it('keeps a proven sandbox outcome when private Temp deletion is blocked', async () => {
     await resetSandboxRuntimeForTest();
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-temp-cleanup-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-temp-cleanup-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
     const invocation = await sandbox.prepare({
@@ -2813,7 +2826,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       readonly allowWrite: readonly string[];
     };
     const privateTemp = request.allowWrite.find((entry) => (
-      isPathInside(path.join(os.tmpdir(), 'kodax-sandbox'), entry)
+      isPathInside(path.join(realpathSync.native(os.tmpdir()), 'kodax-sandbox'), entry)
     ));
     expect(privateTemp).toBeDefined();
     fileSystemMock.rmFailurePath = privateTemp;
@@ -2832,7 +2845,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
 
   it('removes a private command Temp when policy construction fails', async () => {
     await resetSandboxRuntimeForTest();
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-temp-policy-failure-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-temp-policy-failure-'));
     tempRoots.push(root);
     const invalidAgentHome = path.join(root, 'agent-home-file');
     await writeFile(invalidAgentHome, 'not a directory', 'utf8');
@@ -2865,7 +2878,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
 
   it('does not widen an Agent Home under system Temp into the private command Temp policy', async () => {
     await resetSandboxRuntimeForTest();
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-agent-home-materialize-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-agent-home-materialize-'));
     tempRoots.push(root);
     const agentHome = path.join(root, '.kodax');
     const workspace = path.join(root, 'workspace');
@@ -2897,7 +2910,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
         || isPathInside(entry, agentHome)
     ))).toBe(false);
     expect(request.allowWrite.some((entry) => (
-      isPathInside(path.join(os.tmpdir(), 'kodax-sandbox'), entry)
+      isPathInside(path.join(realpathSync.native(os.tmpdir()), 'kodax-sandbox'), entry)
     ))).toBe(true);
     await invocation.cleanup();
   });
@@ -2914,7 +2927,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   });
   it('protects an explicitly snapshotted workspace Exec Policy from sandbox writes', async () => {
     await resetSandboxRuntimeForTest();
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-exec-policy-deny-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-exec-policy-deny-'));
     tempRoots.push(root);
     const execPolicy = path.join(root, '.kodax', 'exec-policy.jsonc');
     await mkdir(path.dirname(execPolicy), { recursive: true });
@@ -3002,7 +3015,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       }),
       'utf8',
     );
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-legacy-acl-reconcile-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-legacy-acl-reconcile-'));
     tempRoots.push(root);
     const home = path.join(root, 'host-home');
     const agentHome = path.join(home, '.kodax');
@@ -3041,7 +3054,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   });
 
   it('keeps the native operation deadline independent from static preparation', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-startup-deadline-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-startup-deadline-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
     const preparedAt = Date.now();
@@ -3068,7 +3081,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   });
 
   it('reports pre-start unavailability when termination proves target Resume never occurred', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-pre-start-observation-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-pre-start-observation-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
     const deadlineAt = Date.now() + 180_000;
@@ -3112,7 +3125,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   }, 10_000);
 
   it('partitions shared network brokers by exact network authority', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-network-partition-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-network-partition-'));
     tempRoots.push(root);
     const base = {
       command: process.execPath,
@@ -3136,7 +3149,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   });
 
   it('re-references an idle shared network broker for its next command lease', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-network-ref-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-network-ref-'));
     tempRoots.push(root);
     const request = {
       command: process.execPath,
@@ -3163,7 +3176,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   it.runIf(process.platform === 'win32')(
     'keeps trusted PowerShell artifact verification out of warm SDK command admission',
     async () => {
-      const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-artifact-revalidation-'));
+      const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-artifact-revalidation-'));
       tempRoots.push(root);
       const request = {
         command: process.execPath,
@@ -3185,7 +3198,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   );
 
   it('does not let one short caller deadline poison a shared broker startup', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-network-deadline-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-network-deadline-'));
     tempRoots.push(root);
     windowsNetworkBrokerMock.readinessDelayMs = 1_500;
     const base = {
@@ -3207,7 +3220,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   });
 
   it('replaces a shared broker after terminal proof fails without interrupting active leases', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-terminal-isolation-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-terminal-isolation-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
     const prepare = (toolCallId: string) => sandbox.prepare({
@@ -3230,7 +3243,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       readonly terminalRecordPath: string;
     };
     const failedPrivateTemp = failedRequest.allowWrite.find((entry) => (
-      isPathInside(path.join(os.tmpdir(), 'kodax-sandbox'), entry)
+      isPathInside(path.join(realpathSync.native(os.tmpdir()), 'kodax-sandbox'), entry)
     ));
     if (failedPrivateTemp === undefined) throw new Error('expected a private command Temp');
     tempRoots.push(failedPrivateTemp);
@@ -3256,7 +3269,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   it.runIf(process.platform === 'win32')(
     'extends pre-start termination when a durable Resume record appears',
     async () => {
-      const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-resume-termination-'));
+      const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-resume-termination-'));
       tempRoots.push(root);
       stubbornBroker.mode = 'silent';
       const running = runKodaXSandboxed({
@@ -3321,7 +3334,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   );
 
   it('retires an unreferenced broker after trusted terminal proof reports controller loss', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-terminal-retire-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-terminal-retire-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
     const prepare = (toolCallId: string) => sandbox.prepare({
@@ -3367,7 +3380,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   });
 
   it('replaces a failed shared broker without waiting for an unrelated active lease', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-broker-rolling-replace-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-broker-rolling-replace-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
     const prepare = (toolCallId: string) => sandbox.prepare({
@@ -3474,7 +3487,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
 
   it('does not count detached brokers against a process-local admission limit', async () => {
     const roots = await Promise.all(Array.from({ length: 5 }, async (_, index) => {
-      const root = await mkdtemp(path.join(os.tmpdir(), `kodax-v2-detached-capacity-${index}-`));
+      const root = await createTestDirectory(path.join(os.tmpdir(), `kodax-v2-detached-capacity-${index}-`));
       tempRoots.push(root);
       return root;
     }));
@@ -3584,7 +3597,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   }, 20_000);
 
   it('does not replace a healthy broker after caller-local start attestation abort', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-attestation-abort-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-attestation-abort-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
     const prepare = (toolCallId: string) => sandbox.prepare({
@@ -3629,7 +3642,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   });
 
   it('replaces a broker when the native host closes before Resume under its own startup budget', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-native-start-close-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-native-start-close-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
     const prepare = (toolCallId: string) => sandbox.prepare({
@@ -3675,7 +3688,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   });
 
   it('does not retire a healthy broker when target stderr imitates an internal disconnect', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-started-controller-loss-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-started-controller-loss-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
     const prepare = (toolCallId: string) => sandbox.prepare({
@@ -3749,7 +3762,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   });
 
   it('keeps a healthy broker after a native-host bootstrap-delivery timeout', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-bootstrap-timeout-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-bootstrap-timeout-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
     const prepare = (toolCallId: string) => sandbox.prepare({
@@ -3799,7 +3812,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
 
   it('does not let an unconfirmed retired broker impose a process-local admission limit', async () => {
     const roots = await Promise.all(Array.from({ length: 5 }, async (_, index) => {
-      const root = await mkdtemp(path.join(os.tmpdir(), `kodax-v2-unknown-stop-${index}-`));
+      const root = await createTestDirectory(path.join(os.tmpdir(), `kodax-v2-unknown-stop-${index}-`));
       tempRoots.push(root);
       return root;
     }));
@@ -3899,7 +3912,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   }, 20_000);
 
   it('retires an idle shared broker after its bounded reuse grace', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-network-idle-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-network-idle-'));
     tempRoots.push(root);
     const request = {
       command: process.execPath,
@@ -3918,7 +3931,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   });
 
   it('does not evict an unrelated idle broker to admit a sixth network authority', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-network-lru-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-network-lru-'));
     tempRoots.push(root);
     for (let index = 0; index < 6; index += 1) {
       const result = await runKodaXSandboxed({
@@ -3936,7 +3949,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   });
 
   it('does not impose a process-local capacity gate on a sixth active broker lease', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-network-active-capacity-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-network-active-capacity-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
     const held: Array<NonNullable<Awaited<ReturnType<typeof sandbox.prepare>>>> = [];
@@ -3986,7 +3999,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   });
 
   it('revalidates the setup generation before an SDK native host spawn and cleans up', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-sdk-generation-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-sdk-generation-'));
     tempRoots.push(root);
     const controlFilesBefore = (await readdir(windowsSandboxControlDirectory())).sort();
     const hostSpawnsBefore = capturedSpawnArgv.filter((argv) => argv[1] === '__host').length;
@@ -4019,7 +4032,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   });
 
   it('releases an SDK native request when host spawn throws synchronously', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-sdk-spawn-failure-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-sdk-spawn-failure-'));
     tempRoots.push(root);
     const commandControlFiles = async (): Promise<readonly string[]> => (
       (await readdir(windowsSandboxControlDirectory()))
@@ -4043,7 +4056,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   });
 
   it('retires a silent network broker so the next command can create a healthy broker', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-network-silent-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-network-silent-'));
     tempRoots.push(root);
     windowsNetworkBrokerMock.silentReadiness = true;
 
@@ -4071,7 +4084,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   }, 25_000);
 
   it('does not consume live broker capacity after spawn errors without exit events', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-network-spawn-error-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-network-spawn-error-'));
     tempRoots.push(root);
     windowsNetworkBrokerMock.spawnErrorBeforeReady = true;
 
@@ -4089,7 +4102,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   });
 
   it('partitions shared network brokers after a same-account setup generation change', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-account-partition-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-account-partition-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({
       workspaceRoot: root,
@@ -4179,7 +4192,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   });
 
   it('rejects per-command denyRead before creating a native ACL transaction', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-persistent-deny-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-persistent-deny-'));
     tempRoots.push(root);
     const customDeny = path.join(root, 'policy-secret');
     await mkdir(customDeny);
@@ -4202,7 +4215,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   });
 
   it('rejects startup and doctor readiness when setup read capabilities are missing despite a healthy account and NUL', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-missing-read-capability-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-missing-read-capability-'));
     tempRoots.push(root);
     const marker = JSON.parse(await readFile(cutoverMarkerFile(), 'utf8')) as Record<string, unknown>;
     await writeFile(cutoverMarkerFile(), JSON.stringify({ ...marker, setupReadRoots: [root] }));
@@ -4598,7 +4611,7 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     const removalsAfterSetup = capturedSyncSpawns.filter(({ args }) => (
       args[0] === '__persistent-deny-read' && args[1] === 'remove'
     )).length;
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-post-setup-admission-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-post-setup-admission-'));
     tempRoots.push(root);
     const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
     const invocation = await sandbox.prepare({
@@ -5175,7 +5188,7 @@ describe.skipIf(process.platform === 'win32')('POSIX ASRT Skill-script adapter',
   });
 
   it('runs the standalone broker entry with the same pinned request shape', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-asrt-broker-test-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-asrt-broker-test-'));
     tempRoots.push(root);
     const requestFile = path.join(root, 'request.json');
     const observationFile = path.join(root, 'observation.json');
@@ -5220,7 +5233,7 @@ describe.skipIf(process.platform === 'win32')('POSIX ASRT Skill-script adapter',
   });
 
   it('reports pre-start unavailability without directly replaying on the host', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-asrt-broker-fallback-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-asrt-broker-fallback-'));
     tempRoots.push(root);
     const requestFile = path.join(root, 'request.json');
     const observationFile = path.join(root, 'observation.json');
@@ -5256,7 +5269,7 @@ describe.skipIf(process.platform === 'win32')('POSIX ASRT Skill-script adapter',
   it(
     'does not replay when a spawned wrapper exits without target attestation',
     async () => {
-      const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-asrt-attestation-fallback-'));
+      const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-asrt-attestation-fallback-'));
       tempRoots.push(root);
       const requestFile = path.join(root, 'request.json');
       const observationFile = path.join(root, 'observation.json');
@@ -5287,7 +5300,7 @@ describe.skipIf(process.platform === 'win32')('POSIX ASRT Skill-script adapter',
   );
 
   it('reports wrapper pre-start failure without directly replaying on the host', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-asrt-wrapper-spawn-fallback-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-asrt-wrapper-spawn-fallback-'));
     tempRoots.push(root);
     const requestFile = path.join(root, 'request.json');
     const observationFile = path.join(root, 'observation.json');
@@ -5320,7 +5333,7 @@ describe.skipIf(process.platform === 'win32')('POSIX ASRT Skill-script adapter',
   });
 
   it('drains target attestation before deciding whether fallback is safe', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-asrt-attestation-race-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-asrt-attestation-race-'));
     tempRoots.push(root);
     const requestFile = path.join(root, 'request.json');
     const observationFile = path.join(root, 'observation.json');
@@ -5352,7 +5365,7 @@ describe.skipIf(process.platform === 'win32')('POSIX ASRT Skill-script adapter',
   });
 
   it('does not re-inject host secrets into a POSIX broker child environment', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-asrt-broker-env-test-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-asrt-broker-env-test-'));
     tempRoots.push(root);
     const requestFile = path.join(root, 'request.json');
     const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -5458,7 +5471,7 @@ describe.skipIf(process.platform === 'win32')('POSIX ASRT Skill-script adapter',
     const [protectedRoot] = trustedTextNativeArtifactStateRoots();
     if (protectedRoot === undefined) throw new Error('expected a protected native text root');
     await mkdir(protectedRoot, { recursive: true, mode: 0o700 });
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-protected-state-alias-'));
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-protected-state-alias-'));
     tempRoots.push(root);
     const alias = path.join(root, 'alias');
     await symlink(protectedRoot, alias, 'dir');

@@ -91,6 +91,7 @@ import {
 } from './windows-sandbox-v2.js';
 import {
   assertWindowsAsrtRunnerTrustOutsideWriteRoots,
+  canonicalExistingPath,
   assertWindowsSandboxControlStateNotDirectlyAccessible,
   assertTrustedTextNativeStateNotDirectlyReadable,
   assertTrustedTextNativeStateNotDirectlyWritable,
@@ -4427,7 +4428,8 @@ function workspaceShellSandboxConfig(
   ),
   trustedProjectExecPolicyPath?: string,
 ): SandboxRuntimeConfig {
-  const agentHome = path.resolve(getAgentConfigHome());
+  const agentHome = process.platform === 'win32'
+    ? canonicalExistingPath(getAgentConfigHome()) : path.resolve(getAgentConfigHome());
   const controlDirectory = path.join(agentHome, 'sandbox-runtime');
   const home = path.resolve(
     process.platform === 'win32' ? process.env.USERPROFILE ?? os.homedir() : os.homedir(),
@@ -4519,17 +4521,18 @@ function workspaceShellSandboxConfig(
 function boundedWindowsWorkspaceDenies(
   config: SandboxRuntimeConfig,
 ): SandboxRuntimeConfig {
-  const writeRoots = config.filesystem.allowWrite;
+  const writeRoots = config.filesystem.allowWrite.map(canonicalExistingPath);
   return {
     ...config,
     filesystem: {
       ...config.filesystem,
+      allowWrite: writeRoots,
       // Existing sensitive roots are guarded once for the dedicated sandbox
       // SID. No glob expansion or child enumeration occurs; explicit denies
       // remain authoritative over any overlapping grant.
       denyRead: config.filesystem.denyRead,
-      denyWrite: config.filesystem.denyWrite.filter((denied) => (
-        writeRoots.some((granted) => isInside(granted, denied))
+      denyWrite: config.filesystem.denyWrite.map(canonicalExistingPath).filter((denied) => (
+        writeRoots.some((granted) => isInside(granted, denied) || isInside(denied, granted))
       )),
     },
   };

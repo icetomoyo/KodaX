@@ -304,7 +304,7 @@ describe("createKodaXRuntime", () => {
   });
 
   beforeEach(async () => {
-    tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "kodax-runtime-"));
+    tempRoot = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), "kodax-runtime-"));
     codingMock.runManagedTask.mockReset();
     codingMock.startKodaX.mockReset();
     codingMock.beforeGoalBinding = null;
@@ -16798,7 +16798,7 @@ describe("createKodaXRuntime", () => {
     }
   });
 
-  it("keeps broad reads sandbox-first outside Auto mode and preserves caller fallback", async () => {
+  it.each(["prepared", "not-selected", "blocked"] as const)("keeps broad reads sandbox-first outside Auto mode (%s)", async (backendState) => {
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const projectRoot = path.join(tempRoot, "accept-edits-project");
     await fs.mkdir(projectRoot, { recursive: true });
@@ -16813,27 +16813,50 @@ describe("createKodaXRuntime", () => {
       permissionMode: "accept-edits",
       executionCwd: projectRoot,
     });
-    const callerPrepare = vi.fn<KodaXShellSandbox["prepare"]>();
+    const callerPrepare = vi.fn<KodaXShellSandbox["prepare"]>(async (request) => {
+      request.reportObservation?.({ version: 1, state: "fallback", reason: "not_ready", execution: "normal_permission_policy" });
+      return undefined;
+    });
     let runOptions: KodaXOptions | undefined;
     codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
       runOptions = options;
       return fakeRunningSession(options, new Promise<KodaXResult>(() => undefined));
     });
-    const handle = await runtime.runs.start({
-      sessionId: session.id,
-      prompt: "wait",
-      permissionBroker: "client",
-      options: {
-        context: {
-          executionCwd: projectRoot,
-          gitRoot: projectRoot,
-          shellSandbox: { prepare: callerPrepare },
-        },
-      },
+    // This SDK contract is independent of machine setup. Real Native execution
+    // and missing-cutover rejection have their own Windows OS/backend gates.
+    const backendFailure = new Error("fixture: selected sandbox unavailable");
+    const prepared = { executable: process.execPath, args: ["--version"], env: process.env, cleanup: vi.fn(async () => undefined) };
+    const backendPrepare = vi.fn<KodaXShellSandbox["prepare"]>(async (request) => {
+      if (backendState === "blocked") throw backendFailure;
+      if (backendState === "prepared") return prepared;
+      request.reportObservation?.({ version: 1, state: "not_selected" });
+      return undefined;
     });
-    if (!runOptions) throw new Error("expected Runtime run options");
+    const sandboxModule = await import("./sandbox-runtime.js");
+    const factory = vi.spyOn(sandboxModule, "createAsrtShellSandbox").mockReturnValue({
+      prepare: backendPrepare,
+      processTreeContainment: process.platform === "linux" ? "root-exit-drains" : undefined,
+    });
+    let runId: string | undefined;
     let invocation: Awaited<ReturnType<KodaXShellSandbox["prepare"]>>;
     try {
+      const handle = await runtime.runs.start({
+        sessionId: session.id,
+        prompt: "wait",
+        permissionBroker: "client",
+        options: {
+          context: {
+            executionCwd: projectRoot,
+            gitRoot: projectRoot,
+            shellSandbox: { prepare: callerPrepare },
+          },
+        },
+      });
+      runId = handle.runId;
+      if (!runOptions) throw new Error("expected Runtime run options");
+      const selection = factory.mock.calls.find(([input]) => input.workspaceRoot === projectRoot)?.[0];
+      expect(selection).toBeDefined();
+      await expect(selection?.shouldSandbox({ id: "bash_accept_edits", name: "bash", input: { command: "git status --short" } })).resolves.toBe(true);
       const { getAgentConfigHome } = await import("@kodax-ai/agent");
       const protectedRead = runOptions.events?.beforeToolExecute?.(
         "bash",
@@ -16845,7 +16868,7 @@ describe("createKodaXRuntime", () => {
         .resolves.toEqual([]);
 
       const observations: KodaXShellSandboxObservation[] = [];
-      invocation = await runOptions.context?.shellSandbox?.prepare({
+      const preparation = runOptions.context?.shellSandbox?.prepare({
         toolCallId: "bash_accept_edits",
         toolInput: { command: "git status --short" },
         command: "git status --short",
@@ -16854,23 +16877,30 @@ describe("createKodaXRuntime", () => {
         reportObservation: (observation) => observations.push(observation),
       });
 
-      if (invocation === undefined) {
+      if (backendState === "blocked") {
+        await expect(preparation).rejects.toBe(backendFailure);
+        expect(callerPrepare).not.toHaveBeenCalled();
+      } else if (backendState === "not-selected") {
+        await expect(preparation).resolves.toBeUndefined();
         expect(callerPrepare).toHaveBeenCalledTimes(1);
         expect(observations.at(-1)).toMatchObject({
           state: "fallback",
           execution: "normal_permission_policy",
         });
       } else {
+        invocation = await preparation;
+        expect(invocation).toBe(prepared);
         expect(callerPrepare).not.toHaveBeenCalled();
-        expect(observations.at(-1)?.state).not.toBe("not_selected");
       }
+      expect(backendPrepare).toHaveBeenCalledTimes(1);
       expect(runOptions.context?.shellSandbox?.processTreeContainment).toBe(
         process.platform === "linux" ? "root-exit-drains" : undefined,
       );
       expect(runOptions.context).not.toHaveProperty('textFileMutationSandbox');
     } finally {
+      factory.mockRestore();
       await invocation?.cleanup();
-      await runtime.runs.abort(handle.runId);
+      if (runId !== undefined) await runtime.runs.abort(runId);
       await runtime.close();
     }
   });

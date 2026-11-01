@@ -249,7 +249,9 @@ it('binds Main-owned credentials and tools to Product inputs, queued Runs and ex
       // Bounded cleanup can return unknown under load; recover using the same idempotent request.
       if (receipt?.cleanup.state === 'unknown') await client.lifecycle.requestExit({ requestId: 'cancel-compaction' });
       return (await client.lifecycle.readExit('cancel-compaction'))?.cleanup.state;
-    }).toBe('succeeded');
+      // Cleanup can spend two bounded one-second settlement phases before an
+      // idempotent recovery; the default one-second poll cannot cover them.
+    }, { timeout: 10_000 }).toBe('succeeded');
     const quit = await client.lifecycle.readExit('cancel-compaction');
     expect(quit!.cleanup.operationIds).toHaveLength(1);
     expect((await client.sessions.readHistory(session.id)).sourceRevision).toBe(beforeCompact.sourceRevision);

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -44,7 +44,7 @@ let second: Awaited<ReturnType<typeof connectKodaXClient>>;
 let reconnect: Awaited<ReturnType<typeof connectKodaXClient>> | undefined;
 
 beforeEach(async () => {
-  homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-interactions-'));
+  homeDir = await mkdtemp(path.join(await realpath(os.tmpdir()), 'kodax-product-interactions-'));
   requests = [];
   exposedTools = [];
   scriptedToolCall = () => [];

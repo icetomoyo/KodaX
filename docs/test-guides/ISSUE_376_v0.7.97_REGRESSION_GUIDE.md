@@ -776,8 +776,58 @@ moving the failed alpha.12 tag.
   failure, without changing assertions, deadlines, replay or fallback policy.
   Do not attribute the failure to broker-program extraction without evidence.
 
-Candidate verification is pending remote manual dispatch of Release on the
-fixed Main SHA. That event runs CI, five platform builds and universal package
-gates but skips publishing. The repair task must not move a tag, create a
-Release or publish npm. Final run/SHA and results will be appended after they
-are observed; no all-green claim is made at this checkpoint.
+### Second candidate checkpoint (2026-11-02)
+
+Manual Release run [41322473294](https://github.com/icetomoyo/KodaX/actions/runs/41322473294)
+tested Main `ac18c1026`: nine jobs passed, six failed and two were skipped.
+Both macOS builds passed, and Windows real v2 passed all 30 cases, including
+background concurrency. This single passing run does not establish the original
+intermittent code 2 root cause. The subsequently reached real Memory OS gate
+failed; its Host fallback remains forbidden and now includes preparation
+observations. Neither publishing nor the universal package gate ran.
+
+Follow-up repairs retain all OS isolation assertions and the 32-request offline
+release budget:
+
+- Canonicalize Windows grant/deny identities before bounding write masks, and
+  canonicalize Agent Home before finding concrete legacy Memory roots. Actual
+  short-name preparation reproduced missing masks. Scoped and legacy Memory
+  deny ancestors also must survive grants to their children; those two cases
+  independently failed then passed. No blanket deny of all legacy projects is
+  added, and Memory stays readable.
+- Ordinary SDK/backend test fixtures use physical paths, including private Temp
+  assertions. Explicit real 8.3 cases remain, with physical-identity checks.
+  SDK sandbox selection is tested independently of machine setup in three
+  exact outcomes: prepared, not selected (caller compatibility), and failed
+  selected backend (propagate failure, never invoke caller). Actual Native
+  admission and missing-cutover rejection remain in backend/OS gates.
+- REPL redirect evidence now reuses the existing coding boundary policy. Both
+  directions of temp long/short spelling are tested together against one
+  physical root; the reverse direction failed before this repair. No separate
+  path cache or alias parser is introduced.
+- Downloaded failing Windows release evidence showed the extra request was an
+  owned Memory review. Missing-worker preflight now checks that no **primary**
+  generation starts, while all primary and auxiliary requests still count
+  toward the same total budget. The actual Windows archive gate passed locally
+  after this test correction (11 primary, 7 auxiliary, 0 external calls).
+- Node 22's cancelled-compaction cleanup test used Vitest's default one-second
+  poll while production settlement has bounded asynchronous phases. Only that
+  test observation window is explicitly ten seconds; production budgets and
+  required idle/run outcomes are unchanged.
+
+Local boundaries remain explicit: the interactive PTY fixture entered normal
+automatic sandbox preparation, then exceeded its 45-second startup allowance
+before any model request. The machine's cutover marker was left at `installing`;
+it has not been forged, reset or marked current by hand. A separate forced-temp
+probe also failed in PowerShell artifact `File.Move` with DirectoryNotFound;
+its longer path is a suspect, not an isolated cause or acceptance evidence. Use the ordinary physical
+temp root and its verified existing 8.3 alias for the repeatable CI comparison.
+Do not claim a successful local interactive PTY or real Memory OS test from
+these attempts, and do not rotate the shared sandbox account to green a unit
+suite.
+
+The next exact Main SHA still requires a fresh full manual Release run: CI,
+five platform builds and the universal package gate, with publishing skipped.
+The repair task must not move the failed alpha.12 tag, create a Release or
+publish npm. The final tested SHA/run and observed result belong in the release
+handoff; this checkpoint makes no all-green claim.

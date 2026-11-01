@@ -12,7 +12,7 @@ it.runIf(process.platform === 'win32' && process.env.KODAX_REAL_WINDOWS_MEMORY =
   'enforces governed Memory writes through the real Windows OS sandbox', async () => {
     const doctor = await doctorSandboxRuntime({ refresh: true });
     expect(doctor.ready, doctor.diagnostics.join('\n')).toBe(true);
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-memory-os-'));
+    const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'kodax-memory-os-'));
     const home = path.join(root, '.kodax');
     const scoped = path.join(home, 'memory-scopes', 'a'.repeat(64), 'project', 'b'.repeat(64), 'retain.md');
     const legacy = path.join(home, 'projects', 'fixture', 'memory', 'retain.md');
@@ -32,11 +32,13 @@ for (const file of paths) {
 }
 fs.writeFileSync(${JSON.stringify(path.join(root, 'normal.txt'))}, 'allowed');
 process.stdout.write('MEMORY_OS_BOUNDARY_VERIFIED');`);
+      const observations: string[] = [];
       const result = await toolBash({ command: `"${process.execPath}" "${program}"`, timeout: 30 }, {
         backups: new Map(), executionCwd: root, configHome: home, toolCallId: 'memory-os-boundary',
         resolveShellPermissionMode: () => 'auto',
         shellSandbox: createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true }),
-        authorizeShellHostExecution: async () => { throw new Error('OS regression must never fall back to Host execution.'); },
+        reportToolSandboxObservation: observation => { observations.push(JSON.stringify(observation)); },
+        authorizeShellHostExecution: async () => { throw new Error(`OS regression must never fall back to Host execution. ${observations.join('\n')}`); },
       });
       expect(result).toContain('MEMORY_OS_BOUNDARY_VERIFIED');
       for (const file of [scoped, legacy]) expect(await fs.readFile(file, 'utf8')).toBe('retained-memory');

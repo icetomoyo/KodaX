@@ -20,8 +20,8 @@
  *   - file_modification / protected_path for write/edit tools — produced
  *     by the coding-side `fileSignalCollector` (`input.path` is enough).
  *
- * Purity: deterministic given (command, projectRoot, stable env). Path
- * extraction is regex/AST-based, no I/O.
+ * Path extraction is regex/AST-based. Boundary checks share the coding policy's
+ * physical identities, including long and short Windows temporary paths.
  */
 
 import path from 'node:path';
@@ -156,7 +156,8 @@ export const replBashPathSignalCollector: SignalCollector = {
       const insideProject = isPathInsideDirectory(resolved, resolvedRoot);
       if (insideProject) continue;
       const insideTemp = tempDirs.some((d) => isPathInsideDirectory(resolved, d));
-      if (insideTemp) continue;
+      // Use the same fresh physical boundary as argv paths for either 8.3 spelling.
+      if (insideTemp || !isAlwaysConfirmPath(resolved, projectRoot)) continue;
       // Outside project + outside temp = redirect-to-elsewhere.
       signals.push({ kind: 'shell_redirect_outside', target });
     }

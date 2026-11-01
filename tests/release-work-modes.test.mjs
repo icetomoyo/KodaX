@@ -42,6 +42,7 @@ test('release archive preserves work modes, partial effects, cancellation and re
   const workspace = path.join(root, 'workspace');
   const binary = path.join(packageDir, process.platform === 'win32' ? 'kodax.exe' : 'kodax');
   const requests = [];
+  const primaryRequests = [];
   const failures = [];
   const cases = [];
   let nativeShellContract;
@@ -85,6 +86,7 @@ test('release archive preserves work modes, partial effects, cancellation and re
         // Record auxiliary requests separately. This fixture does not evaluate memory generation.
         finish(response, { content: '{}' }); return;
       }
+      primaryRequests.push(parsed);
       assert.ok(active, 'Unexpected root generation');
       const step = active.requests.length;
       active.requests.push(parsed);
@@ -235,10 +237,12 @@ test('release archive preserves work modes, partial effects, cancellation and re
       const worker = path.join(packageDir, 'script-worker.cjs');
       await rename(worker, `${worker}.missing`);
       try {
-        const requestCount = requests.length;
+        // Completed Runs can still have owned Memory review requests in flight.
+        // Missing-worker preflight must not start a new primary generation.
+        const requestCount = primaryRequests.length;
         await assert.rejects(client.sessions.updateSettings(sessionId, { workMode: 'script' }), /Script executor unavailable/);
         assert.equal((await client.sessions.getSettings(sessionId)).workMode ?? 'coding', 'coding');
-        assert.equal(requests.length, requestCount);
+        assert.equal(primaryRequests.length, requestCount);
       } finally { await rename(`${worker}.missing`, worker); }
       assert.deepEqual(failures, []);
       completedAssertions = true;
@@ -268,7 +272,8 @@ test('release archive preserves work modes, partial effects, cancellation and re
       await writeFile(path.join(evidence, 'requests.json'), JSON.stringify(requests, null, 2));
       await writeFile(path.join(evidence, 'report.json'), JSON.stringify({ platform: process.platform, arch: process.arch,
         archiveSha256: createHash('sha256').update(await readFile(archive)).digest('hex'), cases, failures,
-        primaryRequests: cases.reduce((sum, item) => sum + item.primaryRequests, 0), capturedRequests: requests.length,
+        primaryRequests: primaryRequests.length, auxiliaryRequests: requests.length - primaryRequests.length,
+        capturedRequests: requests.length,
         externalModelCalls: 0, completedAssertions }, null, 2));
       process.stderr.write(`Offline release evidence: ${evidence}\n`);
       if ((!completedAssertions || failures.length > 0) && existsSync(path.join(configHome, 'runtime'))) {

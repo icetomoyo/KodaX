@@ -440,7 +440,8 @@ function assertTrustedTextNativeStateNotDirectlyAccessible(
   }
 }
 
-function canonicalExistingPath(value: string): string {
+/** Internal Root filesystem policy identity; not re-exported by public SDK entries. */
+export function canonicalExistingPath(value: string): string {
   let existingAncestor = path.resolve(value);
   const missingSuffix: string[] = [];
   for (;;) {
