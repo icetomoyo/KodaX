@@ -14,6 +14,7 @@ import { toolUndo } from './undo.js';
 import { toolWrite } from './write.js';
 
 const roots: string[] = [];
+const canonicalTemporaryRoot = fs.realpathSync.native(os.tmpdir());
 
 afterEach(() => {
   setAgentConfigHome(undefined);
@@ -28,7 +29,7 @@ function context(backups: Map<string, string>): KodaXToolExecutionContext {
 
 describe('toolUndo Agent Home hard boundary', () => {
   it('keeps a trusted backup and refuses to overwrite a later shell change', async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-undo-trusted-cas-'));
+    const root = fs.mkdtempSync(path.join(canonicalTemporaryRoot, 'kodax-undo-trusted-cas-'));
     roots.push(root);
     const target = path.join(root, 'target.txt');
     const canonicalTarget = path.join(root, 'canonical-target.txt');
@@ -109,7 +110,7 @@ describe('toolUndo Agent Home hard boundary', () => {
   });
 
   it('rebinds an uncertain undo receipt to the committed revision before retry', async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-undo-uncertain-'));
+    const root = fs.mkdtempSync(path.join(canonicalTemporaryRoot, 'kodax-undo-uncertain-'));
     roots.push(root);
     const target = path.join(root, 'target.txt');
     const canonicalTarget = path.join(root, 'canonical-target.txt');
@@ -174,7 +175,7 @@ describe('toolUndo Agent Home hard boundary', () => {
   });
 
   it('restores the most recently modified file after an A, B, A sequence', async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-undo-order-'));
+    const root = fs.mkdtempSync(path.join(canonicalTemporaryRoot, 'kodax-undo-order-'));
     roots.push(root);
     const a = path.join(root, 'a.txt');
     const b = path.join(root, 'b.txt');
@@ -192,7 +193,7 @@ describe('toolUndo Agent Home hard boundary', () => {
   });
 
   it('restores an ordinary Session file from the current execution context', async () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-undo-open-'));
+    const home = fs.mkdtempSync(path.join(canonicalTemporaryRoot, 'kodax-undo-open-'));
     roots.push(home);
     setAgentConfigHome(home);
     const target = path.join(home, 'sessions', 'turn.json');
@@ -206,7 +207,7 @@ describe('toolUndo Agent Home hard boundary', () => {
   });
 
   it('restores an explicitly approved sensitive Agent Home file', async () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-undo-sensitive-'));
+    const home = fs.mkdtempSync(path.join(canonicalTemporaryRoot, 'kodax-undo-sensitive-'));
     roots.push(home);
     setAgentConfigHome(home);
     const target = path.join(home, 'config.json');
@@ -218,7 +219,7 @@ describe('toolUndo Agent Home hard boundary', () => {
   });
 
   it('restores a Runtime target after the outer permission policy approved it', async () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-undo-runtime-'));
+    const home = fs.mkdtempSync(path.join(canonicalTemporaryRoot, 'kodax-undo-runtime-'));
     roots.push(home);
     setAgentConfigHome(home);
     const target = path.join(home, 'runtime', 'state.json');
@@ -232,7 +233,7 @@ describe('toolUndo Agent Home hard boundary', () => {
   });
 
   it('canonicalizes a Session-path junction before restoring its target', async () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-undo-junction-'));
+    const home = fs.mkdtempSync(path.join(canonicalTemporaryRoot, 'kodax-undo-junction-'));
     roots.push(home);
     setAgentConfigHome(home);
     const runtime = path.join(home, 'runtime');
@@ -249,7 +250,7 @@ describe('toolUndo Agent Home hard boundary', () => {
   });
 
   it('refuses restore after the backed-up path is retargeted outside its original identity', async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-undo-identity-'));
+    const root = fs.mkdtempSync(path.join(canonicalTemporaryRoot, 'kodax-undo-identity-'));
     roots.push(root);
     const originalDir = path.join(root, 'workspace', 'target');
     const originalPath = path.join(originalDir, 'file.txt');

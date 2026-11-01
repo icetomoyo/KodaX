@@ -20,6 +20,21 @@ import {
   windowsSandboxControlDirectory,
 } from './windows-native-artifacts.js';
 
+it.skipIf(process.platform !== 'win32')('resolves a short-name cache anchor without accepting a junction anchor', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-native-short-root-'));
+  try {
+    const short = spawnSync('cmd.exe', ['/d', '/c', `for %I in ("${root}") do @echo %~sI`],
+      { encoding: 'utf8', windowsHide: true, windowsVerbatimArguments: true });
+    expect(short.status).toBe(0);
+    vi.stubEnv('LOCALAPPDATA', short.stdout.trim());
+    expect(windowsNativeArtifactCacheRoot()).toBe(path.join(fs.realpathSync.native(root), 'KodaXNativeArtifactsV3'));
+    const alias = path.join(root, 'alias');
+    fs.symlinkSync(root, alias, 'junction');
+    vi.stubEnv('LOCALAPPDATA', alias);
+    expect(() => windowsNativeArtifactCacheRoot()).toThrow(/alias|reparse/i);
+  } finally { vi.unstubAllEnvs(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 it('retains the exact audited native provisioning programs after externalizing their data', () => {
   const scripts = JSON.parse(fs.readFileSync(new URL('./windows-native-scripts.json', import.meta.url), 'utf8')) as Record<string, string>;
   const expected = {

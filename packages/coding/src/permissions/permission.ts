@@ -17,6 +17,7 @@ import os from 'os';
 
 import {
   getAgentConfigHome,
+  emitKodaXDiagnostic,
   isPathInsideDirectory,
   resolveExecutionPath,
 } from '@kodax-ai/agent';
@@ -1033,10 +1034,19 @@ export function generateSavePattern(
  */
 export function isAlwaysConfirmPath(targetPath: string, projectRoot: string): boolean {
   try {
-    const normalizedPath = path.resolve(targetPath);
-    const normalizedRoot = path.resolve(projectRoot);
+    const lexicalPath = path.resolve(targetPath);
+    const lexicalRoot = path.resolve(projectRoot);
+    // Keep the lexical guard even when .kodax itself is a directory alias.
+    if (isPathInsideDirectory(lexicalPath, path.join(lexicalRoot, '.kodax'))) return true;
+    // Resolve fresh identities: a prior policy query must not authorize a
+    // retargeted junction, and Windows short names must match the temp root.
+    const normalizedPath = canonicalizeAgentHomePolicyPath(lexicalPath);
+    const normalizedRoot = canonicalizeAgentHomePolicyPath(lexicalRoot);
+    const projectKodaxDir = canonicalizeAgentHomePolicyPath(path.join(lexicalRoot, '.kodax'));
+    if (normalizedPath === undefined || normalizedRoot === undefined || projectKodaxDir === undefined) {
+      throw new Error('Protected-path identity could not be resolved.');
+    }
     const userKodaxDir = path.resolve(getAgentConfigHome());
-    const projectKodaxDir = path.join(normalizedRoot, '.kodax');
 
     // .kodax/ project config directory — always protected
     if (isPathInsideDirectory(normalizedPath, projectKodaxDir)) {
@@ -1072,9 +1082,10 @@ export function isAlwaysConfirmPath(targetPath: string, projectRoot: string): bo
 
     // Outside project AND outside system temp — require confirmation
     return true;
-  } catch {
-    // Path parsing errors should degrade to "not protected" instead of crashing permission checks.
-    return false;
+  } catch (error: unknown) {
+    emitKodaXDiagnostic({ source: 'permission:protected-path', level: 'warn',
+      message: 'Cannot resolve protected-path policy; confirmation is required.', detail: error });
+    return true;
   }
 }
 

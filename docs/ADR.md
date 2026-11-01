@@ -1,6 +1,6 @@
 # KodaX Architecture Decision Records
 
-## FEATURE_302 implementation alignment — 2026-11-01 (released in v0.7.97-alpha.12)
+## FEATURE_302 implementation alignment — 2026-11-01 (v0.7.97-alpha.12 candidate)
 
 The accepted provider parity design is indexed in
 [FEATURE_302](features/v0.7.99.md#feature_302-independent-llm-provider-parity),

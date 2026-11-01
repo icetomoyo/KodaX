@@ -1338,6 +1338,12 @@ beforeAll(async () => {
   // the native cache used by live sandbox sessions. Provisioning requires
   // an ordinary host token; this suite cannot provision inside a sandbox.
   nativeArtifactLocalAppData = await mkdtemp(path.join(os.tmpdir(), 'kodax-test-native-artifacts-'));
+  const shortRoot = spawnSync('cmd.exe', ['/d', '/c', `for %I in ("${nativeArtifactLocalAppData}") do @echo %~sI`],
+    { encoding: 'utf8', windowsVerbatimArguments: true, windowsHide: true });
+  if (shortRoot.status !== 0) throw new Error('Cannot prepare the short-name native cache fixture.');
+  const alias = shortRoot.stdout.trim();
+  expect(realpathSync.native(alias).toLowerCase()).toBe(realpathSync.native(nativeArtifactLocalAppData).toLowerCase());
+  nativeArtifactLocalAppData = alias;
   vi.stubEnv('LOCALAPPDATA', nativeArtifactLocalAppData);
   const runnerSource = path.resolve(
     'node_modules', '@anthropic-ai', 'sandbox-runtime',

@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve lexical and physical protected paths across Windows short names;
+  keep missing SSH identities excluded and native cache anchors free of reparse
+  aliases. Replace credential staging DACLs without retaining explicit broad
+  grants. Preserve Undo's native identity and CAS fences while correcting
+  canonical test fixtures and retaining failed sandbox bootstrap diagnostics.
+
 ---
 
 ## [0.7.97-alpha.12] - 2026-11-01
@@ -139,6 +147,9 @@ retained. npm publication remains a manual maintainer action.
   work modes, original tool results, token estimates, task reports, question
   deadlines, Skill policy and sandbox readiness. Exact query IDs/aliases now
   take precedence over keyword ranking, preserving custom SDK manual topics.
+- Keep trusted-text, POSIX sandbox and storage-repair test fixtures on
+  canonical temporary roots so macOS runner paths under the `/var` symbolic
+  link satisfy the hardened agent-home and filesystem-alias fences.
 
 ---
 

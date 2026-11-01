@@ -10,8 +10,10 @@ Target machines do **not** need Node.js or any runtime installed.
 
 ## v0.7.97-alpha.12 release preparation
 
-Release state: `v0.7.97-alpha.12` is the GitHub pre-release for the exact
-tagged commit — the twelfth alpha of the v0.7.97 line, converging public
+Release state: `v0.7.97-alpha.12` is a candidate awaiting multi-platform CI.
+The initial tag still identifies `220df4e9d`; run `41314703124` failed and
+created no GitHub Release. npm publication has not occurred. The candidate
+is the twelfth alpha of the v0.7.97 line, converging public
 product execution on the independent shared Host (embedded/default Runtime
 construction, inline owner switching and function-based in-process
 external-agent Hosts are retired behind an explicit daemon launcher, with
@@ -73,6 +75,32 @@ Local Windows verification on the tagged candidate: typecheck, the
 self-knowledge/manual-budget suites and the fast suite passed on
 2026-11-01; this does not substitute for the final tag's five-platform
 Actions results or manual acceptance.
+
+The first alpha.12 tag run (`41314703124`, candidate `220df4e9d`) failed the
+two darwin trusted-text jobs and the darwin-arm64 build. This cycle's audit
+hardening rejects agent homes and repair targets reachable through
+symbolic-link ancestors, and macOS runner temporary roots live under the
+`/var` symlink (`/private/var`), so every trusted-text integration test and
+two bundled storage-repair tests failed on darwin only. Real macOS user
+homes under `/Users` are unaffected; the failures came from test fixtures
+built directly on `os.tmpdir()` — the default vitest config home, the
+trusted-text integration roots, the POSIX sandbox policy fixtures and the
+bundled storage-repair tests. Those fixtures now canonicalize their base
+with `realpath`, matching the production constraint; Linux and Windows
+runners are unaffected. Final acceptance still requires all five platform
+gates on the re-tagged commit.
+
+The follow-up fixes preserve lexical and physical protected-path checks,
+canonicalize missing SSH-key ancestors and short-name native cache anchors
+without accepting reparse anchors, and replace credential staging DACLs
+without transient broad grants. Undo's canonical identity/CAS and native
+short-name rejection remain intact; its fake canonical fixtures use real
+canonical roots. The native background concurrency gate retains its original
+assertions and deadlines, with bounded CI-only bootstrap-log diagnostics.
+Candidate validation must use manual dispatch on the exact commit before
+the release owner moves a tag. Neither tag movement nor publication is part
+of the repair task; final results are recorded in the
+[Issue 376 regression guide](test-guides/ISSUE_376_v0.7.97_REGRESSION_GUIDE.md).
 
 ## v0.7.97-alpha.11 release preparation
 

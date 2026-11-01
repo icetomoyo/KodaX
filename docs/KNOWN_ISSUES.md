@@ -30,7 +30,7 @@ resolution evidence is retained. Issues 345–347 are unchanged.
 ## Issue 376: Windows gate and recovery/credential/permission audit follow-up
 
 - Priority: High
-- Status: Confirmed local code gaps repaired; offline acceptance complete with documented full-scan failures and whole-file replays; native/live boundaries and separate GC capability remain; released in `v0.7.97-alpha.12`; still-open findings tracked in [REVIEW_v0.7.97_FIX_LIST.md](REVIEW_v0.7.97_FIX_LIST.md)
+- Status: Confirmed local code gaps repaired; offline acceptance complete with documented full-scan failures and whole-file replays; alpha.12 candidate awaits remote acceptance after its first failed tag run; native/live boundaries and separate GC capability remain; still-open findings tracked in [REVIEW_v0.7.97_FIX_LIST.md](REVIEW_v0.7.97_FIX_LIST.md)
 - Created: 2026-11-01
 
 The accepted first batch and its failure boundaries are recorded in the

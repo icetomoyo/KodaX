@@ -41,7 +41,7 @@ async function createIntegrationTestRoot(): Promise<string> {
   await fs.mkdir(base, { recursive: true });
   // Canonicalize for macOS runner roots under the /var symbolic link, which
   // the hardened trusted-text agent-home fences reject.
-  return fs.mkdtemp(path.join(await fs.realpath(base), 'kodax-windows-text-host-'));
+  return fs.mkdtemp(path.join(fsSync.realpathSync.native(base), 'kodax-windows-text-host-'));
 }
 
 async function writeFromExternalProcess(target: string, content: string): Promise<void> {
@@ -64,6 +64,25 @@ describe('Windows trusted text transaction integration', () => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
     await fs.rm(root, { recursive: true, force: true });
+  });
+
+  windowsIt('rejects short-name input while canonical input writes and undoes through the actual Host', async () => {
+    const short = (await execFile('cmd.exe', ['/d', '/c', `for %I in ("${root}") do @echo %~sI`],
+      { windowsVerbatimArguments: true, windowsHide: true })).stdout.trim();
+    expect(fsSync.realpathSync.native(short)).toBe(fsSync.realpathSync.native(root));
+    const target = path.join(short, 'short-path.md');
+    await fs.writeFile(target, 'before');
+    const ctx: KodaXToolExecutionContext = {
+      backups: new Map(), executionCwd: root, gitRoot: root,
+      trustedTextMutationHost: createWindowsTrustedTextMutationHost(() => [root], authorizeOrdinaryCanonicalTarget),
+    };
+    if (short.toLowerCase() !== fsSync.realpathSync.native(root).toLowerCase()) {
+      await expect(toolWrite({ path: target, content: 'after' }, ctx)).rejects.toMatchObject({ code: 'text_mutation_unsafe_path' });
+    }
+    const canonicalTarget = path.join(fsSync.realpathSync.native(root), 'short-path.md');
+    expect(await toolWrite({ path: canonicalTarget, content: 'after' }, ctx)).toContain('File updated');
+    expect(await toolUndo({}, ctx)).toContain('Restored');
+    expect(await fs.readFile(target, 'utf8')).toBe('before');
   });
 
   portableIt.each([

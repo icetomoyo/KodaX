@@ -729,3 +729,55 @@ This closes the confirmed local code seams in this batch. It does not close
 real provider/cloud-account acceptance, native Windows Memory setup, historical
 unattributed first-read observations, or reference-safe global tool-output GC.
 Those boundaries remain visible in `KNOWN_ISSUES.md` and the Space handoff.
+
+## Alpha.12 first remote CI follow-up
+
+The first tag run [41314703124](https://github.com/icetomoyo/KodaX/actions/runs/41314703124)
+tested `220df4e9d` and failed. Windows portable reported 14 failures, system
+reported 65; the real v2 background-concurrency case failed in both Windows
+release gates. macOS fixture aliases and a Node 20 Linux null stdout also
+failed. These are first remote acceptance results, not contradicted by the
+earlier explicitly local acceptance. A newly exercised gate exposing a defect
+does not establish when that defect was introduced.
+
+GLM's `e9ad81b32` canonical temporary fixtures and `fef65651a` null stdout
+handling are retained. The handoff contained four uncommitted files; those
+were captured before takeover and completed without resetting the branch or
+moving the failed alpha.12 tag.
+
+- Protected-path regression: retain lexical `.kodax` protection and freshly
+  resolved physical protection; failed resolution diagnoses and requires
+  confirmation. The junction and access-denied cases failed before the fix.
+  The original 8.3 fixture also had cmd argument quoting wrong; corrected
+  `spawnSync` transport verifies a real existing short-name identity first.
+- SSH read-root regression: absent private keys still resolve their existing
+  directory prefix, so a short home does not grant its `.keys` directory.
+  The explicit short-home/nonexistent-key regression failed then passed.
+- Native cache identity: normalize the existing anchor before constructing
+  missing descendants, but reject Windows reparse ancestors first. The real
+  short-name cache regression failed then passed; the sandbox unit file now
+  exercises its own isolated cache through an actual short-name spelling.
+- Credential staging: an explicit Administrators ACE survived incremental
+  icacls updates and propagated to new staging files. An isolated fixture
+  reproduced it. One exact, protected DACL replacement keeps current-user and
+  SYSTEM entries only, without temporarily resetting to a broad parent ACL.
+  Existing credential bytes survive reinitialization. The 13 file-store tests
+  passed locally. PowerShell initialization/write cost is real; ordinary key
+  reads do not invoke this path, and no model/retry/account selection changes.
+- Undo: keep native short-name rejection, canonical backup identity and CAS
+  unchanged. Mock snapshots claiming canonical paths now use canonical fixture
+  roots. A new actual Host case rejects short-name input and successfully
+  writes/undoes the corresponding canonical input. The first proposed success
+  expectation for raw short input was withdrawn after it exposed the existing
+  native path contract; it was not a product fix.
+- V2: local isolated execution was blocked by the recorded setup-owned read
+  capability prerequisite. It does not reproduce or explain CI's code 2.
+  The CI-only fixture now retains bounded new background-bootstrap logs on
+  failure, without changing assertions, deadlines, replay or fallback policy.
+  Do not attribute the failure to broker-program extraction without evidence.
+
+Candidate verification is pending remote manual dispatch of Release on the
+fixed Main SHA. That event runs CI, five platform builds and universal package
+gates but skips publishing. The repair task must not move a tag, create a
+Release or publish npm. Final run/SHA and results will be appended after they
+are observed; no all-green claim is made at this checkpoint.

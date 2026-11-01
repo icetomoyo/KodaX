@@ -329,7 +329,17 @@ export function verifyProtectedWindowsNativeArtifactImage(
 export function windowsNativeArtifactCacheRoot(): string {
   const localAppData = process.env.LOCALAPPDATA
     ?? path.join(os.homedir(), 'AppData', 'Local');
-  return path.join(path.resolve(localAppData), 'KodaXNativeArtifactsV3');
+  const anchor = path.resolve(localAppData);
+  // Expanding short names must not erase the provisioner's reparse guard.
+  for (let current = anchor; process.platform === 'win32'; current = path.dirname(current)) {
+    try {
+      if (fs.lstatSync(current).isSymbolicLink()) throw new Error('Native cache anchor contains a filesystem alias.');
+    } catch (error: unknown) {
+      if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+    }
+    if (path.dirname(current) === current) break;
+  }
+  return path.join(canonicalExistingPath(anchor), 'KodaXNativeArtifactsV3');
 }
 
 export function windowsSandboxControlDirectory(): string {

@@ -1797,6 +1797,9 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       workspaceRoot: holderRoot,
       shouldSandbox: () => true,
     });
+    // In CI this process owns the temporary directory. Preserve the failed
+    // background bootstrap output, which can precede the attestation listener.
+    const capturesBefore = process.env.CI === 'true' ? new Set(await readdir(os.tmpdir())) : undefined;
     const holderResult = await toolBash({
       command: `"${process.execPath}" "${holderScript}" "${holderReady}" "${holderStop}"`,
       run_in_background: true,
@@ -1808,7 +1811,14 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
       toolCallId: 'real-background-holder',
       shellSandbox: holderSandbox,
     });
-    expect(holderResult).toContain('Command started in background');
+    let bootstrapEvidence = '';
+    if (capturesBefore !== undefined && !holderResult.includes('Command started in background')) {
+      const captures = (await readdir(os.tmpdir()))
+        .filter(name => /^kodax-bg-[0-9]+-[a-z0-9]+\.log$/.test(name) && !capturesBefore.has(name)).slice(0,4);
+      bootstrapEvidence = (await Promise.all(captures.map(async name =>
+        `${name}: ${(await readFile(path.join(os.tmpdir(), name), 'utf8')).slice(-8192)}`))).join('\n');
+    }
+    expect(holderResult, bootstrapEvidence).toContain('Command started in background');
     const holderOutput = /Output:\s*(.+)/.exec(holderResult)?.[1]?.trim();
     if (holderOutput === undefined) throw new Error(`Missing background output path: ${holderResult}`);
 
