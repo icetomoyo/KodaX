@@ -2184,6 +2184,18 @@ export function configureKodaXRootCommand(program: Command): Command {
       .action(() => {})
   );
   configureKodaXExecPolicyCommand(configured);
+  // Topic help is a root option, consumed before subcommand dispatch.
+  // Stop before any nested action or argument validation can run.
+  configured.hook('preSubcommand', (root, command) => {
+    if (root.opts().help === undefined) return;
+    let target = command;
+    for (const name of root.args.slice(1)) {
+      const child = target.commands.find(candidate => candidate.name() === name || candidate.aliases().includes(name));
+      if (!child) break;
+      target = child;
+    }
+    target.help();
+  });
   return configured;
 }
 
@@ -2824,6 +2836,240 @@ async function executeProviderSetup(
   printProviderSetupCompletion(result.selection, result.credentialSource);
 }
 
+export function configureKodaXDaemonCommand(program: Command): Command {
+  const daemonCommand = program
+    .command('daemon')
+    .description('Inspect and manage the local KodaX runtime daemon')
+    .helpOption('-h, --help', 'Show daemon help');
+
+  daemonCommand
+    .command('start')
+    .description('Start the runtime daemon in a detached background process')
+    .option('--profile <name>', 'Daemon profile', 'default')
+    .option(
+      '--home <dir>',
+      HELP_DAEMON_HOME,
+    )
+    .option('-m, --provider <name>', 'Default provider for hosted runs')
+    .option('--model <name>', 'Default model for hosted runs')
+    .option(
+      '--timeout-ms <n>',
+      'Milliseconds to wait for daemon health',
+      parseOptionalNonNegativeInt,
+      5_000,
+    )
+    .option('--json', 'Output machine-readable JSON')
+    .action(
+      async (
+        localOptions: {
+          profile?: string;
+          home?: string;
+          provider?: string;
+          model?: string;
+          timeoutMs?: number;
+          json?: boolean;
+        },
+        command: Command,
+      ) => {
+        const options = mergeCommandOptionsWithGlobals(localOptions, command);
+        await startDaemonCommand({
+          profile: options.profile ?? 'default',
+          ...resolveCliRuntimeDaemonLocation(options.home),
+          provider: options.provider,
+          model: options.model,
+          timeoutMs: options.timeoutMs ?? 5_000,
+          json: options.json === true,
+        });
+      },
+    );
+
+  daemonCommand
+    .command('stop')
+    .description('Stop a healthy runtime daemon')
+    .option('--profile <name>', 'Daemon profile', 'default')
+    .option(
+      '--home <dir>',
+      HELP_DAEMON_HOME,
+    )
+    .option(
+      '--timeout-ms <n>',
+      'Milliseconds to wait for daemon shutdown',
+      parseOptionalNonNegativeInt,
+      5_000,
+    )
+    .option(
+      '--force',
+      'Clean verified stale daemon ownership without killing unverified live processes',
+    )
+    .option('--json', 'Output machine-readable JSON')
+    .action(
+      async (subOpts: {
+        profile?: string;
+        home?: string;
+        timeoutMs?: number;
+        force?: boolean;
+        json?: boolean;
+      }) => {
+        await stopDaemonCommand({
+          profile: subOpts.profile ?? 'default',
+          ...resolveCliRuntimeDaemonLocation(subOpts.home),
+          timeoutMs: subOpts.timeoutMs ?? 5_000,
+          force: subOpts.force === true,
+          json: subOpts.json === true,
+        });
+      },
+    );
+
+  daemonCommand
+    .command('restart')
+    .description('Restart the runtime daemon')
+    .option('--profile <name>', 'Daemon profile', 'default')
+    .option(
+      '--home <dir>',
+      HELP_DAEMON_HOME,
+    )
+    .option('-m, --provider <name>', 'Default provider for hosted runs')
+    .option('--model <name>', 'Default model for hosted runs')
+    .option(
+      '--timeout-ms <n>',
+      'Milliseconds to wait for daemon shutdown/startup',
+      parseOptionalNonNegativeInt,
+      5_000,
+    )
+    .option('--json', 'Output machine-readable JSON')
+    .action(
+      async (
+        localOptions: {
+          profile?: string;
+          home?: string;
+          provider?: string;
+          model?: string;
+          timeoutMs?: number;
+          json?: boolean;
+        },
+        command: Command,
+      ) => {
+        const options = mergeCommandOptionsWithGlobals(localOptions, command);
+        await restartDaemonCommand({
+          profile: options.profile ?? 'default',
+          ...resolveCliRuntimeDaemonLocation(options.home),
+          provider: options.provider,
+          model: options.model,
+          timeoutMs: options.timeoutMs ?? 5_000,
+          json: options.json === true,
+        });
+      },
+    );
+
+  daemonCommand
+    .command('logs')
+    .description('Print the daemon log path and recent lines')
+    .option('--profile <name>', 'Daemon profile', 'default')
+    .option(
+      '--home <dir>',
+      HELP_DAEMON_HOME,
+    )
+    .option(
+      '--lines <n>',
+      'Number of log lines to print',
+      parseOptionalNonNegativeInt,
+      80,
+    )
+    .option('--json', 'Output machine-readable JSON')
+    .action(
+      async (subOpts: {
+        profile?: string;
+        home?: string;
+        lines?: number;
+        json?: boolean;
+      }) => {
+        await printDaemonLogs({
+          profile: subOpts.profile ?? 'default',
+          ...resolveCliRuntimeDaemonLocation(subOpts.home),
+          lines: subOpts.lines ?? 80,
+          json: subOpts.json === true,
+        });
+      },
+    );
+
+  daemonCommand
+    .command('serve')
+    .description('Run the runtime daemon host in the foreground')
+    .option('--profile <name>', 'Daemon profile', 'default')
+    .option(
+      '--home <dir>',
+      HELP_DAEMON_HOME,
+    )
+    .addOption(new Option('--config-home <dir>').hideHelp())
+    .option('-m, --provider <name>', 'Default provider for hosted runs')
+    .option('--model <name>', 'Default model for hosted runs')
+    .option('--sessions-dir <dir>', 'Runtime session storage directory')
+    .option(
+      '--permission-timeout-ms <n>',
+      'Permission request timeout',
+      parseOptionalNonNegativeInt,
+    )
+    .option(
+      '--user-input-timeout-ms <n>',
+      'Ordinary-question timeout in milliseconds (default: 0, no deadline)',
+      parseOptionalNonNegativeInt,
+    )
+    .addOption(
+      new Option('--orphan-exit-ms <n>')
+        .argParser(parseOptionalNonNegativeInt)
+        .hideHelp(),
+    )
+    .action(
+      async (
+        localOptions: {
+          profile?: string;
+          home?: string;
+          provider?: string;
+          model?: string;
+          configHome?: string;
+          sessionsDir?: string;
+          permissionTimeoutMs?: number;
+          userInputTimeoutMs?: number;
+          orphanExitMs?: number;
+        },
+        command: Command,
+      ) => {
+        const options = mergeCommandOptionsWithGlobals(localOptions, command);
+        await serveDaemonCommand({
+          profile: options.profile ?? 'default',
+          ...resolveCliRuntimeDaemonLocation(options.home, options.configHome),
+          provider: options.provider,
+          model: options.model,
+          sessionsDir: options.sessionsDir,
+          permissionTimeoutMs: options.permissionTimeoutMs,
+          userInputTimeoutMs: options.userInputTimeoutMs,
+          orphanExitMs: options.orphanExitMs,
+        });
+      },
+    );
+
+  daemonCommand
+    .command('status')
+    .description('Inspect daemon state and endpoint health')
+    .option('--profile <name>', 'Daemon profile', 'default')
+    .option(
+      '--home <dir>',
+      HELP_DAEMON_HOME,
+    )
+    .option('--json', 'Output machine-readable JSON')
+    .action(
+      async (subOpts: { profile?: string; home?: string; json?: boolean }) => {
+        await printDaemonStatus({
+          profile: subOpts.profile ?? 'default',
+          ...resolveCliRuntimeDaemonLocation(subOpts.home),
+          json: subOpts.json === true,
+        });
+      },
+    );
+
+  return daemonCommand;
+}
+
 export function configureKodaXSetupCommand(program: Command): Command {
   const setupCommand = program
     .command('setup')
@@ -3380,235 +3626,7 @@ complete -c kodax -l version -d 'Show version'`);
       });
     });
 
-  const daemonCommand = program
-    .command('daemon')
-    .description('Inspect and manage the local KodaX runtime daemon')
-    .helpOption('-h, --help', 'Show daemon help');
-
-  daemonCommand
-    .command('start')
-    .description('Start the runtime daemon in a detached background process')
-    .option('--profile <name>', 'Daemon profile', 'default')
-    .option(
-      '--home <dir>',
-      HELP_DAEMON_HOME,
-    )
-    .option('-m, --provider <name>', 'Default provider for hosted runs')
-    .option('--model <name>', 'Default model for hosted runs')
-    .option(
-      '--timeout-ms <n>',
-      'Milliseconds to wait for daemon health',
-      parseOptionalNonNegativeInt,
-      5_000,
-    )
-    .option('--json', 'Output machine-readable JSON')
-    .action(
-      async (
-        localOptions: {
-          profile?: string;
-          home?: string;
-          provider?: string;
-          model?: string;
-          timeoutMs?: number;
-          json?: boolean;
-        },
-        command: Command,
-      ) => {
-        const options = mergeCommandOptionsWithGlobals(localOptions, command);
-        await startDaemonCommand({
-          profile: options.profile ?? 'default',
-          ...resolveCliRuntimeDaemonLocation(options.home),
-          provider: options.provider,
-          model: options.model,
-          timeoutMs: options.timeoutMs ?? 5_000,
-          json: options.json === true,
-        });
-      },
-    );
-
-  daemonCommand
-    .command('stop')
-    .description('Stop a healthy runtime daemon')
-    .option('--profile <name>', 'Daemon profile', 'default')
-    .option(
-      '--home <dir>',
-      HELP_DAEMON_HOME,
-    )
-    .option(
-      '--timeout-ms <n>',
-      'Milliseconds to wait for daemon shutdown',
-      parseOptionalNonNegativeInt,
-      5_000,
-    )
-    .option(
-      '--force',
-      'Clean verified stale daemon ownership without killing unverified live processes',
-    )
-    .option('--json', 'Output machine-readable JSON')
-    .action(
-      async (subOpts: {
-        profile?: string;
-        home?: string;
-        timeoutMs?: number;
-        force?: boolean;
-        json?: boolean;
-      }) => {
-        await stopDaemonCommand({
-          profile: subOpts.profile ?? 'default',
-          ...resolveCliRuntimeDaemonLocation(subOpts.home),
-          timeoutMs: subOpts.timeoutMs ?? 5_000,
-          force: subOpts.force === true,
-          json: subOpts.json === true,
-        });
-      },
-    );
-
-  daemonCommand
-    .command('restart')
-    .description('Restart the runtime daemon')
-    .option('--profile <name>', 'Daemon profile', 'default')
-    .option(
-      '--home <dir>',
-      HELP_DAEMON_HOME,
-    )
-    .option('-m, --provider <name>', 'Default provider for hosted runs')
-    .option('--model <name>', 'Default model for hosted runs')
-    .option(
-      '--timeout-ms <n>',
-      'Milliseconds to wait for daemon shutdown/startup',
-      parseOptionalNonNegativeInt,
-      5_000,
-    )
-    .option('--json', 'Output machine-readable JSON')
-    .action(
-      async (
-        localOptions: {
-          profile?: string;
-          home?: string;
-          provider?: string;
-          model?: string;
-          timeoutMs?: number;
-          json?: boolean;
-        },
-        command: Command,
-      ) => {
-        const options = mergeCommandOptionsWithGlobals(localOptions, command);
-        await restartDaemonCommand({
-          profile: options.profile ?? 'default',
-          ...resolveCliRuntimeDaemonLocation(options.home),
-          provider: options.provider,
-          model: options.model,
-          timeoutMs: options.timeoutMs ?? 5_000,
-          json: options.json === true,
-        });
-      },
-    );
-
-  daemonCommand
-    .command('logs')
-    .description('Print the daemon log path and recent lines')
-    .option('--profile <name>', 'Daemon profile', 'default')
-    .option(
-      '--home <dir>',
-      HELP_DAEMON_HOME,
-    )
-    .option(
-      '--lines <n>',
-      'Number of log lines to print',
-      parseOptionalNonNegativeInt,
-      80,
-    )
-    .option('--json', 'Output machine-readable JSON')
-    .action(
-      async (subOpts: {
-        profile?: string;
-        home?: string;
-        lines?: number;
-        json?: boolean;
-      }) => {
-        await printDaemonLogs({
-          profile: subOpts.profile ?? 'default',
-          ...resolveCliRuntimeDaemonLocation(subOpts.home),
-          lines: subOpts.lines ?? 80,
-          json: subOpts.json === true,
-        });
-      },
-    );
-
-  daemonCommand
-    .command('serve')
-    .description('Run the runtime daemon host in the foreground')
-    .option('--profile <name>', 'Daemon profile', 'default')
-    .option(
-      '--home <dir>',
-      HELP_DAEMON_HOME,
-    )
-    .addOption(new Option('--config-home <dir>').hideHelp())
-    .option('-m, --provider <name>', 'Default provider for hosted runs')
-    .option('--model <name>', 'Default model for hosted runs')
-    .option('--sessions-dir <dir>', 'Runtime session storage directory')
-    .option(
-      '--permission-timeout-ms <n>',
-      'Permission request timeout',
-      parseOptionalNonNegativeInt,
-    )
-    .option(
-      '--user-input-timeout-ms <n>',
-      'Ordinary-question timeout in milliseconds (default: 0, no deadline)',
-      parseOptionalNonNegativeInt,
-    )
-    .addOption(
-      new Option('--orphan-exit-ms <n>')
-        .argParser(parseOptionalNonNegativeInt)
-        .hideHelp(),
-    )
-    .action(
-      async (
-        localOptions: {
-          profile?: string;
-          home?: string;
-          provider?: string;
-          model?: string;
-          configHome?: string;
-          sessionsDir?: string;
-          permissionTimeoutMs?: number;
-          userInputTimeoutMs?: number;
-          orphanExitMs?: number;
-        },
-        command: Command,
-      ) => {
-        const options = mergeCommandOptionsWithGlobals(localOptions, command);
-        await serveDaemonCommand({
-          profile: options.profile ?? 'default',
-          ...resolveCliRuntimeDaemonLocation(options.home, options.configHome),
-          provider: options.provider,
-          model: options.model,
-          sessionsDir: options.sessionsDir,
-          permissionTimeoutMs: options.permissionTimeoutMs,
-          userInputTimeoutMs: options.userInputTimeoutMs,
-          orphanExitMs: options.orphanExitMs,
-        });
-      },
-    );
-
-  daemonCommand
-    .command('status')
-    .description('Inspect daemon state and endpoint health')
-    .option('--profile <name>', 'Daemon profile', 'default')
-    .option(
-      '--home <dir>',
-      HELP_DAEMON_HOME,
-    )
-    .option('--json', 'Output machine-readable JSON')
-    .action(
-      async (subOpts: { profile?: string; home?: string; json?: boolean }) => {
-        await printDaemonStatus({
-          profile: subOpts.profile ?? 'default',
-          ...resolveCliRuntimeDaemonLocation(subOpts.home),
-          json: subOpts.json === true,
-        });
-      },
-    );
+  configureKodaXDaemonCommand(program);
 
   const skillCommand = program
     .command('skill')

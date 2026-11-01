@@ -204,15 +204,63 @@ and preserved both that document and tmp_diffstat.txt. No user Host was stopped
 for deployment. Space/design revisions, package versions and release pins are
 unchanged; nothing was pushed or published.
 
-Known follow-up outside this UI change: an attempted broader help probe found
+Historical follow-up outside the UI change: an attempted broader help probe found
 that daemon management `--help` can dispatch an operation instead of only
 printing help. In the isolated temporary home, start/stop dispatched and
 restart returned an operational failure. The fixture Host has a successful
 shutdown receipt and no active ownership; no user's Host was targeted.
 The first affected version is unknown (observed in 0.7.97-alpha.11 with the
-unchanged pre-extraction CLI code). Management subcommand help must be checked
-in isolation and fixed separately; the twenty passing output comparisons
-above deliberately do not claim that those entry points are read-only.
+unchanged pre-extraction CLI code). At that checkpoint it remained unfixed;
+the twenty passing output comparisons above deliberately excluded those
+entry points. The repair and independent acceptance are recorded below.
+
+### Daemon help dispatch repair — 2026-11-01
+
+The root `--help [topic]` is an ordinary Commander option. Root parsing consumes
+it before dispatch, so a nested command no longer sees the flag and can execute
+its management action. A real daemon command-tree regression replaced only the
+management callbacks with counters and was RED: start's action ran once for
+`daemon start --help`. A second nested/alias regression proved the same shared
+root cause outside the daemon family.
+
+Root's `preSubcommand` boundary now honors the consumed help option before
+nested argument validation or actions. It follows the registered command
+prefix, including aliases, and prints the target help. Root topic help remains
+compatible. Plain commands still execute normally; an option value such as
+`--profile=--help` or a literal after the end-of-options delimiter is not promoted to a help
+request. Existing excess-argument validation remains intact.
+
+The six daemon registrations were moved unchanged into their own constructor
+for the real-tree tests; a byte comparison confirms all six action bodies and
+options are identical. Main invokes this constructor at the original location.
+No Host shutdown policy, SDK protocol, credential selection, package version
+or release pin changes are involved.
+
+Acceptance on the independent final runtime tree:
+
+- Ten affected CLI source test files: 191 passed, zero failed/skipped/TODO. The real
+  command-options file has 67 cases; option helpers add 42 targeted cases.
+- The full published bundle invocation: 89 passed, zero failed/skipped/TODO,
+  covering the new help cases plus normal CLI/Host recovery, credentials,
+  OAuth, memory-review shutdown, Responses, MCP/Skills and tarball execution.
+- Final help fixture file: two cases passed after its failure cleanup was
+  strengthened. Its 26 real help subprocesses cover long/short flags for all
+  six leaves and group help. With tracing enabled, an absent Host's directory
+  tree and configuration stay unchanged; a live independent Host keeps its
+  runtime identity and ownership/state/token hashes. No user Host is targeted.
+  Cleanup attempts shutdown, disconnect, exact-owner verification and current
+  fixture-owner cleanup separately; failures retain evidence and aggregate
+  errors. This final two-case rerun is not added again to the 89-case count.
+- Full build and source/test type checks pass. CLI is 5,177,260 bytes within
+  the unchanged 5,177,344-byte limit. Twenty existing root/topic/ACP help
+  renders remain byte-identical in both color modes.
+- Coverage for only the new root dispatch barrier: 11/11 statements, 6/6
+  branches and 2/2 functions. This is not whole-file or repository coverage.
+
+The public management entry points are now safe to use for help. Ordinary
+management actions remain intentional operations and are exercised separately.
+Remote push acceptance is recorded after guarded local Main integration;
+Space remains outside this push scope and no package/tag release is requested.
 
 ## Standards
 
@@ -222,6 +270,8 @@ the test cleanup, helper-script migration and synchronized declarations/examples
 The subsequent ASRT test-only increment also has zero remaining findings.
 The 2026-11-01 shortcut feedback and budget-preserving extraction also have
 zero remaining rule violations or actionable smells.
+The daemon help repair has zero remaining findings after fixing the native
+fixture's failure cleanup chain.
 
 ## Spec
 
@@ -232,3 +282,4 @@ hook writeback were fixed and covered by public execution regressions.
 The subsequent ASRT test-only increment also has zero remaining findings.
 The 2026-11-01 shortcut feedback increment has zero remaining findings after
 closing-window cancellation was added.
+The daemon help repair has zero remaining findings.
