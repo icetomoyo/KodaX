@@ -441,6 +441,12 @@ OAuth 注销与 API-key 删除保持不同入口；高级原生连接沿 SDK/CLI
 
 ### FEATURE_302 T12-H：账号保持与可重试升级（未发布）
 
+本轮 Root 代码与测试固定点：本地 `KodaX` 提交
+`a31f86206e413e89b5a97acad3b7090473cf474e`（基于 `68a02521c`）。
+设计子仓 gitlink 保持 `8574086208d6b5cc6ff6599c825fe88d986c4dd0`；本批未修改
+Space 仓库。Space 接手应采用包含此 Root 提交的 SDK/完整资源，继续保留自身独立
+分支的凭证迁移与 Main broker 代码；不把本地验收视作推送、发布或真实账户认证。
+
 2026-11-01 的 Root 审计补充仍未发布：既有 SDK/配置/API_KEY 入口和 auth.json v2
 保持有效。CLI 按需打开所选 OAuth，失败可重试；缺失、撤销或 profile/issuer 不匹配
 均报错，不能用环境 Key 或其他注册账号兜底。原始损坏配置、凭证及队列文件保留。

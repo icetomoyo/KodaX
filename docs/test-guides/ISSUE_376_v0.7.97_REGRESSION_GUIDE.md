@@ -304,6 +304,10 @@ failure. Do not use either first-run count as a final passing result.
 
 ### Subsequent Main acceptance record
 
+Committed code/test revision: local `KodaX`
+`a31f86206e413e89b5a97acad3b7090473cf474e`. The separate handoff pin is
+documentation-only; design gitlink and Space source were not changed.
+
 Frozen code/test/config patch against `68a02521c` (documentation excluded):
 SHA-256 `0245E133A86CD770211B1B8A8577C83FE66CC5BFD47813B566E70AB9E51968A6`.
 No source or build mutations run during the final source suite. Documentation
