@@ -312,6 +312,25 @@ jobs:
           KODAX_WINDOWS_TEST_TIER: ${{ matrix.tier }}
         run: npm run test:windows
 
+      - name: Install isolated PTY acceptance tools
+        if: matrix.tier == 'portable'
+        run: npm install --prefix "$env:RUNNER_TEMP/kodax-acceptance-tools" --no-save --package-lock=false --no-audit --no-fund node-pty@1.1.0 @xterm/headless@5.5.0 @xterm/addon-unicode11@0.9.0
+
+      - name: Windows real-terminal streaming history regression
+        if: matrix.tier == 'portable'
+        timeout-minutes: 3
+        env:
+          KODAX_ACCEPTANCE_TOOLS: ${{ runner.temp }}/kodax-acceptance-tools
+        run: npm run test:repl-pty:built -- --streaming-scroll-only
+
+      - name: Retain failed PTY evidence
+        if: failure() && matrix.tier == 'portable'
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-repl-pty-failure
+          path: ${{ runner.temp }}/kodax-repl-acceptance-*/**
+          if-no-files-found: ignore
+
   packaged-electron-daemon:
     name: packaged Electron daemon (Windows)
     runs-on: windows-latest

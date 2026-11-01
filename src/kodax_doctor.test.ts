@@ -49,9 +49,12 @@ describe('kodax doctor trusted text diagnostic', () => {
     const owner = path.join(home, 'runtime', 'daemon', 'default', 'owner-policy.lock');
     const migration = path.join(home, 'sessions', '.migration-lock');
     const oauth = path.join(home, 'provider-oauth', `${'a'.repeat(64)}.sealed.lock`);
+    const writer = path.join(home, 'sessions', '.write-locks', `${'b'.repeat(64)}.lock`);
     fs.mkdirSync(path.dirname(owner), { recursive: true });
     fs.mkdirSync(migration, { recursive: true });
     fs.mkdirSync(oauth, { recursive: true });
+    fs.mkdirSync(path.dirname(writer), { recursive: true });
+    fs.writeFileSync(writer, '');
     fs.writeFileSync(config, '{"apiKey":"NEVER_PRINT_CREDENTIAL",}');
     fs.writeFileSync(lock, '');
     fs.writeFileSync(owner, '{');
@@ -61,7 +64,8 @@ describe('kodax doctor trusted text diagnostic', () => {
       await runDoctor('test', true);
       const report = JSON.parse(output[0]!) as { coreConfig: { state: string; path: string; offset: number }; locks: { items: { path: string }[] } };
       expect(report.coreConfig).toMatchObject({ state: 'invalid', path: config, offset: expect.any(Number) });
-      expect(report.locks.items.map(item => item.path)).toEqual(expect.arrayContaining([lock, owner, migration, oauth]));
+      expect(report.locks.items.map(item => item.path)).toEqual(expect.arrayContaining([lock, owner, migration, oauth, writer]));
+      expect(report.locks.items).toContainEqual(expect.objectContaining({ path: owner, record: 'invalid-json', ownership: 'unverified' }));
       expect(output[0]).not.toContain('NEVER_PRINT_CREDENTIAL');
       expect(fs.readFileSync(config, 'utf8')).toBe('{"apiKey":"NEVER_PRINT_CREDENTIAL",}');
       expect(fs.readFileSync(lock, 'utf8')).toBe('');
@@ -87,6 +91,32 @@ describe('kodax doctor trusted text diagnostic', () => {
       expect(output[0]).not.toContain('owner-policy.lock');
       expect(JSON.parse(output[0]!).locks.items).toContainEqual({ path: path.join(home, 'runtime'), state: 'alias' });
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('distinguishes unreadable ownership records and reclamation claims without claiming they are abandoned', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-doctor-lock-records-'));
+    vi.stubEnv('KODAX_HOME', home);
+    const lock = path.join(home, 'config.json.write.lock');
+    const claim = `${lock}.reclaim.fixture`;
+    const migration = path.join(home, 'sessions', '.migration-lock');
+    fs.mkdirSync(migration, { recursive: true });
+    fs.writeFileSync(lock, '');
+    fs.writeFileSync(claim, JSON.stringify({ version: 1, pid: process.pid, nonce: 'DO_NOT_PRINT_OWNER_NONCE' }));
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((value?: unknown) => { output.push(String(value)); });
+    try {
+      await runDoctor('test', true);
+      const report = JSON.parse(output[0]!);
+      expect(report.locks.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: lock, record: 'empty', ownership: 'unverified' }),
+        expect.objectContaining({ path: claim, kind: 'reclamation-claim', record: 'json-object', ownership: 'unverified' }),
+        expect.objectContaining({ path: migration, record: 'missing', ownership: 'unverified' }),
+      ]));
+      expect(output[0]).not.toContain('DO_NOT_PRINT_OWNER_NONCE');
+      expect(fs.readFileSync(lock, 'utf8')).toBe('');
+      expect(fs.existsSync(claim)).toBe(true);
+      expect(fs.existsSync(migration)).toBe(true);
+    } finally { fs.rmSync(home, { recursive: true, force: true }); }
   });
 
   it('never treats digits in a parser excerpt as an offset', async () => {

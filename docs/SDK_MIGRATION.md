@@ -480,7 +480,12 @@ Space 若提供存储维护，可显式调用 `/coding.inspectToolOutputStorage(
 坏配置不再阻止 CLI `--help`、`--version` 和只读 `doctor`；执行与配置写入仍拒绝使用
 坏配置作默认账号。`doctor --json` 新增 `coreConfig` 语法状态/位置与 `locks` 清单，
 不返回原文或凭证。它只覆盖默认配置根下的已知位置，显式 SDK storage 覆盖需另查。
-Space 可展示这些诊断，但不能凭锁年龄或 PID 不可读自动删除历史锁。离线修复应先
+Space 可展示这些诊断，但不能凭锁年龄或 PID 不可读自动删除历史锁。
+后续诊断补齐默认 `sessions/.write-locks`；锁记录的 empty/invalid-json/missing、
+json-object 和 reclamation-claim 可区分，但 `ownership: unverified` 一律不是死亡证明。
+子 Agent 的终态配额/认证错误不再误触发 Provider fallback；真实 408、限流及暂时
+Responses 服务故障仍可沿已配置的链切换。401 强制刷新与稳定账号 replay 身份尚未
+贯通，Space 不能自行把当前 POST 重放或删除 token 身份隔离来掩盖错误。离线修复应先
 停止所有共享 CLI/Host/SDK 写入者、备份原目录，再隔离明确诊断出的锁及对应 reclaim
 claim；保留 config/auth/session/journal。活跃任务或未确认所有者不能做此处理。
 

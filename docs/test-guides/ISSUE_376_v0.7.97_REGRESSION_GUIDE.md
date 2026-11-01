@@ -364,3 +364,95 @@ again; both review axes remain at zero. No production or build change followed
 the frozen source run. Hashes of CLI JS, Runtime JS/types, root types and the
 audited program resource were unchanged across the full run and final package
 replay. Native/live exclusions are retained rather than relabelled as passes.
+
+## Claude follow-up disposition — 2026-11-01
+
+Review baseline: `f196fcbd4` (production repairs `a31f86206`). The author's
+untracked list compares only through `68a02521c`; it is retained unchanged.
+This section records current facts rather than treating every historical status
+as a new regression.
+
+| Report | Current disposition and remaining boundary |
+| --- | --- |
+| F03 | A real PTY driver and npm entry already exist. Its missing CI execution is real: add the Windows portable-tier streaming/saved-history test, with pinned native drivers in runner temp and failed terminal evidence retained. This is a scoped key-to-screen gate, not the entire interactive matrix. |
+| F08 | Provider requests already continue after execution-fact projection failures. Whole-file load/validate/replace remains a scaling debt (~13.6 seconds for the recorded 1,000-request fixture). No append/checkpoint format migration or speedup is claimed. |
+| F09 | Real temporary-store reproduction confirms a torn Runtime agent ledger fences that task as unknown while a healthy task can finish; original ledger and snapshot remain intact. Extension writes a whole KV snapshot by rename and normally omits the final LF; A2A writes a complete JSON array by rename. Neither permits dropping a last line or loading empty defaults. Explicit diagnostic/repair APIs with original-byte checks and writer exclusion remain unfinished. |
+| F12 | Both thrown and returned quota/terminal failures can wrongly enter child fallback. Regressions first reproduced both routes; the fix respects quota codes, non-retryable classification, request-build failures and authentication HTTP status while retaining configured transient fallback. Other credential subitems are separated below. |
+| F44 | Fixed in `a31f86206`, with built CLI cases for empty, truncated and trailing-comma config. Help/version/doctor remain available; execution and writes still fail closed. JSON offsets exclude parser excerpts. |
+| F45 | Default lock inventory and offline instructions exist in `a31f86206`, but missed `sessions/.write-locks` and did not distinguish empty/malformed/missing records. Add that inventory and bounded record-syntax/claim diagnosis in JSON and text. Every ownership result remains unverified; no live-owner proof, automatic deletion or interrupted-claim recovery is implied. |
+| F46 | An eight-cell plan-exit pilot and its limits are already recorded above. Ready-plan tool use was observed; the denied-write recovery comparison remains inconclusive. No new model-facing wording or paid eval is introduced in this follow-up. |
+
+Migration and sealed-OAuth directory locks still have a process-crash window
+between directory creation and owner-record publication. This was confirmed by
+source inspection, not a kill-process experiment in this follow-up. The resulting
+missing-owner directory remains retained and unverified. Atomic file-lock
+publication and in-process cleanup do not prove this directory window is closed.
+
+### Credential distinctions that constrain the remaining work
+
+- Endpoint fingerprint mismatch under CLI/Host environment drift is intentional
+  authorization fencing, not grounds to approve a new destination. Improving
+  availability requires an explicitly authorized, trusted connection snapshot.
+- Current `auth.json` v1 reading, native protocols and current/tombstone precedence
+  over sealed imports are covered. Old alpha.11 binary limitations cannot be
+  attributed to the current source. An obsolete sealed backup must never replace
+  a current or revoked registration (`src/provider-oauth-store.test.ts`).
+- `openOAuthSession` currently exposes acquisition but no rejected-generation
+  refresh operation. A future 401 path must compare the rejected credential
+  generation, retain the same registration/account, respect revocation, and
+  refresh only subsequent requests; it must not blindly replay a possibly
+  non-idempotent POST. Copilot resource-token renewal differs from grant refresh.
+- Rotating cloud/OAuth tokens conservatively invalidate native replay identity.
+  The present string-only broker does not attest a stable principal. Removing
+  its token hash or replacing it with a provider/profile name could reuse signed
+  history across accounts. Stable reuse requires trusted account/registration and
+  connection epochs, with unknown cloud identity remaining conservatively isolated.
+- A server-consumed refresh token lost before durable publication cannot always
+  be recovered locally. Explicit reauthorization can remain necessary; never
+  substitute another account or resurrect a stale backup to hide this outcome.
+
+These conclusions follow the actual seams in `src/provider-credential-authorizer.ts`,
+`src/provider-oauth-store.ts`, `packages/llm/src/oauth/session.ts`,
+`packages/llm/src/credential-fingerprint.ts`, `packages/coding/src/child-fallback.ts`,
+`src/runtime-agent-store.ts`, `packages/agent/src/external-agents/executor-plane.ts`,
+`packages/agent/src/session-lineage/persistence.ts` and `src/a2a/task-store.ts`.
+Offline probes used OS temp fixtures only; no user credentials or real accounts
+were read, repaired, revoked or switched.
+
+### Follow-up validation
+
+The final source/type checks and complete build passed. The 16-file targeted
+regression passed **341 tests**, with **one file-symlink privilege skip**; a
+verbose replay identified `File symlink privilege is unavailable` rather than
+counting it as a pass. The final built bundle suite passed **94/94**, the real
+Windows Ink streaming/saved-history PTY passed **3/3**, and the historical-owner
+and installed-consumer cutover gate passed **3/3**. Exit codes were zero.
+Workflow YAML parses; the added CI step itself awaits remote execution because
+this local work is not pushed.
+
+Final CLI is **5,173,001 bytes**, below the unchanged **5,177,344-byte** budget.
+Normal successful request handling gains no filesystem/process/model work:
+fallback classification runs on the error path, and lock reads occur only in
+explicit doctor diagnostics. No prompt, effort, history budget or timeout was
+changed. No new latency benchmark or intelligence-equivalence claim is made;
+F08's previously measured write scaling remains outstanding. This scoped
+follow-up did **not** repeat the earlier 19,066-test whole-source run; that
+separate frozen acceptance above remains historical evidence for `a31f86206`.
+
+Logs and fake terminal evidence remain in OS temp:
+`kodax-claude-followup-{typecheck,build,targeted,bundle,pty,cutover,lock-skip}.log`
+and `kodax-repl-acceptance-V6aoos`. No production build mutation occurred during
+the final packaged/PTY/cutover verification. The original reference reports,
+Space branch, design submodule and user-owned untracked files are unchanged.
+
+#### Standards
+
+Final independent review: **0 remaining findings**. The initial overbroad
+Responses stream-error guard was corrected and protected by a RED/GREEN test.
+
+#### Spec
+
+Final independent review: **0 remaining findings in this slice**. HTTP 408 and
+legacy authentication classification findings were fixed with RED/GREEN tests.
+F08, F09 explicit repair, F12 rejected-generation refresh/native replay identity,
+F45 unknown-owner recovery and F46 recovery-eval limits remain as stated above.

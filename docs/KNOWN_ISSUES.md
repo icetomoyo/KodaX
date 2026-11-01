@@ -45,6 +45,11 @@ See its separate acceptance record in the same regression guide. Explicit output
 storage inspection does not close global automatic GC; native/live acceptance,
 Claude 5.5 preserved-prefix integration and execution-fact storage scaling remain
 separate, unverified or unfinished scopes, not implied passes.
+The Claude follow-up disposition in the guide separates stale F44/F46 claims
+from remaining F03/F08/F09/F12/F45 work. The follow-up closes terminal-error
+child fallback and improves read-only lock diagnosis; 401 generation-aware
+refresh, trusted stable account identity for replay, and explicit corrupt-log
+repair are still unfinished. Unknown locks are never reclaimed merely by age.
 Main verification observed one intermittent packaged Shell cleanup failure;
 isolated, eight-way concurrent and complete bundled replays passed. Its cause
 remains unconfirmed; the retained evidence and improved failure diagnostic are

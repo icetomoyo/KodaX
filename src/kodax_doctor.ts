@@ -222,7 +222,7 @@ export async function runDoctor(
     `  Core config: ${report.coreConfig.state} (${report.coreConfig.path})${'offset' in report.coreConfig ? `; JSON offset ${report.coreConfig.offset}` : ''}`,
     '',
     'Retained locks (presence alone does not prove abandonment)',
-    ...report.locks.items.map(item => `  ${item.state}: ${item.path}`),
+    ...report.locks.items.map(item => `  ${item.state}: ${item.path}${item.record ? `; ${item.kind}, record=${item.record}, ownership=${item.ownership}` : ''}`),
     ...report.locks.issues.map(issue => `  unavailable (${issue.code}): ${issue.path}`),
     `  ${report.locks.recovery}`,
     `  ${report.locks.scope}`,

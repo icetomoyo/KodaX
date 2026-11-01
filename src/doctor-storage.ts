@@ -22,12 +22,43 @@ export function inspectDoctorCoreConfig(home: string) {
   }
 }
 
+/** Syntax only: a parseable record never proves owner liveness or permission to reclaim. */
+function inspectLockRecord(file: string): { record: string; code?: string } {
+  let handle: number | undefined;
+  try {
+    const entry = fs.lstatSync(file);
+    if (entry.isSymbolicLink()) return { record: 'alias' };
+    if (!entry.isFile()) return { record: 'not-file' };
+    handle = fs.openSync(file, 'r');
+    const opened = fs.fstatSync(handle);
+    if (opened.dev !== entry.dev || opened.ino !== entry.ino || !opened.isFile()) return { record: 'changed' };
+    const maximum = 64 * 1024;
+    if (opened.size > maximum) return { record: 'too-large' };
+    const buffer = Buffer.alloc(maximum + 1);
+    const count = fs.readSync(handle, buffer, 0, buffer.length, 0);
+    if (count > maximum) return { record: 'too-large' };
+    if (count === 0) return { record: 'empty' };
+    try {
+      const value: unknown = JSON.parse(buffer.toString('utf8', 0, count));
+      return { record: value !== null && typeof value === 'object' && !Array.isArray(value) ? 'json-object' : 'invalid-shape' };
+    } catch { return { record: 'invalid-json' }; }
+  } catch (error) { return { record: code(error) === 'ENOENT' ? 'missing' : 'unreadable', code: code(error) }; }
+  finally { if (handle !== undefined) fs.closeSync(handle); }
+}
+
 /** Inventory only known lock locations, without opening credentials or following directory aliases. */
 export function inspectDoctorLocks(home: string) {
-  const items: { path: string; state: 'present' | 'alias' | 'unreadable'; code?: string }[] = [];
+  const items: { path: string; state: 'present' | 'alias' | 'unreadable'; code?: string;
+    kind?: 'lock' | 'reclamation-claim'; ownership?: 'unverified'; record?: string; recordPath?: string }[] = [];
   const issues: { path: string; code: string }[] = [];
   const inspect = (file: string): void => {
-    try { items.push({ path: file, state: fs.lstatSync(file).isSymbolicLink() ? 'alias' : 'present' }); }
+    try {
+      const entry = fs.lstatSync(file);
+      if (entry.isSymbolicLink()) { items.push({ path: file, state: 'alias' }); return; }
+      const recordPath = entry.isDirectory() ? path.join(file, 'owner.json') : file;
+      items.push({ path: file, state: 'present', kind: path.basename(file).includes('.reclaim.') ? 'reclamation-claim' : 'lock',
+        ownership: 'unverified', recordPath, ...inspectLockRecord(recordPath) });
+    }
     catch (error) { if (code(error) !== 'ENOENT') items.push({ path: file, state: 'unreadable', code: code(error) }); }
   };
   const entries = (directory: string): fs.Dirent[] => {
@@ -53,6 +84,7 @@ export function inspectDoctorLocks(home: string) {
   scan(path.join(home, 'provider-oauth'));
   const sessions = path.join(home, 'sessions');
   scan(sessions);
+  scan(path.join(sessions, '.write-locks'));
   scan(path.join(sessions, '.product-host'));
   const daemon = path.join(home, 'runtime', 'daemon');
   for (const entry of entries(daemon)) {

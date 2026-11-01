@@ -21,6 +21,10 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Prevent terminal quota, authentication and explicitly non-retryable child
+  failures from triggering cross-provider fallback. Diagnose retained Session
+  writer locks and lock-record syntax without disclosing owner fields or
+  reclaiming unknown ownership; add a Windows streaming-history PTY CI gate.
 - Keep help, version and read-only doctor available with corrupt configuration;
   retain execution/write fencing and diagnose exact lock locations without
   exposing config contents or following directory aliases.
