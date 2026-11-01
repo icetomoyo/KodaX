@@ -18,6 +18,7 @@ describe('FileExtensionStore (FEATURE_034 manual persistence)', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     delete process.env.HOME;
     delete process.env.USERPROFILE;
@@ -43,10 +44,38 @@ describe('FileExtensionStore (FEATURE_034 manual persistence)', () => {
     expect(loaded).toEqual(entry);
   });
 
+  it('never converts corrupt persisted data into a writable empty or partial store', async () => {
+    const namespace = uniqueNs(), store = createExtensionStore(namespace);
+    await store.put('retain', { credentialReference: 'fixture-only' });
+    const file = path.join(tempDir, '.kodax', 'extension-store', namespace, 'store.jsonl');
+    const valid = await fs.readFile(file, 'utf8');
+    const corrupt = `${valid}\n{broken`;
+    await fs.writeFile(file, corrupt);
+    await expect(store.put('new', 1)).rejects.toThrow(/corrupt|invalid/i);
+    await expect(store.clear()).rejects.toThrow(/corrupt|invalid/i);
+    expect(await fs.readFile(file, 'utf8')).toBe(corrupt);
+    await fs.writeFile(file, valid);
+    await store.put('new', 1);
+    expect((await store.get('retain'))?.value).toEqual({ credentialReference: 'fixture-only' });
+  });
+
   it('returns undefined for a missing key', async () => {
     const store = createExtensionStore(uniqueNs());
     const loaded = await store.get('nope');
     expect(loaded).toBeUndefined();
+  });
+
+  it('retains the old file when atomic publication fails instead of copying over it', async () => {
+    const namespace = uniqueNs(), store = createExtensionStore(namespace);
+    await store.put('retain', 42);
+    const file = path.join(tempDir, '.kodax', 'extension-store', namespace, 'store.jsonl');
+    const original = await fs.readFile(file, 'utf8');
+    const fault = vi.spyOn(fs, 'rename').mockRejectedValue(Object.assign(new Error('fixture rename busy'), { code: 'EBUSY' }));
+    await expect(store.put('new', 1)).rejects.toThrow('fixture rename busy');
+    expect(await fs.readFile(file, 'utf8')).toBe(original);
+    fault.mockRestore();
+    await store.put('new', 1);
+    expect((await store.get('retain'))?.value).toBe(42);
   });
 
   it('overwrites an existing key and assigns a new version', async () => {

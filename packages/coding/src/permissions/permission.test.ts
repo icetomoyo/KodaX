@@ -1221,6 +1221,13 @@ function makeExtractor(answer: BashPrefixResult): BashPrefixExtractor {
 }
 
 describe('isToolCallAllowed (FEATURE_153 extractor path)', () => {
+  it.each([
+    'git commitment', 'git commit -m "x" $(echo injected)', 'git commit -m `echo injected`',
+    'git commit -m x; echo injected', 'git commit -m x | echo injected', 'git commit -m x > outside',
+    "git commit -m 'x & echo injected'", 'git commit %PAYLOAD%', 'git commit -m x\necho injected',
+  ])('requires confirmation for ambiguous no-extractor command: %s', async command => {
+    expect(await isToolCallAllowed('bash', { command }, ['Bash(git commit:*)'])).toBe(false);
+  });
   it('matches `Bash(git commit:*)` when extractor returns prefix `git commit`', async () => {
     const extractor = makeExtractor({ kind: 'prefix', value: 'git commit' });
     const allowed = await isToolCallAllowed(

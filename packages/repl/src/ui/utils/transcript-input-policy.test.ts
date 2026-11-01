@@ -11,6 +11,16 @@ import {
 } from "./transcript-input-policy.js";
 
 describe("transcript-input-policy", () => {
+  it.each([
+    [0, true, { kind: 'scroll-by', delta: -4 }],
+    [0, false, { kind: 'consume' }],
+    [4, true, { kind: 'scroll-by', delta: -4 }],
+    [4, false, { kind: 'scroll-by', delta: -4 }],
+  ] as const)('keeps wheel navigation live at offset %s while isBrowsingHistory=%s', (historyScrollOffset, isBrowsingHistory, expected) => {
+    expect(resolveTranscriptPointerAction({ keyName: 'wheeldown', hasTranscript: true, historyScrollOffset, isBrowsingHistory,
+      reviewPageSize: 18, reviewWheelStep: 4, hasMouse: false, usesManagedMouseClicks: false, supportsMouseTracking: false,
+      usesRendererMouseTracking: false, usesManagedMouseWheel: true, supportsWheelHistory: true })).toEqual(expected);
+  });
   it("detects transcript activity from rows or live streaming state", () => {
     expect(hasTranscriptInputActivity({
       itemsLength: 0,

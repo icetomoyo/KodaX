@@ -9,7 +9,7 @@ export type ProviderCredentialSource = { readonly provider: string; readonly con
   | { readonly kind: 'external' }
   | { readonly kind: 'environment'; readonly apiKeyEnv: string }
   | { readonly kind: 'api-key'; readonly apiKeyEnv: string; readonly store: FileProviderCredentialStore; readonly binding: ProviderCredentialFileBinding; readonly connectionFingerprint: string }
-  | { readonly kind: 'oauth'; readonly session: OAuthCredentialSession; readonly service: NonNullable<KodaXCustomProviderConfig['oauth']>; readonly profile?: string; readonly issuer?: string }
+  | { readonly kind: 'oauth'; readonly session: Pick<OAuthCredentialSession, 'service' | 'profile' | 'issuer' | 'acquire' | 'onInvalidate'>; readonly service: NonNullable<KodaXCustomProviderConfig['oauth']>; readonly profile?: string; readonly issuer?: string }
   | { readonly kind: 'cloud'; readonly connection: KodaXCustomProviderConfig; readonly resolve: (request: RuntimeScopedCredentialRequest, signal: AbortSignal) => Promise<KodaXCloudCredential> }
 );
 export interface ProviderCredentialAuthorizer { readonly authorizeExecution: KodaXClientHostAuthorization; close(): Promise<void>; }

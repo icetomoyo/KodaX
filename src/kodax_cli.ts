@@ -9,7 +9,6 @@ import {
 } from './one-shot-task.js';
 import { toKodaXProductClient } from './client-runtime-adapter.js';
 import { configureProviderAuthCommand } from './provider-auth-cli.js';
-import { createCliProviderCredentials } from './cli-provider-credentials.js';
 import { createProviderCredentialManager } from './provider-credential-manager.js';
 import type { KodaXClientHostAuthorization } from './client-host-authorization.js';
 import { ensureRecoveringKodaXRuntime } from './recovering-runtime-client.js';
@@ -4366,11 +4365,8 @@ complete -c kodax -l version -d 'Show version'`);
   // FEATURE_298 T27 — fixed Host: the CLI client owns no extension
   // runtime, integration hot reload, or A2A handle; the Host does.
   let cliRuntime: KodaXRuntime | undefined;
-  let cliCredentials: ReturnType<typeof createCliProviderCredentials> | undefined;
-  const authorizeCli: KodaXClientHostAuthorization = async (request, services) => {
-    const authorizer = await (cliCredentials ??= createCliProviderCredentials(config));
-    return authorizer.authorizeExecution(request, services);
-  };
+  const cliCredentials = (await import('./cli-provider-credentials.js')).createCliProviderCredentialAccess(config);
+  const authorizeCli: KodaXClientHostAuthorization = cliCredentials.authorizeExecution;
   let shouldHardExitAfterInteractiveCleanup = false;
   const integrationEvents = createIntegrationEventBridge((message) =>
     console.error(chalk.dim(message)),
@@ -4843,7 +4839,7 @@ complete -c kodax -l version -d 'Show version'`);
   } finally {
     let credentialCloseError: unknown;
     const closeCredentials = async () => {
-      try { if (cliCredentials) await (await cliCredentials).close(); }
+      try { await cliCredentials.close(); }
       catch (error) { credentialCloseError = error; }
     };
     if (shouldHardExitAfterInteractiveCleanup) {

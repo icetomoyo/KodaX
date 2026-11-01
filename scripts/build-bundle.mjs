@@ -593,6 +593,7 @@ log(`Copying provider-capabilities.json → ${path.relative(repoRoot, capJsonDst
 cpSync(capJsonSrc, capJsonDst);
 cpSync(path.join(repoRoot, 'packages/coding/src/self-knowledge/manual-topics.json'), path.join(distDir, 'manual-topics.json'));
 cpSync(path.join(repoRoot, 'packages/coding/src/prompts/static-text.json'), path.join(distDir, 'static-text.json'));
+cpSync(path.join(repoRoot, 'src/windows-native-scripts.json'), path.join(distDir, 'windows-native-scripts.json'));
 cpSync(path.join(repoRoot, 'packages/repl/src/common/generated-config-templates.json'), path.join(distDir, 'generated-config-templates.json'));
 log(`  ✓ dist/provider-capabilities.json copied`);
 

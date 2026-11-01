@@ -47,7 +47,7 @@ export async function executeWithPermission(
   if (mode === 'plan') {
     const planModeBlockReason = getPlanModeBlockReason(toolName, input, permContext.gitRoot);
     if (planModeBlockReason) {
-      return `${planModeBlockReason} Do not try to modify files while planning. Finish the plan first, then use ask_user_question to ask the user whether to proceed. If the user confirms, call set_permission_mode with mode "accept-edits" to switch to implementation mode.`;
+      return `${planModeBlockReason} Submit the completed plan with exit_plan_mode to request Host approval. Continue implementation after approval; plan mode keeps project files read-only until that transition is authorized.`;
     }
   }
 

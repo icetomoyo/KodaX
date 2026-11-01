@@ -11,7 +11,6 @@
  */
 
 import fs from 'fs/promises';
-import fsSync from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 
@@ -97,7 +96,7 @@ function fromPersistedLine(raw: string): KodaXExtensionStoreEntry | null {
     }
     return null;
   } catch (error) {
-    // Corrupt JSONL entries are ignored; valid later lines still participate.
+    // The caller rejects this unreadable baseline before any mutation.
     void error;
     return null;
   }
@@ -214,10 +213,6 @@ export class FileExtensionStore implements KodaXExtensionStore {
   // -- internal -------------------------------------------------------------
 
   private async readAllEntries(): Promise<Map<string, KodaXExtensionStoreEntry>> {
-    if (!fsSync.existsSync(this.filePath)) {
-      return new Map();
-    }
-
     try {
       const raw = await fs.readFile(this.filePath, 'utf-8');
       const trimmed = raw.trim();
@@ -229,15 +224,14 @@ export class FileExtensionStore implements KodaXExtensionStore {
       // Last-write-wins: later lines overwrite earlier ones for the same key.
       for (const line of trimmed.split('\n')) {
         const entry = fromPersistedLine(line);
-        if (entry) {
-          map.set(entry.key, entry);
-        }
+        if (!line.trim()) continue;
+        if (!entry) throw Object.assign(new Error('Corrupt extension store; retain the original file and repair it before retrying.'), { code: 'extension_store_corrupt' });
+        map.set(entry.key, entry);
       }
       return map;
     } catch (error) {
-      // Store reads are best-effort; callers can continue with an empty store.
-      void error;
-      return new Map();
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return new Map();
+      throw error;
     }
   }
 
@@ -251,14 +245,11 @@ export class FileExtensionStore implements KodaXExtensionStore {
 
     // Atomic write via per-process temp file + rename.
     const tmpPath = createAtomicWriteTempPath(this.filePath);
-    await fs.writeFile(tmpPath, lines.join('\n'), 'utf-8');
     try {
+      await fs.writeFile(tmpPath, lines.join('\n'), { encoding: 'utf-8', mode: 0o600 });
       await fs.rename(tmpPath, this.filePath);
-    } catch (error) {
-      // On Windows, rename fails when the target exists. Fall back to copy + unlink.
-      void error;
-      await fs.copyFile(tmpPath, this.filePath);
-      await fs.unlink(tmpPath);
+    } finally {
+      await fs.rm(tmpPath, { force: true });
     }
   }
 }

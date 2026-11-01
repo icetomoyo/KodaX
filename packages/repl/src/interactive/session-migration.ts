@@ -19,6 +19,9 @@
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
+import { claimConfigLockReclamation } from '../common/core-config-lock.js';
 
 import { deriveProjectKeyFromData, UNKNOWN_PROJECT_KEY, type ProjectIdentity } from './project-key.js';
 import { publishProjectManifest } from './project-manifest.js';
@@ -31,15 +34,29 @@ import {
 
 export const LAYOUT_VERSION = 3;
 
-/** A lock whose heartbeat is older than this is considered abandoned. */
-const STALE_LOCK_MS = 5 * 60 * 1000;
 const HEAD_READ_BYTES = 65536;
+
+class SessionMigrationCleanupError extends Error {}
+
+async function removeMigrationPath(file: string, directory = false): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try { await fs.rm(file, { force: true, recursive: directory }); return; }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (attempt >= 3 || !['EPERM', 'EBUSY', 'EACCES', 'ENOTEMPTY'].includes(code ?? '')) {
+        throw new SessionMigrationCleanupError('Session migration cleanup must be retried before a stable read.', { cause: error });
+      }
+      await delay(20 * (attempt + 1));
+    }
+  }
+}
 
 const layoutMarkerPath = (dir: string): string => path.join(dir, '.layout.json');
 const lockDirPath = (dir: string): string => path.join(dir, '.migration-lock');
 const ownerPath = (dir: string): string => path.join(lockDirPath(dir), 'owner.json');
 const journalPath = (dir: string): string => path.join(dir, '.migration-journal.jsonl');
 const sessionsArchiveDir = (dir: string): string => path.join(path.dirname(dir), 'sessions-archive');
+const inactiveLocks = new Map<string, string>();
 
 interface MovePlan {
   readonly from: string;
@@ -246,54 +263,87 @@ export async function needsMigration(sessionsDir: string): Promise<boolean> {
 
 async function lockIsStale(dir: string): Promise<boolean> {
   try {
-    const data = JSON.parse(await fs.readFile(ownerPath(dir), 'utf8')) as {
+    const raw = await fs.readFile(ownerPath(dir), 'utf8');
+    const data = JSON.parse(raw) as {
       pid?: number;
       heartbeatAt?: number;
     };
-    if (typeof data.pid === 'number' && data.pid !== process.pid) {
+    if (typeof data.pid === 'number' && Number.isSafeInteger(data.pid) && data.pid > 0 && data.pid !== process.pid) {
       try {
         process.kill(data.pid, 0); // throws ESRCH if the holder is gone
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'ESRCH') {
-          return true;
+          return claimConfigLockReclamation(lockDirPath(dir), raw)
+            && await fs.readFile(ownerPath(dir), 'utf8') === raw;
         }
       }
     }
-    if (typeof data.heartbeatAt === 'number' && Date.now() - data.heartbeatAt > STALE_LOCK_MS) {
-      return true;
-    }
     return false;
   } catch {
-    return true; // unreadable owner → treat as abandoned
+    return false; // Unknown ownership never grants permission to remove a lock.
   }
 }
 
-async function acquireLock(dir: string): Promise<boolean> {
+async function acquireLock(dir: string): Promise<string | undefined> {
   const lock = lockDirPath(dir);
+  const inactive = inactiveLocks.get(dir);
+  if (inactive !== undefined) {
+    // Claim this local retry before yielding; a parallel caller cannot delete
+    // the replacement lock that this acquisition is about to publish.
+    inactiveLocks.delete(dir);
+    await releaseLock(dir, inactive);
+  }
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    let created = false;
     try {
       await fs.mkdir(lock); // atomic; throws EEXIST if held
+      created = true;
+      const nonce = randomUUID();
       await fs.writeFile(
         ownerPath(dir),
-        JSON.stringify({ pid: process.pid, startTime: Date.now(), heartbeatAt: Date.now() }),
+        JSON.stringify({ pid: process.pid, nonce, startTime: Date.now(), heartbeatAt: Date.now() }),
       );
-      return true;
+      return nonce;
     } catch (err) {
+      if (created) {
+        try { await removeMigrationPath(lock, true); }
+        catch (cleanup) { throw new SessionMigrationCleanupError('Migration owner publication and cleanup failed.', { cause: new AggregateError([err, cleanup]) }); }
+        throw err;
+      }
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
-        return false;
+        throw err;
       }
       if (attempt === 0 && (await lockIsStale(dir))) {
-        await fs.rm(lock, { recursive: true, force: true }).catch(() => undefined);
+        await removeMigrationPath(lock, true);
         continue; // reclaim + retry once
       }
-      return false; // another live migrator holds it
+      return undefined; // another live or unverifiable migrator holds it
     }
   }
-  return false;
+  return undefined;
 }
 
-async function releaseLock(dir: string): Promise<void> {
-  await fs.rm(lockDirPath(dir), { recursive: true, force: true }).catch(() => undefined);
+async function releaseLock(dir: string, nonce: string): Promise<void> {
+  inactiveLocks.set(dir, nonce);
+  try {
+    const owner: unknown = JSON.parse(await fs.readFile(ownerPath(dir), 'utf8'));
+    if (!owner || typeof owner !== 'object' || !('nonce' in owner) || owner.nonce !== nonce) {
+      inactiveLocks.delete(dir);
+      throw new SessionMigrationCleanupError('Session migration ownership changed before cleanup.');
+    }
+    await removeMigrationPath(lockDirPath(dir), true);
+    inactiveLocks.delete(dir);
+  } catch (error) {
+    if (error instanceof SessionMigrationCleanupError) throw error;
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      try { await fs.lstat(lockDirPath(dir)); }
+      catch (probe) {
+        if ((probe as NodeJS.ErrnoException).code === 'ENOENT') { inactiveLocks.delete(dir); return; }
+        throw new SessionMigrationCleanupError('Session migration cleanup cannot inspect the retained lock.', { cause: probe });
+      }
+    }
+    throw new SessionMigrationCleanupError('Session migration cleanup ownership is unreadable; original lock retained for retry.', { cause: error });
+  }
 }
 
 async function assertNoActiveSessionWriters(sessionsDir: string): Promise<void> {
@@ -442,7 +492,8 @@ export interface MigrationResult {
  * holds the lock — the caller still operates fine via dual-layout reads).
  */
 export async function runMigration(sessionsDir: string): Promise<MigrationResult> {
-  if (!(await acquireLock(sessionsDir))) {
+  const nonce = await acquireLock(sessionsDir);
+  if (!nonce) {
     return { moved: 0, planned: 0 };
   }
   try {
@@ -481,10 +532,10 @@ export async function runMigration(sessionsDir: string): Promise<MigrationResult
     await writeMarker(sessionsDir);
     // Journal has served its purpose; the marker is the durable idempotency
     // guard. Removing it is safe (it never held session data).
-    await fs.rm(journalPath(sessionsDir), { force: true }).catch(() => undefined);
+    await removeMigrationPath(journalPath(sessionsDir));
     return { moved, planned: plans.length };
   } finally {
-    await releaseLock(sessionsDir);
+    await releaseLock(sessionsDir, nonce);
   }
 }
 
@@ -496,11 +547,18 @@ export async function runMigration(sessionsDir: string): Promise<MigrationResult
 export async function ensureLayoutMigrated(sessionsDir: string): Promise<void> {
   try {
     if (await isMigrated(sessionsDir)) {
+      if (fsSync.existsSync(journalPath(sessionsDir)) || fsSync.existsSync(lockDirPath(sessionsDir))) {
+        const nonce = await acquireLock(sessionsDir);
+        if (nonce) {
+          try { await removeMigrationPath(journalPath(sessionsDir)); }
+          finally { await releaseLock(sessionsDir, nonce); }
+        }
+      }
       return;
     }
     await runMigration(sessionsDir);
   } catch (error: unknown) {
-    if (error instanceof ConversationPageCacheCleanupError) throw error;
+    if (error instanceof ConversationPageCacheCleanupError || error instanceof SessionMigrationCleanupError) throw error;
     // best-effort — dual-layout reads keep everything working
   }
 }

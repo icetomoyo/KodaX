@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -8,6 +11,27 @@ import path from 'node:path';
 // the boundary under test, including shared chunks and its credential ALS.
 const llm = await import('../dist/sdk-llm.js');
 const { generateSummary } = await import('../dist/sdk-agent.js');
+
+test('published config loaders reject retained unreadable credentials before selecting another provider', async () => {
+  const folder = await mkdtemp(path.join(tmpdir(), 'kodax-bundled-invalid-config-'));
+  const raw = '{"provider":"deepseek","apiKeys":{"deepseek":"fixture-retain"},';
+  await writeFile(path.join(folder, 'config.json'), raw);
+  const entry = pathToFileURL(path.resolve('dist/sdk-repl.js')).href;
+  const script = `import assert from 'node:assert/strict'; import fs from 'node:fs'; import path from 'node:path';
+let requests=0; const localFetch=globalThis.fetch;
+globalThis.fetch=async(input,...args)=>{if(String(input).startsWith('data:'))return localFetch(input,...args);requests++;throw Error('No provider request is allowed');};
+const {loadConfig}=await import(${JSON.stringify(entry)});
+assert.throws(()=>loadConfig(),/Core configuration/);
+const file=path.join(process.env.KODAX_HOME,'config.json');
+assert.equal(fs.readFileSync(file,'utf8'),${JSON.stringify(raw)});
+assert.equal(requests,0);
+fs.writeFileSync(file,JSON.stringify({provider:'deepseek'}));
+assert.equal(loadConfig().provider,'deepseek');`;
+  try {
+    await promisify(execFile)(process.execPath, ['--input-type=module', '--eval', script],
+      { windowsHide: true, env: { ...process.env, KODAX_HOME: folder }, timeout: 30_000 });
+  } finally { await rm(folder, { recursive: true, force: true }); }
+});
 test('published file credentials survive store reconstruction and share the SDK credential scope', async t => {
   const folder = await mkdtemp(path.join(tmpdir(), 'kodax-bundled-file-auth-'));
   const file = path.join(folder, 'auth.json');

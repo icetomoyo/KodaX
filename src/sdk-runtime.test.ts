@@ -13636,6 +13636,55 @@ describe("createKodaXRuntime", () => {
     } finally { await third.close(); }
   });
 
+  it('fences work and config patches on unreadable core config without discarding its bytes or selecting defaults', async () => {
+    const { createKodaXRuntime } = await import('../tests/runtime-fixture.js');
+    const homeDir = path.join(tempRoot, 'unreadable-core-config');
+    const file = path.join(homeDir, '.kodax', 'config.json');
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    const raw = '{"provider":"retained-provider","apiKeys":{"retain":"fixture-account"},';
+    await fs.writeFile(file, raw);
+    await expect(createKodaXRuntime({ homeDir, defaultProvider: 'mock-provider' })).rejects.toThrow(/core configuration/i);
+    expect(await fs.readFile(file, 'utf8')).toBe(raw);
+    await fs.writeFile(file, JSON.stringify({ provider: 'mock-provider' }));
+    const runtime = await createKodaXRuntime({ homeDir, defaultProvider: 'mock-provider' });
+    const session = await runtime.sessions.create({ title: 'Keep selected account' });
+    await fs.writeFile(file, raw);
+    try {
+      expect(await runtime.config.readEffective()).toMatchObject({ persistedConfig: { state: 'invalid' } });
+      await expect(runtime.runs.start({ sessionId: session.id, prompt: 'Must not switch account' })).rejects.toThrow(/core configuration/i);
+      await expect(runtime.config.patch({ effort: 'high' })).rejects.toThrow(/core configuration/i);
+      expect(codingMock.startKodaX).not.toHaveBeenCalled();
+      expect(await fs.readFile(file, 'utf8')).toBe(raw);
+      await fs.writeFile(file, JSON.stringify({ provider: 'mock-provider', effort: 'high' }));
+      await runtime.config.reload();
+      expect(await runtime.config.read()).toMatchObject({ provider: 'mock-provider', effort: 'high' });
+    } finally { await runtime.close(); }
+  });
+
+  it.each(['invalid-json', 'foreign-session'] as const)('isolates corrupt pending inputs (%s) to their Session without dropping bytes or executing unknown work', async fault => {
+    const { createKodaXRuntime } = await import('../tests/runtime-fixture.js');
+    const homeDir = path.join(tempRoot, 'corrupt-pending-session');
+    const first = await createKodaXRuntime({ homeDir, defaultProvider: 'mock-provider' });
+    const broken = await first.sessions.create({ title: 'Broken queue' });
+    const healthy = await first.sessions.create({ title: 'Healthy queue' });
+    await first.close();
+    const directory = path.join(homeDir, '.kodax', 'runtime', 'pending-inputs');
+    await fs.mkdir(directory, { recursive: true });
+    const file = path.join(directory, `${encodeURIComponent(broken.id)}.json`);
+    const queued = { sessionId: healthy.id, inputId: 'retain-valid', text: 'Retain the original account and constraint.', delivery: 'after_turn' };
+    const raw = fault === 'invalid-json' ? '{retain-original' : JSON.stringify([{ input: queued, skill: false, principalId: 'client-B' }]);
+    await fs.writeFile(file, raw);
+    await fs.writeFile(path.join(directory, `${encodeURIComponent(healthy.id)}.json`), JSON.stringify([{ input: queued, skill: false, principalId: 'client-B' }]));
+    const restored = await createKodaXRuntime({ homeDir, defaultProvider: 'mock-provider' });
+    try {
+      expect(await restored.runs.getInput(healthy.id, queued.inputId)).toMatchObject({ state: 'queued' });
+      await expect(restored.runs.start({ sessionId: broken.id, prompt: 'Must not execute' })).rejects.toMatchObject({ code: 'conflict' });
+      expect(codingMock.startKodaX).not.toHaveBeenCalled();
+      expect(await fs.readFile(file, 'utf8')).toBe(raw);
+      expect(await restored.sessions.load(healthy.id)).toBeDefined();
+    } finally { await restored.close(); }
+  });
+
   it('rejects stale Host queue writes instead of losing inputs accepted by another Host', async () => {
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const homeDir = path.join(tempRoot, 'pending-cas');

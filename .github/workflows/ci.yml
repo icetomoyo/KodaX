@@ -289,6 +289,29 @@ jobs:
         timeout-minutes: 20
         run: npm run test:system -- --no-file-parallelism --maxWorkers=1
 
+  windows-source:
+    name: Windows source (${{ matrix.tier }})
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        tier: [portable, system]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Build platform test inputs
+        run: npm run build
+      - name: Windows recovery, credentials and permission contracts
+        env:
+          KODAX_WINDOWS_TEST_TIER: ${{ matrix.tier }}
+        run: npm run test:windows
+
   packaged-electron-daemon:
     name: packaged Electron daemon (Windows)
     runs-on: windows-latest
@@ -378,6 +401,12 @@ jobs:
           KODAX_HOME: ${{ runner.temp }}\kodax-electron-smoke-home\.kodax
           KODAX_REAL_WINDOWS_SANDBOX_V2: '1'
         run: node node_modules/vitest/vitest.mjs run tests/feature-295-windows-v2-policy.test.ts
+
+      - name: Windows governed Memory OS boundary
+        env:
+          KODAX_HOME: ${{ runner.temp }}\kodax-electron-smoke-home\.kodax
+          KODAX_REAL_WINDOWS_MEMORY: '1'
+        run: node node_modules/vitest/vitest.mjs run tests/windows-governed-memory.test.ts
 
       - name: Packaged Electron daemon gate
         env:

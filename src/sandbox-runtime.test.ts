@@ -2651,6 +2651,29 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     await invocation.cleanup();
   });
 
+  it('keeps scoped and concrete legacy Memory readable while masking writes under a broad workspace grant', async () => {
+    await resetSandboxRuntimeForTest();
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-memory-write-mask-'));
+    tempRoots.push(root);
+    const home = path.join(root, '.kodax');
+    const scoped = path.join(home, 'memory-scopes');
+    const legacy = path.join(home, 'projects', 'fixture-project', 'memory');
+    await mkdir(scoped, { recursive: true }); await mkdir(legacy, { recursive: true });
+    vi.stubEnv('KODAX_HOME', home);
+    const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
+    const invocation = await sandbox.prepare({ toolCallId: 'memory-write-mask', toolInput: { command: 'node --version' },
+      command: 'node --version', executable: process.execPath, args: ['--version'], cwd: root, env: process.env, fallbackToNormalExecution: false });
+    if (!invocation) throw new Error('expected Windows v2 invocation');
+    const request = JSON.parse(readFileSync(invocation.args.at(-1)!, 'utf8')) as { denyRead: string[]; denyWrite: string[] };
+    for (const directory of [scoped, legacy]) {
+      const canonical = (await realpath(directory)).toLowerCase();
+      expect(request.denyWrite.map(value => value.toLowerCase())).toContain(canonical);
+      expect(request.denyRead.map(value => value.toLowerCase())).not.toContain(canonical);
+    }
+    expect(request.denyWrite.map(value => value.toLowerCase())).not.toContain(path.join(home, 'projects').toLowerCase());
+    await invocation.cleanup();
+  });
+
   it('allows broad home reads and isolates host temporary writes per command', async () => {
     await resetSandboxRuntimeForTest();
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-v2-broad-host-access-'));

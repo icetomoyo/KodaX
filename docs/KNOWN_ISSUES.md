@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-10-31_
+_Last Updated: 2026-11-01_
 
 ---
 
@@ -26,6 +26,19 @@ documentation update.
 Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
+
+## Issue 376: Windows gate and recovery/credential/permission audit follow-up
+
+- Priority: High
+- Status: Implemented and offline-accepted on `codex/llm-provider-parity`; native Memory OS acceptance pending; not merged or released
+- Created: 2026-11-01
+
+The accepted first batch and its failure boundaries are recorded in the
+[regression guide](test-guides/ISSUE_376_v0.7.97_REGRESSION_GUIDE.md).
+Unknown historical locks and interrupted reclamation claims remain fail-closed;
+corrupt credential/config/pending-input bytes are retained for explicit repair.
+Full Access opaque Host programs remain trusted code, outside OS isolation.
+Model catalog/pricing, learned Skill integration and cache layout are later work.
 
 ## Issue 375: Constrained Skill shell patterns admit extra effects
 

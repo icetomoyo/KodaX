@@ -386,6 +386,7 @@ function buildOne(target, version) {
   cpSync(capJsonSrc, join(outDir, 'provider-capabilities.json'));
   cpSync(join(ROOT, 'packages/coding/src/self-knowledge/manual-topics.json'), join(outDir, 'manual-topics.json'));
   cpSync(join(ROOT, 'packages/coding/src/prompts/static-text.json'), join(outDir, 'static-text.json'));
+  cpSync(join(ROOT, 'src/windows-native-scripts.json'), join(outDir, 'windows-native-scripts.json'));
   cpSync(join(ROOT, 'packages/repl/src/common/generated-config-templates.json'), join(outDir, 'generated-config-templates.json'));
 
   // Image validation runs the unchanged JS/WASM codec outside the compiled executable.

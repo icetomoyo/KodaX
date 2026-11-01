@@ -133,7 +133,7 @@ async function importMainWithMocks(options: {
 }> {
   const calls: string[] = [];
   vi.doMock('./provider-credential-manager.js', () => ({ createProviderCredentialManager: () => ({ describe: async () => ({ stored: false }) }) }));
-  vi.doMock('./cli-provider-credentials.js', () => ({ createCliProviderCredentials: async () => ({ authorizeExecution: async () => undefined, close: async () => undefined }) }));
+  vi.doMock('./cli-provider-credentials.js', () => ({ createCliProviderCredentialAccess: () => ({ authorizeExecution: async () => undefined, close: async () => undefined }) }));
   const runtimeOptions: unknown[] = [];
   const runtimeStarts: unknown[] = [];
   const runtimeDeletes: string[] = [];

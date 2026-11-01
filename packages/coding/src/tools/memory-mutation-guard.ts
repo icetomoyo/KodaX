@@ -1,7 +1,8 @@
 import { getAgentConfigPath, isAutoManagedMemoryFile } from '@kodax-ai/agent';
+import { isGovernedMemoryMutationTarget } from '../permissions/agent-home-policy.js';
 
 export function memoryMutationDenial(filePath: string): string | undefined {
-  return isAutoManagedMemoryFile(filePath)
+  return isAutoManagedMemoryFile(filePath) || isGovernedMemoryMutationTarget(filePath)
     ? '[Tool Error] Memory files are governed by the Memory Control Plane; use an explicit memory command or proposal instead.'
     : undefined;
 }

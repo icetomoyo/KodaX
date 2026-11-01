@@ -20,6 +20,31 @@ import {
   windowsSandboxControlDirectory,
 } from './windows-native-artifacts.js';
 
+it('retains the exact audited native provisioning programs after externalizing their data', () => {
+  const scripts = JSON.parse(fs.readFileSync(new URL('./windows-native-scripts.json', import.meta.url), 'utf8')) as Record<string, string>;
+  const expected = {
+    provision: '1dc640daef701ff7648e4980ae640a28b2776b73a4793e5423304c729cc86016',
+    control: 'a3d7af9f9308494634b3b19ce263cc7ec0901b034691c94883567ca44a5e567b',
+  };
+  for (const [key, hash] of Object.entries(expected)) {
+    expect(createHash('sha256').update(scripts[key]!, 'utf8').digest('hex')).toBe(hash);
+    expect(Buffer.byteLength(scripts[key]!, 'utf16le')).toBe(key === 'provision' ? 17574 : 16816);
+  }
+});
+
+it('fails before native execution when a packaged script is missing or changed, and retries valid data', () => {
+  const missing = vi.spyOn(fs, 'readFileSync').mockImplementationOnce(() => {
+    throw Object.assign(new Error('fixture resource missing'), { code: 'ENOENT' });
+  });
+  expect(() => _internalWindowsNativeArtifacts.nativeScript('provision')).toThrow('fixture resource missing');
+  missing.mockRestore();
+  const changed = vi.spyOn(fs, 'readFileSync').mockReturnValueOnce(JSON.stringify({ control: 'changed program' }));
+  expect(() => _internalWindowsNativeArtifacts.nativeScript('control')).toThrow(/audited program/);
+  changed.mockRestore();
+  expect(createHash('sha256').update(_internalWindowsNativeArtifacts.nativeScript('control'), 'utf8').digest('hex'))
+    .toBe('a3d7af9f9308494634b3b19ce263cc7ec0901b034691c94883567ca44a5e567b');
+});
+
 function windowsManifestText(
   asrtSha256: string,
   shellSha256 = 'b'.repeat(64),

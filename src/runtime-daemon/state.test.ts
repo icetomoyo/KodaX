@@ -35,6 +35,55 @@ import {
 const tempRoots: string[] = [];
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
 
+it('does not publish an owner after close failure or leave its temporary file', () => {
+  const paths = resolveRuntimeDaemonPaths(tempHome(), 'close-failure');
+  const close = fsDefault.closeSync;
+  const fault = vi.spyOn(fsDefault, 'closeSync').mockImplementationOnce(fd => { close(fd); throw new Error('fixture close failure'); });
+  syncBuiltinESMExports();
+  expect(() => tryAcquireRuntimeDaemonLock(paths, { runtimeId: 'owner', pid: process.pid, createdAt: new Date().toISOString() })).toThrow('fixture close failure');
+  fault.mockRestore(); syncBuiltinESMExports();
+  expect(fs.existsSync(paths.lockFile)).toBe(false);
+  expect(fs.readdirSync(paths.rootDir)).toEqual([]);
+});
+
+it('surfaces a failed coordinator release and retries only that finished nonce', () => {
+  const sessions = tempHome();
+  const release = tryAcquireRuntimeSessionStorageStartup(sessions)!;
+  const lock = path.join(fs.realpathSync(sessions), '.product-host', 'startup.lock');
+  const unlink = fsDefault.unlinkSync;
+  const fault = vi.spyOn(fsDefault, 'unlinkSync').mockImplementation(file => {
+    if (file === lock) throw Object.assign(new Error('fixture release busy'), { code: 'EBUSY' });
+    unlink(file);
+  });
+  syncBuiltinESMExports();
+  expect(release).toThrow('fixture release busy');
+  fault.mockRestore(); syncBuiltinESMExports();
+  const next = tryAcquireRuntimeSessionStorageStartup(sessions);
+  expect(next).toBeDefined();
+  next!();
+});
+
+it.each(['write', 'sync'] as const)('a failed owner record %s does not strand coordination or daemon locks', failure => {
+  const paths = resolveRuntimeDaemonPaths(tempHome(), 'failed-publication');
+  fs.mkdirSync(paths.rootDir, { recursive: true });
+  const fail = vi.spyOn(fsDefault, failure === 'write' ? 'writeFileSync' : 'fsyncSync')
+    .mockImplementationOnce(() => { throw Object.assign(new Error('fixture disk failure'), { code: 'ENOSPC' }); });
+  syncBuiltinESMExports();
+  expect(() => updateRuntimeOwnerPolicy(paths, 'daemon', 0)).toThrow();
+  fail.mockRestore(); syncBuiltinESMExports();
+  expect(fs.existsSync(paths.ownerPolicyLockFile)).toBe(false);
+  expect(() => updateRuntimeOwnerPolicy(paths, 'daemon', 0)).not.toThrow();
+  const owner = { runtimeId: 'fixture-owner', pid: process.pid, createdAt: new Date().toISOString() };
+  const failDaemon = vi.spyOn(fsDefault, 'fsyncSync').mockImplementationOnce(() => { throw new Error('fixture sync failure'); });
+  syncBuiltinESMExports();
+  expect(() => tryAcquireRuntimeDaemonLock(paths, owner)).toThrow('fixture sync failure');
+  failDaemon.mockRestore(); syncBuiltinESMExports();
+  expect(fs.existsSync(paths.lockFile)).toBe(false);
+  const lock = tryAcquireRuntimeDaemonLock(paths, owner);
+  expect(lock).toBeDefined();
+  releaseRuntimeDaemonLock(lock!);
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
   Object.defineProperty(process, 'platform', originalPlatform);

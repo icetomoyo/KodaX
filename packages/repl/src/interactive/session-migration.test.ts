@@ -1,6 +1,6 @@
 import os from 'os';
 import path from 'path';
-import { existsSync } from 'fs';
+import fsSync, { existsSync } from 'fs';
 import fsPromises from 'fs/promises';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -55,6 +55,95 @@ describe('FEATURE_219 session-migration', () => {
     );
   });
 
+  it('retries its own finished lock cleanup in the same Host without adopting live foreign locks', async () => {
+    await seedFlat('cleanup-retry');
+    const lock = path.join(sessionsDir, '.migration-lock');
+    const remove = fsPromises.rm;
+    const fault = vi.spyOn(fsPromises, 'rm').mockImplementation(async (file, options) => {
+      if (file === lock) throw Object.assign(new Error('fixture busy'), { code: 'EBUSY' });
+      return remove(file, options);
+    });
+    await expect(ensureLayoutMigrated(sessionsDir)).rejects.toThrow(/cleanup/i);
+    expect(existsSync(lock)).toBe(true);
+    fault.mockRestore();
+    await ensureLayoutMigrated(sessionsDir);
+    expect(existsSync(lock)).toBe(false);
+    await mkdir(lock);
+    await writeFile(path.join(lock, 'owner.json'), JSON.stringify({ pid: process.pid, nonce: 'foreign' }));
+    await ensureLayoutMigrated(sessionsDir);
+    expect(existsSync(lock)).toBe(true);
+  });
+
+  it('cleans only its own directory when owner publication fails', async () => {
+    await seedFlat('owner-failure');
+    const lock = path.join(sessionsDir, '.migration-lock');
+    const write = fsPromises.writeFile;
+    const fault = vi.spyOn(fsPromises, 'writeFile').mockImplementation(async (file, ...args) => {
+      if (file === path.join(lock, 'owner.json')) throw new Error('fixture owner write failure');
+      return write(file, ...args);
+    });
+    await expect(runMigration(sessionsDir)).rejects.toThrow('fixture owner write failure');
+    expect(existsSync(lock)).toBe(false);
+    fault.mockRestore();
+    await runMigration(sessionsDir);
+    expect(await isMigrated(sessionsDir)).toBe(true);
+  });
+
+  it('surfaces both owner publication and cleanup failure while retaining the unknown lock', async () => {
+    const source = await seedFlat('double-failure');
+    const original = await readFile(source, 'utf8');
+    const lock = path.join(sessionsDir, '.migration-lock');
+    const write = fsPromises.writeFile, remove = fsPromises.rm;
+    const ownerFailure = Object.assign(new Error('fixture owner failure'), { code: 'EIO' });
+    const cleanupFailure = Object.assign(new Error('fixture cleanup busy'), { code: 'EBUSY' });
+    vi.spyOn(fsPromises, 'writeFile').mockImplementation(async (file, ...args) => {
+      if (file === path.join(lock, 'owner.json')) throw ownerFailure;
+      return write(file, ...args);
+    });
+    vi.spyOn(fsPromises, 'rm').mockImplementation(async (file, options) => {
+      if (file === lock) throw cleanupFailure;
+      return remove(file, options);
+    });
+    await expect(ensureLayoutMigrated(sessionsDir)).rejects.toMatchObject({
+      message: expect.stringMatching(/cleanup/i),
+      cause: expect.objectContaining({ errors: [ownerFailure, expect.objectContaining({ cause: cleanupFailure })] }),
+    });
+    expect(existsSync(lock)).toBe(true);
+    expect(await readFile(source, 'utf8')).toBe(original);
+  });
+
+  it('surfaces unreadable release ownership and retries it after repair without deleting unknown data', async () => {
+    await seedFlat('owner-read-failure');
+    const owner = path.join(sessionsDir, '.migration-lock', 'owner.json');
+    const read = fsPromises.readFile;
+    const exists = fsSync.existsSync;
+    const hidden = vi.spyOn(fsSync, 'existsSync').mockImplementation(file =>
+      file === path.dirname(owner) && exists(path.join(sessionsDir, '.layout.json')) ? false : exists(file));
+    const fault = vi.spyOn(fsPromises, 'readFile').mockImplementation(async (file, ...args) => {
+      if (file === owner && existsSync(path.join(sessionsDir, '.layout.json'))) {
+        throw Object.assign(new Error('fixture owner read denied'), { code: 'EACCES' });
+      }
+      return read(file, ...args);
+    });
+    await expect(ensureLayoutMigrated(sessionsDir)).rejects.toThrow(/cleanup/i);
+    expect(existsSync(owner)).toBe(true);
+    fault.mockRestore();
+    hidden.mockRestore();
+    await ensureLayoutMigrated(sessionsDir);
+    expect(existsSync(owner)).toBe(false);
+  });
+
+  it.each([-1, 0, 1.25, '42'])('retains an unverifiable migration PID %s instead of reclaiming it', async pid => {
+    await seedFlat('unknown-owner');
+    const lock = path.join(sessionsDir, '.migration-lock');
+    await mkdir(lock);
+    const raw = JSON.stringify({ pid, heartbeatAt: 0 });
+    await writeFile(path.join(lock, 'owner.json'), raw);
+    expect(await runMigration(sessionsDir)).toEqual({ moved: 0, planned: 0 });
+    expect(await readFile(path.join(lock, 'owner.json'), 'utf8')).toBe(raw);
+    expect(await isMigrated(sessionsDir)).toBe(false);
+  });
+
   it('reads a large metadata record without misrouting the session to _unknown', async () => {
     const id = 'large-meta';
     await writeFile(
@@ -91,6 +180,29 @@ describe('FEATURE_219 session-migration', () => {
     // Second run is a no-op (marker present).
     const again = await runMigration(sessionsDir);
     expect(again.moved).toBe(0);
+  });
+
+  it('finishes committed journal cleanup before a new storage instance reads saved history', async () => {
+    const { FileSessionStorage } = await import('./storage.js');
+    const id = '20261101_000001';
+    const options = { sessionsDir, configHome: path.join(root, '.kodax') };
+    await new FileSessionStorage(options).save(id, { title: 'Retain history', gitRoot: root, messages: [{ role: 'user', content: 'keep every byte' }] });
+    await writeFile(path.join(sessionsDir, '.migration-journal.jsonl'), '');
+    await ensureLayoutMigrated(sessionsDir);
+    const snapshot = await new FileSessionStorage(options).readFullSnapshot(id);
+    expect(snapshot).toBeDefined();
+    expect(existsSync(path.join(sessionsDir, '.migration-journal.jsonl'))).toBe(false);
+  });
+
+  it('never steals a live migration lock merely because its heartbeat is old', async () => {
+    const flat = await seedFlat('20261101_000002');
+    const lock = path.join(sessionsDir, '.migration-lock');
+    await mkdir(lock);
+    const bytes = JSON.stringify({ pid: process.pid, startTime: 0, heartbeatAt: 0 });
+    await writeFile(path.join(lock, 'owner.json'), bytes);
+    expect((await runMigration(sessionsDir)).moved).toBe(0);
+    expect(await readFile(path.join(lock, 'owner.json'), 'utf8')).toBe(bytes);
+    expect(existsSync(flat)).toBe(true);
   });
 
   it('relocates an orphan island sidecar instead of deleting it (non-destructive)', async () => {

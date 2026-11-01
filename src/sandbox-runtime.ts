@@ -533,6 +533,7 @@ const WORKSPACE_SHELL_INTERNAL_AGENT_HOME_DIRECTORIES = [
   'runtime',
   'processes',
   'learned',
+  'memory-scopes',
 ] as const;
 const ELECTRON_NODE_ENV_SCRUB_IMPORT_LITERAL = JSON.stringify(ELECTRON_NODE_ENV_SCRUB_IMPORT);
 const ELECTRON_RUN_AS_NODE_ENV_LITERAL = JSON.stringify(ELECTRON_RUN_AS_NODE_ENV);
@@ -4735,16 +4736,24 @@ function workspaceShellSandboxConfig(
     ],
     agentHome,
   );
+  const legacyProjects = path.join(agentHome, 'projects');
+  const legacyMemoryRoots = existsSync(legacyProjects)
+    && writeRoots.some(root => isInside(root, legacyProjects) || isInside(legacyProjects, root))
+    ? readdirSync(legacyProjects, { withFileTypes: true }).flatMap(entry => {
+      const memory = path.join(legacyProjects, entry.name, 'memory');
+      return (entry.isDirectory() || entry.isSymbolicLink()) && existsSync(memory) ? [memory] : [];
+    }) : [];
   const protectedAgentHomeWriteRoots = [
     controlDirectory,
     ...credentialRoots,
+    ...legacyMemoryRoots,
     ...WORKSPACE_SHELL_INTERNAL_AGENT_HOME_DIRECTORIES.map(
       (directory) => path.join(agentHome, directory),
     ),
   ];
   if (process.platform === 'win32') {
     for (const protectedRoot of protectedAgentHomeWriteRoots) {
-      if (protectedRoot !== credentialFile && writeRoots.some((granted) => isInside(granted, protectedRoot))) {
+      if (protectedRoot !== credentialFile && !existsSync(protectedRoot) && writeRoots.some((granted) => isInside(granted, protectedRoot))) {
         mkdirSync(protectedRoot, { recursive: true });
       }
     }

@@ -582,6 +582,9 @@ async function toolBashInHome(input: Record<string, unknown>, ctx: KodaXToolExec
     observationReason?: 'not_ready' | 'prepare_failed' | 'backend_failed',
   ): Promise<string> => {
     if (ctx.abortSignal?.aborted) return cancelledCommandResult(command);
+    const { getGovernedMemoryShellWriteDenial } = await import('../permissions/permission.js');
+    const memoryDenial = getGovernedMemoryShellWriteDenial(command, cwd, ctx.configHome);
+    if (memoryDenial) return memoryDenial;
     if (reason !== 'direct-host' && diagnostic !== undefined) {
       emitKodaXDiagnostic({ source: 'coding:bash', level: 'warn',
         message: 'Sandbox target did not start; requesting host-boundary authorization.',

@@ -524,7 +524,7 @@ function buildProviderConfig(custom: KodaXCustomProviderConfig): KodaXProviderCo
     // custom providers see zero behavior change. Per-model entries in
     // `models[]` can override individually via KodaXModelDescriptor.
     replayReasoningContent: custom.replayReasoningContent ?? false,
-    strictThinkingSignature: custom.strictThinkingSignature ?? false,
+    strictThinkingSignature: custom.oauth === 'anthropic' || (custom.strictThinkingSignature ?? false),
     streamMaxDurationMs: custom.streamMaxDurationMs,
     // FEATURE_216 v0.7.45 — explicit verifyStrategy wins; otherwise
     // derive from protocol per the table in the type's JSDoc.

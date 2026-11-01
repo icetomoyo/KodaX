@@ -21,6 +21,25 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Discover Windows source regressions automatically and retain the native OS gate.
+  Publish complete config/Host lock records, recover verified dead owners without
+  TTL stealing, and retry completed migration/release cleanup. Config and extension
+  publication failures retain original bytes, including legacy credential fields.
+- Isolate corrupt execution statistics, pending inputs and agent event ledgers
+  without replaying unknown effects or discarding queued intent. Retry failed CLI
+  credential bootstrap and load linked OAuth registrations only when selected;
+  preserve profile/account binding, revocation and Host replacement fences.
+- Reject unreadable or invalid existing core configuration in CLI and SDK
+  execution instead of selecting default credentials. Retain the original bytes,
+  permit first-use missing configuration, and retry after explicit repair.
+- Prevent native Anthropic API-key requests from inheriting ambient Bearer auth,
+  and omit unsigned foreign thinking on native Anthropic OAuth tool history.
+  Constrain SDK shell prefix fallback and protect governed Memory mutation at
+  sandbox and obvious direct Host targets. Plan recovery names the actual
+  `exit_plan_mode` approval flow.
+- Ship configuration templates, static prompts and audited native scripts in standalone
+  archives; load the byte-identical native programs lazily within the CLI budget.
+
 - Resolve explicit and queued Skill references against the executing Host's
   config home, keeping separate Hosts' user Skills and registries isolated.
 - Keep admitted Skill catalogs available under Markdown Agent and SDK profile instructions across Solo, Adaptive and public Runner entries; reuse the bounded catalog formatter for Runtime bindings while preserving complete caller prompt overrides and pinned authorization.

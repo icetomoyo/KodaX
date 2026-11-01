@@ -102,8 +102,8 @@ it('preserves the complete executable schema and tool order for every audited bu
   expect(candidate.tools.map(tool => tool.name)).toEqual(tools.map(tool => tool.name));
   expect(withoutAnnotations(candidate.tools)).toEqual(withoutAnnotations(tools));
   expect(JSON.stringify(tools)).toBe(before);
-  expect(candidate.tools.filter((tool, index) => tool !== tools[index])).toHaveLength(32);
-  // Evolved activation/default semantics remain outside the frozen audit.
+  expect(candidate.tools.filter((tool, index) => tool !== tools[index])).toHaveLength(31);
+  // Evolved activation/default and plan recovery semantics remain outside the frozen audit.
   expect(candidate.tools.filter((tool, index) => tool === tools[index]).map(tool => tool.name))
-    .toEqual(['ask_user_question', 'todo_create']);
+    .toEqual(['ask_user_question', 'exit_plan_mode', 'todo_create']);
 });

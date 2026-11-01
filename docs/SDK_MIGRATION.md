@@ -441,6 +441,21 @@ OAuth 注销与 API-key 删除保持不同入口；高级原生连接沿 SDK/CLI
 
 ### FEATURE_302 T12-H：账号保持与可重试升级（未发布）
 
+2026-11-01 的 Root 审计补充仍未发布：既有 SDK/配置/API_KEY 入口和 auth.json v2
+保持有效。CLI 按需打开所选 OAuth，失败可重试；缺失、撤销或 profile/issuer 不匹配
+均报错，不能用环境 Key 或其他注册账号兜底。原始损坏配置、凭证及队列文件保留。
+已有核心配置损坏、非对象或读取被拒绝时，CLI 与 SDK 均显式拒绝按空配置执行或
+打补丁，防止采用默认 provider/环境账号；真正缺失的新用户配置仍允许正常启动。
+有效旧配置与正常文件链接继续有效，悬空文件链接保留并报错。存活 Host 的
+`config.readEffective()` 仍可报告 `persistedConfig.state: invalid`，修复后重新读取
+原 provider；冷启动失败也可在修复后重试，不生成替代身份。
+Space 接手时应保留统计的 `coverage: partial`/issues；单个损坏 pending-input 文件仅
+使所属 Session 提交返回现有 `conflict`，不能自动清空或重新绑定其 principal。
+任务事件不可读则任务呈 `unknown` 并拒绝再次派发，健康任务不受影响。修复原文件后
+重连/重启 Host 恢复原队列与身份，不把未知执行当成重试许可。Windows 原生静态资源
+也必须随 SDK/二进制一起分发，缺失或篡改会显式失败。验收及真实 OS 前置条件见
+[Issue 376](test-guides/ISSUE_376_v0.7.97_REGRESSION_GUIDE.md)。本批没有修改 Space 仓库。
+
 CLI 的 config.json、API_KEY 和单记录凭证 SDK 入口继续有效，auth.json 仍为 v2。
 新增 AtomicFileProviderCredentialStore 扩展提供一致快照与多记录 CAS，不改变旧调用方契约。
 Space 的旧 Key 自动迁到应用私有作用域，旧加密副本保留；CLI 已有不同 Key 时双方继续各用

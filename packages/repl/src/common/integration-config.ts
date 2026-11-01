@@ -17,7 +17,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 
 import type { McpServerConfig, McpServersConfig } from "@kodax-ai/agent";
-import { withCoreConfigWriteLock } from "./core-config-lock.js";
+import { withConfigWriteLock, withCoreConfigWriteLock } from "./core-config-lock.js";
 
 export type IntegrationDomain = "mcp" | "a2a" | "extensions";
 export type IntegrationConfigSource = "user" | "legacy-user" | "default";
@@ -575,21 +575,6 @@ function currentUserRevision(file: string): string | undefined {
   return existsSync(file) ? hashText(readFileSync(file, "utf8")) : undefined;
 }
 
-function acquireWriteLock(file: string): {
-  readonly fd: number;
-  readonly path: string;
-} {
-  const lockPath = `${file}.lock`;
-  try {
-    return { fd: openSync(lockPath, "wx", 0o600), path: lockPath };
-  } catch (error: unknown) {
-    throw new Error(
-      `Integration configuration is busy: ${path.basename(file)}`,
-      { cause: error },
-    );
-  }
-}
-
 export function writeIntegrationDocument<T extends object>(input: {
   readonly domain: IntegrationDomain;
   readonly configHome: string;
@@ -601,8 +586,7 @@ export function writeIntegrationDocument<T extends object>(input: {
   const file = resolveIntegrationConfigPath(input.domain, input.configHome);
   const document = input.validate(input.document);
   mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  const lock = acquireWriteLock(file);
-  try {
+  return withConfigWriteLock(file, `${file}.lock`, () => {
     const actualRevision = currentUserRevision(file);
     const expectedRevision =
       input.expectedRevision === null ? undefined : input.expectedRevision;
@@ -652,10 +636,7 @@ export function writeIntegrationDocument<T extends object>(input: {
       raw,
       document,
     });
-  } finally {
-    closeSync(lock.fd);
-    if (existsSync(lock.path)) unlinkSync(lock.path);
-  }
+  });
 }
 
 function metadataSignature(file: string): string {

@@ -3975,6 +3975,7 @@ interface RuntimePersistence {
   savePendingInputs(sessionId: string, inputs: readonly import('./session-input-queue.js').PendingSessionInput[]): void;
   loadPendingInputs(): readonly import('./session-input-queue.js').PendingSessionInput[];
   hasPendingInputs(sessionId: string): boolean;
+  assertPendingInputsReadable(sessionId: string): void;
   close(): void;
   nextSessionOrder(sessionId: string): number;
   saveRunStatus(status: RuntimeRunStatus): RuntimeRunStatus;
@@ -9813,6 +9814,7 @@ async function createRuntimeRunService(deps: {
   // manual compaction holds occupancy, so no writer interleaves with the
   // compaction's whole-lineage commit.
   const assertSessionNotCompacting = (sessionId: string): void => {
+    deps.persistence.assertPendingInputsReadable(sessionId);
     if (!deps.activeCompactions.has(sessionId)) return;
     const error = new Error(
       `Session compaction is in progress and cannot admit new work: ${sessionId}`,
@@ -11986,6 +11988,7 @@ async function createRuntimeRunService(deps: {
       deps.artifacts,
       operation,
     );
+    deps.persistence.assertPendingInputsReadable(input.sessionId);
     let admittedSessionContext = requiredAfterRun?.admittedSessionContext;
     if (requiredAfterRun !== undefined && admittedSessionContext === undefined) {
       throw new RuntimeContinuationStaleError(requiredAfterRun.runId);
@@ -13039,6 +13042,7 @@ async function createRuntimeRunService(deps: {
 
     async getInput(sessionId, inputId) {
       deps.ensureOpen();
+      deps.persistence.assertPendingInputsReadable(sessionId);
       const queued = productQueue.read(sessionId, inputId);
       if (queued) return queued;
       const record = findAcceptedInput(sessionId, inputId);
@@ -13047,6 +13051,7 @@ async function createRuntimeRunService(deps: {
 
     async withdrawInput(sessionId, inputId) {
       deps.ensureOpen();
+      deps.persistence.assertPendingInputsReadable(sessionId);
       return deps.sessionOperations.run(sessionId, async () => {
         await deps.sessionAdmission.assertRunAccess(sessionId);
         return productQueue.withdraw(sessionId, inputId);
@@ -16532,6 +16537,12 @@ function createRuntimePersistence(
   const sessionOrdersDir = path.join(runtimeDir, "session-orders");
   const pendingInputsDir = path.join(runtimeDir, 'pending-inputs');
   const pendingInputDigests = new Map<string, string>();
+  const unreadablePendingInputFiles = new Set<string>();
+  const assertPendingInputsReadable = (sessionId: string): void => {
+    if (unreadablePendingInputFiles.has(`${encodeURIComponent(sessionId)}.json`)) {
+      throw createRuntimeConflictError('Pending Session inputs are unreadable and have been retained. Repair the original queue file and restart the Host before submitting work to this Session.', 0);
+    }
+  };
   const permissionGrantsFile = path.join(runtimeDir, "permission-grants.json");
   const runStatusIndexFile = path.join(runtimeDir, "run-status-index.json");
 
@@ -16984,6 +16995,7 @@ function createRuntimePersistence(
       pendingTerminalRunStatuses.clear();
     },
     savePendingInputs(sessionId, inputs) {
+      assertPendingInputsReadable(sessionId);
       fs.mkdirSync(pendingInputsDir, { recursive: true });
       const file = path.join(pendingInputsDir, `${encodeURIComponent(sessionId)}.json`);
       withRuntimeStatusFileLock(file, () => {
@@ -16999,9 +17011,11 @@ function createRuntimePersistence(
       });
     },
     hasPendingInputs(sessionId) { return fs.existsSync(path.join(pendingInputsDir, `${encodeURIComponent(sessionId)}.json`)); },
+    assertPendingInputsReadable,
     loadPendingInputs() {
       if (!fs.existsSync(pendingInputsDir)) return [];
       return fs.readdirSync(pendingInputsDir).filter(name => name.endsWith('.json')).flatMap(name => {
+        try {
         const values: unknown = JSON.parse(fs.readFileSync(path.join(pendingInputsDir, name), 'utf8'));
         if (!Array.isArray(values) || !values.every(value => isRecord(value) && typeof value.skill === 'boolean'
           && (value.principalId === undefined || typeof value.principalId === 'string') && isRecord(value.input)
@@ -17009,8 +17023,15 @@ function createRuntimePersistence(
           && typeof value.input.inputId === 'string' && typeof value.input.text === 'string')) {
           throw new Error('Malformed pending Session input recovery.');
         }
+        new SessionInputQueue(() => undefined).validateRestore(values as import('./session-input-queue.js').PendingSessionInput[]);
         pendingInputDigests.set(decodeURIComponent(name.slice(0, -5)), createHash('sha256').update(JSON.stringify(values)).digest('hex'));
         return values as import('./session-input-queue.js').PendingSessionInput[];
+        } catch {
+          unreadablePendingInputFiles.add(name);
+          emitKodaXDiagnostic({ source: 'runtime-persistence', level: 'warn',
+            message: 'Pending inputs are unreadable; the original file is retained and only its Session is blocked.', detail: { file: name } });
+          return [];
+        }
       });
     },
     nextSessionOrder(sessionId) {
@@ -22655,7 +22676,11 @@ function resolveRuntimeConfigFile(
 function readRuntimeConfig(
   configFile: string | undefined,
 ): Record<string, unknown> {
-  return readRuntimeConfigDocument(configFile).config;
+  const document = readRuntimeConfigDocument(configFile);
+  if (document.state === 'invalid') {
+    throw new Error(`Core configuration is unreadable or invalid: ${configFile ?? replApi.KODAX_CONFIG_FILE}. Repair the retained original before continuing.`);
+  }
+  return document.config;
 }
 
 function runtimeAutoReviewPolicy(
@@ -22777,14 +22802,16 @@ function readRuntimeConfigDocument(
       state: "loaded",
     };
   }
-  if (!fs.existsSync(configFile)) return { config: {}, state: "missing" };
+  let present = false;
   try {
+    fs.lstatSync(configFile);
+    present = true;
     const parsed = JSON.parse(fs.readFileSync(configFile, "utf8")) as unknown;
     return isRecord(parsed)
       ? { config: parsed, state: "loaded" }
       : { config: {}, state: "invalid" };
-  } catch {
-    return { config: {}, state: "invalid" };
+  } catch (error) {
+    return { config: {}, state: !present && (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'invalid' };
   }
 }
 

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { AgentActorOwner } from '@kodax-ai/agent';
+import { emitKodaXDiagnostic, type AgentActorOwner } from '@kodax-ai/agent';
 import type { ProviderRequestObservation } from '@kodax-ai/llm';
 import type { KodaXShellSandboxObservation, RuntimeContextBudgetSnapshot } from '@kodax-ai/coding';
 import type { ClientExecutionTarget, ClientProviderRequestFact, ClientToolExecutionFact, ClientStatisticsService,
@@ -13,16 +13,52 @@ interface Facts {
   owners: Record<string, AgentActorOwner>;
   requests: ClientProviderRequestFact[]; tools: ClientToolExecutionFact[]; contexts: ClientContextBudgetFact[];
 }
+function record(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+function isTokenCount(value: unknown): boolean {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+function validUsage(value: unknown): boolean {
+  if (value === undefined) return true;
+  return record(value) && isTokenCount(value.inputTokens) && isTokenCount(value.outputTokens)
+    && (value.totalTokens === undefined || isTokenCount(value.totalTokens))
+    && (value.cachedReadTokens === undefined || isTokenCount(value.cachedReadTokens))
+    && (value.cachedWriteTokens === undefined || isTokenCount(value.cachedWriteTokens))
+    && (value.thoughtTokens === undefined || isTokenCount(value.thoughtTokens));
+}
 export function createExecutionFactsStore(configHome: string, owner: AgentActorOwner) {
+  const incomplete = new Set<string>();
+  const unavailable = 'Execution statistics are incomplete because their storage was unavailable. Unknown executions must not be replayed; totals include only recorded facts.';
+  const reportFailure = (sessionId: string): void => {
+    if (!incomplete.has(sessionId)) emitKodaXDiagnostic({ source: 'execution-facts', level: 'warn',
+      message: 'Execution statistics storage is unavailable; inference remains usable and coverage is partial.', detail: { sessionId } });
+    incomplete.add(sessionId);
+  };
+  const partial = (facts: Facts): Facts => {
+    if (incomplete.has(facts.sessionId)) { facts.coverage = 'partial'; if (!facts.issues.includes(unavailable)) facts.issues.push(unavailable); }
+    return facts;
+  };
+  const empty = (sessionId: string): Facts => partial({ version: 1, sessionId, revision: 0, coverage: 'partial',
+    issues: ['Usage before execution-fact collection is unavailable.'], owners: {}, requests: [], tools: [], contexts: [] });
   const file = (sessionId: string) => path.join(configHome, 'execution-facts', `${createHash('sha256').update(sessionId).digest('hex')}.json`);
   const load = (sessionId: string): Facts => {
     const target = file(sessionId);
-    if (!fs.existsSync(target)) return { version: 1, sessionId, revision: 0, coverage: 'partial',
-      issues: ['Usage before execution-fact collection is unavailable.'], owners: {}, requests: [], tools: [], contexts: [] };
+    if (!fs.existsSync(target)) return empty(sessionId);
     const facts = JSON.parse(fs.readFileSync(target, 'utf8')) as Facts;
     if (facts.version !== 1 || facts.sessionId !== sessionId || !Array.isArray(facts.requests) || !Array.isArray(facts.tools)
-      || !Array.isArray(facts.contexts) || !Number.isSafeInteger(facts.revision)) throw new Error('Invalid persisted execution facts.');
-    return facts;
+      || !Array.isArray(facts.contexts) || !Number.isSafeInteger(facts.revision)
+      || !facts.owners || typeof facts.owners !== 'object' || Array.isArray(facts.owners)
+      || !Array.isArray(facts.issues) || !facts.issues.every(issue => typeof issue === 'string')
+      || !['complete', 'partial'].includes(facts.coverage)
+      || !Object.values(facts.owners).every(value => record(value) && typeof value.runtimeId === 'string'
+        && typeof value.ownerId === 'string' && Number.isSafeInteger(value.pid) && typeof value.startedAt === 'string')
+      || !facts.requests.every(row => record(row) && typeof row.requestId === 'string' && typeof row.runtimeId === 'string'
+        && typeof row.state === 'string' && validUsage(row.usage) && validUsage(row.partialUsage))
+      || !facts.tools.every(row => record(row) && typeof row.id === 'string' && typeof row.runtimeId === 'string'
+        && typeof row.state === 'string' && Array.isArray(row.sandbox))
+      || !facts.contexts.every(row => record(row) && typeof row.contextId === 'string')) throw new Error('Invalid persisted execution facts.');
+    return partial(facts);
   };
   const save = (facts: Facts): void => {
     const target = file(facts.sessionId);
@@ -32,12 +68,18 @@ export function createExecutionFactsStore(configHome: string, owner: AgentActorO
     finally { fs.rmSync(temporary, { force: true }); }
   };
   const change = (sessionId: string, effect: (facts: Facts) => void): void => {
-    const facts = load(sessionId); facts.revision += 1;
-    facts.owners[owner.runtimeId] = owner;
-    effect(facts); save(facts);
+    try {
+      const facts = load(sessionId); facts.revision += 1;
+      facts.owners[owner.runtimeId] = owner;
+      effect(facts); save(facts);
+    } catch { reportFailure(sessionId); }
+  };
+  const readAvailable = (sessionId: string): Facts => {
+    try { return load(sessionId); }
+    catch { reportFailure(sessionId); return empty(sessionId); }
   };
   const recovered = async (sessionId: string): Promise<Facts> => {
-    const observed = load(sessionId);
+    const observed = readAvailable(sessionId);
     const dead = new Map<string, string>();
     for (const [runtimeId, previous] of Object.entries(observed.owners)) {
       if (!observed.requests.some(row => row.runtimeId === runtimeId && row.state === 'started')
@@ -46,7 +88,7 @@ export function createExecutionFactsStore(configHome: string, owner: AgentActorO
       dead.set(runtimeId, JSON.stringify(previous));
     }
     // Probes yield; re-read before the synchronous write to preserve new facts.
-    const facts = load(sessionId);
+    const facts = readAvailable(sessionId);
     let changed = false;
     for (const [runtimeId, identity] of dead) {
       if (JSON.stringify(facts.owners[runtimeId]) !== identity) continue;
@@ -61,8 +103,8 @@ export function createExecutionFactsStore(configHome: string, owner: AgentActorO
       const issue = 'Some adapters report operation boundaries rather than physical wire attempts.';
       if (!facts.issues.includes(issue)) facts.issues.push(issue);
     }
-    if (changed) save(facts);
-    return facts;
+    if (changed) try { save(facts); } catch { reportFailure(sessionId); }
+    return partial(facts);
   };
   const page = <T extends { revision: number }>(facts: Facts, kind: 'requests' | 'tools', rows: readonly T[], options?: { cursor?: string; limit?: number }): ClientExecutionFactsPage<T> => {
     const limit = options?.limit ?? 100;
@@ -103,7 +145,11 @@ export function createExecutionFactsStore(configHome: string, owner: AgentActorO
   };
   return {
     service,
-    created(sessionId: string): void { if (load(sessionId).revision === 0) change(sessionId, facts => { facts.coverage = 'complete'; facts.issues = []; }); },
+    created(sessionId: string): void {
+      try { if (load(sessionId).revision === 0) change(sessionId, facts => {
+        if (!incomplete.has(sessionId)) { facts.coverage = 'complete'; facts.issues = []; }
+      }); } catch { reportFailure(sessionId); }
+    },
     provider(sessionId: string, target: ClientExecutionTarget, observation: ProviderRequestObservation): void {
       change(sessionId, facts => {
         const existing = facts.requests.findIndex(row => row.requestId === observation.requestId);
@@ -137,7 +183,8 @@ export function createExecutionFactsStore(configHome: string, owner: AgentActorO
         const previous = facts.tools[index];
         const row: ClientToolExecutionFact = { id, revision: facts.revision, toolId, name: name ?? previous?.name ?? 'unknown',
           sessionId, target, runtimeId: owner.runtimeId,
-          state: patch.result !== undefined && previous?.state !== 'executing' && previous?.state !== 'completed'
+          state: patch.result !== undefined && previous === undefined && facts.issues.includes(unavailable) ? 'unknown'
+            : patch.result !== undefined && previous?.state !== 'executing' && previous?.state !== 'completed'
             ? 'not_executed' : patch.state ?? previous?.state ?? 'prepared',
           result: patch.result ?? previous?.result, updatedAt: new Date().toISOString(),
           sandbox: [...(previous?.sandbox ?? []), ...(patch.observation === undefined ? [] : [patch.observation])] };
