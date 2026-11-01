@@ -108,3 +108,37 @@ These are actual skips, not TODOs and not passes. Default Vitest also excludes p
 | **Total** | **87** | **0 TODO** |
 
 Implementation and offline acceptance are complete for this batch. Native Memory OS acceptance and remote CI execution remain unverified; the shared environment was not changed to force them green. Keep those prerequisites visible when integrating or releasing.
+
+## Main integration follow-up — 2026-11-01
+
+The user authorized merging this batch and requested that subsequent fixes use
+the `KodaX` branch directly in `C:/Works/GitProj/KodaX-AI/KodaX`, without another
+feature worktree. Main fast-forwarded from `4606eda9` to `2ee4a782` without
+conflicts; the reviewed production tree is unchanged. The three pre-existing
+untracked audit/scratch files were preserved, and the design submodule remains
+at `8574086208d6b5cc6ff6599c825fe88d986c4dd0` with no local changes.
+
+Main's own dependency links, build and typecheck passed. Its rebuilt distribution
+passed the three historical cutover cases and the integrity-pinned alpha.11 busy
+Host upgrade. CLI size remains 5,173,836 bytes. The existing full source result
+above applies to the identical production/test source; another full source run
+was not substituted for validating the rebuilt Main distribution.
+
+The first Main bundled run passed 91/92: `bundled-shell-cleanup.test.mjs` reported
+a cleanup failure, but its wrapper hid the original assertion message. The fixture
+was retained at `%TEMP%/kodax-bundle-cleanup-1gcO1c`. On inspection both recorded
+PIDs were absent and its child registry was empty; that later observation alone
+does not establish their state at the failing assertion. No processes were killed
+based on those old PIDs. An isolated replay, eight concurrent isolated replays,
+and a complete Main bundled replay all passed; the latter was **92/92**, with no
+skips or TODOs. Failure wrapping now includes the original error message while
+retaining its cause and fixture. Assertions and production cleanup code were not
+weakened or changed. Root cause remains unconfirmed; do not describe it as a fixed
+leak, proven PID reuse, or a proven timing-only failure.
+
+Main logs are in OS temporary storage under `kodax-issue376-main-{build,typecheck,
+bundle,bundle-diagnostic,cutover,upgrade}.log`; isolated stress records use
+`kodax-issue376-cleanup-stress-0.log` through `-7.log`. No source/build mutation
+ran during the bundled replays. No push, publication, shared sandbox setup,
+credential replacement or user Host shutdown was performed. The native Memory
+prerequisite remains unchanged and unverified as described above.

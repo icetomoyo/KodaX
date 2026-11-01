@@ -30,7 +30,7 @@ resolution evidence is retained. Issues 345–347 are unchanged.
 ## Issue 376: Windows gate and recovery/credential/permission audit follow-up
 
 - Priority: High
-- Status: Implemented and offline-accepted on `codex/llm-provider-parity`; native Memory OS acceptance pending; not merged or released
+- Status: Merged into local `KodaX`; offline acceptance passed; native Memory OS acceptance pending; not pushed or released
 - Created: 2026-11-01
 
 The accepted first batch and its failure boundaries are recorded in the
@@ -39,6 +39,10 @@ Unknown historical locks and interrupted reclamation claims remain fail-closed;
 corrupt credential/config/pending-input bytes are retained for explicit repair.
 Full Access opaque Host programs remain trusted code, outside OS isolation.
 Model catalog/pricing, learned Skill integration and cache layout are later work.
+Main verification observed one intermittent packaged Shell cleanup failure;
+isolated, eight-way concurrent and complete bundled replays passed. Its cause
+remains unconfirmed; the retained evidence and improved failure diagnostic are
+recorded in the regression guide rather than classified as a repaired product bug.
 
 ## Issue 375: Constrained Skill shell patterns admit extra effects
 
