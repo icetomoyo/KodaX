@@ -554,3 +554,8 @@ SDK view 契约未变。这不代表 Space 已实现同样的产品交互，仍�
 `8574086208d6b5cc6ff6599c825fe88d986c4dd0` 在设计仓 `origin/main` 中的可达性；
 Space 独立分支不推送，不创建版本标签、不发布包。最终主仓与远端验收见
 [daemon 帮助回归记录](test-guides/FEATURE_233_v0.7.97_TEST_GUIDE.md#daemon-help-dispatch-repair--2026-11-01)。
+
+远端验收：功能提交 `8a8bd445e6f62f899fb850b757ce78879abcde65` 已合入本地 KodaX 并
+推送至 Root `origin/KodaX`；设计仓 `origin/main` 已先推送上述 `8574086` 依赖，随后
+分别核对远端 SHA。实际主仓重建、类型检查、109 项定向源码、8 项发布包验收通过；
+独立工作区完整发布包为 89 项通过。Space 保持独立，未推送、未改 SDK pin，未发布包或标签。

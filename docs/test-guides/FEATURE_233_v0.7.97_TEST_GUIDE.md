@@ -259,8 +259,21 @@ Acceptance on the independent final runtime tree:
 
 The public management entry points are now safe to use for help. Ordinary
 management actions remain intentional operations and are exercised separately.
-Remote push acceptance is recorded after guarded local Main integration;
-Space remains outside this push scope and no package/tag release is requested.
+Functional commit `8a8bd445e6f62f899fb850b757ce78879abcde65` was safely
+fast-forwarded into local KodaX. The actual Main checkout was rebuilt and
+passed source/test type checks, 109 targeted command/option tests, eight
+published help/budget/cold-recovery cases and twenty unchanged help renders.
+Main's CLI is also 5,177,260 bytes. The peer's three untracked review/scratch
+files were preserved and not staged or pushed.
+
+GitHub refs were independently verified after push: Root `origin/KodaX`
+contains that functional commit; design `origin/main` contains the pinned
+`8574086208d6b5cc6ff6599c825fe88d986c4dd0`, pushed before Root so its gitlink
+is reachable. This includes the previously local Root/design integration
+history. Space was not pushed; no package, version tag or release was created.
+The push receipt also reported 30 default-branch dependency alerts (eight
+high, twenty moderate, two low). This task did not investigate those alerts;
+these counts are the remote receipt, not a security-audit result.
 
 ## Standards
 
