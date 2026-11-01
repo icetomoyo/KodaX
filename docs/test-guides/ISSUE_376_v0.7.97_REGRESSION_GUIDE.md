@@ -911,3 +911,28 @@ After the fixture adjustment, local bundle acceptance passed 96 + 2 cases
 historical recovery, 2.19-second concurrent recovery, 51 ms history reads and
 1.36-second restart. Both review axes have no open findings. No production
 source or public contract changes are part of this follow-up.
+
+Run [41332132335](https://github.com/icetomoyo/KodaX/actions/runs/41332132335)
+on `4b77145d4` passed the adjusted help fixture, all five platform builds,
+universal npm packaging, Linux suites and Windows system contracts. The
+Electron job also passed historical migration, alpha.11 upgrade, CPU-contention
+attachment, startup/cancellation, native transactions and all 30 real v2 cases,
+then failed the real Memory gate. The old rejection callback omitted the
+authorization request's diagnostic, so an empty observation list alone cannot
+identify the preparation failure. Windows portable was still running at this
+checkpoint and is not counted as passed here.
+
+The direct Memory tool fixture had skipped a real Host invariant:
+`createCliProviderCredentials` initializes the private credential store before
+shell admission. Windows native policy validates every denyWrite target through
+an existing ACL handle; the isolated fixture had Memory files but no `auth.json`.
+It now initializes its own empty protected store and staging targets using the
+public file-store API, then executes the same shell/OS assertions. The fallback
+rejection now includes only reason, diagnostic and bounded observations. This
+does not initialize or migrate a real user's credentials, repair the shared
+sandbox or allow Host fallback. The 13 credential-file regressions and test
+typecheck passed locally; actual OS acceptance still needs the next exact SHA.
+That run subsequently completed with 15 successful jobs, only the Memory job
+failed, and publishing skipped. Windows portable passed, including the corrected
+Temp Bash syntax and extension execution cases; no newer candidate was dispatched
+until these remaining results were available.

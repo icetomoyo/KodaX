@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, it } from 'vitest';
 import { setAgentConfigHome } from '@kodax-ai/agent';
+import { createFileProviderCredentialStore } from '@kodax-ai/llm';
 import { toolBash } from '@kodax-ai/coding';
 import { createAsrtShellSandbox, doctorSandboxRuntime } from '../src/sandbox-runtime.js';
 
@@ -21,6 +22,9 @@ it.runIf(process.platform === 'win32' && process.env.KODAX_REAL_WINDOWS_MEMORY =
         await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, 'retained-memory');
       }
       setAgentConfigHome(home);
+      // The Host initializes its private credential mask targets before shell
+      // admission. This direct tool fixture must establish the same invariant.
+      await createFileProviderCredentialStore(path.join(home, 'auth.json')).initialize();
       const program = path.join(root, 'probe.cjs');
       await fs.writeFile(program, `const fs = require('node:fs');
 const paths = ${JSON.stringify([scoped, legacy])};
@@ -37,8 +41,12 @@ process.stdout.write('MEMORY_OS_BOUNDARY_VERIFIED');`);
         backups: new Map(), executionCwd: root, configHome: home, toolCallId: 'memory-os-boundary',
         resolveShellPermissionMode: () => 'auto',
         shellSandbox: createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true }),
-        reportToolSandboxObservation: observation => { observations.push(JSON.stringify(observation)); },
-        authorizeShellHostExecution: async () => { throw new Error(`OS regression must never fall back to Host execution. ${observations.join('\n')}`); },
+        reportToolSandboxObservation: observation => { if (observations.length < 24) observations.push(JSON.stringify(observation)); },
+        authorizeShellHostExecution: async request => {
+          throw new Error(`OS regression must never fall back to Host execution. ${JSON.stringify({
+            reason: request.reason, diagnostic: request.diagnostic, observations,
+          })}`);
+        },
       });
       expect(result).toContain('MEMORY_OS_BOUNDARY_VERIFIED');
       for (const file of [scoped, legacy]) expect(await fs.readFile(file, 'utf8')).toBe('retained-memory');
