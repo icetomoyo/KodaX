@@ -1,10 +1,10 @@
 # Space 的 Product Client / Host 接缝
 
-2026-10-18 的 Space 核查样本安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，当时官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前开发树 `0.7.97-alpha.11` 核对，不据此推断 Space 已升级；源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
+2026-10-18 的 Space 核查样本安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，当时官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前开发树 `0.7.97-alpha.12` 核对，不据此推断 Space 已升级；源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
 
 ## 2026-10-29 未发布 SDK 接入补充
 
-2026-10-30 的后续未发布修复补齐统一 Host 的 Partner 准入、可信 profile 快照、
+2026-10-30 的后续修复（已随 `v0.7.97-alpha.12` 发布）补齐统一 Host 的 Partner 准入、可信 profile 快照、
 实际 Run workMode 查询、Actor checkpoint 跨进程恢复和配置应用边界。
 采用 [SDK 组合契约](SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布)，不再使用
 旧 Partner inline 例外。`services.createExecutionProfile` 在 Main 基于 Host 实际目录评估显式策略，并保留

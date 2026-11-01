@@ -30,11 +30,12 @@ resolution evidence is retained. Issues 345–347 are unchanged.
 ## Issue 376: Windows gate and recovery/credential/permission audit follow-up
 
 - Priority: High
-- Status: Confirmed local code gaps repaired; offline acceptance complete with documented full-scan failures and whole-file replays; native/live boundaries and separate GC capability remain; not pushed or released
+- Status: Confirmed local code gaps repaired; offline acceptance complete with documented full-scan failures and whole-file replays; native/live boundaries and separate GC capability remain; released in `v0.7.97-alpha.12`; still-open findings tracked in [REVIEW_v0.7.97_FIX_LIST.md](REVIEW_v0.7.97_FIX_LIST.md)
 - Created: 2026-11-01
 
 The accepted first batch and its failure boundaries are recorded in the
-[regression guide](test-guides/ISSUE_376_v0.7.97_REGRESSION_GUIDE.md).
+[regression guide](test-guides/ISSUE_376_v0.7.97_REGRESSION_GUIDE.md) and the
+[2026-11-01 full-chain audit](REVIEW_v0.7.97_FULL_CHAIN_AUDIT.md).
 Unknown historical locks and interrupted reclamation claims remain fail-closed;
 corrupt credential/config/pending-input bytes are retained for explicit repair.
 Full Access opaque Host programs remain trusted code, outside OS isolation.
@@ -202,7 +203,7 @@ acceptance. Issue 371 now has a confirmed startup-recovery fix; its historical
 - Status: Open (startup recovery fixed; historical first-read delay not attributed)
 - Introduced: observed in v0.7.97-alpha.10 at `ec442c75`; first affected version unknown
 - Created: 2026-10-28
-- Fixed: first startup recovery in `v0.7.97-alpha.11`; 2026-10-31 recurrence fixed locally at `16973a93` (unreleased)
+- Fixed: first startup recovery in `v0.7.97-alpha.11`; 2026-10-31 recurrence fixed in `v0.7.97-alpha.12` (`16973a93`)
 
 ### Original Problem
 

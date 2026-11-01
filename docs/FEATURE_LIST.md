@@ -11,15 +11,15 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-alpha.11` (Git tag); `v0.7.96` remains the last stable release; subsequent changes are unreleased |
-| Current package version | `@kodax-ai/kodax@0.7.97-alpha.11` (npm publication remains manual) |
+| Current released version | `v0.7.97-alpha.12` (Git tag); `v0.7.96` remains the last stable release |
+| Current package version | `@kodax-ai/kodax@0.7.97-alpha.12` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 core packages + private optional `artifacts` source workspace; one public npm package |
 | Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3` and extended with startup streamlining, Session recency ordering, draft admission, concurrent-launch recovery and shared-Session Host ownership resolution through `v0.7.97-alpha.7`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement released in alpha.4; missing visual capabilities remain unverified; [design](ADR.md#verification-responsibility-and-tradeoffs) |
 | Artifact distribution revision | `2026-10-18` — one `@kodax-ai/kodax` npm package; four `/artifacts` subpaths and resources staged in the main tarball; local implementation, not yet published |
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
-| Current development | `v0.7.97` / `FEATURE_298` — post-alpha.10 Agent/Coding/experimental Script work modes, SDK question/original-output/task-report/streaming alignment, and Windows startup/readiness repairs; [current SDK checklist](SDK_MIGRATION.md#2026-10-29-未发布改动对齐). Cross-platform/manual release verification and Issue 371's historical first-read investigation remain open. |
-| Roadmap updated | `2026-10-31` — FEATURE_302 H/I/J accepted offline; Root/design local main integrated with complete source, package and historical Host gates passed; unreleased; FEATURE_300 remains Planned |
+| Current development | `v0.7.97` / `FEATURE_298` — the unified shared-Host execution cutover, FEATURE_302 provider/OAuth credential parity and the 2026-11-01 full-chain audit fixes released in `v0.7.97-alpha.12` on top of the alpha.11 work modes; [current SDK checklist](SDK_MIGRATION.md#2026-10-29-未发布改动对齐). Cross-platform/manual release verification, the fix list's still-open findings and Issue 371's historical first-read investigation remain open. |
+| Roadmap updated | `2026-11-01` — FEATURE_302 H/I/J accepted and integrated; the provider parity stack and unified Host cutover released in `v0.7.97-alpha.12`; FEATURE_300 remains Planned |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
 | Total tracked features | `86` |
 | InProgress | `2` |
@@ -552,6 +552,25 @@ Final frozen package **80** and historical/real-alpha.11 Host gates **4** passed
 and build fingerprints remained unchanged throughout. See the J guide for exact checkpoints.
 Space stays independently at `da531f0a`; its historical I counts do not certify a newly paired
 Space build. No push/publication.
+
+## v0.7.97-alpha.12 Release Record
+
+`v0.7.97-alpha.12` is the twelfth alpha of the v0.7.97 line: public product
+execution converges on the independent shared Host — embedded/default Runtime
+construction, inline owner switching and function-based in-process
+external-agent Hosts are retired behind an explicit daemon launcher with
+one-way abandoned-owner policy migration, and
+`runtimeExitSettlement`/`settleKodaXRuntimeExit()` retire. FEATURE_302
+provider/OAuth credential parity lands the native Responses transport,
+ordered history, native cloud protocols with scoped authentication, Mistral
+Pi, native media classification, shared file credentials bound to actual
+provider connections and hidden API-key setup; Claude 5.5 history fragments
+and per-message effort controls join the LLM layer; manual data moves out
+of the CLI JavaScript budget; and the 2026-11-01 full-chain audit's Windows
+recovery, credential and permission hardening ships with lock diagnostics
+and a Windows streaming-history PTY CI gate. Every v0.7.96 stable and
+v0.7.97-alpha.1 through alpha.11 contract is retained. Cross-platform
+manual acceptance and npm publication remain manual maintainer steps.
 
 ## v0.7.97-alpha.11 Release Record
 

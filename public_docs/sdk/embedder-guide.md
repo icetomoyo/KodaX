@@ -1,7 +1,7 @@
 # KodaX SDK — Product Client and Host Integration
 
 This page describes the current FEATURE_298/299/301 development tree, checked against
-package version `0.7.97-alpha.11`. The version alone does not claim that all current
+package version `0.7.97-alpha.12`. The version alone does not claim that all current
 working-tree changes are already published to npm. Check the installed
 package exports and the connected Host's capabilities when migrating.
 
@@ -25,7 +25,7 @@ objects, not alternate names for this contract.
   release context. They are not instructions for a product UI to create its own
   execution owner or write the shared Host's files.
 
-## Unreleased unified Host SDK cutover
+## Unified Host SDK cutover (shipped in v0.7.97-alpha.12)
 
 Public Runtime construction now connects to one independent shared Host. Default
 construction, `mode:'embedded'`, internal owner switches and function-based
@@ -104,7 +104,7 @@ usable SDK executors. Native exposure, discoverable capabilities and permission
 to execute remain different boundaries; preserve explicit profile/child scope
 when adapting a UI or a standalone host.
 
-#### Partner + Agent intersection (unreleased, after alpha.11)
+#### Partner + Agent intersection (shipped in v0.7.97-alpha.12)
 
 For the unified Product Client, select Session `workMode: 'agent'`. Partner persona
 and opaque profile identifiers impose no additional readonly ceiling. Explicit tool
@@ -3108,7 +3108,7 @@ runKodaX({
 `@kodax-ai/kodax/runtime` is the trusted connection facade for the shared Host.
 The same Host owns sessions, Runs, permissions, configuration and persistence
 for CLI, Space, IDE and SDK clients. Public in-process construction is retired;
-see the unreleased cutover above for compatibility limits.
+see the unified Host cutover above for compatibility limits.
 
 ### Which shape to use
 

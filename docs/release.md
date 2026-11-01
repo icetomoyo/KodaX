@@ -8,6 +8,72 @@ Use [SDK_MIGRATION.md](SDK_MIGRATION.md) for the supported current surface.
 KodaX is distributed as **standalone binaries** built with `bun build --compile`.
 Target machines do **not** need Node.js or any runtime installed.
 
+## v0.7.97-alpha.12 release preparation
+
+Release state: `v0.7.97-alpha.12` is the GitHub pre-release for the exact
+tagged commit — the twelfth alpha of the v0.7.97 line, converging public
+product execution on the independent shared Host (embedded/default Runtime
+construction, inline owner switching and function-based in-process
+external-agent Hosts are retired behind an explicit daemon launcher, with
+one-way abandoned-owner policy migration), landing FEATURE_302
+provider/OAuth credential parity (native Responses transport, ordered
+history, native cloud protocols with scoped authentication, Mistral Pi,
+native media classification, shared file credentials bound to actual
+provider connections, hidden API-key setup through CLI and REPL with Host
+scope fences), adding Claude 5.5 history fragments with per-message effort
+controls, moving manual data out of the CLI JavaScript budget, and shipping
+the 2026-11-01 full-chain audit's Windows recovery, credential and
+permission hardening (Issue 376; audit and fix list under
+[REVIEW_v0.7.97_FULL_CHAIN_AUDIT.md](REVIEW_v0.7.97_FULL_CHAIN_AUDIT.md) /
+[REVIEW_v0.7.97_FIX_LIST.md](REVIEW_v0.7.97_FIX_LIST.md)). The tag-triggered
+Release workflow runs the reusable CI workflow alongside the build matrix;
+branch pushes do not trigger it, while CI can also be dispatched manually.
+The eventual `-alpha` tag suffix marks the release as a GitHub pre-release
+automatically. npm registry publication remains a separate maintainer step.
+The published-alpha.11 in-place upgrade gates in CI and the Release
+workflow intentionally pin the last npm-published version
+(`0.7.97-alpha.11`) while alpha.12 is unpublished; bump them only after the
+maintainer publishes alpha.12 to npm. This cycle also runs the new Windows
+streaming-history PTY gate and the Windows source-regression discovery
+gate for the first time on a tag. Issue 371's historical first-read
+latency, the fix list's still-open findings (F-13 through F-46 except the
+verified fixes) and Script model-efficiency acceptance remain explicit.
+Existing dated release records below describe their own artifacts.
+
+### Release execution contract
+
+- Push the version tag only after the release candidate, documentation and
+  feature-design submodule commits are prepared. Ordinary branch pushes do
+  not run CI. A `v*` tag starts Release, including the reusable full CI
+  workflow.
+- Full CI and all five native build jobs run concurrently. The GitHub
+  Release requires successful CI, all platform archive checks, and the
+  universal npm package checks. Manual dispatch builds candidates but never
+  publishes a Release.
+- Node 20 system tests run on a separate runner, retaining serial execution
+  within the complete system suite. Node 20/22 fast tests, Node 20
+  unit/contract tests, Windows Electron and shell contracts, and native
+  platform checks remain.
+- Each build validates its actual archive before the longer Electron
+  checks. Bundle and archive steps have five-minute process limits; the
+  archive test has a three-minute test budget, aborts pending waits and
+  retains failure evidence. Failed archive evidence is uploaded for seven
+  days. No failed test is converted into success or automatically retried.
+- Re-run failed jobs when diagnosing infrastructure failures on an
+  unchanged candidate. A source or workflow fix requires a new commit/run.
+  Verify the final tag SHA and every required job; an earlier green branch
+  run is not evidence for a different tagged commit.
+- Release assets comprise five platform archives and their checksums, one
+  universal npm tarball and its checksum, plus aggregated `SHA256SUMS`.
+  The maintainer publishes the audited tarball with `node scripts/release.mjs`;
+  this workflow never performs `npm publish`.
+
+The workflow contracts are covered by `tests/release-workflow.test.ts`.
+Local Windows verification on the tagged candidate: typecheck, the
+self-knowledge/manual-budget suites and the fast suite passed on
+2026-11-01; this does not substitute for the final tag's five-platform
+Actions results or manual acceptance.
+
 ## v0.7.97-alpha.11 release preparation
 
 Release state: `v0.7.97-alpha.11` is the GitHub pre-release for the exact

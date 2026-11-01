@@ -6,6 +6,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-alpha.12] - 2026-11-01
+
+Twelfth alpha of the v0.7.97 line: public product execution converges on the
+independent shared Host with retired embedded/default construction, inline
+owner switching and function-based external-agent Hosts, plus abandoned-owner
+policy migration with a one-way fence; FEATURE_302 lands native
+provider/OAuth credential parity across the Responses transport, ordered
+history, native cloud protocols, Mistral Pi, native media classification,
+shared file credentials and hidden API-key setup; Claude 5.5 history fragments
+and per-message effort controls join the LLM layer; and the 2026-11-01
+full-chain audit's Windows recovery, credential and permission hardening
+ships. Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.11 contract is
+retained. npm publication remains a manual maintainer action.
+
 ### Changed
 
 - Store execution statistics in append-only, Session-root-scoped journals;

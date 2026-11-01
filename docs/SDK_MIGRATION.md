@@ -1,6 +1,6 @@
 # SDK 统一 Client 契约迁移指南
 
-适用范围：当前工作树的 FEATURE_298/299/301 实现；本次核对的包版本为 `0.7.97-alpha.11`。版本号不表示 npm 已发布当前工作树中的所有变更。接入前应核对所安装包的导出和 Host 能力。
+适用范围：当前工作树的 FEATURE_298/299/301 实现；本次核对的包版本为 `0.7.97-alpha.12`。版本号不表示 npm 已发布当前工作树中的所有变更。接入前应核对所安装包的导出和 Host 能力。
 
 Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附件/统计与退出恢复范围见 [SDK/Host 接缝](SPACE_SDK_SEAMS.md)。
 
@@ -100,7 +100,7 @@ next_run 值在新 Run
 见 [Client 契约](CLIENT_CONTRACT.md#配置生效边界)。回归步骤见
 [FEATURE_298 验收指南](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#2026-10-30-sdk-组合与配置边界)。
 
-本节描述 alpha.11 之后的未发布收口，优先于下文历史版本的嵌入示例。
+本节描述 alpha.11 之后、已随 `v0.7.97-alpha.12` 发布的 Host 收口，优先于下文历史版本的嵌入示例。
 完整产品执行只由独立共享 Host 拥有。产品使用 `ensureKodaXClient` / `connectKodaXClient`；
 可信底层接入使用 `ensureKodaXRuntime` / `connectKodaXRuntime`。连接关闭只释放本连接。
 
@@ -146,7 +146,8 @@ Space 或其他外部客户端已升级，也不要求独立库与 Product Clien
 | Skill 策略 | 模型发现、激活与 SDK 调用复用可信 registry；`Bash(pattern)` 仅允许匹配的单命令，仍须 Host 授权 |
 
 CLI 的 `--agent-mode sa/amaw` 是迁移错误；底层 SDK 的显式兼容 profile/角色/执行路由
-仍按各自契约保留，不能机械替换为产品模式。该组能力已纳入 alpha.11；上节 Host 收口仍未发布。
+仍按各自契约保留，不能机械替换为产品模式。该组能力已纳入 alpha.11；上节 Host 收口已随
+`v0.7.97-alpha.12` 发布。
 Issue 371 的历史首次读取延迟、Script 的模型效率及跨平台人工验收不因 SDK 对齐而关闭。
 
 本次 Windows 源码核对验证（2026-10-29）：`npm run build`、`npm run typecheck`

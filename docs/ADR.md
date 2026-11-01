@@ -1,12 +1,13 @@
 # KodaX Architecture Decision Records
 
-## FEATURE_302 implementation alignment — 2026-11-01 (unreleased)
+## FEATURE_302 implementation alignment — 2026-11-01 (released in v0.7.97-alpha.12)
 
 The accepted provider parity design is indexed in
 [FEATURE_302](features/v0.7.99.md#feature_302-independent-llm-provider-parity),
 [transport and credential contracts](LLM_INTEGRATION.md), and the
 [SDK migration guide](SDK_MIGRATION.md). The design filename is a planning
-identifier; the implementation remains package `0.7.97-alpha.11`, unpublished.
+identifier; the implementation ships as package `0.7.97-alpha.12`; npm
+publication remains manual.
 
 The default trusted Main credential store is the shared, permission-restricted
 `auth.json` v2 beside `config.json`, for API keys and OAuth registrations.
@@ -29,7 +30,7 @@ The subsequent unified Host cutover retires `runtimeExitSettlement` and
 `settleKodaXRuntimeExit()`. References in version-labelled ADR/release addenda below
 remain historical; they must not be copied as current SDK capability requirements.
 
-## Standalone Windows Shell cleanup evidence — 2026-10-30 (unreleased)
+## Standalone Windows Shell cleanup evidence — 2026-10-30 (shipped in v0.7.97-alpha.12)
 
 Standalone Shell commands and environment probes outside a verified supervising
 Windows Job now start through a private stdin gate inside an existing effect Job.
@@ -62,7 +63,7 @@ The environment-isolation tests must fail when cleanup is skipped and retain the
 diagnostic directory. Actual PID and registry checks cover normal exit, cancellation
 and timeout. See the [cleanup acceptance gate](test-guides/ISSUE_159_v0.7.69_REGRESSION_GUIDE.md#2026-10-30-standalone-shell-cleanup-addendum).
 
-## Explicit profile/work-mode intersection — 2026-10-30 (unreleased)
+## Explicit profile/work-mode intersection — 2026-10-30 (shipped in v0.7.97-alpha.12)
 
 Keep alpha.11's Coding compatibility path for explicit SDK profiles, prompt
 overrides and tool policies unless the host opts the root Run into
@@ -80,7 +81,7 @@ remain independently usable. The public `resolveWorkMode` helper and managed
 `onEffectiveConfig.workMode` expose the effective choice; Session settings expose
 only the requested choice. Recovery persists the composition setting and still
 requires fresh authority bindings. See the
-[integration contract](../public_docs/sdk/embedder-guide.md#partner--agent-intersection-unreleased-after-alpha11)
+[integration contract](../public_docs/sdk/embedder-guide.md#partner--agent-intersection-shipped-in-v0797-alpha12)
 and [offline acceptance](test-guides/FEATURE_247_v0.7.97_TEST_GUIDE.md).
 
 The unified Host accepts Partner identity without turning that metadata into
@@ -109,7 +110,7 @@ Capability version 2 rejects older Hosts that cannot preserve this contract. Glo
 live Session settings and from values already captured by an admitted Run.
 See [composition and configuration](SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布).
 
-## Unified Host SDK ownership cutover — 2026-10-29 (unreleased)
+## Unified Host SDK ownership cutover — 2026-10-29 (shipped in v0.7.97-alpha.12)
 
 FEATURE_298 now retires public in-process product ownership. Default/embedded
 Runtime construction, caller-owned external-agent daemons and public inline-owner

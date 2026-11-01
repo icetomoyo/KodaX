@@ -9,13 +9,13 @@ subpaths or the existing CLI size limit. Help resolves lazy auth subcommands
 before printing and never dispatches management operations. See the
 [Issue 376 acceptance contract](test-guides/ISSUE_376_v0.7.97_REGRESSION_GUIDE.md).
 
-> Unreleased Host SDK cutover: public product execution connects to one independent Host.
+> Unified Host SDK cutover (shipped in v0.7.97-alpha.12): public product execution connects to one independent Host.
 > Embedded/default owner construction, inline switching and caller-owned external-agent
 > daemons are retired. Internal Runtime and independent libraries remain. See
 > [migration and ownership limits](SDK_MIGRATION.md#统一-host-sdk-收口未发布).
 
 Last updated: 2026-11-01. Current development tree: FEATURE_298/299/301/302 on package
-`0.7.97-alpha.11`, with `v0.7.96` as the last stable release; publication is separate.
+`0.7.97-alpha.12`, with `v0.7.96` as the last stable release; publication is separate.
 
 Product integrations use `KodaXProductClient` through `/client`. Read the
 [Client contract](CLIENT_CONTRACT.md) and [SDK migration guide](SDK_MIGRATION.md)

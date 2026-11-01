@@ -38,21 +38,26 @@
 
 ## Current development after alpha.10
 
-The subsequent unpublished unified Host cutover retires `runtimeExitSettlement`
-and `settleKodaXRuntimeExit()`. Version-labelled paragraphs below describe their
-historical releases; use the [current SDK migration guide](docs/SDK_MIGRATION.md)
-for supported interfaces and [provider contracts](docs/LLM_INTEGRATION.md) for
-credential/account-preserving upgrades. Existing SDK/config/API_KEY entries remain.
+The unified Host cutover shipped in the `v0.7.97-alpha.12` tag retires
+`runtimeExitSettlement` and `settleKodaXRuntimeExit()`. Version-labelled
+paragraphs below describe their historical releases; use the [current SDK
+migration guide](docs/SDK_MIGRATION.md) for supported interfaces and
+[provider contracts](docs/LLM_INTEGRATION.md) for credential/account-preserving
+upgrades. Existing SDK/config/API_KEY entries remain.
 
-The unreleased source adds Agent / Coding / experimental Script work modes,
-with Coding as the default. Select them with `--work-mode`, `/work-mode`, or
-Product Client Session `workMode`; this is independent of permissions and model
-choice. SDK/Host paths now share the corresponding settings, question outcomes,
-saved original tool reads, structured task reports and estimated-token progress.
-See the [SDK alignment and migration checklist](docs/SDK_MIGRATION.md#2026-10-29-未发布改动对齐)
+Agent / Coding / experimental Script work modes ship with Coding as the
+default. Select them with `--work-mode`, `/work-mode`, or Product Client
+Session `workMode`; this is independent of permissions and model choice.
+SDK/Host paths now share the corresponding settings, question outcomes,
+saved original tool reads, structured task reports and estimated-token
+progress. See the [SDK alignment and migration checklist](docs/SDK_MIGRATION.md#2026-10-29-未发布改动对齐)
 and [English integration guide](public_docs/sdk/embedder-guide.md#post-alpha10-sdk-alignment).
-These source additions shipped in the `v0.7.97-alpha.11` tag. Issue 371's
-historical first-read latency and Script model-efficiency acceptance remain open.
+These source additions shipped in the `v0.7.97-alpha.11` tag; the
+`v0.7.97-alpha.12` tag ships the unified shared-Host cutover, the
+FEATURE_302 provider/OAuth credential parity stack, and the 2026-11-01
+full-chain audit's Windows recovery, credential and permission fixes.
+Issue 371's historical first-read latency and Script model-efficiency
+acceptance remain open.
 
 ## Install in 30 seconds
 
@@ -815,6 +820,24 @@ starts, upgrades, or waits. See
 [docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) and the
 [v0.7.97-alpha.4 release notes](docs/release.md#v0797-alpha4-release-preparation).
 Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2/alpha.3 contract is
+retained.
+
+**v0.7.97-alpha.12 release:** Public product execution converges on the
+independent shared Host — embedded/default Runtime construction, inline
+owner switching and function-based in-process external-agent Hosts are
+retired behind an explicit daemon launcher with one-way abandoned-owner
+policy migration, and `runtimeExitSettlement`/`settleKodaXRuntimeExit()`
+retire. FEATURE_302 provider/OAuth credential parity lands the native
+Responses transport, ordered history, native cloud protocols with scoped
+authentication, Mistral Pi, native media classification, shared file
+credentials bound to actual provider connections and hidden API-key setup;
+Claude 5.5 history fragments and per-message effort controls join the LLM
+layer; manual data moves out of the CLI JavaScript budget; and the
+2026-11-01 full-chain audit's Windows recovery, credential and permission
+hardening ships with lock diagnostics and a Windows streaming-history PTY
+CI gate. Tagging and publication remain separate. See the
+[v0.7.97-alpha.12 release notes](docs/release.md#v0797-alpha12-release-preparation).
+Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.11 contract is
 retained.
 
 **v0.7.97-alpha.11 release:** Explicit Agent, Coding and experimental Script
@@ -2166,7 +2189,7 @@ This development tree exposes 17 SDK subpaths plus the root. Shared product
 applications use `@kodax-ai/kodax/client`; independent libraries and trusted Host
 APIs remain available through the other subpaths. See the [Client contract](docs/CLIENT_CONTRACT.md)
 and [SDK migration guide](docs/SDK_MIGRATION.md). This documentation was checked
-against package version `0.7.97-alpha.11`; npm publication is separate from
+against package version `0.7.97-alpha.12`; npm publication is separate from
 the current development-tree contract.
 
 ```bash
