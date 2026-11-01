@@ -4055,7 +4055,7 @@ function workspaceShellTempRoot(workspaceRoot: string, policyKey: string): strin
     ? policyKey
     : path.resolve(workspaceRoot);
   return path.join(
-    os.tmpdir(),
+    process.platform === 'win32' ? canonicalExistingPath(os.tmpdir()) : os.tmpdir(),
     'kodax-sandbox',
     createHash('sha256').update(identity).digest('hex').slice(0, 16),
   );

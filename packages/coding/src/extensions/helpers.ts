@@ -41,6 +41,7 @@ export interface ExecResult {
  *
  * SECURITY: Only a whitelist of safe environment variables is passed to the
  * subprocess. API keys and tokens from the parent environment are NOT inherited.
+ * PowerShell runs without profiles or interactive prompts, like command probes.
  */
 export async function exec(
   command: string,
@@ -48,7 +49,8 @@ export async function exec(
 ): Promise<ExecResult> {
   const timeout = options.timeout ?? DEFAULT_COMMAND_TIMEOUT;
   const shell = options.shell ?? (process.platform === 'win32' ? 'powershell' : 'bash');
-  const shellArgs = shell === 'powershell' ? ['-Command', command] : ['-c', command];
+  const shellArgs = shell === 'powershell'
+    ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command] : ['-c', command];
 
   const safeEnv: Record<string, string> = {
     PATH: process.env.PATH ?? '',

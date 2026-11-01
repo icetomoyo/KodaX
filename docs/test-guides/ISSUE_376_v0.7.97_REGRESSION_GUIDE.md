@@ -831,3 +831,65 @@ five platform builds and the universal package gate, with publishing skipped.
 The repair task must not move the failed alpha.12 tag, create a Release or
 publish npm. The final tested SHA/run and observed result belong in the release
 handoff; this checkpoint makes no all-green claim.
+
+### Third candidate follow-up (2026-11-02)
+
+Run [41327225086](https://github.com/icetomoyo/KodaX/actions/runs/41327225086)
+tested Main `430692f0c`: 11 jobs passed, four failed, two were skipped. All
+POSIX builds/native gates and Linux full/system suites passed. Windows v2 again
+passed all 30 real cases in the release build. Remaining failures were:
+
+- Electron's parallel bundle group passed 97/98; mixed historical recovery took
+  11,442 ms against the unchanged 10,000 ms budget. The same SHA's Windows build
+  passed 98/98. Its 220-tree recovery and several other Host cases also slowed
+  under the competing functional workload. Local independent recovery was
+  1.3–2.3 seconds; this does not prove the remote production path has no cost.
+  `test:bundle` now runs 96 functional cases in parallel, then both startup
+  performance cases separately, with every budget, identity/history and cleanup
+  assertion retained. Local acceptance was 86.88 seconds plus 10.39 seconds
+  (512-record generations 2.18/2.10 seconds; 220 trees 2.46 seconds). The extra
+  Node invocation has real cost; no new CI job, install or rebuild is added.
+  Startup diagnostics now emit bounded stage timings before the budget check.
+- The actual packaged Electron test reached shutdown after the first 20
+  sandboxed queries, then called the retired public `enableKodaXDaemonOwner`.
+  The gate now captures the public owner identity before shutdown and verifies
+  that exact Host and Job through `waitForRuntimeDaemonShutdown`, followed by
+  read-only unowned/daemon policy assertions. The original 300-second release
+  allowance remains; no retired public mutator is restored. Five helper cases
+  reject unverified, replacement, failed and inline outcomes; 21 fixture cases
+  passed locally. Full packaged execution still requires remote acceptance.
+- Windows system passed 868 cases but failed eight. One Temp fault-injection
+  case reproduced a physical grant/lexical cleanup mismatch. Canonicalizing
+  the Windows private Temp root keeps the environment, grants and cleanup on
+  one identity; a verified short-temp fixture failed then passed. Six bootstrap
+  failures and the pre-start test exposed a mock pipe with no reader. A bounded
+  18 KiB environment reproduced the exact bootstrap-delivery timeout locally;
+  making the fake native controller consume stdin fixed it. The original
+  10-second unit allowance and virtual attestation deadlines remain unchanged.
+  Deliberate bootstrap-write-pending simulation is retained separately.
+- Windows portable passed 2,987 cases but failed three. Two path fixtures used
+  unquoted Windows backslashes as Bash syntax, which Bash correctly unescapes;
+  quoted forward-slash paths make the intended temp identity unambiguous.
+  Extension `exec('echo hello')` also exceeded its 30-second command/test
+  allowance. PowerShell now starts with `-NoProfile -NonInteractive -NoLogo`,
+  avoiding ambient profile execution and interactive prompts. The exact cause
+  of the remote first-launch delay is not isolated; command budgets, explicit
+  Bash behavior and the secret-free environment whitelist are retained. Two
+  argument/environment cases and all seven real helper cases passed locally.
+
+Isolated native-cache fixture names are short so an additional real 8.3 Temp
+alias does not manufacture a long-path provisioning failure unrelated to the
+policy under test. Real alias identities, cache ACL/reparse checks and the
+SID-unavailable repair rejection remain asserted. No shared sandbox setup or
+account rotation is used to repair a test fixture. The final candidate still
+needs all remote gates, including real Memory and universal npm packaging.
+
+Final local checkpoint: complete build and production/test typechecking passed;
+seven SDK/extension/Electron-fixture/permission files passed 404 cases. The
+verified short-Temp sandbox file passed 104 cases with 27 platform exclusions.
+The rebuilt bundle passed 96 functional and two independent startup cases
+(86.34 + 9.37 seconds; recovery 2.05/1.36 seconds, 220 trees 2.45 seconds,
+history 47 ms, restart 1.50 seconds). Standards and Spec reviews have no open
+findings; the PowerShell profile compatibility boundary is recorded in
+`SDK_MIGRATION.md`. These local results do not replace the next exact-SHA
+manual Release run.

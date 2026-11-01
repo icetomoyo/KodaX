@@ -565,6 +565,9 @@ vi.mock('node:child_process', async (importOriginal) => {
         return true;
       });
       const spawnArgs = Array.isArray(argsOrOptions) ? argsOrOptions : [];
+      // A native controller consumes its control stream before Resume. Without
+      // a reader, larger CI environments fill PassThrough and stall callbacks.
+      if (spawnArgs[0] === '__host') child.stdin.resume();
       if (spawnArgs.includes('acl') && spawnArgs.includes('recover')) {
         capturedSyncSpawns.push({
           command,
@@ -1343,7 +1346,7 @@ beforeAll(async () => {
   // Mock SID artifacts and destructive cache-recovery tests must not touch
   // the native cache used by live sandbox sessions. Provisioning requires
   // an ordinary host token; this suite cannot provision inside a sandbox.
-  nativeArtifactLocalAppData = await createTestDirectory(path.join(os.tmpdir(), 'kodax-test-native-artifacts-'));
+  nativeArtifactLocalAppData = await createTestDirectory(path.join(os.tmpdir(), 'kn-'));
   const shortRoot = spawnSync('cmd.exe', ['/d', '/c', `for %I in ("${nativeArtifactLocalAppData}") do @echo %~sI`],
     { encoding: 'utf8', windowsVerbatimArguments: true, windowsHide: true });
   if (shortRoot.status !== 0) throw new Error('Cannot prepare the short-name native cache fixture.');
@@ -2808,6 +2811,14 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     await resetSandboxRuntimeForTest();
     const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-temp-cleanup-'));
     tempRoots.push(root);
+    const tempRoot = await createTestDirectory(path.join(os.tmpdir(), 'kt-'));
+    tempRoots.push(tempRoot);
+    const shortTemp = spawnSync('cmd.exe', ['/d', '/c', `for %I in ("${tempRoot}") do @echo %~sI`],
+      { encoding: 'utf8', windowsHide: true, windowsVerbatimArguments: true });
+    expect(shortTemp.status).toBe(0);
+    expect(realpathSync.native(shortTemp.stdout.trim())).toBe(tempRoot);
+    vi.stubEnv('TEMP', shortTemp.stdout.trim());
+    vi.stubEnv('TMP', shortTemp.stdout.trim());
     const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
     const invocation = await sandbox.prepare({
       toolCallId: 'temp-cleanup-after-proof',
@@ -3092,7 +3103,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       executable: process.execPath,
       args: ['--version'],
       cwd: root,
-      env: process.env,
+      env: { SystemRoot: process.env.SystemRoot, CI_FIXTURE_PADDING: 'x'.repeat(18 * 1024) },
       deadlineAt,
       fallbackToNormalExecution: false,
     });
@@ -3106,7 +3117,9 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
-    await invocation.processControl.closeInput?.(child, undefined, deadlineAt);
+    // A selected controller reads the bootstrap even when it never attests
+    // Resume. CI's larger environment must not deadlock the mock stdin pipe.
+    await invocation.processControl.closeInput?.(child, undefined, Date.now() + 1_000);
     vi.useFakeTimers();
     try {
       const attestation = expect(
@@ -4466,7 +4479,7 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
   });
 
   it('does not repair an existing control DACL when a provisioned account SID is unavailable', async () => {
-    const freshLocalAppData = path.join(path.dirname(process.env.KODAX_HOME!), 'sid-unavailable-local-app-data');
+    const freshLocalAppData = path.join(path.dirname(process.env.KODAX_HOME!), 'sid');
     await mkdir(freshLocalAppData);
     vi.stubEnv('LOCALAPPDATA', freshLocalAppData);
     windowsSandboxMock.sidProcessesActive = false;

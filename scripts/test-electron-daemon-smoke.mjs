@@ -556,11 +556,12 @@ async function verifyAttachDetachAndOwnerFence(
   const management = await sdk.connectKodaXRuntime({ homeDir, profile, autoStart: false, requirements: { daemonManagement: 1 } });
   assert.equal(management.identity.runtimeId, runtimeId, 'Electron close must detach without stopping the daemon.');
   await waitForClientCount(management, 1);
+  const owner = sdk.getKodaXRuntimeOwnerState({ homeDir, profile }).owner;
+  assert.equal(owner?.runtimeId, runtimeId);
   await management.daemon.shutdown();
   await management.close();
-  await waitForUnowned(sdk);
+  await verifyDaemonOwnerReleased(sdk, owner);
   await assertNoAclPoisonMarkers('A clean packaged-daemon stop must remove every ACL owner marker.');
-  assert.equal((await enableDaemonOwnerWhenReady(sdk)).mode, 'daemon');
 
   const restartResultFile = path.join(temporaryRoot, 'restart-result.json');
   const restartDetachFile = path.join(temporaryRoot, 'restart-detach');
@@ -598,11 +599,12 @@ async function verifyAttachDetachAndOwnerFence(
 
   const restartManagement = await sdk.connectKodaXRuntime({ homeDir, profile, autoStart: false, requirements: { daemonManagement: 1 } });
   await waitForClientCount(restartManagement, 1);
+  const restartedOwner = sdk.getKodaXRuntimeOwnerState({ homeDir, profile }).owner;
+  assert.equal(restartedOwner?.runtimeId, restartResult.runtimeId);
   await restartManagement.daemon.shutdown();
   await restartManagement.close();
-  await waitForUnowned(sdk);
+  await verifyDaemonOwnerReleased(sdk, restartedOwner);
   await assertNoAclPoisonMarkers('The restarted daemon must also confirm clean ACL teardown.');
-  assert.equal((await enableDaemonOwnerWhenReady(sdk)).mode, 'daemon');
 }
 
 async function assertNoAclPoisonMarkers(message, legacyHomeDir = homeDir) {
@@ -620,26 +622,15 @@ async function waitForClientCount(runtime, expected) {
   await waitUntil(async () => (await runtime.status.preflight()).clientCount === expected, 30_000, `clientCount=${expected}`);
 }
 
-async function waitForUnowned(sdk) {
-  await waitUntil(
-    () => sdk.getKodaXRuntimeOwnerState({ homeDir, profile }).ownerStatus === 'unowned',
-    300_000,
-    'an unowned Runtime fence',
-  );
-}
-
-async function enableDaemonOwnerWhenReady(sdk) {
-  let ownerPolicy;
-  await waitUntil(() => {
-    try {
-      ownerPolicy = sdk.enableKodaXDaemonOwner({ homeDir, profile });
-      return true;
-    } catch (error) {
-      if (!String(error).includes('owner transition is already in progress')) throw error;
-      return false;
-    }
-  }, 10_000, 'the Runtime owner transition fence to drain');
-  return ownerPolicy;
+async function verifyDaemonOwnerReleased(sdk, owner) {
+  assert.ok(owner, 'The exact Runtime owner must be captured before shutdown.');
+  const result = await sdk.waitForRuntimeDaemonShutdown({
+    configHome: path.join(homeDir, '.kodax'), profile, owner, timeoutMs: 300_000,
+  });
+  assert.equal(result.status, 'succeeded', 'The exact packaged Host and its Job must exit.');
+  const state = sdk.getKodaXRuntimeOwnerState({ homeDir, profile });
+  assert.equal(state.ownerStatus, 'unowned');
+  assert.equal(state.policy.mode, 'daemon', 'Unified Host policy must survive shutdown without an owner-mode mutation.');
 }
 
 async function waitForJson(file, timeoutMs) {

@@ -4,6 +4,11 @@
 
 Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附件/统计与退出恢复范围见 [SDK/Host 接缝](SPACE_SDK_SEAMS.md)。
 
+2026-11-02 发布验收修复中，扩展 API `exec()` 的 PowerShell 启动改为
+`-NoLogo -NoProfile -NonInteractive`，避免隐式执行用户 profile 和交互提示。
+依赖 profile 内函数或 alias 的扩展需在命令中显式初始化（例如 `Import-Module`）。
+原命令超时、秘密环境变量白名单和显式 Bash 执行契约保留。
+
 Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` 保留，
 Solo 和 Adaptive 都会向模型提供可用且已授权的 Skill 目录。运行时绑定生成的
 目录共用 8,000 UTF-16 单元上限；省略目录项不会删除已绑定的授权。

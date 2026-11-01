@@ -56,3 +56,40 @@ describe('packaged Electron native artifact guard', () => {
       .rejects.toThrow(/kodax-windows-sandbox\.exe/);
   });
 });
+
+describe('packaged Electron public Host shutdown contract', () => {
+  const owner = { runtimeId: 'rt_fixture', pid: 1234, processStartIdentity: '111',
+    processContainment: 'windows-job', supervisorPid: 1235, supervisorProcessStartIdentity: '112' };
+
+  function verifyRelease(status = 'succeeded', mode = 'daemon') {
+    const verifyShutdown = vi.fn(async () => ({ status }));
+    // Deliberately provide only the public read/verification surface: retired
+    // inline/daemon policy mutators cannot be used by this release gate.
+    const sdk = { waitForRuntimeDaemonShutdown: verifyShutdown,
+      getKodaXRuntimeOwnerState: () => ({ ownerStatus: 'unowned', policy: { mode } }) };
+    const result = Promise.resolve().then(() => {
+      const first = source.indexOf('async function verifyDaemonOwnerReleased(');
+      const last = source.indexOf('async function waitForJson(', first);
+      assert.ok(first >= 0 && last > first, 'The packaged gate needs public exact-Host shutdown verification.');
+      return runInNewContext(`${source.slice(first, last)}\nverifyDaemonOwnerReleased(sdk, owner)`, {
+        sdk, owner, assert, path, homeDir: '/fixture-home', profile: 'fixture',
+      });
+    });
+    return { result, verifyShutdown };
+  }
+
+  it('waits for the exact Host and Job to exit without mutating owner policy', async () => {
+    const { result, verifyShutdown } = verifyRelease();
+    await expect(result).resolves.toBeUndefined();
+    expect(verifyShutdown).toHaveBeenCalledExactlyOnceWith({ configHome: path.join('/fixture-home', '.kodax'),
+      profile: 'fixture', owner, timeoutMs: 300_000 });
+  });
+
+  it.each(['unverified', 'replacement_running', 'failed'])('rejects %s shutdown instead of claiming release', async (status) => {
+    await expect(verifyRelease(status).result).rejects.toThrow();
+  });
+
+  it('rejects a return to inline owner policy', async () => {
+    await expect(verifyRelease('succeeded', 'inline').result).rejects.toThrow();
+  });
+});

@@ -61,7 +61,7 @@ describe('replBashPathSignalCollector — outside_project', () => {
     // to `C:\tmp` which is NOT the actual system temp dir.
     const tempScratch = path.join(os.tmpdir(), 'scratch.txt');
     const signals = replBashPathSignalCollector.collect(
-      bash(`echo x > ${tempScratch}`),
+      bash(`echo x > ${JSON.stringify(tempScratch.replaceAll('\\', '/'))}`),
       PROJECT_ROOT,
     );
     expect(signals.some((s) => s.kind === 'outside_project')).toBe(false);
@@ -80,7 +80,7 @@ describe('replBashPathSignalCollector — outside_project', () => {
       for (const shortSide of ['environment', 'target']) {
         for (const name of ['TEMP', 'TMP', 'TMPDIR']) vi.stubEnv(name, shortSide === 'environment' ? short : canonical);
         const target = path.join(shortSide === 'target' ? short : canonical, 'scratch.txt');
-        const signals = replBashPathSignalCollector.collect(bash(`echo x > ${target}`), PROJECT_ROOT);
+        const signals = replBashPathSignalCollector.collect(bash(`echo x > ${JSON.stringify(target.replaceAll('\\', '/'))}`), PROJECT_ROOT);
         expect(signals).toEqual([]);
       }
     } finally { vi.unstubAllEnvs(); fs.rmSync(root, { recursive: true, force: true }); }
