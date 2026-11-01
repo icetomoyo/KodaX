@@ -1,5 +1,47 @@
 # LLM 接入补齐契约（FEATURE_302）
 
+## Issue 376 接缝补齐（2026-11-01，尚未发布）
+
+内建 Anthropic 的 Claude Opus/Sonnet/Haiku 5.5 使用版本化 `nativeHistory`
+增量片段，保存实际已发送的图片/提醒和协议响应块（工具输入沿用既有解析策略）；
+JSON 落盘后校验账号、目的地、
+模型、canonical 前缀及父片段再复用。系统/工具变化转为会话内原生更新，保持旧前缀；
+effort 变化采用会话内控制，thinking 模式变化建立新 lineage，移除旧签名但保留已接纳
+的图片和工具回执。跨账号/模型、编辑历史、压缩或缺失父片段不能继承不再可证明的
+opaque thinking；可读推理保留为普通上下文。安全过滤改变输出时不保存被过滤的原始片段。
+
+缓存 TTL/关闭只重新投影协议缓存标记，不改工具参数或 JSON Schema 中同名业务字段。
+stream 保留实际 block 次序、空但已签名的 thinking、citation 和服务端工具 JSON delta。
+`thinkingMode` 为受模型限制的可选 SDK 控制：Sonnet 支持 `between_tools`，Haiku 支持
+`disabled`；Opus 仍要求 adaptive。发送前拒绝不支持的 sampling 和 assistant prefill。
+`onPayload`/`samplingParams` 不能覆盖统一 effort，非 effort 的 `output_config.format`
+扩展仍可合并使用；prepared hash 对应最终发送对象。兼容网关保留其文本优先/宽松签名
+策略，旧模型保持原 thinking 参数策略；严格 Anthropic 序列化保留实际块次序。
+
+OAuth lease 可协商 `credentialContextVersion: 1`。可信 Main 返回带稳定注册/账号隔离身份
+的请求凭证封装，LLM 层在进入请求作用域时解包，HTTP 头只包含内部凭证。401 可按被拒
+token 的指纹刷新同一注册代次，失败的生成 POST 不重放；下一次明确的新请求再取新凭证。
+旧的 string broker/绑定入口继续可用；grant 隔离不因此成为已验证 subject，仍遵守下文的
+`verifyIdentity`/`identityKind` 契约。云回调可选择返回 `{credential, replayIdentity}`；
+该 identity 必须来自可信 principal 校验，不能以 unsigned token claim、profile 名或环境
+变量名推定。默认云 SDK 无法证明稳定 principal 时继续采用保守隔离，不新增身份查询请求。
+端点指纹仍按实际请求环境校验，配置/环境 key 继续可用，broker scope 不回退到另一来源。
+
+公共目录没有当前账号的请求身份，不以某个账号的拒绝记录全局收窄能力。显式 probe
+继续对每个候选发出有界真实请求，供用户主动重新验证；普通生成请求才在自身 scope
+内沿用拒绝缓存并自愈。probe 不改变用户默认 effort，忘记能力记录仍是独立显式操作。
+
+模型目录新增 5.5，不改原默认模型与默认输出预算。费率采用三款模型官方 overview
+（[Opus](https://platform.claude.com/docs/en/models/opus-5-5/overview)、
+[Sonnet](https://platform.claude.com/docs/en/models/sonnet-5-5/overview)、
+[Haiku](https://platform.claude.com/docs/en/models/haiku-5-5/overview)，2026-11-01 核对）；
+Haiku 长上下文档位先按完整输入计量，再分配 cache 读写。协议依据官方
+[preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking)、
+[会话内系统消息](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages) 和
+[effort](https://platform.claude.com/docs/en/build-with-claude/effort)。离线 fixture 不验证真实签名、
+订阅权益、服务端缓存命中或跨区域价格；其他 Anthropic 网关、Vertex/Bedrock 的高级原生
+5.5 历史并不因此自动获得同等协议保证。
+
 实现对照 pi `e7a0df27c09d11bf4161d3605246cbf57a129cb2`，2026-10-30。这里描述代码和离线契约；不将服务目录、client 注册、订阅权益或 fixture 视为真实账号验证。T01–T12 的实现与离线验收已于2026-10-31完成，尚未合并或发布；真实账号及跨平台范围见最终验收记录。
 
 ## 能力、历史和请求扩展

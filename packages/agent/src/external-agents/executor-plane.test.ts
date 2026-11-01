@@ -4,6 +4,7 @@ import {
   AgentCancellationUncertainError,
   ExternalAgentRegistrationConflictError,
   AgentStartUncertainError,
+  AgentExecutorPlaneInitializationError,
   createAgentExecutorPlane,
   createMemoryAgentExecutorPlaneStore,
 } from './executor-plane.js';
@@ -167,6 +168,38 @@ function factory(executor: FakeExecutor): AgentExecutorFactory {
 }
 
 describe('FEATURE_258 AgentExecutorPlane', () => {
+  it('disposes recovered executors if initialization later fails to persist recovery', async () => {
+    const store = createMemoryAgentExecutorPlaneStore();
+    const initial = await createAgentExecutorPlane({ factories: [factory(new FakeExecutor())], policy: allowAllPolicy(), store });
+    await initial.registrations.upsert(registration({ credentialRef: undefined }));
+    await initial.tasks.start(taskInput({ taskId: 'failed-recovery-publication' }));
+    await initial.close();
+    const recovered = new FakeExecutor();
+    await expect(createAgentExecutorPlane({ factories: [factory(recovered)], policy: allowAllPolicy(),
+      store: { ...store, async saveTask() { throw new Error('fixture recovery persistence failed'); } } }))
+      .rejects.toThrow('fixture recovery persistence failed');
+    expect(recovered.disposeCalls).toBe(1);
+  });
+
+  it('retains explicit retry authority if initialization and executor disposal both fail', async () => {
+    const store = createMemoryAgentExecutorPlaneStore();
+    const initial = await createAgentExecutorPlane({ factories: [factory(new FakeExecutor())], policy: allowAllPolicy(), store });
+    await initial.registrations.upsert(registration({ credentialRef: undefined }));
+    await initial.tasks.start(taskInput({ taskId: 'failed-recovery-cleanup' })); await initial.close();
+    const recovered = new FakeExecutor(); recovered.disposeError = new Error('fixture dispose failed');
+    const background: Error[] = [];
+    let failure: unknown;
+    try { await createAgentExecutorPlane({ factories: [factory(recovered)], policy: allowAllPolicy(),
+      onBackgroundError: error => { background.push(error); },
+      store: { ...store, async saveTask() { throw new Error('fixture recovery persistence failed'); } } }); }
+    catch (error) { failure = error; }
+    expect(failure).toBeInstanceOf(AgentExecutorPlaneInitializationError);
+    expect(background.length).toBeGreaterThan(0);
+    recovered.disposeError = undefined;
+    await (failure as AgentExecutorPlaneInitializationError).retryCleanup();
+    expect(recovered.disposeCalls).toBeGreaterThan(2);
+    expect(recovered.starts).toHaveLength(0);
+  });
   it('fences an unreadable task ledger without blocking healthy task recovery or rewriting original state', async () => {
     const store = createMemoryAgentExecutorPlaneStore();
     const first = await createAgentExecutorPlane({ factories: [], policy: allowAllPolicy(), store });

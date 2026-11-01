@@ -612,3 +612,44 @@ Space 独立分支不推送，不创建版本标签、不发布包。最终主�
 推送至 Root `origin/KodaX`；设计仓 `origin/main` 已先推送上述 `8574086` 依赖，随后
 分别核对远端 SHA。实际主仓重建、类型检查、109 项定向源码、8 项发布包验收通过；
 独立工作区完整发布包为 89 项通过。Space 保持独立，未推送、未改 SDK pin，未发布包或标签。
+
+## Issue 376：恢复、凭证与原生历史补齐（2026-11-01，未发布）
+
+本轮直接在 Root 本地 `KodaX` 主分支实施，基线 `3cd3e5af`；没有修改设计子仓
+`8574086` 或 Space 独立提交 `da531f0a`。本轮未推送、发布或改变 SDK pin，验收见
+[Issue 376 指南](test-guides/ISSUE_376_v0.7.97_REGRESSION_GUIDE.md)。
+
+旧配置文件、已保存 API key、支持的环境 key 与原有 broker/绑定入口继续可用；账号、
+路由和墓碑优先级不变。OAuth 新 broker 协商请求凭证封装以获得稳定账号 replay 身份和
+401 按代次刷新，旧 string 回调仍工作。消费方必须通过 SDK 凭证 scope，不能把封装字符串
+直接填入 HTTP 头、保存到配置或传入 Renderer。刷新成功也不重放刚失败的 POST，不把另一
+账号或 API key 当作修复。云回调可额外返回经过可信 principal 验证的 `replayIdentity`；
+没有该证明的默认云 SDK 继续保守隔离，不能伪造稳定身份来争取缓存。
+
+新的 Main `/runtime` 维护入口为 `inspectStorageRepair`、`inspectStorageRepairCandidate`、
+`applyStorageRepair`、`confirmStorageRepair`。本地 CLI 对应 `doctor --inspect-storage <target.json>`、
+`--repair-storage <plan.json> [--repair-candidate <candidate>] --writers-stopped`、
+`--verify-storage <receipt.json> --writers-stopped --verified-current-state`。单次只选一种动作；
+这些入口属于可信本机管理员，未进入 Product Client、Renderer 或模型工具目录。
+inspection 只读；apply 核对原件身份/hash、实际 writer 锁和候选完整性，保留备份并设置
+repair fence。当前单个源文件/候选的维护检查上限为 64 MiB，超限会明确拒绝，不截断数据。
+合法 JSON 不证明外部副作用已核对，只有独立人工/可信运维核对当前状态后
+才能 confirm 清 fence。`--writers-stopped` 是操作者对旧非协作 writer 的前置声明，不能
+证明其他安装已离线。未知锁不按年龄删除；不兼容的锁协议仍拒绝通用修复。
+
+事件账本只对语法损坏的末行提供明确前缀候选；Extension/A2A/任务 snapshot 使用完整候选，
+不把空集合当成默认修复。修复失败和中断保留原件、回执和 fence；未知任务不自动派发远端
+效果。原始凭证/config 损坏仍不自动清空或重置账号。服务端已消费 refresh token、客户端
+却尚未持久化便崩溃时，本地无法保证恢复；封存备份不能当作可自动回滚的有效 refresh token。
+需要旧 alpha.11 不认识的新协议时，不支持降级到旧 reader/writer 共用新存储。
+
+统计 v2 按真实 Session 存储根分隔，以独立追加 lane 收集事实，旧默认 v1 只读导入，未采集
+的历史仍为 partial。统计不是执行权威。分页 cursor 绑定当前投影代次；Host 重启、重建、
+LRU 淘汰或旧格式 cursor 返回 `conflict` 时，从第一页重取并按 ID/revision upsert。
+这避免并发 lane 在冷热恢复排序不同后继续旧 offset 而漏项。
+
+自定义存储/Space 必须原样保留 assistant 的可选 `nativeHistory`，不要用显示文本重建完整
+记录；过滤改变内容时丢弃不匹配的片段。Claude 5.5 的原生范围与真实账号验证限制见
+[接入契约](LLM_INTEGRATION.md)。全局工具输出自动清理是另一个存储能力：需要关闭
+Root/Space/分支/附件的引用与所有权链路。本轮没有加入 TTL 删除，旧工具原件保留；
+现有显式诊断不等于自动 GC 已完成。

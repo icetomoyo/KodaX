@@ -409,3 +409,26 @@ T12-J 已将这些 Root 接缝与另一线程 `a9587af7e` 的 MCP/Skill 修复�
 主分支，并同步设计子仓。Root 的合并后验收另记 FEATURE_302 测试指南 J 节；I 中的
 Space 计数仍是该独立检查点的历史证据。本轮 Space 产品代码继续保留在 `da531f0a`，
 由负责线程接手后续合入、persona/Partner/profile 和生产打包，未推送或发布。
+
+## Issue 376 最新接手说明（2026-11-01，未发布）
+
+Root 本轮继续在本地 `KodaX` 修复（起点 `3cd3e5af`），设计子仓仍为 `8574086`；
+Space 仍保留独立 `da531f0a`，本轮未改 Space、未推送或发布。接手时先锁定包含本轮
+修复的 SDK 字节，再走真实产品包验收：旧 key/配置/env 来源固定与墓碑规则不变；
+OAuth 通过既有 broker 协商请求凭证 v1，刷新同一账号的被拒代次，不重放失败 POST，
+Renderer 仍只拿状态；不要直接转发或持久化封装凭证。云稳定 replay 身份只能由可信
+Main 验证 principal 后提供，不能以 profile 或未签名 claim 代替证明。保留 assistant
+的 `nativeHistory` 增量片段及完整 canonical 内容，验证跨 JSON/分支/恢复时的图片、
+thinking、动态工具、effort 与 cache；旧回调仍兼容，但没有新协商能力的回调不承诺稳定
+刷新身份。统计 cursor 失效返回 conflict 时，从第一页重新同步并按 ID/revision upsert。
+损坏账本/Extension/A2A 与未知锁的显式修复只在可信 Main/本地 CLI 执行：保留原件和
+receipt/fence，实际核对外部效果后独立确认，不能由 UI 自动勾选“已核对”。旧非协作
+writer 必须停止升级。继续保留账号来源选择、换号/撤销、活跃任务与退出/冷 Host 恢复
+门禁，并合并原负责线程的 persona/Partner/profile 工作。全局工具输出自动 GC 尚是
+独立能力，需要先闭合 Root/Space 与附件/分支引用；本轮保留旧原件，没有按 TTL 删除。
+Root 离线 E2E 不代替真实 OAuth/云账号、Claude 签名缓存或 Space 成品验收；完整范围见
+[SDK 迁移说明](SDK_MIGRATION.md)。
+
+能力目录显示也须保留账号边界：不将某个 scope 的拒绝全局套给其他账号。主动 probe
+继续对候选发出有界真实请求；普通生成才沿用 scoped 拒绝缓存。UI 展示请求/实际 effort
+并保留用户默认值，不能为修复显示而扩大授权、发额外探测或偷偷换来源。

@@ -66,7 +66,7 @@ function unavailableProviderResult(result: KodaXResult): boolean {
   const failure = result.failure;
   if (result.success || result.interrupted || !failure || failure.source === 'local' || failure.errorClass === 'local_execution_error'
     || (failure.failureCode && failure.failureCode !== 'response_stream_error')) return false;
-  if (failure.errorClass === 'non_retryable_provider_error' || failure.errorClass === 'user_abort' || isProviderQuotaError(failure)) return false;
+  if (failure.retryable === false || failure.errorClass === 'user_abort' || isProviderQuotaError(failure)) return false;
   if (failure.httpStatus !== undefined) return failure.httpStatus === 408 || failure.httpStatus === 429 || failure.httpStatus >= 500;
   return ['rate_limit', 'provider_overloaded', 'connection_failure', 'request_timeout', 'stream_idle_timeout', 'chunk_timeout']
     .includes(failure.errorClass);

@@ -6,7 +6,6 @@
 
 import { KodaXBaseProvider } from './base.js';
 import {
-  createAnthropicSdkClient,
   KodaXAnthropicCompatProvider,
 } from './anthropic.js';
 import { KodaXOpenAICompatProvider } from './openai.js';
@@ -34,7 +33,6 @@ import {
   normalizeCapabilityProfile,
 } from './capability-profile.js';
 import { getProviderSnapshots } from './provider-capabilities.loader.js';
-import type Anthropic from '@anthropic-ai/sdk';
 
 // ============== Provider 名称类型 ==============
 
@@ -193,13 +191,8 @@ class AnthropicProvider extends KodaXAnthropicCompatProvider {
     // providers (kimi-code, ark-coding, etc.) lack the signing key and
     // accept any signature, so they keep the lenient default. v0.7.28.
     strictThinkingSignature: true,
+    userAgentMode: 'sdk',
   });
-
-  // Anthropic proper talks to api.anthropic.com and must keep the SDK's
-  // native user agent — unlike the compat base, it adds no gateway headers.
-  protected override buildClient(): Promise<Anthropic> {
-    return createAnthropicSdkClient({ apiKey: this.getApiKey(), authToken: null, baseURL: this.getBaseUrl() });
-  }
 }
 
 class ZhipuCodingProvider extends KodaXAnthropicCompatProvider {

@@ -8,6 +8,16 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Store execution statistics in append-only, Session-root-scoped journals;
+  retain legacy projections and expire pagination cursors after projection
+  recovery. Keep unknown outcomes non-authoritative for execution.
+- Load optional Node CLI auth, doctor, storage maintenance and one-shot
+  components on demand within the existing size reserve; standalone binaries
+  embed those components and public SDK entry points remain unchanged.
+- Add native Claude 5.5 history fragments, ordered thinking/tool blocks,
+  inline tool/system updates and per-message effort controls. Preserve
+  admitted images across restore and keep cache policy out of tool arguments.
+
 - Converge public Runtime ownership on the independent shared Host. Retire
   embedded/default construction, inline owner switching and function-based
   in-process external-agent Hosts. Keep the explicit daemon launcher and its
@@ -21,6 +31,16 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Refresh rejected OAuth credential generations through the existing broker
+  without replaying the failed request or changing the selected account.
+  Preserve trusted account identity across refresh and fence revoked leases.
+- Publish migration/OAuth/storage lock owners completely; add explicit local
+  inspection, retained backups, repair fences and separately attested recovery
+  for supported damaged ledgers/snapshots and unidentified historical locks.
+- Prevent ambient Anthropic SDK headers from replacing the selected credential;
+  keep unsupported Claude sampling/prefill and hook effort overrides off wire.
+- Preserve explicit non-retryable provider facts through returned child
+  failures while retaining configured fallback for transient HTTP failures.
 - Prevent terminal quota, authentication and explicitly non-retryable child
   failures from triggering cross-provider fallback. Diagnose retained Session
   writer locks and lock-record syntax without disclosing owner fields or

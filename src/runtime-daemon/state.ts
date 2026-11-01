@@ -942,6 +942,14 @@ export function acquireRuntimeSessionStorageOwner(
   }
 }
 
+/** Offline maintenance shares the coordination gate used for Host owner publication/removal. */
+export function tryAcquireRuntimeLockMaintenance(file: string): (() => void) | undefined {
+  if (!['daemon.lock', 'owner.lock'].includes(path.basename(file))) throw new Error('Unsupported Runtime ownership repair target.');
+  const paths = { ownerPolicyLockFile: path.join(path.dirname(file), 'owner-policy.lock') };
+  const handle = tryAcquireRuntimeOwnerCoordination(paths);
+  return handle ? () => releaseRuntimeOwnerCoordination(paths, handle) : undefined;
+}
+
 export function releaseRuntimeDaemonLock(handle: RuntimeDaemonLockHandle): boolean {
   const coordinationPaths = {
     ownerPolicyLockFile: path.join(path.dirname(handle.file), 'owner-policy.lock'),

@@ -319,6 +319,7 @@ import {
   type ManagedRunChildProcessReference,
   createMcpManager,
   createAgentExecutorPlane,
+  AgentExecutorPlaneInitializationError,
   createSessionLineage,
   emitKodaXDiagnostic,
   getAgentConfigHome,
@@ -4278,6 +4279,8 @@ function isTransientConversationBoundaryError(error: unknown): boolean {
     && (error.code === "data_changed" || error.code === "resync_required");
 }
 
+const pendingRuntimeInitializationCleanup = new Map<string, () => Promise<void>>();
+
 async function createKodaXRuntimeInternal(
   options: CreateKodaXHostRuntimeOptions,
 ): Promise<KodaXRuntime> {
@@ -4437,6 +4440,9 @@ async function createKodaXRuntimeInternal(
     ? path.join(path.resolve(options.homeDir), ".kodax")
     : replApi.KODAX_DIR;
   const sessionsDir = resolveRuntimeSessionsDir(options);
+  const initializationKey = JSON.stringify([configHome, path.resolve(sessionsDir ?? path.join(configHome, 'sessions'))]);
+  const previousInitialization = pendingRuntimeInitializationCleanup.get(initializationKey);
+  if (previousInitialization) { await previousInitialization(); pendingRuntimeInitializationCleanup.delete(initializationKey); }
   const sessionManager = createSessionManager(
     sessionsDir ? { sessionsDir, configHome } : { configHome },
   );
@@ -4458,6 +4464,20 @@ async function createKodaXRuntimeInternal(
       });
     },
   });
+  let agentPlane: AgentExecutorPlane | undefined;
+  let agentStore: ReturnType<typeof createRuntimeAgentExecutorPlaneStore> | undefined;
+  let startupIntegrations: Awaited<ReturnType<typeof createHostIntegrations>> | undefined;
+  let failedPlaneCleanup: (() => Promise<void>) | undefined;
+  let initializedClose: (() => Promise<void>) | undefined;
+  const cleanupInitialization = async (): Promise<void> => {
+    if (initializedClose) { await initializedClose(); return; }
+    await failedPlaneCleanup?.();
+    await agentPlane?.close();
+    agentStore?.close();
+    await startupIntegrations?.close();
+    await ownerLiveness.close();
+  };
+  try {
   const runOwner: AgentActorOwner = {
     ownerId: `runtime_${randomUUID().replace(/-/g, "")}`,
     runtimeId: identity.runtimeId,
@@ -4467,24 +4487,20 @@ async function createKodaXRuntimeInternal(
     livenessPort: ownerLiveness.port,
   };
   const persistence = createRuntimePersistence(options, runOwner);
-  const executionFacts = createExecutionFactsStore(configHome, runOwner);
-  let agentPlane: AgentExecutorPlane | undefined;
-  try {
+  const executionFacts = createExecutionFactsStore(configHome, runOwner, sessionsDir);
+    if (options.externalAgents) agentStore = createRuntimeAgentExecutorPlaneStore(path.join(persistence.runtimeDir, "agents"), { exclusive: true });
     agentPlane = options.externalAgents
       ? await createAgentExecutorPlane({
           factories: options.externalAgents.factories,
           policy: options.externalAgents.policy,
           credentialBroker: options.externalAgents.credentialBroker,
           artifactPolicy: options.externalAgents.artifactPolicy,
-          store: createRuntimeAgentExecutorPlaneStore(
-            path.join(persistence.runtimeDir, "agents"),
-          ),
+          store: agentStore,
+        }).catch((error: unknown) => {
+          if (error instanceof AgentExecutorPlaneInitializationError) failedPlaneCleanup = error.retryCleanup;
+          throw error;
         })
       : undefined;
-  } catch (error: unknown) {
-    await ownerLiveness.close();
-    throw error;
-  }
 
   // The view's history source is the canonical conversation (lineage-resolved,
   // so pre-compaction entries survive); the recent storage tail is only the
@@ -5048,6 +5064,7 @@ async function createKodaXRuntimeInternal(
   reportStartupProgress({ stage: 'initializing', phase: 'mcp' });
   const integrations = await createHostIntegrations(configHome,
     readRuntimeConfig(path.join(configHome, "config.json")), reportStartupProgress);
+  startupIntegrations = integrations;
   // FEATURE_298 T12: per-Session MCP resources persist Host-side so a restart
   // rebuilds them. A deleted Session drops its record; an archived Session
   // keeps it for the unarchive rebuild while its live resources are released.
@@ -5505,6 +5522,7 @@ async function createKodaXRuntimeInternal(
         await agentPlane!.close();
         agentPlaneClosed = true;
       }
+      agentStore?.close();
       await integrations.close();
       if (getActiveUserInteraction() === sharedElicitSurface) {
         setActiveUserInteraction(undefined);
@@ -5542,6 +5560,7 @@ async function createKodaXRuntimeInternal(
     return attempt;
   };
 
+  initializedClose = closeRuntime;
   const runtime: KodaXRuntime = {
     statistics: {
       read: async sessionId => { ensureOpen(); await sessionAdmission.assertRunAccess(sessionId); return executionFacts.service.read(sessionId); },
@@ -5753,6 +5772,14 @@ async function createKodaXRuntimeInternal(
       ...(issues.length > 0 ? { state: 'unknown' as const, issues } : {}) };
   });
   return runtime;
+  } catch (error) {
+    try { await cleanupInitialization(); }
+    catch (cleanup) {
+      pendingRuntimeInitializationCleanup.set(initializationKey, cleanupInitialization);
+      throw new AggregateError([error, cleanup], 'Runtime initialization and ownership cleanup failed; retry the same storage scope.');
+    }
+    throw error;
+  }
 }
 
 function assertRuntimeCapabilities(

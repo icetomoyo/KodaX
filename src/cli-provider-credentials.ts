@@ -25,7 +25,7 @@ export function createCliProviderCredentialAccess(config: Parameters<typeof crea
 }
 
 function deferredSession(scope: { service: NonNullable<KodaXCustomProviderConfig['oauth']>; profile: string; issuer?: string },
-  load: () => Promise<OAuthCredentialSession>): Pick<OAuthCredentialSession, 'service' | 'profile' | 'issuer' | 'acquire' | 'onInvalidate'> {
+  load: () => Promise<OAuthCredentialSession>): Pick<OAuthCredentialSession, 'service' | 'profile' | 'issuer' | 'acquire' | 'onInvalidate' | 'replayIdentity' | 'recoverRejectedCredential'> {
   let pending: Promise<OAuthCredentialSession> | undefined, opened: OAuthCredentialSession | undefined;
   const listeners = new Map<() => Promise<void>, (() => void) | undefined>();
   const open = (): Promise<OAuthCredentialSession> => {
@@ -43,7 +43,13 @@ function deferredSession(scope: { service: NonNullable<KodaXCustomProviderConfig
     pending = current; return current;
   };
   return { ...scope,
+    get replayIdentity() { return opened?.replayIdentity; },
     async acquire(signal) { signal?.throwIfAborted(); const session = await open(); signal?.throwIfAborted(); return session.acquire(signal); },
+    async recoverRejectedCredential(fingerprint, signal) {
+      const session = await open();
+      if (!session.recoverRejectedCredential) throw new Error('OAuth credential recovery requires an updated session.');
+      await session.recoverRejectedCredential(fingerprint, signal);
+    },
     onInvalidate(listener) {
       listeners.set(listener, opened?.onInvalidate(listener));
       return () => { listeners.get(listener)?.(); listeners.delete(listener); };

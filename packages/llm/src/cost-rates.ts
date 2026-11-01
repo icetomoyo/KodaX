@@ -7,6 +7,10 @@
 
 import type { KodaXCacheWriteUsage } from './types.js';
 export interface CostRate {
+  /** Whole-request tier selected from total prompt tokens, before cache partitions. */
+  readonly longContext?: { readonly aboveInputTokens: number; readonly inputPer1M: number; readonly outputPer1M: number;
+    readonly cacheReadPer1M: number; readonly cacheWritePer1M: number;
+    readonly cacheWritePer1MByTtl?: CostRate['cacheWritePer1MByTtl'] };
   /** Input band covered by this estimate. Outside it, the nullable calculator returns unknown. */
   readonly maxPricedInputTokens?: number;
   readonly cacheWritePer1MByTtl?: Readonly<Partial<Record<Exclude<keyof KodaXCacheWriteUsage, 'unknown'>, number>>>;
@@ -23,6 +27,10 @@ export interface CostRate {
 // Estimates, not bills. Selected native routes rechecked 2026-11-01; see docs/LLM_INTEGRATION.md.
 export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string, CostRate>>>> = {
   anthropic: {
+    'claude-opus-5-5': { inputPer1M: 4, outputPer1M: 20, cacheReadPer1M: 0.2, cacheWritePer1M: 5, cacheWritePer1MByTtl: { '5m': 5, '1h': 8 } },
+    'claude-sonnet-5-5': { inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.1, cacheWritePer1M: 2.5, cacheWritePer1MByTtl: { '5m': 2.5, '1h': 4 } },
+    'claude-haiku-5-5': { inputPer1M: 0.1, outputPer1M: 0.5, cacheReadPer1M: 0.01, cacheWritePer1M: 0.125, cacheWritePer1MByTtl: { '5m': 0.125, '1h': 0.2 },
+      longContext: { aboveInputTokens: 100_000, inputPer1M: 0.5, outputPer1M: 2.5, cacheReadPer1M: 0.05, cacheWritePer1M: 0.625, cacheWritePer1MByTtl: { '5m': 0.625, '1h': 1 } } },
     'claude-opus-4-8': {
       inputPer1M: 5.0,
       outputPer1M: 25.0,
@@ -251,6 +259,7 @@ export function calculateCost(
   cacheReadTokens = 0,
   cacheWriteTokens = 0,
 ): number {
+  rate = selectInputTier(rate, totalInputTokens);
   const uncachedInputTokens = Math.max(
     0,
     totalInputTokens - cacheReadTokens - cacheWriteTokens,
@@ -265,8 +274,13 @@ export function calculateCost(
 }
 
 /** Keep the legacy numeric calculator intact; unknown lifetime pricing is explicitly nullable here. */
+function selectInputTier(rate: CostRate, input: number): CostRate {
+  if (!rate.longContext) return rate;
+  return rate.longContext && input > rate.longContext.aboveInputTokens ? { ...rate, ...rate.longContext, longContext: undefined } : { ...rate, longContext: undefined };
+}
 export function calculateCostWithCacheLifetimes(rate: CostRate, input: number, output: number, reads: number, writes: number,
   lifetimes: KodaXCacheWriteUsage | undefined): number | null {
+  rate = selectInputTier(rate, input);
   if (rate.maxPricedInputTokens !== undefined && input > rate.maxPricedInputTokens) return null;
   if (!lifetimes) return calculateCost(rate, input, output, reads, writes);
   let categorized = 0, writeCost = 0;

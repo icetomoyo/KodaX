@@ -160,11 +160,7 @@ export interface OneShotClientTaskInput {
  * Exit-code contract for the one-shot CLI: success 0, interrupted 130
  * (SIGINT convention), anything else — limit reached or failed — 1.
  */
-export function exitCodeForOneShotResult(result: KodaXResult): number {
-  if (result.success) return 0;
-  if (result.interrupted) return 130;
-  return 1;
-}
+export { exitCodeForOneShotResult } from './one-shot-exit-code.js';
 
 export async function runOneShotClientTask(
   input: OneShotClientTaskInput,

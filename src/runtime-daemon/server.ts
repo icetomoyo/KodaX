@@ -3356,6 +3356,7 @@ function bindTrustedScopedCredentialAccess(input: {
     signal: input.reverseBridge.credentialSignal(leaseId),
     isActive: () => input.reverseBridge.isCredentialActive(leaseId),
     acquire: (provider, purpose, signal, attribution, connectionFingerprint) => input.reverseBridge.acquireScopedCredential({
+      credentialContextVersion: 1,
       ...(connectionFingerprint ? { connectionFingerprint } : {}),
       leaseId,
       provider,
@@ -3364,6 +3365,11 @@ function bindTrustedScopedCredentialAccess(input: {
       purpose,
       signal,
     }),
+    recoverRejectedCredential: async (provider, rejectedCredentialFingerprint, signal, attribution, connectionFingerprint) => {
+      await input.reverseBridge.acquireScopedCredential({ credentialContextVersion: 1, rejectedCredentialFingerprint,
+        ...(connectionFingerprint ? { connectionFingerprint } : {}), leaseId, provider, sessionId: input.sessionId,
+        target: attributedCredentialTarget(input.target, attribution), purpose: 'utility', signal });
+    },
   };
 }
 

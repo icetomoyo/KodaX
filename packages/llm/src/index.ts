@@ -7,12 +7,15 @@
 
 // ============== Types ==============
 export { reconcileAssistantContent } from './assistant-content.js';
+export { retainAnthropicNativeHistory } from './providers/anthropic-native-history.js';
 export { projectResponsesMessages } from './providers/responses-messages.js';
 export { KodaXOpenAIResponsesProvider } from './providers/openai-responses.js';
 export { runWithProviderRequestObserver, runWithAdditionalProviderRequestObserver, runWithProviderRequestAbortSignal, runWithProviderRequestRoute, runWithProviderRequestAttribution } from './provider-request-observation.js';
 export type { ProviderRequestObservation } from './provider-request-observation.js';
 export type {
   KodaXAssistantBlock,
+  KodaXAnthropicHistory,
+  KodaXInputTransformation,
   KodaXGenerationSource,
   KodaXImageBlock,
   KodaXTextBlock,
@@ -122,6 +125,8 @@ export {
 } from './errors.js';
 export type { KodaXProviderErrorMetadata, KodaXContextOverflowFacts } from './errors.js';
 export { isProviderQuotaError } from './retry/provider-quota.js';
+export { serializeProviderCredentialGrant } from './credential-grant.js';
+export type { ProviderCredentialGrant } from './credential-grant.js';
 
 // ============== Constants ==============
 export {
@@ -365,7 +370,7 @@ export { createOAuthRefreshDriver } from './oauth/drivers.js';
 export { createOAuthProviderConfig } from './oauth/provider-config.js';
 export type { KodaXCloudConnection } from './types.js';
 export { serializeCloudCredential } from './cloud/credentials.js';
-export type { KodaXCloudCredential } from './cloud/credentials.js';
+export type { KodaXCloudCredential, KodaXCloudCredentialResolution } from './cloud/credentials.js';
 export { createCloudProviderConfig } from './cloud/provider-config.js';
 export { createGoogleCacheConnection, createGoogleCache, getGoogleCache, listGoogleCaches, updateGoogleCache, deleteGoogleCache } from './cloud/google-cache.js';
 export type { KodaXGoogleCacheConnection, KodaXGoogleCacheReference, KodaXGoogleCacheExpiration, KodaXGoogleCacheRequest } from './types.js';

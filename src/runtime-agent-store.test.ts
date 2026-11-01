@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   AgentTaskEvent,
@@ -10,6 +10,67 @@ import type {
   ExternalAgentRegistration,
 } from '@kodax-ai/agent';
 import { createRuntimeAgentExecutorPlaneStore } from './runtime-agent-store.js';
+
+it('holds managed writer ownership until close and lets read-only inspection continue', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-agent-store-exclusive-'));
+  const writer = createRuntimeAgentExecutorPlaneStore(root, { exclusive: true });
+  try {
+    await writer.saveTask(createTaskSnapshot('retained-task'));
+    expect(() => createRuntimeAgentExecutorPlaneStore(root, { exclusive: true })).toThrow(/owned|busy/i);
+    expect(await createRuntimeAgentExecutorPlaneStore(root).loadTasks()).toHaveLength(1);
+    writer.close();
+    const restored = createRuntimeAgentExecutorPlaneStore(root, { exclusive: true });
+    expect(await restored.loadTasks()).toHaveLength(1);
+    restored.close();
+  } finally { writer.close?.(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+it('retains task bytes and execution fencing when repair-state inspection is unreadable', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-agent-fence-unreadable-'));
+  const store = createRuntimeAgentExecutorPlaneStore(root);
+  const task = createTaskSnapshot('fenced');
+  await store.saveTask(task);
+  const directory = path.join(root, 'tasks', createHash('sha256').update(task.taskId).digest('hex'));
+  const before = fs.readFileSync(path.join(directory, 'snapshot.json'));
+  const lstat = fs.lstatSync;
+  const error = Object.assign(new Error('fixture fence denied'), { code: 'EACCES' });
+  const fault = vi.spyOn(fs, 'lstatSync').mockImplementation((...args) => {
+    if (args[0] === path.join(directory, '.repair-fence')) throw error;
+    return lstat(...args);
+  });
+  try {
+    await expect(store.saveTask({ ...task, state: 'completed' })).rejects.toBe(error);
+    await expect(store.loadEvents(task.taskId)).rejects.toBe(error);
+    await expect(store.appendEvent({ taskId: task.taskId, seq: 1, type: 'state', timestamp: task.updatedAt })).rejects.toBe(error);
+    expect(fs.readFileSync(path.join(directory, 'snapshot.json'))).toEqual(before);
+  } finally { fault.mockRestore(); store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+it('does not append a new event onto a corrupt ledger tail through the raw store API', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-agent-append-corrupt-'));
+  const taskId = 'raw-task', store = createRuntimeAgentExecutorPlaneStore(root);
+  const event = { taskId, seq: 1, timestamp: '2026-11-01T00:00:00Z', type: 'state' as const };
+  try {
+    await store.appendEvent(event);
+    const file = path.join(root, 'tasks', createHash('sha256').update(taskId).digest('hex'), 'events.jsonl');
+    fs.appendFileSync(file, '{"seq":2');
+    const before = fs.readFileSync(file);
+    await expect(store.appendEvent({ ...event, seq: 2 })).rejects.toThrow(/ledger|invalid/i);
+    expect(fs.readFileSync(file)).toEqual(before);
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+it('appends after a valid ledger without a final LF without joining the JSON records', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-agent-append-separator-'));
+  const taskId = 'restored-task', store = createRuntimeAgentExecutorPlaneStore(root);
+  const event = { taskId, seq: 1, timestamp: '2026-11-01T00:00:00Z', type: 'state' as const };
+  const directory = path.join(root, 'tasks', createHash('sha256').update(taskId).digest('hex'));
+  fs.mkdirSync(directory, { recursive: true }); fs.writeFileSync(path.join(directory, 'events.jsonl'), JSON.stringify(event));
+  try {
+    await store.appendEvent({ ...event, seq: 2 });
+    expect((await createRuntimeAgentExecutorPlaneStore(root).loadEvents(taskId)).map(row => row.seq)).toEqual([1, 2]);
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 let tempDir: string | undefined;
 

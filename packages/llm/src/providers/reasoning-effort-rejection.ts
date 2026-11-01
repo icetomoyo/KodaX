@@ -49,6 +49,7 @@ const EFFORT_PARAM_MARKERS = [
   'reasoninglevel',
   'reasoning_level',
   'reasoning.effort',
+  'output_config.effort',
   'thinking.effort',
   'thinking.type',
 ];
@@ -121,7 +122,7 @@ export function classifyReasoningEffortRejection(
   if (!message) {
     return null;
   }
-  const parameter = /(?:unknown|unrecognized|unexpected|unsupported|not supported)\s+(?:parameter|field|argument)s?\s*:?\s*['"`]*(reasoning_effort|reasoning\b|thinking\b|enable_thinking|thinking_budget|budget_tokens)/.exec(message)?.[1]
+  const parameter = /(?:unknown|unrecognized|unexpected|unsupported|not supported)\s+(?:parameter|field|argument)s?\s*:?\s*['"`]*(output_config\.effort\b|reasoning_effort|reasoning\b|thinking\b|enable_thinking|thinking_budget|budget_tokens)/.exec(message)?.[1]
     ?? /\b(enable_thinking|thinking_budget|budget_tokens)\b['"`]*\s+(?:is\s+)?(?:unsupported|not supported)/.exec(message)?.[1]
     ?? /does not support\s+(?:the\s+)?['"`]*(reasoning_effort|reasoning|thinking)['"`]*\s+(?:parameter|field)/.exec(message)?.[1];
   if (parameter) {

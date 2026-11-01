@@ -44,6 +44,23 @@ describe('FileExtensionStore (FEATURE_034 manual persistence)', () => {
     expect(loaded).toEqual(entry);
   });
 
+  it('serializes namespace mutations across independent instances without losing keys', async () => {
+    const namespace = uniqueNs();
+    const first = createExtensionStore(namespace), second = createExtensionStore(namespace);
+    await Promise.all(Array.from({ length: 12 }, (_, index) => (index % 2 ? first : second).put(`key-${index}`, index)));
+    expect(await first.list()).toHaveLength(12);
+    for (let index = 0; index < 12; index++) expect((await second.get(`key-${index}`))?.value).toBe(index);
+  });
+
+  it('does not expose restored account references as normal reads before recovery is verified', async () => {
+    const namespace = uniqueNs(), store = createExtensionStore(namespace);
+    await store.put('accountReference', 'fixture-account');
+    const fence = path.join(tempDir, '.kodax', 'extension-store', namespace, 'store.jsonl.repair-fence');
+    await fs.writeFile(fence, '{"version":1,"state":"unverified-recovery"}');
+    await expect(store.get('accountReference')).rejects.toThrow(/unverified|repair/i);
+    await expect(store.list()).rejects.toThrow(/unverified|repair/i);
+  });
+
   it('never converts corrupt persisted data into a writable empty or partial store', async () => {
     const namespace = uniqueNs(), store = createExtensionStore(namespace);
     await store.put('retain', { credentialReference: 'fixture-only' });

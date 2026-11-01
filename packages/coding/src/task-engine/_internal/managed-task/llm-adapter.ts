@@ -111,7 +111,7 @@ import {
   resolveReasoningMode,
   resolveRoleEffort,
 } from '../../../reasoning.js';
-import { mapLegacyReasoningModeToEffortIntent, reconcileAssistantContent, type KodaXAssistantBlock } from '@kodax-ai/llm';
+import { mapLegacyReasoningModeToEffortIntent, reconcileAssistantContent, type KodaXAssistantBlock, type KodaXAnthropicHistory } from '@kodax-ai/llm';
 import type {
   KodaXEvents,
   KodaXOptions,
@@ -604,6 +604,7 @@ export function buildRunnerLlmAdapter(
     };
 
     let streamResult: {
+      nativeHistory?: KodaXAnthropicHistory;
       contentBlocks?: readonly KodaXAssistantBlock[];
       textBlocks?: readonly { text: string }[];
       toolBlocks?: readonly KodaXToolUseBlock[];
@@ -1489,6 +1490,7 @@ export function buildRunnerLlmAdapter(
       }
 
       streamResult = {
+        nativeHistory: raw.nativeHistory,
         contentBlocks: raw.contentBlocks,
         textBlocks: accumulatedText ? [{ text: accumulatedText }] : raw.textBlocks,
         toolBlocks: raw.toolBlocks,
@@ -1563,6 +1565,7 @@ export function buildRunnerLlmAdapter(
     // missing the thinking block in history.
     const thinkingBlocks = streamResult.thinkingBlocks;
     const runnerResult: RunnerLlmResult = {
+      ...(streamResult.nativeHistory ? { nativeHistory: streamResult.nativeHistory } : {}),
       ...(streamResult.contentBlocks ? { contentBlocks: reconcileAssistantContent(streamResult.contentBlocks, {
         ...streamResult, textBlocks: text ? [{ text }] : [],
       }) } : {}),

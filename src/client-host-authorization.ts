@@ -78,6 +78,9 @@ export type RuntimeScopedCredentialPurpose =
   | "utility";
 
 export interface RuntimeScopedCredentialRequest {
+  /** Optional negotiation; older hosts and callbacks retain plain-string credentials. */
+  readonly credentialContextVersion?: 1;
+  readonly rejectedCredentialFingerprint?: string;
   /** Actual adapter destination proof; required by destination-bound credential sources. */
   readonly connectionFingerprint?: string;
   readonly requestId: string;

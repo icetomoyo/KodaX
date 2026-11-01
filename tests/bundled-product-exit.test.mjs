@@ -72,6 +72,7 @@ test('Product quit verifies exact process cleanup offline and never quits a repl
     const unconfirmed = JSON.stringify({ ...original, cleanup: { ...original.cleanup, state: 'unknown',
       issues: ['Client memory work remains unconfirmed.'] } });
     await writeFile(file, unconfirmed);
+    const priorExits = new Map([[accepted.requestId, JSON.parse(unconfirmed)]]);
     for (let restart = 0; restart < 2; restart += 1) {
       const offline = await verifiedExit(homeDir, clientInfo, 'quit-original');
       assert.equal(offline.cleanup.state, 'unknown');
@@ -87,17 +88,23 @@ test('Product quit verifies exact process cleanup offline and never quits a repl
       const pendingDeadline = Date.now() + 20_000;
       let pending = await client.lifecycle.listPendingExits();
       while (pending.length && Date.now() < pendingDeadline) {
-        assert.equal(pending.length, 1);
-        const row = pending[0];
-        assert.equal(row.requestId, accepted.requestId);
-        assert.equal(row.runtimeId, accepted.runtimeId);
-        assert.equal(row.clientId, accepted.clientId);
-        assert.deepEqual(row.host.owner, accepted.host.owner);
-        assert.equal(row.host.cleanup, 'succeeded');
-        assert.deepEqual(row.cleanup, JSON.parse(unconfirmed).cleanup);
-        assert.equal(row.recovery.state, 'blocked');
-        assert.equal(row.recovery.reason, 'daemon_active');
-        assert.equal(row.recovery.nextAction, 'retry_verification');
+        // Every historical generation is freshly checked. A prior replacement
+        // can also be temporarily unconfirmed, but never identify the new Host.
+        assert.equal(new Set(pending.map(row => row.requestId)).size, pending.length);
+        for (const row of pending) {
+          const prior = priorExits.get(row.requestId);
+          assert.ok(prior, `Unexpected pending exit: ${JSON.stringify(row)}`);
+          assert.equal(row.runtimeId, prior.runtimeId);
+          assert.equal(row.clientId, prior.clientId);
+          assert.deepEqual(row.host.owner, prior.host.owner);
+          assert.equal(row.host.cleanup, 'succeeded');
+          assert.deepEqual(row.cleanup, prior.cleanup);
+          assert.equal(row.recovery.state, 'blocked');
+          const retryReasons = ['daemon_active'];
+          if (prior.host.owner.processContainment === 'windows-job') retryReasons.push('containment_active');
+          assert.ok(retryReasons.includes(row.recovery.reason), JSON.stringify(row));
+          assert.equal(row.recovery.nextAction, 'retry_verification');
+        }
         await delay(50);
         pending = await client.lifecycle.listPendingExits();
       }
@@ -112,7 +119,10 @@ test('Product quit verifies exact process cleanup offline and never quits a repl
       const replacement = await client.lifecycle.requestExit({ requestId, shutdownHost: true });
       assert.notEqual(replacement.runtimeId, accepted.runtimeId);
       await client.disconnect();
-      await verifiedExit(homeDir, clientInfo, requestId);
+      const replacementExit = await verifiedExit(homeDir, clientInfo, requestId);
+      assert.equal(replacementExit.runtimeId, replacement.runtimeId);
+      assert.deepEqual(replacementExit.host.owner, replacement.host.owner);
+      priorExits.set(requestId, replacementExit);
       ownerExitVerified = true;
     }
   } finally {

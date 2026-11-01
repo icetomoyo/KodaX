@@ -17,6 +17,7 @@
 
 import type {
   KodaXAssistantBlock,
+  KodaXAnthropicHistory,
   KodaXContentBlock,
   KodaXRedactedThinkingBlock,
   KodaXTextBlock,
@@ -25,7 +26,7 @@ import type {
   KodaXToolResultContentItem,
   KodaXToolUseBlock,
 } from '@kodax-ai/llm';
-import { reconcileAssistantContent } from '@kodax-ai/llm';
+import { reconcileAssistantContent, retainAnthropicNativeHistory } from '@kodax-ai/llm';
 import type { Span } from '../tracing/index.js';
 
 import type { Agent, AgentMessage, AgentTool } from './agent.js';
@@ -61,6 +62,7 @@ export interface RunnerToolCall {
  * terminates and `text` becomes the final output.
  */
 export interface RunnerLlmResult {
+  readonly nativeHistory?: KodaXAnthropicHistory;
   readonly contentBlocks?: readonly KodaXAssistantBlock[];
   /** Trusted adapter: bounded request preparation earns a turn credit only after verified progress. */
   readonly contextPreparationProgress?: () => boolean;
@@ -325,6 +327,7 @@ export function buildAssistantMessageFromLlmResult(
     toolBlocks: result.toolCalls?.map(call => ({ type: 'tool_use', id: call.id, name: call.name, input: call.input })),
   }) : blocks;
   return { role: 'assistant', content: content.length ? content : [{ type: 'text', text: '' }],
+    ...(result.nativeHistory ? { nativeHistory: retainAnthropicNativeHistory(result.nativeHistory, content) } : {}),
     ...(result.outputId !== undefined ? { outputId: result.outputId } : {}) };
 }
 

@@ -109,7 +109,7 @@ import {
   resolveReasoningMode,
   type ReasoningPlan,
 } from '../reasoning.js';
-import { effortToLegacyReasoningMode, reconcileAssistantContent } from '@kodax-ai/llm';
+import { effortToLegacyReasoningMode, reconcileAssistantContent, retainAnthropicNativeHistory } from '@kodax-ai/llm';
 import { resolveExecutionCwd, resolveExecutionPath } from '../runtime-paths.js';
 import type { KodaXWrittenFile } from '../types.js';
 import {
@@ -520,11 +520,11 @@ function replaceLatestAssistantToolBlocks(
   const message = messages[index];
   if (!message || message.role !== 'assistant') return;
   const visibleToolBlocks = result.toolBlocks.filter((block) => isVisibleToolName(block.name));
+  const content = guardEmptyAssistantContent(reconcileAssistantContent(result.contentBlocks, { ...result, toolBlocks: visibleToolBlocks }));
   messages[index] = {
     ...message,
-    content: guardEmptyAssistantContent(reconcileAssistantContent(result.contentBlocks, {
-      ...result, toolBlocks: visibleToolBlocks,
-    })),
+    nativeHistory: retainAnthropicNativeHistory(result.nativeHistory ?? message.nativeHistory, content),
+    content,
   };
 }
 
@@ -614,6 +614,7 @@ type TerminalProviderMetadata = Pick<
   | 'failureCode'
   | 'providerStage'
   | 'httpStatus'
+  | 'retryable'
   | 'upstreamCode'
   | 'requestId'
   | 'retryAfterMs'
@@ -646,6 +647,7 @@ function readTerminalProviderMetadata(error: Error): TerminalProviderMetadata {
     failureCode,
     providerStage,
     httpStatus,
+    retryable: typeof metadata?.retryable === 'boolean' ? metadata.retryable : undefined,
     upstreamCode: typeof metadata?.upstreamCode === 'string'
       ? safeFailureIdentifier(metadata.upstreamCode)
       : undefined,
@@ -714,6 +716,7 @@ function buildTerminalProviderFailure(input: {
     ...(model === undefined ? {} : { model }),
     ...(metadata.providerStage === undefined ? {} : { providerStage: metadata.providerStage }),
     ...(metadata.httpStatus === undefined ? {} : { httpStatus: metadata.httpStatus }),
+    ...(metadata.retryable === undefined ? {} : { retryable: metadata.retryable }),
     ...(metadata.upstreamCode === undefined ? {} : { upstreamCode: metadata.upstreamCode }),
     ...(metadata.requestId === undefined ? {} : { requestId: metadata.requestId }),
     ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
@@ -2555,6 +2558,7 @@ async function runSubstrateInContext(
       messages.push({
         role: 'assistant',
         content: assistantContent,
+        ...(result.nativeHistory ? { nativeHistory: retainAnthropicNativeHistory(result.nativeHistory, assistantContent) } : {}),
         outputId,
         turnId: liveTurnScopeRef.current.turnId,
         timestamp: new Date().toISOString(),

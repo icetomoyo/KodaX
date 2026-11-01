@@ -21,11 +21,12 @@ test('informational commands remain available with corrupt core config and prese
     for (const raw of ['', '{"provider":', '{"apiKey":"NEVER_PRINT_CREDENTIAL",}']) {
       await writeFile(path.join(configHome, 'config.json'), raw);
       const before = await files(configHome);
-      for (const args of [['--version'], ['--help'], ['doctor', '--help'], ['config', '--help'], ['doctor', '--json']]) {
+      for (const args of [['--version'], ['--help'], ['doctor', '--help'], ['config', '--help'], ['auth', '--help'], ['auth', 'login', '--help'], ['doctor', '--json']]) {
         const { stdout, stderr } = await run(homeDir, args);
         assert.ok(stdout.trim(), `${args.join(' ')} must produce information`);
         assert.doesNotMatch(stdout + stderr, /NEVER_PRINT_CREDENTIAL/);
         if (args.includes('--json')) assert.equal(JSON.parse(stdout).coreConfig.state, 'invalid');
+        if (args[0] === 'auth') assert.match(stdout, args.includes('login') ? /--client-id[\s\S]*--scope[\s\S]*--device[\s\S]*--redirect-uri/ : /set-key[\s\S]*remove-key[\s\S]*login[\s\S]*status[\s\S]*logout/);
         assert.deepEqual(await files(configHome), before, `${args.join(' ')} must not mutate retained files`);
       }
       await assert.rejects(run(homeDir, ['--print', 'do not execute']), /Core configuration is unreadable or invalid/);

@@ -65,6 +65,10 @@ function extensions(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) invalid('Request extensions must be an object.');
   if (Object.keys(value).some(key => protectedFields.has(key) || ['__proto__', 'constructor', 'prototype'].includes(key))) invalid('Request extensions cannot override protected protocol fields.');
   const options = value as Record<string, unknown>;
+  if (Object.hasOwn(options, 'output_config') && (!options.output_config || typeof options.output_config !== 'object'
+    || Array.isArray(options.output_config) || 'effort' in options.output_config)) {
+    invalid('Request extensions cannot override reasoning effort.');
+  }
   validateProviderOptions(options.providerOptions);
   return options;
 }
@@ -84,13 +88,16 @@ export async function prepareProviderPayload<T extends object>(payload: T, shape
   const { options, metadata } = current;
   payload = applyCachePolicy(payload, current.cache, options.cacheRetention, current.cacheDisabled, metadata.provider);
   if (options.temperature !== undefined && (!Number.isFinite(options.temperature) || options.temperature < 0)) invalid('Temperature must be a finite non-negative number.');
-  const additions = { ...extensions(options.samplingParams ?? {}), ...(options.temperature !== undefined ? { temperature: options.temperature } : {}) };
+  const additions: Record<string, unknown> = { ...extensions(options.samplingParams ?? {}), ...(options.temperature !== undefined ? { temperature: options.temperature } : {}) };
   let patch: Record<string, unknown> | void;
   try { patch = await options.onPayload?.(structuredClone(payload) as Record<string, unknown>, { ...metadata }); }
   catch (error) { hookFailure('onPayload', error); }
   if (patch !== undefined) Object.assign(additions, extensions(patch));
   const container = shape === 'google' ? 'generationConfig' : shape === 'bedrock' ? 'inferenceConfig' : shape === 'pi' ? 'options' : undefined;
   const original = payload as Record<string, unknown>;
+  if (additions.output_config && typeof additions.output_config === 'object') {
+    additions.output_config = { ...(original.output_config as object | undefined), ...additions.output_config };
+  }
   const prepared = container ? { ...payload, [container]: { ...(original[container] as object), ...additions } } : { ...payload, ...additions };
   if (observe) observePreparedProviderPayload(prepared);
   return prepared as T;

@@ -42,7 +42,7 @@ if (process.argv[2] === '--interrupt-migration') {
   } });
   const retainedToken = await retained.acquire();
   process.send({ accountId: session.accountId, migration, code, refreshes, retainedAccountId: retained.accountId,
-    retainedCredentialUsable: retainedToken === (retained.service === 'github-copilot' ? 'resource-account-a' : 'grant-account-a') });
+    retainedCredentialUsable: retainedToken === (retained.service === 'github-copilot' ? 'resource-account-a-1' : 'grant-account-a-1') });
   process.disconnect();
 } else {
   for (const service of ['openai-chatgpt', 'openai-codex', 'github-copilot']) {
@@ -58,11 +58,16 @@ if (process.argv[2] === '--interrupt-migration') {
       process.env.KODAX_OAUTH_RECOVERY_UNSET = 'must-not-use-ambient-key';
       let runtime, client, owner, child, releaseRefresh, currentAuthorizer, lastAuthorization;
       const authorizers = [], wires = [], errors = [];
-      let passed = false;
+      let passed = false, rejectNext = false;
       const server = createServer((request, response) => {
         void (async () => {
           for await (const _chunk of request) { /* Drain fixture request. */ }
           wires.push(request.headers.authorization);
+          if (rejectNext) {
+            rejectNext = false;
+            response.writeHead(401, { 'content-type': 'application/json' });
+            response.end(JSON.stringify({ error: { message: 'Fixture access token revoked', type: 'authentication_error' } })); return;
+          }
           response.writeHead(200, { 'content-type': 'text/event-stream' });
           response.end(`data: ${JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk',
             choices: [{ index: 0, delta: { content: '## Goal\nPreserve the selected account.\n## Progress\nRecovery verified.\n## Next Steps\nContinue the task.' }, finish_reason: 'stop' }],
@@ -127,6 +132,7 @@ if (process.argv[2] === '--interrupt-migration') {
       assert.deepEqual(await readFile(legacyFile), originalLegacy);
       assert.equal(await migrateProviderOAuthRegistration({ configPath, registrationId: 'account-b' }), 'migrated');
       const refreshes = [];
+      const resources = new Map();
       let enteredRefresh;
       const entered = new Promise(resolve => { enteredRefresh = resolve; });
       const driver = {
@@ -136,9 +142,13 @@ if (process.argv[2] === '--interrupt-migration') {
             enteredRefresh();
             await new Promise(resolve => { releaseRefresh = resolve; });
           }
-          return { accessToken: `grant-${record.id}`, refreshToken: `rotated-${record.id}`, expiresAt: Date.now() + 3600_000 };
+          const generation = refreshes.filter(account => account === record.accountId).length;
+          return { accessToken: `grant-${record.id}-${generation}`, refreshToken: `rotated-${record.id}-${generation}`, expiresAt: Date.now() + 3600_000 };
         },
-        async exchangeResource(record) { return { accessToken: `resource-${record.id}`, expiresAt: Date.now() + 3600_000 }; },
+        async exchangeResource(record) {
+          const generation = (resources.get(record.id) ?? 0) + 1; resources.set(record.id, generation);
+          return { accessToken: `resource-${record.id}-${generation}`, expiresAt: Date.now() + 3600_000 };
+        },
       };
       const selectedSession = async () => {
         const config = JSON.parse(await readFile(configPath, 'utf8'));
@@ -165,7 +175,7 @@ if (process.argv[2] === '--interrupt-migration') {
         });
       };
       const storage = new FileSessionStorage({ sessionsDir, configHome });
-      for (const id of ['delayed-a', 'selected-b', 'restored-b', 'revoked-b']) {
+      for (const id of ['delayed-a', 'selected-b', 'restored-b', 'rejected-b', 'after-rejection-b', 'revoked-b']) {
         await storage.save(id, { title: id, gitRoot: folder, messages: Array.from({ length: 24 }, (_, index) => ({
           role: index % 2 ? 'assistant' : 'user', content: index % 2 ? 'Retain prior task evidence. '.repeat(180) : `Continue ${index}.`,
         })) });
@@ -190,6 +200,7 @@ if (process.argv[2] === '--interrupt-migration') {
       assert.ok((await outcomeA).error);
       assert.deepEqual(wires, [], 'An account switched during refresh must never reach the model endpoint');
       const bSession = await selectedSession();
+      const replayIdentity = bSession.replayIdentity;
       let b = authorize(bSession);
       assert.equal(bSession.accountId, 'account-b');
       assert.equal((await compact(b, 'selected-b')).compacted, true);
@@ -199,11 +210,23 @@ if (process.argv[2] === '--interrupt-migration') {
       await stopHost(); await startHost();
       assert.notEqual(runtime.identity.runtimeId, firstRuntimeId);
       await assert.rejects(runtime.credentials.resumeScoped(stale.credential.leaseId, async () => 'forbidden'));
-      b = authorize(await selectedSession());
+      const restoredSession = await selectedSession();
+      assert.equal(restoredSession.replayIdentity, replayIdentity);
+      b = authorize(restoredSession);
       assert.equal((await compact(b, 'restored-b')).compacted, true);
       assert.deepEqual(refreshes, ['account-a', 'account-b']);
-      const expectedToken = service === 'github-copilot' ? 'resource-account-b' : 'grant-account-b';
-      assert.deepEqual(wires, [`Bearer ${expectedToken}`, `Bearer ${expectedToken}`]);
+      assert.equal(wires.length, 2);
+      const prefix = service === 'github-copilot' ? 'Bearer resource-account-b-' : 'Bearer grant-account-b-';
+      assert.ok(wires.every(value => value.startsWith(prefix)));
+      rejectNext = true;
+      await assert.rejects(compact(b, 'rejected-b'));
+      assert.equal(wires.length, 3, 'A rejected physical POST must not be replayed automatically');
+      assert.equal((await compact(b, 'after-rejection-b')).compacted, true);
+      assert.equal(wires.length, 4);
+      assert.notEqual(wires[3], wires[2]);
+      assert.ok(wires.every(value => value.startsWith(prefix)), 'Refresh must keep the explicitly selected account');
+      assert.equal(restoredSession.replayIdentity, replayIdentity);
+      assert.deepEqual(refreshes, service === 'github-copilot' ? ['account-a', 'account-b'] : ['account-a', 'account-b', 'account-b']);
       assert.equal((await bSession.revoke()).leaseRevocationFailures, 0);
       await assert.rejects(compact(b, 'revoked-b'), /closed|revoked/);
       await stopHost();
@@ -227,7 +250,7 @@ if (process.argv[2] === '--interrupt-migration') {
       assert.equal((await store.readApiKey(keyBinding)).key, 'must-not-use-unrelated-key');
       assert.equal(JSON.parse(await readFile(configPath, 'utf8')).unrelated, 'preserved');
       assert.deepEqual(await readFile(legacyFile), originalLegacy);
-      assert.equal(wires.length, 2);
+      assert.equal(wires.length, 4);
       passed = true;
     });
   }

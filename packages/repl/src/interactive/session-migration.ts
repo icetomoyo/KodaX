@@ -8,7 +8,7 @@
  *   - dual-layout read (the id-only locator) ships FIRST, so an interrupted
  *     migration never makes a session unreadable
  *   - `.layout.json` marker (written last, temp+rename) makes it idempotent
- *   - `.migration-lock/` directory lock (atomic mkdir) + `owner.json` with
+ *   - `.migration-lock` complete file publication (legacy directory + owner.json readable) with
  *     confirmed-dead pid reclamation; unknown owners remain retained for offline repair
  *   - `.migration-journal.jsonl` records every move → resume forward on the
  *     next start; never auto-rollback, never auto-delete session data
@@ -21,7 +21,7 @@ import fsSync from 'fs';
 import path from 'path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { claimConfigLockReclamation } from '../common/core-config-lock.js';
+import { claimConfigLockReclamation, publishConfigLock } from '../common/core-config-lock.js';
 
 import { deriveProjectKeyFromData, UNKNOWN_PROJECT_KEY, type ProjectIdentity } from './project-key.js';
 import { publishProjectManifest } from './project-manifest.js';
@@ -57,6 +57,12 @@ const ownerPath = (dir: string): string => path.join(lockDirPath(dir), 'owner.js
 const journalPath = (dir: string): string => path.join(dir, '.migration-journal.jsonl');
 const sessionsArchiveDir = (dir: string): string => path.join(path.dirname(dir), 'sessions-archive');
 const inactiveLocks = new Map<string, string>();
+
+async function readMigrationOwner(dir: string): Promise<string> {
+  const lock = lockDirPath(dir), entry = await fs.lstat(lock);
+  if (entry.isSymbolicLink()) throw new Error('Migration lock ownership is an alias.');
+  return fs.readFile(entry.isDirectory() ? ownerPath(dir) : lock, 'utf8');
+}
 
 interface MovePlan {
   readonly from: string;
@@ -263,18 +269,22 @@ export async function needsMigration(sessionsDir: string): Promise<boolean> {
 
 async function lockIsStale(dir: string): Promise<boolean> {
   try {
-    const raw = await fs.readFile(ownerPath(dir), 'utf8');
+    const raw = await readMigrationOwner(dir);
     const data = JSON.parse(raw) as {
       pid?: number;
       heartbeatAt?: number;
+      version?: unknown;
+      nonce?: unknown;
     };
+    if (!(await fs.lstat(lockDirPath(dir))).isDirectory()
+      && (data.version !== 1 || typeof data.nonce !== 'string' || !data.nonce)) return false;
     if (typeof data.pid === 'number' && Number.isSafeInteger(data.pid) && data.pid > 0 && data.pid !== process.pid) {
       try {
         process.kill(data.pid, 0); // throws ESRCH if the holder is gone
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'ESRCH') {
           return claimConfigLockReclamation(lockDirPath(dir), raw)
-            && await fs.readFile(ownerPath(dir), 'utf8') === raw;
+            && await readMigrationOwner(dir) === raw;
         }
       }
     }
@@ -294,31 +304,15 @@ async function acquireLock(dir: string): Promise<string | undefined> {
     await releaseLock(dir, inactive);
   }
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    let created = false;
+    const nonce = randomUUID();
     try {
-      await fs.mkdir(lock); // atomic; throws EEXIST if held
-      created = true;
-      const nonce = randomUUID();
-      await fs.writeFile(
-        ownerPath(dir),
-        JSON.stringify({ pid: process.pid, nonce, startTime: Date.now(), heartbeatAt: Date.now() }),
-      );
-      return nonce;
-    } catch (err) {
-      if (created) {
-        try { await removeMigrationPath(lock, true); }
-        catch (cleanup) { throw new SessionMigrationCleanupError('Migration owner publication and cleanup failed.', { cause: new AggregateError([err, cleanup]) }); }
-        throw err;
-      }
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
-        throw err;
-      }
-      if (attempt === 0 && (await lockIsStale(dir))) {
-        await removeMigrationPath(lock, true);
-        continue; // reclaim + retry once
-      }
-      return undefined; // another live or unverifiable migrator holds it
+      if (publishConfigLock(lock, JSON.stringify({ version: 1, pid: process.pid, nonce, startTime: Date.now() }))) return nonce;
+    } catch (error) {
+      if (error instanceof AggregateError) throw new SessionMigrationCleanupError('Migration owner publication cleanup failed.', { cause: error });
+      throw error;
     }
+    if (attempt === 0 && await lockIsStale(dir)) { await removeMigrationPath(lock, true); continue; }
+    return undefined; // A live or unverifiable writer retains ownership.
   }
   return undefined;
 }
@@ -326,7 +320,7 @@ async function acquireLock(dir: string): Promise<string | undefined> {
 async function releaseLock(dir: string, nonce: string): Promise<void> {
   inactiveLocks.set(dir, nonce);
   try {
-    const owner: unknown = JSON.parse(await fs.readFile(ownerPath(dir), 'utf8'));
+    const owner: unknown = JSON.parse(await readMigrationOwner(dir));
     if (!owner || typeof owner !== 'object' || !('nonce' in owner) || owner.nonce !== nonce) {
       inactiveLocks.delete(dir);
       throw new SessionMigrationCleanupError('Session migration ownership changed before cleanup.');

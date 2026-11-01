@@ -5,13 +5,20 @@ import { createHostOwnedExtensionRuntime } from "./host-integrations.js";
 import { reportDaemonStartupPhase } from './runtime-daemon/startup-progress.js';
 import {
   exitCodeForOneShotResult,
-  runOneShotClientTask,
-} from './one-shot-task.js';
+} from './one-shot-exit-code.js';
 import { toKodaXProductClient } from './client-runtime-adapter.js';
-import { configureProviderAuthCommand } from './provider-auth-cli.js';
-import { createProviderCredentialManager } from './provider-credential-manager.js';
 import type { KodaXClientHostAuthorization } from './client-host-authorization.js';
 import { ensureRecoveringKodaXRuntime } from './recovering-runtime-client.js';
+
+declare const KODAX_CLI_LAZY_COMPONENTS: boolean | undefined;
+function loadCliComponent<T>(file: string, source: () => Promise<T>): Promise<T> {
+  // Node distributions defer optional commands; Bun binaries embed the literal source imports.
+  if (typeof KODAX_CLI_LAZY_COMPONENTS !== 'undefined' && KODAX_CLI_LAZY_COMPONENTS && !('Bun' in globalThis)) {
+    return import(new URL(file, import.meta.url).href) as Promise<T>;
+  }
+  return source();
+}
+const loadProviderAuth = () => loadCliComponent('./provider-auth-cli.js', () => import('./provider-auth-cli.js'));
 
 // ── Runtime environment defaults ──
 // NODE_ENV must be set BEFORE any ESM static import is evaluated, otherwise
@@ -89,7 +96,6 @@ import {
   RUNTIME_DAEMON_BOOTSTRAP_LOG_MAX_BYTES,
   daemonServeExecArgv,
 } from './runtime-daemon/process.js';
-import { runDoctor } from './kodax_doctor.js';
 import {
   getDefaultCommandDir,
   KODAX_COMMANDS_DIR,
@@ -665,6 +671,7 @@ async function runCliTaskViaClient(
   prompt: string,
   authorizeExecution?: KodaXClientHostAuthorization,
 ): Promise<KodaXResult> {
+  const { runOneShotClientTask } = await loadCliComponent('./one-shot-task.js', () => import('./one-shot-task.js'));
   return runOneShotOwnedProcess((abortSignal) => runOneShotClientTask({
     client: toKodaXProductClient(runtime, authorizeExecution),
     runtime,
@@ -2185,8 +2192,9 @@ export function configureKodaXRootCommand(program: Command): Command {
   configureKodaXExecPolicyCommand(configured);
   // Topic help is a root option, consumed before subcommand dispatch.
   // Stop before any nested action or argument validation can run.
-  configured.hook('preSubcommand', (root, command) => {
+  configured.hook('preSubcommand', async (root, command) => {
     if (root.opts().help === undefined) return;
+    if (command.name() === 'auth' && command.commands.length === 0) (await loadProviderAuth()).configureProviderAuthCommand(root, command);
     let target = command;
     for (const name of root.args.slice(1)) {
       const child = target.commands.find(candidate => candidate.name() === name || candidate.aliases().includes(name));
@@ -3343,7 +3351,10 @@ async function runCliMain(startupProgress?: CliStartupProgress) {
   });
 
   configureKodaXSetupCommand(program);
-  configureProviderAuthCommand(program);
+  const auth = program.command('auth').description('Save API keys, login, inspect or revoke provider credentials');
+  program.hook('preSubcommand', async (_parent, command) => {
+    if (command === auth && auth.commands.length === 0) (await loadProviderAuth()).configureProviderAuthCommand(program, auth);
+  });
   configureKodaXMemoryCommand(program);
 
   // ============== completion subcommand ==============
@@ -3583,6 +3594,12 @@ complete -c kodax -l version -d 'Show version'`);
       'Print environment diagnostics (runtime, providers, session/trace disk usage)',
     )
     .option('--json', 'Output machine-readable JSON')
+    .option('--inspect-storage <target.json>', 'Inspect one explicit storage target without modifying it')
+    .option('--repair-storage <plan.json>', 'Apply an inspected offline storage repair plan, retaining original bytes')
+    .option('--repair-candidate <file>', 'Complete recovery snapshot for offline storage repair')
+    .option('--verify-storage <receipt.json>', 'Confirm an externally verified restored state before resuming access')
+    .option('--writers-stopped', 'Acknowledge every shared CLI, Host and SDK writer has stopped')
+    .option('--verified-current-state', 'Confirm the restored state and external effects have been independently verified')
     .option(
       '--ping',
       'Live-probe each configured provider (network + small token cost)',
@@ -3591,7 +3608,13 @@ complete -c kodax -l version -d 'Show version'`);
       '--native-text',
       'Load and hash-check the trusted text native binding',
     )
-    .action(async (opts: { json?: boolean; ping?: boolean; nativeText?: boolean }) => {
+    .action(async (opts: { json?: boolean; ping?: boolean; nativeText?: boolean; inspectStorage?: string; repairStorage?: string;
+      repairCandidate?: string; verifyStorage?: string; writersStopped?: boolean; verifiedCurrentState?: boolean }) => {
+      if (opts.inspectStorage || opts.repairStorage || opts.verifyStorage || opts.repairCandidate || opts.writersStopped || opts.verifiedCurrentState) {
+        const { runStorageRepairCli } = await loadCliComponent('./storage-repair-cli.js', () => import('./storage-repair-cli.js'));
+        await runStorageRepairCli(opts); return;
+      }
+      const { runDoctor } = await loadCliComponent('./kodax_doctor.js', () => import('./kodax_doctor.js'));
       await runDoctor(version, Boolean(opts?.json), {
         ping: Boolean(opts?.ping),
         nativeText: Boolean(opts?.nativeText),
@@ -4263,7 +4286,7 @@ complete -c kodax -l version -d 'Show version'`);
         process.exitCode = 1; return;
       }
     }
-    if (readiness.status === 'needs-credential' && !(await createProviderCredentialManager({ configPath: KODAX_CONFIG_FILE }).describe(readiness.provider)).stored) {
+    if (readiness.status === 'needs-credential' && !(await (await loadProviderAuth()).createProviderCredentialManager({ configPath: KODAX_CONFIG_FILE }).describe(readiness.provider)).stored) {
       process.stdout.write(
         `\n${renderMissingProviderCredentialGuide(
           readiness.apiKeyEnv

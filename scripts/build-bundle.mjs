@@ -6,7 +6,7 @@
 // Produces the following artifacts under dist/:
 //   1. dist/kodax_bootstrap.js — lightweight CLI entry (bin command runs this)
 //   2. dist/kodax_resume.js  — bare-resume discovery and picker
-//   3. dist/kodax_cli.js     — full CLI entry (self-contained)
+//   3. dist/kodax_cli.js     — CLI core (optional commands load private SDK components)
 //   4. dist/index.js         — SDK root entry (`@kodax-ai/kodax`)
 //   5. dist/sdk-agent.js     — SDK subpath `@kodax-ai/kodax/agent`
 //   6. dist/sdk-llm.js       — SDK subpath `@kodax-ai/kodax/llm`
@@ -35,8 +35,10 @@
 // esbuild's automatic transitive import tracking. All third-party packages
 // (and node built-ins) stay external and are listed in root package.json#dependencies.
 //
-// The full CLI stays self-contained; the bootstrap only imports it after
-// optional bare-resume routing. The SDK entries share code via `splitting: true`
+// The bootstrap imports the CLI core after optional bare-resume routing.
+// Node auth/doctor/storage-maintenance/one-shot components load on demand;
+// standalone Bun binaries embed their literal source imports instead.
+// The SDK entries share code via `splitting: true`
 // so re-exporting the same
 // internal package from multiple subpaths doesn't multiply tarball size.
 //
@@ -363,6 +365,9 @@ const commonOptions = {
   // to '0.0.0' in the banner). Same mechanism Bun --compile uses for the
   // standalone binary build (see packages/repl/src/common/utils.ts:265).
   define: {
+    // The loader also keeps a runtime Bun gate: this Node distribution is fed
+    // to Bun --compile later, after first-stage defines have already folded.
+    KODAX_CLI_LAZY_COMPONENTS: 'true',
     KODAX_NATIVE_MANIFESTS_JSON: nativeManifestsJson === undefined
       ? 'undefined'
       : JSON.stringify(nativeManifestsJson),
@@ -402,12 +407,14 @@ const cliResult = await build({
   ...commonOptions,
   metafile: true,
   entryPoints: [path.join(repoRoot, 'src/kodax_cli.ts')],
+  external: [...external, './provider-auth-cli.js', './storage-repair-cli.js', './kodax_doctor.js', './one-shot-task.js'],
   outfile: path.join(distDir, 'kodax_cli.js'),
 });
 assertStartupImportBoundary('CLI', cliResult, { eagerOnly: true });
 assertSingleProviderCredentialModule('CLI', cliResult);
 
 const cliBytes = statSync(path.join(distDir, 'kodax_cli.js')).size;
+if (writeMetafile) writeFileSync(path.join(distDir, 'cli-meta.json'), JSON.stringify(cliResult.metafile));
 // Match the stricter published-artifact fence: preserve 64 KiB of CLI headroom.
 // Audited program data stays in packaged resources, without trimming behavior.
 assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024 - 64 * 1024);
@@ -470,6 +477,11 @@ log(`  ✓ dist/kodax_bootstrap.js (${(bootstrapBytes / 1024).toFixed(0)} kB)`);
 const sdkSources = sdkEntriesFromPackage(rootPkg);
 const sdkEntryNames = Object.keys(sdkSources);
 const sdkEntryPoints = Object.fromEntries(Object.entries(sdkSources).map(([name, source]) => [name, path.join(repoRoot, source)]));
+// Internal CLI component, sharing the SDK chunks; not a new public package export.
+sdkEntryPoints['provider-auth-cli'] = path.join(repoRoot, 'src/provider-auth-cli.ts');
+sdkEntryPoints['storage-repair-cli'] = path.join(repoRoot, 'src/storage-repair-cli.ts');
+sdkEntryPoints.kodax_doctor = path.join(repoRoot, 'src/kodax_doctor.ts');
+sdkEntryPoints['one-shot-task'] = path.join(repoRoot, 'src/one-shot-task.ts');
 
 log(`Building ${sdkEntryNames.length} SDK entries (splitting on)…`);
 const sdkResult = await build({

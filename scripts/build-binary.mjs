@@ -521,6 +521,27 @@ async function verifyHostBinary(binaryPath) {
       env: { ...process.env, BUN_BE_BUN: '1', NODE_PATH: '', NODE_OPTIONS: '', PATH: process.env.SystemRoot ?? '/usr/bin' }, timeout: 15_000 });
     if (scriptResult.error) throw scriptResult.error;
     if (scriptResult.status !== 0) throw new Error(`Packaged Script smoke failed: ${scriptResult.stderr}`);
+    const optionalEnv = { ...process.env, KODAX_HOME: smokeHome, KODAX_TRACING: '0' };
+    const authHelp = spawnSync(smokeBinaryPath, ['auth', 'login', '--help'], {
+      cwd: packageDir, encoding: 'utf8', windowsHide: true, env: optionalEnv, timeout: 15_000,
+    });
+    if (authHelp.error) throw authHelp.error;
+    if (authHelp.status !== 0 || !authHelp.stdout.includes('--client-id')) {
+      throw new Error(`Standalone nested auth help failed: ${authHelp.stdout}\n${authHelp.stderr}`);
+    }
+    const lockPath = join(smokeHome, 'config.json.write.lock');
+    const maintenanceRequest = join(smokeHome, 'storage-target.json');
+    writeFileSync(lockPath, '');
+    writeFileSync(maintenanceRequest, JSON.stringify({ kind: 'lock', root: smokeHome, path: lockPath }));
+    const maintenance = spawnSync(smokeBinaryPath, ['doctor', '--inspect-storage', maintenanceRequest], {
+      cwd: packageDir, encoding: 'utf8', windowsHide: true, env: optionalEnv, timeout: 15_000,
+    });
+    if (maintenance.error) throw maintenance.error;
+    if (maintenance.status !== 0 || JSON.parse(maintenance.stdout).target?.path !== lockPath || readFileSync(lockPath, 'utf8') !== '') {
+      throw new Error(`Standalone storage inspection failed: ${maintenance.stdout}\n${maintenance.stderr}`);
+    }
+    rmSync(lockPath);
+    process.stdout.write('    ✓ standalone smoke: embedded auth help and read-only storage maintenance\n');
     const result = spawnSync(smokeBinaryPath, ['a2a', 'list'], {
       cwd: packageDir,
       encoding: 'utf8',
@@ -578,7 +599,7 @@ async function verifyHostBinary(binaryPath) {
     try {
       nativeTextReport = JSON.parse(nativeTextResult.stdout.trim());
     } catch {
-      throw new Error('Standalone native text smoke must emit one JSON doctor report.');
+      throw new Error(`Standalone native text smoke must emit one JSON doctor report: ${nativeTextResult.stdout}\n${nativeTextResult.stderr}`);
     }
     // The expected protocol is read from the source constant so the smoke
     // stays exact across protocol bumps instead of pinning a stale number.

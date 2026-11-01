@@ -19,6 +19,16 @@ it('prices Claude cache writes using their actual lifetime', () => {
   expect(getCostRate('anthropic', 'claude-sonnet-4-6')?.cacheReadPer1M).toBe(0.3);
 });
 
+it('selects the Haiku 5.5 price band before subtracting cache writes', () => {
+  expect(getCostRate('anthropic', 'claude-opus-5-5')?.cacheReadPer1M).toBe(0.2);
+  expect(getCostRate('anthropic', 'claude-sonnet-5-5')?.cacheReadPer1M).toBe(0.1);
+  const rate = getCostRate('anthropic', 'claude-haiku-5-5')!;
+  expect(rate).toBeDefined();
+  expect(calculateCost(rate, 100_000, 1_000)).toBeCloseTo(0.0105);
+  expect(calculateCost(rate, 100_001, 1_000)).toBeCloseTo(0.0525005);
+  expect(calculateCostWithCacheLifetimes(rate, 200_000, 1_000, 0, 200_000, { '1h': 200_000 })).toBeCloseTo(0.2025);
+});
+
 it('keeps new Kimi API estimates separate from Coding subscription accounting', () => {
   expect(getCostRate('kimi', 'kimi-k3.1-pro')).toMatchObject({ inputPer1M: 1.82, outputPer1M: 9.52, basis: 'estimate' });
   expect(getCostRate('kimi-code', 'k3.1-pro')).toMatchObject({ inputPer1M: 2, outputPer1M: 10, basis: 'nominal' });

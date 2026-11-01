@@ -4,6 +4,23 @@ import type { OAuthCredentialSession } from '@kodax-ai/llm';
 import type { RuntimeCredentialService, RuntimeScopedCredentialBroker } from './client-host-authorization.js';
 
 describe('OAuth scoped credential binding', () => {
+  it('serves negotiated credential recovery through the public SDK binding', async () => {
+    let broker!: RuntimeScopedCredentialBroker;
+    const recover = vi.fn(async (_fingerprint: string) => undefined);
+    const credentials = { registerScoped: async (_input: unknown, callback: RuntimeScopedCredentialBroker) => {
+      broker = callback; return { id: 'lease', providers: ['subscription'], brokerVersion: 2 as const };
+    }, revoke: async () => true } as unknown as RuntimeCredentialService;
+    const session: OAuthCredentialSession = { id: 'registration', service: 'openai-chatgpt', accountId: 'account',
+      replayIdentity: 'a'.repeat(64), acquire: async () => 'inference-token', recoverRejectedCredential: recover,
+      onInvalidate: () => () => undefined, revoke: async () => ({ remote: 'unsupported', leaseRevocationFailures: 0 }) };
+    const binding = await bindOAuthCredentials({ credentials, provider: { name: 'subscription', oauth: session.service }, session });
+    try {
+      const token = await broker({ requestId: 'r', leaseId: 'lease', provider: 'subscription', sessionId: 's',
+        target: { kind: 'run', runId: 'run' }, purpose: 'primary', credentialContextVersion: 1, rejectedCredentialFingerprint: 'b'.repeat(64) });
+      expect(token).toMatch(/^kodax-provider-grant-v1:/);
+      expect(recover).toHaveBeenCalledWith('b'.repeat(64), expect.any(AbortSignal));
+    } finally { await binding.close(); }
+  });
   it('revokes the old lease before switching accounts and fences delayed credentials', async () => {
     const brokers = new Map<string, RuntimeScopedCredentialBroker>();
     const revoke = vi.fn(async () => true);

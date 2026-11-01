@@ -1198,6 +1198,8 @@ export interface KodaXExecutionFailure {
   readonly requestPhase: FailureStage | 'local_execution';
   readonly providerStage?: 'catalog' | 'request_build' | 'transport' | 'response_stream';
   readonly httpStatus?: number;
+  /** Explicit upstream retry/fallback veto, preserved through returned failures. */
+  readonly retryable?: boolean;
   readonly upstreamCode?: string;
   readonly requestId?: string;
   readonly retryAfterMs?: number;

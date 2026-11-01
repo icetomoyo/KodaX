@@ -35,12 +35,18 @@ export function applyCachePolicy<T extends object>(payload: T, capabilities: Kod
     bedrockCheckpoints(payload as Record<string, unknown>, capabilities);
   }
   let checkpoints = 0;
-  const visit = (value: unknown, location: string, depth: number): unknown => {
+  const visit = (value: unknown, location: string, depth: number, literal = false): unknown => {
     if (depth > 64) throw new KodaXProviderError('Cache payload exceeds the processing depth.', provider, { retryable: false });
-    if (Array.isArray(value)) return value.map(entry => visit(entry, location, depth + 1));
+    if (Array.isArray(value)) return value.map(entry => visit(entry, location, depth + 1, literal));
     if (!value || typeof value !== 'object' || ArrayBuffer.isView(value)) return value;
     const output: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(value)) {
+      if (literal) { output[key] = visit(child, location, depth + 1, true); continue; }
+      // Schemas and tool arguments are user data, even when a business field has a cache-like name.
+      if (['input_schema', 'parameters', 'inputSchema', 'schema', 'responseSchema', 'json', 'arguments', 'args'].includes(key)
+        || (key === 'input' && ('toolUseId' in value || ['tool_use', 'server_tool_use', 'tool_call', 'function_call'].includes(String((value as Record<string, unknown>).type))))) {
+        output[key] = visit(child, location, depth + 1, true); continue;
+      }
       const nextLocation = key === 'toolConfig' || key === 'tools' ? 'tools' : ['system', 'messages'].includes(key) ? key : location;
       if (['cache_control', 'cachePoint', 'prompt_cache_breakpoint'].includes(key)) {
         if (off || (capabilities?.locations && !capabilities.locations.includes(location as 'system' | 'tools' | 'messages'))) continue;

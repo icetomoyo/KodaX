@@ -1,6 +1,31 @@
 import { expect, it, vi } from 'vitest';
 import { createProviderCredentialAuthorizer } from './provider-credential-authorizer.js';
 import type { RuntimeScopedCredentialBroker, KodaXClientHostAuthorization, RuntimeCredentialService } from './client-host-authorization.js';
+
+it('negotiates OAuth identity and rejected-generation recovery while preserving legacy string brokers', async () => {
+  let broker!: RuntimeScopedCredentialBroker;
+  let token = 'original-token';
+  const recover = vi.fn(async (_fingerprint: string, _signal?: AbortSignal) => { token = 'replacement-token'; });
+  const session = { service: 'openai-chatgpt' as const, replayIdentity: 'a'.repeat(64),
+    acquire: async () => token, recoverRejectedCredential: recover, onInvalidate: () => () => undefined };
+  const credentials = { registerScoped: async (_input: unknown, callback: RuntimeScopedCredentialBroker) => {
+    broker = callback; return { id: 'lease', providers: ['subscription'], brokerVersion: 2 as const };
+  }, revoke: async () => true };
+  const authorizer = createProviderCredentialAuthorizer({ sources: [{ provider: 'subscription', kind: 'oauth', service: session.service, session }] });
+  try {
+    await authorizer.authorizeExecution({ kind: 'provider_probe', input: { provider: 'subscription', efforts: [] } },
+      { credentials, identity: { runtimeId: 'host', profile: 'default' } } as unknown as Parameters<KodaXClientHostAuthorization>[1]);
+    const request = { requestId: 'r', leaseId: 'lease', provider: 'subscription', sessionId: 's', target: { kind: 'run' as const, runId: 'run' }, purpose: 'primary' as const };
+    expect(await broker(request)).toBe('original-token');
+    const encoded = await broker({ ...request, credentialContextVersion: 1 });
+    expect(encoded).toMatch(/^kodax-provider-grant-v1:/);
+    expect(JSON.parse(Buffer.from(encoded!.split(':')[1]!, 'base64url').toString('utf8'))).toMatchObject({ credential: 'original-token', identity: session.replayIdentity, recoverable: true });
+    await broker({ ...request, credentialContextVersion: 1, rejectedCredentialFingerprint: 'b'.repeat(64) });
+    expect(recover).toHaveBeenCalledTimes(1);
+    expect(recover.mock.calls[0]![0]).toBe('b'.repeat(64));
+    expect(await broker(request)).toBe('replacement-token');
+  } finally { await authorizer.close(); }
+});
 it('does not register profile-bound authority with a different or unverified Host profile', async () => {
   const registerScoped = vi.fn();
   const authorizer = createProviderCredentialAuthorizer({ sources: [{ provider: 'profiled', kind: 'environment', apiKeyEnv: 'KEY', profile: 'work' }] });

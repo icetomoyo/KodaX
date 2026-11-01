@@ -365,9 +365,9 @@ describe('invokeChildWithFallback', () => {
   });
 
   it.each([
-    { errorClass: 'non_retryable_provider_error', httpStatus: 429 },
+    { errorClass: 'non_retryable_provider_error', httpStatus: 429, retryable: false },
     { errorClass: 'rate_limit', httpStatus: 429, upstreamCode: 'insufficient_quota' },
-    { errorClass: 'non_retryable_provider_error', httpStatus: 503 },
+    { errorClass: 'non_retryable_provider_error', httpStatus: 503, retryable: false },
     { errorClass: 'user_abort', httpStatus: 503 },
   ] as const)('preserves terminal returned failure without switching providers: %j', async failure => {
     vi.stubEnv('KODAX_FALLBACK_PROVIDERS', 'kimi-code');
@@ -382,5 +382,15 @@ describe('invokeChildWithFallback', () => {
     expect(result.success).toBe(false);
     expect(run).toHaveBeenCalledTimes(1);
     expect(onFallback).not.toHaveBeenCalled();
+  });
+
+  it.each([429, 500, 503, 504])('keeps a returned generic classification from hiding transient HTTP %s', async httpStatus => {
+    vi.stubEnv('KODAX_FALLBACK_PROVIDERS', 'kimi-code');
+    const run = vi.fn().mockResolvedValueOnce({ ...okResult(), success: false, failure: {
+      errorClass: 'non_retryable_provider_error', httpStatus, source: 'provider',
+      message: 'unavailable', safeMessage: 'unavailable', requestPhase: 'before_first_delta',
+    } }).mockResolvedValueOnce(okResult('fallback'));
+    expect((await invokeChildWithFallback(baseOptions(), 'brief', run)).lastText).toBe('fallback');
+    expect(run).toHaveBeenCalledTimes(2);
   });
 });

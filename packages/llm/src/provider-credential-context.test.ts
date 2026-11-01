@@ -21,6 +21,59 @@ import {
 import { KodaXRateLimitError } from './errors.js';
 
 describe('provider credential context', () => {
+  it('unwraps trusted grants at the legacy exact-scope adapter boundary', async () => {
+    const credential = 'kodax-provider-grant-v1:' + Buffer.from(JSON.stringify({ provider: 'openai', credential: 'inner-fixture', identity: 'a'.repeat(64) })).toString('base64url');
+    await runWithProviderCredential('openai', credential, async () => {
+      expect(getScopedProviderCredential('openai')).toBe('inner-fixture');
+      await withProviderRequestCredential('openai', 'primary', undefined, () => expect(getScopedProviderCredential('openai')).toBe('inner-fixture'));
+    });
+  });
+  it('preserves cancellation while rejected-credential recovery is pending', async () => {
+    const abort = new AbortController();
+    const scope = createProviderCredentialLeaseScope({ allowedProviders: ['openai'],
+      acquire: async () => 'kodax-provider-grant-v1:' + Buffer.from(JSON.stringify({ provider: 'openai', credential: 'fixture-token', recoverable: true })).toString('base64url'),
+      recoverRejectedCredential: async () => { abort.abort(); throw new Error('private-backend-failure'); } });
+    try {
+      await expect(runWithProviderCredentialLeaseScope(scope, () => withProviderRequestCredential('openai', 'primary', abort.signal,
+        () => { throw Object.assign(new Error('credential rejected'), { status: 401 }); }))).rejects.toMatchObject({ name: 'AbortError' });
+    } finally { scope.close(); }
+  });
+  it('unwraps a negotiated trusted grant and recovers a rejected generation without replaying the operation', async () => {
+    let identity = 'a'.repeat(64);
+    let token = 'old-inference-token';
+    let requests = 0;
+    const recoveries: string[] = [];
+    const replayScopes: (string | undefined)[] = [];
+    const access = { allowedProviders: ['openai'],
+      acquire: async () => 'kodax-provider-grant-v1:' + Buffer.from(JSON.stringify({ provider: 'openai', credential: token, identity, recoverable: true })).toString('base64url'),
+      recoverRejectedCredential: async (_provider: string, fingerprint: string) => { recoveries.push(fingerprint); token = 'new-inference-token'; } };
+    const scope = createProviderCredentialLeaseScope(access);
+    try {
+      await runWithProviderCredentialLeaseScope(scope, async () => {
+        await expect(withProviderRequestCredential('openai', 'primary', undefined, () => {
+          requests++;
+          expect(getScopedProviderCredential('openai')).toBe('old-inference-token');
+          replayScopes.push(getProvider('openai').getReasoningLearningScope());
+          throw Object.assign(new Error('rejected old-inference-token'), { status: 401 });
+        })).rejects.toThrow('rejected [REDACTED_CREDENTIAL]');
+        expect(requests).toBe(1);
+        expect(recoveries).toHaveLength(1);
+        expect(recoveries[0]).toMatch(/^[a-f0-9]{64}$/);
+        await withProviderRequestCredential('openai', 'primary', undefined, () => {
+          requests++;
+          expect(getScopedProviderCredential('openai')).toBe('new-inference-token');
+          replayScopes.push(getProvider('openai').getReasoningLearningScope());
+        });
+        expect(requests).toBe(2);
+        expect(replayScopes[0]).toBeDefined();
+        expect(replayScopes[1]).toBe(replayScopes[0]);
+        identity = 'b'.repeat(64);
+        await withProviderRequestCredential('openai', 'primary', undefined, () => {
+          expect(getProvider('openai').getReasoningLearningScope()).not.toBe(replayScopes[0]);
+        });
+      });
+    } finally { scope.close(); }
+  });
   it.each(['TimeoutError', 'AbortError'])('preserves native %s semantics during redaction', (name) => {
     const secret = 'fake-domexception-secret';
     const original = new DOMException(`request failed with ${secret}`, name);

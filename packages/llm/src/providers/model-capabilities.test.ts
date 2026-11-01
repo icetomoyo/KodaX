@@ -27,6 +27,12 @@ import {
 } from './index.js';
 
 describe('built-in provider model capabilities (no API key required)', () => {
+  it.each(['opus', 'sonnet', 'haiku'])('advertises Claude %s 5.5 without changing the existing default or output budget', family => {
+    const caps = getModelCapabilities('anthropic', `claude-${family}-5-5`);
+    expect(caps).toMatchObject({ contextWindow: 1_000_000, maxOutputTokens: 64000, outputTokenLimit: 128000,
+      reasoningCapability: 'native-adaptive', supportsThinking: true });
+    expect(getProviderModelDescriptors('anthropic')[0]?.id).toBe('claude-sonnet-4-6');
+  });
   it('exposes the Sonnet 4.6 ceiling without raising its default output budget', () => {
     const caps = getModelCapabilities('anthropic', 'claude-sonnet-4-6');
     expect(caps).toBeDefined();
@@ -243,6 +249,9 @@ describe('built-in provider model capabilities (no API key required)', () => {
     expect(descriptors[0]?.id).toBe('claude-sonnet-4-6'); // default
     expect(descriptors.map((d) => d.id)).toEqual([
       'claude-sonnet-4-6',
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
+      'claude-haiku-5-5',
       'claude-opus-4-8',
       'claude-opus-4-7',
       'claude-opus-4-6',

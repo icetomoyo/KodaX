@@ -98,6 +98,9 @@ export type {
 } from './types.js';
 
 // ============== Constants ==============
+export { tryAcquireStorageFileLock, withStorageFileLock } from './runtime/storage-file-lock.js';
+export { validateExtensionStoreSnapshot } from './session-lineage/persistence.js';
+export type { StorageFileLock } from './runtime/storage-file-lock.js';
 export {
   KODAX_MAX_TOKENS,
   KODAX_DEFAULT_TIMEOUT,

@@ -14,6 +14,22 @@ function fixtureSealer() {
     async unseal(sealed: Uint8Array) { const input = Buffer.from(sealed), decipher = createDecipheriv('aes-256-gcm', key, input.subarray(0, 12)); decipher.setAuthTag(input.subarray(12, 28)); return Buffer.concat([decipher.update(input.subarray(28)), decipher.final()]); } };
 }
 
+it('publishes a complete file lock before entering an encrypted transaction', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'kodax-sealed-publication-'));
+  const id = 'publication-fixture';
+  const lock = path.join(directory, `${createHash('sha256').update(id).digest('hex')}.sealed.lock`);
+  const store = createEncryptedOAuthSessionStore(directory, fixtureSealer());
+  try {
+    await store.transact(id, async record => {
+      const owner = JSON.parse(await readFile(lock, 'utf8')) as { pid: number; runtimeId: string };
+      expect(owner.pid).toBe(process.pid);
+      expect(owner.runtimeId).toBeTruthy();
+      return { record, result: undefined };
+    });
+    expect(await readdir(directory)).not.toContain(path.basename(lock));
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 it('recovers only a verified dead sealed-store writer while preserving registration identity', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'kodax-sealed-owner-recovery-'));
   const id = 'dead-writer-registration';

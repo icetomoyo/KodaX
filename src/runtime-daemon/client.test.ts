@@ -1696,6 +1696,8 @@ describe('runtime daemon client proxy', () => {
     transport.emit(createRuntimeDaemonNotification('credential.request', {
       requestId: 'credential-request-v2',
       brokerVersion: 2,
+      credentialContextVersion: 1,
+      rejectedCredentialFingerprint: 'b'.repeat(64),
       leaseId: lease.id,
       provider: 'anthropic',
       sessionId: 'session-1',
@@ -1712,6 +1714,8 @@ describe('runtime daemon client proxy', () => {
     expect(requests).toEqual([{
       requestId: 'credential-request-v2',
       leaseId: lease.id,
+      credentialContextVersion: 1,
+      rejectedCredentialFingerprint: 'b'.repeat(64),
       provider: 'anthropic',
       sessionId: 'session-1',
       target: {

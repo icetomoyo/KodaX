@@ -356,8 +356,8 @@ function projectAnthropicMessages(
     }
     const blocks = message.content.filter((block) => block.type !== 'cache-boundary');
     const content: Array<Readonly<Record<string, unknown>>> = [];
-    // Match assistant serialization: keep text/reasoning in source order,
-    // then append calls. User messages emit results before ordinary content.
+    // Strict native history keeps block order. Lenient compatibility routes
+    // keep their text-first grouping. User messages emit results first.
     for (const block of role === 'assistant' ? blocks : []) {
       if (block.type === 'thinking') {
         const trusted = provider.canReplayReasoning(block, model);
@@ -374,6 +374,8 @@ function projectAnthropicMessages(
         content.push({ type: 'redacted_thinking', data: block.data });
       } else if (block.type === 'text') {
         content.push({ type: 'text', text: block.text });
+      } else if (block.type === 'tool_use' && strictSignature) {
+        content.push({ type: 'tool_use', id: block.id, name: block.name, input: block.input });
       }
     }
     if (role === 'user') {
@@ -388,7 +390,7 @@ function projectAnthropicMessages(
       }
     } else {
       for (const block of blocks) {
-        if (block.type !== 'tool_use') continue;
+        if (block.type !== 'tool_use' || strictSignature) continue;
         content.push({
           type: 'tool_use',
           id: block.id,
@@ -415,7 +417,7 @@ function projectAnthropicMessages(
       content.unshift({ type: 'thinking', thinking: '...', signature: '' });
     }
     const effectivelyEmpty = content.length === 0 || content.every((block) =>
-      (block.type === 'thinking' && !block.thinking)
+      (block.type === 'thinking' && !block.thinking && !block.signature)
       || (block.type === 'text' && !block.text));
     projected.push({
       role,

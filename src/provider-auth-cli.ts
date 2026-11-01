@@ -7,6 +7,7 @@ import { createOAuthRefreshDriver, openOAuthSession, validateCustomProviderConfi
 import { getAgentConfigPath } from '@kodax-ai/agent';
 import { linkProviderOAuthRegistration, createTerminalProviderSetupInteraction } from '@kodax-ai/repl';
 import { createProviderCredentialManager } from './provider-credential-manager.js';
+export { createProviderCredentialManager } from './provider-credential-manager.js';
 import { assertProviderOAuthSessionScope, migrateProviderOAuthRegistration, providerOAuthStore } from './provider-oauth-store.js';
 export { providerOAuthStore } from './provider-oauth-store.js';
 import { loginProviderOAuth } from './provider-oauth-login.js';
@@ -55,8 +56,8 @@ export function receiveOAuthCallback(redirectUri: string, authorizationUrl: stri
     });
   });
 }
-export function configureProviderAuthCommand(program: Command): void {
-  const auth = program.command('auth').description('Save API keys, login, inspect or revoke provider credentials');
+export function configureProviderAuthCommand(program: Command, command?: Command): void {
+  const auth = command ?? program.command('auth').description('Save API keys, login, inspect or revoke provider credentials');
   auth.command('set-key <provider>').description('Enter a hidden API key and save it in permission-protected plaintext auth.json').action(async (name: string) => {
     const manager = createProviderCredentialManager(), before = await manager.describe(name);
     const interaction = createTerminalProviderSetupInteraction({ input: process.stdin, output: process.stdout });

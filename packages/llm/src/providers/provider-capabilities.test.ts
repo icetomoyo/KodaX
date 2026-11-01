@@ -188,6 +188,11 @@ describe('FEATURE_198 — provider-capabilities loader', () => {
       expect(a.maxOutputTokens).toBe(64000);
       expect(a.thinkingBudgetCap).toBe(28000);
       expect(a.models).toEqual([
+        ...['opus', 'sonnet', 'haiku'].map(family => expect.objectContaining({
+          id: `claude-${family}-5-5`, displayName: `${family[0]!.toUpperCase()}${family.slice(1)} 5.5`,
+          contextWindow: 1000000, outputTokenLimit: 128000, reasoningCapability: 'native-adaptive',
+          reasoningProfile: expect.objectContaining({ defaultEffort: family === 'sonnet' ? 'high' : 'medium' }),
+        })),
         expect.objectContaining({
           id: 'claude-opus-4-8',
           displayName: 'Opus 4.8',

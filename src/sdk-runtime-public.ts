@@ -1,4 +1,6 @@
 export { providerOAuthStore, migrateProviderOAuthRegistration } from './provider-oauth-store.js';
+export { inspectStorageRepair, inspectStorageRepairCandidate, applyStorageRepair, confirmStorageRepair } from './storage-repair.js';
+export type { StorageRepairTarget, StorageRepairPlan, StorageRepairReceipt } from './storage-repair.js';
 export { loginProviderOAuth } from './provider-oauth-login.js';
 export type { ProviderOAuthLoginInput } from './provider-oauth-login.js';
 export { createEncryptedOAuthSessionStore, createWindowsOAuthSessionStore } from './oauth-session-store.js';

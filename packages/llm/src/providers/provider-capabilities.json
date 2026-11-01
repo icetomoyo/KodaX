@@ -9,6 +9,36 @@
       "model": "claude-sonnet-4-6",
       "models": [
         {
+          "id": "claude-opus-5-5", "displayName": "Opus 5.5", "contextWindow": 1000000, "outputTokenLimit": 128000,
+          "reasoningCapability": "native-adaptive",
+          "reasoningProfile": {
+            "reasoningPreset": "claude-adaptive-xhigh", "effortStrategy": "anthropic-output-effort", "thinkingStrategy": "anthropic-adaptive",
+            "defaultEffort": "medium", "supportsThinkingDisplay": true, "supportsThinkingBlockBinding": true,
+            "supportsReasoningEffort": true, "supportsAdaptiveThinking": true,
+            "supportedEfforts": [{ "value": "low" }, { "value": "medium", "isDefault": true }, { "value": "high" }, { "value": "xhigh" }, { "value": "max" }]
+          }
+        },
+        {
+          "id": "claude-sonnet-5-5", "displayName": "Sonnet 5.5", "contextWindow": 1000000, "outputTokenLimit": 128000,
+          "reasoningCapability": "native-adaptive",
+          "reasoningProfile": {
+            "reasoningPreset": "claude-adaptive-xhigh", "effortStrategy": "anthropic-output-effort", "thinkingStrategy": "anthropic-adaptive",
+            "defaultEffort": "high", "supportsThinkingDisplay": true, "supportsThinkingBlockBinding": true,
+            "supportsReasoningEffort": true, "supportsAdaptiveThinking": true,
+            "supportedEfforts": [{ "value": "low" }, { "value": "medium" }, { "value": "high", "isDefault": true }, { "value": "xhigh" }, { "value": "max" }]
+          }
+        },
+        {
+          "id": "claude-haiku-5-5", "displayName": "Haiku 5.5", "contextWindow": 1000000, "outputTokenLimit": 128000,
+          "reasoningCapability": "native-adaptive",
+          "reasoningProfile": {
+            "reasoningPreset": "claude-adaptive-xhigh", "effortStrategy": "anthropic-output-effort", "thinkingStrategy": "anthropic-adaptive",
+            "defaultEffort": "medium", "supportsThinkingDisplay": true, "supportsThinkingBlockBinding": true,
+            "supportsReasoningEffort": true, "supportsAdaptiveThinking": true, "supportsDisabledThinking": true, "disabledEfforts": ["none"],
+            "supportedEfforts": [{ "value": "none" }, { "value": "low" }, { "value": "medium", "isDefault": true }, { "value": "high" }, { "value": "xhigh" }, { "value": "max" }]
+          }
+        },
+        {
           "id": "claude-opus-4-8",
           "displayName": "Opus 4.8",
           "reasoningCapability": "native-adaptive",

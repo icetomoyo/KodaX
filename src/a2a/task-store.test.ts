@@ -14,6 +14,17 @@ afterEach(() => {
 });
 
 describe('A2AFileTaskStore durability and lock ownership', () => {
+  it('does not start a writable server from a restored but unverified snapshot', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-a2a-repair-fence-'));
+    roots.push(root);
+    fs.writeFileSync(path.join(root, 'tasks.json'), '[]');
+    fs.writeFileSync(path.join(root, 'tasks.json.repair-fence'), '{"version":1}');
+    let unexpected: A2AFileTaskStore | undefined;
+    try { expect(() => { unexpected = new A2AFileTaskStore(root); }).toThrow(/repair|unverified/i); }
+    finally { unexpected?.close(); }
+    expect(fs.existsSync(path.join(root, '.server.lock'))).toBe(false);
+    expect(fs.readFileSync(path.join(root, 'tasks.json'), 'utf8')).toBe('[]');
+  });
   it('does not steal a lock when the owner probe is denied', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-a2a-lock-'));
     roots.push(root);

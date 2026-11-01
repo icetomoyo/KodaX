@@ -1,5 +1,6 @@
 /** OAuth login/ID-token validation and secure persistence belong to the trusted host. */
 import type { KodaXCustomProviderConfig } from '../types.js';
+import { credentialFingerprint } from '../credential-fingerprint.js';
 export type OAuthService = NonNullable<KodaXCustomProviderConfig['oauth']>;
 
 export interface OAuthTokens {
@@ -56,12 +57,16 @@ export interface OAuthRefreshDriver {
 }
 
 export interface OAuthCredentialSession {
+  /** Non-secret verified registration identity, stable across token rotation. */
+  readonly replayIdentity?: string;
   readonly id: string;
   readonly service: OAuthService;
   readonly accountId: string;
   readonly issuer?: string;
   readonly profile?: string;
   acquire(signal?: AbortSignal): Promise<string>;
+  /** Refresh only if this inference-token digest is still current; never replays a model request. */
+  recoverRejectedCredential?(rejectedFingerprint: string, signal?: AbortSignal): Promise<void>;
   /** Called before local/remote revocation; host bridges must fence old authority immediately. */
   onInvalidate(listener: () => Promise<void>): () => void;
   /** Clears tokens while retaining registration metadata, even if remote revocation fails. */
@@ -138,9 +143,7 @@ export async function openOAuthSession(input: {
   const lifetime = shared.controller;
   const listeners = shared.listeners;
   const ensureActive = () => { if (lifetime.signal.aborted) throw new OAuthCredentialError('session_revoked'); };
-  return {
-    id, service: initial.service, accountId: initial.accountId, issuer: initial.issuer, profile: initial.profile,
-    async acquire(signal) {
+  const acquire = async (signal?: AbortSignal, rejectedFingerprint?: string): Promise<string> => {
       signal?.throwIfAborted();
       ensureActive();
       const pending = store.transact<{ token?: string; error?: OAuthCredentialError }>(id, async record => {
@@ -150,15 +153,19 @@ export async function openOAuthSession(input: {
         if (!validTokens(record.credentials, requiresGrantExpiry)) throw new OAuthCredentialError('reauthentication_required');
         let next = record;
         let exchangingResource = false;
+        const resourceService = record.service === 'github-copilot' || record.service === 'meta';
+        const inference = resourceService ? record.resource : record.credentials;
+        const rejected = rejectedFingerprint !== undefined && inference !== undefined
+          && credentialFingerprint(inference.accessToken) === rejectedFingerprint;
         const refreshSignal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(30_000)]);
         try {
           if (record.credentials.expiresAt !== undefined && record.credentials.expiresAt <= Date.now()
             && (record.credentials.earliestRefreshAt ?? 0) > Date.now()) throw new OAuthCredentialError('refresh_failed');
-          if (due(record.credentials)) next = { ...next, credentials: await driver.refresh(next, refreshSignal), resource: undefined };
+          if (rejected && !resourceService && !record.credentials.refreshToken) throw new OAuthCredentialError('reauthentication_required');
+          if (due(record.credentials) || (rejected && !resourceService)) next = { ...next, credentials: await driver.refresh(next, refreshSignal), resource: undefined };
           if (!validTokens(next.credentials, requiresGrantExpiry)
             || (next.credentials.expiresAt !== undefined && next.credentials.expiresAt <= Date.now())) throw new OAuthCredentialError('reauthentication_required');
-          const resourceService = next.service === 'github-copilot' || next.service === 'meta';
-          if (resourceService && (!validTokens(next.resource) || due(next.resource))) {
+          if (resourceService && (rejected || !validTokens(next.resource) || due(next.resource))) {
             if (!driver.exchangeResource) throw new OAuthCredentialError('invalid_session');
             exchangingResource = true;
             next = { ...next, resource: await driver.exchangeResource(next, refreshSignal) };
@@ -184,6 +191,15 @@ export async function openOAuthSession(input: {
       ensureActive();
       if (result.error) throw result.error;
       return result.token!;
+    };
+  return {
+    id, service: initial.service, accountId: initial.accountId, issuer: initial.issuer, profile: initial.profile,
+    replayIdentity: credentialFingerprint([id, initial.service, initial.clientId, initial.accountId, initial.issuer,
+      initial.identityKind ?? 'account', initial.profile ?? 'default']),
+    acquire: signal => acquire(signal),
+    async recoverRejectedCredential(fingerprint, signal) {
+      if (!/^[a-f0-9]{64}$/.test(fingerprint)) throw new OAuthCredentialError('invalid_session');
+      await acquire(signal, fingerprint);
     },
     onInvalidate(listener) { ensureActive(); listeners.add(listener); return () => { listeners.delete(listener); }; },
     revoke() {

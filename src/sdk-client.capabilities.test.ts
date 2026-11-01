@@ -83,7 +83,7 @@ it('probes and forgets capabilities in the actual Host used by subsequent SA and
           },
         };
         const config: CurrentConfig = {
-          ...selection, thinking: true, reasoningMode: 'balanced', agentMode: 'sa', permissionMode: 'accept-edits',
+          ...selection, thinking: true, reasoningMode: 'auto', agentMode: 'sa', permissionMode: 'accept-edits',
         };
         const beforeProbe = requests.length;
         await providerCommand.handler(['probe'], context, callbacks, config);

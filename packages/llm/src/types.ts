@@ -186,6 +186,8 @@ export interface KodaXTaskResultMetadata {
 export interface KodaXMessage {
   role: 'user' | 'assistant' | 'system';
   content: string | KodaXContentBlock[];
+  /** Provider-owned append-only wire fragment. Preserve when saving/copying an assistant turn. */
+  nativeHistory?: KodaXAnthropicHistory;
   /** Marks messages injected by the system (auto-continue, retry prompts). Hidden in REPL display. */
   _synthetic?: boolean;
   /**
@@ -246,6 +248,7 @@ export interface KodaXTokenUsage {
 export type KodaXCacheWriteUsage = Partial<Record<'5m' | '1h' | '30m' | '12h' | 'unknown', number>>;
 
 export interface KodaXStreamResult {
+  nativeHistory?: KodaXAnthropicHistory;
   /** Authoritative generation order when supplied. Legacy providers retain their existing projections. */
   contentBlocks?: KodaXAssistantBlock[];
   textBlocks: KodaXTextBlock[];
@@ -259,6 +262,22 @@ export interface KodaXStreamResult {
 }
 
 export type KodaXAssistantBlock = KodaXTextBlock | KodaXToolUseBlock | KodaXThinkingBlock | KodaXRedactedThinkingBlock;
+
+/** No credentials. Each assistant stores only new input plus its actual native output. */
+export interface KodaXAnthropicHistory {
+  version: 1;
+  source: KodaXGenerationSource;
+  id: string;
+  parent?: string;
+  inputDigest: string;
+  outputDigest: string;
+  baseline?: { system: unknown; tools: unknown; effort?: string };
+  append: Record<string, unknown>[];
+  output: Record<string, unknown>[];
+  requested: { system: string; tools: string; effort?: string; thinkingMode?: string };
+  transformations?: KodaXInputTransformation[];
+}
+export interface KodaXInputTransformation { type: string; path: string; reason: string; }
 
 export interface KodaXGenerationSource {
   provider: string;
@@ -967,6 +986,8 @@ export interface KodaXProviderConfig {
 }
 
 export interface KodaXProviderStreamOptions {
+  /** Claude 5.5 native protocol only; between_tools still performs thinking during tools. */
+  thinkingMode?: 'adaptive' | 'between_tools' | 'disabled';
   thinkingDisplay?: 'summarized' | 'omitted';
   /** Responses only. Omitted preserves SSE; auto may fall back before generation dispatch. */
   transport?: 'sse' | 'auto' | 'websocket' | 'websocket-cached';

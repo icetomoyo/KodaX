@@ -1,5 +1,14 @@
 # KodaX High-Level Design
 
+Node CLI optional components (`provider-auth-cli`, `kodax_doctor`,
+`storage-repair-cli`, `one-shot-task`) ship as private distribution entries
+sharing the SDK chunks. Normal interactive bootstrap does not statically load
+them. Source execution keeps literal imports; standalone Bun builds embed them
+through the build-time selector. This changes package layout, not public SDK
+subpaths or the existing CLI size limit. Help resolves lazy auth subcommands
+before printing and never dispatches management operations. See the
+[Issue 376 acceptance contract](test-guides/ISSUE_376_v0.7.97_REGRESSION_GUIDE.md).
+
 > Unreleased Host SDK cutover: public product execution connects to one independent Host.
 > Embedded/default owner construction, inline switching and caller-owned external-agent
 > daemons are retired. Internal Runtime and independent libraries remain. See

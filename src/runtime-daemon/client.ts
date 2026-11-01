@@ -1567,6 +1567,8 @@ async function answerCredentialRequest(
           provider: requireStringField(payload, 'provider'),
           sessionId: requireStringField(payload, 'sessionId'),
           ...(payload.connectionFingerprint !== undefined ? { connectionFingerprint: parseCredentialConnectionFingerprint(payload.connectionFingerprint) } : {}),
+          ...(payload.credentialContextVersion !== undefined ? { credentialContextVersion: parseCredentialContextVersion(payload.credentialContextVersion) } : {}),
+          ...(payload.rejectedCredentialFingerprint !== undefined ? { rejectedCredentialFingerprint: parseCredentialConnectionFingerprint(payload.rejectedCredentialFingerprint) } : {}),
           target: parseScopedCredentialTarget(payload.target),
           purpose: parseScopedCredentialPurpose(payload.purpose),
         });
@@ -2652,4 +2654,8 @@ function assertRuntimeTransportSafe(
 function parseCredentialConnectionFingerprint(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) throw new Error('Invalid credential connection fingerprint.');
   return value;
+}
+function parseCredentialContextVersion(value: unknown): 1 {
+  if (value !== 1) throw new Error('Unsupported credential context version.');
+  return 1;
 }

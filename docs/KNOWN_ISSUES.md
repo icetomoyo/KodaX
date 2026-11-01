@@ -30,7 +30,7 @@ resolution evidence is retained. Issues 345–347 are unchanged.
 ## Issue 376: Windows gate and recovery/credential/permission audit follow-up
 
 - Priority: High
-- Status: First and subsequent Main fixes accepted locally; source 19,066 passed / 87 conditional skips / 0 TODO, packaged 94 passed; native Memory OS acceptance pending; not pushed or released
+- Status: Confirmed local code gaps repaired; offline acceptance complete with documented full-scan failures and whole-file replays; native/live boundaries and separate GC capability remain; not pushed or released
 - Created: 2026-11-01
 
 The accepted first batch and its failure boundaries are recorded in the
@@ -41,15 +41,24 @@ Full Access opaque Host programs remain trusted code, outside OS isolation.
 The subsequent Main batch repairs learned Skill/explicit invocation lifetimes,
 verified model/rate metadata, model-specific image/cache projection, SDK inventory,
 corrupt-config informational commands and CLI-provider PID generation retention.
-See its separate acceptance record in the same regression guide. Explicit output
-storage inspection does not close global automatic GC; native/live acceptance,
-Claude 5.5 preserved-prefix integration and execution-fact storage scaling remain
-separate, unverified or unfinished scopes, not implied passes.
-The Claude follow-up disposition in the guide separates stale F44/F46 claims
-from remaining F03/F08/F09/F12/F45 work. The follow-up closes terminal-error
-child fallback and improves read-only lock diagnosis; 401 generation-aware
-refresh, trusted stable account identity for replay, and explicit corrupt-log
-repair are still unfinished. Unknown locks are never reclaimed merely by age.
+See the separate dated acceptance records in the same guide. The remaining-seam
+implementation adds complete lock publication, explicit quarantined repair,
+verified-candidate/receipt/fence handling, store-lifetime cleanup, OAuth 401
+generation recovery without POST replay, trusted registration replay identity,
+linear execution-fact journals and native Anthropic Claude 5.5 history fragments.
+Normal generation uses account-scoped rejection learning; explicit probes keep
+issuing real bounded requests. Catalog discovery does not globally narrow one
+account's capabilities.
+Historical source/packaged counts are retained in their dated records rather
+than presented as the final count for later changes.
+Unknown locks still require explicit offline maintenance, never age-based
+reclamation. Corrupt replacements require complete captured authority and
+separate external-effect verification. Default cloud identities without verified
+principal stay conservative; remote-consumed, uncommitted refresh tokens may
+require reauthentication. Real OAuth/cloud/Claude account acceptance and native
+Windows Memory setup remain unverified. Global automatic tool-output cleanup is
+a separate capability requiring Root/Space/reference ownership closure; originals
+remain and explicit diagnostics are not GC.
 Main verification observed one intermittent packaged Shell cleanup failure;
 isolated, eight-way concurrent and complete bundled replays passed. Its cause
 remains unconfirmed; the retained evidence and improved failure diagnostic are

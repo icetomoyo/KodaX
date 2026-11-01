@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { classifyReasoningEffortRejection } from './reasoning-effort-rejection.js';
 
+it('learns an exact Anthropic output_config.effort rejection without confusing output-format failures', () => {
+  expect(classifyReasoningEffortRejection({ status: 400, message: "Unsupported value 'high' for output_config.effort. Supported values: low, medium." }, 'high'))
+    .toMatchObject({ rejectedEffort: 'high' });
+  expect(classifyReasoningEffortRejection({ status: 400, message: 'output_config.format is invalid; requested high precision' }, 'high')).toBeNull();
+  expect(classifyReasoningEffortRejection({ status: 400, message: 'Unsupported parameter: output_config.effort' }, 'high'))
+    .toMatchObject({ parameterRejected: true, parameter: 'output_config.effort' });
+});
+
 function err(message: string, status?: number): Error & { status?: number } {
   const e = new Error(message) as Error & { status?: number };
   if (status !== undefined) {

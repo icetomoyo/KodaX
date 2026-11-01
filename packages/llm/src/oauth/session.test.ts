@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { openOAuthSession, OAuthCredentialError, type OAuthSessionRecord, type OAuthSessionStore } from './session.js';
+import { credentialFingerprint } from '../credential-fingerprint.js';
 
 function memoryStore(initial: OAuthSessionRecord): OAuthSessionStore {
   let record: OAuthSessionRecord | undefined = structuredClone(initial);
@@ -43,6 +44,43 @@ const record: OAuthSessionRecord = {
 };
 
 describe('host-owned OAuth session', () => {
+  it('recovers a rejected Copilot resource without rotating the non-expiring GitHub grant', async () => {
+    const store = memoryStore({ ...record, service: 'github-copilot', credentials: { accessToken: 'github-grant' },
+      resource: { accessToken: 'rejected-resource', expiresAt: Date.now() + 3600_000 } });
+    const refresh = vi.fn(async () => { throw new Error('must not refresh the identity grant'); });
+    const exchangeResource = vi.fn(async () => ({ accessToken: 'renewed-resource', expiresAt: Date.now() + 3600_000 }));
+    const session = await openOAuthSession({ id: record.id, store, driver: { refresh, exchangeResource } });
+    const identity = session.replayIdentity;
+    await Promise.all([session.recoverRejectedCredential!(credentialFingerprint('rejected-resource')),
+      session.recoverRejectedCredential!(credentialFingerprint('rejected-resource'))]);
+    expect(await session.acquire()).toBe('renewed-resource');
+    expect(session.replayIdentity).toBe(identity);
+    expect(exchangeResource).toHaveBeenCalledTimes(1);
+    expect(refresh).not.toHaveBeenCalled();
+  });
+  it('requires reauthorization for a rejected issued key instead of inventing a refresh grant or falling back', async () => {
+    const store = memoryStore({ ...record, service: 'openrouter', credentials: { accessToken: 'rejected-issued-key' } });
+    const refresh = vi.fn(async () => { throw new Error('no refresh grant exists'); });
+    const session = await openOAuthSession({ id: record.id, store, driver: { refresh } });
+    await expect(session.recoverRejectedCredential!(credentialFingerprint('rejected-issued-key'))).rejects.toMatchObject({ code: 'reauthentication_required' });
+    const restored = await openOAuthSession({ id: record.id, store, driver: { refresh } });
+    await expect(restored.acquire()).rejects.toMatchObject({ code: 'reauthentication_required' });
+    expect(refresh).not.toHaveBeenCalled();
+  });
+  it('recovers only the rejected token generation without refreshing a newer token or changing registration', async () => {
+    const store = memoryStore({ ...record, credentials: { ...record.credentials!, expiresAt: Date.now() + 3600_000 } });
+    const refresh = vi.fn(async () => ({ accessToken: 'replacement-access', refreshToken: 'replacement-refresh', expiresAt: Date.now() + 3600_000 }));
+    const session = await openOAuthSession({ id: record.id, store, driver: { refresh } });
+    const rejected = credentialFingerprint(await session.acquire());
+    await Promise.all([session.recoverRejectedCredential!(rejected), session.recoverRejectedCredential!(rejected)]);
+    expect(await session.acquire()).toBe('replacement-access');
+    expect(refresh).toHaveBeenCalledTimes(1);
+    await session.recoverRejectedCredential!(rejected);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(session.accountId).toBe(record.accountId);
+    const restored = await openOAuthSession({ id: record.id, store, driver: { refresh } });
+    expect(await restored.acquire()).toBe('replacement-access');
+  });
   it('serializes refresh and persists rotated credentials before supplying request tokens', async () => {
     const store = memoryStore(record);
     const refresh = vi.fn(async () => ({ accessToken: 'new-access', refreshToken: 'new-refresh', expiresAt: Date.now() + 3600_000 }));

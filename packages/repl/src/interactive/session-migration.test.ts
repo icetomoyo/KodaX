@@ -2,6 +2,7 @@ import os from 'os';
 import path from 'path';
 import fsSync, { existsSync } from 'fs';
 import fsPromises from 'fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -29,6 +30,25 @@ describe('FEATURE_219 session-migration', () => {
     return p;
   }
 
+  it('publishes a complete file owner before moving any session', async () => {
+    const source = await seedFlat('atomic-publication');
+    const lock = path.join(sessionsDir, '.migration-lock');
+    const rename = fsPromises.rename;
+    let observed = false;
+    vi.spyOn(fsPromises, 'rename').mockImplementation(async (from, to) => {
+      if (from === source) {
+        observed = true;
+        const owner = JSON.parse(await readFile(lock, 'utf8')) as { pid: number; nonce: string };
+        expect(owner.pid).toBe(process.pid);
+        expect(owner.nonce).toBeTruthy();
+      }
+      return rename(from, to);
+    });
+    await runMigration(sessionsDir);
+    expect(observed).toBe(true);
+    expect(existsSync(lock)).toBe(false);
+  });
+
   beforeEach(async () => {
     root = await mkdtemp(path.join(os.tmpdir(), 'kodax-mig-'));
     sessionsDir = path.join(root, 'sessions');
@@ -37,6 +57,7 @@ describe('FEATURE_219 session-migration', () => {
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    syncBuiltinESMExports();
     await rm(root, { recursive: true, force: true });
   });
 
@@ -74,51 +95,50 @@ describe('FEATURE_219 session-migration', () => {
     expect(existsSync(lock)).toBe(true);
   });
 
-  it('cleans only its own directory when owner publication fails', async () => {
+  it('retains session bytes and removes its inert temporary record when owner publication fails', async () => {
     await seedFlat('owner-failure');
     const lock = path.join(sessionsDir, '.migration-lock');
-    const write = fsPromises.writeFile;
-    const fault = vi.spyOn(fsPromises, 'writeFile').mockImplementation(async (file, ...args) => {
-      if (file === path.join(lock, 'owner.json')) throw new Error('fixture owner write failure');
-      return write(file, ...args);
+    const link = fsSync.linkSync;
+    const fault = vi.spyOn(fsSync, 'linkSync').mockImplementation((from, to) => {
+      if (to === lock) throw new Error('fixture owner write failure');
+      return link(from, to);
     });
+    syncBuiltinESMExports();
     await expect(runMigration(sessionsDir)).rejects.toThrow('fixture owner write failure');
     expect(existsSync(lock)).toBe(false);
-    fault.mockRestore();
+    fault.mockRestore(); syncBuiltinESMExports();
     await runMigration(sessionsDir);
     expect(await isMigrated(sessionsDir)).toBe(true);
   });
 
-  it('surfaces both owner publication and cleanup failure while retaining the unknown lock', async () => {
+  it('surfaces both atomic publication and temporary cleanup failures without publishing an unknown owner', async () => {
     const source = await seedFlat('double-failure');
     const original = await readFile(source, 'utf8');
     const lock = path.join(sessionsDir, '.migration-lock');
-    const write = fsPromises.writeFile, remove = fsPromises.rm;
+    const link = fsSync.linkSync, remove = fsSync.rmSync;
     const ownerFailure = Object.assign(new Error('fixture owner failure'), { code: 'EIO' });
     const cleanupFailure = Object.assign(new Error('fixture cleanup busy'), { code: 'EBUSY' });
-    vi.spyOn(fsPromises, 'writeFile').mockImplementation(async (file, ...args) => {
-      if (file === path.join(lock, 'owner.json')) throw ownerFailure;
-      return write(file, ...args);
+    vi.spyOn(fsSync, 'linkSync').mockImplementation((from, to) => {
+      if (to === lock) throw ownerFailure;
+      return link(from, to);
     });
-    vi.spyOn(fsPromises, 'rm').mockImplementation(async (file, options) => {
-      if (file === lock) throw cleanupFailure;
+    vi.spyOn(fsSync, 'rmSync').mockImplementation((file, options) => {
+      if (String(file).startsWith(`${lock}.`) && String(file).endsWith('.tmp')) throw cleanupFailure;
       return remove(file, options);
     });
+    syncBuiltinESMExports();
     await expect(ensureLayoutMigrated(sessionsDir)).rejects.toMatchObject({
       message: expect.stringMatching(/cleanup/i),
-      cause: expect.objectContaining({ errors: [ownerFailure, expect.objectContaining({ cause: cleanupFailure })] }),
+      cause: expect.objectContaining({ errors: [ownerFailure, cleanupFailure] }),
     });
-    expect(existsSync(lock)).toBe(true);
+    expect(existsSync(lock)).toBe(false);
     expect(await readFile(source, 'utf8')).toBe(original);
   });
 
   it('surfaces unreadable release ownership and retries it after repair without deleting unknown data', async () => {
     await seedFlat('owner-read-failure');
-    const owner = path.join(sessionsDir, '.migration-lock', 'owner.json');
+    const owner = path.join(sessionsDir, '.migration-lock');
     const read = fsPromises.readFile;
-    const exists = fsSync.existsSync;
-    const hidden = vi.spyOn(fsSync, 'existsSync').mockImplementation(file =>
-      file === path.dirname(owner) && exists(path.join(sessionsDir, '.layout.json')) ? false : exists(file));
     const fault = vi.spyOn(fsPromises, 'readFile').mockImplementation(async (file, ...args) => {
       if (file === owner && existsSync(path.join(sessionsDir, '.layout.json'))) {
         throw Object.assign(new Error('fixture owner read denied'), { code: 'EACCES' });
@@ -128,7 +148,6 @@ describe('FEATURE_219 session-migration', () => {
     await expect(ensureLayoutMigrated(sessionsDir)).rejects.toThrow(/cleanup/i);
     expect(existsSync(owner)).toBe(true);
     fault.mockRestore();
-    hidden.mockRestore();
     await ensureLayoutMigrated(sessionsDir);
     expect(existsSync(owner)).toBe(false);
   });
@@ -141,6 +160,16 @@ describe('FEATURE_219 session-migration', () => {
     await writeFile(path.join(lock, 'owner.json'), raw);
     expect(await runMigration(sessionsDir)).toEqual({ moved: 0, planned: 0 });
     expect(await readFile(path.join(lock, 'owner.json'), 'utf8')).toBe(raw);
+    expect(await isMigrated(sessionsDir)).toBe(false);
+  });
+
+  it.each([{ pid: 2_146_999_999 }, { version: 2, pid: 2_146_999_999, nonce: 'unknown-format' },
+    { version: 1, pid: 2_146_999_999, nonce: '' }])('retains an incomplete or unknown file-lock owner: %j', async owner => {
+    await seedFlat('unknown-file-owner');
+    const lock = path.join(sessionsDir, '.migration-lock'), raw = JSON.stringify(owner);
+    await writeFile(lock, raw);
+    expect(await runMigration(sessionsDir)).toEqual({ moved: 0, planned: 0 });
+    expect(await readFile(lock, 'utf8')).toBe(raw);
     expect(await isMigrated(sessionsDir)).toBe(false);
   });
 

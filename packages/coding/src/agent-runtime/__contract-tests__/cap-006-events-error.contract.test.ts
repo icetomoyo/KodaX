@@ -102,6 +102,7 @@ class ToolThenFailProvider extends KodaXBaseProvider {
       {
         stage: 'transport',
         httpStatus: 400,
+        retryable: false,
         upstreamCode: 'invalid_request_error',
         requestId: 'req-safe-123',
       },
@@ -183,6 +184,7 @@ describe('CAP-006: onError event contract', { timeout: 30_000 }, () => {
       requestPhase: 'before_first_delta',
       providerStage: 'transport',
       httpStatus: 400,
+      retryable: false,
       upstreamCode: 'invalid_request_error',
       requestId: 'req-safe-123',
     });

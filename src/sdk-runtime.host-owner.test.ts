@@ -16,6 +16,19 @@ afterEach(async () => {
 });
 
 describe('product Host Session storage ownership', () => {
+  it('cleans up agent storage ownership after a later integration initialization failure', async () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-host-late-init-failure-'));
+    roots.push(homeDir);
+    const config = path.join(homeDir, '.kodax', 'config.json');
+    fs.mkdirSync(path.dirname(config), { recursive: true }); fs.writeFileSync(config, '{}');
+    await expect(createKodaXRuntime({ homeDir, externalAgents: { factories: [], policy: async () => ({ allowed: false }) }, onStartupProgress(progress) {
+      if (progress.stage === 'initializing' && progress.phase === 'mcp') fs.writeFileSync(config, '{broken');
+    } })).rejects.toThrow();
+    fs.writeFileSync(config, '{}');
+    const recovered = await createKodaXRuntime({ homeDir, externalAgents: { factories: [], policy: async () => ({ allowed: false }) } });
+    runtimes.push(recovered);
+    await recovered.close();
+  });
   it('runs historical recovery only after shared storage ownership, in the Host home', async () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-host-recovery-'));
     roots.push(homeDir);

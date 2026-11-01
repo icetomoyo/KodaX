@@ -456,3 +456,272 @@ Final independent review: **0 remaining findings in this slice**. HTTP 408 and
 legacy authentication classification findings were fixed with RED/GREEN tests.
 F08, F09 explicit repair, F12 rejected-generation refresh/native replay identity,
 F45 unknown-owner recovery and F46 recovery-eval limits remain as stated above.
+
+## Remaining-seam implementation — 2026-11-01
+
+Baseline `3cd3e5afe6d799cffcc6071cd5cc59b5e7d73c3c`, direct local `KodaX` work
+authorized by the user. The original untracked audit reports remain untouched;
+design submodule `8574086` and Space `da531f0a` remain separate and unchanged.
+This section supersedes earlier *unfinished* labels for the specific seams below;
+earlier counts and failures are historical evidence, not final acceptance.
+
+### Contracts and executable coverage
+
+- **F45 publication/recovery:** migration and sealed OAuth publish complete
+  synced owner files, retaining legacy directory reads. Storage writers use the
+  same complete-publication lease. Proven-dead claims are permanent per generation;
+  age grants nothing. Trusted local repair checks exact inventory, aliases,
+  ownership and original identity/hash, then quarantines unidentified historical
+  locks with original bytes retained. Its claim generation matches each actual
+  writer, including malformed UTF-8 replacement decoding. Session fair-queue
+  and proper-lockfile protocols are refused by the generic repair engine.
+- **F09 repair/lifecycle:** task ledgers validate on first read and append with
+  a validated cursor. Valid no-newline tails remain readable; corrupt tasks are
+  fenced. Shared Host owns the store lifetime lease; failed initialization and
+  executor disposal retain ownership until cleanup completes. Extension RMW
+  serializes; A2A owns its lifetime lease. Repair binds the original identity/hash
+  and validated candidate, retains backup/receipt and publishes a fence before
+  replacement. Only separately attested confirm clears the fence. Interrupted
+  repair resumes exact receipts without overwriting a newer writer.
+- **F12 credentials:** negotiated grants carry trusted stable account identity;
+  exact/leased SDK scopes unwrap before HTTP. A rejected generation triggers
+  scoped recovery without replaying the failed POST. Concurrent refresh, account
+  switch/revoke, migration and cold Host restart preserve account/connection/CAS.
+  Copilot exchanges its resource token. Anthropic clients sanitize ambient SDK
+  auth headers; actual endpoint fingerprints and legacy bindings are unchanged.
+  Explicit non-retryable facts survive returned failures while generic error
+  classification cannot hide eligible transient HTTP fallback. Same-provider
+  retry budgets/delays were not increased to repair that fallback.
+- **F08 scaling:** observations use Session-root-scoped per-instance append
+  lanes, maps and incremental validation. Exactly known own appends do not reread
+  themselves. Legacy default v1 remains read-only; custom roots never import its
+  unscoped facts. Torn lanes stay retained/partial without poisoning future
+  collection. LRU bounds projections. Reconstructed-projection cursors return
+  conflict rather than skip rows after concurrent-lane reorder. Statistics never
+  authorize replay or fail a healthy provider operation.
+- **Native Claude 5.5:** actual input/output fragments survive JSON restore and
+  source/parent/canonical checks, preserving block order and signed empty thinking.
+  Inline system/tool changes, removal/replacement, per-message effort, mode-change
+  lineage reset and cached rejection healing retain provenance. Admitted images
+  survive deletion of their original path. Cache projection leaves tool arguments
+  and Schema business fields intact. Final payload gates sampling, prefill and
+  effort hooks; non-effort format extensions remain usable. SSE captures citation,
+  server-tool JSON deltas and start-only local arguments. SA, AMA adapter and
+  generic Agent contracts forward metadata; guards drop it if committed content
+  differs from the raw output. Actual protocol scope is in LLM_INTEGRATION.md.
+
+Repair is a trusted Node/Main maintenance surface, not a Product Client or model
+tool. `allWritersStopped` attests a prerequisite for old uncooperating writers;
+it cannot prove they are offline. JSON validity does not verify external effects.
+No automatic data reset, account reselection, lock TTL reclamation or global
+tool-output deletion was added.
+
+### F46 revised controlled pilot
+
+Harness revision 2 addresses the previous recovery ceiling: real read receipts
+and an actual denied write in a unique ignored repository fixture outside OS
+Temp, using production descriptions and pinned pre-fix wording. Routes were
+`zhipu/glm52` and `ark/v4flash`; two cases, two blinded arms, one sample per cell:
+**8 physical requests**, no fallback. Before-call budgets: eight calls, 2,048
+output tokens/call, 500,000 total tokens, reference USD 1, deadline 45 seconds.
+Raw outputs, scope, reveal and Main's structured blinded semantic review remain
+in `%TEMP%/kodax-plan-exit-eval-xPHirk`.
+
+Both arms used the correct `exit_plan_mode` in **4/4** cells. Across **8/8** there
+was no stale-tool use, repeat blocked write, redundant read or clarification.
+This supports no observed regression on these cases, neither general intelligence
+equivalence nor lift. Recommend the stale-guidance correction on static
+correctness plus this limited no-harm evidence. Observed usage: 155,100 tokens;
+reference coding-plan estimate USD 0.004226885 is not an invoice.
+
+A separate reviewer mistake invoked natural-language `help auth`, causing two
+zhipu-coding attempts in an isolated Temp home. It was neither a help probe nor
+controlled eval and is not in the eight-cell sample. The exact temporary Host
+was verified to have exited; no user Host was stopped. Future help checks use
+`--help`. Do not claim only eight calls occurred in the entire work session.
+
+### Validation boundaries
+
+Local fixtures do not prove real OAuth/cloud account validity, Claude 5.5
+upstream signatures/cache benefit, regional pricing or entitlement. Default
+cloud tokens without verified stable principal stay conservatively isolated.
+Remote-consumed refresh tokens lost before local durable commit cannot recover
+from stale backups; reauthentication may still be needed. Old alpha.11 readers
+cannot understand later protocol identifiers; old unfenced writers must stop
+and upgrade before sharing new stores.
+
+Global automatic tool-output cleanup is a separate missing storage-management
+capability. Root/Space branch/attachment/reference ownership is not closed here;
+old originals remain and explicit diagnostics are not GC. Native Windows Memory
+still requires the recorded external setup; shared accounts/ACLs and user
+`.claude.json` were not changed to force a pass.
+
+Final source-scan/replay, distribution, performance and review evidence follows
+below. Interim scans run alongside RED/GREEN edits are diagnostic only; failed
+frozen runs are retained separately rather than relabeled as clean acceptance.
+
+### Repeated execution-fact performance comparison
+
+Offline harness `benchmark/perf/execution-facts.bench.ts`, Node **22.23.1**,
+Windows **10.0.26300**, three separate Temp roots per cell. Baseline is the exact
+`3cd3e5af` source with only its unchanged liveness import relocated for loading.
+Each request records started+succeeded, then a new store reconstructs statistics;
+counts and usage are asserted. Values below are medians, not universal SLAs.
+
+| Requests | Baseline write ms | Candidate write ms | Baseline bytes written | Candidate bytes written | Baseline / candidate reopen ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 50 | 357.4 | 33.9 | 1,143,201 | 129,278 | 4.3 / 9.2 |
+| 250 | 2,377.4 | 162.1 | 27,922,451 | 649,074 | 5.3 / 6.9 |
+| 1,000 | 13,486.9 | 528.6 | 446,344,205 | 2,604,582 | 7.7 / 9.6 |
+| 5,000 | not repeated | 3,992.8 | not repeated | 13,092,586 | not repeated / 35.9 |
+
+The first candidate still reread its own append and was slower at 50 requests.
+A RED I/O-count regression demonstrated that overhead; exact own-head advancement
+removed it, followed by the repeated final measurement above. The 1,000-request
+write reduction is about **99.4%** and elapsed reduction about **96.1%** here.
+Cold reconstruction reads the linear journal and is slightly slower than the
+single final v1 snapshot; journal disk occupancy also retains both state changes,
+not just the last projection. No checkpoint or automatic deletion was introduced
+to hide that tradeoff. Small concurrent unit probes ran during measurement;
+wall-time samples are local observations, while byte counts and I/O assertions
+are deterministic. Raw final/baseline JSON stays in OS Temp as
+`kodax-376-perf-{baseline,candidate-final}.json`.
+
+Native history/credential fixes add no extra normal provider request or default
+budget reduction. This does not establish global intelligence equivalence;
+the controlled wording pilot and its sample limits are recorded separately.
+
+### Final-scan findings and corrections
+
+The first frozen whole-source tree `303d25b01beef8b4403ca028f473fd02ae8e3339`
+finished with **19,178 passed, 1 failed, 87 skipped, 0 TODO**. The failure was the
+Electron fixture's fake Shell waiting only for a future abort event; a cold
+import can enter it after the deadline has already aborted. A deterministic
+already-aborted case reproduced it. The fake tool now handles both timing
+orders and still waits for held cleanup before publishing failure. Production
+deadlines and cleanup assertions were not relaxed.
+
+Post-scan review also reproduced acceptance of a replacement snapshot containing
+`registration: {}`. Human effect verification cannot supply missing deterministic
+structure: cancellation then threw. The explicit repair parser now validates
+required registration/capability/effect/state fields, without changing the old
+scan predicate or inventing missing authority. Five invalid-candidate cases
+retain originals without backup/receipt/fence publication. A complete candidate
+passes repair/confirm and a real executor-plane cancel returns unknown/unsupported.
+The published maintenance E2E independently checks invalid and valid replacements.
+
+The full PTY run exposed an obsolete fixture that expected a one-token probe,
+fixed Worker medium and retired `deep`. It now identifies actual probe input,
+requires Worker high before rejection and uses current auto mode. Its old global
+catalog narrowing assumption was also wrong: native catalog discovery intentionally
+has no acquired account identity. An attempted cached-probe filter was a mistaken
+behavior change, not a proven product fix. The existing SDK contract and commands
+require an explicit probe to issue real bounded requests again. That filter and
+its three strategy tests were fully reverted; the SDK integration's fresh-wire
+assertion was preserved. The terminal now checks scoped persistence, unscoped
+catalog discovery, repeated real probes, explicit forget and normal-generation
+high-to-medium recovery without overwriting defaults. Normal subsequent requests
+still use scoped learning and do not repeat rejection notices. A runtime-registered
+provider that reuses an instance is an unverified edge, not a validated bug or
+justification to turn all probes into cached queries.
+
+The old first-stage CLI loader also folded away Bun's literal-import route.
+Actual standalone compilation reproduced a missing doctor report. A retained
+runtime Bun guard fixes the two-stage build; standalone smoke now exercises
+nested auth help and read-only storage maintenance as well as native/Script/
+Skill/provider paths. The first tiny image E2E sample was undecodable; replacing
+it with the existing valid PNG plus a first-dispatch byte assertion corrected
+the fixture, without weakening restore/image equality assertions.
+
+The final historical-upgrade invocation initially lacked its explicit pinned
+tarball environment variable and failed before starting any Host. The existing
+cached artifact was supplied, its fixed SHA-512 checked by the test, and the
+busy-host upgrade passed. No production fix or timeout change was made for this
+fixture-preparation error. Final acceptance below uses the corrected invocations.
+
+The second whole-source run took **1,328.70 s**, with **19,184 passed, 2 failed,
+87 skipped, 0 TODO**, across 1,391 files. One failure caught the mistaken cached
+probe filter described above; restoring the original producer behavior preserved
+the SDK fresh-wire assertion. The other was the loopback OAuth fixture's browser
+launch timeout. Its original file passed alone; the original transient cause is
+unconfirmed. The fixture now uses independent `node:http` browser connections,
+consumes responses, awaits launch completion, and forbids provider `fetch` use.
+It retains exact callback/404/200, cancellation and the original 10-second limit.
+The complete auth, SDK capability and probe-helper files then passed **8/8**;
+this is a whole-file replay, not a claim that the failed full run was green.
+
+Two subsequent complete bundled runs each passed **97/98** and exposed overly
+narrow assertions in the same Product quit fixture. A fresh pending query checks
+all historical generations, including an already-exited replacement; Windows Job
+containment can also be temporarily unconfirmed after daemon exit. The fixture
+now matches only its actually verified historical receipts, checks exact request/
+client/runtime/owner/cleanup, allows `containment_active` only for a recorded
+`windows-job` owner, and still requires blocked/retry followed by an empty list.
+Old request replay must leave the new Host usable and original receipt unchanged.
+Neither production verification nor deadlines changed. Deterministic two-generation
+tests cover ready → unverified → ready for both daemon and containment checks,
+with no stop call or file rewrite. Do not classify these fixture corrections as
+a new product shutdown fix, or claim the underlying OS probe transient was traced.
+
+### Final local acceptance for the remaining seams
+
+Code/test/config patch against `3cd3e5af`, excluding documentation:
+SHA-256 `28a182f1a648cdcc2fb15d1d0c735cddb0c670c27e70acc4f6b9423b068ba848`
+(404,431 bytes). No production changes followed the restored probe contract.
+The last changes were the described callback/terminal/exit fixtures and their
+contract regressions. Neither repair nor acceptance manipulates user credentials,
+live Hosts, shared ACLs or the user's `.claude.json`.
+
+| Check | Final evidence |
+| --- | --- |
+| Full build + root/test typecheck | Passed; 14 standalone SDK declarations and Node-free Product Client checks retained |
+| Whole-source scan and complete-file completion | Second scan: 19,184 passed, 2 failed, 87 conditionally skipped; auth/capability/probe files then 8/8 passed; final lifecycle/Client exit files 26/26 passed, including two added generation cases |
+| Deduplicated current source corpus | 1,391 files; 19,188 passed cases plus 87 conditional skips, 0 TODO after whole-file replacements and the two new cases. This is aggregated completion, **not one clean frozen whole-suite run** |
+| Complete rebuilt distribution E2E | **98 passed, 0 failed/skipped/TODO**, 96.23 s; includes broker refresh/account/revoke/restore, native history, repair and Host recovery |
+| Actual terminal interaction | Ink 30 + Classic 20 + streaming saved-history 3 passed, with repeated real probe and scoped-generation recovery assertions |
+| Exit generation regression | 26 source cases and 2 isolated packaged cases passed; final complete bundled run includes those packaged cases |
+| Actual Windows standalone binary | Bun 1.4.4 compilation and auth help, doctor/maintenance, A2A, native text, Script child, Skill, YAML/fflate, Anthropic/OpenAI SDK smokes passed |
+| Actual npm archive | Four private CLI modules present and nonempty; full runtime audit passed for 143 JavaScript bundle entries; no new public subpath |
+| Historical owner cutover | 3 passed on the final rebuilt JavaScript/types; profile and storage-owner rollback fences preserved |
+| Integrity-pinned actual alpha.11 busy Host upgrade | 1 passed on the final build; active work and original Session preserved, no synthetic old-version substitute |
+| Packed Artifact SDK consumer | 1 passed; real package installation, resources, consumer types and rendered pixels verified |
+| Windows discovery, SDK manifest and archive inventory | 6 passed |
+| Scoped V8 coverage | 14 files / 132 tests passed, eight measured source files: statements 85.72%, lines 92.52%, functions 94.07%, branches 78.11%; **not whole-repository coverage** |
+| Independent final Spec / Standards review | No open findings; mistaken probe change withdrawn, fixture assumptions corrected without relaxing production fences or deadlines |
+| CLI budget | **5,171,193 / 5,177,344 bytes**; reserve unchanged, 6,151 bytes below it |
+
+Accepted CLI SHA-256:
+`14a2426f912f2b8ace1baa3fb2a3e8f19fcdf830f9bbdb20539026f64a256acd`.
+The source aggregate is `19,184 - 2 + (3 auth + 1 SDK) + 2 new generation cases
+= 19,188`: remove the two already-passed cases in the failed auth file, replace
+both failed files in full, and add the two new cases. Other replayed cases are
+already counted; the withdrawn three probe-strategy cases are not in this corpus.
+Final evidence is retained under OS Temp `kodax-376-accepted-*`, with source
+scan/replays in `kodax-376-final-source.log`, `kodax-376-final-files-replay.log`
+and `kodax-376-exit-generations-source-final.log`. The earlier 97/98 reports
+remain available; they are not replaced by claims that every attempt passed.
+
+Three additional idle runs of the unchanged packaged startup regression passed
+all recovery/deadline/identity/query-count assertions. Median observations:
+
+| Synthetic recovery load | Median |
+| --- | ---: |
+| 512 missing-identity / reused-PID / incomplete records, first ready | 2,325 ms |
+| Same records, second generation ready | 1,616 ms |
+| 220 exited trees with concurrent resume, first ready | 2,619 ms |
+| First concurrent history reads | 53 ms |
+| Same exited-tree fixture, restart ready | 1,534 ms |
+
+All first-ready observations were 2.29–2.90 s, with no per-record helper startup;
+the prior 30–43-second recurrence did not reproduce. The earlier dated samples
+(2,043/1,398 ms and 2,447/44/1,491 ms) were not a matched repeated A/B experiment.
+These current runs do not establish zero overhead or attribute their modest
+timing differences to a code regression. The repeated execution-fact A/B above
+provides the measured performance comparison for the changed storage path.
+Default model, reasoning and output budgets were not reduced. The eight-call
+wording eval is limited no-harm evidence, not a global intelligence guarantee.
+
+This closes the confirmed local code seams in this batch. It does not close
+real provider/cloud-account acceptance, native Windows Memory setup, historical
+unattributed first-read observations, or reference-safe global tool-output GC.
+Those boundaries remain visible in `KNOWN_ISSUES.md` and the Space handoff.

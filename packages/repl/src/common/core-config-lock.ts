@@ -64,9 +64,10 @@ function errorCode(error: unknown): string | undefined {
   return typeof error.code === 'string' ? error.code : undefined;
 }
 
-function publish(lockPath: string, raw: string): boolean {
+export function publishConfigLock(lockPath: string, raw: string): boolean {
   const temporary = `${lockPath}.${randomUUID()}.tmp`;
   let fd: number | undefined, published = false;
+  let publicationError: unknown;
   try {
     fd = openSync(temporary, 'wx', 0o600);
     writeFileSync(fd, raw); fsyncSync(fd);
@@ -74,6 +75,9 @@ function publish(lockPath: string, raw: string): boolean {
     try { linkSync(temporary, lockPath); published = true; }
     catch (error) { if (errorCode(error) !== 'EEXIST') throw error; }
     return published;
+  } catch (error) {
+    publicationError = error;
+    throw error;
   } finally {
     try {
       try { if (fd !== undefined) closeSync(fd); }
@@ -85,7 +89,8 @@ function publish(lockPath: string, raw: string): boolean {
         try { rmSync(lockPath); }
         catch (cleanup) { throw new AggregateError([error, cleanup], 'Configuration lock cleanup failed.'); }
       }
-      throw error;
+      if (publicationError !== undefined) throw new AggregateError([publicationError, error], 'Configuration lock publication and cleanup failed.');
+      throw new AggregateError([error], error instanceof Error ? error.message : 'Configuration lock cleanup failed.');
     }
   }
 }
@@ -109,7 +114,7 @@ function reclaim(lockPath: string): boolean {
 /** One deletion claimant per retired generation; never remove these tombstones online. */
 export function claimConfigLockReclamation(lockPath: string, generation: string): boolean {
   const claim = `${lockPath}.reclaim.${createHash('sha256').update(generation).digest('hex')}`;
-  return publish(claim, JSON.stringify({ pid: process.pid, nonce: randomUUID() }));
+  return publishConfigLock(claim, JSON.stringify({ pid: process.pid, nonce: randomUUID() }));
 }
 
 /** Internal shared boundary for core and integration config writers; old lock paths stay honored. */
@@ -117,7 +122,7 @@ export function withConfigWriteLock<T>(configPath: string, lockPath: string, act
   mkdirSync(path.dirname(lockPath), { recursive: true, mode: 0o700 });
   retryInactiveRelease(lockPath);
   const raw = JSON.stringify({ version: 1, pid: process.pid, nonce: randomUUID() });
-  if (!publish(lockPath, raw) && (!reclaim(lockPath) || !publish(lockPath, raw))) {
+  if (!publishConfigLock(lockPath, raw) && (!reclaim(lockPath) || !publishConfigLock(lockPath, raw))) {
     throw new CoreConfigWriteConflictError(configPath, lockPath);
   }
   let actionError: unknown;

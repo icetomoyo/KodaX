@@ -37,7 +37,7 @@ describe('cloud credentials use the existing scoped broker', () => {
     } });
     const request = { requestId: 'request', leaseId: 'lease', provider: provider.name, sessionId: 'session', target: { kind: 'run' as const, runId: 'run' }, purpose: 'primary' as const };
     const pending = broker(request);
-    const rejected = expect(pending).rejects.toThrow('Cloud credential broker acquisition failed.');
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
     await binding.close(); expect(signal?.aborted).toBe(true); release(); await rejected;
     const failed = await bindCloudCredentials({ credentials, provider, async resolve() { throw new Error('private-host-account-secret'); } });
     await expect(broker(request)).rejects.toThrow('Cloud credential broker acquisition failed.'); await failed.close();

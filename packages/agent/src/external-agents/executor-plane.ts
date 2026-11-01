@@ -2230,6 +2230,14 @@ function defaultIdempotencyKey(): string {
   return `agent-dispatch-${randomUUID()}`;
 }
 
+/** Initialization failed after acquiring resources; retain cleanup authority until disposal is verified. */
+export class AgentExecutorPlaneInitializationError extends AggregateError {
+  constructor(error: unknown, cleanup: unknown, readonly retryCleanup: () => Promise<void>) {
+    super([error, cleanup], 'Agent executor initialization and cleanup failed; retry cleanup before reopening its store.');
+    this.name = 'AgentExecutorPlaneInitializationError';
+  }
+}
+
 export async function createAgentExecutorPlane(
   options: CreateAgentExecutorPlaneOptions,
 ): Promise<AgentExecutorPlane> {
@@ -2249,7 +2257,12 @@ export async function createAgentExecutorPlane(
     createIdempotencyKey: options.createIdempotencyKey ?? defaultIdempotencyKey,
     closeTimeoutMs,
   });
-  await runtime.initialize();
+  try { await runtime.initialize(); }
+  catch (error) {
+    try { await runtime.close(); }
+    catch (cleanup) { throw new AgentExecutorPlaneInitializationError(error, cleanup, () => runtime.close()); }
+    throw error;
+  }
   return {
     registrations: runtime.registrations,
     tasks: runtime.tasks,

@@ -81,6 +81,8 @@ it('isolates request fetch/env/hooks and rejects protected payload or auth overr
   await expect(provider.complete([], [], '', undefined, { ...options, headers: { authorization: 'foreign' } })).rejects.toThrow(/controlled/);
   await expect(provider.complete([], [], '', undefined, { ...options, samplingParams: { max_output_tokens: 999 } })).rejects.toThrow(/protected/);
   await expect(provider.complete([], [], '', undefined, { ...options, onPayload: () => ({ tools: [] }) })).rejects.toThrow(/protected/);
+  await expect(provider.complete([], [], '', undefined, { ...options, onPayload: () => ({ output_config: { effort: 'low' } }) })).rejects.toThrow(/reasoning|protected/);
+  await expect(provider.complete([], [], '', undefined, { ...options, samplingParams: { output_config: { effort: 'low' } } })).rejects.toThrow(/reasoning|protected/);
   expect(wire).toHaveBeenCalledTimes(2); expect(fallback).not.toHaveBeenCalled();
 });
 
