@@ -1,6 +1,6 @@
 # SDK 统一 Client 契约迁移指南
 
-适用范围：当前工作树的 FEATURE_298/299/301 实现；本次核对的包版本为 `0.7.97-alpha.12`。版本号不表示 npm 已发布当前工作树中的所有变更。接入前应核对所安装包的导出和 Host 能力。
+适用范围：当前工作树的 FEATURE_298/299/301 实现；本次核对的包版本为 `0.7.97-beta.1`。版本号不表示 npm 已发布当前工作树中的所有变更。接入前应核对所安装包的导出和 Host 能力。
 
 Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附件/统计与退出恢复范围见 [SDK/Host 接缝](SPACE_SDK_SEAMS.md)。
 
@@ -19,7 +19,8 @@ Solo 和 Adaptive 都会向模型提供可用且已授权的 Skill 目录。运�
 
 ### 2026-11-02 Space 默认方法、消费绑定与 Quick Ask（alpha.12 之后，未发布）
 
-已发布的 `0.7.97-alpha.12` 不含本节接口。请锁定后续实际发布包，并检查
+已发布的 `0.7.97-alpha.12` 不含本节接口；本节接口随 `v0.7.97-beta.1` 发布。
+请锁定该实际发布包（beta.1 的 npm 发布仍为手动步骤），并检查
 `productExecutionBinding:1`、`sessionPromotion:1`；旧 Host 明确返回
 `daemon_upgrade_required`，不能忽略声明继续执行。原配置、环境变量 Key、凭证 broker、
 原 `authorizeExecution` 回调及未使用新字段的调用保留原行为。
@@ -97,8 +98,8 @@ CLI 原体积门禁、CI job/矩阵/触发条件和发布依赖关系保持原�
 ### 2026-11-02 核心配置提交补齐（alpha.12 之后，未发布）
 
 Space 正式 alpha.12 验收基线为 `codex/sdk-alpha12-preparation@ca8d2313`；其配置
-原子性反馈已纳入 Root 后续修复。本节新增实现需要后续 SDK 包，版本字符串仍为 alpha.12
-不代表已发布这些字节。没有修改 Space 产品代码或其凭证来源。
+原子性反馈已纳入 Root 后续修复。本节新增实现已随 `v0.7.97-beta.1` 发布，历史
+版本字符串 alpha.12 不含这些字节。没有修改 Space 产品代码或其凭证来源。
 
 所有核心配置修改（Runtime、Provider CRUD/setup/OAuth registration、旧权限模式保存/
 迁移、初始化、saveConfig 与拆分集成迁移清理）使用同一配置写锁与原子替换。
@@ -128,7 +129,7 @@ OAuth 和撤销规则保持；改名不证明新别名有权使用旧账号。
 源码与产物指纹一致，双轴复审无剩余项。完整证据和先前失败见
 [最终验收](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#最终验收2026-11-02未发布)。
 设计子仓仍为 `7927f835744643b418d463b10a2e1c1c4bdd12e8`，Space 独立分支及产物未改。
-接手时先发布并锁定包含该提交的新 SDK 字节，按能力门禁启用默认方法/业务 resolver 和
+接手时先锁定包含该提交的 `v0.7.97-beta.1` SDK 字节（npm 发布为手动步骤），按能力门禁启用默认方法/业务 resolver 和
 promotion，保留配置有限锁忙重试与原凭证来源，再走 Space 生产安装包的账号保持、撤销、
 排队/恢复和 Quick Ask 成品回归。已发布 alpha.12（标签 `f24a922c1`）不含本节后续补丁；
 本轮没有移动标签、发布 npm 或替 Space 完成产品侧适配。

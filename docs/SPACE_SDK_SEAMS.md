@@ -3,7 +3,7 @@
 ## 2026-11-02 后续接手：默认方法与 Quick Ask（alpha.12 之后，未发布）
 
 已发布 alpha.12 及 Space `codex/sdk-alpha12-preparation` 的先行适配仍是各自历史基线；
-本节 Root 新接口需要后续实际 SDK 包。Root 不修改 Space 分支、keychain、凭证来源或账号选择。
+本节 Root 新接口已随 `v0.7.97-beta.1` 发布（npm 发布为手动步骤）。Root 不修改 Space 分支、keychain、凭证来源或账号选择。
 完整类型、能力、失败码与恢复限制见 [SDK 迁移说明](SDK_MIGRATION.md)。
 
 专家迁移采用 `productExecutionBinding:1`：可信 Main 的 `authorizeExecution` 注册
@@ -44,7 +44,7 @@ Quick Ask 侧栏与丢响应恢复。Root 的协议/真实 Host 测试不能替�
 Root 上轮功能基线 `b385395c9f8686aee182a4c6a38b4f3008421d32` 已在 `origin/KodaX`，
 完整 CI 16 个任务成功、发布跳过；本机冻结全套 19252 通过、87 条件跳过、无失败/TODO。
 设计子仓 `7927f835744643b418d463b10a2e1c1c4bdd12e8` 和 Space `ca8d2313` 保持原样。
-这批接缝尚未发布：Space 先锁定包含该提交的新 SDK 包，再完成以上默认方法、排队/
+这批接缝已随 `v0.7.97-beta.1` 发布：Space 先锁定该 SDK 包（npm 发布为手动步骤），再完成以上默认方法、排队/
 恢复业务绑定、Quick Ask 与配置/账号保持验收。现有 API_KEY/config/broker 入口保留，
 不得因错误、改名或重试改变账号来源。[完整验收与历史失败](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#最终验收2026-11-02未发布)。
 
@@ -72,7 +72,7 @@ Main/Renderer 不传该标记、不改 inputId，也不需自行迁移队列文�
 新 SDK 仍待发布；Space 升级后验收默认保持/变更、普通与显式 redirect、冷恢复和原账号
 保持，继续使用既有 API，不传内部队列标记，也不手改 pending 文件。
 
-2026-10-18 的 Space 核查样本安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，当时官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前开发树 `0.7.97-alpha.12` 核对，不据此推断 Space 已升级；源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
+2026-10-18 的 Space 核查样本安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，当时官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前开发树 `0.7.97-beta.1` 核对，不据此推断 Space 已升级；源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
 
 ## 2026-10-29 未发布 SDK 接入补充
 

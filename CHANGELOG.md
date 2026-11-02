@@ -6,6 +6,32 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-beta.1] - 2026-11-02
+
+First beta of the v0.7.97 line: Space-facing Host execution and Session
+seams complete — Main-owned capability-gated default Skills and
+consumption-time execution bindings select committed expert/connector state
+with fresh credential/tool leases at actual Product input consumption, and
+Quick Ask promotes Sessions through Host-owned revision checks with durable
+request-ID reconciliation while preserving the original Session and history.
+Plain redirect Run boundaries persist apart from legacy explicit Skill queues
+and survive cold recovery with strict missing-method rejection; Main bindings
+resolve before steer authority and retain the active Run's principal and
+lease boundaries. Every core configuration update publishes atomically under
+the shared lock — old bytes stay on failed writes, damaged provider
+collections are rejected before mutation, configuration errors stay free of
+secrets, and Windows reader-denied replacements retry within the same staged
+file and write lock. The complete daemon schema ships as packaged data inside
+the npm inventory while the CLI keeps its size budget; owner-local temporary
+Run results stay awaitable after Host Session cleanup. Windows protected
+paths retain lexical and physical short-name fences with credential staging
+DACLs replaced without broad grants. Bare `resume` discovery paints immediate
+`Finding sessions` feedback without extra startup work. Every v0.7.96 stable
+and v0.7.97-alpha.1 through alpha.12 contract is retained. npm publication
+remains a manual maintainer action.
+
 ### Added
 
 - Add capability-gated Main default Skills and execution-binding resolvers for
@@ -40,6 +66,9 @@ All notable changes to this project will be documented in this file.
   aliases. Replace credential staging DACLs without retaining explicit broad
   grants. Preserve Undo's native identity and CAS fences while correcting
   canonical test fixtures and retaining failed sandbox bootstrap diagnostics.
+- Paint `Finding sessions` startup feedback while bare-resume discovery scans
+  sessions and clear it before the picker or empty-list notice, without adding
+  file reads, workers, rebuilds or other startup work to the loading path.
 
 ---
 

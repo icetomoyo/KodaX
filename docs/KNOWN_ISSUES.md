@@ -203,7 +203,7 @@ acceptance. Issue 371 now has a confirmed startup-recovery fix; its historical
 - Status: Open (startup recovery fixed; historical first-read delay not attributed)
 - Introduced: observed in v0.7.97-alpha.10 at `ec442c75`; first affected version unknown
 - Created: 2026-10-28
-- Fixed: first startup recovery in `v0.7.97-alpha.11`; 2026-10-31 recurrence fixed in `v0.7.97-alpha.12` (`16973a93`)
+- Fixed: first startup recovery in `v0.7.97-alpha.11`; 2026-10-31 recurrence fixed in `v0.7.97-alpha.12` (`16973a93`); bare-resume discovery feedback (`Finding sessions`, no extra startup work) in `v0.7.97-beta.1` (`e18600b79`)
 
 ### Original Problem
 
