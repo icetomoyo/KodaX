@@ -192,7 +192,8 @@ Space 原脚本的观察条件等待错误出现；OS 临时副本只改观察/�
 `%TEMP%/kodax-plain-redirect-expected-results.log`。最终构建和 source/test 类型检查通过，
 相关 10 文件 83 项通过，实际 dist 发布包门禁 3 项通过；双轴最终复审无剩余项。复审发现
 generation checkpoint 的 `skill:"true"` 可能通过宽松 truthy 检查，新增测试先 RED 后改为
-严格布尔校验，未放宽旧合法数据路径。新 CI 待收齐，不能沿用前一提交结果。
+严格布尔校验，未放宽旧合法数据路径。本段为功能候选送审状态，最终 CI 在下文单列，
+不能沿用前一提交结果。
 暂无 tag/npm 发布，Space/设计子仓不改。
 
 首次本轮 CI [41433864935](https://github.com/icetomoyo/KodaX/actions/runs/41433864935)
@@ -207,7 +208,7 @@ generation checkpoint 的 `skill:"true"` 可能通过宽松 truthy 检查，新�
 仍在原并行组，其他包测试、CI job 与生产启动代码不变。10 秒刷新预算、阶段/能力断言、
 失败日志捕获及精确 owner 清理不放宽，也不把整个包回归串行化。独立 Windows CPU
 争抢与原生并发门禁继续保留。该 trace 本身尚不能排除性能原因，需新完整 CI 与独立
-压力验证。新串行组本机 3 项通过（约 18 秒），完整新 CI 待验证。
+压力验证。新串行组本机 3 项通过（约 18 秒），当时完整新 CI 待验证，最终结果见收尾段。
 同步修正压力 runner 的文件引用，并强制 TAP 输出包含目标用例的实际成功记录；旧引用
 在 Node 上可能只输出文件级成功，0 个目标用例仍 exit 0。旧引用负对照已确认是假绿，
 新 runner 以同样旧路径负对照时明确失败；正确路径 3 worker × 3 轮共 9 个真实用例通过。
@@ -220,7 +221,23 @@ generation checkpoint 的 `skill:"true"` 可能通过宽松 truthy 检查，新�
 收尾本机 `npm run test:bundle` 为并行 99 项加串行 3 项，共 102 通过、0 失败/跳过/TODO；
 压力真实 9 次通过、空匹配负对照明确拒绝。此次测试组织/清理修正的双轴复审无剩余项，
 SDK 功能源码自 `cd151cb1d` 后未变。首跑 CI 最终 15 个任务通过、1 个失败、发布跳过，
-其失败保留如上，后续完整 CI 必须在新提交上重新验证。
+其失败保留如上，后续完整 CI 已在新提交上重新验证。
+
+最终候选 `KodaX@962a41600d5676460e35866be908ec22b32c301b` 已推送，精确 SHA 的
+[完整 CI 41438153424](https://github.com/icetomoyo/KodaX/actions/runs/41438153424)
+16 个任务成功、发布按预期跳过，无失败。Node 20/22 日志确认 binding-controls 5 项、
+binding-recovery 5 项、队列 22 项均实际执行；Windows Electron 日志确认独立压力组
+3 worker × 3 轮共 9 个目标 case 成功，另一次为串行组，未发生空匹配假绿。
+覆盖 Windows source 两层、真实终端流式历史、原生并发/Electron、五平台归档及统一
+npm 包安装后 SDK 门禁。Standards 与 Spec 最终复审均无剩余项。
+
+最终本机代码/测试/产物指纹在验收文档补录前后核对一致：7433 文件、SHA-256
+`daaa6429ea0047adce11a283e59074d026374d6582d4359154a59a7d6515fab6`。
+后续仅补验收文档，CI 归属上述候选。CLI 为 5,158,633 字节，低于原预算 5,177,344；
+bootstrap 4,066 字节，生产启动预算、模型参数与提示词模板未改。CI 墙钟 26 分 33 秒，仅为本次运行
+记录，不把单次 CI 耗时当作稳定性能基准；独立压力门禁保留原 15/10 秒限制并实际通过。
+SDK 尚未发布，alpha.12 tag 仍为 `f24a922c117e0ece5d26224a133a69973b313ab6`，设计子仓
+仍为 `7927f835744643b418d463b10a2e1c1c4bdd12e8`；Space 未改，需新 SDK 后再做产品验收。
 
 ## 2026-10-30 Partner 通用 Agent 契约修复（未发布）
 

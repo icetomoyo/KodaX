@@ -70,11 +70,15 @@ Main 应为 steer 返回目标 Run 原有声明；同 inputId 的已接受重试
 principal 重绑，不能借迁移获得另一账号或专家的 authority。持久字段 `skill` 保留旧名称，
 含义为独立 Run 边界，不能据其为 true 推断一定有具名方法。Client/wire 输入与既有配置、
 凭证入口不变。
-本次修正提交 `00bfe7ed12407eda722a6bc4b15ace106e413dc5` 已在 Root 主分支，
+前一次 steer/显式 redirect 修正提交 `00bfe7ed12407eda722a6bc4b15ace106e413dc5` 已在 Root 主分支，
 [完整 CI](https://github.com/icetomoyo/KodaX/actions/runs/41415454375) 16 个任务通过、
 发布跳过；尚未发布 npm。Space 需使用包含本次修正的新 SDK，不能只依赖旧 alpha.12。
 该 CI 是普通 redirect 第二次补审前的基线；以上边界区分修正还需包含在后续新 SDK 中，
 本轮独立验证见 [普通 redirect 补审](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#普通-redirect-的补审修正2026-11-02)。
+普通 redirect 功能修正为 `cd151cb1ddf7eb273debb5e458a9c989d8804ac1`，含后续门禁修正的
+候选 `962a41600d5676460e35866be908ec22b32c301b` 已推送 Root `KodaX` 主分支，精确 SHA 的
+[CI 41438153424](https://github.com/icetomoyo/KodaX/actions/runs/41438153424) 16 个任务成功、
+发布跳过。未发新 SDK 包；Space 升级时必须包含本轮修正，原 Client 参数和凭证入口不变。
 
 Quick Ask 使用 `sessions.promote({sessionId,requestId,expectedRevision,tag})`，修订来自
 `sessions.read(...).metadataRevision`。成功返回 `{requestId,session}`，仍是原 Session ID。
