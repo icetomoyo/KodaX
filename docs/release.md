@@ -446,7 +446,9 @@ On top of v0.7.97-alpha.6 it includes:
   connection timeouts surface as `ETIMEDOUT`, so clients can retry without
   losing state.
 - Bundle gate growth: `test:bundle` now includes bundled real-process
-  shared-Host recovery (`tests/bundled-shared-host-recovery.test.mjs`).
+  shared-Host idle exit (`tests/bundled-shared-host-recovery.test.mjs`) and
+  profile recovery (`tests/bundled-shared-profile-recovery.test.mjs`, now in
+  the serial startup group with its original deadlines).
 - Bounded Windows startup cleanup: the automatic historical child sweep keeps
   unverifiable incomplete Run trees `unknown` instead of launching a
   PowerShell termination helper per old record — a helper storm that

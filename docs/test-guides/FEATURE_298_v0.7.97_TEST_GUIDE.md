@@ -169,6 +169,8 @@ Space 在 `d1ff86e4e` 再次复现一项 P2：活跃 AMA 先排普通 after_turn
 默认方法和业务 revision 始终不变；第二个输入被延迟到独立 Run 时写成
 `skill:true/explicitSkill:null`，上一补丁把它误认成历史显式 Skill，错误阻断。因此上一节
 `00bfe7ed1` 的 CI 全绿不能作为本分支已覆盖的证据。
+漏测点是前序 after_turn 启动的另一个 AMA Run 会再次消费后续队列，并把普通 redirect
+转为独立边界；原目标 Run 已被停止不能排除这条后续路径。
 
 本机原样重放 Space `plain-redirect-constant-default.mjs` 得到相同错误、请求数停在 2；
 公共 SDK 的最小场景和旧 null 普通队列冷恢复均先 RED（分别约 5 秒），不是仅静态推理。
@@ -192,6 +194,33 @@ Space 原脚本的观察条件等待错误出现；OS 临时副本只改观察/�
 generation checkpoint 的 `skill:"true"` 可能通过宽松 truthy 检查，新增测试先 RED 后改为
 严格布尔校验，未放宽旧合法数据路径。新 CI 待收齐，不能沿用前一提交结果。
 暂无 tag/npm 发布，Space/设计子仓不改。
+
+首次本轮 CI [41433864935](https://github.com/icetomoyo/KodaX/actions/runs/41433864935)
+在 `cd151cb1d` 暴露一个已有 Windows 限时恢复门禁在并行环境下预算耗尽，疑似资源争抢：普通 redirect 的 dist 场景
+通过，但并行包测试中的 default→coder profile 刷新在端到端 10 秒预算末尾超时。
+保留的 `windows-sdk-startup-41433864935` artifact 显示旧 Host 正常停止，新 daemon 已在
+11:14:18.568 UTC ready，没有卡住初始化；观察者的预算还包含旧 Host 检查、退出和新
+进程冷启动，最后未在期限内确认连接，不能只凭该记录认定产品恢复死锁或忽略失败。
+
+仅将这项 profile 刷新测试原样移至 `bundled-shared-profile-recovery.test.mjs`，与已有
+`bundled-startup-recovery.test.mjs` 用 `--test-concurrency=1` 顺序运行；30 秒 idle 退出测试
+仍在原并行组，其他包测试、CI job 与生产启动代码不变。10 秒刷新预算、阶段/能力断言、
+失败日志捕获及精确 owner 清理不放宽，也不把整个包回归串行化。独立 Windows CPU
+争抢与原生并发门禁继续保留。该 trace 本身尚不能排除性能原因，需新完整 CI 与独立
+压力验证。新串行组本机 3 项通过（约 18 秒），完整新 CI 待验证。
+同步修正压力 runner 的文件引用，并强制 TAP 输出包含目标用例的实际成功记录；旧引用
+在 Node 上可能只输出文件级成功，0 个目标用例仍 exit 0。旧引用负对照已确认是假绿，
+新 runner 以同样旧路径负对照时明确失败；正确路径 3 worker × 3 轮共 9 个真实用例通过。
+发布说明及 Issue 222/371 的回归命令一并同步，不靠 exit 0 宣称压力门禁已执行。
+
+本机完整包回归另出现一次 CLI 恢复夹具的 `EBUSY`：清理忽略 daemon stop 返回结果，
+在仍有 governed background work 的 Host 退出前删除其临时目录。保留证据显示 Host 后来
+正常 orphan exit；夹具现先等待 CLI 退出，再显式停止已核验的私有 owner 并确认完整退出，
+最后删除自己的临时目录。生产 shutdown/background 策略不改，恢复正文断言不放宽。
+收尾本机 `npm run test:bundle` 为并行 99 项加串行 3 项，共 102 通过、0 失败/跳过/TODO；
+压力真实 9 次通过、空匹配负对照明确拒绝。此次测试组织/清理修正的双轴复审无剩余项，
+SDK 功能源码自 `cd151cb1d` 后未变。首跑 CI 最终 15 个任务通过、1 个失败、发布跳过，
+其失败保留如上，后续完整 CI 必须在新提交上重新验证。
 
 ## 2026-10-30 Partner 通用 Agent 契约修复（未发布）
 

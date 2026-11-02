@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
-import { connectKodaXRuntime } from '../dist/sdk-runtime.js';
+import { connectKodaXRuntime, getKodaXRuntimeOwnerState, waitForRuntimeDaemonShutdown } from '../dist/sdk-runtime.js';
 import { ensureKodaXClient } from '../dist/sdk-client.js';
 import { FileSessionStorage } from '../dist/sdk-repl.js';
 
@@ -194,7 +194,11 @@ for (const mode of modes) test(`bundled ${mode} automatically continues its orig
     throw error;
   }
   finally {
-    if (child && !childExited) child.kill();
+    if (child && !childExited) {
+      child.kill();
+      if (mode === 'print') await exit;
+      else await until('fixture CLI exit', () => childExited, 10_000);
+    }
     terminal?.dispose();
     if (observer) {
       for (const run of await observer.runs.list({})) {
@@ -202,7 +206,14 @@ for (const mode of modes) test(`bundled ${mode} automatically continues its orig
       }
     }
     await product?.disconnect(); await observer?.close();
-    execFileSync(process.execPath, [cli, 'daemon', 'stop', '--json'], { env, windowsHide: true, timeout: 20_000 });
+    assert.equal(path.dirname(homeDir), path.resolve(os.tmpdir()));
+    const owner = getKodaXRuntimeOwnerState({ homeDir }).owner;
+    // This isolated fixture may still have governed background work. Stop its
+    // verified owner explicitly before removing a directory it can still write.
+    const stopped = JSON.parse(execFileSync(process.execPath, [cli, 'daemon', 'stop', '--force', '--json'],
+      { env, windowsHide: true, timeout: 20_000, encoding: 'utf8' }));
+    assert.ok(stopped.stopped || stopped.reason === 'missing' || stopped.health === 'missing', JSON.stringify(stopped));
+    if (owner) assert.equal((await waitForRuntimeDaemonShutdown({ configHome, owner })).status, 'succeeded');
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
     assert.equal(path.dirname(homeDir), path.resolve(os.tmpdir()));
     await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });

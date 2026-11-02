@@ -67,7 +67,8 @@ From the repository, build the workspace packages and bundled CLI/SDK, then run:
 npm run build:packages
 npm run build:bundle
 npx vitest run packages/agent/src/runtime/process-tree.windows.test.ts packages/agent/src/runtime/process-tree.test.ts packages/agent/src/runtime/process-tree.identity-batch.test.ts packages/agent/src/runtime/managed-child-processes.test.ts packages/agent/src/runtime/managed-child-processes.scope.test.ts packages/agent/src/runtime/managed-child-processes.run.test.ts packages/agent/src/runtime/managed-child-processes.cache.test.ts
-node --test tests/bundled-startup-recovery.test.mjs tests/bundled-shared-host-recovery.test.mjs
+node --test tests/bundled-shared-host-recovery.test.mjs
+node --test --test-concurrency=1 tests/bundled-startup-recovery.test.mjs tests/bundled-shared-profile-recovery.test.mjs
 ```
 
 The bundled startup regression is included in `npm run test:bundle`; it skips
