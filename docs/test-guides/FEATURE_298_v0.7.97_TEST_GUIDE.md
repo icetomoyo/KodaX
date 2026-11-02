@@ -52,7 +52,21 @@ job 的新增并发配置测试命中真实 `EPERM` rename。原文件仍完整�
 与错误变化。没有放宽客户端有限锁忙重试、删目标或重放业务修改。该候选本机 bundle
 102/102、实际 tarball 旧 Host 切换 3/3；源码全套 fast 期间为处理上述真实缺口主动停止，
 不记全绿。此前基线 f24 的同机 1005 轮保留测试 61.6 秒、当前路径 61.2 秒，均通过；
-单次对照未见线性回退，但不是远端超时原因的证明。
+单次对照未见线性回退，但不是远端超时原因的证明。该候选旧 Windows source 日志还确认
+保留用例 130.15 秒通过；取消投影用例失败，但取消发生在全组详细栈输出之前，未保留其
+断言失败位置。原 fake abort 立即 resolve、随后 get 却要求仍是 unknown 的竞态假设，已用
+基线等 executor 先完成的合法调度确定 RED；新测试显式 gate 中间态，再 release 验证终态，
+不据此宣称已证明旧 CI 唯一根因，也不改生产取消语义。
+
+候选 `1627bc612` 的 CI `41399204135` 已通过新增并发配置测试，但 packaged Electron 的
+真实 scoped Host 死亡恢复失败；bootstrap 明确记录 `daemon.json` 的 EPERM 重试 200 ms
+耗尽。独立 Windows reader 以无 DELETE 共享的真实句柄，在首次 rename 标记后持有
+500 ms：`state.windows-publication.test.ts` 的配置和 Host 状态两个公开写入用例均 RED。
+后续只将这两个异常路径的累计重试调度预算改为 1 秒，两项 GREEN；永久拒绝、oversleep、
+错误变化和无竞争零等待断言继续通过。未提高 Host 启动或测试超时，未删目标或重放业务。
+该真实子进程用例进入 SYSTEM 和原 Windows 自动发现，不增加 CI job。
+本机该候选 fast 3462/53 skip、unit 13217/5 skip 通过，随后为上述修复停止 contract，
+不记为单次冻结全套通过。最终新候选另记。
 
 首个冻结候选 `36d83f05e` 的 CI `41390222335` 暴露 npm `files` 白名单漏掉 schema
 数据，以及临时 Session 删除后调用 `runs.await` 的真实竞争。前者以 actual npm pack

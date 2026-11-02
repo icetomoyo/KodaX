@@ -47,7 +47,7 @@ describe('withCoreConfigWriteLock', () => {
       let elapsed = 0;
       vi.spyOn(performance, 'now').mockImplementation(() => elapsed);
       vi.spyOn(Atomics, 'wait').mockImplementation((_cell, _index, _value, timeout) => {
-        elapsed += failure === 'oversleep' ? 250 : timeout ?? 0;
+        elapsed += failure === 'oversleep' ? 1_250 : timeout ?? 0;
         return 'timed-out';
       });
       const denial = Object.assign(new Error('Fixture permission denial'), { code: 'EPERM' });
@@ -64,8 +64,8 @@ describe('withCoreConfigWriteLock', () => {
         expect(() => withCoreConfigWriteLock(file, () => writeCoreConfigAtomically(file, 'new')))
           .toThrow(failure === 'different-error' ? ioError : denial);
         expect(readFileSync(file, 'utf8')).toBe('old');
-        expect(starts.every(start => start < 200)).toBe(true);
-        expect(calls.mock.calls.length).toBe(failure === 'oversleep' ? 1 : failure === 'different-error' ? 2 : 5);
+        expect(starts.every(start => start < 1_000)).toBe(true);
+        expect(calls.mock.calls.length).toBe(failure === 'oversleep' ? 1 : failure === 'different-error' ? 2 : 21);
       } finally { calls.mockRestore(); syncBuiltinESMExports(); rmSync(home, { recursive: true, force: true }); }
     });
 

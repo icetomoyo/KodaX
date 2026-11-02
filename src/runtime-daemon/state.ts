@@ -621,7 +621,7 @@ function renameRuntimeDaemonState(temporary: string, target: string): void {
     // Windows readers can briefly deny replacement. Keep the flushed staging
     // file and the old state intact; permanent denials still fail closed. The
     // monotonic budget starts at this first failure, including subsequent I/O.
-    const deadline = performance.now() + 200;
+    const deadline = performance.now() + 1_000;
     const waitCell = new Int32Array(new SharedArrayBuffer(4));
     for (;;) {
       const remaining = deadline - performance.now();

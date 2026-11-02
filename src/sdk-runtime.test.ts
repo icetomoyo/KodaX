@@ -14078,8 +14078,9 @@ describe("createKodaXRuntime", () => {
       session.id,
       "run.interrupted",
     );
+    let settleInterrupted: (() => void) | undefined;
+    const abortRequested = vi.fn();
     codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => {
-      let settleInterrupted: (() => void) | undefined;
       const result = new Promise<KodaXResult>((resolve) => {
         settleInterrupted = () => resolve({
             success: false,
@@ -14092,7 +14093,7 @@ describe("createKodaXRuntime", () => {
       return {
         ...fakeRunningSession(options, result),
         abort() {
-          settleInterrupted?.();
+          abortRequested();
         },
       };
     });
@@ -14101,40 +14102,44 @@ describe("createKodaXRuntime", () => {
       sessionId: session.id,
       prompt: "cancel an active coding run",
     });
-    await expect(runtime.runs.abort(handle.runId)).resolves.toMatchObject({
-      accepted: true,
-      phase: "unknown",
-    });
-    await expect(runtime.runs.get(handle.runId)).resolves.toMatchObject({
-      phase: "unknown",
-      failureDetail: {
+    try {
+      await expect(runtime.runs.abort(handle.runId)).resolves.toMatchObject({
+        accepted: true,
+        phase: "unknown",
+      });
+      expect(abortRequested).toHaveBeenCalledOnce();
+      // Hold executor completion until the intermediate state has been observed.
+      await expect(runtime.runs.get(handle.runId)).resolves.toMatchObject({
+        phase: "unknown",
+        failureDetail: {
+          failureKind: "cancelled",
+          providerErrorCode: "cancelled",
+        },
+      });
+      settleInterrupted?.();
+      const result = await handle.result;
+      const status = await runtime.runs.get(handle.runId);
+      const [interruptedEvent] = interruptedCollector.events;
+      const diagnostics = await vi.waitFor(() => captureRuntimeSessionDiagnostics(runtime, {
+        sessionId: session.id,
+        runId: handle.runId,
+      }));
+      const expectedDetail = {
         failureKind: "cancelled",
+        stage: "runtime_control",
         providerErrorCode: "cancelled",
-      },
-    });
-    const result = await handle.result;
-    const status = await runtime.runs.get(handle.runId);
-    const [interruptedEvent] = interruptedCollector.events;
-    const diagnostics = await vi.waitFor(() => captureRuntimeSessionDiagnostics(runtime, {
-      sessionId: session.id,
-      runId: handle.runId,
-    }));
-    const expectedDetail = {
-      failureKind: "cancelled",
-      stage: "runtime_control",
-      providerErrorCode: "cancelled",
-      safeMessage: "Runtime run was cancelled by the user.",
-    } as const;
+        safeMessage: "Runtime run was cancelled by the user.",
+      } as const;
 
-    expect(result).toMatchObject({
-      phase: "interrupted",
-      failureDetail: expectedDetail,
-      terminal: { failureKind: "cancelled" },
-    });
-    expect(status.failureDetail).toEqual(expectedDetail);
-    expect(interruptedEvent?.payload).toMatchObject({ failureDetail: expectedDetail });
-    expect(diagnostics.run.failureDetail).toEqual(expectedDetail);
-    await runtime.close();
+      expect(result).toMatchObject({
+        phase: "interrupted",
+        failureDetail: expectedDetail,
+        terminal: { failureKind: "cancelled" },
+      });
+      expect(status.failureDetail).toEqual(expectedDetail);
+      expect(interruptedEvent?.payload).toMatchObject({ failureDetail: expectedDetail });
+      expect(diagnostics.run.failureDetail).toEqual(expectedDetail);
+    } finally { settleInterrupted?.(); await runtime.close(); }
   });
 
   it.each(["upstream signal", "runtime Stop"])("preserves cancellation through Runtime and Runner via %s", async (via) => {

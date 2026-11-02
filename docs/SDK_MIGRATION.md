@@ -92,7 +92,7 @@ Space 现有有限锁忙重试可保留；不重试损坏文件，不把配置�
 版本后盲目覆盖。确需复合修改时，使用已有 `withCoreConfigWriteLock`，锁内读取，调用
 新增公开 `writeCoreConfigAtomically`；不要嵌套再次加锁的 SDK mutation。
 锁失败或临时文件写入失败不发布部分配置；成功提交后才应用 Runtime 默认值/更新注册表。
-Windows reader 短暂拒绝替换（`EPERM`）时，在同一锁和 staged 文件内做最多 200 ms
+Windows reader 短暂拒绝替换（`EPERM`）时，在同一锁和 staged 文件内做最多 1 秒
 累计重试；永久拒绝、其他 IO 错误仍报错并保留旧文件。预算限制重试调度，不能打断单次
 内核调用。发布后的锁释放失败可能发生在提交完成之后；遇到它或断连等结果不明时先重读
 核对，不能假定失败等于未提交，不自动回滚或重放凭证/账号切换。凭证 binding/revision、

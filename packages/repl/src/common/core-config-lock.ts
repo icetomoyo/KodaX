@@ -90,8 +90,8 @@ function publishCoreConfigReplacement(temporary: string, file: string): void {
   catch (error: unknown) {
     if (process.platform !== 'win32' || errorCode(error) !== 'EPERM') throw error;
     // Readers/antivirus can briefly deny replacement. Keep both files intact,
-    // and retain the caller's writer lock within one monotonic 200 ms budget.
-    const deadline = performance.now() + 200;
+    // and retain the caller's writer lock within one monotonic one-second budget.
+    const deadline = performance.now() + 1_000;
     const waitCell = new Int32Array(new SharedArrayBuffer(4));
     for (;;) {
       const remaining = deadline - performance.now();

@@ -421,8 +421,8 @@ describe('runtime daemon state paths', () => {
     try { writeRuntimeDaemonState(paths, state()); } catch (error: unknown) { caught = error; }
 
     expect(caught).toBe(first);
-    expect(elapsed).toBe(200);
-    expect(rename).toHaveBeenCalledTimes(20);
+    expect(elapsed).toBe(1_000);
+    expect(rename).toHaveBeenCalledTimes(100);
     expect(readRuntimeDaemonState(paths)).toEqual(previous);
     expect(fs.readdirSync(paths.rootDir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
   });
@@ -453,7 +453,7 @@ describe('runtime daemon state paths', () => {
     const failure = Object.assign(new Error('rename denied'), { code: 'EPERM' });
     let elapsed = 0;
     vi.spyOn(performance, 'now').mockImplementation(() => elapsed);
-    vi.spyOn(Atomics, 'wait').mockImplementation(() => { elapsed = 205; return 'timed-out'; });
+    vi.spyOn(Atomics, 'wait').mockImplementation(() => { elapsed = 1_005; return 'timed-out'; });
     const rename = vi.spyOn(fsDefault, 'renameSync').mockImplementation(() => { throw failure; });
     syncBuiltinESMExports();
 
@@ -474,7 +474,7 @@ describe('runtime daemon state paths', () => {
       return 'timed-out';
     });
     const rename = vi.spyOn(fsDefault, 'renameSync').mockImplementationOnce(() => { throw first; })
-      .mockImplementation(() => { elapsed += 200; throw first; });
+      .mockImplementation(() => { elapsed += 1_000; throw first; });
     syncBuiltinESMExports();
 
     expect(() => writeRuntimeDaemonState(paths, state())).toThrow(first);
