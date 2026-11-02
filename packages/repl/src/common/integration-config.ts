@@ -17,7 +17,8 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 
 import type { McpServerConfig, McpServersConfig } from "@kodax-ai/agent";
-import { withConfigWriteLock, withCoreConfigWriteLock } from "./core-config-lock.js";
+import { readCoreConfig as readCoreConfigFile, writeCoreConfigAtomically as publishCoreConfig,
+  withConfigWriteLock, withCoreConfigWriteLock } from "./core-config-lock.js";
 
 export type IntegrationDomain = "mcp" | "a2a" | "extensions";
 export type IntegrationConfigSource = "user" | "legacy-user" | "default";
@@ -343,9 +344,7 @@ function snapshot<T extends object>(input: {
 }
 
 function readCoreConfig(configHome: string): Record<string, unknown> {
-  const file = coreConfigPath(configHome);
-  if (!existsSync(file)) return {};
-  return requireRecord(readJsonFile(file).value, "Core config");
+  return readCoreConfigFile(coreConfigPath(configHome));
 }
 
 export function readMcpIntegration(
@@ -475,18 +474,9 @@ function writeCoreConfigAtomically(
 ): void {
   const file = coreConfigPath(configHome);
   mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
-  const fd = openSync(temporary, "wx", 0o600);
   try {
-    writeFileSync(fd, `${JSON.stringify(config, null, 2)}\n`, "utf8");
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-  try {
-    renameSync(temporary, file);
+    publishCoreConfig(file, `${JSON.stringify(config, null, 2)}\n`);
   } catch (error: unknown) {
-    if (existsSync(temporary)) unlinkSync(temporary);
     throw new Error("Failed to atomically clean legacy integration fields.", {
       cause: error,
     });

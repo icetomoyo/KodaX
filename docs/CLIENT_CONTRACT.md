@@ -19,6 +19,9 @@ Main 新类型包括 `KodaXClientHostServices`、`RuntimeDefaultSkill`、`Runtim
 `RuntimeExecutionBindingSnapshot/Request/Resolver/Service`，从 `/client` 与 `/runtime` 导出。
 Product 输入不能携带这些执行 authority；排队拒绝由 `ClientInputAdmissionError` 显式呈现，
 会话 promotion 返回 `ClientSessionPromotionResult` 和权威 `ClientSession.metadataRevision`。
+可信 Main 配置读写的原子提交、公开完整读取与可区分的配置锁忙/损坏错误见
+[配置提交契约](SDK_MIGRATION.md#2026-11-02-核心配置提交补齐alpha12-之后未发布)；
+这些维护入口不授予 Renderer 读取凭证或跳过绑定/CAS 的权限。
 完整调用顺序、恢复/撤销与旧 Host 行为见 [SDK 迁移说明](SDK_MIGRATION.md)。
 
 2026-10-02 主线 rc.14 修复融合仍属于 FEATURE_298 / v0.7.97。中断后的下一次运行只从当前分支的 canonical Session/lineage、Run status 和已成功保存的显示 checkpoint 读取有限恢复说明；不恢复持久事件日志，也不根据事件推导成功。Host 先等待现有 checkpoint 写入，再按 inputId/turnId、sourceRunId 和 outputId 确认来源，排除已提交的同一输出、Thinking、child 输出及普通通知。工具提出、执行开始、结果已保存分别记录；重复 callId 按所属 assistantOutputId 匹配；执行开始但没有已保存结果时，效果仍为 unknown。说明仅进入临时模型上下文，不能成为用户指令或正式会话正文。未落盘 token 不承诺硬崩溃恢复。

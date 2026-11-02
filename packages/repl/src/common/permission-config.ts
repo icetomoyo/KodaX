@@ -19,6 +19,7 @@ import fsSync from 'fs';
 import path from 'path';
 
 import { getAgentConfigPath } from '@kodax-ai/agent';
+import { readCoreConfig, withCoreConfigWriteLock, writeCoreConfigAtomically } from './core-config-lock.js';
 import {
   PermissionMode,
   canonicalizePermissionMode,
@@ -172,13 +173,17 @@ function writeJsonFile(filePath: string, data: Record<string, unknown>): void {
  */
 export function loadPermissionMode(): PermissionMode | undefined {
   // Only use user-level config for permissionMode
-  const userConfig = readJsonFile(USER_CONFIG_FILE) as PermissionConfigData;
+  const userConfig = readCoreConfig(USER_CONFIG_FILE) as PermissionConfigData;
   if (userConfig.permissionMode === 'default') {
-    writeJsonFile(USER_CONFIG_FILE, {
-      ...userConfig,
-      permissionMode: 'accept-edits',
+    return withCoreConfigWriteLock(USER_CONFIG_FILE, () => {
+      const current = readCoreConfig(USER_CONFIG_FILE);
+      if (current.permissionMode === 'default') {
+        writeCoreConfigAtomically(USER_CONFIG_FILE, JSON.stringify({ ...current, permissionMode: 'accept-edits' }, null, 2));
+        return 'accept-edits';
+      }
+      return normalizePermissionMode(typeof current.permissionMode === 'string' ? current.permissionMode : undefined,
+        undefined as PermissionMode | undefined);
     });
-    return 'accept-edits';
   }
 
   return normalizePermissionMode(userConfig.permissionMode, undefined as PermissionMode | undefined);
@@ -189,10 +194,11 @@ export function loadPermissionMode(): PermissionMode | undefined {
  * 保存权限模式到用户级配置
  */
 export function savePermissionModeUser(mode: PermissionMode): void {
-  const current = readJsonFile(USER_CONFIG_FILE);
-  writeJsonFile(USER_CONFIG_FILE, {
-    ...current,
-    permissionMode: canonicalizePermissionMode(mode),
+  withCoreConfigWriteLock(USER_CONFIG_FILE, () => {
+    const current = readCoreConfig(USER_CONFIG_FILE);
+    writeCoreConfigAtomically(USER_CONFIG_FILE, JSON.stringify({
+      ...current, permissionMode: canonicalizePermissionMode(mode),
+    }, null, 2));
   });
 }
 

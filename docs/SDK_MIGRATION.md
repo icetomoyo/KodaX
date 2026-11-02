@@ -70,6 +70,31 @@ Host 原子保存 tag 与操作回执，历史、原生历史、lineage、附件
 Node SDK 与独立二进制均携带。自定义打包需保留该资源，不能省略后放宽协议校验。
 CLI 原体积门禁、CI job/矩阵/触发条件和发布依赖关系保持原值。
 
+### 2026-11-02 核心配置提交补齐（alpha.12 之后，未发布）
+
+Space 正式 alpha.12 验收基线为 `codex/sdk-alpha12-preparation@ca8d2313`；其配置
+原子性反馈已纳入 Root 后续修复。本节新增实现需要后续 SDK 包，版本字符串仍为 alpha.12
+不代表已发布这些字节。没有修改 Space 产品代码或其凭证来源。
+
+所有核心配置修改（Runtime、Provider CRUD/setup/OAuth registration、旧权限模式保存/
+迁移、初始化、saveConfig 与拆分集成迁移清理）使用同一配置写锁与原子替换。
+写入在同目录临时文件完成并同步后才发布；合作 writer 在锁内重新读取当前配置，保留
+未知字段与凭证。普通未加锁 reader 只见完整旧文档或新文档。此保证要求所有 writer
+升级；旧版截断写入、直接外部编辑、两个不同路径别名锁，以及突然断电的文件系统持久性
+不由它保证。显式配置文件 symlink 的原入口继续保留。
+
+可信 Main 可从 `/repl` 导入 `readCoreConfig(configPath)` 读取完整文档；只有文件确实
+缺失才返回 `{}`，损坏/不可读/断链返回 `CoreConfigReadError`，不回落默认值或重置账号。
+错误不携带配置原文或解析器 cause。`CoreConfigWriteConflictError` 保留原类身份，增加
+`code:'conflict'`、`data:{source:'configuration',reason:'lock_busy'}`；读取错误为
+`code:'internal_error'`、`data:{source:'configuration',reason:'read_failed'}`，兼容既有 RPC 错误码。
+Space 现有有限锁忙重试可保留；不重试损坏文件，不把配置忙归为网络故障，不补取新 CAS
+版本后盲目覆盖。确需复合修改时，使用已有 `withCoreConfigWriteLock`，锁内读取，调用
+新增公开 `writeCoreConfigAtomically`；不要嵌套再次加锁的 SDK mutation。
+锁失败或临时文件写入失败不发布部分配置；成功提交后才应用 Runtime 默认值/更新注册表。
+提交结果因断连不明时先重读并核对，不自动重放凭证或账号切换。凭证 binding/revision、
+OAuth 和撤销规则保持；改名不证明新别名有权使用旧账号。
+
 ### 2026-10-30 SDK 组合契约修复（未发布）
 
 Partner 默认具备所选通用 Agent 工作面的能力：persona、surface/profileId 和专家验证

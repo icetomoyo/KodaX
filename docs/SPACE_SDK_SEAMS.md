@@ -31,6 +31,12 @@ Host 原子保存元数据和回执，保留原 Session ID、历史、原生历�
 提交后重新同步 observation/history 修订及分页边界，不复用写入前的 cursor。
 旧 Host 缺能力时要求安全升级，不能直写文件或另建 Session 绕过。
 
+Space 最新已发布包验收基线为 `codex/sdk-alpha12-preparation@ca8d2313`。其追加的配置
+原子性缺口已在 Root 后续实现补齐：所有核心配置 writer 共用锁与原子发布，坏文件不回落
+空配置。公开完整读取、锁忙/读取失败语义、混合旧 writer 限制及 Main 复合修改方式见
+[配置提交契约](SDK_MIGRATION.md#2026-11-02-核心配置提交补齐alpha12-之后未发布)。
+Space 保留有限的明确锁忙重试，不能重试解析失败、绕过 CAS 或因改名默默采用另一账号。
+
 接手验收还需 Space 自己完成：所有现有专家和普通 Partner 的共享 Host 流程、队列切换/
 禁用/卸载、失败配置提交、显式方法覆盖、重连/冷恢复、连接器撤销、Actor 隔离以及
 Quick Ask 侧栏与丢响应恢复。Root 的协议/真实 Host 测试不能替代这些产品验收。

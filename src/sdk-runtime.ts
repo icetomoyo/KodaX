@@ -282,6 +282,8 @@ import {
   removeMcpServer,
   saveConfig,
   withCoreConfigWriteLock,
+  writeCoreConfigAtomically,
+  CoreConfigReadError,
   upsertCustomProvider,
   upsertMcpServer,
   validateMcpServerConfig,
@@ -22839,7 +22841,7 @@ function readRuntimeConfig(
 ): Record<string, unknown> {
   const document = readRuntimeConfigDocument(configFile);
   if (document.state === 'invalid') {
-    throw new Error(`Core configuration is unreadable or invalid: ${configFile ?? replApi.KODAX_CONFIG_FILE}. Repair the retained original before continuing.`);
+    throw new CoreConfigReadError(configFile ?? replApi.KODAX_CONFIG_FILE);
   }
   return document.config;
 }
@@ -23117,7 +23119,7 @@ function writeRuntimeConfigUnlocked(
   config: Record<string, unknown>,
 ): void {
   fs.mkdirSync(path.dirname(configFile), { recursive: true });
-  fs.writeFileSync(configFile, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  writeCoreConfigAtomically(configFile, `${JSON.stringify(config, null, 2)}\n`);
 }
 
 function mutateRuntimeConfig<T>(
@@ -23197,9 +23199,18 @@ function registerRuntimeConfiguredCustomProviders(
 function extractRuntimeCustomProviders(
   config: Record<string, unknown>,
 ): KodaXCustomProviderConfig[] {
-  return Array.isArray(config.customProviders)
-    ? structuredClone(config.customProviders as KodaXCustomProviderConfig[])
-    : [];
+  if (config.customProviders === undefined) return [];
+  if (!Array.isArray(config.customProviders)) throw new CoreConfigReadError('config.json');
+  try {
+    const names = new Set<string>();
+    for (const provider of config.customProviders) {
+      validateCustomProviderConfig(provider);
+      if (names.has(provider.name)) throw new CoreConfigReadError('config.json');
+      names.add(provider.name);
+    }
+  }
+  catch { throw new CoreConfigReadError('config.json'); }
+  return structuredClone(config.customProviders as KodaXCustomProviderConfig[]);
 }
 
 function cloneCustomProviders(

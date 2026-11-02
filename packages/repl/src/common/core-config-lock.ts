@@ -15,10 +15,36 @@ import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 export class CoreConfigWriteConflictError extends Error {
+  readonly code = 'conflict';
+  readonly data = { source: 'configuration', reason: 'lock_busy' } as const;
   constructor(configPath: string, lockPath = coreConfigWriteLockPath(configPath)) {
     super(`Core configuration lock is busy or its ownership cannot be safely recovered: ${configPath}. Retained lock: ${lockPath}. Use kodax doctor for offline recovery guidance; never remove a lock while shared writers may be active.`);
     this.name = 'CoreConfigWriteConflictError';
   }
+}
+
+/** Safe to display: parser/IO errors may contain credentials from config.json. */
+export class CoreConfigReadError extends Error {
+  readonly code = 'internal_error';
+  readonly data = { source: 'configuration', reason: 'read_failed' } as const;
+  constructor(file: string) {
+    super(`Core configuration is unreadable or invalid: ${file}. Retain and repair the original before continuing.`);
+    this.name = 'CoreConfigReadError';
+  }
+}
+
+/** A missing entry is empty; a broken link, unreadable file or invalid JSON is never a default. */
+export function readCoreConfig(file: string): Record<string, unknown> {
+  try { lstatSync(file); }
+  catch (error: unknown) {
+    if (errorCode(error) === 'ENOENT') return {};
+    throw new CoreConfigReadError(file);
+  }
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new CoreConfigReadError(file);
+    return parsed as Record<string, unknown>;
+  } catch { throw new CoreConfigReadError(file); }
 }
 
 // Only releases whose action has finished in this module may be retried while

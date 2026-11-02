@@ -4,7 +4,7 @@
  * fresh temp dir so the real `~/.kodax/config.json` is never touched.
  */
 
-import {
+import fs, {
   closeSync,
   existsSync,
   mkdirSync,
@@ -16,8 +16,9 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { syncBuiltinESMExports } from 'node:module';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { setAgentConfigHome } from '@kodax-ai/coding';
 
@@ -41,6 +42,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks(); syncBuiltinESMExports();
   setAgentConfigHome(undefined);
   rmSync(tmpHome, { recursive: true, force: true });
 });
@@ -48,6 +50,63 @@ afterEach(() => {
 function writeConfig(content: unknown): void {
   writeFileSync(configPath, JSON.stringify(content, null, 2), 'utf-8');
 }
+
+it.each(['{"apiKeys":{"anthropic":"fixture-preserve"},', '[]', 'null', 'fixture-preserve'])
+  ('retains damaged core configuration instead of publishing an empty replacement (%#)', raw => {
+    writeFileSync(configPath, raw);
+    for (const action of [() => listCustomProviders(), () => getCustomProviderConfig('alpha'),
+      () => upsertCustomProvider(makeProvider('alpha')), () => removeCustomProvider('alpha')]) {
+      expect(action).toThrow(/core configuration/i);
+      try { action(); } catch (error: unknown) { expect(String(error)).not.toContain('fixture-preserve'); }
+      expect(readFileSync(configPath, 'utf8')).toBe(raw);
+    }
+  });
+
+it('retains old credentials and unrelated fields when a partial disk write fails before publication', () => {
+  const original = JSON.stringify({ apiKeys: { anthropic: 'fixture-preserve-account' }, unknown: { retain: true },
+    customProviders: [makeProvider('alpha')] });
+  writeFileSync(configPath, original);
+  const write = fs.writeFileSync;
+  const fault = vi.spyOn(fs, 'writeFileSync').mockImplementation((target, data, options) => {
+    if (typeof data === 'string' && data.includes('fixture-preserve-account')) {
+      write(target, data.slice(0, 17), options);
+      throw Object.assign(new Error('Fixture disk full'), { code: 'ENOSPC' });
+    }
+    write(target, data, options);
+  });
+  syncBuiltinESMExports();
+  expect(() => upsertCustomProvider(makeProvider('beta'))).toThrow('Fixture disk full');
+  expect(readFileSync(configPath, 'utf8')).toBe(original);
+  fault.mockRestore(); syncBuiltinESMExports();
+  upsertCustomProvider(makeProvider('beta'));
+  expect(readConfig()).toMatchObject({ apiKeys: { anthropic: 'fixture-preserve-account' }, unknown: { retain: true } });
+  expect(listCustomProviders().map(provider => provider.name)).toEqual(['alpha', 'beta']);
+});
+
+it('does not replace an unreadable original or expose IO diagnostics containing configuration bytes', () => {
+  const raw = JSON.stringify({ apiKeys: { anthropic: 'fixture-unreadable-account' } });
+  writeFileSync(configPath, raw);
+  const read = fs.readFileSync;
+  const fault = vi.spyOn(fs, 'readFileSync').mockImplementation((target, options) => {
+    if (target === configPath) throw Object.assign(new Error('PRIVATE_CONFIGURATION_BYTES'), { code: 'EACCES' });
+    return read(target, options);
+  });
+  syncBuiltinESMExports();
+  for (const action of [() => listCustomProviders(), () => upsertCustomProvider(makeProvider('alpha'))]) {
+    expect(action).toThrow(/core configuration/i);
+    try { action(); } catch (error: unknown) { expect(String(error)).not.toContain('PRIVATE_CONFIGURATION_BYTES'); }
+  }
+  fault.mockRestore(); syncBuiltinESMExports();
+  expect(readFileSync(configPath, 'utf8')).toBe(raw);
+});
+
+it.each([{}, null, [null], [{ name: 'incomplete', apiKey: 'fixture-original-key' }], [makeProvider('duplicate'), makeProvider('duplicate')]])
+  ('retains malformed provider collections rather than deleting original credential bindings (%#)', customProviders => {
+    const raw = JSON.stringify({ customProviders, apiKeys: { anthropic: 'fixture-original-key' } });
+    writeFileSync(configPath, raw);
+    expect(() => upsertCustomProvider(makeProvider('beta'))).toThrow(/core configuration/i);
+    expect(readFileSync(configPath, 'utf8')).toBe(raw);
+  });
 
 function readConfig(): { customProviders?: Array<{ name: string }> } {
   if (!existsSync(configPath)) return {};

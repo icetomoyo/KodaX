@@ -1,4 +1,6 @@
 import fs from 'node:fs/promises';
+import syncFs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -17,6 +19,7 @@ describe('runtime config patch validation', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks(); syncBuiltinESMExports();
     try {
       for (const owner of daemonOwners.splice(0)) {
         await shutdownRuntimeDaemon(owner.homeDir, owner.profile);
@@ -30,6 +33,53 @@ describe('runtime config patch validation', () => {
       vi.resetModules();
       await fs.rm(tempRoot, { recursive: true, force: true });
     }
+  });
+
+  it('keeps the committed file and execution defaults when a Runtime patch disk write fails', async () => {
+    const configFile = path.join(tempRoot, '.kodax', 'config.json');
+    await fs.mkdir(path.dirname(configFile), { recursive: true });
+    await fs.writeFile(configFile, JSON.stringify({ model: 'before', unknown: { retain: true },
+      apiKeys: { deepseek: 'fixture-runtime-preserve-account' } }));
+    const { createKodaXRuntime } = await import('../tests/runtime-fixture.js');
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot });
+    const original = await fs.readFile(configFile, 'utf8');
+    const previousTokens = process.env.KODAX_MAX_OUTPUT_TOKENS;
+    const write = syncFs.writeFileSync;
+    const fault = vi.spyOn(syncFs, 'writeFileSync').mockImplementation((target, data, options) => {
+      if (typeof data === 'string' && data.includes('fixture-runtime-preserve-account')) {
+        write(target, data.slice(0, 17), options);
+        throw Object.assign(new Error('Fixture disk full'), { code: 'ENOSPC' });
+      }
+      write(target, data, options);
+    });
+    syncBuiltinESMExports();
+    try {
+      await expect(runtime.config.patch({ model: 'after', maxOutputTokens: 1234 })).rejects.toThrow('Fixture disk full');
+      expect(await fs.readFile(configFile, 'utf8')).toBe(original);
+      expect(process.env.KODAX_MAX_OUTPUT_TOKENS).toBe(previousTokens);
+      expect(await runtime.config.read()).toMatchObject({ model: 'before', unknown: { retain: true } });
+      fault.mockRestore(); syncBuiltinESMExports();
+      await runtime.config.patch({ model: 'after' });
+      expect(JSON.parse(await fs.readFile(configFile, 'utf8'))).toMatchObject({ model: 'after', unknown: { retain: true },
+        apiKeys: { deepseek: 'fixture-runtime-preserve-account' } });
+    } finally { fault.mockRestore(); syncBuiltinESMExports(); await runtime.close(); }
+  });
+
+  it.each([{ broken: 'fixture-saved-account' }, [
+    { name: 'duplicate', protocol: 'openai', baseUrl: 'https://example.local/v1', apiKeyEnv: 'FIXTURE_UNUSED_KEY', model: 'fixture' },
+    { name: 'duplicate', protocol: 'openai', baseUrl: 'https://example.local/v1', apiKeyEnv: 'FIXTURE_UNUSED_KEY', model: 'fixture' },
+  ]])('retains malformed saved provider bindings before accepting a catalog mutation (%#)', async customProviders => {
+    const { createKodaXRuntime } = await import('../tests/runtime-fixture.js');
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot });
+    const file = path.join(tempRoot, '.kodax', 'config.json');
+    const original = JSON.stringify({ customProviders });
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, original);
+    try {
+      await expect(runtime.catalog.upsertCustomProvider({ name: 'new', protocol: 'openai', baseUrl: 'https://example.local/v1',
+        apiKeyEnv: 'FIXTURE_UNUSED_KEY', model: 'fixture' })).rejects.toThrow(/core configuration/i);
+      expect(await fs.readFile(file, 'utf8')).toBe(original);
+    } finally { await runtime.close(); }
   });
 
   it('allows explicit public keys and rejects admin-plane keys that have dedicated APIs', async () => {
@@ -164,6 +214,22 @@ describe('runtime config patch validation', () => {
         provider: 'openai',
         model: 'daemon-home-model',
       });
+      const file = path.join(runtimeHome, '.kodax', 'config.json');
+      const original = await fs.readFile(file, 'utf8');
+      const lock = `${file}.write.lock`;
+      await fs.writeFile(lock, JSON.stringify({ version: 1, pid: process.pid, nonce: 'fixture-live-writer' }));
+      try {
+        await expect(runtime.config.patch({ model: 'must-not-write' })).rejects.toMatchObject({ code: 'conflict',
+          data: { source: 'configuration', reason: 'lock_busy' } });
+        expect(await fs.readFile(file, 'utf8')).toBe(original);
+      } finally { await fs.rm(lock); }
+      await fs.writeFile(file, 'PRIVATE_CONFIG_FRAGMENT');
+      try {
+        await expect(runtime.config.read()).rejects.toMatchObject({ code: 'internal_error',
+          data: { source: 'configuration', reason: 'read_failed' } });
+        await expect(runtime.config.patch({ model: 'must-not-clear' })).rejects.not.toThrow('PRIVATE_CONFIG_FRAGMENT');
+        expect(await fs.readFile(file, 'utf8')).toBe('PRIVATE_CONFIG_FRAGMENT');
+      } finally { await fs.writeFile(file, original); }
       await expect(fs.access(path.join(envHome, 'config.json'))).rejects.toThrow();
     } finally {
       await runtime.close();

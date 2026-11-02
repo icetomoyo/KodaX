@@ -16,6 +16,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Publish every core configuration update under the existing shared lock with
+  atomic replacement; retain old bytes on failed writes, reject damaged saved
+  provider collections before mutation, and keep configuration errors free of secrets.
 - Preserve rejected queued inputs and explicit Skill identity; retain prepared
   Skill admission context without replaying hooks or adopting changed policies
   during checkpoint recovery. New execution intent requires a compatible Host.

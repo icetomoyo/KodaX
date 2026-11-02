@@ -31,6 +31,20 @@
 15 秒；停止该扫描后完整文件与 Host 组重跑 167 项通过。该失败保留，不记为全量通过。
 后续冻结全套与 CI 结果在完成后另记，不能把分批计数相加冒充单次全绿。
 
+追加配置原子性范围（Space `ca8d2313` 正式 alpha.12 反馈）：公开 Provider CRUD、Runtime
+config/catalog、setup 与旧 permission 保存均做部分磁盘写失败注入，先 RED 复现截断/
+丢弃旧字段，再 GREEN 证明失败保留原字节；坏 JSON/坏 Provider 集合/不可读原件明确拒绝，
+诊断不带原文。`tests/bundled-space-host.test.mjs` 增加真实独立进程停在部分写入阶段、
+杀掉 writer、并发 Provider 改名与无关设置更新；未加锁 reader 必须只见完整已提交值，
+旧凭证 binding/CAS 不因改名获得新权限。该测试进入原有 bundle 门禁，不新增 CI job。
+
+第二候选 `3e87509f0` 的 CI `41392027227` 为 15 个 job 成功、Windows source(system)
+一个失败、publish 跳过。唯一失败是 1005 轮 Run 保留测试超过原 150 秒上限；本机分段探针
+100 轮约 5.5–7.3 秒，总约 61 秒，通过 1000 条淘汰点无突变。此证据未证明远端超时原因；
+探针已移除，未提高超时或降低 1005 轮覆盖。第二次本机全套 fast 3462/53 skip、unit
+13198/5 skip、contract 1034 通过后，system 期间开始了新增配置修复，旧 dist 与源码混用，
+该次 system 已停止，不能称为冻结全套通过。后续最终候选另行记录。
+
 首个冻结候选 `36d83f05e` 的 CI `41390222335` 暴露 npm `files` 白名单漏掉 schema
 数据，以及临时 Session 删除后调用 `runs.await` 的真实竞争。前者以 actual npm pack
 清单测试 RED→GREEN 修复；后者以公开接口等原临时 Session 确已删除后再 await，稳定
