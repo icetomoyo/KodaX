@@ -98,6 +98,17 @@ Windows reader 短暂拒绝替换（`EPERM`）时，在同一锁和 staged 文�
 核对，不能假定失败等于未提交，不自动回滚或重放凭证/账号切换。凭证 binding/revision、
 OAuth 和撤销规则保持；改名不证明新别名有权使用旧账号。
 
+最终功能已推送 Root `KodaX@b385395c9f8686aee182a4c6a38b4f3008421d32`，完整 CI
+[41401900534](https://github.com/icetomoyo/KodaX/actions/runs/41401900534) 全绿（16 个
+任务成功、发布按预期跳过）；本机冻结全套 19252 通过、87 条件跳过、0 失败/0 TODO，
+源码与产物指纹一致，双轴复审无剩余项。完整证据和先前失败见
+[最终验收](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#最终验收2026-11-02未发布)。
+设计子仓仍为 `7927f835744643b418d463b10a2e1c1c4bdd12e8`，Space 独立分支及产物未改。
+接手时先发布并锁定包含该提交的新 SDK 字节，按能力门禁启用默认方法/业务 resolver 和
+promotion，保留配置有限锁忙重试与原凭证来源，再走 Space 生产安装包的账号保持、撤销、
+排队/恢复和 Quick Ask 成品回归。已发布 alpha.12（标签 `f24a922c1`）不含本节后续补丁；
+本轮没有移动标签、发布 npm 或替 Space 完成产品侧适配。
+
 ### 2026-10-30 SDK 组合契约修复（未发布）
 
 Partner 默认具备所选通用 Agent 工作面的能力：persona、surface/profileId 和专家验证

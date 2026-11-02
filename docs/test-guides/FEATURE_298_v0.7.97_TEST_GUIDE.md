@@ -29,7 +29,7 @@
 
 本机初次全量扫描与其他重型验证并行，`sdk-client.startup.test.ts` 的 MCP 进入等待超过
 15 秒；停止该扫描后完整文件与 Host 组重跑 167 项通过。该失败保留，不记为全量通过。
-后续冻结全套与 CI 结果在完成后另记，不能把分批计数相加冒充单次全绿。
+最终冻结全套与 CI 结果见本节末“最终验收”；旧失败记录继续保留，不能把分批计数相加冒充单次全绿。
 
 追加配置原子性范围（Space `ca8d2313` 正式 alpha.12 反馈）：公开 Provider CRUD、Runtime
 config/catalog、setup 与旧 permission 保存均做部分磁盘写失败注入，先 RED 复现截断/
@@ -76,6 +76,47 @@ RED→GREEN。仅当前 owner 的 temporary Run 复用既有缓存准入，未�
 其中两个 one-shot 失败属于上述真实竞争；队列第三 Run 的调度等待改用其真实身份和
 completed 结果再检查三次请求；crash 夹具改为先核验原进程身份退出，并保留 bootstrap
 失败诊断。后两项单独重跑原已通过，未将新夹具写法宣称为首次失败唯一原因的复现证明。
+
+### 最终验收：2026-11-02（未发布）
+
+功能候选为 Root `KodaX@b385395c9f8686aee182a4c6a38b4f3008421d32`，已推送
+`origin/KodaX`。设计子仓仍为 `7927f835744643b418d463b10a2e1c1c4bdd12e8`，
+Space `codex/sdk-alpha12-preparation@ca8d2313` 及其产物未改。没有打标签或 npm 发布；
+已发布 alpha.12 标签仍指向本轮起点 `f24a922c1`，不能按版本字符串假定包含后续能力。
+
+- 源码/测试类型检查、完整 build 均 EXIT 0；本仓没有独立 lint script。
+- 单次 `npm run test:full`（Windows / Node 22）EXIT 0：fast 3462/53 skip，unit
+  13217/5 skip，contract 1034/0 skip，system 1539/29 skip；合计 **19252 通过、
+  87 条件跳过、0 失败、0 TODO**，1391 个文件通过、7 个文件跳过。该次是在最终
+  构建冻结后从头完成，区别于上面中止或混合源码/dist 的历史尝试。
+- 前后 7431 个源码/测试/构建文件 SHA-256 一致：
+  `450bad435fb4a668940e054b8c709e112545f400da2d03cc2df80c0998d36475`。
+  指纹排除文档；仅本节验收记录在完成后更新。完整日志 `%TEMP%/kodax-space-final-full.log`，
+  类型/构建分别为 `kodax-space-held-type.log`、`kodax-space-held-build.log`。
+  故障注入日志和测试进程的 beforeExit MaxListeners 警告原样保留，未通过提高监听器上限隐藏。
+- [最终完整 CI 41401900534](https://github.com/icetomoyo/KodaX/actions/runs/41401900534)
+  精确验证上述功能 SHA：16 个验证/构建任务成功，publish 按手动分支运行规则跳过。
+  Node 20/22、Linux/macOS/Windows、两个 Windows source tier、真实终端、原生并发/
+  权限、Electron、完整 bundle、实际通用 npm 安装与旧 Host 迁移均通过。总时长
+  25m59s；CI job/并行度/矩阵/触发条件没有修改。CI 摘要 `%TEMP%/kodax-space-final-ci.json`。
+- 最终本机构建专项 `node --test tests/bundled-cli-host-recovery.test.mjs tests/bundled-space-host.test.mjs`
+  为 5/5，包含 print/scoped 真杀 Host 后原 Run 恢复和配置独立进程故障/并发。
+  最新完整 bundle 与实际 npm tarball 的历史切换在上述 CI 成功候选上验证；本机较早
+  `1a4b5f7f3` 的 102/102 bundle 和 3/3 tarball 记录保留为该候选历史结果，不冒充新候选结果。
+- Windows CI 的真实占用用例 2/2（824/819 ms）；SDK Runtime 完整文件 342/342，
+  取消投影 582 ms，1005 轮保留 118.205 秒。没有提高原 150 秒保留门槛。
+- CLI 5157845 bytes，低于原 5177344 门槛，也小于正式 alpha.12 的 5174615 bytes。
+  较早源码保留链路同机单次对照约 61.6/61.2 秒；`1a4b5f7f3` 的本机 bundle 性能记录为
+  512 混合历史启动约 2.2 秒、220 退出树约 3.1 秒；最终 CI 重复通过同一恢复预算门禁。
+  首屏采样在 `1a4b5f7f3` 完成，正式 alpha.12 与该候选各 5 次抽样中位数
+  2.652/2.888 秒，范围 2.541–3.020/2.667–3.097 秒；小样本范围重叠，保留约 0.24 秒
+  差异，不据此宣称完全无性能变化或因果提升。原始测量位于
+  `%TEMP%/kodax-space-perf-ZziYud/first-ready-results.json`。
+
+Standards 轴：最终功能及配置/Windows/取消夹具增量复审，硬违反 0、坏味道判断 0。
+Spec 轴：默认 Skill、消费时业务绑定、原绑定恢复、同 Session promotion 与配置提交合同
+无剩余发现。真实云/OAuth 服务、模型质量及 Space 成品接入仍由其对应发布/产品门禁验收；
+离线 loopback 和进程组合通过不能替代这些验证。
 
 ## 2026-10-30 Partner 通用 Agent 契约修复（未发布）
 
