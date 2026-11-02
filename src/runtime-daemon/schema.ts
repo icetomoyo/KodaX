@@ -1,5 +1,24 @@
 import type { AgentSpawnInput } from '@kodax-ai/agent';
 import type { KodaXContextOverflowFacts } from '@kodax-ai/llm';
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+declare const KODAX_DAEMON_SCHEMA_RESOURCE: boolean | undefined;
+let resource: RuntimeDaemonProtocolSchema | undefined;
+function loadSchemaResource(): RuntimeDaemonProtocolSchema {
+  if (!resource) {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const candidates = process.env.KODAX_BUNDLED === 'true'
+      ? [path.join(path.dirname(process.execPath), 'runtime-daemon-schema.json')]
+      : [path.join(here, 'runtime-daemon-schema.json'), path.join(here, '..', 'runtime-daemon-schema.json')];
+    resource = JSON.parse(readFileSync(candidates.find(existsSync) ?? candidates[0]!, 'utf8')) as RuntimeDaemonProtocolSchema;
+    if (resource.protocol !== KODAX_DAEMON_PROTOCOL || resource.version !== KODAX_DAEMON_PROTOCOL_VERSION) {
+      throw new Error('Runtime daemon schema resource version mismatch.');
+    }
+  }
+  return resource;
+}
 
 import {
   KODAX_DAEMON_PROTOCOL,
@@ -56,7 +75,8 @@ const nullOrObjectSchema: RuntimeDaemonJsonSchema = {
 const okSchema = objectSchema({ ok: booleanSchema }, ['ok']);
 const noParamsSchema = objectSchema({});
 
-export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
+export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeDaemonMethodSchema> =
+  typeof KODAX_DAEMON_SCHEMA_RESOURCE !== 'undefined' && KODAX_DAEMON_SCHEMA_RESOURCE ? loadSchemaResource().methods : {
   initialize: {
     params: objectSchema({
       profile: stringSchema,
@@ -120,6 +140,15 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   },
 
   'session.create': { params: createSessionParamsSchema(), result: sessionSchema() },
+  'session.promote': {
+    params: objectSchema({ sessionId: stringSchema, requestId: { type: 'string', maxLength: 128 },
+      expectedRevision: stringSchema, tag: { type: 'string', maxLength: 256 } }, ['sessionId', 'requestId', 'expectedRevision', 'tag']),
+    result: objectSchema({ requestId: stringSchema, session: sessionSchema() }, ['requestId', 'session']),
+  },
+  'session.promotion.read': {
+    params: objectSchema({ sessionId: stringSchema, requestId: stringSchema }, ['sessionId', 'requestId']),
+    result: { oneOf: [{ type: 'null' }, objectSchema({ requestId: stringSchema, session: sessionSchema() }, ['requestId', 'session'])] },
+  },
   'session.load': {
     params: objectSchema({
       sessionId: stringSchema,
@@ -397,6 +426,9 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
     }, ['leaseId', 'providers'], true),
     result: objectAnySchema,
   },
+  'execution.register': { params: objectSchema({ leaseId: stringSchema }, ['leaseId']), result: objectAnySchema },
+  'execution.revoke': { params: objectSchema({ leaseId: stringSchema }, ['leaseId']), result: objectSchema({ revoked: booleanSchema }, ['revoked']) },
+  'execution.complete': { params: objectSchema({ requestId: stringSchema, resolution: executionAuthorizationSchema(), error: stringSchema }, ['requestId']), result: okSchema },
   'credential.get': {
     params: objectSchema({ leaseId: stringSchema }, ['leaseId']),
     result: { oneOf: [objectAnySchema, { type: 'null' }] },
@@ -803,7 +835,8 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS = {
   },
 } satisfies Record<RuntimeDaemonMethod, RuntimeDaemonMethodSchema>;
 
-export const RUNTIME_DAEMON_NOTIFICATION_SCHEMAS = {
+export const RUNTIME_DAEMON_NOTIFICATION_SCHEMAS: Record<RuntimeDaemonNotificationMethod, RuntimeDaemonJsonSchema> =
+  typeof KODAX_DAEMON_SCHEMA_RESOURCE !== 'undefined' && KODAX_DAEMON_SCHEMA_RESOURCE ? loadSchemaResource().notifications : {
   'subscription.error': objectSchema({ subscriptionId: stringSchema, message: stringSchema }, ['subscriptionId', 'message']),
   'session.view': objectSchema({ subscriptionId: stringSchema, view: objectAnySchema }, ['subscriptionId', 'view']),
   event: objectSchema({ subscriptionId: stringSchema, event: objectAnySchema }, ['subscriptionId', 'event']),
@@ -827,6 +860,7 @@ export const RUNTIME_DAEMON_NOTIFICATION_SCHEMAS = {
     }, ['code', 'reason', 'runtimeId', 'message']),
   }, ['subscriptionId', 'invalidation']),
   'credential.request': objectAnySchema,
+  'execution.resolve': objectSchema({ requestId: stringSchema, leaseId: stringSchema, request: objectAnySchema }, ['requestId', 'leaseId', 'request']),
   'host_tool.invoke': objectAnySchema,
   'runtime.warning': objectAnySchema,
 } satisfies Record<RuntimeDaemonNotificationMethod, RuntimeDaemonJsonSchema>;
@@ -1416,7 +1450,10 @@ function startRunParamsSchema(): RuntimeDaemonJsonSchema {
 
 function executionAuthorizationSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
+    binding: objectSchema({ leaseId: stringSchema }, ['leaseId']),
+    businessBinding: objectSchema({ id: stringSchema, revision: stringSchema, data: objectAnySchema }, ['id', 'revision']),
     profile: objectSchema({ agentProfile: objectAnySchema, taskVerification: objectAnySchema,
+      defaultSkill: objectSchema({ name: { type: 'string', maxLength: 128 } }, ['name']),
       tools: arraySchema(stringSchema), toolMetadata: arraySchema(objectSchema({ name: stringSchema,
         sideEffect: { enum: ['readonly', 'reads-network', 'mutates-fs', 'mutates-shell', 'mutates-network', 'mutates-state'] },
         planModeAllowed: booleanSchema }, ['name', 'sideEffect', 'planModeAllowed'])) }, []),

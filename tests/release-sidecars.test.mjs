@@ -8,7 +8,7 @@ import { test } from 'node:test';
 
 const exec = promisify(execFile);
 const workflow = await readFile(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
-const required = ['provider-capabilities.json', 'manual-topics.json', 'static-text.json', 'windows-native-scripts.json', 'generated-config-templates.json'];
+const required = ['provider-capabilities.json', 'manual-topics.json', 'static-text.json', 'runtime-daemon-schema.json', 'windows-native-scripts.json', 'generated-config-templates.json'];
 
 test('the real tar release inventory includes every runtime data sidecar', async () => {
   const names = workflow.match(/sidecars=\(([\s\S]*?)\n\s*\)/)?.[1].trim().split(/\s+/);

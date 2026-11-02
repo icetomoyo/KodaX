@@ -17,6 +17,7 @@ export function createExecutionProfile(
     .filter(tool => !context.excludeTools?.includes(tool.name)
     && (context.toolVisibilityPolicy?.(tool) ?? true));
   return structuredClone({
+    ...(context.defaultSkill === undefined ? {} : { defaultSkill: context.defaultSkill }),
     ...(context.agentProfile === undefined ? {} : { agentProfile: context.agentProfile }),
     ...(context.taskVerification === undefined ? {} : { taskVerification: context.taskVerification }),
     ...(restricted ? { tools: metadata!.map(tool => tool.name), toolMetadata: metadata } : {}),

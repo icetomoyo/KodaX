@@ -365,6 +365,7 @@ const commonOptions = {
   // to '0.0.0' in the banner). Same mechanism Bun --compile uses for the
   // standalone binary build (see packages/repl/src/common/utils.ts:265).
   define: {
+    KODAX_DAEMON_SCHEMA_RESOURCE: 'true',
     // The loader also keeps a runtime Bun gate: this Node distribution is fed
     // to Bun --compile later, after first-stage defines have already folded.
     KODAX_CLI_LAZY_COMPONENTS: 'true',
@@ -401,6 +402,14 @@ const commonOptions = {
 };
 
 // ---- build CLI entry -----------------------------------------------------
+
+// Generate the complete schema from its typed source. Production consumes the
+// same data without carrying the schema-builder program in every CLI bundle.
+const schemaBuild = await build({ ...commonOptions, entryPoints: [path.join(repoRoot, 'src/runtime-daemon/schema.ts')],
+  write: false, metafile: false, sourcemap: false,
+  define: { ...commonOptions.define, KODAX_DAEMON_SCHEMA_RESOURCE: 'false' } });
+const schemaModule = await import(`data:text/javascript;base64,${Buffer.from(schemaBuild.outputFiles[0].text).toString('base64')}`);
+writeFileSync(path.join(distDir, 'runtime-daemon-schema.json'), JSON.stringify(schemaModule.RUNTIME_DAEMON_PROTOCOL_SCHEMA));
 
 log('Building dist/kodax_cli.js (CLI entry)…');
 const cliResult = await build({

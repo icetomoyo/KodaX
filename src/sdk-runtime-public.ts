@@ -1,4 +1,6 @@
 export { providerOAuthStore, migrateProviderOAuthRegistration } from './provider-oauth-store.js';
+export type { KodaXClientHostServices, RuntimeDefaultSkill, RuntimeBusinessBinding, RuntimeExecutionBindingSnapshot,
+  RuntimeExecutionBindingRequest, RuntimeExecutionBindingResolver, RuntimeExecutionBindingService } from './client-host-authorization.js';
 export { inspectStorageRepair, inspectStorageRepairCandidate, applyStorageRepair, confirmStorageRepair } from './storage-repair.js';
 export type { StorageRepairTarget, StorageRepairPlan, StorageRepairReceipt } from './storage-repair.js';
 export { loginProviderOAuth } from './provider-oauth-login.js';
@@ -247,6 +249,8 @@ export type {
   RuntimeScopedCredentialRequest,
   RuntimeScopedCredentialTarget,
   RuntimeSession,
+  RuntimePromoteSessionInput,
+  RuntimeSessionPromotionResult,
   RuntimeSessionCancelInput,
   RuntimeSessionCancelReceipt,
   RuntimeSessionDiagnosticError,

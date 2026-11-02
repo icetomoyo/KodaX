@@ -2,10 +2,11 @@
 import type {
   ClientCommandInput, ClientReviewInput, ClientSubmitInput, ClientToolInvocationInput, ClientWorkflowStartInput,
 } from '@kodax-ai/coding/client-contract';
-import type { AgentSpawnInput } from '@kodax-ai/agent';
+import type { AgentSpawnInput, KodaXJsonValue } from '@kodax-ai/agent';
 import type { KodaXAgentProfile, KodaXTaskVerificationContract, KodaXToolVisibilityMeta, KodaXToolVisibilityPolicy } from '@kodax-ai/coding/client-contract';
 
 export interface RuntimeExecutionProfile {
+  readonly defaultSkill?: RuntimeDefaultSkill;
   readonly agentProfile?: KodaXAgentProfile;
   readonly taskVerification?: KodaXTaskVerificationContract;
   /** Additional ceiling, intersected with the selected mode and Host restrictions. */
@@ -15,10 +16,42 @@ export interface RuntimeExecutionProfile {
 }
 
 export interface RuntimeExecutionProfileSource {
+  readonly defaultSkill?: RuntimeDefaultSkill;
   readonly agentProfile?: KodaXAgentProfile;
   readonly taskVerification?: KodaXTaskVerificationContract;
   readonly toolVisibilityPolicy?: KodaXToolVisibilityPolicy;
   readonly excludeTools?: readonly string[];
+}
+
+/** A method reference resolved only by the executing Host's registry. */
+export interface RuntimeDefaultSkill { readonly name: string; }
+
+/** Non-secret committed application identity; never credentials or callbacks. */
+export interface RuntimeBusinessBinding {
+  readonly id: string;
+  readonly revision: string;
+  readonly data?: Readonly<Record<string, KodaXJsonValue>>;
+}
+
+export interface RuntimeExecutionBindingSnapshot {
+  readonly businessBinding: RuntimeBusinessBinding;
+  readonly defaultSkill?: RuntimeDefaultSkill;
+}
+
+export interface RuntimeExecutionBindingRequest {
+  readonly phase: 'admission' | 'recovery';
+  readonly sessionId: string;
+  readonly input?: ClientSubmitInput;
+  readonly recovery?: { readonly runId: string; readonly snapshot?: RuntimeExecutionBindingSnapshot;
+    readonly profile: RuntimeExecutionProfile };
+}
+
+export type RuntimeExecutionBindingResolver = (request: RuntimeExecutionBindingRequest, services: KodaXClientHostServices, signal: AbortSignal)
+  => Promise<Omit<RuntimeExecutionAuthorization, 'binding'>>;
+
+export interface RuntimeExecutionBindingService {
+  register(resolver: RuntimeExecutionBindingResolver): Promise<{ readonly id: string }>;
+  revoke(leaseId: string): Promise<boolean>;
 }
 
 export interface RuntimeCredentialRequest {
@@ -194,6 +227,9 @@ export interface KodaXClientWorkflowHostPolicy {
 
 /** Non-secret capabilities selected by trusted Main code, never by a Product input. */
 export interface RuntimeExecutionAuthorization {
+  /** Resolve the committed application binding at actual consumption, through this Main-owned lease. */
+  readonly binding?: { readonly leaseId: string };
+  readonly businessBinding?: RuntimeBusinessBinding;
   /** Trusted root behavior and tool ceiling; callbacks remain in Main. */
   readonly profile?: RuntimeExecutionProfile;
   readonly credential?: Extract<RuntimeCredentialBinding, { readonly mode: 'scoped' }>;
@@ -216,10 +252,17 @@ export type KodaXClientExecutionRequest =
   | { readonly kind: 'agent_followup'; readonly input: { readonly sessionId: string; readonly actorPath: string; readonly objective: string; readonly expectedRevision?: number; readonly resumeCheckpoint?: boolean } }
   | { readonly kind: 'compaction'; readonly input: { readonly sessionId: string; readonly customInstructions?: string } };
 
+export interface KodaXClientHostServices {
+  readonly identity: { readonly runtimeId: string; readonly profile?: string };
+  readonly credentials: RuntimeCredentialService;
+  readonly hostTools: RuntimeHostToolService;
+  readonly executionBindings: RuntimeExecutionBindingService;
+  /** Evaluate in Main against this Session's actual Host catalog plus the selected lease. */
+  readonly createExecutionProfile: (context: RuntimeExecutionProfileSource, hostTools?: readonly RuntimeHostToolDescriptor[]) => Promise<RuntimeExecutionProfile>;
+}
+
 export type KodaXClientHostAuthorization = (
   request: KodaXClientExecutionRequest,
-  services: { readonly identity: { readonly runtimeId: string; readonly profile?: string }; readonly credentials: RuntimeCredentialService; readonly hostTools: RuntimeHostToolService;
-    /** Evaluate in Main against this Session's actual Host catalog plus the selected lease. */
-    readonly createExecutionProfile: (context: RuntimeExecutionProfileSource, hostTools?: readonly RuntimeHostToolDescriptor[]) => Promise<RuntimeExecutionProfile> },
+  services: KodaXClientHostServices,
 ) => Promise<RuntimeExecutionAuthorization | undefined>;
 

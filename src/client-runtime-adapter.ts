@@ -3,7 +3,7 @@ import { memoryProposalRevision } from '@kodax-ai/agent';
 import type { KodaXRuntime } from './sdk-runtime.js';
 import { toClientConfig, toClientSessionSettings } from './client-settings.js';
 import type { KodaXClientExecutionRequest, KodaXClientHostAuthorization, RuntimeExecutionAuthorization } from './client-host-authorization.js';
-import { createExecutionProfile, hostToolMetadata } from './execution-profile.js';
+import { createExecutionServices } from './execution-services.js';
 
 /**
  * FEATURE_298 T35 — project a connected runtime as the product client. The
@@ -14,6 +14,11 @@ export function toKodaXProductClient(
   runtime: KodaXRuntime,
   authorizeExecution?: KodaXClientHostAuthorization,
 ): KodaXProductClient {
+  const requirePromotionContract = (): void => {
+    if ((runtime.capabilities?.sessionPromotion as { version?: number } | undefined)?.version !== 1) {
+      throw Object.assign(new Error('Session promotion requires an upgraded Host.'), { code: 'daemon_upgrade_required' });
+    }
+  };
   const authorize = async <Request extends KodaXClientExecutionRequest>(request: Request): Promise<Request['input'] & {
     readonly authorization?: RuntimeExecutionAuthorization;
   }> => {
@@ -21,31 +26,16 @@ export function toKodaXProductClient(
     // Untyped Product/IPC inputs cannot supply Host authority.
     for (const key of ['authorization', 'credential', 'hostTools', 'providerCredential',
       'providerCredentialAccess', 'origin', 'trustedRunId', 'workflowHostPolicy', 'profile', 'agentProfile',
-      'workModePolicy', 'toolVisibilityPolicy', 'tools']) delete (input as unknown as Record<string, unknown>)[key];
-    const requireProfileContract = () => {
-      if ((runtime.capabilities?.productExecutionProfile as { version?: number } | undefined)?.version !== 2) {
-        throw Object.assign(new Error('Execution profiles require an upgraded Host.'), { code: 'daemon_upgrade_required' });
-      }
-    };
-    const authorization = await authorizeExecution?.({ ...request, input } as Request, {
-      get identity() { return runtime.identity; },
-      credentials: runtime.credentials, hostTools: runtime.hostTools,
-      async createExecutionProfile(context, hostTools = []) {
-        requireProfileContract();
-        if (!runtime.catalog.executionTools) throw new Error('Host tool catalog is unavailable.');
-        if (!('sessionId' in input) || input.sessionId === undefined) throw new Error('An execution profile requires a Session identity.');
-        const catalog = await runtime.catalog.executionTools(input.sessionId);
-        const names = new Set(catalog.map(tool => tool.name));
-        for (const tool of hostTools) {
-          if (names.has(tool.name)) throw new Error(`Host tool collides with a registered tool: ${tool.name}`);
-          names.add(tool.name);
-        }
-        return createExecutionProfile(context, [...catalog, ...hostTools.map(hostToolMetadata)]);
-      },
-    });
+      'workModePolicy', 'toolVisibilityPolicy', 'tools', 'binding', 'businessBinding', 'defaultSkill']) delete (input as unknown as Record<string, unknown>)[key];
+    const authorization = await authorizeExecution?.({ ...request, input } as Request,
+      createExecutionServices(runtime, 'sessionId' in input ? input.sessionId : undefined));
     if ((authorization?.profile !== undefined || authorization?.tools !== undefined)
       && (runtime.capabilities?.productExecutionProfile as { version?: number } | undefined)?.version !== 2) {
       throw Object.assign(new Error('Execution profiles require an upgraded Host.'), { code: 'daemon_upgrade_required' });
+    }
+    if ((authorization?.profile?.defaultSkill !== undefined || authorization?.binding !== undefined || authorization?.businessBinding !== undefined)
+      && (runtime.capabilities?.productExecutionBinding as { version?: number } | undefined)?.version !== 1) {
+      throw Object.assign(new Error('Default Skills require an upgraded Host.'), { code: 'daemon_upgrade_required' });
     }
     return { ...input, ...(authorization === undefined ? {} : { authorization: structuredClone(authorization) }) };
   };
@@ -74,6 +64,14 @@ export function toKodaXProductClient(
     sessions: {
       cancel: input => runtime.sessions.cancel(input),
       create: (input) => runtime.sessions.create(input),
+      promote: async input => {
+        requirePromotionContract();
+        return runtime.sessions.promote(input);
+      },
+      readPromotion: async (sessionId, requestId) => {
+        requirePromotionContract();
+        return runtime.sessions.readPromotion(sessionId, requestId);
+      },
       list: (filter) => runtime.sessions.list(filter),
       read: (sessionId) => runtime.sessions.load(sessionId),
       delete: (sessionId) => runtime.sessions.delete(sessionId),

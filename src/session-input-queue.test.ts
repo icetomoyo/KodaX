@@ -2,6 +2,24 @@ import { expect, it, vi } from 'vitest';
 import { SessionInputQueue } from './session-input-queue.js';
 import { withProductExecution, type ProductExecutionContext } from './product-execution-authorization.js';
 
+it('retains rejected queued intent across restart and reports a cleared error only after original-principal rebind', () => {
+  const queue = new SessionInputQueue(() => {});
+  const context: ProductExecutionContext = { principalId: 'A', key: 'lease', bindRun: async input => input };
+  const input = { sessionId: 's', inputId: 'blocked', text: 'Keep my original question' };
+  withProductExecution(context, () => queue.enqueue(input, false));
+  queue.block('s', 'blocked', { code: 'execution_binding_rejected', message: 'Disabled expert' });
+  const saved = queue.snapshot('s');
+  expect(queue.batch('s')).toEqual([]);
+  expect(queue.read('s', 'blocked')?.admissionError?.code).toBe('execution_binding_rejected');
+  const restored = new SessionInputQueue(() => {});
+  withProductExecution(context, () => restored.restore(saved));
+  expect(restored.batch('s')).toEqual([]);
+  withProductExecution({ ...context, principalId: 'B' }, () => expect(() => restored.rebind(input)).toThrow(/principal/));
+  withProductExecution(context, () => expect(restored.rebind(input)).not.toHaveProperty('admissionError'));
+  expect(restored.batch('s')).toMatchObject([{ input }]);
+  expect(restored.snapshot('s')[0]).not.toHaveProperty('admissionError');
+});
+
 it.each([undefined, 'immediate', 'after_turn', 'redirect'] as const)('preserves exact queued delivery intent %s across restart and fresh authorization', (delivery) => {
   const input = { sessionId: 's', inputId: 'pending', text: 'Keep the original constraint.',
     ...(delivery !== undefined ? { delivery } : {}),

@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 import { MessageQueue, type QueuedMessage } from '@kodax-ai/agent';
-import type { ClientInputAcceptance, ClientQueuedInput, ClientSubmitInput } from '@kodax-ai/coding/client-contract';
-import { currentProductExecution, type ProductExecutionContext } from './product-execution-authorization.js';
+import type { ClientInputAcceptance, ClientInputAdmissionError, ClientQueuedInput, ClientSubmitInput } from '@kodax-ai/coding/client-contract';
+import { currentProductExecution, productExecutionIntentKey, type ProductExecutionContext } from './product-execution-authorization.js';
 
 interface QueuedInputFact {
+  explicitSkill?: string | null;
+  admissionError?: ClientInputAdmissionError;
   execution?: ProductExecutionContext;
   readonly principalId?: string;
   awaitingBinding?: boolean;
@@ -14,12 +16,15 @@ interface QueuedInputFact {
   readonly delivery?: ClientSubmitInput['delivery'];
   readonly targetRunId?: string;
   /** Host-confirmed Skill boundary; trusted expansion happens at consumption. */
-  readonly skill: boolean;
+  skill: boolean;
   state: ClientInputAcceptance['state'];
   runId?: string;
 }
 
 export interface PendingSessionInput {
+  /** null marks a new default/Run boundary; absent on legacy explicit Skill queues. */
+  readonly explicitSkill?: string | null;
+  readonly admissionError?: ClientInputAdmissionError;
   readonly input: ClientSubmitInput;
   readonly skill: boolean;
   readonly principalId?: string;
@@ -62,23 +67,32 @@ export class SessionInputQueue {
   }
 
   snapshot(sessionId: string): readonly PendingSessionInput[] {
-    return this.ordered(sessionId).map(({ input, skill, principalId }) => ({
-      input: structuredClone(input), skill,
-      ...(principalId ? { principalId } : {}),
-    }));
+    return this.ordered(sessionId).map(({ input, skill, principalId, explicitSkill }) => {
+      const error = this.facts.get(this.key(sessionId, input.inputId))?.admissionError;
+      return { input: structuredClone(input), skill,
+        ...(explicitSkill === undefined ? {} : { explicitSkill }),
+        ...(error === undefined ? {} : { admissionError: structuredClone(error) }),
+        ...(principalId ? { principalId } : {}) };
+    });
   }
 
   validateRestore(inputs: readonly PendingSessionInput[]): void {
     const additions = new Map<string, Set<string>>();
     const intents = new Map<string, string>();
     for (const value of inputs) {
+      if (value.explicitSkill !== undefined && value.explicitSkill !== null && (typeof value.explicitSkill !== 'string' || !value.explicitSkill.trim()
+        || value.explicitSkill.length > 128)) throw conflict('Malformed queued Skill identity.');
+      const error = value.admissionError;
+      if (error !== undefined && (error === null || typeof error !== 'object'
+        || !['execution_binding_unavailable', 'execution_binding_rejected', 'execution_binding_changed', 'default_skill_unavailable'].includes(error.code)
+        || typeof error.message !== 'string' || error.message.length > 512)) throw conflict('Malformed queued admission error.');
       const key = this.key(value.input.sessionId, value.input.inputId);
       const intent = JSON.stringify([inputIntentDigest(value.input), value.principalId]);
       if (intents.has(key) && intents.get(key) !== intent) throw conflict('Input ID already belongs to a different intent.');
       intents.set(key, intent);
       const existing = this.facts.get(key);
       if (existing) {
-        if (existing.principalId !== value.principalId || existing.digest !== inputIntentDigest(value.input, existing.awaitingBinding ? undefined : existing.execution?.key)) {
+        if (existing.principalId !== value.principalId || existing.digest !== inputIntentDigest(value.input, existing.awaitingBinding ? undefined : productExecutionIntentKey(existing.execution))) {
           throw conflict('Input ID already belongs to a different intent.');
         }
         continue;
@@ -109,11 +123,12 @@ export class SessionInputQueue {
           const execution = currentProductExecution();
           const key = this.key(value.input.sessionId, value.input.inputId);
           if (this.facts.has(key)) {
-            if (!deferAuthorization && value.principalId === execution?.principalId) this.rebind(value.input);
+            if (!deferAuthorization && value.admissionError === undefined && value.principalId === execution?.principalId) this.rebind(value.input);
             continue;
           }
-          const awaitingBinding = deferAuthorization || value.principalId !== execution?.principalId;
-          this.enqueueWithExecution(value.input, value.skill, awaitingBinding ? undefined : execution, value.principalId, awaitingBinding);
+          const awaitingBinding = deferAuthorization || value.admissionError !== undefined || value.principalId !== execution?.principalId;
+          this.enqueueWithExecution(value.input, value.skill, awaitingBinding ? undefined : execution, value.principalId, awaitingBinding, value.explicitSkill);
+          if (value.admissionError !== undefined) this.facts.get(key)!.admissionError = structuredClone(value.admissionError);
         }
       } finally {
         this.restoring = false;
@@ -128,14 +143,15 @@ export class SessionInputQueue {
   read(sessionId: string, inputId: string): ClientInputAcceptance | undefined {
     const fact = this.facts.get(this.key(sessionId, inputId));
     if (!fact) return undefined;
-    return { sessionId, inputId, state: fact.state, ...(fact.runId ? { runId: fact.runId } : {}) };
+    return { sessionId, inputId, state: fact.state, ...(fact.runId ? { runId: fact.runId } : {}),
+      ...(fact.admissionError === undefined ? {} : { admissionError: structuredClone(fact.admissionError) }) };
   }
 
   find(input: ClientSubmitInput): ClientInputAcceptance | undefined {
     const fact = this.facts.get(this.key(input.sessionId, input.inputId));
     if (!fact) return undefined;
     if (fact.awaitingBinding && fact.principalId !== currentProductExecution()?.principalId) throw conflict('Pending input requires its original principal to rebind.');
-    if (fact.digest !== inputIntentDigest(input, fact.awaitingBinding ? undefined : currentProductExecution()?.key)) throw conflict('Input ID already belongs to a different intent.');
+    if (fact.digest !== inputIntentDigest(input, fact.awaitingBinding ? undefined : productExecutionIntentKey(currentProductExecution()))) throw conflict('Input ID already belongs to a different intent.');
     return this.read(input.sessionId, input.inputId);
   }
 
@@ -144,35 +160,43 @@ export class SessionInputQueue {
     const found = this.find(input);
     const fact = this.facts.get(this.key(input.sessionId, input.inputId));
     if (fact?.awaitingBinding) {
+      if (fact.admissionError !== undefined) this.persistPending(input.sessionId, this.snapshot(input.sessionId).map(value => {
+        if (value.input.inputId !== input.inputId) return value;
+        const { admissionError: _error, ...rest } = value;
+        return rest;
+      }));
       fact.execution = currentProductExecution();
-      fact.digest = inputIntentDigest(input, fact.execution?.key);
+      fact.digest = inputIntentDigest(input, productExecutionIntentKey(fact.execution));
       fact.awaitingBinding = false;
+      delete fact.admissionError;
       this.changed(input.sessionId);
     }
-    return found;
+    return found === undefined ? undefined : this.read(input.sessionId, input.inputId);
   }
 
-  enqueue(input: ClientSubmitInput, skill: boolean): ClientInputAcceptance {
+  enqueue(input: ClientSubmitInput, skill: boolean, explicitSkill?: string): ClientInputAcceptance {
     const duplicate = this.find(input);
     if (duplicate) return duplicate;
-    return this.enqueueWithExecution(input, skill, currentProductExecution(), currentProductExecution()?.principalId, false);
+    return this.enqueueWithExecution(input, skill, currentProductExecution(), currentProductExecution()?.principalId, false, skill ? explicitSkill ?? null : undefined);
   }
 
   private enqueueWithExecution(input: ClientSubmitInput, skill: boolean, execution: ProductExecutionContext | undefined,
-    principalId: string | undefined, awaitingBinding: boolean): ClientInputAcceptance {
+    principalId: string | undefined, awaitingBinding: boolean, explicitSkill?: string | null): ClientInputAcceptance {
     if (this.queue.count({ agentId: input.sessionId, mode: 'prompt', maxPriority: 'user' }) >= MAX_QUEUED_INPUTS) {
       throw conflict(`Queued follow-up limit reached (${MAX_QUEUED_INPUTS}). Wait or withdraw an input.`);
     }
     this.persistPending(input.sessionId, [...this.snapshot(input.sessionId), { input: structuredClone(input), skill,
+      ...(explicitSkill === undefined ? {} : { explicitSkill }),
       ...(principalId ? { principalId } : {}) }]);
     const messageId = this.queue.enqueue({
       agentId: input.sessionId, mode: 'prompt', priority: 'user', content: input.text,
       ...(input.inputArtifacts !== undefined ? { inputArtifacts: structuredClone(input.inputArtifacts) } : {}),
     });
     this.facts.set(this.key(input.sessionId, input.inputId), {
-      sessionId: input.sessionId, inputId: input.inputId, digest: inputIntentDigest(input, execution?.key), messageId,
+      sessionId: input.sessionId, inputId: input.inputId, digest: inputIntentDigest(input, productExecutionIntentKey(execution)), messageId,
       delivery: input.delivery, targetRunId: input.targetRunId,
       execution, principalId, awaitingBinding,
+      explicitSkill,
       skill, state: 'queued',
     });
     this.changed(input.sessionId);
@@ -187,7 +211,7 @@ export class SessionInputQueue {
     const duplicate = this.find(input);
     if (duplicate) return duplicate;
     this.facts.set(this.key(input.sessionId, input.inputId), {
-      sessionId: input.sessionId, inputId: input.inputId, digest: inputIntentDigest(input, currentProductExecution()?.key),
+      sessionId: input.sessionId, inputId: input.inputId, digest: inputIntentDigest(input, productExecutionIntentKey(currentProductExecution())),
       principalId: currentProductExecution()?.principalId,
       skill: false, state, runId,
     });
@@ -213,10 +237,34 @@ export class SessionInputQueue {
   list(sessionId: string): readonly ClientQueuedInput[] {
     return this.ordered(sessionId).map(({ input, enqueuedAt }) => ({
       inputId: input.inputId, text: queuePreview(input.text), enqueuedAt,
+      ...(this.facts.get(this.key(sessionId, input.inputId))?.admissionError === undefined ? {} : {
+        admissionError: structuredClone(this.facts.get(this.key(sessionId, input.inputId))!.admissionError),
+      }),
     }));
   }
 
-  private ordered(sessionId: string): readonly { readonly input: ClientSubmitInput; readonly skill: boolean; readonly enqueuedAt: number; readonly execution?: ProductExecutionContext; readonly principalId?: string; readonly awaitingBinding?: boolean }[] {
+  deferToRunBoundary(sessionId: string, inputId: string): void {
+    const fact = this.facts.get(this.key(sessionId, inputId));
+    if (!fact || fact.state !== 'queued' || fact.skill) return;
+    this.persistPending(sessionId, this.snapshot(sessionId).map(value => value.input.inputId === inputId ? { ...value, skill: true, explicitSkill: null } : value));
+    fact.skill = true;
+    fact.explicitSkill = null;
+    this.changed(sessionId);
+  }
+
+  block(sessionId: string, inputId: string, error: ClientInputAdmissionError): void {
+    const fact = this.facts.get(this.key(sessionId, inputId));
+    const queued = this.ordered(sessionId).find(value => value.input.inputId === inputId);
+    if (!fact || !queued || fact.state !== 'queued') return;
+    const admissionError = { code: error.code, message: error.message.slice(0, 512) };
+    this.persistPending(sessionId, this.snapshot(sessionId).map(value => value.input.inputId === inputId ? { ...value, admissionError } : value));
+    fact.admissionError = admissionError;
+    fact.digest = inputIntentDigest(queued.input);
+    fact.awaitingBinding = true;
+    this.changed(sessionId);
+  }
+
+  private ordered(sessionId: string): readonly { readonly input: ClientSubmitInput; readonly skill: boolean; readonly explicitSkill?: string | null; readonly enqueuedAt: number; readonly execution?: ProductExecutionContext; readonly principalId?: string; readonly awaitingBinding?: boolean }[] {
     const queued = this.queue.peek({ agentId: sessionId, mode: 'prompt', maxPriority: 'user' });
     const factByMessageId = new Map<string, QueuedInputFact>();
     for (const fact of this.facts.values()) {
@@ -233,6 +281,7 @@ export class SessionInputQueue {
           ...(fact.targetRunId !== undefined ? { targetRunId: fact.targetRunId } : {}),
           ...(message.inputArtifacts !== undefined ? { inputArtifacts: message.inputArtifacts } : {}) },
         skill: fact.skill,
+        explicitSkill: fact.explicitSkill,
         execution: fact.execution,
         principalId: fact.principalId, awaitingBinding: fact.awaitingBinding,
         enqueuedAt: message.enqueuedAt,
@@ -245,7 +294,7 @@ export class SessionInputQueue {
    * alone. FEATURE_298 T37 — the skill flag tells the Host to prepare the
    * input's trusted expansion at consumption.
    */
-  batch(sessionId: string): readonly { readonly input: ClientSubmitInput; readonly enqueuedAt: number; readonly skill: boolean; readonly execution?: ProductExecutionContext }[] {
+  batch(sessionId: string): readonly { readonly input: ClientSubmitInput; readonly enqueuedAt: number; readonly skill: boolean; readonly explicitSkill?: string | null; readonly execution?: ProductExecutionContext }[] {
     const ordered = this.ordered(sessionId);
     const first = ordered[0];
     if (!first || first.awaitingBinding) return [];
@@ -273,10 +322,21 @@ export class SessionInputQueue {
 
   /** Caller holds the same Session operation lock used by withdrawal. */
   async consumePlainBatch(sessionId: string, runId: string,
-    persist: (inputs: readonly QueuedMessage[]) => Promise<void>, executionKey?: string, principalId?: string): Promise<readonly QueuedMessage[]> {
-    const batch = this.batch(sessionId);
-    if (batch.length === 0 || batch[0]!.skill || batch[0]!.execution?.key !== executionKey
+    persist: (inputs: readonly QueuedMessage[]) => Promise<void>, executionKey?: string, principalId?: string,
+    authorize?: (input: ClientSubmitInput, execution: ProductExecutionContext) => Promise<boolean>): Promise<readonly QueuedMessage[]> {
+    let batch = this.batch(sessionId);
+    if (batch.length === 0 || batch[0]!.skill
       || batch[0]!.execution?.principalId !== principalId) return [];
+    if (batch[0]!.execution?.resolve === undefined && batch[0]!.execution?.key !== executionKey) return [];
+    let count = 0;
+    for (const item of batch) {
+      if (item.execution?.resolve !== undefined) {
+        if (!authorize || !await authorize(item.input, item.execution)) break;
+      } else if (item.execution?.key !== executionKey) break;
+      count += 1;
+    }
+    batch = batch.slice(0, count);
+    if (!batch.length) return [];
     const prompts: QueuedMessage[] = batch.map(({ input, enqueuedAt }) => ({
       id: `product:${this.facts.get(this.key(sessionId, input.inputId))!.messageId!}`,
       agentId: sessionId, inputId: input.inputId, content: input.text,

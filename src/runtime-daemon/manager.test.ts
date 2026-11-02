@@ -446,6 +446,8 @@ function makeRuntime(
       version: '0.7.66',
     },
     sessions: {
+      async promote(input) { return { requestId: input.requestId, session: { id: input.sessionId, title: 'Promoted', tag: input.tag } }; },
+      async readPromotion() { return null; },
       async cancel(input) { return { ...input, frontier: 0, receipts: [] }; },
       async status(sessionId) {
         return { sessionId, runtimeId: "runtime-test", phase: "idle",
@@ -625,6 +627,7 @@ function makeRuntime(
         return { requestId, accepted: false, status: 'already_resolved' };
       },
     },
+    executionBindings: { async register() { return { id: 'binding-test' }; }, async revoke() { return false; } },
     credentials: createTestCredentialService(),
     hostTools: createTestHostToolService(),
     workflows: {

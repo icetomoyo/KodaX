@@ -77,6 +77,8 @@ export interface ClientExtensionDiagnostics {
 }
 
 export interface ClientSession {
+  /** Opaque metadata CAS revision; independent of conversation and settings revisions. */
+  readonly metadataRevision?: string;
   readonly executionCwd?: string;
   /** Active conversation messages, when supplied by a Host read. */
   readonly msgCount?: number;
@@ -115,6 +117,18 @@ export interface ClientSessionFilter {
   readonly cursor?: string;
 }
 
+export interface ClientPromoteSessionInput {
+  readonly sessionId: string;
+  readonly requestId: string;
+  readonly expectedRevision: string;
+  readonly tag: string;
+}
+
+export interface ClientSessionPromotionResult {
+  readonly requestId: string;
+  readonly session: ClientSession;
+}
+
 export interface KodaXProductClient {
   readonly lifecycle: ClientLifecycleService;
   readonly statistics: ClientStatisticsService;
@@ -130,6 +144,9 @@ export interface KodaXProductClient {
     cancel(input: ClientSessionCancelInput): Promise<ClientSessionCancelReceipt>;
     compact(sessionId: string, input?: { readonly customInstructions?: string }): Promise<ClientCompactSessionResult>;
     create(input?: ClientCreateSessionInput): Promise<ClientSession>;
+    /** Promote once, preserving identity and canonical data. Retry only with the original request. */
+    promote(input: ClientPromoteSessionInput): Promise<ClientSessionPromotionResult>;
+    readPromotion(sessionId: string, requestId: string): Promise<ClientSessionPromotionResult | null>;
     list(filter?: ClientSessionFilter): Promise<readonly ClientSessionSummary[]>;
     read(sessionId: string): Promise<ClientSession>;
     delete(sessionId: string): Promise<void>;
@@ -811,6 +828,8 @@ export interface ClientSubmitInput {
 
 /** Identity of an accepted input in the current Host, not a completion receipt. */
 export interface ClientInputAcceptance {
+  /** Retained queued intent whose consumption needs a fresh explicit Main binding. */
+  readonly admissionError?: ClientInputAdmissionError;
   /**
    * 'submitted' is saved in the conversation context (does not prove the
    * Provider received it); 'queued' waits for its slot; 'withdrawn' was
@@ -824,10 +843,16 @@ export interface ClientInputAcceptance {
 }
 
 export interface ClientQueuedInput {
+  readonly admissionError?: ClientInputAdmissionError;
   readonly inputId: string;
   /** Bounded display preview; withdraw returns the complete original text. */
   readonly text: string;
   readonly enqueuedAt: number;
+}
+
+export interface ClientInputAdmissionError {
+  readonly code: 'execution_binding_unavailable' | 'execution_binding_rejected' | 'execution_binding_changed' | 'default_skill_unavailable';
+  readonly message: string;
 }
 
 /** User-explainable lifecycle facts; accepting a Stop never implies them. */

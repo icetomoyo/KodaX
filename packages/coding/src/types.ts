@@ -1020,6 +1020,8 @@ export type KodaXSkillProjectionConfidence = 'high' | 'medium' | 'low';
 
 export interface KodaXSkillInvocationRuntimePolicy {
   readonly enforceAtRuntime?: boolean;
+  /** Host-owned completed admission; checkpoint recovery validates policy before reusing it. */
+  readonly admission?: { readonly policyFingerprint: string; readonly additionalContext: string };
 }
 
 export interface KodaXSkillInvocationContext {

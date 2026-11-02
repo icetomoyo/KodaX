@@ -2,6 +2,35 @@
 
 本指南验证构建后的产品入口。组件、协议和 SDK 单测继续保留，但不替代这里的真实进程与终端操作。
 
+## 2026-11-02 Space 接缝补齐（alpha.12 之后，未发布）
+
+能力与接手顺序见 [SDK 迁移](../SDK_MIGRATION.md) 与 [Space 接缝](../SPACE_SDK_SEAMS.md)。
+源码基线 `f24a922c1`；本节不改写已发布 alpha.12 的历史结果。所有新增模型响应为 loopback
+夹具，不使用真实 Key，也不代表线上模型质量、云/OAuth 账户或 Space 成品已验收。
+
+- `src/sdk-client.default-skill.test.ts`：公开 Product + 独立 Host，默认方法、persona、
+  原问题、动态上下文、显式覆盖一轮及下一轮恢复；缺失默认方法在模型调用前拒绝。
+- `src/sdk-client.execution-binding.test.ts`：实际消费时读取最后提交的专家，草稿不生效；
+  排队显式方法卸载保留原问题；普通同权限 follow-up 留在当前 Run；后续拒绝只阻断该输入。
+- `src/sdk-client.binding-recovery.test.ts`：保存 checkpoint 后启动真实独立 Host，原业务/
+  persona/已展开方法、等价重排快照、新凭证、撤销拒绝、工具上限收紧；旧 alpha.12 队列
+  重绑后缺失显式方法拒绝，原问题可撤回。该用例验证持久恢复边界，未伪称真实进程崩溃。
+- `src/sdk-client.promotion.test.ts`：真实 Host 的 CAS、busy、双客户端竞争、丢失成功响应
+  后查询/重试、冷重启、派生会话身份及 canonical/nativeHistory/附件/lineage/统计保真。
+- `packages/coding/src/skill-invocation-policy.test.ts`：已完成准入 hooks 只执行一次，保存其
+  附加上下文；恢复拒绝仅 frontmatter 放宽权限或方法来源/策略变更，不重放 hooks。
+- `src/session-input-queue.test.ts`、`src/runtime-daemon/{protocol,client,reverse-bridge}.test.ts`：
+  失败输入持久保留与原 principal 重绑，旧 Host 拒绝新 intent，错误帧有界返回，跨 principal、
+  撤销/断连/替换与迟到反向结果失效。
+- `tests/bundled-space-host.test.mjs`：实际 dist SDK + 独立 bundled CLI Host，默认方法与
+  业务解析、同 Session promotion、冷重启操作查询；纳入现有 `test:bundle`。
+- `tests/release-sidecars.test.mjs`：真实 tar/Windows zip 清单包含新 schema 数据；完整数据
+  从 TypeScript 同源构建，原 CLI 预算 5,177,344 bytes 不放宽，CI 矩阵与触发条件不变。
+
+本机初次全量扫描与其他重型验证并行，`sdk-client.startup.test.ts` 的 MCP 进入等待超过
+15 秒；停止该扫描后完整文件与 Host 组重跑 167 项通过。该失败保留，不记为全量通过。
+后续冻结全套与 CI 结果在完成后另记，不能把分批计数相加冒充单次全绿。
+
 ## 2026-10-30 Partner 通用 Agent 契约修复（未发布）
 
 下节保留修复前失败证据。本轮统一契约为：Partner persona 不增加只读上限；Session 选择

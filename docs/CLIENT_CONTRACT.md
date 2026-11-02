@@ -13,6 +13,14 @@
 
 可信 Main 的 `authorizeExecution`、canonical `historyBoundary` / Retry `before`、历史完整性与图片引用，以及宿主配置/统计/生命周期边界见 [Space SDK/Host 接缝](SPACE_SDK_SEAMS.md)。这些接缝补齐需要当前 SDK 与 Host，不能仅根据旧包版本假定支持。
 
+2026-11-02 alpha.12 之后的未发布补齐：`productExecutionBinding:1` 支持可信 Main
+默认 Skill 与实际消费时的业务解析，`sessionPromotion:1` 支持原 Session 的 CAS promotion。
+Main 新类型包括 `KodaXClientHostServices`、`RuntimeDefaultSkill`、`RuntimeBusinessBinding`、
+`RuntimeExecutionBindingSnapshot/Request/Resolver/Service`，从 `/client` 与 `/runtime` 导出。
+Product 输入不能携带这些执行 authority；排队拒绝由 `ClientInputAdmissionError` 显式呈现，
+会话 promotion 返回 `ClientSessionPromotionResult` 和权威 `ClientSession.metadataRevision`。
+完整调用顺序、恢复/撤销与旧 Host 行为见 [SDK 迁移说明](SDK_MIGRATION.md)。
+
 2026-10-02 主线 rc.14 修复融合仍属于 FEATURE_298 / v0.7.97。中断后的下一次运行只从当前分支的 canonical Session/lineage、Run status 和已成功保存的显示 checkpoint 读取有限恢复说明；不恢复持久事件日志，也不根据事件推导成功。Host 先等待现有 checkpoint 写入，再按 inputId/turnId、sourceRunId 和 outputId 确认来源，排除已提交的同一输出、Thinking、child 输出及普通通知。工具提出、执行开始、结果已保存分别记录；重复 callId 按所属 assistantOutputId 匹配；执行开始但没有已保存结果时，效果仍为 unknown。说明仅进入临时模型上下文，不能成为用户指令或正式会话正文。未落盘 token 不承诺硬崩溃恢复。
 
 Shell 清理重试耗尽时保留 deferred 进程身份，允许后续对话和 Host close 继续；这不证明进程已退出，也不确认 Stop。ClientRunStatus 和 runs.await 的 ClientRunOutcome 都携带 Host terminal（含 effectOutcome）及实际 Stop 事实；产品继续消费 `effectOutcome: unknown`，不能将执行完成等同于副作用已确认。

@@ -15,6 +15,11 @@ import {
 } from './protocol.js';
 
 describe('runtime daemon protocol frames', () => {
+  it.each(['execution_binding_unavailable', 'execution_binding_rejected', 'execution_binding_changed', 'default_skill_unavailable'] as const)
+    ('round-trips %s so failed mutations settle their original RPC', code => {
+      const frame = createRuntimeDaemonErrorResponse({ code, message: 'Fixture rejection.' }, 'original-request');
+      expect(parseRuntimeDaemonFrame(JSON.stringify(frame))).toEqual(frame);
+    });
   it('creates and validates request frames with known methods', () => {
     const request = createRuntimeDaemonRequest('req-1', 'session.create', {
       title: 'Daemon Session',

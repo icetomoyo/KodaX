@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { createExecutionBindingChannel } from './execution-bindings.js';
 import * as fs from 'node:fs';
 import path from 'node:path';
 
@@ -82,6 +83,7 @@ export function runtimeDaemonReverseBridgeLimits(): RuntimeDaemonReverseBridgeLi
 }
 
 export interface RuntimeDaemonReverseBridge {
+  readonly executionBindings: ReturnType<typeof createExecutionBindingChannel>;
   attachTransport(
     notify: (notification: RuntimeDaemonNotification) => void,
   ): RuntimeSubscription;
@@ -204,6 +206,7 @@ export function createRuntimeDaemonReverseBridge(
     readonly notify: (notification: RuntimeDaemonNotification) => void;
   } | undefined;
   let closed = false;
+  const executionBindings = createExecutionBindingChannel(() => closed ? undefined : activeTransport?.notify, limits.callTimeoutMs);
 
   const requireOpen = (): void => {
     if (closed) throw bridgeError('host_tool_unavailable', 'Host bridge connection is closed.');
@@ -510,8 +513,10 @@ export function createRuntimeDaemonReverseBridge(
   }
 
   return {
+    executionBindings,
     attachTransport(notify) {
       requireOpen();
+      executionBindings.cancel();
       if (activeTransport !== undefined) {
         rejectPendingCredentialRequests('Credential client connection was replaced.');
         rejectDispatchedHostCalls();
@@ -522,6 +527,7 @@ export function createRuntimeDaemonReverseBridge(
       return {
         close() {
           if (activeTransport?.id !== id) return;
+          executionBindings.cancel();
           activeTransport = undefined;
           activeHostLeases.clear();
           rejectPendingCredentialRequests('Credential client disconnected.');
@@ -803,11 +809,13 @@ export function createRuntimeDaemonReverseBridge(
       };
     },
     retireLeases() {
+      executionBindings.close();
       for (const [id, lease] of [...credentials]) retireCredentialLease(id, lease, 'Client exited.');
       for (const id of [...hostTools.keys()]) this.revokeHostTools(id);
     },
     close() {
       if (closed) return;
+      executionBindings.close();
       closed = true;
       activeTransport = undefined;
       activeHostLeases.clear();

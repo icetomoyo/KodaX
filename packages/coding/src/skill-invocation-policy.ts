@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   SkillRegistry,
   emitKodaXDiagnostic,
@@ -459,6 +460,17 @@ async function applyExplicitSkillInvocationPolicy(options: KodaXOptions, prompt?
     source: 'skill', path: trustedSkill.skillFilePath, allowedTools: trustedSkill.allowedTools,
     hooks: trustedSkill.hooks, model: trustedSkill.model, context: trustedSkill.context, agent: trustedSkill.agent,
   } : commandInvocation!;
+  const policyFingerprint = createHash('sha256').update(JSON.stringify(trustedSkill
+    ? [trustedSkill.skillFilePath, trustedSkill.rawContent, trustedSkill.allowedTools,
+      trustedSkill.hooks, trustedSkill.model, trustedSkill.context, trustedSkill.agent]
+    : [policy.path, policy.allowedTools, policy.hooks, policy.model, policy.context, policy.agent])).digest('hex');
+  const admission = options.session?.generationCheckpoint ? invocation.runtimePolicy?.admission : undefined;
+  if (options.session?.generationCheckpoint && (admission !== undefined
+    ? admission.policyFingerprint !== policyFingerprint || typeof admission.additionalContext !== 'string'
+    : Boolean(policy.hooks?.SessionStart?.length || policy.hooks?.UserPromptSubmit?.length)
+      || invocation.allowedTools !== policy.allowedTools || invocation.path !== policy.path)) {
+    throw new KodaXSkillInvocationError('skill_policy_restore_failed', invocation.name);
+  }
   const allowedTools = parseAllowedTools(policy.allowedTools);
   // A matching hook is an arbitrary runtime decision. Do not execute it early
   // or assume it will allow a later recovery read; retain the original inline.
@@ -490,7 +502,7 @@ async function applyExplicitSkillInvocationPolicy(options: KodaXOptions, prompt?
     });
     await notify(`Skill ${invocation.name} has invalid allowed-tools entries: ${allowedTools.invalidEntries.join(', ')}`);
   }
-  const started = await runHooks(
+  const started = admission ? {} : await runHooks(
     'SessionStart', policy.hooks?.SessionStart, invocation.name,
     { displayName: invocation.name, source: policy.source, path: policy.path },
     cwd, allowedTools, baseEvents.beforeToolExecute, options, notify,
@@ -501,7 +513,7 @@ async function applyExplicitSkillInvocationPolicy(options: KodaXOptions, prompt?
     });
   }
   const rawUserInput = options.context?.rawUserInput ?? prompt ?? '';
-  const submitted = await runHooks(
+  const submitted = admission ? {} : await runHooks(
     'UserPromptSubmit', policy.hooks?.UserPromptSubmit, rawUserInput,
     { displayName: invocation.name, source: policy.source, path: policy.path, prompt: rawUserInput },
     cwd, allowedTools, baseEvents.beforeToolExecute, options, notify,
@@ -511,9 +523,13 @@ async function applyExplicitSkillInvocationPolicy(options: KodaXOptions, prompt?
       code: 'skill_invocation_blocked' as const,
     });
   }
-  const additionalContext = [policy.agent ? `Preferred agent: ${policy.agent}` : undefined,
+  const additionalContext = admission?.additionalContext ?? [policy.agent ? `Preferred agent: ${policy.agent}` : undefined,
     started.additionalContext, submitted.additionalContext]
     .filter((value): value is string => Boolean(value)).join('\n\n');
+  // The caller's invocation object is also the Host's checkpoint source. Only
+  // completed, declarative admission facts survive; executable hooks stay live.
+  Object.assign(invocation, { runtimePolicy: { ...invocation.runtimePolicy,
+    admission: { policyFingerprint, additionalContext } } });
   const promptOverlay = [options.context?.promptOverlay, additionalContext].filter(Boolean).join('\n\n');
   const pending = new Set<Promise<void>>();
   let terminalNotification: (() => void) | undefined;

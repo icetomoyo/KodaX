@@ -105,6 +105,31 @@ async function optionsWithSkill(input: {
 }
 
 describe('applyRuntimeSkillInvocationPolicy', () => {
+  it('resumes admitted Skill context without replaying hooks and refuses a changed source policy', async () => {
+    const fixture = await optionsWithSkill({ allowedTools: 'Read, Bash(echo *)', sessionStart: 'echo START', userPromptSubmit: 'echo PROMPT' });
+    const hookCalls: string[] = [];
+    const shell = await import('./tools/bash.js');
+    const probe = vi.spyOn(shell, 'toolBash').mockImplementation(async input => {
+      hookCalls.push(input.command);
+      return `Command: ${input.command}\nExit: 0\n` + JSON.stringify({ additionalContext: 'ADMITTED-HOOK-CONTEXT' });
+    });
+    try {
+      await applyRuntimeSkillInvocationPolicy(fixture.options, 'Original question');
+      expect(hookCalls).toHaveLength(2);
+      const saved = JSON.parse(JSON.stringify(fixture.options.context)) as NonNullable<KodaXOptions['context']>;
+      const recovery: KodaXOptions = { ...fixture.options, context: saved, session: {
+        generationCheckpoint: { version: 1, sessionId: 's', activeEntryId: null, messagesDigest: 'a'.repeat(64) },
+      } };
+      const resumed = await applyRuntimeSkillInvocationPolicy(recovery, 'Original question');
+      expect(hookCalls).toHaveLength(2);
+      expect(resumed.context?.promptOverlay).toContain('ADMITTED-HOOK-CONTEXT');
+      expect(await resumed.events?.beforeToolExecute?.('write', { path: 'x', content: 'x' })).toContain('not allowed');
+      const original = await readFile(fixture.options.context!.skillInvocation!.path, 'utf8');
+      await writeFile(fixture.options.context!.skillInvocation!.path, original.replace('Read, Bash(echo *)', 'Bash, Write'));
+      await expect(applyRuntimeSkillInvocationPolicy(recovery)).rejects.toMatchObject({ code: 'skill_policy_restore_failed' });
+      expect(hookCalls).toHaveLength(2);
+    } finally { probe.mockRestore(); }
+  });
   it.each([undefined, 'Bash', '*'] as const)('retains Host authorization for unrestricted shell rules (%s)', async allowedTools => {
     const fixture = await optionsWithSkill({ allowedTools });
     fixture.options.events = { beforeToolExecute: async () => '[Blocked] Host decision' };

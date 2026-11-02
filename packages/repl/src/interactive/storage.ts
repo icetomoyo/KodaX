@@ -32,6 +32,7 @@ import {
   AgentActorStoreConflictError,
   AgentOwnerConflictError,
   AgentOwnerUnknownError,
+  promoteSessionMetadata,
   appendSessionLineageLabel,
   archiveOldIslands,
   cleanupIncompleteToolCalls,
@@ -4191,6 +4192,9 @@ export class FileSessionStorage implements KodaXSessionStorage {
         ? existing?.data.runtimeInfo
         : {
             ...data.runtimeInfo,
+            ...(existing?.data.runtimeInfo?.sessionPromotion?.sessionId !== id ? {} : {
+              sessionPromotion: existing.data.runtimeInfo.sessionPromotion,
+            }),
             // Execution snapshots cannot change the Host-owned Session lifetime.
             ...(existing?.data.runtimeInfo?.temporary === true ? { temporary: true } : {}),
             ...(!acceptSandboxWorktreeRoots
@@ -4208,7 +4212,8 @@ export class FileSessionStorage implements KodaXSessionStorage {
       errorMetadata: Object.prototype.hasOwnProperty.call(data, 'errorMetadata')
         ? data.errorMetadata
         : existing?.data.errorMetadata,
-      tag: data.tag ?? existing?.data.tag,
+      tag: existing?.data.runtimeInfo?.sessionPromotion?.sessionId === id
+        ? existing.data.runtimeInfo.sessionPromotion.tag : data.tag ?? existing?.data.tag,
       // FEATURE_173 no-regress guard — a lineage-less snapshot whose messages
       // are a prefix of the persisted active path reuses the existing lineage
       // instead of regressing `activeEntryId` (the dual-writer corruption).
@@ -4699,6 +4704,22 @@ export class FileSessionStorage implements KodaXSessionStorage {
         ...existing.data,
         runtimeInfo,
       }, true);
+    });
+    return found;
+  }
+
+  /** One Host-owned metadata transaction; never replace history from a caller snapshot. */
+  async promoteOwned(id: string, ownerId: string | undefined,
+    input: import('@kodax-ai/agent').KodaXSessionPromotionRecord): Promise<boolean> {
+    const request = structuredClone(input);
+    let found = false;
+    await this.serializedWrite(id, async () => {
+      const existing = await this.readSession(id);
+      if (existing === null) return;
+      this.assertActorFileOwner(existing.data.actorSnapshot, ownerId);
+      const next = promoteSessionMetadata(id, existing.data, request);
+      if (next !== existing.data) await this.mergeAndWriteInternal(id, next);
+      found = true;
     });
     return found;
   }

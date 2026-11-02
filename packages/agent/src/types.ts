@@ -462,7 +462,16 @@ export type KodaXSessionUiHistoryItem =
 
 export type KodaXSessionWorkspaceKind = 'detected' | 'managed';
 
+/** Durable receipt for the one-way promotion of a consumer's temporary Session. */
+export interface KodaXSessionPromotionRecord {
+  readonly sessionId: string;
+  readonly requestId: string;
+  readonly expectedRevision: string;
+  readonly tag: string;
+}
+
 export interface KodaXSessionRuntimeInfo {
+  readonly sessionPromotion?: KodaXSessionPromotionRecord;
   /** Host-owned task lifetime; delete this Session after its task settles. */
   temporary?: boolean;
   canonicalRepoRoot?: string;

@@ -17,6 +17,59 @@ Solo 和 Adaptive 都会向模型提供可用且已授权的 Skill 目录。运�
 
 ## 统一 Host SDK 收口（未发布）
 
+### 2026-11-02 Space 默认方法、消费绑定与 Quick Ask（alpha.12 之后，未发布）
+
+已发布的 `0.7.97-alpha.12` 不含本节接口。请锁定后续实际发布包，并检查
+`productExecutionBinding:1`、`sessionPromotion:1`；旧 Host 明确返回
+`daemon_upgrade_required`，不能忽略声明继续执行。原配置、环境变量 Key、凭证 broker、
+原 `authorizeExecution` 回调及未使用新字段的调用保留原行为。
+
+可信 Main 可返回 `profile.defaultSkill:{name}`。Host 使用自己的 registry/config root
+准备方法，保留原始用户问题、persona 与普通 Partner 的 shell/写文件/子 Agent 能力；
+具体执行仍受现有模式、审批、沙箱和显式工具上限约束。用户显式 Skill 仅覆盖本轮，
+下轮恢复默认。已识别的排队显式方法若消失会拒绝，不悄悄换成默认方法。
+
+需要排队时读取最新业务配置时，在 Main 注册
+`services.executionBindings.register(async (request, scopedServices, signal) => authorization)`，
+外层 `authorizeExecution` 对 `kind:'input'` / `'recovery'` 仅返回 `{binding:{leaseId}}`；
+命令、review、工具、Workflow、compaction/probe 和独立 Actor 继续各自原有的显式授权，
+不能把根输入 binding 用于这些操作。`request.phase:'admission'`
+发生在真实准入/消费边界；回调原子读取最后成功提交的专家/连接器状态，返回正常凭证、
+工具、profile 以及 `businessBinding:{id,revision,data?}`。`data` 只放非秘密事实，整个
+快照最多 16 KiB。每次解析使用回调传入的 Session 专属 `scopedServices` 构建 profile，
+不要闭包缓存首次 Session 的目录；不要在 Main 展开 Skill、执行 hooks 或修改原问题。
+同一 Run 的工具上限保持固定，业务变化的后续输入进入下一 Run。未提交 UI 草稿不生效；
+禁用/撤销必须事实拒绝，明确移除专家可以返回已提交的普通 Partner 绑定。
+
+`phase:'recovery'` 提供 `recovery.snapshot` 和原 persona/profile 事实：保留原业务快照，
+重新获取当前凭证/连接器 lease 和更窄的工具上限。不要用当前选中专家替换原专家。
+旧 Run 没有业务快照时，Main 必须自行核实来源，不能猜测账号或绑定。
+已准备 Skill 的回执保存原 hooks 附加上下文及来源/策略指纹；冷恢复不重放准入 hooks，
+来源或策略变化会明确拒绝。旧 checkpoint 无法证明有副作用 hooks 已完成时也拒绝自动重放。
+带新快照/回执的 checkpoint 使用 v2，旧 Host 不能降级读取执行。
+
+断连、失效或拒绝返回 `execution_binding_unavailable` / `execution_binding_rejected`；
+恢复换业务返回 `execution_binding_changed`，缺失已选方法返回 `default_skill_unavailable`。
+排队失败保留原输入，`inputs.read` / 队列暴露 `admissionError`，不丢弃或自动重试。
+原 principal 以同一 inputId/原问题重提交可重新绑定；也可显式 withdraw。
+旧 alpha.12 队列的显式方法身份可从唯一原引用恢复；歧义或方法消失时保留原问题并
+要求确认，不以新默认方法替代。恢复的根 Run 业务快照不授权尚未消费的新轮次。
+重连/冷 Host 后重新注册进程内 lease；独立 Actor 使用自己的准入，不借用根专家声明。
+
+Quick Ask 使用 `sessions.promote({sessionId,requestId,expectedRevision,tag})`，修订来自
+`sessions.read(...).metadataRevision`。成功返回 `{requestId,session}`，仍是原 Session ID。
+Host 原子保存 tag 与操作回执，历史、原生历史、lineage、附件和统计不变；新 promotion
+要求会话空闲且可写。每个原 Session 一次 promotion，相同 requestId/修订/tag 可重试；
+不同请求或变化的参数返回 conflict。丢失响应时调用
+`sessions.readPromotion(sessionId,requestId)`，按原操作查询/重试；确认成功后 Space 才更新
+侧栏和 ephemeral 状态。Fork/Recover 的新 Session 不继承源 promotion 操作身份。
+元数据提交会刷新 Session capture/history 修订，Space 应重新读取分页 cursor 与 historyBoundary；
+修订变化不代表历史内容被改写。
+
+发布包新增 `runtime-daemon-schema.json`：构建从同一个 TypeScript 协议源生成完整数据，
+Node SDK 与独立二进制均携带。自定义打包需保留该资源，不能省略后放宽协议校验。
+CLI 原体积门禁、CI job/矩阵/触发条件和发布依赖关系保持原值。
+
 ### 2026-10-30 SDK 组合契约修复（未发布）
 
 Partner 默认具备所选通用 Agent 工作面的能力：persona、surface/profileId 和专家验证

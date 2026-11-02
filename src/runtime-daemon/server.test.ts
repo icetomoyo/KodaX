@@ -3305,6 +3305,8 @@ const METHOD_SMOKE_PARAMS = {
   'daemon.preflight': undefined,
   'daemon.management.get': undefined,
   'session.create': { sessionId: 'session-smoke', title: 'Smoke Session' },
+  'session.promote': { sessionId: 'session-1', requestId: 'promote-smoke', expectedRevision: '0'.repeat(64), tag: 'coder' },
+  'session.promotion.read': { sessionId: 'session-1', requestId: 'promote-smoke' },
   'session.load': { sessionId: 'session-1' },
   'session.list': { limit: 5 },
   'session.status': { sessionId: 'session-1' },
@@ -3391,6 +3393,9 @@ const METHOD_SMOKE_PARAMS = {
     requestId: 'perm-1',
     response: { kind: 'permission', decision: { type: 'allow_once' } },
   },
+  'execution.register': { leaseId: 'binding-test' },
+  'execution.revoke': { leaseId: 'binding-test' },
+  'execution.complete': { requestId: 'resolution-test', error: 'execution_binding_rejected' },
   'credential.register': { leaseId: 'credential-1', providers: ['mock'] },
   'credential.get': { leaseId: 'credential-1' },
   'credential.revoke': { leaseId: 'credential-1' },
@@ -3597,6 +3602,8 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
       runtimeEventCoalescing: { version: 1 },
     },
     sessions: {
+      async promote(input) { return { requestId: input.requestId, session: { id: input.sessionId, title: 'Promoted', tag: input.tag } }; },
+      async readPromotion() { return null; },
       async cancel(input) { return { ...input, frontier: 0, receipts: [] }; },
       async create(input) {
         return {
@@ -3883,6 +3890,7 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
     },
     userInputs: createTestUserInputs(),
     interactions: createTestInteractions(),
+    executionBindings: { async register() { return { id: 'binding-test' }; }, async revoke() { return false; } },
     credentials: createTestCredentialService(),
     hostTools: createTestHostToolService(),
     workflows: {

@@ -10,6 +10,9 @@
  * - 通用常量配置
  */
 
+export { sessionMetadataRevision, promoteSessionMetadata } from './runtime/session-promotion.js';
+export type { KodaXSessionPromotionRecord } from './types.js';
+
 // ============== Types ==============
 export type {
   KodaXImageBlock,

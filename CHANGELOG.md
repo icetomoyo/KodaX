@@ -6,7 +6,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Add capability-gated Main default Skills and execution-binding resolvers for
+  committed expert/connector selection at actual Product input consumption;
+  retain original recovery bindings with fresh credential/tool leases.
+- Add Host-owned, revision-checked Session promotion with durable request-ID
+  reconciliation for Quick Ask, preserving the original Session and history.
+
 ### Fixed
+
+- Preserve rejected queued inputs and explicit Skill identity; retain prepared
+  Skill admission context without replaying hooks or adopting changed policies
+  during checkpoint recovery. New execution intent requires a compatible Host.
+- Generate the complete daemon schema as packaged data, preserving the existing
+  CLI size budget and release workflow matrix/trigger behavior.
 
 - Preserve lexical and physical protected paths across Windows short names;
   keep missing SSH identities excluded and native cache anchors free of reparse

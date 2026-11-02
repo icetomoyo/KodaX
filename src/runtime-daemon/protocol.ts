@@ -21,7 +21,9 @@ export type RuntimeDaemonMethod =
   | 'daemon.preflight'
   | 'daemon.management.get'
   | 'session.create'
+  | 'session.promote'
   | 'session.load'
+  | 'session.promotion.read'
   | 'session.list'
   | 'session.status'
   | 'session.transcript'
@@ -83,6 +85,9 @@ export type RuntimeDaemonMethod =
   | 'permission.grants.revoke'
   | 'interaction.list'
   | 'interaction.respond'
+  | 'execution.register'
+  | 'execution.revoke'
+  | 'execution.complete'
   | 'credential.register'
   | 'credential.get'
   | 'credential.revoke'
@@ -221,6 +226,7 @@ export type RuntimeDaemonMutationMethod =
   | 'session.goal.resume'
   | 'session.goal.clear'
   | 'session.create'
+  | 'session.promote'
   | 'session.fork'
   | 'session.recover'
   | 'session.notice.append'
@@ -286,6 +292,7 @@ export type RuntimeDaemonNotificationMethod =
   | 'session.view'
   | 'event'
   | 'observation.invalidated'
+  | 'execution.resolve'
   | 'credential.request'
   | 'host_tool.invoke'
   | 'runtime.warning';
@@ -297,6 +304,10 @@ export interface RuntimeDaemonError {
 }
 
 export type RuntimeDaemonErrorCode =
+  | 'execution_binding_unavailable'
+  | 'execution_binding_rejected'
+  | 'execution_binding_changed'
+  | 'default_skill_unavailable'
   | 'invalid_frame'
   | 'invalid_request'
   | 'invalid_params'
@@ -381,7 +392,9 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'daemon.preflight',
   'daemon.management.get',
   'session.create',
+  'session.promote',
   'session.load',
+  'session.promotion.read',
   'session.list',
   'session.status',
   'session.transcript',
@@ -443,6 +456,9 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'permission.grants.revoke',
   'interaction.list',
   'interaction.respond',
+  'execution.register',
+  'execution.revoke',
+  'execution.complete',
   'credential.register',
   'credential.get',
   'credential.revoke',
@@ -563,6 +579,7 @@ export const RUNTIME_DAEMON_MUTATION_METHODS: readonly RuntimeDaemonMutationMeth
   'session.goal.resume',
   'session.goal.clear',
   'session.create',
+  'session.promote',
   'session.fork',
   'session.recover',
   'session.notice.append',
@@ -652,6 +669,9 @@ const MUTATION_METHODS: ReadonlySet<string> = new Set<RuntimeDaemonMutationMetho
 // Reverse-bridge control requests mutate daemon-owned live state and are
 // already reconciled by their one-shot request IDs.
 const REVERSE_BRIDGE_STATE_METHODS: ReadonlySet<RuntimeDaemonMethod> = new Set([
+  'execution.register',
+  'execution.revoke',
+  'execution.complete',
   'credential.register',
   'credential.revoke',
   'credential.supply',
@@ -665,12 +685,17 @@ const NOTIFICATION_METHODS: ReadonlySet<string> = new Set<RuntimeDaemonNotificat
   'session.view',
   'event',
   'observation.invalidated',
+  'execution.resolve',
   'credential.request',
   'host_tool.invoke',
   'runtime.warning',
 ]);
 
 const ERROR_CODES: ReadonlySet<string> = new Set<RuntimeDaemonErrorCode>([
+  'execution_binding_unavailable',
+  'execution_binding_rejected',
+  'execution_binding_changed',
+  'default_skill_unavailable',
   'invalid_frame',
   'invalid_request',
   'invalid_params',

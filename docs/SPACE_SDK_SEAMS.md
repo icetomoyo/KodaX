@@ -1,5 +1,40 @@
 # Space 的 Product Client / Host 接缝
 
+## 2026-11-02 后续接手：默认方法与 Quick Ask（alpha.12 之后，未发布）
+
+已发布 alpha.12 及 Space `codex/sdk-alpha12-preparation` 的先行适配仍是各自历史基线；
+本节 Root 新接口需要后续实际 SDK 包。Root 不修改 Space 分支、keychain、凭证来源或账号选择。
+完整类型、能力、失败码与恢复限制见 [SDK 迁移说明](SDK_MIGRATION.md)。
+
+专家迁移采用 `productExecutionBinding:1`：可信 Main 的 `authorizeExecution` 注册
+`services.executionBindings.register(resolver)`，仅对 input/recovery 返回该 binding lease；
+其他命令、工具、Workflow、probe/compaction 与独立 Actor 保留各自授权。resolver
+在真实消费时读取最后成功提交的专家/连接器记录，使用传入的 Session 专属 services
+创建 profile，返回 `businessBinding`、`profile.defaultSkill` 与当前凭证/工具 lease。
+在 Main 不拼 slash、不展开方法、不执行 hooks；Renderer 不提供这些 authority。
+普通 Partner 不加工具禁用名单。显式 Skill 一轮优先，之后回到默认；被禁用、卸载或
+撤销的选择在模型请求前拒绝，排队 `admissionError` 保留原问题，用户可重绑或撤回。
+业务变更只采用已确认提交；写入中/失败的草稿不能成为 authority。
+
+冷恢复按 resolver 的 `phase:'recovery'` 使用原 `recovery.snapshot` 和 persona/profile，
+重新注册当前 lease、收紧工具上限。绑定身份/配置不同会拒绝，不偷偷采用当前专家或另一账号。
+方法来源/策略变化会拒绝旧 checkpoint；已完成的准入 hooks 和动态上下文不重放。
+独立 Actor 使用自己的声明。Space 应保留原 inputId、原问题和稳定 Main principal，
+冷 Host 后重新注册 lease，再以原身份重绑尚未消费的输入。
+
+Quick Ask 采用 `sessionPromotion:1`：读 Session 的 `metadataRevision`，生成并保存稳定
+requestId，调用 `sessions.promote({sessionId,requestId,expectedRevision,tag})`。
+确认返回的权威 Session 后才更新侧栏/ephemeral 状态；忙碌、冲突时保留原会话。
+响应丢失/断连后按原 requestId 调 `sessions.readPromotion`，必要时原参数重试。
+Host 原子保存元数据和回执，保留原 Session ID、历史、原生历史、lineage、附件和统计。
+一次 promotion 后不同请求会 conflict；Fork/Recover 新会话拥有独立操作身份。
+提交后重新同步 observation/history 修订及分页边界，不复用写入前的 cursor。
+旧 Host 缺能力时要求安全升级，不能直写文件或另建 Session 绕过。
+
+接手验收还需 Space 自己完成：所有现有专家和普通 Partner 的共享 Host 流程、队列切换/
+禁用/卸载、失败配置提交、显式方法覆盖、重连/冷恢复、连接器撤销、Actor 隔离以及
+Quick Ask 侧栏与丢响应恢复。Root 的协议/真实 Host 测试不能替代这些产品验收。
+
 2026-10-18 的 Space 核查样本安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，当时官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前开发树 `0.7.97-alpha.12` 核对，不据此推断 Space 已升级；源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
 
 ## 2026-10-29 未发布 SDK 接入补充
