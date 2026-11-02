@@ -54,6 +54,10 @@ redirect 保存显式方法身份，卸载后阻断而不执行默认方法；�
 确认。`skill` 持久字段不改名，继续兼容旧 checkpoint。接手时应锁定同时包含这轮补审
 修正的 SDK，不能仅依赖之前 `b385395c9` 的 CI 通过记录；新增真实 Host 及发布包门禁见
 [Space 补审修正](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#space-独立补审修正2026-11-02)。
+本次功能提交为 Root `KodaX@00bfe7ed12407eda722a6bc4b15ace106e413dc5`，精确 SHA 的
+[CI 41415454375](https://github.com/icetomoyo/KodaX/actions/runs/41415454375) 16 个任务通过、
+发布跳过；本机专项 72 项、实际 dist 门禁 3 项通过，双轴复审无剩余项。尚未发新 SDK 包；
+Space 分支、设计子仓与现有 alpha.12 tag 均保持原样，产品接入仍需在升级新包后验收。
 
 2026-10-18 的 Space 核查样本安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，当时官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前开发树 `0.7.97-alpha.12` 核对，不据此推断 Space 已升级；源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
 

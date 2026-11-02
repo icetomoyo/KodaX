@@ -146,8 +146,22 @@ steer accepted，redirect 显式名已保存，方法卸载后 queued/not-starte
 Host/HTTP/临时目录清理均确认。原始 RED 和期望修正版日志分别为
 `%TEMP%/kodax-space-review-original-red.log`、`kodax-space-review-expected-results.log`。
 本轮最终构建与 source/test 类型检查通过；相关 10 文件 72 项通过，实际 dist 发布包门禁
-3 项通过。Standards（硬违反/坏味道）和 Spec 最终复审均无剩余项。完整 CI 尚待本轮
-提交运行，不能沿用上一候选的全绿数；未修改 CI job、体积预算或发布行为。
+3 项通过。Standards（硬违反/坏味道）和 Spec 最终复审均无剩余项。
+
+功能修正 `KodaX@00bfe7ed12407eda722a6bc4b15ace106e413dc5` 已推送，精确 SHA 的
+[完整 CI 41415454375](https://github.com/icetomoyo/KodaX/actions/runs/41415454375)
+16 个任务成功、发布按预期跳过，无失败。覆盖 Node 20/22、Windows source 两层、
+Windows 原生并发/Electron、五平台归档和统一 npm 包的安装后 SDK 门禁。CI 日志确认
+新增 binding-controls 和双变体 binding-recovery 在 Node 20/22 均实际执行通过。
+最终代码/测试/构建产物指纹核对一致（7432 文件，SHA-256
+`e186f169272b80fbd4d0b880d6751401bc448e87e86ab7544f371548bee0e092`）；后续仅补验收文档。
+
+未修改 CI job、体积预算或发布行为；CLI 为 5,158,202 字节，仍低于原预算 5,177,344，
+bootstrap 4,066 字节。CI 总墙钟 25 分 30 秒，各分组对照上轮有快有慢（Node 20/Windows portable 更慢，
+Node 22/system/Electron 更快），该单次运行不能替代稳定性能基准；两组相关真实 Host
+回归文件在 Node 20 各约 13 秒、Node 22 各约 10 秒。未改变启动入口、模型策略或提示词。
+没有打标签、发布 npm 或修改 Space/设计子仓；Space 需升级包含本次修正的新 SDK 后再
+完成产品验收。已有 alpha.12 tag 仍指向 `f24a922c117e0ece5d26224a133a69973b313ab6`。
 
 ## 2026-10-30 Partner 通用 Agent 契约修复（未发布）
 

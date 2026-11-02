@@ -65,6 +65,9 @@ Main 应为 steer 返回目标 Run 原有声明；同 inputId 的已接受重试
 `skill:true / explicitSkill:null / redirect` 按旧显式意图保守恢复唯一引用；缺失或歧义要求
 确认，原问题可撤回。持久字段 `skill` 保留旧名称，含义为独立 Run 边界，不能据其为 true
 推断一定有具名方法。SDK/wire 类型与既有配置、凭证入口不变。
+本次修正提交 `00bfe7ed12407eda722a6bc4b15ace106e413dc5` 已在 Root 主分支，
+[完整 CI](https://github.com/icetomoyo/KodaX/actions/runs/41415454375) 16 个任务通过、
+发布跳过；尚未发布 npm。Space 需使用包含本次修正的新 SDK，不能只依赖旧 alpha.12。
 
 Quick Ask 使用 `sessions.promote({sessionId,requestId,expectedRevision,tag})`，修订来自
 `sessions.read(...).metadataRevision`。成功返回 `{requestId,session}`，仍是原 Session ID。
