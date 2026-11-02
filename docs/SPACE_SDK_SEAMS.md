@@ -41,12 +41,19 @@ Space 保留有限的明确锁忙重试，不能重试解析失败、绕过 CAS 
 禁用/卸载、失败配置提交、显式方法覆盖、重连/冷恢复、连接器撤销、Actor 隔离以及
 Quick Ask 侧栏与丢响应恢复。Root 的协议/真实 Host 测试不能替代这些产品验收。
 
-Root 最终功能提交 `b385395c9f8686aee182a4c6a38b4f3008421d32` 已在 `origin/KodaX`，
+Root 上轮功能基线 `b385395c9f8686aee182a4c6a38b4f3008421d32` 已在 `origin/KodaX`，
 完整 CI 16 个任务成功、发布跳过；本机冻结全套 19252 通过、87 条件跳过、无失败/TODO。
 设计子仓 `7927f835744643b418d463b10a2e1c1c4bdd12e8` 和 Space `ca8d2313` 保持原样。
 这批接缝尚未发布：Space 先锁定包含该提交的新 SDK 包，再完成以上默认方法、排队/
 恢复业务绑定、Quick Ask 与配置/账号保持验收。现有 API_KEY/config/broker 入口保留，
 不得因错误、改名或重试改变账号来源。[完整验收与历史失败](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#最终验收2026-11-02未发布)。
+
+2026-11-02 Space 补审复现的 steer/redirect 两条漏测分支已补回归：同授权 steer 会先解析
+binding 后进入原 Run；Main 保留该 Run 的业务/profile/credential/tool lease，变化仍 conflict。
+redirect 保存显式方法身份，卸载后阻断而不执行默认方法；旧 null 标记也保守恢复或要求
+确认。`skill` 持久字段不改名，继续兼容旧 checkpoint。接手时应锁定同时包含这轮补审
+修正的 SDK，不能仅依赖之前 `b385395c9` 的 CI 通过记录；新增真实 Host 及发布包门禁见
+[Space 补审修正](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#space-独立补审修正2026-11-02)。
 
 2026-10-18 的 Space 核查样本安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，当时官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前开发树 `0.7.97-alpha.12` 核对，不据此推断 Space 已升级；源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
 

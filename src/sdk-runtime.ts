@@ -12584,8 +12584,12 @@ async function createRuntimeRunService(deps: {
     let preparedSkill: Awaited<ReturnType<typeof prepareSkillInput>>;
     try {
       execution = await resolveProductExecution(first.input, first.execution);
+      // Earlier binding builds marked recognized redirects with null instead of
+      // their method name. Treat that persisted shape like legacy explicit input.
+      const legacyExplicit = first.skill && (first.explicitSkill === undefined
+        || (first.input.delivery === 'redirect' && first.explicitSkill === null));
       preparedSkill = await withProductExecution(execution, () => prepareSkillInput(sessionId, first.input.text,
-        first.explicitSkill ?? undefined, first.skill && first.explicitSkill === undefined));
+        first.explicitSkill ?? undefined, legacyExplicit));
       if (execution?.defaultSkill !== undefined) batch = batch.slice(0, 1);
       else if (first.execution?.resolve !== undefined) {
         let count = 1;
@@ -12769,7 +12773,16 @@ async function createRuntimeRunService(deps: {
     input: ClientSubmitInput,
   ): Promise<ClientInputAcceptance> => {
     const target = requireActiveTargetRun(input);
-    const execution = currentProductExecution();
+    const declared = currentProductExecution();
+    if (declared?.principalId !== target.origin?.principalId) {
+      throw createRuntimeConflictError(declared?.key !== target.productExecutionKey
+        ? 'Steer cannot replace active-run execution authorization.'
+        : 'Steer cannot enter another client\'s Run.', 0);
+    }
+    const execution = await resolveProductExecution(input, declared, target.abortController?.signal);
+    execution?.assertAdmission?.();
+    // Resolving Main authority may outlive the target or its steer window.
+    requireActiveTargetRun(input);
     if (execution?.key !== target.productExecutionKey) {
       throw createRuntimeConflictError('Steer cannot replace active-run execution authorization.', 0);
     }
@@ -12820,7 +12833,8 @@ async function createRuntimeRunService(deps: {
     await deps.sessionAdmission.loadExecutable(input.sessionId);
     // Receive the follow-up first, then cancel the old execution; the
     // redirect Stop reason lets the settled Run continue this queue.
-    const queuedInput = productQueue.enqueue(input, (await resolveSkillInput(input.sessionId, input.text)) !== undefined);
+    const explicit = await resolveSkillInput(input.sessionId, input.text);
+    const queuedInput = productQueue.enqueue(input, explicit !== undefined, explicit?.skill.name);
     await abortRun(target.runId, { redirect: true });
     return queuedInput;
   };

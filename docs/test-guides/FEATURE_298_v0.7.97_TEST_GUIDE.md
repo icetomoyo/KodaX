@@ -79,6 +79,8 @@ completed 结果再检查三次请求；crash 夹具改为先核验原进程身�
 
 ### 最终验收：2026-11-02（未发布）
 
+本段保留 Space 补审前的功能基线记录；后续修正见下一节。
+
 功能候选为 Root `KodaX@b385395c9f8686aee182a4c6a38b4f3008421d32`，已推送
 `origin/KodaX`。设计子仓仍为 `7927f835744643b418d463b10a2e1c1c4bdd12e8`，
 Space `codex/sdk-alpha12-preparation@ca8d2313` 及其产物未改。没有打标签或 npm 发布；
@@ -117,6 +119,35 @@ Standards 轴：最终功能及配置/Windows/取消夹具增量复审，硬违�
 Spec 轴：默认 Skill、消费时业务绑定、原绑定恢复、同 Session promotion 与配置提交合同
 无剩余发现。真实云/OAuth 服务、模型质量及 Space 成品接入仍由其对应发布/产品门禁验收；
 离线 loopback 和进程组合通过不能替代这些验证。
+
+### Space 独立补审修正：2026-11-02
+
+Space 在 Root `34bc0528e` 独立复现 2 项 P2 和 1 项 P3；本机重放同一真实 Host 复现
+脚本，也得到 binding steer 的 conflict、静态授权对照成功，以及 redirect 显式方法卸载
+后默认回落。这是上轮漏测分支，上面 `b385395c9` 的全绿结果不覆盖其正确性。
+
+- `sdk-client.binding-controls.test.ts` 对 steer、redirect 分别先 RED 再修复：同授权 steer
+  实际到达原 AMA Run，重复提交不二次解析；业务/profile/凭据/tools 改变、异主、错误
+  target、解析中撤销仍拒绝。Main 每次从真实 Host 读取 profile，没有用固定字符串伪造 key。
+  redirect 的具名方法卸载后只保留原输入/admissionError，不产生默认请求；恢复方法可执行。
+- `sdk-client.binding-recovery.test.ts` 参数化旧 after_turn/redirect 记录：旧 redirect 的
+  `skill:true/explicitSkill:null` 先 RED，修复后在冷 Host、新凭据和收紧工具上限下仍保留
+  原业务与原问题，缺失方法阻断。`session-input-queue.test.ts` 固定 absent/null/name 三态的
+  JSON 恢复兼容；只修正 `skill` 注释，不改字段名或旧 checkpoint 格式。
+- `tests/bundled-space-host.test.mjs` 把同授权 steer 和卸载显式 redirect 加入原发布包门禁，
+  使用实际 dist SDK/独立 Host，与既有默认方法、promotion、冷重启保真一起验证，不加 CI job。
+- 修复中相关回归首次出现一个旧错误文案断言失败；已保留旧授权/异主错误的优先级，
+  没有通过修改旧断言或放宽授权来转绿。异步测试的初版等待制造了串行准入阻塞，已改为
+  可确定观察的 binding 撤销，不能把该测试等待当成已复现的产品完成/取消回归。
+
+原复现脚本的最后一段等待“错误地执行默认方法”；修复后这段等待自然超时，不能记为
+产品失败或脚本全绿。OS 临时副本仅把观察条件改为正确的 `admissionError`，不改变操作链：
+steer accepted，redirect 显式名已保存，方法卸载后 queued/not-started、请求仍为 1；
+Host/HTTP/临时目录清理均确认。原始 RED 和期望修正版日志分别为
+`%TEMP%/kodax-space-review-original-red.log`、`kodax-space-review-expected-results.log`。
+本轮最终构建与 source/test 类型检查通过；相关 10 文件 72 项通过，实际 dist 发布包门禁
+3 项通过。Standards（硬违反/坏味道）和 Spec 最终复审均无剩余项。完整 CI 尚待本轮
+提交运行，不能沿用上一候选的全绿数；未修改 CI job、体积预算或发布行为。
 
 ## 2026-10-30 Partner 通用 Agent 契约修复（未发布）
 

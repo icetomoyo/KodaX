@@ -12,7 +12,7 @@ import { ensureKodaXClient } from './sdk-client.js';
 import { runtimeClientPrincipal } from './runtime-daemon/client-lifecycle.js';
 import { getKodaXRuntimeOwnerState, waitForRuntimeDaemonShutdown } from './sdk-runtime.js';
 
-it('cold-recovers the original expert and prepared method with fresh credentials and a narrower tool ceiling', async () => {
+it.each(['after_turn', 'redirect'] as const)('cold-recovers original authority and a legacy queue with delivery=%s', async delivery => {
   const homeDir = await mkdtemp(path.join(await realpath(os.tmpdir()), 'kodax-binding-recovery-'));
   const configHome = path.join(homeDir, '.kodax');
   const profile = 'bound-recovery';
@@ -58,8 +58,10 @@ it('cold-recovers the original expert and prepared method with fresh credentials
   await writeFile(path.join(runDir, 'generation-recovery.json'), JSON.stringify({ version: 2, checkpoint,
     start: { prompt: 'Original question', options: { ...options, executionBinding: binding, executionToolCeiling: { tools: ['read', 'write'] } }, requiredBindings: [] },
     requiresCredential: true, requiresHostTools: false, actorTurnBaseline: [],
-    pendingInputs: [{ skill: true, principalId: runtimeClientPrincipal(clientInfo.instanceId, clientInfo.instanceSecret),
-      input: { sessionId, inputId: 'legacy-method', text: '/missing-old-method Original legacy question', delivery: 'after_turn' } }] }));
+    pendingInputs: [{ skill: true, ...(delivery === 'redirect' ? { explicitSkill: null } : {}),
+      principalId: runtimeClientPrincipal(clientInfo.instanceId, clientInfo.instanceSecret),
+      input: { sessionId, inputId: 'legacy-method', text: '/missing-old-method Original legacy question', delivery,
+        ...(delivery === 'redirect' ? { targetRunId: runId } : {}) } }] }));
   let mode: 'changed' | 'revoked' | 'fresh' = 'changed';
   let leaseId: string | undefined;
   const seen: string[] = [];
@@ -96,7 +98,8 @@ it('cold-recovers the original expert and prepared method with fresh credentials
     expect((await client.sessions.readHistory(sessionId)).items.filter(item => item.type === 'user').map(item => item.text)).toEqual(['Original question']);
     expect(await client.inputs.read(sessionId, 'legacy-method')).toMatchObject({ state: 'queued' });
     expect((await client.inputs.read(sessionId, 'legacy-method'))?.runId).toBeUndefined();
-    await client.inputs.submit({ sessionId, inputId: 'legacy-method', text: '/missing-old-method Original legacy question', delivery: 'after_turn' });
+    await client.inputs.submit({ sessionId, inputId: 'legacy-method', text: '/missing-old-method Original legacy question', delivery,
+      ...(delivery === 'redirect' ? { targetRunId: runId } : {}) });
     await expect.poll(async () => (await client.inputs.read(sessionId, 'legacy-method'))?.admissionError?.code, { timeout: 15_000 })
       .toBe('default_skill_unavailable');
     expect(requests).toHaveLength(1);

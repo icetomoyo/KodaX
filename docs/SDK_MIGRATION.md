@@ -56,6 +56,16 @@ Solo 和 Adaptive 都会向模型提供可用且已授权的 Skill 目录。运�
 要求确认，不以新默认方法替代。恢复的根 Run 业务快照不授权尚未消费的新轮次。
 重连/冷 Host 后重新注册进程内 lease；独立 Actor 使用自己的准入，不借用根专家声明。
 
+Space 独立补审后的修正：`steer` 也先在 Host 解析 Main binding，再比较目标 Run 的完整
+授权 key、principal 和窗口；解析完成后重新核验目标仍活动。同授权的 steer 进入原 AMA Run，
+变化的业务/profile/credential/tool lease 仍拒绝，不能以新 lease 或当前新专家替换原执行。
+Main 应为 steer 返回目标 Run 原有声明；同 inputId 的已接受重试不重复解析或注入。
+`redirect` 入队保存已识别的显式方法名，消费前卸载会保留输入并返回
+`default_skill_unavailable`，不回落默认方法。旧补丁写出的
+`skill:true / explicitSkill:null / redirect` 按旧显式意图保守恢复唯一引用；缺失或歧义要求
+确认，原问题可撤回。持久字段 `skill` 保留旧名称，含义为独立 Run 边界，不能据其为 true
+推断一定有具名方法。SDK/wire 类型与既有配置、凭证入口不变。
+
 Quick Ask 使用 `sessions.promote({sessionId,requestId,expectedRevision,tag})`，修订来自
 `sessions.read(...).metadataRevision`。成功返回 `{requestId,session}`，仍是原 Session ID。
 Host 原子保存 tag 与操作回执，历史、原生历史、lineage、附件和统计不变；新 promotion
@@ -98,7 +108,7 @@ Windows reader 短暂拒绝替换（`EPERM`）时，在同一锁和 staged 文�
 核对，不能假定失败等于未提交，不自动回滚或重放凭证/账号切换。凭证 binding/revision、
 OAuth 和撤销规则保持；改名不证明新别名有权使用旧账号。
 
-最终功能已推送 Root `KodaX@b385395c9f8686aee182a4c6a38b4f3008421d32`，完整 CI
+前次功能基线已推送 Root `KodaX@b385395c9f8686aee182a4c6a38b4f3008421d32`，完整 CI
 [41401900534](https://github.com/icetomoyo/KodaX/actions/runs/41401900534) 全绿（16 个
 任务成功、发布按预期跳过）；本机冻结全套 19252 通过、87 条件跳过、0 失败/0 TODO，
 源码与产物指纹一致，双轴复审无剩余项。完整证据和先前失败见

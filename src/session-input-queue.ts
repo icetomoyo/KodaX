@@ -15,17 +15,19 @@ interface QueuedInputFact {
   readonly messageId?: string;
   readonly delivery?: ClientSubmitInput['delivery'];
   readonly targetRunId?: string;
-  /** Host-confirmed Skill boundary; trusted expansion happens at consumption. */
+  /** Legacy persisted name: true requires a separate Run, for a Skill or changed authority/default method. */
   skill: boolean;
   state: ClientInputAcceptance['state'];
   runId?: string;
 }
 
 export interface PendingSessionInput {
-  /** null marks a new default/Run boundary; absent on legacy explicit Skill queues. */
+  /** A name pins explicit intent; null marks a default/authority boundary.
+   * Legacy explicit queues omit it; earlier recognized redirects also wrote null. */
   readonly explicitSkill?: string | null;
   readonly admissionError?: ClientInputAdmissionError;
   readonly input: ClientSubmitInput;
+  /** Keep this persisted name for old checkpoints; true is a Run boundary, not proof of a named Skill. */
   readonly skill: boolean;
   readonly principalId?: string;
 }
@@ -290,9 +292,9 @@ export class SessionInputQueue {
   }
 
   /**
-   * One drain unit: consecutive plain texts merge; a Skill input drains
-   * alone. FEATURE_298 T37 — the skill flag tells the Host to prepare the
-   * input's trusted expansion at consumption.
+   * One drain unit: compatible plain texts merge; legacy `skill: true`
+   * drains alone at a new Run boundary. `explicitSkill` distinguishes a
+   * named method from a default/authority boundary; expansion happens at consumption.
    */
   batch(sessionId: string): readonly { readonly input: ClientSubmitInput; readonly enqueuedAt: number; readonly skill: boolean; readonly explicitSkill?: string | null; readonly execution?: ProductExecutionContext }[] {
     const ordered = this.ordered(sessionId);

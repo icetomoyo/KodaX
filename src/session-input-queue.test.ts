@@ -2,6 +2,17 @@ import { expect, it, vi } from 'vitest';
 import { SessionInputQueue } from './session-input-queue.js';
 import { withProductExecution, type ProductExecutionContext } from './product-execution-authorization.js';
 
+it.each([{}, { explicitSkill: null }, { explicitSkill: 'explicit-method' }])
+  ('retains persisted Run-boundary and legacy Skill markers across JSON restore (%#)', marker => {
+    const saved = [{ input: { sessionId: 's', inputId: 'pending', text: '/explicit-method Keep original arguments',
+      delivery: 'redirect' as const, targetRunId: 'old-run' }, skill: true, ...marker }];
+    const queue = new SessionInputQueue(() => {});
+    queue.restore(JSON.parse(JSON.stringify(saved)) as typeof saved);
+    expect(queue.snapshot('s')).toEqual(saved);
+    expect(queue.batch('s')).toHaveLength(1);
+    expect(queue.batch('s')[0]?.input.text).toBe('/explicit-method Keep original arguments');
+  });
+
 it('retains rejected queued intent across restart and reports a cleared error only after original-principal rebind', () => {
   const queue = new SessionInputQueue(() => {});
   const context: ProductExecutionContext = { principalId: 'A', key: 'lease', bindRun: async input => input };
