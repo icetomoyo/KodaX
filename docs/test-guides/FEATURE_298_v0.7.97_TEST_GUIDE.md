@@ -45,6 +45,15 @@ config/catalog、setup 与旧 permission 保存均做部分磁盘写失败注入
 13198/5 skip、contract 1034 通过后，system 期间开始了新增配置修复，旧 dist 与源码混用，
 该次 system 已停止，不能称为冻结全套通过。后续最终候选另行记录。
 
+配置候选 `1a4b5f7f3` 的 CI `41397617918` 在 Windows build 和 packaged Electron 两个
+job 的新增并发配置测试命中真实 `EPERM` rename。原文件仍完整，提交却失败；不能当作
+测试噪声重跑。后续补丁只在 Windows EPERM 下沿原 staged 文件/锁做 200 ms 累计预算
+重试；4 个公共 writer 回归先 RED（3 失败）再 GREEN，覆盖瞬态、永久拒绝、oversleep
+与错误变化。没有放宽客户端有限锁忙重试、删目标或重放业务修改。该候选本机 bundle
+102/102、实际 tarball 旧 Host 切换 3/3；源码全套 fast 期间为处理上述真实缺口主动停止，
+不记全绿。此前基线 f24 的同机 1005 轮保留测试 61.6 秒、当前路径 61.2 秒，均通过；
+单次对照未见线性回退，但不是远端超时原因的证明。
+
 首个冻结候选 `36d83f05e` 的 CI `41390222335` 暴露 npm `files` 白名单漏掉 schema
 数据，以及临时 Session 删除后调用 `runs.await` 的真实竞争。前者以 actual npm pack
 清单测试 RED→GREEN 修复；后者以公开接口等原临时 Session 确已删除后再 await，稳定

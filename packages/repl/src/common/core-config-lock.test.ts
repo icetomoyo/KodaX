@@ -23,6 +23,52 @@ import {
 
 describe('withCoreConfigWriteLock', () => {
   afterEach(() => { vi.restoreAllMocks(); syncBuiltinESMExports(); });
+  it.skipIf(process.platform !== 'win32')('publishes after a transient reader denies Windows replacement', () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'kodax-core-rename-'));
+    const file = path.join(home, 'config.json');
+    writeFileSync(file, 'old');
+    const rename = fs.renameSync;
+    const calls = vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
+      throw Object.assign(new Error('Fixture reader denial'), { code: 'EPERM' });
+    }).mockImplementation(rename);
+    syncBuiltinESMExports();
+    try {
+      withCoreConfigWriteLock(file, () => writeCoreConfigAtomically(file, 'new'));
+      expect(readFileSync(file, 'utf8')).toBe('new');
+      expect(calls).toHaveBeenCalledTimes(2);
+    } finally { calls.mockRestore(); syncBuiltinESMExports(); rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it.skipIf(process.platform !== 'win32').each(['permanent', 'oversleep', 'different-error'] as const)
+    ('bounds Windows config replacement retries and preserves the original on %s', failure => {
+      const home = mkdtempSync(path.join(tmpdir(), 'kodax-core-rename-budget-'));
+      const file = path.join(home, 'config.json');
+      writeFileSync(file, 'old');
+      let elapsed = 0;
+      vi.spyOn(performance, 'now').mockImplementation(() => elapsed);
+      vi.spyOn(Atomics, 'wait').mockImplementation((_cell, _index, _value, timeout) => {
+        elapsed += failure === 'oversleep' ? 250 : timeout ?? 0;
+        return 'timed-out';
+      });
+      const denial = Object.assign(new Error('Fixture permission denial'), { code: 'EPERM' });
+      const ioError = Object.assign(new Error('Fixture permanent IO failure'), { code: 'EIO' });
+      const starts: number[] = [];
+      const calls = vi.spyOn(fs, 'renameSync').mockImplementation(() => {
+        starts.push(elapsed);
+        if (starts.length > 1 && failure === 'different-error') throw ioError;
+        if (starts.length > 1) elapsed += 40;
+        throw denial;
+      });
+      syncBuiltinESMExports();
+      try {
+        expect(() => withCoreConfigWriteLock(file, () => writeCoreConfigAtomically(file, 'new')))
+          .toThrow(failure === 'different-error' ? ioError : denial);
+        expect(readFileSync(file, 'utf8')).toBe('old');
+        expect(starts.every(start => start < 200)).toBe(true);
+        expect(calls.mock.calls.length).toBe(failure === 'oversleep' ? 1 : failure === 'different-error' ? 2 : 5);
+      } finally { calls.mockRestore(); syncBuiltinESMExports(); rmSync(home, { recursive: true, force: true }); }
+    });
+
   it.each(['write', 'sync', 'link', 'close', 'temporary-cleanup'] as const)('never starts a config write after failed lock %s', failure => {
     const home = mkdtempSync(path.join(tmpdir(), 'kodax-core-publication-'));
     const config = path.join(home, 'config.json'), lock = coreConfigWriteLockPath(config);

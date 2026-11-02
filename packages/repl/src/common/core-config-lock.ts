@@ -78,10 +78,29 @@ export function writeCoreConfigAtomically(file: string, raw: string): void {
     fd = openSync(temporary, 'wx', 0o600);
     writeFileSync(fd, raw); fsyncSync(fd);
     const closing = fd; fd = undefined; closeSync(closing);
-    renameSync(temporary, file);
+    publishCoreConfigReplacement(temporary, file);
   } finally {
     try { if (fd !== undefined) closeSync(fd); }
     finally { rmSync(temporary, { force: true }); }
+  }
+}
+
+function publishCoreConfigReplacement(temporary: string, file: string): void {
+  try { renameSync(temporary, file); }
+  catch (error: unknown) {
+    if (process.platform !== 'win32' || errorCode(error) !== 'EPERM') throw error;
+    // Readers/antivirus can briefly deny replacement. Keep both files intact,
+    // and retain the caller's writer lock within one monotonic 200 ms budget.
+    const deadline = performance.now() + 200;
+    const waitCell = new Int32Array(new SharedArrayBuffer(4));
+    for (;;) {
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) throw error;
+      Atomics.wait(waitCell, 0, 0, Math.min(10, remaining));
+      if (performance.now() >= deadline) throw error;
+      try { renameSync(temporary, file); return; }
+      catch (next: unknown) { if (errorCode(next) !== 'EPERM') throw next; }
+    }
   }
 }
 
