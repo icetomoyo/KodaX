@@ -59,6 +59,13 @@ redirect 保存显式方法身份，卸载后阻断而不执行默认方法；�
 发布跳过；本机专项 72 项、实际 dist 门禁 3 项通过，双轴复审无剩余项。尚未发新 SDK 包；
 Space 分支、设计子仓与现有 alpha.12 tag 均保持原样，产品接入仍需在升级新包后验收。
 
+随后普通 redirect 的第二次补审发现新旧 null 标记混淆，上述 CI 不覆盖该遗漏场景。
+修正后 Host 为普通 Run 边界持久记录内部 `plainRunBoundary:true`；普通 after_turn 后的
+redirect 不再误作旧显式方法，默认方法保持或消费前成功变更都在独立新 Run 中处理。
+旧 null 无引用的普通输入可在原 principal 重绑后恢复；旧方法卸载、歧义引用仍拒绝回退。
+Main/Renderer 不传该标记、不改 inputId，也不需自行迁移队列文件。发布和 Space 接手
+必须包含本轮修正，[验证记录](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#普通-redirect-的补审修正2026-11-02) 单独列出，暂不 publish。
+
 2026-10-18 的 Space 核查样本安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，当时官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前开发树 `0.7.97-alpha.12` 核对，不据此推断 Space 已升级；源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
 
 ## 2026-10-29 未发布 SDK 接入补充

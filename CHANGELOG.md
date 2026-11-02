@@ -16,6 +16,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Distinguish plain redirect Run boundaries from legacy explicit Skill queues,
+  retaining that intent through cold recovery without weakening missing-method
+  rejection or changing the original input, principal, or authority.
 - Resolve Main bindings before checking steer authority, retaining the active
   Run's principal and lease boundaries; preserve explicit method identity for
   redirects, including conservative recovery of older null-marked queue records.

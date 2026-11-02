@@ -62,12 +62,19 @@ Space 独立补审后的修正：`steer` 也先在 Host 解析 Main binding，�
 Main 应为 steer 返回目标 Run 原有声明；同 inputId 的已接受重试不重复解析或注入。
 `redirect` 入队保存已识别的显式方法名，消费前卸载会保留输入并返回
 `default_skill_unavailable`，不回落默认方法。旧补丁写出的
-`skill:true / explicitSkill:null / redirect` 按旧显式意图保守恢复唯一引用；缺失或歧义要求
-确认，原问题可撤回。持久字段 `skill` 保留旧名称，含义为独立 Run 边界，不能据其为 true
-推断一定有具名方法。SDK/wire 类型与既有配置、凭证入口不变。
+`skill:true / explicitSkill:null / redirect` 同时可能来自普通 Run 边界，不能只凭 delivery
+认定显式方法。新普通边界由 Host 持久保存内部 `plainRunBoundary:true`，冷恢复后仍不按
+旧显式意图判断；这不是 Client 输入选项，不由 Main/Renderer 提供。旧 null 记录无方法
+引用时按普通输入恢复，仍使用消费时 Main 最新成功提交的默认方法；带引用的旧记录按
+唯一方法保守恢复，方法缺失或引用歧义仍拒绝，原问题可撤回。已报错输入继续要求原
+principal 重绑，不能借迁移获得另一账号或专家的 authority。持久字段 `skill` 保留旧名称，
+含义为独立 Run 边界，不能据其为 true 推断一定有具名方法。Client/wire 输入与既有配置、
+凭证入口不变。
 本次修正提交 `00bfe7ed12407eda722a6bc4b15ace106e413dc5` 已在 Root 主分支，
 [完整 CI](https://github.com/icetomoyo/KodaX/actions/runs/41415454375) 16 个任务通过、
 发布跳过；尚未发布 npm。Space 需使用包含本次修正的新 SDK，不能只依赖旧 alpha.12。
+该 CI 是普通 redirect 第二次补审前的基线；以上边界区分修正还需包含在后续新 SDK 中，
+本轮独立验证见 [普通 redirect 补审](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#普通-redirect-的补审修正2026-11-02)。
 
 Quick Ask 使用 `sessions.promote({sessionId,requestId,expectedRevision,tag})`，修订来自
 `sessions.read(...).metadataRevision`。成功返回 `{requestId,session}`，仍是原 Session ID。

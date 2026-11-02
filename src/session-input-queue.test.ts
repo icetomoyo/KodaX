@@ -1,8 +1,8 @@
 import { expect, it, vi } from 'vitest';
-import { SessionInputQueue } from './session-input-queue.js';
+import { SessionInputQueue, type PendingSessionInput } from './session-input-queue.js';
 import { withProductExecution, type ProductExecutionContext } from './product-execution-authorization.js';
 
-it.each([{}, { explicitSkill: null }, { explicitSkill: 'explicit-method' }])
+it.each([{}, { explicitSkill: null }, { explicitSkill: 'explicit-method' }, { explicitSkill: null, plainRunBoundary: true as const }])
   ('retains persisted Run-boundary and legacy Skill markers across JSON restore (%#)', marker => {
     const saved = [{ input: { sessionId: 's', inputId: 'pending', text: '/explicit-method Keep original arguments',
       delivery: 'redirect' as const, targetRunId: 'old-run' }, skill: true, ...marker }];
@@ -12,6 +12,39 @@ it.each([{}, { explicitSkill: null }, { explicitSkill: 'explicit-method' }])
     expect(queue.batch('s')).toHaveLength(1);
     expect(queue.batch('s')[0]?.input.text).toBe('/explicit-method Keep original arguments');
   });
+
+it('commits plain Run boundaries before changing memory and retains their intent through cold JSON restore', async () => {
+  let fail = false;
+  let saved: readonly PendingSessionInput[] = [];
+  const queue = new SessionInputQueue(() => {}, (_session, pending) => {
+    if (fail) throw new Error('EIO');
+    saved = JSON.parse(JSON.stringify(pending)) as readonly PendingSessionInput[];
+  });
+  const input = { sessionId: 's', inputId: 'plain', text: '/unknown-method Keep raw input', delivery: 'redirect' as const, targetRunId: 'old-run' };
+  queue.enqueue(input, false);
+  fail = true;
+  expect(() => queue.deferToRunBoundary('s', 'plain')).toThrow('EIO');
+  expect(queue.snapshot('s')).toEqual([{ input, skill: false }]);
+  fail = false;
+  queue.deferToRunBoundary('s', 'plain');
+  expect(saved).toEqual([{ input, skill: true, explicitSkill: null, plainRunBoundary: true }]);
+  const restored = new SessionInputQueue(() => {});
+  restored.restore(saved);
+  expect(restored.snapshot('s')).toEqual(saved);
+  expect(await restored.consumePlainBatch('s', 'active-run', async () => {})).toEqual([]);
+  expect(restored.batch('s')).toMatchObject([{ input, plainRunBoundary: true }]);
+});
+
+it.each([
+  { skill: true, explicitSkill: null, plainRunBoundary: 'true' },
+  { skill: true, explicitSkill: 'selected-method', plainRunBoundary: true },
+  { skill: 'true', explicitSkill: null, plainRunBoundary: true },
+])('rejects malformed plain-boundary provenance before restoring any input (%#)', marker => {
+  const queue = new SessionInputQueue(() => {});
+  const saved = [{ input: { sessionId: 's', inputId: 'bad', text: 'Keep' }, ...marker }];
+  expect(() => queue.restore(JSON.parse(JSON.stringify(saved)) as readonly PendingSessionInput[])).toThrow(/boundary/);
+  expect(queue.list('s')).toEqual([]);
+});
 
 it('retains rejected queued intent across restart and reports a cleared error only after original-principal rebind', () => {
   const queue = new SessionInputQueue(() => {});

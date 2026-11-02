@@ -12585,9 +12585,11 @@ async function createRuntimeRunService(deps: {
     try {
       execution = await resolveProductExecution(first.input, first.execution);
       // Earlier binding builds marked recognized redirects with null instead of
-      // their method name. Treat that persisted shape like legacy explicit input.
+      // their method name. Newly deferred plain inputs carry their own marker;
+      // old null redirects without a reference cannot identify an explicit Skill.
       const legacyExplicit = first.skill && (first.explicitSkill === undefined
-        || (first.input.delivery === 'redirect' && first.explicitSkill === null));
+        || (first.input.delivery === 'redirect' && first.explicitSkill === null && !first.plainRunBoundary
+          && (parseInlineSkillReferences(first.input.text).length > 0 || parseBareInlineSlashReferences(first.input.text).length > 0)));
       preparedSkill = await withProductExecution(execution, () => prepareSkillInput(sessionId, first.input.text,
         first.explicitSkill ?? undefined, legacyExplicit));
       if (execution?.defaultSkill !== undefined) batch = batch.slice(0, 1);

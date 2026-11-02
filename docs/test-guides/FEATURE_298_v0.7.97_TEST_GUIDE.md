@@ -163,6 +163,36 @@ Node 22/system/Electron 更快），该单次运行不能替代稳定性能基�
 没有打标签、发布 npm 或修改 Space/设计子仓；Space 需升级包含本次修正的新 SDK 后再
 完成产品验收。已有 alpha.12 tag 仍指向 `f24a922c117e0ece5d26224a133a69973b313ab6`。
 
+### 普通 redirect 的补审修正：2026-11-02
+
+Space 在 `d1ff86e4e` 再次复现一项 P2：活跃 AMA 先排普通 after_turn，再排普通 redirect，
+默认方法和业务 revision 始终不变；第二个输入被延迟到独立 Run 时写成
+`skill:true/explicitSkill:null`，上一补丁把它误认成历史显式 Skill，错误阻断。因此上一节
+`00bfe7ed1` 的 CI 全绿不能作为本分支已覆盖的证据。
+
+本机原样重放 Space `plain-redirect-constant-default.mjs` 得到相同错误、请求数停在 2；
+公共 SDK 的最小场景和旧 null 普通队列冷恢复均先 RED（分别约 5 秒），不是仅静态推理。
+新增内部持久 `plainRunBoundary:true` 由 Host 在转边界时产生，持久失败不改内存；
+JSON/checkpoint 恢复保留该来源，只允许 `skill:true/explicitSkill:null` 的组合。
+旧 null 无引用记录可按普通输入恢复；有引用的旧 null、旧 absent 和具名显式输入继续
+校验唯一方法，卸载或歧义拒绝默认回落。无新的 Client 输入参数或 Main 迁移职责。
+
+相关真实 Host 用例覆盖默认不变、未知 slash、排队期间已提交默认方法变更；冷恢复
+覆盖旧显式、歧义引用、已报错旧普通和带标记新普通。冷恢复夹具原先只测试拒绝，
+未给下一轮设置 provider；新正向消费先在原 Run 完成后通过公开 settings 配置 fixture，
+不能在 recovering Run 活跃时修改设置，也不能放宽生产守卫来适配夹具。
+原发布包门禁同时保留 steer、显式方法卸载拒绝、普通 redirect、promotion 和冷重启保真；
+未增加 CI job 或放宽超时/预算。
+
+Space 原脚本的观察条件等待错误出现；OS 临时副本只改观察/断言，不改操作链，修复后
+得到 submitted、独立 Run 完成、3 次请求、默认方法与原问题保留，Host/HTTP/临时目录
+清理均确认。原 RED 日志 `%TEMP%/kodax-plain-redirect-original-red.log`，正确期望日志
+`%TEMP%/kodax-plain-redirect-expected-results.log`。最终构建和 source/test 类型检查通过，
+相关 10 文件 83 项通过，实际 dist 发布包门禁 3 项通过；双轴最终复审无剩余项。复审发现
+generation checkpoint 的 `skill:"true"` 可能通过宽松 truthy 检查，新增测试先 RED 后改为
+严格布尔校验，未放宽旧合法数据路径。新 CI 待收齐，不能沿用前一提交结果。
+暂无 tag/npm 发布，Space/设计子仓不改。
+
 ## 2026-10-30 Partner 通用 Agent 契约修复（未发布）
 
 下节保留修复前失败证据。本轮统一契约为：Partner persona 不增加只读上限；Session 选择

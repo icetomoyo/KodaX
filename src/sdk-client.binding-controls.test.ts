@@ -20,6 +20,7 @@ async function bindingFixture() {
   const profile = 'controls';
   const requests: string[] = [];
   const resolutions: RuntimeExecutionBindingRequest[] = [];
+  const selection = { defaultSkill: 'default-method' };
   const firstRequest = gate();
   const responseGates = [firstRequest];
   const releases = [firstRequest.release];
@@ -49,7 +50,7 @@ async function bindingFixture() {
     async authorizeExecution(_request, services) {
       bindingId ??= (await services.executionBindings.register(async (input, scoped) => {
         resolutions.push(structuredClone(input));
-        const profile = await scoped.createExecutionProfile({ defaultSkill: { name: 'default-method' } });
+        const profile = await scoped.createExecutionProfile({ defaultSkill: { name: selection.defaultSkill } });
         original ??= { businessBinding: { id: 'expert', revision: '1' },
           credential: { mode: 'scoped', leaseId: (await scoped.credentials.registerScoped({ providers: ['controls-fixture'] }, async () => 'fixture-only')).id,
             providers: ['controls-fixture'] },
@@ -63,7 +64,7 @@ async function bindingFixture() {
   });
   const session = await client.sessions.create({ projectPath: homeDir, surface: 'partner' });
   await client.sessions.updateSettings(session.id, { provider: 'controls-fixture', model: 'fixture', workMode: 'agent', agentMode: 'ama', permissionMode: 'full-access' });
-  return { client, session, requests, resolutions, behavior, firstRequest, homeDir, profile, configHome,
+  return { client, session, requests, resolutions, selection, behavior, firstRequest, homeDir, profile, configHome,
     get authorization() { if (!original) throw new Error('Run authority was not resolved.'); return original; },
     async revokeBinding() { if (!revokeBinding) throw new Error('Binding was not registered.'); return revokeBinding(); },
     gate() { const pending = gate(); releases.push(pending.release); return pending; },
@@ -169,5 +170,41 @@ it('retains a redirect explicit method while blocked and refuses default fallbac
     expect((await client.runs.await(restored.runId!)).phase).toBe('completed');
     expect(fixture.requests).toHaveLength(2);
     expect(fixture.requests[1]).toContain('METHOD-explicit-method');
+  } finally { await fixture.close(); }
+}, 90_000);
+
+it.each([
+  { text: 'Plain redirect with no Skill reference', defaultSkill: 'default-method' },
+  { text: '/unknown-method Plain redirect with an unrecognized reference', defaultSkill: 'default-method' },
+  { text: 'Plain redirect with a newly committed default', defaultSkill: 'explicit-method' },
+])('runs a plain redirect behind after-turn input ($text; default=$defaultSkill)', async ({ text, defaultSkill }) => {
+  const fixture = await bindingFixture();
+  const { client, session } = fixture;
+  try {
+    const active = await client.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start' });
+    await expect.poll(() => fixture.requests.length, { timeout: 15_000 }).toBe(1);
+    const before = { sessionId: session.id, inputId: 'before', text: 'Earlier queued question', delivery: 'after_turn' as const };
+    await client.inputs.submit(before);
+    const response = fixture.holdNextResponse();
+    const redirect = { sessionId: session.id, inputId: 'plain-redirect', text,
+      delivery: 'redirect' as const, targetRunId: active.runId! };
+    await client.inputs.submit(redirect);
+    fixture.firstRequest.release();
+    expect((await client.runs.await(active.runId!)).phase).toBe('interrupted');
+    await expect.poll(() => fixture.requests.length, { timeout: 15_000 }).toBe(2);
+    fixture.selection.defaultSkill = defaultSkill;
+    response.release();
+    await expect.poll(async () => {
+      const result = await client.inputs.read(session.id, redirect.inputId);
+      return result?.state === 'submitted' || result?.admissionError !== undefined;
+    }, { timeout: 15_000 }).toBe(true);
+    const accepted = await client.inputs.read(session.id, redirect.inputId);
+    expect(accepted).toMatchObject({ state: 'submitted' });
+    expect(accepted?.admissionError).toBeUndefined();
+    expect(accepted?.runId).not.toBe((await client.inputs.read(session.id, before.inputId))?.runId);
+    expect((await client.runs.await(accepted!.runId!)).phase).toBe('completed');
+    expect(fixture.requests).toHaveLength(3);
+    expect(fixture.requests[2]).toContain(`METHOD-${defaultSkill}`);
+    expect(fixture.requests[2]).toContain(redirect.text);
   } finally { await fixture.close(); }
 }, 90_000);

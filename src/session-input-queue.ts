@@ -5,6 +5,7 @@ import { currentProductExecution, productExecutionIntentKey, type ProductExecuti
 
 interface QueuedInputFact {
   explicitSkill?: string | null;
+  plainRunBoundary?: true;
   admissionError?: ClientInputAdmissionError;
   execution?: ProductExecutionContext;
   readonly principalId?: string;
@@ -23,8 +24,10 @@ interface QueuedInputFact {
 
 export interface PendingSessionInput {
   /** A name pins explicit intent; null marks a default/authority boundary.
-   * Legacy explicit queues omit it; earlier recognized redirects also wrote null. */
+   * Legacy explicit queues omit it; older null redirects are ambiguous without plainRunBoundary. */
   readonly explicitSkill?: string | null;
+  /** Host-confirmed plain input deferred to a new Run; not a legacy explicit Skill. */
+  readonly plainRunBoundary?: true;
   readonly admissionError?: ClientInputAdmissionError;
   readonly input: ClientSubmitInput;
   /** Keep this persisted name for old checkpoints; true is a Run boundary, not proof of a named Skill. */
@@ -69,10 +72,11 @@ export class SessionInputQueue {
   }
 
   snapshot(sessionId: string): readonly PendingSessionInput[] {
-    return this.ordered(sessionId).map(({ input, skill, principalId, explicitSkill }) => {
+    return this.ordered(sessionId).map(({ input, skill, principalId, explicitSkill, plainRunBoundary }) => {
       const error = this.facts.get(this.key(sessionId, input.inputId))?.admissionError;
       return { input: structuredClone(input), skill,
         ...(explicitSkill === undefined ? {} : { explicitSkill }),
+        ...(plainRunBoundary === undefined ? {} : { plainRunBoundary }),
         ...(error === undefined ? {} : { admissionError: structuredClone(error) }),
         ...(principalId ? { principalId } : {}) };
     });
@@ -84,6 +88,8 @@ export class SessionInputQueue {
     for (const value of inputs) {
       if (value.explicitSkill !== undefined && value.explicitSkill !== null && (typeof value.explicitSkill !== 'string' || !value.explicitSkill.trim()
         || value.explicitSkill.length > 128)) throw conflict('Malformed queued Skill identity.');
+      if (value.plainRunBoundary !== undefined && (value.plainRunBoundary !== true || value.skill !== true
+        || value.explicitSkill !== null)) throw conflict('Malformed plain Run boundary.');
       const error = value.admissionError;
       if (error !== undefined && (error === null || typeof error !== 'object'
         || !['execution_binding_unavailable', 'execution_binding_rejected', 'execution_binding_changed', 'default_skill_unavailable'].includes(error.code)
@@ -129,7 +135,7 @@ export class SessionInputQueue {
             continue;
           }
           const awaitingBinding = deferAuthorization || value.admissionError !== undefined || value.principalId !== execution?.principalId;
-          this.enqueueWithExecution(value.input, value.skill, awaitingBinding ? undefined : execution, value.principalId, awaitingBinding, value.explicitSkill);
+          this.enqueueWithExecution(value.input, value.skill, awaitingBinding ? undefined : execution, value.principalId, awaitingBinding, value.explicitSkill, value.plainRunBoundary);
           if (value.admissionError !== undefined) this.facts.get(key)!.admissionError = structuredClone(value.admissionError);
         }
       } finally {
@@ -183,12 +189,13 @@ export class SessionInputQueue {
   }
 
   private enqueueWithExecution(input: ClientSubmitInput, skill: boolean, execution: ProductExecutionContext | undefined,
-    principalId: string | undefined, awaitingBinding: boolean, explicitSkill?: string | null): ClientInputAcceptance {
+    principalId: string | undefined, awaitingBinding: boolean, explicitSkill?: string | null, plainRunBoundary?: true): ClientInputAcceptance {
     if (this.queue.count({ agentId: input.sessionId, mode: 'prompt', maxPriority: 'user' }) >= MAX_QUEUED_INPUTS) {
       throw conflict(`Queued follow-up limit reached (${MAX_QUEUED_INPUTS}). Wait or withdraw an input.`);
     }
     this.persistPending(input.sessionId, [...this.snapshot(input.sessionId), { input: structuredClone(input), skill,
       ...(explicitSkill === undefined ? {} : { explicitSkill }),
+      ...(plainRunBoundary === undefined ? {} : { plainRunBoundary }),
       ...(principalId ? { principalId } : {}) }]);
     const messageId = this.queue.enqueue({
       agentId: input.sessionId, mode: 'prompt', priority: 'user', content: input.text,
@@ -199,6 +206,7 @@ export class SessionInputQueue {
       delivery: input.delivery, targetRunId: input.targetRunId,
       execution, principalId, awaitingBinding,
       explicitSkill,
+      plainRunBoundary,
       skill, state: 'queued',
     });
     this.changed(input.sessionId);
@@ -248,9 +256,10 @@ export class SessionInputQueue {
   deferToRunBoundary(sessionId: string, inputId: string): void {
     const fact = this.facts.get(this.key(sessionId, inputId));
     if (!fact || fact.state !== 'queued' || fact.skill) return;
-    this.persistPending(sessionId, this.snapshot(sessionId).map(value => value.input.inputId === inputId ? { ...value, skill: true, explicitSkill: null } : value));
+    this.persistPending(sessionId, this.snapshot(sessionId).map(value => value.input.inputId === inputId ? { ...value, skill: true, explicitSkill: null, plainRunBoundary: true } : value));
     fact.skill = true;
     fact.explicitSkill = null;
+    fact.plainRunBoundary = true;
     this.changed(sessionId);
   }
 
@@ -266,7 +275,7 @@ export class SessionInputQueue {
     this.changed(sessionId);
   }
 
-  private ordered(sessionId: string): readonly { readonly input: ClientSubmitInput; readonly skill: boolean; readonly explicitSkill?: string | null; readonly enqueuedAt: number; readonly execution?: ProductExecutionContext; readonly principalId?: string; readonly awaitingBinding?: boolean }[] {
+  private ordered(sessionId: string): readonly { readonly input: ClientSubmitInput; readonly skill: boolean; readonly explicitSkill?: string | null; readonly plainRunBoundary?: true; readonly enqueuedAt: number; readonly execution?: ProductExecutionContext; readonly principalId?: string; readonly awaitingBinding?: boolean }[] {
     const queued = this.queue.peek({ agentId: sessionId, mode: 'prompt', maxPriority: 'user' });
     const factByMessageId = new Map<string, QueuedInputFact>();
     for (const fact of this.facts.values()) {
@@ -284,6 +293,7 @@ export class SessionInputQueue {
           ...(message.inputArtifacts !== undefined ? { inputArtifacts: message.inputArtifacts } : {}) },
         skill: fact.skill,
         explicitSkill: fact.explicitSkill,
+        plainRunBoundary: fact.plainRunBoundary,
         execution: fact.execution,
         principalId: fact.principalId, awaitingBinding: fact.awaitingBinding,
         enqueuedAt: message.enqueuedAt,
@@ -296,7 +306,7 @@ export class SessionInputQueue {
    * drains alone at a new Run boundary. `explicitSkill` distinguishes a
    * named method from a default/authority boundary; expansion happens at consumption.
    */
-  batch(sessionId: string): readonly { readonly input: ClientSubmitInput; readonly enqueuedAt: number; readonly skill: boolean; readonly explicitSkill?: string | null; readonly execution?: ProductExecutionContext }[] {
+  batch(sessionId: string): readonly { readonly input: ClientSubmitInput; readonly enqueuedAt: number; readonly skill: boolean; readonly explicitSkill?: string | null; readonly plainRunBoundary?: true; readonly execution?: ProductExecutionContext }[] {
     const ordered = this.ordered(sessionId);
     const first = ordered[0];
     if (!first || first.awaitingBinding) return [];

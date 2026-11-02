@@ -152,7 +152,7 @@ test('published-layout Host preserves binding controls, explicit methods and pro
   const configHome = path.join(homeDir, '.kodax');
   const profile = 'bundle-space';
   const requests = [];
-  const gates = [0, 2].map(index => {
+  const gates = [0, 2, 3, 4].map(index => {
     let release;
     const promise = new Promise(resolve => { release = resolve; });
     return { index, promise, release };
@@ -223,6 +223,28 @@ test('published-layout Host preserves binding controls, explicit methods and pro
     await waitFor(async () => (await client.inputs.read(session.id, 'redirect'))?.admissionError?.code === 'default_skill_unavailable', 'missing explicit method rejection');
     assert.equal(requests.length, 3);
     assert.equal((await client.inputs.withdraw(session.id, 'redirect')).text, redirect.text);
+    const plainSource = await client.inputs.submit({ sessionId: session.id, inputId: 'plain-source', text: 'Start the ordinary redirect source' });
+    await waitFor(() => requests.length === 4, 'ordinary redirect source request');
+    await client.inputs.submit({ sessionId: session.id, inputId: 'plain-before', text: 'Earlier ordinary input', delivery: 'after_turn' });
+    const plainRedirect = { sessionId: session.id, inputId: 'plain-redirect', text: '/not-installed Preserve this raw question',
+      delivery: 'redirect', targetRunId: plainSource.runId };
+    await client.inputs.submit(plainRedirect);
+    gates[2].release();
+    assert.equal((await client.runs.await(plainSource.runId)).phase, 'interrupted');
+    await waitFor(() => requests.length === 5, 'earlier ordinary input request');
+    gates[3].release();
+    await waitFor(async () => {
+      const input = await client.inputs.read(session.id, plainRedirect.inputId);
+      return input?.state === 'submitted' || input?.admissionError !== undefined;
+    }, 'ordinary redirect consumption');
+    const plain = await client.inputs.read(session.id, plainRedirect.inputId);
+    assert.equal(plain.state, 'submitted');
+    assert.equal(plain.admissionError, undefined);
+    assert.notEqual(plain.runId, (await client.inputs.read(session.id, 'plain-before')).runId);
+    assert.equal((await client.runs.await(plain.runId)).phase, 'completed');
+    assert.equal(requests.length, 6);
+    assert.ok(requests[5].includes('BUNDLED-EXPERT-METHOD'));
+    assert.ok(requests[5].includes(plainRedirect.text));
     const before = await client.sessions.read(session.id);
     const history = await client.sessions.readHistory(session.id);
     const promotion = { sessionId: session.id, requestId: 'bundle-promotion', expectedRevision: before.metadataRevision, tag: 'partner' };
