@@ -255,6 +255,7 @@
     "dist/provider-capabilities.json",
     "dist/manual-topics.json",
     "dist/static-text.json",
+    "dist/runtime-daemon-schema.json",
     "dist/windows-native-scripts.json",
     "dist/generated-config-templates.json",
     "dist/semantic-worker.js",

@@ -31,6 +31,15 @@
 15 秒；停止该扫描后完整文件与 Host 组重跑 167 项通过。该失败保留，不记为全量通过。
 后续冻结全套与 CI 结果在完成后另记，不能把分批计数相加冒充单次全绿。
 
+首个冻结候选 `36d83f05e` 的 CI `41390222335` 暴露 npm `files` 白名单漏掉 schema
+数据，以及临时 Session 删除后调用 `runs.await` 的真实竞争。前者以 actual npm pack
+清单测试 RED→GREEN 修复；后者以公开接口等原临时 Session 确已删除后再 await，稳定
+RED→GREEN。仅当前 owner 的 temporary Run 复用既有缓存准入，未放宽持久/外来 Run 访问。
+同一候选本机 fast 为 3,458 通过、53 跳过、4 失败；未继续执行后续 tiers，不能记为全绿。
+其中两个 one-shot 失败属于上述真实竞争；队列第三 Run 的调度等待改用其真实身份和
+completed 结果再检查三次请求；crash 夹具改为先核验原进程身份退出，并保留 bootstrap
+失败诊断。后两项单独重跑原已通过，未将新夹具写法宣称为首次失败唯一原因的复现证明。
+
 ## 2026-10-30 Partner 通用 Agent 契约修复（未发布）
 
 下节保留修复前失败证据。本轮统一契约为：Partner persona 不增加只读上限；Session 选择

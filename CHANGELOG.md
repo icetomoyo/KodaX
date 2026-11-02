@@ -21,6 +21,8 @@ All notable changes to this project will be documented in this file.
   during checkpoint recovery. New execution intent requires a compatible Host.
 - Generate the complete daemon schema as packaged data, preserving the existing
   CLI size budget and release workflow matrix/trigger behavior.
+- Keep owner-local temporary Run results awaitable after Host Session cleanup;
+  include generated protocol data in the actual npm package inventory.
 
 - Preserve lexical and physical protected paths across Windows short names;
   keep missing SSH identities excluded and native cache anchors free of reparse

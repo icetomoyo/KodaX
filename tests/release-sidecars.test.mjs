@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,6 +10,19 @@ import { test } from 'node:test';
 const exec = promisify(execFile);
 const workflow = await readFile(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
 const required = ['provider-capabilities.json', 'manual-topics.json', 'static-text.json', 'runtime-daemon-schema.json', 'windows-native-scripts.json', 'generated-config-templates.json'];
+
+test('the actual npm pack inventory includes runtime data sidecars', async () => {
+  const npm = [process.env.npm_execpath,
+    path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js'),
+    path.join(path.dirname(path.dirname(process.execPath)), 'lib/node_modules/npm/bin/npm-cli.js'),
+  ].find(candidate => candidate?.endsWith('npm-cli.js') && existsSync(candidate));
+  assert.ok(npm, 'Cannot locate npm CLI for package inventory verification.');
+  const packed = await exec(process.execPath, [npm, 'pack', '--dry-run', '--ignore-scripts', '--json'],
+    { cwd: path.resolve(import.meta.dirname, '..'), windowsHide: true, timeout: 60_000, maxBuffer: 8 * 1024 * 1024 });
+  const [manifest] = JSON.parse(packed.stdout);
+  const files = new Set(manifest.files.map(entry => entry.path));
+  for (const name of required) assert.ok(files.has(`dist/${name}`), `npm package omitted ${name}`);
+});
 
 test('the real tar release inventory includes every runtime data sidecar', async () => {
   const names = workflow.match(/sidecars=\(([\s\S]*?)\n\s*\)/)?.[1].trim().split(/\s+/);

@@ -10,6 +10,7 @@ import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
 import { ensureKodaXRuntime } from './sdk-runtime.js';
 import { readRuntimeDaemonLockOwner, resolveRuntimeDaemonPaths, type RuntimeDaemonPaths } from './runtime-daemon/state.js';
 import { RuntimeDaemonTransportError } from './runtime-daemon/transport.js';
+import { waitForRuntimeDaemonOwnerExit } from './runtime-daemon/process.js';
 
 let homeDir: string;
 let configHome: string;
@@ -128,9 +129,17 @@ async function killHostAndRestart(scenario: CrashScenario): Promise<{
   process.kill(owner!.pid!, 'SIGKILL');
   await scenario.client.disconnect().catch(() => undefined);
   await scenario.first.close().catch(() => undefined);
-  const restarted = await ensureKodaXRuntime({
-    homeDir: scenario.homeDir, profile: scenario.profile, daemonStartupTimeoutMs: 60_000,
-  });
+  await waitForRuntimeDaemonOwnerExit({ pid: owner!.pid!, processStartIdentity: owner!.processStartIdentity }, 30_000);
+  let restarted: Awaited<ReturnType<typeof ensureKodaXRuntime>>;
+  try {
+    restarted = await ensureKodaXRuntime({
+      homeDir: scenario.homeDir, profile: scenario.profile, daemonStartupTimeoutMs: 60_000,
+    });
+  } catch (cause: unknown) {
+    const log = path.join(scenario.paths.rootDir, 'bootstrap.log');
+    const diagnostics = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').slice(-4000) : 'Bootstrap log absent.';
+    throw new Error(`Crash restart failed. Bootstrap diagnostics: ${diagnostics}`, { cause });
+  }
   const survivor = await connectKodaXClient({
     homeDir: scenario.homeDir, profile: scenario.profile,
   });

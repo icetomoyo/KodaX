@@ -13330,7 +13330,9 @@ async function createRuntimeRunService(deps: {
       deps.ensureOpen();
       const run = deps.runs.get(runId);
       if (run?.ownedByRuntime === true) {
-        await assertRunRecordAccess(run);
+        // Host settlement may already have deleted this temporary Session.
+        // Its admitted identity still protects the owner-local result.
+        await assertRunRecordAccess(run, run.admittedSessionContext?.runtimeInfo?.temporary === true);
         return run.result;
       }
       const persisted = deps.persistence.loadRunStatus(runId);
