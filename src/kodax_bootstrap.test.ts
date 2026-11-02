@@ -10,6 +10,36 @@ import {
 } from './kodax_bootstrap.js';
 
 describe('KodaX CLI bootstrap', () => {
+  it('shows discovery feedback before importing the selector and clears it before the picker', async () => {
+    const streams = [process.stdin, process.stdout, process.stderr];
+    const descriptors = streams.map(stream => Object.getOwnPropertyDescriptor(stream, 'isTTY'));
+    const writes: string[] = [];
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation(chunk => { writes.push(String(chunk)); return true; });
+    try {
+      streams.forEach(stream => Object.defineProperty(stream, 'isTTY', { value: true, configurable: true }));
+      await runKodaXBootstrap({
+        argv: ['node', 'kodax', '-r'],
+        loadCli: vi.fn(),
+        loadResume: async () => {
+          expect(writes.join('')).toContain('Finding sessions');
+          return { resolveBareResume: async options => {
+            options?.onDiscoveryComplete?.();
+            expect(writes.at(-1)).toBe('\r\u001B[2K');
+            return { kind: 'exit' };
+          } };
+        },
+        stdin: { pause: vi.fn(), unref: vi.fn() },
+      });
+    } finally {
+      write.mockRestore();
+      streams.forEach((stream, index) => {
+        const descriptor = descriptors[index];
+        if (descriptor) Object.defineProperty(stream, 'isTTY', descriptor);
+        else Reflect.deleteProperty(stream, 'isTTY');
+      });
+    }
+  });
+
   it.each([
     [['-r']],
     [['--resume']],

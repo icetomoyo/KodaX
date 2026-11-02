@@ -781,3 +781,55 @@ are not byte-identical (45 of 262 files differ), so Main was validated through
 its own generated artifacts rather than assigned the other checkout's binary
 acceptance. The functional code stayed frozen during Main validation; the
 following integration/handoff update is documentation only.
+
+## 2026-11-02: early resume feedback, with the loading path preserved
+
+The reported 2–3 second post-build pauses were not fully reproduced. Initial
+actual-history picker timing was 522 ms, then 495–509 ms; isolated selection
+reached startup feedback in 471 ms, then 327–333 ms. Node persistent compile
+cache was disabled. These observations do not establish an antivirus/disk
+cause or rule out every cold-start regression.
+
+Read-only discovery opened 2,329 files and read 93,096,675 bytes for 96 visible
+sessions because a complete project index was absent. Normal storage listing
+can repair indexes; strict Host summary/history reads bypass legacy storage
+load. Why the user's original manifest disappeared remains undetermined.
+
+The final change only paints `Finding sessions` before importing/scanning and
+clears it before the picker or empty-list notice. Existing selection feedback,
+module-loading order, cancellation, read-only discovery, index maintenance,
+Host startup, credentials and SDK contracts remain unchanged. No additional
+file reads, rebuilds, workers, configuration or CI jobs enter the loading path.
+The existing unref'ed progress timer is stopped by the bootstrap finally block.
+
+Experiments deliberately NOT retained after the user's performance priority:
+
+- Immediate dynamic import while displaying the picker delayed fast-Enter
+  feedback from about 5 ms to 331 ms; it moved work onto the input thread.
+- File prefetch did not demonstrate a reliable improvement in total latency.
+- Explicit-selection index rebuilding preserved 96 results in an isolated
+  2,329-file fixture and reduced later listing from 264 ms to 33 ms, but added
+  348 ms to the first selection. This mandatory extra startup work was removed.
+- The experimental parallel index writer and its tests were removed with that
+  optimization. The original serial publication and locking code is preserved.
+
+This is a feedback fix, not a claim that 2–3 second cold loading is eliminated.
+Further index optimization requires measuring the complete first/warm lifecycle
+without adding synchronous maintenance to session selection or SDK reads.
+
+Final minimal-candidate local validation (2026-11-02): source/test type checks,
+full build and 63 focused checks passed. Real PTY discovery feedback appeared
+at 73–84 ms; the actual 96-session list appeared at 525–542 ms (initial baseline
+495–522 ms, separate non-controlled samples; no regression rate is inferred).
+Search and selection feedback remained 4–7 ms. Isolated selection to startup
+feedback was 480 ms first and 353–389 ms subsequently, versus the initial
+471 / 327–333 ms observations. No speedup in total loading time is claimed.
+The probe asserted selection did not create a missing resume-index manifest;
+real-list cancellation exited successfully without starting a user Host.
+Only the bootstrap/discovery feedback wiring changes in production (8 lines).
+The final packaged suite passed all 102 cases (99 parallel plus 3 serial), with
+zero failures or skips. The 220-tree recovery gate reached ready in 2,226 ms,
+read concurrent history in 58 ms and restarted in 1,350 ms under unchanged
+budgets. Standards and Spec reviews each reported zero remaining findings.
+The existing release preparation edits were preserved; this change does not
+alter CI, package versions, release tags, or publishing.

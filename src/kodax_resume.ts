@@ -24,6 +24,7 @@ export interface ResolveBareResumeOptions {
     options?: SessionPickerRunOptions,
   ) => Promise<SessionPickerItem | undefined>;
   readonly beforeSelect?: (session: SessionPickerItem) => Promise<void>;
+  readonly onDiscoveryComplete?: () => void;
   readonly notify?: (notice: ResumeNotice) => void | Promise<void>;
 }
 
@@ -46,6 +47,7 @@ export async function resolveBareResume(
     projectRoot: options.cwd ?? process.cwd(),
     limit: Number.MAX_SAFE_INTEGER,
   });
+  options.onDiscoveryComplete?.();
   if (sessions.length === 0) {
     await notify('empty');
     return { kind: 'continue', argv: [] };
