@@ -1,6 +1,7 @@
 import { recordRejectedImage } from './rejected-image.js';
 import { createHash } from 'node:crypto';
 import { requestEnvironment, hasRequestEnvironment, prepareProviderPayload, requestExtensionFetch, providerStreamEvent } from './request-extensions.js';
+import { withCacheWritePartition } from './request-extensions.js';
 import { openAIChatTools, withoutPreferredToolConstraints } from './tool-constraints.js';
 import { connectionAuthFetch } from './connection-auth.js';
 import { observeProviderFetch } from '../provider-request-observation.js';
@@ -55,6 +56,7 @@ import {
   isImageFileMissing,
   MISSING_IMAGE_PLACEHOLDER,
   UNSUPPORTED_TOOL_RESULT_IMAGE_PLACEHOLDER,
+  UNSUPPORTED_MODEL_IMAGE_PLACEHOLDER,
 } from './image-serialization.js';
 import { resolvePromptCacheDisabled } from '../run-scoped-config.js';
 import { buildReasoningEffortLadder, usesReasoningEffortLadder } from '../reasoning-ladder.js';
@@ -146,6 +148,7 @@ export type OpenAIUsageLike = {
   total_tokens?: number;
   prompt_tokens_details?: {
     cached_tokens?: number | null;
+    cache_write_tokens?: number | null;
   } | null;
   // FEATURE_116 Sub-task D — DeepSeek private cache fields. DeepSeek's
   // OpenAI-compat /chat/completions returns cache stats at the TOP level
@@ -191,11 +194,16 @@ export function normalizeOpenAIUsage(usage: OpenAIUsageLike): KodaXTokenUsage | 
         ? usage.prompt_cache_hit_tokens
         : undefined;
 
+  const cachedWriteTokens = usage.prompt_tokens_details?.cache_write_tokens;
+  if (cachedWriteTokens !== undefined && cachedWriteTokens !== null
+    && (!Number.isFinite(cachedWriteTokens) || cachedWriteTokens < 0
+      || cachedWriteTokens + (cachedReadTokens ?? 0) > inputTokens)) return undefined;
   return {
     inputTokens,
     outputTokens,
     totalTokens,
     ...(cachedReadTokens !== undefined ? { cachedReadTokens } : {}),
+    ...(cachedWriteTokens != null ? { cachedWriteTokens, cachedWriteTokensByTtl: { unknown: cachedWriteTokens } } : {}),
   };
 }
 
@@ -1097,7 +1105,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         // Keep idle timers alive on every SSE chunk.
         streamOptions?.onHeartbeat?.();
 
-        usage = normalizeOpenAIUsage(chunk.usage as OpenAIUsageLike) ?? usage;
+        usage = withCacheWritePartition(normalizeOpenAIUsage(chunk.usage as OpenAIUsageLike)) ?? usage;
 
         const choice = chunk.choices[0];
         const delta = choice?.delta;
@@ -1388,7 +1396,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         textBlocks,
         toolBlocks,
         thinkingBlocks,
-        usage: normalizeOpenAIUsage(response.usage as OpenAIUsageLike),
+        usage: withCacheWritePartition(normalizeOpenAIUsage(response.usage as OpenAIUsageLike)),
         stopReason: choice?.finish_reason ?? undefined,
       };
     }, signal, streamOptions?.singleAttempt ? 1 : 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter, { model, tools });
@@ -1504,10 +1512,11 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
   private async serializeToolResult(
     block: KodaXToolResultBlock,
     attachments: ToolResultImages,
+    model?: string,
   ): Promise<OpenAI.Chat.ChatCompletionToolMessageParam> {
     const text: string[] = [];
     const images: OpenAI.Chat.ChatCompletionContentPart[] = [];
-    const multimodal = this.getCapabilityProfile().multimodalSupport;
+    const multimodal = this.getCapabilityProfile(model).multimodalSupport;
     const supportsImages = multimodal === 'image-input' || multimodal === 'full';
     if (typeof block.content === 'string') text.push(block.content);
     else for (const item of block.content) {
@@ -1540,6 +1549,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
   private async serializeUserMessage(
     contentBlocks: KodaXContentBlock[],
     attachments: ToolResultImages,
+    model?: string,
   ): Promise<OpenAI.Chat.ChatCompletionMessageParam[]> {
     const results: OpenAI.Chat.ChatCompletionMessageParam[] = [];
     const text = contentBlocks
@@ -1554,7 +1564,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       if (block.type === 'tool_result') {
         // Images travel only with the result selected by history repair;
         // orphan/duplicate results must not leave image-only user messages.
-        results.push(await this.serializeToolResult(block, attachments));
+        results.push(await this.serializeToolResult(block, attachments, model));
       }
     }
 
@@ -1576,6 +1586,10 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       });
     }
     for (const block of imageBlocks) {
+      if (this.getModelDescriptor(model)?.multimodalSupport === 'none') {
+        content.push({ type: 'text', text: UNSUPPORTED_MODEL_IMAGE_PLACEHOLDER });
+        continue;
+      }
       const image = await prepareImageBlock(block);
       if ('placeholder' in image) {
         content.push({
@@ -1653,7 +1667,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         continue;
       }
 
-      converted.push(...await this.serializeUserMessage(message.content, attachments));
+      converted.push(...await this.serializeUserMessage(message.content, attachments, model));
     }
 
     return this.repairToolCallHistory(converted, attachments);

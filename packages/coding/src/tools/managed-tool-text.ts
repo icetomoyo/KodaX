@@ -39,7 +39,7 @@ export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
   edit: { description: staticText("t11.tools/managed-tool-text.1"),
     annotations: { 'properties.path': null, 'properties.edits': null, 'properties.edits.items.properties.new_string': null,
       'properties.edits.items.properties.old_string': null, 'properties.edits.items.properties.replace_all': 'All occurrences; default false.' } },
-  exit_plan_mode: { description: 'Parent-only interactive REPL approval of the finished plan. Approved → accept-edits; rejected → stay in plan and revise. Never combine with set_permission_mode.',
+  exit_plan_mode: { description: 'Parent-only interactive REPL approval of the finished plan. Approved → accept-edits; rejected → stay in plan and revise. Wait for Host approval before implementing.',
     annotations: { 'properties.plan': 'Full plan, not summary: ≤40 lines, ≤3 bullet levels, one sentence/bullet. If larger, present the current phase for phase-by-phase approval.' } },
   followup_task: { description: 'Task/evidence for a direct child: idle starts a turn atomically; running receives it in-place without another slot.',
     annotations: { 'properties.target': 'Canonical child path or direct-child name.', 'properties.objective': 'Additional objective/evidence.',

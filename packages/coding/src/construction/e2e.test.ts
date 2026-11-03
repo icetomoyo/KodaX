@@ -139,7 +139,7 @@ describe('v0.7.28 end-to-end: stage → activate → executeTool → revoke', ()
     // exact form, but it MUST be a positive integer string — proving
     // the dispatch succeeded end to end.
     expect(out).toMatch(/^\d+$/);
-    expect(parseInt(out, 10)).toBeGreaterThan(0);
+    expect(parseInt(out as string, 10)).toBeGreaterThan(0);
   });
 
   it('capability gate: undeclared ctx.tools.<name> surfaces CapabilityDeniedError through executeTool', async () => {
@@ -167,7 +167,7 @@ describe('v0.7.28 end-to-end: stage → activate → executeTool → revoke', ()
     // Use it once before revoke to confirm it works.
     const before = await executeTool('count_lines', { path: targetFile }, ctx);
     expect(before).toMatch(/^\d+$/);
-    expect(parseInt(before, 10)).toBeGreaterThan(0);
+    expect(parseInt(before as string, 10)).toBeGreaterThan(0);
 
     // Revoke.
     await revoke('count_lines', '1.0.0');

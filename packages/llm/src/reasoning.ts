@@ -478,7 +478,10 @@ export function normalizeReasoningEffortValue(
 
 export function mapLegacyReasoningModeToEffortIntent(
   mode: KodaXReasoningMode,
-): KodaXStableEffortIntent {
+): KodaXStableEffortIntent;
+/** Normalize old inputs once; native and provider-specific efforts pass through. */
+export function mapLegacyReasoningModeToEffortIntent(mode: KodaXWireReasoningEffort): KodaXWireReasoningEffort;
+export function mapLegacyReasoningModeToEffortIntent(mode: KodaXWireReasoningEffort): KodaXWireReasoningEffort {
   switch (mode) {
     case 'off':
       return 'none';
@@ -490,6 +493,8 @@ export function mapLegacyReasoningModeToEffortIntent(
       return 'medium';
     case 'deep':
       return 'high';
+    default:
+      return mode;
   }
 }
 

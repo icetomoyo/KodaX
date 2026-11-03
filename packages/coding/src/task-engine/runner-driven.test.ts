@@ -33,6 +33,7 @@ import {
   readLearningProposalStore,
   resolveActiveRootQueueRoute,
   resolveLearningProposalStore,
+  SkillRegistry,
   type KodaXMemoryOutcomeDigest,
   type KodaXSessionData,
   type MemoryContextIdentity,
@@ -4921,7 +4922,10 @@ describe('Shard 6d-d — session continuity', () => {
     const retention = input.retained ? { managedContextRetention: {} } : {};
     const options = (context: KodaXOptions['context']) => ({
       ...makeOptions(),
-      context: { ...makeOptions().context, ...context },
+      // An undefined skillsPrompt otherwise discovers the developer's real user Skills.
+      context: { ...makeOptions().context, configHome: path.join(testWorkspaceRoot, 'config-home'),
+        skillRegistry: new SkillRegistry(testWorkspaceRoot, { projectPaths: [], userPaths: [], pluginPaths: [],
+          builtinPath: path.join(testWorkspaceRoot, 'no-builtin-skills') }), ...context },
     });
     const first = await runManagedTaskViaRunner(
       { ...options(input.firstContext), session: { id: input.sessionId, ...retention } },

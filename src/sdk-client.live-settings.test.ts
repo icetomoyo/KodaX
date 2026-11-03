@@ -25,12 +25,12 @@ it.each([
   { agentMode: 'ama', compact: true },
 ] as const)('applies live $agentMode Session settings at the next request (compaction: $compact)', async ({ agentMode, compact }) => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-live-settings-'));
-  const samples = Array.from({ length: 3 }, (_, index) => path.join(homeDir, `sample-${index}.txt`));
+  const samples = Array.from({ length: 5 }, (_, index) => path.join(homeDir, `sample-${index}.txt`));
   await Promise.all(samples.map((sample, index) => writeFile(sample, `sample content ${index}`)));
   const mainRequests: { provider: string; model: string | undefined; reasoning: Parameters<KodaXBaseProvider['stream']>[3] }[] = [];
   const summaryRequests: typeof mainRequests = [];
-  const entered = Array.from({ length: 4 }, gate);
-  const release = Array.from({ length: 4 }, gate);
+  const entered = Array.from({ length: 6 }, gate);
+  const release = Array.from({ length: 6 }, gate);
   let seedingHistory = compact;
   class LiveSettingsProvider extends KodaXBaseProvider {
     readonly supportsThinking = true;
@@ -64,7 +64,7 @@ it.each([
       expect(args[4]?.modelOverride).toBe(request.model);
       if (typeof request.reasoning === 'object') expect(args[3]).toMatchObject(request.reasoning);
       else expect(args[3]).toBe(request.reasoning);
-      return index < (compact ? 1 : 3)
+      return index < (compact ? 1 : 5)
         ? { textBlocks: [], thinkingBlocks: [], toolBlocks: [{ type: 'tool_use', id: `read-${index}`, name: 'read', input: { path: samples[index] } }], stopReason: 'tool_use',
             ...(compact ? { usage: { inputTokens: 129_900, outputTokens: 100, totalTokens: 130_000 } } : {}) }
         : { textBlocks: [{ type: 'text', text: 'Read sample content.' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
@@ -97,7 +97,7 @@ it.each([
           seedingHistory = false;
         }
         await client.sessions.updateSettings(session.id, {
-          provider: 'live-settings-first', model: 'initial-model', effort: 'low',
+          provider: 'live-settings-first', model: 'initial-model', effort: 'high',
           permissionMode: 'full-access', agentMode,
           ...(compact ? { compactionTriggerTokens: 120_000 } : {}),
         });
@@ -110,7 +110,7 @@ it.each([
         if (accepted.runId === undefined) throw new Error('An idle Session must start the submitted input.');
         expect((await runtime.runs.get(accepted.runId)).mode).toBe(agentMode === 'ama' ? 'managed_task' : 'coding');
         await entered[0]!.promise;
-        const first = { provider: 'live-settings-first', model: 'initial-model', reasoning: { enabled: true, effort: 'low' } };
+        const first = { provider: 'live-settings-first', model: 'initial-model', reasoning: { enabled: true, effort: 'high' } };
         expect(mainRequests[0]).toEqual(first);
         await client.sessions.updateSettings(session.id, { provider: 'live-settings-next', model: 'next-model', effort: 'none' });
         expect(mainRequests[0]).toEqual(first);
@@ -129,15 +129,23 @@ it.each([
           compactionStarted.close();
           return;
         }
-        await client.sessions.updateSettings(session.id, { effort: null, reasoningMode: 'quick' });
+        await client.sessions.updateSettings(session.id, { effort: 'max' });
         release[1]!.resolve();
         await entered[2]!.promise;
-        expect(mainRequests[2]?.reasoning).toEqual({ enabled: true, effort: 'low' });
-        await client.sessions.updateSettings(session.id, { reasoningMode: null, thinking: false, model: null });
+        expect(mainRequests[2]?.reasoning).toEqual({ enabled: true, effort: 'max' });
+        await client.sessions.updateSettings(session.id, { effort: 'auto' });
         release[2]!.resolve();
         await entered[3]!.promise;
-        expect(mainRequests[3]).toEqual({ provider: 'live-settings-next', model: undefined, reasoning: { enabled: false, effort: 'none' } });
+        expect(mainRequests[3]?.reasoning).toEqual({ enabled: true, effort: 'auto' });
+        await client.sessions.updateSettings(session.id, { effort: null, reasoningMode: 'quick' });
         release[3]!.resolve();
+        await entered[4]!.promise;
+        expect(mainRequests[4]?.reasoning).toEqual({ enabled: true, effort: 'low' });
+        await client.sessions.updateSettings(session.id, { reasoningMode: null, thinking: false, model: null });
+        release[4]!.resolve();
+        await entered[5]!.promise;
+        expect(mainRequests[5]).toEqual({ provider: 'live-settings-next', model: undefined, reasoning: { enabled: false, effort: 'none' } });
+        release[5]!.resolve();
         expect((await runtime.runs.await(accepted.runId)).phase).toBe('completed');
       } finally {
         release.forEach((item) => item.resolve());

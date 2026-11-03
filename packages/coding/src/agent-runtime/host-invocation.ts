@@ -14,6 +14,7 @@ import { saveRequiredSessionSnapshot } from './middleware/session-snapshot.js';
 import { bindVisualObservationAdmission } from '../media/visual-owner.js';
 import { emitEffectiveTaskConfig } from './effective-config.js';
 import { isToolDiscoverable } from '../tools/tool-search.js';
+import { applyRuntimeSkillInvocationPolicy, awaitRuntimeSkillInvocationPolicy } from '../skill-invocation-policy.js';
 
 export interface HostInvocation {
   readonly options: KodaXOptions;
@@ -32,34 +33,42 @@ export interface HostInvocation {
 export function withHostInvocation<T>(original: KodaXOptions, prompt: string, execute: (host: HostInvocation) => Promise<T>): Promise<T> {
   const sessionId = original.session?.id ?? randomUUID();
   const runId = original.context?.runtimeRunId ?? randomUUID();
-  const options = { ...original, context: { ...original.context, runtimeRunId: runId } };
+  let options: KodaXOptions = { ...original, context: { ...original.context, runtimeRunId: runId } };
   const runtime = options.extensionRuntime ?? getActiveExtensionRuntime() ?? undefined;
   return withExtensionRuntimeContext(async () => {
     const releaseExecution = bindActiveExtensionExecutionRuntime(runtime);
     let releaseController: (() => void) | void = undefined;
+    let failure: unknown;
     try {
       options.abortSignal?.throwIfAborted();
       const resumed = await resolveInitialMessages(options, sessionId);
       const runTools = listRunScopedTools(runtime);
       const activeTools = applyToolVisibilityPolicy(filterExcludedTools([
         ...(runtime?.getDefaults?.().activeTools ?? listTools()), ...runTools.map(tool => tool.name),
-      ], options.context.excludeTools), options.context.toolVisibilityPolicy, runScopedToolMap(runTools));
+      ], options.context?.excludeTools), options.context?.toolVisibilityPolicy, runScopedToolMap(runTools));
       const state = buildRuntimeSessionState({ ...resumed, activeTools,
         modelSelection: runtime?.getDefaults?.().modelSelection ?? {},
         loadedExtensionState: resumed.loadedExtensionState, loadedExtensionRecords: resumed.loadedExtensionRecords });
       releaseController = runtime?.bindController?.(createExtensionRuntimeSessionController(state));
       await runtime?.hydrateSession?.(sessionId);
+      options = await applyRuntimeSkillInvocationPolicy(options, prompt);
       const ctx = buildToolExecutionContext({ options, sessionId, runtime, managedProtocolPayloadRef: { current: undefined } });
       bindVisualObservationAdmission(ctx, options, state);
       emitEffectiveTaskConfig(options, { agentMode: options.agentMode ?? 'ama', toolScope: state.activeTools.filter(name => isToolDiscoverable(name, ctx)) });
-      const messages = appendPromptIfNotDuplicate(resumed.messages, prompt, options.context.inputArtifacts,
+      const messages = appendPromptIfNotDuplicate(resumed.messages, prompt, options.context?.inputArtifacts,
         undefined, options.session?.inputId);
       const save = async (): Promise<void> => {
         if (options.session?.storage) await saveRequiredSessionSnapshot(options, sessionId, {
-          messages, title: resumed.title || prompt.slice(0, 80), gitRoot: options.context.gitRoot ?? undefined, runtimeSessionState: state,
+          messages, title: resumed.title || prompt.slice(0, 80), gitRoot: options.context?.gitRoot ?? undefined, runtimeSessionState: state,
         });
       };
       return await execute({ options, sessionId, runId, ctx, state, messages, save });
-    } finally { releaseController?.(); releaseExecution(); }
+    } catch (error: unknown) {
+      failure = error;
+      throw error;
+    } finally {
+      try { await awaitRuntimeSkillInvocationPolicy(options, failure); }
+      finally { releaseController?.(); releaseExecution(); }
+    }
   }, runtime, runId);
 }

@@ -467,6 +467,7 @@ export {
   persistToolOutput,
   resolveToolOutputDir,
   cleanupExpiredToolOutputs,
+  inspectToolOutputStorage,
   cleanupUnreferencedToolOutputs,
   maybeRunReferenceAwareToolOutputGc,
   maybeRunToolOutputGc,
@@ -491,6 +492,7 @@ export type {
   ToolResultBudgetUsageInput,
   ToolResultCapacity,
   ToolOutputGcResult,
+  ToolOutputStorageUsage,
 } from './tools/index.js';
 
 export {

@@ -2,6 +2,34 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { calculateCostWithCacheLifetimes, createCustomProvider, runWithProviderRequestObserver, type ProviderRequestObservation } from '../index.js';
 
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+it.each(['chat', 'responses'].flatMap(api => ['measured', 'missing', 'malformed', 'partial'].map(mode => ({ api, mode }))))(
+  'retains Kimi $api cache writes with $mode lifetime evidence', async ({ api, mode }) => {
+  vi.stubEnv('CACHE_USAGE_KEY', 'offline');
+  const usage = api === 'chat'
+    ? { prompt_tokens: 1000, completion_tokens: 100, total_tokens: 1100,
+        prompt_tokens_details: { cached_tokens: 400, cache_write_tokens: 300 } }
+    : { input_tokens: 1000, output_tokens: 100, total_tokens: 1100,
+        input_tokens_details: { cached_tokens: 400, cache_write_tokens: 300 } };
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(api === 'chat'
+    ? { choices: [{ message: { role: 'assistant', content: 'done' }, finish_reason: 'stop' }], usage }
+    : { status: 'completed', output: [], usage }, { headers: mode === 'missing' ? {} : {
+      'Msh-Usage-Cache-Write-Tokens-5m': mode === 'malformed' ? '-1' : '200',
+      'Msh-Usage-Cache-Write-Tokens-1h': mode === 'partial' ? '50' : '100',
+    } })));
+  const provider = createCustomProvider({ name: 'cache-usage', model: 'fixture', protocol: 'openai',
+    ...(api === 'responses' ? { api: 'responses' as const } : {}),
+    baseUrl: 'https://cache.example/v1', apiKeyEnv: 'CACHE_USAGE_KEY', maxOutputTokens: 100 });
+  const facts: ProviderRequestObservation[] = [];
+  const result = await runWithProviderRequestObserver(fact => facts.push(fact), () => provider.complete([], [], ''));
+  const expected = mode === 'measured' ? { '5m': 200, '1h': 100 } : { unknown: 300 };
+  expect(result.usage).toMatchObject({ inputTokens: 1000, cachedReadTokens: 400,
+    cachedWriteTokens: 300, cachedWriteTokensByTtl: expected });
+  expect(facts.find(fact => fact.wireObservation === 'observed' && fact.state === 'succeeded')?.usage?.cachedWriteTokensByTtl).toEqual(expected);
+  const cost = calculateCostWithCacheLifetimes({ inputPer1M: 1, outputPer1M: 2, cacheReadPer1M: 0.1,
+    cacheWritePer1MByTtl: { '5m': 1.25, '1h': 2 } }, 1000, 100, 400, 300, result.usage?.cachedWriteTokensByTtl);
+  if (mode === 'measured') expect(cost).toBeCloseTo(0.00099);
+  else expect(cost).toBeNull();
+});
 it.each(['anthropic', 'responses'] as const)('preserves native %s cache-write lifetimes through the result and physical observation', async route => {
   vi.stubEnv('CACHE_USAGE_KEY', 'fixture');
   vi.stubGlobal('fetch', vi.fn(async () => Response.json(route === 'anthropic'

@@ -209,6 +209,10 @@ jobs:
             builtin
             provider-capabilities.json
             manual-topics.json
+            static-text.json
+            runtime-daemon-schema.json
+            windows-native-scripts.json
+            generated-config-templates.json
             semantic-worker.js
             constructed-handler-worker.js
             script-cell.js
@@ -231,7 +235,7 @@ jobs:
             archive_file="${archive_base}.zip"
             # Windows 10+ ships with bsdtar; powershell Compress-Archive also works.
             # Zip archives are Windows-only targets, so vendor/ is always present.
-            powershell -Command "Compress-Archive -Path kodax.exe,builtin,provider-capabilities.json,manual-topics.json,semantic-worker.js,constructed-handler-worker.js,script-cell.js,script-worker.cjs,image-codec,vendor -DestinationPath '$archive_file' -Force"
+            powershell -Command "Compress-Archive -Path kodax.exe,builtin,provider-capabilities.json,manual-topics.json,static-text.json,runtime-daemon-schema.json,windows-native-scripts.json,generated-config-templates.json,semantic-worker.js,constructed-handler-worker.js,script-cell.js,script-worker.cjs,image-codec,vendor -DestinationPath '$archive_file' -Force"
           else
             archive_file="${archive_base}.tar.gz"
             tar -czf "$archive_file" kodax "${sidecars[@]}"
@@ -398,12 +402,12 @@ jobs:
         timeout-minutes: 5
         run: npm run test:host-cutover
 
-      - name: Published alpha.11 Host in-place upgrade gate
+      - name: Published alpha.12 Host in-place upgrade gate
         timeout-minutes: 5
         env:
-          KODAX_ALPHA11_TARBALL: ${{ runner.temp }}/kodax-ai-kodax-0.7.97-alpha.11.tgz
+          KODAX_ALPHA12_TARBALL: ${{ runner.temp }}/kodax-ai-kodax-0.7.97-alpha.12.tgz
         run: |
-          npm pack @kodax-ai/kodax@0.7.97-alpha.11 --ignore-scripts --pack-destination "$RUNNER_TEMP"
+          npm pack @kodax-ai/kodax@0.7.97-alpha.12 --ignore-scripts --pack-destination "$RUNNER_TEMP"
           npm run test:host-upgrade
 
       - name: Hash npm package

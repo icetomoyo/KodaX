@@ -304,7 +304,7 @@ describe("createKodaXRuntime", () => {
   });
 
   beforeEach(async () => {
-    tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "kodax-runtime-"));
+    tempRoot = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), "kodax-runtime-"));
     codingMock.runManagedTask.mockReset();
     codingMock.startKodaX.mockReset();
     codingMock.beforeGoalBinding = null;
@@ -13725,6 +13725,55 @@ describe("createKodaXRuntime", () => {
     } finally { await third.close(); }
   });
 
+  it('fences work and config patches on unreadable core config without discarding its bytes or selecting defaults', async () => {
+    const { createKodaXRuntime } = await import('../tests/runtime-fixture.js');
+    const homeDir = path.join(tempRoot, 'unreadable-core-config');
+    const file = path.join(homeDir, '.kodax', 'config.json');
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    const raw = '{"provider":"retained-provider","apiKeys":{"retain":"fixture-account"},';
+    await fs.writeFile(file, raw);
+    await expect(createKodaXRuntime({ homeDir, defaultProvider: 'mock-provider' })).rejects.toThrow(/core configuration/i);
+    expect(await fs.readFile(file, 'utf8')).toBe(raw);
+    await fs.writeFile(file, JSON.stringify({ provider: 'mock-provider' }));
+    const runtime = await createKodaXRuntime({ homeDir, defaultProvider: 'mock-provider' });
+    const session = await runtime.sessions.create({ title: 'Keep selected account' });
+    await fs.writeFile(file, raw);
+    try {
+      expect(await runtime.config.readEffective()).toMatchObject({ persistedConfig: { state: 'invalid' } });
+      await expect(runtime.runs.start({ sessionId: session.id, prompt: 'Must not switch account' })).rejects.toThrow(/core configuration/i);
+      await expect(runtime.config.patch({ effort: 'high' })).rejects.toThrow(/core configuration/i);
+      expect(codingMock.startKodaX).not.toHaveBeenCalled();
+      expect(await fs.readFile(file, 'utf8')).toBe(raw);
+      await fs.writeFile(file, JSON.stringify({ provider: 'mock-provider', effort: 'high' }));
+      await runtime.config.reload();
+      expect(await runtime.config.read()).toMatchObject({ provider: 'mock-provider', effort: 'high' });
+    } finally { await runtime.close(); }
+  });
+
+  it.each(['invalid-json', 'foreign-session'] as const)('isolates corrupt pending inputs (%s) to their Session without dropping bytes or executing unknown work', async fault => {
+    const { createKodaXRuntime } = await import('../tests/runtime-fixture.js');
+    const homeDir = path.join(tempRoot, 'corrupt-pending-session');
+    const first = await createKodaXRuntime({ homeDir, defaultProvider: 'mock-provider' });
+    const broken = await first.sessions.create({ title: 'Broken queue' });
+    const healthy = await first.sessions.create({ title: 'Healthy queue' });
+    await first.close();
+    const directory = path.join(homeDir, '.kodax', 'runtime', 'pending-inputs');
+    await fs.mkdir(directory, { recursive: true });
+    const file = path.join(directory, `${encodeURIComponent(broken.id)}.json`);
+    const queued = { sessionId: healthy.id, inputId: 'retain-valid', text: 'Retain the original account and constraint.', delivery: 'after_turn' };
+    const raw = fault === 'invalid-json' ? '{retain-original' : JSON.stringify([{ input: queued, skill: false, principalId: 'client-B' }]);
+    await fs.writeFile(file, raw);
+    await fs.writeFile(path.join(directory, `${encodeURIComponent(healthy.id)}.json`), JSON.stringify([{ input: queued, skill: false, principalId: 'client-B' }]));
+    const restored = await createKodaXRuntime({ homeDir, defaultProvider: 'mock-provider' });
+    try {
+      expect(await restored.runs.getInput(healthy.id, queued.inputId)).toMatchObject({ state: 'queued' });
+      await expect(restored.runs.start({ sessionId: broken.id, prompt: 'Must not execute' })).rejects.toMatchObject({ code: 'conflict' });
+      expect(codingMock.startKodaX).not.toHaveBeenCalled();
+      expect(await fs.readFile(file, 'utf8')).toBe(raw);
+      expect(await restored.sessions.load(healthy.id)).toBeDefined();
+    } finally { await restored.close(); }
+  });
+
   it('rejects stale Host queue writes instead of losing inputs accepted by another Host', async () => {
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const homeDir = path.join(tempRoot, 'pending-cas');
@@ -14118,8 +14167,9 @@ describe("createKodaXRuntime", () => {
       session.id,
       "run.interrupted",
     );
+    let settleInterrupted: (() => void) | undefined;
+    const abortRequested = vi.fn();
     codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => {
-      let settleInterrupted: (() => void) | undefined;
       const result = new Promise<KodaXResult>((resolve) => {
         settleInterrupted = () => resolve({
             success: false,
@@ -14132,7 +14182,7 @@ describe("createKodaXRuntime", () => {
       return {
         ...fakeRunningSession(options, result),
         abort() {
-          settleInterrupted?.();
+          abortRequested();
         },
       };
     });
@@ -14141,40 +14191,44 @@ describe("createKodaXRuntime", () => {
       sessionId: session.id,
       prompt: "cancel an active coding run",
     });
-    await expect(runtime.runs.abort(handle.runId)).resolves.toMatchObject({
-      accepted: true,
-      phase: "unknown",
-    });
-    await expect(runtime.runs.get(handle.runId)).resolves.toMatchObject({
-      phase: "unknown",
-      failureDetail: {
+    try {
+      await expect(runtime.runs.abort(handle.runId)).resolves.toMatchObject({
+        accepted: true,
+        phase: "unknown",
+      });
+      expect(abortRequested).toHaveBeenCalledOnce();
+      // Hold executor completion until the intermediate state has been observed.
+      await expect(runtime.runs.get(handle.runId)).resolves.toMatchObject({
+        phase: "unknown",
+        failureDetail: {
+          failureKind: "cancelled",
+          providerErrorCode: "cancelled",
+        },
+      });
+      settleInterrupted?.();
+      const result = await handle.result;
+      const status = await runtime.runs.get(handle.runId);
+      const [interruptedEvent] = interruptedCollector.events;
+      const diagnostics = await vi.waitFor(() => captureRuntimeSessionDiagnostics(runtime, {
+        sessionId: session.id,
+        runId: handle.runId,
+      }));
+      const expectedDetail = {
         failureKind: "cancelled",
+        stage: "runtime_control",
         providerErrorCode: "cancelled",
-      },
-    });
-    const result = await handle.result;
-    const status = await runtime.runs.get(handle.runId);
-    const [interruptedEvent] = interruptedCollector.events;
-    const diagnostics = await vi.waitFor(() => captureRuntimeSessionDiagnostics(runtime, {
-      sessionId: session.id,
-      runId: handle.runId,
-    }));
-    const expectedDetail = {
-      failureKind: "cancelled",
-      stage: "runtime_control",
-      providerErrorCode: "cancelled",
-      safeMessage: "Runtime run was cancelled by the user.",
-    } as const;
+        safeMessage: "Runtime run was cancelled by the user.",
+      } as const;
 
-    expect(result).toMatchObject({
-      phase: "interrupted",
-      failureDetail: expectedDetail,
-      terminal: { failureKind: "cancelled" },
-    });
-    expect(status.failureDetail).toEqual(expectedDetail);
-    expect(interruptedEvent?.payload).toMatchObject({ failureDetail: expectedDetail });
-    expect(diagnostics.run.failureDetail).toEqual(expectedDetail);
-    await runtime.close();
+      expect(result).toMatchObject({
+        phase: "interrupted",
+        failureDetail: expectedDetail,
+        terminal: { failureKind: "cancelled" },
+      });
+      expect(status.failureDetail).toEqual(expectedDetail);
+      expect(interruptedEvent?.payload).toMatchObject({ failureDetail: expectedDetail });
+      expect(diagnostics.run.failureDetail).toEqual(expectedDetail);
+    } finally { settleInterrupted?.(); await runtime.close(); }
   });
 
   it.each(["upstream signal", "runtime Stop"])("preserves cancellation through Runtime and Runner via %s", async (via) => {
@@ -16838,7 +16892,7 @@ describe("createKodaXRuntime", () => {
     }
   });
 
-  it("keeps broad reads sandbox-first outside Auto mode and preserves caller fallback", async () => {
+  it.each(["prepared", "not-selected", "blocked"] as const)("keeps broad reads sandbox-first outside Auto mode (%s)", async (backendState) => {
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const projectRoot = path.join(tempRoot, "accept-edits-project");
     await fs.mkdir(projectRoot, { recursive: true });
@@ -16853,27 +16907,50 @@ describe("createKodaXRuntime", () => {
       permissionMode: "accept-edits",
       executionCwd: projectRoot,
     });
-    const callerPrepare = vi.fn<KodaXShellSandbox["prepare"]>();
+    const callerPrepare = vi.fn<KodaXShellSandbox["prepare"]>(async (request) => {
+      request.reportObservation?.({ version: 1, state: "fallback", reason: "not_ready", execution: "normal_permission_policy" });
+      return undefined;
+    });
     let runOptions: KodaXOptions | undefined;
     codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
       runOptions = options;
       return fakeRunningSession(options, new Promise<KodaXResult>(() => undefined));
     });
-    const handle = await runtime.runs.start({
-      sessionId: session.id,
-      prompt: "wait",
-      permissionBroker: "client",
-      options: {
-        context: {
-          executionCwd: projectRoot,
-          gitRoot: projectRoot,
-          shellSandbox: { prepare: callerPrepare },
-        },
-      },
+    // This SDK contract is independent of machine setup. Real Native execution
+    // and missing-cutover rejection have their own Windows OS/backend gates.
+    const backendFailure = new Error("fixture: selected sandbox unavailable");
+    const prepared = { executable: process.execPath, args: ["--version"], env: process.env, cleanup: vi.fn(async () => undefined) };
+    const backendPrepare = vi.fn<KodaXShellSandbox["prepare"]>(async (request) => {
+      if (backendState === "blocked") throw backendFailure;
+      if (backendState === "prepared") return prepared;
+      request.reportObservation?.({ version: 1, state: "not_selected" });
+      return undefined;
     });
-    if (!runOptions) throw new Error("expected Runtime run options");
+    const sandboxModule = await import("./sandbox-runtime.js");
+    const factory = vi.spyOn(sandboxModule, "createAsrtShellSandbox").mockReturnValue({
+      prepare: backendPrepare,
+      processTreeContainment: process.platform === "linux" ? "root-exit-drains" : undefined,
+    });
+    let runId: string | undefined;
     let invocation: Awaited<ReturnType<KodaXShellSandbox["prepare"]>>;
     try {
+      const handle = await runtime.runs.start({
+        sessionId: session.id,
+        prompt: "wait",
+        permissionBroker: "client",
+        options: {
+          context: {
+            executionCwd: projectRoot,
+            gitRoot: projectRoot,
+            shellSandbox: { prepare: callerPrepare },
+          },
+        },
+      });
+      runId = handle.runId;
+      if (!runOptions) throw new Error("expected Runtime run options");
+      const selection = factory.mock.calls.find(([input]) => input.workspaceRoot === projectRoot)?.[0];
+      expect(selection).toBeDefined();
+      await expect(selection?.shouldSandbox({ id: "bash_accept_edits", name: "bash", input: { command: "git status --short" } })).resolves.toBe(true);
       const { getAgentConfigHome } = await import("@kodax-ai/agent");
       const protectedRead = runOptions.events?.beforeToolExecute?.(
         "bash",
@@ -16885,7 +16962,7 @@ describe("createKodaXRuntime", () => {
         .resolves.toEqual([]);
 
       const observations: KodaXShellSandboxObservation[] = [];
-      invocation = await runOptions.context?.shellSandbox?.prepare({
+      const preparation = runOptions.context?.shellSandbox?.prepare({
         toolCallId: "bash_accept_edits",
         toolInput: { command: "git status --short" },
         command: "git status --short",
@@ -16894,23 +16971,30 @@ describe("createKodaXRuntime", () => {
         reportObservation: (observation) => observations.push(observation),
       });
 
-      if (invocation === undefined) {
+      if (backendState === "blocked") {
+        await expect(preparation).rejects.toBe(backendFailure);
+        expect(callerPrepare).not.toHaveBeenCalled();
+      } else if (backendState === "not-selected") {
+        await expect(preparation).resolves.toBeUndefined();
         expect(callerPrepare).toHaveBeenCalledTimes(1);
         expect(observations.at(-1)).toMatchObject({
           state: "fallback",
           execution: "normal_permission_policy",
         });
       } else {
+        invocation = await preparation;
+        expect(invocation).toBe(prepared);
         expect(callerPrepare).not.toHaveBeenCalled();
-        expect(observations.at(-1)?.state).not.toBe("not_selected");
       }
+      expect(backendPrepare).toHaveBeenCalledTimes(1);
       expect(runOptions.context?.shellSandbox?.processTreeContainment).toBe(
         process.platform === "linux" ? "root-exit-drains" : undefined,
       );
       expect(runOptions.context).not.toHaveProperty('textFileMutationSandbox');
     } finally {
+      factory.mockRestore();
       await invocation?.cleanup();
-      await runtime.runs.abort(handle.runId);
+      if (runId !== undefined) await runtime.runs.abort(runId);
       await runtime.close();
     }
   });

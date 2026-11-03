@@ -1,16 +1,18 @@
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
-import { serializeCloudCredential, validateCustomProviderConfig, type KodaXCloudCredential, type KodaXCustomProviderConfig, type OAuthCredentialSession,
+import { validateCustomProviderConfig, type KodaXCloudCredentialResolution, type KodaXCustomProviderConfig, type OAuthCredentialSession,
   type FileProviderCredentialStore, type ProviderCredentialFileBinding } from '@kodax-ai/llm';
 import type { KodaXClientHostAuthorization, RuntimeScopedCredentialRequest } from './client-host-authorization.js';
 import { bindRequestCredentials, type RuntimeRequestCredentialBinding } from './request-credential-binding.js';
 import { assertProviderOAuthSessionScope } from './provider-oauth-store.js';
+import { acquireOAuthRequestCredential } from './oauth-request-credential.js';
+import { cloudRequestCredential } from './cloud-request-credential.js';
 
 export type ProviderCredentialSource = { readonly provider: string; readonly connectionFingerprint?: string; readonly profile?: string } & (
   | { readonly kind: 'external' }
   | { readonly kind: 'environment'; readonly apiKeyEnv: string }
   | { readonly kind: 'api-key'; readonly apiKeyEnv: string; readonly store: FileProviderCredentialStore; readonly binding: ProviderCredentialFileBinding; readonly connectionFingerprint: string }
-  | { readonly kind: 'oauth'; readonly session: OAuthCredentialSession; readonly service: NonNullable<KodaXCustomProviderConfig['oauth']>; readonly profile?: string; readonly issuer?: string }
-  | { readonly kind: 'cloud'; readonly connection: KodaXCustomProviderConfig; readonly resolve: (request: RuntimeScopedCredentialRequest, signal: AbortSignal) => Promise<KodaXCloudCredential> }
+  | { readonly kind: 'oauth'; readonly session: Pick<OAuthCredentialSession, 'service' | 'profile' | 'issuer' | 'acquire' | 'onInvalidate' | 'replayIdentity' | 'recoverRejectedCredential'>; readonly service: NonNullable<KodaXCustomProviderConfig['oauth']>; readonly profile?: string; readonly issuer?: string }
+  | { readonly kind: 'cloud'; readonly connection: KodaXCustomProviderConfig; readonly resolve: (request: RuntimeScopedCredentialRequest, signal: AbortSignal) => Promise<KodaXCloudCredentialResolution> }
 );
 export interface ProviderCredentialAuthorizer { readonly authorizeExecution: KodaXClientHostAuthorization; close(): Promise<void>; }
 /** Trusted Main only. Sources are an explicit allowlist, never supplied by Product/model input. */
@@ -74,8 +76,10 @@ async function acquire(source: ProviderCredentialSource, request: RuntimeScopedC
   environment?: () => Readonly<Record<string, string | undefined>>): Promise<string> {
   signal.throwIfAborted();
   if (source.connectionFingerprint && request.connectionFingerprint !== source.connectionFingerprint) throw new Error('Provider credential connection is not approved.');
+  if (request.rejectedCredentialFingerprint !== undefined && (request.credentialContextVersion !== 1
+    || !/^[a-f0-9]{64}$/.test(request.rejectedCredentialFingerprint) || source.kind !== 'oauth')) throw new Error('Credential recovery is not supported by this source.');
   if (source.kind === 'external') throw new Error('This provider owns authentication outside the API-key broker.');
-  if (source.kind === 'oauth') return source.session.acquire(signal);
+  if (source.kind === 'oauth') return acquireOAuthRequestCredential(source.session, request, signal);
   if (source.kind === 'api-key') { const saved = await source.store.readApiKey(source.binding); signal.throwIfAborted(); if (saved) return saved.key; }
   if (source.kind === 'environment' || source.kind === 'api-key') {
     const key = (environment?.() ?? process.env)[source.apiKeyEnv];
@@ -83,12 +87,13 @@ async function acquire(source: ProviderCredentialSource, request: RuntimeScopedC
     return key;
   }
   try {
-    const credential = await source.resolve(request, signal); signal.throwIfAborted();
+    const resolved = cloudRequestCredential(source.provider, await source.resolve(request, signal), request.credentialContextVersion);
+    const credential = resolved.credential; signal.throwIfAborted();
     const cloud = source.connection.cloud!;
     if ((cloud.service === 'gemini' && credential.type !== 'api-key') || (cloud.service === 'bedrock' && credential.type === 'api-key')
       || (cloud.service !== 'bedrock' && credential.type === 'aws') || (cloud.service === 'vertex' && credential.type === 'bearer' && !cloud.project)) throw new Error('Mismatched cloud credential.');
-    return serializeCloudCredential(source.provider, credential);
-  } catch { throw new Error('Cloud credential broker acquisition failed.'); }
+    return resolved.serialize();
+  } catch { signal.throwIfAborted(); throw new Error('Cloud credential broker acquisition failed.'); }
 }
 
 function subscribeSources(sources: Iterable<ProviderCredentialSource>, listener: () => Promise<void>): () => void {

@@ -81,7 +81,8 @@ import {
   buildToolMemoryObservations,
   codingMemorySourcePolicy,
 } from '../memory/coding-observations.js';
-import { collectVerifiedCheckFacts } from '../memory/verified-checks.js';
+import { collectVerifiedCheckFacts, resolveLearnedSkillCanaryOutcome } from '../memory/verified-checks.js';
+import { prepareCodingLearnedSkillBinding } from '../learned-skill-runtime.js';
 import type { KodaXWrittenFile } from '../types.js';
 import {
   createMemoryRecallBinding,
@@ -247,6 +248,7 @@ import { createExtensionRuntimeSessionController } from '../agent-runtime/middle
 import {
   buildRuntimeSessionState,
   snapshotRuntimeSessionState,
+  markRuntimeSelectionChanged,
   type RuntimeSessionState,
 } from '../agent-runtime/runtime-session-state.js';
 // CAP-010: shared tri-state permission gate. AMA's
@@ -260,6 +262,7 @@ import { listToolDefinitions } from '../tools/index.js';
 import { activateSessionHistoryTools } from '../tools/session-history.js';
 import { runToolDispatch } from '../agent-runtime/tool-dispatch.js';
 import { randomUUID } from 'node:crypto';
+import { getActiveExtensionRuntime, withExtensionRuntimeContext } from '../extensions/runtime.js';
 import { bindModelSkillSelection } from '../skill-invocation-policy.js';
 import { isSkillToolCall, SKILL_ACTION_DEFERRED } from '../tools/skill.js';
 import {
@@ -889,11 +892,29 @@ export async function runManagedTaskViaRunner(
   options: KodaXOptions,
   prompt: string,
   adapterOverride?: Parameters<typeof buildRunnerLlmAdapter>[1],
+  plan?: ReasoningPlan,
+): Promise<KodaXResult> {
+  const extensionRuntime = options.extensionRuntime ?? getActiveExtensionRuntime() ?? undefined;
+  const boundOptions = { ...options, extensionRuntime, context: { ...options.context,
+    runtimeRunId: options.context?.runtimeRunId ?? randomUUID() } };
+  return withExtensionRuntimeContext(() => runManagedTaskViaRunnerInContext(boundOptions, prompt, adapterOverride, plan),
+    extensionRuntime, boundOptions.context.runtimeRunId);
+}
+
+async function runManagedTaskViaRunnerInContext(
+  options: KodaXOptions,
+  prompt: string,
+  adapterOverride?: Parameters<typeof buildRunnerLlmAdapter>[1],
   // Shard 6d-L: accept the reasoning plan produced by `createManagedReasoningPlan`
   // in `task-engine.ts`. Optional so direct Runner invocations from tests
   // (or future SDK consumers) still work without constructing a plan.
   plan?: ReasoningPlan,
 ): Promise<KodaXResult> {
+  const defaults = options.extensionRuntime?.getDefaults?.();
+  if (defaults) options = { ...options,
+    provider: defaults.modelSelection.provider ?? options.provider,
+    modelOverride: defaults.modelSelection.model ?? options.modelOverride,
+    effort: defaults.thinkingLevel ?? options.effort };
   // FEATURE_103 (v0.7.29): apply L5 user-followup escalation once at the
   // AMA entry. Mirrors the SA `runKodaX` wiring so the bumped ceiling
   // propagates uniformly through createReasoningPlan, buildRunnerLlmAdapter,
@@ -920,6 +941,34 @@ export async function runManagedTaskViaRunner(
   const releaseActiveRootQueueRoute = registerActiveRootQueueRoute(
     actorQueueId(initialSessionId, '/root'),
   );
+  let learnedBinding: Awaited<ReturnType<typeof prepareCodingLearnedSkillBinding>>;
+  let learnedOutcomesCompleted = false;
+  let learnedBindingReleased = false;
+  const releaseLearnedSkills = async (): Promise<void> => {
+    const binding = learnedBinding;
+    if (!binding || learnedBindingReleased) return;
+    learnedBindingReleased = true;
+    try { await runOwnedMemoryWork(effectiveOptions, () => binding.release()); }
+    catch (error: unknown) {
+      emitResilienceDebug('[learning:skill-binding-release:error]', { error: error instanceof Error ? error.message : String(error) });
+    }
+  };
+  const completeLearnedSkills = async (result?: KodaXResult): Promise<void> => {
+    if (!learnedBinding || learnedOutcomesCompleted) return;
+    learnedOutcomesCompleted = true;
+    const checks = collectVerifiedCheckFacts(result?.artifactLedger ?? []);
+    try {
+      await runOwnedMemoryWork(effectiveOptions, async () => {
+        await learnedBinding?.context.completeLearnedSkillOutcomes?.({
+          sessionId: initialSessionId,
+          outcome: resolveLearnedSkillCanaryOutcome(result?.success === true && !result.interrupted, checks),
+          evidenceRefs: checks.length > 0 ? checks.map(check => check.ref) : [`host:run-terminal:${initialSessionId}`],
+        });
+      });
+    } catch (error: unknown) {
+      emitResilienceDebug('[learning:skill-outcome:error]', { error: error instanceof Error ? error.message : String(error) });
+    }
+  };
   try {
   await runOwnedMemoryWork(effectiveOptions, () => maybeRunMemoryMaintenanceWindow(effectiveOptions));
   effectiveOptions.abortSignal?.throwIfAborted();
@@ -994,7 +1043,7 @@ export async function runManagedTaskViaRunner(
         } : {}) } : update, meta);
     },
   }, liveTurnScopeRef);
-  const optionsWithLiveEvents: KodaXOptions = {
+  let optionsWithLiveEvents: KodaXOptions = {
     ...baseOptionsWithSessionId,
     context: {
       ...(baseOptionsWithSessionId.context ?? {}),
@@ -1002,6 +1051,21 @@ export async function runManagedTaskViaRunner(
     },
     events: liveEvents,
   };
+  if (currentAgentId === undefined && parentAgentId === undefined) {
+    const memoryIdentity = optionsWithLiveEvents.context?.memoryIdentity
+      ?? deriveCodingMemoryIdentity(optionsWithLiveEvents, resolveExecutionCwd(optionsWithLiveEvents.context), initialSessionId);
+    await runOwnedMemoryWork(optionsWithLiveEvents, async () => {
+      learnedBinding = await prepareCodingLearnedSkillBinding(optionsWithLiveEvents, memoryIdentity, initialSessionId);
+      // Keep setup cancellation cleanup inside the same Host-owned work item.
+      if (optionsWithLiveEvents.abortSignal?.aborted) {
+        learnedBindingReleased = true;
+        await learnedBinding?.release();
+      }
+    });
+    optionsWithLiveEvents = { ...optionsWithLiveEvents, context: {
+      ...optionsWithLiveEvents.context, memoryIdentity, ...learnedBinding?.context,
+    } };
+  }
   const startedMemoryRuntime = await runOwnedMemoryWork(optionsWithLiveEvents, async () => {
     const started = await startRunnerMemoryRuntime(
       optionsWithLiveEvents,
@@ -1104,6 +1168,7 @@ export async function runManagedTaskViaRunner(
         artifactLedger: result.artifactLedger,
       },
     );
+    await completeLearnedSkills(result);
     if (result.success) {
       emitLiveTurnCompleted(result.interrupted ? 'interrupted' : 'completed');
     } else {
@@ -1179,6 +1244,7 @@ export async function runManagedTaskViaRunner(
         summary: error.message,
       },
     );
+    await completeLearnedSkills();
     throw err;
   } finally {
     // onComplete fires on every terminal — success, block, or error —
@@ -1189,10 +1255,12 @@ export async function runManagedTaskViaRunner(
     // divergence preserved deliberately — REPL listeners on the AMA
     // path rely on the universal-cleanup semantics. Future work to
     // unify would touch REPL contract.
+    await releaseLearnedSkills();
     emitComplete(liveEvents);
   }
   } finally {
-    releaseActiveRootQueueRoute();
+    try { await releaseLearnedSkills(); }
+    finally { releaseActiveRootQueueRoute(); }
   }
 }
 
@@ -1333,18 +1401,13 @@ async function runManagedTaskViaRunnerInner(
     spentBudget: 0,
     currentHarness: initialHarness,
   };
-  const runtimeOptions: KodaXOptions = options.context?.managedWorkBudget
-    ? options
-    : {
-        ...options,
-        context: { ...options.context, managedWorkBudget: budget },
-      };
+  options.context = { ...options.context, managedWorkBudget: budget };
   const extensionRuntime = options.extensionRuntime;
   const managedProtocolPayloadRef: { current: KodaXManagedProtocolPayload | undefined } = {
     current: undefined,
   };
   const substrateBaseCtx = buildToolExecutionContext({
-    options: runtimeOptions,
+    options,
     // FEATURE_247 (R7) — same session id `sessionIdRef` uses below, so tool
     // handlers can attribute an AMA call to the right concurrent session.
     sessionId: options.session?.id ?? resolvedSessionId,
@@ -2019,6 +2082,7 @@ async function runManagedTaskViaRunnerInner(
         ? !runtimeSessionState.extensionRecords.some(record => record.extensionId === 'kodax.visual')
         : undefined,
     }),
+    () => runtimeSessionState,
   );
 
   // FEATURE_143 (v0.7.36) — `plan.promptOverlay` (routing-notes block:
@@ -2092,19 +2156,28 @@ async function runManagedTaskViaRunnerInner(
   });
   bindVisualObservationAdmission(baseCtx, options, runtimeSessionState);
   recovery.runtimeSessionState = runtimeSessionState;
+  baseCtx.parentAgentConfig = {
+    ...baseCtx.parentAgentConfig,
+    get provider() { return runtimeSessionState.modelSelection.provider ?? options.provider; },
+    get model() { return runtimeSessionState.modelSelection.model; },
+    get effort() { return runtimeSessionState.thinkingLevel ?? resolveInitialRuntimeThinkingLevel(options); },
+  };
   bindModelSkillSelection(baseCtx, model => {
     options.modelOverride = model;
     runtimeSessionState.modelSelection.model = model;
+    markRuntimeSelectionChanged(runtimeSessionState);
   }, () => runtimeSessionState.modelSelection.provider ?? options.provider);
   options.sessionControl?._attach({
     setProvider: (provider) => {
       options.provider = provider;
       runtimeSessionState.modelSelection.provider = provider;
+      markRuntimeSelectionChanged(runtimeSessionState);
     },
     setModel: (model) => {
       options.model = model;
       options.modelOverride = model;
       runtimeSessionState.modelSelection.model = model;
+      markRuntimeSelectionChanged(runtimeSessionState);
     },
     setReasoning: (mode, reasoning) => {
       options.reasoningMode = mode;
@@ -2112,6 +2185,7 @@ async function runManagedTaskViaRunnerInner(
       if (reasoning !== undefined) options.thinking = reasoning.thinking;
       runtimeSessionState.thinkingLevel = options.effort
         ?? mapLegacyReasoningModeToEffortIntent(resolveReasoningMode(options));
+      markRuntimeSelectionChanged(runtimeSessionState);
     },
   });
   const initialMessages = options.session?.generationCheckpoint ? resolvedInitial.messages : appendPromptIfNotDuplicate(
@@ -2245,7 +2319,8 @@ async function runManagedTaskViaRunnerInner(
     contextTokenSnapshotRef,
     activeToolDefinitions: projectScriptModelTools(entryAgent, entryAgent.tools ?? []),
     ...(scriptMode ? { canReadPagedContent: canReadWithModelTools(entryAgent, projectScriptModelTools(entryAgent, entryAgent.tools ?? [])) } : {}),
-    get reasoning() { return resolveManagedProviderReasoning(options, entryAgent); },
+    get reasoning() { return resolveManagedProviderReasoning({ ...options,
+      effort: runtimeSessionState.thinkingLevel ?? options.effort }, entryAgent); },
     canonicalManagedContext: () => {
       const snapshot = captureManagedRunContext();
       pendingCompactedRuntimeContext = snapshot.runtimeFingerprint;

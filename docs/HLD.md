@@ -1,18 +1,40 @@
 # KodaX High-Level Design
 
-> Unreleased Host SDK cutover: public product execution connects to one independent Host.
+Node CLI optional components (`provider-auth-cli`, `kodax_doctor`,
+`storage-repair-cli`, `one-shot-task`) ship as private distribution entries
+sharing the SDK chunks. Normal interactive bootstrap does not statically load
+them. Source execution keeps literal imports; standalone Bun builds embed them
+through the build-time selector. This changes package layout, not public SDK
+subpaths or the existing CLI size limit. Help resolves lazy auth subcommands
+before printing and never dispatches management operations. See the
+[Issue 376 acceptance contract](test-guides/ISSUE_376_v0.7.97_REGRESSION_GUIDE.md).
+
+> Unified Host SDK cutover (shipped in v0.7.97-alpha.12): public product execution connects to one independent Host.
 > Embedded/default owner construction, inline switching and caller-owned external-agent
 > daemons are retired. Internal Runtime and independent libraries remain. See
 > [migration and ownership limits](SDK_MIGRATION.md#统一-host-sdk-收口未发布).
 
-Last updated: 2026-10-29. Current development tree: FEATURE_298/299/301 on package
-`0.7.97-alpha.11`, with `v0.7.96` as the last stable release; publication is separate.
+Last updated: 2026-11-02. Current development tree: FEATURE_298/299/301/302 on package
+`0.7.97-beta.1`, with `v0.7.96` as the last stable release; publication is separate.
 
 Product integrations use `KodaXProductClient` through `/client`. Read the
 [Client contract](CLIENT_CONTRACT.md) and [SDK migration guide](SDK_MIGRATION.md)
 for current guarantees. Version-labelled release paragraphs below are historical
 context, not promises that retired Runtime surfaces still exist. Historical
 ADRs remain records of their original decisions.
+
+## Provider and credential architecture — FEATURE_302 (2026-11-01)
+
+The standalone LLM layer selects explicit Chat Completions, Responses,
+Anthropic, Gemini/Vertex, Bedrock or Azure transport and cloud authentication;
+coding and product layers retain their existing entry points. The trusted Main
+credential broker binds a provider connection, profile and selected account;
+clients receive status and authorization handles, not secrets. Default storage
+is shared `auth.json` v2, with explicit legacy encrypted backends and source-preserving
+migration. Missing/revoked/invalid state cannot silently select an environment key
+or another account. Canonical history remains intact across wire projections.
+See [accepted storage alignment](ADR.md#feature_302-implementation-alignment--2026-11-01-unreleased),
+[integration contracts](LLM_INTEGRATION.md), and [implementation acceptance](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md).
 
 ## Current SDK alignment after alpha.10 (2026-10-29)
 

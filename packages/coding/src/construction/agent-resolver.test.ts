@@ -145,7 +145,8 @@ describe('registerConstructedAgent / resolveConstructedAgent', () => {
       }),
     );
     const agent = resolveConstructedAgent('rich');
-    expect(agent?.reasoning?.default).toBe('balanced');
+    expect(agent?.reasoning?.default).toBe('medium');
+    expect(agent?.reasoning?.max).toBe('high');
     expect(agent?.model).toBe('claude-sonnet-4-6');
     expect(agent?.provider).toBe('anthropic');
     expect(agent?.effort).toBe('high');

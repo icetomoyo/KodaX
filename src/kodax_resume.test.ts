@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { SessionPickerRunOptions } from '@kodax-ai/repl/cli-resume';
 
 import { resolveBareResume } from './kodax_resume.js';
 
@@ -12,10 +13,12 @@ describe('resolveBareResume', () => {
   it('returns the selected session as an exact resume argument', async () => {
     const notify = vi.fn();
     const beforeSelect = vi.fn(async () => undefined);
+    const onDiscoveryComplete = vi.fn();
     const pickSession = vi.fn(async (
       _sessions: readonly typeof session[],
-      options?: { readonly prepareSelection?: (selected: typeof session) => Promise<void> },
+      options?: SessionPickerRunOptions,
     ) => {
+      expect(onDiscoveryComplete).toHaveBeenCalledTimes(1);
       await options?.prepareSelection?.(session);
       return session;
     });
@@ -25,6 +28,7 @@ describe('resolveBareResume', () => {
       listSessions: async () => [session],
       pickSession,
       beforeSelect,
+      onDiscoveryComplete,
       notify,
     });
 

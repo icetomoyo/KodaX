@@ -4,6 +4,7 @@ import {
   AgentCancellationUncertainError,
   ExternalAgentRegistrationConflictError,
   AgentStartUncertainError,
+  AgentExecutorPlaneInitializationError,
   createAgentExecutorPlane,
   createMemoryAgentExecutorPlaneStore,
 } from './executor-plane.js';
@@ -167,6 +168,56 @@ function factory(executor: FakeExecutor): AgentExecutorFactory {
 }
 
 describe('FEATURE_258 AgentExecutorPlane', () => {
+  it('disposes recovered executors if initialization later fails to persist recovery', async () => {
+    const store = createMemoryAgentExecutorPlaneStore();
+    const initial = await createAgentExecutorPlane({ factories: [factory(new FakeExecutor())], policy: allowAllPolicy(), store });
+    await initial.registrations.upsert(registration({ credentialRef: undefined }));
+    await initial.tasks.start(taskInput({ taskId: 'failed-recovery-publication' }));
+    await initial.close();
+    const recovered = new FakeExecutor();
+    await expect(createAgentExecutorPlane({ factories: [factory(recovered)], policy: allowAllPolicy(),
+      store: { ...store, async saveTask() { throw new Error('fixture recovery persistence failed'); } } }))
+      .rejects.toThrow('fixture recovery persistence failed');
+    expect(recovered.disposeCalls).toBe(1);
+  });
+
+  it('retains explicit retry authority if initialization and executor disposal both fail', async () => {
+    const store = createMemoryAgentExecutorPlaneStore();
+    const initial = await createAgentExecutorPlane({ factories: [factory(new FakeExecutor())], policy: allowAllPolicy(), store });
+    await initial.registrations.upsert(registration({ credentialRef: undefined }));
+    await initial.tasks.start(taskInput({ taskId: 'failed-recovery-cleanup' })); await initial.close();
+    const recovered = new FakeExecutor(); recovered.disposeError = new Error('fixture dispose failed');
+    const background: Error[] = [];
+    let failure: unknown;
+    try { await createAgentExecutorPlane({ factories: [factory(recovered)], policy: allowAllPolicy(),
+      onBackgroundError: error => { background.push(error); },
+      store: { ...store, async saveTask() { throw new Error('fixture recovery persistence failed'); } } }); }
+    catch (error) { failure = error; }
+    expect(failure).toBeInstanceOf(AgentExecutorPlaneInitializationError);
+    expect(background.length).toBeGreaterThan(0);
+    recovered.disposeError = undefined;
+    await (failure as AgentExecutorPlaneInitializationError).retryCleanup();
+    expect(recovered.disposeCalls).toBeGreaterThan(2);
+    expect(recovered.starts).toHaveLength(0);
+  });
+  it('fences an unreadable task ledger without blocking healthy task recovery or rewriting original state', async () => {
+    const store = createMemoryAgentExecutorPlaneStore();
+    const first = await createAgentExecutorPlane({ factories: [], policy: allowAllPolicy(), store });
+    for (const taskId of ['broken-ledger', 'healthy-ledger']) await first.tasks.recordLocal({ taskId, agentId: 'native:fixture', objective: 'Retain work', configurationRevision: 'fixture' });
+    await first.close();
+    const before = await store.loadTasks();
+    const failing = { ...store, async loadEvents(taskId: string) { if (taskId === 'broken-ledger') throw new Error('fixture torn ledger'); return store.loadEvents(taskId); } };
+    const errors: Error[] = [];
+    const plane = await createAgentExecutorPlane({ factories: [], policy: allowAllPolicy(), store: failing, onBackgroundError: error => { errors.push(error); } });
+    try {
+      expect(await plane.tasks.get('broken-ledger')).toMatchObject({ state: 'unknown' });
+      await expect(plane.tasks.updateLocal('broken-ledger', { state: 'completed' })).rejects.toThrow(/ledger|unreadable/i);
+      expect((await store.loadTasks()).find(task => task.taskId === 'broken-ledger')).toEqual(before.find(task => task.taskId === 'broken-ledger'));
+      await plane.tasks.updateLocal('healthy-ledger', { state: 'completed' });
+      expect(await plane.tasks.get('healthy-ledger')).toMatchObject({ state: 'completed' });
+      expect(errors).toHaveLength(1);
+    } finally { await plane.close(); }
+  });
   it('registers, filters, dispatches and freezes the selected registration revision', async () => {
     const executor = new FakeExecutor();
     const plane = await createAgentExecutorPlane({

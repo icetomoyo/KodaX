@@ -7,6 +7,7 @@ import {
 import path from 'node:path';
 
 import { getAgentConfigHome } from '@kodax-ai/agent';
+import { withCoreConfigWriteLock, writeCoreConfigAtomically } from './core-config-lock.js';
 
 import { getConfigTemplate, type ConfigTemplateName } from './generated-config-templates.js';
 import {
@@ -176,6 +177,16 @@ function createIfMissing(
   file: SetupConfigFile,
   validateA2A: ((value: unknown) => unknown) | undefined,
 ): SetupConfigFileResult {
+  if (file.domain === 'core' && file.kind === 'active') {
+    const existing = existingFileResult(file, validateA2A);
+    if (existing.status !== 'missing') return existing;
+    return withCoreConfigWriteLock(file.path, () => {
+      const current = existingFileResult(file, validateA2A);
+      if (current.status !== 'missing') return current;
+      writeCoreConfigAtomically(file.path, file.content);
+      return { domain: file.domain, kind: file.kind, path: file.path, status: 'created' };
+    });
+  }
   mkdirSync(path.dirname(file.path), { recursive: true, mode: 0o700 });
   try {
     writeFileSync(file.path, file.content, {

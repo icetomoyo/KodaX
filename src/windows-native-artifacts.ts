@@ -11,6 +11,30 @@ declare const KODAX_WINDOWS_NATIVE_MANIFEST_JSON: string | undefined;
 declare const KODAX_NATIVE_MANIFEST_JSON: string | undefined;
 declare const KODAX_NATIVE_MANIFESTS_JSON: string | undefined;
 
+const NATIVE_SCRIPT_HASHES = {
+  provision: '1dc640daef701ff7648e4980ae640a28b2776b73a4793e5423304c729cc86016',
+  control: 'a3d7af9f9308494634b3b19ce263cc7ec0901b034691c94883567ca44a5e567b',
+  asrtBroker: 'b0ef25b6284fc6a7fcc57a6fea215e48e2554b6ba8e07c058f7d544224fe4d18',
+} as const;
+const nativeScripts = new Map<keyof typeof NATIVE_SCRIPT_HASHES, string>();
+function nativeScript(key: keyof typeof NATIVE_SCRIPT_HASHES): string {
+  const cached = nativeScripts.get(key);
+  if (cached !== undefined) return cached;
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = process.env.KODAX_BUNDLED === 'true'
+    ? [path.join(path.dirname(process.execPath), 'windows-native-scripts.json')]
+    : [path.join(here, 'windows-native-scripts.json'), path.join(here, '..', 'windows-native-scripts.json')];
+  const scripts = JSON.parse(fs.readFileSync(candidates.find(candidate => fs.existsSync(candidate)) ?? candidates[0]!, 'utf8')) as Record<string, unknown>;
+  const text = scripts[key];
+  if (typeof text !== 'string' || createHash('sha256').update(text, 'utf8').digest('hex') !== NATIVE_SCRIPT_HASHES[key]) {
+    throw new Error('Packaged runtime program is missing or does not match the audited program.');
+  }
+  nativeScripts.set(key, text); return text;
+}
+
+/** Internal Root program data; the historical asset filename is retained. */
+export const loadAuditedRuntimeProgram = nativeScript;
+
 export interface WindowsNativeArtifactManifest {
   readonly version: 1;
   readonly platform: 'win32';
@@ -305,7 +329,17 @@ export function verifyProtectedWindowsNativeArtifactImage(
 export function windowsNativeArtifactCacheRoot(): string {
   const localAppData = process.env.LOCALAPPDATA
     ?? path.join(os.homedir(), 'AppData', 'Local');
-  return path.join(path.resolve(localAppData), 'KodaXNativeArtifactsV3');
+  const anchor = path.resolve(localAppData);
+  // Expanding short names must not erase the provisioner's reparse guard.
+  for (let current = anchor; process.platform === 'win32'; current = path.dirname(current)) {
+    try {
+      if (fs.lstatSync(current).isSymbolicLink()) throw new Error('Native cache anchor contains a filesystem alias.');
+    } catch (error: unknown) {
+      if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+    }
+    if (path.dirname(current) === current) break;
+  }
+  return path.join(canonicalExistingPath(anchor), 'KodaXNativeArtifactsV3');
 }
 
 export function windowsSandboxControlDirectory(): string {
@@ -406,7 +440,8 @@ function assertTrustedTextNativeStateNotDirectlyAccessible(
   }
 }
 
-function canonicalExistingPath(value: string): string {
+/** Internal Root filesystem policy identity; not re-exported by public SDK entries. */
+export function canonicalExistingPath(value: string): string {
   let existingAncestor = path.resolve(value);
   const missingSuffix: string[] = [];
   for (;;) {
@@ -677,289 +712,9 @@ function protectedArtifactDirectory(
 // the embedded release manifest. It creates every cache component with its
 // final protected DACL; existing components are verified and never repaired
 // through a path-based ACL mutation.
-const PROVISION_PROTECTED_ARTIFACT = String.raw`
-$ErrorActionPreference = 'Stop'
-$payloadText = [Console]::In.ReadToEnd()
-if ([Text.Encoding]::UTF8.GetByteCount($payloadText) -gt 90000000) { throw 'payload exceeds bound' }
-$payload = $payloadText | ConvertFrom-Json
-$hostSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
-$systemSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
-$usersSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-545')
-$sandboxSid = if ([string]::IsNullOrEmpty([string]$payload.sandboxReadSid)) { $null } else { [Security.Principal.SecurityIdentifier]::new([string]$payload.sandboxReadSid) }
-$localUsersReadExecute = [bool]$payload.localUsersReadExecute
-$allowCreate = [bool]$payload.allowCreate
-$inherit = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
-$none = [Security.AccessControl.PropagationFlags]::None
-$allow = [Security.AccessControl.AccessControlType]::Allow
-function New-DirectorySecurity {
-  $security = [Security.AccessControl.DirectorySecurity]::new()
-  $security.SetAccessRuleProtection($true, $false)
-  $security.SetOwner($hostSid)
-  [void]$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($hostSid, [Security.AccessControl.FileSystemRights]::FullControl, $inherit, $none, $allow))
-  [void]$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($systemSid, [Security.AccessControl.FileSystemRights]::FullControl, $inherit, $none, $allow))
-  [void]$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($usersSid, [Security.AccessControl.FileSystemRights]::ReadAndExecute, $inherit, $none, $allow))
-  return $security
-}
-function New-FileSecurity {
-  $security = [Security.AccessControl.FileSecurity]::new()
-  $security.SetAccessRuleProtection($true, $false)
-  $security.SetOwner($hostSid)
-  [void]$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($hostSid, [Security.AccessControl.FileSystemRights]::FullControl, $allow))
-  [void]$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($systemSid, [Security.AccessControl.FileSystemRights]::FullControl, $allow))
-  if ($localUsersReadExecute) { [void]$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($usersSid, [Security.AccessControl.FileSystemRights]::ReadAndExecute, $allow)) }
-  elseif ($null -ne $sandboxSid) { [void]$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sandboxSid, [Security.AccessControl.FileSystemRights]::ReadAndExecute, $allow)) }
-  return $security
-}
-function Assert-NoReparse([string]$candidate) {
-  $item = Get-Item -LiteralPath $candidate -Force
-  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "reparse artifact path: $candidate" }
-}
-function Assert-AclShape($acl, [bool]$directory, [string]$candidate) {
-  if (-not $acl.AreAccessRulesProtected -or $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $hostSid.Value) { throw 'artifact ACL is not protected and host-owned' }
-  $expected = @{}
-  $expected[$hostSid.Value] = [int][Security.AccessControl.FileSystemRights]::FullControl
-  $expected[$systemSid.Value] = [int][Security.AccessControl.FileSystemRights]::FullControl
-  $readExecuteMask = [int]([Security.AccessControl.FileSystemRights]::ReadAndExecute -bor [Security.AccessControl.FileSystemRights]::Synchronize)
-  if ($directory) { $expected[$usersSid.Value] = $readExecuteMask }
-  if (-not $directory -and $localUsersReadExecute) { $expected[$usersSid.Value] = $readExecuteMask }
-  elseif (-not $directory -and $null -ne $sandboxSid) { $expected[$sandboxSid.Value] = $readExecuteMask }
-  $observed = @{}
-  foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
-    if ($rule.IsInherited) { throw 'artifact ACL contains an inherited rule' }
-    # Existing DENY ACEs can be legacy KodaX state or administrator policy.
-    # Shape alone cannot prove ownership, so never remove or rewrite them. A
-    # DENY cannot widen access, and is safe to retain while the exact ALLOW
-    # surface below remains closed and fully verified.
-    if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Deny) { continue }
-    $sid = $rule.IdentityReference.Value
-    if (-not $expected.ContainsKey($sid) -or $observed.ContainsKey($sid)) { throw "artifact ACL contains an unexpected allow rule for $sid at $candidate" }
-    if ([int]$rule.FileSystemRights -ne $expected[$sid]) { throw "artifact ACL allow mask is invalid for $sid at $candidate" }
-    if ($directory) {
-      if ($rule.InheritanceFlags -ne $inherit -or $rule.PropagationFlags -ne $none) { throw 'artifact directory ACL inheritance is invalid' }
-    } elseif ($rule.InheritanceFlags -ne [Security.AccessControl.InheritanceFlags]::None) {
-      throw 'artifact file ACL inheritance is invalid'
-    }
-    $observed[$sid] = $true
-  }
-  foreach ($sid in $expected.Keys) { if (-not $observed.ContainsKey($sid)) { throw 'artifact ACL is missing a required allow rule' } }
-}
-function Ensure-ProtectedDirectory([string]$candidate) {
-  if (Test-Path -LiteralPath $candidate) {
-    Assert-NoReparse $candidate
-    Assert-AclShape ([IO.Directory]::GetAccessControl($candidate)) $true $candidate
-    return
-  }
-  if (-not $allowCreate) { throw "protected artifact directory is missing: $candidate" }
-  [void][IO.Directory]::CreateDirectory($candidate, (New-DirectorySecurity))
-  Assert-NoReparse $candidate
-  Assert-AclShape ([IO.Directory]::GetAccessControl($candidate)) $true $candidate
-}
-$cacheRoot = [IO.Path]::GetFullPath([string]$payload.cacheRoot)
-$anchor = [IO.Path]::GetFullPath([string]$payload.anchor)
-$destinationDirectory = [IO.Path]::GetFullPath([string]$payload.destinationDirectory)
-if (-not $cacheRoot.StartsWith($anchor + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'cache root escaped host LocalAppData' }
-if (-not $destinationDirectory.StartsWith($cacheRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'destination escaped cache root' }
-Assert-NoReparse $anchor
-$current = $anchor
-$relative = $destinationDirectory.Substring($anchor.Length).TrimStart([IO.Path]::DirectorySeparatorChar)
-foreach ($part in ($relative -split '[\\/]')) {
-  if ([string]::IsNullOrEmpty($part)) { continue }
-  $current = [IO.Path]::Combine($current, $part)
-  Ensure-ProtectedDirectory $current
-}
-$bytes = [Convert]::FromBase64String([string]$payload.bytes)
-$hash = [Security.Cryptography.SHA256]::Create()
-try { $actual = ([BitConverter]::ToString($hash.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() } finally { $hash.Dispose() }
-if ($actual -ne ([string]$payload.sha256).ToLowerInvariant()) { throw 'provisioning payload hash mismatch' }
-$destination = [IO.Path]::Combine($destinationDirectory, [string]$payload.file)
-# Keep the CreateNew staging name short. PowerShell 5.1 FileStream still hits
-# MAX_PATH on otherwise valid LocalAppData roots before long-path policy is
-# enabled, while GetRandomFileName retains cross-process collision resistance.
-$temporary = [IO.Path]::Combine($destinationDirectory, '.' + [IO.Path]::GetRandomFileName() + '.tmp')
-try {
-  if (-not (Test-Path -LiteralPath $destination)) {
-    if (-not $allowCreate) { throw 'protected artifact is missing' }
-    $stream = [IO.FileStream]::new($temporary, [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::FullControl, [IO.FileShare]::None, 65536, [IO.FileOptions]::WriteThrough, (New-FileSecurity))
-    try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
-    try { [IO.File]::Move($temporary, $destination) } catch { if (-not (Test-Path -LiteralPath $destination)) { throw } }
-  }
-  Assert-NoReparse $destination
-  Assert-AclShape ([IO.File]::GetAccessControl($destination)) $false $destination
-  # A sibling Runtime may already be executing this content-addressed image.
-  # Verification must share an immutable published file for read/delete or
-  # artifact provisioning itself becomes a cross-Runtime admission lock.
-  $share = [IO.FileShare]::Read -bor [IO.FileShare]::Delete
-  $stream = [IO.FileStream]::new($destination, [IO.FileMode]::Open, [IO.FileAccess]::Read, $share)
-  try {
-    $publishedHasher = [Security.Cryptography.SHA256]::Create()
-    try { $publishedHash = ([BitConverter]::ToString($publishedHasher.ComputeHash($stream))).Replace('-', '').ToLowerInvariant() } finally { $publishedHasher.Dispose() }
-  } finally { $stream.Dispose() }
-  if ($publishedHash -ne $actual) { throw 'published artifact hash mismatch' }
-  [Console]::Out.Write($destination)
-} finally {
-  if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
-}
-`;
 
-const ENSURE_PROTECTED_CONTROL_DIRECTORY = String.raw`
-$ErrorActionPreference = 'Stop'
-$payload = ([Console]::In.ReadToEnd() | ConvertFrom-Json)
-$hostSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
-$systemSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
-$inherit = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
-$none = [Security.AccessControl.PropagationFlags]::None
-$allow = [Security.AccessControl.AccessControlType]::Allow
-function Assert-NoReparse([string]$candidate) {
-  $item = Get-Item -LiteralPath $candidate -Force
-  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "reparse control path: $candidate" }
-}
-function New-ControlSecurity {
-  $security = [Security.AccessControl.DirectorySecurity]::new()
-  $security.SetAccessRuleProtection($true, $false)
-  $security.SetOwner($hostSid)
-  [void]$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($hostSid, [Security.AccessControl.FileSystemRights]::FullControl, $inherit, $none, $allow))
-  [void]$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($systemSid, [Security.AccessControl.FileSystemRights]::FullControl, $inherit, $none, $allow))
-  return $security
-}
-function Assert-ControlSecurity([string]$candidate) {
-  $acl = [IO.Directory]::GetAccessControl($candidate)
-  if (-not $acl.AreAccessRulesProtected -or $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $hostSid.Value) {
-    throw 'control directory ACL is not protected and host-owned'
-  }
-  $expected = @{}
-  $expected[$hostSid.Value] = $true
-  $expected[$systemSid.Value] = $true
-  $observed = @{}
-  foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
-    if ($rule.IsInherited -or $rule.AccessControlType -ne $allow) { throw 'control directory ACL contains an unexpected rule' }
-    $sid = $rule.IdentityReference.Value
-    if (-not $expected.ContainsKey($sid) -or $observed.ContainsKey($sid)) { throw 'control directory ACL contains an unexpected principal' }
-    if ($rule.FileSystemRights -ne [Security.AccessControl.FileSystemRights]::FullControl -or $rule.InheritanceFlags -ne $inherit -or $rule.PropagationFlags -ne $none) {
-      throw 'control directory ACL rule shape is invalid'
-    }
-    $observed[$sid] = $true
-  }
-  foreach ($sid in $expected.Keys) { if (-not $observed.ContainsKey($sid)) { throw 'control directory ACL is missing a required principal' } }
-}
-function Test-ControlOwnerProcessAlive([uint32]$processId) {
-  if ($processId -gt [int]::MaxValue) { return $false }
-  try {
-    return $null -ne [Diagnostics.Process]::GetProcessById([int]$processId)
-  } catch [ArgumentException] {
-    return $false
-  } catch {
-    return $true
-  }
-}
-function Remove-ProvenStaleControlEntries([string]$candidate) {
-  $now = [DateTimeOffset]::UtcNow
-  foreach ($entry in [IO.Directory]::EnumerateFiles($candidate)) {
-    try {
-      $item = Get-Item -LiteralPath $entry -Force
-    } catch {
-      if ($_.Exception -is [Management.Automation.ItemNotFoundException] -or
-        $_.Exception -is [IO.FileNotFoundException] -or
-        $_.Exception -is [IO.DirectoryNotFoundException]) {
-        # Another setup/owner may retire a converged entry after enumeration.
-        continue
-      }
-      throw
-    }
-    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.Length -gt 1048576) { continue }
-    $warmupMatch = [regex]::Match($item.Name, '^windows-read-warmup-([0-9]+)-[0-9a-fA-F-]{36}\.log$')
-    if ($warmupMatch.Success) {
-      $warmupPid = 0L
-      if ([long]::TryParse($warmupMatch.Groups[1].Value, [ref]$warmupPid) -and
-        $warmupPid -gt 0 -and
-        $warmupPid -le [uint32]::MaxValue -and
-        -not (Test-ControlOwnerProcessAlive ([uint32]$warmupPid))) {
-        # Protocol-9 alpha builds left an authority-free warmup diagnostic.
-        # Its dead creator proves no process can append to it.
-        [IO.File]::Delete($entry)
-      }
-      continue
-    }
-    $stagingMatch = [regex]::Match($item.Name, '^windows-(resume|started)-([0-9]+)-[0-9a-fA-F-]{36}\.([0-9]+)\.[0-9a-fA-F]{32}\.tmp$')
-    $denyStagingMatch = [regex]::Match($item.Name, '^windows-deny-[0-9a-fA-F-]{36}\.([0-9]+)\.[0-9a-fA-F]{32}\.tmp$')
-    if ($stagingMatch.Success -or $denyStagingMatch.Success) {
-      $stagingPidText = if ($stagingMatch.Success) { $stagingMatch.Groups[3].Value } else { $denyStagingMatch.Groups[1].Value }
-      $stagingPid = 0L
-      if ([long]::TryParse($stagingPidText, [ref]$stagingPid) -and
-        $stagingPid -gt 0 -and
-        $stagingPid -le [uint32]::MaxValue -and
-        -not (Test-ControlOwnerProcessAlive ([uint32]$stagingPid)) -and
-        $item.LastWriteTimeUtc -lt $now.UtcDateTime.AddMinutes(-1)) {
-        # Atomic publication staging files carry no authority. A dead creator
-        # plus two launch budgets proves publication can no longer complete.
-        [IO.File]::Delete($entry)
-      }
-      continue
-    }
-    $match = [regex]::Match($item.Name, '^windows-(shell|network|resume|started|terminal)-([0-9]+)-[0-9a-fA-F-]{36}\.json$')
-    if (-not $match.Success) { continue }
-    $ownerPid = 0L
-    if (-not [long]::TryParse($match.Groups[2].Value, [ref]$ownerPid) -or $ownerPid -le 0 -or $ownerPid -gt [uint32]::MaxValue) { continue }
-    if (Test-ControlOwnerProcessAlive ([uint32]$ownerPid)) { continue }
-    $kind = $match.Groups[1].Value
-    $retire = $false
-    if ($kind -eq 'resume' -or $kind -eq 'started') {
-      # Launch attestations carry no authority and have no consumer after their
-      # creating Runtime exits.
-      $retire = $true
-    } elseif ($kind -eq 'network') {
-      # A network request is deleted as soon as its broker reads it. A dead
-      # creator plus two launch budgets proves this file was never admitted.
-      $retire = $item.LastWriteTimeUtc -lt $now.UtcDateTime.AddMinutes(-1)
-    } else {
-      try { $record = ([IO.File]::ReadAllText($entry) | ConvertFrom-Json) } catch { continue }
-      if ($kind -eq 'shell') {
-        $deadline = 0L
-        $retire = [long]::TryParse([string]$record.operationDeadlineUnixMs, [ref]$deadline) -and $deadline -lt $now.ToUnixTimeMilliseconds()
-      } else {
-        # A terminal record is disposable only after native Job drainage was
-        # durably observed. Unknown or partial records remain fail-closed.
-        $retire = $record.jobDrained -eq $true
-      }
-    }
-    if ($retire) { [IO.File]::Delete($entry) }
-  }
-}
-$cacheRoot = [IO.Path]::GetFullPath([string]$payload.cacheRoot)
-$controlRoot = [IO.Path]::GetFullPath([string]$payload.controlRoot)
-$action = [string]$payload.action
-if ([IO.Path]::GetDirectoryName($controlRoot) -ne $cacheRoot) { throw 'control directory escaped native cache root' }
-if (-not (Test-Path -LiteralPath $cacheRoot -PathType Container)) { throw 'protected native cache root is unavailable' }
-Assert-NoReparse $cacheRoot
-if ($action -eq 'verify') {
-  if (-not (Test-Path -LiteralPath $controlRoot -PathType Container)) { throw 'protected native shell control state is not initialized; run kodax sandbox setup' }
-  Assert-NoReparse $controlRoot
-} elseif ($action -eq 'ensure') {
-  if (Test-Path -LiteralPath $controlRoot) {
-    Assert-NoReparse $controlRoot
-  } else {
-    [void][IO.Directory]::CreateDirectory($controlRoot, (New-ControlSecurity))
-    Assert-NoReparse $controlRoot
-  }
-} elseif ($action -eq 'repair') {
-  if (Test-Path -LiteralPath $controlRoot) {
-    Assert-NoReparse $controlRoot
-    $existing = [IO.Directory]::GetAccessControl($controlRoot)
-    if ($existing.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $hostSid.Value) { throw 'refusing to repair native shell control state not owned by the host' }
-    Remove-ProvenStaleControlEntries $controlRoot
-    $entries = [IO.Directory]::EnumerateFileSystemEntries($controlRoot).GetEnumerator()
-    try { $notEmpty = $entries.MoveNext() } finally { $entries.Dispose() }
-    if ($notEmpty) { throw 'refusing to repair non-empty native shell control state; close KodaX and remove the directory manually' }
-    [IO.Directory]::SetAccessControl($controlRoot, (New-ControlSecurity))
-  } else {
-    [void][IO.Directory]::CreateDirectory($controlRoot, (New-ControlSecurity))
-  }
-  Assert-NoReparse $controlRoot
-} else {
-  throw 'invalid native shell control state action'
-}
-Assert-ControlSecurity $controlRoot
-[Console]::Out.Write($controlRoot)
-`;
+
+
 
 function runWindowsSandboxControlDirectoryAction(
   action: 'verify' | 'ensure' | 'repair',
@@ -975,7 +730,7 @@ function runWindowsSandboxControlDirectoryAction(
   );
   const result = spawnSync(powershell, [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-    '-EncodedCommand', Buffer.from(ENSURE_PROTECTED_CONTROL_DIRECTORY, 'utf16le').toString('base64'),
+    '-EncodedCommand', Buffer.from(nativeScript('control'), 'utf16le').toString('base64'),
   ], {
     input: JSON.stringify({ action, cacheRoot, controlRoot }),
     encoding: 'utf8',
@@ -1038,7 +793,7 @@ function provisionProtectedArtifact(input: {
   );
   const result = spawnSync(powershell, [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-    '-EncodedCommand', Buffer.from(PROVISION_PROTECTED_ARTIFACT, 'utf16le').toString('base64'),
+    '-EncodedCommand', Buffer.from(nativeScript('provision'), 'utf16le').toString('base64'),
   ], {
     input: JSON.stringify({
       cacheRoot,
@@ -1336,6 +1091,7 @@ export function resolveWindowsNativeArtifact(
 }
 
 export const _internalWindowsNativeArtifacts = {
+  nativeScript,
   assertDevelopmentSourceIsOutsideWriteRoots,
   artifactDirectories,
   physicalElectronArtifactPath,

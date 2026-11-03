@@ -3,7 +3,7 @@
  *
  * JSONL-backed key-value store scoped to a single extension identity.
  * Each store instance owns one `.jsonl` file inside the extension store
- * directory.  All I/O is async and safe for single-writer use.
+ * directory. Mutations serialize across cooperating processes sharing the namespace.
  *
  * File format (one JSON object per line):
  *
@@ -11,9 +11,9 @@
  */
 
 import fs from 'fs/promises';
-import fsSync from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { withStorageFileLock } from '../runtime/storage-file-lock.js';
 
 import { getAgentConfigPath } from '../runtime/agent-home.js';
 import type {
@@ -97,7 +97,7 @@ function fromPersistedLine(raw: string): KodaXExtensionStoreEntry | null {
     }
     return null;
   } catch (error) {
-    // Corrupt JSONL entries are ignored; valid later lines still participate.
+    // The caller rejects this unreadable baseline before any mutation.
     void error;
     return null;
   }
@@ -111,6 +111,13 @@ function ensureExtensionDir(namespaceId: string): string {
 
 function ensureExtensionFile(namespaceId: string): string {
   return path.join(ensureExtensionDir(namespaceId), 'store.jsonl');
+}
+
+/** Complete snapshot validation for trusted offline maintenance; no partial KV baseline. */
+export function validateExtensionStoreSnapshot(raw: string): void {
+  for (const line of raw.trim().split('\n')) {
+    if (line.trim() && !fromPersistedLine(line)) throw new Error('Invalid extension store snapshot.');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -141,41 +148,45 @@ export class FileExtensionStore implements KodaXExtensionStore {
     value: KodaXJsonValue,
     options?: { expectedVersion?: string },
   ): Promise<KodaXExtensionStoreEntry | false> {
-    const normalizedKey = key.trim();
-    if (!normalizedKey) {
-      throw new Error('Extension store key must be a non-empty string.');
-    }
-
-    const entries = await this.readAllEntries();
-    const existing = entries.get(normalizedKey);
-
-    if (options?.expectedVersion !== undefined) {
-      if (!existing || existing.version !== options.expectedVersion) {
-        return false;
+    return withStorageFileLock(`${this.filePath}.lock`, async () => {
+      const normalizedKey = key.trim();
+      if (!normalizedKey) {
+        throw new Error('Extension store key must be a non-empty string.');
       }
-    }
 
-    const now = Date.now();
-    const newVersion = generateVersion();
-    const entry: KodaXExtensionStoreEntry = {
-      key: normalizedKey,
-      value,
-      version: newVersion,
-      updatedAt: now,
-    };
+      const entries = await this.readAllEntries();
+      const existing = entries.get(normalizedKey);
 
-    entries.set(normalizedKey, entry);
-    await this.writeAllEntries(entries);
-    return entry;
+      if (options?.expectedVersion !== undefined) {
+        if (!existing || existing.version !== options.expectedVersion) {
+          return false;
+        }
+      }
+
+      const now = Date.now();
+      const newVersion = generateVersion();
+      const entry: KodaXExtensionStoreEntry = {
+        key: normalizedKey,
+        value,
+        version: newVersion,
+        updatedAt: now,
+      };
+
+      entries.set(normalizedKey, entry);
+      await this.writeAllEntries(entries);
+      return entry;
+    });
   }
 
   async delete(key: string): Promise<boolean> {
-    const entries = await this.readAllEntries();
-    const existed = entries.delete(key.trim());
-    if (existed) {
-      await this.writeAllEntries(entries);
-    }
-    return existed;
+    return withStorageFileLock(`${this.filePath}.lock`, async () => {
+      const entries = await this.readAllEntries();
+      const existed = entries.delete(key.trim());
+      if (existed) {
+        await this.writeAllEntries(entries);
+      }
+      return existed;
+    });
   }
 
   async list(options?: { prefix?: string }): Promise<string[]> {
@@ -191,37 +202,43 @@ export class FileExtensionStore implements KodaXExtensionStore {
   }
 
   async clear(options?: { prefix?: string }): Promise<number> {
-    const entries = await this.readAllEntries();
-    const prefix = options?.prefix ?? '';
-    let removed = 0;
-    if (prefix) {
-      for (const key of entries.keys()) {
-        if (key.startsWith(prefix)) {
-          entries.delete(key);
-          removed++;
+    return withStorageFileLock(`${this.filePath}.lock`, async () => {
+      const entries = await this.readAllEntries();
+      const prefix = options?.prefix ?? '';
+      let removed = 0;
+      if (prefix) {
+        for (const key of entries.keys()) {
+          if (key.startsWith(prefix)) {
+            entries.delete(key);
+            removed++;
+          }
         }
+      } else {
+        removed = entries.size;
+        entries.clear();
       }
-    } else {
-      removed = entries.size;
-      entries.clear();
-    }
-    if (removed > 0) {
-      await this.writeAllEntries(entries);
-    }
-    return removed;
+      if (removed > 0) {
+        await this.writeAllEntries(entries);
+      }
+      return removed;
+    });
   }
 
   // -- internal -------------------------------------------------------------
 
-  private async readAllEntries(): Promise<Map<string, KodaXExtensionStoreEntry>> {
-    if (!fsSync.existsSync(this.filePath)) {
-      return new Map();
-    }
+  private async assertWritable(): Promise<void> {
+    try { await fs.lstat(`${this.filePath}.repair-fence`); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+    throw new Error('Extension storage was restored with unverified completeness; inspect its repair receipt before resuming access.');
+  }
 
+  private async readAllEntries(): Promise<Map<string, KodaXExtensionStoreEntry>> {
+    await this.assertWritable();
     try {
       const raw = await fs.readFile(this.filePath, 'utf-8');
       const trimmed = raw.trim();
       if (!trimmed) {
+        await this.assertWritable();
         return new Map();
       }
 
@@ -229,15 +246,15 @@ export class FileExtensionStore implements KodaXExtensionStore {
       // Last-write-wins: later lines overwrite earlier ones for the same key.
       for (const line of trimmed.split('\n')) {
         const entry = fromPersistedLine(line);
-        if (entry) {
-          map.set(entry.key, entry);
-        }
+        if (!line.trim()) continue;
+        if (!entry) throw Object.assign(new Error('Corrupt extension store; retain the original file and repair it before retrying.'), { code: 'extension_store_corrupt' });
+        map.set(entry.key, entry);
       }
+      await this.assertWritable();
       return map;
     } catch (error) {
-      // Store reads are best-effort; callers can continue with an empty store.
-      void error;
-      return new Map();
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') { await this.assertWritable(); return new Map(); }
+      throw error;
     }
   }
 
@@ -251,14 +268,11 @@ export class FileExtensionStore implements KodaXExtensionStore {
 
     // Atomic write via per-process temp file + rename.
     const tmpPath = createAtomicWriteTempPath(this.filePath);
-    await fs.writeFile(tmpPath, lines.join('\n'), 'utf-8');
     try {
+      await fs.writeFile(tmpPath, lines.join('\n'), { encoding: 'utf-8', mode: 0o600 });
       await fs.rename(tmpPath, this.filePath);
-    } catch (error) {
-      // On Windows, rename fails when the target exists. Fall back to copy + unlink.
-      void error;
-      await fs.copyFile(tmpPath, this.filePath);
-      await fs.unlink(tmpPath);
+    } finally {
+      await fs.rm(tmpPath, { force: true });
     }
   }
 }

@@ -137,6 +137,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('v0.7.94 SDK keeps `sandboxRuntime:4`');
     expect(sdk).toContain('The v0.7.95 SDK advertises Windows `sandboxRuntime:5`');
     expect(sdk).toContain('`runtimeExitSettlement:2`');
+    expect(sdk).toContain('`runtimeExitSettlement:2` is retired');
     expect(sdk).toContain('compatible live Bash lease');
     expect(sdk).toContain('linked worktree roots persist in the owning Session');
     expect(sdk).toContain('gitSafeDirectory: authorized-repo-roots');
@@ -169,7 +170,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('may canonicalize DACL protection/inheritance control at commit');
     expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
-    expect(sandbox).toContain('v0.7.97-alpha.11 release uses Windows native shell protocol 10');
+    expect(sandbox).toContain('v0.7.97-beta.1 release uses Windows native shell protocol 10');
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
@@ -197,11 +198,22 @@ describe('FEATURE_218 manual registry', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('The v0.7.97-alpha.11 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.97-beta.1 release advertises Windows `sandboxRuntime:11`');
     expect(sdk).toContain('The v0.7.97-alpha.10 release resumes checkpointed Runs and task trees after Host');
     expect(sdk).toContain('The v0.7.97-alpha.11 release adds explicit Agent, Coding and experimental Script work modes');
     expect(sdk).toContain('Script runs supported leaf tools through existing permission and receipt boundaries.');
+    expect(sdk).toContain('The v0.7.97-alpha.12 release converges public product execution on the independent');
+    expect(sdk).toContain('shared Host: embedded/default Runtime construction, inline owner switching and function-based');
+    expect(sdk).toContain('FEATURE_302 provider parity adds the native Responses transport, ordered history, native');
+    expect(sdk).toContain('permission hardening ships with lock diagnostics and a Windows streaming-history PTY CI gate.');
     expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.10 contract is retained.');
+    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.11 contract is retained.');
+    expect(sdk).toContain('The v0.7.97-beta.1 release completes Space-facing Host execution and Session seams:');
+    expect(sdk).toContain('Main-owned capability-gated default Skills and consumption-time execution bindings select');
+    expect(sdk).toContain('request-ID reconciliation while preserving the original Session and history.');
+    expect(sdk).toContain('the shared lock with old bytes retained on failed writes, damaged provider collections rejected');
+    expect(sdk).toContain('Bare `resume` discovery paints immediate `Finding sessions`');
+    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.12 contract is retained.');
     expect(sdk).toContain('wait in `recovering`');
     expect(sdk).toContain('Kimi K3.1 provider routes join the registry with all seven effort levels mapped');
     expect(sdk).toContain('skip or Host timeout returns `unanswered` with its reason.');
@@ -430,7 +442,7 @@ describe('FEATURE_218 manual registry', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(providers).toContain('deepseek-v4-flash');
+    expect(providers).toContain('deepseek-flash');
     expect(providers).toContain('deepseek-v4-pro');
     expect(providers).toContain('text-only');
     expect(customProviders).toContain('maxOutputTokensField');

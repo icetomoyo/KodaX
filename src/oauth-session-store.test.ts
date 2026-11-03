@@ -2,10 +2,10 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:crypto';
 import { createEncryptedOAuthSessionStore, createWindowsOAuthSessionStore } from './oauth-session-store.js';
 
 function fixtureSealer() {
@@ -13,6 +13,35 @@ function fixtureSealer() {
   return { async seal(plaintext: Uint8Array) { const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', key, iv); const body = Buffer.concat([cipher.update(plaintext), cipher.final()]); return Buffer.concat([iv, cipher.getAuthTag(), body]); },
     async unseal(sealed: Uint8Array) { const input = Buffer.from(sealed), decipher = createDecipheriv('aes-256-gcm', key, input.subarray(0, 12)); decipher.setAuthTag(input.subarray(12, 28)); return Buffer.concat([decipher.update(input.subarray(28)), decipher.final()]); } };
 }
+
+it('publishes a complete file lock before entering an encrypted transaction', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'kodax-sealed-publication-'));
+  const id = 'publication-fixture';
+  const lock = path.join(directory, `${createHash('sha256').update(id).digest('hex')}.sealed.lock`);
+  const store = createEncryptedOAuthSessionStore(directory, fixtureSealer());
+  try {
+    await store.transact(id, async record => {
+      const owner = JSON.parse(await readFile(lock, 'utf8')) as { pid: number; runtimeId: string };
+      expect(owner.pid).toBe(process.pid);
+      expect(owner.runtimeId).toBeTruthy();
+      return { record, result: undefined };
+    });
+    expect(await readdir(directory)).not.toContain(path.basename(lock));
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+it('recovers only a verified dead sealed-store writer while preserving registration identity', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'kodax-sealed-owner-recovery-'));
+  const id = 'dead-writer-registration';
+  const file = path.join(directory, `${createHash('sha256').update(id).digest('hex')}.sealed`);
+  await mkdir(`${file}.lock`);
+  await writeFile(path.join(`${file}.lock`, 'owner.json'), JSON.stringify({ runtimeId: 'fixture-retired', pid: 2_146_999_999, createdAt: '2026-01-01T00:00:00Z' }));
+  const store = createEncryptedOAuthSessionStore(directory, fixtureSealer());
+  try {
+    await expect(store.transact(id, async record => ({ record, result: 'recovered-without-selecting-another-account' })))
+      .resolves.toBe('recovered-without-selecting-another-account');
+  } finally { await rm(directory, { recursive: true, force: true }); }
+}, 35_000);
 
 it('serializes rotating transactions across store instances and never writes plaintext token material', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'kodax-oauth-store-'));

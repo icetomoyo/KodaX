@@ -283,6 +283,7 @@ describe('F270 actor principal wiring', () => {
     const ctx = buildToolExecutionContext({
       options: {
         provider: 'mock',
+        thinking: false,
         disablePromptCache: false,
         context: { contextDiagnostics: true },
       },
@@ -292,6 +293,7 @@ describe('F270 actor principal wiring', () => {
 
     expect(ctx.parentAgentConfig).toMatchObject({
       provider: 'mock',
+      thinking: false,
       disablePromptCache: false,
       contextDiagnostics: true,
     });
@@ -322,6 +324,13 @@ describe('F270 actor principal wiring', () => {
 
     expect(root.goalUsageSink).toBe(chargeDescendantUsage);
     expect(child.goalUsageSink).toBe(goalUsageSink);
+  });
+
+  it('keeps child selection current when live Session controls change the parent options', () => {
+    const options: import('../types.js').KodaXOptions = { provider: 'first', model: 'first-model', effort: 'high', thinking: true };
+    const ctx = buildToolExecutionContext({ options, runtime: undefined, managedProtocolPayloadRef: { current: undefined } });
+    options.provider = 'next'; options.modelOverride = 'next-model'; options.effort = 'none'; options.thinking = false;
+    expect(ctx.parentAgentConfig).toMatchObject({ provider: 'next', model: 'next-model', effort: 'none', thinking: false });
   });
 
   it('forwards the host-boundary shell authorizer to tool contexts', () => {

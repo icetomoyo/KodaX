@@ -42,6 +42,14 @@ function writeJson(file: string, value: unknown): void {
 }
 
 describe("FEATURE_268 integration config substrate", () => {
+  it("recovers a verified dead integration writer without changing the legacy lock pathname", () => {
+    const file = resolveIntegrationConfigPath('mcp', configHome);
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(`${file}.lock`, JSON.stringify({ version: 1, pid: 2_146_999_999, nonce: 'integration-fixture' }));
+    const result = writeIntegrationDocument({ domain: 'mcp', configHome, document: { version: 1, servers: {} }, validate: parseMcpIntegrationDocument, expectedRevision: null });
+    expect(result.source).toBe('user');
+    expect(existsSync(`${file}.lock`)).toBe(false);
+  });
   it("uses exactly one user file per integration domain", () => {
     expect(resolveIntegrationConfigPath("mcp", configHome)).toBe(
       path.join(configHome, "integrations", "mcp.json"),

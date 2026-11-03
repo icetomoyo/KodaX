@@ -1,7 +1,9 @@
 import os from 'node:os';
 import path from 'node:path';
+import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { setAgentConfigHome } from '@kodax-ai/agent';
 import type { RunnerToolCall } from '@kodax-ai/agent';
@@ -59,11 +61,29 @@ describe('replBashPathSignalCollector — outside_project', () => {
     // to `C:\tmp` which is NOT the actual system temp dir.
     const tempScratch = path.join(os.tmpdir(), 'scratch.txt');
     const signals = replBashPathSignalCollector.collect(
-      bash(`echo x > ${tempScratch}`),
+      bash(`echo x > ${JSON.stringify(tempScratch.replaceAll('\\', '/'))}`),
       PROJECT_ROOT,
     );
     expect(signals.some((s) => s.kind === 'outside_project')).toBe(false);
     expect(signals.some((s) => s.kind === 'shell_redirect_outside')).toBe(false);
+  });
+
+  it.runIf(process.platform === 'win32')('does not turn either short-name temp spelling into an outside-project signal', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-signal-short-'));
+    try {
+      const alias = spawnSync('cmd.exe', ['/d', '/c', `for %I in ("${root}") do @echo %~sI`],
+        { encoding: 'utf8', windowsHide: true, windowsVerbatimArguments: true });
+      expect(alias.status).toBe(0);
+      const canonical = fs.realpathSync.native(root);
+      const short = alias.stdout.trim();
+      expect(fs.realpathSync.native(short).toLowerCase()).toBe(canonical.toLowerCase());
+      for (const shortSide of ['environment', 'target']) {
+        for (const name of ['TEMP', 'TMP', 'TMPDIR']) vi.stubEnv(name, shortSide === 'environment' ? short : canonical);
+        const target = path.join(shortSide === 'target' ? short : canonical, 'scratch.txt');
+        const signals = replBashPathSignalCollector.collect(bash(`echo x > ${JSON.stringify(target.replaceAll('\\', '/'))}`), PROJECT_ROOT);
+        expect(signals).toEqual([]);
+      }
+    } finally { vi.unstubAllEnvs(); fs.rmSync(root, { recursive: true, force: true }); }
   });
 
   it('resolves redirects from executionCwd without changing the project boundary', () => {

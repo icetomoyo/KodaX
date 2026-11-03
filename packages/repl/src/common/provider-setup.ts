@@ -6,9 +6,8 @@
  * user to set its value outside KodaX before restarting the terminal.
  */
 
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
-import path from 'node:path';
 
 import {
   KODAX_DEFAULT_PROVIDER,
@@ -20,6 +19,7 @@ import {
 import {
   CoreConfigWriteConflictError,
   withCoreConfigWriteLock,
+  writeCoreConfigAtomically,
 } from './core-config-lock.js';
 
 export interface ProviderSetupCatalogEntry {
@@ -550,23 +550,22 @@ function customProviderEndpointError(baseUrl: string): string | undefined {
 }
 
 function readConfig(configPath: string): ParsedConfig {
-  if (!fs.existsSync(configPath)) {
-    return {
-      configPath,
-      revision: revisionFor(undefined),
-      exists: false,
-      config: {},
-    };
+  try { fs.lstatSync(configPath); }
+  catch (error: unknown) {
+    if (error !== null && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return { configPath, revision: revisionFor(undefined), exists: false, config: {} };
+    }
+    return { configPath, revision: revisionFor(undefined), exists: true, error: 'config.json cannot be read.' };
   }
   let raw: string;
   try {
     raw = fs.readFileSync(configPath, 'utf8');
-  } catch (error) {
+  } catch {
     return {
       configPath,
       revision: revisionFor(undefined),
       exists: true,
-      error: error instanceof Error ? error.message : 'config.json cannot be read.',
+      error: 'config.json cannot be read.',
     };
   }
   try {
@@ -585,12 +584,12 @@ function readConfig(configPath: string): ParsedConfig {
       exists: true,
       config: parsed,
     };
-  } catch (error) {
+  } catch {
     return {
       configPath,
       revision: revisionFor(raw),
       exists: true,
-      error: error instanceof Error ? error.message : 'config.json is invalid JSON.',
+      error: 'config.json is invalid JSON; retain and repair the original.',
     };
   }
 }
@@ -604,19 +603,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function writeConfigAtomically(configPath: string, config: Record<string, unknown>): void {
-  const directory = path.dirname(configPath);
-  fs.mkdirSync(directory, { recursive: true });
-  const temporary = path.join(directory, `.config.${process.pid}.${randomUUID()}.tmp`);
-  try {
-    fs.writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`, {
-      encoding: 'utf8',
-      mode: 0o600,
-    });
-    fs.renameSync(temporary, configPath);
-  } catch (error) {
-    fs.rmSync(temporary, { force: true });
-    throw error;
-  }
+  writeCoreConfigAtomically(configPath, `${JSON.stringify(config, null, 2)}\n`);
 }
 
 

@@ -59,7 +59,7 @@ export class KodaXBedrockProvider extends KodaXNativeCloudProvider {
         applyAnthropicThinkingOptions(thinking.additionalModelRequestFields, request.profile, request.options, this.name, true);
       } else if (request.options?.thinkingDisplay !== undefined) applyAnthropicThinkingOptions({}, request.profile, request.options, this.name, true);
       const params: ConverseCommandInput = await prepareProviderPayload({ modelId: request.model,
-        messages: await projectBedrockMessages(request.messages, request.source, this.config.promptCacheAffinity === true, this.getCapabilityProfile().multimodalSupport !== 'none'),
+        messages: await projectBedrockMessages(request.messages, request.source, this.config.promptCacheAffinity === true, this.getCapabilityProfile(request.options?.modelOverride).multimodalSupport !== 'none'),
         ...(request.system ? { system: [{ text: request.system }] } : {}), inferenceConfig: { maxTokens: request.maxOutputTokens },
         ...(request.tools.length ? { toolConfig: { tools: request.tools.map(t => {
           const constraints = toolParameters(t, request.toolCapabilities, this.name);

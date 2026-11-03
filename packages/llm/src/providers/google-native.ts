@@ -39,7 +39,7 @@ export class KodaXGoogleProvider extends KodaXNativeCloudProvider {
       headers: { 'content-type': 'application/json', ...(credential.type === 'api-key'
         ? this.config.authentication === 'bearer' ? { authorization: `Bearer ${credential.key}` } : { 'x-goog-api-key': credential.key }
         : { authorization: `Bearer ${credential.token}` }) },
-      body: JSON.stringify(await prepareProviderPayload({ contents: await projectGoogleMessages(request.messages, request.source, this.getCapabilityProfile().multimodalSupport !== 'none'),
+      body: JSON.stringify(await prepareProviderPayload({ contents: await projectGoogleMessages(request.messages, request.source, this.getCapabilityProfile(request.options?.modelOverride).multimodalSupport !== 'none'),
         ...(cacheName ? { cachedContent: cacheName } : {}),
         ...(!cacheName && request.system ? { systemInstruction: { parts: [{ text: request.system }] } } : {}),
         ...(!cacheName && tools.tools.length ? tools : {}),

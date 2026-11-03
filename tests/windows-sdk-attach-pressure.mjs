@@ -11,15 +11,24 @@ assert.equal(process.platform, 'win32');
 const workers = Math.min(3, availableParallelism());
 process.stdout.write(`Windows SDK attachment: ${workers} concurrent workers, 3 cases each\n`);
 
-const fixture = fileURLToPath(new URL('./bundled-shared-host-recovery.test.mjs', import.meta.url));
+const fixture = fileURLToPath(new URL('./bundled-shared-profile-recovery.test.mjs', import.meta.url));
 async function worker(index) {
   for (let iteration = 0; iteration < 3; iteration += 1) {
     await new Promise((resolve, reject) => {
-      const child = spawn(process.execPath, ['--test', '--test-name-pattern=^ensure recovers a shared Session directory', fixture],
-        { windowsHide: true, stdio: 'inherit' });
+      let output = '';
+      const child = spawn(process.execPath, ['--test', '--test-reporter=tap', '--test-name-pattern=^ensure recovers a shared Session directory', fixture],
+        { windowsHide: true, stdio: ['ignore', 'pipe', 'inherit'] });
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', chunk => { output += chunk; process.stdout.write(chunk); });
       child.once('error', reject);
-      child.once('exit', (code, signal) => code === 0 ? resolve()
-        : reject(new Error(`SDK pressure worker ${index}, iteration ${iteration} failed (${code ?? signal})`)));
+      child.once('close', (code, signal) => {
+        if (code !== 0) { reject(new Error(`SDK pressure worker ${index}, iteration ${iteration} failed (${code ?? signal})`)); return; }
+        try {
+          assert.match(output, /^ok \d+ - ensure recovers a shared Session directory from an idle default-profile Host\r?$/m,
+            `SDK pressure worker ${index}, iteration ${iteration} did not execute the recovery case`);
+          resolve();
+        } catch (error) { reject(error); }
+      });
     });
   }
 }

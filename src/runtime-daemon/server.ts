@@ -1,11 +1,13 @@
 import type { MemoryRefFilter, MemoryRememberInput } from '@kodax-ai/agent';
+import { RUNTIME_AUTO_MODE_GUARDRAIL_CAPABILITY } from '../runtime-capability-facts.js';
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from 'node:util';
 import { runtimeClientPrincipal, type RuntimeClientLifecycleController } from './client-lifecycle.js';
-import { withProductExecution } from '../product-execution-authorization.js';
+import { withProductExecution, currentProductExecution, type ProductExecutionContext } from '../product-execution-authorization.js';
+import { parseExecutionBindingSnapshot } from '../execution-binding-snapshot.js';
 import type { RuntimeExecutionProfile } from '../client-host-authorization.js';
 import { createExecutionToolPolicy, executionProfileAllowsTool, hostToolMetadata, intersectExecutionToolCeilings } from '../execution-profile.js';
 import {
-  DEFAULT_CLASSIFIER_TIMEOUT_MS,
   getActiveExtensionRuntime,
   listTools,
 } from "@kodax-ai/coding";
@@ -183,6 +185,7 @@ const ALL_RUNTIME_GRANTED_SCOPES = [
   "agent:control",
   "credential:register",
   "host-tool:register",
+  'execution:register',
   "owner:admin",
   "daemon:admin",
 ] as const satisfies readonly RuntimeGrantedScope[];
@@ -201,6 +204,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "daemon.status",
     "daemon.logs",
     "session.load",
+    "session.promotion.read",
     "session.list",
     "session.status",
     "session.transcript",
@@ -270,6 +274,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "memory.ensureOpenTarget",
     "invocations.prepareReview",
     "session.create",
+    "session.promote",
     "session.fork",
     "session.recover",
     "session.notice.append",
@@ -316,6 +321,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "credential.revoke",
     "credential.supply",
   ]),
+  ...scopeEntries('execution:register', ['execution.register', 'execution.revoke', 'execution.complete']),
   ...scopeEntries("host-tool:register", [
     "host_tool.register",
     "host_tool.get",
@@ -1563,6 +1569,16 @@ async function dispatchRuntimeDaemonRequest(
       return runtime.sessions.create(
         optionalRecord(request.params) as RuntimeCreateSessionInput | undefined,
       );
+    case 'session.promote': {
+      const params = requireRecord(request.params);
+      return runtime.sessions.promote({ sessionId: requireStringField(params, 'sessionId'),
+        requestId: requireStringField(params, 'requestId'), expectedRevision: requireStringField(params, 'expectedRevision'),
+        tag: requireStringField(params, 'tag') });
+    }
+    case 'session.promotion.read': {
+      const params = requireRecord(request.params);
+      return runtime.sessions.readPromotion(requireStringField(params, 'sessionId'), requireStringField(params, 'requestId'));
+    }
     case "session.load":
       return runtime.sessions.load(
         requireStringParam(request.params, "sessionId"),
@@ -1933,8 +1949,9 @@ async function dispatchRuntimeDaemonRequest(
       const runId = requireStringField(params, 'runId');
       const status = await runtime.runs.get(runId);
       if (status.origin?.principalId !== principalId) throw daemonError('permission_denied', 'Generation recovery requires the original principal.');
-      const authorization = optionalRecord(params.authorization);
-      const bound = await bindTrustedRunInput({ params: { ...params, ...authorization }, profile,
+      const execution = currentProductExecution();
+      const authorization = execution?.authorization ?? optionalRecord(params.authorization);
+      const bound = await bindTrustedRunInput({ params: { ...params, ...authorization }, profile: execution?.profile,
         sessionId: status.sessionId, trustedRunId: runId,
         principalId, clientName, clientVersion, reverseBridge });
       const handle = await runtime.runs.recover({ ...bound, runId } as Parameters<typeof runtime.runs.recover>[0]);
@@ -2213,6 +2230,16 @@ async function dispatchRuntimeDaemonRequest(
       return { ok };
     }
 
+    case 'execution.register':
+      return reverseBridge.executionBindings.register(requireStringParam(request.params, 'leaseId'));
+    case 'execution.revoke':
+      return { revoked: reverseBridge.executionBindings.revoke(requireStringParam(request.params, 'leaseId')) };
+    case 'execution.complete': {
+      const params = requireRecord(request.params);
+      return { ok: reverseBridge.executionBindings.complete({ requestId: requireStringField(params, 'requestId'),
+        authorization: optionalRecord(params.resolution) as import('../client-host-authorization.js').RuntimeExecutionAuthorization | undefined,
+        error: optionalStringField(params, 'error') }) };
+    }
     case "workflow.list":
       return runtime.workflows.list(
         optionalRecord(request.params) as RuntimeWorkflowFilter | undefined,
@@ -2405,6 +2432,7 @@ async function dispatchRuntimeDaemonRequest(
   };
   const authorization = isRecord(request.params) ? optionalRecord(request.params.authorization) : undefined;
   if (request.method === 'agents.spawn' || request.method === 'agents.followup') {
+    if (authorization?.binding !== undefined || authorization?.businessBinding !== undefined) throw daemonError('invalid_params', 'Independent Actors require their own declarations.');
     if (authorization?.profile !== undefined) throw daemonError('invalid_params', 'Root profiles do not replace independent Actor declarations.');
     if (authorization?.workflowHostPolicy !== undefined) throw daemonError('invalid_params', 'Workflow ceilings bind to Product Runs, not independent Actor admissions.');
     options.clientLifecycle?.assertAdmission(principalId);
@@ -2420,38 +2448,77 @@ async function dispatchRuntimeDaemonRequest(
   if (authorization !== undefined && (params.credential !== undefined || params.hostTools !== undefined)) {
     throw daemonError('invalid_params', 'Use one execution authorization binding.');
   }
-  const credential = optionalRecord(authorization?.credential ?? (request.method === 'run.recover' ? params.credential : undefined));
-  const hostTools = optionalRecord(authorization?.hostTools ?? (request.method === 'run.recover' ? params.hostTools : undefined));
-  const workflowHostPolicy = optionalRecord(authorization?.workflowHostPolicy);
-  const requestedProfile = authorization?.profile as RuntimeExecutionProfile | undefined;
-  const explicitTools = authorization?.tools === undefined ? undefined : requireStringArrayField(authorization, 'tools');
-  const profile = explicitTools === undefined ? requestedProfile : { ...requestedProfile,
-    tools: explicitTools.filter(name => requestedProfile?.tools === undefined || requestedProfile.tools.includes(name)) };
   const sessionId = request.method === 'run.recover' ? (await runtime.runs.get(requireStringField(params, 'runId'))).sessionId
-    : credential === undefined && hostTools === undefined
-    ? optionalStringField(params, 'sessionId') : requireStringField(params, 'sessionId');
-  if (authorization !== undefined && credential === undefined && hostTools === undefined && workflowHostPolicy === undefined && profile === undefined) {
-    throw daemonError('invalid_params', 'Execution authorization requires a lease or Workflow policy.');
+    : optionalStringField(params, 'sessionId');
+  const assertAdmission = () => options.clientLifecycle?.assertAdmission(principalId);
+  const createContext = (approved: Record<string, unknown> | undefined, intentKey?: string): ProductExecutionContext => {
+    const deferred = optionalRecord(approved?.binding);
+    if (deferred !== undefined) {
+      if (!sessionId || !['input.submit', 'run.recover'].includes(request.method)
+        || Object.keys(approved!).some(key => key !== 'binding')) throw daemonError('invalid_params', 'Use a standalone binding reference for Product input or recovery.');
+      const leaseId = requireStringField(deferred, 'leaseId');
+      const key = JSON.stringify([principalId, sessionId, 'binding', leaseId]);
+      return { key, intentKey, principalId, sessionId, assertAdmission,
+        async resolve(input, signal) {
+          assertAdmission();
+          if (input.sessionId !== sessionId) throw daemonError('permission_denied', 'Execution binding belongs to another Session.');
+          const resolved = await reverseBridge.executionBindings.resolve(leaseId, input, signal);
+          assertAdmission();
+          if (resolved.businessBinding === undefined) throw daemonError('execution_binding_rejected', 'Main did not provide a committed business binding.');
+          return createContext(resolved as Record<string, unknown>, intentKey ?? key);
+        },
+        async bindRun() { throw daemonError('execution_binding_unavailable', 'Execution binding has not been resolved.'); },
+      };
+    }
+    const credential = optionalRecord(approved?.credential ?? (request.method === 'run.recover' ? params.credential : undefined));
+    const hostTools = optionalRecord(approved?.hostTools ?? (request.method === 'run.recover' ? params.hostTools : undefined));
+    const workflowHostPolicy = optionalRecord(approved?.workflowHostPolicy);
+    const requestedProfile = approved?.profile as RuntimeExecutionProfile | undefined;
+    const explicitTools = approved?.tools === undefined ? undefined : requireStringArrayField(approved, 'tools');
+    const profile = explicitTools === undefined ? requestedProfile : { ...requestedProfile,
+      tools: explicitTools.filter(name => requestedProfile?.tools === undefined || requestedProfile.tools.includes(name)) };
+    if ((credential !== undefined || hostTools !== undefined) && !sessionId) throw daemonError('invalid_params', 'Execution leases require a Session identity.');
+    if (approved !== undefined && credential === undefined && hostTools === undefined && workflowHostPolicy === undefined && profile === undefined) {
+      throw daemonError('invalid_params', 'Execution authorization requires a lease or Workflow policy.');
+    }
+    const bindingSnapshot = approved?.businessBinding === undefined ? undefined
+      : parseExecutionBindingSnapshot({ businessBinding: approved.businessBinding,
+        ...(profile?.defaultSkill === undefined ? {} : { defaultSkill: profile.defaultSkill }) });
+    if (approved?.businessBinding !== undefined && !bindingSnapshot) throw daemonError('execution_binding_rejected', 'Invalid committed business binding snapshot.');
+    const key = approved === undefined ? undefined : JSON.stringify([principalId, sessionId,
+      credential === undefined ? null : [credential.leaseId, credential.mode === 'scoped'
+        ? [...requireStringArrayField(credential, 'providers')].sort() : credential.provider], hostTools?.leaseId ?? null,
+      ...(workflowHostPolicy === undefined ? [] : [[workflowHostPolicy.maxAgents ?? null, workflowHostPolicy.tokenBudget ?? null]]),
+      ...(profile === undefined ? [] : [profile]), ...(bindingSnapshot === undefined ? [] : [bindingSnapshot])]);
+    return { key, intentKey, principalId, sessionId, profile, bindingSnapshot,
+      authorization: approved as import('../client-host-authorization.js').RuntimeExecutionAuthorization | undefined,
+      defaultSkill: profile?.defaultSkill, assertAdmission,
+      async bindRun(runInput, runId, baseExtensionRuntime) {
+        assertAdmission();
+        const bound = await bindTrustedRunInput({ params: { ...runInput,
+          ...(credential !== undefined ? { credential } : {}), ...(hostTools !== undefined ? { hostTools } : {}),
+          ...(workflowHostPolicy !== undefined ? { options: { ...runInput.options, workflowHostPolicy } } : {}),
+        }, profile, sessionId: runInput.sessionId, trustedRunId: runId, principalId, clientName, clientVersion, reverseBridge,
+          baseExtensionRuntime, trustedProductPreparation: true }) as unknown as RuntimeStartRunInput;
+        return bindingSnapshot === undefined ? bound : { ...bound, options: { ...bound.options, executionBinding: bindingSnapshot } };
+      },
+    };
+  };
+  let context = createContext(authorization);
+  if (request.method === 'run.recover' && context.resolve !== undefined) {
+    const status = await runtime.runs.get(requireStringField(params, 'runId'));
+    const original = status.executionBinding;
+    context = await context.resolve({ phase: 'recovery', sessionId: status.sessionId, recovery: {
+      runId: status.runId, ...(original === undefined ? {} : { snapshot: original }), profile: {
+        agentProfile: status.effectiveConfig?.agentProfile, taskVerification: status.effectiveConfig?.verification,
+        defaultSkill: original?.defaultSkill,
+      },
+    } });
+    if (original !== undefined && !isDeepStrictEqual(context.bindingSnapshot?.businessBinding, original.businessBinding)) {
+      throw daemonError('execution_binding_changed', 'Recovery must retain the originally admitted business identity.');
+    }
   }
-  // Stable scope equality lets a same-authority follow-up enter the active Run;
-  // a different authority always waits for its own Run.
-  const key = authorization === undefined ? undefined : JSON.stringify([principalId, sessionId,
-    credential === undefined ? null : [credential.leaseId, credential.mode === 'scoped'
-      ? [...requireStringArrayField(credential, 'providers')].sort() : credential.provider],
-    hostTools?.leaseId ?? null,
-    ...(workflowHostPolicy === undefined ? [] : [[workflowHostPolicy.maxAgents ?? null, workflowHostPolicy.tokenBudget ?? null]]),
-    ...(profile === undefined ? [] : [profile])]);
-  return withProductExecution({ key, principalId, sessionId, assertAdmission: () => options.clientLifecycle?.assertAdmission(principalId),
-    bindRun: async (runInput, runId, baseExtensionRuntime) => {
-    options.clientLifecycle?.assertAdmission(principalId);
-    return await bindTrustedRunInput({ params: { ...runInput,
-      ...(credential !== undefined ? { credential } : {}),
-      ...(hostTools !== undefined ? { hostTools } : {}),
-      ...(workflowHostPolicy !== undefined ? { options: { ...runInput.options, workflowHostPolicy } } : {}),
-    }, profile, sessionId: runInput.sessionId, trustedRunId: runId, principalId, clientName, clientVersion, reverseBridge, baseExtensionRuntime,
-      trustedProductPreparation: true }) as unknown as RuntimeStartRunInput;
-  },
-  }, dispatch);
+  return withProductExecution(context, dispatch);
 }
 
 function actorToolRuntimeFactory(authorization: Record<string, unknown> | undefined, sessionId: string,
@@ -2674,6 +2741,8 @@ function runtimeDaemonCapabilities(
   delete safeOverrides.productExecutionProfile;
   delete safeOverrides.actorCheckpointRecovery;
   delete safeOverrides.sessionDrafts;
+  delete safeOverrides.sessionPromotion;
+  delete safeOverrides.productExecutionBinding;
   delete safeOverrides.productHistoryBoundaries;
   delete safeOverrides.productExecutionAuthorization;
   delete safeOverrides.productExitControl;
@@ -2718,6 +2787,10 @@ function runtimeDaemonCapabilities(
       ? { productExitControl: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.sessionDrafts) && ownerCapabilities.sessionDrafts.version === 1
       ? { sessionDrafts: { version: 1 } } : {}),
+    ...(isRecord(ownerCapabilities.sessionPromotion) && ownerCapabilities.sessionPromotion.version === 1
+      ? { sessionPromotion: { version: 1 } } : {}),
+    ...(isRecord(ownerCapabilities.productExecutionBinding) && ownerCapabilities.productExecutionBinding.version === 1
+      ? { productExecutionBinding: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.productExecutionFacts) && ownerCapabilities.productExecutionFacts.version === 1
       ? { productExecutionFacts: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.providerProbeAuthorization) && ownerCapabilities.providerProbeAuthorization.version === 1
@@ -2752,25 +2825,7 @@ function runtimeDaemonCapabilities(
     ...(runtimeEventCoalescing
       ? { runtimeEventCoalescing: { version: 1 } }
       : {}),
-    runtimeAutoModeGuardrail: {
-      version: 6,
-      owner: "session-runtime",
-      sandboxFirst: true,
-      sandboxCompletionAuthority: true,
-      hostBoundaryReviewOnly: true,
-      escalationCreatesPermission: false,
-      automaticUserPromptOnDeny: false,
-      defaultClassifierTimeoutMs: DEFAULT_CLASSIFIER_TIMEOUT_MS,
-      retryClassifierTimeoutMs: 180_000,
-      maxClassifierAttempts: 2,
-      boundedClassifierInput: true,
-      diagnosticsVersion: 1,
-      permissionGrantSuggestions: true,
-      concretePermissionMatchers: true,
-      clientScopeExpansion: false,
-      exactTextMutationApproval: true,
-      livePermissionContext: true,
-    },
+    runtimeAutoModeGuardrail: { ...RUNTIME_AUTO_MODE_GUARDRAIL_CAPABILITY },
     ...(orphanExitEnabled
       ? {
           daemonOrphanExit: {
@@ -3374,6 +3429,7 @@ function bindTrustedScopedCredentialAccess(input: {
     signal: input.reverseBridge.credentialSignal(leaseId),
     isActive: () => input.reverseBridge.isCredentialActive(leaseId),
     acquire: (provider, purpose, signal, attribution, connectionFingerprint) => input.reverseBridge.acquireScopedCredential({
+      credentialContextVersion: 1,
       ...(connectionFingerprint ? { connectionFingerprint } : {}),
       leaseId,
       provider,
@@ -3382,6 +3438,11 @@ function bindTrustedScopedCredentialAccess(input: {
       purpose,
       signal,
     }),
+    recoverRejectedCredential: async (provider, rejectedCredentialFingerprint, signal, attribution, connectionFingerprint) => {
+      await input.reverseBridge.acquireScopedCredential({ credentialContextVersion: 1, rejectedCredentialFingerprint,
+        ...(connectionFingerprint ? { connectionFingerprint } : {}), leaseId, provider, sessionId: input.sessionId,
+        target: attributedCredentialTarget(input.target, attribution), purpose: 'utility', signal });
+    },
   };
 }
 
@@ -3943,6 +4004,7 @@ function isRuntimeDaemonErrorCode(
     value === "credential_unavailable" ||
     value === "host_tool_unavailable" ||
     value === "host_tool_unknown" ||
-    value === "internal_error"
+    value === 'execution_binding_unavailable' || value === 'execution_binding_rejected' || value === 'execution_binding_changed' ||
+    value === 'default_skill_unavailable' || value === "internal_error"
   );
 }

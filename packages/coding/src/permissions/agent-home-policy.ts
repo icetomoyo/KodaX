@@ -107,7 +107,29 @@ function isProtectedRelativePath(relative: string): boolean {
 
 export function isAutoWritableAgentHomePath(target: string, agentHome: string): boolean {
   const relative = normalizedRelative(target, agentHome);
-  return relative !== undefined && !isProtectedRelativePath(relative);
+  return relative !== undefined && !isProtectedRelativePath(relative)
+    && !isGovernedMemoryRelativePath(path.relative(agentHome, target).replaceAll('\\', '/'));
+}
+
+function isGovernedMemoryRelativePath(relative: string, destructiveAncestors = false): boolean {
+  if (process.platform === 'win32') relative = relative.toLowerCase().split('/').map(part => part.split(':')[0]!.replace(/[ .]+$/u, '')).join('/');
+  return relative === 'memory-scopes' || relative.startsWith('memory-scopes/')
+    || (destructiveAncestors && /^projects(?:\/[^/]+)?$/u.test(relative)) || /^projects\/[^/]+\/memory(?:\/|$)/u.test(relative);
+}
+
+/** Write-only policy: Memory inspection is readable; Control Plane owns mutation. */
+export function isGovernedMemoryMutationTarget(targetPath: string, cwd = process.cwd(), agentHome = getAgentConfigHome(), destructiveAncestors = false): boolean {
+  const home = path.resolve(agentHome);
+  const lexical = path.resolve(cwd, expandHome(targetPath));
+  const canonicalHome = canonicalizeAgentHomePolicyPath(home) ?? home;
+  const canonicalTarget = canonicalizeAgentHomePolicyPath(targetPath, cwd);
+  const candidates: [string, string][] = [[lexical, home]];
+  if (canonicalTarget) candidates.push([canonicalTarget, canonicalHome]);
+  return candidates.some(([target, root]) => {
+    if (destructiveAncestors && isPathInsideDirectory(root, target)) return true;
+    if (!isPathInsideDirectory(target, root)) return false;
+    return isGovernedMemoryRelativePath(path.relative(root, target).replaceAll('\\', '/'), destructiveAncestors);
+  });
 }
 
 /** Agent Home reads stay open except for credentials and control-plane data. */
@@ -179,6 +201,7 @@ export function isAgentHomeHardMutationTarget(
   } catch {
     return false;
   }
+  if (isGovernedMemoryMutationTarget(targetPath, executionCwd, agentHome)) return true;
   const lexicalHome = path.resolve(agentHome);
   const resolvedTarget = path.resolve(executionCwd, expandHome(targetPath));
   if (isPathInsideDirectory(resolvedTarget, lexicalHome)) {
@@ -219,6 +242,7 @@ export function isAgentHomeHardRemovalTarget(
   const resolvedTarget = path.resolve(executionCwd, expandHome(targetPath));
   try {
     if (!fs.lstatSync(resolvedTarget).isSymbolicLink()) {
+      if (isGovernedMemoryMutationTarget(targetPath, executionCwd, agentHome, true)) return true;
       const lexicalHome = path.resolve(agentHome);
       const canonicalHome = canonicalizeAgentHomePolicyPath(agentHome) ?? lexicalHome;
       const canonicalTarget = canonicalizeAgentHomePolicyPath(resolvedTarget);

@@ -381,7 +381,7 @@ export function isSessionRecoveryCandidateError(error: Error, messageCount: numb
   }
 
   const message = collectErrorText(error);
-  if (matchesAny(message, AUTH_OR_CONFIGURATION_PATTERNS)) {
+  if (isAuthenticationOrConfigurationError(error)) {
     return false;
   }
 
@@ -389,6 +389,10 @@ export function isSessionRecoveryCandidateError(error: Error, messageCount: numb
   return classified.errorClass === 'provider_overloaded'
     || classified.errorClass === 'reasoning_content_required'
     || matchesAny(message, SESSION_HISTORY_REJECTED_PATTERNS);
+}
+
+export function isAuthenticationOrConfigurationError(error: Error): boolean {
+  return matchesAny(collectErrorText(error), AUTH_OR_CONFIGURATION_PATTERNS);
 }
 
 // ============== Helpers ==============

@@ -23,6 +23,9 @@ it.each([
     try {
       expect(views.at(-1)?.settings.effort).toBe('high');
       expect(views.at(-1)?.items).toEqual([]);
+      expect(views.at(-1)?.activity).toMatchObject({ reasoning: {
+        providerRequestId: 'second', requestedEffort, sentEffort, verified: false,
+      } });
     } finally { observation.close(); }
   } finally { await owner.close(); }
 });
@@ -44,12 +47,20 @@ it('retains observed reasoning feedback without mixing child, replaced, or reset
       workflowCorrelation: { workflowRunId: 'workflow' } });
     events.onReasoningResolved?.({ provider: 'provider', model: 'model', requestedEffort: 'high',
       sentEffort: 'medium', verified: false, fallbacks: [{ effort: 'high', reason: 'unsupported-effort' }], providerRequestId: 'second' });
+    for (const meta of [{ providerRequestId: 'first' }, { providerRequestId: 'second', childAgentId: 'child' },
+      { providerRequestId: 'second', workflowCorrelation: { workflowRunId: 'workflow' } }]) {
+      events.onReasoningResolved?.({ provider: 'provider', model: 'model', requestedEffort: 'max', sentEffort: 'none',
+        verified: false, fallbacks: [{ effort: 'max', reason: 'unsupported-effort' }], ...meta });
+    }
     await expect.poll(() => views.at(-1)?.items.length).toBe(2);
     expect(views.at(-1)?.items.map(item => item.text)).toEqual([
       "[Reasoning] provider/model rejected effort 'high'.",
       "[Reasoning] provider/model sent effort 'medium' (requested 'high'; unverified).",
     ]);
     expect(views.at(-1)?.settings.effort).toBe('high');
+    expect(views.at(-1)?.activity).toMatchObject({ reasoning: {
+      providerRequestId: 'second', requestedEffort: 'high', sentEffort: 'medium', verified: false,
+    } });
     // Routine resolutions add no notice, and absent wire parameters are never called accepted.
     events.onReasoningResolved?.({ provider: 'provider', model: 'model', requestedEffort: 'auto',
       sentEffort: 'medium', verified: false, fallbacks: [], providerRequestId: 'second' });

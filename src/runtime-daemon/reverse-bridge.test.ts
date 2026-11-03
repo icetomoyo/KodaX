@@ -11,6 +11,28 @@ import {
 } from './reverse-bridge.js';
 
 describe('runtime daemon reverse bridge', () => {
+  it.each(['revoke', 'detach', 'replace', 'cancel'] as const)('fences stale execution resolutions after %s without borrowing another principal', async action => {
+    const hub = createRuntimeDaemonReverseBridgeHub();
+    const notifications: RuntimeDaemonNotification[] = [];
+    const identity = { principalId: 'expert-main', instanceSecret: 's'.repeat(32) };
+    const first = hub.attach({ ...identity, connectionId: 'first', notify: event => notifications.push(event) });
+    const other = hub.attach({ principalId: 'other', instanceSecret: 'o'.repeat(32), connectionId: 'other', notify: () => {} });
+    first.bridge.executionBindings.register('expert-binding');
+    const controller = new AbortController();
+    const pending = first.bridge.executionBindings.resolve('expert-binding', { phase: 'admission', sessionId: 's' }, controller.signal);
+    const rejected = expect(pending).rejects.toMatchObject({ code: action === 'cancel' ? 'cancelled' : 'execution_binding_unavailable' });
+    const requestId = readString(notifications[0]?.params, 'requestId');
+    expect(other.bridge.executionBindings.complete({ requestId, authorization: { profile: {} } })).toBe(false);
+    let replacement: ReturnType<typeof hub.attach> | undefined;
+    try {
+      if (action === 'revoke') first.bridge.executionBindings.revoke('expert-binding');
+      else if (action === 'detach') first.close();
+      else if (action === 'cancel') controller.abort();
+      else replacement = hub.attach({ ...identity, connectionId: 'next', notify: () => {} });
+      await rejected;
+      expect(first.bridge.executionBindings.complete({ requestId, authorization: { profile: {} } })).toBe(false);
+    } finally { first.close(); replacement?.close(); other.close(); hub.close(); }
+  });
   it.each(['operation', 'run'] as const)('rejects stale %s credential replies without detaching the successor', async (kind) => {
     const hub = createRuntimeDaemonReverseBridgeHub();
     const identity = { principalId: 'space', instanceSecret: 's'.repeat(32) };

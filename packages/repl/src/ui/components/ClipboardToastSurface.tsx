@@ -1,15 +1,18 @@
 import React from "react";
 import { Box, Text } from "../tui.js";
 import { getTheme } from "../themes/index.js";
+import { Spinner } from './LoadingIndicator.js';
 
 export interface ClipboardToastSurfaceProps {
   text?: string;
   tone?: "success" | "warning";
+  pending?: boolean;
 }
 
 export const ClipboardToastSurface: React.FC<ClipboardToastSurfaceProps> = ({
   text,
   tone = "success",
+  pending = false,
 }) => {
   const trimmedText = text?.trim();
   if (!trimmedText) {
@@ -23,7 +26,7 @@ export const ClipboardToastSurface: React.FC<ClipboardToastSurfaceProps> = ({
   return (
     <Box paddingX={1} backgroundColor={theme.colors.inputBackground}>
       <Text color={foreground}>
-        {icon} {trimmedText}
+        {pending ? <Spinner color={foreground} /> : icon} {trimmedText}
       </Text>
     </Box>
   );

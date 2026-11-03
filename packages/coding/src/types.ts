@@ -1034,6 +1034,8 @@ export type KodaXSkillProjectionConfidence = 'high' | 'medium' | 'low';
 
 export interface KodaXSkillInvocationRuntimePolicy {
   readonly enforceAtRuntime?: boolean;
+  /** Host-owned completed admission; checkpoint recovery validates policy before reusing it. */
+  readonly admission?: { readonly policyFingerprint: string; readonly additionalContext: string };
 }
 
 export interface KodaXSkillInvocationContext {
@@ -1212,6 +1214,8 @@ export interface KodaXExecutionFailure {
   readonly requestPhase: FailureStage | 'local_execution';
   readonly providerStage?: 'catalog' | 'request_build' | 'transport' | 'response_stream';
   readonly httpStatus?: number;
+  /** Explicit upstream retry/fallback veto, preserved through returned failures. */
+  readonly retryable?: boolean;
   readonly upstreamCode?: string;
   readonly requestId?: string;
   readonly retryAfterMs?: number;
@@ -2209,6 +2213,7 @@ export interface KodaXOptions {
   provider: string;
   model?: string;
   modelOverride?: string;
+  /** Selected root effort; legacy reasoningMode/thinking are fallback inputs only. */
   effort?: KodaXWireReasoningEffort;
   thinking?: boolean;
   reasoningMode?: KodaXReasoningMode;
@@ -2932,6 +2937,7 @@ export interface KodaXToolExecutionContext {
     readonly provider: string;
     readonly model?: string;
     readonly reasoningMode?: KodaXReasoningMode;
+    readonly thinking?: boolean;
     readonly effort?: KodaXWireReasoningEffort;
     readonly repoIntelligenceMode?: KodaXRepoIntelligenceMode;
     readonly repoIntelligenceTrace?: boolean;

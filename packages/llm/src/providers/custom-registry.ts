@@ -349,6 +349,7 @@ export function getCustomModelCapabilities(
   return {
     ...(toolCapabilities ? { toolCapabilities: structuredClone(toolCapabilities) } : {}),
     ...(cacheCapabilities ? { cacheCapabilities: structuredClone(cacheCapabilities) } : {}),
+    multimodalSupport: descriptor.multimodalSupport ?? getCustomProviderCapabilityProfile(providerName)?.multimodalSupport,
     provider: providerName,
     model: descriptor.id,
     displayName: descriptor.displayName ?? descriptor.id,

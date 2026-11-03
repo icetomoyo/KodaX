@@ -24,7 +24,7 @@ import {
   readMcpIntegration,
   writeIntegrationDocument,
 } from './integration-config.js';
-import { withCoreConfigWriteLock } from './core-config-lock.js';
+import { withCoreConfigWriteLock, writeCoreConfigAtomically } from './core-config-lock.js';
 import {
   buildProviderCapabilitySnapshot,
   evaluateProviderPolicy,
@@ -275,7 +275,7 @@ function readPersistedCoreConfig(): PersistedCoreConfig | undefined {
 }
 
 function writePersistedCoreConfig(config: Readonly<Record<string, unknown>>): void {
-  fsSync.writeFileSync(KODAX_CONFIG_FILE, JSON.stringify(config, null, 2));
+  writeCoreConfigAtomically(KODAX_CONFIG_FILE, JSON.stringify(config, null, 2));
 }
 
 function migrateLegacyPermissionModeInConfig<T extends { permissionMode?: string }>(
@@ -329,7 +329,7 @@ function migrateAutoInProjectAliasInConfig<T extends { permissionMode?: string }
         /("permissionMode"\s*:\s*)"auto-in-project"/,
         '$1"auto"',
       );
-      if (next !== persisted.raw) fsSync.writeFileSync(KODAX_CONFIG_FILE, next);
+      if (next !== persisted.raw) writeCoreConfigAtomically(KODAX_CONFIG_FILE, next);
     });
   } catch {
     // Best-effort self-heal. The in-memory canonicalization below still applies,
@@ -1061,7 +1061,10 @@ export function loadConfig(): {
   };
 } {
   try {
-    if (fsSync.existsSync(KODAX_CONFIG_FILE)) {
+    let hasCoreConfig = false;
+    try { fsSync.lstatSync(KODAX_CONFIG_FILE); hasCoreConfig = true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    if (hasCoreConfig) {
       const parsed = JSON.parse(fsSync.readFileSync(KODAX_CONFIG_FILE, 'utf-8')) as {
         provider?: string;
         model?: string;
@@ -1105,6 +1108,7 @@ export function loadConfig(): {
         };
         sandbox?: unknown;
       };
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Invalid core configuration object.');
       const migrated = migrateLegacyAgentModeConfig(parsed);
       // FEATURE_078: collapse `reasoningCeiling` (preferred) onto
       // `reasoningMode` so existing call sites that read
@@ -1140,7 +1144,7 @@ export function loadConfig(): {
     }
   } catch (error) {
     if (error instanceof InvalidAgentModeConfigError) throw error;
-    // Unreadable user config should fall back to defaults instead of breaking startup.
+    throw new Error(`Core configuration is unreadable or invalid: ${KODAX_CONFIG_FILE}. Repair the retained original before continuing. Use kodax doctor --json for a read-only syntax diagnostic.`);
   }
   // Split integration files are independently usable. A user does not need to
   // create an otherwise-empty core config.json before mcp.json or
@@ -1389,21 +1393,20 @@ export function saveConfig(config: {
   withCoreConfigWriteLock(KODAX_CONFIG_FILE, () => {
     let current: Record<string, unknown> = {};
     if (fsSync.existsSync(KODAX_CONFIG_FILE)) {
-      try {
-        const parsed = JSON.parse(fsSync.readFileSync(KODAX_CONFIG_FILE, 'utf8')) as unknown;
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          current = parsed as Record<string, unknown>;
-        }
-      } catch {
-        // Preserve the existing public behavior: a malformed core config does
-        // not block replacing it with a valid explicitly supplied snapshot.
+      const raw = fsSync.readFileSync(KODAX_CONFIG_FILE, 'utf8');
+      let parsed: unknown;
+      try { parsed = JSON.parse(raw) as unknown; }
+      catch { throw new Error('Core configuration is unreadable; retain and repair the original before saving.'); }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('Invalid core configuration; retain and repair the original before saving.');
       }
+      current = parsed as Record<string, unknown>;
     }
     const merged: Record<string, unknown> = { ...current, ...coreConfig };
     for (const key of Object.keys(coreConfig) as Array<keyof typeof coreConfig>) {
       if (coreConfig[key] === undefined) delete merged[key];
     }
-    fsSync.writeFileSync(KODAX_CONFIG_FILE, JSON.stringify(merged, null, 2));
+    writeCoreConfigAtomically(KODAX_CONFIG_FILE, JSON.stringify(merged, null, 2));
   });
 
   if (extensions !== undefined) {

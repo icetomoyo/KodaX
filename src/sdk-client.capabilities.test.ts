@@ -83,7 +83,7 @@ it('probes and forgets capabilities in the actual Host used by subsequent SA and
           },
         };
         const config: CurrentConfig = {
-          ...selection, thinking: true, reasoningMode: 'balanced', agentMode: 'sa', permissionMode: 'accept-edits',
+          ...selection, thinking: true, reasoningMode: 'auto', agentMode: 'sa', permissionMode: 'accept-edits',
         };
         const beforeProbe = requests.length;
         await providerCommand.handler(['probe'], context, callbacks, config);
@@ -133,9 +133,9 @@ it('probes and forgets capabilities in the actual Host used by subsequent SA and
         await awaitLatestCodingMemoryReviewDrain(5_000);
         expect(requestedEfforts).toContain('high');
         for (const agentMode of ['sa', 'ama'] as const) {
-          // The AMA worker's role default is medium, bounded by the user's high ceiling.
-          rejectActualEffort = agentMode === 'sa' ? 'high' : 'medium';
-          const sentEffort = agentMode === 'sa' ? 'medium' : 'low';
+          // Both execution paths inherit high; only an actual rejection may lower the wire effort.
+          rejectActualEffort = 'high';
+          const sentEffort = 'medium';
           await awaitLatestCodingMemoryReviewDrain(5_000);
           await client.catalog.forgetCapabilities(selection);
           const session = await client.sessions.create({ projectPath: homeDir });
@@ -143,16 +143,29 @@ it('probes and forgets capabilities in the actual Host used by subsequent SA and
           const saved = await client.sessions.getSettings(session.id);
           const defaults = await client.config.read();
           const notices: string[] = [];
+          const noticeIds = new Set<string>(), completedRuns = new Set<string>();
+          let actualReasoning: import('@kodax-ai/coding/client-contract').ClientSessionActivity['reasoning'];
           const observation = await client.sessions.observe(session.id, view => {
             notices.push(...view.items.filter(item => item.type === 'info').map(item => item.text));
+            for (const item of view.items) if (item.type === 'info' && item.text.startsWith('[Reasoning]')) noticeIds.add(item.id);
+            for (const run of view.runs) if (run.phase === 'completed') completedRuns.add(run.runId);
+            actualReasoning = view.activity?.reasoning;
           });
           try {
             const run = await client.inputs.submit({ sessionId: session.id, inputId: `rejected-${agentMode}`, text: 'Reply briefly.' });
             expect(await client.runs.await(run.runId!)).toMatchObject({ phase: 'completed' });
             await expect.poll(() => notices.join('\n'), { message: agentMode }).toContain(`rejected effort '${rejectActualEffort}'`);
             await expect.poll(() => notices.join('\n')).toContain(`sent effort '${sentEffort}' (requested '${rejectActualEffort}'; unverified)`);
+            expect(actualReasoning).toMatchObject({ requestedEffort: 'high', sentEffort: 'medium', verified: false });
             expect(await client.sessions.getSettings(session.id)).toEqual(saved);
             expect(await client.config.read()).toEqual(defaults);
+            const beforeNext = requests.length, noticeCount = noticeIds.size;
+            const next = await client.inputs.submit({ sessionId: session.id, inputId: `learned-${agentMode}`, text: 'Reply briefly again.' });
+            expect(await client.runs.await(next.runId!)).toMatchObject({ phase: 'completed' });
+            await expect.poll(() => completedRuns.has(next.runId!)).toBe(true);
+            expect(requests.slice(beforeNext)).not.toContainEqual(expect.objectContaining({ reasoning_effort: 'high' }));
+            expect(noticeIds.size).toBe(noticeCount);
+            expect(actualReasoning).toMatchObject({ requestedEffort: 'high', sentEffort: 'medium', verified: false });
           } finally { observation.close(); }
         }
         await client.disconnect();

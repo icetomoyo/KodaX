@@ -9,8 +9,10 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { initializeSetupConfiguration } from './setup-config.js';
 
@@ -21,10 +23,22 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks(); syncBuiltinESMExports();
   rmSync(configHome, { recursive: true, force: true });
 });
 
 describe('initializeSetupConfiguration', () => {
+  it('does not publish a partial new core config when initial creation fails', () => {
+    const write = fs.writeFileSync;
+    vi.spyOn(fs, 'writeFileSync').mockImplementation((target, data, options) => {
+      if (data === '{}\n') { write(target, '{', options); throw new Error('Fixture disk full'); }
+      write(target, data, options);
+    });
+    syncBuiltinESMExports();
+    expect(() => initializeSetupConfiguration({ configHome })).toThrow('Fixture disk full');
+    expect(fs.existsSync(join(configHome, 'config.json'))).toBe(false);
+  });
+
   it('creates every missing active config and annotated template', () => {
     const result = initializeSetupConfiguration({ configHome });
 

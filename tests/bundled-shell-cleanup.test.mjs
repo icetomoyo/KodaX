@@ -37,6 +37,7 @@ test('bundled standalone Shell drains detached descendants and releases recovery
     assert.equal(path.dirname(directory), path.resolve(tmpdir()));
     await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   } catch (error) {
-    throw new Error(`Bundled cleanup failed; retained evidence in ${directory}`, { cause: error });
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Bundled cleanup failed: ${detail}; retained evidence in ${directory}`, { cause: error });
   }
 });

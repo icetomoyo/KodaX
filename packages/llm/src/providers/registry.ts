@@ -6,7 +6,6 @@
 
 import { KodaXBaseProvider } from './base.js';
 import {
-  createAnthropicSdkClient,
   KodaXAnthropicCompatProvider,
 } from './anthropic.js';
 import { KodaXOpenAICompatProvider } from './openai.js';
@@ -34,7 +33,6 @@ import {
   normalizeCapabilityProfile,
 } from './capability-profile.js';
 import { getProviderSnapshots } from './provider-capabilities.loader.js';
-import type Anthropic from '@anthropic-ai/sdk';
 
 // ============== Provider 名称类型 ==============
 
@@ -193,13 +191,8 @@ class AnthropicProvider extends KodaXAnthropicCompatProvider {
     // providers (kimi-code, ark-coding, etc.) lack the signing key and
     // accept any signature, so they keep the lenient default. v0.7.28.
     strictThinkingSignature: true,
+    userAgentMode: 'sdk',
   });
-
-  // Anthropic proper talks to api.anthropic.com and must keep the SDK's
-  // native user agent — unlike the compat base, it adds no gateway headers.
-  protected override buildClient(): Promise<Anthropic> {
-    return createAnthropicSdkClient({ apiKey: this.getApiKey() });
-  }
 }
 
 class ZhipuCodingProvider extends KodaXAnthropicCompatProvider {
@@ -463,10 +456,12 @@ export function getProviderConfiguredReasoningCapability(
 
 export function getProviderConfiguredCapabilityProfile(
   name: string,
+  model?: string,
 ): KodaXProviderCapabilityProfile | null {
-  return isProviderName(name)
-    ? cloneCapabilityProfile(KODAX_PROVIDER_SNAPSHOTS[name].capabilityProfile)
-    : null;
+  if (!isProviderName(name)) return null;
+  const profile = cloneCapabilityProfile(KODAX_PROVIDER_SNAPSHOTS[name].capabilityProfile);
+  return { ...profile, multimodalSupport: getModelCapabilities(name, model ?? KODAX_PROVIDER_SNAPSHOTS[name].model)?.multimodalSupport
+    ?? profile.multimodalSupport };
 }
 
 // 获取所有可用的 Provider 列表（带配置状态）
@@ -545,6 +540,8 @@ export function isProviderName(name: string): name is ProviderName {
  * values in a popout UI can trust them.
  */
 export interface KodaXModelCapabilities {
+  /** Effective model modality, without opening a credential or Provider client. */
+  multimodalSupport?: KodaXProviderCapabilityProfile['multimodalSupport'];
   cacheCapabilities?: KodaXCacheCapabilities;
   /** Explicit tool constraints; omission does not advertise support. */
   toolCapabilities?: KodaXToolCapabilities;
@@ -608,6 +605,7 @@ function effectiveCapabilities(
   return {
     ...(toolCapabilities ? { toolCapabilities: structuredClone(toolCapabilities) } : {}),
     ...(cacheCapabilities ? { cacheCapabilities: structuredClone(cacheCapabilities) } : {}),
+    multimodalSupport: descriptor.multimodalSupport ?? snapshot.capabilityProfile.multimodalSupport,
     provider: providerName,
     model: descriptor.id,
     displayName: descriptor.displayName ?? descriptor.id,

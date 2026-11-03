@@ -1,5 +1,20 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { createProviderConnection, createCustomProvider, createCloudProviderConfig, runWithProviderCredential, serializeCloudCredential, runWithScopedConfig } from '../index.js';
+import { applyCachePolicy } from './cache-policy.js';
+
+it('does not treat cache-named tool arguments or JSON schema properties as protocol markers', () => {
+  const literal = { cache_control: { value: 'business data' }, cachePoint: 'customer field', prompt_cache_breakpoint: false };
+  const payload = { tools: [{ name: 'fixture', input_schema: { type: 'object', properties: literal } }],
+    messages: [{ role: 'assistant', content: [{ type: 'tool_use', id: 'call', name: 'fixture', input: literal }] },
+      { role: 'user', content: [{ type: 'text', text: 'new', cache_control: { type: 'ephemeral' } }] }] };
+  const cleaned = applyCachePolicy(payload, { dialect: 'anthropic', maxCheckpoints: 1 }, 'none', false, 'fixture');
+  expect(cleaned.tools[0]!.input_schema.properties).toEqual(literal);
+  expect(cleaned.messages[0]!.content[0]).toHaveProperty('input', literal);
+  expect(cleaned.messages[1]!.content[0]).not.toHaveProperty('cache_control');
+  expect(() => applyCachePolicy(payload, { dialect: 'anthropic', maxCheckpoints: 1 }, 'short', false, 'fixture')).not.toThrow();
+  cleaned.tools[0]!.input_schema.properties.cache_control.value = 'changed request';
+  expect(literal.cache_control.value).toBe('business data');
+});
 
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 it('rejects a cache dialect declared for another native API before creating a connection', () => {

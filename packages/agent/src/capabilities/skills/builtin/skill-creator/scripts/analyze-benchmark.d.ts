@@ -6,6 +6,8 @@ export interface AnalyzeBenchmarkOptions {
   skillName?: string;
   provider?: string;
   model?: string;
+  effort?: string;
+  /** @deprecated Use effort. */
   reasoningMode?: string;
   maxIter?: number;
   cwd?: string;

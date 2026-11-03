@@ -42,6 +42,12 @@ async function capture(agent: Agent, context?: KodaXContextOptions) {
 }
 
 describe('ordinary managed root tool presentation', () => {
+  it('teaches the existing plan approval transition in both canonical and compact contracts', () => {
+    for (const text of [getBuiltinToolDefinition('exit_plan_mode')!.description, managedToolText.exit_plan_mode!.description]) {
+      expect(text).not.toContain('set_permission_mode');
+      expect(text).toMatch(/approv/i);
+    }
+  });
   it('exposes the bounded initial Todo status in both canonical and compact contracts', async () => {
     for (const full of [false, true]) {
       const sent = await capture(makeWorker({}, full));
@@ -106,7 +112,7 @@ describe('ordinary managed root tool presentation', () => {
     const before = JSON.stringify(tools);
     // Changing canonical teaching requires re-auditing the shorter wording, not silently carrying it forward.
     // History now distinguishes entry evidence versions from strict global snapshots.
-    expect(createHash('sha256').update(JSON.stringify(tools.filter(tool => tool.name !== 'ask_user_question').map(contract))).digest('hex')).toMatchInlineSnapshot(`"7822ed1b8b285eacb174f93ab844276796129ad51c76462f1dff770709a866cf"`);
+    expect(createHash('sha256').update(JSON.stringify(tools.filter(tool => tool.name !== 'ask_user_question').map(contract))).digest('hex')).toMatchInlineSnapshot(`"5864b790c85dec50b399aaca2cbed942b98a8008b1e3be02d96075f43c8fcd04"`);
     const agent = markRegistryManagedAgent({ name: 'worker', instructions: '', tools }, { backups: new Map() });
     markOrdinaryRootToolContract(agent);
     const projected = projectManagedToolContracts(agent, tools);

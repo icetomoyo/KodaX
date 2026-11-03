@@ -300,6 +300,51 @@ describe('invokeChildWithFallback', () => {
     expect(run).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    new KodaXProviderError('account exhausted', 'zhipu-coding', { httpStatus: 429, upstreamCode: 'insufficient_quota', retryable: false }),
+    new KodaXRateLimitError('account exhausted', undefined, { httpStatus: 429, upstreamCode: 'insufficient_quota', retryable: false }),
+    new KodaXProviderError('credential rejected', 'zhipu-coding', { httpStatus: 401 }),
+    new KodaXProviderError('do not retry', 'zhipu-coding', { httpStatus: 503, retryable: false }),
+    new KodaXProviderError('invalid request', 'zhipu-coding', { failureCode: 'request_build_failed', stage: 'request_build' }),
+    new KodaXProviderError('Provider API error: 401 unauthorized', 'custom'),
+  ])('preserves a terminal thrown provider error without switching providers: %s', async error => {
+    vi.stubEnv('KODAX_FALLBACK_PROVIDERS', 'kimi-code');
+    const run = vi.fn().mockRejectedValueOnce(error).mockResolvedValueOnce(okResult('unexpected fallback'));
+    const onFallback = vi.fn();
+
+    await expect(invokeChildWithFallback(baseOptions(), 'brief', run, { onFallback })).rejects.toBe(error);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(onFallback).not.toHaveBeenCalled();
+  });
+
+  it.each(['server_error', 'rate_limit_exceeded'])('retains configured fallback for transient Responses %s, thrown or returned', async upstreamCode => {
+    vi.stubEnv('KODAX_FALLBACK_PROVIDERS', 'kimi-code');
+    const error = new KodaXProviderError('temporarily unavailable', 'openai',
+      { failureCode: 'response_stream_error', stage: 'response_stream', upstreamCode });
+    const failure: NonNullable<KodaXResult['failure']> = { errorClass: upstreamCode === 'server_error' ? 'provider_overloaded' : 'rate_limit',
+      failureCode: 'response_stream_error', upstreamCode, message: 'temporarily unavailable',
+      safeMessage: 'temporarily unavailable', requestPhase: 'before_first_delta' };
+    for (const run of [vi.fn().mockRejectedValueOnce(error).mockResolvedValueOnce(okResult('fallback')),
+      vi.fn().mockResolvedValueOnce({ ...okResult(), success: false, failure }).mockResolvedValueOnce(okResult('fallback'))]) {
+      const result = await invokeChildWithFallback(baseOptions(), 'brief', run);
+      expect(result.lastText).toBe('fallback');
+      expect(run).toHaveBeenCalledTimes(2);
+      expect(run.mock.calls[1]![0]).toMatchObject({ provider: 'kimi-code' });
+    }
+  });
+
+  it('retains configured fallback after HTTP 408 retries are exhausted, thrown or returned', async () => {
+    vi.stubEnv('KODAX_FALLBACK_PROVIDERS', 'kimi-code');
+    const error = new KodaXProviderError('request timed out', 'custom', { httpStatus: 408 });
+    const failure: NonNullable<KodaXResult['failure']> = { errorClass: 'request_timeout', httpStatus: 408,
+      message: 'request timed out', safeMessage: 'request timed out', requestPhase: 'before_first_delta' };
+    for (const run of [vi.fn().mockRejectedValueOnce(error).mockResolvedValueOnce(okResult('fallback')),
+      vi.fn().mockResolvedValueOnce({ ...okResult(), success: false, failure }).mockResolvedValueOnce(okResult('fallback'))]) {
+      expect((await invokeChildWithFallback(baseOptions(), 'brief', run)).lastText).toBe('fallback');
+      expect(run).toHaveBeenCalledTimes(2);
+    }
+  });
+
   it('does NOT fall back when the request was aborted', async () => {
     vi.stubEnv('KODAX_FALLBACK_PROVIDERS', 'kimi-code');
     const controller = new AbortController();
@@ -317,5 +362,35 @@ describe('invokeChildWithFallback', () => {
     const result = await invokeChildWithFallback(baseOptions(), 'brief', run);
     expect(result.success).toBe(false);
     expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { errorClass: 'non_retryable_provider_error', httpStatus: 429, retryable: false },
+    { errorClass: 'rate_limit', httpStatus: 429, upstreamCode: 'insufficient_quota' },
+    { errorClass: 'non_retryable_provider_error', httpStatus: 503, retryable: false },
+    { errorClass: 'user_abort', httpStatus: 503 },
+  ] as const)('preserves terminal returned failure without switching providers: %j', async failure => {
+    vi.stubEnv('KODAX_FALLBACK_PROVIDERS', 'kimi-code');
+    const original: KodaXResult = { ...okResult(), success: false,
+      failure: { ...failure, source: 'provider', message: 'terminal provider failure',
+        safeMessage: 'terminal provider failure', requestPhase: 'before_first_delta' } };
+    const run = vi.fn().mockResolvedValueOnce(original).mockResolvedValueOnce(okResult('unexpected fallback'));
+    const onFallback = vi.fn();
+
+    const result = await invokeChildWithFallback(baseOptions(), 'brief', run, { onFallback });
+    expect(result.failure).toBe(original.failure);
+    expect(result.success).toBe(false);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(onFallback).not.toHaveBeenCalled();
+  });
+
+  it.each([429, 500, 503, 504])('keeps a returned generic classification from hiding transient HTTP %s', async httpStatus => {
+    vi.stubEnv('KODAX_FALLBACK_PROVIDERS', 'kimi-code');
+    const run = vi.fn().mockResolvedValueOnce({ ...okResult(), success: false, failure: {
+      errorClass: 'non_retryable_provider_error', httpStatus, source: 'provider',
+      message: 'unavailable', safeMessage: 'unavailable', requestPhase: 'before_first_delta',
+    } }).mockResolvedValueOnce(okResult('fallback'));
+    expect((await invokeChildWithFallback(baseOptions(), 'brief', run)).lastText).toBe('fallback');
+    expect(run).toHaveBeenCalledTimes(2);
   });
 });

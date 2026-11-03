@@ -23,8 +23,12 @@ import { WorkflowAbortError, WorkflowLimitError } from '@kodax-ai/agent/workflow
 
 import type { KodaXEvents, KodaXOptions, KodaXWorkflowAgentDigestEvent } from '../types.js';
 import { CodingActorSession } from '../agent-runtime/actor-runtime.js';
-import { parallelInvestigation } from './builtin/parallel-investigation.js';
+import { parallelInvestigation as typedParallelInvestigation } from './builtin/parallel-investigation.js';
+import { getBuiltinWorkflow } from './builtin/registry.js';
 import { buildApprovalSummary, emitWorkflowAgentDigest, runWorkflowFromOptions, runWorkflowModule } from './workflow-runner.js';
+
+// The registry entry is the type-erased module that production runs.
+const parallelInvestigation = getBuiltinWorkflow(typedParallelInvestigation.meta.name)!;
 
 const childExecutorMock = vi.hoisted(() => ({
   calls: [] as Array<{
@@ -340,6 +344,7 @@ describe('runWorkflowModule', () => {
       model: 'claude-sonnet-4-6',
       modelOverride: 'claude-opus-4-8',
       effort: 'high',
+      thinking: false,
       disablePromptCache: false,
       guardrails: [guardrail],
       context: {
@@ -362,8 +367,8 @@ describe('runWorkflowModule', () => {
     expect(childExecutorMock.calls).toHaveLength(1);
     expect(childExecutorMock.calls[0]?.options.guardrails).toBe(options.guardrails);
     expect(childExecutorMock.calls[0]?.options.planModeBlockCheck).toBe(planModeBlockCheck);
-    expect(childExecutorMock.calls[0]?.options.parentOptions?.model).toBe('claude-opus-4-8');
-    expect(childExecutorMock.calls[0]?.options.parentOptions?.effort).toBe('high');
+    expect(childExecutorMock.calls[0]?.options.parentOptions).toMatchObject({ model: 'claude-opus-4-8', effort: 'high' });
+    expect(childExecutorMock.calls[0]?.options.parentOptions).toMatchObject({ thinking: false });
     expect(childExecutorMock.calls[0]?.options.parentOptions?.repoIntelligenceMode).toBe('off');
     expect(childExecutorMock.calls[0]?.options.parentOptions?.repoIntelligenceTrace).toBe(true);
     expect(childExecutorMock.calls[0]?.options.parentOptions?.contextDiagnostics).toBe(true);
@@ -512,8 +517,7 @@ describe('runWorkflowModule', () => {
       approval: () => true,
     });
 
-    expect(outcome.kind).toBe('failed');
-    expect(outcome.state.status).toBe('stopped');
+    expect(outcome).toMatchObject({ kind: 'failed', state: { status: 'stopped' } });
     const runJson = JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8')) as { status?: unknown };
     expect(runJson.status).toBe('stopped');
   });

@@ -81,8 +81,26 @@ async function protectFile(file: string, directory = false): Promise<void> {
     const result = await promisify(execFile)(path.join(systemDirectory, 'whoami.exe'), ['/user', '/fo', 'csv', '/nh'], { windowsHide: true, timeout: 10000 });
     windowsSid = result.stdout.match(/"(S-[0-9-]+)"/)?.[1]; if (!windowsSid) throw failure();
   }
-  const flags = directory ? '(OI)(CI)(F)' : '(F)';
-  await promisify(execFile)(path.join(systemDirectory, 'icacls.exe'), [file, '/inheritance:r', '/grant:r', `*${windowsSid}:${flags}`, `*S-1-5-18:${flags}`, '/Q'], { windowsHide: true, timeout: 10000 });
+  // Replace the DACL in one operation. Incremental grants leave explicit
+  // Administrators/CREATOR OWNER entries inherited by new staging files.
+  const program = [
+    "$ErrorActionPreference='Stop'",
+    "$directory=$env:KODAX_AUTH_DIRECTORY -eq '1'",
+    '$security=if($directory){[Security.AccessControl.DirectorySecurity]::new()}else{[Security.AccessControl.FileSecurity]::new()}',
+    '$security.SetAccessRuleProtection($true,$false)',
+    '$inheritance=if($directory){[Security.AccessControl.InheritanceFlags]3}else{[Security.AccessControl.InheritanceFlags]0}',
+    "foreach($value in @($env:KODAX_AUTH_SID,'S-1-5-18')){",
+    '$sid=[Security.Principal.SecurityIdentifier]::new($value)',
+    "$rule=[Security.AccessControl.FileSystemAccessRule]::new($sid,[Security.AccessControl.FileSystemRights]::FullControl,$inheritance,[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow)",
+    '$security.AddAccessRule($rule)',
+    '}',
+    'if($directory){[IO.Directory]::SetAccessControl($env:KODAX_AUTH_FILE,$security)}else{[IO.File]::SetAccessControl($env:KODAX_AUTH_FILE,$security)}',
+  ].join('\n');
+  await promisify(execFile)(path.join(systemDirectory, 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(program, 'utf16le').toString('base64')], {
+      windowsHide: true, timeout: 10000,
+      env: { ...process.env, KODAX_AUTH_FILE: file, KODAX_AUTH_SID: windowsSid, KODAX_AUTH_DIRECTORY: directory ? '1' : '0' },
+    });
 }
 async function prepareStaging(file: string): Promise<string> {
   const staging = `${file}.staging`;

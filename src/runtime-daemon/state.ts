@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import path from 'node:path';
 
@@ -456,10 +456,14 @@ function runtimeOwnerPolicyConflict(
   return error;
 }
 
+const inactiveCoordinators = new Map<string, RuntimeOwnerCoordinationHandle>();
+
 function tryAcquireRuntimeOwnerCoordination(
   paths: Pick<RuntimeDaemonPaths, 'ownerPolicyLockFile'>,
   recoverAbandoned = true,
 ): RuntimeOwnerCoordinationHandle | undefined {
+  const inactive = inactiveCoordinators.get(paths.ownerPolicyLockFile);
+  if (inactive !== undefined) releaseRuntimeOwnerCoordination(paths, inactive);
   const nonce = randomUUID();
   const processStartIdentity = readRuntimeOwnerProcessStartIdentity(process.pid);
   const owner: RuntimeDaemonLockOwner = {
@@ -468,23 +472,15 @@ function tryAcquireRuntimeOwnerCoordination(
     createdAt: new Date().toISOString(),
     ...(processStartIdentity === undefined ? {} : { processStartIdentity }),
   };
-  let fd: number | undefined;
-  try {
-    fd = fs.openSync(paths.ownerPolicyLockFile, 'wx', 0o600);
-    fs.writeFileSync(fd, `${JSON.stringify({ ...owner, nonce })}\n`, 'utf8');
-    fs.fsyncSync(fd);
-    return { nonce, owner };
-  } catch (error: unknown) {
-    if (isNodeFileError(error) && error.code === 'EEXIST') {
-      if (recoverAbandoned && removeAbandonedRuntimeOwnerCoordination(paths)) {
-        return tryAcquireRuntimeOwnerCoordination(paths, false);
-      }
-      return undefined;
-    }
-    throw error;
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
+  const record = { ...owner, nonce };
+  const acquired = tryAcquireRuntimeDaemonLock({
+    rootDir: path.dirname(paths.ownerPolicyLockFile), lockFile: paths.ownerPolicyLockFile,
+  }, record);
+  if (acquired) return { nonce, owner };
+  if (recoverAbandoned && removeAbandonedRuntimeOwnerCoordination(paths)) {
+    return tryAcquireRuntimeOwnerCoordination(paths, false);
   }
+  return undefined;
 }
 
 function removeAbandonedRuntimeOwnerCoordination(
@@ -492,6 +488,13 @@ function removeAbandonedRuntimeOwnerCoordination(
 ): boolean {
   const current = readRuntimeOwnerCoordinationHandle(paths);
   if (!current || runtimeOwnerProcessState(current.owner) !== 'gone') return false;
+  // Keep a generation-specific tombstone: a delayed second reclaimer can
+  // never inherit deletion authority after a new owner has entered.
+  const claimFile = `${paths.ownerPolicyLockFile}.reclaim.${createHash('sha256').update(current.nonce).digest('hex')}`;
+  const claimed = tryAcquireRuntimeDaemonLock({ rootDir: path.dirname(claimFile), lockFile: claimFile }, {
+    runtimeId: `owner-reclaim-${randomUUID()}`, pid: process.pid, createdAt: new Date().toISOString(),
+  });
+  if (!claimed) return false;
   try {
     const latest = readRuntimeOwnerCoordinationHandle(paths);
     if (!latest || latest.nonce !== current.nonce) return false;
@@ -532,8 +535,14 @@ function releaseRuntimeOwnerCoordination(
     if (isRecord(parsed) && parsed.nonce === handle.nonce) {
       fs.unlinkSync(paths.ownerPolicyLockFile);
     }
-  } catch {
-    // A missing or replaced coordinator is not ours to remove.
+    inactiveCoordinators.delete(paths.ownerPolicyLockFile);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      inactiveCoordinators.delete(paths.ownerPolicyLockFile);
+      return;
+    }
+    inactiveCoordinators.set(paths.ownerPolicyLockFile, handle);
+    throw error;
   }
 }
 
@@ -612,7 +621,7 @@ function renameRuntimeDaemonState(temporary: string, target: string): void {
     // Windows readers can briefly deny replacement. Keep the flushed staging
     // file and the old state intact; permanent denials still fail closed. The
     // monotonic budget starts at this first failure, including subsequent I/O.
-    const deadline = performance.now() + 200;
+    const deadline = performance.now() + 1_000;
     const waitCell = new Int32Array(new SharedArrayBuffer(4));
     for (;;) {
       const remaining = deadline - performance.now();
@@ -825,11 +834,18 @@ export function tryAcquireRuntimeDaemonLock(
   owner: RuntimeDaemonLockOwner,
 ): RuntimeDaemonLockHandle | undefined {
   fs.mkdirSync(paths.rootDir, { recursive: true });
+  const temporary = `${paths.lockFile}.${randomUUID()}.tmp`;
   let fd: number | undefined;
+  let published = false;
   try {
-    fd = fs.openSync(paths.lockFile, 'wx', 0o600);
+    fd = fs.openSync(temporary, 'wx', 0o600);
     fs.writeFileSync(fd, `${JSON.stringify(owner, null, 2)}\n`, 'utf8');
     fs.fsyncSync(fd);
+    const closing = fd; fd = undefined; fs.closeSync(closing);
+    // Publish a complete record without replacing an existing owner's file.
+    // A process exit before publication leaves only an inert unique temp file.
+    fs.linkSync(temporary, paths.lockFile);
+    published = true;
     return { file: paths.lockFile, owner };
   } catch (error) {
     if (isNodeFileError(error) && error.code === 'EEXIST') {
@@ -837,8 +853,16 @@ export function tryAcquireRuntimeDaemonLock(
     }
     throw error;
   } finally {
-    if (fd !== undefined) {
-      fs.closeSync(fd);
+    try {
+      try { if (fd !== undefined) fs.closeSync(fd); }
+      finally { fs.rmSync(temporary, { force: true }); }
+    }
+    catch (error) {
+      if (published && sameRuntimeLockOwner(readRuntimeDaemonLockOwner(paths.lockFile), owner)) {
+        try { fs.unlinkSync(paths.lockFile); }
+        catch (cleanup) { throw new AggregateError([error, cleanup], 'Runtime owner publication cleanup failed.'); }
+      }
+      throw error;
     }
   }
 }
@@ -916,6 +940,14 @@ export function acquireRuntimeSessionStorageOwner(
   } finally {
     releaseRuntimeOwnerCoordination(paths, coordination);
   }
+}
+
+/** Offline maintenance shares the coordination gate used for Host owner publication/removal. */
+export function tryAcquireRuntimeLockMaintenance(file: string): (() => void) | undefined {
+  if (!['daemon.lock', 'owner.lock'].includes(path.basename(file))) throw new Error('Unsupported Runtime ownership repair target.');
+  const paths = { ownerPolicyLockFile: path.join(path.dirname(file), 'owner-policy.lock') };
+  const handle = tryAcquireRuntimeOwnerCoordination(paths);
+  return handle ? () => releaseRuntimeOwnerCoordination(paths, handle) : undefined;
 }
 
 export function releaseRuntimeDaemonLock(handle: RuntimeDaemonLockHandle): boolean {

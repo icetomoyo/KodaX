@@ -545,6 +545,10 @@ function validateModelDescriptor(
   const id = requireString(raw.id, `${path}.id`);
   const wireModel = optionalString(raw.wireModel, `${path}.wireModel`);
   const displayName = optionalString(raw.displayName, `${path}.displayName`);
+  const multimodalSupport = optionalString(raw.multimodalSupport, `${path}.multimodalSupport`);
+  if (multimodalSupport !== undefined && !['none', 'image-input', 'full'].includes(multimodalSupport)) {
+    throw new Error(`provider-capabilities.json: ${path}.multimodalSupport must be none, image-input or full`);
+  }
   const contextWindow = optionalNumber(raw.contextWindow, `${path}.contextWindow`);
   const maxOutputTokens = optionalNumber(
     raw.maxOutputTokens,
@@ -580,7 +584,7 @@ function validateModelDescriptor(
         );
   const reasoningProfile = validateReasoningProfileField(raw, path);
   const descriptor: KodaXModelDescriptor = { id, ...constraintMetadata(raw, path) };
-  for (const [field, value] of Object.entries({ wireModel, displayName, contextWindow, maxOutputTokens,
+  for (const [field, value] of Object.entries({ wireModel, displayName, multimodalSupport, contextWindow, maxOutputTokens,
     outputTokenLimit, maxOutputTokensField, thinkingBudgetCap, reasoningCapability, reasoningProfile,
     replayReasoningContent, strictThinkingSignature, streamMaxDurationMs })) {
     if (value !== undefined) Object.assign(descriptor, { [field]: value });

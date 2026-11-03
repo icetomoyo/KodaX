@@ -133,7 +133,7 @@ async function importMainWithMocks(options: {
 }> {
   const calls: string[] = [];
   vi.doMock('./provider-credential-manager.js', () => ({ createProviderCredentialManager: () => ({ describe: async () => ({ stored: false }) }) }));
-  vi.doMock('./cli-provider-credentials.js', () => ({ createCliProviderCredentials: async () => ({ authorizeExecution: async () => undefined, close: async () => undefined }) }));
+  vi.doMock('./cli-provider-credentials.js', () => ({ createCliProviderCredentialAccess: () => ({ authorizeExecution: async () => undefined, close: async () => undefined }) }));
   const runtimeOptions: unknown[] = [];
   const runtimeStarts: unknown[] = [];
   const runtimeDeletes: string[] = [];
@@ -355,6 +355,8 @@ async function importMainWithMocks(options: {
     replaceConfiguredMcpCapabilityProvider: vi.fn(async () => undefined),
     buildMcpReverseCapabilities: vi.fn(() => ({})),
     KODAX_DEFAULT_PROVIDER: 'mock-provider',
+    DEFAULT_CLASSIFIER_TIMEOUT_MS: 90_000,
+    DEFAULT_CLASSIFIER_RETRY_TIMEOUT_MS: 180_000,
     checkPromiseSignal: vi.fn(),
     getProvider: vi.fn(),
     getAvailableProviderNames: vi.fn(() => ['mock-provider']),

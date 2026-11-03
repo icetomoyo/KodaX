@@ -7,10 +7,18 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { getDefaultSkillPaths, initializeSkillRegistry, SkillRegistry } from '../dist/sdk-skills.js';
 import { KodaXBaseProvider, registerModelProvider } from '../dist/sdk-llm.js';
-import { createDefaultCodingAgent, runKodaX } from '../dist/sdk-coding.js';
+import { createDefaultCodingAgent, runKodaX, resolveSkillModelOverride } from '../dist/sdk-coding.js';
 import { Runner } from '../dist/sdk-agent.js';
 import { ensureKodaXRuntime, waitForRuntimeDaemonShutdown } from '../dist/sdk-runtime.js';
 import { createServer } from 'node:http';
+
+test('split SDK preserves fixed model IDs while resolving current generic Skill aliases', () => {
+  assert.equal(resolveSkillModelOverride('anthropic', 'haiku'), 'claude-haiku-4-5');
+  assert.equal(resolveSkillModelOverride('anthropic', 'opus'), 'claude-opus-4-8');
+  for (const model of ['constructor', 'toString', '__proto__', 'claude-opus-4-1']) {
+    for (const provider of ['anthropic', 'deepseek']) assert.equal(resolveSkillModelOverride(provider, model), model);
+  }
+});
 
 test('split SDK discovers packaged built-in skills from the installed distribution', async () => {
   const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));

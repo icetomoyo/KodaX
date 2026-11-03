@@ -9,12 +9,13 @@
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import fsSync from 'fs';
+import os from 'node:os';
+import path from 'node:path';
+import { syncBuiltinESMExports } from 'node:module';
 
 import {
   loadAutoModeSettings,
-  loadPermissionMode,
   resolveAutoModeSettings,
-  savePermissionModeUser,
 } from './permission-config.js';
 
 const writeFakeConfig = (autoMode: Record<string, unknown> | undefined): void => {
@@ -66,43 +67,74 @@ describe('loadAutoModeSettings — FEATURE_092 phase 2b.7b slice C', () => {
 });
 
 describe('permission mode compatibility boundary — FEATURE_297', () => {
-  beforeEach(() => {
-    vi.spyOn(fsSync, 'existsSync').mockReturnValue(true);
-    vi.spyOn(fsSync, 'mkdirSync').mockReturnValue(undefined);
-    vi.spyOn(fsSync, 'writeFileSync').mockReturnValue(undefined);
+  let home: string;
+  let file: string;
+  let modes: typeof import('./permission-config.js');
+  beforeEach(async () => {
+    home = fsSync.mkdtempSync(path.join(os.tmpdir(), 'kodax-permission-config-'));
+    file = path.join(home, 'config.json');
+    vi.stubEnv('KODAX_HOME', home);
+    vi.resetModules();
+    modes = await import('./permission-config.js');
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    syncBuiltinESMExports();
+    vi.unstubAllEnvs();
+    fsSync.rmSync(home, { recursive: true, force: true });
   });
 
   it('loads auto-in-project as canonical Auto[LLM]', () => {
-    vi.spyOn(fsSync, 'readFileSync').mockReturnValue(JSON.stringify({
+    fsSync.writeFileSync(file, JSON.stringify({
       permissionMode: 'auto-in-project',
     }));
 
-    expect(loadPermissionMode()).toBe('auto');
+    expect(modes.loadPermissionMode()).toBe('auto');
   });
 
   it('writes only the canonical mode when a legacy alias reaches the save boundary', () => {
-    vi.spyOn(fsSync, 'readFileSync').mockReturnValue(JSON.stringify({
+    fsSync.writeFileSync(file, JSON.stringify({
       permissionMode: 'accept-edits',
     }));
 
-    savePermissionModeUser('auto-in-project');
-
-    expect(fsSync.writeFileSync).toHaveBeenCalledOnce();
-    const serialized = vi.mocked(fsSync.writeFileSync).mock.calls[0]?.[1];
-    expect(typeof serialized === 'string' ? JSON.parse(serialized) : undefined)
+    modes.savePermissionModeUser('auto-in-project');
+    expect(JSON.parse(fsSync.readFileSync(file, 'utf8')))
       .toMatchObject({ permissionMode: 'auto' });
   });
 
   it('round-trips Full Access without rewriting it', () => {
-    vi.spyOn(fsSync, 'readFileSync').mockReturnValue(JSON.stringify({
+    fsSync.writeFileSync(file, JSON.stringify({
       permissionMode: 'full-access',
     }));
 
-    expect(loadPermissionMode()).toBe('full-access');
+    expect(modes.loadPermissionMode()).toBe('full-access');
+  });
+
+  it('retains credentials on failed permission-mode publication and refuses a busy shared lock', () => {
+    const raw = JSON.stringify({ permissionMode: 'full-access', apiKeys: { anthropic: 'fixture-permission-account' } });
+    fsSync.writeFileSync(file, raw);
+    const write = fsSync.writeFileSync;
+    const fault = vi.spyOn(fsSync, 'writeFileSync').mockImplementation((target, data, options) => {
+      if (typeof data === 'string' && data.includes('fixture-permission-account')) {
+        write(target, data.slice(0, 17), options); throw new Error('Fixture disk full');
+      }
+      write(target, data, options);
+    });
+    syncBuiltinESMExports();
+    expect(() => modes.savePermissionModeUser('auto')).toThrow('Fixture disk full');
+    expect(fsSync.readFileSync(file, 'utf8')).toBe(raw);
+    fault.mockRestore(); syncBuiltinESMExports();
+    fsSync.writeFileSync(`${file}.write.lock`, JSON.stringify({ version: 1, pid: process.pid, nonce: 'live' }));
+    expect(() => modes.savePermissionModeUser('auto')).toThrow(/configuration lock/i);
+    expect(fsSync.readFileSync(file, 'utf8')).toBe(raw);
+  });
+
+  it('does not clear malformed core configuration during an explicit permission save', () => {
+    const raw = '{"apiKeys":{"anthropic":"fixture-permission-account"},';
+    fsSync.writeFileSync(file, raw);
+    expect(() => modes.savePermissionModeUser('auto')).toThrow(/core configuration/i);
+    expect(fsSync.readFileSync(file, 'utf8')).toBe(raw);
   });
 });
 

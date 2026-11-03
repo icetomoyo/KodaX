@@ -19,6 +19,9 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { applyProviderPrepareHook } from '../../../agent-runtime/provider-hook.js';
+import type { RuntimeSessionState } from '../../../agent-runtime/runtime-session-state.js';
+import { markRuntimeSelectionChanged } from '../../../agent-runtime/runtime-session-state.js';
 import { withEffectivePermissionContext } from '../../../prompts/effective-permissions.js';
 import { getRegistryManagedAgentContext } from '../../../tools/model-tool-definition.js';
 import { canProjectManagedToolContracts, projectManagedToolContracts } from '../../../tools/managed-tool-contract.js';
@@ -111,7 +114,7 @@ import {
   resolveReasoningMode,
   resolveRoleEffort,
 } from '../../../reasoning.js';
-import { mapLegacyReasoningModeToEffortIntent, reconcileAssistantContent, type KodaXAssistantBlock } from '@kodax-ai/llm';
+import { mapLegacyReasoningModeToEffortIntent, reconcileAssistantContent, type KodaXAssistantBlock, type KodaXAnthropicHistory } from '@kodax-ai/llm';
 import type {
   KodaXEvents,
   KodaXOptions,
@@ -298,7 +301,7 @@ export function resolveManagedProviderReasoning(
 }
 
 export function buildRunnerLlmAdapter(
-  options: KodaXOptions,
+  baseOptions: KodaXOptions,
   overrideStream?: (
     messages: readonly KodaXMessage[],
     tools: readonly KodaXToolDefinition[],
@@ -307,12 +310,8 @@ export function buildRunnerLlmAdapter(
   ) => Promise<{ textBlocks?: readonly { text: string }[]; toolBlocks?: readonly KodaXToolUseBlock[] }>,
   tokenStateRef?: { current: RunnerAdapterTokenState },
   /**
-   * FEATURE_078: optional callback that returns Scout's current
-   * `downstream_reasoning_hint` (L3 input). Called once per per-role
-   * adapter invocation so the resolver sees the hint as soon as the
-   * Scout payload is populated. Returning `undefined` bypasses L3 and
-   * falls back to L2 (`agent.reasoning.default`) clamped by L1
-   * (user ceiling). The callback closes over the AMA frame's recorder.
+   * @deprecated Ignored compatibility slot; the Scout reasoning chain is retired.
+   * Kept positional so old SDK callers do not shift later arguments.
    */
   getScoutReasoningHint?: () => KodaXReasoningMode | undefined,
   /**
@@ -368,6 +367,7 @@ export function buildRunnerLlmAdapter(
   userInputDegradationCache?: UserInputDegradationCache,
   hasPendingRecoveryInput?: () => boolean,
   getToolActivationFacts?: () => ManagedToolActivationFacts,
+  getRuntimeSelection?: () => Pick<RuntimeSessionState, 'modelSelection' | 'thinkingLevel' | 'selectionRevision'>,
 ): (messages: readonly KodaXMessage[], agent: Agent) => Promise<RunnerLlmResult> {
   // FEATURE_072 parity: the REPL's token-count indicator reads
   // `onIterationEnd` to refresh after each worker LLM turn. The iteration
@@ -385,8 +385,8 @@ export function buildRunnerLlmAdapter(
   // of degraded copies for irreducibly oversized fresh user inputs, and the
   // tool-execution context backing the spill artifact.
   const userInputSpillCtx: KodaXToolExecutionContext = { backups: new Map(),
-    toolResultRecovery: options.context?.toolResultRecovery,
-    isPagedContentRecoveryAllowed: options.context?.isPagedContentRecoveryAllowed };
+    toolResultRecovery: baseOptions.context?.toolResultRecovery,
+    isPagedContentRecoveryAllowed: baseOptions.context?.isPagedContentRecoveryAllowed };
 
   const requireUserInputDegradationCache = (): UserInputDegradationCache => {
     if (userInputDegradationCache === undefined) {
@@ -395,6 +395,7 @@ export function buildRunnerLlmAdapter(
     return userInputDegradationCache;
   };
 
+  const options = baseOptions;
   // Cost tracker — one per session; `recordUsage` is called after every
   // provider.stream usage payload. REPL /cost reads through
   // `events.getCostReport.current`.
@@ -404,12 +405,20 @@ export function buildRunnerLlmAdapter(
       formatCostReport(getCostSummary(costTracker));
   }
   return async (messages, agent) => {
+    const selection = getRuntimeSelection?.();
+    const selectionRevision = selection?.selectionRevision ?? 0;
+    const options: KodaXOptions = { ...baseOptions, ...(selection ? {
+      provider: selection.modelSelection.provider ?? baseOptions.provider,
+      model: selection.modelSelection.model, modelOverride: selection.modelSelection.model,
+      effort: selection.thinkingLevel ?? baseOptions.effort,
+    } : {}) };
     const outputId = `output_${randomUUID()}`;
     let activeProviderRequestId: string | undefined;
     let outputTextFilter = createManagedOutputTextFilter();
     try {
     if (options.events?.isGenerationSuspensionRequested?.()) throw new GenerationSuspensionError();
-    const activeModel = options.modelOverride ?? options.model;
+    let activeModel = options.modelOverride ?? options.model;
+    let providerReasoning = resolveManagedProviderReasoning(options, agent);
     // Strip every leading contiguous system message and concatenate their
     // content. v0.7.22-style flows pushed a single agent-instructions system
     // prompt and nothing else, so taking only `messages[0]` was enough. The
@@ -433,7 +442,19 @@ export function buildRunnerLlmAdapter(
         systemParts.push(text);
       }
     }
-    const baseSystem = systemParts.join('\n\n');
+    const prepared = await applyProviderPrepareHook({ provider: options.provider, model: activeModel,
+      reasoningMode: providerReasoning.effort, systemPrompt: systemParts.join('\n\n') });
+    if (prepared.blockedReason) throw new Error(prepared.blockedReason);
+    options.provider = prepared.provider;
+    options.model = options.modelOverride = activeModel = prepared.model;
+    options.effort = prepared.reasoningMode ?? providerReasoning.effort;
+    providerReasoning = { enabled: options.effort !== 'none', effort: options.effort };
+    if (selection && (selection.selectionRevision ?? 0) === selectionRevision) {
+      selection.modelSelection = { provider: options.provider, model: activeModel };
+      selection.thinkingLevel = options.effort;
+      markRuntimeSelectionChanged(selection);
+    }
+    const baseSystem = prepared.systemPrompt;
     let system = withEffectivePermissionContext(baseSystem, options.context);
     let transcript = messages.slice(cut);
     // Injected reminders commit only with a successful turn, so a failure
@@ -543,13 +564,8 @@ export function buildRunnerLlmAdapter(
     const buildWireSystem = (source: string, tools: readonly KodaXToolDefinition[]) =>
       withEffectivePermissionContext(projectManagedSystemContract(agent, tools, source, options.context), options.context);
 
-    // Reasoning single-tracking: resolve the per-turn reasoning EFFORT through
-    // the FEATURE_078 L1-L2 chain (effort-native):
-    //   L1 (user ceiling)  ← options.effort (or legacy reasoningMode mapped)
-    //   L2 (agent default) ← agent.reasoning.default + .max (mapped to effort)
-    // FEATURE_193 (v0.7.43): V1 chain retired — the Worker is the sole agent,
-    // so the per-role split and the Scout hint (L3) are gone.
-    let providerReasoning = resolveManagedProviderReasoning(options, agent);
+    // Built-in Worker/Script roots inherit the current Session effort.
+    // Only an explicitly declared specialist profile adds a role constraint.
 
     iterationState.current += 1;
     options.events?.onIterationStart?.(iterationState.current, MAX_ITER_HINT);
@@ -604,6 +620,7 @@ export function buildRunnerLlmAdapter(
     };
 
     let streamResult: {
+      nativeHistory?: KodaXAnthropicHistory;
       contentBlocks?: readonly KodaXAssistantBlock[];
       textBlocks?: readonly { text: string }[];
       toolBlocks?: readonly KodaXToolUseBlock[];
@@ -1497,6 +1514,7 @@ export function buildRunnerLlmAdapter(
       }
 
       streamResult = {
+        nativeHistory: raw.nativeHistory,
         contentBlocks: raw.contentBlocks,
         textBlocks: accumulatedText ? [{ text: accumulatedText }] : raw.textBlocks,
         toolBlocks: raw.toolBlocks,
@@ -1571,6 +1589,7 @@ export function buildRunnerLlmAdapter(
     // missing the thinking block in history.
     const thinkingBlocks = streamResult.thinkingBlocks;
     const runnerResult: RunnerLlmResult = {
+      ...(streamResult.nativeHistory ? { nativeHistory: streamResult.nativeHistory } : {}),
       ...(streamResult.contentBlocks ? { contentBlocks: reconcileAssistantContent(streamResult.contentBlocks, {
         ...streamResult, textBlocks: text ? [{ text }] : [],
       }) } : {}),

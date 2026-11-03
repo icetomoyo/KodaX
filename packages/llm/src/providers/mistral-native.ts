@@ -27,7 +27,7 @@ export class KodaXMistralProvider extends KodaXNativeProvider {
     const response = await nativeResponse(`${this.config.baseUrl!.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST', signal: request.signal, headers: { authorization: `Bearer ${this.getApiKey()}`, 'content-type': 'application/json', ...(key ? { 'x-affinity': key } : {}) },
       body: JSON.stringify(await prepareProviderPayload({ model: request.model, messages: [...(request.system ? [{ role: 'system', content: request.system }] : []),
-        ...await projectMistralMessages(request.messages, request.source, this.getCapabilityProfile().multimodalSupport !== 'none')],
+        ...await projectMistralMessages(request.messages, request.source, this.getCapabilityProfile(request.options?.modelOverride).multimodalSupport !== 'none')],
       stream: request.streaming, max_tokens: request.maxOutputTokens, ...reasoning, ...(key ? { prompt_cache_key: key } : {}),
       ...(request.tools.length ? { tools: openAIChatTools(request.tools, request.toolCapabilities, this.name) } : {}),
       ...(request.options?.forcedToolName ? { tool_choice: { type: 'function', function: { name: request.options.forcedToolName } } } : {}) })) });

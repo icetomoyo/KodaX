@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -20,6 +20,10 @@ import { trustedTextNativeArtifactStateRoots } from '../src/windows-native-artif
 
 const realPosixGate = (process.platform === 'linux' || process.platform === 'darwin')
   && process.env.KODAX_REAL_POSIX_SANDBOX === '1';
+
+// macOS temporary roots sit under the /var symbolic link; hardened
+// trusted-text alias fences require canonical fixture paths.
+const canonicalTemporaryRoot = await realpath(os.tmpdir());
 
 const barrierScript = String.raw`
 const fs = require('node:fs');
@@ -86,7 +90,7 @@ describe.runIf(realPosixGate)('FEATURE_295 real POSIX shell sandbox', () => {
   });
 
   it('runs independent policies concurrently and enforces each write root', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-posix-policies-'));
+    const root = await mkdtemp(path.join(canonicalTemporaryRoot, 'kodax-posix-policies-'));
     roots.push(root);
     const policyA = path.join(root, 'a');
     const policyB = path.join(root, 'b');
@@ -186,7 +190,7 @@ try {
   }, 50_000);
 
   it('keeps trusted text writes independent from a live shell sandbox', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-posix-text-shell-'));
+    const root = await mkdtemp(path.join(canonicalTemporaryRoot, 'kodax-posix-text-shell-'));
     roots.push(root);
     const shellRoot = path.join(root, 'shell');
     const textRoot = path.join(root, 'text');
@@ -256,7 +260,7 @@ if (!fs.existsSync(release)) process.exit(7);
   }, 40_000);
 
   it('does not let the sandbox target forge broker control authority', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-posix-control-authority-'));
+    const root = await mkdtemp(path.join(canonicalTemporaryRoot, 'kodax-posix-control-authority-'));
     roots.push(root);
     const result = await runKodaXSandboxed({
       command: process.execPath,
@@ -281,7 +285,7 @@ if (!fs.existsSync(release)) process.exit(7);
     const protectedRoot = trustedTextNativeArtifactStateRoots().at(-1);
     if (protectedRoot === undefined) throw new Error('expected a protected native text root');
     await mkdir(protectedRoot, { recursive: true, mode: 0o700 });
-    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-posix-protected-alias-'));
+    const root = await mkdtemp(path.join(canonicalTemporaryRoot, 'kodax-posix-protected-alias-'));
     roots.push(root);
     const alias = path.join(root, 'alias');
     await symlink(protectedRoot, alias, 'dir');

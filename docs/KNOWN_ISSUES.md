@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-10-31_
+_Last Updated: 2026-11-01_
 
 ---
 
@@ -27,7 +27,8 @@ Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
 
-Integration note (2026-10-31): worktree-only Goal Issue 370 is now Issue 376. Mainline Issue 370 (history wheel navigation) retains its identity.
+Integration note (2026-10-31): worktree-only Goal Issue 370 became Issue 376. Mainline Issue 370 (history wheel navigation) retains its identity.
+Integration note (2026-11-02): mainline published its own Issue 376 (Windows gate audit), so the worktree Goal issue is now Issue 377.
 
 ## Nested provider observations can duplicate child usage summaries (2026-10-31)
 
@@ -46,7 +47,7 @@ not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
 
-## Issue 376: Child Agents expose failing Goal tools and bypass the root goal budget
+## Issue 377: Child Agents expose failing Goal tools and bypass the root goal budget
 
 - Priority: Medium
 - Status: Resolved
@@ -98,6 +99,45 @@ the soft goal budget before the next settlement; this is not a prepaid hard cap.
 child call reaches the sink, and a root call settles 1,400 pending descendant
 tokens with its own 24. Binding, lifecycle, context and forwarding tests cover
 read/write children, Workflow digest and structured-output repair runs.
+
+## Issue 376: Windows gate and recovery/credential/permission audit follow-up
+
+- Priority: High
+- Status: Confirmed local code gaps repaired; offline acceptance complete with documented full-scan failures and whole-file replays; alpha.12 candidate awaits remote acceptance after its first failed tag run; native/live boundaries and separate GC capability remain; still-open findings tracked in [REVIEW_v0.7.97_FIX_LIST.md](REVIEW_v0.7.97_FIX_LIST.md)
+- Created: 2026-11-01
+
+The accepted first batch and its failure boundaries are recorded in the
+[regression guide](test-guides/ISSUE_376_v0.7.97_REGRESSION_GUIDE.md) and the
+[2026-11-01 full-chain audit](REVIEW_v0.7.97_FULL_CHAIN_AUDIT.md).
+Unknown historical locks and interrupted reclamation claims remain fail-closed;
+corrupt credential/config/pending-input bytes are retained for explicit repair.
+Full Access opaque Host programs remain trusted code, outside OS isolation.
+The subsequent Main batch repairs learned Skill/explicit invocation lifetimes,
+verified model/rate metadata, model-specific image/cache projection, SDK inventory,
+corrupt-config informational commands and CLI-provider PID generation retention.
+See the separate dated acceptance records in the same guide. The remaining-seam
+implementation adds complete lock publication, explicit quarantined repair,
+verified-candidate/receipt/fence handling, store-lifetime cleanup, OAuth 401
+generation recovery without POST replay, trusted registration replay identity,
+linear execution-fact journals and native Anthropic Claude 5.5 history fragments.
+Normal generation uses account-scoped rejection learning; explicit probes keep
+issuing real bounded requests. Catalog discovery does not globally narrow one
+account's capabilities.
+Historical source/packaged counts are retained in their dated records rather
+than presented as the final count for later changes.
+Unknown locks still require explicit offline maintenance, never age-based
+reclamation. Corrupt replacements require complete captured authority and
+separate external-effect verification. Default cloud identities without verified
+principal stay conservative; remote-consumed, uncommitted refresh tokens may
+require reauthentication. Real OAuth/cloud/Claude account acceptance and native
+Windows Memory setup remain unverified. Global automatic tool-output cleanup is
+a separate capability requiring Root/Space/reference ownership closure; originals
+remain and explicit diagnostics are not GC.
+Main verification observed one intermittent packaged Shell cleanup failure;
+isolated, eight-way concurrent and complete bundled replays passed. Its cause
+remains unconfirmed; the retained evidence and improved failure diagnostic are
+recorded in the regression guide rather than classified as a repaired product bug.
+
 ## Issue 375: Constrained Skill shell patterns admit extra effects
 
 - Priority: High
@@ -236,7 +276,7 @@ acceptance. Issue 371 now has a confirmed startup-recovery fix; its historical
 - Status: Open (startup recovery fixed; historical first-read delay not attributed)
 - Introduced: observed in v0.7.97-alpha.10 at `ec442c75`; first affected version unknown
 - Created: 2026-10-28
-- Fixed: first startup recovery in `v0.7.97-alpha.11`; 2026-10-31 recurrence fixed locally at `16973a93` (unreleased)
+- Fixed: first startup recovery in `v0.7.97-alpha.11`; 2026-10-31 recurrence fixed in `v0.7.97-alpha.12` (`16973a93`); bare-resume discovery feedback (`Finding sessions`, no extra startup work) in `v0.7.97-beta.1` (`e18600b79`)
 
 ### Original Problem
 
@@ -2253,7 +2293,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 376 | Medium | Resolved | Child Agents expose failing Goal tools and bypass the root goal budget | FEATURE_192 v0.7.44; first affected version unknown | post-v0.7.97-alpha.10 working tree (unreleased) | 2026-10-31 | 2026-10-31 |
+| 377 | Medium | Resolved | Child Agents expose failing Goal tools and bypass the root goal budget | FEATURE_192 v0.7.44; first affected version unknown | post-v0.7.97-alpha.10 working tree (unreleased) | 2026-10-31 | 2026-10-31 |
 | 375 | High | Resolved | Constrained Skill shell patterns admit extra effects | observed on aeb16fef; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
 | 374 | Medium | Resolved | Client question adapters lose unanswered semantics | observed on aeb16fef; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
 | 373 | Low | Resolved | Streaming progress mixes character and token units | observed in v0.7.97-alpha.10; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |

@@ -1,8 +1,13 @@
 # SDK 统一 Client 契约迁移指南
 
-适用范围：当前工作树的 FEATURE_298/299/301 实现；本次核对的包版本为 `0.7.97-alpha.11`。版本号不表示 npm 已发布当前工作树中的所有变更。接入前应核对所安装包的导出和 Host 能力。
+适用范围：当前工作树的 FEATURE_298/299/301 实现；本次核对的包版本为 `0.7.97-beta.1`。版本号不表示 npm 已发布当前工作树中的所有变更。接入前应核对所安装包的导出和 Host 能力。
 
 Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附件/统计与退出恢复范围见 [SDK/Host 接缝](SPACE_SDK_SEAMS.md)。
+
+2026-11-02 发布验收修复中，扩展 API `exec()` 的 PowerShell 启动改为
+`-NoLogo -NoProfile -NonInteractive`，避免隐式执行用户 profile 和交互提示。
+依赖 profile 内函数或 alias 的扩展需在命令中显式初始化（例如 `Import-Module`）。
+原命令超时、秘密环境变量白名单和显式 Bash 执行契约保留。
 
 Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` 保留，
 Solo 和 Adaptive 都会向模型提供可用且已授权的 Skill 目录。运行时绑定生成的
@@ -11,6 +16,123 @@ Solo 和 Adaptive 都会向模型提供可用且已授权的 Skill 目录。运�
 可选 Skill 目录。`sa` 当前仍是可执行的 Solo 模式；`amaw` 才是归一为 `ama` 的旧别名。
 
 ## 统一 Host SDK 收口（未发布）
+
+### 2026-11-02 Space 默认方法、消费绑定与 Quick Ask（alpha.12 之后，未发布）
+
+已发布的 `0.7.97-alpha.12` 不含本节接口；本节接口随 `v0.7.97-beta.1` 发布。
+请锁定该实际发布包（beta.1 的 npm 发布仍为手动步骤），并检查
+`productExecutionBinding:1`、`sessionPromotion:1`；旧 Host 明确返回
+`daemon_upgrade_required`，不能忽略声明继续执行。原配置、环境变量 Key、凭证 broker、
+原 `authorizeExecution` 回调及未使用新字段的调用保留原行为。
+
+可信 Main 可返回 `profile.defaultSkill:{name}`。Host 使用自己的 registry/config root
+准备方法，保留原始用户问题、persona 与普通 Partner 的 shell/写文件/子 Agent 能力；
+具体执行仍受现有模式、审批、沙箱和显式工具上限约束。用户显式 Skill 仅覆盖本轮，
+下轮恢复默认。已识别的排队显式方法若消失会拒绝，不悄悄换成默认方法。
+
+需要排队时读取最新业务配置时，在 Main 注册
+`services.executionBindings.register(async (request, scopedServices, signal) => authorization)`，
+外层 `authorizeExecution` 对 `kind:'input'` / `'recovery'` 仅返回 `{binding:{leaseId}}`；
+命令、review、工具、Workflow、compaction/probe 和独立 Actor 继续各自原有的显式授权，
+不能把根输入 binding 用于这些操作。`request.phase:'admission'`
+发生在真实准入/消费边界；回调原子读取最后成功提交的专家/连接器状态，返回正常凭证、
+工具、profile 以及 `businessBinding:{id,revision,data?}`。`data` 只放非秘密事实，整个
+快照最多 16 KiB。每次解析使用回调传入的 Session 专属 `scopedServices` 构建 profile，
+不要闭包缓存首次 Session 的目录；不要在 Main 展开 Skill、执行 hooks 或修改原问题。
+同一 Run 的工具上限保持固定，业务变化的后续输入进入下一 Run。未提交 UI 草稿不生效；
+禁用/撤销必须事实拒绝，明确移除专家可以返回已提交的普通 Partner 绑定。
+
+`phase:'recovery'` 提供 `recovery.snapshot` 和原 persona/profile 事实：保留原业务快照，
+重新获取当前凭证/连接器 lease 和更窄的工具上限。不要用当前选中专家替换原专家。
+旧 Run 没有业务快照时，Main 必须自行核实来源，不能猜测账号或绑定。
+已准备 Skill 的回执保存原 hooks 附加上下文及来源/策略指纹；冷恢复不重放准入 hooks，
+来源或策略变化会明确拒绝。旧 checkpoint 无法证明有副作用 hooks 已完成时也拒绝自动重放。
+带新快照/回执的 checkpoint 使用 v2，旧 Host 不能降级读取执行。
+
+断连、失效或拒绝返回 `execution_binding_unavailable` / `execution_binding_rejected`；
+恢复换业务返回 `execution_binding_changed`，缺失已选方法返回 `default_skill_unavailable`。
+排队失败保留原输入，`inputs.read` / 队列暴露 `admissionError`，不丢弃或自动重试。
+原 principal 以同一 inputId/原问题重提交可重新绑定；也可显式 withdraw。
+旧 alpha.12 队列的显式方法身份可从唯一原引用恢复；歧义或方法消失时保留原问题并
+要求确认，不以新默认方法替代。恢复的根 Run 业务快照不授权尚未消费的新轮次。
+重连/冷 Host 后重新注册进程内 lease；独立 Actor 使用自己的准入，不借用根专家声明。
+
+Space 独立补审后的修正：`steer` 也先在 Host 解析 Main binding，再比较目标 Run 的完整
+授权 key、principal 和窗口；解析完成后重新核验目标仍活动。同授权的 steer 进入原 AMA Run，
+变化的业务/profile/credential/tool lease 仍拒绝，不能以新 lease 或当前新专家替换原执行。
+Main 应为 steer 返回目标 Run 原有声明；同 inputId 的已接受重试不重复解析或注入。
+`redirect` 入队保存已识别的显式方法名，消费前卸载会保留输入并返回
+`default_skill_unavailable`，不回落默认方法。旧补丁写出的
+`skill:true / explicitSkill:null / redirect` 同时可能来自普通 Run 边界，不能只凭 delivery
+认定显式方法。新普通边界由 Host 持久保存内部 `plainRunBoundary:true`，冷恢复后仍不按
+旧显式意图判断；这不是 Client 输入选项，不由 Main/Renderer 提供。旧 null 记录无方法
+引用时按普通输入恢复，仍使用消费时 Main 最新成功提交的默认方法；带引用的旧记录按
+唯一方法保守恢复，方法缺失或引用歧义仍拒绝，原问题可撤回。已报错输入继续要求原
+principal 重绑，不能借迁移获得另一账号或专家的 authority。持久字段 `skill` 保留旧名称，
+含义为独立 Run 边界，不能据其为 true 推断一定有具名方法。Client/wire 输入与既有配置、
+凭证入口不变。
+前一次 steer/显式 redirect 修正提交 `00bfe7ed12407eda722a6bc4b15ace106e413dc5` 已在 Root 主分支，
+[完整 CI](https://github.com/icetomoyo/KodaX/actions/runs/41415454375) 16 个任务通过、
+发布跳过；尚未发布 npm。Space 需使用包含本次修正的新 SDK，不能只依赖旧 alpha.12。
+该 CI 是普通 redirect 第二次补审前的基线；以上边界区分修正还需包含在后续新 SDK 中，
+本轮独立验证见 [普通 redirect 补审](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#普通-redirect-的补审修正2026-11-02)。
+普通 redirect 功能修正为 `cd151cb1ddf7eb273debb5e458a9c989d8804ac1`，含后续门禁修正的
+候选 `962a41600d5676460e35866be908ec22b32c301b` 已推送 Root `KodaX` 主分支，精确 SHA 的
+[CI 41438153424](https://github.com/icetomoyo/KodaX/actions/runs/41438153424) 16 个任务成功、
+发布跳过。未发新 SDK 包；Space 升级时必须包含本轮修正，原 Client 参数和凭证入口不变。
+
+Quick Ask 使用 `sessions.promote({sessionId,requestId,expectedRevision,tag})`，修订来自
+`sessions.read(...).metadataRevision`。成功返回 `{requestId,session}`，仍是原 Session ID。
+Host 原子保存 tag 与操作回执，历史、原生历史、lineage、附件和统计不变；新 promotion
+要求会话空闲且可写。每个原 Session 一次 promotion，相同 requestId/修订/tag 可重试；
+不同请求或变化的参数返回 conflict。丢失响应时调用
+`sessions.readPromotion(sessionId,requestId)`，按原操作查询/重试；确认成功后 Space 才更新
+侧栏和 ephemeral 状态。Fork/Recover 的新 Session 不继承源 promotion 操作身份。
+元数据提交会刷新 Session capture/history 修订，Space 应重新读取分页 cursor 与 historyBoundary；
+修订变化不代表历史内容被改写。
+
+发布包新增 `runtime-daemon-schema.json`：构建从同一个 TypeScript 协议源生成完整数据，
+Node SDK 与独立二进制均携带。自定义打包需保留该资源，不能省略后放宽协议校验。
+CLI 原体积门禁、CI job/矩阵/触发条件和发布依赖关系保持原值。
+
+### 2026-11-02 核心配置提交补齐（alpha.12 之后，未发布）
+
+Space 正式 alpha.12 验收基线为 `codex/sdk-alpha12-preparation@ca8d2313`；其配置
+原子性反馈已纳入 Root 后续修复。本节新增实现已随 `v0.7.97-beta.1` 发布，历史
+版本字符串 alpha.12 不含这些字节。没有修改 Space 产品代码或其凭证来源。
+
+所有核心配置修改（Runtime、Provider CRUD/setup/OAuth registration、旧权限模式保存/
+迁移、初始化、saveConfig 与拆分集成迁移清理）使用同一配置写锁与原子替换。
+写入在同目录临时文件完成并同步后才发布；合作 writer 在锁内重新读取当前配置，保留
+未知字段与凭证。普通未加锁 reader 只见完整旧文档或新文档。此保证要求所有 writer
+升级；旧版截断写入、直接外部编辑、两个不同路径别名锁，以及突然断电的文件系统持久性
+不由它保证。显式配置文件 symlink 的原入口继续保留。
+
+可信 Main 可从 `/repl` 导入 `readCoreConfig(configPath)` 读取完整文档；只有文件确实
+缺失才返回 `{}`，损坏/不可读/断链返回 `CoreConfigReadError`，不回落默认值或重置账号。
+错误不携带配置原文或解析器 cause。`CoreConfigWriteConflictError` 保留原类身份，增加
+`code:'conflict'`、`data:{source:'configuration',reason:'lock_busy'}`；读取错误为
+`code:'internal_error'`、`data:{source:'configuration',reason:'read_failed'}`，兼容既有 RPC 错误码。
+Space 现有有限锁忙重试可保留；不重试损坏文件，不把配置忙归为网络故障，不补取新 CAS
+版本后盲目覆盖。确需复合修改时，使用已有 `withCoreConfigWriteLock`，锁内读取，调用
+新增公开 `writeCoreConfigAtomically`；不要嵌套再次加锁的 SDK mutation。
+锁失败或临时文件写入失败不发布部分配置；成功提交后才应用 Runtime 默认值/更新注册表。
+Windows reader 短暂拒绝替换（`EPERM`）时，在同一锁和 staged 文件内做最多 1 秒
+累计重试；永久拒绝、其他 IO 错误仍报错并保留旧文件。预算限制重试调度，不能打断单次
+内核调用。发布后的锁释放失败可能发生在提交完成之后；遇到它或断连等结果不明时先重读
+核对，不能假定失败等于未提交，不自动回滚或重放凭证/账号切换。凭证 binding/revision、
+OAuth 和撤销规则保持；改名不证明新别名有权使用旧账号。
+
+前次功能基线已推送 Root `KodaX@b385395c9f8686aee182a4c6a38b4f3008421d32`，完整 CI
+[41401900534](https://github.com/icetomoyo/KodaX/actions/runs/41401900534) 全绿（16 个
+任务成功、发布按预期跳过）；本机冻结全套 19252 通过、87 条件跳过、0 失败/0 TODO，
+源码与产物指纹一致，双轴复审无剩余项。完整证据和先前失败见
+[最终验收](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#最终验收2026-11-02未发布)。
+设计子仓仍为 `7927f835744643b418d463b10a2e1c1c4bdd12e8`，Space 独立分支及产物未改。
+接手时先锁定包含该提交的 `v0.7.97-beta.1` SDK 字节（npm 发布为手动步骤），按能力门禁启用默认方法/业务 resolver 和
+promotion，保留配置有限锁忙重试与原凭证来源，再走 Space 生产安装包的账号保持、撤销、
+排队/恢复和 Quick Ask 成品回归。已发布 alpha.12（标签 `f24a922c1`）不含本节后续补丁；
+本轮没有移动标签、发布 npm 或替 Space 完成产品侧适配。
 
 ### 2026-10-30 SDK 组合契约修复（未发布）
 
@@ -100,7 +222,7 @@ next_run 值在新 Run
 见 [Client 契约](CLIENT_CONTRACT.md#配置生效边界)。回归步骤见
 [FEATURE_298 验收指南](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#2026-10-30-sdk-组合与配置边界)。
 
-本节描述 alpha.11 之后的未发布收口，优先于下文历史版本的嵌入示例。
+本节描述 alpha.11 之后、已随 `v0.7.97-alpha.12` 发布的 Host 收口，优先于下文历史版本的嵌入示例。
 完整产品执行只由独立共享 Host 拥有。产品使用 `ensureKodaXClient` / `connectKodaXClient`；
 可信底层接入使用 `ensureKodaXRuntime` / `connectKodaXRuntime`。连接关闭只释放本连接。
 
@@ -146,7 +268,8 @@ Space 或其他外部客户端已升级，也不要求独立库与 Product Clien
 | Skill 策略 | 模型发现、激活与 SDK 调用复用可信 registry；`Bash(pattern)` 仅允许匹配的单命令，仍须 Host 授权 |
 
 CLI 的 `--agent-mode sa/amaw` 是迁移错误；底层 SDK 的显式兼容 profile/角色/执行路由
-仍按各自契约保留，不能机械替换为产品模式。该组能力已纳入 alpha.11；上节 Host 收口仍未发布。
+仍按各自契约保留，不能机械替换为产品模式。该组能力已纳入 alpha.11；上节 Host 收口已随
+`v0.7.97-alpha.12` 发布。
 Issue 371 的历史首次读取延迟、Script 的模型效率及跨平台人工验收不因 SDK 对齐而关闭。
 
 本次 Windows 源码核对验证（2026-10-29）：`npm run build`、`npm run typecheck`
@@ -361,21 +484,32 @@ The automatic Sidecar Verifier is retired. Remove `verifierLog`, `/verifier-log`
 
 原有 provider 名称、config.json 和 API_KEY 环境变量继续有效，默认仍为现有 HTTP/SSE；不需要将 API key 搬进配置文件。原生/订阅连接通过既有 broker 按请求授权。新增能力及边界见 [LLM 接入契约](LLM_INTEGRATION.md)。
 
-`CostRecord.cost`、provider/session 的总费用现在为 `number | null`。未知价格或未覆盖的 cache-write TTL 返回 `null`，不能再当作零价；`knownCostSubtotal`、`unknownCostCalls`、`nominalCostCalls`、`costBasis` 区分已知小计与订阅名义估算。已有数值费率和显式零价保持原义，静态费率不是实时账单。`cachedWriteTokensByTtl` 保留缓存写入分区，`cacheWritePer1MByTtl` 可为已声明 TTL 提供估算费率。
+`TokenUsageRecord.cost`、provider/session 的总费用现在为 `number | null`。未知价格或未覆盖的 cache-write TTL 返回 `null`，不能再当作零价；`knownCostSubtotal`、`unknownCostCalls`、`nominalCostCalls`、`costBasis` 区分已知小计与订阅名义估算。已有数值费率和显式零价保持原义，静态费率不是实时账单。`cachedWriteTokensByTtl` 保留缓存写入分区，`cacheWritePer1MByTtl` 可为已声明 TTL 提供估算费率。
 
 工具 strict/grammar 只按显式能力启用；`require` 不可静默降级，`prefer` 仅在明确的 400/422 约束拒绝后有一次受限回退。`strict` 会关闭对象额外属性，将可选属性变为可空的必填属性，属于显式 opt-in。Responses grammar 的原始输入由声明的单个字符串属性承接，部分流片段不构成可执行工具。
 
 原生 provider 的 reasoning 学习记录增加身份 scope；旧的无 scope 记录不用于限制新原生请求或 REPL 可选 effort。账号/密钥/连接变化会隔离学习及 opaque history，仍保留可读历史。CLI bridge 的旧行为保持。请求投影诊断区分 estimated 和 native protocol-input；后者为签名前实际请求对象的哈希，不代表服务端 cache hit 或实际计费。
 
-Reasoning 展示兼容补充（2026-10-31）：Host `settings.effort` 是用户的会话选择，
-AMA Worker 会在其约束下按角色选择单次 effort；例如会话 `high`、Worker `medium`、
-DeepSeek profile 映射后实际发送 `high` 可以同时成立。`onReasoningResolved` 继续保留
-完整请求诊断，`verified:false` 不表示请求失败。CLI 只为本次新发生的
+Reasoning 链路修正（2026-10-31）：Host `settings.effort` 是用户的会话选择，
+内置 AMA Worker、SA 和 Script 根执行继承此选择，不再套用旧的
+`balanced/deep` 角色默认或上限。旧实现把 `high` 压成 `medium` 属于缺口，
+不能因某些 provider 最后又映射回 `high` 而视为正常。只有明确声明的 specialist
+保留其显式 effort 策略；子任务的显式 `auto` 也不再被丢弃为继承父级。
+Agent/构造产物的旧 profile 在接入边界转换为 `medium/high` 等原生 effort，
+不改写调用者对象或存量文件；旧 reasoningMode/thinking SDK 输入仍兼容。
+`onReasoningResolved` 继续保留完整诊断；Client `activity.reasoning` 新增只读的
+主请求结果（provider/model、请求 ID、requested/sent effort、fallbacks、verified）。
+新请求开始时清空，child/旧请求不能覆盖；旧 Host 缺失时不得推断实际档位。
+AMA 扩展的 session hydration、runtime.setThinkingLevel 与 provider:before 现在
+通过既有 Run 隔离机制和同一运行选择生效；工具/Actor/workflow 继承当前选择，
+保留旧 thinking 输入及共享 Actor 预算，不把临时扩展覆盖写成全局默认。
+`verified:false` 不表示失败，也不证明服务端实际采用该强度。CLI 只为本次新发生的
 `unsupported-effort` / `unsupported-parameter` 回退追加结果提示；profile 映射和
 `cached-rejection` 不逐轮追加提示。Space 接手时应保持同样的区分，不应将单次
 Worker/子任务结果写回共享会话选择或全局配置；后续请求通过身份隔离的能力学习自愈。
-状态栏的会话选择也不能被解读为服务端已验证的单次执行档位。本次展示修复通过
-9 个完整文件的 117 项定向回归及源代码/测试类型检查；不新增请求、配置迁移或凭证操作。
+状态栏仍表达会话选择；Space 可用 `activity.reasoning` 展示本次发送结果，
+不把自愈后的 wire 参数回写到会话选择或全局默认。身份隔离的能力学习负责后续请求。
+回归入口见 [effort 链路指南](test-guides/FEATURE_233_v0.7.97_TEST_GUIDE.md)。
 
 
 ## T12-A Main 授权与 OAuth registration
@@ -429,6 +563,59 @@ OAuth 注销与 API-key 删除保持不同入口；高级原生连接沿 SDK/CLI
 [FEATURE_302 最终验收](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-efg-final-offline-acceptance-2026-10-31)。
 
 ### FEATURE_302 T12-H：账号保持与可重试升级（未发布）
+
+本轮 Root 代码与测试固定点：本地 `KodaX` 提交
+`a31f86206e413e89b5a97acad3b7090473cf474e`（基于 `68a02521c`）。
+设计子仓 gitlink 保持 `8574086208d6b5cc6ff6599c825fe88d986c4dd0`；本批未修改
+Space 仓库。Space 接手应采用包含此 Root 提交的 SDK/完整资源，继续保留自身独立
+分支的凭证迁移与 Main broker 代码；不把本地验收视作推送、发布或真实账户认证。
+
+2026-11-01 的 Root 审计补充仍未发布：既有 SDK/配置/API_KEY 入口和 auth.json v2
+保持有效。CLI 按需打开所选 OAuth，失败可重试；缺失、撤销或 profile/issuer 不匹配
+均报错，不能用环境 Key 或其他注册账号兜底。原始损坏配置、凭证及队列文件保留。
+已有核心配置损坏、非对象或读取被拒绝时，CLI 与 SDK 均显式拒绝按空配置执行或
+打补丁，防止采用默认 provider/环境账号；真正缺失的新用户配置仍允许正常启动。
+有效旧配置与正常文件链接继续有效，悬空文件链接保留并报错。存活 Host 的
+`config.readEffective()` 仍可报告 `persistedConfig.state: invalid`，修复后重新读取
+原 provider；冷启动失败也可在修复后重试，不生成替代身份。
+Space 接手时应保留统计的 `coverage: partial`/issues；单个损坏 pending-input 文件仅
+使所属 Session 提交返回现有 `conflict`，不能自动清空或重新绑定其 principal。
+任务事件不可读则任务呈 `unknown` 并拒绝再次派发，健康任务不受影响。修复原文件后
+重连/重启 Host 恢复原队列与身份，不把未知执行当成重试许可。Windows 原生静态资源
+也必须随 SDK/二进制一起分发，缺失或篡改会显式失败。验收及真实 OS 前置条件见
+[Issue 376](test-guides/ISSUE_376_v0.7.97_REGRESSION_GUIDE.md)。本批没有修改 Space 仓库。
+
+后续审计修复补齐 AMA Root learned Skill 的 catalog/准入/outcome/release；失败和取消
+不能计作已验证成功，释放必须属于 Host 可等待的 Memory 工作，并先于完成通知。
+显式 `runs.startTool` 加载 Skill 时也装配现有策略和 hooks；这仍是当前 Run 的一次
+调用，不给后续 Run 持久授予工具权限。Space 无需恢复旧 SA CLI 或重复 effort 提示。
+模型描述新增可选 `multimodalSupport`；切换模型时按选中模型判断图片，保留原始历史。
+费用沿用可空/nominal 合同，新增 `maxPricedInputTokens` 限定已覆盖费率的输入范围；
+未知价格、TTL 或超范围不能显示为零。目录/费率来源和限制见
+[模型与费用边界](LLM_INTEGRATION.md#审计后续模型与费用估算边界2026-11-01未发布)。
+
+Space 若提供存储维护，可显式调用 `/coding.inspectToolOutputStorage(directory)`；
+`partial`、`failed` 或子目录存在时，不能把平面容量统计当完整全局清单。
+清理须先停止共享该目录的所有写入，并掌握所有 SDK/Host 会话与 manifest/stream 的
+完整引用闭包，再调用既有 `cleanupUnreferencedToolOutputs`。仅有当前 Space 会话目录
+不构成完整范围；未知引用域继续保留，不能恢复启动扫盘或按 TTL 自动删除。
+
+坏配置不再阻止 CLI `--help`、`--version` 和只读 `doctor`；执行与配置写入仍拒绝使用
+坏配置作默认账号。`doctor --json` 新增 `coreConfig` 语法状态/位置与 `locks` 清单，
+不返回原文或凭证。它只覆盖默认配置根下的已知位置，显式 SDK storage 覆盖需另查。
+Space 可展示这些诊断，但不能凭锁年龄或 PID 不可读自动删除历史锁。
+后续诊断补齐默认 `sessions/.write-locks`；锁记录的 empty/invalid-json/missing、
+json-object 和 reclamation-claim 可区分，但 `ownership: unverified` 一律不是死亡证明。
+子 Agent 的终态配额/认证错误不再误触发 Provider fallback；真实 408、限流及暂时
+Responses 服务故障仍可沿已配置的链切换。401 强制刷新与稳定账号 replay 身份尚未
+贯通，Space 不能自行把当前 POST 重放或删除 token 身份隔离来掩盖错误。离线修复应先
+停止所有共享 CLI/Host/SDK 写入者、备份原目录，再隔离明确诊断出的锁及对应 reclaim
+claim；保留 config/auth/session/journal。活跃任务或未确认所有者不能做此处理。
+
+更新 SDK 时须同步完整 dist 和既有 JSON 资源，不能只替换 JS 并复用旧资源。
+`windows-native-scripts.json` 的历史文件名保留，现也包含带哈希校验的共享 ASRT
+broker 模板；按需装配并缓存，程序内容和参数语义保持。旧 Host 的既有 Windows
+provision/control 数据未改，运行中的任务不为本次资源整理而强制退出。
 
 CLI 的 config.json、API_KEY 和单记录凭证 SDK 入口继续有效，auth.json 仍为 v2。
 新增 AtomicFileProviderCredentialStore 扩展提供一致快照与多记录 CAS，不改变旧调用方契约。
@@ -492,7 +679,7 @@ Space 仍在 `codex/provider-credentials-space` 独立分支接手，配套设�
 发布前需锁定包含本轮修复的已发布 SDK，重跑生产安装包升级、账号保持、撤销、
 Host 重启和退出恢复门禁。Root 的离线组合回归不能代替真实服务登录或 Space 成品验收。
 
-最新交接：Root 本地 `KodaX` 主分支已安全包含功能提交
+恢复阶段交接（后续 effort 修正见下）：Root 本地 `KodaX` 主分支已安全包含功能提交
 `27bb8536edf8ba149860e6d4c4562ecb0f8526fb`，设计子仓仍为
 `8574086208d6b5cc6ff6599c825fe88d986c4dd0`；Space 保留
 `codex/provider-credentials-space@7b37e1c8ddf0d72d8674d521f1e8e0298d3341a2`，
@@ -503,3 +690,89 @@ SDK 字节，再做 Space 生产安装包升级、旧配置/API_KEY 与凭证迁
 真实 Codex/OpenAI/Copilot 刷新换号及 Host/退出恢复；persona/Partner/profile 在途改动
 整合后仍需复验。旧 sealed 只作保留的恢复材料，不覆盖当前授权或撤销记录；旧新版本
 不得并行刷新同一 rotating grant，未知所有者旧锁不按时间强行清理。尚未推送或发布。
+
+### 2026-10-31 effort 链路修正：最新 Space 交接（未发布）
+
+Root 本地 `KodaX` 主分支已安全包含功能提交
+`9e3147da47536b1ed3fb8817c0e351b8923776c3`，以及测试夹具修正
+`19aa6a3c3cfb0ff82974d7a931d33ee71403373d`；设计子仓仍为
+`8574086208d6b5cc6ff6599c825fe88d986c4dd0`，Space 仍保留
+`codex/provider-credentials-space@7b37e1c8ddf0d72d8674d521f1e8e0298d3341a2`。
+本轮没有改动 Space 产品代码、凭证、账号选择或原配置/API_KEY 入口。
+内置 AMA/SA/Script 根请求现在继承 Session effort，工具、Actor、workflow 和子代理
+继承当前运行选择；旧 balanced/deep profile 仅在兼容边界转为 medium/high，
+新脚手架和辅助评测脚本使用原生 effort，modelHint 的同名路由档位继续保留。
+Space 应继续把 settings.effort 当作用户选择，按需消费新增可选只读
+activity.reasoning（主请求的 requested/sent、归属与 verified:false）；缺字段保持未知，
+不得用子任务、旧请求或兼容回退改写共享选择及全局默认。正常映射和已学回退不重复提示，
+新拒绝仍可见；账号隔离的能力学习和撤销/恢复边界保持。源码按完整文件复验汇总
+18,884 通过、73 条件跳过、0 TODO；实际主仓构建/类型、192 项定向源码通过，
+发布包按完整文件复验为 87 通过，双轴复审无剩余发现，详细范围和初次失败见
+[effort 回归指南](test-guides/FEATURE_233_v0.7.97_TEST_GUIDE.md)。接手时先发布并锁定
+包含功能提交的 SDK 字节，再做 Space 生产安装包升级、真实服务 OAuth/换号/撤销和
+Host/退出恢复门禁，并整合另一线程的 persona/Partner/profile 改动后复验。
+Root 离线结果不代替 Space 成品验收。新版 CLI/SDK 启动连接时，可对同一安装中可验证、
+安全空闲的旧 Host 按构建指纹自动换代；普通交互 Host 在最后一个客户端离开、全部工作
+空闲 30 秒后自动退出。活动工作、其他连接、显式常驻/A2A、跨安装或缺失构建身份等情况
+按既有边界保留或拒绝替换，不要求用户一律手动 daemon stop。
+尚未推送或发布。
+
+2026-11-01 终端反馈补充：Root 本地 KodaX 已包含功能提交
+`306eafdfa8ec3242abeead9e1fdf56ee3763b45e`。Ctrl+T effort 快捷键改为保存期间 spinner、确认成功后
+约两秒的短暂浮层；成功不再写入会话通知，失败/部分成功及显式 `/effort` 回执保持。
+连续按键按序应用，退出开始即取消排队动作和迟到反馈；保存协议、Session 选择、凭证和
+SDK view 契约未变。这不代表 Space 已实现同样的产品交互，仍由负责线程独立接手。
+
+2026-11-01 CLI 帮助修正：根帮助选项在子命令分发前统一处理，`daemon` 六个子命令
+的 `--help` / `-h` 只输出帮助，不能触发启动、停止、重启或前台服务。嵌套命令及别名
+沿同一边界保护，普通管理调用与原参数保持不变；SDK/凭证/Host 生命周期契约未变。
+本轮 Git 推送范围为 Root 的 `origin/KodaX`，以及其引用的设计提交
+`8574086208d6b5cc6ff6599c825fe88d986c4dd0` 在设计仓 `origin/main` 中的可达性；
+Space 独立分支不推送，不创建版本标签、不发布包。最终主仓与远端验收见
+[daemon 帮助回归记录](test-guides/FEATURE_233_v0.7.97_TEST_GUIDE.md#daemon-help-dispatch-repair--2026-11-01)。
+
+远端验收：功能提交 `8a8bd445e6f62f899fb850b757ce78879abcde65` 已合入本地 KodaX 并
+推送至 Root `origin/KodaX`；设计仓 `origin/main` 已先推送上述 `8574086` 依赖，随后
+分别核对远端 SHA。实际主仓重建、类型检查、109 项定向源码、8 项发布包验收通过；
+独立工作区完整发布包为 89 项通过。Space 保持独立，未推送、未改 SDK pin，未发布包或标签。
+
+## Issue 376：恢复、凭证与原生历史补齐（2026-11-01，未发布）
+
+本轮直接在 Root 本地 `KodaX` 主分支实施，基线 `3cd3e5af`；没有修改设计子仓
+`8574086` 或 Space 独立提交 `da531f0a`。本轮未推送、发布或改变 SDK pin，验收见
+[Issue 376 指南](test-guides/ISSUE_376_v0.7.97_REGRESSION_GUIDE.md)。
+
+旧配置文件、已保存 API key、支持的环境 key 与原有 broker/绑定入口继续可用；账号、
+路由和墓碑优先级不变。OAuth 新 broker 协商请求凭证封装以获得稳定账号 replay 身份和
+401 按代次刷新，旧 string 回调仍工作。消费方必须通过 SDK 凭证 scope，不能把封装字符串
+直接填入 HTTP 头、保存到配置或传入 Renderer。刷新成功也不重放刚失败的 POST，不把另一
+账号或 API key 当作修复。云回调可额外返回经过可信 principal 验证的 `replayIdentity`；
+没有该证明的默认云 SDK 继续保守隔离，不能伪造稳定身份来争取缓存。
+
+新的 Main `/runtime` 维护入口为 `inspectStorageRepair`、`inspectStorageRepairCandidate`、
+`applyStorageRepair`、`confirmStorageRepair`。本地 CLI 对应 `doctor --inspect-storage <target.json>`、
+`--repair-storage <plan.json> [--repair-candidate <candidate>] --writers-stopped`、
+`--verify-storage <receipt.json> --writers-stopped --verified-current-state`。单次只选一种动作；
+这些入口属于可信本机管理员，未进入 Product Client、Renderer 或模型工具目录。
+inspection 只读；apply 核对原件身份/hash、实际 writer 锁和候选完整性，保留备份并设置
+repair fence。当前单个源文件/候选的维护检查上限为 64 MiB，超限会明确拒绝，不截断数据。
+合法 JSON 不证明外部副作用已核对，只有独立人工/可信运维核对当前状态后
+才能 confirm 清 fence。`--writers-stopped` 是操作者对旧非协作 writer 的前置声明，不能
+证明其他安装已离线。未知锁不按年龄删除；不兼容的锁协议仍拒绝通用修复。
+
+事件账本只对语法损坏的末行提供明确前缀候选；Extension/A2A/任务 snapshot 使用完整候选，
+不把空集合当成默认修复。修复失败和中断保留原件、回执和 fence；未知任务不自动派发远端
+效果。原始凭证/config 损坏仍不自动清空或重置账号。服务端已消费 refresh token、客户端
+却尚未持久化便崩溃时，本地无法保证恢复；封存备份不能当作可自动回滚的有效 refresh token。
+需要旧 alpha.11 不认识的新协议时，不支持降级到旧 reader/writer 共用新存储。
+
+统计 v2 按真实 Session 存储根分隔，以独立追加 lane 收集事实，旧默认 v1 只读导入，未采集
+的历史仍为 partial。统计不是执行权威。分页 cursor 绑定当前投影代次；Host 重启、重建、
+LRU 淘汰或旧格式 cursor 返回 `conflict` 时，从第一页重取并按 ID/revision upsert。
+这避免并发 lane 在冷热恢复排序不同后继续旧 offset 而漏项。
+
+自定义存储/Space 必须原样保留 assistant 的可选 `nativeHistory`，不要用显示文本重建完整
+记录；过滤改变内容时丢弃不匹配的片段。Claude 5.5 的原生范围与真实账号验证限制见
+[接入契约](LLM_INTEGRATION.md)。全局工具输出自动清理是另一个存储能力：需要关闭
+Root/Space/分支/附件的引用与所有权链路。本轮没有加入 TTL 删除，旧工具原件保留；
+现有显式诊断不等于自动 GC 已完成。

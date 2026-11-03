@@ -68,7 +68,7 @@ import {
   runFanOut,
   type ISkillRegistry,
 } from '@kodax-ai/agent';
-import { normalizeReasoningEffortValue } from '@kodax-ai/llm';
+import { mapLegacyReasoningModeToEffortIntent, normalizeReasoningEffortValue } from '@kodax-ai/llm';
 // FEATURE_191 — specialist agent override resolution. `resolveConstructedAgent`
 // returns `Agent | undefined`; the Actor adapter has already
 // rejected unknown names before bundle construction, so a re-resolve here is
@@ -88,11 +88,13 @@ import {
 } from './tools/tool-result-policy.js';
 import type {
   Agent,
+  AgentReasoningProfile,
   AgentCapabilities,
   GuardrailPermissionIntent,
   KodaXSessionStorage,
   WorkflowEventCorrelation,
 } from '@kodax-ai/agent';
+import { resolveRoleEffort } from './reasoning-effort.js';
 // FEATURE_093 (v0.7.24): lazy-load `runKodaX` to break the cycle
 // `agent.ts → extensions/runtime.ts → tools/index.ts → tools/registry.ts
 // → child-executor.ts → agent.ts`. The runtime import defers agent resolution
@@ -214,7 +216,7 @@ export interface ChildExecutorOptions {
   /** Parent-provided persistence capability for an isolated child-owned lineage. */
   readonly historyStorage?: KodaXSessionStorage;
   readonly parentOptions: Readonly<Partial<
-    Pick<KodaXOptions, 'provider' | 'model' | 'effort' | 'reasoningMode' | 'extensionRuntime' | 'events' | 'compaction' | 'disablePromptCache' | 'sandbox'>
+    Pick<KodaXOptions, 'provider' | 'model' | 'effort' | 'reasoningMode' | 'thinking' | 'extensionRuntime' | 'events' | 'compaction' | 'disablePromptCache' | 'sandbox'>
     & Pick<KodaXContextOptions, 'repoIntelligenceMode' | 'repoIntelligenceTrace' | 'contextDiagnostics' | 'shellExecution' | 'permissionIntent'>
   >>;
   readonly parentRole: string;
@@ -418,6 +420,7 @@ interface SpecialistOverride {
   modelOverride?: string;
   providerOverride?: string;
   effortOverride?: KodaXWireReasoningEffort;
+  reasoningProfile?: AgentReasoningProfile;
 }
 
 function buildChildPermissionIntent(
@@ -1152,10 +1155,11 @@ function resolveSpecialistOverride(
   }
   const specialist: Agent = specialistEntry.agent;
   // FEATURE_102 Phase 1: surface the specialist's explicit model/provider.
-  const modelProviderEffort: Pick<SpecialistOverride, 'modelOverride' | 'providerOverride' | 'effortOverride'> = {
+  const modelProviderEffort: Pick<SpecialistOverride, 'modelOverride' | 'providerOverride' | 'effortOverride' | 'reasoningProfile'> = {
     ...(specialist.model ? { modelOverride: specialist.model } : {}),
     ...(specialist.provider ? { providerOverride: specialist.provider } : {}),
     ...(specialist.effort ? { effortOverride: specialist.effort } : {}),
+    ...(specialist.reasoning ? { reasoningProfile: specialist.reasoning } : {}),
   };
   // Agent.instructions is `string | ((ctx) => string)`. Constructed agents
   // built by agent-resolver.buildAgentFromContent assign the literal
@@ -1188,15 +1192,18 @@ function normalizeChildEffort(
   effort: KodaXWireReasoningEffort | undefined,
 ): KodaXWireReasoningEffort | undefined {
   if (effort === undefined || effort.trim().length === 0) return undefined;
-  const normalized = normalizeReasoningEffortValue(effort);
-  return normalized === 'auto' ? undefined : normalized;
+  return normalizeReasoningEffortValue(effort);
 }
 
 function resolveChildEffort(
   bundle: KodaXChildContextBundle,
   specialistEffort: KodaXWireReasoningEffort | undefined,
-  parentEffort: KodaXWireReasoningEffort | undefined,
+  parent: ChildExecutorOptions['parentOptions'],
+  profile?: AgentReasoningProfile,
 ): KodaXWireReasoningEffort | undefined {
+  const parentEffort = normalizeChildEffort(parent.effort) ?? (parent.reasoningMode !== undefined
+    ? mapLegacyReasoningModeToEffortIntent(parent.reasoningMode)
+    : parent.thinking === undefined ? undefined : parent.thinking ? 'auto' : 'none');
   const lockedEffort = normalizeChildEffort(specialistEffort);
   const dispatchEffort = normalizeChildEffort(bundle.effort);
   if (lockedEffort !== undefined && dispatchEffort !== undefined && dispatchEffort !== lockedEffort) {
@@ -1205,7 +1212,12 @@ function resolveChildEffort(
       `but dispatch requested "${dispatchEffort}". Remove the dispatch effort or match the specialist effort.`,
     );
   }
-  return lockedEffort ?? dispatchEffort ?? parentEffort;
+  const declared = lockedEffort ?? dispatchEffort;
+  if (!profile) return declared ?? parentEffort;
+  const resolved = resolveRoleEffort(declared ?? parentEffort ?? profile.default,
+    { ...profile, default: declared ?? profile.default });
+  if (declared !== undefined && resolved !== declared) throw new Error(`Specialist effort '${declared}' exceeds its profile maximum.`);
+  return resolved;
 }
 
 interface ResolvedChildRoute {
@@ -1326,7 +1338,7 @@ async function runReadChildBody(
   // FEATURE_191 — specialist override switch (no-op when bundle.specialistName
   // is undefined; falls through to v0.7.42 defaults).
   // FEATURE_102 Phase 1 — also surfaces the specialist's explicit model/provider/effort.
-  const { systemPromptOverride, excludeTools: specialistExcludeTools, modelOverride, providerOverride, effortOverride } =
+  const { systemPromptOverride, excludeTools: specialistExcludeTools, modelOverride, providerOverride, effortOverride, reasoningProfile } =
     resolveSpecialistOverride(
       bundle,
       CHILD_AGENT_SYSTEM_PROMPT,
@@ -1391,7 +1403,7 @@ async function runReadChildBody(
     const childStartedAt = Date.now();
     const runFn = await getRunKodaX();
     const childSession = buildChildRunSession(options, options.initialMessages);
-    const childEffort = resolveChildEffort(bundle, effortOverride, options.parentOptions.effort);
+    const childEffort = resolveChildEffort(bundle, effortOverride, options.parentOptions, reasoningProfile);
     let actualProvider = provider;
     let fallbackReason: string | undefined;
     const result = await invokeChildWithFallback(
@@ -1634,6 +1646,7 @@ async function runWriteChildBody(
     modelOverride,
     providerOverride,
     effortOverride,
+    reasoningProfile,
   } =
     resolveSpecialistOverride(
       bundle,
@@ -1705,7 +1718,7 @@ async function runWriteChildBody(
     const childStartedAt = Date.now();
     const runFn = await getRunKodaX();
     const childSession = buildChildRunSession(options, options.initialMessages);
-    const childEffort = resolveChildEffort(bundle, effortOverride, options.parentOptions.effort);
+    const childEffort = resolveChildEffort(bundle, effortOverride, options.parentOptions, reasoningProfile);
     let actualProvider = provider;
     let fallbackReason: string | undefined;
     const result = await invokeChildWithFallback(

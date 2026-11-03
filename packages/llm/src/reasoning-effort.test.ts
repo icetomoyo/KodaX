@@ -23,6 +23,10 @@ const openAiCapability: KodaXReasoningProfile = {
 };
 
 describe('reasoning effort resolver', () => {
+  it.each(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'custom-effort'])(
+    'preserves native effort %s at the legacy compatibility intake', effort => {
+      expect(mapLegacyReasoningModeToEffortIntent(effort)).toBe(effort);
+    });
   it('maps legacy reasoning modes to stable effort intent', () => {
     expect(mapLegacyReasoningModeToEffortIntent('off')).toBe('none');
     expect(mapLegacyReasoningModeToEffortIntent('auto')).toBe('auto');

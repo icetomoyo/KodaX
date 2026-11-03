@@ -1,10 +1,82 @@
 # Space 的 Product Client / Host 接缝
 
-2026-10-18 的 Space 核查样本安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，当时官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前开发树 `0.7.97-alpha.11` 核对，不据此推断 Space 已升级；源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
+## 2026-11-02 后续接手：默认方法与 Quick Ask（alpha.12 之后，未发布）
+
+已发布 alpha.12 及 Space `codex/sdk-alpha12-preparation` 的先行适配仍是各自历史基线；
+本节 Root 新接口已随 `v0.7.97-beta.1` 发布（npm 发布为手动步骤）。Root 不修改 Space 分支、keychain、凭证来源或账号选择。
+完整类型、能力、失败码与恢复限制见 [SDK 迁移说明](SDK_MIGRATION.md)。
+
+专家迁移采用 `productExecutionBinding:1`：可信 Main 的 `authorizeExecution` 注册
+`services.executionBindings.register(resolver)`，仅对 input/recovery 返回该 binding lease；
+其他命令、工具、Workflow、probe/compaction 与独立 Actor 保留各自授权。resolver
+在真实消费时读取最后成功提交的专家/连接器记录，使用传入的 Session 专属 services
+创建 profile，返回 `businessBinding`、`profile.defaultSkill` 与当前凭证/工具 lease。
+在 Main 不拼 slash、不展开方法、不执行 hooks；Renderer 不提供这些 authority。
+普通 Partner 不加工具禁用名单。显式 Skill 一轮优先，之后回到默认；被禁用、卸载或
+撤销的选择在模型请求前拒绝，排队 `admissionError` 保留原问题，用户可重绑或撤回。
+业务变更只采用已确认提交；写入中/失败的草稿不能成为 authority。
+
+冷恢复按 resolver 的 `phase:'recovery'` 使用原 `recovery.snapshot` 和 persona/profile，
+重新注册当前 lease、收紧工具上限。绑定身份/配置不同会拒绝，不偷偷采用当前专家或另一账号。
+方法来源/策略变化会拒绝旧 checkpoint；已完成的准入 hooks 和动态上下文不重放。
+独立 Actor 使用自己的声明。Space 应保留原 inputId、原问题和稳定 Main principal，
+冷 Host 后重新注册 lease，再以原身份重绑尚未消费的输入。
+
+Quick Ask 采用 `sessionPromotion:1`：读 Session 的 `metadataRevision`，生成并保存稳定
+requestId，调用 `sessions.promote({sessionId,requestId,expectedRevision,tag})`。
+确认返回的权威 Session 后才更新侧栏/ephemeral 状态；忙碌、冲突时保留原会话。
+响应丢失/断连后按原 requestId 调 `sessions.readPromotion`，必要时原参数重试。
+Host 原子保存元数据和回执，保留原 Session ID、历史、原生历史、lineage、附件和统计。
+一次 promotion 后不同请求会 conflict；Fork/Recover 新会话拥有独立操作身份。
+提交后重新同步 observation/history 修订及分页边界，不复用写入前的 cursor。
+旧 Host 缺能力时要求安全升级，不能直写文件或另建 Session 绕过。
+
+Space 最新已发布包验收基线为 `codex/sdk-alpha12-preparation@ca8d2313`。其追加的配置
+原子性缺口已在 Root 后续实现补齐：所有核心配置 writer 共用锁与原子发布，坏文件不回落
+空配置。公开完整读取、锁忙/读取失败语义、混合旧 writer 限制及 Main 复合修改方式见
+[配置提交契约](SDK_MIGRATION.md#2026-11-02-核心配置提交补齐alpha12-之后未发布)。
+Space 保留有限的明确锁忙重试，不能重试解析失败、绕过 CAS 或因改名默默采用另一账号。
+
+接手验收还需 Space 自己完成：所有现有专家和普通 Partner 的共享 Host 流程、队列切换/
+禁用/卸载、失败配置提交、显式方法覆盖、重连/冷恢复、连接器撤销、Actor 隔离以及
+Quick Ask 侧栏与丢响应恢复。Root 的协议/真实 Host 测试不能替代这些产品验收。
+
+Root 上轮功能基线 `b385395c9f8686aee182a4c6a38b4f3008421d32` 已在 `origin/KodaX`，
+完整 CI 16 个任务成功、发布跳过；本机冻结全套 19252 通过、87 条件跳过、无失败/TODO。
+设计子仓 `7927f835744643b418d463b10a2e1c1c4bdd12e8` 和 Space `ca8d2313` 保持原样。
+这批接缝已随 `v0.7.97-beta.1` 发布：Space 先锁定该 SDK 包（npm 发布为手动步骤），再完成以上默认方法、排队/
+恢复业务绑定、Quick Ask 与配置/账号保持验收。现有 API_KEY/config/broker 入口保留，
+不得因错误、改名或重试改变账号来源。[完整验收与历史失败](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#最终验收2026-11-02未发布)。
+
+2026-11-02 Space 补审复现的 steer/redirect 两条漏测分支已补回归：同授权 steer 会先解析
+binding 后进入原 Run；Main 保留该 Run 的业务/profile/credential/tool lease，变化仍 conflict。
+redirect 保存显式方法身份，卸载后阻断而不执行默认方法；旧 null 标记也保守恢复或要求
+确认。`skill` 持久字段不改名，继续兼容旧 checkpoint。接手时应锁定同时包含这轮补审
+修正的 SDK，不能仅依赖之前 `b385395c9` 的 CI 通过记录；新增真实 Host 及发布包门禁见
+[Space 补审修正](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#space-独立补审修正2026-11-02)。
+上一轮功能提交为 Root `KodaX@00bfe7ed12407eda722a6bc4b15ace106e413dc5`，精确 SHA 的
+[CI 41415454375](https://github.com/icetomoyo/KodaX/actions/runs/41415454375) 16 个任务通过、
+发布跳过；本机专项 72 项、实际 dist 门禁 3 项通过，双轴复审无剩余项。尚未发新 SDK 包；
+Space 分支、设计子仓与现有 alpha.12 tag 均保持原样，产品接入仍需在升级新包后验收。
+
+随后普通 redirect 的第二次补审发现新旧 null 标记混淆，上述 CI 不覆盖该遗漏场景。
+修正后 Host 为普通 Run 边界持久记录内部 `plainRunBoundary:true`；普通 after_turn 后的
+redirect 不再误作旧显式方法，默认方法保持或消费前成功变更都在独立新 Run 中处理。
+旧 null 无引用的普通输入可在原 principal 重绑后恢复；旧方法卸载、歧义引用仍拒绝回退。
+Main/Renderer 不传该标记、不改 inputId，也不需自行迁移队列文件。发布和 Space 接手
+必须包含本轮修正，[验证记录](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#普通-redirect-的补审修正2026-11-02) 单独列出，尚未 publish。
+本轮普通 redirect 功能提交 `cd151cb1d`，最终含门禁修正候选
+`962a41600d5676460e35866be908ec22b32c301b` 已在 Root 主分支；精确 SHA 的
+[CI 41438153424](https://github.com/icetomoyo/KodaX/actions/runs/41438153424) 16 个任务成功、
+发布跳过，本机相关 83 项、完整包回归 102 项、真实压力 9 次通过，双轴复审无剩余项。
+新 SDK 仍待发布；Space 升级后验收默认保持/变更、普通与显式 redirect、冷恢复和原账号
+保持，继续使用既有 API，不传内部队列标记，也不手改 pending 文件。
+
+2026-10-18 的 Space 核查样本安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，当时官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前开发树 `0.7.97-beta.1` 核对，不据此推断 Space 已升级；源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
 
 ## 2026-10-29 未发布 SDK 接入补充
 
-2026-10-30 的后续未发布修复补齐统一 Host 的 Partner 准入、可信 profile 快照、
+2026-10-30 的后续修复（已随 `v0.7.97-alpha.12` 发布）补齐统一 Host 的 Partner 准入、可信 profile 快照、
 实际 Run workMode 查询、Actor checkpoint 跨进程恢复和配置应用边界。
 采用 [SDK 组合契约](SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布)，不再使用
 旧 Partner inline 例外。`services.createExecutionProfile` 在 Main 基于 Host 实际目录评估显式策略，并保留
@@ -409,3 +481,34 @@ T12-J 已将这些 Root 接缝与另一线程 `a9587af7e` 的 MCP/Skill 修复�
 主分支，并同步设计子仓。Root 的合并后验收另记 FEATURE_302 测试指南 J 节；I 中的
 Space 计数仍是该独立检查点的历史证据。本轮 Space 产品代码继续保留在 `da531f0a`，
 由负责线程接手后续合入、persona/Partner/profile 和生产打包，未推送或发布。
+
+## Issue 376 最新接手说明（2026-11-01，未发布）
+
+Root 本轮修复已提交到本地 `KodaX`：`eb7d1a3bcb1426c8971437077201dc97b0ee7c95`
+（起点 `3cd3e5af`），设计子仓仍为 `8574086208d6b5cc6ff6599c825fe88d986c4dd0`；
+Space 仍保留独立 `da531f0a`，本轮未改 Space、未推送或发布。接手时先锁定包含本轮
+修复的 SDK 字节，再走真实产品包验收：旧 key/配置/env 来源固定与墓碑规则不变；
+OAuth 通过既有 broker 协商请求凭证 v1，刷新同一账号的被拒代次，不重放失败 POST，
+Renderer 仍只拿状态；不要直接转发或持久化封装凭证。云稳定 replay 身份只能由可信
+Main 验证 principal 后提供，不能以 profile 或未签名 claim 代替证明。保留 assistant
+的 `nativeHistory` 增量片段及完整 canonical 内容，验证跨 JSON/分支/恢复时的图片、
+thinking、动态工具、effort 与 cache；旧回调仍兼容，但没有新协商能力的回调不承诺稳定
+刷新身份。统计 cursor 失效返回 conflict 时，从第一页重新同步并按 ID/revision upsert。
+损坏账本/Extension/A2A 与未知锁的显式修复只在可信 Main/本地 CLI 执行：保留原件和
+receipt/fence，实际核对外部效果后独立确认，不能由 UI 自动勾选“已核对”。旧非协作
+writer 必须停止升级。继续保留账号来源选择、换号/撤销、活跃任务与退出/冷 Host 恢复
+门禁，并合并原负责线程的 persona/Partner/profile 工作。全局工具输出自动 GC 尚是
+独立能力，需要先闭合 Root/Space 与附件/分支引用；本轮保留旧原件，没有按 TTL 删除。
+Root 离线 E2E 不代替真实 OAuth/云账号、Claude 签名缓存或 Space 成品验收；完整范围见
+[SDK 迁移说明](SDK_MIGRATION.md)。
+
+能力目录显示也须保留账号边界：不将某个 scope 的拒绝全局套给其他账号。主动 probe
+继续对候选发出有界真实请求；普通生成才沿用 scoped 拒绝缓存。UI 展示请求/实际 effort
+并保留用户默认值，不能为修复显示而扩大授权、发额外探测或偷偷换来源。
+
+Root 最终安装包 E2E 98/98、Ink/Classic/流式历史 PTY 53/53、历史所有者切换 3/3、
+真实 alpha.11 活跃 Host 升级 1/1 及 Windows 独立二进制通过。源码全量扫描的两处
+失败和完整文件复测均保留记录，当前去重汇总为 19,188 通过、87 条件跳过、0 TODO，
+不是一次全绿的冻结全套运行。交接时保留这个证据区别，并在 Space 锁定实际 SDK
+字节后重跑产品侧账号来源、刷新/撤销、恢复、动态工具与原生历史链路。详见
+[本轮最终验收](test-guides/ISSUE_376_v0.7.97_REGRESSION_GUIDE.md#final-local-acceptance-for-the-remaining-seams)。

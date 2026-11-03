@@ -40,6 +40,7 @@ import {
   resolveProviderCredential,
   withProviderInvocationCredential,
   getScopedCloudCredential,
+  getScopedProviderReplayIdentity,
 } from '../provider-credential-context.js';
 
 /**
@@ -273,6 +274,8 @@ export abstract class KodaXBaseProvider {
       this.getReasoningProfile(model), this.config.authentication, this.config.oauth, credential])).digest('hex');
   }
   protected getRequestCredentialFingerprint(): string | undefined {
+    const identity = getScopedProviderReplayIdentity(this.name);
+    if (identity) return credentialFingerprint(['trusted-registration', identity], requestIdentity());
     const plain = resolveProviderCredential(this.name, this.config.credentialSource === 'broker' ? undefined : requestEnvironment(this.config.apiKeyEnv));
     const credential = plain ?? getScopedCloudCredential(this.name);
     if (!credential) return undefined;
@@ -544,10 +547,12 @@ export abstract class KodaXBaseProvider {
     return this.config.apiKeyEnv;
   }
 
-  getCapabilityProfile(): KodaXProviderCapabilityProfile {
-    return cloneCapabilityProfile(
+  getCapabilityProfile(modelOverride?: string): KodaXProviderCapabilityProfile {
+    const profile = cloneCapabilityProfile(
       this.config.capabilityProfile ?? NATIVE_PROVIDER_CAPABILITY_PROFILE,
     );
+    const modality = this.getModelDescriptor(modelOverride)?.multimodalSupport;
+    return modality === undefined ? profile : { ...profile, multimodalSupport: modality };
   }
 
   getConfiguredReasoningCapability(modelOverride?: string): KodaXReasoningCapability {

@@ -6,7 +6,7 @@
 // Produces the following artifacts under dist/:
 //   1. dist/kodax_bootstrap.js — lightweight CLI entry (bin command runs this)
 //   2. dist/kodax_resume.js  — bare-resume discovery and picker
-//   3. dist/kodax_cli.js     — full CLI entry (self-contained)
+//   3. dist/kodax_cli.js     — CLI core (optional commands load private SDK components)
 //   4. dist/index.js         — SDK root entry (`@kodax-ai/kodax`)
 //   5. dist/sdk-agent.js     — SDK subpath `@kodax-ai/kodax/agent`
 //   6. dist/sdk-llm.js       — SDK subpath `@kodax-ai/kodax/llm`
@@ -35,8 +35,10 @@
 // esbuild's automatic transitive import tracking. All third-party packages
 // (and node built-ins) stay external and are listed in root package.json#dependencies.
 //
-// The full CLI stays self-contained; the bootstrap only imports it after
-// optional bare-resume routing. The SDK entries share code via `splitting: true`
+// The bootstrap imports the CLI core after optional bare-resume routing.
+// Node auth/doctor/storage-maintenance/one-shot components load on demand;
+// standalone Bun binaries embed their literal source imports instead.
+// The SDK entries share code via `splitting: true`
 // so re-exporting the same
 // internal package from multiple subpaths doesn't multiply tarball size.
 //
@@ -52,6 +54,7 @@
 const HELPER_SCRIPT_DEPTH_TO_DIST = 3;
 
 import { build } from 'esbuild';
+import { sdkEntriesFromPackage } from './sdk-entrypoints.mjs';
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -362,6 +365,10 @@ const commonOptions = {
   // to '0.0.0' in the banner). Same mechanism Bun --compile uses for the
   // standalone binary build (see packages/repl/src/common/utils.ts:265).
   define: {
+    KODAX_DAEMON_SCHEMA_RESOURCE: 'true',
+    // The loader also keeps a runtime Bun gate: this Node distribution is fed
+    // to Bun --compile later, after first-stage defines have already folded.
+    KODAX_CLI_LAZY_COMPONENTS: 'true',
     KODAX_NATIVE_MANIFESTS_JSON: nativeManifestsJson === undefined
       ? 'undefined'
       : JSON.stringify(nativeManifestsJson),
@@ -396,21 +403,30 @@ const commonOptions = {
 
 // ---- build CLI entry -----------------------------------------------------
 
+// Generate the complete schema from its typed source. Production consumes the
+// same data without carrying the schema-builder program in every CLI bundle.
+const schemaBuild = await build({ ...commonOptions, entryPoints: [path.join(repoRoot, 'src/runtime-daemon/schema.ts')],
+  write: false, metafile: false, sourcemap: false,
+  define: { ...commonOptions.define, KODAX_DAEMON_SCHEMA_RESOURCE: 'false' } });
+const schemaModule = await import(`data:text/javascript;base64,${Buffer.from(schemaBuild.outputFiles[0].text).toString('base64')}`);
+writeFileSync(path.join(distDir, 'runtime-daemon-schema.json'), JSON.stringify(schemaModule.RUNTIME_DAEMON_PROTOCOL_SCHEMA));
+
 log('Building dist/kodax_cli.js (CLI entry)…');
 const cliResult = await build({
   ...commonOptions,
   metafile: true,
   entryPoints: [path.join(repoRoot, 'src/kodax_cli.ts')],
+  external: [...external, './provider-auth-cli.js', './storage-repair-cli.js', './kodax_doctor.js', './one-shot-task.js'],
   outfile: path.join(distDir, 'kodax_cli.js'),
 });
 assertStartupImportBoundary('CLI', cliResult, { eagerOnly: true });
 assertSingleProviderCredentialModule('CLI', cliResult);
 
 const cliBytes = statSync(path.join(distDir, 'kodax_cli.js')).size;
-// SDK contracts, the Windows Job gate, the Host view-read close fence and
-// authorized tool-result recovery and Host-scoped Skill lookup add <21 KiB
-// without new dependencies. Dependency and cold-entry fences remain enforced.
-assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024 + 21 * 1024);
+if (writeMetafile) writeFileSync(path.join(distDir, 'cli-meta.json'), JSON.stringify(cliResult.metafile));
+// Match the stricter published-artifact fence: preserve 64 KiB of CLI headroom.
+// Audited program data stays in packaged resources, without trimming behavior.
+assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024 - 64 * 1024);
 log(`  ✓ dist/kodax_cli.js (${(cliBytes / 1024).toFixed(0)} kB)`);
 
 // Bare `-r` must show the picker without evaluating the full CLI graph.
@@ -467,10 +483,14 @@ log(`  ✓ dist/kodax_bootstrap.js (${(bootstrapBytes / 1024).toFixed(0)} kB)`);
 // — Node's ESM resolver follows chunk imports transparently, so splitting
 // does not affect the helper-depth contract verified below.
 
-const sdkEntryNames = ['index', 'sdk-agent', 'sdk-llm', 'sdk-coding', 'sdk-media', 'sdk-repl', 'sdk-skills', 'sdk-mcp', 'sdk-session', 'sdk-runtime', 'sdk-client', 'sdk-sandbox', 'sdk-a2a', 'sdk-experimental-memory'];
-const sdkEntryPoints = Object.fromEntries(sdkEntryNames.map((name) => [
-  name, path.join(repoRoot, 'src', name === 'sdk-runtime' ? 'sdk-runtime-public.ts' : name + '.ts'),
-]));
+const sdkSources = sdkEntriesFromPackage(rootPkg);
+const sdkEntryNames = Object.keys(sdkSources);
+const sdkEntryPoints = Object.fromEntries(Object.entries(sdkSources).map(([name, source]) => [name, path.join(repoRoot, source)]));
+// Internal CLI component, sharing the SDK chunks; not a new public package export.
+sdkEntryPoints['provider-auth-cli'] = path.join(repoRoot, 'src/provider-auth-cli.ts');
+sdkEntryPoints['storage-repair-cli'] = path.join(repoRoot, 'src/storage-repair-cli.ts');
+sdkEntryPoints.kodax_doctor = path.join(repoRoot, 'src/kodax_doctor.ts');
+sdkEntryPoints['one-shot-task'] = path.join(repoRoot, 'src/one-shot-task.ts');
 
 log(`Building ${sdkEntryNames.length} SDK entries (splitting on)…`);
 const sdkResult = await build({
@@ -593,6 +613,7 @@ log(`Copying provider-capabilities.json → ${path.relative(repoRoot, capJsonDst
 cpSync(capJsonSrc, capJsonDst);
 cpSync(path.join(repoRoot, 'packages/coding/src/self-knowledge/manual-topics.json'), path.join(distDir, 'manual-topics.json'));
 cpSync(path.join(repoRoot, 'packages/coding/src/prompts/static-text.json'), path.join(distDir, 'static-text.json'));
+cpSync(path.join(repoRoot, 'src/windows-native-scripts.json'), path.join(distDir, 'windows-native-scripts.json'));
 cpSync(path.join(repoRoot, 'packages/repl/src/common/generated-config-templates.json'), path.join(distDir, 'generated-config-templates.json'));
 log(`  ✓ dist/provider-capabilities.json copied`);
 

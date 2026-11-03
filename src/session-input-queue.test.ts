@@ -1,6 +1,68 @@
 import { expect, it, vi } from 'vitest';
-import { SessionInputQueue } from './session-input-queue.js';
+import { SessionInputQueue, type PendingSessionInput } from './session-input-queue.js';
 import { withProductExecution, type ProductExecutionContext } from './product-execution-authorization.js';
+
+it.each([{}, { explicitSkill: null }, { explicitSkill: 'explicit-method' }, { explicitSkill: null, plainRunBoundary: true as const }])
+  ('retains persisted Run-boundary and legacy Skill markers across JSON restore (%#)', marker => {
+    const saved = [{ input: { sessionId: 's', inputId: 'pending', text: '/explicit-method Keep original arguments',
+      delivery: 'redirect' as const, targetRunId: 'old-run' }, skill: true, ...marker }];
+    const queue = new SessionInputQueue(() => {});
+    queue.restore(JSON.parse(JSON.stringify(saved)) as typeof saved);
+    expect(queue.snapshot('s')).toEqual(saved);
+    expect(queue.batch('s')).toHaveLength(1);
+    expect(queue.batch('s')[0]?.input.text).toBe('/explicit-method Keep original arguments');
+  });
+
+it('commits plain Run boundaries before changing memory and retains their intent through cold JSON restore', async () => {
+  let fail = false;
+  let saved: readonly PendingSessionInput[] = [];
+  const queue = new SessionInputQueue(() => {}, (_session, pending) => {
+    if (fail) throw new Error('EIO');
+    saved = JSON.parse(JSON.stringify(pending)) as readonly PendingSessionInput[];
+  });
+  const input = { sessionId: 's', inputId: 'plain', text: '/unknown-method Keep raw input', delivery: 'redirect' as const, targetRunId: 'old-run' };
+  queue.enqueue(input, false);
+  fail = true;
+  expect(() => queue.deferToRunBoundary('s', 'plain')).toThrow('EIO');
+  expect(queue.snapshot('s')).toEqual([{ input, skill: false }]);
+  fail = false;
+  queue.deferToRunBoundary('s', 'plain');
+  expect(saved).toEqual([{ input, skill: true, explicitSkill: null, plainRunBoundary: true }]);
+  const restored = new SessionInputQueue(() => {});
+  restored.restore(saved);
+  expect(restored.snapshot('s')).toEqual(saved);
+  expect(await restored.consumePlainBatch('s', 'active-run', async () => {})).toEqual([]);
+  expect(restored.batch('s')).toMatchObject([{ input, plainRunBoundary: true }]);
+});
+
+it.each([
+  { skill: true, explicitSkill: null, plainRunBoundary: 'true' },
+  { skill: true, explicitSkill: 'selected-method', plainRunBoundary: true },
+  { skill: 'true', explicitSkill: null, plainRunBoundary: true },
+])('rejects malformed plain-boundary provenance before restoring any input (%#)', marker => {
+  const queue = new SessionInputQueue(() => {});
+  const saved = [{ input: { sessionId: 's', inputId: 'bad', text: 'Keep' }, ...marker }];
+  expect(() => queue.restore(JSON.parse(JSON.stringify(saved)) as readonly PendingSessionInput[])).toThrow(/boundary/);
+  expect(queue.list('s')).toEqual([]);
+});
+
+it('retains rejected queued intent across restart and reports a cleared error only after original-principal rebind', () => {
+  const queue = new SessionInputQueue(() => {});
+  const context: ProductExecutionContext = { principalId: 'A', key: 'lease', bindRun: async input => input };
+  const input = { sessionId: 's', inputId: 'blocked', text: 'Keep my original question' };
+  withProductExecution(context, () => queue.enqueue(input, false));
+  queue.block('s', 'blocked', { code: 'execution_binding_rejected', message: 'Disabled expert' });
+  const saved = queue.snapshot('s');
+  expect(queue.batch('s')).toEqual([]);
+  expect(queue.read('s', 'blocked')?.admissionError?.code).toBe('execution_binding_rejected');
+  const restored = new SessionInputQueue(() => {});
+  withProductExecution(context, () => restored.restore(saved));
+  expect(restored.batch('s')).toEqual([]);
+  withProductExecution({ ...context, principalId: 'B' }, () => expect(() => restored.rebind(input)).toThrow(/principal/));
+  withProductExecution(context, () => expect(restored.rebind(input)).not.toHaveProperty('admissionError'));
+  expect(restored.batch('s')).toMatchObject([{ input }]);
+  expect(restored.snapshot('s')[0]).not.toHaveProperty('admissionError');
+});
 
 it.each([undefined, 'immediate', 'after_turn', 'redirect'] as const)('preserves exact queued delivery intent %s across restart and fresh authorization', (delivery) => {
   const input = { sessionId: 's', inputId: 'pending', text: 'Keep the original constraint.',

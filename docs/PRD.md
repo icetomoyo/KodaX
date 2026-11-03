@@ -2,13 +2,15 @@
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
 
-> Last updated: 2026-10-29
+> Last updated: 2026-11-02
 >
-> Current implementation baseline: `@kodax-ai/kodax@0.7.97-alpha.11`.
+> Current implementation baseline: `@kodax-ai/kodax@0.7.97-beta.1`.
 > The GitHub release is automated from the release tag; npm publication
 > remains manual.
 > This baseline advertises Windows `sandboxRuntime:11`;
-> `runtimeExitSettlement:2` and `crashOutcomeModel:2` are unchanged.
+> `crashOutcomeModel:2` remains. The unified Host cutover retired
+> `runtimeExitSettlement` and `settleKodaXRuntimeExit`; historical version
+> descriptions do not restore these APIs. See [current migration](SDK_MIGRATION.md).
 >
 > This document describes the current product. Historical pre-v0.7.43
 > chain/harness designs have been removed from this current PRD because they no

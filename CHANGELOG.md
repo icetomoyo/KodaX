@@ -6,7 +6,97 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-beta.1] - 2026-11-02
+
+First beta of the v0.7.97 line: Space-facing Host execution and Session
+seams complete — Main-owned capability-gated default Skills and
+consumption-time execution bindings select committed expert/connector state
+with fresh credential/tool leases at actual Product input consumption, and
+Quick Ask promotes Sessions through Host-owned revision checks with durable
+request-ID reconciliation while preserving the original Session and history.
+Plain redirect Run boundaries persist apart from legacy explicit Skill queues
+and survive cold recovery with strict missing-method rejection; Main bindings
+resolve before steer authority and retain the active Run's principal and
+lease boundaries. Every core configuration update publishes atomically under
+the shared lock — old bytes stay on failed writes, damaged provider
+collections are rejected before mutation, configuration errors stay free of
+secrets, and Windows reader-denied replacements retry within the same staged
+file and write lock. The complete daemon schema ships as packaged data inside
+the npm inventory while the CLI keeps its size budget; owner-local temporary
+Run results stay awaitable after Host Session cleanup. Windows protected
+paths retain lexical and physical short-name fences with credential staging
+DACLs replaced without broad grants. Bare `resume` discovery paints immediate
+`Finding sessions` feedback without extra startup work. Every v0.7.96 stable
+and v0.7.97-alpha.1 through alpha.12 contract is retained. npm publication
+remains a manual maintainer action.
+
+### Added
+
+- Add capability-gated Main default Skills and execution-binding resolvers for
+  committed expert/connector selection at actual Product input consumption;
+  retain original recovery bindings with fresh credential/tool leases.
+- Add Host-owned, revision-checked Session promotion with durable request-ID
+  reconciliation for Quick Ask, preserving the original Session and history.
+
+### Fixed
+
+- Distinguish plain redirect Run boundaries from legacy explicit Skill queues,
+  retaining that intent through cold recovery without weakening missing-method
+  rejection or changing the original input, principal, or authority.
+- Resolve Main bindings before checking steer authority, retaining the active
+  Run's principal and lease boundaries; preserve explicit method identity for
+  redirects, including conservative recovery of older null-marked queue records.
+- Publish every core configuration update under the existing shared lock with
+  atomic replacement; retain old bytes on failed writes, reject damaged saved
+  provider collections before mutation, and keep configuration errors free of secrets.
+  Bound Windows reader-denied replacements to the same staged file and write
+  lock, retaining the old configuration on permanent denial.
+- Preserve rejected queued inputs and explicit Skill identity; retain prepared
+  Skill admission context without replaying hooks or adopting changed policies
+  during checkpoint recovery. New execution intent requires a compatible Host.
+- Generate the complete daemon schema as packaged data, preserving the existing
+  CLI size budget and release workflow matrix/trigger behavior.
+- Keep owner-local temporary Run results awaitable after Host Session cleanup;
+  include generated protocol data in the actual npm package inventory.
+
+- Preserve lexical and physical protected paths across Windows short names;
+  keep missing SSH identities excluded and native cache anchors free of reparse
+  aliases. Replace credential staging DACLs without retaining explicit broad
+  grants. Preserve Undo's native identity and CAS fences while correcting
+  canonical test fixtures and retaining failed sandbox bootstrap diagnostics.
+- Paint `Finding sessions` startup feedback while bare-resume discovery scans
+  sessions and clear it before the picker or empty-list notice, without adding
+  file reads, workers, rebuilds or other startup work to the loading path.
+
+---
+
+## [0.7.97-alpha.12] - 2026-11-01
+
+Twelfth alpha of the v0.7.97 line: public product execution converges on the
+independent shared Host with retired embedded/default construction, inline
+owner switching and function-based external-agent Hosts, plus abandoned-owner
+policy migration with a one-way fence; FEATURE_302 lands native
+provider/OAuth credential parity across the Responses transport, ordered
+history, native cloud protocols, Mistral Pi, native media classification,
+shared file credentials and hidden API-key setup; Claude 5.5 history fragments
+and per-message effort controls join the LLM layer; and the 2026-11-01
+full-chain audit's Windows recovery, credential and permission hardening
+ships. Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.11 contract is
+retained. npm publication remains a manual maintainer action.
+
 ### Changed
+
+- Store execution statistics in append-only, Session-root-scoped journals;
+  retain legacy projections and expire pagination cursors after projection
+  recovery. Keep unknown outcomes non-authoritative for execution.
+- Load optional Node CLI auth, doctor, storage maintenance and one-shot
+  components on demand within the existing size reserve; standalone binaries
+  embed those components and public SDK entry points remain unchanged.
+- Add native Claude 5.5 history fragments, ordered thinking/tool blocks,
+  inline tool/system updates and per-message effort controls. Preserve
+  admitted images across restore and keep cache policy out of tool arguments.
 
 - Converge public Runtime ownership on the independent shared Host. Retire
   embedded/default construction, inline owner switching and function-based
@@ -20,6 +110,58 @@ All notable changes to this project will be documented in this file.
   API and downgrade limits.
 
 ### Fixed
+
+- Refresh rejected OAuth credential generations through the existing broker
+  without replaying the failed request or changing the selected account.
+  Preserve trusted account identity across refresh and fence revoked leases.
+- Publish migration/OAuth/storage lock owners completely; add explicit local
+  inspection, retained backups, repair fences and separately attested recovery
+  for supported damaged ledgers/snapshots and unidentified historical locks.
+- Prevent ambient Anthropic SDK headers from replacing the selected credential;
+  keep unsupported Claude sampling/prefill and hook effort overrides off wire.
+- Preserve explicit non-retryable provider facts through returned child
+  failures while retaining configured fallback for transient HTTP failures.
+- Prevent terminal quota, authentication and explicitly non-retryable child
+  failures from triggering cross-provider fallback. Diagnose retained Session
+  writer locks and lock-record syntax without disclosing owner fields or
+  reclaiming unknown ownership; add a Windows streaming-history PTY CI gate.
+- Keep help, version and read-only doctor available with corrupt configuration;
+  retain execution/write fencing and diagnose exact lock locations without
+  exposing config contents or following directory aliases.
+- Pin Windows CLI-provider child birth identities through delayed exit events
+  and retain captured descendants across intermediate-parent exit.
+- Preserve explicit SDK Skill catalogs, including empty overrides, across SA/AMA
+  learned bindings and compaction. Keep the stricter CLI size reserve using an
+  audited, lazily assembled broker program resource with identical emitted bytes.
+
+- Restore AMA Root learned Skill admission and owned finalization; explicit SDK
+  Skill calls now settle the existing policy and hooks without a model request.
+  Keep empty learned stores off foreground initialization and discover protected
+  formal names when a review actually commits a Skill.
+- Correct verified model ceilings, generic Skill aliases, cache pricing and Kimi
+  cache-write usage; retain default output budgets, fixed IDs and account choices.
+  Project unsupported historical images explicitly without rewriting history.
+- Derive SDK build/type entries from package exports and compile published examples.
+  Share current Runtime guardrail facts while retaining independent minimums.
+  Add explicit storage-capacity inspection and isolate cleanup state by directory.
+- Discover Windows source regressions automatically and retain the native OS gate.
+  Publish complete config/Host lock records, recover verified dead owners without
+  TTL stealing, and retry completed migration/release cleanup. Config and extension
+  publication failures retain original bytes, including legacy credential fields.
+- Isolate corrupt execution statistics, pending inputs and agent event ledgers
+  without replaying unknown effects or discarding queued intent. Retry failed CLI
+  credential bootstrap and load linked OAuth registrations only when selected;
+  preserve profile/account binding, revocation and Host replacement fences.
+- Reject unreadable or invalid existing core configuration in CLI and SDK
+  execution instead of selecting default credentials. Retain the original bytes,
+  permit first-use missing configuration, and retry after explicit repair.
+- Prevent native Anthropic API-key requests from inheriting ambient Bearer auth,
+  and omit unsigned foreign thinking on native Anthropic OAuth tool history.
+  Constrain SDK shell prefix fallback and protect governed Memory mutation at
+  sandbox and obvious direct Host targets. Plan recovery names the actual
+  `exit_plan_mode` approval flow.
+- Ship configuration templates, static prompts and audited native scripts in standalone
+  archives; load the byte-identical native programs lazily within the CLI budget.
 
 - Resolve explicit and queued Skill references against the executing Host's
   config home, keeping separate Hosts' user Skills and registries isolated.
@@ -61,6 +203,9 @@ All notable changes to this project will be documented in this file.
   work modes, original tool results, token estimates, task reports, question
   deadlines, Skill policy and sandbox readiness. Exact query IDs/aliases now
   take precedence over keyword ranking, preserving custom SDK manual topics.
+- Keep trusted-text, POSIX sandbox and storage-repair test fixtures on
+  canonical temporary roots so macOS runner paths under the `/var` symbolic
+  link satisfy the hardened agent-home and filesystem-alias fences.
 
 ---
 

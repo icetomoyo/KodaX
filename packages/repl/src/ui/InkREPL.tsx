@@ -25,6 +25,7 @@ import React, {
   useMemo,
 } from "react";
 import { usePromptHistoryBrowse } from './hooks/usePromptHistoryBrowse.js';
+import { useEffortShortcut } from './hooks/useEffortShortcut.js';
 import { capturePromptBrowseAnchor, resolvePromptBrowseAnchor } from './utils/prompt-history-browse.js';
 import { applyClientSessionViewSettings, changedClientSessionSettings, clientSessionSettings } from './client-session-settings.js';
 import type { RuntimeStopCallbacks, RuntimeStopControl } from '../interactive/runtime-stop.js';
@@ -5776,18 +5777,21 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     ),
     [dialogConfirmState, dialogRequestState],
   );
+  const { cycle: cycleHostEffort, cancel: cancelEffortShortcut, notice: effortShortcutNotice } = useEffortShortcut(
+    selectNextHostEffort, publishCommandFeedback, context.sessionId,
+  );
   const selectionCopyNoticeSurface = useMemo(() => {
-    if (!selectionCopyNotice) {
+    const notice = effortShortcutNotice ?? selectionCopyNotice;
+    if (!notice) {
       return undefined;
     }
 
     return (
       <ClipboardToastSurface
-        text={selectionCopyNotice.text}
-        tone={selectionCopyNotice.tone}
+        {...notice}
       />
     );
-  }, [selectionCopyNotice]);
+  }, [selectionCopyNotice, effortShortcutNotice]);
   // Overlay surface: only used for transient toasts (ClipboardToast) that have
   // their own backgroundColor fill. Dialogs and suggestions are ALWAYS inline
   // to avoid terminal transparency bleed-through (Issue 112).
@@ -6025,41 +6029,47 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }
 
   const selectClientConfig = useCallback(async (next: CurrentConfig,
-    explicit: readonly (keyof ClientSessionSettingsPatch)[]): Promise<void> => {
+    explicit: readonly (keyof ClientSessionSettingsPatch)[], signal?: AbortSignal): Promise<void> => {
+    signal?.throwIfAborted();
     const plane = options.clientPlane;
     if (plane?.updateSettings) {
       const sessionId = context.sessionId;
       const patch = changedClientSessionSettings(clientSessionSettings(currentConfigRef.current, options.maxIter),
         clientSessionSettings(next, options.maxIter), explicit);
       const write = async () => {
+        if (signal?.aborted) return;
         await plane.updateSettings!(sessionId, patch);
+        if (signal?.aborted) return;
         settingsSelectionRef.current = { sessionId, patch: { ...settingsSelectionRef.current.patch, ...patch } };
       };
       settingsWriteRef.current = settingsWriteRef.current.then(write, write);
       await settingsWriteRef.current;
     }
+    signal?.throwIfAborted();
     currentConfigRef.current = next;
     setCurrentConfig(next);
   }, [context.sessionId, options.clientPlane, options.maxIter]);
 
-  const cycleHostEffort = async (): Promise<void> => {
+  async function selectNextHostEffort(signal: AbortSignal) {
     const current = currentConfigRef.current;
     try {
       const cycle = await options.catalog!.reasoningEfforts({ provider: current.provider, model: current.model });
+      signal.throwIfAborted();
       if (!cycle.length) return;
       const shown = current.permissionMode === 'plan' && !current.effortOverride && current.planModeEffort !== undefined
         ? current.planModeEffort : current.effortOverride ? current.effort : undefined;
       const index = nearestCycleIndex(cycle, shown === 'none' ? 'off' : shown ?? 'auto');
-      const result = await hostEffortCommand([cycle[(index + 1) % cycle.length]!], {
+      const next = cycle[(index + 1) % cycle.length]!;
+      const result = await hostEffortCommand([next], {
         config: options.config, catalog: options.catalog,
-        setEffort: async effort => selectClientConfig({ ...currentConfigRef.current, effort, effortOverride: effort !== undefined }, ['effort']),
-        setReasoningMode: async reasoningMode => selectClientConfig({ ...currentConfigRef.current, reasoningMode, thinking: reasoningMode !== 'off' }, ['reasoningMode', 'thinking']),
+        setEffort: async effort => selectClientConfig({ ...currentConfigRef.current, effort, effortOverride: effort !== undefined }, ['effort'], signal),
+        setReasoningMode: async reasoningMode => selectClientConfig({ ...currentConfigRef.current, reasoningMode, thinking: reasoningMode !== 'off' }, ['reasoningMode', 'thinking'], signal),
       }, current);
-      await publishCommandFeedback(result.message ?? '');
+      return result.success ? { success: true, message: `Effort: ${next === 'off' ? 'none' : next}` } : result;
     } catch (error) {
-      await publishCommandFeedback(`Host effort selection failed: ${String(error)}`);
+      return { success: false, message: `Host effort selection failed: ${String(error)}` };
     }
-  };
+  }
 
   const setSessionPermissionMode = useCallback(async (mode: PermissionMode): Promise<void> => {
     const canonicalMode = canonicalizePermissionMode(mode);
@@ -8983,6 +8993,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [flushPendingPersistContextState]);
 
   const requestGracefulExit = useCallback(async () => {
+    cancelEffortShortcut();
     if (gracefulExitRunnerRef.current) {
       return gracefulExitRunnerRef.current;
     }
@@ -9021,6 +9032,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     return gracefulExitRunnerRef.current;
   }, [
     abort,
+    cancelEffortShortcut,
     clearResponse,
     clearThinkingContent,
     clearToolInputContent,

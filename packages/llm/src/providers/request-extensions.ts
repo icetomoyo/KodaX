@@ -3,8 +3,9 @@ import { createHash } from 'node:crypto';
 import type { KodaXCacheCapabilities, KodaXProviderRequestMetadata, KodaXProviderStreamOptions, KodaXTokenUsage } from '../types.js';
 import { KodaXProviderError } from '../errors.js';
 import { applyCachePolicy } from './cache-policy.js';
+import { cacheWritePartition } from './cache-usage.js';
 
-interface RequestExtensions { environment: Readonly<Record<string, string | undefined>>; options: KodaXProviderStreamOptions; metadata: KodaXProviderRequestMetadata; cache?: KodaXCacheCapabilities; cacheDisabled: boolean; }
+interface RequestExtensions { environment: Readonly<Record<string, string | undefined>>; options: KodaXProviderStreamOptions; metadata: KodaXProviderRequestMetadata; cache?: KodaXCacheCapabilities; cacheDisabled: boolean; measuredCacheWrites?: Readonly<Record<string, unknown>>; }
 const requests = new AsyncLocalStorage<RequestExtensions>();
 const protectedFields = new Set(['model', 'modelId', 'messages', 'input', 'instructions', 'system', 'systemInstruction', 'contents', 'context',
   'tools', 'tool_choice', 'toolChoice', 'toolConfig', 'max_tokens', 'max_completion_tokens', 'max_output_tokens', 'maxTokens', 'maxOutputTokens',
@@ -37,6 +38,9 @@ export function requestEnvironment(key: string): string | undefined {
 export function requestIdentity(): string | undefined { return requests.getStore()?.options.identity; }
 export function withCacheWritePartition(usage: KodaXTokenUsage | undefined): KodaXTokenUsage | undefined {
   const current = requests.getStore();
+  if (usage?.cachedWriteTokens !== undefined && current?.measuredCacheWrites !== undefined) {
+    return { ...usage, cachedWriteTokensByTtl: cacheWritePartition(usage.cachedWriteTokens, current.measuredCacheWrites) };
+  }
   return usage?.cachedWriteTokens && !usage.cachedWriteTokensByTtl && (current?.options.cacheRetention === 'long' || current?.cache?.dialect === 'openai-options')
     ? { ...usage, cachedWriteTokensByTtl: { unknown: usage.cachedWriteTokens } } : usage;
 }
@@ -61,6 +65,10 @@ function extensions(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) invalid('Request extensions must be an object.');
   if (Object.keys(value).some(key => protectedFields.has(key) || ['__proto__', 'constructor', 'prototype'].includes(key))) invalid('Request extensions cannot override protected protocol fields.');
   const options = value as Record<string, unknown>;
+  if (Object.hasOwn(options, 'output_config') && (!options.output_config || typeof options.output_config !== 'object'
+    || Array.isArray(options.output_config) || 'effort' in options.output_config)) {
+    invalid('Request extensions cannot override reasoning effort.');
+  }
   validateProviderOptions(options.providerOptions);
   return options;
 }
@@ -80,13 +88,16 @@ export async function prepareProviderPayload<T extends object>(payload: T, shape
   const { options, metadata } = current;
   payload = applyCachePolicy(payload, current.cache, options.cacheRetention, current.cacheDisabled, metadata.provider);
   if (options.temperature !== undefined && (!Number.isFinite(options.temperature) || options.temperature < 0)) invalid('Temperature must be a finite non-negative number.');
-  const additions = { ...extensions(options.samplingParams ?? {}), ...(options.temperature !== undefined ? { temperature: options.temperature } : {}) };
+  const additions: Record<string, unknown> = { ...extensions(options.samplingParams ?? {}), ...(options.temperature !== undefined ? { temperature: options.temperature } : {}) };
   let patch: Record<string, unknown> | void;
   try { patch = await options.onPayload?.(structuredClone(payload) as Record<string, unknown>, { ...metadata }); }
   catch (error) { hookFailure('onPayload', error); }
   if (patch !== undefined) Object.assign(additions, extensions(patch));
   const container = shape === 'google' ? 'generationConfig' : shape === 'bedrock' ? 'inferenceConfig' : shape === 'pi' ? 'options' : undefined;
   const original = payload as Record<string, unknown>;
+  if (additions.output_config && typeof additions.output_config === 'object') {
+    additions.output_config = { ...(original.output_config as object | undefined), ...additions.output_config };
+  }
   const prepared = container ? { ...payload, [container]: { ...(original[container] as object), ...additions } } : { ...payload, ...additions };
   if (observe) observePreparedProviderPayload(prepared);
   return prepared as T;
@@ -110,7 +121,14 @@ export function requestExtensionFetch(fallback: typeof globalThis.fetch): typeof
     const current = requests.getStore();
     if (!current) return fallback(input, init);
     const headers = requestHeaders(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    current.measuredCacheWrites = undefined;
     const response = await (current.options.fetch ?? fallback)(input, { ...init, headers, redirect: 'error' });
+    const short = response.headers.get('Msh-Usage-Cache-Write-Tokens-5m');
+    const long = response.headers.get('Msh-Usage-Cache-Write-Tokens-1h');
+    if (short !== null || long !== null) {
+      const tokens = (value: string | null) => value === null ? undefined : /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) ? Number(value) : NaN;
+      current.measuredCacheWrites = { '5m': tokens(short), '1h': tokens(long) };
+    }
     try { await current.options.onResponse?.(response.clone(), { ...current.metadata }); }
     catch (error) { hookFailure('onResponse', error); }
     init?.signal?.throwIfAborted();

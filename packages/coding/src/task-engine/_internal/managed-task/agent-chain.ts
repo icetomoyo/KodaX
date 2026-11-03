@@ -670,9 +670,8 @@ export function buildRunnerAgentChain(ctx: KodaXToolExecutionContext,
       ),
     ],
     handoffs: undefined,
-    // Worker plans + executes, so it can escalate to deep reasoning after a
-    // revise signal to break retry loops.
-    reasoning: { default: 'balanced', max: 'deep', escalateOnRevise: true },
+    // The built-in Worker inherits the session effort. Legacy role defaults
+    // must not silently lower high/xhigh/max selected by the user.
   };
 
   const workerHandoffs: Handoff[] = [];

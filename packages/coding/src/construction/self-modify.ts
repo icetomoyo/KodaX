@@ -31,6 +31,8 @@
  */
 
 import type { AgentContent, GuardrailRef } from './types.js';
+import { mapLegacyReasoningModeToEffortIntent, type KodaXWireReasoningEffort } from '@kodax-ai/llm';
+import { compareEfforts } from '../reasoning-effort.js';
 
 /**
  * Outcome of a hard-check pass. A `reject` outcome carries the rule
@@ -77,14 +79,7 @@ export type SelfModifyRuleId =
   | 'budget-exhausted'
   | 'self-modify-disabled';
 
-/**
- * Reasoning depth ordering used by the ceiling check. Mirrors the
- * `'quick' < 'balanced' < 'deep'` ordering implied by
- * `AgentReasoningRef`. Centralizing the rank here lets the ceiling
- * comparison stay a one-liner without scattering ad-hoc maps.
- */
-const REASONING_RANK = { quick: 0, balanced: 1, deep: 2 } as const;
-type ReasoningLevel = keyof typeof REASONING_RANK;
+type ReasoningLevel = KodaXWireReasoningEffort;
 
 export interface ValidateSelfModifyInput {
   /** Prior `AgentContent` from the currently-active manifest. */
@@ -101,10 +96,8 @@ export interface ValidateSelfModifyInput {
   readonly prevKind: 'tool' | 'agent';
   readonly nextKind: 'tool' | 'agent';
   /**
-   * System-configured ceiling on reasoning depth. The agent's new
-   * `reasoning.max` may not exceed this. Defaults to `'deep'` (no
-   * ceiling effectively) when undefined — matches the existing
-   * AgentReasoningRef contract.
+   * System-configured effort ceiling. Omitted means no configured ceiling.
+   * Legacy SDK values normalize before comparison.
    */
   readonly userReasoningCeiling?: ReasoningLevel;
   /**
@@ -247,7 +240,7 @@ function checkReasoningCeiling(
   if (ceiling === undefined) return { ok: true };
   const proposed = next.reasoning?.max;
   if (proposed === undefined) return { ok: true };
-  if (REASONING_RANK[proposed] > REASONING_RANK[ceiling]) {
+  if (compareEfforts(mapLegacyReasoningModeToEffortIntent(proposed), mapLegacyReasoningModeToEffortIntent(ceiling)) > 0) {
     return {
       ok: false,
       rule: 'reasoning-ceiling',

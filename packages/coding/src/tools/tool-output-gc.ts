@@ -42,6 +42,36 @@ export interface ToolOutputGcResult {
   readonly bytesRemoved: number;
 }
 
+export interface ToolOutputStorageUsage {
+  readonly status: 'complete' | 'partial' | 'missing';
+  readonly files: number;
+  readonly bytes: number;
+  /** Flat namespace only; child namespaces require their own inspection. */
+  readonly directories: number;
+  readonly failed: number;
+}
+
+function isMissing(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+}
+
+/** Explicit read-only capacity inspection, never a liveness proof or an automatic sweep. */
+export async function inspectToolOutputStorage(dir: string): Promise<ToolOutputStorageUsage> {
+  let names: string[];
+  try { names = await fs.readdir(dir); }
+  catch (error: unknown) { return { status: isMissing(error) ? 'missing' : 'partial', files: 0, bytes: 0, directories: 0, failed: isMissing(error) ? 0 : 1 }; }
+  let files = 0, bytes = 0, directories = 0, failed = 0;
+  for (const name of names) {
+    try {
+      const stat = await fs.lstat(path.join(dir, name));
+      if (stat.isFile()) { files++; bytes += stat.size; }
+      else if (stat.isDirectory()) directories++;
+      else failed++; // Do not follow aliases into another storage namespace.
+    } catch { failed++; }
+  }
+  return { status: failed ? 'partial' : 'complete', files, bytes, directories, failed };
+}
+
 /**
  * Walk `dir` once and unlink any regular file whose mtime is older than
  * `now - ttlMs`. Subdirectories are ignored (defensive: a future feature
@@ -68,8 +98,8 @@ async function cleanupExpiredToolOutputsInPlace(
   let entries: string[];
   try {
     entries = await fs.readdir(dir);
-  } catch {
-    return { scanned: 0, removed: 0, failed: 0, bytesRemoved: 0 };
+  } catch (error: unknown) {
+    return { scanned: 0, removed: 0, failed: isMissing(error) ? 0 : 1, bytesRemoved: 0 };
   }
 
   let scanned = 0;
@@ -113,8 +143,9 @@ function normalizeArtifactPath(filePath: string): string {
 
 /**
  * Production-safe sweep: age is only a grace gate; a referenced artifact is
- * retained regardless of age. Callers must supply references from every live
- * and resumable session in their storage scope.
+ * retained regardless of age. The operator must stop writers and supply the
+ * complete reference closure from every SDK/Host storage root sharing this
+ * namespace, including manifest/stream dependencies. Unknown scope means retain.
  */
 export async function cleanupUnreferencedToolOutputs(
   dir: string,
@@ -137,8 +168,8 @@ async function cleanupUnreferencedToolOutputsInPlace(
   let entries: string[];
   try {
     entries = await fs.readdir(dir);
-  } catch {
-    return { scanned: 0, removed: 0, failed: 0, bytesRemoved: 0 };
+  } catch (error: unknown) {
+    return { scanned: 0, removed: 0, failed: isMissing(error) ? 0 : 1, bytesRemoved: 0 };
   }
 
   const referenced = new Set([...referencedPaths].map(normalizeArtifactPath));
@@ -163,10 +194,14 @@ async function cleanupUnreferencedToolOutputsInPlace(
   return { scanned, removed, failed, bytesRemoved };
 }
 
-// In-process throttle state — reset on process restart. Not exported;
-// `__resetGcCooldownForTests` below punches through for the test file.
-let lastGcAtMs = 0;
-let inFlight: Promise<ToolOutputGcResult | null> | null = null;
+// Hosts may manage multiple storage roots in one process.
+const gcStates = new Map<string, { lastGcAtMs: number; inFlight: Promise<ToolOutputGcResult | null> | null }>();
+function stateFor(dir: string) {
+  const key = normalizeArtifactPath(dir);
+  let state = gcStates.get(key);
+  if (!state) { state = { lastGcAtMs: 0, inFlight: null }; gcStates.set(key, state); }
+  return state;
+}
 
 /**
  * Throttled wrapper for an explicit host/operator cleanup request. It is not
@@ -181,23 +216,24 @@ export function maybeRunToolOutputGc(
   ttlMs: number = DEFAULT_TOOL_OUTPUT_TTL_MS,
   now: number = Date.now(),
 ): Promise<ToolOutputGcResult | null> {
-  if (inFlight) {
-    return inFlight;
+  const state = stateFor(dir);
+  if (state.inFlight) {
+    return state.inFlight;
   }
-  if (now - lastGcAtMs < GC_COOLDOWN_MS) {
+  if (now - state.lastGcAtMs < GC_COOLDOWN_MS) {
     return Promise.resolve(null);
   }
-  lastGcAtMs = now;
-  inFlight = cleanupExpiredToolOutputs(dir, ttlMs, now)
+  state.lastGcAtMs = now;
+  state.inFlight = cleanupExpiredToolOutputs(dir, ttlMs, now)
     .then((result) => {
-      inFlight = null;
+      state.inFlight = null;
       return result;
     })
     .catch(() => {
-      inFlight = null;
+      state.inFlight = null;
       return null;
     });
-  return inFlight;
+  return state.inFlight;
 }
 
 /**
@@ -210,24 +246,24 @@ export function maybeRunReferenceAwareToolOutputGc(
   graceMs: number = DEFAULT_TOOL_OUTPUT_TTL_MS,
   now: number = Date.now(),
 ): Promise<ToolOutputGcResult | null> {
-  if (inFlight) return inFlight;
-  if (now - lastGcAtMs < GC_COOLDOWN_MS) return Promise.resolve(null);
-  lastGcAtMs = now;
-  inFlight = loadReferencedPaths()
+  const state = stateFor(dir);
+  if (state.inFlight) return state.inFlight;
+  if (now - state.lastGcAtMs < GC_COOLDOWN_MS) return Promise.resolve(null);
+  state.lastGcAtMs = now;
+  state.inFlight = loadReferencedPaths()
     .then((referenced) => cleanupUnreferencedToolOutputs(dir, referenced, graceMs, now))
     .then((result) => {
-      inFlight = null;
+      state.inFlight = null;
       return result;
     })
     .catch(() => {
-      inFlight = null;
+      state.inFlight = null;
       return null;
     });
-  return inFlight;
+  return state.inFlight;
 }
 
 /** Test hook — resets the cooldown so each test starts from a clean slate. */
 export function __resetGcCooldownForTests(): void {
-  lastGcAtMs = 0;
-  inFlight = null;
+  gcStates.clear();
 }

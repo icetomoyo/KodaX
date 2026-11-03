@@ -1,6 +1,7 @@
 import { exec as execCallback } from 'child_process';
 import { promisify } from 'util';
 import type { KodaXEvents, KodaXOptions } from '@kodax-ai/coding';
+import { resolveSkillModelOverride } from '@kodax-ai/coding';
 import type { CommandHook, CommandHooks, CommandInvocationRequest } from '../commands/types.js';
 
 const execAsync = promisify(execCallback);
@@ -172,35 +173,6 @@ function hookMatches(hook: CommandHook, target: string): boolean {
     return true;
   }
   return matchesPattern(hook.matcher, target);
-}
-
-function resolveModelOverride(provider: string, model?: string): string | undefined {
-  if (!model) {
-    return undefined;
-  }
-
-  const normalizedModel = model.trim();
-  if (!normalizedModel) {
-    return undefined;
-  }
-
-  if (!['haiku', 'sonnet', 'opus'].includes(normalizedModel)) {
-    return normalizedModel;
-  }
-
-  if (provider !== 'anthropic') {
-    return undefined;
-  }
-
-  switch (normalizedModel) {
-    case 'haiku':
-      return 'claude-3-5-haiku-latest';
-    case 'opus':
-      return 'claude-opus-4-1';
-    case 'sonnet':
-    default:
-      return 'claude-sonnet-4-6';
-  }
 }
 
 function buildModelUserInput(
@@ -379,7 +351,7 @@ export async function prepareInvocationExecution(
   const hookCwd = baseOptions.context?.executionCwd
     ?? baseOptions.context?.gitRoot
     ?? process.cwd();
-  const modelOverride = resolveModelOverride(baseOptions.provider, request.model);
+  const modelOverride = resolveSkillModelOverride(baseOptions.provider, request.model);
   let isDispatchingNotification = false;
 
   const emitWithNotifications: RuntimeEmitter = async (text) => {

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, realpath } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
@@ -12,7 +12,7 @@ import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 
 it('product workflows honor the same implicit and explicit Edits permission mode', async () => {
-  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-audit-workflow-default-'));
+  const homeDir = await mkdtemp(path.join(await realpath(os.tmpdir()), 'kodax-audit-workflow-default-'));
   const target = path.join(homeDir, 'workflow-write.txt');
   class Provider extends KodaXBaseProvider {
     readonly name = 'audit-workflow-default';

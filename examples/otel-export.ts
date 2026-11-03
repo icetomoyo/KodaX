@@ -21,7 +21,7 @@ import {
   Runner,
   createAgent,
   type AgentMessage,
-} from '@kodax-ai/agent';
+} from '@kodax-ai/kodax/agent';
 import {
   Tracer,
   addTracingProcessor,
@@ -30,7 +30,7 @@ import {
   type Span,
   type Trace,
   type TracingProcessor,
-} from '@kodax-ai/agent/tracing';
+} from '@kodax-ai/kodax/agent';
 
 /**
  * Pseudo OpenTelemetry exporter. In a real app replace the `export*` stubs

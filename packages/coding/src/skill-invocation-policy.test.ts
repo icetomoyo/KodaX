@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { applyRuntimeSkillInvocationPolicy } from './skill-invocation-policy.js';
+import { applyRuntimeSkillInvocationPolicy, resolveSkillModelOverride } from './skill-invocation-policy.js';
 import { awaitRuntimeSkillInvocationPolicy } from './skill-invocation-policy.js';
 import {
   setKodaXDiagnosticSink,
@@ -12,6 +12,18 @@ import {
 import type { KodaXOptions } from './types.js';
 
 const tempDirs: string[] = [];
+
+it.each(['constructor', 'toString', '__proto__'])('preserves the fixed model ID %s on every provider', model => {
+  for (const provider of ['anthropic', 'deepseek']) expect(resolveSkillModelOverride(provider, model)).toBe(model);
+});
+
+it.each([['haiku', 'claude-haiku-4-5'], ['sonnet', 'claude-sonnet-4-6'], ['opus', 'claude-opus-4-8']])(
+  'resolves the generic %s preference while preserving fixed IDs and other routes', (alias, model) => {
+    expect(resolveSkillModelOverride('anthropic', alias)).toBe(model);
+    expect(resolveSkillModelOverride('deepseek', alias)).toBeUndefined();
+    expect(resolveSkillModelOverride('anthropic', 'claude-opus-4-1')).toBe('claude-opus-4-1');
+  },
+);
 
 afterEach(async () => {
   vi.unstubAllEnvs();
@@ -93,6 +105,31 @@ async function optionsWithSkill(input: {
 }
 
 describe('applyRuntimeSkillInvocationPolicy', () => {
+  it('resumes admitted Skill context without replaying hooks and refuses a changed source policy', async () => {
+    const fixture = await optionsWithSkill({ allowedTools: 'Read, Bash(echo *)', sessionStart: 'echo START', userPromptSubmit: 'echo PROMPT' });
+    const hookCalls: string[] = [];
+    const shell = await import('./tools/bash.js');
+    const probe = vi.spyOn(shell, 'toolBash').mockImplementation(async input => {
+      hookCalls.push(String(input.command));
+      return `Command: ${String(input.command)}\nExit: 0\n` + JSON.stringify({ additionalContext: 'ADMITTED-HOOK-CONTEXT' });
+    });
+    try {
+      await applyRuntimeSkillInvocationPolicy(fixture.options, 'Original question');
+      expect(hookCalls).toHaveLength(2);
+      const saved = JSON.parse(JSON.stringify(fixture.options.context)) as NonNullable<KodaXOptions['context']>;
+      const recovery: KodaXOptions = { ...fixture.options, context: saved, session: {
+        generationCheckpoint: { version: 1, sessionId: 's', activeEntryId: null, messagesDigest: 'a'.repeat(64) },
+      } };
+      const resumed = await applyRuntimeSkillInvocationPolicy(recovery, 'Original question');
+      expect(hookCalls).toHaveLength(2);
+      expect(resumed.context?.promptOverlay).toContain('ADMITTED-HOOK-CONTEXT');
+      expect(await resumed.events?.beforeToolExecute?.('write', { path: 'x', content: 'x' })).toContain('not allowed');
+      const original = await readFile(fixture.options.context!.skillInvocation!.path, 'utf8');
+      await writeFile(fixture.options.context!.skillInvocation!.path, original.replace('Read, Bash(echo *)', 'Bash, Write'));
+      await expect(applyRuntimeSkillInvocationPolicy(recovery)).rejects.toMatchObject({ code: 'skill_policy_restore_failed' });
+      expect(hookCalls).toHaveLength(2);
+    } finally { probe.mockRestore(); }
+  });
   it.each([undefined, 'Bash', '*'] as const)('retains Host authorization for unrestricted shell rules (%s)', async allowedTools => {
     const fixture = await optionsWithSkill({ allowedTools });
     fixture.options.events = { beforeToolExecute: async () => '[Blocked] Host decision' };
@@ -156,7 +193,7 @@ describe('applyRuntimeSkillInvocationPolicy', () => {
       context: {
         gitRoot: root,
         skillRegistry: new SkillRegistry(root),
-        skillInvocation: { name: 'draft-response', runtimePolicy: { enforceAtRuntime: true } },
+        skillInvocation: { name: 'draft-response', path: '', expandedContent: '', runtimePolicy: { enforceAtRuntime: true } },
       },
     })).rejects.toMatchObject({
       code: 'skill_not_registered', source: 'local', stage: 'skill_load', skillName: 'draft-response',
@@ -165,7 +202,7 @@ describe('applyRuntimeSkillInvocationPolicy', () => {
 
   it('reports a Skill absent from trusted discovery without echoing its supplied path', async () => {
     const { options, root } = await optionsWithSkill({});
-    options.context!.skillInvocation = { name: 'kodax-missing-skill', path: path.join(root, 'private', 'SKILL.md'),
+    options.context!.skillInvocation = { name: 'kodax-missing-skill', expandedContent: '', path: path.join(root, 'private', 'SKILL.md'),
       runtimePolicy: { enforceAtRuntime: true } };
     await expect(applyRuntimeSkillInvocationPolicy(options)).rejects.toMatchObject({
       code: 'skill_not_found', source: 'local', stage: 'skill_load', skillName: 'kodax-missing-skill',

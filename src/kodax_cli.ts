@@ -5,14 +5,20 @@ import { createHostOwnedExtensionRuntime } from "./host-integrations.js";
 import { reportDaemonStartupPhase } from './runtime-daemon/startup-progress.js';
 import {
   exitCodeForOneShotResult,
-  runOneShotClientTask,
-} from './one-shot-task.js';
+} from './one-shot-exit-code.js';
 import { toKodaXProductClient } from './client-runtime-adapter.js';
-import { configureProviderAuthCommand } from './provider-auth-cli.js';
-import { createCliProviderCredentials } from './cli-provider-credentials.js';
-import { createProviderCredentialManager } from './provider-credential-manager.js';
 import type { KodaXClientHostAuthorization } from './client-host-authorization.js';
 import { ensureRecoveringKodaXRuntime } from './recovering-runtime-client.js';
+
+declare const KODAX_CLI_LAZY_COMPONENTS: boolean | undefined;
+function loadCliComponent<T>(file: string, source: () => Promise<T>): Promise<T> {
+  // Node distributions defer optional commands; Bun binaries embed the literal source imports.
+  if (typeof KODAX_CLI_LAZY_COMPONENTS !== 'undefined' && KODAX_CLI_LAZY_COMPONENTS && !('Bun' in globalThis)) {
+    return import(new URL(file, import.meta.url).href) as Promise<T>;
+  }
+  return source();
+}
+const loadProviderAuth = () => loadCliComponent('./provider-auth-cli.js', () => import('./provider-auth-cli.js'));
 
 // ── Runtime environment defaults ──
 // NODE_ENV must be set BEFORE any ESM static import is evaluated, otherwise
@@ -90,7 +96,6 @@ import {
   RUNTIME_DAEMON_BOOTSTRAP_LOG_MAX_BYTES,
   daemonServeExecArgv,
 } from './runtime-daemon/process.js';
-import { runDoctor } from './kodax_doctor.js';
 import {
   getDefaultCommandDir,
   KODAX_COMMANDS_DIR,
@@ -666,6 +671,7 @@ async function runCliTaskViaClient(
   prompt: string,
   authorizeExecution?: KodaXClientHostAuthorization,
 ): Promise<KodaXResult> {
+  const { runOneShotClientTask } = await loadCliComponent('./one-shot-task.js', () => import('./one-shot-task.js'));
   return runOneShotOwnedProcess((abortSignal) => runOneShotClientTask({
     client: toKodaXProductClient(runtime, authorizeExecution),
     runtime,
@@ -1890,339 +1896,135 @@ function formatDaemonHealth(
 }
 // ============== CLI Help Topics ==============
 
+function printHelpLine(label: string, description = ''): void {
+  console.log(chalk.dim(label) + description);
+}
+
+const HELP_WORKSPACE_ROOT = "Workspace root to inspect (defaults to current directory)";
+const HELP_DAEMON_HOME = "Base directory that owns the .kodax runtime daemon state";
+const HELP_EFFORT = "Reasoning effort: off, auto, low, medium, high, xhigh, max, or model-supported value";
+const HELP_REPO_INTELLIGENCE = "Repo intelligence mode: auto, full, light, off";
+const HELP_SESSION = "Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID";
+const HELP_THINKING = "Compatibility alias for --reasoning auto";
+const HELP_NEW_SESSION = "Legacy no-op; current CLI already starts a fresh session by default";
+
+function printHelpHeading(text: string): void {
+  console.log(chalk.bold(text));
+}
+
 const CLI_HELP_TOPICS: Record<string, () => void> = {
   acp: () => {
     console.log(chalk.cyan('\nACP Server\n'));
-    console.log(chalk.bold('Overview:'));
-    console.log(
-      chalk.dim(
-        '  Run KodaX as a stdio ACP server so editors and IDEs can connect directly.',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  Session creation, prompt streaming, cancellation, and permission prompts reuse KodaX runtime semantics.\n',
-      ),
-    );
-    console.log(chalk.bold('Command:'));
-    console.log(chalk.dim('  kodax acp serve [options]\n'));
-    console.log(chalk.bold('Options:'));
-    console.log(
-      chalk.dim('  --cwd <dir>                  ') +
-        'Working directory exposed to ACP sessions',
-    );
-    console.log(
-      chalk.dim('  -m, --provider <name>        ') + 'Provider to use',
-    );
-    console.log(
-      chalk.dim('  --model <name>               ') + 'Model override',
-    );
-    console.log(
-      chalk.dim('  --effort <level>             ') +
-        'Reasoning effort: off, auto, low, medium, high, xhigh, max, or model-supported value',
-    );
-    console.log(
-      chalk.dim('  --reasoning <mode>           ') +
-        'Compatibility mode: off, auto, quick, balanced, deep',
-    );
-    console.log(
-      chalk.dim('  --repo-intelligence <mode>   ') +
-        'Repo intelligence mode: auto, full, light, off',
-    );
-    console.log(
-      chalk.dim('  --repo-intelligence-trace    ') +
-        'Emit repo intelligence trace metadata/logging',
-    );
-    console.log(
-      chalk.dim('  -t, --thinking               ') +
-        'Compatibility alias for --reasoning auto',
-    );
-    console.log(
-      chalk.dim('  --permission-mode <mode>     ') +
-        'Initial mode: plan, accept-edits, auto, full-access',
-    );
-    console.log(
-      chalk.dim('  KODAX_ACP_LOG=<level>        ') +
-        'stderr log level: off, error, info, debug\n',
-    );
-    console.log(chalk.bold('Examples:'));
-    console.log(chalk.dim('  kodax acp serve'));
-    console.log(
-      chalk.dim(
-        '  kodax acp serve --cwd C:\\repo --permission-mode accept-edits',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  kodax acp serve -m openai --model gpt-5.4 --reasoning balanced\n',
-      ),
-    );
+    printHelpHeading('Overview:');
+    printHelpLine('  Run KodaX as a stdio ACP server so editors and IDEs can connect directly.');
+    printHelpLine('  Session creation, prompt streaming, cancellation, and permission prompts reuse KodaX runtime semantics.\n');
+    printHelpHeading('Command:');
+    printHelpLine('  kodax acp serve [options]\n');
+    printHelpHeading('Options:');
+    printHelpLine('  --cwd <dir>                  ', 'Working directory exposed to ACP sessions');
+    printHelpLine('  -m, --provider <name>        ', 'Provider to use');
+    printHelpLine('  --model <name>               ', 'Model override');
+    printHelpLine('  --effort <level>             ', HELP_EFFORT);
+    printHelpLine('  --reasoning <mode>           ', 'Compatibility mode: off, auto, quick, balanced, deep');
+    printHelpLine('  --repo-intelligence <mode>   ', HELP_REPO_INTELLIGENCE);
+    printHelpLine('  --repo-intelligence-trace    ', 'Emit repo intelligence trace metadata/logging');
+    printHelpLine('  -t, --thinking               ', HELP_THINKING);
+    printHelpLine('  --permission-mode <mode>     ', 'Initial mode: plan, accept-edits, auto, full-access');
+    printHelpLine('  KODAX_ACP_LOG=<level>        ', 'stderr log level: off, error, info, debug\n');
+    printHelpHeading('Examples:');
+    printHelpLine('  kodax acp serve');
+    printHelpLine('  kodax acp serve --cwd C:\\repo --permission-mode accept-edits');
+    printHelpLine('  kodax acp serve -m openai --model gpt-5.4 --effort medium\n');
   },
   skill: () => {
     console.log(chalk.cyan('\nSkill Utilities\n'));
-    console.log(chalk.bold('Overview:'));
-    console.log(
-      chalk.dim(
-        '  Use built-in skill packaging commands without starting an agent session.',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  These commands are thin wrappers around the builtin skill-creator tools.\n',
-      ),
-    );
-    console.log(chalk.bold('Commands:'));
-    console.log(
-      chalk.dim('  kodax skill init <name> [options]   ') +
-        'Create a new skill scaffold',
-    );
-    console.log(
-      chalk.dim('  kodax skill validate <dir>          ') +
-        'Validate a skill directory',
-    );
-    console.log(
-      chalk.dim('  kodax skill eval --skill-path ...   ') +
-        'Run end-to-end eval workspace generation',
-    );
-    console.log(
-      chalk.dim('  kodax skill grade <workspace>       ') +
-        'Grade eval runs into grading.json files',
-    );
-    console.log(
-      chalk.dim('  kodax skill analyze <workspace>     ') +
-        'Analyze benchmark variance and failures',
-    );
-    console.log(
-      chalk.dim('  kodax skill compare <workspace>     ') +
-        'Blind-compare two configs across runs',
-    );
-    console.log(
-      chalk.dim('  kodax skill package <dir> [options] ') +
-        'Package a skill as .skill',
-    );
-    console.log(
-      chalk.dim('  kodax skill install <input> [opts]  ') +
-        'Install a skill from dir or .skill',
-    );
-    console.log(chalk.bold('Examples:'));
-    console.log(
-      chalk.dim('  kodax skill init release-notes --dest ./.kodax/skills'),
-    );
-    console.log(chalk.dim('  kodax skill validate ./.kodax/skills/my-skill'));
-    console.log(
-      chalk.dim(
-        '  kodax skill eval --skill-path ./.kodax/skills/my-skill --evals ./.kodax/skills/my-skill/evals/evals.json --workspace ./iteration-1',
-      ),
-    );
-    console.log(chalk.dim('  kodax skill grade ./iteration-1'));
-    console.log(chalk.dim('  kodax skill analyze ./iteration-1'));
-    console.log(
-      chalk.dim(
-        '  kodax skill compare ./iteration-1 --config-a with_skill --config-b without_skill',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  kodax skill package ./.kodax/skills/my-skill --output ./my-skill.skill',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  kodax skill install ./my-skill.skill --dest ~/.kodax/skills --force\n',
-      ),
-    );
+    printHelpHeading('Overview:');
+    printHelpLine('  Use built-in skill packaging commands without starting an agent session.');
+    printHelpLine('  These commands are thin wrappers around the builtin skill-creator tools.\n');
+    printHelpHeading('Commands:');
+    printHelpLine('  kodax skill init <name> [options]   ', 'Create a new skill scaffold');
+    printHelpLine('  kodax skill validate <dir>          ', 'Validate a skill directory');
+    printHelpLine('  kodax skill eval --skill-path ...   ', 'Run end-to-end eval workspace generation');
+    printHelpLine('  kodax skill grade <workspace>       ', 'Grade eval runs into grading.json files');
+    printHelpLine('  kodax skill analyze <workspace>     ', 'Analyze benchmark variance and failures');
+    printHelpLine('  kodax skill compare <workspace>     ', 'Blind-compare two configs across runs');
+    printHelpLine('  kodax skill package <dir> [options] ', 'Package a skill as .skill');
+    printHelpLine('  kodax skill install <input> [opts]  ', 'Install a skill from dir or .skill');
+    printHelpHeading('Examples:');
+    printHelpLine('  kodax skill init release-notes --dest ./.kodax/skills');
+    printHelpLine('  kodax skill validate ./.kodax/skills/my-skill');
+    printHelpLine('  kodax skill eval --skill-path ./.kodax/skills/my-skill --evals ./.kodax/skills/my-skill/evals/evals.json --workspace ./iteration-1');
+    printHelpLine('  kodax skill grade ./iteration-1');
+    printHelpLine('  kodax skill analyze ./iteration-1');
+    printHelpLine('  kodax skill compare ./iteration-1 --config-a with_skill --config-b without_skill');
+    printHelpLine('  kodax skill package ./.kodax/skills/my-skill --output ./my-skill.skill');
+    printHelpLine('  kodax skill install ./my-skill.skill --dest ~/.kodax/skills --force\n');
   },
   sessions: () => {
     console.log(chalk.cyan('\nSession Management\n'));
-    console.log(chalk.bold('Overview:'));
-    console.log(
-      chalk.dim(
-        '  KodaX automatically saves conversation sessions, allowing you to',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  resume work later or switch between different conversations.\n',
-      ),
-    );
-    console.log(chalk.bold('Options:'));
-    console.log(
-      chalk.dim('  -c, --continue       ') +
-        'Continue most recent non-empty conversation',
-    );
-    console.log(
-      chalk.dim('  -r, --resume [value] ') +
-        'Resume by ID or exact title (no value = searchable picker)',
-    );
-    console.log(
-      chalk.dim('  -n, --new            ') +
-        'Legacy no-op; current CLI already starts a fresh session by default',
-    );
-    console.log(
-      chalk.dim('  -s, --session <op>   ') +
-        'Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID',
-    );
-    console.log(
-      chalk.dim('  --no-session         ') +
-        'Disable session persistence (print mode only)\n',
-    );
-    console.log(chalk.bold('Examples:'));
-    console.log(
-      chalk.dim('  kodax                      ') +
-        '# Start new session (interactive)',
-    );
-    console.log(
-      chalk.dim('  kodax -c                   ') +
-        '# Continue recent conversation',
-    );
-    console.log(
-      chalk.dim('  kodax -r                   ') +
-        '# Search and select a saved session',
-    );
-    console.log(
-      chalk.dim('  kodax -r 20260219_143052   ') + '# Resume specific session',
-    );
-    console.log(
-      chalk.dim('  kodax -r "Review runtime"  ') +
-        '# Resume a unique exact title; duplicates open the picker',
-    );
-    console.log(
-      chalk.dim('  kodax -s list              ') + '# List all sessions',
-    );
-    console.log(
-      chalk.dim('  kodax -s delete 20260219   ') + '# Delete a session',
-    );
-    console.log(
-      chalk.dim('  kodax -p "task" --no-session') + ' # Run without saving\n',
-    );
+    printHelpHeading('Overview:');
+    printHelpLine('  KodaX automatically saves conversation sessions, allowing you to');
+    printHelpLine('  resume work later or switch between different conversations.\n');
+    printHelpHeading('Options:');
+    printHelpLine('  -c, --continue       ', 'Continue most recent non-empty conversation');
+    printHelpLine('  -r, --resume [value] ', 'Resume by ID or exact title (no value = searchable picker)');
+    printHelpLine('  -n, --new            ', HELP_NEW_SESSION);
+    printHelpLine('  -s, --session <op>   ', HELP_SESSION);
+    printHelpLine('  --no-session         ', 'Disable session persistence (print mode only)\n');
+    printHelpHeading('Examples:');
+    printHelpLine('  kodax                      ', '# Start new session (interactive)');
+    printHelpLine('  kodax -c                   ', '# Continue recent conversation');
+    printHelpLine('  kodax -r                   ', '# Search and select a saved session');
+    printHelpLine('  kodax -r 20260219_143052   ', '# Resume specific session');
+    printHelpLine('  kodax -r "Review runtime"  ', '# Resume a unique exact title; duplicates open the picker');
+    printHelpLine('  kodax -s list              ', '# List all sessions');
+    printHelpLine('  kodax -s delete 20260219   ', '# Delete a session');
+    printHelpLine('  kodax -p "task" --no-session', ' # Run without saving\n');
   },
   project: () => {
     console.log(chalk.cyan('\nProject Mode\n'));
-    console.log(chalk.bold('Overview:'));
-    console.log(
-      chalk.dim(
-        '  Project mode spans two surfaces: non-REPL bootstrap commands and REPL /project commands.',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  Current workflow includes planning, quality review, brainstorm sessions, harness-verified execution, and runtime artifacts under .agent/project/.\n',
-      ),
-    );
-    console.log(chalk.bold('REPL /project Commands:'));
-    console.log(
-      chalk.dim('  /project status [prompt] [--features|--progress]') +
-        '  Status + guided analysis',
-    );
-    console.log(
-      chalk.dim('  /project plan [#index|topic]                 ') +
-        '  Generate project or feature planning truth',
-    );
-    console.log(
-      chalk.dim('  /project quality                             ') +
-        '  Deterministic workflow health + release review',
-    );
-    console.log(
-      chalk.dim('  /project brainstorm                          ') +
-        '  UI-driven discovery flow',
-    );
-    console.log(
-      chalk.dim('  /project next [prompt|#index] [--no-confirm] ') +
-        '  Harness-verified feature execution',
-    );
-    console.log(
-      chalk.dim('  /project auto [prompt] [--max=N|--confirm]   ') +
-        '  REPL-side auto-continue with pause support',
-    );
-    console.log(
-      chalk.dim('  /project pause                               ') +
-        '  Stop /project auto',
-    );
-    console.log(
-      chalk.dim('  /project verify [#index|--last]              ') +
-        '  Rerun deterministic harness verification',
-    );
-    console.log(
-      chalk.dim('  /project edit <prompt>                       ') +
-        '  Edit current-stage truth',
-    );
-    console.log(
-      chalk.dim('  /project analyze [prompt]                    ') +
-        '  AI project analysis',
-    );
-    console.log(
-      chalk.dim('  /project reset [--all]                       ') +
-        '  Clear progress or remove project truth files\n',
-    );
-    console.log(chalk.bold('Current Semantics:'));
-    console.log(
-      chalk.dim(
-        '  - /project next and /project auto are verifier-gated, not self-declared completion',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  - /project plan writes the latest plan to .agent/project/session_plan.md',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  - /project quality combines deterministic checks with optional model-generated guidance',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  - /project brainstorm aligns requirements into .agent/project/alignment.md\n',
-      ),
-    );
-    console.log(chalk.bold('Examples:'));
-    console.log(chalk.dim('  kodax -h project'));
-    console.log(
-      chalk.dim(
-        '  kodax  # then: /project brainstorm -> /project plan -> /project next',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  kodax  # then: /project quality | /project verify --last | /project auto --max=3\n',
-      ),
-    );
+    printHelpHeading('Overview:');
+    printHelpLine('  Project mode spans two surfaces: non-REPL bootstrap commands and REPL /project commands.');
+    printHelpLine('  Current workflow includes planning, quality review, brainstorm sessions, harness-verified execution, and runtime artifacts under .agent/project/.\n');
+    printHelpHeading('REPL /project Commands:');
+    printHelpLine('  /project status [prompt] [--features|--progress]', '  Status + guided analysis');
+    printHelpLine('  /project plan [#index|topic]                 ', '  Generate project or feature planning truth');
+    printHelpLine('  /project quality                             ', '  Deterministic workflow health + release review');
+    printHelpLine('  /project brainstorm                          ', '  UI-driven discovery flow');
+    printHelpLine('  /project next [prompt|#index] [--no-confirm] ', '  Harness-verified feature execution');
+    printHelpLine('  /project auto [prompt] [--max=N|--confirm]   ', '  REPL-side auto-continue with pause support');
+    printHelpLine('  /project pause                               ', '  Stop /project auto');
+    printHelpLine('  /project verify [#index|--last]              ', '  Rerun deterministic harness verification');
+    printHelpLine('  /project edit <prompt>                       ', '  Edit current-stage truth');
+    printHelpLine('  /project analyze [prompt]                    ', '  AI project analysis');
+    printHelpLine('  /project reset [--all]                       ', '  Clear progress or remove project truth files\n');
+    printHelpHeading('Current Semantics:');
+    printHelpLine('  - /project next and /project auto are verifier-gated, not self-declared completion');
+    printHelpLine('  - /project plan writes the latest plan to .agent/project/session_plan.md');
+    printHelpLine('  - /project quality combines deterministic checks with optional model-generated guidance');
+    printHelpLine('  - /project brainstorm aligns requirements into .agent/project/alignment.md\n');
+    printHelpHeading('Examples:');
+    printHelpLine('  kodax -h project');
+    printHelpLine('  kodax  # then: /project brainstorm -> /project plan -> /project next');
+    printHelpLine('  kodax  # then: /project quality | /project verify --last | /project auto --max=3\n');
   },
   auto: () => {
     console.log(chalk.cyan('\nAuto Mode\n'));
-    console.log(chalk.bold('Auto Mode (-y, --auto):'));
-    console.log(chalk.dim('  Backward-compatibility alias kept for scripts.'));
-    console.log(
-      chalk.dim(
-        '  Non-REPL CLI already runs in auto mode by default, so this flag currently has no additional effect.\n',
-      ),
-    );
-    console.log(chalk.bold('Options:'));
-    console.log(
-      chalk.dim('  -y, --auto             ') +
-        'Backward-compat alias (no-op in non-REPL CLI)\n',
-    );
-    console.log(chalk.bold('Examples:'));
-    console.log(
-      chalk.dim('  kodax -y "refactor code"          ') +
-        '# Legacy alias; same as plain non-REPL run\n',
-    );
+    printHelpHeading('Auto Mode (-y, --auto):');
+    printHelpLine('  Backward-compatibility alias kept for scripts.');
+    printHelpLine('  Non-REPL CLI already runs in auto mode by default, so this flag currently has no additional effect.\n');
+    printHelpHeading('Options:');
+    printHelpLine('  -y, --auto             ', 'Backward-compat alias (no-op in non-REPL CLI)\n');
+    printHelpHeading('Examples:');
+    printHelpLine('  kodax -y "refactor code"          ', '# Legacy alias; same as plain non-REPL run\n');
   },
   provider: () => {
     const providerNames = getAvailableProviderNames();
     console.log(chalk.cyan('\nLLM Providers\n'));
-    console.log(chalk.bold('Overview:'));
-    console.log(
-      chalk.dim(
-        '  KodaX supports multiple LLM providers. Configure via -m option',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  or set default in ~/.kodax/config.json. Use --model to override the default model.\n',
-      ),
-    );
-    console.log(chalk.bold('Available Providers:'));
+    printHelpHeading('Overview:');
+    printHelpLine('  KodaX supports multiple LLM providers. Configure via -m option');
+    printHelpLine('  or set default in ~/.kodax/config.json. Use --model to override the default model.\n');
+    printHelpHeading('Available Providers:');
     providerNames.forEach((name) => {
       const detail =
         name === 'gemini-cli' || name === 'codex-cli'
@@ -2231,122 +2033,40 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
       console.log(chalk.dim(`  ${name.padEnd(15)} `) + detail);
     });
     console.log();
-    console.log(chalk.bold('Key Options:'));
-    console.log(chalk.dim('  -m, --provider <name> ') + 'Provider to use');
-    console.log(
-      chalk.dim('  --model <name>        ') +
-        'Model override for the selected provider\n',
-    );
-    console.log(chalk.bold('Examples:'));
-    console.log(chalk.dim('  kodax -m anthropic "task"     ') + '# Use Claude');
-    console.log(
-      chalk.dim('  kodax -m openai --model gpt-5.4 "task"') +
-        '# Override model',
-    );
-    console.log(
-      chalk.dim('  /model                        ') +
-        '# Switch in REPL (saves to config)\n',
-    );
+    printHelpHeading('Key Options:');
+    printHelpLine('  -m, --provider <name> ', 'Provider to use');
+    printHelpLine('  --model <name>        ', 'Model override for the selected provider\n');
+    printHelpHeading('Examples:');
+    printHelpLine('  kodax -m anthropic "task"     ', '# Use Claude');
+    printHelpLine('  kodax -m openai --model gpt-5.4 "task"', '# Override model');
+    printHelpLine('  /model                        ', '# Switch in REPL (saves to config)\n');
   },
   thinking: () => {
     console.log(chalk.cyan('\nReasoning Effort\n'));
-    console.log(chalk.bold('Overview:'));
     console.log(
-      chalk.dim(
-        '  Reasoning controls how much deliberate analysis KodaX should apply.',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  Use --effort for new configs; --reasoning remains as a compatibility alias.\n',
-      ),
-    );
-    console.log(chalk.bold('Options:'));
-    console.log(
-      chalk.dim('  --effort <level>     ') +
-        'Set reasoning effort: off, auto, low, medium, high, xhigh, max, or model-supported value',
-    );
-    console.log(
-      chalk.dim('  --reasoning <mode>   ') +
-        'Compatibility mode: off, auto, quick, balanced, deep',
-    );
-    console.log(
-    );
-    console.log(
-      chalk.dim('  -t, --thinking       ') +
-        'Compatibility alias for --reasoning auto\n',
-    );
-    console.log(chalk.bold('Examples:'));
-    console.log(
-      chalk.dim('  kodax --effort high "design the architecture"     ') +
-        '# High effort',
-    );
-    console.log(
-      chalk.dim('  kodax --reasoning deep "design the architecture"   ') +
-        '# Legacy alias for high effort',
-    );
-    console.log(
-      chalk.dim('  kodax --reasoning balanced -p "analyze this bug"   ') +
-        '# Medium-depth reasoning',
-    );
-    console.log(
-      chalk.dim('  kodax -t "review this PR"                           ') +
-        '# Alias for auto',
-    );
-    console.log(
-      chalk.dim('  /reasoning balanced                                 ') +
-        '# Set in REPL\n',
+      'Use --effort <level> or /effort <level>.\n'
+      + 'Levels: none, minimal, auto, low, medium, high, xhigh, max, or model-supported values.\n'
+      + 'Example: kodax --effort high "design the architecture"\n'
+      + 'Legacy --reasoning <mode> and -t/--thinking remain accepted.\n',
     );
   },
   print: () => {
     console.log(chalk.cyan('\nPrint Mode\n'));
-    console.log(chalk.bold('Overview:'));
-    console.log(
-      chalk.dim(
-        '  Run a single task and exit. Useful for scripting and CI/CD.\n',
-      ),
-    );
-    console.log(
-      chalk.dim(
-        '  `--mode json` is a scripting surface, not the ACP server protocol.\n',
-      ),
-    );
-    console.log(chalk.bold('Options:'));
-    console.log(chalk.dim('  -p, --print <text>  ') + 'Run task and exit');
-    console.log(
-      chalk.dim('  --mode json         ') +
-        'Emit newline-delimited JSON events to stdout for scripts/CI',
-    );
-    console.log(
-      chalk.dim('  --model <name>      ') +
-        'Override the selected provider model',
-    );
-    console.log(
-      chalk.dim('  --no-session        ') + 'Disable session saving\n',
-    );
-    console.log(chalk.bold('Examples:'));
-    console.log(
-      chalk.dim('  kodax -p "fix the bug in auth.ts"   ') + '# Quick fix',
-    );
-    console.log(
-      chalk.dim('  kodax -p "generate tests" --reasoning balanced') +
-        ' # With reasoning',
-    );
-    console.log(
-      chalk.dim('  kodax -p "task" -m openai --model gpt-5.4') +
-        ' # Provider + model override',
-    );
-    console.log(
-      chalk.dim('  kodax -p "task" --no-session        ') + '# Stateless run',
-    );
-    console.log(
-      chalk.dim('  kodax --mode json "inspect auth flow"') +
-        ' # Structured JSONL output',
-    );
-    console.log(
-      chalk.dim('  kodax -p "task" -m anthropic --reasoning deep') +
-        ' # Explicit provider selection\n',
-    );
+    printHelpHeading('Overview:');
+    printHelpLine('  Run a single task and exit. Useful for scripting and CI/CD.\n');
+    printHelpLine('  `--mode json` is a scripting surface, not the ACP server protocol.\n');
+    printHelpHeading('Options:');
+    printHelpLine('  -p, --print <text>  ', 'Run task and exit');
+    printHelpLine('  --mode json         ', 'Emit newline-delimited JSON events to stdout for scripts/CI');
+    printHelpLine('  --model <name>      ', 'Override the selected provider model');
+    printHelpLine('  --no-session        ', 'Disable session saving\n');
+    printHelpHeading('Examples:');
+    printHelpLine('  kodax -p "fix the bug in auth.ts"   ', '# Quick fix');
+    printHelpLine('  kodax -p "generate tests" --effort medium', ' # With reasoning');
+    printHelpLine('  kodax -p "task" -m openai --model gpt-5.4', ' # Provider + model override');
+    printHelpLine('  kodax -p "task" --no-session        ', '# Stateless run');
+    printHelpLine('  kodax --mode json "inspect auth flow"', ' # Structured JSONL output');
+    printHelpLine('  kodax -p "task" -m anthropic --effort high', ' # Explicit provider selection\n');
   },
 };
 
@@ -2415,7 +2135,7 @@ export function configureKodaXRootCommand(program: Command): Command {
       )
       .option(
         '-n, --new',
-        'Legacy no-op; current CLI already starts a fresh session by default',
+        HELP_NEW_SESSION,
       )
       .option(
         '-r, --resume [id-or-title]',
@@ -2423,10 +2143,10 @@ export function configureKodaXRootCommand(program: Command): Command {
       )
       .option('-m, --provider <name>', 'LLM provider')
       .option('--model <name>', 'Model override')
-      .option('-t, --thinking', 'Compatibility alias for --reasoning auto')
+      .option('-t, --thinking', HELP_THINKING)
       .option(
         '--effort <level>',
-        'Reasoning effort: off, auto, low, medium, high, xhigh, max, or model-supported value',
+        HELP_EFFORT,
         parseEffortOption,
       )
       .option(
@@ -2438,7 +2158,7 @@ export function configureKodaXRootCommand(program: Command): Command {
       .option('--work-mode <mode>', 'Session work mode: agent, coding (default), script', parseWorkModeOption)
       .option(
         '--repo-intelligence <mode>',
-        'Repo intelligence mode: auto, full, light, off',
+        HELP_REPO_INTELLIGENCE,
         parseRepoIntelligenceModeOption,
       )
       .option(
@@ -2448,7 +2168,7 @@ export function configureKodaXRootCommand(program: Command): Command {
       .option('-y, --auto', 'Backward-compat alias; no effect in non-REPL CLI')
       .option(
         '-s, --session <op>',
-        'Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID',
+        HELP_SESSION,
       )
       .option(
         '--apply-session-cleanup',
@@ -2470,6 +2190,19 @@ export function configureKodaXRootCommand(program: Command): Command {
       .action(() => {})
   );
   configureKodaXExecPolicyCommand(configured);
+  // Topic help is a root option, consumed before subcommand dispatch.
+  // Stop before any nested action or argument validation can run.
+  configured.hook('preSubcommand', async (root, command) => {
+    if (root.opts().help === undefined) return;
+    if (command.name() === 'auth' && command.commands.length === 0) (await loadProviderAuth()).configureProviderAuthCommand(root, command);
+    let target = command;
+    for (const name of root.args.slice(1)) {
+      const child = target.commands.find(candidate => candidate.name() === name || candidate.aliases().includes(name));
+      if (!child) break;
+      target = child;
+    }
+    target.help();
+  });
   return configured;
 }
 
@@ -2801,7 +2534,7 @@ function showBasicHelp(): void {
     '  kodax -h project                 # Project mode workflow across CLI and REPL',
   );
   console.log(
-    '  kodax -p "quick fix" --reasoning balanced  # Quick task with reasoning',
+    '  kodax -p "quick fix" --effort medium  # Quick task with reasoning',
   );
   console.log(
     '  kodax -c                          # Continue recent conversation',
@@ -3110,6 +2843,240 @@ async function executeProviderSetup(
   printProviderSetupCompletion(result.selection, result.credentialSource);
 }
 
+export function configureKodaXDaemonCommand(program: Command): Command {
+  const daemonCommand = program
+    .command('daemon')
+    .description('Inspect and manage the local KodaX runtime daemon')
+    .helpOption('-h, --help', 'Show daemon help');
+
+  daemonCommand
+    .command('start')
+    .description('Start the runtime daemon in a detached background process')
+    .option('--profile <name>', 'Daemon profile', 'default')
+    .option(
+      '--home <dir>',
+      HELP_DAEMON_HOME,
+    )
+    .option('-m, --provider <name>', 'Default provider for hosted runs')
+    .option('--model <name>', 'Default model for hosted runs')
+    .option(
+      '--timeout-ms <n>',
+      'Milliseconds to wait for daemon health',
+      parseOptionalNonNegativeInt,
+      5_000,
+    )
+    .option('--json', 'Output machine-readable JSON')
+    .action(
+      async (
+        localOptions: {
+          profile?: string;
+          home?: string;
+          provider?: string;
+          model?: string;
+          timeoutMs?: number;
+          json?: boolean;
+        },
+        command: Command,
+      ) => {
+        const options = mergeCommandOptionsWithGlobals(localOptions, command);
+        await startDaemonCommand({
+          profile: options.profile ?? 'default',
+          ...resolveCliRuntimeDaemonLocation(options.home),
+          provider: options.provider,
+          model: options.model,
+          timeoutMs: options.timeoutMs ?? 5_000,
+          json: options.json === true,
+        });
+      },
+    );
+
+  daemonCommand
+    .command('stop')
+    .description('Stop a healthy runtime daemon')
+    .option('--profile <name>', 'Daemon profile', 'default')
+    .option(
+      '--home <dir>',
+      HELP_DAEMON_HOME,
+    )
+    .option(
+      '--timeout-ms <n>',
+      'Milliseconds to wait for daemon shutdown',
+      parseOptionalNonNegativeInt,
+      5_000,
+    )
+    .option(
+      '--force',
+      'Clean verified stale daemon ownership without killing unverified live processes',
+    )
+    .option('--json', 'Output machine-readable JSON')
+    .action(
+      async (subOpts: {
+        profile?: string;
+        home?: string;
+        timeoutMs?: number;
+        force?: boolean;
+        json?: boolean;
+      }) => {
+        await stopDaemonCommand({
+          profile: subOpts.profile ?? 'default',
+          ...resolveCliRuntimeDaemonLocation(subOpts.home),
+          timeoutMs: subOpts.timeoutMs ?? 5_000,
+          force: subOpts.force === true,
+          json: subOpts.json === true,
+        });
+      },
+    );
+
+  daemonCommand
+    .command('restart')
+    .description('Restart the runtime daemon')
+    .option('--profile <name>', 'Daemon profile', 'default')
+    .option(
+      '--home <dir>',
+      HELP_DAEMON_HOME,
+    )
+    .option('-m, --provider <name>', 'Default provider for hosted runs')
+    .option('--model <name>', 'Default model for hosted runs')
+    .option(
+      '--timeout-ms <n>',
+      'Milliseconds to wait for daemon shutdown/startup',
+      parseOptionalNonNegativeInt,
+      5_000,
+    )
+    .option('--json', 'Output machine-readable JSON')
+    .action(
+      async (
+        localOptions: {
+          profile?: string;
+          home?: string;
+          provider?: string;
+          model?: string;
+          timeoutMs?: number;
+          json?: boolean;
+        },
+        command: Command,
+      ) => {
+        const options = mergeCommandOptionsWithGlobals(localOptions, command);
+        await restartDaemonCommand({
+          profile: options.profile ?? 'default',
+          ...resolveCliRuntimeDaemonLocation(options.home),
+          provider: options.provider,
+          model: options.model,
+          timeoutMs: options.timeoutMs ?? 5_000,
+          json: options.json === true,
+        });
+      },
+    );
+
+  daemonCommand
+    .command('logs')
+    .description('Print the daemon log path and recent lines')
+    .option('--profile <name>', 'Daemon profile', 'default')
+    .option(
+      '--home <dir>',
+      HELP_DAEMON_HOME,
+    )
+    .option(
+      '--lines <n>',
+      'Number of log lines to print',
+      parseOptionalNonNegativeInt,
+      80,
+    )
+    .option('--json', 'Output machine-readable JSON')
+    .action(
+      async (subOpts: {
+        profile?: string;
+        home?: string;
+        lines?: number;
+        json?: boolean;
+      }) => {
+        await printDaemonLogs({
+          profile: subOpts.profile ?? 'default',
+          ...resolveCliRuntimeDaemonLocation(subOpts.home),
+          lines: subOpts.lines ?? 80,
+          json: subOpts.json === true,
+        });
+      },
+    );
+
+  daemonCommand
+    .command('serve')
+    .description('Run the runtime daemon host in the foreground')
+    .option('--profile <name>', 'Daemon profile', 'default')
+    .option(
+      '--home <dir>',
+      HELP_DAEMON_HOME,
+    )
+    .addOption(new Option('--config-home <dir>').hideHelp())
+    .option('-m, --provider <name>', 'Default provider for hosted runs')
+    .option('--model <name>', 'Default model for hosted runs')
+    .option('--sessions-dir <dir>', 'Runtime session storage directory')
+    .option(
+      '--permission-timeout-ms <n>',
+      'Permission request timeout',
+      parseOptionalNonNegativeInt,
+    )
+    .option(
+      '--user-input-timeout-ms <n>',
+      'Ordinary-question timeout in milliseconds (default: 0, no deadline)',
+      parseOptionalNonNegativeInt,
+    )
+    .addOption(
+      new Option('--orphan-exit-ms <n>')
+        .argParser(parseOptionalNonNegativeInt)
+        .hideHelp(),
+    )
+    .action(
+      async (
+        localOptions: {
+          profile?: string;
+          home?: string;
+          provider?: string;
+          model?: string;
+          configHome?: string;
+          sessionsDir?: string;
+          permissionTimeoutMs?: number;
+          userInputTimeoutMs?: number;
+          orphanExitMs?: number;
+        },
+        command: Command,
+      ) => {
+        const options = mergeCommandOptionsWithGlobals(localOptions, command);
+        await serveDaemonCommand({
+          profile: options.profile ?? 'default',
+          ...resolveCliRuntimeDaemonLocation(options.home, options.configHome),
+          provider: options.provider,
+          model: options.model,
+          sessionsDir: options.sessionsDir,
+          permissionTimeoutMs: options.permissionTimeoutMs,
+          userInputTimeoutMs: options.userInputTimeoutMs,
+          orphanExitMs: options.orphanExitMs,
+        });
+      },
+    );
+
+  daemonCommand
+    .command('status')
+    .description('Inspect daemon state and endpoint health')
+    .option('--profile <name>', 'Daemon profile', 'default')
+    .option(
+      '--home <dir>',
+      HELP_DAEMON_HOME,
+    )
+    .option('--json', 'Output machine-readable JSON')
+    .action(
+      async (subOpts: { profile?: string; home?: string; json?: boolean }) => {
+        await printDaemonStatus({
+          profile: subOpts.profile ?? 'default',
+          ...resolveCliRuntimeDaemonLocation(subOpts.home),
+          json: subOpts.json === true,
+        });
+      },
+    );
+
+  return daemonCommand;
+}
+
 export function configureKodaXSetupCommand(program: Command): Command {
   const setupCommand = program
     .command('setup')
@@ -3367,33 +3334,6 @@ async function runCliMain(startupProgress?: CliStartupProgress) {
     });
   }
 
-  // Session retention: opt-in best-effort background prune of session files
-  // older than KODAX_SESSION_RETENTION_DAYS. DEFAULT OFF (0) — auto-deleting a
-  // user's accumulated history is destructive and surprising, so it must be
-  // explicitly enabled (e.g. KODAX_SESSION_RETENTION_DAYS=30). The `list()`
-  // head-read path already keeps `kodax -c` + the picker fast regardless of
-  // file count, so retention is a housekeeping convenience, not a perf
-  // requirement. Fire-and-forget never blocks startup, but cleanup failures
-  // are reported because cached message bodies must remain attached to a
-  // retryable Session lifecycle operation.
-  // Read from env (shell override) then config.json (persistent). This runs at
-  // startup before prepareRuntimeConfig's bridge, so it reads config directly.
-  if (!isDaemonManagementCommand) {
-    const sessionRetentionDays = Number(
-      process.env.KODAX_SESSION_RETENTION_DAYS ??
-        loadConfig().sessionRetentionDays ??
-        0,
-    );
-    void new FileSessionStorage().cleanupOldSessions(sessionRetentionDays).catch((error: unknown) => {
-      emitKodaXDiagnostic({
-        source: 'cli:session-retention',
-        level: 'warn',
-        message: 'Session retention cleanup was incomplete and will be retried later.',
-        detail: error instanceof Error ? error.message : String(error),
-      });
-    });
-  }
-
   const program = configureKodaXRootCommand(
     new Command()
       .name('kodax')
@@ -3411,7 +3351,10 @@ async function runCliMain(startupProgress?: CliStartupProgress) {
   });
 
   configureKodaXSetupCommand(program);
-  configureProviderAuthCommand(program);
+  const auth = program.command('auth').description('Save API keys, login, inspect or revoke provider credentials');
+  program.hook('preSubcommand', async (_parent, command) => {
+    if (command === auth && auth.commands.length === 0) (await loadProviderAuth()).configureProviderAuthCommand(program, auth);
+  });
   configureKodaXMemoryCommand(program);
 
   // ============== completion subcommand ==============
@@ -3651,6 +3594,12 @@ complete -c kodax -l version -d 'Show version'`);
       'Print environment diagnostics (runtime, providers, session/trace disk usage)',
     )
     .option('--json', 'Output machine-readable JSON')
+    .option('--inspect-storage <target.json>', 'Inspect one explicit storage target without modifying it')
+    .option('--repair-storage <plan.json>', 'Apply an inspected offline storage repair plan, retaining original bytes')
+    .option('--repair-candidate <file>', 'Complete recovery snapshot for offline storage repair')
+    .option('--verify-storage <receipt.json>', 'Confirm an externally verified restored state before resuming access')
+    .option('--writers-stopped', 'Acknowledge every shared CLI, Host and SDK writer has stopped')
+    .option('--verified-current-state', 'Confirm the restored state and external effects have been independently verified')
     .option(
       '--ping',
       'Live-probe each configured provider (network + small token cost)',
@@ -3659,242 +3608,20 @@ complete -c kodax -l version -d 'Show version'`);
       '--native-text',
       'Load and hash-check the trusted text native binding',
     )
-    .action(async (opts: { json?: boolean; ping?: boolean; nativeText?: boolean }) => {
+    .action(async (opts: { json?: boolean; ping?: boolean; nativeText?: boolean; inspectStorage?: string; repairStorage?: string;
+      repairCandidate?: string; verifyStorage?: string; writersStopped?: boolean; verifiedCurrentState?: boolean }) => {
+      if (opts.inspectStorage || opts.repairStorage || opts.verifyStorage || opts.repairCandidate || opts.writersStopped || opts.verifiedCurrentState) {
+        const { runStorageRepairCli } = await loadCliComponent('./storage-repair-cli.js', () => import('./storage-repair-cli.js'));
+        await runStorageRepairCli(opts); return;
+      }
+      const { runDoctor } = await loadCliComponent('./kodax_doctor.js', () => import('./kodax_doctor.js'));
       await runDoctor(version, Boolean(opts?.json), {
         ping: Boolean(opts?.ping),
         nativeText: Boolean(opts?.nativeText),
       });
     });
 
-  const daemonCommand = program
-    .command('daemon')
-    .description('Inspect and manage the local KodaX runtime daemon')
-    .helpOption('-h, --help', 'Show daemon help');
-
-  daemonCommand
-    .command('start')
-    .description('Start the runtime daemon in a detached background process')
-    .option('--profile <name>', 'Daemon profile', 'default')
-    .option(
-      '--home <dir>',
-      'Base directory that owns the .kodax runtime daemon state',
-    )
-    .option('-m, --provider <name>', 'Default provider for hosted runs')
-    .option('--model <name>', 'Default model for hosted runs')
-    .option(
-      '--timeout-ms <n>',
-      'Milliseconds to wait for daemon health',
-      parseOptionalNonNegativeInt,
-      5_000,
-    )
-    .option('--json', 'Output machine-readable JSON')
-    .action(
-      async (
-        localOptions: {
-          profile?: string;
-          home?: string;
-          provider?: string;
-          model?: string;
-          timeoutMs?: number;
-          json?: boolean;
-        },
-        command: Command,
-      ) => {
-        const options = mergeCommandOptionsWithGlobals(localOptions, command);
-        await startDaemonCommand({
-          profile: options.profile ?? 'default',
-          ...resolveCliRuntimeDaemonLocation(options.home),
-          provider: options.provider,
-          model: options.model,
-          timeoutMs: options.timeoutMs ?? 5_000,
-          json: options.json === true,
-        });
-      },
-    );
-
-  daemonCommand
-    .command('stop')
-    .description('Stop a healthy runtime daemon')
-    .option('--profile <name>', 'Daemon profile', 'default')
-    .option(
-      '--home <dir>',
-      'Base directory that owns the .kodax runtime daemon state',
-    )
-    .option(
-      '--timeout-ms <n>',
-      'Milliseconds to wait for daemon shutdown',
-      parseOptionalNonNegativeInt,
-      5_000,
-    )
-    .option(
-      '--force',
-      'Clean verified stale daemon ownership without killing unverified live processes',
-    )
-    .option('--json', 'Output machine-readable JSON')
-    .action(
-      async (subOpts: {
-        profile?: string;
-        home?: string;
-        timeoutMs?: number;
-        force?: boolean;
-        json?: boolean;
-      }) => {
-        await stopDaemonCommand({
-          profile: subOpts.profile ?? 'default',
-          ...resolveCliRuntimeDaemonLocation(subOpts.home),
-          timeoutMs: subOpts.timeoutMs ?? 5_000,
-          force: subOpts.force === true,
-          json: subOpts.json === true,
-        });
-      },
-    );
-
-  daemonCommand
-    .command('restart')
-    .description('Restart the runtime daemon')
-    .option('--profile <name>', 'Daemon profile', 'default')
-    .option(
-      '--home <dir>',
-      'Base directory that owns the .kodax runtime daemon state',
-    )
-    .option('-m, --provider <name>', 'Default provider for hosted runs')
-    .option('--model <name>', 'Default model for hosted runs')
-    .option(
-      '--timeout-ms <n>',
-      'Milliseconds to wait for daemon shutdown/startup',
-      parseOptionalNonNegativeInt,
-      5_000,
-    )
-    .option('--json', 'Output machine-readable JSON')
-    .action(
-      async (
-        localOptions: {
-          profile?: string;
-          home?: string;
-          provider?: string;
-          model?: string;
-          timeoutMs?: number;
-          json?: boolean;
-        },
-        command: Command,
-      ) => {
-        const options = mergeCommandOptionsWithGlobals(localOptions, command);
-        await restartDaemonCommand({
-          profile: options.profile ?? 'default',
-          ...resolveCliRuntimeDaemonLocation(options.home),
-          provider: options.provider,
-          model: options.model,
-          timeoutMs: options.timeoutMs ?? 5_000,
-          json: options.json === true,
-        });
-      },
-    );
-
-  daemonCommand
-    .command('logs')
-    .description('Print the daemon log path and recent lines')
-    .option('--profile <name>', 'Daemon profile', 'default')
-    .option(
-      '--home <dir>',
-      'Base directory that owns the .kodax runtime daemon state',
-    )
-    .option(
-      '--lines <n>',
-      'Number of log lines to print',
-      parseOptionalNonNegativeInt,
-      80,
-    )
-    .option('--json', 'Output machine-readable JSON')
-    .action(
-      async (subOpts: {
-        profile?: string;
-        home?: string;
-        lines?: number;
-        json?: boolean;
-      }) => {
-        await printDaemonLogs({
-          profile: subOpts.profile ?? 'default',
-          ...resolveCliRuntimeDaemonLocation(subOpts.home),
-          lines: subOpts.lines ?? 80,
-          json: subOpts.json === true,
-        });
-      },
-    );
-
-  daemonCommand
-    .command('serve')
-    .description('Run the runtime daemon host in the foreground')
-    .option('--profile <name>', 'Daemon profile', 'default')
-    .option(
-      '--home <dir>',
-      'Base directory that owns the .kodax runtime daemon state',
-    )
-    .addOption(new Option('--config-home <dir>').hideHelp())
-    .option('-m, --provider <name>', 'Default provider for hosted runs')
-    .option('--model <name>', 'Default model for hosted runs')
-    .option('--sessions-dir <dir>', 'Runtime session storage directory')
-    .option(
-      '--permission-timeout-ms <n>',
-      'Permission request timeout',
-      parseOptionalNonNegativeInt,
-    )
-    .option(
-      '--user-input-timeout-ms <n>',
-      'Ordinary-question timeout in milliseconds (default: 0, no deadline)',
-      parseOptionalNonNegativeInt,
-    )
-    .addOption(
-      new Option('--orphan-exit-ms <n>')
-        .argParser(parseOptionalNonNegativeInt)
-        .hideHelp(),
-    )
-    .action(
-      async (
-        localOptions: {
-          profile?: string;
-          home?: string;
-          provider?: string;
-          model?: string;
-          configHome?: string;
-          sessionsDir?: string;
-          permissionTimeoutMs?: number;
-          userInputTimeoutMs?: number;
-          orphanExitMs?: number;
-        },
-        command: Command,
-      ) => {
-        const options = mergeCommandOptionsWithGlobals(localOptions, command);
-        await serveDaemonCommand({
-          profile: options.profile ?? 'default',
-          ...resolveCliRuntimeDaemonLocation(options.home, options.configHome),
-          provider: options.provider,
-          model: options.model,
-          sessionsDir: options.sessionsDir,
-          permissionTimeoutMs: options.permissionTimeoutMs,
-          userInputTimeoutMs: options.userInputTimeoutMs,
-          orphanExitMs: options.orphanExitMs,
-        });
-      },
-    );
-
-  daemonCommand
-    .command('status')
-    .description('Inspect daemon state and endpoint health')
-    .option('--profile <name>', 'Daemon profile', 'default')
-    .option(
-      '--home <dir>',
-      'Base directory that owns the .kodax runtime daemon state',
-    )
-    .option('--json', 'Output machine-readable JSON')
-    .action(
-      async (subOpts: { profile?: string; home?: string; json?: boolean }) => {
-        await printDaemonStatus({
-          profile: subOpts.profile ?? 'default',
-          ...resolveCliRuntimeDaemonLocation(subOpts.home),
-          json: subOpts.json === true,
-        });
-      },
-    );
+  configureKodaXDaemonCommand(program);
 
   const skillCommand = program
     .command('skill')
@@ -3913,8 +3640,8 @@ complete -c kodax -l version -d 'Show version'`);
     .option('-m, --provider <name>', 'Provider to use')
     .option('--model <name>', 'Model override')
     // prettier-ignore
-    .option('--effort <level>', 'Reasoning effort: off, auto, low, medium, high, xhigh, max, or model-supported value', parseEffortOption)
-    .option('-t, --thinking', 'Compatibility alias for --reasoning auto')
+    .option('--effort <level>', HELP_EFFORT, parseEffortOption)
+    .option('-t, --thinking', HELP_THINKING)
     .option(
       '--reasoning <mode>',
       'Reasoning mode: off, auto, quick, balanced, deep',
@@ -3922,7 +3649,7 @@ complete -c kodax -l version -d 'Show version'`);
     )
     .option(
       '--repo-intelligence <mode>',
-      'Repo intelligence mode: auto, full, light, off',
+      HELP_REPO_INTELLIGENCE,
       parseRepoIntelligenceModeOption,
     )
     .option(
@@ -4327,7 +4054,7 @@ complete -c kodax -l version -d 'Show version'`);
     .option('--all', 'Also list builtin / extension tools')
     .option(
       '--cwd <dir>',
-      'Workspace root to inspect (defaults to current directory)',
+      HELP_WORKSPACE_ROOT,
     )
     .action(async (subOpts: { all?: boolean; cwd?: string }) => {
       const { runToolsList } = await import('./constructed_cli.js');
@@ -4344,7 +4071,7 @@ complete -c kodax -l version -d 'Show version'`);
     )
     .option(
       '--cwd <dir>',
-      'Workspace root to inspect (defaults to current directory)',
+      HELP_WORKSPACE_ROOT,
     )
     .action(async (spec: string, subOpts: { cwd?: string }) => {
       const { runToolsInspect } = await import('./constructed_cli.js');
@@ -4358,7 +4085,7 @@ complete -c kodax -l version -d 'Show version'`);
     )
     .option(
       '--cwd <dir>',
-      'Workspace root to inspect (defaults to current directory)',
+      HELP_WORKSPACE_ROOT,
     )
     .action(async (spec: string, subOpts: { cwd?: string }) => {
       const { runToolsRevoke } = await import('./constructed_cli.js');
@@ -4387,7 +4114,7 @@ complete -c kodax -l version -d 'Show version'`);
     )
     .option(
       '--cwd <dir>',
-      'Workspace root to inspect (defaults to current directory)',
+      HELP_WORKSPACE_ROOT,
     )
     .action(async (name: string, subOpts: { cwd?: string }) => {
       const { runResetSelfModifyBudget } = await import('./self_modify_cli.js');
@@ -4403,7 +4130,7 @@ complete -c kodax -l version -d 'Show version'`);
     )
     .option(
       '--cwd <dir>',
-      'Workspace root to inspect (defaults to current directory)',
+      HELP_WORKSPACE_ROOT,
     )
     .action(async (name: string, subOpts: { cwd?: string }) => {
       const { runConstructedAudit } = await import('./self_modify_cli.js');
@@ -4417,7 +4144,7 @@ complete -c kodax -l version -d 'Show version'`);
     )
     .option(
       '--cwd <dir>',
-      'Workspace root to inspect (defaults to current directory)',
+      HELP_WORKSPACE_ROOT,
     )
     .action(async (name: string, subOpts: { cwd?: string }) => {
       const { runDisableSelfModify } = await import('./self_modify_cli.js');
@@ -4431,7 +4158,7 @@ complete -c kodax -l version -d 'Show version'`);
     )
     .option(
       '--cwd <dir>',
-      'Workspace root to inspect (defaults to current directory)',
+      HELP_WORKSPACE_ROOT,
     )
     .action(async (name: string, subOpts: { cwd?: string }) => {
       const { runConstructedRollback } = await import('./self_modify_cli.js');
@@ -4476,11 +4203,53 @@ complete -c kodax -l version -d 'Show version'`);
   }
 
   const opts = program.opts();
+  // -h / --help [topic]: show basic help or a detailed help topic
+  if (opts.help !== undefined) {
+    if (typeof opts.help === 'string') {
+      const topic = opts.help.toLowerCase();
+      if (showCliHelpTopic(topic)) {
+        return;
+      }
+      console.log(chalk.yellow(`\n[Unknown help topic: ${topic}]`));
+      showCliHelpTopics();
+      return;
+    }
+    // No topic specified: show basic help overview.
+    showBasicHelp();
+    return;
+  }
+
   const outputMode = (opts.mode as CliOutputMode | undefined) ?? 'text';
   // Hydrate login-shell and config-backed environment before first-run
   // readiness inspects credentials. Reuse this same Runtime configuration for
   // startup so the gate and the session cannot observe different environments.
   const config = prepareRuntimeConfig();
+  // Session retention: opt-in best-effort background prune of session files
+  // older than KODAX_SESSION_RETENTION_DAYS. DEFAULT OFF (0) — auto-deleting a
+  // user's accumulated history is destructive and surprising, so it must be
+  // explicitly enabled (e.g. KODAX_SESSION_RETENTION_DAYS=30). The `list()`
+  // head-read path already keeps `kodax -c` + the picker fast regardless of
+  // file count, so retention is a housekeeping convenience, not a perf
+  // requirement. Fire-and-forget never blocks startup, but cleanup failures
+  // are reported because cached message bodies must remain attached to a
+  // retryable Session lifecycle operation.
+  // Execution-only: informational commands must not load or mutate user state.
+  {
+    const sessionRetentionDays = Number(
+      process.env.KODAX_SESSION_RETENTION_DAYS ??
+        config.sessionRetentionDays ??
+        0,
+    );
+    void new FileSessionStorage().cleanupOldSessions(sessionRetentionDays).catch((error: unknown) => {
+      emitKodaXDiagnostic({
+        source: 'cli:session-retention',
+        level: 'warn',
+        message: 'Session retention cleanup was incomplete and will be retried later.',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+
   if (
     shouldAutoLaunchProviderSetup({
       outputMode,
@@ -4517,7 +4286,7 @@ complete -c kodax -l version -d 'Show version'`);
         process.exitCode = 1; return;
       }
     }
-    if (readiness.status === 'needs-credential' && !(await createProviderCredentialManager({ configPath: KODAX_CONFIG_FILE }).describe(readiness.provider)).stored) {
+    if (readiness.status === 'needs-credential' && !(await (await loadProviderAuth()).createProviderCredentialManager({ configPath: KODAX_CONFIG_FILE }).describe(readiness.provider)).stored) {
       process.stdout.write(
         `\n${renderMissingProviderCredentialGuide(
           readiness.apiKeyEnv
@@ -4634,11 +4403,8 @@ complete -c kodax -l version -d 'Show version'`);
   // FEATURE_298 T27 — fixed Host: the CLI client owns no extension
   // runtime, integration hot reload, or A2A handle; the Host does.
   let cliRuntime: KodaXRuntime | undefined;
-  let cliCredentials: ReturnType<typeof createCliProviderCredentials> | undefined;
-  const authorizeCli: KodaXClientHostAuthorization = async (request, services) => {
-    const authorizer = await (cliCredentials ??= createCliProviderCredentials(config));
-    return authorizer.authorizeExecution(request, services);
-  };
+  const cliCredentials = (await import('./cli-provider-credentials.js')).createCliProviderCredentialAccess(config);
+  const authorizeCli: KodaXClientHostAuthorization = cliCredentials.authorizeExecution;
   let shouldHardExitAfterInteractiveCleanup = false;
   const integrationEvents = createIntegrationEventBridge((message) =>
     console.error(chalk.dim(message)),
@@ -4763,22 +4529,6 @@ complete -c kodax -l version -d 'Show version'`);
     }
 
     let userPrompt = options.prompt.join(' ');
-
-    // -h / --help [topic]: show basic help or a detailed help topic
-    if (opts.help !== undefined) {
-      if (typeof opts.help === 'string') {
-        const topic = opts.help.toLowerCase();
-        if (showCliHelpTopic(topic)) {
-          return;
-        }
-        console.log(chalk.yellow(`\n[Unknown help topic: ${topic}]`));
-        showCliHelpTopics();
-        return;
-      }
-      // No topic specified: show basic help overview.
-      showBasicHelp();
-      return;
-    }
 
     validateCliModeSelection(options, {
       resumeWithoutId: opts.resume === true,
@@ -5111,7 +4861,7 @@ complete -c kodax -l version -d 'Show version'`);
   } finally {
     let credentialCloseError: unknown;
     const closeCredentials = async () => {
-      try { if (cliCredentials) await (await cliCredentials).close(); }
+      try { await cliCredentials.close(); }
       catch (error) { credentialCloseError = error; }
     };
     if (shouldHardExitAfterInteractiveCleanup) {

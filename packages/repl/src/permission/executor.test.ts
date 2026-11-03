@@ -15,6 +15,15 @@ describe('executeWithPermission Full Access', () => {
     codingMock.executeTool.mockResolvedValue('executed');
   });
 
+  it('directs a blocked plan write to the existing approval tool without executing or approving it', async () => {
+    const permission = createPermissionContext({ permissionMode: 'plan', gitRoot: process.cwd(), onConfirm: vi.fn(async () => ({ confirmed: false })) });
+    const result = await executeWithPermission('write', { path: 'src/fixture-plan-write.ts', content: 'must not write' }, { backups: new Map() }, permission);
+    expect(result).toContain('exit_plan_mode');
+    expect(result).not.toContain('set_permission_mode');
+    expect(codingMock.executeTool).not.toHaveBeenCalled();
+    expect(permission.onConfirm).not.toHaveBeenCalled();
+  });
+
   it('bypasses legacy helper-script and protected-path gates', async () => {
     const coreContext: KodaXToolExecutionContext = { backups: new Map() };
     const permission = createPermissionContext({

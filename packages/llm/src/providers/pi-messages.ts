@@ -21,7 +21,7 @@ export class KodaXPiMessagesProvider extends KodaXNativeProvider {
   override getCacheCapabilities(model?: string) { return super.getCacheCapabilities(model) ?? { dialect: 'pi' as const }; }
   protected async invoke(request: NativeRequest): Promise<KodaXStreamResult> {
     const cacheOff = resolvePromptCacheDisabled();
-    const messages = await projectPiMessages(request.messages, request.source, this.getCapabilityProfile().multimodalSupport !== 'none');
+    const messages = await projectPiMessages(request.messages, request.source, this.getCapabilityProfile(request.options?.modelOverride).multimodalSupport !== 'none');
     if (request.effort) request.sentReasoningEffort = request.effort;
     const response = await nativeResponse(`${this.config.baseUrl!.replace(/\/$/, '')}/messages`, {
       method: 'POST', signal: request.signal, headers: { authorization: `Bearer ${this.getApiKey()}`, 'content-type': 'application/json', accept: 'text/event-stream' },

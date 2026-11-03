@@ -27,6 +27,28 @@ const RUN_LIFECYCLE_CAPABILITIES = {
 } as const;
 
 describe('runtime daemon client proxy', () => {
+  it.each([{ binding: { leaseId: 'old' } }, { businessBinding: { id: 'expert', revision: 'r1' }, profile: {} },
+    { profile: { defaultSkill: { name: 'expert-method' } } }])('rejects new execution intent on an old Host before sending it', async authorization => {
+    const sent: string[] = [];
+    const client = createRuntimeDaemonClient({
+      identity: { runtimeId: 'old-binding-host', mode: 'daemon', profile: 'default', startedAt: '2026-11-02T00:00:00Z', version: KODAX_VERSION },
+      transport: { async request(method) { sent.push(method); return {}; }, subscribe() { return { close() {} }; } },
+    });
+    await expect(client.runs.acceptInput({ sessionId: 's', inputId: 'new', text: 'Question', authorization }))
+      .rejects.toMatchObject({ code: 'daemon_upgrade_required' });
+    expect(sent).toEqual([]);
+  });
+  it('requires promotion capability before sending Product metadata operations to an old Host', async () => {
+    const sent: string[] = [];
+    const client = createRuntimeDaemonClient({
+      identity: { runtimeId: 'old-promotion-host', mode: 'daemon', profile: 'default', startedAt: '2026-11-02T00:00:00Z', version: KODAX_VERSION },
+      transport: { async request(method) { sent.push(method); return {}; }, subscribe() { return { close() {} }; } },
+    });
+    await expect(client.sessions.promote({ sessionId: 's', requestId: 'promotion', expectedRevision: '0'.repeat(64), tag: 'coder' }))
+      .rejects.toMatchObject({ code: 'daemon_upgrade_required' });
+    await expect(client.sessions.readPromotion('s', 'promotion')).rejects.toMatchObject({ code: 'daemon_upgrade_required' });
+    expect(sent).toEqual([]);
+  });
   it.each(['question', 'question_multi', 'question_input'] as const)('rejects a local timeout without sending a malformed %s answer', async kind => {
     const sent: string[] = [];
     const client = createRuntimeDaemonClient({
@@ -1696,6 +1718,8 @@ describe('runtime daemon client proxy', () => {
     transport.emit(createRuntimeDaemonNotification('credential.request', {
       requestId: 'credential-request-v2',
       brokerVersion: 2,
+      credentialContextVersion: 1,
+      rejectedCredentialFingerprint: 'b'.repeat(64),
       leaseId: lease.id,
       provider: 'anthropic',
       sessionId: 'session-1',
@@ -1712,6 +1736,8 @@ describe('runtime daemon client proxy', () => {
     expect(requests).toEqual([{
       requestId: 'credential-request-v2',
       leaseId: lease.id,
+      credentialContextVersion: 1,
+      rejectedCredentialFingerprint: 'b'.repeat(64),
       provider: 'anthropic',
       sessionId: 'session-1',
       target: {

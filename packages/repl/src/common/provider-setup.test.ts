@@ -10,6 +10,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { createCloudProviderConfig, createOAuthProviderConfig } from '@kodax-ai/llm';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -49,6 +50,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks(); syncBuiltinESMExports();
   rmSync(tempDirectory, { recursive: true, force: true });
 });
 
@@ -168,6 +170,15 @@ describe('inspectProviderSetupReadiness', () => {
     const readiness = inspectProviderSetupReadiness({ configPath, catalog, environment: {} });
     expect(readiness).toMatchObject({ status: 'invalid-config', configPath });
     expect(readFileSync(configPath, 'utf8')).toBe('{ not json');
+  });
+
+  it('does not expose invalid configuration bytes through setup diagnostics', () => {
+    const raw = 'PRIVATE_KEY_777-not-json';
+    writeFileSync(configPath, raw);
+    const readiness = inspectProviderSetupReadiness({ configPath, catalog, environment: {} });
+    expect(readiness.status).toBe('invalid-config');
+    expect(JSON.stringify(readiness)).not.toContain('PRIVATE_');
+    expect(readFileSync(configPath, 'utf8')).toBe(raw);
   });
 
   it('treats malformed existing custom providers as invalid instead of offering a lossy setup', () => {
@@ -437,9 +448,15 @@ it('preserves the previous configuration when writing an OAuth registration link
   const provider = createOAuthProviderConfig({ name: 'oauth', service: 'openrouter', model: 'fixture' });
   const previous = JSON.stringify({ provider: 'kept', unrelated: 'retained', customProviders: [provider] }); writeFileSync(configPath, previous);
   const originalWrite = fs.writeFileSync;
-  const write = vi.spyOn(fs, 'writeFileSync').mockImplementation((file) => { originalWrite(file, '{"partial":'); throw new Error('fixture disk failure'); });
+  const write = vi.spyOn(fs, 'writeFileSync').mockImplementation((file, data, options) => {
+    if (typeof data === 'string' && data.includes('"unrelated"')) {
+      originalWrite(file, '{"partial":'); throw new Error('fixture disk failure');
+    }
+    originalWrite(file, data, options);
+  });
+  syncBuiltinESMExports();
   try {
     expect(() => linkProviderOAuthRegistration({ configPath, name: provider.name, service: provider.oauth!, registration: 'new-registration' })).toThrow(/disk failure/);
     expect(readFileSync(configPath, 'utf8')).toBe(previous);
-  } finally { write.mockRestore(); }
+  } finally { write.mockRestore(); syncBuiltinESMExports(); }
 });

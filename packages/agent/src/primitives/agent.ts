@@ -24,12 +24,14 @@ import type {
   KodaXToolDefinition,
   KodaXWireReasoningEffort,
 } from '@kodax-ai/llm';
+import { mapLegacyReasoningModeToEffortIntent } from '@kodax-ai/llm';
 
 /**
  * Reasoning depth / mode selector. Alias for `KodaXReasoningMode` to keep the
  * Layer A surface independent of the `KodaX*` brand; unified during the prefix
  * cleanup in FEATURE_086 (v0.7.27).
  */
+/** @deprecated Compatibility alias for old SDK inputs; use KodaXWireReasoningEffort. */
 export type ReasoningDepth = KodaXReasoningMode;
 
 /**
@@ -49,14 +51,20 @@ export type AgentMessage = KodaXMessage;
 /**
  * Declarative reasoning profile attached to an Agent.
  *
- * In v0.7.23 this is a placeholder shape — only the `default` depth is read
- * when the Runner dispatches to `runKodaX`. Escalation on revise/replan and
- * max clamping are implemented in FEATURE_078 (v0.7.29).
+ * Effort-native defaults for explicitly declared specialist agents.
+ * Built-in roots inherit the Session selection without a role profile.
  */
 export interface AgentReasoningProfile {
-  readonly default: ReasoningDepth;
-  readonly max?: ReasoningDepth;
+  readonly default: KodaXWireReasoningEffort;
+  readonly max?: KodaXWireReasoningEffort;
+  /** @deprecated Accepted for old declarations; automatic role escalation is retired. */
   readonly escalateOnRevise?: boolean;
+}
+
+/** Compatibility intake for old SDK declarations and persisted agent manifests. */
+export function normalizeAgentReasoningProfile(profile: AgentReasoningProfile): AgentReasoningProfile {
+  return { ...profile, default: mapLegacyReasoningModeToEffortIntent(profile.default),
+    ...(profile.max !== undefined ? { max: mapLegacyReasoningModeToEffortIntent(profile.max) } : {}) };
 }
 
 /**
@@ -179,7 +187,7 @@ export interface Agent<TContext = unknown> {
 export function createAgent<TContext = unknown>(
   spec: Agent<TContext>,
 ): Agent<TContext> {
-  return Object.freeze({ ...spec });
+  return Object.freeze({ ...spec, ...(spec.reasoning ? { reasoning: normalizeAgentReasoningProfile(spec.reasoning) } : {}) });
 }
 
 /**

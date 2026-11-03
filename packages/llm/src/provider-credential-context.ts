@@ -1,6 +1,9 @@
 import type { KodaXProviderCapabilityProfile } from './types.js';
 import { inheritRejectedImage } from './providers/rejected-image.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { deserializeProviderCredentialGrant } from './credential-grant.js';
+import { credentialFingerprint } from './credential-fingerprint.js';
+import { KodaXProviderError } from './errors.js';
 import { cloudCredentialSecrets, deserializeCloudCredential, isCloudCredentialCarrier, type KodaXCloudCredential } from './cloud/credentials.js';
 import { observeProviderOperation, currentProviderRequestAbortSignal, currentProviderRequestAttribution, hasProviderOperationOwner } from './provider-request-observation.js';
 
@@ -24,6 +27,11 @@ export interface ProviderCredentialLeaseAccess {
     attribution?: ProviderCredentialAttribution,
     connectionFingerprint?: string,
   ): Promise<string>;
+  /** A physical 401 may refresh subsequent requests; never retries the current operation. */
+  recoverRejectedCredential?(
+    provider: string, rejectedFingerprint: string, signal: AbortSignal,
+    attribution?: ProviderCredentialAttribution, connectionFingerprint?: string,
+  ): Promise<void>;
 }
 
 export type ProviderCredentialAttribution =
@@ -43,6 +51,7 @@ export interface ProviderCredentialLeaseScope {
 }
 
 interface ExactProviderCredentialScope {
+  readonly replayIdentity?: string;
   readonly connectionFingerprint?: string;
   readonly signal?: AbortSignal;
   readonly kind: 'exact';
@@ -80,18 +89,22 @@ export function runWithProviderCredential<T>(
   operation: () => T,
 ): T {
   if (!provider || !credential) throw new Error('Provider credential scope requires non-empty values.');
+  const grant = deserializeProviderCredentialGrant(provider, credential);
+  const wrapped = grant.credential !== credential;
+  credential = grant.credential;
   let active = true;
   const scope: ExactProviderCredentialScope = {
     kind: 'exact',
     provider,
     credential,
+    replayIdentity: grant.identity,
     isActive: () => active,
   };
   try {
     const result = providerCredentialStorage.run(scope, operation);
     if (isPromiseLike(result)) {
       return Promise.resolve(result).catch((error: unknown) => {
-        throw isCloudCredentialCarrier(credential) ? redactCredentialValue(error, redactionPattern(credential), new WeakMap()) : error;
+        throw wrapped || isCloudCredentialCarrier(credential) ? redactCredentialValue(error, redactionPattern(credential), new WeakMap()) : error;
       }).finally(() => {
         active = false;
       }) as T;
@@ -100,7 +113,7 @@ export function runWithProviderCredential<T>(
     return result;
   } catch (error: unknown) {
     active = false;
-    throw isCloudCredentialCarrier(credential) ? redactCredentialValue(error, redactionPattern(credential), new WeakMap()) : error;
+    throw wrapped || isCloudCredentialCarrier(credential) ? redactCredentialValue(error, redactionPattern(credential), new WeakMap()) : error;
   }
 }
 
@@ -269,7 +282,7 @@ async function withProviderRequestCredentialInternal<T>(
     lease.controller.signal,
     lease.access.signal,
   ]);
-  const credential = await lease.access.acquire(
+  const supplied = await lease.access.acquire(
     provider,
     purpose,
     requestSignal,
@@ -277,11 +290,14 @@ async function withProviderRequestCredentialInternal<T>(
     connectionFingerprint,
   );
   assertLeaseActive(lease);
-  if (!credential) throw new Error('Provider credential broker returned no credential.');
+  if (!supplied) throw new Error('Provider credential broker returned no credential.');
+  const grant = deserializeProviderCredentialGrant(provider, supplied);
+  const credential = grant.credential;
   const exact: ExactProviderCredentialScope = {
     kind: 'exact',
     provider,
     credential,
+    replayIdentity: grant.identity,
     connectionFingerprint,
     parentLease: lease,
     signal: requestSignal,
@@ -292,12 +308,39 @@ async function withProviderRequestCredentialInternal<T>(
       try {
         return await operation(requestSignal);
       } catch (error: unknown) {
+        if (grant.recoverable && lease.access.recoverRejectedCredential && !requestSignal.aborted && rejectedAuthentication(error)) {
+          try {
+            await lease.access.recoverRejectedCredential(provider, credentialFingerprint(credential), requestSignal, lease.attribution, connectionFingerprint);
+          } catch {
+            requestSignal.throwIfAborted();
+            throw new KodaXProviderError('Provider authentication was rejected and credential recovery failed.', provider,
+              { httpStatus: 401, retryable: false });
+          }
+        }
         throw redactCredentialValue(error, redactionPattern(credential), new WeakMap());
       }
     });
   } finally {
     requestController.abort(new Error('provider request completed'));
   }
+}
+
+function rejectedAuthentication(error: unknown): boolean {
+  const seen = new Set<object>();
+  while (error && typeof error === 'object' && !seen.has(error) && seen.size < 8) {
+    seen.add(error);
+    if (('status' in error && error.status === 401)
+      || ('metadata' in error && error.metadata && typeof error.metadata === 'object'
+        && 'httpStatus' in error.metadata && error.metadata.httpStatus === 401)) return true;
+    error = 'cause' in error ? error.cause : undefined;
+  }
+  return false;
+}
+
+/** Non-secret scope only; old brokers without a trusted identity remain token-isolated. */
+export function getScopedProviderReplayIdentity(provider: string): string | undefined {
+  const scope = providerCredentialStorage.getStore();
+  return scope?.kind === 'exact' && scope.provider === provider && scope.isActive() ? scope.replayIdentity : undefined;
 }
 
 /** Internal provider lookup. The credential is never copied to config or diagnostics. */

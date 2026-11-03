@@ -12,6 +12,7 @@
  */
 
 import type { KodaXWireReasoningEffort } from '@kodax-ai/llm';
+import type { AgentReasoningProfile } from '@kodax-ai/agent';
 
 /**
  * Handler script source. v0.7.28 limits language to `'javascript'` so that
@@ -114,14 +115,9 @@ export interface AgentHandoffRef {
 
 /**
  * Reasoning profile declaration mirroring the Layer A
- * `AgentReasoningProfile`. Kept structurally identical so the resolver
- * passes the value through without re-shaping.
+ * `AgentReasoningProfile`. Legacy persisted values normalize at admission.
  */
-export interface AgentReasoningRef {
-  readonly default: 'quick' | 'balanced' | 'deep';
-  readonly max?: 'quick' | 'balanced' | 'deep';
-  readonly escalateOnRevise?: boolean;
-}
+export type AgentReasoningRef = AgentReasoningProfile;
 
 /**
  * Sandbox test case. Used by `sandbox_test_agent` to verify a

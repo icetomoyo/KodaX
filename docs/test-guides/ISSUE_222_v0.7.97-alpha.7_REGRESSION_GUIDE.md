@@ -509,7 +509,7 @@ npx vitest run src/sdk-runtime.maintenance.test.ts src/sdk-runtime.memory-review
 npx vitest run src/kodax_cli.daemon-smoke.test.ts
 npm run typecheck
 npm run build
-node --test tests/bundled-shared-host-recovery.test.mjs
+node --test --test-concurrency=1 tests/bundled-shared-host-recovery.test.mjs tests/bundled-shared-profile-recovery.test.mjs
 node --test tests/bundled-memory-review-shutdown.test.mjs tests/bundled-daemon-compaction.test.mjs
 ```
 

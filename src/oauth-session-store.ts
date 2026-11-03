@@ -1,22 +1,58 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, open, rename, unlink, rmdir } from 'node:fs/promises';
+import { mkdir, readFile, open, rename, unlink, rm, lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { OAuthCredentialError, type OAuthSessionRecord, type OAuthSessionStore } from '@kodax-ai/llm';
+import { readRuntimeDaemonLockOwner, runtimeOwnerProcessState, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 
 /** Supply an OS/user-bound authenticated sealer; no plaintext fallback is provided. */
 export interface OAuthSessionSealer { seal(plaintext: Uint8Array): Promise<Uint8Array>; unseal(ciphertext: Uint8Array): Promise<Uint8Array>; }
 function missing(error: unknown): boolean { return !!error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT'; }
-function storageError(): OAuthCredentialError { return new OAuthCredentialError('storage_failed'); }
+function storageError(lockPath?: string): OAuthCredentialError {
+  const error = new OAuthCredentialError('storage_failed');
+  if (lockPath) error.message += ` Retained lock: ${lockPath}. Inspect with kodax doctor before offline repair.`;
+  return error;
+}
+async function lockOwnerFile(lockPath: string): Promise<string> {
+  const entry = await lstat(lockPath);
+  if (entry.isSymbolicLink()) throw storageError(lockPath);
+  return entry.isDirectory() ? path.join(lockPath, 'owner.json') : lockPath;
+}
 async function lock(directory: string): Promise<() => Promise<void>> {
   const deadline = Date.now() + 30000;
   while (true) {
-    try { await mkdir(directory, { mode: 0o700 }); return () => rmdir(directory); }
-    catch (error) {
-      if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'EEXIST') throw storageError();
-      if (Date.now() >= deadline) throw storageError();
+    try {
+      const nonce = randomUUID();
+      const acquired = tryAcquireRuntimeDaemonLock({ rootDir: path.dirname(directory), lockFile: directory }, {
+        runtimeId: nonce, pid: process.pid, createdAt: new Date().toISOString(),
+      });
+      if (acquired) return async () => {
+        if (readRuntimeDaemonLockOwner(await lockOwnerFile(directory))?.runtimeId !== nonce) throw storageError(directory);
+        const retired = `${directory}.released.${nonce}`;
+        await rename(directory, retired);
+        await rm(retired, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 });
+      };
+      const ownerFile = await lockOwnerFile(directory);
+      const previous = readRuntimeDaemonLockOwner(ownerFile);
+      if (previous && runtimeOwnerProcessState(previous) === 'gone') {
+        const generation = createHash('sha256').update(JSON.stringify(previous)).digest('hex');
+        const claim = `${directory}.reclaim.${generation}`;
+        if (tryAcquireRuntimeDaemonLock({ rootDir: path.dirname(directory), lockFile: claim }, {
+          runtimeId: randomUUID(), pid: process.pid, createdAt: new Date().toISOString(),
+        })) {
+          if (JSON.stringify(readRuntimeDaemonLockOwner(await lockOwnerFile(directory))) !== JSON.stringify(previous)) throw storageError(directory);
+          const retired = `${directory}.abandoned.${generation}`;
+          await rename(directory, retired);
+          await rm(retired, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 });
+          continue;
+        }
+      }
+      if (Date.now() >= deadline) throw storageError(directory);
       await delay(20);
+    } catch (error) {
+      if (missing(error)) continue; // The previous generation released while inspected.
+      throw error instanceof OAuthCredentialError ? error : storageError(directory);
     }
   }
 }

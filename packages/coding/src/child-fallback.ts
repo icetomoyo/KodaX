@@ -18,9 +18,10 @@
  */
 import { randomUUID } from 'node:crypto';
 import { KodaXNetworkError, KodaXProviderError, KodaXRateLimitError,
-  runWithAdditionalProviderRequestObserver, runWithProviderRequestRoute } from '@kodax-ai/llm';
+  isProviderQuotaError, runWithAdditionalProviderRequestObserver, runWithProviderRequestRoute } from '@kodax-ai/llm';
 
 import type { KodaXOptions, KodaXResult } from './types.js';
+import { isAuthenticationOrConfigurationError } from './resilience/classifier.js';
 
 type RunKodaXFn = (options: KodaXOptions, prompt: string) => Promise<KodaXResult>;
 
@@ -40,6 +41,13 @@ export function resolveFallbackChain(): string[] {
  * providers because the agent didn't finish the task would mask real failures.
  */
 export function isFallbackEligibleError(error: unknown): boolean {
+  if (isProviderQuotaError(error)) return false;
+  if (error instanceof KodaXProviderError || error instanceof KodaXRateLimitError) {
+    const metadata = error.metadata;
+    if (metadata?.retryable === false || (metadata?.failureCode && metadata.failureCode !== 'response_stream_error')) return false;
+    if (metadata?.httpStatus !== undefined) return metadata.httpStatus === 408 || metadata.httpStatus === 429 || metadata.httpStatus >= 500;
+    if (isAuthenticationOrConfigurationError(error)) return false;
+  }
   return (
     error instanceof KodaXRateLimitError ||
     error instanceof KodaXNetworkError ||
@@ -56,8 +64,10 @@ function errorReason(error: unknown): string {
 
 function unavailableProviderResult(result: KodaXResult): boolean {
   const failure = result.failure;
-  if (result.success || result.interrupted || !failure || failure.source === 'local' || failure.errorClass === 'local_execution_error' || failure.failureCode) return false;
-  if (failure.httpStatus !== undefined) return failure.httpStatus === 429 || failure.httpStatus >= 500;
+  if (result.success || result.interrupted || !failure || failure.source === 'local' || failure.errorClass === 'local_execution_error'
+    || (failure.failureCode && failure.failureCode !== 'response_stream_error')) return false;
+  if (failure.retryable === false || failure.errorClass === 'user_abort' || isProviderQuotaError(failure)) return false;
+  if (failure.httpStatus !== undefined) return failure.httpStatus === 408 || failure.httpStatus === 429 || failure.httpStatus >= 500;
   return ['rate_limit', 'provider_overloaded', 'connection_failure', 'request_timeout', 'stream_idle_timeout', 'chunk_timeout']
     .includes(failure.errorClass);
 }

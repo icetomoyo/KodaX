@@ -37,6 +37,7 @@
 // See docs/ADR.md ADR-022 + ADR-024 for the SDK distribution architecture.
 
 import { rollup } from 'rollup';
+import { sdkEntriesFromPackage } from './sdk-entrypoints.mjs';
 import { execFileSync } from 'node:child_process';
 import dts from 'rollup-plugin-dts';
 import { existsSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync } from 'node:fs';
@@ -82,22 +83,7 @@ function isExternal(id) {
   return thirdPartyDeps.has(root);
 }
 
-const sdkEntries = {
-  index: 'src/index.ts',
-  'sdk-agent': 'src/sdk-agent.ts',
-  'sdk-llm': 'src/sdk-llm.ts',
-  'sdk-coding': 'src/sdk-coding.ts',
-  'sdk-media': 'src/sdk-media.ts',
-  'sdk-repl': 'src/sdk-repl.ts',
-  'sdk-skills': 'src/sdk-skills.ts',
-  'sdk-mcp': 'src/sdk-mcp.ts',
-  'sdk-session': 'src/sdk-session.ts',
-  'sdk-runtime': 'src/sdk-runtime-public.ts',
-  'sdk-client': 'src/sdk-client.ts',
-  'sdk-sandbox': 'src/sdk-sandbox.ts',
-  'sdk-a2a': 'src/sdk-a2a.ts',
-  'sdk-experimental-memory': 'src/sdk-experimental-memory.ts',
-};
+const sdkEntries = sdkEntriesFromPackage(rootPkg);
 
 const internalSubpathDtsResolver = {
   name: 'internal-subpath-dts-resolver',
@@ -248,9 +234,20 @@ async function main() {
     process.exit(1);
   }
 
+  for (const [subpath, target] of Object.entries(rootPkg.exports)) {
+    if (typeof target === 'string') continue;
+    for (const field of ['import', 'types']) if (!existsSync(path.join(repoRoot, target[field]))) {
+      throw new Error(`Published ${subpath} has no built ${field} entry: ${target[field]}`);
+    }
+  }
   execFileSync(process.execPath, [
     path.join(repoRoot, 'node_modules/typescript/bin/tsc'),
     '-p', path.join(repoRoot, 'tests/fixtures/product-client-types/tsconfig.json'),
+  ], { stdio: 'inherit', windowsHide: true });
+  execFileSync(process.execPath, [path.join(repoRoot, 'node_modules/typescript/bin/tsc'),
+    '--noEmit', '--skipLibCheck', '--module', 'NodeNext', '--moduleResolution', 'NodeNext',
+    '--target', 'ES2022', '--types', 'node',
+    path.join(repoRoot, 'examples/embedded-agent.ts'), path.join(repoRoot, 'examples/otel-export.ts'),
   ], { stdio: 'inherit', windowsHide: true });
   log('Done. SDK types are self-contained; product Client compiles without Node ambient types.');
 }

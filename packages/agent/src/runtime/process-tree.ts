@@ -536,7 +536,7 @@ function readWindowsProcessStartIdentities(pids: readonly number[]): Map<number,
   const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsProcessStartIdentitiesScript(pids)], {
     encoding: 'utf8', timeout: DEFAULT_TASKKILL_MS, windowsHide: true,
   });
-  const identities = result.stdout === undefined ? undefined : parseWindowsProcessStartIdentities(result.stdout, pids);
+  const identities = parseWindowsProcessStartIdentities(result.stdout ?? '', pids);
   if (result.error || result.status !== 0 || identities === undefined) {
     reportWindowsProbe('process-start-identities', result, startedAt, false);
     return undefined;

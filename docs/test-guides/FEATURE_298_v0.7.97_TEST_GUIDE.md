@@ -2,6 +2,243 @@
 
 本指南验证构建后的产品入口。组件、协议和 SDK 单测继续保留，但不替代这里的真实进程与终端操作。
 
+## 2026-11-02 Space 接缝补齐（alpha.12 之后，未发布）
+
+能力与接手顺序见 [SDK 迁移](../SDK_MIGRATION.md) 与 [Space 接缝](../SPACE_SDK_SEAMS.md)。
+源码基线 `f24a922c1`；本节不改写已发布 alpha.12 的历史结果。所有新增模型响应为 loopback
+夹具，不使用真实 Key，也不代表线上模型质量、云/OAuth 账户或 Space 成品已验收。
+
+- `src/sdk-client.default-skill.test.ts`：公开 Product + 独立 Host，默认方法、persona、
+  原问题、动态上下文、显式覆盖一轮及下一轮恢复；缺失默认方法在模型调用前拒绝。
+- `src/sdk-client.execution-binding.test.ts`：实际消费时读取最后提交的专家，草稿不生效；
+  排队显式方法卸载保留原问题；普通同权限 follow-up 留在当前 Run；后续拒绝只阻断该输入。
+- `src/sdk-client.binding-recovery.test.ts`：保存 checkpoint 后启动真实独立 Host，原业务/
+  persona/已展开方法、等价重排快照、新凭证、撤销拒绝、工具上限收紧；旧 alpha.12 队列
+  重绑后缺失显式方法拒绝，原问题可撤回。该用例验证持久恢复边界，未伪称真实进程崩溃。
+- `src/sdk-client.promotion.test.ts`：真实 Host 的 CAS、busy、双客户端竞争、丢失成功响应
+  后查询/重试、冷重启、派生会话身份及 canonical/nativeHistory/附件/lineage/统计保真。
+- `packages/coding/src/skill-invocation-policy.test.ts`：已完成准入 hooks 只执行一次，保存其
+  附加上下文；恢复拒绝仅 frontmatter 放宽权限或方法来源/策略变更，不重放 hooks。
+- `src/session-input-queue.test.ts`、`src/runtime-daemon/{protocol,client,reverse-bridge}.test.ts`：
+  失败输入持久保留与原 principal 重绑，旧 Host 拒绝新 intent，错误帧有界返回，跨 principal、
+  撤销/断连/替换与迟到反向结果失效。
+- `tests/bundled-space-host.test.mjs`：实际 dist SDK + 独立 bundled CLI Host，默认方法与
+  业务解析、同 Session promotion、冷重启操作查询；纳入现有 `test:bundle`。
+- `tests/release-sidecars.test.mjs`：真实 tar/Windows zip 清单包含新 schema 数据；完整数据
+  从 TypeScript 同源构建，原 CLI 预算 5,177,344 bytes 不放宽，CI 矩阵与触发条件不变。
+
+本机初次全量扫描与其他重型验证并行，`sdk-client.startup.test.ts` 的 MCP 进入等待超过
+15 秒；停止该扫描后完整文件与 Host 组重跑 167 项通过。该失败保留，不记为全量通过。
+最终冻结全套与 CI 结果见本节末“最终验收”；旧失败记录继续保留，不能把分批计数相加冒充单次全绿。
+
+追加配置原子性范围（Space `ca8d2313` 正式 alpha.12 反馈）：公开 Provider CRUD、Runtime
+config/catalog、setup 与旧 permission 保存均做部分磁盘写失败注入，先 RED 复现截断/
+丢弃旧字段，再 GREEN 证明失败保留原字节；坏 JSON/坏 Provider 集合/不可读原件明确拒绝，
+诊断不带原文。`tests/bundled-space-host.test.mjs` 增加真实独立进程停在部分写入阶段、
+杀掉 writer、并发 Provider 改名与无关设置更新；未加锁 reader 必须只见完整已提交值，
+旧凭证 binding/CAS 不因改名获得新权限。该测试进入原有 bundle 门禁，不新增 CI job。
+
+第二候选 `3e87509f0` 的 CI `41392027227` 为 15 个 job 成功、Windows source(system)
+一个失败、publish 跳过。唯一失败是 1005 轮 Run 保留测试超过原 150 秒上限；本机分段探针
+100 轮约 5.5–7.3 秒，总约 61 秒，通过 1000 条淘汰点无突变。此证据未证明远端超时原因；
+探针已移除，未提高超时或降低 1005 轮覆盖。第二次本机全套 fast 3462/53 skip、unit
+13198/5 skip、contract 1034 通过后，system 期间开始了新增配置修复，旧 dist 与源码混用，
+该次 system 已停止，不能称为冻结全套通过。后续最终候选另行记录。
+
+配置候选 `1a4b5f7f3` 的 CI `41397617918` 在 Windows build 和 packaged Electron 两个
+job 的新增并发配置测试命中真实 `EPERM` rename。原文件仍完整，提交却失败；不能当作
+测试噪声重跑。后续补丁只在 Windows EPERM 下沿原 staged 文件/锁做 200 ms 累计预算
+重试；4 个公共 writer 回归先 RED（3 失败）再 GREEN，覆盖瞬态、永久拒绝、oversleep
+与错误变化。没有放宽客户端有限锁忙重试、删目标或重放业务修改。该候选本机 bundle
+102/102、实际 tarball 旧 Host 切换 3/3；源码全套 fast 期间为处理上述真实缺口主动停止，
+不记全绿。此前基线 f24 的同机 1005 轮保留测试 61.6 秒、当前路径 61.2 秒，均通过；
+单次对照未见线性回退，但不是远端超时原因的证明。该候选旧 Windows source 日志还确认
+保留用例 130.15 秒通过；取消投影用例失败，但取消发生在全组详细栈输出之前，未保留其
+断言失败位置。原 fake abort 立即 resolve、随后 get 却要求仍是 unknown 的竞态假设，已用
+基线等 executor 先完成的合法调度确定 RED；新测试显式 gate 中间态，再 release 验证终态，
+不据此宣称已证明旧 CI 唯一根因，也不改生产取消语义。
+
+候选 `1627bc612` 的 CI `41399204135` 已通过新增并发配置测试，但 packaged Electron 的
+真实 scoped Host 死亡恢复失败；bootstrap 明确记录 `daemon.json` 的 EPERM 重试 200 ms
+耗尽。独立 Windows reader 以无 DELETE 共享的真实句柄，在首次 rename 标记后持有
+500 ms：`state.windows-publication.test.ts` 的配置和 Host 状态两个公开写入用例均 RED。
+后续只将这两个异常路径的累计重试调度预算改为 1 秒，两项 GREEN；永久拒绝、oversleep、
+错误变化和无竞争零等待断言继续通过。未提高 Host 启动或测试超时，未删目标或重放业务。
+该真实子进程用例进入 SYSTEM 和原 Windows 自动发现，不增加 CI job。
+本机该候选 fast 3462/53 skip、unit 13217/5 skip 通过，随后为上述修复停止 contract，
+不记为单次冻结全套通过。最终新候选另记。
+
+首个冻结候选 `36d83f05e` 的 CI `41390222335` 暴露 npm `files` 白名单漏掉 schema
+数据，以及临时 Session 删除后调用 `runs.await` 的真实竞争。前者以 actual npm pack
+清单测试 RED→GREEN 修复；后者以公开接口等原临时 Session 确已删除后再 await，稳定
+RED→GREEN。仅当前 owner 的 temporary Run 复用既有缓存准入，未放宽持久/外来 Run 访问。
+同一候选本机 fast 为 3,458 通过、53 跳过、4 失败；未继续执行后续 tiers，不能记为全绿。
+其中两个 one-shot 失败属于上述真实竞争；队列第三 Run 的调度等待改用其真实身份和
+completed 结果再检查三次请求；crash 夹具改为先核验原进程身份退出，并保留 bootstrap
+失败诊断。后两项单独重跑原已通过，未将新夹具写法宣称为首次失败唯一原因的复现证明。
+
+### 最终验收：2026-11-02（未发布）
+
+本段保留 Space 补审前的功能基线记录；后续修正见下一节。
+
+功能候选为 Root `KodaX@b385395c9f8686aee182a4c6a38b4f3008421d32`，已推送
+`origin/KodaX`。设计子仓仍为 `7927f835744643b418d463b10a2e1c1c4bdd12e8`，
+Space `codex/sdk-alpha12-preparation@ca8d2313` 及其产物未改。没有打标签或 npm 发布；
+已发布 alpha.12 标签仍指向本轮起点 `f24a922c1`，不能按版本字符串假定包含后续能力。
+
+- 源码/测试类型检查、完整 build 均 EXIT 0；本仓没有独立 lint script。
+- 单次 `npm run test:full`（Windows / Node 22）EXIT 0：fast 3462/53 skip，unit
+  13217/5 skip，contract 1034/0 skip，system 1539/29 skip；合计 **19252 通过、
+  87 条件跳过、0 失败、0 TODO**，1391 个文件通过、7 个文件跳过。该次是在最终
+  构建冻结后从头完成，区别于上面中止或混合源码/dist 的历史尝试。
+- 前后 7431 个源码/测试/构建文件 SHA-256 一致：
+  `450bad435fb4a668940e054b8c709e112545f400da2d03cc2df80c0998d36475`。
+  指纹排除文档；仅本节验收记录在完成后更新。完整日志 `%TEMP%/kodax-space-final-full.log`，
+  类型/构建分别为 `kodax-space-held-type.log`、`kodax-space-held-build.log`。
+  故障注入日志和测试进程的 beforeExit MaxListeners 警告原样保留，未通过提高监听器上限隐藏。
+- [最终完整 CI 41401900534](https://github.com/icetomoyo/KodaX/actions/runs/41401900534)
+  精确验证上述功能 SHA：16 个验证/构建任务成功，publish 按手动分支运行规则跳过。
+  Node 20/22、Linux/macOS/Windows、两个 Windows source tier、真实终端、原生并发/
+  权限、Electron、完整 bundle、实际通用 npm 安装与旧 Host 迁移均通过。总时长
+  25m59s；CI job/并行度/矩阵/触发条件没有修改。CI 摘要 `%TEMP%/kodax-space-final-ci.json`。
+- 最终本机构建专项 `node --test tests/bundled-cli-host-recovery.test.mjs tests/bundled-space-host.test.mjs`
+  为 5/5，包含 print/scoped 真杀 Host 后原 Run 恢复和配置独立进程故障/并发。
+  最新完整 bundle 与实际 npm tarball 的历史切换在上述 CI 成功候选上验证；本机较早
+  `1a4b5f7f3` 的 102/102 bundle 和 3/3 tarball 记录保留为该候选历史结果，不冒充新候选结果。
+- Windows CI 的真实占用用例 2/2（824/819 ms）；SDK Runtime 完整文件 342/342，
+  取消投影 582 ms，1005 轮保留 118.205 秒。没有提高原 150 秒保留门槛。
+- CLI 5157845 bytes，低于原 5177344 门槛，也小于正式 alpha.12 的 5174615 bytes。
+  较早源码保留链路同机单次对照约 61.6/61.2 秒；`1a4b5f7f3` 的本机 bundle 性能记录为
+  512 混合历史启动约 2.2 秒、220 退出树约 3.1 秒；最终 CI 重复通过同一恢复预算门禁。
+  首屏采样在 `1a4b5f7f3` 完成，正式 alpha.12 与该候选各 5 次抽样中位数
+  2.652/2.888 秒，范围 2.541–3.020/2.667–3.097 秒；小样本范围重叠，保留约 0.24 秒
+  差异，不据此宣称完全无性能变化或因果提升。原始测量位于
+  `%TEMP%/kodax-space-perf-ZziYud/first-ready-results.json`。
+
+Standards 轴：最终功能及配置/Windows/取消夹具增量复审，硬违反 0、坏味道判断 0。
+Spec 轴：默认 Skill、消费时业务绑定、原绑定恢复、同 Session promotion 与配置提交合同
+无剩余发现。真实云/OAuth 服务、模型质量及 Space 成品接入仍由其对应发布/产品门禁验收；
+离线 loopback 和进程组合通过不能替代这些验证。
+
+### Space 独立补审修正：2026-11-02
+
+Space 在 Root `34bc0528e` 独立复现 2 项 P2 和 1 项 P3；本机重放同一真实 Host 复现
+脚本，也得到 binding steer 的 conflict、静态授权对照成功，以及 redirect 显式方法卸载
+后默认回落。这是上轮漏测分支，上面 `b385395c9` 的全绿结果不覆盖其正确性。
+
+- `sdk-client.binding-controls.test.ts` 对 steer、redirect 分别先 RED 再修复：同授权 steer
+  实际到达原 AMA Run，重复提交不二次解析；业务/profile/凭据/tools 改变、异主、错误
+  target、解析中撤销仍拒绝。Main 每次从真实 Host 读取 profile，没有用固定字符串伪造 key。
+  redirect 的具名方法卸载后只保留原输入/admissionError，不产生默认请求；恢复方法可执行。
+- `sdk-client.binding-recovery.test.ts` 参数化旧 after_turn/redirect 记录：旧 redirect 的
+  `skill:true/explicitSkill:null` 先 RED，修复后在冷 Host、新凭据和收紧工具上限下仍保留
+  原业务与原问题，缺失方法阻断。`session-input-queue.test.ts` 固定 absent/null/name 三态的
+  JSON 恢复兼容；只修正 `skill` 注释，不改字段名或旧 checkpoint 格式。
+- `tests/bundled-space-host.test.mjs` 把同授权 steer 和卸载显式 redirect 加入原发布包门禁，
+  使用实际 dist SDK/独立 Host，与既有默认方法、promotion、冷重启保真一起验证，不加 CI job。
+- 修复中相关回归首次出现一个旧错误文案断言失败；已保留旧授权/异主错误的优先级，
+  没有通过修改旧断言或放宽授权来转绿。异步测试的初版等待制造了串行准入阻塞，已改为
+  可确定观察的 binding 撤销，不能把该测试等待当成已复现的产品完成/取消回归。
+
+原复现脚本的最后一段等待“错误地执行默认方法”；修复后这段等待自然超时，不能记为
+产品失败或脚本全绿。OS 临时副本仅把观察条件改为正确的 `admissionError`，不改变操作链：
+steer accepted，redirect 显式名已保存，方法卸载后 queued/not-started、请求仍为 1；
+Host/HTTP/临时目录清理均确认。原始 RED 和期望修正版日志分别为
+`%TEMP%/kodax-space-review-original-red.log`、`kodax-space-review-expected-results.log`。
+本轮最终构建与 source/test 类型检查通过；相关 10 文件 72 项通过，实际 dist 发布包门禁
+3 项通过。Standards（硬违反/坏味道）和 Spec 最终复审均无剩余项。
+
+功能修正 `KodaX@00bfe7ed12407eda722a6bc4b15ace106e413dc5` 已推送，精确 SHA 的
+[完整 CI 41415454375](https://github.com/icetomoyo/KodaX/actions/runs/41415454375)
+16 个任务成功、发布按预期跳过，无失败。覆盖 Node 20/22、Windows source 两层、
+Windows 原生并发/Electron、五平台归档和统一 npm 包的安装后 SDK 门禁。CI 日志确认
+新增 binding-controls 和双变体 binding-recovery 在 Node 20/22 均实际执行通过。
+最终代码/测试/构建产物指纹核对一致（7432 文件，SHA-256
+`e186f169272b80fbd4d0b880d6751401bc448e87e86ab7544f371548bee0e092`）；后续仅补验收文档。
+
+未修改 CI job、体积预算或发布行为；CLI 为 5,158,202 字节，仍低于原预算 5,177,344，
+bootstrap 4,066 字节。CI 总墙钟 25 分 30 秒，各分组对照上轮有快有慢（Node 20/Windows portable 更慢，
+Node 22/system/Electron 更快），该单次运行不能替代稳定性能基准；两组相关真实 Host
+回归文件在 Node 20 各约 13 秒、Node 22 各约 10 秒。未改变启动入口、模型策略或提示词。
+没有打标签、发布 npm 或修改 Space/设计子仓；Space 需升级包含本次修正的新 SDK 后再
+完成产品验收。已有 alpha.12 tag 仍指向 `f24a922c117e0ece5d26224a133a69973b313ab6`。
+
+### 普通 redirect 的补审修正：2026-11-02
+
+Space 在 `d1ff86e4e` 再次复现一项 P2：活跃 AMA 先排普通 after_turn，再排普通 redirect，
+默认方法和业务 revision 始终不变；第二个输入被延迟到独立 Run 时写成
+`skill:true/explicitSkill:null`，上一补丁把它误认成历史显式 Skill，错误阻断。因此上一节
+`00bfe7ed1` 的 CI 全绿不能作为本分支已覆盖的证据。
+漏测点是前序 after_turn 启动的另一个 AMA Run 会再次消费后续队列，并把普通 redirect
+转为独立边界；原目标 Run 已被停止不能排除这条后续路径。
+
+本机原样重放 Space `plain-redirect-constant-default.mjs` 得到相同错误、请求数停在 2；
+公共 SDK 的最小场景和旧 null 普通队列冷恢复均先 RED（分别约 5 秒），不是仅静态推理。
+新增内部持久 `plainRunBoundary:true` 由 Host 在转边界时产生，持久失败不改内存；
+JSON/checkpoint 恢复保留该来源，只允许 `skill:true/explicitSkill:null` 的组合。
+旧 null 无引用记录可按普通输入恢复；有引用的旧 null、旧 absent 和具名显式输入继续
+校验唯一方法，卸载或歧义拒绝默认回落。无新的 Client 输入参数或 Main 迁移职责。
+
+相关真实 Host 用例覆盖默认不变、未知 slash、排队期间已提交默认方法变更；冷恢复
+覆盖旧显式、歧义引用、已报错旧普通和带标记新普通。冷恢复夹具原先只测试拒绝，
+未给下一轮设置 provider；新正向消费先在原 Run 完成后通过公开 settings 配置 fixture，
+不能在 recovering Run 活跃时修改设置，也不能放宽生产守卫来适配夹具。
+原发布包门禁同时保留 steer、显式方法卸载拒绝、普通 redirect、promotion 和冷重启保真；
+未增加 CI job 或放宽超时/预算。
+
+Space 原脚本的观察条件等待错误出现；OS 临时副本只改观察/断言，不改操作链，修复后
+得到 submitted、独立 Run 完成、3 次请求、默认方法与原问题保留，Host/HTTP/临时目录
+清理均确认。原 RED 日志 `%TEMP%/kodax-plain-redirect-original-red.log`，正确期望日志
+`%TEMP%/kodax-plain-redirect-expected-results.log`。最终构建和 source/test 类型检查通过，
+相关 10 文件 83 项通过，实际 dist 发布包门禁 3 项通过；双轴最终复审无剩余项。复审发现
+generation checkpoint 的 `skill:"true"` 可能通过宽松 truthy 检查，新增测试先 RED 后改为
+严格布尔校验，未放宽旧合法数据路径。本段为功能候选送审状态，最终 CI 在下文单列，
+不能沿用前一提交结果。
+暂无 tag/npm 发布，Space/设计子仓不改。
+
+首次本轮 CI [41433864935](https://github.com/icetomoyo/KodaX/actions/runs/41433864935)
+在 `cd151cb1d` 暴露一个已有 Windows 限时恢复门禁在并行环境下预算耗尽，疑似资源争抢：普通 redirect 的 dist 场景
+通过，但并行包测试中的 default→coder profile 刷新在端到端 10 秒预算末尾超时。
+保留的 `windows-sdk-startup-41433864935` artifact 显示旧 Host 正常停止，新 daemon 已在
+11:14:18.568 UTC ready，没有卡住初始化；观察者的预算还包含旧 Host 检查、退出和新
+进程冷启动，最后未在期限内确认连接，不能只凭该记录认定产品恢复死锁或忽略失败。
+
+仅将这项 profile 刷新测试原样移至 `bundled-shared-profile-recovery.test.mjs`，与已有
+`bundled-startup-recovery.test.mjs` 用 `--test-concurrency=1` 顺序运行；30 秒 idle 退出测试
+仍在原并行组，其他包测试、CI job 与生产启动代码不变。10 秒刷新预算、阶段/能力断言、
+失败日志捕获及精确 owner 清理不放宽，也不把整个包回归串行化。独立 Windows CPU
+争抢与原生并发门禁继续保留。该 trace 本身尚不能排除性能原因，需新完整 CI 与独立
+压力验证。新串行组本机 3 项通过（约 18 秒），当时完整新 CI 待验证，最终结果见收尾段。
+同步修正压力 runner 的文件引用，并强制 TAP 输出包含目标用例的实际成功记录；旧引用
+在 Node 上可能只输出文件级成功，0 个目标用例仍 exit 0。旧引用负对照已确认是假绿，
+新 runner 以同样旧路径负对照时明确失败；正确路径 3 worker × 3 轮共 9 个真实用例通过。
+发布说明及 Issue 222/371 的回归命令一并同步，不靠 exit 0 宣称压力门禁已执行。
+
+本机完整包回归另出现一次 CLI 恢复夹具的 `EBUSY`：清理忽略 daemon stop 返回结果，
+在仍有 governed background work 的 Host 退出前删除其临时目录。保留证据显示 Host 后来
+正常 orphan exit；夹具现先等待 CLI 退出，再显式停止已核验的私有 owner 并确认完整退出，
+最后删除自己的临时目录。生产 shutdown/background 策略不改，恢复正文断言不放宽。
+收尾本机 `npm run test:bundle` 为并行 99 项加串行 3 项，共 102 通过、0 失败/跳过/TODO；
+压力真实 9 次通过、空匹配负对照明确拒绝。此次测试组织/清理修正的双轴复审无剩余项，
+SDK 功能源码自 `cd151cb1d` 后未变。首跑 CI 最终 15 个任务通过、1 个失败、发布跳过，
+其失败保留如上，后续完整 CI 已在新提交上重新验证。
+
+最终候选 `KodaX@962a41600d5676460e35866be908ec22b32c301b` 已推送，精确 SHA 的
+[完整 CI 41438153424](https://github.com/icetomoyo/KodaX/actions/runs/41438153424)
+16 个任务成功、发布按预期跳过，无失败。Node 20/22 日志确认 binding-controls 5 项、
+binding-recovery 5 项、队列 22 项均实际执行；Windows Electron 日志确认独立压力组
+3 worker × 3 轮共 9 个目标 case 成功，另一次为串行组，未发生空匹配假绿。
+覆盖 Windows source 两层、真实终端流式历史、原生并发/Electron、五平台归档及统一
+npm 包安装后 SDK 门禁。Standards 与 Spec 最终复审均无剩余项。
+
+最终本机代码/测试/产物指纹在验收文档补录前后核对一致：7433 文件、SHA-256
+`daaa6429ea0047adce11a283e59074d026374d6582d4359154a59a7d6515fab6`。
+后续仅补验收文档，CI 归属上述候选。CLI 为 5,158,633 字节，低于原预算 5,177,344；
+bootstrap 4,066 字节，生产启动预算、模型参数与提示词模板未改。CI 墙钟 26 分 33 秒，仅为本次运行
+记录，不把单次 CI 耗时当作稳定性能基准；独立压力门禁保留原 15/10 秒限制并实际通过。
+SDK 尚未发布，alpha.12 tag 仍为 `f24a922c117e0ece5d26224a133a69973b313ab6`，设计子仓
+仍为 `7927f835744643b418d463b10a2e1c1c4bdd12e8`；Space 未改，需新 SDK 后再做产品验收。
+
 ## 2026-10-30 Partner 通用 Agent 契约修复（未发布）
 
 下节保留修复前失败证据。本轮统一契约为：Partner persona 不增加只读上限；Session 选择

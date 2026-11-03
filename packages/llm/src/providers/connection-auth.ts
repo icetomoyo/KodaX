@@ -1,9 +1,9 @@
 import type { KodaXProviderConfig } from '../types.js';
 import { requestExtensionFetch } from './request-extensions.js';
 
-/** Only explicitly selected connection modes replace SDK auth; legacy defaults stay intact. */
+/** Anthropic SDK ambient headers must never replace the selected key. Other SDK defaults stay intact. */
 export function connectionAuthFetch(config: KodaXProviderConfig, key: string, protocol: 'anthropic' | 'openai'): typeof fetch | undefined {
-  if (!config.authentication && config.credentialSource !== 'broker') return undefined;
+  if (protocol !== 'anthropic' && !config.authentication && config.credentialSource !== 'broker') return undefined;
   return (url, init) => {
     const headers = new Headers(init?.headers);
     for (const header of ['authorization', 'x-api-key', 'api-key', 'cf-aig-authorization', 'openai-organization', 'openai-project']) headers.delete(header);

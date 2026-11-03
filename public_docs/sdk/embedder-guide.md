@@ -1,7 +1,7 @@
 # KodaX SDK — Product Client and Host Integration
 
 This page describes the current FEATURE_298/299/301 development tree, checked against
-package version `0.7.97-alpha.11`. The version alone does not claim that all current
+package version `0.7.97-beta.1`. The version alone does not claim that all current
 working-tree changes are already published to npm. Check the installed
 package exports and the connected Host's capabilities when migrating.
 
@@ -25,7 +25,7 @@ objects, not alternate names for this contract.
   release context. They are not instructions for a product UI to create its own
   execution owner or write the shared Host's files.
 
-## Unreleased unified Host SDK cutover
+## Unified Host SDK cutover (shipped in v0.7.97-alpha.12)
 
 Public Runtime construction now connects to one independent shared Host. Default
 construction, `mode:'embedded'`, internal owner switches and function-based
@@ -104,7 +104,7 @@ usable SDK executors. Native exposure, discoverable capabilities and permission
 to execute remain different boundaries; preserve explicit profile/child scope
 when adapting a UI or a standalone host.
 
-#### Partner + Agent intersection (unreleased, after alpha.11)
+#### Partner + Agent intersection (shipped in v0.7.97-alpha.12)
 
 For the unified Product Client, select Session `workMode: 'agent'`. Partner persona
 and opaque profile identifiers impose no additional readonly ceiling. Explicit tool
@@ -963,7 +963,7 @@ console.log(session.id);                // freshly minted or echoes opts.session
 // Mid-run mutators — applied on the next turn (CAP-055 per-turn re-resolution).
 session.setProvider('zhipu');
 session.setModel('glm-4.6');
-session.setReasoning('balanced');       // KodaXReasoningMode: 'off' | 'auto' | 'quick' | 'balanced' | 'deep'
+session.setReasoning(undefined, { effort: 'high' }); // native effort; old mode inputs remain compatible
 
 // Cooperative abort.
 setTimeout(() => session.abort('user cancelled'), 30_000);
@@ -1639,11 +1639,11 @@ caches stay warm across mixed list / run operations).
 implementing the same interface can be passed in. Minimal contract:
 
 ```ts
-import type { KodaXSessionStorage, SessionData } from '@kodax-ai/kodax/coding';
+import type { KodaXSessionStorage, KodaXSessionData } from '@kodax-ai/kodax/agent';
 
 class MyDbSessionStorage implements KodaXSessionStorage {
-  async save(id: string, data: SessionData): Promise<void> { /* ... */ }
-  async load(id: string): Promise<SessionData | null> { /* ... */ }
+  async save(id: string, data: KodaXSessionData): Promise<void> { /* ... */ }
+  async load(id: string): Promise<KodaXSessionData | null> { /* ... */ }
   async list(opts?: ...): Promise<SessionSummary[]> { /* ... */ }
   async delete(id: string): Promise<void> { /* ... */ }
   // (other methods — see the @kodax-ai/kodax/coding type for the full surface)
@@ -1858,28 +1858,23 @@ failures at activate time rather than silently dropped registrations.
 
 ```ts
 import {
-  listConstructedAgents,
-  resolveConstructedAgent,
+  listCodingDispatchableAgents,
+  resolveCodingDispatchableAgent,
 } from '@kodax-ai/kodax';
 
-// All registered constructed agents (markdown + extension + LLM + CLI).
-const agents = listConstructedAgents();
+// Native and constructed dispatch descriptors visible in this context.
+const context = { actorId: 'embedder:main' };
+const agents = listCodingDispatchableAgents(context);
 
 // Resolve a specific agent by name.
-const agent = resolveConstructedAgent('db-reviewer');
+const agent = resolveCodingDispatchableAgent('db-reviewer', context);
 ```
 
-> **Source-aware variants** — `listConstructedAgentsWithSource()` /
-> `resolveConstructedAgentSource(name)` expose the in-memory source
-> tag (`'built-in' | 'extension' | 'markdown:user' | 'markdown:project'
-> | 'constructed:cli' | 'constructed:llm'`). These are marked
-> `@internal` in v0.7.43 and exposed only via the construction
-> sub-barrel — they will be promoted to the top-level SDK entry when
-> the v0.7.46+ REPL `/agents list` command lands as their third
-> production consumer (current consumers: source-tag round-trip tests
-> + planned REPL). Embedders that need provenance today can read the
-> source via the existing `listConstructedAgents()` Agent shape and
-> cross-reference their own registration calls.
+> This returns dispatch descriptors, not executable Agent instances. Supply the
+> Host-admitted project context and optional agent scope for project-local discovery.
+> Discovery does not grant execution authority. Internal construction registry
+> helpers are not public SDK entrypoints; use descriptor `origin` and the Host's
+> existing admission path rather than importing an internal sub-barrel.
 
 ### Wiring dispatch
 
@@ -3113,7 +3108,7 @@ runKodaX({
 `@kodax-ai/kodax/runtime` is the trusted connection facade for the shared Host.
 The same Host owns sessions, Runs, permissions, configuration and persistence
 for CLI, Space, IDE and SDK clients. Public in-process construction is retired;
-see the unreleased cutover above for compatibility limits.
+see the unified Host cutover above for compatibility limits.
 
 ### Which shape to use
 

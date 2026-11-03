@@ -333,8 +333,7 @@ describe('ArgumentCompleter', () => {
       it('should filter models by partial matching haiku', async () => {
         const completions = await completer.getCompletions('/model anthropic/ha', 21);
 
-        expect(completions.length).toBe(1);
-        expect(completions[0]?.display).toBe('anthropic/claude-haiku-4-5');
+        expect(completions.map(item => item.display)).toEqual(['anthropic/claude-haiku-5-5', 'anthropic/claude-haiku-4-5']);
       });
 
       it('should return empty for unknown provider after /', async () => {

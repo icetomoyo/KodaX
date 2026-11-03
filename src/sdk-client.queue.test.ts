@@ -113,7 +113,12 @@ it('shares queued input, atomically withdraws exact input, and delivers the rema
     expect(requestModels).toEqual(['queue-model-a']);
     release();
     await runtime.runs.await(active.runId!);
-    await expect.poll(() => requests.length).toBe(3);
+    // The other principal starts a separate Run after the current one settles.
+    // Wait for that Run's identity and outcome, not a one-second scheduling race.
+    await expect.poll(async () => (await second.inputs.read(session.id, 'third'))?.runId, { timeout: 15_000 }).toBeTruthy();
+    const third = await second.inputs.read(session.id, 'third');
+    expect((await second.runs.await(third!.runId!)).phase).toBe('completed');
+    expect(requests).toHaveLength(3);
     expect(requestModels).toEqual(['queue-model-a', 'queue-model-b', 'queue-model-b']);
     await expect.poll(() => views.at(-1)?.queue.length).toBe(0);
     const delivered = requests[1]!.filter(message => message.role === 'user'

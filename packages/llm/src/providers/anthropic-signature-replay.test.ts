@@ -7,6 +7,44 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it.each(['stream', 'complete'] as const)('preserves native ordered blocks and a signature-only turn through %s', async method => {
+  vi.stubEnv('ANTHROPIC_API_KEY', 'offline-fixture-key');
+  const requests: Array<Record<string, unknown>> = [];
+  const blocks = [
+    { type: 'thinking', thinking: '', signature: 'opaque-only' },
+    { type: 'tool_use', id: 'a', name: 'read', input: {} },
+    { type: 'thinking', thinking: 'after tool', signature: 'second' },
+    { type: 'text', text: 'continuing' },
+    { type: 'tool_use', id: 'b', name: 'read', input: {} },
+  ];
+  vi.stubGlobal('fetch', async (_url: unknown, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>; requests.push(body);
+    if (body.stream) {
+      const events = [
+        { type: 'message_start', message: { usage: { input_tokens: 1, output_tokens: 0 } } },
+        ...blocks.flatMap((block, index) => [{ type: 'content_block_start', index, content_block: block }, { type: 'content_block_stop', index }]),
+        { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 1 } }, { type: 'message_stop' },
+      ];
+      return new Response(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''),
+        { headers: { 'content-type': 'text/event-stream' } });
+    }
+    return new Response(JSON.stringify({ content: blocks, stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 } }),
+      { headers: { 'content-type': 'application/json' } });
+  });
+  const provider = getProvider('anthropic');
+  const result = await provider[method]([{ role: 'user', content: 'read' }], [], '', { effort: 'high' }, { maxOutputTokensOverride: 4096 });
+  expect(result.contentBlocks).toMatchObject(blocks);
+  await provider.complete([
+    { role: 'user', content: 'read' }, { role: 'assistant', content: result.contentBlocks! },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a', content: 'A' }, { type: 'tool_result', tool_use_id: 'b', content: 'B' }] },
+    { role: 'assistant', content: [result.thinkingBlocks[0]!] }, { role: 'user', content: 'continue' },
+  ], [], '', { effort: 'high' }, { maxOutputTokensOverride: 4096 });
+  expect(requests[1]?.messages).toMatchObject([
+    { role: 'user' }, { role: 'assistant', content: blocks }, { role: 'user' },
+    { role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: 'opaque-only' }] }, { role: 'user' },
+  ]);
+});
+
 it.each(['stream', 'complete'] as const)('captures streamed signatures and replays them through %s', async (method) => {
   vi.stubEnv('ANTHROPIC_API_KEY', 'offline-fixture-key');
   const requests: Array<Record<string, unknown>> = [];

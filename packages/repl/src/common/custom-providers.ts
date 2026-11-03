@@ -37,16 +37,13 @@
  * visible conflict instead of silently replacing one another.
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
-
 import {
   getAgentConfigPath,
   registerCustomProviders,
   validateCustomProviderConfig,
   type KodaXCustomProviderConfig,
 } from '@kodax-ai/coding';
-import { withCoreConfigWriteLock } from './core-config-lock.js';
+import { CoreConfigReadError, readCoreConfig, withCoreConfigWriteLock, writeCoreConfigAtomically } from './core-config-lock.js';
 
 /**
  * Return a snapshot of every custom provider currently persisted in
@@ -153,52 +150,41 @@ function configFilePath(): string {
 }
 
 /**
- * Read the entire `config.json` as a plain object. Treats a missing or
- * malformed file as an empty config, mirroring `loadConfig`'s behavior
- * in `common/utils.ts` (read failures must not break startup).
+ * Read one committed document. Only a missing file is an empty config;
+ * invalid or unreadable originals must never be replaced by a default.
  */
 function readWholeConfig(): Record<string, unknown> {
-  const file = configFilePath();
-  if (!fs.existsSync(file)) {
-    return {};
-  }
-  try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf-8'));
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-    return {};
-  } catch {
-    return {};
-  }
+  return readCoreConfig(configFilePath());
 }
 
 /**
  * Persist the entire config object back to disk, preserving all
- * top-level fields the caller has not touched. mkdirSync handles the
- * fresh-install case (no `~/.kodax/` yet).
+ * top-level fields the caller has not touched. The caller holds the core
+ * writer lock, which also creates the fresh-install directory.
  */
 function writeWholeConfig(config: Record<string, unknown>): void {
-  const file = configFilePath();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(config, null, 2), 'utf-8');
+  writeCoreConfigAtomically(configFilePath(), JSON.stringify(config, null, 2));
 }
 
 /**
  * Pull the `customProviders` array out of an arbitrary config object.
- * Tolerant of missing field / wrong type — returns empty array.
+ * Missing is empty; malformed stored entries must be repaired before mutation.
  */
 function extractCustomProviders(
   config: Record<string, unknown>,
 ): KodaXCustomProviderConfig[] {
   const value = config.customProviders;
-  if (!Array.isArray(value)) {
-    return [];
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new CoreConfigReadError(configFilePath());
+  try {
+    const names = new Set<string>();
+    for (const entry of value) {
+      validateCustomProviderConfig(entry);
+      if (names.has(entry.name)) throw new CoreConfigReadError(configFilePath());
+      names.add(entry.name);
+    }
   }
-  // The on-disk shape is trusted as-is here; the writer side runs
-  // `validateCustomProviderConfig` before persistence, so a well-formed
-  // file is the contract. Embedders that hand-edit `config.json` with
-  // bad entries will surface the error on next `resolveProvider` call.
+  catch { throw new CoreConfigReadError(configFilePath()); }
   return value as KodaXCustomProviderConfig[];
 }
 

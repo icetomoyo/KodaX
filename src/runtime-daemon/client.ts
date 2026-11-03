@@ -1,5 +1,7 @@
 import type { RuntimeMemoryPlane } from '../runtime-memory.js';
 import { randomUUID } from 'node:crypto';
+import { createExecutionBindingClient } from '../execution-binding-client.js';
+import { createExecutionServices } from '../execution-services.js';
 import { isDeepStrictEqual } from 'node:util';
 import type { ClientHistoryPage, ClientHistoryReadOptions, ClientHistorySearchInput, ClientHistorySearchResult, ClientInteraction, ClientInteractionResponse, ClientInteractionResult, ClientObservation, ClientObserveOptions, ClientObservationStatus, ClientProviderInfo, ClientSessionView, ClientItemContent } from '@kodax-ai/coding/client-contract';
 
@@ -265,15 +267,26 @@ export function createRuntimeDaemonClient(
   options: RuntimeDaemonClientOptions,
 ): KodaXDaemonRuntime {
   const runtimeCapabilities = options.capabilities ?? {};
+  const requirePromotionContract = (): void => {
+    const capability = runtimeCapabilities.sessionPromotion as { version?: number } | undefined;
+    if (capability?.version !== 1) throw Object.assign(new Error('Session promotion requires an upgraded Host.'), {
+      code: 'daemon_upgrade_required', capability: 'sessionPromotion', requiredVersion: 1,
+    });
+  };
   const request = (
     method: RuntimeDaemonMethod,
     params?: unknown,
     control?: RuntimeDaemonRequestControl,
-  ): Promise<unknown> => options.transport.request(
-    method,
-    params,
-    control,
-  );
+  ): Promise<unknown> => {
+    const authorization = params !== null && typeof params === 'object' && 'authorization' in params
+      ? params.authorization as import('../client-host-authorization.js').RuntimeExecutionAuthorization | undefined : undefined;
+    if ((authorization?.binding !== undefined || authorization?.businessBinding !== undefined || authorization?.profile?.defaultSkill !== undefined)
+      && (runtimeCapabilities.productExecutionBinding as { version?: number } | undefined)?.version !== 1) {
+      return Promise.reject(Object.assign(new Error('Execution bindings require an upgraded Host.'), { code: 'daemon_upgrade_required' }));
+    }
+    return options.transport.request(method, params, control);
+  };
+  const executionBindings = createExecutionBindingClient(request, runtimeCapabilities, sessionId => createExecutionServices(runtime, sessionId));
   const subscriptionRequest: RuntimeDaemonClientTransport['request'] = (method, params) => {
     const capability = options.capabilities?.subscriptionLifecycle;
     if (typeof capability !== 'object' || capability === null
@@ -388,7 +401,9 @@ export function createRuntimeDaemonClient(
     }
   });
   const reverseSubscription = options.transport.subscribe((notification) => {
-    if (notification.method === 'credential.request') {
+    if (notification.method === 'execution.resolve') {
+      void executionBindings.handle(notification.params).catch(() => reportReverseBridgeFailure('execution binding'));
+    } else if (notification.method === 'credential.request') {
       void answerCredentialRequest(notification.params, credentialBrokers, request)
         .catch(() => reportReverseBridgeFailure('credential request'));
     } else if (notification.method === 'host_tool.invoke') {
@@ -408,6 +423,7 @@ export function createRuntimeDaemonClient(
     if (closeAttempt) return closeAttempt;
     const attempt = (async (): Promise<void> => {
       if (!localResourcesClosed) {
+        executionBindings.close();
         transportLifecycleSubscription?.close();
         reverseSubscription.close();
         connectionListeners.clear();
@@ -481,7 +497,7 @@ export function createRuntimeDaemonClient(
     (options?.runId === undefined || pending.runId === options.runId)
     && (options?.expectedRevision === undefined || options.expectedRevision === 0);
 
-  return {
+  const runtime: KodaXDaemonRuntime = {
     identity: options.identity,
     statistics: {
       read: sessionId => request('session.facts.read', { sessionId }) as ReturnType<NonNullable<KodaXRuntime['statistics']>['read']>,
@@ -494,8 +510,11 @@ export function createRuntimeDaemonClient(
       listPendingExits: () => request('client.exit.pending') as ReturnType<NonNullable<KodaXRuntime['lifecycle']>['listPendingExits']>,
     },
     capabilities: options.capabilities,
+    executionBindings: executionBindings.service,
     ...(options.grantedScopes !== undefined ? { grantedScopes: options.grantedScopes } : {}),
     sessions: {
+      promote: async input => { requirePromotionContract(); return request('session.promote', input) as ReturnType<KodaXRuntime['sessions']['promote']>; },
+      readPromotion: async (sessionId, requestId) => { requirePromotionContract(); return request('session.promotion.read', { sessionId, requestId }) as ReturnType<KodaXRuntime['sessions']['readPromotion']>; },
       create(input = {}) {
         const transportInput = input;
         return request('session.create', transportInput) as Promise<RuntimeSession>;
@@ -724,7 +743,7 @@ export function createRuntimeDaemonClient(
     },
     runs: {
       acceptInput(input) {
-        return options.transport.request('input.submit', input) as ReturnType<KodaXRuntime['runs']['acceptInput']>;
+        return request('input.submit', input) as ReturnType<KodaXRuntime['runs']['acceptInput']>;
       },
       getInput(sessionId, inputId) {
         return request('input.read', { sessionId, inputId }) as ReturnType<KodaXRuntime['runs']['getInput']>;
@@ -1467,6 +1486,7 @@ export function createRuntimeDaemonClient(
     },
     close: closeClient,
   };
+  return runtime;
 }
 
 /**
@@ -1567,6 +1587,8 @@ async function answerCredentialRequest(
           provider: requireStringField(payload, 'provider'),
           sessionId: requireStringField(payload, 'sessionId'),
           ...(payload.connectionFingerprint !== undefined ? { connectionFingerprint: parseCredentialConnectionFingerprint(payload.connectionFingerprint) } : {}),
+          ...(payload.credentialContextVersion !== undefined ? { credentialContextVersion: parseCredentialContextVersion(payload.credentialContextVersion) } : {}),
+          ...(payload.rejectedCredentialFingerprint !== undefined ? { rejectedCredentialFingerprint: parseCredentialConnectionFingerprint(payload.rejectedCredentialFingerprint) } : {}),
           target: parseScopedCredentialTarget(payload.target),
           purpose: parseScopedCredentialPurpose(payload.purpose),
         });
@@ -2652,4 +2674,8 @@ function assertRuntimeTransportSafe(
 function parseCredentialConnectionFingerprint(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) throw new Error('Invalid credential connection fingerprint.');
   return value;
+}
+function parseCredentialContextVersion(value: unknown): 1 {
+  if (value !== 1) throw new Error('Unsupported credential context version.');
+  return 1;
 }

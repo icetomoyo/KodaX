@@ -56,6 +56,38 @@ it('does not keep a safely recovered historical exit in the pending admission li
   } finally { await rm(homeDir, { recursive: true, force: true }); }
 });
 
+it.each(['daemon_active', 'containment_active'] as const)(
+  'freshly verifies every historical generation after a prior ready result (%s)', async reason => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-exit-generations-'));
+  try {
+    const base = oldReceipt();
+    const first = { ...base, host: { ...base.host, owner: { ...base.host.owner,
+      processContainment: 'windows-job' as const, supervisorPid: 45, supervisorProcessStartIdentity: 'old-supervisor' } } };
+    const second = { ...first, requestId: 'replacement-exit', runtimeId: 'intermediate-host',
+      host: { ...first.host, owner: { ...first.host.owner, runtimeId: 'intermediate-host', pid: 43,
+        supervisorPid: 46, supervisorProcessStartIdentity: 'intermediate-supervisor' } } };
+    const files = await Promise.all([first, second].map(receipt => receiptFile(homeDir, receipt)));
+    const originalBytes = await Promise.all(files.map(file => readFile(file, 'utf8')));
+    const probe = vi.spyOn(shutdownVerifier, 'waitForRuntimeDaemonShutdown')
+      .mockResolvedValue({ status: 'replacement_running', runtimeId: 'replacement', pid: 44 });
+    const { controller, stop } = replacementController(homeDir);
+    expect(await controller.pending('client')).toEqual([]);
+    probe.mockResolvedValue({ status: 'unverified', reason });
+    const pending = await controller.pending('client');
+    expect(new Set(pending.map(row => row.requestId))).toEqual(new Set([first.requestId, second.requestId]));
+    for (const receipt of [first, second]) {
+      expect(pending.find(row => row.requestId === receipt.requestId)).toMatchObject({
+        runtimeId: receipt.runtimeId, cleanup: receipt.cleanup, host: { owner: receipt.host.owner },
+        recovery: { state: 'blocked', reason, nextAction: 'retry_verification' },
+      });
+    }
+    expect(stop).not.toHaveBeenCalled();
+    expect(await Promise.all(files.map(file => readFile(file, 'utf8')))).toEqual(originalBytes);
+    probe.mockResolvedValue({ status: 'replacement_running', runtimeId: 'replacement', pid: 44 });
+    expect(await controller.pending('client')).toEqual([]);
+  } finally { await rm(homeDir, { recursive: true, force: true }); }
+});
+
 it('rechecks a replayed old exit without rewriting history or stopping the replacement Host', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-exit-replay-'));
   try {

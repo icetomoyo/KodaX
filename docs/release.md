@@ -1,7 +1,162 @@
 # Release & Binary Distribution
 
+The unified Host cutover shipped in `v0.7.97-alpha.12` retired
+`runtimeExitSettlement` and `settleKodaXRuntimeExit()`. Capability lists within older release
+preparations below record those tagged releases, not current SDK requirements.
+Use [SDK_MIGRATION.md](SDK_MIGRATION.md) for the supported current surface.
+
 KodaX is distributed as **standalone binaries** built with `bun build --compile`.
 Target machines do **not** need Node.js or any runtime installed.
+
+## v0.7.97-beta.1 release preparation
+
+Release state: `v0.7.97-beta.1` is a candidate awaiting multi-platform CI.
+npm publication has not occurred. The candidate is the first beta of the
+v0.7.97 line, completing the Space-facing Host execution and Session seams:
+Main-owned capability-gated default Skills with consumption-time execution
+bindings over committed expert/connector state and fresh credential/tool
+leases, Host-owned revision-checked Quick Ask Session promotion with durable
+request-ID reconciliation, plain/explicit redirect Run-boundary persistence
+through cold recovery with strict missing-method rejection, and steer-side
+Main-binding resolution retaining the active Run's principal and leases.
+Core configuration updates publish atomically under the shared lock with old
+bytes retained on failed writes, damaged provider collections rejected before
+mutation, secret-free errors and bounded Windows reader-denied replacement;
+the complete daemon schema ships as packaged npm data within the existing CLI
+size budget; owner-local temporary Run outcomes stay awaitable after Host
+Session cleanup; the alpha.12 follow-up Windows short-name protected-path,
+DACL and bootstrap-diagnostic hardening lands; and bare-resume `Finding
+sessions` discovery feedback adds no startup work (Issue 371 stays open for
+the un-attributed historical first-read latency). The published-alpha.11
+in-place upgrade gates in CI and the Release workflow now pin the last
+npm-published version (`0.7.97-alpha.12`, published 2026-11-02 under the
+`alpha` dist-tag); bump them only after the maintainer publishes beta.1 to
+npm. The tag-triggered Release workflow runs the reusable CI workflow
+alongside the build matrix; ordinary branch pushes do not trigger it, while
+CI can also be dispatched manually. The eventual `-beta` tag suffix marks
+the release as a GitHub pre-release automatically. npm registry publication
+remains a separate maintainer step. Issue 371's remaining historical
+first-read latency, the fix list's still-open findings and Script
+model-efficiency acceptance remain explicit. Existing dated release records
+below describe their own artifacts.
+
+### Release execution contract
+
+- Push the version tag only after the release candidate, documentation and
+  feature-design submodule commits are prepared. Ordinary branch pushes do not
+  run CI. A `v*` tag starts Release, including the reusable full CI workflow.
+- Full CI and all five native build jobs run concurrently. The GitHub Release
+  requires successful CI, all platform archive checks, and the universal npm
+  package checks. Manual dispatch builds candidates but never publishes a Release.
+- Each build validates its actual archive before the longer Electron checks.
+  Bundle and archive steps have five-minute process limits; the archive test
+  has a three-minute test budget, aborts pending waits and retains failure
+  evidence. Failed archive evidence is uploaded for seven days. No failed test
+  is converted into success or automatically retried.
+- Re-run failed jobs when diagnosing infrastructure failures on an unchanged
+  candidate. A source or workflow fix requires a new commit/run. Verify the
+  final tag SHA and every required job; an earlier green branch run is not
+  evidence for a different tagged commit.
+- Release assets comprise five platform archives and their checksums, one
+  universal npm tarball and its checksum, plus aggregated `SHA256SUMS`.
+  The maintainer publishes the audited tarball with `node scripts/release.mjs`;
+  this workflow never performs `npm publish`.
+
+The workflow contracts are covered by `tests/release-workflow.test.ts`.
+
+## v0.7.97-alpha.12 release preparation
+
+Release state: `v0.7.97-alpha.12` is a candidate awaiting multi-platform CI.
+The initial tag still identifies `220df4e9d`; run `41314703124` failed and
+created no GitHub Release. npm publication has not occurred. The candidate
+is the twelfth alpha of the v0.7.97 line, converging public
+product execution on the independent shared Host (embedded/default Runtime
+construction, inline owner switching and function-based in-process
+external-agent Hosts are retired behind an explicit daemon launcher, with
+one-way abandoned-owner policy migration), landing FEATURE_302
+provider/OAuth credential parity (native Responses transport, ordered
+history, native cloud protocols with scoped authentication, Mistral Pi,
+native media classification, shared file credentials bound to actual
+provider connections, hidden API-key setup through CLI and REPL with Host
+scope fences), adding Claude 5.5 history fragments with per-message effort
+controls, moving manual data out of the CLI JavaScript budget, and shipping
+the 2026-11-01 full-chain audit's Windows recovery, credential and
+permission hardening (Issue 376; audit and fix list under
+[REVIEW_v0.7.97_FULL_CHAIN_AUDIT.md](REVIEW_v0.7.97_FULL_CHAIN_AUDIT.md) /
+[REVIEW_v0.7.97_FIX_LIST.md](REVIEW_v0.7.97_FIX_LIST.md)). The tag-triggered
+Release workflow runs the reusable CI workflow alongside the build matrix;
+branch pushes do not trigger it, while CI can also be dispatched manually.
+The eventual `-alpha` tag suffix marks the release as a GitHub pre-release
+automatically. npm registry publication remains a separate maintainer step.
+The published-alpha.11 in-place upgrade gates in CI and the Release
+workflow intentionally pin the last npm-published version
+(`0.7.97-alpha.11`) while alpha.12 is unpublished; bump them only after the
+maintainer publishes alpha.12 to npm. This cycle also runs the new Windows
+streaming-history PTY gate and the Windows source-regression discovery
+gate for the first time on a tag. Issue 371's historical first-read
+latency, the fix list's still-open findings (F-13 through F-46 except the
+verified fixes) and Script model-efficiency acceptance remain explicit.
+Existing dated release records below describe their own artifacts.
+
+### Release execution contract
+
+- Push the version tag only after the release candidate, documentation and
+  feature-design submodule commits are prepared. Ordinary branch pushes do
+  not run CI. A `v*` tag starts Release, including the reusable full CI
+  workflow.
+- Full CI and all five native build jobs run concurrently. The GitHub
+  Release requires successful CI, all platform archive checks, and the
+  universal npm package checks. Manual dispatch builds candidates but never
+  publishes a Release.
+- Node 20 system tests run on a separate runner, retaining serial execution
+  within the complete system suite. Node 20/22 fast tests, Node 20
+  unit/contract tests, Windows Electron and shell contracts, and native
+  platform checks remain.
+- Each build validates its actual archive before the longer Electron
+  checks. Bundle and archive steps have five-minute process limits; the
+  archive test has a three-minute test budget, aborts pending waits and
+  retains failure evidence. Failed archive evidence is uploaded for seven
+  days. No failed test is converted into success or automatically retried.
+- Re-run failed jobs when diagnosing infrastructure failures on an
+  unchanged candidate. A source or workflow fix requires a new commit/run.
+  Verify the final tag SHA and every required job; an earlier green branch
+  run is not evidence for a different tagged commit.
+- Release assets comprise five platform archives and their checksums, one
+  universal npm tarball and its checksum, plus aggregated `SHA256SUMS`.
+  The maintainer publishes the audited tarball with `node scripts/release.mjs`;
+  this workflow never performs `npm publish`.
+
+The workflow contracts are covered by `tests/release-workflow.test.ts`.
+Local Windows verification on the tagged candidate: typecheck, the
+self-knowledge/manual-budget suites and the fast suite passed on
+2026-11-01; this does not substitute for the final tag's five-platform
+Actions results or manual acceptance.
+
+The first alpha.12 tag run (`41314703124`, candidate `220df4e9d`) failed the
+two darwin trusted-text jobs and the darwin-arm64 build. This cycle's audit
+hardening rejects agent homes and repair targets reachable through
+symbolic-link ancestors, and macOS runner temporary roots live under the
+`/var` symlink (`/private/var`), so every trusted-text integration test and
+two bundled storage-repair tests failed on darwin only. Real macOS user
+homes under `/Users` are unaffected; the failures came from test fixtures
+built directly on `os.tmpdir()` — the default vitest config home, the
+trusted-text integration roots, the POSIX sandbox policy fixtures and the
+bundled storage-repair tests. Those fixtures now canonicalize their base
+with `realpath`, matching the production constraint; Linux and Windows
+runners are unaffected. Final acceptance still requires all five platform
+gates on the re-tagged commit.
+
+The follow-up fixes preserve lexical and physical protected-path checks,
+canonicalize missing SSH-key ancestors and short-name native cache anchors
+without accepting reparse anchors, and replace credential staging DACLs
+without transient broad grants. Undo's canonical identity/CAS and native
+short-name rejection remain intact; its fake canonical fixtures use real
+canonical roots. The native background concurrency gate retains its original
+assertions and deadlines, with bounded CI-only bootstrap-log diagnostics.
+Candidate validation must use manual dispatch on the exact commit before
+the release owner moves a tag. Neither tag movement nor publication is part
+of the repair task; final results are recorded in the
+[Issue 376 regression guide](test-guides/ISSUE_376_v0.7.97_REGRESSION_GUIDE.md).
 
 ## v0.7.97-alpha.11 release preparation
 
@@ -347,7 +502,9 @@ On top of v0.7.97-alpha.6 it includes:
   connection timeouts surface as `ETIMEDOUT`, so clients can retry without
   losing state.
 - Bundle gate growth: `test:bundle` now includes bundled real-process
-  shared-Host recovery (`tests/bundled-shared-host-recovery.test.mjs`).
+  shared-Host idle exit (`tests/bundled-shared-host-recovery.test.mjs`) and
+  profile recovery (`tests/bundled-shared-profile-recovery.test.mjs`, now in
+  the serial startup group with its original deadlines).
 - Bounded Windows startup cleanup: the automatic historical child sweep keeps
   unverifiable incomplete Run trees `unknown` instead of launching a
   PowerShell termination helper per old record — a helper storm that

@@ -10,11 +10,13 @@ import path from 'node:path';
 import { KODAX_DIR } from '@kodax-ai/repl';
 import { resolveRuntimeDaemonPathsFromConfigHome } from './runtime-daemon/state.js';
 import { runtimeClientPrincipal, readExitReceipts, verifyExitReceipt } from './runtime-daemon/client-lifecycle.js';
-export type { KodaXClientHostAuthorization, KodaXClientExecutionRequest, RuntimeExecutionAuthorization, KodaXClientWorkflowHostPolicy } from './client-host-authorization.js';
+export type { KodaXClientHostAuthorization, KodaXClientHostServices, KodaXClientExecutionRequest, RuntimeExecutionAuthorization, KodaXClientWorkflowHostPolicy } from './client-host-authorization.js';
 
 export type * from '@kodax-ai/coding/client-contract';
 export { createExecutionProfile } from './execution-profile.js';
-export type { RuntimeExecutionProfile, RuntimeExecutionProfileSource } from './client-host-authorization.js';
+export type { RuntimeExecutionProfile, RuntimeExecutionProfileSource, RuntimeDefaultSkill,
+  RuntimeBusinessBinding, RuntimeExecutionBindingSnapshot, RuntimeExecutionBindingRequest,
+  RuntimeExecutionBindingResolver, RuntimeExecutionBindingService } from './client-host-authorization.js';
 export type { RuntimeClientInfo } from './runtime-client-info.js';
 
 export interface ConnectKodaXClientOptions {

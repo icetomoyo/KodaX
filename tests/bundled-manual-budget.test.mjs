@@ -9,6 +9,8 @@ test('npm package includes the required manual data', () => {
   }));
   assert.ok(packed[0].files.some(file => file.path === 'dist/manual-topics.json'));
   assert.ok(packed[0].files.some(file => file.path === 'dist/static-text.json'));
+  assert.ok(packed[0].files.some(file => file.path === 'dist/windows-native-scripts.json'));
+  assert.ok(packed[0].files.some(file => file.path === 'dist/generated-config-templates.json'));
 });
 
 test('CLI retains room for native Responses within the existing 5 MiB limit', () => {

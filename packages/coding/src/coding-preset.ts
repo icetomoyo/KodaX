@@ -27,7 +27,6 @@ import {
   type Agent,
   type AgentMessage,
   type AgentMiddlewareDeclaration,
-  type AgentReasoningProfile,
   type PresetDispatcher,
   type RunResult,
 } from '@kodax-ai/agent';
@@ -217,26 +216,6 @@ export const DEFAULT_CODING_MIDDLEWARE: readonly AgentMiddlewareDeclaration[] = 
 ]);
 
 /**
- * Default reasoning profile for the SA single-agent declaration — FEATURE_078.
- *
- * Mirrors the AMA Worker profile (`balanced/deep`) so SA and AMA modes
- * share the same depth envelope. `escalateOnRevise: true` matches the
- * substrate's existing auto-reroute depth-escalation path that triggers
- * on uncertainty / low-value-review heuristics. FEATURE_193 (v0.7.43)
- * retired the V1 multi-role envelope (Scout / Planner / Generator /
- * Evaluator); only the Worker profile remains.
- *
- * The L1 user ceiling (`--reasoning <mode>` / `options.reasoningMode`) still
- * clamps the effective per-turn depth via `resolveRoleReasoning` and the
- * ceiling-aware `escalateThinkingDepth(_, ceiling)` helper.
- */
-export const DEFAULT_CODING_REASONING_PROFILE: AgentReasoningProfile = Object.freeze({
-  default: 'balanced',
-  max: 'deep',
-  escalateOnRevise: true,
-});
-
-/**
  * Construct the default coding Agent declaration. SDK consumers may write
  * `Runner.run(createDefaultCodingAgent(), prompt, { presetOptions })` and
  * the Runner will execute the substrate via `Agent.substrateExecutor`.
@@ -254,7 +233,6 @@ export function createDefaultCodingAgent(
     instructions: DEFAULT_CODING_INSTRUCTIONS,
     substrateExecutor: codingSubstrate,
     middleware: DEFAULT_CODING_MIDDLEWARE,
-    reasoning: DEFAULT_CODING_REASONING_PROFILE,
     ...overrides,
   });
 }

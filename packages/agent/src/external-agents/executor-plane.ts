@@ -536,6 +536,7 @@ class AgentExecutorPlaneRuntime {
   readonly #registrationRevisionHistory = new Map<string, string>();
   readonly #taskRegistrationSnapshots = new Map<string, ExternalAgentRegistration>();
   readonly #tasks = new Map<string, AgentTaskSnapshot>();
+  readonly #unreadableTaskEvents = new Set<string>();
   readonly #durableTaskStates = new Map<string, AgentTaskSnapshot['state']>();
   readonly #eventSequences = new Map<string, number>();
   readonly #executors = new Map<string, AgentExecutor>();
@@ -597,8 +598,15 @@ class AgentExecutorPlaneRuntime {
       }
       this.#tasks.set(task.taskId, clone(task));
       this.#durableTaskStates.set(task.taskId, task.state);
-      const events = await this.options.store.loadEvents(task.taskId);
-      this.#eventSequences.set(task.taskId, events.at(-1)?.seq ?? 0);
+      try {
+        const events = await this.options.store.loadEvents(task.taskId);
+        this.#eventSequences.set(task.taskId, events.at(-1)?.seq ?? 0);
+      } catch {
+        this.#unreadableTaskEvents.add(task.taskId);
+        const error = 'Durable task event ledger is unreadable; original data is retained and this task is fenced.';
+        this.#tasks.set(task.taskId, { ...clone(task), state: 'unknown', error });
+        this.reportBackgroundError(new Error(error), { operation: 'event-pump-recovery', taskId: task.taskId });
+      }
     }
     await this.reconcileTaskRegistrationSnapshots();
     await this.recoverNonTerminalTasks();
@@ -1467,6 +1475,7 @@ class AgentExecutorPlaneRuntime {
   }
 
   private async waitTask(taskId: string, timeoutMs?: number): Promise<AgentTaskSnapshot> {
+    this.assertTaskEventsReadable(taskId);
     const current = this.requireTask(taskId);
     if (isTerminal(current.state)) return clone(current);
     if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
@@ -1702,6 +1711,7 @@ class AgentExecutorPlaneRuntime {
     type: AgentTaskEvent['type'],
     detail: AgentExecutorEvent = {},
   ): Promise<void> {
+    this.assertTaskEventsReadable(task.taskId);
     const safeTask = clone(task);
     await this.options.store.saveTask(safeTask);
     this.#tasks.set(task.taskId, safeTask);
@@ -1763,6 +1773,7 @@ class AgentExecutorPlaneRuntime {
     readonly executor: AgentExecutor;
     readonly reference: NonNullable<AgentTaskSnapshot['executorReference']>;
   }> {
+    this.assertTaskEventsReadable(task.taskId);
     const reference = task.executorReference ?? { idempotencyKey: task.idempotencyKey };
     const boundExecutor = this.#taskExecutors.get(task.taskId);
     if (boundExecutor) return { executor: boundExecutor, reference };
@@ -2131,6 +2142,7 @@ class AgentExecutorPlaneRuntime {
 
   private async recoverNonTerminalTasks(): Promise<void> {
     for (const task of [...this.#tasks.values()]) {
+      if (this.#unreadableTaskEvents.has(task.taskId)) continue;
       if (task.route !== 'external' || isTerminal(task.state)) continue;
       const registration = this.#taskRegistrationSnapshots.get(taskSnapshotKey(task));
       if (!registration) {
@@ -2139,6 +2151,10 @@ class AgentExecutorPlaneRuntime {
       }
       await this.reconcileTask(task.taskId);
     }
+  }
+
+  private assertTaskEventsReadable(taskId: string): void {
+    if (this.#unreadableTaskEvents.has(taskId)) throw new Error('Task event ledger is unreadable; repair the retained original data before retrying this task.');
   }
 
   private async reconcileTaskRegistrationSnapshots(): Promise<void> {
@@ -2214,6 +2230,14 @@ function defaultIdempotencyKey(): string {
   return `agent-dispatch-${randomUUID()}`;
 }
 
+/** Initialization failed after acquiring resources; retain cleanup authority until disposal is verified. */
+export class AgentExecutorPlaneInitializationError extends AggregateError {
+  constructor(error: unknown, cleanup: unknown, readonly retryCleanup: () => Promise<void>) {
+    super([error, cleanup], 'Agent executor initialization and cleanup failed; retry cleanup before reopening its store.');
+    this.name = 'AgentExecutorPlaneInitializationError';
+  }
+}
+
 export async function createAgentExecutorPlane(
   options: CreateAgentExecutorPlaneOptions,
 ): Promise<AgentExecutorPlane> {
@@ -2233,7 +2257,12 @@ export async function createAgentExecutorPlane(
     createIdempotencyKey: options.createIdempotencyKey ?? defaultIdempotencyKey,
     closeTimeoutMs,
   });
-  await runtime.initialize();
+  try { await runtime.initialize(); }
+  catch (error) {
+    try { await runtime.close(); }
+    catch (cleanup) { throw new AgentExecutorPlaneInitializationError(error, cleanup, () => runtime.close()); }
+    throw error;
+  }
   return {
     registrations: runtime.registrations,
     tasks: runtime.tasks,

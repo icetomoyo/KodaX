@@ -5,7 +5,24 @@
 当前契约核对至 2026-10-29 源码 `b70d2d30`；tag 后新增能力与层级差异见
 [SDK 一致性清单](SDK_MIGRATION.md#2026-10-29-未发布改动对齐)。这不是 npm 发布声明。
 
+2026-11-01 审计补充以 `68a02521c` 及后续本地主分支修复为基线：Root/Space 的
+凭证、Skill、模型能力和维护诊断衔接见
+[T12-H 交接](SDK_MIGRATION.md#feature_302-t12-h账号保持与可重试升级未发布)与
+[Issue 376 验收](test-guides/ISSUE_376_v0.7.97_REGRESSION_GUIDE.md)。前述日期区间为
+历史清单范围，不表示后续未经验证的云账户或旧客户端已获得新能力。
+
 可信 Main 的 `authorizeExecution`、canonical `historyBoundary` / Retry `before`、历史完整性与图片引用，以及宿主配置/统计/生命周期边界见 [Space SDK/Host 接缝](SPACE_SDK_SEAMS.md)。这些接缝补齐需要当前 SDK 与 Host，不能仅根据旧包版本假定支持。
+
+2026-11-02 alpha.12 之后的未发布补齐：`productExecutionBinding:1` 支持可信 Main
+默认 Skill 与实际消费时的业务解析，`sessionPromotion:1` 支持原 Session 的 CAS promotion。
+Main 新类型包括 `KodaXClientHostServices`、`RuntimeDefaultSkill`、`RuntimeBusinessBinding`、
+`RuntimeExecutionBindingSnapshot/Request/Resolver/Service`，从 `/client` 与 `/runtime` 导出。
+Product 输入不能携带这些执行 authority；排队拒绝由 `ClientInputAdmissionError` 显式呈现，
+会话 promotion 返回 `ClientSessionPromotionResult` 和权威 `ClientSession.metadataRevision`。
+可信 Main 配置读写的原子提交、公开完整读取与可区分的配置锁忙/损坏错误见
+[配置提交契约](SDK_MIGRATION.md#2026-11-02-核心配置提交补齐alpha12-之后未发布)；
+这些维护入口不授予 Renderer 读取凭证或跳过绑定/CAS 的权限。
+完整调用顺序、恢复/撤销与旧 Host 行为见 [SDK 迁移说明](SDK_MIGRATION.md)。
 
 2026-10-02 主线 rc.14 修复融合仍属于 FEATURE_298 / v0.7.97。中断后的下一次运行只从当前分支的 canonical Session/lineage、Run status 和已成功保存的显示 checkpoint 读取有限恢复说明；不恢复持久事件日志，也不根据事件推导成功。Host 先等待现有 checkpoint 写入，再按 inputId/turnId、sourceRunId 和 outputId 确认来源，排除已提交的同一输出、Thinking、child 输出及普通通知。工具提出、执行开始、结果已保存分别记录；重复 callId 按所属 assistantOutputId 匹配；执行开始但没有已保存结果时，效果仍为 unknown。说明仅进入临时模型上下文，不能成为用户指令或正式会话正文。未落盘 token 不承诺硬崩溃恢复。
 
@@ -611,7 +628,18 @@ CLI 的 Ink、classic、单次输入使用 Host Client 投影；SDK `/client` �
 
 `activity.todos`、`children`、`managedTask`、`costReport` 是 Host 事实，终端直接消费；本地加载状态不能覆盖另一个客户端启动的活动 Run。`managedTask.childFanoutClass` 与 fanoutCount 共同驱动原 AMA 后台条。模型内调用工作流时，`activity.workflow` 复用已有 `ClientWorkflowProcess`，保留阶段、计数、状态和名称；子代理摘要作为可补读、可保存的显示项提供。临时 Worker 进度仍只属于活动面，不变成用户对话。
 
-effort 拒绝与发送参数变化通过现有保留通知提供，按实际 Provider 请求归属过滤旧请求和 child。`sentEffort` 只说明发送参数，`verified: false` 不证明模型实际采用该推理强度；没有 Provider 回调时不推断成功。通知不改写 Session 或保存默认。AMA 的角色默认仍受用户上限约束，反馈记录实际角色请求，不把用户上限误写成每次请求值。
+内置 AMA Worker、SA 和 Script 根执行直接继承 Session effort；不能用已退役的
+`balanced/deep` 角色默认压低 `high/xhigh/max`。显式 specialist 策略与子任务自身
+选择独立；子任务显式 `auto` 表示 provider 自选，不等于省略并继承父级。
+旧 Agent profile 在创建、构造 admission/resolution 等边界转换为原生 effort；
+旧 SDK 的 reasoningMode/thinking 只作兼容输入，已有配置无需人工重写。
+
+effort 拒绝通过现有保留通知提供；正常 profile 映射与已学习的回退不逐轮追加通知。
+`activity.reasoning` 为当前主请求的结构化发送结果，含 provider/model、可选请求 ID、
+requestedEffort、可选 sentEffort、fallbacks 和 `verified:false`。旧请求或 child
+不能覆盖它，新请求开始时清空；没有 Provider 回调时不推断成功。缺失 sentEffort
+表示没有该参数，不代表关闭 thinking。旧 Host 缺少整个字段时保留未知。
+这些事实不改写 Session 选择或保存默认；`sentEffort` 也不证明服务端实际采用该强度。
 
 `activity.streaming` 是当前请求的瞬时进度：thinking 提供既有 item 引用、完整字符数和可选 `estimatedTokenCount`；tool-input 提供工具名称、调用 ID，以及该调用的累计 `charCount` 和可选 `estimatedTokenCount`。两种估算都由 Host 在现有 80ms 视图合并时复用 `countTokens`，针对当前请求/调用收到的完整文本计算，先于显示裁剪；不是累计 Run usage、独立计费数或 Provider 报告值。纯 Client 不重新估算，也不从字符数直接换算。Ink/classic 以 `~… tokens` 明示估算；旧 Host 没有该字段时仅显示 Thinking/Receiving 工具标签，不伪装精确数值。缺少工具调用 ID 时不按名称拼接计数。Host 暂存完整累计参数用于估算，在请求替换、流结束、对应工具开始、Run 终态、Session reset/close 时释放；参数草稿不暴露或持久化到 view/checkpoint。Ink 用现有 spinner 显示实时计数，classic 按请求/阶段/调用去重输出进入时的快照，活动消失后清空去重状态。UTF-16 正文偏移与原始字符计数不因显示改用 token 而改变；这里不承诺逐字 JSON 预览。
 

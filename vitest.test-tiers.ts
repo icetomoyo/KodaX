@@ -51,6 +51,7 @@ export const CONTRACT_TEST_FILES = [
 // High-value tests whose subprocess, daemon, repository-indexing, or storage
 // behavior makes them unsuitable for the edit/verify loop.
 export const SYSTEM_TEST_FILES = [
+  'src/runtime-daemon/state.windows-publication.test.ts',
   'src/sandbox-runtime.test.ts',
   'src/kodax_cli.daemon-smoke.test.ts',
   'src/kodax_cli.setup-boundary.test.ts',

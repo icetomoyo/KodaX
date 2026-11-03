@@ -548,7 +548,8 @@ describe('F270 coding Actor runtime adapter', () => {
     const root = session.attach({
       ...ctx,
       parentAgentConfig: {
-        ...ctx.parentAgentConfig,
+        ...ctx.parentAgentConfig!,
+        thinking: false,
         contextDiagnostics: true,
         disablePromptCache: false,
       },
@@ -561,6 +562,7 @@ describe('F270 coding Actor runtime adapter', () => {
     expect(executeChildAgentsMock).toHaveBeenCalledOnce();
     expect(executeChildAgentsMock.mock.calls[0]?.[2].actorTurnId).toBe(turn.turnId);
     expect(executeChildAgentsMock.mock.calls[0]?.[2].parentOptions).toMatchObject({
+      thinking: false,
       contextDiagnostics: true,
       disablePromptCache: false,
     });

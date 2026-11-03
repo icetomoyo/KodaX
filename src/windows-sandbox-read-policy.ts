@@ -14,13 +14,21 @@ const SSH_PATH_DIRECTIVES = new Set([
 ]);
 
 function pathKey(value: string): string {
-  try { return realpathSync.native(value).toLowerCase(); }
-  catch (error: unknown) {
-    if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) {
-      emitKodaXDiagnostic({ source: 'sandbox:ssh-config', level: 'warn',
-        message: `Cannot canonicalize SSH ACL path: ${value}`, detail: error });
+  const suffix: string[] = [];
+  let current = path.resolve(value);
+  while (true) {
+    try { return path.join(realpathSync.native(current), ...suffix).toLowerCase(); }
+    catch (error: unknown) {
+      if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+        emitKodaXDiagnostic({ source: 'sandbox:ssh-config', level: 'warn',
+          message: `Cannot canonicalize SSH ACL path: ${value}`, detail: error });
+        return path.resolve(value).toLowerCase();
+      }
+      const parent = path.dirname(current);
+      if (parent === current) return path.resolve(value).toLowerCase();
+      suffix.unshift(path.basename(current));
+      current = parent;
     }
-    return path.resolve(value).toLowerCase();
   }
 }
 

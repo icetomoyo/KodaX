@@ -1,9 +1,10 @@
 import { classifyReasoningEffortRejection } from './reasoning-effort-rejection.js';
+import { prepareAnthropicNativeHistory, restoreAnthropicNativeHistory } from './anthropic-native-history.js';
 import { cacheWritePartition } from './cache-usage.js';
 import { applyAnthropicThinkingOptions, hasThinkingBinding, THINKING_BINDING_BETA } from './anthropic-thinking-options.js';
 import { withCacheWritePartition } from './request-extensions.js';
 import { recordRejectedImage } from './rejected-image.js';
-import { requestEnvironment, hasRequestEnvironment, prepareProviderPayload, requestExtensionFetch, providerStreamEvent } from './request-extensions.js';
+import { requestEnvironment, hasRequestEnvironment, prepareProviderPayload, observePreparedProviderPayload, requestExtensionFetch, providerStreamEvent } from './request-extensions.js';
 import { anthropicTools, withoutPreferredToolConstraints } from './tool-constraints.js';
 import { createHash } from 'node:crypto';
 import { connectionAuthFetch } from './connection-auth.js';
@@ -21,6 +22,8 @@ import { isCleanStop } from '../stop-reason.js';
 import { KodaXProviderError } from '../errors.js';
 import {
   KodaXContentBlock,
+  KodaXAssistantBlock,
+  KodaXInputTransformation,
   KodaXGenerationSource,
   KodaXNormalizedReasoningRequest,
   KodaXProviderConfig,
@@ -52,6 +55,7 @@ import {
 } from '../cache-control.js';
 import {
   prepareImageBlock,
+  UNSUPPORTED_MODEL_IMAGE_PLACEHOLDER,
 } from './image-serialization.js';
 import { resolvePromptCacheDisabled } from '../run-scoped-config.js';
 import {
@@ -62,6 +66,13 @@ import {
 
 const KODAX_ANTHROPIC_COMPAT_USER_AGENT = 'KodaX';
 const KODAX_ANTHROPIC_EFFORT_BETA_HEADER = 'effort-2025-11-24';
+
+function inputTransformations(value: unknown): KodaXInputTransformation[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 1000).flatMap(entry => isRecord(entry)
+    && ['type', 'path', 'reason'].every(key => typeof entry[key] === 'string' && entry[key].length <= 256)
+    ? [{ type: entry.type as string, path: entry.path as string, reason: entry.reason as string }] : []);
+}
 
 export async function createAnthropicSdkClient(
   options: ConstructorParameters<typeof Anthropic>[0],
@@ -212,6 +223,21 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     const raw = params as unknown as Record<string, unknown>;
     const thinking = raw.thinking as { type?: string; effort?: string } | undefined;
     const output = raw.output_config as { effort?: string } | undefined;
+    if (this.isNativeHistoryModel(params.model)) {
+      if (thinking?.type === 'disabled') return 'none';
+      let active = output?.effort, pending: string | undefined, newInput = false;
+      for (const message of params.messages as unknown as Record<string, unknown>[]) {
+        if (message.role === 'assistant') newInput = false;
+        if (message.role === 'user' && (typeof message.content === 'string' || (Array.isArray(message.content)
+          && message.content.some(block => isRecord(block) && block.type !== 'tool_result')))) {
+          newInput = true; active = pending ?? active; pending = undefined;
+        }
+        if (message.role === 'system' && isRecord(message.output_config) && typeof message.output_config.effort === 'string') {
+          if (newInput) active = message.output_config.effort; else pending = message.output_config.effort;
+        }
+      }
+      return active;
+    }
     return typeof raw.reasoning_effort === 'string' ? raw.reasoning_effort : output?.effort ?? thinking?.effort
       ?? (thinking?.type === 'disabled' ? 'none' : undefined);
   }
@@ -323,12 +349,76 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
   ): AnthropicRequestOptions {
     const capability = this.getReasoningProfile(model);
     const betas = [...(capability?.requiresEffortBetaHeader && hasAnthropicOutputEffort(params) ? [KODAX_ANTHROPIC_EFFORT_BETA_HEADER] : []),
-      ...(hasThinkingBinding(params) ? [THINKING_BINDING_BETA] : [])];
+      ...(hasThinkingBinding(params) ? [THINKING_BINDING_BETA] : []),
+      ...(this.isNativeHistoryModel(model) ? ['inline-tools-2026-09-15', 'mid-conversation-output-config-2026-07-01'] : [])];
     const headers = betas.length ? { 'anthropic-beta': betas.join(',') } : undefined;
     return {
       ...(signal ? { signal } : {}),
       ...(headers ? { headers } : {}),
     };
+  }
+
+  private isNativeHistoryModel(model?: string): boolean {
+    return this.name === 'anthropic' && /^claude-(opus|sonnet|haiku)-5-5(?:-|$)/.test(model ?? this.config.model);
+  }
+
+  private nativeHistoryInput(messages: KodaXMessage[], model: string, reasoning: KodaXNormalizedReasoningRequest, options?: KodaXProviderStreamOptions) {
+    const native = this.isNativeHistoryModel(model);
+    const source = this.getGenerationSource(model);
+    let restored = native ? restoreAnthropicNativeHistory(messages, source) : undefined;
+    const effort = reasoning.effort === 'auto' || reasoning.effortSource === 'omitted' || reasoning.effort === 'none'
+      ? model.startsWith('claude-sonnet-') ? 'high' : 'medium' : reasoning.effort;
+    const mode = options?.thinkingMode ?? (!reasoning.enabled && reasoning.effortSource !== 'omitted' ? 'disabled' : 'adaptive');
+    const resetLineage = !!restored && (restored.requested.thinkingMode !== mode
+      || (mode !== 'adaptive' && restored.requested.effort !== effort));
+    const tail = restored ? messages.slice(restored.start) : messages;
+    const input = native ? tail.map(message => ({ ...message,
+      content: typeof message.content === 'string' ? message.content : message.content.flatMap(block => block.type === 'thinking'
+        ? block.thinking ? [{ type: 'text' as const, text: `<prior_reasoning>\n${block.thinking}\n</prior_reasoning>` }] : []
+        : block.type === 'redacted_thinking' ? [] : [block]),
+    })) : messages;
+    return { native, source, restored, input, resetLineage };
+  }
+
+  private applyNativeControls(params: Anthropic.Messages.MessageCreateParams, model: string, reasoning: KodaXNormalizedReasoningRequest, options?: KodaXProviderStreamOptions, suppressEffort = false): void {
+    if (!this.isNativeHistoryModel(model)) {
+      if (options?.thinkingMode !== undefined) throw new KodaXProviderError('Thinking mode requires a supported native Claude 5.5 model.', this.name, { retryable: false });
+      return;
+    }
+    const mode = options?.thinkingMode ?? (!reasoning.enabled && reasoning.effortSource !== 'omitted' ? 'disabled' : 'adaptive');
+    const disabled = mode === 'disabled';
+    const effort = reasoning.effort === 'auto' || reasoning.effortSource === 'omitted' || reasoning.effort === 'none'
+      ? model.startsWith('claude-sonnet-') ? 'high' : 'medium' : reasoning.effort;
+    if (disabled && !model.startsWith('claude-haiku-')) throw new KodaXProviderError('This Claude model requires adaptive thinking; effort none is unsupported.', this.name, { retryable: false });
+    if (!['adaptive', 'between_tools', 'disabled'].includes(mode) || (mode === 'between_tools' && !model.startsWith('claude-sonnet-'))) {
+      throw new KodaXProviderError('Unsupported native Claude thinking mode.', this.name, { retryable: false });
+    }
+    if (mode !== 'adaptive' && (!['low', 'medium', 'high'].includes(effort) || options?.thinkingDisplay !== undefined)) {
+      throw new KodaXProviderError('This thinking mode requires effort high or below and no display/binding controls.', this.name, { retryable: false });
+    }
+    if (!model.startsWith('claude-haiku-') && params.tool_choice && params.tool_choice.type !== 'auto' && params.tool_choice.type !== 'none') {
+      throw new KodaXProviderError('This Claude model does not support forced tool choice.', this.name, { retryable: false });
+    }
+    params.thinking = { type: mode } as Anthropic.Messages.ThinkingConfigParam;
+    const rejected = this.knownReasoningRejections(model, options);
+    if (suppressEffort || rejected.includes('*')) setAnthropicOutputEffort(params, undefined);
+    else setAnthropicOutputEffort(params, effort);
+    if (rejected.includes('*')) {
+      if (mode !== 'adaptive') throw new KodaXProviderError('The requested thinking mode was rejected; refusing to enable thinking silently.', this.name, { retryable: false });
+      delete params.thinking; // Native adaptive is also the documented default when omitted.
+    }
+    delete params.temperature; delete params.top_p; delete params.top_k;
+    const last = [...params.messages].filter(message => message.role !== ('system' as string)).at(-1);
+    if (last?.role === 'assistant') throw new KodaXProviderError('Claude 5.5 does not support assistant prefill.', this.name, { retryable: false });
+  }
+
+  private validateNativePayload(params: Anthropic.Messages.MessageCreateParams): void {
+    if (params.temperature !== undefined || params.top_p !== undefined || params.top_k !== undefined) {
+      throw new KodaXProviderError('Claude 5.5 sampling controls cannot be set.', this.name, { retryable: false, failureCode: 'request_build_failed' });
+    }
+    if ([...params.messages].filter(message => message.role !== ('system' as string)).at(-1)?.role === 'assistant') {
+      throw new KodaXProviderError('Claude 5.5 does not support assistant prefill.', this.name, { retryable: false, failureCode: 'request_build_failed' });
+    }
   }
 
   private applyReasoningProfile(
@@ -762,6 +852,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     return this.withRateLimit(async (retryState) => {
       const normalizedReasoning = this.normalizeReasoning(reasoning);
       const model = streamOptions?.modelOverride ?? this.config.model;
+      const native = this.nativeHistoryInput(messages, model, normalizedReasoning, streamOptions);
       const resolution: KodaXReasoningResolution = { provider: this.name, model,
         requestedEffort: normalizedReasoning.effortSource === 'omitted' ? 'auto' : normalizedReasoning.effort,
         verified: false, fallbacks: [] };
@@ -771,7 +862,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       retryState.maxOutputTokensLimit ??= requestMaxOutputTokens;
       const maxOutputTokens = Math.min(retryState.maxOutputTokensOverride ?? requestMaxOutputTokens, requestMaxOutputTokens);
       const convertedMessages = appendAnthropicEphemeralSuffix(this.applyCacheControlToMessages(
-        await this.convertMessages(messages, model),
+        await this.convertMessages(native.input, model, !native.restored, native.restored?.messages.at(-1) as unknown as Anthropic.Messages.MessageParam | undefined),
       ), streamOptions?.ephemeralSuffix?.content);
       const initialCapability = normalizedReasoning.enabled
         ? this.getReasoningCapability(model)
@@ -809,7 +900,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         const kwargs: Anthropic.Messages.MessageCreateParams = {
           model: wireModel,
           max_tokens: maxOutputTokens,
-          system: this.applyCacheControlToSystem(this.buildSystemPrompt(system, messages)),
+          system: this.applyCacheControlToSystem(this.buildSystemPrompt(system, messages, model)),
           messages: convertedMessages,
           ...(tools.length > 0
             ? { tools: this.applyCacheControlToTools(withoutPreferredToolConstraints(tools, retryState.disablePreferredToolConstraints), model) }
@@ -865,6 +956,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           applyAnthropicOutputEffort(kwargs, normalizedReasoning);
         }
 
+        this.applyNativeControls(kwargs, model, normalizedReasoning, streamOptions, capability === 'none' || retryState.suppressReasoningEffort);
         applyAnthropicThinkingOptions(kwargs, reasoningProfile, streamOptions, this.name);
         return kwargs;
       };
@@ -877,6 +969,10 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       const textBlocks: KodaXTextBlock[] = [];
       const toolBlocks: KodaXToolUseBlock[] = [];
       const thinkingBlocks: (KodaXThinkingBlock | KodaXRedactedThinkingBlock)[] = [];
+      const orderedBlocks = new Map<number, KodaXAssistantBlock>();
+      const nativeBlocks = new Map<number, Record<string, unknown>>();
+      const nativeInputs = new Map<number, string>();
+      const transformations: KodaXInputTransformation[] = [];
       let usage: KodaXTokenUsage | undefined;
 
       let currentBlockType: string | null = null;
@@ -898,6 +994,8 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       // 参考: https://github.com/anthropics/anthropic-sdk-typescript
       const client = await this.getClient();
       let response: Awaited<ReturnType<typeof client.messages.create>> | undefined;
+      let nativePreparation: ReturnType<typeof prepareAnthropicNativeHistory> | undefined;
+      let acceptedRequest: Record<string, unknown> | undefined;
       let lastError: unknown;
 
       for (const capability of attempts) {
@@ -905,15 +1003,21 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           let request: Anthropic.Messages.MessageCreateParams | undefined;
           try {
             request = buildRequest(capability);
+            if (native.native) {
+              nativePreparation = prepareAnthropicNativeHistory(messages, native.source, native.restored, request as unknown as Record<string, unknown>, this.knownReasoningRejections(model, streamOptions), native.resetLineage);
+              request = nativePreparation.request as unknown as Anthropic.Messages.MessageCreateParams;
+            }
             if (this.skipRejectedControl(request, model, streamOptions)) {
               resolution.fallbacks.push({ effort: this.controlEffort(request), reason: 'cached-rejection' }); break;
             }
-            request = await prepareProviderPayload(request);
+            request = await prepareProviderPayload(request, 'root', !native.native);
+            if (native.native) { this.validateNativePayload(request); observePreparedProviderPayload(request); }
             resolution.sentEffort = this.controlEffort(request);
             response = await client.messages.create(
               request,
               { ...this.buildMessageCreateOptions(request, model, signal), maxRetries: 0 },
             ).catch(error => { recordRejectedImage(error, request!); throw error; });
+            acceptedRequest = request as unknown as Record<string, unknown>;
           } catch (error) {
             const learned = this.learnRejectedControl(error, request, model, streamOptions);
             if (streamOptions?.singleAttempt) throw error;
@@ -1001,6 +1105,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         if (event.type === 'content_block_start') {
           lastEventTime = Date.now();
           const block = event.content_block;
+          if (native.native) nativeBlocks.set(event.index, structuredClone(block) as unknown as Record<string, unknown>);
           currentBlockType = block.type;
 
           // Debug: Log tool_use block start
@@ -1013,7 +1118,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           }
 
           if (block.type === 'thinking') {
-            currentThinking = '';
+            currentThinking = block.thinking ?? '';
             currentThinkingSignature = block.signature ?? '';
           } else if (block.type === 'redacted_thinking') {
             // The redacted-thinking payload (`data`) is a single opaque
@@ -1025,7 +1130,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             currentBlockType = 'redacted_thinking';
             currentRedactedData = (block as any).data ?? '';
           } else if (block.type === 'text') {
-            currentText = '';
+            currentText = block.text ?? '';
           } else if (block.type === 'tool_use') {
             currentToolId = block.id;
             currentToolName = block.name;
@@ -1034,6 +1139,15 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         } else if (event.type === 'content_block_delta') {
           lastEventTime = Date.now();
           const delta = event.delta;
+          if (native.native) {
+            const block = nativeBlocks.get(event.index);
+            if (block && delta.type === 'citations_delta') {
+              block.citations = [...(Array.isArray(block.citations) ? block.citations : []), structuredClone(delta.citation)];
+            }
+            if (block && block.type !== 'tool_use' && delta.type === 'input_json_delta') {
+              nativeInputs.set(event.index, (nativeInputs.get(event.index) ?? '') + delta.partial_json);
+            }
+          }
           if (delta.type === 'thinking_delta') {
             currentThinking += delta.thinking ?? '';
             streamOptions?.onThinkingDelta?.(delta.thinking ?? '');
@@ -1052,6 +1166,14 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           }
         } else if (event.type === 'content_block_stop') {
           lastEventTime = Date.now();  // Issue 084: Track last event time
+          const nativeInput = nativeInputs.get(event.index);
+          if (nativeInput !== undefined) {
+            try { nativeBlocks.get(event.index)!.input = JSON.parse(nativeInput) as unknown; }
+            catch { throw new KodaXProviderError('Provider returned invalid native server-tool input.', this.name,
+              { failureCode: 'response_stream_error', stage: 'response_stream', retryable: false }); }
+            nativeInputs.delete(event.index);
+          }
+          const count = thinkingBlocks.length + textBlocks.length + toolBlocks.length;
           if (currentBlockType === 'thinking') {
             if (currentThinking || currentThinkingSignature) {
               thinkingBlocks.push({ type: 'thinking', thinking: currentThinking, signature: currentThinkingSignature });
@@ -1089,7 +1211,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
               }
               // Skip this invalid tool_use block - do not add to toolBlocks
             } else {
-              const parsed = parseToolInputWithSalvageTracked(currentToolInput);
+              const parsed = parseToolInputWithSalvageTracked(currentToolInput || (native.native ? JSON.stringify(nativeBlocks.get(event.index)?.input ?? {}) : ''));
               // `_salvaged` is the raw "strict parse failed" signal (kept on a
               // clean stop so a mutating tool's malformed payload is still
               // gated). `_truncated` is the provisional "salvaged + likely
@@ -1105,6 +1227,17 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
               });
             }
           }
+          if (thinkingBlocks.length + textBlocks.length + toolBlocks.length > count) {
+            const block = currentBlockType === 'thinking' || currentBlockType === 'redacted_thinking'
+              ? thinkingBlocks.at(-1) : currentBlockType === 'text' ? textBlocks.at(-1) : toolBlocks.at(-1);
+            if (block) orderedBlocks.set(event.index, block);
+            if (native.native && block) {
+              const { source: _source, ...wire } = block.type === 'thinking' || block.type === 'redacted_thinking' ? block : { ...block, source: undefined };
+              const clean = { ...wire } as Record<string, unknown>;
+              delete clean._salvaged; delete clean._truncated;
+              nativeBlocks.set(event.index, { ...nativeBlocks.get(event.index), ...clean });
+            }
+          }
           currentBlockType = null;
         } else if (event.type === 'message_stop') {
           // Issue 084 fix: Mark message as complete
@@ -1115,6 +1248,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             this.logStreamDiagnostic(`[Stream] message_stop received after ${duration}ms`);
           }
         } else if (event.type === 'message_delta') {
+          transformations.push(...inputTransformations((event as unknown as Record<string, unknown>).input_transformations));
           // Issue 084 fix: Track message_delta events (contain stop_reason, usage)
           lastEventTime = Date.now();
           usage = normalizeAnthropicUsage(
@@ -1130,6 +1264,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             }
           }
         } else if (event.type === 'message_start') {
+          transformations.push(...inputTransformations((event.message as unknown as Record<string, unknown>)?.input_transformations));
           // Issue 084 fix: Track message start
           lastEventTime = Date.now();
           usage = normalizeAnthropicUsage(
@@ -1218,7 +1353,12 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
 
       for (const block of thinkingBlocks) block.source = this.getGenerationSource(model);
       streamOptions?.onReasoningResolved?.(resolution);
-      return { textBlocks, toolBlocks: finalToolBlocks, thinkingBlocks, usage, stopReason, reasoningResolution: resolution };
+      const finalized = new Map(finalToolBlocks.map(block => [block.id, block]));
+      const contentBlocks = [...orderedBlocks.entries()].sort(([a], [b]) => a - b)
+        .map(([, block]) => block.type === 'tool_use' ? finalized.get(block.id) ?? block : block);
+      return { contentBlocks, textBlocks, toolBlocks: finalToolBlocks, thinkingBlocks, usage, stopReason, reasoningResolution: resolution,
+        ...(nativePreparation && acceptedRequest ? { nativeHistory: nativePreparation.finish(acceptedRequest, contentBlocks,
+          [...nativeBlocks.entries()].sort(([a], [b]) => a - b).map(([, block]) => block), transformations) } : {}) };
     }, signal, streamOptions?.singleAttempt ? 1 : 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter, {
       model: streamOptions?.modelOverride ?? this.config.model,
       onRejected: streamOptions?.onReasoningEffortRejected,
@@ -1241,6 +1381,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     return this.withRateLimit(async (retryState) => {
       const normalizedReasoning = this.normalizeReasoning(reasoning);
       const model = streamOptions?.modelOverride ?? this.config.model;
+      const native = this.nativeHistoryInput(messages, model, normalizedReasoning, streamOptions);
       const resolution: KodaXReasoningResolution = { provider: this.name, model,
         requestedEffort: normalizedReasoning.effortSource === 'omitted' ? 'auto' : normalizedReasoning.effort,
         verified: false, fallbacks: [] };
@@ -1250,7 +1391,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       retryState.maxOutputTokensLimit ??= requestMaxOutputTokens;
       const maxOutputTokens = Math.min(retryState.maxOutputTokensOverride ?? requestMaxOutputTokens, requestMaxOutputTokens);
       const convertedMessages = appendAnthropicEphemeralSuffix(this.applyCacheControlToMessages(
-        await this.convertMessages(messages, model),
+        await this.convertMessages(native.input, model, !native.restored, native.restored?.messages.at(-1) as unknown as Anthropic.Messages.MessageParam | undefined),
       ), streamOptions?.ephemeralSuffix?.content);
       const initialCapability = normalizedReasoning.enabled
         ? this.getReasoningCapability(model)
@@ -1288,7 +1429,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         const kwargs: Anthropic.Messages.MessageCreateParams = {
           model: wireModel,
           max_tokens: maxOutputTokens,
-          system: this.applyCacheControlToSystem(this.buildSystemPrompt(system, messages)),
+          system: this.applyCacheControlToSystem(this.buildSystemPrompt(system, messages, model)),
           messages: convertedMessages,
           ...(tools.length > 0
             ? { tools: this.applyCacheControlToTools(withoutPreferredToolConstraints(tools, retryState.disablePreferredToolConstraints), model) }
@@ -1343,12 +1484,15 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           applyAnthropicOutputEffort(kwargs, normalizedReasoning);
         }
 
+        this.applyNativeControls(kwargs, model, normalizedReasoning, streamOptions, capability === 'none' || retryState.suppressReasoningEffort);
         applyAnthropicThinkingOptions(kwargs, reasoningProfile, streamOptions, this.name);
         return kwargs;
       };
 
       const client = await this.getClient();
       let response: Awaited<ReturnType<typeof client.messages.create>> | undefined;
+      let nativePreparation: ReturnType<typeof prepareAnthropicNativeHistory> | undefined;
+      let acceptedRequest: Record<string, unknown> | undefined;
       let lastError: unknown;
 
       for (const capability of attempts) {
@@ -1356,15 +1500,21 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           let request: Anthropic.Messages.MessageCreateParams | undefined;
           try {
             request = buildRequest(capability);
+            if (native.native) {
+              nativePreparation = prepareAnthropicNativeHistory(messages, native.source, native.restored, request as unknown as Record<string, unknown>, this.knownReasoningRejections(model, streamOptions), native.resetLineage);
+              request = nativePreparation.request as unknown as Anthropic.Messages.MessageCreateParams;
+            }
             if (this.skipRejectedControl(request, model, streamOptions)) {
               resolution.fallbacks.push({ effort: this.controlEffort(request), reason: 'cached-rejection' }); break;
             }
-            request = await prepareProviderPayload(request);
+            request = await prepareProviderPayload(request, 'root', !native.native);
+            if (native.native) { this.validateNativePayload(request); observePreparedProviderPayload(request); }
             resolution.sentEffort = this.controlEffort(request);
             response = await client.messages.create(
               request,
               { ...this.buildMessageCreateOptions(request, model, signal), maxRetries: 0 },
             ).catch(error => { recordRejectedImage(error, request!); throw error; });
+            acceptedRequest = request as unknown as Record<string, unknown>;
           } catch (error) {
             const learned = this.learnRejectedControl(error, request, model, streamOptions);
             if (streamOptions?.singleAttempt) throw error;
@@ -1411,8 +1561,9 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       const textBlocks: KodaXTextBlock[] = [];
       const toolBlocks: KodaXToolUseBlock[] = [];
       const thinkingBlocks: (KodaXThinkingBlock | KodaXRedactedThinkingBlock)[] = [];
+      const contentBlocks: KodaXAssistantBlock[] = [];
 
-      for (const block of (response as Anthropic.Messages.Message).content as Array<any>) {
+      for (const block of (response as Anthropic.Messages.Message).content) {
         if (block.type === 'text') {
           textBlocks.push({ type: 'text', text: block.text });
           streamOptions?.onTextDelta?.(block.text);
@@ -1438,15 +1589,23 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             type: 'tool_use',
             id: block.id,
             name: block.name,
-            input: typeof block.input === 'object' && block.input !== null ? block.input : {},
+            input: isRecord(block.input) ? block.input : {},
           });
         }
+        const admitted = block.type === 'text' ? textBlocks.at(-1)
+          : block.type === 'tool_use' ? toolBlocks.at(-1)
+            : block.type === 'thinking' || block.type === 'redacted_thinking' ? thinkingBlocks.at(-1) : undefined;
+        if (admitted) contentBlocks.push(admitted);
       }
 
       for (const block of thinkingBlocks) block.source = this.getGenerationSource(model);
       streamOptions?.onReasoningResolved?.(resolution);
       return {
         reasoningResolution: resolution,
+        contentBlocks,
+        ...(nativePreparation && acceptedRequest ? { nativeHistory: nativePreparation.finish(acceptedRequest, contentBlocks,
+          (response as Anthropic.Messages.Message).content as unknown as Record<string, unknown>[],
+          inputTransformations((response as unknown as Record<string, unknown>).input_transformations)) } : {}),
         textBlocks,
         toolBlocks,
         thinkingBlocks,
@@ -1488,8 +1647,9 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       .join('\n');
   }
 
-  private buildSystemPrompt(baseSystem: string, messages: KodaXMessage[]): string {
-    const inlineSystemMessages = messages
+  private buildSystemPrompt(baseSystem: string, messages: KodaXMessage[], model?: string): string {
+    const candidates = this.isNativeHistoryModel(model) ? messages.slice(0, messages.findIndex(message => message.role !== 'system')) : messages;
+    const inlineSystemMessages = candidates
       .filter((message) => message.role === 'system')
       .map((message) => this.serializeSystemMessageContent(message.content))
       .filter(Boolean);
@@ -1502,6 +1662,8 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
   private async convertMessages(
     messages: KodaXMessage[],
     model?: string,
+    repair = true,
+    previous?: Anthropic.Messages.MessageParam,
   ): Promise<Anthropic.Messages.MessageParam[]> {
     // Filter out 'system' role messages - Anthropic API only supports 'user' and 'assistant' in messages array
     // System messages are handled via the separate 'system' parameter
@@ -1509,11 +1671,23 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     // Resolve strict-signature once per call so all three downstream
     // branches share the same answer for the active model.
     const strictSignature = this.getEffectiveStrictThinkingSignature(model);
+    const supportsImages = this.getModelDescriptor(model)?.multimodalSupport !== 'none';
+    const native = this.isNativeHistoryModel(model);
+    const pendingSystems: Anthropic.Messages.MessageParam[] = [];
 
-    for (const m of messages.filter((message) => message.role !== 'system')) {
+    for (const m of messages) {
+      if (m.role === 'system') {
+        if (native && (converted.length > 0 || !repair)) {
+          const value = { role: 'system', content: [{ type: 'text', text: this.serializeSystemMessageContent(m.content) }] } as unknown as Anthropic.Messages.MessageParam;
+          if (converted.at(-1)?.role === 'user' || (converted.at(-1)?.role as string) === 'system') converted.push(value);
+          else pendingSystems.push(value);
+        }
+        continue;
+      }
       const role: 'user' | 'assistant' = m.role === 'user' ? 'user' : 'assistant';
       if (typeof m.content === 'string') {
         converted.push({ role, content: m.content });
+        if (role === 'user') converted.push(...pendingSystems.splice(0));
         continue;
       }
       const content: Anthropic.Messages.ContentBlockParam[] = [];
@@ -1563,10 +1737,12 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             // sealed reasoning is lost.
           } else if (b.type === 'text') {
             content.push({ type: 'text', text: b.text });
+          } else if (b.type === 'tool_use' && strictSignature) {
+            content.push({ type: 'tool_use', id: b.id, name: b.name, input: b.input });
           }
         }
         for (const b of m.content) {
-          if (b.type === 'tool_use') {
+          if (b.type === 'tool_use' && !strictSignature) {
             content.push({ type: 'tool_use', id: b.id, name: b.name, input: b.input });
           }
         }
@@ -1593,6 +1769,10 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
                 if (item.type === 'text') {
                   items.push({ type: 'text', text: item.text });
                 } else if (item.type === 'image') {
+                  if (!supportsImages) {
+                    items.push({ type: 'text', text: UNSUPPORTED_MODEL_IMAGE_PLACEHOLDER });
+                    continue;
+                  }
                   const image = await prepareImageBlock(item);
                   if ('placeholder' in image) {
                     items.push({ type: 'text', text: image.placeholder });
@@ -1625,6 +1805,10 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           if (b.type === 'text') {
             content.push({ type: 'text', text: b.text });
           } else if (b.type === 'image' && m.role === 'user') {
+            if (!supportsImages) {
+              content.push({ type: 'text', text: UNSUPPORTED_MODEL_IMAGE_PLACEHOLDER });
+              continue;
+            }
             const image = await prepareImageBlock(b);
             if ('placeholder' in image) {
               content.push({ type: 'text', text: image.placeholder });
@@ -1685,8 +1869,8 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       // the slot with a wire-only '...' to preserve alternation.)
       const isEffectivelyEmpty = content.length === 0 || (
         (role === 'assistant' || role === 'user') && content.every((b) => {
-          const t = b as unknown as { type: string; thinking?: string; text?: string };
-          return (t.type === 'thinking' && !t.thinking)
+          const t = b as unknown as { type: string; thinking?: string; signature?: string; text?: string };
+          return (t.type === 'thinking' && !t.thinking && !t.signature)
             || (t.type === 'text' && !t.text);
         })
       );
@@ -1697,9 +1881,12 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           ? [{ type: 'text', text: '...' } as Anthropic.Messages.ContentBlockParam]
           : content,
       } as Anthropic.Messages.MessageParam);
+      if (role === 'user') converted.push(...pendingSystems.splice(0));
     }
 
-    return this.repairToolCallHistory(converted);
+    if (pendingSystems.length) throw new KodaXProviderError('Native system changes require the next user turn and complete tool results.', this.name, { retryable: false });
+    if (native && previous) return this.repairToolCallHistory([previous, ...converted], true).slice(1);
+    return repair ? this.repairToolCallHistory(converted, native) : converted;
   }
 
   /**
@@ -1725,6 +1912,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
    */
   private repairToolCallHistory(
     messages: Anthropic.Messages.MessageParam[],
+    native = false,
   ): Anthropic.Messages.MessageParam[] {
     const repaired: Anthropic.Messages.MessageParam[] = [];
     let openCallIds = new Set<string>();
@@ -1777,9 +1965,11 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
         // user/assistant alternation survive.
         const answerById = new Map<string, Anthropic.Messages.ToolResultBlockParam>();
         const carried: Anthropic.Messages.ContentBlockParam[] = [];
+        const deferredSystems: Anthropic.Messages.MessageParam[] = [];
         let cursor = index + 1;
         while (cursor < messages.length && messages[cursor]!.role !== 'assistant') {
           const m2 = messages[cursor]!;
+          if (native && (m2.role as string) === 'system') { deferredSystems.push(m2); cursor += 1; continue; }
           if (typeof m2.content === 'string') {
             carried.push({ type: 'text', text: m2.content });
           } else if (Array.isArray(m2.content)) {
@@ -1820,6 +2010,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           is_error: true,
         } as Anthropic.Messages.ToolResultBlockParam);
         repaired.push({ role: 'user', content: [...answers, ...carried] });
+        repaired.push(...deferredSystems);
         index = cursor;
         continue;
       }

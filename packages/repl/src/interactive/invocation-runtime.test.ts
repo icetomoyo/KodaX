@@ -323,31 +323,33 @@ describe('prepareInvocationExecution', () => {
     expect(emit).toHaveBeenCalledWith(expect.stringContaining('[Hook Notification] notification-received'));
   });
 
-  it('resolves anthropic model preferences into a per-run override', async () => {
+  it.each([['haiku', 'claude-haiku-4-5'], ['sonnet', 'claude-sonnet-4-6'], ['opus', 'claude-opus-4-8']])(
+    'resolves anthropic %s into a per-run override', async (alias, model) => {
     const prepared = await prepareInvocationExecution(
       { provider: 'anthropic' },
       {
         prompt: 'Use sonnet',
         source: 'skill',
         displayName: 'sonnet-skill',
-        model: 'sonnet',
+        model: alias,
       },
       '/skill:sonnet-skill',
       vi.fn()
     );
 
-    expect(prepared.options?.modelOverride).toBe('claude-sonnet-4-6');
+    expect(prepared.options?.modelOverride).toBe(model);
   });
 
   it('normalizes a legacy AMAW turn override to AMA without touching the session mode', async () => {
-    const prepared = await prepareInvocationExecution(
-      { provider: 'anthropic', agentMode: 'ama' },
-      {
+    const legacyRequest = {
         prompt: 'Author and run a workflow',
-        source: 'prompt',
+        source: 'prompt' as const,
         displayName: 'workflow create',
         agentModeOverride: 'amaw',
-      },
+      };
+    const prepared = await prepareInvocationExecution(
+      { provider: 'anthropic', agentMode: 'ama' },
+      legacyRequest,
       '/workflow create compare repos',
       vi.fn()
     );
@@ -356,14 +358,15 @@ describe('prepareInvocationExecution', () => {
   });
 
   it('keeps the Workflow runs directory while normalizing a legacy AMAW override', async () => {
-    const prepared = await prepareInvocationExecution(
-      { provider: 'anthropic', agentMode: 'ama', workflowRunsBaseDir: '/tmp/wf-runs' },
-      {
+    const legacyRequest = {
         prompt: 'Author and run a workflow',
-        source: 'prompt',
+        source: 'prompt' as const,
         displayName: 'workflow create',
         agentModeOverride: 'amaw',
-      },
+      };
+    const prepared = await prepareInvocationExecution(
+      { provider: 'anthropic', agentMode: 'ama', workflowRunsBaseDir: '/tmp/wf-runs' },
+      legacyRequest,
       '/workflow review since v0.7.57',
       vi.fn()
     );

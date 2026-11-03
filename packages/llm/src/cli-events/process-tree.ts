@@ -537,6 +537,21 @@ interface WindowsProcessTreeCapture {
   readonly completeTree: boolean;
 }
 
+/** An exited intermediate must not erase already captured exact identities. */
+function mergeWindowsProcessTreeCaptures(
+  current: WindowsProcessTreeCapture | null | undefined,
+  retained: WindowsProcessTreeCapture | undefined,
+): WindowsProcessTreeCapture | undefined {
+  if (!current) return retained;
+  if (!retained) return current;
+  if (current.root.pid !== retained.root.pid || current.root.creationTime !== retained.root.creationTime) return retained;
+  const descendants = new Map<string, WindowsProcessIdentity>();
+  for (const identity of [...retained.descendants, ...current.descendants]) descendants.set(`${identity.pid}:${identity.creationTime}`, identity);
+  return { root: retained.root, descendants: [...descendants.values()],
+    uncertainDescendantPids: [...new Set([...retained.uncertainDescendantPids, ...current.uncertainDescendantPids])],
+    completeTree: current.completeTree || retained.completeTree };
+}
+
 const windowsCaptureByChild = new WeakMap<ChildProcess, WindowsProcessTreeCapture>();
 
 export function rememberChildProcessTree(child: ChildProcess): string | undefined {
@@ -545,6 +560,11 @@ export function rememberChildProcessTree(child: ChildProcess): string | undefine
     || child.pid === undefined
   ) return undefined;
   const tracked = windowsCaptureByChild.get(child);
+  if (tracked !== undefined && !isExited(child)) {
+    const refreshed = captureWindowsProcessTree(child.pid, tracked.root.creationTime);
+    windowsCaptureByChild.set(child, mergeWindowsProcessTreeCaptures(refreshed, tracked) ?? tracked);
+    return tracked.root.creationTime;
+  }
   const snapshot = readWindowsProcessSnapshot();
   if (tracked !== undefined && isExited(child)) {
     if (snapshot === undefined) return tracked.root.creationTime;
@@ -558,14 +578,14 @@ export function rememberChildProcessTree(child: ChildProcess): string | undefine
       tracked.root.pid,
       tracked.root.creationTime,
     );
-    windowsCaptureByChild.set(child, {
+    windowsCaptureByChild.set(child, mergeWindowsProcessTreeCaptures({
       root: tracked.root,
       descendants: descendants.filter((identity) => identity.creationTime !== '0'),
       uncertainDescendantPids: descendants
         .filter((identity) => identity.creationTime === '0')
         .map((identity) => identity.pid),
       completeTree: tracked.completeTree,
-    });
+    }, tracked) ?? tracked);
     return tracked.root.creationTime;
   }
   let root = snapshot?.find((identity) => (
@@ -634,10 +654,8 @@ export async function killChildProcessTree(child: ChildProcess): Promise<Process
     const capture = tracked === undefined
       ? undefined
       : captureWindowsProcessTree(child.pid, tracked.root.creationTime);
-    if (capture !== undefined && capture !== null) {
-      windowsCaptureByChild.set(child, capture);
-    }
-    const reusable = capture ?? tracked;
+    const reusable = mergeWindowsProcessTreeCaptures(capture, tracked);
+    if (reusable !== undefined) windowsCaptureByChild.set(child, reusable);
     if (capture === undefined && reusable === undefined) return UNKNOWN;
     if (
       isExited(child)
@@ -655,7 +673,7 @@ export async function killChildProcessTree(child: ChildProcess): Promise<Process
         ? (reusable === undefined
             ? UNKNOWN
             : await killCapturedWindowsTree(reusable))
-        : await killCapturedWindowsTree(capture);
+        : await killCapturedWindowsTree(reusable ?? capture);
     if (await waitForExit(child, FORCE_WAIT_MS)) {
       return windowsTreeResult.status === 'unknown' ? UNKNOWN : TERMINATED;
     }

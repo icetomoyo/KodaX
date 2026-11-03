@@ -2,11 +2,17 @@
  * KodaX Cost Rates - Multi-Provider pricing table
  *
  * 成本费率表 - 所有 Provider 的计费标准
- * 支持 11 个内置 Provider 的成本追踪，用户可以覆盖默认费率
+ * 支持内置 Provider 的成本追踪，用户可以覆盖默认费率
  */
 
 import type { KodaXCacheWriteUsage } from './types.js';
 export interface CostRate {
+  /** Whole-request tier selected from total prompt tokens, before cache partitions. */
+  readonly longContext?: { readonly aboveInputTokens: number; readonly inputPer1M: number; readonly outputPer1M: number;
+    readonly cacheReadPer1M: number; readonly cacheWritePer1M: number;
+    readonly cacheWritePer1MByTtl?: CostRate['cacheWritePer1MByTtl'] };
+  /** Input band covered by this estimate. Outside it, the nullable calculator returns unknown. */
+  readonly maxPricedInputTokens?: number;
   readonly cacheWritePer1MByTtl?: Readonly<Partial<Record<Exclude<keyof KodaXCacheWriteUsage, 'unknown'>, number>>>;
   readonly basis?: 'estimate' | 'nominal';
   readonly inputPer1M: number; // USD per 1M input tokens
@@ -18,15 +24,20 @@ export interface CostRate {
 }
 
 // Default rates for all built-in providers (approximate, user can override)
-// Rates are from official pricing pages as of 2026-07
+// Estimates, not bills. Selected native routes rechecked 2026-11-01; see docs/LLM_INTEGRATION.md.
 export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string, CostRate>>>> = {
   anthropic: {
+    'claude-opus-5-5': { inputPer1M: 4, outputPer1M: 20, cacheReadPer1M: 0.2, cacheWritePer1M: 5, cacheWritePer1MByTtl: { '5m': 5, '1h': 8 } },
+    'claude-sonnet-5-5': { inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.1, cacheWritePer1M: 2.5, cacheWritePer1MByTtl: { '5m': 2.5, '1h': 4 } },
+    'claude-haiku-5-5': { inputPer1M: 0.1, outputPer1M: 0.5, cacheReadPer1M: 0.01, cacheWritePer1M: 0.125, cacheWritePer1MByTtl: { '5m': 0.125, '1h': 0.2 },
+      longContext: { aboveInputTokens: 100_000, inputPer1M: 0.5, outputPer1M: 2.5, cacheReadPer1M: 0.05, cacheWritePer1M: 0.625, cacheWritePer1MByTtl: { '5m': 0.625, '1h': 1 } } },
     'claude-opus-4-8': {
       inputPer1M: 5.0,
       outputPer1M: 25.0,
       cachePer1M: 0.5,
       cacheReadPer1M: 0.5,
       cacheWritePer1M: 6.25,
+      cacheWritePer1MByTtl: { '5m': 6.25, '1h': 10 },
     },
     'claude-opus-4-7': {
       inputPer1M: 5.0,
@@ -41,45 +52,46 @@ export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string,
       cachePer1M: 0.5,
       cacheReadPer1M: 0.5,
       cacheWritePer1M: 6.25,
+      cacheWritePer1MByTtl: { '5m': 6.25, '1h': 10 },
     },
     'claude-sonnet-4-6': {
       inputPer1M: 3.0,
       outputPer1M: 15.0,
-      cachePer1M: 0.375,
-      cacheReadPer1M: 0.375,
+      cachePer1M: 0.3,
+      cacheReadPer1M: 0.3,
       cacheWritePer1M: 3.75,
+      cacheWritePer1MByTtl: { '5m': 3.75, '1h': 6 },
     },
     'claude-haiku-4-5': {
-      inputPer1M: 0.8,
-      outputPer1M: 4.0,
-      cachePer1M: 0.08,
-      cacheReadPer1M: 0.08,
-      cacheWritePer1M: 1.0,
+      inputPer1M: 1,
+      outputPer1M: 5,
+      cachePer1M: 0.1,
+      cacheReadPer1M: 0.1,
+      cacheWritePer1M: 1.25,
+      cacheWritePer1MByTtl: { '5m': 1.25, '1h': 2 },
     },
   },
   openai: {
-    'gpt-5.4': { inputPer1M: 30.0, outputPer1M: 120.0 },
+    'gpt-5.3-codex': { inputPer1M: 1.75, outputPer1M: 14, cacheReadPer1M: 0.175 },
+    // Higher-context/session and regional charges need more facts than token counts.
+    'gpt-5.4': { inputPer1M: 2.5, outputPer1M: 15, cacheReadPer1M: 0.25, maxPricedInputTokens: 272_000 },
     'gpt-5.3-codex-spark': { inputPer1M: 10.0, outputPer1M: 40.0 },
   },
   deepseek: {
-    // Official CNY rates per 1M tokens (https://api-docs.deepseek.com/zh-cn/quick_start/pricing,
-    // accessed 2026-09-10), converted at ¥1 ≈ $0.14 — matching the Kimi
-    // convention. Pricing is time-of-day (peak = Beijing Mon–Fri 9:00–12:00
-    // and 14:00–18:00, idle = half of peak); this table records IDLE rates.
-    // Peak equivalents: flash input 0.28 / output 1.12, v4-pro input 1.26 /
-    // output 3.78. `deepseek-flash` = DeepSeek-V4.1-Flash (released
-    // 2026-09-10, native image input); the legacy `deepseek-v4-flash` ids
-    // remain callable and are served by the same backing model at flash
-    // rates. NOTE: from 2026-09-14 12:00 Beijing, `deepseek-v4-pro`
-    // requests are routed to V4.1-Flash and billed at flash rates until
-    // V4.1 Pro ships — revisit the pro entry then.
-    'deepseek-flash': { inputPer1M: 0.14, outputPer1M: 0.56, cachePer1M: 0.0028 },
-    // Official pro price until the 2026-09-14 routing change above.
-    'deepseek-v4-pro': { inputPer1M: 0.63, outputPer1M: 1.89, cachePer1M: 0.021 },
+    // Official USD off-peak estimates (2026-11-01); peak is 2x.
+    // https://api-docs.deepseek.com/quick_start/pricing/
+    'deepseek-flash': { inputPer1M: 0.15, outputPer1M: 0.60, cachePer1M: 0.003 },
+    'deepseek-v4-pro': { inputPer1M: 0.66, outputPer1M: 1.98, cachePer1M: 0.022 },
   },
   kimi: {
+    // Domestic K3.1 CNY prices, 2026-10-24, using this table's fixed 0.14 USD/CNY
+    // estimation convention. Not official USD or live FX; user overrides win.
+    'kimi-k3.1-pro': { inputPer1M: 1.82, outputPer1M: 9.52, cacheReadPer1M: 0.182,
+      cacheWritePer1M: 1.82, cacheWritePer1MByTtl: { '5m': 1.82, '1h': 3.64 }, basis: 'estimate' },
+    'kimi-k3.1-pro-highspeed': { inputPer1M: 3.64, outputPer1M: 19.04, cacheReadPer1M: 0.182,
+      cacheWritePer1M: 3.64, cacheWritePer1MByTtl: { '5m': 3.64, '1h': 7.28 }, basis: 'estimate' },
     // Official prices are published in CNY; converted at ¥1 ≈ $0.14,
-    // matching the convention used for DeepSeek above. cachePer1M is
+    // using this table's fixed estimation convention. cachePer1M is
     // the automatic context-cache hit price.
     'kimi-k3': { inputPer1M: 2.8, outputPer1M: 14.0, cachePer1M: 0.28 },
     'kimi-k2.7-code': { inputPer1M: 0.91, outputPer1M: 3.78, cachePer1M: 0.182 },
@@ -88,6 +100,9 @@ export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string,
     'kimi-k2.5': { inputPer1M: 0.56, outputPer1M: 2.94, cachePer1M: 0.098 },
   },
   'kimi-code': {
+    // Subscription usage-value estimates (pi IMPLIED_COSTS), not membership bills.
+    'k3.1-pro': { inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.2, basis: 'nominal' },
+    'k3.1-pro-highspeed': { inputPer1M: 4, outputPer1M: 20, cacheReadPer1M: 0.2, basis: 'nominal' },
     // Kimi-for-Coding is a subscription endpoint — the per-token rate
     // shown here is a nominal placeholder for cost-tracker accounting;
     // real-world cost is the flat membership fee plus request-quota.
@@ -244,6 +259,7 @@ export function calculateCost(
   cacheReadTokens = 0,
   cacheWriteTokens = 0,
 ): number {
+  rate = selectInputTier(rate, totalInputTokens);
   const uncachedInputTokens = Math.max(
     0,
     totalInputTokens - cacheReadTokens - cacheWriteTokens,
@@ -258,8 +274,14 @@ export function calculateCost(
 }
 
 /** Keep the legacy numeric calculator intact; unknown lifetime pricing is explicitly nullable here. */
+function selectInputTier(rate: CostRate, input: number): CostRate {
+  if (!rate.longContext) return rate;
+  return rate.longContext && input > rate.longContext.aboveInputTokens ? { ...rate, ...rate.longContext, longContext: undefined } : { ...rate, longContext: undefined };
+}
 export function calculateCostWithCacheLifetimes(rate: CostRate, input: number, output: number, reads: number, writes: number,
   lifetimes: KodaXCacheWriteUsage | undefined): number | null {
+  rate = selectInputTier(rate, input);
+  if (rate.maxPricedInputTokens !== undefined && input > rate.maxPricedInputTokens) return null;
   if (!lifetimes) return calculateCost(rate, input, output, reads, writes);
   let categorized = 0, writeCost = 0;
   for (const [ttl, count] of Object.entries(lifetimes)) {

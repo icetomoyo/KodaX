@@ -162,6 +162,11 @@ it.skipIf(process.platform !== 'win32')('protects the actual plaintext file with
   const [protectedRules, accounts] = result.stdout.split('|'); expect(protectedRules).toBe('True');
   const identities = accounts!.split(','); expect(identities).toHaveLength(2); expect(identities).toContain('S-1-5-18');
   expect(identities.filter(identity => identity !== 'S-1-5-18').every(identity => /^S-1-5-21-/.test(identity))).toBe(true);
+  // Existing explicit grants must be removed as well as inherited ones.
+  await promisify(execFile)(path.join(process.env.SystemRoot!, 'System32', 'icacls.exe'),
+    [`${file}.staging`, '/grant', '*S-1-5-32-544:(OI)(CI)(F)', '/Q'], { windowsHide: true, timeout: 10000 });
+  await createFileProviderCredentialStore(file).initialize();
+  expect((await createFileProviderCredentialStore(file).readApiKey(binding))?.key).toBe('acl-fixture');
   const probe = path.join(`${file}.staging`, 'empty-permission-probe'); await writeFile(probe, '');
   const directoryScript = "$dir=[System.IO.Directory]::GetAccessControl($env:KODAX_TEST_AUTH_STAGE);$file=[System.IO.File]::GetAccessControl($env:KODAX_TEST_AUTH_PROBE);[Console]::Write(($dir.AreAccessRulesProtected.ToString()+'|'+(($file.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier]) | ForEach-Object {$_.IdentityReference.Value}) -join ',')))";
   const inherited = await promisify(execFile)(path.join(process.env.SystemRoot!, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),

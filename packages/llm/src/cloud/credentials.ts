@@ -5,6 +5,10 @@ export type KodaXCloudCredential =
   | { readonly type: 'aws'; readonly accessKeyId: string; readonly secretAccessKey: string;
       readonly sessionToken?: string; readonly expiresAt?: number };
 
+/** Optional verified principal epoch, supplied by trusted Main; never inferred from unsigned token claims. */
+export type KodaXCloudCredentialResolution = KodaXCloudCredential
+  | { readonly credential: KodaXCloudCredential; readonly replayIdentity: string };
+
 const PREFIX = 'kodax-cloud-v1:';
 export function isCloudCredentialCarrier(value: string): boolean { return value.startsWith(PREFIX); }
 function invalid(): never { throw new Error('Invalid or expired cloud request credential.'); }

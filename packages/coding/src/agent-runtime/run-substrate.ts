@@ -111,7 +111,7 @@ import {
   resolveReasoningMode,
   type ReasoningPlan,
 } from '../reasoning.js';
-import { effortToLegacyReasoningMode, reconcileAssistantContent } from '@kodax-ai/llm';
+import { effortToLegacyReasoningMode, reconcileAssistantContent, retainAnthropicNativeHistory } from '@kodax-ai/llm';
 import { resolveExecutionCwd, resolveExecutionPath } from '../runtime-paths.js';
 import type { KodaXWrittenFile } from '../types.js';
 import {
@@ -316,6 +316,7 @@ import {
   type RuntimeSessionState,
   buildRuntimeSessionState,
   snapshotRuntimeSessionState,
+  markRuntimeSelectionChanged,
 } from './runtime-session-state.js';
 import {
   saveRequiredSessionSnapshot,
@@ -523,11 +524,11 @@ function replaceLatestAssistantToolBlocks(
   const message = messages[index];
   if (!message || message.role !== 'assistant') return;
   const visibleToolBlocks = result.toolBlocks.filter((block) => isVisibleToolName(block.name));
+  const content = guardEmptyAssistantContent(reconcileAssistantContent(result.contentBlocks, { ...result, toolBlocks: visibleToolBlocks }));
   messages[index] = {
     ...message,
-    content: guardEmptyAssistantContent(reconcileAssistantContent(result.contentBlocks, {
-      ...result, toolBlocks: visibleToolBlocks,
-    })),
+    nativeHistory: retainAnthropicNativeHistory(result.nativeHistory ?? message.nativeHistory, content),
+    content,
   };
 }
 
@@ -617,6 +618,7 @@ type TerminalProviderMetadata = Pick<
   | 'failureCode'
   | 'providerStage'
   | 'httpStatus'
+  | 'retryable'
   | 'upstreamCode'
   | 'requestId'
   | 'retryAfterMs'
@@ -649,6 +651,7 @@ function readTerminalProviderMetadata(error: Error): TerminalProviderMetadata {
     failureCode,
     providerStage,
     httpStatus,
+    retryable: typeof metadata?.retryable === 'boolean' ? metadata.retryable : undefined,
     upstreamCode: typeof metadata?.upstreamCode === 'string'
       ? safeFailureIdentifier(metadata.upstreamCode)
       : undefined,
@@ -717,6 +720,7 @@ function buildTerminalProviderFailure(input: {
     ...(model === undefined ? {} : { model }),
     ...(metadata.providerStage === undefined ? {} : { providerStage: metadata.providerStage }),
     ...(metadata.httpStatus === undefined ? {} : { httpStatus: metadata.httpStatus }),
+    ...(metadata.retryable === undefined ? {} : { retryable: metadata.retryable }),
     ...(metadata.upstreamCode === undefined ? {} : { upstreamCode: metadata.upstreamCode }),
     ...(metadata.requestId === undefined ? {} : { requestId: metadata.requestId }),
     ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
@@ -1211,6 +1215,7 @@ async function runSubstrateInContext(
   bindModelSkillSelection(ctx, model => {
     options.modelOverride = model;
     runtimeSessionState.modelSelection.model = model;
+    markRuntimeSelectionChanged(runtimeSessionState);
   }, () => runtimeSessionState.modelSelection.provider ?? options.provider);
   const terminalLiveTurnIds = new Set<string>();
   const emitLiveTurnCompletedOnce = (
@@ -1346,9 +1351,11 @@ async function runSubstrateInContext(
   options.sessionControl?._attach({
     setProvider: (name) => {
       runtimeSessionState.modelSelection.provider = name;
+      markRuntimeSelectionChanged(runtimeSessionState);
     },
     setModel: (model) => {
       runtimeSessionState.modelSelection.model = model;
+      markRuntimeSelectionChanged(runtimeSessionState);
       options.model = model;
       options.modelOverride = model;
     },
@@ -1358,6 +1365,7 @@ async function runSubstrateInContext(
         : reasoning.effort ?? mapLegacyReasoningModeToEffortIntent(
             resolveReasoningMode({ ...options, ...reasoning, reasoningMode: mode }),
           );
+      markRuntimeSelectionChanged(runtimeSessionState);
     },
   });
   const releaseRuntimeBindingCandidate = runtime?.bindController?.(
@@ -1412,6 +1420,12 @@ async function runSubstrateInContext(
     sessionErrorMetadata: errorMetadata,
     repoSignals: repoRoutingSignals ?? undefined,
   });
+  ctx.parentAgentConfig = {
+    ...ctx.parentAgentConfig,
+    get provider() { return runtimeSessionState.modelSelection.provider ?? options.provider; },
+    get model() { return runtimeSessionState.modelSelection.model; },
+    get effort() { return runtimeSessionState.thinkingLevel ?? reasoningPlan.effort; },
+  };
   let currentExecution = await buildReasoningExecutionState(
     {
       ...options,
@@ -1650,6 +1664,7 @@ async function runSubstrateInContext(
     for (let iter = 0; iter < iterationLimit; iter++) {
     const goalTurnStartedAt = Date.now();
     let generationPending = true;
+    const selectionRevision = runtimeSessionState.selectionRevision ?? 0;
     const capacityRevision = events.getContextRecoveryRevision?.();
     try {
       if (events.isGenerationSuspensionRequested?.()) throw new GenerationSuspensionError();
@@ -1704,10 +1719,13 @@ async function runSubstrateInContext(
       }
       turnState.currentProviderName = preparedProviderState.provider;
       turnState.currentModelOverride = preparedProviderState.model;
-      runtimeSessionState.modelSelection.provider = turnState.currentProviderName;
-      runtimeSessionState.modelSelection.model = turnState.currentModelOverride;
       turnState.runtimeThinkingLevel = preparedProviderState.reasoningMode;
-      runtimeSessionState.thinkingLevel = turnState.runtimeThinkingLevel;
+      if ((runtimeSessionState.selectionRevision ?? 0) === selectionRevision) {
+        runtimeSessionState.modelSelection.provider = turnState.currentProviderName;
+        runtimeSessionState.modelSelection.model = turnState.currentModelOverride;
+        runtimeSessionState.thinkingLevel = turnState.runtimeThinkingLevel;
+        markRuntimeSelectionChanged(runtimeSessionState);
+      }
       const streamProvider = resolveProvider(turnState.currentProviderName);
       // Hooks/session settings may switch CLI to native; admit using the actual transport.
       setImagePreparation(streamProvider.getCapabilityProfile().transport === 'native-api');
@@ -2577,6 +2595,7 @@ async function runSubstrateInContext(
       messages.push({
         role: 'assistant',
         content: assistantContent,
+        ...(result.nativeHistory ? { nativeHistory: retainAnthropicNativeHistory(result.nativeHistory, assistantContent) } : {}),
         outputId,
         turnId: liveTurnScopeRef.current.turnId,
         timestamp: new Date().toISOString(),

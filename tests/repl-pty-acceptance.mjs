@@ -113,10 +113,10 @@ async function respondToModelRequest(state, request, response) {
   const data = JSON.parse(body);
   state.requests.push(data);
   const token = lastUserText(data.messages).match(/^(?:\/ah-run\s+)?(ACCEPT_[A-Z_]+)/)?.[1] ?? 'AUXILIARY';
-  // AMA's Worker defaults to medium under the user's high ceiling. Reject the
-  // effort actually chosen by that path; capability probes still reject high.
-  if ((data.max_completion_tokens === 1 && data.reasoning_effort === 'high')
-    || (token === 'ACCEPT_CAPABILITY' && data.reasoning_effort === 'medium')) {
+  // Probes use the bounded production budget, while Worker requests inherit
+  // the Session's selected effort. Identify probes by their actual input.
+  const capabilityProbe = lastUserText(data.messages) === 'ping';
+  if ((capabilityProbe || token === 'ACCEPT_CAPABILITY') && data.reasoning_effort === 'high') {
     response.writeHead(400, { 'content-type': 'application/json' });
     response.end(JSON.stringify({ error: { message: `Unsupported value: reasoning_effort '${data.reasoning_effort}'.`,
       type: 'invalid_request_error', param: 'reasoning_effort', code: 'unsupported_value' } }));
@@ -491,27 +491,34 @@ async function checkProviderCapabilities(state) {
   assert.ok((await state.client.catalog.reasoningEfforts(selection)).includes('high'));
   assert.equal(state.requests.length, initialRequests, 'Capability discovery does not probe');
   await state.terminal.submit('/provider probe');
-  await waitFor('Host learns the rejected effort', async () =>
-    !(await state.client.catalog.reasoningEfforts(selection)).includes('high'));
+  await waitFor('Host records the rejection in its credential scope', async () => {
+    const cache = JSON.parse(await readFile(path.join(state.homeDir, '.kodax', 'capability-cache.json'), 'utf8').catch(error => {
+      if (error.code === 'ENOENT') return '{}'; throw error;
+    }));
+    return Object.entries(cache).some(([key, value]) => key.startsWith('acceptance-local/acceptance-model#') && value.rejected?.includes('high'));
+  });
+  assert.ok((await state.client.catalog.reasoningEfforts(selection)).includes('high'),
+    'Unscoped catalog discovery must not apply one account\'s learned rejection to other accounts');
   await waitFor('probe result presented', () => state.terminal.screen().includes('rejections recorded'));
   const rejectedRequests = state.requests.filter(request => request.reasoning_effort === 'high').length;
   const beforeSecondProbe = state.requests.length;
   await state.terminal.submit('/provider probe');
-  await waitFor('second probe accepts the remaining efforts', () => state.requests.length >= beforeSecondProbe + 2);
+  await waitFor('explicit second probe retests all candidates', () => state.requests.length >= beforeSecondProbe + 3);
   await waitFor('second probe has finished rendering', () =>
     (state.terminal.screen().match(/rejections recorded/g) ?? []).length === 2);
-  assert.equal(state.requests.filter(request => request.reasoning_effort === 'high').length, rejectedRequests,
-    'The next probe must use Host-filtered candidates');
+  assert.equal(state.requests.filter(request => request.reasoning_effort === 'high').length, rejectedRequests + 1,
+    'An explicit probe must retest high; only normal generations use the learned rejection cache');
   await state.terminal.submit('/provider forget-capability acceptance-local/acceptance-model');
   await waitFor('Host clear receipt presented', () => state.terminal.screen().includes('Cleared Host learned capability'));
   assert.ok((await state.client.catalog.reasoningEfforts(selection)).includes('high'));
   const savedEffort = (await state.client.config.read()).effort;
-  await state.client.sessions.updateSettings(state.sessionId, { effort: 'high', thinking: true, reasoningMode: 'deep' });
+  await state.client.sessions.updateSettings(state.sessionId, { effort: 'high', thinking: true, reasoningMode: 'auto' });
   await waitFor('explicit Host effort reaches the terminal view', () => state.view.settings.effort === 'high');
   await state.terminal.submit('ACCEPT_CAPABILITY');
   await waitFor('real execution recovers from effort rejection', () => state.terminal.screen().includes('END_ACCEPT_CAPABILITY'));
   assert.ok(received(state, 'ACCEPT_CAPABILITY').some(request => request.reasoning_effort === 'medium'));
-  assert.ok(received(state, 'ACCEPT_CAPABILITY').some(request => request.reasoning_effort !== 'medium'));
+  assert.ok(received(state, 'ACCEPT_CAPABILITY').some(request => request.reasoning_effort === 'high'),
+    'The Worker inherits the explicit high effort before the provider rejects it');
   assert.equal((await state.client.config.read()).effort, savedEffort, 'Observed rejection must not overwrite user defaults');
   await state.client.sessions.updateSettings(state.sessionId, { effort: 'off', thinking: false, reasoningMode: 'off' });
 }

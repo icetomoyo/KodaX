@@ -10,6 +10,7 @@ export type BootstrapResumeRoute =
 interface ResumeModule {
   readonly resolveBareResume: (options?: {
     readonly beforeSelect?: () => Promise<void>;
+    readonly onDiscoveryComplete?: () => void;
   }) => Promise<BootstrapResumeRoute>;
 }
 
@@ -75,7 +76,12 @@ export async function runKodaXBootstrap(options: KodaXBootstrapOptions = {}): Pr
       return;
     }
     if (isBareResumeRequest(args)) {
+      if (isInteractiveCliStartup([])) startupProgress = createCliStartupProgress('Finding sessions');
       const route = await (await loadResume()).resolveBareResume({
+        onDiscoveryComplete: () => {
+          startupProgress?.stop();
+          startupProgress = undefined;
+        },
         beforeSelect: async () => {
           await loadCliOnce();
         },

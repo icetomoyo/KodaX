@@ -63,9 +63,17 @@ test('resume remains bounded with missing identities, reused PIDs and incomplete
       .save(sessionId, { title: 'Resume with historical records', gitRoot: homeDir, messages });
     for (let generation = 0; generation < 2; generation++) {
       const started = performance.now();
-      const client = await ensureKodaXClient({ homeDir, daemonStartupTimeoutMs: 12_000 });
+      const stages = [];
+      const client = await ensureKodaXClient({ homeDir, daemonStartupTimeoutMs: 12_000,
+        onStartupProgress: progress => {
+          if (stages.length < 24) stages.push({ ms: Math.round(performance.now() - started), stage: progress.stage,
+            phase: progress.stage === 'initializing' ? progress.phase : undefined,
+            reason: progress.stage === 'waiting' ? progress.reason : undefined });
+        },
+      });
       clients.push(client);
       const readyMs = Math.round(performance.now() - started);
+      t.diagnostic(`512 mixed historical records: generation ${generation + 1} ready ${readyMs} ms; stages ${JSON.stringify(stages)}`);
       assert.ok(readyMs < 10_000, `Historical registry recovery took ${readyMs} ms`);
       assert.equal((await client.sessions.read(sessionId)).msgCount, messages.length);
       const history = await client.sessions.readHistory(sessionId, { limit: 10 });
@@ -74,7 +82,6 @@ test('resume remains bounded with missing identities, reused PIDs and incomplete
         const file = path.join(registry, ...(record.hasIdentity ? ['.unresolved'] : []), record.file);
         assert.equal(await readFile(file, 'utf8'), record.bytes, 'Recovery must retain the original evidence');
       }
-      t.diagnostic(`512 mixed historical records: generation ${generation + 1} ready ${readyMs} ms`);
       await closeFixtureHost(clients, configHome);
     }
     const saved = await new FileSessionStorage({ sessionsDir: path.join(configHome, 'sessions'), configHome }).load(sessionId);
@@ -141,6 +148,7 @@ test('concurrent resume clients recover exited Windows trees without per-record 
     }));
     for (const launch of launches) if (launch.status === 'rejected') throw launch.reason;
     const readyMs = Math.round(performance.now() - started);
+    t.diagnostic(`220 exited trees: ready ${readyMs} ms`);
     assert.ok(readyMs < 10_000, `Cold recovery took ${readyMs} ms for 220 exited trees`);
     assert.deepEqual((await readdir(registry)).filter(file => file.endsWith('.json')), [pendingName]);
     assert.equal(await readFile(pendingFile, 'utf8'), pendingContents, 'Unresolved Run evidence must survive recovery');

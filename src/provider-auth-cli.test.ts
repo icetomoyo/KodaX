@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { createServer } from 'node:http';
+import { createServer, get } from 'node:http';
 import { once } from 'node:events';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -9,6 +9,16 @@ import { configureProviderAuthCommand, readOAuthConnection, receiveOAuthCallback
 import { createOAuthProviderConfig } from '@kodax-ai/llm';
 
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+function browserGet(url: string): Promise<number | undefined> {
+  // The real browser has its own transport. Do not couple this fixture to
+  // provider fetch mocks, lazy undici initialization or its connection pool.
+  return new Promise((resolve, reject) => {
+    get(url, { agent: false }, response => {
+      response.on('error', reject); response.resume();
+      response.on('end', () => resolve(response.statusCode));
+    }).on('error', reject);
+  });
+}
 it('does not log out another profile through the default CLI connection', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'kodax-auth-profile-')); vi.stubEnv('KODAX_HOME', directory);
   const configPath = path.join(directory, 'config.json'), provider = { ...createOAuthProviderConfig({ name: 'foreign', service: 'openrouter', model: 'fixture' }), oauthRegistration: 'work-grant' };
@@ -23,16 +33,25 @@ it('does not log out another profile through the default CLI connection', async 
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 it('accepts only the exact loopback callback and closes observation on abort', async () => {
+  const providerFetch = vi.fn(async () => { throw new Error('Provider transport must not launch the browser callback.'); });
+  vi.stubGlobal('fetch', providerFetch);
   const reservation = createServer(); reservation.listen(0, '127.0.0.1'); await once(reservation, 'listening');
   const address = reservation.address(); if (!address || typeof address === 'string') throw new Error('Expected local port');
   await new Promise<void>(resolve => reservation.close(() => resolve()));
   const redirect = `http://127.0.0.1:${address.port}/callback`;
   let wrongStatus: number | undefined;
+  let correctStatus: number | undefined;
+  let launched: Promise<void> | undefined;
   const callback = await receiveOAuthCallback(redirect, 'https://issuer.example/authorize', AbortSignal.timeout(10000), async () => {
-    wrongStatus = (await fetch(`http://127.0.0.1:${address.port}/other`)).status;
-    await fetch(`${redirect}?state=fixture&code=fixture`);
+    launched = (async () => {
+      wrongStatus = await browserGet(`http://127.0.0.1:${address.port}/other`);
+      correctStatus = await browserGet(`${redirect}?state=fixture&code=fixture`);
+    })();
+    await launched;
   });
-  expect(wrongStatus).toBe(404); expect(callback).toContain('code=fixture');
+  await launched;
+  expect(wrongStatus).toBe(404); expect(correctStatus).toBe(200); expect(callback).toContain('code=fixture');
+  expect(providerFetch).not.toHaveBeenCalled();
   const controller = new AbortController(); controller.abort();
   await expect(receiveOAuthCallback(redirect, 'https://issuer.example', controller.signal)).rejects.toThrow(/cancelled/);
   expect(() => receiveOAuthCallback('http://0.0.0.0:1455/callback', 'https://issuer.example', controller.signal)).toThrow(/loopback/);

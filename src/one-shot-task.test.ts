@@ -286,6 +286,20 @@ it('persists validated repo intelligence settings across Host restart and suppor
 it('FEATURE_298 T35 — a cancelled run projects the interrupted legacy result', async () => {
   const harness = await startHarness('kodax-one-shot-cancel-');
   const client = toKodaXProductClient(harness.runtime);
+  const awaitRun = client.runs.await.bind(client.runs);
+  client.runs.await = async runId => {
+    const { sessionId } = await client.runs.read(runId);
+    // A terminal result remains observable after its temporary Session is
+    // deleted, even if the caller is descheduled before sending await.
+    await expect.poll(async () => {
+      try { await client.sessions.read(sessionId); return false; }
+      catch (error: unknown) {
+        if (error instanceof Error && error.message.startsWith('Session not found:')) return true;
+        throw error;
+      }
+    }, { timeout: 15_000 }).toBe(true);
+    return awaitRun(runId);
+  };
   mockManagedResult({
     success: false, lastText: '', messages: [], sessionId: 'host-assigned',
     interrupted: true, signal: 'BLOCKED',

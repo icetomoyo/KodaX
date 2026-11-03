@@ -10,6 +10,9 @@
  * - 通用常量配置
  */
 
+export { sessionMetadataRevision, promoteSessionMetadata } from './runtime/session-promotion.js';
+export type { KodaXSessionPromotionRecord } from './types.js';
+
 // ============== Types ==============
 export type {
   KodaXImageBlock,
@@ -98,6 +101,9 @@ export type {
 } from './types.js';
 
 // ============== Constants ==============
+export { tryAcquireStorageFileLock, withStorageFileLock } from './runtime/storage-file-lock.js';
+export { validateExtensionStoreSnapshot } from './session-lineage/persistence.js';
+export type { StorageFileLock } from './runtime/storage-file-lock.js';
 export {
   KODAX_MAX_TOKENS,
   KODAX_DEFAULT_TIMEOUT,
@@ -177,7 +183,7 @@ export type {
   Handoff,
   ReasoningDepth,
 } from './primitives/agent.js';
-export { createAgent, createHandoff } from './primitives/agent.js';
+export { createAgent, createHandoff, normalizeAgentReasoningProfile } from './primitives/agent.js';
 
 // Base Session interface (the @experimental thick KodaXSessionLineage at root
 // stays as the coding-preset session implementation; this is the Layer A

@@ -289,6 +289,48 @@ jobs:
         timeout-minutes: 20
         run: npm run test:system -- --no-file-parallelism --maxWorkers=1
 
+  windows-source:
+    name: Windows source (${{ matrix.tier }})
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        tier: [portable, system]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Build platform test inputs
+        run: npm run build
+      - name: Windows recovery, credentials and permission contracts
+        env:
+          KODAX_WINDOWS_TEST_TIER: ${{ matrix.tier }}
+        run: npm run test:windows
+
+      - name: Install isolated PTY acceptance tools
+        if: matrix.tier == 'portable'
+        run: npm install --prefix "$env:RUNNER_TEMP/kodax-acceptance-tools" --no-save --package-lock=false --no-audit --no-fund node-pty@1.1.0 @xterm/headless@5.5.0 @xterm/addon-unicode11@0.9.0
+
+      - name: Windows real-terminal streaming history regression
+        if: matrix.tier == 'portable'
+        timeout-minutes: 3
+        env:
+          KODAX_ACCEPTANCE_TOOLS: ${{ runner.temp }}/kodax-acceptance-tools
+        run: npm run test:repl-pty:built -- --streaming-scroll-only
+
+      - name: Retain failed PTY evidence
+        if: failure() && matrix.tier == 'portable'
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-repl-pty-failure
+          path: ${{ runner.temp }}/kodax-repl-acceptance-*/**
+          if-no-files-found: ignore
+
   packaged-electron-daemon:
     name: packaged Electron daemon (Windows)
     runs-on: windows-latest
@@ -337,12 +379,12 @@ jobs:
         timeout-minutes: 5
         run: npm run test:host-cutover
 
-      - name: Published alpha.11 Host in-place upgrade gate
+      - name: Published alpha.12 Host in-place upgrade gate
         timeout-minutes: 5
         env:
-          KODAX_ALPHA11_TARBALL: ${{ runner.temp }}/kodax-ai-kodax-0.7.97-alpha.11.tgz
+          KODAX_ALPHA12_TARBALL: ${{ runner.temp }}/kodax-ai-kodax-0.7.97-alpha.12.tgz
         run: |
-          npm pack @kodax-ai/kodax@0.7.97-alpha.11 --ignore-scripts --pack-destination "$env:RUNNER_TEMP"
+          npm pack @kodax-ai/kodax@0.7.97-alpha.12 --ignore-scripts --pack-destination "$env:RUNNER_TEMP"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run test:host-upgrade
 
@@ -378,6 +420,12 @@ jobs:
           KODAX_HOME: ${{ runner.temp }}\kodax-electron-smoke-home\.kodax
           KODAX_REAL_WINDOWS_SANDBOX_V2: '1'
         run: node node_modules/vitest/vitest.mjs run tests/feature-295-windows-v2-policy.test.ts
+
+      - name: Windows governed Memory OS boundary
+        env:
+          KODAX_HOME: ${{ runner.temp }}\kodax-electron-smoke-home\.kodax
+          KODAX_REAL_WINDOWS_MEMORY: '1'
+        run: node node_modules/vitest/vitest.mjs run tests/windows-governed-memory.test.ts
 
       - name: Packaged Electron daemon gate
         env:

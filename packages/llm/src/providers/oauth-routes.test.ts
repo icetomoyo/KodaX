@@ -2,8 +2,26 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createOAuthProviderConfig } from '../oauth/provider-config.js';
 import { createCustomProvider } from './custom-provider.js';
 import { runWithProviderCredential } from '../provider-credential-context.js';
+import type { KodaXMessage } from '../types.js';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+it('never fabricates an empty signed thinking block for native Anthropic OAuth tool history', async () => {
+  let body = '';
+  vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+    body = await new Request(input, init).text();
+    return Response.json({ id: 'fixture', type: 'message', role: 'assistant', model: 'fixture', content: [{ type: 'text', text: 'done' }],
+      stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } });
+  });
+  const config = { ...createOAuthProviderConfig({ service: 'anthropic', name: 'native-thinking', model: 'fixture' }), supportsThinking: true };
+  const history: KodaXMessage[] = [{ role: 'user', content: 'fixture' },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'tool', name: 'read', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool', content: 'fixture' }] }];
+  await runWithProviderCredential(config.name, 'selected-oauth-fixture', () => createCustomProvider(config).complete(history, [], '', undefined,
+    { effort: 'high', maxOutputTokensOverride: 2048 }));
+  expect(body).not.toContain('"signature":""');
+  expect(body).toContain('"tool_use"');
+  expect(body).toContain('"tool_result"');
+});
 it.each(['openai-chatgpt', 'openai-codex', 'github-copilot', 'anthropic', 'openrouter', 'kimi-coding', 'meta', 'xai', 'radius'] as const)
   ('preserves an explicit unsupported credential probe for %s with zero network requests', async service => {
     const fetch = vi.fn(async () => { throw new Error('unexpected credential probe'); });

@@ -203,6 +203,9 @@ export { renderSetupGuide } from "./common/setup-guide.js";
 export type { RenderSetupGuideInput } from "./common/setup-guide.js";
 export {
   CoreConfigWriteConflictError,
+  CoreConfigReadError,
+  readCoreConfig,
+  writeCoreConfigAtomically,
   coreConfigWriteLockPath,
   withCoreConfigWriteLock,
 } from "./common/core-config-lock.js";

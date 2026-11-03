@@ -223,7 +223,7 @@ describe('packaged Electron daemon environment probe', () => {
     expect(fixtureSource).toContain('abortSignal: signal');
   });
 
-  it('does not publish timeout failure before aborted cleanup settles', async () => {
+  it.each(['waiting', 'already-aborted'] as const)('does not publish timeout failure before %s cleanup settles', async mode => {
     const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'kodax-electron-probe-timeout-'));
     const proofPath = path.join(temporaryRoot, 'environment-proof.json');
     let abortObserved = false;
@@ -235,11 +235,14 @@ describe('packaged Electron daemon environment probe', () => {
         doctor: async () => ({ ready: true, diagnostics: [], setupRequired: false }),
         toolBash: async ({ abortSignal }) => {
           if (abortSignal === undefined) throw new Error('Expected a shell probe abort signal.');
+          if (mode === 'already-aborted') await waitUntil(() => abortSignal.aborted);
           await new Promise<void>((resolve) => {
-            abortSignal.addEventListener('abort', () => {
+            const aborted = () => {
               abortObserved = true;
               resolve();
-            }, { once: true });
+            };
+            if (abortSignal.aborted) aborted();
+            else abortSignal.addEventListener('abort', aborted, { once: true });
           });
           await cleanup;
           return 'Exit: 1\ncancelled';

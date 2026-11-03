@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { tryAcquireStorageFileLock, type StorageFileLock } from '@kodax-ai/agent';
 
 import { A2A_PRINCIPAL_KEY_SCHEME } from './principal-key.js';
 import { isRecord, parseA2AMessage, parseA2ATask } from './schemas.js';
@@ -108,24 +109,36 @@ function parseRecord(value: unknown): A2AServerTaskRecord {
   };
 }
 
+export function parseA2ATaskStoreSnapshot(raw: string): readonly A2AServerTaskRecord[] {
+  const parsed: unknown = JSON.parse(raw);
+  if (!Array.isArray(parsed)) throw new Error('A2A task store root must be an array.');
+  const records = parsed.map(parseRecord);
+  if (new Set(records.map(record => record.taskId)).size !== records.length) throw new Error('A2A snapshot contains duplicate task IDs.');
+  return records;
+}
+
 export class A2AFileTaskStore {
   readonly #records = new Map<string, A2AServerTaskRecord>();
   readonly #listeners = new Map<string, Set<TaskListener>>();
   readonly #file: string;
   readonly #lockPath: string;
-  readonly #lockFd: number;
+  readonly #lock: StorageFileLock;
 
   constructor(root: string) {
     const resolved = path.resolve(root);
     fs.mkdirSync(resolved, { recursive: true, mode: 0o700 });
     this.#file = path.join(resolved, 'tasks.json');
     this.#lockPath = path.join(resolved, '.server.lock');
-    this.#lockFd = this.acquireLock();
+    this.#lock = this.acquireLock();
     try {
+      let fenced = false;
+      try { fs.lstatSync(`${this.#file}.repair-fence`); fenced = true; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      if (fenced) throw new Error('A2A storage repair is unverified; inspect its receipt before enabling task effects.');
       this.load();
     } catch (error: unknown) {
-      fs.closeSync(this.#lockFd);
-      fs.rmSync(this.#lockPath, { force: true });
+      try { this.#lock.release(); }
+      catch (cleanup) { throw new AggregateError([error, cleanup], 'A2A storage initialization and lock cleanup failed.'); }
       throw error;
     }
     // FEATURE_298 T20 — the store exclusively owns its dataDir (lock above),
@@ -254,49 +267,24 @@ export class A2AFileTaskStore {
 
   close(): void {
     this.#listeners.clear();
-    fs.closeSync(this.#lockFd);
-    fs.rmSync(this.#lockPath, { force: true });
+    this.#lock.release();
   }
 
-  private acquireLock(): number {
-    const attempt = (): number => {
-      const fd = fs.openSync(this.#lockPath, 'wx', 0o600);
-      fs.writeFileSync(fd, `${process.pid}\n`, 'utf8');
-      fs.fsyncSync(fd);
-      return fd;
-    };
-    try {
-      return attempt();
-    } catch (error: unknown) {
-      let stale = false;
-      try {
-        const pid = Number.parseInt(fs.readFileSync(this.#lockPath, 'utf8').trim(), 10);
-        if (Number.isSafeInteger(pid) && pid > 0) {
-          try { process.kill(pid, 0); }
-          catch (probeError: unknown) {
-            stale = (probeError as NodeJS.ErrnoException).code === 'ESRCH';
-          }
-        }
-      } catch {
-        stale = false;
-      }
-      if (!stale) throw new Error('A2A task store is already owned by another server.', { cause: error });
-      fs.rmSync(this.#lockPath, { force: true });
-      return attempt();
-    }
+  private acquireLock(): StorageFileLock {
+    const lock = tryAcquireStorageFileLock(this.#lockPath, { legacyPidRecord: true });
+    if (!lock) throw new Error('A2A task store is already owned by another server or has unverified lock ownership.');
+    return lock;
   }
 
   private load(): void {
     if (!fs.existsSync(this.#file)) return;
-    let parsed: unknown;
+    let parsed: readonly A2AServerTaskRecord[];
     try {
-      parsed = JSON.parse(fs.readFileSync(this.#file, 'utf8')) as unknown;
+      parsed = parseA2ATaskStoreSnapshot(fs.readFileSync(this.#file, 'utf8'));
     } catch (error: unknown) {
       throw new Error(`Failed to read A2A task store: ${error instanceof Error ? error.message : String(error)}`);
     }
-    if (!Array.isArray(parsed)) throw new Error('A2A task store root must be an array.');
-    for (const value of parsed) {
-      const record = parseRecord(value);
+    for (const record of parsed) {
       this.#records.set(record.taskId, record);
     }
   }

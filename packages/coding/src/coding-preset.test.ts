@@ -136,7 +136,7 @@ describe('coding-preset', () => {
       reasoning: { default: 'deep' },
       guardrails: [{ kind: 'input', name: 'safety' }],
     });
-    expect(agent.reasoning?.default).toBe('deep');
+    expect(agent.reasoning?.default).toBe('high');
     expect(agent.guardrails).toHaveLength(1);
     expect(agent.guardrails?.[0]).toEqual({ kind: 'input', name: 'safety' });
     expect(agent.name).toBe(DEFAULT_CODING_AGENT_NAME);

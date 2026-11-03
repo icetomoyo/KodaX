@@ -1,7 +1,8 @@
 import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import os from 'os';
 import path from 'path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setAgentConfigHome } from '@kodax-ai/agent';
 import {
   getDirectShellBypassBlockReason,
@@ -295,10 +296,33 @@ describe('plan mode — metadata-driven gating (v0.7.42 gap 2)', () => {
 });
 
 describe('isAlwaysConfirmPath — system temp as safe scratchpad', () => {
+  const windowsIt = process.platform === 'win32' ? it : it.skip;
+
   it('does NOT require confirmation for paths inside the system temp directory', () => {
     const projectRoot = createProjectRoot();
     const tempFile = path.join(os.tmpdir(), `kodax-test-${Date.now()}.txt`);
     expect(isAlwaysConfirmPath(tempFile, projectRoot)).toBe(false);
+  });
+
+  windowsIt('does NOT require confirmation for system temp paths reached through an 8.3 alias ancestor', () => {
+    const projectRoot = createProjectRoot();
+    const longRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-short-alias-'));
+    try {
+      const result = spawnSync(
+        'cmd',
+        ['/d', '/c', `for %I in ("${longRoot}") do @echo %~sI`],
+        { encoding: 'utf8', windowsVerbatimArguments: true, windowsHide: true },
+      );
+      expect(result.status).toBe(0);
+      const short = result.stdout.trim();
+      expect(fs.realpathSync.native(short).toLowerCase()).toBe(fs.realpathSync.native(longRoot).toLowerCase());
+      // Volumes without short-name generation keep the long form; the guard
+      // only applies where an 8.3 alias actually exists (GitHub runners do).
+      if (short.toLowerCase() === longRoot.toLowerCase()) return;
+      expect(isAlwaysConfirmPath(path.join(short, 'scratch.txt'), projectRoot)).toBe(false);
+    } finally {
+      fs.rmSync(longRoot, { recursive: true, force: true });
+    }
   });
 
   it('does NOT require confirmation for paths inside the project root', () => {
@@ -317,6 +341,25 @@ describe('isAlwaysConfirmPath — system temp as safe scratchpad', () => {
     const projectRoot = createProjectRoot();
     const kodaxFile = path.join(projectRoot, '.kodax', 'config.json');
     expect(isAlwaysConfirmPath(kodaxFile, projectRoot)).toBe(true);
+  });
+
+  it('protects lexical project config reached through a directory alias', () => {
+    const projectRoot = createProjectRoot();
+    const ordinary = path.join(projectRoot, 'ordinary');
+    fs.mkdirSync(ordinary);
+    fs.symlinkSync(ordinary, path.join(projectRoot, '.kodax'), process.platform === 'win32' ? 'junction' : 'dir');
+    expect(isAlwaysConfirmPath(path.join(projectRoot, '.kodax', 'config.json'), projectRoot)).toBe(true);
+    expect(isAlwaysConfirmPath(path.join(ordinary, 'config.json'), projectRoot)).toBe(true);
+  });
+
+  it('keeps confirmation required when an ordinary target cannot be canonicalized', () => {
+    const projectRoot = createProjectRoot();
+    const probe = vi.spyOn(fs.realpathSync, 'native').mockImplementation(() => {
+      throw Object.assign(new Error('Fixture access denied.'), { code: 'EACCES' });
+    });
+    try {
+      expect(isAlwaysConfirmPath(path.join(projectRoot, 'file.txt'), projectRoot)).toBe(true);
+    } finally { probe.mockRestore(); }
   });
 
   it('DOES require confirmation for ~/.kodax user config', () => {
@@ -1221,6 +1264,13 @@ function makeExtractor(answer: BashPrefixResult): BashPrefixExtractor {
 }
 
 describe('isToolCallAllowed (FEATURE_153 extractor path)', () => {
+  it.each([
+    'git commitment', 'git commit -m "x" $(echo injected)', 'git commit -m `echo injected`',
+    'git commit -m x; echo injected', 'git commit -m x | echo injected', 'git commit -m x > outside',
+    "git commit -m 'x & echo injected'", 'git commit %PAYLOAD%', 'git commit -m x\necho injected',
+  ])('requires confirmation for ambiguous no-extractor command: %s', async command => {
+    expect(await isToolCallAllowed('bash', { command }, ['Bash(git commit:*)'])).toBe(false);
+  });
   it('matches `Bash(git commit:*)` when extractor returns prefix `git commit`', async () => {
     const extractor = makeExtractor({ kind: 'prefix', value: 'git commit' });
     const allowed = await isToolCallAllowed(

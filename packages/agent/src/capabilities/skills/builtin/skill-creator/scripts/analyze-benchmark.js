@@ -123,8 +123,8 @@ async function defaultRunAnalyst(prompt, options) {
       provider: options.provider ?? 'anthropic',
       model: options.model,
       maxIter: options.maxIter ?? 20,
-      reasoningMode: options.reasoningMode ?? 'balanced',
-      thinking: options.reasoningMode ? options.reasoningMode !== 'off' : true,
+      effort: options.effort ?? (options.reasoningMode ? undefined : 'medium'),
+      reasoningMode: options.reasoningMode,
       context: {
         gitRoot: path.resolve(options.cwd ?? options.workspaceDir ?? process.cwd()),
       },
@@ -232,7 +232,8 @@ function parseArgs(argv) {
     skillName: undefined,
     provider: 'anthropic',
     model: undefined,
-    reasoningMode: 'balanced',
+    effort: undefined,
+    reasoningMode: undefined,
     maxIter: 20,
     cwd: process.cwd(),
   };
@@ -251,6 +252,8 @@ function parseArgs(argv) {
       args.provider = argv[++index];
     } else if (token === '--model' && argv[index + 1]) {
       args.model = argv[++index];
+    } else if (token === '--effort' && argv[index + 1]) {
+      args.effort = argv[++index];
     } else if (token === '--reasoning' && argv[index + 1]) {
       args.reasoningMode = argv[++index];
     } else if (token === '--max-iter' && argv[index + 1]) {

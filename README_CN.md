@@ -38,12 +38,20 @@
 
 ## alpha.10 之后的当前开发
 
-未发布源码新增 Agent / Coding / 实验性 Script 工作模式，默认 Coding。
+随 `v0.7.97-alpha.12` 标签发布的统一 Host 收口已退役 `runtimeExitSettlement` 与
+`settleKodaXRuntimeExit()`。下文带版本的发布记录保留历史事实；当前接口以
+[SDK 迁移指南](docs/SDK_MIGRATION.md)为准，凭证与账号保持见
+[接入契约](docs/LLM_INTEGRATION.md)。既有 SDK、配置与 API_KEY 环境入口继续有效。
+
+Agent / Coding / 实验性 Script 工作模式已随 `v0.7.97-alpha.11` 标签发布,默认 Coding。
 CLI 使用 `--work-mode`，REPL 使用 `/work-mode`，Product Client 使用 Session
 `workMode`；它与权限、模型选择独立。SDK/Host 的相关设置、问题结算、工具原文读取、
 结构化任务报告和 token 估算进度已接入对应契约，见
 [SDK 一致性与迁移清单](docs/SDK_MIGRATION.md#2026-10-29-未发布改动对齐)。
-这些源码变更已随 `v0.7.97-alpha.11` 标签发布。
+`v0.7.97-alpha.12` 标签发布统一共享 Host 收口、FEATURE_302 供应商/OAuth 凭据
+对齐栈，以及 2026-11-01 全链路审计的 Windows 恢复、凭据与权限修复；
+`v0.7.97-beta.1` 标签完成 Space 侧 Host 执行与会话接缝——Main 默认 Skills、
+Quick Ask Session promotion 与核心配置原子发布。
 Issue 371 的历史首次读取延迟及 Script 模型效率验收仍未关闭。
 
 ## 30 秒上手
@@ -323,6 +331,36 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 详见 [docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) 与
 [v0.7.97-alpha.4 发布清单](docs/release.md#v0797-alpha4-release-preparation)。
 所有 v0.7.96 稳定与 v0.7.97-alpha.1/alpha.2/alpha.3 契约全部保留。
+
+**v0.7.97-beta.1 发布**：Space 侧 Host 执行与会话接缝收尾——Main 持有的
+能力门禁默认 Skills 与消费时执行绑定在实际 Product 输入消费点选取已提交
+专家/连接器状态并重新获取凭证/工具 lease;Quick Ask 通过 Host 掌握的修订
+检查与持久 request-ID 对账完成 Session promotion,保留原 Session 与历史。
+普通 redirect 的 Run 边界与遗留显式 Skill 队列分离并持久化,冷恢复后仍保持
+严格缺失方法拒绝;Main 绑定先于 steer 权限解析,保留活动 Run 的 principal
+与 lease 边界。所有核心配置更新在同一共享锁下原子发布——失败写入保留旧
+字节、损坏的 provider 集合变更前拒绝、配置错误不含秘密,Windows reader
+拒绝的替换在同一 staged 文件与写锁内有界重试。完整 daemon schema 作为
+打包数据进入 npm 清单且 CLI 保持体积预算;owner 本地临时 Run 结果在 Host
+Session 清理后仍可等待。Windows 保护路径保留词法与物理短名围栏;裸
+`resume` 会话发现立即显示 `Finding sessions` 反馈且不增加启动工作
+（Issue 371 的历史首次读取调查仍未关闭）。代码提交、版本标签与实际发布
+分别判断。
+详见 [v0.7.97-beta.1 发布清单](docs/release.md#v0797-beta1-release-preparation)。
+所有 v0.7.96 稳定与 v0.7.97-alpha.1 至 alpha.12 契约全部保留。
+
+**v0.7.97-alpha.12 发布**：公开产品执行收口到独立共享 Host——内嵌/默认
+Runtime 构造、内联 owner 切换与函数式进程内外部 Agent Host 退役，由显式
+daemon 启动器接管，并对废弃 owner 策略做单向迁移;`runtimeExitSettlement`
+与 `settleKodaXRuntimeExit()` 退役。FEATURE_302 供应商/OAuth 凭据对齐落地
+原生 Responses 传输、有序历史、带作用域认证的原生云协议、Mistral Pi、
+原生媒体分类、绑定实际供应商连接的共享文件凭据与隐藏 API Key 配置;
+Claude 5.5 历史片段与逐消息 effort 控制进入 LLM 层;manual 数据移出 CLI
+JavaScript 预算;2026-11-01 全链路审计的 Windows 恢复、凭据与权限加固
+随锁诊断与 Windows 流式历史 PTY CI 门禁一并发布。代码提交、版本标签与
+实际发布分别判断。
+详见 [v0.7.97-alpha.12 发布清单](docs/release.md#v0797-alpha12-release-preparation)。
+所有 v0.7.96 稳定与 v0.7.97-alpha.1 至 alpha.11 契约全部保留。
 
 **v0.7.97-alpha.11 发布**：显式 Agent、Coding 与实验性 Script 工作模式通过
 CLI、`/work-mode` 与托管 SDK/Session 路径落地——Coding 保持默认，Script 在既有
