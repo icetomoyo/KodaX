@@ -1,9 +1,33 @@
 import { expect, it, vi } from 'vitest';
 import type { RunnableTool } from '@kodax-ai/agent';
-import { withScriptModelTool, canReadWithModelTools, projectScriptModelTools, getScriptModelContracts, buildScriptModelDescription } from './model.js';
+import { withScriptModelTool, canReadWithModelTools, projectScriptModelTools, getScriptModelContracts, buildScriptModelDescription, closeScriptModelSession } from './model.js';
 import { fitToolSchemasToContext } from '../tool-exposure-planner.js';
 import { getToolDefinition } from '../../tools/index.js';
 import type { ScriptCellResult } from './cell.js';
+
+it('rejects overlapping cells recoverably and separates cancellation request from completed cleanup', async () => {
+  let finish!: () => void;
+  let signal: AbortSignal | undefined;
+  const agent = withScriptModelTool({ name: 'worker', instructions: '' }, { backups: new Map() }, [], async (_code, caller, scope) => {
+    signal = caller.abortSignal;
+    await new Promise<void>(resolve => { finish = resolve; });
+    return { cellId: scope.cellId, status: 'cancelled', receipts: [], hadToolErrors: false };
+  });
+  const exec = agent.tools!.find(tool => tool.name === 'script_exec') as RunnableTool;
+  const wait = agent.tools!.find(tool => tool.name === 'script_wait') as RunnableTool;
+  const first = JSON.parse(String((await exec.execute({ code: 'pending', yield_time_ms: 0 }, { agent })).content));
+  expect(first).toMatchObject({ status: 'running', cleanupComplete: false });
+  expect((await exec.execute({ code: 'overlap' }, { agent })).isError).toBe(true);
+  expect((await wait.execute({ cell_id: first.cellId, cursor: -1, cancel: true }, { agent })).isError).toBe(true);
+  expect(signal?.aborted).toBe(false);
+  expect(JSON.parse(String((await wait.execute({ cell_id: first.cellId, cancel: true, yield_time_ms: 0 }, { agent })).content)))
+    .toMatchObject({ status: 'cancelling', cleanupComplete: false });
+  expect(signal?.aborted).toBe(true);
+  finish();
+  expect(JSON.parse(String((await wait.execute({ cell_id: first.cellId }, { agent })).content)))
+    .toMatchObject({ status: 'cancelled', cleanupComplete: true });
+  await closeScriptModelSession(agent);
+});
 
 it('returns one complete copy of an identical guest value and leaf result without losing actual call evidence', async () => {
   const leaf = { content: 'File written: generated.txt\n  (1 lines)', isError: false,
@@ -99,7 +123,7 @@ it('keeps native shell available for background execution outside the foreground
   const agent = withScriptModelTool({ name: 'worker', instructions: '', tools }, { backups: new Map() }, tools.slice(0, 2),
     async () => ({ status: 'completed', receipts: [], hadToolErrors: false }));
   const visible = projectScriptModelTools(agent, agent.tools!);
-  expect(visible.map(tool => tool.name)).toEqual(['bash', 'undo', 'script_exec']);
+  expect(visible.map(tool => tool.name)).toEqual(['bash', 'undo', 'script_exec', 'script_wait']);
   expect(visible[0]).toEqual(tools[1]);
 });
 
@@ -143,7 +167,7 @@ it('recognizes paged read only when a real Script read binding is in the present
   const worker = { name: 'worker', instructions: '', tools: [getToolDefinition('read')!] };
   const script = withScriptModelTool(worker, { backups: new Map() }, worker.tools, async () => ({ status: 'completed', receipts: [], hadToolErrors: false }));
   const menu = projectScriptModelTools(script, script.tools!);
-  expect(menu.map(tool => tool.name)).toEqual(['script_exec']);
+  expect(menu.map(tool => tool.name)).toEqual(['script_exec', 'script_wait']);
   expect(canReadWithModelTools(script, menu)).toBe(true);
   expect(canReadWithModelTools(script, [])).toBe(false);
   expect(canReadWithModelTools(worker, menu)).toBe(false);

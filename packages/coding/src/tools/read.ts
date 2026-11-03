@@ -532,6 +532,7 @@ export async function toolRead(
       if (lineOffset === 0) {
         ctx.readFileStateCache?.record(filePath, offset, limit, stat.mtimeMs);
       }
+      if (ctx.toolCallId) ctx.recordToolResultProjection?.(ctx.toolCallId, { content: output, modelContent: notes.join('\n') });
       return output;
     }
 

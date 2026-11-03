@@ -29,6 +29,10 @@ export function toKodaXProductClient(
       'workModePolicy', 'toolVisibilityPolicy', 'tools', 'binding', 'businessBinding', 'defaultSkill']) delete (input as unknown as Record<string, unknown>)[key];
     const authorization = await authorizeExecution?.({ ...request, input } as Request,
       createExecutionServices(runtime, 'sessionId' in input ? input.sessionId : undefined));
+    if (authorization?.profile?.requiredWorkMode !== undefined
+      && (runtime.capabilities?.productExecutionModeConstraint as { version?: number } | undefined)?.version !== 1) {
+      throw Object.assign(new Error('Execution mode constraints require an upgraded Host.'), { code: 'daemon_upgrade_required' });
+    }
     if ((authorization?.profile !== undefined || authorization?.tools !== undefined)
       && (runtime.capabilities?.productExecutionProfile as { version?: number } | undefined)?.version !== 2) {
       throw Object.assign(new Error('Execution profiles require an upgraded Host.'), { code: 'daemon_upgrade_required' });
@@ -337,6 +341,14 @@ export function toKodaXProductClient(
       stop: (runId, options) => runtime.workflows.stop(runId, options),
     },
     catalog: {
+      inspectRepoIntelligence: async sessionId => {
+        if (!runtime.catalog.inspectRepoIntelligence) throw Object.assign(new Error('Repository diagnostics require an upgraded Host.'), { code: 'daemon_upgrade_required' });
+        return runtime.catalog.inspectRepoIntelligence(sessionId);
+      },
+      prewarmRepoIntelligence: async sessionId => {
+        if (!runtime.catalog.prewarmRepoIntelligence) throw Object.assign(new Error('Repository prewarm requires an upgraded Host.'), { code: 'daemon_upgrade_required' });
+        return runtime.catalog.prewarmRepoIntelligence(sessionId);
+      },
       extensions: async () => {
         const result = await runtime.catalog.extensions();
         const loaded = ({ path, label, loadSource }: { path: string; label: string; loadSource: string }) => ({ path, label, loadSource });

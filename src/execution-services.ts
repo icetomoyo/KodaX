@@ -8,6 +8,9 @@ export function createExecutionServices(runtime: KodaXRuntime, sessionId?: strin
     get identity() { return runtime.identity; },
     credentials: runtime.credentials, hostTools: runtime.hostTools, executionBindings: runtime.executionBindings,
     async createExecutionProfile(context, hostTools = []) {
+      if (context.requiredWorkMode !== undefined && (runtime.capabilities?.productExecutionModeConstraint as { version?: number } | undefined)?.version !== 1) {
+        throw Object.assign(new Error('Execution mode constraints require an upgraded Host.'), { code: 'daemon_upgrade_required' });
+      }
       if ((runtime.capabilities?.productExecutionProfile as { version?: number } | undefined)?.version !== 2) {
         throw Object.assign(new Error('Execution profiles require an upgraded Host.'), { code: 'daemon_upgrade_required' });
       }

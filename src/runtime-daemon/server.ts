@@ -196,6 +196,8 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
 > = new Map([
   ...scopeEntries("session:observe", [
     'tool.catalog',
+    'repo.intelligence.inspect',
+    'repo.intelligence.prewarm',
     'session.facts.read', 'session.facts.requests', 'session.facts.tools',
     "ping",
     "runtime.identity",
@@ -1210,6 +1212,12 @@ async function dispatchRuntimeDaemonRequest(
     case 'tool.catalog':
       if (!runtime.catalog.executionTools) throw daemonError('method_not_found', 'Host tool catalog is unavailable.');
       return runtime.catalog.executionTools(requireStringParam(request.params, 'sessionId'));
+    case 'repo.intelligence.inspect':
+      if (!runtime.catalog.inspectRepoIntelligence) throw daemonError('method_not_found', 'Host repository diagnostics are unavailable.');
+      return runtime.catalog.inspectRepoIntelligence(requireStringParam(request.params, 'sessionId'));
+    case 'repo.intelligence.prewarm':
+      if (!runtime.catalog.prewarmRepoIntelligence) throw daemonError('method_not_found', 'Host repository prewarm is unavailable.');
+      return runtime.catalog.prewarmRepoIntelligence(requireStringParam(request.params, 'sessionId'));
     case "extension.list":
       return runtime.catalog.extensions();
     case "extension.reload":
@@ -2440,7 +2448,7 @@ async function dispatchRuntimeDaemonRequest(
     if (authorization !== undefined && params.credential !== undefined) throw daemonError('invalid_params', 'Use one Actor authorization binding.');
     return dispatch();
   }
-  const productExecution = ['input.submit', 'invocations.executeCommand', 'invocations.startReview',
+  const productExecution = ['input.submit', 'input.withdraw', 'invocations.executeCommand', 'invocations.startReview',
     'invocations.startAgentsLean', 'workflow.start', 'run.recover'].includes(request.method);
   if (authorization === undefined && !productExecution) return dispatch();
   options.clientLifecycle?.assertAdmission(principalId);
@@ -2459,6 +2467,7 @@ async function dispatchRuntimeDaemonRequest(
       const leaseId = requireStringField(deferred, 'leaseId');
       const key = JSON.stringify([principalId, sessionId, 'binding', leaseId]);
       return { key, intentKey, principalId, sessionId, assertAdmission,
+        bindingAvailable: reverseBridge.executionBindings.captureAvailability(leaseId),
         async resolve(input, signal) {
           assertAdmission();
           if (input.sessionId !== sessionId) throw daemonError('permission_denied', 'Execution binding belongs to another Session.');
@@ -2491,6 +2500,7 @@ async function dispatchRuntimeDaemonRequest(
       ...(workflowHostPolicy === undefined ? [] : [[workflowHostPolicy.maxAgents ?? null, workflowHostPolicy.tokenBudget ?? null]]),
       ...(profile === undefined ? [] : [profile]), ...(bindingSnapshot === undefined ? [] : [bindingSnapshot])]);
     return { key, intentKey, principalId, sessionId, profile, bindingSnapshot,
+      bindingAvailable: reverseBridge.executionBindings.captureAvailability(),
       authorization: approved as import('../client-host-authorization.js').RuntimeExecutionAuthorization | undefined,
       defaultSkill: profile?.defaultSkill, assertAdmission,
       async bindRun(runInput, runId, baseExtensionRuntime) {
@@ -2512,6 +2522,7 @@ async function dispatchRuntimeDaemonRequest(
       runId: status.runId, ...(original === undefined ? {} : { snapshot: original }), profile: {
         agentProfile: status.effectiveConfig?.agentProfile, taskVerification: status.effectiveConfig?.verification,
         defaultSkill: original?.defaultSkill,
+        requiredWorkMode: status.requiredWorkMode,
       },
     } });
     if (original !== undefined && !isDeepStrictEqual(context.bindingSnapshot?.businessBinding, original.businessBinding)) {
@@ -2641,6 +2652,7 @@ async function bindTrustedRunInput(input: {
       ? {
           options: {
             ...safeTransportOptions,
+            ...(input.profile?.requiredWorkMode === undefined ? {} : { executionWorkMode: input.profile.requiredWorkMode }),
             ...(executionToolCeiling === undefined ? {} : { executionToolCeiling: structuredClone(executionToolCeiling) }),
             ...(input.profile === undefined ? {} : {
               context: {
@@ -2739,10 +2751,13 @@ function runtimeDaemonCapabilities(
   delete safeOverrides.runLifecycleControl;
   delete safeOverrides.productClient;
   delete safeOverrides.productExecutionProfile;
+  delete safeOverrides.repoIntelligenceDiagnostics;
   delete safeOverrides.actorCheckpointRecovery;
   delete safeOverrides.sessionDrafts;
   delete safeOverrides.sessionPromotion;
   delete safeOverrides.productExecutionBinding;
+  delete safeOverrides.productInputRecovery;
+  delete safeOverrides.productExecutionModeConstraint;
   delete safeOverrides.productHistoryBoundaries;
   delete safeOverrides.productExecutionAuthorization;
   delete safeOverrides.productExitControl;
@@ -2757,6 +2772,8 @@ function runtimeDaemonCapabilities(
   return {
     events: true,
     productExecutionProfile: { version: 2 },
+    ...(isRecord(ownerCapabilities.repoIntelligenceDiagnostics) && ownerCapabilities.repoIntelligenceDiagnostics.version === 1
+      ? { repoIntelligenceDiagnostics: { version: 1 } } : {}),
     actorCheckpointRecovery: { version: 1 },
     permissions: true,
     workflows: true,
@@ -2791,6 +2808,10 @@ function runtimeDaemonCapabilities(
       ? { sessionPromotion: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.productExecutionBinding) && ownerCapabilities.productExecutionBinding.version === 1
       ? { productExecutionBinding: { version: 1 } } : {}),
+    ...(isRecord(ownerCapabilities.productInputRecovery) && ownerCapabilities.productInputRecovery.version === 1
+      ? { productInputRecovery: { version: 1 } } : {}),
+    ...(isRecord(ownerCapabilities.productExecutionModeConstraint) && ownerCapabilities.productExecutionModeConstraint.version === 1
+      ? { productExecutionModeConstraint: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.productExecutionFacts) && ownerCapabilities.productExecutionFacts.version === 1
       ? { productExecutionFacts: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.providerProbeAuthorization) && ownerCapabilities.providerProbeAuthorization.version === 1
@@ -4005,6 +4026,6 @@ function isRuntimeDaemonErrorCode(
     value === "host_tool_unavailable" ||
     value === "host_tool_unknown" ||
     value === 'execution_binding_unavailable' || value === 'execution_binding_rejected' || value === 'execution_binding_changed' ||
-    value === 'default_skill_unavailable' || value === "internal_error"
+    value === 'default_skill_unavailable' || value === 'execution_mode_mismatch' || value === "internal_error"
   );
 }

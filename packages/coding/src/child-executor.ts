@@ -598,6 +598,10 @@ async function cleanupChildIsolationScope(
   if (scope.suspended) return undefined;
   try {
     await releaseGenerationWorktree(scope.worktreePath);
+    // A Workflow may still publish artifacts referring to this scope after the
+    // child returns. Its Host reclaims unreferenced scopes after final evidence
+    // and physical resources settle; a child result is not that boundary.
+    if (parentCtx.workflowWorktreeBaseDir) return undefined;
     await removeWorkflowWorktree(scope.worktreePath, { ...parentCtx, workflowWorktreeBaseDir: dirname(scope.worktreePath) });
     return undefined;
   } catch (error) {
@@ -619,7 +623,7 @@ function appendCleanupWarning(
 
 /**
  * FEATURE_217 Layer 1 — run a child body that yields its own result, then
- * ALWAYS reclaim the isolation worktree, attaching any cleanup warning to the
+ * Reclaim ordinary isolation worktrees (Workflow trees defer to their Host), attaching any cleanup warning to the
  * result. On an unexpected throw past the body's own guards the worktree is
  * still reclaimed before rethrowing, so a workflow worktree can never leak on
  * the per-child path. (The run-terminal sweep in `workflow-runner.ts` — Layer 2

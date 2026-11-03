@@ -27,6 +27,16 @@ const RUN_LIFECYCLE_CAPABILITIES = {
 } as const;
 
 describe('runtime daemon client proxy', () => {
+  it('rejects repository inspection and prewarm on an old Host without sending requests', async () => {
+    const sent: string[] = [];
+    const client = createRuntimeDaemonClient({
+      identity: { runtimeId: 'old-repo-host', mode: 'daemon', profile: 'default', startedAt: '2026-11-03T00:00:00Z', version: KODAX_VERSION },
+      transport: { async request(method) { sent.push(method); return {}; }, subscribe() { return { close() {} }; } },
+    });
+    await expect(client.catalog.inspectRepoIntelligence!('session')).rejects.toMatchObject({ code: 'daemon_upgrade_required' });
+    await expect(client.catalog.prewarmRepoIntelligence!('session')).rejects.toMatchObject({ code: 'daemon_upgrade_required' });
+    expect(sent).toEqual([]);
+  });
   it.each([{ binding: { leaseId: 'old' } }, { businessBinding: { id: 'expert', revision: 'r1' }, profile: {} },
     { profile: { defaultSkill: { name: 'expert-method' } } }])('rejects new execution intent on an old Host before sending it', async authorization => {
     const sent: string[] = [];

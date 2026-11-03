@@ -240,9 +240,33 @@ it('a Host crash after the tool result entered the context shows interrupted, no
   const scenario = await startScenario('Run the scripted tool.');
   // Request 2 carries the committed tool result: that is the observable of
   // the result entering the follow-up model context.
-  await expect.poll(() => providerRequests, { timeout: 60_000 }).toBe(2);
-  await expect.poll(() => providerToolResults.some((result) => result.includes('tool-ran')),
-    { timeout: 60_000 }).toBe(true);
+  try {
+    await expect.poll(() => providerRequests, { timeout: 60_000 }).toBe(2);
+    await expect.poll(() => providerToolResults.some((result) => result.includes('tool-ran')),
+      { timeout: 60_000 }).toBe(true);
+  } catch (cause: unknown) {
+    const atFailure = { providerRequests, markerLines: markerLines() };
+    const describeError = (error: unknown) => error instanceof Error
+      ? { name: error.name, message: error.message, ...('code' in error ? { code: String(error.code) } : {}) }
+      : { message: String(error) };
+    const sample = async (read: () => Promise<unknown>) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return { value: await Promise.race([Promise.resolve().then(read), new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error('Failure diagnostic read exceeded 2000ms.')), 2_000);
+        })]) };
+      } catch (error: unknown) { return { error: describeError(error) }; }
+      finally { clearTimeout(timer); }
+    };
+    const [run, input] = await Promise.all([
+      sample(() => scenario.client.runs.read(scenario.runId)),
+      sample(() => scenario.client.inputs.read(scenario.sessionId, 'crash-input')),
+    ]);
+    let bootstrap: { tail: string } | { error: ReturnType<typeof describeError> };
+    try { bootstrap = { tail: fs.readFileSync(path.join(scenario.paths.rootDir, 'bootstrap.log'), 'utf8').slice(-4000) }; }
+    catch (error: unknown) { bootstrap = { error: describeError(error) }; }
+    throw new Error(`Crash context precondition failed. Diagnostics: ${JSON.stringify({ ...atFailure, run, input, bootstrap })}`, { cause });
+  }
   const { survivor, restarted } = await killHostAndRestart(scenario);
   try {
     const status = await readAfterCrashBoundary(() => survivor.runs.read(scenario.runId));

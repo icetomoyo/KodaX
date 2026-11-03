@@ -278,8 +278,16 @@ export function createRuntimeDaemonClient(
     params?: unknown,
     control?: RuntimeDaemonRequestControl,
   ): Promise<unknown> => {
+    if ((method === 'repo.intelligence.inspect' || method === 'repo.intelligence.prewarm')
+      && (runtimeCapabilities.repoIntelligenceDiagnostics as { version?: number } | undefined)?.version !== 1) {
+      return Promise.reject(Object.assign(new Error('Repository intelligence diagnostics require an upgraded Host.'), { code: 'daemon_upgrade_required' }));
+    }
     const authorization = params !== null && typeof params === 'object' && 'authorization' in params
       ? params.authorization as import('../client-host-authorization.js').RuntimeExecutionAuthorization | undefined : undefined;
+    if (authorization?.profile?.requiredWorkMode !== undefined
+      && (runtimeCapabilities.productExecutionModeConstraint as { version?: number } | undefined)?.version !== 1) {
+      return Promise.reject(Object.assign(new Error('Execution mode constraints require an upgraded Host.'), { code: 'daemon_upgrade_required' }));
+    }
     if ((authorization?.binding !== undefined || authorization?.businessBinding !== undefined || authorization?.profile?.defaultSkill !== undefined)
       && (runtimeCapabilities.productExecutionBinding as { version?: number } | undefined)?.version !== 1) {
       return Promise.reject(Object.assign(new Error('Execution bindings require an upgraded Host.'), { code: 'daemon_upgrade_required' }));
@@ -1202,6 +1210,12 @@ export function createRuntimeDaemonClient(
       },
     },
     catalog: {
+      inspectRepoIntelligence(sessionId) {
+        return request('repo.intelligence.inspect', { sessionId }) as Promise<import('@kodax-ai/coding/client-contract').ClientRepoIntelligenceHostStatus>;
+      },
+      prewarmRepoIntelligence(sessionId) {
+        return request('repo.intelligence.prewarm', { sessionId }) as Promise<import('@kodax-ai/coding/client-contract').ClientRepoIntelligenceHostStatus>;
+      },
       executionTools(sessionId) {
         return request('tool.catalog', { sessionId }) as Promise<readonly import('@kodax-ai/coding/client-contract').KodaXToolVisibilityMeta[]>;
       },

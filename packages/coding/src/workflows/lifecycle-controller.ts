@@ -455,6 +455,18 @@ export function createWorkflowLifecycleController(
     },
 
     readWorkflowResult: async (runId) => {
+      const directory = runDir(runBaseDir, runId);
+      if (directory && readRecord(join(directory, 'run.json'))?.resultPath === 'result.json') {
+        // A declared original must not silently degrade to its lossy summary.
+        const original = JSON.parse(readFileSync(join(directory, 'result.json'), 'utf8')) as unknown;
+        if (typeof original !== 'object' || original === null || !('version' in original)
+          || original.version !== 1) throw new Error('Workflow final result is invalid.');
+        if (!('value' in original)) {
+          if ('kind' in original && original.kind === 'undefined') return 'undefined';
+          throw new Error('Workflow final result is invalid.');
+        }
+        return typeof original.value === 'string' ? original.value : JSON.stringify(original.value, null, 2);
+      }
       const live = runManager.getWorkflowProcessSnapshot(runId)?.resultSummary;
       if (live) return live;
       const dir = runDir(runBaseDir, runId);

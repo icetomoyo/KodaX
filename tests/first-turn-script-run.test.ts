@@ -4,6 +4,8 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { afterEach, expect, it, vi } from 'vitest';
+import type { ToolGuardrail } from '@kodax-ai/agent';
+import type { ExtensionRuntimeContract } from '../packages/coding/src/extensions/runtime-contract.js';
 import { FileSessionStorage } from '../packages/repl/src/interactive/storage.js';
 import { runScriptInvocation } from '../packages/coding/src/agent-runtime/script/run.js';
 import { runToolInvocation } from '../packages/coding/src/agent-runtime/tool-invocation.js';
@@ -32,6 +34,92 @@ async function fixture() {
   await writeFile(path.join(root, 'value.txt'), 'before');
   return { root, storage, options };
 }
+
+it('does not report success when explicit output persistence fails after the guest returns', async () => {
+  const { storage, options } = await fixture();
+  const save = storage.save.bind(storage);
+  let failed = false;
+  vi.spyOn(storage, 'save').mockImplementation(async (id, data) => {
+    if (!failed && data.extensionRecords?.at(-1)?.type === 'cell.output') {
+      failed = true;
+      await new Promise(resolve => setTimeout(resolve, 25));
+      throw new Error('Explicit output persistence failed');
+    }
+    return save(id, data);
+  });
+  const result = await runScriptInvocation(options, "text('mandatory warning'); return 42;", limits);
+  expect(result.success).toBe(false);
+  expect(result.scriptCell).toMatchObject({ status: 'failed', error: expect.stringContaining('Explicit output persistence failed') });
+});
+
+it('persists rewritten actual arguments before a tool hook can start an effect', async () => {
+  const { storage, options } = await fixture();
+  const rewrite: ToolGuardrail = { kind: 'tool', name: 'canonical-target', beforeTool: async call => ({ action: 'rewrite',
+    payload: { ...call, input: { path: 'value.txt', content: 'canonical content' } } }) };
+  options.guardrails = [rewrite];
+  let prepared = false;
+  options.events = { beforeToolExecute: async () => {
+    const records = (await storage.load('script-session'))?.extensionRecords ?? [];
+    prepared = records.some(record => record.type === 'call.prepared'
+      && JSON.stringify(record.data).includes('canonical content'));
+    return true;
+  } };
+  const result = await runScriptInvocation(options, "return await tools.write({path:'requested.txt',content:'requested content'});", limits);
+  expect(result.scriptCell.hadToolErrors).toBe(false);
+  expect(prepared).toBe(true);
+});
+
+it.each([true, false])('uses durable hook-mutated invocation arguments (persistence failure: %s)', async failPrepared => {
+  const { root, storage, options } = await fixture();
+  const save = storage.save.bind(storage);
+  let failed = false;
+  vi.spyOn(storage, 'save').mockImplementation(async (id, data) => {
+    if (failPrepared && !failed && data.extensionRecords?.at(-1)?.type === 'call.prepared') {
+      failed = true;
+      throw new Error('Actual invocation persistence unavailable');
+    }
+    return save(id, data);
+  });
+  options.events = { beforeToolExecute: async (_name, input) => {
+    input.path = 'actual.txt'; input.content = 'hook content'; return true;
+  } };
+  const result = await runScriptInvocation(options, "return await tools.write({path:'requested.txt',content:'requested content'});", limits);
+  expect(result.success).toBe(!failPrepared);
+  if (failPrepared) {
+    expect(result.scriptCell.error).toContain('Actual invocation persistence unavailable');
+    await expect(readFile(path.join(root, 'actual.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+  } else {
+    expect(await readFile(path.join(root, 'actual.txt'), 'utf8')).toBe('hook content');
+    expect(result.scriptCell.receipts[0]?.result.metadata?.toolCall).toMatchObject({ name: 'write', input: { path: 'actual.txt', content: 'hook content' } });
+    expect(JSON.stringify((await storage.load('script-session'))?.extensionRecords?.filter(record => record.type === 'call.prepared'))).toContain('hook content');
+  }
+  await expect(readFile(path.join(root, 'requested.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it('pages a large authorized Host result inside one production cell while retaining the canonical original', async () => {
+  const { storage, options } = await fixture();
+  const body = 'original payload '.repeat(800) + '\nWARNING: partial source';
+  let calls = 0;
+  const extensionRuntime: ExtensionRuntimeContract = {
+    listRunTools: () => [{ name: 'host_large', description: 'Large fixture result', capabilityId: 'fixture:large',
+      inputSchema: { type: 'object', properties: {} }, sideEffect: 'readonly', planModeAllowed: true }],
+    searchCapabilities: async () => [], describeCapability: async () => undefined,
+    executeCapability: async () => { calls++; return { kind: 'tool', content: body }; },
+    readCapability: async () => ({ kind: 'resource', content: '' }), getCapabilityPrompt: async () => undefined,
+    getCapabilityPromptContext: async () => undefined,
+  };
+  const result = await runScriptInvocation({ ...options, extensionRuntime }, `
+    const source = await tools.host_large({}); let offset = 0, last = '', count = 0;
+    do { const page = await read_result(source.result_ref.callId, offset); count += page.text.length; last = page.text; offset = page.nextOffset; } while (offset !== undefined);
+    return { count, warning: last.includes('WARNING: partial source'), status: source.status };
+  `, { ...limits, maxTransferBytes: 4096 });
+  expect(result.success, result.scriptCell.error).toBe(true);
+  expect(result.scriptCell.value).toMatchObject({ warning: true, status: 'settled' });
+  expect(calls).toBe(1);
+  const records = (await storage.load('script-session'))?.extensionRecords ?? [];
+  expect(JSON.stringify(records.filter(record => record.type === 'call.settled'))).toContain(body.slice(0, 1024));
+  expect(JSON.stringify(records.filter(record => record.type === 'call.settled'))).toContain('WARNING: partial source');
+});
 
 it('durably owns partial effects and resumes evidence without replaying a previous Script cell', async () => {
   const { root, storage, options } = await fixture();

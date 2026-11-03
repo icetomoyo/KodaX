@@ -815,6 +815,10 @@ async function prepareStableSessionReadBoundary(
   if (fsSync.existsSync(writerPath)) {
     await reclaimStaleKodaXFileLock(writerPath);
   }
+  const topologyPath = sessionLocationTopologyLockPath(sessionsDir);
+  if (fsSync.existsSync(topologyPath)) {
+    await reclaimStaleKodaXFileLock(topologyPath, { requireKnownOwner: true });
+  }
   assertStableSessionReadBoundary(sessionsDir, id);
 }
 
@@ -4968,7 +4972,10 @@ export class FileSessionStorage implements KodaXSessionStorage {
     options: SessionReadOptions = {},
   ): Promise<ConversationPageCachePage | null> {
     throwIfSessionReadAborted(options.signal);
+    normalizeSessionReadTimeout(options.timeoutMs);
+    const startedAt = Date.now();
     const operation = (async (): Promise<ConversationPageCachePage | null> => {
+      await this.awaitOwnWrites(id, options, startedAt);
       const mainPath = await this.resolveSessionLocation(id, true);
       if (mainPath === null) return null;
       const topologyIdentity = this.verifiedLocationTopology(id);
@@ -5014,7 +5021,10 @@ export class FileSessionStorage implements KodaXSessionStorage {
     readonly admission: ConversationPageCacheAdmission;
   } | null> {
     throwIfSessionReadAborted(options.signal);
+    normalizeSessionReadTimeout(options.timeoutMs);
+    const startedAt = Date.now();
     const operation = (async () => {
+      await this.awaitOwnWrites(id, options, startedAt);
       const mainPath = await this.resolveSessionLocation(id, true);
       if (mainPath === null) return null;
       const topologyIdentity = this.verifiedLocationTopology(id);
@@ -5084,7 +5094,10 @@ export class FileSessionStorage implements KodaXSessionStorage {
     options: SessionReadOptions = {},
   ): Promise<ConversationPageCacheChunk | null> {
     throwIfSessionReadAborted(options.signal);
+    normalizeSessionReadTimeout(options.timeoutMs);
+    const startedAt = Date.now();
     const operation = (async (): Promise<ConversationPageCacheChunk | null> => {
+      await this.awaitOwnWrites(id, options, startedAt);
       const mainPath = await this.resolveSessionLocation(id, true);
       if (mainPath === null) return null;
       const topologyIdentity = this.verifiedLocationTopology(id);

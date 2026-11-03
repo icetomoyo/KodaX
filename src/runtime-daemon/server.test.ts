@@ -3543,9 +3543,16 @@ const METHOD_SMOKE_PARAMS = {
   'agents.wait': { sessionId: 'session-1', afterSequence: 0, timeoutMs: 1 },
 
   'tool.catalog': { sessionId: 'session-1' },
+  'repo.intelligence.inspect': { sessionId: 'session-1' },
+  'repo.intelligence.prewarm': { sessionId: 'session-1' },
 } satisfies Record<RuntimeDaemonMethod, unknown>;
 
 function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
+  const repoIntelligenceStatus = async (sessionId: string) => ({
+    runtimeId: 'runtime-test', sessionId, workspaceRoot: '/repo',
+    configuredMode: 'off' as const, requestedMode: 'off' as const, effectiveEngine: 'off' as const,
+    status: 'disabled' as const, initialized: false, warnings: [],
+  });
   const listeners: Array<{
     readonly filter: RuntimeEventFilter;
     readonly listener: RuntimeEventListener;
@@ -3994,6 +4001,8 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
       },
     },
     catalog: {
+      inspectRepoIntelligence: repoIntelligenceStatus,
+      prewarmRepoIntelligence: repoIntelligenceStatus,
       executionTools: async () => [],
       async reasoningEfforts() { return ['auto', 'high']; },
       async probeReasoningEfforts(input) { return input.efforts.map((effort) => ({ effort, status: 'accepted' as const })); },

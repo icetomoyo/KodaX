@@ -25,6 +25,7 @@ import type {
   WorkflowScriptManifest,
 } from '@kodax-ai/agent';
 import { buildWorkflowCostReport } from './cost-report.js';
+import { writeWorkflowJson } from './persistence.js';
 
 export type WorkflowRunProcessMetadata = Pick<
   WorkflowProcessTrackerOptions,
@@ -52,6 +53,8 @@ export interface RunJsonInput {
   readonly endedAt: number;
   readonly scriptSnapshot?: WorkflowScriptSnapshotRef;
   readonly resultSummary?: string;
+  /** Complete script return value; the summary is only a display projection. */
+  readonly result?: unknown;
   readonly processMetadata?: WorkflowRunProcessMetadata;
 }
 
@@ -107,6 +110,11 @@ export function createRunGraphWriter(runDir: string, deps: RunGraphWriterDeps = 
       return { scriptPath, manifestPath };
     },
     writeRunJson: (input) => {
+      // Publish the original before the manifest can advertise it. Existing
+      // results remain readable if final manifest publication fails.
+      const hasResult = Object.prototype.hasOwnProperty.call(input, 'result');
+      if (hasResult) writeWorkflowJson(join(runDir, 'result.json'), input.result === undefined
+        ? { version: 1, kind: 'undefined' } : { version: 1, value: input.result });
       const hostMetadata = normalizeHostMetadata(input.processMetadata?.hostMetadata);
       const runJson = {
         runId: input.state.runId,
@@ -123,6 +131,7 @@ export function createRunGraphWriter(runDir: string, deps: RunGraphWriterDeps = 
         endedAt: input.endedAt,
         args: input.args,
         ...(input.resultSummary !== undefined ? { resultSummary: input.resultSummary } : {}),
+        ...(hasResult ? { resultPath: 'result.json' } : {}),
         ...(input.processMetadata?.displayName !== undefined
           ? { displayName: input.processMetadata.displayName }
           : {}),
@@ -153,7 +162,7 @@ export function createRunGraphWriter(runDir: string, deps: RunGraphWriterDeps = 
             }
           : {}),
       };
-      writeFileSync(join(runDir, 'run.json'), `${JSON.stringify(runJson, null, 2)}\n`, 'utf8');
+      writeWorkflowJson(join(runDir, 'run.json'), runJson);
     },
   };
 }

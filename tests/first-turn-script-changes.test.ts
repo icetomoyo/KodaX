@@ -7,6 +7,7 @@ import { createScriptPilot } from '../packages/coding/src/agent-runtime/script/p
 import { buildRuntimeSessionState } from '../packages/coding/src/agent-runtime/runtime-session-state.js';
 import { runToolDispatch } from '../packages/coding/src/agent-runtime/tool-dispatch.js';
 import { executeTool, getToolDefinition } from '../packages/coding/src/tools/index.js';
+import * as nativeTools from '../packages/coding/src/tools/index.js';
 import type { KodaXToolExecutionContext } from '../packages/coding/src/types.js';
 import { wrapCodingToolAsRunnable } from '../packages/coding/src/task-engine/_internal/managed-task/tool-wrappers.js';
 import { projectModelToolDefinition } from '../packages/coding/src/tools/model-tool-definition.js';
@@ -19,6 +20,7 @@ const names = ['changed_scope', 'changed_diff'];
 const directories: string[] = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
   for (const root of directories.splice(0)) {
     if (path.dirname(root) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('kodax-script-changes-')) throw new Error('Unsafe fixture cleanup');
     await rm(root, { recursive: true, force: true, maxRetries: 3 });
@@ -216,16 +218,24 @@ it.each(names)('settles the admitted %s call after cancellation and does not exe
   const { root, budget, dispatch } = await fixture();
   const controller = new AbortController();
   const ended = vi.fn();
-  const admitted = vi.fn(() => { controller.abort(); });
+  const admitted = vi.fn();
   const input = name === 'changed_diff' ? { paths: ['src/value.ts'] } : {};
   const nativeController = new AbortController();
-  const nativeAdmitted = vi.fn(() => { nativeController.abort(); });
+  let cancelling = nativeController;
+  const original = nativeTools.executeTool;
+  const executing = vi.spyOn(nativeTools, 'executeTool').mockImplementation((...args) => {
+    const work = original(...args); // Enter the real handler before cancelling, beyond durable preparation.
+    cancelling.abort();
+    return work;
+  });
+  const nativeAdmitted = vi.fn();
   const nativeEnded = vi.fn();
   const baseline = await runToolDispatch({ ...dispatch, abortSignal: nativeController.signal,
     events: { onToolExecutionStart: nativeAdmitted, onToolExecutionEnd: nativeEnded },
     toolBlocks: [{ type: 'tool_use', id: 'native-cancelled', name, input }] });
   expect(nativeAdmitted).toHaveBeenCalledOnce();
   expect(nativeEnded).toHaveBeenCalledOnce();
+  cancelling = controller;
   const result = await createScriptPilot({ ...dispatch, abortSignal: controller.signal,
     events: { onToolExecutionStart: admitted, onToolExecutionEnd: ended } }, budget).run(`
     await tools[${JSON.stringify(name)}](${JSON.stringify(input)});
@@ -239,6 +249,7 @@ it.each(names)('settles the admitted %s call after cancellation and does not exe
   expect(admitted).toHaveBeenCalledOnce();
   expect(ended).toHaveBeenCalledOnce();
   expect(budget.spentBudget).toBe(1);
+  expect(executing).toHaveBeenCalledTimes(2); // One baseline and one Script leaf; no replay or second leaf.
   if (name === 'changed_scope') {
     const saved = JSON.parse(await readFile(path.join(root, '.agent/repo-intelligence/changed-scope.json'), 'utf8')) as { files: { path: string }[] };
     expect(saved.files.map(file => file.path)).toContain('src/value.ts');
@@ -261,16 +272,26 @@ it('retains the native bounded scope report and its explicit omitted-files warni
   expect(result.receipts[0]?.result.content).toContain('untracked files excluded');
 });
 
-it('keeps the full native diff in host receipts if a deliberately small cell transfer limit is exceeded', async () => {
+it('pages the original native diff by reference under a small transfer limit without replay', async () => {
   const { root, ctx, budget, dispatch } = await fixture();
   await writeFile(path.join(root, 'src/large.ts'), `export const text = '${'x'.repeat(8000)}';\n`);
   const input = { paths: ['src/large.ts'] };
   const baseline = await executeTool('changed_diff', input, ctx);
-  const result = await createScriptPilot(dispatch, budget).run(`return await tools.changed_diff(${JSON.stringify(input)});`,
+  const admitted = vi.fn();
+  const result = await createScriptPilot({ ...dispatch, events: { onToolExecutionStart: admitted } }, budget).run(`
+    const r=await tools.changed_diff(${JSON.stringify(input)}),id=r.result_ref.callId;
+    const p=await read_result(id),q=await read_result(id),t=await read_result(id,r.result_ref.totalLength-10);
+    return {status:r.status,total:r.result_ref.totalLength,first:p.text,next:p.nextOffset,last:t.text,repeat:p.text===q.text};`,
     { ...limits, maxTransferBytes: 2048 });
-  expect(result).toMatchObject({ status: 'failed', error: expect.stringContaining('transfer limit') });
+  expect(result.status, result.error).toBe('completed');
   expect(result.receipts).toHaveLength(1);
   expect(result.receipts[0]?.result.content).toBe(baseline);
+  const original = JSON.stringify(result.receipts[0]!.result);
+  const page = result.value as { next: number };
+  expect(page.next).toBeGreaterThan(0);
+  expect(result.value).toEqual({ status: 'settled', total: original.length, first: original.slice(0, page.next),
+    next: page.next, last: original.slice(-10), repeat: true });
+  expect(admitted).toHaveBeenCalledOnce();
   expect(budget.spentBudget).toBe(1);
 });
 

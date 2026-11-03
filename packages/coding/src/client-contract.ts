@@ -36,6 +36,21 @@ import type {
 export type * from './client-domains.js';
 export type * from './execution-profile-contract.js';
 
+/** Actual execution Host cache facts; inspection never initializes a project. */
+export interface ClientRepoIntelligenceStatus {
+  readonly configuredMode: 'auto' | 'off' | 'light' | 'full';
+  readonly requestedMode: 'off' | 'light' | 'full';
+  readonly effectiveEngine: 'off' | 'light' | 'full';
+  readonly status: 'disabled' | 'ok' | 'limited' | 'unavailable' | 'warming';
+  readonly initialized: boolean;
+  readonly warnings: readonly string[];
+}
+export interface ClientRepoIntelligenceHostStatus extends ClientRepoIntelligenceStatus {
+  readonly runtimeId: string;
+  readonly sessionId: string;
+  readonly workspaceRoot: string;
+}
+
 export type ClientHostStartupPhase =
   | 'modules' | 'extensions' | 'runtime' | 'recovery' | 'mcp' | 'sessions' | 'a2a' | 'listener';
 
@@ -278,6 +293,8 @@ export interface KodaXProductClient {
     reload(): Promise<{ readonly ok: true; readonly config: ClientConfig }>;
   };
   readonly catalog: {
+    inspectRepoIntelligence(sessionId: string): Promise<ClientRepoIntelligenceHostStatus>;
+    prewarmRepoIntelligence(sessionId: string): Promise<ClientRepoIntelligenceHostStatus>;
     extensions(): Promise<{
       readonly active: boolean;
       readonly extensions: readonly ClientLoadedExtension[];
@@ -851,7 +868,7 @@ export interface ClientQueuedInput {
 }
 
 export interface ClientInputAdmissionError {
-  readonly code: 'execution_binding_unavailable' | 'execution_binding_rejected' | 'execution_binding_changed' | 'default_skill_unavailable';
+  readonly code: 'execution_binding_unavailable' | 'execution_binding_rejected' | 'execution_binding_changed' | 'default_skill_unavailable' | 'execution_mode_mismatch';
   readonly message: string;
 }
 

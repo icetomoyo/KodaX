@@ -137,7 +137,7 @@ it('uses the Host catalog and enforces root and Actor ceilings across native and
       const base = { credential: { leaseId: credential.id, mode: 'scoped' as const, providers: ['audit-loopback'] }, hostTools: { leaseId: lease.id } };
       if (request.kind === 'agent_spawn' || request.kind === 'agent_followup') return { ...base, tools: ['audit_allowed', 'mcp_call'] };
       if (request.kind === 'tool' && request.input.rawInput === 'ROOT_DENY') return { ...base, tools: ['read'] };
-      const profile = freezeMetadata ? firstProfile! : await services.createExecutionProfile({ agentProfile: { id: 'partner' },
+      const profile = freezeMetadata ? firstProfile! : await services.createExecutionProfile({ requiredWorkMode: 'agent', agentProfile: { id: 'partner' },
         toolVisibilityPolicy: tool => tool.name !== 'audit_denied' && (!derived || !['write', 'edit', 'bash'].includes(tool.name)) }, lease.tools);
       firstProfile ??= profile;
       return { ...base, profile };
@@ -171,6 +171,10 @@ it('uses the Host catalog and enforces root and Actor ceilings across native and
       name: 'write', input: { path: outputPath, content: 'PARTNER_WRITE_ALLOWED' } });
     expect((await client.runs.await(written.runId)).phase).toBe('completed');
     expect(await readFile(outputPath, 'utf8')).toBe('PARTNER_WRITE_ALLOWED');
+    const shell = await client.runs.startTool({ sessionId: partner.id, inputId: 'partner-shell', rawInput: 'Run an authorized shell command',
+      name: 'bash', input: { command: 'echo MODE_SHELL_ALLOWED > mode-shell.txt' } });
+    expect((await client.runs.await(shell.runId)).phase).toBe('completed');
+    expect((await readFile(join(homeDir, 'mode-shell.txt'), 'utf8')).trim()).toBe('MODE_SHELL_ALLOWED');
     const rootDeniedPath = join(homeDir, 'root-forbidden.txt');
     const rootDenied = await client.runs.startTool({ sessionId: partner.id, inputId: 'root-tools-only', rawInput: 'ROOT_DENY',
       name: 'write', input: { path: rootDeniedPath, content: 'DENIED' } });

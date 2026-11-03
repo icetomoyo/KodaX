@@ -82,6 +82,12 @@ vi.mock('node:fs/promises', async (importOriginal) => {
         }
       }
       const value = await actual.readFile(target, encoding);
+      if (fsMockState.mode === 'unknown-successor-after-observation' && !fsMockState.replaced
+        && targetPath === fsMockState.lockPath) {
+        fsMockState.replaced = true;
+        await actual.writeFile(target, fsMockState.successorOwner, 'utf8');
+        await actual.utimes(target, new Date(0), new Date(0));
+      }
       if (fsMockState.mode === 'replace-on-final-read-without-ticket'
         && !fsMockState.replaced
         && String(target) === fsMockState.lockPath) {
@@ -181,6 +187,96 @@ afterEach(async () => {
 });
 
 describe('learning file lock stale recovery', () => {
+  it('reclaims a fresh reused-PID owner and all of its identity-matched queue entries with one owner lookup', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-store-lock-fresh-identity-')); tempDirs.push(root);
+    const lockPath = path.join(root, 'owner.lock');
+    const queuePath = `${lockPath}.queue`;
+    const identity = Buffer.from('old-process-start').toString('base64url');
+    const raw = `${process.pid} aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa identity=${identity}\n`;
+    await writeFile(lockPath, raw);
+    await mkdir(queuePath);
+    for (let index = 1; index <= 4; index++) {
+      const token = `${index}bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb`;
+      await writeFile(path.join(queuePath, `ticket-${String(index).padStart(16, '0')}-${token}.lock`),
+        `${process.pid} ${token} identity=${identity}\n`);
+    }
+    await writeFile(path.join(queuePath, 'choosing-cccccccc-cccc-4ccc-8ccc-cccccccccccc.lock'), raw);
+    const processTree = await import('../runtime/process-tree.js');
+    const readIdentity = vi.spyOn(processTree, 'readProcessStartIdentity').mockReturnValue('current-process-start');
+    const { reclaimStaleLearningFileLock } = await import('./store-lock.js');
+    expect(await reclaimStaleLearningFileLock(lockPath, { requireKnownOwner: true })).toBe(true);
+    await expect(readFile(lockPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readdir(queuePath)).toEqual([]);
+    // One observation of the old PID, plus the existing cached identity for our own ticket.
+    expect(readIdentity).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['matching', 'unknown', 'legacy', 'empty'] as const)('retains a fresh %s owner during explicit known-owner recovery', async state => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-store-lock-fresh-retain-')); tempDirs.push(root);
+    const lockPath = path.join(root, 'owner.lock');
+    const identity = Buffer.from('original-process-start').toString('base64url');
+    const raw = `${process.pid} dddddddd-dddd-4ddd-8ddd-dddddddddddd${state === 'legacy' ? '' : state === 'empty' ? ' identity=A' : ` identity=${identity}`}\n`;
+    await writeFile(lockPath, raw);
+    const processTree = await import('../runtime/process-tree.js');
+    const readIdentity = vi.spyOn(processTree, 'readProcessStartIdentity')
+      .mockReturnValue(state === 'unknown' ? undefined : 'original-process-start');
+    const { reclaimStaleLearningFileLock } = await import('./store-lock.js');
+    expect(await reclaimStaleLearningFileLock(lockPath, { requireKnownOwner: true })).toBe(false);
+    expect(await readFile(lockPath, 'utf8')).toBe(raw);
+    expect(readIdentity).toHaveBeenCalledTimes(state === 'legacy' || state === 'empty' ? 0 : 1);
+  });
+
+  it('retains a fresh legacy ticket even after proving the coordinator PID was reused', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-store-lock-fresh-legacy-ticket-')); tempDirs.push(root);
+    const lockPath = path.join(root, 'owner.lock');
+    const queuePath = `${lockPath}.queue`;
+    const token = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    const identity = Buffer.from('old-process-start').toString('base64url');
+    const owner = `${process.pid} ${token} identity=${identity}\n`;
+    const ticket = path.join(queuePath, `ticket-0000000000000001-${token}.lock`);
+    const legacy = `${process.pid} ${token}\n`;
+    await writeFile(lockPath, owner); await mkdir(queuePath); await writeFile(ticket, legacy);
+    const processTree = await import('../runtime/process-tree.js');
+    const readIdentity = vi.spyOn(processTree, 'readProcessStartIdentity').mockReturnValue('current-process-start');
+    const { reclaimStaleLearningFileLock } = await import('./store-lock.js');
+    expect(await reclaimStaleLearningFileLock(lockPath, { requireKnownOwner: true })).toBe(false);
+    expect(await readFile(lockPath, 'utf8')).toBe(owner);
+    expect(await readFile(ticket, 'utf8')).toBe(legacy);
+    expect(readIdentity).toHaveBeenCalledTimes(2);
+  });
+
+  it('retains an aged empty identity as unknown for strict recovery while ordinary writers retain legacy recovery', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-store-lock-aged-empty-')); tempDirs.push(root);
+    const lockPath = path.join(root, 'owner.lock');
+    const raw = `${process.pid} dddddddd-dddd-4ddd-8ddd-dddddddddddd identity=A\n`;
+    await writeFile(lockPath, raw);
+    const old = new Date(Date.now() - 60_000);
+    await utimes(lockPath, old, old);
+    const processTree = await import('../runtime/process-tree.js');
+    const readIdentity = vi.spyOn(processTree, 'readProcessStartIdentity').mockReturnValue('current-process-start');
+    const { reclaimStaleLearningFileLock, withLearningFileLock } = await import('./store-lock.js');
+    expect(await reclaimStaleLearningFileLock(lockPath, { requireKnownOwner: true })).toBe(false);
+    expect(await readFile(lockPath, 'utf8')).toBe(raw);
+    expect(readIdentity).not.toHaveBeenCalled();
+    await expect(withLearningFileLock(lockPath, async () => 'recovered', 500)).resolves.toBe('recovered');
+    await expect(readFile(lockPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('adds no fresh owner identity query to ordinary writers', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-store-lock-fresh-writer-')); tempDirs.push(root);
+    const lockPath = path.join(root, 'owner.lock');
+    const identity = Buffer.from('old-process-start').toString('base64url');
+    const raw = `${process.pid} ffffffff-ffff-4fff-8fff-ffffffffffff identity=${identity}\n`;
+    await writeFile(lockPath, raw);
+    const processTree = await import('../runtime/process-tree.js');
+    const readIdentity = vi.spyOn(processTree, 'readProcessStartIdentity').mockReturnValue('current-process-start');
+    const { acquireLearningFileLock } = await import('./store-lock.js');
+    await expect(acquireLearningFileLock(lockPath, 0)).rejects.toMatchObject({ code: 'kodax_file_lock_timeout' });
+    expect(await readFile(lockPath, 'utf8')).toBe(raw);
+    // Only the original one-time self-identity capture for the writer's ticket.
+    expect(readIdentity).toHaveBeenCalledTimes(1);
+  });
+
   it('does not reap its own choosing entry when the logical clock jumps forward', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-store-lock-own-choosing-'));
     tempDirs.push(root);
@@ -201,6 +297,27 @@ describe('learning file lock stale recovery', () => {
 
     await expect(reclaimStaleLearningFileLock(lockPath)).resolves.toBe(false);
     await expect(readdir(`${lockPath}.queue`)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('retains an unknown successor installed between known-owner stale observations, while ordinary writers retain legacy recovery', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-store-lock-known-reclaim-'));
+    tempDirs.push(root);
+    const lockPath = path.join(root, 'owner.lock');
+    const unknown = 'unknown-owner\n';
+    await writeFile(lockPath, '2147483647 11111111-1111-4111-8111-111111111111\n');
+    await utimes(lockPath, new Date(0), new Date(0));
+    Object.assign(fsMockState, { mode: 'unknown-successor-after-observation', lockPath,
+      successorOwner: unknown, replaced: false, removedSuccessor: false });
+    const { reclaimStaleLearningFileLock, acquireLearningFileLock } = await import('./store-lock.js');
+    try {
+      expect(await reclaimStaleLearningFileLock(lockPath, { requireKnownOwner: true })).toBe(false);
+      expect(fsMockState.replaced).toBe(true);
+      expect(fsMockState.removedSuccessor).toBe(false);
+      expect(await readFile(lockPath, 'utf8')).toBe(unknown);
+      const release = await acquireLearningFileLock(lockPath, 500);
+      await release();
+      await expect(readFile(lockPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { fsMockState.mode = 'idle'; }
   });
 
   it('does not remove a successor while reclaiming a stale lock outside an operation', async () => {

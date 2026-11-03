@@ -12,6 +12,11 @@ if (previous && runtimeOwnerProcessState(previous) === 'gone') {
   removeRuntimeDaemonOwnershipIfUnchanged(paths, { lockOwner: previous, state: readRuntimeDaemonState(paths) });
 }
 const runtime = await createKodaXHostRuntime({ homeDir, sharedDaemonHost: true });
+if (process.argv[3] === 'crash-on-workflow-terminal') {
+  runtime.events.subscribe({}, event => {
+    if (event.type === 'run.completed' || event.type === 'run.failed' || event.type === 'run.interrupted') process.exit(99);
+  });
+}
 const lock = tryAcquireRuntimeDaemonLock(paths, { runtimeId: runtime.identity.runtimeId,
   pid: process.pid, createdAt: runtime.identity.startedAt });
 if (!lock) throw new Error('Cannot acquire the isolated SDK fixture Host.');

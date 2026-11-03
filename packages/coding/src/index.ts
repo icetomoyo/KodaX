@@ -556,6 +556,8 @@ export {
   getProcessContext,
   getImpactEstimate,
   prewarmRepoIntelligenceCaches,
+  inspectRepoIntelligenceProject,
+  prepareRepoIntelligenceProject,
 } from './repo-intelligence/runtime.js';
 
 export type {

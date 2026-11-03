@@ -11,6 +11,7 @@ import { runToolDispatch } from '../packages/coding/src/agent-runtime/tool-dispa
 import { shutdownRepoIntelligenceWorkerForTest } from '../packages/coding/src/repo-intelligence/semantic-worker-client.js';
 import * as repoWorker from '../packages/coding/src/repo-intelligence/semantic-worker-client.js';
 import { executeTool, getToolDefinition } from '../packages/coding/src/tools/index.js';
+import * as nativeTools from '../packages/coding/src/tools/index.js';
 import { projectModelToolDefinition } from '../packages/coding/src/tools/model-tool-definition.js';
 import { wrapCodingToolAsRunnable } from '../packages/coding/src/task-engine/_internal/managed-task/tool-wrappers.js';
 import type { KodaXToolExecutionContext } from '../packages/coding/src/types.js';
@@ -308,14 +309,24 @@ it.each(relations.filter(name => name !== 'module_context'))('recovers from an a
   expect(budget.spentBudget).toBe(2);
 }, 30_000);
 
-it('retains the complete native overview receipt when a small guest transfer limit fails', async () => {
+it('pages the complete native overview by reference under a small transfer limit without replay', async () => {
   const { ctx, budget, dispatch } = await fixture();
   const baseline = await executeTool('repo_overview', {}, ctx);
-  const result = await createScriptPilot(dispatch, budget).run('return await tools.repo_overview({});',
+  const admitted = vi.fn();
+  const result = await createScriptPilot({ ...dispatch, events: { onToolExecutionStart: admitted } }, budget).run(`
+    const r=await tools.repo_overview({}),id=r.result_ref.callId;
+    const p=await read_result(id),q=await read_result(id),t=await read_result(id,r.result_ref.totalLength-10);
+    return {status:r.status,total:r.result_ref.totalLength,first:p.text,next:p.nextOffset,last:t.text,repeat:p.text===q.text};`,
     { ...limits, maxTransferBytes: 512 });
-  expect(result).toMatchObject({ status: 'failed', error: expect.stringContaining('transfer limit') });
+  expect(result.status, result.error).toBe('completed');
   expect(result.receipts).toHaveLength(1);
   expect(stable(result.receipts[0]?.result.content)).toBe(stable(baseline));
+  const original = JSON.stringify(result.receipts[0]!.result);
+  const page = result.value as { next: number };
+  expect(page.next).toBeGreaterThan(0);
+  expect(result.value).toEqual({ status: 'settled', total: original.length, first: original.slice(0, page.next),
+    next: page.next, last: original.slice(-10), repeat: true });
+  expect(admitted).toHaveBeenCalledOnce();
   expect(budget.spentBudget).toBe(1);
 });
 
@@ -336,15 +347,22 @@ it.each(names)('respects Agent, explicit exclusions and live revocation of %s', 
 
 it.each(names)('drains admitted %s work and preserves its result on cancellation without dispatching another leaf', async name => {
   const { ctx, budget, dispatch } = await fixture();
-  // Warm the shared worker before comparing cancellation at the tool admission boundary.
+  // Warm the shared worker before comparing cancellation after real handler entry.
   await executeTool(name, inputFor(name), ctx);
   const nativeController = new AbortController();
+  let cancelling = nativeController;
+  const original = nativeTools.executeTool;
+  const executing = vi.spyOn(nativeTools, 'executeTool').mockImplementation((...args) => {
+    const work = original(...args);
+    cancelling.abort();
+    return work;
+  });
   const baseline = await runToolDispatch({ ...dispatch, abortSignal: nativeController.signal,
-    events: { onToolExecutionStart: () => nativeController.abort() },
     toolBlocks: [{ type: 'tool_use', id: 'native-cancelled', name, input: inputFor(name) }] });
   const controller = new AbortController();
+  cancelling = controller;
   const ended = vi.fn();
-  const admitted = vi.fn(() => controller.abort());
+  const admitted = vi.fn();
   const pilot = createScriptPilot({ ...dispatch, abortSignal: controller.signal,
     events: { onToolExecutionStart: admitted, onToolExecutionEnd: ended } }, budget);
   const result = await pilot.run(`await tools.${name}(${JSON.stringify(inputFor(name))}); await tools.repo_overview({});`, limits);
@@ -354,6 +372,7 @@ it.each(names)('drains admitted %s work and preserves its result on cancellation
   expect(ended).toHaveBeenCalledOnce();
   expect(admitted).toHaveBeenCalledOnce();
   expect(budget.spentBudget).toBe(1);
+  expect(executing).toHaveBeenCalledTimes(2);
   expect(await pilot.run(`return await tools.${name}(${JSON.stringify(inputFor(name))});`, limits)).toMatchObject({ status: 'cancelled', receipts: [] });
   expect(budget.spentBudget).toBe(1);
 }, 30_000);

@@ -455,6 +455,26 @@ export class CodingActorSession {
     return this.controller.protocolOwnerSignal(ownerPath);
   }
 
+  /** Actor interruption is durable intent; resource cleanup waits for the
+   * actual executor promises. Only this Workflow's descendants participate. */
+  async waitForWorkflowExecutors(runId: string, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    const owner = `/root/workflow:${runId}/`;
+    let abort: (() => void) | undefined;
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      abort = () => reject(signal.reason ?? new Error('Workflow resource settlement aborted.'));
+      signal.addEventListener('abort', abort, { once: true });
+    });
+    try {
+      for (;;) {
+        signal.throwIfAborted();
+        const pending = [...this.executingTurns.values()].filter(turn => turn.actorPath.startsWith(owner));
+        if (pending.length === 0) return;
+        await Promise.race([Promise.allSettled(pending.map(turn => turn.settled)), cancelled]);
+      }
+    } finally { if (abort) signal.removeEventListener('abort', abort); }
+  }
+
   settleWorkflowOwner(
     ownerPath: string,
     state: 'completed' | 'failed' | 'interrupted',

@@ -114,6 +114,30 @@ afterEach(() => {
 });
 
 describe('F270 coding Actor runtime adapter', () => {
+  it('waits for physical Workflow executors without waiting for another client subtree', async () => {
+    const releases = new Map<string, () => void>();
+    executeChildAgentsMock.mockImplementation(async (_bundles, _ctx, options) => {
+      await new Promise<void>(resolve => releases.set(options.actorControl!.callerPath, resolve));
+      return completedChild('drained');
+    });
+    const session = new CodingActorSession({ sessionId: 'workflow-drain' });
+    const env = environment();
+    const root = session.attach(env.ctx, env.options);
+    const owner = await session.createWorkflowOwner('/root', 'owned');
+    const child = await owner.spawn({ taskName: 'child', objective: 'Inspect.' });
+    const peer = await session.spawnRoot({ taskName: 'peer', objective: 'Independent work.' }, { executionPrincipalId: 'peer' });
+    try {
+      await vi.waitFor(() => expect(releases.size).toBe(2));
+      await owner.interrupt(child.actorPath);
+      let drained = false;
+      const waiting = session.waitForWorkflowExecutors('owned', new AbortController().signal).then(() => { drained = true; });
+      await Promise.resolve();
+      expect(drained).toBe(false);
+      releases.get(child.actorPath)!();
+      await waiting;
+      expect(root.output(peer.actorPath).state).toBe('running');
+    } finally { for (const release of releases.values()) release(); await session.close(); }
+  });
   it('preserves an independent client subtree and confirms descendant executor drain after its parent completes', async () => {
     let releaseChild!: () => void;
     let childTurn: { actorPath: string; turnId: string } | undefined;

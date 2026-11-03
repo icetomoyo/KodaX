@@ -11,17 +11,25 @@ export function createExecutionProfile(
   context: RuntimeExecutionProfileSource,
   catalog?: readonly KodaXToolVisibilityMeta[],
 ): RuntimeExecutionProfile {
+  if (context.requiredWorkMode !== undefined && context.requiredWorkMode !== 'agent') throw new Error('Unsupported required work mode.');
   const restricted = context.toolVisibilityPolicy !== undefined || (context.excludeTools?.length ?? 0) > 0;
   if (restricted && catalog === undefined) throw new Error('A tool policy requires the Host catalog. Use authorizeExecution services.createExecutionProfile.');
   const metadata = catalog?.map(tool => ({ name: tool.name, sideEffect: tool.sideEffect, planModeAllowed: tool.planModeAllowed === true }))
     .filter(tool => !context.excludeTools?.includes(tool.name)
     && (context.toolVisibilityPolicy?.(tool) ?? true));
   return structuredClone({
+    ...(context.requiredWorkMode === undefined ? {} : { requiredWorkMode: context.requiredWorkMode }),
     ...(context.defaultSkill === undefined ? {} : { defaultSkill: context.defaultSkill }),
     ...(context.agentProfile === undefined ? {} : { agentProfile: context.agentProfile }),
     ...(context.taskVerification === undefined ? {} : { taskVerification: context.taskVerification }),
     ...(restricted ? { tools: metadata!.map(tool => tool.name), toolMetadata: metadata } : {}),
   });
+}
+
+/** A mode constraint never changes the requested mode or its permission policy. */
+export function assertExecutionWorkMode(required: RuntimeExecutionProfile['requiredWorkMode'], actual: string): void {
+  if (required !== undefined && required !== actual) throw Object.assign(
+    new Error(`Execution requires ${required} work mode; the Host selected ${actual}.`), { code: 'execution_mode_mismatch' });
 }
 
 /** Exact metadata equality preserves every input to the original visibility predicate. */

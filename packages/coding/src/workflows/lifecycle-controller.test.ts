@@ -112,6 +112,19 @@ describe('WorkflowLifecycleController', () => {
     }));
   });
 
+  it('reads the complete structured final result after the live manager is gone', async () => {
+    const manager = createWorkflowRunManager();
+    const complete = { summary: 'short preview', findings: [{ file: 'src/main.ts', details: '完整证据'.repeat(1000) }] };
+    const run = manager.start({
+      module: { meta: { name: 'full-result', description: 'retain original result' }, run: async () => complete },
+      args: {}, runId: 'original', runDir: join(dir, 'original'), backend: fakeBackend(),
+    });
+    await run.done;
+    const reopened = createWorkflowLifecycleController({ runManager: createWorkflowRunManager(), runBaseDir: dir });
+    const result = await reopened.readWorkflowResult('original');
+    expect(JSON.parse(result!)).toEqual(complete);
+  });
+
   it('prunes only terminal persisted runs and protects active runs', async () => {
     const manager = createWorkflowRunManager();
     const controller = createWorkflowLifecycleController({

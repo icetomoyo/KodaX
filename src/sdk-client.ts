@@ -54,7 +54,7 @@ export async function readKodaXClientExits(options: {
 /** Local launcher. All business operations use the same product Client as passive connections. */
 export async function ensureKodaXClient(options: EnsureKodaXClientOptions = {}): Promise<KodaXProductClient> {
   return toKodaXProductClient(await ensureRecoveringKodaXRuntime({ ...options, requirements: {
-    productClient: 1, productHistoryBoundaries: 1, productExitControl: 1, productExecutionFacts: 1,
+    productClient: 1, productHistoryBoundaries: 1, productExitControl: 1, productExecutionFacts: 1, productInputRecovery: 1,
     ...(options.authorizeExecution ? { productExecutionAuthorization: 2, productActorAuthorization: 1, providerProbeAuthorization: 1 } : {}),
   } }, options.authorizeExecution), options.authorizeExecution);
 }
@@ -71,7 +71,7 @@ export async function connectKodaXClient(
     autoStart: false,
     onStartupProgress: options.onStartupProgress,
     clientInfo: options.clientInfo,
-    requirements: { productClient: 1, productHistoryBoundaries: 1, productExitControl: 1, productExecutionFacts: 1,
+    requirements: { productClient: 1, productHistoryBoundaries: 1, productExitControl: 1, productExecutionFacts: 1, productInputRecovery: 1,
       ...(options.authorizeExecution ? { productExecutionAuthorization: 2, productActorAuthorization: 1, providerProbeAuthorization: 1 } : {}) },
   });
   return toKodaXProductClient(runtime, options.authorizeExecution);

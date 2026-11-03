@@ -15,6 +15,161 @@ Solo 和 Adaptive 都会向模型提供可用且已授权的 Skill 目录。运�
 调用方显式设置的 `systemPromptOverride` 仍是 Solo 的完整提示覆盖，不自动追加
 可选 Skill 目录。`sa` 当前仍是可执行的 Solo 模式；`amaw` 才是归一为 `ama` 的旧别名。
 
+## 2026-11-03 beta.1 后续修复（未发布）
+
+本轮基线为 `v0.7.97-beta.1` / `e733e51f`。`beta` 指向 beta.1、
+`latest` 指向稳定版 0.7.96 是正常发布策略。下述后续修复须分别验证源码、
+正式包、实际运行 Host 和 Space 成品，不能用本地版本号推断旧 Host 已升级。
+
+- Promotion 提交后，已有/新增/第二客户端观察者须刷新元数据及历史边界；
+  保留原 Session、正文、附件和 ID。陈旧分页仍按原修订规则失效。
+- Pending 输入的原始意图与失效连接授权分开；仅原稳定 principal 可以重绑
+  未消费的原输入，并通过持久幂等撤回回执取回完整正文及附件。
+  共享接收状态不授予其他 principal 读取原输入全文的权力。
+- Script Stop、冷 Host 和 observe 后历史首读分别验证；内部写入收敛不放宽
+  真实并发变更/过期分页冲突。Issue 371 的历史加载性能继续独立验收。
+- Partner 的可信 Agent 模式要求在 Host 准入、消费和装配边界核验；模式要求
+  与 shell/write/子 Agent 权限正交，不通过禁止正常工具实现。
+- Script 分阶段补组合/安全并发、模型选择输出与完整证据、长任务观察及有界
+  跨 cell 数据；保留原生调用、权限、预算、guardrail、真实参数与取消清理。
+  性能及智能验收计入新增教学、回读、全部 Provider 请求和实际 usage。
+- Repo-intelligence 诊断/预热由实际执行 Host 返回，复用同一缓存；保留按需
+  初始化与失败回退，预热错误不归为 Provider 失败。Linux 既有指引先复验。
+- Workflow 保留 slash、进度、停止及会话最终结果；新增独立运行记录管理与
+  rename/delete/prune 公共接口需求撤回。Host 确认自身子任务/资源停止后，
+  持久完整结果、报告与历史引用，再释放运行状态和清理无引用临时资源。
+  结果/交付物、项目文件、保存定义、其他客户端及 unknown 运行受保护；
+  断连不等于取消，冷恢复只续清理不重放未知副作用。
+
+本节固定源码实施契约；每个切片的运行证据与未验边界记录在
+[本轮测试指南](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#2026-11-03-beta1-后续正确性与-scriptworkflow实施中)。
+真实账号、覆盖安装、跨平台和麒麟实机继续单列验收。
+
+### 输入恢复与模式约束
+
+`connectKodaXClient`/`ensureKodaXClient` 要求实际 Host 的
+`productInputRecovery:1`。Main 持久保留原 `instanceId`/`instanceSecret`，
+由认证连接派生稳定 principal；仅对尚未消费且旧连接 generation 已失效或 lease
+已撤销的输入，按原 inputId、全文、附件、delivery 和 target 重提交以重绑。
+同连接仍有效时不能用另一 lease 替换已接受的授权。
+
+`inputs.read` 继续共享接收状态；`inputs.withdraw` 的全文和幂等回执只属于原
+principal，外来身份返回 `permission_denied`。这是对旧跨 principal 撤回行为的
+必要收紧，不影响普通 Agent 工具权限。回执与移除 pending 原子提交；丢响应后
+按原 Session/inputId 重试 withdraw，返回原正文、附件 descriptor 及 delivery。
+已撤回 ID 再提交返回 withdrawn，不能再次执行。回执保留至 Session 释放/删除。
+旧数组队列继续读；新 envelope 使旧 Host 保守拒绝，坏文件仅阻断所属 Session。
+
+Partner 可在可信 Main 使用
+`services.createExecutionProfile({requiredWorkMode:'agent'})`，要求实际 Host 的
+`productExecutionModeConstraint:1`。Host 在准入、排队消费、安全点和最终装配
+核对模式，不匹配返回 `execution_mode_mismatch`，保留原问题。它不自动切换
+Session、不限制正常 shell/write/子 Agent；子 Agent 保留自己的模式声明。
+静态 pending 约束随原意图持久化，新连接省略字段不能放宽。
+根 Run generation checkpoint v3 保留约束并校验原身份/fresh authority；
+旧 Host 拒绝 v3。Main recovery.profile 可读取原约束，不应改成当前 UI 选择。
+
+### Repo-intelligence 诊断与预热
+
+在既有 Product catalog 使用
+`catalog.inspectRepoIntelligence(sessionId)` 和
+`catalog.prewarmRepoIntelligence(sessionId)`；实际 Host 须声明
+`repoIntelligenceDiagnostics:1`，旧 Host 在发送前明确拒绝。
+返回 runtimeId、sessionId、workspaceRoot、配置/请求模式、effectiveEngine、
+status、initialized 和 warnings。inspect 只看现有缓存，不执行 probe 或索引；
+未初始化不是 ready，prewarm 可等待当前共享缓存完成，另一客户端能读到同一事实。
+Host 根据受准入 Session 解析路径与有效设置，不接受 Renderer 自报缓存状态。
+off/禁用预热保持惰性；worker 降级保留 warnings，不触发 Provider 请求/失败。
+缓存过期或 Host generation 变化后应重新观察，不能沿用旧 ready。
+
+### Script 的分阶段契约
+
+参照 Code Mode 的可观察效果，保留 QuickJS，实现顺序为 S1 组合、S2 输出与证据、
+S3 长任务与 Run 内数据；不以 JavaScript 可执行或选择 Script 模式作为覆盖证明。
+这些阶段复用既有 Run、Host dispatcher、Session records 和共享预算，不建立第二个 Runtime。
+
+参照依据（2026-11-04 复核）：OpenAI 的 [Code Mode hooks 契约](https://learn.chatgpt.com/docs/hooks#tool-calls-from-code-mode)
+要求嵌套调用继续接受执行前阻断/参数改写，执行后拒绝不能撤销副作用；
+[配置文档](https://learn.chatgpt.com/docs/config-file/config-reference) 区分 direct、deferred
+和 code_mode 工具面。并发、取消 drain 与非持久 store 的实现参照为本地官方 Codex
+源码 `edd1ae37ec82650e8d7a97a7e84db39fd5722441`，不是所有已部署版本的能力声明。
+据此选择复用原 dispatcher 和权限路径、保留原生调用，并分别定义观察、完成与清理。
+
+- **S1 工具组合与顺序**：脚本中的 `tools.NAME(input)` 沿实际 registry、Host/MCP
+  已授权绑定、guardrail 和权限路径调用。只读且允许并发的独立调用可并行；写入与未知
+  副作用保留屏障顺序。真实参数在 guardrail/hook 修改后先持久再执行，不能只记录模型
+  原参数。并发准入后若工具被改为有副作用则拒绝，不能静默重试。原生 `tool_call` 仍可
+  调用同一能力，bash 保留原生入口；不强迫每个任务经过 Script。
+- **S2 完整证据与选择输出**：`cell.started/output/yielded/settled` 与
+  `call.started/prepared/settled` 写入同一 canonical Session。模型侧
+  `selected_output:true` 仅在可证明的正文/必要说明分离边界省略正文；失败、警告、
+  分页、截断和未决副作用不得消失，无法分类的结果保守完整返回。
+  `script_read({cell_id,call_id,offset})` 在同一 Session 回读原始参数及结果，
+  按 `nextOffset` 续页；unknown 不是执行失败或可重放证明。
+  单次传输过大的结果先保存完整 receipt，再向 cell 返回 `result_ref`，
+  `await read_result(callId,offset)` 只允许读取本 cell 已完成的结果，按页处理原始 JSON。
+  不截掉原文后伪称已完整处理，也不因回读再次执行工具。
+  Script 的文件读取返回程序可用的实际正文，不复用“模型已看过正文”的 native read
+  去重提示，也不把 guest 读取登记为模型已见原文；写入/编辑仍使原生读取缓存失效。
+  原生 read 保留原有去重，程序重复取数的必要 I/O 不宣称为效率收益。
+- **S3 观察、取消与数据生命周期**：`script_exec({code,yield_time_ms})` 和
+  `script_wait({cell_id,cursor,yield_time_ms,cancel})` 的等待窗口不延长执行截止。
+  yield 返回观察，不等于完成；取消先报告 cancelling，只有 `cleanupComplete`
+  才证明已准入调用及其清理收敛。父 Run 退出须取消并 drain 活动 cell，Stop 保留
+  interrupted 历史。每个 Run 同时一个活动 cell；独立 Run 互不加全局锁。
+  `store/load` 在该 Run 的 fresh VM cells 间传递 JSON，最多 128 项、合计 1 MiB，
+  `store(key,undefined)` 删除。结束或 Host 崩溃即丢失，不是恢复 checkpoint。
+  cell 默认 60 秒、64 次尝试调用、32 MiB VM、单次传输 1 MiB；控制消息另按现有
+  调用/字节限额派生总量上限，空消息也计费，重复 yield 合并，避免无界入队。
+
+这些实现不自动重放未知副作用，不放宽权限或增加模型评审调用。提示与工具契约的
+新增字节、实际脚本执行比例、任务正确性及全部请求/token/耗时分别报告；有界 smoke
+不能证明总体效率提升或模型智能无回退。
+
+### Workflow 的同 Host 收尾
+
+保留现有 slash 执行、进度、停止、读取与 Session 最终结果；本轮不新增公共
+rename/delete/prune，也不扩展独立运行记录产品。执行的同一 Host 先等待自身该 Workflow
+的子执行器真正停止，再原子持久完整 `result.json`、报告/manifest 和稳定的
+`workflow:<runId>:result` Session 输出及 artifactRefs，之后才发布终态并释放运行状态。
+合法 `undefined` 结果使用显式 envelope，与缺失原文区分；断连不触发取消。
+
+清理只处理 Host 已登记的、owner/终态/停止证据完整且无引用的临时资源。发布终态前
+先持久 cleanup receipt；重启仅读这个小型 pending 索引续清理，不扫描历史或重跑脚本。
+结果、报告、交付物、脏或未合入 worktree、项目文件、保存定义、其他客户端和状态未知
+运行继续保留；失败清理可续办，不能以按年龄删除或全局 git prune 冒充自动收尾。
+Space 通过公开 Host 结果/历史接口读取，不直接操作 Host 运行目录。
+
+其他 Session 将临时 worktree 或子目录用作项目/执行目录时，Host 在准入边界解析
+真实路径并持久登记项目引用；即便采用者空闲、Session 删除或 Host 重启，也不把已采用
+项目重新当垃圾。登记与删除共用每个 worktree 的文件锁，锁内重验目录身份；别名不会
+绕过保护。正常叶调用不逐次解析路径，也不为收尾增加全局 Session 扫描或全局锁。
+开始执行前的 host-owner 证据允许运行中安全采用；普通同形状目录缺少 Host 证据时
+继续按普通项目处理。
+
+临时分支的精确路径、名称和原 OID 在移树前持久登记，临时删除失败保留 warning 与
+pending；即便树已移除，冷恢复仍能继续。变更 OID 或被其他 checkout 使用的分支受保护，
+最终 ref 删除以原 OID 作 CAS，不盲删同名新分支。收尾仅额外移除精确的空协调目录，
+非空、未知或仍有等待者的目录保留。
+
+### 交付顺序与剩余验收
+
+1. 先交付本轮源码和独立 Host 回归，固定构建身份；本地源码通过不代表 npm 已更新。
+2. 后续正式发包须从该源码生成新 beta，复验真实 tarball 的 SDK、worker、协议数据与
+   原 CLI 体积门禁。继续保留稳定 `latest=0.7.96` 的通道策略，不用覆盖旧 beta.1 代替发布。
+3. Main 连接实际 Host 后核对上述能力键与 runtime generation；升级包后仍存活的旧 Host
+   必须先完成既有切换流程。运行中 Session、未消费输入及恢复授权按各自契约迁移。
+   新 Script 行为另做实际 Host smoke，不能只凭 SDK 版本或已有执行器能力声明判断。
+4. Space 再验 promotion/输入重绑/Agent 模式拒绝、预热状态、Workflow 原文与自动收尾，
+   通过共享 Host 接口接入。SDK 的独立双客户端通过不替代 Space 成品验收。
+
+Script 的 S1–S3 源码机制与真实模型可用性分别推进：有界样本已暴露命名空间和格式化
+读取结果的消费摩擦，不能以最终任务由原生 fallback 完成证明脚本成功或效率提高。
+保持显式选择和原生能力，后续先设计可用性改进及最小受影响样本，再决定是否调整默认。
+下一阶段先用固定工具结果验证程序数据与显示格式的分离方案，再以有界单轮样本检查
+命名空间和数据消费；方案须保留原生显示、警告、权限及原文，复用既有受权工具路径。
+跨平台、麒麟、真实账号、覆盖安装和 Issue 371 仍由各自验收关闭。
+
 ## 统一 Host SDK 收口（未发布）
 
 ### 2026-11-02 Space 默认方法、消费绑定与 Quick Ask（alpha.12 之后，未发布）

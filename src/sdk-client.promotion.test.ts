@@ -7,9 +7,59 @@ import { StringDecoder } from 'node:string_decoder';
 import { expect, it } from 'vitest';
 import { FileSessionStorage } from '@kodax-ai/repl';
 import type { KodaXSessionData } from '@kodax-ai/agent';
+import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
 import { ensureKodaXClient, connectKodaXClient } from './sdk-client.js';
 import { getKodaXRuntimeOwnerState, waitForRuntimeDaemonShutdown } from './sdk-runtime.js';
 import { readRuntimeDaemonState, resolveRuntimeDaemonPaths } from './runtime-daemon/state.js';
+
+it('refreshes existing, peer and new observers after promotion without replacing history', async () => {
+  const homeDir = await mkdtemp(path.join(await realpath(os.tmpdir()), 'kodax-promotion-view-'));
+  const profile = 'promotion-view';
+  const client = await ensureKodaXClient({ homeDir, profile });
+  const peer = await connectKodaXClient({ homeDir, profile });
+  const observations: { close(): void }[] = [];
+  try {
+    const session = await client.sessions.create({ title: 'Original question', tag: 'quick-ask', projectPath: homeDir });
+    const storage = new FileSessionStorage({ sessionsDir: path.join(homeDir, '.kodax', 'sessions'),
+      configHome: path.join(homeDir, '.kodax') });
+    const original = (await storage.load(session.id))!;
+    original.messages = [{ role: 'user', inputId: 'original-input', content: 'Original retained question' },
+      { role: 'assistant', outputId: 'original-output', content: 'Original retained answer' }];
+    delete original.lineage;
+    await storage.save(session.id, original);
+    const current = await client.sessions.read(session.id);
+    const history = await client.sessions.readHistory(session.id, { limit: 1 });
+    expect(history.nextCursor).toBeDefined();
+    const localViews: ClientSessionView[] = [];
+    const peerViews: ClientSessionView[] = [];
+    observations.push(await client.sessions.observe(session.id, view => { localViews.push(view); }));
+    observations.push(await peer.sessions.observe(session.id, view => { peerViews.push(view); }));
+    expect(localViews.at(-1)?.session.tag).toBe('quick-ask');
+    const promoted = await client.sessions.promote({ sessionId: session.id, requestId: 'observed-promotion',
+      expectedRevision: current.metadataRevision!, tag: 'coder' });
+    await expect.poll(() => localViews.at(-1)?.session.metadataRevision).toBe(promoted.session.metadataRevision);
+    await expect.poll(() => peerViews.at(-1)?.session.metadataRevision).toBe(promoted.session.metadataRevision);
+    const fresh: ClientSessionView[] = [];
+    observations.push(await peer.sessions.observe(session.id, view => { fresh.push(view); }));
+    for (const view of [localViews.at(-1)!, peerViews.at(-1)!, fresh.at(-1)!]) {
+      expect(view.session).toMatchObject({ id: session.id, title: 'Original question', tag: 'coder',
+        metadataRevision: promoted.session.metadataRevision });
+      expect(view.items.map(item => item.text)).toEqual(['Original retained question', 'Original retained answer']);
+    }
+    expect(await peer.sessions.read(session.id)).toEqual(promoted.session);
+    expect((await peer.sessions.readHistory(session.id)).items.map(item => item.text))
+      .toEqual(['Original retained question', 'Original retained answer']);
+    await expect(peer.sessions.readHistory(session.id, { cursor: history.nextCursor })).rejects
+      .toMatchObject({ code: 'resync_required' });
+  } finally {
+    for (const observation of observations) observation.close();
+    await peer.disconnect();
+    const owner = getKodaXRuntimeOwnerState({ homeDir, profile }).owner;
+    await client.host.shutdown(); await client.disconnect();
+    if (owner) expect(await waitForRuntimeDaemonShutdown({ configHome: path.join(homeDir, '.kodax'), profile, owner })).toMatchObject({ status: 'succeeded' });
+    await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+}, 120_000);
 
 it('promotes a Quick Ask through its independent Host and preserves the Session identity', async () => {
   const homeDir = await mkdtemp(path.join(await realpath(os.tmpdir()), 'kodax-promotion-'));

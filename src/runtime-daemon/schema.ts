@@ -634,6 +634,8 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
   'mcp.tool.list': { params: objectSchema({ server: stringSchema, forceRefresh: booleanSchema }, [], true), result: arrayAnySchema },
 
   'tool.catalog': { params: objectSchema({ sessionId: stringSchema }, ['sessionId']), result: arraySchema(objectAnySchema) },
+  'repo.intelligence.inspect': { params: objectSchema({ sessionId: stringSchema }, ['sessionId']), result: repoIntelligenceStatusSchema() },
+  'repo.intelligence.prewarm': { params: objectSchema({ sessionId: stringSchema }, ['sessionId']), result: repoIntelligenceStatusSchema() },
   'extension.list': {
     params: noParamsSchema,
     result: objectSchema({
@@ -1448,11 +1450,20 @@ function startRunParamsSchema(): RuntimeDaemonJsonSchema {
   }, ['sessionId']);
 }
 
+function repoIntelligenceStatusSchema(): RuntimeDaemonJsonSchema {
+  return objectSchema({ configuredMode: { enum: ['auto', 'off', 'light', 'full'] },
+    requestedMode: { enum: ['off', 'light', 'full'] }, effectiveEngine: { enum: ['off', 'light', 'full'] },
+    status: { enum: ['disabled', 'ok', 'limited', 'unavailable', 'warming'] }, initialized: booleanSchema,
+    warnings: arraySchema(stringSchema), runtimeId: stringSchema, sessionId: stringSchema, workspaceRoot: stringSchema,
+  }, ['configuredMode', 'requestedMode', 'effectiveEngine', 'status', 'initialized', 'warnings', 'runtimeId', 'sessionId', 'workspaceRoot']);
+}
+
 function executionAuthorizationSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
     binding: objectSchema({ leaseId: stringSchema }, ['leaseId']),
     businessBinding: objectSchema({ id: stringSchema, revision: stringSchema, data: objectAnySchema }, ['id', 'revision']),
     profile: objectSchema({ agentProfile: objectAnySchema, taskVerification: objectAnySchema,
+      requiredWorkMode: { enum: ['agent'] },
       defaultSkill: objectSchema({ name: { type: 'string', maxLength: 128 } }, ['name']),
       tools: arraySchema(stringSchema), toolMetadata: arraySchema(objectSchema({ name: stringSchema,
         sideEffect: { enum: ['readonly', 'reads-network', 'mutates-fs', 'mutates-shell', 'mutates-network', 'mutates-state'] },

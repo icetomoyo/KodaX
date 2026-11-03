@@ -7,6 +7,18 @@ import { resolveScriptWorkerUrl, runScriptCell } from './cell.js';
 
 const limits = { timeoutMs: 3_000, memoryBytes: 16 * 1024 * 1024, maxCalls: 8, maxTransferBytes: 128 * 1024 };
 
+it.each(['yield_control()', "text('')", "store('same', 1)"])(
+  'bounds empty or repeated control messages before Host persistence (%s)', async operation => {
+    let events = 0;
+    const persisted = async () => { events++; await new Promise(resolve => setTimeout(resolve, 5)); };
+    const result = await runScriptCell({ code: `for(let i=0;i<400;i++) ${operation}; return 42;`, toolNames: [],
+      limits: { ...limits, timeoutMs: 1000, maxCalls: 1, maxTransferBytes: 1024 }, invoke: vi.fn(),
+      onYield: persisted, onOutput: persisted, onStore: () => { events++; } });
+    expect(events).toBeLessThanOrEqual(32);
+    if (operation === 'yield_control()') { expect(events).toBe(1); expect(result.status).toBe('completed'); }
+    else expect(result.status).toBe('failed');
+  });
+
 it('evaluates isolated JavaScript and composes dependent calls in one cell', async () => {
   const invoke = vi.fn(async (name: string, input: Record<string, unknown>) => ({ content: name === 'read' ? 'one\ntwo' : String(input.value) }));
   const result = await runScriptCell({ code: 'const r = await tools.read({path:"x"}); return await tools.grep({value:r.content.split("\\n")[1]});',
@@ -93,6 +105,32 @@ it('caps calls and transfer size rather than silently dropping errors or results
   expect(oversized.status).toBe('failed');
   expect(oversized.error).toContain('transfer limit');
   expect(oversized.receipts[0]?.result.content).toHaveLength(256);
+});
+
+it('lets a cell page a durably settled large result and select data without losing warnings or invoking effects again', async () => {
+  let durable = false;
+  const result = { content: '界'.repeat(3000) + '\nWARNING: original source is incomplete', isError: true,
+    metadata: { warning: 'keep this original warning', truncated: true, actualInput: { original: 'retained' } } };
+  const invoke = vi.fn(async () => result);
+  const cell = await runScriptCell({ limits: { ...limits, maxTransferBytes: 2048 }, toolNames: ['host_large'], invoke,
+    onReceipt: async () => { durable = true; }, code: `
+      const result = await tools.host_large({});
+      let encoded = '', offset, pages = 0;
+      do { const page = await read_result(result.result_ref.callId, offset); encoded += page.text; pages++; offset = page.nextOffset; } while (offset !== undefined);
+      const original = JSON.parse(encoded);
+      return { status: result.status, isError: result.isError, warning: original.metadata.warning, truncated: original.metadata.truncated, length: original.content.length, pages };
+    ` });
+  expect(durable).toBe(true);
+  expect(cell.status, cell.error).toBe('completed');
+  expect(cell.value).toMatchObject({ status: 'settled', isError: true, warning: 'keep this original warning', truncated: true, length: result.content.length });
+  expect((cell.value as { pages: number }).pages).toBeGreaterThan(1);
+  expect(cell.receipts[0]?.result).toEqual(result);
+  expect(invoke).toHaveBeenCalledOnce();
+  const next = await runScriptCell({ limits, toolNames: [], invoke,
+    code: 'return await read_result(1);' });
+  expect(next.status).toBe('failed');
+  expect(next.error).toContain('from this cell');
+  expect(invoke).toHaveBeenCalledOnce();
 });
 
 it('rejects non-DTO host results without losing the original receipt', async () => {

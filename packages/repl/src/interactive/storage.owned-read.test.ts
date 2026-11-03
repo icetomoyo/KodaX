@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { expect, it, vi } from 'vitest';
 import { FileSessionStorage, type SessionReadOptions } from './storage.js';
 
@@ -64,6 +65,45 @@ it('waits for its own in-flight write before taking a strict read, retaining for
     await f.writing;
     expect(await result).toMatchObject({ data: { title: 'after' } });
   } finally { await f.close(); }
+});
+
+it.each(['boundary', 'cache'] as const)('waits for its owned writer before the first conversation %s read', async kind => {
+  const f = await heldWrite();
+  const read = (storage: FileSessionStorage) => kind === 'boundary'
+    ? storage.readConversationPageBoundary('owned-read')
+    : storage.readConversationPageCache('owned-read', { limit: 10, maxPageBytes: 65_536,
+      maxInlineEntryBytes: 32_768, reservedBytes: 0 });
+  let settled = false;
+  const reading = read(f.storage).then(value => { settled = true; return { value }; },
+    (error: unknown) => { settled = true; return { error }; });
+  try {
+    await expect(read(new FileSessionStorage({ sessionsDir: f.sessionsDir }))).rejects.toMatchObject({ code: 'data_changed' });
+    await new Promise(resolve => setTimeout(resolve, 25));
+    expect(settled).toBe(false);
+    f.release(); await f.writing;
+    expect(await reading).not.toHaveProperty('error');
+  } finally { await f.close(); }
+});
+
+it('recovers a cold history read after its topology lock owner exited, retaining live and unknown owners', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-topology-recovery-'));
+  const storage = new FileSessionStorage({ sessionsDir: root });
+  await storage.save('cold', { messages: [{ role: 'user', content: 'Preserved history' }] });
+  const lock = path.join(root, '.location-topology.lock');
+  try {
+    const owner = spawnSync(process.execPath, ['-e',
+      'require("node:fs").writeFileSync(process.argv[1], `${process.pid} 1234abcd\\n`); process.exit(1);', lock],
+    { windowsHide: true });
+    expect(owner.status).toBe(1);
+    await expect(new FileSessionStorage({ sessionsDir: root }).readConversationPageBoundary('cold')).resolves.toBeTruthy();
+    for (const raw of [`${process.pid} 1234abcd\n`, 'unknown-owner\n']) {
+      await fs.writeFile(lock, raw);
+      await fs.utimes(lock, new Date(0), new Date(0));
+      await expect(new FileSessionStorage({ sessionsDir: root }).readConversationPageBoundary('cold'))
+        .rejects.toMatchObject({ code: 'data_changed' });
+      expect(await fs.readFile(lock, 'utf8')).toBe(raw);
+    }
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
 it('waits for its own in-flight write before capturing a stable full snapshot', async () => {

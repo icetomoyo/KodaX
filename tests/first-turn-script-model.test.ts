@@ -7,6 +7,114 @@ import { KodaXBaseProvider, registerModelProvider, clearRuntimeModelProviders,
 import { runManagedTask } from '@kodax-ai/coding';
 import { FileSessionStorage } from '../packages/repl/src/interactive/storage.js';
 import type { ScriptCellResult } from '../packages/coding/src/agent-runtime/script/cell.js';
+import type { ExtensionRuntimeContract } from '../packages/coding/src/extensions/runtime-contract.js';
+
+it.each(['native', 'parallel', 'host', 'selected'] as const)('supports the %s tool path through the production Script-mode model', async (scenario) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-script-native-'));
+  const storage = new FileSessionStorage({ sessionsDir: path.join(root, 'sessions'), configHome: root, cwd: root });
+  let requests = 0;
+  const executed: string[] = [];
+  let independentReads = 0;
+  let releaseReads!: () => void;
+  const readsReady = new Promise<void>(resolve => { releaseReads = resolve; });
+  const hostCall = vi.fn(async (_provider: string, capability: string, input: Record<string, unknown>) => {
+    expect(capability).toBe('fixture:host_extract');
+    expect(input).toEqual({ value: 'native equivalence evidence' });
+    return { kind: 'tool' as const, content: 'host processed native equivalence evidence' };
+  });
+  const extensionRuntime: ExtensionRuntimeContract = {
+    listRunTools: () => [{ name: 'host_extract', description: 'Process supplied fixture text.', capabilityId: 'fixture:host_extract',
+      inputSchema: { type: 'object', properties: { value: { type: 'string' } }, required: ['value'] }, sideEffect: 'readonly', planModeAllowed: true }],
+    searchCapabilities: async () => [], describeCapability: async () => undefined,
+    executeCapability: hostCall, readCapability: async () => ({ kind: 'resource', content: '' }),
+    getCapabilityPrompt: async () => undefined, getCapabilityPromptContext: async () => undefined,
+  };
+  vi.stubEnv('KODAX_SCRIPT_TEST_KEY', 'offline');
+  vi.stubEnv('KODAX_HOME', root);
+  await writeFile(path.join(root, 'native.txt'), scenario === 'selected' ? 'private payload for selection\n'.repeat(300) : 'native equivalence evidence');
+  class NativeFixture extends KodaXBaseProvider {
+    readonly name = 'script-native-offline';
+    readonly supportsThinking = false;
+    protected readonly config = { apiKeyEnv: 'KODAX_SCRIPT_TEST_KEY', model: 'fixture', supportsThinking: false };
+    async stream(messages: KodaXMessage[], tools: KodaXToolDefinition[]): Promise<KodaXStreamResult> {
+      const step = requests++;
+      if (step > (scenario === 'selected' ? 2 : 1)) throw new Error('Unexpected model round');
+      expect(tools.map(tool => tool.name)).toContain('tool_call');
+      const description = tools.find(tool => tool.name === 'script_exec')!.description;
+      expect(description).toContain('Native tool_call');
+      expect(description).toContain('"name":"read"');
+      if (step === 1) {
+        if (scenario === 'selected') {
+          expect(JSON.stringify(messages)).not.toContain('private payload for selection');
+          expect(JSON.stringify(messages)).toContain('Showing lines');
+          expect(JSON.stringify(messages)).toContain('selected-count');
+        } else expect(JSON.stringify(messages)).toContain('native equivalence evidence');
+        const receipt = messages.flatMap(message => Array.isArray(message.content) ? message.content : [])
+          .find(block => block.type === 'tool_result' && block.tool_use_id === (scenario === 'native' ? 'native-read' : 'parallel-cell'));
+        expect(receipt?.type === 'tool_result' && receipt.is_error === true).toBe(false);
+        if (scenario === 'selected' && receipt?.type === 'tool_result') {
+          expect(tools.map(tool => tool.name)).toContain('script_read');
+          const cell = JSON.parse(String(receipt.content)) as { cellId: string };
+          expect(cell.cellId).toBeTypeOf('string');
+          return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [
+            { type: 'tool_use', id: 'original', name: 'script_read', input: { cell_id: cell.cellId, call_id: 1 } },
+          ] };
+        }
+      }
+      if (step === 2) expect(JSON.stringify(messages)).toContain('private payload for selection');
+      return { textBlocks: step ? [{ type: 'text', text: 'Read the file through the native tool.' }] : [], thinkingBlocks: [],
+        toolBlocks: step ? [] : scenario === 'native' ? [{ type: 'tool_use', id: 'native-read', name: 'tool_call',
+          input: { name: 'read', input: { path: 'native.txt' } } }]
+          : [{ type: 'tool_use', id: 'parallel-cell', name: 'script_exec', input: { ...(scenario === 'selected' ? { selected_output: true } : {}), code: scenario === 'selected'
+            ? "const source = await tools.read({path:'native.txt',limit:2}); return {'selected-count':source.content.split('\\n').length};"
+            : scenario === 'host'
+            ? "const value = await tools.read({path:'native.txt'}); return await tools.host_extract({value:value.content.split('native equivalence evidence')[1] === undefined ? 'missing' : 'native equivalence evidence'});"
+            :
+            "const reads = [tools.read({path:'native.txt'}), tools.read({path:'native.txt'})]; const write = tools.write({path:'after.txt',content:'after reads'}); const last = tools.read({path:'after.txt'}); return await Promise.all([...reads,write,last]);" } }],
+        stopReason: step ? 'end_turn' : 'tool_use' };
+    }
+  }
+  registerModelProvider('script-native-offline', () => new NativeFixture());
+  try {
+    const result = await runManagedTask({ provider: 'script-native-offline', workMode: 'script', agentMode: 'ama',
+      reasoningMode: 'off', lsp: false, session: { id: 'native-script-session', storage },
+      ...(scenario === 'host' ? { extensionRuntime } : {}),
+      context: { executionCwd: root, gitRoot: root, repoIntelligenceMode: 'off' },
+      events: { beforeToolExecute: async (name, input) => {
+        executed.push(name);
+        if (scenario === 'parallel' && name === 'read' && input.path === 'native.txt') {
+          if (++independentReads === 2) releaseReads();
+          await Promise.race([readsReady, new Promise(resolve => setTimeout(resolve, 150))]);
+          expect(independentReads).toBe(2);
+        }
+        return ['read', 'write', 'tool_call', 'host_extract', 'script_read'].includes(name);
+      } },
+    }, 'Read native.txt using the native tool path.');
+    expect(result.success).toBe(true);
+    expect(requests).toBe(scenario === 'selected' ? 3 : 2);
+    expect(executed).toContain('read');
+    expect(executed).not.toContain('script_exec');
+    const records = (await storage.load('native-script-session'))?.extensionRecords ?? [];
+    if (scenario === 'native') expect(records.filter(record => record.type === 'cell.started')).toEqual([]);
+    else if (scenario === 'parallel') {
+      expect(executed).toEqual(['read', 'read', 'write', 'read']);
+      expect(records.filter(record => record.type === 'call.settled')).toHaveLength(4);
+      expect(await readFile(path.join(root, 'after.txt'), 'utf8')).toBe('after reads');
+    } else if (scenario === 'host') {
+      expect(hostCall).toHaveBeenCalledOnce();
+      expect(executed).toEqual(['read', 'host_extract']);
+      expect(records.filter(record => record.type === 'call.settled')).toHaveLength(2);
+    } else {
+      expect(JSON.stringify(records.filter(record => record.type === 'call.settled'))).toContain('private payload for selection');
+      expect(executed.filter(name => name !== 'script_read')).toEqual(['read']);
+    }
+  } finally {
+    clearRuntimeModelProviders();
+    vi.unstubAllEnvs();
+    if (path.dirname(root) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('kodax-script-native-')) throw new Error('Unsafe fixture cleanup');
+    await rm(root, { recursive: true, force: true, maxRetries: 3 });
+  }
+}, 30_000);
 
 it.each([false, true].flatMap(persistedByHost => ['success', 'projected', 'denied', 'failed', 'cancelled'].map(scenario => ({ persistedByHost, scenario }))))(
   'assembles full contracts and settles $scenario (host persistence=$persistedByHost)', async ({ persistedByHost, scenario }) => {

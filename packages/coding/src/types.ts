@@ -2842,6 +2842,10 @@ export interface KodaXToolExecutionContext {
   resolveToolResultCapacityTokens?: (messages: readonly KodaXMessage[]) => number;
   /** Trusted side-channel for a tool-owned recovery artifact. */
   recordToolResultArtifact?: (toolCallId: string, outputPath: string) => void;
+  /** Trusted renderer separation of data from mandatory notes. Consumers must match the final content exactly. */
+  recordToolResultProjection?: (toolCallId: string, projection: { readonly content: string; readonly modelContent: string }) => void;
+  /** Optional Script durability fence, after permission hooks; execution uses this same input snapshot. */
+  beforeToolInvoke?: (call: { readonly id: string; readonly name: string; readonly input: Record<string, unknown> }) => Promise<void>;
   /** @internal Invocation-owned successful writes; reset by each execution path. */
   writtenFiles?: Map<string, KodaXWrittenFile>;
   /** Session-scoped directory for helper scripts and scratch outputs. */

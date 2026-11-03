@@ -1393,6 +1393,7 @@ describe('executeChildAgents', () => {
       { description: 'workflow-cb-base' },
       expect.objectContaining({ workflowWorktreeBaseDir: '/runs/p/r1/worktrees' }),
     );
+    expect(mockToolWorktreeRemove).not.toHaveBeenCalled();
   });
 
   it('passes active skill resource roots into child briefings', async () => {

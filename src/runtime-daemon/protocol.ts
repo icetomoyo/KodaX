@@ -142,6 +142,8 @@ export type RuntimeDaemonMethod =
   | 'mcp.tool.list'
   | 'extension.list'
   | 'tool.catalog'
+  | 'repo.intelligence.inspect'
+  | 'repo.intelligence.prewarm'
   | 'extension.reload'
   | 'command.list'
   | 'command.resolve'
@@ -304,6 +306,7 @@ export interface RuntimeDaemonError {
 }
 
 export type RuntimeDaemonErrorCode =
+  | 'execution_mode_mismatch'
   | 'execution_binding_unavailable'
   | 'execution_binding_rejected'
   | 'execution_binding_changed'
@@ -513,6 +516,8 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'mcp.tool.list',
   'extension.list',
   'tool.catalog',
+  'repo.intelligence.inspect',
+  'repo.intelligence.prewarm',
   'extension.reload',
   'command.list',
   'command.resolve',
@@ -692,6 +697,7 @@ const NOTIFICATION_METHODS: ReadonlySet<string> = new Set<RuntimeDaemonNotificat
 ]);
 
 const ERROR_CODES: ReadonlySet<string> = new Set<RuntimeDaemonErrorCode>([
+  'execution_mode_mismatch',
   'execution_binding_unavailable',
   'execution_binding_rejected',
   'execution_binding_changed',

@@ -16,6 +16,7 @@ import {
   runRestrictedWorkflowScript,
   validateRestrictedWorkflowSource,
   WorkflowScriptExecutionError,
+  runWorkflow,
 } from './index.js';
 import { DEFAULT_WORKFLOW_SCRIPT_SYNC_TIMEOUT_MS } from './script-runner.js';
 
@@ -73,6 +74,22 @@ function fakeWorkflowApi(): { wf: WorkflowApi; prompts: string[]; phases: string
 }
 
 describe('runRestrictedWorkflowScript', () => {
+  it('stops an idle script on its owning Runtime signal without another guest RPC', async () => {
+    const abort = new AbortController();
+    const module = createRestrictedWorkflowModule({
+      manifest: { name: 'idle-cancel', description: 'Cancel idle JS', phases: ['wait'],
+        readOnly: true, maxAgents: 1, maxConcurrency: 1, patterns: ['fan-out-and-synthesize'] },
+      source: 'async function run(wf) { wf.log("ready"); await new Promise(() => {}); return "done"; }',
+      timeoutMs: 500,
+    });
+    const outcome = await runWorkflow({ runId: 'idle-cancel', args: {}, signal: abort.signal,
+      backend: { spawn: async () => notImplemented('spawn'), wait: async () => notImplemented('wait'),
+        output: async () => notImplemented('output'), send: async () => {}, stop: async () => {} },
+      onEvent: event => { if (event.type === 'workflow_log') abort.abort(); },
+    }, module.run);
+    expect(outcome.ok).toBe(false);
+    expect(outcome.state.status).toBe('stopped');
+  });
   it('forwards compact briefing fields through the trusted host boundary', async () => {
     const { wf, inputs } = fakeWorkflowApi();
     await runRestrictedWorkflowScript({

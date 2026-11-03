@@ -28,7 +28,8 @@ import type {
   WorkflowOutcome,
 } from '@kodax-ai/agent';
 
-import { basename, dirname } from 'node:path';
+import { basename, join } from 'node:path';
+import { writeWorkflowJson } from './persistence.js';
 
 import { createCodingWorkflowBackend, type WorkflowChildOptions } from './agent-adapter.js';
 import { createNestedWorkflowResolver } from './nested-resolver.js';
@@ -41,8 +42,6 @@ import {
 } from './run-graph.js';
 import {
   workflowWorktreeBaseDir,
-  sweepWorkflowRunWorktrees,
-  pruneStaleWorkflowWorktrees,
   type WorktreeSweepDeps,
 } from './worktree-sweep.js';
 import { buildToolExecutionContext } from '../agent-runtime/tool-execution-context.js';
@@ -232,17 +231,16 @@ export async function runWorkflowModule(
 
   const now = opts.now ?? (() => Date.now());
 
-  // FEATURE_217 Layer 3 — reclaim worktrees orphaned by a previous hard kill
-  // before this run starts allocating its own. Fail-soft, never blocks the run.
-  // Git runs from the same cwd `toolWorktreeCreate` used (`executionCwd ?? gitRoot`)
-  // so `git worktree list/remove` resolves the repo even when `gitRoot` is unset.
+  // Age is not proof that a previous Host or another client stopped using a
+  // worktree. Reclamation belongs to the owning Host after resource settlement.
   const gitRoot = opts.ctx?.executionCwd ?? opts.ctx?.gitRoot;
-  await pruneStaleWorkflowWorktrees(
-    { workflowRunsRoot: dirname(opts.runDir), gitRoot },
-    { now, ...opts.worktreeSweepDeps },
-  );
 
   const writer = createRunGraphWriter(opts.runDir, { now });
+  if (opts.processMetadata?.hostMetadata) {
+    writeWorkflowJson(join(opts.runDir, 'host-owner.json'), {
+      version: 1, runId: opts.runId, hostMetadata: opts.processMetadata.hostMetadata,
+    });
+  }
   // FEATURE_246 resume telemetry — the resumed run id, derived from the prior run
   // dir (runDir === <baseDir>/<runId>). Threaded into BOTH the live tracker AND
   // run.json (below), so a snapshot reconstructed from persisted history also
@@ -295,47 +293,35 @@ export async function runWorkflowModule(
   };
 
   const startedAt = now();
-  let outcome: Awaited<ReturnType<typeof runWorkflow>>;
-  try {
-    outcome = await runWorkflow(
-      {
-        runId: opts.runId,
-        args: opts.args,
-        backend,
-        limits,
-        ...(opts.signal ? { signal: opts.signal } : {}),
-        summarizeResult: workflowResultSummary,
-        // FEATURE_246 Part E: one-level nested wf.workflow(name, args) resolves
-        // built-in + saved workflows for this run's project (cwd derived the
-        // same way as the worktree gitRoot above).
-        resolveWorkflowModule: createNestedWorkflowResolver(gitRoot ?? process.cwd()),
-        // FEATURE_246 Part D (ADR-048): every run writes its content-addressed
-        // result cache (so a later resume can replay it); on resume the cache is
-        // seeded from the prior run dir.
-        resultCache: createFsResultCache(
-          opts.runDir,
-          opts.resumeFromRunDir ? { readFrom: opts.resumeFromRunDir } : {},
-        ),
-        onEvent: (event) => {
-          writer.onEvent(event);
-          if (processTracker) {
-            opts.onWorkflowProcessEvent?.(processTracker.applyEvent(event));
-          }
-          opts.onEvent?.(event);
-        },
+  const outcome = await runWorkflow(
+    {
+      runId: opts.runId,
+      args: opts.args,
+      backend,
+      limits,
+      ...(opts.signal ? { signal: opts.signal } : {}),
+      summarizeResult: workflowResultSummary,
+      // FEATURE_246 Part E: one-level nested wf.workflow(name, args) resolves
+      // built-in + saved workflows for this run's project (cwd derived the
+      // same way as the worktree gitRoot above).
+      resolveWorkflowModule: createNestedWorkflowResolver(gitRoot ?? process.cwd()),
+      // FEATURE_246 Part D (ADR-048): every run writes its content-addressed
+      // result cache (so a later resume can replay it); on resume the cache is
+      // seeded from the prior run dir.
+      resultCache: createFsResultCache(
+        opts.runDir,
+        opts.resumeFromRunDir ? { readFrom: opts.resumeFromRunDir } : {},
+      ),
+      onEvent: (event) => {
+        writer.onEvent(event);
+        if (processTracker) {
+          opts.onWorkflowProcessEvent?.(processTracker.applyEvent(event));
+        }
+        opts.onEvent?.(event);
       },
-      (wf) => opts.module.run(wf, opts.args),
-    );
-  } finally {
-    // FEATURE_217 Layer 2 — reclaim any worktree still registered under this
-    // run's base dir on every terminal path (success / failure / cancel),
-    // covering aborted or spawn-without-wait children that skipped per-child
-    // cleanup. Fail-soft.
-    await sweepWorkflowRunWorktrees(
-      { baseDir: workflowWorktreeBaseDir(opts.runDir), gitRoot },
-      { now, ...opts.worktreeSweepDeps },
-    );
-  }
+    },
+    (wf) => opts.module.run(wf, opts.args),
+  );
 
   const resultSummary = outcome.ok ? workflowResultSummary(outcome.result) : undefined;
   writer.writeRunJson({
@@ -346,6 +332,7 @@ export async function runWorkflowModule(
     endedAt: now(),
     ...(scriptSnapshot ? { scriptSnapshot } : {}),
     ...(resultSummary !== undefined ? { resultSummary } : {}),
+    ...(outcome.ok ? { result: outcome.result } : {}),
     // Persist resumedFromRunId into run.json alongside any host processMetadata so a
     // snapshot reconstructed from disk (lifecycle-controller) reports the resume too.
     ...(opts.processMetadata !== undefined || resumedFromRunId !== undefined
