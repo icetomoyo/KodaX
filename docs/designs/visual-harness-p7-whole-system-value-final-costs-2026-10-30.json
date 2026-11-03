@@ -1,0 +1,332 @@
+{
+  "date": "2026-10-30",
+  "provider": "kimi-code",
+  "model": "kimi-for-coding",
+  "comparison": {
+    "B0": "1826cc228f299995fe5b22e608c7fbd90c3dc9ee",
+    "V": "4c0cf681a13e2b686f8b2b6bb012dde7c54ec023"
+  },
+  "unit": "Native API input (cache included once) + output tokens; not estimated tokens or invoice USD",
+  "qualityLockedBeforeCosts": true,
+  "rawSummary": {
+    "path": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\kodax-eval-dumps\\visual-harness\\whole-value-r2-qGeSqn\\final\\final-costs.json",
+    "sha256": "bfe190c46383c053e542adbd81a9fd01a5e6ffce9b55ef4399f62a49b5fce1ff"
+  },
+  "tasks": [
+    {
+      "caseId": "L",
+      "arm": "B0",
+      "sourceRevision": "r5a",
+      "actualUsage": {
+        "inputTokens": 180978,
+        "outputTokens": 3957,
+        "totalTokens": 184935,
+        "cachedReadTokens": 157489,
+        "cachedWriteTokens": 0
+      },
+      "providerCalls": 9,
+      "phaseTokens": {
+        "history-0": 0,
+        "history-1": 0,
+        "compaction": 0,
+        "main": 181348,
+        "background": 3587,
+        "auxiliary": 0,
+        "unclassified": 0
+      },
+      "imageBlocks": {
+        "sentImageBlocks": 28,
+        "uniqueKnownImagePayloads": 6,
+        "repeatedKnownImageBlocks": 22,
+        "unknownPayloadBlocks": 0,
+        "sentImagePayloadBytes": 3133260,
+        "meaning": "Counts wire image blocks; contact sheets count as one image, not their component frames. Byte-distinct resizes count as distinct payloads."
+      },
+      "foregroundDurationMs": 84099,
+      "settledDurationMs": 129650,
+      "durationMeaning": "Original foreground elapsed duration.",
+      "foregroundCompleted": true,
+      "backgroundSucceeded": true,
+      "backgroundError": null,
+      "interruptedThenContinued": false
+    },
+    {
+      "caseId": "L",
+      "arm": "V",
+      "sourceRevision": "r5",
+      "actualUsage": {
+        "inputTokens": 151518,
+        "outputTokens": 3638,
+        "totalTokens": 155156,
+        "cachedReadTokens": 127853,
+        "cachedWriteTokens": 0
+      },
+      "providerCalls": 8,
+      "phaseTokens": {
+        "history-0": 0,
+        "history-1": 0,
+        "compaction": 0,
+        "main": 152033,
+        "background": 3123,
+        "auxiliary": 0,
+        "unclassified": 0
+      },
+      "imageBlocks": {
+        "sentImageBlocks": 20,
+        "uniqueKnownImagePayloads": 5,
+        "repeatedKnownImageBlocks": 15,
+        "unknownPayloadBlocks": 0,
+        "sentImagePayloadBytes": 1997907,
+        "meaning": "Counts wire image blocks; contact sheets count as one image, not their component frames. Byte-distinct resizes count as distinct payloads."
+      },
+      "foregroundDurationMs": 95335,
+      "settledDurationMs": 116078,
+      "durationMeaning": "Original foreground elapsed duration.",
+      "foregroundCompleted": true,
+      "backgroundSucceeded": true,
+      "backgroundError": null,
+      "interruptedThenContinued": false
+    },
+    {
+      "caseId": "H",
+      "arm": "B0",
+      "sourceRevision": "r5d+r5f",
+      "actualUsage": {
+        "inputTokens": 669128,
+        "outputTokens": 14715,
+        "totalTokens": 683843,
+        "cachedReadTokens": 547568,
+        "cachedWriteTokens": 0
+      },
+      "providerCalls": 22,
+      "phaseTokens": {
+        "history-0": 184318,
+        "history-1": 351618,
+        "compaction": 14410,
+        "main": 124303,
+        "background": 9194,
+        "auxiliary": 0,
+        "unclassified": 0
+      },
+      "imageBlocks": {
+        "sentImageBlocks": 153,
+        "uniqueKnownImagePayloads": 11,
+        "repeatedKnownImageBlocks": 142,
+        "unknownPayloadBlocks": 0,
+        "sentImagePayloadBytes": 10220647,
+        "meaning": "Counts wire image blocks; contact sheets count as one image, not their component frames. Byte-distinct resizes count as distinct payloads."
+      },
+      "foregroundDurationMs": 418165,
+      "settledDurationMs": 456921,
+      "durationMeaning": "Sum of interrupted original and continuation foreground durations; human repair interval excluded. Interrupted/resumed versus uninterrupted comparison is limited.",
+      "foregroundCompleted": true,
+      "backgroundSucceeded": false,
+      "backgroundError": {
+        "kind": "background-error",
+        "phase": "main",
+        "message": "Truncated native response; automatic retry/continuation is outside the frozen call graph."
+      },
+      "interruptedThenContinued": true
+    },
+    {
+      "caseId": "H",
+      "arm": "V",
+      "sourceRevision": "r5c",
+      "actualUsage": {
+        "inputTokens": 245716,
+        "outputTokens": 10438,
+        "totalTokens": 256154,
+        "cachedReadTokens": 168318,
+        "cachedWriteTokens": 0
+      },
+      "providerCalls": 12,
+      "phaseTokens": {
+        "history-0": 80905,
+        "history-1": 86915,
+        "compaction": 9582,
+        "main": 69566,
+        "background": 9186,
+        "auxiliary": 0,
+        "unclassified": 0
+      },
+      "imageBlocks": {
+        "sentImageBlocks": 41,
+        "uniqueKnownImagePayloads": 11,
+        "repeatedKnownImageBlocks": 30,
+        "unknownPayloadBlocks": 0,
+        "sentImagePayloadBytes": 2748191,
+        "meaning": "Counts wire image blocks; contact sheets count as one image, not their component frames. Byte-distinct resizes count as distinct payloads."
+      },
+      "foregroundDurationMs": 265190,
+      "settledDurationMs": 303781,
+      "durationMeaning": "Original foreground elapsed duration.",
+      "foregroundCompleted": true,
+      "backgroundSucceeded": false,
+      "backgroundError": {
+        "kind": "background-error",
+        "phase": "main",
+        "message": "Truncated native response; automatic retry/continuation is outside the frozen call graph."
+      },
+      "interruptedThenContinued": false
+    },
+    {
+      "caseId": "V",
+      "arm": "B0",
+      "sourceRevision": "r5e",
+      "actualUsage": {
+        "inputTokens": 257745,
+        "outputTokens": 6087,
+        "totalTokens": 263832,
+        "cachedReadTokens": 209783,
+        "cachedWriteTokens": 0
+      },
+      "providerCalls": 8,
+      "phaseTokens": {
+        "history-0": 0,
+        "history-1": 0,
+        "compaction": 0,
+        "main": 260327,
+        "background": 3505,
+        "auxiliary": 0,
+        "unclassified": 0
+      },
+      "imageBlocks": {
+        "sentImageBlocks": 44,
+        "uniqueKnownImagePayloads": 9,
+        "repeatedKnownImageBlocks": 35,
+        "unknownPayloadBlocks": 0,
+        "sentImagePayloadBytes": 9760445,
+        "meaning": "Counts wire image blocks; contact sheets count as one image, not their component frames. Byte-distinct resizes count as distinct payloads."
+      },
+      "foregroundDurationMs": 171125,
+      "settledDurationMs": 208227,
+      "durationMeaning": "Original foreground elapsed duration.",
+      "foregroundCompleted": true,
+      "backgroundSucceeded": false,
+      "backgroundError": {
+        "kind": "background-error",
+        "phase": "main",
+        "message": "Truncated native response; automatic retry/continuation is outside the frozen call graph."
+      },
+      "interruptedThenContinued": false
+    },
+    {
+      "caseId": "V",
+      "arm": "V",
+      "sourceRevision": "r5e",
+      "actualUsage": {
+        "inputTokens": 516718,
+        "outputTokens": 9038,
+        "totalTokens": 525756,
+        "cachedReadTokens": 449087,
+        "cachedWriteTokens": 0
+      },
+      "providerCalls": 12,
+      "phaseTokens": {
+        "history-0": 0,
+        "history-1": 0,
+        "compaction": 0,
+        "main": 522797,
+        "background": 2959,
+        "auxiliary": 0,
+        "unclassified": 0
+      },
+      "imageBlocks": {
+        "sentImageBlocks": 88,
+        "uniqueKnownImagePayloads": 12,
+        "repeatedKnownImageBlocks": 76,
+        "unknownPayloadBlocks": 0,
+        "sentImagePayloadBytes": 21838152,
+        "meaning": "Counts wire image blocks; contact sheets count as one image, not their component frames. Byte-distinct resizes count as distinct payloads."
+      },
+      "foregroundDurationMs": 267635,
+      "settledDurationMs": 287277,
+      "durationMeaning": "Original foreground elapsed duration.",
+      "foregroundCompleted": true,
+      "backgroundSucceeded": true,
+      "backgroundError": null,
+      "interruptedThenContinued": false
+    }
+  ],
+  "pairs": [
+    {
+      "caseId": "L",
+      "totalTokenDelta": {
+        "absolute": -29779,
+        "percent": -16.1,
+        "exact": true,
+        "meaning": "V minus B0; percentage denominator is B0. Null means unavailable or zero/unknown denominator. Intervals are conservative bounds."
+      }
+    },
+    {
+      "caseId": "H",
+      "totalTokenDelta": {
+        "absolute": -427689,
+        "percent": -62.54,
+        "exact": true,
+        "meaning": "V minus B0; percentage denominator is B0. Null means unavailable or zero/unknown denominator. Intervals are conservative bounds."
+      }
+    },
+    {
+      "caseId": "V",
+      "totalTokenDelta": {
+        "absolute": 261924,
+        "percent": 99.28,
+        "exact": true,
+        "meaning": "V minus B0; percentage denominator is B0. Null means unavailable or zero/unknown denominator. Intervals are conservative bounds."
+      }
+    }
+  ],
+  "finalSixTasks": {
+    "calls": 71,
+    "actualUsage": {
+      "inputTokens": 2021803,
+      "outputTokens": 47873,
+      "totalTokens": 2069676,
+      "cachedReadTokens": 1660098,
+      "cachedWriteTokens": 0
+    },
+    "partOfCumulativeNotAdditional": true
+  },
+  "experimentCumulative": {
+    "scope": "whole-value r2 through r5f; excludes earlier method-placement experiments",
+    "attempts": 147,
+    "accountedCalls": 143,
+    "knownUsage": {
+      "inputTokens": 3550857,
+      "outputTokens": 82793,
+      "totalTokens": 3633650,
+      "cachedReadTokens": 2928023,
+      "cachedWriteTokens": 0
+    },
+    "missingUsageCalls": 4,
+    "exactTotal": null,
+    "reservedUnknownCallTokens": 44889,
+    "planningReservationTokens": 50000,
+    "planningIsNotProvenUpperBound": true,
+    "exactSpendUsd": null
+  },
+  "limitations": [
+    "One case per task/arm; exploratory whole-version comparison, not causal attribution or significance",
+    "L reused r5/r5a evidence has different auxiliary output cap; actual foreground/background costs separated",
+    "H B0 sums original interruption and same-session neutral continuation; includes all actual calls, excludes human waiting from active elapsed duration",
+    "All final task calls have actual final usage; earlier missing usage remains unknown in cumulative",
+    "Runtime delivery does not imply fully correct task answer or successful background learning",
+    "No explicit new visual tool used in final selected tasks; ordinary read/bash/render/decode routes available to both arms"
+  ],
+  "qualityEvidence": {
+    "L": {
+      "path": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\kodax-eval-dumps\\visual-harness\\whole-value-r2-qGeSqn\\final\\L-quality-review.json",
+      "sha256": "76b4350720fb72e5a58f33bb28b15682b6bc4de1f5a895aa65f59e19f16456ef"
+    },
+    "H": {
+      "path": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\kodax-eval-dumps\\visual-harness\\whole-value-r2-qGeSqn\\final\\H-quality-review.json",
+      "sha256": "10e8c236fd8ca2cd91283d5a66b3dc9abd6563672cab7310551c8f8b6b16ce99"
+    },
+    "V": {
+      "path": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\kodax-eval-dumps\\visual-harness\\whole-value-r2-qGeSqn\\final\\V-quality-review.json",
+      "sha256": "b54f030109bf5778935745278e7bc4dca36608a30f52e08c00bd381f562c71ac"
+    }
+  },
+  "rawAccountingIssues": []
+}

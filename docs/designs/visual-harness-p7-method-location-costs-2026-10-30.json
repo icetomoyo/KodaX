@@ -1,0 +1,655 @@
+{
+  "revision": "method-location-r1/autonomy-a1",
+  "sourceRevision": "4c0cf681a",
+  "rawDirectory": "C:/Users/ADMIN/AppData/Local/Temp/kodax-eval-dumps/visual-harness/method-location-r1-fBMzw3",
+  "productionModified": false,
+  "comparison": "Current candidate tool-description guidance vs same method moved to system in experimental wire only; not pre-visual B0.",
+  "route": {
+    "endpoint": "https://api.kimi.com/coding/v1/chat/completions",
+    "model": "kimi-for-coding",
+    "requestedThinking": "disabled",
+    "internalThinkingVerified": false,
+    "reportedDisplayName": "K2.8 Preview",
+    "reportedThinkingSupport": "only"
+  },
+  "budget": {
+    "maxCalls": 16,
+    "maxTokens": 350000,
+    "maxObservedExtraWalletUsd": 2,
+    "maxOutputTokens": 2048,
+    "timeoutMs": 60000
+  },
+  "actual": {
+    "calls": 13,
+    "tokens": 253637,
+    "input": 250875,
+    "output": 2762,
+    "metadata": 15,
+    "extraWalletCnyCents": 0,
+    "invoiceAndSubscriptionAllocation": null
+  },
+  "rows": [
+    {
+      "caseId": "alerts-0",
+      "condition": "full",
+      "status": "final",
+      "calls": 1,
+      "input": 18687,
+      "output": 289,
+      "total": 18976,
+      "apiMs": 11234,
+      "imageSends": 1,
+      "uniqueImages": 1,
+      "tools": []
+    },
+    {
+      "caseId": "alerts-1",
+      "condition": "full",
+      "status": "final",
+      "calls": 1,
+      "input": 18683,
+      "output": 22,
+      "total": 18705,
+      "apiMs": 8967,
+      "imageSends": 1,
+      "uniqueImages": 1,
+      "tools": []
+    },
+    {
+      "caseId": "alerts-0",
+      "condition": "crop",
+      "status": "final",
+      "calls": 1,
+      "input": 18897,
+      "output": 274,
+      "total": 19171,
+      "apiMs": 16085,
+      "imageSends": 2,
+      "uniqueImages": 2,
+      "tools": []
+    },
+    {
+      "caseId": "alerts-1",
+      "condition": "crop",
+      "status": "final",
+      "calls": 1,
+      "input": 18893,
+      "output": 327,
+      "total": 19220,
+      "apiMs": 10678,
+      "imageSends": 2,
+      "uniqueImages": 2,
+      "tools": []
+    },
+    {
+      "caseId": "routing-0",
+      "condition": "tool",
+      "status": "final",
+      "calls": 3,
+      "input": 59810,
+      "output": 684,
+      "total": 60494,
+      "apiMs": 24360,
+      "imageSends": 5,
+      "uniqueImages": 3,
+      "tools": [
+        "skill",
+        "visual_inspect"
+      ]
+    },
+    {
+      "caseId": "routing-0",
+      "condition": "task",
+      "status": "final",
+      "calls": 1,
+      "input": 18657,
+      "output": 236,
+      "total": 18893,
+      "apiMs": 13512,
+      "imageSends": 1,
+      "uniqueImages": 1,
+      "tools": []
+    },
+    {
+      "caseId": "routing-1",
+      "condition": "tool",
+      "status": "final",
+      "calls": 3,
+      "input": 58863,
+      "output": 485,
+      "total": 59348,
+      "apiMs": 16966,
+      "imageSends": 4,
+      "uniqueImages": 2,
+      "tools": [
+        "skill",
+        "visual_inspect"
+      ]
+    },
+    {
+      "caseId": "routing-1",
+      "condition": "task",
+      "status": "final",
+      "calls": 2,
+      "input": 38385,
+      "output": 445,
+      "total": 38830,
+      "apiMs": 13428,
+      "imageSends": 2,
+      "uniqueImages": 1,
+      "tools": [
+        "skill"
+      ]
+    }
+  ],
+  "sums": {
+    "tool": {
+      "calls": 6,
+      "total": 119842,
+      "apiMs": 41326,
+      "imageSends": 9
+    },
+    "task": {
+      "calls": 3,
+      "total": 57723,
+      "apiMs": 26940,
+      "imageSends": 3
+    }
+  },
+  "requests": [
+    {
+      "stem": "E-A-X-1",
+      "caseId": "alerts-0",
+      "condition": "full",
+      "usage": {
+        "prompt_tokens": 18687,
+        "completion_tokens": 289,
+        "total_tokens": 18976
+      },
+      "cachedInput": null,
+      "durationMs": 11234,
+      "images": [
+        {
+          "sha256": "f35509cf43bf0e5b2782240a40b44d8738bccb9e6e568967facf6a69eec2ec65",
+          "width": 2560,
+          "height": 1600,
+          "bytes": 200652
+        }
+      ],
+      "requestSha256": "cdfb65ad50bf7245fdf306bc4cd37cc97120a257fd1eb9e71532287257b164cc",
+      "responseSha256": "1014c8b6ec3e2a48b302ef6c98316002c5c9c4ef492a5e07bbebd65f487d8a52",
+      "model": "kimi-for-coding",
+      "finishReason": "stop"
+    },
+    {
+      "stem": "E-A-X-2",
+      "caseId": "alerts-1",
+      "condition": "full",
+      "usage": {
+        "prompt_tokens": 18683,
+        "completion_tokens": 22,
+        "total_tokens": 18705,
+        "cached_tokens": 13056,
+        "prompt_tokens_details": {
+          "cached_tokens": 13056
+        }
+      },
+      "cachedInput": 13056,
+      "durationMs": 8967,
+      "images": [
+        {
+          "sha256": "5acbb143996cc666233de95f5091aec6bf66413ebd199bb9b953899bfb1e8252",
+          "width": 2560,
+          "height": 1600,
+          "bytes": 200640
+        }
+      ],
+      "requestSha256": "761c1afd25f30ae2a0108f766f15ff547c320bf503e46b05f137f90d90cc14b1",
+      "responseSha256": "654866935f332ae064ef28e9f07375276bf9cd0930dfdecbe681c44b80b521ff",
+      "model": "kimi-for-coding",
+      "finishReason": "stop"
+    },
+    {
+      "stem": "E-A-Y-1",
+      "caseId": "alerts-0",
+      "condition": "crop",
+      "usage": {
+        "prompt_tokens": 18897,
+        "completion_tokens": 274,
+        "total_tokens": 19171,
+        "cached_tokens": 18637,
+        "prompt_tokens_details": {
+          "cached_tokens": 18637
+        }
+      },
+      "cachedInput": 18637,
+      "durationMs": 16085,
+      "images": [
+        {
+          "sha256": "f35509cf43bf0e5b2782240a40b44d8738bccb9e6e568967facf6a69eec2ec65",
+          "width": 2560,
+          "height": 1600,
+          "bytes": 200652
+        },
+        {
+          "sha256": "782ec14f1af6c32fa27dc1c3906131c9f7c95f9dce09585c7b19fec2739a8d2f",
+          "width": 1800,
+          "height": 59,
+          "bytes": 6423
+        }
+      ],
+      "requestSha256": "e01c949a5d5bcb58b6e5b0badc88bde1baf4c14852354ab22b1027089b614ce2",
+      "responseSha256": "544667de2e13fb73696ae4976823cc07d08de775dee0555a6dd88d4a52d71e6b",
+      "model": "kimi-for-coding",
+      "finishReason": "stop"
+    },
+    {
+      "stem": "E-A-Y-2",
+      "caseId": "alerts-1",
+      "condition": "crop",
+      "usage": {
+        "prompt_tokens": 18893,
+        "completion_tokens": 327,
+        "total_tokens": 19220,
+        "cached_tokens": 18633,
+        "prompt_tokens_details": {
+          "cached_tokens": 18633
+        }
+      },
+      "cachedInput": 18633,
+      "durationMs": 10678,
+      "images": [
+        {
+          "sha256": "5acbb143996cc666233de95f5091aec6bf66413ebd199bb9b953899bfb1e8252",
+          "width": 2560,
+          "height": 1600,
+          "bytes": 200640
+        },
+        {
+          "sha256": "843aa14914bb7b0203f5c10f65c4e4e8f63ee89a66a5220de25b50c3c0b372d3",
+          "width": 1800,
+          "height": 59,
+          "bytes": 6496
+        }
+      ],
+      "requestSha256": "1a6498c5da6bd2dd48c99e24376500a4cabd99697654c29e788bbfc107073ea7",
+      "responseSha256": "505d3e83ceb31e646fd77ebb252aa32e7a18226e19f38f0e9757f7d85f434468",
+      "model": "kimi-for-coding",
+      "finishReason": "stop"
+    },
+    {
+      "stem": "G-A-X-1",
+      "caseId": "routing-0",
+      "condition": "tool",
+      "usage": {
+        "prompt_tokens": 18657,
+        "completion_tokens": 99,
+        "total_tokens": 18756,
+        "cached_tokens": 13056,
+        "prompt_tokens_details": {
+          "cached_tokens": 13056
+        }
+      },
+      "cachedInput": 13056,
+      "durationMs": 7005,
+      "images": [
+        {
+          "sha256": "aa021a4785fbbcb5af2f3588a4392893432dc5874367f13afadf45be78f5ab08",
+          "width": 2560,
+          "height": 1600,
+          "bytes": 200847
+        }
+      ],
+      "requestSha256": "99cc3cbb1258aa9b685e92662499678c4d81ccdaff603876b8b469917d7b8cfd",
+      "responseSha256": "cfb96dc031c016ad2e5ed870504477b65479aaf638bc62bbb364a19134599fa2",
+      "model": "kimi-for-coding",
+      "finishReason": "tool_calls"
+    },
+    {
+      "stem": "G-A-X-2",
+      "caseId": "routing-0",
+      "condition": "tool",
+      "usage": {
+        "prompt_tokens": 19789,
+        "completion_tokens": 299,
+        "total_tokens": 20088,
+        "cached_tokens": 18645,
+        "prompt_tokens_details": {
+          "cached_tokens": 18645
+        }
+      },
+      "cachedInput": 18645,
+      "durationMs": 6792,
+      "images": [
+        {
+          "sha256": "aa021a4785fbbcb5af2f3588a4392893432dc5874367f13afadf45be78f5ab08",
+          "width": 2560,
+          "height": 1600,
+          "bytes": 200847
+        }
+      ],
+      "requestSha256": "7b823235adbef78f010569bbfe4cb3d2fe4d1e2e9e327a22e6f9c38b84f27db5",
+      "responseSha256": "759644817e92601f1afadc0828262a33c48b2c4fdd7054da3b25b97ab6bc49a2",
+      "model": "kimi-for-coding",
+      "finishReason": "tool_calls"
+    },
+    {
+      "stem": "G-A-X-3",
+      "caseId": "routing-0",
+      "condition": "tool",
+      "usage": {
+        "prompt_tokens": 21364,
+        "completion_tokens": 286,
+        "total_tokens": 21650,
+        "cached_tokens": 19712,
+        "prompt_tokens_details": {
+          "cached_tokens": 19712
+        }
+      },
+      "cachedInput": 19712,
+      "durationMs": 10563,
+      "images": [
+        {
+          "sha256": "aa021a4785fbbcb5af2f3588a4392893432dc5874367f13afadf45be78f5ab08",
+          "width": 2560,
+          "height": 1600,
+          "bytes": 200847
+        },
+        {
+          "sha256": "9f086ec7db3bfa36771766548793acc4dff5493864fb2d065875d4bd706950db",
+          "width": 2000,
+          "height": 80,
+          "bytes": 16352
+        },
+        {
+          "sha256": "e338f358e126481ba794e09832fd6cffc811c513b98bf52cbb72159b72a837d7",
+          "width": 2000,
+          "height": 220,
+          "bytes": 46957
+        }
+      ],
+      "requestSha256": "56669157f33acc00bf69442dc03942dd37360ee099d5c06bf29d545dfa856535",
+      "responseSha256": "8d66b2333e35582e3ebb723b64132bb910c7d1e6532667d0e4c66732d8e972e9",
+      "model": "kimi-for-coding",
+      "finishReason": "stop"
+    },
+    {
+      "stem": "G-A-Y-1",
+      "caseId": "routing-0",
+      "condition": "task",
+      "usage": {
+        "prompt_tokens": 18657,
+        "completion_tokens": 236,
+        "total_tokens": 18893,
+        "cached_tokens": 7168,
+        "prompt_tokens_details": {
+          "cached_tokens": 7168
+        }
+      },
+      "cachedInput": 7168,
+      "durationMs": 13512,
+      "images": [
+        {
+          "sha256": "aa021a4785fbbcb5af2f3588a4392893432dc5874367f13afadf45be78f5ab08",
+          "width": 2560,
+          "height": 1600,
+          "bytes": 200847
+        }
+      ],
+      "requestSha256": "493fad79dd5e68d434b3fe9a96564bf1526d27a4a2d16cadbd5595850ab345c0",
+      "responseSha256": "4e55b54228434574921164022378c02134bf117022996baf8dfd9b2afeb26dbd",
+      "model": "kimi-for-coding",
+      "finishReason": "stop"
+    },
+    {
+      "stem": "T-A-X-1",
+      "caseId": "routing-1",
+      "condition": "tool",
+      "usage": {
+        "prompt_tokens": 18660,
+        "completion_tokens": 90,
+        "total_tokens": 18750,
+        "cached_tokens": 13056,
+        "prompt_tokens_details": {
+          "cached_tokens": 13056
+        }
+      },
+      "cachedInput": 13056,
+      "durationMs": 5248,
+      "images": [
+        {
+          "sha256": "05bbe3bf24780b4f81e8dd1c2ef129b6e2979deaef492105925033c71a808b23",
+          "width": 2560,
+          "height": 1600,
+          "bytes": 200686
+        }
+      ],
+      "requestSha256": "a2a0eab01173cbb5a0544a0a5b97b1c78071b40ce5d27a38927ee12cb505e459",
+      "responseSha256": "0c34e7a89b9522aaee8e8a2aa95e075ae69fc39c5c6e6745de01dd530432f4ce",
+      "model": "kimi-for-coding",
+      "finishReason": "tool_calls"
+    },
+    {
+      "stem": "T-A-X-2",
+      "caseId": "routing-1",
+      "condition": "tool",
+      "usage": {
+        "prompt_tokens": 19775,
+        "completion_tokens": 219,
+        "total_tokens": 19994,
+        "cached_tokens": 18648,
+        "prompt_tokens_details": {
+          "cached_tokens": 18648
+        }
+      },
+      "cachedInput": 18648,
+      "durationMs": 5802,
+      "images": [
+        {
+          "sha256": "05bbe3bf24780b4f81e8dd1c2ef129b6e2979deaef492105925033c71a808b23",
+          "width": 2560,
+          "height": 1600,
+          "bytes": 200686
+        }
+      ],
+      "requestSha256": "00134a541523b6b278381778f1942e695f98092711cd9f0dc956978a0152c763",
+      "responseSha256": "ac43ef0bfdda924077eb7aba19c51f7eaede19b87a3bea02dfb3f8d7ab427343",
+      "model": "kimi-for-coding",
+      "finishReason": "tool_calls"
+    },
+    {
+      "stem": "T-A-X-3",
+      "caseId": "routing-1",
+      "condition": "tool",
+      "usage": {
+        "prompt_tokens": 20428,
+        "completion_tokens": 176,
+        "total_tokens": 20604,
+        "cached_tokens": 19712,
+        "prompt_tokens_details": {
+          "cached_tokens": 19712
+        }
+      },
+      "cachedInput": 19712,
+      "durationMs": 5916,
+      "images": [
+        {
+          "sha256": "05bbe3bf24780b4f81e8dd1c2ef129b6e2979deaef492105925033c71a808b23",
+          "width": 2560,
+          "height": 1600,
+          "bytes": 200686
+        },
+        {
+          "sha256": "ba9e49c9a8e281e8756479774e128715c4f3aee7490b07d5a8003b25315445d9",
+          "width": 2000,
+          "height": 36,
+          "bytes": 6587
+        }
+      ],
+      "requestSha256": "8838682c1f2eca93087c70b14e517664e874e358326239c5d70b6a3b67f10a1d",
+      "responseSha256": "e433c88fee1c150aab487ae4550f32bdb4d231de1a60b54a8e06ea1dcd4039dc",
+      "model": "kimi-for-coding",
+      "finishReason": "stop"
+    },
+    {
+      "stem": "T-A-Y-1",
+      "caseId": "routing-1",
+      "condition": "task",
+      "usage": {
+        "prompt_tokens": 18660,
+        "completion_tokens": 64,
+        "total_tokens": 18724,
+        "cached_tokens": 13056,
+        "prompt_tokens_details": {
+          "cached_tokens": 13056
+        }
+      },
+      "cachedInput": 13056,
+      "durationMs": 5347,
+      "images": [
+        {
+          "sha256": "05bbe3bf24780b4f81e8dd1c2ef129b6e2979deaef492105925033c71a808b23",
+          "width": 2560,
+          "height": 1600,
+          "bytes": 200686
+        }
+      ],
+      "requestSha256": "c95268ecf4b3429cec4d03cac08d5cfd1cdab2a77713797340b1b9cdd173b770",
+      "responseSha256": "9a702de3b144a10a397a57ab5fb82c28b62d80adf83d0ef1957291bcd246bc01",
+      "model": "kimi-for-coding",
+      "finishReason": "tool_calls"
+    },
+    {
+      "stem": "T-A-Y-2",
+      "caseId": "routing-1",
+      "condition": "task",
+      "usage": {
+        "prompt_tokens": 19725,
+        "completion_tokens": 381,
+        "total_tokens": 20106,
+        "cached_tokens": 18648,
+        "prompt_tokens_details": {
+          "cached_tokens": 18648
+        }
+      },
+      "cachedInput": 18648,
+      "durationMs": 8081,
+      "images": [
+        {
+          "sha256": "05bbe3bf24780b4f81e8dd1c2ef129b6e2979deaef492105925033c71a808b23",
+          "width": 2560,
+          "height": 1600,
+          "bytes": 200686
+        }
+      ],
+      "requestSha256": "9b0f9e3f8bef9d6c4b986b5e7e5bba0af5188eb9eb5e1bbaffab6a451cbf339d",
+      "responseSha256": "29a695cec9f76b9f60be1282ee2e2cde6d304f0f94de472d567e0d1b38fc3378",
+      "model": "kimi-for-coding",
+      "finishReason": "stop"
+    }
+  ],
+  "artifacts": [
+    {
+      "file": "plan.json",
+      "sha256": "5226f0313663a5d9619c7b0589e2a3736c57566fca29f51b6ce442366272ab0d"
+    },
+    {
+      "file": "freeze.calibration.json",
+      "sha256": "9dd87a8fbb0fb7d02acb057cb42584bd930836a0994d4f0503b76b3442817640"
+    },
+    {
+      "file": "freeze.autonomy.json",
+      "sha256": "5bc62b6091d2ee8dd6faf1e2c95441b6e5144991f9e3bb284a3838cd095c48c2"
+    },
+    {
+      "file": "autonomy-amendment.json",
+      "sha256": "34dd5533eb2c579cf3f1ca75f4b6f6492bfe188b4415ba442250fced3a5ffb96"
+    },
+    {
+      "file": "cases.json",
+      "sha256": "d9d544c6a62a49799c587553a9480b1f5d1a1aa80fe0add98785208274f6e0dc"
+    },
+    {
+      "file": "mapping.json",
+      "sha256": "54aa33dbb7b5602b26deee2d3a0a1c0d88bed59334e280a54174b62c798f2a2f"
+    },
+    {
+      "file": "calibration.blind.json",
+      "sha256": "6d7855b991dcfe603481a0a5bd586db915bcdafec52737273b8a4596199b8013"
+    },
+    {
+      "file": "calibration.reveal.json",
+      "sha256": "2a01977f70a8ad5555386e5d2be9e89719f83013740147c77aba35db83d75daf"
+    },
+    {
+      "file": "calibration.quality-review.json",
+      "sha256": "8c9985cdc513cb9898fa386ad0e59b641e319de03d8d71d1f29c19bc8d79f882"
+    },
+    {
+      "file": "autonomy.blind.json",
+      "sha256": "d2d18bda964347d74a7dcc3780ed546df3dc7e26c252bb32e4d44df66e1ddbd3"
+    },
+    {
+      "file": "autonomy.reveal.json",
+      "sha256": "dc895a63460ca80514f0a4b18d46b68c937037368f69b6f73cbcbecf0ba38519"
+    },
+    {
+      "file": "autonomy.quality-review.v0.json",
+      "sha256": "440ff75c8aad8cbed9bedf01fcc3cf9bb02bd16614a2df7497406cb9f2f197fc"
+    },
+    {
+      "file": "autonomy.quality-review.json",
+      "sha256": "290d381e9fdbf51126ba25f51bba8e17c07adaea3dcc05ac075855a52de3dc9a"
+    },
+    {
+      "file": "offline-feedback.json",
+      "sha256": "4a87bf341dccafc886695624a375698b9116ee6aa6a22b7a8db6c889ce601b0b"
+    },
+    {
+      "file": "calibration-correction.json",
+      "sha256": "2200211d2f92177f080ecbdfb51b71d01c455ad4fc96933d3dcfce9ed78d9f62"
+    },
+    {
+      "file": "verification.json",
+      "sha256": "4bc42b03ae443d2e6c6345a16594918e41a7d0ef6ddbde65c759bab4257ea9f4"
+    },
+    {
+      "file": "coverage/coverage-summary.json",
+      "sha256": "31d6c8bf8bc3b4db36f2692a60ad30a23a2eda5c2c0db994a6a8560cce6e8e77"
+    },
+    {
+      "file": "models.json",
+      "sha256": "17c3cd9cc0c5a6b3e5ba866e5d50b8186759795a2ea8e333bc29c6a2001cc8bb"
+    }
+  ],
+  "quality": {
+    "coreAutonomyCorrect": {
+      "tool": "2/2",
+      "task": "2/2"
+    },
+    "materialQualityGainEstablished": false,
+    "errorCorrectionEstablished": false,
+    "autonomousInspection": {
+      "tool": "2/2",
+      "task": "0/2"
+    },
+    "calibration": "90: both correct; 180: full process-only, crop final-correct with contradictory opening. No isolated evidence-benefit claim."
+  },
+  "limitations": [
+    "One generation per arm/state, synthetic table UI template; no statistical or cross-task generalization.",
+    "Controlled whole microtask only; no Runtime compaction/background review or old-B0 comparison.",
+    "Initial production replay retains existing visual-review instructions; one calibration no-tool response only announced skill loading.",
+    "Only API duration sums captured; full task wall time and tool durations were not separately instrumented.",
+    "No arbitrary multi-line or JSON-escaped method contract; helper validated for the exact single-line frozen method.",
+    "Cached input included in prompt input; missing fields stay null. Wallet observation is not subscription price or invoice.",
+    "Quality v0 ancillary visibility interpretation corrected before reveal/usage; both reviews retained.",
+    "Both randomized autonomy pairs happened to execute tool arm first; order was not counterbalanced."
+  ],
+  "review": {
+    "standardsRemaining": 0,
+    "specFound": 1,
+    "specResolved": 1,
+    "specRemaining": 0,
+    "resolved": "Response finishReason wording corrected: 5 tool_calls, 8 stop, no length."
+  }
+}

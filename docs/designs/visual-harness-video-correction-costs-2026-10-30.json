@@ -1,0 +1,113 @@
+{
+  "revision": "video-correction-r1",
+  "originalBaseline": {
+    "tokens": 263832,
+    "calls": 8,
+    "recovery": "correct21.3, other report errors remain"
+  },
+  "originalCandidate": {
+    "tokens": 525756,
+    "calls": 12,
+    "recovery": "incorrect(21.6,21.7]"
+  },
+  "arms": {
+    "frames": {
+      "actualUsage": {
+        "inputTokens": 81560,
+        "outputTokens": 1173,
+        "totalTokens": 82733,
+        "cachedReadTokens": 0,
+        "cachedWriteTokens": 0
+      },
+      "nativeStartUsage": {
+        "input_tokens": 81560,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "output_tokens": 0,
+        "service_tier": "standard",
+        "inference_geo": "not_available"
+      },
+      "actualCallCount": 1,
+      "durationMs": 32744,
+      "imagesSent": 15,
+      "addedOriginalFrames": 3,
+      "originalTaskTokens": 525756,
+      "correctedTaskTotalTokens": 608489,
+      "correctedTaskCallCount": 13,
+      "increaseVsOriginalCandidatePercent": 15.7360068168504,
+      "increaseVsOriginalBaselinePercent": 130.63502531914247,
+      "requestSha256": "218c82a6a31df72cd7c839d3c7c2b364391248d157d2c74e87effa709823984a",
+      "responseSha256": "11baaac302fdae61fee370ab24687ea4739a57bf6fc1a2a87bfc603cc1efc6f7",
+      "stopReason": "end_turn"
+    },
+    "guided": {
+      "actualUsage": {
+        "inputTokens": 81619,
+        "outputTokens": 1709,
+        "totalTokens": 83328,
+        "cachedReadTokens": 73216,
+        "cachedWriteTokens": 0
+      },
+      "nativeStartUsage": {
+        "input_tokens": 8403,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 73216,
+        "output_tokens": 0,
+        "service_tier": "standard",
+        "inference_geo": "not_available"
+      },
+      "actualCallCount": 1,
+      "durationMs": 46641,
+      "imagesSent": 15,
+      "addedOriginalFrames": 3,
+      "originalTaskTokens": 525756,
+      "correctedTaskTotalTokens": 609084,
+      "correctedTaskCallCount": 13,
+      "increaseVsOriginalCandidatePercent": 15.84917718485381,
+      "increaseVsOriginalBaselinePercent": 130.8605476212135,
+      "requestSha256": "8fcaa6afde6e274ace51c03eab688e12b892e068cdf3ee783fcee43b8a88e2c3",
+      "responseSha256": "c2c81258709969b6e7edff24a3dfdcde5ea7572fcad314bb391f59997a644031",
+      "stopReason": "end_turn"
+    }
+  },
+  "newExperimentTotal": {
+    "calls": 2,
+    "actualTokens": 166061,
+    "metadataRequests": 5,
+    "imagesSentIncludingRepeatedHistory": 30,
+    "distinctAddedFrames": 3,
+    "spendUsd": null,
+    "walletObservedDeltaCny": 0,
+    "walletCaveat": "Subscription actual dollar cost unknown; zero observed wallet movement is not proof of zero economic cost or zero eventual billing."
+  },
+  "guidedMinusFrames": {
+    "inputTokens": 59,
+    "outputTokens": 536,
+    "totalTokens": 595
+  },
+  "verification": "Independently reconstructed final SSE usage including cache tokens; each matches recorder; hashes match; two complete end_turn responses; no tool execution/retry.",
+  "sourceEvidence": {
+    "rawRoot": "C:/Users/ADMIN/AppData/Local/Temp/kodax-eval-dumps/visual-harness/whole-value-r2-qGeSqn/video-correction-r1",
+    "sourceCandidate": "4c0cf681a13e2b686f8b2b6bb012dde7c54ec023",
+    "videoSha256": "512b782f878ac7ef2e6b527b14f08cf9e01a424069632f76d7cf5d61a1419f99",
+    "originalInputSha256": "266a7e9f01ed5a7e49db5bf19b81186264604156d63583bcf171c1baf785703e",
+    "priorRequestSha256": "d061a5e258b4899de78675aefd8bbfd224a4fdd035b21bdf46368b397bc76b6f",
+    "frames": [
+      {
+        "frameIndex": 636,
+        "ptsSeconds": 21.2,
+        "sha256": "d6b39b2c11865829044f0829838e35f0c071859fe1397ced9a7c95404ca064a1"
+      },
+      {
+        "frameIndex": 639,
+        "ptsSeconds": 21.3,
+        "sha256": "ac8392165667f3cc3c4e0f03b0950807ab7a78fee9ccc527aefea3126dc174e4"
+      },
+      {
+        "frameIndex": 648,
+        "ptsSeconds": 21.6,
+        "sha256": "cb4f467aa7688ebbc6b7df67562bfadacc895e4ff9867d1a3fa12f760d3213c5"
+      }
+    ]
+  }
+}

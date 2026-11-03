@@ -1,0 +1,850 @@
+{
+  "date": "2026-10-30",
+  "scope": "whole-system task comparison r2-r4; derived evidence, not raw requests",
+  "sourceSummary": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\kodax-eval-dumps\\visual-harness\\whole-value-r2-qGeSqn\\r4\\final-costs.json",
+  "sourceSummarySha256": "1308e6ef20986ed0e8e3528259d30c914ec4983ee4700835c7852bd09de36671",
+  "qualityReviewedBeforeCostSummary": true,
+  "methodology": [
+    "Sum each provider/revision ledger once; result snapshots are never added as separate ledgers.",
+    "Native input includes uncached, cache-read and cache-creation exactly once. Output usage is cumulative, never a sum of SSE deltas.",
+    "A missing final usage makes the complete cell/experiment total unknown; known subtotals and explicit reservations remain separate.",
+    "Generation calls are physical attempts counted before dispatch. Raw image hashes describe sent payloads, not logical screenshots.",
+    "Runtime phase completed is reported separately from background review settlement/error. No quality judgment is inferred from exit status."
+  ],
+  "cumulative": {
+    "countedProviderAttempts": 64,
+    "accountedCallsInLedgers": 62,
+    "metadataCallsInLedgers": 97,
+    "usage": {
+      "complete": false,
+      "missingUsageCalls": 2,
+      "knownSubtotal": {
+        "inputTokens": 1309833,
+        "outputTokens": 29095,
+        "totalTokens": 1338928,
+        "cachedReadTokens": 1111117,
+        "cachedWriteTokens": 0
+      },
+      "actualWholeScope": null
+    },
+    "reservations": [
+      {
+        "provider": "deepseek",
+        "revision": "r3",
+        "id": "deepseek-L-1",
+        "ordinal": 1,
+        "kind": "main-or-history",
+        "actual": false,
+        "inputReported": 14964,
+        "maximumOutput": 8192,
+        "reservedTokenUpperBound": 23156,
+        "basis": "Complete initial input usage plus sent max_tokens; assumes provider honors its output cap. Not final billed usage.",
+        "estimatedSpendUpperBoundUsd": 0.014319599999999998
+      },
+      {
+        "provider": "kimi-code",
+        "revision": "r4",
+        "id": "kimi-code-L-1",
+        "ordinal": 9,
+        "kind": "background_episode_learning_review",
+        "actual": false,
+        "inputReported": 2341,
+        "maximumOutput": 8192,
+        "reservedTokenUpperBound": 10533,
+        "basis": "Complete initial input usage plus sent max_tokens; assumes provider honors its output cap. Not final billed usage."
+      }
+    ],
+    "reservedUnknownCallTokens": 33689,
+    "images": {
+      "sentImageBlocks": 172,
+      "uniqueKnownImagePayloads": 30,
+      "repeatedKnownImageBlocks": 142,
+      "unknownPayloadBlocks": 0,
+      "sentImagePayloadBytes": 22306676,
+      "meaning": "Counts wire image blocks; contact sheets count as one image, not their component frames. Byte-distinct resizes count as distinct payloads."
+    },
+    "exactWholeExperimentSpendUsd": null,
+    "knownUsagePlusReservationEnvelopeTokens": 1372617
+  },
+  "providers": [
+    {
+      "provider": "deepseek",
+      "countedProviderAttempts": 15,
+      "accountedCallsInLedger": 14,
+      "metadataCallsInLedgers": 0,
+      "usage": {
+        "complete": false,
+        "missingUsageCalls": 1,
+        "knownSubtotal": {
+          "inputTokens": 248352,
+          "outputTokens": 7804,
+          "totalTokens": 256156,
+          "cachedReadTokens": 219136,
+          "cachedWriteTokens": 0
+        },
+        "actualWholeScope": null
+      },
+      "images": {
+        "sentImageBlocks": 18,
+        "uniqueKnownImagePayloads": 4,
+        "repeatedKnownImageBlocks": 14,
+        "unknownPayloadBlocks": 0,
+        "sentImagePayloadBytes": 1701766,
+        "meaning": "Counts wire image blocks; contact sheets count as one image, not their component frames. Byte-distinct resizes count as distinct payloads."
+      },
+      "exactSpendUsd": null,
+      "knownRatedSpendUpperBoundUsd": 0.019444416,
+      "observedAccountDeltaCny": null,
+      "monetaryMeaning": "Peak-rate estimate for settled calls only, not an invoice; missing-call reservation is separate.",
+      "reservations": [
+        {
+          "revision": "r3",
+          "id": "deepseek-L-1",
+          "ordinal": 1,
+          "kind": "main-or-history",
+          "actual": false,
+          "inputReported": 14964,
+          "maximumOutput": 8192,
+          "reservedTokenUpperBound": 23156,
+          "basis": "Complete initial input usage plus sent max_tokens; assumes provider honors its output cap. Not final billed usage.",
+          "estimatedSpendUpperBoundUsd": 0.014319599999999998
+        }
+      ]
+    },
+    {
+      "provider": "kimi-code",
+      "countedProviderAttempts": 49,
+      "accountedCallsInLedger": 48,
+      "metadataCallsInLedgers": 97,
+      "usage": {
+        "complete": false,
+        "missingUsageCalls": 1,
+        "knownSubtotal": {
+          "inputTokens": 1061481,
+          "outputTokens": 21291,
+          "totalTokens": 1082772,
+          "cachedReadTokens": 891981,
+          "cachedWriteTokens": 0
+        },
+        "actualWholeScope": null
+      },
+      "images": {
+        "sentImageBlocks": 154,
+        "uniqueKnownImagePayloads": 30,
+        "repeatedKnownImageBlocks": 124,
+        "unknownPayloadBlocks": 0,
+        "sentImagePayloadBytes": 20604910,
+        "meaning": "Counts wire image blocks; contact sheets count as one image, not their component frames. Byte-distinct resizes count as distinct payloads."
+      },
+      "exactSpendUsd": null,
+      "knownRatedSpendUpperBoundUsd": null,
+      "observedAccountDeltaCny": 0,
+      "monetaryMeaning": "Subscription cost remains unknown; account delta is observed, may lag, and zero does not mean free. No post-timeout wallet probe was made.",
+      "reservations": [
+        {
+          "revision": "r4",
+          "id": "kimi-code-L-1",
+          "ordinal": 9,
+          "kind": "background_episode_learning_review",
+          "actual": false,
+          "inputReported": 2341,
+          "maximumOutput": 8192,
+          "reservedTokenUpperBound": 10533,
+          "basis": "Complete initial input usage plus sent max_tokens; assumes provider honors its output cap. Not final billed usage."
+        }
+      ]
+    }
+  ],
+  "cells": [
+    {
+      "revision": "r2",
+      "id": "deepseek-L-1",
+      "caseId": "L",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "executed": true,
+      "countedProviderAttempts": 8,
+      "accountedCallsInLedger": 8,
+      "usage": {
+        "complete": true,
+        "missingUsageCalls": 0,
+        "knownSubtotal": {
+          "inputTokens": 137968,
+          "outputTokens": 2068,
+          "totalTokens": 140036,
+          "cachedReadTokens": 119296,
+          "cachedWriteTokens": 0
+        },
+        "actualWholeScope": {
+          "inputTokens": 137968,
+          "outputTokens": 2068,
+          "totalTokens": 140036,
+          "cachedReadTokens": 119296,
+          "cachedWriteTokens": 0
+        }
+      },
+      "images": {
+        "sentImageBlocks": 8,
+        "uniqueKnownImagePayloads": 1,
+        "repeatedKnownImageBlocks": 7,
+        "unknownPayloadBlocks": 0,
+        "sentImagePayloadBytes": 705472,
+        "meaning": "Counts wire image blocks; contact sheets count as one image, not their component frames. Byte-distinct resizes count as distinct payloads."
+      },
+      "completion": {
+        "runtimePhase": "interrupted",
+        "foregroundCompleted": false,
+        "foregroundTerminalMs": null,
+        "recordedVisibleCompletionMs": null,
+        "runTerminalMs": 30067,
+        "queueSettlementMs": 30136,
+        "queueDrainedReported": true,
+        "backgroundFinalUsageComplete": true,
+        "unfinishedBackgroundAttempts": [],
+        "error": {
+          "name": "Error",
+          "message": "Eight main response slots exhausted."
+        },
+        "deliverablePresent": false,
+        "note": null
+      },
+      "providerDurationKnownSumMs": 14803,
+      "providerDurationMissingCalls": 0,
+      "arm": "B0"
+    },
+    {
+      "revision": "r2",
+      "id": "deepseek-L-2",
+      "caseId": "L",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "executed": true,
+      "countedProviderAttempts": 6,
+      "accountedCallsInLedger": 6,
+      "usage": {
+        "complete": true,
+        "missingUsageCalls": 0,
+        "knownSubtotal": {
+          "inputTokens": 110384,
+          "outputTokens": 5736,
+          "totalTokens": 116120,
+          "cachedReadTokens": 99840,
+          "cachedWriteTokens": 0
+        },
+        "actualWholeScope": {
+          "inputTokens": 110384,
+          "outputTokens": 5736,
+          "totalTokens": 116120,
+          "cachedReadTokens": 99840,
+          "cachedWriteTokens": 0
+        }
+      },
+      "images": {
+        "sentImageBlocks": 9,
+        "uniqueKnownImagePayloads": 4,
+        "repeatedKnownImageBlocks": 5,
+        "unknownPayloadBlocks": 0,
+        "sentImagePayloadBytes": 908110,
+        "meaning": "Counts wire image blocks; contact sheets count as one image, not their component frames. Byte-distinct resizes count as distinct payloads."
+      },
+      "completion": {
+        "runtimePhase": "interrupted",
+        "foregroundCompleted": false,
+        "foregroundTerminalMs": null,
+        "recordedVisibleCompletionMs": null,
+        "runTerminalMs": 43912,
+        "queueSettlementMs": 43979,
+        "queueDrainedReported": true,
+        "backgroundFinalUsageComplete": true,
+        "unfinishedBackgroundAttempts": [],
+        "error": {
+          "name": "Error",
+          "message": "Truncated native response; automatic retry/continuation is outside the frozen call graph."
+        },
+        "deliverablePresent": false,
+        "note": null
+      },
+      "providerDurationKnownSumMs": 36690,
+      "providerDurationMissingCalls": 0,
+      "arm": "V"
+    },
+    {
+      "revision": "r2",
+      "id": "kimi-code-L-1",
+      "caseId": "L",
+      "provider": "kimi-code",
+      "model": "kimi-for-coding",
+      "executed": true,
+      "countedProviderAttempts": 8,
+      "accountedCallsInLedger": 8,
+      "usage": {
+        "complete": true,
+        "missingUsageCalls": 0,
+        "knownSubtotal": {
+          "inputTokens": 147949,
+          "outputTokens": 2696,
+          "totalTokens": 150645,
+          "cachedReadTokens": 123722,
+          "cachedWriteTokens": 0
+        },
+        "actualWholeScope": {
+          "inputTokens": 147949,
+          "outputTokens": 2696,
+          "totalTokens": 150645,
+          "cachedReadTokens": 123722,
+          "cachedWriteTokens": 0
+        }
+      },
+      "images": {
+        "sentImageBlocks": 21,
+        "uniqueKnownImagePayloads": 5,
+        "repeatedKnownImageBlocks": 16,
+        "unknownPayloadBlocks": 0,
+        "sentImagePayloadBytes": 1866865,
+        "meaning": "Counts wire image blocks; contact sheets count as one image, not their component frames. Byte-distinct resizes count as distinct payloads."
+      },
+      "completion": {
+        "runtimePhase": "interrupted",
+        "foregroundCompleted": false,
+        "foregroundTerminalMs": null,
+        "recordedVisibleCompletionMs": null,
+        "runTerminalMs": 91473,
+        "queueSettlementMs": 91540,
+        "queueDrainedReported": true,
+        "backgroundFinalUsageComplete": true,
+        "unfinishedBackgroundAttempts": [],
+        "error": {
+          "name": "Error",
+          "message": "Eight main response slots exhausted."
+        },
+        "deliverablePresent": false,
+        "note": null
+      },
+      "providerDurationKnownSumMs": 80014,
+      "providerDurationMissingCalls": 0,
+      "arm": "B0"
+    },
+    {
+      "revision": "r2",
+      "id": "kimi-code-L-2",
+      "caseId": "L",
+      "provider": "kimi-code",
+      "model": "kimi-for-coding",
+      "executed": true,
+      "countedProviderAttempts": 8,
+      "accountedCallsInLedger": 8,
+      "usage": {
+        "complete": true,
+        "missingUsageCalls": 0,
+        "knownSubtotal": {
+          "inputTokens": 143504,
+          "outputTokens": 4847,
+          "totalTokens": 148351,
+          "cachedReadTokens": 124057,
+          "cachedWriteTokens": 0
+        },
+        "actualWholeScope": {
+          "inputTokens": 143504,
+          "outputTokens": 4847,
+          "totalTokens": 148351,
+          "cachedReadTokens": 124057,
+          "cachedWriteTokens": 0
+        }
+      },
+      "images": {
+        "sentImageBlocks": 16,
+        "uniqueKnownImagePayloads": 6,
+        "repeatedKnownImageBlocks": 10,
+        "unknownPayloadBlocks": 0,
+        "sentImagePayloadBytes": 1283715,
+        "meaning": "Counts wire image blocks; contact sheets count as one image, not their component frames. Byte-distinct resizes count as distinct payloads."
+      },
+      "completion": {
+        "runtimePhase": "interrupted",
+        "foregroundCompleted": false,
+        "foregroundTerminalMs": null,
+        "recordedVisibleCompletionMs": null,
+        "runTerminalMs": 185198,
+        "queueSettlementMs": 185268,
+        "queueDrainedReported": true,
+        "backgroundFinalUsageComplete": true,
+        "unfinishedBackgroundAttempts": [],
+        "error": {
+          "name": "Error",
+          "message": "Eight main response slots exhausted."
+        },
+        "deliverablePresent": true,
+        "note": null
+      },
+      "providerDurationKnownSumMs": 175787,
+      "providerDurationMissingCalls": 0,
+      "arm": "V"
+    },
+    {
+      "revision": "r3",
+      "id": "deepseek-L-1",
+      "caseId": "L",
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "executed": true,
+      "countedProviderAttempts": 1,
+      "accountedCallsInLedger": 0,
+      "usage": {
+        "complete": false,
+        "missingUsageCalls": 1,
+        "knownSubtotal": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "totalTokens": 0,
+          "cachedReadTokens": 0,
+          "cachedWriteTokens": 0
+        },
+        "actualWholeScope": null
+      },
+      "images": {
+        "sentImageBlocks": 1,
+        "uniqueKnownImagePayloads": 1,
+        "repeatedKnownImageBlocks": 0,
+        "unknownPayloadBlocks": 0,
+        "sentImagePayloadBytes": 88184,
+        "meaning": "Counts wire image blocks; contact sheets count as one image, not their component frames. Byte-distinct resizes count as distinct payloads."
+      },
+      "completion": {
+        "runtimePhase": null,
+        "foregroundCompleted": false,
+        "foregroundTerminalMs": null,
+        "recordedVisibleCompletionMs": null,
+        "runTerminalMs": null,
+        "queueSettlementMs": null,
+        "queueDrainedReported": null,
+        "backgroundFinalUsageComplete": true,
+        "unfinishedBackgroundAttempts": [],
+        "error": {
+          "name": "HostStreamDeadline",
+          "message": "Native SSE kept sending keep-alive beyond the frozen 60-second request deadline; AbortSignal did not end body iteration. Host stopped only this launcher process tree."
+        },
+        "deliverablePresent": false,
+        "note": null
+      },
+      "providerDurationKnownSumMs": 0,
+      "providerDurationMissingCalls": 1,
+      "arm": "B0"
+    },
+    {
+      "revision": "r3",
+      "id": "kimi-code-H-1",
+      "caseId": "H",
+      "provider": "kimi-code",
+      "model": "kimi-for-coding",
+      "executed": true,
+      "countedProviderAttempts": 1,
+      "accountedCallsInLedger": 1,
+      "usage": {
+        "complete": true,
+        "missingUsageCalls": 0,
+        "knownSubtotal": {
+          "inputTokens": 23201,
+          "outputTokens": 302,
+          "totalTokens": 23503,
+          "cachedReadTokens": 7936,
+          "cachedWriteTokens": 0
+        },
+        "actualWholeScope": {
+          "inputTokens": 23201,
+          "outputTokens": 302,
+          "totalTokens": 23503,
+          "cachedReadTokens": 7936,
+          "cachedWriteTokens": 0
+        }
+      },
+      "images": {
+        "sentImageBlocks": 5,
+        "uniqueKnownImagePayloads": 5,
+        "repeatedKnownImageBlocks": 0,
+        "unknownPayloadBlocks": 0,
+        "sentImagePayloadBytes": 336355,
+        "meaning": "Counts wire image blocks; contact sheets count as one image, not their component frames. Byte-distinct resizes count as distinct payloads."
+      },
+      "completion": {
+        "runtimePhase": null,
+        "foregroundCompleted": false,
+        "foregroundTerminalMs": null,
+        "recordedVisibleCompletionMs": null,
+        "runTerminalMs": null,
+        "queueSettlementMs": null,
+        "queueDrainedReported": null,
+        "backgroundFinalUsageComplete": true,
+        "unfinishedBackgroundAttempts": [],
+        "error": {
+          "name": "Error",
+          "message": "One history response slot exhausted."
+        },
+        "deliverablePresent": false,
+        "note": null
+      },
+      "providerDurationKnownSumMs": 16098,
+      "providerDurationMissingCalls": 0,
+      "arm": "B0"
+    },
+    {
+      "revision": "r3",
+      "id": "kimi-code-L-1",
+      "caseId": "L",
+      "provider": "kimi-code",
+      "model": "kimi-for-coding",
+      "executed": true,
+      "countedProviderAttempts": 7,
+      "accountedCallsInLedger": 7,
+      "usage": {
+        "complete": true,
+        "missingUsageCalls": 0,
+        "knownSubtotal": {
+          "inputTokens": 123249,
+          "outputTokens": 3118,
+          "totalTokens": 126367,
+          "cachedReadTokens": 102289,
+          "cachedWriteTokens": 0
+        },
+        "actualWholeScope": {
+          "inputTokens": 123249,
+          "outputTokens": 3118,
+          "totalTokens": 126367,
+          "cachedReadTokens": 102289,
+          "cachedWriteTokens": 0
+        }
+      },
+      "images": {
+        "sentImageBlocks": 14,
+        "uniqueKnownImagePayloads": 4,
+        "repeatedKnownImageBlocks": 10,
+        "unknownPayloadBlocks": 0,
+        "sentImagePayloadBytes": 1521541,
+        "meaning": "Counts wire image blocks; contact sheets count as one image, not their component frames. Byte-distinct resizes count as distinct payloads."
+      },
+      "completion": {
+        "runtimePhase": "completed",
+        "foregroundCompleted": true,
+        "foregroundTerminalMs": 102523,
+        "recordedVisibleCompletionMs": 102523,
+        "runTerminalMs": 102523,
+        "queueSettlementMs": 132613,
+        "queueDrainedReported": true,
+        "backgroundFinalUsageComplete": true,
+        "unfinishedBackgroundAttempts": [],
+        "error": null,
+        "deliverablePresent": true,
+        "note": null
+      },
+      "providerDurationKnownSumMs": 126441,
+      "providerDurationMissingCalls": 0,
+      "arm": "V"
+    },
+    {
+      "revision": "r3",
+      "id": "kimi-code-L-2",
+      "caseId": "L",
+      "provider": "kimi-code",
+      "model": "kimi-for-coding",
+      "executed": true,
+      "countedProviderAttempts": 8,
+      "accountedCallsInLedger": 8,
+      "usage": {
+        "complete": true,
+        "missingUsageCalls": 0,
+        "knownSubtotal": {
+          "inputTokens": 170118,
+          "outputTokens": 3362,
+          "totalTokens": 173480,
+          "cachedReadTokens": 150206,
+          "cachedWriteTokens": 0
+        },
+        "actualWholeScope": {
+          "inputTokens": 170118,
+          "outputTokens": 3362,
+          "totalTokens": 173480,
+          "cachedReadTokens": 150206,
+          "cachedWriteTokens": 0
+        }
+      },
+      "images": {
+        "sentImageBlocks": 22,
+        "uniqueKnownImagePayloads": 4,
+        "repeatedKnownImageBlocks": 18,
+        "unknownPayloadBlocks": 0,
+        "sentImagePayloadBytes": 2455921,
+        "meaning": "Counts wire image blocks; contact sheets count as one image, not their component frames. Byte-distinct resizes count as distinct payloads."
+      },
+      "completion": {
+        "runtimePhase": "interrupted",
+        "foregroundCompleted": false,
+        "foregroundTerminalMs": null,
+        "recordedVisibleCompletionMs": null,
+        "runTerminalMs": 103725,
+        "queueSettlementMs": 103791,
+        "queueDrainedReported": true,
+        "backgroundFinalUsageComplete": true,
+        "unfinishedBackgroundAttempts": [],
+        "error": {
+          "name": "Error",
+          "message": "Eight main response slots exhausted."
+        },
+        "deliverablePresent": false,
+        "note": null
+      },
+      "providerDurationKnownSumMs": 95079,
+      "providerDurationMissingCalls": 0,
+      "arm": "B0"
+    },
+    {
+      "revision": "r3",
+      "id": "kimi-code-V-1",
+      "caseId": "V",
+      "provider": "kimi-code",
+      "model": "kimi-for-coding",
+      "executed": true,
+      "countedProviderAttempts": 8,
+      "accountedCallsInLedger": 8,
+      "usage": {
+        "complete": true,
+        "missingUsageCalls": 0,
+        "knownSubtotal": {
+          "inputTokens": 273781,
+          "outputTokens": 4071,
+          "totalTokens": 277852,
+          "cachedReadTokens": 224473,
+          "cachedWriteTokens": 0
+        },
+        "actualWholeScope": {
+          "inputTokens": 273781,
+          "outputTokens": 4071,
+          "totalTokens": 277852,
+          "cachedReadTokens": 224473,
+          "cachedWriteTokens": 0
+        }
+      },
+      "images": {
+        "sentImageBlocks": 48,
+        "uniqueKnownImagePayloads": 10,
+        "repeatedKnownImageBlocks": 38,
+        "unknownPayloadBlocks": 0,
+        "sentImagePayloadBytes": 10508144,
+        "meaning": "Counts wire image blocks; contact sheets count as one image, not their component frames. Byte-distinct resizes count as distinct payloads."
+      },
+      "completion": {
+        "runtimePhase": "interrupted",
+        "foregroundCompleted": false,
+        "foregroundTerminalMs": null,
+        "recordedVisibleCompletionMs": null,
+        "runTerminalMs": 138503,
+        "queueSettlementMs": 138571,
+        "queueDrainedReported": true,
+        "backgroundFinalUsageComplete": true,
+        "unfinishedBackgroundAttempts": [],
+        "error": {
+          "name": "Error",
+          "message": "Token budget reached after actual usage settlement."
+        },
+        "deliverablePresent": false,
+        "note": null
+      },
+      "providerDurationKnownSumMs": 125760,
+      "providerDurationMissingCalls": 0,
+      "arm": "V"
+    },
+    {
+      "revision": "r4",
+      "id": "kimi-code-L-1",
+      "caseId": "L",
+      "provider": "kimi-code",
+      "model": "kimi-for-coding",
+      "executed": true,
+      "countedProviderAttempts": 9,
+      "accountedCallsInLedger": 8,
+      "usage": {
+        "complete": false,
+        "missingUsageCalls": 1,
+        "knownSubtotal": {
+          "inputTokens": 179679,
+          "outputTokens": 2895,
+          "totalTokens": 182574,
+          "cachedReadTokens": 159298,
+          "cachedWriteTokens": 0
+        },
+        "actualWholeScope": null
+      },
+      "images": {
+        "sentImageBlocks": 28,
+        "uniqueKnownImagePayloads": 6,
+        "repeatedKnownImageBlocks": 22,
+        "unknownPayloadBlocks": 0,
+        "sentImagePayloadBytes": 2632369,
+        "meaning": "Counts wire image blocks; contact sheets count as one image, not their component frames. Byte-distinct resizes count as distinct payloads."
+      },
+      "completion": {
+        "runtimePhase": "completed",
+        "foregroundCompleted": true,
+        "foregroundTerminalMs": 131145,
+        "recordedVisibleCompletionMs": null,
+        "runTerminalMs": 131145,
+        "queueSettlementMs": 193048,
+        "queueDrainedReported": true,
+        "backgroundFinalUsageComplete": false,
+        "unfinishedBackgroundAttempts": [
+          9
+        ],
+        "error": {
+          "name": "Error",
+          "message": "The operation was aborted due to timeout"
+        },
+        "deliverablePresent": true,
+        "note": "Foreground runtime completed; a later background review failed. Queue drained does not mean background succeeded."
+      },
+      "providerDurationKnownSumMs": 182643,
+      "providerDurationMissingCalls": 0,
+      "arm": "V"
+    }
+  ],
+  "unexecutedCells": [
+    {
+      "revision": "r2",
+      "id": "deepseek-H-1",
+      "arm": "V",
+      "actualTaskUsage": null,
+      "status": "no provider attempt; not a behavior sample"
+    },
+    {
+      "revision": "r2",
+      "id": "deepseek-H-2",
+      "arm": "B0",
+      "actualTaskUsage": null,
+      "status": "no provider attempt; not a behavior sample"
+    },
+    {
+      "revision": "r2",
+      "id": "deepseek-V-1",
+      "arm": "B0",
+      "actualTaskUsage": null,
+      "status": "no provider attempt; not a behavior sample"
+    },
+    {
+      "revision": "r2",
+      "id": "deepseek-V-2",
+      "arm": "V",
+      "actualTaskUsage": null,
+      "status": "no provider attempt; not a behavior sample"
+    },
+    {
+      "revision": "r2",
+      "id": "kimi-code-H-1",
+      "arm": "V",
+      "actualTaskUsage": null,
+      "status": "no provider attempt; not a behavior sample"
+    },
+    {
+      "revision": "r2",
+      "id": "kimi-code-H-2",
+      "arm": "B0",
+      "actualTaskUsage": null,
+      "status": "no provider attempt; not a behavior sample"
+    },
+    {
+      "revision": "r2",
+      "id": "kimi-code-V-1",
+      "arm": "B0",
+      "actualTaskUsage": null,
+      "status": "no provider attempt; not a behavior sample"
+    },
+    {
+      "revision": "r2",
+      "id": "kimi-code-V-2",
+      "arm": "V",
+      "actualTaskUsage": null,
+      "status": "no provider attempt; not a behavior sample"
+    },
+    {
+      "revision": "r3",
+      "id": "deepseek-H-1",
+      "arm": "V",
+      "actualTaskUsage": null,
+      "status": "no provider attempt; not a behavior sample"
+    },
+    {
+      "revision": "r3",
+      "id": "deepseek-H-2",
+      "arm": "B0",
+      "actualTaskUsage": null,
+      "status": "no provider attempt; not a behavior sample"
+    },
+    {
+      "revision": "r3",
+      "id": "deepseek-L-2",
+      "arm": "V",
+      "actualTaskUsage": null,
+      "status": "no provider attempt; not a behavior sample"
+    },
+    {
+      "revision": "r3",
+      "id": "deepseek-V-1",
+      "arm": "B0",
+      "actualTaskUsage": null,
+      "status": "no provider attempt; not a behavior sample"
+    },
+    {
+      "revision": "r3",
+      "id": "deepseek-V-2",
+      "arm": "V",
+      "actualTaskUsage": null,
+      "status": "no provider attempt; not a behavior sample"
+    },
+    {
+      "revision": "r3",
+      "id": "kimi-code-H-2",
+      "arm": "V",
+      "actualTaskUsage": null,
+      "status": "no provider attempt; not a behavior sample"
+    },
+    {
+      "revision": "r3",
+      "id": "kimi-code-V-2",
+      "arm": "B0",
+      "actualTaskUsage": null,
+      "status": "no provider attempt; not a behavior sample"
+    },
+    {
+      "revision": "r4",
+      "id": "kimi-code-H-1",
+      "arm": "B0",
+      "actualTaskUsage": null,
+      "status": "no provider attempt; not a behavior sample"
+    },
+    {
+      "revision": "r4",
+      "id": "kimi-code-H-2",
+      "arm": "V",
+      "actualTaskUsage": null,
+      "status": "no provider attempt; not a behavior sample"
+    },
+    {
+      "revision": "r4",
+      "id": "kimi-code-L-2",
+      "arm": "B0",
+      "actualTaskUsage": null,
+      "status": "no provider attempt; not a behavior sample"
+    },
+    {
+      "revision": "r4",
+      "id": "kimi-code-V-1",
+      "arm": "V",
+      "actualTaskUsage": null,
+      "status": "no provider attempt; not a behavior sample"
+    },
+    {
+      "revision": "r4",
+      "id": "kimi-code-V-2",
+      "arm": "B0",
+      "actualTaskUsage": null,
+      "status": "no provider attempt; not a behavior sample"
+    }
+  ],
+  "consistencyIssues": []
+}

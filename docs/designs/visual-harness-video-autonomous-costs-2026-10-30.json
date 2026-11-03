@@ -1,0 +1,232 @@
+{
+  "revision": "video-autonomous-r1",
+  "sourceCandidate": "4c0cf681a13e2b686f8b2b6bb012dde7c54ec023",
+  "baselineRevision": "1826cc228f299995fe5b22e608c7fbd90c3dc9ee",
+  "rawRoot": "C:/Users/ADMIN/AppData/Local/Temp/kodax-eval-dumps/visual-harness/whole-value-r2-qGeSqn/video-autonomous-r1",
+  "actualTokens": 325979,
+  "mainTokens": 322388,
+  "auxiliaryTokens": 3591,
+  "calls": 9,
+  "mainResponses": 8,
+  "tools": 18,
+  "imagesSent": 53,
+  "distinctPayloads": 11,
+  "backgroundSettled": true,
+  "backgroundError": {
+    "kind": "background-error",
+    "phase": "main",
+    "message": "Truncated native response; automatic retry/continuation is outside the frozen call graph."
+  },
+  "auxiliaryFailures": [
+    {
+      "phase": "main",
+      "toolName": "commit_episode_learning_review",
+      "requestSha256": "ae4f7129a44aa90109bf9ef79c79366b5bc4138c51340e85a199df0927222d0d",
+      "message": "Truncated native response; automatic retry/continuation is outside the frozen call graph."
+    }
+  ],
+  "foregroundMs": 159214,
+  "settledMs": 191915,
+  "metadataRequests": 19,
+  "spendUsd": null,
+  "walletObservedDeltaCny": 0,
+  "billingCaveat": "Wallet observation may lag and subscription cost not allocated; zero delta is not proof of free use.",
+  "old": {
+    "B0": {
+      "actualTokens": 263832,
+      "calls": 8,
+      "mainResponses": 7,
+      "tools": 13,
+      "settledMs": 208227,
+      "mainCompletionMs": 171125
+    },
+    "V": {
+      "actualTokens": 525756,
+      "calls": 12,
+      "mainResponses": 11,
+      "tools": 17,
+      "settledMs": 287277,
+      "mainCompletionMs": 267635
+    }
+  },
+  "deltaVsOldCandidate": {
+    "tokens": -199777,
+    "percent": -37.998044720364575
+  },
+  "deltaVsBaseline": {
+    "tokens": 62147,
+    "percent": 23.55552017950817
+  },
+  "requests": [
+    {
+      "ordinal": 1,
+      "kind": "main",
+      "usage": {
+        "inputTokens": 19007,
+        "outputTokens": 331,
+        "totalTokens": 19338,
+        "cachedReadTokens": 8448,
+        "cachedWriteTokens": 0
+      },
+      "durationMs": 12479,
+      "stopReason": "tool_use",
+      "images": 4,
+      "requestSha256": "948a927eb49ba0a0069b03b597e6e3f347b4351a38af5ae1fff940a2f9224969",
+      "responseSha256": "bc4f56dc7ae5cee28511cda83b0d5f485926cef1face05f05297238a0d9fba6a"
+    },
+    {
+      "ordinal": 2,
+      "kind": "main",
+      "usage": {
+        "inputTokens": 21699,
+        "outputTokens": 170,
+        "totalTokens": 21869,
+        "cachedReadTokens": 18995,
+        "cachedWriteTokens": 0
+      },
+      "durationMs": 5378,
+      "stopReason": "tool_use",
+      "images": 4,
+      "requestSha256": "fad49d3e1604c88044670725ff00532abeda2a695531c7931f858fe1d23f3bdf",
+      "responseSha256": "5c7004039bf6495dea374d6628de033df72762bf99dd8cc5cca7b95be36bb965"
+    },
+    {
+      "ordinal": 3,
+      "kind": "main",
+      "usage": {
+        "inputTokens": 28816,
+        "outputTokens": 322,
+        "totalTokens": 29138,
+        "cachedReadTokens": 21504,
+        "cachedWriteTokens": 0
+      },
+      "durationMs": 8420,
+      "stopReason": "tool_use",
+      "images": 4,
+      "requestSha256": "8c089fead4e4b41c8742a635cff878f5d4a36dff383653c14917bf8ee71b1281",
+      "responseSha256": "5babb089ef8c9d85bc4c4e98c435ea2948a0932635d61a38013af6464b6ec604"
+    },
+    {
+      "ordinal": 4,
+      "kind": "main",
+      "usage": {
+        "inputTokens": 29181,
+        "outputTokens": 182,
+        "totalTokens": 29363,
+        "cachedReadTokens": 28672,
+        "cachedWriteTokens": 0
+      },
+      "durationMs": 5493,
+      "stopReason": "tool_use",
+      "images": 4,
+      "requestSha256": "fe21f79e1c4435945d2e9937f471528207f3dcc1f1eaeaf4d2501966f01ee7d0",
+      "responseSha256": "e082702e974b239a3d9cebcd17675d54ae89998a8402ca139c95b15c10e328e7"
+    },
+    {
+      "ordinal": 5,
+      "kind": "main",
+      "usage": {
+        "inputTokens": 41932,
+        "outputTokens": 1057,
+        "totalTokens": 42989,
+        "cachedReadTokens": 29184,
+        "cachedWriteTokens": 0
+      },
+      "durationMs": 27595,
+      "stopReason": "tool_use",
+      "images": 7,
+      "requestSha256": "5db816513c4d050a79648adbc838ed37dee26398e8e702ad4c51452c8d1dd13c",
+      "responseSha256": "2a5c54e79a122f560ba7fe06ccf0d59ece562cbb04ed1a49cc5de13da6b16076"
+    },
+    {
+      "ordinal": 6,
+      "kind": "main",
+      "usage": {
+        "inputTokens": 49466,
+        "outputTokens": 368,
+        "totalTokens": 49834,
+        "cachedReadTokens": 41920,
+        "cachedWriteTokens": 0
+      },
+      "durationMs": 12144,
+      "stopReason": "tool_use",
+      "images": 8,
+      "requestSha256": "46e1826b176b2a1db8526621169b985e004c5456c673058f52af37f34277806a",
+      "responseSha256": "900a13b74de2876c2b980b020fc6be6f768663ba2fe1ee247c665d272fc8d70f"
+    },
+    {
+      "ordinal": 7,
+      "kind": "main",
+      "usage": {
+        "inputTokens": 62400,
+        "outputTokens": 2271,
+        "totalTokens": 64671,
+        "cachedReadTokens": 49454,
+        "cachedWriteTokens": 0
+      },
+      "durationMs": 58134,
+      "stopReason": "tool_use",
+      "images": 11,
+      "requestSha256": "2b8288aec9434eb26fb576c3852dde9bee739e5c6fb4f039aa88145d06c2c8fb",
+      "responseSha256": "f6078415a9712a8b9d782d9fa46b919c1dd2f6a9234540c93989dfc0d36fbc7c"
+    },
+    {
+      "ordinal": 8,
+      "kind": "main",
+      "usage": {
+        "inputTokens": 64751,
+        "outputTokens": 435,
+        "totalTokens": 65186,
+        "cachedReadTokens": 62388,
+        "cachedWriteTokens": 0
+      },
+      "durationMs": 11992,
+      "stopReason": "end_turn",
+      "images": 11,
+      "requestSha256": "7eab0e653dc78c05327031ca451cc0e67d0139fb51bdb21fdd4b999b57bf3a02",
+      "responseSha256": "55913d462ae133c1c467d0af16fd0649372e243c56e068f93e94793c60aaeb54"
+    },
+    {
+      "ordinal": 9,
+      "kind": "auxiliary",
+      "usage": {
+        "inputTokens": 2391,
+        "outputTokens": 1200,
+        "totalTokens": 3591,
+        "cachedReadTokens": 0,
+        "cachedWriteTokens": 0
+      },
+      "durationMs": 30634,
+      "stopReason": "max_tokens",
+      "images": 0,
+      "requestSha256": "ae4f7129a44aa90109bf9ef79c79366b5bc4138c51340e85a199df0927222d0d",
+      "responseSha256": "0397db32a6d6ac3f37449fb76cf865d6b5050772ebccbb72dda6b526a663c469"
+    }
+  ],
+  "verification": "Reconstructed native terminal SSE actual input including cache +output for all9 calls; hashes and ledger exact. Optional auxiliary max_tokens completion has complete actual usage; no retries. Independent code check, not an independent human reviewer.",
+  "evidenceChecks": {
+    "tools_identical_to_original_candidate": true,
+    "initial_four_images_same_order_bytes": true,
+    "new_system_is_uninjected_plus_method": true,
+    "user_task_present": true,
+    "uninjected_system_identical_after_workspace_path_normalization": true,
+    "recovery_sheet_actually_in_provider_requests": [
+      7,
+      8
+    ],
+    "selected_source_frames_21_2_21_3": true,
+    "actual_frames_match_prior_originals": true,
+    "recorded_request_equals_production_modified_body": true,
+    "individual_original_png_read_count": 0
+  },
+  "frameEvidence": {
+    "distinctDecoded": 90,
+    "fineRequestedFrames": 20,
+    "coarseFrames": 76,
+    "newFineDistinct": 14,
+    "originalCandidateDistinctDecoded": 95,
+    "originalBaselineDistinctDecoded": 91,
+    "originalPngReads": 0,
+    "invalidVisualCalls": 1
+  }
+}
