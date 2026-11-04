@@ -171,6 +171,7 @@ export function createScriptPilot(dispatch: PilotDispatch, budget: KodaXManagedW
           ? result.content === projection.content : isDeepStrictEqual(result.content, projection.content)) ? projection : undefined;
         const settled = { content: result.content, isError: result.is_error === true
           || (canonical.name === 'bash' && shellExecutionOutcome?.success !== true),
+          ...(matchedProjection?.sourceContent !== undefined && !result.is_error ? { sourceContent: matchedProjection.sourceContent } : {}),
           ...(matchedProjection?.data && !result.is_error ? { data: matchedProjection.data } : {}),
           metadata: { ...result.metadata, toolCall: canonical, editRecoveryMessages: processed.editRecoveryMessages,
             ...(typeof matchedProjection?.modelContent === 'string' ? { scriptModelContent: matchedProjection.modelContent } : {}),

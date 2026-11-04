@@ -3604,6 +3604,7 @@ function parseRuntimeHostToolDescriptors(
       name: requireStringField(record, "name"),
       description: requireStringField(record, "description"),
       inputSchema: requireRecordField(record, "inputSchema"),
+      ...(record.outputSchema !== undefined ? { outputSchema: requireRecordField(record, "outputSchema") } : {}),
       sideEffect,
     };
   });

@@ -53,17 +53,28 @@ export function renderCapabilityToolResult(
     output = `${errorPrefix}${render(combined)}`;
   }
   if (ctx?.toolCallId && ctx.recordToolResultProjection) {
-    let projection: ToolResultProjection | undefined;
-    try {
-      if (isJsonDto(result.structuredContent)) projection = {
+    const snapshot = <T>(read: () => T): T | undefined => {
+      try { return read(); }
+      catch (error) {
+        if (!(error instanceof RangeError) && !(error instanceof Error && error.name === 'DataCloneError')) throw error;
+        emitKodaXDiagnostic({ source: 'coding:tool-result-projection', level: 'warn',
+          message: `Optional tool projection is unavailable (${error.name}); original tool evidence is retained.` });
+        return undefined;
+      }
+    };
+    const sourceContent = snapshot(() => {
+      const content = result.content;
+      return typeof content === 'string' ? content
+        : content !== undefined && isJsonDto(content) ? structuredClone(content) : undefined;
+    });
+    const data = snapshot(() => isJsonDto(result.structuredContent)
+      ? { kind: 'json' as const, value: structuredClone(result.structuredContent) } : undefined);
+    const projection: ToolResultProjection | undefined = sourceContent !== undefined || data !== undefined
+      ? snapshot(() => ({
         content: typeof output === 'string' ? output : structuredClone(output),
-        data: { kind: 'json', value: structuredClone(result.structuredContent) },
-      };
-    } catch (error) {
-      if (!(error instanceof RangeError) && !(error instanceof Error && error.name === 'DataCloneError')) throw error;
-      emitKodaXDiagnostic({ source: 'coding:tool-result-projection', level: 'warn',
-        message: `Optional JSON projection is unavailable (${error.name}); original tool evidence is retained.` });
-    }
+        ...(sourceContent !== undefined ? { sourceContent } : {}),
+        ...(data ? { data } : {}),
+      })) : undefined;
     // Listener failures can enforce durability and must never be downgraded.
     if (projection) ctx.recordToolResultProjection(ctx.toolCallId, projection);
   }

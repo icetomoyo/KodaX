@@ -262,20 +262,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     // the description per productName; default output is byte-identical to the
     // prior literal (pinned by tool-description.test.ts).
     description: buildManualToolDescription(),
-    input_schema: {
-      type: 'object',
-      properties: {
-        topic: {
-          type: 'string',
-          description: staticText("tool.kodax_manual.description"),
-        },
-        query: {
-          type: 'string',
-          description: 'A free-text question when you do not know the topic id (English or Chinese).',
-        },
-      },
-      required: [],
-    },
+    input_schema: toolInputSchema('tool.kodax_manual.input_schema'),
     handler: toolKodaxManual,
     sideEffect: 'readonly',
     toClassifierInput: () => '',
@@ -288,20 +275,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
       staticText("tool.skill.text.2"),
       staticText("tool.skill.text.3"),
     ].join('\n'),
-    input_schema: {
-      type: 'object',
-      properties: {
-        skill: {
-          type: 'string',
-          description: 'The skill name (e.g. "commit", "review-pr"). Leading slash is tolerated.',
-        },
-        args: {
-          type: 'string',
-          description: 'Optional arguments forwarded to the skill resolver.',
-        },
-      },
-      required: ['skill'],
-    },
+    input_schema: toolInputSchema('tool.skill.input_schema'),
     handler: toolSkill,
     sideEffect: 'mutates-state',
     planModeAllowed: true,
@@ -937,13 +911,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     name: 'repo_overview',
     workSurface: 'coding',
     description: staticText("tool.repo_overview.description"),
-    input_schema: {
-      type: 'object',
-      properties: {
-        target_path: { type: 'string', description: 'Optional path inside the workspace to resolve the repository root from' },
-        refresh: { type: 'boolean', description: 'When true, rebuild the repo overview snapshot before returning it' },
-      },
-    },
+    input_schema: toolInputSchema('tool.repo_overview.input_schema'),
     handler: toolRepoOverview,
     sideEffect: 'readonly',
     toClassifierInput: () => '',
@@ -1006,15 +974,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     name: 'lsp_references',
     workSurface: 'coding',
     description: staticText("tool.lsp_references.description"),
-    input_schema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'File containing the symbol' },
-        line: { type: 'number', description: '1-based line of the symbol' },
-        character: { type: 'number', description: 'Optional 1-based column of the symbol' },
-      },
-      required: ['path', 'line'],
-    },
+    input_schema: toolInputSchema('tool.lsp_references.input_schema'),
     handler: toolLspReferences,
     sideEffect: 'readonly',
     toClassifierInput: () => '',
@@ -1023,13 +983,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     name: 'lsp_document_symbols',
     workSurface: 'coding',
     description: staticText("tool.lsp_document_symbols.description"),
-    input_schema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'File to outline' },
-      },
-      required: ['path'],
-    },
+    input_schema: toolInputSchema('tool.lsp_document_symbols.input_schema'),
     handler: toolLspDocumentSymbols,
     sideEffect: 'readonly',
     toClassifierInput: () => '',
@@ -1038,12 +992,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     name: 'lsp_workspace_symbols',
     workSurface: 'coding',
     description: staticText("tool.lsp_workspace_symbols.description"),
-    input_schema: {
-      type: 'object',
-      properties: {
-        query: { type: 'string', description: 'Symbol query text; may be empty for a broad server-supported listing' },
-      },
-    },
+    input_schema: toolInputSchema('tool.lsp_workspace_symbols.input_schema'),
     handler: toolLspWorkspaceSymbols,
     sideEffect: 'readonly',
     toClassifierInput: () => '',

@@ -14,6 +14,62 @@ it('discloses outer async helper lifetime in the callable code contract', async 
   } finally { await closeScriptModelSession(agent); }
 });
 
+it.each([false, true])('references a displayed source copy without changing explicit returns (selected: %s)', async selected => {
+  const sourceContent = '  Opaque source: 雪\tkeep the exact spacing.\r\n'.repeat(30);
+  const leaf = { content: `Display header\n${sourceContent}\nDisplay footer`, sourceContent };
+  const cell: ScriptCellResult = { cellId: 'source-copy', status: 'completed', hadToolErrors: false,
+    value: { originalText: sourceContent }, receipts: [{ id: 1, name: 'host.data', input: {}, result: leaf }] };
+  const before = structuredClone(cell);
+  const run = vi.fn(async () => cell);
+  const read = vi.fn(() => ({ status: 'settled', text: JSON.stringify({ result: leaf }) }));
+  const agent = withScriptModelTool({ name: 'worker', instructions: '' }, { backups: new Map() }, [], run, read);
+  try {
+    const entry = agent.tools!.find(tool => tool.name === 'script_exec') as RunnableTool;
+    const response = await entry.execute({ code: 'return suppliedSource;', selected_output: selected }, { agent });
+    const visible = JSON.parse(String(response.content));
+    expect(visible.receipts[0].result).not.toHaveProperty('sourceContent');
+    expect(visible.receipts[0].result).toMatchObject({ sourceContentOmitted: true,
+      original: { cell_id: 'source-copy', call_id: 1 }, content: leaf.content });
+    expect(visible.value).toEqual({ originalText: sourceContent });
+    expect(Buffer.byteLength(String(response.content))).toBeLessThan(Buffer.byteLength(JSON.stringify(before)));
+    expect(read).not.toHaveBeenCalled();
+    const reader = agent.tools!.find(tool => tool.name === 'script_read') as RunnableTool;
+    const original = JSON.parse(String((await reader.execute({ cell_id: 'source-copy', call_id: 1 }, { agent })).content));
+    expect(JSON.parse(original.text).result.sourceContent).toBe(sourceContent);
+    expect(run).toHaveBeenCalledOnce();
+    expect(cell).toEqual(before);
+  } finally { await closeScriptModelSession(agent); }
+});
+
+it.each([
+  { name: 'missing reader', source: 'source body '.repeat(40), displayed: true, readable: false, omitted: false },
+  { name: 'undisplayed text', source: 'source body '.repeat(40), displayed: false, readable: true, omitted: false },
+  { name: 'whitespace', source: ' '.repeat(400), displayed: false, readable: true, omitted: false },
+  { name: 'empty text', source: '', displayed: true, readable: true, omitted: false },
+  { name: 'small text', source: 'x', displayed: true, readable: true, omitted: false },
+  { name: 'blocks', source: [{ type: 'text' as const, text: 'opaque block\n'.repeat(40) }], displayed: true, readable: true, omitted: true },
+  { name: 'undisplayed blocks', source: [{ type: 'text' as const, text: 'opaque block\n'.repeat(40) }], displayed: false, readable: true, omitted: false },
+  { name: 'empty blocks', source: [], displayed: true, readable: true, omitted: false },
+])('preserves the source visibility and byte boundary for $name', async test => {
+  const content = !test.displayed ? 'Display omitted the source.' : typeof test.source === 'string'
+    ? `Header\n${test.source}\nFooter` : [{ type: 'text' as const, text: 'Header' }, ...test.source];
+  const leaf = { content, sourceContent: test.source };
+  const cell: ScriptCellResult = { cellId: 'source-boundary', status: 'completed', hadToolErrors: false,
+    value: { copiedSource: test.source }, receipts: [{ id: 1, name: 'source.tool', input: {}, result: leaf }] };
+  const agent = withScriptModelTool({ name: 'worker', instructions: '' }, { backups: new Map() }, [], async () => cell,
+    test.readable ? () => ({ status: 'settled', text: JSON.stringify({ result: leaf }) }) : undefined);
+  try {
+    const response = await (agent.tools![0] as RunnableTool).execute({ code: 'return suppliedSource;', selected_output: true }, { agent });
+    const visible = JSON.parse(String(response.content));
+    const receipt = visible.receipts[0].result;
+    if (test.omitted) expect(receipt).toMatchObject({ sourceContentOmitted: true,
+      original: { cell_id: 'source-boundary', call_id: 1 } });
+    else expect(receipt.sourceContent).toEqual(test.source);
+    expect(receipt.content).toEqual(content);
+    expect(visible.value).toEqual({ copiedSource: test.source });
+  } finally { await closeScriptModelSession(agent); }
+});
+
 it('rejects overlapping cells recoverably and separates cancellation request from completed cleanup', async () => {
   let finish!: () => void;
   let signal: AbortSignal | undefined;

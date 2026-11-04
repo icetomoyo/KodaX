@@ -126,6 +126,38 @@ S3 长任务与 Run 内数据；不以 JavaScript 可执行或选择 Script 模�
 新增字节、实际脚本执行比例、任务正确性及全部请求/token/耗时分别报告；有界 smoke
 不能证明总体效率提升或模型智能无回退。
 
+### 2026-11-04 原文返回与按需输出描述（未发布）
+
+基线 `37258ec5c`。Host Run 工具与显式 `mcp_call` 的成功、未被后处理改写的
+Script 结果可增加 `sourceContent`：它直接保留 `CapabilityResult.content`，可为
+字符串（包括空串、空白和原行分隔）或普通 JSON 内容 blocks。它与已有展示
+`content`、结构化 `data.value` 分开，消费者无需从展示标题、行标签或拼接文本中
+反向提取原文。它不是警告分类器，也不代表传输或文件字节原文；普通文件 read
+的 `data.text` 规范化契约保持。本轮不扩展 resource/fallback 路径。
+
+原字段缺省、非普通 JSON blocks、容量不足、错误或后处理改写时，该可选视图
+可能缺省，不能据此推断来源为空或没有警告。未知 metadata 不会授予此字段。
+原生无投影监听方不新增复制；Script 字符串免复制，blocks 独立快照，guest 修改
+不改变持久原文。最终内容匹配和错误门禁防止绕过 hook/脱敏。可选快照容量失败
+记录诊断并保留原结果，监听和持久化异常仍传播，不变成 Provider 失败。
+
+VM 和完整 receipt 保留 sourceContent，额外字节计入原容量/传输限额。大结果
+继续按既有 result_ref/read_result 分页，Session 原文用 script_read 读取，不重复
+执行工具。模型回执仅在原文可回读、展示中已有完整副本且严格减少 UTF-8 字节时，
+使用 `sourceContentOmitted:true` 和 `original:{cell_id,call_id}` 引用；显式返回及
+未显示、空白、小值继续保留。该优化不等于模型必然选择最少上下文。
+
+Host 工具注册 descriptor 新增可选 `outputSchema`，经原 IPC 注册和已有
+`mcp_describe` 按需返回，同时完整显示 Host description/server。标准 MCP 原字段
+优先；默认搜索、RunScoped 工具合同和模型菜单不常驻大型输出 schema，不自动
+describe 或执行工具。未声明就是未知；这是工具方声明，不表示 SDK 已验证每个
+返回值符合 schema，也不是新的执行授权。旧 Host 可能尚不返回该可选元数据，
+接入时须核对实际 Host，不能只看 Main SDK 版本。
+
+SDK 保证受权返回视图与证据保真可读。消费者若要求交付物逐字保留来源，应直接
+使用原值、在交付前比对并回读验证；本轮不增加全局写入拦截或自动修改文件。
+既有模型样本的警告前缀失败继续保留，不以新接口保证任意模型的业务产物正确。
+
 ### 2026-11-04 Script 调用路径与程序数据（未发布）
 
 基线为 `49da64f24`。前次真实样本的裸名调用和格式化文本解析失败，按通用调用与

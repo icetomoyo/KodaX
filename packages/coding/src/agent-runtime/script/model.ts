@@ -46,8 +46,23 @@ function serializeModelReceipt(cell: ScriptCellResult | ScriptObservation, selec
   const receipts = cell.receipts.map(({ id, name, result }) => {
     const notes = result.metadata?.scriptModelContent;
     const original = { cell_id: cell.cellId, call_id: id };
-    const presented = selected && !result.isError && typeof notes === 'string'
+    let presented = selected && !result.isError && typeof notes === 'string'
       ? { ...result, content: notes, contentOmitted: true, original } : result;
+    if (readable && result.sourceContent !== undefined) {
+      const source = result.sourceContent;
+      const duplicate = typeof source === 'string' ? source.trim() ? source : undefined
+        : source.length ? JSON.stringify(source).slice(1, -1) : undefined;
+      const displayed = duplicate !== undefined && (typeof source === 'string'
+        ? typeof presented.content === 'string' ? presented.content.includes(duplicate)
+          : presented.content.some(item => item.type === 'text' && item.text.includes(duplicate))
+        : typeof presented.content !== 'string' && JSON.stringify(presented.content).includes(duplicate));
+      const reference = { sourceContentOmitted: true, original };
+      if (displayed && Buffer.byteLength(JSON.stringify(reference))
+        < Buffer.byteLength(JSON.stringify({ sourceContent: source }))) {
+        const { sourceContent: _source, ...rest } = presented;
+        presented = { ...rest, ...reference };
+      }
+    }
     if (readable && result.data?.kind === 'text') {
       const { text: _text, ...range } = result.data;
       return { id, name, result: { ...presented, data: { ...range, textOmitted: true, original } } };

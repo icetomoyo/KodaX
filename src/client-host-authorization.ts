@@ -169,6 +169,8 @@ export interface RuntimeHostToolDescriptor {
   readonly name: string;
   readonly description: string;
   readonly inputSchema: Readonly<Record<string, unknown>>;
+  /** Optional declared return shape, disclosed on demand through mcp_describe. */
+  readonly outputSchema?: Readonly<Record<string, unknown>>;
   readonly sideEffect: "none" | "idempotent" | "non_idempotent";
 }
 

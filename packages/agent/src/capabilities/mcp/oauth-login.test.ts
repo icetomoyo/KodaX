@@ -2,7 +2,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getAgentConfigPath, setAgentConfigHome } from '../../runtime/agent-home.js';
 import {
   buildAuthorizeUrl,
@@ -14,6 +14,7 @@ import {
   registerOAuthClient,
 } from './oauth-login.js';
 import { startOAuthCallbackServer } from './oauth.js';
+import { createFetchHttpFixture } from '../../../../../tests/fetch-http-fixture.js';
 
 const servers: http.Server[] = [];
 const tempDirs: string[] = [];
@@ -38,12 +39,9 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 }
 
 async function getFreePort(): Promise<number> {
-  const probe = http.createServer();
-  const port = await new Promise<number>((resolve) => {
-    probe.listen(0, '127.0.0.1', () => resolve((probe.address() as { port: number }).port));
-  });
-  await new Promise<void>((resolve) => probe.close(() => resolve()));
-  return port;
+  const { server, url } = await createFetchHttpFixture((_request, response) => response.end());
+  await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  return Number(new URL(url).port);
 }
 
 interface OAuthServer {
@@ -55,7 +53,7 @@ interface OAuthServer {
 /** A combined fake resource + authorization server (discovery, DCR, token). */
 async function startOAuthServer(asMetadataExtra: Record<string, unknown> = {}): Promise<OAuthServer> {
   const state: OAuthServer = { origin: '', register: [], token: [] };
-  const server = http.createServer(async (req, res) => {
+  const { server, url } = await createFetchHttpFixture(async (req, res) => {
     const url = new URL(req.url ?? '/', state.origin || 'http://localhost');
     const json = (body: Record<string, unknown>): void => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -88,9 +86,7 @@ async function startOAuthServer(asMetadataExtra: Record<string, unknown> = {}): 
     res.end();
   });
   servers.push(server);
-  state.origin = await new Promise<string>((resolve) => {
-    server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${(server.address() as { port: number }).port}`));
-  });
+  state.origin = url;
   return state;
 }
 
@@ -174,12 +170,30 @@ describe('refreshTokenWithResource', () => {
 });
 
 describe('startOAuthCallbackServer', () => {
+  it('selects a Fetch-compatible callback fixture after a refused port', async () => {
+    const originalFetch = globalThis.fetch;
+    const probe = vi.spyOn(globalThis, 'fetch')
+      .mockRejectedValueOnce(new TypeError('fetch failed', { cause: new Error('bad port') }))
+      .mockImplementation(originalFetch);
+    let callback: Awaited<ReturnType<typeof startOAuthCallbackServer>> | undefined;
+    try {
+      const port = await getFreePort();
+      callback = await startOAuthCallbackServer(port);
+      expect((await fetch(`http://127.0.0.1:${port}/callback?code=checked&state=ready`)).status).toBe(200);
+      await expect(callback.waitForCode()).resolves.toEqual({ code: 'checked', state: 'ready' });
+      expect(probe.mock.calls.length).toBeGreaterThanOrEqual(3);
+    } finally {
+      callback?.close();
+      probe.mockRestore();
+    }
+  });
+
   it('delivers code+state from a callback and is idempotently closable', async () => {
     const port = await getFreePort();
     const cb = await startOAuthCallbackServer(port);
     try {
       const got = cb.waitForCode();
-      await fetch(`http://127.0.0.1:${port}/callback?code=c1&state=s1`).catch(() => {});
+      expect((await fetch(`http://127.0.0.1:${port}/callback?code=c1&state=s1`)).status).toBe(200);
       expect(await got).toEqual({ code: 'c1', state: 's1' });
     } finally {
       cb.close();
@@ -191,7 +205,7 @@ describe('startOAuthCallbackServer', () => {
     const port = await getFreePort();
     const cb = await startOAuthCallbackServer(port);
     try {
-      await fetch(`http://127.0.0.1:${port}/callback?code=early&state=st`).catch(() => {});
+      expect((await fetch(`http://127.0.0.1:${port}/callback?code=early&state=st`)).status).toBe(200);
       await expect(cb.waitForCode()).resolves.toEqual({ code: 'early', state: 'st' });
     } finally {
       cb.close();
@@ -202,10 +216,12 @@ describe('startOAuthCallbackServer', () => {
     const port = await getFreePort();
     const cb = await startOAuthCallbackServer(port);
     try {
-      // Fire the redirect, then attach the rejection handler synchronously with
-      // the waitForCode() call (no window for an unhandled rejection).
-      void fetch(`http://127.0.0.1:${port}/callback?error=access_denied`).catch(() => {});
-      await expect(cb.waitForCode()).rejects.toThrow(/access_denied/);
+      // Observe both the callback error and redirect transport failure immediately.
+      await Promise.all([
+        expect(cb.waitForCode()).rejects.toThrow(/access_denied/),
+        fetch(`http://127.0.0.1:${port}/callback?error=access_denied`)
+          .then(response => expect(response.status).toBe(400)),
+      ]);
     } finally {
       cb.close();
     }

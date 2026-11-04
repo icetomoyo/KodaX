@@ -2,6 +2,127 @@
 
 本指南验证构建后的产品入口。组件、协议和 SDK 单测继续保留，但不替代这里的真实进程与终端操作。
 
+## 2026-11-04 Script 返回契约与按需描述（源码修复已验证，未发布）
+
+基线 `37258ec5c`。按本轮重新诊断的结论，将 SDK 返回合同、模型任务正确性及
+效率分开验收。旧 revision 8/9 的任务失败、partial/unknown usage 和原始记录保持，
+不再用警告前缀样例是否全绿判定整个 Script 执行器。SDK 保证权限、返回值和
+原始证据保真可读；消费者负责自己的业务 schema、原文要求及交付前校验。
+
+修复范围固定为两项，不处理 OpenAI 协议、发包或 Space UI：
+
+1. Host Run 工具与显式 mcp_call 的成功结果可提供 `sourceContent`，值为真实
+   CapabilityResult.content 的独立原始视图，字符串或内容 blocks；与展示 content
+   及结构化 data.value 分开。空串、空白和 block 边界不能靠解析展示文本还原，
+   因此新增该可选视图。不解析 caveat、不猜 warnings 字段，也不信任 metadata
+   伪造的 sourceContent。只在已有 Script 投影监听方存在时快照；沿原最终内容
+   matcher 和错误门禁防止绕过后处理/脱敏。容量失败保留旧结果并诊断；监听和
+   持久化异常继续传播。复用原 receipt/read_result/script_read，不新建存储或重放。
+2. 标准 MCP 已有按需 mcp_describe/outputSchema，继续复用。仅补 Host 注册的
+   可选 outputSchema 穿过公共 descriptor 与 IPC parser，并让既有描述 formatter
+   兼容 Host description/server 字段。默认搜索、RunScoped 合同及模型菜单不附加
+   大型输出 schema，不自动 describe、不新增查询工具或结果 schema 验证器。
+
+模型侧只在原文可回读、展示中确有完整副本且 UTF-8 字节严格减少时引用重复
+sourceContent；无 reader、未展示、空白、小值及显式返回保留。VM/持久层保留
+完整 source，计入现有传输/容量限制，可能更早进入原有大结果回读路径。
+
+确定性公共验收：两条工具路径、原文与 JSON 独立、空值/空白/blocks、
+producer/guest/hook 修改隔离、scope 拒绝、可选容量回退、分页回读及无重放；
+真实公开 managed Run 直接取原文生成交付，消费者写前比对、写后回读校验；
+真实独立 Host 注册→Script 按需 describe，验证原始 schema/描述及零业务执行。
+本轮问题均可由 Layer 1/零费用 SDK 集成回答，不发送新模型请求，不运行新
+LLM eval，也不声称新字段能保证任意模型逐字复制或带来效率提升。
+
+### 本轮实施证据
+
+- 原文投影新增 21 项；连同既有 JSON 与 renderer 回归 55 项通过。模型呈现完整
+  文件 57 项通过，包含选择/未选择输出、原文引用回读、完整证据不变及不重放。
+  两条缺口均先 RED 再 GREEN：公开 managed Run 原先缺少原文视图；Host IPC
+  原先丢弃注册的 outputSchema。保留对应 RED，不用旧成功结果替代。
+- 公开 managed Run 经真实 QuickJS 并发读取两项 Host JSON、计算、写文件再读取；
+  消费者逐字校验 sourceContent，原先的警告原文和计算结果 41 均保留。这验证
+  消费者可实施交付校验，不代表 SDK 新增全局写入拦截或模型逐字复制保证。
+- 按需描述单测 24 项通过；独立 Host + Client 的真实 IPC 集成 1 项通过，
+  大型 schema/描述默认不进菜单，显式 Script mcp_describe 后完整返回，业务工具
+  执行次数为 0。首次 IPC 失败来自子进程使用旧 dist；构建后同一断言通过，
+  保留失败日志，不将其描述为源码故障或真实模型请求。
+- 实际 npm pack tarball 的干净目录测试 2/2 通过：公开 SDK/Worker 同时取得
+  sourceContent 和 JSON 计算结果 42，原始回执完整、Host 只执行一次，原生模式、
+  Todo 与缺失 Worker 的原断言保留。该测试未发布包，Provider 为离线确定性响应。
+
+范围覆盖率：原文 producer `capability-result.ts` 行 100%、分支 98.93%；
+source/pilot 联合行 91.33%、分支 81.90%；describe 行 95.65%、分支 87.50%。
+这是选定文件的 V8 覆盖率，不是整个仓库、全部 pilot 路径或真实模型质量覆盖。
+原始结果保存在 `%TEMP%/kodax-source-content-coverage/`、
+`%TEMP%/kodax-host-describe-coverage/` 及对应 tests JSON。
+
+完整 build 首次真实失败：CLI 5,178,038 bytes 超过原 5,177,344 门禁。
+复用既有 staticText/toolInputSchema，仅将 kodax_manual、skill、lsp_references、
+repo_overview、lsp_document_symbols、lsp_workspace_symbols 六项静态 schema
+移至同一资源（1,390 JSON bytes），不新增加载机制。全部 78 项构建 SDK 的名称、
+说明和输入 schema 序列化字节与基线相同。最终 build 通过，CLI 5,177,070 bytes；
+根源码和测试 typecheck 通过。Script API 教学仅增 84 UTF-8 bytes，解释原文视图及
+纠正“完整输入合同不必发现”的说法；字节不当作实际 token，也没有任务专用提示。
+
+构建、类型、tarball 与独立 Host 证据分别在
+`%TEMP%/kodax-script-return-contract-final-build.log`、
+`%TEMP%/kodax-script-return-contract-types.log`、
+`%TEMP%/kodax-script-return-contract-tarball.log` 及
+`%TEMP%/kodax-host-output-schema-ipc-built.{log,json}`。
+Standards/Spec 独立交叉评审均 0 项未解决 finding。
+
+首次完整 Vitest 在 4 workers、retry=0 下独立运行 1,120.03 秒，EXIT 1：
+1,411 文件通过、3 失败、7 跳过；19,512 测试通过、3 失败、87 跳过。
+日志与 JSON 为 `%TEMP%/kodax-script-return-contract-full.{log,json}`，保留原失败：
+
+- 大 Host 回读已成功、计数 27,645，但旧断言只在末页查告警，实际 warning:false。
+  新原文视图改变了 JSON 页边界；改为完整拼接、解析后核对展示及 source 两处告警，
+  另校验完整长度、多页、canonical source===body 与展示保留全文。原单次执行、
+  success/settled 和 4,096 bytes 限制均保留，生产分页不变。
+- MCP SSE 识别明确为 Fetch `bad port`，发生在发 HTTP 前。仅让本地 HTTP 夹具复用
+  既有 createFetchHttpFixture，健康路由不进入业务计数，仅 bad-port 原因允许重绑，
+  其他失败、原超时和认证/SSE 断言不变，不修改生产 Fetch 策略或系统端口范围。
+- OAuth 负向回调只有 30 秒测试超时，旧代码吞掉 redirect fetch 异常；没有记录原端口，
+  不能认定首轮同因。测试候选端口和假 AS 复用同一健康夹具，并同时 await 传输响应与
+  access_denied 协议错误，今后保留直接失败信号；不调整生产 OAuth 或放大超时。
+
+两条实际 wrapper 的坏端口注入先 RED 后 GREEN；完整相关 4 文件 79/79 通过。
+两位评审独立指出新断言不能把健康 fetch 总次数锁定为 3，已改为至少 3，允许夹具
+按原契约继续排除真实坏端口，同时保留业务调用一次/准确 callback code+state。
+该调整后新增两例再次 2/2 通过，49 项为名称筛选；最终源码/测试 typecheck 通过。
+证据为 `%TEMP%/kodax-return-contract-fixtures-{red,green,reviewed}.{log,json}` 与
+`%TEMP%/kodax-script-return-contract-types-final.log`。两位评审 finding 已清零。
+
+第二轮前冻结 5,709 文件，SHA-256
+`ddd648886d074e3d05724e2e750fe2665224476941356e6767b547982ba3d776`；
+与首轮冻结清单相比仅上述 3 个测试文件不同，生产源码和 dist 未变。原清单
+`e4747938e512212a2f26afa8c73e276bfe9ab84b19f5824abb29473f88e82140` 与两次
+manifest 均保存在 OS temporary。
+
+最终完整 Vitest 沿用 4 workers、retry=0，独立执行 1,106.79 秒、EXIT 0：
+**1,414 文件通过、7 跳过；19,517 测试通过、87 条件跳过，0 失败、0 未处理错误**。
+本次只增加只读即时失败 reporter，不改测试选择、超时或重试策略。上述三个文件均
+通过，原首轮失败记录保持。结果为
+`%TEMP%/kodax-script-return-contract-verified-full.{log,json}`。
+随后完整 `npm run test:bundle` EXIT 0，原两组 **99+3=102 项通过、0 失败**，
+耗时 84,845 + 15,129 ms；日志为
+`%TEMP%/kodax-script-return-contract-bundle.log`。全量与打包后再次核对 5,709 文件，
+SHA-256 仍为上述 ddd648…，未在验证期间改生产源码或构建。`git diff --check` 通过；
+仓库没有 lint 脚本，不虚报 lint 已运行。
+
+| 验收层 | 本轮状态 |
+|---|---|
+| 源码实现 | 两项通用返回合同修复完成；构建、类型、确定性组合、全量及打包通过，独立双轴评审无未解决项 |
+| 正式发包 | 未发布；本地 npm pack 干净目录验收通过，不能据此推断 registry 包已有字段 |
+| 实际运行 Host 能力 | 已验证本机 Windows 独立 Host 的新注册/描述路径；Space 在用 Host 未升级或核对，旧 Host 不作能力承诺 |
+| Space 成品接入 | 本轮未修改或验收 Space；由其按已安装包与实际执行 Host 接入并验证 |
+
+本轮 **0 次新增真实模型请求**；revision 8/9 的脚本覆盖、严格任务失败、实际 usage
+及耗时维持原记录，不将离线 Provider、字段可用或任务样例正确代替新的采用率、
+质量或效率结论。跨平台、真实账号、覆盖安装、麒麟自动回退及 Issue 371 继续独立
+验收，不随本次源码修复或未来发包自动关闭。
+
 ## 2026-11-04 Script 显式执行与模式验收（源码已验证，未发布）
 
 基线 `532243a27`。本轮补齐上一轮的验收缺口，区分“选中 Script 模式”、

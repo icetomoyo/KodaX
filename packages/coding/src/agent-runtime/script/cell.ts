@@ -5,7 +5,7 @@ import { basename, dirname, join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { isDeepStrictEqual } from 'node:util';
 import type { RunnerToolResult } from '@kodax-ai/agent';
-import type { ToolResultData } from '../../types.js';
+import type { ToolResultData, ToolResultProjection } from '../../types.js';
 import { createScriptControlBudget } from './control.js';
 
 export interface ScriptCellLimits {
@@ -15,6 +15,7 @@ export interface ScriptCellLimits {
   readonly maxTransferBytes: number;
 }
 export interface ScriptToolResult extends RunnerToolResult {
+  readonly sourceContent?: ToolResultProjection['sourceContent'];
   readonly data?: ToolResultData;
 }
 export interface ScriptReceipt {

@@ -109,12 +109,19 @@ it('pages a large authorized Host result inside one production cell while retain
     getCapabilityPromptContext: async () => undefined,
   };
   const result = await runScriptInvocation({ ...options, extensionRuntime }, `
-    const source = await tools.host_large({}); let offset = 0, last = '', count = 0;
-    do { const page = await read_result(source.result_ref.callId, offset); count += page.text.length; last = page.text; offset = page.nextOffset; } while (offset !== undefined);
-    return { count, warning: last.includes('WARNING: partial source'), status: source.status };
+    const source = await tools.host_large({}); let offset = 0, text = '', pages = 0;
+    do { const page = await read_result(source.result_ref.callId, offset); text += page.text; pages++; offset = page.nextOffset; } while (offset !== undefined);
+    const original = JSON.parse(text);
+    return { count: text.length, pages, warning: original.content.includes('WARNING: partial source'),
+      sourceWarning: original.sourceContent.includes('WARNING: partial source'), status: source.status };
   `, { ...limits, maxTransferBytes: 4096 });
   expect(result.success, result.scriptCell.error).toBe(true);
-  expect(result.scriptCell.value).toMatchObject({ warning: true, status: 'settled' });
+  const canonical = result.scriptCell.receipts[0]?.result;
+  expect(result.scriptCell.value).toMatchObject({ warning: true, sourceWarning: true, status: 'settled',
+    count: JSON.stringify(canonical).length, pages: expect.any(Number) });
+  expect((result.scriptCell.value as { pages: number }).pages).toBeGreaterThan(1);
+  expect(canonical?.sourceContent).toBe(body);
+  expect(canonical?.content).toContain(body);
   expect(calls).toBe(1);
   const records = (await storage.load('script-session'))?.extensionRecords ?? [];
   expect(JSON.stringify(records.filter(record => record.type === 'call.settled'))).toContain(body.slice(0, 1024));

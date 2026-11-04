@@ -65,6 +65,34 @@ function restoreEnvironment(name: string, value: string | undefined): void {
 describe('runtime daemon dispatcher', () => {
   afterEach(() => setActiveExtensionRuntime(null));
 
+  it('preserves optional Host output schemas at the public registration boundary', async () => {
+    const dispatcher = createRuntimeDaemonDispatcher({ runtime: makeRuntime() });
+    try {
+      await initializeDispatcher(dispatcher);
+      const descriptor = { name: 'geometry.read-grid', description: 'Read a measured grid.',
+        inputSchema: { type: 'object', properties: {} }, sideEffect: 'none',
+        outputSchema: { type: 'object', properties: { axes: { type: 'array', items: { type: 'string' } } } } };
+      const registered = await dispatcher.handle(createRuntimeDaemonRequest('schema-register', 'host_tool.register', {
+        leaseId: 'schema-lease', tools: [descriptor],
+      }));
+      expect(isRuntimeDaemonSuccessResponse(registered), JSON.stringify(registered)).toBe(true);
+      expect(registered).toMatchObject({ kind: 'response', result: { tools: [descriptor] } });
+      const { outputSchema: _outputSchema, ...legacy } = descriptor;
+      const old = await dispatcher.handle(createRuntimeDaemonRequest('legacy-register', 'host_tool.register', {
+        leaseId: 'legacy-schema-lease', tools: [legacy],
+      }));
+      expect(old).toMatchObject({ kind: 'response', result: { tools: [legacy] } });
+      if (!isRuntimeDaemonSuccessResponse(old)) throw new Error('Legacy registration failed');
+      expect(old.result).toEqual({ id: 'legacy-schema-lease', tools: [legacy] });
+      for (const [index, value] of [null, [], false, 7, 'schema'].entries()) {
+        const invalid = await dispatcher.handle(createRuntimeDaemonRequest(`schema-invalid-${index}`, 'host_tool.register', {
+          leaseId: `invalid-schema-${index}`, tools: [{ ...descriptor, outputSchema: value }],
+        }));
+        expect(invalid).toMatchObject({ kind: 'error', error: { code: 'invalid_request' } });
+      }
+    } finally { dispatcher.close(); }
+  });
+
   it.each(['runtime', 'callback', 'management'] as const)('cancels the underlying %s daemon preflight scan', async (route) => {
     const runtime = makeRuntime();
     const original = runtime.status.preflight;

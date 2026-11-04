@@ -17,7 +17,7 @@ it('computes from concurrent Host JSON in a production Script cell and reads its
     east: { samples: [[11, 13]], complete: true },
   };
   const warnings = ['WARNING: west readings remain provisional', 'WARNING: east readings are a limited sample'];
-  const expected = { total: 41, complete: false };
+  const expected = { total: 41, complete: false, sourceNotes: warnings };
   const executed: string[] = [];
   const budget = { totalBudget: 4, spentBudget: 0, currentHarness: 'H0_DIRECT' as const };
   let requests = 0;
@@ -61,21 +61,26 @@ it('computes from concurrent Host JSON in a production Script cell and reads its
         { type: 'tool_use', id: 'json-cell', name: 'script_exec', input: { selected_output: true, code: `
           const sources = await Promise.all(['west','east'].map(region => tools['measurements.sample-grid']({region})));
           if (sources.some(r => r.isError || r.data?.kind !== 'json')) throw Error('Missing typed source');
+          const sourceNotes = sources.map(r => r.sourceContent);
+          if (sourceNotes.some(note => typeof note !== 'string')) throw Error('Missing original source content');
           const summary = {
             total: sources.flatMap(r => r.data.value.samples.flat()).reduce((sum,n) => sum+n,0),
-            complete: sources.every(r => r.data.value.complete)
+            complete: sources.every(r => r.data.value.complete), sourceNotes
           };
+          if (summary.sourceNotes.some((note,i) => note !== sources[i].sourceContent)) throw Error('Source changed before write');
           const writing = tools.write({path:'summary.json',content:JSON.stringify(summary)});
           const reading = tools.read({path:'summary.json'});
           const [written,readback] = await Promise.all([writing,reading]);
           if (written.isError || readback.isError || readback.data?.kind !== 'text') throw Error('Readback failed');
-          return JSON.parse(readback.data.text);
+          const saved = JSON.parse(readback.data.text);
+          if (saved.sourceNotes.some((note,i) => note !== sources[i].sourceContent)) throw Error('Saved source changed');
+          return saved;
         ` } },
       ] };
       const receipt = messages.flatMap(message => Array.isArray(message.content) ? message.content : [])
         .find(block => block.type === 'tool_result' && block.tool_use_id === 'json-cell');
       if (receipt?.type !== 'tool_result') throw new Error('Missing model-visible Script receipt');
-      expect(receipt.is_error).not.toBe(true);
+      expect(receipt.is_error, String(receipt.content)).not.toBe(true);
       const cell = JSON.parse(String(receipt.content)) as ScriptCellResult;
       expect(cell).toMatchObject({ status: 'completed', hadToolErrors: false, value: expected });
       for (const warning of warnings) expect(String(receipt.content)).toContain(warning);
@@ -88,8 +93,9 @@ it('computes from concurrent Host JSON in a production Script cell and reads its
     const result = await runManagedTask({ provider: 'script-json-offline', workMode: 'script', agentMode: 'ama',
       reasoningMode: 'off', lsp: false, extensionRuntime, session: { id: 'json-session', storage },
       context: { executionCwd: root, gitRoot: root, repoIntelligenceMode: 'off', managedWorkBudget: budget },
-      events: { beforeToolExecute: async name => {
+      events: { beforeToolExecute: async (name, input) => {
         executed.push(name);
+        if (name === 'write') expect(JSON.parse(String(input.content)).sourceNotes).toEqual(warnings);
         if (name === 'read') expect(await readFile(join(root, 'summary.json'), 'utf8')).toBe(JSON.stringify(expected));
         return ['measurements.sample-grid', 'write', 'read'].includes(name);
       } },
@@ -108,7 +114,7 @@ it('computes from concurrent Host JSON in a production Script cell and reads its
     for (const [index, region] of ['west', 'east'].entries()) {
       const receipt = receipts.find(item => item.name === 'measurements.sample-grid' && item.input.region === region);
       expect(receipt).toMatchObject({ input: { region }, result: { isError: false,
-        data: { kind: 'json', value: source[region as keyof typeof source] } } });
+        data: { kind: 'json', value: source[region as keyof typeof source] }, sourceContent: warnings[index] } });
       expect(String(receipt?.result.content)).toContain(warnings[index]);
     }
     expect(receipts.find(item => item.name === 'write')).toMatchObject({

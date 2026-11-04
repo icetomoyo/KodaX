@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { McpServerRuntime } from './runtime.js';
 import type { McpReverseCapabilities } from './reverse-capabilities.js';
+import { createFetchHttpFixture } from '../../../../../tests/fetch-http-fixture.js';
 
 type JsonObject = Record<string, unknown>;
 
@@ -870,13 +871,7 @@ async function createRuntime(
 async function startHttpServer(
   handler: http.RequestListener,
 ): Promise<{ url: string; stop: () => Promise<void> }> {
-  const server = http.createServer(handler);
-  const url = await new Promise<string>((resolve) => {
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address() as { port: number };
-      resolve(`http://127.0.0.1:${address.port}`);
-    });
-  });
+  const { server, url } = await createFetchHttpFixture(handler);
   return {
     url,
     stop: () => new Promise<void>((resolve) => {
@@ -886,6 +881,25 @@ async function startHttpServer(
 }
 
 describe('McpServerRuntime protocol compatibility', () => {
+  it('selects a Fetch-compatible fixture before sending MCP business requests', async () => {
+    const originalFetch = globalThis.fetch;
+    const probe = vi.spyOn(globalThis, 'fetch')
+      .mockRejectedValueOnce(new TypeError('fetch failed', { cause: new Error('bad port') }))
+      .mockImplementation(originalFetch);
+    const handler = vi.fn((_request: http.IncomingMessage, response: http.ServerResponse) => response.end('MCP fixture'));
+    let fixture: Awaited<ReturnType<typeof startHttpServer>> | undefined;
+    try {
+      fixture = await startHttpServer(handler);
+      expect(handler).not.toHaveBeenCalled();
+      expect(await (await fetch(fixture.url)).text()).toBe('MCP fixture');
+      expect(handler).toHaveBeenCalledOnce();
+      expect(probe.mock.calls.length).toBeGreaterThanOrEqual(3);
+    } finally {
+      probe.mockRestore();
+      await fixture?.stop();
+    }
+  });
+
   it('preserves explicit structured null and only falls back to snake case when camel case is absent', async () => {
     const dir = await createTempDir();
     const source = createNdjsonServerSource({ startsPath: path.join(dir, 'starts.txt') }).replace(

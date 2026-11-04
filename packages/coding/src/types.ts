@@ -2652,6 +2652,8 @@ export type ToolResultData = ToolResultTextData | { readonly kind: 'json'; reado
 
 export interface ToolResultProjection {
   readonly content: KodaXToolResultBlock['content'];
+  /** Original provider content, before display wrapping. Not parsed or classified. */
+  readonly sourceContent?: KodaXToolResultBlock['content'];
   /** Only a trusted renderer may declare which model-visible notes replace a body. */
   readonly modelContent?: string;
   readonly data?: ToolResultData;
