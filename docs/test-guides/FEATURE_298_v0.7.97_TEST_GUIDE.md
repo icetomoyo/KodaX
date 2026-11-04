@@ -2,6 +2,107 @@
 
 本指南验证构建后的产品入口。组件、协议和 SDK 单测继续保留，但不替代这里的真实进程与终端操作。
 
+## 2026-11-04 Script 真实日志根因与最小合同方案（诊断完成，生产未改）
+
+基线 `f689d0fe1`。三个独立子 Agent 交叉核对 revision 10 的实际 system/tools、
+生成调用和执行回执，排除“Host callable 未披露”与“SDK JSON/原文损坏”。环境
+限制和统一 wrapper 说明已经下发；问题不能简化为再堆一段提示。已证的执行失败为
+Node/CommonJS 假定、将 wrapper 当业务对象、复制 JSON 到 JS 模板时的转义破坏。
+合同体积、局部返回型含糊和回执去重影响恢复的显著性仍是待检验假设。
+
+零费用真实 SDK 重放命令为
+`node %TEMP%/kodax-script-r10-execution-replay.mjs --expect-task-correct`，按旧严格
+oracle 明确 EXIT 1；证据在 `%TEMP%/kodax-script-contract-replay-ePGvF2/` 与
+`%TEMP%/kodax-script-contract-execution-red.log`。原 A 最后 cell 在没有付费请求
+截断时能从真实 Host 返回值算出正确数字和原文，但额外 source.batch 仍使严格
+交付失败。原 B 两 cell 稳定重现 require/JSON.parse 失败；仅将复制字面量的数据
+入口换成 tools.read().data.text，原剩余算法即得到正确 groups/notes。它仍未写
+成品且多 source.factors，不能称完整任务或真实模型恢复成功。重放没有自动执行
+未知副作用，只在独立 OS temporary 目录使用已知只读 fixture 和临时文件。
+
+付费前固定 Layer 2 两个真实状态：B `/rows/0` 的初始环境选择，A `/rows/2` 的
+错误后恢复。每状态 fresh baseline/单因素 prototype 各一次，共最多四次 Provider
+操作/物理 fetch；只捕获模型下一步，不执行生成工具、不展开 Run。ENV 仅替换
+原有两句，明确 QuickJS／非 Node、无 require、I/O 经 tools。RESULT 仅重排 callable
+说明并标 Promise<ScriptToolResult>：原 name、description、input_schema 及
+sideEffect/planModeAllowed 等其余字段完整保留，原 result_ref 分支不变。结果
+合同采用整组呈现改变，不能把差异单归因 Promise 字样。两原型尚未修改生产。
+
+原始全部 system/messages、其他工具与 schema 保持；输入模型 `ark/k27 high`、
+每响应 2,048 output tokens、单请求 120 秒、全段 300 秒；singleAttempt，额外
+隐藏派发仍计入四次物理上限，不 fallback、不追补样本。未知派发前预留 100,000
+token，总停止阈值 500,000，真实结算超额不截断；$4 保守预留并非账单。状态顺序
+固定，每状态内 arm 顺序随机，主会话在不读映射与 thinking 的证据包中先盲评再揭盲。ENV 合法
+原生选择和 RESULT 合理探查都允许；同步检查误生成 TS、虚构 helper 或其他回退。
+一例/arm/状态仅作假设 pilot，不宣称总体智能、采用率或任务效率改善。
+
+原型零网络自检已通过，假 fetch 达四次后第五次拒绝；其他合同/system/messages
+结构比较相同。ENV 描述 23,299→23,343 bytes，RESULT 27,286→27,249 bytes；
+静态字节不当作实际 token。源 Run 的辅助请求 option 对象未全存，当前冻结的是
+完整逻辑状态和两 arm 共用显式参数，不宣称原生 wire/完整 Run 逐字复放。
+原型、自检和后续 raw 位于 OS temporary，保留旧失败和原评分，结果另记。
+
+### 单步结果与取舍
+
+四次固定调用已结束，raw 位于
+`%TEMP%/kodax-eval-dumps/space-sdk-script-contract-diagnosis-20261104/probe-wBWBuI/`。
+`main-blind-review.json` 在读取 arm 映射前锁定，随后揭盲并将逐例结论、raw/输入
+hash、指标与限制写入 `main-session-review.json`。四次均完整 usage，合计
+**63,635 实报 tokens**，实际请求 4、执行生成工具 0；$4 仍只是保守预留，不是账单。
+
+| 假设 | 盲评／揭盲结果 | 决定 |
+|---|---|---|
+| 精确环境称谓能减少误用 | 两臂都用了 tools.read/data.text，均无 require；baseline 先健康探查，prototype 过早猜错权重结构及输出层级 | 没有观察到目标收益；单例差异不证明候选导致总体回退，不把改词当修复 |
+| 明确返回签名能修正取值 | 两臂都继续读外层 factors/batches/caveat，未用 data.value/sourceContent；均没有新增 TS/helper 误用 | 签名原型未成为有效补救，不直接落生产，不追加试样 |
+
+三个已证失败点应分开：环境假定错误由 QuickJS 正确拒绝；外层 wrapper 错读变成
+undefined，又被条件分支吞掉，最终把同一个错误空摘要自比较为“验证通过”；B 的
+JSON 被复制到 JS 模板后发生换行/转义破坏。工具合同缺失与传输损坏已被反证。
+长合同和去重的显著性影响仍非已证因果；请求/输出上限影响恢复，不能代替这几个
+首发错误的根因，也不能用提高上限宣布问题解决。
+
+额外零费用浅 guard 原型仅在隔离重放中包直接工具结果，确实在 A 的 `.factors`
+外层读取处报 API 合同错误、保留前两次成功回执，错误摘要未写入；正确 data.value
+和原文路径仍能算出正确结果。但是兼容反例已证：当前正常工作的
+`r.structuredContent ?? r.data?.value` 在 guard 下变为 throw。这是普通属性读取
+语义改变，不能默认为透明修复。它也不解决业务 data 内误猜、require 或复制转义。
+因此不默认采用 strict guard、不扁平化业务字段、不模拟 require；原型只作诊断。
+证据为 `%TEMP%/kodax-script-contract-replay-9RPYlY/` 及
+`%TEMP%/kodax-script-contract-guard-compatibility.log`，网络请求为 0。
+
+### 建议实施的最小两片（尚未实施，效果待验）
+
+1. **已有失败的恢复诊断**：在 `script/worker.ts` 的结构化 VM 错误边界，仅针对
+   已确认不可用的运行环境全局增强定位信息；保留原 name/message/stack、失败状态
+   和真实回执，提醒工具可能已执行、不可自动重放。不扫描或改写用户代码，不把
+   普通局部变量错误猜成 Node 问题，也不再增加一组全局任务提示。
+2. **类型数据优先的模型呈现**：在 capability renderer 的可信投影与 model serializer
+   之间，让模型保留 guest 实际的 data.value/text 路径，压缩 renderer 自己追加的
+   重复展示；保留 producer 原文、summary、metadata、警告、分页/截断和原文回读。
+   不反解析 provider 文本，不推断业务 schema。首片只做成功的叶结果、未改写、真实 JSON、
+   字符串展示；多模态/error/取消/无 reader 或不匹配等沿原策略。
+
+第二片必须比较**最终整 cell JSON**与真正旧序列化的 UTF-8 bytes，包含 selected、
+显式返回及原 value_from_receipt 折叠；不更小就回退，不能抬高 baseline。复用现有
+modelContent 元数据路径会给 guest/canonical 增加字段和容量成本，不能承诺逐字节
+不变；建议使用模型层短命可信投影（内部 WeakMap，类似已有 Script model 状态），
+不把提示写进 result/receipt。只在原结果及内容快照仍匹配时使用；clone、恢复或
+缺提示时回退旧策略。它不是会话内数据存储，不增加 Runtime、持久化或恢复协议。
+
+已用同一真实 renderer 做零费表示可行性验证：先断言其完整输出与真实 canonical
+content 完全一致，再移除它自己添加的 structured JSON 展示。batch receipt 从
+**1,915→1,689 bytes**，同时恢复真实 data.value、保留原文；scale 小值候选为
+727→746 bytes，因而不采用。冻结整 cell JSON **2,982→2,756 bytes**。该原型没有把
+提示附加到 guest/canonical，不能据此隐藏后续实现的状态/容量成本。证据在
+`%TEMP%/kodax-script-typed-presentation-BqpxUI/evidence.json`；这不是新模型效果证明。
+
+后续实现验收应分片：先公共 SDK/QuickJS 零费回放与接口回归，核对异常定位、原
+引用/observe/wait、hook 改写/脱敏、metadata 伪造、optional/null/空白/blocks、
+分页/显式返回及整 cell 字节回退；原生、guest 内容/数据与 canonical 不变。再对
+真正改变的错误后状态做有界单步恢复观察，不重跑完整任务求绿。本轮决定为保留
+既有生产行为、实施上述两片前先完成这些边界验证；不能宣称通用智能、效率或
+任务正确性已经修复。独立业务约束也不能被“与自己生成的摘要相等”替代。
+
 ## 2026-11-04 最终候选真实模型补验（revision 10，已完成）
 
 候选 `e177e0ce98a7e3f38653389382554ffadd31c7bc`。用户要求尝试验证尚缺的真实模型
