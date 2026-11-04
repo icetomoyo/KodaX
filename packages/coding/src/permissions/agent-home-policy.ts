@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { getAgentConfigHome, isPathInsideDirectory } from '@kodax-ai/agent';
+import { getActiveAgentHomes, getAgentConfigHome, isPathInsideDirectory } from '@kodax-ai/agent';
 
 const PROTECTED_DIRECTORIES = new Set([
   'runtime', 'mcp-tokens', 'mcp-clients', 'integrations',
@@ -191,19 +191,24 @@ export function isProtectedAgentHomeMutationTarget(
     && !isAutoWritableAgentHomePath(canonicalTarget, canonicalHome);
 }
 
+/** The process agent home and every agent home an open in-process Runtime loads from. */
+function activeAgentHomes(): string[] {
+  try {
+    return getActiveAgentHomes();
+  } catch {
+    return [];
+  }
+}
+
 /** Unauthorizable model-side boundary: Agent Home and host-owned control state. */
 export function isAgentHomeHardMutationTarget(
   targetPath: string,
   executionCwd = process.cwd(),
 ): boolean {
-  let agentHome: string;
-  try {
-    agentHome = getAgentConfigHome();
-  } catch {
-    return false;
-  }
-  return isGovernedMemoryMutationTarget(targetPath, executionCwd, agentHome)
-    || isAgentHomeTargetIn(agentHome, targetPath, executionCwd, isHardAgentHomeRelativePath);
+  return activeAgentHomes().some((agentHome) => (
+    isGovernedMemoryMutationTarget(targetPath, executionCwd, agentHome)
+    || isAgentHomeTargetIn(agentHome, targetPath, executionCwd, isHardAgentHomeRelativePath)
+  ));
 }
 
 /** Code and integrations the Host loads as trusted: no approval lets a model write them. */
@@ -211,14 +216,10 @@ export function isAgentHomeHostLoadedTarget(
   targetPath: string,
   executionCwd = process.cwd(),
 ): boolean {
-  let agentHome: string;
-  try {
-    agentHome = getAgentConfigHome();
-  } catch {
-    return false;
-  }
-  return isAgentHomeTargetIn(agentHome, targetPath, executionCwd, (relative) => (
-    relative !== undefined && isUnderDirectories(relative, HOST_LOADED_AGENT_HOME_DIRECTORIES)
+  return activeAgentHomes().some((agentHome) => (
+    isAgentHomeTargetIn(agentHome, targetPath, executionCwd, (relative) => (
+      relative !== undefined && isUnderDirectories(relative, HOST_LOADED_AGENT_HOME_DIRECTORIES)
+    ))
   ));
 }
 
