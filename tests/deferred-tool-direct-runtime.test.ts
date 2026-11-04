@@ -8,6 +8,11 @@ import { createKodaXRuntime } from './runtime-fixture.js';
 import { measureModelFields } from './first-turn-uniform-costs.js';
 import { inputHash, type FrozenInput } from './first-turn-eval-support.js';
 import { projectToolSearchResultParameters } from '../packages/coding/src/tools/tool-search-model-result.js';
+import type { GuardedHttpResponse } from '../packages/coding/src/tools/_internal/guarded-http-get.js';
+
+// web_fetch reads through guardedHttpGet, not the global fetch.
+const fetcher = vi.hoisted(() => vi.fn<(target: string) => Promise<GuardedHttpResponse>>());
+vi.mock('../packages/coding/src/tools/_internal/guarded-http-get.js', () => ({ guardedHttpGet: fetcher }));
 
 const url = 'https://nodejs.org/api/fs.html';
 const text = 'fs.rm: When force is true, exceptions will be ignored if path does not exist. Default: false.';
@@ -29,12 +34,11 @@ it.each(['agent', 'coding', 'script'] as const)('keeps %s URL/report work direct
   const hashes = async () => Object.fromEntries(await Promise.all(sourceFiles.map(async file => [file, inputHash(await fs.readFile(file, 'utf8'))])));
   const sourceHashes = await hashes();
   vi.stubEnv('KODAX_HOME', root);
-  const fetcher = vi.fn(async (input: string | URL | Request) => {
-    const requested = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-    if (requested !== url) throw new Error('Unexpected network request in offline Runtime test');
-    return new Response(text, { status: 200, headers: { 'content-type': 'text/plain' } });
+  fetcher.mockReset().mockImplementation(async (target) => {
+    if (target !== url) throw new Error('Unexpected network request in offline Runtime test');
+    return { url, status: 200, contentType: 'text/plain', body: new Response(text) };
   });
-  vi.stubGlobal('fetch', fetcher);
+  vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Unexpected network request in offline Runtime test'); }));
   const providerName = `deferred-direct-${path.basename(root)}`;
   const inputs: FrozenInput[] = [], publicResults: { name: string; content: string }[] = [];
   let mode = initialMode, canonicalHelp = '', step = 0, failure: unknown;

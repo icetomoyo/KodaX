@@ -3,6 +3,7 @@ import type { KodaXToolExecutionContext } from '../types.js';
 import { readOptionalString } from './internal.js';
 import { renderCapabilityToolResult } from './capability-result.js';
 import type { ToolResult } from './types.js';
+import { guardedHttpGet } from './_internal/guarded-http-get.js';
 import {
   convertCapabilityReadResult,
   extractHtmlTitle,
@@ -81,20 +82,16 @@ export async function toolWebFetch(
       throw new Error('url must use http or https.');
     }
 
-    const response = await fetch(url, {
-      method: 'GET',
-      signal: createFetchTimeoutSignal(FETCH_TIMEOUT_MS),
-      headers: {
-        'user-agent': 'KodaX/0.7 retrieval',
-        accept: 'text/html,application/json,text/plain;q=0.9,*/*;q=0.8',
-      },
+    const response = await guardedHttpGet(url, createFetchTimeoutSignal(FETCH_TIMEOUT_MS), {
+      'user-agent': 'KodaX/0.7 retrieval',
+      accept: 'text/html,application/json,text/plain;q=0.9,*/*;q=0.8',
     });
-    const contentType = response.headers.get('content-type') ?? 'unknown';
-    const { text: body, truncated, bytesRead } = await readResponseTextLimited(response, FETCH_MAX_BYTES);
+    const contentType = response.contentType ?? 'unknown';
+    const { text: body, truncated, bytesRead } = await readResponseTextLimited(response.body, FETCH_MAX_BYTES);
     const isHtml = contentType.includes('text/html');
     const title = isHtml ? extractHtmlTitle(body) : undefined;
     const content = isHtml ? stripHtmlToText(body) : body;
-    const finalUrl = response.url || url;
+    const finalUrl = response.url;
     const sourceStatus = truncated
       ? `[SOURCE_INCOMPLETE: response exceeded the ${FETCH_MAX_BYTES / 1024} KiB network acquisition safety limit.] `
       : '';
@@ -104,7 +101,7 @@ export async function toolWebFetch(
       scope: 'remote',
       trust: 'open-world',
       freshness: 'fresh',
-      summary: `${sourceStatus}${response.ok
+      summary: `${sourceStatus}${response.status >= 200 && response.status < 300
         ? `Fetched ${finalUrl} (${response.status}).`
         : `Fetched ${finalUrl} with non-success status ${response.status}.`}`,
       content: readCapabilityContent({ kind: 'resource', content }) ?? content,

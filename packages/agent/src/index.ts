@@ -405,6 +405,11 @@ export {
   getProviderReasoningCacheOptions,
 } from './runtime/capability-cache.js';
 
+export {
+  isCloudMetadataAddress,
+  isPrivateNetworkAddress,
+} from './runtime/network-address-policy.js';
+
 // FEATURE_208 (v0.7.45): process hardening (debug-preserving subset).
 export {
   assertNoGitInstallPrompt,
