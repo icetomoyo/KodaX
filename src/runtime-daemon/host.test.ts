@@ -919,6 +919,33 @@ describe("runtime daemon host", () => {
   await host.close();
 });
 
+it("warns in the daemon log when a proxy variable will not reach every request", async () => {
+  vi.stubEnv("HTTPS_PROXY", "http://user:proxy-secret@127.0.0.1:9");
+  vi.stubEnv("NODE_USE_ENV_PROXY", undefined);
+  vi.stubEnv("NODE_OPTIONS", undefined);
+  try {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), "default");
+    const runtime = makeRuntime();
+    const lock = tryAcquireRuntimeDaemonLock(paths, {
+      runtimeId: runtime.identity.runtimeId,
+      pid: process.pid,
+      createdAt: runtime.identity.startedAt,
+    });
+    if (!lock) throw new Error("Expected daemon lock for proxy diagnostic test.");
+
+    const host = await startRuntimeDaemonHost({ runtime, paths, endpoint: await makeTestEndpoint(), lock });
+    cleanupTasks.push(() => host.close());
+
+    const logText = fs.readFileSync(paths.logFile, "utf8");
+    expect(logText).toContain("[runtime:network] HTTPS_PROXY is set");
+    expect(logText).toContain("NODE_USE_ENV_PROXY=1");
+    expect(logText).not.toContain("proxy-secret");
+    await host.close();
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
 it("keeps cyclic Error cause chains diagnosable in the daemon log", async () => {
   const paths = resolveRuntimeDaemonPaths(tempHome(), "default");
   const runtime = makeRuntime();

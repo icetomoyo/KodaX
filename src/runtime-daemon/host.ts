@@ -12,6 +12,7 @@ import {
   createRuntimeDaemonDispatcher,
   createRuntimeDaemonRunResultStore,
 } from './server.js';
+import { describeProxyEnvironmentGap } from '../proxy-environment.js';
 import {
   appendRuntimeDaemonLog,
   createRuntimeDaemonToken,
@@ -72,6 +73,8 @@ export async function startRuntimeDaemonHost(
   const restoreDiagnostics = setKodaXDiagnosticSink((diagnostic) => {
     appendRuntimeDiagnostic(options.paths, diagnostic);
   });
+  const proxyGap = describeProxyEnvironmentGap();
+  if (proxyGap !== undefined) emitKodaXDiagnostic({ source: 'runtime:network', level: 'warn', message: proxyGap });
 
   let server: RuntimeDaemonSocketServer | undefined;
   let scheduleStop: (() => void) | undefined;
