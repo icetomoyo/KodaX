@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
+import { emitKodaXDiagnostic } from '../diagnostics.js';
 import { killChildProcessTree } from './process-tree.js';
 
 const PAYLOAD_ENV = 'KODAX_EFFECT_JOB_PAYLOAD';
@@ -355,7 +356,10 @@ try {
   $source = @'
 ${WINDOWS_EFFECT_JOB_SOURCE}
 '@
+  $compile = [Diagnostics.Stopwatch]::StartNew()
   Add-Type -TypeDefinition $source
+  [Console]::Out.WriteLine('COMPILED:' + $compile.ElapsedMilliseconds)
+  [Console]::Out.Flush()
   if ($payload.action -eq 'recover') {
     $drained = [KodaXEffectJob]::TerminateAndDrain([string]$payload.jobName)
     [Console]::Out.WriteLine($(if ($drained) { 'DRAINED' } else { 'NOT_FOUND' }))
@@ -787,6 +791,16 @@ export async function windowsSandboxSidHasOtherProcesses(
   return output === 'ACTIVE';
 }
 
+/** Startup cost is mostly Add-Type compiling the supervisor, which runs on every launch. */
+function reportSupervisorStartup(readyMs: number, compileMs: number | undefined, error?: Error): void {
+  emitKodaXDiagnostic({
+    source: 'runtime:windows',
+    level: error ? 'warn' : 'debug',
+    message: error ? 'Windows effect Job supervisor failed to start.' : 'Windows effect Job supervisor ready.',
+    detail: { readyMs, compileMs, timeoutMs: STARTUP_TIMEOUT_MS, ...(error ? { error: error.message } : {}) },
+  });
+}
+
 function waitForEffectJobReady(supervisor: ChildProcess): Promise<void> {
   const stdout = supervisor.stdout;
   const stderr = supervisor.stderr;
@@ -794,6 +808,8 @@ function waitForEffectJobReady(supervisor: ChildProcess): Promise<void> {
     return Promise.reject(new Error('Windows effect Job supervisor stdout is unavailable.'));
   }
   return new Promise<void>((resolve, reject) => {
+    const startedAt = Date.now();
+    let compileMs: number | undefined;
     let stdoutBuffer = '';
     let stderrBuffer = '';
     const timer = setTimeout(() => {
@@ -808,6 +824,7 @@ function waitForEffectJobReady(supervisor: ChildProcess): Promise<void> {
     };
     const settle = (error?: Error): void => {
       cleanup();
+      reportSupervisorStartup(Date.now() - startedAt, compileMs, error);
       if (error) reject(error);
       else resolve();
     };
@@ -816,6 +833,7 @@ function waitForEffectJobReady(supervisor: ChildProcess): Promise<void> {
       const lines = stdoutBuffer.split(/\r?\n/);
       stdoutBuffer = lines.pop() ?? '';
       for (const line of lines) {
+        if (line.startsWith('COMPILED:')) compileMs = Number(line.slice('COMPILED:'.length));
         if (line === 'READY') {
           settle();
           return;

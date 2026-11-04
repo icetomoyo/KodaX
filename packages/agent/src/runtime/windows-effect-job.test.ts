@@ -5,6 +5,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { setKodaXDiagnosticSink, type KodaXDiagnostic } from '../diagnostics.js';
 import {
   containWindowsEffectProcess,
   terminateWindowsEffectJob,
@@ -104,6 +105,47 @@ describe.runIf(process.platform === 'win32')('Windows effect Job', () => {
       watcher.close();
       gate.kill();
     }
+  });
+
+  it('reports supervisor readiness and Add-Type compile time as a diagnostic', async () => {
+    const diagnostics: KodaXDiagnostic[] = [];
+    const restore = setKodaXDiagnosticSink((diagnostic) => diagnostics.push(diagnostic));
+    const gate = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    try {
+      const effectJob = await containWindowsEffectProcess(gate.pid!);
+      gate.kill();
+      await effectJob.drained;
+    } finally {
+      restore();
+      gate.kill();
+    }
+    const ready = diagnostics.find((item) => item.message === 'Windows effect Job supervisor ready.');
+    expect(ready).toMatchObject({ source: 'runtime:windows', level: 'debug' });
+    const detail = ready?.detail as { readyMs: number; compileMs: number };
+    expect(detail.compileMs).toBeGreaterThanOrEqual(0);
+    expect(detail.readyMs).toBeGreaterThanOrEqual(detail.compileMs);
+  });
+
+  it('reports a supervisor startup failure with its timings as a warning', async () => {
+    const exited = spawn(process.execPath, ['-e', ''], { stdio: 'ignore', windowsHide: true });
+    await new Promise<void>((resolve) => exited.once('exit', () => resolve()));
+    const diagnostics: KodaXDiagnostic[] = [];
+    const restore = setKodaXDiagnosticSink((diagnostic) => diagnostics.push(diagnostic));
+    try {
+      await expect(containWindowsEffectProcess(exited.pid!)).rejects.toThrow('OpenProcess');
+    } finally {
+      restore();
+    }
+    const failure = diagnostics.find((item) => item.message === 'Windows effect Job supervisor failed to start.');
+    expect(failure).toMatchObject({ source: 'runtime:windows', level: 'warn' });
+    expect(failure?.detail).toMatchObject({
+      readyMs: expect.any(Number),
+      compileMs: expect.any(Number),
+      error: expect.stringContaining('OpenProcess'),
+    });
   });
 
   it('keeps a delayed supervisor failure observable without an unhandled rejection', async () => {
