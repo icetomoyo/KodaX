@@ -58,7 +58,10 @@ FEATURE_302 provider/OAuth credential parity stack, and the 2026-11-01
 full-chain audit's Windows recovery, credential and permission fixes;
 the `v0.7.97-beta.1` tag completes the Space-facing Host execution and
 Session seams with Main default Skills, Quick Ask Session promotion and
-atomic core-config publication.
+atomic core-config publication; the `v0.7.97-beta.2` tag hardens Script
+execution reliability with typed program data, native tool-name wire
+fidelity, on-demand output contracts and shared Host recovery/Workflow
+finalization fixes.
 Issue 371's historical first-read latency and Script model-efficiency
 acceptance remain open.
 
@@ -823,6 +826,29 @@ starts, upgrades, or waits. See
 [docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) and the
 [v0.7.97-alpha.4 release notes](docs/release.md#v0797-alpha4-release-preparation).
 Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2/alpha.3 contract is
+retained.
+
+**v0.7.97-beta.2 release:** Script execution reliability hardening — VM
+call paths expose complete collision-safe tool aliases beside original
+names, typed program data carries normalized read windows and trusted
+structured JSON, and duplicate model output is projected only when the
+original receipt stays fully readable. Native tool names are encoded at
+the Anthropic-compatible wire boundary and restore canonical identity,
+arguments, permissions and deltas; an isolated optional sourceContent
+view preserves original content beside display output, and Host tools
+may declare outputSchema served on demand through `mcp_describe` without
+enlarging default menus; missing Node globals gain bounded contextual
+guidance without displacing original QuickJS error JSON or settled
+receipts. Shared Host recovery refreshes promoted observers, preserves
+owner-bound pending input recovery with idempotent withdrawal receipts,
+reclaims proven dead history locks and enforces trusted Agent mode before
+execution; Host-owned repo diagnostics/prewarm and durable Workflow
+finalization with physical task draining and protected project references
+land. Bounded real-model validation records Script model-facing
+reliability as recommend-iterate; no efficiency or general intelligence
+improvement is claimed. Tagging and publication remain separate. See the
+[v0.7.97-beta.2 release notes](docs/release.md#v0797-beta2-release-preparation).
+Every v0.7.96 stable and v0.7.97-alpha.1 through beta.1 contract is
 retained.
 
 **v0.7.97-beta.1 release:** Space-facing Host execution and Session seams
@@ -2215,7 +2241,7 @@ This development tree exposes 17 SDK subpaths plus the root. Shared product
 applications use `@kodax-ai/kodax/client`; independent libraries and trusted Host
 APIs remain available through the other subpaths. See the [Client contract](docs/CLIENT_CONTRACT.md)
 and [SDK migration guide](docs/SDK_MIGRATION.md). This documentation was checked
-against package version `0.7.97-beta.1`; npm publication is separate from
+against package version `0.7.97-beta.2`; npm publication is separate from
 the current development-tree contract.
 
 ```bash

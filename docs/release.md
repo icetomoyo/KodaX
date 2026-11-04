@@ -8,6 +8,65 @@ Use [SDK_MIGRATION.md](SDK_MIGRATION.md) for the supported current surface.
 KodaX is distributed as **standalone binaries** built with `bun build --compile`.
 Target machines do **not** need Node.js or any runtime installed.
 
+## v0.7.97-beta.2 release preparation
+
+Release state: `v0.7.97-beta.2` is a candidate awaiting multi-platform CI.
+npm publication has not occurred. The candidate is the second beta of the
+v0.7.97 line, hardening Script execution reliability: VM call paths expose
+complete collision-safe tool aliases beside original names with typed
+program data (normalized read windows and trusted structured JSON) and
+duplicate model output projected only while original receipts stay fully
+readable; native tool names are encoded at the Anthropic-compatible wire
+boundary restoring canonical identity, arguments, permissions and deltas;
+an isolated optional sourceContent view preserves original content beside
+display output, and Host tools may declare outputSchema served on demand
+through `mcp_describe` without enlarging default menus; missing Node
+globals gain bounded contextual guidance without displacing original
+QuickJS error JSON or settled receipts. Shared Host recovery refreshes
+promoted observers, preserves owner-bound pending input recovery with
+idempotent withdrawal receipts, reclaims proven dead history locks and
+enforces trusted Agent mode before execution; Host-owned repo
+diagnostics/prewarm and durable Workflow finalization with physical task
+draining, protected project references and precise cleanup retry land.
+Bounded real-model validation records Script model-facing reliability as
+recommend-iterate; no efficiency or general intelligence improvement is
+claimed. The published-alpha.12 in-place upgrade gates in CI and the
+Release workflow now pin the last npm-published version (`0.7.97-beta.1`,
+published 2026-11-02 under the `beta` dist-tag); bump them only after the
+maintainer publishes beta.2 to npm. The tag-triggered Release workflow
+runs the reusable CI workflow alongside the build matrix; ordinary branch
+pushes do not trigger it, while CI can also be dispatched manually. The
+eventual `-beta` tag suffix marks the release as a GitHub pre-release
+automatically. npm registry publication remains a separate maintainer
+step. Issue 371's remaining historical first-read latency, the fix list's
+still-open findings, Script model-facing reliability acceptance and
+cross-platform manual verification remain explicit. Existing dated
+release records below describe their own artifacts.
+
+### Release execution contract
+
+- Push the version tag only after the release candidate, documentation and
+  feature-design submodule commits are prepared. Ordinary branch pushes do not
+  run CI. A `v*` tag starts Release, including the reusable full CI workflow.
+- Full CI and all five native build jobs run concurrently. The GitHub Release
+  requires successful CI, all platform archive checks, and the universal npm
+  package checks. Manual dispatch builds candidates but never publishes a Release.
+- Each build validates its actual archive before the longer Electron checks.
+  Bundle and archive steps have five-minute process limits; the archive test
+  has a three-minute test budget, aborts pending waits and retains failure
+  evidence. Failed archive evidence is uploaded for seven days. No failed test
+  is converted into success or automatically retried.
+- Re-run failed jobs when diagnosing infrastructure failures on an unchanged
+  candidate. A source or workflow fix requires a new commit/run. Verify the
+  final tag SHA and every required job; an earlier green branch run is not
+  evidence for a different tagged commit.
+- Release assets comprise five platform archives and their checksums, one
+  universal npm tarball and its checksum, plus aggregated `SHA256SUMS`.
+  The maintainer publishes the audited tarball with `node scripts/release.mjs`;
+  this workflow never performs `npm publish`.
+
+The workflow contracts are covered by `tests/release-workflow.test.ts`.
+
 ## v0.7.97-beta.1 release preparation
 
 Release state: `v0.7.97-beta.1` is a candidate awaiting multi-platform CI.

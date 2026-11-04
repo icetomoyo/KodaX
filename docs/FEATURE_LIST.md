@@ -11,15 +11,15 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-beta.1` (Git tag); `v0.7.96` remains the last stable release |
-| Current package version | `@kodax-ai/kodax@0.7.97-beta.1` (npm publication remains manual) |
+| Current released version | `v0.7.97-beta.2` (Git tag); `v0.7.96` remains the last stable release |
+| Current package version | `@kodax-ai/kodax@0.7.97-beta.2` (npm publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 core packages + private optional `artifacts` source workspace; one public npm package |
 | Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3` and extended with startup streamlining, Session recency ordering, draft admission, concurrent-launch recovery and shared-Session Host ownership resolution through `v0.7.97-alpha.7`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement released in alpha.4; missing visual capabilities remain unverified; [design](ADR.md#verification-responsibility-and-tradeoffs) |
 | Artifact distribution revision | `2026-10-18` — one `@kodax-ai/kodax` npm package; four `/artifacts` subpaths and resources staged in the main tarball; local implementation, not yet published |
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
-| Current development | `v0.7.97` / `FEATURE_298` — the Space Host execution and session seams (Main default Skills with consumption-time execution bindings, Quick Ask Session promotion, redirect-boundary recovery and atomic core-config publication) plus the alpha.12 follow-up Windows hardening prepared for the `v0.7.97-beta.1` candidate on top of the released alpha.12 unified Host cutover; [current SDK checklist](SDK_MIGRATION.md#2026-10-29-未发布改动对齐). Cross-platform/manual release verification, the fix list's still-open findings and Issue 371's historical first-read investigation remain open. |
-| Roadmap updated | `2026-11-02` — the Space execution/session seam completion and core-config publication prepared for the `v0.7.97-beta.1` candidate on top of the released alpha.12; FEATURE_300 remains Planned |
+| Current development | `v0.7.97` / `FEATURE_298` — Script execution reliability hardening (collision-safe VM call paths with typed program data, native tool-name wire fidelity, optional sourceContent and on-demand outputSchema, missing-Node-global contextual guidance) plus shared Host recovery (promoted-observer refresh, owner-bound pending input recovery, dead history-lock reclamation, trusted Agent mode) and Host-owned repo diagnostics/prewarm with durable Workflow finalization prepared for the `v0.7.97-beta.2` candidate on top of the released beta.1; [current SDK checklist](SDK_MIGRATION.md#2026-10-29-未发布改动对齐). Cross-platform/manual release verification, the fix list's still-open findings, Script model-facing reliability (recommend-iterate) and Issue 371's historical first-read investigation remain open. |
+| Roadmap updated | `2026-11-04` — the Script reliability and shared Host recovery/Workflow finalization fixes prepared for the `v0.7.97-beta.2` candidate on top of the released beta.1; FEATURE_300 remains Planned |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
 | Total tracked features | `86` |
 | InProgress | `2` |
@@ -552,6 +552,30 @@ Final frozen package **80** and historical/real-alpha.11 Host gates **4** passed
 and build fingerprints remained unchanged throughout. See the J guide for exact checkpoints.
 Space stays independently at `da531f0a`; its historical I counts do not certify a newly paired
 Space build. No push/publication.
+
+## v0.7.97-beta.2 Release Record
+
+`v0.7.97-beta.2` is the second beta of the v0.7.97 line: Script execution
+reliability hardening — VM call paths expose complete collision-safe tool
+aliases beside original names, typed program data carries normalized read
+windows and trusted structured JSON, and duplicate model output is projected
+only when the original receipt stays fully readable; native tool names are
+encoded at the Anthropic-compatible wire boundary and restore canonical
+identity, arguments, permissions and deltas; an isolated optional
+sourceContent view preserves original content beside display output, and
+Host tools may declare outputSchema served on demand through `mcp_describe`
+without enlarging default menus; missing Node globals gain bounded
+contextual guidance without displacing original QuickJS error JSON or
+settled receipts. Shared Host recovery refreshes promoted observers,
+preserves owner-bound pending input recovery with idempotent withdrawal
+receipts, reclaims proven dead history locks and enforces trusted Agent
+mode before execution; Host-owned repo diagnostics/prewarm and durable
+Workflow finalization with physical task draining and protected project
+references land. Bounded real-model validation records Script model-facing
+reliability as recommend-iterate without efficiency or general
+intelligence claims. Every v0.7.96 stable and v0.7.97-alpha.1 through
+beta.1 contract is retained. Cross-platform manual acceptance and npm
+publication remain manual maintainer steps.
 
 ## v0.7.97-beta.1 Release Record
 

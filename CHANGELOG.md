@@ -8,6 +8,58 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.97-beta.2] - 2026-11-04
+
+Second beta of the v0.7.97 line: Script execution reliability hardening —
+VM call paths expose complete collision-safe tool aliases beside original
+names, typed program data carries normalized read windows and trusted
+structured JSON, and duplicate model output is projected only when the
+original receipt stays fully readable. Native tool names are encoded at the
+Anthropic-compatible wire boundary and restore canonical identity, arguments,
+permissions and deltas; an isolated optional sourceContent view preserves
+original content beside display output and JSON data, and Host tools may
+declare outputSchema served on demand through `mcp_describe` without
+enlarging default menus; missing Node globals gain bounded contextual
+guidance without displacing original QuickJS error JSON, settled receipts or
+authorized tool aliases. Shared Host recovery hardens: promoted observers
+refresh, owner-bound pending input recovery is preserved with idempotent
+withdrawal receipts, proven dead history locks are reclaimed, and trusted
+Agent mode is enforced before execution; Host-owned repo diagnostics/prewarm
+and durable Workflow finalization with physical task draining, protected
+project references and precise cleanup retry land. Bounded real-model
+validation records Script model-facing reliability as recommend-iterate
+without efficiency or general intelligence claims. Every v0.7.96 stable and
+v0.7.97-alpha.1 through beta.1 contract is retained. npm publication remains
+a manual maintainer action.
+
+### Fixed
+
+- Harden shared Host recovery and Script lifecycle: refresh promoted
+  observers, preserve owner-bound pending input recovery with persistent
+  idempotent withdrawal receipts, reclaim proven dead history locks, enforce
+  trusted Agent mode before execution, and add Host-owned repo
+  diagnostics/prewarm plus durable Workflow finalization with physical task
+  draining, protected project references and precise cleanup retry.
+- Expose complete VM call paths with collision-safe aliases beside original
+  tool names; carry normalized read windows and trusted structured JSON
+  without parsing presentation, projecting duplicate model output only while
+  full receipts and original readback stay readable.
+- Encode native tool names at the Anthropic-compatible wire boundary and
+  restore canonical identity, arguments, permissions, deltas and opaque
+  history; validate effective forced names against the current canonical
+  menu and document async helper lifetime in the Script code contract.
+- Keep an isolated optional sourceContent view beside display content and
+  JSON data through Script receipts and original-result readers; serve
+  optional Host outputSchema registration through IPC and `mcp_describe`
+  on-demand output contracts without enlarging default menus or adding
+  result validators.
+- Append bounded runtime and receipt guidance only for exact missing Node
+  globals, preserving original QuickJS error JSON, settled receipts and
+  authorized tool aliases without reading guest globals, displacing original
+  evidence or replaying effects.
+
+---
+
 ## [0.7.97-beta.1] - 2026-11-02
 
 First beta of the v0.7.97 line: Space-facing Host execution and Session

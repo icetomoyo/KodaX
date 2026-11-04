@@ -51,7 +51,9 @@ CLI 使用 `--work-mode`，REPL 使用 `/work-mode`，Product Client 使用 Sess
 `v0.7.97-alpha.12` 标签发布统一共享 Host 收口、FEATURE_302 供应商/OAuth 凭据
 对齐栈，以及 2026-11-01 全链路审计的 Windows 恢复、凭据与权限修复；
 `v0.7.97-beta.1` 标签完成 Space 侧 Host 执行与会话接缝——Main 默认 Skills、
-Quick Ask Session promotion 与核心配置原子发布。
+Quick Ask Session promotion 与核心配置原子发布;`v0.7.97-beta.2` 标签加固
+Script 执行可靠性——类型化程序数据、原生工具名 wire 保真、按需输出契约与
+共享 Host 恢复/Workflow 终结修复。
 Issue 371 的历史首次读取延迟及 Script 模型效率验收仍未关闭。
 
 ## 30 秒上手
@@ -331,6 +333,21 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 详见 [docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) 与
 [v0.7.97-alpha.4 发布清单](docs/release.md#v0797-alpha4-release-preparation)。
 所有 v0.7.96 稳定与 v0.7.97-alpha.1/alpha.2/alpha.3 契约全部保留。
+
+**v0.7.97-beta.2 发布**：Script 执行可靠性加固——VM 调用路径在原名之外提供
+无冲突安全别名,类型化程序数据承载规范化读取窗口与可信结构化 JSON,仅在原
+回执保持完整可读时才投影重复的模型输出。原生工具名在 Anthropic 兼容 wire
+边界编码并恢复 canonical 身份、参数、权限与增量;独立可选 sourceContent 视图
+在展示输出之外保留原文,Host 工具可声明 outputSchema 经 `mcp_describe` 按需
+返回而不扩大默认菜单;缺失 Node 全局仅追加有界上下文指引,不覆盖原始 QuickJS
+错误 JSON 或已定回执。共享 Host 恢复刷新已提升观察者、以幂等撤回回执保留
+owner 绑定的 pending 输入恢复、回收已证死锁并在执行前核验可信 Agent 模式;
+Host 自有的 repo 诊断/预热与持久 Workflow 终结（物理任务排空、受保护项目
+引用）一并落地。有界真实模型验证将 Script 面向模型的可靠性记为
+recommend-iterate,不宣称效率或通用智能提升。代码提交、版本标签与实际发布
+分别判断。
+详见 [v0.7.97-beta.2 发布清单](docs/release.md#v0797-beta2-release-preparation)。
+所有 v0.7.96 稳定与 v0.7.97-alpha.1 至 beta.1 契约全部保留。
 
 **v0.7.97-beta.1 发布**：Space 侧 Host 执行与会话接缝收尾——Main 持有的
 能力门禁默认 Skills 与消费时执行绑定在实际 Product 输入消费点选取已提交
