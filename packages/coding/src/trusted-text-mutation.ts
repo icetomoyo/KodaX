@@ -1,5 +1,6 @@
 import path from 'node:path';
 
+import { isAgentHomeHostLoadedTarget } from './permissions/agent-home-policy.js';
 import type { KodaXTrustedTextFileSnapshot } from './types.js';
 
 export type KodaXTrustedTextMutationErrorCode =
@@ -61,7 +62,7 @@ export class KodaXTrustedTextMutationError extends Error {
 /** Shared lexical/canonical policy for trusted main-process text mutations. */
 export function assertTrustedTextMutationPolicy(
   filePath: string,
-  _executionCwd = process.cwd(),
+  executionCwd = process.cwd(),
   protectedPaths: readonly string[] = [],
   allowGitMetadata = false,
 ): void {
@@ -78,6 +79,17 @@ export function assertTrustedTextMutationPolicy(
       code: 'text_mutation_unsafe_path',
       path: filePath,
       message: `Trusted text mutation denied a UNC, device, drive-relative, or ADS path: ${filePath}`,
+    });
+  }
+  // After the UNC/device check: classification touches the filesystem.
+  if (isAgentHomeHostLoadedTarget(filePath, executionCwd)) {
+    throw new KodaXTrustedTextMutationError({
+      code: 'text_mutation_policy_denied',
+      path: filePath,
+      message: `Trusted text mutation targets KodaX extensions or integrations the Host loads as trusted: ${filePath}`,
+      denialSource: 'runtime_integrity',
+      matchedRule: 'protected_agent_home_state',
+      remediation: 'The Host loads this state as trusted configuration, so only the user can change it. Tell the user what to change instead of rewriting this operation through Shell.',
     });
   }
   const components = path.resolve(filePath).split(/[\\/]+/);

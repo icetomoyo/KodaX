@@ -2696,6 +2696,26 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     await invocation.cleanup();
   });
 
+  it('masks shell writes to Host-loaded extensions and integrations under a broad grant', async () => {
+    await resetSandboxRuntimeForTest();
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-host-loaded-write-mask-'));
+    tempRoots.push(root);
+    const home = path.join(root, '.kodax');
+    await mkdir(path.join(home, 'extensions'), { recursive: true });
+    vi.stubEnv('KODAX_HOME', home);
+    const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
+    const invocation = await sandbox.prepare({ toolCallId: 'host-loaded-write-mask', toolInput: { command: 'node --version' },
+      command: 'node --version', executable: process.execPath, args: ['--version'], cwd: root, env: process.env, fallbackToNormalExecution: false });
+    if (!invocation) throw new Error('expected Windows v2 invocation');
+    const request = JSON.parse(readFileSync(invocation.args.at(-1)!, 'utf8')) as { denyRead: string[]; denyWrite: string[] };
+    for (const directory of ['extensions', 'integrations']) {
+      const canonical = (await realpath(path.join(home, directory))).toLowerCase();
+      expect(request.denyWrite.map(value => value.toLowerCase())).toContain(canonical);
+      expect(request.denyRead.map(value => value.toLowerCase())).not.toContain(canonical);
+    }
+    await invocation.cleanup();
+  });
+
   it('allows broad home reads and isolates host temporary writes per command', async () => {
     await resetSandboxRuntimeForTest();
     const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-broad-host-access-'));

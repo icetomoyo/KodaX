@@ -21,6 +21,7 @@ describe('trusted text file mutation boundary', () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await fs.rm(root, { recursive: true, force: true });
   });
 
@@ -261,6 +262,50 @@ describe('trusted text file mutation boundary', () => {
     ))).rejects.toMatchObject({ code: 'text_mutation_policy_denied', denialSource: 'builtin_fallback',
       matchedRule: 'protected_git_metadata', remediation: expect.stringContaining('Full Access') });
     expect(snapshot).not.toHaveBeenCalled();
+  });
+
+  it.for(['extensions/planted.mjs', 'integrations/mcp.json', 'extensions'])(
+    'refuses Host-loaded Agent Home state %s even with Full Access', async (relative) => {
+      const home = path.join(root, 'agent-home');
+      vi.stubEnv('KODAX_HOME', home);
+      const filePath = path.join(home, relative);
+      const snapshot = vi.fn<KodaXTrustedTextMutationHost['snapshot']>();
+      const ctx: KodaXToolExecutionContext = {
+        backups: new Map(),
+        executionCwd: root,
+        resolveShellPermissionMode: () => 'full-access',
+        trustedTextMutationHost: { snapshot, commit: vi.fn<KodaXTrustedTextMutationHost['commit']>() },
+      };
+
+      await expect(Promise.resolve().then(() => withTextFileMutation(
+        filePath, 'write', { path: filePath }, ctx, async () => undefined,
+      ))).rejects.toMatchObject({ code: 'text_mutation_policy_denied', denialSource: 'runtime_integrity',
+        matchedRule: 'protected_agent_home_state' });
+      expect(snapshot).not.toHaveBeenCalled();
+    },
+  );
+
+  it('refuses Agent Home state reached through the final canonical target', async () => {
+    const home = path.join(root, 'agent-home');
+    vi.stubEnv('KODAX_HOME', home);
+    const requested = path.join(root, 'ordinary.mjs');
+    const commit = vi.fn<KodaXTrustedTextMutationHost['commit']>();
+    const operation = vi.fn(async () => undefined);
+    const ctx: KodaXToolExecutionContext = {
+      backups: new Map(),
+      executionCwd: root,
+      resolveShellPermissionMode: () => 'full-access',
+      trustedTextMutationHost: {
+        snapshot: vi.fn(async () => ({ state: 'missing', content: '', revision: 'missing',
+          slot: 'slot:planted', canonicalPath: path.join(home, 'extensions', 'planted.mjs') })),
+        commit,
+      },
+    };
+
+    await expect(withTextFileMutation(requested, 'write', { path: requested }, ctx, operation))
+      .rejects.toMatchObject({ code: 'text_mutation_policy_denied', matchedRule: 'protected_agent_home_state' });
+    expect(operation).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
   });
 
   it('rechecks protected policy against the final canonical target', async () => {

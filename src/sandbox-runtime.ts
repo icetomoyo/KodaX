@@ -536,6 +536,8 @@ const WORKSPACE_SHELL_INTERNAL_AGENT_HOME_DIRECTORIES = [
   'processes',
   'learned',
   'memory-scopes',
+  'extensions',
+  'integrations',
 ] as const;
 const ELECTRON_NODE_ENV_SCRUB_IMPORT_LITERAL = JSON.stringify(ELECTRON_NODE_ENV_SCRUB_IMPORT);
 const ELECTRON_RUN_AS_NODE_ENV_LITERAL = JSON.stringify(ELECTRON_RUN_AS_NODE_ENV);

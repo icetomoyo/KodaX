@@ -108,6 +108,7 @@ function isProtectedRelativePath(relative: string): boolean {
 export function isAutoWritableAgentHomePath(target: string, agentHome: string): boolean {
   const relative = normalizedRelative(target, agentHome);
   return relative !== undefined && !isProtectedRelativePath(relative)
+    && !isHardAgentHomeRelativePath(relative)
     && !isGovernedMemoryRelativePath(path.relative(agentHome, target).replaceAll('\\', '/'));
 }
 
@@ -201,31 +202,55 @@ export function isAgentHomeHardMutationTarget(
   } catch {
     return false;
   }
-  if (isGovernedMemoryMutationTarget(targetPath, executionCwd, agentHome)) return true;
+  return isGovernedMemoryMutationTarget(targetPath, executionCwd, agentHome)
+    || isAgentHomeTargetIn(agentHome, targetPath, executionCwd, isHardAgentHomeRelativePath);
+}
+
+/** Code and integrations the Host loads as trusted: no approval lets a model write them. */
+export function isAgentHomeHostLoadedTarget(
+  targetPath: string,
+  executionCwd = process.cwd(),
+): boolean {
+  let agentHome: string;
+  try {
+    agentHome = getAgentConfigHome();
+  } catch {
+    return false;
+  }
+  return isAgentHomeTargetIn(agentHome, targetPath, executionCwd, (relative) => (
+    relative !== undefined && isUnderDirectories(relative, HOST_LOADED_AGENT_HOME_DIRECTORIES)
+  ));
+}
+
+/** Checks the lexical and canonical target; an unresolvable path inside Agent Home fails closed. */
+function isAgentHomeTargetIn(
+  agentHome: string,
+  targetPath: string,
+  executionCwd: string,
+  matches: (relative: string | undefined) => boolean,
+): boolean {
   const lexicalHome = path.resolve(agentHome);
   const resolvedTarget = path.resolve(executionCwd, expandHome(targetPath));
-  if (isPathInsideDirectory(resolvedTarget, lexicalHome)) {
-    const lexicalRelative = normalizedRelative(resolvedTarget, lexicalHome);
-    if (isHardAgentHomeRelativePath(lexicalRelative)) return true;
-  }
+  if (isPathInsideDirectory(resolvedTarget, lexicalHome)
+    && matches(normalizedRelative(resolvedTarget, lexicalHome))) return true;
   const canonicalHome = canonicalizeAgentHomePolicyPath(agentHome) ?? lexicalHome;
   const canonicalTarget = canonicalizeAgentHomePolicyPath(targetPath, executionCwd);
   if (canonicalTarget === undefined) {
     return isPathInsideDirectory(resolvedTarget, lexicalHome);
   }
-  if (!isPathInsideDirectory(canonicalTarget, canonicalHome)) return false;
-  const relative = normalizedRelative(canonicalTarget, canonicalHome);
-  return isHardAgentHomeRelativePath(relative);
+  return isPathInsideDirectory(canonicalTarget, canonicalHome)
+    && matches(normalizedRelative(canonicalTarget, canonicalHome));
+}
+
+const HOST_LOADED_AGENT_HOME_DIRECTORIES = ['extensions', 'integrations'];
+const HARD_AGENT_HOME_DIRECTORIES = ['runtime', 'processes', 'learned', ...HOST_LOADED_AGENT_HOME_DIRECTORIES];
+
+function isUnderDirectories(relative: string, directories: readonly string[]): boolean {
+  return directories.some((directory) => relative === directory || relative.startsWith(`${directory}/`));
 }
 
 function isHardAgentHomeRelativePath(relative: string | undefined): boolean {
-  return relative === undefined
-    || relative === 'runtime'
-    || relative.startsWith('runtime/')
-    || relative === 'processes'
-    || relative.startsWith('processes/')
-    || relative === 'learned'
-    || relative.startsWith('learned/');
+  return relative === undefined || isUnderDirectories(relative, HARD_AGENT_HOME_DIRECTORIES);
 }
 
 /** Removal unlinks a final symlink instead of mutating the symlink target. */
