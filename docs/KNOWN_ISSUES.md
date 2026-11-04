@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-04_
+_Last Updated: 2026-11-05_
 
 ---
 
@@ -46,6 +46,64 @@ This predates the child contract projection; the eval uses raw per-call usage,
 not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
+
+## Issue 385: Inline Runtime agent home is outside model write protection
+
+- Priority: Low
+- Status: Resolved
+- Introduced: inline `homeDir` Runtimes predate Issue 380; the gap became visible with it
+- Created / Resolved: 2026-11-05
+- Fixed: KodaX-next-dev (unreleased)
+
+### Original Problem
+
+An inline Runtime built with `homeDir` loads extensions and integrations, and keeps
+permission grants, under `<homeDir>/.kodax`. The model-side protections (the hard
+Agent Home set, the Issue 380 refusal of `extensions/` and `integrations/`, and the
+shell sandbox mask of internal directories) only checked the process agent home
+(`KODAX_HOME` or `setAgentConfigHome()`). When the two differed and `<homeDir>/.kodax`
+was writable, for example inside the workspace, a model write could plant an
+extension the Runtime loads with Host authority.
+
+Only the `@internal` `createKodaXHostRuntime` builds such a Runtime. The public
+`createKodaXRuntime` accepts only `mode: 'daemon'`, and daemon and worker processes
+set `KODAX_HOME` to their agent home.
+
+### Resolution
+
+- `registerRuntimeAgentHome()` (`@kodax-ai/agent`) records the agent home of an open
+  Runtime. Registrations are counted, so Runtimes sharing a home release it only
+  when the last one closes. `getActiveAgentHomes()` returns the process agent home
+  first, then the registered ones.
+- `createKodaXRuntimeInternal` registers `configHome` before it loads integrations
+  and releases it after it closes them, including when initialization fails.
+- `isAgentHomeHardMutationTarget` and `isAgentHomeHostLoadedTarget` check every
+  active agent home. Text tools therefore refuse `extensions/` and `integrations/`
+  of an open inline Runtime in every mode.
+- The shell sandbox masks the internal directories (`runtime`, `extensions`,
+  `integrations` and the rest) of every active agent home.
+
+### Remaining Limits
+
+- Approval-gated rules still use the process agent home only: credential and
+  `config.json` reads and writes, and text tool writes to `runtime/`, `processes/`
+  and `learned/`. Under an inline Runtime home inside the workspace, those writes
+  follow the workspace rules.
+- A Runtime's agent home is protected while it is open. Files written there
+  before it opens are loaded as they are.
+
+### Verification
+
+- `agent-home.test.ts`: registration, counting, idempotent release and
+  de-duplication, including Windows case differences.
+- `agent-home-policy.test.ts`: a registered home's extensions, integrations,
+  `runtime/permission-grants.json` and memory scopes become hard targets, its
+  ordinary files stay writable, and the protection ends on release. It failed
+  before the fix.
+- `sandbox-runtime.test.ts` (Windows): `denyWrite` contains the registered home's
+  `extensions`, `integrations` and `runtime`. It failed before the fix.
+- `sdk-runtime.agent-home.test.ts`: an inline Runtime registers its home while
+  open and releases it on close.
 
 ## Issue 384: Nested workflows and CLI print-mode commands ignore KODAX_HOME
 
@@ -274,10 +332,8 @@ integration commands, or a Host UI.
   invoked, through Skill hook admission.
 - Extension paths a user registers in `integrations/extensions.json` outside
   Agent Home are ordinary files; the user chose to trust them.
-- An inline `createKodaXRuntime({ homeDir })` in a process whose agent home
-  (`KODAX_HOME` or `setAgentConfigHome()`) differs protects the process agent
-  home, not `<homeDir>/.kodax`. Daemon and worker processes set `KODAX_HOME`
-  to match.
+- An inline Runtime whose `homeDir` differs from the process agent home was not
+  covered; Issue 385 extends these protections to its agent home while it is open.
 
 ### Verification
 
@@ -2628,6 +2684,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 385 | Low | Resolved | Inline Runtime agent home is outside model write protection | inline `homeDir` Runtimes; visible with Issue 380 | KodaX-next-dev (unreleased) | 2026-11-05 | 2026-11-05 |
 | 384 | Low | Resolved | Nested workflows and CLI print-mode commands ignore KODAX_HOME | FEATURE_246 Part E; CLI commands earlier | KodaX-next-dev (unreleased) | 2026-11-04 | 2026-11-04 |
 | 383 | Low | Open | Volcengine instance metadata address is not confirmed | Issue 381 metadata set | — | 2026-11-04 | — |
 | 382 | Low | Resolved | User Skill discovery ignores KODAX_HOME | FEATURE_194 v0.7.43 or earlier | KodaX-next-dev working tree (unreleased) | 2026-11-04 | 2026-11-04 |
@@ -17502,14 +17559,14 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 262 (38 Open, 224 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 263 (38 Open, 225 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
 
-### 2026-11-04: Issues 378-384
+### 2026-11-04: Issues 378-385
 
 - Resolved extension tool policy gaps (378, 379), model installation of
   Host-loaded extensions and integrations (380), and `web_fetch` access to cloud
@@ -17517,6 +17574,8 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 - Resolved User Skill discovery ignoring `KODAX_HOME` (382).
 - Recorded the unconfirmed Volcengine instance metadata address (383, Open).
 - Resolved nested workflows and CLI print-mode commands ignoring `KODAX_HOME` (384).
+- Extended model write protection to the agent home of an open inline Runtime (385,
+  2026-11-05).
 
 ### 2026-10-29: Issues 374 and 375
 

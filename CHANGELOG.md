@@ -19,6 +19,8 @@ All notable changes to this project will be documented in this file.
   `<agent home>/integrations` with text tools in any mode, including Full
   Access, or with Shell where the sandbox is active. The Host loads both as
   trusted code and live integrations (Issue 380).
+- These model-side protections also cover the agent home of an open inline
+  Runtime built with `homeDir`, not only the process agent home (Issue 385).
 - `web_fetch` refuses cloud metadata addresses on every hop and refuses a
   redirect from a public site into the private network. Direct LAN, VPC and
   intranet targets still work (Issue 381).
