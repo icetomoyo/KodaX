@@ -6,6 +6,7 @@ import { withCacheWritePartition } from './request-extensions.js';
 import { recordRejectedImage } from './rejected-image.js';
 import { requestEnvironment, hasRequestEnvironment, prepareProviderPayload, observePreparedProviderPayload, requestExtensionFetch, providerStreamEvent } from './request-extensions.js';
 import { anthropicTools, withoutPreferredToolConstraints } from './tool-constraints.js';
+import { anthropicToolNames } from './anthropic-tool-names.js';
 import { createHash } from 'node:crypto';
 import { connectionAuthFetch } from './connection-auth.js';
 import { observeProviderFetch, observeProviderStreamUsage } from '../provider-request-observation.js';
@@ -849,6 +850,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     streamOptions?: KodaXProviderStreamOptions,
     signal?: AbortSignal
   ): Promise<KodaXStreamResult> {
+    const toolNames = anthropicToolNames(messages, tools, this.name);
     return this.withRateLimit(async (retryState) => {
       const normalizedReasoning = this.normalizeReasoning(reasoning);
       const model = streamOptions?.modelOverride ?? this.config.model;
@@ -861,9 +863,9 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       const requestMaxOutputTokens = this.getEffectiveMaxOutputTokens(model, streamOptions?.maxOutputTokensOverride);
       retryState.maxOutputTokensLimit ??= requestMaxOutputTokens;
       const maxOutputTokens = Math.min(retryState.maxOutputTokensOverride ?? requestMaxOutputTokens, requestMaxOutputTokens);
-      const convertedMessages = appendAnthropicEphemeralSuffix(this.applyCacheControlToMessages(
+      const convertedMessages = toolNames.project(appendAnthropicEphemeralSuffix(this.applyCacheControlToMessages(
         await this.convertMessages(native.input, model, !native.restored, native.restored?.messages.at(-1) as unknown as Anthropic.Messages.MessageParam | undefined),
-      ), streamOptions?.ephemeralSuffix?.content);
+      ), streamOptions?.ephemeralSuffix?.content));
       const initialCapability = normalizedReasoning.enabled
         ? this.getReasoningCapability(model)
         : 'none';
@@ -903,7 +905,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           system: this.applyCacheControlToSystem(this.buildSystemPrompt(system, messages, model)),
           messages: convertedMessages,
           ...(tools.length > 0
-            ? { tools: this.applyCacheControlToTools(withoutPreferredToolConstraints(tools, retryState.disablePreferredToolConstraints), model) }
+            ? { tools: this.applyCacheControlToTools(withoutPreferredToolConstraints(toolNames.tools, retryState.disablePreferredToolConstraints), model) }
             : {}),
           stream: true,
           ...(this.config.promptCacheAffinity === true
@@ -958,6 +960,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
 
         this.applyNativeControls(kwargs, model, normalizedReasoning, streamOptions, capability === 'none' || retryState.suppressReasoningEffort);
         applyAnthropicThinkingOptions(kwargs, reasoningProfile, streamOptions, this.name);
+        if (kwargs.tool_choice?.type === 'tool') kwargs.tool_choice.name = toolNames.forced(kwargs.tool_choice.name);
         return kwargs;
       };
 
@@ -1133,7 +1136,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             currentText = block.text ?? '';
           } else if (block.type === 'tool_use') {
             currentToolId = block.id;
-            currentToolName = block.name;
+            currentToolName = toolNames.fromWire(block.name);
             currentToolInput = '';
           }
         } else if (event.type === 'content_block_delta') {
@@ -1235,6 +1238,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
               const { source: _source, ...wire } = block.type === 'thinking' || block.type === 'redacted_thinking' ? block : { ...block, source: undefined };
               const clean = { ...wire } as Record<string, unknown>;
               delete clean._salvaged; delete clean._truncated;
+              if (clean.type === 'tool_use' && typeof clean.name === 'string') clean.name = toolNames.toWire(clean.name);
               nativeBlocks.set(event.index, { ...nativeBlocks.get(event.index), ...clean });
             }
           }
@@ -1378,6 +1382,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     streamOptions?: KodaXProviderStreamOptions,
     signal?: AbortSignal,
   ): Promise<KodaXStreamResult> {
+    const toolNames = anthropicToolNames(messages, tools, this.name);
     return this.withRateLimit(async (retryState) => {
       const normalizedReasoning = this.normalizeReasoning(reasoning);
       const model = streamOptions?.modelOverride ?? this.config.model;
@@ -1390,9 +1395,9 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       const requestMaxOutputTokens = this.getEffectiveMaxOutputTokens(model, streamOptions?.maxOutputTokensOverride);
       retryState.maxOutputTokensLimit ??= requestMaxOutputTokens;
       const maxOutputTokens = Math.min(retryState.maxOutputTokensOverride ?? requestMaxOutputTokens, requestMaxOutputTokens);
-      const convertedMessages = appendAnthropicEphemeralSuffix(this.applyCacheControlToMessages(
+      const convertedMessages = toolNames.project(appendAnthropicEphemeralSuffix(this.applyCacheControlToMessages(
         await this.convertMessages(native.input, model, !native.restored, native.restored?.messages.at(-1) as unknown as Anthropic.Messages.MessageParam | undefined),
-      ), streamOptions?.ephemeralSuffix?.content);
+      ), streamOptions?.ephemeralSuffix?.content));
       const initialCapability = normalizedReasoning.enabled
         ? this.getReasoningCapability(model)
         : 'none';
@@ -1432,7 +1437,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           system: this.applyCacheControlToSystem(this.buildSystemPrompt(system, messages, model)),
           messages: convertedMessages,
           ...(tools.length > 0
-            ? { tools: this.applyCacheControlToTools(withoutPreferredToolConstraints(tools, retryState.disablePreferredToolConstraints), model) }
+            ? { tools: this.applyCacheControlToTools(withoutPreferredToolConstraints(toolNames.tools, retryState.disablePreferredToolConstraints), model) }
             : {}),
           ...(this.config.promptCacheAffinity === true
             && streamOptions?.promptCacheKey
@@ -1486,6 +1491,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
 
         this.applyNativeControls(kwargs, model, normalizedReasoning, streamOptions, capability === 'none' || retryState.suppressReasoningEffort);
         applyAnthropicThinkingOptions(kwargs, reasoningProfile, streamOptions, this.name);
+        if (kwargs.tool_choice?.type === 'tool') kwargs.tool_choice.name = toolNames.forced(kwargs.tool_choice.name);
         return kwargs;
       };
 
@@ -1588,7 +1594,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
           toolBlocks.push({
             type: 'tool_use',
             id: block.id,
-            name: block.name,
+            name: toolNames.fromWire(block.name),
             input: isRecord(block.input) ? block.input : {},
           });
         }

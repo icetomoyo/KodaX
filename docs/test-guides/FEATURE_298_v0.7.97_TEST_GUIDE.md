@@ -2,6 +2,208 @@
 
 本指南验证构建后的产品入口。组件、协议和 SDK 单测继续保留，但不替代这里的真实进程与终端操作。
 
+## 2026-11-04 Script 显式执行与模式验收（源码已验证，未发布）
+
+基线 `532243a27`。本轮补齐上一轮的验收缺口，区分“选中 Script 模式”、
+“实际执行脚本”和“任务正确完成”，不以采用率代替功能正确性或效率。
+不因旧 XML 样本单次 `require` 失败扩展 VM 权限或增加任务、模型专属提示。
+
+先复核旧原始轨迹与实际下发的生产工具合同，再沿公开
+`runManagedTask({workMode:'script'})` 补齐确定性组合验收：真实 QuickJS 消费
+Host `data.value`、计算、写文件，再从真实 `read.data.text` 回读验证；复用已有
+并发、顺序、分页、取消和历史测试，不新增第二套执行器。
+
+真实模型预注册 revision 8：同一固定结构化数据任务、同一 `ark/k27` 路由与
+受支持的 high effort，固定三个条件：显式要求 Script 取数/计算/保存/回读的
+功能覆盖；自然任务的 Script 模式；相同自然任务的 Coding 原生模式。前一条件
+不计自主采用率，后两条件只作单样本成本观察，不据此声称因果效率提升或整体
+智能无回退。实际 Script JSON 计算须由主会话追踪执行代码和输入到交付物的
+依赖链；不能从 `.data` 字样、DTO 可用、mode 或任务完成推断。
+
+Layer 1 的功能、评分和预算自检全部先完成且不联网。Layer 3.5 的理由是确定性
+响应无法观察真实模型生成及实际调用/token/耗时。最多三个条件，每个最多六轮、
+六个 Provider 操作和六次实际 HTTP（含 learning/retry）、十二次共享预算计费的
+叶执行、零 child；沿用生产 cell 六十四次尝试及独立截止/内存/传输限制。
+每响应最多 2,048 output tokens、请求 120 秒、任务 300 秒，每条件 500,000
+token 计账，总计最多十八次 HTTP/操作、1,500,000 token 计账，$18 保守预留
+（非实测账单）。未知 usage 沿用至少 100,000 token 的保守占位，实际值另记
+unknown。同 Provider 单在途，逐条件 drain/关闭准入/收束后再运行下一条件。
+失败、原生 fallback 和零脚本保留，不追加条件或重跑求成功。
+
+所有条件保持相同原生能力、权限和工具预算；仅按模式及显式覆盖需求改变条件。
+工具数据、任务、字面量预期、停止规则及构建身份在付费请求前落到 OS temporary
+design，原始输入/输出、完整回执和主会话语义评审同处留存。记录四层交付状态，
+本轮不发包、不升级部署 Host，也不代替 Space、跨平台或 Issue 371 验收。
+
+旧 XML 轨迹已按生产字节复核：实际 `script_exec` 合同包含
+`No process, filesystem, network or imports`，没有 Node 可用声明。隔离环境正确在
+首个叶调用前拒绝 `require('fs')`；后续 Windows 原生命令补救未完成。没有因果证据
+表明增加提示能修好该单例，因此本轮保留现有教学和权限。长合同的显著性仍是未证
+假设，不据此增加生产 token。
+
+零费用公开构建 SDK 复放：第一个 cell 原样执行失败代码，failed 且零叶调用；同 Run
+第二个 cell 仅将 `fs` 读写替换为现有工具与文本 data，XML/log 解析逻辑不变，
+`read/read/write` 三叶成功，结果精确为 `u1/Tea & Coffee/9` 与 `u3/蓝灯/3`。
+两 cell 与实际参数、结果完整持久保存，没有自动重放。运行耗时 2.63 秒、网络零次，
+四次离线 Provider 响应含 learning，不能计作真实模型覆盖或原失败模型恢复成功。
+完整证据为 `%TEMP%/kodax-script-environment-recovery-oEDHX8/evidence.json`，
+临时执行器为 `%TEMP%/kodax-script-environment-recovery-probe.mjs`。
+
+### revision 8 实测与新缺口
+
+原文及主会话逐例语义评审保存在
+`%TEMP%/kodax-eval-dumps/space-sdk-script-mode-acceptance-20261104/kodax-script-live-Brxwok/`。
+运行前 5,701 文件清单 SHA-256 为
+`d47d64006b5f6d512588cb983b139cda0833498e25320f49a4c08639fbb072e1`；
+本轮早期重新 build 后，生产源码与 dist 仍与 `532243a27` 逐项相等。
+冻结后的三个条件保持原样，没有在运行中加入新的修正或追补任务。
+
+| 条件 | Run/严格交付物 | Script cell 成功/尝试 | HTTP | 实报 token | 任务/收集耗时 |
+|---|---|---|---|---|---|
+| 显式 Script，ark/k27 high | 未完成/未交付 | 0/4 | 6 | 99,762 | 74,810/74,839 ms |
+| 自然 Script，ark/k27 high | 完成/正确 | 2/3 | 6 | 107,760 | 62,182/62,539 ms |
+| 原生 Coding，ark/k27 high | 准入请求失败/未交付 | 0/0 | 3，含修复及 learning | 已知 9,122，另一次 unknown | 37,245/61,587 ms |
+
+合计十五次实际 HTTP/操作，十四次有完整 usage，已知 **216,644 tokens**；一次
+拒绝请求无 usage，实际总量是 unknown。预算计账 316,644（含 100,000 占位），
+不能冒称实际 token；$15 是预留而非实测账单。所有请求已收束，无额外模型评审。
+
+显式条件的四个 cell 都在 async helper 内 await 工具，但外层仅调用 helper，未
+await/return 其 Promise；补 yield 后仍失败。worker 正确拒绝且保留 pending/unknown，
+不能自动接管脱离 body 的 Promise 或重放。公共 code 合同和错误诊断缺少外层
+生命周期的清晰说明，后续仅补通用说明，不加入函数名、领域或 Provider 示例。
+
+自然条件确实在 QuickJS 中计算出正确结果，但先返回两份 Host DTO，随后把全部
+记录与倍率重新写成代码字面量。一个 cell 又误用 `require` 失败，后一个成功计算，
+最终通过原生 bridge 写入和回读。它证明脚本算术，**不证明直接消费 Host
+`data.value` 或脚本内完成写入回读**；不能从任务正确推断组合效率。
+
+原生条件的首请求在任何 assistant 工具调用前就收到 400 `function name is invalid`；
+菜单包含带点的 Host 工具名。后续修复响应和 learning 不是任务继续完成。
+这是协议工具名兼容缺口，不能隐藏原生工具或改业务身份来绕过，也不能据此宣称
+Script 胜过原生。实际 Ark 走 Anthropic-compatible Messages；相似 OpenAI formatter
+的零费用 RED 不是 Ark 已修的证据。原生效率对照目前无效。
+
+工程建议为 `recommend-iterate`：保留原命名/数据修复与安全语义，补清生命周期
+并处理实际协议边界，再仅对输入确实变化的最小集合重新预注册。历史失败保持，
+本轮不扩展无关解析器、模型专属提示或新运行时。
+
+### 通用生命周期修正与 revision 9 预注册
+
+生产 code 字段说明与未等待调用的错误诊断各增加 66 UTF-8 bytes，明确 body
+结束前须 await/return async helper 调用；不含函数名、任务或模型示例。调度、
+并发、权限和未知副作用处理不变，yield 不会接管未挂接 Promise。域外 QuickJS
+验证未挂接 helper 仍拒绝，返回 Promise 接管及外层 await 正常，各最多执行一次；
+失败可能已有回执或 unknown，仍须核对证据，不能直接重放。
+生命周期与公开模型合同先 RED 后 GREEN，两个文件整测 72/72；记录为
+`%TEMP%/kodax-script-helper-{lifetime,contract}-{red,green}.json` 及
+`%TEMP%/kodax-script-helper-final.json`。这些是确定性证据，不计真实模型覆盖。
+
+revision 9 仅补验两个实际输入变化的条件：显式 Script 的公共生命周期说明变化，
+及原生 Coding 的实际 Anthropic 协议工具名兼容修复；不重跑自然 Script。
+复用 revision 8 的数据、schema、严格预期、业务正文与 `ark/k27 high`。显式测试
+前缀进一步要求从工具返回值直接在脚本中计算、保存和回读，不把源记录抄成生成
+代码；不提供字段或代码答案，不强制 selected_output，也不改生产采用策略。
+这是独立的功能覆盖要求，不计自然采用率；两条件不作效率对照或提示词优劣比较。
+
+先完成零网络合同/功能/预算/互斥入口自检与新构建；付费前保存全部精确条件、
+源数据、预期和 SDK/Worker 摘要。每条件沿用六轮、六次操作/HTTP（含 learning/
+retry）、十二次计费叶执行、零 child、2,048 output tokens、120 秒请求及 300 秒
+任务限额。新段最多 **十二次 HTTP、1,000,000 token 计账、$12 保守预留**，
+与 revision 8 已用十五次合计最多二十七次；旧 usage unknown 保持 unknown，
+不转移旧预算、不覆写旧失败。串行逐条件收束；不因失败或无脚本再追加样本。
+
+实际 Anthropic-compatible 修复只在协议边界生成可读合法别名，保留 canonical
+工具名与真实参数、许可检查、ordered blocks/deltas 和 signed/opaque 历史。
+`kdx_` 保留前缀的合法原名也编码；普通合法名不 hash、不改 schema/description，
+无改名时沿用原引用。生效的 forced 别名不能冒充 canonical 名，原本忽略 forced
+及空工具的策略保持。实际 provider 的 stream/complete、历史工具增删、前缀碰撞、
+Unicode/长名、未知名及 forced 先 RED 后 GREEN，最终相关十一文件 **171 项通过**，
+含十五个新回归。独立 mapper 的 V8 行/语句/函数均 100%，分支 97.05%，仅覆盖
+该文件，不代表整个 Anthropic 入口或全仓。记录为
+`%TEMP%/kodax-anthropic-wire-names-final.{log,json}` 及同名 `-coverage` 目录。
+公开 native managed Run 另验真实序列化/SSE parser/Host 原身份与原参数/许可允许
+和拒绝/canonical，**2/2 通过**，零真实网络。夹具调试的 effort/SSE/省略字段断言
+错误未当作产品 RED；原问题依据是 revision 8 真实 400 和 provider seam 的失败。
+
+源码修订后的构建曾两次真实失败：CLI **5,177,991** 及 **5,177,797 bytes** 均超过
+原 **5,177,344** 门禁。沿既有 staticText/toolInputSchema 移动六个纯 schema：
+followup_task、update_goal、exit_plan_mode、insert_after_anchor、validate_tool、
+lsp_hover，合计 2,173 JSON bytes；复用已有资源、一次加载和初始化解析。
+独立 AST 值/递归键顺序校验及构建后全部 **78** 项原生 name/description/schema
+逐字节对比均相等，不删除工具或更改 schema。最终完整 build 通过，CLI
+**5,177,109 bytes**；根源码/测试类型检查及零网络 driver self-test 通过。
+两次失败日志为 `%TEMP%/kodax-script-followup-{build,final-build}.log`，最终构建
+为 `%TEMP%/kodax-script-followup-release-build.log`，未放宽门禁。
+
+### revision 9 实际结果与完成边界
+
+付费前冻结 5,706 文件，SHA-256
+`29c95fcb593396d58651d12a8596332bcd2092dcfed2263606979521e1e64c6a`。
+原始输入/输出、完整执行与主会话语义评审在
+`%TEMP%/kodax-eval-dumps/space-sdk-script-lifecycle-acceptance-20261104/kodax-script-live-bSSrzt/`。
+
+| 条件 | Run/严格交付物 | 实际 Script cell 成功/尝试 | Script leaf 成功/尝试 | HTTP | 已知完整 usage tokens | 任务/收集耗时 |
+|---|---|---|---|---|---|---|
+| 显式 Script，ark/k27 high | 完成/警告原文不合格 | 2/3 | 10/10 | 6，含 learning 1 | 72,598，另 2 partial | 80,494/110,540 ms |
+| 原生 Coding，ark/k27 high | 完成/警告原文不合格 | 0/0 | 0/0 | 5，含 learning 1 | 55,862，另 1 partial | 50,919/80,926 ms |
+
+Script 三个 cell 都正确等待/返回外层 helper，未再出现未等待失败；这不是单例
+因果改善证明。首 cell 在两次受权读取后误用 require 失败；第二个使用错误的嵌套
+路径，写出空 groups；第三个直接使用新取得的 Host `data.value.batches` 与倍率，
+完成 flatten/filter/group/scale，得到 east 45、north 54、south 51，保存并通过
+Script read 的 `data.text` 返回磁盘内容。代码没有抄入源记录字面量。主会话将
+最后回读文本解析为 JSON，确认与实际交付物内容相等；代码返回回读内容，未在 VM 内断言两者
+相等。因此这次确实覆盖了 **真实模型直接 JSON 计算及脚本写入/回读**，不等于
+整体任务正确或最少上下文。没有 selected_output 要求或原生工具删减。
+
+严格交付物失败的原因是模型用 regex 抽取 caveat 正文，删除了 `Batch caveat:` /
+`Scale caveat:` 前缀。SDK 原始回执和模型收到的正文都保留完整前缀，不是 SDK
+隐藏警告；数值、排序、计数和 complete:false 正确。原生条件也完成相同正确数值，
+但同样省掉警告前缀。两例均保留 taskCorrect:false，不放宽评分或加领域修复提示。
+原生真实 gateway 接受新菜单、返回别名，SDK 按两个原名及原 batch 参数各执行
+一次，再用 native write/read 完成交付，确认并未删除原生能力来提高脚本覆盖。
+
+新段十一请求中八次完整 usage，共 **128,460 已知 tokens**；三次取消仅有零值
+partial usage，不能解释为零实际成本，实际总 token 仍 unknown。计账 428,460
+含三次 100,000 占位，$11 为预留而非账单。与 revision 8 合计 **26 次 HTTP**，
+22 次完整 usage 合计 **345,104**、3 partial、1 unknown，实际总量未知；计账
+745,104，低于累计 27 HTTP 的预注册上限。付费请求到此停止，不追加样本。
+任务与收集耗时分别列明，后者包含 learning/drain；不同前缀与不完整 usage 不构成
+效率对照，不声称提升、整体智能无回退或所有模型都能正确使用 Script。
+
+工程建议继续 `recommend-iterate`：本轮 SDK 公共生命周期与已验协议缺口已修，
+直接 JSON 脚本执行证据已补齐；完整任务的警告原文遵循仍未通过。保留通用修复，
+不为这两例改生产解法或继续补样本求通过。修复限定 Anthropic-compatible 路径；
+OpenAI Chat 的同类原名透传限制已有零费用证据，仍须独立处理，不能宣称全部
+Provider 原生通道已支持任意工具名。正式发包、部署 Host、Space 成品及既有独立
+平台验收继续分开。
+
+### 本轮最终回归与交付状态
+
+最终默认 Vitest 全量在固定 4 workers、retry=0 下独立执行，没有与付费样本或其他
+重测试并行，**1,098.12 秒、EXIT 0**：**1,411 文件通过、7 跳过；19,476 测试
+通过、0 失败、87 跳过**。JSON 报告 `success:true`，没有删除、过滤或重试失败。
+记录为 `%TEMP%/kodax-script-followup-final-full.{log,json}`。
+随后原样执行完整 `npm run test:bundle`，两组 **99 + 3 = 102 项通过、0 失败**，
+耗时 87,548.615 + 15,052.427 ms，记录为
+`%TEMP%/kodax-script-followup-final-bundle.log`。包含干净目录实际 tarball、worker
+缺失的明确失败、打包 Anthropic 历史和独立 Host 场景，不代表 npm 已正式发包。
+
+全量和打包后再次校验 5,706 文件清单，仍与付费前
+`29c95fcb593396d58651d12a8596332bcd2092dcfed2263606979521e1e64c6a`
+完全一致。独立 Standards、Spec 各 **0 项未解决 finding**；两份新集成测试由非
+作者独立复核，主会话原始语义评审和 usage 也经交叉核对。独立 AST 确认六项
+schema 值和递归键序不变，357 项既有静态资源值原样保留。仓库没有 lint script，
+未把类型、格式或 diff 检查称作 lint。
+
+| 验收层 | 本轮状态 |
+|---|---|
+| 源码实现 | 通用生命周期说明及已验 Anthropic 原生通道修复、构建/类型/全量/打包通过；真实 JSON 计算链已覆盖，严格模型任务和其他协议限制如上单列 |
+| 正式发包 | 未发布，仍为本地源码修订；未改 beta.1 版本、npm tag 或稳定 latest |
+| 实际运行 Host | 本地 SDK/Worker/受权 Host 与独立 Host 回归已验；未升级部署 Host，付费工具 fixture 不替代 reverse-bridge/lease 或外部服务验收 |
+| Space 成品接入 | 本轮未验；跨平台、麒麟、真实账号、覆盖安装与 Issue 371 均不据此关闭 |
+
 ## 2026-11-04 Script 调用与程序数据后续（未发布）
 
 源码基线 `49da64f24`，对应本轮真实模型暴露的命名空间与数据格式问题。

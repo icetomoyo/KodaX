@@ -5,6 +5,15 @@ import { fitToolSchemasToContext } from '../tool-exposure-planner.js';
 import { getToolDefinition } from '../../tools/index.js';
 import type { ScriptCellResult } from './cell.js';
 
+it('discloses outer async helper lifetime in the callable code contract', async () => {
+  const agent = withScriptModelTool({ name: 'worker', instructions: '' }, { backups: new Map() }, [],
+    async () => ({ status: 'completed', receipts: [], hadToolErrors: false }));
+  try {
+    const entry = agent.tools!.find(tool => tool.name === 'script_exec')!;
+    expect(JSON.stringify(entry.input_schema)).toMatch(/await or return.*async helper calls.*cell body/i);
+  } finally { await closeScriptModelSession(agent); }
+});
+
 it('rejects overlapping cells recoverably and separates cancellation request from completed cleanup', async () => {
   let finish!: () => void;
   let signal: AbortSignal | undefined;

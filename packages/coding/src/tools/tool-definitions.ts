@@ -404,15 +404,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   {
     name: 'insert_after_anchor',
     description: staticText("tool.insert_after_anchor.description"),
-    input_schema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'The file to update' },
-        anchor: { type: 'string', description: 'A unique heading or nearby marker to insert after' },
-        content: { type: 'string', description: 'The content to insert after the anchor' },
-      },
-      required: ['path', 'anchor', 'content'],
-    },
+    input_schema: toolInputSchema('tool.insert_after_anchor.input_schema'),
     handler: toolInsertAfterAnchor,
     sideEffect: 'mutates-fs',
     toClassifierInput: (input) => {
@@ -541,18 +533,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   {
     name: 'followup_task',
     description: staticText("tool.followup_task.description"),
-    input_schema: {
-      type: 'object',
-      properties: {
-        target: { type: 'string', description: 'Canonical child path or direct-child task name.' },
-        objective: { type: 'string', description: 'Additional objective or changed evidence.' },
-        quality_strategy: {
-          type: 'object',
-          description: staticText("tool.followup_task.description.1"),
-        },
-      },
-      required: ['target', 'objective'],
-    },
+    input_schema: toolInputSchema('tool.followup_task.input_schema'),
     handler: toolFollowupTask,
     sideEffect: 'mutates-state',
     toClassifierInput: (input) => {
@@ -883,23 +864,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     name: 'update_goal',
     description:
       staticText("tool.update_goal.description"),
-    input_schema: {
-      type: 'object',
-      properties: {
-        status: {
-          type: 'string',
-          enum: ['complete', 'blocked'],
-          description:
-            "Target goal status.",
-        },
-        blocker_kind: {
-          type: 'string',
-          description:
-            staticText("tool.update_goal.description.1"),
-        },
-      },
-      required: ['status'],
-    },
+    input_schema: toolInputSchema('tool.update_goal.input_schema'),
     handler: toolUpdateGoal,
     sideEffect: 'mutates-state',
     planModeAllowed: false,
@@ -909,16 +874,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   {
     name: 'exit_plan_mode',
     description: staticText("tool.exit_plan_mode.description"),
-    input_schema: {
-      type: 'object',
-      properties: {
-        plan: {
-          type: 'string',
-          description: staticText("tool.exit_plan_mode.description.1"),
-        },
-      },
-      required: ['plan'],
-    },
+    input_schema: toolInputSchema('tool.exit_plan_mode.input_schema'),
     handler: toolExitPlanMode,
     sideEffect: 'mutates-state',
     planModeAllowed: true,
@@ -1041,15 +997,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     name: 'lsp_hover',
     workSurface: 'coding',
     description: staticText("tool.lsp_hover.description"),
-    input_schema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'File containing the symbol' },
-        line: { type: 'number', description: '1-based line of the symbol' },
-        character: { type: 'number', description: 'Optional 1-based column of the symbol' },
-      },
-      required: ['path', 'line'],
-    },
+    input_schema: toolInputSchema('tool.lsp_hover.input_schema'),
     handler: toolLspHover,
     sideEffect: 'readonly',
     toClassifierInput: () => '',
@@ -1214,17 +1162,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     description:
       staticText("tool.validate_tool.text")
       + 'Does NOT touch disk. Use this BEFORE stage_construction to fail fast on malformed handlers.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        artifact_json: { type: 'string', description: 'The full ConstructionArtifact as a JSON string.' },
-        provider: {
-          type: 'string',
-          description: "Provider whose tool-schema constraints are checked. Defaults to 'anthropic'.",
-        },
-      },
-      required: ['artifact_json'],
-    },
+    input_schema: toolInputSchema('tool.validate_tool.input_schema'),
     handler: toolValidateTool,
     sideEffect: 'readonly',
     toClassifierInput: () => '',

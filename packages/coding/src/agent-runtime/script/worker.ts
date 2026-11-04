@@ -47,7 +47,7 @@ export async function scriptWorkerMain(): Promise<void> {
         const error = JSON.stringify(vm.dump(state.error)); state.error.dispose(); throw new Error(error);
       }
       const text = vm.getString(state.value); state.value.dispose();
-      if (pending.size) throw new Error('Script returned with unawaited tool calls; effects must be reconciled from receipts.');
+      if (pending.size) throw new Error('Script returned with unawaited tool calls. Await or return async helper calls before the cell body finishes; effects must be reconciled from receipts.');
       if (Buffer.byteLength(text) > data.maxTransferBytes) throw new Error('Script output exceeds the transfer limit.');
       finish({ kind: 'done', value: (JSON.parse(text) as { value?: unknown }).value });
     } catch (error) { finish({ kind: 'failed', error: String(error).slice(0, data.maxTransferBytes) }); }

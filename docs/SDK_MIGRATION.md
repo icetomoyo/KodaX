@@ -182,6 +182,25 @@ VM 与持久回执保留 `content` 和完整 `data`，既有 `result_ref/read_re
 JSON 的模型回执只有在原文可回读、实际显示已包含副本且引用严格减少 UTF-8 字节时
 才省派生 value；null、未显示值及小值保留。选定文本隐藏继续遵守原有语义。
 
+Script 验收须显式配置 `workMode:'script'` 并核对实际 cell/leaf 回执。功能覆盖任务
+可以明确要求在 Script 中取数、计算和保存；这种覆盖不计作模型自主采用率。另用
+自然任务观察 Script 模式及原生 Coding 模式的实际选择、任务结果和成本，原生工具
+继续可用。模式已选中、JSON DTO 已进入 VM 或任务最终正确，都不能单独证明脚本
+实际完成了数据计算；需核对执行代码与输入到交付物的依赖。
+
+`code` 是 async 函数体，cell 的生命周期由该 body 的 Promise 决定。调用异步
+helper 时须在 body 内 await 或 return 其 Promise；仅在 helper 内 await 工具
+不足以等待整个 helper。未等待的工具调用仍会失败，yield 只影响观察，不自动
+接管脱离 body 的工作；已有或未知效果仍通过完整回执核对，不自动重放。
+
+本轮同时修复实际 Ark 使用的 Anthropic-compatible 原生工具名传输：不符合协议的
+名称使用可读片段加稳定摘要的合法别名，返回、流式 delta 与历史回放仍恢复 SDK
+原名，参数、权限和 canonical 记录不变。`kdx_` 是传输保留前缀，以它开头的合法
+SDK 名称也会编码，避免与生成别名冲突；普通合法名称及内置工具合同不变。
+别名不是执行授权，未知别名不越权解码，真正生效的 forced 名必须来自当前原名
+工具表，signed/opaque 协议原文保持。此修复限定该协议路径；OpenAI Chat 等其他
+协议没有由本轮获得同类兼容，已发现的 OpenAI Chat 同类透传限制仍待独立处理。
+
 ### Workflow 的同 Host 收尾
 
 保留现有 slash 执行、进度、停止、读取与 Session 最终结果；本轮不新增公共

@@ -122,7 +122,7 @@ export function withScriptModelTool(agent: Agent, context: KodaXToolExecutionCon
   const entry: RunnableTool = {
     name: SCRIPT_TOOL_NAME,
     description: buildScriptModelDescription(contracts, agent.tools?.some(tool => tool.name === 'tool_call')),
-    input_schema: { type: 'object', properties: { code: { type: 'string', description: 'Async function body; return a JSON value.' },
+    input_schema: { type: 'object', properties: { code: { type: 'string', description: 'Async function body. Await or return async helper calls before the cell body finishes; return a JSON value.' },
       yield_time_ms: { type: 'integer', minimum: 0, maximum: 60000, description: 'Observation window only; a running cell continues until its independent deadline or cancellation.' },
       selected_output: { type: 'boolean', description: 'Return your selected value and mandatory notes; unclassified tool output remains complete.' } }, required: ['code'] },
     requiresSerialExecution: () => true,

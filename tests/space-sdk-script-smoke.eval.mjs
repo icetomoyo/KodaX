@@ -155,22 +155,131 @@ function revisionSixCases() {
   ];
 }
 
+function revisionEightCases() {
+  const target = { alias: 'ark/k27', provider: 'ark-coding', model: 'kimi-k2.7-code', apiKeyEnv: 'ARK_CODING_API_KEY', effort: 'high' };
+  const task = 'Use the available measurement tools to read batch obs-20261104 and its unit scale table. '
+    + 'Include only observations whose eligible field is true. Multiply each included reading by the factor for its unit, '
+    + 'then write measurement-summary.json with groups (group, count and scaledTotal, sorted by group), '
+    + 'source (the batch snapshot and complete fields), and warnings (all source caveats preserved verbatim and deduplicated). '
+    + 'Read the saved JSON to verify it, then return a brief summary. Choose appropriate available tools.';
+  const sourceData = {
+    batch: { snapshot: 'obs-20261104-v2', complete: false, batches: [
+      { id: 'a', observations: [
+        { id: 'm1', group: 'north', reading: 7, unit: 'ticks', eligible: true },
+        { id: 'm2', group: 'south', reading: 4, unit: 'steps', eligible: true },
+        { id: 'm3', group: 'north', reading: 6, unit: 'pulses', eligible: true },
+        { id: 'm4', group: 'east', reading: 9, unit: 'ticks', eligible: true },
+        { id: 'm5', group: 'south', reading: 5, unit: 'pulses', eligible: true },
+        { id: 'm6', group: 'east', reading: 3, unit: 'steps', eligible: true },
+      ] },
+      { id: 'b', observations: [
+        { id: 'm7', group: 'north', reading: 2, unit: 'steps', eligible: false },
+        { id: 'm8', group: 'south', reading: 8, unit: 'ticks', eligible: true },
+        { id: 'm9', group: 'east', reading: 4, unit: 'pulses', eligible: true },
+        { id: 'm10', group: 'north', reading: 11, unit: 'ticks', eligible: true },
+        { id: 'm11', group: 'east', reading: 100, unit: 'ticks', eligible: false },
+        { id: 'm12', group: 'south', reading: 2, unit: 'steps', eligible: false },
+      ] },
+    ] },
+    scaleTable: { factors: { ticks: 2, steps: 5, pulses: 3 } },
+  };
+  const expected = { groups: [
+    { group: 'east', count: 3, scaledTotal: 45 },
+    { group: 'north', count: 3, scaledTotal: 54 },
+    { group: 'south', count: 3, scaledTotal: 51 },
+  ], source: { snapshot: 'obs-20261104-v2', complete: false }, warnings: [
+    'Batch caveat: late observations are excluded; complete is false.',
+    'Scale caveat: factors are provisional calibration values.',
+  ] };
+  return [
+    { id: 'measurement-requested', selection: 'requested', workMode: 'script',
+      task: `For this acceptance task, use Script to obtain the source data, perform the computation, save the result and read it back. ${task}` },
+    { id: 'measurement-natural-script', selection: 'natural', workMode: 'script', task },
+    { id: 'measurement-native-coding', selection: 'native', workMode: 'coding', task },
+  ].map(condition => ({ ...condition, kind: 'measurement', target, inputs: {}, sourceData,
+    outputFile: 'measurement-summary.json', expected }));
+}
+
+function revisionNineCases() {
+  const [requested, natural, native] = revisionEightCases();
+  return [
+    { ...requested, task: 'For this acceptance task, use Script to obtain the source data and compute directly from the values returned by tools inside Script, '
+      + `save the result and read it back; do not copy source records into generated code. ${natural.task}` },
+    native,
+  ];
+}
+
+function measurementToolDefinitions() {
+  return [
+    { name: 'measurements.read-batch', description: 'Read a measurement batch by batch id. Returns nested observations, snapshot, completeness and a source caveat.',
+      inputSchema: { type: 'object', properties: { batch: { type: 'string' } }, required: ['batch'] } },
+    { name: 'measurements.scale-table', description: 'Read the unit calibration factor table for a measurement batch, with a source caveat.',
+      inputSchema: { type: 'object', properties: { batch: { type: 'string' } }, required: ['batch'] } },
+  ];
+}
+
+function revisionEightDesign(fixtures) {
+  return {
+    revision: 8, sourceBaseline: '532243a27', layer: '3.5-smoke', comparison: false,
+    maxCases: 3, maxProviderCalls: 18, maxCallsPerCell: 6, maxRoundsPerCell: 6,
+    maxOutputTokensPerCall: 2048, maxTokensPerCase: 500_000, maxTotalTokens: 1_500_000,
+    maxExternalSpendUsd: 18, estimatedExternalSpendUsd: [1, 9], timeoutMs: 300_000,
+    revisionNote: 'Three fixed conditions of one new measurement task: explicitly requested Script coverage, natural Script mode, and native coding mode. All share source data, expected artifact and Ark route/effort. Requested coverage is excluded from natural adoption. Old XML and Host failures remain intact; no old task is rerun to obtain success. No production prompt or tool contract changes.',
+    reasoningEffort: 'ark/k27 high, identical in all three conditions',
+    conditionalCase: 'Disabled. All three predeclared conditions run once, regardless of Script choice, task outcome or missing credentials. No fallback or additional sample.',
+    question: 'Can the model obtain structured source data, calculate from it inside Script, save and read back the result when explicitly requested? Separately observe natural Script usage and the same natural task in coding mode, with actual correctness, requests, tokens and time.',
+    whyNotLayer1: 'Offline built-SDK checks establish JSON computation, write/readback, exact modes, scorer and no-network budgets. They cannot establish that a real model authors and actually executes the computation. The two natural conditions observe mode costs; a single sample cannot establish an efficiency gain or generalization.',
+    rubric: 'Artifact correctness is independent of Script choice. Main session traces actual executed code, original receipts and write/read dependencies to distinguish JSON computation from printing DTOs or reconstructing literals. Requested completion via native tools alone does not establish requested Script coverage. Natural Script and native coding are descriptive matched-task observations, not prompt A/B or causal lift evidence. Keep all failures, zero-script, timeout and missing usage.',
+    fixtureConstraints: 'Same nested measurement batch and independent scale table from authorized readonly Host tools in all conditions; source values are not in the user task. Same native bridge/bash/read/write/search hook allowlist, shared 12 billed-leaf work budget, zero children and unchanged production Script VM limits. Only explicit-coverage user prefix and declared work mode differ. Public SDK embedder fixture, no daemon lease, real external service or AutoMode-safety coverage.',
+    concurrency: 'One Ark provider lane. Run requested Script, natural Script and native coding sequentially; drain learning, close admissions and settle every tracked request before the next condition. Each has at most six operations and six physical HTTP including learning/retries, at most 500000 token accounting; aggregate at most 18 HTTP, 1500000 token accounting and $18 reservation. No sample retry or extra condition.',
+    modeCostInterpretation: 'Compare only the two identical natural user tasks descriptively. If the Script-mode model does not actually use Script, these are configuration costs, not Script-execution efficiency. Requested coverage is never pooled into natural adoption or used as an efficiency arm. Same fixture does not remove model randomness, order or cache effects.',
+    toolDefinitions: measurementToolDefinitions().map(tool => ({ ...tool,
+      capabilityId: `host:script-smoke:${tool.name}`, sideEffect: 'readonly', planModeAllowed: true })),
+    caseDefinitions: fixtures.map(({ id, kind, target, selection, workMode, task, inputs, sourceData, outputFile, expected }) =>
+      ({ id, kind, target, selection, workMode, task, inputs, sourceData, outputFile, expected })),
+  };
+}
+
+function revisionNineDesign(fixtures) {
+  return {
+    ...revisionEightDesign(fixtures), revision: 9,
+    maxCases: 2, maxProviderCalls: 12, maxTotalTokens: 1_000_000,
+    maxExternalSpendUsd: 12, estimatedExternalSpendUsd: [1, 6],
+    revisionNote: 'Two affected conditions only after generic product corrections: the code contract now explains awaiting or returning async helpers before the cell body finishes, and Anthropic wire tool names are encoded compatibly. Reuse revision 8 measurement data, schemas, expected artifact and Ark route/effort. The requested prefix now explicitly distinguishes computation from copying source records into generated code; it gives no API field, solution or output literal. Do not rerun natural Script. Revision 8 raw, failures and costs remain separate. This is not a prompt A/B or efficiency comparison.',
+    reasoningEffort: 'ark/k27 high, unchanged for both conditions',
+    conditionalCase: 'Disabled. Exactly requested Script and native coding, once each regardless of outcome. No fallback, sample retry or additional condition.',
+    question: 'With the corrected production input, does requested Script compute directly from tool-returned values and save/read back a correct artifact? Separately, does native coding retain working authorized tools through the actual Anthropic wire path?',
+    whyNotLayer1: 'Actual VM and captured HTTP payload tests establish lifecycle and reversible wire-name semantics at zero model cost. They cannot show that a real model authors the requested computation or that the real gateway accepts the new native tool wire names. Only the two conditions affected by those changes are repeated; the prior natural sample is retained.',
+    rubric: 'Review every executed cell and original receipt to trace source values into computed output and committed readback. Returning DTOs or copying source records into generated code does not establish requested Script computation. Artifact correctness and actual native tool execution are separate observations. Keep failure, unknown effects, missing usage and native fallback. Conditions differ in task prefix and mode; no efficiency, lift or generalization comparison.',
+    concurrency: 'One Ark provider lane. Run requested Script then native coding, with bounded learning drain, closed admission and settled tracked calls before the second condition. Each permits at most six operations and six physical HTTP including learning/retries and 500000 token accounting; the new segment permits at most 12 HTTP, 1000000 token accounting and $12 reservation. No sample retry or extra condition.',
+    modeCostInterpretation: 'Record actual token and time per condition only. The distinct requested user prefix and coding mode prevent an efficiency comparison. Do not pool these conditions with revision 8 adoption or correctness rates.',
+    previousRevision: { revision: 8, evidenceDirectory: 'space-sdk-script-mode-acceptance-20261104/kodax-script-live-Brxwok',
+      actualHttpRequests: 15, actualReportedTokens: null, originalMaxProviderCalls: 18,
+      originalMaxTotalTokens: 1_500_000, originalMaxExternalSpendUsd: 18,
+      note: 'All revision 8 raw and failures remain unchanged. Native usage was incomplete; no total actual token figure is inferred from budget accounting. Unused budget is not transferred.' },
+    cumulativeKnownBudget: { previousActualHttpRequests: 15, newSegmentMaxHttpRequests: 12, maxCombinedHttpRequests: 27,
+      newSegmentMaxTokenAccounting: 1_000_000, newSegmentMaxExternalSpendUsd: 12 },
+  };
+}
+
 async function prepareRevisionSixCase(fixture, directory, report) {
   report.fixtureInputs = fixture.inputs;
   for (const [name, body] of Object.entries(fixture.inputs)) await writeFile(path.join(directory, name), body);
-  if (fixture.id !== 'host-opaque') return undefined;
+  const measurement = fixture.kind === 'measurement';
+  if (!measurement && fixture.id !== 'host-opaque') return undefined;
+  if (measurement) report.fixtureSourceData = fixture.sourceData;
   const rows = [
     { id: 'ISS-17', project: 'alpha', state: 'open', title: 'Login, café', points: 2 },
     { id: 'ISS-23', project: 'alpha', state: 'open', title: '修复蓝灯', points: 5 },
     { id: 'ISS-41', project: 'alpha', state: 'closed', title: 'Archived', points: 80 },
     { id: 'ISS-99', project: 'beta', state: 'open', title: 'Other project', points: 90 },
   ];
-  const definitions = [
+  const definitions = (measurement ? measurementToolDefinitions() : [
     { name: 'exports.issue-list', description: 'List issue ids for a project and state. Returns a TSV listing with source caveats and separate structured snapshot/completeness fields.',
       inputSchema: { type: 'object', properties: { project: { type: 'string' }, state: { type: 'string', enum: ['open', 'closed'] } }, required: ['project', 'state'] } },
     { name: 'exports.issue-detail', description: 'Read one issue by id. Returns structured id/title/points and a separate source caveat.',
       inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
-  ].map(tool => ({ ...tool, capabilityId: `host:script-smoke:${tool.name}`, sideEffect: 'readonly', planModeAllowed: true }));
+  ]).map(tool => ({ ...tool, capabilityId: `host:script-smoke:${tool.name}`, sideEffect: 'readonly', planModeAllowed: true }));
   report.hostInvocations = [];
   const lookup = (provider, id) => {
     const definition = provider === 'mcp' && definitions.find(tool => tool.capabilityId === id);
@@ -192,7 +301,12 @@ async function prepareRevisionSixCase(fixture, directory, report) {
       try {
         const definition = lookup(provider, id);
         let result;
-        if (definition.name === 'exports.issue-list') {
+        if (measurement) {
+          if (input.batch !== 'obs-20261104') throw new Error('Unknown measurement batch');
+          const batchResult = definition.name === 'measurements.read-batch';
+          result = { kind: 'tool', content: fixture.expected.warnings[batchResult ? 0 : 1],
+            structuredContent: structuredClone(batchResult ? fixture.sourceData.batch : fixture.sourceData.scaleTable) };
+        } else if (definition.name === 'exports.issue-list') {
           if (typeof input.project !== 'string' || !['open', 'closed'].includes(input.state)) throw new Error('project and state are required');
           const selected = rows.filter(row => row.project === input.project && row.state === input.state);
           result = { kind: 'tool', content: `${fixture.expected.warnings[0]}\nid\tstate\n${selected.map(row => `${row.id}\t${row.state}`).join('\n')}`,
@@ -214,7 +328,7 @@ async function prepareRevisionSixCase(fixture, directory, report) {
 async function checkRevisionSixOutput(fixture, directory) {
   try {
     const output = JSON.parse(await readFile(path.join(directory, fixture.outputFile), 'utf8'));
-    const normalize = value => fixture.id === 'host-opaque' && Array.isArray(value?.warnings)
+    const normalize = value => (fixture.id === 'host-opaque' || fixture.kind === 'measurement') && Array.isArray(value?.warnings)
       ? { ...value, warnings: [...value.warnings].sort() } : value;
     return { output, taskCorrect: isDeepStrictEqual(normalize(output), normalize(fixture.expected)) };
   } catch (error) { return { taskCorrect: false, outputError: String(error) }; }
@@ -320,6 +434,45 @@ if (process.argv.includes('--self-test')) {
   assert.equal(revisionSix.length, 3);
   assert.deepEqual(revisionSix.map(item => item.target.alias), ['zhipu/glm52', 'ark/k27', 'zhipu/glm52']);
   assert.ok(revisionSix.every(item => item.target.effort === 'high' && !item.task.includes('script_exec')));
+  const revisionEight = revisionEightCases();
+  assert.deepEqual(revisionEight.map(item => [item.selection, item.workMode]),
+    [['requested', 'script'], ['natural', 'script'], ['native', 'coding']]);
+  assert.ok(revisionEight.every(item => item.target.alias === 'ark/k27' && item.target.effort === 'high'));
+  assert.equal(revisionEight[1].task, revisionEight[2].task);
+  assert.ok(revisionEight[0].task.endsWith(revisionEight[1].task));
+  assert.ok(!revisionEight[1].task.includes('Script'));
+  assert.ok(!revisionEight[0].task.includes('data.value') && !revisionEight[0].task.includes('selected_output'));
+  assert.deepEqual(revisionEight[0].sourceData, revisionEight[2].sourceData);
+  assert.deepEqual(revisionEight[0].expected, revisionEight[2].expected);
+  const revisionNine = revisionNineCases();
+  assert.deepEqual(revisionNine.map(item => [item.selection, item.workMode]), [['requested', 'script'], ['native', 'coding']]);
+  assert.equal(revisionNine[1].task, revisionEight[2].task);
+  assert.ok(revisionNine[0].task.endsWith(revisionEight[1].task));
+  assert.ok(revisionNine[0].task.includes('compute directly from the values returned by tools inside Script'));
+  assert.ok(revisionNine[0].task.includes('do not copy source records into generated code'));
+  assert.ok(!revisionNine[0].task.includes('data.value') && !revisionNine[0].task.includes('selected_output'));
+  for (const fixture of revisionNine) {
+    assert.deepEqual(fixture.sourceData, revisionEight[0].sourceData);
+    assert.deepEqual(fixture.expected, revisionEight[0].expected);
+    assert.deepEqual(fixture.target, revisionEight[0].target);
+  }
+  const designNine = revisionNineDesign(revisionNine);
+  assert.equal(designNine.revision, 9);
+  assert.equal(designNine.maxCases, 2);
+  assert.equal(designNine.maxProviderCalls, 12);
+  assert.equal(designNine.maxTotalTokens, 1_000_000);
+  assert.equal(designNine.maxExternalSpendUsd, 12);
+  assert.equal(designNine.cumulativeKnownBudget.maxCombinedHttpRequests, 27);
+  assert.deepEqual(designNine.toolDefinitions, revisionEightDesign(revisionEight).toolDefinitions);
+  assert.deepEqual(designNine.caseDefinitions.map(fixture => [fixture.selection, fixture.workMode]), [['requested', 'script'], ['native', 'coding']]);
+  const modeDesign = revisionEightDesign(revisionEight);
+  assert.equal(modeDesign.revision, 8);
+  assert.equal(modeDesign.maxProviderCalls, 3 * modeDesign.maxCallsPerCell);
+  assert.equal(modeDesign.maxTotalTokens, 3 * modeDesign.maxTokensPerCase);
+  assert.equal(modeDesign.maxExternalSpendUsd, 18);
+  assert.equal(modeDesign.comparison, false);
+  assert.deepEqual(modeDesign.caseDefinitions.map(item => item.workMode), ['script', 'script', 'coding']);
+  assert.deepEqual(modeDesign.caseDefinitions[1].sourceData, modeDesign.caseDefinitions[2].sourceData);
   const fixtureDirectory = await mkdtemp(path.join(tmpdir(), 'kodax-script-offline-'));
   for (const fixture of revisionSix) {
     const directory = path.join(fixtureDirectory, fixture.id); await mkdir(directory);
@@ -332,6 +485,24 @@ if (process.argv.includes('--self-test')) {
       assert.equal((await checkRevisionSixOutput(fixture, directory)).taskCorrect, true);
     }
     await writeFile(path.join(directory, fixture.outputFile), '{}');
+    assert.equal((await checkRevisionSixOutput(fixture, directory)).taskCorrect, false);
+  }
+  for (const fixture of revisionEight) {
+    const directory = path.join(fixtureDirectory, fixture.id); await mkdir(directory);
+    const runtime = await prepareRevisionSixCase(fixture, directory, {});
+    assert.deepEqual(runtime.listRunTools('mcp').map(tool => tool.name), ['measurements.read-batch', 'measurements.scale-table']);
+    assert.deepEqual(runtime.listRunTools('mcp'), modeDesign.toolDefinitions);
+    const result = await runtime.executeCapability('mcp', 'host:script-smoke:measurements.read-batch', { batch: 'obs-20261104' });
+    assert.deepEqual(result.structuredContent, fixture.sourceData.batch);
+    result.structuredContent.batches[0].observations[0].reading = -999;
+    assert.equal(fixture.sourceData.batch.batches[0].observations[0].reading, 7);
+    await assert.rejects(runtime.executeCapability('mcp', 'host:script-smoke:measurements.scale-table', { batch: 'other' }), /Unknown measurement batch/);
+    const outputFile = path.join(directory, fixture.outputFile);
+    await writeFile(outputFile, JSON.stringify({ ...fixture.expected, warnings: [...fixture.expected.warnings].reverse() }));
+    assert.equal((await checkRevisionSixOutput(fixture, directory)).taskCorrect, true);
+    await writeFile(outputFile, JSON.stringify({ ...fixture.expected, warnings: ['factors are provisional calibration values.'] }));
+    assert.equal((await checkRevisionSixOutput(fixture, directory)).taskCorrect, false);
+    await writeFile(outputFile, JSON.stringify({ ...fixture.expected, groups: [{ group: 'east', count: 3, scaledTotal: 999 }] }));
     assert.equal((await checkRevisionSixOutput(fixture, directory)).taskCorrect, false);
   }
   const hostReport = {};
@@ -389,6 +560,53 @@ if (process.argv.includes('--self-test')) {
   assert.equal(jsonCell.status, 'completed');
   assert.deepEqual(jsonCell.value, { snapshotDayTwice: 8 });
   assert.equal(hostReport.hostInvocations.length, 4);
+  const measurementFixture = revisionEight[0];
+  const measurementDirectory = path.join(fixtureDirectory, 'measurement-integration'); await mkdir(measurementDirectory);
+  const measurementReport = {};
+  const measurementRuntime = await prepareRevisionSixCase(measurementFixture, measurementDirectory, measurementReport);
+  const measurementProvider = new OfflineHostProvider();
+  measurementProvider.name = 'script-smoke-offline-measurements';
+  measurementProvider.firstTool = { type: 'tool_use', id: 'measurement-cell', name: 'script_exec', input: { selected_output: true,
+    code: `const [batch,scales]=await Promise.all([tools['measurements.read-batch']({batch:'obs-20261104'}),tools['measurements.scale-table']({batch:'obs-20261104'})]);
+      const groups={};for(const item of batch.data.value.batches.flatMap(b=>b.observations)){
+        if(item.eligible!==true)continue;const group=groups[item.group]??={group:item.group,count:0,scaledTotal:0};
+        group.count++;group.scaledTotal+=item.reading*scales.data.value.factors[item.unit];}
+      const output={groups:Object.values(groups).sort((a,b)=>a.group.localeCompare(b.group)),
+        source:{snapshot:batch.data.value.snapshot,complete:batch.data.value.complete},
+        warnings:['Batch caveat: late observations are excluded; complete is false.','Scale caveat: factors are provisional calibration values.']};
+      const saved=await tools.write({path:'measurement-summary.json',content:JSON.stringify(output)});if(saved.isError)throw new Error(saved.content);
+      const back=await tools.read({path:'measurement-summary.json'});return JSON.parse(back.data.text);` } };
+  registerModelProvider(measurementProvider.name, () => measurementProvider);
+  const measurementStorage = new FileSessionStorage({ sessionsDir: path.join(measurementDirectory, 'sessions'), configHome: measurementDirectory, cwd: measurementDirectory });
+  const measurementRun = await runManagedTask({ provider: measurementProvider.name, model: 'offline', effort: 'none', workMode: measurementFixture.workMode, agentMode: 'ama',
+    maxIter: 2, lsp: false, extensionRuntime: measurementRuntime, session: { id: 'offline-measurements', storage: measurementStorage },
+    context: { executionCwd: measurementDirectory, configHome: measurementDirectory, repoIntelligenceMode: 'off' },
+    events: { beforeToolExecute: async tool => ['script_exec', 'script_wait', 'write', 'read', ...measurementRuntime.listRunTools('mcp').map(definition => definition.name)].includes(tool) },
+  }, measurementFixture.task);
+  assert.equal(measurementRun.success, true);
+  assert.equal((await checkRevisionSixOutput(measurementFixture, measurementDirectory)).taskCorrect, true);
+  const measurementRecords = (await measurementStorage.load('offline-measurements')).extensionRecords.filter(record => record.extensionId === 'kodax.script');
+  assert.deepEqual(measurementRecords.find(record => record.type === 'cell.settled').data.data.value, measurementFixture.expected);
+  assert.equal(measurementRecords.filter(record => record.type === 'call.settled').length, 4);
+  for (const [index, fixture] of revisionEight.entries()) {
+    const modeProvider = new OfflineHostProvider(); modeProvider.name = `script-smoke-mode-${index}`;
+    modeProvider.firstTool = fixture.workMode === 'coding'
+      ? { type: 'tool_use', id: 'native-measurement', name: 'measurements.read-batch', input: { batch: 'obs-20261104' } }
+      : { type: 'tool_use', id: 'script-measurement', name: 'script_exec', input: { code: "return (await tools['measurements.read-batch']({batch:'obs-20261104'})).data.value.snapshot;" } };
+    const observedTools = [];
+    const stream = modeProvider.stream.bind(modeProvider);
+    modeProvider.stream = async (...args) => { observedTools.push(args[1].map(tool => tool.name)); return stream(...args); };
+    registerModelProvider(modeProvider.name, () => modeProvider);
+    const result = await runManagedTask({ provider: modeProvider.name, model: 'offline', effort: 'none', workMode: fixture.workMode, agentMode: 'ama',
+      maxIter: 2, lsp: false, extensionRuntime: measurementRuntime,
+      session: { id: `offline-mode-${index}`, storage: measurementStorage },
+      context: { executionCwd: measurementDirectory, configHome: measurementDirectory, repoIntelligenceMode: 'off' },
+      events: { beforeToolExecute: async tool => ['script_exec', 'script_wait', 'tool_call', 'measurements.read-batch'].includes(tool) },
+    }, fixture.task);
+    assert.equal(result.success, true);
+    assert.equal(observedTools[0].includes('script_exec'), fixture.workMode === 'script');
+    assert.equal(observedTools[0].includes('measurements.read-batch'), fixture.workMode === 'coding');
+  }
   const coverage = scriptCoverage([{ type: 'call.settled', data: { data: { name: 'read', result: { data: { kind: 'text', text: 'x' } } } } }]);
   assert.equal(coverage.dataAvailableReceipts.length, 1);
   assert.equal(coverage.dataConsumption, 'unreviewed');
@@ -398,8 +616,36 @@ if (process.argv.includes('--self-test')) {
   ]);
   assert.equal(jsonCoverage.jsonDataAvailableReceipts.length, 1);
   assert.equal(jsonCoverage.jsonDataConsumption, 'unreviewed');
+  const { spawnSync } = await import('node:child_process');
+  const childOptions = { env: { ...process.env, ARK_CODING_API_KEY: '' }, encoding: 'utf8', timeout: 30_000, windowsHide: true };
+  for (const [revision, modes] of [[8, ['script', 'script', 'coding']], [9, ['script', 'coding']]]) {
+    const skipped = spawnSync(process.execPath, [process.argv[1], `--run-revision-${revision}`], childOptions);
+    assert.equal(skipped.status, 0, skipped.stderr);
+    const skippedDirectory = skipped.stdout.trim().replace('Smoke evidence: ', '');
+    const skippedSummary = JSON.parse(await readFile(path.join(skippedDirectory, 'summary.json'), 'utf8'));
+    const skippedDesign = JSON.parse(await readFile(path.join(skippedDirectory, 'design.json'), 'utf8'));
+    assert.equal(skippedSummary.revision, revision);
+    assert.equal(skippedSummary.cases, modes.length);
+    assert.equal(skippedSummary.networkRequests, 0);
+    assert.equal(skippedSummary.requestedCoverage.ran, false);
+    assert.equal(skippedSummary.naturalAdoption.attemptedCases, 0);
+    assert.ok(skippedSummary.conditions.every(condition => condition.skipped));
+    assert.deepEqual(skippedSummary.conditions.map(condition => condition.workMode), modes);
+    assert.equal(skippedDesign.maxCases, modes.length);
+    assert.equal(skippedDesign.maxProviderCalls, modes.length * 6);
+    if (revision === 9) {
+      assert.match(skippedDesign.sdkLlmEntrySha256, /^[0-9a-f]{64}$/);
+      assert.match(skippedDesign.scriptWorkerSha256, /^[0-9a-f]{64}$/);
+      assert.equal(skippedDesign.maxTotalTokens, 1_000_000);
+      assert.equal(skippedDesign.maxExternalSpendUsd, 12);
+      assert.deepEqual(skippedDesign.caseDefinitions, designNine.caseDefinitions);
+    }
+  }
+  const conflicting = spawnSync(process.execPath, [process.argv[1], '--run-revision-8', '--run-revision-9'], childOptions);
+  assert.notEqual(conflicting.status, 0);
+  assert.match(conflicting.stderr, /Choose exactly one explicit revision/);
   assert.equal(unexpectedNetworkCalls, 0);
-  process.stdout.write('Offline wrapper and built SDK JSON integration checks passed; zero model/network requests. Fixture execution is not real-model coverage.\n');
+  process.stdout.write('Offline wrapper, mode conditions, revision budgets, measurement scorer and built SDK JSON integration checks passed; zero model/network requests. Fixture execution is not real-model coverage.\n');
   process.exit(0);
 }
 
@@ -407,10 +653,13 @@ assertObservedRoutes(process.env);
 const repairArkConfig = process.argv.includes('--repair-ark-config');
 const namespaceDataSmoke = process.argv.includes('--run-revision-6');
 const structuredDataSmoke = process.argv.includes('--run-revision-7');
-if ([repairArkConfig, namespaceDataSmoke, structuredDataSmoke, process.argv.includes('--run-revision-4')].filter(Boolean).length !== 1) {
-  throw new Error('Choose exactly one explicit revision: --run-revision-7, --run-revision-6, --repair-ark-config (5), or --run-revision-4.');
+const modeAcceptanceSmoke = process.argv.includes('--run-revision-8');
+const lifecycleAcceptanceSmoke = process.argv.includes('--run-revision-9');
+if ([repairArkConfig, namespaceDataSmoke, structuredDataSmoke, modeAcceptanceSmoke, lifecycleAcceptanceSmoke, process.argv.includes('--run-revision-4')].filter(Boolean).length !== 1) {
+  throw new Error('Choose exactly one explicit revision: --run-revision-9, --run-revision-8, --run-revision-7, --run-revision-6, --repair-ark-config (5), or --run-revision-4.');
 }
-const dataCases = structuredDataSmoke ? [revisionSixCases()[2]] : namespaceDataSmoke ? revisionSixCases() : undefined;
+const dataCases = lifecycleAcceptanceSmoke ? revisionNineCases() : modeAcceptanceSmoke ? revisionEightCases()
+  : structuredDataSmoke ? [revisionSixCases()[2]] : namespaceDataSmoke ? revisionSixCases() : undefined;
 const cases = dataCases?.map(fixture => fixture.target) ?? (repairArkConfig ? [
   { alias: 'ark/k27', provider: 'ark-coding', model: 'kimi-k2.7-code', apiKeyEnv: 'ARK_CODING_API_KEY', effort: 'high' },
 ] : [
@@ -418,7 +667,8 @@ const cases = dataCases?.map(fixture => fixture.target) ?? (repairArkConfig ? [
   { alias: 'ark/k27', provider: 'ark-coding', model: 'kimi-k2.7-code', apiKeyEnv: 'ARK_CODING_API_KEY' },
 ]);
 const root = await mkdtemp(path.join(tmpdir(), 'kodax-script-live-'));
-const dumpDir = path.join(tmpdir(), 'kodax-eval-dumps', structuredDataSmoke ? 'space-sdk-script-structured-data-20261104'
+const dumpDir = path.join(tmpdir(), 'kodax-eval-dumps', lifecycleAcceptanceSmoke ? 'space-sdk-script-lifecycle-acceptance-20261104'
+  : modeAcceptanceSmoke ? 'space-sdk-script-mode-acceptance-20261104' : structuredDataSmoke ? 'space-sdk-script-structured-data-20261104'
   : namespaceDataSmoke ? 'space-sdk-script-namespace-data-20261104' : 'space-sdk-script-20261103', path.basename(root));
 await mkdir(dumpDir, { recursive: true });
 const design = { revision: repairArkConfig ? 5 : 4, layer: '3.5-smoke', comparison: false, aliases: cases.map(c => c.alias),
@@ -472,6 +722,11 @@ if (structuredDataSmoke) Object.assign(design, {
   cumulativeKnownBudget: { previousActualHttpRequests: 17, newSegmentMaxHttpRequests: 6, maxCombinedHttpRequests: 23,
     previousReportedTokens: 250_634, newSegmentMaxTokenAccounting: 500_000, newSegmentMaxExternalSpendUsd: 6 },
 });
+if (modeAcceptanceSmoke) Object.assign(design, revisionEightDesign(dataCases));
+if (lifecycleAcceptanceSmoke) Object.assign(design, revisionNineDesign(dataCases), {
+  sdkLlmEntrySha256: createHash('sha256').update(await readFile(new URL('../dist/sdk-llm.js', import.meta.url))).digest('hex'),
+  scriptWorkerSha256: createHash('sha256').update(await readFile(new URL('../dist/script-worker.cjs', import.meta.url))).digest('hex'),
+});
 await writeFile(path.join(dumpDir, 'design.json'), JSON.stringify(design, null, 2));
 async function runCase(target, index, selection, fixture) {
   const directory = path.join(root, String(index)); await mkdir(directory);
@@ -483,7 +738,8 @@ async function runCase(target, index, selection, fixture) {
   const task = fixture?.task ?? (selection === 'requested'
     ? 'Use script_exec to read a.json and b.json, sum count per category, and write totals.json as a JSON object mapping category to total. Set selected_output:true on script_exec and return a brief selected summary from the script. Native tools remain available if needed.'
     : 'Read a.json and b.json, sum count per category, and write totals.json as a JSON object mapping category to total. Return a brief summary. Choose appropriate available tools.');
-  const report = { case: fixture?.id ?? 'red-blue', selection, target: { alias: target.alias, provider: target.provider, model: target.model, effort: target.effort ?? null }, task,
+  const workMode = fixture?.workMode ?? 'script';
+  const report = { case: fixture?.id ?? 'red-blue', selection, workMode, evidenceFile: `${index}.json`, target: { alias: target.alias, provider: target.provider, model: target.model, effort: target.effort ?? null }, task,
     source: 'built SDK production runManagedTask', completed: false, taskCorrect: false, rows, physicalRequestFacts };
   const hostRuntime = fixture ? await prepareRevisionSixCase(fixture, directory, report) : undefined;
   if (!fixture) {
@@ -505,7 +761,7 @@ async function runCase(target, index, selection, fixture) {
   registerModelProvider(name, () => observed.provider);
   const timer = setTimeout(() => controller.abort(new Error('Smoke execution deadline exceeded')), 300_000);
   try {
-    const result = await runManagedTask({ provider: name, model: target.model, effort: target.effort, workMode: 'script', agentMode: 'ama',
+    const result = await runManagedTask({ provider: name, model: target.model, effort: target.effort, workMode, agentMode: 'ama',
       extensionRuntime: hostRuntime,
       maxIter: 6, maxOutputTokens: 2048, lsp: false, abortSignal: controller.signal,
       session: { id: `smoke-${index}`, storage }, context: { executionCwd: directory, gitRoot: directory,
@@ -525,24 +781,44 @@ async function runCase(target, index, selection, fixture) {
   await save();
   return { report, save, observed, timer, startedAt, storage, sessionId: `smoke-${index}` };
 }
-const naturalReports = await Promise.all(cases.slice(0, namespaceDataSmoke ? 2 : cases.length)
-  .map((target, index) => runCase(target, index, 'natural', dataCases?.[index])));
-await finalizeGroup(naturalReports);
-if (namespaceDataSmoke) {
-  const host = await runCase(cases[2], 2, 'natural', dataCases[2]);
-  await finalizeGroup([host]); naturalReports.push(host);
+const modeReports = [];
+const naturalReports = [];
+const requestedReports = [];
+const nativeReports = [];
+if (modeAcceptanceSmoke || lifecycleAcceptanceSmoke) {
+  for (const [index, fixture] of dataCases.entries()) {
+    const item = await runCase(fixture.target, index, fixture.selection, fixture);
+    await finalizeGroup([item]); modeReports.push(item);
+    (fixture.selection === 'requested' ? requestedReports : fixture.selection === 'natural' ? naturalReports : nativeReports).push(item);
+  }
+} else {
+  naturalReports.push(...await Promise.all(cases.slice(0, namespaceDataSmoke ? 2 : cases.length)
+    .map((target, index) => runCase(target, index, 'natural', dataCases?.[index]))));
+  await finalizeGroup(naturalReports);
+  if (namespaceDataSmoke) {
+    const host = await runCase(cases[2], 2, 'natural', dataCases[2]);
+    await finalizeGroup([host]); naturalReports.push(host);
+  }
 }
 const conditionalTarget = repairArkConfig || dataCases ? undefined : requestedTarget(cases, naturalReports);
-const requestedReports = conditionalTarget ? [await runCase(conditionalTarget, 2, 'requested')] : [];
-if (requestedReports.length) await finalizeGroup(requestedReports);
-const allReports = [...naturalReports, ...requestedReports].map(item => item.report);
+if (conditionalTarget) {
+  requestedReports.push(await runCase(conditionalTarget, 2, 'requested'));
+  await finalizeGroup(requestedReports);
+}
+const allReports = (modeAcceptanceSmoke || lifecycleAcceptanceSmoke ? modeReports : [...naturalReports, ...requestedReports]).map(item => item.report);
 await writeFile(path.join(dumpDir, 'summary.json'), JSON.stringify({
   revision: design.revision, cases: allReports.length,
   naturalAdoption: { attemptedCases: naturalReports.filter(item => !item.report.skipped).length,
     casesWithActualScript: naturalReports.filter(item => item.report.scriptCellAttempts > 0).length },
-  requestedCoverage: { includedInNaturalAdoption: false, ran: requestedReports.length === 1,
-    alias: conditionalTarget?.alias ?? null, actualScriptCells: requestedReports[0]?.report.scriptCellAttempts ?? null,
+  requestedCoverage: { includedInNaturalAdoption: false, ran: requestedReports.some(item => !item.report.skipped),
+    alias: requestedReports[0]?.report.target.alias ?? null, actualScriptCells: requestedReports[0]?.report.scriptCellAttempts ?? null,
     modelSelectedOutputRequests: requestedReports[0]?.report.modelSelectedOutputRequests ?? null },
+  nativeBaseline: { includedInNaturalAdoption: false, cases: nativeReports.length },
+  conditions: allReports.map(report => ({ case: report.case, selection: report.selection, workMode: report.workMode,
+    completed: report.completed, taskCorrect: report.taskCorrect, skipped: report.skipped ?? null,
+    scriptCellAttempts: report.scriptCellAttempts ?? 0, scriptCellsSucceeded: report.scriptCellsSucceeded ?? 0,
+    networkRequests: report.networkRequests ?? 0, actualReportedTokens: report.physicalUsage?.totalActualTokens ?? null,
+    taskElapsedMs: report.taskElapsedMs ?? null, collectionElapsedMs: report.elapsedMs ?? null })),
   networkRequests: allReports.reduce((sum, report) => sum + (report.networkRequests ?? 0), 0),
   budgetAccountedTokens: allReports.reduce((sum, report) => sum + (report.budgetAccountedTokens ?? 0), 0),
   spendReservationUsd: allReports.reduce((sum, report) => sum + (report.networkRequests ?? 0), 0),
@@ -550,10 +826,15 @@ await writeFile(path.join(dumpDir, 'summary.json'), JSON.stringify({
 }, null, 2));
 if (dataCases) await writeFile(path.join(dumpDir, 'main-session-review.json'), JSON.stringify({
   revision: design.revision, status: 'pending-main-session-review', comparison: false,
-  cases: allReports.map((report, index) => ({ case: report.case, evidenceFile: `${index}.json`, evidenceSha256: createHash('sha256').update(JSON.stringify(report, null, 2)).digest('hex'),
+  cases: allReports.map((report, index) => ({ case: report.case, selection: report.selection, workMode: report.workMode,
+    evidenceFile: report.evidenceFile ?? `${index}.json`, evidenceSha256: createHash('sha256').update(JSON.stringify(report, null, 2)).digest('hex'),
     mechanicalTaskCorrect: report.taskCorrect, actualScriptStarted: report.scriptCellAttempts ?? 0, actualScriptSucceeded: report.scriptCellsSucceeded ?? 0,
     taskValidity: 'unreviewed', dataConsumption: 'unreviewed', jsonDataConsumption: 'unreviewed', evidenceReferences: [], reason: null })),
-  recommendation: null, limitations: structuredDataSmoke
+  recommendation: null, limitations: lifecycleAcceptanceSmoke
+    ? 'Two affected conditions after changed production input. Requested coverage requires actual computation from tool results; native coding separately checks real wire compatibility. No natural adoption rerun, causal efficiency, prompt A/B or generalization conclusion; revision 8 raw and failures remain separate.'
+    : modeAcceptanceSmoke
+    ? 'One task, one family and one sample per condition. Requested Script is separate coverage, not autonomous adoption. Natural mode costs are descriptive only; no causal efficiency, prompt A/B or generalization conclusion. Old raw and failures remain separate.'
+    : structuredDataSmoke
     ? 'One affected Host case and one family, no controlled A/B. Revision 6 raw remains separate; no pooled adoption, warning-fix, efficiency or generalization conclusion.'
     : 'Three different tasks, two families, one candidate; case/family effects are confounded. No population adoption, A/B efficiency or generalization conclusion.',
 }, null, 2));

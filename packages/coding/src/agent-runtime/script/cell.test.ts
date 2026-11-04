@@ -209,6 +209,41 @@ it('does not mistake unawaited tools or invalid JSON arguments for a successful 
   expect(invoke).not.toHaveBeenCalled();
 });
 
+it('explains outer async helper lifetime without losing effects or replaying them', async () => {
+  const invoke = vi.fn(async () => ({ content: 'effect recorded' }));
+  const input = { limits, toolNames: ['append_record'], invoke };
+  const result = await runScriptCell({ ...input,
+    code: "async function record(){return await tools.append_record({value:'sample'});} record();" });
+  expect(result.status).toBe('failed');
+  expect(invoke.mock.calls.length).toBeLessThanOrEqual(1);
+  expect(result.receipts).toHaveLength(invoke.mock.calls.length);
+  expect([...result.receipts, ...result.pendingCalls ?? []]).toEqual([
+    expect.objectContaining({ id: 1, name: 'append_record', input: { value: 'sample' } }),
+  ]);
+  for (const receipt of result.receipts) expect(receipt.result).toEqual({ content: 'effect recorded' });
+  for (const pending of result.pendingCalls ?? []) expect(pending.status).toBe('unknown');
+  const calls = invoke.mock.calls.length;
+  const next = await runScriptCell({ ...input, code: 'return "Inspect prior evidence before any new effect";' });
+  expect(next.status).toBe('completed');
+  expect(invoke).toHaveBeenCalledTimes(calls);
+  expect(result.error).toContain('effects must be reconciled from receipts');
+  expect(result.error).toMatch(/await or return.*async helper calls.*cell body/i);
+});
+
+it.each(['return record();', 'return await record();', 'const value=await record(); return value;'])(
+  'adopts async helper work before the body finishes (%s)', async completion => {
+    const invoke = vi.fn(async () => ({ content: 'recorded sample' }));
+    const result = await runScriptCell({ limits, toolNames: ['append_record'], invoke,
+      code: `async function record(){return (await tools.append_record({value:'sample'})).content;} ${completion}` });
+    expect(result.status, result.error).toBe('completed');
+    expect(result.value).toBe('recorded sample');
+    expect(result.hadToolErrors).toBe(false);
+    expect(result.pendingCalls).toBeUndefined();
+    expect(invoke).toHaveBeenCalledOnce();
+    expect(result.receipts).toEqual([{ id: 1, name: 'append_record', input: { value: 'sample' },
+      result: { content: 'recorded sample' } }]);
+  });
+
 it('rejects invalid limits and oversized source before creating a worker', async () => {
   const input = { code: 'return 42;', toolNames: [], invoke: vi.fn(), limits };
   await expect(runScriptCell({ ...input, limits: { ...limits, maxCalls: 0 } })).rejects.toThrow('positive safe integers');
