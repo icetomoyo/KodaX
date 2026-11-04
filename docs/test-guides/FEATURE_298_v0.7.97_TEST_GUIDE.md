@@ -2,6 +2,94 @@
 
 本指南验证构建后的产品入口。组件、协议和 SDK 单测继续保留，但不替代这里的真实进程与终端操作。
 
+## 2026-11-04 Script 原始 VM 错误的按需诊断
+
+基线 `142fb02f7`；本片仅实现下方历史计划中的错误恢复诊断，未实施类型数据优先呈现。
+原 `Error: {name,message,stack,...}` 保持原顺序及内容；仅在结构化 QuickJS
+`ReferenceError` 的消息精确为缺少 `require/process/Buffer/module/exports/__dirname/__filename`
+且该名称不是已授权工具别名时，附加当前隔离环境、经已披露 tools 进行 I/O，以及
+重试前核对 receipts/pendingCalls、已有副作用不会回滚的说明。不读取 guest global
+以免执行 getter；不扫描/改写代码，不增加 Node 权限，不自动重放。只有原错误和
+完整诊断共同装进原传输预算才追加，预算不足时保留原错误。
+
+零费公开构建 SDK 回放保留原 r10 错误与成功回执，网络请求为零；证据在
+`%TEMP%/kodax-script-contract-replay-v1PDN7`，日志为
+`kodax-script-error-diagnostic-baseline.log`。新增公共 `runManagedTask` 回归先 RED：
+原始异常存在，但无诊断；修复后验证写入一次、异常/堆栈与诊断进入模型及持久历史，
+随后可走原生读取而不重复写入。其他回归覆盖普通缺变量、TDZ、Type/SyntaxError、
+合法工具/本地别名、typeof、非 Error 拒绝、getter 不重复执行及预算不足。
+
+### 有界错误后单步比较（不是完整任务验收）
+
+先冻结两个真实状态：A `/0.json/rows/2` 已成功读取两个 Host 工具后遇到 require；
+B `/1.json/rows/1` 在第一个工具前遇到 require。每状态 baseline/candidate 各一次，
+除末条 tool_result 的 error 后附加 **234 UTF-8 bytes** 外，system、tools、messages、
+回执和状态逐字一致。使用 `ark-coding/kimi-k2.7-code`、high、每次输出 2,048，
+单请求 120s、总截止 300s、最多 4 次操作/物理请求、总 token 阈值 500,000、
+每个未结算请求预留 100,000；费用预留 $4，并非实测账单。先跑离线预算自检，
+再执行固定四调用，不执行模型生成工具，不重试、不 fallback、不追加样本。
+
+| 固定状态 | 补充诊断的下一响应 | 原错误的下一响应 | 实测 tokens（候选/基线） | 耗时 ms（候选/基线） |
+|---|---|---|---|---|
+| A：已有成功 Host 读取 | Script 改用工具 I/O，仍错读业务 wrapper，且把 read wrapper 直接 JSON.parse | Script 改用工具 I/O，仍错读业务 wrapper，read 解析 fallback 未使用真实 data.text | 17,456 / 17,393 | 20,529 / 30,283 |
+| B：工具前失败 | 两次合法原生 read，属健康探查 | 选择 Script，但错把文本读取当 data.value | 14,267 / 14,349 | 4,579 / 6,756 |
+
+主会话先盲评并落盘，再揭盲：A 轻微倾向基线，但两者都不正确；B 明显倾向候选的
+健康探查。两版均未重复 require，故此指标无区分度。候选发出 Script **1/2**、
+基线 **2/2**；这不是实际脚本覆盖（生成代码执行数为 0），也不能用较多 Script
+调用代表正确性。共 **4/4 完整 usage，63,465 实测 tokens**，无 partial/unknown；
+候选共 31,723、基线 31,742；两个状态的输入各多 51 tokens，来自失败后才追加的
+诊断，正常成功路径的上下文未变。缓存命中和耗时不同，n=1/arm/state，不能宣称效率
+提升或跨模型泛化。单步没有完成任务，不能填写完整任务正确率。
+
+工程结论：原错误上的真实、按需环境诊断可作为小范围可诊断性修复；本样本没有
+证明 Script 计算/数据格式问题已解决。保留 native 路径、权限、预算、guardrail 及
+所有原始回执，不接受强制 Script、严格字段 Proxy、伪造 require 或全局提示词扩写。
+原始错误若已存在，也不等于模型一定能正确恢复。更完整的 Script 质量与效率仍需
+其独立验收，不能随本片或 SDK 发包宣布关闭。
+
+原始输入/输出、预注册、driver hash、盲评和揭盲映射在
+`%TEMP%/kodax-eval-dumps/space-sdk-script-error-diagnostic-20261104/probe-DeYdJu/`；
+驱动为 `%TEMP%/kodax-script-error-diagnostic-one-step.mjs`。下方历史的四请求
+63,635 tokens 属另一轮合同原型实验，未合并成本轮样本。
+
+实际构建的 `dist/script-cell.js` → `script-worker.cjs` 另经零网络回归：先确认一次
+调用，再触发 require，原错误、metadata/回执均保留；追加文案与上述付费候选逐字
+一致，下一 cell 返回 42，没有重放。证据在
+`%TEMP%/kodax-script-error-diagnostic-built-cxY26k/evidence.json`。
+修复后再用相同驱动回放原日志，EXIT 0、网络 0；证据在
+`%TEMP%/kodax-script-contract-replay-FKi1gC/`。前两条真实 Host 读取的参数、正文、
+data/sourceContent 及原异常前缀与修复前逐字一致；全部 12 条叶调用在仅归一化
+各自临时 fixture 根路径后相等。首次直接比较因不同目录出现在文件工具显示中而
+失败，未修改产品或忽略其他字段。`diagnostic-comparison.json` 保留此比较边界；
+wrapper/转义等原失败继续保留，不能把回放断言通过当作任务本身通过。
+
+### Standards
+
+独立规范轴评审：0 项 finding；以 AGENTS、CONTRIBUTING 及 12 项 smell 基线审查。
+
+### Spec
+
+独立需求轴评审：0 项 finding；仅实现本轮授权诊断，未越界修改数据呈现、权限或
+重放语义。第三位子 Agent 复核模型证据，确认建议只能限于条件式可诊断性改进。
+
+最终工程门禁（Windows，本片冻结候选）：
+
+- `npm run build`、源码及测试 `npm run typecheck` 均 EXIT 0。没有定义 lint 脚本。
+  CLI 主体仍为 **5,177,070 bytes**，未放宽原有 5,177,344-byte 预算。
+- 完整 Vitest、4 workers、retry=0：**1,414 文件通过、7 跳过；19,532 测试通过、
+  87 跳过，0 失败**，耗时 1,311.48s，EXIT 0；无未处理错误。
+  新增回归所在的 public SDK 文件 15/15、cell 文件 39/39 均在这次完整集合通过。
+- 完整 `npm run test:bundle`：**99+3=102/102**，EXIT 0。
+- 5,709 文件的源码/测试/构建身份在完整测试、包测试及收尾后保持
+  `53af4024ab54c3f5d6754d4f5e1273965a53d8717384d5c7468a754508e24db0`。
+  日志为 `%TEMP%/kodax-script-error-diagnostic-{build,typecheck,full,bundle}.log`，
+  完整 JSON 为同前缀 `full.json`。早期 GREEN 预期遗漏原生 tool_call 外层 hook，
+  仅修正测试对真实调用链的预期，再独立通过并由完整集合确认；生产权限未改。
+
+以上只验收本地源码与构建。正式发包、已运行 Host 的升级以及 Space 成品接入
+没有在本轮执行；跨平台、真实账号、覆盖安装与 Issue 371 保持独立。
+
 ## 2026-11-04 Script 真实日志根因与最小合同方案（诊断完成，生产未改）
 
 基线 `f689d0fe1`。三个独立子 Agent 交叉核对 revision 10 的实际 system/tools、

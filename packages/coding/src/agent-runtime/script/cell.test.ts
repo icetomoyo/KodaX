@@ -87,6 +87,60 @@ it('has no host globals, Node modules or host Function constructor escape', asyn
   expect(invoke).not.toHaveBeenCalled();
 });
 
+it.each(['require', 'process', 'Buffer', 'module', 'exports', '__dirname', '__filename'])(
+  'explains the missing %s global while preserving its original VM exception', async name => {
+    const invoke = vi.fn();
+    const result = await runScriptCell({ limits, toolNames: [], invoke, code: `return ${name};` });
+    expect(result.status).toBe('failed');
+    const [original, diagnostic] = result.error!.split('\nScript environment:');
+    expect(JSON.parse(original!.slice('Error: '.length))).toMatchObject({
+      name: 'ReferenceError', message: `'${name}' is not defined`, stack: expect.stringContaining('eval.js:'),
+    });
+    expect(diagnostic).toContain('QuickJS, not Node.js.');
+    expect(diagnostic).toContain('tools[name](input)');
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+it.each([
+  ['return missing_local;', 'ReferenceError'],
+  ['return require; let require;', 'ReferenceError'],
+  ["const require=1; require('fs');", 'TypeError'],
+  ["JSON.parse('{');", 'SyntaxError'],
+  ["throw new Error('ordinary failure');", 'Error'],
+])('keeps ordinary guest failures unchanged (%s)', async (code, name) => {
+  const result = await runScriptCell({ limits, toolNames: [], invoke: vi.fn(), code });
+  expect(result.status).toBe('failed');
+  expect(JSON.parse(result.error!.slice('Error: '.length))).toMatchObject({ name, stack: expect.any(String) });
+});
+
+it('preserves supported local and tool aliases, feature detection and non-Error rejections', async () => {
+  const invoke = vi.fn(async () => ({ content: 'authorized require tool' }));
+  const alias = await runScriptCell({ limits, toolNames: ['require'], invoke, code: 'return (await require({})).content;' });
+  expect(alias).toMatchObject({ status: 'completed', value: 'authorized require tool' });
+  const local = await runScriptCell({ limits, toolNames: [], invoke,
+    code: 'const process = () => 42; return [process(), typeof require];' });
+  expect(local).toMatchObject({ status: 'completed', value: [42, 'undefined'] });
+  const rejected = await runScriptCell({ limits, toolNames: [], invoke, code: 'throw undefined;' });
+  expect(rejected).toMatchObject({ status: 'failed', error: 'Error' });
+  expect(invoke).toHaveBeenCalledOnce();
+});
+
+it('does not evaluate guest globals to diagnose an error or displace original evidence for a hint', async () => {
+  const result = await runScriptCell({ limits, toolNames: [], invoke: vi.fn(), code: `
+    Object.defineProperty(globalThis, 'require', {get() { text('getter ran'); throw new ReferenceError("'require' is not defined"); }});
+    require('fs');
+  ` });
+  expect(result.status).toBe('failed');
+  expect(result.error).toContain('Script environment:');
+  expect(result.outputs).toEqual(['getter ran']);
+  const small = await runScriptCell({ limits: { ...limits, maxTransferBytes: 256 }, toolNames: [], invoke: vi.fn(), code: "require('fs');" });
+  expect(small.status).toBe('failed');
+  expect(JSON.parse(small.error!.slice('Error: '.length))).toMatchObject({
+    name: 'ReferenceError', message: "'require' is not defined", stack: expect.stringContaining('eval.js:'),
+  });
+  expect(Buffer.byteLength(small.error!)).toBeLessThanOrEqual(256);
+});
+
 it('denies hidden control/bridge calls even when the guest invokes the transport directly', async () => {
   const invoke = vi.fn();
   const result = await runScriptCell({ limits, toolNames: ['read'], invoke,

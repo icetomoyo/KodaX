@@ -36,15 +36,27 @@ export async function scriptWorkerMain(): Promise<void> {
     evaluation?.dispose();
     vm.dispose(); runtime.dispose(); port.close();
   }
+  function describeGuestError(handle: QuickJSHandle): string | undefined {
+    const value: unknown = vm.dump(handle);
+    handle.dispose();
+    const original = JSON.stringify(value);
+    if (!value || typeof value !== 'object' || !('name' in value) || value.name !== 'ReferenceError'
+      || !('message' in value) || typeof value.message !== 'string') return original;
+    const missing = /^'(require|process|Buffer|module|exports|__dirname|__filename)' is not defined$/.exec(value.message)?.[1];
+    if (!missing || data.toolNames.includes(missing)) return original;
+    const diagnostic = '\nScript environment: QuickJS, not Node.js. Node modules and host globals are unavailable; use the disclosed tools[name](input) for host I/O. Before retrying, inspect receipts and pendingCalls; earlier tool effects are not rolled back.';
+    // Keep the original error ahead of optional context, within the existing transfer budget.
+    return Buffer.byteLength(`Error: ${original}${diagnostic}`) <= data.maxTransferBytes ? original + diagnostic : original;
+  }
   function drain(): void {
     if (closed || !evaluation) return;
     try {
       const jobs = runtime.executePendingJobs();
-      if (jobs.error) { const error = JSON.stringify(vm.dump(jobs.error)); jobs.error.dispose(); throw new Error(error); }
+      if (jobs.error) throw new Error(describeGuestError(jobs.error));
       const state = vm.getPromiseState(evaluation);
       if (state.type === 'pending') return;
       if (state.type === 'rejected') {
-        const error = JSON.stringify(vm.dump(state.error)); state.error.dispose(); throw new Error(error);
+        throw new Error(describeGuestError(state.error));
       }
       const text = vm.getString(state.value); state.value.dispose();
       if (pending.size) throw new Error('Script returned with unawaited tool calls. Await or return async helper calls before the cell body finishes; effects must be reconciled from receipts.');

@@ -9,6 +9,66 @@ import { FileSessionStorage } from '../packages/repl/src/interactive/storage.js'
 import type { ScriptCellResult } from '../packages/coding/src/agent-runtime/script/cell.js';
 import type { ExtensionRuntimeContract } from '../packages/coding/src/extensions/runtime-contract.js';
 
+it('preserves the original VM error and settled effects when reporting an unavailable host global', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-script-error-'));
+  const storage = new FileSessionStorage({ sessionsDir: path.join(root, 'sessions'), configHome: root, cwd: root });
+  const executed: string[] = [];
+  let requests = 0;
+  let failure: ScriptCellResult | undefined;
+  vi.stubEnv('KODAX_SCRIPT_TEST_KEY', 'offline');
+  vi.stubEnv('KODAX_HOME', root);
+  class ErrorFixture extends KodaXBaseProvider {
+    readonly name = 'script-error-offline';
+    readonly supportsThinking = false;
+    protected readonly config = { apiKeyEnv: 'KODAX_SCRIPT_TEST_KEY', model: 'fixture', supportsThinking: false };
+    async stream(messages: KodaXMessage[]): Promise<KodaXStreamResult> {
+      const step = requests++;
+      if (step > 2) throw new Error('Unexpected model round');
+      if (step === 1) {
+        const block = messages.flatMap(message => Array.isArray(message.content) ? message.content : [])
+          .find(item => item.type === 'tool_result' && item.tool_use_id === 'failed-cell');
+        if (block?.type !== 'tool_result') throw new Error('Missing failed cell');
+        expect(block.is_error).toBe(true);
+        failure = JSON.parse(String(block.content)) as ScriptCellResult;
+        expect(failure).toMatchObject({ status: 'failed', hadToolErrors: false });
+        const original = JSON.parse(failure.error!.split('\nScript environment:')[0]!.slice('Error: '.length)) as Record<string, unknown>;
+        expect(original).toMatchObject({ name: 'ReferenceError', message: "'require' is not defined", stack: expect.stringContaining('eval.js:') });
+        expect(failure.error).toContain('Script environment: QuickJS, not Node.js.');
+        expect(failure.error).toContain('inspect receipts and pendingCalls');
+        expect(failure.error).toContain('earlier tool effects are not rolled back');
+        expect(failure.receipts).toEqual([expect.objectContaining({ id: 1, name: 'write', result: expect.objectContaining({ isError: false }) })]);
+      }
+      return { textBlocks: step === 2 ? [{ type: 'text', text: 'Read the preserved result.' }] : [], thinkingBlocks: [],
+        toolBlocks: step === 2 ? [] : [{ type: 'tool_use', id: step ? 'recovery-read' : 'failed-cell',
+          name: step ? 'tool_call' : 'script_exec', input: step ? { name: 'read', input: { path: 'retained.txt' } }
+            : { code: "await tools.write({path:'retained.txt',content:'effect retained'}); require('node:fs');" } }],
+        stopReason: step === 2 ? 'end_turn' : 'tool_use' };
+    }
+  }
+  registerModelProvider('script-error-offline', () => new ErrorFixture());
+  try {
+    const result = await runManagedTask({ provider: 'script-error-offline', workMode: 'script', agentMode: 'ama',
+      reasoningMode: 'off', lsp: false, maxIter: 4, session: { id: 'error-session', storage },
+      context: { executionCwd: root, gitRoot: root, repoIntelligenceMode: 'off' },
+      events: { beforeToolExecute: async name => { executed.push(name); return ['write', 'read', 'tool_call'].includes(name); } },
+    }, 'Inspect the retained result after the failed script without repeating the write.');
+    expect(result.success).toBe(true);
+    expect(requests).toBe(3);
+    expect(executed).toEqual(['write', 'tool_call', 'read']);
+    expect(await readFile(path.join(root, 'retained.txt'), 'utf8')).toBe('effect retained');
+    const saved = await storage.load('error-session');
+    expect(saved?.extensionRecords?.find(record => record.type === 'cell.settled')).toMatchObject({
+      data: { data: { status: 'failed', error: failure?.error } },
+    });
+    expect(saved?.extensionRecords?.filter(record => record.type === 'call.settled')).toHaveLength(1);
+    expect(JSON.stringify(saved?.messages)).toContain('Script environment: QuickJS, not Node.js.');
+  } finally {
+    clearRuntimeModelProviders(); vi.unstubAllEnvs();
+    if (path.dirname(root) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('kodax-script-error-')) throw new Error('Unsafe fixture cleanup');
+    await rm(root, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
 it.each(['native', 'parallel', 'host', 'selected'] as const)('supports the %s tool path through the production Script-mode model', async (scenario) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-script-native-'));
   const storage = new FileSessionStorage({ sessionsDir: path.join(root, 'sessions'), configHome: root, cwd: root });
