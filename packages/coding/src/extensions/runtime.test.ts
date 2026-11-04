@@ -17,6 +17,8 @@ import {
   registerOfficialSandboxExtension,
   runActiveExtensionHook,
 } from './index.js';
+import { TOOL_BEFORE_HOOK_TIMEOUT_MS } from './runtime.js';
+import { CANCELLED_TOOL_RESULT_MESSAGE } from '../constants.js';
 import {
   _resetAgentResolverForTesting,
   resolveConstructedAgent,
@@ -968,8 +970,7 @@ describe('KodaXExtensionRuntime', () => {
     await runtime.loadExtension(extensionPath);
 
     // Both throwing hooks must resolve to undefined (allow), NOT propagate
-    // the error — this is the fault-isolation contract that already
-    // exists for `tool:before` and must hold for the new hooks too.
+    // the error. Only the `tool:before` policy hook fails closed.
     await expect(
       runActiveExtensionHook('todo:before-create', { seed: { content: 'X' } }),
     ).resolves.toBeUndefined();
@@ -1164,3 +1165,62 @@ declare global {
   // eslint-disable-next-line no-var
   var __kodaxTestExtAgentDispose: ((fn: () => void) => void) | undefined;
 }
+
+describe('KodaXExtensionRuntime — tool:before is a fail-closed policy hook', () => {
+  const payload = { name: 'bash', input: { command: 'ls' } };
+  const source = (label: string) => ({ source: { kind: 'runtime' as const, id: label, label } });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('blocks and names the extension when a policy handler throws', async () => {
+    const runtime = createExtensionRuntime();
+    runtime.registerHook('tool:before', () => { throw new Error('policy store offline'); }, source('corp-policy'));
+    const result = await runtime.runHook('tool:before', payload);
+    expect(result).toBe('[Tool Error] bash: Extension "corp-policy" policy check failed: policy store offline');
+    expect(result).not.toBe(CANCELLED_TOOL_RESULT_MESSAGE);
+    expect(runtime.getDiagnostics().failures).toEqual(expect.arrayContaining([
+      expect.objectContaining({ stage: 'hook', target: 'tool:before', message: 'policy store offline' }),
+    ]));
+    await runtime.dispose();
+  });
+
+  it('blocks and names the extension when a policy handler does not settle in time', async () => {
+    vi.useFakeTimers();
+    const runtime = createExtensionRuntime();
+    runtime.registerHook('tool:before', () => new Promise<undefined>(() => undefined), source('slow-policy'));
+    const pending = runtime.runHook('tool:before', payload);
+    await vi.advanceTimersByTimeAsync(TOOL_BEFORE_HOOK_TIMEOUT_MS);
+    await expect(pending).resolves.toBe(
+      `[Tool Error] bash: Extension "slow-policy" policy check failed: timed out after ${TOOL_BEFORE_HOOK_TIMEOUT_MS / 1000}s.`);
+    await runtime.dispose();
+  });
+
+  it('lets a later handler block after an earlier handler allowed', async () => {
+    const runtime = createExtensionRuntime();
+    const earlyAllow = (() => true) as unknown as () => undefined; // JS extensions can return true; it is not in the type.
+    runtime.registerHook('tool:before', earlyAllow, source('allow-all'));
+    runtime.registerHook('tool:before', () => 'Blocked by deny-list.', source('deny-list'));
+    await expect(runtime.runHook('tool:before', payload)).resolves.toBe('Blocked by deny-list.');
+    await runtime.dispose();
+  });
+
+  it('fails closed through a combined Session runtime', async () => {
+    const sessionRuntime = createExtensionRuntime();
+    const globalRuntime = createExtensionRuntime();
+    globalRuntime.registerHook('tool:before', () => { throw new Error('boom'); }, source('global-policy'));
+    sessionRuntime.registerHook('tool:before', () => undefined, source('session-policy'));
+    await expect(combineExtensionRuntimes(sessionRuntime, globalRuntime).runHook('tool:before', payload))
+      .resolves.toBe('[Tool Error] bash: Extension "global-policy" policy check failed: boom');
+    await sessionRuntime.dispose();
+    await globalRuntime.dispose();
+  });
+
+  it('keeps other hooks fail-open', async () => {
+    const runtime = createExtensionRuntime();
+    runtime.registerHook('todo:before-create', () => { throw new Error('extension bug'); }, source('todo-ext'));
+    await expect(runtime.runHook('todo:before-create', { seed: { content: 'X' } })).resolves.toBeUndefined();
+    await runtime.dispose();
+  });
+});

@@ -140,6 +140,8 @@ interface ExtensionLoadOptions {
 }
 
 let activeExtensionRuntime: KodaXExtensionRuntime | null = null;
+/** A `tool:before` policy handler that has not settled by then blocks the call. */
+export const TOOL_BEFORE_HOOK_TIMEOUT_MS = 10_000;
 let activeExtensionExecutionRuntime: ActiveExtensionExecutionRuntime | null = null;
 
 interface ActiveExtensionExecutionRuntime {
@@ -1001,6 +1003,10 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
     if (!handlers || handlers.length === 0) {
       return undefined;
     }
+    if (hook === 'tool:before') {
+      const policyPayload = payload as Parameters<ExtensionHookMap['tool:before']>[0];
+      return await this.runToolPolicy(handlers, policyPayload) as Awaited<ReturnType<ExtensionHookMap[THook]>> | undefined;
+    }
 
     for (const handler of handlers) {
       try {
@@ -1018,6 +1024,46 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
     }
 
     return undefined;
+  }
+
+  /**
+   * `tool:before` is a policy gate, so unlike other hooks it fails closed: a
+   * handler that throws or does not settle blocks the call. An allow does not
+   * stop later handlers, because any one of them may block.
+   */
+  private async runToolPolicy(
+    handlers: readonly RuntimeRecord<(payload: unknown) => Promise<unknown> | unknown>[],
+    payload: Parameters<ExtensionHookMap['tool:before']>[0],
+  ): Promise<string | false | undefined> {
+    for (const handler of handlers) {
+      const verdict = await this.runToolPolicyHandler(handler, payload);
+      if (verdict !== undefined) return verdict;
+    }
+    return undefined;
+  }
+
+  private async runToolPolicyHandler(
+    handler: RuntimeRecord<(payload: unknown) => Promise<unknown> | unknown>,
+    payload: Parameters<ExtensionHookMap['tool:before']>[0],
+  ): Promise<string | false | undefined> {
+    const timedOut = Symbol('timed-out');
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<typeof timedOut>((resolve) => {
+      timer = setTimeout(() => resolve(timedOut), TOOL_BEFORE_HOOK_TIMEOUT_MS);
+      timer.unref?.();
+    });
+    try {
+      const result = await Promise.race([Promise.resolve(handler.value(payload)), timeout]);
+      if (result !== timedOut) return typeof result === 'string' || result === false ? result : undefined;
+      throw new Error(`timed out after ${TOOL_BEFORE_HOOK_TIMEOUT_MS / 1000}s.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.recordFailure('hook', 'tool:before', handler.source, error);
+      this.runtimeLogger.warn('Extension tool:before policy failed; blocking the call:', message);
+      return `[Tool Error] ${payload.name}: Extension "${handler.source.label}" policy check failed: ${message}`;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private createExtensionSource(
