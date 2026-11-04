@@ -2,6 +2,107 @@
 
 本指南验证构建后的产品入口。组件、协议和 SDK 单测继续保留，但不替代这里的真实进程与终端操作。
 
+## 2026-11-04 最终候选真实模型补验（revision 10，已完成）
+
+候选 `e177e0ce98a7e3f38653389382554ffadd31c7bc`。用户要求尝试验证尚缺的真实模型
+效果与成本证据。本轮不改生产提示、工具、权限、模型配置或 SDK，只扩展已有有界
+smoke driver；Layer 1 机制已验，但不能观察真实模型选择、代码生成与实际 usage。
+
+固定 `ark/k27` / `ark-coding` / `kimi-k2.7-code`、high effort，Layer 3.5 三个条件：
+旧 revision 9 显式 Script measurement 的任务、数据、严格原文预期原样保留；新增
+NDJSON 乱序修订、停用、负数及 Unicode/空白 notes 的自然任务，分别用 Script 和
+Coding 模式运行。后两者正文、文件、预期和原生工具白名单相同。前者只计显式功能
+覆盖；后两者只作一个样本的模式/成本观察，零脚本或原生 fallback 如实记录。
+Host 输出 schema 在真实授权 describe 路径提供，默认菜单不附加；模型未查询时
+记“未观察 schema 消费”，不追加任务或提示来强求使用。逐例检查严格产物、实际
+计算值依赖、脚本写入、真实回读、是否在 VM 校验、原文取用和完整历史。
+
+三个条件各执行一次、逐一收束；每例最多 6 Provider 操作/物理 fetch/轮次，含
+learning/retry；12 次共享预算计费叶执行、0 child，保留原生产 VM 限制。请求最多
+2,048 output tokens、120 秒，任务从起始计 300 秒；完成后最多收集 120 秒，不重置
+任务截止。未知 fetch 在派发前预留 100,000 token，结算按真实 usage 替换；每例
+500,000 token 停止阈值、合计阈值 1,500,000，最多 18 次请求、$18 保守预留（不是
+实测账单）。单次真实结算仍可能超过 token 阈值，必须保留超额且停止后续请求；
+后续条件最多分配总阈值的剩余额度，已耗尽则跳过，不能截断 usage 来制造绝对上限。
+不关闭生产 learning/stall；partial/unknown 不能当零实际成本，usage 不全不算节省率。
+
+付费前已对预算“整次操作结束才记账”的缺口先 RED（6 次未知 fetch 超过预期 5 次）
+再 GREEN，补派发预留、取消原因和完整 Session messages。旧 revision 定义不改，
+原 30 秒收集默认保留；只有本轮用 120 秒，避免旧两例 learning 在约 30 秒被收集器
+截断的问题。所有原失败/unknown 保留。零网络 self-test 另验严格 scorer、不同模式、
+可发现 schema、内层 JSON 与原文计算/写回，以及缺凭据时不请求。最初 self-test 的
+新 revision 未接入和 JSON 丢弃 undefined 导致的比较失败保留；修正的是实验接线与
+JSON 归一化，未放宽产物 oracle。最终零网络日志为
+`%TEMP%/kodax-script-r10-self-test-verified.log`。
+
+付费前冻结 5,709 文件，清单 SHA-256
+`8eacdc0a5b0869b2fe1dee0b2b8206864e8c4dad18c16c760b99dd3125783435`；
+与已全量验收候选相比只变更本 smoke driver，生产源码和 dist 相同。driver SHA-256
+`0b3b7b169d27223b8f36931830dbfbcaeef2455017187c62c4fe49085f3c0fa4`。
+独立 Standards/Spec 两轴终审均 0 项未解决 finding。所有日志和原始记录独立保留。
+
+raw、design、完整调用和主会话逐例语义评审落在 OS temporary 的
+`kodax-eval-dumps/space-sdk-script-final-candidate-20261104/`。
+本轮不是 prompt A/B，不跨模型泛化，不以任务完成或 `.data` 字样代替实际脚本计算；
+不以单家族三条件证明总体智能无回退或因果效率提升。失败不改评分、不自动重跑；
+由主会话结合任务有效性和原始证据提出发布建议，不预设“全部通过”。
+
+### 实际结果与发布建议
+
+完整 raw 在该目录下 `kodax-script-live-xuiIQR/`；driver 日志为
+`%TEMP%/kodax-script-r10-live.log`。`main-session-review.json` 已由当前主会话逐例
+审阅代码、执行回执、磁盘文件及原始输入后落盘，包含每例 raw/file SHA-256、输入
+未变核对、判分一致性、数据依赖和发布建议；两位独立 agent 交叉核对任务与用量。
+
+| 条件（均 ark/k27 high） | Run / 严格产物 | cell 成功/尝试（非任务成功） | 实际 HTTP | 实报 token | 任务/收集耗时 |
+|---|---|---|---|---|---|
+| 旧严格任务，显式 Script | 未完成 / 错误空摘要 | 2/4 | 6 | 已知 92,391，另 1 partial | 187,407/187,456 ms |
+| 新 NDJSON，自然 Script | 未完成 / 未生成文件 | 0/2 | 6 | 94,828，完整 | 83,660/83,691 ms |
+| 同题 NDJSON，原生 Coding | 未完成 / 严格正确 | 0/0 | 6 | 83,833，完整 | 86,048/86,079 ms |
+
+三个条件均达到六操作准入上限，下一操作被拒；没有追加或重复样本。自然样本
+实际启动 Script 为 1/1，但两 cell 都失败，不能算成功计算、功能覆盖或总体采用率。
+显式条件不计自然采用，也不当作原生效率对照。原生正确产物与未完成 Run 分别报告。
+
+- 显式 Script 的首响应 `max_tokens:2048` 无可用工具调用；首 cell 两次 Host 读取
+  成功后误用 require。第二 cell 错把工具 wrapper 当业务对象，写出空 groups、缺少
+  snapshot/complete、空 warnings；实际 data.text 回读及 VM 比对均成功，却只证明
+  与同一个错误摘要一致。第三 cell 仅展示完整 wrapper，不算业务计算。第四 cell
+  代码开始正确访问 data.value/sourceContent，但首叶已被预算取消，不能把生成代码
+  当成执行成功；该代码还带额外 source.batch，不能提前承诺其严格产物必正确。
+  九个 Script 叶终态为八成功、一取消、零未决；未查询 outputSchema。
+- 自然 Script 首 cell 在 require 处失败，零叶调用；原生读取后又把源数据抄进 JS
+  字符串，产生换行/转义后的 JSON.parse 失败，不能归因 data.text 损坏。随后原生
+  多行 node -e 的回执虽为 Exit:0，但明确提示 Windows cmd 可能未传入脚本体，
+  后续读取也确认文件不存在；最终只创建了空 process.js，没有有效计算或交付。
+- 原生条件沿共用白名单保留 shell/read/write 等能力，实际通过 Node 读取原文件、计算、写最终 JSON，并
+  fs.readFileSync/JSON.parse 回读；末次 shell 回执 Exit:0，从回读对象输出 ID 和
+  core=28、edge=29、ops=17，磁盘文件通过完整严格 oracle。SDK read 读的是处理器
+  源码，没有独立 SDK read 最终摘要，也没有全 JSON 预期断言或最终 assistant 收尾。
+  期间重复写过同一处理器，不能描述为最优执行路径。
+
+合计 **18 次实际 HTTP，17 次完整 usage 为 271,052 tokens，另 1 次 partial**；
+实际总 token 为 unknown。预算账 **371,052** 包含 100,000 未知预留，$18 为保守
+预留而非账单。该 partial 是显式条件 `/rows/4` 的 report_stall_judgment 副调用，
+在 5,002 ms、taskAborted:false 时取消；生产 sidecar 默认 5,000 ms 到时 abort。
+不是收集器 120 秒截断或 Provider 失败，partial0 不等于零实际成本。实际 learning
+派发为 0；没有漏算或额外重试。三例均已关闭准入、tracked requests 已收束，收集
+未超时，未达到 120 秒请求或 300 秒任务截止，结算超额为 0。
+
+主会话结论为 **recommend-iterate，范围是 Script 的真实模型使用可靠性**。任务和
+oracle 有效，结果受输出/请求预算及单家族单样本限制，不能证明更多预算仍失败，
+也不能作为候选导致智能回退的因果证据。原文和 JSON 字段在真实回执中完整；没有
+namespace 路由错误，但尚未观察到成功的 sourceContent→正确交付链或 schema 消费。
+显式条件的最后取消 cell 主要在执行 ledger 记录，未验 Space 历史成品 view，不
+因此宣布历史一致性通过或认定历史 bug。两种自然模式交付状态不同，不计算成功
+等价任务的 token 节省率，也不宣称整体质量、速度或智能无回退。
+
+保留已通过工程验收的 SDK 修复，可作为明确限定的 beta 继续集成验证；不把 Script
+宣传为稳定可用或效率提升，不据此推广 latest。下一步先复用冻结失败轨迹做通用
+沙箱环境及工具返回合同的最小复现/评审，如需改动先用有界单步探针验证理解和直接
+取值；不再追加同类端到端样本求绿、不加任务/模型专属提示、不删除原生能力。
+正式发包、运行 Host、Space、跨平台、账号、覆盖安装及 Issue 371 仍分开验收。
+
 ## 2026-11-04 Script 返回契约与按需描述（源码修复已验证，未发布）
 
 基线 `37258ec5c`。按本轮重新诊断的结论，将 SDK 返回合同、模型任务正确性及

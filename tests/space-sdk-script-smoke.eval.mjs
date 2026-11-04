@@ -8,34 +8,48 @@ import { getProvider, KodaXBaseProvider, registerModelProvider, runWithAdditiona
 import { runManagedTask, awaitLatestCodingMemoryReviewDrain } from '../dist/sdk-coding.js';
 import { FileSessionStorage } from '../dist/sdk-repl.js';
 
-function observeProvider(actual, target, report, save, controller) {
+function observeProvider(actual, target, report, save, controller, tokenStopThreshold = 500_000) {
   let lane = Promise.resolve();
   let closed = false;
   let budgetTokens = 0;
   const tracked = new Set();
   const accounted = new Set();
+  const reservations = new Map();
   const dispatched = new Set();
   const terminal = new Map();
   report.dispatches = [];
   report.budgetReservations = [];
   const checkBudget = () => {
-    if (budgetTokens >= 500_000) controller.abort(new Error('Per-case token accounting budget reached'));
+    if (budgetTokens >= tokenStopThreshold) controller.abort(new Error('Token accounting stop threshold reached'));
   };
   const account = (key, usage, partialUsage) => {
     if (accounted.has(key)) return;
     accounted.add(key);
     const known = usage?.totalTokens;
     const reserved = Number.isFinite(known) ? known : Math.max(100_000, partialUsage?.totalTokens ?? 0);
-    budgetTokens += reserved;
-    report.budgetReservations.push({ key, tokens: reserved, kind: Number.isFinite(known) ? 'reported_usage' : 'unknown_usage_reservation' });
+    const previous = reservations.get(key);
+    budgetTokens += reserved - (previous?.tokens ?? 0);
+    const entry = previous ?? { key };
+    Object.assign(entry, { tokens: reserved, kind: Number.isFinite(known) ? 'reported_usage' : 'unknown_usage_reservation' });
+    if (!previous) { reservations.set(key, entry); report.budgetReservations.push(entry); }
     checkBudget();
+  };
+  const reserve = key => {
+    if (budgetTokens + 100_000 > tokenStopThreshold) {
+      report.blockedTokenReservations = (report.blockedTokenReservations ?? 0) + 1;
+      controller.abort(new Error('Per-case token reservation budget exhausted before dispatch'));
+      throw controller.signal.reason;
+    }
+    const entry = { key, tokens: 100_000, kind: 'in_flight_reservation', reservedBeforeDispatch: 100_000 };
+    budgetTokens += entry.tokens;
+    reservations.set(key, entry); report.budgetReservations.push(entry);
   };
   function invoke(method, args) {
     if (closed) return Promise.reject(new Error('Smoke request admission is closed'));
     const pending = lane.then(async () => {
       if (closed) throw new Error('Smoke request admission is closed');
       controller.signal.throwIfAborted();
-      if (report.rows.length >= 6 || budgetTokens >= 500_000) {
+      if (report.rows.length >= 6 || budgetTokens >= tokenStopThreshold) {
         controller.abort(new Error('Pre-registered smoke budget exhausted'));
         throw controller.signal.reason;
       }
@@ -69,9 +83,11 @@ function observeProvider(actual, target, report, save, controller) {
               controller.abort(new Error('Physical fetch budget exhausted before dispatch'));
               throw controller.signal.reason;
             }
-            const requestId = latestPhysical?.requestId;
+            const requestId = latestPhysical && !dispatched.has(latestPhysical.requestId) ? latestPhysical.requestId : undefined;
+            const accountingKey = requestId ?? `unobserved-fetch-${report.dispatches.length}`;
+            reserve(accountingKey);
             if (requestId) dispatched.add(requestId);
-            report.dispatches.push({ index: report.dispatches.length, rowIndex: row.index, requestId,
+            report.dispatches.push({ index: report.dispatches.length, rowIndex: row.index, requestId, accountingKey,
               purpose: latestPhysical?.purpose ?? row.purpose, startedAt: Date.now() });
             return (options?.fetch ?? globalThis.fetch)(input, { ...init,
               signal: AbortSignal.any([requestSignal, ...[init?.signal].filter(Boolean)]) });
@@ -84,10 +100,12 @@ function observeProvider(actual, target, report, save, controller) {
         const dispatches = report.dispatches.slice(firstDispatch);
         for (const dispatch of dispatches) {
           const fact = terminal.get(dispatch.requestId);
-          account(dispatch.requestId ?? `unobserved-fetch-${dispatch.index}`, fact?.usage, fact?.partialUsage);
+          account(dispatch.accountingKey, fact?.usage, fact?.partialUsage);
         }
         if (!dispatches.length && row.result?.usage) account(`operation-${row.index}`, row.result.usage);
         row.elapsedMs = Date.now() - row.startedAt;
+        if (requestSignal.aborted) row.cancellation = { requestReason: String(requestSignal.reason),
+          taskAborted: controller.signal.aborted, taskReason: controller.signal.aborted ? String(controller.signal.reason) : null };
         await save();
       }
     });
@@ -115,6 +133,8 @@ function observeProvider(actual, target, report, save, controller) {
           ? complete.reduce((sum, attempt) => sum + attempt.terminal.usage.totalTokens, 0) : null };
       report.operationUsage = report.rows.map(row => ({ index: row.index, purpose: row.purpose, usage: row.result?.usage ?? null }));
       report.budgetAccountedTokens = budgetTokens;
+      report.tokenStopThreshold = tokenStopThreshold;
+      report.settlementOverrunTokens = Math.max(0, budgetTokens - tokenStopThreshold);
       report.networkRequests = report.dispatches.length;
       report.providerRequests = report.rows.length;
       report.learningRequests = report.rows.filter(row => row.purpose === 'learning').length;
@@ -209,6 +229,55 @@ function revisionNineCases() {
   ];
 }
 
+function revisionTenCases() {
+  const requested = { ...revisionNineCases()[0], describeOutputSchemas: true };
+  const rows = [
+    { id: 'r1', revision: 2, team: 'core', units: 5, unit: 'tick', active: true, note: '新版本' },
+    { id: 'r2', revision: 1, team: 'core', units: 3, unit: 'credit', active: true, note: 'two\nlines' },
+    { id: 'r3', revision: 1, team: 'edge', units: 4, unit: 'tick', active: true, note: 'said "yes"' },
+    { id: 'r4', revision: 1, team: 'ops', units: -2, unit: 'credit', active: true, note: 'refund' },
+    { id: 'r5', revision: 1, team: 'edge', units: 100, unit: 'tick', active: true, note: 'superseded' },
+    { id: 'r6', revision: 1, team: 'core', units: 7, unit: 'credit', active: false, note: 'inactive' },
+    { id: 'r7', revision: 1, team: 'ops', units: 6, unit: 'tick', active: true, note: 'café' },
+    { id: 'r8', revision: 1, team: 'edge', units: 1, unit: 'credit', active: true, note: '蓝灯🌱' },
+    { id: 'r9', revision: 1, team: 'core', units: 4, unit: 'tick', active: true, note: '  keep spaces  ' },
+    { id: 'r10', revision: 1, team: 'ops', units: 3, unit: 'credit', active: true, note: '' },
+    { id: 'r11', revision: 1, team: 'edge', units: 8, unit: 'tick', active: true, note: 'edge' },
+    { id: 'r12', revision: 1, team: 'core', units: -1, unit: 'credit', active: true, note: 'correction' },
+    { id: 'r1', revision: 1, team: 'ops', units: 99, unit: 'tick', active: true, note: 'older row arrives last' },
+    { id: 'r5', revision: 2, team: 'edge', units: 10, unit: 'tick', active: false, note: 'retired' },
+  ];
+  const task = 'Read events.ndjson and weights.json. For each event id keep the row with the highest revision, '
+    + 'then include only rows whose active field is true. Multiply units by the factor for its unit. '
+    + 'Write event-summary.json with groups (team, count and total, sorted by team), '
+    + 'source (snapshot from weights.json, latestCount before filtering and includedCount), '
+    + 'and notes (an object mapping included id to its exact note string). '
+    + 'Read the saved JSON to verify it, then return a brief summary. Choose appropriate available tools.';
+  const inputs = { 'events.ndjson': rows.map(row => JSON.stringify(row)).join('\n') + '\n',
+    'weights.json': JSON.stringify({ snapshot: 'weights-20261104', factors: { tick: 2, credit: 5 } }) };
+  const expected = { groups: [{ team: 'core', count: 4, total: 28 }, { team: 'edge', count: 3, total: 29 }, { team: 'ops', count: 3, total: 17 }],
+    source: { snapshot: 'weights-20261104', latestCount: 12, includedCount: 10 },
+    notes: { r1: '新版本', r2: 'two\nlines', r3: 'said "yes"', r4: 'refund', r7: 'café', r8: '蓝灯🌱',
+      r9: '  keep spaces  ', r10: '', r11: 'edge', r12: 'correction' } };
+  return [requested, ...[
+    { id: 'events-natural-script', selection: 'natural', workMode: 'script' },
+    { id: 'events-native-coding', selection: 'native', workMode: 'coding' },
+  ].map(condition => ({ ...condition, target: requested.target, task, inputs, expected, outputFile: 'event-summary.json' }))];
+}
+
+function measurementOutputSchemas() {
+  return {
+    'measurements.read-batch': { type: 'object', required: ['snapshot', 'complete', 'batches'], properties: {
+      snapshot: { type: 'string' }, complete: { type: 'boolean' }, batches: { type: 'array', items: { type: 'object',
+        required: ['id', 'observations'], properties: { id: { type: 'string' }, observations: { type: 'array', items: {
+          type: 'object', required: ['id', 'group', 'reading', 'unit', 'eligible'], properties: { id: { type: 'string' },
+            group: { type: 'string' }, reading: { type: 'number' }, unit: { type: 'string' }, eligible: { type: 'boolean' } },
+        } } } } } } },
+    'measurements.scale-table': { type: 'object', required: ['factors'], properties: {
+      factors: { type: 'object', additionalProperties: { type: 'number' } } } },
+  };
+}
+
 function measurementToolDefinitions() {
   return [
     { name: 'measurements.read-batch', description: 'Read a measurement batch by batch id. Returns nested observations, snapshot, completeness and a source caveat.',
@@ -262,6 +331,25 @@ function revisionNineDesign(fixtures) {
   };
 }
 
+function revisionTenDesign(fixtures) {
+  return { ...revisionEightDesign(fixtures), revision: 10, sourceBaseline: 'e177e0ce98a7e3f38653389382554ffadd31c7bc', reviewDrainMs: 120_000,
+    revisionNote: 'Final candidate smoke after isolated sourceContent and on-demand Host outputSchema changes. Reuse the exact revision 9 requested task and strict expected artifact; add one different NDJSON task with identical natural Script/coding conditions. Historical failures remain separate. No production prompt change, sample retry, fallback or extra case.',
+    conditionalCase: 'Disabled. The three fixed conditions run once in declared order regardless of outcome. A missing credential is a skip, not a fallback.',
+    question: 'Does the final candidate support actual model-authored Script computation, exact-source delivery and persisted readback? Separately observe natural choice and task/cost behavior on a different data format in Script and coding modes.',
+    whyNotLayer1: 'Existing VM, independent Host and tarball regressions prove the interfaces. They cannot show real model selection, generated data dependencies, task correctness or physical usage/time. This is a bounded one-family pilot, not a prompt comparison or general intelligence proof.',
+    rubric: 'Score artifacts independently of tool choice. Review every original cell, leaf receipt, Session message and saved file. Trace JSON/text parsing into computation and Script write/readback; distinguish returning readback from verifying it. Record direct sourceContent use, rendered-text parsing, schema queried/not queried, native fallback, warnings, failures and missing usage. Requested coverage is excluded from natural adoption. Do not require optional discovery or Script in the natural task.',
+    fixtureConstraints: 'Requested measurement fixture and strict warnings are unchanged from revision 9; only truthful output schemas are available through existing authorized describe. The natural task uses out-of-order NDJSON revisions, inactive records, negative adjustments and exact Unicode/whitespace notes. Natural tasks, files and expected values are identical across modes. Keep the same native allowlist and 12 billed-leaf budget, zero children and production VM limits. Embedded public SDK; independent Host mechanism was tested separately, no deployed Space or external service claim.',
+    concurrency: 'One Ark lane, requested Script then natural Script then natural coding, each drained/closed before the next. Per condition: six operations/physical fetches/rounds including learning, 500000 token stop threshold, 2048 output tokens, 120s request and 300s execution deadline from task start. Collection waits at most 120s without resetting execution deadline. At most 18 fetches and $18 conservative reservation; aggregate token stop threshold 1500000. Unknown fetches reserve 100000 before dispatch and settle by physical identity; actual usage is never clipped, a single settlement may overrun the stop threshold and is reported. Later conditions receive at most the remaining aggregate threshold; exhausted conditions skip. No production learning/stall disabled.',
+    modeCostInterpretation: 'Record B/C identical-task costs descriptively only. One sample per mode, ordering/cache effects and one family preclude causal efficiency or overall intelligence conclusions. Zero actual Script in B means configuration cost only; incomplete usage forbids token saving rates. Requested A is never an efficiency arm.',
+    onDemandOutputSchemas: measurementOutputSchemas(),
+    caseDefinitions: fixtures.map(({ id, kind, target, selection, workMode, task, inputs, sourceData, outputFile, expected, describeOutputSchemas }) =>
+      ({ id, kind, target, selection, workMode, task, inputs, sourceData, outputFile, expected, describeOutputSchemas })),
+    previousRevision: { revision: 9, evidenceDirectory: 'space-sdk-script-lifecycle-acceptance-20261104/kodax-script-live-bSSrzt',
+      actualHttpRequests: 11, knownCompleteTokens: 128_460, partialRequests: 3, totalActualTokens: null,
+      note: 'Keep old task failures and incomplete usage unchanged; no pooled correctness, no unused budget transfer.' },
+  };
+}
+
 async function prepareRevisionSixCase(fixture, directory, report) {
   report.fixtureInputs = fixture.inputs;
   for (const [name, body] of Object.entries(fixture.inputs)) await writeFile(path.join(directory, name), body);
@@ -281,6 +369,7 @@ async function prepareRevisionSixCase(fixture, directory, report) {
       inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
   ]).map(tool => ({ ...tool, capabilityId: `host:script-smoke:${tool.name}`, sideEffect: 'readonly', planModeAllowed: true }));
   report.hostInvocations = [];
+  report.hostDescriptions = [];
   const lookup = (provider, id) => {
     const definition = provider === 'mcp' && definitions.find(tool => tool.capabilityId === id);
     if (!definition) throw new Error(`Host capability is not authorized: ${provider}/${id}`);
@@ -294,7 +383,13 @@ async function prepareRevisionSixCase(fixture, directory, report) {
     searchCapabilities: async (provider, query) => provider === 'mcp'
       ? definitions.filter(tool => `${tool.name} ${tool.description}`.toLowerCase().includes(query.toLowerCase()))
         .map(tool => ({ id: tool.capabilityId, kind: 'tool', name: tool.name, description: tool.description })) : [],
-    describeCapability: async (provider, id) => lookup(provider, id),
+    describeCapability: async (provider, id) => {
+      const definition = lookup(provider, id);
+      const descriptor = fixture.describeOutputSchemas ? { ...definition, id: definition.capabilityId, kind: 'tool', server: 'script-smoke',
+        outputSchema: measurementOutputSchemas()[definition.name] } : definition;
+      report.hostDescriptions.push({ provider, id, descriptor: structuredClone(descriptor) });
+      return descriptor;
+    },
     async executeCapability(provider, id, input) {
       const invocation = { provider, id, input: structuredClone(input) };
       report.hostInvocations.push(invocation);
@@ -343,13 +438,13 @@ function scriptCoverage(records) {
     note: 'Data availability or source syntax does not prove consumption. Main-session review must trace executed cells and output dependencies using full canonical records.' };
 }
 
-async function finalizeGroup(completedReports, reviewDrain = awaitLatestCodingMemoryReviewDrain) {
+async function finalizeGroup(completedReports, reviewDrain = awaitLatestCodingMemoryReviewDrain, drainTimeoutMs = 30_000) {
   let drainTimer;
   let drainTimedOut = false;
   try {
     await Promise.race([
-      Promise.all([reviewDrain(30_000), ...completedReports.map(item => item.observed?.idle())]),
-      new Promise(resolve => { drainTimer = setTimeout(() => { drainTimedOut = true; resolve(); }, 30_000); }),
+      Promise.all([reviewDrain(drainTimeoutMs), ...completedReports.map(item => item.observed?.idle())]),
+      new Promise(resolve => { drainTimer = setTimeout(() => { drainTimedOut = true; resolve(); }, drainTimeoutMs); }),
     ]);
   } finally {
     clearTimeout(drainTimer);
@@ -358,9 +453,10 @@ async function finalizeGroup(completedReports, reviewDrain = awaitLatestCodingMe
   }
   for (const { report, save, observed, startedAt, storage, sessionId } of completedReports) {
     observed?.summarize();
-    report.reviewDrain = { bestEffort: true, timeoutMs: 30_000, timedOut: drainTimedOut, admissionClosed: true, trackedRequestsSettled: true };
+    report.reviewDrain = { bestEffort: true, timeoutMs: drainTimeoutMs, timedOut: drainTimedOut, admissionClosed: true, trackedRequestsSettled: true };
     const saved = storage ? await storage.load(sessionId) : undefined;
     report.records = saved?.extensionRecords ?? [];
+    report.sessionMessages = saved?.messages ?? [];
     const records = report.records.filter(record => record.extensionId === 'kodax.script');
     report.scriptCellAttempts = records.filter(record => record.type === 'cell.started').length;
     report.scriptCellsCompleted = records.filter(record => record.type === 'cell.settled' && record.data?.data?.status === 'completed').length;
@@ -404,9 +500,32 @@ if (process.argv.includes('--self-test')) {
   let fetches = 0;
   const cap = observeProvider({ async stream(_m, _t, _s, _r, options) { for (let i = 0; i < 7; i++) await options.fetch('fixture', {}); } },
     { model: 'fixture' }, capReport, async () => {}, new AbortController());
-  await assert.rejects(cap.provider.stream([], [], '', false, { fetch: async () => { fetches++; } }), /fetch budget/);
-  await cap.idle(); cap.summarize(); assert.equal(fetches, 6); assert.equal(capReport.blockedFetches, 1);
+  await assert.rejects(cap.provider.stream([], [], '', false, { fetch: async () => { fetches++; } }), /budget/i);
+  await cap.idle(); cap.summarize(); assert.equal(fetches, 5);
+  assert.equal(capReport.budgetAccountedTokens, 500_000);
   assert.equal(capReport.physicalUsage.totalActualTokens, null);
+  let knownOperations = 0, afterKnownFetches = 0;
+  const knownReport = { rows: [], physicalRequestFacts: [] };
+  const known = observeProvider({ async stream(_m, _t, _s, _r, request) {
+    if (knownOperations++ === 0) return { usage: { inputTokens: 489_999, outputTokens: 1, totalTokens: 490_000 } };
+    await request.fetch('fixture', {});
+  } }, { model: 'fixture' }, knownReport, async () => {}, new AbortController());
+  await known.provider.stream([], [], '', false, options);
+  await assert.rejects(known.provider.stream([], [], '', false, { fetch: async () => { afterKnownFetches++; } }), /budget/i);
+  await known.idle(); known.summarize();
+  assert.equal(afterKnownFetches, 0);
+  assert.equal(knownReport.budgetAccountedTokens, 490_000);
+  assert.match(knownReport.rows[1].cancellation.taskReason, /reservation budget/);
+  const overrunReport = { rows: [], physicalRequestFacts: [] };
+  const overrun = observeProvider({ async stream() {
+    return { usage: { inputTokens: 539_999, outputTokens: 1, totalTokens: 540_000 } };
+  } }, { model: 'fixture' }, overrunReport, async () => {}, new AbortController());
+  await overrun.provider.stream([], [], '', false, options);
+  await assert.rejects(overrun.provider.stream([], [], '', false, options), /threshold/);
+  await overrun.idle(); overrun.summarize();
+  assert.equal(overrunReport.budgetAccountedTokens, 540_000);
+  assert.equal(overrunReport.settlementOverrunTokens, 40_000);
+  assert.equal(overrunReport.rows[0].result.usage.totalTokens, 540_000);
   let entered;
   const began = new Promise(resolve => { entered = resolve; });
   const drain = observeProvider({ async complete(_m, _t, _s, _r, options) {
@@ -428,6 +547,14 @@ if (process.argv.includes('--self-test')) {
     observed: { idle: async () => { sequence.push('idle'); }, close: () => { sequence.push('closed'); }, summarize: () => { sequence.push('summarized'); } },
   }], async () => { sequence.push('learning-drained'); });
   assert.deepEqual(sequence, ['learning-drained', 'idle', 'closed', 'idle', 'summarized', 'saved']);
+  const collection = { rows: [] };
+  const messages = [{ role: 'assistant', content: 'Complete persisted evidence.' }];
+  await finalizeGroup([{ report: collection, startedAt: Date.now(), save: async () => {},
+    storage: { load: async () => ({ messages }) }, sessionId: 'offline-collection' }], async timeoutMs => {
+    assert.equal(timeoutMs, 120_000);
+  }, 120_000);
+  assert.equal(collection.reviewDrain.timeoutMs, 120_000);
+  assert.deepEqual(collection.sessionMessages, messages);
   assertObservedRoutes({});
   assert.throws(() => assertObservedRoutes({ KODAX_STALL_PROVIDER: 'external', KODAX_STALL_MODEL: 'external' }), /bypass/);
   const revisionSix = revisionSixCases();
@@ -473,7 +600,40 @@ if (process.argv.includes('--self-test')) {
   assert.equal(modeDesign.comparison, false);
   assert.deepEqual(modeDesign.caseDefinitions.map(item => item.workMode), ['script', 'script', 'coding']);
   assert.deepEqual(modeDesign.caseDefinitions[1].sourceData, modeDesign.caseDefinitions[2].sourceData);
+  const revisionTen = revisionTenCases();
+  const designTen = revisionTenDesign(revisionTen);
+  assert.equal(designTen.revision, 10);
+  assert.equal(designTen.reviewDrainMs, 120_000);
+  assert.deepEqual(revisionTen.map(item => [item.selection, item.workMode]), [['requested', 'script'], ['natural', 'script'], ['native', 'coding']]);
+  assert.equal(revisionTen[0].task, revisionNine[0].task);
+  assert.deepEqual(revisionTen[0].expected, revisionNine[0].expected);
+  assert.deepEqual(revisionTen[0].sourceData, revisionNine[0].sourceData);
+  assert.equal(revisionTen[1].task, revisionTen[2].task);
+  assert.ok(!revisionTen[1].task.includes('Script'));
+  assert.deepEqual(revisionTen[1].inputs, revisionTen[2].inputs);
+  assert.deepEqual(revisionTen[1].expected, revisionTen[2].expected);
+  assert.equal(designTen.maxProviderCalls, 18);
+  assert.equal(designTen.maxTotalTokens, 1_500_000);
   const fixtureDirectory = await mkdtemp(path.join(tmpdir(), 'kodax-script-offline-'));
+  for (const fixture of revisionTen) {
+    const directory = path.join(fixtureDirectory, `revision-ten-${fixture.id}`); await mkdir(directory);
+    const runtime = await prepareRevisionSixCase(fixture, directory, {});
+    if (fixture.describeOutputSchemas) {
+      assert.ok(runtime.listRunTools('mcp').every(tool => tool.outputSchema === undefined));
+      const descriptor = await runtime.describeCapability('mcp', 'host:script-smoke:measurements.read-batch');
+      assert.deepEqual(descriptor.outputSchema, measurementOutputSchemas()['measurements.read-batch']);
+      await assert.rejects(runtime.describeCapability('mcp', 'host:script-smoke:unauthorized'), /not authorized/);
+    }
+    const output = path.join(directory, fixture.outputFile);
+    await writeFile(output, JSON.stringify(fixture.expected));
+    assert.equal((await checkRevisionSixOutput(fixture, directory)).taskCorrect, true);
+    await writeFile(output, '{}');
+    assert.equal((await checkRevisionSixOutput(fixture, directory)).taskCorrect, false);
+    if (!fixture.kind) {
+      await writeFile(output, JSON.stringify({ ...fixture.expected, notes: { ...fixture.expected.notes, r9: 'keep spaces' } }));
+      assert.equal((await checkRevisionSixOutput(fixture, directory)).taskCorrect, false);
+    }
+  }
   for (const fixture of revisionSix) {
     const directory = path.join(fixtureDirectory, fixture.id); await mkdir(directory);
     const report = {};
@@ -573,7 +733,7 @@ if (process.argv.includes('--self-test')) {
         group.count++;group.scaledTotal+=item.reading*scales.data.value.factors[item.unit];}
       const output={groups:Object.values(groups).sort((a,b)=>a.group.localeCompare(b.group)),
         source:{snapshot:batch.data.value.snapshot,complete:batch.data.value.complete},
-        warnings:['Batch caveat: late observations are excluded; complete is false.','Scale caveat: factors are provisional calibration values.']};
+        warnings:[batch.sourceContent,scales.sourceContent]};
       const saved=await tools.write({path:'measurement-summary.json',content:JSON.stringify(output)});if(saved.isError)throw new Error(saved.content);
       const back=await tools.read({path:'measurement-summary.json'});return JSON.parse(back.data.text);` } };
   registerModelProvider(measurementProvider.name, () => measurementProvider);
@@ -618,7 +778,7 @@ if (process.argv.includes('--self-test')) {
   assert.equal(jsonCoverage.jsonDataConsumption, 'unreviewed');
   const { spawnSync } = await import('node:child_process');
   const childOptions = { env: { ...process.env, ARK_CODING_API_KEY: '' }, encoding: 'utf8', timeout: 30_000, windowsHide: true };
-  for (const [revision, modes] of [[8, ['script', 'script', 'coding']], [9, ['script', 'coding']]]) {
+  for (const [revision, modes] of [[8, ['script', 'script', 'coding']], [9, ['script', 'coding']], [10, ['script', 'script', 'coding']]]) {
     const skipped = spawnSync(process.execPath, [process.argv[1], `--run-revision-${revision}`], childOptions);
     assert.equal(skipped.status, 0, skipped.stderr);
     const skippedDirectory = skipped.stdout.trim().replace('Smoke evidence: ', '');
@@ -640,6 +800,10 @@ if (process.argv.includes('--self-test')) {
       assert.equal(skippedDesign.maxExternalSpendUsd, 12);
       assert.deepEqual(skippedDesign.caseDefinitions, designNine.caseDefinitions);
     }
+    if (revision === 10) {
+      assert.deepEqual(skippedDesign.caseDefinitions, JSON.parse(JSON.stringify(designTen.caseDefinitions)));
+      assert.equal(skippedDesign.reviewDrainMs, 120_000);
+    }
   }
   const conflicting = spawnSync(process.execPath, [process.argv[1], '--run-revision-8', '--run-revision-9'], childOptions);
   assert.notEqual(conflicting.status, 0);
@@ -655,10 +819,11 @@ const namespaceDataSmoke = process.argv.includes('--run-revision-6');
 const structuredDataSmoke = process.argv.includes('--run-revision-7');
 const modeAcceptanceSmoke = process.argv.includes('--run-revision-8');
 const lifecycleAcceptanceSmoke = process.argv.includes('--run-revision-9');
-if ([repairArkConfig, namespaceDataSmoke, structuredDataSmoke, modeAcceptanceSmoke, lifecycleAcceptanceSmoke, process.argv.includes('--run-revision-4')].filter(Boolean).length !== 1) {
-  throw new Error('Choose exactly one explicit revision: --run-revision-9, --run-revision-8, --run-revision-7, --run-revision-6, --repair-ark-config (5), or --run-revision-4.');
+const returnContractSmoke = process.argv.includes('--run-revision-10');
+if ([repairArkConfig, namespaceDataSmoke, structuredDataSmoke, modeAcceptanceSmoke, lifecycleAcceptanceSmoke, returnContractSmoke, process.argv.includes('--run-revision-4')].filter(Boolean).length !== 1) {
+  throw new Error('Choose exactly one explicit revision: --run-revision-10, --run-revision-9, --run-revision-8, --run-revision-7, --run-revision-6, --repair-ark-config (5), or --run-revision-4.');
 }
-const dataCases = lifecycleAcceptanceSmoke ? revisionNineCases() : modeAcceptanceSmoke ? revisionEightCases()
+const dataCases = returnContractSmoke ? revisionTenCases() : lifecycleAcceptanceSmoke ? revisionNineCases() : modeAcceptanceSmoke ? revisionEightCases()
   : structuredDataSmoke ? [revisionSixCases()[2]] : namespaceDataSmoke ? revisionSixCases() : undefined;
 const cases = dataCases?.map(fixture => fixture.target) ?? (repairArkConfig ? [
   { alias: 'ark/k27', provider: 'ark-coding', model: 'kimi-k2.7-code', apiKeyEnv: 'ARK_CODING_API_KEY', effort: 'high' },
@@ -667,7 +832,7 @@ const cases = dataCases?.map(fixture => fixture.target) ?? (repairArkConfig ? [
   { alias: 'ark/k27', provider: 'ark-coding', model: 'kimi-k2.7-code', apiKeyEnv: 'ARK_CODING_API_KEY' },
 ]);
 const root = await mkdtemp(path.join(tmpdir(), 'kodax-script-live-'));
-const dumpDir = path.join(tmpdir(), 'kodax-eval-dumps', lifecycleAcceptanceSmoke ? 'space-sdk-script-lifecycle-acceptance-20261104'
+const dumpDir = path.join(tmpdir(), 'kodax-eval-dumps', returnContractSmoke ? 'space-sdk-script-final-candidate-20261104' : lifecycleAcceptanceSmoke ? 'space-sdk-script-lifecycle-acceptance-20261104'
   : modeAcceptanceSmoke ? 'space-sdk-script-mode-acceptance-20261104' : structuredDataSmoke ? 'space-sdk-script-structured-data-20261104'
   : namespaceDataSmoke ? 'space-sdk-script-namespace-data-20261104' : 'space-sdk-script-20261103', path.basename(root));
 await mkdir(dumpDir, { recursive: true });
@@ -727,6 +892,11 @@ if (lifecycleAcceptanceSmoke) Object.assign(design, revisionNineDesign(dataCases
   sdkLlmEntrySha256: createHash('sha256').update(await readFile(new URL('../dist/sdk-llm.js', import.meta.url))).digest('hex'),
   scriptWorkerSha256: createHash('sha256').update(await readFile(new URL('../dist/script-worker.cjs', import.meta.url))).digest('hex'),
 });
+if (returnContractSmoke) Object.assign(design, revisionTenDesign(dataCases), {
+  sdkLlmEntrySha256: createHash('sha256').update(await readFile(new URL('../dist/sdk-llm.js', import.meta.url))).digest('hex'),
+  scriptWorkerSha256: createHash('sha256').update(await readFile(new URL('../dist/script-worker.cjs', import.meta.url))).digest('hex'),
+  driverSha256: createHash('sha256').update(await readFile(new URL(import.meta.url))).digest('hex'),
+});
 await writeFile(path.join(dumpDir, 'design.json'), JSON.stringify(design, null, 2));
 async function runCase(target, index, selection, fixture) {
   const directory = path.join(root, String(index)); await mkdir(directory);
@@ -751,13 +921,15 @@ async function runCase(target, index, selection, fixture) {
     const snapshot = JSON.stringify(report, null, 2);
     const next = saveTail.then(() => writeFile(file, snapshot)); saveTail = next; return next;
   };
-  if (!process.env[target.apiKeyEnv]) {
-    report.skipped = 'Configured route credential is unavailable'; await save();
+  const tokenStopThreshold = returnContractSmoke ? Math.min(500_000,
+    Math.max(0, design.maxTotalTokens - modeReports.reduce((sum, item) => sum + (item.report.budgetAccountedTokens ?? 0), 0))) : 500_000;
+  if (tokenStopThreshold <= 0 || !process.env[target.apiKeyEnv]) {
+    report.skipped = tokenStopThreshold <= 0 ? 'Aggregate token stop threshold exhausted' : 'Configured route credential is unavailable'; await save();
     return { report, save, startedAt };
   }
   const actual = getProvider(target.provider);
   const name = `script-smoke-${index}`;
-  const observed = observeProvider(actual, target, report, save, controller);
+  const observed = observeProvider(actual, target, report, save, controller, tokenStopThreshold);
   registerModelProvider(name, () => observed.provider);
   const timer = setTimeout(() => controller.abort(new Error('Smoke execution deadline exceeded')), 300_000);
   try {
@@ -785,10 +957,10 @@ const modeReports = [];
 const naturalReports = [];
 const requestedReports = [];
 const nativeReports = [];
-if (modeAcceptanceSmoke || lifecycleAcceptanceSmoke) {
+if (modeAcceptanceSmoke || lifecycleAcceptanceSmoke || returnContractSmoke) {
   for (const [index, fixture] of dataCases.entries()) {
     const item = await runCase(fixture.target, index, fixture.selection, fixture);
-    await finalizeGroup([item]); modeReports.push(item);
+    await finalizeGroup([item], awaitLatestCodingMemoryReviewDrain, design.reviewDrainMs ?? 30_000); modeReports.push(item);
     (fixture.selection === 'requested' ? requestedReports : fixture.selection === 'natural' ? naturalReports : nativeReports).push(item);
   }
 } else {
@@ -805,7 +977,7 @@ if (conditionalTarget) {
   requestedReports.push(await runCase(conditionalTarget, 2, 'requested'));
   await finalizeGroup(requestedReports);
 }
-const allReports = (modeAcceptanceSmoke || lifecycleAcceptanceSmoke ? modeReports : [...naturalReports, ...requestedReports]).map(item => item.report);
+const allReports = (modeAcceptanceSmoke || lifecycleAcceptanceSmoke || returnContractSmoke ? modeReports : [...naturalReports, ...requestedReports]).map(item => item.report);
 await writeFile(path.join(dumpDir, 'summary.json'), JSON.stringify({
   revision: design.revision, cases: allReports.length,
   naturalAdoption: { attemptedCases: naturalReports.filter(item => !item.report.skipped).length,
@@ -830,7 +1002,9 @@ if (dataCases) await writeFile(path.join(dumpDir, 'main-session-review.json'), J
     evidenceFile: report.evidenceFile ?? `${index}.json`, evidenceSha256: createHash('sha256').update(JSON.stringify(report, null, 2)).digest('hex'),
     mechanicalTaskCorrect: report.taskCorrect, actualScriptStarted: report.scriptCellAttempts ?? 0, actualScriptSucceeded: report.scriptCellsSucceeded ?? 0,
     taskValidity: 'unreviewed', dataConsumption: 'unreviewed', jsonDataConsumption: 'unreviewed', evidenceReferences: [], reason: null })),
-  recommendation: null, limitations: lifecycleAcceptanceSmoke
+  recommendation: null, limitations: returnContractSmoke
+    ? 'Three fixed candidate-only conditions, one family. Strict artifact and actual Script computation/source/readback coverage are distinct. Natural same-task costs are descriptive, not causal efficiency, overall intelligence or cross-model generalization evidence. Missing usage remains unknown; no saving rate. Previous raw/failures are retained.'
+    : lifecycleAcceptanceSmoke
     ? 'Two affected conditions after changed production input. Requested coverage requires actual computation from tool results; native coding separately checks real wire compatibility. No natural adoption rerun, causal efficiency, prompt A/B or generalization conclusion; revision 8 raw and failures remain separate.'
     : modeAcceptanceSmoke
     ? 'One task, one family and one sample per condition. Requested Script is separate coverage, not autonomous adoption. Natural mode costs are descriptive only; no causal efficiency, prompt A/B or generalization conclusion. Old raw and failures remain separate.'
