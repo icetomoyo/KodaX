@@ -4,12 +4,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  setAgentConfigHome,
   setKodaXDiagnosticSink,
   type KodaXDiagnostic,
 } from '@kodax-ai/agent';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  getDefaultCommandDir,
   loadCommands,
   resolveProgrammableCommandModuleUrl,
 } from './cli_commands.js';
@@ -138,5 +140,27 @@ describe('programmable command module loading', () => {
       level: 'warn',
       message: expect.stringContaining('broken.js'),
     }));
+  });
+});
+
+describe('default command directory', () => {
+  afterEach(() => {
+    setAgentConfigHome(undefined);
+  });
+
+  it('follows the agent home at call time, like REPL command discovery', () => {
+    setAgentConfigHome(commandDir);
+
+    expect(getDefaultCommandDir()).toBe(path.join(commandDir, 'commands'));
+  });
+
+  it('loads prompt commands from the agent home when no directory is given', async () => {
+    await fs.mkdir(path.join(commandDir, 'commands'));
+    await fs.writeFile(path.join(commandDir, 'commands', 'greet.md'), '# Greet\nSay hello.\n', 'utf8');
+    setAgentConfigHome(commandDir);
+
+    const commands = await loadCommands();
+
+    expect(commands.get('greet')?.type).toBe('prompt');
   });
 });

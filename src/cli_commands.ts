@@ -1,11 +1,11 @@
 import fs from 'fs/promises';
 import path from 'path';
-import os from 'os';
 import { pathToFileURL } from 'node:url';
-import { emitKodaXDiagnostic } from '@kodax-ai/agent';
+import { emitKodaXDiagnostic, getAgentConfigPath } from '@kodax-ai/agent';
 import type { KodaXResult } from '@kodax-ai/coding';
 
-export const KODAX_COMMANDS_DIR = path.join(os.homedir(), '.kodax', 'commands');
+/** Commands directory frozen at module load. Use getDefaultCommandDir() to honor a later setAgentConfigHome(). */
+export const KODAX_COMMANDS_DIR = getAgentConfigPath('commands');
 
 export interface KodaXCommand {
   name: string;
@@ -21,7 +21,7 @@ export interface KodaXCommandContext {
 }
 
 export function getDefaultCommandDir(): string {
-  return KODAX_COMMANDS_DIR;
+  return getAgentConfigPath('commands');
 }
 
 export function resolveProgrammableCommandModuleUrl(
@@ -38,7 +38,7 @@ export async function loadCommands(
   commandDir?: string,
 ): Promise<Map<string, KodaXCommand>> {
   const commands = new Map<string, KodaXCommand>();
-  const dir = commandDir ?? KODAX_COMMANDS_DIR;
+  const dir = commandDir ?? getDefaultCommandDir();
 
   try {
     await fs.mkdir(dir, { recursive: true });

@@ -10,6 +10,7 @@ import fsSync from 'fs';
 import path from 'path';
 import os from 'os';
 import { Command } from 'commander';
+import { getAgentConfigPath } from '@kodax-ai/agent';
 
 // 从 kodax_cli 导入 Commands 系统
 import {
@@ -80,7 +81,6 @@ function createTestableSpinner(
 describe('Commands System', () => {
   it('should export KODAX_COMMANDS_DIR', () => {
     expect(KODAX_COMMANDS_DIR).toBeDefined();
-    expect(KODAX_COMMANDS_DIR).toContain('.kodax');
     expect(KODAX_COMMANDS_DIR).toContain('commands');
   });
 
@@ -295,7 +295,7 @@ describe('CLI Entry Point', () => {
   });
 
   it('should export commands directory constant', () => {
-    expect(KODAX_COMMANDS_DIR).toBe(path.join(os.homedir(), '.kodax', 'commands'));
+    expect(KODAX_COMMANDS_DIR).toBe(getAgentConfigPath('commands'));
   });
 
   it('should not attach a bare action to the root skill subcommand', async () => {
