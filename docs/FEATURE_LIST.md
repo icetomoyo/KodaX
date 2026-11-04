@@ -22,12 +22,12 @@
 | Visual harness implementation | [P0–P2 实施与验证](designs/visual-harness-implementation-2026-10-28.md); [P3–P7 续接](designs/visual-harness-p3-p7-implementation-2026-10-29.md) — P3/P4/P5/P6 implemented within declared scope. [New P7 task-value plan](designs/visual-harness-p7-task-value-plan-2026-10-29.md) compares final task results and full-task tokens against optimized pre-visual 1826cc22; not executed. Old r3 remains tool-choice/single-response cost evidence, not task benefit acceptance. Historical default suite 18,094 passed / 0 failed; earlier r2/ENOTEMPTY/Feature270/T30 failures and unlocated causes retained. No new feature ID/version assigned |
 | Roadmap updated | `2026-11-02` — the Space execution/session seam completion and core-config publication prepared for the `v0.7.97-beta.1` candidate on top of the released alpha.12; FEATURE_300 remains Planned |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
-| Total tracked features | `86` |
+| Total tracked features | `88` |
 | InProgress | `2` |
-| Planned | `17` |
+| Planned | `19` |
 | Completed | `61` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
-| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302` |
+| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304` |
 | Archive cutoff | Shipped / canceled / absorbed / shelved items through `v0.7.49` are archived. |
 
 ### 一览表
@@ -36,6 +36,7 @@
 |---|---:|---|---|
 | Completed | 61 | `302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 2 | `298, 225` | `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
+| Planned, 0.7.98 | 2 | `303, 304` | `303` waits for the Node floor decision; `304` waits for ADR-071 review and confirmed callers. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
@@ -89,6 +90,7 @@
 | `v0.7.95` | `0` |
 | `v0.7.96` | `0` |
 | `v0.7.97` | `1` |
+| `v0.7.98` | `2` |
 | `v0.7.99` | `1` |
 | `v0.7.100` | `0` |
 | `v0.7.105` | `0` |
@@ -2163,6 +2165,8 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
+| `303` | Proxy and Private CA Support | Enhancement / Network + Runtime | High | `v0.7.98` | [v0.7.98](features/v0.7.98.md#feature_303-proxy-and-private-ca-support) — Planned; spike done, waits for the Node floor decision |
+| `304` | Ask Result for Extension Tool Policy | Enhancement / Extensions + Permissions | High | `v0.7.98` | [v0.7.98](features/v0.7.98.md#feature_304-ask-result-for-extension-tool-policy) — Planned; ADR-071 Proposed |
 | `300` | Git Execution Consolidation with Shared macOS Preflight | Refactor | Medium | `v0.7.99` | [v0.7.99](features/v0.7.99.md#feature_300-git-execution-consolidation-with-shared-macos-preflight) — Planned; design only |
 | `287` | Advisor Mode Virtual Provider | Enhancement / LLM Provider + Session Quality | High | `v0.8.13` | [v0.8.13](features/v0.8.13.md#feature_287-advisor-mode-virtual-provider) |
 | `288` | CLI-Space Daemon Profile Alignment | Enhancement / Runtime + Multi-Client UX | High | `v0.8.14` | [v0.8.14](features/v0.8.14.md#feature_288-cli-space-daemon-profile-alignment) |
@@ -2180,6 +2184,20 @@ fixed GitHub binary archive sidecar omission before tagging.
 | `113` | TodoList JSON / CLI Surface | Enhancement | Medium | `v0.9.7` | [v0.9.7](features/v0.9.7.md#feature_113-todolist-json--cli-surface) |
 | `139` | NotebookEdit Tool | Enhancement / Tool | Low | `v0.9.25` | [v0.9.25](features/v0.9.25.md#feature_139-notebookedit-tool--jupyter-cell-level-crud) |
 | `262` | npm 12 Install-Time Security + Trusted Publishing Migration | Internal / Supply Chain Security | High | `v0.9.0` | [v0.9.0](features/v0.9.0.md#feature_262-npm-12-install-time-security--trusted-publishing-migration) |
+
+---
+
+## 2026-11-04 FEATURE_303 and FEATURE_304 Addition
+
+- Status: Planned; target `v0.7.98`; implementation has not started.
+- Source: WP6 and WP7 of the [SDK foundation hardening plan](designs/sdk-foundation-hardening-plan-2026-11-04.md).
+  The plan's Phase 1 defects are Issues 378-381.
+- FEATURE_303: proxy and private CA support. The spike found that Node 22 and 24 honor
+  `NODE_USE_ENV_PROXY` for `fetch`, `http`/`https` and both model SDKs; `ws` needs the global
+  agent; `NODE_EXTRA_CA_CERTS` already works. Waits for the Node floor decision.
+- FEATURE_304: `ask` result for extension `tool:before`. Decision record: ADR-071 (Proposed).
+  Waits for review and for Space to confirm two of the three callers.
+- Design: [v0.7.98](features/v0.7.98.md).
 
 ---
 

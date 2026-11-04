@@ -6,6 +6,44 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- Extension `tool:before` now applies on every dispatch path: AMA with a
+  combined Session runtime, AMA without `events`, and nested calls from
+  constructed tools. A bridged `tool_call` fires the hook and asks for
+  permission once (Issue 378).
+- An allow no longer ends `tool:before` evaluation, so any handler can still
+  block. A handler that throws or does not answer within 10 seconds blocks the call, and
+  the message names the extension (Issue 379).
+- The model can no longer write `<agent home>/extensions` or
+  `<agent home>/integrations` with text tools in any mode, including Full
+  Access, or with Shell where the sandbox is active. The Host loads both as
+  trusted code and live integrations (Issue 380).
+- `web_fetch` refuses cloud metadata addresses on every hop and refuses a
+  redirect from a public site into the private network. Direct LAN, VPC and
+  intranet targets still work (Issue 381).
+
+### Changed
+
+- The Windows effect Job supervisor reports its `Add-Type` compile time and
+  startup time through `runtime:windows` diagnostics, and reports startup
+  failures and timeouts as warnings.
+
+### Compatibility
+
+- Embedders that run AMA without `events` now get their extensions'
+  `tool:before` decisions applied. Nested constructed-tool calls now ask for
+  permission in default mode and respect the active tool set.
+- An extension that returned an early allow no longer stops later handlers. A
+  throwing or hanging policy hook now blocks instead of allowing.
+- The agent can no longer install an MCP server or extension by editing
+  `integrations/` or `extensions/`. Users do that through `kodax mcp add`, the
+  integration commands or a Host UI.
+- `web_fetch` follows up to 20 redirects itself and decodes gzip, deflate and
+  br. Its 12-second deadline, 512 KiB cap and tool description are unchanged.
+  Behind an environment proxy only address literals and the proxy's own
+  address are checked, and a hop the proxy resolved counts as public.
+
 ---
 
 ## [0.7.97-beta.1] - 2026-11-02

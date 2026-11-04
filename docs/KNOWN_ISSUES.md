@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-01_
+_Last Updated: 2026-11-04_
 
 ---
 
@@ -46,6 +46,255 @@ This predates the child contract projection; the eval uses raw per-call usage,
 not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
+
+## Issue 382: User Skill discovery ignores KODAX_HOME
+
+- Priority: Low
+- Status: Open
+- Introduced: present since FEATURE_194 v0.7.43 (`88f2faa96`); first affected version unknown
+- Created: 2026-11-04
+- Fixed: —
+
+### Original Problem
+
+`getDefaultSkillPaths()` (`packages/agent/src/capabilities/skills/types.ts`)
+builds the user Skill root from `os.homedir()/.kodax/skills`, not from
+`getAgentConfigHome()`. With `KODAX_HOME` or `setAgentConfigHome()`, user
+Skills are still read from the default home. `agent-home.ts` lists the paths
+that intentionally skip the resolver; user Skills are not among them.
+
+### Next Step
+
+Resolve the KodaX user Skill root through `getAgentConfigPath('skills')`. Keep
+`~/.agents/skills` on the OS home because it is a cross-agent standard. Add a
+discovery test with `KODAX_HOME` set. Found during the SDK foundation hardening
+review; it is outside that work's scope.
+
+## Issue 381: `web_fetch` can read cloud metadata and follow public redirects into the private network
+
+- Priority: High
+- Status: Resolved
+- Introduced: first affected version unknown (observed on `fc296bd56`)
+- Created / Resolved: 2026-11-04
+- Fixed: KodaX-next-dev working tree (unreleased)
+
+### Original Problem
+
+`web_fetch` used the global `fetch()` with no address policy. A prompt-injected
+Run on a cloud host could read the instance metadata endpoint
+(`169.254.169.254` and its provider variants), which can return cloud
+credentials. A public page could also redirect `web_fetch` to an intranet
+address the user never named.
+
+Direct LAN, VPC and intranet access is intended and stays allowed: reading
+internal documentation and services is a core Agent use case.
+
+### Resolution
+
+`web_fetch` now uses `guardedHttpGet` (`tools/_internal/guarded-http-get.ts`):
+
+- Cloud metadata addresses are refused on every hop: address literals before
+  connecting, hostnames at connect time inside `lookup()`, and the connected
+  peer after the response, which also covers a proxy's own address. DNS
+  rebinding cannot swap the address after the check.
+- A redirect from a public address into the private network is refused.
+  Private-to-private and private-to-public redirects still work.
+- A reused keep-alive socket skips `lookup()`. `guardedHttpGet` remembers the
+  sockets it connected directly and checks their server before the request is
+  sent, so a pooled socket cannot bypass either rule.
+- Redirects are followed manually, up to 20 as in `fetch()`. gzip, deflate and
+  br bodies are decoded. The 12-second deadline and 512 KiB cap are unchanged.
+  Non-standard status codes such as 999 are reported instead of failing.
+
+The address sets live in `@kodax-ai/agent`
+(`isCloudMetadataAddress`, `isPrivateNetworkAddress`). The metadata set covers
+`169.254.0.0/16`, `fe80::/10`, AWS `fd00:ec2::254`, GCP `fd20:ce::254`, Oracle
+`fd00:c1::a9fe:a9fe`, Alibaba `100.100.100.200` and Azure `168.63.129.16`.
+IPv4-mapped IPv6 and integer forms are covered. The tool description did not
+change.
+
+### Remaining Limits
+
+- Behind an environment proxy (`NODE_USE_ENV_PROXY`), the proxy resolves
+  hostnames. Only address literals and the proxy's own address are checked.
+  A hop the proxy resolved counts as public, so it cannot redirect to a private
+  address literal or to a private host reached directly through `NO_PROXY`.
+- `169.254.0.0/16` and `fe80::/10` count as metadata, so LAN devices that only
+  have a link-local address cannot be fetched. This keeps unknown cloud
+  metadata variants inside that range covered.
+- Volcengine's metadata address is not confirmed and is not in the set.
+- Shell commands (`curl`) are governed by the permission mode and sandbox, not
+  by this policy.
+
+### Verification
+
+`network-address-policy.test.ts` covers both address sets, including scoped and
+IPv4-mapped forms. `web-fetch.test.ts` covers metadata literals, a hostname
+resolving to metadata, a redirect into metadata, public-to-private redirects
+through a literal and a hostname, a public redirect into a host whose
+keep-alive socket is still pooled (the intranet server never receives the
+request), a direct private hostname, all three content encodings, and status
+999. Proxy hops are simulated by routing `globalAgent.createConnection` to a
+local proxy. A probe against a real local proxy on Node 22.23.1 and Electron
+42.5.0 (Node 24.17.0) confirmed that Node never calls the custom `lookup()` for
+proxied requests, for HTTP or HTTPS, and that refusing a reused socket on its
+`socket` event stops the request before it is written (also on Node 20.20.2).
+
+## Issue 380: Model writes can install Host-loaded extensions and integrations
+
+- Priority: High
+- Status: Resolved
+- Introduced: first affected version unknown (observed on `fc296bd56`)
+- Created / Resolved: 2026-11-04
+- Fixed: KodaX-next-dev working tree (unreleased)
+
+### Original Problem
+
+The Host loads `<agent home>/extensions` as trusted code at start and
+hot-reloads `<agent home>/integrations` (MCP, extension paths, A2A). The model
+could write both:
+
+- `extensions/` was ordinary auto-writable Agent Home space in every mode.
+- `integrations/` was protected only by the Auto-mode denylist.
+- The text mutation tools (`write`, `edit`, `multi_edit`, `insert_after_anchor`,
+  `undo`) leave Agent Home writes to the outer permission policy, and Full
+  Access approves them without asking.
+
+A prompt-injected run could therefore install an extension or MCP server that
+later runs with Host authority, without a user action.
+
+### Resolution
+
+- The hard Agent Home set adds `extensions` and `integrations`. Hard paths are
+  never auto-writable, so Auto and default modes classify them the same way.
+  Read access is unchanged.
+- `assertTrustedTextMutationPolicy` refuses `extensions/` and `integrations/`
+  in every mode (`isAgentHomeHostLoadedTarget`). It checks the requested path,
+  the final canonical path and the Host commit target. The model receives a
+  `[Blocked]` result with `matchedRule: protected_agent_home_state` and is told
+  to describe the change to the user.
+- Text tool writes to `runtime/`, `processes/` and `learned/` keep their earlier
+  design: the outer permission policy decides, so a user can approve them.
+- The shell sandbox `denyWrite` list masks both directories, and explicit Agent
+  Home write grants to them are refused.
+
+Users still install MCP servers and extensions through `kodax mcp add`, the
+integration commands, or a Host UI.
+
+### Remaining Limits
+
+- Full Access bash without an active sandbox is not covered.
+- Skill directories stay writable. A planted Skill runs commands only when it is
+  invoked, through Skill hook admission.
+- Extension paths a user registers in `integrations/extensions.json` outside
+  Agent Home are ordinary files; the user chose to trust them.
+- An inline `createKodaXRuntime({ homeDir })` in a process whose agent home
+  (`KODAX_HOME` or `setAgentConfigHome()`) differs protects the process agent
+  home, not `<homeDir>/.kodax`. Daemon and worker processes set `KODAX_HOME`
+  to match.
+
+### Verification
+
+`agent-home-policy.test.ts` covers classification, keeps extension source
+readable and leaves `runtime/` to the outer policy. `text-file-mutation.test.ts`
+refuses `extensions/` and `integrations/` with Full Access, before the trusted
+host runs, and through a canonical target. The existing
+`windows-text-transaction.test.ts` and `undo.test.ts` cases for approved
+`runtime/` writes still pass. `sandbox-runtime.test.ts` checks the Windows
+`denyWrite` mask.
+
+## Issue 379: Extension `tool:before` fails open on a throw or hang
+
+- Priority: High
+- Status: Resolved
+- Introduced: first affected version unknown (observed on `fc296bd56`)
+- Created / Resolved: 2026-11-04
+- Fixed: KodaX-next-dev working tree (unreleased)
+
+### Original Problem
+
+`runHook` treated `tool:before` like any other hook:
+
+- A handler that threw was logged and skipped, so the call ran.
+- A handler that never settled stalled the Run with no limit.
+- The first handler that returned any value other than `undefined`, including
+  `true`, ended evaluation, so a later policy handler could not block.
+
+A policy extension that crashed, timed out, or ran after a permissive
+extension therefore allowed the call.
+
+### Resolution
+
+`KodaXExtensionRuntime.runHook` runs `tool:before` as a fail-closed policy hook:
+
+- Each handler has 10 seconds (`TOOL_BEFORE_HOOK_TIMEOUT_MS`).
+- A throw or timeout records an extension failure and blocks the call with a
+  message naming the extension.
+- Only a block string or `false` ends evaluation, so any handler can still block
+  after another one allowed.
+- Block strings are returned verbatim. The combined Session runtime inherits
+  this (global handlers first, then Session handlers).
+
+Other hooks keep their fail-open behavior.
+
+### Remaining Limits
+
+A handler that ignores the timeout keeps running in the background; its late
+result is discarded.
+
+### Verification
+
+`extensions/runtime.test.ts` covers throw, timeout, a later block after an
+allow, a throwing global hook through a combined runtime, and a fail-open
+`todo:before-create` hook.
+
+## Issue 378: Extension tool policy is skipped or doubled on some dispatch paths
+
+- Priority: High
+- Status: Resolved
+- Introduced: first affected version unknown (observed on `fc296bd56`)
+- Created / Resolved: 2026-11-04
+- Fixed: KodaX-next-dev working tree (unreleased)
+
+### Original Problem
+
+- AMA runs with a combined Session runtime (`combineExtensionRuntimes`) never ran
+  extension `tool:before`, or any extension hook or event. The execution frame
+  activated only registry runtimes.
+- The AMA `tool_call` bridge gated both the wrapper and its target. With Host
+  events in default mode, one operation asked for permission twice, and the
+  extension hook ran twice.
+- Nested `ctx.tools.<name>` calls from constructed tools used `executeTool()`
+  directly. They skipped the Host permission gate, extension `tool:before`, and
+  the Run's active tool set.
+
+### Resolution
+
+- `withExtensionRuntimeContext` also activates a runtime that implements the
+  execution contract, so a combined Session runtime fires hooks and events in
+  AMA as it does in SA.
+- The AMA runner skips `tool_call` and `tool_describe`, as SA dispatch does. The
+  bridge gates its concrete target once, with or without Host events.
+- `ctx-proxy` routes nested calls through the Host's `invokeCheckedTool` when it
+  is present. The nesting depth travels through `AsyncLocalStorage`, so the
+  depth limit still holds.
+
+Compatibility: embedders that run AMA without events now get extension
+`tool:before`. Nested constructed-tool calls now ask for permission in default
+mode and respect the active tool set.
+
+### Remaining Limits
+
+Extension `tool:before` still runs only after a Host allow; a Host block or
+cancel ends the check first, which is the intended order.
+
+### Verification
+
+`agent.tool-gate-coverage.test.ts` runs 16 rows: SA and AMA, plain and combined
+runtime, with and without events, direct and bridge. Each row asserts that the
+hook runs exactly once and the tool handler never runs. CAP-PERMISSION-005
+covers every Host verdict. `ctx-proxy.test.ts` covers checked routing and the
+depth limit. Child Agents and Script leaf calls use the same entry points.
 
 ## Issue 377: Child Agents expose failing Goal tools and bypass the root goal budget
 
@@ -2293,6 +2542,11 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 382 | Low | Open | User Skill discovery ignores KODAX_HOME | FEATURE_194 v0.7.43 or earlier | — | 2026-11-04 | — |
+| 381 | High | Resolved | `web_fetch` can read cloud metadata and follow public redirects into the private network | first affected version unknown | KodaX-next-dev working tree (unreleased) | 2026-11-04 | 2026-11-04 |
+| 380 | High | Resolved | Model writes can install Host-loaded extensions and integrations | first affected version unknown | KodaX-next-dev working tree (unreleased) | 2026-11-04 | 2026-11-04 |
+| 379 | High | Resolved | Extension `tool:before` fails open on a throw or hang | first affected version unknown | KodaX-next-dev working tree (unreleased) | 2026-11-04 | 2026-11-04 |
+| 378 | High | Resolved | Extension tool policy is skipped or doubled on some dispatch paths | first affected version unknown | KodaX-next-dev working tree (unreleased) | 2026-11-04 | 2026-11-04 |
 | 377 | Medium | Resolved | Child Agents expose failing Goal tools and bypass the root goal budget | FEATURE_192 v0.7.44; first affected version unknown | post-v0.7.97-alpha.10 working tree (unreleased) | 2026-10-31 | 2026-10-31 |
 | 375 | High | Resolved | Constrained Skill shell patterns admit extra effects | observed on aeb16fef; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
 | 374 | Medium | Resolved | Client question adapters lose unanswered semantics | observed on aeb16fef; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
@@ -17160,12 +17414,19 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 255 (37 Open, 218 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 260 (38 Open, 222 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-04: Issues 378-382
+
+- Resolved extension tool policy gaps (378, 379), model installation of
+  Host-loaded extensions and integrations (380), and `web_fetch` access to cloud
+  metadata and public-to-private redirects (381).
+- Recorded User Skill discovery ignoring `KODAX_HOME` (382, Open).
 
 ### 2026-10-29: Issues 374 and 375
 

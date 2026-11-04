@@ -6976,6 +6976,78 @@ optimistic stopped UI, client-side list/abort loops, global workflow cancellatio
 mode-blind dangerous-command blocks, interpreter rewrites after explicit denial,
 and a separate extension permission or lifecycle engine.
 
+## ADR-071: Extension Policy May Ask for a Person's Approval
+
+**Status**: Proposed (2026-11-04). Implementation (FEATURE_304) waits for this
+ADR's review and for Space to confirm callers 2 and 3 below.
+
+**Context**: An extension `tool:before` hook can only allow or block a call.
+Since Issue 379, an allow no longer ends evaluation, so any handler can block,
+and a throw or a 10-second timeout blocks. Host approval is separate: the Host asks a person
+only when the permission mode and persisted grants require it. A Full Access
+Run, or a call already covered by an `allow_always` grant, never reaches a
+person. A policy that wants a person to confirm one specific call, such as an
+expensive deploy inside an otherwise trusted Run, has to block it, and the
+model then works around the block.
+
+The Host already has the needed approval path. `authorizeTrackedPermission`
+raises a `RuntimePermissionRequest` with a `reason`. It does not look up grants
+or take the Full Access shortcut, and `forcedPermissionCalls` stops the same
+call from being asked twice.
+
+**Decision**:
+
+1. `tool:before` may also return `{ decision: 'ask', reason: string }`. Results
+   combine as block, then ask, then allow. When several handlers ask, all their
+   reasons are shown together.
+2. On `ask`, the permission gate calls a new optional
+   `KodaXEvents.requestToolApproval(tool, input, reason, meta)`. If the member is absent, the
+   call is blocked with a message that names the extension. Only an explicit
+   allow runs the call; deny, dismiss and timeout block it.
+3. The Host implements the member with `authorizeTrackedPermission`. Session
+   and persistent answers are downgraded to allow-once, because the extension
+   asked about this call, not about the tool. The existing permission timeout
+   applies.
+4. No new wire message is needed. Extension hooks and `KodaXEvents` run in the
+   Run-owning process, and the request reaches clients as the existing
+   `RuntimePermissionRequest`. Embedded and daemon capabilities advertise
+   `toolHookAsk: { version: 1 }`, so a client that requires it gets
+   `client_upgrade_required` instead of a hang.
+5. Every place that rebuilds `KodaXEvents` field by field (child executor,
+   orchestration, trusted coding entry, Skill invocation policy, script pilot)
+   forwards the member. A test fails if one drops it.
+6. Tool descriptions and system prompts do not change. The model sees a
+   blocked result after a denial, as it does today.
+
+**Callers** (all three are required before implementation):
+
+1. The official sandbox asks, instead of blocking, for recursive deletes and
+   for deletes outside the workspace.
+2. Space billable or high-risk Host tools ask before each call. Pending Space
+   confirmation.
+3. Space's chat-channel approval relay forwards the request to a remote
+   approver. Pending Space confirmation.
+
+**Consequences**:
+
+- A policy can keep a person in the loop in every permission mode, including
+  Full Access, without a new approval channel.
+- A Host without the member fails closed: an `ask` becomes a block, never an
+  allow.
+- Unattended Runs see the permission timeout. A job that hits `ask` with no
+  person present is denied after the timeout, as documented in
+  `CLIENT_CONTRACT.md` ("无人值守运行").
+
+**Rejected alternatives**:
+
+- **Treat `ask` as a block until a person changes the mode.** This forces a
+  mode change for a single call, which widens authority for the rest of the Run.
+- **A separate approval event or wire message for extensions.** It duplicates
+  `RuntimePermissionRequest`, and every client would need to render two
+  approval types.
+- **Let the extension prompt the user itself.** Extensions have no UI, and a
+  Host must be able to audit every approval.
+
 ## 2026-10-11 — Main-agent result verification replaces Sidecar Verifier
 
 The main agent verifies each requested requirement with actual tool and rendered evidence before delivery. The built-in `visual-review` skill covers static images/charts, paginated documents/slides/sheets, interactive web/app/terminal/canvas/3D surfaces, and temporal video/animation results. Missing capabilities and unchecked scope are reported as unverified. An ordinary read-only child reviewer may contribute findings within the same Run; the main agent owns repairs and the final answer.

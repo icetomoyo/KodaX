@@ -644,3 +644,42 @@ requestedEffort、可选 sentEffort、fallbacks 和 `verified:false`。旧请求
 `activity.streaming` 是当前请求的瞬时进度：thinking 提供既有 item 引用、完整字符数和可选 `estimatedTokenCount`；tool-input 提供工具名称、调用 ID，以及该调用的累计 `charCount` 和可选 `estimatedTokenCount`。两种估算都由 Host 在现有 80ms 视图合并时复用 `countTokens`，针对当前请求/调用收到的完整文本计算，先于显示裁剪；不是累计 Run usage、独立计费数或 Provider 报告值。纯 Client 不重新估算，也不从字符数直接换算。Ink/classic 以 `~… tokens` 明示估算；旧 Host 没有该字段时仅显示 Thinking/Receiving 工具标签，不伪装精确数值。缺少工具调用 ID 时不按名称拼接计数。Host 暂存完整累计参数用于估算，在请求替换、流结束、对应工具开始、Run 终态、Session reset/close 时释放；参数草稿不暴露或持久化到 view/checkpoint。Ink 用现有 spinner 显示实时计数，classic 按请求/阶段/调用去重输出进入时的快照，活动消失后清空去重状态。UTF-16 正文偏移与原始字符计数不因显示改用 token 而改变；这里不承诺逐字 JSON 预览。
 
 计划批准使用已有 permission Interaction，`options.plan` 提供完整计划正文，不从截断的 inputPreview 恢复。首个有效回答生效；Host 确认当前 Run 仍在运行且仍为 Plan 模式后才应用批准结果。拒绝、取消及 Stop 不切换权限模式，客户端不能自行先显示已批准。
+
+## 无人值守运行
+
+定时任务、聊天渠道等无人值守宿主沿用同一产品面，没有单独的 Run authority API。
+本节说明 SDK 已有的行为，以及宿主需要自行完成的部分。
+
+**每个任务使用独立 Session。** 权限模式、模型等设置与历史都归属 Session。
+`sessions.updateSettings` 修改的 permissionMode 会在活跃 Run 的下一次物理请求生效；
+这是有意设计，用户可以随时放宽或收紧正在运行的工作，Agent 自身不能修改模式。
+任务若与用户对话共用 Session，就会采用用户随后的模式选择，历史也会混在一起。
+需要固定模式的任务，应在自己的 Session 中运行，运行期间不修改该 Session 设置。
+Plan 模式下批准计划会把该 Session 切换为 accept-edits。
+
+**确定性 inputId。** 同一次计划执行使用由任务身份与计划时间构成的固定 inputId。
+接收不确定时用原 ID 调用 `inputs.read`，不要换新 ID 重发。`read` 返回 null
+只说明当前 Host 查不到记录，跨 Host 重启不保证恰好一次。
+
+**工具上限。** 可信 Main 的 `authorizeExecution` 可通过
+`RuntimeExecutionAuthorization.tools` 或 `profile` 收窄本 Run 的工具集合，需要
+`productExecutionProfile:2`。上限只收窄可用工具，不代替审批。
+
+**持久授权。** `allow_always` 授权不带 Session 归属，按工具和 Host 签发的精确
+matcher 匹配。它适用于同一 Agent Home 下的所有 Run，包括带授权记录的 Run，
+前提是工具仍在上限内；`allow_session` 只在原 Session 内有效。Host 在发出权限请求前
+查询授权；Auto 与 Full Access 先由各自策略决定，沙箱边界升级总是重新询问。
+用户为交互工作授予的持久授权，因此也会放行任务中的相同调用。需要逐次判断的策略应放在扩展 `tool:before` 中：它在授权匹配之后运行，
+抛错或超时即阻止。进程内宿主的 `beforeToolExecute` 不会看到已被授权匹配的调用。
+宿主可用 `permissions.listGrants` 和 `revokeGrant` 查看与撤销授权。
+
+**每个交互都要结算。** 无人值守客户端必须回答或拒绝每个 Interaction。
+权限请求默认 5 分钟后按拒绝结算（`daemon serve --permission-timeout-ms`，0 表示无期限）。
+普通问题默认无期限（`--user-input-timeout-ms`，或新启动 Host 时的
+`ensureKodaXClient({ userInputTimeoutMs })`）；不设期限又无人回答时 Run 会一直等待。
+无法作答的客户端应像 one-shot CLI 一样处理本 Run 的交互：普通问题以
+`{ kind: 'skip', reason: 'non_interactive' }` 跳过，权限请求附带原因拒绝。
+这些期限是 Host 启动选项，连接已有 Host 不会修改其策略。
+
+**Host 环境在启动时固定。** 守护 Host 启动时复制父进程环境，包括代理、证书、
+`KODAX_HOME` 和 Provider 变量。修改这些变量后需要重启 Host 才生效。
