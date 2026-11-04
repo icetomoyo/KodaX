@@ -47,13 +47,39 @@ not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
 
-## Issue 382: User Skill discovery ignores KODAX_HOME
+## Issue 383: Volcengine instance metadata address is not confirmed
 
 - Priority: Low
 - Status: Open
-- Introduced: present since FEATURE_194 v0.7.43 (`88f2faa96`); first affected version unknown
+- Introduced: Issue 381 metadata set (2026-11-04)
 - Created: 2026-11-04
 - Fixed: —
+
+### Original Problem
+
+`isCloudMetadataAddress()` (`packages/agent/src/runtime/network-address-policy.ts`)
+covers link-local addresses and the known non-link-local metadata endpoints of
+Alibaba Cloud, Azure, AWS, GCP and Oracle Cloud. Volcengine ECS is believed to
+serve instance metadata at `100.96.0.96`, but no official source was confirmed.
+That address is in `100.64.0.0/10`, which counts as private, not metadata. On a
+Volcengine instance, a direct `web_fetch` to it is therefore allowed. A redirect
+from a public page to it is still refused.
+
+### Next Step
+
+Confirm the address from Volcengine documentation or with
+`curl http://100.96.0.96/latest/meta-data/` on an ECS instance. If confirmed, add
+it to the metadata set with a test. Low priority: the attack needs KodaX on a
+Volcengine instance with an IAM role and a model that is steered to fetch the
+address directly.
+
+## Issue 382: User Skill discovery ignores KODAX_HOME
+
+- Priority: Low
+- Status: Resolved
+- Introduced: present since FEATURE_194 v0.7.43 (`88f2faa96`); first affected version unknown
+- Created / Resolved: 2026-11-04
+- Fixed: KodaX-next-dev working tree (unreleased)
 
 ### Original Problem
 
@@ -63,12 +89,30 @@ builds the user Skill root from `os.homedir()/.kodax/skills`, not from
 Skills are still read from the default home. `agent-home.ts` lists the paths
 that intentionally skip the resolver; user Skills are not among them.
 
-### Next Step
+### Resolution
 
-Resolve the KodaX user Skill root through `getAgentConfigPath('skills')`. Keep
-`~/.agents/skills` on the OS home because it is a cross-agent standard. Add a
-discovery test with `KODAX_HOME` set. Found during the SDK foundation hardening
-review; it is outside that work's scope.
+- `getDefaultSkillPaths()` resolves the KodaX user Skill root through
+  `getAgentConfigPath('skills')`, so it follows `setAgentConfigHome()`, then
+  `KODAX_HOME`, then `~/.kodax`.
+- `~/.agents/skills` stays on the OS home because it is a cross-agent standard.
+
+### Remaining Limits
+
+- A user who sets `KODAX_HOME` and kept Skills in `~/.kodax/skills` must move
+  them to `<KODAX_HOME>/skills`.
+- Personal workflows (`packages/coding/src/workflows/nested-resolver.ts`) and
+  user commands (`src/cli_commands.ts`) still use `~/.kodax` directly. They are
+  not part of this issue.
+
+### Verification
+
+- `packages/agent/src/capabilities/skills/discovery.test.ts`: user paths follow
+  `KODAX_HOME` and `setAgentConfigHome()`, and discovery finds a Skill placed
+  under `KODAX_HOME`. All three failed before the fix.
+- `skill-invocation-policy.test.ts` built its "restricted" registry on default
+  paths. Under the fixture's `KODAX_HOME` it now sees the fixture Skill, so the
+  test gives that registry explicit empty user paths. Before the fix it read the
+  developer's real `~/.kodax/skills`.
 
 ## Issue 381: `web_fetch` can read cloud metadata and follow public redirects into the private network
 
@@ -122,7 +166,7 @@ change.
 - `169.254.0.0/16` and `fe80::/10` count as metadata, so LAN devices that only
   have a link-local address cannot be fetched. This keeps unknown cloud
   metadata variants inside that range covered.
-- Volcengine's metadata address is not confirmed and is not in the set.
+- Volcengine's metadata address is not confirmed and is not in the set (Issue 383).
 - Shell commands (`curl`) are governed by the permission mode and sandbox, not
   by this policy.
 
@@ -2542,7 +2586,8 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 382 | Low | Open | User Skill discovery ignores KODAX_HOME | FEATURE_194 v0.7.43 or earlier | — | 2026-11-04 | — |
+| 383 | Low | Open | Volcengine instance metadata address is not confirmed | Issue 381 metadata set | — | 2026-11-04 | — |
+| 382 | Low | Resolved | User Skill discovery ignores KODAX_HOME | FEATURE_194 v0.7.43 or earlier | KodaX-next-dev working tree (unreleased) | 2026-11-04 | 2026-11-04 |
 | 381 | High | Resolved | `web_fetch` can read cloud metadata and follow public redirects into the private network | first affected version unknown | KodaX-next-dev working tree (unreleased) | 2026-11-04 | 2026-11-04 |
 | 380 | High | Resolved | Model writes can install Host-loaded extensions and integrations | first affected version unknown | KodaX-next-dev working tree (unreleased) | 2026-11-04 | 2026-11-04 |
 | 379 | High | Resolved | Extension `tool:before` fails open on a throw or hang | first affected version unknown | KodaX-next-dev working tree (unreleased) | 2026-11-04 | 2026-11-04 |
@@ -17414,19 +17459,20 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 260 (38 Open, 222 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 261 (38 Open, 223 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
 
-### 2026-11-04: Issues 378-382
+### 2026-11-04: Issues 378-383
 
 - Resolved extension tool policy gaps (378, 379), model installation of
   Host-loaded extensions and integrations (380), and `web_fetch` access to cloud
   metadata and public-to-private redirects (381).
-- Recorded User Skill discovery ignoring `KODAX_HOME` (382, Open).
+- Resolved User Skill discovery ignoring `KODAX_HOME` (382).
+- Recorded the unconfirmed Volcengine instance metadata address (383, Open).
 
 ### 2026-10-29: Issues 374 and 375
 

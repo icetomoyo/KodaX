@@ -29,6 +29,12 @@ All notable changes to this project will be documented in this file.
   startup time through `runtime:windows` diagnostics, and reports startup
   failures and timeouts as warnings.
 
+### Fixed
+
+- User Skills load from the agent home (`KODAX_HOME` or `setAgentConfigHome()`)
+  instead of always from `~/.kodax/skills`. `~/.agents/skills` is unchanged
+  (Issue 382).
+
 ### Compatibility
 
 - Embedders that run AMA without `events` now get their extensions'
@@ -43,6 +49,8 @@ All notable changes to this project will be documented in this file.
   br. Its 12-second deadline, 512 KiB cap and tool description are unchanged.
   Behind an environment proxy only address literals and the proxy's own
   address are checked, and a hop the proxy resolved counts as public.
+- With `KODAX_HOME` set, user Skills in `~/.kodax/skills` are no longer found.
+  Move them to `<KODAX_HOME>/skills`.
 
 ---
 

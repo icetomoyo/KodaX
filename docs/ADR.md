@@ -6978,8 +6978,9 @@ and a separate extension permission or lifecycle engine.
 
 ## ADR-071: Extension Policy May Ask for a Person's Approval
 
-**Status**: Proposed (2026-11-04). Implementation (FEATURE_304) waits for this
-ADR's review and for Space to confirm callers 2 and 3 below.
+**Status**: Accepted (2026-11-04). The product owner accepted the decision,
+including asks in Full Access and over persisted grants. Implementation is
+FEATURE_304.
 
 **Context**: An extension `tool:before` hook can only allow or block a call.
 Since Issue 379, an allow no longer ends evaluation, so any handler can block,
@@ -7019,14 +7020,15 @@ call from being asked twice.
 6. Tool descriptions and system prompts do not change. The model sees a
    blocked result after a denial, as it does today.
 
-**Callers** (all three are required before implementation):
+**Callers**: This is an SDK foundation seam with clear value for extension
+authors, so implementation does not wait for every caller below to be confirmed.
 
 1. The official sandbox asks, instead of blocking, for recursive deletes and
    for deletes outside the workspace.
-2. Space billable or high-risk Host tools ask before each call. Pending Space
-   confirmation.
+2. Space billable or high-risk Host tools ask before each call. Expected when
+   Space adopts the capability.
 3. Space's chat-channel approval relay forwards the request to a remote
-   approver. Pending Space confirmation.
+   approver. Expected when Space adopts the capability.
 
 **Consequences**:
 

@@ -1,6 +1,6 @@
 # KodaX SDK Foundation Hardening Plan (2026-11-04)
 
-> Status: approved 2026-11-04; Phase 1, the WP6 spike and WP8 are implemented (uncommitted). See section 0.
+> Status: approved 2026-11-04; Phase 1, the WP6 spike and WP8 are implemented and pushed. See section 0.
 > Scope: work in the KodaX SDK repository (this worktree). The Space-side plan is a separate document:
 > [space-workbuddy-class-evolution-handoff-2026-11-04.md](space-workbuddy-class-evolution-handoff-2026-11-04.md).
 > Baseline: `@kodax-ai/kodax@0.7.97-beta.1`, branch `KodaX-next-dev` at `fc296bd56`.
@@ -8,9 +8,9 @@
 
 ## 0. Implementation status (2026-11-04)
 
-Phase 1, the WP6 spike and WP8 are implemented in the `KodaX-next-dev` working tree. Nothing is
-committed or released. No tool description or system prompt changed, so prompt caching and model
-behavior are unaffected and no prompt eval is needed.
+Phase 1, the WP6 spike and WP8 are committed and pushed on `KodaX-next-dev`; nothing is released.
+No tool description or system prompt changed, so prompt caching and model behavior are unaffected
+and no prompt eval is needed. The Node floor (section 10, decision 2) and ADR-071 were decided the same day.
 
 | WP | State | Record |
 |---|---|---|
@@ -19,8 +19,8 @@ behavior are unaffected and no prompt eval is needed.
 | WP3 | Done | Issue 380 |
 | WP4 | Done | Issue 381 |
 | WP5 | Done (documentation; grants behavior settled, no code change) | `CLIENT_CONTRACT.md` "无人值守运行" |
-| WP6 | Spike done; implementation waits for the Node floor decision | FEATURE_303, [v0.7.98](../features/v0.7.98.md#feature_303-proxy-and-private-ca-support) |
-| WP7 | ADR-071 Proposed; code waits for review and confirmed callers | FEATURE_304, ADR-071 |
+| WP6 | Spike done (Node and Bun); Node floor stays `>=20`; ready to implement | FEATURE_303, [v0.7.98](../features/v0.7.98.md#feature_303-proxy-and-private-ca-support) |
+| WP7 | ADR-071 Accepted; ready to implement | FEATURE_304, ADR-071 |
 | WP8 | Done | see below |
 | WP9 | Not started; lives in the `KodaX-Extensions` repository | — |
 
@@ -47,14 +47,17 @@ behavior are unaffected and no prompt eval is needed.
   - A reused keep-alive socket also skips `lookup()`. Sockets connected directly are remembered,
     and their server is checked before a reused one sends the request.
   - The metadata set adds GCP `fd20:ce::254`, Oracle `fd00:c1::a9fe:a9fe` and Azure `168.63.129.16`.
-    Volcengine is not confirmed and is not in the set.
+    Volcengine is not confirmed and is not in the set (Issue 383).
 - **WP5.** Persisted `allow_always` grants have no Session scope. They apply to every Run in the same
   Agent Home, including authorized Runs, within the Run's tool ceiling. This is documented; no opt-out
   was added because no Host has asked for one.
-- **WP6.** Measured on Node 20.20.2, Node 22.23.1 and Space's Electron 42.5.0 (Node 24.17.0). Results
-  are in [FEATURE_303](../features/v0.7.98.md#2-spike-结果2026-11-04). The main finding: Space can use
+- **WP6.** Measured on Node 20.20.2, Node 22.23.1, Space's Electron 42.5.0 (Node 24.17.0) and
+  Bun 1.4.4, which builds the release binaries. Results are in
+  [FEATURE_303](../features/v0.7.98.md#2-spike-结果2026-11-04). The main findings: Space can use
   a proxy today by passing `NODE_USE_ENV_PROXY=1` to the daemon. The SDK gap is `ws`, the Responses
-  WebSocket client.
+  WebSocket client. In the binary, `fetch` and both model SDKs follow `HTTP(S)_PROXY` without
+  `NODE_USE_ENV_PROXY`, `web_fetch` needs it, and Bun's built-in `ws` needs an explicit `proxy` option.
+  The Node floor stays `>=20`; Node 20 users get a diagnostic.
 - **WP8.** The supervisor script reports `Add-Type` time on a `COMPILED:<ms>` line. Every launch emits
   a `runtime:windows` diagnostic: `debug` "Windows effect Job supervisor ready." with `readyMs` and
   `compileMs`, or `warn` "Windows effect Job supervisor failed to start." with the timings and the
@@ -380,7 +383,8 @@ mode, instead of only blocking it.
 7. **First in-tree caller.** The official sandbox asks, instead of blocking, for bulk deletes
    (`official-sandbox.ts:156-180`). The rule is narrow: recursive deletes, or deletes outside the
    workspace.
-8. **Callers.** The ADR must name three real callers before implementation starts:
+8. **Callers.** This is an SDK foundation seam with clear value for extension authors, so it does not
+   wait for three confirmed callers (product owner, 2026-11-04). Known callers:
    - the official sandbox bulk-delete rule;
    - billable or high-risk Space host tools;
    - Space's chat-channel approval relay.
@@ -482,14 +486,14 @@ WP1-WP3 and WP4 touch different files.
 | The combined-runtime gap in AMA is real and wider than expected | It is tested on day 1. If it is real, it becomes the first fix and may move R1 by a few days. |
 | Fail-closed hooks break buggy third-party extensions | Intended. The block message names the extension, so the cause is visible. |
 | Blocking link-local addresses or public-to-private redirects breaks a rare legitimate target | The error message points to `bash`/`curl`, which go through normal permission checks. Drop the redirect rule if it causes real problems. |
-| The proxy fix needs a new dependency | The preferred option (raise the Node floor) avoids it. The spike decides. |
+| The proxy fix needs a new dependency | Not needed. The Node floor stays `>=20`; proxy users need Node 22.21+/24.5+ or the binary. |
 
 ## 10. Decisions needed from the product owner
 
 1. **Release vehicle for R1:** `0.7.97-beta.2` (recommended, so Space gets the fixes in its current
    migration), or `0.7.98-alpha.1`.
-2. **Node floor:** raise to Node 22 LTS if the spike confirms env-proxy support (recommended), or keep
-   Node 20 and add `undici`.
+2. **Node floor:** decided 2026-11-04: keep `>=20` and add no dependency. Proxy support needs
+   Node 22.21+/24.5+ or the release binary; Node 20 gets a diagnostic.
 3. **Protecting `integrations/`** means the agent can no longer add MCP servers by editing config. The
    recommendation is to accept this.
 4. **Tracking:** register WP1-WP4 as issues and WP5-WP7 as features now, or after review.
