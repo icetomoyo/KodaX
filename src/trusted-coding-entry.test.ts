@@ -78,6 +78,13 @@ describe('KodaX direct coding entries', () => {
     expect(mocks.run.mock.calls[0]?.[0].context?.trustedTextMutationHost).toBe(mocks.host);
   });
 
+  it('keeps the Host approval member when it wraps tool admission', async () => {
+    const requestToolApproval = vi.fn(async () => true);
+    await runKodaX({ ...options({ gitRoot: 'C:\\repo' }), events: { requestToolApproval } }, 'write');
+
+    expect(mocks.run.mock.calls[0]?.[0].events?.requestToolApproval).toBe(requestToolApproval);
+  });
+
   it('preserves an explicit embedder host without creating a competing authority', async () => {
     const explicit = { snapshot: vi.fn(), commit: vi.fn() } as KodaXTrustedTextMutationHost;
     const input = options({ trustedTextMutationHost: explicit });

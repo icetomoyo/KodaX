@@ -454,6 +454,25 @@ it('joins the real extension host event frame without changing its read-only per
   } finally { await runtime.dispose(); }
 });
 
+it('routes an extension ask from a Script call to the Host approval member', async () => {
+  const { directory, ctx, budget, dispatch } = await fixture();
+  const runtime = createExtensionRuntime();
+  runtime.registerHook('tool:before', ({ name }) => name === 'write' ? { decision: 'ask', reason: 'Overwrites a file.' } : undefined,
+    { source: { kind: 'runtime', id: 'guard', label: 'guard' } });
+  ctx.extensionRuntime = runtime;
+  ctx.sessionId = 'script-ask-session'; ctx.runtimeRunId = 'script-ask-run';
+  const requestToolApproval = vi.fn(async () => 'Not approved.');
+  try {
+    const result = await withExtensionRuntimeContext(() => createScriptPilot({ ...dispatch,
+      events: { beforeToolExecute: async () => true, requestToolApproval } }, budget).run(
+      "return await tools.write({path:'value.mjs',content:'must not overwrite'});", limits), runtime, ctx.runtimeRunId);
+    expect(result.receipts[0]?.result.content).toBe('Not approved.');
+    expect(await readFile(path.join(directory, 'value.mjs'), 'utf8')).toBe('export const value = 1;\n');
+    expect(requestToolApproval).toHaveBeenCalledWith('write', expect.objectContaining({ path: 'value.mjs' }),
+      'Extension "guard": Overwrites a file.', expect.anything());
+  } finally { await runtime.dispose(); }
+});
+
 it('rejects background shell calls before permission/execution until async lifecycle is qualified', async () => {
   const { budget, dispatch } = await fixture();
   const permission = vi.fn(async () => '[Tool Error] Fixture prevents a background process');

@@ -4361,6 +4361,7 @@ async function createKodaXRuntimeInternal(
     externalAgents: options.externalAgents !== undefined,
     afterTurnInput: { version: 1 },
     interruptInput: { version: 1, availability: "per_run" },
+    toolHookAsk: { version: 1 },
     contextCompaction: {
       version: 3,
       alwaysOn: true,
@@ -20439,6 +20440,22 @@ function wrapKodaXEvents(input: {
     if (begin || !toolIdentities.has(key)) toolIdentities.set(key, `execution_${randomUUID()}`);
     return toolIdentities.get(key)!;
   };
+  // Exact calls a person approved at admission. An extension ask about the
+  // same call then needs no second prompt.
+  const approvedAtAdmission = new Set<string>();
+  const withPermissionPhase = async <T>(wait: () => Promise<T>): Promise<T> => {
+    const previousPhase = record.phase;
+    if (record.phase === "running") {
+      onPhase("waiting_permission");
+    }
+    try {
+      return await wait();
+    } finally {
+      if (record.phase === "waiting_permission") {
+        onPhase(previousPhase === "queued" ? "running" : previousPhase);
+      }
+    }
+  };
   const authorizeTrackedPermission = async (
     tool: string,
     toolInput: Record<string, unknown>,
@@ -20446,6 +20463,7 @@ function wrapKodaXEvents(input: {
     shellPermission:
       | Pick<RuntimePermissionGrantContext, "shell" | "shellContractFingerprint">
       | undefined,
+    extensionReason?: string,
   ): Promise<RuntimePermissionToolDecision> => {
     const stoppedBeforePermission = managedStopDecision();
     if (stoppedBeforePermission !== undefined) return stoppedBeforePermission;
@@ -20462,11 +20480,14 @@ function wrapKodaXEvents(input: {
           : {}),
         ...(meta?.toolId ? { toolCallId: meta.toolId } : {}),
         toolName: tool,
+        ...(extensionReason !== undefined ? { reason: extensionReason } : {}),
         inputPreview: previewInput(toolInput),
         executionCwd: resolveRuntimeExecutionCwd(record),
       },
       undefined,
-      {
+      // An extension asked about this one call, so the answer must not
+      // become a grant: the request offers no grant suggestions.
+      extensionReason !== undefined ? undefined : {
         toolInput,
         ...(shellPermission ?? {}),
         ...(typeof record.start?.options.context?.gitRoot === "string"
@@ -21188,6 +21209,7 @@ function wrapKodaXEvents(input: {
         input: toolInput,
       };
       const exactCallKey = runtimeAutoModeDecisionKey(exactCall);
+      if (exactCallKey !== undefined) approvedAtAdmission.delete(exactCallKey);
       const forcedPermission = exactCallKey !== undefined
         && record.forcedPermissionCalls?.delete(exactCallKey) === true;
       const permissionMode = replApi.normalizePermissionMode(record.permissionMode);
@@ -21274,27 +21296,45 @@ function wrapKodaXEvents(input: {
       // request exists for it; headless execution answers through the shared
       // permission registry.
       if (original?.beforeToolExecute) {
-        const previousPhase = record.phase;
-        if (record.phase === "running") {
-          onPhase("waiting_permission");
-        }
-        try {
-          const decision = await original.beforeToolExecute(
-            tool,
-            toolInput,
-            meta,
-          );
-          const stoppedAfterHook = managedStopDecision();
-          if (stoppedAfterHook !== undefined) return stoppedAfterHook;
-          return decision;
-        } finally {
-          if (record.phase === "waiting_permission") {
-            onPhase(previousPhase === "queued" ? "running" : previousPhase);
-          }
-        }
+        const hostHook = original.beforeToolExecute;
+        return withPermissionPhase(async () => {
+          const decision = await hostHook(tool, toolInput, meta);
+          return managedStopDecision() ?? decision;
+        });
       }
-      return authorizeTrackedPermission(tool, toolInput, meta, shellPermission);
+      const decision = await authorizeTrackedPermission(tool, toolInput, meta, shellPermission);
+      if (decision === true && exactCallKey !== undefined) approvedAtAdmission.add(exactCallKey);
+      return decision;
     },
+    // An embedder that owns approvals but cannot answer an extension ask
+    // leaves the member out, so the permission gate blocks the call.
+    ...(original?.beforeToolExecute !== undefined && original.requestToolApproval === undefined
+      ? {}
+      : {
+          requestToolApproval: async (
+            tool: string,
+            toolInput: Record<string, unknown>,
+            reason: string,
+            meta?: KodaXToolEventMeta,
+          ): Promise<RuntimePermissionToolDecision> => {
+            const stoppedBeforeApproval = managedStopDecision();
+            if (stoppedBeforeApproval !== undefined) return stoppedBeforeApproval;
+            const exactCallKey = runtimeAutoModeDecisionKey({
+              id: meta?.toolId ?? `runtime_${tool}`,
+              name: tool,
+              input: toolInput,
+            });
+            if (exactCallKey !== undefined && approvedAtAdmission.delete(exactCallKey)) return true;
+            const hostApproval = original?.requestToolApproval;
+            if (hostApproval) {
+              return withPermissionPhase(async () => {
+                const decision = await hostApproval(tool, toolInput, reason, meta);
+                return managedStopDecision() ?? decision;
+              });
+            }
+            return authorizeTrackedPermission(tool, toolInput, meta, undefined, reason);
+          },
+        }),
     ...(original?.askUser || enableSharedInteractions
       ? {
           askUser: (

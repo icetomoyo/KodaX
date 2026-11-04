@@ -2063,6 +2063,19 @@ describe('runtime daemon dispatcher', () => {
       expect(queried).toMatchObject({ result: initialized.capabilities });
     } finally { dispatcher.close(); }
   });
+  it.each([[true, false], [true, true], [false, true], [false, false]])('forwards the tool hook ask only when its owner supports it (%s, override=%s)', async (supported, override) => {
+    const dispatcher = createRuntimeDaemonDispatcher({
+      runtime: { ...makeRuntime(), capabilities: supported ? { toolHookAsk: { version: 1 } } : {} },
+      capabilities: override ? { toolHookAsk: { version: 1 } } : undefined,
+    });
+    try {
+      const initialized = await initializeDispatcher(dispatcher);
+      if (supported) expect(initialized.capabilities).toHaveProperty('toolHookAsk', { version: 1 });
+      else expect(initialized.capabilities).not.toHaveProperty('toolHookAsk');
+      const queried = await dispatcher.handle(createRuntimeDaemonRequest('ask-capability', 'runtime.capabilities'));
+      expect(queried).toMatchObject({ result: initialized.capabilities });
+    } finally { dispatcher.close(); }
+  });
 
   it.each([
     {},

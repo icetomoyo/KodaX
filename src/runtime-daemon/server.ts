@@ -2753,6 +2753,7 @@ function runtimeDaemonCapabilities(
   delete safeOverrides.subscriptionLifecycle;
   delete safeOverrides.sessionCancellation;
   delete safeOverrides.toolInvocation;
+  delete safeOverrides.toolHookAsk;
   const reverseBridgeLimits = runtimeDaemonReverseBridgeLimits();
   return {
     events: true,
@@ -2797,6 +2798,8 @@ function runtimeDaemonCapabilities(
       ? { providerProbeAuthorization: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.productActorAuthorization) && ownerCapabilities.productActorAuthorization.version === 1
       ? { productActorAuthorization: { version: 1 } } : {}),
+    ...(isRecord(ownerCapabilities.toolHookAsk) && ownerCapabilities.toolHookAsk.version === 1
+      ? { toolHookAsk: { version: 1 } } : {}),
     ...(isRecord(toolInvocation) && toolInvocation.version === 1
       ? { toolInvocation: { version: 1 } } : {}),
     ...(isRecord(sessionCancellation) && sessionCancellation.version === 1 && sessionCancellation.durableFrontier === true
