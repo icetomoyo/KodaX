@@ -14,6 +14,13 @@ All notable changes to this project will be documented in this file.
   variable is set but some requests would bypass it, the Host logs a
   `runtime:network` warning that names the variable without its value.
   `NODE_EXTRA_CA_CERTS` is documented for private root CAs.
+- Extension `tool:before` can return `{ decision: 'ask', reason }` to have a
+  person approve one call (FEATURE_304, ADR-071). The ask reaches a person in
+  every permission mode, including Full Access and calls a saved grant already
+  allows. A block from any handler still wins. The request carries the reason
+  and no grant suggestions, so it can only be allowed once or rejected. Hosts
+  implement the new optional `KodaXEvents.requestToolApproval`; without it an
+  ask blocks the call. Runtimes advertise `toolHookAsk: { version: 1 }`.
 
 ### Security
 
@@ -36,6 +43,9 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- The official sandbox extension asks a person before a recursive delete or a
+  delete outside the workspace, instead of blocking `rm -rf` and
+  `Remove-Item -Recurse` outright. `git reset --hard` is still blocked.
 - The Windows effect Job supervisor reports its `Add-Type` compile time and
   startup time through `runtime:windows` diagnostics, and reports startup
   failures and timeouts as warnings.

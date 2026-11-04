@@ -311,6 +311,8 @@ delivery 的队列行为如下；空 queue 不能证明所有已知输入已经�
 
 Interaction 的 kind 决定 options 和 response：单选问题、多问题、文本输入或权限。普通问题通过 `kind: 'skip'` 跳过，旧 `kind: 'cancel'` 同样按跳过兼容；权限取消仍为拒绝。权限答案为 allow_once、带 suggestionId 的 allow_session/allow_always、或 reject；suggestionId 来自当前请求，不能自行拼装。`accepted: false` / `already_resolved` 覆盖迟到、重复、取消、过期或未知目标；不要无限重答。
 
+扩展 `tool:before` 请人批准某一次调用时，权限请求的 `reason` 写明发起的扩展和原因。这类请求不带 grantSuggestions，只能用 allow_once 或 reject 回答；回答只放行这一次调用，不会成为授权。Host 以 `toolHookAsk: { version: 1 }` 声明支持。
+
 `readLineage` 在尚无 lineage 的旧 Session 可返回 null。会话读取、lineage、设置读取及 fork/recover 都先等待同 Host 已发起的显示快照保存，再进行原有准入和存储一致性检查；调用者不必先读一次历史来触发同步。保存失败会传递给调用者，外部写入造成的不稳定边界仍明确拒绝。Run 终态本身不等于所有显示快照已保存。
 
 标签和分支选择的未知 selector 必须明确冲突。rewind 需要 expectedHead，只允许空闲 Session，且不会撤销文件副作用；fork 可使用带 sourceRevision 的 historyBoundary，源 Session 保持不变。recover 从确定性恢复种子派生新 Session，不执行 LLM 调用；继续运行仍通过普通 input submit。
@@ -670,7 +672,8 @@ matcher 匹配。它适用于同一 Agent Home 下的所有 Run，包括带授�
 前提是工具仍在上限内；`allow_session` 只在原 Session 内有效。Host 在发出权限请求前
 查询授权；Auto 与 Full Access 先由各自策略决定，沙箱边界升级总是重新询问。
 用户为交互工作授予的持久授权，因此也会放行任务中的相同调用。需要逐次判断的策略应放在扩展 `tool:before` 中：它在授权匹配之后运行，
-抛错或超时即阻止。进程内宿主的 `beforeToolExecute` 不会看到已被授权匹配的调用。
+抛错或超时即阻止。它可以返回 `{ decision: 'ask', reason }`，在任何权限模式下请人批准这一次调用，
+包括 Full Access 和已有授权的调用；无人回答时按权限超时拒绝。进程内宿主的 `beforeToolExecute` 不会看到已被授权匹配的调用。
 宿主可用 `permissions.listGrants` 和 `revokeGrant` 查看与撤销授权。
 
 **每个交互都要结算。** 无人值守客户端必须回答或拒绝每个 Interaction。

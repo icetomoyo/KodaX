@@ -6980,7 +6980,7 @@ and a separate extension permission or lifecycle engine.
 
 **Status**: Accepted (2026-11-04). The product owner accepted the decision,
 including asks in Full Access and over persisted grants. Implementation is
-FEATURE_304.
+FEATURE_304 (completed 2026-11-05).
 
 **Context**: An extension `tool:before` hook can only allow or block a call.
 Since Issue 379, an allow no longer ends evaluation, so any handler can block,
@@ -7049,6 +7049,15 @@ authors, so implementation does not wait for every caller below to be confirmed.
   approval types.
 - **Let the extension prompt the user itself.** Extensions have no UI, and a
   Host must be able to audit every approval.
+
+**Implementation note (2026-11-05, FEATURE_304)**: Decision 3 is met without a
+downgrade step. The ask request carries no grant context, so it offers no grant
+suggestions, and an `allow_session` or `allow_always` answer is refused as
+invalid input. The person can only allow once or reject. If the same call was
+just approved by a person at admission, the Host does not ask again; a saved
+grant, Full Access or Auto allow does not count as that approval.
+`requestToolApproval` returns `boolean | string`: only `true` runs the call, and
+a string blocks it with that text.
 
 ## 2026-10-11 — Main-agent result verification replaces Sidecar Verifier
 
