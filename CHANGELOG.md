@@ -53,6 +53,10 @@ a manual maintainer action.
   optional Host outputSchema registration through IPC and `mcp_describe`
   on-demand output contracts without enlarging default menus or adding
   result validators.
+- Re-audit the CLI startup bundle budget from 5056 kB to 5064 kB (5 MiB minus
+  56 KiB): the Script reliability additions end the five-native release build
+  about 2 kB past the former 64 KiB headroom; audited program data stays in
+  packaged resources and no trimming behavior changes.
 - Keep the structured display section inside the capacity guard: deep-but-valid
   provider DTOs no longer fail the whole render when local stringify/clone
   budgets overflow — original tool evidence is retained with the same optional
