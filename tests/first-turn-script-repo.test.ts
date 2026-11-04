@@ -27,7 +27,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   for (const root of directories.splice(0)) {
     if (path.dirname(root) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('kodax-script-repo-')) throw new Error('Unsafe fixture cleanup');
-    await rm(root, { recursive: true, force: true, maxRetries: 3 });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 

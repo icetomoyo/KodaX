@@ -48,7 +48,7 @@ export async function toolMcpCall(
         capabilityKind: result.kind,
         ...omitRepeatedMetadata(result.metadata),
       },
-    }));
+    }), ctx);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return `[Tool Error] mcp_call: ${message}`;

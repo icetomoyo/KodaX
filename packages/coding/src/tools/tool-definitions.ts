@@ -644,14 +644,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   {
     name: 'web_fetch',
     description: staticText("tool.web_fetch.description"),
-    input_schema: {
-      type: 'object',
-      properties: {
-        url: { type: 'string', description: 'Remote URL to fetch' },
-        provider_id: { type: 'string', description: 'Optional extension capability provider id for provider-backed fetch' },
-        capability_id: { type: 'string', description: 'Optional provider capability id for provider-backed fetch' },
-      },
-    },
+    input_schema: toolInputSchema('tool.web_fetch.input_schema'),
     handler: toolWebFetch,
     sideEffect: 'reads-network',
     toClassifierInput: (input) => {
@@ -1030,14 +1023,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     name: 'module_context',
     workSurface: 'coding',
     description: staticText("tool.module_context.description"),
-    input_schema: {
-      type: 'object',
-      properties: {
-        module: { type: 'string', description: 'Module id, label, or package name to inspect' },
-        target_path: { type: 'string', description: 'Optional path used to infer the enclosing module' },
-        refresh: { type: 'boolean', description: 'When true, rebuild repo intelligence before returning the module capsule' },
-      },
-    },
+    input_schema: toolInputSchema('tool.module_context.input_schema'),
     handler: toolModuleContext,
     sideEffect: 'readonly',
     toClassifierInput: () => '',
@@ -1046,15 +1032,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     name: 'lsp_definition',
     workSurface: 'coding',
     description: staticText("tool.lsp_definition.description"),
-    input_schema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'File containing the symbol' },
-        line: { type: 'number', description: '1-based line of the symbol' },
-        character: { type: 'number', description: 'Optional 1-based column of the symbol (defaults to the line start)' },
-      },
-      required: ['path', 'line'],
-    },
+    input_schema: toolInputSchema('tool.lsp_definition.input_schema'),
     handler: toolLspDefinition,
     sideEffect: 'readonly',
     toClassifierInput: () => '',
@@ -1126,16 +1104,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     name: 'lsp_implementation',
     workSurface: 'coding',
     description: staticText("tool.lsp_implementation.description"),
-    input_schema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'File containing the symbol' },
-        line: { type: 'number', description: '1-based line of the symbol' },
-        character: { type: 'number', description: 'Optional 1-based column of the symbol' },
-        column: { type: 'number', description: 'Alias for character' },
-      },
-      required: ['path', 'line'],
-    },
+    input_schema: toolInputSchema('tool.lsp_implementation.input_schema'),
     handler: toolLspImplementation,
     sideEffect: 'readonly',
     toClassifierInput: () => '',
@@ -1144,16 +1113,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     name: 'lsp_prepare_call_hierarchy',
     workSurface: 'coding',
     description: staticText("tool.lsp_prepare_call_hierarchy.description"),
-    input_schema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'File containing the callable symbol' },
-        line: { type: 'number', description: '1-based line of the symbol' },
-        character: { type: 'number', description: 'Optional 1-based column of the symbol' },
-        column: { type: 'number', description: 'Alias for character' },
-      },
-      required: ['path', 'line'],
-    },
+    input_schema: toolInputSchema('tool.lsp_prepare_call_hierarchy.input_schema'),
     handler: toolLspPrepareCallHierarchy,
     sideEffect: 'readonly',
     toClassifierInput: () => '',
@@ -1162,16 +1122,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     name: 'lsp_incoming_calls',
     workSurface: 'coding',
     description: staticText("tool.lsp_incoming_calls.description"),
-    input_schema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'File containing the callable symbol' },
-        line: { type: 'number', description: '1-based line of the symbol' },
-        character: { type: 'number', description: 'Optional 1-based column of the symbol' },
-        column: { type: 'number', description: 'Alias for character' },
-      },
-      required: ['path', 'line'],
-    },
+    input_schema: toolInputSchema('tool.lsp_incoming_calls.input_schema'),
     handler: toolLspIncomingCalls,
     sideEffect: 'readonly',
     toClassifierInput: () => '',
@@ -1180,16 +1131,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     name: 'lsp_outgoing_calls',
     workSurface: 'coding',
     description: staticText("tool.lsp_outgoing_calls.description"),
-    input_schema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'File containing the callable symbol' },
-        line: { type: 'number', description: '1-based line of the symbol' },
-        character: { type: 'number', description: 'Optional 1-based column of the symbol' },
-        column: { type: 'number', description: 'Alias for character' },
-      },
-      required: ['path', 'line'],
-    },
+    input_schema: toolInputSchema('tool.lsp_outgoing_calls.input_schema'),
     handler: toolLspOutgoingCalls,
     sideEffect: 'readonly',
     toClassifierInput: () => '',
@@ -1311,18 +1253,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     description:
       staticText("tool.test_tool.text")
       + staticText("tool.test_tool.text.1"),
-    input_schema: {
-      type: 'object',
-      properties: {
-        name: { type: 'string', description: 'Artifact name as stored on disk.' },
-        version: { type: 'string', description: 'Artifact version as stored on disk.' },
-        provider: {
-          type: 'string',
-          description: "Provider whose tool-schema constraints are checked. Defaults to 'anthropic'.",
-        },
-      },
-      required: ['name', 'version'],
-    },
+    input_schema: toolInputSchema('tool.test_tool.input_schema'),
     handler: toolTestTool,
     sideEffect: 'mutates-state',
     classifierExemptReason: 'Runs the local validation pipeline without activating or expanding capability.',

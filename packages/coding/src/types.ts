@@ -2633,6 +2633,30 @@ export type {
   AskUserSelectionAnswer,
 };
 
+/** Program text from a read window, not byte-exact file content. Lines are joined
+ * with LF; original line separators and a final newline are not preserved. */
+export interface ToolResultTextData {
+  readonly kind: 'text';
+  readonly text: string;
+  readonly normalized: true;
+  readonly offset: number;
+  readonly line_offset: number;
+  /** Number of source lines represented in this window, not the file total. */
+  readonly lineCount: number;
+  /** True only when this window covers the entire source from its beginning. */
+  readonly complete: boolean;
+  readonly next?: { readonly offset: number; readonly limit: number; readonly line_offset?: number };
+}
+
+export type ToolResultData = ToolResultTextData | { readonly kind: 'json'; readonly value: KodaXJsonValue };
+
+export interface ToolResultProjection {
+  readonly content: KodaXToolResultBlock['content'];
+  /** Only a trusted renderer may declare which model-visible notes replace a body. */
+  readonly modelContent?: string;
+  readonly data?: ToolResultData;
+}
+
 export interface KodaXToolExecutionContext {
   /** Effective work surface; runtime-built contexts always set this. Absent means Coding for standalone tool callers. */
   workMode?: KodaXWorkMode;
@@ -2843,7 +2867,7 @@ export interface KodaXToolExecutionContext {
   /** Trusted side-channel for a tool-owned recovery artifact. */
   recordToolResultArtifact?: (toolCallId: string, outputPath: string) => void;
   /** Trusted renderer separation of data from mandatory notes. Consumers must match the final content exactly. */
-  recordToolResultProjection?: (toolCallId: string, projection: { readonly content: string; readonly modelContent: string }) => void;
+  recordToolResultProjection?: (toolCallId: string, projection: ToolResultProjection) => void;
   /** Optional Script durability fence, after permission hooks; execution uses this same input snapshot. */
   beforeToolInvoke?: (call: { readonly id: string; readonly name: string; readonly input: Record<string, unknown> }) => Promise<void>;
   /** @internal Invocation-owned successful writes; reset by each execution path. */

@@ -104,7 +104,7 @@ export async function executeRunScopedTool(
       content,
       items: [],
       metadata: { ...result.metadata, capabilityKind: result.kind },
-    }));
+    }), ctx);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return `[Tool Error] ${definition.name}: ${message}`;

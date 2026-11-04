@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { isRunnableTool, type Agent, type RunnerToolObserver } from '@kodax-ai/agent';
 import type { KodaXToolUseBlock } from '@kodax-ai/llm';
-import type { KodaXManagedWorkBudget } from '../../types.js';
+import type { KodaXManagedWorkBudget, ToolResultProjection } from '../../types.js';
 import { getRegisteredToolDefinition, getToolDefinition, getBuiltinToolDefinition, isToolMutation } from '../../tools/index.js';
 import { isToolDiscoverable } from '../../tools/tool-search.js';
 import { projectModelToolDefinition } from '../../tools/model-tool-definition.js';
@@ -85,7 +85,7 @@ export function createScriptPilot(dispatch: PilotDispatch, budget: KodaXManagedW
         const block: KodaXToolUseBlock = { type: 'tool_use', id: `script_${randomUUID()}_${sequence}`, name, input };
         const finalToolBlocks = new Map<string, KodaXToolUseBlock>();
         const artifacts = new Map<string, string>();
-        let projection: { readonly content: string; readonly modelContent: string } | undefined;
+        let projection: ToolResultProjection | undefined;
         let shellExecutionOutcome: { success: boolean } | undefined;
         let admittedParallel = false;
         const canParallel = (call: { name: string; input: Record<string, unknown> }): boolean => {
@@ -104,7 +104,7 @@ export function createScriptPilot(dispatch: PilotDispatch, budget: KodaXManagedW
               assertActive(call.name);
             }
           },
-          recordToolResultProjection: (id: string, value: { readonly content: string; readonly modelContent: string }) => {
+          recordToolResultProjection: (id: string, value: ToolResultProjection) => {
             projection = value;
             dispatch.ctx.recordToolResultProjection?.(id, value);
           },
@@ -167,10 +167,13 @@ export function createScriptPilot(dispatch: PilotDispatch, budget: KodaXManagedW
           mutationScopeReflection: dispatch.mutationScopeReflection });
         const result = processed.toolResults[0];
         if (!result) throw new Error('Script leaf produced no visible result.');
+        const matchedProjection = projection && (typeof projection.content === 'string'
+          ? result.content === projection.content : isDeepStrictEqual(result.content, projection.content)) ? projection : undefined;
         const settled = { content: result.content, isError: result.is_error === true
           || (canonical.name === 'bash' && shellExecutionOutcome?.success !== true),
+          ...(matchedProjection?.data && !result.is_error ? { data: matchedProjection.data } : {}),
           metadata: { ...result.metadata, toolCall: canonical, editRecoveryMessages: processed.editRecoveryMessages,
-            ...(projection && result.content === projection.content ? { scriptModelContent: projection.modelContent } : {}),
+            ...(typeof matchedProjection?.modelContent === 'string' ? { scriptModelContent: matchedProjection.modelContent } : {}),
             ...(shellExecutionOutcome ? { shellExecutionOutcome } : {}) } };
         dispatch.toolObserver?.onToolResult?.(canonical, settled);
         return settled;

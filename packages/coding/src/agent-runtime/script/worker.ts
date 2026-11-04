@@ -117,7 +117,15 @@ export async function scriptWorkerMain(): Promise<void> {
       return promise.handle;
     });
     vm.setProp(vm.global, '__hostCall', call); call.dispose();
-    vm.unwrapResult(vm.evalCode(`globalThis.tools = Object.freeze(Object.fromEntries(${JSON.stringify(data.toolNames)}.map(name => [name, input => __hostCall(name, JSON.stringify(input ?? {}))])));`)).dispose();
+    vm.unwrapResult(vm.evalCode(`
+      globalThis.tools = Object.freeze(Object.setPrototypeOf(Object.fromEntries(${JSON.stringify(data.toolNames)}.map(name => [name, input => __hostCall(name, JSON.stringify(input ?? {}))])), null));
+      for (const name of Object.keys(tools)) {
+        if (name in globalThis || !/^[$_\\p{ID_Start}][$\\u200c\\u200d\\p{ID_Continue}]*$/u.test(name)) continue;
+        try { new Function('"use strict"; return async function (' + name + ') {};'); }
+        catch (error) { if (!(error instanceof SyntaxError)) throw error; continue; }
+        globalThis[name] = tools[name];
+      }
+    `)).dispose();
     port.on('message', (message: { id: number; result: string }) => {
       const promise = pending.get(message.id);
       if (closed || !promise) return;

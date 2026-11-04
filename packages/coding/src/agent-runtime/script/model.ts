@@ -30,7 +30,7 @@ export function buildScriptModelDescription(leaves: readonly KodaXToolDefinition
   return staticText("t12.agent-runtime/script/model.0")
     + (nativeBridge ? 'Native tool_call({name,input}) can call these same tools without a Script cell; use whichever fits the task. ' : '')
     + `Use native bash for background commands. Limits: ${SCRIPT_MODEL_LIMITS.timeoutMs / 1000}s cell deadline (admitted host calls drain before return), ${SCRIPT_MODEL_LIMITS.maxCalls} attempted calls, ${SCRIPT_MODEL_LIMITS.memoryBytes / 1024 / 1024}MiB VM memory, ${SCRIPT_MODEL_LIMITS.maxTransferBytes / 1024 / 1024}MiB per transfer.\nCallable contracts (JSON Schema):\n`
-    + leaves.map(tool => JSON.stringify(tool)).join('\n');
+    + leaves.map(tool => `tools[${JSON.stringify(tool.name)}](input): ${JSON.stringify(tool)}`).join('\n');
 }
 
 /** Only actually disclosed, unchanged bindings prove leaf-contract coverage. */
@@ -42,16 +42,34 @@ export function getScriptModelContracts(agent: Agent, tools: readonly KodaXToolD
 }
 
 /** Same-response reference only; guest results and durable receipts remain complete. */
-function serializeModelReceipt(cell: ScriptCellResult | ScriptObservation, selected = false): string {
+function serializeModelReceipt(cell: ScriptCellResult | ScriptObservation, selected = false, readable = false): string {
   const receipts = cell.receipts.map(({ id, name, result }) => {
     const notes = result.metadata?.scriptModelContent;
-    return { id, name, result: selected && !result.isError && typeof notes === 'string'
-      ? { ...result, content: notes, contentOmitted: true, original: { cell_id: cell.cellId, call_id: id } } : result };
+    const original = { cell_id: cell.cellId, call_id: id };
+    const presented = selected && !result.isError && typeof notes === 'string'
+      ? { ...result, content: notes, contentOmitted: true, original } : result;
+    if (readable && result.data?.kind === 'text') {
+      const { text: _text, ...range } = result.data;
+      return { id, name, result: { ...presented, data: { ...range, textOmitted: true, original } } };
+    }
+    if (readable && result.data?.kind === 'json') {
+      const value = result.data.value;
+      const duplicate = value === null ? undefined : typeof value === 'string' ? value.trim() ? value : undefined : JSON.stringify(value);
+      const displayed = duplicate && (typeof presented.content === 'string' ? presented.content.includes(duplicate)
+        : presented.content.some(item => item.type === 'text' && item.text.includes(duplicate)));
+      if (displayed) {
+        const data = { kind: 'json' as const, valueOmitted: true, original };
+        if (Buffer.byteLength(JSON.stringify(data)) < Buffer.byteLength(JSON.stringify(result.data))) {
+          return { id, name, result: { ...presented, data } };
+        }
+      }
+    }
+    return { id, name, result: presented };
   });
   const full = JSON.stringify({ ...cell, receipts });
   if (selected) return full;
   const findReference = (value: unknown): { id: number; field: 'result' | 'content' } | undefined => {
-    for (const receipt of cell.receipts) {
+    for (const receipt of receipts) {
       if (isDeepStrictEqual(value, receipt.result)) return { id: receipt.id, field: 'result' };
       if (isDeepStrictEqual(value, receipt.result.content)) return { id: receipt.id, field: 'content' };
     }
@@ -90,7 +108,8 @@ export function withScriptModelTool(agent: Agent, context: KodaXToolExecutionCon
   function render(result: ScriptCellResult | ScriptObservation, selected: boolean) {
     const images = result.receipts.flatMap(receipt => typeof receipt.result.content === 'string' ? []
       : receipt.result.content.filter(item => item.type === 'image'));
-    const text = serializeModelReceipt(result, selected && readReceipt !== undefined && result.cellId !== undefined);
+    const readable = readReceipt !== undefined && result.cellId !== undefined;
+    const text = serializeModelReceipt(result, selected && readable, readable);
     return { content: images.length ? [{ type: 'text' as const, text }, ...images] : text,
       isError: !['completed', 'running', 'cancelling'].includes(result.status) || result.hadToolErrors,
       metadata: { scriptCellStatus: result.status, scriptReadPaths: result.receipts.flatMap(receipt => {

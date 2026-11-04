@@ -50,6 +50,205 @@ it('returns one complete copy of an identical guest value and leaf result withou
   expect(cell).toEqual(original);
 });
 
+it.each([false, true])('omits only derived receipt text with readable originals, preserving selected values and output (selected: %s)', async selected => {
+  const text = 'Program data, not display framing.\n'.repeat(40);
+  const leaf = { content: `     1\t${text}\n[Showing lines 3-4. Continue with offset=5]`,
+    data: { kind: 'text' as const, text, normalized: true as const, offset: 3, line_offset: 0, lineCount: 2, complete: false,
+      next: { offset: 5, limit: 2 } },
+    metadata: { scriptModelContent: '[Showing lines 3-4. Continue with offset=5]', warning: 'Source remains incomplete' } };
+  const cell: ScriptCellResult = { cellId: 'readable-data', status: 'completed', hadToolErrors: false,
+    value: structuredClone(leaf), outputs: [text], receipts: [{ id: 1, name: 'read', input: { path: 'source.txt' }, result: leaf }] };
+  const original = structuredClone(cell);
+  const readOriginal = vi.fn(() => ({ status: 'settled', text: JSON.stringify({ result: leaf }) }));
+  const agent = withScriptModelTool({ name: 'worker', instructions: '' }, { backups: new Map() }, [], async () => cell, readOriginal);
+  try {
+    const entry = agent.tools!.find(tool => tool.name === 'script_exec') as RunnableTool;
+    const response = await entry.execute({ code: 'return result;', selected_output: selected }, { agent });
+    const visible = JSON.parse(String(response.content));
+    expect(visible.receipts[0].result.data).toEqual({ kind: 'text', normalized: true, offset: 3, line_offset: 0, lineCount: 2,
+      complete: false, next: { offset: 5, limit: 2 }, textOmitted: true, original: { cell_id: 'readable-data', call_id: 1 } });
+    expect(visible.receipts[0].result.content).toBe(selected ? leaf.metadata.scriptModelContent : leaf.content);
+    expect(visible.receipts[0].result.metadata.warning).toBe('Source remains incomplete');
+    expect(visible.value.data).toEqual(leaf.data);
+    expect(visible.outputs).toEqual([text]);
+    expect(visible).not.toHaveProperty('value_from_receipt');
+    const reader = agent.tools!.find(tool => tool.name === 'script_read') as RunnableTool;
+    const page = JSON.parse(String((await reader.execute({ cell_id: 'readable-data', call_id: 1 }, { agent })).content));
+    expect(JSON.parse(page.text).result).toEqual(leaf);
+    expect(cell).toEqual(original);
+  } finally { await closeScriptModelSession(agent); }
+});
+
+it.each([false, true])('keeps derived text when a usable original read path is unavailable (reader: %s)', async reader => {
+  const leaf = { content: '     1\tOriginal text\n[End of file]',
+    data: { kind: 'text' as const, text: 'Original text', normalized: true as const, offset: 1, line_offset: 0, lineCount: 1, complete: true },
+    metadata: { scriptModelContent: '[End of file]' } };
+  const cell: ScriptCellResult = { ...(reader ? {} : { cellId: 'no-reader' }), status: 'completed', hadToolErrors: false,
+    receipts: [{ id: 1, name: 'read', input: {}, result: leaf }] };
+  const agent = withScriptModelTool({ name: 'worker', instructions: '' }, { backups: new Map() }, [], async () => cell,
+    reader ? () => ({ result: leaf }) : undefined);
+  try {
+    const response = await (agent.tools![0] as RunnableTool).execute({ code: 'return null;', selected_output: true }, { agent });
+    expect(JSON.parse(String(response.content)).receipts[0].result).toEqual(leaf);
+  } finally { await closeScriptModelSession(agent); }
+});
+
+it('keeps error bodies and mandatory evidence when derived text has a complete original read path', async () => {
+  const leaf = { content: '[Tool Error] source failed after partial text; WARNING retain original', isError: true,
+    data: { kind: 'text' as const, text: 'partial text', normalized: true as const, offset: 7, line_offset: 0, lineCount: 1, complete: false,
+      next: { offset: 8, limit: 1 } }, metadata: { scriptModelContent: 'Do not hide the error' } };
+  const cell: ScriptCellResult = { cellId: 'error-data', status: 'failed', hadToolErrors: true, error: 'Source unavailable',
+    value: { selected: 'partial text' }, receipts: [{ id: 1, name: 'read', input: {}, result: leaf }] };
+  const agent = withScriptModelTool({ name: 'worker', instructions: '' }, { backups: new Map() }, [], async () => cell, () => ({ result: leaf }));
+  try {
+    const response = await (agent.tools![0] as RunnableTool).execute({ code: 'return summary;', selected_output: true }, { agent });
+    const visible = JSON.parse(String(response.content));
+    expect(visible.receipts[0].result.content).toBe(leaf.content);
+    expect(visible.receipts[0].result.data).toMatchObject({ complete: false, next: { offset: 8, limit: 1 }, textOmitted: true });
+    expect(visible.value).toEqual({ selected: 'partial text' });
+    expect(visible).toMatchObject({ status: 'failed', hadToolErrors: true, error: 'Source unavailable' });
+    expect(response.isError).toBe(true);
+  } finally { await closeScriptModelSession(agent); }
+});
+
+it.each([false, true])('omits displayed structured duplicates without changing opaque evidence or explicit values (selected: %s)', async selected => {
+  const value = { points: Array.from({ length: 40 }, (_, index) => [index, index + 1]), units: 'source-defined' };
+  const leaf = { content: `Opaque source warning: retain exactly.\nStructured content:\n${JSON.stringify(value)}`,
+    data: { kind: 'json' as const, value }, metadata: { warning: 'Source is provisional' } };
+  const cell: ScriptCellResult = { cellId: 'json-original', status: 'completed', hadToolErrors: false,
+    value: structuredClone(leaf), outputs: [JSON.stringify(value)],
+    receipts: [{ id: 1, name: 'geometry.sample-grid', input: { scale: 2 }, result: leaf }] };
+  const original = structuredClone(cell);
+  const agent = withScriptModelTool({ name: 'worker', instructions: '' }, { backups: new Map() }, [], async () => cell,
+    () => ({ status: 'settled', text: JSON.stringify({ result: leaf }) }));
+  try {
+    const response = await (agent.tools![0] as RunnableTool).execute({ code: 'return result;', selected_output: selected }, { agent });
+    const visible = JSON.parse(String(response.content));
+    expect(visible.receipts[0].result.data).toEqual({ kind: 'json', valueOmitted: true, original: { cell_id: 'json-original', call_id: 1 } });
+    expect(visible.receipts[0].result.content).toBe(leaf.content);
+    expect(visible.receipts[0].result.metadata).toEqual(leaf.metadata);
+    expect(visible.value.data).toEqual(leaf.data);
+    expect(visible.outputs).toEqual([JSON.stringify(value)]);
+    expect(visible).not.toHaveProperty('value_from_receipt');
+    const reader = agent.tools!.find(tool => tool.name === 'script_read') as RunnableTool;
+    const page = JSON.parse(String((await reader.execute({ cell_id: 'json-original', call_id: 1 }, { agent })).content));
+    expect(JSON.parse(page.text).result).toEqual(leaf);
+    expect(cell).toEqual(original);
+  } finally { await closeScriptModelSession(agent); }
+});
+
+it('keeps a small displayed JSON value instead of increasing bytes with an original reference', async () => {
+  const leaf = { content: 'Structured content:\n0', data: { kind: 'json' as const, value: 0 } };
+  const readOriginal = vi.fn(() => ({ result: leaf }));
+  const agent = withScriptModelTool({ name: 'worker', instructions: '' }, { backups: new Map() }, [],
+    async () => ({ cellId: '84b24ad2-7e0f-4fb7-a395-5fe9a6c9ca70', status: 'completed', hadToolErrors: false,
+      receipts: [{ id: 1, name: 'lookup', input: {}, result: leaf }] }), readOriginal);
+  try {
+    const response = await (agent.tools![0] as RunnableTool).execute({ code: 'return null;' }, { agent });
+    const data = JSON.parse(String(response.content)).receipts[0].result.data;
+    expect(data).toEqual({ kind: 'json', value: 0 });
+    expect(Buffer.byteLength(JSON.stringify(data))).toBeLessThanOrEqual(Buffer.byteLength(JSON.stringify(leaf.data)));
+    expect(readOriginal).not.toHaveBeenCalled();
+  } finally { await closeScriptModelSession(agent); }
+});
+
+it.each([null, '', ' \t\n', { unseen: Array(80).fill(42) }])('retains structured values absent from the presented body (%j)', async value => {
+  const leaf = { content: 'Opaque caveat only.', data: { kind: 'json' as const, value } };
+  const agent = withScriptModelTool({ name: 'worker', instructions: '' }, { backups: new Map() }, [],
+    async () => ({ cellId: 'not-displayed', status: 'completed', hadToolErrors: false,
+      receipts: [{ id: 1, name: 'lookup', input: {}, result: leaf }] }), () => ({ result: leaf }));
+  try {
+    const response = await (agent.tools![0] as RunnableTool).execute({ code: 'return null;', selected_output: true }, { agent });
+    expect(JSON.parse(String(response.content)).receipts[0].result).toEqual(leaf);
+  } finally { await closeScriptModelSession(agent); }
+});
+
+it.each([false, 0, [], [1, 'two'], 'source value'].map(value => ({ value })))(
+  'keeps small scalar and array values directly without increasing receipt bytes ($value)', async ({ value }) => {
+  const leaf = { content: `Structured content:\n${typeof value === 'string' ? value : JSON.stringify(value)}`, data: { kind: 'json' as const, value } };
+  const agent = withScriptModelTool({ name: 'worker', instructions: '' }, { backups: new Map() }, [],
+    async () => ({ cellId: 'json-kinds', status: 'completed', hadToolErrors: false, value,
+      receipts: [{ id: 1, name: 'lookup', input: {}, result: leaf }] }), () => ({ result: leaf }));
+  try {
+    const response = await (agent.tools![0] as RunnableTool).execute({ code: 'return sourceValue;', selected_output: true }, { agent });
+    const visible = JSON.parse(String(response.content));
+    expect(visible.receipts[0].result.data).toEqual(leaf.data);
+    expect(Buffer.byteLength(JSON.stringify(visible.receipts[0].result.data))).toBeLessThanOrEqual(Buffer.byteLength(JSON.stringify(leaf.data)));
+    expect(visible.value).toEqual(value);
+    const reader = agent.tools!.find(tool => tool.name === 'script_read') as RunnableTool;
+    expect(JSON.parse(String((await reader.execute({ cell_id: 'json-kinds', call_id: 1 }, { agent })).content)).result.data.value).toEqual(value);
+  } finally { await closeScriptModelSession(agent); }
+});
+
+it.each([Array.from({ length: 100 }, (_, index) => index), 'source value '.repeat(80), '界'.repeat(30)].map(value => ({ value })))(
+  'omits a displayed JSON value only when its original reference saves UTF-8 bytes ($value)', async ({ value }) => {
+  const leaf = { content: `Structured content:\n${typeof value === 'string' ? value : JSON.stringify(value)}`, data: { kind: 'json' as const, value } };
+  const agent = withScriptModelTool({ name: 'worker', instructions: '' }, { backups: new Map() }, [],
+    async () => ({ cellId: 'utf8-data', status: 'completed', hadToolErrors: false, value,
+      receipts: [{ id: 1, name: 'lookup', input: {}, result: leaf }] }), () => ({ result: leaf }));
+  try {
+    const response = await (agent.tools![0] as RunnableTool).execute({ code: 'return sourceValue;', selected_output: true }, { agent });
+    const visible = JSON.parse(String(response.content));
+    expect(visible.receipts[0].result.data).toEqual({ kind: 'json', valueOmitted: true, original: { cell_id: 'utf8-data', call_id: 1 } });
+    expect(Buffer.byteLength(JSON.stringify(visible.receipts[0].result.data))).toBeLessThan(Buffer.byteLength(JSON.stringify(leaf.data)));
+    if (value === '界'.repeat(30)) expect(JSON.stringify(visible.receipts[0].result.data).length).toBeGreaterThan(JSON.stringify(leaf.data).length);
+    expect(visible.value).toEqual(value);
+    const reader = agent.tools!.find(tool => tool.name === 'script_read') as RunnableTool;
+    expect(JSON.parse(String((await reader.execute({ cell_id: 'utf8-data', call_id: 1 }, { agent })).content)).result.data.value).toEqual(value);
+  } finally { await closeScriptModelSession(agent); }
+});
+
+it('retains a structured duplicate when no original receipt reader exists', async () => {
+  const value = { samples: Array(50).fill(3) };
+  const leaf = { content: `Structured content:\n${JSON.stringify(value)}`, data: { kind: 'json' as const, value } };
+  const agent = withScriptModelTool({ name: 'worker', instructions: '' }, { backups: new Map() }, [],
+    async () => ({ cellId: 'no-json-reader', status: 'completed', hadToolErrors: false,
+      receipts: [{ id: 1, name: 'lookup', input: {}, result: leaf }] }));
+  try {
+    const response = await (agent.tools![0] as RunnableTool).execute({ code: 'return null;', selected_output: true }, { agent });
+    expect(JSON.parse(String(response.content)).receipts[0].result).toEqual(leaf);
+  } finally { await closeScriptModelSession(agent); }
+});
+
+it('keeps multimodal error evidence intact alongside structured original references', async () => {
+  const image = { type: 'image', path: '/source-evidence.png', mediaType: 'image/png' } as const;
+  const value = { partial: Array(60).fill(true) };
+  const leaf = { content: [{ type: 'text', text: 'Source warning: partial failure.' }, image,
+    { type: 'text', text: `Structured content:\n${JSON.stringify(value)}` }] as const, isError: true,
+    data: { kind: 'json' as const, value } };
+  const agent = withScriptModelTool({ name: 'worker', instructions: '' }, { backups: new Map() }, [],
+    async () => ({ cellId: 'json-image-error', status: 'failed', error: 'Source failed', hadToolErrors: true,
+      receipts: [{ id: 1, name: 'lookup', input: {}, result: leaf }] }), () => ({ result: leaf }));
+  try {
+    const response = await (agent.tools![0] as RunnableTool).execute({ code: 'return null;', selected_output: true }, { agent });
+    if (typeof response.content === 'string') throw new Error('Image evidence must remain typed');
+    const text = response.content.find(item => item.type === 'text');
+    if (text?.type !== 'text') throw new Error('Missing result presentation');
+    const visible = JSON.parse(text.text);
+    expect(visible.receipts[0].result.content).toEqual(leaf.content);
+    expect(visible.receipts[0].result.data).toMatchObject({ kind: 'json', valueOmitted: true });
+    expect(response.content.filter(item => item.type === 'image')).toEqual([image]);
+    expect(response.isError).toBe(true);
+    expect(visible).toMatchObject({ status: 'failed', error: 'Source failed', hadToolErrors: true });
+  } finally { await closeScriptModelSession(agent); }
+});
+
+it('keeps a tiny selected text body hidden even when a reference costs more bytes', async () => {
+  const leaf = { content: '     1\tX\n[End of file]',
+    data: { kind: 'text' as const, text: 'X', normalized: true as const, offset: 1, line_offset: 0, lineCount: 1, complete: true },
+    metadata: { scriptModelContent: '[End of file]' } };
+  const agent = withScriptModelTool({ name: 'worker', instructions: '' }, { backups: new Map() }, [],
+    async () => ({ cellId: 'small-hidden-text', status: 'completed', hadToolErrors: false, value: 1,
+      receipts: [{ id: 1, name: 'read', input: {}, result: leaf }] }), () => ({ result: leaf }));
+  try {
+    const response = await (agent.tools![0] as RunnableTool).execute({ code: 'return 1;', selected_output: true }, { agent });
+    const visible = JSON.parse(String(response.content));
+    expect(visible.receipts[0].result.content).toBe('[End of file]');
+    expect(visible.receipts[0].result.data).not.toHaveProperty('text');
+    expect(visible.receipts[0].result.data.textOmitted).toBe(true);
+  } finally { await closeScriptModelSession(agent); }
+});
+
 it('shares an identical top-level output field while retaining independent return data and failure evidence', async () => {
   const content = 'Test run: 11 passed; exact stdout evidence.\n'.repeat(60);
   const cell: ScriptCellResult = { status: 'failed', error: 'later call failed', hadToolErrors: true,
@@ -192,6 +391,20 @@ it('exposes structured leaf contracts only behind the unchanged visible Script e
   expect(projectScriptModelTools(script, withoutEntry)).toBe(withoutEntry);
   leaves[0]!.description = 'Mutation after binding';
   expect(getScriptModelContracts(script, menu)!.leaves[0]!.description).toBe(getToolDefinition('read')!.description);
+});
+
+it('pairs each unchanged leaf schema with its exact executable namespace path', () => {
+  const leaves = ['lookup_record', 'inventory.lookup-v2', '读取', 'default', 'quote"name'].map(name => ({
+    name, description: 'An authorized generic lookup.',
+    input_schema: { type: 'object' as const, properties: { key: { type: 'string' } }, required: ['key'] },
+  }));
+  const original = structuredClone(leaves);
+  const description = buildScriptModelDescription(leaves);
+  for (const leaf of leaves) {
+    expect(description).toContain(`tools[${JSON.stringify(leaf.name)}](input): ${JSON.stringify(leaf)}`);
+  }
+  expect(leaves).toEqual(original);
+  expect(description).not.toContain('unlisted_tool');
 });
 
 it('retains native evidence including warnings that are only encoded in the body', async () => {

@@ -5,6 +5,7 @@ import { toolWebFetch } from './web-fetch.js';
 import { executeRunScopedTool } from '../agent-runtime/run-scoped-tools.js';
 import { tryMcpFallback } from '../agent-runtime/tool-dispatch.js';
 import { isToolResultErrorContent } from '../agent-runtime/tool-result-classify.js';
+import { renderCapabilityToolResult } from './capability-result.js';
 import type { KodaXToolExecutionContext } from '../types.js';
 
 const image = { type: 'image', path: '/retained-image.png', mediaType: 'image/png' } as const;
@@ -40,4 +41,11 @@ it('keeps metadata-only MCP fallback evidence visible', async () => {
     searchCapabilities: async () => [{ id: 'mcp:test:tool:read', name: 'read' }],
   } } as unknown as KodaXToolExecutionContext;
   expect(await tryMcpFallback('read', {}, ctx)).toContain('receipt-42');
+});
+
+it('propagates projection listener failures instead of treating them as optional snapshot limits', () => {
+  expect(() => renderCapabilityToolResult({ kind: 'tool', content: 'original', structuredContent: { value: 7 } },
+    content => content ?? '', { backups: new Map(), toolCallId: 'listener-fence',
+      recordToolResultProjection: () => { throw new RangeError('Listener persistence failed'); } }))
+    .toThrow('Listener persistence failed');
 });

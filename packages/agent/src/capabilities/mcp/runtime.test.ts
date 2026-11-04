@@ -886,6 +886,27 @@ async function startHttpServer(
 }
 
 describe('McpServerRuntime protocol compatibility', () => {
+  it('preserves explicit structured null and only falls back to snake case when camel case is absent', async () => {
+    const dir = await createTempDir();
+    const source = createNdjsonServerSource({ startsPath: path.join(dir, 'starts.txt') }).replace(
+      "const method = message.method;",
+      `const method = message.method;
+      if (method === 'tools/call') {
+        const mode = message.params.arguments.mode;
+        const result = { content: [{type:'text',text:'original evidence'}], structured_content: { fallback: true } };
+        if (mode === 'null') result.structuredContent = null;
+        if (mode === 'false') result.structuredContent = false;
+        writeMessage({jsonrpc:'2.0',id:message.id,result}); return;
+      }`,
+    );
+    const runtime = await createRuntime(dir, await writeScript(dir, source));
+    try {
+      expect((await runtime.callTool('echo_tool', { mode: 'null' })).structuredContent).toBeNull();
+      expect((await runtime.callTool('echo_tool', { mode: 'false' })).structuredContent).toBe(false);
+      expect((await runtime.callTool('echo_tool', { mode: 'absent' })).structuredContent).toEqual({ fallback: true });
+    } finally { await runtime.dispose(); }
+  });
+
   it('connects to standard stdio NDJSON servers on the first attempt', async () => {
     const dir = await createTempDir();
     const startsPath = path.join(dir, 'starts.txt');

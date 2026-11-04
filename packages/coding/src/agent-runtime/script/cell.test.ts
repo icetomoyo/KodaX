@@ -29,6 +29,53 @@ it('evaluates isolated JavaScript and composes dependent calls in one cell', asy
   expect(invoke).toHaveBeenCalledTimes(2);
 });
 
+it('calls an authorized generic tool through the same bare alias and namespace function', async () => {
+  const invoke = vi.fn(async (_name: string, input: Record<string, unknown>) => ({ content: String(input.value) }));
+  const result = await runScriptCell({ limits, toolNames: ['lookup_record'], invoke,
+    code: 'const first = await lookup_record({value:21}); const second = await tools.lookup_record({value:42}); return {same:lookup_record===tools.lookup_record,values:[first.content,second.content]};' });
+  expect(result.status, result.error).toBe('completed');
+  expect(result.value).toEqual({ same: true, values: ['21', '42'] });
+  expect(result.receipts.map(receipt => ({ id: receipt.id, name: receipt.name, input: receipt.input })))
+    .toEqual([{ id: 1, name: 'lookup_record', input: { value: 21 } }, { id: 2, name: 'lookup_record', input: { value: 42 } }]);
+  expect(invoke).toHaveBeenCalledTimes(2);
+});
+
+it('has no inherited callable namespace entries while preserving authorized prototype names', async () => {
+  const invoke = vi.fn(async (name: string) => ({ content: name }));
+  const result = await runScriptCell({ limits, toolNames: ['constructor', '__proto__'], invoke, code: `
+    return { inherited: typeof tools.toString, prototype: Object.getPrototypeOf(tools), frozen: Object.isFrozen(tools),
+      values: [(await tools['constructor']({})).content, (await tools['__proto__']({})).content] };
+  ` });
+  expect(result.status, result.error).toBe('completed');
+  expect(result.value).toEqual({ inherited: 'undefined', prototype: null, frozen: true, values: ['constructor', '__proto__'] });
+  expect(result.receipts.map(receipt => receipt.name)).toEqual(['constructor', '__proto__']);
+  expect(invoke).toHaveBeenCalledTimes(2);
+});
+
+it('keeps controls and JavaScript globals intact while exposing every authorized name through tools', async () => {
+  const names = ['text', 'store', 'load', 'read_result', 'yield_control', 'tools', '__hostCall', '__store', '__load', '__emit',
+    'Object', 'Promise', 'JSON', 'Function', 'constructor', '__proto__', 'toString', 'await', 'default', 'eval', 'arguments',
+    'a-b', 'capability.inspect', '读取', '$lookup', '_lookup'];
+  const invoke = vi.fn(async (name: string) => ({ content: name }));
+  let yielded = 0;
+  const result = await runScriptCell({ limits: { ...limits, maxCalls: names.length }, toolNames: names, invoke,
+    onYield: () => { yielded++; }, code: `
+      store('answer', 42); text(load('answer')); yield_control();
+      const bare = [读取 === tools['读取'], $lookup === tools.$lookup, _lookup === tools._lookup];
+      const protectedNames = ${JSON.stringify(names.slice(0, -3))}.every(name => globalThis[name] !== tools[name]);
+      const results = [];
+      for (const name of ${JSON.stringify(names)}) results.push((await tools[name]({})).content);
+      return { bare, protectedNames, globals: [typeof Object, typeof Promise, typeof JSON.parse, typeof Function, typeof unlisted_tool], results };
+    ` });
+  expect(result.status, result.error).toBe('completed');
+  expect(result.value).toEqual({ bare: [true, true, true], protectedNames: true,
+    globals: ['function', 'function', 'function', 'function', 'undefined'], results: names });
+  expect(result.outputs).toEqual(['42']);
+  expect(yielded).toBe(1);
+  expect(result.receipts.map(receipt => receipt.name)).toEqual(names);
+  expect(invoke).toHaveBeenCalledTimes(names.length);
+});
+
 it('has no host globals, Node modules or host Function constructor escape', async () => {
   const invoke = vi.fn();
   const result = await runScriptCell({ limits, toolNames: ['read'], invoke,
@@ -73,7 +120,7 @@ it('preserves confirmed effects after failure, and never automatically replays t
   expect(writes).toBe(1);
 });
 
-it('cancels the guest, waits for admitted tool cleanup and prevents queued effects', async () => {
+it.each(['tools.read', 'read'])('cancels %s, waits for admitted tool cleanup and prevents queued effects', async call => {
   const abort = new AbortController();
   const effects: string[] = [];
   let settled = false;
@@ -86,7 +133,7 @@ it('cancels the guest, waits for admitted tool cleanup and prevents queued effec
     return { content: '[Tool Error] cancelled', isError: true };
   });
   const result = await runScriptCell({ limits, toolNames: ['read'], invoke, signal: abort.signal,
-    code: 'await Promise.all([tools.read({path:"one"}), tools.read({path:"two"})]);' });
+    code: `await Promise.all([${call}({path:"one"}), ${call}({path:"two"})]);` });
   expect(result.status).toBe('cancelled');
   expect(settled).toBe(true);
   expect(effects).toEqual(['started', 'aborted']);
@@ -94,14 +141,14 @@ it('cancels the guest, waits for admitted tool cleanup and prevents queued effec
   expect(result.receipts).toHaveLength(1);
 });
 
-it('caps calls and transfer size rather than silently dropping errors or results', async () => {
+it.each(['tools.read', 'read'])('caps %s calls and transfer size rather than silently dropping errors or results', async call => {
   const invoke = vi.fn(async () => ({ content: 'ok' }));
   const called = await runScriptCell({ limits: { ...limits, maxCalls: 1 }, toolNames: ['read'], invoke,
-    code: 'await tools.read({path:"one"}); await tools.read({path:"two"});' });
+    code: `await ${call}({path:"one"}); await ${call}({path:"two"});` });
   expect(called.status).toBe('failed');
   expect(invoke).toHaveBeenCalledOnce();
   const oversized = await runScriptCell({ limits: { ...limits, maxTransferBytes: 128 }, toolNames: ['read'],
-    invoke: async () => ({ content: 'x'.repeat(256) }), code: 'return await tools.read({});' });
+    invoke: async () => ({ content: 'x'.repeat(256) }), code: `return await ${call}({});` });
   expect(oversized.status).toBe('failed');
   expect(oversized.error).toContain('transfer limit');
   expect(oversized.receipts[0]?.result.content).toHaveLength(256);

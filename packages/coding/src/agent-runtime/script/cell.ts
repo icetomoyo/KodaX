@@ -5,6 +5,7 @@ import { basename, dirname, join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { isDeepStrictEqual } from 'node:util';
 import type { RunnerToolResult } from '@kodax-ai/agent';
+import type { ToolResultData } from '../../types.js';
 import { createScriptControlBudget } from './control.js';
 
 export interface ScriptCellLimits {
@@ -13,11 +14,14 @@ export interface ScriptCellLimits {
   readonly maxCalls: number;
   readonly maxTransferBytes: number;
 }
+export interface ScriptToolResult extends RunnerToolResult {
+  readonly data?: ToolResultData;
+}
 export interface ScriptReceipt {
   readonly id: number;
   readonly name: string;
   readonly input: Record<string, unknown>;
-  readonly result: RunnerToolResult;
+  readonly result: ScriptToolResult;
 }
 export interface ScriptCellResult {
   readonly cellId?: string;
@@ -46,7 +50,7 @@ export interface ScriptCellInput {
   /** Host-owned checked dispatcher. Must settle only after the leaf and its cancellation cleanup settle. */
   readonly invoke: (name: string, input: Record<string, unknown>, signal: AbortSignal, id: number,
     admit: (parallel: boolean, canonical?: Omit<ScriptReceipt, 'result'>) => Promise<void>,
-    prepare: (canonical: Omit<ScriptReceipt, 'result'>) => Promise<void>) => Promise<RunnerToolResult>;
+    prepare: (canonical: Omit<ScriptReceipt, 'result'>) => Promise<void>) => Promise<ScriptToolResult>;
   /** The checked dispatcher must await admit after canonical argument preparation and before execution. */
   readonly concurrentPreparation?: boolean;
   readonly storedValues?: ReadonlyMap<string, string>;
@@ -185,7 +189,7 @@ export async function runScriptCell(input: ScriptCellInput): Promise<ScriptCellR
         if (!input.concurrentPreparation) await admit(false);
         if (controller.signal.aborted) return;
         let parameters: Record<string, unknown> = {};
-        let result: RunnerToolResult | undefined;
+        let result: ScriptToolResult | undefined;
         try {
           if (!allowed.has(message.name)) throw new Error(`Tool ${message.name} is outside this Script cell.`);
           if (Buffer.byteLength(message.input) > input.limits.maxTransferBytes) throw new Error('Script tool input exceeds the transfer limit.');

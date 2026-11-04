@@ -3,7 +3,8 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { getProvider, registerModelProvider, runWithAdditionalProviderRequestObserver } from '../dist/sdk-llm.js';
+import { isDeepStrictEqual } from 'node:util';
+import { getProvider, KodaXBaseProvider, registerModelProvider, runWithAdditionalProviderRequestObserver } from '../dist/sdk-llm.js';
 import { runManagedTask, awaitLatestCodingMemoryReviewDrain } from '../dist/sdk-coding.js';
 import { FileSessionStorage } from '../dist/sdk-repl.js';
 
@@ -133,6 +134,101 @@ function assertObservedRoutes(env) {
   }
 }
 
+function revisionSixCases() {
+  const glm = { alias: 'zhipu/glm52', provider: 'zhipu-coding', model: 'glm-5.2', apiKeyEnv: 'ZHIPU_CODING_API_KEY', effort: 'high' };
+  const ark = { alias: 'ark/k27', provider: 'ark-coding', model: 'kimi-k2.7-code', apiKeyEnv: 'ARK_CODING_API_KEY', effort: 'high' };
+  return [
+    { id: 'csv-unicode', target: glm, outputFile: 'sales-summary.json',
+      task: 'Read sales.csv and write sales-summary.json with totals (an object mapping customer to summed quantity) and notes (an object mapping row id to its note). Preserve customer names, CSV quoting and embedded note newlines; normalize note line endings to LF. Return a brief summary. Choose appropriate available tools.',
+      inputs: { 'sales.csv': '\uFEFFid,customer,quantity,note\r\na1,"Mira, Inc",2,ready\r\na2,李雷,3,"two\r\nlines"\r\na3,"Mira, Inc",4,"said ""yes"""\r\n' },
+      expected: { totals: { 'Mira, Inc': 6, 李雷: 3 }, notes: { a1: 'ready', a2: 'two\nlines', a3: 'said "yes"' } } },
+    { id: 'xml-log', target: ark, outputFile: 'inventory-summary.json',
+      task: 'Use catalog.xml and adjustments.log to write inventory-summary.json as an array of active catalog items, sorted by id. Each item must contain id, decoded name and adjustedStock: starting stock plus only INFO log deltas for that item. Ignore inactive items and other log levels. Return a brief summary. Choose appropriate available tools.',
+      inputs: { 'catalog.xml': '<catalog>\n  <item id="u1" active="true"><name>Tea &amp; Coffee</name><stock>7</stock></item>\n  <item id="u2" active="false"><name>旧件</name><stock>99</stock></item>\n  <item id="u3" active="true"><name>蓝灯</name><stock>4</stock></item>\n</catalog>\n',
+        'adjustments.log': '2026-11-04T01:00:00Z level=INFO item=u1 delta=2\n2026-11-04T01:01:00Z level=WARN item=u1 delta=10\n2026-11-04T01:02:00Z level=INFO item=u3 delta=-1\n2026-11-04T01:03:00Z level=INFO item=u2 delta=50' },
+      expected: [{ id: 'u1', name: 'Tea & Coffee', adjustedStock: 9 }, { id: 'u3', name: '蓝灯', adjustedStock: 3 }] },
+    { id: 'host-opaque', target: glm, outputFile: 'issue-summary.json', inputs: {},
+      task: 'Use the available issue export tools to list open issues for project alpha and fetch each returned issue detail. Write issue-summary.json with issues (id, title, points, sorted by id), totalPoints, source (the list result snapshot and complete fields), and warnings (all source caveat messages preserved verbatim, with repeated messages deduplicated). Return a brief summary. Choose appropriate available tools.',
+      expected: { issues: [{ id: 'ISS-17', title: 'Login, café', points: 2 }, { id: 'ISS-23', title: '修复蓝灯', points: 5 }], totalPoints: 7,
+        source: { snapshot: 'alpha-20261104', complete: false },
+        warnings: ['Source caveat: alpha snapshot omits archived issues; totals describe returned open rows only.', 'Detail caveat: point estimates are provisional.'] } },
+  ];
+}
+
+async function prepareRevisionSixCase(fixture, directory, report) {
+  report.fixtureInputs = fixture.inputs;
+  for (const [name, body] of Object.entries(fixture.inputs)) await writeFile(path.join(directory, name), body);
+  if (fixture.id !== 'host-opaque') return undefined;
+  const rows = [
+    { id: 'ISS-17', project: 'alpha', state: 'open', title: 'Login, café', points: 2 },
+    { id: 'ISS-23', project: 'alpha', state: 'open', title: '修复蓝灯', points: 5 },
+    { id: 'ISS-41', project: 'alpha', state: 'closed', title: 'Archived', points: 80 },
+    { id: 'ISS-99', project: 'beta', state: 'open', title: 'Other project', points: 90 },
+  ];
+  const definitions = [
+    { name: 'exports.issue-list', description: 'List issue ids for a project and state. Returns a TSV listing with source caveats and separate structured snapshot/completeness fields.',
+      inputSchema: { type: 'object', properties: { project: { type: 'string' }, state: { type: 'string', enum: ['open', 'closed'] } }, required: ['project', 'state'] } },
+    { name: 'exports.issue-detail', description: 'Read one issue by id. Returns structured id/title/points and a separate source caveat.',
+      inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
+  ].map(tool => ({ ...tool, capabilityId: `host:script-smoke:${tool.name}`, sideEffect: 'readonly', planModeAllowed: true }));
+  report.hostInvocations = [];
+  const lookup = (provider, id) => {
+    const definition = provider === 'mcp' && definitions.find(tool => tool.capabilityId === id);
+    if (!definition) throw new Error(`Host capability is not authorized: ${provider}/${id}`);
+    return definition;
+  };
+  const unsupported = async () => { throw new Error('Host fixture operation is not authorized'); };
+  return {
+    hasCapabilityProvider: provider => provider === 'mcp',
+    listCapabilityProviders: () => [{ id: 'mcp', search: async () => definitions }],
+    listRunTools: provider => provider === 'mcp' ? definitions : [],
+    searchCapabilities: async (provider, query) => provider === 'mcp'
+      ? definitions.filter(tool => `${tool.name} ${tool.description}`.toLowerCase().includes(query.toLowerCase()))
+        .map(tool => ({ id: tool.capabilityId, kind: 'tool', name: tool.name, description: tool.description })) : [],
+    describeCapability: async (provider, id) => lookup(provider, id),
+    async executeCapability(provider, id, input) {
+      const invocation = { provider, id, input: structuredClone(input) };
+      report.hostInvocations.push(invocation);
+      try {
+        const definition = lookup(provider, id);
+        let result;
+        if (definition.name === 'exports.issue-list') {
+          if (typeof input.project !== 'string' || !['open', 'closed'].includes(input.state)) throw new Error('project and state are required');
+          const selected = rows.filter(row => row.project === input.project && row.state === input.state);
+          result = { kind: 'tool', content: `${fixture.expected.warnings[0]}\nid\tstate\n${selected.map(row => `${row.id}\t${row.state}`).join('\n')}`,
+            structuredContent: { snapshot: 'alpha-20261104', complete: false }, metadata: { source: 'offline Host fixture' } };
+        } else {
+          const row = rows.find(item => item.id === input.id);
+          if (!row) throw new Error('Unknown issue id');
+          result = { kind: 'tool', content: fixture.expected.warnings[1], structuredContent: { id: row.id, title: row.title, points: row.points } };
+        }
+        invocation.result = structuredClone(result);
+        return result;
+      } catch (error) { invocation.error = String(error); throw error; }
+    },
+    readCapability: unsupported, getCapabilityPrompt: unsupported,
+    getCapabilityPromptContext: async () => undefined,
+  };
+}
+
+async function checkRevisionSixOutput(fixture, directory) {
+  try {
+    const output = JSON.parse(await readFile(path.join(directory, fixture.outputFile), 'utf8'));
+    const normalize = value => fixture.id === 'host-opaque' && Array.isArray(value?.warnings)
+      ? { ...value, warnings: [...value.warnings].sort() } : value;
+    return { output, taskCorrect: isDeepStrictEqual(normalize(output), normalize(fixture.expected)) };
+  } catch (error) { return { taskCorrect: false, outputError: String(error) }; }
+}
+
+function scriptCoverage(records) {
+  const dataAvailableReceipts = records.filter(record => record.type === 'call.settled'
+    && ['text', 'json'].includes(record.data?.data?.result?.data?.kind))
+    .map(record => ({ recordId: record.id ?? null, name: record.data.data.name, input: record.data.data.input, kind: record.data.data.result.data.kind }));
+  return { dataAvailableReceipts, jsonDataAvailableReceipts: dataAvailableReceipts.filter(receipt => receipt.kind === 'json'),
+    dataConsumption: 'unreviewed', jsonDataConsumption: 'unreviewed',
+    note: 'Data availability or source syntax does not prove consumption. Main-session review must trace executed cells and output dependencies using full canonical records.' };
+}
+
 async function finalizeGroup(completedReports, reviewDrain = awaitLatestCodingMemoryReviewDrain) {
   let drainTimer;
   let drainTimedOut = false;
@@ -159,6 +255,7 @@ async function finalizeGroup(completedReports, reviewDrain = awaitLatestCodingMe
     report.scriptLeavesSucceeded = records.filter(record => record.type === 'call.settled' && record.data?.data?.result && record.data.data.result.isError !== true).length;
     report.scriptLeavesErrored = records.filter(record => record.type === 'call.settled' && record.data?.data?.result?.isError === true).length;
     report.scriptLeavesUnsettled = report.scriptLeafAttempts - report.scriptLeavesSucceeded - report.scriptLeavesErrored;
+    report.scriptCoverage = scriptCoverage(records);
     report.modelSelectedOutputRequests = report.rows.flatMap(row => row.result?.toolBlocks ?? [])
       .filter(tool => tool.name === 'script_exec' && tool.input?.selected_output === true).length;
     report.elapsedMs = Date.now() - startedAt;
@@ -170,6 +267,8 @@ async function finalizeGroup(completedReports, reviewDrain = awaitLatestCodingMe
 // Offline exercise of the exact wrapper; never creates a real Provider or calls network fetch.
 if (process.argv.includes('--self-test')) {
   const { default: assert } = await import('node:assert/strict');
+  let unexpectedNetworkCalls = 0;
+  globalThis.fetch = async () => { unexpectedNetworkCalls++; throw new Error('Offline self-test forbids network'); };
   let active = 0, maximum = 0;
   const descriptor = { contextWindow: 123456 };
   const fake = { getModelDescriptor: () => descriptor,
@@ -217,23 +316,110 @@ if (process.argv.includes('--self-test')) {
   assert.deepEqual(sequence, ['learning-drained', 'idle', 'closed', 'idle', 'summarized', 'saved']);
   assertObservedRoutes({});
   assert.throws(() => assertObservedRoutes({ KODAX_STALL_PROVIDER: 'external', KODAX_STALL_MODEL: 'external' }), /bypass/);
-  process.stdout.write('Offline wrapper checks passed; zero model/network requests.\n');
+  const revisionSix = revisionSixCases();
+  assert.equal(revisionSix.length, 3);
+  assert.deepEqual(revisionSix.map(item => item.target.alias), ['zhipu/glm52', 'ark/k27', 'zhipu/glm52']);
+  assert.ok(revisionSix.every(item => item.target.effort === 'high' && !item.task.includes('script_exec')));
+  const fixtureDirectory = await mkdtemp(path.join(tmpdir(), 'kodax-script-offline-'));
+  for (const fixture of revisionSix) {
+    const directory = path.join(fixtureDirectory, fixture.id); await mkdir(directory);
+    const report = {};
+    await prepareRevisionSixCase(fixture, directory, report);
+    await writeFile(path.join(directory, fixture.outputFile), JSON.stringify(fixture.expected));
+    assert.equal((await checkRevisionSixOutput(fixture, directory)).taskCorrect, true);
+    if (fixture.id === 'host-opaque') {
+      await writeFile(path.join(directory, fixture.outputFile), JSON.stringify({ ...fixture.expected, warnings: [...fixture.expected.warnings].reverse() }));
+      assert.equal((await checkRevisionSixOutput(fixture, directory)).taskCorrect, true);
+    }
+    await writeFile(path.join(directory, fixture.outputFile), '{}');
+    assert.equal((await checkRevisionSixOutput(fixture, directory)).taskCorrect, false);
+  }
+  const hostReport = {};
+  const hostRuntime = await prepareRevisionSixCase(revisionSix[2], fixtureDirectory, hostReport);
+  assert.deepEqual(hostRuntime.listRunTools('mcp').map(tool => tool.name), ['exports.issue-list', 'exports.issue-detail']);
+  assert.deepEqual(hostRuntime.listRunTools('other'), []);
+  const listed = await hostRuntime.executeCapability('mcp', 'host:script-smoke:exports.issue-list', { project: 'alpha', state: 'open' });
+  assert.ok(listed.content.includes('ISS-23') && !listed.content.includes('ISS-99'));
+  assert.equal(listed.structuredContent.complete, false);
+  await assert.rejects(hostRuntime.executeCapability('mcp', 'host:script-smoke:unknown', {}), /not authorized/);
+  assert.equal(hostReport.hostInvocations.length, 2);
+  class OfflineHostProvider extends KodaXBaseProvider {
+    name = 'script-smoke-offline-host';
+    supportsThinking = false;
+    config = { apiKeyEnv: 'KODAX_SCRIPT_SMOKE_OFFLINE_KEY', model: 'offline', supportsThinking: false };
+    calls = 0;
+    firstTool = { type: 'tool_use', id: 'offline-host-call', name: 'tool_call', input: { name: 'exports.issue-list', input: { project: 'alpha', state: 'open' } } };
+    async stream() {
+      const first = this.calls++ === 0;
+      return { textBlocks: first ? [] : [{ type: 'text', text: 'Offline fixture complete.' }], thinkingBlocks: [],
+        toolBlocks: first ? [this.firstTool] : [],
+        stopReason: first ? 'tool_use' : 'end_turn', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } };
+    }
+  }
+  const nativeProvider = new OfflineHostProvider();
+  registerModelProvider(nativeProvider.name, () => nativeProvider);
+  process.env.KODAX_SCRIPT_SMOKE_OFFLINE_KEY = 'offline-only';
+  await runManagedTask({ provider: 'script-smoke-offline-host', model: 'offline', effort: 'none', workMode: 'script', agentMode: 'ama',
+    maxIter: 2, lsp: false, extensionRuntime: hostRuntime,
+    session: { id: 'offline-host', storage: new FileSessionStorage({ sessionsDir: path.join(fixtureDirectory, 'sessions'), configHome: fixtureDirectory, cwd: fixtureDirectory }) },
+    context: { executionCwd: fixtureDirectory, configHome: fixtureDirectory, repoIntelligenceMode: 'off' },
+    events: { beforeToolExecute: async tool => ['tool_call', 'exports.issue-list'].includes(tool) },
+  }, 'List the open alpha issues.');
+  assert.equal(hostReport.hostInvocations.length, 3);
+  assert.equal(hostReport.hostInvocations[2].id, 'host:script-smoke:exports.issue-list');
+  assert.equal(hostReport.hostInvocations[2].error, undefined);
+  const jsonProvider = new OfflineHostProvider();
+  jsonProvider.name = 'script-smoke-offline-json';
+  jsonProvider.firstTool = { type: 'tool_use', id: 'offline-json-call', name: 'script_exec', input: {
+    code: `const r=await tools['exports.issue-list']({project:'alpha',state:'open'});
+      if(r.data?.kind!=='json')throw new Error('Built SDK did not deliver typed JSON');
+      return {snapshotDayTwice:Number(r.data.value.snapshot.slice(-2))*2};`, selected_output: true } };
+  registerModelProvider(jsonProvider.name, () => jsonProvider);
+  const jsonStorage = new FileSessionStorage({ sessionsDir: path.join(fixtureDirectory, 'sessions'), configHome: fixtureDirectory, cwd: fixtureDirectory });
+  await runManagedTask({ provider: jsonProvider.name, model: 'offline', effort: 'none', workMode: 'script', agentMode: 'ama',
+    maxIter: 2, lsp: false, extensionRuntime: hostRuntime, session: { id: 'offline-json', storage: jsonStorage },
+    context: { executionCwd: fixtureDirectory, configHome: fixtureDirectory, repoIntelligenceMode: 'off' },
+    events: { beforeToolExecute: async tool => ['script_exec', 'script_wait', 'exports.issue-list'].includes(tool) },
+  }, 'Inspect the alpha issue snapshot.');
+  const jsonRecords = (await jsonStorage.load('offline-json')).extensionRecords.filter(record => record.extensionId === 'kodax.script');
+  const jsonReceipt = jsonRecords.find(record => record.type === 'call.settled').data.data.result;
+  assert.deepEqual(jsonReceipt.data, { kind: 'json', value: { snapshot: 'alpha-20261104', complete: false } });
+  assert.ok(jsonReceipt.content.includes('Source caveat: alpha snapshot omits archived issues; totals describe returned open rows only.'));
+  const jsonCell = jsonRecords.find(record => record.type === 'cell.settled').data.data;
+  assert.equal(jsonCell.status, 'completed');
+  assert.deepEqual(jsonCell.value, { snapshotDayTwice: 8 });
+  assert.equal(hostReport.hostInvocations.length, 4);
+  const coverage = scriptCoverage([{ type: 'call.settled', data: { data: { name: 'read', result: { data: { kind: 'text', text: 'x' } } } } }]);
+  assert.equal(coverage.dataAvailableReceipts.length, 1);
+  assert.equal(coverage.dataConsumption, 'unreviewed');
+  const jsonCoverage = scriptCoverage([
+    { type: 'call.settled', data: { data: { name: 'geometry.sample-grid', result: { data: { kind: 'json', value: [0, false, null] } } } } },
+    { type: 'call.settled', data: { data: { name: 'opaque', result: { metadata: { data: { kind: 'json', value: 42 } } } } } },
+  ]);
+  assert.equal(jsonCoverage.jsonDataAvailableReceipts.length, 1);
+  assert.equal(jsonCoverage.jsonDataConsumption, 'unreviewed');
+  assert.equal(unexpectedNetworkCalls, 0);
+  process.stdout.write('Offline wrapper and built SDK JSON integration checks passed; zero model/network requests. Fixture execution is not real-model coverage.\n');
   process.exit(0);
 }
 
 assertObservedRoutes(process.env);
 const repairArkConfig = process.argv.includes('--repair-ark-config');
-if (!repairArkConfig && !process.argv.includes('--run-revision-4')) {
-  throw new Error('Choose --repair-ark-config for the one-case revision 5 or explicitly replay --run-revision-4.');
+const namespaceDataSmoke = process.argv.includes('--run-revision-6');
+const structuredDataSmoke = process.argv.includes('--run-revision-7');
+if ([repairArkConfig, namespaceDataSmoke, structuredDataSmoke, process.argv.includes('--run-revision-4')].filter(Boolean).length !== 1) {
+  throw new Error('Choose exactly one explicit revision: --run-revision-7, --run-revision-6, --repair-ark-config (5), or --run-revision-4.');
 }
-const cases = repairArkConfig ? [
+const dataCases = structuredDataSmoke ? [revisionSixCases()[2]] : namespaceDataSmoke ? revisionSixCases() : undefined;
+const cases = dataCases?.map(fixture => fixture.target) ?? (repairArkConfig ? [
   { alias: 'ark/k27', provider: 'ark-coding', model: 'kimi-k2.7-code', apiKeyEnv: 'ARK_CODING_API_KEY', effort: 'high' },
 ] : [
   { alias: 'zhipu/glm52', provider: 'zhipu-coding', model: 'glm-5.2', apiKeyEnv: 'ZHIPU_CODING_API_KEY' },
   { alias: 'ark/k27', provider: 'ark-coding', model: 'kimi-k2.7-code', apiKeyEnv: 'ARK_CODING_API_KEY' },
-];
+]);
 const root = await mkdtemp(path.join(tmpdir(), 'kodax-script-live-'));
-const dumpDir = path.join(tmpdir(), 'kodax-eval-dumps', 'space-sdk-script-20261103', path.basename(root));
+const dumpDir = path.join(tmpdir(), 'kodax-eval-dumps', structuredDataSmoke ? 'space-sdk-script-structured-data-20261104'
+  : namespaceDataSmoke ? 'space-sdk-script-namespace-data-20261104' : 'space-sdk-script-20261103', path.basename(root));
 await mkdir(dumpDir, { recursive: true });
 const design = { revision: repairArkConfig ? 5 : 4, layer: '3.5-smoke', comparison: false, aliases: cases.map(c => c.alias),
   revisionNote: repairArkConfig
@@ -254,21 +440,56 @@ const design = { revision: repairArkConfig ? 5 : 4, layer: '3.5-smoke', comparis
   whyNotLayer1: 'Deterministic tests cannot establish autonomous tool choice or real Provider usage.',
   rubric: 'Verify totals.json equals {red:5,blue:3}; report zero-script, failures, timeout and missing usage. No population-level quality or efficiency claim.',
   concurrency: 'One request per provider, distinct natural providers parallel; conditional requested case starts after all natural request admissions close and tracked requests settle. No fallback or automatic sample reruns.' };
+if (dataCases) Object.assign(design, {
+  revision: 6, sourceBaseline: '49da64f24',
+  maxBilledLeafExecutions: 12,
+  scriptCellLimits: { timeoutMs: 60_000, memoryBytes: 32 * 1024 * 1024, maxCalls: 64, maxTransferBytes: 1024 * 1024 },
+  leafAccounting: 'The shared work budget charges executions, not all attempts. Each Script cell keeps its production 64-attempt limit and VM limits above; denied/refused attempts can be unbilled. Record started, succeeded, errored and unsettled calls plus full receipts separately; there is no 12-attempt ceiling.',
+  revisionNote: 'New candidate-only namespace/data smoke with three fixed natural tasks. Historical revisions 4/5 and their raw failures/results remain separate; their red/blue tasks and earlier candidate builds are not pooled into this candidate rate. No conditional requested-Script case, sample rerun, A/B, lift or generalization claim.',
+  reasoningEffort: 'high for both fixed provider/model families',
+  conditionalCase: 'Disabled. Exactly three predeclared tasks regardless of Script choice or task outcome.',
+  question: 'For three bounded natural tasks, separately observe task correctness, actual Script starts/success, reviewed data consumption, requests, tokens and elapsed time.',
+  whyNotLayer1: 'Layer 1 proves namespace/data contracts and native invariants first. It cannot observe autonomous execution choices, real multi-step data consumption or physical Provider usage. These are Layer 3.5 observations; no additional single-turn probes are run.',
+  rubric: 'Compare parsed output with literal fixture ground truth, independently of tool choice. Main session reviews every case from full records for task validity, Script execution and data dependencies; data presence or .data source text alone is not consumption. Native completion, no Script, failures, timeouts and unknown usage are retained. Efficiency is descriptive only; no A/B evidence exists.',
+  fixtureConstraints: 'CSV with BOM/CRLF/quoted Unicode and multiline fields; XML plus log filters; explicit trusted SDK embedder Host tools with dotted/hyphen names and opaque caveats/separate structured values. Native bash/read/write/search/tool_call remain available. No child tools; 12 billed leaf executions, 6 turns and 6 logical/physical requests per case including learning/retries. Host fixture is not daemon lease or external service coverage.',
+  concurrency: 'CSV/GLM and XML/Ark run in parallel. Close admissions and settle tracked requests plus bounded learning drain for both before Host/GLM starts. One request per provider, no fallback, retries of samples or conditional tasks.',
+  caseDefinitions: dataCases.map(({ id, target, task, inputs, outputFile, expected }) => ({ id, target, task, inputs, outputFile, expected })),
+  reviewOutput: 'main-session-review.json is a pending review template, not an automatic verdict. Fill case evidence references, data-consumption reasoning, limits and recommendation from persisted raw without new generation.',
+});
+if (dataCases) delete design.maxLeafCalls;
+if (structuredDataSmoke) Object.assign(design, {
+  revision: 7, maxCases: 1, maxProviderCalls: 6, maxTotalTokens: 500_000, maxExternalSpendUsd: 6, estimatedExternalSpendUsd: [1, 3],
+  revisionNote: 'One affected Host case only: production contracts now expose genuine structuredContent as JSON data, so the actual model input changes. Reuse revision 6 Host task, fixture inputs, expected output, route/effort and strict scorer unchanged. This tests typed source consumption rather than model reconstruction; it is not a warning-prefix fix and does not guarantee strict task correctness. No CSV/Ark rerun, requested-Script case, A/B or pooled candidate rate.',
+  reasoningEffort: 'zhipu/glm52 high, unchanged from revision 6 Host case',
+  conditionalCase: 'Disabled. Exactly the existing Host case regardless of Script choice or task outcome.',
+  question: 'Does the unchanged natural Host task actually consume typed JSON source data, and does its output meet the unchanged contract? Record both independently from Script starts and usage.',
+  whyNotLayer1: 'Independent geometry.sample-grid tests prove JSON data contracts and safety boundaries at zero model cost. They cannot establish autonomous typed source consumption in the existing Host task. Only that task has changed production input; previous CSV and XML/Ark raw are retained without reruns.',
+  fixtureConstraints: 'Unchanged revision 6 Host task through explicit trusted SDK embedder tools with dotted/hyphen names, opaque caveats and existing structured values. Native bridge/bash remain available. No children; 12 billed leaf executions and production per-cell 64-attempt/VM limits; 6 turns/logical requests/physical HTTP including learning and retries. No daemon lease or external-service coverage.',
+  concurrency: 'One case, one GLM provider lane. Bounded learning drain closes admissions and settles tracked calls. No fallback, sample retry or additional case.',
+  previousRevision: { revision: 6, evidenceDirectory: 'space-sdk-script-namespace-data-20261104/kodax-script-live-F9E92m',
+    actualHttpRequests: 17, actualReportedTokens: 250_634, originalMaxProviderCalls: 18, originalMaxTotalTokens: 1_500_000,
+    originalMaxExternalSpendUsd: 18, note: 'Original caps/raw remain intact; no unused balance is transferred. Results remain a separate revision.' },
+  cumulativeKnownBudget: { previousActualHttpRequests: 17, newSegmentMaxHttpRequests: 6, maxCombinedHttpRequests: 23,
+    previousReportedTokens: 250_634, newSegmentMaxTokenAccounting: 500_000, newSegmentMaxExternalSpendUsd: 6 },
+});
 await writeFile(path.join(dumpDir, 'design.json'), JSON.stringify(design, null, 2));
-async function runCase(target, index, selection) {
+async function runCase(target, index, selection, fixture) {
   const directory = path.join(root, String(index)); await mkdir(directory);
   const storage = new FileSessionStorage({ sessionsDir: path.join(directory, 'sessions'), configHome: directory, cwd: directory });
-  await writeFile(path.join(directory, 'a.json'), JSON.stringify([{ category: 'red', count: 2 }, { category: 'blue', count: 3 }]));
-  await writeFile(path.join(directory, 'b.json'), JSON.stringify([{ category: 'red', count: 3 }]));
   const file = path.join(dumpDir, `${index}.json`);
   const controller = new AbortController();
   const rows = []; const physicalRequestFacts = [];
   const startedAt = Date.now();
-  const task = selection === 'requested'
+  const task = fixture?.task ?? (selection === 'requested'
     ? 'Use script_exec to read a.json and b.json, sum count per category, and write totals.json as a JSON object mapping category to total. Set selected_output:true on script_exec and return a brief selected summary from the script. Native tools remain available if needed.'
-    : 'Read a.json and b.json, sum count per category, and write totals.json as a JSON object mapping category to total. Return a brief summary. Choose appropriate available tools.';
-  const report = { selection, target: { alias: target.alias, provider: target.provider, model: target.model, effort: target.effort ?? null }, task,
+    : 'Read a.json and b.json, sum count per category, and write totals.json as a JSON object mapping category to total. Return a brief summary. Choose appropriate available tools.');
+  const report = { case: fixture?.id ?? 'red-blue', selection, target: { alias: target.alias, provider: target.provider, model: target.model, effort: target.effort ?? null }, task,
     source: 'built SDK production runManagedTask', completed: false, taskCorrect: false, rows, physicalRequestFacts };
+  const hostRuntime = fixture ? await prepareRevisionSixCase(fixture, directory, report) : undefined;
+  if (!fixture) {
+    await writeFile(path.join(directory, 'a.json'), JSON.stringify([{ category: 'red', count: 2 }, { category: 'blue', count: 3 }]));
+    await writeFile(path.join(directory, 'b.json'), JSON.stringify([{ category: 'red', count: 3 }]));
+  }
   let saveTail = Promise.resolve();
   const save = () => {
     const snapshot = JSON.stringify(report, null, 2);
@@ -285,25 +506,33 @@ async function runCase(target, index, selection) {
   const timer = setTimeout(() => controller.abort(new Error('Smoke execution deadline exceeded')), 300_000);
   try {
     const result = await runManagedTask({ provider: name, model: target.model, effort: target.effort, workMode: 'script', agentMode: 'ama',
+      extensionRuntime: hostRuntime,
       maxIter: 6, maxOutputTokens: 2048, lsp: false, abortSignal: controller.signal,
       session: { id: `smoke-${index}`, storage }, context: { executionCwd: directory, gitRoot: directory,
         configHome: directory, repoIntelligenceMode: 'off', managedWorkBudget: { totalBudget: 12, spentBudget: 0, currentHarness: 'H0_DIRECT' } },
-      events: { beforeToolExecute: async tool => ['bash', 'read', 'write', 'glob', 'grep', 'tool_search', 'tool_call', 'script_exec', 'script_read', 'script_wait'].includes(tool) },
+      events: { beforeToolExecute: async tool => ['bash', 'read', 'write', 'glob', 'grep', 'tool_search', 'tool_call', 'script_exec', 'script_read', 'script_wait',
+        ...(hostRuntime?.listRunTools('mcp').map(definition => definition.name) ?? []), ...(fixture ? ['mcp_search', 'mcp_describe', 'mcp_call'] : [])].includes(tool) },
     }, task);
     report.completed = result.success; report.lastText = result.lastText;
   } catch (error) { report.error = String(error); }
   finally { report.taskElapsedMs = Date.now() - startedAt; }
-  try {
+  if (fixture) Object.assign(report, await checkRevisionSixOutput(fixture, directory));
+  else try {
     const output = JSON.parse(await readFile(path.join(directory, 'totals.json'), 'utf8'));
     report.output = output;
     report.taskCorrect = output.red === 5 && output.blue === 3 && Object.keys(output).length === 2;
-  } catch { report.taskCorrect = false; }
+  } catch (error) { report.taskCorrect = false; report.outputError = String(error); }
   await save();
   return { report, save, observed, timer, startedAt, storage, sessionId: `smoke-${index}` };
 }
-const naturalReports = await Promise.all(cases.map((target, index) => runCase(target, index, 'natural')));
+const naturalReports = await Promise.all(cases.slice(0, namespaceDataSmoke ? 2 : cases.length)
+  .map((target, index) => runCase(target, index, 'natural', dataCases?.[index])));
 await finalizeGroup(naturalReports);
-const conditionalTarget = repairArkConfig ? undefined : requestedTarget(cases, naturalReports);
+if (namespaceDataSmoke) {
+  const host = await runCase(cases[2], 2, 'natural', dataCases[2]);
+  await finalizeGroup([host]); naturalReports.push(host);
+}
+const conditionalTarget = repairArkConfig || dataCases ? undefined : requestedTarget(cases, naturalReports);
 const requestedReports = conditionalTarget ? [await runCase(conditionalTarget, 2, 'requested')] : [];
 if (requestedReports.length) await finalizeGroup(requestedReports);
 const allReports = [...naturalReports, ...requestedReports].map(item => item.report);
@@ -318,5 +547,14 @@ await writeFile(path.join(dumpDir, 'summary.json'), JSON.stringify({
   budgetAccountedTokens: allReports.reduce((sum, report) => sum + (report.budgetAccountedTokens ?? 0), 0),
   spendReservationUsd: allReports.reduce((sum, report) => sum + (report.networkRequests ?? 0), 0),
   measuredBillingUsd: null,
+}, null, 2));
+if (dataCases) await writeFile(path.join(dumpDir, 'main-session-review.json'), JSON.stringify({
+  revision: design.revision, status: 'pending-main-session-review', comparison: false,
+  cases: allReports.map((report, index) => ({ case: report.case, evidenceFile: `${index}.json`, evidenceSha256: createHash('sha256').update(JSON.stringify(report, null, 2)).digest('hex'),
+    mechanicalTaskCorrect: report.taskCorrect, actualScriptStarted: report.scriptCellAttempts ?? 0, actualScriptSucceeded: report.scriptCellsSucceeded ?? 0,
+    taskValidity: 'unreviewed', dataConsumption: 'unreviewed', jsonDataConsumption: 'unreviewed', evidenceReferences: [], reason: null })),
+  recommendation: null, limitations: structuredDataSmoke
+    ? 'One affected Host case and one family, no controlled A/B. Revision 6 raw remains separate; no pooled adoption, warning-fix, efficiency or generalization conclusion.'
+    : 'Three different tasks, two families, one candidate; case/family effects are confounded. No population adoption, A/B efficiency or generalization conclusion.',
 }, null, 2));
 process.stdout.write(`Smoke evidence: ${dumpDir}\n`);

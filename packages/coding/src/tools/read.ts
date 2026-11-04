@@ -419,6 +419,8 @@ export async function toolRead(
   }
 
   const lines: string[] = [];
+  // Native reads need only the display. Collect program text only for a listener.
+  const textLines: string[] | undefined = ctx.toolCallId && ctx.recordToolResultProjection ? [] : undefined;
   const stream = createReadStream(filePath, { encoding: 'utf-8' });
   const reader = createInterface({
     input: stream,
@@ -476,6 +478,7 @@ export async function toolRead(
       }
 
       lines.push(numberedLine);
+      textLines?.push(displayLine);
       outputBytes += lineBytes;
       if (nextLineContinuation) {
         lineContinuation = nextLineContinuation;
@@ -532,7 +535,19 @@ export async function toolRead(
       if (lineOffset === 0) {
         ctx.readFileStateCache?.record(filePath, offset, limit, stat.mtimeMs);
       }
-      if (ctx.toolCallId) ctx.recordToolResultProjection?.(ctx.toolCallId, { content: output, modelContent: notes.join('\n') });
+      if (ctx.toolCallId) ctx.recordToolResultProjection?.(ctx.toolCallId, {
+        content: output, modelContent: notes.join('\n'),
+        ...(textLines ? { data: {
+          kind: 'text' as const, text: textLines.slice(0, effectiveLines.length).join('\n'), normalized: true as const,
+          offset, line_offset: lineOffset, lineCount: effectiveLines.length,
+          complete: offset === 1 && lineOffset === 0 && !effectiveHasMoreLines,
+          // Unlike the short human hint, keep the requested page size so a
+          // completed long line can share its next page with subsequent lines.
+          ...(effectiveLineContinuation ? { next: { offset: effectiveLineContinuation.lineNumber, limit,
+            line_offset: effectiveLineContinuation.nextOffset } }
+            : effectiveHasMoreLines ? { next: { offset: offset + effectiveLines.length, limit, line_offset: 0 } } : {}),
+        } } : {}),
+      });
       return output;
     }
 

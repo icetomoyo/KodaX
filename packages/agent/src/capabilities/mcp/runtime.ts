@@ -672,7 +672,7 @@ export class McpServerRuntime {
         return {
           content: await normalizeMcpContent(record?.content),
           isError: readBoolean(record?.isError) ?? readBoolean(record?.is_error) ?? false,
-          structuredContent: record?.structuredContent ?? record?.structured_content,
+          structuredContent: record?.structuredContent !== undefined ? record.structuredContent : record?.structured_content,
           metadata: {
             serverId: this.serverId,
             isError: readBoolean(record?.isError) ?? readBoolean(record?.is_error) ?? false,

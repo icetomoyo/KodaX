@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { createServer, type ServerResponse } from 'node:http';
+import type { ServerResponse } from 'node:http';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -10,6 +10,7 @@ import type { RuntimeCredentialLease, RuntimeHostToolLease, RuntimeExecutionProf
 import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
 import { CODING_SUMMARY_PROMPT, CODING_UPDATE_SUMMARY_PROMPT, LEARNING_REVIEW_TOOL, getRegisteredToolDefinition } from '@kodax-ai/coding';
 import { connectKodaXRuntime } from '../src/sdk-runtime.js';
+import { createFetchHttpFixture } from './fetch-http-fixture.js';
 
 async function bounded<T>(promise: Promise<T>, milliseconds: number, message: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -85,7 +86,7 @@ it('uses the Host catalog and enforces root and Actor ceilings across native and
   let freezeMetadata = false;
   let firstProfile: RuntimeExecutionProfile | undefined;
   let lease: RuntimeHostToolLease | undefined;
-  const server = createServer(async (request, response) => {
+  const { server, url } = await createFetchHttpFixture(async (request, response) => {
     let body = ''; for await (const chunk of request) body += String(chunk);
     const wire = JSON.parse(body) as WireRequest;
     if (wire.tools?.some(tool => tool.function.name === LEARNING_REVIEW_TOOL.name)) { finish(response, { content: '{}' }); return; }
@@ -112,8 +113,6 @@ it('uses the Host catalog and enforces root and Actor ceilings across native and
     if (name) finish(response, { tool_calls: [{ index: 0, id, type: 'function', function: { name, arguments: JSON.stringify(input) } }] }, 'tool_calls');
     else finish(response, { content: 'Audit finished.' });
   });
-  await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
-  const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing address');
   await mkdir(join(homeDir, '.kodax'), { recursive: true });
   await mkdir(join(homeDir, '.kodax', 'extensions'), { recursive: true });
   await writeFile(join(homeDir, '.kodax', 'extensions', 'host-only.mjs'), `export default api => {
@@ -123,7 +122,7 @@ it('uses the Host catalog and enforces root and Actor ceilings across native and
   };`);
   expect(getRegisteredToolDefinition('host_only_readonly')).toBeUndefined();
   await writeFile(join(homeDir, '.kodax', 'config.json'), JSON.stringify({ provider: 'audit-loopback', model: 'fixture',
-    customProviders: [{ name: 'audit-loopback', protocol: 'openai', model: 'fixture', baseUrl: `http://127.0.0.1:${address.port}/v1`, apiKeyEnv: 'KODAX_UNUSED_AUDIT_KEY' }] }));
+    customProviders: [{ name: 'audit-loopback', protocol: 'openai', model: 'fixture', baseUrl: `${url}/v1`, apiKeyEnv: 'KODAX_UNUSED_AUDIT_KEY' }] }));
   let host: Awaited<ReturnType<typeof startHost>> | undefined;
   let client: KodaXProductClient | undefined;
   let credential: RuntimeCredentialLease | undefined;
@@ -251,14 +250,12 @@ it.each([
   { label: 'streaming compaction summary', stream: true, content: CODING_SUMMARY_PROMPT, status: 200 },
   { label: 'non-streaming compaction update', stream: false, content: CODING_UPDATE_SUMMARY_PROMPT, status: 200 },
 ])('routes root recovery fixture requests by their intent: $label', async ({ stream, content, status }) => {
-  const server = createServer(async (request, response) => {
+  const { server, url } = await createFetchHttpFixture(async (request, response) => {
     let body = ''; for await (const chunk of request) body += String(chunk);
     respondRootRecoveryFixture(JSON.parse(body) as WireRequest & { stream?: boolean }, response);
   });
-  await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
-  const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing fixture address');
   try {
-    const response = await fetch(`http://127.0.0.1:${address.port}/v1/chat/completions`, { method: 'POST',
+    const response = await fetch(`${url}/v1/chat/completions`, { method: 'POST',
       headers: { 'content-type': 'application/json' }, body: JSON.stringify({ stream, messages: [{ role: 'user', content }] }),
     });
     const body = await response.text();
@@ -287,7 +284,7 @@ it.each([
   const recoveryRequests = [
     { stream: 0, nonstream: 0, summary: 0 }, { stream: 0, nonstream: 0, summary: 0 }, { stream: 0, nonstream: 0, summary: 0 },
   ];
-  const server = createServer(async (request, response) => {
+  const { server, url } = await createFetchHttpFixture(async (request, response) => {
     let body = ''; for await (const chunk of request) body += String(chunk);
     const wire = JSON.parse(body) as WireRequest & { stream?: boolean };
     const traffic = recoveryRequests[recoveryRound]!;
@@ -312,8 +309,6 @@ it.each([
     } }] }, 'tool_calls');
     else finish(response, { content: 'Root recovery ceiling verified.' });
   });
-  await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
-  const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing loopback address');
   await mkdir(join(homeDir, '.kodax', 'extensions'), { recursive: true });
   await writeFile(join(homeDir, 'evidence.txt'), 'ORIGINAL_READ_SCOPE');
   await writeFile(join(homeDir, '.kodax', 'extensions', 'recovery.mjs'), `export default api => api.registerTool({
@@ -321,7 +316,7 @@ it.each([
     sideEffect: 'readonly', planModeAllowed: true, handler: async () => 'ORIGINAL_METADATA' });`);
   await writeFile(join(homeDir, '.kodax', 'config.json'), JSON.stringify({ provider: 'root-recovery-loopback', model: 'fixture', customProviders: [{
     name: 'root-recovery-loopback', protocol: 'openai', model: 'fixture', apiKeyEnv: 'KODAX_ROOT_RECOVERY_UNSET_KEY',
-    contextWindow: 32768, maxOutputTokens: 1024, baseUrl: `http://127.0.0.1:${address.port}/v1`,
+    contextWindow: 32768, maxOutputTokens: 1024, baseUrl: `${url}/v1`,
   }] }));
   const identity = { name: 'root-recovery-test', instanceId: 'sdk-root-profile-recovery', instanceSecret: 'fixture-only-root-profile-secret-1234567890' };
   let host: Awaited<ReturnType<typeof startHost>> | undefined;

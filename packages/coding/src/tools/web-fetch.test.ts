@@ -1,11 +1,12 @@
-import { createServer } from 'node:http';
+import type { Server } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import { toolWebFetch } from './web-fetch.js';
 import { getToolDefinition } from './registry.js';
 import { DEFERRED_TOOL_HINTS } from './deferred-tools.js';
+import { createFetchHttpFixture } from '../../../../tests/fetch-http-fixture.js';
 
 describe('toolWebFetch', () => {
-  let server: ReturnType<typeof createServer> | undefined;
+  let server: Server | undefined;
   let baseUrl = '';
 
   it('advertises the implemented plain-text, redirect and cache contract', () => {
@@ -20,7 +21,7 @@ describe('toolWebFetch', () => {
 
   it('follows redirects and performs a fresh GET on repeated reads', async () => {
     let reads = 0;
-    server = createServer((request, response) => {
+    ({ server, url: baseUrl } = await createFetchHttpFixture((request, response) => {
       if (request.url === '/redirect') {
         response.writeHead(302, { location: '/target' });
         response.end();
@@ -28,11 +29,7 @@ describe('toolWebFetch', () => {
         response.writeHead(200, { 'content-type': 'text/html' });
         response.end(`<h1>Read ${++reads}</h1><a href="/other">Link</a>`);
       }
-    });
-    await new Promise<void>(resolve => server!.listen(0, '127.0.0.1', resolve));
-    const address = server.address();
-    if (!address || typeof address === 'string') throw new Error('Missing local HTTP fixture address');
-    baseUrl = `http://127.0.0.1:${address.port}`;
+    }));
     const ctx = { backups: new Map<string, string>(), executionCwd: process.cwd() };
     const first = await toolWebFetch({ url: `${baseUrl}/redirect` }, ctx);
     const second = await toolWebFetch({ url: `${baseUrl}/redirect` }, ctx);
@@ -54,19 +51,10 @@ describe('toolWebFetch', () => {
   });
 
   it('fetches and normalizes html content', async () => {
-    server = createServer((_, response) => {
+    ({ server, url: baseUrl } = await createFetchHttpFixture((_, response) => {
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end('<html><head><title>Spec</title></head><body><main><h1>Hello</h1><p>Wave B retrieval body.</p></main></body></html>');
-    });
-    await new Promise<void>((resolve) => {
-      server?.listen(0, '127.0.0.1', () => {
-        const address = server?.address();
-        if (address && typeof address === 'object') {
-          baseUrl = `http://127.0.0.1:${address.port}`;
-        }
-        resolve();
-      });
-    });
+    }));
 
     const result = await toolWebFetch({
       url: `${baseUrl}/spec`,
@@ -81,19 +69,10 @@ describe('toolWebFetch', () => {
   });
 
   it('preserves leading and trailing whitespace in non-HTML response bodies', async () => {
-    server = createServer((_, response) => {
+    ({ server, url: baseUrl } = await createFetchHttpFixture((_, response) => {
       response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
       response.end('  leading\nmiddle\ntrailing  ');
-    });
-    await new Promise<void>((resolve) => {
-      server?.listen(0, '127.0.0.1', () => {
-        const address = server?.address();
-        if (address && typeof address === 'object') {
-          baseUrl = `http://127.0.0.1:${address.port}`;
-        }
-        resolve();
-      });
-    });
+    }));
 
     const result = await toolWebFetch({ url: `${baseUrl}/plain` }, {
       backups: new Map(),
@@ -124,19 +103,10 @@ describe('toolWebFetch', () => {
   });
 
   it('marks a response incomplete when the network acquisition safety limit is reached', async () => {
-    server = createServer((_, response) => {
+    ({ server, url: baseUrl } = await createFetchHttpFixture((_, response) => {
       response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
       response.end(`first\n${'x'.repeat(512 * 1024)}\nlast-after-limit`);
-    });
-    await new Promise<void>((resolve) => {
-      server?.listen(0, '127.0.0.1', () => {
-        const address = server?.address();
-        if (address && typeof address === 'object') {
-          baseUrl = `http://127.0.0.1:${address.port}`;
-        }
-        resolve();
-      });
-    });
+    }));
 
     const result = await toolWebFetch({ url: `${baseUrl}/large` }, {
       backups: new Map(),

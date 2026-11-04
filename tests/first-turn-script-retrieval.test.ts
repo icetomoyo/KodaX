@@ -1,4 +1,4 @@
-import { createServer } from 'node:http';
+import type { Server } from 'node:http';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,10 +13,11 @@ import * as nativeTools from '../packages/coding/src/tools/index.js';
 import { projectModelToolDefinition } from '../packages/coding/src/tools/model-tool-definition.js';
 import { wrapCodingToolAsRunnable } from '../packages/coding/src/task-engine/_internal/managed-task/tool-wrappers.js';
 import type { KodaXToolExecutionContext } from '../packages/coding/src/types.js';
+import { createFetchHttpFixture } from './fetch-http-fixture.js';
 
 const names = ['memory_recall', 'session_history_search', 'session_history_read', 'kodax_manual', 'web_search', 'web_fetch'];
 const limits = { timeoutMs: 5000, memoryBytes: 16 * 1024 * 1024, maxCalls: 12, maxTransferBytes: 128 * 1024 };
-const servers: ReturnType<typeof createServer>[] = [];
+const servers: Server[] = [];
 const directories: string[] = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
@@ -34,7 +35,7 @@ afterEach(async () => {
 async function fixture(totalBudget = 12) {
   const requests: string[] = [];
   let page = '<html><title>Fixture</title><p>Evidence 中文</p></html>';
-  const server = createServer((request, response) => {
+  const { server, url } = await createFetchHttpFixture((request, response) => {
     requests.push(request.url ?? '');
     response.setHeader('Content-Type', 'text/html; charset=utf-8');
     if (request.url?.startsWith('/search')) {
@@ -45,10 +46,6 @@ async function fixture(totalBudget = 12) {
     } else response.end(page);
   });
   servers.push(server);
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Missing local fixture address');
-  const url = `http://127.0.0.1:${address.port}`;
   vi.stubEnv('KODAX_WEB_SEARCH_ENDPOINT', `${url}/search`);
   const lineage = applySessionCompaction(createSessionLineage([
     { role: 'system', content: 'HIDDEN-SYSTEM-INSTRUCTION' },
@@ -107,7 +104,7 @@ it('preserves all six native retrieval contracts, complete content and provenanc
 });
 
 it.each(names)('%s preserves policy refusal and recovery without charging denied work', async name => {
-  const { budget, dispatch, inputs } = await fixture(1);
+  const { budget, dispatch, inputs, requests } = await fixture(1);
   let attempts = 0;
   const events = { beforeToolExecute: vi.fn(async () => ++attempts <= 2 ? '[Blocked] Retrieval policy' : true) };
   const baseline = await runToolDispatch({ ...dispatch, events, abortSignal: undefined,
@@ -117,7 +114,9 @@ it.each(names)('%s preserves policy refusal and recovery without charging denied
     if (!denied.isError) throw new Error('Expected refusal');
     return await tools.${name}(${JSON.stringify(inputs[name])});
   `, limits);
-  expect(result.receipts.map(receipt => receipt.result.isError)).toEqual([true, false]);
+  const evidence = JSON.stringify({ status: result.status, error: result.error, attempts, requests, receipts: result.receipts });
+  expect(result.status, evidence).toBe('completed');
+  expect(result.receipts.map(receipt => receipt.result.isError), evidence).toEqual([true, false]);
   expect(result.receipts[0]?.result.content).toBe(baseline.get('native-denied'));
   expect(result.receipts[1]?.input).toEqual(inputs[name]);
   expect(budget.spentBudget).toBe(1);
