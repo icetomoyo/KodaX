@@ -121,7 +121,7 @@ export interface SkillFile {
 
 export type SkillSource =
   | 'project' // <projectRoot>/.kodax/skills/
-  | 'user' // ~/.kodax/skills/ or ~/.agent/skills/
+  | 'user' // <agent home>/skills/ or ~/.agents/skills/
   | 'plugin' // Plugin-provided skills
   | 'builtin'; // Built-in skills
 
@@ -318,6 +318,7 @@ import { existsSync } from 'node:fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { getAgentConfigPath } from '../../runtime/agent-home.js';
 import { listPluginSkillPaths } from './plugin-paths.js';
 
 // ESM-compatible __dirname
@@ -348,16 +349,14 @@ function resolveBuiltinPath(): string {
  *
  * Priority order (highest first):
  * 1. Project - <projectRoot>/.kodax/skills/
- * 2. User - ~/.kodax/skills/
- * 3. User - ~/.agents/skills/ (AgentSkills standard)
+ * 2. User - <agent home>/skills/ (~/.kodax unless KODAX_HOME or setAgentConfigHome())
+ * 3. User - ~/.agents/skills/ (AgentSkills standard, shared across tools)
  * 4. Plugin - (dynamic)
  * 5. Builtin - packages/skills/src/builtin/
  * Learned Skills are supplied separately through a record-gated Learned Area
  * and never through a loose directory.
  */
 export function getDefaultSkillPaths(projectRoot?: string): SkillPathsConfig {
-  const home = homedir();
-
   return {
     // Project-level (highest priority) - native Skills override shared Skills.
     projectPaths: projectRoot
@@ -367,10 +366,10 @@ export function getDefaultSkillPaths(projectRoot?: string): SkillPathsConfig {
         ]
       : [],
 
-    // User-level - ~/.kodax/skills/ and ~/.agents/skills/
+    // User-level - <agent home>/skills/ and ~/.agents/skills/
     userPaths: [
-      path.join(home, '.kodax', 'skills'),
-      path.join(home, '.agents', 'skills'),
+      getAgentConfigPath('skills'),
+      path.join(homedir(), '.agents', 'skills'),
     ],
 
     // Plugin-level (runtime-provided)
@@ -388,7 +387,7 @@ export function getDefaultSkillPaths(projectRoot?: string): SkillPathsConfig {
  * Priority: Project > User > Plugin > Builtin. Record-gated Learned Skills
  * are appended by discovery after these formal sources.
  * - Project: Project-specific skills override everything else
- * - User: User preferences (~/.kodax/ and ~/.agents/)
+ * - User: User preferences (<agent home>/skills/ and ~/.agents/skills/)
  * - Plugin: Third-party plugins
  * - Builtin: Default skills shipped with KodaX
  * - Learned: Runtime-governed Skills, always lower precedence than formal sources

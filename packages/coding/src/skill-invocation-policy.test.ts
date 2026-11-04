@@ -551,7 +551,10 @@ describe('applyRuntimeSkillInvocationPolicy', () => {
     const fixture = await optionsWithSkill({});
     const restrictedRoot = await mkdtemp(path.join(os.tmpdir(), 'kodax-restricted-registry-'));
     tempDirs.push(restrictedRoot);
-    const restrictedRegistry = new SkillRegistry(restrictedRoot);
+    // The fixture's KODAX_HOME holds the Skill, so the restricted registry must not read user paths.
+    const restrictedRegistry = new SkillRegistry(restrictedRoot, {
+      userPaths: [], pluginPaths: [], builtinPath: path.join(restrictedRoot, 'no-builtins'),
+    });
     await restrictedRegistry.discover();
     fixture.options.context!.skillRegistry = restrictedRegistry;
 
